@@ -39,6 +39,51 @@ export interface PiEvent {
   permission_decision_id?: string
 }
 
+export interface PatchFile {
+  path: string
+  new_content: string
+}
+
+export interface Patch {
+  patch_id: string
+  session_id: string
+  status: string
+  affected_files: string[]
+  diff: string
+  reason: string
+  approval_status: string
+  rollback_pointer?: string
+}
+
+export interface Decision {
+  decision_id: string
+  capability: string
+  resource: string
+  decision: 'allowed' | 'denied' | 'requires_approval'
+  reason: string
+  policy_id: string
+}
+
+export interface ExecResult {
+  decision: Decision
+  result?: {
+    exit_code: number
+    duration_ms: number
+    stdout: string[]
+    stderr: string[]
+    timed_out: boolean
+  }
+}
+
+export interface AuditReport {
+  session_id: string
+  total_events: number
+  events_by_type: Record<string, number>
+  policy_violations: unknown[]
+  files_read: unknown[]
+  commands: unknown[]
+}
+
 interface RpcError {
   code: number
   message: string
@@ -79,7 +124,7 @@ export class PiClient {
     })
   }
 
-  // Convenience wrappers over the Session / Task APIs.
+  // ---- sessions & tasks ----
   createSession(workspaceRoot: string, profile = 'safe-edit'): Promise<Session> {
     return this.call<Session>('session.create', { workspace_root: workspaceRoot, profile })
   }
@@ -94,6 +139,44 @@ export class PiClient {
 
   replaySession(sessionId: string): Promise<PiEvent[]> {
     return this.call<PiEvent[]>('session.replay', { session_id: sessionId })
+  }
+
+  // ---- workspace & patches ----
+  search(sessionId: string, pattern: string): Promise<Array<{ file: string; line: number; text: string }>> {
+    return this.call('workspace.search', { session_id: sessionId, pattern })
+  }
+
+  getFile(sessionId: string, path: string): Promise<{ content: string; hash: string }> {
+    return this.call('workspace.file.get', { session_id: sessionId, path })
+  }
+
+  proposePatch(sessionId: string, files: PatchFile[], reason = ''): Promise<Patch> {
+    return this.call<Patch>('workspace.patch.propose', { session_id: sessionId, reason, files })
+  }
+
+  applyPatch(sessionId: string, patchId: string): Promise<Patch> {
+    return this.call<Patch>('workspace.patch.apply', { session_id: sessionId, patch_id: patchId })
+  }
+
+  rollbackPatch(sessionId: string, patchId: string): Promise<Patch> {
+    return this.call<Patch>('workspace.patch.rollback', { session_id: sessionId, patch_id: patchId })
+  }
+
+  // ---- commands, approvals, audit ----
+  exec(sessionId: string, argv: string[], taskId?: string): Promise<ExecResult> {
+    return this.call<ExecResult>('command.exec', { session_id: sessionId, argv, task_id: taskId })
+  }
+
+  approve(sessionId: string, decisionId: string): Promise<unknown> {
+    return this.call('task.action.approve', { session_id: sessionId, decision_id: decisionId })
+  }
+
+  deny(sessionId: string, decisionId: string, reason = 'denied'): Promise<unknown> {
+    return this.call('task.action.deny', { session_id: sessionId, decision_id: decisionId, reason })
+  }
+
+  auditReport(sessionId: string): Promise<AuditReport> {
+    return this.call<AuditReport>('audit.report', { session_id: sessionId })
   }
 
   close(): void {

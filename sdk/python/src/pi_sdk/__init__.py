@@ -63,7 +63,7 @@ class PiClient:
             raise PiRpcError(err.get("code", -1), err.get("message", "unknown"))
         return response.get("result")
 
-    # Convenience wrappers over the Session / Task APIs.
+    # ---- sessions & tasks ----
     def create_session(self, workspace_root: str, profile: str = "safe-edit") -> dict[str, Any]:
         return self.call("session.create", {"workspace_root": workspace_root, "profile": profile})
 
@@ -75,6 +75,38 @@ class PiClient:
 
     def replay_session(self, session_id: str) -> list[dict[str, Any]]:
         return self.call("session.replay", {"session_id": session_id})
+
+    # ---- workspace & patches ----
+    def search(self, session_id: str, pattern: str) -> list[dict[str, Any]]:
+        return self.call("workspace.search", {"session_id": session_id, "pattern": pattern})
+
+    def get_file(self, session_id: str, path: str) -> dict[str, Any]:
+        return self.call("workspace.file.get", {"session_id": session_id, "path": path})
+
+    def propose_patch(self, session_id: str, files: list[dict[str, str]], reason: str = "") -> dict[str, Any]:
+        return self.call("workspace.patch.propose", {"session_id": session_id, "reason": reason, "files": files})
+
+    def apply_patch(self, session_id: str, patch_id: str) -> dict[str, Any]:
+        return self.call("workspace.patch.apply", {"session_id": session_id, "patch_id": patch_id})
+
+    def rollback_patch(self, session_id: str, patch_id: str) -> dict[str, Any]:
+        return self.call("workspace.patch.rollback", {"session_id": session_id, "patch_id": patch_id})
+
+    # ---- commands, approvals, audit ----
+    def exec(self, session_id: str, argv: list[str], task_id: str | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {"session_id": session_id, "argv": argv}
+        if task_id:
+            params["task_id"] = task_id
+        return self.call("command.exec", params)
+
+    def approve(self, session_id: str, decision_id: str) -> dict[str, Any]:
+        return self.call("task.action.approve", {"session_id": session_id, "decision_id": decision_id})
+
+    def deny(self, session_id: str, decision_id: str, reason: str = "denied") -> dict[str, Any]:
+        return self.call("task.action.deny", {"session_id": session_id, "decision_id": decision_id, "reason": reason})
+
+    def audit_report(self, session_id: str) -> dict[str, Any]:
+        return self.call("audit.report", {"session_id": session_id})
 
     def close(self) -> None:
         if self._sock is not None:
