@@ -125,13 +125,212 @@ impl Profile {
         }
     }
 
+    pub fn full_workspace() -> Self {
+        Self {
+            name: "full-workspace".into(),
+            file_read_in_workspace: true,
+            file_write: WriteMode::Workspace,
+            command_allowlist: vec![],
+            max_command_risk: 3,
+            network: NetworkMode::RequiresApproval,
+            secret_read: true,
+        }
+    }
+
+    pub fn ci_runner() -> Self {
+        Self {
+            name: "ci-runner".into(),
+            file_read_in_workspace: true,
+            file_write: WriteMode::PatchOnly,
+            command_allowlist: [
+                "npm ci", "npm test", "npm run build", "cargo build", "cargo test",
+                "go build ./...", "go test ./...", "make", "make test",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            max_command_risk: 2,
+            network: NetworkMode::Allowlist(vec![
+                "registry.npmjs.org".into(),
+                "crates.io".into(),
+                "proxy.golang.org".into(),
+            ]),
+            secret_read: true, // scoped; the broker still gates per-secret
+        }
+    }
+
+    pub fn sandboxed() -> Self {
+        Self {
+            name: "sandboxed".into(),
+            file_read_in_workspace: true,
+            file_write: WriteMode::PatchOnly,
+            command_allowlist: vec![],
+            max_command_risk: 0,
+            network: NetworkMode::Denied,
+            secret_read: false,
+        }
+    }
+
+    pub fn trusted_local() -> Self {
+        Self {
+            name: "trusted-local".into(),
+            file_read_in_workspace: true,
+            file_write: WriteMode::Workspace,
+            command_allowlist: vec![],
+            max_command_risk: 4,
+            network: NetworkMode::RequiresApproval,
+            secret_read: true,
+        }
+    }
+
+    pub fn enterprise_restricted() -> Self {
+        Self {
+            name: "enterprise-restricted".into(),
+            file_read_in_workspace: true,
+            file_write: WriteMode::PatchOnly,
+            command_allowlist: vec![],
+            max_command_risk: 1,
+            network: NetworkMode::Denied,
+            secret_read: false,
+        }
+    }
+
+    /// All seven built-in profiles by name (PRD §8.3).
     pub fn builtin(name: &str) -> Option<Self> {
         match name {
             "read-only" => Some(Self::read_only()),
             "safe-edit" => Some(Self::safe_edit()),
+            "full-workspace" => Some(Self::full_workspace()),
+            "ci-runner" => Some(Self::ci_runner()),
+            "sandboxed" => Some(Self::sandboxed()),
+            "trusted-local" => Some(Self::trusted_local()),
+            "enterprise-restricted" => Some(Self::enterprise_restricted()),
             _ => None,
         }
     }
+
+    pub fn builtin_names() -> &'static [&'static str] {
+        &[
+            "read-only", "safe-edit", "full-workspace", "ci-runner",
+            "sandboxed", "trusted-local", "enterprise-restricted",
+        ]
+    }
+
+    /// Loads a custom profile from the TOML format used in
+    /// protocol/capabilities/profiles/*.toml (PRD §8.3: users can define
+    /// custom permission profiles).
+    pub fn from_toml(source: &str) -> Result<Self, ProfileError> {
+        let raw: RawProfile = toml::from_str(source).map_err(|e| ProfileError(e.to_string()))?;
+        let rules = raw.rules.unwrap_or_default();
+
+        let file_write = match rules.file_write.allow.as_deref() {
+            Some("patch_only") => WriteMode::PatchOnly,
+            Some("workspace") => WriteMode::Workspace,
+            _ => WriteMode::Denied,
+        };
+        let network = match rules.network_access.allow.as_deref() {
+            Some("approval") => NetworkMode::RequiresApproval,
+            Some("allowlist") => {
+                NetworkMode::Allowlist(raw.network_allowlist.map(|a| a.hosts).unwrap_or_default())
+            }
+            _ => NetworkMode::Denied,
+        };
+        Ok(Self {
+            name: raw.name,
+            file_read_in_workspace: matches!(rules.file_read.allow.as_deref(), Some("workspace") | None),
+            file_write,
+            command_allowlist: raw.command_allowlist.map(|a| a.patterns).unwrap_or_default(),
+            max_command_risk: rules.command_exec.max_risk_level.unwrap_or(0),
+            network,
+            secret_read: !matches!(rules.secret_read.allow.as_deref(), Some("none") | None),
+        })
+    }
+
+    /// A machine-readable description of what this profile grants
+    /// (the "capability graph" view, PRD §8.3).
+    pub fn describe(&self) -> ProfileDescription {
+        ProfileDescription {
+            name: self.name.clone(),
+            file_read: if self.file_read_in_workspace { "workspace" } else { "none" }.into(),
+            file_write: match self.file_write {
+                WriteMode::Denied => "none",
+                WriteMode::PatchOnly => "patch_only",
+                WriteMode::Workspace => "workspace",
+            }
+            .into(),
+            max_command_risk: self.max_command_risk,
+            command_allowlist: self.command_allowlist.clone(),
+            network: match &self.network {
+                NetworkMode::Denied => "denied".into(),
+                NetworkMode::RequiresApproval => "approval".into(),
+                NetworkMode::Allowlist(h) => format!("allowlist:{}", h.join(",")),
+            },
+            secret_read: self.secret_read,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ProfileError(pub String);
+
+impl std::fmt::Display for ProfileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid profile: {}", self.0)
+    }
+}
+impl std::error::Error for ProfileError {}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProfileDescription {
+    pub name: String,
+    pub file_read: String,
+    pub file_write: String,
+    pub max_command_risk: u8,
+    pub command_allowlist: Vec<String>,
+    pub network: String,
+    pub secret_read: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawProfile {
+    name: String,
+    rules: Option<RawRules>,
+    command_allowlist: Option<RawAllowlist>,
+    network_allowlist: Option<RawNetworkAllowlist>,
+}
+
+/// Each rule in the TOML is an inline table, e.g.
+/// `command_exec = { allow = "allowlist", max_risk_level = 1 }`.
+#[derive(Debug, Default, Deserialize)]
+struct Rule {
+    allow: Option<String>,
+    max_risk_level: Option<u8>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawRules {
+    #[serde(default)]
+    file_read: Rule,
+    #[serde(default)]
+    file_write: Rule,
+    #[serde(default)]
+    command_exec: Rule,
+    #[serde(default)]
+    network_access: Rule,
+    #[serde(default)]
+    secret_read: Rule,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawAllowlist {
+    #[serde(default)]
+    patterns: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawNetworkAllowlist {
+    #[serde(default)]
+    hosts: Vec<String>,
 }
 
 /// Stateless policy evaluation. The kernel owns audit + approval flow.
@@ -381,6 +580,56 @@ mod tests {
         assert_eq!(
             PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "cargo test")).decision,
             Verdict::Allowed
+        );
+    }
+
+    #[test]
+    fn all_seven_builtins_resolve() {
+        for name in Profile::builtin_names() {
+            assert!(Profile::builtin(name).is_some(), "missing builtin {name}");
+        }
+        assert!(Profile::builtin("nonexistent").is_none());
+    }
+
+    #[test]
+    fn custom_profile_loads_from_toml() {
+        let src = r#"
+name = "my-team"
+description = "custom"
+
+[rules]
+file_read = { allow = "workspace" }
+file_write = { allow = "patch_only" }
+command_exec = { allow = "allowlist", max_risk_level = 2 }
+network_access = { allow = "allowlist" }
+secret_read = { allow = "scoped" }
+
+[command_allowlist]
+patterns = ["make deploy-staging"]
+
+[network_allowlist]
+hosts = ["internal.example.com"]
+"#;
+        let p = Profile::from_toml(src).unwrap();
+        assert_eq!(p.name, "my-team");
+        assert_eq!(p.max_command_risk, 2);
+        assert!(p.secret_read);
+        assert_eq!(p.file_write, WriteMode::PatchOnly);
+        assert!(matches!(p.network, NetworkMode::Allowlist(ref h) if h == &["internal.example.com"]));
+        assert!(p.command_allowlist.contains(&"make deploy-staging".to_string()));
+    }
+
+    #[test]
+    fn enterprise_restricted_denies_network_and_secrets() {
+        let p = Profile::enterprise_restricted();
+        let root = Path::new("/tmp/ws");
+        assert_eq!(
+            PolicyEngine::evaluate(&p, root, &req(Capability::NetworkAccess, "example.com")).decision,
+            Verdict::Denied
+        );
+        assert_eq!(
+            PolicyEngine::evaluate(&p, root, &req(Capability::SecretRead, "TOKEN")).decision,
+            Verdict::Denied
         );
     }
 }

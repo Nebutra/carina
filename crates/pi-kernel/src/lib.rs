@@ -5,6 +5,9 @@
 //! evaluates policy, records the decision in the audit log, and only then
 //! lets the caller proceed.
 
+mod secret;
+pub use secret::SecretBroker;
+
 use pi_audit::{AuditError, AuditLog, Event, EventType};
 use pi_policy::{Capability, CapabilityRequest, Decision, PolicyEngine, Profile, Verdict};
 use std::path::{Path, PathBuf};
@@ -26,6 +29,7 @@ pub struct Kernel {
     workspace_root: PathBuf,
     profile: Profile,
     audit: AuditLog,
+    secrets: SecretBroker,
 }
 
 impl Kernel {
@@ -35,16 +39,67 @@ impl Kernel {
         profile_name: &str,
         audit_dir: &Path,
     ) -> Result<Self, KernelError> {
-        let session_id = session_id.into();
         let profile = Profile::builtin(profile_name)
             .ok_or_else(|| KernelError::UnknownProfile(profile_name.to_string()))?;
+        Self::with_profile(session_id, workspace_root, profile, audit_dir)
+    }
+
+    /// Builds a kernel from an explicit profile (e.g. a custom profile
+    /// loaded from TOML). This is how custom permission profiles enter the
+    /// runtime (PRD §8.3).
+    pub fn with_profile(
+        session_id: impl Into<String>,
+        workspace_root: impl Into<PathBuf>,
+        profile: Profile,
+        audit_dir: &Path,
+    ) -> Result<Self, KernelError> {
+        let session_id = session_id.into();
         let audit = AuditLog::open(audit_dir, &session_id)?;
         Ok(Self {
             session_id,
             workspace_root: workspace_root.into(),
             profile,
             audit,
+            secrets: SecretBroker::new(),
         })
+    }
+
+    /// Mutable access to the session's secret broker.
+    pub fn secrets_mut(&mut self) -> &mut SecretBroker {
+        &mut self.secrets
+    }
+
+    pub fn secrets(&self) -> &SecretBroker {
+        &self.secrets
+    }
+
+    /// Requests a secret by name. Returns the opaque handle only if policy
+    /// allows and the secret is registered; the plaintext never leaves the
+    /// kernel and only `secret_handle` is written to the audit log.
+    pub fn request_secret(&self, name: &str) -> Result<(Decision, Option<String>), KernelError> {
+        let request = CapabilityRequest {
+            capability: Capability::SecretRead,
+            requested_by: pi_policy::Principal::Agent,
+            resource: name.to_string(),
+            session_id: self.session_id.clone(),
+            task_id: None,
+        };
+        let decision = PolicyEngine::evaluate(&self.profile, &self.workspace_root, &request);
+        let handle = if decision.decision == Verdict::Allowed {
+            self.secrets.handle(name)
+        } else {
+            None
+        };
+        // Audit event records the handle, never the value.
+        let payload = serde_json::json!({
+            "secret_handle": handle,
+            "decision": decision.decision,
+            "reason": decision.reason,
+        });
+        let event = Event::new(&self.session_id, EventType::SecretRequested, payload)
+            .with_decision(&decision.decision_id);
+        self.audit.append(&event)?;
+        Ok((decision, handle))
     }
 
     /// Evaluates a capability request and records the outcome.

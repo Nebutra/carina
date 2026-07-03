@@ -220,3 +220,38 @@ func (s *Service) ClassifyCommand(command string) (int, error) {
 	err := s.call("kernel.classify", map[string]any{"command": command}, &out)
 	return out.RiskLevel, err
 }
+
+// ProfileDescribe returns the capability-graph view of a session's profile.
+func (s *Service) ProfileDescribe(sessionID string) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := s.call("kernel.profile.describe", map[string]any{"session_id": sessionID}, &out)
+	return out, err
+}
+
+// GrantSecret registers a secret value; only the handle is returned.
+func (s *Service) GrantSecret(sessionID, name, value string) (string, error) {
+	var out struct {
+		Handle string `json:"handle"`
+	}
+	err := s.call("kernel.secret.grant", map[string]any{"session_id": sessionID, "name": name, "value": value}, &out)
+	return out.Handle, err
+}
+
+// RequestSecret asks for a secret handle; plaintext never crosses this boundary.
+func (s *Service) RequestSecret(sessionID, name string) (*Decision, string, error) {
+	var out struct {
+		Decision Decision `json:"decision"`
+		Handle   string   `json:"handle"`
+	}
+	err := s.call("kernel.secret.request", map[string]any{"session_id": sessionID, "name": name}, &out)
+	return &out.Decision, out.Handle, err
+}
+
+// Redact scrubs known secret values from text before it is logged.
+func (s *Service) Redact(sessionID, text string) (string, error) {
+	var out struct {
+		Text string `json:"text"`
+	}
+	err := s.call("kernel.redact", map[string]any{"session_id": sessionID, "text": text}, &out)
+	return out.Text, err
+}

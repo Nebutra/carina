@@ -134,6 +134,9 @@ func (d *Daemon) registerMethods() {
 
 	d.server.Register("command.exec", d.handleCommandExec)
 	d.server.Register("audit.report", d.handleAuditReport)
+	d.server.Register("profile.describe", d.handleProfileDescribe)
+	d.server.Register("secret.grant", d.handleSecretGrant)
+	d.server.Register("secret.request", d.handleSecretRequest)
 
 	d.server.RegisterStream("session.events.stream", d.handleEventStream)
 
@@ -521,7 +524,12 @@ func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decisio
 	if len(output) > 100 {
 		output = output[:100]
 	}
-	d.record(sessionID, "CommandOutput", taskID, map[string]any{"stream": "stdout", "chunk": strings.Join(output, "\n")}, "")
+	// Redact any known secret values before the output enters the log.
+	chunk := strings.Join(output, "\n")
+	if redacted, err := d.kern.Redact(sessionID, chunk); err == nil {
+		chunk = redacted
+	}
+	d.record(sessionID, "CommandOutput", taskID, map[string]any{"stream": "stdout", "chunk": chunk}, "")
 	d.record(sessionID, "CommandExited", taskID,
 		map[string]any{"exit_code": result.ExitCode, "duration_ms": result.DurationMs}, "")
 	return result, nil
@@ -535,6 +543,45 @@ func (d *Daemon) handleAuditReport(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return d.kern.AuditReport(id)
+}
+
+func (d *Daemon) handleProfileDescribe(params json.RawMessage) (any, error) {
+	id, err := sessionID(params)
+	if err != nil {
+		return nil, err
+	}
+	return d.kern.ProfileDescribe(id)
+}
+
+func (d *Daemon) handleSecretGrant(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		Name      string `json:"name"`
+		Value     string `json:"value"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	handle, err := d.kern.GrantSecret(p.SessionID, p.Name, p.Value)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"name": p.Name, "handle": handle}, nil
+}
+
+func (d *Daemon) handleSecretRequest(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		Name      string `json:"name"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	decision, handle, err := d.kern.RequestSecret(p.SessionID, p.Name)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"decision": decision, "handle": handle}, nil
 }
 
 func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription) error {

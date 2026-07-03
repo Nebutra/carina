@@ -9,7 +9,7 @@
 use pi_audit::{Event, EventType};
 use pi_kernel::{Kernel, KernelError};
 use pi_patch::{content_hash, PatchTransaction};
-use pi_policy::{Capability, CapabilityRequest, Decision, Principal, Verdict};
+use pi_policy::{Capability, CapabilityRequest, Decision, Principal, Profile, Verdict};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -106,6 +106,10 @@ impl Service {
                 let cmd = str_param(p, "command")?;
                 Ok(json!({"command": cmd, "risk_level": pi_policy::classify_command(&cmd)}))
             }
+            "kernel.profile.describe" => self.profile_describe(p),
+            "kernel.secret.grant" => self.secret_grant(p),
+            "kernel.secret.request" => self.secret_request(p),
+            "kernel.redact" => self.redact(p),
             _ => Err(format!("unknown method {method}")),
         }
     }
@@ -113,10 +117,25 @@ impl Service {
     fn session_init(&mut self, p: &Value) -> Result<Value, String> {
         let session_id = str_param(p, "session_id")?;
         let workspace_root = PathBuf::from(str_param(p, "workspace_root")?);
-        let profile = p.get("profile").and_then(Value::as_str).unwrap_or("safe-edit");
+        let events_dir = self.state_dir.join("events");
 
-        let kernel = Kernel::new(&session_id, &workspace_root, profile, &self.state_dir.join("events"))
-            .map_err(err_str)?;
+        // A session may use a builtin profile by name, or supply a custom
+        // profile as inline TOML (PRD §8.3).
+        let (kernel, profile_name) = if let Some(toml) = p.get("profile_toml").and_then(Value::as_str) {
+            let profile = Profile::from_toml(toml).map_err(err_str)?;
+            let name = profile.name.clone();
+            (
+                Kernel::with_profile(&session_id, &workspace_root, profile, &events_dir).map_err(err_str)?,
+                name,
+            )
+        } else {
+            let name = p.get("profile").and_then(Value::as_str).unwrap_or("safe-edit").to_string();
+            (
+                Kernel::new(&session_id, &workspace_root, &name, &events_dir).map_err(err_str)?,
+                name,
+            )
+        };
+
         self.sessions.insert(
             session_id.clone(),
             SessionCtx {
@@ -127,7 +146,34 @@ impl Service {
                 resolved: HashMap::new(),
             },
         );
-        Ok(json!({"session_id": session_id, "profile": profile}))
+        Ok(json!({"session_id": session_id, "profile": profile_name}))
+    }
+
+    fn profile_describe(&mut self, p: &Value) -> Result<Value, String> {
+        let ctx = self.ctx(p)?;
+        serde_json::to_value(ctx.kernel.profile().describe()).map_err(err_str)
+    }
+
+    fn secret_grant(&mut self, p: &Value) -> Result<Value, String> {
+        let name = str_param(p, "name")?;
+        let value = str_param(p, "value")?;
+        let ctx = self.ctx(p)?;
+        ctx.kernel.secrets_mut().grant(&name, &value);
+        // Never echo the value; confirm the handle only.
+        Ok(json!({"name": name, "handle": format!("secret://{name}")}))
+    }
+
+    fn secret_request(&mut self, p: &Value) -> Result<Value, String> {
+        let name = str_param(p, "name")?;
+        let ctx = self.ctx(p)?;
+        let (decision, handle) = ctx.kernel.request_secret(&name).map_err(err_str)?;
+        Ok(json!({"decision": decision, "handle": handle}))
+    }
+
+    fn redact(&mut self, p: &Value) -> Result<Value, String> {
+        let text = str_param(p, "text")?;
+        let ctx = self.ctx(p)?;
+        Ok(json!({"text": ctx.kernel.secrets().redact(&text)}))
     }
 
     fn ctx(&mut self, p: &Value) -> Result<&mut SessionCtx, String> {

@@ -46,7 +46,7 @@ func TestEndToEndLoop(t *testing.T) {
 	}
 	defer d.Close()
 
-	sock := filepath.Join(t.TempDir(), "d.sock")
+	sock := shortSocket(t)
 	go func() { _ = d.Run(sock) }()
 	waitForSocket(t, sock)
 
@@ -184,6 +184,19 @@ func waitForSocket(t *testing.T, path string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("socket %s never appeared", path)
+}
+
+// shortSocket returns a socket path under /tmp short enough for the
+// platform's sockaddr_un limit (~104 bytes on macOS), regardless of the
+// test name length that t.TempDir() would otherwise inject.
+func shortSocket(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "pios")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "d.sock")
 }
 
 var _ = exec.Command // reserved for future worker tests

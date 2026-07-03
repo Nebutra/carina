@@ -33,6 +33,9 @@ Usage:
 
   pi approve <session_id> <decision_id>
   pi deny <session_id> <decision_id> [reason]
+  pi profile <session_id>                describe the active permission profile
+  pi secret grant <session_id> <n> <v>   register a secret (returns a handle)
+  pi secret request <session_id> <name>  request a secret handle
   pi metrics
 
 The daemon must be running: pi-daemon &
@@ -131,6 +134,15 @@ func run(cmd string, args []string) error {
 	case "patch":
 		return cmdPatch(c, args)
 
+	case "profile":
+		if len(args) < 1 {
+			return fmt.Errorf("usage: pi profile <session_id>")
+		}
+		return call(c, "profile.describe", map[string]any{"session_id": args[0]})
+
+	case "secret":
+		return cmdSecret(c, args)
+
 	default:
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", cmd)
@@ -196,6 +208,27 @@ func cmdPatch(c *rpcClient, args []string) error {
 		})
 	default:
 		return fmt.Errorf("unknown patch subcommand %q", sub)
+	}
+}
+
+func cmdSecret(c *rpcClient, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: pi secret <grant|request> <session_id> [name] [value]")
+	}
+	sub, sessionID := args[0], args[1]
+	switch sub {
+	case "grant":
+		if len(args) < 4 {
+			return fmt.Errorf("usage: pi secret grant <session_id> <name> <value>")
+		}
+		return call(c, "secret.grant", map[string]any{"session_id": sessionID, "name": args[2], "value": args[3]})
+	case "request":
+		if len(args) < 3 {
+			return fmt.Errorf("usage: pi secret request <session_id> <name>")
+		}
+		return call(c, "secret.request", map[string]any{"session_id": sessionID, "name": args[2]})
+	default:
+		return fmt.Errorf("unknown secret subcommand %q", sub)
 	}
 }
 
