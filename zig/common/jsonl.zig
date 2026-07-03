@@ -4,12 +4,21 @@
 const std = @import("std");
 
 /// Writes one line to stdout, looping until all bytes are flushed.
+/// A closed pipe (downstream `head`, killed daemon) is a clean exit,
+/// not a crash.
 pub fn writeLine(bytes: []const u8) !void {
     var written: usize = 0;
     while (written < bytes.len) {
-        written += try std.posix.write(std.posix.STDOUT_FILENO, bytes[written..]);
+        written += write(bytes[written..]);
     }
-    _ = try std.posix.write(std.posix.STDOUT_FILENO, "\n");
+    _ = write("\n");
+}
+
+fn write(bytes: []const u8) usize {
+    return std.posix.write(std.posix.STDOUT_FILENO, bytes) catch |err| switch (err) {
+        error.BrokenPipe => std.process.exit(0),
+        else => std.process.exit(1),
+    };
 }
 
 /// Formats and writes one JSON line.

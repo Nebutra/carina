@@ -9,6 +9,11 @@ repository.workspace = true
 [dependencies]
 pi-policy = { workspace = true }
 pi-audit = { workspace = true }
+pi-patch = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[[bin]]
+name = "pi-kernel-service"
+path = "src/bin/pi-kernel-service.rs"

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"io"
+	"os"
+
 	"github.com/TsekaLuk/pi-os/go/rpc"
 )
 
@@ -12,4 +15,12 @@ func dialDaemon() (*rpcClient, error) {
 		return nil, err
 	}
 	return rpc.Dial(socket)
+}
+
+func readAllStdin() (string, error) {
+	b, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }

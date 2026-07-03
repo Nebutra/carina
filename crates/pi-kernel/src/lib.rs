@@ -86,6 +86,59 @@ impl Kernel {
         })
     }
 
+    /// Resolves a `requires_approval` decision. The approval itself is an
+    /// audit event (`ToolApproved`) that records who approved it.
+    pub fn approve(&self, decision: &Decision, approver: &str) -> Result<Decision, KernelError> {
+        let approved = Decision {
+            decision: Verdict::Allowed,
+            reason: format!("approved by {approver} ({})", decision.reason),
+            ..decision.clone()
+        };
+        let payload = serde_json::json!({
+            "capability": approved.capability,
+            "resource": approved.resource,
+            "approver": approver,
+        });
+        let event = Event::new(&self.session_id, EventType::ToolApproved, payload)
+            .with_decision(&approved.decision_id);
+        self.audit.append(&event)?;
+        Ok(approved)
+    }
+
+    /// Records a denial issued by a human reviewer.
+    pub fn deny(&self, decision: &Decision, approver: &str, reason: &str) -> Result<Decision, KernelError> {
+        let denied = Decision {
+            decision: Verdict::Denied,
+            reason: format!("denied by {approver}: {reason}"),
+            ..decision.clone()
+        };
+        let payload = serde_json::json!({
+            "capability": denied.capability,
+            "resource": denied.resource,
+            "approver": approver,
+            "reason": reason,
+        });
+        let event = Event::new(&self.session_id, EventType::ToolDenied, payload)
+            .with_decision(&denied.decision_id);
+        self.audit.append(&event)?;
+        Ok(denied)
+    }
+
+    /// Appends an arbitrary event to this session's audit log (used by the
+    /// control plane for lifecycle events like CommandStarted).
+    pub fn record_event(&self, event: &Event) -> Result<(), KernelError> {
+        self.audit.append(event)?;
+        Ok(())
+    }
+
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    pub fn workspace_root(&self) -> &Path {
+        &self.workspace_root
+    }
+
     pub fn profile(&self) -> &Profile {
         &self.profile
     }

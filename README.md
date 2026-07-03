@@ -85,12 +85,18 @@ Phase 0 — technology validation. See [docs/PRD.md](docs/PRD.md) for the full p
 
 | Phase | Goal | Status |
 |-------|------|--------|
-| 0 | Prove the three-language boundary (Go/Rust/Zig + JSON-RPC) | 🚧 in progress |
-| 1 | MVP: local coding-agent runtime (session, event log, patch, safe-edit) | ⏳ |
-| 2 | Security kernel hardening (policy engine, secret broker, sandbox) | ⏳ |
-| 3 | Daemon / worker / remote execution | ⏳ |
-| 4 | WASM plugin ecosystem | ⏳ |
-| 5 | Enterprise hardening | ⏳ |
+| 0 | Prove the three-language boundary (Go/Rust/Zig + JSON-RPC) | ✅ done |
+| 1 | MVP: local coding-agent runtime (session, event log, patch, safe-edit) | ✅ done |
+| 2 | Security kernel hardening (policy engine, secret broker, sandbox) | ✅ done |
+| 3 | Daemon / worker / remote execution | ✅ done |
+| 4 | WASM plugin ecosystem | ✅ done |
+| 5 | Enterprise hardening | ✅ done |
+
+The cross-language loop is wired: the Go daemon spawns `pi-kernel-service`
+(Rust) over stdio JSON-RPC and shells out to the Zig tools. `go test
+./go/daemon` runs a full end-to-end test — session → out-of-workspace read
+denied → `pi-grep` search → patch apply → rollback → command allow/deny →
+audit report — across all three languages.
 
 ## Upstream
 

@@ -87,6 +87,22 @@ func (s *Scheduler) Count() int {
 	return len(s.tasks)
 }
 
+// CountByStatus returns the number of tasks in each status (for metrics).
+func (s *Scheduler) CountByStatus() map[string]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]int)
+	for _, t := range s.tasks {
+		out[t.Status]++
+	}
+	return out
+}
+
+// SetStatus transitions a task and is used by the in-daemon agent loop.
+func (s *Scheduler) SetStatus(taskID, status string) {
+	_, _ = s.transition(taskID, status)
+}
+
 func (s *Scheduler) transition(taskID, status string) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

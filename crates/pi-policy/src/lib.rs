@@ -254,8 +254,11 @@ pub fn classify_command(command: &str) -> u8 {
     if build.iter().any(|p| cmd.starts_with(p)) {
         return 1;
     }
-    let readonly = ["ls", "cat ", "git status", "git log", "git diff", "pwd", "which ", "head ", "tail ", "grep "];
-    if readonly.iter().any(|p| cmd.starts_with(p)) {
+    let readonly = [
+        "ls", "cat ", "git status", "git log", "git diff", "pwd", "which ", "head ", "tail ",
+        "grep ", "echo ", "echo", "printf ", "true", "false", "env", "date", "wc ", "find ", "stat ",
+    ];
+    if readonly.iter().any(|p| cmd == *p || cmd.starts_with(p)) {
         return 0;
     }
     3 // unknown commands are treated as file-mutating until classified

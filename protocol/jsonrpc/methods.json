@@ -45,8 +45,18 @@
       { "method": "worker.output.stream", "params": { "worker_id": "string" }, "result": "subscription" },
       { "method": "worker.revoke", "params": { "worker_id": "string" }, "result": { "ok": "boolean" } }
     ],
+    "command": [
+      { "method": "command.exec", "params": { "session_id": "string", "task_id": "string?", "argv": "string[]" }, "result": { "decision": "PermissionDecision", "result": "CommandResult?" } }
+    ],
+    "audit": [
+      { "method": "audit.report", "params": { "session_id": "string" }, "result": "AuditReport" }
+    ],
+    "stream": [
+      { "method": "session.events.stream", "params": { "session_id": "string" }, "result": "subscription", "notifications": "event" }
+    ],
     "daemon": [
-      { "method": "daemon.status", "params": {}, "result": { "version": "string", "uptime_seconds": "number", "sessions": "number", "tasks": "number" } }
+      { "method": "daemon.status", "params": {}, "result": { "version": "string", "uptime_seconds": "number", "sessions": "number", "tasks": "number", "workers": "number", "tools": "boolean" } },
+      { "method": "daemon.metrics", "params": {}, "result": { "tasks_by_status": "object", "model_usage": "object", "subscribers": "number" } }
     ]
   }
 }

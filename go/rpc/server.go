@@ -1,6 +1,7 @@
-// Package rpc implements the Pi-OS JSON-RPC 2.0 transport over unix sockets.
-// Method registry mirrors protocol/jsonrpc/methods.json. Framing is
-// newline-delimited JSON (MVP; see docs/rpc-api.md).
+// Package rpc implements the Pi-OS JSON-RPC 2.0 transport. Framing is
+// newline-delimited JSON over a unix socket or TCP (docs/rpc-api.md).
+// Beyond request/response it supports server-initiated notifications, used
+// for streaming session events to subscribers.
 package rpc
 
 import (
@@ -43,15 +44,51 @@ func (e *Error) Error() string { return fmt.Sprintf("rpc error %d: %s", e.Code, 
 // Handler processes a single method call.
 type Handler func(params json.RawMessage) (any, error)
 
-// Server is a minimal JSON-RPC 2.0 server over a unix socket.
+// StreamHandler attaches a long-lived subscription to a connection.
+type StreamHandler func(params json.RawMessage, sub *Subscription) error
+
+// Subscription pushes server notifications to one connection.
+type Subscription struct {
+	mu   sync.Mutex
+	enc  *json.Encoder
+	done chan struct{}
+}
+
+// Notify sends a server notification (no id) to the subscriber.
+func (s *Subscription) Notify(method string, params any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.done:
+		return fmt.Errorf("subscription closed")
+	default:
+	}
+	return s.enc.Encode(Response{JSONRPC: "2.0", Result: nil, Error: nil, ID: nil}.withNotify(method, params))
+}
+
+// Done reports when the subscriber disconnected.
+func (s *Subscription) Done() <-chan struct{} { return s.done }
+
+// notification is encoded instead of Response for server-initiated messages.
+type notification struct {
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  any    `json:"params"`
+}
+
+func (Response) withNotify(method string, params any) notification {
+	return notification{JSONRPC: "2.0", Method: method, Params: params}
+}
+
 type Server struct {
-	mu       sync.RWMutex
-	handlers map[string]Handler
-	listener net.Listener
+	mu        sync.RWMutex
+	handlers  map[string]Handler
+	streams   map[string]StreamHandler
+	listeners []net.Listener
 }
 
 func NewServer() *Server {
-	return &Server{handlers: make(map[string]Handler)}
+	return &Server{handlers: make(map[string]Handler), streams: make(map[string]StreamHandler)}
 }
 
 func (s *Server) Register(method string, h Handler) {
@@ -60,17 +97,33 @@ func (s *Server) Register(method string, h Handler) {
 	s.handlers[method] = h
 }
 
-// ListenUnix serves connections on socketPath until Close is called.
+func (s *Server) RegisterStream(method string, h StreamHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.streams[method] = h
+}
+
 func (s *Server) ListenUnix(socketPath string) error {
 	_ = os.Remove(socketPath)
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("rpc: listen %s: %w", socketPath, err)
 	}
-	s.mu.Lock()
-	s.listener = ln
-	s.mu.Unlock()
+	return s.accept(ln)
+}
 
+func (s *Server) ListenTCP(addr string) error {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("rpc: listen tcp %s: %w", addr, err)
+	}
+	return s.accept(ln)
+}
+
+func (s *Server) accept(ln net.Listener) error {
+	s.mu.Lock()
+	s.listeners = append(s.listeners, ln)
+	s.mu.Unlock()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -83,8 +136,8 @@ func (s *Server) ListenUnix(socketPath string) error {
 func (s *Server) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.listener != nil {
-		return s.listener.Close()
+	for _, ln := range s.listeners {
+		_ = ln.Close()
 	}
 	return nil
 }
@@ -92,8 +145,10 @@ func (s *Server) Close() error {
 func (s *Server) serve(conn net.Conn) {
 	defer conn.Close()
 	scanner := bufio.NewScanner(conn)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	enc := json.NewEncoder(conn)
+	done := make(chan struct{})
+	defer close(done)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -105,6 +160,21 @@ func (s *Server) serve(conn net.Conn) {
 			_ = enc.Encode(Response{JSONRPC: "2.0", Error: &Error{Code: CodeParseError, Message: err.Error()}})
 			continue
 		}
+
+		// Stream methods keep the connection open and push notifications.
+		s.mu.RLock()
+		streamHandler, isStream := s.streams[req.Method]
+		s.mu.RUnlock()
+		if isStream {
+			sub := &Subscription{enc: enc, done: done}
+			if err := streamHandler(req.Params, sub); err != nil {
+				_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInternalError, Message: err.Error()}})
+				continue
+			}
+			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"subscribed": true}})
+			continue
+		}
+
 		_ = enc.Encode(s.dispatch(req))
 	}
 }
