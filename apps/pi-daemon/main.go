@@ -27,13 +27,21 @@ func main() {
 	tcp := flag.String("tcp", "", "optional TCP listen address for remote workers, e.g. :7777")
 	kernelBin := flag.String("kernel", "", "pi-kernel-service path (default: auto-discover)")
 	toolsDir := flag.String("tools", "", "zig native tools directory (default: auto-discover)")
+	policyDir := flag.String("policy", filepath.Join(defaultDir, "policy"), "enterprise org-policy directory")
+	offline := flag.Bool("offline", false, "offline mode: disable network model providers")
 	flag.Parse()
 
 	if err := os.MkdirAll(filepath.Dir(*socket), 0o700); err != nil {
 		log.Fatalf("pi-daemon: %v", err)
 	}
 
-	d, err := daemon.New(daemon.Options{StateDir: *stateDir, KernelBin: *kernelBin, ToolsDir: *toolsDir})
+	d, err := daemon.New(daemon.Options{
+		StateDir:  *stateDir,
+		KernelBin: *kernelBin,
+		ToolsDir:  *toolsDir,
+		PolicyDir: *policyDir,
+		Offline:   *offline,
+	})
 	if err != nil {
 		log.Fatalf("pi-daemon: %v", err)
 	}

@@ -30,6 +30,8 @@ type Options struct {
 	StateDir  string // session metadata, event logs, snapshots
 	KernelBin string // pi-kernel-service path ("" = auto-discover)
 	ToolsDir  string // zig tools directory ("" = auto-discover)
+	PolicyDir string // enterprise org-policy directory ("" = none)
+	Offline   bool   // disable network model providers (PRD §5: offline mode)
 }
 
 type pendingCommand struct {
@@ -48,6 +50,8 @@ type Daemon struct {
 	tools   *toolchain.Toolchain
 	events  *Bus
 	started time.Time
+
+	org *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
 
 	mu          sync.Mutex
 	pendingCmds map[string]pendingCommand // decision_id -> command awaiting approval
@@ -74,11 +78,12 @@ func New(opts Options) (*Daemon, error) {
 		kern:        kern,
 		tools:       toolchain.New(opts.ToolsDir),
 		events:      NewBus(),
+		org:         loadOrgPolicy(opts.PolicyDir),
 		started:     time.Now().UTC(),
 		pendingCmds: make(map[string]pendingCommand),
 	}
 	d.registerMethods()
-	registerProviders(d.router)
+	registerProviders(d.router, opts.Offline)
 	d.recover()
 	return d, nil
 }
@@ -90,7 +95,7 @@ func New(opts Options) (*Daemon, error) {
 func (d *Daemon) recover() {
 	recovered := 0
 	for _, sess := range d.store.Recoverable() {
-		if err := d.kern.InitSession(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile); err != nil {
+		if err := d.kern.InitSessionWithPolicy(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile, d.org); err != nil {
 			continue
 		}
 		recovered++
@@ -152,6 +157,7 @@ func (d *Daemon) registerMethods() {
 
 	d.server.Register("command.exec", d.handleCommandExec)
 	d.server.Register("audit.report", d.handleAuditReport)
+	d.server.Register("audit.export", d.handleAuditExport)
 	d.server.Register("profile.describe", d.handleProfileDescribe)
 	d.server.Register("secret.grant", d.handleSecretGrant)
 	d.server.Register("secret.request", d.handleSecretRequest)
@@ -209,7 +215,7 @@ func (d *Daemon) handleSessionCreate(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := d.kern.InitSession(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile); err != nil {
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile, d.org); err != nil {
 		return nil, fmt.Errorf("kernel session init: %w", err)
 	}
 	return sess, nil
@@ -308,6 +314,7 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 		SessionID  string `json:"session_id"`
 		DecisionID string `json:"decision_id"`
 		Approver   string `json:"approver"`
+		Role       string `json:"role"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -315,9 +322,13 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 	if p.Approver == "" {
 		p.Approver = "user"
 	}
-	decision, err := d.kern.Approve(p.SessionID, p.DecisionID, p.Approver)
+	decision, err := d.kern.ApproveWithRole(p.SessionID, p.DecisionID, p.Approver, p.Role)
 	if err != nil {
 		return nil, err
+	}
+	// A role-rejected approval does not execute the pending command.
+	if decision.Decision != "allowed" {
+		return map[string]any{"decision": decision}, nil
 	}
 
 	// If the approval unblocks a queued command, execute it now.
@@ -565,6 +576,14 @@ func (d *Daemon) handleAuditReport(params json.RawMessage) (any, error) {
 	return d.kern.AuditReport(id)
 }
 
+func (d *Daemon) handleAuditExport(params json.RawMessage) (any, error) {
+	id, err := sessionID(params)
+	if err != nil {
+		return nil, err
+	}
+	return d.kern.AuditExport(id)
+}
+
 func (d *Daemon) handleProfileDescribe(params json.RawMessage) (any, error) {
 	id, err := sessionID(params)
 	if err != nil {
@@ -616,9 +635,10 @@ func (d *Daemon) handlePluginInspect(params json.RawMessage) (any, error) {
 
 func (d *Daemon) handlePluginRun(params json.RawMessage) (any, error) {
 	var p struct {
-		SessionID    string `json:"session_id"`
-		ManifestTOML string `json:"manifest_toml"`
-		WasmBase64   string `json:"wasm_base64"`
+		SessionID       string `json:"session_id"`
+		ManifestTOML    string `json:"manifest_toml"`
+		WasmBase64      string `json:"wasm_base64"`
+		SignatureBase64 string `json:"signature_base64"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -626,7 +646,7 @@ func (d *Daemon) handlePluginRun(params json.RawMessage) (any, error) {
 	if _, ok := d.store.Get(p.SessionID); !ok {
 		return nil, fmt.Errorf("unknown session %s", p.SessionID)
 	}
-	return d.kern.PluginRun(p.SessionID, p.ManifestTOML, p.WasmBase64)
+	return d.kern.PluginRun(p.SessionID, p.ManifestTOML, p.WasmBase64, p.SignatureBase64)
 }
 
 func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription) error {

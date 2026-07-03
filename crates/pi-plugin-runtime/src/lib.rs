@@ -8,8 +8,10 @@
 //! shown to the user at install time.
 
 mod host;
+mod signing;
 
 pub use host::{AllowDeclared, CapabilityHost, HostDecision, PluginRuntime, RunOutcome};
+pub use signing::{SignatureVerifier, SigningError};
 
 use serde::Deserialize;
 

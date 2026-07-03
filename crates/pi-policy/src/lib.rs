@@ -333,13 +333,87 @@ struct RawNetworkAllowlist {
     hosts: Vec<String>,
 }
 
+/// An organization-wide policy bundle (PRD §5 Phase 5: team policy). Its
+/// rules are *mandatory* — they can only tighten a session's profile, never
+/// loosen it. A deny here overrides any allow the profile would grant.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PolicyBundle {
+    #[serde(default)]
+    pub name: String,
+    /// Capabilities that are always denied, regardless of profile.
+    #[serde(default)]
+    pub deny_capabilities: Vec<Capability>,
+    /// A hard ceiling on command risk; commands above this are denied.
+    #[serde(default)]
+    pub max_command_risk: Option<u8>,
+    /// Network hosts that are always denied.
+    #[serde(default)]
+    pub deny_network_hosts: Vec<String>,
+    /// Capabilities that always require human approval even if the profile
+    /// would auto-allow them.
+    #[serde(default)]
+    pub require_approval: Vec<Capability>,
+}
+
+impl PolicyBundle {
+    pub fn from_toml(source: &str) -> Result<Self, ProfileError> {
+        toml::from_str(source).map_err(|e| ProfileError(e.to_string()))
+    }
+
+    /// Applies the bundle to a profile decision, only ever tightening it.
+    fn constrain(&self, req: &CapabilityRequest, decision: Verdict, reason: String) -> (Verdict, String) {
+        if self.deny_capabilities.contains(&req.capability) {
+            return (Verdict::Denied, format!("org policy '{}' denies {:?}", self.name, req.capability));
+        }
+        if req.capability == Capability::NetworkAccess
+            && self.deny_network_hosts.iter().any(|h| h == &req.resource)
+        {
+            return (Verdict::Denied, format!("org policy '{}' blocks host {}", self.name, req.resource));
+        }
+        if req.capability == Capability::CommandExec {
+            if let Some(cap) = self.max_command_risk {
+                if classify_command(&req.resource) > cap {
+                    return (
+                        Verdict::Denied,
+                        format!("org policy '{}' caps command risk at {}", self.name, cap),
+                    );
+                }
+            }
+        }
+        // Escalate an auto-allow to require approval if the bundle demands it.
+        if decision == Verdict::Allowed && self.require_approval.contains(&req.capability) {
+            return (
+                Verdict::RequiresApproval,
+                format!("org policy '{}' requires approval for {:?}", self.name, req.capability),
+            );
+        }
+        (decision, reason)
+    }
+}
+
 /// Stateless policy evaluation. The kernel owns audit + approval flow.
 pub struct PolicyEngine;
 
 impl PolicyEngine {
     pub fn evaluate(profile: &Profile, workspace_root: &Path, req: &CapabilityRequest) -> Decision {
+        Self::evaluate_with_bundle(profile, None, workspace_root, req)
+    }
+
+    /// Evaluates against the profile, then applies the org policy bundle
+    /// (which can only tighten the result).
+    pub fn evaluate_with_bundle(
+        profile: &Profile,
+        bundle: Option<&PolicyBundle>,
+        workspace_root: &Path,
+        req: &CapabilityRequest,
+    ) -> Decision {
         let policy_id = format!("policy_{}", profile.name.replace('-', "_"));
-        let (decision, reason) = Self::verdict(profile, workspace_root, req);
+        let (mut decision, mut reason) = Self::verdict(profile, workspace_root, req);
+        if let Some(bundle) = bundle {
+            let (d, r) = bundle.constrain(req, decision, reason);
+            decision = d;
+            reason = r;
+        }
         Decision {
             decision_id: new_decision_id(),
             capability: req.capability,
@@ -631,5 +705,53 @@ hosts = ["internal.example.com"]
             PolicyEngine::evaluate(&p, root, &req(Capability::SecretRead, "TOKEN")).decision,
             Verdict::Denied
         );
+    }
+
+    #[test]
+    fn policy_bundle_only_tightens() {
+        let bundle = PolicyBundle::from_toml(
+            r#"
+name = "acme-corp"
+deny_capabilities = ["SecretRead"]
+max_command_risk = 0
+require_approval = ["PatchApply"]
+"#,
+        )
+        .unwrap();
+        let profile = Profile::full_workspace(); // permissive
+        let root = Path::new("/tmp/ws");
+
+        // A command the profile would allow is capped by the bundle.
+        let d = PolicyEngine::evaluate_with_bundle(
+            &profile,
+            Some(&bundle),
+            root,
+            &req(Capability::CommandExec, "cargo build"),
+        );
+        assert_eq!(d.decision, Verdict::Denied);
+        assert!(d.reason.contains("acme-corp"));
+
+        // Secrets: profile allows (as approval), bundle denies outright.
+        let d = PolicyEngine::evaluate_with_bundle(
+            &profile,
+            Some(&bundle),
+            root,
+            &req(Capability::SecretRead, "TOKEN"),
+        );
+        assert_eq!(d.decision, Verdict::Denied);
+    }
+
+    #[test]
+    fn policy_bundle_cannot_loosen() {
+        // An empty bundle must not turn a profile deny into an allow.
+        let bundle = PolicyBundle::default();
+        let profile = Profile::read_only();
+        let d = PolicyEngine::evaluate_with_bundle(
+            &profile,
+            Some(&bundle),
+            Path::new("/tmp/ws"),
+            &req(Capability::CommandExec, "cargo test"),
+        );
+        assert_ne!(d.decision, Verdict::Allowed);
     }
 }

@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.15.1
+
+      - name: Build Zig native tools
+        working-directory: zig
+        run: zig build
+
+      - name: Cargo test (capability kernel)
+        run: cargo test --workspace
+
+      - name: Build kernel service
+        run: cargo build --release -p pi-kernel --bin pi-kernel-service
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go test (E2E across Go/Rust/Zig)
+        env:
+          PI_KERNEL_BIN: ${{ github.workspace }}/target/release/pi-kernel-service
+        run: go test ./...

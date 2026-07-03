@@ -9,7 +9,7 @@ mod secret;
 pub use secret::SecretBroker;
 
 use pi_audit::{AuditError, AuditLog, Event, EventType};
-use pi_policy::{Capability, CapabilityRequest, Decision, PolicyEngine, Profile, Verdict};
+use pi_policy::{Capability, CapabilityRequest, Decision, PolicyBundle, PolicyEngine, Profile, Verdict};
 use std::path::{Path, PathBuf};
 
 pub use pi_audit;
@@ -27,9 +27,11 @@ pub enum KernelError {
 
 /// Bridges a plugin's capability request to the session policy engine. The
 /// plugin runtime has already checked the manifest; this is the second gate
-/// (PRD §8.7: plugins are limited to their authorized scope).
+/// (PRD §8.7: plugins are limited to their authorized scope), and it also
+/// applies the org policy bundle.
 struct ProfileHost {
     profile: Profile,
+    bundle: Option<PolicyBundle>,
     workspace_root: PathBuf,
 }
 
@@ -50,7 +52,9 @@ impl pi_plugin_runtime::CapabilityHost for ProfileHost {
             session_id: String::new(),
             task_id: None,
         };
-        PolicyEngine::evaluate(&self.profile, &self.workspace_root, &request).decision == Verdict::Allowed
+        PolicyEngine::evaluate_with_bundle(&self.profile, self.bundle.as_ref(), &self.workspace_root, &request)
+            .decision
+            == Verdict::Allowed
     }
 }
 
@@ -59,8 +63,31 @@ pub struct Kernel {
     session_id: String,
     workspace_root: PathBuf,
     profile: Profile,
+    bundle: Option<PolicyBundle>,
     audit: AuditLog,
     secrets: SecretBroker,
+    verifier: pi_plugin_runtime::SignatureVerifier,
+    approval_policy: ApprovalPolicy,
+}
+
+/// Role-based approval policy (PRD §5 Phase 5). Maps a minimum command risk
+/// level to the role required to approve it. An approver lacking the role is
+/// rejected.
+#[derive(Debug, Clone, Default)]
+pub struct ApprovalPolicy {
+    /// risk level (inclusive) -> required role
+    pub required_role_at_risk: Vec<(u8, String)>,
+}
+
+impl ApprovalPolicy {
+    /// Returns the role required to approve a command of the given risk, if any.
+    pub fn required_role(&self, risk: u8) -> Option<&str> {
+        self.required_role_at_risk
+            .iter()
+            .filter(|(threshold, _)| risk >= *threshold)
+            .max_by_key(|(threshold, _)| *threshold)
+            .map(|(_, role)| role.as_str())
+    }
 }
 
 impl Kernel {
@@ -90,9 +117,28 @@ impl Kernel {
             session_id,
             workspace_root: workspace_root.into(),
             profile,
+            bundle: None,
             audit,
             secrets: SecretBroker::new(),
+            verifier: pi_plugin_runtime::SignatureVerifier::new(),
+            approval_policy: ApprovalPolicy::default(),
         })
+    }
+
+    /// Attaches an organization policy bundle that can only tighten this
+    /// session's profile (PRD §5 Phase 5: team policy / policy bundle).
+    pub fn set_bundle(&mut self, bundle: PolicyBundle) {
+        self.bundle = Some(bundle);
+    }
+
+    /// Trusts an ed25519 publisher key for signed-plugin verification.
+    pub fn trust_plugin_key(&mut self, key_bytes: &[u8]) -> Result<(), KernelError> {
+        self.verifier.trust_key(key_bytes).map_err(|e| KernelError::Plugin(e.to_string()))
+    }
+
+    /// Sets the role-based approval policy.
+    pub fn set_approval_policy(&mut self, policy: ApprovalPolicy) {
+        self.approval_policy = policy;
     }
 
     /// Mutable access to the session's secret broker.
@@ -138,7 +184,8 @@ impl Kernel {
     /// Denials are additionally logged as `PolicyViolation` so audit reports
     /// can answer "why was this blocked" (PRD §8.2 acceptance criteria).
     pub fn request(&self, req: CapabilityRequest) -> Result<Decision, KernelError> {
-        let decision = PolicyEngine::evaluate(&self.profile, &self.workspace_root, &req);
+        let decision =
+            PolicyEngine::evaluate_with_bundle(&self.profile, self.bundle.as_ref(), &self.workspace_root, &req);
 
         let event_type = match decision.decision {
             Verdict::Allowed => EventType::ToolApproved,
@@ -175,6 +222,38 @@ impl Kernel {
     /// Resolves a `requires_approval` decision. The approval itself is an
     /// audit event (`ToolApproved`) that records who approved it.
     pub fn approve(&self, decision: &Decision, approver: &str) -> Result<Decision, KernelError> {
+        self.approve_as(decision, approver, None)
+    }
+
+    /// Role-aware approval (PRD §5 Phase 5). If the approval policy requires
+    /// a role for this action's risk level and `role` doesn't match, the
+    /// approval is rejected and recorded as denied.
+    pub fn approve_as(
+        &self,
+        decision: &Decision,
+        approver: &str,
+        role: Option<&str>,
+    ) -> Result<Decision, KernelError> {
+        if decision.capability == Capability::CommandExec {
+            let risk = pi_policy::classify_command(&decision.resource);
+            if let Some(required) = self.approval_policy.required_role(risk) {
+                if role != Some(required) {
+                    let reason = format!(
+                        "approval rejected: risk {risk} requires role '{required}', approver had {:?}",
+                        role
+                    );
+                    let denied = Decision { decision: Verdict::Denied, reason: reason.clone(), ..decision.clone() };
+                    let event = Event::new(
+                        &self.session_id,
+                        EventType::ToolDenied,
+                        serde_json::json!({"approver": approver, "role": role, "required_role": required, "reason": reason}),
+                    )
+                    .with_decision(&denied.decision_id);
+                    self.audit.append(&event)?;
+                    return Ok(denied);
+                }
+            }
+        }
         let approved = Decision {
             decision: Verdict::Allowed,
             reason: format!("approved by {approver} ({})", decision.reason),
@@ -225,6 +304,17 @@ impl Kernel {
         manifest: &pi_plugin_runtime::Manifest,
         wasm: &[u8],
     ) -> Result<pi_plugin_runtime::RunOutcome, KernelError> {
+        self.run_plugin_signed(manifest, wasm, None)
+    }
+
+    /// Runs a plugin, optionally verifying an ed25519 signature over the
+    /// module bytes when the deployment trusts publisher keys.
+    pub fn run_plugin_signed(
+        &self,
+        manifest: &pi_plugin_runtime::Manifest,
+        wasm: &[u8],
+        signature: Option<&[u8]>,
+    ) -> Result<pi_plugin_runtime::RunOutcome, KernelError> {
         // Record that the plugin was loaded (PluginLoad capability).
         let load_event = Event::new(
             &self.session_id,
@@ -233,8 +323,25 @@ impl Kernel {
         );
         self.audit.append(&load_event)?;
 
+        // If any publisher keys are trusted, the plugin MUST be signed by one
+        // of them (PRD §5: signed plugin). Unsigned/untrusted → refused.
+        if !self.verifier.is_empty() {
+            match signature {
+                Some(sig) => self
+                    .verifier
+                    .verify(wasm, sig)
+                    .map_err(|e| KernelError::Plugin(format!("signature check failed: {e}")))?,
+                None => {
+                    return Err(KernelError::Plugin(
+                        "plugin is unsigned but this deployment requires signed plugins".into(),
+                    ))
+                }
+            }
+        }
+
         let host = ProfileHost {
             profile: self.profile.clone(),
+            bundle: self.bundle.clone(),
             workspace_root: self.workspace_root.clone(),
         };
         let outcome = pi_plugin_runtime::PluginRuntime::new()
@@ -257,6 +364,19 @@ impl Kernel {
             self.audit.append(&event)?;
         }
         Ok(outcome)
+    }
+
+    /// Exports the full audit bundle for centralized/enterprise audit
+    /// (PRD §5 Phase 5: centralized audit). Returns the session id, event
+    /// count, and every event in append order.
+    pub fn export_audit(&self) -> Result<serde_json::Value, KernelError> {
+        let events = self.audit.read_all()?;
+        Ok(serde_json::json!({
+            "session_id": self.session_id,
+            "profile": self.profile.name,
+            "event_count": events.len(),
+            "events": events,
+        }))
     }
 
     pub fn session_id(&self) -> &str {

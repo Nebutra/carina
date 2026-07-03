@@ -118,10 +118,58 @@ func (s *Service) call(method string, params map[string]any, result any) error {
 	return s.client.Call(method, params, result)
 }
 
+// OrgPolicy carries enterprise policy applied at session init (PRD §5).
+type OrgPolicy struct {
+	BundleTOML        string           // mandatory-deny policy bundle
+	TrustedPluginKeys []string         // base64 ed25519 publisher keys
+	ApprovalPolicy    []ApprovalRule   // role required per risk threshold
+}
+
+type ApprovalRule struct {
+	MinRisk int    `json:"min_risk"`
+	Role    string `json:"role"`
+}
+
 func (s *Service) InitSession(sessionID, workspaceRoot, profile string) error {
-	return s.call("kernel.session.init", map[string]any{
+	return s.InitSessionWithPolicy(sessionID, workspaceRoot, profile, nil)
+}
+
+// InitSessionWithPolicy initializes a session and, if org is non-nil,
+// attaches the org policy bundle, trusted plugin keys, and approval policy.
+func (s *Service) InitSessionWithPolicy(sessionID, workspaceRoot, profile string, org *OrgPolicy) error {
+	params := map[string]any{
 		"session_id": sessionID, "workspace_root": workspaceRoot, "profile": profile,
-	}, nil)
+	}
+	if org != nil {
+		if org.BundleTOML != "" {
+			params["bundle_toml"] = org.BundleTOML
+		}
+		if len(org.TrustedPluginKeys) > 0 {
+			params["trusted_plugin_keys"] = org.TrustedPluginKeys
+		}
+		if len(org.ApprovalPolicy) > 0 {
+			params["approval_policy"] = org.ApprovalPolicy
+		}
+	}
+	return s.call("kernel.session.init", params, nil)
+}
+
+// ApproveWithRole resolves an approval carrying the approver's role (RBAC).
+func (s *Service) ApproveWithRole(sessionID, decisionID, approver, role string) (*Decision, error) {
+	var d Decision
+	params := map[string]any{"session_id": sessionID, "decision_id": decisionID, "approver": approver}
+	if role != "" {
+		params["role"] = role
+	}
+	err := s.call("kernel.approve", params, &d)
+	return &d, err
+}
+
+// AuditExport returns the full audit bundle for centralized audit.
+func (s *Service) AuditExport(sessionID string) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := s.call("kernel.audit.export", map[string]any{"session_id": sessionID}, &out)
+	return out, err
 }
 
 // Request evaluates a capability request and returns the audit-logged decision.
@@ -264,11 +312,16 @@ func (s *Service) PluginInspect(manifestTOML string) (json.RawMessage, error) {
 }
 
 // PluginRun runs a WASM plugin under the session policy. wasmBase64 is the
-// base64-encoded module.
-func (s *Service) PluginRun(sessionID, manifestTOML, wasmBase64 string) (json.RawMessage, error) {
+// base64-encoded module; signatureBase64 is an optional ed25519 signature
+// (required when the deployment trusts publisher keys).
+func (s *Service) PluginRun(sessionID, manifestTOML, wasmBase64, signatureBase64 string) (json.RawMessage, error) {
 	var out json.RawMessage
-	err := s.call("kernel.plugin.run", map[string]any{
+	params := map[string]any{
 		"session_id": sessionID, "manifest_toml": manifestTOML, "wasm_base64": wasmBase64,
-	}, &out)
+	}
+	if signatureBase64 != "" {
+		params["signature_base64"] = signatureBase64
+	}
+	err := s.call("kernel.plugin.run", params, &out)
 	return out, err
 }

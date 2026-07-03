@@ -1,0 +1,4 @@
+[
+  { "min_risk": 2, "role": "tech-lead" },
+  { "min_risk": 4, "role": "security-lead" }
+]

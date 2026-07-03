@@ -81,7 +81,9 @@ make all
 
 ## Status
 
-Phase 0 — technology validation. See [docs/PRD.md](docs/PRD.md) for the full product requirements and [docs/architecture.md](docs/architecture.md) for the layered design.
+All six PRD phases (0–5) are implemented and tested. See [docs/PRD.md](docs/PRD.md) for the full product requirements, [docs/architecture.md](docs/architecture.md) for the layered design, and [docs/enterprise.md](docs/enterprise.md) for the Phase 5 controls.
+
+**Tests:** 32 Rust tests (`cargo test --workspace`) + 8 Go end-to-end tests across all three languages (`go test ./...`). Run everything with `make test`.
 
 | Phase | Goal | Status |
 |-------|------|--------|

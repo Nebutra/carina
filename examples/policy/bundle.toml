@@ -1,0 +1,22 @@
+# Example enterprise policy bundle (PRD §5 Phase 5).
+#
+# Drop this at ~/.pi-os/policy/bundle.toml (or pass --policy <dir> to
+# pi-daemon). Its rules are MANDATORY: they can only tighten a session's
+# permission profile, never loosen it. A deny here overrides any allow the
+# session profile would grant.
+
+name = "acme-corp"
+
+# Capabilities that are always denied, regardless of the session profile.
+deny_capabilities = ["RemoteExecute"]
+
+# Hard ceiling on command risk (0=read-only .. 5=destructive). Commands above
+# this are denied even if the profile would allow them.
+max_command_risk = 2
+
+# Hosts that are always blocked for NetworkAccess.
+deny_network_hosts = ["pastebin.com", "example-exfil.net"]
+
+# Capabilities that always require human approval, even if the profile would
+# auto-allow them.
+require_approval = ["PatchApply"]

@@ -59,8 +59,12 @@ func truncate(s string, n int) string {
 // registerProviders installs the default model providers. The mock
 // provider keeps the runtime fully functional offline (PRD §17 DX: first
 // task in 5 minutes); real providers are added when API keys are present.
-func registerProviders(router *modelrouter.Router) {
-	router.RegisterProvider(NewAnthropicProviderFromEnv())
+// In offline mode (PRD §5 Phase 5) only the mock provider is registered, so
+// no request can leave the machine.
+func registerProviders(router *modelrouter.Router, offline bool) {
+	if !offline {
+		router.RegisterProvider(NewAnthropicProviderFromEnv())
+	}
 	router.RegisterProvider(modelrouter.NewMockProvider())
 	_ = time.Now
 }

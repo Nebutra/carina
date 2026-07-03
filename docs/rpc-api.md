@@ -42,9 +42,19 @@ Notifications (server → client) stream events; every payload conforms to [`pro
 
 Each returns a `PermissionDecision` (see schema). Side effects only proceed on `allowed`.
 
+## Command / Audit / Secret / Plugin / Enterprise
+
+- `command.exec` — propose a command; returns a decision (and result if allowed).
+- `audit.report` — summary (violations, files, commands); `audit.export` — full bundle for centralized audit.
+- `profile.describe` — capability-graph view of the session profile.
+- `secret.grant` / `secret.request` — handle-based secrets; plaintext never crosses the boundary.
+- `plugin.inspect` — declared permissions; `plugin.run` — run a WASM plugin (optional `signature_base64`).
+- `task.action.approve` — accepts an optional `role` for role-based approval.
+- `session.events.stream` — server-notification stream of session events.
+
 ## Worker API
 
-`worker.register` · `worker.heartbeat` · `worker.assign` · `worker.output.stream` · `worker.revoke`
+`worker.register` · `worker.heartbeat` · `worker.list` · `worker.revoke`
 
 ## Example
 

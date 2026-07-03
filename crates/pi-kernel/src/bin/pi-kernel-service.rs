@@ -7,9 +7,9 @@
 //! the audit log so the control plane cannot bypass it.
 
 use pi_audit::{Event, EventType};
-use pi_kernel::{Kernel, KernelError};
+use pi_kernel::{ApprovalPolicy, Kernel, KernelError};
 use pi_patch::{content_hash, PatchTransaction};
-use pi_policy::{Capability, CapabilityRequest, Decision, Principal, Profile, Verdict};
+use pi_policy::{Capability, CapabilityRequest, Decision, PolicyBundle, Principal, Profile, Verdict};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -97,6 +97,7 @@ impl Service {
             "kernel.event.record" => self.event_record(p),
             "kernel.audit.read" => self.audit_read(p),
             "kernel.audit.report" => self.audit_report(p),
+            "kernel.audit.export" => self.audit_export(p),
             "kernel.patch.propose" => self.patch_propose(p),
             "kernel.patch.apply" => self.patch_apply(p),
             "kernel.patch.rollback" => self.patch_rollback(p),
@@ -123,7 +124,7 @@ impl Service {
 
         // A session may use a builtin profile by name, or supply a custom
         // profile as inline TOML (PRD §8.3).
-        let (kernel, profile_name) = if let Some(toml) = p.get("profile_toml").and_then(Value::as_str) {
+        let (mut kernel, profile_name) = if let Some(toml) = p.get("profile_toml").and_then(Value::as_str) {
             let profile = Profile::from_toml(toml).map_err(err_str)?;
             let name = profile.name.clone();
             (
@@ -137,6 +138,33 @@ impl Service {
                 name,
             )
         };
+
+        // Enterprise: attach an org policy bundle (mandatory denies).
+        if let Some(bundle_toml) = p.get("bundle_toml").and_then(Value::as_str) {
+            kernel.set_bundle(PolicyBundle::from_toml(bundle_toml).map_err(err_str)?);
+        }
+        // Enterprise: trust publisher keys for signed-plugin enforcement.
+        if let Some(keys) = p.get("trusted_plugin_keys").and_then(Value::as_array) {
+            for key in keys {
+                if let Some(b64) = key.as_str() {
+                    let raw = base64_decode(b64).ok_or("invalid base64 plugin key")?;
+                    kernel.trust_plugin_key(&raw).map_err(err_str)?;
+                }
+            }
+        }
+        // Enterprise: role-based approval thresholds.
+        if let Some(rules) = p.get("approval_policy").and_then(Value::as_array) {
+            let mut policy = ApprovalPolicy::default();
+            for rule in rules {
+                if let (Some(risk), Some(role)) = (
+                    rule.get("min_risk").and_then(Value::as_u64),
+                    rule.get("role").and_then(Value::as_str),
+                ) {
+                    policy.required_role_at_risk.push((risk as u8, role.to_string()));
+                }
+            }
+            kernel.set_approval_policy(policy);
+        }
 
         self.sessions.insert(
             session_id.clone(),
@@ -196,9 +224,16 @@ impl Service {
         let manifest_toml = str_param(p, "manifest_toml")?;
         let wasm_b64 = str_param(p, "wasm_base64")?;
         let wasm = base64_decode(&wasm_b64).ok_or("invalid base64 wasm")?;
+        let signature = match p.get("signature_base64").and_then(Value::as_str) {
+            Some(sig_b64) => Some(base64_decode(sig_b64).ok_or("invalid base64 signature")?),
+            None => None,
+        };
         let manifest = pi_plugin_runtime::Manifest::from_toml(&manifest_toml).map_err(err_str)?;
         let ctx = self.ctx(p)?;
-        let outcome = ctx.kernel.run_plugin(&manifest, &wasm).map_err(err_str)?;
+        let outcome = ctx
+            .kernel
+            .run_plugin_signed(&manifest, &wasm, signature.as_deref())
+            .map_err(err_str)?;
         let decisions: Vec<Value> = outcome
             .decisions
             .iter()
@@ -244,12 +279,17 @@ impl Service {
     fn approve(&mut self, p: &Value) -> Result<Value, String> {
         let decision_id = str_param(p, "decision_id")?;
         let approver = p.get("approver").and_then(Value::as_str).unwrap_or("user").to_string();
+        let role = p.get("role").and_then(Value::as_str).map(String::from);
         let ctx = self.ctx(p)?;
         let pending = ctx
             .pending
             .remove(&decision_id)
             .ok_or_else(|| format!("no pending decision {decision_id}"))?;
-        let approved = ctx.kernel.approve(&pending, &approver).map_err(err_str)?;
+        let approved = ctx.kernel.approve_as(&pending, &approver, role.as_deref()).map_err(err_str)?;
+        // A role-rejected approval stays pending so it can be retried.
+        if approved.decision != Verdict::Allowed {
+            ctx.pending.insert(decision_id.clone(), pending);
+        }
         ctx.resolved.insert(decision_id, approved.clone());
         serde_json::to_value(&approved).map_err(err_str)
     }
@@ -291,6 +331,11 @@ impl Service {
         let ctx = self.ctx(p)?;
         let events = ctx.kernel.audit().read_all().map_err(err_str)?;
         serde_json::to_value(&events).map_err(err_str)
+    }
+
+    fn audit_export(&mut self, p: &Value) -> Result<Value, String> {
+        let ctx = self.ctx(p)?;
+        ctx.kernel.export_audit().map_err(err_str)
     }
 
     fn audit_report(&mut self, p: &Value) -> Result<Value, String> {

@@ -23,6 +23,7 @@ Usage:
   pi watch <session_id>           stream the live event feed
   pi audit <session_id>           replay the session event stream
   pi report <session_id>          audit summary (violations, files, commands)
+  pi export <session_id>          export the full audit bundle (centralized audit)
   pi search <session_id> <text>   structured workspace search (pi-grep)
   pi exec <session_id> -- cmd...  run a command through the kernel
 
@@ -101,6 +102,8 @@ func run(cmd string, args []string) error {
 		return callArg(c, "session.replay", args, "session_id")
 	case "report":
 		return callArg(c, "audit.report", args, "session_id")
+	case "export":
+		return callArg(c, "audit.export", args, "session_id")
 	case "close":
 		return callArg(c, "session.close", args, "session_id")
 
@@ -121,9 +124,13 @@ func run(cmd string, args []string) error {
 
 	case "approve":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: pi approve <session_id> <decision_id>")
+			return fmt.Errorf("usage: pi approve <session_id> <decision_id> [role]")
 		}
-		return call(c, "task.action.approve", map[string]any{"session_id": args[0], "decision_id": args[1]})
+		p := map[string]any{"session_id": args[0], "decision_id": args[1]}
+		if len(args) > 2 {
+			p["role"] = args[2]
+		}
+		return call(c, "task.action.approve", p)
 	case "deny":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: pi deny <session_id> <decision_id> [reason]")
@@ -233,7 +240,7 @@ func cmdPlugin(c *rpcClient, args []string) error {
 		return call(c, "plugin.inspect", map[string]any{"manifest_toml": string(manifest)})
 	case "run":
 		if len(args) < 4 {
-			return fmt.Errorf("usage: pi plugin run <session_id> <manifest.toml> <module.wasm>")
+			return fmt.Errorf("usage: pi plugin run <session_id> <manifest.toml> <module.wasm> [signature.sig]")
 		}
 		manifest, err := os.ReadFile(args[2])
 		if err != nil {
@@ -243,11 +250,19 @@ func cmdPlugin(c *rpcClient, args []string) error {
 		if err != nil {
 			return err
 		}
-		return call(c, "plugin.run", map[string]any{
+		p := map[string]any{
 			"session_id":    args[1],
 			"manifest_toml": string(manifest),
 			"wasm_base64":   base64.StdEncoding.EncodeToString(wasm),
-		})
+		}
+		if len(args) > 4 {
+			sig, err := os.ReadFile(args[4])
+			if err != nil {
+				return err
+			}
+			p["signature_base64"] = base64.StdEncoding.EncodeToString(sig)
+		}
+		return call(c, "plugin.run", p)
 	default:
 		return fmt.Errorf("unknown plugin subcommand %q", args[0])
 	}
