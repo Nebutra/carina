@@ -1,6 +1,8 @@
 // Package sessionstore persists sessions and their append-only event logs.
-// MVP storage: in-memory session table + one JSONL event log per session
-// (PRD §15.2: SQLite + JSONL; SQLite lands with session recovery in Phase 1).
+// Session metadata is written to one JSON file per session so the daemon
+// can recover live sessions after a crash (PRD §17.3). Event logs are owned
+// and written by the Rust kernel (single audit writer); this package reads
+// session rows and reloads them on startup.
 package sessionstore
 
 import (
@@ -41,12 +43,53 @@ type Store struct {
 	sessions map[string]*Session
 }
 
-// Open prepares the store under dir (created if missing).
+// Open prepares the store under dir and loads any persisted sessions.
 func Open(dir string) (*Store, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "sessions"), 0o700); err != nil {
 		return nil, fmt.Errorf("sessionstore: create %s: %w", dir, err)
 	}
-	return &Store{dir: dir, sessions: make(map[string]*Session)}, nil
+	s := &Store{dir: dir, sessions: make(map[string]*Session)}
+	if err := s.load(); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// load reads persisted session rows from disk (crash recovery).
+func (s *Store) load() error {
+	entries, err := os.ReadDir(filepath.Join(s.dir, "sessions"))
+	if err != nil {
+		return nil // no sessions yet
+	}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(s.dir, "sessions", e.Name()))
+		if err != nil {
+			continue
+		}
+		var sess Session
+		if err := json.Unmarshal(raw, &sess); err != nil {
+			continue
+		}
+		s.sessions[sess.SessionID] = &sess
+	}
+	return nil
+}
+
+// Recoverable returns sessions that were active at crash time and should be
+// re-initialized in the kernel on startup.
+func (s *Store) Recoverable() []*Session {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*Session
+	for _, sess := range s.sessions {
+		if sess.Status == "active" {
+			out = append(out, sess)
+		}
+	}
+	return out
 }
 
 func (s *Store) CreateSession(workspaceRoot, profile string) (*Session, error) {
@@ -64,6 +107,9 @@ func (s *Store) CreateSession(workspaceRoot, profile string) (*Session, error) {
 	s.mu.Lock()
 	s.sessions[sess.SessionID] = sess
 	s.mu.Unlock()
+	if err := s.persist(sess); err != nil {
+		return nil, err
+	}
 	return sess, nil
 }
 
@@ -86,18 +132,37 @@ func (s *Store) List() []*Session {
 
 func (s *Store) SetStatus(sessionID, status string) (*Session, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	sess, ok := s.sessions[sessionID]
 	if !ok {
+		s.mu.Unlock()
 		return nil, fmt.Errorf("sessionstore: unknown session %s", sessionID)
 	}
 	updated := *sess
 	updated.Status = status
 	s.sessions[sessionID] = &updated
+	s.mu.Unlock()
+	if err := s.persist(&updated); err != nil {
+		return nil, err
+	}
 	return &updated, nil
 }
 
+// persist atomically writes a session row (temp + rename).
+func (s *Store) persist(sess *Session) error {
+	path := filepath.Join(s.dir, "sessions", sess.SessionID+".json")
+	raw, err := json.MarshalIndent(sess, "", "  ")
+	if err != nil {
+		return fmt.Errorf("sessionstore: marshal: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return fmt.Errorf("sessionstore: write: %w", err)
+	}
+	return os.Rename(tmp, path)
+}
+
 // AppendEvent writes one event to the session's append-only JSONL log.
+// (Retained for tooling/tests; the kernel is the primary event writer.)
 func (s *Store) AppendEvent(ev Event) error {
 	if ev.EventID == "" {
 		ev.EventID = NewID("evt")
@@ -145,7 +210,7 @@ func (s *Store) ReadEvents(sessionID string) ([]Event, error) {
 }
 
 func (s *Store) eventLogPath(sessionID string) string {
-	return filepath.Join(s.dir, sessionID+".events.jsonl")
+	return filepath.Join(s.dir, "events", sessionID+".events.jsonl")
 }
 
 // NewID returns a prefixed random identifier, e.g. "sess_3f2a…".

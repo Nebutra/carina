@@ -79,7 +79,25 @@ func New(opts Options) (*Daemon, error) {
 	}
 	d.registerMethods()
 	registerProviders(d.router)
+	d.recover()
 	return d, nil
+}
+
+// recover re-initializes any sessions that were active when a previous
+// daemon exited (PRD §17.3: daemon crash recovery). The event logs already
+// persist; here we restore the in-kernel session context so the session can
+// continue to be queried and used.
+func (d *Daemon) recover() {
+	recovered := 0
+	for _, sess := range d.store.Recoverable() {
+		if err := d.kern.InitSession(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile); err != nil {
+			continue
+		}
+		recovered++
+	}
+	if recovered > 0 {
+		fmt.Printf("pi-daemon: recovered %d session(s)\n", recovered)
+	}
 }
 
 // Run blocks serving JSON-RPC on the unix socket.
