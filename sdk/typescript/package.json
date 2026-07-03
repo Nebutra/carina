@@ -1,0 +1,16 @@
+{
+  "name": "@pi-os/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Pi-OS Agent Runtime (JSON-RPC over unix socket)",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "$comment": "Pi-OS JSON-RPC 2.0 method registry (MVP draft). Transport: unix socket (~/.pi-os/daemon.sock) or stdio, newline-delimited JSON. Server->client notifications use method 'event' with an Event payload (see ../schemas/event.schema.json).",
+  "version": "0.1.0",
+  "apis": {
+    "session": [
+      { "method": "session.create", "params": { "workspace_root": "string", "profile": "string" }, "result": "Session" },
+      { "method": "session.get", "params": { "session_id": "string" }, "result": "Session" },
+      { "method": "session.list", "params": {}, "result": "Session[]" },
+      { "method": "session.pause", "params": { "session_id": "string" }, "result": "Session" },
+      { "method": "session.resume", "params": { "session_id": "string" }, "result": "Session" },
+      { "method": "session.close", "params": { "session_id": "string" }, "result": "Session" },
+      { "method": "session.export", "params": { "session_id": "string", "format": "jsonl|sqlite" }, "result": { "path": "string" } },
+      { "method": "session.replay", "params": { "session_id": "string" }, "result": "Event[]" }
+    ],
+    "task": [
+      { "method": "task.submit", "params": { "session_id": "string", "prompt": "string" }, "result": "Task" },
+      { "method": "task.cancel", "params": { "task_id": "string" }, "result": "Task" },
+      { "method": "task.status", "params": { "task_id": "string" }, "result": "Task" },
+      { "method": "task.events.stream", "params": { "task_id": "string" }, "result": "subscription" },
+      { "method": "task.action.approve", "params": { "task_id": "string", "decision_id": "string" }, "result": "PermissionDecision" },
+      { "method": "task.action.deny", "params": { "task_id": "string", "decision_id": "string", "reason": "string" }, "result": "PermissionDecision" }
+    ],
+    "workspace": [
+      { "method": "workspace.open", "params": { "root_path": "string" }, "result": "Workspace" },
+      { "method": "workspace.scan", "params": { "workspace_id": "string" }, "result": { "files": "number", "skipped": "number" } },
+      { "method": "workspace.tree", "params": { "workspace_id": "string", "max_depth": "number?" }, "result": "TreeNode[]" },
+      { "method": "workspace.search", "params": { "workspace_id": "string", "pattern": "string", "glob": "string?" }, "result": "Match[]" },
+      { "method": "workspace.file.get", "params": { "workspace_id": "string", "path": "string" }, "result": { "content": "string", "hash": "string" } },
+      { "method": "workspace.patch.propose", "params": { "session_id": "string", "diff": "string", "reason": "string" }, "result": "PatchTransaction" },
+      { "method": "workspace.patch.apply", "params": { "patch_id": "string" }, "result": "PatchTransaction" },
+      { "method": "workspace.patch.rollback", "params": { "patch_id": "string" }, "result": "PatchTransaction" }
+    ],
+    "capability": [
+      { "method": "capability.file.read", "params": { "session_id": "string", "path": "string" }, "result": "PermissionDecision" },
+      { "method": "capability.file.write", "params": { "session_id": "string", "path": "string" }, "result": "PermissionDecision" },
+      { "method": "capability.command.exec", "params": { "session_id": "string", "command": "string" }, "result": "PermissionDecision" },
+      { "method": "capability.network.access", "params": { "session_id": "string", "host": "string" }, "result": "PermissionDecision" },
+      { "method": "capability.secret.read", "params": { "session_id": "string", "name": "string" }, "result": "PermissionDecision" },
+      { "method": "capability.patch.apply", "params": { "session_id": "string", "patch_id": "string" }, "result": "PermissionDecision" }
+    ],
+    "worker": [
+      { "method": "worker.register", "params": { "name": "string", "kind": "local|remote|ci|sandbox" }, "result": { "worker_id": "string" } },
+      { "method": "worker.heartbeat", "params": { "worker_id": "string" }, "result": { "ok": "boolean" } },
+      { "method": "worker.assign", "params": { "worker_id": "string", "task_id": "string" }, "result": "Task" },
+      { "method": "worker.output.stream", "params": { "worker_id": "string" }, "result": "subscription" },
+      { "method": "worker.revoke", "params": { "worker_id": "string" }, "result": { "ok": "boolean" } }
+    ],
+    "daemon": [
+      { "method": "daemon.status", "params": {}, "result": { "version": "string", "uptime_seconds": "number", "sessions": "number", "tasks": "number" } }
+    ]
+  }
+}

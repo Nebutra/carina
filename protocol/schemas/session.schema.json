@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TsekaLuk/pi-os/protocol/schemas/session.schema.json",
+  "title": "Session",
+  "type": "object",
+  "required": ["session_id", "workspace_id", "status", "permission_profile", "created_at"],
+  "properties": {
+    "session_id": { "type": "string", "pattern": "^sess_" },
+    "workspace_id": { "type": "string", "pattern": "^ws_" },
+    "user_id": { "type": "string" },
+    "status": { "enum": ["active", "paused", "closed"] },
+    "model_config": {
+      "type": "object",
+      "properties": {
+        "provider": { "type": "string" },
+        "model": { "type": "string" }
+      }
+    },
+    "permission_profile": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "event_log_path": { "type": "string" },
+    "patch_transactions": { "type": "array", "items": { "type": "string" } }
+  }
+}

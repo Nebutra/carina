@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TsekaLuk/pi-os/protocol/schemas/workspace.schema.json",
+  "title": "Workspace",
+  "type": "object",
+  "required": ["workspace_id", "root_path"],
+  "properties": {
+    "workspace_id": { "type": "string", "pattern": "^ws_" },
+    "root_path": { "type": "string" },
+    "git_repo": { "type": "boolean" },
+    "allowed_paths": { "type": "array", "items": { "type": "string" } },
+    "ignored_paths": { "type": "array", "items": { "type": "string" } },
+    "language_profile": { "type": "array", "items": { "type": "string" } },
+    "index_status": { "enum": ["none", "indexing", "ready", "stale"] },
+    "permission_profile": { "type": "string" }
+  }
+}

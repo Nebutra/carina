@@ -1,0 +1,10 @@
+name = "read-only"
+description = "Inspect only. No side effects of any kind."
+
+[rules]
+file_read = { allow = "workspace" }
+file_write = { allow = "none" }
+command_exec = { allow = "none" }
+network_access = { allow = "none" }
+secret_read = { allow = "none" }
+patch_apply = { allow = "none" }

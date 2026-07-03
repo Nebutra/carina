@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TsekaLuk/pi-os/protocol/schemas/task.schema.json",
+  "title": "Task",
+  "type": "object",
+  "required": ["task_id", "session_id", "workspace_id", "status", "user_prompt", "created_at", "updated_at"],
+  "properties": {
+    "task_id": { "type": "string", "pattern": "^task_" },
+    "session_id": { "type": "string", "pattern": "^sess_" },
+    "workspace_id": { "type": "string", "pattern": "^ws_" },
+    "status": { "enum": ["queued", "running", "paused", "waiting_approval", "completed", "failed", "cancelled"] },
+    "user_prompt": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "risk_level": { "type": "integer", "minimum": 0, "maximum": 5 }
+  }
+}

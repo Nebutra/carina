@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pi-kernel",
+    "crates/pi-policy",
+    "crates/pi-patch",
+    "crates/pi-audit",
+    "crates/pi-plugin-runtime",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/TsekaLuk/pi-os"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+sha2 = "0.10"
+toml = "0.8"
+time = { version = "0.3", features = ["formatting", "serde", "serde-well-known"] }
+pi-kernel = { path = "crates/pi-kernel" }
+pi-policy = { path = "crates/pi-policy" }
+pi-patch = { path = "crates/pi-patch" }
+pi-audit = { path = "crates/pi-audit" }

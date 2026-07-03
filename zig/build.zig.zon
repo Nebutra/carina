@@ -1,0 +1,7 @@
+.{
+    .name = .pi_os_native,
+    .version = "0.1.0",
+    .fingerprint = 0x39cbcfaf9e505aaa,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{""},
+}

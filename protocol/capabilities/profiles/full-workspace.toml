@@ -1,0 +1,10 @@
+name = "full-workspace"
+description = "Trusted local development: full read/write inside the workspace, approvals for risky commands."
+
+[rules]
+file_read = { allow = "workspace" }
+file_write = { allow = "workspace" }
+command_exec = { allow = "policy", max_risk_level = 3 }
+network_access = { allow = "approval" }
+secret_read = { allow = "approval" }
+patch_apply = { allow = "auto" }

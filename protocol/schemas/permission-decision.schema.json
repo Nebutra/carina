@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TsekaLuk/pi-os/protocol/schemas/permission-decision.schema.json",
+  "title": "PermissionDecision",
+  "type": "object",
+  "required": ["decision_id", "capability", "requested_by", "resource", "decision"],
+  "properties": {
+    "decision_id": { "type": "string", "pattern": "^perm_" },
+    "capability": {
+      "enum": [
+        "FileRead", "FileWrite", "CommandExec", "NetworkAccess", "SecretRead",
+        "GitOperation", "PatchApply", "ProcessSpawn", "PluginLoad", "RemoteExecute"
+      ]
+    },
+    "requested_by": { "enum": ["agent", "plugin", "user"] },
+    "resource": { "type": "string" },
+    "decision": { "enum": ["allowed", "denied", "requires_approval"] },
+    "reason": { "type": "string" },
+    "policy_id": { "type": "string" }
+  }
+}

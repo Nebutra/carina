@@ -1,0 +1,20 @@
+{
+  "$comment": "Capability types (PRD §8.3) and command risk levels (PRD §8.8).",
+  "version": "0.1.0",
+  "capabilities": [
+    "FileRead", "FileWrite", "CommandExec", "NetworkAccess", "SecretRead",
+    "GitOperation", "PatchApply", "ProcessSpawn", "PluginLoad", "RemoteExecute"
+  ],
+  "command_risk_levels": [
+    { "level": 0, "class": "read-only commands", "default": "auto_allow" },
+    { "level": 1, "class": "test / build / lint", "default": "auto_allow_safe_profile" },
+    { "level": 2, "class": "package install", "default": "require_approval" },
+    { "level": 3, "class": "file mutation commands", "default": "require_approval" },
+    { "level": 4, "class": "network / deployment / credential-related", "default": "deny_or_explicit_profile" },
+    { "level": 5, "class": "destructive commands", "default": "deny" }
+  ],
+  "builtin_profiles": [
+    "read-only", "safe-edit", "full-workspace", "ci-runner",
+    "sandboxed", "trusted-local", "enterprise-restricted"
+  ]
+}

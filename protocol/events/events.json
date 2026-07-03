@@ -1,0 +1,26 @@
+{
+  "$comment": "Canonical event type enumeration (PRD §8.2). The event log is append-only; every event carries timestamp + session_id; side-effect events carry permission_decision_id.",
+  "version": "0.1.0",
+  "types": [
+    { "name": "TaskCreated", "side_effect": false, "payload": ["task_id", "user_prompt"] },
+    { "name": "ModelRequested", "side_effect": false, "payload": ["provider", "model", "input_tokens"] },
+    { "name": "ModelResponded", "side_effect": false, "payload": ["provider", "model", "output_tokens", "stop_reason"] },
+    { "name": "ToolRequested", "side_effect": false, "payload": ["tool", "arguments"] },
+    { "name": "ToolApproved", "side_effect": false, "payload": ["tool", "decision_id"] },
+    { "name": "ToolDenied", "side_effect": false, "payload": ["tool", "decision_id", "reason"] },
+    { "name": "FileRead", "side_effect": true, "payload": ["path", "bytes"] },
+    { "name": "FileWriteProposed", "side_effect": false, "payload": ["path", "patch_id"] },
+    { "name": "PatchProposed", "side_effect": false, "payload": ["patch_id", "affected_files", "reason"] },
+    { "name": "PatchApplied", "side_effect": true, "payload": ["patch_id", "new_hash", "rollback_pointer"] },
+    { "name": "PatchFailed", "side_effect": false, "payload": ["patch_id", "error"] },
+    { "name": "CommandStarted", "side_effect": true, "payload": ["command", "cwd", "risk_level"] },
+    { "name": "CommandOutput", "side_effect": false, "payload": ["stream", "chunk"] },
+    { "name": "CommandExited", "side_effect": false, "payload": ["exit_code", "duration_ms"] },
+    { "name": "NetworkRequested", "side_effect": true, "payload": ["host", "method"] },
+    { "name": "SecretRequested", "side_effect": true, "payload": ["secret_handle"] },
+    { "name": "PolicyViolation", "side_effect": false, "payload": ["capability", "resource", "policy_id"] },
+    { "name": "RollbackStarted", "side_effect": true, "payload": ["patch_id", "rollback_pointer"] },
+    { "name": "RollbackCompleted", "side_effect": false, "payload": ["patch_id"] },
+    { "name": "SessionClosed", "side_effect": false, "payload": ["reason"] }
+  ]
+}

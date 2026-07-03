@@ -1,0 +1,10 @@
+[package]
+name = "pi-policy"
+description = "Pi-OS policy engine: capabilities, permission profiles, command risk classification, workspace boundary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }

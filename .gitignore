@@ -1,0 +1,35 @@
+# Rust
+/target/
+Cargo.lock
+
+# Go
+/bin/
+*.test
+*.out
+
+# Zig
+zig-out/
+.zig-cache/
+zig-cache/
+
+# Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+build/
+
+# Runtime state
+*.sock
+*.db
+*.jsonl
+!protocol/**/*.jsonl
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

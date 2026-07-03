@@ -1,0 +1,16 @@
+name = "ci-runner"
+description = "CI execution: test/build commands only, no arbitrary shell, secrets only when explicitly scoped."
+
+[rules]
+file_read = { allow = "workspace" }
+file_write = { allow = "patch_only" }
+command_exec = { allow = "allowlist", max_risk_level = 2 }
+network_access = { allow = "allowlist" }
+secret_read = { allow = "scoped" }
+patch_apply = { allow = "auto" }
+
+[command_allowlist]
+patterns = ["npm ci", "npm test", "npm run build", "cargo build", "cargo test", "go build ./...", "go test ./...", "make", "make test"]
+
+[network_allowlist]
+hosts = ["registry.npmjs.org", "crates.io", "proxy.golang.org"]
