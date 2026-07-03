@@ -110,6 +110,8 @@ impl Service {
             "kernel.secret.grant" => self.secret_grant(p),
             "kernel.secret.request" => self.secret_request(p),
             "kernel.redact" => self.redact(p),
+            "kernel.plugin.inspect" => self.plugin_inspect(p),
+            "kernel.plugin.run" => self.plugin_run(p),
             _ => Err(format!("unknown method {method}")),
         }
     }
@@ -174,6 +176,39 @@ impl Service {
         let text = str_param(p, "text")?;
         let ctx = self.ctx(p)?;
         Ok(json!({"text": ctx.kernel.secrets().redact(&text)}))
+    }
+
+    /// Parses a plugin manifest and returns its declared permissions for
+    /// install-time review (PRD §8.7: permissions shown at install).
+    fn plugin_inspect(&mut self, p: &Value) -> Result<Value, String> {
+        let manifest_toml = str_param(p, "manifest_toml")?;
+        let manifest = pi_plugin_runtime::Manifest::from_toml(&manifest_toml).map_err(err_str)?;
+        Ok(json!({
+            "name": manifest.name,
+            "version": manifest.version,
+            "permissions": manifest.permission_summary(),
+        }))
+    }
+
+    /// Loads and runs a WASM plugin under the session policy. `wasm_base64`
+    /// carries the module bytes; each capability decision is audited.
+    fn plugin_run(&mut self, p: &Value) -> Result<Value, String> {
+        let manifest_toml = str_param(p, "manifest_toml")?;
+        let wasm_b64 = str_param(p, "wasm_base64")?;
+        let wasm = base64_decode(&wasm_b64).ok_or("invalid base64 wasm")?;
+        let manifest = pi_plugin_runtime::Manifest::from_toml(&manifest_toml).map_err(err_str)?;
+        let ctx = self.ctx(p)?;
+        let outcome = ctx.kernel.run_plugin(&manifest, &wasm).map_err(err_str)?;
+        let decisions: Vec<Value> = outcome
+            .decisions
+            .iter()
+            .map(|d| json!({"capability": d.capability, "resource": d.resource, "allowed": d.allowed, "reason": d.reason}))
+            .collect();
+        Ok(json!({
+            "result_code": outcome.result_code,
+            "logs": outcome.logs,
+            "decisions": decisions,
+        }))
     }
 
     fn ctx(&mut self, p: &Value) -> Result<&mut SessionCtx, String> {
@@ -580,6 +615,34 @@ fn err_str<E: std::fmt::Display>(e: E) -> String {
 
 fn error_response(id: Value, code: i64, message: &str) -> String {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}).to_string()
+}
+
+/// Standard base64 decode (no padding requirement). Kept dependency-free.
+fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut lookup = [255u8; 256];
+    for (i, &c) in TABLE.iter().enumerate() {
+        lookup[c as usize] = i as u8;
+    }
+    let mut out = Vec::new();
+    let mut buf = 0u32;
+    let mut bits = 0u32;
+    for &c in input.as_bytes() {
+        if c == b'=' || c == b'\n' || c == b'\r' {
+            continue;
+        }
+        let v = lookup[c as usize];
+        if v == 255 {
+            return None;
+        }
+        buf = (buf << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Some(out)
 }
 
 // Unused import guard: KernelError is part of the public surface we exercise.

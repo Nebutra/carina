@@ -155,6 +155,8 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("profile.describe", d.handleProfileDescribe)
 	d.server.Register("secret.grant", d.handleSecretGrant)
 	d.server.Register("secret.request", d.handleSecretRequest)
+	d.server.Register("plugin.inspect", d.handlePluginInspect)
+	d.server.Register("plugin.run", d.handlePluginRun)
 
 	d.server.RegisterStream("session.events.stream", d.handleEventStream)
 
@@ -600,6 +602,31 @@ func (d *Daemon) handleSecretRequest(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"decision": decision, "handle": handle}, nil
+}
+
+func (d *Daemon) handlePluginInspect(params json.RawMessage) (any, error) {
+	var p struct {
+		ManifestTOML string `json:"manifest_toml"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	return d.kern.PluginInspect(p.ManifestTOML)
+}
+
+func (d *Daemon) handlePluginRun(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID    string `json:"session_id"`
+		ManifestTOML string `json:"manifest_toml"`
+		WasmBase64   string `json:"wasm_base64"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if _, ok := d.store.Get(p.SessionID); !ok {
+		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	}
+	return d.kern.PluginRun(p.SessionID, p.ManifestTOML, p.WasmBase64)
 }
 
 func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription) error {

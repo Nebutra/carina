@@ -25,3 +25,4 @@ pi-kernel = { path = "crates/pi-kernel" }
 pi-policy = { path = "crates/pi-policy" }
 pi-patch = { path = "crates/pi-patch" }
 pi-audit = { path = "crates/pi-audit" }
+pi-plugin-runtime = { path = "crates/pi-plugin-runtime" }

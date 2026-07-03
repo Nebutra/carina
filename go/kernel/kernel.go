@@ -255,3 +255,20 @@ func (s *Service) Redact(sessionID, text string) (string, error) {
 	err := s.call("kernel.redact", map[string]any{"session_id": sessionID, "text": text}, &out)
 	return out.Text, err
 }
+
+// PluginInspect parses a manifest and returns its declared permissions.
+func (s *Service) PluginInspect(manifestTOML string) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := s.call("kernel.plugin.inspect", map[string]any{"manifest_toml": manifestTOML}, &out)
+	return out, err
+}
+
+// PluginRun runs a WASM plugin under the session policy. wasmBase64 is the
+// base64-encoded module.
+func (s *Service) PluginRun(sessionID, manifestTOML, wasmBase64 string) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := s.call("kernel.plugin.run", map[string]any{
+		"session_id": sessionID, "manifest_toml": manifestTOML, "wasm_base64": wasmBase64,
+	}, &out)
+	return out, err
+}

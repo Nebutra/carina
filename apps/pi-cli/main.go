@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -36,6 +37,8 @@ Usage:
   pi profile <session_id>                describe the active permission profile
   pi secret grant <session_id> <n> <v>   register a secret (returns a handle)
   pi secret request <session_id> <name>  request a secret handle
+  pi plugin inspect <manifest.toml>              show declared permissions
+  pi plugin run <session_id> <manifest> <wasm>   run a WASM plugin
   pi metrics
 
 The daemon must be running: pi-daemon &
@@ -143,6 +146,9 @@ func run(cmd string, args []string) error {
 	case "secret":
 		return cmdSecret(c, args)
 
+	case "plugin":
+		return cmdPlugin(c, args)
+
 	default:
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", cmd)
@@ -208,6 +214,42 @@ func cmdPatch(c *rpcClient, args []string) error {
 		})
 	default:
 		return fmt.Errorf("unknown patch subcommand %q", sub)
+	}
+}
+
+func cmdPlugin(c *rpcClient, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: pi plugin <inspect|run> ...")
+	}
+	switch args[0] {
+	case "inspect":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: pi plugin inspect <manifest.toml>")
+		}
+		manifest, err := os.ReadFile(args[1])
+		if err != nil {
+			return err
+		}
+		return call(c, "plugin.inspect", map[string]any{"manifest_toml": string(manifest)})
+	case "run":
+		if len(args) < 4 {
+			return fmt.Errorf("usage: pi plugin run <session_id> <manifest.toml> <module.wasm>")
+		}
+		manifest, err := os.ReadFile(args[2])
+		if err != nil {
+			return err
+		}
+		wasm, err := os.ReadFile(args[3])
+		if err != nil {
+			return err
+		}
+		return call(c, "plugin.run", map[string]any{
+			"session_id":    args[1],
+			"manifest_toml": string(manifest),
+			"wasm_base64":   base64.StdEncoding.EncodeToString(wasm),
+		})
+	default:
+		return fmt.Errorf("unknown plugin subcommand %q", args[0])
 	}
 }
 

@@ -19,8 +19,39 @@ pub use pi_policy;
 pub enum KernelError {
     #[error("unknown permission profile: {0}")]
     UnknownProfile(String),
+    #[error("plugin error: {0}")]
+    Plugin(String),
     #[error(transparent)]
     Audit(#[from] AuditError),
+}
+
+/// Bridges a plugin's capability request to the session policy engine. The
+/// plugin runtime has already checked the manifest; this is the second gate
+/// (PRD §8.7: plugins are limited to their authorized scope).
+struct ProfileHost {
+    profile: Profile,
+    workspace_root: PathBuf,
+}
+
+impl pi_plugin_runtime::CapabilityHost for ProfileHost {
+    fn allow(&self, capability: &str, resource: &str) -> bool {
+        let cap = match capability {
+            "file_read" => Capability::FileRead,
+            "file_write" => Capability::FileWrite,
+            "command_exec" => Capability::CommandExec,
+            "network" => Capability::NetworkAccess,
+            "secret" => Capability::SecretRead,
+            _ => return false,
+        };
+        let request = CapabilityRequest {
+            capability: cap,
+            requested_by: pi_policy::Principal::Plugin,
+            resource: resource.to_string(),
+            session_id: String::new(),
+            task_id: None,
+        };
+        PolicyEngine::evaluate(&self.profile, &self.workspace_root, &request).decision == Verdict::Allowed
+    }
 }
 
 /// A session-scoped kernel instance.
@@ -184,6 +215,48 @@ impl Kernel {
     pub fn record_event(&self, event: &Event) -> Result<(), KernelError> {
         self.audit.append(event)?;
         Ok(())
+    }
+
+    /// Runs a WASM plugin under this session's policy (PRD §8.7). Every
+    /// capability the plugin requests is gated by both its manifest and the
+    /// session profile, and each decision is written to the audit log.
+    pub fn run_plugin(
+        &self,
+        manifest: &pi_plugin_runtime::Manifest,
+        wasm: &[u8],
+    ) -> Result<pi_plugin_runtime::RunOutcome, KernelError> {
+        // Record that the plugin was loaded (PluginLoad capability).
+        let load_event = Event::new(
+            &self.session_id,
+            EventType::ToolRequested,
+            serde_json::json!({"plugin": manifest.name, "version": manifest.version}),
+        );
+        self.audit.append(&load_event)?;
+
+        let host = ProfileHost {
+            profile: self.profile.clone(),
+            workspace_root: self.workspace_root.clone(),
+        };
+        let outcome = pi_plugin_runtime::PluginRuntime::new()
+            .run(manifest, wasm, Box::new(host))
+            .map_err(|e| KernelError::Plugin(e.to_string()))?;
+
+        // Audit each capability decision the plugin made.
+        for d in &outcome.decisions {
+            let event_type = if d.allowed { EventType::ToolApproved } else { EventType::PolicyViolation };
+            let event = Event::new(
+                &self.session_id,
+                event_type,
+                serde_json::json!({
+                    "plugin": manifest.name,
+                    "capability": d.capability,
+                    "resource": d.resource,
+                    "reason": d.reason,
+                }),
+            );
+            self.audit.append(&event)?;
+        }
+        Ok(outcome)
     }
 
     pub fn session_id(&self) -> &str {

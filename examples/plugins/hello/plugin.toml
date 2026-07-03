@@ -1,0 +1,10 @@
+name = "hello-plugin"
+version = "0.1.0"
+kind = "command"
+
+# Every permission the plugin can ever use is declared here and shown to the
+# user at install time. The runtime refuses any capability not listed.
+[permissions]
+command_exec = ["go test ./..."]
+# Note: this plugin does NOT declare `secret`, so its attempt to read a
+# secret at runtime is refused and recorded as a PolicyViolation.

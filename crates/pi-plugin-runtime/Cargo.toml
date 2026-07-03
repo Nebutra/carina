@@ -9,5 +9,12 @@ repository.workspace = true
 [dependencies]
 pi-policy = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 toml = { workspace = true }
 thiserror = { workspace = true }
+wasmi = "0.40"
+wat = "1"
+
+[[bin]]
+name = "pi-wat2wasm"
+path = "src/bin/pi-wat2wasm.rs"
