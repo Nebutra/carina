@@ -53,8 +53,10 @@ type Service struct {
 	client *rpc.Client
 }
 
-// Start launches the kernel binary with the given state directory.
-func Start(binPath, stateDir string) (*Service, error) {
+// Start launches the kernel binary with the given state directory. toolsDir
+// is passed through as PI_TOOLS_DIR so the kernel can delegate patch writes
+// to pi-patch-native (PRD §4.4).
+func Start(binPath, stateDir, toolsDir string) (*Service, error) {
 	if binPath == "" {
 		var err error
 		binPath, err = FindBinary()
@@ -63,6 +65,10 @@ func Start(binPath, stateDir string) (*Service, error) {
 		}
 	}
 	cmd := exec.Command(binPath, stateDir)
+	cmd.Env = os.Environ()
+	if toolsDir != "" {
+		cmd.Env = append(cmd.Env, "PI_TOOLS_DIR="+toolsDir)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("kernel: stdin pipe: %w", err)

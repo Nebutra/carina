@@ -59,6 +59,9 @@ func (t *Toolchain) tool(name string) string {
 	return name
 }
 
+// Dir returns the resolved tools directory ("" if tools are on $PATH).
+func (t *Toolchain) Dir() string { return t.dir }
+
 // Available reports whether the native tools can be found.
 func (t *Toolchain) Available() bool {
 	_, err := exec.LookPath(t.tool("pi-scan"))

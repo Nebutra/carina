@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 fn main() {
     let state_dir = std::env::args()
@@ -496,29 +497,33 @@ impl Service {
             .approve(false)
             .map_err(err_str)?;
 
-        // Atomic apply: write every file via temp+rename; restore on failure.
-        let mut written: Vec<&FileChange> = Vec::new();
-        for c in &record.files {
-            let abs = ctx.workspace_root.join(&c.path);
-            if let Err(e) = atomic_write(&abs, c.new_content.as_bytes()) {
-                for w in &written {
-                    let _ = restore_file(&ctx.workspace_root, &record.snapshot_dir, &record.files, w);
-                }
+        // Delegate the actual disk write to the Zig pi-patch-native tool
+        // (PRD §4.4: file mutation runs in the native toolchain, not Rust).
+        // The tool applies atomically (all-or-nothing) and restores on
+        // failure; if the tool is unavailable we fail rather than writing
+        // directly, so Zig is the only patch-apply path (PRD §16.5).
+        let plan = build_patch_plan(&ctx.workspace_root, &record.files, &record.snapshot_dir);
+        match run_patch_native("apply", &plan) {
+            Ok(status) if status == "applied" => {}
+            outcome => {
+                let reason = match outcome {
+                    Ok(s) => format!("pi-patch-native reported '{s}', expected 'applied'"),
+                    Err(e) => e,
+                };
                 let failed = tx.fail().map_err(err_str)?;
                 ctx.kernel
                     .record_event(&Event::new(
                         &session_id,
                         EventType::PatchFailed,
-                        json!({"patch_id": patch_id, "error": e.to_string()}),
-                    ))
+                        json!({"patch_id": patch_id, "error": reason}),
+                    ).with_actor(Actor::Zig))
                     .map_err(err_str)?;
                 ctx.patches.insert(
                     patch_id.clone(),
                     PatchRecord { tx: failed, files: record.files.clone(), snapshot_dir: record.snapshot_dir.clone() },
                 );
-                return Err(format!("patch apply failed (rolled back): {e}"));
+                return Err(format!("patch apply failed: {reason}"));
             }
-            written.push(c);
         }
 
         let new_hash = combined_hash(&record.files, Pre::New);
@@ -553,14 +558,27 @@ impl Service {
             ))
             .map_err(err_str)?;
 
-        for c in &record.files {
-            restore_file(&ctx.workspace_root, &record.snapshot_dir, &record.files, c)
-                .map_err(|e| format!("rollback failed for {}: {e}", c.path))?;
+        // Restore via the Zig tool (§4.4): copy snapshots back / delete
+        // files the patch created.
+        let plan = build_patch_plan(&ctx.workspace_root, &record.files, &record.snapshot_dir);
+        match run_patch_native("rollback", &plan) {
+            Ok(status) if status == "rolled_back" => {}
+            outcome => {
+                let reason = match outcome {
+                    Ok(s) => format!("pi-patch-native reported '{s}'"),
+                    Err(e) => e,
+                };
+                ctx.patches.insert(
+                    patch_id.clone(),
+                    PatchRecord { tx: record.tx, files: record.files, snapshot_dir: record.snapshot_dir },
+                );
+                return Err(format!("rollback failed: {reason}"));
+            }
         }
 
         let tx = record.tx.rollback().map_err(err_str)?;
         ctx.kernel
-            .record_event(&Event::new(&session_id, EventType::RollbackCompleted, json!({"patch_id": patch_id})))
+            .record_event(&Event::new(&session_id, EventType::RollbackCompleted, json!({"patch_id": patch_id})).with_actor(Actor::Zig))
             .map_err(err_str)?;
 
         let result = serde_json::to_value(&tx).map_err(err_str)?;
@@ -629,34 +647,60 @@ fn render_diff(files: &[FileChange]) -> String {
     out
 }
 
-fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("pi-os-tmp");
-    std::fs::write(&tmp, content)?;
-    std::fs::rename(&tmp, path)
+/// Builds the JSON plan consumed by pi-patch-native.
+fn build_patch_plan(root: &Path, files: &[FileChange], snapshot_dir: &Path) -> Value {
+    let items: Vec<Value> = files
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            json!({
+                "path": root.join(&c.path).to_string_lossy(),
+                "new_content": c.new_content,
+                "snapshot": snapshot_dir.join(format!("{i}.pre")).to_string_lossy(),
+                "existed": c.existed,
+            })
+        })
+        .collect();
+    json!({ "files": items })
 }
 
-fn restore_file(
-    root: &Path,
-    snapshot_dir: &Path,
-    all: &[FileChange],
-    target: &FileChange,
-) -> std::io::Result<()> {
-    let idx = all.iter().position(|c| c.path == target.path).unwrap_or(0);
-    let abs = root.join(&target.path);
-    if target.existed {
-        let snap = snapshot_dir.join(format!("{idx}.pre"));
-        let content = std::fs::read(&snap)?;
-        atomic_write(&abs, &content)
-    } else {
-        match std::fs::remove_file(&abs) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e),
+/// Locates the pi-patch-native binary. There is NO Rust write fallback: if
+/// the native tool is missing, patch apply fails (PRD §4.4, §16.5).
+fn patch_native_bin() -> Result<PathBuf, String> {
+    if let Ok(p) = std::env::var("PI_PATCH_NATIVE_BIN") {
+        return Ok(PathBuf::from(p));
+    }
+    if let Ok(dir) = std::env::var("PI_TOOLS_DIR") {
+        let candidate = Path::new(&dir).join("pi-patch-native");
+        if candidate.exists() {
+            return Ok(candidate);
         }
     }
+    Err("pi-patch-native not found (set PI_TOOLS_DIR or PI_PATCH_NATIVE_BIN); refusing to write directly".into())
+}
+
+/// Runs pi-patch-native with a plan on stdin and returns its reported status.
+fn run_patch_native(subcmd: &str, plan: &Value) -> Result<String, String> {
+    let bin = patch_native_bin()?;
+    let mut child = Command::new(&bin)
+        .arg(subcmd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn pi-patch-native: {e}"))?;
+    {
+        let stdin = child.stdin.as_mut().ok_or("pi-patch-native: no stdin")?;
+        stdin.write_all(plan.to_string().as_bytes()).map_err(err_str)?;
+    }
+    let out = child.wait_with_output().map_err(err_str)?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let last = stdout.lines().last().unwrap_or("");
+    let v: Value = serde_json::from_str(last).map_err(|_| format!("pi-patch-native bad output: {stdout}"))?;
+    v.get("status")
+        .and_then(Value::as_str)
+        .map(String::from)
+        .ok_or_else(|| format!("pi-patch-native error: {stdout}"))
 }
 
 fn str_param(p: &Value, key: &str) -> Result<String, String> {

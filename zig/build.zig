@@ -11,6 +11,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // pi-pty needs libc for the POSIX pseudo-terminal calls (posix_openpt,
+    // grantpt, ptsname, ioctl, forkpty semantics).
+    const needs_libc = std.StaticStringMap(void).initComptime(.{
+        .{"pi-pty"},
+    });
+
     const tools = [_][]const u8{
         "pi-scan",
         "pi-grep",
@@ -25,6 +31,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path(b.fmt("{s}/main.zig", .{tool})),
             .target = target,
             .optimize = optimize,
+            .link_libc = needs_libc.has(tool),
         });
         mod.addImport("jsonl", jsonl_mod);
 

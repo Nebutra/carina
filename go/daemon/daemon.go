@@ -65,7 +65,10 @@ func New(opts Options) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	kern, err := kernel.Start(opts.KernelBin, opts.StateDir)
+	tools := toolchain.New(opts.ToolsDir)
+	// The kernel delegates patch writes to pi-patch-native, so it needs the
+	// same tools directory (PRD §4.4).
+	kern, err := kernel.Start(opts.KernelBin, opts.StateDir, tools.Dir())
 	if err != nil {
 		return nil, fmt.Errorf("daemon: cannot start capability kernel: %w", err)
 	}
@@ -76,7 +79,7 @@ func New(opts Options) (*Daemon, error) {
 		router:      modelrouter.New(),
 		server:      rpc.NewServer(),
 		kern:        kern,
-		tools:       toolchain.New(opts.ToolsDir),
+		tools:       tools,
 		events:      NewBus(),
 		org:         loadOrgPolicy(opts.PolicyDir),
 		started:     time.Now().UTC(),

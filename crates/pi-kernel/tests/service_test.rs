@@ -17,8 +17,11 @@ struct Service {
 impl Service {
     fn start(state_dir: &std::path::Path) -> Self {
         let bin = env!("CARGO_BIN_EXE_pi-kernel-service");
+        // The kernel delegates patch writes to pi-patch-native.
+        let tools = format!("{}/../../zig/zig-out/bin", env!("CARGO_MANIFEST_DIR"));
         let mut child = Command::new(bin)
             .arg(state_dir)
+            .env("PI_TOOLS_DIR", tools)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
