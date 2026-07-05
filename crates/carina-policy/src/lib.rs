@@ -587,9 +587,29 @@ pub fn apply_approval_mode(mode: ApprovalMode, mut d: Decision) -> Decision {
     }
 }
 
-/// Command risk classification (PRD §8.8). Heuristic MVP — a proper
-/// classifier with shell parsing lands in Phase 2.
+/// Command risk classification (PRD §8.8). Compound shell commands are
+/// DECOMPOSED so a read-only-looking prefix cannot hide a risky tail: the line
+/// is split into the sub-commands it actually runs (`&&`, `||`, `|`, `;`,
+/// newlines, plus `$(...)` / backtick subshell bodies) and the HIGHEST
+/// sub-command risk wins. Argv is joined with spaces upstream, so a
+/// `bash -c "a && rm x"` invocation exposes its operators here — exactly what we
+/// want to gate. (Heuristic MVP — a full shell parser lands in Phase 2.)
 pub fn classify_command(command: &str) -> u8 {
+    // Take the MAX of the whole-line score and every sub-command's score. The
+    // whole-line pass still catches patterns that span an operator (e.g.
+    // `curl url | sh`); the per-segment pass catches a risky tail hidden behind
+    // a read-only-looking prefix. Max => never lowers the risk (fail-closed).
+    let whole = classify_atom(command);
+    let seg_max = shell_segments(command)
+        .iter()
+        .map(|s| classify_atom(s))
+        .max()
+        .unwrap_or(0);
+    whole.max(seg_max)
+}
+
+/// classify_atom scores a single, non-compound command.
+fn classify_atom(command: &str) -> u8 {
     let cmd = command.trim();
     let destructive = ["rm -rf", "rm -fr", "mkfs", "dd if=", ":(){", "> /dev/"];
     if destructive.iter().any(|p| cmd.contains(p)) || (cmd.contains("curl") && cmd.contains("| sh"))
@@ -621,6 +641,151 @@ pub fn classify_command(command: &str) -> u8 {
         return 0;
     }
     3 // unknown commands are treated as file-mutating until classified
+}
+
+/// shell_segments splits a command line into the sub-commands it will run,
+/// separating on top-level `&&`, `||`, `|`, `;`, and newlines (quote-aware so
+/// operators inside quotes are ignored), and pulling out `$(...)` and backtick
+/// subshell bodies as their own segments. Being over-eager here is fail-closed:
+/// a mis-split only raises the risk estimate, never lowers it.
+fn shell_segments(command: &str) -> Vec<String> {
+    let chars: Vec<char> = command.chars().collect();
+    let mut segments: Vec<String> = Vec::new();
+    let mut subshells: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let (mut sq, mut dq) = (false, false);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\'' && !dq {
+            sq = !sq;
+            cur.push(c);
+            i += 1;
+            continue;
+        }
+        if c == '"' && !sq {
+            dq = !dq;
+            cur.push(c);
+            i += 1;
+            continue;
+        }
+        if !sq && !dq {
+            if c == '$' && i + 1 < chars.len() && chars[i + 1] == '(' {
+                let mut depth = 1;
+                let mut j = i + 2;
+                let mut inner = String::new();
+                while j < chars.len() && depth > 0 {
+                    match chars[j] {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    if depth > 0 {
+                        inner.push(chars[j]);
+                    }
+                    j += 1;
+                }
+                subshells.push(inner);
+                i = j + 1;
+                continue;
+            }
+            if c == '`' {
+                let mut j = i + 1;
+                let mut inner = String::new();
+                while j < chars.len() && chars[j] != '`' {
+                    inner.push(chars[j]);
+                    j += 1;
+                }
+                subshells.push(inner);
+                i = j + 1;
+                continue;
+            }
+            if c == ';' || c == '\n' {
+                segments.push(std::mem::take(&mut cur));
+                i += 1;
+                continue;
+            }
+            if c == '&' && i + 1 < chars.len() && chars[i + 1] == '&' {
+                segments.push(std::mem::take(&mut cur));
+                i += 2;
+                continue;
+            }
+            if c == '|' {
+                let step = if i + 1 < chars.len() && chars[i + 1] == '|' { 2 } else { 1 };
+                segments.push(std::mem::take(&mut cur));
+                i += step;
+                continue;
+            }
+        }
+        cur.push(c);
+        i += 1;
+    }
+    segments.push(cur);
+
+    let mut out: Vec<String> = Vec::new();
+    for s in segments {
+        let t = s.trim();
+        if !t.is_empty() {
+            out.push(t.to_string());
+        }
+    }
+    for sub in subshells {
+        for s in shell_segments(&sub) {
+            out.push(s);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod shell_gating_tests {
+    use super::*;
+
+    #[test]
+    fn simple_commands_unchanged() {
+        assert_eq!(classify_command("echo hello"), 0);
+        assert_eq!(classify_command("grep foo ."), 0);
+        assert_eq!(classify_command("cargo test"), 1);
+        assert_eq!(classify_command("rm -rf /tmp/x"), 5);
+        assert_eq!(classify_command("git push origin main"), 4);
+    }
+
+    #[test]
+    fn compound_takes_max_sub_command_risk() {
+        // The bypass: a read-only prefix used to hide a mutating tail (risk 0).
+        assert_eq!(classify_command("cat f && chmod 777 x"), 3);
+        assert_eq!(classify_command("ls && mv a b"), 3);
+        assert_eq!(classify_command("echo ok; rm secret.txt"), 3);
+        assert_eq!(classify_command("echo ok && rm -rf /tmp/x"), 5);
+        assert_eq!(classify_command("ls -la | git push"), 4);
+        // Read-only chains stay read-only.
+        assert_eq!(classify_command("echo a && echo b"), 0);
+        assert_eq!(classify_command("cat f | grep x | wc -l"), 0);
+    }
+
+    #[test]
+    fn subshell_bodies_are_gated() {
+        assert_eq!(classify_command("echo $(rm -rf /tmp/x)"), 5);
+        assert_eq!(classify_command("echo `chmod 777 y`"), 3);
+    }
+
+    #[test]
+    fn operators_inside_quotes_are_not_split() {
+        // echoing a literal string that contains && must stay read-only.
+        assert_eq!(classify_command("echo \"a && b\""), 0);
+        assert_eq!(classify_command("grep 'a|b' file"), 0);
+    }
+
+    #[test]
+    fn hidden_mutation_is_no_longer_read_only() {
+        assert!(!is_readonly_command("cat f && rm x"));
+        assert!(is_readonly_command("cat f && echo done"));
+    }
 }
 
 /// Workspace boundary check with lexical normalization plus symlink
