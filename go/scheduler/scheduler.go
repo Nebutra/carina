@@ -31,6 +31,9 @@ type Task struct {
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
 	RiskLevel       int            `json:"risk_level"`
+	Mode            string         `json:"mode,omitempty"`            // foreground | background
+	Summary         string         `json:"summary,omitempty"`         // final result / degrade reason
+	AppliedPatches  []string       `json:"applied_patches,omitempty"` // rollbackable patch ids
 }
 
 type Scheduler struct {
@@ -131,4 +134,55 @@ func (s *Scheduler) transition(taskID, status string) (*Task, error) {
 	updated.UpdatedAt = time.Now().UTC()
 	s.tasks[taskID] = &updated
 	return &updated, nil
+}
+
+// SetResult attaches a finished run's summary and applied-patch ids, so a
+// completed/degraded background run is queryable without scanning the log.
+func (s *Scheduler) SetResult(taskID, summary string, patches []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[taskID]
+	if !ok {
+		return
+	}
+	updated := *t
+	updated.Summary = summary
+	updated.AppliedPatches = patches
+	updated.UpdatedAt = time.Now().UTC()
+	s.tasks[taskID] = &updated
+}
+
+// SetMode records whether a task runs in the foreground or as a background run.
+func (s *Scheduler) SetMode(taskID, mode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.tasks[taskID]; ok {
+		updated := *t
+		updated.Mode = mode
+		s.tasks[taskID] = &updated
+	}
+}
+
+// List returns a snapshot of every task (the background-run registry).
+func (s *Scheduler) List() []*Task {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*Task, 0, len(s.tasks))
+	for _, t := range s.tasks {
+		out = append(out, t)
+	}
+	return out
+}
+
+// Load reinserts a persisted task on daemon startup (run-registry recovery). It
+// never clobbers a task already in memory.
+func (s *Scheduler) Load(t *Task) {
+	if t == nil || t.TaskID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.tasks[t.TaskID]; !exists {
+		s.tasks[t.TaskID] = t
+	}
 }

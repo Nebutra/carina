@@ -33,6 +33,8 @@ type Options struct {
 	ToolsDir  string // zig tools directory ("" = auto-discover)
 	PolicyDir string // enterprise org-policy directory ("" = none)
 	Offline   bool   // disable network model providers (PRD §5: offline mode)
+
+	MaxConcurrentTasks int // cap on concurrent background runs (0 => default 8)
 }
 
 type pendingCommand struct {
@@ -59,6 +61,9 @@ type Daemon struct {
 
 	mu          sync.Mutex
 	pendingCmds map[string]pendingCommand // decision_id -> command awaiting approval
+
+	runs   *runStore     // durable background-run registry (survives restart)
+	runSem chan struct{} // concurrency cap for background runs
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -92,6 +97,18 @@ func New(opts Options) (*Daemon, error) {
 	}
 	d.registerMethods()
 	registerProviders(d.router, opts.Offline)
+	// Durable run registry + concurrency cap for background runs. Reloading the
+	// registry lets `task.list`/`task.status` answer for runs from before a
+	// restart (the run record survives even though the live loop does not yet).
+	d.runs = newRunStore(opts.StateDir)
+	for _, t := range d.runs.load() {
+		d.sched.Load(t)
+	}
+	maxConcurrent := opts.MaxConcurrentTasks
+	if maxConcurrent <= 0 {
+		maxConcurrent = 8
+	}
+	d.runSem = make(chan struct{}, maxConcurrent)
 	// Best-effort: wire the claude CLI reasoner if available and not offline.
 	if !opts.Offline {
 		if r, err := newClaudeCLIReasoner(); err == nil {
@@ -163,6 +180,8 @@ func (d *Daemon) registerMethods() {
 
 	d.server.Register("task.submit", d.handleTaskSubmit)
 	d.server.Register("task.status", d.handleTaskStatus)
+	d.server.Register("task.list", d.handleTaskList)
+	d.server.Register("task.result", d.handleTaskResult)
 	d.server.Register("task.cancel", d.handleTaskCancel)
 	d.server.Register("task.action.approve", d.handleApprove)
 	d.server.Register("task.action.deny", d.handleDeny)
@@ -306,10 +325,15 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
 	}
 	task := d.sched.SubmitWithGoal(sess.SessionID, sess.WorkspaceID, p.Prompt, p.SuccessCriteria)
+	d.sched.SetMode(task.TaskID, "background")
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt}, "")
+	d.persistRun(task.TaskID)
 
-	go d.runTask(sess, task)
+	go d.runTaskGuarded(sess, task)
+	if t, ok := d.sched.Get(task.TaskID); ok {
+		return t, nil
+	}
 	return task, nil
 }
 
@@ -335,6 +359,69 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
 	return d.sched.Cancel(p.TaskID)
+}
+
+// handleTaskList returns the background-run registry, optionally filtered by
+// session or status — the "check back later" surface for background agents.
+func (d *Daemon) handleTaskList(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		Status    string `json:"status"`
+	}
+	_ = json.Unmarshal(params, &p) // all filters optional
+	all := d.sched.List()
+	out := make([]*scheduler.Task, 0, len(all))
+	for _, t := range all {
+		if p.SessionID != "" && t.SessionID != p.SessionID {
+			continue
+		}
+		if p.Status != "" && t.Status != p.Status {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+// handleTaskResult returns one run record: status, summary, and applied patches.
+func (d *Daemon) handleTaskResult(params json.RawMessage) (any, error) {
+	var p struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	t, ok := d.sched.Get(p.TaskID)
+	if !ok {
+		return nil, fmt.Errorf("unknown task %s", p.TaskID)
+	}
+	return t, nil
+}
+
+// persistRun snapshots a task's current record to the durable run store.
+func (d *Daemon) persistRun(taskID string) {
+	if t, ok := d.sched.Get(taskID); ok {
+		d.runs.save(t)
+	}
+}
+
+// runTaskGuarded runs a background agent task under a concurrency cap and a
+// panic guard: a panic in the agent loop marks that one run failed (recorded +
+// persisted) instead of crashing the daemon and taking every other run with it.
+func (d *Daemon) runTaskGuarded(sess *sessionstore.Session, task *scheduler.Task) {
+	d.runSem <- struct{}{}
+	defer func() { <-d.runSem }()
+	defer func() {
+		if r := recover(); r != nil {
+			d.sched.SetStatus(task.TaskID, "failed")
+			d.sched.SetResult(task.TaskID, fmt.Sprintf("panic: %v", r), nil)
+			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+				map[string]any{"status": "failed", "reason": "panic recovered"}, "")
+			d.persistRun(task.TaskID)
+		}
+	}()
+	d.runTask(sess, task)
+	d.persistRun(task.TaskID)
 }
 
 // ---- approvals ------------------------------------------------------------

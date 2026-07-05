@@ -223,17 +223,19 @@ func (d *Daemon) checkSuccessCriteria(sess *sessionstore.Session, task *schedule
 	return failed
 }
 
-// finish marks a task completed with the model's summary.
+// finish marks a task completed with the model's summary and persists the run
+// record (summary + applied patches) so it stays queryable after restart.
 func (d *Daemon) finish(sess *sessionstore.Session, task *scheduler.Task, summary string) {
 	d.sched.SetStatus(task.TaskID, "completed")
+	d.sched.SetResult(task.TaskID, summary, d.appliedPatchIDs(sess))
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 		map[string]any{"status": "completed", "summary": summary}, "")
+	d.persistRun(task.TaskID)
 }
 
-// degrade ends a task that couldn't reach done, but does so gracefully:
-// it reports partial progress (applied patches survive and are rollbackable)
-// rather than a bare failure (the SWE-agent "autosubmit" idea).
-func (d *Daemon) degrade(sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, reason string) {
+// appliedPatchIDs returns the ids of patches that landed (applied/committed) in
+// a session — the rollbackable footprint of a run.
+func (d *Daemon) appliedPatchIDs(sess *sessionstore.Session) []string {
 	patches, _ := d.kern.PatchList(sess.SessionID)
 	applied := make([]string, 0, len(patches))
 	for _, p := range patches {
@@ -241,11 +243,21 @@ func (d *Daemon) degrade(sess *sessionstore.Session, task *scheduler.Task, tr *T
 			applied = append(applied, p.PatchID)
 		}
 	}
+	return applied
+}
+
+// degrade ends a task that couldn't reach done, but does so gracefully:
+// it reports partial progress (applied patches survive and are rollbackable)
+// rather than a bare failure (the SWE-agent "autosubmit" idea).
+func (d *Daemon) degrade(sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, reason string) {
+	applied := d.appliedPatchIDs(sess)
 	d.sched.SetStatus(task.TaskID, "degraded")
+	d.sched.SetResult(task.TaskID, reason, applied)
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
 		"status": "degraded", "reason": reason,
 		"turns": len(tr.Turns), "applied_patches": applied,
 	}, "")
+	d.persistRun(task.TaskID)
 }
 
 func briefAction(a *action) string {
