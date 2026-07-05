@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -51,7 +52,9 @@ type Daemon struct {
 	events  *Bus
 	started time.Time
 
-	org *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
+	org        *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
+	stateDir   string
+	socketPath string
 
 	mu          sync.Mutex
 	pendingCmds map[string]pendingCommand // decision_id -> command awaiting approval
@@ -82,6 +85,7 @@ func New(opts Options) (*Daemon, error) {
 		tools:       tools,
 		events:      NewBus(),
 		org:         loadOrgPolicy(opts.PolicyDir),
+		stateDir:    opts.StateDir,
 		started:     time.Now().UTC(),
 		pendingCmds: make(map[string]pendingCommand),
 	}
@@ -110,7 +114,11 @@ func (d *Daemon) recover() {
 
 // Run blocks serving JSON-RPC on the unix socket.
 func (d *Daemon) Run(socketPath string) error {
+	d.socketPath = socketPath
+	// A local execution worker and a sandbox worker are always available
+	// (PRD §5.4).
 	d.pool.Register("local", worker.Local)
+	d.pool.Register("sandbox", worker.Sandbox)
 	return d.server.ListenUnix(socketPath)
 }
 
@@ -180,12 +188,18 @@ func (d *Daemon) registerMethods() {
 
 func (d *Daemon) handleStatus(_ json.RawMessage) (any, error) {
 	return map[string]any{
-		"version":        Version,
-		"uptime_seconds": int(time.Since(d.started).Seconds()),
-		"sessions":       len(d.store.List()),
-		"tasks":          d.sched.Count(),
-		"workers":        len(d.pool.List()),
-		"tools":          d.tools.Available(),
+		"version":         Version,
+		"pid":             os.Getpid(),
+		"uptime_seconds":  int(time.Since(d.started).Seconds()),
+		"active_sessions": len(d.store.List()),
+		"sessions":        len(d.store.List()),
+		"queued_tasks":    d.sched.CountByStatus()["queued"],
+		"tasks":           d.sched.Count(),
+		"active_workers":  len(d.pool.List()),
+		"workers":         len(d.pool.List()),
+		"tools":           d.tools.Available(),
+		"rpc_endpoint":    d.socketPath,
+		"event_log_path":  filepath.Join(d.stateDir, "events"),
 	}, nil
 }
 
@@ -548,9 +562,13 @@ func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decisio
 	command := strings.Join(argv, " ")
 	risk, _ := d.kern.ClassifyCommand(command)
 	// The command is executed by the Zig pi-run tool, so its lifecycle
-	// events are attributed to the Zig actor.
-	d.record(sessionID, "CommandStarted", taskID, "zig",
-		map[string]any{"command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk}, decision.DecisionID)
+	// events are attributed to the Zig actor. Package-manager mutations are
+	// flagged so lockfile changes are auditable (PRD §13.7).
+	started := map[string]any{"command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk}
+	if mutatesPackages(command) {
+		started["package_mutation"] = true
+	}
+	d.record(sessionID, "CommandStarted", taskID, "zig", started, decision.DecisionID)
 
 	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute)
 	if err != nil {
@@ -744,6 +762,29 @@ func (d *Daemon) session(params json.RawMessage) (*sessionstore.Session, string,
 		return nil, "", fmt.Errorf("unknown session %s", id)
 	}
 	return sess, id, nil
+}
+
+// mutatesPackages reports whether a command installs/updates dependencies
+// and therefore likely changes a lockfile (PRD §13.7).
+func mutatesPackages(command string) bool {
+	prefixes := []string{
+		"npm install", "npm i ", "npm ci", "npm uninstall", "npm update",
+		"pnpm add", "pnpm install", "pnpm remove", "yarn add", "yarn install", "yarn remove",
+		"pip install", "pip uninstall", "poetry add", "poetry remove",
+		"cargo add", "cargo install", "cargo remove", "go get", "bundle add",
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(command, p) {
+			return true
+		}
+	}
+	// Direct lockfile edits.
+	for _, lock := range []string{"package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock", "go.sum", "poetry.lock"} {
+		if strings.Contains(command, lock) {
+			return true
+		}
+	}
+	return false
 }
 
 func sessionID(params json.RawMessage) (string, error) {

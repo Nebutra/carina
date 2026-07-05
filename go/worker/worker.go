@@ -23,8 +23,26 @@ type Worker struct {
 	WorkerID      string    `json:"worker_id"`
 	Name          string    `json:"name"`
 	Kind          Kind      `json:"kind"`
+	Type          Kind      `json:"type"` // alias of Kind for §5.4 compatibility
+	Status        string    `json:"status"`
+	CurrentTask   string    `json:"current_task"`
+	Capabilities  []string  `json:"capabilities"`
 	RegisteredAt  time.Time `json:"registered_at"`
 	LastHeartbeat time.Time `json:"last_heartbeat"`
+}
+
+// capabilitiesFor returns the capability set a worker kind may exercise.
+func capabilitiesFor(kind Kind) []string {
+	switch kind {
+	case Local:
+		return []string{"FileRead", "FileWrite", "CommandExec", "PatchApply"}
+	case Sandbox:
+		return []string{"FileRead", "CommandExec"} // no host writes; mediated
+	case CI:
+		return []string{"CommandExec"}
+	default: // Remote
+		return []string{"CommandExec"}
+	}
 }
 
 type Pool struct {
@@ -42,6 +60,9 @@ func (p *Pool) Register(name string, kind Kind) *Worker {
 		WorkerID:      sessionstore.NewID("wrk"),
 		Name:          name,
 		Kind:          kind,
+		Type:          kind,
+		Status:        "idle",
+		Capabilities:  capabilitiesFor(kind),
 		RegisteredAt:  now,
 		LastHeartbeat: now,
 	}

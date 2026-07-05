@@ -431,6 +431,14 @@ impl PolicyEngine {
                 if !profile.file_read_in_workspace {
                     return (Verdict::Denied, "profile denies FileRead".into());
                 }
+                // Secret-bearing files are denied even inside the workspace
+                // (PRD §13.8): they must go through the secret broker.
+                if is_sensitive_file(&req.resource) {
+                    return (
+                        Verdict::Denied,
+                        "sensitive file (credentials/secret material) — use the secret broker".into(),
+                    );
+                }
                 if path_within_workspace(root, Path::new(&req.resource)) {
                     (Verdict::Allowed, format!("{} allows FileRead within workspace", profile.name))
                 } else {
@@ -499,6 +507,28 @@ impl PolicyEngine {
             }
         }
     }
+}
+
+/// True if the path names credential/secret material that must never be
+/// read as a plain file, even inside the workspace (PRD §13.8).
+pub fn is_sensitive_file(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    let base = std::path::Path::new(&lower)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&lower);
+
+    // Exact/base-name matches for secret files.
+    let sensitive_names = [
+        ".env", ".npmrc", ".pypirc", ".netrc", ".git-credentials",
+        "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", "credentials",
+    ];
+    if sensitive_names.iter().any(|n| base == *n || base.starts_with(".env.")) {
+        return true;
+    }
+    // Path-segment matches for secret directories.
+    let sensitive_dirs = ["/.ssh/", "/.aws/", "/.gnupg/", "/.config/gcloud", "/.kube/"];
+    sensitive_dirs.iter().any(|d| lower.contains(d))
 }
 
 /// Command risk classification (PRD §8.8). Heuristic MVP — a proper
@@ -739,6 +769,34 @@ require_approval = ["PatchApply"]
             &req(Capability::SecretRead, "TOKEN"),
         );
         assert_eq!(d.decision, Verdict::Denied);
+    }
+
+    #[test]
+    fn sensitive_files_denied_even_in_workspace() {
+        let profile = Profile::full_workspace(); // permissive
+        let root = Path::new("/tmp/ws");
+        for path in [
+            "/tmp/ws/.env",
+            "/tmp/ws/.env.production",
+            "/tmp/ws/config/.aws/credentials",
+            "/tmp/ws/.ssh/id_rsa",
+            "/tmp/ws/.npmrc",
+        ] {
+            let d = PolicyEngine::evaluate(&profile, root, &req(Capability::FileRead, path));
+            assert_eq!(d.decision, Verdict::Denied, "{path} should be denied");
+        }
+        // A normal source file is still allowed.
+        assert_ne!(
+            PolicyEngine::evaluate(&profile, root, &req(Capability::FileRead, "/tmp/ws/src/main.rs")).decision,
+            Verdict::Denied
+        );
+    }
+
+    #[test]
+    fn lockfile_is_sensitive_classification() {
+        // Package installs that touch a lockfile classify as install-risk (2).
+        assert_eq!(classify_command("npm install left-pad"), 2);
+        assert_eq!(classify_command("pnpm add react"), 2);
     }
 
     #[test]

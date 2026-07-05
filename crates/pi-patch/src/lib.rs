@@ -60,8 +60,15 @@ pub enum PatchError {
 pub struct PatchTransaction {
     pub patch_id: String,
     pub session_id: String,
+    /// Provenance: the task, agent step, and model that produced the patch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_step_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    /// When the patch was proposed (unix epoch milliseconds as a string).
+    pub created_at: String,
     pub status: PatchStatus,
     pub affected_files: Vec<String>,
     /// Hash of the pre-image the diff was computed against.
@@ -92,7 +99,10 @@ impl PatchTransaction {
         Ok(Self {
             patch_id: new_patch_id(),
             session_id: session_id.into(),
+            task_id: None,
             agent_step_id: None,
+            model_id: None,
+            created_at: now_millis(),
             status: PatchStatus::Proposed,
             affected_files,
             base_hash: content_hash(base_content),
@@ -104,6 +114,20 @@ impl PatchTransaction {
             test_status: TestStatus::NotRun,
             rollback_pointer: None,
         })
+    }
+
+    /// Attaches provenance: which task/agent-step/model produced this patch
+    /// (PRD §7.6).
+    pub fn with_provenance(
+        mut self,
+        task_id: Option<String>,
+        agent_step_id: Option<String>,
+        model_id: Option<String>,
+    ) -> Self {
+        self.task_id = task_id;
+        self.agent_step_id = agent_step_id;
+        self.model_id = model_id;
+        self
     }
 
     /// Pre-apply validation: the current on-disk content must still match
@@ -197,6 +221,15 @@ fn new_patch_id() -> String {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     format!("patch_{nanos:x}")
+}
+
+fn now_millis() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    millis.to_string()
 }
 
 #[cfg(test)]

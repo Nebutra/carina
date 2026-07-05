@@ -29,6 +29,10 @@ type Decision struct {
 type Patch struct {
 	PatchID         string   `json:"patch_id"`
 	SessionID       string   `json:"session_id"`
+	TaskID          string   `json:"task_id,omitempty"`
+	AgentStepID     string   `json:"agent_step_id,omitempty"`
+	ModelID         string   `json:"model_id,omitempty"`
+	CreatedAt       string   `json:"created_at"`
 	Status          string   `json:"status"`
 	AffectedFiles   []string `json:"affected_files"`
 	BaseHash        string   `json:"base_hash"`

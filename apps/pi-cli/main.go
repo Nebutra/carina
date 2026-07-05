@@ -101,8 +101,12 @@ func run(cmd string, args []string) error {
 		return call(c, "session.list", map[string]any{})
 
 	case "run", "ask":
+		// --background is accepted for clarity; tasks always run in the
+		// daemon and survive CLI exit (PRD §5.2/§10.2), so this is the
+		// default behavior.
+		args = dropFlag(args, "--background")
 		if len(args) < 1 {
-			return fmt.Errorf(`usage: pi %s "<prompt>"`, cmd)
+			return fmt.Errorf(`usage: pi %s "<prompt>" [--background]`, cmd)
 		}
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -188,6 +192,17 @@ func run(cmd string, args []string) error {
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", cmd)
 	}
+}
+
+// dropFlag removes a boolean flag from args if present.
+func dropFlag(args []string, flag string) []string {
+	out := args[:0:0]
+	for _, a := range args {
+		if a != flag {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func cmdInit() error {

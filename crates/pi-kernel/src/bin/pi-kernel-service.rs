@@ -426,9 +426,11 @@ impl Service {
         let base = combined_hash(&changes, Pre::Old);
         let diff = render_diff(&changes);
         let paths: Vec<String> = changes.iter().map(|c| c.path.clone()).collect();
+        let agent_step_id = p.get("agent_step_id").and_then(Value::as_str).map(String::from);
+        let model_id = p.get("model_id").and_then(Value::as_str).map(String::from);
         let tx = PatchTransaction::propose(&session_id, paths.clone(), base.as_bytes(), &diff, &reason)
-            .map_err(err_str)?;
-        // The state machine hashes the combined-hash string itself; store as-is.
+            .map_err(err_str)?
+            .with_provenance(task_id.clone(), agent_step_id, model_id);
 
         let snapshot_dir = state_dir.join("snapshots").join(&tx.patch_id);
         std::fs::create_dir_all(&snapshot_dir).map_err(err_str)?;

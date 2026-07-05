@@ -3,22 +3,88 @@
   "$id": "https://github.com/TsekaLuk/pi-os/protocol/schemas/patch-transaction.schema.json",
   "title": "PatchTransaction",
   "type": "object",
-  "required": ["patch_id", "session_id", "status", "affected_files"],
+  "required": [
+    "patch_id",
+    "session_id",
+    "status",
+    "affected_files"
+  ],
   "properties": {
-    "patch_id": { "type": "string", "pattern": "^patch_" },
-    "session_id": { "type": "string", "pattern": "^sess_" },
-    "agent_step_id": { "type": "string" },
-    "status": {
-      "enum": ["proposed", "validated", "approved", "applied", "verified", "committed", "rolled_back", "failed"]
+    "patch_id": {
+      "type": "string",
+      "pattern": "^patch_"
     },
-    "affected_files": { "type": "array", "items": { "type": "string" } },
-    "base_hash": { "type": "string" },
-    "new_hash": { "type": "string" },
-    "diff": { "type": "string" },
-    "reason": { "type": "string" },
-    "risk_level": { "type": "integer", "minimum": 0, "maximum": 5 },
-    "approval_status": { "enum": ["pending", "approved", "denied", "auto"] },
-    "test_status": { "enum": ["not_run", "passed", "failed"] },
-    "rollback_pointer": { "type": "string" }
+    "session_id": {
+      "type": "string",
+      "pattern": "^sess_"
+    },
+    "agent_step_id": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "proposed",
+        "validated",
+        "approved",
+        "applied",
+        "verified",
+        "committed",
+        "rolled_back",
+        "failed"
+      ]
+    },
+    "affected_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "base_hash": {
+      "type": "string"
+    },
+    "new_hash": {
+      "type": "string"
+    },
+    "diff": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "risk_level": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5
+    },
+    "approval_status": {
+      "enum": [
+        "pending",
+        "approved",
+        "denied",
+        "auto"
+      ]
+    },
+    "test_status": {
+      "enum": [
+        "not_run",
+        "passed",
+        "failed"
+      ]
+    },
+    "rollback_pointer": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string",
+      "description": "task that produced the patch"
+    },
+    "model_id": {
+      "type": "string",
+      "description": "model that generated the change"
+    },
+    "created_at": {
+      "type": "string",
+      "description": "unix epoch millis when proposed"
+    }
   }
 }
