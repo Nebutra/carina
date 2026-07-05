@@ -30,6 +30,14 @@ Usage:
   pi search <session_id> <text>   structured workspace search (pi-grep)
   pi exec <session_id> -- cmd...  run a command through the kernel
 
+  Native tools (run straight on the Zig toolchain, no daemon):
+  pi scan [path]                  workspace file tree (ignore rules, binary/lang)
+  pi grep <pattern> <path>        structured search
+  pi diff <a> <b>                 structured diff
+  pi run-native [opts] -- cmd...  run a command (timeout/cwd/env)
+  pi pty [opts] -- cmd...         interactive pseudo-terminal
+  pi patch-native <apply|dry-run|rollback>   atomic patch primitive (JSON on stdin)
+
   pi patch list <session_id>
   pi patch show <session_id> <patch_id>
   pi patch propose <session_id> <path> <<< "new file content"
@@ -66,6 +74,16 @@ func run(cmd string, args []string) error {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
+	// Native toolchain launchers (PRD §8.1): pi forwards straight to the
+	// Zig binaries — no daemon, no business logic, just process exec.
+	// run/patch use a -native suffix to avoid clashing with the agent-level
+	// `pi run` and the daemon-level `pi patch`.
+	case "scan", "grep", "diff", "pty":
+		return execTool("pi-"+cmd, args)
+	case "run-native":
+		return execTool("pi-run", args)
+	case "patch-native":
+		return execTool("pi-patch-native", args)
 	}
 
 	c, err := dialDaemon()
