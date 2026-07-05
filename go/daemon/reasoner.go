@@ -19,6 +19,38 @@ type Reasoner interface {
 	Think(ctx context.Context, prompt string) (string, error)
 }
 
+// retryBaseDelay is the initial backoff; overridable in tests.
+var retryBaseDelay = 2 * time.Second
+
+// thinkWithRetry wraps a reasoner call with exponential backoff — transport
+// errors (rate limits, 5xx, timeouts) are retried; the caller's context
+// bounds total time. This fixes the "Think error => task dies" gap.
+func thinkWithRetry(ctx context.Context, r Reasoner, prompt string) (string, error) {
+	const maxAttempts = 4
+	delay := retryBaseDelay
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		out, err := r.Think(ctx, prompt)
+		if err == nil {
+			return out, nil
+		}
+		lastErr = err
+		if attempt == maxAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(delay):
+		}
+		delay *= 2
+		if delay > 30*time.Second {
+			delay = 30 * time.Second
+		}
+	}
+	return "", fmt.Errorf("reasoner failed after %d attempts: %w", maxAttempts, lastErr)
+}
+
 // ---- claude CLI reasoner ---------------------------------------------------
 
 // claudeCLIReasoner uses the local `claude` binary in headless mode as a pure
@@ -112,4 +144,21 @@ func (s *scriptedReasoner) Think(_ context.Context, _ string) (string, error) {
 	step := s.steps[s.i]
 	s.i++
 	return step, nil
+}
+
+// flakyReasoner fails its first `failFirst` calls, then returns `then`.
+// Used to test transport retry.
+type flakyReasoner struct {
+	failFirst int
+	then      string
+	calls     int
+}
+
+func (f *flakyReasoner) Name() string { return "flaky" }
+func (f *flakyReasoner) Think(_ context.Context, _ string) (string, error) {
+	f.calls++
+	if f.calls <= f.failFirst {
+		return "", fmt.Errorf("simulated transport error %d", f.calls)
+	}
+	return f.then, nil
 }

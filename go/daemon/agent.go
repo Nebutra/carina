@@ -14,7 +14,10 @@ import (
 	sessionstore "github.com/TsekaLuk/pi-os/go/session-store"
 )
 
-const maxAgentTurns = 14
+const (
+	maxAgentTurns = 14
+	maxRequeries  = 3
+)
 
 // systemPrompt instructs the reasoner to act as a coding agent that can only
 // affect the world through pi-os tools, one JSON action at a time.
@@ -65,45 +68,123 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
 		map[string]any{"engine": d.reasoner.Name(), "prompt": task.UserPrompt}, "")
 
-	history := strings.Builder{}
+	ctx := context.Background()
+	tr := newTranscript(task.UserPrompt)
+	guard := newLoopGuard()
+	// A cheap summarizer for compaction: reuse the reasoner on the head.
+	summarize := func(head string) (string, error) {
+		return thinkWithRetry(ctx, d.reasoner,
+			"Summarize this agent transcript in <=200 words, keeping: the task, decisions made, "+
+				"patches applied (ids), unresolved errors. Drop raw tool output.\n\n"+head)
+	}
+
 	for turn := 1; turn <= maxAgentTurns; turn++ {
 		if t, ok := d.sched.Get(task.TaskID); ok && t.Status == "cancelled" {
 			return
 		}
 
+		// Bound the model view (audit log keeps everything).
+		tr.compact(summarize)
 		prompt := fmt.Sprintf("%s\n\nTASK: %s\n\nTRANSCRIPT:\n%s\nRespond with the next action as a single JSON object.",
-			systemPrompt, task.UserPrompt, history.String())
+			systemPrompt, task.UserPrompt, tr.render())
 
-		raw, err := d.reasoner.Think(context.Background(), prompt)
-		if err != nil {
-			d.sched.SetStatus(task.TaskID, "failed")
+		// inner requery loop: malformed actions are re-asked without
+		// consuming a real turn (up to maxRequeries).
+		var act action
+		var raw string
+		ok := false
+		for requery := 0; requery <= maxRequeries; requery++ {
+			var err error
+			raw, err = thinkWithRetry(ctx, d.reasoner, prompt)
+			if err != nil {
+				d.degrade(sess, task, tr, "reasoner error: "+err.Error())
+				return
+			}
 			d.record(sess.SessionID, "ModelResponded", task.TaskID, "model",
-				map[string]any{"error": err.Error()}, "")
-			return
+				map[string]any{"turn": turn, "text": truncate(raw, 400)}, "")
+			a, perr := parseAction(raw)
+			if perr == nil {
+				act, ok = a, true
+				break
+			}
+			prompt = fmt.Sprintf("%s\n\nYour last reply was not a valid action JSON (%s). "+
+				"Reply with ONE JSON object like {\"tool\":\"read\",\"path\":\"...\"}.", prompt, perr.Error())
 		}
-		d.record(sess.SessionID, "ModelResponded", task.TaskID, "model",
-			map[string]any{"turn": turn, "text": truncate(raw, 400)}, "")
-
-		act, perr := parseAction(raw)
-		if perr != nil {
-			fmt.Fprintf(&history, "turn %d: (unparseable action; reply with ONE valid JSON object)\n", turn)
-			continue
+		if !ok {
+			d.degrade(sess, task, tr, "model kept emitting invalid actions")
+			return
 		}
 
 		if act.Tool == "done" {
-			d.sched.SetStatus(task.TaskID, "completed")
-			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
-				map[string]any{"status": "completed", "summary": act.Summary}, "")
+			d.finish(sess, task, act.Summary)
 			return
 		}
 
+		// Loop safety: catch repeated actions and no-progress stalls.
+		fp := act.Tool + ":" + act.Path + ":" + strings.Join(act.Command, " ") + ":" + act.Pattern
+		if guard.repeated(act.Tool, fp) {
+			tr.addTurn(Turn{Thought: act.Thought, Tool: act.Tool,
+				ActionBrief: briefAction(&act),
+				Obs:         Observation{Content: "You have repeated this exact action several times with no new result. Change approach, or use {\"tool\":\"done\"} if finished."}})
+			continue
+		}
+		if guard.stalled() {
+			tr.addTurn(Turn{Tool: "system",
+				ActionBrief: "loop-guard",
+				Obs:         Observation{Content: "Many turns with no edit. Either make a concrete change with the patch tool, or finish with done."}})
+			guard.madeProgress() // reset so we give one more chance, then degrade
+		}
+
 		obs := d.executeAction(sess, task, &act)
-		fmt.Fprintf(&history, "turn %d action=%s\nobservation: %s\n\n", turn, act.Tool, truncate(obs, 1500))
+		pinned := act.Tool == "run" || act.Tool == "patch" // keep test/patch results
+		if act.Tool == "patch" && strings.Contains(obs, "applied") {
+			guard.madeProgress()
+		} else {
+			guard.tick()
+		}
+		tr.addTurn(Turn{Thought: act.Thought, Tool: act.Tool,
+			ActionBrief: briefAction(&act), Obs: Observation{Content: obs, Pinned: pinned}})
 	}
 
-	d.sched.SetStatus(task.TaskID, "failed")
-	d.record(sess.SessionID, "ModelResponded", task.TaskID, "go",
-		map[string]any{"error": "reached max turns without done"}, "")
+	d.degrade(sess, task, tr, "reached max turns without done")
+}
+
+// finish marks a task completed with the model's summary.
+func (d *Daemon) finish(sess *sessionstore.Session, task *scheduler.Task, summary string) {
+	d.sched.SetStatus(task.TaskID, "completed")
+	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+		map[string]any{"status": "completed", "summary": summary}, "")
+}
+
+// degrade ends a task that couldn't reach done, but does so gracefully:
+// it reports partial progress (applied patches survive and are rollbackable)
+// rather than a bare failure (the SWE-agent "autosubmit" idea).
+func (d *Daemon) degrade(sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, reason string) {
+	patches, _ := d.kern.PatchList(sess.SessionID)
+	applied := make([]string, 0, len(patches))
+	for _, p := range patches {
+		if p.Status == "applied" || p.Status == "committed" {
+			applied = append(applied, p.PatchID)
+		}
+	}
+	d.sched.SetStatus(task.TaskID, "degraded")
+	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+		"status": "degraded", "reason": reason,
+		"turns": len(tr.Turns), "applied_patches": applied,
+	}, "")
+}
+
+func briefAction(a *action) string {
+	switch a.Tool {
+	case "read", "patch":
+		return a.Tool + " " + a.Path
+	case "search":
+		return "search " + a.Pattern
+	case "run":
+		return "run [" + strings.Join(a.Command, " ") + "]"
+	default:
+		return a.Tool
+	}
 }
 
 // executeAction runs one tool action through the kernel + toolchain and
