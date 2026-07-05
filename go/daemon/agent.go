@@ -20,14 +20,8 @@ const (
 	maxVerifyAttempts = 3
 )
 
-// systemPrompt instructs the reasoner to act as a coding agent that can only
-// affect the world through pi-os tools, one JSON action at a time.
-const systemPrompt = `You are a coding agent running inside the pi-os runtime.
-You CANNOT touch the system directly. You act only by emitting ONE tool action
-per turn as a single JSON object, and pi-os executes it through its security
-kernel, returning an observation.
-
-Available tools:
+// toolsHelp is the shared tool reference used by the main agent and subagents.
+const toolsHelp = `Available tools:
 - {"tool":"list"}                              list the workspace file tree
 - {"tool":"read","path":"rel/path"}            read a file
 - {"tool":"search","pattern":"text"}           search the workspace
@@ -41,6 +35,20 @@ Rules:
 - Use "patch" to change files (never shell for edits). Provide the COMPLETE new file content.
 - When the task is complete, use "done" with a clear summary.`
 
+// systemPrompt instructs the reasoner to act as a coding agent that can only
+// affect the world through pi-os tools, one JSON action at a time.
+const systemPrompt = `You are a coding agent running inside the pi-os runtime.
+You CANNOT touch the system directly. You act only by emitting ONE tool action
+per turn as a single JSON object, and pi-os executes it through its security
+kernel, returning an observation.
+
+` + toolsHelp + `
+
+You may also delegate to specialized subagents (isolated context, restricted
+capabilities) for focused sub-tasks like recon or review:
+- {"tool":"spawn","agent":"scout","task":"find all auth code"}
+- {"tool":"spawn","tasks":[{"agent":"scout","task":"..."},{"agent":"reviewer","task":"..."}]}   (parallel)`
+
 // action is the decision emitted by the reasoner each turn. Fields are read
 // from the top level (flat form the model naturally emits) or from a nested
 // "action" object (see parseAction).
@@ -52,6 +60,16 @@ type action struct {
 	Command []string `json:"command"`
 	Content string   `json:"content"`
 	Summary string   `json:"summary"`
+	// spawn tool
+	Agent string      `json:"agent"`
+	Task  string      `json:"task"`
+	Tasks []SpawnTask `json:"tasks"`
+}
+
+// SpawnTask is one delegation in a parallel spawn.
+type SpawnTask struct {
+	Agent string `json:"agent"`
+	Task  string `json:"task"`
 }
 
 // runTask drives one agent task to completion (PRD §18). Every side effect is
@@ -308,6 +326,9 @@ func (d *Daemon) executeAction(sess *sessionstore.Session, task *scheduler.Task,
 
 	case "patch":
 		return d.agentPatch(sess, task, act.Path, act.Content)
+
+	case "spawn":
+		return d.executeSpawn(sess, task, act)
 
 	default:
 		return "unknown tool: " + act.Tool

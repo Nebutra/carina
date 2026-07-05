@@ -24,6 +24,8 @@ type Session struct {
 	Status            string    `json:"status"` // active | paused | closed
 	PermissionProfile string    `json:"permission_profile"`
 	ApprovalMode      string    `json:"approval_mode,omitempty"` // untrusted|on_request|never
+	ParentID          string    `json:"parent_id,omitempty"`     // set for subagent sessions
+	Depth             int       `json:"depth"`                   // 0 = main; bounded to prevent runaway nesting
 	CreatedAt         time.Time `json:"created_at"`
 }
 
@@ -99,6 +101,17 @@ func (s *Store) CreateSession(workspaceRoot, profile string) (*Session, error) {
 
 // CreateSessionMode also sets the per-session approval mode (goal axis).
 func (s *Store) CreateSessionMode(workspaceRoot, profile, approvalMode string) (*Session, error) {
+	return s.createSession(workspaceRoot, profile, approvalMode, "", 0)
+}
+
+// CreateSubSession creates an isolated subagent session linked to a parent,
+// at depth = parent.Depth + 1 (bounded by the caller to prevent runaway
+// nesting).
+func (s *Store) CreateSubSession(workspaceRoot, profile, approvalMode, parentID string, depth int) (*Session, error) {
+	return s.createSession(workspaceRoot, profile, approvalMode, parentID, depth)
+}
+
+func (s *Store) createSession(workspaceRoot, profile, approvalMode, parentID string, depth int) (*Session, error) {
 	if profile == "" {
 		profile = "safe-edit"
 	}
@@ -109,6 +122,8 @@ func (s *Store) CreateSessionMode(workspaceRoot, profile, approvalMode string) (
 		Status:            "active",
 		PermissionProfile: profile,
 		ApprovalMode:      approvalMode,
+		ParentID:          parentID,
+		Depth:             depth,
 		CreatedAt:         time.Now().UTC(),
 	}
 	s.mu.Lock()
