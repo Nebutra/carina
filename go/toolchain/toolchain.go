@@ -15,8 +15,11 @@ import (
 )
 
 type FileEntry struct {
-	Path string `json:"path"`
-	Size int64  `json:"size"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Binary   bool   `json:"binary"`
+	Large    bool   `json:"large"`
+	Language string `json:"language"`
 }
 
 type Match struct {

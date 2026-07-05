@@ -81,7 +81,11 @@ make all
 
 ## Status
 
-All six PRD phases (0–5) are implemented and tested. See [docs/PRD.md](docs/PRD.md) for the full product requirements, [docs/architecture.md](docs/architecture.md) for the layered design, and [docs/enterprise.md](docs/enterprise.md) for the Phase 5 controls.
+All six PRD phases (0–5) are implemented and tested, **and pi-os drives a real ReAct coding agent** — the model decides, the Rust kernel authorizes, the Zig tools execute, every step is audited and rollbackable. See [docs/agent.md](docs/agent.md) for how to run it, [docs/PRD.md](docs/PRD.md) for the full requirements, [docs/architecture.md](docs/architecture.md) for the layered design, and [docs/enterprise.md](docs/enterprise.md) for the Phase 5 controls.
+
+```bash
+cd your-repo && pi run "fix the failing test"   # Claude reasons; pi-os executes safely
+```
 
 **Tests:** 57 Rust tests (`cargo test --workspace`) + Go unit & end-to-end tests across all three languages (`go test ./...`). Run everything with `make test`.
 

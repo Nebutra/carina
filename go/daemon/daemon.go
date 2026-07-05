@@ -55,6 +55,7 @@ type Daemon struct {
 	org        *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
 	stateDir   string
 	socketPath string
+	reasoner   Reasoner // agent "thinking" engine (nil => mock loop)
 
 	mu          sync.Mutex
 	pendingCmds map[string]pendingCommand // decision_id -> command awaiting approval
@@ -91,9 +92,18 @@ func New(opts Options) (*Daemon, error) {
 	}
 	d.registerMethods()
 	registerProviders(d.router, opts.Offline)
+	// Best-effort: wire the claude CLI reasoner if available and not offline.
+	if !opts.Offline {
+		if r, err := newClaudeCLIReasoner(); err == nil {
+			d.reasoner = r
+		}
+	}
 	d.recover()
 	return d, nil
 }
+
+// SetReasoner overrides the agent reasoning engine (used by tests).
+func (d *Daemon) SetReasoner(r Reasoner) { d.reasoner = r }
 
 // recover re-initializes any sessions that were active when a previous
 // daemon exited (PRD §17.3: daemon crash recovery). The event logs already
