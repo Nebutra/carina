@@ -116,6 +116,7 @@ func New(opts Options) (*Daemon, error) {
 		}
 	}
 	d.recover()
+	d.resumeRuns()
 	return d, nil
 }
 
@@ -405,10 +406,10 @@ func (d *Daemon) persistRun(taskID string) {
 	}
 }
 
-// runTaskGuarded runs a background agent task under a concurrency cap and a
-// panic guard: a panic in the agent loop marks that one run failed (recorded +
-// persisted) instead of crashing the daemon and taking every other run with it.
-func (d *Daemon) runTaskGuarded(sess *sessionstore.Session, task *scheduler.Task) {
+// guardRun runs a background agent function under a concurrency cap and a panic
+// guard: a panic marks that one run failed (recorded + persisted) instead of
+// crashing the daemon and taking every other run with it.
+func (d *Daemon) guardRun(sess *sessionstore.Session, task *scheduler.Task, run func()) {
 	d.runSem <- struct{}{}
 	defer func() { <-d.runSem }()
 	defer func() {
@@ -420,8 +421,56 @@ func (d *Daemon) runTaskGuarded(sess *sessionstore.Session, task *scheduler.Task
 			d.persistRun(task.TaskID)
 		}
 	}()
-	d.runTask(sess, task)
+	run()
 	d.persistRun(task.TaskID)
+}
+
+func (d *Daemon) runTaskGuarded(sess *sessionstore.Session, task *scheduler.Task) {
+	d.guardRun(sess, task, func() { d.runTask(sess, task) })
+}
+
+func (d *Daemon) resumeTaskGuarded(sess *sessionstore.Session, task *scheduler.Task, cp *runCheckpoint) {
+	d.guardRun(sess, task, func() { d.resumeTask(sess, task, cp) })
+}
+
+// markInterrupted records that a mid-flight run could not be resumed after a
+// restart (its session vanished, or it had no checkpoint to resume from).
+func (d *Daemon) markInterrupted(task *scheduler.Task, reason string) {
+	d.sched.SetStatus(task.TaskID, "degraded")
+	d.sched.SetResult(task.TaskID, "interrupted by daemon restart: "+reason, nil)
+	d.persistRun(task.TaskID)
+}
+
+// resumeRuns relaunches background runs that were mid-flight when the daemon
+// stopped. A run with a transcript checkpoint continues from its next turn; one
+// without a checkpoint is marked interrupted rather than blindly re-run (which
+// could duplicate side effects). It requires a reasoner — otherwise a no-op, so
+// the run stays "running" until a reasoner-backed daemon picks it up.
+func (d *Daemon) resumeRuns() {
+	if d.reasoner == nil {
+		return
+	}
+	resumed := 0
+	for _, task := range d.sched.List() {
+		if task.Status != "running" {
+			continue
+		}
+		sess, ok := d.store.Get(task.SessionID)
+		if !ok {
+			d.markInterrupted(task, "session gone")
+			continue
+		}
+		cp := d.runs.loadCheckpoint(task.TaskID)
+		if cp == nil {
+			d.markInterrupted(task, "no checkpoint")
+			continue
+		}
+		go d.resumeTaskGuarded(sess, task, cp)
+		resumed++
+	}
+	if resumed > 0 {
+		fmt.Printf("carina-daemon: resumed %d background run(s)\n", resumed)
+	}
 }
 
 // ---- approvals ------------------------------------------------------------

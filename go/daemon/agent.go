@@ -93,9 +93,29 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
 		map[string]any{"engine": d.reasoner.Name(), "prompt": task.UserPrompt}, "")
+	d.runLoop(sess, task, newTranscript(task.UserPrompt), 1)
+}
 
+// resumeTask continues a background run from a persisted transcript checkpoint
+// after a daemon restart. Prior turns (and their side effects) are already in
+// the transcript and the audit log, so only the NEXT action runs — completed
+// work is never re-executed.
+func (d *Daemon) resumeTask(sess *sessionstore.Session, task *scheduler.Task, cp *runCheckpoint) {
+	d.sched.SetStatus(task.TaskID, "running")
+	if d.reasoner == nil {
+		d.degrade(sess, task, cp.Transcript, "no reasoner available to resume run")
+		return
+	}
+	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
+		map[string]any{"engine": d.reasoner.Name(), "prompt": task.UserPrompt, "resumed_from_turn": cp.Turn}, "")
+	d.runLoop(sess, task, cp.Transcript, cp.Turn+1)
+}
+
+// runLoop is the ReAct loop shared by fresh (runTask) and resumed (resumeTask)
+// runs. It checkpoints the transcript after each turn, so a daemon crash loses
+// at most one in-flight action.
+func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, startTurn int) {
 	ctx := context.Background()
-	tr := newTranscript(task.UserPrompt)
 	guard := newLoopGuard()
 	verifyAttempts := 0
 	// A cheap summarizer for compaction: reuse the reasoner on the head.
@@ -105,7 +125,7 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 				"patches applied (ids), unresolved errors. Drop raw tool output.\n\n"+head)
 	}
 
-	for turn := 1; turn <= maxAgentTurns; turn++ {
+	for turn := startTurn; turn <= maxAgentTurns; turn++ {
 		if t, ok := d.sched.Get(task.TaskID); ok && t.Status == "cancelled" {
 			return
 		}
@@ -189,6 +209,8 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 		}
 		tr.addTurn(Turn{Thought: act.Thought, Tool: act.Tool,
 			ActionBrief: briefAction(&act), Obs: Observation{Content: obs, Pinned: pinned}})
+		// Checkpoint after each completed turn so a crash can resume here.
+		d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr})
 	}
 
 	d.degrade(sess, task, tr, "reached max turns without done")
@@ -231,6 +253,7 @@ func (d *Daemon) finish(sess *sessionstore.Session, task *scheduler.Task, summar
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 		map[string]any{"status": "completed", "summary": summary}, "")
 	d.persistRun(task.TaskID)
+	d.runs.deleteCheckpoint(task.TaskID)
 }
 
 // appliedPatchIDs returns the ids of patches that landed (applied/committed) in
@@ -258,6 +281,7 @@ func (d *Daemon) degrade(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		"turns": len(tr.Turns), "applied_patches": applied,
 	}, "")
 	d.persistRun(task.TaskID)
+	d.runs.deleteCheckpoint(task.TaskID)
 }
 
 func briefAction(a *action) string {

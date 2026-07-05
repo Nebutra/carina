@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // panicReasoner blows up on every call — used to prove a panic in the agent
@@ -97,4 +98,50 @@ func TestBackgroundRunPanicIsolation(t *testing.T) {
 	if tk, _ := d.sched.Get(good.TaskID); tk.Status != "completed" {
 		t.Fatalf("daemon should still complete tasks after a panic, got %s", tk.Status)
 	}
+}
+
+// TestBackgroundRunResumesAfterRestart: a run interrupted mid-flight (persisted
+// as "running" with a transcript checkpoint) is resumed by a fresh daemon and
+// driven to completion — the core "durable background agent" behavior.
+func TestBackgroundRunResumesAfterRestart(t *testing.T) {
+	stateDir := t.TempDir()
+	ws := t.TempDir()
+	os.WriteFile(filepath.Join(ws, "a.txt"), []byte("hi\n"), 0o600)
+
+	// d1: create a session + task and simulate a mid-run crash — status "running"
+	// with a one-turn transcript checkpoint, then Close before it finished.
+	d1 := newDaemonAt(t, stateDir)
+	sess, _ := d1.store.CreateSession(ws, "safe-edit")
+	d1.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d1.sched.Submit(sess.SessionID, sess.WorkspaceID, "resume me")
+	d1.sched.SetStatus(task.TaskID, "running")
+	tr := newTranscript(task.UserPrompt)
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.txt", Obs: Observation{Content: "hi"}})
+	d1.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: 1, Transcript: tr})
+	d1.persistRun(task.TaskID)
+	d1.Close()
+
+	// d2: restart on the same state dir. New()'s resumeRuns() no-ops (offline =>
+	// nil reasoner) and leaves the run "running". Inject a reasoner, then resume.
+	d2 := newDaemonAt(t, stateDir)
+	defer d2.Close()
+	if tk, ok := d2.sched.Get(task.TaskID); !ok || tk.Status != "running" {
+		t.Fatalf("interrupted run should be preserved as running for resume, got %+v", tk)
+	}
+	d2.SetReasoner(&scriptedReasoner{steps: []string{`{"tool":"done","summary":"resumed and finished"}`}})
+	d2.resumeRuns()
+
+	// Resume is async; poll for terminal state.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if tk, _ := d2.sched.Get(task.TaskID); tk.Status == "completed" {
+			if tk.Summary != "resumed and finished" {
+				t.Fatalf("resumed run wrong summary: %q", tk.Summary)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	tk, _ := d2.sched.Get(task.TaskID)
+	t.Fatalf("resumed run did not complete in time, status=%s", tk.Status)
 }

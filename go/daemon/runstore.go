@@ -66,3 +66,47 @@ func (r *runStore) load() []*scheduler.Task {
 	}
 	return out
 }
+
+// runCheckpoint is the resumable model-view of a run: the turn reached and the
+// (compacted) transcript. The audit log remains the full source of truth; this
+// is only what the agent loop needs to continue from where it left off.
+type runCheckpoint struct {
+	Turn       int         `json:"turn"`
+	Transcript *Transcript `json:"transcript"`
+}
+
+func (r *runStore) saveCheckpoint(taskID string, cp *runCheckpoint) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	raw, err := json.Marshal(cp)
+	if err != nil {
+		return
+	}
+	p := filepath.Join(r.dir, taskID+".ckpt.json")
+	tmp := p + ".tmp"
+	if os.WriteFile(tmp, raw, 0o600) == nil {
+		_ = os.Rename(tmp, p)
+	}
+}
+
+func (r *runStore) loadCheckpoint(taskID string) *runCheckpoint {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	raw, err := os.ReadFile(filepath.Join(r.dir, taskID+".ckpt.json"))
+	if err != nil {
+		return nil
+	}
+	var cp runCheckpoint
+	if json.Unmarshal(raw, &cp) != nil || cp.Transcript == nil {
+		return nil
+	}
+	// The compaction policy is unexported and does not serialize; restore it.
+	cp.Transcript.policy = defaultCompactionPolicy()
+	return &cp
+}
+
+func (r *runStore) deleteCheckpoint(taskID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_ = os.Remove(filepath.Join(r.dir, taskID+".ckpt.json"))
+}
