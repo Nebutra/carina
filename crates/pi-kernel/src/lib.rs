@@ -432,4 +432,98 @@ mod tests {
         assert_eq!(events[0].event_type, EventType::ToolApproved);
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    fn tmp(name: &str) -> PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("pi-kernel-{name}-{}-{n:x}", std::process::id()))
+    }
+
+    #[test]
+    fn unknown_profile_errors() {
+        let dir = tmp("badprofile");
+        assert!(Kernel::new("s", "/tmp/ws", "no-such-profile", &dir).is_err());
+    }
+
+    #[test]
+    fn approve_and_deny_are_audited() {
+        let dir = tmp("approve");
+        let kernel = Kernel::new("sess_ap", "/tmp/ws", "safe-edit", &dir).unwrap();
+        // Build a requires_approval decision (risk-2 command).
+        let decision = kernel
+            .request(CapabilityRequest {
+                capability: Capability::CommandExec,
+                requested_by: pi_policy::Principal::Agent,
+                resource: "npm install x".into(),
+                session_id: "sess_ap".into(),
+                task_id: None,
+            })
+            .unwrap();
+        assert_eq!(decision.decision, Verdict::RequiresApproval);
+
+        let approved = kernel.approve(&decision, "alice").unwrap();
+        assert_eq!(approved.decision, Verdict::Allowed);
+        let denied = kernel.deny(&decision, "bob", "nope").unwrap();
+        assert_eq!(denied.decision, Verdict::Denied);
+
+        // approve + deny each appended an event beyond the original request.
+        assert!(kernel.audit().read_all().unwrap().len() >= 3);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn secret_request_records_handle_not_value() {
+        let dir = tmp("secret");
+        let mut kernel = Kernel::new("sess_s", "/tmp/ws", "full-workspace", &dir).unwrap();
+        kernel.secrets_mut().grant("API_KEY", "plaintext-secret");
+        let (decision, handle) = kernel.request_secret("API_KEY").unwrap();
+        // full-workspace requires approval for secrets, so no handle yet.
+        assert_eq!(decision.decision, Verdict::RequiresApproval);
+        assert!(handle.is_none());
+        // The audit log must not contain the plaintext.
+        let raw = std::fs::read_to_string(kernel.audit().path()).unwrap();
+        assert!(!raw.contains("plaintext-secret"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_audit_and_bundle_and_approval_policy() {
+        let dir = tmp("export");
+        let mut kernel = Kernel::new("sess_e", "/tmp/ws", "safe-edit", &dir).unwrap();
+        kernel.set_bundle(PolicyBundle::default());
+        kernel.set_approval_policy(ApprovalPolicy {
+            required_role_at_risk: vec![(2, "lead".into())],
+        });
+        kernel.request_file_read("/etc/passwd", Some("task_1".into())).unwrap();
+        let export = kernel.export_audit().unwrap();
+        assert!(export["event_count"].as_u64().unwrap() >= 1);
+        assert_eq!(export["profile"], "safe-edit");
+
+        // Role-gated approval: without the role it is rejected.
+        let d = kernel
+            .request(CapabilityRequest {
+                capability: Capability::CommandExec,
+                requested_by: pi_policy::Principal::Agent,
+                resource: "npm install x".into(),
+                session_id: "sess_e".into(),
+                task_id: None,
+            })
+            .unwrap();
+        let rejected = kernel.approve_as(&d, "alice", None).unwrap();
+        assert_eq!(rejected.decision, Verdict::Denied);
+        let ok = kernel.approve_as(&d, "bob", Some("lead")).unwrap();
+        assert_eq!(ok.decision, Verdict::Allowed);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn approval_policy_required_role_thresholds() {
+        let policy = ApprovalPolicy {
+            required_role_at_risk: vec![(2, "lead".into()), (4, "security".into())],
+        };
+        assert_eq!(policy.required_role(1), None);
+        assert_eq!(policy.required_role(2), Some("lead"));
+        assert_eq!(policy.required_role(4), Some("security"));
+        assert_eq!(policy.required_role(5), Some("security"));
+    }
 }

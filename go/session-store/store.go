@@ -170,6 +170,9 @@ func (s *Store) AppendEvent(ev Event) error {
 	if ev.Timestamp.IsZero() {
 		ev.Timestamp = time.Now().UTC()
 	}
+	if err := os.MkdirAll(filepath.Join(s.dir, "events"), 0o700); err != nil {
+		return fmt.Errorf("sessionstore: create events dir: %w", err)
+	}
 	f, err := os.OpenFile(s.eventLogPath(ev.SessionID), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("sessionstore: open event log: %w", err)

@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+const cliVersion = "0.6.0"
+
 const usage = `pi — Pi Agent OS Runtime client
 
 Usage:
@@ -69,6 +71,9 @@ func main() {
 
 func run(cmd string, args []string) error {
 	switch cmd {
+	case "version", "--version", "-v":
+		fmt.Println("pi " + cliVersion)
+		return nil
 	case "init":
 		return cmdInit()
 	case "help", "-h", "--help":

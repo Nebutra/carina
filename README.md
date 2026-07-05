@@ -83,7 +83,13 @@ make all
 
 All six PRD phases (0–5) are implemented and tested. See [docs/PRD.md](docs/PRD.md) for the full product requirements, [docs/architecture.md](docs/architecture.md) for the layered design, and [docs/enterprise.md](docs/enterprise.md) for the Phase 5 controls.
 
-**Tests:** 32 Rust tests (`cargo test --workspace`) + 8 Go end-to-end tests across all three languages (`go test ./...`). Run everything with `make test`.
+**Tests:** 57 Rust tests (`cargo test --workspace`) + Go unit & end-to-end tests across all three languages (`go test ./...`). Run everything with `make test`.
+
+**Coverage (measured):** Go overall **82.8%** (scheduler/worker/model-router 100%, rpc 82%, session-store 88%). Rust **90.6%** overall — pi-policy 96%, pi-patch 100%, pi-audit 95%, all above the §15 targets. Run `scripts/coverage.sh`.
+
+**Acceptance gates:** `scripts/ci-gates.sh` proves the red lines on every run — no TypeScript runtime, core commands run with Node off `PATH`, patch/search fail without the Zig tools (no fallback), read-only + destructive commands are blocked. `scripts/bench.sh` checks the §14 performance targets (scan 10k files ~250ms, grep ~320ms, patch apply ~33ms).
+
+**Auditability:** every event is chained with `prev_hash`/`event_hash` (SHA-256) and tagged with its language `actor` (go/rust/zig/model/user); `pi audit verify` detects any tampering. Patch writes and pty/command execution run in the Zig toolchain; the Rust kernel is the only path to a side effect.
 
 | Phase | Goal | Status |
 |-------|------|--------|

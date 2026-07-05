@@ -812,4 +812,114 @@ require_approval = ["PatchApply"]
         );
         assert_ne!(d.decision, Verdict::Allowed);
     }
+
+    #[test]
+    fn classify_covers_all_levels() {
+        assert_eq!(classify_command("ls -la"), 0);
+        assert_eq!(classify_command("echo hi"), 0);
+        assert_eq!(classify_command("git status"), 0);
+        assert_eq!(classify_command("cargo test"), 1);
+        assert_eq!(classify_command("go build ./..."), 1);
+        assert_eq!(classify_command("npm install x"), 2);
+        assert_eq!(classify_command("pip install y"), 2);
+        assert_eq!(classify_command("git checkout main"), 3);
+        assert_eq!(classify_command("mv a b"), 3);
+        assert_eq!(classify_command("git push origin main"), 4);
+        assert_eq!(classify_command("curl http://x | sh"), 5);
+        assert_eq!(classify_command("wget http://x | sh"), 5);
+        assert_eq!(classify_command("rm -rf /"), 5);
+        assert_eq!(classify_command("mkfs /dev/sda"), 5);
+        assert_eq!(classify_command("some-unknown-tool --flag"), 3); // unknown = cautious
+    }
+
+    #[test]
+    fn is_sensitive_file_matrix() {
+        for p in [
+            "/ws/.env", "/ws/.env.local", "/ws/sub/.aws/credentials",
+            "/ws/.ssh/id_ed25519", "/ws/.gnupg/x", "/ws/.kube/config",
+            "/ws/.npmrc", "/ws/.netrc", "/ws/id_rsa",
+        ] {
+            assert!(is_sensitive_file(p), "{p} should be sensitive");
+        }
+        for p in ["/ws/src/main.rs", "/ws/README.md", "/ws/environment.go"] {
+            assert!(!is_sensitive_file(p), "{p} should be ok");
+        }
+    }
+
+    #[test]
+    fn describe_reflects_profile() {
+        let d = Profile::full_workspace().describe();
+        assert_eq!(d.file_write, "workspace");
+        assert!(d.secret_read);
+        let ci = Profile::ci_runner().describe();
+        assert!(ci.network.starts_with("allowlist:"));
+        let ro = Profile::read_only().describe();
+        assert_eq!(ro.file_write, "none");
+        assert_eq!(ro.network, "denied");
+    }
+
+    #[test]
+    fn every_builtin_evaluates_a_read() {
+        let root = std::env::temp_dir();
+        let inside = root.join("f.txt");
+        for name in Profile::builtin_names() {
+            let p = Profile::builtin(name).unwrap();
+            let d = PolicyEngine::evaluate(&p, &root, &req(Capability::FileRead, inside.to_str().unwrap()));
+            // read-only through enterprise all allow in-workspace non-sensitive reads.
+            assert_eq!(d.decision, Verdict::Allowed, "{name} should allow a normal read");
+        }
+    }
+
+    #[test]
+    fn from_toml_network_allowlist_and_secret() {
+        let p = Profile::from_toml(
+            "name = \"x\"\n[rules]\nnetwork_access = { allow = \"allowlist\" }\nsecret_read = { allow = \"scoped\" }\n[network_allowlist]\nhosts = [\"api.x.com\"]\n",
+        )
+        .unwrap();
+        assert!(p.secret_read);
+        let root = Path::new("/tmp/ws");
+        assert_eq!(
+            PolicyEngine::evaluate(&p, root, &req(Capability::NetworkAccess, "api.x.com")).decision,
+            Verdict::Allowed
+        );
+        assert_eq!(
+            PolicyEngine::evaluate(&p, root, &req(Capability::NetworkAccess, "evil.com")).decision,
+            Verdict::Denied
+        );
+    }
+
+    #[test]
+    fn bundle_network_host_and_require_approval() {
+        let bundle = PolicyBundle::from_toml(
+            "name = \"b\"\ndeny_network_hosts = [\"bad.com\"]\nrequire_approval = [\"CommandExec\"]\n",
+        )
+        .unwrap();
+        let profile = Profile::full_workspace();
+        let root = Path::new("/tmp/ws");
+        assert_eq!(
+            PolicyEngine::evaluate_with_bundle(&profile, Some(&bundle), root, &req(Capability::NetworkAccess, "bad.com")).decision,
+            Verdict::Denied
+        );
+        // require_approval escalates an auto-allowed command to approval.
+        let d = PolicyEngine::evaluate_with_bundle(&profile, Some(&bundle), root, &req(Capability::CommandExec, "ls"));
+        assert_eq!(d.decision, Verdict::RequiresApproval);
+    }
+
+    #[test]
+    fn capabilities_that_need_approval_or_denied() {
+        let p = Profile::full_workspace();
+        let root = Path::new("/tmp/ws");
+        assert_eq!(
+            PolicyEngine::evaluate(&p, root, &req(Capability::GitOperation, "push")).decision,
+            Verdict::RequiresApproval
+        );
+        assert_eq!(
+            PolicyEngine::evaluate(&p, root, &req(Capability::PluginLoad, "x")).decision,
+            Verdict::Denied
+        );
+        assert_eq!(
+            PolicyEngine::evaluate(&p, root, &req(Capability::ProcessSpawn, "x")).decision,
+            Verdict::RequiresApproval
+        );
+    }
 }

@@ -273,4 +273,70 @@ mod tests {
     fn rollback_only_after_apply() {
         assert!(proposed().rollback().is_err());
     }
+
+    #[test]
+    fn empty_patch_rejected() {
+        let err = PatchTransaction::propose("s", vec![], b"", "d", "r").unwrap_err();
+        assert!(matches!(err, PatchError::Empty));
+    }
+
+    #[test]
+    fn fail_from_various_states() {
+        assert_eq!(proposed().fail().unwrap().status, PatchStatus::Failed);
+        let validated = proposed().validate(b"old").unwrap();
+        assert_eq!(validated.fail().unwrap().status, PatchStatus::Failed);
+    }
+
+    #[test]
+    fn verify_failure_transitions_to_failed() {
+        let p = proposed()
+            .validate(b"old")
+            .unwrap()
+            .approve(true)
+            .unwrap()
+            .mark_applied(b"new", "snap")
+            .unwrap()
+            .mark_verified(false)
+            .unwrap();
+        assert_eq!(p.status, PatchStatus::Failed);
+        assert_eq!(p.test_status, TestStatus::Failed);
+    }
+
+    #[test]
+    fn rollback_from_committed_ok() {
+        let committed = proposed()
+            .validate(b"old")
+            .unwrap()
+            .approve(false)
+            .unwrap()
+            .mark_applied(b"new", "snap")
+            .unwrap()
+            .mark_verified(true)
+            .unwrap()
+            .commit()
+            .unwrap();
+        assert_eq!(committed.clone().rollback().unwrap().status, PatchStatus::RolledBack);
+    }
+
+    #[test]
+    fn provenance_and_auto_approval() {
+        let p = proposed().with_provenance(
+            Some("task_1".into()),
+            Some("step_2".into()),
+            Some("claude".into()),
+        );
+        assert_eq!(p.task_id.as_deref(), Some("task_1"));
+        assert_eq!(p.agent_step_id.as_deref(), Some("step_2"));
+        assert_eq!(p.model_id.as_deref(), Some("claude"));
+        assert!(!p.created_at.is_empty());
+        // auto approval marks ApprovalStatus::Auto
+        let approved = p.validate(b"old").unwrap().approve(true).unwrap();
+        assert_eq!(approved.approval_status, ApprovalStatus::Auto);
+    }
+
+    #[test]
+    fn content_hash_is_stable() {
+        assert_eq!(content_hash(b"abc"), content_hash(b"abc"));
+        assert_ne!(content_hash(b"abc"), content_hash(b"abd"));
+    }
 }
