@@ -58,6 +58,7 @@ type Daemon struct {
 	stateDir   string
 	socketPath string
 	reasoner   Reasoner // agent "thinking" engine (nil => mock loop)
+	summarizer Reasoner // optional cheaper model for compaction/summarization
 
 	mu          sync.Mutex
 	pendingCmds map[string]pendingCommand // decision_id -> command awaiting approval
@@ -114,6 +115,12 @@ func New(opts Options) (*Daemon, error) {
 		if r, err := newClaudeCLIReasoner(); err == nil {
 			d.reasoner = r
 		}
+		// Model tiering: an optional cheaper model for compaction/summarization.
+		if m := os.Getenv("CARINA_SUMMARIZER_MODEL"); m != "" {
+			if r, err := newClaudeCLIReasonerModel(m); err == nil {
+				d.summarizer = r
+			}
+		}
 	}
 	d.recover()
 	d.resumeRuns()
@@ -122,6 +129,18 @@ func New(opts Options) (*Daemon, error) {
 
 // SetReasoner overrides the agent reasoning engine (used by tests).
 func (d *Daemon) SetReasoner(r Reasoner) { d.reasoner = r }
+
+// SetSummarizer overrides the (cheaper) summarization engine used for compaction.
+func (d *Daemon) SetSummarizer(r Reasoner) { d.summarizer = r }
+
+// summarizeReasoner returns the tiered summarizer if configured, else the main
+// reasoner — so compaction/summarization can run on a cheaper model.
+func (d *Daemon) summarizeReasoner() Reasoner {
+	if d.summarizer != nil {
+		return d.summarizer
+	}
+	return d.reasoner
+}
 
 // recover re-initializes any sessions that were active when a previous
 // daemon exited (PRD §17.3: daemon crash recovery). The event logs already

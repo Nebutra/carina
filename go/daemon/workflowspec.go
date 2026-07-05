@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,7 +31,7 @@ type WorkflowSpec struct {
 
 func parseWorkflowSpec(raw []byte) (*WorkflowSpec, error) {
 	var s WorkflowSpec
-	if err := json.Unmarshal(raw, &s); err != nil {
+	if err := decodeStrictJSON(raw, &s); err != nil {
 		return nil, err
 	}
 	if s.Name == "" {

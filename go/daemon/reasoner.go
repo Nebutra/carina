@@ -83,6 +83,17 @@ func newClaudeCLIReasoner() (*claudeCLIReasoner, error) {
 	}, nil
 }
 
+// newClaudeCLIReasonerModel builds a claude reasoner pinned to a specific
+// model — used for the cheaper summarization/compaction tier.
+func newClaudeCLIReasonerModel(model string) (*claudeCLIReasoner, error) {
+	r, err := newClaudeCLIReasoner()
+	if err != nil {
+		return nil, err
+	}
+	r.model = model
+	return r, nil
+}
+
 func (r *claudeCLIReasoner) Name() string { return "claude-cli" }
 
 func (r *claudeCLIReasoner) Think(ctx context.Context, prompt string) (string, error) {

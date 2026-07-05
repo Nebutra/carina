@@ -120,7 +120,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 	verifyAttempts := 0
 	// A cheap summarizer for compaction: reuse the reasoner on the head.
 	summarize := func(head string) (string, error) {
-		return thinkWithRetry(ctx, d.reasoner,
+		return thinkWithRetry(ctx, d.summarizeReasoner(),
 			"Summarize this agent transcript in <=200 words, keeping: the task, decisions made, "+
 				"patches applied (ids), unresolved errors. Drop raw tool output.\n\n"+head)
 	}

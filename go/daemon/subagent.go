@@ -111,7 +111,7 @@ func (d *Daemon) runSubagentLoop(sess *sessionstore.Session, task *scheduler.Tas
 
 	for turn := 1; turn <= maxTurns; turn++ {
 		tr.compact(func(head string) (string, error) {
-			return thinkWithRetry(ctx, d.reasoner, "Summarize concisely:\n"+head)
+			return thinkWithRetry(ctx, d.summarizeReasoner(), "Summarize concisely:\n"+head)
 		})
 		prompt := fmt.Sprintf("%s\n\nTASK: %s\n\nTRANSCRIPT:\n%s\nNext action as one JSON object.",
 			sysPrompt, task.UserPrompt, tr.render())
