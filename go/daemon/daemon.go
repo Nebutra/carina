@@ -158,6 +158,7 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("command.exec", d.handleCommandExec)
 	d.server.Register("audit.report", d.handleAuditReport)
 	d.server.Register("audit.export", d.handleAuditExport)
+	d.server.Register("audit.verify", d.handleAuditVerify)
 	d.server.Register("profile.describe", d.handleProfileDescribe)
 	d.server.Register("secret.grant", d.handleSecretGrant)
 	d.server.Register("secret.request", d.handleSecretRequest)
@@ -246,7 +247,7 @@ func (d *Daemon) handleSessionClose(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.record(id, "SessionClosed", "", map[string]any{"reason": "client request"}, "")
+	d.record(id, "SessionClosed", "", "go", map[string]any{"reason": "client request"}, "")
 	return sess, nil
 }
 
@@ -276,7 +277,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
 	}
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, p.Prompt)
-	d.record(sess.SessionID, "TaskCreated", task.TaskID,
+	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt}, "")
 
 	go d.runTask(sess, task)
@@ -432,7 +433,7 @@ func (d *Daemon) handleFileGet(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	sum := sha256.Sum256(content)
-	d.record(sess.SessionID, "FileRead", "",
+	d.record(sess.SessionID, "FileRead", "", "go",
 		map[string]any{"path": abs, "bytes": len(content)}, decision.DecisionID)
 	return map[string]any{"content": string(content), "hash": hex.EncodeToString(sum[:])}, nil
 }
@@ -543,12 +544,14 @@ func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decisio
 	}
 	command := strings.Join(argv, " ")
 	risk, _ := d.kern.ClassifyCommand(command)
-	d.record(sessionID, "CommandStarted", taskID,
+	// The command is executed by the Zig pi-run tool, so its lifecycle
+	// events are attributed to the Zig actor.
+	d.record(sessionID, "CommandStarted", taskID, "zig",
 		map[string]any{"command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk}, decision.DecisionID)
 
 	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute)
 	if err != nil {
-		d.record(sessionID, "CommandExited", taskID, map[string]any{"exit_code": -1, "error": err.Error()}, "")
+		d.record(sessionID, "CommandExited", taskID, "zig", map[string]any{"exit_code": -1, "error": err.Error()}, "")
 		return nil, err
 	}
 	output := result.Stdout
@@ -560,8 +563,8 @@ func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decisio
 	if redacted, err := d.kern.Redact(sessionID, chunk); err == nil {
 		chunk = redacted
 	}
-	d.record(sessionID, "CommandOutput", taskID, map[string]any{"stream": "stdout", "chunk": chunk}, "")
-	d.record(sessionID, "CommandExited", taskID,
+	d.record(sessionID, "CommandOutput", taskID, "zig", map[string]any{"stream": "stdout", "chunk": chunk}, "")
+	d.record(sessionID, "CommandExited", taskID, "zig",
 		map[string]any{"exit_code": result.ExitCode, "duration_ms": result.DurationMs}, "")
 	return result, nil
 }
@@ -582,6 +585,14 @@ func (d *Daemon) handleAuditExport(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return d.kern.AuditExport(id)
+}
+
+func (d *Daemon) handleAuditVerify(params json.RawMessage) (any, error) {
+	id, err := sessionID(params)
+	if err != nil {
+		return nil, err
+	}
+	return d.kern.AuditVerify(id)
 }
 
 func (d *Daemon) handleProfileDescribe(params json.RawMessage) (any, error) {
@@ -659,13 +670,16 @@ func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription
 }
 
 // record appends an event through the kernel (single audit writer) and
-// fans it out to live subscribers.
-func (d *Daemon) record(sessionID, eventType, taskID string, payload map[string]any, decisionID string) {
-	_ = d.kern.RecordEvent(sessionID, eventType, taskID, payload, decisionID)
+// fans it out to live subscribers. actor tags the language layer that
+// produced the effect (go/rust/zig/model/user) so the audit trail shows
+// the Go → Rust → Zig control flow (PRD §4.1).
+func (d *Daemon) record(sessionID, eventType, taskID, actor string, payload map[string]any, decisionID string) {
+	_ = d.kern.RecordEvent(sessionID, eventType, taskID, actor, payload, decisionID)
 	d.events.Publish(sessionID, map[string]any{
 		"session_id": sessionID,
 		"task_id":    taskID,
 		"type":       eventType,
+		"actor":      actor,
 		"timestamp":  time.Now().UTC().Format(time.RFC3339),
 		"payload":    payload,
 	})

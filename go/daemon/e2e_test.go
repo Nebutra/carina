@@ -186,6 +186,18 @@ func waitForSocket(t *testing.T, path string) {
 	t.Fatalf("socket %s never appeared", path)
 }
 
+// waitFor polls cond up to ~3s; fails the test if it never becomes true.
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	for i := 0; i < 150; i++ {
+		if cond() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("condition not met within timeout")
+}
+
 // shortSocket returns a socket path under /tmp short enough for the
 // platform's sockaddr_un limit (~104 bytes on macOS), regardless of the
 // test name length that t.TempDir() would otherwise inject.

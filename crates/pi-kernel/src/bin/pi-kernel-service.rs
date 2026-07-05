@@ -6,7 +6,7 @@
 //! transactional patch apply/rollback. The kernel is the single writer of
 //! the audit log so the control plane cannot bypass it.
 
-use pi_audit::{Event, EventType};
+use pi_audit::{Actor, Event, EventType};
 use pi_kernel::{ApprovalPolicy, Kernel, KernelError};
 use pi_patch::{content_hash, PatchTransaction};
 use pi_policy::{Capability, CapabilityRequest, Decision, PolicyBundle, Principal, Profile, Verdict};
@@ -98,6 +98,7 @@ impl Service {
             "kernel.audit.read" => self.audit_read(p),
             "kernel.audit.report" => self.audit_report(p),
             "kernel.audit.export" => self.audit_export(p),
+            "kernel.audit.verify" => self.audit_verify(p),
             "kernel.patch.propose" => self.patch_propose(p),
             "kernel.patch.apply" => self.patch_apply(p),
             "kernel.patch.rollback" => self.patch_rollback(p),
@@ -316,7 +317,12 @@ impl Service {
         let payload = p.get("payload").cloned().unwrap_or_else(|| json!({}));
         let ctx = self.ctx(p)?;
 
-        let mut event = Event::new(&session_id, event_type, payload);
+        let actor = p
+            .get("actor")
+            .and_then(Value::as_str)
+            .map(Actor::from_str)
+            .unwrap_or(Actor::Go); // events recorded via RPC come from the Go control plane
+        let mut event = Event::new(&session_id, event_type, payload).with_actor(actor);
         if let Some(task_id) = p.get("task_id").and_then(Value::as_str) {
             event = event.with_task(task_id);
         }
@@ -336,6 +342,12 @@ impl Service {
     fn audit_export(&mut self, p: &Value) -> Result<Value, String> {
         let ctx = self.ctx(p)?;
         ctx.kernel.export_audit().map_err(err_str)
+    }
+
+    fn audit_verify(&mut self, p: &Value) -> Result<Value, String> {
+        let ctx = self.ctx(p)?;
+        let report = ctx.kernel.audit().verify().map_err(err_str)?;
+        serde_json::to_value(&report).map_err(err_str)
     }
 
     fn audit_report(&mut self, p: &Value) -> Result<Value, String> {

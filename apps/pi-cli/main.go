@@ -22,6 +22,9 @@ Usage:
   pi resume <session_id>          show a session
   pi watch <session_id>           stream the live event feed
   pi audit <session_id>           replay the session event stream
+  pi audit verify <session_id>    verify the tamper-evident hash chain
+  pi audit last                   audit summary of the most recent session
+  pi replay <session_id>          replay the session event stream
   pi report <session_id>          audit summary (violations, files, commands)
   pi export <session_id>          export the full audit bundle (centralized audit)
   pi search <session_id> <text>   structured workspace search (pi-grep)
@@ -99,11 +102,18 @@ func run(cmd string, args []string) error {
 	case "resume":
 		return callArg(c, "session.get", args, "session_id")
 	case "audit":
-		return callArg(c, "session.replay", args, "session_id")
+		return cmdAudit(c, args)
+	case "replay":
+		if len(args) < 1 {
+			return fmt.Errorf("usage: pi replay <session_id>")
+		}
+		return call(c, "session.replay", map[string]any{"session_id": args[0]})
 	case "report":
 		return callArg(c, "audit.report", args, "session_id")
 	case "export":
 		return callArg(c, "audit.export", args, "session_id")
+	case "verify":
+		return callArg(c, "audit.verify", args, "session_id")
 	case "close":
 		return callArg(c, "session.close", args, "session_id")
 
@@ -266,6 +276,54 @@ func cmdPlugin(c *rpcClient, args []string) error {
 	default:
 		return fmt.Errorf("unknown plugin subcommand %q", args[0])
 	}
+}
+
+// cmdAudit dispatches:
+//
+//	pi audit <session_id>          replay the event stream
+//	pi audit verify <session_id>   verify the tamper-evident hash chain
+//	pi audit last                  audit summary of the most recent session
+func cmdAudit(c *rpcClient, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: pi audit <session_id> | pi audit verify <session_id> | pi audit last")
+	}
+	switch args[0] {
+	case "verify":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: pi audit verify <session_id>")
+		}
+		return call(c, "audit.verify", map[string]any{"session_id": args[1]})
+	case "last":
+		sid, err := latestSession(c)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("latest session: %s\n", sid)
+		return call(c, "audit.report", map[string]any{"session_id": sid})
+	default:
+		return call(c, "session.replay", map[string]any{"session_id": args[0]})
+	}
+}
+
+// latestSession returns the most recently created session id.
+func latestSession(c *rpcClient) (string, error) {
+	var sessions []struct {
+		SessionID string `json:"session_id"`
+		CreatedAt string `json:"created_at"`
+	}
+	if err := c.Call("session.list", map[string]any{}, &sessions); err != nil {
+		return "", err
+	}
+	if len(sessions) == 0 {
+		return "", fmt.Errorf("no sessions yet")
+	}
+	latest := sessions[0]
+	for _, s := range sessions[1:] {
+		if s.CreatedAt > latest.CreatedAt {
+			latest = s
+		}
+	}
+	return latest.SessionID, nil
 }
 
 func cmdSecret(c *rpcClient, args []string) error {

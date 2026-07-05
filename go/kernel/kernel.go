@@ -201,16 +201,27 @@ func (s *Service) Deny(sessionID, decisionID, approver, reason string) (*Decisio
 	return &d, err
 }
 
-// RecordEvent appends a lifecycle event to the session's audit log.
-func (s *Service) RecordEvent(sessionID, eventType, taskID string, payload map[string]any, decisionID string) error {
+// RecordEvent appends a lifecycle event to the session's audit log, tagged
+// with the language actor that produced it (go/rust/zig/model/user).
+func (s *Service) RecordEvent(sessionID, eventType, taskID, actor string, payload map[string]any, decisionID string) error {
 	params := map[string]any{"session_id": sessionID, "type": eventType, "payload": payload}
 	if taskID != "" {
 		params["task_id"] = taskID
+	}
+	if actor != "" {
+		params["actor"] = actor
 	}
 	if decisionID != "" {
 		params["permission_decision_id"] = decisionID
 	}
 	return s.call("kernel.event.record", params, nil)
+}
+
+// AuditVerify recomputes the session's hash chain and reports any tampering.
+func (s *Service) AuditVerify(sessionID string) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := s.call("kernel.audit.verify", map[string]any{"session_id": sessionID}, &out)
+	return out, err
 }
 
 func (s *Service) ReadEvents(sessionID string) (json.RawMessage, error) {

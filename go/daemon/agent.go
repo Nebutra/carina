@@ -22,13 +22,13 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 	decision, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.TaskID)
 	if err == nil && decision.Decision == "allowed" {
 		if files, err := d.tools.Scan(sess.WorkspaceRoot); err == nil {
-			d.record(sess.SessionID, "FileRead", task.TaskID,
+			d.record(sess.SessionID, "FileRead", task.TaskID, "zig",
 				map[string]any{"resource": sess.WorkspaceRoot, "bytes": len(files)}, decision.DecisionID)
 		}
 	}
 
 	// 2. Call the model router.
-	d.record(sess.SessionID, "ModelRequested", task.TaskID,
+	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
 		map[string]any{"prompt": task.UserPrompt}, "")
 	resp, err := d.router.Complete(context.Background(), modelrouter.Request{
 		Model:  "default",
@@ -36,11 +36,11 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 	})
 	if err != nil {
 		d.sched.SetStatus(task.TaskID, "failed")
-		d.record(sess.SessionID, "ModelResponded", task.TaskID,
+		d.record(sess.SessionID, "ModelResponded", task.TaskID, "model",
 			map[string]any{"error": err.Error()}, "")
 		return
 	}
-	d.record(sess.SessionID, "ModelResponded", task.TaskID, map[string]any{
+	d.record(sess.SessionID, "ModelResponded", task.TaskID, "model", map[string]any{
 		"provider": resp.Provider, "model": resp.Model,
 		"output_tokens": resp.OutputTokens, "text": truncate(resp.Text, 500),
 	}, "")
