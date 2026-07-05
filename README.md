@@ -241,6 +241,7 @@ Honest state of things. Carina is **alpha** — the enforcement core is real; th
 - [ ] Windows support
 - [ ] SDK parity across TypeScript / Python / Go
 - [ ] SLSA build provenance on all release artifacts
+- [ ] Hosted one-line installer at `get.nebutra.com` + Homebrew tap + published `SECURITY.md` (security@nebutra.com)
 
 Track it in [GitHub Issues](https://github.com/Nebutra/carina/issues) — gaps are contribution opportunities, not surprises.
 
