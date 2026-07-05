@@ -16,7 +16,7 @@
 [![no telemetry](https://img.shields.io/badge/telemetry-none-0BF1C3)](#)
 [![powered by Nebutra](https://img.shields.io/badge/powered%20by-Nebutra-0033FE)](#)
 
-`curl -fsSL https://get.nebutra.dev/carina | sh`
+`curl -fsSL https://get.nebutra.com/carina | sh`
 
 [English](README.md) · **简体中文** · [日本語](README.ja.md)
 
@@ -110,7 +110,7 @@ Go makes it run.  Rust makes it safe.  Zig makes it sharp.  LLM makes it useful.
 **一条命令（推荐）：**
 
 ```bash
-curl -fsSL https://get.nebutra.dev/carina | sh
+curl -fsSL https://get.nebutra.com/carina | sh
 ```
 
 **Homebrew：**
@@ -193,7 +193,7 @@ carina rollback f3a9c1
 
 威胁模型、日志格式与验证协议见 [`docs/security-model.md`](docs/security-model.md)。
 
-**上报漏洞：** 请发邮件至 **security@nebutra.dev**（参见 [`SECURITY.md`](SECURITY.md)）。请不要为安全上报开公开 issue。
+**上报漏洞：** 请发邮件至 **security@nebutra.com**（参见 [`SECURITY.md`](SECURITY.md)）。请不要为安全上报开公开 issue。
 
 ---
 
@@ -263,6 +263,6 @@ Apache-2.0 —— 参见 [`LICENSE`](LICENSE)。
 <div align="center">
 
 **Nebutra Carina** —— 你的智能体运行其上的安全龙骨。
-由 [Nebutra](https://nebutra.dev) 提供支持 · [Sailor](https://github.com/Nebutra/create-sailor) 的姊妹项目。
+由 [Nebutra](https://nebutra.com) 提供支持 · [Sailor](https://github.com/Nebutra/create-sailor) 的姊妹项目。
 
 </div>

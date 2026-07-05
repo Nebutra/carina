@@ -16,7 +16,7 @@
 [![no telemetry](https://img.shields.io/badge/telemetry-none-0BF1C3)](#)
 [![powered by Nebutra](https://img.shields.io/badge/powered%20by-Nebutra-0033FE)](#)
 
-`curl -fsSL https://get.nebutra.dev/carina | sh`
+`curl -fsSL https://get.nebutra.com/carina | sh`
 
 [English](README.md) · [简体中文](README.zh-CN.md) · **日本語**
 
@@ -110,7 +110,7 @@ Go makes it run.  Rust makes it safe.  Zig makes it sharp.  LLM makes it useful.
 **ワンコマンド（推奨）：**
 
 ```bash
-curl -fsSL https://get.nebutra.dev/carina | sh
+curl -fsSL https://get.nebutra.com/carina | sh
 ```
 
 **Homebrew：**
@@ -193,7 +193,7 @@ carina rollback f3a9c1
 
 脅威モデル、ログフォーマット、検証プロトコルは：[`docs/security-model.md`](docs/security-model.md)。
 
-**脆弱性の報告：** **security@nebutra.dev** までメールしてください（[`SECURITY.md`](SECURITY.md) 参照）。セキュリティ報告について公開 issue を立てるのはお控えください。
+**脆弱性の報告：** **security@nebutra.com** までメールしてください（[`SECURITY.md`](SECURITY.md) 参照）。セキュリティ報告について公開 issue を立てるのはお控えください。
 
 ---
 
@@ -263,6 +263,6 @@ Apache-2.0 — [`LICENSE`](LICENSE) を参照してください。
 <div align="center">
 
 **Nebutra Carina** — エージェントが走るための、安全なキール（竜骨）。
-Powered by [Nebutra](https://nebutra.dev) · sibling to [Sailor](https://github.com/Nebutra/create-sailor).
+Powered by [Nebutra](https://nebutra.com) · sibling to [Sailor](https://github.com/Nebutra/create-sailor).
 
 </div>

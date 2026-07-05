@@ -16,7 +16,7 @@
 [![no telemetry](https://img.shields.io/badge/telemetry-none-0BF1C3)](#)
 [![powered by Nebutra](https://img.shields.io/badge/powered%20by-Nebutra-0033FE)](#)
 
-`curl -fsSL https://get.nebutra.dev/carina | sh`
+`curl -fsSL https://get.nebutra.com/carina | sh`
 
 **English** · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
 
@@ -110,7 +110,7 @@ Depth lives in [`docs/architecture.md`](docs/architecture.md) and [`docs/securit
 **One command (recommended):**
 
 ```bash
-curl -fsSL https://get.nebutra.dev/carina | sh
+curl -fsSL https://get.nebutra.com/carina | sh
 ```
 
 **Homebrew:**
@@ -193,7 +193,7 @@ Sub-agents inherit **attenuated** capability sets (child ⊆ parent), so delegat
 
 Threat model, log format, and verification protocol: [`docs/security-model.md`](docs/security-model.md).
 
-**Reporting a vulnerability:** email **security@nebutra.dev** (see [`SECURITY.md`](SECURITY.md)). Please don't open public issues for security reports.
+**Reporting a vulnerability:** email **security@nebutra.com** (see [`SECURITY.md`](SECURITY.md)). Please don't open public issues for security reports.
 
 ---
 
@@ -263,6 +263,6 @@ Apache-2.0 — see [`LICENSE`](LICENSE).
 <div align="center">
 
 **Nebutra Carina** — the secure keel your agents run on.
-Powered by [Nebutra](https://nebutra.dev) · sibling to [Sailor](https://github.com/Nebutra/create-sailor).
+Powered by [Nebutra](https://nebutra.com) · sibling to [Sailor](https://github.com/Nebutra/create-sailor).
 
 </div>
