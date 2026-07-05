@@ -336,6 +336,7 @@ func (d *Daemon) executeAction(sess *sessionstore.Session, task *scheduler.Task,
 		}
 		d.record(sess.SessionID, "FileRead", task.TaskID, "go",
 			map[string]any{"path": abs, "bytes": len(content)}, dec.DecisionID)
+		d.recordRead(sess.SessionID, act.Path, string(content))
 		return string(content)
 
 	case "search":
@@ -387,6 +388,11 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 	if path == "" {
 		return "error: patch needs a path"
 	}
+	// Read-before-write: refuse to clobber a file the agent never read, or one
+	// that drifted since it read it (dirty write).
+	if err := d.checkWriteProvenance(sess.SessionID, path, resolveIn(sess.WorkspaceRoot, path)); err != nil {
+		return "DENIED: " + err.Error()
+	}
 	patch, err := d.kern.PatchPropose(sess.SessionID, task.TaskID, "agent edit",
 		[]kernel.FileChange{{Path: path, NewContent: content}})
 	if err != nil {
@@ -396,6 +402,9 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 	if err != nil {
 		return "patch apply failed (nothing written): " + err.Error()
 	}
+	// The agent's edit is now the on-disk truth; record it so a follow-up edit
+	// in the same run isn't flagged as a blind overwrite.
+	d.recordRead(sess.SessionID, path, content)
 	return fmt.Sprintf("patch %s applied to %s (status=%s, rollbackable)", applied.PatchID, path, applied.Status)
 }
 

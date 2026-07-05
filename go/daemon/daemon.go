@@ -65,6 +65,9 @@ type Daemon struct {
 
 	runs   *runStore     // durable background-run registry (survives restart)
 	runSem chan struct{} // concurrency cap for background runs
+
+	readProv   map[string]map[string]string // session -> relpath -> sha256 of last read (dirty-write guard)
+	readProvMu sync.Mutex
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -110,6 +113,7 @@ func New(opts Options) (*Daemon, error) {
 		maxConcurrent = 8
 	}
 	d.runSem = make(chan struct{}, maxConcurrent)
+	d.readProv = map[string]map[string]string{}
 	// Best-effort: wire the claude CLI reasoner if available and not offline.
 	if !opts.Offline {
 		if r, err := newClaudeCLIReasoner(); err == nil {
@@ -423,6 +427,43 @@ func (d *Daemon) persistRun(taskID string) {
 	if t, ok := d.sched.Get(taskID); ok {
 		d.runs.save(t)
 	}
+}
+
+// recordRead notes the hash of content the agent read for a path, so a later
+// blind or stale full-file overwrite (a dirty write) can be caught.
+func (d *Daemon) recordRead(sessionID, path, content string) {
+	h := sha256.Sum256([]byte(content))
+	d.readProvMu.Lock()
+	defer d.readProvMu.Unlock()
+	if d.readProv[sessionID] == nil {
+		d.readProv[sessionID] = map[string]string{}
+	}
+	d.readProv[sessionID][path] = hex.EncodeToString(h[:])
+}
+
+// checkWriteProvenance rejects a full-file overwrite that would clobber an
+// existing file the agent never read, or one that drifted since it was last
+// read (a concurrent agent/hook/formatter touched it). New files are allowed.
+func (d *Daemon) checkWriteProvenance(sessionID, relpath, abspath string) error {
+	cur, err := os.ReadFile(abspath)
+	if err != nil {
+		return nil // file does not exist yet — nothing to clobber
+	}
+	sum := sha256.Sum256(cur)
+	curHash := hex.EncodeToString(sum[:])
+	d.readProvMu.Lock()
+	seen := ""
+	if m := d.readProv[sessionID]; m != nil {
+		seen = m[relpath]
+	}
+	d.readProvMu.Unlock()
+	if seen == "" {
+		return fmt.Errorf("refusing blind overwrite of existing file %q — read it first", relpath)
+	}
+	if seen != curHash {
+		return fmt.Errorf("stale write: %q changed since you last read it — re-read before editing", relpath)
+	}
+	return nil
 }
 
 // guardRun runs a background agent function under a concurrency cap and a panic
