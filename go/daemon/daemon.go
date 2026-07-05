@@ -235,6 +235,33 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("worker.heartbeat", d.handleWorkerHeartbeat)
 	d.server.Register("worker.list", d.handleWorkerList)
 	d.server.Register("worker.revoke", d.handleWorkerRevoke)
+
+	// The remote (TCP) transport is restricted to read/observe methods; every
+	// mutating/side-effecting method stays local-only. A local-only kill-switch
+	// (daemon.remote.disable) can cut off remote access entirely.
+	d.server.MarkRemoteSafe(
+		"daemon.status", "daemon.metrics",
+		"session.get", "session.list", "session.replay",
+		"task.status", "task.list", "task.result",
+		"audit.report", "audit.export", "audit.verify",
+		"profile.describe", "session.events.stream",
+		// Remote workers legitimately join and heartbeat over TCP.
+		"worker.register", "worker.heartbeat", "worker.list",
+	)
+	d.server.Register("daemon.remote.disable", d.handleRemoteDisable)
+}
+
+// handleRemoteDisable toggles the remote kill-switch (local-only: it is not on
+// the remote allowlist, so a remote caller can never re-enable itself).
+func (d *Daemon) handleRemoteDisable(params json.RawMessage) (any, error) {
+	var p struct {
+		On bool `json:"on"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	d.server.SetRemoteDisabled(p.On)
+	return map[string]any{"remote_disabled": p.On}, nil
 }
 
 // ---- daemon ---------------------------------------------------------------

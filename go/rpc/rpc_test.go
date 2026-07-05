@@ -93,6 +93,7 @@ func TestStreamNotifications(t *testing.T) {
 func TestTCPRoundTrip(t *testing.T) {
 	s := NewServer()
 	s.Register("ping", func(_ json.RawMessage) (any, error) { return map[string]bool{"ok": true}, nil })
+	s.MarkRemoteSafe("ping") // TCP transport is now origin-restricted
 
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	addr := ln.Addr().String()

@@ -20,6 +20,16 @@ const (
 	CodeInternalError  = -32603
 )
 
+// Origin identifies which transport a request arrived on. Local (unix socket)
+// is trusted; Remote (TCP) is restricted to an explicit read/observe allowlist
+// and can be cut off entirely with the kill-switch.
+type Origin int
+
+const (
+	OriginLocal Origin = iota
+	OriginRemote
+)
+
 type Request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -81,14 +91,54 @@ func (Response) withNotify(method string, params any) notification {
 }
 
 type Server struct {
-	mu        sync.RWMutex
-	handlers  map[string]Handler
-	streams   map[string]StreamHandler
-	listeners []net.Listener
+	mu             sync.RWMutex
+	handlers       map[string]Handler
+	streams        map[string]StreamHandler
+	listeners      []net.Listener
+	remoteSafe     map[string]bool // methods a Remote origin may call
+	remoteDisabled bool            // kill-switch: refuse all Remote calls
 }
 
 func NewServer() *Server {
-	return &Server{handlers: make(map[string]Handler), streams: make(map[string]StreamHandler)}
+	return &Server{
+		handlers:   make(map[string]Handler),
+		streams:    make(map[string]StreamHandler),
+		remoteSafe: make(map[string]bool),
+	}
+}
+
+// MarkRemoteSafe allowlists a method for the Remote (TCP) transport. Anything
+// not marked is local-only (mutating/side-effecting methods stay off remote).
+func (s *Server) MarkRemoteSafe(methods ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, m := range methods {
+		s.remoteSafe[m] = true
+	}
+}
+
+// SetRemoteDisabled toggles the remote kill-switch: when on, every Remote call
+// is refused regardless of the allowlist.
+func (s *Server) SetRemoteDisabled(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.remoteDisabled = on
+}
+
+// remoteAuthorized reports whether a method may run for the given origin.
+func (s *Server) remoteAuthorized(method string, origin Origin) (bool, string) {
+	if origin == OriginLocal {
+		return true, ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.remoteDisabled {
+		return false, "remote access is disabled (kill-switch)"
+	}
+	if !s.remoteSafe[method] {
+		return false, "method not available over remote transport: " + method
+	}
+	return true, ""
 }
 
 func (s *Server) Register(method string, h Handler) {
@@ -109,7 +159,7 @@ func (s *Server) ListenUnix(socketPath string) error {
 	if err != nil {
 		return fmt.Errorf("rpc: listen %s: %w", socketPath, err)
 	}
-	return s.accept(ln)
+	return s.accept(ln, OriginLocal)
 }
 
 func (s *Server) ListenTCP(addr string) error {
@@ -117,10 +167,10 @@ func (s *Server) ListenTCP(addr string) error {
 	if err != nil {
 		return fmt.Errorf("rpc: listen tcp %s: %w", addr, err)
 	}
-	return s.accept(ln)
+	return s.accept(ln, OriginRemote)
 }
 
-func (s *Server) accept(ln net.Listener) error {
+func (s *Server) accept(ln net.Listener, origin Origin) error {
 	s.mu.Lock()
 	s.listeners = append(s.listeners, ln)
 	s.mu.Unlock()
@@ -129,7 +179,7 @@ func (s *Server) accept(ln net.Listener) error {
 		if err != nil {
 			return nil // listener closed
 		}
-		go s.serve(conn)
+		go s.serve(conn, origin)
 	}
 }
 
@@ -142,7 +192,7 @@ func (s *Server) Close() error {
 	return nil
 }
 
-func (s *Server) serve(conn net.Conn) {
+func (s *Server) serve(conn net.Conn, origin Origin) {
 	defer conn.Close()
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
@@ -158,6 +208,12 @@ func (s *Server) serve(conn net.Conn) {
 		var req Request
 		if err := json.Unmarshal(line, &req); err != nil {
 			_ = enc.Encode(Response{JSONRPC: "2.0", Error: &Error{Code: CodeParseError, Message: err.Error()}})
+			continue
+		}
+
+		// Enforce transport-origin restriction before doing any work.
+		if ok, reason := s.remoteAuthorized(req.Method, origin); !ok {
+			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: reason}})
 			continue
 		}
 
