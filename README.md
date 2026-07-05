@@ -231,6 +231,7 @@ Honest state of things. Carina is **alpha** — the enforcement core is real; th
 - [x] Sub-agent capability attenuation (child ⊆ parent)
 - [x] `carina` CLI (alias `cr`)
 - [x] Workflow orchestration engine — declarative DAG of subagents, parallel + resumable
+- [x] Durable, resumable background runs — per-turn checkpoint + restart-resume, run registry (`task.list`/`task.result`), concurrency cap, panic isolation
 
 **Planned**
 - [ ] Additional model providers beyond the initial router set
@@ -242,6 +243,7 @@ Honest state of things. Carina is **alpha** — the enforcement core is real; th
 - [ ] SDK parity across TypeScript / Python / Go
 - [ ] SLSA build provenance on all release artifacts
 - [ ] Hosted one-line installer at `get.nebutra.com` + Homebrew tap + published `SECURITY.md` (security@nebutra.com)
+- [ ] Background-agent UX: attach/tail with replay cursor, completion webhooks, git-worktree isolation, remote/sandboxed runs
 
 Track it in [GitHub Issues](https://github.com/Nebutra/carina/issues) — gaps are contribution opportunities, not surprises.
 
