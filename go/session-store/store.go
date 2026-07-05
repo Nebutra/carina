@@ -23,6 +23,7 @@ type Session struct {
 	WorkspaceRoot     string    `json:"workspace_root"`
 	Status            string    `json:"status"` // active | paused | closed
 	PermissionProfile string    `json:"permission_profile"`
+	ApprovalMode      string    `json:"approval_mode,omitempty"` // untrusted|on_request|never
 	CreatedAt         time.Time `json:"created_at"`
 }
 
@@ -93,6 +94,11 @@ func (s *Store) Recoverable() []*Session {
 }
 
 func (s *Store) CreateSession(workspaceRoot, profile string) (*Session, error) {
+	return s.CreateSessionMode(workspaceRoot, profile, "")
+}
+
+// CreateSessionMode also sets the per-session approval mode (goal axis).
+func (s *Store) CreateSessionMode(workspaceRoot, profile, approvalMode string) (*Session, error) {
 	if profile == "" {
 		profile = "safe-edit"
 	}
@@ -102,6 +108,7 @@ func (s *Store) CreateSession(workspaceRoot, profile string) (*Session, error) {
 		WorkspaceRoot:     workspaceRoot,
 		Status:            "active",
 		PermissionProfile: profile,
+		ApprovalMode:      approvalMode,
 		CreatedAt:         time.Now().UTC(),
 	}
 	s.mu.Lock()

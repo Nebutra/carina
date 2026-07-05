@@ -112,7 +112,7 @@ func (d *Daemon) SetReasoner(r Reasoner) { d.reasoner = r }
 func (d *Daemon) recover() {
 	recovered := 0
 	for _, sess := range d.store.Recoverable() {
-		if err := d.kern.InitSessionWithPolicy(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile, d.org); err != nil {
+		if err := d.kern.InitSessionFull(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile, sess.ApprovalMode, d.org); err != nil {
 			continue
 		}
 		recovered++
@@ -229,6 +229,7 @@ func (d *Daemon) handleSessionCreate(params json.RawMessage) (any, error) {
 	var p struct {
 		WorkspaceRoot string `json:"workspace_root"`
 		Profile       string `json:"profile"`
+		ApprovalMode  string `json:"approval_mode"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -239,11 +240,11 @@ func (d *Daemon) handleSessionCreate(params json.RawMessage) (any, error) {
 	if _, err := os.Stat(p.WorkspaceRoot); err != nil {
 		return nil, fmt.Errorf("workspace_root: %w", err)
 	}
-	sess, err := d.store.CreateSession(p.WorkspaceRoot, p.Profile)
+	sess, err := d.store.CreateSessionMode(p.WorkspaceRoot, p.Profile, p.ApprovalMode)
 	if err != nil {
 		return nil, err
 	}
-	if err := d.kern.InitSessionWithPolicy(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile, d.org); err != nil {
+	if err := d.kern.InitSessionFull(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile, sess.ApprovalMode, d.org); err != nil {
 		return nil, fmt.Errorf("kernel session init: %w", err)
 	}
 	return sess, nil
@@ -290,8 +291,9 @@ func (d *Daemon) handleSessionReplay(params json.RawMessage) (any, error) {
 
 func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	var p struct {
-		SessionID string `json:"session_id"`
-		Prompt    string `json:"prompt"`
+		SessionID       string                   `json:"session_id"`
+		Prompt          string                   `json:"prompt"`
+		SuccessCriteria []scheduler.SuccessCheck `json:"success_criteria"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -303,7 +305,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	if sess.Status != "active" {
 		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
 	}
-	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, p.Prompt)
+	task := d.sched.SubmitWithGoal(sess.SessionID, sess.WorkspaceID, p.Prompt, p.SuccessCriteria)
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt}, "")
 

@@ -9,7 +9,7 @@
 use pi_audit::{Actor, Event, EventType};
 use pi_kernel::{ApprovalPolicy, Kernel, KernelError};
 use pi_patch::{content_hash, PatchTransaction};
-use pi_policy::{Capability, CapabilityRequest, Decision, PolicyBundle, Principal, Profile, Verdict};
+use pi_policy::{ApprovalMode, Capability, CapabilityRequest, Decision, PolicyBundle, Principal, Profile, Verdict};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -154,6 +154,10 @@ impl Service {
                 }
             }
         }
+        // Goal mechanism: the approval-mode axis (untrusted/on_request/never).
+        if let Some(mode) = p.get("approval_mode").and_then(Value::as_str) {
+            kernel.set_approval_mode(ApprovalMode::from_str(mode));
+        }
         // Enterprise: role-based approval thresholds.
         if let Some(rules) = p.get("approval_policy").and_then(Value::as_array) {
             let mut policy = ApprovalPolicy::default();
@@ -282,12 +286,17 @@ impl Service {
         let decision_id = str_param(p, "decision_id")?;
         let approver = p.get("approver").and_then(Value::as_str).unwrap_or("user").to_string();
         let role = p.get("role").and_then(Value::as_str).map(String::from);
+        let for_session = p.get("for_session").and_then(Value::as_bool).unwrap_or(false);
         let ctx = self.ctx(p)?;
         let pending = ctx
             .pending
             .remove(&decision_id)
             .ok_or_else(|| format!("no pending decision {decision_id}"))?;
-        let approved = ctx.kernel.approve_as(&pending, &approver, role.as_deref()).map_err(err_str)?;
+        let approved = if for_session && role.is_none() {
+            ctx.kernel.approve_for_session(&pending, &approver).map_err(err_str)?
+        } else {
+            ctx.kernel.approve_as(&pending, &approver, role.as_deref()).map_err(err_str)?
+        };
         // A role-rejected approval stays pending so it can be retried.
         if approved.decision != Verdict::Allowed {
             ctx.pending.insert(decision_id.clone(), pending);

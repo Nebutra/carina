@@ -9,7 +9,9 @@ mod secret;
 pub use secret::SecretBroker;
 
 use pi_audit::{AuditError, AuditLog, Event, EventType};
-use pi_policy::{Capability, CapabilityRequest, Decision, PolicyBundle, PolicyEngine, Profile, Verdict};
+use pi_policy::{ApprovalMode, Capability, CapabilityRequest, Decision, PolicyBundle, PolicyEngine, Profile, Verdict};
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 pub use pi_audit;
@@ -64,6 +66,10 @@ pub struct Kernel {
     workspace_root: PathBuf,
     profile: Profile,
     bundle: Option<PolicyBundle>,
+    approval_mode: ApprovalMode,
+    /// Approval memory (Codex ApprovedForSession): capability|resource-prefix
+    /// keys that were approved for the whole session, to cut approval fatigue.
+    approval_cache: RefCell<HashSet<String>>,
     audit: AuditLog,
     secrets: SecretBroker,
     verifier: pi_plugin_runtime::SignatureVerifier,
@@ -118,11 +124,25 @@ impl Kernel {
             workspace_root: workspace_root.into(),
             profile,
             bundle: None,
+            approval_mode: ApprovalMode::default(),
+            approval_cache: RefCell::new(HashSet::new()),
             audit,
             secrets: SecretBroker::new(),
             verifier: pi_plugin_runtime::SignatureVerifier::new(),
             approval_policy: ApprovalPolicy::default(),
         })
+    }
+
+    /// Sets the approval mode (the "when to ask" axis, orthogonal to the
+    /// profile's "what can you do" axis).
+    pub fn set_approval_mode(&mut self, mode: ApprovalMode) {
+        self.approval_mode = mode;
+    }
+
+    fn cache_key(cap: Capability, resource: &str) -> String {
+        // Cache by capability + a coarse resource prefix (first path/word).
+        let prefix = resource.split_whitespace().next().unwrap_or(resource);
+        format!("{cap:?}|{prefix}")
     }
 
     /// Attaches an organization policy bundle that can only tighten this
@@ -184,8 +204,18 @@ impl Kernel {
     /// Denials are additionally logged as `PolicyViolation` so audit reports
     /// can answer "why was this blocked" (PRD §8.2 acceptance criteria).
     pub fn request(&self, req: CapabilityRequest) -> Result<Decision, KernelError> {
-        let decision =
+        let mut decision =
             PolicyEngine::evaluate_with_bundle(&self.profile, self.bundle.as_ref(), &self.workspace_root, &req);
+        // Apply the orthogonal approval-mode axis (Codex two-axis model).
+        decision = pi_policy::apply_approval_mode(self.approval_mode, decision);
+        // Approval memory: a prior ApprovedForSession auto-satisfies.
+        if decision.decision == Verdict::RequiresApproval {
+            let key = Self::cache_key(decision.capability, &decision.resource);
+            if self.approval_cache.borrow().contains(&key) {
+                decision.decision = Verdict::Allowed;
+                decision.reason = "approved for session (cached)".into();
+            }
+        }
 
         let event_type = match decision.decision {
             Verdict::Allowed => EventType::ToolApproved,
@@ -222,6 +252,15 @@ impl Kernel {
     /// Resolves a `requires_approval` decision. The approval itself is an
     /// audit event (`ToolApproved`) that records who approved it.
     pub fn approve(&self, decision: &Decision, approver: &str) -> Result<Decision, KernelError> {
+        self.approve_as(decision, approver, None)
+    }
+
+    /// Approves and remembers for the whole session: subsequent requests for
+    /// the same capability+resource-prefix auto-satisfy (Codex
+    /// ApprovedForSession — cuts approval fatigue on long tasks).
+    pub fn approve_for_session(&self, decision: &Decision, approver: &str) -> Result<Decision, KernelError> {
+        let key = Self::cache_key(decision.capability, &decision.resource);
+        self.approval_cache.borrow_mut().insert(key);
         self.approve_as(decision, approver, None)
     }
 

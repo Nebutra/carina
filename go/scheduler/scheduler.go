@@ -11,16 +11,26 @@ import (
 	sessionstore "github.com/TsekaLuk/pi-os/go/session-store"
 )
 
+// SuccessCheck is an objective completion criterion for a goal (Codex-style
+// verifiable "done", instead of pure model self-judgment).
+type SuccessCheck struct {
+	Kind    string `json:"kind"` // command_zero_exit | file_exists | grep_absent
+	Command string `json:"command,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Pattern string `json:"pattern,omitempty"`
+}
+
 // Task mirrors protocol/schemas/task.schema.json.
 type Task struct {
-	TaskID      string    `json:"task_id"`
-	SessionID   string    `json:"session_id"`
-	WorkspaceID string    `json:"workspace_id"`
-	Status      string    `json:"status"` // queued | running | paused | waiting_approval | completed | failed | cancelled
-	UserPrompt  string    `json:"user_prompt"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	RiskLevel   int       `json:"risk_level"`
+	TaskID          string         `json:"task_id"`
+	SessionID       string         `json:"session_id"`
+	WorkspaceID     string         `json:"workspace_id"`
+	Status          string         `json:"status"` // queued | running | paused | waiting_approval | completed | degraded | failed | cancelled
+	UserPrompt      string         `json:"user_prompt"`
+	SuccessCriteria []SuccessCheck `json:"success_criteria,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	RiskLevel       int            `json:"risk_level"`
 }
 
 type Scheduler struct {
@@ -34,15 +44,21 @@ func New() *Scheduler {
 }
 
 func (s *Scheduler) Submit(sessionID, workspaceID, prompt string) *Task {
+	return s.SubmitWithGoal(sessionID, workspaceID, prompt, nil)
+}
+
+// SubmitWithGoal submits a task carrying objective success criteria.
+func (s *Scheduler) SubmitWithGoal(sessionID, workspaceID, prompt string, criteria []SuccessCheck) *Task {
 	now := time.Now().UTC()
 	task := &Task{
-		TaskID:      sessionstore.NewID("task"),
-		SessionID:   sessionID,
-		WorkspaceID: workspaceID,
-		Status:      "queued",
-		UserPrompt:  prompt,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		TaskID:          sessionstore.NewID("task"),
+		SessionID:       sessionID,
+		WorkspaceID:     workspaceID,
+		Status:          "queued",
+		UserPrompt:      prompt,
+		SuccessCriteria: criteria,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 	s.mu.Lock()
 	s.tasks[task.TaskID] = task

@@ -130,9 +130,10 @@ func (s *Service) call(method string, params map[string]any, result any) error {
 
 // OrgPolicy carries enterprise policy applied at session init (PRD §5).
 type OrgPolicy struct {
-	BundleTOML        string           // mandatory-deny policy bundle
-	TrustedPluginKeys []string         // base64 ed25519 publisher keys
-	ApprovalPolicy    []ApprovalRule   // role required per risk threshold
+	BundleTOML        string         // mandatory-deny policy bundle
+	TrustedPluginKeys []string       // base64 ed25519 publisher keys
+	ApprovalPolicy    []ApprovalRule // role required per risk threshold
+	ApprovalMode      string         // untrusted | on_request | never (goal axis)
 }
 
 type ApprovalRule struct {
@@ -141,14 +142,22 @@ type ApprovalRule struct {
 }
 
 func (s *Service) InitSession(sessionID, workspaceRoot, profile string) error {
-	return s.InitSessionWithPolicy(sessionID, workspaceRoot, profile, nil)
+	return s.InitSessionFull(sessionID, workspaceRoot, profile, "", nil)
 }
 
-// InitSessionWithPolicy initializes a session and, if org is non-nil,
-// attaches the org policy bundle, trusted plugin keys, and approval policy.
+// InitSessionWithPolicy keeps the existing enterprise-only signature.
 func (s *Service) InitSessionWithPolicy(sessionID, workspaceRoot, profile string, org *OrgPolicy) error {
+	return s.InitSessionFull(sessionID, workspaceRoot, profile, "", org)
+}
+
+// InitSessionFull initializes a session with a per-session approval mode
+// (goal axis) plus optional enterprise org policy.
+func (s *Service) InitSessionFull(sessionID, workspaceRoot, profile, approvalMode string, org *OrgPolicy) error {
 	params := map[string]any{
 		"session_id": sessionID, "workspace_root": workspaceRoot, "profile": profile,
+	}
+	if approvalMode != "" {
+		params["approval_mode"] = approvalMode
 	}
 	if org != nil {
 		if org.BundleTOML != "" {
@@ -159,6 +168,9 @@ func (s *Service) InitSessionWithPolicy(sessionID, workspaceRoot, profile string
 		}
 		if len(org.ApprovalPolicy) > 0 {
 			params["approval_policy"] = org.ApprovalPolicy
+		}
+		if approvalMode == "" && org.ApprovalMode != "" {
+			params["approval_mode"] = org.ApprovalMode
 		}
 	}
 	return s.call("kernel.session.init", params, nil)
@@ -172,6 +184,16 @@ func (s *Service) ApproveWithRole(sessionID, decisionID, approver, role string) 
 		params["role"] = role
 	}
 	err := s.call("kernel.approve", params, &d)
+	return &d, err
+}
+
+// ApproveForSession approves and remembers for the whole session, so
+// later requests for the same capability+resource-prefix auto-satisfy.
+func (s *Service) ApproveForSession(sessionID, decisionID, approver string) (*Decision, error) {
+	var d Decision
+	err := s.call("kernel.approve", map[string]any{
+		"session_id": sessionID, "decision_id": decisionID, "approver": approver, "for_session": true,
+	}, &d)
 	return &d, err
 }
 

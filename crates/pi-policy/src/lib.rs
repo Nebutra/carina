@@ -531,6 +531,62 @@ pub fn is_sensitive_file(path: &str) -> bool {
     sensitive_dirs.iter().any(|d| lower.contains(d))
 }
 
+/// Approval mode — the "when do you stop and ask me" axis, orthogonal to the
+/// permission profile's "what can you do" axis (Codex's key insight). This
+/// lets the same capability set run at different interruption levels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalMode {
+    /// Only known-safe (read-only) commands auto-run; everything else asks.
+    Untrusted,
+    /// Profile decides; risky effects ask. (default)
+    #[default]
+    OnRequest,
+    /// Never ask — deny stands, but requires-approval becomes allow.
+    Never,
+}
+
+impl ApprovalMode {
+    pub fn from_str(s: &str) -> ApprovalMode {
+        match s {
+            "untrusted" => ApprovalMode::Untrusted,
+            "never" => ApprovalMode::Never,
+            _ => ApprovalMode::OnRequest,
+        }
+    }
+}
+
+/// A command with no side effects (risk level 0) is "known safe".
+pub fn is_readonly_command(command: &str) -> bool {
+    classify_command(command) == 0
+}
+
+/// Applies the approval-mode axis on top of a profile decision. It can only
+/// change `RequiresApproval`↔`Allowed`; it never turns a `Denied` into an
+/// allow (the profile/bundle ceiling still holds).
+pub fn apply_approval_mode(mode: ApprovalMode, mut d: Decision) -> Decision {
+    match mode {
+        ApprovalMode::OnRequest => d,
+        ApprovalMode::Never => {
+            if d.decision == Verdict::RequiresApproval {
+                d.decision = Verdict::Allowed;
+                d.reason = format!("approval_mode=never auto-allows ({})", d.reason);
+            }
+            d
+        }
+        ApprovalMode::Untrusted => {
+            if d.capability == Capability::CommandExec
+                && d.decision == Verdict::Allowed
+                && !is_readonly_command(&d.resource)
+            {
+                d.decision = Verdict::RequiresApproval;
+                d.reason = "untrusted mode: non-read-only command needs approval".into();
+            }
+            d
+        }
+    }
+}
+
 /// Command risk classification (PRD §8.8). Heuristic MVP — a proper
 /// classifier with shell parsing lands in Phase 2.
 pub fn classify_command(command: &str) -> u8 {
@@ -903,6 +959,42 @@ require_approval = ["PatchApply"]
         // require_approval escalates an auto-allowed command to approval.
         let d = PolicyEngine::evaluate_with_bundle(&profile, Some(&bundle), root, &req(Capability::CommandExec, "ls"));
         assert_eq!(d.decision, Verdict::RequiresApproval);
+    }
+
+    #[test]
+    fn approval_mode_is_orthogonal_to_profile() {
+        let profile = Profile::safe_edit();
+        let root = Path::new("/tmp/ws");
+
+        // safe-edit: a package install is risk-2 => RequiresApproval by profile.
+        let base = PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "npm install x"));
+        assert_eq!(base.decision, Verdict::RequiresApproval);
+
+        // never: the same decision becomes Allowed (deny would still stand).
+        let never = apply_approval_mode(ApprovalMode::Never, base.clone());
+        assert_eq!(never.decision, Verdict::Allowed);
+
+        // never must NOT rescue an outright deny.
+        let denied = PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "rm -rf /"));
+        assert_eq!(apply_approval_mode(ApprovalMode::Never, denied).decision, Verdict::Denied);
+
+        // untrusted: an allowed non-read-only command is escalated to approval;
+        // a read-only one stays allowed.
+        let cargo = PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "cargo test"));
+        assert_eq!(cargo.decision, Verdict::Allowed); // allowlisted
+        let untrusted = apply_approval_mode(ApprovalMode::Untrusted, cargo);
+        assert_eq!(untrusted.decision, Verdict::RequiresApproval); // cargo test isn't read-only (risk 1)
+
+        let ls = Decision {
+            decision_id: "perm_x".into(),
+            capability: Capability::CommandExec,
+            requested_by: Principal::Agent,
+            resource: "ls -la".into(),
+            decision: Verdict::Allowed,
+            reason: "ok".into(),
+            policy_id: "p".into(),
+        };
+        assert_eq!(apply_approval_mode(ApprovalMode::Untrusted, ls).decision, Verdict::Allowed);
     }
 
     #[test]

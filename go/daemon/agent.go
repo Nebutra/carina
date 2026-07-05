@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	maxAgentTurns = 14
-	maxRequeries  = 3
+	maxAgentTurns     = 14
+	maxRequeries      = 3
+	maxVerifyAttempts = 3
 )
 
 // systemPrompt instructs the reasoner to act as a coding agent that can only
@@ -71,6 +72,7 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 	ctx := context.Background()
 	tr := newTranscript(task.UserPrompt)
 	guard := newLoopGuard()
+	verifyAttempts := 0
 	// A cheap summarizer for compaction: reuse the reasoner on the head.
 	summarize := func(head string) (string, error) {
 		return thinkWithRetry(ctx, d.reasoner,
@@ -116,6 +118,24 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 		}
 
 		if act.Tool == "done" {
+			// Goal verification: if the task carries objective success
+			// criteria, check them before accepting "done" (Codex-style
+			// verifiable completion vs pure model self-judgment).
+			if len(task.SuccessCriteria) > 0 {
+				if failed := d.checkSuccessCriteria(sess, task); len(failed) > 0 {
+					verifyAttempts++
+					d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+						map[string]any{"status": "goal_check_failed", "failed": failed}, "")
+					if verifyAttempts > maxVerifyAttempts {
+						d.degrade(sess, task, tr, "success criteria still failing after retries")
+						return
+					}
+					tr.addTurn(Turn{Tool: "system", ActionBrief: "goal-check",
+						Obs: Observation{Pinned: true, Content: "NOT done yet — these success criteria failed:\n" +
+							strings.Join(failed, "\n") + "\nKeep working, then call done again."}})
+					continue
+				}
+			}
 			d.finish(sess, task, act.Summary)
 			return
 		}
@@ -147,6 +167,35 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 	}
 
 	d.degrade(sess, task, tr, "reached max turns without done")
+}
+
+// checkSuccessCriteria runs each objective criterion through the kernel +
+// toolchain, returning the failures (empty = all pass). This is the "goal
+// verifier" that turns model-judged done into machine-checked done.
+func (d *Daemon) checkSuccessCriteria(sess *sessionstore.Session, task *scheduler.Task) []string {
+	var failed []string
+	for _, c := range task.SuccessCriteria {
+		switch c.Kind {
+		case "command_zero_exit":
+			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+				map[string]any{"status": "goal_check", "command": c.Command}, "")
+			obs := d.agentRun(sess, task, strings.Fields(c.Command))
+			if !strings.Contains(obs, "exit=0") {
+				failed = append(failed, fmt.Sprintf("`%s` did not exit 0: %s", c.Command, truncate(obs, 200)))
+			}
+		case "file_exists":
+			if _, err := os.Stat(resolveIn(sess.WorkspaceRoot, c.Path)); err != nil {
+				failed = append(failed, "file missing: "+c.Path)
+			}
+		case "grep_absent":
+			if matches, err := d.tools.Grep(c.Pattern, sess.WorkspaceRoot); err == nil && len(matches) > 0 {
+				failed = append(failed, fmt.Sprintf("pattern still present (%d matches): %s", len(matches), c.Pattern))
+			}
+		default:
+			// unknown check kinds are ignored (forward-compatible)
+		}
+	}
+	return failed
 }
 
 // finish marks a task completed with the model's summary.
