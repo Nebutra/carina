@@ -32,26 +32,26 @@ jobs:
         run: cargo test --workspace
 
       - name: Build kernel service
-        run: cargo build --release -p pi-kernel --bin pi-kernel-service
+        run: cargo build --release -p carina-kernel --bin carina-kernel-service
 
       - name: Go vet
         run: go vet ./...
 
       - name: Go test with coverage (E2E across Go/Rust/Zig)
         env:
-          PI_KERNEL_BIN: ${{ github.workspace }}/target/release/pi-kernel-service
+          CARINA_KERNEL_BIN: ${{ github.workspace }}/target/release/carina-kernel-service
         run: go test -race -coverpkg=./go/... -coverprofile=cover.out ./go/... && go tool cover -func=cover.out | tail -1
 
       - name: Build CLI binaries
         run: |
-          go build -o bin/pi ./apps/pi-cli
-          go build -o bin/pi-daemon ./apps/pi-daemon
-          go build -o bin/pi-worker ./apps/pi-worker
-          cp target/release/pi-kernel-service bin/
+          go build -o bin/carina ./apps/carina-cli
+          go build -o bin/carina-daemon ./apps/carina-daemon
+          go build -o bin/carina-worker ./apps/carina-worker
+          cp target/release/carina-kernel-service bin/
 
       - name: Acceptance gates (§16 — no-TS / no-Node / policy-bypass / native-tool)
         env:
-          PI_KERNEL_BIN: ${{ github.workspace }}/target/release/pi-kernel-service
+          CARINA_KERNEL_BIN: ${{ github.workspace }}/target/release/carina-kernel-service
         run: bash scripts/ci-gates.sh
 
       - name: Performance benchmarks (§14)

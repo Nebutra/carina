@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/TsekaLuk/pi-os/protocol/schemas/event.schema.json",
+  "$id": "https://github.com/Nebutra/carina/protocol/schemas/event.schema.json",
   "title": "Event",
   "description": "Append-only audit event. Side-effect events MUST carry permission_decision_id.",
   "type": "object",

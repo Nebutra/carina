@@ -1,4 +1,4 @@
-;; hello-plugin — Pi-OS example WASM plugin (PRD §8.7).
+;; hello-plugin — Carina example WASM plugin (PRD §8.7).
 ;;
 ;; Demonstrates the capability boundary: the plugin requests one capability
 ;; it declared (command_exec / "go test ./...") and one it did NOT declare
@@ -6,7 +6,7 @@
 ;; recording both decisions in the session audit log.
 ;;
 ;; Build to wasm:  wat2wasm hello.wat -o hello.wasm
-;; (or use the pi-os test harness which compiles WAT in-process)
+;; (or use the carina test harness which compiles WAT in-process)
 (module
   (import "env" "pi_request_capability"
     (func $req (param i32 i32 i32 i32) (result i32)))

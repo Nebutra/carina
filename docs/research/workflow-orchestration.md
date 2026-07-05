@@ -5,7 +5,7 @@
 ## 原理:workflow vs agent = 谁掌控 control flow
 - **Workflow**:LLM 步骤由**预定义代码路径**编排,顺序/分支/并行/终止由开发者写死,控制流**确定**。LLM 只做每步内的推理。
 - **Agent**:LLM **动态决定下一步**,循环到停止条件。控制流**模型驱动/非确定**。
-- pi-os 现在的 `agent.go` 就是纯 agent(ReAct loop),**还没有 workflow 层**。
+- carina 现在的 `agent.go` 就是纯 agent(ReAct loop),**还没有 workflow 层**。
 - Anthropic 原则:用最简方案;workflow 给"well-defined 任务的可预测一致性",agent 给"步数不可预测的开放问题"(更贵更易错)。
 
 ## 五种模式(都可归约为「带有界环的 DAG」)
@@ -28,14 +28,14 @@
 
 ## 其它框架
 - **Vercel AI SDK**:workflow 就是 TS control flow(await 链 / Promise.all / while+break)—— **不需要图引擎,宿主语言的有界步骤编排就够**。
-- **CrewAI**:Crews(自主角色协作)vs Flows(确定性 `@start`/`@listen`/`@router`)。"Crews for autonomy, Flows for control",可组合(Flow 编排,步骤内委托 Crew)—— 正是 pi-os 目标:确定性外层包自主内层。
+- **CrewAI**:Crews(自主角色协作)vs Flows(确定性 `@start`/`@listen`/`@router`)。"Crews for autonomy, Flows for control",可组合(Flow 编排,步骤内委托 Crew)—— 正是 carina 目标:确定性外层包自主内层。
 - **Swarm**:agent + handoff(去中心化路由,可审计性差,已被 Agents SDK 取代)。
 
 ## 哲学:为何 workflow 常优于全自主
 控制流是**代码/数据而非模型输出**,所以:可预测可重复(无长循环累积错误)、可审计可回放(plan 是可 review 的 artifact)、可测试(每步近纯函数)、成本/延迟有界、失败隔离可治理(retry/timeout/approval/能力上限 per-step)。成熟设计 = **hybrid**:确定性 workflow 管外层,个别步骤是有界自主 agent。
 
-## → pi-os 设计(agent 给的方案,直接可实现)
-**加一个薄 `go/workflow` 引擎坐在 scheduler 之上**。pi-os 已有 workflow 引擎需要的 4 块:scheduler(Task 状态机)、session+durable state、**哈希链 event log(= 免费 checkpointer,replay 重建状态)**、kernel-gated effects + worker pool + Bus。
+## → carina 设计(agent 给的方案,直接可实现)
+**加一个薄 `go/workflow` 引擎坐在 scheduler 之上**。carina 已有 workflow 引擎需要的 4 块:scheduler(Task 状态机)、session+durable state、**哈希链 event log(= 免费 checkpointer,replay 重建状态)**、kernel-gated effects + worker pool + Bus。
 
 - **workflow 定义 = 纯数据**(新 `protocol/schemas/workflow.schema.json`):steps(kind: agent/tool/model/router/evaluator/subworkflow)+ edges(normal/conditional/join)+ state(channels+reducers)+ limits(max_supersteps/max_visits)。**条件用沙箱表达式(JSONLogic/CEL,不可执行代码)** —— 相对 LangGraph 任意 Python 节点的安全+审计优势。
 - **执行 = super-step/BSP 循环**:算 ready 集(in-edges 满足+条件真+visits<上限)→ 并发派 scheduler.Task → barrier → reducer 合并 State → 评估 out-edges → 记 EdgeTaken → Superstep++。

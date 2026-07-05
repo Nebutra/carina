@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/TsekaLuk/pi-os/go/kernel"
+	"github.com/Nebutra/carina/go/kernel"
 )
 
 // loadOrgPolicy reads the enterprise policy bundle from a config directory

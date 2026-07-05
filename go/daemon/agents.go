@@ -51,15 +51,15 @@ func attenuate(parent, requested string) string {
 	return parent // child cannot exceed parent
 }
 
-// loadAgentSpecs discovers agents from the user dir (~/.pi-os/agents) and the
-// project dir (<workspace>/.pi-os/agents). Project agents override user ones.
+// loadAgentSpecs discovers agents from the user dir (~/.carina/agents) and the
+// project dir (<workspace>/.carina/agents). Project agents override user ones.
 func loadAgentSpecs(workspaceRoot string) map[string]*AgentSpec {
 	out := map[string]*AgentSpec{}
 	if home, err := os.UserHomeDir(); err == nil {
-		loadAgentsFromDir(filepath.Join(home, ".pi-os", "agents"), "user", out)
+		loadAgentsFromDir(filepath.Join(home, ".carina", "agents"), "user", out)
 	}
 	if workspaceRoot != "" {
-		loadAgentsFromDir(filepath.Join(workspaceRoot, ".pi-os", "agents"), "project", out)
+		loadAgentsFromDir(filepath.Join(workspaceRoot, ".carina", "agents"), "project", out)
 	}
 	return out
 }

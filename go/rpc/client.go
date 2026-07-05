@@ -29,7 +29,7 @@ type Client struct {
 func Dial(socketPath string) (*Client, error) {
 	conn, err := net.DialTimeout("unix", socketPath, 3*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("rpc: dial %s: %w (is the daemon running? try `pi-daemon`)", socketPath, err)
+		return nil, fmt.Errorf("rpc: dial %s: %w (is the daemon running? try `carina-daemon`)", socketPath, err)
 	}
 	return NewClient(conn, conn, conn), nil
 }

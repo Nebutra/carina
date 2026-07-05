@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	modelrouter "github.com/TsekaLuk/pi-os/go/model-router"
-	"github.com/TsekaLuk/pi-os/go/kernel"
-	"github.com/TsekaLuk/pi-os/go/scheduler"
-	sessionstore "github.com/TsekaLuk/pi-os/go/session-store"
+	modelrouter "github.com/Nebutra/carina/go/model-router"
+	"github.com/Nebutra/carina/go/kernel"
+	"github.com/Nebutra/carina/go/scheduler"
+	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
 const (
@@ -36,11 +36,11 @@ Rules:
 - When the task is complete, use "done" with a clear summary.`
 
 // systemPrompt instructs the reasoner to act as a coding agent that can only
-// affect the world through pi-os tools, one JSON action at a time.
-const systemPrompt = `You are a coding agent running inside the pi-os runtime.
+// affect the world through the Nebutra runtime, one JSON action at a time.
+const systemPrompt = `You are a coding agent running on the Nebutra agent runtime.
 You CANNOT touch the system directly. You act only by emitting ONE tool action
-per turn as a single JSON object, and pi-os executes it through its security
-kernel, returning an observation.
+per turn as a single JSON object, and the Nebutra runtime executes it through
+its security kernel, returning an observation.
 
 ` + toolsHelp + `
 
@@ -336,7 +336,7 @@ func (d *Daemon) executeAction(sess *sessionstore.Session, task *scheduler.Task,
 }
 
 // agentPatch proposes and applies a full-file edit through the kernel's
-// transactional patch engine (writes land via Zig pi-patch-native).
+// transactional patch engine (writes land via Zig carina-patch-native).
 func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, path, content string) string {
 	if path == "" {
 		return "error: patch needs a path"
@@ -355,7 +355,7 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 
 // agentRun executes a command the agent proposed: kernel decision first
 // (destructive => denied; risky => auto-approved in autonomous mode), then
-// Zig pi-run. Every step is audited.
+// Zig carina-run. Every step is audited.
 func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv []string) string {
 	command := strings.Join(argv, " ")
 	dec, err := d.kern.Request(sess.SessionID, "CommandExec", command, task.TaskID)

@@ -1,5 +1,5 @@
 {
-  "$comment": "Pi-OS JSON-RPC 2.0 method registry (MVP draft). Transport: unix socket (~/.pi-os/daemon.sock) or stdio, newline-delimited JSON. Server->client notifications use method 'event' with an Event payload (see ../schemas/event.schema.json).",
+  "$comment": "Carina JSON-RPC 2.0 method registry (MVP draft). Transport: unix socket (~/.carina/daemon.sock) or stdio, newline-delimited JSON. Server->client notifications use method 'event' with an Event payload (see ../schemas/event.schema.json).",
   "version": "0.1.0",
   "apis": {
     "session": [

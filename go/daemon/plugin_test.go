@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TsekaLuk/pi-os/go/daemon"
-	"github.com/TsekaLuk/pi-os/go/rpc"
+	"github.com/Nebutra/carina/go/daemon"
+	"github.com/Nebutra/carina/go/rpc"
 )
 
 // TestPluginPermissionBoundary verifies PRD §8.7 through the full stack: a
@@ -17,17 +17,17 @@ import (
 func TestPluginPermissionBoundary(t *testing.T) {
 	repoRoot := repoRoot(t)
 	kernelBin := firstExisting(
-		os.Getenv("PI_KERNEL_BIN"),
-		filepath.Join(repoRoot, "target/release/pi-kernel-service"),
-		filepath.Join(repoRoot, "target/debug/pi-kernel-service"),
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
 	)
 	if kernelBin == "" {
-		t.Skip("pi-kernel-service not built")
+		t.Skip("carina-kernel-service not built")
 	}
 	wasmPath := filepath.Join(repoRoot, "examples/plugins/hello/hello.wasm")
 	wasm, err := os.ReadFile(wasmPath)
 	if err != nil {
-		t.Skip("example plugin not built (run pi-wat2wasm)")
+		t.Skip("example plugin not built (run carina-wat2wasm)")
 	}
 	manifest, err := os.ReadFile(filepath.Join(repoRoot, "examples/plugins/hello/plugin.toml"))
 	if err != nil {

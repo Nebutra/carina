@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TsekaLuk/pi-os/go/daemon"
-	"github.com/TsekaLuk/pi-os/go/rpc"
+	"github.com/Nebutra/carina/go/daemon"
+	"github.com/Nebutra/carina/go/rpc"
 )
 
 // TestSignedPluginEnforcement verifies PRD §5 Phase 5: when the deployment
@@ -17,12 +17,12 @@ import (
 func TestSignedPluginEnforcement(t *testing.T) {
 	repoRoot := repoRoot(t)
 	kernelBin := firstExisting(
-		os.Getenv("PI_KERNEL_BIN"),
-		filepath.Join(repoRoot, "target/release/pi-kernel-service"),
-		filepath.Join(repoRoot, "target/debug/pi-kernel-service"),
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
 	)
 	if kernelBin == "" {
-		t.Skip("pi-kernel-service not built")
+		t.Skip("carina-kernel-service not built")
 	}
 	wasm, err := os.ReadFile(filepath.Join(repoRoot, "examples/plugins/hello/hello.wasm"))
 	if err != nil {

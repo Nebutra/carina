@@ -12,7 +12,7 @@ import (
 
 // Reasoner turns a prompt into the agent's next decision. It is the pure
 // "thinking" step — it has NO ability to touch the system. All side effects
-// happen in the pi-os kernel/toolchain after the reasoner decides.
+// happen in the carina kernel/toolchain after the reasoner decides.
 type Reasoner interface {
 	Name() string
 	// Think returns the model's raw text response to a prompt.
@@ -56,9 +56,9 @@ func thinkWithRetry(ctx context.Context, r Reasoner, prompt string) (string, err
 // claudeCLIReasoner uses the local `claude` binary in headless mode as a pure
 // inference engine. Claude Code's OWN tools are disabled (--allowedTools "")
 // and it runs in an isolated, empty cwd, so it cannot touch the workspace —
-// it can only reason and emit a decision. This lets pi-os use the CC Switch /
+// it can only reason and emit a decision. This lets carina use the CC Switch /
 // Mox gateway (which only admits the Claude Code client) while keeping every
-// real side effect inside the pi-os capability kernel.
+// real side effect inside the carina capability kernel.
 type claudeCLIReasoner struct {
 	bin     string
 	model   string // optional --model override

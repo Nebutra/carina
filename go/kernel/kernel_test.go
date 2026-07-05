@@ -11,17 +11,17 @@ import (
 func testBins(t *testing.T) (kernelBin, toolsDir string) {
 	_, file, _, _ := runtime.Caller(0)
 	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
-	for _, p := range []string{"target/release/pi-kernel-service", "target/debug/pi-kernel-service"} {
+	for _, p := range []string{"target/release/carina-kernel-service", "target/debug/carina-kernel-service"} {
 		if _, err := os.Stat(filepath.Join(root, p)); err == nil {
 			kernelBin = filepath.Join(root, p)
 			break
 		}
 	}
-	if env := os.Getenv("PI_KERNEL_BIN"); env != "" {
+	if env := os.Getenv("CARINA_KERNEL_BIN"); env != "" {
 		kernelBin = env
 	}
 	if kernelBin == "" {
-		t.Skip("pi-kernel-service not built")
+		t.Skip("carina-kernel-service not built")
 	}
 	toolsDir = filepath.Join(root, "zig", "zig-out", "bin")
 	return
@@ -56,8 +56,8 @@ func TestKernelClientLifecycle(t *testing.T) {
 		t.Fatalf("profile describe: %v", err)
 	}
 
-	// patch propose -> apply -> rollback (delegates to pi-patch-native)
-	if _, err := os.Stat(filepath.Join(toolsDir, "pi-patch-native")); err != nil {
+	// patch propose -> apply -> rollback (delegates to carina-patch-native)
+	if _, err := os.Stat(filepath.Join(toolsDir, "carina-patch-native")); err != nil {
 		t.Skip("zig tools not built for patch")
 	}
 	p, err := svc.PatchPropose("sess_k", "task_1", "test", []FileChange{{Path: "a.txt", NewContent: "changed\n"}})
@@ -188,9 +188,9 @@ func TestKernelSecretRequestAndPatchShow(t *testing.T) {
 }
 
 func TestFindBinaryEnv(t *testing.T) {
-	t.Setenv("PI_KERNEL_BIN", "/some/path/pi-kernel-service")
+	t.Setenv("CARINA_KERNEL_BIN", "/some/path/carina-kernel-service")
 	got, err := FindBinary()
-	if err != nil || got != "/some/path/pi-kernel-service" {
+	if err != nil || got != "/some/path/carina-kernel-service" {
 		t.Fatalf("FindBinary env: %q %v", got, err)
 	}
 }

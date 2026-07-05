@@ -1,7 +1,7 @@
 {
-  "name": "@pi-os/sdk",
+  "name": "@carina/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for the Pi-OS Agent Runtime (JSON-RPC over unix socket)",
+  "description": "TypeScript SDK for the Carina Agent Runtime (JSON-RPC over unix socket)",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

@@ -1,18 +1,18 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/pi-kernel",
-    "crates/pi-policy",
-    "crates/pi-patch",
-    "crates/pi-audit",
-    "crates/pi-plugin-runtime",
+    "crates/carina-kernel",
+    "crates/carina-policy",
+    "crates/carina-patch",
+    "crates/carina-audit",
+    "crates/carina-plugin-runtime",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/TsekaLuk/pi-os"
+repository = "https://github.com/Nebutra/carina"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -21,8 +21,8 @@ thiserror = "2"
 sha2 = "0.10"
 toml = "0.8"
 time = { version = "0.3", features = ["formatting", "serde", "serde-well-known"] }
-pi-kernel = { path = "crates/pi-kernel" }
-pi-policy = { path = "crates/pi-policy" }
-pi-patch = { path = "crates/pi-patch" }
-pi-audit = { path = "crates/pi-audit" }
-pi-plugin-runtime = { path = "crates/pi-plugin-runtime" }
+carina-kernel = { path = "crates/carina-kernel" }
+carina-policy = { path = "crates/carina-policy" }
+carina-patch = { path = "crates/carina-patch" }
+carina-audit = { path = "crates/carina-audit" }
+carina-plugin-runtime = { path = "crates/carina-plugin-runtime" }

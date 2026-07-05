@@ -1,9 +1,9 @@
 # Enterprise Deployment (Phase 5)
 
-Pi-OS ships with the controls an organization needs to run agents on shared
+Carina ships with the controls an organization needs to run agents on shared
 infrastructure. Everything here is opt-in — a local single user pays no cost.
 
-Configure a policy directory (default `~/.pi-os/policy`, or `pi-daemon
+Configure a policy directory (default `~/.carina/policy`, or `carina-daemon
 --policy <dir>`). All files are optional.
 
 ## 1. Policy bundle — `bundle.toml`
@@ -52,7 +52,7 @@ refused before instantiation.
 ```bash
 # publisher signs the module
 openssl ... # or any ed25519 tool -> module.sig
-echo "<base64 pubkey>" >> ~/.pi-os/policy/trusted-keys
+echo "<base64 pubkey>" >> ~/.carina/policy/trusted-keys
 pi plugin run <session> plugin.toml module.wasm module.sig
 ```
 
@@ -71,7 +71,7 @@ effect in the session is present with its permission decision.
 ## 5. Offline mode
 
 ```bash
-pi-daemon --offline   # only the mock model provider; no request leaves the host
+carina-daemon --offline   # only the mock model provider; no request leaves the host
 ```
 
 ## What's enforced

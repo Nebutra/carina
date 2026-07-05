@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	sessionstore "github.com/TsekaLuk/pi-os/go/session-store"
+	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
 // SuccessCheck is an objective completion criterion for a goal (Codex-style

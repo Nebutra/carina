@@ -1,6 +1,6 @@
 # Architecture
 
-Pi-OS is a layered agent runtime. Each layer has one job, one language, and one contract with the layer below it.
+Carina is a layered agent runtime. Each layer has one job, one language, and one contract with the layer below it.
 
 ## Layers
 
@@ -35,23 +35,23 @@ Agent Surface ──JSON-RPC──▶ Go Control Plane ──Capability API─�
 - `go/scheduler` — task queue: submit / cancel / pause / resume, priorities, concurrency.
 - `go/worker` — worker pool: local, remote, CI, sandbox workers.
 - `go/model-router` — unified model call interface: provider fallback, rate limits, token usage log, streaming.
-- `apps/pi-daemon` — daemon entrypoint.
-- `apps/pi-cli` — user-facing CLI (`pi run`, `pi audit`, `pi patch …`).
-- `apps/pi-tui` — interactive TUI (Phase 1+).
+- `apps/carina-daemon` — daemon entrypoint.
+- `apps/carina-cli` — user-facing CLI (`carina run`, `carina audit`, `carina patch …`).
+- `apps/carina-tui` — interactive TUI (Phase 1+).
 
 ### Rust Capability Kernel (`crates/`)
 
-- `pi-kernel` — capability types, capability requests, kernel façade that every side effect flows through.
-- `pi-policy` — policy engine + permission profiles (`read-only`, `safe-edit`, `full-workspace`, `ci-runner`, …), workspace path containment, command risk classification.
-- `pi-patch` — transactional patch engine: lifecycle state machine, conflict detection, atomic apply, rollback pointers, provenance.
-- `pi-audit` — event model (20 event types), append-only audit log, report generation.
-- `pi-plugin-runtime` — WASM plugin host: manifest parsing, permission review, capability-scoped host functions.
+- `carina-kernel` — capability types, capability requests, kernel façade that every side effect flows through.
+- `carina-policy` — policy engine + permission profiles (`read-only`, `safe-edit`, `full-workspace`, `ci-runner`, …), workspace path containment, command risk classification.
+- `carina-patch` — transactional patch engine: lifecycle state machine, conflict detection, atomic apply, rollback pointers, provenance.
+- `carina-audit` — event model (20 event types), append-only audit log, report generation.
+- `carina-plugin-runtime` — WASM plugin host: manifest parsing, permission review, capability-scoped host functions.
 
 ### Zig Native Toolchain (`zig/`)
 
 Small, fast, cross-platform binaries that emit machine-readable JSON and never bypass kernel policy:
 
-`pi-scan` (workspace file tree), `pi-grep` (structured search), `pi-diff` (structured diff), `pi-patch-native` (apply/verify/rollback/dry-run), `pi-run` (command execution with timeout/env allowlist), `pi-pty` (interactive terminal sessions).
+`carina-scan` (workspace file tree), `carina-grep` (structured search), `carina-diff` (structured diff), `carina-patch-native` (apply/verify/rollback/dry-run), `carina-run` (command execution with timeout/env allowlist), `carina-pty` (interactive terminal sessions).
 
 ### Protocol (`protocol/`)
 
@@ -66,8 +66,8 @@ Small, fast, cross-platform binaries that emit machine-readable JSON and never b
 user prompt → Go daemon creates session → Agent Surface calls model
 → model requests FileRead → Rust kernel checks policy → Zig scans/reads
 → model proposes patch → Rust kernel opens PatchTransaction → user approves
-→ Zig pi-patch applies → Go daemon runs tests → kernel checks CommandExec
-→ Zig pi-run executes → Event Log records everything → user inspects / rolls back
+→ Zig carina-patch applies → Go daemon runs tests → kernel checks CommandExec
+→ Zig carina-run executes → Event Log records everything → user inspects / rolls back
 ```
 
 ## Communication & storage decisions

@@ -45,7 +45,7 @@ func TestSubagentIsolatedAndAttenuated(t *testing.T) {
 	defer d.Close()
 
 	// Define a project-local scout agent (read-only).
-	agentsDir := filepath.Join(ws, ".pi-os", "agents")
+	agentsDir := filepath.Join(ws, ".carina", "agents")
 	os.MkdirAll(agentsDir, 0o755)
 	os.WriteFile(filepath.Join(agentsDir, "scout.md"),
 		[]byte("---\nname: scout\ndescription: recon\nprofile: read-only\nmax_turns: 3\n---\nYou are a scout. Report what you find.\n"), 0o644)

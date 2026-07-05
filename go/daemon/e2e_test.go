@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TsekaLuk/pi-os/go/daemon"
-	"github.com/TsekaLuk/pi-os/go/rpc"
+	"github.com/Nebutra/carina/go/daemon"
+	"github.com/Nebutra/carina/go/rpc"
 )
 
 // TestEndToEndLoop exercises the PRD §18 MVP loop across all three
@@ -22,15 +22,15 @@ import (
 func TestEndToEndLoop(t *testing.T) {
 	repoRoot := repoRoot(t)
 	kernelBin := firstExisting(
-		os.Getenv("PI_KERNEL_BIN"),
-		filepath.Join(repoRoot, "target/release/pi-kernel-service"),
-		filepath.Join(repoRoot, "target/debug/pi-kernel-service"),
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
 	)
 	if kernelBin == "" {
-		t.Skip("pi-kernel-service not built; run `cargo build` first")
+		t.Skip("carina-kernel-service not built; run `cargo build` first")
 	}
 	toolsDir := filepath.Join(repoRoot, "zig/zig-out/bin")
-	if _, err := os.Stat(filepath.Join(toolsDir, "pi-scan")); err != nil {
+	if _, err := os.Stat(filepath.Join(toolsDir, "carina-scan")); err != nil {
 		t.Skip("zig tools not built; run `zig build` first")
 	}
 
@@ -72,7 +72,7 @@ func TestEndToEndLoop(t *testing.T) {
 		t.Fatal("expected out-of-workspace read to fail")
 	}
 
-	// 3. Workspace search via Zig pi-grep.
+	// 3. Workspace search via Zig carina-grep.
 	var matches []struct {
 		File string `json:"file"`
 		Line int    `json:"line"`
@@ -81,7 +81,7 @@ func TestEndToEndLoop(t *testing.T) {
 		t.Fatalf("workspace.search: %v", err)
 	}
 	if len(matches) == 0 {
-		t.Fatal("expected pi-grep to find 'hello'")
+		t.Fatal("expected carina-grep to find 'hello'")
 	}
 
 	// 4. Propose + apply a patch (Rust transactional engine writes the file).
@@ -112,7 +112,7 @@ func TestEndToEndLoop(t *testing.T) {
 	}
 
 	// 6. Command execution: a safe test-class command is allowed and runs
-	// through Zig pi-run.
+	// through Zig carina-run.
 	var exec1 struct {
 		Decision struct {
 			Decision string `json:"decision"`

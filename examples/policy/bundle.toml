@@ -1,7 +1,7 @@
 # Example enterprise policy bundle (PRD §5 Phase 5).
 #
-# Drop this at ~/.pi-os/policy/bundle.toml (or pass --policy <dir> to
-# pi-daemon). Its rules are MANDATORY: they can only tighten a session's
+# Drop this at ~/.carina/policy/bundle.toml (or pass --policy <dir> to
+# carina-daemon). Its rules are MANDATORY: they can only tighten a session's
 # permission profile, never loosen it. A deny here overrides any allow the
 # session profile would grant.
 

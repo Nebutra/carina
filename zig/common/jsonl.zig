@@ -1,4 +1,4 @@
-//! Shared helpers for the Pi-OS native tools: every tool emits
+//! Shared helpers for the Carina native tools: every tool emits
 //! machine-readable JSON lines on stdout (PRD §8.5 acceptance criteria).
 
 const std = @import("std");

@@ -1,0 +1,20 @@
+[package]
+name = "carina-kernel"
+description = "Carina Capability Kernel facade: every side effect flows through here"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+carina-policy = { workspace = true }
+carina-audit = { workspace = true }
+carina-patch = { workspace = true }
+carina-plugin-runtime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[[bin]]
+name = "carina-kernel-service"
+path = "src/bin/carina-kernel-service.rs"

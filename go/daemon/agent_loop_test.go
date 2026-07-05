@@ -13,20 +13,20 @@ import (
 
 // TestAgentLoopExecutesThroughKernel proves the ReAct loop actually edits a
 // file and runs a command — all mediated by the kernel — using a scripted
-// reasoner (no model, no cost). This is the mechanism test for "pi-os as a
+// reasoner (no model, no cost). This is the mechanism test for "carina as a
 // real coding agent".
 func TestAgentLoopExecutesThroughKernel(t *testing.T) {
 	repoRoot := repoRootFromHere(t)
 	kernelBin := firstExistingPath(
-		os.Getenv("PI_KERNEL_BIN"),
-		filepath.Join(repoRoot, "target/release/pi-kernel-service"),
-		filepath.Join(repoRoot, "target/debug/pi-kernel-service"),
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
 	)
 	if kernelBin == "" {
-		t.Skip("pi-kernel-service not built")
+		t.Skip("carina-kernel-service not built")
 	}
 	toolsDir := filepath.Join(repoRoot, "zig/zig-out/bin")
-	if _, err := os.Stat(filepath.Join(toolsDir, "pi-scan")); err != nil {
+	if _, err := os.Stat(filepath.Join(toolsDir, "carina-scan")); err != nil {
 		t.Skip("zig tools not built")
 	}
 
@@ -43,7 +43,7 @@ func TestAgentLoopExecutesThroughKernel(t *testing.T) {
 	d.SetReasoner(&scriptedReasoner{steps: []string{
 		`{"thought":"survey","action":{"tool":"list"}}`,
 		`{"thought":"read it","action":{"tool":"read","path":"hello.txt"}}`,
-		`{"thought":"edit","action":{"tool":"patch","path":"hello.txt","content":"hello\n// added by the pi-os agent\n"}}`,
+		`{"thought":"edit","action":{"tool":"patch","path":"hello.txt","content":"hello\n// added by the carina agent\n"}}`,
 		`{"thought":"verify","action":{"tool":"run","command":["cat","hello.txt"]}}`,
 		`{"thought":"finish","action":{"tool":"done","summary":"added a comment to hello.txt"}}`,
 	}})
@@ -60,7 +60,7 @@ func TestAgentLoopExecutesThroughKernel(t *testing.T) {
 
 	// The file must actually have been edited (through the kernel + Zig).
 	got, _ := os.ReadFile(filepath.Join(ws, "hello.txt"))
-	if string(got) != "hello\n// added by the pi-os agent\n" {
+	if string(got) != "hello\n// added by the carina agent\n" {
 		t.Fatalf("file not edited by agent: %q", got)
 	}
 
@@ -105,12 +105,12 @@ func TestAgentLoopExecutesThroughKernel(t *testing.T) {
 func TestAgentLoopBlocksDestructive(t *testing.T) {
 	repoRoot := repoRootFromHere(t)
 	kernelBin := firstExistingPath(
-		os.Getenv("PI_KERNEL_BIN"),
-		filepath.Join(repoRoot, "target/release/pi-kernel-service"),
-		filepath.Join(repoRoot, "target/debug/pi-kernel-service"),
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
 	)
 	if kernelBin == "" {
-		t.Skip("pi-kernel-service not built")
+		t.Skip("carina-kernel-service not built")
 	}
 	ws := t.TempDir()
 	os.WriteFile(filepath.Join(ws, "keep.txt"), []byte("important\n"), 0o600)

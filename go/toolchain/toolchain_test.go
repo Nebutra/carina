@@ -12,7 +12,7 @@ func toolsDir(t *testing.T) string {
 	_, file, _, _ := runtime.Caller(0)
 	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
 	dir := filepath.Join(root, "zig", "zig-out", "bin")
-	if _, err := os.Stat(filepath.Join(dir, "pi-scan")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "carina-scan")); err != nil {
 		t.Skip("zig tools not built")
 	}
 	return dir

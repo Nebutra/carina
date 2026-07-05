@@ -3,10 +3,10 @@
 all: go rust zig
 
 go:
-	go build -o bin/pi ./apps/pi-cli
-	go build -o bin/pi-daemon ./apps/pi-daemon
-	go build -o bin/pi-worker ./apps/pi-worker
-	go build -o bin/pi-tui ./apps/pi-tui
+	go build -o bin/carina ./apps/carina-cli
+	go build -o bin/carina-daemon ./apps/carina-daemon
+	go build -o bin/carina-worker ./apps/carina-worker
+	go build -o bin/carina-tui ./apps/carina-tui
 	go vet ./...
 
 test: rust-test go-test
@@ -15,8 +15,8 @@ rust-test:
 	cargo test --workspace
 
 go-test: rust
-	cp target/*/pi-kernel-service bin/ 2>/dev/null || cargo build --release -p pi-kernel --bin pi-kernel-service
-	PI_KERNEL_BIN=$(PWD)/target/release/pi-kernel-service go test ./...
+	cp target/*/carina-kernel-service bin/ 2>/dev/null || cargo build --release -p carina-kernel --bin carina-kernel-service
+	CARINA_KERNEL_BIN=$(PWD)/target/release/carina-kernel-service go test ./...
 
 rust:
 	cargo check --workspace

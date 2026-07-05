@@ -1,7 +1,7 @@
-// Package daemon hosts the long-running Pi-OS control plane: it wires the
+// Package daemon hosts the long-running Carina control plane: it wires the
 // session store, scheduler, worker pool, and model router behind the
 // JSON-RPC server, and mediates every side effect through the Rust
-// Capability Kernel (pi-kernel-service) and the Zig native toolchain.
+// Capability Kernel (carina-kernel-service) and the Zig native toolchain.
 package daemon
 
 import (
@@ -15,13 +15,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TsekaLuk/pi-os/go/kernel"
-	modelrouter "github.com/TsekaLuk/pi-os/go/model-router"
-	"github.com/TsekaLuk/pi-os/go/rpc"
-	"github.com/TsekaLuk/pi-os/go/scheduler"
-	sessionstore "github.com/TsekaLuk/pi-os/go/session-store"
-	"github.com/TsekaLuk/pi-os/go/toolchain"
-	"github.com/TsekaLuk/pi-os/go/worker"
+	"github.com/Nebutra/carina/go/kernel"
+	modelrouter "github.com/Nebutra/carina/go/model-router"
+	"github.com/Nebutra/carina/go/rpc"
+	"github.com/Nebutra/carina/go/scheduler"
+	sessionstore "github.com/Nebutra/carina/go/session-store"
+	"github.com/Nebutra/carina/go/toolchain"
+	"github.com/Nebutra/carina/go/worker"
 )
 
 const Version = "0.5.0"
@@ -29,7 +29,7 @@ const Version = "0.5.0"
 // Options configures external binaries and storage.
 type Options struct {
 	StateDir  string // session metadata, event logs, snapshots
-	KernelBin string // pi-kernel-service path ("" = auto-discover)
+	KernelBin string // carina-kernel-service path ("" = auto-discover)
 	ToolsDir  string // zig tools directory ("" = auto-discover)
 	PolicyDir string // enterprise org-policy directory ("" = none)
 	Offline   bool   // disable network model providers (PRD §5: offline mode)
@@ -63,14 +63,14 @@ type Daemon struct {
 
 func New(opts Options) (*Daemon, error) {
 	if opts.StateDir == "" {
-		opts.StateDir = ".pi-os-state"
+		opts.StateDir = ".carina-state"
 	}
 	store, err := sessionstore.Open(opts.StateDir)
 	if err != nil {
 		return nil, err
 	}
 	tools := toolchain.New(opts.ToolsDir)
-	// The kernel delegates patch writes to pi-patch-native, so it needs the
+	// The kernel delegates patch writes to carina-patch-native, so it needs the
 	// same tools directory (PRD §4.4).
 	kern, err := kernel.Start(opts.KernelBin, opts.StateDir, tools.Dir())
 	if err != nil {
@@ -118,7 +118,7 @@ func (d *Daemon) recover() {
 		recovered++
 	}
 	if recovered > 0 {
-		fmt.Printf("pi-daemon: recovered %d session(s)\n", recovered)
+		fmt.Printf("carina-daemon: recovered %d session(s)\n", recovered)
 	}
 }
 
@@ -573,7 +573,7 @@ func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decisio
 	}
 	command := strings.Join(argv, " ")
 	risk, _ := d.kern.ClassifyCommand(command)
-	// The command is executed by the Zig pi-run tool, so its lifecycle
+	// The command is executed by the Zig carina-run tool, so its lifecycle
 	// events are attributed to the Zig actor. Package-manager mutations are
 	// flagged so lockfile changes are auditable (PRD §13.7).
 	started := map[string]any{"command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk}

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TsekaLuk/pi-os/go/scheduler"
+	"github.com/Nebutra/carina/go/scheduler"
 )
 
 // TestGoalApprovalModeAxis proves the Codex two-axis model: the same profile

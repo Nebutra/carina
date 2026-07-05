@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/TsekaLuk/pi-os/protocol/schemas/session.schema.json",
+  "$id": "https://github.com/Nebutra/carina/protocol/schemas/session.schema.json",
   "title": "Session",
   "type": "object",
   "required": ["session_id", "workspace_id", "status", "permission_profile", "created_at"],

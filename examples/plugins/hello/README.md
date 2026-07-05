@@ -1,4 +1,4 @@
-# hello-plugin — Pi-OS example WASM plugin
+# hello-plugin — Carina example WASM plugin
 
 Demonstrates the plugin capability boundary (PRD §8.7): a plugin can only use
 the capabilities it declares in its manifest, and each request is gated a
@@ -26,12 +26,12 @@ It returns `1` (only one request was allowed).
 
 ```bash
 # rebuild the wasm if you edit the .wat
-cargo run --release -p pi-plugin-runtime --bin pi-wat2wasm -- \
+cargo run --release -p carina-plugin-runtime --bin carina-wat2wasm -- \
   examples/plugins/hello/hello.wat examples/plugins/hello/hello.wasm
 
 # with a running daemon:
 pi plugin inspect examples/plugins/hello/plugin.toml
-SID=$(pi run "demo" | grep -o 'sess_[a-f0-9]*' | head -1)
+SID=$(carina run "demo" | grep -o 'sess_[a-f0-9]*' | head -1)
 pi plugin run "$SID" examples/plugins/hello/plugin.toml examples/plugins/hello/hello.wasm
-pi audit "$SID"   # see the PolicyViolation for the undeclared secret request
+carina audit "$SID"   # see the PolicyViolation for the undeclared secret request
 ```

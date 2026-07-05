@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TsekaLuk/pi-os/go/daemon"
-	"github.com/TsekaLuk/pi-os/go/rpc"
+	"github.com/Nebutra/carina/go/daemon"
+	"github.com/Nebutra/carina/go/rpc"
 )
 
 // TestSecretBrokerNeverLeaksPlaintext verifies PRD §12.3 / §17.2: a secret's
@@ -17,12 +17,12 @@ import (
 func TestSecretBrokerNeverLeaksPlaintext(t *testing.T) {
 	repoRoot := repoRoot(t)
 	kernelBin := firstExisting(
-		os.Getenv("PI_KERNEL_BIN"),
-		filepath.Join(repoRoot, "target/release/pi-kernel-service"),
-		filepath.Join(repoRoot, "target/debug/pi-kernel-service"),
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
 	)
 	if kernelBin == "" {
-		t.Skip("pi-kernel-service not built")
+		t.Skip("carina-kernel-service not built")
 	}
 
 	stateDir := t.TempDir()

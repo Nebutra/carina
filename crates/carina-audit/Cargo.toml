@@ -1,0 +1,14 @@
+[package]
+name = "carina-audit"
+description = "Carina append-only event log and audit reporting"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+sha2 = { workspace = true }

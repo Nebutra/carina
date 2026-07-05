@@ -11,7 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/TsekaLuk/pi-os/go/rpc"
+	"github.com/Nebutra/carina/go/rpc"
 )
 
 // Decision mirrors protocol/schemas/permission-decision.schema.json.
@@ -51,7 +51,7 @@ type FileChange struct {
 	NewContent string `json:"new_content"`
 }
 
-// Service is a running pi-kernel-service child process.
+// Service is a running carina-kernel-service child process.
 type Service struct {
 	cmd    *exec.Cmd
 	client *rpc.Client
@@ -59,7 +59,7 @@ type Service struct {
 
 // Start launches the kernel binary with the given state directory. toolsDir
 // is passed through as PI_TOOLS_DIR so the kernel can delegate patch writes
-// to pi-patch-native (PRD §4.4).
+// to carina-patch-native (PRD §4.4).
 func Start(binPath, stateDir, toolsDir string) (*Service, error) {
 	if binPath == "" {
 		var err error
@@ -93,27 +93,27 @@ func Start(binPath, stateDir, toolsDir string) (*Service, error) {
 	return svc, nil
 }
 
-// FindBinary locates pi-kernel-service: $PI_KERNEL_BIN, next to the current
+// FindBinary locates carina-kernel-service: $CARINA_KERNEL_BIN, next to the current
 // executable, cargo target dirs, then $PATH.
 func FindBinary() (string, error) {
-	if p := os.Getenv("PI_KERNEL_BIN"); p != "" {
+	if p := os.Getenv("CARINA_KERNEL_BIN"); p != "" {
 		return p, nil
 	}
 	if exe, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exe), "pi-kernel-service")
+		candidate := filepath.Join(filepath.Dir(exe), "carina-kernel-service")
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
 		}
 	}
-	for _, rel := range []string{"target/release/pi-kernel-service", "target/debug/pi-kernel-service"} {
+	for _, rel := range []string{"target/release/carina-kernel-service", "target/debug/carina-kernel-service"} {
 		if _, err := os.Stat(rel); err == nil {
 			return rel, nil
 		}
 	}
-	if p, err := exec.LookPath("pi-kernel-service"); err == nil {
+	if p, err := exec.LookPath("carina-kernel-service"); err == nil {
 		return p, nil
 	}
-	return "", fmt.Errorf("kernel: pi-kernel-service not found (set PI_KERNEL_BIN or run `cargo build`)")
+	return "", fmt.Errorf("kernel: carina-kernel-service not found (set CARINA_KERNEL_BIN or run `cargo build`)")
 }
 
 func (s *Service) Close() error {

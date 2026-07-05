@@ -1,4 +1,4 @@
-// Package rpc implements the Pi-OS JSON-RPC 2.0 transport. Framing is
+// Package rpc implements the Carina JSON-RPC 2.0 transport. Framing is
 // newline-delimited JSON over a unix socket or TCP (docs/rpc-api.md).
 // Beyond request/response it supports server-initiated notifications, used
 // for streaming session events to subscribers.

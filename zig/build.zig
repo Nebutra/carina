@@ -11,19 +11,19 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // pi-pty needs libc for the POSIX pseudo-terminal calls (posix_openpt,
+    // carina-pty needs libc for the POSIX pseudo-terminal calls (posix_openpt,
     // grantpt, ptsname, ioctl, forkpty semantics).
     const needs_libc = std.StaticStringMap(void).initComptime(.{
-        .{"pi-pty"},
+        .{"carina-pty"},
     });
 
     const tools = [_][]const u8{
-        "pi-scan",
-        "pi-grep",
-        "pi-diff",
-        "pi-patch-native",
-        "pi-run",
-        "pi-pty",
+        "carina-scan",
+        "carina-grep",
+        "carina-diff",
+        "carina-patch-native",
+        "carina-run",
+        "carina-pty",
     };
 
     for (tools) |tool| {

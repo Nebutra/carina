@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/TsekaLuk/pi-os/go/scheduler"
-	sessionstore "github.com/TsekaLuk/pi-os/go/session-store"
+	"github.com/Nebutra/carina/go/scheduler"
+	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
 const (

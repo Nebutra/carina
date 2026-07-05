@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/TsekaLuk/pi-os/protocol/schemas/task.schema.json",
+  "$id": "https://github.com/Nebutra/carina/protocol/schemas/task.schema.json",
   "title": "Task",
   "type": "object",
   "required": ["task_id", "session_id", "workspace_id", "status", "user_prompt", "created_at", "updated_at"],

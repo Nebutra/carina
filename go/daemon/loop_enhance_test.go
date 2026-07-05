@@ -10,12 +10,12 @@ func newLoopDaemon(t *testing.T) (*Daemon, string) {
 	t.Helper()
 	repoRoot := repoRootFromHere(t)
 	kernelBin := firstExistingPath(
-		os.Getenv("PI_KERNEL_BIN"),
-		filepath.Join(repoRoot, "target/release/pi-kernel-service"),
-		filepath.Join(repoRoot, "target/debug/pi-kernel-service"),
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
 	)
 	if kernelBin == "" {
-		t.Skip("pi-kernel-service not built")
+		t.Skip("carina-kernel-service not built")
 	}
 	ws := t.TempDir()
 	d, err := New(Options{StateDir: t.TempDir(), KernelBin: kernelBin,

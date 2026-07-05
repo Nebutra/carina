@@ -1,6 +1,6 @@
 # RPC API
 
-Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.pi-os/daemon.sock`) or stdio. gRPC is a later optimization. Machine-readable registry: [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json).
+Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. gRPC is a later optimization. Machine-readable registry: [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json).
 
 Notifications (server → client) stream events; every payload conforms to [`protocol/schemas/`](../protocol/schemas/).
 
@@ -31,8 +31,8 @@ Notifications (server → client) stream events; every payload conforms to [`pro
 | Method | Purpose |
 |--------|---------|
 | `workspace.open` / `workspace.scan` | register + index a workspace |
-| `workspace.tree` | file tree (via `pi-scan`) |
-| `workspace.search` | structured search (via `pi-grep`) |
+| `workspace.tree` | file tree (via `carina-scan`) |
+| `workspace.search` | structured search (via `carina-grep`) |
 | `workspace.file.get` | read a file (FileRead capability) |
 | `workspace.patch.propose` / `apply` / `rollback` | transactional patch operations |
 

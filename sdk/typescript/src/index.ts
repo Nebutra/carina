@@ -1,7 +1,7 @@
 /**
- * Pi-OS TypeScript SDK (Phase 0).
+ * Carina TypeScript SDK (Phase 0).
  *
- * A thin JSON-RPC 2.0 client for the pi-daemon unix socket. The Agent
+ * A thin JSON-RPC 2.0 client for the carina-daemon unix socket. The Agent
  * Surface (and any IDE/CI integration) talks to the runtime exclusively
  * through this protocol — see protocol/jsonrpc/methods.json.
  */
@@ -89,7 +89,7 @@ interface RpcError {
   message: string
 }
 
-export const defaultSocketPath = (): string => join(homedir(), '.pi-os', 'daemon.sock')
+export const defaultSocketPath = (): string => join(homedir(), '.carina', 'daemon.sock')
 
 export class PiClient {
   private socket: Socket | null = null
@@ -109,7 +109,7 @@ export class PiClient {
         resolve()
       })
       socket.once('error', (err) =>
-        reject(new Error(`cannot reach pi-daemon at ${this.socketPath}: ${err.message}`)),
+        reject(new Error(`cannot reach carina-daemon at ${this.socketPath}: ${err.message}`)),
       )
     })
   }

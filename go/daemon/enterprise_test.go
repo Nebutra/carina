@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TsekaLuk/pi-os/go/daemon"
-	"github.com/TsekaLuk/pi-os/go/rpc"
+	"github.com/Nebutra/carina/go/daemon"
+	"github.com/Nebutra/carina/go/rpc"
 )
 
 // TestEnterprisePolicyBundleAndRBAC verifies PRD §5 Phase 5: an org policy
@@ -16,12 +16,12 @@ import (
 func TestEnterprisePolicyBundleAndRBAC(t *testing.T) {
 	repoRoot := repoRoot(t)
 	kernelBin := firstExisting(
-		os.Getenv("PI_KERNEL_BIN"),
-		filepath.Join(repoRoot, "target/release/pi-kernel-service"),
-		filepath.Join(repoRoot, "target/debug/pi-kernel-service"),
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
 	)
 	if kernelBin == "" {
-		t.Skip("pi-kernel-service not built")
+		t.Skip("carina-kernel-service not built")
 	}
 
 	stateDir := t.TempDir()
@@ -99,12 +99,12 @@ max_command_risk = 1
 func TestRBACApprovalRequiresRole(t *testing.T) {
 	repoRoot := repoRoot(t)
 	kernelBin := firstExisting(
-		os.Getenv("PI_KERNEL_BIN"),
-		filepath.Join(repoRoot, "target/release/pi-kernel-service"),
-		filepath.Join(repoRoot, "target/debug/pi-kernel-service"),
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
 	)
 	if kernelBin == "" {
-		t.Skip("pi-kernel-service not built")
+		t.Skip("carina-kernel-service not built")
 	}
 	stateDir := t.TempDir()
 	ws := t.TempDir()

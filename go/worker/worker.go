@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	sessionstore "github.com/TsekaLuk/pi-os/go/session-store"
+	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
 type Kind string

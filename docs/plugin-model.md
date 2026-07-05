@@ -1,6 +1,6 @@
 # Plugin Model
 
-Plugins extend the runtime without breaking the security boundary. Execution target: **WASM** (Phase 4), hosted by `crates/pi-plugin-runtime`.
+Plugins extend the runtime without breaking the security boundary. Execution target: **WASM** (Phase 4), hosted by `crates/carina-plugin-runtime`.
 
 ## Plugin types
 

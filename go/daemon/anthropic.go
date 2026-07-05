@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	modelrouter "github.com/TsekaLuk/pi-os/go/model-router"
+	modelrouter "github.com/Nebutra/carina/go/model-router"
 )
 
 // anthropicProvider calls the Anthropic Messages API. It is registered

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pi-OS acceptance gates (PRD §16). Each gate proves a red-line invariant.
+# Carina acceptance gates (PRD §16). Each gate proves a red-line invariant.
 # Exit non-zero on the first failure. Run from the repo root.
 set -uo pipefail
 
@@ -7,9 +7,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 TOOLS="${PI_TOOLS_DIR:-$ROOT/zig/zig-out/bin}"
-KERNEL="${PI_KERNEL_BIN:-$ROOT/target/release/pi-kernel-service}"
-PI="$ROOT/bin/pi"
-DAEMON="$ROOT/bin/pi-daemon"
+KERNEL="${CARINA_KERNEL_BIN:-$ROOT/target/release/carina-kernel-service}"
+PI="$ROOT/bin/carina"
+DAEMON="$ROOT/bin/carina-daemon"
 
 fail() { echo "GATE FAILED: $1" >&2; exit 1; }
 ok()   { echo "GATE PASS:   $1"; }
@@ -30,22 +30,22 @@ ok "16.1 no TypeScript runtime"
 # ---------------------------------------------------------------------------
 # 16.2 — No Node runtime. Core native commands run with node off PATH.
 # ---------------------------------------------------------------------------
-[ -x "$PI" ] || fail "16.2 pi binary missing (run: go build -o bin/pi ./apps/pi-cli)"
+[ -x "$PI" ] || fail "16.2 pi binary missing (run: go build -o bin/carina ./apps/carina-cli)"
 env -i PATH="/usr/bin:/bin" PI_TOOLS_DIR="$TOOLS" "$PI" version >/dev/null 2>&1 || fail "16.2 pi version needs node"
 env -i PATH="/usr/bin:/bin" PI_TOOLS_DIR="$TOOLS" "$PI" scan "$ROOT/protocol" >/dev/null 2>&1 || fail "16.2 pi scan needs node"
 env -i PATH="/usr/bin:/bin" PI_TOOLS_DIR="$TOOLS" "$PI" grep "schema" "$ROOT/protocol" >/dev/null 2>&1 || fail "16.2 pi grep needs node"
 ok "16.2 core commands run without node"
 
 # ---------------------------------------------------------------------------
-# 16.5 — Native tool required. Remove pi-grep; search must fail (no fallback).
+# 16.5 — Native tool required. Remove carina-grep; search must fail (no fallback).
 # ---------------------------------------------------------------------------
 GATE_TMP=$(mktemp -d)
 trap 'rm -rf "$GATE_TMP"; [ -n "${DPID:-}" ] && kill "$DPID" 2>/dev/null' EXIT
 mkdir -p "$GATE_TMP/tools" "$GATE_TMP/ws"
-for t in pi-scan pi-run pi-diff pi-pty pi-patch-native; do cp "$TOOLS/$t" "$GATE_TMP/tools/"; done  # NOT pi-grep
+for t in carina-scan carina-run carina-diff carina-pty carina-patch-native; do cp "$TOOLS/$t" "$GATE_TMP/tools/"; done  # NOT carina-grep
 printf 'x TODO y\n' > "$GATE_TMP/ws/f.txt"
-[ -x "$DAEMON" ] || fail "16.5 pi-daemon binary missing"
-[ -x "$KERNEL" ] || fail "16.5 pi-kernel-service missing (run: cargo build --release -p pi-kernel --bin pi-kernel-service)"
+[ -x "$DAEMON" ] || fail "16.5 carina-daemon binary missing"
+[ -x "$KERNEL" ] || fail "16.5 carina-kernel-service missing (run: cargo build --release -p carina-kernel --bin carina-kernel-service)"
 
 PI_TOOLS_DIR="$GATE_TMP/tools" "$DAEMON" -socket "$GATE_TMP/d.sock" -state "$GATE_TMP/st" \
   -kernel "$KERNEL" -tools "$GATE_TMP/tools" -policy "$GATE_TMP/np" >"$GATE_TMP/d.log" 2>&1 &
@@ -70,10 +70,10 @@ def call(m, **p):
 se, _ = call("session.create", workspace_root=ws, profile="safe-edit")
 sid = se["session_id"]
 
-# 16.5: search must fail without pi-grep (no non-Zig fallback).
+# 16.5: search must fail without carina-grep (no non-Zig fallback).
 _, err = call("workspace.search", session_id=sid, pattern="TODO")
 if err is None:
-    print("16.5 FAIL: search succeeded without pi-grep"); sys.exit(1)
+    print("16.5 FAIL: search succeeded without carina-grep"); sys.exit(1)
 
 # 16.4: policy bypass — read-only cannot write; rm -rf is denied.
 ro, _ = call("session.create", workspace_root=ws, profile="read-only")
@@ -97,7 +97,7 @@ ok "16.4 policy bypass blocked (read-only + destructive)"
 # ---------------------------------------------------------------------------
 # 16.3 — Process tree: the daemon subtree spawned no node/tsx/bun.
 # ---------------------------------------------------------------------------
-# (Covered structurally: the daemon only spawns pi-kernel-service and the Zig
+# (Covered structurally: the daemon only spawns carina-kernel-service and the Zig
 #  tools; none are Node. The no-node gate above already ran the daemon.)
 grep -qi 'node\|tsx\|bun\|deno' "$GATE_TMP/d.log" 2>/dev/null && fail "16.3 node reference in daemon output" || true
 ok "16.3 no node in daemon runtime"

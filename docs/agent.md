@@ -1,6 +1,6 @@
-# Using Pi-OS as a Coding Agent
+# Using Carina as a Coding Agent
 
-Pi-OS is not just a runtime — it drives a real ReAct coding agent. The model
+Carina is not just a runtime — it drives a real ReAct coding agent. The model
 **only decides**; every side effect is authorized by the Rust capability
 kernel and executed by the Zig toolchain, and the whole run is a
 tamper-evident audit trail you can replay and roll back.
@@ -13,16 +13,16 @@ Claude (decides)  →  Go agent loop  →  Rust kernel (authorizes)  →  Zig to
 
 ## The loop
 
-Each turn the reasoner emits one JSON action; pi-os runs it and feeds back an
+Each turn the reasoner emits one JSON action; carina runs it and feeds back an
 observation:
 
 | Action | Goes through | Runs on |
 |--------|-------------|---------|
-| `{"tool":"list"}` | FileRead capability | Zig `pi-scan` |
+| `{"tool":"list"}` | FileRead capability | Zig `carina-scan` |
 | `{"tool":"read","path":"…"}` | FileRead capability | kernel-gated read |
-| `{"tool":"search","pattern":"…"}` | FileRead capability | Zig `pi-grep` |
-| `{"tool":"run","command":["…"]}` | CommandExec capability (risk-classified) | Zig `pi-run` |
-| `{"tool":"patch","path":"…","content":"…"}` | PatchApply capability | Rust transaction → Zig `pi-patch-native` |
+| `{"tool":"search","pattern":"…"}` | FileRead capability | Zig `carina-grep` |
+| `{"tool":"run","command":["…"]}` | CommandExec capability (risk-classified) | Zig `carina-run` |
+| `{"tool":"patch","path":"…","content":"…"}` | PatchApply capability | Rust transaction → Zig `carina-patch-native` |
 | `{"tool":"done","summary":"…"}` | — | ends the task |
 
 Destructive commands (`rm -rf`, `curl … | sh`) are **denied** before they run;
@@ -39,7 +39,7 @@ step). Two implementations:
   isolated empty cwd so it cannot touch the workspace. This works with **CC
   Switch / gateway setups that only admit the Claude Code client** (e.g. the
   Mox gateway), because the request comes from the real `claude` binary. The
-  agent's actual file/command/patch work happens in pi-os, not in Claude Code.
+  agent's actual file/command/patch work happens in carina, not in Claude Code.
 - **scripted** — replays fixed decisions; used by tests to drive the full loop
   deterministically with no model and no cost.
 
@@ -50,14 +50,14 @@ daemon is not in `--offline` mode. Set `PI_REASONER_MODEL` to pin a model.
 
 ```bash
 # start the runtime (reasoner auto-wired if `claude` is on PATH)
-pi-daemon -tools ./zig/zig-out/bin -kernel ./bin/pi-kernel-service &
+carina-daemon -tools ./zig/zig-out/bin -kernel ./bin/carina-kernel-service &
 
 cd your-repo
-pi run "fix the failing test in parser.go"     # agent works autonomously
-pi audit <session>        # replay every model decision + kernel-gated effect
-pi audit verify <session> # confirm the hash chain wasn't tampered with
-pi patch list <session>   # every edit, rollbackable
-pi patch rollback <id>    # undo an edit
+carina run "fix the failing test in parser.go"     # agent works autonomously
+carina audit <session>        # replay every model decision + kernel-gated effect
+carina audit verify <session> # confirm the hash chain wasn't tampered with
+carina patch list <session>   # every edit, rollbackable
+carina patch rollback <id>    # undo an edit
 ```
 
 ## Verified

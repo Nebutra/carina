@@ -3,7 +3,7 @@ package daemon
 import (
 	"sync"
 
-	"github.com/TsekaLuk/pi-os/go/rpc"
+	"github.com/Nebutra/carina/go/rpc"
 )
 
 // Bus fans session events out to live subscribers (PRD §8.6: event

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Pi-OS test coverage report (PRD §15). Reports measured coverage honestly;
+# Carina test coverage report (PRD §15). Reports measured coverage honestly;
 # does not fake thresholds.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-export PI_KERNEL_BIN="${PI_KERNEL_BIN:-$ROOT/target/release/pi-kernel-service}"
+export CARINA_KERNEL_BIN="${CARINA_KERNEL_BIN:-$ROOT/target/release/carina-kernel-service}"
 
 echo "=== Go coverage (go test -cover) ==="
 go test -cover ./go/... 2>/dev/null | grep -E "coverage|no test files" || true

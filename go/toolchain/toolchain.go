@@ -48,7 +48,7 @@ func New(dir string) *Toolchain {
 		dir = os.Getenv("PI_TOOLS_DIR")
 	}
 	if dir == "" {
-		if _, err := os.Stat(filepath.Join("zig", "zig-out", "bin", "pi-scan")); err == nil {
+		if _, err := os.Stat(filepath.Join("zig", "zig-out", "bin", "carina-scan")); err == nil {
 			dir = filepath.Join("zig", "zig-out", "bin")
 		}
 	}
@@ -67,13 +67,13 @@ func (t *Toolchain) Dir() string { return t.dir }
 
 // Available reports whether the native tools can be found.
 func (t *Toolchain) Available() bool {
-	_, err := exec.LookPath(t.tool("pi-scan"))
+	_, err := exec.LookPath(t.tool("carina-scan"))
 	return err == nil
 }
 
-// Scan walks the workspace tree via pi-scan.
+// Scan walks the workspace tree via carina-scan.
 func (t *Toolchain) Scan(root string) ([]FileEntry, error) {
-	out, err := t.runJSONLines(30*time.Second, t.tool("pi-scan"), root)
+	out, err := t.runJSONLines(30*time.Second, t.tool("carina-scan"), root)
 	if err != nil {
 		return nil, err
 	}
@@ -87,9 +87,9 @@ func (t *Toolchain) Scan(root string) ([]FileEntry, error) {
 	return files, nil
 }
 
-// Grep searches via pi-grep (which walks directories natively).
+// Grep searches via carina-grep (which walks directories natively).
 func (t *Toolchain) Grep(pattern, root string) ([]Match, error) {
-	out, err := t.runJSONLines(30*time.Second, t.tool("pi-grep"), pattern, root)
+	out, err := t.runJSONLines(30*time.Second, t.tool("carina-grep"), pattern, root)
 	if err != nil {
 		return nil, err
 	}
@@ -103,14 +103,14 @@ func (t *Toolchain) Grep(pattern, root string) ([]Match, error) {
 	return matches, nil
 }
 
-// Run executes a command through pi-run with captured output.
+// Run executes a command through carina-run with captured output.
 func (t *Toolchain) Run(argv []string, cwd string, timeout time.Duration) (*CommandResult, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("toolchain: empty command")
 	}
 	args := []string{"--cwd", cwd, "--timeout-ms", fmt.Sprintf("%d", timeout.Milliseconds()), "--"}
 	args = append(args, argv...)
-	out, err := t.runJSONLines(timeout+10*time.Second, t.tool("pi-run"), args...)
+	out, err := t.runJSONLines(timeout+10*time.Second, t.tool("carina-run"), args...)
 	if err != nil {
 		return nil, err
 	}

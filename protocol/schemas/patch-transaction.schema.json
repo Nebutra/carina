@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/TsekaLuk/pi-os/protocol/schemas/patch-transaction.schema.json",
+  "$id": "https://github.com/Nebutra/carina/protocol/schemas/patch-transaction.schema.json",
   "title": "PatchTransaction",
   "type": "object",
   "required": [

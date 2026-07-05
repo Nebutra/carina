@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/TsekaLuk/pi-os/protocol/schemas/permission-decision.schema.json",
+  "$id": "https://github.com/Nebutra/carina/protocol/schemas/permission-decision.schema.json",
   "title": "PermissionDecision",
   "type": "object",
   "required": ["decision_id", "capability", "requested_by", "resource", "decision"],

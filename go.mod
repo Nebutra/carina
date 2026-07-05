@@ -1,3 +1,3 @@
-module github.com/TsekaLuk/pi-os
+module github.com/Nebutra/carina
 
 go 1.25

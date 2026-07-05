@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pi-OS performance benchmarks (PRD §14). Generates a synthetic repo and
+# Carina performance benchmarks (PRD §14). Generates a synthetic repo and
 # times the native tools. Prints measured ms and checks against the targets.
 set -uo pipefail
 
@@ -23,13 +23,13 @@ ms() { python3 -c "import sys;print(round(float(sys.argv[1])*1000))" "$1"; }
 
 # scan
 t0=$(python3 -c "import time;print(time.time())")
-"$TOOLS/pi-scan" "$TMP" >/dev/null
+"$TOOLS/carina-scan" "$TMP" >/dev/null
 t1=$(python3 -c "import time;print(time.time())")
 scan_ms=$(python3 -c "print(round(($t1-$t0)*1000))")
 
 # grep
 t0=$(python3 -c "import time;print(time.time())")
-"$TOOLS/pi-grep" "TODO" "$TMP" >/dev/null
+"$TOOLS/carina-grep" "TODO" "$TMP" >/dev/null
 t1=$(python3 -c "import time;print(time.time())")
 grep_ms=$(python3 -c "print(round(($t1-$t0)*1000))")
 
@@ -37,7 +37,7 @@ grep_ms=$(python3 -c "print(round(($t1-$t0)*1000))")
 echo "orig" > "$TMP/one.txt"; cp "$TMP/one.txt" "$TMP/one.pre"
 plan=$(python3 -c 'import json,sys;print(json.dumps({"files":[{"path":sys.argv[1]+"/one.txt","new_content":"changed\n","snapshot":sys.argv[1]+"/one.pre","existed":True}]}))' "$TMP")
 t0=$(python3 -c "import time;print(time.time())")
-echo "$plan" | "$TOOLS/pi-patch-native" apply >/dev/null
+echo "$plan" | "$TOOLS/carina-patch-native" apply >/dev/null
 t1=$(python3 -c "import time;print(time.time())")
 patch_ms=$(python3 -c "print(round(($t1-$t0)*1000))")
 
