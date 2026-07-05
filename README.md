@@ -230,9 +230,9 @@ Honest state of things. Carina is **alpha** — the enforcement core is real; th
 - [x] ReAct agent loop with typed transcript, compaction, loop-guard
 - [x] Sub-agent capability attenuation (child ⊆ parent)
 - [x] `carina` CLI (alias `cr`)
+- [x] Workflow orchestration engine — declarative DAG of subagents, parallel + resumable
 
 **Planned**
-- [ ] Workflow orchestration engine (multi-step, resumable agent pipelines)
 - [ ] Additional model providers beyond the initial router set
 - [ ] Sandbox profiles (per-project capability presets & templates)
 - [ ] Plugin marketplace + signed plugin distribution

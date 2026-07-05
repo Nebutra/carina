@@ -47,7 +47,12 @@ its security kernel, returning an observation.
 You may also delegate to specialized subagents (isolated context, restricted
 capabilities) for focused sub-tasks like recon or review:
 - {"tool":"spawn","agent":"scout","task":"find all auth code"}
-- {"tool":"spawn","tasks":[{"agent":"scout","task":"..."},{"agent":"reviewer","task":"..."}]}   (parallel)`
+- {"tool":"spawn","tasks":[{"agent":"scout","task":"..."},{"agent":"reviewer","task":"..."}]}   (parallel)
+
+For a repeatable multi-step pipeline, run a named workflow (a dependency DAG of
+subagents; independent steps run in parallel, and each step's output is
+available to later steps as ${step_id}). Top-level only:
+- {"tool":"workflow","workflow":"review","task":"optional input, available to every step as ${input}"}`
 
 // action is the decision emitted by the reasoner each turn. Fields are read
 // from the top level (flat form the model naturally emits) or from a nested
@@ -64,6 +69,8 @@ type action struct {
 	Agent string      `json:"agent"`
 	Task  string      `json:"task"`
 	Tasks []SpawnTask `json:"tasks"`
+	// workflow tool
+	Workflow string `json:"workflow"`
 }
 
 // SpawnTask is one delegation in a parallel spawn.
@@ -329,6 +336,9 @@ func (d *Daemon) executeAction(sess *sessionstore.Session, task *scheduler.Task,
 
 	case "spawn":
 		return d.executeSpawn(sess, task, act)
+
+	case "workflow":
+		return d.executeWorkflow(sess, task, act)
 
 	default:
 		return "unknown tool: " + act.Tool

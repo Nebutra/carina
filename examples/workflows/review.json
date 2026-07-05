@@ -1,0 +1,10 @@
+{
+  "name": "review",
+  "description": "Scan changed files, review for bugs and performance in parallel, then synthesize one report.",
+  "steps": [
+    {"id": "scan",   "agent": "scout",    "task": "List the files changed in the working tree and briefly summarize each."},
+    {"id": "bugs",   "agent": "reviewer", "task": "Review these files for correctness bugs:\n${scan}", "needs": ["scan"]},
+    {"id": "perf",   "agent": "reviewer", "task": "Review these files for performance issues:\n${scan}", "needs": ["scan"]},
+    {"id": "report", "agent": "writer",   "task": "Synthesize one prioritized review from:\nBUGS:\n${bugs}\n\nPERF:\n${perf}", "needs": ["bugs", "perf"]}
+  ]
+}
