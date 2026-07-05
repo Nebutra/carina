@@ -439,6 +439,9 @@ impl PolicyEngine {
                         "sensitive file (credentials/secret material) — use the secret broker".into(),
                     );
                 }
+                if let Err(e) = guard_special_path(&req.resource) {
+                    return (Verdict::Denied, e);
+                }
                 if path_within_workspace(root, Path::new(&req.resource)) {
                     (Verdict::Allowed, format!("{} allows FileRead within workspace", profile.name))
                 } else {
@@ -452,6 +455,9 @@ impl PolicyEngine {
                     "FileWrite only through PatchApply under this profile".into(),
                 ),
                 WriteMode::Workspace => {
+                    if let Err(e) = guard_special_path(&req.resource) {
+                        return (Verdict::Denied, e);
+                    }
                     if path_within_workspace(root, Path::new(&req.resource)) {
                         (Verdict::Allowed, "workspace write allowed".into())
                     } else {
@@ -529,6 +535,35 @@ pub fn is_sensitive_file(path: &str) -> bool {
     // Path-segment matches for secret directories.
     let sensitive_dirs = ["/.ssh/", "/.aws/", "/.gnupg/", "/.config/gcloud", "/.kube/"];
     sensitive_dirs.iter().any(|d| lower.contains(d))
+}
+
+/// guard_special_path rejects paths that name a device/pseudo file, a special
+/// node (FIFO/socket/char-or-block device), a Windows UNC/device namespace, or
+/// contain a NUL byte — none of which a workspace file op should touch, even if
+/// they lexically resolve inside the workspace (e.g. a symlink to /dev/tcp).
+pub fn guard_special_path(path: &str) -> Result<(), String> {
+    if path.contains('\0') {
+        return Err("path contains a NUL byte".into());
+    }
+    if path.starts_with(r"\\") {
+        return Err("Windows UNC/device path is not allowed".into());
+    }
+    let lower = path.to_ascii_lowercase();
+    let device = ["/dev/", "/proc/", "/sys/", "/run/"];
+    if device.iter().any(|p| lower.starts_with(p)) || lower == "/dev" || lower == "/proc" {
+        return Err(format!("path targets a device/pseudo filesystem: {path}"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        if let Ok(md) = std::fs::symlink_metadata(path) {
+            let ft = md.file_type();
+            if ft.is_fifo() || ft.is_socket() || ft.is_char_device() || ft.is_block_device() {
+                return Err("path is a special node (fifo/socket/device)".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Approval mode — the "when do you stop and ask me" axis, orthogonal to the
@@ -950,6 +985,16 @@ mod shell_gating_tests {
         assert_eq!(classify_command("git show HEAD"), 0);
         assert_eq!(classify_command("git commit -am x"), 3);
         assert_eq!(classify_command("git branch -D main"), 3);
+    }
+
+    #[test]
+    fn special_paths_are_denied() {
+        assert!(guard_special_path("/dev/tcp/1.2.3.4/80").is_err());
+        assert!(guard_special_path("/proc/self/mem").is_err());
+        assert!(guard_special_path("/sys/kernel/x").is_err());
+        assert!(guard_special_path(r"\\server\share\x").is_err());
+        assert!(guard_special_path("has\0nul").is_err());
+        assert!(guard_special_path("src/normal/file.rs").is_ok());
     }
 }
 
