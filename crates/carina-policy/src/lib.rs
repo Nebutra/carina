@@ -600,12 +600,32 @@ pub fn classify_command(command: &str) -> u8 {
     // `curl url | sh`); the per-segment pass catches a risky tail hidden behind
     // a read-only-looking prefix. Max => never lowers the risk (fail-closed).
     let whole = classify_atom(command);
-    let seg_max = shell_segments(command)
+    let segments = shell_segments(command);
+    let seg_max = segments.iter().map(|s| classify_atom(s)).max().unwrap_or(0);
+    // Descend into command-carrying builtins (eval/xargs) whose real command is
+    // their payload, so `eval "rm -rf /"` is not scored as a bare `eval`.
+    let carried_max = segments
         .iter()
-        .map(|s| classify_atom(s))
+        .filter_map(|s| carried_command(s))
+        .map(|c| classify_command(&c))
         .max()
         .unwrap_or(0);
-    whole.max(seg_max)
+    whole.max(seg_max).max(carried_max)
+}
+
+/// carried_command returns the payload of a command-carrying builtin (eval,
+/// xargs) — the command that will actually run — so it can be classified too.
+fn carried_command(atom: &str) -> Option<String> {
+    let a = atom.trim();
+    for kw in ["eval ", "xargs "] {
+        if let Some(rest) = a.strip_prefix(kw) {
+            let r = rest.trim().trim_matches(|c| c == '"' || c == '\'');
+            if !r.is_empty() {
+                return Some(r.to_string());
+            }
+        }
+    }
+    None
 }
 
 /// classify_atom scores a single, non-compound command.
@@ -705,14 +725,50 @@ fn shell_segments(command: &str) -> Vec<String> {
                 i = j + 1;
                 continue;
             }
+            // Process substitution <(...) and >(...): the body runs as a command.
+            if (c == '<' || c == '>') && i + 1 < chars.len() && chars[i + 1] == '(' {
+                let mut depth = 1;
+                let mut j = i + 2;
+                let mut inner = String::new();
+                while j < chars.len() && depth > 0 {
+                    match chars[j] {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    if depth > 0 {
+                        inner.push(chars[j]);
+                    }
+                    j += 1;
+                }
+                subshells.push(inner);
+                i = j + 1;
+                continue;
+            }
             if c == ';' || c == '\n' {
                 segments.push(std::mem::take(&mut cur));
                 i += 1;
                 continue;
             }
-            if c == '&' && i + 1 < chars.len() && chars[i + 1] == '&' {
+            if c == '&' {
+                // `&&` and background `&` are both boundaries; `&>` is a redirect.
+                if i + 1 < chars.len() && chars[i + 1] == '&' {
+                    segments.push(std::mem::take(&mut cur));
+                    i += 2;
+                    continue;
+                }
+                if i + 1 < chars.len() && chars[i + 1] == '>' {
+                    cur.push(c);
+                    i += 1;
+                    continue;
+                }
                 segments.push(std::mem::take(&mut cur));
-                i += 2;
+                i += 1;
                 continue;
             }
             if c == '|' {
@@ -785,6 +841,20 @@ mod shell_gating_tests {
     fn hidden_mutation_is_no_longer_read_only() {
         assert!(!is_readonly_command("cat f && rm x"));
         assert!(is_readonly_command("cat f && echo done"));
+    }
+
+    #[test]
+    fn background_process_sub_and_eval_boundaries() {
+        // single '&' background operator is a boundary (tail was hidden before)
+        assert_eq!(classify_command("echo done & chmod 777 x"), 3);
+        assert_eq!(classify_command("echo a & echo b"), 0);
+        // '&>' redirect is NOT a background boundary
+        assert_eq!(classify_command("echo hi &> out.txt"), 0);
+        // process substitution bodies are gated (a 'cat' prefix no longer hides them)
+        assert_eq!(classify_command("cat <(chmod 777 y)"), 3);
+        // command-carrying builtins descend into their payload
+        assert_eq!(classify_command("eval \"rm -rf /tmp/x\""), 5);
+        assert_eq!(classify_command("xargs chmod 777 < list"), 3);
     }
 }
 
