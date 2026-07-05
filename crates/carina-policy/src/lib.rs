@@ -645,6 +645,27 @@ fn classify_atom(command: &str) -> u8 {
     if mutation.iter().any(|p| cmd.starts_with(p)) {
         return 3;
     }
+    // Flag-level: a read-only-looking command turned mutating by a flag.
+    if cmd.contains("find")
+        && ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"]
+            .iter()
+            .any(|f| cmd.contains(f))
+    {
+        return 3;
+    }
+    if (cmd.starts_with("sed ") || cmd.contains(" sed ") || cmd.starts_with("perl "))
+        && (cmd.contains(" -i") || cmd.contains("--in-place"))
+    {
+        return 3;
+    }
+    // Output redirection to a file is a write.
+    if has_write_redirect(cmd) {
+        return 3;
+    }
+    // git: only unambiguously read-only subcommands are risk 0.
+    if cmd.starts_with("git ") {
+        return if is_readonly_git(cmd) { 0 } else { 3 };
+    }
     let install = ["npm install", "npm i ", "pnpm add", "yarn add", "pip install", "cargo add", "brew install", "go get"];
     if install.iter().any(|p| cmd.starts_with(p)) {
         return 2;
@@ -661,6 +682,57 @@ fn classify_atom(command: &str) -> u8 {
         return 0;
     }
     3 // unknown commands are treated as file-mutating until classified
+}
+
+/// has_write_redirect reports whether an atom redirects output to a file
+/// (`>` / `>>`), which is a filesystem write. It ignores fd duplications and
+/// stderr-merges (`2>&1`, `&>`, `->`, `=>`, `<>`).
+fn has_write_redirect(cmd: &str) -> bool {
+    let b = cmd.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'>' {
+            let prev = if i > 0 { b[i - 1] } else { b' ' };
+            let next = if i + 1 < b.len() { b[i + 1] } else { b' ' };
+            if prev == b'&' || prev == b'-' || prev == b'=' || prev == b'<' || next == b'&' {
+                i += 1;
+                continue;
+            }
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// is_readonly_git reports whether a `git <sub>` command is unambiguously
+/// read-only. Mutating-capable subcommands (branch/tag/config/remote/commit/…)
+/// are deliberately excluded so they are NOT scored as risk 0.
+fn is_readonly_git(cmd: &str) -> bool {
+    let sub = cmd
+        .strip_prefix("git ")
+        .unwrap_or("")
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
+    matches!(
+        sub,
+        "status"
+            | "log"
+            | "diff"
+            | "show"
+            | "rev-parse"
+            | "describe"
+            | "ls-files"
+            | "ls-tree"
+            | "blame"
+            | "cat-file"
+            | "symbolic-ref"
+            | "shortlog"
+            | "reflog"
+            | "whatchanged"
+            | "grep"
+    )
 }
 
 /// shell_segments splits a command line into the sub-commands it will run,
@@ -767,6 +839,11 @@ fn shell_segments(command: &str) -> Vec<String> {
                     i += 1;
                     continue;
                 }
+                if i > 0 && chars[i - 1] == '>' {
+                    cur.push(c); // `>&` fd duplication (e.g. 2>&1), not a boundary
+                    i += 1;
+                    continue;
+                }
                 segments.push(std::mem::take(&mut cur));
                 i += 1;
                 continue;
@@ -855,6 +932,24 @@ mod shell_gating_tests {
         // command-carrying builtins descend into their payload
         assert_eq!(classify_command("eval \"rm -rf /tmp/x\""), 5);
         assert_eq!(classify_command("xargs chmod 777 < list"), 3);
+    }
+
+    #[test]
+    fn dangerous_flags_redirects_and_git_writes() {
+        // find/sed flags that mutate
+        assert_eq!(classify_command("find . -delete"), 3);
+        assert_eq!(classify_command("find . -exec rm {} ;"), 3);
+        assert_eq!(classify_command("find . -name '*.rs'"), 0); // benign find stays read-only
+        assert_eq!(classify_command("sed -i s/a/b/ f.txt"), 3);
+        // output redirection is a write; fd redirection is not
+        assert_eq!(classify_command("echo pwned > /etc/hosts"), 3);
+        assert_eq!(classify_command("cat f > out.txt"), 3);
+        assert_eq!(classify_command("ls -la 2>&1"), 0);
+        // git: read-only subcommands are 0, mutating ones are not
+        assert_eq!(classify_command("git status"), 0);
+        assert_eq!(classify_command("git show HEAD"), 0);
+        assert_eq!(classify_command("git commit -am x"), 3);
+        assert_eq!(classify_command("git branch -D main"), 3);
     }
 }
 
@@ -1250,3 +1345,4 @@ require_approval = ["PatchApply"]
         );
     }
 }
+
