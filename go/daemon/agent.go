@@ -248,6 +248,20 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 					continue
 				}
 			}
+			// Independent verifier: a separate judge (fresh context) rules on the
+			// done-claim before we trust it. Default-lenient (nil verifier => pass).
+			if ok, reason := d.verifyDone(ctx, sess, task, act.Summary); !ok {
+				verifyAttempts++
+				d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+					map[string]any{"status": "verify_rejected", "reason": truncate(reason, 300)}, "")
+				if verifyAttempts > maxVerifyAttempts {
+					d.degrade(sess, task, tr, "independent verifier kept rejecting the done-claim: "+reason)
+					return
+				}
+				tr.addTurn(Turn{Tool: "system", ActionBrief: "verify-rejected", Obs: Observation{Pinned: true,
+					Content: "An independent verifier rejected your 'done': " + reason + "\nKeep working, then call done again."}})
+				continue
+			}
 			d.finish(sess, task, act.Summary)
 			return
 		}

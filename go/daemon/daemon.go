@@ -45,6 +45,7 @@ type Options struct {
 	SandboxCommands       bool               // run commands under an OS syscall sandbox (macOS sandbox-exec)
 	InteractiveApproval   bool               // requires_approval pauses for an operator decision instead of auto-approving
 	EgressCredentials     []EgressCredential // per-host credentials injected at the egress boundary
+	VerifierModel         string             // model for the independent done-verifier ("" => verifier off)
 }
 
 // EgressCredential authenticates outbound requests to a host by injecting a
@@ -81,6 +82,7 @@ type Daemon struct {
 	socketPath string
 	reasoner   Reasoner // agent "thinking" engine (nil => mock loop)
 	summarizer Reasoner // optional cheaper model for compaction/summarization
+	verifier   Reasoner // optional independent "judge" for done-claims (nil => default-lenient)
 
 	mu          sync.Mutex
 	pendingCmds map[string]pendingCommand // decision_id -> command awaiting approval
@@ -207,6 +209,16 @@ func New(opts Options) (*Daemon, error) {
 				d.summarizer = r
 			}
 		}
+		// Independent done-verifier: a separate model that judges completion.
+		vm := opts.VerifierModel
+		if vm == "" {
+			vm = os.Getenv("CARINA_VERIFIER_MODEL")
+		}
+		if vm != "" {
+			if r, err := newClaudeCLIReasonerModel(vm); err == nil {
+				d.verifier = r
+			}
+		}
 	}
 	d.recover()
 	d.resumeRuns()
@@ -218,6 +230,9 @@ func (d *Daemon) SetReasoner(r Reasoner) { d.reasoner = r }
 
 // SetSummarizer overrides the (cheaper) summarization engine used for compaction.
 func (d *Daemon) SetSummarizer(r Reasoner) { d.summarizer = r }
+
+// SetVerifier overrides the independent done-verifier engine (nil => lenient).
+func (d *Daemon) SetVerifier(r Reasoner) { d.verifier = r }
 
 // summarizeReasoner returns the tiered summarizer if configured, else the main
 // reasoner — so compaction/summarization can run on a cheaper model.
