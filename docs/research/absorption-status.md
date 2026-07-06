@@ -36,6 +36,9 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
 **Wave 6 — ops**
 - [x] Doctor / system-health surface (`daemon.doctor` independent probes)
 
+**Wave 7 — large subsystems (production-grade)**
+- [x] **MCP interop — client** (`go/mcp`): stdio JSON-RPC 2.0, async reader + per-call timeouts, initialize/tools-list/tools-call lifecycle, reconnect, `mcpServers` config; the `mcp` tool proxies every call through the capability kernel (PluginLoad) + audit, tools surfaced as `mcp__server__tool`. (Also fixed the stale `PluginLoad=Denied` policy → `RequiresApproval`, unblocking spawn in production.)
+
 > Plus, earlier in the same effort: the **Workflow orchestration engine** (DAG +
 > parallel + resume) and **background runs** (durable run registry, per-turn
 > transcript checkpoint + restart-resume, concurrency cap, panic isolation).
@@ -55,8 +58,8 @@ permission request/resolve protocol, prompt-cache segmentation, `/btw` ephemeral
 side-query, cross-process history, attach/tail replay cursor, anti-tamper
 process hardening (Linux prctl).
 
-**Large subsystems (need pragmatic MVPs, each its own effort):**
-- MCP interop (client consuming external servers + server mode exposing gated tools)
+**Large subsystems (remaining — each its own focused effort):**
+- MCP **server mode** (expose Carina's gated tools to other MCP clients) — client done above
 - Distributed work-dispatch bridge (scheduler leases + worker poll-execute-report)
 - Egress proxy (network as a gated capability + boundary credential injection)
 - OS-level syscall sandbox (macOS sandbox-exec/SBPL, Linux namespaces+seccomp)
