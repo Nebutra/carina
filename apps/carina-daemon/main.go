@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
+	"github.com/Nebutra/carina/go/config"
 	"github.com/Nebutra/carina/go/daemon"
 )
 
@@ -20,27 +22,54 @@ func main() {
 	if err != nil {
 		log.Fatalf("carina-daemon: %v", err)
 	}
-	defaultDir := filepath.Join(home, ".carina")
 
-	stateDir := flag.String("state", filepath.Join(defaultDir, "state"), "session/event storage directory")
-	socket := flag.String("socket", filepath.Join(defaultDir, "daemon.sock"), "unix socket path")
-	tcp := flag.String("tcp", "", "optional TCP listen address for remote workers, e.g. :7777")
-	kernelBin := flag.String("kernel", "", "carina-kernel-service path (default: auto-discover)")
-	toolsDir := flag.String("tools", "", "zig native tools directory (default: auto-discover)")
-	policyDir := flag.String("policy", filepath.Join(defaultDir, "policy"), "enterprise org-policy directory")
-	offline := flag.Bool("offline", false, "offline mode: disable network model providers")
+	// Resolve the layered config (defaults → global → project → env). Flags,
+	// parsed below, are the final highest-precedence layer via their defaults.
+	cwd, _ := os.Getwd()
+	cfg, err := config.Load(home, cwd)
+	if err != nil {
+		log.Fatalf("carina-daemon: %v", err)
+	}
+
+	stateDir := flag.String("state", cfg.StateDir, "session/event storage directory")
+	socket := flag.String("socket", cfg.Socket, "unix socket path")
+	tcp := flag.String("tcp", cfg.TCP, "optional TCP listen address for remote workers, e.g. :7777")
+	kernelBin := flag.String("kernel", cfg.KernelBin, "carina-kernel-service path (default: auto-discover)")
+	toolsDir := flag.String("tools", cfg.ToolsDir, "zig native tools directory (default: auto-discover)")
+	policyDir := flag.String("policy", cfg.PolicyDir, "enterprise org-policy directory")
+	offline := flag.Bool("offline", cfg.Offline, "offline mode: disable network model providers")
+	maxConcurrent := flag.Int("max-concurrent", cfg.MaxConcurrentTasks, "cap on concurrent background runs")
+	maxTokens := flag.Int("max-task-tokens", cfg.MaxTaskTokens, "per-task token budget (0 = unlimited)")
+	requireTrust := flag.Bool("require-trust", cfg.RequireWorkspaceTrust, "deny command exec in untrusted workspaces")
+	sandbox := flag.Bool("sandbox", cfg.SandboxCommands, "run commands under an OS syscall sandbox")
+	egress := flag.Bool("egress", cfg.EnableEgressProxy, "route command network through a deny-by-default egress proxy")
+	egressAllow := flag.String("egress-allow", strings.Join(cfg.EgressAllow, ","), "comma-separated hosts allowed when -egress is on")
 	flag.Parse()
+
+	// Bridge the resolved summarizer model into the env the daemon reads, unless
+	// the operator already set it explicitly.
+	if cfg.SummarizerModel != "" {
+		if _, set := os.LookupEnv("CARINA_SUMMARIZER_MODEL"); !set {
+			_ = os.Setenv("CARINA_SUMMARIZER_MODEL", cfg.SummarizerModel)
+		}
+	}
 
 	if err := os.MkdirAll(filepath.Dir(*socket), 0o700); err != nil {
 		log.Fatalf("carina-daemon: %v", err)
 	}
 
 	d, err := daemon.New(daemon.Options{
-		StateDir:  *stateDir,
-		KernelBin: *kernelBin,
-		ToolsDir:  *toolsDir,
-		PolicyDir: *policyDir,
-		Offline:   *offline,
+		StateDir:              *stateDir,
+		KernelBin:             *kernelBin,
+		ToolsDir:              *toolsDir,
+		PolicyDir:             *policyDir,
+		Offline:               *offline,
+		MaxConcurrentTasks:    *maxConcurrent,
+		MaxTaskTokens:         *maxTokens,
+		RequireWorkspaceTrust: *requireTrust,
+		SandboxCommands:       *sandbox,
+		EnableEgressProxy:     *egress,
+		EgressAllow:           splitList(*egressAllow),
 	})
 	if err != nil {
 		log.Fatalf("carina-daemon: %v", err)
@@ -69,4 +98,15 @@ func main() {
 	if err := d.Run(*socket); err != nil {
 		log.Fatalf("carina-daemon: %v", err)
 	}
+}
+
+// splitList parses a comma-separated flag value into a trimmed, non-empty slice.
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
