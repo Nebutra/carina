@@ -53,25 +53,39 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
 - Double-buffered submit snapshot ≈ per-task goroutine + own transcript (no shared context).
 - buildTool() middleware seam ≈ `dispatchAction` gates every tool via the kernel and records it.
 
+**Wave 8 — coordination / config / security close-out (all landed)**
+- [x] **Task-completion notification envelope** (`go/daemon/notify.go`): terminal
+  paths (finish/degrade/cancel/remote-report) publish one `task.completed` signal
+  (status, summary, patches, tokens, attempts, duration); plus `Bus.Tap` for
+  in-process observation (parent/child coordination, metrics).
+- [x] **`/add-dir` scoped grant** (`kernel.session.add_dir`): widen a session to
+  additional roots without loosening the profile — the kernel evaluates each path
+  capability against its containing root (effective_root); local-only grant.
+- [x] **Config precedence cascade** (`go/config`): defaults → global → project →
+  env → flags, unknown-key/typo rejection, fail-fast validation; wired into the
+  daemon entrypoint so all newer knobs are file/env configurable.
+- [x] **Interactive permission request/resolve** (`go/daemon/approval.go`): opt-in
+  human-in-the-loop — `requires_approval` pauses (waiting_approval), emits a
+  `permission.request`, and blocks on `task.approval.resolve` (allow/deny) or a
+  timeout (=> denied); autonomous auto-approve stays the default.
+- [x] **Attach/tail replay cursor** (`session.attach`): cursor-based replay for a
+  reconnecting client (catch up from a monotonic cursor, then tail live).
+
 ## ⏳ Remaining — next dedicated phase
 
 **Medium (additive, tractable):** leader permission bridge (bounded child→parent
-escalation), coordinator/verifier separation, task-notification completion
-envelope, intra-turn parallel tool execution, `/add-dir` scoped grant, config
-precedence cascade + hot-reload, ordered multi-source auth chain, interactive
-permission request/resolve protocol, prompt-cache segmentation, `/btw` ephemeral
-side-query, cross-process history, attach/tail replay cursor, anti-tamper
-process hardening (Linux prctl).
+escalation), coordinator/verifier separation, intra-turn parallel tool execution,
+ordered multi-source auth chain, prompt-cache segmentation, `/btw` ephemeral
+side-query, cross-process history, anti-tamper process hardening (Linux prctl),
+config hot-reload (fs-watch on top of the cascade).
 
-**Large subsystems:** all six landed (Wave 7 above). Remaining深化 (deepening,
-each optional): Linux sandbox backend (namespaces+seccomp) alongside the macOS
-one; full LSP semantic intelligence (gopls/tsserver live deltas) beyond the
-Stage-1 syntax probe; boundary credential injection at the egress proxy.
+**Large subsystems:** all six landed (Wave 7). Remaining深化 (deepening, each
+optional): Linux sandbox backend (namespaces+seccomp) alongside the macOS one;
+full LSP semantic intelligence (gopls/tsserver live deltas) beyond the Stage-1
+syntax probe; boundary credential injection at the egress proxy.
 
 ## Test status
-Full Go suite green **with the Zig toolchain built** (`zig build` →
-`zig/zig-out/bin`): `carina-policy`, `go/rpc`, `go/scheduler`, `go/worker`,
-`go/kernel`, `go/mcp`, `go/mcpserver`, `go/egress`, `go/toolchain`, and the full
-`go/daemon` suite all pass under `-race`, including the previously Zig-gated
-tests (`TestGoalSuccessCriteriaVerified`, `TestRBACApprovalRequiresRole`,
-`TestDaemonHandlerSurface`, `TestEndToEndLoop`) and every Wave-7 subsystem test.
+Full matrix green. **Go: 108 tests across 17 packages under `-race`** (with the
+Zig toolchain built at `zig/zig-out/bin`), including the previously Zig-gated
+tests and every Wave-7/8 subsystem test. **Rust: all crates pass** — kernel 11+5,
+`carina-policy` 27, `carina-audit` 6, `carina-plugin-runtime` 6+2.
