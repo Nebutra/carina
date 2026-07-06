@@ -64,6 +64,10 @@ impl carina_plugin_runtime::CapabilityHost for ProfileHost {
 pub struct Kernel {
     session_id: String,
     workspace_root: PathBuf,
+    /// Extra roots granted at runtime (the `/add-dir` scoped grant). A path
+    /// capability is evaluated against whichever root contains it, so a session
+    /// can be widened to additional trees without loosening the profile.
+    additional_roots: Vec<PathBuf>,
     profile: Profile,
     bundle: Option<PolicyBundle>,
     approval_mode: ApprovalMode,
@@ -122,6 +126,7 @@ impl Kernel {
         Ok(Self {
             session_id,
             workspace_root: workspace_root.into(),
+            additional_roots: Vec::new(),
             profile,
             bundle: None,
             approval_mode: ApprovalMode::default(),
@@ -159,6 +164,33 @@ impl Kernel {
     /// Sets the role-based approval policy.
     pub fn set_approval_policy(&mut self, policy: ApprovalPolicy) {
         self.approval_policy = policy;
+    }
+
+    /// Grants the session an additional allowed root (`/add-dir`). Paths within
+    /// it are thereafter evaluated as in-workspace. Idempotent.
+    pub fn add_dir(&mut self, path: impl Into<PathBuf>) {
+        let path = path.into();
+        if !self.additional_roots.contains(&path) {
+            self.additional_roots.push(path);
+        }
+    }
+
+    /// The additional roots granted to this session.
+    pub fn additional_roots(&self) -> &[PathBuf] {
+        &self.additional_roots
+    }
+
+    /// Selects the root a path resource is evaluated against: an additional root
+    /// that contains it, else the primary workspace root. For non-path
+    /// capabilities the choice is irrelevant (the policy engine ignores the root).
+    fn effective_root(&self, resource: &str) -> &Path {
+        let candidate = Path::new(resource);
+        for root in &self.additional_roots {
+            if carina_policy::path_within_workspace(root, candidate) {
+                return root;
+            }
+        }
+        &self.workspace_root
     }
 
     /// Mutable access to the session's secret broker.
@@ -204,8 +236,9 @@ impl Kernel {
     /// Denials are additionally logged as `PolicyViolation` so audit reports
     /// can answer "why was this blocked" (PRD §8.2 acceptance criteria).
     pub fn request(&self, req: CapabilityRequest) -> Result<Decision, KernelError> {
+        let root = self.effective_root(&req.resource);
         let mut decision =
-            PolicyEngine::evaluate_with_bundle(&self.profile, self.bundle.as_ref(), &self.workspace_root, &req);
+            PolicyEngine::evaluate_with_bundle(&self.profile, self.bundle.as_ref(), root, &req);
         // Apply the orthogonal approval-mode axis (Codex two-axis model).
         decision = carina_policy::apply_approval_mode(self.approval_mode, decision);
         // Approval memory: a prior ApprovedForSession auto-satisfies.
@@ -476,6 +509,36 @@ mod tests {
         use std::time::{SystemTime, UNIX_EPOCH};
         let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         std::env::temp_dir().join(format!("carina-kernel-{name}-{}-{n:x}", std::process::id()))
+    }
+
+    #[test]
+    fn add_dir_grants_an_additional_root() {
+        let audit = tmp("adddir-audit");
+        let ws = tmp("adddir-ws");
+        let extra = tmp("adddir-extra");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&extra).unwrap();
+
+        let mut kernel = Kernel::new("sess_ad", &ws, "safe-edit", &audit).unwrap();
+        let target = extra.join("notes.txt");
+
+        // Before the grant: a read outside the workspace is denied.
+        let before = kernel.request_file_read(target.to_str().unwrap(), None).unwrap();
+        assert_eq!(before.decision, Verdict::Denied);
+
+        // After /add-dir: the same read is allowed (evaluated against the added root).
+        kernel.add_dir(&extra);
+        let after = kernel.request_file_read(target.to_str().unwrap(), None).unwrap();
+        assert_eq!(after.decision, Verdict::Allowed);
+
+        // A path in neither root remains denied.
+        let elsewhere = tmp("adddir-other").join("x.txt");
+        let denied = kernel.request_file_read(elsewhere.to_str().unwrap(), None).unwrap();
+        assert_eq!(denied.decision, Verdict::Denied);
+
+        std::fs::remove_dir_all(&audit).ok();
+        std::fs::remove_dir_all(&ws).ok();
+        std::fs::remove_dir_all(&extra).ok();
     }
 
     #[test]

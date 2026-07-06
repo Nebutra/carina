@@ -92,6 +92,7 @@ impl Service {
         match method {
             "ping" => Ok(json!({"ok": true})),
             "kernel.session.init" => self.session_init(p),
+            "kernel.session.add_dir" => self.session_add_dir(p),
             "kernel.request" => self.capability_request(p),
             "kernel.approve" => self.approve(p),
             "kernel.deny" => self.deny(p),
@@ -183,6 +184,15 @@ impl Service {
             },
         );
         Ok(json!({"session_id": session_id, "profile": profile_name}))
+    }
+
+    /// Grants the session an additional allowed root (`/add-dir`). Paths within
+    /// it are thereafter evaluated as in-workspace.
+    fn session_add_dir(&mut self, p: &Value) -> Result<Value, String> {
+        let path = str_param(p, "path")?;
+        let ctx = self.ctx(p)?;
+        ctx.kernel.add_dir(PathBuf::from(&path));
+        Ok(json!({"path": path, "additional_roots": ctx.kernel.additional_roots().len()}))
     }
 
     fn profile_describe(&mut self, p: &Value) -> Result<Value, String> {

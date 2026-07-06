@@ -187,6 +187,14 @@ func (s *Service) ApproveWithRole(sessionID, decisionID, approver, role string) 
 	return &d, err
 }
 
+// AddDir grants the session an additional allowed root (the /add-dir scoped
+// grant). Path capabilities on resources within it are thereafter evaluated as
+// in-workspace, without loosening the profile.
+func (s *Service) AddDir(sessionID, path string) error {
+	return s.call("kernel.session.add_dir",
+		map[string]any{"session_id": sessionID, "path": path}, nil)
+}
+
 // ApproveForSession approves and remembers for the whole session, so
 // later requests for the same capability+resource-prefix auto-satisfy.
 func (s *Service) ApproveForSession(sessionID, decisionID, approver string) (*Decision, error) {

@@ -274,6 +274,7 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("session.fork", d.handleSessionFork)
 	d.server.Register("session.plan_mode", d.handlePlanMode)
 	d.server.Register("session.approve_plan", d.handleApprovePlan)
+	d.server.Register("session.add_dir", d.handleAddDir)
 
 	d.server.Register("task.submit", d.handleTaskSubmit)
 	d.server.Register("task.status", d.handleTaskStatus)
@@ -522,6 +523,36 @@ func (d *Daemon) handlePlanMode(params json.RawMessage) (any, error) {
 	}
 	d.setPlanMode(p.SessionID, p.On)
 	return map[string]any{"session_id": p.SessionID, "plan_mode": p.On}, nil
+}
+
+// handleAddDir grants a session an additional allowed root (the /add-dir scoped
+// grant). Local-only: it is never on the remote allowlist, so a remote caller
+// can never widen the sandbox. The directory must already exist.
+func (d *Daemon) handleAddDir(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		Path      string `json:"path"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	sess, ok := d.store.Get(p.SessionID)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	}
+	abs, err := filepath.Abs(p.Path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path: %w", err)
+	}
+	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("add_dir requires an existing directory: %s", abs)
+	}
+	if err := d.kern.AddDir(sess.SessionID, abs); err != nil {
+		return nil, err
+	}
+	d.record(sess.SessionID, "TaskCreated", "", "go",
+		map[string]any{"status": "dir_granted", "path": abs}, "")
+	return map[string]any{"session_id": sess.SessionID, "path": abs, "granted": true}, nil
 }
 
 // handleApprovePlan approves the plan and exits plan mode so execution proceeds.
