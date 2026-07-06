@@ -18,6 +18,7 @@ import (
 
 	"github.com/Nebutra/carina/go/auth"
 	"github.com/Nebutra/carina/go/egress"
+	"github.com/Nebutra/carina/go/history"
 	"github.com/Nebutra/carina/go/kernel"
 	"github.com/Nebutra/carina/go/mcp"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
@@ -124,7 +125,8 @@ type Daemon struct {
 
 	reload func() error // config reload closure (SIGHUP/RPC); nil until SetReloader
 
-	authChain *auth.Chain // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
+	authChain *auth.Chain      // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
+	history   *history.History // shared cross-process prompt history
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -188,6 +190,9 @@ func New(opts Options) (*Daemon, error) {
 		[]string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
 		func() (string, error) { return os.Getenv("CARINA_NEBUTRA_TOKEN"), nil },
 	)
+	// Shared cross-process prompt history (survives restarts; multiple daemons
+	// can append concurrently).
+	d.history = history.New(filepath.Join(opts.StateDir, "history"))
 	go d.reapLeases() // re-queue dispatch tasks abandoned by crashed workers
 	d.mcp = mcp.NewManager()
 	if home, err := os.UserHomeDir(); err == nil {
@@ -349,6 +354,7 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("session.add_dir", d.handleAddDir)
 	d.server.Register("task.approval.resolve", d.handleApprovalResolve)
 	d.server.Register("task.btw", d.handleTaskBtw)
+	d.server.Register("history.recent", d.handleHistoryRecent)
 
 	d.server.Register("task.submit", d.handleTaskSubmit)
 	d.server.Register("task.status", d.handleTaskStatus)
@@ -722,6 +728,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	}
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt}, "")
+	_ = d.history.Append(p.Prompt) // shared cross-process prompt history (best-effort)
 	d.persistRun(task.TaskID)
 
 	go d.runTaskGuarded(sess, task)
