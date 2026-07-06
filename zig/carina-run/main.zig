@@ -78,6 +78,23 @@ pub fn main() !void {
         try argv_list.append(allocator, "/usr/bin/sandbox-exec");
         try argv_list.append(allocator, "-p");
         try argv_list.append(allocator, profile);
+    } else if (sandbox and builtin.os.tag == .linux) {
+        // Linux: wrap the child in bubblewrap (bwrap) — a mount+user namespace
+        // sandbox that remounts the root read-only and rebinds only cwd + /tmp
+        // writable, mirroring the macOS confinement. If bwrap is not installed,
+        // fall through to unwrapped (the capability kernel policy still applies).
+        const cwd_raw = cwd orelse ".";
+        const cwd_abs = std.fs.realpathAlloc(allocator, cwd_raw) catch cwd_raw;
+        if (hasExecutable(allocator, "bwrap")) {
+            const args_bwrap = [_][]const u8{
+                "bwrap",   "--ro-bind", "/",        "/",
+                "--bind",  cwd_abs,     cwd_abs,     "--bind",
+                "/tmp",    "/tmp",      "--dev",     "/dev",
+                "--proc",  "/proc",     "--unshare-user", "--unshare-pid",
+                "--die-with-parent",    "--",
+            };
+            for (args_bwrap) |a| try argv_list.append(allocator, a);
+        }
     }
     for (args[argv_start..]) |a| try argv_list.append(allocator, a);
     const child_argv = try argv_list.toOwnedSlice(allocator);
@@ -154,4 +171,19 @@ fn emitChunks(allocator: std.mem.Allocator, stream: []const u8, data: []const u8
         const escaped = try jsonl.escape(allocator, line);
         try jsonl.printLine(allocator, "{{\"stream\":\"{s}\",\"chunk\":\"{s}\"}}", .{ stream, escaped });
     }
+}
+
+// hasExecutable reports whether `name` is found on PATH (used to detect the
+// Linux sandbox helper bwrap before wrapping the child).
+fn hasExecutable(allocator: std.mem.Allocator, name: []const u8) bool {
+    const path_env = std.process.getEnvVarOwned(allocator, "PATH") catch return false;
+    defer allocator.free(path_env);
+    var it = std.mem.tokenizeScalar(u8, path_env, ':');
+    while (it.next()) |dir| {
+        const full = std.fs.path.join(allocator, &.{ dir, name }) catch continue;
+        defer allocator.free(full);
+        std.fs.cwd().access(full, .{}) catch continue;
+        return true;
+    }
+    return false;
 }
