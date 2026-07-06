@@ -137,6 +137,15 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 			return
 		}
 
+		// Drain async steering messages at the turn boundary so a running
+		// (background) agent can be redirected without a restart.
+		for _, msg := range d.drainMailbox(task.TaskID) {
+			tr.addTurn(Turn{Tool: "user", ActionBrief: "steer",
+				Obs: Observation{Content: "USER STEERING (incorporate this now): " + msg, Pinned: true}})
+			d.record(sess.SessionID, "TaskCreated", task.TaskID, "user",
+				map[string]any{"status": "steered", "message": truncate(msg, 200)}, "")
+		}
+
 		// Bound the model view (audit log keeps everything).
 		tr.compact(summarize)
 		prompt := fmt.Sprintf("%s\n\nTASK: %s\n\nTRANSCRIPT:\n%s\nRespond with the next action as a single JSON object.",

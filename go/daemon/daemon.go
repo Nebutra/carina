@@ -75,6 +75,9 @@ type Daemon struct {
 	trust         *trustStore // trusted workspace roots
 	requireTrust  bool        // deny command exec in untrusted workspaces
 	maxTaskTokens int         // per-task token budget (0 => unlimited)
+
+	mailbox   map[string][]string // task -> pending steering messages
+	mailboxMu sync.Mutex
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -124,6 +127,7 @@ func New(opts Options) (*Daemon, error) {
 	d.trust = newTrustStore(opts.StateDir)
 	d.requireTrust = opts.RequireWorkspaceTrust
 	d.maxTaskTokens = opts.MaxTaskTokens
+	d.mailbox = map[string][]string{}
 	// Best-effort: wire the claude CLI reasoner if available and not offline.
 	if !opts.Offline {
 		if r, err := newClaudeCLIReasoner(); err == nil {
@@ -218,6 +222,7 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("task.list", d.handleTaskList)
 	d.server.Register("task.result", d.handleTaskResult)
 	d.server.Register("task.cancel", d.handleTaskCancel)
+	d.server.Register("task.steer", d.handleTaskSteer)
 	d.server.Register("task.action.approve", d.handleApprove)
 	d.server.Register("task.action.deny", d.handleDeny)
 
@@ -463,6 +468,42 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
 	return d.sched.Cancel(p.TaskID)
+}
+
+// handleTaskSteer queues a steering message for a running task; the agent loop
+// drains it at the next turn boundary and folds it into the transcript, so you
+// can redirect a running (background) agent without restarting it.
+func (d *Daemon) handleTaskSteer(params json.RawMessage) (any, error) {
+	var p struct {
+		TaskID  string `json:"task_id"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if p.TaskID == "" || p.Message == "" {
+		return nil, fmt.Errorf("task_id and message are required")
+	}
+	d.steer(p.TaskID, p.Message)
+	return map[string]any{"queued": true}, nil
+}
+
+func (d *Daemon) steer(taskID, message string) {
+	if strings.TrimSpace(message) == "" {
+		return
+	}
+	d.mailboxMu.Lock()
+	d.mailbox[taskID] = append(d.mailbox[taskID], message)
+	d.mailboxMu.Unlock()
+}
+
+// drainMailbox returns and clears a task's pending steering messages.
+func (d *Daemon) drainMailbox(taskID string) []string {
+	d.mailboxMu.Lock()
+	defer d.mailboxMu.Unlock()
+	msgs := d.mailbox[taskID]
+	delete(d.mailbox, taskID)
+	return msgs
 }
 
 // handleTaskList returns the background-run registry, optionally filtered by
