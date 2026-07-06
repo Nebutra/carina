@@ -176,8 +176,9 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 
 		// Bound the model view (audit log keeps everything).
 		tr.compact(summarize)
-		prompt := fmt.Sprintf("%s\n\nTASK: %s\n\nTRANSCRIPT:\n%s\nRespond with the next action as a single JSON object.",
-			sysPrompt, task.UserPrompt, tr.render())
+		seg := buildPromptSegments(sysPrompt, task.UserPrompt, tr.render(),
+			"Respond with the next action as a single JSON object.")
+		prompt := seg.full() // StablePrefix is cacheable across turns; suffix is volatile
 
 		// inner requery loop: malformed actions are re-asked without
 		// consuming a real turn (up to maxRequeries).
