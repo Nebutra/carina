@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Nebutra/carina/go/kernel"
@@ -52,7 +53,12 @@ capabilities) for focused sub-tasks like recon or review:
 For a repeatable multi-step pipeline, run a named workflow (a dependency DAG of
 subagents; independent steps run in parallel, and each step's output is
 available to later steps as ${step_id}). Top-level only:
-- {"tool":"workflow","workflow":"review","task":"optional input, available to every step as ${input}"}`
+- {"tool":"workflow","workflow":"review","task":"optional input, available to every step as ${input}"}
+
+To gather context faster, batch several READ-ONLY tools (list/read/search) to run
+in parallel in one turn:
+- {"actions":[{"tool":"read","path":"a.go"},{"tool":"read","path":"b.go"},{"tool":"search","pattern":"foo"}]}
+Writes (patch/run) must stay one action per turn — never put them in a batch.`
 
 // action is the decision emitted by the reasoner each turn. Fields are read
 // from the top level (flat form the model naturally emits) or from a nested
@@ -75,6 +81,8 @@ type action struct {
 	MCPServer string         `json:"mcp_server"`
 	MCPTool   string         `json:"mcp_tool"`
 	Args      map[string]any `json:"args"`
+	// intra-turn parallel batch of read-only actions (list/read/search)
+	Actions []action `json:"actions,omitempty"`
 }
 
 // SpawnTask is one delegation in a parallel spawn.
@@ -244,6 +252,31 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 			return
 		}
 
+		// Intra-turn parallel batch: run several read-only tools concurrently and
+		// fold their observations back as one turn. Writes are rejected so no
+		// write races are possible.
+		if len(act.Actions) > 0 {
+			if bad := nonReadOnlyTools(act.Actions); len(bad) > 0 {
+				tr.addTurn(Turn{Tool: "system", ActionBrief: "batch-rejected", Obs: Observation{Pinned: true,
+					Content: "Parallel batches are read-only (list/read/search); these are not: " + strings.Join(bad, ", ") +
+						". Run writes (patch/run) one action per turn."}})
+				guard.tick()
+				d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr})
+				continue
+			}
+			if guard.repeated("batch", briefBatch(act.Actions)) {
+				tr.addTurn(Turn{Tool: "batch", ActionBrief: briefBatch(act.Actions),
+					Obs: Observation{Content: "You repeated this batch with no new result. Change approach, or use done."}})
+				continue
+			}
+			obs := d.executeBatch(sess, task, act.Actions)
+			guard.tick() // reads make no edit
+			tr.addTurn(Turn{Thought: act.Thought, Tool: "batch",
+				ActionBrief: briefBatch(act.Actions), Obs: Observation{Content: obs}})
+			d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr})
+			continue
+		}
+
 		// Loop safety: catch repeated actions and no-progress stalls.
 		fp := act.Tool + ":" + act.Path + ":" + strings.Join(act.Command, " ") + ":" + act.Pattern
 		if guard.repeated(act.Tool, fp) {
@@ -356,6 +389,57 @@ func briefAction(a *action) string {
 	default:
 		return a.Tool
 	}
+}
+
+// isReadOnlyTool reports whether a tool has no side effects (safe to batch).
+func isReadOnlyTool(tool string) bool {
+	switch tool {
+	case "list", "read", "search":
+		return true
+	}
+	return false
+}
+
+// nonReadOnlyTools returns the offending tool names in a batch (empty = all safe).
+func nonReadOnlyTools(acts []action) []string {
+	var bad []string
+	for _, a := range acts {
+		if !isReadOnlyTool(a.Tool) {
+			bad = append(bad, a.Tool)
+		}
+	}
+	return bad
+}
+
+// briefBatch renders a batch for the transcript, e.g. parallel[read a | search x].
+func briefBatch(acts []action) string {
+	parts := make([]string, len(acts))
+	for i := range acts {
+		parts[i] = briefAction(&acts[i])
+	}
+	return "parallel[" + strings.Join(parts, " | ") + "]"
+}
+
+// executeBatch runs a batch of read-only actions concurrently (one goroutine
+// each, through the same kernel-gated executeAction as a single action) and
+// joins the observations in emit order. Safe because every sub-action is
+// side-effect-free and the kernel client serializes requests.
+func (d *Daemon) executeBatch(sess *sessionstore.Session, task *scheduler.Task, acts []action) string {
+	results := make([]string, len(acts))
+	var wg sync.WaitGroup
+	for i := range acts {
+		wg.Add(1)
+		go func(i int, sub action) {
+			defer wg.Done()
+			results[i] = d.executeAction(sess, task, &sub)
+		}(i, acts[i])
+	}
+	wg.Wait()
+	var b strings.Builder
+	for i := range acts {
+		fmt.Fprintf(&b, "=== [%d] %s ===\n%s\n", i, briefAction(&acts[i]), results[i])
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // executeAction runs a tool action wrapped by lifecycle hooks: a PreToolUse
@@ -620,6 +704,19 @@ func parseAction(raw string) (action, error) {
 		if json.Unmarshal(block, &nested) == nil && nested.Action.Tool != "" {
 			a = nested.Action
 		}
+	}
+	// Batch form: {"actions":[...]} runs several read-only tools in parallel.
+	// Validate structurally here; the read-only policy is enforced in runLoop.
+	if len(a.Actions) > 0 {
+		for i, sub := range a.Actions {
+			if sub.Tool == "" {
+				return action{}, fmt.Errorf("action %d in batch has no tool", i)
+			}
+			if len(sub.Actions) > 0 {
+				return action{}, fmt.Errorf("nested batches not allowed")
+			}
+		}
+		return a, nil
 	}
 	if a.Tool == "" {
 		return action{}, fmt.Errorf("no tool in action")
