@@ -513,8 +513,8 @@ func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv
 	case "denied":
 		return "DENIED by policy: " + dec.Reason
 	case "requires_approval":
-		approved, aerr := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "agent", "")
-		if aerr != nil || approved.Decision != "allowed" {
+		approved, ok := d.resolveApproval(sess, task, dec, command)
+		if !ok {
 			return "requires approval (not granted): " + dec.Reason
 		}
 		dec = approved
@@ -563,8 +563,8 @@ func (d *Daemon) callMCP(sess *sessionstore.Session, task *scheduler.Task, act *
 	case "denied":
 		return "DENIED by policy: " + dec.Reason
 	case "requires_approval":
-		approved, aerr := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "agent", "")
-		if aerr != nil || approved.Decision != "allowed" {
+		approved, ok := d.resolveApproval(sess, task, dec, "mcp:"+act.MCPServer+"/"+act.MCPTool)
+		if !ok {
 			return "requires approval (not granted): " + dec.Reason
 		}
 		dec = approved

@@ -44,6 +44,7 @@ func main() {
 	sandbox := flag.Bool("sandbox", cfg.SandboxCommands, "run commands under an OS syscall sandbox")
 	egress := flag.Bool("egress", cfg.EnableEgressProxy, "route command network through a deny-by-default egress proxy")
 	egressAllow := flag.String("egress-allow", strings.Join(cfg.EgressAllow, ","), "comma-separated hosts allowed when -egress is on")
+	interactiveApproval := flag.Bool("interactive-approval", cfg.InteractiveApproval, "pause for an operator decision on requires_approval instead of auto-approving")
 	flag.Parse()
 
 	// Bridge the resolved summarizer model into the env the daemon reads, unless
@@ -70,6 +71,7 @@ func main() {
 		SandboxCommands:       *sandbox,
 		EnableEgressProxy:     *egress,
 		EgressAllow:           splitList(*egressAllow),
+		InteractiveApproval:   *interactiveApproval,
 	})
 	if err != nil {
 		log.Fatalf("carina-daemon: %v", err)

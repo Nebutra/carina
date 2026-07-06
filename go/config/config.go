@@ -35,6 +35,7 @@ type Config struct {
 	EnableEgressProxy     bool     `json:"enable_egress_proxy"`
 	EgressAllow           []string `json:"egress_allow"`
 	SandboxCommands       bool     `json:"sandbox_commands"`
+	InteractiveApproval   bool     `json:"interactive_approval"`
 	SummarizerModel       string   `json:"summarizer_model"`
 }
 
@@ -98,6 +99,7 @@ func mergeEnv(cfg *Config) {
 	envBool("CARINA_REQUIRE_WORKSPACE_TRUST", &cfg.RequireWorkspaceTrust)
 	envBool("CARINA_ENABLE_EGRESS_PROXY", &cfg.EnableEgressProxy)
 	envBool("CARINA_SANDBOX_COMMANDS", &cfg.SandboxCommands)
+	envBool("CARINA_INTERACTIVE_APPROVAL", &cfg.InteractiveApproval)
 	envInt("CARINA_MAX_CONCURRENT_TASKS", &cfg.MaxConcurrentTasks)
 	envInt("CARINA_MAX_TASK_TOKENS", &cfg.MaxTaskTokens)
 	envList("CARINA_EGRESS_ALLOW", &cfg.EgressAllow)

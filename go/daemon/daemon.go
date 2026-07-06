@@ -43,6 +43,7 @@ type Options struct {
 	EnableEgressProxy     bool     // route command network through a deny-by-default egress proxy
 	EgressAllow           []string // hosts allowed when the egress proxy is enabled
 	SandboxCommands       bool     // run commands under an OS syscall sandbox (macOS sandbox-exec)
+	InteractiveApproval   bool     // requires_approval pauses for an operator decision instead of auto-approving
 }
 
 type pendingCommand struct {
@@ -94,6 +95,11 @@ type Daemon struct {
 
 	stopCh   chan struct{} // closed on Close; stops background loops (lease reaper)
 	stopOnce sync.Once
+
+	interactiveApproval bool                 // when true, requires_approval pauses for an operator decision
+	approvalTimeout     time.Duration        // how long to wait for an interactive approval (0 => 5m)
+	pendingApprovals    map[string]chan bool // decision_id -> resolver channel
+	approvalMu          sync.Mutex
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -147,6 +153,8 @@ func New(opts Options) (*Daemon, error) {
 	d.mailbox = map[string][]string{}
 	d.planMode = map[string]bool{}
 	d.stopCh = make(chan struct{})
+	d.pendingApprovals = map[string]chan bool{}
+	d.interactiveApproval = opts.InteractiveApproval
 	go d.reapLeases() // re-queue dispatch tasks abandoned by crashed workers
 	d.mcp = mcp.NewManager()
 	if home, err := os.UserHomeDir(); err == nil {
@@ -275,6 +283,7 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("session.plan_mode", d.handlePlanMode)
 	d.server.Register("session.approve_plan", d.handleApprovePlan)
 	d.server.Register("session.add_dir", d.handleAddDir)
+	d.server.Register("task.approval.resolve", d.handleApprovalResolve)
 
 	d.server.Register("task.submit", d.handleTaskSubmit)
 	d.server.Register("task.status", d.handleTaskStatus)
