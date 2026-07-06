@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Nebutra/carina/go/kernel"
+	"github.com/Nebutra/carina/go/mcp"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/rpc"
 	"github.com/Nebutra/carina/go/scheduler"
@@ -81,6 +82,8 @@ type Daemon struct {
 
 	planMode map[string]bool // session -> plan mode (read-only until approved)
 	planMu   sync.Mutex
+
+	mcp *mcp.Manager // external MCP servers (proxied tools, kernel-gated)
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -132,6 +135,10 @@ func New(opts Options) (*Daemon, error) {
 	d.maxTaskTokens = opts.MaxTaskTokens
 	d.mailbox = map[string][]string{}
 	d.planMode = map[string]bool{}
+	d.mcp = mcp.NewManager()
+	if home, err := os.UserHomeDir(); err == nil {
+		d.mcp.LoadAndConnect(filepath.Join(home, ".carina", "mcp.json"))
+	}
 	// Best-effort: wire the claude CLI reasoner if available and not offline.
 	if !opts.Offline {
 		if r, err := newClaudeCLIReasoner(); err == nil {
@@ -198,6 +205,9 @@ func (d *Daemon) RunTCP(addr string) error {
 
 func (d *Daemon) Close() error {
 	_ = d.server.Close()
+	if d.mcp != nil {
+		d.mcp.Close()
+	}
 	return d.kern.Close()
 }
 

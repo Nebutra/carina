@@ -508,8 +508,13 @@ impl PolicyEngine {
             Capability::GitOperation | Capability::ProcessSpawn => {
                 (Verdict::RequiresApproval, "mediated operation requires approval".into())
             }
-            Capability::PluginLoad | Capability::RemoteExecute => {
-                (Verdict::Denied, "not available before Phase 3/4".into())
+            Capability::PluginLoad => {
+                // Plugins and MCP tool loads are mediated (approval), not denied
+                // outright — the plugin runtime and MCP client are implemented.
+                (Verdict::RequiresApproval, "plugin/MCP load requires approval".into())
+            }
+            Capability::RemoteExecute => {
+                (Verdict::Denied, "remote execution is not enabled for this profile".into())
             }
         }
     }
@@ -1382,6 +1387,10 @@ require_approval = ["PatchApply"]
         );
         assert_eq!(
             PolicyEngine::evaluate(&p, root, &req(Capability::PluginLoad, "x")).decision,
+            Verdict::RequiresApproval
+        );
+        assert_eq!(
+            PolicyEngine::evaluate(&p, root, &req(Capability::RemoteExecute, "x")).decision,
             Verdict::Denied
         );
         assert_eq!(

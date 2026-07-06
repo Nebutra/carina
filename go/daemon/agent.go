@@ -71,6 +71,10 @@ type action struct {
 	Tasks []SpawnTask `json:"tasks"`
 	// workflow tool
 	Workflow string `json:"workflow"`
+	// mcp tool
+	MCPServer string         `json:"mcp_server"`
+	MCPTool   string         `json:"mcp_tool"`
+	Args      map[string]any `json:"args"`
 }
 
 // SpawnTask is one delegation in a parallel spawn.
@@ -138,6 +142,14 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 	}
 	if style := loadStyle(sess.WorkspaceRoot); style != "" {
 		sysPrompt = "OUTPUT STYLE (apply to your presentation):\n" + style + "\n\n" + sysPrompt
+	}
+	if tools := d.mcp.Tools(); len(tools) > 0 {
+		var b strings.Builder
+		b.WriteString("\n\nMCP TOOLS (call via {\"tool\":\"mcp\",\"mcp_server\":\"<server>\",\"mcp_tool\":\"<name>\",\"args\":{...}}):\n")
+		for _, t := range tools {
+			fmt.Fprintf(&b, "- mcp__%s__%s: %s\n", t.Server, t.Name, truncate(t.Description, 120))
+		}
+		sysPrompt += b.String()
 	}
 
 	for turn := startTurn; turn <= maxAgentTurns; turn++ {
@@ -441,6 +453,9 @@ func (d *Daemon) dispatchAction(sess *sessionstore.Session, task *scheduler.Task
 	case "workflow":
 		return d.executeWorkflow(sess, task, act)
 
+	case "mcp":
+		return d.callMCP(sess, task, act)
+
 	default:
 		return "unknown tool: " + act.Tool
 	}
@@ -520,6 +535,43 @@ func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv
 		fmt.Fprintf(&b, "\n[stderr] %s", strings.Join(result.Stderr, "\n"))
 	}
 	return b.String()
+}
+
+// callMCP proxies a tool call to an external MCP server. Like every other
+// effect it is gated by the capability kernel (PluginLoad) and audited, so MCP
+// tools are subject to the same policy + approval as native tools; the result
+// is redacted before it enters the transcript/log.
+func (d *Daemon) callMCP(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+	if act.MCPServer == "" || act.MCPTool == "" {
+		return "error: mcp needs mcp_server and mcp_tool"
+	}
+	dec, err := d.kern.Request(sess.SessionID, "PluginLoad", "mcp:"+act.MCPServer+"/"+act.MCPTool, task.TaskID)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	switch dec.Decision {
+	case "denied":
+		return "DENIED by policy: " + dec.Reason
+	case "requires_approval":
+		approved, aerr := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "agent", "")
+		if aerr != nil || approved.Decision != "allowed" {
+			return "requires approval (not granted): " + dec.Reason
+		}
+		dec = approved
+	}
+	d.record(sess.SessionID, "ToolApproved", task.TaskID, "go",
+		map[string]any{"mcp_server": act.MCPServer, "mcp_tool": act.MCPTool}, dec.DecisionID)
+
+	out, err := d.mcp.Call(act.MCPServer, act.MCPTool, act.Args)
+	if err != nil {
+		return "mcp error: " + err.Error()
+	}
+	if red, e := d.kern.Redact(sess.SessionID, out); e == nil {
+		out = red
+	}
+	d.record(sess.SessionID, "ModelResponded", task.TaskID, "go",
+		map[string]any{"mcp_server": act.MCPServer, "mcp_tool": act.MCPTool, "result": truncate(out, 300)}, "")
+	return out
 }
 
 func resolveIn(root, path string) string {
