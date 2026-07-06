@@ -46,7 +46,7 @@ func TestScanGrepRun(t *testing.T) {
 		t.Fatal("grep match should carry a line number")
 	}
 
-	res, err := tc.Run([]string{"echo", "hello"}, ws, 5*time.Second)
+	res, err := tc.Run([]string{"echo", "hello"}, ws, 5*time.Second, nil)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestScanGrepRun(t *testing.T) {
 
 func TestRunTimeout(t *testing.T) {
 	tc := New(toolsDir(t))
-	res, err := tc.Run([]string{"sleep", "5"}, t.TempDir(), 300*time.Millisecond)
+	res, err := tc.Run([]string{"sleep", "5"}, t.TempDir(), 300*time.Millisecond, nil)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nebutra/carina/go/egress"
 	"github.com/Nebutra/carina/go/kernel"
 	"github.com/Nebutra/carina/go/mcp"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
@@ -37,8 +38,10 @@ type Options struct {
 
 	MaxConcurrentTasks int // cap on concurrent background runs (0 => default 8)
 
-	RequireWorkspaceTrust bool // when true, deny command exec in untrusted workspaces
-	MaxTaskTokens         int  // per-task token budget (0 => unlimited); over-budget runs degrade
+	RequireWorkspaceTrust bool     // when true, deny command exec in untrusted workspaces
+	MaxTaskTokens         int      // per-task token budget (0 => unlimited); over-budget runs degrade
+	EnableEgressProxy     bool     // route command network through a deny-by-default egress proxy
+	EgressAllow           []string // hosts allowed when the egress proxy is enabled
 }
 
 type pendingCommand struct {
@@ -83,7 +86,9 @@ type Daemon struct {
 	planMode map[string]bool // session -> plan mode (read-only until approved)
 	planMu   sync.Mutex
 
-	mcp *mcp.Manager // external MCP servers (proxied tools, kernel-gated)
+	mcp       *mcp.Manager  // external MCP servers (proxied tools, kernel-gated)
+	egress    *egress.Proxy // deny-by-default network egress proxy (optional)
+	egressURL string
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -138,6 +143,12 @@ func New(opts Options) (*Daemon, error) {
 	d.mcp = mcp.NewManager()
 	if home, err := os.UserHomeDir(); err == nil {
 		d.mcp.LoadAndConnect(filepath.Join(home, ".carina", "mcp.json"))
+	}
+	if opts.EnableEgressProxy {
+		d.egress = egress.New(egress.Allowlist(opts.EgressAllow))
+		if url, err := d.egress.Start(); err == nil {
+			d.egressURL = url
+		}
 	}
 	// Best-effort: wire the claude CLI reasoner if available and not offline.
 	if !opts.Offline {
@@ -208,7 +219,24 @@ func (d *Daemon) Close() error {
 	if d.mcp != nil {
 		d.mcp.Close()
 	}
+	if d.egress != nil {
+		_ = d.egress.Close()
+	}
 	return d.kern.Close()
+}
+
+// egressEnv returns the HTTP(S)_PROXY environment for command children when the
+// egress proxy is active, so their network is gated deny-by-default; nil when
+// the proxy is disabled (children keep direct network).
+func (d *Daemon) egressEnv() []string {
+	if d.egressURL == "" {
+		return nil
+	}
+	return []string{
+		"HTTP_PROXY=" + d.egressURL, "HTTPS_PROXY=" + d.egressURL,
+		"http_proxy=" + d.egressURL, "https_proxy=" + d.egressURL,
+		"NO_PROXY=localhost,127.0.0.1", "no_proxy=localhost,127.0.0.1",
+	}
 }
 
 // Kernel exposes the capability kernel to the agent loop.
@@ -987,7 +1015,7 @@ func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decisio
 	}
 	d.record(sessionID, "CommandStarted", taskID, "zig", started, decision.DecisionID)
 
-	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute)
+	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv())
 	if err != nil {
 		d.record(sessionID, "CommandExited", taskID, "zig", map[string]any{"exit_code": -1, "error": err.Error()}, "")
 		return nil, err

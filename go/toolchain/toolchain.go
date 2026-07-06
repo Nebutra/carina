@@ -73,7 +73,7 @@ func (t *Toolchain) Available() bool {
 
 // Scan walks the workspace tree via carina-scan.
 func (t *Toolchain) Scan(root string) ([]FileEntry, error) {
-	out, err := t.runJSONLines(30*time.Second, t.tool("carina-scan"), root)
+	out, err := t.runJSONLines(30*time.Second, nil, t.tool("carina-scan"), root)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (t *Toolchain) Scan(root string) ([]FileEntry, error) {
 
 // Grep searches via carina-grep (which walks directories natively).
 func (t *Toolchain) Grep(pattern, root string) ([]Match, error) {
-	out, err := t.runJSONLines(30*time.Second, t.tool("carina-grep"), pattern, root)
+	out, err := t.runJSONLines(30*time.Second, nil, t.tool("carina-grep"), pattern, root)
 	if err != nil {
 		return nil, err
 	}
@@ -103,14 +103,16 @@ func (t *Toolchain) Grep(pattern, root string) ([]Match, error) {
 	return matches, nil
 }
 
-// Run executes a command through carina-run with captured output.
-func (t *Toolchain) Run(argv []string, cwd string, timeout time.Duration) (*CommandResult, error) {
+// Run executes a command through carina-run with captured output. extraEnv is
+// appended to the child's environment (used to inject HTTP(S)_PROXY when the
+// egress proxy is active); nil leaves the inherited environment untouched.
+func (t *Toolchain) Run(argv []string, cwd string, timeout time.Duration, extraEnv []string) (*CommandResult, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("toolchain: empty command")
 	}
 	args := []string{"--cwd", cwd, "--timeout-ms", fmt.Sprintf("%d", timeout.Milliseconds()), "--"}
 	args = append(args, argv...)
-	out, err := t.runJSONLines(timeout+10*time.Second, t.tool("carina-run"), args...)
+	out, err := t.runJSONLines(timeout+10*time.Second, extraEnv, t.tool("carina-run"), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -142,8 +144,11 @@ func (t *Toolchain) Run(argv []string, cwd string, timeout time.Duration) (*Comm
 	return result, nil
 }
 
-func (t *Toolchain) runJSONLines(timeout time.Duration, bin string, args ...string) ([]json.RawMessage, error) {
+func (t *Toolchain) runJSONLines(timeout time.Duration, env []string, bin string, args ...string) ([]json.RawMessage, error) {
 	cmd := exec.Command(bin, args...)
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
