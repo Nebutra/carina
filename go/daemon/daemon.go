@@ -348,6 +348,7 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("session.approve_plan", d.handleApprovePlan)
 	d.server.Register("session.add_dir", d.handleAddDir)
 	d.server.Register("task.approval.resolve", d.handleApprovalResolve)
+	d.server.Register("task.btw", d.handleTaskBtw)
 
 	d.server.Register("task.submit", d.handleTaskSubmit)
 	d.server.Register("task.status", d.handleTaskStatus)
