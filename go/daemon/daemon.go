@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Nebutra/carina/go/auth"
 	"github.com/Nebutra/carina/go/egress"
 	"github.com/Nebutra/carina/go/kernel"
 	"github.com/Nebutra/carina/go/mcp"
@@ -122,6 +123,8 @@ type Daemon struct {
 	bridgeMu           sync.Mutex
 
 	reload func() error // config reload closure (SIGHUP/RPC); nil until SetReloader
+
+	authChain *auth.Chain // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -179,6 +182,12 @@ func New(opts Options) (*Daemon, error) {
 	d.interactiveApproval.Store(opts.InteractiveApproval)
 	d.subagentParentTask = map[string]string{}
 	d.escalationCounts = map[string]int{}
+	// Provider auth: BYOK API keys first (user-supplied), then the Nebutra
+	// ecosystem OAuth token (a cached access token from the identity flow).
+	d.authChain = auth.DefaultChain(
+		[]string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
+		func() (string, error) { return os.Getenv("CARINA_NEBUTRA_TOKEN"), nil },
+	)
 	go d.reapLeases() // re-queue dispatch tasks abandoned by crashed workers
 	d.mcp = mcp.NewManager()
 	if home, err := os.UserHomeDir(); err == nil {
@@ -453,6 +462,8 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 		}),
 		"tools":    map[string]any{"available": d.tools.Available(), "dir": d.tools.Dir()},
 		"reasoner": d.reasoner != nil,
+		// Resolved credential SOURCE only — never the value. "" = unauthenticated.
+		"auth": map[string]any{"source": d.authChain.ResolvedSource()},
 	}, nil
 }
 
