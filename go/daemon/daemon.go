@@ -205,6 +205,7 @@ func (d *Daemon) Router() *modelrouter.Router { return d.router }
 func (d *Daemon) registerMethods() {
 	d.server.Register("daemon.status", d.handleStatus)
 	d.server.Register("daemon.metrics", d.handleMetrics)
+	d.server.Register("daemon.doctor", d.handleDoctor)
 
 	d.server.Register("session.create", d.handleSessionCreate)
 	d.server.Register("session.get", d.handleSessionGet)
@@ -251,7 +252,7 @@ func (d *Daemon) registerMethods() {
 	// mutating/side-effecting method stays local-only. A local-only kill-switch
 	// (daemon.remote.disable) can cut off remote access entirely.
 	d.server.MarkRemoteSafe(
-		"daemon.status", "daemon.metrics",
+		"daemon.status", "daemon.metrics", "daemon.doctor",
 		"session.get", "session.list", "session.replay",
 		"task.status", "task.list", "task.result",
 		"audit.report", "audit.export", "audit.verify",
@@ -290,6 +291,30 @@ func (d *Daemon) handleWorkspaceTrust(params json.RawMessage) (any, error) {
 	}
 	d.trust.setTrust(p.Root, p.Trusted)
 	return map[string]any{"root": p.Root, "trusted": p.Trusted}, nil
+}
+
+// handleDoctor runs independent health probes and returns a self-diagnosis
+// (kernel reachable, native tools present, state dir writable, reasoner wired).
+func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
+	probe := func(fn func() error) map[string]any {
+		if err := fn(); err != nil {
+			return map[string]any{"ok": false, "error": err.Error()}
+		}
+		return map[string]any{"ok": true}
+	}
+	return map[string]any{
+		"version": Version,
+		"kernel":  probe(func() error { _, err := d.kern.ClassifyCommand("echo ok"); return err }),
+		"state_dir_writable": probe(func() error {
+			f := filepath.Join(d.stateDir, ".doctor")
+			if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+				return err
+			}
+			return os.Remove(f)
+		}),
+		"tools":    map[string]any{"available": d.tools.Available(), "dir": d.tools.Dir()},
+		"reasoner": d.reasoner != nil,
+	}, nil
 }
 
 // ---- daemon ---------------------------------------------------------------
