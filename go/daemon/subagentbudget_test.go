@@ -12,7 +12,7 @@ import (
 func TestSubagentTokenBudget(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
-	d.maxTaskTokens = 10 // tiny: the first subagent prompt blows it
+	d.maxTaskTokens.Store(10) // tiny: the first subagent prompt blows it
 
 	agentsDir := filepath.Join(ws, ".carina", "agents")
 	os.MkdirAll(agentsDir, 0o755)

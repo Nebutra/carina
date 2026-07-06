@@ -47,6 +47,11 @@ func main() {
 	interactiveApproval := flag.Bool("interactive-approval", cfg.InteractiveApproval, "pause for an operator decision on requires_approval instead of auto-approving")
 	flag.Parse()
 
+	// Record which flags the operator set explicitly, so they stay the highest-
+	// precedence layer across SIGHUP reloads (a reload must not clobber them).
+	pinned := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { pinned[f.Name] = true })
+
 	// Bridge the resolved summarizer model into the env the daemon reads, unless
 	// the operator already set it explicitly.
 	if cfg.SummarizerModel != "" {
@@ -77,14 +82,49 @@ func main() {
 		log.Fatalf("carina-daemon: %v", err)
 	}
 
+	// Config hot-reload: re-run the cascade and live-apply the reloadable subset,
+	// re-pinning any operator-set CLI flags so they remain highest-precedence.
+	reload := func() error {
+		nc, err := config.Load(home, cwd)
+		if err != nil {
+			return err
+		}
+		if pinned["max-task-tokens"] {
+			nc.MaxTaskTokens = *maxTokens
+		}
+		if pinned["interactive-approval"] {
+			nc.InteractiveApproval = *interactiveApproval
+		}
+		if pinned["require-trust"] {
+			nc.RequireWorkspaceTrust = *requireTrust
+		}
+		if pinned["sandbox"] {
+			nc.SandboxCommands = *sandbox
+		}
+		if pinned["egress-allow"] {
+			nc.EgressAllow = splitList(*egressAllow)
+		}
+		return d.ApplyConfig(nc)
+	}
+	d.SetReloader(reload)
+
 	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
-		<-sigs
-		fmt.Println("\ncarina-daemon: shutting down")
-		_ = d.Close()
-		_ = os.Remove(*socket)
-		os.Exit(0)
+		for sig := range sigs {
+			if sig == syscall.SIGHUP {
+				if err := reload(); err != nil {
+					log.Printf("carina-daemon: config reload failed (keeping last-good): %v", err)
+				} else {
+					fmt.Println("carina-daemon: config reloaded (SIGHUP)")
+				}
+				continue
+			}
+			fmt.Println("\ncarina-daemon: shutting down")
+			_ = d.Close()
+			_ = os.Remove(*socket)
+			os.Exit(0)
+		}
 	}()
 
 	if *tcp != "" {

@@ -129,8 +129,8 @@ func (d *Daemon) runSubagentLoop(sess *sessionstore.Session, task *scheduler.Tas
 
 		// Per-subagent token budget (whale-session protection).
 		d.sched.AddTokens(task.TaskID, estimateTokens(prompt)+estimateTokens(raw))
-		if d.maxTaskTokens > 0 {
-			if t, ok := d.sched.Get(task.TaskID); ok && t.TokensUsed > d.maxTaskTokens {
+		if mtt := d.maxTaskTokens.Load(); mtt > 0 {
+			if t, ok := d.sched.Get(task.TaskID); ok && int64(t.TokensUsed) > mtt {
 				d.sched.SetStatus(task.TaskID, "degraded")
 				return "(subagent hit token budget)"
 			}

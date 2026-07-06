@@ -12,7 +12,7 @@ import (
 func TestTokenBudgetGovernor(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
-	d.maxTaskTokens = 50 // tiny budget: the very first prompt blows it
+	d.maxTaskTokens.Store(50) // tiny budget: the very first prompt blows it
 
 	os.WriteFile(filepath.Join(ws, "a.txt"), []byte("hi\n"), 0o600)
 	steps := make([]string, 40)

@@ -10,7 +10,7 @@ import (
 func TestWorkspaceTrustGate(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
-	d.requireTrust = true // enable strict trust (Options.RequireWorkspaceTrust)
+	d.requireTrust.Store(true) // enable strict trust (Options.RequireWorkspaceTrust)
 
 	sess, _ := d.store.CreateSession(ws, "full-workspace")
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "full-workspace", nil)

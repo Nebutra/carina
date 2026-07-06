@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Nebutra/carina/go/egress"
@@ -93,9 +94,9 @@ type Daemon struct {
 	readProv   map[string]map[string]string // session -> relpath -> sha256 of last read (dirty-write guard)
 	readProvMu sync.Mutex
 
-	trust         *trustStore // trusted workspace roots
-	requireTrust  bool        // deny command exec in untrusted workspaces
-	maxTaskTokens int         // per-task token budget (0 => unlimited)
+	trust         *trustStore  // trusted workspace roots
+	requireTrust  atomic.Bool  // deny command exec in untrusted workspaces (hot-reloadable)
+	maxTaskTokens atomic.Int64 // per-task token budget (0 => unlimited; hot-reloadable)
 
 	mailbox   map[string][]string // task -> pending steering messages
 	mailboxMu sync.Mutex
@@ -106,12 +107,12 @@ type Daemon struct {
 	mcp       *mcp.Manager  // external MCP servers (proxied tools, kernel-gated)
 	egress    *egress.Proxy // deny-by-default network egress proxy (optional)
 	egressURL string
-	sandbox   bool // run commands under an OS syscall sandbox
+	sandbox   atomic.Bool // run commands under an OS syscall sandbox (hot-reloadable)
 
 	stopCh   chan struct{} // closed on Close; stops background loops (lease reaper)
 	stopOnce sync.Once
 
-	interactiveApproval bool                 // when true, requires_approval pauses for an operator decision
+	interactiveApproval atomic.Bool          // when true, requires_approval pauses for an operator decision (hot-reloadable)
 	approvalTimeout     time.Duration        // how long to wait for an interactive approval (0 => 5m)
 	pendingApprovals    map[string]chan bool // decision_id -> resolver channel
 	approvalMu          sync.Mutex
@@ -119,6 +120,8 @@ type Daemon struct {
 	subagentParentTask map[string]string // childSessionID -> parentTaskID (leader-bridge linkage)
 	escalationCounts   map[string]int    // childTaskID -> escalations used (bridge cap)
 	bridgeMu           sync.Mutex
+
+	reload func() error // config reload closure (SIGHUP/RPC); nil until SetReloader
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -166,14 +169,14 @@ func New(opts Options) (*Daemon, error) {
 	d.runSem = make(chan struct{}, maxConcurrent)
 	d.readProv = map[string]map[string]string{}
 	d.trust = newTrustStore(opts.StateDir)
-	d.requireTrust = opts.RequireWorkspaceTrust
-	d.maxTaskTokens = opts.MaxTaskTokens
-	d.sandbox = opts.SandboxCommands
+	d.requireTrust.Store(opts.RequireWorkspaceTrust)
+	d.maxTaskTokens.Store(int64(opts.MaxTaskTokens))
+	d.sandbox.Store(opts.SandboxCommands)
 	d.mailbox = map[string][]string{}
 	d.planMode = map[string]bool{}
 	d.stopCh = make(chan struct{})
 	d.pendingApprovals = map[string]chan bool{}
-	d.interactiveApproval = opts.InteractiveApproval
+	d.interactiveApproval.Store(opts.InteractiveApproval)
 	d.subagentParentTask = map[string]string{}
 	d.escalationCounts = map[string]int{}
 	go d.reapLeases() // re-queue dispatch tasks abandoned by crashed workers
@@ -396,6 +399,7 @@ func (d *Daemon) registerMethods() {
 		"work.poll", "work.renew", "work.report",
 	)
 	d.server.Register("daemon.remote.disable", d.handleRemoteDisable)
+	d.server.Register("daemon.reload", d.handleReload) // local-only (config hot-reload)
 }
 
 // handleRemoteDisable toggles the remote kill-switch (local-only: it is not on
@@ -1173,7 +1177,7 @@ func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decisio
 	}
 	d.record(sessionID, "CommandStarted", taskID, "zig", started, decision.DecisionID)
 
-	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox)
+	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
 	if err != nil {
 		d.record(sessionID, "CommandExited", taskID, "zig", map[string]any{"exit_code": -1, "error": err.Error()}, "")
 		return nil, err

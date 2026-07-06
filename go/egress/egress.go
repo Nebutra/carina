@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -19,10 +20,19 @@ type Gate func(host string) (allow bool, reason string)
 
 // Proxy is a running loopback egress proxy.
 type Proxy struct {
+	mu   sync.RWMutex // guards gate (live-swappable via SetGate for hot-reload)
 	gate Gate
 	inj  *Injector // optional per-host credential injection (nil = none)
 	ln   net.Listener
 	srv  *http.Server
+}
+
+// SetGate swaps the allow/deny gate live (e.g. on a config reload of the egress
+// allowlist) without restarting the listener.
+func (p *Proxy) SetGate(g Gate) {
+	p.mu.Lock()
+	p.gate = g
+	p.mu.Unlock()
 }
 
 func New(gate Gate) *Proxy { return &Proxy{gate: gate} }
@@ -58,9 +68,12 @@ func (p *Proxy) Close() error {
 }
 
 func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
+	p.mu.RLock()
+	gate := p.gate
+	p.mu.RUnlock()
 	if r.Method == http.MethodConnect {
 		host := hostOnly(r.Host)
-		if ok, reason := p.gate(host); !ok {
+		if ok, reason := gate(host); !ok {
 			http.Error(w, "egress denied: "+reason, http.StatusForbidden)
 			return
 		}
@@ -71,7 +84,7 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 	if host == "" {
 		host = hostOnly(r.Host)
 	}
-	if ok, reason := p.gate(host); !ok {
+	if ok, reason := gate(host); !ok {
 		http.Error(w, "egress denied: "+reason, http.StatusForbidden)
 		return
 	}

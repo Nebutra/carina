@@ -209,9 +209,9 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		// Meter token spend and enforce the per-task budget (safety brake for
 		// runaway autonomous loops).
 		d.sched.AddTokens(task.TaskID, estimateTokens(prompt)+estimateTokens(raw))
-		if d.maxTaskTokens > 0 {
-			if t, ok := d.sched.Get(task.TaskID); ok && t.TokensUsed > d.maxTaskTokens {
-				d.degrade(sess, task, tr, fmt.Sprintf("token budget exceeded (%d > %d tokens)", t.TokensUsed, d.maxTaskTokens))
+		if mtt := d.maxTaskTokens.Load(); mtt > 0 {
+			if t, ok := d.sched.Get(task.TaskID); ok && int64(t.TokensUsed) > mtt {
+				d.degrade(sess, task, tr, fmt.Sprintf("token budget exceeded (%d > %d tokens)", t.TokensUsed, mtt))
 				return
 			}
 		}
@@ -604,7 +604,7 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 // (destructive => denied; risky => auto-approved in autonomous mode), then
 // Zig carina-run. Every step is audited.
 func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv []string) string {
-	if d.requireTrust && !d.trust.isTrusted(sess.WorkspaceRoot) {
+	if d.requireTrust.Load() && !d.trust.isTrusted(sess.WorkspaceRoot) {
 		return "DENIED: workspace not trusted — approve it first (workspace.trust)"
 	}
 	command := strings.Join(argv, " ")
@@ -635,7 +635,7 @@ func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv
 	}
 	d.record(sess.SessionID, "CommandStarted", task.TaskID, "zig", started, dec.DecisionID)
 
-	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox)
+	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
 	if err != nil {
 		d.record(sess.SessionID, "CommandExited", task.TaskID, "zig", map[string]any{"exit_code": -1, "error": err.Error()}, "")
 		return "command error: " + err.Error()

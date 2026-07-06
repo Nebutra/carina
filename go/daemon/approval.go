@@ -17,7 +17,7 @@ const defaultApprovalTimeout = 5 * time.Minute
 // SetInteractiveApproval toggles human-in-the-loop approval (used by tests and
 // the entrypoint). When on, a requires_approval decision pauses for an operator
 // verdict instead of being auto-approved.
-func (d *Daemon) SetInteractiveApproval(on bool) { d.interactiveApproval = on }
+func (d *Daemon) SetInteractiveApproval(on bool) { d.interactiveApproval.Store(on) }
 
 // resolveApproval turns a requires_approval decision into a final one. In
 // autonomous mode (default) it auto-approves as the agent. In interactive mode
@@ -25,7 +25,7 @@ func (d *Daemon) SetInteractiveApproval(on bool) { d.interactiveApproval = on }
 // (possibly upgraded) decision and whether it is now allowed.
 func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
 	approver := "agent"
-	if d.interactiveApproval {
+	if d.interactiveApproval.Load() {
 		if !d.awaitInteractiveApproval(sess, task, dec, label) {
 			return dec, false
 		}
