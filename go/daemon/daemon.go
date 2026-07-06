@@ -422,6 +422,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		SessionID       string                   `json:"session_id"`
 		Prompt          string                   `json:"prompt"`
 		SuccessCriteria []scheduler.SuccessCheck `json:"success_criteria"`
+		OutputSchema    []string                 `json:"output_schema"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -435,6 +436,9 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	}
 	task := d.sched.SubmitWithGoal(sess.SessionID, sess.WorkspaceID, p.Prompt, p.SuccessCriteria)
 	d.sched.SetMode(task.TaskID, "background")
+	if len(p.OutputSchema) > 0 {
+		d.sched.SetOutputSchema(task.TaskID, p.OutputSchema)
+	}
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt}, "")
 	d.persistRun(task.TaskID)

@@ -35,6 +35,7 @@ type Task struct {
 	Summary         string         `json:"summary,omitempty"`         // final result / degrade reason
 	AppliedPatches  []string       `json:"applied_patches,omitempty"` // rollbackable patch ids
 	TokensUsed      int            `json:"tokens_used,omitempty"`     // metered token spend (budget governance)
+	OutputSchema    []string       `json:"output_schema,omitempty"`   // required keys in the final JSON output
 }
 
 type Scheduler struct {
@@ -151,6 +152,18 @@ func (s *Scheduler) SetResult(taskID, summary string, patches []string) {
 	updated.AppliedPatches = patches
 	updated.UpdatedAt = time.Now().UTC()
 	s.tasks[taskID] = &updated
+}
+
+// SetOutputSchema records the required keys the task's final JSON output must
+// contain (structured output for headless/programmatic runs).
+func (s *Scheduler) SetOutputSchema(taskID string, keys []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.tasks[taskID]; ok {
+		updated := *t
+		updated.OutputSchema = keys
+		s.tasks[taskID] = &updated
+	}
 }
 
 // AddTokens accumulates metered token spend for budget governance.

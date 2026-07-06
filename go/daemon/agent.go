@@ -207,6 +207,19 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 					continue
 				}
 			}
+			if len(task.OutputSchema) > 0 {
+				if missing := validateOutput(act.Summary, task.OutputSchema); len(missing) > 0 {
+					verifyAttempts++
+					if verifyAttempts > maxVerifyAttempts {
+						d.degrade(sess, task, tr, "final output never matched the required schema")
+						return
+					}
+					tr.addTurn(Turn{Tool: "system", ActionBrief: "output-schema", Obs: Observation{Pinned: true,
+						Content: "Your 'done' summary must be a JSON object containing keys: " + strings.Join(task.OutputSchema, ", ") +
+							" (missing/invalid: " + strings.Join(missing, ", ") + "). Re-emit done with a valid JSON summary."}})
+					continue
+				}
+			}
 			d.finish(sess, task, act.Summary)
 			return
 		}
@@ -572,6 +585,23 @@ func truncate(s string, n int) string {
 // claude-cli does not expose token counts cheaply on every call, so the budget
 // governor meters with this estimate.
 func estimateTokens(s string) int { return len(s)/4 + 1 }
+
+// validateOutput returns the required keys missing from a done summary that is
+// expected to be a JSON object (structured output). A summary that is not a
+// JSON object counts every key as missing.
+func validateOutput(summary string, keys []string) []string {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal([]byte(strings.TrimSpace(summary)), &obj) != nil {
+		return keys
+	}
+	var missing []string
+	for _, k := range keys {
+		if _, ok := obj[k]; !ok {
+			missing = append(missing, k)
+		}
+	}
+	return missing
+}
 
 func registerProviders(router *modelrouter.Router, offline bool) {
 	if !offline {
