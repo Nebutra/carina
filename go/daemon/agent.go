@@ -125,6 +125,13 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 				"patches applied (ids), unresolved errors. Drop raw tool output.\n\n"+head)
 	}
 
+	// Persistent project/user memory (CARINA.md) is prepended to the system
+	// prompt so the agent follows repo-specific conventions.
+	sysPrompt := systemPrompt
+	if mem := loadMemory(sess.WorkspaceRoot); mem != "" {
+		sysPrompt = systemPrompt + "\n\nPROJECT MEMORY (from CARINA.md — follow it):\n" + mem
+	}
+
 	for turn := startTurn; turn <= maxAgentTurns; turn++ {
 		if t, ok := d.sched.Get(task.TaskID); ok && t.Status == "cancelled" {
 			return
@@ -133,7 +140,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		// Bound the model view (audit log keeps everything).
 		tr.compact(summarize)
 		prompt := fmt.Sprintf("%s\n\nTASK: %s\n\nTRANSCRIPT:\n%s\nRespond with the next action as a single JSON object.",
-			systemPrompt, task.UserPrompt, tr.render())
+			sysPrompt, task.UserPrompt, tr.render())
 
 		// inner requery loop: malformed actions are re-asked without
 		// consuming a real turn (up to maxRequeries).
