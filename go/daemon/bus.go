@@ -12,6 +12,7 @@ import (
 type Bus struct {
 	mu   sync.RWMutex
 	subs map[string][]*rpc.Subscription // session_id -> subscribers
+	taps []func(sessionID string, event map[string]any)
 }
 
 func NewBus() *Bus {
@@ -24,11 +25,23 @@ func (b *Bus) Subscribe(sessionID string, sub *rpc.Subscription) {
 	b.mu.Unlock()
 }
 
-// Publish delivers an event to every live subscriber of the session,
-// pruning any that have disconnected.
+// Tap registers an in-process listener invoked for every published event, across
+// all sessions. Used for coordination (a parent awaiting a child's completion
+// envelope) and metrics, without an RPC round-trip.
+func (b *Bus) Tap(fn func(sessionID string, event map[string]any)) {
+	b.mu.Lock()
+	b.taps = append(b.taps, fn)
+	b.mu.Unlock()
+}
+
+// Publish delivers an event to every in-process tap and every live subscriber of
+// the session, pruning any subscribers that have disconnected.
 func (b *Bus) Publish(sessionID string, event map[string]any) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	for _, tap := range b.taps {
+		tap(sessionID, event)
+	}
 	subs := b.subs[sessionID]
 	if len(subs) == 0 {
 		return

@@ -313,6 +313,7 @@ func (d *Daemon) finish(sess *sessionstore.Session, task *scheduler.Task, summar
 		map[string]any{"status": "completed", "summary": summary}, "")
 	d.persistRun(task.TaskID)
 	d.runs.deleteCheckpoint(task.TaskID)
+	d.emitCompletion(sess.SessionID, task)
 }
 
 // appliedPatchIDs returns the ids of patches that landed (applied/committed) in
@@ -341,6 +342,7 @@ func (d *Daemon) degrade(sess *sessionstore.Session, task *scheduler.Task, tr *T
 	}, "")
 	d.persistRun(task.TaskID)
 	d.runs.deleteCheckpoint(task.TaskID)
+	d.emitCompletion(sess.SessionID, task)
 }
 
 func briefAction(a *action) string {

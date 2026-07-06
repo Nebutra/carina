@@ -606,7 +606,12 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	return d.sched.Cancel(p.TaskID)
+	task, err := d.sched.Cancel(p.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	d.emitCompletion(task.SessionID, task)
+	return task, nil
 }
 
 // handleTaskSteer queues a steering message for a running task; the agent loop
@@ -927,10 +932,10 @@ func (d *Daemon) handleFileGet(params json.RawMessage) (any, error) {
 
 func (d *Daemon) handlePatchPropose(params json.RawMessage) (any, error) {
 	var p struct {
-		SessionID string               `json:"session_id"`
-		TaskID    string               `json:"task_id"`
-		Reason    string               `json:"reason"`
-		Files     []kernel.FileChange  `json:"files"`
+		SessionID string              `json:"session_id"`
+		TaskID    string              `json:"task_id"`
+		Reason    string              `json:"reason"`
+		Files     []kernel.FileChange `json:"files"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)

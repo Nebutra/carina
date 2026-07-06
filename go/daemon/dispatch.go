@@ -120,12 +120,14 @@ func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 	if err := d.sched.Report(p.TaskID, p.WorkerID, p.Status, p.Summary, p.Patches); err != nil {
 		return nil, err
 	}
+	var task *scheduler.Task
 	sessionID := ""
 	if t, ok := d.sched.Get(p.TaskID); ok {
-		sessionID = t.SessionID
+		task, sessionID = t, t.SessionID
 	}
 	d.record(sessionID, "TaskCreated", p.TaskID, "worker",
 		map[string]any{"status": p.Status, "worker_id": p.WorkerID, "reported": true}, "")
 	d.persistRun(p.TaskID)
+	d.emitCompletion(sessionID, task)
 	return map[string]any{"ok": true}, nil
 }
