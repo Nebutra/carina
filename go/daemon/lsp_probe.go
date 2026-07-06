@@ -26,6 +26,14 @@ func serverForExt(ext string) (semanticServer, bool) {
 		return semanticServer{bin: "typescript-language-server", args: []string{"--stdio"}, langID: "typescript"}, true
 	case ".py":
 		return semanticServer{bin: "pyright-langserver", args: []string{"--stdio"}, langID: "python"}, true
+	case ".rs":
+		return semanticServer{bin: "rust-analyzer", args: nil, langID: "rust"}, true
+	case ".c", ".h", ".cc", ".cpp", ".hpp", ".cxx":
+		return semanticServer{bin: "clangd", args: nil, langID: "cpp"}, true
+	case ".zig":
+		return semanticServer{bin: "zls", args: nil, langID: "zig"}, true
+	case ".rb":
+		return semanticServer{bin: "solargraph", args: []string{"stdio"}, langID: "ruby"}, true
 	default:
 		return semanticServer{}, false
 	}

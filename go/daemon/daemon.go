@@ -158,6 +158,7 @@ func New(opts Options) (*Daemon, error) {
 		started:     time.Now().UTC(),
 		pendingCmds: make(map[string]pendingCommand),
 	}
+	_ = hardenProcess() // Linux: non-dumpable, anti-ptrace (best-effort)
 	d.registerMethods()
 	registerProviders(d.router, opts.Offline)
 	// Durable run registry + concurrency cap for background runs. Reloading the
