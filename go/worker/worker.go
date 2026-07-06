@@ -95,6 +95,14 @@ func (p *Pool) Revoke(workerID string) error {
 	return nil
 }
 
+// Get returns a registered worker by id (used to authorize work-dispatch polls).
+func (p *Pool) Get(workerID string) (*Worker, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	w, ok := p.workers[workerID]
+	return w, ok
+}
+
 func (p *Pool) List() []*Worker {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

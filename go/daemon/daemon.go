@@ -91,6 +91,9 @@ type Daemon struct {
 	egress    *egress.Proxy // deny-by-default network egress proxy (optional)
 	egressURL string
 	sandbox   bool // run commands under an OS syscall sandbox
+
+	stopCh   chan struct{} // closed on Close; stops background loops (lease reaper)
+	stopOnce sync.Once
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -143,6 +146,8 @@ func New(opts Options) (*Daemon, error) {
 	d.sandbox = opts.SandboxCommands
 	d.mailbox = map[string][]string{}
 	d.planMode = map[string]bool{}
+	d.stopCh = make(chan struct{})
+	go d.reapLeases() // re-queue dispatch tasks abandoned by crashed workers
 	d.mcp = mcp.NewManager()
 	if home, err := os.UserHomeDir(); err == nil {
 		d.mcp.LoadAndConnect(filepath.Join(home, ".carina", "mcp.json"))
@@ -218,6 +223,11 @@ func (d *Daemon) RunTCP(addr string) error {
 }
 
 func (d *Daemon) Close() error {
+	d.stopOnce.Do(func() {
+		if d.stopCh != nil {
+			close(d.stopCh)
+		}
+	})
 	_ = d.server.Close()
 	if d.mcp != nil {
 		d.mcp.Close()
@@ -301,6 +311,13 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("worker.list", d.handleWorkerList)
 	d.server.Register("worker.revoke", d.handleWorkerRevoke)
 
+	// Work-dispatch bridge: enqueue is control-plane (local); poll/renew/report
+	// are the remote worker's lease protocol.
+	d.server.Register("work.submit", d.handleWorkSubmit)
+	d.server.Register("work.poll", d.handleWorkPoll)
+	d.server.Register("work.renew", d.handleWorkRenew)
+	d.server.Register("work.report", d.handleWorkReport)
+
 	// The remote (TCP) transport is restricted to read/observe methods; every
 	// mutating/side-effecting method stays local-only. A local-only kill-switch
 	// (daemon.remote.disable) can cut off remote access entirely.
@@ -312,6 +329,9 @@ func (d *Daemon) registerMethods() {
 		"profile.describe", "session.events.stream",
 		// Remote workers legitimately join and heartbeat over TCP.
 		"worker.register", "worker.heartbeat", "worker.list",
+		// …and lease/execute/report dispatched work. (work.submit stays local:
+		// only the control plane enqueues work, never a remote worker.)
+		"work.poll", "work.renew", "work.report",
 	)
 	d.server.Register("daemon.remote.disable", d.handleRemoteDisable)
 }

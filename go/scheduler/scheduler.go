@@ -36,12 +36,21 @@ type Task struct {
 	AppliedPatches  []string       `json:"applied_patches,omitempty"` // rollbackable patch ids
 	TokensUsed      int            `json:"tokens_used,omitempty"`     // metered token spend (budget governance)
 	OutputSchema    []string       `json:"output_schema,omitempty"`   // required keys in the final JSON output
+	// Work-dispatch lease (remote execution via the bridge). Empty for tasks the
+	// local daemon runs in-process.
+	LeaseOwner  string    `json:"lease_owner,omitempty"`  // worker holding the dispatch lease
+	LeaseExpiry time.Time `json:"lease_expiry,omitempty"` // visibility timeout; once past, the task is re-queued
+	Attempts    int       `json:"attempts,omitempty"`     // dispatch delivery attempts (at-least-once)
 }
 
 type Scheduler struct {
 	mu    sync.Mutex
 	queue []string
-	tasks map[string]*Task
+	// dispatchQueue holds tasks awaiting a remote worker's lease (work.poll).
+	// It is separate from queue/the in-process path so the two never race for
+	// the same task.
+	dispatchQueue []string
+	tasks         map[string]*Task
 }
 
 func New() *Scheduler {
