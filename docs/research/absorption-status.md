@@ -94,16 +94,38 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   reloadable subset (budget, approval mode, trust, sandbox, egress allowlist) via
   atomics + egress SetGate; validate-before-apply keeps last-good.
 
-## ⏳ Remaining — optional, non-gap
+**Wave 10 — niche close-out (all landed)**
+- [x] **Ordered multi-source auth chain** (`go/auth`): BYOK API keys first
+  (env/static/file), then a Nebutra-ecosystem OAuth fallback; Kind drives the
+  header (x-api-key vs Authorization: Bearer). Values never logged; daemon.doctor
+  reports the resolved source name only.
+- [x] **Config fs-watch** (`go/config/watch.go`): dependency-free mtime-poll
+  auto-reload on top of SIGHUP.
+- [x] **/btw ephemeral side-query** (`task.btw`): answers an aside in task context
+  without polluting the transcript (side_query audit event only).
+- [x] **Prompt-cache segmentation** (`go/daemon/promptcache.go`): stable prefix
+  (system+task) vs volatile suffix (transcript) with a CacheBreakpoint for
+  provider prefix-caching; byte-identical prompt (pure refactor).
+- [x] **Cross-process history** (`go/history`): O_APPEND shared prompt history
+  safe across processes; `history.recent` RPC.
+- [x] **Anti-tamper hardening** (`go/daemon/harden_linux.go`): Linux prctl
+  PR_SET_DUMPABLE 0 (non-dumpable, anti-ptrace) protecting in-memory secrets;
+  build-tagged no-op off Linux.
+- [x] **Expanded LSP matrix**: rust-analyzer/clangd/zls/solargraph alongside
+  gopls/tsserver/pyright.
 
-Only niche polish left: ordered multi-source auth chain, prompt-cache
-segmentation, `/btw` ephemeral side-query, cross-process history, anti-tamper
-process hardening (Linux prctl), config fs-watch (auto-reload without SIGHUP),
-egress HTTPS-MITM credential tier, full multi-language LSP server matrix.
+## ⏳ Remaining — deliberately deferred (not a gap)
+
+- **Egress HTTPS-MITM credential tier.** Tier-1 plain-HTTP injection is done. The
+  HTTPS tier requires terminating child TLS with a locally-minted CA (per-host
+  cert generation, TLS re-origination, CA private key in daemon memory) — a real
+  attack-surface expansion warranting its own review, not a quick add. Documented
+  as a scoped future subsystem rather than shipped half-built.
 
 ## Test status
-Full matrix green. **Go: 131 tests across 18 packages under `-race`** (with the
-Zig toolchain built at `zig/zig-out/bin`), including the previously Zig-gated
-tests and every Wave-7/8/9 subsystem test. **Rust: all crates pass** — kernel
+Full matrix green. **Go: 151 tests across 20 packages under `-race`** (with the
+Zig toolchain built at `zig/zig-out/bin`); the Go tree also cross-builds for
+linux/amd64. Includes the previously Zig-gated tests and every Wave-7/8/9/10
+subsystem test. **Rust: all crates pass** (57 tests) — kernel
 11+5, `carina-policy` 27, `carina-audit` 6, `carina-plugin-runtime` 6+2. Zig
 tools build on macOS; `carina-run` cross-compiles for x86_64-linux.
