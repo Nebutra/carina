@@ -124,6 +124,15 @@ func (d *Daemon) runSubagentLoop(sess *sessionstore.Session, task *scheduler.Tas
 		d.record(sess.SessionID, "ModelResponded", task.TaskID, "model",
 			map[string]any{"turn": turn, "text": truncate(raw, 300)}, "")
 
+		// Per-subagent token budget (whale-session protection).
+		d.sched.AddTokens(task.TaskID, estimateTokens(prompt)+estimateTokens(raw))
+		if d.maxTaskTokens > 0 {
+			if t, ok := d.sched.Get(task.TaskID); ok && t.TokensUsed > d.maxTaskTokens {
+				d.sched.SetStatus(task.TaskID, "degraded")
+				return "(subagent hit token budget)"
+			}
+		}
+
 		act, perr := parseAction(raw)
 		if perr != nil {
 			tr.addTurn(Turn{Tool: "system", ActionBrief: "reparse", Obs: Observation{Content: "reply with one valid JSON action"}})
