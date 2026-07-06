@@ -307,9 +307,23 @@ func briefAction(a *action) string {
 	}
 }
 
-// executeAction runs one tool action through the kernel + toolchain and
-// returns the observation to feed back to the reasoner.
+// executeAction runs a tool action wrapped by lifecycle hooks: a PreToolUse
+// hook that exits 2 blocks the action (its stderr is the feedback); PostToolUse
+// hooks observe the result. The kernel+toolchain dispatch is dispatchAction.
 func (d *Daemon) executeAction(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+	if blocked, reason := d.runPreToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, "")); blocked {
+		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+			map[string]any{"status": "hook_blocked", "tool": act.Tool, "reason": reason}, "")
+		return "BLOCKED by hook: " + reason
+	}
+	obs := d.dispatchAction(sess, task, act)
+	d.runPostToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, obs))
+	return obs
+}
+
+// dispatchAction runs one tool action through the kernel + toolchain and
+// returns the observation to feed back to the reasoner.
+func (d *Daemon) dispatchAction(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
 	switch act.Tool {
 	case "list":
 		dec, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.TaskID)
