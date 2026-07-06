@@ -108,6 +108,17 @@ func main() {
 	}
 	d.SetReloader(reload)
 
+	// Auto-reload: watch the config files and reload on change (complements
+	// SIGHUP for environments that can't signal the daemon).
+	watcher := config.NewWatcher(config.WatchPaths(home, cwd), 0, func() { // 0 => default 3s
+		if err := reload(); err != nil {
+			log.Printf("carina-daemon: auto-reload failed (keeping last-good): %v", err)
+		} else {
+			fmt.Println("carina-daemon: config auto-reloaded (file change)")
+		}
+	})
+	go watcher.Run()
+
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
