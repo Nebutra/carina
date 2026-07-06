@@ -494,6 +494,11 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 			map[string]any{"status": "post_edit_diagnostics", "path": path, "diagnostics": truncate(diag, 500)}, "")
 		result += "\n[diagnostics] this edit introduced errors:\n" + truncate(diag, 1000)
 	}
+	// Semantic (LSP) diagnostics augment the syntax probe when a language server
+	// is installed — type errors and undefined symbols a parse check can't see.
+	if sem := d.semanticDiagnostics(resolveIn(sess.WorkspaceRoot, path), sess.WorkspaceRoot); sem != "" {
+		result += "\n[semantic] this edit has type errors:\n" + truncate(sem, 1000)
+	}
 	return result
 }
 
