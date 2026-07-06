@@ -78,6 +78,9 @@ type Daemon struct {
 
 	mailbox   map[string][]string // task -> pending steering messages
 	mailboxMu sync.Mutex
+
+	planMode map[string]bool // session -> plan mode (read-only until approved)
+	planMu   sync.Mutex
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -128,6 +131,7 @@ func New(opts Options) (*Daemon, error) {
 	d.requireTrust = opts.RequireWorkspaceTrust
 	d.maxTaskTokens = opts.MaxTaskTokens
 	d.mailbox = map[string][]string{}
+	d.planMode = map[string]bool{}
 	// Best-effort: wire the claude CLI reasoner if available and not offline.
 	if !opts.Offline {
 		if r, err := newClaudeCLIReasoner(); err == nil {
@@ -217,6 +221,8 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("session.close", d.handleSessionClose)
 	d.server.Register("session.replay", d.handleSessionReplay)
 	d.server.Register("session.fork", d.handleSessionFork)
+	d.server.Register("session.plan_mode", d.handlePlanMode)
+	d.server.Register("session.approve_plan", d.handleApprovePlan)
 
 	d.server.Register("task.submit", d.handleTaskSubmit)
 	d.server.Register("task.status", d.handleTaskStatus)
@@ -438,6 +444,49 @@ func (d *Daemon) handleSessionFork(params json.RawMessage) (any, error) {
 	d.record(child.SessionID, "TaskCreated", "", "go",
 		map[string]any{"status": "forked", "parent": src.SessionID}, "")
 	return child, nil
+}
+
+// handlePlanMode toggles plan mode for a session: while on, the agent may
+// explore read-only but edits/commands are blocked until the plan is approved.
+func (d *Daemon) handlePlanMode(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		On        bool   `json:"on"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if p.SessionID == "" {
+		return nil, fmt.Errorf("session_id is required")
+	}
+	d.setPlanMode(p.SessionID, p.On)
+	return map[string]any{"session_id": p.SessionID, "plan_mode": p.On}, nil
+}
+
+// handleApprovePlan approves the plan and exits plan mode so execution proceeds.
+func (d *Daemon) handleApprovePlan(params json.RawMessage) (any, error) {
+	id, err := sessionID(params)
+	if err != nil {
+		return nil, err
+	}
+	d.setPlanMode(id, false)
+	return map[string]any{"session_id": id, "plan_mode": false, "approved": true}, nil
+}
+
+func (d *Daemon) setPlanMode(sessionID string, on bool) {
+	d.planMu.Lock()
+	defer d.planMu.Unlock()
+	if on {
+		d.planMode[sessionID] = true
+	} else {
+		delete(d.planMode, sessionID)
+	}
+}
+
+func (d *Daemon) isPlanMode(sessionID string) bool {
+	d.planMu.Lock()
+	defer d.planMu.Unlock()
+	return d.planMode[sessionID]
 }
 
 // ---- tasks ----------------------------------------------------------------

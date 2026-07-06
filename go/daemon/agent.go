@@ -353,6 +353,9 @@ func (d *Daemon) executeAction(sess *sessionstore.Session, task *scheduler.Task,
 			map[string]any{"status": "hook_blocked", "tool": act.Tool, "reason": reason}, "")
 		return "BLOCKED by hook: " + reason
 	}
+	if d.isPlanMode(sess.SessionID) && (act.Tool == "patch" || act.Tool == "run") {
+		return "BLOCKED: plan mode active — explore read-only and present a plan; the operator must approve it (session.approve_plan) before edits/commands"
+	}
 	obs := d.dispatchAction(sess, task, act)
 	d.runPostToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, obs))
 	return obs
