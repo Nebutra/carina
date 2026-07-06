@@ -42,6 +42,7 @@ type Options struct {
 	MaxTaskTokens         int      // per-task token budget (0 => unlimited); over-budget runs degrade
 	EnableEgressProxy     bool     // route command network through a deny-by-default egress proxy
 	EgressAllow           []string // hosts allowed when the egress proxy is enabled
+	SandboxCommands       bool     // run commands under an OS syscall sandbox (macOS sandbox-exec)
 }
 
 type pendingCommand struct {
@@ -89,6 +90,7 @@ type Daemon struct {
 	mcp       *mcp.Manager  // external MCP servers (proxied tools, kernel-gated)
 	egress    *egress.Proxy // deny-by-default network egress proxy (optional)
 	egressURL string
+	sandbox   bool // run commands under an OS syscall sandbox
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -138,6 +140,7 @@ func New(opts Options) (*Daemon, error) {
 	d.trust = newTrustStore(opts.StateDir)
 	d.requireTrust = opts.RequireWorkspaceTrust
 	d.maxTaskTokens = opts.MaxTaskTokens
+	d.sandbox = opts.SandboxCommands
 	d.mailbox = map[string][]string{}
 	d.planMode = map[string]bool{}
 	d.mcp = mcp.NewManager()
@@ -1015,7 +1018,7 @@ func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decisio
 	}
 	d.record(sessionID, "CommandStarted", taskID, "zig", started, decision.DecisionID)
 
-	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv())
+	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox)
 	if err != nil {
 		d.record(sessionID, "CommandExited", taskID, "zig", map[string]any{"exit_code": -1, "error": err.Error()}, "")
 		return nil, err

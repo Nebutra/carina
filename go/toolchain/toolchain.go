@@ -106,11 +106,15 @@ func (t *Toolchain) Grep(pattern, root string) ([]Match, error) {
 // Run executes a command through carina-run with captured output. extraEnv is
 // appended to the child's environment (used to inject HTTP(S)_PROXY when the
 // egress proxy is active); nil leaves the inherited environment untouched.
-func (t *Toolchain) Run(argv []string, cwd string, timeout time.Duration, extraEnv []string) (*CommandResult, error) {
+func (t *Toolchain) Run(argv []string, cwd string, timeout time.Duration, extraEnv []string, sandbox bool) (*CommandResult, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("toolchain: empty command")
 	}
-	args := []string{"--cwd", cwd, "--timeout-ms", fmt.Sprintf("%d", timeout.Milliseconds()), "--"}
+	args := []string{"--cwd", cwd, "--timeout-ms", fmt.Sprintf("%d", timeout.Milliseconds())}
+	if sandbox {
+		args = append(args, "--sandbox")
+	}
+	args = append(args, "--")
 	args = append(args, argv...)
 	out, err := t.runJSONLines(timeout+10*time.Second, extraEnv, t.tool("carina-run"), args...)
 	if err != nil {

@@ -8,6 +8,7 @@
 //!         {"exit_code":N,"duration_ms":N,"timed_out":bool}
 
 const std = @import("std");
+const builtin = @import("builtin");
 const jsonl = @import("jsonl");
 
 const max_output = 64 * 1024 * 1024;
@@ -26,6 +27,7 @@ pub fn main() !void {
     var cwd: ?[]const u8 = null;
     var timeout_ms: u64 = 120_000;
     var env_names = std.ArrayList([]const u8){};
+    var sandbox = false;
     var argv_start: usize = 0;
 
     var i: usize = 1;
@@ -40,6 +42,8 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, arg, "--env") and i + 1 < args.len) {
             i += 1;
             try env_names.append(allocator, args[i]);
+        } else if (std.mem.eql(u8, arg, "--sandbox")) {
+            sandbox = true;
         } else if (std.mem.eql(u8, arg, "--")) {
             argv_start = i + 1;
             break;
@@ -56,7 +60,29 @@ pub fn main() !void {
 
     const started = std.time.milliTimestamp();
 
-    var child = std.process.Child.init(args[argv_start..], allocator);
+    // OS-level sandbox: on macOS, wrap the child in sandbox-exec with a profile
+    // that confines file writes to the workspace (cwd) + tmp — a syscall-level
+    // safety net orthogonal to the capability kernel. Non-macOS falls back to
+    // running unwrapped (kernel policy still applies).
+    var argv_list = std.ArrayList([]const u8){};
+    if (sandbox and builtin.os.tag == .macos) {
+        const cwd_raw = cwd orelse ".";
+        // Canonicalize so the profile subpath matches the kernel-resolved path
+        // (macOS /var -> /private/var). Confine writes to cwd + /tmp only.
+        const cwd_abs = std.fs.realpathAlloc(allocator, cwd_raw) catch cwd_raw;
+        const profile = try std.fmt.allocPrint(
+            allocator,
+            "(version 1)(allow default)(deny file-write* (subpath \"/\"))(allow file-write* (subpath \"{s}\") (subpath \"/tmp\") (subpath \"/private/tmp\"))(allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\") (literal \"/dev/tty\") (literal \"/dev/urandom\") (literal \"/dev/dtracehelper\"))",
+            .{cwd_abs},
+        );
+        try argv_list.append(allocator, "/usr/bin/sandbox-exec");
+        try argv_list.append(allocator, "-p");
+        try argv_list.append(allocator, profile);
+    }
+    for (args[argv_start..]) |a| try argv_list.append(allocator, a);
+    const child_argv = try argv_list.toOwnedSlice(allocator);
+
+    var child = std.process.Child.init(child_argv, allocator);
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
     if (cwd) |dir| child.cwd = dir;
@@ -64,7 +90,9 @@ pub fn main() !void {
     // Env allowlist: PATH + HOME always pass; everything else must be named.
     var env_map = std.process.EnvMap.init(allocator);
     var parent_env = try std.process.getEnvMap(allocator);
-    const always = [_][]const u8{ "PATH", "HOME", "TMPDIR" };
+    // PATH/HOME/TMPDIR always pass; proxy vars pass so the egress proxy applies;
+    // everything else must be explicitly named via --env.
+    const always = [_][]const u8{ "PATH", "HOME", "TMPDIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy" };
     for (always) |name| {
         if (parent_env.get(name)) |value| try env_map.put(name, value);
     }
