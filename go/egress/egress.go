@@ -20,11 +20,13 @@ type Gate func(host string) (allow bool, reason string)
 
 // Proxy is a running loopback egress proxy.
 type Proxy struct {
-	mu   sync.RWMutex // guards gate (live-swappable via SetGate for hot-reload)
-	gate Gate
-	inj  *Injector // optional per-host credential injection (nil = none)
-	ln   net.Listener
-	srv  *http.Server
+	mu       sync.RWMutex // guards gate (live-swappable via SetGate for hot-reload)
+	gate     Gate
+	inj      *Injector // optional per-host credential injection (nil = none)
+	ca       *CA       // ephemeral MITM CA, generated only when a rule opts in
+	upstream *http.Client
+	ln       net.Listener
+	srv      *http.Server
 }
 
 // SetGate swaps the allow/deny gate live (e.g. on a config reload of the egress
@@ -38,11 +40,19 @@ func (p *Proxy) SetGate(g Gate) {
 func New(gate Gate) *Proxy { return &Proxy{gate: gate} }
 
 // NewWithInjector builds a proxy that also injects per-host credentials at the
-// boundary (plain-HTTP only; see forward).
+// boundary. HTTPS injection only happens for rules that explicitly opt into
+// MITM; all other HTTPS CONNECT traffic remains an opaque tunnel.
 func NewWithInjector(gate Gate, inj *Injector) *Proxy { return &Proxy{gate: gate, inj: inj} }
 
 // Start binds a loopback port and serves; returns the proxy URL (http://host:port).
 func (p *Proxy) Start() (string, error) {
+	if p.inj.hasMITM() && p.ca == nil {
+		ca, err := NewCA()
+		if err != nil {
+			return "", fmt.Errorf("egress mitm ca: %w", err)
+		}
+		p.ca = ca
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", err
@@ -67,6 +77,21 @@ func (p *Proxy) Close() error {
 	return nil
 }
 
+// MITMEnabled reports whether this proxy has any host opted into HTTPS
+// interception.
+func (p *Proxy) MITMEnabled() bool { return p.inj.hasMITM() }
+
+// WriteMITMCABundleFile writes the process-local trust bundle children should
+// use when MITM is enabled. The bundle keeps normal system roots where they can
+// be discovered and appends Carina's ephemeral CA; it never modifies system
+// trust.
+func (p *Proxy) WriteMITMCABundleFile(path string) error {
+	if p.ca == nil {
+		return fmt.Errorf("egress mitm ca not initialized")
+	}
+	return p.ca.WriteBundleFile(path)
+}
+
 func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 	p.mu.RLock()
 	gate := p.gate
@@ -75,6 +100,10 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 		host := hostOnly(r.Host)
 		if ok, reason := gate(host); !ok {
 			http.Error(w, "egress denied: "+reason, http.StatusForbidden)
+			return
+		}
+		if p.inj.mitm(host) {
+			p.mitmConnect(w, r)
 			return
 		}
 		p.tunnel(w, r)
@@ -115,9 +144,9 @@ func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request) {
 }
 
 // forward proxies a plain-HTTP request after the gate allows it, injecting a
-// per-host credential at the boundary if configured. Note: credential injection
-// applies to plain HTTP only — HTTPS flows through the opaque CONNECT tunnel and
-// would require TLS termination (MITM) to authenticate, which is a later tier.
+// per-host credential at the boundary if configured. HTTPS requests normally
+// flow through the opaque CONNECT tunnel; only per-host MITM opt-in rules are
+// terminated for credential injection.
 func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, host string) {
 	if p.inj != nil {
 		p.inj.apply(host, r.Header)

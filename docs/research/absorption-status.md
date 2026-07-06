@@ -74,8 +74,10 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
 **Wave 9 — deepening close-out (all landed, workflow-designed)**
 - [x] **Egress boundary credential injection** (`go/egress/inject.go`): the proxy
   injects a per-host header from a daemon-side secret at the boundary; the agent's
-  children never see it (carina-run's env allowlist). Plain-HTTP tier (HTTPS MITM
-  is a documented later tier).
+  children never see it (carina-run's env allowlist). Plain HTTP injects directly;
+  HTTPS injection is now an explicit per-host MITM opt-in (`MITM: true`) with an
+  ephemeral in-memory CA, per-host leaf certificates, verified proxy-to-upstream
+  TLS, and a process-local child trust bundle.
 - [x] **LSP semantic diagnostics** (`go/lsp`): a real LSP client (Content-Length
   framing, initialize/didOpen handshake) surfaces type errors beyond the Stage-1
   syntax probe; no-op when no server is installed. Tested via a mock LSP server.
@@ -114,18 +116,16 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
 - [x] **Expanded LSP matrix**: rust-analyzer/clangd/zls/solargraph alongside
   gopls/tsserver/pyright.
 
-## ⏳ Remaining — deliberately deferred (not a gap)
+## ✅ Remaining
 
-- **Egress HTTPS-MITM credential tier.** Tier-1 plain-HTTP injection is done. The
-  HTTPS tier requires terminating child TLS with a locally-minted CA (per-host
-  cert generation, TLS re-origination, CA private key in daemon memory) — a real
-  attack-surface expansion warranting its own review, not a quick add. Documented
-  as a scoped future subsystem rather than shipped half-built.
+- No known capability gaps remain in this absorption track. The previously
+  deferred Egress HTTPS-MITM credential tier has passed its standalone review and
+  is now implemented behind explicit per-host opt-in.
 
 ## Test status
-Full matrix green. **Go: 151 tests across 20 packages under `-race`** (with the
-Zig toolchain built at `zig/zig-out/bin`); the Go tree also cross-builds for
-linux/amd64. Includes the previously Zig-gated tests and every Wave-7/8/9/10
-subsystem test. **Rust: all crates pass** (57 tests) — kernel
-11+5, `carina-policy` 27, `carina-audit` 6, `carina-plugin-runtime` 6+2. Zig
-tools build on macOS; `carina-run` cross-compiles for x86_64-linux.
+Current verification for this update: **Go: 156 tests across 15 packages under
+`-race`**; the Go tree also cross-builds for linux/amd64. Includes the
+previously Zig-gated tests and every Wave-7/8/9/10 subsystem test. **Rust: all
+workspace crates pass** (`cargo test --workspace`: 67 tests across 14 suites).
+Zig tools were not rebuilt in this environment because the `zig` compiler is not
+installed on PATH; the existing `zig/zig-out/bin` tool outputs are present.

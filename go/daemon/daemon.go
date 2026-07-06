@@ -61,6 +61,7 @@ type EgressCredential struct {
 	Header      string // header to set (default Authorization)
 	ValuePrefix string // e.g. "Bearer "
 	SecretEnv   string // daemon env var holding the secret value
+	MITM        bool   // opt this host into HTTPS TLS interception for injection
 }
 
 type pendingCommand struct {
@@ -106,10 +107,11 @@ type Daemon struct {
 	planMode map[string]bool // session -> plan mode (read-only until approved)
 	planMu   sync.Mutex
 
-	mcp       *mcp.Manager  // external MCP servers (proxied tools, kernel-gated)
-	egress    *egress.Proxy // deny-by-default network egress proxy (optional)
-	egressURL string
-	sandbox   atomic.Bool // run commands under an OS syscall sandbox (hot-reloadable)
+	mcp          *mcp.Manager  // external MCP servers (proxied tools, kernel-gated)
+	egress       *egress.Proxy // deny-by-default network egress proxy (optional)
+	egressURL    string
+	egressCAPath string      // process-local CA bundle for MITM-enabled children
+	sandbox      atomic.Bool // run commands under an OS syscall sandbox (hot-reloadable)
 
 	stopCh   chan struct{} // closed on Close; stops background loops (lease reaper)
 	stopOnce sync.Once
@@ -205,7 +207,7 @@ func New(opts Options) (*Daemon, error) {
 		if len(opts.EgressCredentials) > 0 {
 			rules := map[string]egress.InjectionRule{}
 			for _, c := range opts.EgressCredentials {
-				rules[c.Host] = egress.InjectionRule{Header: c.Header, ValuePrefix: c.ValuePrefix, SecretName: c.SecretEnv}
+				rules[c.Host] = egress.InjectionRule{Header: c.Header, ValuePrefix: c.ValuePrefix, SecretName: c.SecretEnv, MITM: c.MITM}
 				allow = append(allow, c.Host) // an injected host must also be reachable
 			}
 			// Deployment-scoped resolver: reads the secret from the daemon's env,
@@ -218,8 +220,22 @@ func New(opts Options) (*Daemon, error) {
 		} else {
 			d.egress = egress.New(egress.Allowlist(allow))
 		}
-		if url, err := d.egress.Start(); err == nil {
-			d.egressURL = url
+		url, err := d.egress.Start()
+		if err != nil {
+			return nil, fmt.Errorf("daemon: start egress proxy: %w", err)
+		}
+		d.egressURL = url
+		if d.egress.MITMEnabled() {
+			stateDir, err := filepath.Abs(opts.StateDir)
+			if err != nil {
+				stateDir = opts.StateDir
+			}
+			caPath := filepath.Join(stateDir, "egress-ca-bundle.pem")
+			if err := d.egress.WriteMITMCABundleFile(caPath); err != nil {
+				_ = d.egress.Close()
+				return nil, fmt.Errorf("daemon: write egress MITM CA bundle: %w", err)
+			}
+			d.egressCAPath = caPath
 		}
 	}
 	// Best-effort: wire the claude CLI reasoner if available and not offline.
@@ -322,11 +338,22 @@ func (d *Daemon) egressEnv() []string {
 	if d.egressURL == "" {
 		return nil
 	}
-	return []string{
+	env := []string{
 		"HTTP_PROXY=" + d.egressURL, "HTTPS_PROXY=" + d.egressURL,
 		"http_proxy=" + d.egressURL, "https_proxy=" + d.egressURL,
 		"NO_PROXY=localhost,127.0.0.1", "no_proxy=localhost,127.0.0.1",
 	}
+	if d.egressCAPath != "" {
+		env = append(env,
+			"SSL_CERT_FILE="+d.egressCAPath,
+			"REQUESTS_CA_BUNDLE="+d.egressCAPath,
+			"CURL_CA_BUNDLE="+d.egressCAPath,
+			"GIT_SSL_CAINFO="+d.egressCAPath,
+			"NODE_EXTRA_CA_CERTS="+d.egressCAPath,
+			"CARINA_EGRESS_CA_BUNDLE="+d.egressCAPath,
+		)
+	}
+	return env
 }
 
 // Kernel exposes the capability kernel to the agent loop.

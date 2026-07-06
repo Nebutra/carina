@@ -14,6 +14,10 @@ type InjectionRule struct {
 	Header      string // e.g. "Authorization" (defaults to Authorization if empty)
 	ValuePrefix string // e.g. "Bearer "
 	SecretName  string // key passed to the resolver
+	// MITM opts this host into TLS interception so the credential can be injected
+	// on HTTPS (not just plain HTTP). Higher-risk: requires the child to trust the
+	// egress CA. Off by default; plain-HTTP injection needs no interception.
+	MITM bool
 }
 
 // Injector applies per-host credential injection. Injection is opt-in per host:
@@ -37,6 +41,28 @@ func (in *Injector) injects(host string) bool {
 	return ok
 }
 
+// mitm reports whether a host is opted into TLS interception for HTTPS injection.
+func (in *Injector) mitm(host string) bool {
+	if in == nil {
+		return false
+	}
+	r, ok := in.rules[host]
+	return ok && r.MITM
+}
+
+// hasMITM reports whether any host requires TLS interception.
+func (in *Injector) hasMITM() bool {
+	if in == nil {
+		return false
+	}
+	for _, r := range in.rules {
+		if r.MITM {
+			return true
+		}
+	}
+	return false
+}
+
 // apply sets the credential header for host if a rule exists and its secret
 // resolves; returns whether a header was injected. The secret value is never
 // logged. An already-present header is overwritten so the injected credential
@@ -51,7 +77,7 @@ func (in *Injector) apply(host string, h http.Header) bool {
 	}
 	val, ok := in.resolve(rule.SecretName)
 	if !ok || val == "" {
-		return false // secret absent/denied — forward unauthenticated rather than fail
+		return false // secret absent/denied; forward unauthenticated rather than fail
 	}
 	header := rule.Header
 	if header == "" {
