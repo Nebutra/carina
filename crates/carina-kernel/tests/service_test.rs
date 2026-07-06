@@ -21,7 +21,7 @@ impl Service {
         let tools = format!("{}/../../zig/zig-out/bin", env!("CARGO_MANIFEST_DIR"));
         let mut child = Command::new(bin)
             .arg(state_dir)
-            .env("PI_TOOLS_DIR", tools)
+            .env("CARINA_TOOLS_DIR", tools)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())

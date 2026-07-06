@@ -43,5 +43,5 @@
 - **免费复用**:checkpoint/resume=replay event log;HITL=step.requires_approval 复用 waiting_approval+pendingCmds+task.action.approve;终止=max_supersteps+max_visits。
 - **★ 安全差异点**:每 step 声明 `risk_ceiling`,kernel 强制 —— workflow 能**编排**能力但不能**提权**;编排是确定性 Go,step 内副作用仍走 kernel→Zig,审计保留 Go→Rust→Zig actor。
 - 新事件:WorkflowCreated/StepStarted/StepCompleted/StepFailed/StepSkipped/StepAwaitingApproval/EdgeTaken/WorkflowCompleted/WorkflowFailed(进哈希链,actor=go)。
-- 新 RPC:workflow.define/submit/status/cancel + workflow.events.stream。CLI:pi workflow submit/status/replay。
+- 新 RPC:workflow.define/submit/status/cancel + workflow.events.stream。CLI:carina workflow submit/status/replay。
 - **构建顺序**:① linear chaining+events+replay ② conditional edges(routing+evaluator 环)+沙箱求值 ③ static parallel fan-out/join+reducers ④ dynamic Send ⑤ HITL+subworkflow。

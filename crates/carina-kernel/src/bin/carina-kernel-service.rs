@@ -688,16 +688,16 @@ fn build_patch_plan(root: &Path, files: &[FileChange], snapshot_dir: &Path) -> V
 /// Locates the carina-patch-native binary. There is NO Rust write fallback: if
 /// the native tool is missing, patch apply fails (PRD §4.4, §16.5).
 fn patch_native_bin() -> Result<PathBuf, String> {
-    if let Ok(p) = std::env::var("PI_PATCH_NATIVE_BIN") {
+    if let Ok(p) = std::env::var("CARINA_PATCH_NATIVE_BIN") {
         return Ok(PathBuf::from(p));
     }
-    if let Ok(dir) = std::env::var("PI_TOOLS_DIR") {
+    if let Ok(dir) = std::env::var("CARINA_TOOLS_DIR") {
         let candidate = Path::new(&dir).join("carina-patch-native");
         if candidate.exists() {
             return Ok(candidate);
         }
     }
-    Err("carina-patch-native not found (set PI_TOOLS_DIR or PI_PATCH_NATIVE_BIN); refusing to write directly".into())
+    Err("carina-patch-native not found (set CARINA_TOOLS_DIR or CARINA_PATCH_NATIVE_BIN); refusing to write directly".into())
 }
 
 /// Runs carina-patch-native with a plan on stdin and returns its reported status.

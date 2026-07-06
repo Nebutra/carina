@@ -36,7 +36,7 @@ Dependency-free, high-leverage S/M items that every later wave leans on.
   `ExpectedBaseHash` per-file guard in the kernel `patch_propose`.
 - **Duplicate-key JSON detection** — `hasDuplicateKeys` at both trust boundaries
   (Go `parseAction`, Rust `handle_line`) rejects smuggled `{"tool":"read","tool":"run"}`.
-- **Model tiering** — a second cheaper `Reasoner` (`PI_SUMMARIZER_MODEL`) for
+- **Model tiering** — a second cheaper `Reasoner` (`CARINA_SUMMARIZER_MODEL`) for
   compaction/summarization, falling back to the primary when unset.
 
 ### Wave 2 — Execution-security gating, transport hardening & context bounding

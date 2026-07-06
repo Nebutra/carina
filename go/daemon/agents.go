@@ -8,8 +8,8 @@ import (
 )
 
 // AgentSpec defines a subagent: an isolated, capability-restricted persona
-// the main agent can delegate to. Loaded from markdown + frontmatter, exactly
-// like Claude Code / pi agents. The `profile` field is the capability ceiling
+// the main agent can delegate to. Loaded from markdown + frontmatter, in the
+// same style as other coding-agent CLIs. The `profile` field is the capability ceiling
 // — enforced by the Rust kernel, and further attenuated so a child can never
 // exceed its parent (child ⊆ parent).
 type AgentSpec struct {

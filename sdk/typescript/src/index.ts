@@ -29,7 +29,7 @@ export interface Task {
   risk_level: number
 }
 
-export interface PiEvent {
+export interface CarinaEvent {
   event_id: string
   session_id: string
   task_id?: string
@@ -91,7 +91,7 @@ interface RpcError {
 
 export const defaultSocketPath = (): string => join(homedir(), '.carina', 'daemon.sock')
 
-export class PiClient {
+export class CarinaClient {
   private socket: Socket | null = null
   private nextId = 0
   private buffer = ''
@@ -137,8 +137,8 @@ export class PiClient {
     return this.call<Task>('task.submit', { session_id: sessionId, prompt })
   }
 
-  replaySession(sessionId: string): Promise<PiEvent[]> {
-    return this.call<PiEvent[]>('session.replay', { session_id: sessionId })
+  replaySession(sessionId: string): Promise<CarinaEvent[]> {
+    return this.call<CarinaEvent[]>('session.replay', { session_id: sessionId })
   }
 
   // ---- workspace & patches ----

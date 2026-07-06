@@ -44,7 +44,7 @@ step). Two implementations:
   deterministically with no model and no cost.
 
 The daemon wires `claude-cli` automatically when the binary is present and the
-daemon is not in `--offline` mode. Set `PI_REASONER_MODEL` to pin a model.
+daemon is not in `--offline` mode. Set `CARINA_REASONER_MODEL` to pin a model.
 
 ## Run it
 

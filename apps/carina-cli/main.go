@@ -1,4 +1,4 @@
-// pi is the Carina command-line client (PRD §11). It is a thin JSON-RPC
+// carina is the Carina command-line client (PRD §11). It is a thin JSON-RPC
 // client of carina-daemon — the CLI is not the runtime.
 package main
 
@@ -13,31 +13,31 @@ import (
 
 const cliVersion = "0.6.0"
 
-const usage = `pi — Pi Agent OS Runtime client
+const usage = `carina — Carina Agent Runtime client
 
 Usage:
   carina init                         create ~/.carina and print daemon hint
   carina status                       daemon health and counters
-  pi sessions                     list sessions
+  carina sessions                     list sessions
   carina run "<prompt>"               create a session in cwd and submit a task
   carina ask "<prompt>"               alias for run
-  pi resume <session_id>          show a session
-  pi watch <session_id>           stream the live event feed
+  carina resume <session_id>          show a session
+  carina watch <session_id>           stream the live event feed
   carina audit <session_id>           replay the session event stream
   carina audit verify <session_id>    verify the tamper-evident hash chain
   carina audit last                   audit summary of the most recent session
-  pi replay <session_id>          replay the session event stream
-  pi report <session_id>          audit summary (violations, files, commands)
-  pi export <session_id>          export the full audit bundle (centralized audit)
-  pi search <session_id> <text>   structured workspace search (carina-grep)
-  pi exec <session_id> -- cmd...  run a command through the kernel
+  carina replay <session_id>          replay the session event stream
+  carina report <session_id>          audit summary (violations, files, commands)
+  carina export <session_id>          export the full audit bundle (centralized audit)
+  carina search <session_id> <text>   structured workspace search (carina-grep)
+  carina exec <session_id> -- cmd...  run a command through the kernel
 
   Native tools (run straight on the Zig toolchain, no daemon):
-  pi scan [path]                  workspace file tree (ignore rules, binary/lang)
-  pi grep <pattern> <path>        structured search
-  pi diff <a> <b>                 structured diff
+  carina scan [path]                  workspace file tree (ignore rules, binary/lang)
+  carina grep <pattern> <path>        structured search
+  carina diff <a> <b>                 structured diff
   carina run-native [opts] -- cmd...  run a command (timeout/cwd/env)
-  pi pty [opts] -- cmd...         interactive pseudo-terminal
+  carina pty [opts] -- cmd...         interactive pseudo-terminal
   carina patch-native <apply|dry-run|rollback>   atomic patch primitive (JSON on stdin)
 
   carina patch list <session_id>
@@ -46,14 +46,14 @@ Usage:
   carina patch apply <session_id> <patch_id>
   carina patch rollback <session_id> <patch_id>
 
-  pi approve <session_id> <decision_id>
-  pi deny <session_id> <decision_id> [reason]
-  pi profile <session_id>                describe the active permission profile
-  pi secret grant <session_id> <n> <v>   register a secret (returns a handle)
-  pi secret request <session_id> <name>  request a secret handle
-  pi plugin inspect <manifest.toml>              show declared permissions
-  pi plugin run <session_id> <manifest> <wasm>   run a WASM plugin
-  pi metrics
+  carina approve <session_id> <decision_id>
+  carina deny <session_id> <decision_id> [reason]
+  carina profile <session_id>                describe the active permission profile
+  carina secret grant <session_id> <n> <v>   register a secret (returns a handle)
+  carina secret request <session_id> <name>  request a secret handle
+  carina plugin inspect <manifest.toml>              show declared permissions
+  carina plugin run <session_id> <manifest> <wasm>   run a WASM plugin
+  carina metrics
 
 The daemon must be running: carina-daemon &
 `
@@ -64,7 +64,7 @@ func main() {
 		os.Exit(2)
 	}
 	if err := run(os.Args[1], os.Args[2:]); err != nil {
-		fmt.Fprintf(os.Stderr, "pi: %v\n", err)
+		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -72,19 +72,19 @@ func main() {
 func run(cmd string, args []string) error {
 	switch cmd {
 	case "version", "--version", "-v":
-		fmt.Println("pi " + cliVersion)
+		fmt.Println("carina " + cliVersion)
 		return nil
 	case "init":
 		return cmdInit()
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
-	// Native toolchain launchers (PRD §8.1): pi forwards straight to the
+	// Native toolchain launchers (PRD §8.1): carina forwards straight to the
 	// Zig binaries — no daemon, no business logic, just process exec.
 	// run/patch use a -native suffix to avoid clashing with the agent-level
 	// `carina run` and the daemon-level `carina patch`.
 	case "scan", "grep", "diff", "pty":
-		return execTool("pi-"+cmd, args)
+		return execTool("carina-"+cmd, args)
 	case "run-native":
 		return execTool("carina-run", args)
 	case "patch-native":
@@ -111,7 +111,7 @@ func run(cmd string, args []string) error {
 		// default behavior.
 		args = dropFlag(args, "--background")
 		if len(args) < 1 {
-			return fmt.Errorf(`usage: pi %s "<prompt>" [--background]`, cmd)
+			return fmt.Errorf(`usage: carina %s "<prompt>" [--background]`, cmd)
 		}
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -132,7 +132,7 @@ func run(cmd string, args []string) error {
 		return cmdAudit(c, args)
 	case "replay":
 		if len(args) < 1 {
-			return fmt.Errorf("usage: pi replay <session_id>")
+			return fmt.Errorf("usage: carina replay <session_id>")
 		}
 		return call(c, "session.replay", map[string]any{"session_id": args[0]})
 	case "report":
@@ -146,13 +146,13 @@ func run(cmd string, args []string) error {
 
 	case "watch":
 		if len(args) < 1 {
-			return fmt.Errorf("usage: pi watch <session_id>")
+			return fmt.Errorf("usage: carina watch <session_id>")
 		}
 		return watch(c, args[0])
 
 	case "search":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: pi search <session_id> <text>")
+			return fmt.Errorf("usage: carina search <session_id> <text>")
 		}
 		return call(c, "workspace.search", map[string]any{"session_id": args[0], "pattern": args[1]})
 
@@ -161,7 +161,7 @@ func run(cmd string, args []string) error {
 
 	case "approve":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: pi approve <session_id> <decision_id> [role]")
+			return fmt.Errorf("usage: carina approve <session_id> <decision_id> [role]")
 		}
 		p := map[string]any{"session_id": args[0], "decision_id": args[1]}
 		if len(args) > 2 {
@@ -170,7 +170,7 @@ func run(cmd string, args []string) error {
 		return call(c, "task.action.approve", p)
 	case "deny":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: pi deny <session_id> <decision_id> [reason]")
+			return fmt.Errorf("usage: carina deny <session_id> <decision_id> [reason]")
 		}
 		reason := "denied by user"
 		if len(args) > 2 {
@@ -183,7 +183,7 @@ func run(cmd string, args []string) error {
 
 	case "profile":
 		if len(args) < 1 {
-			return fmt.Errorf("usage: pi profile <session_id>")
+			return fmt.Errorf("usage: carina profile <session_id>")
 		}
 		return call(c, "profile.describe", map[string]any{"session_id": args[0]})
 
@@ -224,9 +224,9 @@ func cmdInit() error {
 }
 
 func cmdExec(c *rpcClient, args []string) error {
-	// pi exec <session_id> -- cmd arg...
+	// carina exec <session_id> -- cmd arg...
 	if len(args) < 3 || args[1] != "--" {
-		return fmt.Errorf("usage: pi exec <session_id> -- <command> [args...]")
+		return fmt.Errorf("usage: carina exec <session_id> -- <command> [args...]")
 	}
 	return call(c, "command.exec", map[string]any{"session_id": args[0], "argv": args[2:]})
 }
@@ -274,12 +274,12 @@ func cmdPatch(c *rpcClient, args []string) error {
 
 func cmdPlugin(c *rpcClient, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: pi plugin <inspect|run> ...")
+		return fmt.Errorf("usage: carina plugin <inspect|run> ...")
 	}
 	switch args[0] {
 	case "inspect":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: pi plugin inspect <manifest.toml>")
+			return fmt.Errorf("usage: carina plugin inspect <manifest.toml>")
 		}
 		manifest, err := os.ReadFile(args[1])
 		if err != nil {
@@ -288,7 +288,7 @@ func cmdPlugin(c *rpcClient, args []string) error {
 		return call(c, "plugin.inspect", map[string]any{"manifest_toml": string(manifest)})
 	case "run":
 		if len(args) < 4 {
-			return fmt.Errorf("usage: pi plugin run <session_id> <manifest.toml> <module.wasm> [signature.sig]")
+			return fmt.Errorf("usage: carina plugin run <session_id> <manifest.toml> <module.wasm> [signature.sig]")
 		}
 		manifest, err := os.ReadFile(args[2])
 		if err != nil {
@@ -366,18 +366,18 @@ func latestSession(c *rpcClient) (string, error) {
 
 func cmdSecret(c *rpcClient, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: pi secret <grant|request> <session_id> [name] [value]")
+		return fmt.Errorf("usage: carina secret <grant|request> <session_id> [name] [value]")
 	}
 	sub, sessionID := args[0], args[1]
 	switch sub {
 	case "grant":
 		if len(args) < 4 {
-			return fmt.Errorf("usage: pi secret grant <session_id> <name> <value>")
+			return fmt.Errorf("usage: carina secret grant <session_id> <name> <value>")
 		}
 		return call(c, "secret.grant", map[string]any{"session_id": sessionID, "name": args[2], "value": args[3]})
 	case "request":
 		if len(args) < 3 {
-			return fmt.Errorf("usage: pi secret request <session_id> <name>")
+			return fmt.Errorf("usage: carina secret request <session_id> <name>")
 		}
 		return call(c, "secret.request", map[string]any{"session_id": sessionID, "name": args[2]})
 	default:
@@ -416,13 +416,13 @@ func call(c *rpcClient, method string, params any) error {
 
 func callArg(c *rpcClient, method string, args []string, key string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: pi ... <%s>", key)
+		return fmt.Errorf("usage: carina ... <%s>", key)
 	}
 	return call(c, method, map[string]any{key: args[0]})
 }
 
 func defaultSocketPath() (string, error) {
-	if s := os.Getenv("PI_OS_SOCKET"); s != "" {
+	if s := os.Getenv("CARINA_SOCKET"); s != "" {
 		return s, nil
 	}
 	home, err := os.UserHomeDir()

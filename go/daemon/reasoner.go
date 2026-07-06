@@ -71,13 +71,13 @@ func newClaudeCLIReasoner() (*claudeCLIReasoner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("claude CLI not found on PATH: %w", err)
 	}
-	dir, err := os.MkdirTemp("", "pi-reasoner-")
+	dir, err := os.MkdirTemp("", "carina-reasoner-")
 	if err != nil {
 		return nil, err
 	}
 	return &claudeCLIReasoner{
 		bin:     bin,
-		model:   os.Getenv("PI_REASONER_MODEL"),
+		model:   os.Getenv("CARINA_REASONER_MODEL"),
 		workdir: dir,
 		timeout: 180 * time.Second,
 	}, nil

@@ -131,7 +131,7 @@ func TestClientNilCloser(t *testing.T) {
 }
 
 func TestDialErrors(t *testing.T) {
-	if _, err := Dial("/nonexistent/pi.sock"); err == nil {
+	if _, err := Dial("/nonexistent/carina.sock"); err == nil {
 		t.Fatal("dial of missing socket should error")
 	}
 	if _, err := DialTCP("127.0.0.1:1"); err == nil {

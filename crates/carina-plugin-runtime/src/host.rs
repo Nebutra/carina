@@ -3,12 +3,12 @@
 //! Defines the ABI between a plugin and the runtime and enforces the
 //! manifest permission boundary. The plugin's only imports are:
 //!
-//! - `env.pi_log(ptr, len)` — emit a UTF-8 log line.
-//! - `env.pi_request_capability(cap_ptr, cap_len, res_ptr, res_len) -> i32`
+//! - `env.carina_log(ptr, len)` — emit a UTF-8 log line.
+//! - `env.carina_request_capability(cap_ptr, cap_len, res_ptr, res_len) -> i32`
 //!   returns 1 if allowed, 0 if denied. A request for a capability not
 //!   declared in the manifest is always denied and recorded.
 //!
-//! The plugin exports `pi_run() -> i32` (a result code).
+//! The plugin exports `carina_run() -> i32` (a result code).
 
 use crate::{Manifest, PluginError};
 use wasmi::{Caller, Engine, Extern, Linker, Memory, Module, Store};
@@ -67,10 +67,12 @@ impl Default for PluginRuntime {
 
 impl PluginRuntime {
     pub fn new() -> Self {
-        Self { engine: Engine::default() }
+        Self {
+            engine: Engine::default(),
+        }
     }
 
-    /// Loads and runs a WASM plugin's `pi_run` export. `wasm` is a module
+    /// Loads and runs a WASM plugin's `carina_run` export. `wasm` is a module
     /// binary; `host` is the live policy gate.
     pub fn run(
         &self,
@@ -78,7 +80,8 @@ impl PluginRuntime {
         wasm: &[u8],
         host: Box<dyn CapabilityHost>,
     ) -> Result<RunOutcome, PluginError> {
-        let module = Module::new(&self.engine, wasm).map_err(|e| PluginError::Wasm(e.to_string()))?;
+        let module =
+            Module::new(&self.engine, wasm).map_err(|e| PluginError::Wasm(e.to_string()))?;
 
         let state = HostState {
             manifest: manifest.clone(),
@@ -90,21 +93,30 @@ impl PluginRuntime {
         let mut store = Store::new(&self.engine, state);
         let mut linker = <Linker<HostState>>::new(&self.engine);
 
-        // env.pi_log(ptr, len)
-        linker
-            .func_wrap("env", "pi_log", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
-                if let Some(text) = read_string(&mut caller, ptr, len) {
-                    caller.data_mut().logs.push(text);
-                }
-            })
-            .map_err(|e| PluginError::Wasm(e.to_string()))?;
-
-        // env.pi_request_capability(cap_ptr, cap_len, res_ptr, res_len) -> i32
+        // env.carina_log(ptr, len)
         linker
             .func_wrap(
                 "env",
-                "pi_request_capability",
-                |mut caller: Caller<'_, HostState>, cap_ptr: i32, cap_len: i32, res_ptr: i32, res_len: i32| -> i32 {
+                "carina_log",
+                |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
+                    if let Some(text) = read_string(&mut caller, ptr, len) {
+                        caller.data_mut().logs.push(text);
+                    }
+                },
+            )
+            .map_err(|e| PluginError::Wasm(e.to_string()))?;
+
+        // env.carina_request_capability(cap_ptr, cap_len, res_ptr, res_len) -> i32
+        linker
+            .func_wrap(
+                "env",
+                "carina_request_capability",
+                |mut caller: Caller<'_, HostState>,
+                 cap_ptr: i32,
+                 cap_len: i32,
+                 res_ptr: i32,
+                 res_len: i32|
+                 -> i32 {
                     let capability = read_string(&mut caller, cap_ptr, cap_len).unwrap_or_default();
                     let resource = read_string(&mut caller, res_ptr, res_len).unwrap_or_default();
 
@@ -146,9 +158,11 @@ impl PluginRuntime {
         }
 
         let run = instance
-            .get_typed_func::<(), i32>(&store, "pi_run")
-            .map_err(|e| PluginError::Wasm(format!("missing pi_run export: {e}")))?;
-        let result_code = run.call(&mut store, ()).map_err(|e| PluginError::Wasm(e.to_string()))?;
+            .get_typed_func::<(), i32>(&store, "carina_run")
+            .map_err(|e| PluginError::Wasm(format!("missing carina_run export: {e}")))?;
+        let result_code = run
+            .call(&mut store, ())
+            .map_err(|e| PluginError::Wasm(e.to_string()))?;
 
         let data = store.into_data();
         Ok(RunOutcome {

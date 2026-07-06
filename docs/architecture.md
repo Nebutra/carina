@@ -23,7 +23,7 @@ Agent Surface ──JSON-RPC──▶ Go Control Plane ──Capability API─�
 4. **Every patch is a transaction.** Proposed → Validated → Approved → Applied → Verified → Committed, with a rollback pointer at every stage. No half-applied state, ever.
 5. **Every tool declares its permissions.** Plugins and tools carry manifests; undeclared capability use is a `PolicyViolation` event.
 6. **Local-first.** The daemon, workers, and remote execution are extensions — a single binary on a laptop is the base case.
-7. **The CLI is a client.** `pi` talks JSON-RPC to the daemon. IDEs, CI, and SDKs use the same protocol.
+7. **The CLI is a client.** `carina` talks JSON-RPC to the daemon. IDEs, CI, and SDKs use the same protocol.
 
 ## Component map
 

@@ -36,7 +36,7 @@ approver lacking the role is rejected and the rejection is audited.
 ```
 
 ```bash
-pi approve <session> <decision_id> tech-lead   # role supplied at approval time
+carina approve <session> <decision_id> tech-lead   # role supplied at approval time
 ```
 
 Roles come from the `IdentityProvider` seam (`go/daemon/identity.go`) — the
@@ -53,16 +53,16 @@ refused before instantiation.
 # publisher signs the module
 openssl ... # or any ed25519 tool -> module.sig
 echo "<base64 pubkey>" >> ~/.carina/policy/trusted-keys
-pi plugin run <session> plugin.toml module.wasm module.sig
+carina plugin run <session> plugin.toml module.wasm module.sig
 ```
 
 Verified end to end by `TestSignedPluginEnforcement` (unsigned refused,
 rogue-signed refused, trusted-signed runs).
 
-## 4. Centralized audit — `pi export`
+## 4. Centralized audit — `carina export`
 
 ```bash
-pi export <session_id>   # full audit bundle: profile + every event, in order
+carina export <session_id>   # full audit bundle: profile + every event, in order
 ```
 
 The bundle is suitable for shipping to a central audit store. Every side

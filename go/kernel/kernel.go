@@ -58,7 +58,7 @@ type Service struct {
 }
 
 // Start launches the kernel binary with the given state directory. toolsDir
-// is passed through as PI_TOOLS_DIR so the kernel can delegate patch writes
+// is passed through as CARINA_TOOLS_DIR so the kernel can delegate patch writes
 // to carina-patch-native (PRD §4.4).
 func Start(binPath, stateDir, toolsDir string) (*Service, error) {
 	if binPath == "" {
@@ -71,7 +71,7 @@ func Start(binPath, stateDir, toolsDir string) (*Service, error) {
 	cmd := exec.Command(binPath, stateDir)
 	cmd.Env = os.Environ()
 	if toolsDir != "" {
-		cmd.Env = append(cmd.Env, "PI_TOOLS_DIR="+toolsDir)
+		cmd.Env = append(cmd.Env, "CARINA_TOOLS_DIR="+toolsDir)
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

@@ -13,7 +13,7 @@ second time by the session's permission profile.
 
 ## What it does
 
-`pi_run` makes two capability requests:
+`carina_run` makes two capability requests:
 
 1. `command_exec` / `go test ./...` — **declared** → allowed (if the session
    profile also permits it).
@@ -30,8 +30,8 @@ cargo run --release -p carina-plugin-runtime --bin carina-wat2wasm -- \
   examples/plugins/hello/hello.wat examples/plugins/hello/hello.wasm
 
 # with a running daemon:
-pi plugin inspect examples/plugins/hello/plugin.toml
+carina plugin inspect examples/plugins/hello/plugin.toml
 SID=$(carina run "demo" | grep -o 'sess_[a-f0-9]*' | head -1)
-pi plugin run "$SID" examples/plugins/hello/plugin.toml examples/plugins/hello/hello.wasm
+carina plugin run "$SID" examples/plugins/hello/plugin.toml examples/plugins/hello/hello.wasm
 carina audit "$SID"   # see the PolicyViolation for the undeclared secret request
 ```

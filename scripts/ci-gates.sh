@@ -6,9 +6,9 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-TOOLS="${PI_TOOLS_DIR:-$ROOT/zig/zig-out/bin}"
+TOOLS="${CARINA_TOOLS_DIR:-$ROOT/zig/zig-out/bin}"
 KERNEL="${CARINA_KERNEL_BIN:-$ROOT/target/release/carina-kernel-service}"
-PI="$ROOT/bin/carina"
+CARINA="$ROOT/bin/carina"
 DAEMON="$ROOT/bin/carina-daemon"
 
 fail() { echo "GATE FAILED: $1" >&2; exit 1; }
@@ -30,10 +30,10 @@ ok "16.1 no TypeScript runtime"
 # ---------------------------------------------------------------------------
 # 16.2 — No Node runtime. Core native commands run with node off PATH.
 # ---------------------------------------------------------------------------
-[ -x "$PI" ] || fail "16.2 pi binary missing (run: go build -o bin/carina ./apps/carina-cli)"
-env -i PATH="/usr/bin:/bin" PI_TOOLS_DIR="$TOOLS" "$PI" version >/dev/null 2>&1 || fail "16.2 pi version needs node"
-env -i PATH="/usr/bin:/bin" PI_TOOLS_DIR="$TOOLS" "$PI" scan "$ROOT/protocol" >/dev/null 2>&1 || fail "16.2 pi scan needs node"
-env -i PATH="/usr/bin:/bin" PI_TOOLS_DIR="$TOOLS" "$PI" grep "schema" "$ROOT/protocol" >/dev/null 2>&1 || fail "16.2 pi grep needs node"
+[ -x "$CARINA" ] || fail "16.2 carina binary missing (run: go build -o bin/carina ./apps/carina-cli)"
+env -i PATH="/usr/bin:/bin" CARINA_TOOLS_DIR="$TOOLS" "$CARINA" version >/dev/null 2>&1 || fail "16.2 carina version needs node"
+env -i PATH="/usr/bin:/bin" CARINA_TOOLS_DIR="$TOOLS" "$CARINA" scan "$ROOT/protocol" >/dev/null 2>&1 || fail "16.2 carina scan needs node"
+env -i PATH="/usr/bin:/bin" CARINA_TOOLS_DIR="$TOOLS" "$CARINA" grep "schema" "$ROOT/protocol" >/dev/null 2>&1 || fail "16.2 carina grep needs node"
 ok "16.2 core commands run without node"
 
 # ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ printf 'x TODO y\n' > "$GATE_TMP/ws/f.txt"
 [ -x "$DAEMON" ] || fail "16.5 carina-daemon binary missing"
 [ -x "$KERNEL" ] || fail "16.5 carina-kernel-service missing (run: cargo build --release -p carina-kernel --bin carina-kernel-service)"
 
-PI_TOOLS_DIR="$GATE_TMP/tools" "$DAEMON" -socket "$GATE_TMP/d.sock" -state "$GATE_TMP/st" \
+CARINA_TOOLS_DIR="$GATE_TMP/tools" "$DAEMON" -socket "$GATE_TMP/d.sock" -state "$GATE_TMP/st" \
   -kernel "$KERNEL" -tools "$GATE_TMP/tools" -policy "$GATE_TMP/np" >"$GATE_TMP/d.log" 2>&1 &
 DPID=$!
 for _ in $(seq 1 100); do [ -S "$GATE_TMP/d.sock" ] && break; sleep 0.05; done

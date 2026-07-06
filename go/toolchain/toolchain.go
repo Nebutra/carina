@@ -38,14 +38,14 @@ type CommandResult struct {
 
 // Toolchain locates and runs the native tools.
 type Toolchain struct {
-	dir string // directory containing the pi-* binaries; "" = $PATH
+	dir string // directory containing the carina-* binaries; "" = $PATH
 }
 
-// New resolves the tools directory: explicit arg, $PI_TOOLS_DIR, the
+// New resolves the tools directory: explicit arg, $CARINA_TOOLS_DIR, the
 // in-repo zig-out/bin, or $PATH.
 func New(dir string) *Toolchain {
 	if dir == "" {
-		dir = os.Getenv("PI_TOOLS_DIR")
+		dir = os.Getenv("CARINA_TOOLS_DIR")
 	}
 	if dir == "" {
 		if _, err := os.Stat(filepath.Join("zig", "zig-out", "bin", "carina-scan")); err == nil {

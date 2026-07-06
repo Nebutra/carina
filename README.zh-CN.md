@@ -1,271 +1,276 @@
-<div align="center">
-
-<img src="docs/assets/carina-hero.png" alt="Nebutra Carina —— 你的智能体运行其上的安全龙骨" width="100%" />
-
 # Nebutra Carina
 
-**一个安全的智能体运行时（agent runtime），由 Go、Rust 与 Zig 编写。**
+**Carina 是一个本地优先的 Agent Runtime，用来在明确的权限、审计与回滚边界内运行编程智能体。**
 
-*你的智能体运行其上的安全龙骨 —— 每一次副作用（side effect）都被把关、审计、可回滚。*
-
-[![build](https://img.shields.io/badge/build-passing-0033FE)](#)
-[![release](https://img.shields.io/badge/release-v0.1.0--alpha-0BF1C3)](#)
-[![stack](https://img.shields.io/badge/Go%20%C2%B7%20Rust%20%C2%B7%20Zig-polyglot-8b5cf6)](#)
-[![license](https://img.shields.io/badge/license-Apache--2.0-informational)](#)
-[![signed releases](https://img.shields.io/badge/releases-signed-0033FE)](#)
-[![no telemetry](https://img.shields.io/badge/telemetry-none-0BF1C3)](#)
-[![powered by Nebutra](https://img.shields.io/badge/powered%20by-Nebutra-0033FE)](#)
-
-`curl -fsSL https://get.nebutra.com/carina | sh`
+状态：**alpha**。本仓库已经实现核心执行与约束机制，但打包发布、公开安装渠道和部分 UX
+仍在早期阶段。CLI 细节和配置格式仍可能变化。
 
 [English](README.md) · **简体中文** · [日本語](README.ja.md)
 
-</div>
-
 ---
 
-## 什么是 Carina
+## Carina 是什么
 
-**Carina 是真正把 AI 编程智能体「跑起来」的安全底座** —— 不是操作系统，不是框架，而是一个运行时。你把一项任务交给智能体，Carina 执行它的 ReAct 循环，同时让它的**能力内核（capability kernel）在边界处为每一次副作用把关**，把每一次都记入一份**防篡改、哈希链式的审计日志（audit log）**，并以**可回滚的事务性补丁（patch）**形式落地文件改动。
+Carina 不是编辑器、聊天产品，也不是托管沙箱。它位于 AI 编程智能体和真实机器之间，是一层运行时。
 
-其他所有人卖的是一个会*行动*的智能体。Carina 运行的智能体不仅会行动，**而且值得信任、可被撤销**。
+当智能体需要读文件、提出代码修改、执行命令、访问网络、调用插件或使用 secret 时，Carina 会把这些动作送入能力内核。能力内核根据当前策略决定：允许、拒绝，或要求人工审批。被允许的副作用会写入哈希链式审计日志；文件改动会以事务性 patch 的形式应用，并可检查、可回滚。
 
-它面向的是这样一类人：想给智能体开放一台真实机器的真实权限 —— 写文件、跑命令、调工具 —— 却不必把钥匙拱手交出、然后只能祈祷。如果你曾想用一个密码学意义上确凿的「是」，来回答*「智能体到底做了什么，我能不能撤回？」*，那么 Carina 正是你以往靠一个 CLI、一个沙箱和一层审计补丁手工拼凑出来的那个运行时。
+目标很直接：让智能体能在真实仓库里做有用的事，同时不要把每次 tool call 都变成隐式、不可追踪的机器权限。
 
-一个二进制文件取代那一整堆东西。你只需要 `carina`。
+## 适合什么场景
 
+Carina 面向的是需要给编程智能体真实执行权限，同时又关心 prompt 发出之后如何约束和追踪的场景。
+
+适合：
+
+- 让智能体在本地仓库中执行任务，同时把写入、命令、网络访问和 secret 放在策略之后。
+- 让长任务或后台任务在 CLI 退出之后继续存在。
+- 生成可回答“智能体做了什么、何时做、为什么被允许”的事件流。
+- 回滚智能体产生的文件改动，而不是只依赖临时的 Git 清理。
+- 为 IDE、CI、内部 Agent 平台或工作流引擎提供可复用的执行底座。
+- 让子智能体或插件以比父任务更窄的权限运行。
+
+不适合：
+
+- 你只需要编辑器助手或聊天 UI。
+- 你想要的是托管式、开箱即用的 Agent 服务。
+- 你不需要审计日志、权限边界、回滚或 daemon 会话。
+- 你今天就需要稳定的二进制发布版。本阶段从源码构建最可靠。
+
+## 当前仓库状态
+
+当前代码库已实现：
+
+- Go daemon 和 CLI client：会话、任务、调度、JSON-RPC、模型路由、worker 和事件流。
+- Rust 能力内核：权限决策、策略执行、事务性 patch、审计日志和插件执行边界。
+- Zig 原生工具：scan、grep、diff、patch、命令执行和 pty 原语。
+- 内置权限 profile，例如 `read-only`、`safe-edit`、`full-workspace`、`ci-runner` 以及企业场景 profile。
+- 可验证的哈希链式 append-only 审计日志。
+- patch 的 propose、inspect、apply、rollback 流程。
+- ReAct 风格 Agent loop：typed transcript、compaction、loop guard、完成验证和后台任务恢复。
+- 子智能体能力衰减：子会话只能获得父权限的子集，不能获得超集。
+- 声明式 DAG Agent workflow 编排。
+- MCP client 和 server 互通，并通过同一能力边界执行。
+- 默认拒绝的 egress proxy、网络 allowlist、daemon 侧凭证注入，以及显式 per-host opt-in 的 HTTPS MITM 凭证注入。
+- 通过 broker 处理 secret，而不是把进程环境里的原始 secret 直接暴露给子命令。
+
+尚未完成：
+
+- 公开安装脚本和 Homebrew tap。
+- 公开 `SECURITY.md` 和贡献指南。
+- 带 provenance 的稳定发布产物。
+- 完整打磨的 TUI / dashboard。
+- Windows 支持。
+- TypeScript、Python、Go SDK 的能力对齐。
+- 面向远程 worker / 集群部署的生产运维文档。
+
+## 从源码快速开始
+
+要求：
+
+- Go 1.25 或更新版本
+- Rust 1.85 或更新版本
+- Zig 0.15.x
+- macOS 或 Linux
+
+构建：
+
+```bash
+git clone https://github.com/Nebutra/carina
+cd carina
+make all
 ```
-Go makes it run.  Rust makes it safe.  Zig makes it sharp.  LLM makes it useful.
+
+启动 daemon：
+
+```bash
+./bin/carina-daemon &
 ```
 
----
+把模型凭证放到 daemon 进程环境中。BYOK API key 优先；配置后 daemon 也支持 Nebutra OAuth 兜底。
 
-## 为什么要三种语言（外加一个 LLM）
+```bash
+export ANTHROPIC_API_KEY=sk-...
+# 或
+export OPENAI_API_KEY=sk-...
+```
 
-这就是全部立论所在。每种语言只干**一件事**，选它是因为它在这件事上独一无二地擅长。没有为堆技术而堆技术的设计 —— 每一个依赖都物有所值。
+在当前仓库运行任务：
 
-| 层 | 语言 | 唯一职责 | 具体机制 | 可度量的效果 |
-|---|---|---|---|---|
-| **控制平面** | **Go** | *让它跑起来* | daemon、调度器、会话存储、JSON-RPC 接口、模型路由。每会话一个 goroutine 的并发模型，单个长驻进程。 | 众多智能体会话，可远程调度，全部跑在一个受监管的 daemon 上。CLI 只是一个**客户端** —— 把它杀掉，会话照样存活。 |
-| **能力内核** | **Rust** | *让它安全* | 策略引擎 + 可回滚补丁引擎 + 哈希链式仅追加审计日志 + 插件运行时。每一次副作用都要跨越一道带类型的能力边界。 | **100% 的副作用被把关 + 审计。**每个补丁**原子且可逆**。日志**防篡改** —— 改动任一条目，整条链就会断裂。 |
-| **原生工具链** | **Zig** | *让它锋利* | 把 `scan`、`grep`、`diff`、`patch`、`pty` 做成小巧的原生二进制。无 GC、无运行时，输出结构化 JSON。 | 快速、分配开销极低的原语，启动只需约几毫秒。智能体每天要命中数千次的热路径，不必再为某个语言运行时买单。 |
-| **智能体界面** | **LLM** | *让它有用* | 带类型化转录（typed transcript）的 ReAct 循环、压缩（compaction）+ 循环守卫（loop-guard）、带**能力衰减（capability attenuation，子集 ⊆ 父集）**的子智能体，以及 Codex 风格的目标 / 成功标准 + 审批模式。 | 智能体能*思考并行动* —— 而派生出的子智能体**永远无法超出其父智能体的权限**。有委派，无提权。 |
+```bash
+./bin/carina run "fix the failing tests and show the patch"
+```
 
-### 用大白话说清这些机制
+查看会话：
 
-- **能力把关（capability gating）。** 智能体从不直接触碰操作系统。读一个文件、写一个补丁、派生一个进程、访问网络 —— 每一项都是一种**能力**，必须由内核授予。未授予的副作用 ⇒ 这个副作用根本不会发生。这就是「模型承诺不会 `rm -rf`」和「模型压根没被交予执行它的能力」之间的区别。
-- **防篡改审计日志。** 每一次被授予的副作用都会追加进一份日志，其中每条条目都嵌入了前一条的哈希（`hash(N) = H(entry_N ‖ hash(N-1))`）。整条链端到端可验证：你能证明事后没有任何条目被插入、删除或改写。不是「相信我」，而是「核对这道数学题」。
-- **事务性、可回滚补丁。** 文件改动不会边写边祈祷落盘顺利。补丁引擎把一次改动暂存为一个事务，让你先预览，再原子地落地，并保留足够信息以便**干净地撤销它**。一次糟糕的智能体编辑，只需一条 `carina rollback` 即可挽回。
-- **子智能体衰减（sub-agent attenuation）。** 当一个智能体进行委派时，子智能体继承的是父智能体能力的一个**子集** —— 绝不会是超集。一个只需要读权限的调研子智能体，不可能突然获得写权限。最小权限，从结构上强制执行，一路贯穿整棵树。
-- **原生 Zig 工具。** 智能体高频依赖的那些原语（grep 一个仓库、diff 一处改动、驱动一个 pty）都是原生且结构化的 —— 为机器调用而设计，直接吐出 JSON，而不是从给人看的 stdout 里去刮取。
+```bash
+./bin/carina sessions
+./bin/carina audit <session_id>
+./bin/carina audit verify <session_id>
+./bin/carina patch list <session_id>
+./bin/carina patch show <session_id> <patch_id>
+```
 
-> **使命。** 未来十年的软件将在智能体参与的循环中写就。Carina 押下一个赌注：「拥有真实权限的智能体」与「处于掌控之中」并非一道非此即彼的取舍 —— 只要安全被正确地实现，它不过就是好的基础设施。
+回滚已应用的 patch：
 
----
+```bash
+./bin/carina patch rollback <session_id> <patch_id>
+```
+
+## 常见工作流
+
+### 个人仓库任务
+
+日常编程任务可使用 `safe-edit` 或更严格的 profile。智能体可以读取 workspace、提出 patch、运行 allowlist 中的测试/构建命令。危险命令、网络访问和 secret 会根据当前 profile 被拒绝或要求审批。
+
+### 团队或安全审查
+
+使用 audit stream 和 audit export 查看哪些文件被读取、哪些命令被执行、哪些权限决策被作出，以及哪个 patch 修改了文件。哈希链可帮助验证者发现事件历史是否被改动。
+
+### 后台或远程执行
+
+CLI 是 client；daemon 持有运行时状态。会话和后台任务可以在 CLI 退出后继续存在。worker 接口面向本地、远程、CI 或沙箱化执行池。
+
+### 嵌入到其它产品
+
+当 Carina 需要位于其它产品表面之后时，可以使用 JSON-RPC server、SDK 或 MCP server mode，例如 IDE 插件、Web UI、CI workflow 或内部 Agent 平台。
+
+## 核心概念
+
+### 能力边界
+
+Carina 把副作用表示为能力，例如文件读写、命令执行、网络访问、secret 访问、patch apply、插件加载和远程执行。会话的 permission profile 决定请求会被允许、拒绝，还是进入审批。
+
+### 审计日志
+
+每个权限决策和被允许的副作用都会记录为事件。事件被追加到哈希链：每条事件包含上一条事件的哈希。验证过程可以发现被插入、删除或修改的事件。
+
+### 事务性 patch
+
+智能体的文件修改以 patch transaction 表示。patch 可以被提出、检查、应用和回滚。patch 系统的目标是避免半应用状态，并保留每次修改的来源。
+
+### Daemon 会话
+
+daemon 存储会话状态、调度任务、流式输出事件，并协调 worker。这让任务不依赖单个终端进程的生命周期。
+
+### 子智能体能力衰减
+
+任务派生子智能体时，子会话获得衰减后的权限集合。它可以比父任务权限更小，但不能获得父任务没有的权限。
+
+### Egress 与 secret
+
+启用 egress proxy 后，网络默认拒绝。host 必须被策略允许。凭证可以从 daemon 侧 secret 在 egress 边界注入，因此子命令不需要在环境变量中拿到原始 secret。HTTPS 凭证注入需要显式 per-host MITM opt-in，并使用进程局部 trust bundle，不修改系统信任库。
 
 ## 架构
 
-```
-┌───────────────────────────────────────────────────────────┐
-│                      Agent Surface  (LLM)                  │
-│   CLI · TUI · SDK · ReAct loop · sub-agents · approval     │
-└───────────────────────────────┬───────────────────────────┘
-                                │ JSON-RPC
-┌───────────────────────────────▼───────────────────────────┐
-│                   Control Plane  (Go)                      │
-│   daemon · scheduler · session store · model router        │
-│   "make it run"                                            │
-└───────────────────────────────┬───────────────────────────┘
-                                │ Capability API  (every effect crosses here)
-┌───────────────────────────────▼───────────────────────────┐
-│                 Capability Kernel  (Rust)                  │
-│   policy engine · transactional patch · hash-chained audit │
-│   plugin runtime · "make it safe"                          │
-└───────────────────────────────┬───────────────────────────┘
-                                │ Native tool calls
-┌───────────────────────────────▼───────────────────────────┐
-│                 Native Toolchain  (Zig)                    │
-│   scan · grep · diff · patch · pty · "make it sharp"       │
-└───────────────────────────────────────────────────────────┘
-```
+Carina 按职责拆分，而不是为了展示技术栈而拆分。
 
-**核心不变量**
+| 层 | 主要职责 | 当前实现 |
+|---|---|---|
+| Agent surface | ReAct loop、transcript、审批、子智能体、workflow 执行 | Go daemon 与 model-router 集成 |
+| Control plane | 会话、调度、JSON-RPC、worker、事件流、egress proxy | Go |
+| Capability kernel | 权限决策、策略、事务性 patch、审计链、插件边界 | Rust |
+| Native toolchain | 仓库扫描、grep、diff、patch、进程执行、pty | Zig |
+| Client surfaces | CLI、TUI、SDK、MCP server/client 集成 | Go 与 SDK 包 |
 
-1. 智能体从不直接触碰系统资源。
-2. 每一次副作用都要穿过能力内核。
-3. 每一次被授予的副作用都会追加进哈希链式审计日志。
-4. 每一个补丁都可预览、可验证、可回滚。
-5. 每一个工具与插件都显式声明其能力。
-6. 默认本地优先（local-first）；远程执行是一种扩展，而非硬性要求。
-7. CLI 是客户端 —— daemon 才是运行时。
+这个设计把面向模型的 loop 和副作用边界分开。智能体可以请求动作；运行时决定动作能否发生，并记录结果。
 
-更深入的内容见 [`docs/architecture.md`](docs/architecture.md) 与 [`docs/security-model.md`](docs/security-model.md) —— 本 README 披露的是模型，而非内部实现细节。
+更多文档：
 
----
+- [Architecture](docs/architecture.md)
+- [Security model](docs/security-model.md)
+- [RPC API](docs/rpc-api.md)
+- [Plugin model](docs/plugin-model.md)
+- [Enterprise notes](docs/enterprise.md)
 
-## 安装
+## 安全模型
 
-> **需要：** macOS 或 Linux（x86-64 / arm64）。Windows 已列入[路线图](#roadmap)。
+默认姿态：
 
-**一条命令（推荐）：**
+1. 默认最小权限。
+2. 未显式授权时不能访问 workspace 外部。
+3. 默认不能读取 secret。
+4. 默认限制网络访问。
+5. 默认拒绝破坏性命令。
+6. 文件改动走 patch transaction。
+7. 插件没有隐式权限。
 
-```bash
-curl -fsSL https://get.nebutra.com/carina | sh
-```
+内置 profile 定义常见策略组合：
 
-**Homebrew：**
+| Profile | 适用场景 |
+|---|---|
+| `read-only` | 检查 workspace，不允许写入、命令、网络或 secret。 |
+| `safe-edit` | 读 workspace 文件，通过 patch 写入，运行 allowlist 中的测试/构建命令。 |
+| `full-workspace` | 更宽的 workspace 访问，仍然审计并支持审批。 |
+| `ci-runner` | 测试/构建自动化，限制任意 shell 和 secret 访问。 |
+| `enterprise-restricted` | 组织策略叠加和中心化审批规则。 |
 
-```bash
-brew install nebutra/tap/carina
-```
+安全边界只有在限制被说清楚时才有意义。alpha 阶段的重要限制：
 
-**从源码构建** —— 需要 Go ≥ 1.25、Rust ≥ 1.85、Zig 0.15.x：
+- Carina 本身不是 VM，也不是完整容器隔离系统。
+- 选定后端已实现 OS 级 sandboxing，但生产部署 profile 仍需单独评审。
+- 策略正确性依赖命令通过 Carina toolchain 和 daemon 控制的环境运行。
+- 公开打包和供应链 provenance 还未完成。
 
-```bash
-git clone https://github.com/Nebutra/carina && cd carina
-make all        # builds Go control plane, Rust kernel crates, Zig tools
-```
+## 与其它工具的关系
 
-验证：
+这不是胜负表。这个领域的工具优化目标不同，而且能力变化很快。具体功能应以各项目自己的文档为准。
 
-```bash
-carina --version   # carina 0.1.0-alpha
-```
+| 如果你主要需要... | 常见工具 | Carina 的位置 |
+|---|---|---|
+| 编辑器内代码助手和交互体验 | Cursor、Windsurf、Cline、IDE 插件 | Carina 更底层。它可以支撑编辑器表面，但不试图替代编辑器。 |
+| CLI 里的结对编程 | Aider、Claude Code 风格 CLI、Codex 风格 CLI | Carina 关注运行时边界：daemon 会话、策略、审计、回滚和 worker。 |
+| 一次性托管执行环境 | E2B 和其它 sandbox provider | Carina 是本地优先的运行时基础设施。它可以使用 sandboxing，但核心关注点是逐动作控制和来源记录。 |
+| 内部 Agent 的可复用执行底座 | 自研 Agent stack、CI 系统、内部平台 | Carina 设计为可嵌入到其它 UI 和 workflow 后面。 |
 
----
-
-## 快速上手 —— 你的第一次智能体运行
-
-```bash
-# 1. Start the runtime (control-plane daemon; sessions outlive your shell)
-carina daemon &
-#   ⇒ carina daemon listening on ~/.carina/daemon.sock
-
-# 2. Point an API key at it (never hardcoded — env only)
-export ANTHROPIC_API_KEY=sk-...
-
-# 3. Run your first agent against a task
-carina run "add a --json flag to the status command and update its test"
-#   ⇒ session f3a9c1  created
-#   ⇒ [react] plan → grep → edit → test
-#   ⇒ [gate]  write  cmd/status.go              approved (capability: fs.write)
-#   ⇒ [patch] staged 1 file · atomic · rollbackable  →  cr patch show f3a9c1
-#   ⇒ [audit] entry 0007 chained  sha256:9b1e…  (prev 3c7a…)
-#   ⇒ done · success criteria met · 1 patch applied
-
-# 4. Inspect exactly what happened — and verify the chain
-carina audit f3a9c1 --verify
-#   ⇒ 7 entries · chain intact · no tampering detected ✓
-
-# 5. Don't like it? Take it back, atomically.
-carina rollback f3a9c1
-#   ⇒ reverted 1 patch · workspace clean
-```
-
-每个动词都提供了短别名 `cr`（`cr run`、`cr audit`）。在脚本和文档中请优先使用完整的 `carina`。
-
----
-
-## 核心能力
-
-- 🔒 **能力把关** —— 每一次副作用都需要显式授权；未授权 ⇒ 绝不发生。
-- 🧾 **哈希链式审计日志** —— 仅追加、防篡改、端到端可验证。
-- ↩️ **事务性回滚** —— 补丁原子且可干净地逆转。
-- 🧬 **子智能体衰减** —— 子能力 ⊆ 父能力，从结构上强制执行。
-- 🔁 **ReAct 循环 + 循环守卫** —— 类型化转录、压缩、失控检测。
-- ✋ **审批模式** —— Codex 风格的目标 / 成功标准；对指定的副作用类别要求人工签字放行。
-- ⚡ **原生 Zig 工具链** —— scan / grep / diff / patch / pty，结构化 JSON，无 GC。
-- 🛰️ **daemon 优先** —— 会话可远程调度，并在 CLI 之外存活。
-- 🔌 **沙箱化插件运行时** —— 第三方工具在同一套能力契约下运行。
-- 🙈 **无遥测** —— 什么都不会回传；日志归你所有。
-
----
-
-## 安全与可审计性
-
-对一个智能体运行时来说，**安全就是产品本身。** Carina 的保证是一条由三项属性构成的链条，每一项都可验证：
-
-1. **已把关（Gated）** —— 能力内核是通往副作用的*唯一*路径。不存在让模型直接调用 `exec` 的后门；它向内核请求，由内核依据策略作出裁决。审批模式让你可以在任一副作用类别（写入、网络、进程派生）上插入一名人类。
-2. **已审计（Audited）** —— 每一次被授予的副作用都成为仅追加日志中的一条条目，条条哈希链接到上一条。`carina audit <session> --verify` 会重新计算整条链并报告任何篡改。由于这种链接是密码学的，篡改历史的攻击者必须打破其后每一个哈希 —— 而这做不到。
-3. **可逆（Reversible）** —— 补丁引擎把改动当作事务对待。事前预览，事后回滚，皆为原子操作。「智能体把我的仓库搞坏了」不再是一场灾难，而只是一次 `rollback`。
-
-子智能体继承的是**衰减后**的能力集合（子集 ⊆ 父集），因此委派永远不会导致提权。插件在同一个沙箱内、依据与一方工具相同的显式能力契约运行。
-
-威胁模型、日志格式与验证协议见 [`docs/security-model.md`](docs/security-model.md)。
-
-**上报漏洞：** 请发邮件至 **security@nebutra.com**（参见 [`SECURITY.md`](SECURITY.md)）。请不要为安全上报开公开 issue。
-
----
-
-## 前人成果与技术渊源
-
-Carina 立足于业已验证的成熟技术，而非为标新立异而标新立异：**ReAct** 循环（推理 + 行动）、**Codex 风格**的目标 / 成功标准与审批模式、带衰减的**基于能力的安全（capability-based security）**（子集 ⊆ 父集），以及防篡改的**哈希链式日志**。它的贡献在于，把这些统一到一个运行时之下、置于同一道执行边界之内。
-
----
-
-## 横向对比
-
-| | Carina | Aider / Cline | Cursor / Windsurf | E2B / 沙箱 |
-|---|---|---|---|---|
-| 在受监管的 daemon 上运行智能体 | ✅ | ❌（受限于 CLI） | ❌（受限于编辑器） | 部分 |
-| 每一次副作用都经能力把关 | ✅ | ❌ | ❌ | ✅（隔离，而非逐副作用） |
-| 防篡改审计日志 | ✅ | ❌ | ❌ | ❌ |
-| 编辑的事务性回滚 | ✅ | 仅靠 git | 仅靠 git | ❌ |
-| 子智能体能力衰减 | ✅ | ❌ | ❌ | ❌ |
-
-Carina **不是**编辑器，**也不是**托管产品。它是别人都能跑在其上的那个底座。
-
----
+实际区别是：Carina 较少强调前端体验打磨，更多强调让 Agent 执行可检查、受策略约束、可回滚。
 
 ## 路线图
 
-如实交代现状。Carina 处于 **alpha** 阶段 —— 执行核心已经货真价实；围绕它的生态尚在早期。
+近期重点：
 
-**已交付**
-- [x] Go 控制平面：daemon、调度器、会话存储、JSON-RPC
-- [x] Rust 能力内核：策略引擎 + 能力把关
-- [x] 防篡改哈希链式审计日志 + `--verify`
-- [x] 事务性、可回滚补丁引擎
-- [x] Zig 原生工具链：scan / grep / diff / patch / pty
-- [x] 带类型化转录、压缩、循环守卫的 ReAct 智能体循环
-- [x] 子智能体能力衰减（子集 ⊆ 父集）
-- [x] `carina` CLI（别名 `cr`）
-- [x] Workflow 编排引擎 —— 声明式子智能体 DAG，并行 + 可恢复
-- [x] 可持久化、可恢复的后台运行 —— 逐轮 checkpoint + 重启续跑、运行注册表（`task.list`/`task.result`）、并发上限、panic 隔离
+- 发布安装路径：签名 release、托管安装器、Homebrew tap 和供应链 provenance。
+- 增加 `SECURITY.md`、贡献文档和 release 流程文档。
+- 改进 TUI 和实时审计查看。
+- 强化远程 worker 运行，并记录生产部署模式。
+- 改进 TypeScript、Python、Go SDK 的能力对齐。
+- 继续扩展 policy profile、sandbox backend 和插件签名。
+- 在核心 Unix 路径稳定后增加 Windows 支持。
 
-**规划中**
-- [ ] 在初始路由集之外接入更多模型提供方
-- [ ] 沙箱配置档（按项目的能力预设与模板）
-- [ ] 插件市场 + 签名插件分发
-- [ ] 用于实时会话 + 审计流查看的 TUI 仪表盘
-- [ ] 跨工作节点的远程 / 集群化执行
-- [ ] Windows 支持
-- [ ] TypeScript / Python / Go 之间对等的 SDK
-- [ ] 为所有发布产物提供 SLSA 构建溯源
-- [ ] 托管的一键安装脚本（`get.nebutra.com`）+ Homebrew tap + 公开的 `SECURITY.md`（security@nebutra.com）
-- [ ] 后台 agent 体验：attach/tail（重放游标）、完成 webhook、git worktree 隔离、远程/沙箱运行
+## 开发
 
-在 [GitHub Issues](https://github.com/Nebutra/carina/issues) 追踪进展 —— 那些缺口是贡献的机会，而非意外的坑。
+构建全部组件：
 
----
+```bash
+make all
+```
 
-## 参与贡献
+运行 Go 测试：
 
-各操作系统的开发构建指南与架构导览见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。构建命令为 `make go` / `make rust` / `make zig` / `make all`。新增一项能力的 PR 必须同时补上它的审计日志覆盖 —— 这是本项目的铁律。
+```bash
+make go-test
+```
 
-## 社区
+运行 Rust 测试：
 
-- 讨论：[GitHub Discussions](https://github.com/Nebutra/carina/discussions)
-- 聊天：[Discord](https://discord.gg/nebutra)
-- 动态：[@nebutra](https://x.com/nebutra)
+```bash
+make rust-test
+```
+
+构建 Zig 工具：
+
+```bash
+make zig
+```
+
+有用文档：
+
+- [PRD](docs/PRD.md)
+- [Agent model](docs/agent.md)
+- [Architecture](docs/architecture.md)
+- [Security model](docs/security-model.md)
+- [Research status](docs/research/absorption-status.md)
 
 ## 许可证
 
-Apache-2.0 —— 参见 [`LICENSE`](LICENSE)。
-
-<div align="center">
-
-**Nebutra Carina** —— 你的智能体运行其上的安全龙骨。
-由 [Nebutra](https://nebutra.com) 提供支持 · [Sailor](https://github.com/Nebutra/create-sailor) 的姊妹项目。
-
-</div>
+Apache-2.0。参见 [LICENSE](LICENSE)。

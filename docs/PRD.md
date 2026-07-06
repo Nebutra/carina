@@ -1,8 +1,8 @@
-# PRD：Pi Agent Runtime 重写方案
+# PRD：Carina Agent Runtime 方案
 
 ## 1. 项目名称
 
-**Pi Agent OS Runtime**(内部代号:**Carina**)
+**Carina Agent Runtime**
 
 一句话定位:一个面向 Coding Agent / General Agent 的本地优先、安全可控、可扩展、可远程调度的 Agent Runtime。
 
@@ -18,7 +18,7 @@
 4. **扩展和执行耦合** — 插件/工具扩展往往与主进程权限混在一起,插件可以间接获得过高系统权限。
 5. **单机 CLI 上限明显** — 很多 Agent 工具适合个人交互,但难以自然演化为团队级 daemon、远程 worker、CI agent、审计系统。
 
-因此,本项目目标不是简单"用 Go/Rust/Zig 重写 Pi",而是将 Pi 重新定义为:**Agent Runtime / Agent OS**。
+因此,本项目目标不是简单改写一个 CLI,而是把 Carina 定义为:**Agent Runtime / Agent OS**。
 
 ## 3. 产品目标
 
@@ -100,7 +100,7 @@ carina ask "explain this repo"
 carina edit "refactor auth middleware"
 carina plan "migrate this package to async"
 carina audit last
-pi rollback last
+carina rollback last
 carina status
 ```
 
@@ -183,7 +183,7 @@ Patch 元数据:patch_id、session_id、agent_step_id、affected_files、base_ha
 
 ### 8.5 Zig Native Toolchain
 
-工具列表:`carina-scan carina-grep carina-diff carina-patch carina-run carina-pty pi-json pi-tree pi-stat pi-watch`
+工具列表:`carina-scan carina-grep carina-diff carina-patch carina-run carina-pty carina-json carina-tree carina-stat carina-watch`
 
 - **carina-scan**:快速扫描 workspace 文件树;ignore rules、大小限制、binary detection、language detection。
 - **carina-grep**:快速文本搜索;regex、glob、context lines、结构化 JSON 输出。
@@ -284,7 +284,7 @@ Workspace 元数据:workspace_id、root_path、git_repo、allowed_paths、ignore
 ```
 # 基础
 carina init | carina run "..." | carina ask "..." | carina edit "..." | carina plan "..."
-carina status | pi sessions | pi resume <session>
+carina status | carina sessions | carina resume <session>
 
 # 审计
 carina audit | carina audit session <id> | carina audit file src/auth.ts | carina audit command

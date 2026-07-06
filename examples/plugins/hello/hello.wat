@@ -8,9 +8,9 @@
 ;; Build to wasm:  wat2wasm hello.wat -o hello.wasm
 ;; (or use the carina test harness which compiles WAT in-process)
 (module
-  (import "env" "pi_request_capability"
+  (import "env" "carina_request_capability"
     (func $req (param i32 i32 i32 i32) (result i32)))
-  (import "env" "pi_log" (func $log (param i32 i32)))
+  (import "env" "carina_log" (func $log (param i32 i32)))
   (memory (export "memory") 1)
 
   ;; string table
@@ -20,7 +20,7 @@
   (data (i32.const 48)  "API_KEY")        ;; len 7
   (data (i32.const 64)  "hello-plugin")   ;; len 12
 
-  (func (export "pi_run") (result i32)
+  (func (export "carina_run") (result i32)
     (local $allowed i32)
 
     ;; declared capability -> allowed

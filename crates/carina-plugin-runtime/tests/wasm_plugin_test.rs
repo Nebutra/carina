@@ -26,15 +26,15 @@ command_exec = ["npm test"]
 //   48: "API_KEY"           (7 bytes)
 const WAT: &str = r#"
 (module
-  (import "env" "pi_request_capability"
+  (import "env" "carina_request_capability"
     (func $req (param i32 i32 i32 i32) (result i32)))
-  (import "env" "pi_log" (func $log (param i32 i32)))
+  (import "env" "carina_log" (func $log (param i32 i32)))
   (memory (export "memory") 1)
   (data (i32.const 0)  "command_exec")
   (data (i32.const 16) "npm test")
   (data (i32.const 32) "secret")
   (data (i32.const 48) "API_KEY")
-  (func (export "pi_run") (result i32)
+  (func (export "carina_run") (result i32)
     (local $allowed i32)
     ;; declared: command_exec / npm test
     (if (call $req (i32.const 0) (i32.const 12) (i32.const 16) (i32.const 8))
@@ -57,7 +57,10 @@ fn plugin_cannot_exceed_declared_permissions() {
         .expect("plugin runs");
 
     // Exactly one request (the declared one) was allowed.
-    assert_eq!(outcome.result_code, 1, "only the declared capability should be allowed");
+    assert_eq!(
+        outcome.result_code, 1,
+        "only the declared capability should be allowed"
+    );
     assert_eq!(outcome.decisions.len(), 2);
 
     let allowed: Vec<_> = outcome.decisions.iter().filter(|d| d.allowed).collect();
@@ -88,7 +91,9 @@ fn session_policy_can_veto_a_declared_capability() {
     let manifest = Manifest::from_toml(MANIFEST).unwrap();
     let runtime = PluginRuntime::new();
 
-    let outcome = runtime.run(&manifest, &wasm, Box::new(VetoNetwork)).unwrap();
+    let outcome = runtime
+        .run(&manifest, &wasm, Box::new(VetoNetwork))
+        .unwrap();
     // Even though the manifest declares command_exec, live policy vetoes it,
     // so nothing is allowed.
     assert_eq!(outcome.result_code, 0);

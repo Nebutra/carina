@@ -28,7 +28,7 @@ func readAllStdin() (string, error) {
 }
 
 // execTool runs a Zig native tool, transparently passing through stdio and
-// the child's exit code. pi is a native launcher here (PRD §3.1/§8.1).
+// the child's exit code. carina is a native launcher here (PRD §3.1/§8.1).
 func execTool(tool string, args []string) error {
 	bin := tool
 	if dir := toolsDir(); dir != "" {
@@ -45,10 +45,10 @@ func execTool(tool string, args []string) error {
 	return err
 }
 
-// toolsDir locates the Zig tools: $PI_TOOLS_DIR, next to the pi binary, or
-// the in-repo build output.
+// toolsDir locates the Zig tools: $CARINA_TOOLS_DIR, next to the carina binary,
+// or the in-repo build output.
 func toolsDir() string {
-	if d := os.Getenv("PI_TOOLS_DIR"); d != "" {
+	if d := os.Getenv("CARINA_TOOLS_DIR"); d != "" {
 		return d
 	}
 	if exe, err := os.Executable(); err == nil {

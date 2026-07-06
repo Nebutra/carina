@@ -2,7 +2,7 @@
 //!
 //! Plugins are WASM modules executed by the `wasmi` interpreter. They never
 //! see the host filesystem, environment, or shell — the only way out is the
-//! host import `pi_request_capability`, and every capability a plugin uses
+//! host import `carina_request_capability`, and every capability a plugin uses
 //! must be declared in its manifest. An undeclared request is refused and
 //! surfaced as a policy violation, so a plugin cannot exceed the permissions
 //! shown to the user at install time.
@@ -103,7 +103,8 @@ impl Manifest {
             "secret" => &self.permissions.secret,
             _ => return false,
         };
-        list.iter().any(|d| d == resource || d == "*" || d == "workspace")
+        list.iter()
+            .any(|d| d == resource || d == "*" || d == "workspace")
     }
 }
 

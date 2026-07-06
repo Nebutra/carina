@@ -4,7 +4,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TOOLS="${PI_TOOLS_DIR:-$ROOT/zig/zig-out/bin}"
+TOOLS="${CARINA_TOOLS_DIR:-$ROOT/zig/zig-out/bin}"
 N="${1:-10000}"   # file count
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT

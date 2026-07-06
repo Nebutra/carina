@@ -11,21 +11,21 @@ import socket
 from pathlib import Path
 from typing import Any
 
-__all__ = ["PiClient", "PiRpcError", "default_socket_path"]
+__all__ = ["CarinaClient", "CarinaRpcError", "default_socket_path"]
 
 
 def default_socket_path() -> Path:
     return Path.home() / ".carina" / "daemon.sock"
 
 
-class PiRpcError(RuntimeError):
+class CarinaRpcError(RuntimeError):
     def __init__(self, code: int, message: str) -> None:
         super().__init__(f"rpc {code}: {message}")
         self.code = code
         self.message = message
 
 
-class PiClient:
+class CarinaClient:
     """Blocking JSON-RPC client. One request/response per call."""
 
     def __init__(self, socket_path: Path | str | None = None) -> None:
@@ -60,7 +60,7 @@ class PiClient:
         response = json.loads(self._read_line())
         if response.get("error"):
             err = response["error"]
-            raise PiRpcError(err.get("code", -1), err.get("message", "unknown"))
+            raise CarinaRpcError(err.get("code", -1), err.get("message", "unknown"))
         return response.get("result")
 
     # ---- sessions & tasks ----

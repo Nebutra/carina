@@ -4,5 +4,5 @@ package main
 import "fmt"
 
 func main() {
-	fmt.Println("carina-tui: interactive TUI lands in Phase 1 — use `pi` (apps/carina-cli) for now")
+	fmt.Println("carina-tui: interactive TUI is not implemented yet; use `carina` (apps/carina-cli) for now")
 }
