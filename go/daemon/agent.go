@@ -412,6 +412,9 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 // (destructive => denied; risky => auto-approved in autonomous mode), then
 // Zig carina-run. Every step is audited.
 func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv []string) string {
+	if d.requireTrust && !d.trust.isTrusted(sess.WorkspaceRoot) {
+		return "DENIED: workspace not trusted — approve it first (workspace.trust)"
+	}
 	command := strings.Join(argv, " ")
 	dec, err := d.kern.Request(sess.SessionID, "CommandExec", command, task.TaskID)
 	if err != nil {

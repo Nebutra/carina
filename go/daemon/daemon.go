@@ -35,6 +35,8 @@ type Options struct {
 	Offline   bool   // disable network model providers (PRD §5: offline mode)
 
 	MaxConcurrentTasks int // cap on concurrent background runs (0 => default 8)
+
+	RequireWorkspaceTrust bool // when true, deny command exec in untrusted workspaces
 }
 
 type pendingCommand struct {
@@ -68,6 +70,9 @@ type Daemon struct {
 
 	readProv   map[string]map[string]string // session -> relpath -> sha256 of last read (dirty-write guard)
 	readProvMu sync.Mutex
+
+	trust        *trustStore // trusted workspace roots
+	requireTrust bool        // deny command exec in untrusted workspaces
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -114,6 +119,8 @@ func New(opts Options) (*Daemon, error) {
 	}
 	d.runSem = make(chan struct{}, maxConcurrent)
 	d.readProv = map[string]map[string]string{}
+	d.trust = newTrustStore(opts.StateDir)
+	d.requireTrust = opts.RequireWorkspaceTrust
 	// Best-effort: wire the claude CLI reasoner if available and not offline.
 	if !opts.Offline {
 		if r, err := newClaudeCLIReasoner(); err == nil {
@@ -213,6 +220,7 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("workspace.tree", d.handleWorkspaceTree)
 	d.server.Register("workspace.search", d.handleWorkspaceSearch)
 	d.server.Register("workspace.file.get", d.handleFileGet)
+	d.server.Register("workspace.trust", d.handleWorkspaceTrust)
 	d.server.Register("workspace.patch.propose", d.handlePatchPropose)
 	d.server.Register("workspace.patch.apply", d.handlePatchApply)
 	d.server.Register("workspace.patch.rollback", d.handlePatchRollback)
@@ -262,6 +270,23 @@ func (d *Daemon) handleRemoteDisable(params json.RawMessage) (any, error) {
 	}
 	d.server.SetRemoteDisabled(p.On)
 	return map[string]any{"remote_disabled": p.On}, nil
+}
+
+// handleWorkspaceTrust marks a workspace root trusted/untrusted for command
+// execution under strict trust mode (local-only).
+func (d *Daemon) handleWorkspaceTrust(params json.RawMessage) (any, error) {
+	var p struct {
+		Root    string `json:"root"`
+		Trusted bool   `json:"trusted"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if p.Root == "" {
+		return nil, fmt.Errorf("root is required")
+	}
+	d.trust.setTrust(p.Root, p.Trusted)
+	return map[string]any{"root": p.Root, "trusted": p.Trusted}, nil
 }
 
 // ---- daemon ---------------------------------------------------------------
