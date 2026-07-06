@@ -71,21 +71,39 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
 - [x] **Attach/tail replay cursor** (`session.attach`): cursor-based replay for a
   reconnecting client (catch up from a monotonic cursor, then tail live).
 
-## ⏳ Remaining — next dedicated phase
+**Wave 9 — deepening close-out (all landed, workflow-designed)**
+- [x] **Egress boundary credential injection** (`go/egress/inject.go`): the proxy
+  injects a per-host header from a daemon-side secret at the boundary; the agent's
+  children never see it (carina-run's env allowlist). Plain-HTTP tier (HTTPS MITM
+  is a documented later tier).
+- [x] **LSP semantic diagnostics** (`go/lsp`): a real LSP client (Content-Length
+  framing, initialize/didOpen handshake) surfaces type errors beyond the Stage-1
+  syntax probe; no-op when no server is installed. Tested via a mock LSP server.
+- [x] **Linux sandbox backend** (`carina-run`): bubblewrap namespace sandbox
+  parallel to macOS sandbox-exec; compiler-verified for x86_64-linux (cross-build).
+- [x] **Intra-turn parallel tools** (`go/daemon/agent.go`): `{"actions":[...]}`
+  runs read-only tools (list/read/search) concurrently in one turn; writes stay
+  one-per-turn (rejected in a batch), so no write races.
+- [x] **Coordinator/verifier separation** (`go/daemon/verifier.go`): an
+  independent judge (fresh context) rules on the done-claim before finish;
+  default-lenient + fail-open.
+- [x] **Leader permission bridge** (`go/daemon/bridge.go`): a subagent escalates a
+  refused whitelisted capability to its parent (child ⊆ parent preserved),
+  bounded by whitelist + one-hop + per-task cap.
+- [x] **Config hot-reload** (`go/daemon/reload.go`): SIGHUP live-applies the
+  reloadable subset (budget, approval mode, trust, sandbox, egress allowlist) via
+  atomics + egress SetGate; validate-before-apply keeps last-good.
 
-**Medium (additive, tractable):** leader permission bridge (bounded child→parent
-escalation), coordinator/verifier separation, intra-turn parallel tool execution,
-ordered multi-source auth chain, prompt-cache segmentation, `/btw` ephemeral
-side-query, cross-process history, anti-tamper process hardening (Linux prctl),
-config hot-reload (fs-watch on top of the cascade).
+## ⏳ Remaining — optional, non-gap
 
-**Large subsystems:** all six landed (Wave 7). Remaining深化 (deepening, each
-optional): Linux sandbox backend (namespaces+seccomp) alongside the macOS one;
-full LSP semantic intelligence (gopls/tsserver live deltas) beyond the Stage-1
-syntax probe; boundary credential injection at the egress proxy.
+Only niche polish left: ordered multi-source auth chain, prompt-cache
+segmentation, `/btw` ephemeral side-query, cross-process history, anti-tamper
+process hardening (Linux prctl), config fs-watch (auto-reload without SIGHUP),
+egress HTTPS-MITM credential tier, full multi-language LSP server matrix.
 
 ## Test status
-Full matrix green. **Go: 108 tests across 17 packages under `-race`** (with the
+Full matrix green. **Go: 131 tests across 18 packages under `-race`** (with the
 Zig toolchain built at `zig/zig-out/bin`), including the previously Zig-gated
-tests and every Wave-7/8 subsystem test. **Rust: all crates pass** — kernel 11+5,
-`carina-policy` 27, `carina-audit` 6, `carina-plugin-runtime` 6+2.
+tests and every Wave-7/8/9 subsystem test. **Rust: all crates pass** — kernel
+11+5, `carina-policy` 27, `carina-audit` 6, `carina-plugin-runtime` 6+2. Zig
+tools build on macOS; `carina-run` cross-compiles for x86_64-linux.
