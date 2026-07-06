@@ -279,6 +279,7 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("session.list", d.handleSessionList)
 	d.server.Register("session.close", d.handleSessionClose)
 	d.server.Register("session.replay", d.handleSessionReplay)
+	d.server.Register("session.attach", d.handleSessionAttach)
 	d.server.Register("session.fork", d.handleSessionFork)
 	d.server.Register("session.plan_mode", d.handlePlanMode)
 	d.server.Register("session.approve_plan", d.handleApprovePlan)
@@ -333,7 +334,7 @@ func (d *Daemon) registerMethods() {
 	// (daemon.remote.disable) can cut off remote access entirely.
 	d.server.MarkRemoteSafe(
 		"daemon.status", "daemon.metrics", "daemon.doctor",
-		"session.get", "session.list", "session.replay",
+		"session.get", "session.list", "session.replay", "session.attach",
 		"task.status", "task.list", "task.result",
 		"audit.report", "audit.export", "audit.verify",
 		"profile.describe", "session.events.stream",
@@ -491,6 +492,44 @@ func (d *Daemon) handleSessionReplay(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return d.kern.ReadEvents(id)
+}
+
+// handleSessionAttach is cursor-based replay for a reconnecting client (attach +
+// tail). It returns the events at/after `since` plus a monotonic `cursor` (the
+// append-only audit log's length). A client attaches with since=0 to catch up,
+// then either re-attaches with since=cursor to poll for more, or subscribes to
+// session.events.stream to tail live from that point.
+func (d *Daemon) handleSessionAttach(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		Since     int    `json:"since"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if p.SessionID == "" {
+		return nil, fmt.Errorf("session_id required")
+	}
+	raw, err := d.kern.ReadEvents(p.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	var all []json.RawMessage
+	if err := json.Unmarshal(raw, &all); err != nil {
+		return nil, fmt.Errorf("attach: decode events: %w", err)
+	}
+	since := p.Since
+	if since < 0 {
+		since = 0
+	}
+	if since > len(all) {
+		since = len(all) // cursor ahead of the log (e.g. after a compaction) => nothing new
+	}
+	return map[string]any{
+		"events": all[since:],
+		"from":   since,
+		"cursor": len(all),
+	}, nil
 }
 
 // handleSessionFork branches a session: a new session sharing the workspace,
