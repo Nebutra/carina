@@ -34,6 +34,7 @@ type Task struct {
 	Mode            string         `json:"mode,omitempty"`            // foreground | background
 	Summary         string         `json:"summary,omitempty"`         // final result / degrade reason
 	AppliedPatches  []string       `json:"applied_patches,omitempty"` // rollbackable patch ids
+	TokensUsed      int            `json:"tokens_used,omitempty"`     // metered token spend (budget governance)
 }
 
 type Scheduler struct {
@@ -150,6 +151,17 @@ func (s *Scheduler) SetResult(taskID, summary string, patches []string) {
 	updated.AppliedPatches = patches
 	updated.UpdatedAt = time.Now().UTC()
 	s.tasks[taskID] = &updated
+}
+
+// AddTokens accumulates metered token spend for budget governance.
+func (s *Scheduler) AddTokens(taskID string, n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.tasks[taskID]; ok {
+		updated := *t
+		updated.TokensUsed += n
+		s.tasks[taskID] = &updated
+	}
 }
 
 // SetMode records whether a task runs in the foreground or as a background run.

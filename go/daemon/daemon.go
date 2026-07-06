@@ -37,6 +37,7 @@ type Options struct {
 	MaxConcurrentTasks int // cap on concurrent background runs (0 => default 8)
 
 	RequireWorkspaceTrust bool // when true, deny command exec in untrusted workspaces
+	MaxTaskTokens         int  // per-task token budget (0 => unlimited); over-budget runs degrade
 }
 
 type pendingCommand struct {
@@ -71,8 +72,9 @@ type Daemon struct {
 	readProv   map[string]map[string]string // session -> relpath -> sha256 of last read (dirty-write guard)
 	readProvMu sync.Mutex
 
-	trust        *trustStore // trusted workspace roots
-	requireTrust bool        // deny command exec in untrusted workspaces
+	trust         *trustStore // trusted workspace roots
+	requireTrust  bool        // deny command exec in untrusted workspaces
+	maxTaskTokens int         // per-task token budget (0 => unlimited)
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -121,6 +123,7 @@ func New(opts Options) (*Daemon, error) {
 	d.readProv = map[string]map[string]string{}
 	d.trust = newTrustStore(opts.StateDir)
 	d.requireTrust = opts.RequireWorkspaceTrust
+	d.maxTaskTokens = opts.MaxTaskTokens
 	// Best-effort: wire the claude CLI reasoner if available and not offline.
 	if !opts.Offline {
 		if r, err := newClaudeCLIReasoner(); err == nil {

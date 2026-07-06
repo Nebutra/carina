@@ -162,6 +162,16 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 			return
 		}
 
+		// Meter token spend and enforce the per-task budget (safety brake for
+		// runaway autonomous loops).
+		d.sched.AddTokens(task.TaskID, estimateTokens(prompt)+estimateTokens(raw))
+		if d.maxTaskTokens > 0 {
+			if t, ok := d.sched.Get(task.TaskID); ok && t.TokensUsed > d.maxTaskTokens {
+				d.degrade(sess, task, tr, fmt.Sprintf("token budget exceeded (%d > %d tokens)", t.TokensUsed, d.maxTaskTokens))
+				return
+			}
+		}
+
 		if act.Tool == "done" {
 			// Goal verification: if the task carries objective success
 			// criteria, check them before accepting "done" (Codex-style
@@ -527,6 +537,11 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// estimateTokens approximates the token count of a string (~4 chars/token).
+// claude-cli does not expose token counts cheaply on every call, so the budget
+// governor meters with this estimate.
+func estimateTokens(s string) int { return len(s)/4 + 1 }
 
 func registerProviders(router *modelrouter.Router, offline bool) {
 	if !offline {
