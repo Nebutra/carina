@@ -115,6 +115,11 @@ func (d *Daemon) resumeTask(sess *sessionstore.Session, task *scheduler.Task, cp
 // runs. It checkpoints the transcript after each turn, so a daemon crash loses
 // at most one in-flight action.
 func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, startTurn int) {
+	// Refresh the task so settings applied after submit (output schema, mode)
+	// are visible — the scheduler replaces the row on each update.
+	if t, ok := d.sched.Get(task.TaskID); ok {
+		task = t
+	}
 	ctx := context.Background()
 	guard := newLoopGuard()
 	verifyAttempts := 0
