@@ -81,6 +81,9 @@ func (d *Daemon) spawnSubagent(parent *sessionstore.Session, parentTask *schedul
 	}, "")
 
 	childTask := d.sched.Submit(child.SessionID, child.WorkspaceID, taskDesc)
+	// Record the parent-task linkage so the leader bridge can escalate a refused
+	// child capability to the parent task (ParentID gives the session, not the task).
+	d.registerSubagentParent(child.SessionID, parentTask.TaskID)
 	summary := d.runSubagentLoop(child, childTask, spec)
 
 	d.record(parent.SessionID, "ModelResponded", parentTask.TaskID, "go", map[string]any{

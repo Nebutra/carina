@@ -115,6 +115,10 @@ type Daemon struct {
 	approvalTimeout     time.Duration        // how long to wait for an interactive approval (0 => 5m)
 	pendingApprovals    map[string]chan bool // decision_id -> resolver channel
 	approvalMu          sync.Mutex
+
+	subagentParentTask map[string]string // childSessionID -> parentTaskID (leader-bridge linkage)
+	escalationCounts   map[string]int    // childTaskID -> escalations used (bridge cap)
+	bridgeMu           sync.Mutex
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -170,6 +174,8 @@ func New(opts Options) (*Daemon, error) {
 	d.stopCh = make(chan struct{})
 	d.pendingApprovals = map[string]chan bool{}
 	d.interactiveApproval = opts.InteractiveApproval
+	d.subagentParentTask = map[string]string{}
+	d.escalationCounts = map[string]int{}
 	go d.reapLeases() // re-queue dispatch tasks abandoned by crashed workers
 	d.mcp = mcp.NewManager()
 	if home, err := os.UserHomeDir(); err == nil {

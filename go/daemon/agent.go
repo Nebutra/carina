@@ -614,9 +614,14 @@ func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv
 	}
 	switch dec.Decision {
 	case "denied":
-		return "DENIED by policy: " + dec.Reason
+		// A subagent may escalate a refused command to its parent's authority.
+		if esc, ok := d.escalateToParent(sess, task, "CommandExec", command, command); ok {
+			dec = esc
+		} else {
+			return "DENIED by policy: " + dec.Reason
+		}
 	case "requires_approval":
-		approved, ok := d.resolveApproval(sess, task, dec, command)
+		approved, ok := d.resolveApprovalOrEscalate(sess, task, dec, "CommandExec", command, command)
 		if !ok {
 			return "requires approval (not granted): " + dec.Reason
 		}
@@ -662,11 +667,16 @@ func (d *Daemon) callMCP(sess *sessionstore.Session, task *scheduler.Task, act *
 	if err != nil {
 		return "error: " + err.Error()
 	}
+	mcpResource := "mcp:" + act.MCPServer + "/" + act.MCPTool
 	switch dec.Decision {
 	case "denied":
-		return "DENIED by policy: " + dec.Reason
+		if esc, ok := d.escalateToParent(sess, task, "PluginLoad", mcpResource, mcpResource); ok {
+			dec = esc
+		} else {
+			return "DENIED by policy: " + dec.Reason
+		}
 	case "requires_approval":
-		approved, ok := d.resolveApproval(sess, task, dec, "mcp:"+act.MCPServer+"/"+act.MCPTool)
+		approved, ok := d.resolveApprovalOrEscalate(sess, task, dec, "PluginLoad", mcpResource, mcpResource)
 		if !ok {
 			return "requires approval (not granted): " + dec.Reason
 		}
