@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/kernel"
+	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
@@ -484,7 +484,15 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 	// The agent's edit is now the on-disk truth; record it so a follow-up edit
 	// in the same run isn't flagged as a blind overwrite.
 	d.recordRead(sess.SessionID, path, content)
-	return fmt.Sprintf("patch %s applied to %s (status=%s, rollbackable)", applied.PatchID, path, applied.Status)
+	result := fmt.Sprintf("patch %s applied to %s (status=%s, rollbackable)", applied.PatchID, path, applied.Status)
+	// Post-edit diagnostics: surface compile/parse errors this edit introduced,
+	// so the agent can self-correct on the next turn instead of turns later.
+	if diag := checkEdited(resolveIn(sess.WorkspaceRoot, path)); diag != "" {
+		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+			map[string]any{"status": "post_edit_diagnostics", "path": path, "diagnostics": truncate(diag, 500)}, "")
+		result += "\n[diagnostics] this edit introduced errors:\n" + truncate(diag, 1000)
+	}
+	return result
 }
 
 // agentRun executes a command the agent proposed: kernel decision first
