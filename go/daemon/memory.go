@@ -34,3 +34,27 @@ func loadMemory(ws string) string {
 	}
 	return mem
 }
+
+// loadStyle returns an optional output-style directive (Carina's output-styles
+// analogue) that shapes the agent's presentation/persona. Project style
+// (<ws>/.carina/output-style.md) overrides the user style
+// (~/.carina/output-style.md).
+func loadStyle(ws string) string {
+	read := func(path string) string {
+		if raw, err := os.ReadFile(path); err == nil {
+			return strings.TrimSpace(string(raw))
+		}
+		return ""
+	}
+	if ws != "" {
+		if s := read(filepath.Join(ws, ".carina", "output-style.md")); s != "" {
+			return s
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if s := read(filepath.Join(home, ".carina", "output-style.md")); s != "" {
+			return s
+		}
+	}
+	return ""
+}

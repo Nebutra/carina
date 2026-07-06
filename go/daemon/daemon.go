@@ -216,6 +216,7 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("session.list", d.handleSessionList)
 	d.server.Register("session.close", d.handleSessionClose)
 	d.server.Register("session.replay", d.handleSessionReplay)
+	d.server.Register("session.fork", d.handleSessionFork)
 
 	d.server.Register("task.submit", d.handleTaskSubmit)
 	d.server.Register("task.status", d.handleTaskStatus)
@@ -413,6 +414,30 @@ func (d *Daemon) handleSessionReplay(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return d.kern.ReadEvents(id)
+}
+
+// handleSessionFork branches a session: a new session sharing the workspace,
+// profile, and approval mode, linked to the source as its parent (lineage), so
+// you can explore an alternate line of work without disturbing the original.
+func (d *Daemon) handleSessionFork(params json.RawMessage) (any, error) {
+	id, err := sessionID(params)
+	if err != nil {
+		return nil, err
+	}
+	src, ok := d.store.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", id)
+	}
+	child, err := d.store.CreateSubSession(src.WorkspaceRoot, src.PermissionProfile, src.ApprovalMode, src.SessionID, src.Depth+1)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.kern.InitSessionFull(child.SessionID, child.WorkspaceRoot, child.PermissionProfile, child.ApprovalMode, d.org); err != nil {
+		return nil, fmt.Errorf("fork init: %w", err)
+	}
+	d.record(child.SessionID, "TaskCreated", "", "go",
+		map[string]any{"status": "forked", "parent": src.SessionID}, "")
+	return child, nil
 }
 
 // ---- tasks ----------------------------------------------------------------

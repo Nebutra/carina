@@ -136,6 +136,9 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 	if mem := loadMemory(sess.WorkspaceRoot); mem != "" {
 		sysPrompt = systemPrompt + "\n\nPROJECT MEMORY (from CARINA.md — follow it):\n" + mem
 	}
+	if style := loadStyle(sess.WorkspaceRoot); style != "" {
+		sysPrompt = "OUTPUT STYLE (apply to your presentation):\n" + style + "\n\n" + sysPrompt
+	}
 
 	for turn := startTurn; turn <= maxAgentTurns; turn++ {
 		if t, ok := d.sched.Get(task.TaskID); ok && t.Status == "cancelled" {
