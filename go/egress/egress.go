@@ -20,11 +20,16 @@ type Gate func(host string) (allow bool, reason string)
 // Proxy is a running loopback egress proxy.
 type Proxy struct {
 	gate Gate
+	inj  *Injector // optional per-host credential injection (nil = none)
 	ln   net.Listener
 	srv  *http.Server
 }
 
 func New(gate Gate) *Proxy { return &Proxy{gate: gate} }
+
+// NewWithInjector builds a proxy that also injects per-host credentials at the
+// boundary (plain-HTTP only; see forward).
+func NewWithInjector(gate Gate, inj *Injector) *Proxy { return &Proxy{gate: gate, inj: inj} }
 
 // Start binds a loopback port and serves; returns the proxy URL (http://host:port).
 func (p *Proxy) Start() (string, error) {
@@ -70,7 +75,7 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "egress denied: "+reason, http.StatusForbidden)
 		return
 	}
-	p.forward(w, r)
+	p.forward(w, r, host)
 }
 
 // tunnel establishes a CONNECT tunnel (for HTTPS) after the gate allows it.
@@ -96,8 +101,14 @@ func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request) {
 	go func() { _, _ = io.Copy(client, dest); client.Close() }()
 }
 
-// forward proxies a plain-HTTP request after the gate allows it.
-func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
+// forward proxies a plain-HTTP request after the gate allows it, injecting a
+// per-host credential at the boundary if configured. Note: credential injection
+// applies to plain HTTP only — HTTPS flows through the opaque CONNECT tunnel and
+// would require TLS termination (MITM) to authenticate, which is a later tier.
+func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, host string) {
+	if p.inj != nil {
+		p.inj.apply(host, r.Header)
+	}
 	r.RequestURI = ""
 	resp, err := http.DefaultTransport.RoundTrip(r)
 	if err != nil {

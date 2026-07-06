@@ -38,12 +38,25 @@ type Options struct {
 
 	MaxConcurrentTasks int // cap on concurrent background runs (0 => default 8)
 
-	RequireWorkspaceTrust bool     // when true, deny command exec in untrusted workspaces
-	MaxTaskTokens         int      // per-task token budget (0 => unlimited); over-budget runs degrade
-	EnableEgressProxy     bool     // route command network through a deny-by-default egress proxy
-	EgressAllow           []string // hosts allowed when the egress proxy is enabled
-	SandboxCommands       bool     // run commands under an OS syscall sandbox (macOS sandbox-exec)
-	InteractiveApproval   bool     // requires_approval pauses for an operator decision instead of auto-approving
+	RequireWorkspaceTrust bool               // when true, deny command exec in untrusted workspaces
+	MaxTaskTokens         int                // per-task token budget (0 => unlimited); over-budget runs degrade
+	EnableEgressProxy     bool               // route command network through a deny-by-default egress proxy
+	EgressAllow           []string           // hosts allowed when the egress proxy is enabled
+	SandboxCommands       bool               // run commands under an OS syscall sandbox (macOS sandbox-exec)
+	InteractiveApproval   bool               // requires_approval pauses for an operator decision instead of auto-approving
+	EgressCredentials     []EgressCredential // per-host credentials injected at the egress boundary
+}
+
+// EgressCredential authenticates outbound requests to a host by injecting a
+// header at the egress proxy, sourced from a daemon-side env var (deployment-
+// scoped). The agent's command children never receive SecretEnv — carina-run's
+// env allowlist excludes it — so the secret stays on the daemon side of the
+// boundary.
+type EgressCredential struct {
+	Host        string // host to authenticate (also unioned into the egress allowlist)
+	Header      string // header to set (default Authorization)
+	ValuePrefix string // e.g. "Bearer "
+	SecretEnv   string // daemon env var holding the secret value
 }
 
 type pendingCommand struct {
@@ -161,7 +174,24 @@ func New(opts Options) (*Daemon, error) {
 		d.mcp.LoadAndConnect(filepath.Join(home, ".carina", "mcp.json"))
 	}
 	if opts.EnableEgressProxy {
-		d.egress = egress.New(egress.Allowlist(opts.EgressAllow))
+		allow := append([]string{}, opts.EgressAllow...)
+		var inj *egress.Injector
+		if len(opts.EgressCredentials) > 0 {
+			rules := map[string]egress.InjectionRule{}
+			for _, c := range opts.EgressCredentials {
+				rules[c.Host] = egress.InjectionRule{Header: c.Header, ValuePrefix: c.ValuePrefix, SecretName: c.SecretEnv}
+				allow = append(allow, c.Host) // an injected host must also be reachable
+			}
+			// Deployment-scoped resolver: reads the secret from the daemon's env,
+			// which carina-run's env allowlist withholds from command children.
+			inj = egress.NewInjector(rules, func(name string) (string, bool) {
+				v := os.Getenv(name)
+				return v, v != ""
+			})
+			d.egress = egress.NewWithInjector(egress.Allowlist(allow), inj)
+		} else {
+			d.egress = egress.New(egress.Allowlist(allow))
+		}
 		if url, err := d.egress.Start(); err == nil {
 			d.egressURL = url
 		}
