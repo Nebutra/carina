@@ -3,6 +3,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -17,9 +18,20 @@ type AgentSpec struct {
 	Description  string
 	Profile      string // capability ceiling: read-only | safe-edit | ci-runner | full-workspace | ...
 	Model        string
+	Mode         string // primary | subagent
+	Hidden       bool
 	MaxTurns     int
 	SystemPrompt string
-	Source       string // "user" | "project"
+	Source       string // "built-in" | "user" | "project"
+}
+
+type AgentInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Profile     string `json:"profile,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	Source      string `json:"source,omitempty"`
 }
 
 // profileRank orders the built-in profiles by how permissive they are, so a
@@ -54,13 +66,73 @@ func attenuate(parent, requested string) string {
 // loadAgentSpecs discovers agents from the user dir (~/.carina/agents) and the
 // project dir (<workspace>/.carina/agents). Project agents override user ones.
 func loadAgentSpecs(workspaceRoot string) map[string]*AgentSpec {
-	out := map[string]*AgentSpec{}
+	out := builtinAgentSpecs()
 	if home, err := os.UserHomeDir(); err == nil {
 		loadAgentsFromDir(filepath.Join(home, ".carina", "agents"), "user", out)
 	}
 	if workspaceRoot != "" {
 		loadAgentsFromDir(filepath.Join(workspaceRoot, ".carina", "agents"), "project", out)
 	}
+	return out
+}
+
+func builtinAgentSpecs() map[string]*AgentSpec {
+	return map[string]*AgentSpec{
+		"build": {
+			Name:         "build",
+			Description:  "Default coding agent for implementation work.",
+			Profile:      "safe-edit",
+			Mode:         "primary",
+			MaxTurns:     8,
+			Source:       "built-in",
+			SystemPrompt: "You are in build mode. Inspect the workspace, make targeted changes, run relevant checks, and finish with a concise engineering summary.",
+		},
+		"plan": {
+			Name:         "plan",
+			Description:  "Read-only planning agent for analysis before edits.",
+			Profile:      "read-only",
+			Mode:         "primary",
+			MaxTurns:     8,
+			Source:       "built-in",
+			SystemPrompt: "You are in plan mode. Explore and reason, but do not edit files or run commands. Produce a concrete plan and wait for approval before implementation.",
+		},
+		"general": {
+			Name:         "general",
+			Description:  "General-purpose subagent for bounded research and multi-step work.",
+			Profile:      "read-only",
+			Mode:         "subagent",
+			MaxTurns:     8,
+			Source:       "built-in",
+			SystemPrompt: "You are a general-purpose subagent. Complete the delegated task independently and return only the result summary.",
+		},
+		"explore": {
+			Name:         "explore",
+			Description:  "Fast read-only subagent for finding files, symbols, and code paths.",
+			Profile:      "read-only",
+			Mode:         "subagent",
+			MaxTurns:     6,
+			Source:       "built-in",
+			SystemPrompt: "You are a codebase exploration specialist. Use list, search, and read. Do not edit files or run commands. Return exact paths and findings.",
+		},
+	}
+}
+
+func sortedAgentInfos(specs map[string]*AgentSpec, includeHidden bool) []AgentInfo {
+	out := make([]AgentInfo, 0, len(specs))
+	for _, spec := range specs {
+		if spec == nil || spec.Name == "" || (spec.Hidden && !includeHidden) {
+			continue
+		}
+		out = append(out, AgentInfo{
+			Name:        spec.Name,
+			Description: spec.Description,
+			Profile:     spec.Profile,
+			Model:       spec.Model,
+			Mode:        spec.Mode,
+			Source:      spec.Source,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
@@ -117,11 +189,18 @@ func parseAgentSpec(content string) *AgentSpec {
 			spec.Profile = val
 		case "model":
 			spec.Model = val
+		case "mode":
+			spec.Mode = val
+		case "hidden":
+			spec.Hidden = val == "true" || val == "yes" || val == "1"
 		case "max_turns":
 			if n, err := strconv.Atoi(val); err == nil {
 				spec.MaxTurns = n
 			}
 		}
+	}
+	if spec.Mode == "" {
+		spec.Mode = "subagent"
 	}
 	return spec
 }

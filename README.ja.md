@@ -138,6 +138,19 @@ CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
 ./bin/carina run --model openrouter/openai/gpt-5-fast "use the catalog fast mode"
 ```
 
+Agent mode と slash command は runtime で確認できます。
+
+```bash
+./bin/carina agents list
+./bin/carina commands list
+./bin/carina run --agent plan "inspect the migration risk"
+./bin/carina run "/review main"
+```
+
+組み込み agent は `build`、`plan`、`general`、`explore` です。user/project の
+override は `~/.carina/agents/*.md`、`<repo>/.carina/agents/*.md`、
+`~/.carina/commands/*.md`、`<repo>/.carina/commands/*.md` に置きます。
+
 現在のリポジトリでタスクを実行：
 
 ```bash

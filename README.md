@@ -162,6 +162,19 @@ CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
 ./bin/carina run --model openrouter/openai/gpt-5-fast "use the catalog fast mode"
 ```
 
+Agent modes and slash commands are discoverable at runtime:
+
+```bash
+./bin/carina agents list
+./bin/carina commands list
+./bin/carina run --agent plan "inspect the migration risk"
+./bin/carina run "/review main"
+```
+
+Built-ins include `build`, `plan`, `general`, and `explore`. User/project
+overrides live in `~/.carina/agents/*.md`, `<repo>/.carina/agents/*.md`,
+`~/.carina/commands/*.md`, and `<repo>/.carina/commands/*.md`.
+
 Run a task in the current repository:
 
 ```bash

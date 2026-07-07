@@ -380,6 +380,8 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("daemon.status", d.handleStatus)
 	d.server.Register("daemon.metrics", d.handleMetrics)
 	d.server.Register("daemon.doctor", d.handleDoctor)
+	d.server.Register("agent.list", d.handleAgentList)
+	d.server.Register("command.list", d.handleCommandList)
 
 	d.server.Register("session.create", d.handleSessionCreate)
 	d.server.Register("session.get", d.handleSessionGet)
@@ -442,7 +444,7 @@ func (d *Daemon) registerMethods() {
 	// mutating/side-effecting method stays local-only. A local-only kill-switch
 	// (daemon.remote.disable) can cut off remote access entirely.
 	d.server.MarkRemoteSafe(
-		"daemon.status", "daemon.metrics", "daemon.doctor",
+		"daemon.status", "daemon.metrics", "daemon.doctor", "agent.list", "command.list",
 		"session.get", "session.list", "session.replay", "session.attach",
 		"task.status", "task.list", "task.result",
 		"audit.report", "audit.export", "audit.verify",
@@ -468,6 +470,49 @@ func (d *Daemon) handleRemoteDisable(params json.RawMessage) (any, error) {
 	}
 	d.server.SetRemoteDisabled(p.On)
 	return map[string]any{"remote_disabled": p.On}, nil
+}
+
+func (d *Daemon) handleAgentList(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID     string `json:"session_id"`
+		WorkspaceRoot string `json:"workspace_root"`
+		IncludeHidden bool   `json:"include_hidden"`
+	}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+	}
+	root := p.WorkspaceRoot
+	if p.SessionID != "" {
+		sess, ok := d.store.Get(p.SessionID)
+		if !ok {
+			return nil, fmt.Errorf("unknown session %s", p.SessionID)
+		}
+		root = sess.WorkspaceRoot
+	}
+	return map[string]any{"agents": sortedAgentInfos(loadAgentSpecs(root), p.IncludeHidden)}, nil
+}
+
+func (d *Daemon) handleCommandList(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID     string `json:"session_id"`
+		WorkspaceRoot string `json:"workspace_root"`
+	}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+	}
+	root := p.WorkspaceRoot
+	if p.SessionID != "" {
+		sess, ok := d.store.Get(p.SessionID)
+		if !ok {
+			return nil, fmt.Errorf("unknown session %s", p.SessionID)
+		}
+		root = sess.WorkspaceRoot
+	}
+	return map[string]any{"commands": sortedCommandInfos(loadCommandSpecs(root))}, nil
 }
 
 // handleWorkspaceTrust marks a workspace root trusted/untrusted for command
@@ -748,6 +793,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		SessionID       string                   `json:"session_id"`
 		Prompt          string                   `json:"prompt"`
 		Model           string                   `json:"model"`
+		Agent           string                   `json:"agent"`
 		SuccessCriteria []scheduler.SuccessCheck `json:"success_criteria"`
 		OutputSchema    []string                 `json:"output_schema"`
 	}
@@ -761,14 +807,41 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	if sess.Status != "active" {
 		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
 	}
-	task := d.sched.SubmitWithGoalAndModel(sess.SessionID, sess.WorkspaceID, p.Prompt, p.Model, p.SuccessCriteria)
+	prompt := p.Prompt
+	model := p.Model
+	agent := p.Agent
+	if expanded, ok, err := expandSlashCommand(prompt, loadCommandSpecs(sess.WorkspaceRoot)); err != nil {
+		return nil, err
+	} else if ok {
+		prompt = expanded.Prompt
+		if agent == "" {
+			agent = expanded.Agent
+		}
+		if model == "" {
+			model = expanded.Model
+		}
+		d.record(sess.SessionID, "TaskCreated", "", "go",
+			map[string]any{"status": "command_expanded", "command": expanded.Name}, "")
+	}
+	if agent == "" {
+		agent = "build"
+	}
+	agents := loadAgentSpecs(sess.WorkspaceRoot)
+	spec := agents[agent]
+	if spec == nil {
+		return nil, fmt.Errorf("unknown agent %q", agent)
+	}
+	if model == "" {
+		model = spec.Model
+	}
+	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, prompt, model, agent, p.SuccessCriteria)
 	d.sched.SetMode(task.TaskID, "background")
 	if len(p.OutputSchema) > 0 {
 		d.sched.SetOutputSchema(task.TaskID, p.OutputSchema)
 	}
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
-		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt, "model": task.Model}, "")
-	_ = d.history.Append(p.Prompt) // shared cross-process prompt history (best-effort)
+		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt, "model": task.Model, "agent": task.Agent}, "")
+	_ = d.history.Append(prompt) // shared cross-process prompt history (best-effort)
 	d.persistRun(task.TaskID)
 
 	go d.runTaskGuarded(sess, task)

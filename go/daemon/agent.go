@@ -97,6 +97,9 @@ type SpawnTask struct {
 // the mock single-shot loop so the runtime still works offline.
 func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 	d.sched.SetStatus(task.TaskID, "running")
+	if task.Agent == "plan" {
+		d.setPlanMode(sess.SessionID, true)
+	}
 
 	if d.reasoner == nil {
 		d.runMockTask(sess, task)
@@ -104,7 +107,7 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 	}
 
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
-		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "prompt": task.UserPrompt}, "")
+		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "agent": taskAgent(task), "prompt": task.UserPrompt}, "")
 	d.runLoop(sess, task, newTranscript(task.UserPrompt), 1)
 }
 
@@ -114,12 +117,15 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 // work is never re-executed.
 func (d *Daemon) resumeTask(sess *sessionstore.Session, task *scheduler.Task, cp *runCheckpoint) {
 	d.sched.SetStatus(task.TaskID, "running")
+	if task.Agent == "plan" {
+		d.setPlanMode(sess.SessionID, true)
+	}
 	if d.reasoner == nil {
 		d.degrade(sess, task, cp.Transcript, "no reasoner available to resume run")
 		return
 	}
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
-		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "prompt": task.UserPrompt, "resumed_from_turn": cp.Turn}, "")
+		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "agent": taskAgent(task), "prompt": task.UserPrompt, "resumed_from_turn": cp.Turn}, "")
 	d.runLoop(sess, task, cp.Transcript, cp.Turn+1)
 }
 
@@ -145,6 +151,9 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 	// Persistent project/user memory (CARINA.md) is prepended to the system
 	// prompt so the agent follows repo-specific conventions.
 	sysPrompt := systemPrompt
+	if spec := loadAgentSpecs(sess.WorkspaceRoot)[taskAgent(task)]; spec != nil && strings.TrimSpace(spec.SystemPrompt) != "" {
+		sysPrompt = strings.TrimSpace(spec.SystemPrompt) + "\n\n" + systemPrompt
+	}
 	if mem := loadMemory(sess.WorkspaceRoot); mem != "" {
 		sysPrompt = systemPrompt + "\n\nPROJECT MEMORY (from CARINA.md — follow it):\n" + mem
 	}
@@ -791,6 +800,13 @@ func taskModel(task *scheduler.Task) string {
 		return strings.TrimSpace(task.Model)
 	}
 	return "default"
+}
+
+func taskAgent(task *scheduler.Task) string {
+	if task != nil && strings.TrimSpace(task.Agent) != "" {
+		return strings.TrimSpace(task.Agent)
+	}
+	return "build"
 }
 
 // validateOutput returns the required keys missing from a done summary that is

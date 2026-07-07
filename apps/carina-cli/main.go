@@ -27,6 +27,8 @@ Usage:
                                       create a session in cwd and submit a task
   carina ask [--model provider/model] "<prompt>"
                                       alias for run
+  carina agents list                  list available agent modes
+  carina commands list                list slash commands
   carina resume <session_id>          show a session
   carina watch <session_id>           stream the live event feed
   carina audit <session_id>           replay the session event stream
@@ -116,15 +118,19 @@ func run(cmd string, args []string) error {
 		return call(c, "daemon.metrics", map[string]any{})
 	case "sessions":
 		return call(c, "session.list", map[string]any{})
+	case "agents":
+		return cmdAgents(c, args)
+	case "commands":
+		return cmdCommands(c, args)
 
 	case "run", "ask":
 		// --background is accepted for clarity; tasks always run in the
 		// daemon and survive CLI exit (PRD §5.2/§10.2), so this is the
 		// default behavior.
 		args = dropFlag(args, "--background")
-		prompt, model, err := parseRunArgs(args)
+		prompt, model, agent, err := parseRunArgs(args)
 		if err != nil {
-			return fmt.Errorf(`usage: carina %s [--model provider/model] "<prompt>" [--background]`, cmd)
+			return fmt.Errorf(`usage: carina %s [--agent name] [--model provider/model] "<prompt>" [--background]`, cmd)
 		}
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -140,6 +146,9 @@ func run(cmd string, args []string) error {
 		params := map[string]any{"session_id": sess.SessionID, "prompt": prompt}
 		if model != "" {
 			params["model"] = model
+		}
+		if agent != "" {
+			params["agent"] = agent
 		}
 		return call(c, "task.submit", params)
 
@@ -216,24 +225,30 @@ func run(cmd string, args []string) error {
 	}
 }
 
-func parseRunArgs(args []string) (prompt, model string, err error) {
+func parseRunArgs(args []string) (prompt, model, agent string, err error) {
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--model", "-m":
 			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
-				return "", "", fmt.Errorf("model required")
+				return "", "", "", fmt.Errorf("model required")
 			}
 			model = strings.TrimSpace(args[i+1])
+			i++
+		case "--agent", "-a":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", fmt.Errorf("agent required")
+			}
+			agent = strings.TrimSpace(args[i+1])
 			i++
 		default:
 			rest = append(rest, args[i])
 		}
 	}
 	if len(rest) < 1 || strings.TrimSpace(rest[0]) == "" {
-		return "", "", fmt.Errorf("prompt required")
+		return "", "", "", fmt.Errorf("prompt required")
 	}
-	return rest[0], model, nil
+	return rest[0], model, agent, nil
 }
 
 // dropFlag removes a boolean flag from args if present.
@@ -349,6 +364,34 @@ func cmdProviders(args []string) error {
 		rows = append(rows, row{ID: p.ID, Name: p.Name, Env: p.Env, API: p.API, Models: len(p.Models)})
 	}
 	return printJSON(rows)
+}
+
+func cmdAgents(c *rpcClient, args []string) error {
+	if len(args) == 0 {
+		args = []string{"list"}
+	}
+	if args[0] != "list" && args[0] != "ls" {
+		return fmt.Errorf("usage: carina agents list")
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	return call(c, "agent.list", map[string]any{"workspace_root": cwd})
+}
+
+func cmdCommands(c *rpcClient, args []string) error {
+	if len(args) == 0 {
+		args = []string{"list"}
+	}
+	if args[0] != "list" && args[0] != "ls" {
+		return fmt.Errorf("usage: carina commands list")
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	return call(c, "command.list", map[string]any{"workspace_root": cwd})
 }
 
 func cmdExec(c *rpcClient, args []string) error {

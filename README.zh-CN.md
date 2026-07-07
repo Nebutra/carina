@@ -133,6 +133,19 @@ CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
 ./bin/carina run --model openrouter/openai/gpt-5-fast "use the catalog fast mode"
 ```
 
+Agent mode 和 slash command 可以在运行时查看：
+
+```bash
+./bin/carina agents list
+./bin/carina commands list
+./bin/carina run --agent plan "inspect the migration risk"
+./bin/carina run "/review main"
+```
+
+内置 agent 包括 `build`、`plan`、`general`、`explore`。用户/项目覆盖文件位于
+`~/.carina/agents/*.md`、`<repo>/.carina/agents/*.md`、
+`~/.carina/commands/*.md` 和 `<repo>/.carina/commands/*.md`。
+
 在当前仓库运行任务：
 
 ```bash

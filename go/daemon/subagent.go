@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -80,7 +81,7 @@ func (d *Daemon) spawnSubagent(parent *sessionstore.Session, parentTask *schedul
 		"child_profile": childProfile, "depth": child.Depth, "task": taskDesc,
 	}, "")
 
-	childTask := d.sched.Submit(child.SessionID, child.WorkspaceID, taskDesc)
+	childTask := d.sched.SubmitWithGoalModelAgent(child.SessionID, child.WorkspaceID, taskDesc, spec.Model, spec.Name, nil)
 	// Record the parent-task linkage so the leader bridge can escalate a refused
 	// child capability to the parent task (ParentID gives the session, not the task).
 	d.registerSubagentParent(child.SessionID, parentTask.TaskID)
@@ -173,5 +174,6 @@ func specNames(specs map[string]*AgentSpec) []string {
 	for name := range specs {
 		out = append(out, name)
 	}
+	sort.Strings(out)
 	return out
 }
