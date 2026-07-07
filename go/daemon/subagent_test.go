@@ -69,10 +69,16 @@ func TestSubagentIsolatedAndAttenuated(t *testing.T) {
 
 	// A new child session must exist, be read-only (attenuated from parent's
 	// full-workspace), and be linked to the parent at depth 1.
-	var child *struct{ profile, parent string; depth int }
+	var child *struct {
+		profile, parent string
+		depth           int
+	}
 	for _, s := range d.store.List() {
 		if s.ParentID == parent.SessionID {
-			child = &struct{ profile, parent string; depth int }{s.PermissionProfile, s.ParentID, s.Depth}
+			child = &struct {
+				profile, parent string
+				depth           int
+			}{s.PermissionProfile, s.ParentID, s.Depth}
 		}
 	}
 	if child == nil {

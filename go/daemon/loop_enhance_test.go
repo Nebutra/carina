@@ -32,9 +32,9 @@ func TestLoopRequeryOnMalformedAction(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
 	d.SetReasoner(&scriptedReasoner{steps: []string{
-		"I'll think about it... (no json here)",      // malformed -> requery
-		"still thinking, no action",                   // malformed -> requery
-		`{"tool":"done","summary":"nothing to do"}`,   // valid
+		"I'll think about it... (no json here)",     // malformed -> requery
+		"still thinking, no action",                 // malformed -> requery
+		`{"tool":"done","summary":"nothing to do"}`, // valid
 	}})
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)

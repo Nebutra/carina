@@ -41,7 +41,7 @@ max_command_risk = 1
 
 	d, err := daemon.New(daemon.Options{
 		StateDir: stateDir, KernelBin: kernelBin,
-		ToolsDir: filepath.Join(repoRoot, "zig/zig-out/bin"),
+		ToolsDir:  filepath.Join(repoRoot, "zig/zig-out/bin"),
 		PolicyDir: policyDir, Offline: true,
 	})
 	if err != nil {

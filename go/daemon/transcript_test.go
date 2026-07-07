@@ -20,7 +20,7 @@ func TestTranscriptCompactionElidesThenSummarizes(t *testing.T) {
 	// Add many turns to blow the budget.
 	for i := 0; i < 10; i++ {
 		content := strings.Repeat("data ", 60) // ~300 chars each
-		pinned := i == 9                        // last one pinned
+		pinned := i == 9                       // last one pinned
 		tr.addTurn(Turn{Tool: "read", ActionBrief: "read f", Obs: Observation{Content: content, Pinned: pinned}})
 	}
 	summarizeCalled := false

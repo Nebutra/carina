@@ -140,7 +140,7 @@ func TestEndToEndLoop(t *testing.T) {
 
 	// 8. Audit report reflects the policy violation and command activity.
 	var report struct {
-		TotalEvents      int             `json:"total_events"`
+		TotalEvents      int               `json:"total_events"`
 		PolicyViolations []json.RawMessage `json:"policy_violations"`
 	}
 	if err := c.Call("audit.report", map[string]any{"session_id": sess.SessionID}, &report); err != nil {
