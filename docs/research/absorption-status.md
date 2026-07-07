@@ -116,16 +116,35 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
 - [x] **Expanded LSP matrix**: rust-analyzer/clangd/zls/solargraph alongside
   gopls/tsserver/pyright.
 
+**Wave 11 — OpenCode absorption (all landed)**
+- [x] **BYOK provider catalog + runtime adapters** (`go/provider`,
+  `go/model-router`, `go/daemon/provider_adapters.go`): provider metadata is no
+  longer a thin hard-coded enum. Carina now has a discoverable catalog with
+  env-key lookup, model IDs, API-family routing, credential resolution, and
+  per-request model dispatch for OpenAI-compatible, Anthropic, Gemini, and
+  OpenRouter-style providers.
+- [x] **Agent modes + slash commands** (`go/daemon/agents.go`,
+  `go/daemon/commands.go`): built-in/user/project agents are discoverable via
+  `agent.list`, task submission accepts `--agent`, and slash commands expand
+  reusable prompt templates from built-in, user, and project registries.
+- [x] **MCP prompts as command registry entries** (`go/mcp`,
+  `go/daemon/mcp_commands.go`): external MCP `prompts/list` metadata is exposed
+  as `/mcp.<server>.<prompt>` commands, and `task.submit` renders them through
+  `prompts/get` before scheduling. Prompt-only MCP servers now connect cleanly;
+  prompt expansion is read-only and does not grant MCP tool capabilities.
+
 ## ✅ Remaining
 
-- No known capability gaps remain in this absorption track. The previously
-  deferred Egress HTTPS-MITM credential tier has passed its standalone review and
-  is now implemented behind explicit per-host opt-in.
+- No known capability gaps remain in the Claude Code absorption track. The
+  previously deferred Egress HTTPS-MITM credential tier has passed its
+  standalone review and is now implemented behind explicit per-host opt-in.
+- OpenCode items reviewed and intentionally not absorbed now: ACP session
+  protocol support (overlaps Carina's JSON-RPC/CLI control plane) and broad
+  workspace revert checkpoints (requires a separate snapshot policy).
 
 ## Test status
-Current verification for this update: **Go: 156 tests across 15 packages under
-`-race`**; the Go tree also cross-builds for linux/amd64. Includes the
-previously Zig-gated tests and every Wave-7/8/9/10 subsystem test. **Rust: all
-workspace crates pass** (`cargo test --workspace`: 67 tests across 14 suites).
-Zig tools were not rebuilt in this environment because the `zig` compiler is not
-installed on PATH; the existing `zig/zig-out/bin` tool outputs are present.
+Current verification for this update: **Go: 187 tests across 20 packages under
+`-race`**. Includes the previously Zig-gated tests and every Wave-7/8/9/10/11
+subsystem test. **Rust: all workspace crates pass** (`cargo test --workspace`:
+67 tests across 14 suites). Zig tools were not rebuilt in this update because
+this change touched Go/docs only.

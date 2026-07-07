@@ -13,6 +13,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -43,6 +45,21 @@ type NamespacedTool struct {
 	Description string `json:"description"`
 }
 
+// Prompt mirrors an MCP prompt definition from prompts/list.
+type Prompt struct {
+	Server      string           `json:"server,omitempty"`
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Arguments   []PromptArgument `json:"arguments,omitempty"`
+}
+
+// PromptArgument mirrors an MCP prompt argument definition.
+type PromptArgument struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
 type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -59,6 +76,10 @@ type toolsListResult struct {
 	Tools []Tool `json:"tools"`
 }
 
+type promptsListResult struct {
+	Prompts []Prompt `json:"prompts"`
+}
+
 type contentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
@@ -67,6 +88,15 @@ type contentBlock struct {
 type toolCallResult struct {
 	Content []contentBlock `json:"content"`
 	IsError bool           `json:"isError"`
+}
+
+type promptMessage struct {
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
+}
+
+type promptGetResult struct {
+	Messages []promptMessage `json:"messages"`
 }
 
 // Client manages one MCP server subprocess. A background reader dispatches
@@ -85,7 +115,8 @@ type Client struct {
 	pending map[int64]chan rpcResponse
 	closed  bool
 
-	tools []Tool
+	tools   []Tool
+	prompts []Prompt
 }
 
 func newClient(name string, s Server) *Client {
@@ -126,12 +157,12 @@ func (c *Client) connect() error {
 	}
 	_ = c.notify("notifications/initialized", map[string]any{})
 	var tl toolsListResult
-	if err := c.call("tools/list", map[string]any{}, &tl); err != nil {
-		c.close()
-		return err
-	}
+	_ = c.call("tools/list", map[string]any{}, &tl)
+	var pl promptsListResult
+	_ = c.call("prompts/list", map[string]any{}, &pl)
 	c.mu.Lock()
 	c.tools = tl.Tools
+	c.prompts = pl.Prompts
 	c.mu.Unlock()
 	return nil
 }
@@ -239,6 +270,55 @@ func (c *Client) callTool(name string, args map[string]any) (string, error) {
 	return out, nil
 }
 
+// getPrompt renders an MCP prompt and flattens text message content.
+func (c *Client) getPrompt(name string, args map[string]string) (string, error) {
+	if args == nil {
+		args = map[string]string{}
+	}
+	var res promptGetResult
+	if err := c.call("prompts/get", map[string]any{"name": name, "arguments": args}, &res); err != nil {
+		return "", err
+	}
+	out := flattenPromptMessages(res.Messages)
+	if strings.TrimSpace(out) == "" {
+		return "", fmt.Errorf("mcp prompt %q returned no text content", name)
+	}
+	return out, nil
+}
+
+func flattenPromptMessages(messages []promptMessage) string {
+	var parts []string
+	for _, msg := range messages {
+		text := strings.TrimSpace(flattenPromptContent(msg.Content))
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+}
+
+func flattenPromptContent(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var block contentBlock
+	if json.Unmarshal(raw, &block) == nil && block.Type == "text" {
+		return block.Text
+	}
+	var blocks []contentBlock
+	if json.Unmarshal(raw, &blocks) == nil {
+		var out strings.Builder
+		for _, b := range blocks {
+			if b.Type == "text" {
+				out.WriteString(b.Text)
+			}
+		}
+		return out.String()
+	}
+	return ""
+}
+
 func (c *Client) isClosed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -310,6 +390,36 @@ func (m *Manager) Tools() []NamespacedTool {
 		}
 		c.mu.Unlock()
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Server == out[j].Server {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Server < out[j].Server
+	})
+	return out
+}
+
+// Prompts returns every connected server's prompts, namespaced by server.
+func (m *Manager) Prompts() []Prompt {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Prompt
+	for name, c := range m.clients {
+		c.mu.Lock()
+		for _, p := range c.prompts {
+			cp := p
+			cp.Server = name
+			cp.Arguments = append([]PromptArgument(nil), p.Arguments...)
+			out = append(out, cp)
+		}
+		c.mu.Unlock()
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Server == out[j].Server {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Server < out[j].Server
+	})
 	return out
 }
 
@@ -329,6 +439,22 @@ func (m *Manager) Call(server, tool string, args map[string]any) (string, error)
 	return c.callTool(tool, args)
 }
 
+// GetPrompt renders a prompt on a server, reconnecting once if the server has died.
+func (m *Manager) GetPrompt(server, prompt string, args map[string]string) (string, error) {
+	m.mu.Lock()
+	c := m.clients[server]
+	m.mu.Unlock()
+	if c == nil {
+		return "", fmt.Errorf("unknown mcp server %q", server)
+	}
+	if c.isClosed() {
+		if err := c.connect(); err != nil {
+			return "", fmt.Errorf("mcp server %q is down: %w", server, err)
+		}
+	}
+	return c.getPrompt(prompt, args)
+}
+
 // Servers returns the names of connected servers.
 func (m *Manager) Servers() []string {
 	m.mu.Lock()
@@ -337,6 +463,7 @@ func (m *Manager) Servers() []string {
 	for n := range m.clients {
 		out = append(out, n)
 	}
+	sort.Strings(out)
 	return out
 }
 

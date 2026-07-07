@@ -46,8 +46,8 @@ the slash command tail into prompt arguments conservatively:
 - one declared argument receives the full tail;
 - multiple declared arguments receive whitespace-separated positional fields in
   declaration order;
-- `ARGUMENTS` also receives the full tail for servers that choose to support a
-  catch-all argument;
+- a declared `ARGUMENTS` argument receives the full tail for servers that choose
+  to support a catch-all argument;
 - empty optional arguments are omitted.
 
 If a server rejects the arguments, task submission fails with the MCP error

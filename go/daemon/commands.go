@@ -15,19 +15,29 @@ type CommandSpec struct {
 	Agent       string
 	Model       string
 	Template    string
-	Source      string // "built-in" | "user" | "project"
+	Source      string // "built-in" | "user" | "project" | "mcp"
 	Subtask     bool
 	Hints       []string
+	MCPServer   string
+	MCPPrompt   string
+	Arguments   []CommandArgument
+}
+
+type CommandArgument struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
 }
 
 type CommandInfo struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Agent       string   `json:"agent,omitempty"`
-	Model       string   `json:"model,omitempty"`
-	Source      string   `json:"source,omitempty"`
-	Subtask     bool     `json:"subtask,omitempty"`
-	Hints       []string `json:"hints,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Agent       string            `json:"agent,omitempty"`
+	Model       string            `json:"model,omitempty"`
+	Source      string            `json:"source,omitempty"`
+	Subtask     bool              `json:"subtask,omitempty"`
+	Hints       []string          `json:"hints,omitempty"`
+	Arguments   []CommandArgument `json:"arguments,omitempty"`
 }
 
 type ExpandedCommand struct {
@@ -149,6 +159,7 @@ func sortedCommandInfos(specs map[string]*CommandSpec) []CommandInfo {
 			Source:      spec.Source,
 			Subtask:     spec.Subtask,
 			Hints:       append([]string(nil), spec.Hints...),
+			Arguments:   append([]CommandArgument(nil), spec.Arguments...),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -156,26 +167,40 @@ func sortedCommandInfos(specs map[string]*CommandSpec) []CommandInfo {
 }
 
 func expandSlashCommand(input string, specs map[string]*CommandSpec) (*ExpandedCommand, bool, error) {
-	trimmed := strings.TrimSpace(input)
-	if !strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "//") {
-		return nil, false, nil
-	}
-	head, rest, _ := strings.Cut(strings.TrimPrefix(trimmed, "/"), " ")
-	name := strings.TrimSpace(head)
-	if name == "" {
-		return nil, true, fmt.Errorf("command name required")
+	name, args, ok, err := parseSlashCommand(input)
+	if err != nil || !ok {
+		return nil, ok, err
 	}
 	spec := specs[name]
 	if spec == nil {
 		return nil, true, fmt.Errorf("unknown command /%s", name)
 	}
-	args := strings.TrimSpace(rest)
+	if spec.MCPServer != "" || spec.MCPPrompt != "" {
+		return nil, true, fmt.Errorf("command /%s requires daemon expansion", name)
+	}
+	return expandCommandSpec(name, args, spec), true, nil
+}
+
+func parseSlashCommand(input string) (name, args string, ok bool, err error) {
+	trimmed := strings.TrimSpace(input)
+	if !strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "//") {
+		return "", "", false, nil
+	}
+	head, rest, _ := strings.Cut(strings.TrimPrefix(trimmed, "/"), " ")
+	name = strings.TrimSpace(head)
+	if name == "" {
+		return "", "", true, fmt.Errorf("command name required")
+	}
+	return name, strings.TrimSpace(rest), true, nil
+}
+
+func expandCommandSpec(name, args string, spec *CommandSpec) *ExpandedCommand {
 	return &ExpandedCommand{
 		Name:   name,
 		Prompt: expandCommandTemplate(spec.Template, args),
 		Agent:  spec.Agent,
 		Model:  spec.Model,
-	}, true, nil
+	}
 }
 
 func expandCommandTemplate(template, args string) string {

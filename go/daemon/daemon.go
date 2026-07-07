@@ -512,7 +512,7 @@ func (d *Daemon) handleCommandList(params json.RawMessage) (any, error) {
 		}
 		root = sess.WorkspaceRoot
 	}
-	return map[string]any{"commands": sortedCommandInfos(loadCommandSpecs(root))}, nil
+	return map[string]any{"commands": sortedCommandInfos(d.commandSpecs(root))}, nil
 }
 
 // handleWorkspaceTrust marks a workspace root trusted/untrusted for command
@@ -810,7 +810,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	prompt := p.Prompt
 	model := p.Model
 	agent := p.Agent
-	if expanded, ok, err := expandSlashCommand(prompt, loadCommandSpecs(sess.WorkspaceRoot)); err != nil {
+	if expanded, ok, err := d.expandTaskSlashCommand(prompt, sess.WorkspaceRoot); err != nil {
 		return nil, err
 	} else if ok {
 		prompt = expanded.Prompt
