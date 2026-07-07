@@ -10,7 +10,8 @@
       { "method": "session.resume", "params": { "session_id": "string" }, "result": "Session" },
       { "method": "session.close", "params": { "session_id": "string" }, "result": "Session" },
       { "method": "session.export", "params": { "session_id": "string", "format": "jsonl|sqlite" }, "result": { "path": "string" } },
-      { "method": "session.replay", "params": { "session_id": "string" }, "result": "Event[]" }
+      { "method": "session.replay", "params": { "session_id": "string" }, "result": "Event[]" },
+      { "method": "session.items", "params": { "session_id": "string" }, "result": "SessionItemEvent[]" }
     ],
     "task": [
       { "method": "task.submit", "params": { "session_id": "string", "prompt": "string" }, "result": "Task" },

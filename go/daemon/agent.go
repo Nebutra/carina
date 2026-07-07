@@ -639,7 +639,8 @@ func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv
 	}
 
 	risk, _ := d.kern.ClassifyCommand(command)
-	started := map[string]any{"command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk}
+	commandID := sessionstore.NewID("cmd")
+	started := map[string]any{"command_id": commandID, "command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk}
 	if mutatesPackages(command) {
 		started["package_mutation"] = true
 	}
@@ -647,15 +648,15 @@ func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv
 
 	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
 	if err != nil {
-		d.record(sess.SessionID, "CommandExited", task.TaskID, "zig", map[string]any{"exit_code": -1, "error": err.Error()}, "")
+		d.record(sess.SessionID, "CommandExited", task.TaskID, "zig", map[string]any{"command_id": commandID, "exit_code": -1, "error": err.Error()}, "")
 		return "command error: " + err.Error()
 	}
 	stdout := strings.Join(result.Stdout, "\n")
 	if red, e := d.kern.Redact(sess.SessionID, stdout); e == nil {
 		stdout = red
 	}
-	d.record(sess.SessionID, "CommandOutput", task.TaskID, "zig", map[string]any{"stream": "stdout", "chunk": truncate(stdout, 400)}, "")
-	d.record(sess.SessionID, "CommandExited", task.TaskID, "zig", map[string]any{"exit_code": result.ExitCode, "duration_ms": result.DurationMs}, "")
+	d.record(sess.SessionID, "CommandOutput", task.TaskID, "zig", map[string]any{"command_id": commandID, "stream": "stdout", "chunk": truncate(stdout, 400)}, "")
+	d.record(sess.SessionID, "CommandExited", task.TaskID, "zig", map[string]any{"command_id": commandID, "exit_code": result.ExitCode, "duration_ms": result.DurationMs}, "")
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "exit=%d\n%s", result.ExitCode, stdout)

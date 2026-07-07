@@ -133,6 +133,18 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   `prompts/get` before scheduling. Prompt-only MCP servers now connect cleanly;
   prompt expansion is read-only and does not grant MCP tool capabilities.
 
+**Wave 12 — OpenAI Codex source absorption (landed)**
+- [x] **Canonical session item stream** (`go/daemon/items.go`): Codex's strongest
+  reusable mechanism is not its Rust workspace shape or cloud coupling, but the
+  projection layer that turns raw runtime notifications into stable
+  `thread.started` / `turn.started` / `item.*` / `turn.completed` events.
+  Carina now exposes `session.items` and `carina items <session_id>` as a
+  derived, non-authoritative view over the existing hash-chained audit log.
+  Command lifecycle events are grouped into `command_execution`, model replies
+  into `agent_message`, patch lifecycle into `file_change`, and terminal task
+  status into turn completion/failure. New command events include `command_id`
+  for precise future correlation; old logs remain order-compatible.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
@@ -141,10 +153,18 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
 - OpenCode items reviewed and intentionally not absorbed now: ACP session
   protocol support (overlaps Carina's JSON-RPC/CLI control plane) and broad
   workspace revert checkpoints (requires a separate snapshot policy).
+- OpenAI Codex items reviewed and intentionally not absorbed now: Guardian
+  auto-approval reviewer, execpolicy amendment DSL, turn net-diff tracker,
+  Codex's narrower provider manager, and ChatGPT/cloud app-server coupling. The
+  first three are useful but require standalone policy/UX review; the latter two
+  do not fit the current local-first Carina boundary.
 
 ## Test status
-Current verification for this update: **Go: 187 tests across 20 packages under
-`-race`**. Includes the previously Zig-gated tests and every Wave-7/8/9/10/11
-subsystem test. **Rust: all workspace crates pass** (`cargo test --workspace`:
-67 tests across 14 suites). Zig tools were not rebuilt in this update because
-this change touched Go/docs only.
+Current verification for this update: **Go: 189 tests across 17 packages**
+(`go test ./go/... ./apps/carina-cli`) plus targeted race coverage
+(`go test -race ./go/daemon ./apps/carina-cli`, 103 tests across 2 packages).
+All Go app entrypoints also compile/test (`go test ./apps/...`, 3 tests across
+4 packages).
+The JSON-RPC registry was syntax-checked with `jq empty
+protocol/jsonrpc/methods.json`. This change touched Go control-plane, CLI, and
+docs only; Rust and Zig were not rebuilt in this update.

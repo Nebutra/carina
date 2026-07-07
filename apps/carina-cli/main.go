@@ -31,6 +31,7 @@ Usage:
   carina commands list                list slash commands
   carina resume <session_id>          show a session
   carina watch <session_id>           stream the live event feed
+  carina items <session_id>           replay the normalized item stream
   carina audit <session_id>           replay the session event stream
   carina audit verify <session_id>    verify the tamper-evident hash chain
   carina audit last                   audit summary of the most recent session
@@ -161,6 +162,11 @@ func run(cmd string, args []string) error {
 			return fmt.Errorf("usage: carina replay <session_id>")
 		}
 		return call(c, "session.replay", map[string]any{"session_id": args[0]})
+	case "items":
+		if len(args) < 1 {
+			return fmt.Errorf("usage: carina items <session_id>")
+		}
+		return call(c, "session.items", map[string]any{"session_id": args[0]})
 	case "report":
 		return callArg(c, "audit.report", args, "session_id")
 	case "export":

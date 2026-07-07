@@ -388,6 +388,7 @@ func (d *Daemon) registerMethods() {
 	d.server.Register("session.list", d.handleSessionList)
 	d.server.Register("session.close", d.handleSessionClose)
 	d.server.Register("session.replay", d.handleSessionReplay)
+	d.server.Register("session.items", d.handleSessionItems)
 	d.server.Register("session.attach", d.handleSessionAttach)
 	d.server.Register("session.fork", d.handleSessionFork)
 	d.server.Register("session.plan_mode", d.handlePlanMode)
@@ -445,7 +446,7 @@ func (d *Daemon) registerMethods() {
 	// (daemon.remote.disable) can cut off remote access entirely.
 	d.server.MarkRemoteSafe(
 		"daemon.status", "daemon.metrics", "daemon.doctor", "agent.list", "command.list",
-		"session.get", "session.list", "session.replay", "session.attach",
+		"session.get", "session.list", "session.replay", "session.items", "session.attach",
 		"task.status", "task.list", "task.result",
 		"audit.report", "audit.export", "audit.verify",
 		"profile.describe", "session.events.stream",
@@ -1303,7 +1304,8 @@ func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decisio
 	// The command is executed by the Zig carina-run tool, so its lifecycle
 	// events are attributed to the Zig actor. Package-manager mutations are
 	// flagged so lockfile changes are auditable (PRD §13.7).
-	started := map[string]any{"command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk}
+	commandID := sessionstore.NewID("cmd")
+	started := map[string]any{"command_id": commandID, "command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk}
 	if mutatesPackages(command) {
 		started["package_mutation"] = true
 	}
@@ -1311,7 +1313,7 @@ func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decisio
 
 	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
 	if err != nil {
-		d.record(sessionID, "CommandExited", taskID, "zig", map[string]any{"exit_code": -1, "error": err.Error()}, "")
+		d.record(sessionID, "CommandExited", taskID, "zig", map[string]any{"command_id": commandID, "exit_code": -1, "error": err.Error()}, "")
 		return nil, err
 	}
 	output := result.Stdout
@@ -1323,9 +1325,9 @@ func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decisio
 	if redacted, err := d.kern.Redact(sessionID, chunk); err == nil {
 		chunk = redacted
 	}
-	d.record(sessionID, "CommandOutput", taskID, "zig", map[string]any{"stream": "stdout", "chunk": chunk}, "")
+	d.record(sessionID, "CommandOutput", taskID, "zig", map[string]any{"command_id": commandID, "stream": "stdout", "chunk": chunk}, "")
 	d.record(sessionID, "CommandExited", taskID, "zig",
-		map[string]any{"exit_code": result.ExitCode, "duration_ms": result.DurationMs}, "")
+		map[string]any{"command_id": commandID, "exit_code": result.ExitCode, "duration_ms": result.DurationMs}, "")
 	return result, nil
 }
 

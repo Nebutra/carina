@@ -103,6 +103,7 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	// secrets + audit
 	must("secret.grant", map[string]any{"session_id": sid, "name": "K", "value": "v"})
 	must("secret.request", map[string]any{"session_id": sid, "name": "K"})
+	must("session.items", map[string]any{"session_id": sid})
 	must("audit.report", map[string]any{"session_id": sid})
 	must("audit.export", map[string]any{"session_id": sid})
 	must("audit.verify", map[string]any{"session_id": sid})

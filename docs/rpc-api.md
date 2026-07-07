@@ -15,6 +15,7 @@ Notifications (server → client) stream events; every payload conforms to [`pro
 | `session.close` | terminate |
 | `session.export` | export as JSONL / SQLite bundle |
 | `session.replay` | replay the event stream |
+| `session.items` | replay the normalized item stream derived from audit events |
 
 ## Task API
 
@@ -45,6 +46,7 @@ Each returns a `PermissionDecision` (see schema). Side effects only proceed on `
 ## Command / Audit / Secret / Plugin / Enterprise
 
 - `command.exec` — propose a command; returns a decision (and result if allowed).
+- `session.items` — normalized `thread.started` / `turn.started` / `item.*` / `turn.*` stream for UI and SDK consumers; `session.replay` remains the raw audit stream.
 - `audit.report` — summary (violations, files, commands); `audit.export` — full bundle for centralized audit.
 - `profile.describe` — capability-graph view of the session profile.
 - `secret.grant` / `secret.request` — handle-based secrets; plaintext never crosses the boundary.
