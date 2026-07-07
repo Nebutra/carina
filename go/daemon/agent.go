@@ -148,14 +148,14 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 				"patches applied (ids), unresolved errors. Drop raw tool output.\n\n"+head)
 	}
 
-	// Persistent project/user memory (CARINA.md) is prepended to the system
-	// prompt so the agent follows repo-specific conventions.
+	// Persistent project/user instructions are prepended to the system prompt
+	// so the agent follows repo-specific conventions.
 	sysPrompt := systemPrompt
 	if spec := loadAgentSpecs(sess.WorkspaceRoot)[taskAgent(task)]; spec != nil && strings.TrimSpace(spec.SystemPrompt) != "" {
 		sysPrompt = strings.TrimSpace(spec.SystemPrompt) + "\n\n" + systemPrompt
 	}
 	if mem := loadMemory(sess.WorkspaceRoot); mem != "" {
-		sysPrompt = systemPrompt + "\n\nPROJECT MEMORY (from CARINA.md — follow it):\n" + mem
+		sysPrompt += "\n\nPROJECT INSTRUCTIONS (Nebutra/Carina — follow them):\n" + mem
 	}
 	if style := loadStyle(sess.WorkspaceRoot); style != "" {
 		sysPrompt = "OUTPUT STYLE (apply to your presentation):\n" + style + "\n\n" + sysPrompt

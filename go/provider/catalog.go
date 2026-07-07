@@ -17,10 +17,39 @@ import (
 const (
 	DefaultModelsURL = "https://models.dev"
 	cacheTTL         = 5 * time.Minute
+	cacheVersion     = "1"
 )
 
 // Catalog maps provider id to provider metadata.
 type Catalog map[string]Info
+
+type RefreshStrategy string
+
+const (
+	RefreshOnline           RefreshStrategy = "online"
+	RefreshOffline          RefreshStrategy = "offline"
+	RefreshOnlineIfUncached RefreshStrategy = "online_if_uncached"
+)
+
+func ParseRefreshStrategy(raw string) (RefreshStrategy, error) {
+	switch strings.TrimSpace(raw) {
+	case "", string(RefreshOnlineIfUncached):
+		return RefreshOnlineIfUncached, nil
+	case string(RefreshOnline):
+		return RefreshOnline, nil
+	case string(RefreshOffline):
+		return RefreshOffline, nil
+	default:
+		return "", fmt.Errorf("unknown provider refresh strategy %q", raw)
+	}
+}
+
+type cacheEnvelope struct {
+	Version   string    `json:"version"`
+	FetchedAt time.Time `json:"fetched_at"`
+	ETag      string    `json:"etag,omitempty"`
+	Catalog   Catalog   `json:"catalog"`
+}
 
 // Info is the provider subset Carina needs for enumeration and auth discovery.
 type Info struct {
@@ -150,19 +179,38 @@ func Load(opts Options) (Catalog, error) {
 	return Seed(), nil
 }
 
+func LoadWithStrategy(ctx context.Context, opts Options, strategy RefreshStrategy) (Catalog, error) {
+	switch strategy {
+	case RefreshOnline:
+		return Refresh(ctx, opts)
+	case RefreshOffline:
+		return Load(opts)
+	case RefreshOnlineIfUncached, "":
+		path, err := cachePath(opts)
+		if err != nil {
+			return nil, err
+		}
+		if env, err := readCache(path); err == nil && len(env.Catalog) > 0 && freshEnvelope(env, now(opts)) {
+			return env.Catalog, nil
+		}
+		if cat, err := Refresh(ctx, opts); err == nil {
+			return cat, nil
+		}
+		return Load(opts)
+	default:
+		return nil, fmt.Errorf("unknown provider refresh strategy %q", strategy)
+	}
+}
+
 // Refresh fetches the latest catalog and writes it to the cache atomically.
 func Refresh(ctx context.Context, opts Options) (Catalog, error) {
 	url := strings.TrimRight(opts.ModelsURL, "/")
 	if url == "" {
 		url = DefaultModelsURL
 	}
-	path := opts.CachePath
-	if path == "" {
-		var err error
-		path, err = DefaultCachePath()
-		if err != nil {
-			return nil, err
-		}
+	path, err := cachePath(opts)
+	if err != nil {
+		return nil, err
 	}
 	client := opts.HTTP
 	if client == nil {
@@ -173,11 +221,25 @@ func Refresh(ctx context.Context, opts Options) (Catalog, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "carina/provider-catalog")
+	if env, err := readCache(path); err == nil && env.ETag != "" {
+		req.Header.Set("If-None-Match", env.ETag)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotModified {
+		env, err := readCache(path)
+		if err != nil || len(env.Catalog) == 0 {
+			return nil, fmt.Errorf("provider catalog: 304 without usable cache")
+		}
+		env.FetchedAt = now(opts)
+		if err := writeEnvelope(path, env); err != nil {
+			return nil, err
+		}
+		return env.Catalog, nil
+	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("provider catalog: models.dev status %d", resp.StatusCode)
 	}
@@ -188,7 +250,7 @@ func Refresh(ctx context.Context, opts Options) (Catalog, error) {
 	if len(cat) == 0 {
 		return nil, fmt.Errorf("provider catalog: empty response")
 	}
-	if err := write(path, cat); err != nil {
+	if err := writeCache(path, cat, resp.Header.Get("ETag"), now(opts)); err != nil {
 		return nil, err
 	}
 	return cat, nil
@@ -198,6 +260,9 @@ func Refresh(ctx context.Context, opts Options) (Catalog, error) {
 func Fresh(path string, now func() time.Time) bool {
 	if now == nil {
 		now = time.Now
+	}
+	if env, err := readCache(path); err == nil && len(env.Catalog) > 0 {
+		return freshEnvelope(env, now())
 	}
 	st, err := os.Stat(path)
 	if err != nil {
@@ -227,22 +292,62 @@ func Sorted(cat Catalog) []Info {
 }
 
 func read(path string) (Catalog, error) {
+	env, err := readCache(path)
+	if err == nil {
+		return env.Catalog, nil
+	}
+	return nil, err
+}
+
+func readCache(path string) (cacheEnvelope, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return cacheEnvelope{}, err
+	}
+	var env cacheEnvelope
+	if err := json.Unmarshal(b, &env); err == nil && env.Catalog != nil {
+		if env.FetchedAt.IsZero() {
+			if st, statErr := os.Stat(path); statErr == nil {
+				env.FetchedAt = st.ModTime()
+			}
+		}
+		return env, nil
 	}
 	var cat Catalog
 	if err := json.Unmarshal(b, &cat); err != nil {
-		return nil, err
+		return cacheEnvelope{}, err
 	}
-	return cat, nil
+	fetchedAt := time.Time{}
+	if st, statErr := os.Stat(path); statErr == nil {
+		fetchedAt = st.ModTime()
+	}
+	return cacheEnvelope{Version: "legacy", FetchedAt: fetchedAt, Catalog: cat}, nil
 }
 
 func write(path string, cat Catalog) error {
+	return writeCache(path, cat, "", time.Now())
+}
+
+func writeCache(path string, cat Catalog, etag string, fetchedAt time.Time) error {
+	return writeEnvelope(path, cacheEnvelope{
+		Version:   cacheVersion,
+		FetchedAt: fetchedAt.UTC(),
+		ETag:      etag,
+		Catalog:   cat,
+	})
+}
+
+func writeEnvelope(path string, env cacheEnvelope) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(cat, "", "  ")
+	if env.Version == "" {
+		env.Version = cacheVersion
+	}
+	if env.FetchedAt.IsZero() {
+		env.FetchedAt = time.Now().UTC()
+	}
+	b, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -255,4 +360,28 @@ func write(path string, cat Catalog) error {
 		return err
 	}
 	return nil
+}
+
+func cachePath(opts Options) (string, error) {
+	if opts.CachePath != "" {
+		return opts.CachePath, nil
+	}
+	return DefaultCachePath()
+}
+
+func freshEnvelope(env cacheEnvelope, t time.Time) bool {
+	if t.IsZero() {
+		t = time.Now()
+	}
+	if env.FetchedAt.IsZero() {
+		return false
+	}
+	return t.Sub(env.FetchedAt) < cacheTTL
+}
+
+func now(opts Options) time.Time {
+	if opts.Now != nil {
+		return opts.Now()
+	}
+	return time.Now()
 }

@@ -171,7 +171,7 @@ func New(opts Options) (*Daemon, error) {
 		authStore,
 		func() (string, error) { return os.Getenv("CARINA_NEBUTRA_TOKEN"), nil },
 	)
-	providerCatalog := loadRuntimeProviderCatalog()
+	providerCatalog := loadRuntimeProviderCatalog(opts.Offline)
 	registerProviders(d.router, opts.Offline, authStore, providerCatalog)
 	// Durable run registry + concurrency cap for background runs. Reloading the
 	// registry lets `task.list`/`task.status` answer for runs from before a

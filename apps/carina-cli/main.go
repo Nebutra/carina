@@ -64,7 +64,8 @@ Usage:
   carina plugin run <session_id> <manifest> <wasm>   run a WASM plugin
   carina metrics
   carina auth <login|list|logout> ...        manage local BYOK credentials
-  carina providers list [--refresh]          list provider catalog entries
+  carina providers list [--refresh] [--offline]
+                                      list provider catalog entries
 
 The daemon must be running: carina-daemon &
 `
@@ -333,13 +334,21 @@ func cmdProviders(args []string) error {
 		args = []string{"list"}
 	}
 	if args[0] != "list" && args[0] != "ls" {
-		return fmt.Errorf("usage: carina providers list [--refresh]")
+		return fmt.Errorf("usage: carina providers list [--refresh] [--offline]")
 	}
-	refresh := false
+	strategy := provider.RefreshOnlineIfUncached
 	for _, a := range args[1:] {
 		switch a {
 		case "--refresh":
-			refresh = true
+			if strategy == provider.RefreshOffline {
+				return fmt.Errorf("--refresh and --offline cannot be combined")
+			}
+			strategy = provider.RefreshOnline
+		case "--offline":
+			if strategy == provider.RefreshOnline {
+				return fmt.Errorf("--refresh and --offline cannot be combined")
+			}
+			strategy = provider.RefreshOffline
 		default:
 			return fmt.Errorf("unknown providers list flag %q", a)
 		}
@@ -349,12 +358,7 @@ func cmdProviders(args []string) error {
 		return err
 	}
 	opts := provider.Options{CachePath: cachePath, ModelsURL: os.Getenv("CARINA_MODELS_URL")}
-	var cat provider.Catalog
-	if refresh {
-		cat, err = provider.Refresh(context.Background(), opts)
-	} else {
-		cat, err = provider.Load(opts)
-	}
+	cat, err := provider.LoadWithStrategy(context.Background(), opts, strategy)
 	if err != nil {
 		return err
 	}

@@ -144,6 +144,15 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   into `agent_message`, patch lifecycle into `file_change`, and terminal task
   status into turn completion/failure. New command events include `command_id`
   for precise future correlation; old logs remain order-compatible.
+- [x] **Phase A project instructions + provider cache strategy**
+  (`go/daemon/memory.go`, `go/provider/catalog.go`): Codex's AGENTS.md and model
+  manager mechanisms were absorbed by philosophy, not copied by brand. Carina
+  now loads Nebutra/Carina project instructions from repo root to workspace
+  (`CARINA.override.md` / `CARINA.md` first, `AGENTS.override.md` / `AGENTS.md`
+  as compatibility fallback) with source labels and budget truncation. Provider
+  discovery now has explicit `online` / `offline` / `online_if_uncached`
+  strategies, a versioned cache envelope (`fetched_at`, `etag`, `catalog`),
+  ETag/304 TTL renewal, and legacy plain-cache compatibility.
 
 ## ✅ Remaining
 
@@ -153,18 +162,16 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
 - OpenCode items reviewed and intentionally not absorbed now: ACP session
   protocol support (overlaps Carina's JSON-RPC/CLI control plane) and broad
   workspace revert checkpoints (requires a separate snapshot policy).
-- OpenAI Codex items reviewed and intentionally not absorbed now: Guardian
-  auto-approval reviewer, execpolicy amendment DSL, turn net-diff tracker,
-  Codex's narrower provider manager, and ChatGPT/cloud app-server coupling. The
-  first three are useful but require standalone policy/UX review; the latter two
-  do not fit the current local-first Carina boundary.
+- OpenAI Codex items still queued for separate absorption: Nebutra Risk Review
+  for approvals, execpolicy-style prefix overlays with justifications, and
+  turn-level net diff. ChatGPT/cloud app-server coupling remains intentionally
+  outside Carina; multi-endpoint identity/sync work should use Nebutra
+  (云毓智能) boundaries.
 
 ## Test status
-Current verification for this update: **Go: 189 tests across 17 packages**
-(`go test ./go/... ./apps/carina-cli`) plus targeted race coverage
-(`go test -race ./go/daemon ./apps/carina-cli`, 103 tests across 2 packages).
-All Go app entrypoints also compile/test (`go test ./apps/...`, 3 tests across
-4 packages).
-The JSON-RPC registry was syntax-checked with `jq empty
-protocol/jsonrpc/methods.json`. This change touched Go control-plane, CLI, and
-docs only; Rust and Zig were not rebuilt in this update.
+Current verification for this update: full Go coverage
+(`go test ./go/... ./apps/carina-cli`, 194 tests across 17 packages), targeted
+race coverage (`go test -race ./go/provider ./go/daemon ./apps/carina-cli`, 112
+tests across 3 packages), and all Go app entrypoints (`go test ./apps/...`, 3
+tests across 4 packages). This update touched Go control-plane, provider
+catalog, CLI, and docs only; Rust and Zig were not rebuilt.

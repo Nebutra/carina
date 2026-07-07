@@ -65,21 +65,23 @@ type providerQuirk struct {
 	Body    map[string]json.RawMessage
 }
 
-func loadRuntimeProviderCatalog() provider.Catalog {
+func loadRuntimeProviderCatalog(offline bool) provider.Catalog {
 	cachePath, err := provider.DefaultCachePath()
 	if err != nil {
 		return provider.Seed()
 	}
-	cat, err := provider.Load(provider.Options{CachePath: cachePath, ModelsURL: os.Getenv("CARINA_MODELS_URL")})
-	if err != nil || len(cat) == 0 {
-		return provider.Seed()
+	strategy := provider.RefreshOnlineIfUncached
+	if offline {
+		strategy = provider.RefreshOffline
 	}
 	if os.Getenv("CARINA_PROVIDER_REFRESH") == "1" || os.Getenv("CARINA_PROVIDER_REFRESH") == "true" {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if refreshed, err := provider.Refresh(ctx, provider.Options{CachePath: cachePath, ModelsURL: os.Getenv("CARINA_MODELS_URL")}); err == nil {
-			return refreshed
-		}
+		strategy = provider.RefreshOnline
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cat, err := provider.LoadWithStrategy(ctx, provider.Options{CachePath: cachePath, ModelsURL: os.Getenv("CARINA_MODELS_URL")}, strategy)
+	if err != nil || len(cat) == 0 {
+		return provider.Seed()
 	}
 	return cat
 }
