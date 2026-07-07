@@ -45,6 +45,21 @@ type commandProjection struct {
 	stderr []string
 }
 
+type patchProjection struct {
+	patchID         string
+	taskID          string
+	proposedAt      string
+	completedAt     string
+	affectedFiles   []string
+	reason          string
+	applied         bool
+	failed          bool
+	rolledBack      bool
+	error           string
+	newHash         string
+	rollbackPointer string
+}
+
 func (d *Daemon) handleSessionItems(params json.RawMessage) (any, error) {
 	id, err := sessionID(params)
 	if err != nil {
@@ -76,6 +91,9 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 	seenTurns := map[string]bool{}
 	openByID := map[string]*commandProjection{}
 	openByTask := map[string][]*commandProjection{}
+	patches := map[string]*patchProjection{}
+	patchesByTask := map[string][]string{}
+	emittedDiff := map[string]bool{}
 
 	for i, ev := range events {
 		if sessionID == "" {
@@ -154,12 +172,16 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			openByTask[ev.TaskID] = removeCommand(openByTask[ev.TaskID], cmd)
 
 		case "PatchProposed":
+			trackPatchProjection(patches, patchesByTask, ev)
 			out = append(out, fileChangeEvent(sessionID, ev, fallbackItemID("file", ev, i), "proposed"))
 		case "PatchApplied":
+			trackPatchProjection(patches, patchesByTask, ev)
 			out = append(out, fileChangeEvent(sessionID, ev, fallbackItemID("file", ev, i), "applied"))
 		case "PatchFailed":
+			trackPatchProjection(patches, patchesByTask, ev)
 			out = append(out, fileChangeEvent(sessionID, ev, fallbackItemID("file", ev, i), "failed"))
 		case "RollbackCompleted":
+			trackPatchProjection(patches, patchesByTask, ev)
 			out = append(out, fileChangeEvent(sessionID, ev, fallbackItemID("file", ev, i), "rolled_back"))
 		case "PolicyViolation":
 			item := &SessionItem{
@@ -181,8 +203,10 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 				case "risk_review":
 					out = append(out, riskReviewEvent(sessionID, ev, fallbackItemID("risk", ev, i)))
 				case "completed":
+					out = appendTurnNetDiff(out, sessionID, ev, patches, patchesByTask, emittedDiff)
 					out = append(out, turnEvent("turn.completed", sessionID, ev, copyMap(ev.Payload)))
 				case "degraded", "failed", "cancelled":
+					out = appendTurnNetDiff(out, sessionID, ev, patches, patchesByTask, emittedDiff)
 					out = append(out, turnEvent("turn.failed", sessionID, ev, copyMap(ev.Payload)))
 				}
 			}
@@ -223,6 +247,121 @@ func fileChangeEvent(sessionID string, ev itemAuditEvent, id, status string) Ses
 		StartedAt:   ev.Timestamp,
 		CompletedAt: ev.Timestamp,
 		Details:     copyMap(ev.Payload),
+	}
+	return itemEvent("item.completed", sessionID, ev, item)
+}
+
+func trackPatchProjection(patches map[string]*patchProjection, byTask map[string][]string, ev itemAuditEvent) {
+	patchID := stringField(ev.Payload, "patch_id")
+	if patchID == "" {
+		return
+	}
+	p := patches[patchID]
+	if p == nil {
+		p = &patchProjection{patchID: patchID}
+		patches[patchID] = p
+	}
+	if ev.TaskID != "" && p.taskID == "" {
+		p.taskID = ev.TaskID
+		byTask[ev.TaskID] = appendUnique(byTask[ev.TaskID], patchID)
+	}
+	switch ev.Type {
+	case "PatchProposed":
+		p.proposedAt = ev.Timestamp
+		p.reason = stringField(ev.Payload, "reason")
+		p.affectedFiles = stringSliceField(ev.Payload, "affected_files")
+	case "PatchApplied":
+		p.applied = true
+		p.completedAt = ev.Timestamp
+		p.newHash = stringField(ev.Payload, "new_hash")
+		p.rollbackPointer = stringField(ev.Payload, "rollback_pointer")
+	case "PatchFailed":
+		p.failed = true
+		p.completedAt = ev.Timestamp
+		p.error = stringField(ev.Payload, "error")
+	case "RollbackCompleted":
+		p.rolledBack = true
+		p.completedAt = ev.Timestamp
+	}
+}
+
+func appendTurnNetDiff(out []SessionItemEvent, sessionID string, ev itemAuditEvent, patches map[string]*patchProjection, byTask map[string][]string, emitted map[string]bool) []SessionItemEvent {
+	taskID := ev.TaskID
+	if taskID == "" || emitted[taskID] {
+		return out
+	}
+	var list []*patchProjection
+	for _, patchID := range byTask[taskID] {
+		if p := patches[patchID]; p != nil && p.hasDiffSignal() {
+			list = append(list, p)
+		}
+	}
+	if len(list) == 0 {
+		return out
+	}
+	emitted[taskID] = true
+	return append(out, turnNetDiffEvent(sessionID, ev, list))
+}
+
+func (p *patchProjection) hasDiffSignal() bool {
+	return p.applied || p.failed || p.rolledBack
+}
+
+func turnNetDiffEvent(sessionID string, ev itemAuditEvent, patches []*patchProjection) SessionItemEvent {
+	var activeFiles []string
+	var revertedFiles []string
+	var failedFiles []string
+	patchDetails := make([]map[string]any, 0, len(patches))
+	status := "completed"
+	for _, p := range patches {
+		patchStatus := "proposed"
+		switch {
+		case p.rolledBack:
+			patchStatus = "reverted"
+			revertedFiles = appendUniqueStrings(revertedFiles, p.affectedFiles...)
+		case p.failed:
+			patchStatus = "failed"
+			failedFiles = appendUniqueStrings(failedFiles, p.affectedFiles...)
+			if len(activeFiles) == 0 {
+				status = "failed"
+			}
+		case p.applied:
+			patchStatus = "applied"
+			activeFiles = appendUniqueStrings(activeFiles, p.affectedFiles...)
+		}
+		detail := map[string]any{
+			"patch_id":       p.patchID,
+			"status":         patchStatus,
+			"affected_files": append([]string{}, p.affectedFiles...),
+		}
+		if p.reason != "" {
+			detail["reason"] = p.reason
+		}
+		if p.newHash != "" {
+			detail["new_hash"] = p.newHash
+		}
+		if p.rollbackPointer != "" {
+			detail["rollback_pointer"] = p.rollbackPointer
+		}
+		if p.error != "" {
+			detail["error"] = p.error
+		}
+		patchDetails = append(patchDetails, detail)
+	}
+	item := &SessionItem{
+		ID:          "diff_" + ev.TaskID,
+		Type:        "turn_net_diff",
+		Status:      status,
+		TaskID:      ev.TaskID,
+		StartedAt:   ev.Timestamp,
+		CompletedAt: ev.Timestamp,
+		Details: map[string]any{
+			"patch_count":    len(patches),
+			"active_files":   activeFiles,
+			"reverted_files": revertedFiles,
+			"failed_files":   failedFiles,
+			"patches":        patchDetails,
+		},
 	}
 	return itemEvent("item.completed", sessionID, ev, item)
 }
@@ -360,6 +499,46 @@ func stringField(m map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+func stringSliceField(m map[string]any, key string) []string {
+	if m == nil {
+		return nil
+	}
+	v, ok := m[key]
+	if !ok {
+		return nil
+	}
+	switch list := v.(type) {
+	case []string:
+		return append([]string{}, list...)
+	case []any:
+		out := make([]string, 0, len(list))
+		for _, item := range list {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func appendUnique(list []string, v string) []string {
+	for _, existing := range list {
+		if existing == v {
+			return list
+		}
+	}
+	return append(list, v)
+}
+
+func appendUniqueStrings(list []string, values ...string) []string {
+	for _, v := range values {
+		list = appendUnique(list, v)
+	}
+	return list
 }
 
 func copySelected(dst map[string]any, src map[string]any, keys ...string) {

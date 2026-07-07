@@ -158,6 +158,91 @@ func TestProjectSessionItemsRiskReview(t *testing.T) {
 	}
 }
 
+func TestProjectSessionItemsTurnNetDiff(t *testing.T) {
+	events := []itemAuditEvent{
+		{
+			EventID:   "evt_1",
+			SessionID: "sess_1",
+			TaskID:    "task_1",
+			Type:      "TaskCreated",
+			Timestamp: "2026-07-07T00:00:00Z",
+			Payload:   map[string]any{"status": "submitted", "prompt": "edit"},
+		},
+		{
+			EventID:   "evt_2",
+			SessionID: "sess_1",
+			TaskID:    "task_1",
+			Type:      "PatchProposed",
+			Timestamp: "2026-07-07T00:00:01Z",
+			Payload: map[string]any{
+				"patch_id":       "patch_1",
+				"affected_files": []any{"a.go", "b.go"},
+				"reason":         "main edit",
+			},
+		},
+		{
+			EventID:   "evt_3",
+			SessionID: "sess_1",
+			Type:      "PatchApplied",
+			Timestamp: "2026-07-07T00:00:02Z",
+			Payload: map[string]any{
+				"patch_id":         "patch_1",
+				"new_hash":         "hash_1",
+				"rollback_pointer": "rb_1",
+			},
+		},
+		{
+			EventID:   "evt_4",
+			SessionID: "sess_1",
+			TaskID:    "task_1",
+			Type:      "PatchProposed",
+			Timestamp: "2026-07-07T00:00:03Z",
+			Payload: map[string]any{
+				"patch_id":       "patch_2",
+				"affected_files": []any{"scratch.txt"},
+				"reason":         "temporary edit",
+			},
+		},
+		{
+			EventID:   "evt_5",
+			SessionID: "sess_1",
+			Type:      "PatchApplied",
+			Timestamp: "2026-07-07T00:00:04Z",
+			Payload:   map[string]any{"patch_id": "patch_2", "rollback_pointer": "rb_2"},
+		},
+		{
+			EventID:   "evt_6",
+			SessionID: "sess_1",
+			Type:      "RollbackCompleted",
+			Timestamp: "2026-07-07T00:00:05Z",
+			Payload:   map[string]any{"patch_id": "patch_2"},
+		},
+		{
+			EventID:   "evt_7",
+			SessionID: "sess_1",
+			TaskID:    "task_1",
+			Type:      "TaskCreated",
+			Timestamp: "2026-07-07T00:00:06Z",
+			Payload:   map[string]any{"status": "completed", "summary": "done"},
+		},
+	}
+
+	items := projectSessionItems("sess_1", events)
+	diff := findItem(t, items, "item.completed", "turn_net_diff")
+	if diff.ID != "diff_task_1" || diff.Status != "completed" {
+		t.Fatalf("unexpected diff item: %+v", diff)
+	}
+	if diff.Details["patch_count"] != 2 {
+		t.Fatalf("unexpected patch count: %+v", diff.Details)
+	}
+	if !hasString(diff.Details["active_files"], "a.go") || !hasString(diff.Details["active_files"], "b.go") {
+		t.Fatalf("active files missing: %+v", diff.Details)
+	}
+	if !hasString(diff.Details["reverted_files"], "scratch.txt") {
+		t.Fatalf("reverted file missing: %+v", diff.Details)
+	}
+}
+
 func assertEventType(t *testing.T, events []SessionItemEvent, typ string) {
 	t.Helper()
 	for _, ev := range events {
@@ -177,4 +262,22 @@ func findItem(t *testing.T, events []SessionItemEvent, eventType, itemType strin
 	}
 	t.Fatalf("missing %s item for %s in %+v", itemType, eventType, events)
 	return nil
+}
+
+func hasString(v any, want string) bool {
+	switch list := v.(type) {
+	case []string:
+		for _, s := range list {
+			if s == want {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range list {
+			if item == want {
+				return true
+			}
+		}
+	}
+	return false
 }
