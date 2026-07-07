@@ -3,6 +3,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Nebutra/carina/go/scheduler"
@@ -58,6 +59,33 @@ func TestGoalApprovalMemory(t *testing.T) {
 	dec2, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install b", "")
 	if dec2.Decision != "allowed" {
 		t.Fatalf("cached approval should auto-allow, got %s (%s)", dec2.Decision, dec2.Reason)
+	}
+}
+
+func TestGoalApprovalOverlayJustification(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
+
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install a", "")
+	if dec.Decision != "requires_approval" {
+		t.Fatalf("expected approval prompt, got %s", dec.Decision)
+	}
+	if _, err := d.kern.ApproveForSessionWithJustification(sess.SessionID, dec.DecisionID, "user", "needed for dependency setup"); err != nil {
+		t.Fatal(err)
+	}
+	dec2, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install b", "")
+	if dec2.Decision != "allowed" {
+		t.Fatalf("overlay should auto-allow, got %s (%s)", dec2.Decision, dec2.Reason)
+	}
+	raw, err := d.kern.ReadEvents(sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(raw)
+	if !strings.Contains(log, "approval_overlay_created") || !strings.Contains(log, "needed for dependency setup") {
+		t.Fatalf("overlay justification missing from audit log: %s", log)
 	}
 }
 

@@ -297,13 +297,14 @@ impl Service {
         let approver = p.get("approver").and_then(Value::as_str).unwrap_or("user").to_string();
         let role = p.get("role").and_then(Value::as_str).map(String::from);
         let for_session = p.get("for_session").and_then(Value::as_bool).unwrap_or(false);
+        let justification = p.get("justification").and_then(Value::as_str).unwrap_or("approved for session");
         let ctx = self.ctx(p)?;
         let pending = ctx
             .pending
             .remove(&decision_id)
             .ok_or_else(|| format!("no pending decision {decision_id}"))?;
         let approved = if for_session && role.is_none() {
-            ctx.kernel.approve_for_session(&pending, &approver).map_err(err_str)?
+            ctx.kernel.approve_for_session_with_justification(&pending, &approver, justification).map_err(err_str)?
         } else {
             ctx.kernel.approve_as(&pending, &approver, role.as_deref()).map_err(err_str)?
         };

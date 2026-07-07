@@ -11,7 +11,7 @@ pub use secret::SecretBroker;
 use carina_audit::{AuditError, AuditLog, Event, EventType};
 use carina_policy::{ApprovalMode, Capability, CapabilityRequest, Decision, PolicyBundle, PolicyEngine, Profile, Verdict};
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub use carina_audit;
@@ -71,9 +71,9 @@ pub struct Kernel {
     profile: Profile,
     bundle: Option<PolicyBundle>,
     approval_mode: ApprovalMode,
-    /// Approval memory (Codex ApprovedForSession): capability|resource-prefix
-    /// keys that were approved for the whole session, to cut approval fatigue.
-    approval_cache: RefCell<HashSet<String>>,
+    /// Approval overlays (Codex ApprovedForSession): capability|resource-prefix
+    /// rules approved for the whole session, with an auditable rationale.
+    approval_overlays: RefCell<HashMap<String, ApprovalOverlay>>,
     audit: AuditLog,
     secrets: SecretBroker,
     verifier: carina_plugin_runtime::SignatureVerifier,
@@ -87,6 +87,17 @@ pub struct Kernel {
 pub struct ApprovalPolicy {
     /// risk level (inclusive) -> required role
     pub required_role_at_risk: Vec<(u8, String)>,
+}
+
+#[derive(Debug, Clone)]
+struct ApprovalOverlay {
+    overlay_id: String,
+    capability: Capability,
+    resource_prefix: String,
+    source_decision_id: String,
+    approver: String,
+    justification: String,
+    created_at_ms: u128,
 }
 
 impl ApprovalPolicy {
@@ -130,7 +141,7 @@ impl Kernel {
             profile,
             bundle: None,
             approval_mode: ApprovalMode::default(),
-            approval_cache: RefCell::new(HashSet::new()),
+            approval_overlays: RefCell::new(HashMap::new()),
             audit,
             secrets: SecretBroker::new(),
             verifier: carina_plugin_runtime::SignatureVerifier::new(),
@@ -144,9 +155,14 @@ impl Kernel {
         self.approval_mode = mode;
     }
 
+    fn resource_prefix(resource: &str) -> String {
+        let prefix = resource.split_whitespace().next().unwrap_or(resource);
+        prefix.to_string()
+    }
+
     fn cache_key(cap: Capability, resource: &str) -> String {
         // Cache by capability + a coarse resource prefix (first path/word).
-        let prefix = resource.split_whitespace().next().unwrap_or(resource);
+        let prefix = Self::resource_prefix(resource);
         format!("{cap:?}|{prefix}")
     }
 
@@ -241,12 +257,18 @@ impl Kernel {
             PolicyEngine::evaluate_with_bundle(&self.profile, self.bundle.as_ref(), root, &req);
         // Apply the orthogonal approval-mode axis (Codex two-axis model).
         decision = carina_policy::apply_approval_mode(self.approval_mode, decision);
-        // Approval memory: a prior ApprovedForSession auto-satisfies.
+        // Approval overlay: a prior ApprovedForSession auto-satisfies only
+        // after policy reached requires_approval. Denials are never rescued.
+        let mut overlay_hit: Option<ApprovalOverlay> = None;
         if decision.decision == Verdict::RequiresApproval {
             let key = Self::cache_key(decision.capability, &decision.resource);
-            if self.approval_cache.borrow().contains(&key) {
+            if let Some(overlay) = self.approval_overlays.borrow().get(&key).cloned() {
                 decision.decision = Verdict::Allowed;
-                decision.reason = "approved for session (cached)".into();
+                decision.reason = format!(
+                    "approved by session overlay {}: {}",
+                    overlay.overlay_id, overlay.justification
+                );
+                overlay_hit = Some(overlay);
             }
         }
 
@@ -255,13 +277,24 @@ impl Kernel {
             Verdict::RequiresApproval => EventType::ToolRequested,
             Verdict::Denied => EventType::PolicyViolation,
         };
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "capability": decision.capability,
             "resource": decision.resource,
             "decision": decision.decision,
             "reason": decision.reason,
             "policy_id": decision.policy_id,
         });
+        if let Some(overlay) = overlay_hit {
+            payload["approval_overlay"] = serde_json::json!({
+                "overlay_id": overlay.overlay_id,
+                "capability": overlay.capability,
+                "resource_prefix": overlay.resource_prefix,
+                "source_decision_id": overlay.source_decision_id,
+                "approver": overlay.approver,
+                "justification": overlay.justification,
+                "created_at_ms": overlay.created_at_ms.to_string(),
+            });
+        }
         let mut event = Event::new(&self.session_id, event_type, payload)
             .with_decision(&decision.decision_id);
         if let Some(task_id) = &req.task_id {
@@ -292,9 +325,51 @@ impl Kernel {
     /// the same capability+resource-prefix auto-satisfy (Codex
     /// ApprovedForSession — cuts approval fatigue on long tasks).
     pub fn approve_for_session(&self, decision: &Decision, approver: &str) -> Result<Decision, KernelError> {
+        self.approve_for_session_with_justification(decision, approver, "approved for session")
+    }
+
+    /// Approves and remembers for the whole session with an explicit
+    /// justification. The overlay can only satisfy future requires_approval
+    /// decisions; denied requests remain denied.
+    pub fn approve_for_session_with_justification(
+        &self,
+        decision: &Decision,
+        approver: &str,
+        justification: &str,
+    ) -> Result<Decision, KernelError> {
         let key = Self::cache_key(decision.capability, &decision.resource);
-        self.approval_cache.borrow_mut().insert(key);
-        self.approve_as(decision, approver, None)
+        let overlay = ApprovalOverlay {
+            overlay_id: new_overlay_id(),
+            capability: decision.capability,
+            resource_prefix: Self::resource_prefix(&decision.resource),
+            source_decision_id: decision.decision_id.clone(),
+            approver: approver.to_string(),
+            justification: if justification.trim().is_empty() {
+                "approved for session".into()
+            } else {
+                justification.trim().to_string()
+            },
+            created_at_ms: now_ms(),
+        };
+        self.approval_overlays.borrow_mut().insert(key, overlay.clone());
+        let approved = self.approve_as(decision, approver, None)?;
+        let event = Event::new(
+            &self.session_id,
+            EventType::ToolApproved,
+            serde_json::json!({
+                "status": "approval_overlay_created",
+                "overlay_id": overlay.overlay_id,
+                "capability": overlay.capability,
+                "resource_prefix": overlay.resource_prefix,
+                "source_decision_id": overlay.source_decision_id,
+                "approver": overlay.approver,
+                "justification": overlay.justification,
+                "created_at_ms": overlay.created_at_ms.to_string(),
+            }),
+        )
+        .with_decision(&decision.decision_id);
+        self.audit.append(&event)?;
+        Ok(approved)
     }
 
     /// Role-aware approval (PRD §5 Phase 5). If the approval policy requires
@@ -468,6 +543,17 @@ impl Kernel {
     }
 }
 
+fn now_ms() -> u128 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()
+}
+
+fn new_overlay_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    format!("approval_overlay_{nanos:x}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,6 +656,81 @@ mod tests {
 
         // approve + deny each appended an event beyond the original request.
         assert!(kernel.audit().read_all().unwrap().len() >= 3);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn approval_overlay_records_justification_and_auto_satisfies() {
+        let dir = tmp("overlay");
+        let kernel = Kernel::new("sess_overlay", "/tmp/ws", "safe-edit", &dir).unwrap();
+        let first = kernel
+            .request(CapabilityRequest {
+                capability: Capability::CommandExec,
+                requested_by: carina_policy::Principal::Agent,
+                resource: "npm install a".into(),
+                session_id: "sess_overlay".into(),
+                task_id: None,
+            })
+            .unwrap();
+        assert_eq!(first.decision, Verdict::RequiresApproval);
+
+        let approved = kernel
+            .approve_for_session_with_justification(&first, "alice", "task needs npm dependency installs")
+            .unwrap();
+        assert_eq!(approved.decision, Verdict::Allowed);
+
+        let second = kernel
+            .request(CapabilityRequest {
+                capability: Capability::CommandExec,
+                requested_by: carina_policy::Principal::Agent,
+                resource: "npm install b".into(),
+                session_id: "sess_overlay".into(),
+                task_id: None,
+            })
+            .unwrap();
+        assert_eq!(second.decision, Verdict::Allowed);
+        assert!(second.reason.contains("task needs npm dependency installs"));
+
+        let events = kernel.audit().read_all().unwrap();
+        assert!(events.iter().any(|e| {
+            e.payload["status"] == "approval_overlay_created"
+                && e.payload["justification"] == "task needs npm dependency installs"
+        }));
+        assert!(events.iter().any(|e| {
+            e.payload["approval_overlay"]["resource_prefix"] == "npm"
+                && e.payload["approval_overlay"]["source_decision_id"] == first.decision_id
+        }));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn approval_overlay_never_rescues_denied_decision() {
+        let dir = tmp("overlay-deny");
+        let kernel = Kernel::new("sess_overlay_deny", "/tmp/ws", "safe-edit", &dir).unwrap();
+        let first = kernel
+            .request(CapabilityRequest {
+                capability: Capability::CommandExec,
+                requested_by: carina_policy::Principal::Agent,
+                resource: "rm old.txt".into(),
+                session_id: "sess_overlay_deny".into(),
+                task_id: None,
+            })
+            .unwrap();
+        assert_eq!(first.decision, Verdict::RequiresApproval);
+        kernel
+            .approve_for_session_with_justification(&first, "alice", "allow simple rm during cleanup")
+            .unwrap();
+
+        let destructive = kernel
+            .request(CapabilityRequest {
+                capability: Capability::CommandExec,
+                requested_by: carina_policy::Principal::Agent,
+                resource: "rm -rf /".into(),
+                session_id: "sess_overlay_deny".into(),
+                task_id: None,
+            })
+            .unwrap();
+        assert_eq!(destructive.decision, Verdict::Denied);
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -198,9 +198,15 @@ func (s *Service) AddDir(sessionID, path string) error {
 // ApproveForSession approves and remembers for the whole session, so
 // later requests for the same capability+resource-prefix auto-satisfy.
 func (s *Service) ApproveForSession(sessionID, decisionID, approver string) (*Decision, error) {
+	return s.ApproveForSessionWithJustification(sessionID, decisionID, approver, "approved for session")
+}
+
+// ApproveForSessionWithJustification approves and installs an auditable
+// approval overlay for future matching requires_approval decisions.
+func (s *Service) ApproveForSessionWithJustification(sessionID, decisionID, approver, justification string) (*Decision, error) {
 	var d Decision
 	err := s.call("kernel.approve", map[string]any{
-		"session_id": sessionID, "decision_id": decisionID, "approver": approver, "for_session": true,
+		"session_id": sessionID, "decision_id": decisionID, "approver": approver, "for_session": true, "justification": justification,
 	}, &d)
 	return &d, err
 }
