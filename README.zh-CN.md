@@ -1,11 +1,23 @@
+<div align="center">
+
+<img src="docs/assets/carina-hero.png" alt="Nebutra Carina" width="100%" />
+
 # Nebutra Carina
 
-**Carina 是一个本地优先的 Agent Runtime，用来在明确的权限、审计与回滚边界内运行编程智能体。**
+**本地优先的 Agent Runtime，用来在明确的权限、审计与回滚边界内运行编程智能体。**
+
+[![status](https://img.shields.io/badge/status-alpha-0033FE)](#当前仓库状态)
+[![build](https://img.shields.io/badge/build-source%20first-0B7285)](#从源码快速开始)
+[![runtime](https://img.shields.io/badge/runtime-local--first-0BF1C3)](#carina-是什么)
+[![audit](https://img.shields.io/badge/audit-hash--chained-6D28D9)](#核心概念)
+[![license](https://img.shields.io/badge/license-Apache--2.0-informational)](LICENSE)
+
+[English](README.md) · **简体中文** · [日本語](README.ja.md)
+
+</div>
 
 状态：**alpha**。本仓库已经实现核心执行与约束机制，但打包发布、公开安装渠道和部分 UX
 仍在早期阶段。CLI 细节和配置格式仍可能变化。
-
-[English](README.md) · **简体中文** · [日本語](README.ja.md)
 
 ---
 

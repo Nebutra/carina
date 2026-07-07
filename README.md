@@ -1,13 +1,25 @@
+<div align="center">
+
+<img src="docs/assets/carina-hero.png" alt="Nebutra Carina" width="100%" />
+
 # Nebutra Carina
 
-**Carina is a local-first runtime for running coding agents behind explicit
-permission, audit, and rollback boundaries.**
+**A local-first runtime for running coding agents behind explicit permission,
+audit, and rollback boundaries.**
+
+[![status](https://img.shields.io/badge/status-alpha-0033FE)](#current-repository-state)
+[![build](https://img.shields.io/badge/build-source%20first-0B7285)](#quickstart-from-source)
+[![runtime](https://img.shields.io/badge/runtime-local--first-0BF1C3)](#what-carina-is)
+[![audit](https://img.shields.io/badge/audit-hash--chained-6D28D9)](#core-concepts)
+[![license](https://img.shields.io/badge/license-Apache--2.0-informational)](LICENSE)
+
+**English** · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
+
+</div>
 
 Status: **alpha**. The enforcement core is implemented in this repository, but
 packaging, public release infrastructure, and some UX surfaces are still early.
 Expect CLI details and configuration formats to change.
-
-**English** · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
 
 ---
 

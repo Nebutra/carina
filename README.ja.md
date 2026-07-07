@@ -1,14 +1,26 @@
+<div align="center">
+
+<img src="docs/assets/carina-hero.png" alt="Nebutra Carina" width="100%" />
+
 # Nebutra Carina
 
-**Carina は、明示的な権限・監査・ロールバック境界の内側で
+**明示的な権限・監査・ロールバック境界の内側で
 コーディングエージェントを実行するための、ローカルファーストな
-Agent Runtime です。**
+Agent Runtime。**
+
+[![status](https://img.shields.io/badge/status-alpha-0033FE)](#現在のリポジトリ状態)
+[![build](https://img.shields.io/badge/build-source%20first-0B7285)](#ソースからのクイックスタート)
+[![runtime](https://img.shields.io/badge/runtime-local--first-0BF1C3)](#carina-とは)
+[![audit](https://img.shields.io/badge/audit-hash--chained-6D28D9)](#コア概念)
+[![license](https://img.shields.io/badge/license-Apache--2.0-informational)](LICENSE)
+
+[English](README.md) · [简体中文](README.zh-CN.md) · **日本語**
+
+</div>
 
 状態：**alpha**。このリポジトリには中核となる実行・制御機構が実装されていますが、
 パッケージング、公開リリース基盤、一部の UX はまだ初期段階です。CLI の詳細や設定形式は
 今後変わる可能性があります。
-
-[English](README.md) · [简体中文](README.zh-CN.md) · **日本語**
 
 ---
 
