@@ -149,12 +149,17 @@ models.dev first. Runtime adapters currently cover Anthropic Messages, OpenAI
 Responses, OpenAI-compatible chat providers from the catalog, OpenRouter, and
 Google Gemini. Cloud identity providers such as Bedrock, Azure OpenAI, and
 Vertex need separate region/project credential wiring.
+Provider-specific headers and models.dev experimental modes are applied by the
+runtime adapter layer, so entries such as `provider/model-mode` can carry their
+catalog request overrides. Provider HTTP retries also honor `Retry-After` when
+the upstream sends it.
 
 Pick a runtime model explicitly when needed:
 
 ```bash
 CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
 ./bin/carina run --model openrouter/anthropic/claude-sonnet-4-5 "fix the failing tests"
+./bin/carina run --model openrouter/openai/gpt-5-fast "use the catalog fast mode"
 ```
 
 Run a task in the current repository:

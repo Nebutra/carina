@@ -121,12 +121,16 @@ daemon 启动时读取本地缓存的 catalog。如果希望启动前先刷新 m
 OpenAI Responses、catalog 中的 OpenAI-compatible chat provider、OpenRouter 和
 Google Gemini。Bedrock、Azure OpenAI、Vertex 这类云身份 provider 还需要单独的
 region/project/credential chain 接线。
+runtime adapter 会应用 provider-specific headers 和 models.dev experimental modes，
+因此 `provider/model-mode` 这类条目可以携带 catalog 里的请求覆盖。上游返回
+`Retry-After` 时，provider HTTP retry 也会尊重它。
 
 需要指定运行模型时，可以显式传 `provider/model`：
 
 ```bash
 CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
 ./bin/carina run --model openrouter/anthropic/claude-sonnet-4-5 "fix the failing tests"
+./bin/carina run --model openrouter/openai/gpt-5-fast "use the catalog fast mode"
 ```
 
 在当前仓库运行任务：

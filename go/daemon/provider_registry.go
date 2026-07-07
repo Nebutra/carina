@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"os"
 	"regexp"
@@ -57,6 +58,11 @@ var openAICompatibleProviderIDs = map[string]bool{
 	"perplexity": true,
 	"togetherai": true,
 	"xai":        true,
+}
+
+type providerQuirk struct {
+	Headers map[string]string
+	Body    map[string]json.RawMessage
 }
 
 func loadRuntimeProviderCatalog() provider.Catalog {
@@ -147,25 +153,146 @@ func buildRuntimeProvider(info provider.Info, store *auth.Store) modelrouter.Pro
 	model := runtimeDefaultModel(info)
 	chain := auth.ProviderChain(id, info.Env, store, nil)
 	noAuth := isLocalEndpoint(baseURL)
+	quirk := runtimeProviderQuirk(id, baseURL)
+	overrides := runtimeModelOverrides(info)
 	switch protocol {
 	case protocolAnthropic:
-		return newAnthropicCatalogProvider(id, baseURL, model, chain)
+		return newAnthropicCatalogProvider(id, baseURL, model, chain, quirk.Headers, quirk.Body, overrides)
 	case protocolGemini:
 		return &geminiProvider{providerBase: providerBase{
 			id: id, baseURL: baseURL, defaultModel: model, auth: chain, noAuth: noAuth,
+			headers: quirk.Headers, body: quirk.Body, overrides: overrides,
 		}}
 	case protocolOpenAIResponses, protocolOpenAIChat:
-		headers := map[string]string{}
-		if id == "openrouter" {
-			headers["HTTP-Referer"] = "https://github.com/Nebutra/carina"
-			headers["X-Title"] = "Carina"
-		}
 		return &openAIProvider{providerBase: providerBase{
-			id: id, baseURL: baseURL, defaultModel: model, auth: chain, noAuth: noAuth, headers: headers,
+			id: id, baseURL: baseURL, defaultModel: model, auth: chain, noAuth: noAuth,
+			headers: quirk.Headers, body: quirk.Body, overrides: overrides,
 		}, responses: protocol == protocolOpenAIResponses}
 	default:
 		return nil
 	}
+}
+
+func runtimeProviderQuirk(id, baseURL string) providerQuirk {
+	headers := map[string]string{}
+	body := map[string]json.RawMessage{}
+	setHeader := func(k, v string) {
+		headers[k] = v
+	}
+	switch id {
+	case "openrouter":
+		setHeader("HTTP-Referer", "https://github.com/Nebutra/carina")
+		setHeader("X-Title", "Carina")
+	case "llmgateway":
+		setHeader("HTTP-Referer", "https://github.com/Nebutra/carina")
+		setHeader("X-Title", "Carina")
+		setHeader("X-Source", "Carina")
+	case "nvidia":
+		setHeader("HTTP-Referer", "https://github.com/Nebutra/carina")
+		setHeader("X-Title", "Carina")
+		setHeader("X-BILLING-INVOKE-ORIGIN", "Carina")
+	case "vercel":
+		setHeader("http-referer", "https://github.com/Nebutra/carina")
+		setHeader("x-title", "Carina")
+	case "zenmux", "kilo":
+		setHeader("HTTP-Referer", "https://github.com/Nebutra/carina")
+		setHeader("X-Title", "Carina")
+	}
+	if strings.Contains(baseURL, "openrouter.ai") {
+		setHeader("HTTP-Referer", "https://github.com/Nebutra/carina")
+		setHeader("X-Title", "Carina")
+	}
+	return providerQuirk{Headers: headers, Body: body}
+}
+
+func runtimeModelOverrides(info provider.Info) map[string]requestOverride {
+	out := map[string]requestOverride{}
+	for id, model := range info.Models {
+		modelID := strings.TrimSpace(model.ID)
+		if modelID == "" {
+			modelID = id
+		}
+		for mode, settings := range model.ExperimentalModes() {
+			mode = strings.TrimSpace(mode)
+			if mode == "" {
+				continue
+			}
+			alias := modelID + "-" + mode
+			ro := requestOverride{Model: modelID}
+			if settings.Provider != nil {
+				ro.Headers = cloneStringMap(settings.Provider.Headers)
+				ro.Body = cloneRawMap(settings.Provider.Body)
+			}
+			out[alias] = mergeOverride(out[alias], ro)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func mergeOverride(base, next requestOverride) requestOverride {
+	if strings.TrimSpace(next.Model) != "" {
+		base.Model = next.Model
+	}
+	if len(next.Headers) > 0 {
+		base.Headers = mergeStringMaps(base.Headers, next.Headers)
+	}
+	if len(next.Body) > 0 {
+		base.Body = mergeRawMaps(base.Body, next.Body)
+	}
+	return base
+}
+
+func mergeStringMaps(a, b map[string]string) map[string]string {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(a)+len(b))
+	for k, v := range a {
+		out[k] = v
+	}
+	for k, v := range b {
+		out[k] = v
+	}
+	return out
+}
+
+func mergeRawMaps(a, b map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(a)+len(b))
+	for k, v := range a {
+		out[k] = append(json.RawMessage(nil), v...)
+	}
+	for k, v := range b {
+		out[k] = append(json.RawMessage(nil), v...)
+	}
+	return out
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneRawMap(in map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(in))
+	for k, v := range in {
+		out[k] = append(json.RawMessage(nil), v...)
+	}
+	return out
 }
 
 func detectRuntimeProtocol(info provider.Info) runtimeProtocol {
@@ -200,9 +327,48 @@ func runtimeDefaultModel(info provider.Info) string {
 		}
 	}
 	if model := defaultProviderModel[normalizeProviderID(info.ID)]; model != "" {
+		if len(info.Models) == 0 {
+			return model
+		}
+		if _, ok := info.Models[model]; ok {
+			return model
+		}
+		for _, m := range info.Models {
+			if m.ID == model {
+				return model
+			}
+		}
+	}
+	if model := preferredCatalogModel(info); model != "" {
 		return model
 	}
 	return chooseCatalogModel(info.Models)
+}
+
+func preferredCatalogModel(info provider.Info) string {
+	id := normalizeProviderID(info.ID)
+	preferred := []string{}
+	switch id {
+	case "anthropic":
+		preferred = []string{"claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5"}
+	case "openai":
+		preferred = []string{"gpt-5", "gpt-5.2-pro", "gpt-4.1"}
+	case "google":
+		preferred = []string{"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"}
+	case "openrouter":
+		preferred = []string{"openai/gpt-5", "anthropic/claude-sonnet-4.5", "google/gemini-2.5-pro"}
+	}
+	for _, candidate := range preferred {
+		if _, ok := info.Models[candidate]; ok {
+			return candidate
+		}
+		for _, m := range info.Models {
+			if m.ID == candidate {
+				return candidate
+			}
+		}
+	}
+	return ""
 }
 
 func modelEnvCandidates(info provider.Info) []string {
@@ -232,20 +398,100 @@ func chooseCatalogModel(models map[string]provider.Model) string {
 	if len(models) == 0 {
 		return "default"
 	}
-	keys := make([]string, 0, len(models))
+	type scored struct {
+		id    string
+		score int
+	}
+	items := make([]scored, 0, len(models))
 	for id, model := range models {
 		if modelUnsupportedByTextPrompt(id, model) {
 			continue
 		}
-		keys = append(keys, id)
+		items = append(items, scored{id: id, score: modelScore(id, model)})
 	}
-	if len(keys) == 0 {
+	if len(items) == 0 {
 		for id := range models {
-			keys = append(keys, id)
+			items = append(items, scored{id: id})
 		}
 	}
-	sort.Strings(keys)
-	return keys[0]
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].score == items[j].score {
+			return items[i].id < items[j].id
+		}
+		return items[i].score > items[j].score
+	})
+	return items[0].id
+}
+
+func modelScore(id string, model provider.Model) int {
+	score := 0
+	switch strings.ToLower(strings.TrimSpace(model.Status)) {
+	case "", "active":
+		score += 1000
+	case "beta":
+		score += 850
+	case "alpha":
+		score += 650
+	case "deprecated":
+		score -= 10000
+	}
+	if model.Modalities == nil || containsStringFold(model.Modalities.Input, "text") {
+		score += 120
+	}
+	if model.Modalities == nil || containsStringFold(model.Modalities.Output, "text") {
+		score += 160
+	}
+	if model.Reasoning {
+		score += 80
+	}
+	if model.ToolCall {
+		score += 50
+	}
+	if model.Attachment {
+		score += 15
+	}
+	if model.Limit.Context > 0 {
+		score += minInt(model.Limit.Context/8000, 60)
+	}
+	if model.Limit.Output > 0 {
+		score += minInt(model.Limit.Output/4000, 40)
+	}
+	if t, ok := modelReleaseTime(model); ok {
+		score += minInt(int(t.Sub(time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)).Hours()/24/14), 120)
+	}
+	name := strings.ToLower(id + " " + model.Name)
+	for _, marker := range []string{"preview", "experimental", "beta", "alpha"} {
+		if strings.Contains(name, marker) {
+			score -= 25
+		}
+	}
+	if model.Cost != nil {
+		score -= minInt(int(model.Cost.Input+model.Cost.Output), 80)
+	}
+	return score
+}
+
+func modelReleaseTime(model provider.Model) (time.Time, bool) {
+	for _, value := range []string{model.ReleaseDate, model.LastUpdated, model.Knowledge} {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if t, err := time.Parse("2006-01-02", value); err == nil {
+			return t, true
+		}
+		if t, err := time.Parse("2006-01", value); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func modelUnsupportedByTextPrompt(id string, model provider.Model) bool {

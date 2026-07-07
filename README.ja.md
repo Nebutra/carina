@@ -125,12 +125,17 @@ runtime adapter は Anthropic Messages、OpenAI Responses、catalog 内の
 OpenAI-compatible chat provider、OpenRouter、Google Gemini を対象にしています。
 Bedrock、Azure OpenAI、Vertex のような cloud identity provider は、region/project
 credential chain の配線が別途必要です。
+runtime adapter は provider-specific headers と models.dev experimental modes を
+適用します。そのため `provider/model-mode` のような entry は catalog の request
+override を持てます。upstream が `Retry-After` を返す場合、provider HTTP retry も
+それを尊重します。
 
 runtime model を明示する場合は `provider/model` を指定します。
 
 ```bash
 CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
 ./bin/carina run --model openrouter/anthropic/claude-sonnet-4-5 "fix the failing tests"
+./bin/carina run --model openrouter/openai/gpt-5-fast "use the catalog fast mode"
 ```
 
 現在のリポジトリでタスクを実行：

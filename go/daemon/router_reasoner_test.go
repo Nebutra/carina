@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 )
@@ -44,5 +46,12 @@ func TestRouterReasonerRejectsMockFallback(t *testing.T) {
 
 	if _, err := r.Think(context.Background(), "prompt"); err == nil {
 		t.Fatal("router reasoner must not treat mock provider as a real model")
+	}
+}
+
+func TestRetryDelayHonorsWrappedProviderRetryAfter(t *testing.T) {
+	err := fmt.Errorf("router wrapped: %w", providerStatusError{provider: "openai", status: 429, retry: 75 * time.Millisecond})
+	if got := retryDelay(err, 2*time.Second); got != 75*time.Millisecond {
+		t.Fatalf("retry delay = %s", got)
 	}
 }

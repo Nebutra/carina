@@ -26,6 +26,7 @@ type Catalog map[string]Info
 type Info struct {
 	ID     string           `json:"id"`
 	Name   string           `json:"name"`
+	Doc    string           `json:"doc,omitempty"`
 	API    string           `json:"api,omitempty"`
 	Env    []string         `json:"env,omitempty"`
 	NPM    string           `json:"npm,omitempty"`
@@ -35,19 +36,32 @@ type Info struct {
 // Model is a models.dev model entry. Only fields useful to Carina's public
 // listing are modeled here; unknown provider-specific fields are ignored.
 type Model struct {
-	ID          string      `json:"id"`
-	Name        string      `json:"name"`
-	Family      string      `json:"family,omitempty"`
-	ReleaseDate string      `json:"release_date,omitempty"`
-	Limit       ModelLimit  `json:"limit"`
-	Cost        *ModelCost  `json:"cost,omitempty"`
-	Modalities  *Modalities `json:"modalities,omitempty"`
-	Status      string      `json:"status,omitempty"`
-	Provider    *ModelAPI   `json:"provider,omitempty"`
-	Reasoning   bool        `json:"reasoning,omitempty"`
-	ToolCall    bool        `json:"tool_call,omitempty"`
-	Attachment  bool        `json:"attachment,omitempty"`
-	Temperature bool        `json:"temperature,omitempty"`
+	ID               string             `json:"id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description,omitempty"`
+	Family           string             `json:"family,omitempty"`
+	ReleaseDate      string             `json:"release_date,omitempty"`
+	LastUpdated      string             `json:"last_updated,omitempty"`
+	Knowledge        string             `json:"knowledge,omitempty"`
+	Limit            ModelLimit         `json:"limit"`
+	Cost             *ModelCost         `json:"cost,omitempty"`
+	Modalities       *Modalities        `json:"modalities,omitempty"`
+	Status           string             `json:"status,omitempty"`
+	Provider         *ModelAPI          `json:"provider,omitempty"`
+	Experimental     *ModelExperimental `json:"experimental,omitempty"`
+	Reasoning        bool               `json:"reasoning,omitempty"`
+	ReasoningOptions []json.RawMessage  `json:"reasoning_options,omitempty"`
+	ToolCall         bool               `json:"tool_call,omitempty"`
+	Attachment       bool               `json:"attachment,omitempty"`
+	Temperature      bool               `json:"temperature,omitempty"`
+	OpenWeights      bool               `json:"open_weights,omitempty"`
+}
+
+func (m Model) ExperimentalModes() map[string]ModelMode {
+	if m.Experimental == nil {
+		return nil
+	}
+	return m.Experimental.Modes
 }
 
 type ModelLimit struct {
@@ -57,10 +71,32 @@ type ModelLimit struct {
 }
 
 type ModelCost struct {
+	Input           float64         `json:"input"`
+	Output          float64         `json:"output"`
+	CacheRead       float64         `json:"cache_read,omitempty"`
+	CacheWrite      float64         `json:"cache_write,omitempty"`
+	Tiers           []ModelCostTier `json:"tiers,omitempty"`
+	ContextOver200K *ModelCostBase  `json:"context_over_200k,omitempty"`
+}
+
+type ModelCostBase struct {
 	Input      float64 `json:"input"`
 	Output     float64 `json:"output"`
 	CacheRead  float64 `json:"cache_read,omitempty"`
 	CacheWrite float64 `json:"cache_write,omitempty"`
+}
+
+type ModelCostTier struct {
+	Input      float64       `json:"input"`
+	Output     float64       `json:"output"`
+	CacheRead  float64       `json:"cache_read,omitempty"`
+	CacheWrite float64       `json:"cache_write,omitempty"`
+	Tier       ModelCostBand `json:"tier"`
+}
+
+type ModelCostBand struct {
+	Type string `json:"type"`
+	Size int    `json:"size"`
 }
 
 type Modalities struct {
@@ -71,6 +107,20 @@ type Modalities struct {
 type ModelAPI struct {
 	NPM string `json:"npm,omitempty"`
 	API string `json:"api,omitempty"`
+}
+
+type ModelExperimental struct {
+	Modes map[string]ModelMode `json:"modes,omitempty"`
+}
+
+type ModelMode struct {
+	Cost     *ModelCost             `json:"cost,omitempty"`
+	Provider *ModelProviderOverride `json:"provider,omitempty"`
+}
+
+type ModelProviderOverride struct {
+	Body    map[string]json.RawMessage `json:"body,omitempty"`
+	Headers map[string]string          `json:"headers,omitempty"`
 }
 
 // Options controls catalog loading and refreshing.

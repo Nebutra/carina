@@ -19,11 +19,14 @@ import (
 // is set and transparently falls back to mock otherwise (PRD §8.6:
 // provider fallback).
 type anthropicProvider struct {
-	id      string
-	baseURL string
-	auth    *auth.Chain
-	model   string
-	client  *http.Client
+	id        string
+	baseURL   string
+	auth      *auth.Chain
+	model     string
+	client    *http.Client
+	headers   map[string]string
+	body      map[string]json.RawMessage
+	overrides map[string]requestOverride
 }
 
 // NewAnthropicProvider uses the daemon auth chain and ANTHROPIC_MODEL.
@@ -37,16 +40,19 @@ func NewAnthropicProvider(chain *auth.Chain) modelrouter.Provider {
 	}
 }
 
-func newAnthropicCatalogProvider(id, baseURL, model string, chain *auth.Chain) modelrouter.Provider {
+func newAnthropicCatalogProvider(id, baseURL, model string, chain *auth.Chain, headers map[string]string, body map[string]json.RawMessage, overrides map[string]requestOverride) modelrouter.Provider {
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com/v1"
 	}
 	return &anthropicProvider{
-		id:      id,
-		baseURL: strings.TrimRight(baseURL, "/"),
-		auth:    chain,
-		model:   model,
-		client:  &http.Client{Timeout: providerHTTPTimeout},
+		id:        id,
+		baseURL:   strings.TrimRight(baseURL, "/"),
+		auth:      chain,
+		model:     model,
+		client:    &http.Client{Timeout: providerHTTPTimeout},
+		headers:   headers,
+		body:      body,
+		overrides: overrides,
 	}
 }
 
@@ -60,15 +66,15 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 	if cred.Kind != auth.APIKey {
 		return nil, fmt.Errorf("%s: api key credential not set", a.id)
 	}
-	model := req.Model
-	if model == "" || model == "default" {
-		model = a.model
-	}
-	body, _ := json.Marshal(map[string]any{
+	model, responseModel, override := a.resolveModel(req)
+	bodyMap := map[string]any{
 		"model":      model,
 		"max_tokens": 2048,
 		"messages":   []map[string]string{{"role": "user", "content": req.Prompt}},
-	})
+	}
+	mergeRawBody(bodyMap, a.body)
+	mergeRawBody(bodyMap, override.Body)
+	body, _ := json.Marshal(bodyMap)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(a.baseURL, "/")+"/messages", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -76,6 +82,8 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 	httpReq.Header.Set("content-type", "application/json")
 	cred.Apply(httpReq.Header)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	applyHeaders(httpReq.Header, a.headers)
+	applyHeaders(httpReq.Header, override.Headers)
 
 	resp, err := a.client.Do(httpReq)
 	if err != nil {
@@ -83,7 +91,7 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s: status %d", a.id, resp.StatusCode)
+		return nil, statusError(a.id, resp)
 	}
 	var out struct {
 		Content []struct {
@@ -103,11 +111,28 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 	}
 	return &modelrouter.Response{
 		Provider:     a.Name(),
-		Model:        model,
+		Model:        responseModel,
 		Text:         text,
 		InputTokens:  out.Usage.InputTokens,
 		OutputTokens: out.Usage.OutputTokens,
 	}, nil
+}
+
+func (a *anthropicProvider) resolveModel(req modelrouter.Request) (apiModel, responseModel string, override requestOverride) {
+	model := strings.TrimSpace(req.Model)
+	if model == "" || model == "default" {
+		model = a.model
+	}
+	responseModel = model
+	if a.overrides != nil {
+		if found, ok := a.overrides[model]; ok {
+			override = found
+			if strings.TrimSpace(found.Model) != "" {
+				return strings.TrimSpace(found.Model), responseModel, found
+			}
+		}
+	}
+	return model, responseModel, override
 }
 
 func envOr(key, fallback string) string {

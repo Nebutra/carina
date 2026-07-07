@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,6 +29,12 @@ type modelAwareReasoner interface {
 // retryBaseDelay is the initial backoff; overridable in tests.
 var retryBaseDelay = 2 * time.Second
 
+const retryHeaderMaxDelay = 2 * time.Minute
+
+type retryAfterProvider interface {
+	RetryAfter() (time.Duration, bool)
+}
+
 // thinkWithRetry wraps a reasoner call with exponential backoff — transport
 // errors (rate limits, 5xx, timeouts) are retried; the caller's context
 // bounds total time. This fixes the "Think error => task dies" gap.
@@ -48,10 +55,11 @@ func thinkWithRetryModel(ctx context.Context, r Reasoner, model, prompt string) 
 		if attempt == maxAttempts {
 			break
 		}
+		wait := retryDelay(lastErr, delay)
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
-		case <-time.After(delay):
+		case <-time.After(wait):
 		}
 		delay *= 2
 		if delay > 30*time.Second {
@@ -59,6 +67,19 @@ func thinkWithRetryModel(ctx context.Context, r Reasoner, model, prompt string) 
 		}
 	}
 	return "", fmt.Errorf("reasoner failed after %d attempts: %w", maxAttempts, lastErr)
+}
+
+func retryDelay(err error, fallback time.Duration) time.Duration {
+	var retryable retryAfterProvider
+	if err != nil && errors.As(err, &retryable) {
+		if d, ok := retryable.RetryAfter(); ok && d > 0 {
+			if d > retryHeaderMaxDelay {
+				return retryHeaderMaxDelay
+			}
+			return d
+		}
+	}
+	return fallback
 }
 
 func thinkOnce(ctx context.Context, r Reasoner, model, prompt string) (string, error) {

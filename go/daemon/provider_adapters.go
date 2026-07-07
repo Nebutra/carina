@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,16 +25,38 @@ type providerBase struct {
 	client       *http.Client
 	noAuth       bool
 	headers      map[string]string
+	body         map[string]json.RawMessage
+	overrides    map[string]requestOverride
+}
+
+type requestOverride struct {
+	Model   string
+	Headers map[string]string
+	Body    map[string]json.RawMessage
 }
 
 func (p *providerBase) name() string { return p.id }
 
 func (p *providerBase) model(req modelrouter.Request) string {
+	apiModel, _, _ := p.resolveModel(req)
+	return apiModel
+}
+
+func (p *providerBase) resolveModel(req modelrouter.Request) (apiModel, responseModel string, override requestOverride) {
 	model := strings.TrimSpace(req.Model)
 	if model == "" || model == "default" {
 		model = p.defaultModel
 	}
-	return model
+	responseModel = model
+	if p.overrides != nil {
+		if found, ok := p.overrides[model]; ok {
+			override = found
+			if strings.TrimSpace(found.Model) != "" {
+				return strings.TrimSpace(found.Model), responseModel, found
+			}
+		}
+	}
+	return model, responseModel, override
 }
 
 func (p *providerBase) credential() (auth.Credential, bool, error) {
@@ -80,6 +103,64 @@ func (p *providerBase) applyExtraHeaders(h http.Header) {
 	}
 }
 
+func applyHeaders(h http.Header, headers map[string]string) {
+	for k, v := range headers {
+		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+			h.Set(k, v)
+		}
+	}
+}
+
+func mergeRawBody(dst map[string]any, body map[string]json.RawMessage) {
+	for k, raw := range body {
+		if strings.TrimSpace(k) == "" || len(raw) == 0 {
+			continue
+		}
+		var v any
+		if err := json.Unmarshal(raw, &v); err == nil {
+			dst[k] = v
+		}
+	}
+}
+
+type providerStatusError struct {
+	provider string
+	status   int
+	retry    time.Duration
+}
+
+func (e providerStatusError) Error() string {
+	if e.retry > 0 {
+		return fmt.Sprintf("%s: status %d; retry after %s", e.provider, e.status, e.retry)
+	}
+	return fmt.Sprintf("%s: status %d", e.provider, e.status)
+}
+
+func (e providerStatusError) RetryAfter() (time.Duration, bool) {
+	return e.retry, e.retry > 0
+}
+
+func statusError(provider string, resp *http.Response) error {
+	return providerStatusError{provider: provider, status: resp.StatusCode, retry: retryAfter(resp.Header, time.Now())}
+}
+
+func retryAfter(h http.Header, now time.Time) time.Duration {
+	if v := strings.TrimSpace(h.Get("retry-after-ms")); v != "" {
+		if ms, err := strconv.ParseFloat(v, 64); err == nil && ms > 0 {
+			return time.Duration(ms * float64(time.Millisecond))
+		}
+	}
+	if v := strings.TrimSpace(h.Get("retry-after")); v != "" {
+		if seconds, err := strconv.ParseFloat(v, 64); err == nil && seconds > 0 {
+			return time.Duration(seconds * float64(time.Second))
+		}
+		if t, err := http.ParseTime(v); err == nil && t.After(now) {
+			return t.Sub(now)
+		}
+	}
+	return 0
+}
+
 type openAIProvider struct {
 	providerBase
 	responses bool
@@ -99,12 +180,15 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 	if err != nil {
 		return nil, err
 	}
-	model := o.model(req)
-	body, _ := json.Marshal(map[string]any{
+	model, responseModel, override := o.resolveModel(req)
+	bodyMap := map[string]any{
 		"model":      model,
 		"max_tokens": 2048,
 		"messages":   []map[string]string{{"role": "user", "content": req.Prompt}},
-	})
+	}
+	mergeRawBody(bodyMap, o.body)
+	mergeRawBody(bodyMap, override.Body)
+	body, _ := json.Marshal(bodyMap)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint("chat/completions"), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -114,13 +198,14 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 		httpReq.Header.Set("Authorization", "Bearer "+cred.Value)
 	}
 	o.applyExtraHeaders(httpReq.Header)
+	applyHeaders(httpReq.Header, override.Headers)
 	resp, err := o.httpClient().Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("%s: request: %w", o.id, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("%s: status %d", o.id, resp.StatusCode)
+		return nil, statusError(o.id, resp)
 	}
 	var out struct {
 		Choices []struct {
@@ -145,7 +230,7 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 	}
 	return &modelrouter.Response{
 		Provider:     o.Name(),
-		Model:        model,
+		Model:        responseModel,
 		Text:         text,
 		InputTokens:  out.Usage.PromptTokens,
 		OutputTokens: out.Usage.CompletionTokens,
@@ -157,12 +242,15 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 	if err != nil {
 		return nil, err
 	}
-	model := o.model(req)
-	body, _ := json.Marshal(map[string]any{
+	model, responseModel, override := o.resolveModel(req)
+	bodyMap := map[string]any{
 		"model":             model,
 		"input":             req.Prompt,
 		"max_output_tokens": 2048,
-	})
+	}
+	mergeRawBody(bodyMap, o.body)
+	mergeRawBody(bodyMap, override.Body)
+	body, _ := json.Marshal(bodyMap)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint("responses"), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -172,13 +260,14 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 		httpReq.Header.Set("Authorization", "Bearer "+cred.Value)
 	}
 	o.applyExtraHeaders(httpReq.Header)
+	applyHeaders(httpReq.Header, override.Headers)
 	resp, err := o.httpClient().Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("%s: request: %w", o.id, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("%s: status %d", o.id, resp.StatusCode)
+		return nil, statusError(o.id, resp)
 	}
 	var out struct {
 		OutputText string `json:"output_text"`
@@ -208,7 +297,7 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 	}
 	return &modelrouter.Response{
 		Provider:     o.Name(),
-		Model:        model,
+		Model:        responseModel,
 		Text:         text,
 		InputTokens:  out.Usage.InputTokens,
 		OutputTokens: out.Usage.OutputTokens,
@@ -224,18 +313,21 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 	if err != nil {
 		return nil, err
 	}
-	model := g.model(req)
+	model, responseModel, override := g.resolveModel(req)
 	endpoint := g.endpoint("models/" + url.PathEscape(model) + ":generateContent")
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		return nil, err
 	}
-	body, _ := json.Marshal(map[string]any{
+	bodyMap := map[string]any{
 		"contents": []map[string]any{{
 			"parts": []map[string]string{{"text": req.Prompt}},
 		}},
 		"generationConfig": map[string]any{"maxOutputTokens": 2048},
-	})
+	}
+	mergeRawBody(bodyMap, g.body)
+	mergeRawBody(bodyMap, override.Body)
+	body, _ := json.Marshal(bodyMap)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -251,13 +343,14 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 		}
 	}
 	g.applyExtraHeaders(httpReq.Header)
+	applyHeaders(httpReq.Header, override.Headers)
 	resp, err := g.httpClient().Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("%s: request: %w", g.id, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("%s: status %d", g.id, resp.StatusCode)
+		return nil, statusError(g.id, resp)
 	}
 	var out struct {
 		Candidates []struct {
@@ -286,7 +379,7 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 	}
 	return &modelrouter.Response{
 		Provider:     g.Name(),
-		Model:        model,
+		Model:        responseModel,
 		Text:         text,
 		InputTokens:  out.UsageMetadata.PromptTokenCount,
 		OutputTokens: out.UsageMetadata.CandidatesTokenCount,
