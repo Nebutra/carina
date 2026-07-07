@@ -30,6 +30,8 @@ func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Tas
 			return dec, false
 		}
 		approver = "operator"
+	} else if !d.reviewAutonomousApproval(sess, task, dec, label) {
+		return dec, false
 	}
 	approved, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, approver, "")
 	if err != nil || approved.Decision != "allowed" {

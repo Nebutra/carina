@@ -178,6 +178,8 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 		if ev.Type == "TaskCreated" {
 			if status := stringField(ev.Payload, "status"); status != "" {
 				switch status {
+				case "risk_review":
+					out = append(out, riskReviewEvent(sessionID, ev, fallbackItemID("risk", ev, i)))
 				case "completed":
 					out = append(out, turnEvent("turn.completed", sessionID, ev, copyMap(ev.Payload)))
 				case "degraded", "failed", "cancelled":
@@ -221,6 +223,31 @@ func fileChangeEvent(sessionID string, ev itemAuditEvent, id, status string) Ses
 		StartedAt:   ev.Timestamp,
 		CompletedAt: ev.Timestamp,
 		Details:     copyMap(ev.Payload),
+	}
+	return itemEvent("item.completed", sessionID, ev, item)
+}
+
+func riskReviewEvent(sessionID string, ev itemAuditEvent, fallbackID string) SessionItemEvent {
+	id := stringField(ev.Payload, "decision_id")
+	if id == "" {
+		id = fallbackID
+	}
+	status := "completed"
+	if stringField(ev.Payload, "outcome") == "deny" {
+		status = "failed"
+	}
+	details := copyMap(ev.Payload)
+	if ev.PermissionDecisionID != "" {
+		details["permission_decision_id"] = ev.PermissionDecisionID
+	}
+	item := &SessionItem{
+		ID:          id,
+		Type:        "risk_review",
+		Status:      status,
+		TaskID:      ev.TaskID,
+		StartedAt:   ev.Timestamp,
+		CompletedAt: ev.Timestamp,
+		Details:     details,
 	}
 	return itemEvent("item.completed", sessionID, ev, item)
 }

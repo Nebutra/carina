@@ -24,9 +24,10 @@ func TestCascadePrecedence(t *testing.T) {
 	home := t.TempDir()
 	proj := t.TempDir()
 
-	writeConfig(t, home, `{"offline": true, "max_task_tokens": 100, "tools_dir": "/g/tools", "summarizer_model": "cheap"}`)
-	writeConfig(t, proj, `{"max_task_tokens": 200, "tools_dir": "/p/tools"}`)
+	writeConfig(t, home, `{"offline": true, "max_task_tokens": 100, "tools_dir": "/g/tools", "summarizer_model": "cheap", "risk_review_model": "guardian"}`)
+	writeConfig(t, proj, `{"max_task_tokens": 200, "tools_dir": "/p/tools", "risk_review_mode": "enforce"}`)
 	t.Setenv("CARINA_TOOLS_DIR", "/e/tools")
+	t.Setenv("CARINA_RISK_REVIEW_MODE", "advisory")
 
 	cfg, err := Load(home, proj)
 	if err != nil {
@@ -44,6 +45,12 @@ func TestCascadePrecedence(t *testing.T) {
 	}
 	if cfg.SummarizerModel != "cheap" {
 		t.Errorf("summarizer_model should fall through from global, got %q", cfg.SummarizerModel)
+	}
+	if cfg.RiskReviewModel != "guardian" {
+		t.Errorf("risk_review_model should fall through from global, got %q", cfg.RiskReviewModel)
+	}
+	if cfg.RiskReviewMode != "advisory" {
+		t.Errorf("risk_review_mode: env should override project, got %q", cfg.RiskReviewMode)
 	}
 	// A key set by no layer keeps its default.
 	if cfg.MaxConcurrentTasks != 8 {
@@ -86,5 +93,13 @@ func TestEnvValidationFailsFast(t *testing.T) {
 	t.Setenv("CARINA_MAX_TASK_TOKENS", "-5")
 	if _, err := Load(home, ""); err == nil {
 		t.Fatal("a negative token budget must be rejected")
+	}
+}
+
+func TestRiskReviewModeValidationFailsFast(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CARINA_RISK_REVIEW_MODE", "always")
+	if _, err := Load(home, ""); err == nil {
+		t.Fatal("invalid risk_review_mode must be rejected")
 	}
 }

@@ -49,6 +49,8 @@ type Options struct {
 	InteractiveApproval   bool               // requires_approval pauses for an operator decision instead of auto-approving
 	EgressCredentials     []EgressCredential // per-host credentials injected at the egress boundary
 	VerifierModel         string             // model for the independent done-verifier ("" => verifier off)
+	RiskReviewMode        string             // off|advisory|enforce for autonomous approval review ("" => advisory)
+	RiskReviewModel       string             // optional model for Nebutra Risk Review ("" => deterministic local reviewer)
 }
 
 // EgressCredential authenticates outbound requests to a host by injecting a
@@ -81,12 +83,14 @@ type Daemon struct {
 	events  *Bus
 	started time.Time
 
-	org        *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
-	stateDir   string
-	socketPath string
-	reasoner   Reasoner // agent "thinking" engine (nil => mock loop)
-	summarizer Reasoner // optional cheaper model for compaction/summarization
-	verifier   Reasoner // optional independent "judge" for done-claims (nil => default-lenient)
+	org            *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
+	stateDir       string
+	socketPath     string
+	reasoner       Reasoner     // agent "thinking" engine (nil => mock loop)
+	summarizer     Reasoner     // optional cheaper model for compaction/summarization
+	verifier       Reasoner     // optional independent "judge" for done-claims (nil => default-lenient)
+	riskReviewer   Reasoner     // optional independent approval reviewer (nil => deterministic heuristic)
+	riskReviewMode atomic.Value // string: off|advisory|enforce, hot-reloadable
 
 	mu          sync.Mutex
 	pendingCmds map[string]pendingCommand // decision_id -> command awaiting approval
@@ -135,6 +139,14 @@ func New(opts Options) (*Daemon, error) {
 	if opts.StateDir == "" {
 		opts.StateDir = ".carina-state"
 	}
+	riskReviewMode := opts.RiskReviewMode
+	if riskReviewMode == "" {
+		riskReviewMode = os.Getenv("CARINA_RISK_REVIEW_MODE")
+	}
+	riskReviewMode, err := normalizeRiskReviewMode(riskReviewMode)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: %w", err)
+	}
 	store, err := sessionstore.Open(opts.StateDir)
 	if err != nil {
 		return nil, err
@@ -160,6 +172,7 @@ func New(opts Options) (*Daemon, error) {
 		started:     time.Now().UTC(),
 		pendingCmds: make(map[string]pendingCommand),
 	}
+	d.riskReviewMode.Store(riskReviewMode)
 	_ = hardenProcess() // Linux: non-dumpable, anti-ptrace (best-effort)
 	d.registerMethods()
 	authStore, _ := auth.NewStore("")
@@ -268,6 +281,18 @@ func New(opts Options) (*Daemon, error) {
 		if vm != "" {
 			if r, err := newClaudeCLIReasonerModel(vm); err == nil {
 				d.verifier = r
+			}
+		}
+		// Nebutra Risk Review: optional model-backed reviewer for autonomous
+		// approval requests. Without it, a deterministic local reviewer still
+		// records and can enforce obvious high-risk cases.
+		rm := opts.RiskReviewModel
+		if rm == "" {
+			rm = os.Getenv("CARINA_RISK_REVIEW_MODEL")
+		}
+		if rm != "" {
+			if r, err := newClaudeCLIReasonerModel(rm); err == nil {
+				d.riskReviewer = r
 			}
 		}
 	}

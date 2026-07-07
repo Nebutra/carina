@@ -45,6 +45,8 @@ func main() {
 	egress := flag.Bool("egress", cfg.EnableEgressProxy, "route command network through a deny-by-default egress proxy")
 	egressAllow := flag.String("egress-allow", strings.Join(cfg.EgressAllow, ","), "comma-separated hosts allowed when -egress is on")
 	interactiveApproval := flag.Bool("interactive-approval", cfg.InteractiveApproval, "pause for an operator decision on requires_approval instead of auto-approving")
+	riskReviewMode := flag.String("risk-review-mode", cfg.RiskReviewMode, "autonomous approval risk review mode: off|advisory|enforce")
+	riskReviewModel := flag.String("risk-review-model", cfg.RiskReviewModel, "optional model for Nebutra Risk Review (default: local heuristic)")
 	flag.Parse()
 
 	// Record which flags the operator set explicitly, so they stay the highest-
@@ -77,6 +79,8 @@ func main() {
 		EnableEgressProxy:     *egress,
 		EgressAllow:           splitList(*egressAllow),
 		InteractiveApproval:   *interactiveApproval,
+		RiskReviewMode:        *riskReviewMode,
+		RiskReviewModel:       *riskReviewModel,
 	})
 	if err != nil {
 		log.Fatalf("carina-daemon: %v", err)
@@ -94,6 +98,9 @@ func main() {
 		}
 		if pinned["interactive-approval"] {
 			nc.InteractiveApproval = *interactiveApproval
+		}
+		if pinned["risk-review-mode"] {
+			nc.RiskReviewMode = *riskReviewMode
 		}
 		if pinned["require-trust"] {
 			nc.RequireWorkspaceTrust = *requireTrust

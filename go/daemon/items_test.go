@@ -126,6 +126,38 @@ func TestProjectSessionItemsLegacyCommandWithoutID(t *testing.T) {
 	}
 }
 
+func TestProjectSessionItemsRiskReview(t *testing.T) {
+	events := []itemAuditEvent{
+		{
+			EventID:              "evt_risk",
+			SessionID:            "sess_1",
+			TaskID:               "task_1",
+			Type:                 "TaskCreated",
+			Timestamp:            "2026-07-07T00:00:01Z",
+			PermissionDecisionID: "dec_1",
+			Payload: map[string]any{
+				"status":        "risk_review",
+				"decision_id":   "dec_1",
+				"mode":          "enforce",
+				"outcome":       "deny",
+				"risk":          "high",
+				"authorization": "low",
+				"source":        "heuristic",
+				"rationale":     "destructive command",
+			},
+		},
+	}
+
+	items := projectSessionItems("sess_1", events)
+	review := findItem(t, items, "item.completed", "risk_review")
+	if review.ID != "dec_1" || review.Status != "failed" {
+		t.Fatalf("unexpected review item: %+v", review)
+	}
+	if review.Details["outcome"] != "deny" || review.Details["permission_decision_id"] != "dec_1" {
+		t.Fatalf("unexpected review details: %+v", review.Details)
+	}
+}
+
 func assertEventType(t *testing.T, events []SessionItemEvent, typ string) {
 	t.Helper()
 	for _, ev := range events {

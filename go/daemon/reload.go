@@ -10,15 +10,19 @@ import (
 
 // ApplyConfig live-applies the hot-reloadable subset of a config to a running
 // daemon (no restart): the per-task token budget, interactive-approval mode,
-// workspace-trust gate, command sandbox, and egress allowlist. It validates
-// first and returns WITHOUT mutating on failure, so a bad reload keeps the
-// last-good config.
+// risk-review mode, workspace-trust gate, command sandbox, and egress allowlist.
+// It validates first and returns WITHOUT mutating on failure, so a bad reload
+// keeps the last-good config.
 //
 // Restart-only knobs — listeners, kernel/tools/policy wiring, the concurrency
-// cap (d.runSem is sized once), offline/provider setup, and turning the egress
-// proxy itself on/off — are intentionally NOT touched here.
+// cap (d.runSem is sized once), offline/provider setup, the model-backed risk
+// reviewer, and turning the egress proxy itself on/off — are intentionally NOT
+// touched here.
 func (d *Daemon) ApplyConfig(cfg config.Config) error {
 	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := d.setRiskReviewMode(cfg.RiskReviewMode); err != nil {
 		return err
 	}
 	d.maxTaskTokens.Store(int64(cfg.MaxTaskTokens))

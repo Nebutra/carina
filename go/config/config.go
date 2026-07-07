@@ -37,6 +37,8 @@ type Config struct {
 	SandboxCommands       bool     `json:"sandbox_commands"`
 	InteractiveApproval   bool     `json:"interactive_approval"`
 	SummarizerModel       string   `json:"summarizer_model"`
+	RiskReviewMode        string   `json:"risk_review_mode"`
+	RiskReviewModel       string   `json:"risk_review_model"`
 }
 
 // Defaults returns the built-in baseline, anchored at the user's ~/.carina dir.
@@ -95,6 +97,8 @@ func mergeEnv(cfg *Config) {
 	envStr("CARINA_TOOLS_DIR", &cfg.ToolsDir)
 	envStr("CARINA_POLICY_DIR", &cfg.PolicyDir)
 	envStr("CARINA_SUMMARIZER_MODEL", &cfg.SummarizerModel)
+	envStr("CARINA_RISK_REVIEW_MODE", &cfg.RiskReviewMode)
+	envStr("CARINA_RISK_REVIEW_MODEL", &cfg.RiskReviewModel)
 	envBool("CARINA_OFFLINE", &cfg.Offline)
 	envBool("CARINA_REQUIRE_WORKSPACE_TRUST", &cfg.RequireWorkspaceTrust)
 	envBool("CARINA_ENABLE_EGRESS_PROXY", &cfg.EnableEgressProxy)
@@ -112,6 +116,9 @@ func (c Config) Validate() error {
 	}
 	if c.MaxConcurrentTasks < 0 {
 		return fmt.Errorf("config: max_concurrent_tasks must be >= 0, got %d", c.MaxConcurrentTasks)
+	}
+	if mode := strings.ToLower(strings.TrimSpace(c.RiskReviewMode)); mode != "" && mode != "off" && mode != "advisory" && mode != "enforce" {
+		return fmt.Errorf("config: risk_review_mode must be one of off, advisory, enforce")
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -115,4 +116,151 @@ func TestAutonomousApprovalUnchanged(t *testing.T) {
 		t.Fatal("autonomous mode must not emit a permission.request")
 	default:
 	}
+}
+
+func TestRiskReviewAdvisoryRecordsAndAllows(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+
+	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "install dependency")
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	if dec.Decision != "requires_approval" {
+		t.Fatalf("expected requires_approval, got %s", dec.Decision)
+	}
+
+	if _, ok := d.resolveApproval(sess, task, dec, "npm install left-pad"); !ok {
+		t.Fatal("advisory risk review must not block autonomous approval")
+	}
+	payload := lastRiskReviewPayload(t, d, sess.SessionID)
+	if payload["mode"] != "advisory" || payload["outcome"] != "allow" || payload["source"] != "heuristic" {
+		t.Fatalf("unexpected advisory review: %+v", payload)
+	}
+}
+
+func TestRiskReviewEnforceBlocksHighRiskApproval(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	if err := d.SetRiskReviewMode("enforce"); err != nil {
+		t.Fatal(err)
+	}
+
+	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "move file")
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "mv a b", task.TaskID)
+	if dec.Decision != "requires_approval" {
+		t.Fatalf("expected requires_approval, got %s", dec.Decision)
+	}
+
+	if _, ok := d.resolveApproval(sess, task, dec, "mv a b"); ok {
+		t.Fatal("enforce mode must block high-risk autonomous approval")
+	}
+	payload := lastRiskReviewPayload(t, d, sess.SessionID)
+	if payload["mode"] != "enforce" || payload["outcome"] != "deny" || payload["risk"] != "high" {
+		t.Fatalf("unexpected enforce review: %+v", payload)
+	}
+}
+
+func TestRiskReviewModelDenyEnforce(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	if err := d.SetRiskReviewMode("enforce"); err != nil {
+		t.Fatal(err)
+	}
+	d.SetRiskReviewer(&scriptedReasoner{steps: []string{
+		`{"outcome":"deny","risk":"high","authorization":"low","rationale":"task did not justify dependency change"}`,
+	}})
+
+	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "install dependency")
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	if dec.Decision != "requires_approval" {
+		t.Fatalf("expected requires_approval, got %s", dec.Decision)
+	}
+
+	if _, ok := d.resolveApproval(sess, task, dec, "npm install left-pad"); ok {
+		t.Fatal("model deny must block in enforce mode")
+	}
+	payload := lastRiskReviewPayload(t, d, sess.SessionID)
+	if payload["source"] != "model" || payload["outcome"] != "deny" {
+		t.Fatalf("unexpected model review: %+v", payload)
+	}
+}
+
+func TestInteractiveApprovalBypassesRiskReview(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	d.SetInteractiveApproval(true)
+	d.SetRiskReviewer(&scriptedReasoner{steps: []string{
+		`{"outcome":"deny","risk":"high","authorization":"low","rationale":"would block if autonomous"}`,
+	}})
+	reqs := permissionRequests(d)
+
+	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "install dependency")
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	out := make(chan bool, 1)
+	go func() {
+		_, ok := d.resolveApproval(sess, task, dec, "npm install left-pad")
+		out <- ok
+	}()
+	<-reqs
+	if _, err := d.handleApprovalResolve(mustJSON(t, map[string]any{
+		"decision_id": dec.DecisionID, "approve": true})); err != nil {
+		t.Fatal(err)
+	}
+	if ok := <-out; !ok {
+		t.Fatal("operator approval should still allow")
+	}
+	if payload := lastRiskReviewPayloadOrNil(t, d, sess.SessionID); payload != nil {
+		t.Fatalf("interactive approval must not run autonomous risk review: %+v", payload)
+	}
+}
+
+func TestParseRiskReviewAssessment(t *testing.T) {
+	got, err := parseRiskReviewAssessment("```json\n{\"outcome\":\"ALLOW\",\"risk\":\"LOW\",\"authorization\":\"HIGH\",\"rationale\":\"ok\"}\n```")
+	if err != nil {
+		t.Fatalf("fenced assessment should parse: %v", err)
+	}
+	if got.Outcome != "allow" || got.Risk != "low" || got.Authorization != "high" || got.Rationale != "ok" {
+		t.Fatalf("unexpected assessment: %+v", got)
+	}
+	if _, err := parseRiskReviewAssessment(`{"outcome":"maybe","risk":"low","authorization":"high"}`); err == nil {
+		t.Fatal("invalid outcome must fail")
+	}
+}
+
+func lastRiskReviewPayload(t *testing.T, d *Daemon, sessionID string) map[string]any {
+	t.Helper()
+	payload := lastRiskReviewPayloadOrNil(t, d, sessionID)
+	if payload == nil {
+		t.Fatal("missing risk_review audit event")
+	}
+	return payload
+}
+
+func lastRiskReviewPayloadOrNil(t *testing.T, d *Daemon, sessionID string) map[string]any {
+	t.Helper()
+	raw, err := d.kern.ReadEvents(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []struct {
+		Type    string         `json:"type"`
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &events); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	for _, ev := range events {
+		if ev.Type == "TaskCreated" && ev.Payload["status"] == "risk_review" {
+			payload = ev.Payload
+		}
+	}
+	return payload
 }
