@@ -67,7 +67,7 @@ Carina 提供：
 
 还没有产品化完成：
 
-- 签名公开 release 和 Homebrew tap；
+- 签名公开 release、Homebrew tap 和 npm 安装渠道；
 - 完整 contributor/security 流程；
 - 打磨后的 TUI/dashboard；
 - Windows 支持；
@@ -239,6 +239,7 @@ make release-check
 更多文档：
 
 - [产品定位](docs/product.md)
+- [Roadmap](docs/roadmap.md)
 - [发布流程](docs/release.md)
 - [架构](docs/architecture.md)
 - [RPC API](docs/rpc-api.md)

@@ -67,7 +67,7 @@ Carina が提供するもの：
 
 まだ product-complete ではないもの：
 
-- signed public release と Homebrew tap；
+- signed public release、Homebrew tap、npm のインストールチャネル；
 - contributor/security process の完成；
 - polished TUI/dashboard；
 - Windows support；
@@ -239,6 +239,7 @@ make release-check
 More docs:
 
 - [Product positioning](docs/product.md)
+- [Roadmap](docs/roadmap.md)
 - [Release process](docs/release.md)
 - [Architecture](docs/architecture.md)
 - [RPC API](docs/rpc-api.md)

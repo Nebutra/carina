@@ -80,7 +80,7 @@ Implemented in this repository:
 
 Not yet treated as product-complete:
 
-- signed public releases and Homebrew tap;
+- signed public releases, Homebrew tap, and npm install channel;
 - contributor and security process beyond the initial documents in this repo;
 - polished TUI/dashboard;
 - Windows support;
@@ -267,6 +267,7 @@ make release-check
 More documentation:
 
 - [Product positioning](docs/product.md)
+- [Roadmap](docs/roadmap.md)
 - [Release process](docs/release.md)
 - [Architecture](docs/architecture.md)
 - [RPC API](docs/rpc-api.md)

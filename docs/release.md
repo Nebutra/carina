@@ -1,7 +1,8 @@
 # Release Process
 
 Carina is currently a source-first alpha. This document describes the local
-release gate and the intended path to signed public releases.
+release gate and the intended path to signed public releases. Install-channel
+planning lives in [docs/roadmap.md](roadmap.md).
 
 ## Current Source-First Release Gate
 
@@ -64,12 +65,24 @@ Before a non-source public release:
 - attach provenance/SBOM where available;
 - publish release notes;
 - update installer/Homebrew tap;
+- update npm install package when applicable;
 - verify install from a clean machine.
+
+## Install Channel Roadmap
+
+Planned channels are tracked in [docs/roadmap.md](roadmap.md):
+
+- signed GitHub release archives first;
+- Homebrew tap for macOS and Linuxbrew;
+- npm ecosystem package as a thin platform-binary installer/launcher;
+- later shell installer, Linux distro packages, Docker images, and Windows
+  packages when platform support exists.
 
 ## Not Yet Implemented
 
 - hosted installer;
 - Homebrew tap;
+- npm install package;
 - artifact signing;
 - SBOM/provenance automation;
 - Windows release path.

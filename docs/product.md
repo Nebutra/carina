@@ -66,8 +66,8 @@ Current strengths:
 Current gaps:
 
 - release packaging is source-first;
+- Homebrew and npm install channels are planned but not published;
 - dashboard/TUI is not polished;
 - SDK parity is incomplete;
 - Windows is not supported;
 - production remote-worker operations need separate deployment documentation.
-
