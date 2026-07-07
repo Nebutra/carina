@@ -1,4 +1,4 @@
-.PHONY: all go rust zig sdk-ts test rust-test go-test clean
+.PHONY: all go rust zig sdk-ts test rust-test go-test release-check clean
 
 all: go rust zig
 
@@ -26,6 +26,9 @@ zig:
 
 sdk-ts:
 	cd sdk/typescript && npm install && npm run build
+
+release-check:
+	./scripts/release-check.sh
 
 clean:
 	rm -rf bin target zig/zig-out zig/.zig-cache

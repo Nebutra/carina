@@ -41,9 +41,9 @@ workflow:
 - native tools;
 - daemon note.
 
-User-visible output should consistently use `carina`. Historical `pi` naming
-may remain in research notes only; it should not appear in CLI help, README, or
-product docs.
+User-visible output should consistently use `carina`. Archived third-party
+research may retain upstream project names when citing sources, but historical
+Carina aliases should not appear in CLI help, README, or product docs.
 
 ## Product Docs
 

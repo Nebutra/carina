@@ -17,57 +17,65 @@ import (
 
 const cliVersion = "0.6.0"
 
-const usage = `carina — Carina Agent Runtime client
+const usage = `carina — command-line client for the Carina Agent Runtime
 
 Usage:
-  carina init                         create ~/.carina and print daemon hint
-  carina status                       daemon health and counters
-  carina sessions                     list sessions
-  carina run [--model provider/model] "<prompt>"
-                                      create a session in cwd and submit a task
-  carina ask [--model provider/model] "<prompt>"
-                                      alias for run
-  carina agents list                  list available agent modes
-  carina commands list                list slash commands
-  carina resume <session_id>          show a session
-  carina watch <session_id>           stream the live event feed
-  carina items <session_id>           replay the normalized item stream
-  carina audit <session_id>           replay the session event stream
-  carina audit verify <session_id>    verify the tamper-evident hash chain
-  carina audit last                   audit summary of the most recent session
-  carina replay <session_id>          replay the session event stream
-  carina report <session_id>          audit summary (violations, files, commands)
-  carina export <session_id>          export the full audit bundle (centralized audit)
-  carina search <session_id> <text>   structured workspace search (carina-grep)
-  carina exec <session_id> -- cmd...  run a command through the kernel
+  carina <command> [arguments]
 
-  Native tools (run straight on the Zig toolchain, no daemon):
-  carina scan [path]                  workspace file tree (ignore rules, binary/lang)
-  carina grep <pattern> <path>        structured search
-  carina diff <a> <b>                 structured diff
-  carina run-native [opts] -- cmd...  run a command (timeout/cwd/env)
-  carina pty [opts] -- cmd...         interactive pseudo-terminal
-  carina patch-native <apply|dry-run|rollback>   atomic patch primitive (JSON on stdin)
+Start and run:
+  carina init                                      create ~/.carina and print daemon hint
+  carina status                                    show daemon health and counters
+  carina run [--agent name] [--model provider/model] "<prompt>"
+                                                   create a safe-edit session in cwd and submit a task
+  carina ask [--agent name] [--model provider/model] "<prompt>"
+                                                   alias for run
+  carina agents list                               list available agent modes
+  carina commands list                             list slash commands
 
-  carina patch list <session_id>
-  carina patch show <session_id> <patch_id>
-  carina patch propose <session_id> <path> <<< "new file content"
-  carina patch apply <session_id> <patch_id>
-  carina patch rollback <session_id> <patch_id>
+Inspect sessions:
+  carina sessions                                  list sessions
+  carina resume <session_id>                       show a session
+  carina watch <session_id>                        stream live events
+  carina items <session_id>                        replay normalized thread/turn/item events
+  carina search <session_id> <text>                search the workspace through the daemon
 
-  carina approve <session_id> <decision_id>
-  carina deny <session_id> <decision_id> [reason]
-  carina profile <session_id>                describe the active permission profile
-  carina secret grant <session_id> <n> <v>   register a secret (returns a handle)
-  carina secret request <session_id> <name>  request a secret handle
-  carina plugin inspect <manifest.toml>              show declared permissions
-  carina plugin run <session_id> <manifest> <wasm>   run a WASM plugin
-  carina metrics
-  carina auth <login|list|logout> ...        manage local BYOK credentials
-  carina providers list [--refresh] [--offline]
-                                      list provider catalog entries
+Audit and rollback:
+  carina audit <session_id>                        replay the raw session event stream
+  carina audit verify <session_id>                 verify the tamper-evident hash chain
+  carina audit last                                summarize the most recent session
+  carina report <session_id>                       summarize violations, files, and commands
+  carina export <session_id>                       export the full audit bundle
+  carina patch list <session_id>                   list patch transactions
+  carina patch show <session_id> <patch_id>         show a patch transaction
+  carina patch propose <session_id> <path>          propose file content from stdin
+  carina patch apply <session_id> <patch_id>        apply a proposed patch
+  carina patch rollback <session_id> <patch_id>     roll back an applied patch
 
-The daemon must be running: carina-daemon &
+Approvals, secrets, and plugins:
+  carina approve <session_id> <decision_id> [role]  approve a pending decision
+  carina deny <session_id> <decision_id> [reason]   deny a pending decision
+  carina profile <session_id>                       describe the active permission profile
+  carina secret grant <session_id> <name> <value>   register a secret and return a handle
+  carina secret request <session_id> <name>         request a secret handle
+  carina plugin inspect <manifest.toml>             show declared plugin permissions
+  carina plugin run <session_id> <manifest> <wasm>  run a WASM plugin through policy
+
+Providers and BYOK:
+  carina auth login <provider> [api_key|-]          store a local BYOK credential
+  carina auth list                                  list local credential sources
+  carina auth logout <provider>                     remove a local credential
+  carina providers list [--refresh] [--offline]     list provider catalog entries
+
+Native tools, no daemon:
+  carina scan [path]                                workspace file tree
+  carina grep <pattern> <path>                      structured search
+  carina diff <a> <b>                               structured diff
+  carina run-native [opts] -- cmd...                run a command with native wrapper
+  carina pty [opts] -- cmd...                       interactive pseudo-terminal
+  carina patch-native <apply|dry-run|rollback>      atomic patch primitive, JSON on stdin
+
+Daemon:
+  carina-daemon &                                   start the local control-plane daemon
 `
 
 func main() {

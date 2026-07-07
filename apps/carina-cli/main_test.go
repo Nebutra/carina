@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseRunArgsModel(t *testing.T) {
 	prompt, model, agent, err := parseRunArgs([]string{"--model", "openrouter/anthropic/claude-sonnet", "fix tests"})
@@ -25,5 +28,16 @@ func TestParseRunArgsShortModel(t *testing.T) {
 func TestParseRunArgsRequiresPrompt(t *testing.T) {
 	if _, _, _, err := parseRunArgs([]string{"--model", "openai/gpt-5"}); err == nil {
 		t.Fatal("missing prompt should error")
+	}
+}
+
+func TestUsageIsProductizedAndCarinaOnly(t *testing.T) {
+	for _, want := range []string{"Start and run:", "Inspect sessions:", "Audit and rollback:", "Providers and BYOK:", "Native tools, no daemon:"} {
+		if !strings.Contains(usage, want) {
+			t.Fatalf("usage missing section %q", want)
+		}
+	}
+	if strings.Contains(usage, " pi ") || strings.Contains(usage, "PI_") {
+		t.Fatalf("usage must not expose historical aliases:\n%s", usage)
 	}
 }
