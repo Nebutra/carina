@@ -41,6 +41,25 @@ func TestOAuthFallbackWhenNoKey(t *testing.T) {
 	}
 }
 
+func TestProviderChainUsesStoreBeforeOAuth(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	if err := store.SetAPIKey("anthropic", "sk-store", nil); err != nil {
+		t.Fatal(err)
+	}
+	oauthCalled := false
+	chain := ProviderChain("anthropic", []string{"CARINA_PROVIDER_CHAIN_ABSENT"}, store, func() (string, error) {
+		oauthCalled = true
+		return "oauth", nil
+	})
+	cred, ok := chain.Resolve()
+	if !ok || cred.Value != "sk-store" || cred.Source != "auth:anthropic" {
+		t.Fatalf("store should win before oauth: %+v ok=%v", cred, ok)
+	}
+	if oauthCalled {
+		t.Fatal("oauth should not be called when store key resolves")
+	}
+}
+
 func TestNoCredentialResolves(t *testing.T) {
 	chain := DefaultChain([]string{"CARINA_DEFINITELY_UNSET_XYZ"}, nil)
 	if _, ok := chain.Resolve(); ok {

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nebutra/carina/go/auth"
 	"github.com/Nebutra/carina/go/kernel"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/scheduler"
@@ -803,9 +804,9 @@ func validateOutput(summary string, keys []string) []string {
 	return missing
 }
 
-func registerProviders(router *modelrouter.Router, offline bool) {
+func registerProviders(router *modelrouter.Router, offline bool, authChain *auth.Chain) {
 	if !offline {
-		router.RegisterProvider(NewAnthropicProviderFromEnv())
+		router.RegisterProvider(NewAnthropicProvider(authChain))
 	}
 	router.RegisterProvider(modelrouter.NewMockProvider())
 	_ = time.Now

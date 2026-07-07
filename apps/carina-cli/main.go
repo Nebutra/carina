@@ -3,12 +3,16 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Nebutra/carina/go/auth"
+	"github.com/Nebutra/carina/go/provider"
 )
 
 const cliVersion = "0.6.0"
@@ -54,6 +58,8 @@ Usage:
   carina plugin inspect <manifest.toml>              show declared permissions
   carina plugin run <session_id> <manifest> <wasm>   run a WASM plugin
   carina metrics
+  carina auth <login|list|logout> ...        manage local BYOK credentials
+  carina providers list [--refresh]          list provider catalog entries
 
 The daemon must be running: carina-daemon &
 `
@@ -79,6 +85,10 @@ func run(cmd string, args []string) error {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
+	case "auth":
+		return cmdAuth(args)
+	case "providers":
+		return cmdProviders(args)
 	// Native toolchain launchers (PRD §8.1): carina forwards straight to the
 	// Zig binaries — no daemon, no business logic, just process exec.
 	// run/patch use a -native suffix to avoid clashing with the agent-level
@@ -221,6 +231,97 @@ func cmdInit() error {
 	}
 	fmt.Printf("initialized %s\nstart the runtime with:  carina-daemon &\n", dir)
 	return nil
+}
+
+func cmdAuth(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: carina auth <login|list|logout> ...")
+	}
+	store, err := auth.NewStore("")
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "login":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: carina auth login <provider> [api_key|-]")
+		}
+		key := ""
+		if len(args) > 2 && args[2] != "-" {
+			key = args[2]
+		} else {
+			key, err = readAllStdin()
+			if err != nil {
+				return err
+			}
+		}
+		if err := store.SetAPIKey(args[1], key, nil); err != nil {
+			return err
+		}
+		fmt.Printf("stored credential for %s in %s\n", strings.ToLower(args[1]), store.Path)
+		return nil
+	case "list", "ls":
+		list, err := store.ListSafe()
+		if err != nil {
+			return err
+		}
+		return printJSON(list)
+	case "logout":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: carina auth logout <provider>")
+		}
+		if err := store.Remove(args[1]); err != nil {
+			return err
+		}
+		fmt.Printf("removed credential for %s\n", strings.ToLower(args[1]))
+		return nil
+	default:
+		return fmt.Errorf("unknown auth subcommand %q", args[0])
+	}
+}
+
+func cmdProviders(args []string) error {
+	if len(args) == 0 {
+		args = []string{"list"}
+	}
+	if args[0] != "list" && args[0] != "ls" {
+		return fmt.Errorf("usage: carina providers list [--refresh]")
+	}
+	refresh := false
+	for _, a := range args[1:] {
+		switch a {
+		case "--refresh":
+			refresh = true
+		default:
+			return fmt.Errorf("unknown providers list flag %q", a)
+		}
+	}
+	cachePath, err := provider.DefaultCachePath()
+	if err != nil {
+		return err
+	}
+	opts := provider.Options{CachePath: cachePath, ModelsURL: os.Getenv("CARINA_MODELS_URL")}
+	var cat provider.Catalog
+	if refresh {
+		cat, err = provider.Refresh(context.Background(), opts)
+	} else {
+		cat, err = provider.Load(opts)
+	}
+	if err != nil {
+		return err
+	}
+	type row struct {
+		ID     string   `json:"id"`
+		Name   string   `json:"name"`
+		Env    []string `json:"env,omitempty"`
+		API    string   `json:"api,omitempty"`
+		Models int      `json:"models"`
+	}
+	rows := []row{}
+	for _, p := range provider.Sorted(cat) {
+		rows = append(rows, row{ID: p.ID, Name: p.Name, Env: p.Env, API: p.API, Models: len(p.Models)})
+	}
+	return printJSON(rows)
 }
 
 func cmdExec(c *rpcClient, args []string) error {
@@ -407,6 +508,15 @@ func call(c *rpcClient, method string, params any) error {
 		return err
 	}
 	pretty, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(pretty))
+	return nil
+}
+
+func printJSON(v any) error {
+	pretty, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Nebutra/carina/go/auth"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 )
 
@@ -17,15 +18,15 @@ import (
 // is set and transparently falls back to mock otherwise (PRD §8.6:
 // provider fallback).
 type anthropicProvider struct {
-	apiKey string
+	auth   *auth.Chain
 	model  string
 	client *http.Client
 }
 
-// NewAnthropicProviderFromEnv reads ANTHROPIC_API_KEY and ANTHROPIC_MODEL.
-func NewAnthropicProviderFromEnv() modelrouter.Provider {
+// NewAnthropicProvider uses the daemon auth chain and ANTHROPIC_MODEL.
+func NewAnthropicProvider(chain *auth.Chain) modelrouter.Provider {
 	return &anthropicProvider{
-		apiKey: os.Getenv("ANTHROPIC_API_KEY"),
+		auth:   chain,
 		model:  envOr("ANTHROPIC_MODEL", "claude-fable-5"),
 		client: &http.Client{Timeout: 120 * time.Second},
 	}
@@ -34,8 +35,12 @@ func NewAnthropicProviderFromEnv() modelrouter.Provider {
 func (a *anthropicProvider) Name() string { return "anthropic" }
 
 func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Request) (*modelrouter.Response, error) {
-	if a.apiKey == "" {
-		return nil, fmt.Errorf("anthropic: ANTHROPIC_API_KEY not set")
+	cred, ok := a.auth.Resolve()
+	if !ok {
+		return nil, fmt.Errorf("anthropic: credential not set")
+	}
+	if cred.Kind != auth.APIKey {
+		return nil, fmt.Errorf("anthropic: api key credential not set")
 	}
 	model := req.Model
 	if model == "" || model == "default" {
@@ -51,7 +56,7 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 		return nil, err
 	}
 	httpReq.Header.Set("content-type", "application/json")
-	httpReq.Header.Set("x-api-key", a.apiKey)
+	cred.Apply(httpReq.Header)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := a.client.Do(httpReq)

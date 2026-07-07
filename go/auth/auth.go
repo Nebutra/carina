@@ -69,6 +69,23 @@ func DefaultChain(envVars []string, oauth TokenFunc) *Chain {
 	return NewChain(sources...)
 }
 
+// ProviderChain adds a user auth store source between environment BYOK keys and
+// managed OAuth. Environment still wins, but a user can persist a provider key
+// with `carina auth login` without putting it in every shell.
+func ProviderChain(providerID string, envVars []string, store *Store, oauth TokenFunc) *Chain {
+	sources := make([]Source, 0, len(envVars)+2)
+	for _, v := range envVars {
+		sources = append(sources, EnvKey{Var: v})
+	}
+	if store != nil {
+		sources = append(sources, StoreKey{Store: store, Provider: providerID})
+	}
+	if oauth != nil {
+		sources = append(sources, NebutraOAuth{Token: oauth})
+	}
+	return NewChain(sources...)
+}
+
 // Resolve returns the first credential a source yields.
 func (c *Chain) Resolve() (Credential, bool) {
 	for _, s := range c.sources {

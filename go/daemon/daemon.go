@@ -162,7 +162,16 @@ func New(opts Options) (*Daemon, error) {
 	}
 	_ = hardenProcess() // Linux: non-dumpable, anti-ptrace (best-effort)
 	d.registerMethods()
-	registerProviders(d.router, opts.Offline)
+	authStore, _ := auth.NewStore("")
+	// Provider auth: BYOK API keys first (user-supplied), then persisted
+	// provider credentials, then the Nebutra ecosystem OAuth token.
+	d.authChain = auth.ProviderChain(
+		"anthropic",
+		[]string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
+		authStore,
+		func() (string, error) { return os.Getenv("CARINA_NEBUTRA_TOKEN"), nil },
+	)
+	registerProviders(d.router, opts.Offline, d.authChain)
 	// Durable run registry + concurrency cap for background runs. Reloading the
 	// registry lets `task.list`/`task.status` answer for runs from before a
 	// restart (the run record survives even though the live loop does not yet).
@@ -187,12 +196,6 @@ func New(opts Options) (*Daemon, error) {
 	d.interactiveApproval.Store(opts.InteractiveApproval)
 	d.subagentParentTask = map[string]string{}
 	d.escalationCounts = map[string]int{}
-	// Provider auth: BYOK API keys first (user-supplied), then the Nebutra
-	// ecosystem OAuth token (a cached access token from the identity flow).
-	d.authChain = auth.DefaultChain(
-		[]string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
-		func() (string, error) { return os.Getenv("CARINA_NEBUTRA_TOKEN"), nil },
-	)
 	// Shared cross-process prompt history (survives restarts; multiple daemons
 	// can append concurrently).
 	d.history = history.New(filepath.Join(opts.StateDir, "history"))

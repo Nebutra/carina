@@ -110,6 +110,14 @@ export ANTHROPIC_API_KEY=sk-...
 export OPENAI_API_KEY=sk-...
 ```
 
+ローカルに BYOK credential を保存し、provider catalog を確認することもできます。
+
+```bash
+./bin/carina auth login anthropic - < ~/.secrets/anthropic-key
+./bin/carina auth list
+./bin/carina providers list --refresh
+```
+
 現在のリポジトリでタスクを実行：
 
 ```bash

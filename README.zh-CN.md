@@ -107,6 +107,14 @@ export ANTHROPIC_API_KEY=sk-...
 export OPENAI_API_KEY=sk-...
 ```
 
+也可以把 BYOK 凭证存到本机，并查看 provider catalog：
+
+```bash
+./bin/carina auth login anthropic - < ~/.secrets/anthropic-key
+./bin/carina auth list
+./bin/carina providers list --refresh
+```
+
 在当前仓库运行任务：
 
 ```bash

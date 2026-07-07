@@ -134,6 +134,14 @@ export ANTHROPIC_API_KEY=sk-...
 export OPENAI_API_KEY=sk-...
 ```
 
+You can also store a local BYOK credential and inspect the provider catalog:
+
+```bash
+./bin/carina auth login anthropic - < ~/.secrets/anthropic-key
+./bin/carina auth list
+./bin/carina providers list --refresh
+```
+
 Run a task in the current repository:
 
 ```bash
