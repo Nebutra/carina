@@ -27,6 +27,7 @@ type Task struct {
 	WorkspaceID     string         `json:"workspace_id"`
 	Status          string         `json:"status"` // queued | running | paused | waiting_approval | completed | degraded | failed | cancelled
 	UserPrompt      string         `json:"user_prompt"`
+	Model           string         `json:"model,omitempty"` // provider/model override; empty => daemon default
 	SuccessCriteria []SuccessCheck `json:"success_criteria,omitempty"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
@@ -63,6 +64,12 @@ func (s *Scheduler) Submit(sessionID, workspaceID, prompt string) *Task {
 
 // SubmitWithGoal submits a task carrying objective success criteria.
 func (s *Scheduler) SubmitWithGoal(sessionID, workspaceID, prompt string, criteria []SuccessCheck) *Task {
+	return s.SubmitWithGoalAndModel(sessionID, workspaceID, prompt, "", criteria)
+}
+
+// SubmitWithGoalAndModel submits a task with optional objective criteria and a
+// model override such as "openai/gpt-5" or "openrouter/anthropic/claude...".
+func (s *Scheduler) SubmitWithGoalAndModel(sessionID, workspaceID, prompt, model string, criteria []SuccessCheck) *Task {
 	now := time.Now().UTC()
 	task := &Task{
 		TaskID:          sessionstore.NewID("task"),
@@ -70,6 +77,7 @@ func (s *Scheduler) SubmitWithGoal(sessionID, workspaceID, prompt string, criter
 		WorkspaceID:     workspaceID,
 		Status:          "queued",
 		UserPrompt:      prompt,
+		Model:           model,
 		SuccessCriteria: criteria,
 		CreatedAt:       now,
 		UpdatedAt:       now,

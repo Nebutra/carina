@@ -111,8 +111,22 @@ export OPENAI_API_KEY=sk-...
 
 ```bash
 ./bin/carina auth login anthropic - < ~/.secrets/anthropic-key
+./bin/carina auth login openai - < ~/.secrets/openai-key
 ./bin/carina auth list
 ./bin/carina providers list --refresh
+```
+
+daemon 启动时读取本地缓存的 catalog。如果希望启动前先刷新 models.dev，可设置
+`CARINA_PROVIDER_REFRESH=1`。当前 runtime adapter 覆盖 Anthropic Messages、
+OpenAI Responses、catalog 中的 OpenAI-compatible chat provider、OpenRouter 和
+Google Gemini。Bedrock、Azure OpenAI、Vertex 这类云身份 provider 还需要单独的
+region/project/credential chain 接线。
+
+需要指定运行模型时，可以显式传 `provider/model`：
+
+```bash
+CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
+./bin/carina run --model openrouter/anthropic/claude-sonnet-4-5 "fix the failing tests"
 ```
 
 在当前仓库运行任务：

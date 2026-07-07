@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	modelrouter "github.com/Nebutra/carina/go/model-router"
 )
 
 // Reasoner turns a prompt into the agent's next decision. It is the pure
@@ -19,6 +21,10 @@ type Reasoner interface {
 	Think(ctx context.Context, prompt string) (string, error)
 }
 
+type modelAwareReasoner interface {
+	ThinkModel(ctx context.Context, model, prompt string) (string, error)
+}
+
 // retryBaseDelay is the initial backoff; overridable in tests.
 var retryBaseDelay = 2 * time.Second
 
@@ -26,11 +32,15 @@ var retryBaseDelay = 2 * time.Second
 // errors (rate limits, 5xx, timeouts) are retried; the caller's context
 // bounds total time. This fixes the "Think error => task dies" gap.
 func thinkWithRetry(ctx context.Context, r Reasoner, prompt string) (string, error) {
+	return thinkWithRetryModel(ctx, r, "", prompt)
+}
+
+func thinkWithRetryModel(ctx context.Context, r Reasoner, model, prompt string) (string, error) {
 	const maxAttempts = 4
 	delay := retryBaseDelay
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		out, err := r.Think(ctx, prompt)
+		out, err := thinkOnce(ctx, r, model, prompt)
 		if err == nil {
 			return out, nil
 		}
@@ -49,6 +59,46 @@ func thinkWithRetry(ctx context.Context, r Reasoner, prompt string) (string, err
 		}
 	}
 	return "", fmt.Errorf("reasoner failed after %d attempts: %w", maxAttempts, lastErr)
+}
+
+func thinkOnce(ctx context.Context, r Reasoner, model, prompt string) (string, error) {
+	if model != "" {
+		if mr, ok := r.(modelAwareReasoner); ok {
+			return mr.ThinkModel(ctx, model, prompt)
+		}
+	}
+	return r.Think(ctx, prompt)
+}
+
+// ---- model-router reasoner ------------------------------------------------
+
+type routerReasoner struct {
+	router *modelrouter.Router
+	model  string
+}
+
+func newRouterReasoner(router *modelrouter.Router, model string) *routerReasoner {
+	return &routerReasoner{router: router, model: model}
+}
+
+func (r *routerReasoner) Name() string { return "model-router" }
+
+func (r *routerReasoner) Think(ctx context.Context, prompt string) (string, error) {
+	return r.ThinkModel(ctx, r.model, prompt)
+}
+
+func (r *routerReasoner) ThinkModel(ctx context.Context, model, prompt string) (string, error) {
+	if strings.TrimSpace(model) == "" {
+		model = "default"
+	}
+	resp, err := r.router.Complete(ctx, modelrouter.Request{Model: model, Prompt: prompt})
+	if err != nil {
+		return "", err
+	}
+	if resp.Provider == "mock" {
+		return "", fmt.Errorf("model-router: no runtime model provider resolved")
+	}
+	return strings.TrimSpace(resp.Text), nil
 }
 
 // ---- claude CLI reasoner ---------------------------------------------------
@@ -121,9 +171,9 @@ func (r *claudeCLIReasoner) Think(ctx context.Context, prompt string) (string, e
 		return "", fmt.Errorf("claude reasoner: %w", err)
 	}
 	var resp struct {
-		Result   string `json:"result"`
-		IsError  bool   `json:"is_error"`
-		Subtype  string `json:"subtype"`
+		Result  string `json:"result"`
+		IsError bool   `json:"is_error"`
+		Subtype string `json:"subtype"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
 		return "", fmt.Errorf("claude reasoner: decode: %w (%s)", err, truncate(string(out), 200))

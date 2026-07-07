@@ -163,15 +163,16 @@ func New(opts Options) (*Daemon, error) {
 	_ = hardenProcess() // Linux: non-dumpable, anti-ptrace (best-effort)
 	d.registerMethods()
 	authStore, _ := auth.NewStore("")
-	// Provider auth: BYOK API keys first (user-supplied), then persisted
-	// provider credentials, then the Nebutra ecosystem OAuth token.
+	// Doctor keeps a single safe provenance string for the primary Anthropic
+	// chain. Runtime providers each get their own BYOK/env chain below.
 	d.authChain = auth.ProviderChain(
 		"anthropic",
-		[]string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
+		[]string{"ANTHROPIC_API_KEY"},
 		authStore,
 		func() (string, error) { return os.Getenv("CARINA_NEBUTRA_TOKEN"), nil },
 	)
-	registerProviders(d.router, opts.Offline, d.authChain)
+	providerCatalog := loadRuntimeProviderCatalog()
+	registerProviders(d.router, opts.Offline, authStore, providerCatalog)
 	// Durable run registry + concurrency cap for background runs. Reloading the
 	// registry lets `task.list`/`task.status` answer for runs from before a
 	// restart (the run record survives even though the live loop does not yet).
@@ -241,10 +242,17 @@ func New(opts Options) (*Daemon, error) {
 			d.egressCAPath = caPath
 		}
 	}
-	// Best-effort: wire the claude CLI reasoner if available and not offline.
+	// Best-effort: wire a reasoner if available and not offline. An explicit
+	// CARINA_REASONER_MODEL (for example "openai/gpt-5") selects the
+	// model-router reasoner; otherwise Claude CLI remains the preferred local
+	// reasoner, with BYOK provider adapters as the fallback.
 	if !opts.Offline {
-		if r, err := newClaudeCLIReasoner(); err == nil {
+		if model := strings.TrimSpace(os.Getenv("CARINA_REASONER_MODEL")); model != "" {
+			d.reasoner = newRouterReasoner(d.router, model)
+		} else if r, err := newClaudeCLIReasoner(); err == nil {
 			d.reasoner = r
+		} else if hasRunnableRuntimeProvider(providerCatalog, authStore) {
+			d.reasoner = newRouterReasoner(d.router, "default")
 		}
 		// Model tiering: an optional cheaper model for compaction/summarization.
 		if m := os.Getenv("CARINA_SUMMARIZER_MODEL"); m != "" {
@@ -739,6 +747,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	var p struct {
 		SessionID       string                   `json:"session_id"`
 		Prompt          string                   `json:"prompt"`
+		Model           string                   `json:"model"`
 		SuccessCriteria []scheduler.SuccessCheck `json:"success_criteria"`
 		OutputSchema    []string                 `json:"output_schema"`
 	}
@@ -752,13 +761,13 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	if sess.Status != "active" {
 		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
 	}
-	task := d.sched.SubmitWithGoal(sess.SessionID, sess.WorkspaceID, p.Prompt, p.SuccessCriteria)
+	task := d.sched.SubmitWithGoalAndModel(sess.SessionID, sess.WorkspaceID, p.Prompt, p.Model, p.SuccessCriteria)
 	d.sched.SetMode(task.TaskID, "background")
 	if len(p.OutputSchema) > 0 {
 		d.sched.SetOutputSchema(task.TaskID, p.OutputSchema)
 	}
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
-		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt}, "")
+		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt, "model": task.Model}, "")
 	_ = d.history.Append(p.Prompt) // shared cross-process prompt history (best-effort)
 	d.persistRun(task.TaskID)
 

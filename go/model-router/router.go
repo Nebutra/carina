@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -60,6 +61,10 @@ func (r *Router) Complete(ctx context.Context, req Request) (*Response, error) {
 	if len(providers) == 0 {
 		return nil, errors.New("modelrouter: no providers registered")
 	}
+	if target, model, ok := targetedModel(req.Model, providers); ok {
+		providers = []Provider{target}
+		req.Model = model
+	}
 
 	var errs []error
 	for _, p := range providers {
@@ -72,6 +77,22 @@ func (r *Router) Complete(ctx context.Context, req Request) (*Response, error) {
 		return resp, nil
 	}
 	return nil, fmt.Errorf("modelrouter: all providers failed: %w", errors.Join(errs...))
+}
+
+func targetedModel(model string, providers []Provider) (Provider, string, bool) {
+	prefix, suffix, ok := strings.Cut(model, "/")
+	if !ok || prefix == "" {
+		return nil, "", false
+	}
+	for _, p := range providers {
+		if p.Name() == prefix {
+			if suffix == "" {
+				suffix = "default"
+			}
+			return p, suffix, true
+		}
+	}
+	return nil, "", false
 }
 
 func (r *Router) UsageByProvider() map[string]Usage {

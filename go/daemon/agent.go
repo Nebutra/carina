@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Nebutra/carina/go/auth"
 	"github.com/Nebutra/carina/go/kernel"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/scheduler"
@@ -105,7 +104,7 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 	}
 
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
-		map[string]any{"engine": d.reasoner.Name(), "prompt": task.UserPrompt}, "")
+		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "prompt": task.UserPrompt}, "")
 	d.runLoop(sess, task, newTranscript(task.UserPrompt), 1)
 }
 
@@ -120,7 +119,7 @@ func (d *Daemon) resumeTask(sess *sessionstore.Session, task *scheduler.Task, cp
 		return
 	}
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
-		map[string]any{"engine": d.reasoner.Name(), "prompt": task.UserPrompt, "resumed_from_turn": cp.Turn}, "")
+		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "prompt": task.UserPrompt, "resumed_from_turn": cp.Turn}, "")
 	d.runLoop(sess, task, cp.Transcript, cp.Turn+1)
 }
 
@@ -188,7 +187,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		ok := false
 		for requery := 0; requery <= maxRequeries; requery++ {
 			var err error
-			raw, err = thinkWithRetry(ctx, d.reasoner, prompt)
+			raw, err = thinkWithRetryModel(ctx, d.reasoner, task.Model, prompt)
 			if err != nil {
 				d.degrade(sess, task, tr, "reasoner error: "+err.Error())
 				return
@@ -761,8 +760,8 @@ func (d *Daemon) runMockTask(sess *sessionstore.Session, task *scheduler.Task) {
 		}
 	}
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
-		map[string]any{"prompt": task.UserPrompt}, "")
-	resp, err := d.router.Complete(context.Background(), modelrouter.Request{Model: "default", Prompt: task.UserPrompt})
+		map[string]any{"prompt": task.UserPrompt, "model": taskModel(task)}, "")
+	resp, err := d.router.Complete(context.Background(), modelrouter.Request{Model: taskModel(task), Prompt: task.UserPrompt})
 	if err != nil {
 		d.sched.SetStatus(task.TaskID, "failed")
 		d.record(sess.SessionID, "ModelResponded", task.TaskID, "model", map[string]any{"error": err.Error()}, "")
@@ -787,6 +786,13 @@ func truncate(s string, n int) string {
 // governor meters with this estimate.
 func estimateTokens(s string) int { return len(s)/4 + 1 }
 
+func taskModel(task *scheduler.Task) string {
+	if task != nil && strings.TrimSpace(task.Model) != "" {
+		return strings.TrimSpace(task.Model)
+	}
+	return "default"
+}
+
 // validateOutput returns the required keys missing from a done summary that is
 // expected to be a JSON object (structured output). A summary that is not a
 // JSON object counts every key as missing.
@@ -802,12 +808,4 @@ func validateOutput(summary string, keys []string) []string {
 		}
 	}
 	return missing
-}
-
-func registerProviders(router *modelrouter.Router, offline bool, authChain *auth.Chain) {
-	if !offline {
-		router.RegisterProvider(NewAnthropicProvider(authChain))
-	}
-	router.RegisterProvider(modelrouter.NewMockProvider())
-	_ = time.Now
 }

@@ -138,8 +138,23 @@ You can also store a local BYOK credential and inspect the provider catalog:
 
 ```bash
 ./bin/carina auth login anthropic - < ~/.secrets/anthropic-key
+./bin/carina auth login openai - < ~/.secrets/openai-key
 ./bin/carina auth list
 ./bin/carina providers list --refresh
+```
+
+The daemon reads the cached catalog at startup. Set
+`CARINA_PROVIDER_REFRESH=1` when starting the daemon if you want it to refresh
+models.dev first. Runtime adapters currently cover Anthropic Messages, OpenAI
+Responses, OpenAI-compatible chat providers from the catalog, OpenRouter, and
+Google Gemini. Cloud identity providers such as Bedrock, Azure OpenAI, and
+Vertex need separate region/project credential wiring.
+
+Pick a runtime model explicitly when needed:
+
+```bash
+CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
+./bin/carina run --model openrouter/anthropic/claude-sonnet-4-5 "fix the failing tests"
 ```
 
 Run a task in the current repository:

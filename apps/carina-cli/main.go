@@ -23,8 +23,10 @@ Usage:
   carina init                         create ~/.carina and print daemon hint
   carina status                       daemon health and counters
   carina sessions                     list sessions
-  carina run "<prompt>"               create a session in cwd and submit a task
-  carina ask "<prompt>"               alias for run
+  carina run [--model provider/model] "<prompt>"
+                                      create a session in cwd and submit a task
+  carina ask [--model provider/model] "<prompt>"
+                                      alias for run
   carina resume <session_id>          show a session
   carina watch <session_id>           stream the live event feed
   carina audit <session_id>           replay the session event stream
@@ -120,8 +122,9 @@ func run(cmd string, args []string) error {
 		// daemon and survive CLI exit (PRD §5.2/§10.2), so this is the
 		// default behavior.
 		args = dropFlag(args, "--background")
-		if len(args) < 1 {
-			return fmt.Errorf(`usage: carina %s "<prompt>" [--background]`, cmd)
+		prompt, model, err := parseRunArgs(args)
+		if err != nil {
+			return fmt.Errorf(`usage: carina %s [--model provider/model] "<prompt>" [--background]`, cmd)
 		}
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -134,7 +137,11 @@ func run(cmd string, args []string) error {
 			return err
 		}
 		fmt.Printf("session: %s (safe-edit, %s)\n", sess.SessionID, cwd)
-		return call(c, "task.submit", map[string]any{"session_id": sess.SessionID, "prompt": args[0]})
+		params := map[string]any{"session_id": sess.SessionID, "prompt": prompt}
+		if model != "" {
+			params["model"] = model
+		}
+		return call(c, "task.submit", params)
 
 	case "resume":
 		return callArg(c, "session.get", args, "session_id")
@@ -207,6 +214,26 @@ func run(cmd string, args []string) error {
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", cmd)
 	}
+}
+
+func parseRunArgs(args []string) (prompt, model string, err error) {
+	rest := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--model", "-m":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", fmt.Errorf("model required")
+			}
+			model = strings.TrimSpace(args[i+1])
+			i++
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	if len(rest) < 1 || strings.TrimSpace(rest[0]) == "" {
+		return "", "", fmt.Errorf("prompt required")
+	}
+	return rest[0], model, nil
 }
 
 // dropFlag removes a boolean flag from args if present.

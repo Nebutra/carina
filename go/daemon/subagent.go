@@ -110,7 +110,7 @@ func (d *Daemon) runSubagentLoop(sess *sessionstore.Session, task *scheduler.Tas
 	sysPrompt := spec.SystemPrompt + "\n\n" + toolsHelp
 
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "model",
-		map[string]any{"subagent": spec.Name, "prompt": task.UserPrompt}, "")
+		map[string]any{"subagent": spec.Name, "model": taskModel(task), "prompt": task.UserPrompt}, "")
 
 	for turn := 1; turn <= maxTurns; turn++ {
 		tr.compact(func(head string) (string, error) {
@@ -119,7 +119,7 @@ func (d *Daemon) runSubagentLoop(sess *sessionstore.Session, task *scheduler.Tas
 		seg := buildPromptSegments(sysPrompt, task.UserPrompt, tr.render(), "Next action as one JSON object.")
 		prompt := seg.full()
 
-		raw, err := thinkWithRetry(ctx, d.reasoner, prompt)
+		raw, err := thinkWithRetryModel(ctx, d.reasoner, taskModel(task), prompt)
 		if err != nil {
 			d.sched.SetStatus(task.TaskID, "failed")
 			return "subagent failed: " + err.Error()

@@ -114,8 +114,23 @@ export OPENAI_API_KEY=sk-...
 
 ```bash
 ./bin/carina auth login anthropic - < ~/.secrets/anthropic-key
+./bin/carina auth login openai - < ~/.secrets/openai-key
 ./bin/carina auth list
 ./bin/carina providers list --refresh
+```
+
+daemon は起動時にローカル cache の catalog を読みます。起動前に models.dev を
+refresh したい場合は `CARINA_PROVIDER_REFRESH=1` を設定してください。現在の
+runtime adapter は Anthropic Messages、OpenAI Responses、catalog 内の
+OpenAI-compatible chat provider、OpenRouter、Google Gemini を対象にしています。
+Bedrock、Azure OpenAI、Vertex のような cloud identity provider は、region/project
+credential chain の配線が別途必要です。
+
+runtime model を明示する場合は `provider/model` を指定します。
+
+```bash
+CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
+./bin/carina run --model openrouter/anthropic/claude-sonnet-4-5 "fix the failing tests"
 ```
 
 現在のリポジトリでタスクを実行：

@@ -40,7 +40,7 @@ func (d *Daemon) handleTaskBtw(params json.RawMessage) (any, error) {
 	if cp := d.runs.loadCheckpoint(p.TaskID); cp != nil && cp.Transcript != nil {
 		transcript = cp.Transcript.render()
 	}
-	ans, err := thinkWithRetry(context.Background(), d.reasoner, buildSideQueryPrompt(task, p.Question, transcript))
+	ans, err := thinkWithRetryModel(context.Background(), d.reasoner, taskModel(task), buildSideQueryPrompt(task, p.Question, transcript))
 	if err != nil {
 		return nil, err
 	}
