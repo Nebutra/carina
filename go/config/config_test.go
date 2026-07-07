@@ -24,7 +24,7 @@ func TestCascadePrecedence(t *testing.T) {
 	home := t.TempDir()
 	proj := t.TempDir()
 
-	writeConfig(t, home, `{"offline": true, "max_task_tokens": 100, "tools_dir": "/g/tools", "summarizer_model": "cheap", "risk_review_model": "guardian"}`)
+	writeConfig(t, home, `{"offline": true, "max_task_tokens": 100, "tools_dir": "/g/tools", "gateway_ws": "127.0.0.1:7001", "gateway_ws_origins": ["https://app.example"], "summarizer_model": "cheap", "risk_review_model": "guardian"}`)
 	writeConfig(t, proj, `{"max_task_tokens": 200, "tools_dir": "/p/tools", "risk_review_mode": "enforce"}`)
 	t.Setenv("CARINA_TOOLS_DIR", "/e/tools")
 	t.Setenv("CARINA_RISK_REVIEW_MODE", "advisory")
@@ -43,6 +43,12 @@ func TestCascadePrecedence(t *testing.T) {
 	}
 	if cfg.ToolsDir != "/e/tools" {
 		t.Errorf("tools_dir: env should override project, want /e/tools got %q", cfg.ToolsDir)
+	}
+	if cfg.GatewayWS != "127.0.0.1:7001" {
+		t.Errorf("gateway_ws should fall through from global, got %q", cfg.GatewayWS)
+	}
+	if !reflect.DeepEqual(cfg.GatewayWSOrigins, []string{"https://app.example"}) {
+		t.Errorf("gateway_ws_origins should fall through from global, got %#v", cfg.GatewayWSOrigins)
 	}
 	if cfg.SummarizerModel != "cheap" {
 		t.Errorf("summarizer_model should fall through from global, got %q", cfg.SummarizerModel)

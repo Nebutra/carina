@@ -14,10 +14,10 @@ import (
 // It validates first and returns WITHOUT mutating on failure, so a bad reload
 // keeps the last-good config.
 //
-// Restart-only knobs — listeners, kernel/tools/policy wiring, the concurrency
-// cap (d.runSem is sized once), offline/provider setup, the model-backed risk
-// reviewer, and turning the egress proxy itself on/off — are intentionally NOT
-// touched here.
+// Restart-only knobs — listeners (unix/TCP/WebSocket Gateway), kernel/tools/
+// policy wiring, the concurrency cap (d.runSem is sized once), offline/provider
+// setup, the model-backed risk reviewer, and turning the egress proxy itself
+// on/off — are intentionally NOT touched here.
 func (d *Daemon) ApplyConfig(cfg config.Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err

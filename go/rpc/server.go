@@ -300,6 +300,10 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) serve(conn net.Conn, origin Origin) {
+	s.serveWithScopes(conn, origin, nil)
+}
+
+func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
 	defer conn.Close()
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
@@ -322,6 +326,17 @@ func (s *Server) serve(conn net.Conn, origin Origin) {
 		if ok, reason := s.remoteAuthorized(req.Method, origin); !ok {
 			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: reason}})
 			continue
+		}
+		if scopes != nil {
+			scope, _, err := s.ResolveScope(req.Method, req.Params)
+			if err != nil {
+				_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: err.Error()}})
+				continue
+			}
+			if !scopeAllowed(scope, scopes) {
+				_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: "method scope not negotiated: " + req.Method + " requires " + string(scope)}})
+				continue
+			}
 		}
 
 		// Stream methods keep the connection open and push notifications.
@@ -346,6 +361,15 @@ func (s *Server) serve(conn net.Conn, origin Origin) {
 
 		_ = enc.Encode(s.dispatch(req))
 	}
+}
+
+func scopeAllowed(required Scope, allowed []Scope) bool {
+	for _, scope := range allowed {
+		if scope == required {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) dispatch(req Request) Response {

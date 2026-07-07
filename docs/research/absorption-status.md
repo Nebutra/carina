@@ -204,6 +204,18 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   `admin`. This keeps the OpenClaw philosophy while leaving actual network
   Gateway, `/v1`, and `/tools/invoke` for later phases.
 
+**Wave 15 — OpenClaw Gateway absorption (Phase C landed)**
+- [x] **Default-off WebSocket Gateway skeleton** (`go/rpc`, `go/daemon`,
+  `apps/carina-daemon`, `go/config`): added an explicit `-gateway-ws` /
+  `gateway_ws` / `CARINA_GATEWAY_WS` listener at `/gateway`, disabled unless
+  configured. The first text frame must be `gateway.hello`; later JSON-RPC
+  frames reuse descriptor `remote`, the remote kill-switch, negotiated
+  role/scopes, and dynamic scope resolution. Browser `Origin` headers are
+  rejected unless exactly allowlisted through `-gateway-ws-origins`,
+  `gateway_ws_origins`, or `CARINA_GATEWAY_WS_ORIGINS`. This gives Carina a
+  real OpenClaw-style Gateway transport shell without adding `/v1`,
+  `/tools/invoke`, new auth grants, or Nebutra device pairing.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
@@ -218,15 +230,15 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   boundary with local sync off by default.
 - OpenClaw Gateway items intentionally staged: Phase A landed the descriptor
   control-plane substrate and Phase B landed handshake/dynamic-scope mechanics.
-  The HTTP/WS Gateway façade and device/node pairing are not safe to bolt on
-  until they are built on this catalog and Carina's kernel capability model.
+  Phase C landed the default-off WebSocket transport skeleton. The
+  agent-first HTTP façade and device/node pairing are not safe to bolt on until
+  they are built on this catalog and Carina's kernel capability model.
 
 ## Test status
 Current verification for this update: targeted Go coverage
-(`go test ./apps/carina-cli ./go/rpc ./go/daemon ./apps/carina-daemon`, 123
-tests across 4 packages), full Go coverage (`go test ./go/... ./apps/...`, 212
-tests across 21 packages), targeted Go race coverage
-(`go test -race ./go/rpc ./go/daemon ./apps/carina-daemon`, 119 tests across 3
-packages), JSON registry validation (`jq empty protocol/jsonrpc/methods.json`),
-and CLI help smoke check (`go run ./apps/carina-cli --help`). This update
-touched Go RPC/daemon/CLI and docs only; Rust and Zig were not rebuilt.
+(`go test ./go/rpc ./go/config ./go/daemon ./apps/carina-daemon`, 133 tests
+across 4 packages), full Go coverage (`go test ./go/... ./apps/...`, 215 tests
+across 21 packages), and targeted Go race coverage
+(`go test -race ./go/rpc ./go/config ./go/daemon ./apps/carina-daemon`, 133
+tests across 4 packages). This update touched Go RPC/config/daemon entrypoint
+and docs only; Rust and Zig were not rebuilt.

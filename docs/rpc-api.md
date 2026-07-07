@@ -1,6 +1,6 @@
 # RPC API
 
-Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. gRPC is a later optimization. Machine-readable registry: [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json).
+Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. Optional remote TCP and WebSocket Gateway listeners are disabled by default. gRPC is a later optimization. Machine-readable registry: [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json).
 
 Notifications (server → client) stream events; every payload conforms to [`protocol/schemas/`](../protocol/schemas/).
 
@@ -25,6 +25,18 @@ the catalog with `carina gateway methods`.
 snapshot for current JSON-RPC and future WebSocket/HTTP Gateway surfaces.
 Actual authority remains enforced by transport origin, method descriptors, and
 the capability kernel.
+
+Optional WebSocket Gateway:
+
+- enable explicitly with `carina-daemon -gateway-ws 127.0.0.1:8777`, config
+  key `gateway_ws`, or env `CARINA_GATEWAY_WS`;
+- endpoint path is `/gateway`;
+- browser requests with an `Origin` header are rejected unless the exact value
+  is configured through `-gateway-ws-origins`, `gateway_ws_origins`, or
+  `CARINA_GATEWAY_WS_ORIGINS`;
+- first text frame must be a JSON-RPC `gateway.hello` request;
+- later frames are JSON-RPC requests constrained by descriptor `remote`, the
+  remote kill-switch, negotiated scopes, and dynamic scope resolution.
 
 Scopes:
 

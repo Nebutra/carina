@@ -34,6 +34,8 @@ func main() {
 	stateDir := flag.String("state", cfg.StateDir, "session/event storage directory")
 	socket := flag.String("socket", cfg.Socket, "unix socket path")
 	tcp := flag.String("tcp", cfg.TCP, "optional TCP listen address for remote workers, e.g. :7777")
+	gatewayWS := flag.String("gateway-ws", cfg.GatewayWS, "optional WebSocket Gateway listen address, e.g. 127.0.0.1:8777")
+	gatewayWSOrigins := flag.String("gateway-ws-origins", strings.Join(cfg.GatewayWSOrigins, ","), "comma-separated allowed browser Origin values for -gateway-ws")
 	kernelBin := flag.String("kernel", cfg.KernelBin, "carina-kernel-service path (default: auto-discover)")
 	toolsDir := flag.String("tools", cfg.ToolsDir, "zig native tools directory (default: auto-discover)")
 	policyDir := flag.String("policy", cfg.PolicyDir, "enterprise org-policy directory")
@@ -154,6 +156,14 @@ func main() {
 			fmt.Printf("carina-daemon: also listening on tcp %s\n", *tcp)
 			if err := d.RunTCP(*tcp); err != nil {
 				log.Printf("carina-daemon: tcp: %v", err)
+			}
+		}()
+	}
+	if *gatewayWS != "" {
+		go func() {
+			fmt.Printf("carina-daemon: gateway websocket listening on ws://%s/gateway\n", *gatewayWS)
+			if err := d.RunGatewayWebSocket(*gatewayWS, splitList(*gatewayWSOrigins)); err != nil {
+				log.Printf("carina-daemon: gateway websocket: %v", err)
 			}
 		}()
 	}

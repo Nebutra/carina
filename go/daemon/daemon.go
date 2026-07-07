@@ -366,6 +366,12 @@ func (d *Daemon) RunTCP(addr string) error {
 	return d.server.ListenTCP(addr)
 }
 
+// RunGatewayWebSocket serves the descriptor-backed Gateway skeleton over
+// WebSocket. It is default-off and uses the remote transport allowlist.
+func (d *Daemon) RunGatewayWebSocket(addr string, allowedOrigins []string) error {
+	return d.server.ListenWebSocket(addr, "/gateway", allowedOrigins)
+}
+
 func (d *Daemon) Close() error {
 	d.stopOnce.Do(func() {
 		if d.stopCh != nil {
