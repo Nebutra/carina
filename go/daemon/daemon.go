@@ -420,7 +420,9 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("daemon.status", rpc.ScopeRead, true, d.handleStatus)
 	d.registerRPC("daemon.metrics", rpc.ScopeRead, true, d.handleMetrics)
 	d.registerRPC("daemon.doctor", rpc.ScopeRead, true, d.handleDoctor)
+	d.registerRPC("gateway.hello", rpc.ScopeRead, true, d.handleGatewayHello)
 	d.registerRPC("gateway.methods", rpc.ScopeRead, true, d.handleGatewayMethods)
+	d.registerRPC("gateway.resolve_scope", rpc.ScopeRead, false, d.handleGatewayResolveScope)
 	d.registerRPC("agent.list", rpc.ScopeRead, true, d.handleAgentList)
 	d.registerRPC("command.list", rpc.ScopeRead, true, d.handleCommandList)
 
@@ -452,7 +454,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("workspace.search", rpc.ScopeRead, false, d.handleWorkspaceSearch)
 	d.registerRPC("workspace.file.get", rpc.ScopeRead, false, d.handleFileGet)
 	d.registerRPC("workspace.trust", rpc.ScopeAdmin, false, d.handleWorkspaceTrust, true)
-	d.registerRPC("workspace.patch.propose", rpc.ScopeWrite, false, d.handlePatchPropose)
+	d.registerRPCDynamic("workspace.patch.propose", rpc.ScopeWrite, false, d.handlePatchPropose, patchProposeScope)
 	d.registerRPC("workspace.patch.apply", rpc.ScopeWrite, false, d.handlePatchApply)
 	d.registerRPC("workspace.patch.rollback", rpc.ScopeWrite, false, d.handlePatchRollback)
 	d.registerRPC("workspace.patch.list", rpc.ScopeRead, false, d.handlePatchList)
@@ -488,6 +490,10 @@ func (d *Daemon) registerMethods() {
 }
 
 func (d *Daemon) registerRPC(method string, scope rpc.Scope, remote bool, h rpc.Handler, controlPlaneWrite ...bool) {
+	d.registerRPCDynamic(method, scope, remote, h, nil, controlPlaneWrite...)
+}
+
+func (d *Daemon) registerRPCDynamic(method string, scope rpc.Scope, remote bool, h rpc.Handler, resolver rpc.ScopeResolver, controlPlaneWrite ...bool) {
 	desc := rpc.MethodDescriptor{
 		Method:            method,
 		Scope:             scope,
@@ -495,7 +501,7 @@ func (d *Daemon) registerRPC(method string, scope rpc.Scope, remote bool, h rpc.
 		Advertise:         true,
 		ControlPlaneWrite: len(controlPlaneWrite) > 0 && controlPlaneWrite[0],
 	}
-	if err := d.server.RegisterMethod(desc, h); err != nil {
+	if err := d.server.RegisterMethodDynamic(desc, h, resolver); err != nil {
 		panic(err)
 	}
 }
@@ -641,10 +647,43 @@ func (d *Daemon) handleMetrics(_ json.RawMessage) (any, error) {
 	}, nil
 }
 
+func (d *Daemon) handleGatewayHello(params json.RawMessage) (any, error) {
+	var req rpc.HelloRequest
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+	}
+	return rpc.BuildHelloResponse(req, Version, d.server.MethodDescriptors())
+}
+
 func (d *Daemon) handleGatewayMethods(_ json.RawMessage) (any, error) {
 	return map[string]any{
 		"version": "1",
 		"methods": d.server.MethodDescriptors(),
+	}, nil
+}
+
+func (d *Daemon) handleGatewayResolveScope(params json.RawMessage) (any, error) {
+	var p struct {
+		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	p.Method = strings.TrimSpace(p.Method)
+	if p.Method == "" {
+		return nil, fmt.Errorf("method is required")
+	}
+	scope, dynamic, err := d.server.ResolveScope(p.Method, p.Params)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"method":        p.Method,
+		"scope":         scope,
+		"dynamic_scope": dynamic,
 	}, nil
 }
 
@@ -1256,6 +1295,39 @@ func (d *Daemon) handleFileGet(params json.RawMessage) (any, error) {
 }
 
 // ---- patches --------------------------------------------------------------
+
+func patchProposeScope(params json.RawMessage) (rpc.Scope, error) {
+	var p struct {
+		Files []kernel.FileChange `json:"files"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("invalid params: %w", err)
+	}
+	if len(p.Files) == 0 {
+		return rpc.ScopeAdmin, nil
+	}
+	for _, f := range p.Files {
+		if patchPathNeedsAdmin(f.Path) {
+			return rpc.ScopeAdmin, nil
+		}
+	}
+	return rpc.ScopeWrite, nil
+}
+
+func patchPathNeedsAdmin(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" || filepath.IsAbs(path) || filepath.Clean(path) == "." {
+		return true
+	}
+	for _, part := range strings.FieldsFunc(path, func(r rune) bool {
+		return r == '/' || r == '\\'
+	}) {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
 
 func (d *Daemon) handlePatchPropose(params json.RawMessage) (any, error) {
 	var p struct {

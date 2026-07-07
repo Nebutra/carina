@@ -51,9 +51,10 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	must("daemon.metrics", map[string]any{})
 	var methods struct {
 		Methods []struct {
-			Method string `json:"method"`
-			Scope  string `json:"scope"`
-			Remote bool   `json:"remote"`
+			Method       string `json:"method"`
+			Scope        string `json:"scope"`
+			Remote       bool   `json:"remote"`
+			DynamicScope bool   `json:"dynamic_scope"`
 		} `json:"methods"`
 	}
 	if err := c.Call("gateway.methods", map[string]any{}, &methods); err != nil {
@@ -61,16 +62,53 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	}
 	seenStatus := false
 	seenSubmit := false
+	seenPatchPropose := false
 	for _, m := range methods.Methods {
 		switch m.Method {
 		case "daemon.status":
 			seenStatus = m.Scope == "read" && m.Remote
 		case "task.submit":
 			seenSubmit = m.Scope == "write" && !m.Remote
+		case "workspace.patch.propose":
+			seenPatchPropose = m.Scope == "write" && m.DynamicScope
 		}
 	}
-	if !seenStatus || !seenSubmit {
-		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v", seenStatus, seenSubmit)
+	if !seenStatus || !seenSubmit || !seenPatchPropose {
+		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v patch=%v", seenStatus, seenSubmit, seenPatchPropose)
+	}
+	var hello struct {
+		Role     string   `json:"role"`
+		Scopes   []string `json:"scopes"`
+		Features []string `json:"features"`
+	}
+	if err := c.Call("gateway.hello", map[string]any{"role": "operator", "scopes": []string{"read", "admin", "worker"}}, &hello); err != nil {
+		t.Fatal(err)
+	}
+	if hello.Role != "operator" || len(hello.Scopes) != 2 || hello.Scopes[0] != "read" || hello.Scopes[1] != "admin" {
+		t.Fatalf("unexpected gateway.hello negotiation: %+v", hello)
+	}
+	var resolved struct {
+		Method       string `json:"method"`
+		Scope        string `json:"scope"`
+		DynamicScope bool   `json:"dynamic_scope"`
+	}
+	if err := c.Call("gateway.resolve_scope", map[string]any{
+		"method": "workspace.patch.propose",
+		"params": map[string]any{"files": []map[string]any{{"path": "a.go", "new_content": "package p\n"}}},
+	}, &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Scope != "write" || !resolved.DynamicScope {
+		t.Fatalf("relative patch should resolve to write dynamic scope: %+v", resolved)
+	}
+	if err := c.Call("gateway.resolve_scope", map[string]any{
+		"method": "workspace.patch.propose",
+		"params": map[string]any{"files": []map[string]any{{"path": "../escape.go", "new_content": "x"}}},
+	}, &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Scope != "admin" || !resolved.DynamicScope {
+		t.Fatalf("escape patch should resolve to admin dynamic scope: %+v", resolved)
 	}
 
 	// worker lifecycle

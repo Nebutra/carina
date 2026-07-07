@@ -8,7 +8,9 @@ Notifications (server → client) stream events; every payload conforms to [`pro
 
 | Method | Purpose |
 |--------|---------|
+| `gateway.hello` | versioned Gateway handshake snapshot: requested role, negotiated scopes, feature list, method catalog, policy notes |
 | `gateway.methods` | live method catalog: method name, scope, remote exposure, stream flag, discovery flag, control-plane-write metadata |
+| `gateway.resolve_scope` | local-only diagnostic for resolving a method's effective scope from request params |
 | `daemon.status` | daemon process/runtime status |
 | `daemon.metrics` | runtime metrics |
 | `daemon.doctor` | independent health probes |
@@ -16,7 +18,13 @@ Notifications (server → client) stream events; every payload conforms to [`pro
 Carina's daemon now registers RPC methods through a descriptor catalog. The
 descriptor is the authority for remote exposure and future Gateway
 role/scope negotiation; unclassified daemon handlers are refused in strict
-mode. Operators can inspect the live catalog with `carina gateway methods`.
+mode. Operators can inspect the live contract with `carina gateway hello` and
+the catalog with `carina gateway methods`.
+
+`gateway.hello` is not an auth grant. It is a transport-neutral contract
+snapshot for current JSON-RPC and future WebSocket/HTTP Gateway surfaces.
+Actual authority remains enforced by transport origin, method descriptors, and
+the capability kernel.
 
 Scopes:
 
@@ -27,6 +35,13 @@ Scopes:
 | `admin` | high-risk control-plane, secret, config, policy, plugin, or approval actions |
 | `worker` | remote worker lease protocol |
 | `stream` | long-lived event subscriptions |
+
+Dynamic scopes:
+
+- `workspace.patch.propose` has a static baseline of `write`, but resolves to
+  `admin` when params contain an empty path, absolute path, `.` path, or `..`
+  path segment. The resolver is an early Gateway classification layer; the
+  kernel remains the final side-effect authority.
 
 ## Session API
 

@@ -28,7 +28,18 @@ type MethodDescriptor struct {
 	Remote            bool   `json:"remote"`
 	Stream            bool   `json:"stream,omitempty"`
 	Advertise         bool   `json:"advertise"`
+	DynamicScope      bool   `json:"dynamic_scope,omitempty"`
 	ControlPlaneWrite bool   `json:"control_plane_write,omitempty"`
+}
+
+// ValidScope reports whether scope is part of the Gateway control-plane model.
+func ValidScope(scope Scope) bool {
+	switch scope {
+	case ScopeRead, ScopeWrite, ScopeAdmin, ScopeWorker, ScopeStream:
+		return true
+	default:
+		return false
+	}
 }
 
 func (d MethodDescriptor) normalized(stream bool) (MethodDescriptor, error) {
@@ -39,9 +50,7 @@ func (d MethodDescriptor) normalized(stream bool) (MethodDescriptor, error) {
 	if d.Scope == "" {
 		return d, fmt.Errorf("rpc descriptor %q missing scope", d.Method)
 	}
-	switch d.Scope {
-	case ScopeRead, ScopeWrite, ScopeAdmin, ScopeWorker, ScopeStream:
-	default:
+	if !ValidScope(d.Scope) {
 		return d, fmt.Errorf("rpc descriptor %q has invalid scope %q", d.Method, d.Scope)
 	}
 	d.Stream = stream

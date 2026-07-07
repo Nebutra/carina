@@ -54,6 +54,10 @@ func (e *Error) Error() string { return fmt.Sprintf("rpc error %d: %s", e.Code, 
 // Handler processes a single method call.
 type Handler func(params json.RawMessage) (any, error)
 
+// ScopeResolver can narrow or raise a method's required scope from request
+// params. It is used for mixed-risk methods such as patch proposals.
+type ScopeResolver func(params json.RawMessage) (Scope, error)
+
 // StreamHandler attaches a long-lived subscription to a connection.
 type StreamHandler func(params json.RawMessage, sub *Subscription) error
 
@@ -95,6 +99,7 @@ type Server struct {
 	handlers       map[string]Handler
 	streams        map[string]StreamHandler
 	descriptors    map[string]MethodDescriptor
+	scopeResolvers map[string]ScopeResolver
 	listeners      []net.Listener
 	remoteSafe     map[string]bool // methods a Remote origin may call
 	remoteDisabled bool            // kill-switch: refuse all Remote calls
@@ -103,10 +108,11 @@ type Server struct {
 
 func NewServer() *Server {
 	return &Server{
-		handlers:    make(map[string]Handler),
-		streams:     make(map[string]StreamHandler),
-		descriptors: make(map[string]MethodDescriptor),
-		remoteSafe:  make(map[string]bool),
+		handlers:       make(map[string]Handler),
+		streams:        make(map[string]StreamHandler),
+		descriptors:    make(map[string]MethodDescriptor),
+		scopeResolvers: make(map[string]ScopeResolver),
+		remoteSafe:     make(map[string]bool),
 	}
 }
 
@@ -172,10 +178,18 @@ func (s *Server) RegisterStream(method string, h StreamHandler) {
 }
 
 func (s *Server) RegisterMethod(desc MethodDescriptor, h Handler) error {
+	return s.RegisterMethodDynamic(desc, h, nil)
+}
+
+// RegisterMethodDynamic registers a method with an optional param-sensitive
+// scope resolver. The descriptor's static scope remains the fallback and
+// advertised baseline.
+func (s *Server) RegisterMethodDynamic(desc MethodDescriptor, h Handler, resolver ScopeResolver) error {
 	normalized, err := desc.normalized(false)
 	if err != nil {
 		return err
 	}
+	normalized.DynamicScope = resolver != nil
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.descriptors[normalized.Method]; ok {
@@ -189,6 +203,9 @@ func (s *Server) RegisterMethod(desc MethodDescriptor, h Handler) error {
 	}
 	s.handlers[normalized.Method] = h
 	s.descriptors[normalized.Method] = normalized
+	if resolver != nil {
+		s.scopeResolvers[normalized.Method] = resolver
+	}
 	if normalized.Remote {
 		s.remoteSafe[normalized.Method] = true
 	}
@@ -217,6 +234,30 @@ func (s *Server) RegisterStreamMethod(desc MethodDescriptor, h StreamHandler) er
 		s.remoteSafe[normalized.Method] = true
 	}
 	return nil
+}
+
+// ResolveScope returns the effective scope for a method and params. The bool is
+// true when the scope came from a dynamic resolver rather than the descriptor's
+// static baseline.
+func (s *Server) ResolveScope(method string, params json.RawMessage) (Scope, bool, error) {
+	s.mu.RLock()
+	desc, ok := s.descriptors[method]
+	resolver := s.scopeResolvers[method]
+	s.mu.RUnlock()
+	if !ok {
+		return "", false, fmt.Errorf("rpc method not classified: %s", method)
+	}
+	if resolver == nil {
+		return desc.Scope, false, nil
+	}
+	scope, err := resolver(params)
+	if err != nil {
+		return "", true, err
+	}
+	if !ValidScope(scope) {
+		return "", true, fmt.Errorf("rpc method %s resolved invalid scope %q", method, scope)
+	}
+	return scope, true, nil
 }
 
 func (s *Server) ListenUnix(socketPath string) error {

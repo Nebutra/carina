@@ -193,6 +193,17 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   scoped `/tools/invoke`, plugin HTTP request scopes, and Nebutra-boundary
   device/node pairing.
 
+**Wave 14 — OpenClaw Gateway absorption (Phase B landed)**
+- [x] **Handshake skeleton + dynamic scopes** (`go/rpc`, `go/daemon`,
+  `apps/carina-cli`): added a transport-neutral `gateway.hello` contract for
+  role/scope/feature discovery, exposed `carina gateway hello [role]`, and
+  extended descriptors with `dynamic_scope`. `gateway.resolve_scope` resolves
+  effective scope from params for diagnostics and future transports. The first
+  param-sensitive rule is `workspace.patch.propose`: normal relative patch
+  paths resolve to `write`; empty, absolute, `.`, or `..` paths resolve to
+  `admin`. This keeps the OpenClaw philosophy while leaving actual network
+  Gateway, `/v1`, and `/tools/invoke` for later phases.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
@@ -206,14 +217,16 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   now documented and guarded as a Nebutra Cloud (云毓智能, `nebutra.com`) product
   boundary with local sync off by default.
 - OpenClaw Gateway items intentionally staged: Phase A landed the descriptor
-  control-plane substrate. The HTTP/WS Gateway façade and device/node pairing
-  are not safe to bolt on until they are built on this catalog and Carina's
-  kernel capability model.
+  control-plane substrate and Phase B landed handshake/dynamic-scope mechanics.
+  The HTTP/WS Gateway façade and device/node pairing are not safe to bolt on
+  until they are built on this catalog and Carina's kernel capability model.
 
 ## Test status
-Current verification for this update: full Go coverage
-(`go test ./go/... ./apps/...`, 203 tests across 20 packages) and full Rust
-coverage (`cargo test`, 69 tests across 14 suites), plus targeted Go race
-coverage (`go test -race ./go/daemon ./go/config ./apps/carina-daemon`, 119
-tests across 3 packages). This update touched Rust kernel approval semantics,
-Go kernel wrappers, session item projection, and docs only; Zig was not rebuilt.
+Current verification for this update: targeted Go coverage
+(`go test ./apps/carina-cli ./go/rpc ./go/daemon ./apps/carina-daemon`, 123
+tests across 4 packages), full Go coverage (`go test ./go/... ./apps/...`, 212
+tests across 21 packages), targeted Go race coverage
+(`go test -race ./go/rpc ./go/daemon ./apps/carina-daemon`, 119 tests across 3
+packages), JSON registry validation (`jq empty protocol/jsonrpc/methods.json`),
+and CLI help smoke check (`go run ./apps/carina-cli --help`). This update
+touched Go RPC/daemon/CLI and docs only; Rust and Zig were not rebuilt.

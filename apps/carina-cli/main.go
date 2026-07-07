@@ -67,6 +67,7 @@ Providers and BYOK:
   carina providers list [--refresh] [--offline]     list provider catalog entries
 
 Gateway and RPC:
+  carina gateway hello [role]                       negotiate Gateway role/scope discovery
   carina gateway methods                            list RPC methods with scope/exposure metadata
 
 Native tools, no daemon:
@@ -419,13 +420,19 @@ func cmdCommands(c *rpcClient, args []string) error {
 
 func cmdGateway(c *rpcClient, args []string) error {
 	if len(args) == 0 {
-		args = []string{"methods"}
+		args = []string{"hello"}
 	}
 	switch args[0] {
+	case "hello":
+		role := "operator"
+		if len(args) > 1 {
+			role = args[1]
+		}
+		return call(c, "gateway.hello", map[string]any{"role": role})
 	case "methods", "list", "ls":
 		return call(c, "gateway.methods", map[string]any{})
 	default:
-		return fmt.Errorf("usage: carina gateway methods")
+		return fmt.Errorf("usage: carina gateway <hello|methods> [role]")
 	}
 }
 

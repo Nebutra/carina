@@ -154,6 +154,73 @@ func TestDescriptorStrictMode(t *testing.T) {
 	}
 }
 
+func TestDynamicScopeResolver(t *testing.T) {
+	s := NewServer()
+	if err := s.RegisterMethodDynamic(MethodDescriptor{
+		Method: "mixed.patch",
+		Scope:  ScopeWrite,
+	}, func(_ json.RawMessage) (any, error) {
+		return map[string]bool{"ok": true}, nil
+	}, func(params json.RawMessage) (Scope, error) {
+		var p struct {
+			Admin bool `json:"admin"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return "", err
+		}
+		if p.Admin {
+			return ScopeAdmin, nil
+		}
+		return ScopeWrite, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scope, dynamic, err := s.ResolveScope("mixed.patch", mustJSON(t, map[string]bool{"admin": false}))
+	if err != nil || !dynamic || scope != ScopeWrite {
+		t.Fatalf("write scope: scope=%s dynamic=%v err=%v", scope, dynamic, err)
+	}
+	scope, dynamic, err = s.ResolveScope("mixed.patch", mustJSON(t, map[string]bool{"admin": true}))
+	if err != nil || !dynamic || scope != ScopeAdmin {
+		t.Fatalf("admin scope: scope=%s dynamic=%v err=%v", scope, dynamic, err)
+	}
+	descs := s.MethodDescriptors()
+	if len(descs) != 1 || !descs[0].DynamicScope {
+		t.Fatalf("descriptor should advertise dynamic scope: %+v", descs)
+	}
+}
+
+func TestGatewayScopeNegotiation(t *testing.T) {
+	role, scopes, notes, err := NegotiateScopes(RoleOperator, []Scope{ScopeAdmin, ScopeRead, ScopeWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if role != RoleOperator || len(scopes) != 2 || scopes[0] != ScopeRead || scopes[1] != ScopeAdmin {
+		t.Fatalf("unexpected negotiation: role=%s scopes=%v", role, scopes)
+	}
+	if notes != nil {
+		t.Fatalf("explicit scopes should not add notes: %v", notes)
+	}
+	role, scopes, notes, err = NegotiateScopes("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if role != RoleObserver || len(scopes) != 2 || scopes[0] != ScopeRead || scopes[1] != ScopeStream || len(notes) == 0 {
+		t.Fatalf("default negotiation mismatch: role=%s scopes=%v notes=%v", role, scopes, notes)
+	}
+	if _, _, _, err := NegotiateScopes(Role("root"), nil); err == nil {
+		t.Fatal("unsupported role should fail")
+	}
+}
+
+func mustJSON(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
 func TestClientNilCloser(t *testing.T) {
 	c := NewClient(nil, nil, nil)
 	if err := c.Close(); err != nil {
