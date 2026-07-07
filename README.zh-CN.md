@@ -64,6 +64,7 @@ Carina 提供：
 | 网络和 secret | 默认拒绝的 egress proxy、allowlist、daemon 侧凭证注入、显式 per-host HTTPS MITM opt-in |
 | 模型 | BYOK auth chain、provider catalog、OpenAI/Anthropic/Gemini/OpenRouter 风格 adapter |
 | 集成 | MCP client/server、WASM plugin boundary、worker、workflow DAG |
+| Nebutra 边界 | 本地 runtime 保持动作权威；身份和多端同步归 Nebutra Cloud（`nebutra.com`）边界 |
 
 还没有产品化完成：
 
@@ -180,7 +181,7 @@ CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
 |---|---|---|
 | 编辑器内代码助手 | Cursor、Windsurf、Cline、IDE 插件 | Carina 可以支撑编辑器，但自身不是编辑器产品。 |
 | 终端里的结对编程 | Claude Code、Codex CLI、Aider、OpenCode | Carina 不把重点放在聊天 UX，而是放在运行时边界、审计、回滚、worker 和可嵌入性。 |
-| 云端托管 Agent 任务 | OpenAI Codex cloud tasks 和其它托管 Agent 服务 | Carina 是本地优先。云身份和多端同步应放在 Nebutra 边界后，而不是塞进本地 runtime。 |
+| 云端托管 Agent 任务 | OpenAI Codex cloud tasks 和其它托管 Agent 服务 | Carina 是本地优先。云身份和多端同步归 Nebutra Cloud 边界，而不是塞进本地 runtime。 |
 | 一次性云沙箱 | E2B 和其它 sandbox runtime | Carina 可以使用 sandboxing，但核心单位是对仓库逐动作策略控制，不是托管 VM 产品。 |
 | 内部 Agent 基础设施 | 自研 stack、CI 系统、内部平台 | Carina 适合作为 control-plane/runtime 组件被嵌入。 |
 
@@ -239,6 +240,7 @@ make release-check
 更多文档：
 
 - [产品定位](docs/product.md)
+- [Nebutra Cloud 边界](docs/nebutra-cloud-boundary.md)
 - [Roadmap](docs/roadmap.md)
 - [发布流程](docs/release.md)
 - [架构](docs/architecture.md)

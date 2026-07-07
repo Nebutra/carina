@@ -47,6 +47,8 @@ func main() {
 	interactiveApproval := flag.Bool("interactive-approval", cfg.InteractiveApproval, "pause for an operator decision on requires_approval instead of auto-approving")
 	riskReviewMode := flag.String("risk-review-mode", cfg.RiskReviewMode, "autonomous approval risk review mode: off|advisory|enforce")
 	riskReviewModel := flag.String("risk-review-model", cfg.RiskReviewModel, "optional model for Nebutra Risk Review (default: local heuristic)")
+	nebutraCloud := flag.String("nebutra-cloud", cfg.NebutraCloudEndpoint, "Nebutra Cloud endpoint for identity/sync boundary")
+	nebutraSyncMode := flag.String("nebutra-sync-mode", cfg.NebutraSyncMode, "Nebutra sync mode (currently only off)")
 	flag.Parse()
 
 	// Record which flags the operator set explicitly, so they stay the highest-
@@ -81,6 +83,8 @@ func main() {
 		InteractiveApproval:   *interactiveApproval,
 		RiskReviewMode:        *riskReviewMode,
 		RiskReviewModel:       *riskReviewModel,
+		NebutraCloudEndpoint:  *nebutraCloud,
+		NebutraSyncMode:       *nebutraSyncMode,
 	})
 	if err != nil {
 		log.Fatalf("carina-daemon: %v", err)

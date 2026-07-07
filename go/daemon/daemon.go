@@ -22,6 +22,7 @@ import (
 	"github.com/Nebutra/carina/go/kernel"
 	"github.com/Nebutra/carina/go/mcp"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
+	"github.com/Nebutra/carina/go/nebutra"
 	"github.com/Nebutra/carina/go/rpc"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
@@ -51,6 +52,8 @@ type Options struct {
 	VerifierModel         string             // model for the independent done-verifier ("" => verifier off)
 	RiskReviewMode        string             // off|advisory|enforce for autonomous approval review ("" => advisory)
 	RiskReviewModel       string             // optional model for Nebutra Risk Review ("" => deterministic local reviewer)
+	NebutraCloudEndpoint  string             // Nebutra Cloud identity/sync boundary (default https://nebutra.com)
+	NebutraSyncMode       string             // currently only "off"; future sync modes belong behind Nebutra
 }
 
 // EgressCredential authenticates outbound requests to a host by injecting a
@@ -86,6 +89,8 @@ type Daemon struct {
 	org            *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
 	stateDir       string
 	socketPath     string
+	cloudEndpoint  string
+	syncMode       string
 	reasoner       Reasoner     // agent "thinking" engine (nil => mock loop)
 	summarizer     Reasoner     // optional cheaper model for compaction/summarization
 	verifier       Reasoner     // optional independent "judge" for done-claims (nil => default-lenient)
@@ -147,6 +152,14 @@ func New(opts Options) (*Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("daemon: %w", err)
 	}
+	cloudEndpoint, err := nebutra.NormalizeCloudEndpoint(opts.NebutraCloudEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: %w", err)
+	}
+	syncMode, err := nebutra.NormalizeSyncMode(opts.NebutraSyncMode)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: %w", err)
+	}
 	store, err := sessionstore.Open(opts.StateDir)
 	if err != nil {
 		return nil, err
@@ -159,18 +172,20 @@ func New(opts Options) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: cannot start capability kernel: %w", err)
 	}
 	d := &Daemon{
-		store:       store,
-		sched:       scheduler.New(),
-		pool:        worker.NewPool(),
-		router:      modelrouter.New(),
-		server:      rpc.NewServer(),
-		kern:        kern,
-		tools:       tools,
-		events:      NewBus(),
-		org:         loadOrgPolicy(opts.PolicyDir),
-		stateDir:    opts.StateDir,
-		started:     time.Now().UTC(),
-		pendingCmds: make(map[string]pendingCommand),
+		store:         store,
+		sched:         scheduler.New(),
+		pool:          worker.NewPool(),
+		router:        modelrouter.New(),
+		server:        rpc.NewServer(),
+		kern:          kern,
+		tools:         tools,
+		events:        NewBus(),
+		org:           loadOrgPolicy(opts.PolicyDir),
+		stateDir:      opts.StateDir,
+		cloudEndpoint: cloudEndpoint,
+		syncMode:      syncMode,
+		started:       time.Now().UTC(),
+		pendingCmds:   make(map[string]pendingCommand),
 	}
 	d.riskReviewMode.Store(riskReviewMode)
 	_ = hardenProcess() // Linux: non-dumpable, anti-ptrace (best-effort)
@@ -600,6 +615,12 @@ func (d *Daemon) handleStatus(_ json.RawMessage) (any, error) {
 		"tools":           d.tools.Available(),
 		"rpc_endpoint":    d.socketPath,
 		"event_log_path":  filepath.Join(d.stateDir, "events"),
+		"nebutra_cloud": map[string]any{
+			"endpoint":     d.cloudEndpoint,
+			"sync_mode":    d.syncMode,
+			"authority":    "identity/sync only; local runtime remains the action authority",
+			"sync_enabled": d.syncMode != nebutra.SyncModeOff,
+		},
 	}, nil
 }
 

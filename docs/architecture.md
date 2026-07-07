@@ -24,6 +24,9 @@ Agent Surface ──JSON-RPC──▶ Go Control Plane ──Capability API─�
 5. **Every tool declares its permissions.** Plugins and tools carry manifests; undeclared capability use is a `PolicyViolation` event.
 6. **Local-first.** The daemon, workers, and remote execution are extensions — a single binary on a laptop is the base case.
 7. **The CLI is a client.** `carina` talks JSON-RPC to the daemon. IDEs, CI, and SDKs use the same protocol.
+8. **Cloud identity and sync are product boundaries.** Multi-endpoint identity,
+   device registration, and sync belong to Nebutra Cloud (`nebutra.com`); the
+   local runtime remains the authority for repository actions.
 
 ## Component map
 

@@ -28,6 +28,7 @@ func TestCascadePrecedence(t *testing.T) {
 	writeConfig(t, proj, `{"max_task_tokens": 200, "tools_dir": "/p/tools", "risk_review_mode": "enforce"}`)
 	t.Setenv("CARINA_TOOLS_DIR", "/e/tools")
 	t.Setenv("CARINA_RISK_REVIEW_MODE", "advisory")
+	t.Setenv("CARINA_NEBUTRA_CLOUD_ENDPOINT", "https://nebutra.example")
 
 	cfg, err := Load(home, proj)
 	if err != nil {
@@ -51,6 +52,12 @@ func TestCascadePrecedence(t *testing.T) {
 	}
 	if cfg.RiskReviewMode != "advisory" {
 		t.Errorf("risk_review_mode: env should override project, got %q", cfg.RiskReviewMode)
+	}
+	if cfg.NebutraCloudEndpoint != "https://nebutra.example" {
+		t.Errorf("nebutra_cloud_endpoint: env should override defaults, got %q", cfg.NebutraCloudEndpoint)
+	}
+	if cfg.NebutraSyncMode != "off" {
+		t.Errorf("nebutra_sync_mode default should be off, got %q", cfg.NebutraSyncMode)
 	}
 	// A key set by no layer keeps its default.
 	if cfg.MaxConcurrentTasks != 8 {
@@ -101,5 +108,21 @@ func TestRiskReviewModeValidationFailsFast(t *testing.T) {
 	t.Setenv("CARINA_RISK_REVIEW_MODE", "always")
 	if _, err := Load(home, ""); err == nil {
 		t.Fatal("invalid risk_review_mode must be rejected")
+	}
+}
+
+func TestNebutraCloudValidationFailsFast(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CARINA_NEBUTRA_CLOUD_ENDPOINT", "http://nebutra.com")
+	if _, err := Load(home, ""); err == nil {
+		t.Fatal("non-local http Nebutra endpoint must be rejected")
+	}
+}
+
+func TestNebutraSyncModeValidationFailsFast(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CARINA_NEBUTRA_SYNC_MODE", "metadata")
+	if _, err := Load(home, ""); err == nil {
+		t.Fatal("sync modes beyond off must be rejected until the Nebutra connector exists")
 	}
 }

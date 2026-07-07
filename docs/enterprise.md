@@ -43,6 +43,12 @@ Roles come from the `IdentityProvider` seam (`go/daemon/identity.go`) — the
 integration point for SSO/OIDC. The default `LocalIdentity` treats the OS
 user as an admin.
 
+For Nebutra-managed deployments, SSO/OIDC role resolution belongs to Nebutra
+Cloud (`nebutra.com`). Carina consumes resolved identity through the
+`IdentityProvider` seam; it should not embed account, organization, or
+multi-endpoint sync state in the local runtime. See
+[`docs/nebutra-cloud-boundary.md`](nebutra-cloud-boundary.md).
+
 ## 3. Signed plugins — `trusted-keys`
 
 One base64 ed25519 public key per line. When any key is trusted, **every**
@@ -67,6 +73,10 @@ carina export <session_id>   # full audit bundle: profile + every event, in orde
 
 The bundle is suitable for shipping to a central audit store. Every side
 effect in the session is present with its permission decision.
+
+Future Nebutra Cloud audit sync should upload explicit bundles or checkpoints
+from this surface, preserving local event hashes rather than rewriting local
+history.
 
 ## 5. Offline mode
 

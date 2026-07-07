@@ -30,6 +30,7 @@ Carina turns agent execution into a controlled runtime:
 | Use real models | BYOK credential chain and provider catalog |
 | Embed in another product | JSON-RPC, MCP server/client, SDK surfaces |
 | Split work safely | Sub-agent attenuation, workers, workflow DAGs |
+| Coordinate endpoints later | Nebutra Cloud boundary for identity and sync, with Carina remaining local authority |
 
 ## Non-Goals
 
@@ -50,7 +51,7 @@ quickly, and each optimizes for a different job.
 |---|---|---|
 | Editor assistants | Interactive editing inside an IDE | Carina can sit behind an editor, but it focuses on runtime governance. |
 | CLI coding agents | Conversational terminal coding | Carina is less about chat UX and more about durable sessions, audit, rollback, workers, and embedding. |
-| Cloud agent tasks | Managed remote execution and cloud UX | Carina is local-first; Nebutra cloud identity/sync should wrap it rather than live inside it. |
+| Cloud agent tasks | Managed remote execution and cloud UX | Carina is local-first; Nebutra Cloud identity/sync wraps it rather than living inside it. |
 | Cloud sandboxes | Disposable isolated compute | Carina can use sandboxing, but its main object is a policy-gated repository action. |
 | Custom internal stacks | Team-specific orchestration | Carina provides reusable runtime pieces instead of asking every team to rebuild policy/audit/patching. |
 
@@ -62,6 +63,8 @@ Current strengths:
 - audit and patch provenance are implemented;
 - provider/BYOK support is broad enough for practical testing;
 - source builds and tests are usable.
+- Nebutra Cloud identity/sync has an explicit boundary contract, with sync off
+  by default.
 
 Current gaps:
 
@@ -71,3 +74,4 @@ Current gaps:
 - SDK parity is incomplete;
 - Windows is not supported;
 - production remote-worker operations need separate deployment documentation.
+- the Nebutra Cloud sync connector is not implemented yet.

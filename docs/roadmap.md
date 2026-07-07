@@ -48,3 +48,17 @@ Near-term polish work:
 - improve SDK parity across TypeScript, Python, and Go;
 - publish security and contributor processes before broad external adoption.
 
+## Nebutra Cloud Identity And Sync
+
+Carina should not grow a Codex-style app server inside the local runtime. The
+multi-endpoint product layer belongs to Nebutra Cloud (`nebutra.com`).
+
+Planned sequence:
+
+1. Keep `nebutra_sync_mode=off` as the only source-first alpha behavior.
+2. Add a Nebutra-authenticated endpoint/device registry.
+3. Add metadata sync for endpoint/session indexes and status summaries.
+4. Add explicit audit-bundle sync with redaction and retention controls.
+5. Add remote handoff through existing daemon RPC, approval, and audit paths.
+
+See [Nebutra Cloud boundary](nebutra-cloud-boundary.md).

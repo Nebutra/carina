@@ -189,8 +189,9 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   protocol support (overlaps Carina's JSON-RPC/CLI control plane) and broad
   workspace revert checkpoints (requires a separate snapshot policy).
 - OpenAI Codex items reviewed and intentionally not absorbed now: ChatGPT/cloud
-  app-server coupling remains outside Carina; multi-endpoint identity/sync work
-  should use Nebutra (云毓智能) boundaries.
+  app-server coupling remains outside Carina. Multi-endpoint identity/sync is
+  now documented and guarded as a Nebutra Cloud (云毓智能, `nebutra.com`) product
+  boundary with local sync off by default.
 
 ## Test status
 Current verification for this update: full Go coverage

@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/Nebutra/carina/go/nebutra"
 )
 
 // Config is the resolved daemon configuration. JSON tags name the keys accepted
@@ -39,16 +41,20 @@ type Config struct {
 	SummarizerModel       string   `json:"summarizer_model"`
 	RiskReviewMode        string   `json:"risk_review_mode"`
 	RiskReviewModel       string   `json:"risk_review_model"`
+	NebutraCloudEndpoint  string   `json:"nebutra_cloud_endpoint"`
+	NebutraSyncMode       string   `json:"nebutra_sync_mode"`
 }
 
 // Defaults returns the built-in baseline, anchored at the user's ~/.carina dir.
 func Defaults(home string) Config {
 	base := filepath.Join(home, ".carina")
 	return Config{
-		StateDir:           filepath.Join(base, "state"),
-		Socket:             filepath.Join(base, "daemon.sock"),
-		PolicyDir:          filepath.Join(base, "policy"),
-		MaxConcurrentTasks: 8,
+		StateDir:             filepath.Join(base, "state"),
+		Socket:               filepath.Join(base, "daemon.sock"),
+		PolicyDir:            filepath.Join(base, "policy"),
+		MaxConcurrentTasks:   8,
+		NebutraCloudEndpoint: nebutra.DefaultCloudEndpoint,
+		NebutraSyncMode:      nebutra.SyncModeOff,
 	}
 }
 
@@ -99,6 +105,8 @@ func mergeEnv(cfg *Config) {
 	envStr("CARINA_SUMMARIZER_MODEL", &cfg.SummarizerModel)
 	envStr("CARINA_RISK_REVIEW_MODE", &cfg.RiskReviewMode)
 	envStr("CARINA_RISK_REVIEW_MODEL", &cfg.RiskReviewModel)
+	envStr("CARINA_NEBUTRA_CLOUD_ENDPOINT", &cfg.NebutraCloudEndpoint)
+	envStr("CARINA_NEBUTRA_SYNC_MODE", &cfg.NebutraSyncMode)
 	envBool("CARINA_OFFLINE", &cfg.Offline)
 	envBool("CARINA_REQUIRE_WORKSPACE_TRUST", &cfg.RequireWorkspaceTrust)
 	envBool("CARINA_ENABLE_EGRESS_PROXY", &cfg.EnableEgressProxy)
@@ -119,6 +127,12 @@ func (c Config) Validate() error {
 	}
 	if mode := strings.ToLower(strings.TrimSpace(c.RiskReviewMode)); mode != "" && mode != "off" && mode != "advisory" && mode != "enforce" {
 		return fmt.Errorf("config: risk_review_mode must be one of off, advisory, enforce")
+	}
+	if _, err := nebutra.NormalizeCloudEndpoint(c.NebutraCloudEndpoint); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	if _, err := nebutra.NormalizeSyncMode(c.NebutraSyncMode); err != nil {
+		return fmt.Errorf("config: %w", err)
 	}
 	return nil
 }

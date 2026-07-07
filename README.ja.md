@@ -64,6 +64,7 @@ Carina が提供するもの：
 | Network and secrets | deny-by-default egress proxy、allowlist、daemon-side credential injection、explicit per-host HTTPS MITM opt-in |
 | Models | BYOK auth chain、provider catalog、OpenAI/Anthropic/Gemini/OpenRouter-style adapter |
 | Integration | MCP client/server、WASM plugin boundary、worker、workflow DAG |
+| Nebutra boundary | ローカル runtime が action authority を維持し、identity と multi-endpoint sync は Nebutra Cloud（`nebutra.com`）の境界に置く |
 
 まだ product-complete ではないもの：
 
@@ -180,7 +181,7 @@ Carina を別の UI の背後に置く場合は、JSON-RPC、SDK、MCP server mo
 |---|---|---|
 | In-editor coding assistance | Cursor、Windsurf、Cline、IDE extensions | Carina can back an editor, but is not an editor product. |
 | Terminal-first pair programming | Claude Code、Codex CLI、Aider、OpenCode | Carina focuses less on chat UX and more on runtime boundary, audit, rollback, workers, and embeddability. |
-| Cloud-hosted agent tasks | OpenAI Codex cloud tasks and managed agent services | Carina is local-first. Cloud identity and multi-endpoint sync should live behind Nebutra boundaries. |
+| Cloud-hosted agent tasks | OpenAI Codex cloud tasks and managed agent services | Carina is local-first. Cloud identity and multi-endpoint sync live behind Nebutra Cloud boundaries. |
 | Disposable cloud sandboxes | E2B and other sandbox runtimes | Carina can use sandboxing, but the core unit is policy-gated action on a repository, not a hosted VM product. |
 | Internal agent infrastructure | Custom stacks、CI systems、internal platforms | Carina is designed as a control-plane/runtime component. |
 
@@ -239,6 +240,7 @@ make release-check
 More docs:
 
 - [Product positioning](docs/product.md)
+- [Nebutra Cloud boundary](docs/nebutra-cloud-boundary.md)
 - [Roadmap](docs/roadmap.md)
 - [Release process](docs/release.md)
 - [Architecture](docs/architecture.md)
