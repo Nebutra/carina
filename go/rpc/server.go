@@ -94,16 +94,19 @@ type Server struct {
 	mu             sync.RWMutex
 	handlers       map[string]Handler
 	streams        map[string]StreamHandler
+	descriptors    map[string]MethodDescriptor
 	listeners      []net.Listener
 	remoteSafe     map[string]bool // methods a Remote origin may call
 	remoteDisabled bool            // kill-switch: refuse all Remote calls
+	strictMethods  bool            // refuse registered handlers without descriptors
 }
 
 func NewServer() *Server {
 	return &Server{
-		handlers:   make(map[string]Handler),
-		streams:    make(map[string]StreamHandler),
-		remoteSafe: make(map[string]bool),
+		handlers:    make(map[string]Handler),
+		streams:     make(map[string]StreamHandler),
+		descriptors: make(map[string]MethodDescriptor),
+		remoteSafe:  make(map[string]bool),
 	}
 }
 
@@ -125,6 +128,15 @@ func (s *Server) SetRemoteDisabled(on bool) {
 	s.remoteDisabled = on
 }
 
+// RequireDescriptors makes the server fail closed for registered methods that
+// lack a MethodDescriptor. Daemon control planes should enable this after
+// registering their catalog; small tests can keep the legacy Register behavior.
+func (s *Server) RequireDescriptors(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.strictMethods = on
+}
+
 // remoteAuthorized reports whether a method may run for the given origin.
 func (s *Server) remoteAuthorized(method string, origin Origin) (bool, string) {
 	if origin == OriginLocal {
@@ -134,6 +146,12 @@ func (s *Server) remoteAuthorized(method string, origin Origin) (bool, string) {
 	defer s.mu.RUnlock()
 	if s.remoteDisabled {
 		return false, "remote access is disabled (kill-switch)"
+	}
+	if desc, ok := s.descriptors[method]; ok {
+		if desc.Remote {
+			return true, ""
+		}
+		return false, "method not available over remote transport: " + method
 	}
 	if !s.remoteSafe[method] {
 		return false, "method not available over remote transport: " + method
@@ -151,6 +169,54 @@ func (s *Server) RegisterStream(method string, h StreamHandler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.streams[method] = h
+}
+
+func (s *Server) RegisterMethod(desc MethodDescriptor, h Handler) error {
+	normalized, err := desc.normalized(false)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.descriptors[normalized.Method]; ok {
+		return fmt.Errorf("rpc method already registered: %s", normalized.Method)
+	}
+	if _, ok := s.handlers[normalized.Method]; ok {
+		return fmt.Errorf("rpc method already registered: %s", normalized.Method)
+	}
+	if _, ok := s.streams[normalized.Method]; ok {
+		return fmt.Errorf("rpc method already registered: %s", normalized.Method)
+	}
+	s.handlers[normalized.Method] = h
+	s.descriptors[normalized.Method] = normalized
+	if normalized.Remote {
+		s.remoteSafe[normalized.Method] = true
+	}
+	return nil
+}
+
+func (s *Server) RegisterStreamMethod(desc MethodDescriptor, h StreamHandler) error {
+	normalized, err := desc.normalized(true)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.descriptors[normalized.Method]; ok {
+		return fmt.Errorf("rpc method already registered: %s", normalized.Method)
+	}
+	if _, ok := s.handlers[normalized.Method]; ok {
+		return fmt.Errorf("rpc method already registered: %s", normalized.Method)
+	}
+	if _, ok := s.streams[normalized.Method]; ok {
+		return fmt.Errorf("rpc method already registered: %s", normalized.Method)
+	}
+	s.streams[normalized.Method] = h
+	s.descriptors[normalized.Method] = normalized
+	if normalized.Remote {
+		s.remoteSafe[normalized.Method] = true
+	}
+	return nil
 }
 
 func (s *Server) ListenUnix(socketPath string) error {
@@ -220,8 +286,14 @@ func (s *Server) serve(conn net.Conn, origin Origin) {
 		// Stream methods keep the connection open and push notifications.
 		s.mu.RLock()
 		streamHandler, isStream := s.streams[req.Method]
+		_, classified := s.descriptors[req.Method]
+		strict := s.strictMethods
 		s.mu.RUnlock()
 		if isStream {
+			if strict && !classified {
+				_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: "method not classified: " + req.Method}})
+				continue
+			}
 			sub := &Subscription{enc: enc, done: done}
 			if err := streamHandler(req.Params, sub); err != nil {
 				_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInternalError, Message: err.Error()}})
@@ -239,9 +311,15 @@ func (s *Server) dispatch(req Request) Response {
 	resp := Response{JSONRPC: "2.0", ID: req.ID}
 	s.mu.RLock()
 	h, ok := s.handlers[req.Method]
+	_, classified := s.descriptors[req.Method]
+	strict := s.strictMethods
 	s.mu.RUnlock()
 	if !ok {
 		resp.Error = &Error{Code: CodeMethodNotFound, Message: "method not found: " + req.Method}
+		return resp
+	}
+	if strict && !classified {
+		resp.Error = &Error{Code: CodeMethodNotFound, Message: "method not classified: " + req.Method}
 		return resp
 	}
 	result, err := h(req.Params)

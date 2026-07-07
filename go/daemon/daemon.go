@@ -417,87 +417,94 @@ func (d *Daemon) Tools() *toolchain.Toolchain { return d.tools }
 func (d *Daemon) Router() *modelrouter.Router { return d.router }
 
 func (d *Daemon) registerMethods() {
-	d.server.Register("daemon.status", d.handleStatus)
-	d.server.Register("daemon.metrics", d.handleMetrics)
-	d.server.Register("daemon.doctor", d.handleDoctor)
-	d.server.Register("agent.list", d.handleAgentList)
-	d.server.Register("command.list", d.handleCommandList)
+	d.registerRPC("daemon.status", rpc.ScopeRead, true, d.handleStatus)
+	d.registerRPC("daemon.metrics", rpc.ScopeRead, true, d.handleMetrics)
+	d.registerRPC("daemon.doctor", rpc.ScopeRead, true, d.handleDoctor)
+	d.registerRPC("gateway.methods", rpc.ScopeRead, true, d.handleGatewayMethods)
+	d.registerRPC("agent.list", rpc.ScopeRead, true, d.handleAgentList)
+	d.registerRPC("command.list", rpc.ScopeRead, true, d.handleCommandList)
 
-	d.server.Register("session.create", d.handleSessionCreate)
-	d.server.Register("session.get", d.handleSessionGet)
-	d.server.Register("session.list", d.handleSessionList)
-	d.server.Register("session.close", d.handleSessionClose)
-	d.server.Register("session.replay", d.handleSessionReplay)
-	d.server.Register("session.items", d.handleSessionItems)
-	d.server.Register("session.attach", d.handleSessionAttach)
-	d.server.Register("session.fork", d.handleSessionFork)
-	d.server.Register("session.plan_mode", d.handlePlanMode)
-	d.server.Register("session.approve_plan", d.handleApprovePlan)
-	d.server.Register("session.add_dir", d.handleAddDir)
-	d.server.Register("task.approval.resolve", d.handleApprovalResolve)
-	d.server.Register("task.btw", d.handleTaskBtw)
-	d.server.Register("history.recent", d.handleHistoryRecent)
+	d.registerRPC("session.create", rpc.ScopeWrite, false, d.handleSessionCreate)
+	d.registerRPC("session.get", rpc.ScopeRead, true, d.handleSessionGet)
+	d.registerRPC("session.list", rpc.ScopeRead, true, d.handleSessionList)
+	d.registerRPC("session.close", rpc.ScopeWrite, false, d.handleSessionClose)
+	d.registerRPC("session.replay", rpc.ScopeRead, true, d.handleSessionReplay)
+	d.registerRPC("session.items", rpc.ScopeRead, true, d.handleSessionItems)
+	d.registerRPC("session.attach", rpc.ScopeRead, true, d.handleSessionAttach)
+	d.registerRPC("session.fork", rpc.ScopeWrite, false, d.handleSessionFork)
+	d.registerRPC("session.plan_mode", rpc.ScopeWrite, false, d.handlePlanMode)
+	d.registerRPC("session.approve_plan", rpc.ScopeWrite, false, d.handleApprovePlan)
+	d.registerRPC("session.add_dir", rpc.ScopeAdmin, false, d.handleAddDir, true)
+	d.registerRPC("task.approval.resolve", rpc.ScopeAdmin, false, d.handleApprovalResolve, true)
+	d.registerRPC("task.btw", rpc.ScopeWrite, false, d.handleTaskBtw)
+	d.registerRPC("history.recent", rpc.ScopeRead, false, d.handleHistoryRecent)
 
-	d.server.Register("task.submit", d.handleTaskSubmit)
-	d.server.Register("task.status", d.handleTaskStatus)
-	d.server.Register("task.list", d.handleTaskList)
-	d.server.Register("task.result", d.handleTaskResult)
-	d.server.Register("task.cancel", d.handleTaskCancel)
-	d.server.Register("task.steer", d.handleTaskSteer)
-	d.server.Register("task.action.approve", d.handleApprove)
-	d.server.Register("task.action.deny", d.handleDeny)
+	d.registerRPC("task.submit", rpc.ScopeWrite, false, d.handleTaskSubmit)
+	d.registerRPC("task.status", rpc.ScopeRead, true, d.handleTaskStatus)
+	d.registerRPC("task.list", rpc.ScopeRead, true, d.handleTaskList)
+	d.registerRPC("task.result", rpc.ScopeRead, true, d.handleTaskResult)
+	d.registerRPC("task.cancel", rpc.ScopeWrite, false, d.handleTaskCancel)
+	d.registerRPC("task.steer", rpc.ScopeWrite, false, d.handleTaskSteer)
+	d.registerRPC("task.action.approve", rpc.ScopeAdmin, false, d.handleApprove, true)
+	d.registerRPC("task.action.deny", rpc.ScopeAdmin, false, d.handleDeny, true)
 
-	d.server.Register("workspace.tree", d.handleWorkspaceTree)
-	d.server.Register("workspace.search", d.handleWorkspaceSearch)
-	d.server.Register("workspace.file.get", d.handleFileGet)
-	d.server.Register("workspace.trust", d.handleWorkspaceTrust)
-	d.server.Register("workspace.patch.propose", d.handlePatchPropose)
-	d.server.Register("workspace.patch.apply", d.handlePatchApply)
-	d.server.Register("workspace.patch.rollback", d.handlePatchRollback)
-	d.server.Register("workspace.patch.list", d.handlePatchList)
-	d.server.Register("workspace.patch.show", d.handlePatchShow)
+	d.registerRPC("workspace.tree", rpc.ScopeRead, false, d.handleWorkspaceTree)
+	d.registerRPC("workspace.search", rpc.ScopeRead, false, d.handleWorkspaceSearch)
+	d.registerRPC("workspace.file.get", rpc.ScopeRead, false, d.handleFileGet)
+	d.registerRPC("workspace.trust", rpc.ScopeAdmin, false, d.handleWorkspaceTrust, true)
+	d.registerRPC("workspace.patch.propose", rpc.ScopeWrite, false, d.handlePatchPropose)
+	d.registerRPC("workspace.patch.apply", rpc.ScopeWrite, false, d.handlePatchApply)
+	d.registerRPC("workspace.patch.rollback", rpc.ScopeWrite, false, d.handlePatchRollback)
+	d.registerRPC("workspace.patch.list", rpc.ScopeRead, false, d.handlePatchList)
+	d.registerRPC("workspace.patch.show", rpc.ScopeRead, false, d.handlePatchShow)
 
-	d.server.Register("command.exec", d.handleCommandExec)
-	d.server.Register("audit.report", d.handleAuditReport)
-	d.server.Register("audit.export", d.handleAuditExport)
-	d.server.Register("audit.verify", d.handleAuditVerify)
-	d.server.Register("profile.describe", d.handleProfileDescribe)
-	d.server.Register("secret.grant", d.handleSecretGrant)
-	d.server.Register("secret.request", d.handleSecretRequest)
-	d.server.Register("plugin.inspect", d.handlePluginInspect)
-	d.server.Register("plugin.run", d.handlePluginRun)
+	d.registerRPC("command.exec", rpc.ScopeWrite, false, d.handleCommandExec)
+	d.registerRPC("audit.report", rpc.ScopeRead, true, d.handleAuditReport)
+	d.registerRPC("audit.export", rpc.ScopeRead, true, d.handleAuditExport)
+	d.registerRPC("audit.verify", rpc.ScopeRead, true, d.handleAuditVerify)
+	d.registerRPC("profile.describe", rpc.ScopeRead, true, d.handleProfileDescribe)
+	d.registerRPC("secret.grant", rpc.ScopeAdmin, false, d.handleSecretGrant, true)
+	d.registerRPC("secret.request", rpc.ScopeAdmin, false, d.handleSecretRequest, true)
+	d.registerRPC("plugin.inspect", rpc.ScopeRead, false, d.handlePluginInspect)
+	d.registerRPC("plugin.run", rpc.ScopeAdmin, false, d.handlePluginRun, true)
 
-	d.server.RegisterStream("session.events.stream", d.handleEventStream)
+	d.registerStreamRPC("session.events.stream", rpc.ScopeStream, true, d.handleEventStream)
 
-	d.server.Register("worker.register", d.handleWorkerRegister)
-	d.server.Register("worker.heartbeat", d.handleWorkerHeartbeat)
-	d.server.Register("worker.list", d.handleWorkerList)
-	d.server.Register("worker.revoke", d.handleWorkerRevoke)
+	d.registerRPC("worker.register", rpc.ScopeWorker, true, d.handleWorkerRegister)
+	d.registerRPC("worker.heartbeat", rpc.ScopeWorker, true, d.handleWorkerHeartbeat)
+	d.registerRPC("worker.list", rpc.ScopeRead, true, d.handleWorkerList)
+	d.registerRPC("worker.revoke", rpc.ScopeAdmin, false, d.handleWorkerRevoke, true)
 
 	// Work-dispatch bridge: enqueue is control-plane (local); poll/renew/report
 	// are the remote worker's lease protocol.
-	d.server.Register("work.submit", d.handleWorkSubmit)
-	d.server.Register("work.poll", d.handleWorkPoll)
-	d.server.Register("work.renew", d.handleWorkRenew)
-	d.server.Register("work.report", d.handleWorkReport)
+	d.registerRPC("work.submit", rpc.ScopeAdmin, false, d.handleWorkSubmit, true)
+	d.registerRPC("work.poll", rpc.ScopeWorker, true, d.handleWorkPoll)
+	d.registerRPC("work.renew", rpc.ScopeWorker, true, d.handleWorkRenew)
+	d.registerRPC("work.report", rpc.ScopeWorker, true, d.handleWorkReport)
 
-	// The remote (TCP) transport is restricted to read/observe methods; every
-	// mutating/side-effecting method stays local-only. A local-only kill-switch
-	// (daemon.remote.disable) can cut off remote access entirely.
-	d.server.MarkRemoteSafe(
-		"daemon.status", "daemon.metrics", "daemon.doctor", "agent.list", "command.list",
-		"session.get", "session.list", "session.replay", "session.items", "session.attach",
-		"task.status", "task.list", "task.result",
-		"audit.report", "audit.export", "audit.verify",
-		"profile.describe", "session.events.stream",
-		// Remote workers legitimately join and heartbeat over TCP.
-		"worker.register", "worker.heartbeat", "worker.list",
-		// …and lease/execute/report dispatched work. (work.submit stays local:
-		// only the control plane enqueues work, never a remote worker.)
-		"work.poll", "work.renew", "work.report",
-	)
-	d.server.Register("daemon.remote.disable", d.handleRemoteDisable)
-	d.server.Register("daemon.reload", d.handleReload) // local-only (config hot-reload)
+	d.registerRPC("daemon.remote.disable", rpc.ScopeAdmin, false, d.handleRemoteDisable, true)
+	d.registerRPC("daemon.reload", rpc.ScopeAdmin, false, d.handleReload, true)
+	d.server.RequireDescriptors(true)
+}
+
+func (d *Daemon) registerRPC(method string, scope rpc.Scope, remote bool, h rpc.Handler, controlPlaneWrite ...bool) {
+	desc := rpc.MethodDescriptor{
+		Method:            method,
+		Scope:             scope,
+		Remote:            remote,
+		Advertise:         true,
+		ControlPlaneWrite: len(controlPlaneWrite) > 0 && controlPlaneWrite[0],
+	}
+	if err := d.server.RegisterMethod(desc, h); err != nil {
+		panic(err)
+	}
+}
+
+func (d *Daemon) registerStreamRPC(method string, scope rpc.Scope, remote bool, h rpc.StreamHandler) {
+	desc := rpc.MethodDescriptor{Method: method, Scope: scope, Remote: remote, Advertise: true}
+	if err := d.server.RegisterStreamMethod(desc, h); err != nil {
+		panic(err)
+	}
 }
 
 // handleRemoteDisable toggles the remote kill-switch (local-only: it is not on
@@ -631,6 +638,13 @@ func (d *Daemon) handleMetrics(_ json.RawMessage) (any, error) {
 		"tasks_by_status": d.sched.CountByStatus(),
 		"model_usage":     d.router.UsageByProvider(),
 		"subscribers":     d.events.SubscriberCount(),
+	}, nil
+}
+
+func (d *Daemon) handleGatewayMethods(_ json.RawMessage) (any, error) {
+	return map[string]any{
+		"version": "1",
+		"methods": d.server.MethodDescriptors(),
 	}, nil
 }
 

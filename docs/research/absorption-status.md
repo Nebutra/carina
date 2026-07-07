@@ -180,6 +180,19 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   patches are shown as reverted rather than active net changes. This remains a
   non-authoritative projection over the hash-chained audit log.
 
+**Wave 13 — OpenClaw Gateway absorption (Phase A landed)**
+- [x] **Descriptor-first RPC control plane** (`go/rpc`, `go/daemon`): absorbed
+  OpenClaw Gateway's strongest control-plane philosophy without porting its
+  TypeScript surface. Carina daemon methods now register through
+  machine-readable descriptors (`method`, `scope`, `remote`, `stream`,
+  `advertise`, `control_plane_write`), remote exposure is derived from that
+  same catalog, and daemon strict mode refuses unclassified handlers. The new
+  `gateway.methods` RPC plus `carina gateway methods` expose the live catalog
+  for CLI/UI/future WS `hello-ok` feature discovery. Follow-on phases remain
+  separate: role/scoped WebSocket handshake, agent-first OpenAI-compatible HTTP,
+  scoped `/tools/invoke`, plugin HTTP request scopes, and Nebutra-boundary
+  device/node pairing.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
@@ -192,6 +205,10 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   app-server coupling remains outside Carina. Multi-endpoint identity/sync is
   now documented and guarded as a Nebutra Cloud (云毓智能, `nebutra.com`) product
   boundary with local sync off by default.
+- OpenClaw Gateway items intentionally staged: Phase A landed the descriptor
+  control-plane substrate. The HTTP/WS Gateway façade and device/node pairing
+  are not safe to bolt on until they are built on this catalog and Carina's
+  kernel capability model.
 
 ## Test status
 Current verification for this update: full Go coverage

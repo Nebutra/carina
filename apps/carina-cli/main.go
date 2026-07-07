@@ -66,6 +66,9 @@ Providers and BYOK:
   carina auth logout <provider>                     remove a local credential
   carina providers list [--refresh] [--offline]     list provider catalog entries
 
+Gateway and RPC:
+  carina gateway methods                            list RPC methods with scope/exposure metadata
+
 Native tools, no daemon:
   carina scan [path]                                workspace file tree
   carina grep <pattern> <path>                      structured search
@@ -132,6 +135,8 @@ func run(cmd string, args []string) error {
 		return cmdAgents(c, args)
 	case "commands":
 		return cmdCommands(c, args)
+	case "gateway":
+		return cmdGateway(c, args)
 
 	case "run", "ask":
 		// --background is accepted for clarity; tasks always run in the
@@ -410,6 +415,18 @@ func cmdCommands(c *rpcClient, args []string) error {
 		return err
 	}
 	return call(c, "command.list", map[string]any{"workspace_root": cwd})
+}
+
+func cmdGateway(c *rpcClient, args []string) error {
+	if len(args) == 0 {
+		args = []string{"methods"}
+	}
+	switch args[0] {
+	case "methods", "list", "ls":
+		return call(c, "gateway.methods", map[string]any{})
+	default:
+		return fmt.Errorf("usage: carina gateway methods")
+	}
 }
 
 func cmdExec(c *rpcClient, args []string) error {

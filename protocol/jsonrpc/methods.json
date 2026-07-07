@@ -2,6 +2,9 @@
   "$comment": "Carina JSON-RPC 2.0 method registry (MVP draft). Transport: unix socket (~/.carina/daemon.sock) or stdio, newline-delimited JSON. Server->client notifications use method 'event' with an Event payload (see ../schemas/event.schema.json).",
   "version": "0.1.0",
   "apis": {
+    "gateway": [
+      { "method": "gateway.methods", "params": {}, "result": { "version": "string", "methods": "MethodDescriptor[]" } }
+    ],
     "session": [
       { "method": "session.create", "params": { "workspace_root": "string", "profile": "string" }, "result": "Session" },
       { "method": "session.get", "params": { "session_id": "string" }, "result": "Session" },

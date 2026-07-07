@@ -49,6 +49,29 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	// daemon-level
 	must("daemon.status", map[string]any{})
 	must("daemon.metrics", map[string]any{})
+	var methods struct {
+		Methods []struct {
+			Method string `json:"method"`
+			Scope  string `json:"scope"`
+			Remote bool   `json:"remote"`
+		} `json:"methods"`
+	}
+	if err := c.Call("gateway.methods", map[string]any{}, &methods); err != nil {
+		t.Fatal(err)
+	}
+	seenStatus := false
+	seenSubmit := false
+	for _, m := range methods.Methods {
+		switch m.Method {
+		case "daemon.status":
+			seenStatus = m.Scope == "read" && m.Remote
+		case "task.submit":
+			seenSubmit = m.Scope == "write" && !m.Remote
+		}
+	}
+	if !seenStatus || !seenSubmit {
+		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v", seenStatus, seenSubmit)
+	}
 
 	// worker lifecycle
 	var reg struct {

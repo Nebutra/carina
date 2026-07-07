@@ -123,6 +123,37 @@ func TestTCPRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDescriptorStrictMode(t *testing.T) {
+	s := NewServer()
+	s.Register("legacy", func(_ json.RawMessage) (any, error) {
+		return map[string]bool{"ok": true}, nil
+	})
+	if err := s.RegisterMethod(MethodDescriptor{
+		Method:    "classified",
+		Scope:     ScopeRead,
+		Remote:    true,
+		Advertise: true,
+	}, func(_ json.RawMessage) (any, error) {
+		return map[string]bool{"ok": true}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.RequireDescriptors(true)
+
+	if resp := s.dispatch(Request{Method: "classified"}); resp.Error != nil {
+		t.Fatalf("classified method should run: %+v", resp.Error)
+	}
+	if resp := s.dispatch(Request{Method: "legacy"}); resp.Error == nil {
+		t.Fatal("strict mode should reject unclassified registered handlers")
+	}
+	if resp := s.dispatch(Request{Method: "missing"}); resp.Error == nil || resp.Error.Message != "method not found: missing" {
+		t.Fatalf("strict mode should keep unknown methods as method-not-found, got %+v", resp.Error)
+	}
+	if ok, _ := s.remoteAuthorized("classified", OriginRemote); !ok {
+		t.Fatal("descriptor remote=true should allow remote access")
+	}
+}
+
 func TestClientNilCloser(t *testing.T) {
 	c := NewClient(nil, nil, nil)
 	if err := c.Close(); err != nil {

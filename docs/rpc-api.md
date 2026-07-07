@@ -4,6 +4,30 @@ Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or 
 
 Notifications (server → client) stream events; every payload conforms to [`protocol/schemas/`](../protocol/schemas/).
 
+## Gateway / Daemon API
+
+| Method | Purpose |
+|--------|---------|
+| `gateway.methods` | live method catalog: method name, scope, remote exposure, stream flag, discovery flag, control-plane-write metadata |
+| `daemon.status` | daemon process/runtime status |
+| `daemon.metrics` | runtime metrics |
+| `daemon.doctor` | independent health probes |
+
+Carina's daemon now registers RPC methods through a descriptor catalog. The
+descriptor is the authority for remote exposure and future Gateway
+role/scope negotiation; unclassified daemon handlers are refused in strict
+mode. Operators can inspect the live catalog with `carina gateway methods`.
+
+Scopes:
+
+| Scope | Meaning |
+|-------|---------|
+| `read` | read-only status, list, replay, catalog, audit, and result methods |
+| `write` | mutating session/task/workspace actions inside the local operator boundary |
+| `admin` | high-risk control-plane, secret, config, policy, plugin, or approval actions |
+| `worker` | remote worker lease protocol |
+| `stream` | long-lived event subscriptions |
+
 ## Session API
 
 | Method | Purpose |
