@@ -165,6 +165,20 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   same JSON assessment. Each review is audited as `TaskCreated` with
   `status=risk_review` and is projected into `session.items` as a
   `risk_review` item.
+- [x] **Phase C approval overlays with justifications**
+  (`crates/carina-kernel`, `go/kernel`): Codex's execpolicy overlay philosophy
+  was absorbed into Carina's existing session approval memory. A session
+  approval is now an explicit overlay with capability, resource prefix, source
+  decision id, approver, justification, and creation time. Overlays only satisfy
+  future `requires_approval` decisions; they never rescue `denied` policy
+  results. Overlay creation and overlay hits are audit-visible, so repeated
+  approvals are explainable instead of silent cache behavior.
+- [x] **Phase C turn-level net diff projection** (`go/daemon/items.go`):
+  `session.items` now derives `turn_net_diff` items by correlating
+  `PatchProposed`, `PatchApplied`, `PatchFailed`, and `RollbackCompleted`
+  events by `patch_id`. Applied patches contribute active files; rolled-back
+  patches are shown as reverted rather than active net changes. This remains a
+  non-authoritative projection over the hash-chained audit log.
 
 ## ✅ Remaining
 
@@ -174,15 +188,14 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
 - OpenCode items reviewed and intentionally not absorbed now: ACP session
   protocol support (overlaps Carina's JSON-RPC/CLI control plane) and broad
   workspace revert checkpoints (requires a separate snapshot policy).
-- OpenAI Codex items still queued for separate absorption: execpolicy-style
-  prefix overlays with justifications and turn-level net diff. ChatGPT/cloud
-  app-server coupling remains intentionally outside Carina; multi-endpoint
-  identity/sync work should use Nebutra (云毓智能) boundaries.
+- OpenAI Codex items reviewed and intentionally not absorbed now: ChatGPT/cloud
+  app-server coupling remains outside Carina; multi-endpoint identity/sync work
+  should use Nebutra (云毓智能) boundaries.
 
 ## Test status
 Current verification for this update: full Go coverage
-(`go test ./go/... ./apps/...`, 201 tests across 20 packages) and targeted race
-coverage (`go test -race ./go/daemon ./go/config ./apps/carina-daemon`, 117
-tests across 3 packages). This update touched Go control-plane approval/config
-paths, daemon CLI flags, item projection, and docs only; Rust and Zig were not
-rebuilt.
+(`go test ./go/... ./apps/...`, 203 tests across 20 packages) and full Rust
+coverage (`cargo test`, 69 tests across 14 suites), plus targeted Go race
+coverage (`go test -race ./go/daemon ./go/config ./apps/carina-daemon`, 119
+tests across 3 packages). This update touched Rust kernel approval semantics,
+Go kernel wrappers, session item projection, and docs only; Zig was not rebuilt.
