@@ -27,6 +27,7 @@ type HelloRequest struct {
 	ClientID        string   `json:"client_id,omitempty"`
 	Role            Role     `json:"role,omitempty"`
 	Scopes          []Scope  `json:"scopes,omitempty"`
+	Token           string   `json:"token,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
 	UserAgent       string   `json:"user_agent,omitempty"`
 }

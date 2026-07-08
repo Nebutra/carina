@@ -24,10 +24,11 @@ func TestCascadePrecedence(t *testing.T) {
 	home := t.TempDir()
 	proj := t.TempDir()
 
-	writeConfig(t, home, `{"offline": true, "max_task_tokens": 100, "tools_dir": "/g/tools", "gateway_ws": "127.0.0.1:7001", "gateway_ws_origins": ["https://app.example"], "summarizer_model": "cheap", "risk_review_model": "guardian"}`)
+	writeConfig(t, home, `{"offline": true, "max_task_tokens": 100, "tools_dir": "/g/tools", "gateway_ws": "127.0.0.1:7001", "gateway_ws_origins": ["https://app.example"], "gateway_token_signing_key_file": "/g/token.key", "gateway_token_max_ttl_seconds": 600, "summarizer_model": "cheap", "risk_review_model": "guardian"}`)
 	writeConfig(t, proj, `{"max_task_tokens": 200, "tools_dir": "/p/tools", "risk_review_mode": "enforce"}`)
 	t.Setenv("CARINA_TOOLS_DIR", "/e/tools")
 	t.Setenv("CARINA_RISK_REVIEW_MODE", "advisory")
+	t.Setenv("CARINA_GATEWAY_TOKEN_MAX_TTL_SECONDS", "300")
 	t.Setenv("CARINA_NEBUTRA_CLOUD_ENDPOINT", "https://nebutra.example")
 
 	cfg, err := Load(home, proj)
@@ -49,6 +50,12 @@ func TestCascadePrecedence(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.GatewayWSOrigins, []string{"https://app.example"}) {
 		t.Errorf("gateway_ws_origins should fall through from global, got %#v", cfg.GatewayWSOrigins)
+	}
+	if cfg.GatewayTokenSigningKeyFile != "/g/token.key" {
+		t.Errorf("gateway_token_signing_key_file should fall through from global, got %q", cfg.GatewayTokenSigningKeyFile)
+	}
+	if cfg.GatewayTokenMaxTTLSeconds != 300 {
+		t.Errorf("gateway_token_max_ttl_seconds: env should override global, got %d", cfg.GatewayTokenMaxTTLSeconds)
 	}
 	if cfg.SummarizerModel != "cheap" {
 		t.Errorf("summarizer_model should fall through from global, got %q", cfg.SummarizerModel)
@@ -106,6 +113,14 @@ func TestEnvValidationFailsFast(t *testing.T) {
 	t.Setenv("CARINA_MAX_TASK_TOKENS", "-5")
 	if _, err := Load(home, ""); err == nil {
 		t.Fatal("a negative token budget must be rejected")
+	}
+}
+
+func TestGatewayTokenTTLValidationFailsFast(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CARINA_GATEWAY_TOKEN_MAX_TTL_SECONDS", "-1")
+	if _, err := Load(home, ""); err == nil {
+		t.Fatal("negative gateway token ttl must be rejected")
 	}
 }
 

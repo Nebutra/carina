@@ -24,39 +24,42 @@ import (
 // Config is the resolved daemon configuration. JSON tags name the keys accepted
 // in the config files.
 type Config struct {
-	StateDir              string   `json:"state_dir"`
-	Socket                string   `json:"socket"`
-	TCP                   string   `json:"tcp"`
-	GatewayWS             string   `json:"gateway_ws"`
-	GatewayWSOrigins      []string `json:"gateway_ws_origins"`
-	KernelBin             string   `json:"kernel_bin"`
-	ToolsDir              string   `json:"tools_dir"`
-	PolicyDir             string   `json:"policy_dir"`
-	Offline               bool     `json:"offline"`
-	MaxConcurrentTasks    int      `json:"max_concurrent_tasks"`
-	RequireWorkspaceTrust bool     `json:"require_workspace_trust"`
-	MaxTaskTokens         int      `json:"max_task_tokens"`
-	EnableEgressProxy     bool     `json:"enable_egress_proxy"`
-	EgressAllow           []string `json:"egress_allow"`
-	SandboxCommands       bool     `json:"sandbox_commands"`
-	InteractiveApproval   bool     `json:"interactive_approval"`
-	SummarizerModel       string   `json:"summarizer_model"`
-	RiskReviewMode        string   `json:"risk_review_mode"`
-	RiskReviewModel       string   `json:"risk_review_model"`
-	NebutraCloudEndpoint  string   `json:"nebutra_cloud_endpoint"`
-	NebutraSyncMode       string   `json:"nebutra_sync_mode"`
+	StateDir                   string   `json:"state_dir"`
+	Socket                     string   `json:"socket"`
+	TCP                        string   `json:"tcp"`
+	GatewayWS                  string   `json:"gateway_ws"`
+	GatewayWSOrigins           []string `json:"gateway_ws_origins"`
+	GatewayTokenSigningKeyFile string   `json:"gateway_token_signing_key_file"`
+	GatewayTokenMaxTTLSeconds  int      `json:"gateway_token_max_ttl_seconds"`
+	KernelBin                  string   `json:"kernel_bin"`
+	ToolsDir                   string   `json:"tools_dir"`
+	PolicyDir                  string   `json:"policy_dir"`
+	Offline                    bool     `json:"offline"`
+	MaxConcurrentTasks         int      `json:"max_concurrent_tasks"`
+	RequireWorkspaceTrust      bool     `json:"require_workspace_trust"`
+	MaxTaskTokens              int      `json:"max_task_tokens"`
+	EnableEgressProxy          bool     `json:"enable_egress_proxy"`
+	EgressAllow                []string `json:"egress_allow"`
+	SandboxCommands            bool     `json:"sandbox_commands"`
+	InteractiveApproval        bool     `json:"interactive_approval"`
+	SummarizerModel            string   `json:"summarizer_model"`
+	RiskReviewMode             string   `json:"risk_review_mode"`
+	RiskReviewModel            string   `json:"risk_review_model"`
+	NebutraCloudEndpoint       string   `json:"nebutra_cloud_endpoint"`
+	NebutraSyncMode            string   `json:"nebutra_sync_mode"`
 }
 
 // Defaults returns the built-in baseline, anchored at the user's ~/.carina dir.
 func Defaults(home string) Config {
 	base := filepath.Join(home, ".carina")
 	return Config{
-		StateDir:             filepath.Join(base, "state"),
-		Socket:               filepath.Join(base, "daemon.sock"),
-		PolicyDir:            filepath.Join(base, "policy"),
-		MaxConcurrentTasks:   8,
-		NebutraCloudEndpoint: nebutra.DefaultCloudEndpoint,
-		NebutraSyncMode:      nebutra.SyncModeOff,
+		StateDir:                  filepath.Join(base, "state"),
+		Socket:                    filepath.Join(base, "daemon.sock"),
+		PolicyDir:                 filepath.Join(base, "policy"),
+		MaxConcurrentTasks:        8,
+		GatewayTokenMaxTTLSeconds: 900,
+		NebutraCloudEndpoint:      nebutra.DefaultCloudEndpoint,
+		NebutraSyncMode:           nebutra.SyncModeOff,
 	}
 }
 
@@ -103,6 +106,8 @@ func mergeEnv(cfg *Config) {
 	envStr("CARINA_TCP", &cfg.TCP)
 	envStr("CARINA_GATEWAY_WS", &cfg.GatewayWS)
 	envList("CARINA_GATEWAY_WS_ORIGINS", &cfg.GatewayWSOrigins)
+	envStr("CARINA_GATEWAY_TOKEN_SIGNING_KEY_FILE", &cfg.GatewayTokenSigningKeyFile)
+	envInt("CARINA_GATEWAY_TOKEN_MAX_TTL_SECONDS", &cfg.GatewayTokenMaxTTLSeconds)
 	envStr("CARINA_KERNEL_BIN", &cfg.KernelBin)
 	envStr("CARINA_TOOLS_DIR", &cfg.ToolsDir)
 	envStr("CARINA_POLICY_DIR", &cfg.PolicyDir)
@@ -128,6 +133,9 @@ func (c Config) Validate() error {
 	}
 	if c.MaxConcurrentTasks < 0 {
 		return fmt.Errorf("config: max_concurrent_tasks must be >= 0, got %d", c.MaxConcurrentTasks)
+	}
+	if c.GatewayTokenMaxTTLSeconds < 0 {
+		return fmt.Errorf("config: gateway_token_max_ttl_seconds must be >= 0, got %d", c.GatewayTokenMaxTTLSeconds)
 	}
 	if mode := strings.ToLower(strings.TrimSpace(c.RiskReviewMode)); mode != "" && mode != "off" && mode != "advisory" && mode != "enforce" {
 		return fmt.Errorf("config: risk_review_mode must be one of off, advisory, enforce")

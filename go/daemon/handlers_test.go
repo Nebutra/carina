@@ -3,6 +3,7 @@ package daemon_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,24 +93,24 @@ func TestDaemonHandlerSurface(t *testing.T) {
 		Scope        string `json:"scope"`
 		DynamicScope bool   `json:"dynamic_scope"`
 	}
-	if err := c.Call("gateway.resolve_scope", map[string]any{
-		"method": "workspace.patch.propose",
-		"params": map[string]any{"files": []map[string]any{{"path": "a.go", "new_content": "package p\n"}}},
-	}, &resolved); err != nil {
-		t.Fatal(err)
+	assertScope := func(method string, params map[string]any, wantScope string, wantDynamic bool) {
+		t.Helper()
+		if err := c.Call("gateway.resolve_scope", map[string]any{
+			"method": method,
+			"params": params,
+		}, &resolved); err != nil {
+			t.Fatal(err)
+		}
+		if resolved.Scope != wantScope || resolved.DynamicScope != wantDynamic {
+			t.Fatalf("%s should resolve to scope=%s dynamic=%v: %+v", method, wantScope, wantDynamic, resolved)
+		}
 	}
-	if resolved.Scope != "write" || !resolved.DynamicScope {
-		t.Fatalf("relative patch should resolve to write dynamic scope: %+v", resolved)
-	}
-	if err := c.Call("gateway.resolve_scope", map[string]any{
-		"method": "workspace.patch.propose",
-		"params": map[string]any{"files": []map[string]any{{"path": "../escape.go", "new_content": "x"}}},
-	}, &resolved); err != nil {
-		t.Fatal(err)
-	}
-	if resolved.Scope != "admin" || !resolved.DynamicScope {
-		t.Fatalf("escape patch should resolve to admin dynamic scope: %+v", resolved)
-	}
+	assertScope("workspace.patch.propose",
+		map[string]any{"files": []map[string]any{{"path": "a.go", "new_content": "package p\n"}}},
+		"write", true)
+	assertScope("workspace.patch.propose",
+		map[string]any{"files": []map[string]any{{"path": "../escape.go", "new_content": "x"}}},
+		"admin", true)
 
 	// worker lifecycle
 	var reg struct {
@@ -130,6 +131,17 @@ func TestDaemonHandlerSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 	sid := sess.SessionID
+	insideDir := filepath.Join(ws, "nested")
+	if err := os.Mkdir(insideDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	assertScope("session.add_dir", map[string]any{"session_id": sid, "path": insideDir}, "write", true)
+	assertScope("session.add_dir", map[string]any{"session_id": sid, "path": t.TempDir()}, "admin", true)
+	assertScope("workspace.trust", map[string]any{"root": ws, "trusted": false}, "write", true)
+	assertScope("workspace.trust", map[string]any{"root": ws, "trusted": true}, "admin", true)
+	assertScope("task.action.deny", map[string]any{"session_id": sid, "decision_id": "dec_test"}, "write", true)
+	assertScope("task.action.deny", map[string]any{"session_id": sid, "decision_id": "dec_test", "approver": "alice"}, "admin", true)
+	assertScope("task.action.approve", map[string]any{"session_id": sid, "decision_id": "dec_test"}, "admin", false)
 	must("session.get", map[string]any{"session_id": sid})
 	must("session.list", map[string]any{})
 	must("workspace.tree", map[string]any{"session_id": sid})
@@ -205,6 +217,106 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	}
 	if err := c.Call("command.exec", map[string]any{"session_id": "sess_missing", "argv": []string{"ls"}}, nil); err == nil {
 		t.Fatal("exec on unknown session should error")
+	}
+}
+
+func TestDaemonGatewayTokenIssueConfigured(t *testing.T) {
+	repoRoot := repoRoot(t)
+	kernelBin := firstExisting(
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
+	)
+	if kernelBin == "" {
+		t.Skip("carina-kernel-service not built")
+	}
+	keyFile := filepath.Join(t.TempDir(), "gateway-token.key")
+	if err := os.WriteFile(keyFile, []byte("01234567890123456789012345678901\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d, err := daemon.New(daemon.Options{
+		StateDir:                   t.TempDir(),
+		KernelBin:                  kernelBin,
+		ToolsDir:                   filepath.Join(repoRoot, "zig/zig-out/bin"),
+		GatewayTokenSigningKeyFile: keyFile,
+		GatewayTokenMaxTTLSeconds:  120,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	sock := shortSocket(t)
+	go func() { _ = d.Run(sock) }()
+	waitForSocket(t, sock)
+	c, err := rpc.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	var out struct {
+		Token  string `json:"token"`
+		Claims struct {
+			Role      string   `json:"role"`
+			Scopes    []string `json:"scopes"`
+			Transport string   `json:"transport"`
+		} `json:"claims"`
+	}
+	if err := c.Call("gateway.token.issue", map[string]any{
+		"subject": "ws-probe", "role": "operator", "scopes": []string{"read", "admin", "worker"}, "ttl_seconds": 60, "transport": "ws",
+	}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.Token, "gw1.") || out.Claims.Role != "operator" || out.Claims.Transport != "ws" {
+		t.Fatalf("unexpected token issue result: %+v", out)
+	}
+	if len(out.Claims.Scopes) != 2 || out.Claims.Scopes[0] != "read" || out.Claims.Scopes[1] != "admin" {
+		t.Fatalf("unexpected token scopes: %+v", out.Claims.Scopes)
+	}
+	if err := c.Call("gateway.token.issue", map[string]any{"role": "operator", "scopes": []string{"read"}, "ttl_seconds": 600, "transport": "ws"}, nil); err == nil {
+		t.Fatal("over-max gateway token ttl should fail")
+	}
+	if err := c.Call("gateway.token.issue", map[string]any{"role": "operator", "ttl_seconds": 60, "transport": "ws"}, nil); err == nil {
+		t.Fatal("missing gateway token scopes should fail")
+	}
+}
+
+func TestDaemonGatewayTokenIssueDisabledByDefault(t *testing.T) {
+	repoRoot := repoRoot(t)
+	kernelBin := firstExisting(
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
+	)
+	if kernelBin == "" {
+		t.Skip("carina-kernel-service not built")
+	}
+	d, err := daemon.New(daemon.Options{StateDir: t.TempDir(), KernelBin: kernelBin, ToolsDir: filepath.Join(repoRoot, "zig/zig-out/bin")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	sock := shortSocket(t)
+	go func() { _ = d.Run(sock) }()
+	waitForSocket(t, sock)
+	c, err := rpc.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Call("gateway.token.issue", map[string]any{"role": "operator", "scopes": []string{"read"}}, nil); err == nil {
+		t.Fatal("gateway.token.issue should be unavailable without signing key config")
+	}
+}
+
+func TestDaemonGatewayTokenSigningKeyRequiresPrivateFile(t *testing.T) {
+	keyFile := filepath.Join(t.TempDir(), "gateway-token.key")
+	if err := os.WriteFile(keyFile, []byte("01234567890123456789012345678901\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := daemon.New(daemon.Options{StateDir: t.TempDir(), GatewayTokenSigningKeyFile: keyFile})
+	if err == nil || !strings.Contains(err.Error(), "must not be group/world readable") {
+		t.Fatalf("expected private key-file permission error, got %v", err)
 	}
 }
 

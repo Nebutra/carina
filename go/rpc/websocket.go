@@ -18,12 +18,27 @@ import (
 
 const defaultGatewayWebSocketPath = "/gateway"
 
+// GatewayTokenVerifier verifies signed, scoped Gateway capability tokens.
+type GatewayTokenVerifier interface {
+	Verify(token, transport string) (GatewayTokenClaims, error)
+}
+
+type WebSocketOptions struct {
+	Path           string
+	AllowedOrigins []string
+	TokenVerifier  GatewayTokenVerifier
+}
+
 // ListenWebSocket serves the JSON-RPC control plane over WebSocket text frames.
 // It is a Gateway skeleton: callers get the same descriptor/origin policy as
 // TCP remote callers, and no new authority is created by the transport.
 func (s *Server) ListenWebSocket(addr, path string, allowedOrigins []string) error {
-	if strings.TrimSpace(path) == "" {
-		path = defaultGatewayWebSocketPath
+	return s.ListenWebSocketWithOptions(addr, WebSocketOptions{Path: path, AllowedOrigins: allowedOrigins})
+}
+
+func (s *Server) ListenWebSocketWithOptions(addr string, opts WebSocketOptions) error {
+	if strings.TrimSpace(opts.Path) == "" {
+		opts.Path = defaultGatewayWebSocketPath
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -34,8 +49,8 @@ func (s *Server) ListenWebSocket(addr, path string, allowedOrigins []string) err
 	s.mu.Unlock()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
-		s.handleWebSocketUpgrade(w, r, allowedOrigins)
+	mux.HandleFunc(opts.Path, func(w http.ResponseWriter, r *http.Request) {
+		s.handleWebSocketUpgrade(w, r, opts)
 	})
 	err = (&http.Server{Handler: mux}).Serve(ln)
 	if err == nil || strings.Contains(err.Error(), "use of closed network connection") {
@@ -44,12 +59,12 @@ func (s *Server) ListenWebSocket(addr, path string, allowedOrigins []string) err
 	return err
 }
 
-func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, allowedOrigins []string) {
+func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, opts WebSocketOptions) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" && !webSocketOriginAllowed(origin, allowedOrigins) {
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" && !webSocketOriginAllowed(origin, opts.AllowedOrigins) {
 		http.Error(w, "websocket origin not allowed", http.StatusForbidden)
 		return
 	}
@@ -82,7 +97,7 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 	}
 	ws := newWebSocketConn(conn, rw.Reader)
 	_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
-	scopes, err := s.requireWebSocketHello(ws)
+	scopes, err := s.requireWebSocketHello(ws, opts.TokenVerifier)
 	if err != nil {
 		_ = ws.Close()
 		return
@@ -91,7 +106,7 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 	s.serveWithScopes(ws, OriginRemote, scopes)
 }
 
-func (s *Server) requireWebSocketHello(conn net.Conn) ([]Scope, error) {
+func (s *Server) requireWebSocketHello(conn net.Conn, verifier GatewayTokenVerifier) ([]Scope, error) {
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	enc := json.NewEncoder(conn)
@@ -118,12 +133,54 @@ func (s *Server) requireWebSocketHello(conn net.Conn) ([]Scope, error) {
 			return nil, err
 		}
 	}
-	_, scopes, _, err := NegotiateScopes(hello.Role, hello.Scopes)
-	if err != nil {
-		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
-		return nil, err
+	tokenAuthenticated := false
+	var scopes []Scope
+	if verifier != nil {
+		if strings.TrimSpace(hello.Token) == "" {
+			err := fmt.Errorf("gateway token required")
+			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
+			return nil, err
+		}
+		claims, err := verifier.Verify(hello.Token, "ws")
+		if err != nil {
+			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
+			return nil, err
+		}
+		if hello.Role != "" && hello.Role != claims.Role {
+			err := fmt.Errorf("gateway token role mismatch")
+			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
+			return nil, err
+		}
+		scopes, err = IntersectScopes(claims.Scopes, hello.Scopes)
+		if err != nil {
+			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
+			return nil, err
+		}
+		hello.Role = claims.Role
+		hello.Scopes = scopes
+		req.Params, _ = json.Marshal(hello)
+		tokenAuthenticated = true
+	} else {
+		var err error
+		_, scopes, _, err = NegotiateScopes(hello.Role, hello.Scopes)
+		if err != nil {
+			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
+			return nil, err
+		}
 	}
 	resp := s.dispatch(req)
+	if tokenAuthenticated {
+		if result, ok := resp.Result.(HelloResponse); ok {
+			result.Role = hello.Role
+			result.Scopes = scopes
+			if result.Auth == nil {
+				result.Auth = map[string]any{}
+			}
+			result.Auth["grant_type"] = "gateway_token"
+			result.Auth["transport"] = "ws"
+			resp.Result = result
+		}
+	}
 	_ = enc.Encode(resp)
 	if resp.Error != nil {
 		return nil, resp.Error

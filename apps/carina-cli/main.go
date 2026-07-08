@@ -3,13 +3,23 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/sha1"
+	"crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Nebutra/carina/go/auth"
 	"github.com/Nebutra/carina/go/provider"
@@ -69,6 +79,7 @@ Providers and BYOK:
 Gateway and RPC:
   carina gateway hello [role]                       negotiate Gateway role/scope discovery
   carina gateway methods                            list RPC methods with scope/exposure metadata
+  carina gateway ws-probe <ws-url> [role]           probe Gateway WebSocket handshake and hello
 
 Native tools, no daemon:
   carina scan [path]                                workspace file tree
@@ -117,6 +128,10 @@ func run(cmd string, args []string) error {
 		return execTool("carina-run", args)
 	case "patch-native":
 		return execTool("carina-patch-native", args)
+	case "gateway":
+		if len(args) > 0 && args[0] == "ws-probe" {
+			return cmdGatewayWSProbe(args[1:])
+		}
 	}
 
 	c, err := dialDaemon()
@@ -432,8 +447,239 @@ func cmdGateway(c *rpcClient, args []string) error {
 	case "methods", "list", "ls":
 		return call(c, "gateway.methods", map[string]any{})
 	default:
-		return fmt.Errorf("usage: carina gateway <hello|methods> [role]")
+		return fmt.Errorf("usage: carina gateway <hello|methods|ws-probe> [role]")
 	}
+}
+
+func cmdGatewayWSProbe(args []string) error {
+	if len(args) < 1 || len(args) > 2 {
+		return fmt.Errorf("usage: carina gateway ws-probe <ws-url> [role]")
+	}
+	role := "operator"
+	if len(args) > 1 && strings.TrimSpace(args[1]) != "" {
+		role = strings.TrimSpace(args[1])
+	}
+	payload, err := gatewayWSProbe(args[0], role)
+	if err != nil {
+		return err
+	}
+	var out any
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return fmt.Errorf("decode websocket response: %w", err)
+	}
+	return printJSON(out)
+}
+
+func gatewayWSProbe(rawURL, role string) ([]byte, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse websocket url: %w", err)
+	}
+	switch u.Scheme {
+	case "ws", "wss":
+	default:
+		return nil, fmt.Errorf("websocket url must use ws:// or wss://")
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("websocket url missing host")
+	}
+	if u.Path == "" {
+		u.Path = "/gateway"
+	}
+
+	conn, reader, err := dialGatewayWebSocket(u, 10*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	req := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "gateway.hello",
+		"params":  map[string]any{"role": role},
+	}
+	b, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeClientWebSocketText(conn, b); err != nil {
+		return nil, fmt.Errorf("send gateway.hello: %w", err)
+	}
+	resp, err := readServerWebSocketText(reader)
+	if err != nil {
+		return nil, fmt.Errorf("read gateway.hello response: %w", err)
+	}
+	return resp, nil
+}
+
+func dialGatewayWebSocket(u *url.URL, timeout time.Duration) (net.Conn, *bufio.Reader, error) {
+	hostPort := u.Host
+	if u.Port() == "" {
+		port := "80"
+		if u.Scheme == "wss" {
+			port = "443"
+		}
+		hostPort = net.JoinHostPort(u.Hostname(), port)
+	}
+	dialer := &net.Dialer{Timeout: timeout}
+	var (
+		conn net.Conn
+		err  error
+	)
+	if u.Scheme == "wss" {
+		conn, err = tls.DialWithDialer(dialer, "tcp", hostPort, &tls.Config{ServerName: u.Hostname()})
+	} else {
+		conn, err = dialer.Dial("tcp", hostPort)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("dial websocket gateway: %w", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	key, err := newWebSocketKey()
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	reqURI := u.RequestURI()
+	if reqURI == "" {
+		reqURI = "/gateway"
+	}
+	if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\nUser-Agent: carina/%s\r\n\r\n", reqURI, u.Host, key, cliVersion); err != nil {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("send websocket handshake: %w", err)
+	}
+	resp, err := http.ReadResponse(reader, &http.Request{Method: http.MethodGet})
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("read websocket handshake: %w", err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		_ = conn.Close()
+		msg := strings.TrimSpace(string(body))
+		if msg != "" {
+			return nil, nil, fmt.Errorf("websocket handshake failed: %s: %s", resp.Status, msg)
+		}
+		return nil, nil, fmt.Errorf("websocket handshake failed: %s", resp.Status)
+	}
+	if got, want := strings.TrimSpace(resp.Header.Get("Sec-WebSocket-Accept")), webSocketAccept(key); got != want {
+		_ = resp.Body.Close()
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("websocket handshake accept mismatch")
+	}
+	return conn, reader, nil
+}
+
+func newWebSocketKey() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate websocket key: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(b[:]), nil
+}
+
+func webSocketAccept(key string) string {
+	sum := sha1.Sum([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+func writeClientWebSocketText(conn net.Conn, payload []byte) error {
+	var mask [4]byte
+	if _, err := rand.Read(mask[:]); err != nil {
+		return fmt.Errorf("generate websocket mask: %w", err)
+	}
+	header := []byte{0x81}
+	n := len(payload)
+	switch {
+	case n < 126:
+		header = append(header, 0x80|byte(n))
+	case n <= 0xFFFF:
+		header = append(header, 0x80|126, byte(n>>8), byte(n))
+	default:
+		header = append(header, 0x80|127)
+		var ext [8]byte
+		binary.BigEndian.PutUint64(ext[:], uint64(n))
+		header = append(header, ext[:]...)
+	}
+	header = append(header, mask[:]...)
+	masked := make([]byte, len(payload))
+	for i := range payload {
+		masked[i] = payload[i] ^ mask[i%4]
+	}
+	if _, err := conn.Write(header); err != nil {
+		return err
+	}
+	_, err := conn.Write(masked)
+	return err
+}
+
+func readServerWebSocketText(r *bufio.Reader) ([]byte, error) {
+	for {
+		opcode, payload, err := readServerWebSocketFrame(r)
+		if err != nil {
+			return nil, err
+		}
+		switch opcode {
+		case 0x1:
+			return payload, nil
+		case 0x8:
+			return nil, io.EOF
+		case 0x9, 0xA:
+			continue
+		default:
+			return nil, fmt.Errorf("websocket: unsupported opcode %d", opcode)
+		}
+	}
+}
+
+func readServerWebSocketFrame(r *bufio.Reader) (byte, []byte, error) {
+	var hdr [2]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return 0, nil, err
+	}
+	if hdr[0]&0x80 == 0 {
+		return 0, nil, fmt.Errorf("websocket: fragmented frames are not supported")
+	}
+	opcode := hdr[0] & 0x0F
+	masked := hdr[1]&0x80 != 0
+	size := uint64(hdr[1] & 0x7F)
+	switch size {
+	case 126:
+		var ext [2]byte
+		if _, err := io.ReadFull(r, ext[:]); err != nil {
+			return 0, nil, err
+		}
+		size = uint64(binary.BigEndian.Uint16(ext[:]))
+	case 127:
+		var ext [8]byte
+		if _, err := io.ReadFull(r, ext[:]); err != nil {
+			return 0, nil, err
+		}
+		size = binary.BigEndian.Uint64(ext[:])
+	}
+	if size > 16*1024*1024 {
+		return 0, nil, fmt.Errorf("websocket: frame too large")
+	}
+	var mask [4]byte
+	if masked {
+		if _, err := io.ReadFull(r, mask[:]); err != nil {
+			return 0, nil, err
+		}
+	}
+	payload := make([]byte, int(size))
+	if _, err := io.ReadFull(r, payload); err != nil {
+		return 0, nil, err
+	}
+	if masked {
+		for i := range payload {
+			payload[i] ^= mask[i%4]
+		}
+	}
+	return opcode, payload, nil
 }
 
 func cmdExec(c *rpcClient, args []string) error {

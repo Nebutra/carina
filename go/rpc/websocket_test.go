@@ -78,6 +78,213 @@ func TestWebSocketGatewayRoundTripAndRemotePolicy(t *testing.T) {
 	}
 }
 
+func TestWebSocketGatewayTokenScopes(t *testing.T) {
+	s := NewServer()
+	if err := s.RegisterMethod(MethodDescriptor{Method: "gateway.hello", Scope: ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
+		var req HelloRequest
+		if len(params) > 0 {
+			if err := json.Unmarshal(params, &req); err != nil {
+				return nil, err
+			}
+		}
+		return BuildHelloResponse(req, "test", s.MethodDescriptors())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterMethod(MethodDescriptor{Method: "daemon.status", Scope: ScopeRead, Remote: true}, func(_ json.RawMessage) (any, error) {
+		return map[string]bool{"ok": true}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterMethod(MethodDescriptor{Method: "worker.register", Scope: ScopeWorker, Remote: true}, func(_ json.RawMessage) (any, error) {
+		return map[string]bool{"registered": true}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterMethod(MethodDescriptor{Method: "worker.revoke", Scope: ScopeAdmin, Remote: false}, func(_ json.RawMessage) (any, error) {
+		return map[string]bool{"revoked": true}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	issuer, err := NewGatewayTokenIssuer([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := freeTCPAddr(t)
+	go func() {
+		_ = s.ListenWebSocketWithOptions(addr, WebSocketOptions{Path: "/gateway", TokenVerifier: issuer})
+	}()
+	defer s.Close()
+	waitTCP(t, addr)
+
+	readToken := issueGatewayToken(t, issuer, RoleObserver, []Scope{ScopeRead})
+	resp := wsCallWithHello(t, addr, "", map[string]any{"token": readToken}, Request{JSONRPC: "2.0", ID: rawID(t, 1), Method: "daemon.status", Params: mustJSON(t, map[string]any{})})
+	if resp.Error != nil {
+		t.Fatalf("read token should call daemon.status: %+v", resp.Error)
+	}
+	resp = wsCallWithHello(t, addr, "", map[string]any{"token": readToken}, Request{JSONRPC: "2.0", ID: rawID(t, 2), Method: "worker.register", Params: mustJSON(t, map[string]any{})})
+	if resp.Error == nil || !strings.Contains(resp.Error.Message, "method scope not negotiated") {
+		t.Fatalf("read token should not call worker.register, got %+v", resp.Error)
+	}
+
+	workerToken := issueGatewayToken(t, issuer, RoleWorker, []Scope{ScopeWorker})
+	resp = wsCallWithHello(t, addr, "", map[string]any{"token": workerToken}, Request{JSONRPC: "2.0", ID: rawID(t, 3), Method: "worker.register", Params: mustJSON(t, map[string]any{})})
+	if resp.Error != nil {
+		t.Fatalf("worker token should call worker.register: %+v", resp.Error)
+	}
+
+	adminToken := issueGatewayToken(t, issuer, RoleOperator, []Scope{ScopeRead, ScopeAdmin})
+	resp = wsCallWithHello(t, addr, "", map[string]any{"token": adminToken}, Request{JSONRPC: "2.0", ID: rawID(t, 4), Method: "worker.revoke", Params: mustJSON(t, map[string]any{})})
+	if resp.Error == nil || !strings.Contains(resp.Error.Message, "method not available over remote transport") {
+		t.Fatalf("admin token should not bypass remote=false, got %+v", resp.Error)
+	}
+
+	c := wsDial(t, addr, "")
+	defer c.conn.Close()
+	writeWSRequest(t, c, Request{JSONRPC: "2.0", ID: rawID(t, 5), Method: "gateway.hello", Params: mustJSON(t, map[string]any{})})
+	payload, err := c.readText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var helloResp Response
+	if err := json.Unmarshal(payload, &helloResp); err != nil {
+		t.Fatal(err)
+	}
+	if helloResp.Error == nil || !strings.Contains(helloResp.Error.Message, "gateway token required") {
+		t.Fatalf("missing token should fail hello, got %+v", helloResp.Error)
+	}
+}
+
+func TestWebSocketStreamNotificationAfterHello(t *testing.T) {
+	s := NewServer()
+	if err := s.RegisterMethod(MethodDescriptor{Method: "gateway.hello", Scope: ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
+		var req HelloRequest
+		if len(params) > 0 {
+			if err := json.Unmarshal(params, &req); err != nil {
+				return nil, err
+			}
+		}
+		return BuildHelloResponse(req, "test", s.MethodDescriptors())
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	releaseNotification := make(chan struct{})
+	notifyErr := make(chan error, 1)
+	release := func() {
+		select {
+		case <-releaseNotification:
+		default:
+			close(releaseNotification)
+		}
+	}
+	defer release()
+
+	if err := s.RegisterStreamMethod(MethodDescriptor{Method: "events.subscribe", Scope: ScopeStream, Remote: true}, func(_ json.RawMessage, sub *Subscription) error {
+		go func() {
+			<-releaseNotification
+			notifyErr <- sub.Notify("events.update", map[string]string{"type": "ping"})
+		}()
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	addr := freeTCPAddr(t)
+	go func() { _ = s.ListenWebSocket(addr, "/gateway", nil) }()
+	defer s.Close()
+	waitTCP(t, addr)
+
+	c := wsDial(t, addr, "")
+	defer c.conn.Close()
+	if err := c.conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	defer c.conn.SetReadDeadline(time.Time{})
+
+	writeWSRequest(t, c, Request{JSONRPC: "2.0", ID: rawID(t, 1), Method: "gateway.hello", Params: mustJSON(t, map[string]any{})})
+	helloPayload, err := c.readText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var helloResp Response
+	if err := json.Unmarshal(helloPayload, &helloResp); err != nil {
+		t.Fatalf("decode websocket hello response %q: %v", string(helloPayload), err)
+	}
+	if helloResp.Error != nil {
+		t.Fatalf("websocket hello failed: %+v", helloResp.Error)
+	}
+	helloResult, err := json.Marshal(helloResp.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hello HelloResponse
+	if err := json.Unmarshal(helloResult, &hello); err != nil {
+		t.Fatal(err)
+	}
+	foundStream := false
+	for _, method := range hello.Methods {
+		if method.Method == "events.subscribe" && method.Remote && method.Stream && method.Scope == ScopeStream {
+			foundStream = true
+			break
+		}
+	}
+	if !foundStream {
+		t.Fatalf("hello methods did not include remote stream descriptor: %+v", hello.Methods)
+	}
+
+	writeWSRequest(t, c, Request{JSONRPC: "2.0", ID: rawID(t, 2), Method: "events.subscribe", Params: mustJSON(t, map[string]any{})})
+	subscribePayload, err := c.readText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var subscribeResp Response
+	if err := json.Unmarshal(subscribePayload, &subscribeResp); err != nil {
+		t.Fatalf("decode websocket subscribe response %q: %v", string(subscribePayload), err)
+	}
+	if subscribeResp.Error != nil {
+		t.Fatalf("websocket subscribe failed: %+v", subscribeResp.Error)
+	}
+	out, ok := subscribeResp.Result.(map[string]any)
+	if !ok || out["subscribed"] != true {
+		t.Fatalf("subscribe result: %+v", subscribeResp.Result)
+	}
+
+	release()
+	notificationPayload, err := c.readText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var note struct {
+		JSONRPC string          `json:"jsonrpc"`
+		Method  string          `json:"method"`
+		Params  json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal(notificationPayload, &note); err != nil {
+		t.Fatalf("decode websocket notification %q: %v", string(notificationPayload), err)
+	}
+	if note.JSONRPC != "2.0" || note.Method != "events.update" {
+		t.Fatalf("unexpected notification: %+v", note)
+	}
+	var event struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(note.Params, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Type != "ping" {
+		t.Fatalf("expected ping event, got %q", event.Type)
+	}
+	select {
+	case err := <-notifyErr:
+		if err != nil {
+			t.Fatalf("stream notify: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream notify did not return")
+	}
+}
+
 func TestWebSocketRequiresHelloBeforeDispatch(t *testing.T) {
 	s := NewServer()
 	if err := s.RegisterMethod(MethodDescriptor{Method: "daemon.status", Scope: ScopeRead, Remote: true}, func(_ json.RawMessage) (any, error) {
@@ -187,6 +394,26 @@ func wsCallWithHello(t *testing.T, addr, origin string, helloParams map[string]a
 		t.Fatalf("decode websocket response %q: %v", string(payload), err)
 	}
 	return resp
+}
+
+func writeWSRequest(t *testing.T, c *wsTestConn, req Request) {
+	t.Helper()
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.writeText(raw); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func issueGatewayToken(t *testing.T, issuer *GatewayTokenIssuer, role Role, scopes []Scope) string {
+	t.Helper()
+	token, _, err := issuer.Issue("test-client", role, scopes, time.Minute, "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
 }
 
 func wsDial(t *testing.T, addr, origin string) *wsTestConn {

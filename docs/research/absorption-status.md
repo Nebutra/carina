@@ -216,6 +216,31 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   real OpenClaw-style Gateway transport shell without adding `/v1`,
   `/tools/invoke`, new auth grants, or Nebutra device pairing.
 
+**Wave 16 — OpenClaw Gateway absorption (Phase D landed)**
+- [x] **Scoped Gateway capability tokens** (`go/rpc`, `go/daemon`,
+  `go/config`, `apps/carina-daemon`): added signed `gw1` role/scope/transport/
+  expiry claims, local-only `gateway.token.issue`, explicit signing-key config,
+  private key-file validation, max TTL, and WS hello verification when the
+  signer/verifier is configured. Empty token scopes fail closed; verifier
+  rejects non-canonical signed claims, tampering, expiry, and transport
+  mismatch. The signing key is never accepted as a bearer credential.
+- [x] **WebSocket stream coverage + CLI probe** (`go/rpc`,
+  `apps/carina-cli`): WebSocket tests now cover stream subscription
+  notifications after `gateway.hello`, and `carina gateway ws-probe <ws-url>
+  [role]` performs a direct stdlib WS handshake and prints the hello response.
+- [x] **Dynamic scope expansion** (`go/daemon`): `session.add_dir`,
+  `workspace.trust`, and `task.action.deny` now resolve param-sensitive scopes;
+  low-risk contained/revocation/ordinary-deny cases are `write`, while
+  ambiguous, outside, granting, spoofed-approver, or approval paths stay
+  `admin`.
+- [x] **Agent-first HTTP/tool/plugin skeletons and Nebutra pairing boundary**
+  (`docs/rpc-api.md`, `docs/plans`,
+  `docs/nebutra-cloud-boundary.md`): reserved `/v1`, `/tools/invoke`, and
+  plugin HTTP request-local Gateway scope as disabled future surfaces gated by
+  scoped Gateway tokens. Device/node pairing remains a Nebutra identity/sync
+  boundary, not local action authority; node commands must be declared,
+  filtered, bounded, audited, and scoped.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
@@ -228,17 +253,17 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   app-server coupling remains outside Carina. Multi-endpoint identity/sync is
   now documented and guarded as a Nebutra Cloud (云毓智能, `nebutra.com`) product
   boundary with local sync off by default.
-- OpenClaw Gateway items intentionally staged: Phase A landed the descriptor
-  control-plane substrate and Phase B landed handshake/dynamic-scope mechanics.
-  Phase C landed the default-off WebSocket transport skeleton. The
-  agent-first HTTP façade and device/node pairing are not safe to bolt on until
-  they are built on this catalog and Carina's kernel capability model.
+- OpenClaw Gateway items intentionally staged after Phase D: the scoped token
+  foundation is now live, but `/v1`, `/tools/invoke`, plugin HTTP routes, and
+  Nebutra device/node pairing remain disabled implementation surfaces until
+  they are built against this catalog, token model, and Carina's kernel
+  capability model.
 
 ## Test status
 Current verification for this update: targeted Go coverage
-(`go test ./go/rpc ./go/config ./go/daemon ./apps/carina-daemon`, 133 tests
-across 4 packages), full Go coverage (`go test ./go/... ./apps/...`, 215 tests
-across 21 packages), and targeted Go race coverage
-(`go test -race ./go/rpc ./go/config ./go/daemon ./apps/carina-daemon`, 133
-tests across 4 packages). This update touched Go RPC/config/daemon entrypoint
-and docs only; Rust and Zig were not rebuilt.
+(`go test ./go/rpc ./go/config ./go/daemon ./apps/carina-cli`, 150 tests across
+4 packages) and full Go coverage (`go test ./...`, 228 tests across 22
+packages), plus targeted race coverage
+(`go test -race ./go/rpc ./go/config ./go/daemon ./apps/carina-cli ./apps/carina-daemon`,
+150 tests across 5 packages). This update touched Go RPC/config/daemon/CLI
+entrypoints and docs; Rust and Zig were not rebuilt.

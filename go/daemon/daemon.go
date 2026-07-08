@@ -5,6 +5,7 @@
 package daemon
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -42,18 +43,20 @@ type Options struct {
 
 	MaxConcurrentTasks int // cap on concurrent background runs (0 => default 8)
 
-	RequireWorkspaceTrust bool               // when true, deny command exec in untrusted workspaces
-	MaxTaskTokens         int                // per-task token budget (0 => unlimited); over-budget runs degrade
-	EnableEgressProxy     bool               // route command network through a deny-by-default egress proxy
-	EgressAllow           []string           // hosts allowed when the egress proxy is enabled
-	SandboxCommands       bool               // run commands under an OS syscall sandbox (macOS sandbox-exec)
-	InteractiveApproval   bool               // requires_approval pauses for an operator decision instead of auto-approving
-	EgressCredentials     []EgressCredential // per-host credentials injected at the egress boundary
-	VerifierModel         string             // model for the independent done-verifier ("" => verifier off)
-	RiskReviewMode        string             // off|advisory|enforce for autonomous approval review ("" => advisory)
-	RiskReviewModel       string             // optional model for Nebutra Risk Review ("" => deterministic local reviewer)
-	NebutraCloudEndpoint  string             // Nebutra Cloud identity/sync boundary (default https://nebutra.com)
-	NebutraSyncMode       string             // currently only "off"; future sync modes belong behind Nebutra
+	RequireWorkspaceTrust      bool               // when true, deny command exec in untrusted workspaces
+	MaxTaskTokens              int                // per-task token budget (0 => unlimited); over-budget runs degrade
+	EnableEgressProxy          bool               // route command network through a deny-by-default egress proxy
+	EgressAllow                []string           // hosts allowed when the egress proxy is enabled
+	SandboxCommands            bool               // run commands under an OS syscall sandbox (macOS sandbox-exec)
+	InteractiveApproval        bool               // requires_approval pauses for an operator decision instead of auto-approving
+	EgressCredentials          []EgressCredential // per-host credentials injected at the egress boundary
+	VerifierModel              string             // model for the independent done-verifier ("" => verifier off)
+	RiskReviewMode             string             // off|advisory|enforce for autonomous approval review ("" => advisory)
+	RiskReviewModel            string             // optional model for Nebutra Risk Review ("" => deterministic local reviewer)
+	NebutraCloudEndpoint       string             // Nebutra Cloud identity/sync boundary (default https://nebutra.com)
+	NebutraSyncMode            string             // currently only "off"; future sync modes belong behind Nebutra
+	GatewayTokenSigningKeyFile string             // optional local file containing Gateway token signing material
+	GatewayTokenMaxTTLSeconds  int                // max scoped Gateway token TTL (0 => 15m)
 }
 
 // EgressCredential authenticates outbound requests to a host by injecting a
@@ -136,8 +139,10 @@ type Daemon struct {
 
 	reload func() error // config reload closure (SIGHUP/RPC); nil until SetReloader
 
-	authChain *auth.Chain      // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
-	history   *history.History // shared cross-process prompt history
+	authChain          *auth.Chain             // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
+	history            *history.History        // shared cross-process prompt history
+	gatewayTokens      *rpc.GatewayTokenIssuer // optional scoped Gateway token signer/verifier
+	gatewayTokenMaxTTL time.Duration           // max TTL for locally issued scoped Gateway tokens
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -160,6 +165,21 @@ func New(opts Options) (*Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("daemon: %w", err)
 	}
+	gatewayTokenMaxTTL := time.Duration(opts.GatewayTokenMaxTTLSeconds) * time.Second
+	if gatewayTokenMaxTTL <= 0 {
+		gatewayTokenMaxTTL = 15 * time.Minute
+	}
+	var gatewayTokens *rpc.GatewayTokenIssuer
+	if strings.TrimSpace(opts.GatewayTokenSigningKeyFile) != "" {
+		key, err := readGatewayTokenSigningKey(opts.GatewayTokenSigningKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("daemon: %w", err)
+		}
+		gatewayTokens, err = rpc.NewGatewayTokenIssuer(key)
+		if err != nil {
+			return nil, fmt.Errorf("daemon: gateway token signing key: %w", err)
+		}
+	}
 	store, err := sessionstore.Open(opts.StateDir)
 	if err != nil {
 		return nil, err
@@ -172,20 +192,22 @@ func New(opts Options) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: cannot start capability kernel: %w", err)
 	}
 	d := &Daemon{
-		store:         store,
-		sched:         scheduler.New(),
-		pool:          worker.NewPool(),
-		router:        modelrouter.New(),
-		server:        rpc.NewServer(),
-		kern:          kern,
-		tools:         tools,
-		events:        NewBus(),
-		org:           loadOrgPolicy(opts.PolicyDir),
-		stateDir:      opts.StateDir,
-		cloudEndpoint: cloudEndpoint,
-		syncMode:      syncMode,
-		started:       time.Now().UTC(),
-		pendingCmds:   make(map[string]pendingCommand),
+		store:              store,
+		sched:              scheduler.New(),
+		pool:               worker.NewPool(),
+		router:             modelrouter.New(),
+		server:             rpc.NewServer(),
+		kern:               kern,
+		tools:              tools,
+		events:             NewBus(),
+		org:                loadOrgPolicy(opts.PolicyDir),
+		stateDir:           opts.StateDir,
+		cloudEndpoint:      cloudEndpoint,
+		syncMode:           syncMode,
+		started:            time.Now().UTC(),
+		pendingCmds:        make(map[string]pendingCommand),
+		gatewayTokens:      gatewayTokens,
+		gatewayTokenMaxTTL: gatewayTokenMaxTTL,
 	}
 	d.riskReviewMode.Store(riskReviewMode)
 	_ = hardenProcess() // Linux: non-dumpable, anti-ptrace (best-effort)
@@ -316,6 +338,29 @@ func New(opts Options) (*Daemon, error) {
 	return d, nil
 }
 
+func readGatewayTokenSigningKey(path string) ([]byte, error) {
+	path = strings.TrimSpace(path)
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("read gateway token signing key %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("gateway token signing key %s is a directory", path)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("gateway token signing key %s must not be group/world readable", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read gateway token signing key %s: %w", path, err)
+	}
+	key := bytes.TrimSpace(data)
+	if len(key) < 32 {
+		return nil, fmt.Errorf("gateway token signing key must be at least 32 bytes")
+	}
+	return append([]byte(nil), key...), nil
+}
+
 // SetReasoner overrides the agent reasoning engine (used by tests).
 func (d *Daemon) SetReasoner(r Reasoner) { d.reasoner = r }
 
@@ -369,7 +414,11 @@ func (d *Daemon) RunTCP(addr string) error {
 // RunGatewayWebSocket serves the descriptor-backed Gateway skeleton over
 // WebSocket. It is default-off and uses the remote transport allowlist.
 func (d *Daemon) RunGatewayWebSocket(addr string, allowedOrigins []string) error {
-	return d.server.ListenWebSocket(addr, "/gateway", allowedOrigins)
+	return d.server.ListenWebSocketWithOptions(addr, rpc.WebSocketOptions{
+		Path:           "/gateway",
+		AllowedOrigins: allowedOrigins,
+		TokenVerifier:  d.gatewayTokens,
+	})
 }
 
 func (d *Daemon) Close() error {
@@ -429,6 +478,9 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("gateway.hello", rpc.ScopeRead, true, d.handleGatewayHello)
 	d.registerRPC("gateway.methods", rpc.ScopeRead, true, d.handleGatewayMethods)
 	d.registerRPC("gateway.resolve_scope", rpc.ScopeRead, false, d.handleGatewayResolveScope)
+	if d.gatewayTokens != nil {
+		d.registerRPC("gateway.token.issue", rpc.ScopeAdmin, false, d.handleGatewayTokenIssue, true)
+	}
 	d.registerRPC("agent.list", rpc.ScopeRead, true, d.handleAgentList)
 	d.registerRPC("command.list", rpc.ScopeRead, true, d.handleCommandList)
 
@@ -442,7 +494,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("session.fork", rpc.ScopeWrite, false, d.handleSessionFork)
 	d.registerRPC("session.plan_mode", rpc.ScopeWrite, false, d.handlePlanMode)
 	d.registerRPC("session.approve_plan", rpc.ScopeWrite, false, d.handleApprovePlan)
-	d.registerRPC("session.add_dir", rpc.ScopeAdmin, false, d.handleAddDir, true)
+	d.registerRPCDynamic("session.add_dir", rpc.ScopeAdmin, false, d.handleAddDir, d.addDirScope, true)
 	d.registerRPC("task.approval.resolve", rpc.ScopeAdmin, false, d.handleApprovalResolve, true)
 	d.registerRPC("task.btw", rpc.ScopeWrite, false, d.handleTaskBtw)
 	d.registerRPC("history.recent", rpc.ScopeRead, false, d.handleHistoryRecent)
@@ -454,12 +506,12 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("task.cancel", rpc.ScopeWrite, false, d.handleTaskCancel)
 	d.registerRPC("task.steer", rpc.ScopeWrite, false, d.handleTaskSteer)
 	d.registerRPC("task.action.approve", rpc.ScopeAdmin, false, d.handleApprove, true)
-	d.registerRPC("task.action.deny", rpc.ScopeAdmin, false, d.handleDeny, true)
+	d.registerRPCDynamic("task.action.deny", rpc.ScopeAdmin, false, d.handleDeny, d.taskActionDenyScope, true)
 
 	d.registerRPC("workspace.tree", rpc.ScopeRead, false, d.handleWorkspaceTree)
 	d.registerRPC("workspace.search", rpc.ScopeRead, false, d.handleWorkspaceSearch)
 	d.registerRPC("workspace.file.get", rpc.ScopeRead, false, d.handleFileGet)
-	d.registerRPC("workspace.trust", rpc.ScopeAdmin, false, d.handleWorkspaceTrust, true)
+	d.registerRPCDynamic("workspace.trust", rpc.ScopeAdmin, false, d.handleWorkspaceTrust, workspaceTrustScope, true)
 	d.registerRPCDynamic("workspace.patch.propose", rpc.ScopeWrite, false, d.handlePatchPropose, patchProposeScope)
 	d.registerRPC("workspace.patch.apply", rpc.ScopeWrite, false, d.handlePatchApply)
 	d.registerRPC("workspace.patch.rollback", rpc.ScopeWrite, false, d.handlePatchRollback)
@@ -691,6 +743,37 @@ func (d *Daemon) handleGatewayResolveScope(params json.RawMessage) (any, error) 
 		"scope":         scope,
 		"dynamic_scope": dynamic,
 	}, nil
+}
+
+func (d *Daemon) handleGatewayTokenIssue(params json.RawMessage) (any, error) {
+	if d.gatewayTokens == nil {
+		return nil, fmt.Errorf("gateway token issuing is disabled")
+	}
+	var p struct {
+		Subject    string      `json:"subject"`
+		Role       rpc.Role    `json:"role"`
+		Scopes     []rpc.Scope `json:"scopes"`
+		TTLSeconds int64       `json:"ttl_seconds"`
+		Transport  string      `json:"transport"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if len(p.Scopes) == 0 {
+		return nil, fmt.Errorf("scopes are required")
+	}
+	ttl := time.Duration(p.TTLSeconds) * time.Second
+	if p.TTLSeconds <= 0 {
+		ttl = d.gatewayTokenMaxTTL
+	}
+	if ttl > d.gatewayTokenMaxTTL {
+		return nil, fmt.Errorf("ttl_seconds exceeds gateway token max ttl")
+	}
+	token, claims, err := d.gatewayTokens.Issue(p.Subject, p.Role, p.Scopes, ttl, p.Transport)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"token": token, "claims": claims}, nil
 }
 
 // ---- sessions -------------------------------------------------------------
@@ -1298,6 +1381,102 @@ func (d *Daemon) handleFileGet(params json.RawMessage) (any, error) {
 	d.record(sess.SessionID, "FileRead", "", "go",
 		map[string]any{"path": abs, "bytes": len(content)}, decision.DecisionID)
 	return map[string]any{"content": string(content), "hash": hex.EncodeToString(sum[:])}, nil
+}
+
+func (d *Daemon) addDirScope(params json.RawMessage) (rpc.Scope, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		Path      string `json:"path"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("invalid params: %w", err)
+	}
+	sessionID := strings.TrimSpace(p.SessionID)
+	path := strings.TrimSpace(p.Path)
+	if sessionID == "" || sessionID != p.SessionID || path == "" || path != p.Path || !filepath.IsAbs(path) {
+		return rpc.ScopeAdmin, nil
+	}
+	sess, ok := d.store.Get(sessionID)
+	if !ok {
+		return rpc.ScopeAdmin, nil
+	}
+	root, ok := canonicalExistingDir(sess.WorkspaceRoot)
+	if !ok {
+		return rpc.ScopeAdmin, nil
+	}
+	target, ok := canonicalExistingDir(path)
+	if !ok {
+		return rpc.ScopeAdmin, nil
+	}
+	if pathWithin(root, target) {
+		return rpc.ScopeWrite, nil
+	}
+	return rpc.ScopeAdmin, nil
+}
+
+func workspaceTrustScope(params json.RawMessage) (rpc.Scope, error) {
+	var p struct {
+		Root    string `json:"root"`
+		Trusted bool   `json:"trusted"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("invalid params: %w", err)
+	}
+	root := strings.TrimSpace(p.Root)
+	if root == "" || root != p.Root || !filepath.IsAbs(root) || filepath.Clean(root) != root {
+		return rpc.ScopeAdmin, nil
+	}
+	if p.Trusted {
+		return rpc.ScopeAdmin, nil
+	}
+	return rpc.ScopeWrite, nil
+}
+
+func (d *Daemon) taskActionDenyScope(params json.RawMessage) (rpc.Scope, error) {
+	var p struct {
+		SessionID  string `json:"session_id"`
+		DecisionID string `json:"decision_id"`
+		Approver   string `json:"approver"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("invalid params: %w", err)
+	}
+	sessionID := strings.TrimSpace(p.SessionID)
+	decisionID := strings.TrimSpace(p.DecisionID)
+	if sessionID == "" || sessionID != p.SessionID || decisionID == "" || decisionID != p.DecisionID {
+		return rpc.ScopeAdmin, nil
+	}
+	if strings.TrimSpace(p.Approver) != "" {
+		return rpc.ScopeAdmin, nil
+	}
+	if _, ok := d.store.Get(sessionID); !ok {
+		return rpc.ScopeAdmin, nil
+	}
+	return rpc.ScopeWrite, nil
+}
+
+func canonicalExistingDir(path string) (string, bool) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", false
+	}
+	info, err := os.Stat(real)
+	if err != nil || !info.IsDir() {
+		return "", false
+	}
+	return filepath.Clean(real), true
+}
+
+func pathWithin(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
 }
 
 // ---- patches --------------------------------------------------------------

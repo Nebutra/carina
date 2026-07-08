@@ -30,11 +30,47 @@ Nebutra Cloud should own:
 - user account and organization identity;
 - SSO/OIDC integration and role mapping for approvals;
 - device or endpoint registration;
+- device/node pairing records, approval metadata, and sync hints;
 - multi-endpoint session index and handoff metadata;
 - policy bundle distribution;
 - optional audit-bundle upload and retention;
 - remote-worker fleet enrollment and routing metadata;
 - billing, entitlement, and product analytics outside the local runtime.
+
+## Device And Node Pairing Boundary
+
+Nebutra device/node pairing is an identity and sync surface only. Nebutra may
+identify accounts, register devices, record pairing approval metadata, and sync
+which paired endpoint is eligible to attach to a session. It must not become a
+remote action authority.
+
+The local Gateway remains the authority for repository actions. A paired device
+or node can request work only through the existing Gateway role/scope contract,
+method descriptors, dynamic scope resolution, local approvals, and capability
+kernel. Pairing proves "this Nebutra identity and device are known"; it does
+not prove "this device may run arbitrary commands here."
+
+Node command exposure must be declaration-based and filtered:
+
+- nodes declare supported commands and capability surfaces during connection or
+  handshake;
+- the Gateway filters declarations against method descriptors, negotiated
+  role/scopes, platform defaults, dangerous-command policy, plugin policy,
+  local approvals, and config allow/deny rules;
+- commands not both declared by the node and allowed by local Gateway policy are
+  refused before dispatch;
+- approval replay must bind to canonical command, cwd, session, node, and
+  declared capability context so approval for one action cannot execute another.
+
+Device-hosted or plugin-hosted surfaces should use scoped capability URLs with
+short TTLs. These URLs are transport conveniences for a specific route,
+capability, node, and session context. They are not reusable Nebutra identity
+tokens and should be auditable, revocable, and expired by default.
+
+The local owner token must stay separate from Nebutra identity. A local owner or
+admin token unlocks the local daemon boundary only. A Nebutra token identifies a
+cloud account, organization role, and device record only. Neither token should
+be exchanged for, embedded inside, or treated as a fallback for the other.
 
 ## Sync Contract
 
@@ -65,6 +101,7 @@ sync by default.
 | Identity | `go/daemon/identity.go` `IdentityProvider` | Resolve OIDC/SSO access tokens to users and roles. |
 | Model auth | `CARINA_NEBUTRA_TOKEN` OAuth fallback | Provide managed Nebutra access tokens only when BYOK keys are absent. |
 | Config | `nebutra_cloud_endpoint`, `nebutra_sync_mode` | Define which Nebutra product endpoint a future connector talks to. |
+| Device/node pairing | Gateway role/scope handshake and method descriptors | Register device identity and pairing metadata without granting local action authority. |
 | Audit | `audit.export`, `session.items` | Store, search, and present synced bundles without rewriting local history. |
 | Remote workers | worker registry and work-dispatch lease protocol | Enroll endpoints and route work metadata without bypassing local policy. |
 
@@ -76,6 +113,13 @@ sync by default.
   priority for model providers.
 - Cloud-originated work must enter through the same RPC and approval paths as
   local work.
+- Nebutra pairing must never bypass Gateway role/scope checks, method
+  descriptors, dynamic scope resolution, local approvals, or the capability
+  kernel.
+- Device and node commands must be declared, filtered, and bounded before they
+  can be dispatched.
+- Capability URLs must be scoped, short-lived, auditable, and revocable.
+- Nebutra identity tokens and local owner/admin tokens must remain separate
+  trust domains.
 - Audit sync should preserve local event hashes instead of rewriting events.
 - Secrets should sync only as handles or provenance, never as raw values.
-

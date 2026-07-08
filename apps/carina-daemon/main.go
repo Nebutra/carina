@@ -36,6 +36,8 @@ func main() {
 	tcp := flag.String("tcp", cfg.TCP, "optional TCP listen address for remote workers, e.g. :7777")
 	gatewayWS := flag.String("gateway-ws", cfg.GatewayWS, "optional WebSocket Gateway listen address, e.g. 127.0.0.1:8777")
 	gatewayWSOrigins := flag.String("gateway-ws-origins", strings.Join(cfg.GatewayWSOrigins, ","), "comma-separated allowed browser Origin values for -gateway-ws")
+	gatewayTokenSigningKeyFile := flag.String("gateway-token-signing-key-file", cfg.GatewayTokenSigningKeyFile, "optional 0600 file containing Gateway token signing material")
+	gatewayTokenMaxTTL := flag.Int("gateway-token-max-ttl", cfg.GatewayTokenMaxTTLSeconds, "max scoped Gateway token TTL in seconds")
 	kernelBin := flag.String("kernel", cfg.KernelBin, "carina-kernel-service path (default: auto-discover)")
 	toolsDir := flag.String("tools", cfg.ToolsDir, "zig native tools directory (default: auto-discover)")
 	policyDir := flag.String("policy", cfg.PolicyDir, "enterprise org-policy directory")
@@ -71,22 +73,24 @@ func main() {
 	}
 
 	d, err := daemon.New(daemon.Options{
-		StateDir:              *stateDir,
-		KernelBin:             *kernelBin,
-		ToolsDir:              *toolsDir,
-		PolicyDir:             *policyDir,
-		Offline:               *offline,
-		MaxConcurrentTasks:    *maxConcurrent,
-		MaxTaskTokens:         *maxTokens,
-		RequireWorkspaceTrust: *requireTrust,
-		SandboxCommands:       *sandbox,
-		EnableEgressProxy:     *egress,
-		EgressAllow:           splitList(*egressAllow),
-		InteractiveApproval:   *interactiveApproval,
-		RiskReviewMode:        *riskReviewMode,
-		RiskReviewModel:       *riskReviewModel,
-		NebutraCloudEndpoint:  *nebutraCloud,
-		NebutraSyncMode:       *nebutraSyncMode,
+		StateDir:                   *stateDir,
+		KernelBin:                  *kernelBin,
+		ToolsDir:                   *toolsDir,
+		PolicyDir:                  *policyDir,
+		Offline:                    *offline,
+		MaxConcurrentTasks:         *maxConcurrent,
+		MaxTaskTokens:              *maxTokens,
+		RequireWorkspaceTrust:      *requireTrust,
+		SandboxCommands:            *sandbox,
+		EnableEgressProxy:          *egress,
+		EgressAllow:                splitList(*egressAllow),
+		InteractiveApproval:        *interactiveApproval,
+		RiskReviewMode:             *riskReviewMode,
+		RiskReviewModel:            *riskReviewModel,
+		NebutraCloudEndpoint:       *nebutraCloud,
+		NebutraSyncMode:            *nebutraSyncMode,
+		GatewayTokenSigningKeyFile: *gatewayTokenSigningKeyFile,
+		GatewayTokenMaxTTLSeconds:  *gatewayTokenMaxTTL,
 	})
 	if err != nil {
 		log.Fatalf("carina-daemon: %v", err)
