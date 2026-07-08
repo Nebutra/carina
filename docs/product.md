@@ -28,7 +28,7 @@ Carina turns agent execution into a controlled runtime:
 | Explain what happened | Hash-chained audit log, normalized item stream, turn net diff |
 | Recover from bad edits | Transactional patch apply and rollback |
 | Use real models | BYOK credential chain and provider catalog |
-| Embed in another product | JSON-RPC, MCP server/client, SDK surfaces |
+| Embed in another product | JSON-RPC, scoped HTTP Gateway, MCP server/client, SDK surfaces |
 | Split work safely | Sub-agent attenuation, workers, workflow DAGs |
 | Coordinate endpoints later | Nebutra Cloud boundary for identity and sync, with Carina remaining local authority |
 
@@ -62,6 +62,8 @@ Current strengths:
 - control-plane and capability boundary exist;
 - audit and patch provenance are implemented;
 - provider/BYOK support is broad enough for practical testing;
+- scoped HTTP Gateway exposes agent-first `/v1` and read-only tool invoke when
+  explicitly enabled;
 - source builds and tests are usable.
 - Nebutra Cloud identity/sync has an explicit boundary contract, with sync off
   by default.

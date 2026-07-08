@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,6 +144,8 @@ type Daemon struct {
 	history            *history.History        // shared cross-process prompt history
 	gatewayTokens      *rpc.GatewayTokenIssuer // optional scoped Gateway token signer/verifier
 	gatewayTokenMaxTTL time.Duration           // max TTL for locally issued scoped Gateway tokens
+	gatewayHTTPServers []*http.Server
+	gatewayResponses   map[string]string // response id -> session id for /v1/responses continuity
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -208,6 +211,7 @@ func New(opts Options) (*Daemon, error) {
 		pendingCmds:        make(map[string]pendingCommand),
 		gatewayTokens:      gatewayTokens,
 		gatewayTokenMaxTTL: gatewayTokenMaxTTL,
+		gatewayResponses:   map[string]string{},
 	}
 	d.riskReviewMode.Store(riskReviewMode)
 	_ = hardenProcess() // Linux: non-dumpable, anti-ptrace (best-effort)
@@ -421,6 +425,12 @@ func (d *Daemon) RunGatewayWebSocket(addr string, allowedOrigins []string) error
 	})
 }
 
+// RunGatewayHTTP serves the OpenAI-compatible and tool-invoke Gateway facade.
+// It is default-off and requires scoped Gateway token signing to be configured.
+func (d *Daemon) RunGatewayHTTP(addr string, allowedOrigins []string) error {
+	return d.runGatewayHTTP(addr, allowedOrigins)
+}
+
 func (d *Daemon) Close() error {
 	d.stopOnce.Do(func() {
 		if d.stopCh != nil {
@@ -433,6 +443,9 @@ func (d *Daemon) Close() error {
 	}
 	if d.egress != nil {
 		_ = d.egress.Close()
+	}
+	for _, srv := range d.gatewayHTTPServers {
+		_ = srv.Close()
 	}
 	return d.kern.Close()
 }
@@ -753,6 +766,7 @@ func (d *Daemon) handleGatewayTokenIssue(params json.RawMessage) (any, error) {
 		Subject    string      `json:"subject"`
 		Role       rpc.Role    `json:"role"`
 		Scopes     []rpc.Scope `json:"scopes"`
+		Routes     []string    `json:"routes"`
 		TTLSeconds int64       `json:"ttl_seconds"`
 		Transport  string      `json:"transport"`
 	}
@@ -769,7 +783,7 @@ func (d *Daemon) handleGatewayTokenIssue(params json.RawMessage) (any, error) {
 	if ttl > d.gatewayTokenMaxTTL {
 		return nil, fmt.Errorf("ttl_seconds exceeds gateway token max ttl")
 	}
-	token, claims, err := d.gatewayTokens.Issue(p.Subject, p.Role, p.Scopes, ttl, p.Transport)
+	token, claims, err := d.gatewayTokens.IssueWithRoutes(p.Subject, p.Role, p.Scopes, p.Routes, ttl, p.Transport)
 	if err != nil {
 		return nil, err
 	}

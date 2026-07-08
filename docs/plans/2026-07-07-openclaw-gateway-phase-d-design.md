@@ -5,6 +5,9 @@ Builds on Phase A: `docs/plans/2026-07-07-openclaw-gateway-phase-a-design.md`.
 Builds on Phase B: `docs/plans/2026-07-07-openclaw-gateway-phase-b-design.md`.
 Builds on Phase C: `docs/plans/2026-07-07-openclaw-gateway-phase-c-design.md`.
 
+Superseded for runtime closure by:
+`docs/plans/2026-07-08-gateway-http-runtime-closure-design.md`.
+
 ## Decision
 
 Implement the scoped Gateway token foundation, then document the next OpenClaw

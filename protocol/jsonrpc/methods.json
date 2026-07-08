@@ -6,7 +6,7 @@
       { "method": "gateway.hello", "params": { "protocol_version": "number?", "client_id": "string?", "role": "operator|observer|worker|node?", "scopes": "Scope[]?", "token": "string?" }, "result": "GatewayHello" },
       { "method": "gateway.methods", "params": {}, "result": { "version": "string", "methods": "MethodDescriptor[]" } },
       { "method": "gateway.resolve_scope", "params": { "method": "string", "params": "object?" }, "result": { "method": "string", "scope": "Scope", "dynamic_scope": "boolean" } },
-      { "method": "gateway.token.issue", "params": { "subject": "string?", "role": "operator|observer|worker|node?", "scopes": "Scope[]", "ttl_seconds": "number?", "transport": "ws|http|plugin?" }, "result": { "token": "string", "claims": "GatewayTokenClaims" }, "availability": "local-only; registered only when gateway_token_signing_key_file is configured" }
+      { "method": "gateway.token.issue", "params": { "subject": "string?", "role": "operator|observer|worker|node?", "scopes": "Scope[]", "routes": "string[]?", "ttl_seconds": "number?", "transport": "ws|http|plugin?" }, "result": { "token": "string", "claims": "GatewayTokenClaims" }, "availability": "local-only; registered only when gateway_token_signing_key_file is configured" }
     ],
     "session": [
       { "method": "session.create", "params": { "workspace_root": "string", "profile": "string" }, "result": "Session" },

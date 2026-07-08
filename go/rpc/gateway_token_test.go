@@ -59,6 +59,9 @@ func TestGatewayTokenValidation(t *testing.T) {
 	if _, _, err := issuer.Issue("", RoleObserver, []Scope{ScopeAdmin}, time.Minute, ""); err == nil {
 		t.Fatal("role-disallowed token scopes should fail")
 	}
+	if _, _, err := issuer.IssueWithRoutes("", RoleOperator, []Scope{ScopeRead}, []string{"v1/models"}, time.Minute, "http"); err == nil {
+		t.Fatal("route without leading slash should fail")
+	}
 }
 
 func TestGatewayTokenRejectsNonCanonicalClaims(t *testing.T) {
@@ -97,6 +100,15 @@ func TestGatewayTokenRejectsNonCanonicalClaims(t *testing.T) {
 			IssuedAt:  base.Unix(),
 			ExpiresAt: base.Add(time.Minute).Unix(),
 		},
+		"unsorted-routes": {
+			Version:   "1",
+			Role:      RoleOperator,
+			Scopes:    []Scope{ScopeRead},
+			Routes:    []string{"/v1/models", "/plugins/*", "/tools/invoke"},
+			IssuedAt:  base.Unix(),
+			ExpiresAt: base.Add(time.Minute).Unix(),
+			Transport: "ws",
+		},
 	} {
 		token, err := issuer.sign(claims)
 		if err != nil {
@@ -118,5 +130,29 @@ func TestIntersectScopes(t *testing.T) {
 	}
 	if _, err := IntersectScopes([]Scope{ScopeRead}, []Scope{ScopeAdmin}); err == nil {
 		t.Fatal("unauthorized requested scope should fail")
+	}
+}
+
+func TestGatewayTokenRoutes(t *testing.T) {
+	issuer, err := NewGatewayTokenIssuer([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, claims, err := issuer.IssueWithRoutes("http-client", RoleOperator, []Scope{ScopeRead, ScopeWrite}, []string{"/tools/invoke", "/v1/*", "/tools/invoke"}, time.Minute, "http")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claims.Routes) != 2 || claims.Routes[0] != "/tools/invoke" || claims.Routes[1] != "/v1/*" {
+		t.Fatalf("routes were not canonicalized: %+v", claims.Routes)
+	}
+	verified, err := issuer.Verify(token, "http")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !RouteAllowed(verified.Routes, "/v1/models") {
+		t.Fatalf("/v1/models should be allowed by wildcard route: %+v", verified.Routes)
+	}
+	if RouteAllowed(verified.Routes, "/plugins/x") {
+		t.Fatalf("/plugins/x should not be allowed: %+v", verified.Routes)
 	}
 }

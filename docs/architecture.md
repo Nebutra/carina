@@ -40,7 +40,7 @@ Agent Surface ──JSON-RPC──▶ Go Control Plane ──Capability API─�
 - `go/model-router` — unified model call interface: provider fallback, rate limits, token usage log, streaming.
 - `apps/carina-daemon` — daemon entrypoint.
 - `apps/carina-cli` — user-facing CLI (`carina run`, `carina audit`, `carina patch …`).
-- `apps/carina-tui` — interactive TUI (Phase 1+).
+- `apps/carina-tui` — minimal read-only terminal status/session viewer.
 
 ### Rust Capability Kernel (`crates/`)
 

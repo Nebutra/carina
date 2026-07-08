@@ -241,6 +241,23 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   boundary, not local action authority; node commands must be declared,
   filtered, bounded, audited, and scoped.
 
+**Wave 17 — Product/runtime closure (landed)**
+- [x] **Default-off HTTP Gateway runtime** (`go/daemon`, `go/config`,
+  `apps/carina-daemon`): added `gateway_http` / `CARINA_GATEWAY_HTTP` /
+  `-gateway-http`, with exact browser-origin allowlisting and fail-closed
+  startup unless scoped token signing is configured. HTTP tokens must be bound
+  to `transport: "http"` and carry explicit route grants in addition to scopes.
+- [x] **Agent-first `/v1` runtime** (`go/daemon`): `/v1/models` lists Carina
+  agent targets instead of provider catalogs; `/v1/chat/completions` and
+  `/v1/responses` submit normal Carina tasks through the existing daemon path
+  and return OpenAI-shaped envelopes with task/session metadata.
+- [x] **Scoped `/tools/invoke` runtime + plugin HTTP fail-closed contract**
+  (`go/daemon`): `/tools/invoke` is limited to a read-only allowlist and still
+  uses existing daemon/kernel read paths. `/plugins/*` is authenticated but
+  returns fail-closed until a plugin route contract exists.
+- [x] **Minimal usable TUI** (`apps/carina-tui`): replaced the placeholder with
+  a read-only status/session viewer over the daemon socket.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
@@ -253,17 +270,17 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   app-server coupling remains outside Carina. Multi-endpoint identity/sync is
   now documented and guarded as a Nebutra Cloud (云毓智能, `nebutra.com`) product
   boundary with local sync off by default.
-- OpenClaw Gateway items intentionally staged after Phase D: the scoped token
-  foundation is now live, but `/v1`, `/tools/invoke`, plugin HTTP routes, and
-  Nebutra device/node pairing remain disabled implementation surfaces until
-  they are built against this catalog, token model, and Carina's kernel
-  capability model.
+- OpenClaw Gateway items intentionally staged after Wave 17: Nebutra
+  device/node pairing remains a Nebutra identity/sync product surface rather
+  than local action authority. Full plugin HTTP route installation and
+  write-capable direct tool invoke remain future work behind manifest policy
+  and local owner review.
 
 ## Test status
 Current verification for this update: targeted Go coverage
-(`go test ./go/rpc ./go/config ./go/daemon ./apps/carina-cli`, 150 tests across
-4 packages) and full Go coverage (`go test ./...`, 228 tests across 22
+(`go test ./go/rpc ./go/config ./go/daemon ./apps/carina-tui`, 149 tests across
+4 packages) and full Go coverage (`go test ./...`, 234 tests across 22
 packages), plus targeted race coverage
-(`go test -race ./go/rpc ./go/config ./go/daemon ./apps/carina-cli ./apps/carina-daemon`,
-150 tests across 5 packages). This update touched Go RPC/config/daemon/CLI
+(`go test -race ./go/rpc ./go/config ./go/daemon ./apps/carina-tui ./apps/carina-daemon`,
+149 tests across 5 packages). This update touched Go RPC/config/daemon/TUI
 entrypoints and docs; Rust and Zig were not rebuilt.

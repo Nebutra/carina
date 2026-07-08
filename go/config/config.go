@@ -27,6 +27,8 @@ type Config struct {
 	StateDir                   string   `json:"state_dir"`
 	Socket                     string   `json:"socket"`
 	TCP                        string   `json:"tcp"`
+	GatewayHTTP                string   `json:"gateway_http"`
+	GatewayHTTPOrigins         []string `json:"gateway_http_origins"`
 	GatewayWS                  string   `json:"gateway_ws"`
 	GatewayWSOrigins           []string `json:"gateway_ws_origins"`
 	GatewayTokenSigningKeyFile string   `json:"gateway_token_signing_key_file"`
@@ -104,6 +106,8 @@ func mergeEnv(cfg *Config) {
 	envStr("CARINA_STATE_DIR", &cfg.StateDir)
 	envStr("CARINA_SOCKET", &cfg.Socket)
 	envStr("CARINA_TCP", &cfg.TCP)
+	envStr("CARINA_GATEWAY_HTTP", &cfg.GatewayHTTP)
+	envList("CARINA_GATEWAY_HTTP_ORIGINS", &cfg.GatewayHTTPOrigins)
 	envStr("CARINA_GATEWAY_WS", &cfg.GatewayWS)
 	envList("CARINA_GATEWAY_WS_ORIGINS", &cfg.GatewayWSOrigins)
 	envStr("CARINA_GATEWAY_TOKEN_SIGNING_KEY_FILE", &cfg.GatewayTokenSigningKeyFile)

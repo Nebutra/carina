@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -21,6 +22,7 @@ type GatewayTokenClaims struct {
 	Subject   string   `json:"sub,omitempty"`
 	Role      Role     `json:"role"`
 	Scopes    []Scope  `json:"scopes"`
+	Routes    []string `json:"routes,omitempty"`
 	Transport string   `json:"transport,omitempty"`
 	IssuedAt  int64    `json:"iat"`
 	ExpiresAt int64    `json:"exp"`
@@ -46,6 +48,10 @@ func NewGatewayTokenIssuer(secret []byte) (*GatewayTokenIssuer, error) {
 }
 
 func (i *GatewayTokenIssuer) Issue(subject string, role Role, scopes []Scope, ttl time.Duration, transport string) (string, GatewayTokenClaims, error) {
+	return i.IssueWithRoutes(subject, role, scopes, nil, ttl, transport)
+}
+
+func (i *GatewayTokenIssuer) IssueWithRoutes(subject string, role Role, scopes []Scope, routes []string, ttl time.Duration, transport string) (string, GatewayTokenClaims, error) {
 	if ttl <= 0 {
 		return "", GatewayTokenClaims{}, fmt.Errorf("ttl_seconds must be > 0")
 	}
@@ -59,12 +65,17 @@ func (i *GatewayTokenIssuer) Issue(subject string, role Role, scopes []Scope, tt
 	if len(negotiated) == 0 {
 		return "", GatewayTokenClaims{}, fmt.Errorf("no requested gateway token scopes are authorized for role %q", role)
 	}
+	routes, err = NormalizeGatewayTokenRoutes(routes)
+	if err != nil {
+		return "", GatewayTokenClaims{}, err
+	}
 	now := i.now().UTC()
 	claims := GatewayTokenClaims{
 		Version:   "1",
 		Subject:   strings.TrimSpace(subject),
 		Role:      role,
 		Scopes:    negotiated,
+		Routes:    routes,
 		Transport: strings.TrimSpace(transport),
 		IssuedAt:  now.Unix(),
 		ExpiresAt: now.Add(ttl).Unix(),
@@ -109,6 +120,13 @@ func (i *GatewayTokenIssuer) Verify(token, transport string) (GatewayTokenClaims
 	if role != claims.Role || len(canonical) == 0 || !sameScopes(canonical, claims.Scopes) {
 		return GatewayTokenClaims{}, fmt.Errorf("gateway token claims are not canonical for role %q", claims.Role)
 	}
+	routes, err := NormalizeGatewayTokenRoutes(claims.Routes)
+	if err != nil {
+		return GatewayTokenClaims{}, err
+	}
+	if !sameStrings(routes, claims.Routes) {
+		return GatewayTokenClaims{}, fmt.Errorf("gateway token routes are not canonical")
+	}
 	if claims.ExpiresAt <= i.now().UTC().Unix() {
 		return GatewayTokenClaims{}, fmt.Errorf("gateway token expired")
 	}
@@ -116,6 +134,51 @@ func (i *GatewayTokenIssuer) Verify(token, transport string) (GatewayTokenClaims
 		return GatewayTokenClaims{}, fmt.Errorf("gateway token transport mismatch")
 	}
 	return claims, nil
+}
+
+// NormalizeGatewayTokenRoutes canonicalizes optional HTTP route grants. Routes
+// are path-like strings such as /v1/models or /plugins/*.
+func NormalizeGatewayTokenRoutes(routes []string) ([]string, error) {
+	if len(routes) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(routes))
+	seen := map[string]bool{}
+	for _, route := range routes {
+		route = strings.TrimSpace(route)
+		if route == "" {
+			return nil, fmt.Errorf("gateway token route cannot be empty")
+		}
+		if !strings.HasPrefix(route, "/") {
+			return nil, fmt.Errorf("gateway token route %q must start with /", route)
+		}
+		if strings.Contains(route, "..") {
+			return nil, fmt.Errorf("gateway token route %q cannot contain ..", route)
+		}
+		if seen[route] {
+			continue
+		}
+		seen[route] = true
+		out = append(out, route)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func RouteAllowed(grants []string, route string) bool {
+	route = strings.TrimSpace(route)
+	for _, grant := range grants {
+		if grant == route {
+			return true
+		}
+		if strings.HasSuffix(grant, "/*") {
+			prefix := strings.TrimSuffix(grant, "*")
+			if strings.HasPrefix(route, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // IntersectScopes returns requested scopes narrowed to a signed token's
@@ -153,6 +216,18 @@ func IntersectScopes(available, requested []Scope) ([]Scope, error) {
 }
 
 func sameScopes(a, b []Scope) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}

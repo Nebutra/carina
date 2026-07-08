@@ -34,6 +34,8 @@ func main() {
 	stateDir := flag.String("state", cfg.StateDir, "session/event storage directory")
 	socket := flag.String("socket", cfg.Socket, "unix socket path")
 	tcp := flag.String("tcp", cfg.TCP, "optional TCP listen address for remote workers, e.g. :7777")
+	gatewayHTTP := flag.String("gateway-http", cfg.GatewayHTTP, "optional HTTP Gateway listen address, e.g. 127.0.0.1:8787")
+	gatewayHTTPOrigins := flag.String("gateway-http-origins", strings.Join(cfg.GatewayHTTPOrigins, ","), "comma-separated allowed browser Origin values for -gateway-http")
 	gatewayWS := flag.String("gateway-ws", cfg.GatewayWS, "optional WebSocket Gateway listen address, e.g. 127.0.0.1:8777")
 	gatewayWSOrigins := flag.String("gateway-ws-origins", strings.Join(cfg.GatewayWSOrigins, ","), "comma-separated allowed browser Origin values for -gateway-ws")
 	gatewayTokenSigningKeyFile := flag.String("gateway-token-signing-key-file", cfg.GatewayTokenSigningKeyFile, "optional 0600 file containing Gateway token signing material")
@@ -160,6 +162,14 @@ func main() {
 			fmt.Printf("carina-daemon: also listening on tcp %s\n", *tcp)
 			if err := d.RunTCP(*tcp); err != nil {
 				log.Printf("carina-daemon: tcp: %v", err)
+			}
+		}()
+	}
+	if *gatewayHTTP != "" {
+		go func() {
+			fmt.Printf("carina-daemon: gateway http listening on http://%s\n", *gatewayHTTP)
+			if err := d.RunGatewayHTTP(*gatewayHTTP, splitList(*gatewayHTTPOrigins)); err != nil {
+				log.Printf("carina-daemon: gateway http: %v", err)
 			}
 		}()
 	}

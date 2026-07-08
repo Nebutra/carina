@@ -1,6 +1,6 @@
 # RPC API
 
-Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. Optional remote TCP and WebSocket Gateway listeners are disabled by default. gRPC is a later optimization. Machine-readable registry: [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json).
+Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. Optional remote TCP, WebSocket Gateway, and HTTP Gateway listeners are disabled by default. gRPC is a later optimization. Machine-readable registry: [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json).
 
 Notifications (server → client) stream events; every payload conforms to [`protocol/schemas/`](../protocol/schemas/).
 
@@ -59,42 +59,54 @@ Scoped Gateway token issuing:
 - max TTL defaults to 900 seconds and can be configured with
   `gateway_token_max_ttl_seconds`, env
   `CARINA_GATEWAY_TOKEN_MAX_TTL_SECONDS`, or `-gateway-token-max-ttl`.
+- HTTP Gateway tokens should include explicit `routes` grants such as
+  `/v1/models`, `/v1/*`, `/tools/invoke`, or `/plugins/*`; scope alone is not
+  enough for HTTP dispatch.
 
-Future HTTP Gateway surfaces are reserved but not implemented or enabled by
-default. They require scoped Gateway tokens; `gateway.hello` is still not an
-auth grant. A future HTTP dispatch path must intersect token claims with route
-grants, descriptor scopes, dynamic scope resolution, transport origin policy,
-and the capability kernel before any side effect.
+Optional HTTP Gateway:
 
-Reserved future HTTP routes:
+- enable explicitly with `carina-daemon -gateway-http 127.0.0.1:8787`, config
+  key `gateway_http`, or env `CARINA_GATEWAY_HTTP`;
+- HTTP Gateway refuses to start unless `gateway_token_signing_key_file` is
+  configured;
+- browser requests with an `Origin` header are rejected unless the exact value
+  is configured through `-gateway-http-origins`, `gateway_http_origins`, or
+  `CARINA_GATEWAY_HTTP_ORIGINS`;
+- every request requires `Authorization: Bearer <gw1 token>` with
+  `transport: "http"`, a matching route grant, and the required scope.
 
-| Route | Purpose | Default state |
-|-------|---------|---------------|
-| `GET /v1/models` | list token-visible agent targets such as `carina`, `carina/default`, and `carina/<agent_id>` | disabled |
-| `POST /v1/chat/completions` | translate OpenAI-style chat requests into normal Carina agent runs | disabled |
-| `POST /v1/responses` | translate OpenAI-style response requests into normal Carina agent runs with bounded scoped continuity | disabled |
-| `POST /v1/embeddings` | optional later agent-first embeddings facade | disabled |
-| `POST /tools/invoke` | direct tool invocation through the same policy, approval, audit, and kernel capability chain as agent-visible tools | disabled |
+Implemented HTTP routes:
+
+| Route | Purpose | Required scope | Required route grant |
+|-------|---------|----------------|----------------------|
+| `GET /v1/models` | list token-visible agent targets such as `carina`, `carina/default`, and `carina/<agent_id>` | `read` | `/v1/models` or `/v1/*` |
+| `POST /v1/chat/completions` | translate OpenAI-style chat requests into normal Carina agent tasks | `write` | `/v1/chat/completions` or `/v1/*` |
+| `POST /v1/responses` | translate OpenAI-style response requests into normal Carina agent tasks with bounded in-memory `previous_response_id` continuity | `write` | `/v1/responses` or `/v1/*` |
+| `POST /tools/invoke` | invoke a read-only allowlist through the existing daemon/kernel paths | `read` | `/tools/invoke` |
+| `/plugins/*` | authenticated fail-closed plugin HTTP reservation; no plugin route is installed by default | `read` | `/plugins/*` |
 
 The `/v1` facade is agent-first, not provider-first. `model` selects a Carina
-agent target; backend provider overrides require an explicit `admin`-scoped
-Gateway token and provider catalog visibility checks. The route must not expose
-private provider configuration as `/v1/models` data by default.
+agent target (`carina`, `carina/default`, or `carina/<agent>`), not a backend
+provider model. The route does not expose private provider configuration as
+`/v1/models` data.
 
-`/tools/invoke` requires an explicit tool-invoke token grant. Its request shape
-is `tool`, optional `action`, `args`, optional `agent_id`, optional
-`session_key`, and optional `idempotency_key`. Process execution, shell access,
-filesystem writes/deletes/moves, patch application, session injection, node
-relay, Gateway mutation, plugin installation, and secret reads remain denied by
-default unless a future local owner policy enables them.
+`/tools/invoke` requires an explicit `/tools/invoke` route grant. Its request
+shape is `tool`, optional `action`, `args`, optional `agent_id`, optional
+`session_key`, and optional `idempotency_key`. The current runtime only allows a
+read-only method allowlist: daemon status/metrics/doctor, agent/command/session
+listing, session get, and workspace tree/search/file reads. Process execution,
+shell access, filesystem writes/deletes/moves, patch application, session
+injection, node relay, Gateway mutation, plugin installation, and secret reads
+are denied.
 
-Future plugin HTTP routes are extension surfaces, not ambient authority. They
-run after core Gateway routes and cannot shadow `/v1`, `/tools/invoke`,
-`/gateway`, JSON-RPC, session control, approval, secret, or plugin-management
-routes. Protected plugin routes require scoped Gateway tokens. Gateway dispatch
-from plugin code is allowed only inside authenticated request-local scope, only
-for methods declared by the plugin route contract, and only within the inherited
-caller scope. Missing request-local context fails closed.
+Plugin HTTP routes are extension surfaces, not ambient authority. The current
+runtime reserves `/plugins/*` as an authenticated fail-closed route. Future
+plugin handlers must run after core Gateway routes and cannot shadow `/v1`,
+`/tools/invoke`, `/gateway`, JSON-RPC, session control, approval, secret, or
+plugin-management routes. Gateway dispatch from plugin code is allowed only
+inside authenticated request-local scope, only for methods declared by the
+plugin route contract, and only within the inherited caller scope. Missing
+request-local context fails closed.
 
 Scopes:
 
