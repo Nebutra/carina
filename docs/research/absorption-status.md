@@ -298,11 +298,11 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   and local owner review.
 
 ## Test status
-Current verification for this update: `go test ./...`, `bash -n
-scripts/package-release.sh`, `git diff --check`, and `env SKIP_ZIG=1 make
-release-package`. The generated `dist/carina_0.6.0_darwin_arm64.tar.gz`
-validated with `shasum -a 256 -c`, `MANIFEST.json` parsed with `jq`, and the
-archive was checked to contain no historical `pi-*` binaries. Zig is not on the
-current PATH, so this packaging run reused existing `zig/zig-out/bin/carina-*`
-artifacts and recorded that warning; a full release machine should still run
-`make release-check` with Zig installed before publishing.
+Current verification for this update: Zig 0.15.2 installed through
+`zig@0.15`, `make release-check`, `make release-package`, `bash -n
+scripts/package-release.sh`, and `git diff --check`. The generated
+`dist/carina_0.6.0_darwin_arm64.tar.gz` validated with `shasum -a 256 -c`,
+`MANIFEST.json` parsed with `jq`, and the archive was checked to contain no
+historical `pi-*` binaries. The release package rebuilt Zig native tools without
+`SKIP_ZIG`; remaining manifest warnings are only the existing split component
+versions.

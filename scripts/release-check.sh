@@ -23,12 +23,12 @@ echo "==> build release kernel service for Go integration tests"
 cargo build --release -p carina-kernel --bin carina-kernel-service
 
 echo "==> Go tests"
-CARINA_KERNEL_BIN="$ROOT/target/release/carina-kernel-service" go test ./go/... ./apps/...
+go test ./go/... ./apps/...
 
 echo "==> Rust tests"
 cargo test
 
 echo "==> targeted Go race tests"
-CARINA_KERNEL_BIN="$ROOT/target/release/carina-kernel-service" go test -race ./go/daemon ./go/config ./apps/carina-daemon
+go test -race ./go/daemon ./go/config ./apps/carina-daemon
 
 echo "release-check: ok"
