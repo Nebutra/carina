@@ -77,6 +77,7 @@ Implemented in this repository:
 | Commands | Risk classification, approval gates, command output events, optional OS sandbox backend |
 | Network and secrets | Deny-by-default egress proxy, allowlists, daemon-side credential injection, explicit per-host HTTPS MITM opt-in |
 | Models | BYOK auth chain, provider catalog, OpenAI/Anthropic/Gemini/OpenRouter-style runtime adapters |
+| Context engine | Native context-engine boundary with bundled/configured Headroom discovery, managed private MCP transport, and `carina context` diagnostics |
 | Integration | MCP client/server, WASM plugin boundary, workers, workflow DAGs |
 | Nebutra boundary | Local runtime stays authoritative; identity and multi-endpoint sync are scoped to Nebutra Cloud (`nebutra.com`) |
 
@@ -186,6 +187,25 @@ hash rather than by raw memory text.
 scope, external semantic-provider status, and Nebutra Cloud sync status.
 External semantic memory providers and Nebutra Cloud memory sync are explicit
 `local-only` / `off` boundaries in the source-first alpha.
+
+### Native Context Engine
+
+Release packages include a pinned Headroom executable as `bin/headroom`.
+`context_engine=auto` enables Headroom only when it is bundled with Carina or
+explicitly configured through `CARINA_HEADROOM_BIN`, `headroom_bin`, or
+`--headroom-bin`. A global `headroom` found on `PATH` is reported but not used
+as the built-in engine.
+
+Inspect the integration:
+
+```bash
+./bin/carina context status
+./bin/carina context doctor
+./bin/carina context stats
+```
+
+The managed Headroom MCP server is private to Carina's context adapter. It does
+not appear in the agent's public MCP tool list.
 
 ### BYOK Providers
 

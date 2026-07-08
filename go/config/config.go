@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Nebutra/carina/go/contextengine"
 	"github.com/Nebutra/carina/go/nebutra"
 )
 
@@ -49,6 +50,12 @@ type Config struct {
 	RiskReviewModel            string   `json:"risk_review_model"`
 	NebutraCloudEndpoint       string   `json:"nebutra_cloud_endpoint"`
 	NebutraSyncMode            string   `json:"nebutra_sync_mode"`
+	ContextEngine              string   `json:"context_engine"`
+	HeadroomBin                string   `json:"headroom_bin"`
+	HeadroomStateDir           string   `json:"headroom_state_dir"`
+	HeadroomMode               string   `json:"headroom_mode"`
+	HeadroomProxyPort          int      `json:"headroom_proxy_port"`
+	HeadroomTokenBudget        int      `json:"headroom_token_budget"`
 }
 
 // Defaults returns the built-in baseline, anchored at the user's ~/.carina dir.
@@ -62,6 +69,9 @@ func Defaults(home string) Config {
 		GatewayTokenMaxTTLSeconds: 900,
 		NebutraCloudEndpoint:      nebutra.DefaultCloudEndpoint,
 		NebutraSyncMode:           nebutra.SyncModeOff,
+		ContextEngine:             contextengine.ModeAuto,
+		HeadroomMode:              contextengine.HeadroomModeManagedMCP,
+		HeadroomTokenBudget:       4000,
 	}
 }
 
@@ -120,6 +130,10 @@ func mergeEnv(cfg *Config) {
 	envStr("CARINA_RISK_REVIEW_MODEL", &cfg.RiskReviewModel)
 	envStr("CARINA_NEBUTRA_CLOUD_ENDPOINT", &cfg.NebutraCloudEndpoint)
 	envStr("CARINA_NEBUTRA_SYNC_MODE", &cfg.NebutraSyncMode)
+	envStr("CARINA_CONTEXT_ENGINE", &cfg.ContextEngine)
+	envStr("CARINA_HEADROOM_BIN", &cfg.HeadroomBin)
+	envStr("CARINA_HEADROOM_STATE_DIR", &cfg.HeadroomStateDir)
+	envStr("CARINA_HEADROOM_MODE", &cfg.HeadroomMode)
 	envBool("CARINA_OFFLINE", &cfg.Offline)
 	envBool("CARINA_REQUIRE_WORKSPACE_TRUST", &cfg.RequireWorkspaceTrust)
 	envBool("CARINA_ENABLE_EGRESS_PROXY", &cfg.EnableEgressProxy)
@@ -127,6 +141,8 @@ func mergeEnv(cfg *Config) {
 	envBool("CARINA_INTERACTIVE_APPROVAL", &cfg.InteractiveApproval)
 	envInt("CARINA_MAX_CONCURRENT_TASKS", &cfg.MaxConcurrentTasks)
 	envInt("CARINA_MAX_TASK_TOKENS", &cfg.MaxTaskTokens)
+	envInt("CARINA_HEADROOM_PROXY_PORT", &cfg.HeadroomProxyPort)
+	envInt("CARINA_HEADROOM_TOKEN_BUDGET", &cfg.HeadroomTokenBudget)
 	envList("CARINA_EGRESS_ALLOW", &cfg.EgressAllow)
 }
 
@@ -148,6 +164,17 @@ func (c Config) Validate() error {
 		return fmt.Errorf("config: %w", err)
 	}
 	if _, err := nebutra.NormalizeSyncMode(c.NebutraSyncMode); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	if _, err := contextengine.NormalizeConfig(contextengine.Config{
+		ContextEngine:       c.ContextEngine,
+		HeadroomBin:         c.HeadroomBin,
+		HeadroomStateDir:    c.HeadroomStateDir,
+		HeadroomMode:        c.HeadroomMode,
+		HeadroomProxyPort:   c.HeadroomProxyPort,
+		HeadroomTokenBudget: c.HeadroomTokenBudget,
+		CarinaStateDir:      c.StateDir,
+	}); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	return nil

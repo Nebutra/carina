@@ -20,8 +20,8 @@ Planned install channels:
    notes, and provenance/SBOM where available.
 2. **Homebrew tap**: a Nebutra-maintained formula for macOS and Linuxbrew.
    It should install `carina`, `carina-daemon`, `carina-worker`,
-   `carina-tui`, and native tools. Service startup should stay explicit rather
-   than auto-starting a daemon during install.
+   `carina-tui`, bundled `headroom`, and native tools. Service startup should
+   stay explicit rather than auto-starting a daemon during install.
 3. **npm ecosystem package**: an `@nebutra/carina` package for JavaScript and
    TypeScript users. It should be a thin installer/launcher for platform
    binaries, not a second Node.js runtime. TypeScript SDK packages should stay
@@ -35,6 +35,8 @@ Release-channel acceptance criteria:
 - artifacts are signed or have published checksums before public promotion;
 - Homebrew install, npm global install, and source install each have a smoke
   test;
+- bundled Headroom is pinned by `integrations/headroom.lock` and verified by
+  checksum during release packaging;
 - installed CLI help uses only `carina` naming;
 - uninstall instructions remove binaries, service files, and local state
   locations clearly.

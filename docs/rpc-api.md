@@ -15,6 +15,11 @@ Notifications (server → client) stream events; every payload conforms to [`pro
 | `daemon.status` | daemon process/runtime status |
 | `daemon.metrics` | runtime metrics |
 | `daemon.doctor` | independent health probes |
+| `context.status` | local-only native context engine and bundled Headroom status |
+| `context.doctor` | local-only context engine health probe |
+| `context.stats` | local-only local/Headroom compression counters |
+| `context.compress` | local-only diagnostic compression call |
+| `context.retrieve` | local-only diagnostic retrieval by Headroom CCR hash/ref |
 
 Carina's daemon now registers RPC methods through a descriptor catalog. The
 descriptor is the authority for remote exposure and future Gateway
@@ -26,6 +31,29 @@ the catalog with `carina gateway methods`.
 snapshot for current JSON-RPC and future WebSocket/HTTP Gateway surfaces.
 Actual authority remains enforced by transport origin, method descriptors, and
 the capability kernel.
+
+## Native Context Engine
+
+Carina owns the context-engine boundary. Headroom is integrated as a managed,
+private MCP transport behind that boundary when a bundled or explicitly
+configured Headroom binary is available. The managed Headroom server is not
+listed in the agent's public MCP tool list and cannot be called through the
+agent `mcp` action surface.
+
+The context RPCs are local-only:
+
+| Method | Scope | Purpose |
+|--------|-------|---------|
+| `context.status` | `read` | report configured/effective engine, Headroom source, state directory, and managed MCP state |
+| `context.doctor` | `read` | health probe used by `daemon.doctor` |
+| `context.stats` | `read` | local counters plus Headroom stats when connected |
+| `context.compress` | `write` | diagnostic compression call; not the agent transcript path |
+| `context.retrieve` | `read` | diagnostic CCR retrieval by hash/ref; not remote-exposed |
+
+Default `context_engine=auto` only enables bundled or explicitly configured
+Headroom. A `headroom` executable found only on `PATH` is reported in status but
+does not become the built-in engine, so release smoke tests cannot accidentally
+pass because of a developer's global install.
 
 Optional WebSocket Gateway:
 

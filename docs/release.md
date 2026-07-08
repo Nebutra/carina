@@ -52,12 +52,20 @@ The package command writes to `dist/`:
   `checksums.txt`.
 
 The archive includes Go CLIs, the Rust kernel service, Zig native tools matching
-`zig/zig-out/bin/carina-*`, README, LICENSE, SECURITY, and release docs. It
-smoke-tests `bin/carina --version` from the staged package.
+`zig/zig-out/bin/carina-*`, the pinned Headroom executable as `bin/headroom`,
+README, LICENSE, SECURITY, and release docs. It smoke-tests `bin/carina
+--version` and `bin/headroom --help` from the staged package.
+
+Headroom is an upstream-maintained component pinned by
+`integrations/headroom.lock`. Release builders must provide the prepared
+platform executable at the lockfile's `bundle_path`; `package-release.sh`
+verifies the pinned SHA-256 and fails the package if the artifact is missing or
+does not match. The daemon does not download Headroom at startup and does not
+install anything into the user's global Python, npm, pipx, or uv environment.
 
 `VERSION_CHECK.txt` records CLI, daemon, Rust workspace, TypeScript SDK, and
-Python SDK versions. Mismatches are warnings in the package manifest, not hidden
-state.
+Python SDK versions, plus the bundled Headroom pin and source artifact. Version
+mismatches are warnings in the package manifest, not hidden state.
 
 Use existing artifacts without rebuilding:
 
@@ -75,6 +83,9 @@ SKIP_ZIG=1 VERSION=0.6.0 make release-package
 `SKIP_BUILD=1` and `SKIP_ZIG=1` are recorded as warnings in `MANIFEST.json` and
 `VERSION_CHECK.txt`.
 
+For local development only, `SKIP_HEADROOM=1` permits packaging without bundled
+Headroom and records a warning. Public release artifacts must not use it.
+
 Verify an archive:
 
 ```bash
@@ -82,6 +93,8 @@ cd dist
 shasum -a 256 -c carina_<version>_<goos>_<goarch>.tar.gz.sha256
 tar -xzf carina_<version>_<goos>_<goarch>.tar.gz
 ./carina_<version>_<goos>_<goarch>/bin/carina --version
+./carina_<version>_<goos>_<goarch>/bin/carina-daemon --context-engine=off &
+./carina_<version>_<goos>_<goarch>/bin/carina context doctor
 ```
 
 ## Current Artifacts
@@ -92,6 +105,7 @@ tar -xzf carina_<version>_<goos>_<goarch>.tar.gz
 - `carina-daemon`
 - `carina-worker`
 - `carina-tui`
+- `headroom` in release packages only, pinned by `integrations/headroom.lock`
 - Zig tools from `zig/zig-out/bin`
 - Rust `carina-kernel-service` under `target/release`
 

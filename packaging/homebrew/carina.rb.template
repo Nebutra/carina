@@ -7,6 +7,7 @@ class Carina < Formula
 
   def install
     bin.install Dir["bin/carina*"]
+    bin.install "bin/headroom" if File.exist?("bin/headroom")
   end
 
   def caveats
@@ -20,5 +21,6 @@ class Carina < Formula
 
   test do
     assert_match "carina", shell_output("#{bin}/carina --version")
+    assert_predicate bin/"headroom", :exist?
   end
 end

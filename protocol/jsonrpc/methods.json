@@ -24,6 +24,13 @@
       { "method": "memory.context", "params": { "session_id": "string" }, "result": { "scope": "MemoryScope", "context": "string" }, "availability": "local-only" },
       { "method": "memory.write", "params": { "session_id": "string", "target": "memory|user?", "action": "add|replace|remove|batch", "content": "string?", "old_text": "string?", "operations": "MemoryOperation[]?" }, "result": "{ decision: PermissionDecision, result?: MemoryWriteResult }", "availability": "local-only; control-plane write; MemoryWrite capability-gated" }
     ],
+    "context": [
+      { "method": "context.status", "params": {}, "result": "ContextEngineStatus", "availability": "local-only" },
+      { "method": "context.doctor", "params": {}, "result": "{ ok: boolean, status: ContextEngineStatus }", "availability": "local-only" },
+      { "method": "context.stats", "params": {}, "result": "{ local: ContextEngineStats, headroom?: object, headroom_error?: string }", "availability": "local-only" },
+      { "method": "context.compress", "params": { "content": "string", "session_id": "string?", "task_id": "string?", "turn": "number?", "kind": "string?", "tool": "string?", "pinned": "boolean?" }, "result": "ContextCompressResponse", "availability": "local-only diagnostic/write surface" },
+      { "method": "context.retrieve", "params": { "hash": "string?", "ref": "string?", "query": "string?" }, "result": "ContextRetrieveResponse", "availability": "local-only diagnostic surface; not remote-exposed" }
+    ],
     "task": [
       { "method": "task.submit", "params": { "session_id": "string", "prompt": "string" }, "result": "Task" },
       { "method": "task.cancel", "params": { "task_id": "string" }, "result": "Task" },

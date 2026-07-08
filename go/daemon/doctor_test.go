@@ -25,4 +25,7 @@ func TestDoctorProbes(t *testing.T) {
 	if _, ok := m["reasoner"]; !ok {
 		t.Fatal("reasoner probe missing")
 	}
+	if ctx, ok := m["context_engine"].(map[string]any); !ok || ctx["ok"] != true {
+		t.Fatalf("context engine probe missing/wrong: %v", m["context_engine"])
+	}
 }

@@ -55,6 +55,12 @@ func main() {
 	riskReviewModel := flag.String("risk-review-model", cfg.RiskReviewModel, "optional model for Nebutra Risk Review (default: local heuristic)")
 	nebutraCloud := flag.String("nebutra-cloud", cfg.NebutraCloudEndpoint, "Nebutra Cloud endpoint for identity/sync boundary")
 	nebutraSyncMode := flag.String("nebutra-sync-mode", cfg.NebutraSyncMode, "Nebutra sync mode (currently only off)")
+	contextEngine := flag.String("context-engine", cfg.ContextEngine, "context engine: auto|off|headroom|noop")
+	headroomBin := flag.String("headroom-bin", cfg.HeadroomBin, "optional bundled/override Headroom binary path")
+	headroomStateDir := flag.String("headroom-state-dir", cfg.HeadroomStateDir, "Headroom local state directory")
+	headroomMode := flag.String("headroom-mode", cfg.HeadroomMode, "Headroom integration mode: managed_mcp|sidecar|proxy")
+	headroomProxyPort := flag.Int("headroom-proxy-port", cfg.HeadroomProxyPort, "Headroom localhost proxy port (0 = choose later)")
+	headroomTokenBudget := flag.Int("headroom-token-budget", cfg.HeadroomTokenBudget, "Headroom context token budget")
 	flag.Parse()
 
 	// Record which flags the operator set explicitly, so they stay the highest-
@@ -93,6 +99,12 @@ func main() {
 		NebutraSyncMode:            *nebutraSyncMode,
 		GatewayTokenSigningKeyFile: *gatewayTokenSigningKeyFile,
 		GatewayTokenMaxTTLSeconds:  *gatewayTokenMaxTTL,
+		ContextEngine:              *contextEngine,
+		HeadroomBin:                *headroomBin,
+		HeadroomStateDir:           *headroomStateDir,
+		HeadroomMode:               *headroomMode,
+		HeadroomProxyPort:          *headroomProxyPort,
+		HeadroomTokenBudget:        *headroomTokenBudget,
 	})
 	if err != nil {
 		log.Fatalf("carina-daemon: %v", err)
@@ -122,6 +134,24 @@ func main() {
 		}
 		if pinned["egress-allow"] {
 			nc.EgressAllow = splitList(*egressAllow)
+		}
+		if pinned["context-engine"] {
+			nc.ContextEngine = *contextEngine
+		}
+		if pinned["headroom-bin"] {
+			nc.HeadroomBin = *headroomBin
+		}
+		if pinned["headroom-state-dir"] {
+			nc.HeadroomStateDir = *headroomStateDir
+		}
+		if pinned["headroom-mode"] {
+			nc.HeadroomMode = *headroomMode
+		}
+		if pinned["headroom-proxy-port"] {
+			nc.HeadroomProxyPort = *headroomProxyPort
+		}
+		if pinned["headroom-token-budget"] {
+			nc.HeadroomTokenBudget = *headroomTokenBudget
 		}
 		return d.ApplyConfig(nc)
 	}

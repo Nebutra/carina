@@ -50,6 +50,9 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	// daemon-level
 	must("daemon.status", map[string]any{})
 	must("daemon.metrics", map[string]any{})
+	must("context.status", map[string]any{})
+	must("context.doctor", map[string]any{})
+	must("context.stats", map[string]any{})
 	var methods struct {
 		Methods []struct {
 			Method       string `json:"method"`
@@ -67,6 +70,8 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	seenMemoryWrite := false
 	seenMemoryStatus := false
 	seenSessionResume := false
+	seenContextStatus := false
+	seenContextStats := false
 	for _, m := range methods.Methods {
 		switch m.Method {
 		case "daemon.status":
@@ -75,6 +80,10 @@ func TestDaemonHandlerSurface(t *testing.T) {
 			seenSubmit = m.Scope == "write" && !m.Remote
 		case "session.resume":
 			seenSessionResume = m.Scope == "write" && !m.Remote
+		case "context.status":
+			seenContextStatus = m.Scope == "read" && !m.Remote
+		case "context.stats":
+			seenContextStats = m.Scope == "read" && !m.Remote
 		case "workspace.patch.propose":
 			seenPatchPropose = m.Scope == "write" && m.DynamicScope
 		case "memory.status":
@@ -83,8 +92,8 @@ func TestDaemonHandlerSurface(t *testing.T) {
 			seenMemoryWrite = m.Scope == "write" && !m.Remote
 		}
 	}
-	if !seenStatus || !seenSubmit || !seenSessionResume || !seenPatchPropose || !seenMemoryStatus || !seenMemoryWrite {
-		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v resume=%v patch=%v memory_status=%v memory_write=%v", seenStatus, seenSubmit, seenSessionResume, seenPatchPropose, seenMemoryStatus, seenMemoryWrite)
+	if !seenStatus || !seenSubmit || !seenSessionResume || !seenContextStatus || !seenContextStats || !seenPatchPropose || !seenMemoryStatus || !seenMemoryWrite {
+		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v resume=%v context_status=%v context_stats=%v patch=%v memory_status=%v memory_write=%v", seenStatus, seenSubmit, seenSessionResume, seenContextStatus, seenContextStats, seenPatchPropose, seenMemoryStatus, seenMemoryWrite)
 	}
 	var hello struct {
 		Role     string   `json:"role"`

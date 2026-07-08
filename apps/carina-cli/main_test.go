@@ -68,6 +68,18 @@ func TestUsageIncludesMemoryCommands(t *testing.T) {
 	}
 }
 
+func TestUsageIncludesContextCommands(t *testing.T) {
+	for _, want := range []string{
+		"Context engine:",
+		"carina context status",
+		"carina context doctor",
+	} {
+		if !strings.Contains(usage, want) {
+			t.Fatalf("usage missing %q:\n%s", want, usage)
+		}
+	}
+}
+
 func TestUsageIncludesResumeContinuation(t *testing.T) {
 	if !strings.Contains(usage, "carina resume <session_id> [prompt|-]") {
 		t.Fatalf("usage missing productized resume command:\n%s", usage)
@@ -133,6 +145,90 @@ func TestCmdResumeSubmitsTaskToExistingSession(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("resume output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestCmdContextStatus(t *testing.T) {
+	s := rpc.NewServer()
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "context.status", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
+		return map[string]any{"effective_engine": "noop"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	addr := freeTCPAddr(t)
+	go func() { _ = s.ListenTCP(addr) }()
+	defer s.Close()
+	waitTCP(t, addr)
+	c, err := rpc.DialTCP(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	out, err := captureStdout(t, func() error {
+		return cmdContext(c, []string{"status"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"effective_engine": "noop"`) {
+		t.Fatalf("context status output missing engine:\n%s", out)
+	}
+}
+
+func TestCmdContextStatsCompressRetrieve(t *testing.T) {
+	s := rpc.NewServer()
+	var compressed string
+	var retrieved map[string]any
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "context.stats", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
+		return map[string]any{"local": map[string]any{"engine": "noop"}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "context.compress", Scope: rpc.ScopeWrite, Remote: true}, func(params json.RawMessage) (any, error) {
+		var p map[string]any
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		compressed, _ = p["content"].(string)
+		return map[string]any{"content": compressed}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "context.retrieve", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
+		if err := json.Unmarshal(params, &retrieved); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ref": retrieved["hash"], "content": "original"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	addr := freeTCPAddr(t)
+	go func() { _ = s.ListenTCP(addr) }()
+	defer s.Close()
+	waitTCP(t, addr)
+	c, err := rpc.DialTCP(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	if out, err := captureStdout(t, func() error { return cmdContext(c, []string{"stats"}) }); err != nil {
+		t.Fatal(err)
+	} else if !strings.Contains(out, `"engine": "noop"`) {
+		t.Fatalf("context stats output missing engine:\n%s", out)
+	}
+	if _, err := captureStdout(t, func() error { return cmdContext(c, []string{"compress", "hello"}) }); err != nil {
+		t.Fatal(err)
+	}
+	if compressed != "hello" {
+		t.Fatalf("compress params = %q", compressed)
+	}
+	if _, err := captureStdout(t, func() error { return cmdContext(c, []string{"retrieve", "abc", "needle"}) }); err != nil {
+		t.Fatal(err)
+	}
+	if retrieved["hash"] != "abc" || retrieved["query"] != "needle" {
+		t.Fatalf("retrieve params = %#v", retrieved)
 	}
 }
 

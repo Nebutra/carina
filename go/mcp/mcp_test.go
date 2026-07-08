@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,5 +164,35 @@ func TestPromptOnlyMCPServerConnects(t *testing.T) {
 	}
 	if out != "brief text" {
 		t.Fatalf("unexpected prompt-only render: %q", out)
+	}
+}
+
+func TestPrivateMCPServerHiddenFromPublicSurface(t *testing.T) {
+	cfg := writeMockConfig(t)
+	raw, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conf config
+	if err := json.Unmarshal(raw, &conf); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager()
+	defer m.Close()
+	if err := m.ConnectPrivate("private", conf.MCPServers["mock"]); err != nil {
+		t.Fatal(err)
+	}
+	if tools := m.Tools(); len(tools) != 0 {
+		t.Fatalf("private tools should be hidden: %+v", tools)
+	}
+	if _, err := m.CallPublic("private", "echo", map[string]any{"x": 1}); err == nil {
+		t.Fatal("public call should reject private server")
+	}
+	out, err := m.Call("private", "echo", map[string]any{"x": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"x"`) {
+		t.Fatalf("unexpected private call output: %q", out)
 	}
 }

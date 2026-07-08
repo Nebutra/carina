@@ -24,12 +24,14 @@ func TestCascadePrecedence(t *testing.T) {
 	home := t.TempDir()
 	proj := t.TempDir()
 
-	writeConfig(t, home, `{"offline": true, "max_task_tokens": 100, "tools_dir": "/g/tools", "gateway_http": "127.0.0.1:7000", "gateway_http_origins": ["https://api.example"], "gateway_ws": "127.0.0.1:7001", "gateway_ws_origins": ["https://app.example"], "gateway_token_signing_key_file": "/g/token.key", "gateway_token_max_ttl_seconds": 600, "summarizer_model": "cheap", "risk_review_model": "guardian"}`)
-	writeConfig(t, proj, `{"max_task_tokens": 200, "tools_dir": "/p/tools", "risk_review_mode": "enforce"}`)
+	writeConfig(t, home, `{"offline": true, "max_task_tokens": 100, "tools_dir": "/g/tools", "gateway_http": "127.0.0.1:7000", "gateway_http_origins": ["https://api.example"], "gateway_ws": "127.0.0.1:7001", "gateway_ws_origins": ["https://app.example"], "gateway_token_signing_key_file": "/g/token.key", "gateway_token_max_ttl_seconds": 600, "summarizer_model": "cheap", "risk_review_model": "guardian", "context_engine": "noop", "headroom_mode": "managed_mcp", "headroom_token_budget": 1234}`)
+	writeConfig(t, proj, `{"max_task_tokens": 200, "tools_dir": "/p/tools", "risk_review_mode": "enforce", "headroom_mode": "proxy"}`)
 	t.Setenv("CARINA_TOOLS_DIR", "/e/tools")
 	t.Setenv("CARINA_RISK_REVIEW_MODE", "advisory")
 	t.Setenv("CARINA_GATEWAY_TOKEN_MAX_TTL_SECONDS", "300")
 	t.Setenv("CARINA_NEBUTRA_CLOUD_ENDPOINT", "https://nebutra.example")
+	t.Setenv("CARINA_CONTEXT_ENGINE", "headroom")
+	t.Setenv("CARINA_HEADROOM_PROXY_PORT", "7777")
 
 	cfg, err := Load(home, proj)
 	if err != nil {
@@ -77,6 +79,18 @@ func TestCascadePrecedence(t *testing.T) {
 	}
 	if cfg.NebutraSyncMode != "off" {
 		t.Errorf("nebutra_sync_mode default should be off, got %q", cfg.NebutraSyncMode)
+	}
+	if cfg.ContextEngine != "headroom" {
+		t.Errorf("context_engine: env should override global, got %q", cfg.ContextEngine)
+	}
+	if cfg.HeadroomMode != "proxy" {
+		t.Errorf("headroom_mode: project should override global, got %q", cfg.HeadroomMode)
+	}
+	if cfg.HeadroomProxyPort != 7777 {
+		t.Errorf("headroom_proxy_port: env should override defaults, got %d", cfg.HeadroomProxyPort)
+	}
+	if cfg.HeadroomTokenBudget != 1234 {
+		t.Errorf("headroom_token_budget should fall through from global, got %d", cfg.HeadroomTokenBudget)
 	}
 	// A key set by no layer keeps its default.
 	if cfg.MaxConcurrentTasks != 8 {
@@ -151,5 +165,29 @@ func TestNebutraSyncModeValidationFailsFast(t *testing.T) {
 	t.Setenv("CARINA_NEBUTRA_SYNC_MODE", "metadata")
 	if _, err := Load(home, ""); err == nil {
 		t.Fatal("sync modes beyond off must be rejected until the Nebutra connector exists")
+	}
+}
+
+func TestContextEngineValidationFailsFast(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CARINA_CONTEXT_ENGINE", "always")
+	if _, err := Load(home, ""); err == nil {
+		t.Fatal("invalid context engine must be rejected")
+	}
+}
+
+func TestHeadroomModeValidationFailsFast(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CARINA_HEADROOM_MODE", "http")
+	if _, err := Load(home, ""); err == nil {
+		t.Fatal("invalid headroom mode must be rejected")
+	}
+}
+
+func TestHeadroomBudgetValidationFailsFast(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CARINA_HEADROOM_TOKEN_BUDGET", "-1")
+	if _, err := Load(home, ""); err == nil {
+		t.Fatal("negative headroom token budget must be rejected")
 	}
 }

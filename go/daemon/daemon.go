@@ -6,6 +6,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Nebutra/carina/go/auth"
+	"github.com/Nebutra/carina/go/contextengine"
 	"github.com/Nebutra/carina/go/egress"
 	"github.com/Nebutra/carina/go/history"
 	"github.com/Nebutra/carina/go/kernel"
@@ -58,6 +60,12 @@ type Options struct {
 	NebutraSyncMode            string             // currently only "off"; future sync modes belong behind Nebutra
 	GatewayTokenSigningKeyFile string             // optional local file containing Gateway token signing material
 	GatewayTokenMaxTTLSeconds  int                // max scoped Gateway token TTL (0 => 15m)
+	ContextEngine              string             // auto|off|headroom|noop
+	HeadroomBin                string             // optional bundled/override headroom binary path
+	HeadroomStateDir           string             // default: <state>/headroom
+	HeadroomMode               string             // managed_mcp|sidecar|proxy
+	HeadroomProxyPort          int                // 0 => choose later
+	HeadroomTokenBudget        int                // budget for context blocks
 }
 
 // EgressCredential authenticates outbound requests to a host by injecting a
@@ -129,7 +137,8 @@ type Daemon struct {
 	planMode map[string]bool // session -> plan mode (read-only until approved)
 	planMu   sync.Mutex
 
-	mcp          *mcp.Manager  // external MCP servers (proxied tools, kernel-gated)
+	mcp          *mcp.Manager // external MCP servers (proxied tools, kernel-gated)
+	contextEng   contextengine.Engine
 	egress       *egress.Proxy // deny-by-default network egress proxy (optional)
 	egressURL    string
 	egressCAPath string      // process-local CA bundle for MITM-enabled children
@@ -162,11 +171,23 @@ func New(opts Options) (*Daemon, error) {
 	if opts.StateDir == "" {
 		opts.StateDir = ".carina-state"
 	}
+	contextEng, err := contextengine.New(contextengine.Config{
+		ContextEngine:       opts.ContextEngine,
+		HeadroomBin:         opts.HeadroomBin,
+		HeadroomStateDir:    opts.HeadroomStateDir,
+		HeadroomMode:        opts.HeadroomMode,
+		HeadroomProxyPort:   opts.HeadroomProxyPort,
+		HeadroomTokenBudget: opts.HeadroomTokenBudget,
+		CarinaStateDir:      opts.StateDir,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("daemon: %w", err)
+	}
 	riskReviewMode := opts.RiskReviewMode
 	if riskReviewMode == "" {
 		riskReviewMode = os.Getenv("CARINA_RISK_REVIEW_MODE")
 	}
-	riskReviewMode, err := normalizeRiskReviewMode(riskReviewMode)
+	riskReviewMode, err = normalizeRiskReviewMode(riskReviewMode)
 	if err != nil {
 		return nil, fmt.Errorf("daemon: %w", err)
 	}
@@ -221,6 +242,7 @@ func New(opts Options) (*Daemon, error) {
 		pendingCmds:        make(map[string]pendingCommand),
 		pendingMemWrites:   make(map[string]pendingMemoryWrite),
 		memory:             newMemoryStore(opts.StateDir),
+		contextEng:         contextEng,
 		gatewayTokens:      gatewayTokens,
 		gatewayTokenMaxTTL: gatewayTokenMaxTTL,
 		gatewayResponses:   map[string]string{},
@@ -268,6 +290,10 @@ func New(opts Options) (*Daemon, error) {
 	d.history = history.New(filepath.Join(opts.StateDir, "history"))
 	go d.reapLeases() // re-queue dispatch tasks abandoned by crashed workers
 	d.mcp = mcp.NewManager()
+	if _, err := d.connectContextEngineMCP(d.contextEng); err != nil {
+		_ = d.kern.Close()
+		return nil, fmt.Errorf("daemon: managed Headroom MCP: %w", err)
+	}
 	if home, err := os.UserHomeDir(); err == nil {
 		d.mcp.LoadAndConnect(filepath.Join(home, ".carina", "mcp.json"))
 	}
@@ -453,6 +479,9 @@ func (d *Daemon) Close() error {
 	if d.mcp != nil {
 		d.mcp.Close()
 	}
+	if d.contextEng != nil {
+		_ = d.contextEng.Close()
+	}
 	if d.egress != nil {
 		_ = d.egress.Close()
 	}
@@ -496,10 +525,38 @@ func (d *Daemon) Tools() *toolchain.Toolchain { return d.tools }
 // Router exposes the model router.
 func (d *Daemon) Router() *modelrouter.Router { return d.router }
 
+func (d *Daemon) connectContextEngineMCP(eng contextengine.Engine) (bool, error) {
+	if d.mcp == nil || eng == nil {
+		return false, nil
+	}
+	connector, ok := eng.(interface {
+		ManagedMCPServer() (string, contextengine.MCPServer, bool)
+		MarkManagedMCPConnected(error)
+	})
+	if !ok {
+		return false, nil
+	}
+	name, spec, enabled := connector.ManagedMCPServer()
+	if !enabled {
+		return false, nil
+	}
+	err := d.mcp.ConnectPrivate(name, mcp.Server{Command: spec.Command, Args: spec.Args, Env: spec.Env})
+	connector.MarkManagedMCPConnected(err)
+	if err != nil && eng.Status().ConfiguredEngine == contextengine.ModeHeadroom {
+		return true, err
+	}
+	return true, nil
+}
+
 func (d *Daemon) registerMethods() {
 	d.registerRPC("daemon.status", rpc.ScopeRead, true, d.handleStatus)
 	d.registerRPC("daemon.metrics", rpc.ScopeRead, true, d.handleMetrics)
 	d.registerRPC("daemon.doctor", rpc.ScopeRead, true, d.handleDoctor)
+	d.registerRPC("context.status", rpc.ScopeRead, false, d.handleContextStatus)
+	d.registerRPC("context.doctor", rpc.ScopeRead, false, d.handleContextDoctor)
+	d.registerRPC("context.stats", rpc.ScopeRead, false, d.handleContextStats)
+	d.registerRPC("context.retrieve", rpc.ScopeRead, false, d.handleContextRetrieve)
+	d.registerRPC("context.compress", rpc.ScopeWrite, false, d.handleContextCompress)
 	d.registerRPC("gateway.hello", rpc.ScopeRead, true, d.handleGatewayHello)
 	d.registerRPC("gateway.methods", rpc.ScopeRead, true, d.handleGatewayMethods)
 	d.registerRPC("gateway.resolve_scope", rpc.ScopeRead, false, d.handleGatewayResolveScope)
@@ -697,7 +754,8 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 		"tools":    map[string]any{"available": d.tools.Available(), "dir": d.tools.Dir()},
 		"reasoner": d.reasoner != nil,
 		// Resolved credential SOURCE only — never the value. "" = unauthenticated.
-		"auth": map[string]any{"source": d.authChain.ResolvedSource()},
+		"auth":           map[string]any{"source": d.authChain.ResolvedSource()},
+		"context_engine": d.contextDoctor(),
 	}, nil
 }
 
@@ -717,6 +775,7 @@ func (d *Daemon) handleStatus(_ json.RawMessage) (any, error) {
 		"tools":           d.tools.Available(),
 		"rpc_endpoint":    d.socketPath,
 		"event_log_path":  filepath.Join(d.stateDir, "events"),
+		"context_engine":  d.contextStatus(),
 		"nebutra_cloud": map[string]any{
 			"endpoint":     d.cloudEndpoint,
 			"sync_mode":    d.syncMode,
@@ -724,6 +783,240 @@ func (d *Daemon) handleStatus(_ json.RawMessage) (any, error) {
 			"sync_enabled": d.syncMode != nebutra.SyncModeOff,
 		},
 	}, nil
+}
+
+func (d *Daemon) handleContextStatus(_ json.RawMessage) (any, error) {
+	return d.contextStatus(), nil
+}
+
+func (d *Daemon) handleContextDoctor(_ json.RawMessage) (any, error) {
+	return d.contextDoctor(), nil
+}
+
+func (d *Daemon) handleContextStats(_ json.RawMessage) (any, error) {
+	if d.contextEng == nil {
+		return map[string]any{
+			"local": contextengine.Stats{Engine: contextengine.ModeNoop, Phase: "unconfigured"},
+		}, nil
+	}
+	st, err := d.contextEng.Stats(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"local": st}
+	if d.headroomMCPConnected() {
+		raw, err := d.mcp.Call(contextengine.ManagedMCPServerName, "headroom_stats", nil)
+		if err != nil {
+			out["headroom_error"] = err.Error()
+		} else {
+			out["headroom"] = decodeHeadroomToolOutput(raw)
+		}
+	}
+	return out, nil
+}
+
+func (d *Daemon) handleContextCompress(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		TaskID    string `json:"task_id"`
+		Turn      int    `json:"turn"`
+		Kind      string `json:"kind"`
+		Tool      string `json:"tool"`
+		Content   string `json:"content"`
+		Pinned    bool   `json:"pinned"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if p.Content == "" {
+		return nil, fmt.Errorf("content is required")
+	}
+	req := contextengine.CompressRequest{
+		SessionID: p.SessionID,
+		TaskID:    p.TaskID,
+		Turn:      p.Turn,
+		Kind:      p.Kind,
+		Tool:      p.Tool,
+		Content:   p.Content,
+		Pinned:    p.Pinned,
+	}
+	if d.headroomMCPConnected() {
+		raw, err := d.mcp.Call(contextengine.ManagedMCPServerName, "headroom_compress", map[string]any{"content": p.Content})
+		if err != nil {
+			return nil, err
+		}
+		return parseHeadroomCompressResponse(p.Content, raw), nil
+	}
+	if d.contextEng == nil {
+		return nil, fmt.Errorf("context engine is not configured")
+	}
+	return d.contextEng.Compress(context.Background(), req)
+}
+
+func (d *Daemon) handleContextRetrieve(params json.RawMessage) (any, error) {
+	var p struct {
+		Hash  string `json:"hash"`
+		Ref   string `json:"ref"`
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	ref := strings.TrimSpace(p.Hash)
+	if ref == "" {
+		ref = strings.TrimSpace(p.Ref)
+	}
+	if ref == "" {
+		return nil, fmt.Errorf("hash or ref is required")
+	}
+	if d.headroomMCPConnected() {
+		args := map[string]any{"hash": ref}
+		if strings.TrimSpace(p.Query) != "" {
+			args["query"] = strings.TrimSpace(p.Query)
+		}
+		raw, err := d.mcp.Call(contextengine.ManagedMCPServerName, "headroom_retrieve", args)
+		if err != nil {
+			return nil, err
+		}
+		return parseHeadroomRetrieveResponse(ref, raw), nil
+	}
+	if d.contextEng == nil {
+		return nil, fmt.Errorf("context engine is not configured")
+	}
+	return d.contextEng.Retrieve(context.Background(), ref)
+}
+
+func (d *Daemon) contextStatus() any {
+	if d.contextEng == nil {
+		return map[string]any{"configured_engine": "noop", "effective_engine": "noop", "phase": "unconfigured"}
+	}
+	return d.contextEng.Status()
+}
+
+func (d *Daemon) contextDoctor() any {
+	if d.contextEng == nil {
+		return map[string]any{"ok": true, "status": d.contextStatus()}
+	}
+	return d.contextEng.Doctor()
+}
+
+func (d *Daemon) headroomMCPConnected() bool {
+	if d == nil || d.contextEng == nil || d.mcp == nil {
+		return false
+	}
+	st := d.contextEng.Status()
+	return st.EffectiveEngine == contextengine.ModeHeadroom && st.ManagedMCPConnected
+}
+
+func decodeHeadroomToolOutput(raw string) any {
+	var obj any
+	if json.Unmarshal([]byte(raw), &obj) == nil {
+		return obj
+	}
+	return map[string]any{"text": raw}
+}
+
+func parseHeadroomCompressResponse(original, raw string) contextengine.CompressResponse {
+	res := contextengine.CompressResponse{
+		Content:         raw,
+		OriginalBytes:   len(original),
+		CompressedBytes: len(raw),
+		Ratio:           compressionRatio(len(original), len(raw)),
+		Engine:          contextengine.ModeHeadroom,
+	}
+	sum := sha256.Sum256([]byte(original))
+	res.OriginalSHA256 = hex.EncodeToString(sum[:])
+	var obj map[string]any
+	if json.Unmarshal([]byte(raw), &obj) != nil {
+		return res
+	}
+	if s, ok := headroomStringField(obj, "compressed"); ok {
+		res.Content = s
+		res.CompressedBytes = len(s)
+		res.Ratio = compressionRatio(len(original), len(s))
+	}
+	if s, ok := headroomStringField(obj, "hash"); ok {
+		res.OriginalRef = s
+	}
+	if n, ok := numberField(obj, "original_tokens"); ok {
+		res.OriginalTokens = int(n)
+	}
+	if n, ok := numberField(obj, "compressed_tokens"); ok {
+		res.CompressedTokens = int(n)
+	}
+	if n, ok := numberField(obj, "savings_percent"); ok {
+		res.SavingsPercent = n
+	}
+	if transforms, ok := headroomStringSliceField(obj, "transforms"); ok {
+		res.Transforms = transforms
+	}
+	return res
+}
+
+func parseHeadroomRetrieveResponse(ref, raw string) contextengine.RetrieveResponse {
+	res := contextengine.RetrieveResponse{Ref: ref, Content: raw, OriginalBytes: len(raw), Engine: contextengine.ModeHeadroom}
+	var obj map[string]any
+	if json.Unmarshal([]byte(raw), &obj) != nil {
+		sum := sha256.Sum256([]byte(raw))
+		res.SHA256 = hex.EncodeToString(sum[:])
+		return res
+	}
+	if s, ok := headroomStringField(obj, "original_content"); ok {
+		res.Content = s
+		res.OriginalBytes = len(s)
+		sum := sha256.Sum256([]byte(s))
+		res.SHA256 = hex.EncodeToString(sum[:])
+	}
+	if s, ok := headroomStringField(obj, "source"); ok {
+		res.Source = s
+	}
+	if results, ok := obj["results"]; ok {
+		res.Results = results
+		if res.Content == "" {
+			if b, err := json.MarshalIndent(results, "", "  "); err == nil {
+				res.Content = string(b)
+				res.OriginalBytes = len(res.Content)
+			}
+		}
+	}
+	return res
+}
+
+func compressionRatio(original, compressed int) float64 {
+	if original <= 0 {
+		return 1
+	}
+	return float64(compressed) / float64(original)
+}
+
+func headroomStringField(obj map[string]any, key string) (string, bool) {
+	v, ok := obj[key].(string)
+	return v, ok
+}
+
+func numberField(obj map[string]any, key string) (float64, bool) {
+	switch v := obj[key].(type) {
+	case float64:
+		return v, true
+	case int:
+		return float64(v), true
+	default:
+		return 0, false
+	}
+}
+
+func headroomStringSliceField(obj map[string]any, key string) ([]string, bool) {
+	raw, ok := obj[key].([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out, true
 }
 
 func (d *Daemon) handleMetrics(_ json.RawMessage) (any, error) {

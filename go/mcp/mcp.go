@@ -348,9 +348,62 @@ type config struct {
 type Manager struct {
 	mu      sync.Mutex
 	clients map[string]*Client
+	hidden  map[string]bool
 }
 
-func NewManager() *Manager { return &Manager{clients: make(map[string]*Client)} }
+func NewManager() *Manager {
+	return &Manager{clients: make(map[string]*Client), hidden: make(map[string]bool)}
+}
+
+// Connect starts one MCP server and registers it under name, replacing any
+// existing server with the same name. It is used for Carina-managed built-ins
+// that should not require users to edit ~/.carina/mcp.json.
+func (m *Manager) Connect(name string, srv Server) error {
+	return m.connect(name, srv, false)
+}
+
+// ConnectPrivate starts one MCP server for internal Carina adapters. Private
+// servers are available to daemon code through Call, but are hidden from agent
+// tool discovery and rejected by CallPublic.
+func (m *Manager) ConnectPrivate(name string, srv Server) error {
+	return m.connect(name, srv, true)
+}
+
+func (m *Manager) connect(name string, srv Server, hidden bool) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("mcp: server name is required")
+	}
+	c := newClient(name, srv)
+	if err := c.connect(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if old := m.clients[name]; old != nil {
+		old.close()
+	}
+	m.clients[name] = c
+	m.hidden[name] = hidden
+	m.mu.Unlock()
+	return nil
+}
+
+// Disconnect stops and removes one connected MCP server. It is used when a
+// managed built-in is disabled by config reload.
+func (m *Manager) Disconnect(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	m.mu.Lock()
+	c := m.clients[name]
+	delete(m.clients, name)
+	delete(m.hidden, name)
+	m.mu.Unlock()
+	if c != nil {
+		c.close()
+	}
+}
 
 // LoadAndConnect reads mcp.json config files and connects each server (best
 // effort — a server that fails to start is skipped, not fatal).
@@ -365,15 +418,7 @@ func (m *Manager) LoadAndConnect(paths ...string) {
 			continue
 		}
 		for name, srv := range cfg.MCPServers {
-			c := newClient(name, srv)
-			if c.connect() == nil {
-				m.mu.Lock()
-				if old := m.clients[name]; old != nil {
-					old.close()
-				}
-				m.clients[name] = c
-				m.mu.Unlock()
-			}
+			_ = m.Connect(name, srv)
 		}
 	}
 }
@@ -384,6 +429,9 @@ func (m *Manager) Tools() []NamespacedTool {
 	defer m.mu.Unlock()
 	var out []NamespacedTool
 	for name, c := range m.clients {
+		if m.hidden[name] {
+			continue
+		}
 		c.mu.Lock()
 		for _, t := range c.tools {
 			out = append(out, NamespacedTool{Server: name, Name: t.Name, Description: t.Description})
@@ -405,6 +453,9 @@ func (m *Manager) Prompts() []Prompt {
 	defer m.mu.Unlock()
 	var out []Prompt
 	for name, c := range m.clients {
+		if m.hidden[name] {
+			continue
+		}
 		c.mu.Lock()
 		for _, p := range c.prompts {
 			cp := p
@@ -437,6 +488,18 @@ func (m *Manager) Call(server, tool string, args map[string]any) (string, error)
 		}
 	}
 	return c.callTool(tool, args)
+}
+
+// CallPublic invokes a user-configured MCP tool. Internal/private servers are
+// deliberately unreachable through the agent action surface.
+func (m *Manager) CallPublic(server, tool string, args map[string]any) (string, error) {
+	m.mu.Lock()
+	hidden := m.hidden[server]
+	m.mu.Unlock()
+	if hidden {
+		return "", fmt.Errorf("mcp server %q is private", server)
+	}
+	return m.Call(server, tool, args)
 }
 
 // GetPrompt renders a prompt on a server, reconnecting once if the server has died.

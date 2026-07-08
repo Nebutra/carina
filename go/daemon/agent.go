@@ -743,7 +743,7 @@ func (d *Daemon) callMCP(sess *sessionstore.Session, task *scheduler.Task, act *
 	d.record(sess.SessionID, "ToolApproved", task.TaskID, "go",
 		map[string]any{"mcp_server": act.MCPServer, "mcp_tool": act.MCPTool}, dec.DecisionID)
 
-	out, err := d.mcp.Call(act.MCPServer, act.MCPTool, act.Args)
+	out, err := d.mcp.CallPublic(act.MCPServer, act.MCPTool, act.Args)
 	if err != nil {
 		return "mcp error: " + err.Error()
 	}

@@ -64,6 +64,7 @@ Carina が提供するもの：
 | Commands | risk classification、approval gate、command output event、optional OS sandbox backend |
 | Network and secrets | deny-by-default egress proxy、allowlist、daemon-side credential injection、explicit per-host HTTPS MITM opt-in |
 | Models | BYOK auth chain、provider catalog、OpenAI/Anthropic/Gemini/OpenRouter-style adapter |
+| Context engine | native context-engine boundary、bundled/configured Headroom discovery、private managed MCP transport、`carina context` diagnostics |
 | Integration | MCP client/server、WASM plugin boundary、worker、workflow DAG |
 | Nebutra boundary | ローカル runtime が action authority を維持し、identity と multi-endpoint sync は Nebutra Cloud（`nebutra.com`）の境界に置く |
 
@@ -152,6 +153,22 @@ Applied patch を rollback：
 Carina keeps local long-term memory under the daemon state directory. Agent/project notes use `target=memory`; user profile facts use `target=user`. Memory enters each agent run as a frozen prompt snapshot, so writes during the run persist but do not rewrite that run's stable prompt prefix. Use local `memory.*` RPC methods or the native `memory` tool for add/replace/remove/batch. Writes go through the default approval-gated `MemoryWrite` capability, are bounded and content-scanned, and are audited by target/scope/action/content hash instead of raw memory text.
 
 External semantic memory providers and Nebutra Cloud memory sync are not enabled in the source-first alpha.
+
+### Native Context Engine
+
+Release packages include a pinned Headroom executable as `bin/headroom`.
+`context_engine=auto` only enables bundled or explicitly configured Headroom; a
+global `headroom` found on `PATH` is reported but not used as the built-in
+engine.
+
+```bash
+./bin/carina context status
+./bin/carina context doctor
+./bin/carina context stats
+```
+
+The managed Headroom MCP server is private to Carina's context adapter and is
+not listed as a public agent MCP tool.
 
 ### BYOK Providers
 

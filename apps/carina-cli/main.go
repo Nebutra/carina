@@ -60,6 +60,13 @@ Memory:
   carina memory write <session_id> <memory|user> remove <old_text>
                                                    request a memory removal
 
+Context engine:
+  carina context status                             show native context engine and Headroom availability
+  carina context doctor                             diagnose context engine health
+  carina context stats                              show local and Headroom context-engine counters
+  carina context compress <content|->               compress content through the native context engine
+  carina context retrieve <hash> [query]             retrieve original context from Headroom CCR
+
 Audit and rollback:
   carina audit <session_id>                        replay the raw session event stream
   carina audit verify <session_id>                 verify the tamper-evident hash chain
@@ -166,6 +173,8 @@ func run(cmd string, args []string) error {
 		return cmdGateway(c, args)
 	case "memory":
 		return cmdMemory(c, args)
+	case "context":
+		return cmdContext(c, args)
 
 	case "run", "ask":
 		// --background is accepted for clarity; tasks always run in the
@@ -671,6 +680,56 @@ func cmdMemory(c *rpcClient, args []string) error {
 		return err
 	}
 	return call(c, method, params)
+}
+
+func cmdContext(c *rpcClient, args []string) error {
+	if len(args) == 0 {
+		args = []string{"status"}
+	}
+	switch args[0] {
+	case "status":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: carina context status")
+		}
+		return call(c, "context.status", map[string]any{})
+	case "doctor":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: carina context doctor")
+		}
+		return call(c, "context.doctor", map[string]any{})
+	case "stats":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: carina context stats")
+		}
+		return call(c, "context.stats", map[string]any{})
+	case "compress":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: carina context compress <content|->")
+		}
+		content := args[1]
+		if content == "-" {
+			var err error
+			content, err = readAllStdin()
+			if err != nil {
+				return err
+			}
+		}
+		if content == "" {
+			return fmt.Errorf("content is required")
+		}
+		return call(c, "context.compress", map[string]any{"content": content})
+	case "retrieve":
+		if len(args) < 2 || len(args) > 3 {
+			return fmt.Errorf("usage: carina context retrieve <hash> [query]")
+		}
+		params := map[string]any{"hash": args[1]}
+		if len(args) == 3 {
+			params["query"] = args[2]
+		}
+		return call(c, "context.retrieve", params)
+	default:
+		return fmt.Errorf("usage: carina context <status|doctor|stats|compress|retrieve>")
+	}
 }
 
 func memoryRPC(args []string, readInput func() (string, error)) (string, map[string]any, error) {
