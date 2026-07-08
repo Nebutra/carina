@@ -64,6 +64,7 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	seenStatus := false
 	seenSubmit := false
 	seenPatchPropose := false
+	seenMemoryWrite := false
 	for _, m := range methods.Methods {
 		switch m.Method {
 		case "daemon.status":
@@ -72,10 +73,12 @@ func TestDaemonHandlerSurface(t *testing.T) {
 			seenSubmit = m.Scope == "write" && !m.Remote
 		case "workspace.patch.propose":
 			seenPatchPropose = m.Scope == "write" && m.DynamicScope
+		case "memory.write":
+			seenMemoryWrite = m.Scope == "write" && !m.Remote
 		}
 	}
-	if !seenStatus || !seenSubmit || !seenPatchPropose {
-		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v patch=%v", seenStatus, seenSubmit, seenPatchPropose)
+	if !seenStatus || !seenSubmit || !seenPatchPropose || !seenMemoryWrite {
+		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v patch=%v memory=%v", seenStatus, seenSubmit, seenPatchPropose, seenMemoryWrite)
 	}
 	var hello struct {
 		Role     string   `json:"role"`
@@ -148,6 +151,36 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	must("workspace.search", map[string]any{"session_id": sid, "pattern": "TODO"})
 	must("workspace.file.get", map[string]any{"session_id": sid, "path": "a.go"})
 	must("profile.describe", map[string]any{"session_id": sid})
+	var memoryWrite struct {
+		Decision struct {
+			Decision   string `json:"decision"`
+			DecisionID string `json:"decision_id"`
+		} `json:"decision"`
+	}
+	if err := c.Call("memory.write", map[string]any{"session_id": sid, "target": "memory", "action": "add", "content": "Use focused tests before release checks."}, &memoryWrite); err != nil {
+		t.Fatal(err)
+	}
+	if memoryWrite.Decision.Decision == "requires_approval" {
+		must("task.action.approve", map[string]any{"session_id": sid, "decision_id": memoryWrite.Decision.DecisionID})
+	}
+	var memoryList struct {
+		Entries []string `json:"entries"`
+	}
+	if err := c.Call("memory.list", map[string]any{"session_id": sid, "target": "memory"}, &memoryList); err != nil {
+		t.Fatal(err)
+	}
+	if len(memoryList.Entries) != 1 || !strings.Contains(memoryList.Entries[0], "focused tests") {
+		t.Fatalf("unexpected memory.list result: %+v", memoryList)
+	}
+	var memoryContext struct {
+		Context string `json:"context"`
+	}
+	if err := c.Call("memory.context", map[string]any{"session_id": sid}, &memoryContext); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(memoryContext.Context, "<memory-context>") {
+		t.Fatalf("memory.context should be fenced: %+v", memoryContext)
+	}
 
 	// patches
 	var patch struct {
@@ -217,6 +250,109 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	}
 	if err := c.Call("command.exec", map[string]any{"session_id": "sess_missing", "argv": []string{"ls"}}, nil); err == nil {
 		t.Fatal("exec on unknown session should error")
+	}
+}
+
+func TestMemoryWriteApprovalFlow(t *testing.T) {
+	repoRoot := repoRoot(t)
+	kernelBin := firstExisting(
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
+	)
+	if kernelBin == "" {
+		t.Skip("carina-kernel-service not built")
+	}
+	stateDir := t.TempDir()
+	policyDir := filepath.Join(stateDir, "policy")
+	if err := os.MkdirAll(policyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "bundle.toml"), []byte(`
+name = "memory-review"
+require_approval = ["MemoryWrite"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d, err := daemon.New(daemon.Options{
+		StateDir: stateDir, KernelBin: kernelBin,
+		ToolsDir: filepath.Join(repoRoot, "zig/zig-out/bin"), PolicyDir: policyDir, Offline: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	sock := shortSocket(t)
+	go func() { _ = d.Run(sock) }()
+	waitForSocket(t, sock)
+	c, err := rpc.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	var sess struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := c.Call("session.create", map[string]any{"workspace_root": t.TempDir(), "profile": "safe-edit"}, &sess); err != nil {
+		t.Fatal(err)
+	}
+	var write struct {
+		Decision struct {
+			Decision   string `json:"decision"`
+			DecisionID string `json:"decision_id"`
+		} `json:"decision"`
+		Result *struct {
+			Success bool `json:"success"`
+		} `json:"result"`
+	}
+	if err := c.Call("memory.write", map[string]any{
+		"session_id": sess.SessionID,
+		"target":     "memory",
+		"action":     "add",
+		"content":    "Run focused memory approval tests before release.",
+	}, &write); err != nil {
+		t.Fatal(err)
+	}
+	if write.Decision.Decision != "requires_approval" || write.Decision.DecisionID == "" || write.Result != nil {
+		t.Fatalf("expected pending memory approval, got %+v", write)
+	}
+	var before struct {
+		Entries []string `json:"entries"`
+	}
+	if err := c.Call("memory.list", map[string]any{"session_id": sess.SessionID, "target": "memory"}, &before); err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Entries) != 0 {
+		t.Fatalf("pending memory write must not apply before approval: %+v", before)
+	}
+	var approved struct {
+		Decision struct {
+			Decision string `json:"decision"`
+		} `json:"decision"`
+		Result struct {
+			Success       bool   `json:"success"`
+			ContentSHA256 string `json:"content_sha256"`
+		} `json:"result"`
+	}
+	if err := c.Call("task.action.approve", map[string]any{
+		"session_id":  sess.SessionID,
+		"decision_id": write.Decision.DecisionID,
+		"approver":    "operator",
+	}, &approved); err != nil {
+		t.Fatal(err)
+	}
+	if approved.Decision.Decision != "allowed" || !approved.Result.Success || approved.Result.ContentSHA256 == "" {
+		t.Fatalf("approved memory write should apply with hash metadata: %+v", approved)
+	}
+	var after struct {
+		Entries []string `json:"entries"`
+	}
+	if err := c.Call("memory.list", map[string]any{"session_id": sess.SessionID, "target": "memory"}, &after); err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Entries) != 1 || !strings.Contains(after.Entries[0], "focused memory approval") {
+		t.Fatalf("approved memory write did not persist: %+v", after)
 	}
 }
 

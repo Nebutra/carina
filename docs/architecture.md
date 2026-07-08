@@ -17,7 +17,7 @@ Agent Surface ──JSON-RPC──▶ Go Control Plane ──Capability API─�
 
 ## Core principles
 
-1. **Agents never touch system resources directly.** Every file read, command execution, network access, or secret read is a capability request.
+1. **Agents never touch system resources directly.** Every file read, command execution, network access, secret read, or persistent memory write is a capability request.
 2. **Every side effect goes through the Capability Kernel.** The kernel evaluates the request against the session's permission profile and records a `PermissionDecision`.
 3. **Every execution writes to the Event Log.** Append-only, timestamped, session-scoped. Sessions are replayable from the log alone.
 4. **Every patch is a transaction.** Proposed → Validated → Approved → Applied → Verified → Committed, with a rollback pointer at every stage. No half-applied state, ever.
@@ -32,7 +32,7 @@ Agent Surface ──JSON-RPC──▶ Go Control Plane ──Capability API─�
 
 ### Go Control Plane (`go/`, `apps/`)
 
-- `go/daemon` — long-running runtime host: lifecycle, unix-socket RPC listener, recovery.
+- `go/daemon` — long-running runtime host: lifecycle, unix-socket RPC listener, recovery, governed local memory.
 - `go/rpc` — JSON-RPC 2.0 server; method registry mirrors `protocol/jsonrpc`.
 - `go/session-store` — session state + append-only JSONL event log (MVP storage: SQLite + JSONL).
 - `go/scheduler` — task queue: submit / cancel / pause / resume, priorities, concurrency.
@@ -45,7 +45,7 @@ Agent Surface ──JSON-RPC──▶ Go Control Plane ──Capability API─�
 ### Rust Capability Kernel (`crates/`)
 
 - `carina-kernel` — capability types, capability requests, kernel façade that every side effect flows through.
-- `carina-policy` — policy engine + permission profiles (`read-only`, `safe-edit`, `full-workspace`, `ci-runner`, …), workspace path containment, command risk classification.
+- `carina-policy` — policy engine + permission profiles (`read-only`, `safe-edit`, `full-workspace`, `ci-runner`, …), workspace path containment, command risk classification, `MemoryWrite` policy.
 - `carina-patch` — transactional patch engine: lifecycle state machine, conflict detection, atomic apply, rollback pointers, provenance.
 - `carina-audit` — event model (20 event types), append-only audit log, report generation.
 - `carina-plugin-runtime` — WASM plugin host: manifest parsing, permission review, capability-scoped host functions.
@@ -62,6 +62,22 @@ Small, fast, cross-platform binaries that emit machine-readable JSON and never b
 - `schemas/` — JSON Schemas for Task, Event, PermissionDecision, PatchTransaction, Session, Workspace.
 - `events/` — the event type enumeration.
 - `capabilities/` — capability types and built-in permission profiles.
+
+## Governed memory
+
+Carina's local long-term memory belongs to the control plane, not the prompt
+builder. The daemon stores bounded entries under its state directory and keeps
+two targets: `memory` for project/agent notes and `user` for profile facts.
+Each agent run receives a frozen memory snapshot in the prompt, so memory writes
+during that run persist for future work without changing the current run's
+stable prefix.
+
+Memory mutation is still a capability-mediated side effect. The daemon requests
+`MemoryWrite` from the Rust kernel using a resource string that contains only
+target, scope, action, operation count, and content hash. Built-in policy
+requires approval by default. If approved, the daemon applies
+add/replace/remove/batch changes atomically after local content scanning and
+size checks. Audit records the decision and hash metadata, not raw memory text.
 
 ## MVP loop (Phase 1 target)
 

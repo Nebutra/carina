@@ -45,6 +45,7 @@ impl carina_plugin_runtime::CapabilityHost for ProfileHost {
             "command_exec" => Capability::CommandExec,
             "network" => Capability::NetworkAccess,
             "secret" => Capability::SecretRead,
+            "memory_write" => Capability::MemoryWrite,
             _ => return false,
         };
         let request = CapabilityRequest {

@@ -57,6 +57,7 @@ Carina 提供：
 |---|---|
 | 会话和任务 | daemon 会话、后台任务、事件流、attach/replay、task steering |
 | Agent loop | ReAct loop、结构化 action、prompt compaction、success check、verifier、risk review |
+| Memory | 本地受控记忆库，区分 `memory` / `user` target；每次运行使用冻结 prompt snapshot；原生 `memory` tool、本地 `memory.*` RPC、kernel-gated `MemoryWrite` 审计 |
 | 权限 | 内置 profile、approval mode、带理由的 approval overlay、workspace trust、子智能体权限衰减 |
 | 审计 | 哈希链事件日志、audit export、verify、规范化 `session.items`、turn net diff |
 | 文件修改 | 事务性 patch propose/apply/rollback 和 post-edit diagnostics |
@@ -138,6 +139,12 @@ export OPENAI_API_KEY=sk-...
 
 `carina items <session_id>` 提供规范化的 thread/turn/item 视图，包括每轮 patch 汇总。需要原始事件链和防篡改验证时，使用 `carina audit <session_id>` 或 `carina audit verify <session_id>`。
 
+### 受控记忆
+
+Carina 的长期记忆保存在 daemon state 目录下。本地 runtime 区分 agent/project notes（`target=memory`）和用户画像事实（`target=user`）。记忆会作为冻结 snapshot 进入一次 agent run，因此运行中写入会持久化，但不会重写当前运行的稳定 prompt 前缀。可以通过本地 `memory.*` RPC 或原生 `memory` tool 执行 add/replace/remove/batch。写入走默认需要审批的 `MemoryWrite` capability，受大小限制和内容扫描保护，审计只记录 target/scope/action/content hash，不记录原始记忆正文。
+
+外部语义记忆 provider 和 Nebutra Cloud 记忆同步尚未启用。
+
 ### BYOK Provider
 
 保存本地凭证并查看 provider catalog：
@@ -210,6 +217,7 @@ Carina 按职责拆分：
 5. 默认拒绝破坏性命令。
 6. 文件改动走 patch transaction。
 7. 插件没有隐式权限。
+8. 持久记忆写入需要 capability gate，并按 scope、大小和审计边界约束。
 
 Alpha 限制：
 

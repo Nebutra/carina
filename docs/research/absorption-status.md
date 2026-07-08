@@ -279,6 +279,36 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   command, package verification, and planned install channels without claiming
   live public packages.
 
+**Wave 19 — Hermes Agent memory absorption (landed)**
+- [x] **Governed local long-term memory** (`go/daemon/memory_store.go`):
+  absorbed Hermes' useful memory philosophy without importing its Python
+  monolith. Carina now has a local bounded memory store under the daemon state
+  directory, with separate `memory` (agent/project notes) and `user` (profile
+  facts) targets, add/replace/remove/batch operations, atomic writes, duplicate
+  handling, size limits, and deterministic threat-pattern rejection for
+  persistent prompt injection, exfiltration, backdoors, agent config mutation,
+  and hardcoded-secret capture.
+- [x] **Frozen per-run memory snapshot** (`go/daemon/agent.go`,
+  `go/daemon/runstore.go`): memory is loaded once per run as background
+  context in the stable prompt prefix. Writes during the run persist for future
+  work but do not mutate the current run's prompt snapshot or transcript.
+- [x] **Native memory action + local RPC surface** (`go/daemon`):
+  agents can call the native `memory` tool; operators can use local-only
+  `memory.list`, `memory.context`, and `memory.write` RPC. `memory.context`
+  renders fenced recalled context that is explicitly not new user input.
+- [x] **Kernel-gated `MemoryWrite` capability** (`crates/carina-policy`,
+  `crates/carina-kernel`, `protocol/capabilities`,
+  `protocol/schemas/permission-decision.schema.json`): memory mutation is now
+  a first-class capability. Built-in policy requires approval by default, and
+  policy bundles can still deny it explicitly via `deny_capabilities`.
+  `memory.write` queues pending writes when approval is required and applies
+  them only after
+  `task.action.approve`.
+- [x] **Memory audit hygiene** (`go/daemon`): extra audit payloads record
+  target, scope, action, operation count, content hash, and decision id rather
+  than raw memory text. Nebutra Cloud memory sync remains explicitly out of
+  scope until a Nebutra identity/sync connector exists.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
@@ -296,13 +326,15 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   than local action authority. Full plugin HTTP route installation and
   write-capable direct tool invoke remain future work behind manifest policy
   and local owner review.
+- Hermes items intentionally staged after Wave 19: external semantic/vector
+  memory providers, cross-device memory sync, and cloud memory conflict
+  resolution belong behind Nebutra identity/sync policy and are not enabled in
+  the local source-first alpha.
 
 ## Test status
-Current verification for this update: Zig 0.15.2 installed through
-`zig@0.15`, `make release-check`, `make release-package`, `bash -n
-scripts/package-release.sh`, and `git diff --check`. The generated
-`dist/carina_0.6.0_darwin_arm64.tar.gz` validated with `shasum -a 256 -c`,
-`MANIFEST.json` parsed with `jq`, and the archive was checked to contain no
-historical `pi-*` binaries. The release package rebuilt Zig native tools without
-`SKIP_ZIG`; remaining manifest warnings are only the existing split component
-versions.
+Current verification for the Hermes memory update: `go test ./go/... ./apps/...`
+(241 tests), focused daemon memory/RPC/risk-review/subagent subset (17 tests),
+`go test -race ./go/daemon` (123 tests), `cargo test` (70 tests), focused Rust policy coverage for
+`MemoryWrite` bundle controls, Rust kernel approval-path regression, and
+`git diff --check`. The release kernel service was rebuilt so Go integration
+tests use the new capability enum.

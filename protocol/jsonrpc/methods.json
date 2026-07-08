@@ -19,13 +19,18 @@
       { "method": "session.replay", "params": { "session_id": "string" }, "result": "Event[]" },
       { "method": "session.items", "params": { "session_id": "string" }, "result": "SessionItemEvent[]" }
     ],
+    "memory": [
+      { "method": "memory.list", "params": { "session_id": "string", "target": "memory|user?" }, "result": "MemoryState", "availability": "local-only" },
+      { "method": "memory.context", "params": { "session_id": "string" }, "result": { "scope": "MemoryScope", "context": "string" }, "availability": "local-only" },
+      { "method": "memory.write", "params": { "session_id": "string", "target": "memory|user?", "action": "add|replace|remove|batch", "content": "string?", "old_text": "string?", "operations": "MemoryOperation[]?" }, "result": "{ decision: PermissionDecision, result?: MemoryWriteResult }", "availability": "local-only; control-plane write; MemoryWrite capability-gated" }
+    ],
     "task": [
       { "method": "task.submit", "params": { "session_id": "string", "prompt": "string" }, "result": "Task" },
       { "method": "task.cancel", "params": { "task_id": "string" }, "result": "Task" },
       { "method": "task.status", "params": { "task_id": "string" }, "result": "Task" },
       { "method": "task.events.stream", "params": { "task_id": "string" }, "result": "subscription" },
-      { "method": "task.action.approve", "params": { "task_id": "string", "decision_id": "string" }, "result": "PermissionDecision" },
-      { "method": "task.action.deny", "params": { "task_id": "string", "decision_id": "string", "reason": "string" }, "result": "PermissionDecision" }
+      { "method": "task.action.approve", "params": { "session_id": "string", "decision_id": "string", "approver": "string?", "role": "string?" }, "result": "{ decision: PermissionDecision, result?: any }" },
+      { "method": "task.action.deny", "params": { "session_id": "string", "decision_id": "string", "approver": "string?", "reason": "string" }, "result": "PermissionDecision" }
     ],
     "workspace": [
       { "method": "workspace.open", "params": { "root_path": "string" }, "result": "Workspace" },

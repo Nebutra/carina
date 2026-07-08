@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
-/// The ten capability types (protocol/capabilities/capabilities.json).
+/// The capability types (protocol/capabilities/capabilities.json).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Capability {
     FileRead,
@@ -20,6 +20,7 @@ pub enum Capability {
     ProcessSpawn,
     PluginLoad,
     RemoteExecute,
+    MemoryWrite,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -516,6 +517,10 @@ impl PolicyEngine {
             Capability::RemoteExecute => {
                 (Verdict::Denied, "remote execution is not enabled for this profile".into())
             }
+            Capability::MemoryWrite => (
+                Verdict::RequiresApproval,
+                "persistent memory write requires approval".into(),
+            ),
         }
     }
 }
@@ -1342,6 +1347,28 @@ require_approval = ["PatchApply"]
     }
 
     #[test]
+    fn memory_write_is_scoped_and_policy_bundle_controllable() {
+        let profile = Profile::safe_edit();
+        let root = Path::new("/tmp/ws");
+        let resource = "target=memory scope=abcd action=add ops=1 content_sha256=01";
+        let base = PolicyEngine::evaluate(&profile, root, &req(Capability::MemoryWrite, resource));
+        assert_eq!(base.decision, Verdict::RequiresApproval);
+
+        let never = apply_approval_mode(ApprovalMode::Never, base.clone());
+        assert_eq!(never.decision, Verdict::Allowed);
+
+        let deny_bundle =
+            PolicyBundle::from_toml("name = \"locked\"\ndeny_capabilities = [\"MemoryWrite\"]\n").unwrap();
+        let denied = PolicyEngine::evaluate_with_bundle(
+            &profile,
+            Some(&deny_bundle),
+            root,
+            &req(Capability::MemoryWrite, resource),
+        );
+        assert_eq!(denied.decision, Verdict::Denied);
+    }
+
+    #[test]
     fn approval_mode_is_orthogonal_to_profile() {
         let profile = Profile::safe_edit();
         let root = Path::new("/tmp/ws");
@@ -1399,4 +1426,3 @@ require_approval = ["PatchApply"]
         );
     }
 }
-

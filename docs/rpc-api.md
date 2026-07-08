@@ -157,6 +157,25 @@ Dynamic scopes:
 | `task.events.stream` | subscribe to the task event stream |
 | `task.action.approve` / `task.action.deny` | resolve pending approval requests |
 
+## Memory API
+
+| Method | Purpose |
+|--------|---------|
+| `memory.list` | list local memory entries for `target=memory` or `target=user` |
+| `memory.context` | render the fenced recalled-memory context block for the session |
+| `memory.write` | add, replace, remove, or batch memory entries through the `MemoryWrite` capability |
+
+`memory.write` is local-only and control-plane-write. The daemon builds a
+resource string from target, scope, action, operation count, and content hash,
+then requests the `MemoryWrite` capability from the kernel. The built-in policy
+defaults `MemoryWrite` to `requires_approval`. If a session policy or approval
+mode returns `allowed`, the mutation is applied immediately and the response is
+`{ "decision": PermissionDecision, "result": MemoryWriteResult }`; otherwise
+the write is queued and the response contains only the decision.
+`task.action.approve` applies the pending write, while `task.action.deny`
+discards it. Audit payloads record target/scope/action, operation count, and
+content hash, not raw memory text.
+
 ## Workspace API
 
 | Method | Purpose |
@@ -170,6 +189,9 @@ Dynamic scopes:
 ## Capability API (kernel-facing)
 
 `capability.file.read` · `capability.file.write` · `capability.command.exec` · `capability.network.access` · `capability.secret.read` · `capability.patch.apply`
+
+Kernel capability types also include mediated runtime capabilities that are not
+exposed as standalone `capability.*` RPC methods, including `MemoryWrite`.
 
 Each returns a `PermissionDecision` (see schema). Side effects only proceed on `allowed`.
 

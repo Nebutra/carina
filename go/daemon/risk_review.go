@@ -162,6 +162,10 @@ func (d *Daemon) heuristicRiskReview(dec *kernel.Decision) riskReviewAssessment 
 		assessment.Risk = "medium"
 		assessment.Authorization = "medium"
 		assessment.Rationale = "plugin/MCP access is policy-mediated and should remain audited"
+	case "MemoryWrite":
+		assessment.Risk = "medium"
+		assessment.Authorization = "medium"
+		assessment.Rationale = "persistent memory write is scoped, content-scan-gated, and audited by hash"
 	}
 	return assessment
 }

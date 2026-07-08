@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "capabilities": [
     "FileRead", "FileWrite", "CommandExec", "NetworkAccess", "SecretRead",
-    "GitOperation", "PatchApply", "ProcessSpawn", "PluginLoad", "RemoteExecute"
+    "GitOperation", "PatchApply", "ProcessSpawn", "PluginLoad", "RemoteExecute",
+    "MemoryWrite"
   ],
   "command_risk_levels": [
     { "level": 0, "class": "read-only commands", "default": "auto_allow" },

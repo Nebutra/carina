@@ -57,6 +57,7 @@ Carina が提供するもの：
 |---|---|
 | Sessions and tasks | daemon session、background run、event stream、attach/replay、task steering |
 | Agent loop | ReAct loop、structured action、prompt compaction、success check、verifier、risk review |
+| Memory | local governed memory store with `memory` / `user` targets, frozen per-run prompt snapshot, native `memory` tool, local `memory.*` RPC, and kernel-gated `MemoryWrite` audit |
 | Permissions | built-in profile、approval mode、justification 付き approval overlay、workspace trust、sub-agent attenuation |
 | Audit | hash-chained event log、audit export、verify、normalized `session.items`、turn net diff |
 | File changes | transactional patch propose/apply/rollback、post-edit diagnostics |
@@ -138,6 +139,12 @@ Applied patch を rollback：
 
 `carina items <session_id>` は thread/turn/item の normalized view を返し、turn-level patch summary も含みます。raw event chain と tamper-evidence が必要な場合は `carina audit <session_id>` または `carina audit verify <session_id>` を使います。
 
+### Governed Memory
+
+Carina keeps local long-term memory under the daemon state directory. Agent/project notes use `target=memory`; user profile facts use `target=user`. Memory enters each agent run as a frozen prompt snapshot, so writes during the run persist but do not rewrite that run's stable prompt prefix. Use local `memory.*` RPC methods or the native `memory` tool for add/replace/remove/batch. Writes go through the default approval-gated `MemoryWrite` capability, are bounded and content-scanned, and are audited by target/scope/action/content hash instead of raw memory text.
+
+External semantic memory providers and Nebutra Cloud memory sync are not enabled in the source-first alpha.
+
 ### BYOK Providers
 
 Credential を保存し、provider catalog を確認：
@@ -210,6 +217,7 @@ Default posture:
 5. Destructive commands denied by default.
 6. File changes go through patch transactions.
 7. Plugins start with no implicit permissions.
+8. Persistent memory writes are capability-gated, scoped, bounded, and audited.
 
 Alpha limitations:
 

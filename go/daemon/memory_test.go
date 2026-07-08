@@ -17,6 +17,22 @@ func (c *capturingReasoner) Think(_ context.Context, prompt string) (string, err
 	return `{"tool":"done","summary":"ok"}`, nil
 }
 
+type promptRecordingReasoner struct {
+	steps   []string
+	prompts []string
+}
+
+func (p *promptRecordingReasoner) Name() string { return "prompt-recording" }
+func (p *promptRecordingReasoner) Think(_ context.Context, prompt string) (string, error) {
+	p.prompts = append(p.prompts, prompt)
+	if len(p.steps) == 0 {
+		return `{"tool":"done","summary":"ok"}`, nil
+	}
+	step := p.steps[0]
+	p.steps = p.steps[1:]
+	return step, nil
+}
+
 // TestMemoryLoadedIntoPrompt: a project CARINA.md is injected into the system
 // prompt the agent reasons over.
 func TestMemoryLoadedIntoPrompt(t *testing.T) {
@@ -87,5 +103,51 @@ func TestCarinaInstructionsWinOverAgentsFallback(t *testing.T) {
 	}
 	if strings.Contains(mem, "AGENTS_SHOULD_NOT_WIN") {
 		t.Fatalf("AGENTS fallback should not load when CARINA candidate exists:\n%s", mem)
+	}
+}
+
+func TestCarinaMemorySnapshotFrozenAcrossRun(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	scope := memoryScopeFromSession(sess)
+	if _, err := d.memory.apply(scope, memoryWriteRequest{
+		Action:  "add",
+		Target:  "memory",
+		Content: "OLD_MEMORY_MARKER",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := &promptRecordingReasoner{steps: []string{
+		`{"tool":"memory","action":"add","target":"memory","content":"NEW_MEMORY_MARKER"}`,
+		`{"tool":"done","summary":"ok"}`,
+	}}
+	d.SetReasoner(rec)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "remember a fact")
+	d.runTask(sess, task)
+
+	if len(rec.prompts) < 2 {
+		t.Fatalf("expected at least two prompts, got %d", len(rec.prompts))
+	}
+	if !strings.Contains(rec.prompts[0], "OLD_MEMORY_MARKER") {
+		t.Fatal("initial frozen memory snapshot missing old marker")
+	}
+	if strings.Contains(rec.prompts[1], "NEW_MEMORY_MARKER") {
+		t.Fatal("memory written during a run must not refresh that run's frozen prompt snapshot")
+	}
+	state, err := d.memory.list(scope, "memory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, entry := range state.Entries {
+		if entry == "NEW_MEMORY_MARKER" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("memory tool write did not persist: %+v", state)
 	}
 }

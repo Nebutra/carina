@@ -79,6 +79,14 @@ type pendingCommand struct {
 	argv      []string
 }
 
+type pendingMemoryWrite struct {
+	sessionID string
+	taskID    string
+	req       memoryWriteRequest
+	scope     memoryScope
+	summary   memoryWriteSummary
+}
+
 type Daemon struct {
 	store   *sessionstore.Store
 	sched   *scheduler.Scheduler
@@ -101,8 +109,9 @@ type Daemon struct {
 	riskReviewer   Reasoner     // optional independent approval reviewer (nil => deterministic heuristic)
 	riskReviewMode atomic.Value // string: off|advisory|enforce, hot-reloadable
 
-	mu          sync.Mutex
-	pendingCmds map[string]pendingCommand // decision_id -> command awaiting approval
+	mu               sync.Mutex
+	pendingCmds      map[string]pendingCommand     // decision_id -> command awaiting approval
+	pendingMemWrites map[string]pendingMemoryWrite // decision_id -> memory write awaiting approval
 
 	runs   *runStore     // durable background-run registry (survives restart)
 	runSem chan struct{} // concurrency cap for background runs
@@ -142,6 +151,7 @@ type Daemon struct {
 
 	authChain          *auth.Chain             // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
 	history            *history.History        // shared cross-process prompt history
+	memory             *memoryStore            // governed local long-term memory
 	gatewayTokens      *rpc.GatewayTokenIssuer // optional scoped Gateway token signer/verifier
 	gatewayTokenMaxTTL time.Duration           // max TTL for locally issued scoped Gateway tokens
 	gatewayHTTPServers []*http.Server
@@ -209,6 +219,8 @@ func New(opts Options) (*Daemon, error) {
 		syncMode:           syncMode,
 		started:            time.Now().UTC(),
 		pendingCmds:        make(map[string]pendingCommand),
+		pendingMemWrites:   make(map[string]pendingMemoryWrite),
+		memory:             newMemoryStore(opts.StateDir),
 		gatewayTokens:      gatewayTokens,
 		gatewayTokenMaxTTL: gatewayTokenMaxTTL,
 		gatewayResponses:   map[string]string{},
@@ -511,6 +523,9 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("task.approval.resolve", rpc.ScopeAdmin, false, d.handleApprovalResolve, true)
 	d.registerRPC("task.btw", rpc.ScopeWrite, false, d.handleTaskBtw)
 	d.registerRPC("history.recent", rpc.ScopeRead, false, d.handleHistoryRecent)
+	d.registerRPC("memory.list", rpc.ScopeRead, false, d.handleMemoryList)
+	d.registerRPC("memory.context", rpc.ScopeRead, false, d.handleMemoryContext)
+	d.registerRPC("memory.write", rpc.ScopeWrite, false, d.handleMemoryWrite, true)
 
 	d.registerRPC("task.submit", rpc.ScopeWrite, false, d.handleTaskSubmit)
 	d.registerRPC("task.status", rpc.ScopeRead, true, d.handleTaskStatus)
@@ -973,6 +988,188 @@ func (d *Daemon) handleApprovePlan(params json.RawMessage) (any, error) {
 	return map[string]any{"session_id": id, "plan_mode": false, "approved": true}, nil
 }
 
+func (d *Daemon) handleMemoryList(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		Target    string `json:"target"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	sess, ok := d.store.Get(p.SessionID)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	}
+	return d.memory.list(memoryScopeFromSession(sess), p.Target)
+}
+
+func (d *Daemon) handleMemoryContext(params json.RawMessage) (any, error) {
+	id, err := sessionID(params)
+	if err != nil {
+		return nil, err
+	}
+	sess, ok := d.store.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", id)
+	}
+	scope := memoryScopeFromSession(sess)
+	return map[string]any{
+		"scope":   scope,
+		"context": d.memory.contextBlock(scope),
+	}, nil
+}
+
+func (d *Daemon) handleMemoryWrite(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string            `json:"session_id"`
+		Action    string            `json:"action"`
+		Target    string            `json:"target"`
+		Content   string            `json:"content"`
+		OldText   string            `json:"old_text"`
+		Ops       []memoryOperation `json:"operations"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	sess, ok := d.store.Get(p.SessionID)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	}
+	req := memoryWriteRequest{
+		Action:     p.Action,
+		Target:     p.Target,
+		Content:    p.Content,
+		OldText:    p.OldText,
+		Operations: p.Ops,
+	}
+	scope := memoryScopeFromSession(sess)
+	summary, err := summarizeMemoryWrite(scope, req)
+	if err != nil {
+		return nil, err
+	}
+	decision, err := d.kern.Request(sess.SessionID, "MemoryWrite", summary.Resource, "")
+	if err != nil {
+		return nil, err
+	}
+	switch decision.Decision {
+	case "denied":
+		return map[string]any{"decision": decision}, nil
+	case "requires_approval":
+		d.mu.Lock()
+		d.pendingMemWrites[decision.DecisionID] = pendingMemoryWrite{
+			sessionID: sess.SessionID,
+			req:       req,
+			scope:     scope,
+			summary:   summary,
+		}
+		d.mu.Unlock()
+		return map[string]any{"decision": decision}, nil
+	}
+	result, err := d.applyMemoryWrite(sess, "", req, decision, scope, summary)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"decision": decision, "result": result}, nil
+}
+
+type memoryWriteSummary struct {
+	Target         string
+	Action         string
+	ScopeID        string
+	Resource       string
+	ContentSHA256  string
+	OperationCount int
+}
+
+func summarizeMemoryWrite(scope memoryScope, req memoryWriteRequest) (memoryWriteSummary, error) {
+	target, err := normalizeMemoryTarget(req.Target)
+	if err != nil {
+		return memoryWriteSummary{}, err
+	}
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	if action == "" && len(req.Operations) > 0 {
+		action = "batch"
+	}
+	switch action {
+	case "add", "replace", "remove", "batch":
+	default:
+		return memoryWriteSummary{}, fmt.Errorf("unsupported memory action %q", action)
+	}
+	opCount := 1
+	if action == "batch" {
+		opCount = len(req.Operations)
+	}
+	contentHash := memoryWriteHash(req)
+	scopeID := scope.WorkspaceHash
+	if target == memoryTargetUser {
+		scopeID = scope.Profile
+	}
+	resource := fmt.Sprintf(
+		"target=%s scope=%s action=%s ops=%d content_sha256=%s",
+		target,
+		scopeID,
+		action,
+		opCount,
+		contentHash,
+	)
+	return memoryWriteSummary{
+		Target:         target,
+		Action:         action,
+		ScopeID:        scopeID,
+		Resource:       resource,
+		ContentSHA256:  contentHash,
+		OperationCount: opCount,
+	}, nil
+}
+
+func memoryWriteHash(req memoryWriteRequest) string {
+	payload := struct {
+		Action     string            `json:"action"`
+		Target     string            `json:"target"`
+		Content    string            `json:"content,omitempty"`
+		OldText    string            `json:"old_text,omitempty"`
+		Operations []memoryOperation `json:"operations,omitempty"`
+	}{
+		Action:     strings.ToLower(strings.TrimSpace(req.Action)),
+		Target:     strings.ToLower(strings.TrimSpace(req.Target)),
+		Content:    req.Content,
+		OldText:    req.OldText,
+		Operations: req.Operations,
+	}
+	raw, _ := json.Marshal(payload)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func (d *Daemon) applyMemoryWrite(sess *sessionstore.Session, taskID string, req memoryWriteRequest, decision *kernel.Decision, scope memoryScope, summary memoryWriteSummary) (memoryWriteResult, error) {
+	result, err := d.memory.apply(scope, req)
+	if err != nil {
+		return memoryWriteResult{}, err
+	}
+	result.DecisionID = decision.DecisionID
+	result.ContentSHA256 = summary.ContentSHA256
+	result.OperationCount = summary.OperationCount
+	payload := map[string]any{
+		"status":          "memory_write",
+		"target":          summary.Target,
+		"action":          summary.Action,
+		"success":         result.Success,
+		"usage":           result.Usage,
+		"entry_count":     result.EntryCount,
+		"operation_count": summary.OperationCount,
+		"content_sha256":  summary.ContentSHA256,
+		"scope": map[string]any{
+			"profile":        result.Scope.Profile,
+			"workspace_hash": result.Scope.WorkspaceHash,
+		},
+	}
+	if !result.Success {
+		payload["error"] = result.Error
+	}
+	d.record(sess.SessionID, "TaskCreated", taskID, "go", payload, decision.DecisionID)
+	return result, nil
+}
+
 func (d *Daemon) setPlanMode(sessionID string, on bool) {
 	d.planMu.Lock()
 	defer d.planMu.Unlock()
@@ -1303,6 +1500,21 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 		}
 		return map[string]any{"decision": decision, "result": result}, nil
 	}
+	d.mu.Lock()
+	memPending, ok := d.pendingMemWrites[p.DecisionID]
+	delete(d.pendingMemWrites, p.DecisionID)
+	d.mu.Unlock()
+	if ok {
+		sess, ok := d.store.Get(memPending.sessionID)
+		if !ok {
+			return nil, fmt.Errorf("unknown session %s", memPending.sessionID)
+		}
+		result, err := d.applyMemoryWrite(sess, memPending.taskID, memPending.req, decision, memPending.scope, memPending.summary)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"decision": decision, "result": result}, nil
+	}
 	return map[string]any{"decision": decision}, nil
 }
 
@@ -1321,6 +1533,7 @@ func (d *Daemon) handleDeny(params json.RawMessage) (any, error) {
 	}
 	d.mu.Lock()
 	delete(d.pendingCmds, p.DecisionID)
+	delete(d.pendingMemWrites, p.DecisionID)
 	d.mu.Unlock()
 	return d.kern.Deny(p.SessionID, p.DecisionID, p.Approver, p.Reason)
 }

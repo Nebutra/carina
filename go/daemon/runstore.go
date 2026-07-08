@@ -71,8 +71,9 @@ func (r *runStore) load() []*scheduler.Task {
 // (compacted) transcript. The audit log remains the full source of truth; this
 // is only what the agent loop needs to continue from where it left off.
 type runCheckpoint struct {
-	Turn       int         `json:"turn"`
-	Transcript *Transcript `json:"transcript"`
+	Turn           int         `json:"turn"`
+	Transcript     *Transcript `json:"transcript"`
+	MemorySnapshot string      `json:"memory_snapshot,omitempty"`
 }
 
 func (r *runStore) saveCheckpoint(taskID string, cp *runCheckpoint) {

@@ -17,6 +17,8 @@ Carina keeps these responsibilities inside the local runtime:
 - transactional patch apply and rollback;
 - BYOK provider credentials, with user-supplied keys taking priority;
 - local session execution, local workers, and local recovery;
+- local governed memory entries unless an explicit future Nebutra memory-sync
+  mode is enabled;
 - explicit export surfaces such as `audit.export` and `session.items`.
 
 The cloud boundary must not become a bypass around the capability kernel. A
@@ -34,6 +36,7 @@ Nebutra Cloud should own:
 - multi-endpoint session index and handoff metadata;
 - policy bundle distribution;
 - optional audit-bundle upload and retention;
+- optional memory-sync metadata and semantic indexes, when explicitly enabled;
 - remote-worker fleet enrollment and routing metadata;
 - billing, entitlement, and product analytics outside the local runtime.
 
@@ -90,6 +93,10 @@ expected progression is:
    redaction rules and retention controls.
 3. **handoff**: allow a Nebutra-authenticated endpoint to attach to a session or
    enqueue work through the existing daemon authority path.
+4. **memory**: sync selected user/workspace memory metadata through Nebutra
+   identity after local owner opt-in. Raw local memory should not sync by
+   default; synced entries need scope, provenance, retention, and deletion
+   controls.
 
 Raw BYOK keys, local workspace files, and unrestricted transcripts should not
 sync by default.
@@ -101,6 +108,7 @@ sync by default.
 | Identity | `go/daemon/identity.go` `IdentityProvider` | Resolve OIDC/SSO access tokens to users and roles. |
 | Model auth | `CARINA_NEBUTRA_TOKEN` OAuth fallback | Provide managed Nebutra access tokens only when BYOK keys are absent. |
 | Config | `nebutra_cloud_endpoint`, `nebutra_sync_mode` | Define which Nebutra product endpoint a future connector talks to. |
+| Memory | local `memory` / `user` targets and `MemoryWrite` audit metadata | Provide identity, scope mapping, sync policy, retention, and deletion controls for any future memory sync. |
 | Device/node pairing | Gateway role/scope handshake and method descriptors | Register device identity and pairing metadata without granting local action authority. |
 | Audit | `audit.export`, `session.items` | Store, search, and present synced bundles without rewriting local history. |
 | Remote workers | worker registry and work-dispatch lease protocol | Enroll endpoints and route work metadata without bypassing local policy. |
@@ -122,4 +130,6 @@ sync by default.
 - Nebutra identity tokens and local owner/admin tokens must remain separate
   trust domains.
 - Audit sync should preserve local event hashes instead of rewriting events.
+- Memory sync should preserve local provenance and deletion semantics instead
+  of silently merging unscoped facts across users or workspaces.
 - Secrets should sync only as handles or provenance, never as raw values.

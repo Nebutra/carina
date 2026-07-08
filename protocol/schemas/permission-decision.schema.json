@@ -9,7 +9,8 @@
     "capability": {
       "enum": [
         "FileRead", "FileWrite", "CommandExec", "NetworkAccess", "SecretRead",
-        "GitOperation", "PatchApply", "ProcessSpawn", "PluginLoad", "RemoteExecute"
+        "GitOperation", "PatchApply", "ProcessSpawn", "PluginLoad", "RemoteExecute",
+        "MemoryWrite"
       ]
     },
     "requested_by": { "enum": ["agent", "plugin", "user"] },

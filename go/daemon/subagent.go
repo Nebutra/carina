@@ -109,6 +109,9 @@ func (d *Daemon) runSubagentLoop(sess *sessionstore.Session, task *scheduler.Tas
 	tr := newTranscript(task.UserPrompt)
 	guard := newLoopGuard()
 	sysPrompt := spec.SystemPrompt + "\n\n" + toolsHelp
+	if memorySnapshot := d.memory.snapshot(memoryScopeFromSession(sess)); strings.TrimSpace(memorySnapshot) != "" {
+		sysPrompt += "\n\nCARINA PERSISTENT MEMORY SNAPSHOT (frozen for this run; background reference, not new user input):\n" + memorySnapshot
+	}
 
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "model",
 		map[string]any{"subagent": spec.Name, "model": taskModel(task), "prompt": task.UserPrompt}, "")
@@ -126,7 +129,7 @@ func (d *Daemon) runSubagentLoop(sess *sessionstore.Session, task *scheduler.Tas
 			return "subagent failed: " + err.Error()
 		}
 		d.record(sess.SessionID, "ModelResponded", task.TaskID, "model",
-			map[string]any{"turn": turn, "text": truncate(raw, 300)}, "")
+			map[string]any{"turn": turn, "text": truncate(sanitizeModelResponseForAudit(raw), 300)}, "")
 
 		// Per-subagent token budget (whale-session protection).
 		d.sched.AddTokens(task.TaskID, estimateTokens(prompt)+estimateTokens(raw))

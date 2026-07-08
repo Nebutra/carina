@@ -28,6 +28,7 @@ const toolsHelp = `Available tools:
 - {"tool":"search","pattern":"text"}           search the workspace
 - {"tool":"run","command":["prog","arg"]}      run a command (sandboxed; risky commands are denied)
 - {"tool":"patch","path":"rel/path","content":"FULL new file content"}   propose+apply an edit (transactional, rollbackable)
+- {"tool":"memory","target":"memory|user","action":"add|replace|remove|batch","content":"fact","old_text":"unique substring","operations":[...]}   update governed long-term memory
 - {"tool":"done","summary":"what you did / found"}   finish the task
 
 Rules:
@@ -58,19 +59,23 @@ available to later steps as ${step_id}). Top-level only:
 To gather context faster, batch several READ-ONLY tools (list/read/search) to run
 in parallel in one turn:
 - {"actions":[{"tool":"read","path":"a.go"},{"tool":"read","path":"b.go"},{"tool":"search","pattern":"foo"}]}
-Writes (patch/run) must stay one action per turn — never put them in a batch.`
+Writes (patch/run/memory) must stay one action per turn — never put them in a batch.`
 
 // action is the decision emitted by the reasoner each turn. Fields are read
 // from the top level (flat form the model naturally emits) or from a nested
 // "action" object (see parseAction).
 type action struct {
-	Thought string   `json:"thought"`
-	Tool    string   `json:"tool"`
-	Path    string   `json:"path"`
-	Pattern string   `json:"pattern"`
-	Command []string `json:"command"`
-	Content string   `json:"content"`
-	Summary string   `json:"summary"`
+	Thought    string            `json:"thought"`
+	Tool       string            `json:"tool"`
+	Action     json.RawMessage   `json:"action,omitempty"`
+	Path       string            `json:"path"`
+	Pattern    string            `json:"pattern"`
+	Command    []string          `json:"command"`
+	Content    string            `json:"content"`
+	Summary    string            `json:"summary"`
+	Target     string            `json:"target"`
+	OldText    string            `json:"old_text"`
+	Operations []memoryOperation `json:"operations,omitempty"`
 	// spawn tool
 	Agent string      `json:"agent"`
 	Task  string      `json:"task"`
@@ -108,7 +113,7 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
 		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "agent": taskAgent(task), "prompt": task.UserPrompt}, "")
-	d.runLoop(sess, task, newTranscript(task.UserPrompt), 1)
+	d.runLoop(sess, task, newTranscript(task.UserPrompt), 1, d.memory.snapshot(memoryScopeFromSession(sess)))
 }
 
 // resumeTask continues a background run from a persisted transcript checkpoint
@@ -126,13 +131,13 @@ func (d *Daemon) resumeTask(sess *sessionstore.Session, task *scheduler.Task, cp
 	}
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
 		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "agent": taskAgent(task), "prompt": task.UserPrompt, "resumed_from_turn": cp.Turn}, "")
-	d.runLoop(sess, task, cp.Transcript, cp.Turn+1)
+	d.runLoop(sess, task, cp.Transcript, cp.Turn+1, cp.MemorySnapshot)
 }
 
 // runLoop is the ReAct loop shared by fresh (runTask) and resumed (resumeTask)
 // runs. It checkpoints the transcript after each turn, so a daemon crash loses
 // at most one in-flight action.
-func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, startTurn int) {
+func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, startTurn int, memorySnapshot string) {
 	// Refresh the task so settings applied after submit (output schema, mode)
 	// are visible — the scheduler replaces the row on each update.
 	if t, ok := d.sched.Get(task.TaskID); ok {
@@ -156,6 +161,9 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 	}
 	if mem := loadMemory(sess.WorkspaceRoot); mem != "" {
 		sysPrompt += "\n\nPROJECT INSTRUCTIONS (Nebutra/Carina — follow them):\n" + mem
+	}
+	if strings.TrimSpace(memorySnapshot) != "" {
+		sysPrompt += "\n\nCARINA PERSISTENT MEMORY SNAPSHOT (frozen for this run; background reference, not new user input):\n" + memorySnapshot
 	}
 	if style := loadStyle(sess.WorkspaceRoot); style != "" {
 		sysPrompt = "OUTPUT STYLE (apply to your presentation):\n" + style + "\n\n" + sysPrompt
@@ -202,7 +210,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 				return
 			}
 			d.record(sess.SessionID, "ModelResponded", task.TaskID, "model",
-				map[string]any{"turn": turn, "text": truncate(raw, 400)}, "")
+				map[string]any{"turn": turn, "text": sanitizeModelResponseForAudit(raw)}, "")
 			a, perr := parseAction(raw)
 			if perr == nil {
 				act, ok = a, true
@@ -285,7 +293,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 					Content: "Parallel batches are read-only (list/read/search); these are not: " + strings.Join(bad, ", ") +
 						". Run writes (patch/run) one action per turn."}})
 				guard.tick()
-				d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr})
+				d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot})
 				continue
 			}
 			if guard.repeated("batch", briefBatch(act.Actions)) {
@@ -297,7 +305,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 			guard.tick() // reads make no edit
 			tr.addTurn(Turn{Thought: act.Thought, Tool: "batch",
 				ActionBrief: briefBatch(act.Actions), Obs: Observation{Content: obs}})
-			d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr})
+			d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot})
 			continue
 		}
 
@@ -326,7 +334,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		tr.addTurn(Turn{Thought: act.Thought, Tool: act.Tool,
 			ActionBrief: briefAction(&act), Obs: Observation{Content: obs, Pinned: pinned}})
 		// Checkpoint after each completed turn so a crash can resume here.
-		d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr})
+		d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot})
 	}
 
 	d.degrade(sess, task, tr, "reached max turns without done")
@@ -475,8 +483,8 @@ func (d *Daemon) executeAction(sess *sessionstore.Session, task *scheduler.Task,
 			map[string]any{"status": "hook_blocked", "tool": act.Tool, "reason": reason}, "")
 		return "BLOCKED by hook: " + reason
 	}
-	if d.isPlanMode(sess.SessionID) && (act.Tool == "patch" || act.Tool == "run") {
-		return "BLOCKED: plan mode active — explore read-only and present a plan; the operator must approve it (session.approve_plan) before edits/commands"
+	if d.isPlanMode(sess.SessionID) && (act.Tool == "patch" || act.Tool == "run" || act.Tool == "memory") {
+		return "BLOCKED: plan mode active — explore read-only and present a plan; the operator must approve it (session.approve_plan) before edits, commands, or memory writes"
 	}
 	obs := d.dispatchAction(sess, task, act)
 	d.runPostToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, obs))
@@ -566,9 +574,48 @@ func (d *Daemon) dispatchAction(sess *sessionstore.Session, task *scheduler.Task
 	case "mcp":
 		return d.callMCP(sess, task, act)
 
+	case "memory":
+		return d.agentMemory(sess, task, act)
+
 	default:
 		return "unknown tool: " + act.Tool
 	}
+}
+
+func (d *Daemon) agentMemory(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+	req := memoryWriteRequest{
+		Action:     string(act.Action),
+		Target:     act.Target,
+		Content:    act.Content,
+		OldText:    act.OldText,
+		Operations: act.Operations,
+	}
+	req.Action = strings.Trim(req.Action, `"`)
+	scope := memoryScopeFromSession(sess)
+	summary, err := summarizeMemoryWrite(scope, req)
+	if err != nil {
+		return "memory error: " + err.Error()
+	}
+	dec, err := d.kern.Request(sess.SessionID, "MemoryWrite", summary.Resource, task.TaskID)
+	if err != nil {
+		return "memory error: " + err.Error()
+	}
+	switch dec.Decision {
+	case "denied":
+		return "DENIED by policy: " + dec.Reason
+	case "requires_approval":
+		approved, ok := d.resolveApproval(sess, task, dec, "memory "+summary.Action+" "+summary.Target)
+		if !ok {
+			return "requires approval (not granted): " + dec.Reason
+		}
+		dec = approved
+	}
+	result, err := d.applyMemoryWrite(sess, task.TaskID, req, dec, scope, summary)
+	if err != nil {
+		return "memory error: " + err.Error()
+	}
+	raw, _ := json.Marshal(result)
+	return string(raw)
 }
 
 // agentPatch proposes and applies a full-file edit through the kernel's
@@ -713,6 +760,72 @@ func resolveIn(root, path string) string {
 		return path
 	}
 	return root + "/" + path
+}
+
+func sanitizeModelResponseForAudit(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	start := strings.Index(trimmed, "{")
+	end := strings.LastIndex(trimmed, "}")
+	if start < 0 || end <= start {
+		return truncate(raw, 400)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(trimmed[start:end+1]), &obj); err != nil {
+		return truncate(raw, 400)
+	}
+	if !sanitizeMemoryActionMap(obj) {
+		return truncate(raw, 400)
+	}
+	redacted, err := json.Marshal(obj)
+	if err != nil {
+		return "[memory action redacted]"
+	}
+	return truncate(string(redacted), 400)
+}
+
+func sanitizeMemoryActionMap(obj map[string]any) bool {
+	redacted := false
+	if tool, _ := obj["tool"].(string); tool == "memory" {
+		redactMemoryActionFields(obj)
+		redacted = true
+	}
+	if nested, ok := obj["action"].(map[string]any); ok {
+		if sanitizeMemoryActionMap(nested) {
+			redacted = true
+		}
+	}
+	if actions, ok := obj["actions"].([]any); ok {
+		for _, item := range actions {
+			if m, ok := item.(map[string]any); ok && sanitizeMemoryActionMap(m) {
+				redacted = true
+			}
+		}
+	}
+	return redacted
+}
+
+func redactMemoryActionFields(obj map[string]any) {
+	if _, ok := obj["content"]; ok {
+		obj["content"] = "[redacted]"
+	}
+	if _, ok := obj["old_text"]; ok {
+		obj["old_text"] = "[redacted]"
+	}
+	if ops, ok := obj["operations"].([]any); ok {
+		for _, item := range ops {
+			if op, ok := item.(map[string]any); ok {
+				if _, ok := op["content"]; ok {
+					op["content"] = "[redacted]"
+				}
+				if _, ok := op["old_text"]; ok {
+					op["old_text"] = "[redacted]"
+				}
+			}
+		}
+	}
 }
 
 func parseAction(raw string) (action, error) {

@@ -70,6 +70,7 @@ Implemented in this repository:
 |---|---|
 | Sessions and tasks | Daemon-backed sessions, background runs, event streams, attach/replay, task steering |
 | Agent loop | ReAct-style loop, structured actions, prompt compaction, success checks, verifier, risk review |
+| Memory | Local governed memory store with `memory` / `user` targets, frozen per-run prompt snapshot, native `memory` tool, local `memory.*` RPC, and kernel-gated `MemoryWrite` audit |
 | Permissions | Built-in profiles, approval modes, approval overlays with justifications, workspace trust, sub-agent attenuation |
 | Audit | Hash-chained event log, audit export, verification, normalized `session.items` stream, turn net diff |
 | File changes | Transactional patch propose/apply/rollback and post-edit diagnostics |
@@ -158,6 +159,21 @@ turn-level patch summaries. Use `carina audit <session_id>` or
 `carina audit verify <session_id>` when you need the raw event chain and
 tamper-evidence.
 
+### Governed Memory
+
+Carina keeps local long-term memory under the daemon state directory. The
+runtime separates agent/project notes (`target=memory`) from user profile facts
+(`target=user`). Memory enters an agent run as a frozen prompt snapshot, so
+writes during that run are durable but do not rewrite the run's stable prompt
+prefix. Use the local `memory.*` RPC methods or the agent's native `memory`
+tool to add, replace, remove, or batch memory entries. Writes go through the
+default approval-gated `MemoryWrite` capability, are bounded and
+content-scanned, and are audited by target/scope/action/content hash rather
+than by raw memory text.
+
+External semantic memory providers and Nebutra Cloud memory sync are not
+enabled in the source-first alpha.
+
 ### BYOK Providers
 
 Store local credentials and inspect the provider catalog:
@@ -237,6 +253,7 @@ Default posture:
 5. Destructive commands are denied by default.
 6. File changes go through patch transactions.
 7. Plugins start with no implicit permissions.
+8. Persistent memory writes are capability-gated, scoped, bounded, and audited.
 
 Alpha limitations:
 
