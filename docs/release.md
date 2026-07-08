@@ -29,6 +29,61 @@ cargo test
 go test -race ./go/daemon ./go/config ./apps/carina-daemon
 ```
 
+## Local Release Package
+
+Build a current-platform release candidate with:
+
+```bash
+make release-package
+```
+
+To force a release version:
+
+```bash
+VERSION=0.6.0 make release-package
+```
+
+The package command writes to `dist/`:
+
+- `carina_<version>_<goos>_<goarch>.tar.gz`;
+- `carina_<version>_<goos>_<goarch>.tar.gz.sha256`;
+- `SHA256SUMS`;
+- extracted staging directory with `MANIFEST.json`, `VERSION_CHECK.txt`, and
+  `checksums.txt`.
+
+The archive includes Go CLIs, the Rust kernel service, Zig native tools matching
+`zig/zig-out/bin/carina-*`, README, LICENSE, SECURITY, and release docs. It
+smoke-tests `bin/carina --version` from the staged package.
+
+`VERSION_CHECK.txt` records CLI, daemon, Rust workspace, TypeScript SDK, and
+Python SDK versions. Mismatches are warnings in the package manifest, not hidden
+state.
+
+Use existing artifacts without rebuilding:
+
+```bash
+SKIP_BUILD=1 VERSION=0.6.0 ./scripts/package-release.sh
+```
+
+If Zig is unavailable but `zig/zig-out/bin/carina-*` artifacts already exist,
+reuse them explicitly:
+
+```bash
+SKIP_ZIG=1 VERSION=0.6.0 make release-package
+```
+
+`SKIP_BUILD=1` and `SKIP_ZIG=1` are recorded as warnings in `MANIFEST.json` and
+`VERSION_CHECK.txt`.
+
+Verify an archive:
+
+```bash
+cd dist
+shasum -a 256 -c carina_<version>_<goos>_<goarch>.tar.gz.sha256
+tar -xzf carina_<version>_<goos>_<goarch>.tar.gz
+./carina_<version>_<goos>_<goarch>/bin/carina --version
+```
+
 ## Current Artifacts
 
 `make all` writes local binaries into `bin/`:
@@ -68,21 +123,24 @@ Before a non-source public release:
 - update npm install package when applicable;
 - verify install from a clean machine.
 
-## Install Channel Roadmap
+## Install Channel Templates
 
-Planned channels are tracked in [docs/roadmap.md](roadmap.md):
+Templates are checked in but not published:
 
-- signed GitHub release archives first;
-- Homebrew tap for macOS and Linuxbrew;
-- npm ecosystem package as a thin platform-binary installer/launcher;
-- later shell installer, Linux distro packages, Docker images, and Windows
-  packages when platform support exists.
+- Homebrew formula template:
+  `packaging/homebrew/carina.rb.template`;
+- npm installer package template:
+  `packaging/npm/package.json.template`.
+
+Planned channels are tracked in [docs/roadmap.md](roadmap.md). A rendered
+Homebrew formula or npm package must point at signed or checksummed release
+archives and must pass a clean-machine smoke test before public promotion.
 
 ## Not Yet Implemented
 
 - hosted installer;
-- Homebrew tap;
-- npm install package;
+- published Homebrew tap;
+- published npm install package;
 - artifact signing;
 - SBOM/provenance automation;
 - Windows release path.

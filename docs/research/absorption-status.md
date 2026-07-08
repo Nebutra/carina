@@ -258,6 +258,27 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
 - [x] **Minimal usable TUI** (`apps/carina-tui`): replaced the placeholder with
   a read-only status/session viewer over the daemon socket.
 
+**Wave 18 — Release/install packaging closure (landed)**
+- [x] **Local release candidate packaging** (`Makefile`,
+  `scripts/package-release.sh`): added `make release-package` for
+  current-platform archives under `dist/`, including Go CLIs, the Rust kernel
+  service, Zig `carina-*` native tools, release docs, per-file checksums,
+  archive checksum, `MANIFEST.json`, and `VERSION_CHECK.txt`.
+- [x] **Version and build transparency** (`scripts/package-release.sh`): package
+  version defaults to the CLI version or explicit `VERSION=...`; daemon, Rust
+  workspace, TypeScript SDK, and Python SDK version mismatches are recorded as
+  warnings instead of hidden. `SKIP_BUILD=1` and `SKIP_ZIG=1` are explicit and
+  also recorded in the package manifest.
+- [x] **Install-channel templates without false publication claims**
+  (`packaging/homebrew`, `packaging/npm`): added Homebrew and npm templates as
+  publish-time scaffolding only. The docs keep public Homebrew/npm channels in
+  the roadmap until signed/checksummed release artifacts and clean-machine
+  smoke tests exist.
+- [x] **README/release/roadmap sync** (`README*.md`, `docs/release.md`,
+  `docs/roadmap.md`): documented the source-first alpha state, local package
+  command, package verification, and planned install channels without claiming
+  live public packages.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
@@ -270,17 +291,18 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   app-server coupling remains outside Carina. Multi-endpoint identity/sync is
   now documented and guarded as a Nebutra Cloud (云毓智能, `nebutra.com`) product
   boundary with local sync off by default.
-- OpenClaw Gateway items intentionally staged after Wave 17: Nebutra
+- OpenClaw Gateway items intentionally staged after Wave 18: Nebutra
   device/node pairing remains a Nebutra identity/sync product surface rather
   than local action authority. Full plugin HTTP route installation and
   write-capable direct tool invoke remain future work behind manifest policy
   and local owner review.
 
 ## Test status
-Current verification for this update: targeted Go coverage
-(`go test ./go/rpc ./go/config ./go/daemon ./apps/carina-tui`, 149 tests across
-4 packages) and full Go coverage (`go test ./...`, 234 tests across 22
-packages), plus targeted race coverage
-(`go test -race ./go/rpc ./go/config ./go/daemon ./apps/carina-tui ./apps/carina-daemon`,
-149 tests across 5 packages). This update touched Go RPC/config/daemon/TUI
-entrypoints and docs; Rust and Zig were not rebuilt.
+Current verification for this update: `go test ./...`, `bash -n
+scripts/package-release.sh`, `git diff --check`, and `env SKIP_ZIG=1 make
+release-package`. The generated `dist/carina_0.6.0_darwin_arm64.tar.gz`
+validated with `shasum -a 256 -c`, `MANIFEST.json` parsed with `jq`, and the
+archive was checked to contain no historical `pi-*` binaries. Zig is not on the
+current PATH, so this packaging run reused existing `zig/zig-out/bin/carina-*`
+artifacts and recorded that warning; a full release machine should still run
+`make release-check` with Zig installed before publishing.

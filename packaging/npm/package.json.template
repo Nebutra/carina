@@ -1,0 +1,29 @@
+{
+  "name": "@nebutra/carina",
+  "version": "__VERSION__",
+  "description": "Thin installer and launcher for Carina platform binaries",
+  "license": "MIT",
+  "bin": {
+    "carina": "bin/carina.js",
+    "carina-daemon": "bin/carina-daemon.js",
+    "carina-tui": "bin/carina-tui.js"
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "vendor",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js",
+    "test": "node bin/carina.js --version"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ]
+}

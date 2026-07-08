@@ -1,0 +1,24 @@
+class Carina < Formula
+  desc "Local-first runtime for AI coding agents"
+  homepage "https://github.com/Nebutra/carina"
+  url "https://github.com/Nebutra/carina/releases/download/v__VERSION__/carina___VERSION___darwin_arm64.tar.gz"
+  sha256 "__SHA256__"
+  license "MIT"
+
+  def install
+    bin.install Dir["bin/carina*"]
+  end
+
+  def caveats
+    <<~EOS
+      Carina does not auto-start a daemon after install.
+
+      Start it explicitly:
+        carina-daemon
+    EOS
+  end
+
+  test do
+    assert_match "carina", shell_output("#{bin}/carina --version")
+  end
+end

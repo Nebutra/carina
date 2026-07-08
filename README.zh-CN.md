@@ -10,7 +10,7 @@
 [![build](https://img.shields.io/badge/build-source%20first-0B7285)](#从源码快速开始)
 [![runtime](https://img.shields.io/badge/runtime-local--first-0BF1C3)](#为什么用-carina)
 [![audit](https://img.shields.io/badge/audit-hash--chained-6D28D9)](#审查与审计)
-[![license](https://img.shields.io/badge/license-Apache--2.0-informational)](LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-informational)](LICENSE)
 
 [English](README.md) · **简体中文** · [日本語](README.ja.md)
 
@@ -237,6 +237,12 @@ go test -race ./go/daemon ./go/config ./apps/carina-daemon
 make release-check
 ```
 
+构建本地 release candidate 归档：
+
+```bash
+make release-package
+```
+
 更多文档：
 
 - [产品定位](docs/product.md)
@@ -250,4 +256,4 @@ make release-check
 
 ## 许可证
 
-Apache-2.0。参见 [LICENSE](LICENSE)。
+MIT License。参见 [LICENSE](LICENSE)。

@@ -10,7 +10,7 @@
 [![build](https://img.shields.io/badge/build-source%20first-0B7285)](#quickstart-from-source)
 [![runtime](https://img.shields.io/badge/runtime-local--first-0BF1C3)](#why-carina)
 [![audit](https://img.shields.io/badge/audit-hash--chained-6D28D9)](#review-and-audit)
-[![license](https://img.shields.io/badge/license-Apache--2.0-informational)](LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-informational)](LICENSE)
 
 [English](README.md) · [简体中文](README.zh-CN.md) · **日本語**
 
@@ -237,6 +237,12 @@ Run local release gate:
 make release-check
 ```
 
+Build a local release candidate archive:
+
+```bash
+make release-package
+```
+
 More docs:
 
 - [Product positioning](docs/product.md)
@@ -250,4 +256,4 @@ More docs:
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+MIT License. See [LICENSE](LICENSE).

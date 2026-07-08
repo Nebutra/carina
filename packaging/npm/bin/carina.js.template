@@ -1,0 +1,13 @@
+#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const path = require("node:path");
+
+const commandName = path.basename(process.argv[1], ".js");
+const binary = path.join(__dirname, "..", "vendor", process.platform + "-" + process.arch, commandName);
+const result = spawnSync(binary, process.argv.slice(2), { stdio: "inherit" });
+
+if (result.error) {
+  console.error(`failed to launch ${commandName}: ${result.error.message}`);
+  process.exit(127);
+}
+process.exit(result.status ?? 1);

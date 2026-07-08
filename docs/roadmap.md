@@ -9,7 +9,9 @@ Today:
 
 - source build from Git with `make all`;
 - local release gate with `make release-check`;
+- current-platform release candidate archives with `make release-package`;
 - local binaries under `bin/`;
+- local archives, checksums, and manifests under `dist/`;
 - no signed public packages yet.
 
 Planned install channels:

@@ -1,4 +1,4 @@
-.PHONY: all go rust zig sdk-ts test rust-test go-test release-check clean
+.PHONY: all go rust zig sdk-ts test rust-test go-test release-check release-package clean
 
 all: go rust zig
 
@@ -29,6 +29,9 @@ sdk-ts:
 
 release-check:
 	./scripts/release-check.sh
+
+release-package:
+	./scripts/package-release.sh
 
 clean:
 	rm -rf bin target zig/zig-out zig/.zig-cache
