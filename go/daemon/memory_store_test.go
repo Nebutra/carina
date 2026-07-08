@@ -1,8 +1,13 @@
 package daemon
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
 func TestMemoryStoreAppliesBoundedMutations(t *testing.T) {
@@ -55,6 +60,65 @@ func TestMemoryStoreAppliesBoundedMutations(t *testing.T) {
 	}
 	if !batch.Success || batch.EntryCount != 1 {
 		t.Fatalf("batch failed: %+v", batch)
+	}
+}
+
+func TestMemoryScopeUsesNebutraCanonicalIdentity(t *testing.T) {
+	t.Setenv("CARINA_NEBUTRA_IDENTITY_JSON", `{"provider":"nebutra","userId":"user_123","organizationId":"org_456","claimsVersion":"v1"}`)
+	t.Setenv("CARINA_NEBUTRA_TOKEN", "")
+	t.Setenv("CARINA_NEBUTRA_USER_ID", "")
+
+	scope := memoryScopeFromSession(&sessionstore.Session{WorkspaceRoot: t.TempDir()})
+	wantProfile := "nebutra_org_" + shortIdentityHash("org_456") + "_user_" + shortIdentityHash("user_123")
+	if scope.Profile != wantProfile || scope.UserID != "user_123" || scope.OrganizationID != "org_456" {
+		t.Fatalf("unexpected Nebutra memory scope: %+v", scope)
+	}
+	if !scope.Authenticated || scope.IdentitySource != "CARINA_NEBUTRA_IDENTITY_JSON" || scope.ClaimsVersion != "v1" {
+		t.Fatalf("expected authenticated identity metadata, got %+v", scope)
+	}
+	if strings.Contains(scope.Profile, "user_123") || strings.Contains(scope.Profile, "org_456") {
+		t.Fatalf("profile key must not expose raw identity ids: %q", scope.Profile)
+	}
+}
+
+func TestMemoryScopeFallsBackToNebutraTokenClaims(t *testing.T) {
+	t.Setenv("CARINA_NEBUTRA_IDENTITY_JSON", "")
+	t.Setenv("CARINA_NEBUTRA_USER_ID", "")
+	claims, _ := json.Marshal(map[string]any{
+		"sub":                     "user.jwt",
+		"nebutra:organization_id": "org.jwt",
+		"claimsVersion":           "v1",
+	})
+	token := "e30." + base64.RawURLEncoding.EncodeToString(claims) + ".sig"
+	t.Setenv("CARINA_NEBUTRA_TOKEN", token)
+
+	scope := memoryScopeFromSession(&sessionstore.Session{WorkspaceRoot: t.TempDir()})
+	if scope.UserID != "user.jwt" || scope.OrganizationID != "org.jwt" {
+		t.Fatalf("token claims did not map to Nebutra identity: %+v", scope)
+	}
+	if scope.IdentitySource != "CARINA_NEBUTRA_TOKEN:claims" || !scope.Authenticated {
+		t.Fatalf("unexpected token identity metadata: %+v", scope)
+	}
+}
+
+func TestMemoryScopeProfileCannotEscapeStore(t *testing.T) {
+	t.Setenv("CARINA_NEBUTRA_IDENTITY_JSON", `{"userId":"../../user","organizationId":"../org"}`)
+	t.Setenv("CARINA_NEBUTRA_TOKEN", "")
+	t.Setenv("CARINA_NEBUTRA_USER_ID", "")
+
+	store := newMemoryStore(t.TempDir())
+	scope := memoryScopeFromSession(&sessionstore.Session{WorkspaceRoot: t.TempDir()})
+	path := store.pathFor(scope, "user")
+	base := filepath.Join(store.baseDir, "profiles")
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		t.Fatalf("user memory path escaped profiles dir: base=%s path=%s rel=%s", base, path, rel)
+	}
+	if strings.Contains(scope.Profile, ".") || strings.Contains(scope.Profile, "/") || strings.Contains(scope.Profile, "\\") {
+		t.Fatalf("profile key should be path-safe, got %q", scope.Profile)
 	}
 }
 

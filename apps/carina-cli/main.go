@@ -49,6 +49,17 @@ Inspect sessions:
   carina items <session_id>                        replay normalized thread/turn/item events
   carina search <session_id> <text>                search the workspace through the daemon
 
+Memory:
+  carina memory status <session_id>                 show local memory scope, provider, and sync boundary
+  carina memory list <session_id> <memory|user>      list governed memory entries
+  carina memory context <session_id>                 render the recalled-memory prompt block
+  carina memory write <session_id> <memory|user> add <content|->
+                                                   request a memory add
+  carina memory write <session_id> <memory|user> replace <old_text> <content|->
+                                                   request a memory replacement
+  carina memory write <session_id> <memory|user> remove <old_text>
+                                                   request a memory removal
+
 Audit and rollback:
   carina audit <session_id>                        replay the raw session event stream
   carina audit verify <session_id>                 verify the tamper-evident hash chain
@@ -153,6 +164,8 @@ func run(cmd string, args []string) error {
 		return cmdCommands(c, args)
 	case "gateway":
 		return cmdGateway(c, args)
+	case "memory":
+		return cmdMemory(c, args)
 
 	case "run", "ask":
 		// --background is accepted for clarity; tasks always run in the
@@ -449,6 +462,82 @@ func cmdGateway(c *rpcClient, args []string) error {
 	default:
 		return fmt.Errorf("usage: carina gateway <hello|methods|ws-probe> [role]")
 	}
+}
+
+func cmdMemory(c *rpcClient, args []string) error {
+	method, params, err := memoryRPC(args, readAllStdin)
+	if err != nil {
+		return err
+	}
+	return call(c, method, params)
+}
+
+func memoryRPC(args []string, readInput func() (string, error)) (string, map[string]any, error) {
+	if len(args) < 1 {
+		return "", nil, fmt.Errorf("usage: carina memory <status|list|context|write> ...")
+	}
+	switch args[0] {
+	case "status":
+		if len(args) != 2 {
+			return "", nil, fmt.Errorf("usage: carina memory status <session_id>")
+		}
+		return "memory.status", map[string]any{"session_id": args[1]}, nil
+	case "list", "ls":
+		if len(args) != 3 {
+			return "", nil, fmt.Errorf("usage: carina memory list <session_id> <memory|user>")
+		}
+		return "memory.list", map[string]any{"session_id": args[1], "target": args[2]}, nil
+	case "context":
+		if len(args) != 2 {
+			return "", nil, fmt.Errorf("usage: carina memory context <session_id>")
+		}
+		return "memory.context", map[string]any{"session_id": args[1]}, nil
+	case "write":
+		if len(args) < 4 {
+			return "", nil, fmt.Errorf("usage: carina memory write <session_id> <memory|user> <add|replace|remove> ...")
+		}
+		sessionID, target, action := args[1], args[2], strings.ToLower(strings.TrimSpace(args[3]))
+		params := map[string]any{"session_id": sessionID, "target": target, "action": action}
+		switch action {
+		case "add":
+			content, err := memoryCLIContent(args[4:], readInput)
+			if err != nil {
+				return "", nil, err
+			}
+			params["content"] = content
+		case "replace":
+			if len(args) < 5 {
+				return "", nil, fmt.Errorf("usage: carina memory write <session_id> <memory|user> replace <old_text> <content|->")
+			}
+			content, err := memoryCLIContent(args[5:], readInput)
+			if err != nil {
+				return "", nil, err
+			}
+			params["old_text"] = args[4]
+			params["content"] = content
+		case "remove":
+			if len(args) < 5 {
+				return "", nil, fmt.Errorf("usage: carina memory write <session_id> <memory|user> remove <old_text>")
+			}
+			params["old_text"] = strings.Join(args[4:], " ")
+		default:
+			return "", nil, fmt.Errorf("memory action must be add, replace, or remove")
+		}
+		return "memory.write", params, nil
+	default:
+		return "", nil, fmt.Errorf("usage: carina memory <status|list|context|write> ...")
+	}
+}
+
+func memoryCLIContent(args []string, readInput func() (string, error)) (string, error) {
+	if len(args) == 0 {
+		return readInput()
+	}
+	content := strings.Join(args, " ")
+	if strings.TrimSpace(content) == "-" {
+		return readInput()
+	}
+	return content, nil
 }
 
 func cmdGatewayWSProbe(args []string) error {

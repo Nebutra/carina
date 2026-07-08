@@ -163,7 +163,14 @@ Dynamic scopes:
 |--------|---------|
 | `memory.list` | list local memory entries for `target=memory` or `target=user` |
 | `memory.context` | render the fenced recalled-memory context block for the session |
+| `memory.status` | inspect local storage paths, identity scope, semantic-provider status, and Nebutra sync status |
 | `memory.write` | add, replace, remove, or batch memory entries through the `MemoryWrite` capability |
+
+`target=user` is scoped by Nebutra identity metadata when available. The daemon
+uses `CARINA_NEBUTRA_IDENTITY_JSON` first, then the claims payload in
+`CARINA_NEBUTRA_TOKEN`, then `CARINA_NEBUTRA_USER_ID`, and finally the local
+fallback profile. Token claims are used only to choose a local memory scope;
+they do not grant Gateway, kernel, or filesystem authority.
 
 `memory.write` is local-only and control-plane-write. The daemon builds a
 resource string from target, scope, action, operation count, and content hash,

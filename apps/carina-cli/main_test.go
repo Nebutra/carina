@@ -56,6 +56,44 @@ func TestUsageIncludesGatewayWSProbe(t *testing.T) {
 	}
 }
 
+func TestUsageIncludesMemoryCommands(t *testing.T) {
+	for _, want := range []string{
+		"Memory:",
+		"carina memory status <session_id>",
+		"carina memory write <session_id> <memory|user> add <content|->",
+	} {
+		if !strings.Contains(usage, want) {
+			t.Fatalf("usage missing %q:\n%s", want, usage)
+		}
+	}
+}
+
+func TestMemoryRPCBuildsStatusAndWrite(t *testing.T) {
+	method, params, err := memoryRPC([]string{"status", "sess_1"}, func() (string, error) { return "", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != "memory.status" || params["session_id"] != "sess_1" {
+		t.Fatalf("unexpected status rpc: %s %+v", method, params)
+	}
+
+	method, params, err = memoryRPC([]string{"write", "sess_1", "user", "add", "-"}, func() (string, error) {
+		return "Remember the preferred editor.", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != "memory.write" || params["target"] != "user" || params["action"] != "add" || params["content"] != "Remember the preferred editor." {
+		t.Fatalf("unexpected write rpc: %s %+v", method, params)
+	}
+}
+
+func TestMemoryRPCRejectsIncompleteWrite(t *testing.T) {
+	if _, _, err := memoryRPC([]string{"write", "sess_1", "memory", "remove"}, func() (string, error) { return "", nil }); err == nil {
+		t.Fatal("incomplete remove should error")
+	}
+}
+
 func TestGatewayWSProbePrintsHelloResponse(t *testing.T) {
 	s := rpc.NewServer()
 	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "gateway.hello", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {

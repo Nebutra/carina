@@ -525,6 +525,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("history.recent", rpc.ScopeRead, false, d.handleHistoryRecent)
 	d.registerRPC("memory.list", rpc.ScopeRead, false, d.handleMemoryList)
 	d.registerRPC("memory.context", rpc.ScopeRead, false, d.handleMemoryContext)
+	d.registerRPC("memory.status", rpc.ScopeRead, false, d.handleMemoryStatus)
 	d.registerRPC("memory.write", rpc.ScopeWrite, false, d.handleMemoryWrite, true)
 
 	d.registerRPC("task.submit", rpc.ScopeWrite, false, d.handleTaskSubmit)
@@ -1019,6 +1020,39 @@ func (d *Daemon) handleMemoryContext(params json.RawMessage) (any, error) {
 	}, nil
 }
 
+func (d *Daemon) handleMemoryStatus(params json.RawMessage) (any, error) {
+	id, err := sessionID(params)
+	if err != nil {
+		return nil, err
+	}
+	sess, ok := d.store.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", id)
+	}
+	scope := memoryScopeFromSession(sess)
+	return map[string]any{
+		"scope": scope,
+		"storage": map[string]any{
+			"mode":        "local",
+			"memory_path": d.memory.pathFor(scope, memoryTargetMemory),
+			"user_path":   d.memory.pathFor(scope, memoryTargetUser),
+		},
+		"semantic_provider": map[string]any{
+			"enabled":  false,
+			"provider": "local-only",
+			"reason":   "external semantic/vector memory provider is not configured in the source-first runtime",
+			"contract": "future providers must preserve MemoryWrite policy, local deletion semantics, and Nebutra identity scope",
+		},
+		"nebutra_cloud_sync": map[string]any{
+			"enabled":   d.syncMode != nebutra.SyncModeOff,
+			"endpoint":  d.cloudEndpoint,
+			"sync_mode": d.syncMode,
+			"authority": "identity/sync only; local runtime remains the action authority",
+			"reason":    "off is the only supported mode until the Nebutra connector exists",
+		},
+	}, nil
+}
+
 func (d *Daemon) handleMemoryWrite(params json.RawMessage) (any, error) {
 	var p struct {
 		SessionID string            `json:"session_id"`
@@ -1159,8 +1193,10 @@ func (d *Daemon) applyMemoryWrite(sess *sessionstore.Session, taskID string, req
 		"operation_count": summary.OperationCount,
 		"content_sha256":  summary.ContentSHA256,
 		"scope": map[string]any{
-			"profile":        result.Scope.Profile,
-			"workspace_hash": result.Scope.WorkspaceHash,
+			"profile":                result.Scope.Profile,
+			"workspace_hash":         result.Scope.WorkspaceHash,
+			"identity_source":        result.Scope.IdentitySource,
+			"authenticated_identity": result.Scope.Authenticated,
 		},
 	}
 	if !result.Success {

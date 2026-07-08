@@ -83,6 +83,27 @@ Current state:
 - `nebutra_sync_mode` defaults to `off`;
 - `off` is the only supported sync mode in the source-first alpha;
 - daemon status exposes the configured endpoint and sync mode for observability.
+- `memory.status` exposes local memory storage, Nebutra identity scope,
+  semantic-provider status, and memory-sync status.
+
+## Identity Shape
+
+Carina follows the Nebutra identity contract used by the surrounding Nebutra
+stack: a canonical identity has provider, user id, optional organization id,
+role/plan metadata, and `claimsVersion: "v1"`. For local governed memory,
+Carina consumes only the stable identity fields needed for scope:
+
+1. `CARINA_NEBUTRA_IDENTITY_JSON`, when a Nebutra connector provides canonical
+   identity metadata directly.
+2. `CARINA_NEBUTRA_TOKEN` claims, mapping OIDC `sub` and
+   `nebutra:organization_id` into the same canonical shape.
+3. `CARINA_NEBUTRA_USER_ID` / organization env overrides for local development.
+4. `local`, when no Nebutra identity is present.
+
+These fields choose the local `target=user` memory profile. They do not grant
+local action authority, satisfy Gateway authentication, or bypass the
+capability kernel. File paths and kernel resource strings use hash profile keys
+rather than raw user or organization ids.
 
 Future sync modes should be added only when the Nebutra connector exists. The
 expected progression is:
@@ -105,10 +126,10 @@ sync by default.
 
 | Boundary | Carina hook | Nebutra responsibility |
 |---|---|---|
-| Identity | `go/daemon/identity.go` `IdentityProvider` | Resolve OIDC/SSO access tokens to users and roles. |
+| Identity | `go/daemon/identity.go` `IdentityProvider`; memory scope resolver | Resolve OIDC/SSO access tokens to canonical users, roles, organizations, and claims version. |
 | Model auth | `CARINA_NEBUTRA_TOKEN` OAuth fallback | Provide managed Nebutra access tokens only when BYOK keys are absent. |
 | Config | `nebutra_cloud_endpoint`, `nebutra_sync_mode` | Define which Nebutra product endpoint a future connector talks to. |
-| Memory | local `memory` / `user` targets and `MemoryWrite` audit metadata | Provide identity, scope mapping, sync policy, retention, and deletion controls for any future memory sync. |
+| Memory | local `memory` / Nebutra-scoped `user` targets, `memory.status`, and `MemoryWrite` audit metadata | Provide semantic/vector provider contracts, sync policy, retention, conflict handling, and deletion controls for any future memory sync. |
 | Device/node pairing | Gateway role/scope handshake and method descriptors | Register device identity and pairing metadata without granting local action authority. |
 | Audit | `audit.export`, `session.items` | Store, search, and present synced bundles without rewriting local history. |
 | Remote workers | worker registry and work-dispatch lease protocol | Enroll endpoints and route work metadata without bypassing local policy. |

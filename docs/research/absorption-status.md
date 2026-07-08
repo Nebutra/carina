@@ -308,6 +308,13 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   target, scope, action, operation count, content hash, and decision id rather
   than raw memory text. Nebutra Cloud memory sync remains explicitly out of
   scope until a Nebutra identity/sync connector exists.
+- [x] **Memory product closure** (`go/daemon`, `apps/carina-cli`,
+  `docs/nebutra-cloud-boundary.md`): `target=user` now scopes by Nebutra
+  canonical identity JSON, Nebutra OIDC/JWT claims, or local fallback, with
+  hash profile keys for paths and audit resources. Operators get
+  `carina memory status/list/context/write`; `memory.status` exposes local
+  storage, external semantic-provider status, and Nebutra sync status. Approval
+  deny-path tests confirm rejected memory writes do not persist.
 
 ## ✅ Remaining
 
@@ -326,15 +333,14 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   than local action authority. Full plugin HTTP route installation and
   write-capable direct tool invoke remain future work behind manifest policy
   and local owner review.
-- Hermes items intentionally staged after Wave 19: external semantic/vector
-  memory providers, cross-device memory sync, and cloud memory conflict
-  resolution belong behind Nebutra identity/sync policy and are not enabled in
-  the local source-first alpha.
+- Hermes external semantic/vector providers and Nebutra Cloud memory sync are
+  now explicit disabled-by-default product boundaries via `memory.status`.
+  Shipping those backends still requires a Nebutra connector with identity,
+  deletion, retention, and conflict policy; the local source-first runtime no
+  longer presents them as implicit TODOs.
 
 ## Test status
-Current verification for the Hermes memory update: `go test ./go/... ./apps/...`
-(241 tests), focused daemon memory/RPC/risk-review/subagent subset (17 tests),
-`go test -race ./go/daemon` (123 tests), `cargo test` (70 tests), focused Rust policy coverage for
-`MemoryWrite` bundle controls, Rust kernel approval-path regression, and
-`git diff --check`. The release kernel service was rebuilt so Go integration
-tests use the new capability enum.
+Current verification for the memory product-closure update: `go test ./go/... ./apps/...`
+(247 tests), `go test ./go/daemon` (126 tests), `go test ./apps/carina-cli`
+(10 tests), `go test -race ./go/daemon` (126 tests), and `git diff --check`.
+Rust code was not changed in this closure pass.

@@ -26,9 +26,14 @@ const (
 // user/profile facts are profile-scoped, while agent notes are workspace-scoped.
 // Future Nebutra Cloud sync can map these same fields to Nebutra identity.
 type memoryScope struct {
-	Profile       string `json:"profile"`
-	WorkspaceRoot string `json:"workspace_root"`
-	WorkspaceHash string `json:"workspace_hash"`
+	Profile        string `json:"profile"`
+	WorkspaceRoot  string `json:"workspace_root"`
+	WorkspaceHash  string `json:"workspace_hash"`
+	UserID         string `json:"user_id,omitempty"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	ClaimsVersion  string `json:"claims_version,omitempty"`
+	IdentitySource string `json:"identity_source,omitempty"`
+	Authenticated  bool   `json:"authenticated_identity"`
 }
 
 type memoryOperation struct {
@@ -86,10 +91,8 @@ func newMemoryStore(stateDir string) *memoryStore {
 }
 
 func memoryScopeFromSession(sess *sessionstore.Session) memoryScope {
-	profile := strings.TrimSpace(os.Getenv("CARINA_NEBUTRA_USER_ID"))
-	if profile == "" {
-		profile = "local"
-	}
+	identity := resolveNebutraMemoryIdentity()
+	profile := memoryProfileKey(identity)
 	root := strings.TrimSpace(sess.WorkspaceRoot)
 	abs := root
 	if root != "" {
@@ -99,9 +102,14 @@ func memoryScopeFromSession(sess *sessionstore.Session) memoryScope {
 	}
 	sum := sha256.Sum256([]byte(abs))
 	return memoryScope{
-		Profile:       profile,
-		WorkspaceRoot: abs,
-		WorkspaceHash: hex.EncodeToString(sum[:8]),
+		Profile:        profile,
+		WorkspaceRoot:  abs,
+		WorkspaceHash:  hex.EncodeToString(sum[:8]),
+		UserID:         identity.UserID,
+		OrganizationID: identity.OrganizationID,
+		ClaimsVersion:  identity.ClaimsVersion,
+		IdentitySource: identity.Source,
+		Authenticated:  identity.Authenticated,
 	}
 }
 

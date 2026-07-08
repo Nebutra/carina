@@ -65,6 +65,7 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	seenSubmit := false
 	seenPatchPropose := false
 	seenMemoryWrite := false
+	seenMemoryStatus := false
 	for _, m := range methods.Methods {
 		switch m.Method {
 		case "daemon.status":
@@ -73,12 +74,14 @@ func TestDaemonHandlerSurface(t *testing.T) {
 			seenSubmit = m.Scope == "write" && !m.Remote
 		case "workspace.patch.propose":
 			seenPatchPropose = m.Scope == "write" && m.DynamicScope
+		case "memory.status":
+			seenMemoryStatus = m.Scope == "read" && !m.Remote
 		case "memory.write":
 			seenMemoryWrite = m.Scope == "write" && !m.Remote
 		}
 	}
-	if !seenStatus || !seenSubmit || !seenPatchPropose || !seenMemoryWrite {
-		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v patch=%v memory=%v", seenStatus, seenSubmit, seenPatchPropose, seenMemoryWrite)
+	if !seenStatus || !seenSubmit || !seenPatchPropose || !seenMemoryStatus || !seenMemoryWrite {
+		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v patch=%v memory_status=%v memory_write=%v", seenStatus, seenSubmit, seenPatchPropose, seenMemoryStatus, seenMemoryWrite)
 	}
 	var hello struct {
 		Role     string   `json:"role"`
@@ -180,6 +183,21 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	}
 	if !strings.Contains(memoryContext.Context, "<memory-context>") {
 		t.Fatalf("memory.context should be fenced: %+v", memoryContext)
+	}
+	var memoryStatus struct {
+		SemanticProvider struct {
+			Enabled  bool   `json:"enabled"`
+			Provider string `json:"provider"`
+		} `json:"semantic_provider"`
+		NebutraCloudSync struct {
+			SyncMode string `json:"sync_mode"`
+		} `json:"nebutra_cloud_sync"`
+	}
+	if err := c.Call("memory.status", map[string]any{"session_id": sid}, &memoryStatus); err != nil {
+		t.Fatal(err)
+	}
+	if memoryStatus.SemanticProvider.Enabled || memoryStatus.SemanticProvider.Provider != "local-only" || memoryStatus.NebutraCloudSync.SyncMode != "off" {
+		t.Fatalf("unexpected memory.status boundary: %+v", memoryStatus)
 	}
 
 	// patches
@@ -353,6 +371,46 @@ require_approval = ["MemoryWrite"]
 	}
 	if len(after.Entries) != 1 || !strings.Contains(after.Entries[0], "focused memory approval") {
 		t.Fatalf("approved memory write did not persist: %+v", after)
+	}
+
+	var deniedWrite struct {
+		Decision struct {
+			Decision   string `json:"decision"`
+			DecisionID string `json:"decision_id"`
+		} `json:"decision"`
+	}
+	if err := c.Call("memory.write", map[string]any{
+		"session_id": sess.SessionID,
+		"target":     "user",
+		"action":     "add",
+		"content":    "This denied user memory must not persist.",
+	}, &deniedWrite); err != nil {
+		t.Fatal(err)
+	}
+	if deniedWrite.Decision.Decision != "requires_approval" || deniedWrite.Decision.DecisionID == "" {
+		t.Fatalf("expected pending deny candidate, got %+v", deniedWrite)
+	}
+	var denied struct {
+		Decision string `json:"decision"`
+	}
+	if err := c.Call("task.action.deny", map[string]any{
+		"session_id":  sess.SessionID,
+		"decision_id": deniedWrite.Decision.DecisionID,
+		"reason":      "not useful",
+	}, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.Decision != "denied" {
+		t.Fatalf("expected denied memory write decision, got %+v", denied)
+	}
+	var userMemory struct {
+		Entries []string `json:"entries"`
+	}
+	if err := c.Call("memory.list", map[string]any{"session_id": sess.SessionID, "target": "user"}, &userMemory); err != nil {
+		t.Fatal(err)
+	}
+	if len(userMemory.Entries) != 0 {
+		t.Fatalf("denied memory write should not persist: %+v", userMemory)
 	}
 }
 
