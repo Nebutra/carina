@@ -68,6 +68,74 @@ func TestUsageIncludesMemoryCommands(t *testing.T) {
 	}
 }
 
+func TestUsageIncludesResumeContinuation(t *testing.T) {
+	if !strings.Contains(usage, "carina resume <session_id> [prompt|-]") {
+		t.Fatalf("usage missing productized resume command:\n%s", usage)
+	}
+}
+
+func TestParseResumeArgs(t *testing.T) {
+	opts, err := parseResumeArgs([]string{"--model", "openai/gpt-5", "-a", "build", "--watch", "sess_1", "continue", "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.sessionID != "sess_1" || opts.prompt != "continue work" || opts.model != "openai/gpt-5" || opts.agent != "build" || !opts.watch {
+		t.Fatalf("unexpected resume opts: %+v", opts)
+	}
+	if _, err := parseResumeArgs(nil); err == nil {
+		t.Fatal("missing session id should error")
+	}
+}
+
+func TestCmdResumeSubmitsTaskToExistingSession(t *testing.T) {
+	s := rpc.NewServer()
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "session.get", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
+		return map[string]any{
+			"session_id":         "sess_1",
+			"workspace_id":       "ws_1",
+			"workspace_root":     "/tmp/ws",
+			"status":             "active",
+			"permission_profile": "safe-edit",
+			"created_at":         "2026-07-08T00:00:00Z",
+		}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var submitted map[string]any
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "task.submit", Scope: rpc.ScopeWrite, Remote: true}, func(params json.RawMessage) (any, error) {
+		if err := json.Unmarshal(params, &submitted); err != nil {
+			return nil, err
+		}
+		return map[string]any{"task_id": "task_1", "session_id": submitted["session_id"], "user_prompt": submitted["prompt"]}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	addr := freeTCPAddr(t)
+	go func() { _ = s.ListenTCP(addr) }()
+	defer s.Close()
+	waitTCP(t, addr)
+	c, err := rpc.DialTCP(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	out, err := captureStdout(t, func() error {
+		return cmdResume(c, []string{"sess_1", "--agent", "build", "continue please"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if submitted["session_id"] != "sess_1" || submitted["prompt"] != "continue please" || submitted["agent"] != "build" {
+		t.Fatalf("unexpected task.submit params: %+v", submitted)
+	}
+	for _, want := range []string{"resuming session: sess_1", `"task_id": "task_1"`, "To continue this session"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("resume output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestMemoryRPCBuildsStatusAndWrite(t *testing.T) {
 	method, params, err := memoryRPC([]string{"status", "sess_1"}, func() (string, error) { return "", nil })
 	if err != nil {

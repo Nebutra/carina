@@ -512,6 +512,8 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("session.create", rpc.ScopeWrite, false, d.handleSessionCreate)
 	d.registerRPC("session.get", rpc.ScopeRead, true, d.handleSessionGet)
 	d.registerRPC("session.list", rpc.ScopeRead, true, d.handleSessionList)
+	d.registerRPC("session.pause", rpc.ScopeWrite, false, d.handleSessionPause)
+	d.registerRPC("session.resume", rpc.ScopeWrite, false, d.handleSessionResume)
 	d.registerRPC("session.close", rpc.ScopeWrite, false, d.handleSessionClose)
 	d.registerRPC("session.replay", rpc.ScopeRead, true, d.handleSessionReplay)
 	d.registerRPC("session.items", rpc.ScopeRead, true, d.handleSessionItems)
@@ -847,6 +849,65 @@ func (d *Daemon) handleSessionGet(params json.RawMessage) (any, error) {
 
 func (d *Daemon) handleSessionList(_ json.RawMessage) (any, error) {
 	return d.store.List(), nil
+}
+
+func (d *Daemon) handleSessionPause(params json.RawMessage) (any, error) {
+	id, err := sessionID(params)
+	if err != nil {
+		return nil, err
+	}
+	current, ok := d.store.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", id)
+	}
+	if current.Status == "closed" {
+		return nil, fmt.Errorf("session %s is closed", id)
+	}
+	if current.Status == "paused" {
+		return current, nil
+	}
+	sess, err := d.store.SetStatus(id, "paused")
+	if err != nil {
+		return nil, err
+	}
+	d.record(id, "SessionPaused", "", "go", map[string]any{"reason": "client request"}, "")
+	return sess, nil
+}
+
+func (d *Daemon) handleSessionResume(params json.RawMessage) (any, error) {
+	id, err := sessionID(params)
+	if err != nil {
+		return nil, err
+	}
+	current, ok := d.store.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", id)
+	}
+	if current.Status == "closed" {
+		return nil, fmt.Errorf("session %s is closed", id)
+	}
+	if err := d.ensureKernelSession(current); err != nil {
+		return nil, err
+	}
+	if current.Status == "active" {
+		return current, nil
+	}
+	sess, err := d.store.SetStatus(id, "active")
+	if err != nil {
+		return nil, err
+	}
+	d.record(id, "SessionResumed", "", "go", map[string]any{"reason": "client request"}, "")
+	return sess, nil
+}
+
+func (d *Daemon) ensureKernelSession(sess *sessionstore.Session) error {
+	if _, err := d.kern.ProfileDescribe(sess.SessionID); err == nil {
+		return nil
+	}
+	if err := d.kern.InitSessionFull(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile, sess.ApprovalMode, d.org); err != nil {
+		return fmt.Errorf("kernel session init: %w", err)
+	}
+	return nil
 }
 
 func (d *Daemon) handleSessionClose(params json.RawMessage) (any, error) {

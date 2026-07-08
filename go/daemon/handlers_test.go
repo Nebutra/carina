@@ -66,12 +66,15 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	seenPatchPropose := false
 	seenMemoryWrite := false
 	seenMemoryStatus := false
+	seenSessionResume := false
 	for _, m := range methods.Methods {
 		switch m.Method {
 		case "daemon.status":
 			seenStatus = m.Scope == "read" && m.Remote
 		case "task.submit":
 			seenSubmit = m.Scope == "write" && !m.Remote
+		case "session.resume":
+			seenSessionResume = m.Scope == "write" && !m.Remote
 		case "workspace.patch.propose":
 			seenPatchPropose = m.Scope == "write" && m.DynamicScope
 		case "memory.status":
@@ -80,8 +83,8 @@ func TestDaemonHandlerSurface(t *testing.T) {
 			seenMemoryWrite = m.Scope == "write" && !m.Remote
 		}
 	}
-	if !seenStatus || !seenSubmit || !seenPatchPropose || !seenMemoryStatus || !seenMemoryWrite {
-		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v patch=%v memory_status=%v memory_write=%v", seenStatus, seenSubmit, seenPatchPropose, seenMemoryStatus, seenMemoryWrite)
+	if !seenStatus || !seenSubmit || !seenSessionResume || !seenPatchPropose || !seenMemoryStatus || !seenMemoryWrite {
+		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v resume=%v patch=%v memory_status=%v memory_write=%v", seenStatus, seenSubmit, seenSessionResume, seenPatchPropose, seenMemoryStatus, seenMemoryWrite)
 	}
 	var hello struct {
 		Role     string   `json:"role"`
@@ -150,6 +153,8 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	assertScope("task.action.approve", map[string]any{"session_id": sid, "decision_id": "dec_test"}, "admin", false)
 	must("session.get", map[string]any{"session_id": sid})
 	must("session.list", map[string]any{})
+	must("session.pause", map[string]any{"session_id": sid})
+	must("session.resume", map[string]any{"session_id": sid})
 	must("workspace.tree", map[string]any{"session_id": sid})
 	must("workspace.search", map[string]any{"session_id": sid, "pattern": "TODO"})
 	must("workspace.file.get", map[string]any{"session_id": sid, "path": "a.go"})

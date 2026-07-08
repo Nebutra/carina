@@ -113,10 +113,18 @@ export OPENAI_API_KEY=sk-...
 ./bin/carina run "fix the failing tests and show the patch"
 ```
 
+提交后 CLI 会打印续会话提示：
+
+```bash
+To continue this session, run:
+  carina resume <session_id>
+```
+
 检查执行结果：
 
 ```bash
 ./bin/carina sessions
+./bin/carina resume <session_id> "继续上一个任务"
 ./bin/carina items <session_id>
 ./bin/carina audit verify <session_id>
 ./bin/carina patch list <session_id>

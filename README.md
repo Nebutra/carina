@@ -127,10 +127,18 @@ Run a task in the current repository:
 ./bin/carina run "fix the failing tests and show the patch"
 ```
 
+The CLI prints a continuation hint after submission:
+
+```bash
+To continue this session, run:
+  carina resume <session_id>
+```
+
 Inspect what happened:
 
 ```bash
 ./bin/carina sessions
+./bin/carina resume <session_id> "follow up on the previous task"
 ./bin/carina items <session_id>
 ./bin/carina audit verify <session_id>
 ./bin/carina patch list <session_id>

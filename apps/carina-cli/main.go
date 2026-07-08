@@ -44,7 +44,7 @@ Start and run:
 
 Inspect sessions:
   carina sessions                                  list sessions
-  carina resume <session_id>                       show a session
+  carina resume <session_id> [prompt|-]            continue or inspect a session
   carina watch <session_id>                        stream live events
   carina items <session_id>                        replay normalized thread/turn/item events
   carina search <session_id> <text>                search the workspace through the daemon
@@ -194,10 +194,14 @@ func run(cmd string, args []string) error {
 		if agent != "" {
 			params["agent"] = agent
 		}
-		return call(c, "task.submit", params)
+		if err := call(c, "task.submit", params); err != nil {
+			return err
+		}
+		printResumeHint(sess.SessionID)
+		return nil
 
 	case "resume":
-		return callArg(c, "session.get", args, "session_id")
+		return cmdResume(c, args)
 	case "audit":
 		return cmdAudit(c, args)
 	case "replay":
@@ -298,6 +302,203 @@ func parseRunArgs(args []string) (prompt, model, agent string, err error) {
 		return "", "", "", fmt.Errorf("prompt required")
 	}
 	return rest[0], model, agent, nil
+}
+
+type resumeOptions struct {
+	sessionID string
+	prompt    string
+	model     string
+	agent     string
+	watch     bool
+	json      bool
+	noInput   bool
+}
+
+type resumeSession struct {
+	SessionID         string `json:"session_id"`
+	WorkspaceID       string `json:"workspace_id"`
+	WorkspaceRoot     string `json:"workspace_root"`
+	Status            string `json:"status"`
+	PermissionProfile string `json:"permission_profile"`
+	ApprovalMode      string `json:"approval_mode,omitempty"`
+	ParentID          string `json:"parent_id,omitempty"`
+	Depth             int    `json:"depth"`
+	CreatedAt         string `json:"created_at"`
+}
+
+func cmdResume(c *rpcClient, args []string) error {
+	opts, err := parseResumeArgs(args)
+	if err != nil {
+		return err
+	}
+	var sess resumeSession
+	if err := c.Call("session.get", map[string]any{"session_id": opts.sessionID}, &sess); err != nil {
+		return err
+	}
+
+	prompt := opts.prompt
+	if strings.TrimSpace(prompt) == "-" {
+		prompt, err = readAllStdin()
+		if err != nil {
+			return err
+		}
+	} else if strings.TrimSpace(prompt) == "" && !opts.noInput {
+		prompt, err = resumePromptFromInput(sess.SessionID)
+		if err != nil {
+			return err
+		}
+	}
+
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		if opts.json {
+			return printJSON(sess)
+		}
+		return printResumeSummary(c, sess)
+	}
+
+	if sess.Status == "paused" {
+		if err := c.Call("session.resume", map[string]any{"session_id": sess.SessionID}, &sess); err != nil {
+			return err
+		}
+	}
+	if sess.Status != "active" {
+		return fmt.Errorf("session %s is %s, not active", sess.SessionID, sess.Status)
+	}
+
+	params := map[string]any{"session_id": sess.SessionID, "prompt": prompt}
+	if opts.model != "" {
+		params["model"] = opts.model
+	}
+	if opts.agent != "" {
+		params["agent"] = opts.agent
+	}
+	var task json.RawMessage
+	if err := c.Call("task.submit", params, &task); err != nil {
+		return err
+	}
+	if !opts.json {
+		fmt.Printf("resuming session: %s\n", sess.SessionID)
+	}
+	if err := printJSON(task); err != nil {
+		return err
+	}
+	if opts.watch {
+		return watch(c, sess.SessionID)
+	}
+	if !opts.json {
+		printResumeHint(sess.SessionID)
+	}
+	return nil
+}
+
+func parseResumeArgs(args []string) (resumeOptions, error) {
+	var opts resumeOptions
+	rest := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--model", "-m":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return opts, fmt.Errorf("model required")
+			}
+			opts.model = strings.TrimSpace(args[i+1])
+			i++
+		case "--agent", "-a":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return opts, fmt.Errorf("agent required")
+			}
+			opts.agent = strings.TrimSpace(args[i+1])
+			i++
+		case "--watch", "-w":
+			opts.watch = true
+		case "--json":
+			opts.json = true
+		case "--no-input":
+			opts.noInput = true
+		case "--":
+			rest = append(rest, args[i+1:]...)
+			i = len(args)
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				return opts, fmt.Errorf("unknown resume flag %q", args[i])
+			}
+			rest = append(rest, args[i])
+		}
+	}
+	if len(rest) < 1 || strings.TrimSpace(rest[0]) == "" {
+		return opts, fmt.Errorf(`usage: carina resume <session_id> [--agent name] [--model provider/model] [--watch] [prompt|-]`)
+	}
+	opts.sessionID = strings.TrimSpace(rest[0])
+	if len(rest) > 1 {
+		opts.prompt = strings.Join(rest[1:], " ")
+	}
+	return opts, nil
+}
+
+func resumePromptFromInput(sessionID string) (string, error) {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeCharDevice == 0 {
+		return readAllStdin()
+	}
+	fmt.Fprintf(os.Stderr, "Resuming %s. Enter a follow-up prompt, or press Enter to inspect only.\n> ", sessionID)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
+func printResumeSummary(c *rpcClient, sess resumeSession) error {
+	fmt.Printf("session: %s\n", sess.SessionID)
+	fmt.Printf("status: %s\n", sess.Status)
+	fmt.Printf("workspace: %s\n", sess.WorkspaceRoot)
+	fmt.Printf("profile: %s\n", sess.PermissionProfile)
+	if sess.ApprovalMode != "" {
+		fmt.Printf("approval_mode: %s\n", sess.ApprovalMode)
+	}
+	if sess.ParentID != "" {
+		fmt.Printf("parent: %s\n", sess.ParentID)
+	}
+	if sess.CreatedAt != "" {
+		fmt.Printf("created_at: %s\n", sess.CreatedAt)
+	}
+	var items []struct {
+		Type      string         `json:"type"`
+		TaskID    string         `json:"task_id"`
+		Timestamp string         `json:"timestamp"`
+		Item      map[string]any `json:"item"`
+		Details   map[string]any `json:"details"`
+	}
+	if err := c.Call("session.items", map[string]any{"session_id": sess.SessionID}, &items); err == nil && len(items) > 0 {
+		fmt.Println("recent:")
+		start := len(items) - 5
+		if start < 0 {
+			start = 0
+		}
+		for _, it := range items[start:] {
+			fmt.Printf("  %s", it.Type)
+			if it.TaskID != "" {
+				fmt.Printf(" task=%s", it.TaskID)
+			}
+			if title, ok := it.Item["title"].(string); ok && title != "" {
+				fmt.Printf(" %s", title)
+			} else if summary, ok := it.Details["summary"].(string); ok && summary != "" {
+				fmt.Printf(" %s", summary)
+			}
+			fmt.Println()
+		}
+	}
+	fmt.Println("continue:")
+	fmt.Printf("  carina resume %s \"<next instruction>\"\n", sess.SessionID)
+	fmt.Printf("  carina watch %s\n", sess.SessionID)
+	return nil
+}
+
+func printResumeHint(sessionID string) {
+	fmt.Printf("To continue this session, run:\n  carina resume %s\n", sessionID)
 }
 
 // dropFlag removes a boolean flag from args if present.

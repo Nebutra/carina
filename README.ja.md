@@ -113,10 +113,18 @@ export OPENAI_API_KEY=sk-...
 ./bin/carina run "fix the failing tests and show the patch"
 ```
 
+Submit 後、CLI は continuation hint を表示します：
+
+```bash
+To continue this session, run:
+  carina resume <session_id>
+```
+
 結果を確認：
 
 ```bash
 ./bin/carina sessions
+./bin/carina resume <session_id> "continue the previous task"
 ./bin/carina items <session_id>
 ./bin/carina audit verify <session_id>
 ./bin/carina patch list <session_id>

@@ -284,7 +284,7 @@ Workspace 元数据:workspace_id、root_path、git_repo、allowed_paths、ignore
 ```
 # 基础
 carina init | carina run "..." | carina ask "..." | carina edit "..." | carina plan "..."
-carina status | carina sessions | carina resume <session>
+carina status | carina sessions | carina resume <session> ["follow-up prompt"]
 
 # 审计
 carina audit | carina audit session <id> | carina audit file src/auth.ts | carina audit command
