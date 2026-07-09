@@ -1,0 +1,32 @@
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│carina · bubbletea v2 spike  (disposable)                                                                 │
+│补丁干净落地。无惊无险，本该如此。                                                                        │
+│审计链校验通过:1,204 条记录                                                                               │
+│mixed 中英 line: kernel verdict read-only-allow 内核放行 OK                                               │
+│ascii only line for column comparison ......................                                              │
+│全角字符宽度测试:一二三四五六七八九十一二三四五六七八九十                                                 │
+│· attached to sess_04fa1569d9f24797                                                                       │
+│[Pasted 10 lines]                                                                                         │
+│you carina 审批测试 with mixed 中英 text                                                                  │
+│you /cmd mv readme.txt renamed.txt                                                                        │
+│⚿ requires_approval decision_id=perm_18c08f20178bae80                                                     │
+│07:40:29 ✓ CommandStarted mv readme.txt renamed.txt                                                       │
+│07:40:30 ✓ CommandOutput {"chunk":"","command_id":"cmd_7f9d457709bb103d","stream":"stdout"}               │
+│07:40:30 ✓ CommandExited {"command_id":"cmd_7f9d457709bb103d","duration_ms":55,"exit_code":0}             │
+│✓ allowed (once) — resumed: decision perm_18c08f20178bae80 -> allowed                                     │
+│result={"exit_code":0,"duration_ms":55                                                                    │
+│                                                                                                          │
+│                                                                                                          │
+│                                                                                                          │
+│                                                                                                          │
+│                                                                                                          │
+│                                                                                                          │
+│                                                                                                          │
+│                                                                                                          │
+│                                                                                                          │
+│                                                                                                          │
+│                                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ❯ > 输入 / type here — /patch /cmd <argv> /burst                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯

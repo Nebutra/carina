@@ -1,0 +1,15 @@
+{
+  "events_sent": 1000,
+  "frame_max_ms": 11.954,
+  "frame_p50_ms": 5.777,
+  "frame_p95_ms": 10.979,
+  "frames": 601,
+  "lines_visible": 1001,
+  "max_ms": 16.642,
+  "p50_ms": 11.517,
+  "p95_ms": 16.015,
+  "samples": 600,
+  "view_p95_ms": 1.328,
+  "write_p50_ms": 0.012,
+  "write_p95_ms": 0.03
+}

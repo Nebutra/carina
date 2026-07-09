@@ -1,0 +1,27 @@
+{
+  "burst": {
+    "events_sent": 1000,
+    "rate_per_sec": 100.08006405124098,
+    "wall_ms": 9992
+  },
+  "draw_all": {
+    "frames": 188,
+    "max_ms": 9.080542000000001,
+    "mean_ms": 2.5131154468085106,
+    "p50_ms": 2.120167,
+    "p95_ms": 5.26975,
+    "p99_ms": 8.404208
+  },
+  "draw_during_burst": {
+    "frames": 187,
+    "max_ms": 9.080542000000001,
+    "mean_ms": 2.515620299465241,
+    "p50_ms": 2.131834,
+    "p95_ms": 5.26975,
+    "p99_ms": 8.404208
+  },
+  "events_seen": 1000,
+  "label": "exit",
+  "pid": 178,
+  "scenario": "burst"
+}

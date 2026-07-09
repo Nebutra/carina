@@ -1,0 +1,32 @@
+
+
+
+
+
+
+
+
+
+
+                   ╔═════════════════════════════════════════════════════════════════════╗
+                   ║ Patch approval — patch_18c08eb8b4999498 (risk 2, status pending)    ║
+                   ║                                                                     ║
+                   ║ --- a/spike_hello.txt                                               ║
+                   ║ +++ b/spike_hello.txt                                               ║
+                   ║ +hello from the bubbletea spike                                     ║
+                   ║ +你好，来自 Bubble Tea 尖峰试验                                     ║
+                   ║ +second line kept                                                   ║
+                   ║                                                                     ║
+                   ║ [y/1] allow once  [2] session  [3] project  [n/4] deny  [esc] close ║
+                   ╚═════════════════════════════════════════════════════════════════════╝
+
+
+
+
+
+
+
+
+
+
+

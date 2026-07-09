@@ -1,0 +1,32 @@
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│07:32:42 ✓ CommandOutput live event line 3 中文内容 OK                                                    │
+│07:32:42 ✓ CommandExited {"command_id":"cmd_ffbe5dcf8da5733a","duration_ms":52,"exit_code":0}             │
+│07:32:42 ✓ CommandStarted echo live event line 4 中文内容 OK                                              │
+│07:32:42 ✓ CommandOutput live event line 4 中文内容 OK                                                    │
+│07:32:42 ✓ CommandExited {"command_id":"cmd_ca20f27fe5089cbb","duration_ms":56,"exit_code":0}             │
+│07:32:42 ✓ CommandStarted echo live event line 5 中文内容 OK                                              │
+│07:32:42 ✓ CommandOutput live event line 5 中文内容 OK                                                    │
+│07:32:42 ✓ CommandExited {"command_id":"cmd_0e4db47737b68c5b","duration_ms":55,"exit_code":0}             │
+│07:32:42 ✓ CommandStarted echo live event line 6 中文内容 OK                                              │
+│07:32:42 ✓ CommandOutput live event line 6 中文内容 OK                                                    │
+│07:32:42 ✓ CommandExited {"command_id":"cmd_2175e16e31aae686","duration_ms":51,"exit_code":0}             │
+│07:32:42 ✓ CommandStarted echo live event line 7 中文内容 OK                                              │
+│07:32:42 ✓ CommandOutput live event line 7 中文内容 OK                                                    │
+│07:32:42 ✓ CommandExited {"command_id":"cmd_ebcbc04b18ea6783","duration_ms":55,"exit_code":0}             │
+│07:32:43 ✓ CommandStarted echo live event line 8 中文内容 OK                                              │
+│07:32:43 ✓ CommandOutput live event line 8 中文内容 OK                                                    │
+│07:32:43 ✓ CommandExited {"command_id":"cmd_1032500dcaa1b9ae","duration_ms":55,"exit_code":0}             │
+│07:32:43 ✓ CommandStarted echo live event line 9 中文内容 OK                                              │
+│07:32:43 ✓ CommandOutput live event line 9 中文内容 OK                                                    │
+│07:32:43 ✓ CommandExited {"command_id":"cmd_98f0065392318c9d","duration_ms":55,"exit_code":0}             │
+│07:32:43 ✓ CommandStarted echo live event line 10 中文内容 OK                                             │
+│07:32:43 ✓ CommandOutput live event line 10 中文内容 OK                                                   │
+│07:32:43 ✓ CommandExited {"command_id":"cmd_4df6dd259ced5c39","duration_ms":55,"exit_code":0}             │
+│07:32:43 ✓ CommandStarted echo live event line 11 中文内容 OK                                             │
+│07:32:43 ✓ CommandOutput live event line 11 中文内容 OK                                                   │
+│07:32:43 ✓ CommandExited {"command_id":"cmd_4092391278fc6618","duration_ms":55,"exit_code":0}             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ❯ > 输入 / type here — /patch /cmd <argv> /burst                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ carina spike · session sess_04fa1569d9f24797 · 43 lines · /patch /cmd /burst /quit

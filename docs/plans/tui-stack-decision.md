@@ -248,3 +248,60 @@ Zero new work: Makefile `go:` target already builds `bin/carina-tui`; `scripts/p
 - A mature, multi-maintainer React-model Rust framework with proven CJK input (none existed as of mid-2026 — the survey's explicit finding).
 - Carina growing a Rust-side surface anyway (e.g., the CLI renderer migrating for other reasons) — re-run §3.4's everything-Rust option.
 - Charm's v2 stalling (watch: release cadence, #874) — ratatui remains the standing runner-up with its spike results on file.
+
+---
+
+## Spike verdict (as run)
+
+**Date:** 2026-07-09. Both §4 spikes ran the same day against the **real** daemon + Rust kernel + Zig tools (no mocks), and every automatable gate was then **independently re-verified by a second agent** (fresh builds, fresh tmux PTYs, fresh daemon spawns, own instrumentation reads) before this verdict was recorded. Independent-verification numbers below are the re-run values; spike-reported values are in the spike READMEs.
+
+### Gate table — Bubble Tea v2 (Go), `spikes/tui-bubbletea/`
+
+Stack actually used: `charm.land/bubbletea/v2` **v2.0.8**, bubbles v2.1.1, lipgloss v2.0.5; reused `go/rpc.Client` + `go/kernel` structs with ~0 plumbing LoC, as §2.2 predicted.
+
+| Gate | Verdict | Evidence (spike run → independent re-run) |
+|---|---|---|
+| G1 live-daemon | **PASS** | Two-socket attach + `session.events.stream`; 12 external `command.exec` → 36 live events → re-run: fresh daemon, 5 external calls → 15 events (incl. zh output) streamed into the viewport live. |
+| G2 approval | **PASS**¹ | Real `workspace.patch.propose` → pending patch → overlay with real colored unified diff (ANSI 38;5;42 adds / 38;5;203 dels confirmed in both runs) → `y` → applied, file on disk. decision_id path re-run end-to-end: `/cmd mv …` → `requires_approval` + `decision_id perm_18c08fbe…` → `task.action.approve` → command executed (`renamed.txt` on disk), resume events streamed. |
+| G3 cjk | **PASS** (automated) / **PENDING-HUMAN** (IME) | Re-run: required zh lines rendered; `carina 审批测试 with mixed 中英 text` typed through tmux PTY; 7 backspaces deleted grapheme-per-keypress; bracketed paste collapsed to `[Pasted 11 lines]`; **all 31 bordered rows exactly 108 display columns** (east-asian-width check) — zero tearing. |
+| G4 perf | **PASS** | Re-run, 100 ev/s × 10 s (1000 events): **frame render p95 9.38 ms** (spike: 10.98) vs 16 ms gate; event→flush p95 16.5 ms vs 33 ms criterion; **idle CPU 0.00 % mean / 0.0 % max** over 30×1 s ps samples (spike: 0.60 %) vs 1 % gate. |
+
+¹ The `permission.request` *event* emission was not exercised live in either spike (requires the agent loop + a real model provider); pending state, decision_id roundtrip, queued-command execution and streamed resume are all real daemon state. The event-render path must be integration-tested in P1.1.
+
+### Gate table — ratatui 0.30.2 (Rust), `crates/spike-tui-ratatui/` + `spikes/tui-ratatui/`
+
+| Gate | Verdict | Evidence (spike run → independent re-run) |
+|---|---|---|
+| G1 live-daemon | **PASS** | Re-run via `run-gates.sh` end-to-end green: fresh isolated daemon+kernel, two connections, real events rendered in follow-scrolling transcript; all captures alignment-checked (100/100 cols). |
+| G2 approval | **PASS**¹ | Re-run live: real PatchTransaction diff as colored prompt body (28 ANSI-escape lines in capture) → applied; real `pendingCmds` approval `perm_18c08e8e…` → `task.action.approve` → `decision:"allowed"`, command executed; deny path exercised (`task.action.deny`). |
+| G3 cjk | **PASS** (automated) / **PENDING-HUMAN** (IME) | Re-run: required zh lines rendered; `中英 text` → 5 backspaces removed ` text`, next removed whole `英`; **hardware cursor pinned to caret** (`Frame::set_cursor_position`): after `你好 world` cursor x=11, arrowing over `好`/`你` jumps exactly 2 columns — R13 architecture demonstrably works; all bordered rows exactly 100 display columns. |
+| G4 perf | **PASS** | Re-runs: **frame render p95 5.3–7.3 ms** (spike: 3.8–8.3) vs 16 ms gate; **idle CPU 0.00 % mean / 0.0 % max** over 30×1 s samples vs 1 % gate. |
+
+G9-rs (plumbing honesty): first Rust JSON-RPC client = 106 code LoC, but **zero typed wire models written** (stringly `serde_json::Value` throughout); the §2.2 estimate of ~500–1000 LoC hand-written structs + permanent drift stands for production.
+
+### Verdict
+
+**Bubble Tea v2 (Go) is confirmed as the TUI stack.** Per §4's decision rule: both spikes passed all automatable gates, so Go wins on §2.3's gating rows (C2 shared data layer, team-stack coherence, ≈0 plumbing — all empirically confirmed: the Go spike needed no new plumbing code while the Rust spike hand-wrote a client and still dodged the typed layer). **No reversal trigger fired**: the zh gates passed automated verification on both sides (trigger 1 requires a Go IME failure *and* a Rust pass — both IME runs are still PENDING-HUMAN, below); perf gates passed with wide margin on both sides (trigger 2 requires a Go failure); Charm's v2 cadence is active at v2.0.8 (trigger 3). ratatui remains the standing runner-up **with passing spike results now on file** — if the human fcitx5 run fails on Bubble Tea and passes on ratatui, trigger 1 fires and §3.2 applies.
+
+### Open human-verification items (the 5-minute checklists)
+
+Both spikes' IME composition tests are **PENDING-HUMAN** (true IME composition cannot be automated; binaries are built). Run the checklists in `spikes/tui-bubbletea/README.md` ("Manual IME checklist") and `spikes/tui-ratatui/README.md` ("5-minute manual IME checklist") on macOS Pinyin first, then fcitx5/Wayland (the decisive platform for bubbletea#874), recording pass/fail per platform in those files. The Bubble Tea run gates trigger-1; the ratatui run is the comparison arm.
+
+### P1 implementation consequences (what the spikes revealed)
+
+**Adopt / keep:**
+- Pin `charm.land/bubbletea/v2` v2.0.8 + `charm.land/bubbles/v2` v2.1.1 + `charm.land/lipgloss/v2` v2.0.5 (already in `go.mod` from the spike; `go.sum` is the repo's first third-party Go lockfile — review it once, deliberately).
+- The two-connection `go/rpc` pattern (calls + `session.events.stream`, `program.Send` from the stream goroutine) works unchanged — lift it into `apps/carina-tui` as-is.
+- CJK width/grapheme handling is correct out-of-the-box in viewport/textinput/lipgloss borders — write no custom width math; add the east-asian-width alignment check from the spikes as a CI-able capture test.
+- `PatchTransaction.diff` is plain unified diff — a ~30-line manual span colorizer suffices for the P1.1 approval body; defer chroma to syntax-highlighted views.
+- Renderer coalescing + a dumb append-only line cache holds 100 ev/s at ~1 ms View cost to 1k lines; implement the real R18 per-entry cache before 10k-line transcripts.
+
+**Avoid / fix / watch (framework sharp edges found):**
+- `tea.WithOutput` silently disables rendering unless the writer implements `term.File` (`Fd/Read/Close`) — R22 instrumentation wrappers must forward `Fd`.
+- bubbles v2 `textinput` panics on negative width pre-`WindowSizeMsg` — clamp in layout code; its `placeholderView` mixes display-width with rune indexing — avoid CJK placeholders until audited/upstreamed.
+- `tea.PasteMsg.Content` arrives with `\r` line endings — normalize before paste-collapse counting (R14).
+- v2 Layers API is still unexercised (spike used `lipgloss.Place` frame replacement for the overlay) — the layers/declared-cursor (R21) decision is open and must be settled when `views/approvals` is built.
+- The `permission.request` event render path is untested against a live emission — P1.1 needs an integration test that drives the real agent loop (or a stub provider) through `awaitInteractiveApproval`.
+- **Daemon gap found by the ratatui spike:** `workspace.patch.apply` does not verify a prior capability approval (the kernel records the approval at apply time with the given approver) — close this in P1.1 before the approval UI ships, or the UI is theater.
+- R3 (static/dynamic scrollback split) was not attempted in either spike — still open engineering for P3.1, with the altscreen viewport as the fallback.
+- Track bubbletea#874 until the fcitx5 human run is recorded; keep the ratatui spike + evidence on file per the Appendix.

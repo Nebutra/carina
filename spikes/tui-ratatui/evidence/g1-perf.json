@@ -1,0 +1,16 @@
+{
+  "burst": null,
+  "draw_all": {
+    "frames": 18,
+    "max_ms": 4.831125,
+    "mean_ms": 2.3812244444444444,
+    "p50_ms": 2.1541249999999996,
+    "p95_ms": 4.831125,
+    "p99_ms": 4.831125
+  },
+  "draw_during_burst": null,
+  "events_seen": 24,
+  "label": "exit",
+  "pid": 79979,
+  "scenario": "live"
+}

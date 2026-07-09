@@ -1,0 +1,30 @@
+┌ Carina · live · 12 events · 17 lines ────────────────────────────────────────────────────────────┐
+│session created: sess_ab244c49aff83ee6 (safe-edit/on_request)                                     │
+│driver: command.exec ["ls"]                                                                       │
+│07:48:39 CommandStarted   [zig] $ ls                                                              │
+│07:48:39 CommandOutput    [zig] | hello.txt                                                       │
+│07:48:39 CommandExited    [zig] exit=0 55ms                                                       │
+│driver: command.exec ["cat", "hello.txt"]                                                         │
+│07:48:40 CommandStarted   [zig] $ cat hello.txt                                                   │
+│07:48:40 CommandOutput    [zig] | hello from carina ⏎ second line kept intact                     │
+│07:48:40 CommandExited    [zig] exit=0 52ms                                                       │
+│driver: command.exec ["echo", "补丁干净落地。无惊无险，本该如此。"]                               │
+│07:48:40 CommandStarted   [zig] $ echo 补丁干净落地。无惊无险，本该如此。                         │
+│07:48:40 CommandOutput    [zig] | 补丁干净落地。无惊无险，本该如此。                              │
+│07:48:40 CommandExited    [zig] exit=0 52ms                                                       │
+│driver: command.exec ["date"]                                                                     │
+│07:48:41 CommandStarted   [zig] $ date                                                            │
+│07:48:41 CommandOutput    [zig] | Thu Jul  9 15:48:41 CST 2026                                    │
+│07:48:41 CommandExited    [zig] exit=0 56ms                                                       │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ session=sess_ab244c49aff83ee6 sock=/Users/tseka_luk/workspace/code/personal/nebutra/carina/spikes/t
+ [q] quit

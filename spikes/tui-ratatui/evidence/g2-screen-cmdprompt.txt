@@ -1,0 +1,32 @@
+┌ Carina · approval · 0 events · 4 lines ──────────────────────────────────────────────────────────┐
+│session created: sess_0b1e8173e6075d71 (safe-edit/on_request)                                     │
+│patch proposed: patch_18c08f97dff697f0 status=pending risk=2                                      │
+│RESUME: patch patch_18c08f97dff697f0 applied, status=applied new_hash=cb558f3bf4b6945d3d0472bc6b0d│
+│command┌ APPROVAL REQUIRED · 需要审批 ────────────────────────────────────────────────────┐eds pro│
+│       │CommandExec · decision perm_18c08f985be49f38                                      │       │
+│       │                                                                                  │       │
+│       │$ touch spike-approved.txt                                                        │       │
+│       │                                                                                  │       │
+│       │reason: risk level 3 exceeds profile ceiling                                      │       │
+│       │capability: CommandExec                                                           │       │
+│       │                                                                                  │       │
+│       │[a] Allow once    [d] Deny with reason    (Esc keeps it pending)                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       │                                                                                  │       │
+│       └──────────────────────────────────────────────────────────────────────────────────┘       │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ session=sess_0b1e8173e6075d71 sock=/Users/tseka_luk/workspace/code/personal/nebutra/carina/spikes/t
+ [a] allow · [d] deny · approval pending

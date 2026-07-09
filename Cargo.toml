@@ -7,6 +7,7 @@ members = [
     "crates/carina-audit",
     "crates/carina-plugin-runtime",
     "crates/carina-index",
+    "crates/spike-tui-ratatui",
 ]
 
 [workspace.package]

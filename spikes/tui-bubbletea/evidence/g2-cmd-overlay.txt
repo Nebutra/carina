@@ -1,0 +1,32 @@
+
+
+
+
+
+
+
+
+
+
+
+
+                   ╔═════════════════════════════════════════════════════════════════════╗
+                   ║ Command approval — decision_id perm_18c08f20178bae80                ║
+                   ║                                                                     ║
+                   ║ $ mv readme.txt renamed.txt                                         ║
+                   ║ policy: risk level 3 exceeds profile ceiling                        ║
+                   ║                                                                     ║
+                   ║ [y/1] allow once  [2] session  [3] project  [n/4] deny  [esc] close ║
+                   ╚═════════════════════════════════════════════════════════════════════╝
+
+
+
+
+
+
+
+
+
+
+
+

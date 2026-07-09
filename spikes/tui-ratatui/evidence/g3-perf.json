@@ -1,0 +1,16 @@
+{
+  "burst": null,
+  "draw_all": {
+    "frames": 45,
+    "max_ms": 1.311625,
+    "mean_ms": 0.5888537111111111,
+    "p50_ms": 0.560625,
+    "p95_ms": 0.665709,
+    "p99_ms": 1.311625
+  },
+  "draw_during_burst": null,
+  "events_seen": 0,
+  "label": "exit",
+  "pid": 99729,
+  "scenario": "cjk"
+}

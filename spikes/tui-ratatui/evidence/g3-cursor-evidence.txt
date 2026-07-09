@@ -1,0 +1,5 @@
+cursor evidence (tmux #{cursor_x}, input row y=21, border at x=0):
+"你好 world" caret end -> x=11 (1 border + 4 CJK + 1 space + 5 ascii)
+Left x2 over "ld" -> x=9
+Left x5 over "row"+space+"好" -> x=3 (好 = 2 cols)
+Left x1 over "你" -> x=1 (2-col jump, start of input)

@@ -1,0 +1,30 @@
+┌ Carina · live · 24 events · 34 lines ────────────────────────────────────────────────────────────┐
+│07:48:40 CommandExited    [zig] exit=0 52ms                                                       │
+│driver: command.exec ["echo", "补丁干净落地。无惊无险，本该如此。"]                               │
+│07:48:40 CommandStarted   [zig] $ echo 补丁干净落地。无惊无险，本该如此。                         │
+│07:48:40 CommandOutput    [zig] | 补丁干净落地。无惊无险，本该如此。                              │
+│07:48:40 CommandExited    [zig] exit=0 52ms                                                       │
+│driver: command.exec ["date"]                                                                     │
+│07:48:41 CommandStarted   [zig] $ date                                                            │
+│07:48:41 CommandOutput    [zig] | Thu Jul  9 15:48:41 CST 2026                                    │
+│07:48:41 CommandExited    [zig] exit=0 56ms                                                       │
+│driver: command.exec ["echo", "审计链校验通过：1,204 条记录"]                                     │
+│07:48:41 CommandStarted   [zig] $ echo 审计链校验通过：1,204 条记录                               │
+│07:48:41 CommandOutput    [zig] | 审计链校验通过：1,204 条记录                                    │
+│07:48:41 CommandExited    [zig] exit=0 52ms                                                       │
+│driver: command.exec ["pwd"]                                                                      │
+│07:48:41 CommandStarted   [zig] $ pwd                                                             │
+│07:48:42 CommandOutput    [zig] | /Users/tseka_luk/workspace/code/personal/nebutra/carina/spikes/t│
+│07:48:42 CommandExited    [zig] exit=0 53ms                                                       │
+│driver: command.exec ["git", "status"]                                                            │
+│07:48:42 CommandStarted   [zig] $ git status                                                      │
+│07:48:42 CommandOutput    [zig] | On branch main ⏎ Your branch is ahead of 'origin/main' by 1 comm│
+│07:48:42 CommandExited    [zig] exit=0 56ms                                                       │
+│driver: command.exec ["true"]                                                                     │
+│07:48:42 CommandStarted   [zig] $ true                                                            │
+│07:48:42 CommandOutput    [zig] |                                                                 │
+│07:48:42 CommandExited    [zig] exit=0 54ms                                                       │
+│driver: done (8 commands)                                                                         │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ session=sess_ab244c49aff83ee6 sock=/Users/tseka_luk/workspace/code/personal/nebutra/carina/spikes/t
+ [q] quit

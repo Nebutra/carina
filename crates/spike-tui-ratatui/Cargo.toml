@@ -1,0 +1,12 @@
+# SPIKE — disposable code for the TUI stack decision (docs/plans/tui-stack-decision.md §4.3).
+# Not a product crate. See spikes/tui-ratatui/README.md.
+[package]
+name = "spike-tui-ratatui"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+ratatui = "0.30"
+serde_json = { workspace = true }
+unicode-width = "0.2"

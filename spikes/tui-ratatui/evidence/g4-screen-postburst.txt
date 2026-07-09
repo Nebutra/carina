@@ -1,0 +1,30 @@
+┌ Carina · burst · 1000 events · 1001 lines ───────────────────────────────────────────────────────┐
+│evt 0975 kernel verdict: read-only-allow (collapsed)                                              │
+│evt 0976 模型路由:降级到本地推理,延迟 42ms                                                        │
+│evt 0977 scheduler: task tsk_9f2 waiting_approval -> running                                      │
+│evt 0978 补丁干净落地。无惊无险，本该如此。                                                       │
+│evt 0979 audit chain verified: 1,204 records intact                                               │
+│evt 0980 审计链校验通过：1,204 条记录                                                             │
+│evt 0981 kernel verdict: read-only-allow (collapsed)                                              │
+│evt 0982 模型路由:降级到本地推理,延迟 42ms                                                        │
+│evt 0983 scheduler: task tsk_9f2 waiting_approval -> running                                      │
+│evt 0984 补丁干净落地。无惊无险，本该如此。                                                       │
+│evt 0985 audit chain verified: 1,204 records intact                                               │
+│evt 0986 审计链校验通过：1,204 条记录                                                             │
+│evt 0987 kernel verdict: read-only-allow (collapsed)                                              │
+│evt 0988 模型路由:降级到本地推理,延迟 42ms                                                        │
+│evt 0989 scheduler: task tsk_9f2 waiting_approval -> running                                      │
+│evt 0990 补丁干净落地。无惊无险，本该如此。                                                       │
+│evt 0991 audit chain verified: 1,204 records intact                                               │
+│evt 0992 审计链校验通过：1,204 条记录                                                             │
+│evt 0993 kernel verdict: read-only-allow (collapsed)                                              │
+│evt 0994 模型路由:降级到本地推理,延迟 42ms                                                        │
+│evt 0995 scheduler: task tsk_9f2 waiting_approval -> running                                      │
+│evt 0996 补丁干净落地。无惊无险，本该如此。                                                       │
+│evt 0997 audit chain verified: 1,204 records intact                                               │
+│evt 0998 审计链校验通过：1,204 条记录                                                             │
+│evt 0999 kernel verdict: read-only-allow (collapsed)                                              │
+│burst done: 1000 events in 9992ms — now idle (perf written)                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ session=- sock=/Users/tseka_luk/.carina/daemon.sock pid=178
+ [q] quit
