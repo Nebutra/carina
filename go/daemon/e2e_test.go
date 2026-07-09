@@ -84,10 +84,15 @@ func TestEndToEndLoop(t *testing.T) {
 		t.Fatal("expected carina-grep to find 'hello'")
 	}
 
-	// 4. Propose + apply a patch (Rust transactional engine writes the file).
+	// 4. Propose, approve the PatchApply gate decision, then apply (Rust
+	// transactional engine writes the file; apply refuses without approval).
 	var patch struct {
-		PatchID string `json:"patch_id"`
-		Status  string `json:"status"`
+		PatchID       string `json:"patch_id"`
+		Status        string `json:"status"`
+		ApplyDecision struct {
+			Decision   string `json:"decision"`
+			DecisionID string `json:"decision_id"`
+		} `json:"apply_decision"`
 	}
 	if err := c.Call("workspace.patch.propose", map[string]any{
 		"session_id": sess.SessionID,
@@ -95,6 +100,14 @@ func TestEndToEndLoop(t *testing.T) {
 		"files":      []map[string]any{{"path": "a.txt", "new_content": "patched!\n"}},
 	}, &patch); err != nil {
 		t.Fatalf("patch.propose: %v", err)
+	}
+	if patch.ApplyDecision.Decision != "requires_approval" {
+		t.Fatalf("propose should gate apply under safe-edit, got %+v", patch.ApplyDecision)
+	}
+	if err := c.Call("task.action.approve", map[string]any{
+		"session_id": sess.SessionID, "decision_id": patch.ApplyDecision.DecisionID,
+	}, nil); err != nil {
+		t.Fatalf("approve patch gate: %v", err)
 	}
 	if err := c.Call("workspace.patch.apply", map[string]any{"session_id": sess.SessionID, "patch_id": patch.PatchID}, &patch); err != nil {
 		t.Fatalf("patch.apply: %v", err)

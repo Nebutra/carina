@@ -24,16 +24,32 @@ func (d *Daemon) SetInteractiveApproval(on bool) { d.interactiveApproval.Store(o
 // it asks the operator and only approves on an explicit allow. Returns the
 // (possibly upgraded) decision and whether it is now allowed.
 func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
-	approver := "agent"
 	if d.interactiveApproval.Load() {
-		if !d.awaitInteractiveApproval(sess, task, dec, label) {
+		resolved, granted := d.awaitInteractiveApproval(sess, task, dec, label)
+		if !granted {
 			return dec, false
 		}
-		approver = "operator"
-	} else if !d.reviewAutonomousApproval(sess, task, dec, label) {
+		if resolved != nil {
+			// The RPC handler that unblocked the wait (handleApprove /
+			// handleDeny) already resolved this decision in the kernel —
+			// re-approving it here would hit "no pending decision" (the
+			// kernel's pending map is one-shot). Trust that resolution
+			// instead of re-approving.
+			return resolved, resolved.Decision == "allowed"
+		}
+		// Resolved via task.approval.resolve, which only signals the wait
+		// and never touches the kernel: this call is the first and only
+		// approval.
+		approved, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "operator", "")
+		if err != nil || approved.Decision != "allowed" {
+			return dec, false
+		}
+		return approved, true
+	}
+	if !d.reviewAutonomousApproval(sess, task, dec, label) {
 		return dec, false
 	}
-	approved, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, approver, "")
+	approved, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "agent", "")
 	if err != nil || approved.Decision != "allowed" {
 		return dec, false
 	}
@@ -41,10 +57,13 @@ func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Tas
 }
 
 // awaitInteractiveApproval pauses the task, emits a permission.request envelope,
-// and blocks until an operator resolves it (task.approval.resolve), the timeout
-// lapses (=> denied), or the daemon shuts down.
-func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) bool {
-	ch := make(chan bool, 1)
+// and blocks until an operator resolves it (task.approval.resolve or the
+// task.action.approve / task.action.deny RPC surface), the timeout lapses
+// (=> denied), or the daemon shuts down. Returns the already-kernel-resolved
+// decision when the unblocking RPC call resolved one (nil if resolution was
+// only signaled, not resolved), and whether the wait ended granted.
+func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
+	ch := make(chan approvalSignal, 1)
 	d.approvalMu.Lock()
 	d.pendingApprovals[dec.DecisionID] = ch
 	d.approvalMu.Unlock()
@@ -55,7 +74,7 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 	}()
 
 	d.sched.SetStatus(task.TaskID, "waiting_approval")
-	d.events.Publish(sess.SessionID, map[string]any{
+	ev := map[string]any{
 		"type":        "permission.request",
 		"session_id":  sess.SessionID,
 		"task_id":     task.TaskID,
@@ -65,24 +84,45 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 		"reason":      dec.Reason,
 		"label":       label,
 		"timestamp":   time.Now().UTC().Format(time.RFC3339),
-	})
+	}
+	// A PatchApply decision's resource is the patch_id (registerPatchGate):
+	// the operator's approval prompt must show the actual reviewable diff,
+	// not just the capability name — otherwise the diff-rendering code in
+	// go/tui (ColorDiff, openApproval reading ev["diff"]) never sees real
+	// data and an operator approves content they cannot see.
+	if dec.Capability == "PatchApply" {
+		if patch, err := d.kern.PatchShow(sess.SessionID, dec.Resource); err == nil && patch != nil {
+			ev["diff"] = patch.Diff
+		}
+	}
+	d.events.Publish(sess.SessionID, ev)
 
 	timeout := d.approvalTimeout
 	if timeout <= 0 {
 		timeout = defaultApprovalTimeout
 	}
-	var granted bool
+	var sig approvalSignal
 	select {
-	case granted = <-ch:
+	case sig = <-ch:
 	case <-time.After(timeout):
-		granted = false
+		sig = approvalSignal{granted: false}
 	case <-d.stopCh:
-		granted = false
+		sig = approvalSignal{granted: false}
 	}
 	d.sched.SetStatus(task.TaskID, "running")
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "operator",
-		map[string]any{"status": "approval_resolved", "decision_id": dec.DecisionID, "granted": granted}, dec.DecisionID)
-	return granted
+		map[string]any{"status": "approval_resolved", "decision_id": dec.DecisionID, "granted": sig.granted}, dec.DecisionID)
+	return sig.resolved, sig.granted
+}
+
+// approvalSignal carries an operator's verdict into a blocked
+// awaitInteractiveApproval wait. resolved is set when the unblocking call
+// already resolved the decision in the kernel (handleApprove / handleDeny),
+// so the waiter must not re-approve; it is nil when the decision still needs
+// resolving (task.approval.resolve, which only signals).
+type approvalSignal struct {
+	resolved *kernel.Decision
+	granted  bool
 }
 
 // handleApprovalResolve records an operator's verdict for a pending interactive
@@ -95,15 +135,34 @@ func (d *Daemon) handleApprovalResolve(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	d.approvalMu.Lock()
-	ch, ok := d.pendingApprovals[p.DecisionID]
-	d.approvalMu.Unlock()
-	if !ok {
+	if !d.signalPendingApproval(p.DecisionID, nil, p.Approve) {
 		return nil, fmt.Errorf("no pending approval for decision %s", p.DecisionID)
 	}
+	return map[string]any{"decision_id": p.DecisionID, "resolved": p.Approve}, nil
+}
+
+// signalPendingApproval unblocks an in-flight awaitInteractiveApproval wait
+// for decisionID, if one is pending. It is the single choke point both
+// task.approval.resolve (handleApprovalResolve) and the general-purpose
+// task.action.approve / task.action.deny (handleApprove / handleDeny) funnel
+// through, so however an operator's client resolves a requires_approval
+// decision, a live interactive wait on that same decision actually unblocks
+// with the matching outcome — audit and runtime can never disagree. resolved
+// carries the already-kernel-resolved decision when the caller has one
+// (handleApprove / handleDeny); pass nil when only signaling (unblocking a
+// wait doesn't imply it was ever pending — most approvals resolve a
+// synchronous RPC gate, e.g. a patch gate or a queued command, with nothing
+// blocked in awaitInteractiveApproval, so a false return is not an error).
+func (d *Daemon) signalPendingApproval(decisionID string, resolved *kernel.Decision, granted bool) bool {
+	d.approvalMu.Lock()
+	ch, ok := d.pendingApprovals[decisionID]
+	d.approvalMu.Unlock()
+	if !ok {
+		return false
+	}
 	select {
-	case ch <- p.Approve:
+	case ch <- approvalSignal{resolved: resolved, granted: granted}:
 	default: // already resolved; ignore the duplicate
 	}
-	return map[string]any{"decision_id": p.DecisionID, "resolved": p.Approve}, nil
+	return true
 }

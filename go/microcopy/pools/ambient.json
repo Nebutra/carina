@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "overrides": [
+    {
+      "pattern": "^session\\.resume$",
+      "locales": {
+        "en": [
+          "session resumed. everything is where you left it, and we can prove it."
+        ],
+        "zh": [
+          "会话已恢复。原样奉还，且有据可查。"
+        ]
+      }
+    }
+  ],
+  "locales": {
+    "en": {
+      "generic": [
+        "carina is watching. the agent works, the ledger fills.",
+        "workspace warm, policies loaded. ready when you are.",
+        "agent idle. no rush on this end.",
+        "nothing to roll back. today was uneventful, which is the point.",
+        "quiet, as designed."
+      ],
+      "codeintel": [
+        "walking symbols, not guessing.",
+        "reading the code, so the agent reads less.",
+        "cache hit. we have, in fact, been here before.",
+        "warming the index. fresh answers cost a moment."
+      ],
+      "patch": [
+        "measuring twice.",
+        "no drama, as designed.",
+        "lining up hunks in order."
+      ],
+      "session": [
+        "picking up the thread.",
+        "everything is where you left it.",
+        "loading the transcript, oldest first."
+      ],
+      "audit": [
+        "47 actions, 47 audit entries. arithmetic checks out.",
+        "counting entries. all of them.",
+        "every link, in order."
+      ],
+      "agent": [
+        "agent busy. carina keeps the receipts.",
+        "watching the agent so you don't have to.",
+        "third turn. still on task."
+      ],
+      "kernel": [
+        "asking the kernel first.",
+        "the kernel gets a vote. counting it."
+      ],
+      "provider": [
+        "waiting on the model. it is thinking, allegedly.",
+        "tokens spent, receipts kept."
+      ],
+      "git": [
+        "reading history, not rewriting it.",
+        "diffing quietly."
+      ],
+      "file": [
+        "reading only what was asked.",
+        "bytes counted, checksums kept."
+      ],
+      "terminal": [
+        "running your command, keeping the receipt.",
+        "stdout incoming."
+      ],
+      "policy": [
+        "rules first, work second.",
+        "checking the allowlist."
+      ]
+    },
+    "zh": {
+      "generic": [
+        "carina 在场。代理干活，账本记账。",
+        "工作区已热身，策略已装载。",
+        "代理已闲置。这边不催。",
+        "无事可回滚。平淡是设计目标。"
+      ],
+      "codeintel": [
+        "缓存命中。此路我们走过。",
+        "先读代码，代理少走弯路。",
+        "索引热身中。稍等片刻。"
+      ],
+      "patch": [
+        "补丁对齐中。量两次，切一次。",
+        "无惊无险，本该如此。"
+      ],
+      "session": [
+        "接上话头。",
+        "原样奉还。"
+      ],
+      "audit": [
+        "47 个动作，47 条审计。一个不多，一个不少。",
+        "逐条清点，一条不落。"
+      ],
+      "agent": [
+        "代理干活，carina 记账。",
+        "有据可查，才叫干活。"
+      ],
+      "kernel": [
+        "先问内核，再动手。"
+      ],
+      "provider": [
+        "等模型回话。",
+        "有更新（0.4.2）。更新日志比这句话还短。"
+      ],
+      "git": [
+        "只读历史，不改历史。"
+      ],
+      "file": [
+        "按需读取，点到为止。"
+      ],
+      "terminal": [
+        "命令在跑，回执在记。"
+      ],
+      "policy": [
+        "规则在前，动作在后。"
+      ]
+    }
+  }
+}

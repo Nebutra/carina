@@ -117,9 +117,11 @@ type Daemon struct {
 	riskReviewer   Reasoner     // optional independent approval reviewer (nil => deterministic heuristic)
 	riskReviewMode atomic.Value // string: off|advisory|enforce, hot-reloadable
 
-	mu               sync.Mutex
-	pendingCmds      map[string]pendingCommand     // decision_id -> command awaiting approval
-	pendingMemWrites map[string]pendingMemoryWrite // decision_id -> memory write awaiting approval
+	mu                  sync.Mutex
+	pendingCmds         map[string]pendingCommand     // decision_id -> command awaiting approval
+	pendingMemWrites    map[string]pendingMemoryWrite // decision_id -> memory write awaiting approval
+	patchGates          map[string]*patchGate         // patch_id -> PatchApply decision state
+	patchGateByDecision map[string]string             // decision_id -> patch_id
 
 	runs   *runStore     // durable background-run registry (survives restart)
 	runSem chan struct{} // concurrency cap for background runs
@@ -155,10 +157,11 @@ type Daemon struct {
 	stopCh   chan struct{} // closed on Close; stops background loops (lease reaper)
 	stopOnce sync.Once
 
-	interactiveApproval atomic.Bool          // when true, requires_approval pauses for an operator decision (hot-reloadable)
-	approvalTimeout     time.Duration        // how long to wait for an interactive approval (0 => 5m)
-	pendingApprovals    map[string]chan bool // decision_id -> resolver channel
+	interactiveApproval atomic.Bool                    // when true, requires_approval pauses for an operator decision (hot-reloadable)
+	approvalTimeout     time.Duration                  // how long to wait for an interactive approval (0 => 5m)
+	pendingApprovals    map[string]chan approvalSignal // decision_id -> resolver channel
 	approvalMu          sync.Mutex
+	patchGateRetention  time.Duration // how long a resolved patch gate survives before being swept (0 => 1h)
 
 	subagentParentTask map[string]string // childSessionID -> parentTaskID (leader-bridge linkage)
 	escalationCounts   map[string]int    // childTaskID -> escalations used (bridge cap)
@@ -234,26 +237,28 @@ func New(opts Options) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: cannot start capability kernel: %w", err)
 	}
 	d := &Daemon{
-		store:              store,
-		sched:              scheduler.New(),
-		pool:               worker.NewPool(),
-		router:             modelrouter.New(),
-		server:             rpc.NewServer(),
-		kern:               kern,
-		tools:              tools,
-		events:             NewBus(),
-		org:                loadOrgPolicy(opts.PolicyDir),
-		stateDir:           opts.StateDir,
-		cloudEndpoint:      cloudEndpoint,
-		syncMode:           syncMode,
-		started:            time.Now().UTC(),
-		pendingCmds:        make(map[string]pendingCommand),
-		pendingMemWrites:   make(map[string]pendingMemoryWrite),
-		memory:             newMemoryStore(opts.StateDir),
-		contextEng:         contextEng,
-		gatewayTokens:      gatewayTokens,
-		gatewayTokenMaxTTL: gatewayTokenMaxTTL,
-		gatewayResponses:   map[string]string{},
+		store:               store,
+		sched:               scheduler.New(),
+		pool:                worker.NewPool(),
+		router:              modelrouter.New(),
+		server:              rpc.NewServer(),
+		kern:                kern,
+		tools:               tools,
+		events:              NewBus(),
+		org:                 loadOrgPolicy(opts.PolicyDir),
+		stateDir:            opts.StateDir,
+		cloudEndpoint:       cloudEndpoint,
+		syncMode:            syncMode,
+		started:             time.Now().UTC(),
+		pendingCmds:         make(map[string]pendingCommand),
+		pendingMemWrites:    make(map[string]pendingMemoryWrite),
+		patchGates:          make(map[string]*patchGate),
+		patchGateByDecision: make(map[string]string),
+		memory:              newMemoryStore(opts.StateDir),
+		contextEng:          contextEng,
+		gatewayTokens:       gatewayTokens,
+		gatewayTokenMaxTTL:  gatewayTokenMaxTTL,
+		gatewayResponses:    map[string]string{},
 	}
 	d.riskReviewMode.Store(riskReviewMode)
 	_ = hardenProcess() // Linux: non-dumpable, anti-ptrace (best-effort)
@@ -295,7 +300,7 @@ func New(opts Options) (*Daemon, error) {
 	d.mailbox = map[string][]string{}
 	d.planMode = map[string]bool{}
 	d.stopCh = make(chan struct{})
-	d.pendingApprovals = map[string]chan bool{}
+	d.pendingApprovals = map[string]chan approvalSignal{}
 	d.interactiveApproval.Store(opts.InteractiveApproval)
 	d.subagentParentTask = map[string]string{}
 	d.escalationCounts = map[string]int{}
@@ -1884,10 +1889,28 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 	if p.Approver == "" {
 		p.Approver = "user"
 	}
+	// A patch gate's approval window is enforced regardless of call order:
+	// checkPatchGate only discovers an elapsed window when
+	// workspace.patch.apply is actually called, so a late approval arriving
+	// here first — before any apply attempt — must not be allowed to flip a
+	// stale "requires_approval" gate straight to "allowed". Refuse and
+	// expire it here too, before ever asking the kernel to approve it.
+	if patchID, expired := d.expirePatchGateIfStale(p.SessionID, p.DecisionID); expired {
+		d.recordPatchRefusal(p.SessionID, patchID, p.DecisionID, "approval_expired")
+		return nil, fmt.Errorf("approval_expired: patch %s was not applied. decision %s expired before approval; propose the patch again to request a new decision.", patchID, p.DecisionID)
+	}
+
 	decision, err := d.kern.ApproveWithRole(p.SessionID, p.DecisionID, p.Approver, p.Role)
 	if err != nil {
 		return nil, err
 	}
+	// Unblock a live awaitInteractiveApproval wait on this decision (an
+	// agent-originated requires_approval pause), if one is pending. This is
+	// the RPC surface the TUI's approval overlay calls (task.action.approve)
+	// — it must resolve the same wait task.approval.resolve does, or the
+	// operator's verdict is recorded as allowed while the gated action still
+	// times out to denied.
+	d.signalPendingApproval(p.DecisionID, decision, decision.Decision == "allowed")
 	// A role-rejected approval does not execute the pending command.
 	if decision.Decision != "allowed" {
 		return map[string]any{"decision": decision}, nil
@@ -1920,6 +1943,16 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 		}
 		return map[string]any{"decision": decision, "result": result}, nil
 	}
+	// If the approval resolves a patch gate, unlock the apply for that patch.
+	d.mu.Lock()
+	if patchID, ok := d.patchGateByDecision[p.DecisionID]; ok {
+		if gate := d.patchGates[patchID]; gate != nil && gate.status == "requires_approval" {
+			gate.status = "allowed"
+		}
+		d.mu.Unlock()
+		return map[string]any{"decision": decision, "patch_id": patchID}, nil
+	}
+	d.mu.Unlock()
 	return map[string]any{"decision": decision}, nil
 }
 
@@ -1936,11 +1969,25 @@ func (d *Daemon) handleDeny(params json.RawMessage) (any, error) {
 	if p.Approver == "" {
 		p.Approver = "user"
 	}
+	denied, err := d.kern.Deny(p.SessionID, p.DecisionID, p.Approver, p.Reason)
+	if err != nil {
+		return nil, err
+	}
+	// Unblock a live awaitInteractiveApproval wait on this decision, same as
+	// handleApprove — a TUI deny must resolve the agent's pause immediately,
+	// not leave it to time out.
+	d.signalPendingApproval(p.DecisionID, denied, false)
 	d.mu.Lock()
 	delete(d.pendingCmds, p.DecisionID)
 	delete(d.pendingMemWrites, p.DecisionID)
+	// A denied patch gate refuses every later apply of that patch.
+	if patchID, ok := d.patchGateByDecision[p.DecisionID]; ok {
+		if gate := d.patchGates[patchID]; gate != nil && gate.status == "requires_approval" {
+			gate.status = "denied"
+		}
+	}
 	d.mu.Unlock()
-	return d.kern.Deny(p.SessionID, p.DecisionID, p.Approver, p.Reason)
+	return denied, nil
 }
 
 // ---- workspace ------------------------------------------------------------
@@ -2146,6 +2193,18 @@ func patchPathNeedsAdmin(path string) bool {
 	return false
 }
 
+// patchGate is the PatchApply capability decision minted when a patch is
+// proposed. workspace.patch.apply verifies it instead of letting the kernel
+// record a fabricated approval at apply time (the governance gap found by the
+// TUI spikes — docs/plans/tui-stack-decision.md, spike verdict).
+type patchGate struct {
+	sessionID  string
+	patchID    string
+	decisionID string
+	status     string // requires_approval | allowed | denied | expired
+	requested  time.Time
+}
+
 func (d *Daemon) handlePatchPropose(params json.RawMessage) (any, error) {
 	var p struct {
 		SessionID string              `json:"session_id"`
@@ -2156,7 +2215,85 @@ func (d *Daemon) handlePatchPropose(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	return d.kern.PatchPropose(p.SessionID, p.TaskID, p.Reason, p.Files)
+	patch, err := d.kern.PatchPropose(p.SessionID, p.TaskID, p.Reason, p.Files)
+	if err != nil {
+		return nil, err
+	}
+	// Gate the future apply now: the PatchApply decision travels with the
+	// proposal so approval resolves a real decision_id, and apply can verify
+	// that the approval actually happened.
+	decision, err := d.registerPatchGate(p.SessionID, patch.PatchID, p.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	return patchWithApplyDecision(patch, decision)
+}
+
+// registerPatchGate requests the PatchApply capability for a proposed patch
+// and remembers the decision so workspace.patch.apply can check it.
+// defaultPatchGateRetention bounds how long a resolved (terminal) patch gate
+// is kept around purely for idempotent status queries/retries, so a
+// long-running daemon's patchGates/patchGateByDecision maps do not grow
+// without bound as an agent proposes many patches over its lifetime.
+const defaultPatchGateRetention = time.Hour
+
+func (d *Daemon) registerPatchGate(sessionID, patchID, taskID string) (*kernel.Decision, error) {
+	decision, err := d.kern.Request(sessionID, "PatchApply", patchID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	d.sweepPatchGatesLocked()
+	d.patchGates[patchID] = &patchGate{
+		sessionID:  sessionID,
+		patchID:    patchID,
+		decisionID: decision.DecisionID,
+		status:     decision.Decision,
+		requested:  time.Now(),
+	}
+	d.patchGateByDecision[decision.DecisionID] = patchID
+	d.mu.Unlock()
+	return decision, nil
+}
+
+// sweepPatchGatesLocked deletes patch gates that have both reached a
+// terminal state (allowed, denied, expired — never "requires_approval",
+// which must stay reachable until it resolves) and aged past the retention
+// window. Callers must hold d.mu. Piggybacked on registration rather than a
+// background goroutine: the only operation that grows the maps is also a
+// natural, low-frequency point to shrink them, with no extra goroutine
+// lifecycle to manage or leak.
+func (d *Daemon) sweepPatchGatesLocked() {
+	retention := d.patchGateRetention
+	if retention <= 0 {
+		retention = defaultPatchGateRetention
+	}
+	now := time.Now()
+	for patchID, gate := range d.patchGates {
+		if gate.status == "requires_approval" {
+			continue
+		}
+		if now.Sub(gate.requested) <= retention {
+			continue
+		}
+		delete(d.patchGates, patchID)
+		delete(d.patchGateByDecision, gate.decisionID)
+	}
+}
+
+// patchWithApplyDecision returns the patch JSON with the gate decision merged
+// in as apply_decision, so clients learn the decision_id they must resolve.
+func patchWithApplyDecision(patch *kernel.Patch, decision *kernel.Decision) (any, error) {
+	raw, err := json.Marshal(patch)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	out["apply_decision"] = decision
+	return out, nil
 }
 
 func (d *Daemon) handlePatchApply(params json.RawMessage) (any, error) {
@@ -2171,7 +2308,113 @@ func (d *Daemon) handlePatchApply(params json.RawMessage) (any, error) {
 	if p.Approver == "" {
 		p.Approver = "user"
 	}
+	if err := d.checkPatchGate(p.SessionID, p.PatchID); err != nil {
+		return nil, err
+	}
 	return d.kern.PatchApply(p.SessionID, p.PatchID, p.Approver)
+}
+
+// checkPatchGate refuses a patch apply unless its PatchApply decision was
+// resolved to allowed. Pending, denied, and expired decisions refuse with a
+// Governed-register error and a PolicyViolation audit event — the refusal is
+// always observable, never silently swallowed.
+func (d *Daemon) checkPatchGate(sessionID, patchID string) error {
+	d.mu.Lock()
+	_, ok := d.patchGates[patchID]
+	d.mu.Unlock()
+
+	if !ok {
+		// No gate on record (the patch was proposed outside
+		// workspace.patch.propose): mint the decision now instead of trusting
+		// the caller — an unapproved apply still refuses below.
+		if _, err := d.registerPatchGate(sessionID, patchID, ""); err != nil {
+			return err
+		}
+	}
+
+	status, decisionID := d.expirePatchGateStatus(sessionID, patchID)
+
+	switch status {
+	case "allowed":
+		return nil
+	case "denied":
+		d.recordPatchRefusal(sessionID, patchID, decisionID, "approval_denied")
+		return fmt.Errorf("approval_denied: patch %s was not applied. decision %s was denied.", patchID, decisionID)
+	case "expired":
+		d.recordPatchRefusal(sessionID, patchID, decisionID, "approval_expired")
+		return fmt.Errorf("approval_expired: patch %s was not applied. decision %s expired before approval; propose the patch again to request a new decision.", patchID, decisionID)
+	default: // requires_approval
+		d.recordPatchRefusal(sessionID, patchID, decisionID, "approval_required")
+		return fmt.Errorf("approval_required: patch %s was not applied. decision %s is awaiting approval; resolve it with task.action.approve or task.action.deny.", patchID, decisionID)
+	}
+}
+
+// expirePatchGateStatus reads a patch gate's current status, lazily flipping
+// it (and denying the underlying kernel decision, so the expiry is attested
+// in the audit chain rather than just a daemon-side state flip) from
+// "requires_approval" to "expired" if the approval window has already
+// elapsed. Both checkPatchGate (the apply path) and handleApprove (the
+// approve path) must apply this same window regardless of which is called
+// first — a late approval must not be able to race ahead of an apply that
+// would have caught the expiry.
+func (d *Daemon) expirePatchGateStatus(sessionID, patchID string) (status, decisionID string) {
+	window := d.approvalTimeout
+	if window <= 0 {
+		window = defaultApprovalTimeout
+	}
+
+	d.mu.Lock()
+	gate, ok := d.patchGates[patchID]
+	expiredNow := false
+	if ok && gate.status == "requires_approval" && time.Since(gate.requested) > window {
+		gate.status = "expired"
+		expiredNow = true
+	}
+	if ok {
+		status, decisionID = gate.status, gate.decisionID
+	}
+	d.mu.Unlock()
+
+	if expiredNow {
+		// Two callers (an apply via checkPatchGate and an approve via
+		// expirePatchGateIfStale) can both observe "requires_approval"
+		// before either flips it above, so both land here and both call
+		// Deny on the same decision_id; only the first actually resolves
+		// it; the kernel refuses the second with no pending decision left
+		// to deny. That is expected under the race, but it must never be
+		// silently discarded — the failure is recorded as its own
+		// PolicyViolation so the audit trail shows a kernel-side attestation
+		// gap instead of nothing at all.
+		if _, err := d.kern.Deny(sessionID, decisionID, "system", "approval window expired before the patch was applied"); err != nil {
+			d.record(sessionID, "PolicyViolation", "", "go",
+				map[string]any{
+					"capability": "PatchApply", "patch_id": patchID, "decision_id": decisionID,
+					"refusal": "expiry_deny_failed", "error": err.Error(),
+				}, decisionID)
+		}
+	}
+	return status, decisionID
+}
+
+// expirePatchGateIfStale reports whether decisionID gates a patch whose
+// approval window has already elapsed, expiring it as a side effect if so.
+// Used by handleApprove to refuse (and audit) a late approval before ever
+// asking the kernel to approve a decision whose gate is already stale.
+func (d *Daemon) expirePatchGateIfStale(sessionID, decisionID string) (patchID string, expired bool) {
+	d.mu.Lock()
+	patchID, ok := d.patchGateByDecision[decisionID]
+	d.mu.Unlock()
+	if !ok {
+		return "", false
+	}
+	status, _ := d.expirePatchGateStatus(sessionID, patchID)
+	return patchID, status == "expired"
+}
+
+// recordPatchRefusal writes the audit event for a refused patch apply.
+func (d *Daemon) recordPatchRefusal(sessionID, patchID, decisionID, code string) {
+	d.record(sessionID, "PolicyViolation", "", "go",
+		map[string]any{"capability": "PatchApply", "patch_id": patchID, "refusal": code}, decisionID)
 }
 
 func (d *Daemon) handlePatchRollback(params json.RawMessage) (any, error) {

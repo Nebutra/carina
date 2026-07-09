@@ -214,9 +214,14 @@ func TestDaemonHandlerSurface(t *testing.T) {
 		t.Fatalf("unexpected memory.status boundary: %+v", memoryStatus)
 	}
 
-	// patches
+	// patches: propose carries the PatchApply gate decision; apply requires
+	// it to be approved first (governed flow).
 	var patch struct {
-		PatchID string `json:"patch_id"`
+		PatchID       string `json:"patch_id"`
+		ApplyDecision struct {
+			Decision   string `json:"decision"`
+			DecisionID string `json:"decision_id"`
+		} `json:"apply_decision"`
 	}
 	if err := c.Call("workspace.patch.propose", map[string]any{
 		"session_id": sid, "reason": "t", "files": []map[string]any{{"path": "a.go", "new_content": "package p\n"}},
@@ -225,6 +230,13 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	}
 	must("workspace.patch.list", map[string]any{"session_id": sid})
 	must("workspace.patch.show", map[string]any{"session_id": sid, "patch_id": patch.PatchID})
+	if err := c.Call("workspace.patch.apply", map[string]any{"session_id": sid, "patch_id": patch.PatchID}, nil); err == nil {
+		t.Fatal("workspace.patch.apply must refuse before the gate decision is approved")
+	}
+	if patch.ApplyDecision.Decision != "requires_approval" {
+		t.Fatalf("propose should gate apply as requires_approval, got %+v", patch.ApplyDecision)
+	}
+	must("task.action.approve", map[string]any{"session_id": sid, "decision_id": patch.ApplyDecision.DecisionID})
 	must("workspace.patch.apply", map[string]any{"session_id": sid, "patch_id": patch.PatchID})
 	must("workspace.patch.rollback", map[string]any{"session_id": sid, "patch_id": patch.PatchID})
 

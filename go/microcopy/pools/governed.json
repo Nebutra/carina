@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "templates": {
+    "approval.required": {
+      "placeholders": ["action", "path", "decision_id"],
+      "en": "Approval required: agent requests {action} on {path}. No default. Decision {decision_id} is pending.",
+      "zh": "需要授权：代理请求对 {path} 执行 {action}。无默认选项。决定 {decision_id} 等待处理。"
+    },
+    "approval.granted": {
+      "placeholders": ["action", "scope", "decision_id"],
+      "en": "Approved: {action}. Scope: {scope}. Decision {decision_id} is recorded in the audit chain.",
+      "zh": "已批准：{action}。范围：{scope}。决定 {decision_id} 已记入审计链。"
+    },
+    "approval.denied": {
+      "placeholders": ["action", "decision_id"],
+      "en": "Denied: {action}. Decision {decision_id} is recorded in the audit chain. The command was not executed.",
+      "zh": "已拒绝：{action}。决定 {decision_id} 已记入审计链。命令未被执行。"
+    },
+    "policy.denied": {
+      "placeholders": ["rule_id", "action", "audit_id"],
+      "en": "Denied by policy {rule_id}: {action} was not attempted. Audit entry {audit_id} written.",
+      "zh": "已被策略 {rule_id} 拒绝：{action} 未被发起。审计条目 {audit_id} 已写入。"
+    },
+    "policy.updated": {
+      "placeholders": ["tightened", "loosened"],
+      "en": "Policy bundle updated: {tightened} rules tightened, {loosened} loosened. Loosening requires explicit operator approval.",
+      "zh": "策略包已更新：收紧 {tightened} 条，放宽 {loosened} 条。放宽须操作者明确批准。"
+    },
+    "destructive.confirm": {
+      "placeholders": ["command", "count"],
+      "en": "Destructive action: {command} ({count} files). A restore point will be created first. Confirm to proceed.",
+      "zh": "破坏性操作：{command}（{count} 个文件）。将先创建还原点。确认后执行。"
+    },
+    "rollback.complete": {
+      "placeholders": ["count", "checkpoint_id"],
+      "en": "Rollback complete. {count} file changes reverted to checkpoint {checkpoint_id}. Nothing outside the transaction was touched.",
+      "zh": "回滚完成。{count} 处文件改动已还原至检查点 {checkpoint_id}。事务之外未触碰任何内容。"
+    },
+    "checkpoint.created": {
+      "placeholders": ["action", "checkpoint_id"],
+      "en": "Checkpoint created before {action}. Undo at any time with: carina rollback {checkpoint_id}.",
+      "zh": "执行 {action} 前已创建检查点。随时可撤销：carina rollback {checkpoint_id}。"
+    },
+    "audit.verified": {
+      "placeholders": ["count", "head"],
+      "en": "Audit chain verified: {count} entries, head {head}, no gaps, no rewrites.",
+      "zh": "审计链校验通过：{count} 条记录，链头 {head}，无缺口，无改写。"
+    },
+    "secret.redacted": {
+      "placeholders": [],
+      "en": "Secret detected in agent output. Redacted from display; the original is recorded in the encrypted audit store only.",
+      "zh": "在代理输出中检测到密钥。显示已脱敏；原文仅记录于加密审计存储。"
+    },
+    "egress.confirm": {
+      "placeholders": ["subject", "endpoint"],
+      "en": "This action sends {subject} to an external endpoint ({endpoint}). Proceed?",
+      "zh": "此操作将把 {subject} 发送至外部端点（{endpoint}）。是否继续？"
+    }
+  }
+}

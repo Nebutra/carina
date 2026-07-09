@@ -5,33 +5,23 @@ import (
 	"testing"
 )
 
-func TestFormatStatus(t *testing.T) {
-	out := formatStatus(map[string]any{
-		"version":        "0.5.0",
-		"sessions":       2,
-		"tasks":          3,
-		"workers":        1,
-		"tools":          true,
-		"uptime_seconds": 9,
-		"rpc_endpoint":   "/tmp/carina.sock",
-	})
-	for _, want := range []string{"Carina Runtime", "version", "0.5.0", "sessions", "2"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("status output missing %q:\n%s", want, out)
-		}
+// Bad flags exit with the governance usage code (2), not a generic 1.
+func TestRunUsageExitCode(t *testing.T) {
+	var errOut strings.Builder
+	if got := run([]string{"-definitely-not-a-flag"}, &errOut); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage)", got)
 	}
 }
 
-func TestFormatSessions(t *testing.T) {
-	out := formatSessions([]sessionRow{{
-		SessionID: "sess_1", Status: "active", Profile: "safe-edit", WorkspaceRoot: "/repo",
-	}})
-	for _, want := range []string{"Sessions", "sess_1", "active", "safe-edit", "/repo"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("sessions output missing %q:\n%s", want, out)
-		}
+// Under `go test` stdout is not a TTY: the TUI must refuse with the usage
+// code and a pointer at the pipe-friendly surface, never start half-blind.
+func TestRunRequiresTTY(t *testing.T) {
+	var errOut strings.Builder
+	got := run(nil, &errOut)
+	if got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage)", got)
 	}
-	if empty := formatSessions(nil); !strings.Contains(empty, "no sessions") {
-		t.Fatalf("empty sessions output: %s", empty)
+	if !strings.Contains(errOut.String(), "interactive terminal") {
+		t.Fatalf("stderr missing TTY guidance: %q", errOut.String())
 	}
 }

@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "templates": {
+    "interrupted.user": {
+      "placeholders": [],
+      "en": "Stopped by you. Partial results are recorded in the audit chain.",
+      "zh": "已按您的指令停止。部分结果已记录于审计链。"
+    },
+    "interrupted.policy": {
+      "placeholders": ["rule_id"],
+      "en": "Stopped by policy {rule_id}. The interrupt and partial results are recorded in the audit chain.",
+      "zh": "已被策略 {rule_id} 停止。中断与部分结果已记录于审计链。"
+    },
+    "interrupted.agent": {
+      "placeholders": ["agent_id"],
+      "en": "Stopped by agent {agent_id}. The interrupt is recorded in the audit chain.",
+      "zh": "已被代理 {agent_id} 停止。中断已记录于审计链。"
+    },
+    "timed_out": {
+      "placeholders": ["seconds", "action"],
+      "en": "Timed out after {seconds}s: {action}. Partial results are kept. Fix: carina doctor",
+      "zh": "超时（{seconds} 秒）：{action}。部分结果已保留。修复：carina doctor"
+    },
+    "backgrounded": {
+      "placeholders": ["task_id"],
+      "en": "Moved to background: task {task_id}. Watch with: carina watch {task_id}",
+      "zh": "已转入后台：任务 {task_id}。查看：carina watch {task_id}"
+    },
+    "conflict": {
+      "placeholders": ["path"],
+      "en": "Conflict: {path} changed on disk after it was read. Nothing was overwritten. Re-run to retry.",
+      "zh": "冲突：{path} 在读取后被修改。未覆盖任何内容。请重试。"
+    },
+    "done": {
+      "placeholders": [],
+      "en": "Done",
+      "zh": "完成"
+    },
+    "partial": {
+      "placeholders": ["applied", "total", "tx_id"],
+      "en": "Partial: {applied} of {total} steps applied. Applied steps are committed; failed steps are left staged. See: carina log --tx {tx_id}",
+      "zh": "部分完成：{total} 步中 {applied} 步已应用。已应用的更改已提交；失败的更改保留在暂存区。详见：carina log --tx {tx_id}"
+    },
+    "daemon_unreachable": {
+      "placeholders": ["socket"],
+      "en": "Daemon unreachable at {socket}. Fix: carina-daemon &",
+      "zh": "无法连接守护进程（{socket}）。修复：carina-daemon &"
+    },
+    "semantic_off": {
+      "placeholders": ["reason"],
+      "en": "Degraded: semantic search offline ({reason}) — lexical results only. Fix: carina doctor",
+      "zh": "已降级：语义检索离线（{reason}），仅返回词法结果。修复：carina doctor"
+    },
+    "rerank_off": {
+      "placeholders": ["reason"],
+      "en": "Degraded: reranker offline ({reason}) — results unranked. Fix: carina doctor",
+      "zh": "已降级：重排序器离线（{reason}），结果未重排。修复：carina doctor"
+    },
+    "lookup_imprecise": {
+      "placeholders": ["tool", "reason"],
+      "en": "Degraded: {tool} fell back to tree-sitter precision ({reason}). Fix: carina doctor",
+      "zh": "已降级：{tool} 回退至 tree-sitter 精度（{reason}）。修复：carina doctor"
+    }
+  }
+}

@@ -1,66 +1,68 @@
-// carina-tui is a minimal read-only terminal dashboard for Carina.
+// carina-tui is the interactive terminal client for the Carina runtime: a
+// live session transcript, kernel-backed approval prompts, and Ctrl-C as an
+// audited cascading cancel. This binary is deliberately thin — the model,
+// update logic, views, theme, and diff renderer live in go/tui so the CLI
+// renderer can share them (one engine, two renderers).
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 
-	"github.com/Nebutra/carina/go/rpc"
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/Nebutra/carina/go/microcopy"
+	"github.com/Nebutra/carina/go/tui"
+	"github.com/Nebutra/carina/go/tui/theme"
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "carina-tui: %v\n", err)
-		os.Exit(1)
-	}
+	os.Exit(run(os.Args[1:], os.Stderr))
 }
 
-func run(args []string) error {
+func run(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("carina-tui", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	fs.SetOutput(stderr)
 	socket := fs.String("socket", defaultSocket(), "carina daemon unix socket")
+	session := fs.String("session", "", "attach to an existing session id (default: create one)")
+	workspace := fs.String("workspace", "", "workspace root for session.create (default: cwd)")
+	locale := fs.String("locale", "", "copy locale (en, zh; default: CARINA_LOCALE/LC_ALL/LANG)")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return tui.OutcomeUsage.ExitCode()
 	}
-	view := "status"
-	if fs.NArg() > 0 {
-		view = fs.Arg(0)
+	if !isTTY(os.Stdout) || !isTTY(os.Stdin) {
+		fmt.Fprintln(stderr, "carina-tui requires an interactive terminal; use `carina watch --json` for pipes.")
+		return tui.OutcomeUsage.ExitCode()
 	}
-	c, err := rpc.Dial(*socket)
+
+	loc := *locale
+	if loc == "" {
+		loc = microcopy.DetectLocale()
+	}
+	th := theme.New(theme.Detect(os.Getenv, true))
+
+	model := tui.New(tui.Options{
+		Theme:         th,
+		Locale:        loc,
+		Socket:        *socket,
+		SessionID:     *session,
+		WorkspaceRoot: *workspace,
+	})
+	prog := tea.NewProgram(model)
+	tui.Connect(prog, *socket, *session, *workspace)
+
+	final, err := prog.Run()
 	if err != nil {
-		return err
+		fmt.Fprintf(stderr, "carina-tui: %v\n", err)
+		return tui.OutcomeRuntimeError.ExitCode()
 	}
-	defer c.Close()
-	switch view {
-	case "status":
-		var status map[string]any
-		if err := c.Call("daemon.status", map[string]any{}, &status); err != nil {
-			return err
-		}
-		fmt.Print(formatStatus(status))
-	case "sessions":
-		var sessions []sessionRow
-		if err := c.Call("session.list", map[string]any{}, &sessions); err != nil {
-			return err
-		}
-		fmt.Print(formatSessions(sessions))
-	case "json":
-		var status map[string]any
-		if err := c.Call("daemon.status", map[string]any{}, &status); err != nil {
-			return err
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(status)
-	default:
-		return fmt.Errorf("usage: carina-tui [--socket path] [status|sessions|json]")
+	if m, ok := final.(*tui.Model); ok {
+		return m.Outcome().ExitCode()
 	}
-	return nil
+	return tui.OutcomeOK.ExitCode()
 }
 
 func defaultSocket() string {
@@ -71,55 +73,10 @@ func defaultSocket() string {
 	return filepath.Join(home, ".carina", "daemon.sock")
 }
 
-func formatStatus(status map[string]any) string {
-	keys := []string{"version", "sessions", "tasks", "workers", "tools", "uptime_seconds", "rpc_endpoint"}
-	var b strings.Builder
-	b.WriteString("Carina Runtime\n")
-	b.WriteString("==============\n")
-	for _, key := range keys {
-		if v, ok := status[key]; ok {
-			fmt.Fprintf(&b, "%-15s %v\n", key, v)
-		}
+func isTTY(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
 	}
-	var rest []string
-	for key := range status {
-		if !contains(keys, key) {
-			rest = append(rest, key)
-		}
-	}
-	sort.Strings(rest)
-	for _, key := range rest {
-		fmt.Fprintf(&b, "%-15s %v\n", key, status[key])
-	}
-	return b.String()
-}
-
-type sessionRow struct {
-	SessionID     string `json:"session_id"`
-	WorkspaceRoot string `json:"workspace_root"`
-	Profile       string `json:"profile"`
-	Status        string `json:"status"`
-}
-
-func formatSessions(sessions []sessionRow) string {
-	var b strings.Builder
-	b.WriteString("Sessions\n")
-	b.WriteString("========\n")
-	if len(sessions) == 0 {
-		b.WriteString("no sessions\n")
-		return b.String()
-	}
-	for _, s := range sessions {
-		fmt.Fprintf(&b, "%s  %-8s  %-10s  %s\n", s.SessionID, s.Status, s.Profile, s.WorkspaceRoot)
-	}
-	return b.String()
-}
-
-func contains(items []string, item string) bool {
-	for _, candidate := range items {
-		if candidate == item {
-			return true
-		}
-	}
-	return false
+	return info.Mode()&os.ModeCharDevice != 0
 }

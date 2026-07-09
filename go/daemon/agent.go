@@ -656,7 +656,14 @@ func (d *Daemon) agentMemory(sess *sessionstore.Session, task *scheduler.Task, a
 }
 
 // agentPatch proposes and applies a full-file edit through the kernel's
-// transactional patch engine (writes land via Zig carina-patch-native).
+// transactional patch engine (writes land via Zig carina-patch-native). The
+// PatchApply capability decision goes through the same gate discipline as
+// the workspace.patch.apply RPC surface (checkPatchGate): PatchApply always
+// evaluates to requires_approval under any non-denying profile
+// (crates/carina-policy evaluate()), so the agent's own write path pauses
+// for an operator in interactive-approval mode exactly like a gated command
+// (agentRun) — it never self-approves as approver="agent" behind the
+// operator's back.
 func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, path, content string) string {
 	if path == "" {
 		return "error: patch needs a path"
@@ -671,7 +678,37 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 	if err != nil {
 		return "patch propose failed: " + err.Error()
 	}
-	applied, err := d.kern.PatchApply(sess.SessionID, patch.PatchID, "agent")
+	// Gate the apply the same way workspace.patch.propose does: mint the
+	// PatchApply decision now and remember it so a concurrent
+	// workspace.patch.apply on the same patch_id sees the identical gate
+	// state, instead of leaving this apply ungoverned.
+	dec, err := d.registerPatchGate(sess.SessionID, patch.PatchID, task.TaskID)
+	if err != nil {
+		return "patch gate failed: " + err.Error()
+	}
+	approver := "agent"
+	switch dec.Decision {
+	case "denied":
+		if esc, ok := d.escalateToParent(sess, task, "PatchApply", patch.PatchID, "patch "+path); ok {
+			dec = esc
+			approver = "operator"
+		} else {
+			return "DENIED by policy: " + dec.Reason
+		}
+	case "requires_approval":
+		approved, ok := d.resolveApprovalOrEscalate(sess, task, dec, "PatchApply", patch.PatchID, "patch "+path)
+		if !ok {
+			return "requires approval (not granted): " + dec.Reason
+		}
+		dec = approved
+		approver = "operator"
+	}
+	d.mu.Lock()
+	if gate := d.patchGates[patch.PatchID]; gate != nil {
+		gate.status = "allowed"
+	}
+	d.mu.Unlock()
+	applied, err := d.kern.PatchApply(sess.SessionID, patch.PatchID, approver)
 	if err != nil {
 		return "patch apply failed (nothing written): " + err.Error()
 	}

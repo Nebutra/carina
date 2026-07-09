@@ -221,6 +221,14 @@ content hash, not raw memory text.
 | `workspace.file.get` | read a file (FileRead capability) |
 | `workspace.patch.propose` / `apply` / `rollback` | transactional patch operations |
 
+Patch applies are approval-gated: `workspace.patch.propose` requests the
+`PatchApply` capability and returns the decision as `apply_decision` alongside
+the patch. When the decision is `requires_approval`, `workspace.patch.apply`
+refuses (error + `PolicyViolation` audit event) until the decision is resolved
+with `task.action.approve`; a decision resolved by `task.action.deny`, or left
+unresolved past the approval window, refuses permanently and the patch must be
+re-proposed.
+
 ## Capability API (kernel-facing)
 
 `capability.file.read` · `capability.file.write` · `capability.command.exec` · `capability.network.access` · `capability.secret.read` · `capability.patch.apply`
