@@ -15,6 +15,10 @@ const std = @import("std");
 const jsonl = @import("jsonl");
 
 const c = @cImport({
+    // glibc hides posix_openpt/grantpt/unlockpt/ptsname behind X/Open feature
+    // macros; harmless on macOS/BSD where they are always visible.
+    @cDefine("_XOPEN_SOURCE", "600");
+    @cDefine("_DEFAULT_SOURCE", "1");
     @cInclude("stdlib.h");
     @cInclude("unistd.h");
     @cInclude("fcntl.h");
