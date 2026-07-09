@@ -11,7 +11,9 @@ carina-policy = { workspace = true }
 carina-audit = { workspace = true }
 carina-patch = { workspace = true }
 carina-plugin-runtime = { workspace = true }
+carina-index = { workspace = true }
 serde = { workspace = true }
+sha2 = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 

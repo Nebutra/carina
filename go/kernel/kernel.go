@@ -5,8 +5,11 @@
 package kernel
 
 import (
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -359,6 +362,226 @@ func (s *Service) Redact(sessionID, text string) (string, error) {
 	}
 	err := s.call("kernel.redact", map[string]any{"session_id": sessionID, "text": text}, &out)
 	return out.Text, err
+}
+
+// IndexReport is the result of kernel.index.build / kernel.index.update
+// (docs/plans/code-intelligence.md). Skipped carries the paths the kernel
+// refused to ingest (policy-denied or unsupported) with the reason.
+type IndexReport struct {
+	Indexed   int           `json:"indexed"`
+	Unchanged int           `json:"unchanged"`
+	Skipped   []SkippedFile `json:"skipped"`
+	Symbols   int           `json:"symbols"`
+	Edges     int           `json:"edges"`
+	Chunks    int           `json:"chunks"`
+}
+
+// SkippedFile is one path the index build/update did not ingest.
+type SkippedFile struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+// IndexBuild ingests the given workspace-relative paths into the session's
+// code index. The kernel re-gates every path through FileRead policy, so
+// denied paths come back in Skipped rather than entering the index.
+func (s *Service) IndexBuild(sessionID string, paths []string) (*IndexReport, error) {
+	var r IndexReport
+	err := s.call("kernel.index.build", map[string]any{"session_id": sessionID, "paths": paths}, &r)
+	return &r, err
+}
+
+// IndexUpdate invalidates and re-ingests changed paths (and drops deleted
+// ones) after a patch apply/rollback.
+func (s *Service) IndexUpdate(sessionID string, changed, deleted []string) (*IndexReport, error) {
+	params := map[string]any{"session_id": sessionID, "changed_paths": changed}
+	if len(deleted) > 0 {
+		params["deleted_paths"] = deleted
+	}
+	var r IndexReport
+	err := s.call("kernel.index.update", params, &r)
+	return &r, err
+}
+
+// IndexSearch runs governed keyword search (FTS5 BM25 + exact, RRF-fused).
+func (s *Service) IndexSearch(sessionID, query string, limit int) (json.RawMessage, error) {
+	params := map[string]any{"session_id": sessionID, "query": query}
+	if limit > 0 {
+		params["limit"] = limit
+	}
+	var out json.RawMessage
+	err := s.call("kernel.index.search", params, &out)
+	return out, err
+}
+
+// IndexSymbols looks up definitions (and approximate references) by name.
+func (s *Service) IndexSymbols(sessionID, name string, includeRefs bool) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := s.call("kernel.index.symbols", map[string]any{
+		"session_id": sessionID, "name": name, "include_refs": includeRefs,
+	}, &out)
+	return out, err
+}
+
+// IndexImpact walks the bounded transitive dependents of a symbol name
+// (kernel.index.impact). maxDepth/limit <= 0 use the kernel defaults; the
+// kernel clamps both into its documented bounds (1..=5, 1..=200).
+func (s *Service) IndexImpact(sessionID, name string, maxDepth, limit int) (json.RawMessage, error) {
+	params := map[string]any{"session_id": sessionID, "name": name}
+	if maxDepth > 0 {
+		params["max_depth"] = maxDepth
+	}
+	if limit > 0 {
+		params["limit"] = limit
+	}
+	var out json.RawMessage
+	err := s.call("kernel.index.impact", params, &out)
+	return out, err
+}
+
+// IndexMap renders the PageRank-ranked repo map within a token budget.
+func (s *Service) IndexMap(sessionID string, tokenBudget int) (json.RawMessage, error) {
+	params := map[string]any{"session_id": sessionID}
+	if tokenBudget > 0 {
+		params["token_budget"] = tokenBudget
+	}
+	var out json.RawMessage
+	err := s.call("kernel.index.map", params, &out)
+	return out, err
+}
+
+// PendingChunk is one chunk lacking an embedding for a model
+// (kernel.index.pending_chunks). Content is full chunk text — the kernel
+// releases it only through the CodeIndex policy gate.
+type PendingChunk struct {
+	ChunkID     int64  `json:"chunk_id"`
+	Path        string `json:"path"`
+	StartLine   int    `json:"start_line"`
+	EndLine     int    `json:"end_line"`
+	Content     string `json:"content"`
+	ContentHash string `json:"content_hash"`
+}
+
+// PendingChunksResult is one policy-gated batch of chunks to embed.
+type PendingChunksResult struct {
+	Chunks       []PendingChunk `json:"chunks"`
+	TotalPending int            `json:"total_pending"`
+}
+
+// ChunkEmbedding is one caller-computed vector to store, echoing the
+// content_hash returned by IndexPendingChunks.
+type ChunkEmbedding struct {
+	ChunkID     int64
+	ContentHash string
+	Vector      []float32
+}
+
+// EmbedStoreResult reports an embed_store outcome; Stale ids were replaced or
+// deleted since the caller fetched them (expected under concurrent edits).
+type EmbedStoreResult struct {
+	Stored       int     `json:"stored"`
+	Stale        []int64 `json:"stale"`
+	TotalPending int     `json:"total_pending"`
+}
+
+// IndexPendingChunks returns up to limit chunks lacking an embedding for
+// modelID (ascending chunk_id) plus the total backlog size.
+func (s *Service) IndexPendingChunks(sessionID, modelID string, limit int) (*PendingChunksResult, error) {
+	params := map[string]any{"session_id": sessionID, "model_id": modelID}
+	if limit > 0 {
+		params["limit"] = limit
+	}
+	var r PendingChunksResult
+	err := s.call("kernel.index.pending_chunks", params, &r)
+	return &r, err
+}
+
+// IndexEmbedStore stores caller-computed vectors (base64 f32-LE transport).
+// The kernel never computes or fetches embeddings itself.
+func (s *Service) IndexEmbedStore(sessionID, modelID string, dims int, items []ChunkEmbedding) (*EmbedStoreResult, error) {
+	embeddings := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		embeddings = append(embeddings, map[string]any{
+			"chunk_id":      item.ChunkID,
+			"content_hash":  item.ContentHash,
+			"vector_base64": encodeVectorBase64(item.Vector),
+		})
+	}
+	var r EmbedStoreResult
+	err := s.call("kernel.index.embed_store", map[string]any{
+		"session_id": sessionID, "model_id": modelID, "dims": dims, "embeddings": embeddings,
+	}, &r)
+	return &r, err
+}
+
+// IndexSearchVector runs governed search with the additional cosine channel
+// (three-way RRF). The existing IndexSearch stays the keyword-only surface.
+func (s *Service) IndexSearchVector(sessionID, query string, limit int, modelID string, vector []float32) (json.RawMessage, error) {
+	params := map[string]any{
+		"session_id":          sessionID,
+		"query":               query,
+		"model_id":            modelID,
+		"query_vector_base64": encodeVectorBase64(vector),
+	}
+	if limit > 0 {
+		params["limit"] = limit
+	}
+	var out json.RawMessage
+	err := s.call("kernel.index.search", params, &out)
+	return out, err
+}
+
+// encodeVectorBase64 encodes a vector as base64 f32 little-endian
+// (dims * 4 bytes), the kernel's BLOB layout.
+func encodeVectorBase64(vector []float32) string {
+	buf := make([]byte, 0, len(vector)*4)
+	for _, v := range vector {
+		buf = binary.LittleEndian.AppendUint32(buf, math.Float32bits(v))
+	}
+	return base64.StdEncoding.EncodeToString(buf)
+}
+
+// IndexEdge is one LSP-derived precise relation to persist
+// (kernel.index.edges_store, docs/plans/code-intelligence.md V4 §B). Paths
+// are workspace-relative; lines are 1-based.
+type IndexEdge struct {
+	SrcPath string
+	SrcLine int
+	DstPath string
+	DstLine int
+}
+
+// SkippedEdge is one edge the kernel did not persist, with the reason
+// (FileRead-denied endpoint, unresolvable symbol, self edge).
+type SkippedEdge struct {
+	SrcPath string `json:"src_path"`
+	DstPath string `json:"dst_path"`
+	Reason  string `json:"reason"`
+}
+
+// EdgesStoreResult reports a kernel.index.edges_store outcome; skips are
+// expected under concurrent edits and are success, not error.
+type EdgesStoreResult struct {
+	Stored  int           `json:"stored"`
+	Skipped []SkippedEdge `json:"skipped"`
+}
+
+// IndexEdgesStore persists LSP-sourced precise edges. The kernel re-gates
+// both endpoints through FileRead policy and resolves them against indexed
+// symbols — the edges store never ingests content.
+func (s *Service) IndexEdgesStore(sessionID string, edges []IndexEdge) (*EdgesStoreResult, error) {
+	payload := make([]map[string]any, 0, len(edges))
+	for _, e := range edges {
+		payload = append(payload, map[string]any{
+			"src_path": e.SrcPath, "src_line": e.SrcLine,
+			"dst_path": e.DstPath, "dst_line": e.DstLine,
+		})
+	}
+	var r EdgesStoreResult
+	err := s.call("kernel.index.edges_store", map[string]any{
+		"session_id": sessionID, "edges": payload,
+	}, &r)
+	return &r, err
 }
 
 // PluginInspect parses a manifest and returns its declared permissions.

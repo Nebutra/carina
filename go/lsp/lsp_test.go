@@ -75,7 +75,7 @@ func TestCollectDiagnosticsHandshake(t *testing.T) {
 
 // TestDiagnoseMissingServer: an absent server is a clean error, not a panic.
 func TestDiagnoseMissingServer(t *testing.T) {
-	_, err := Diagnose("definitely-not-a-real-lsp-binary", nil, "/root", "/root/m.go", "go", "package m\n", time.Second)
+	_, err := Diagnose("definitely-not-a-real-lsp-binary", nil, "/root", "/root/m.go", "go", "package m\n", time.Second, nil)
 	if err == nil {
 		t.Fatal("a missing server binary must return an error")
 	}

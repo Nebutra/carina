@@ -1,0 +1,21 @@
+[package]
+name = "carina-index"
+description = "Carina governed code intelligence: tree-sitter symbols, SQLite/FTS5 search, PageRank repo map"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+time = { workspace = true }
+rusqlite = { workspace = true }
+streaming-iterator = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-rust = { workspace = true }
+tree-sitter-go = { workspace = true }
+tree-sitter-typescript = { workspace = true }
+tree-sitter-python = { workspace = true }

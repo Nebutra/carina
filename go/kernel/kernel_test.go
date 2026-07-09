@@ -2,6 +2,7 @@ package kernel
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -225,5 +226,90 @@ func TestKernelSecretAndAudit(t *testing.T) {
 	}
 	if string(report) == "" {
 		t.Fatal("verify returned empty")
+	}
+}
+
+func TestKernelIndexRoundTrip(t *testing.T) {
+	kernelBin, toolsDir := testBins(t)
+	svc, err := Start(kernelBin, t.TempDir(), toolsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	ws := t.TempDir()
+	os.WriteFile(filepath.Join(ws, "lib.rs"), []byte("pub fn zz_go_marker() {}\n"), 0o600)
+	os.WriteFile(filepath.Join(ws, ".env"), []byte("SECRET=zz_hidden\n"), 0o600)
+	if err := svc.InitSession("sess_ix", ws, "safe-edit"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build: the sensitive path is skipped, the source file indexed.
+	report, err := svc.IndexBuild("sess_ix", []string{"lib.rs", ".env"})
+	if err != nil {
+		t.Fatalf("index build: %v", err)
+	}
+	if report.Indexed != 1 || len(report.Skipped) != 1 || report.Skipped[0].Path != ".env" {
+		t.Fatalf("unexpected build report: %+v", report)
+	}
+
+	// Search sees the symbol; denied content is unreachable.
+	raw, err := svc.IndexSearch("sess_ix", "zz_go_marker", 5)
+	if err != nil {
+		t.Fatalf("index search: %v", err)
+	}
+	var res struct {
+		Hits []struct {
+			Path string `json:"path"`
+		} `json:"hits"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) == 0 || res.Hits[0].Path != "lib.rs" {
+		t.Fatalf("expected a hit in lib.rs, got %s", raw)
+	}
+	raw, err = svc.IndexSearch("sess_ix", "zz_hidden", 5)
+	if err != nil {
+		t.Fatalf("index search: %v", err)
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) != 0 {
+		t.Fatalf("denied content leaked: %s", raw)
+	}
+
+	// Symbols and map round-trip.
+	if raw, err = svc.IndexSymbols("sess_ix", "zz_go_marker", true); err != nil || len(raw) == 0 {
+		t.Fatalf("index symbols: %v", err)
+	}
+	if raw, err = svc.IndexMap("sess_ix", 512); err != nil || len(raw) == 0 {
+		t.Fatalf("index map: %v", err)
+	}
+
+	// Patch apply, then update reflects the edit.
+	if _, err := os.Stat(filepath.Join(toolsDir, "carina-patch-native")); err != nil {
+		t.Skip("zig tools not built for patch")
+	}
+	p, err := svc.PatchPropose("sess_ix", "", "t", []FileChange{{Path: "lib.rs", NewContent: "pub fn zz_go_renamed() {}\n"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.PatchApply("sess_ix", p.PatchID, "user"); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, err := svc.IndexUpdate("sess_ix", []string{"lib.rs"}, nil); err != nil {
+		t.Fatalf("index update: %v", err)
+	}
+	raw, err = svc.IndexSearch("sess_ix", "zz_go_renamed", 5)
+	if err != nil {
+		t.Fatalf("index search: %v", err)
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) == 0 {
+		t.Fatalf("update did not reflect the edit: %s", raw)
 	}
 }

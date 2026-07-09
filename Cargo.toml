@@ -6,6 +6,7 @@ members = [
     "crates/carina-patch",
     "crates/carina-audit",
     "crates/carina-plugin-runtime",
+    "crates/carina-index",
 ]
 
 [workspace.package]
@@ -21,8 +22,16 @@ thiserror = "2"
 sha2 = "0.10"
 toml = "0.8"
 time = { version = "0.3", features = ["formatting", "serde", "serde-well-known"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+streaming-iterator = "0.1"
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-python = "0.23"
 carina-kernel = { path = "crates/carina-kernel" }
 carina-policy = { path = "crates/carina-policy" }
 carina-patch = { path = "crates/carina-patch" }
 carina-audit = { path = "crates/carina-audit" }
 carina-plugin-runtime = { path = "crates/carina-plugin-runtime" }
+carina-index = { path = "crates/carina-index" }

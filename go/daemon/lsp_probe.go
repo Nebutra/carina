@@ -56,7 +56,7 @@ func (d *Daemon) semanticDiagnostics(abspath, root string) string {
 	if err != nil {
 		return ""
 	}
-	diags, err := lsp.Diagnose(srv.bin, srv.args, root, abspath, srv.langID, string(content), 8*time.Second)
+	diags, err := lsp.Diagnose(srv.bin, srv.args, root, abspath, srv.langID, string(content), 8*time.Second, d.lspEnv())
 	if err != nil {
 		return ""
 	}

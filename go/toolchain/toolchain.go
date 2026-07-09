@@ -20,6 +20,7 @@ type FileEntry struct {
 	Binary   bool   `json:"binary"`
 	Large    bool   `json:"large"`
 	Language string `json:"language"`
+	Mtime    int64  `json:"mtime"` // Unix seconds; 0 when the scanner predates the field
 }
 
 type Match struct {

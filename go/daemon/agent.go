@@ -29,6 +29,12 @@ const toolsHelp = `Available tools:
 - {"tool":"run","command":["prog","arg"]}      run a command (sandboxed; risky commands are denied)
 - {"tool":"patch","path":"rel/path","content":"FULL new file content"}   propose+apply an edit (transactional, rollbackable)
 - {"tool":"memory","target":"memory|user","action":"add|replace|remove|batch","content":"fact","old_text":"unique substring","operations":[...]}   update governed long-term memory
+- {"tool":"code.search","query":"free text or identifier"}      ranked code search (BM25+exact)
+- {"tool":"code.symbols","name":"SymbolName"}                   definitions + references
+- {"tool":"code.map"}                                           compact ranked repo map
+- {"tool":"code.def","name":"SymbolName"}                       precise definition (LSP when available)
+- {"tool":"code.refs","name":"SymbolName"}                      precise references (LSP when available)
+- {"tool":"code.impact","name":"SymbolName"}                    transitive dependents of a symbol (bounded impact analysis)
 - {"tool":"done","summary":"what you did / found"}   finish the task
 
 Rules:
@@ -76,6 +82,9 @@ type action struct {
 	Target     string            `json:"target"`
 	OldText    string            `json:"old_text"`
 	Operations []memoryOperation `json:"operations,omitempty"`
+	// code intelligence tools (code.search / code.symbols)
+	Query string `json:"query"`
+	Name  string `json:"name"`
 	// spawn tool
 	Agent string      `json:"agent"`
 	Task  string      `json:"task"`
@@ -310,7 +319,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		}
 
 		// Loop safety: catch repeated actions and no-progress stalls.
-		fp := act.Tool + ":" + act.Path + ":" + strings.Join(act.Command, " ") + ":" + act.Pattern
+		fp := act.Tool + ":" + act.Path + ":" + strings.Join(act.Command, " ") + ":" + act.Pattern + ":" + act.Query + ":" + act.Name
 		if guard.repeated(act.Tool, fp) {
 			tr.addTurn(Turn{Thought: act.Thought, Tool: act.Tool,
 				ActionBrief: briefAction(&act),
@@ -418,6 +427,16 @@ func briefAction(a *action) string {
 		return "search " + a.Pattern
 	case "run":
 		return "run [" + strings.Join(a.Command, " ") + "]"
+	case "code.search":
+		return "code.search " + a.Query
+	case "code.symbols":
+		return "code.symbols " + a.Name
+	case "code.def":
+		return "code.def " + a.Name
+	case "code.refs":
+		return "code.refs " + a.Name
+	case "code.impact":
+		return "code.impact " + a.Name
 	default:
 		return a.Tool
 	}
@@ -426,7 +445,7 @@ func briefAction(a *action) string {
 // isReadOnlyTool reports whether a tool has no side effects (safe to batch).
 func isReadOnlyTool(tool string) bool {
 	switch tool {
-	case "list", "read", "search":
+	case "list", "read", "search", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact":
 		return true
 	}
 	return false
@@ -577,6 +596,24 @@ func (d *Daemon) dispatchAction(sess *sessionstore.Session, task *scheduler.Task
 	case "memory":
 		return d.agentMemory(sess, task, act)
 
+	case "code.search":
+		return d.agentCodeSearch(sess, task, act)
+
+	case "code.symbols":
+		return d.agentCodeSymbols(sess, task, act)
+
+	case "code.map":
+		return d.agentCodeMap(sess, task, act)
+
+	case "code.def":
+		return d.agentCodeDef(sess, task, act)
+
+	case "code.refs":
+		return d.agentCodeRefs(sess, task, act)
+
+	case "code.impact":
+		return d.agentCodeImpact(sess, task, act)
+
 	default:
 		return "unknown tool: " + act.Tool
 	}
@@ -641,6 +678,9 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 	// The agent's edit is now the on-disk truth; record it so a follow-up edit
 	// in the same run isn't flagged as a blind overwrite.
 	d.recordRead(sess.SessionID, path, content)
+	// Keep the code index in step with the write (best-effort; an index error
+	// never fails the patch).
+	d.invalidateIndex(sess.SessionID, []string{path})
 	result := fmt.Sprintf("patch %s applied to %s (status=%s, rollbackable)", applied.PatchID, path, applied.Status)
 	// Post-edit diagnostics: surface compile/parse errors this edit introduced,
 	// so the agent can self-correct on the next turn instead of turns later.
@@ -694,6 +734,13 @@ func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv
 	d.record(sess.SessionID, "CommandStarted", task.TaskID, "zig", started, dec.DecisionID)
 
 	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
+	// A mutating-capable command may have rewritten files the patch hooks
+	// never see (git checkout, sed -i, codegen): drop the built-index flag so
+	// the next code.* call re-syncs against current disk (conservative even
+	// on a runner error — the command may have partially executed).
+	if risk > 0 {
+		d.indexBuilt.Delete(sess.SessionID)
+	}
 	if err != nil {
 		d.record(sess.SessionID, "CommandExited", task.TaskID, "zig", map[string]any{"command_id": commandID, "exit_code": -1, "error": err.Error()}, "")
 		return "command error: " + err.Error()

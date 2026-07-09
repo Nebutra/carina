@@ -25,12 +25,15 @@ type Diagnostic struct {
 
 // Diagnose spawns a language server, opens filePath, and returns the diagnostics
 // it publishes. It returns an error if the server binary is not found or no
-// diagnostics arrive before the timeout.
-func Diagnose(bin string, args []string, rootDir, filePath, languageID, content string, timeout time.Duration) ([]Diagnostic, error) {
+// diagnostics arrive before the timeout. env is the child's complete
+// environment (exec.Cmd.Env semantics; nil inherits the parent's) — the
+// daemon passes its governed, credential-scrubbed LSP environment.
+func Diagnose(bin string, args []string, rootDir, filePath, languageID, content string, timeout time.Duration, env []string) ([]Diagnostic, error) {
 	if _, err := exec.LookPath(bin); err != nil {
 		return nil, fmt.Errorf("lsp: server %q not found", bin)
 	}
 	cmd := exec.Command(bin, args...)
+	cmd.Env = env
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -47,12 +50,22 @@ func Diagnose(bin string, args []string, rootDir, filePath, languageID, content 
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	}()
-	return collect(stdin, stdout, "file://"+rootDir, "file://"+filePath, languageID, content, timeout)
+	return collect(stdin, stdout, PathToURI(rootDir), PathToURI(filePath), languageID, content, timeout)
 }
 
 // collect drives the LSP handshake over an arbitrary stream pair (so it is
-// testable against a mock server), returning diagnostics for fileURI.
+// testable against a mock server), returning diagnostics for fileURI. Wire
+// URIs are percent-encoded (PathToURI) and publishDiagnostics matches
+// through symlink-canonical path comparison (V4 D2, the Session treatment):
+// real servers encode the URIs they emit and canonicalize paths, so a raw
+// concatenated fileURI still matches an encoded /private/tmp answer.
 func collect(w io.Writer, r io.Reader, rootURI, fileURI, languageID, text string, timeout time.Duration) ([]Diagnostic, error) {
+	if path, ok := URIToPath(rootURI); ok {
+		rootURI = PathToURI(path)
+	}
+	if path, ok := URIToPath(fileURI); ok {
+		fileURI = PathToURI(path)
+	}
 	if err := writeMsg(w, rpcReq(1, "initialize", map[string]any{
 		"processId":    nil,
 		"rootUri":      rootURI,
@@ -102,7 +115,7 @@ func collect(w io.Writer, r io.Reader, rootURI, fileURI, languageID, text string
 						} `json:"range"`
 					} `json:"diagnostics"`
 				}
-				if json.Unmarshal(msg.Params, &p) == nil && p.URI == fileURI {
+				if json.Unmarshal(msg.Params, &p) == nil && sameFileURI(p.URI, fileURI) {
 					out := make([]Diagnostic, 0, len(p.Diagnostics))
 					for _, d := range p.Diagnostics {
 						out = append(out, Diagnostic{

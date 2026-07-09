@@ -127,6 +127,14 @@ type Daemon struct {
 	readProv   map[string]map[string]string // session -> relpath -> sha256 of last read (dirty-write guard)
 	readProvMu sync.Mutex
 
+	indexBuilt sync.Map // session -> true once the code index was lazily built (code.* tools)
+
+	indexSnapshot sync.Map // session -> *sweepSnapshot from the last index sync (V4 mtime staleness sweep)
+
+	codeIntelStatus sync.Map // session -> codeIntelStatus (V3: semantic-layer health on daemon.status.code_intel)
+
+	embedModelDefault string // "<provider>/<model>" of the default embeddings backend ("" = semantic layer off)
+
 	trust         *trustStore  // trusted workspace roots
 	requireTrust  atomic.Bool  // deny command exec in untrusted workspaces (hot-reloadable)
 	maxTaskTokens atomic.Int64 // per-task token budget (0 => unlimited; hot-reloadable)
@@ -261,6 +269,12 @@ func New(opts Options) (*Daemon, error) {
 	)
 	providerCatalog := loadRuntimeProviderCatalog(opts.Offline)
 	registerProviders(d.router, opts.Offline, authStore, providerCatalog)
+	// Embeddings (V2 semantic layer): BYOK only, credential-gated at
+	// registration so no provider means the layer is silently off.
+	d.embedModelDefault = registerEmbeddingsProviders(d.router, opts.Offline, authStore)
+	// Rerank (V4 §C): same BYOK credential gate; no registered provider means
+	// the rerank stage stays off and code.search keeps the kernel order.
+	registerRerankProviders(d.router, opts.Offline, authStore)
 	// Durable run registry + concurrency cap for background runs. Reloading the
 	// registry lets `task.list`/`task.status` answer for runs from before a
 	// restart (the run record survives even though the live loop does not yet).
@@ -776,6 +790,7 @@ func (d *Daemon) handleStatus(_ json.RawMessage) (any, error) {
 		"rpc_endpoint":    d.socketPath,
 		"event_log_path":  filepath.Join(d.stateDir, "events"),
 		"context_engine":  d.contextStatus(),
+		"code_intel":      d.codeIntelStatusSnapshot(),
 		"nebutra_cloud": map[string]any{
 			"endpoint":     d.cloudEndpoint,
 			"sync_mode":    d.syncMode,
@@ -2167,7 +2182,14 @@ func (d *Daemon) handlePatchRollback(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	return d.kern.PatchRollback(p.SessionID, p.PatchID)
+	patch, err := d.kern.PatchRollback(p.SessionID, p.PatchID)
+	if err != nil {
+		return nil, err
+	}
+	// Keep the code index in step with the restore (best-effort; an index
+	// error never fails the rollback).
+	d.invalidateIndex(p.SessionID, patch.AffectedFiles)
+	return patch, nil
 }
 
 func (d *Daemon) handlePatchList(params json.RawMessage) (any, error) {

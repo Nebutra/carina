@@ -37,9 +37,11 @@ type Usage struct {
 }
 
 type Router struct {
-	mu        sync.RWMutex
-	providers []Provider
-	usage     map[string]*Usage
+	mu         sync.RWMutex
+	providers  []Provider
+	embeddings []EmbeddingsProvider
+	rerank     []RerankProvider
+	usage      map[string]*Usage
 }
 
 func New() *Router {

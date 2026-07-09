@@ -7,13 +7,15 @@
 //! the audit log so the control plane cannot bypass it.
 
 use carina_audit::{Actor, Event, EventType};
+use carina_index::{ChunkEmbedding, CodeIndex, FileChange as IndexChange, IngestFile};
 use carina_kernel::{ApprovalPolicy, Kernel, KernelError};
 use carina_patch::{content_hash, PatchTransaction};
 use carina_policy::{ApprovalMode, Capability, CapabilityRequest, Decision, PolicyBundle, Principal, Profile, Verdict};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn main() {
@@ -47,6 +49,9 @@ struct SessionCtx {
     pending: HashMap<String, Decision>,
     /// decision_id -> resolved (approved/denied) decision
     resolved: HashMap<String, Decision>,
+    /// Governed code index for this workspace, opened lazily at
+    /// <state_dir>/index/<sha256(workspace_root)>.sqlite (kernel.index.*).
+    index: Option<CodeIndex>,
 }
 
 struct PatchRecord {
@@ -106,6 +111,15 @@ impl Service {
             "kernel.patch.rollback" => self.patch_rollback(p),
             "kernel.patch.list" => self.patch_list(p),
             "kernel.patch.show" => self.patch_show(p),
+            "kernel.index.build" => self.index_build(p),
+            "kernel.index.update" => self.index_update(p),
+            "kernel.index.search" => self.index_search(p),
+            "kernel.index.pending_chunks" => self.index_pending_chunks(p),
+            "kernel.index.embed_store" => self.index_embed_store(p),
+            "kernel.index.edges_store" => self.index_edges_store(p),
+            "kernel.index.symbols" => self.index_symbols(p),
+            "kernel.index.impact" => self.index_impact(p),
+            "kernel.index.map" => self.index_map(p),
             "kernel.classify" => {
                 let cmd = str_param(p, "command")?;
                 Ok(json!({"command": cmd, "risk_level": carina_policy::classify_command(&cmd)}))
@@ -181,6 +195,7 @@ impl Service {
                 patches: HashMap::new(),
                 pending: HashMap::new(),
                 resolved: HashMap::new(),
+                index: None,
             },
         );
         Ok(json!({"session_id": session_id, "profile": profile_name}))
@@ -482,6 +497,7 @@ impl Service {
         let session_id = str_param(p, "session_id")?;
         let patch_id = str_param(p, "patch_id")?;
         let approver = p.get("approver").and_then(Value::as_str).unwrap_or("user").to_string();
+        let state_dir = self.state_dir.clone();
         let ctx = self.ctx(p)?;
 
         let record = ctx.patches.remove(&patch_id).ok_or_else(|| format!("unknown patch {patch_id}"))?;
@@ -561,6 +577,9 @@ impl Service {
         .with_decision(&decision.decision_id);
         ctx.kernel.record_event(&event).map_err(err_str)?;
 
+        // Keep the code index in step with the write (no-op without an index).
+        invalidate_index_after_patch(&state_dir, ctx, &session_id, &record.files);
+
         let result = serde_json::to_value(&tx).map_err(err_str)?;
         ctx.patches.insert(patch_id, PatchRecord { tx, files: record.files, snapshot_dir: record.snapshot_dir });
         Ok(result)
@@ -569,6 +588,7 @@ impl Service {
     fn patch_rollback(&mut self, p: &Value) -> Result<Value, String> {
         let session_id = str_param(p, "session_id")?;
         let patch_id = str_param(p, "patch_id")?;
+        let state_dir = self.state_dir.clone();
         let ctx = self.ctx(p)?;
         let record = ctx.patches.remove(&patch_id).ok_or_else(|| format!("unknown patch {patch_id}"))?;
 
@@ -603,6 +623,9 @@ impl Service {
             .record_event(&Event::new(&session_id, EventType::RollbackCompleted, json!({"patch_id": patch_id})).with_actor(Actor::Zig))
             .map_err(err_str)?;
 
+        // Keep the code index in step with the restore (no-op without an index).
+        invalidate_index_after_patch(&state_dir, ctx, &session_id, &record.files);
+
         let result = serde_json::to_value(&tx).map_err(err_str)?;
         ctx.patches.insert(patch_id, PatchRecord { tx, files: record.files, snapshot_dir: record.snapshot_dir });
         Ok(result)
@@ -624,6 +647,880 @@ impl Service {
         let record = ctx.patches.get(&patch_id).ok_or_else(|| format!("unknown patch {patch_id}"))?;
         serde_json::to_value(&record.tx).map_err(err_str)
     }
+
+    // ---- governed code intelligence (docs/plans/code-intelligence.md) ------
+
+    /// Builds the index from an explicit path allowlist. Every candidate path
+    /// is re-gated through FileRead policy: denied paths (workspace escapes,
+    /// sensitive files) are skipped — their content can never enter the index.
+    /// Files are read and ingested in bounded batches (per-file size cap plus
+    /// a batch-bytes flush threshold) so a large workspace cannot balloon the
+    /// kernel process — the governance chokepoint — out of memory.
+    ///
+    /// A build is a full sync to the allowlist: previously indexed paths that
+    /// are absent from it (deleted by a run command, vanished from the scan)
+    /// or that are no longer FileRead-allowed are pruned, upholding the same
+    /// invariant as update — stale content of a file the session can no
+    /// longer read must never stay queryable (or reach pending_chunks).
+    fn index_build(&mut self, p: &Value) -> Result<Value, String> {
+        let session_id = str_param(p, "session_id")?;
+        let paths = str_array_param(p, "paths")?;
+        let state_dir = self.state_dir.clone();
+        let ctx = self.ctx(p)?;
+        let started = std::time::Instant::now();
+
+        let decision = index_gate(ctx, &session_id, format!("index build files={}", paths.len()))?;
+        ensure_index(&state_dir, ctx)?;
+        let mut totals = IngestTotals::default();
+        let mut skipped: Vec<Value> = Vec::new();
+        let mut batch: Vec<IngestFile> = Vec::new();
+        let mut batch_bytes = 0usize;
+        // Paths whose previously indexed rows may survive this build; every
+        // other indexed path is reconciled away below.
+        let mut keep: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for raw in &paths {
+            let (rel, abs) = match rel_and_abs(&ctx.workspace_root, raw) {
+                Ok(pair) => pair,
+                Err(reason) => {
+                    skipped.push(json!({"path": raw, "reason": reason}));
+                    continue;
+                }
+            };
+            match ctx.kernel.request_file_read(&abs.to_string_lossy(), None) {
+                Ok(d) if d.decision == Verdict::Allowed => {}
+                Ok(d) => {
+                    skipped.push(json!({"path": rel, "reason": d.reason}));
+                    continue;
+                }
+                Err(e) => {
+                    skipped.push(json!({"path": rel, "reason": e.to_string()}));
+                    continue;
+                }
+            }
+            if let Some(reason) = exceeds_size_cap(&abs) {
+                skipped.push(json!({"path": rel, "reason": reason}));
+                continue;
+            }
+            match std::fs::read_to_string(&abs) {
+                Ok(content) => {
+                    batch_bytes += content.len();
+                    keep.insert(rel.clone());
+                    batch.push(IngestFile { path: rel, content });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // Gone from disk: fall through to the reconciliation drop.
+                    skipped.push(json!({"path": rel, "reason": format!("read error: {e}")}));
+                }
+                Err(e) => {
+                    // Still present and still FileRead-allowed, but unreadable
+                    // (permission denied, non-UTF-8, ...): a transient read
+                    // failure is not a deletion — keep the indexed rows.
+                    keep.insert(rel.clone());
+                    skipped.push(json!({"path": rel, "reason": format!("read error: {e}")}));
+                }
+            }
+            if batch_bytes >= MAX_INGEST_BATCH_BYTES {
+                flush_ingest(ctx, &mut batch, &mut totals, &mut skipped)?;
+                batch_bytes = 0;
+            }
+        }
+        flush_ingest(ctx, &mut batch, &mut totals, &mut skipped)?;
+
+        // Reconcile: drop every indexed path this build did not keep (sorted
+        // for determinism; embeddings cascade with their chunks).
+        let mut drops = 0usize;
+        {
+            let index = ctx.index.as_mut().ok_or("index not open")?;
+            let stale: Vec<String> = index
+                .indexed_paths()
+                .map_err(index_err)?
+                .into_iter()
+                .filter(|path| !keep.contains(path))
+                .collect();
+            let mut deletes: Vec<IndexChange> = Vec::new();
+            for path in stale {
+                skipped.push(json!({"path": path, "reason": "dropped from index: not in build set"}));
+                deletes.push(IndexChange::Delete { path });
+                drops += 1;
+            }
+            flush_update(ctx, &mut deletes, &mut totals, &mut skipped)?;
+        }
+
+        let result = totals.to_json(drops, skipped, &index_db_path(&state_dir, &ctx.workspace_root));
+        record_index_status(ctx, &session_id, "index_build_completed", &result, started, &decision)?;
+        Ok(result)
+    }
+
+    /// Applies caller-reported changes (patch apply / rollback outcomes) with
+    /// the same per-path FileRead gating as build. Changed paths that no
+    /// longer exist on disk are treated as deletes — and so are paths whose
+    /// FileRead verdict is no longer Allowed (or that exceed the size cap):
+    /// the one thing an update must never do is keep stale content of a file
+    /// the session can no longer read queryable.
+    fn index_update(&mut self, p: &Value) -> Result<Value, String> {
+        let session_id = str_param(p, "session_id")?;
+        let changed = str_array_param(p, "changed_paths")?;
+        let deleted = match p.get("deleted_paths") {
+            Some(_) => str_array_param(p, "deleted_paths")?,
+            None => Vec::new(),
+        };
+        let state_dir = self.state_dir.clone();
+        let ctx = self.ctx(p)?;
+        let started = std::time::Instant::now();
+
+        let decision = index_gate(
+            ctx,
+            &session_id,
+            format!("index update changed={} deleted={}", changed.len(), deleted.len()),
+        )?;
+        ensure_index(&state_dir, ctx)?;
+
+        let mut totals = IngestTotals::default();
+        let mut skipped: Vec<Value> = Vec::new();
+        let mut drops = 0usize;
+        let mut batch: Vec<IndexChange> = Vec::new();
+        let mut batch_bytes = 0usize;
+        for raw in &changed {
+            let (rel, abs) = match rel_and_abs(&ctx.workspace_root, raw) {
+                Ok(pair) => pair,
+                Err(reason) => {
+                    skipped.push(json!({"path": raw, "reason": reason}));
+                    continue;
+                }
+            };
+            let d = ctx.kernel.request_file_read(&abs.to_string_lossy(), None).map_err(err_str)?;
+            if d.decision != Verdict::Allowed {
+                // Now denied: drop the stale rows (mirror of the patch hook).
+                skipped.push(json!({"path": rel, "reason": format!("dropped from index: {}", d.reason)}));
+                batch.push(IndexChange::Delete { path: rel });
+                drops += 1;
+                continue;
+            }
+            if let Some(reason) = exceeds_size_cap(&abs) {
+                skipped.push(json!({"path": rel, "reason": format!("dropped from index: {reason}")}));
+                batch.push(IndexChange::Delete { path: rel });
+                drops += 1;
+                continue;
+            }
+            match std::fs::read_to_string(&abs) {
+                Ok(content) => {
+                    batch_bytes += content.len();
+                    batch.push(IndexChange::Upsert { path: rel, content });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // Gone from disk: the change is a delete.
+                    batch.push(IndexChange::Delete { path: rel });
+                    drops += 1;
+                }
+                Err(e) => {
+                    // Still present and still FileRead-allowed, but unreadable
+                    // (permission denied, non-UTF-8 InvalidData, ...): a read
+                    // failure is not a deletion. Keeping the previously
+                    // ingested rows is not a policy leak; silently deleting on
+                    // a transient error would lose index coverage.
+                    skipped.push(json!({
+                        "path": rel,
+                        "reason": format!("read error (kept indexed rows): {e}"),
+                    }));
+                }
+            }
+            if batch_bytes >= MAX_INGEST_BATCH_BYTES {
+                flush_update(ctx, &mut batch, &mut totals, &mut skipped)?;
+                batch_bytes = 0;
+            }
+        }
+        for raw in &deleted {
+            match rel_and_abs(&ctx.workspace_root, raw) {
+                Ok((rel, _)) => {
+                    batch.push(IndexChange::Delete { path: rel });
+                    drops += 1;
+                }
+                Err(reason) => skipped.push(json!({"path": raw, "reason": reason})),
+            }
+        }
+        flush_update(ctx, &mut batch, &mut totals, &mut skipped)?;
+
+        // Deleted files count into "indexed" as drops (RPC contract).
+        let result = totals.to_json(drops, skipped, &index_db_path(&state_dir, &ctx.workspace_root));
+        record_index_status(ctx, &session_id, "index_update_completed", &result, started, &decision)?;
+        Ok(result)
+    }
+
+    fn index_search(&mut self, p: &Value) -> Result<Value, String> {
+        let session_id = str_param(p, "session_id")?;
+        let query = str_param(p, "query")?;
+        let state_dir = self.state_dir.clone();
+        let ctx = self.ctx(p)?;
+
+        index_gate(ctx, &session_id, format!("index search {}", truncate_chars(&query, 200)))?;
+        let mut opts = carina_index::SearchOptions::default();
+        if let Some(limit) = p.get("limit").and_then(Value::as_u64) {
+            opts.limit = limit as usize;
+        }
+        if let Some(lang) = p.get("lang").and_then(Value::as_str) {
+            opts.lang = Some(
+                serde_json::from_value(json!(lang)).map_err(|e| format!("invalid lang: {e}"))?,
+            );
+        }
+        if let Some(prefix) = p.get("path_prefix").and_then(Value::as_str) {
+            opts.path_prefix = Some(prefix.to_string());
+        }
+        // Optional third (cosine) RRF channel: without query_vector_base64
+        // this method is bit-for-bit V1 two-way.
+        if let Some(vec_b64) = p.get("query_vector_base64").and_then(Value::as_str) {
+            let model_id = p
+                .get("model_id")
+                .and_then(Value::as_str)
+                .ok_or("model_id is required when query_vector_base64 is set")?;
+            let bytes = base64_decode(vec_b64).ok_or("query_vector_base64 is not valid base64")?;
+            if bytes.is_empty() || bytes.len() % 4 != 0 {
+                return Err(format!(
+                    "query_vector_base64 must decode to a non-empty multiple of 4 bytes (f32-LE), got {} bytes",
+                    bytes.len()
+                ));
+            }
+            let query_vector = f32_from_le_bytes(&bytes);
+            // D1: the crate's finiteness chokepoint is embed_store, which
+            // search never crosses — reject NaN/±Inf here, before the search
+            // runs (a non-finite component poisons every cosine comparison).
+            if !query_vector.iter().all(|v| v.is_finite()) {
+                return Err("query_vector_base64 contains a non-finite component".into());
+            }
+            opts.query_vector = Some(query_vector);
+            opts.model_id = Some(model_id.to_string());
+        }
+        let index = existing_index(&state_dir, ctx)?;
+        let hits = index.search(&query, &opts).map_err(index_err)?;
+        let mut result = json!({"hits": hits});
+        // Vector-channel liveness counters (V3 observable degrade): a caller
+        // claiming "semantic:on" must be able to tell whether the cosine
+        // channel had live, dims-matching vectors to rank — counts only,
+        // never content.
+        if let (Some(query_vector), Some(model_id)) = (&opts.query_vector, &opts.model_id) {
+            let stats = index
+                .embedding_stats(model_id, query_vector.len())
+                .map_err(index_err)?;
+            result["vector_channel"] = json!(stats);
+        }
+        Ok(result)
+    }
+
+    /// Chunks lacking an embedding for `model_id` (docs/plans/
+    /// code-intelligence.md V2). Policy-gated content egress: raw chunk text
+    /// leaves the kernel here, exactly like search snippets — hence the same
+    /// query-time gate.
+    fn index_pending_chunks(&mut self, p: &Value) -> Result<Value, String> {
+        let session_id = str_param(p, "session_id")?;
+        let model_id = str_param(p, "model_id")?;
+        let limit = p
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(DEFAULT_PENDING_CHUNKS)
+            .min(MAX_EMBED_BATCH) as usize;
+        let state_dir = self.state_dir.clone();
+        let ctx = self.ctx(p)?;
+
+        index_gate(ctx, &session_id, format!("index pending_chunks model={model_id} limit={limit}"))?;
+        let index = existing_index(&state_dir, ctx)?;
+        let (chunks, total_pending) = index.pending_chunks(&model_id, limit).map_err(index_err)?;
+        Ok(json!({"chunks": chunks, "total_pending": total_pending}))
+    }
+
+    /// Stores caller-supplied vectors for chunk ids (the kernel never computes
+    /// or fetches embeddings — zero network I/O). Vectors are derived from
+    /// content, so the write is gated like every other index surface. Stale
+    /// ids (chunk replaced/deleted since pending_chunks) are success, not
+    /// error — the caller just re-syncs.
+    fn index_embed_store(&mut self, p: &Value) -> Result<Value, String> {
+        let session_id = str_param(p, "session_id")?;
+        let model_id = str_param(p, "model_id")?;
+        let dims = p.get("dims").and_then(Value::as_u64).ok_or("dims is required")? as usize;
+        let embeddings_param = p
+            .get("embeddings")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or("embeddings array required")?;
+        let state_dir = self.state_dir.clone();
+        let ctx = self.ctx(p)?;
+        let started = std::time::Instant::now();
+
+        let decision = index_gate(
+            ctx,
+            &session_id,
+            format!("index embed_store model={model_id} chunks={}", embeddings_param.len()),
+        )?;
+        if dims < 1 || dims > MAX_EMBED_DIMS {
+            return Err(format!("dims must be in 1..={MAX_EMBED_DIMS}, got {dims}"));
+        }
+        if embeddings_param.len() as u64 > MAX_EMBED_BATCH {
+            return Err(format!(
+                "at most {MAX_EMBED_BATCH} embeddings per call, got {}",
+                embeddings_param.len()
+            ));
+        }
+        let mut items: Vec<ChunkEmbedding> = Vec::with_capacity(embeddings_param.len());
+        for e in &embeddings_param {
+            let chunk_id = e.get("chunk_id").and_then(Value::as_i64).ok_or("embedding.chunk_id required")?;
+            let content_hash = e
+                .get("content_hash")
+                .and_then(Value::as_str)
+                .ok_or("embedding.content_hash required")?
+                .to_string();
+            let vec_b64 = e
+                .get("vector_base64")
+                .and_then(Value::as_str)
+                .ok_or("embedding.vector_base64 required")?;
+            let bytes = base64_decode(vec_b64)
+                .ok_or_else(|| format!("vector_base64 is not valid base64 (chunk {chunk_id})"))?;
+            if bytes.len() != dims * 4 {
+                return Err(format!(
+                    "vector for chunk {chunk_id} decodes to {} bytes, expected dims * 4 = {} bytes",
+                    bytes.len(),
+                    dims * 4
+                ));
+            }
+            items.push(ChunkEmbedding { chunk_id, content_hash, vector: f32_from_le_bytes(&bytes) });
+        }
+
+        let index = existing_index(&state_dir, ctx)?;
+        let report = index.embed_store(&model_id, &items).map_err(index_err)?;
+        let (_, total_pending) = index.pending_chunks(&model_id, 0).map_err(index_err)?;
+
+        // Decision-linked completion status event (same idiom as
+        // index_build_completed) — no new EventType variants.
+        let event = Event::new(
+            &session_id,
+            EventType::ToolApproved,
+            json!({
+                "status": "index_embed_completed",
+                "model_id": model_id,
+                "stored": report.stored,
+                "stale": report.stale.len(),
+                "duration_ms": started.elapsed().as_millis() as u64,
+            }),
+        )
+        .with_decision(&decision.decision_id);
+        ctx.kernel.record_event(&event).map_err(err_str)?;
+
+        Ok(json!({
+            "stored": report.stored,
+            "stale": report.stale,
+            "total_pending": total_pending,
+        }))
+    }
+
+    /// Persists LSP-sourced precise edges (docs/plans/code-intelligence.md
+    /// V4 §B), gated and audited like its siblings: resource
+    /// `index edges_store edges=<n>`, at most MAX_EDGES_STORE_BATCH edges,
+    /// lines >= 1, both paths normalized via rel_and_abs AND re-gated through
+    /// FileRead (denied -> skipped with the denial reason), endpoints must
+    /// resolve to indexed symbols, and completion records a decision-linked
+    /// `index_edges_stored` status event.
+    fn index_edges_store(&mut self, p: &Value) -> Result<Value, String> {
+        let session_id = str_param(p, "session_id")?;
+        let edges_param = p
+            .get("edges")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or("edges array required")?;
+        let state_dir = self.state_dir.clone();
+        let ctx = self.ctx(p)?;
+        let started = std::time::Instant::now();
+
+        let decision = index_gate(
+            ctx,
+            &session_id,
+            format!("index edges_store edges={}", edges_param.len()),
+        )?;
+        if edges_param.len() as u64 > MAX_EDGES_STORE_BATCH {
+            return Err(format!(
+                "at most {MAX_EDGES_STORE_BATCH} edges per call, got {}",
+                edges_param.len()
+            ));
+        }
+        // Parse strictly (param errors), then normalize + re-gate per
+        // endpoint. A denied or non-workspace path is a *skip*, never a
+        // stored relation: an edge must not smuggle a relation about content
+        // the session cannot read.
+        let mut specs: Vec<carina_index::EdgeSpec> = Vec::with_capacity(edges_param.len());
+        let mut skipped: Vec<Value> = Vec::new();
+        for e in &edges_param {
+            let src_path = e.get("src_path").and_then(Value::as_str).ok_or("edge.src_path required")?;
+            let dst_path = e.get("dst_path").and_then(Value::as_str).ok_or("edge.dst_path required")?;
+            let src_line = e.get("src_line").and_then(Value::as_u64).ok_or("edge.src_line required")?;
+            let dst_line = e.get("dst_line").and_then(Value::as_u64).ok_or("edge.dst_line required")?;
+            if src_line < 1 || dst_line < 1 || src_line > u32::MAX as u64 || dst_line > u32::MAX as u64 {
+                return Err("edge line numbers must be 1-based (>= 1)".into());
+            }
+            // Both endpoints re-pass the FileRead gate exactly like build/
+            // update; the skip carries the denial reason (audited as usual by
+            // the request itself).
+            let mut endpoints_ok = true;
+            let mut rels: [String; 2] = [String::new(), String::new()];
+            for (i, raw) in [src_path, dst_path].iter().enumerate() {
+                match rel_and_abs(&ctx.workspace_root, raw) {
+                    Ok((rel, abs)) => {
+                        let d = ctx.kernel.request_file_read(&abs.to_string_lossy(), None).map_err(err_str)?;
+                        if d.decision != Verdict::Allowed {
+                            skipped.push(json!({
+                                "src_path": src_path,
+                                "dst_path": dst_path,
+                                "reason": format!("{raw}: {}", d.reason),
+                            }));
+                            endpoints_ok = false;
+                            break;
+                        }
+                        rels[i] = rel;
+                    }
+                    Err(reason) => {
+                        skipped.push(json!({
+                            "src_path": src_path,
+                            "dst_path": dst_path,
+                            "reason": format!("{raw}: {reason}"),
+                        }));
+                        endpoints_ok = false;
+                        break;
+                    }
+                }
+            }
+            if !endpoints_ok {
+                continue;
+            }
+            let [src_rel, dst_rel] = rels;
+            specs.push(carina_index::EdgeSpec {
+                src_path: src_rel,
+                src_line: src_line as u32,
+                dst_path: dst_rel,
+                dst_line: dst_line as u32,
+            });
+        }
+
+        // Endpoints must already resolve to indexed symbols — the edges
+        // store never ingests (the index stays a derived artifact).
+        let index = existing_index(&state_dir, ctx)?;
+        let report = index.edges_store(&specs).map_err(index_err)?;
+        for s in &report.skipped {
+            skipped.push(serde_json::to_value(s).map_err(err_str)?);
+        }
+
+        // Decision-linked completion status event (same idiom as
+        // index_embed_completed) — no new EventType variants.
+        let event = Event::new(
+            &session_id,
+            EventType::ToolApproved,
+            json!({
+                "status": "index_edges_stored",
+                "stored": report.stored,
+                "skipped": skipped.len(),
+                "duration_ms": started.elapsed().as_millis() as u64,
+            }),
+        )
+        .with_decision(&decision.decision_id);
+        ctx.kernel.record_event(&event).map_err(err_str)?;
+
+        Ok(json!({"stored": report.stored, "skipped": skipped}))
+    }
+
+    fn index_symbols(&mut self, p: &Value) -> Result<Value, String> {
+        let session_id = str_param(p, "session_id")?;
+        let name = str_param(p, "name")?;
+        let state_dir = self.state_dir.clone();
+        let ctx = self.ctx(p)?;
+
+        index_gate(ctx, &session_id, format!("index symbols {name}"))?;
+        let mut opts = carina_index::SymbolOptions::default();
+        if let Some(kind) = p.get("kind").and_then(Value::as_str) {
+            opts.kind = Some(
+                serde_json::from_value(json!(kind)).map_err(|e| format!("invalid kind: {e}"))?,
+            );
+        }
+        if let Some(include) = p.get("include_refs").and_then(Value::as_bool) {
+            opts.include_references = include;
+        }
+        if let Some(limit) = p.get("limit").and_then(Value::as_u64) {
+            opts.limit = limit as usize;
+        }
+        let index = existing_index(&state_dir, ctx)?;
+        let report = index.symbol_lookup(&name, &opts).map_err(index_err)?;
+        serde_json::to_value(&report).map_err(err_str)
+    }
+
+    /// Transitive dependents of a symbol name over the edges graph
+    /// (docs/plans/code-intelligence.md V3) — index_gate'd and audited like
+    /// search/symbols (query idiom: no extra status event). max_depth clamps
+    /// to 1..=5 (default 3), limit to 1..=200 (default 50); the clamped
+    /// values appear in the audited resource string.
+    fn index_impact(&mut self, p: &Value) -> Result<Value, String> {
+        let session_id = str_param(p, "session_id")?;
+        let name = str_param(p, "name")?;
+        let state_dir = self.state_dir.clone();
+        let ctx = self.ctx(p)?;
+
+        let mut opts = carina_index::ImpactOptions::default();
+        if let Some(depth) = p.get("max_depth").and_then(Value::as_u64) {
+            opts.max_depth = depth as usize;
+        }
+        if let Some(limit) = p.get("limit").and_then(Value::as_u64) {
+            opts.limit = limit as usize;
+        }
+        // Clamp before the gate so the audited resource string carries the
+        // effective (documented) bounds, making the clamp itself observable.
+        opts.max_depth = opts.max_depth.clamp(1, 5);
+        opts.limit = opts.limit.clamp(1, 200);
+
+        index_gate(
+            ctx,
+            &session_id,
+            format!(
+                "index impact {} depth={} limit={}",
+                truncate_chars(&name, 200),
+                opts.max_depth,
+                opts.limit
+            ),
+        )?;
+        let index = existing_index(&state_dir, ctx)?;
+        let report = index.impact(&name, &opts).map_err(index_err)?;
+        serde_json::to_value(&report).map_err(err_str)
+    }
+
+    fn index_map(&mut self, p: &Value) -> Result<Value, String> {
+        let session_id = str_param(p, "session_id")?;
+        let state_dir = self.state_dir.clone();
+        let ctx = self.ctx(p)?;
+
+        let mut opts = carina_index::RepoMapOptions::default();
+        if let Some(budget) = p.get("token_budget").and_then(Value::as_u64) {
+            opts.token_budget = budget as usize;
+        }
+        if let Some(focus) = p.get("focus_paths").and_then(Value::as_array) {
+            opts.focus_paths = focus.iter().filter_map(Value::as_str).map(String::from).collect();
+        }
+        index_gate(ctx, &session_id, format!("index map budget={}", opts.token_budget))?;
+        let index = existing_index(&state_dir, ctx)?;
+        let map = index.repo_map(&opts).map_err(index_err)?;
+        Ok(json!({
+            "map": map.text,
+            "ranked": map.ranked,
+            "token_estimate": map.token_estimate,
+        }))
+    }
+}
+
+// ---- code-index helpers ----------------------------------------------------
+
+/// Per-file ingestion cap (matches the Zig scanner's 5 MiB limit): a single
+/// multi-GB source file must not be read whole into the kernel process.
+const MAX_INDEX_FILE_BYTES: u64 = 5 * 1024 * 1024;
+/// Flush threshold for batched ingestion: at most this many content bytes are
+/// buffered before they are handed to the index and released.
+const MAX_INGEST_BATCH_BYTES: usize = 16 * 1024 * 1024;
+/// pending_chunks default batch size (docs/plans/code-intelligence.md V2).
+const DEFAULT_PENDING_CHUNKS: u64 = 64;
+/// Cap on pending_chunks `limit` and on embeddings per embed_store call.
+const MAX_EMBED_BATCH: u64 = 256;
+/// Cap on edges per edges_store call (the MAX_EMBED_BATCH idiom).
+const MAX_EDGES_STORE_BATCH: u64 = 256;
+/// Accepted embedding dimensionality range (covers every BYOK catalog model).
+const MAX_EMBED_DIMS: usize = 4096;
+
+/// Decodes f32 little-endian bytes (dims * 4) into a vector; callers validate
+/// the length, so `chunks_exact` never drops meaningful trailing bytes.
+fn f32_from_le_bytes(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect()
+}
+
+/// One CodeIndex capability request through the ordinary `Kernel::request`
+/// path, so approval modes, overlays, and org bundles apply unchanged and the
+/// decision lands in the hash chain. Anything but Allowed is an error. A
+/// requires_approval decision is parked in `pending` (one per capability —
+/// retries reuse it, so the set stays bounded) and its decision_id is carried
+/// in the error so the control plane can `kernel.approve` it and retry.
+fn index_gate(ctx: &mut SessionCtx, session_id: &str, resource: String) -> Result<Decision, String> {
+    let request = CapabilityRequest {
+        capability: Capability::CodeIndex,
+        requested_by: Principal::Agent,
+        resource,
+        session_id: session_id.to_string(),
+        task_id: None,
+    };
+    let decision = ctx.kernel.request(request).map_err(err_str)?;
+    match decision.decision {
+        Verdict::Allowed => Ok(decision),
+        Verdict::RequiresApproval => {
+            let reason = decision.reason.clone();
+            let decision_id = match ctx
+                .pending
+                .values()
+                .find(|d| d.capability == Capability::CodeIndex)
+            {
+                Some(existing) => existing.decision_id.clone(),
+                None => {
+                    let id = decision.decision_id.clone();
+                    ctx.pending.insert(id.clone(), decision);
+                    id
+                }
+            };
+            Err(format!("code index requires approval (decision_id={decision_id}): {reason}"))
+        }
+        Verdict::Denied => Err(format!("code index denied: {}", decision.reason)),
+    }
+}
+
+/// Running totals across batched ingest/update flushes.
+#[derive(Default)]
+struct IngestTotals {
+    indexed: usize,
+    unchanged: usize,
+    symbols: usize,
+    edges: usize,
+    chunks: usize,
+}
+
+impl IngestTotals {
+    fn add(&mut self, report: &carina_index::IngestReport) {
+        self.indexed += report.indexed;
+        self.unchanged += report.unchanged;
+        self.symbols += report.symbols;
+        self.edges += report.edges;
+        self.chunks += report.chunks;
+    }
+
+    fn to_json(&self, drops: usize, skipped: Vec<Value>, db_path: &Path) -> Value {
+        json!({
+            "indexed": self.indexed + drops,
+            "unchanged": self.unchanged,
+            "skipped": skipped,
+            "symbols": self.symbols,
+            "edges": self.edges,
+            "chunks": self.chunks,
+            "db_path": db_path.to_string_lossy(),
+        })
+    }
+}
+
+/// Ingests and drains one buffered batch (no-op when empty). The session's
+/// index must already be open (`ensure_index`).
+fn flush_ingest(
+    ctx: &mut SessionCtx,
+    batch: &mut Vec<IngestFile>,
+    totals: &mut IngestTotals,
+    skipped: &mut Vec<Value>,
+) -> Result<(), String> {
+    if batch.is_empty() {
+        return Ok(());
+    }
+    let index = ctx.index.as_mut().ok_or("index not open")?;
+    let report = index.ingest(batch).map_err(index_err)?;
+    batch.clear();
+    totals.add(&report);
+    skipped.extend(skipped_json(&report.skipped));
+    Ok(())
+}
+
+/// Applies and drains one buffered change batch (no-op when empty).
+fn flush_update(
+    ctx: &mut SessionCtx,
+    batch: &mut Vec<IndexChange>,
+    totals: &mut IngestTotals,
+    skipped: &mut Vec<Value>,
+) -> Result<(), String> {
+    if batch.is_empty() {
+        return Ok(());
+    }
+    let index = ctx.index.as_mut().ok_or("index not open")?;
+    let report = index.update(batch).map_err(index_err)?;
+    batch.clear();
+    totals.add(&report);
+    skipped.extend(skipped_json(&report.skipped));
+    Ok(())
+}
+
+/// Reason string when `abs` is over the per-file ingestion cap, None when it
+/// fits (or cannot be stat'ed — the read itself reports that error).
+fn exceeds_size_cap(abs: &Path) -> Option<String> {
+    let len = std::fs::metadata(abs).map(|m| m.len()).unwrap_or(0);
+    (len > MAX_INDEX_FILE_BYTES).then(|| {
+        format!("file exceeds index size cap ({len} > {MAX_INDEX_FILE_BYTES} bytes)")
+    })
+}
+
+/// The per-workspace index database path:
+/// <state_dir>/index/<sha256(workspace_root)>.sqlite.
+fn index_db_path(state_dir: &Path, workspace_root: &Path) -> PathBuf {
+    let mut hasher = Sha256::new();
+    hasher.update(workspace_root.to_string_lossy().as_bytes());
+    state_dir.join("index").join(format!("{:x}.sqlite", hasher.finalize()))
+}
+
+/// Opens (creating if needed) the session's index database.
+fn ensure_index<'a>(state_dir: &Path, ctx: &'a mut SessionCtx) -> Result<&'a mut CodeIndex, String> {
+    if ctx.index.is_none() {
+        let db = index_db_path(state_dir, &ctx.workspace_root);
+        if let Some(parent) = db.parent() {
+            std::fs::create_dir_all(parent).map_err(err_str)?;
+        }
+        ctx.index = Some(CodeIndex::open(&db).map_err(index_err)?);
+    }
+    Ok(ctx.index.as_mut().expect("index just opened"))
+}
+
+/// Opens the session's index database only if it already exists; query
+/// methods must not silently return empty results from a never-built index.
+fn existing_index<'a>(state_dir: &Path, ctx: &'a mut SessionCtx) -> Result<&'a mut CodeIndex, String> {
+    if ctx.index.is_none() && !index_db_path(state_dir, &ctx.workspace_root).exists() {
+        return Err("index not built — call kernel.index.build first".into());
+    }
+    ensure_index(state_dir, ctx)
+}
+
+/// Normalizes a candidate path to (workspace-relative key, absolute path).
+/// The relative key is what the index stores; the absolute path is what the
+/// FileRead policy evaluates. Paths that cannot be expressed relative to the
+/// workspace root are rejected (they could never have been read in-workspace).
+fn rel_and_abs(root: &Path, raw: &str) -> Result<(String, PathBuf), String> {
+    let candidate = Path::new(raw);
+    let abs = if candidate.is_absolute() {
+        normalize_lexical(candidate)
+    } else {
+        normalize_lexical(&root.join(candidate))
+    };
+    let rel = abs
+        .strip_prefix(root)
+        .map_err(|_| "path is not workspace-relative".to_string())?
+        .to_string_lossy()
+        .replace('\\', "/");
+    if rel.is_empty() {
+        return Err("path names the workspace root".into());
+    }
+    Ok((rel, abs))
+}
+
+/// Lexical `.`/`..` normalization (no filesystem access); the policy layer
+/// does its own symlink-aware resolution for the containment decision.
+fn normalize_lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn skipped_json(skipped: &[carina_index::SkippedFile]) -> Vec<Value> {
+    skipped
+        .iter()
+        .map(|s| json!({"path": s.path, "reason": s.reason}))
+        .collect()
+}
+
+/// Records the decision-linked build/update status event (same idiom as the
+/// approval_overlay_created status event) — no new EventType variants.
+fn record_index_status(
+    ctx: &SessionCtx,
+    session_id: &str,
+    status: &str,
+    result: &Value,
+    started: std::time::Instant,
+    decision: &Decision,
+) -> Result<(), String> {
+    let event = Event::new(
+        session_id,
+        EventType::ToolApproved,
+        json!({
+            "status": status,
+            "indexed": result["indexed"],
+            "unchanged": result["unchanged"],
+            "skipped": result["skipped"].as_array().map(Vec::len).unwrap_or(0),
+            "symbols": result["symbols"],
+            "edges": result["edges"],
+            "chunks": result["chunks"],
+            "duration_ms": started.elapsed().as_millis() as u64,
+        }),
+    )
+    .with_decision(&decision.decision_id);
+    ctx.kernel.record_event(&event).map_err(err_str)
+}
+
+/// Best-effort index invalidation after a successful patch apply/rollback.
+/// Runs only when an index already exists for the workspace; every re-read is
+/// still FileRead-gated (a path that became denied is dropped, never leaked),
+/// and an index failure never fails the patch — but it is no longer silent
+/// (V4 D4): a failed open/update records a decision-free
+/// `index_invalidation_failed` status event (error text, never content) so a
+/// stale index stays visible until the next sweep/build heals it.
+fn invalidate_index_after_patch(
+    state_dir: &Path,
+    ctx: &mut SessionCtx,
+    session_id: &str,
+    files: &[FileChange],
+) {
+    if ctx.index.is_none() && !index_db_path(state_dir, &ctx.workspace_root).exists() {
+        return;
+    }
+    let mut changes: Vec<IndexChange> = Vec::new();
+    for f in files {
+        let (rel, abs) = match rel_and_abs(&ctx.workspace_root, &f.path) {
+            Ok(pair) => pair,
+            Err(_) => continue,
+        };
+        let allowed = ctx
+            .kernel
+            .request_file_read(&abs.to_string_lossy(), None)
+            .map(|d| d.decision == Verdict::Allowed)
+            .unwrap_or(false)
+            && exceeds_size_cap(&abs).is_none();
+        // Short-circuit so a denied/oversized path is never read into memory.
+        match allowed.then(|| std::fs::read_to_string(&abs)) {
+            Some(Ok(content)) => changes.push(IndexChange::Upsert { path: rel, content }),
+            _ => changes.push(IndexChange::Delete { path: rel }),
+        }
+    }
+    let failure = match ensure_index(state_dir, ctx) {
+        Ok(index) => index.update(&changes).map_err(index_err).err(),
+        Err(e) => Some(e),
+    };
+    if let Some(error) = failure {
+        // The patch itself already succeeded; surface the stale index in the
+        // audit chain. A failing record_event has nowhere further to report.
+        let _ = ctx.kernel.record_event(&Event::new(
+            session_id,
+            EventType::ToolApproved,
+            json!({"status": "index_invalidation_failed", "error": error}),
+        ));
+    }
+}
+
+fn index_err(e: carina_index::IndexError) -> String {
+    format!("index error: {e}")
+}
+
+/// Truncates to at most `max` characters on a char boundary.
+fn truncate_chars(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+}
+
+fn str_array_param(p: &Value, key: &str) -> Result<Vec<String>, String> {
+    let arr = p
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{key} array required"))?;
+    arr.iter()
+        .map(|v| {
+            // Element-wise strictness: silently dropping a non-string element
+            // would operate on a different path set than the caller named.
+            v.as_str()
+                .map(String::from)
+                .ok_or_else(|| format!("{key} must be an array of strings"))
+        })
+        .collect()
 }
 
 enum Pre {

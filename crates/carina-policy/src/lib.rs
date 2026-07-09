@@ -21,6 +21,7 @@ pub enum Capability {
     PluginLoad,
     RemoteExecute,
     MemoryWrite,
+    CodeIndex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -366,6 +367,18 @@ impl PolicyBundle {
         if self.deny_capabilities.contains(&req.capability) {
             return (Verdict::Denied, format!("org policy '{}' denies {:?}", self.name, req.capability));
         }
+        // CodeIndex is derived FileRead access (the per-workspace index DB
+        // stores file content and outlives sessions), so a bundle constraint
+        // on FileRead constrains index queries the same way — a stricter
+        // session must not read content through an index a looser one built.
+        if req.capability == Capability::CodeIndex
+            && self.deny_capabilities.contains(&Capability::FileRead)
+        {
+            return (
+                Verdict::Denied,
+                format!("org policy '{}' denies FileRead (the code index is derived read access)", self.name),
+            );
+        }
         if req.capability == Capability::NetworkAccess
             && self.deny_network_hosts.iter().any(|h| h == &req.resource)
         {
@@ -381,8 +394,13 @@ impl PolicyBundle {
                 }
             }
         }
-        // Escalate an auto-allow to require approval if the bundle demands it.
-        if decision == Verdict::Allowed && self.require_approval.contains(&req.capability) {
+        // Escalate an auto-allow to require approval if the bundle demands it
+        // (for CodeIndex also when it demands approval for FileRead — see above).
+        if decision == Verdict::Allowed
+            && (self.require_approval.contains(&req.capability)
+                || (req.capability == Capability::CodeIndex
+                    && self.require_approval.contains(&Capability::FileRead)))
+        {
             return (
                 Verdict::RequiresApproval,
                 format!("org policy '{}' requires approval for {:?}", self.name, req.capability),
@@ -521,6 +539,18 @@ impl PolicyEngine {
                 Verdict::RequiresApproval,
                 "persistent memory write requires approval".into(),
             ),
+            Capability::CodeIndex => {
+                // Derived read access: ingestion is FileRead-gated per path, so
+                // the index follows the profile's FileRead grant here; bundle
+                // FileRead constraints are applied in `PolicyBundle::constrain`
+                // (the per-workspace DB outlives sessions, so the *querying*
+                // session's read policy must hold too, not just the ingesting one's).
+                if profile.file_read_in_workspace {
+                    (Verdict::Allowed, format!("{} allows FileRead within workspace", profile.name))
+                } else {
+                    (Verdict::Denied, "profile denies FileRead".into())
+                }
+            }
         }
     }
 }
@@ -1366,6 +1396,82 @@ require_approval = ["PatchApply"]
             &req(Capability::MemoryWrite, resource),
         );
         assert_eq!(denied.decision, Verdict::Denied);
+    }
+
+    #[test]
+    fn code_index_is_derived_read_access() {
+        let root = Path::new("/tmp/ws");
+        // Allowed iff the profile allows in-workspace FileRead (all builtins do).
+        for name in Profile::builtin_names() {
+            let p = Profile::builtin(name).unwrap();
+            let d = PolicyEngine::evaluate(&p, root, &req(Capability::CodeIndex, "index search foo"));
+            assert_eq!(d.decision, Verdict::Allowed, "{name} should allow CodeIndex");
+        }
+        // A custom profile that denies FileRead also denies the index.
+        let mut no_read = Profile::read_only();
+        no_read.file_read_in_workspace = false;
+        let d = PolicyEngine::evaluate(&no_read, root, &req(Capability::CodeIndex, "index search foo"));
+        assert_eq!(d.decision, Verdict::Denied);
+    }
+
+    #[test]
+    fn code_index_follows_bundle_file_read_constraints() {
+        // CodeIndex is derived FileRead access: the per-workspace index DB
+        // outlives sessions, so a bundle that denies or escalates FileRead
+        // must constrain index queries too — otherwise content a session
+        // cannot FileRead is served through code.search.
+        let root = Path::new("/tmp/ws");
+        let profile = Profile::safe_edit();
+
+        let deny = PolicyBundle::from_toml("name = \"locked\"\ndeny_capabilities = [\"FileRead\"]\n").unwrap();
+        let d = PolicyEngine::evaluate_with_bundle(
+            &profile,
+            Some(&deny),
+            root,
+            &req(Capability::CodeIndex, "index search secret"),
+        );
+        assert_eq!(d.decision, Verdict::Denied, "FileRead deny must deny the index: {}", d.reason);
+        assert!(d.reason.contains("locked"));
+
+        let escalate =
+            PolicyBundle::from_toml("name = \"strict\"\nrequire_approval = [\"FileRead\"]\n").unwrap();
+        let d = PolicyEngine::evaluate_with_bundle(
+            &profile,
+            Some(&escalate),
+            root,
+            &req(Capability::CodeIndex, "index search secret"),
+        );
+        assert_eq!(
+            d.decision,
+            Verdict::RequiresApproval,
+            "FileRead escalation must escalate the index: {}",
+            d.reason
+        );
+    }
+
+    #[test]
+    fn code_index_bundle_deny_and_require_approval() {
+        let root = Path::new("/tmp/ws");
+        let profile = Profile::safe_edit();
+        let deny = PolicyBundle::from_toml("name = \"locked\"\ndeny_capabilities = [\"CodeIndex\"]\n").unwrap();
+        let d = PolicyEngine::evaluate_with_bundle(
+            &profile,
+            Some(&deny),
+            root,
+            &req(Capability::CodeIndex, "index build files=3"),
+        );
+        assert_eq!(d.decision, Verdict::Denied);
+        assert!(d.reason.contains("locked"));
+
+        let escalate =
+            PolicyBundle::from_toml("name = \"strict\"\nrequire_approval = [\"CodeIndex\"]\n").unwrap();
+        let d = PolicyEngine::evaluate_with_bundle(
+            &profile,
+            Some(&escalate),
+            root,
+            &req(Capability::CodeIndex, "index map budget=1024"),
+        );
+        assert_eq!(d.decision, Verdict::RequiresApproval);
     }
 
     #[test]
