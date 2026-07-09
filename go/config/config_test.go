@@ -4,8 +4,24 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+// scrubCarinaEnv unsets every CARINA_* variable for the duration of the test
+// so hermetic tests are not polluted by the host or CI job environment
+// (e.g. the CI go-test step exports CARINA_KERNEL_BIN for the E2E suite).
+func scrubCarinaEnv(t *testing.T) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "CARINA_") {
+			continue
+		}
+		key, val, _ := strings.Cut(kv, "=")
+		t.Setenv(key, val) // registers restore-on-cleanup
+		os.Unsetenv(key)
+	}
+}
 
 func writeConfig(t *testing.T, dir, body string) {
 	t.Helper()
@@ -21,6 +37,7 @@ func writeConfig(t *testing.T, dir, body string) {
 // TestCascadePrecedence: env > project > global > default, and absent keys fall
 // through to the prior layer.
 func TestCascadePrecedence(t *testing.T) {
+	scrubCarinaEnv(t)
 	home := t.TempDir()
 	proj := t.TempDir()
 
@@ -102,6 +119,7 @@ func TestCascadePrecedence(t *testing.T) {
 }
 
 func TestNoFilesYieldsDefaults(t *testing.T) {
+	scrubCarinaEnv(t)
 	home := t.TempDir()
 	cfg, err := Load(home, t.TempDir())
 	if err != nil {
