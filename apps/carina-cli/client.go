@@ -36,6 +36,7 @@ func dialDaemon() (*rpcClient, error) { return dialHook() }
 var ungatedCommands = map[string]bool{
 	"version": true, "--version": true, "-v": true,
 	"help": true, "-h": true, "--help": true,
+	"completion": true, "daemon": true,
 	"scan": true, "grep": true, "diff": true, "pty": true,
 	"run-native": true, "patch-native": true,
 	"auth": true, "providers": true,

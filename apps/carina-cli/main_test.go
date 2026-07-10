@@ -51,7 +51,7 @@ func TestUsageIsProductizedAndCarinaOnly(t *testing.T) {
 }
 
 func TestUsageIncludesGatewayWSProbe(t *testing.T) {
-	if !strings.Contains(usage, "carina gateway ws-probe <ws-url> [role]") {
+	if !strings.Contains(usage, "carina gateway ws-probe <ws-url> [role] [token]") {
 		t.Fatalf("usage missing gateway ws-probe:\n%s", usage)
 	}
 }
@@ -93,8 +93,91 @@ func TestUsageIncludesContextCommands(t *testing.T) {
 }
 
 func TestUsageIncludesResumeContinuation(t *testing.T) {
-	if !strings.Contains(usage, "carina resume <session_id> [prompt|-]") {
-		t.Fatalf("usage missing productized resume command:\n%s", usage)
+	for _, want := range []string{
+		"carina resume <session_id> [prompt|-]",
+		"carina steer <task_id> <message>",
+		"carina answer <question_id> <value>",
+		"carina fork <session_id>",
+		"carina cost [session_id] [--json]",
+		"carina workers",
+		"carina daemon start",
+		"carina completion <bash|zsh|fish>",
+	} {
+		if !strings.Contains(usage, want) {
+			t.Fatalf("usage missing productized command %q:\n%s", want, usage)
+		}
+	}
+}
+
+func TestRunAnswerResolvesStructuredQuestion(t *testing.T) {
+	oldDial := dialHook
+	t.Cleanup(func() { dialHook = oldDial })
+	s := rpc.NewServer()
+	var got map[string]any
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "task.user.answer", Scope: rpc.ScopeWrite, Remote: true}, func(params json.RawMessage) (any, error) {
+		if err := json.Unmarshal(params, &got); err != nil {
+			return nil, err
+		}
+		return map[string]any{"accepted": true}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	addr := freeTCPAddr(t)
+	go func() { _ = s.ListenTCP(addr) }()
+	t.Cleanup(func() { _ = s.Close() })
+	waitTCP(t, addr)
+	dialHook = func() (*rpcClient, error) { return rpc.DialTCP(addr) }
+
+	out, err := captureStdout(t, func() error { return run("answer", []string{"question_1", "yes"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["question_id"] != "question_1" || got["value"] != "yes" {
+		t.Fatalf("unexpected answer params: %#v", got)
+	}
+	if !strings.Contains(out, `"accepted": true`) {
+		t.Fatalf("answer output missing acknowledgement: %s", out)
+	}
+	if err := run("answer", []string{"question_1"}); err == nil {
+		t.Fatal("answer without a value must fail")
+	}
+}
+
+func TestCmdSteerQueuesMessage(t *testing.T) {
+	s := rpc.NewServer()
+	var got map[string]any
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "task.steer", Scope: rpc.ScopeWrite, Remote: true}, func(params json.RawMessage) (any, error) {
+		if err := json.Unmarshal(params, &got); err != nil {
+			return nil, err
+		}
+		return map[string]any{"queued": true}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	addr := freeTCPAddr(t)
+	go func() { _ = s.ListenTCP(addr) }()
+	defer s.Close()
+	waitTCP(t, addr)
+	c, err := rpc.DialTCP(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	out, err := captureStdout(t, func() error {
+		return cmdSteer(c, []string{"task_1", "also", "add", "tests"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["task_id"] != "task_1" || got["message"] != "also add tests" {
+		t.Fatalf("unexpected task.steer params: %#v", got)
+	}
+	if !strings.Contains(out, `"queued": true`) {
+		t.Fatalf("steer output missing acknowledgement:\n%s", out)
+	}
+	if err := cmdSteer(c, []string{"task_1"}); err == nil {
+		t.Fatal("missing steering message should fail")
 	}
 }
 
@@ -236,11 +319,14 @@ func TestCmdContextStatsCompressRetrieve(t *testing.T) {
 	if compressed != "hello" {
 		t.Fatalf("compress params = %q", compressed)
 	}
-	if _, err := captureStdout(t, func() error { return cmdContext(c, []string{"retrieve", "abc", "needle"}) }); err != nil {
+	if _, err := captureStdout(t, func() error { return cmdContext(c, []string{"retrieve", "abc"}) }); err != nil {
 		t.Fatal(err)
 	}
-	if retrieved["hash"] != "abc" || retrieved["query"] != "needle" {
+	if retrieved["hash"] != "abc" || retrieved["query"] != nil {
 		t.Fatalf("retrieve params = %#v", retrieved)
+	}
+	if err := cmdContext(c, []string{"retrieve", "abc", "needle"}); err == nil {
+		t.Fatal("retrieve query must be rejected before RPC because the managed Headroom contract is hash-only")
 	}
 }
 
@@ -363,6 +449,14 @@ func TestMemoryRPCRejectsIncompleteWrite(t *testing.T) {
 
 func TestGatewayWSProbePrintsHelloResponse(t *testing.T) {
 	s := rpc.NewServer()
+	issuer, err := rpc.NewGatewayTokenIssuer([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := issuer.Issue("cli-test", rpc.RoleObserver, []rpc.Scope{rpc.ScopeRead}, time.Minute, "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "gateway.hello", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
 		var req rpc.HelloRequest
 		if len(params) > 0 {
@@ -375,12 +469,14 @@ func TestGatewayWSProbePrintsHelloResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := freeTCPAddr(t)
-	go func() { _ = s.ListenWebSocket(addr, "/gateway", nil) }()
+	go func() {
+		_ = s.ListenWebSocketWithOptions(addr, rpc.WebSocketOptions{Path: "/gateway", TokenVerifier: issuer})
+	}()
 	defer s.Close()
 	waitTCP(t, addr)
 
 	out, err := captureStdout(t, func() error {
-		return cmdGatewayWSProbe([]string{"ws://" + addr + "/gateway", "observer"})
+		return cmdGatewayWSProbe([]string{"ws://" + addr + "/gateway", "observer", token})
 	})
 	if err != nil {
 		t.Fatal(err)

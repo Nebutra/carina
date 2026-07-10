@@ -374,6 +374,37 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   allowlist. They can explain behavior during incident triage, but cannot
   become evidence or policy input.
 
+**Wave 22 — Agent Runtime product-surface closure (landed)**
+- [x] **Provider-native usage and cost accounting** (`go/daemon`,
+  `go/model-router`, `apps/carina-cli`): OpenAI and Anthropic adapters now
+  return normalized input, output, cache-read, and cache-write token counts;
+  unknown pricing is explicit; per-task/session usage persists across daemon
+  restarts; `usage.cost` and `carina cost` expose the same contract.
+- [x] **Real prompt-cache boundary** (`go/model-router`, `go/daemon`): stable
+  and volatile prompt segments are separate request fields, and Anthropic's
+  stable prefix is sent with ephemeral cache control rather than merely being
+  described in local metadata.
+- [x] **Typed terminal experience** (`go/tui`): the TUI renders semantic agent,
+  tool, command, file/diff, context, governance, subagent, and workflow events
+  without dumping raw JSON or exposing chain-of-thought. It includes a compact
+  task graph, folded verbose events, CJK/narrow-terminal coverage, multiline
+  steering, follow-tail behavior, and reconnect replay/dedup.
+- [x] **Structured human input** (`go/daemon/user_question.go`, `go/tui`,
+  `apps/carina-cli`): the agent can issue a bounded `ask_user` action, which is
+  persisted before publication, blocks the task as `waiting_input`, restores
+  only live questions after reconnect, and can be resolved through either the
+  TUI overlay or `carina watch --json` plus `carina answer`.
+- [x] **Operator CLI surface** (`apps/carina-cli`): session fork, usage/cost,
+  worker lifecycle, CLI-owned daemon start/status/stop/logs, and bash/zsh/fish
+  completion are first-class commands. Daemon stop verifies a private ownership
+  record against the live daemon PID before sending a signal.
+- [x] **macOS release trust automation** (`.github/workflows/release.yml`,
+  `scripts/sign-and-notarize-release.sh`): tag releases fail closed when Apple
+  credentials are absent, sign every Mach-O with Developer ID, submit through
+  `notarytool`, require Apple `Accepted`, verify Gatekeeper, rebuild checksums,
+  and publish notary/signing evidence. A real credentialed tag run remains the
+  only proof that Apple accepted a release.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
@@ -405,9 +436,18 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   a local-only non-authoritative debug side-channel instead.
 
 ## Test status
-Current verification for the OpenSquilla/backpressure/debug absorption update:
+Current verification for the product-surface closure:
 
 - `git diff --check`
 - `jq empty protocol/jsonrpc/methods.json protocol/events/events.json protocol/schemas/event.schema.json`
-- `CARINA_KERNEL_BIN=$PWD/target/debug/carina-kernel-service go test ./go/... ./apps/...`
-- `cargo test -p carina-audit -p carina-kernel`
+- `CARINA_KERNEL_BIN=$PWD/target/release/carina-kernel-service go test ./...`
+- `go vet ./...`
+- `cargo test --workspace`
+- `go test -race ./go/daemon ./go/config ./apps/carina-daemon`
+- `bash scripts/ci-gates.sh`
+- `bash scripts/test-bench-gate.sh`
+- `bash scripts/test-sign-and-notarize-release.sh`
+
+The local `make release-check` additionally requires Zig 0.15.x. It now fails
+fast with a version diagnostic; a machine whose active Zig is 0.16.x cannot be
+used as release evidence for the repository's CI-pinned Zig 0.15.1 build.

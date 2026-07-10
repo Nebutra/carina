@@ -104,3 +104,27 @@ func TestControlFrameForEventRequiresDecisionID(t *testing.T) {
 		t.Fatal("expected ok=false for a permission.request event missing decision_id")
 	}
 }
+
+func TestControlFrameForEventBuildsStructuredUserQuestion(t *testing.T) {
+	options := []any{
+		map[string]any{"label": "Proceed", "value": "yes"},
+		map[string]any{"label": "Stop", "value": "no"},
+	}
+	event := map[string]any{
+		"type": "user.question", "session_id": "sess_1", "task_id": "task_1",
+		"question_id": "question_1", "prompt": "Continue?", "options": options,
+	}
+	frame, ok := controlFrameForEvent(event)
+	if !ok {
+		t.Fatal("expected a frame for user.question")
+	}
+	if frame["frame"] != "user_question" || frame["question_id"] != "question_1" || frame["options"] == nil {
+		t.Fatalf("unexpected user question frame: %#v", frame)
+	}
+}
+
+func TestControlFrameForEventRejectsIncompleteUserQuestion(t *testing.T) {
+	if _, ok := controlFrameForEvent(map[string]any{"type": "user.question", "question_id": "question_1"}); ok {
+		t.Fatal("incomplete user.question must not produce an actionable frame")
+	}
+}

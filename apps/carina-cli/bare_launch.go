@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/Nebutra/carina/go/microcopy"
@@ -154,9 +156,9 @@ func daemonStartupBackoff(attempt int) time.Duration {
 }
 
 // spawnDaemon starts carina-daemon detached from this process (the
-// documented `carina-daemon &` idiom): stdio redirected to /dev/null,
-// process group detached from the terminal, not waited on — bare `carina`
-// hands off and moves on to dialing.
+// documented `carina-daemon &` idiom): stdio is redirected to the private
+// runtime log and an ownership record is written so `carina daemon stop`
+// never has to guess which process it owns.
 func spawnDaemon() error {
 	bin := "carina-daemon"
 	if dir := toolsDir(); dir != "" {
@@ -164,17 +166,50 @@ func spawnDaemon() error {
 			bin = filepath.Join(dir, "carina-daemon")
 		}
 	}
-	cmd := exec.Command(bin)
-	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	socket, err := defaultSocketPath()
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
+		return err
+	}
+	logFile, err := os.OpenFile(daemonLogPath(socket), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	devnull, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
+	if err != nil {
+		_ = logFile.Close()
+		return err
+	}
+	cmd := exec.Command(bin)
 	cmd.Stdin = devnull
-	cmd.Stdout = devnull
-	cmd.Stderr = devnull
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
 		_ = devnull.Close()
+		_ = logFile.Close()
 		return fmt.Errorf("start %s: %w", bin, err)
+	}
+	_ = devnull.Close()
+	_ = logFile.Close()
+
+	executable, _ := filepath.Abs(bin)
+	record := daemonOwnershipRecord{
+		Owner:      daemonOwnershipMarker,
+		PID:        cmd.Process.Pid,
+		Socket:     socket,
+		Executable: executable,
+		StartedAt:  time.Now().UTC(),
+	}
+	raw, err := json.Marshal(record)
+	if err == nil {
+		err = writePrivateFileAtomic(daemonOwnershipPath(socket), raw)
+	}
+	if err != nil {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		_ = cmd.Process.Release()
+		return fmt.Errorf("record daemon ownership: %w", err)
 	}
 	// Release the child so it survives this process without becoming a
 	// zombie once it exits; carina-daemon is a long-running control-plane

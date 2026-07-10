@@ -23,12 +23,13 @@ import (
 	"time"
 
 	"github.com/Nebutra/carina/go/auth"
+	"github.com/Nebutra/carina/go/product"
 	"github.com/Nebutra/carina/go/provider"
 	"github.com/Nebutra/carina/go/ttyutil"
 	"github.com/Nebutra/carina/go/tui"
 )
 
-const cliVersion = "0.6.0"
+const cliVersion = product.Version
 
 const usage = `carina — command-line client for the Carina Agent Runtime
 
@@ -51,7 +52,11 @@ Start and run:
 Inspect sessions:
   carina sessions                                  list sessions
   carina resume <session_id> [prompt|-]            continue or inspect a session
-  carina watch <session_id> [--json]                stream live events (--json emits typed control_request frames)
+  carina fork <session_id>                         branch a session without changing its parent
+  carina cost [session_id] [--json]                show model usage and cost totals
+  carina watch <session_id> [--json]               stream live events (--json emits actionable control frames)
+  carina steer <task_id> <message>                 redirect a running task at its next turn boundary
+  carina answer <question_id> <value>              answer a structured agent question
   carina items <session_id>                        replay normalized thread/turn/item events
   carina search <session_id> <text>                search the workspace through the daemon
 
@@ -73,7 +78,7 @@ Context engine:
   carina context doctor                             diagnose context engine health
   carina context stats                              show local and Headroom context-engine counters
   carina context compress <content|->               compress content through the native context engine
-  carina context retrieve <hash> [query]             retrieve original context from Headroom CCR
+  carina context retrieve <hash>                     retrieve original context from Headroom CCR
 
 Schedules:
   carina schedule list                               list persistent schedules
@@ -110,10 +115,17 @@ Providers and BYOK:
 Gateway and RPC:
   carina gateway hello [role]                       negotiate Gateway role/scope discovery
   carina gateway methods                            list RPC methods with scope/exposure metadata
-  carina gateway ws-probe <ws-url> [role]           probe Gateway WebSocket handshake and hello
+  carina gateway ws-probe <ws-url> [role] [token]   probe authenticated Gateway WebSocket hello
   carina backpressure status                         show worker pressure reports and throttle directives
   carina debug snapshot [limit]                      show local-only diagnostic trace events
   carina debug trace <correlation_id> [limit]        search diagnostic trace by correlation id
+
+Workers:
+  carina workers                                    list registered workers
+  carina worker list                                list registered workers
+  carina worker register <name> [remote|ci]         register a remote execution worker
+  carina worker heartbeat <worker_id> [credential]  refresh a worker heartbeat (or CARINA_WORKER_CREDENTIAL)
+  carina worker revoke <worker_id> [credential]     revoke a worker (or CARINA_WORKER_CREDENTIAL)
 
 Native tools, no daemon:
   carina scan [path]                                workspace file tree
@@ -124,7 +136,11 @@ Native tools, no daemon:
   carina patch-native <apply|dry-run|rollback>      atomic patch primitive, JSON on stdin
 
 Daemon:
-  carina-daemon &                                   start the local control-plane daemon
+  carina daemon start                              start the CLI-owned local daemon
+  carina daemon status                             show daemon status without auto-starting it
+  carina daemon stop                               stop only a daemon owned by this CLI
+  carina daemon logs                               show recent CLI-owned daemon logs
+  carina completion <bash|zsh|fish>                generate shell completion
 `
 
 func main() {
@@ -153,6 +169,10 @@ func run(cmd string, args []string) error {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
+	case "completion":
+		return cmdCompletion(args)
+	case "daemon":
+		return cmdDaemon(args)
 	case "auth":
 		return cmdAuth(args)
 	case "providers":
@@ -198,6 +218,14 @@ func run(cmd string, args []string) error {
 		return call(c, "daemon.metrics", map[string]any{})
 	case "sessions":
 		return call(c, "session.list", map[string]any{})
+	case "fork":
+		return cmdFork(c, args)
+	case "cost":
+		return cmdCost(c, args)
+	case "workers":
+		return cmdWorker(c, append([]string{"list"}, args...))
+	case "worker":
+		return cmdWorker(c, args)
 	case "agents":
 		return cmdAgents(c, args)
 	case "commands":
@@ -296,6 +324,13 @@ func run(cmd string, args []string) error {
 			return err
 		}
 		return watch(c, sessionID, jsonOut)
+	case "steer":
+		return cmdSteer(c, args)
+	case "answer":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: carina answer <question_id> <value>")
+		}
+		return call(c, "task.user.answer", map[string]any{"question_id": args[0], "value": args[1]})
 
 	case "search":
 		if len(args) < 2 {
@@ -344,6 +379,20 @@ func run(cmd string, args []string) error {
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", cmd)
 	}
+}
+
+func cmdSteer(c *rpcClient, args []string) error {
+	if len(args) < 2 || strings.TrimSpace(args[0]) == "" {
+		return fmt.Errorf("usage: carina steer <task_id> <message>")
+	}
+	message := strings.TrimSpace(strings.Join(args[1:], " "))
+	if message == "" {
+		return fmt.Errorf("usage: carina steer <task_id> <message>")
+	}
+	return call(c, "task.steer", map[string]any{
+		"task_id": strings.TrimSpace(args[0]),
+		"message": message,
+	})
 }
 
 func parseRunArgs(args []string) (prompt, model, agent string, err error) {
@@ -847,14 +896,10 @@ func cmdContext(c *rpcClient, args []string) error {
 		}
 		return call(c, "context.compress", map[string]any{"content": content})
 	case "retrieve":
-		if len(args) < 2 || len(args) > 3 {
-			return fmt.Errorf("usage: carina context retrieve <hash> [query]")
+		if len(args) != 2 {
+			return fmt.Errorf("usage: carina context retrieve <hash>")
 		}
-		params := map[string]any{"hash": args[1]}
-		if len(args) == 3 {
-			params["query"] = args[2]
-		}
-		return call(c, "context.retrieve", params)
+		return call(c, "context.retrieve", map[string]any{"hash": args[1]})
 	default:
 		return fmt.Errorf("usage: carina context <status|doctor|stats|compress|retrieve>")
 	}
@@ -986,14 +1031,21 @@ func memoryCLIContent(args []string, readInput func() (string, error)) (string, 
 }
 
 func cmdGatewayWSProbe(args []string) error {
-	if len(args) < 1 || len(args) > 2 {
-		return fmt.Errorf("usage: carina gateway ws-probe <ws-url> [role]")
+	if len(args) < 1 || len(args) > 3 {
+		return fmt.Errorf("usage: carina gateway ws-probe <ws-url> [role] [token]")
 	}
 	role := "operator"
 	if len(args) > 1 && strings.TrimSpace(args[1]) != "" {
 		role = strings.TrimSpace(args[1])
 	}
-	payload, err := gatewayWSProbe(args[0], role)
+	token := strings.TrimSpace(os.Getenv("CARINA_GATEWAY_TOKEN"))
+	if len(args) == 3 {
+		token = strings.TrimSpace(args[2])
+	}
+	if token == "" {
+		return fmt.Errorf("gateway token is required (argument or CARINA_GATEWAY_TOKEN)")
+	}
+	payload, err := gatewayWSProbe(args[0], role, token)
 	if err != nil {
 		return err
 	}
@@ -1004,7 +1056,7 @@ func cmdGatewayWSProbe(args []string) error {
 	return printJSON(out)
 }
 
-func gatewayWSProbe(rawURL, role string) ([]byte, error) {
+func gatewayWSProbe(rawURL, role, token string) ([]byte, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse websocket url: %w", err)
@@ -1032,7 +1084,7 @@ func gatewayWSProbe(rawURL, role string) ([]byte, error) {
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "gateway.hello",
-		"params":  map[string]any{"role": role},
+		"params":  map[string]any{"role": role, "token": token},
 	}
 	b, err := json.Marshal(req)
 	if err != nil {
@@ -1380,7 +1432,7 @@ func cmdSecret(c *rpcClient, args []string) error {
 
 // parseWatchArgs splits `carina watch <session_id> [--json]`'s positional
 // session_id from the --json pipe-mode flag (P1.5(c)): with --json, watch
-// emits typed control_request frames via controlFrameForEvent instead of
+// emits typed actionable frames via controlFrameForEvent instead of
 // dumping raw event JSON, so a CI bot/wrapper script can grep stdout for
 // frame=control_request per the plan's documented pipe-mode contract.
 func parseWatchArgs(args []string) (sessionID string, jsonOut bool, err error) {

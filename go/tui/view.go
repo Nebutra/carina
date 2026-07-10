@@ -11,28 +11,52 @@ import (
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
-// layout recomputes component sizes. Widths are clamped: bubbles v2
-// textinput panics on negative width before the first WindowSizeMsg (spike
-// sharp edge).
+// layout recomputes component sizes. The prompt grows with its content but is
+// capped so the transcript always keeps the majority of the terminal.
 func (m *Model) layout() {
-	inputHeight := 3
 	statusHeight := 1
 	bannerHeight := 1
-	vh := m.height - inputHeight - statusHeight - bannerHeight - 2 // transcript border
-	if vh < 3 {
-		vh = 3
-	}
+	taskHeight := len(m.taskTreeLines())
 	vw := m.width - 2
-	if vw < 20 {
-		vw = 20
+	if vw < 1 {
+		vw = 1
 	}
 	iw := m.width - 8
-	if iw < 20 {
-		iw = 20
+	if iw < 1 {
+		iw = 1
+	}
+	maxInputHeight := m.height / 3
+	if maxInputHeight < 3 {
+		maxInputHeight = 3
+	}
+	if maxInputHeight > 10 {
+		maxInputHeight = 10
+	}
+	m.input.MaxHeight = maxInputHeight
+	m.input.SetWidth(iw)
+	inputHeight := m.input.Height() + 2                                         // input border
+	vh := m.height - inputHeight - statusHeight - bannerHeight - taskHeight - 2 // transcript border
+	if vh < 1 {
+		vh = 1
 	}
 	m.vp.SetWidth(vw)
 	m.vp.SetHeight(vh)
-	m.input.SetWidth(iw)
+	m.tr.resizePresentations(m.th, m.transcriptWidth())
+	m.vp.SetContentLines(m.tr.lines)
+	if m.followTail {
+		m.vp.GotoBottom()
+	}
+}
+
+func (m *Model) transcriptWidth() int {
+	if m.width-4 > 0 {
+		return m.width - 4
+	}
+	return 1
+}
+
+func (m *Model) taskTreeLines() []string {
+	return m.tasks.lines(m.th, maxInt(m.width-2, 1), 4)
 }
 
 // banner returns the degrade line shown while the daemon link is down —
@@ -79,25 +103,41 @@ func (m *Model) View() tea.View {
 	}
 	b.WriteString("\n")
 
-	frame := m.borderStyle(lipgloss.RoundedBorder()).Width(maxInt(m.width-2, 20))
+	if taskLines := m.taskTreeLines(); len(taskLines) > 0 {
+		b.WriteString(strings.Join(taskLines, "\n"))
+		b.WriteString("\n")
+	}
+
+	frame := m.borderStyle(lipgloss.RoundedBorder()).Width(maxInt(m.width-2, 1))
 	b.WriteString(frame.Render(m.vp.View()))
 	b.WriteString("\n")
-	b.WriteString(frame.Render(" > " + m.input.View()))
+	b.WriteString(frame.Render(m.input.View()))
 	b.WriteString("\n")
 
 	status := "not attached"
 	if m.sessionID != "" {
 		status = "session " + m.sessionID
 	}
-	b.WriteString(m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
-		" carina · %s · %d lines · enter submit · ctrl+c cancel/exit", status, len(m.tr.lines))))
+	activity := "ready"
+	if m.inFlightTaskID != "" {
+		activity = "running " + m.inFlightTaskID
+	}
+	if m.unseenLines > 0 {
+		activity += fmt.Sprintf(" · %d new", m.unseenLines)
+	}
+	statusLine := m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
+		" carina · %s · %s · %d lines", status, activity, len(m.tr.lines)))
+	b.WriteString(fitLine(statusLine, maxInt(m.width, 1)))
 
 	content := b.String()
-	if m.approval != nil {
+	if m.question != nil {
+		content = lipgloss.Place(maxInt(m.width, 1), maxInt(m.height, 1),
+			lipgloss.Center, lipgloss.Center, m.questionOverlayView())
+	} else if m.approval != nil {
 		// Spike-proven overlay: full-frame replacement via lipgloss.Place.
 		// The v2 Layers API is still unexercised upstream (spike sharp edge);
 		// revisit when the declared-cursor work (R21) lands.
-		content = lipgloss.Place(maxInt(m.width, 20), maxInt(m.height, 10),
+		content = lipgloss.Place(maxInt(m.width, 1), maxInt(m.height, 1),
 			lipgloss.Center, lipgloss.Center, m.overlayView())
 	}
 

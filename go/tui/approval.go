@@ -33,7 +33,7 @@ type approvalState struct {
 // would let a keypress resolve the wrong decision_id and orphan the first
 // approval until it times out.
 func (m *Model) openApproval(ev map[string]any) {
-	if m.approval != nil {
+	if m.approval != nil || m.question != nil {
 		m.approvalQueue = append(m.approvalQueue, ev)
 		return
 	}
@@ -44,12 +44,17 @@ func (m *Model) openApproval(ev map[string]any) {
 // after the current overlay is resolved or dismissed.
 func (m *Model) nextQueuedApproval() {
 	m.approval = nil
-	if len(m.approvalQueue) == 0 {
+	if len(m.approvalQueue) > 0 {
+		ev := m.approvalQueue[0]
+		m.approvalQueue = m.approvalQueue[1:]
+		m.approval = m.buildApprovalState(ev)
 		return
 	}
-	ev := m.approvalQueue[0]
-	m.approvalQueue = m.approvalQueue[1:]
-	m.approval = m.buildApprovalState(ev)
+	if len(m.questionQueue) > 0 {
+		ev := m.questionQueue[0]
+		m.questionQueue = m.questionQueue[1:]
+		m.question = buildQuestionState(ev)
+	}
 }
 
 func (m *Model) buildApprovalState(ev map[string]any) *approvalState {
@@ -66,10 +71,9 @@ func (m *Model) buildApprovalState(ev map[string]any) *approvalState {
 	return ap
 }
 
-// resolveApproval resolves the open overlay over RPC. Scope choices beyond
-// "once" resolve through the same task.action.approve today; persisting the
-// scoped grant as an audited policy mutation is P1.1 follow-on work — the
-// chosen scope is already recorded in the Governed transcript line.
+// resolveApproval resolves the open overlay over RPC. The scope is explicit in
+// the request; the daemon returns the scope it actually installed so a failed
+// durable grant can never be presented as broader than a one-time approval.
 func (m *Model) resolveApproval(scope string, allow bool) tea.Cmd {
 	ap, call, sid := m.approval, m.call, m.sessionID
 	return func() tea.Msg {
@@ -97,11 +101,14 @@ func (m *Model) resolveApproval(scope string, allow bool) tea.Cmd {
 		var out struct {
 			Decision *kernel.Decision `json:"decision"`
 			Result   json.RawMessage  `json:"result"`
+			Scope    string           `json:"scope"`
+			GrantErr string           `json:"grant_error"`
 		}
 		err := call.Call("task.action.approve", map[string]any{
 			"session_id":  sid,
 			"decision_id": ap.DecisionID,
 			"approver":    "operator",
+			"scope":       scope,
 		}, &out)
 		if err != nil {
 			return approvalDoneMsg{decisionID: ap.DecisionID, err: err}
@@ -111,9 +118,17 @@ func (m *Model) resolveApproval(scope string, allow bool) tea.Cmd {
 			verdict = out.Decision.Decision
 			detail = out.Decision.Reason
 		}
+		actualScope := scope
+		if out.Scope != "" {
+			actualScope = out.Scope
+		}
 		msg := approvalDoneMsg{
-			verdict: verdict, scope: scope,
+			verdict: verdict, scope: actualScope,
 			action: ap.Action, decisionID: ap.DecisionID, detail: detail,
+		}
+		if out.GrantErr != "" {
+			msg.detail = "requested " + scope + " scope was not persisted: " + out.GrantErr
+			msg.initiator = "grant-error"
 		}
 		if verdict != "allowed" {
 			// The operator said yes but the kernel still refused: a policy
@@ -141,6 +156,9 @@ func (m *Model) handleApprovalDone(msg approvalDoneMsg) {
 			"decision_id": msg.decisionID,
 		}, opts...)))
 		m.outcome = OutcomeOK
+		if msg.initiator == "grant-error" && msg.detail != "" {
+			m.push(fmt.Sprintf("%s %s", glyphNeutral(m.th), msg.detail))
+		}
 	default:
 		m.push(fmt.Sprintf("%s %s", glyphFailed(m.th), microcopy.Governed(microcopy.GovernedApprovalDenied, microcopy.Args{
 			"action":      msg.action,
@@ -183,8 +201,13 @@ func (m *Model) overlayView() string {
 		"  " + m.th.Style(theme.RoleError).Render("[n/4] deny") +
 		m.th.Style(theme.RoleMuted).Render("  [esc] dismiss")
 
-	box := m.th.Style(theme.RoleWarning).Render(title) + "\n\n" +
-		strings.Join(body, "\n") + "\n\n" + footer
+	contentWidth := maxInt(m.width-6, 1)
+	lines := []string{fitLine(m.th.Style(theme.RoleWarning).Render(title), contentWidth), ""}
+	for _, line := range body {
+		lines = append(lines, fitLine(line, contentWidth))
+	}
+	lines = append(lines, "", fitLine(footer, contentWidth))
+	box := strings.Join(lines, "\n")
 	if m.ctrlCHint != "" {
 		// The overlay owns the whole frame while open (view.go) — the
 		// transcript line ctrlC() pushed is not rendered behind it, so the
@@ -193,7 +216,7 @@ func (m *Model) overlayView() string {
 		box += "\n" + m.th.Style(theme.RoleMuted).Render(m.ctrlCHint)
 	}
 
-	style := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(0, 1)
+	style := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(0, 1).Width(contentWidth)
 	if c := m.th.Color(theme.RoleWarning); c != nil {
 		style = style.BorderForeground(c)
 	}

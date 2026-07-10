@@ -499,6 +499,100 @@ func TestPasteCollapse(t *testing.T) {
 	}
 }
 
+func TestTextareaSupportsExplicitNewline(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	m.input.SetValue("first line")
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	m.input.InsertString("second line")
+	if got := m.input.Value(); got != "first line\nsecond line" {
+		t.Fatalf("textarea value = %q, want an explicit newline", got)
+	}
+	if m.input.Height() < 2 {
+		t.Fatalf("textarea height = %d, want dynamic multi-line growth", m.input.Height())
+	}
+}
+
+func TestSubmitWhileRunningSteersCurrentTask(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{
+		"task.submit": map[string]any{"task_id": "tsk_steer"},
+		"task.steer":  nil,
+	}}
+	m, _ := newTestModel(fc)
+	m.input.SetValue("start")
+	cmd, _ := m.handleKey("enter")
+	drain(m, cmd)
+
+	m.input.SetValue("also add tests")
+	cmd, _ = m.handleKey("enter")
+	drain(m, cmd)
+
+	last := fc.last()
+	if last.method != "task.steer" {
+		t.Fatalf("rpc method = %q, want task.steer", last.method)
+	}
+	if last.params["task_id"] != "tsk_steer" || last.params["message"] != "also add tests" {
+		t.Fatalf("task.steer params = %#v", last.params)
+	}
+	if m.inFlightTaskID != "tsk_steer" {
+		t.Fatalf("steering must keep the current task in flight, got %q", m.inFlightTaskID)
+	}
+	if !strings.Contains(transcriptText(m), "steering queued") {
+		t.Fatalf("steering acknowledgement missing:\n%s", transcriptText(m))
+	}
+}
+
+func TestRestoredActiveTaskUsesSteering(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{"task.steer": nil}}
+	m, _ := newTestModel(fc)
+	m.Update(TaskActiveMsg{TaskID: "tsk_restored"})
+	m.input.SetValue("continue with the failing test")
+	cmd, _ := m.handleKey("enter")
+	drain(m, cmd)
+
+	last := fc.last()
+	if last.method != "task.steer" || last.params["task_id"] != "tsk_restored" {
+		t.Fatalf("restored task did not receive steering: %#v", last)
+	}
+}
+
+func TestCompletionReconcileRestoresOnlySteerableTask(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{
+		"task.list": []map[string]any{
+			{"task_id": "task_paused", "status": "paused", "created_at": "2026-07-09T12:00:00Z"},
+			{"task_id": "task_running", "status": "running", "created_at": "2026-07-09T11:00:00Z"},
+		},
+	}}
+	tracker := newCompletionTracker()
+	if got := tracker.reconcile(fc, "sess_test", false); got != "task_running" {
+		t.Fatalf("active task = %q, want task_running", got)
+	}
+}
+
+func TestReadingHistoryIsNotInterruptedByNewEvents(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	for i := 0; i < 80; i++ {
+		m.push(fmt.Sprintf("line %d", i))
+	}
+	if !m.vp.AtBottom() {
+		t.Fatal("precondition: live output should follow the tail")
+	}
+	if _, handled := m.handleKey("pgup"); !handled {
+		t.Fatal("pgup must scroll transcript history")
+	}
+	before := m.vp.YOffset()
+	m.push("new while reading")
+	if got := m.vp.YOffset(); got != before {
+		t.Fatalf("new output moved history viewport from %d to %d", before, got)
+	}
+	if m.unseenLines == 0 {
+		t.Fatal("new output while reading must be counted")
+	}
+	m.handleKey("alt+end")
+	if !m.followTail || m.unseenLines != 0 || !m.vp.AtBottom() {
+		t.Fatalf("alt+end did not restore live tail: follow=%v unseen=%d bottom=%v", m.followTail, m.unseenLines, m.vp.AtBottom())
+	}
+}
+
 func TestDegradeBannerLifecycle(t *testing.T) {
 	m, _ := newTestModel(nil) // no session yet
 	if m.banner() != "" {

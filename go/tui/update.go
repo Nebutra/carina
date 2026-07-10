@@ -56,6 +56,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.push(m.th.Style(theme.RoleMuted).Render("- attached to " + msg.SessionID))
 		return m, nil
 
+	case TaskActiveMsg:
+		if msg.TaskID != "" && msg.TaskID != m.inFlightTaskID {
+			m.inFlightTaskID = msg.TaskID
+			m.tasks.setTask(msg.TaskID, "running")
+			m.push(m.th.Style(theme.RoleMuted).Render("- active task " + msg.TaskID + " restored"))
+			m.layout()
+		}
+		return m, nil
+
 	case ConnLostMsg:
 		m.conn = ConnLost
 		m.push(fmt.Sprintf("%s %s", glyphFailed(m.th), microcopy.Degrade(
@@ -82,7 +91,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskSubmittedMsg:
 		m.inFlightTaskID = msg.taskID
+		m.tasks.setTask(msg.taskID, "running")
 		m.push(m.th.Style(theme.RoleMuted).Render("- task " + msg.taskID + " submitted"))
+		m.layout()
+		return m, nil
+
+	case taskSteeredMsg:
+		m.push(m.th.Style(theme.RoleMuted).Render("- steering queued for task " + msg.taskID))
 		return m, nil
 
 	case cancelDoneMsg:
@@ -93,11 +108,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.inFlightTaskID == msg.taskID {
 			m.inFlightTaskID = ""
 		}
+		m.tasks.setTask(msg.taskID, "cancelled")
 		m.push(m.th.Style(theme.RoleMuted).Render("- cancel recorded for task " + msg.taskID))
+		m.layout()
 		return m, nil
 
 	case approvalDoneMsg:
 		m.handleApprovalDone(msg)
+		return m, nil
+
+	case questionDoneMsg:
+		m.handleQuestionDone(msg)
 		return m, nil
 
 	case rpcErrMsg:
@@ -115,20 +136,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.layout()
 	return m, cmd
 }
 
 // handleEvent renders a streamed event and reacts to governance moments.
 func (m *Model) handleEvent(ev map[string]any) {
-	m.push(renderEvent(ev, m.th, m.locale))
+	m.pushEvent(ev)
+	m.tasks.observeEvent(ev)
+	m.observeQuestionResolution(ev)
 	switch str(ev["type"]) {
 	case "permission.request":
 		m.openApproval(ev)
+	case "user.question":
+		m.openQuestion(ev)
 	case "task.completed":
 		if id := str(ev["task_id"]); id != "" && id == m.inFlightTaskID {
 			m.inFlightTaskID = ""
 		}
 	}
+	m.layout()
 }
 
 // handleKey processes one key. It returns handled=false for keys that belong
@@ -137,6 +164,9 @@ func (m *Model) handleEvent(ev map[string]any) {
 func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	if key == "ctrl+c" {
 		return m.ctrlC(), true
+	}
+	if cmd, handled := m.questionKey(key); handled {
+		return cmd, true
 	}
 	if m.approval != nil {
 		switch key {
@@ -156,6 +186,36 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 			return nil, true
 		}
 		return nil, true // the overlay owns the keyboard while open
+	}
+	switch key {
+	case "pgup":
+		m.vp.PageUp()
+		m.followTail = false
+		return nil, true
+	case "pgdown":
+		m.vp.PageDown()
+		if m.vp.AtBottom() {
+			m.followTail = true
+			m.unseenLines = 0
+		}
+		return nil, true
+	case "alt+home":
+		m.vp.GotoTop()
+		m.followTail = false
+		return nil, true
+	case "alt+end":
+		m.vp.GotoBottom()
+		m.followTail = true
+		m.unseenLines = 0
+		return nil, true
+	case "ctrl+o":
+		if m.tr.toggleLastCollapsible(m.th, m.transcriptWidth()) {
+			m.vp.SetContentLines(m.tr.lines)
+			if m.followTail {
+				m.vp.GotoBottom()
+			}
+		}
+		return nil, true
 	}
 	if key == "enter" {
 		return m.submit(), true
@@ -204,7 +264,9 @@ func (m *Model) cancelTask(taskID string) tea.Cmd {
 	}
 }
 
-// submit sends the input (plus any collapsed pastes) as a task.submit.
+// submit sends a new task while idle. While a task is running, the same input
+// surface becomes steering: the operator can redirect the current loop without
+// cancelling it or accidentally starting a second concurrent task.
 func (m *Model) submit() tea.Cmd {
 	text := strings.TrimSpace(m.input.Value())
 	paste := m.pendingPaste
@@ -213,6 +275,7 @@ func (m *Model) submit() tea.Cmd {
 	}
 	m.input.Reset()
 	m.pendingPaste = nil
+	m.layout()
 	prompt := text
 	if len(paste) > 0 {
 		prompt = strings.TrimSpace(text + "\n" + strings.Join(paste, "\n"))
@@ -220,6 +283,11 @@ func (m *Model) submit() tea.Cmd {
 	shown := text
 	if shown == "" {
 		shown = "[pasted content]"
+	}
+	if m.inFlightTaskID != "" {
+		taskID := m.inFlightTaskID
+		m.push(m.th.Style(theme.RoleTitle).Render("you (steer) ") + shown)
+		return m.steerTask(taskID, prompt)
 	}
 	m.push(m.th.Style(theme.RoleTitle).Render("you ") + shown)
 	call, sid := m.call, m.sessionID
@@ -241,6 +309,22 @@ func (m *Model) submit() tea.Cmd {
 	}
 }
 
+func (m *Model) steerTask(taskID, prompt string) tea.Cmd {
+	call := m.call
+	return func() tea.Msg {
+		if call == nil {
+			return rpcErrMsg{err: errors.New("daemon not connected")}
+		}
+		if err := call.Call("task.steer", map[string]any{
+			"task_id": taskID,
+			"message": prompt,
+		}, nil); err != nil {
+			return rpcErrMsg{err: err}
+		}
+		return taskSteeredMsg{taskID: taskID}
+	}
+}
+
 // handlePaste normalizes bracketed-paste content (terminals paste \r line
 // endings — spike sharp edge) and collapses multi-line pastes to a visible
 // notice; the content is held and folded into the next submission.
@@ -251,7 +335,7 @@ func (m *Model) handlePaste(msg tea.PasteMsg) tea.Cmd {
 		m.push(m.th.Style(theme.RoleMuted).Render(fmt.Sprintf("[Pasted %d lines]", n)))
 		return nil
 	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(tea.PasteMsg{Content: content})
-	return cmd
+	m.input.InsertString(content)
+	m.layout()
+	return nil
 }

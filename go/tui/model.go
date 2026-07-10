@@ -15,9 +15,11 @@
 package tui
 
 import (
+	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
@@ -48,6 +50,10 @@ type (
 		SessionID string
 		Call      Caller
 	}
+	// TaskActiveMsg restores the task the prompt should steer after attach.
+	TaskActiveMsg struct {
+		TaskID string
+	}
 	// EventMsg is one session.events.stream envelope.
 	EventMsg struct {
 		Raw map[string]any
@@ -67,6 +73,10 @@ type (
 )
 
 type taskSubmittedMsg struct {
+	taskID string
+}
+
+type taskSteeredMsg struct {
 	taskID string
 }
 
@@ -108,21 +118,28 @@ type Model struct {
 
 	width, height int
 	vp            viewport.Model
-	input         textinput.Model
+	input         textarea.Model
 	tr            transcript
+	followTail    bool
+	unseenLines   int
 
 	sessionID string
 	call      Caller
 	conn      ConnState
 	attempt   int
 
-	approval       *approvalState
-	approvalQueue  []map[string]any // permission.request envelopes queued while an overlay is open
-	inFlightTaskID string
-	pendingPaste   []string
-	lastCtrlC      time.Time
-	ctrlCHint      string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
-	outcome        Outcome
+	approval         *approvalState
+	approvalQueue    []map[string]any // permission.request envelopes queued while an overlay is open
+	question         *questionState
+	questionQueue    []map[string]any
+	questionSeen     map[string]bool
+	questionResolved map[string]bool
+	tasks            taskGraph
+	inFlightTaskID   string
+	pendingPaste     []string
+	lastCtrlC        time.Time
+	ctrlCHint        string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
+	outcome          Outcome
 }
 
 // New builds the root model. It renders nothing until the program runs.
@@ -130,21 +147,31 @@ func New(o Options) *Model {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	ti := textinput.New()
-	// ASCII placeholder only: bubbles v2 placeholderView mixes display-width
-	// with rune indexing (spike sharp edge) — no CJK here until upstreamed.
+	ti := textarea.New()
+	ti.Prompt = "> "
+	ti.ShowLineNumbers = false
+	ti.DynamicHeight = true
+	ti.MinHeight = 1
+	ti.MaxHeight = 6
+	ti.MaxContentHeight = 1000
+	ti.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j", "shift+enter"))
+	// Keep the placeholder ASCII so its width stays predictable across the
+	// terminal profiles covered by the PTY tests.
 	ti.Placeholder = "type an instruction - enter submits, ctrl+c cancels"
-	ti.Focus()
+	_ = ti.Focus()
 	m := &Model{
-		th:     o.Theme,
-		locale: o.Locale,
-		socket: o.Socket,
-		now:    o.Now,
-		vp:     viewport.New(),
-		input:  ti,
-		conn:   ConnConnecting,
-		width:  80,
-		height: 24,
+		th:               o.Theme,
+		locale:           o.Locale,
+		socket:           o.Socket,
+		now:              o.Now,
+		vp:               viewport.New(),
+		input:            ti,
+		conn:             ConnConnecting,
+		followTail:       true,
+		questionSeen:     make(map[string]bool),
+		questionResolved: make(map[string]bool),
+		width:            80,
+		height:           24,
 	}
 	m.layout()
 	return m
@@ -152,14 +179,38 @@ func New(o Options) *Model {
 
 // Init implements tea.Model.
 func (m *Model) Init() tea.Cmd {
-	return textinput.Blink
+	return m.input.Focus()
 }
 
-// push appends a rendered line to the transcript and follows the tail.
+// push appends a rendered line to the transcript. New output follows the tail
+// only while the operator is already following it; reading older output is
+// never interrupted by an asynchronous event.
 func (m *Model) push(rendered string) {
+	added := len(strings.Split(rendered, "\n"))
 	m.tr.push(rendered)
 	m.vp.SetContentLines(m.tr.lines)
-	m.vp.GotoBottom()
+	if m.followTail {
+		m.vp.GotoBottom()
+		m.unseenLines = 0
+	} else {
+		m.unseenLines += added
+	}
+}
+
+func (m *Model) pushEvent(ev map[string]any) {
+	before := len(m.tr.lines)
+	m.tr.pushPresentation(presentEvent(ev, m.th, m.locale), m.th, m.transcriptWidth())
+	m.vp.SetContentLines(m.tr.lines)
+	added := len(m.tr.lines) - before
+	if added < 1 {
+		added = 1
+	}
+	if m.followTail {
+		m.vp.GotoBottom()
+		m.unseenLines = 0
+	} else {
+		m.unseenLines += added
+	}
 }
 
 // plain reports whether glyph/personality suppression applies (NO_COLOR,

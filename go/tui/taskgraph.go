@@ -1,0 +1,239 @@
+package tui
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/Nebutra/carina/go/tui/theme"
+)
+
+type taskNode struct {
+	ID       string
+	ParentID string
+	Kind     string
+	Label    string
+	Status   string
+	Order    int
+}
+
+// taskGraph is a compact projection, not a second source of truth. Durable
+// replay and transient completion events both fold through observeEvent, so
+// reconnects reconstruct the same tree as a live session.
+type taskGraph struct {
+	nodes map[string]*taskNode
+	order []string
+	seq   int
+}
+
+func (g *taskGraph) ensure(id, parentID, kind, label, status string) *taskNode {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	if g.nodes == nil {
+		g.nodes = make(map[string]*taskNode)
+	}
+	node := g.nodes[id]
+	if node == nil {
+		g.seq++
+		node = &taskNode{ID: id, Order: g.seq}
+		g.nodes[id] = node
+		g.order = append(g.order, id)
+	}
+	if parentID != "" {
+		node.ParentID = parentID
+	}
+	if kind != "" {
+		node.Kind = kind
+	}
+	if label != "" {
+		node.Label = label
+	}
+	if status != "" {
+		node.Status = normalizeTaskStatus(status)
+	}
+	return node
+}
+
+func normalizeTaskStatus(status string) string {
+	status = strings.TrimSpace(strings.ToLower(status))
+	switch {
+	case status == "":
+		return "running"
+	case status == "completed" || strings.HasSuffix(status, "_completed"):
+		return "completed"
+	case status == "failed" || strings.Contains(status, "_failed"):
+		return "failed"
+	case status == "cancelled":
+		return "cancelled"
+	case status == "degraded":
+		return "degraded"
+	case strings.Contains(status, "approval") || strings.Contains(status, "question") || strings.Contains(status, "review"):
+		return "waiting"
+	case status == "queued":
+		return "queued"
+	default:
+		return "running"
+	}
+}
+
+func (g *taskGraph) observeEvent(ev map[string]any) {
+	typ := str(ev["type"])
+	payload, _ := ev["payload"].(map[string]any)
+	taskID := str(ev["task_id"])
+	if taskID == "" {
+		taskID = str(payload["task_id"])
+	}
+
+	switch typ {
+	case "TaskCreated":
+		status := str(payload["status"])
+		if workflow := str(payload["workflow"]); workflow != "" || strings.HasPrefix(status, "workflow_") {
+			runID := str(payload["run_id"])
+			if runID == "" {
+				runID = taskID + ":workflow:" + workflow
+			}
+			node := g.ensure(runID, taskID, "workflow", workflow, status)
+			if node != nil && (status == "workflow_completed" || status == "workflow_failed") {
+				g.completeChildren(runID, node.Status)
+			}
+			return
+		}
+		label := str(payload["user_prompt"])
+		if label == "" {
+			label = firstValue(payload, "agent", "summary", "reason")
+		}
+		g.ensure(taskID, "", "task", label, status)
+	case "ToolApproved":
+		if agent := str(payload["spawn_agent"]); agent != "" {
+			child := str(payload["child_session"])
+			g.ensure(child, taskID, "subagent", agent, "running")
+			return
+		}
+		if runID, step := str(payload["run_id"]), str(payload["step"]); runID != "" && step != "" {
+			g.ensure(runID, taskID, "workflow", str(payload["workflow"]), "running")
+			g.ensure(runID+":"+step, runID, "step", strings.TrimSpace(step+" "+str(payload["agent"])), "running")
+		}
+	case "ModelResponded":
+		if child := str(payload["child_session"]); child != "" && str(payload["spawn_agent"]) != "" {
+			g.ensure(child, taskID, "subagent", str(payload["spawn_agent"]), "completed")
+			return
+		}
+		if runID := str(payload["run_id"]); runID != "" && strings.HasPrefix(str(payload["status"]), "workflow_") {
+			node := g.ensure(runID, taskID, "workflow", str(payload["workflow"]), str(payload["status"]))
+			if node != nil {
+				g.completeChildren(runID, node.Status)
+			}
+		}
+	case "permission.request", "user.question":
+		g.ensure(taskID, "", "task", "", "waiting")
+	case "task.completed":
+		g.ensure(taskID, "", "task", str(ev["summary"]), str(ev["status"]))
+	}
+}
+
+func (g *taskGraph) setTask(id, status string) {
+	g.ensure(id, "", "task", "", status)
+}
+
+func (g *taskGraph) completeChildren(parentID, status string) {
+	for _, node := range g.nodes {
+		if node.ParentID == parentID && !terminalTaskStatus(node.Status) {
+			node.Status = status
+		}
+	}
+}
+
+func (g *taskGraph) activeCount() int {
+	n := 0
+	for _, node := range g.nodes {
+		if !terminalTaskStatus(node.Status) {
+			n++
+		}
+	}
+	return n
+}
+
+func (g *taskGraph) lines(th theme.Theme, width, limit int) []string {
+	if width <= 0 || limit <= 0 || len(g.nodes) == 0 {
+		return nil
+	}
+	ordered := append([]string(nil), g.order...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return g.nodes[ordered[i]].Order < g.nodes[ordered[j]].Order
+	})
+
+	// Active/error work is always visible. Completed nodes are folded into one
+	// summary when the tree would otherwise dominate the transcript.
+	var visible []*taskNode
+	completed := 0
+	for _, id := range ordered {
+		node := g.nodes[id]
+		if node == nil {
+			continue
+		}
+		if node.Status == "completed" {
+			completed++
+			continue
+		}
+		visible = append(visible, node)
+	}
+	if len(visible) == 0 {
+		for i := len(ordered) - 1; i >= 0 && len(visible) < 1; i-- {
+			if node := g.nodes[ordered[i]]; node != nil {
+				visible = append(visible, node)
+			}
+		}
+	}
+
+	header := fmt.Sprintf("tasks · %d active", g.activeCount())
+	if completed > 0 {
+		header += fmt.Sprintf(" · %d done", completed)
+	}
+	out := []string{fitLine(th.Style(theme.RoleMuted).Render(header), width)}
+	for _, node := range visible {
+		if len(out) >= limit {
+			break
+		}
+		prefix := "-"
+		if node.ParentID != "" {
+			prefix = "  `-"
+		}
+		glyph := taskStatusGlyph(th, node.Status)
+		label := node.Label
+		if label == "" {
+			label = node.ID
+		}
+		line := fmt.Sprintf("%s %s %s · %s", prefix, glyph, node.Kind, label)
+		out = append(out, fitLine(line, width))
+	}
+	if len(visible)+1 > limit {
+		out[limit-1] = fitLine(fmt.Sprintf("  +%d more", len(visible)-(limit-1)), width)
+	}
+	return out
+}
+
+func taskStatusGlyph(th theme.Theme, status string) string {
+	switch status {
+	case "completed":
+		return glyphOK(th)
+	case "failed", "cancelled", "degraded":
+		return glyphFailed(th)
+	case "waiting":
+		return glyphNeedsAuth(th)
+	default:
+		return glyphRunning(th)
+	}
+}
+
+func visualLinesFit(lines []string, width int) bool {
+	for _, line := range lines {
+		if ansi.StringWidth(line) > width {
+			return false
+		}
+	}
+	return true
+}
