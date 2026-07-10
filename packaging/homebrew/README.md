@@ -14,7 +14,7 @@ On a `v<version>` tag, `.github/workflows/release.yml`:
 Render a Formula locally with:
 
 ```bash
-VERSION=0.6.0 \
+VERSION="$(go run ./scripts/product-version.go)" \
 DARWIN_ARM64_SHA256=<sha256> \
 DARWIN_AMD64_SHA256=<sha256> \
 ./scripts/render-homebrew-formula.sh
