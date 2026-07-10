@@ -319,18 +319,22 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
 **Wave 20 — OpenSquilla mechanism absorption (landed)**
 - [x] **Routing decision/outcome evidence** (`go/daemon/agent.go`,
   `protocol/events`): every model attempt records requested model, reasoner,
-  routing policy, estimated input/output tokens, latency, and success/failure
-  as separate events. This supplies the contract for future shadow evaluation
-  without importing OpenSquilla's ML router or automatic promotion stack.
+  routing policy, prompt hash, response hash, evidence id, estimated
+  input/output tokens, latency, and success/failure as separate events. This
+  supplies the contract for future shadow evaluation without importing
+  OpenSquilla's ML router or automatic promotion stack.
 - [x] **Curated local memory retrieval** (`go/daemon/memory_store.go`): added
-  deterministic lexical ranking over capability-approved `memory` and `user`
-  entries through local-only `memory.search` and the CLI. Raw turns and audit
-  transcripts remain excluded from recall.
+  deterministic lexical ranking and optional BYOK-embeddings semantic ranking
+  over capability-approved `memory` and `user` entries through local-only
+  `memory.search` and the CLI. Raw turns and audit transcripts remain excluded
+  from recall.
 - [x] **Persistent schedules** (`go/scheduler/schedules.go`,
-  `go/daemon/schedules.go`): atomic local persistence now supports `at`,
+  `go/daemon/schedules.go`): durable local persistence now supports `at`,
   `every`, and five-field `cron`, with create/list/pause/resume/delete RPC and
-  CLI surfaces. Due runs re-enter normal task submission, preserving
-  write-ahead audit, kernel policy, budgets, checkpoints, and completion.
+  CLI surfaces. Writes use temp-file fsync, atomic rename, directory sync,
+  deterministic ordering, and corrupt-file quarantine. Due runs re-enter normal
+  task submission, preserving write-ahead audit, kernel policy, budgets,
+  checkpoints, and completion.
 - [x] **Compaction receipts** (`go/daemon/transcript.go`): successful summary
   compaction persists a versioned receipt with covered turn range, removed
   count, preimage SHA-256, summary SHA-256, and timestamp. Receipts survive
@@ -339,6 +343,10 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   Python monolith, model artifacts, automatic self-training/promotion,
   all-pipeline fail-open behavior, raw-turn memory capture, or process-local
   security state. The Rust capability kernel remains authoritative.
+- [x] **Shutdown and compatibility closure** (`go/daemon/daemon.go`,
+  `go/daemon/protocol_consistency_test.go`): daemon-owned background loops and
+  submitted task goroutines are joined briefly on close, while protocol tests
+  lock event enum/schema consistency and the new memory/schedule RPC surface.
 
 ## ✅ Remaining
 
@@ -357,11 +365,11 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   than local action authority. Full plugin HTTP route installation and
   write-capable direct tool invoke remain future work behind manifest policy
   and local owner review.
-- Hermes external semantic/vector providers and Nebutra Cloud memory sync are
-  now explicit disabled-by-default product boundaries via `memory.status`.
-  Shipping those backends still requires a Nebutra connector with identity,
-  deletion, retention, and conflict policy; the local source-first runtime no
-  longer presents them as implicit TODOs.
+- BYOK semantic memory search is available only for curated local entries when
+  an embeddings provider is configured. Nebutra Cloud memory sync remains an
+  explicit disabled-by-default product boundary via `memory.status`; shipping
+  that backend still requires a Nebutra connector with identity, deletion,
+  retention, and conflict policy.
 - OpenSquilla ML routing remains intentionally deferred until routing evidence
   has enough independently verified samples for shadow evaluation, canarying,
   and automatic rollback. The shipped contract is evidence-first and does not

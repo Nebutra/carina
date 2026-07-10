@@ -1,12 +1,14 @@
 package daemon
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	modelrouter "github.com/Nebutra/carina/go/model-router"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
@@ -82,6 +84,85 @@ func TestMemoryStoreSearchesCuratedEntries(t *testing.T) {
 	if len(result.Hits) == 0 || !strings.Contains(result.Hits[0].Entry, "release-check.sh") {
 		t.Fatalf("unexpected search result: %+v", result)
 	}
+}
+
+func TestMemorySemanticSearchUsesCuratedEmbeddings(t *testing.T) {
+	store := newMemoryStore(t.TempDir())
+	scope := memoryScope{Profile: "local", WorkspaceHash: "project"}
+	for _, content := range []string{
+		"Release validation runs scripts/release-check.sh.",
+		"Documentation is maintained in docs/.",
+	} {
+		if _, err := store.apply(scope, memoryWriteRequest{Action: "add", Target: "memory", Content: content}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	router := modelrouter.New()
+	router.RegisterEmbeddingsProvider(memoryFakeEmbedder{})
+	d := &Daemon{memory: store, router: router, embedModelDefault: "fake/memory-embed"}
+	result, err := d.searchMemory(scope, "release checks", "memory", 2, "semantic", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != "semantic" || result.Semantic == nil || !result.Semantic.Enabled {
+		t.Fatalf("semantic search did not report semantic mode: %+v", result)
+	}
+	if len(result.Hits) == 0 || !strings.Contains(result.Hits[0].Entry, "release-check.sh") || result.Hits[0].Mode != "semantic" {
+		t.Fatalf("unexpected semantic hits: %+v", result.Hits)
+	}
+}
+
+func TestMemorySearchAutoFallsBackWithoutEmbeddingsProvider(t *testing.T) {
+	store := newMemoryStore(t.TempDir())
+	scope := memoryScope{Profile: "local", WorkspaceHash: "project"}
+	if _, err := store.apply(scope, memoryWriteRequest{Action: "add", Target: "memory", Content: "Release validation runs scripts/release-check.sh."}); err != nil {
+		t.Fatal(err)
+	}
+	d := &Daemon{memory: store, router: modelrouter.New()}
+	result, err := d.searchMemory(scope, "release validation", "memory", 2, "auto", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != "lexical" || result.Semantic == nil || result.Semantic.Reason != "no-provider" {
+		t.Fatalf("auto search did not report lexical fallback: %+v", result)
+	}
+	if len(result.Hits) == 0 {
+		t.Fatalf("fallback search returned no hits: %+v", result)
+	}
+}
+
+func TestMemorySemanticSearchRejectsUnknownTargetProvider(t *testing.T) {
+	store := newMemoryStore(t.TempDir())
+	scope := memoryScope{Profile: "local", WorkspaceHash: "project"}
+	if _, err := store.apply(scope, memoryWriteRequest{Action: "add", Target: "memory", Content: "Release validation runs scripts/release-check.sh."}); err != nil {
+		t.Fatal(err)
+	}
+	router := modelrouter.New()
+	router.RegisterEmbeddingsProvider(memoryFakeEmbedder{})
+	d := &Daemon{memory: store, router: router, embedModelDefault: "fake/memory-embed"}
+	if _, err := d.searchMemory(scope, "release checks", "memory", 2, "semantic", "unknown/model"); err == nil || !strings.Contains(err.Error(), "not registered") {
+		t.Fatalf("unknown semantic provider should be rejected, got %v", err)
+	}
+}
+
+type memoryFakeEmbedder struct{}
+
+func (memoryFakeEmbedder) Name() string { return "fake" }
+
+func (memoryFakeEmbedder) Embed(_ context.Context, req modelrouter.EmbeddingsRequest) (*modelrouter.EmbeddingsResponse, error) {
+	vectors := make([][]float32, len(req.Inputs))
+	for i, input := range req.Inputs {
+		lower := strings.ToLower(input)
+		switch {
+		case strings.Contains(lower, "release") || strings.Contains(lower, "check"):
+			vectors[i] = []float32{1, 0}
+		case strings.Contains(lower, "doc"):
+			vectors[i] = []float32{0, 1}
+		default:
+			vectors[i] = []float32{0.5, 0.5}
+		}
+	}
+	return &modelrouter.EmbeddingsResponse{Provider: "fake", Model: "memory-embed", Vectors: vectors, InputTokens: len(req.Inputs)}, nil
 }
 
 func TestMemoryScopeUsesNebutraCanonicalIdentity(t *testing.T) {

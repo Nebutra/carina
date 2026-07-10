@@ -29,7 +29,7 @@ func (d *Daemon) handleScheduleCreate(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.record(p.SessionID, "ScheduleChanged", "", "go", map[string]any{"action": "created", "schedule": row}, "")
+	d.record(p.SessionID, "ScheduleChanged", "", "go", map[string]any{"action": "created", "schedule_id": row.ScheduleID, "schedule": row}, "")
 	return row, nil
 }
 

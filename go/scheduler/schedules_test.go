@@ -1,6 +1,9 @@
 package scheduler
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -58,6 +61,48 @@ func TestScheduleStoreListIsDeterministic(t *testing.T) {
 	rows := store.List()
 	if len(rows) != 2 || rows[0].ScheduleID != early.ScheduleID || rows[1].ScheduleID != late.ScheduleID {
 		t.Fatalf("schedules not sorted by next_run_at: %+v", rows)
+	}
+}
+
+func TestScheduleStoreRecoversValidTempFileWhenMainIsMissing(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 10, 8, 0, 0, 0, time.UTC)
+	raw := `[{"schedule_id":"sched_1","session_id":"sess_1","prompt":"recover","kind":"every","expression":"5m","enabled":true,"next_run_at":"` + now.Add(time.Minute).Format(time.RFC3339) + `","created_at":"` + now.Format(time.RFC3339) + `","updated_at":"` + now.Format(time.RFC3339) + `"}]`
+	if err := os.WriteFile(filepath.Join(dir, "schedules.json.tmp"), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store := OpenScheduleStore(dir)
+	rows := store.List()
+	if len(rows) != 1 || rows[0].ScheduleID != "sched_1" {
+		t.Fatalf("temp schedule was not recovered: %+v", rows)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "schedules.json")); err != nil {
+		t.Fatalf("recovered schedule file missing: %v", err)
+	}
+}
+
+func TestScheduleStoreQuarantinesCorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "schedules.json"), []byte(`{not-json`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := OpenScheduleStore(dir)
+	if rows := store.List(); len(rows) != 0 {
+		t.Fatalf("corrupt schedule file should not load rows: %+v", rows)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "schedules.json.corrupt.") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("corrupt schedule file was not quarantined: %+v", entries)
 	}
 }
 

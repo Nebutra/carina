@@ -217,10 +217,14 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		for requery := 0; requery <= maxRequeries; requery++ {
 			var err error
 			requestedModel := taskModel(task)
+			promptHash := sha256Hex(prompt)
+			evidenceID := routingEvidenceID(task.TaskID, turn, requery, promptHash)
 			d.record(sess.SessionID, "RoutingDecision", task.TaskID, "go", map[string]any{
 				"turn": turn, "requery": requery, "requested_model": requestedModel,
 				"reasoner": d.reasoner.Name(), "policy": "explicit_or_default",
 				"input_tokens_estimated": estimateTokens(prompt),
+				"evidence_id":            evidenceID,
+				"prompt_sha256":          promptHash,
 			}, "")
 			started := time.Now()
 			raw, err = thinkWithRetryModel(ctx, d.reasoner, task.Model, prompt)
@@ -228,6 +232,8 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 				"turn": turn, "requery": requery, "requested_model": requestedModel,
 				"reasoner": d.reasoner.Name(), "latency_ms": time.Since(started).Milliseconds(),
 				"input_tokens_estimated": estimateTokens(prompt),
+				"evidence_id":            evidenceID,
+				"prompt_sha256":          promptHash,
 			}
 			if err != nil {
 				outcome["status"] = "failed"
@@ -235,6 +241,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 			} else {
 				outcome["status"] = "succeeded"
 				outcome["output_tokens_estimated"] = estimateTokens(raw)
+				outcome["response_sha256"] = sha256Hex(raw)
 			}
 			d.record(sess.SessionID, "RoutingOutcome", task.TaskID, "go", outcome, "")
 			if err != nil {
@@ -1037,6 +1044,10 @@ func taskModel(task *scheduler.Task) string {
 		return strings.TrimSpace(task.Model)
 	}
 	return "default"
+}
+
+func routingEvidenceID(taskID string, turn, requery int, promptHash string) string {
+	return "route_" + sha256Hex(fmt.Sprintf("%s:%d:%d:%s", taskID, turn, requery, promptHash))[:16]
 }
 
 func taskAgent(task *scheduler.Task) string {

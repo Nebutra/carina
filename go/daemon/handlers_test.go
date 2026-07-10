@@ -27,7 +27,7 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	ws := t.TempDir()
 	os.WriteFile(filepath.Join(ws, "a.go"), []byte("package p\n// TODO x\n"), 0o600)
 
-	d, err := daemon.New(daemon.Options{StateDir: stateDir, KernelBin: kernelBin, ToolsDir: filepath.Join(repoRoot, "zig/zig-out/bin")})
+	d, err := daemon.New(daemon.Options{StateDir: stateDir, KernelBin: kernelBin, ToolsDir: filepath.Join(repoRoot, "zig/zig-out/bin"), Offline: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,13 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	seenSubmit := false
 	seenPatchPropose := false
 	seenMemoryWrite := false
+	seenMemorySearch := false
 	seenMemoryStatus := false
+	seenScheduleCreate := false
+	seenScheduleList := false
+	seenSchedulePause := false
+	seenScheduleResume := false
+	seenScheduleDelete := false
 	seenSessionResume := false
 	seenContextStatus := false
 	seenContextStats := false
@@ -88,12 +94,25 @@ func TestDaemonHandlerSurface(t *testing.T) {
 			seenPatchPropose = m.Scope == "write" && m.DynamicScope
 		case "memory.status":
 			seenMemoryStatus = m.Scope == "read" && !m.Remote
+		case "memory.search":
+			seenMemorySearch = m.Scope == "read" && !m.Remote
 		case "memory.write":
 			seenMemoryWrite = m.Scope == "write" && !m.Remote
+		case "schedule.create":
+			seenScheduleCreate = m.Scope == "write" && !m.Remote
+		case "schedule.list":
+			seenScheduleList = m.Scope == "read" && !m.Remote
+		case "schedule.pause":
+			seenSchedulePause = m.Scope == "write" && !m.Remote
+		case "schedule.resume":
+			seenScheduleResume = m.Scope == "write" && !m.Remote
+		case "schedule.delete":
+			seenScheduleDelete = m.Scope == "write" && !m.Remote
 		}
 	}
-	if !seenStatus || !seenSubmit || !seenSessionResume || !seenContextStatus || !seenContextStats || !seenPatchPropose || !seenMemoryStatus || !seenMemoryWrite {
-		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v resume=%v context_status=%v context_stats=%v patch=%v memory_status=%v memory_write=%v", seenStatus, seenSubmit, seenSessionResume, seenContextStatus, seenContextStats, seenPatchPropose, seenMemoryStatus, seenMemoryWrite)
+	if !seenStatus || !seenSubmit || !seenSessionResume || !seenContextStatus || !seenContextStats || !seenPatchPropose || !seenMemoryStatus || !seenMemorySearch || !seenMemoryWrite || !seenScheduleCreate || !seenScheduleList || !seenSchedulePause || !seenScheduleResume || !seenScheduleDelete {
+		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v resume=%v context_status=%v context_stats=%v patch=%v memory_status=%v memory_search=%v memory_write=%v schedule_create=%v schedule_list=%v schedule_pause=%v schedule_resume=%v schedule_delete=%v",
+			seenStatus, seenSubmit, seenSessionResume, seenContextStatus, seenContextStats, seenPatchPropose, seenMemoryStatus, seenMemorySearch, seenMemoryWrite, seenScheduleCreate, seenScheduleList, seenSchedulePause, seenScheduleResume, seenScheduleDelete)
 	}
 	var hello struct {
 		Role     string   `json:"role"`
@@ -210,8 +229,15 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	if err := c.Call("memory.status", map[string]any{"session_id": sid}, &memoryStatus); err != nil {
 		t.Fatal(err)
 	}
-	if memoryStatus.SemanticProvider.Enabled || memoryStatus.SemanticProvider.Provider != "local-only" || memoryStatus.NebutraCloudSync.SyncMode != "off" {
+	if memoryStatus.NebutraCloudSync.SyncMode != "off" {
 		t.Fatalf("unexpected memory.status boundary: %+v", memoryStatus)
+	}
+	if memoryStatus.SemanticProvider.Enabled {
+		if memoryStatus.SemanticProvider.Provider != "byok-embeddings" {
+			t.Fatalf("enabled semantic memory provider must be BYOK-scoped: %+v", memoryStatus)
+		}
+	} else if memoryStatus.SemanticProvider.Provider != "local-only" {
+		t.Fatalf("disabled semantic memory provider should stay local-only: %+v", memoryStatus)
 	}
 
 	// patches: propose carries the PatchApply gate decision; apply requires
@@ -258,27 +284,33 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	must("audit.export", map[string]any{"session_id": sid})
 	must("audit.verify", map[string]any{"session_id": sid})
 
-	// command approval flow: risk-2 install -> approve -> executes
+	// command approval flow: local move -> approve -> executes without network.
+	if err := os.WriteFile(filepath.Join(ws, "approve-src.txt"), []byte("move me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var exec struct {
 		Decision struct {
 			Decision   string `json:"decision"`
 			DecisionID string `json:"decision_id"`
 		} `json:"decision"`
 	}
-	if err := c.Call("command.exec", map[string]any{"session_id": sid, "argv": []string{"npm", "install", "x"}}, &exec); err != nil {
+	if err := c.Call("command.exec", map[string]any{"session_id": sid, "argv": []string{"mv", "approve-src.txt", "approve-dst.txt"}}, &exec); err != nil {
 		t.Fatal(err)
 	}
 	if exec.Decision.Decision == "requires_approval" {
 		must("task.action.approve", map[string]any{"session_id": sid, "decision_id": exec.Decision.DecisionID})
 	}
 	// deny path
+	if err := os.WriteFile(filepath.Join(ws, "deny-src.txt"), []byte("do not move\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var exec2 struct {
 		Decision struct {
 			Decision   string `json:"decision"`
 			DecisionID string `json:"decision_id"`
 		} `json:"decision"`
 	}
-	c.Call("command.exec", map[string]any{"session_id": sid, "argv": []string{"pip", "install", "y"}}, &exec2)
+	c.Call("command.exec", map[string]any{"session_id": sid, "argv": []string{"mv", "deny-src.txt", "deny-dst.txt"}}, &exec2)
 	if exec2.Decision.DecisionID != "" {
 		must("task.action.deny", map[string]any{"session_id": sid, "decision_id": exec2.Decision.DecisionID, "reason": "no"})
 	}

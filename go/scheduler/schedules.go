@@ -36,14 +36,10 @@ type ScheduleStore struct {
 
 func OpenScheduleStore(stateDir string) *ScheduleStore {
 	s := &ScheduleStore{path: filepath.Join(stateDir, "schedules.json"), rows: map[string]*Schedule{}}
-	raw, err := os.ReadFile(s.path)
-	if err == nil {
-		var rows []*Schedule
-		if json.Unmarshal(raw, &rows) == nil {
-			for _, row := range rows {
-				if row != nil && row.ScheduleID != "" {
-					s.rows[row.ScheduleID] = row
-				}
+	if rows, ok := loadScheduleRows(s.path); ok {
+		for _, row := range rows {
+			if row != nil && row.ScheduleID != "" {
+				s.rows[row.ScheduleID] = row
 			}
 		}
 	}
@@ -64,6 +60,9 @@ func (s *ScheduleStore) Create(sessionID, prompt, kind, expression string, now t
 	s.mu.Lock()
 	s.rows[row.ScheduleID] = row
 	err = s.persistLocked()
+	if err != nil {
+		delete(s.rows, row.ScheduleID)
+	}
 	s.mu.Unlock()
 	return cloneSchedule(row), err
 }
@@ -81,6 +80,7 @@ func (s *ScheduleStore) SetEnabled(id string, enabled bool, now time.Time) (*Sch
 	if !ok {
 		return nil, fmt.Errorf("unknown schedule %s", id)
 	}
+	prev := cloneSchedule(row)
 	row.Enabled = enabled
 	row.UpdatedAt = now.UTC()
 	if enabled && (row.NextRunAt.IsZero() || !row.NextRunAt.After(now)) {
@@ -90,7 +90,11 @@ func (s *ScheduleStore) SetEnabled(id string, enabled bool, now time.Time) (*Sch
 		}
 		row.NextRunAt = next
 	}
-	return cloneSchedule(row), s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		s.rows[id] = prev
+		return nil, err
+	}
+	return cloneSchedule(row), nil
 }
 
 func (s *ScheduleStore) Delete(id string) (*Schedule, error) {
@@ -101,7 +105,11 @@ func (s *ScheduleStore) Delete(id string) (*Schedule, error) {
 		return nil, fmt.Errorf("unknown schedule %s", id)
 	}
 	delete(s.rows, id)
-	return cloneSchedule(row), s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		s.rows[id] = row
+		return nil, err
+	}
+	return cloneSchedule(row), nil
 }
 
 // ClaimDue advances due schedules before handing them to the daemon. This
@@ -111,10 +119,13 @@ func (s *ScheduleStore) ClaimDue(now time.Time) []*Schedule {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var due []*Schedule
-	for _, row := range s.rows {
+	previous := map[string]*Schedule{}
+	for _, candidate := range cloneSortedSchedules(s.rows) {
+		row := s.rows[candidate.ScheduleID]
 		if !row.Enabled || row.NextRunAt.IsZero() || row.NextRunAt.After(now) {
 			continue
 		}
+		previous[row.ScheduleID] = cloneSchedule(row)
 		due = append(due, cloneSchedule(row))
 		row.LastRunAt = now.UTC()
 		row.UpdatedAt = now.UTC()
@@ -128,7 +139,12 @@ func (s *ScheduleStore) ClaimDue(now time.Time) []*Schedule {
 		}
 	}
 	if len(due) > 0 {
-		_ = s.persistLocked()
+		if err := s.persistLocked(); err != nil {
+			for id, prev := range previous {
+				s.rows[id] = prev
+			}
+			return nil
+		}
 	}
 	return due
 }
@@ -137,9 +153,12 @@ func (s *ScheduleStore) MarkTask(id, taskID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if row := s.rows[id]; row != nil {
+		prev := cloneSchedule(row)
 		row.LastTaskID = taskID
 		row.UpdatedAt = time.Now().UTC()
-		_ = s.persistLocked()
+		if err := s.persistLocked(); err != nil {
+			s.rows[id] = prev
+		}
 	}
 }
 
@@ -147,10 +166,13 @@ func (s *ScheduleStore) RetryClaim(id string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if row := s.rows[id]; row != nil {
+		prev := cloneSchedule(row)
 		row.Enabled = true
 		row.NextRunAt = now.Add(time.Minute).UTC()
 		row.UpdatedAt = now.UTC()
-		_ = s.persistLocked()
+		if err := s.persistLocked(); err != nil {
+			s.rows[id] = prev
+		}
 	}
 }
 
@@ -164,10 +186,89 @@ func (s *ScheduleStore) persistLocked() error {
 		return err
 	}
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+	if err := writeFileDurably(tmp, raw, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	if err := os.Rename(tmp, s.path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return syncDir(filepath.Dir(s.path))
+}
+
+func loadScheduleRows(path string) ([]*Schedule, bool) {
+	tmp := path + ".tmp"
+	raw, err := os.ReadFile(path)
+	if err == nil {
+		rows, ok := decodeScheduleRows(raw)
+		if ok {
+			_ = os.Remove(tmp)
+			return rows, true
+		}
+		quarantineScheduleFile(path)
+		return nil, false
+	}
+	if !os.IsNotExist(err) {
+		return nil, false
+	}
+	raw, err = os.ReadFile(tmp)
+	if err != nil {
+		return nil, false
+	}
+	rows, ok := decodeScheduleRows(raw)
+	if !ok {
+		quarantineScheduleFile(tmp)
+		return nil, false
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return rows, true
+	}
+	_ = syncDir(filepath.Dir(path))
+	return rows, true
+}
+
+func decodeScheduleRows(raw []byte) ([]*Schedule, bool) {
+	var rows []*Schedule
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return nil, false
+	}
+	return rows, true
+}
+
+func quarantineScheduleFile(path string) {
+	suffix := strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
+	_ = os.Rename(path, path+".corrupt."+suffix)
+}
+
+func writeFileDurably(path string, raw []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	return nil
+}
+
+func syncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }
 
 func cloneSchedule(row *Schedule) *Schedule { cp := *row; return &cp }

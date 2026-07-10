@@ -58,7 +58,8 @@ Memory:
   carina memory status <session_id>                 show local memory scope, provider, and sync boundary
   carina memory list <session_id> <memory|user>      list governed memory entries
   carina memory context <session_id>                 render the recalled-memory prompt block
-  carina memory search <session_id> <query>           search curated local memory entries
+  carina memory search [--semantic|--auto] <session_id> <query>
+                                                   search curated local memory entries
   carina memory write <session_id> <memory|user> add <content|->
                                                    request a memory add
   carina memory write <session_id> <memory|user> replace <old_text> <content|->
@@ -813,10 +814,35 @@ func memoryRPC(args []string, readInput func() (string, error)) (string, map[str
 		}
 		return "memory.context", map[string]any{"session_id": args[1]}, nil
 	case "search":
-		if len(args) < 3 {
-			return "", nil, fmt.Errorf("usage: carina memory search <session_id> <query>")
+		mode := ""
+		rest := args[1:]
+	searchFlags:
+		for len(rest) > 0 {
+			switch rest[0] {
+			case "--semantic":
+				mode = "semantic"
+				rest = rest[1:]
+			case "--auto":
+				mode = "auto"
+				rest = rest[1:]
+			case "--mode":
+				if len(rest) < 2 {
+					return "", nil, fmt.Errorf("usage: carina memory search [--semantic|--auto|--mode lexical|semantic|auto] <session_id> <query>")
+				}
+				mode = rest[1]
+				rest = rest[2:]
+			default:
+				break searchFlags
+			}
 		}
-		return "memory.search", map[string]any{"session_id": args[1], "query": strings.Join(args[2:], " ")}, nil
+		if len(rest) < 2 {
+			return "", nil, fmt.Errorf("usage: carina memory search [--semantic|--auto|--mode lexical|semantic|auto] <session_id> <query>")
+		}
+		params := map[string]any{"session_id": rest[0], "query": strings.Join(rest[1:], " ")}
+		if mode != "" {
+			params["mode"] = mode
+		}
+		return "memory.search", params, nil
 	case "write":
 		if len(args) < 4 {
 			return "", nil, fmt.Errorf("usage: carina memory write <session_id> <memory|user> <add|replace|remove> ...")

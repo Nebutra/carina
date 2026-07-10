@@ -22,7 +22,7 @@
     "memory": [
       { "method": "memory.list", "params": { "session_id": "string", "target": "memory|user?" }, "result": "MemoryState", "availability": "local-only" },
       { "method": "memory.context", "params": { "session_id": "string" }, "result": { "scope": "MemoryScope", "context": "string" }, "availability": "local-only" },
-      { "method": "memory.search", "params": { "session_id": "string", "query": "string", "target": "memory|user?", "limit": "number?" }, "result": "MemorySearchResult", "availability": "local-only; curated entries only" },
+      { "method": "memory.search", "params": { "session_id": "string", "query": "string", "target": "memory|user?", "limit": "number?", "mode": "lexical|semantic|auto?", "model": "provider/model?" }, "result": "MemorySearchResult", "availability": "local-only; curated entries only; semantic mode uses BYOK embeddings when configured" },
       { "method": "memory.write", "params": { "session_id": "string", "target": "memory|user?", "action": "add|replace|remove|batch", "content": "string?", "old_text": "string?", "operations": "MemoryOperation[]?" }, "result": "{ decision: PermissionDecision, result?: MemoryWriteResult }", "availability": "local-only; control-plane write; MemoryWrite capability-gated" }
     ],
     "schedule": [

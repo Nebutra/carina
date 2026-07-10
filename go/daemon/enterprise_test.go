@@ -108,6 +108,9 @@ func TestRBACApprovalRequiresRole(t *testing.T) {
 	}
 	stateDir := t.TempDir()
 	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "from.txt"), []byte("move me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	policyDir := filepath.Join(stateDir, "policy")
 	os.MkdirAll(policyDir, 0o700)
 	// Require 'lead' role for any command at risk >= 2. No bundle cap, so the
@@ -134,8 +137,8 @@ func TestRBACApprovalRequiresRole(t *testing.T) {
 	var sess struct {
 		SessionID string `json:"session_id"`
 	}
-	// safe-edit's command ceiling is risk 1, so a risk-2 package install
-	// reaches requires_approval — where the RBAC role gate applies.
+	// safe-edit's command ceiling is risk 1, so a local file move reaches
+	// requires_approval — where the RBAC role gate applies.
 	if err := c.Call("session.create", map[string]any{"workspace_root": ws, "profile": "safe-edit"}, &sess); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +148,7 @@ func TestRBACApprovalRequiresRole(t *testing.T) {
 			DecisionID string `json:"decision_id"`
 		} `json:"decision"`
 	}
-	if err := c.Call("command.exec", map[string]any{"session_id": sess.SessionID, "argv": []string{"npm", "install", "x"}}, &exec); err != nil {
+	if err := c.Call("command.exec", map[string]any{"session_id": sess.SessionID, "argv": []string{"mv", "from.txt", "to.txt"}}, &exec); err != nil {
 		t.Fatal(err)
 	}
 	if exec.Decision.Decision != "requires_approval" {

@@ -158,6 +158,8 @@ type Daemon struct {
 
 	stopCh   chan struct{} // closed on Close; stops background loops (lease reaper)
 	stopOnce sync.Once
+	loopWG   sync.WaitGroup
+	taskWG   sync.WaitGroup
 
 	interactiveApproval atomic.Bool                    // when true, requires_approval pauses for an operator decision (hot-reloadable)
 	approvalTimeout     time.Duration                  // how long to wait for an interactive approval (0 => 5m)
@@ -316,7 +318,7 @@ func New(opts Options) (*Daemon, error) {
 	// Shared cross-process prompt history (survives restarts; multiple daemons
 	// can append concurrently).
 	d.history = history.New(filepath.Join(opts.StateDir, "history"))
-	go d.reapLeases() // re-queue dispatch tasks abandoned by crashed workers
+	d.startBackgroundLoop(d.reapLeases) // re-queue dispatch tasks abandoned by crashed workers
 	d.mcp = mcp.NewManager()
 	if _, err := d.connectContextEngineMCP(d.contextEng); err != nil {
 		_ = d.kern.Close()
@@ -405,7 +407,7 @@ func New(opts Options) (*Daemon, error) {
 	}
 	d.recover()
 	d.resumeRuns()
-	go d.runScheduleLoop()
+	d.startBackgroundLoop(d.runScheduleLoop)
 	return d, nil
 }
 
@@ -505,6 +507,8 @@ func (d *Daemon) Close() error {
 		}
 	})
 	_ = d.server.Close()
+	waitGroupWithTimeout(&d.loopWG, 2*time.Second)
+	waitGroupWithTimeout(&d.taskWG, 5*time.Second)
 	if d.mcp != nil {
 		d.mcp.Close()
 	}
@@ -518,6 +522,36 @@ func (d *Daemon) Close() error {
 		_ = srv.Close()
 	}
 	return d.kern.Close()
+}
+
+func (d *Daemon) startBackgroundLoop(fn func()) {
+	d.loopWG.Add(1)
+	go func() {
+		defer d.loopWG.Done()
+		fn()
+	}()
+}
+
+func (d *Daemon) startTask(fn func()) {
+	d.taskWG.Add(1)
+	go func() {
+		defer d.taskWG.Done()
+		fn()
+	}()
+}
+
+func waitGroupWithTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 // egressEnv returns the HTTP(S)_PROXY environment for command children when the
@@ -1459,6 +1493,8 @@ func (d *Daemon) handleMemorySearch(params json.RawMessage) (any, error) {
 		Query     string `json:"query"`
 		Target    string `json:"target"`
 		Limit     int    `json:"limit"`
+		Mode      string `json:"mode"`
+		Model     string `json:"model"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1467,7 +1503,7 @@ func (d *Daemon) handleMemorySearch(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", p.SessionID)
 	}
-	return d.memory.search(memoryScopeFromSession(sess), p.Query, p.Target, p.Limit)
+	return d.searchMemory(memoryScopeFromSession(sess), p.Query, p.Target, p.Limit, p.Mode, p.Model)
 }
 
 func (d *Daemon) handleMemoryStatus(params json.RawMessage) (any, error) {
@@ -1480,6 +1516,20 @@ func (d *Daemon) handleMemoryStatus(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("unknown session %s", id)
 	}
 	scope := memoryScopeFromSession(sess)
+	semanticProvider := map[string]any{
+		"enabled":  false,
+		"provider": "local-only",
+		"reason":   "external semantic/vector memory provider is not configured in the source-first runtime",
+		"contract": "future providers must preserve MemoryWrite policy, local deletion semantics, and Nebutra identity scope",
+	}
+	if modelID := d.embeddingsModelID(); modelID != "" {
+		semanticProvider = map[string]any{
+			"enabled":  true,
+			"provider": "byok-embeddings",
+			"model":    modelID,
+			"contract": "semantic memory search uses only curated MemoryWrite-approved entries and the BYOK embeddings router",
+		}
+	}
 	return map[string]any{
 		"scope": scope,
 		"storage": map[string]any{
@@ -1487,12 +1537,7 @@ func (d *Daemon) handleMemoryStatus(params json.RawMessage) (any, error) {
 			"memory_path": d.memory.pathFor(scope, memoryTargetMemory),
 			"user_path":   d.memory.pathFor(scope, memoryTargetUser),
 		},
-		"semantic_provider": map[string]any{
-			"enabled":  false,
-			"provider": "local-only",
-			"reason":   "external semantic/vector memory provider is not configured in the source-first runtime",
-			"contract": "future providers must preserve MemoryWrite policy, local deletion semantics, and Nebutra identity scope",
-		},
+		"semantic_provider": semanticProvider,
 		"nebutra_cloud_sync": map[string]any{
 			"enabled":   d.syncMode != nebutra.SyncModeOff,
 			"endpoint":  d.cloudEndpoint,
@@ -1745,7 +1790,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	_ = d.history.Append(prompt) // shared cross-process prompt history (best-effort)
 	d.persistRun(task.TaskID)
 
-	go d.runTaskGuarded(sess, task)
+	d.startTask(func() { d.runTaskGuarded(sess, task) })
 	if t, ok := d.sched.Get(task.TaskID); ok {
 		return t, nil
 	}
@@ -1957,7 +2002,8 @@ func (d *Daemon) resumeRuns() {
 			d.markInterrupted(task, "no checkpoint")
 			continue
 		}
-		go d.resumeTaskGuarded(sess, task, cp)
+		sessCopy, taskCopy, cpCopy := sess, task, cp
+		d.startTask(func() { d.resumeTaskGuarded(sessCopy, taskCopy, cpCopy) })
 		resumed++
 	}
 	if resumed > 0 {

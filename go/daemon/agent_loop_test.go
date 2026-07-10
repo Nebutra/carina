@@ -77,9 +77,25 @@ func TestAgentLoopExecutesThroughKernel(t *testing.T) {
 	var evs []map[string]any
 	json.Unmarshal(events, &evs)
 	types := map[string]bool{}
+	routingEvidence := map[string]string{}
 	for _, e := range evs {
 		if s, ok := e["type"].(string); ok {
 			types[s] = true
+			if s == "RoutingDecision" || s == "RoutingOutcome" {
+				payload, _ := e["payload"].(map[string]any)
+				evidenceID, _ := payload["evidence_id"].(string)
+				promptHash, _ := payload["prompt_sha256"].(string)
+				if evidenceID == "" || promptHash == "" {
+					t.Fatalf("%s missing routing evidence fields: %+v", s, payload)
+				}
+				if prev := routingEvidence[evidenceID]; prev != "" && prev != promptHash {
+					t.Fatalf("routing evidence %s changed prompt hash: %s vs %s", evidenceID, prev, promptHash)
+				}
+				routingEvidence[evidenceID] = promptHash
+				if s == "RoutingOutcome" && payload["status"] == "succeeded" && payload["response_sha256"] == "" {
+					t.Fatalf("successful RoutingOutcome missing response hash: %+v", payload)
+				}
+			}
 		}
 	}
 	for _, want := range []string{"RoutingDecision", "RoutingOutcome", "FileRead", "PatchProposed", "PatchApplied", "CommandStarted", "CommandExited"} {

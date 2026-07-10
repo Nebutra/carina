@@ -81,12 +81,22 @@ type memorySearchHit struct {
 	Entry  string  `json:"entry"`
 	Score  float64 `json:"score"`
 	Index  int     `json:"index"`
+	Mode   string  `json:"mode,omitempty"`
+}
+
+type memorySearchSemanticStatus struct {
+	Enabled  bool   `json:"enabled"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 type memorySearchResult struct {
-	Scope memoryScope       `json:"scope"`
-	Query string            `json:"query"`
-	Hits  []memorySearchHit `json:"hits"`
+	Scope    memoryScope                 `json:"scope"`
+	Query    string                      `json:"query"`
+	Mode     string                      `json:"mode"`
+	Semantic *memorySearchSemanticStatus `json:"semantic,omitempty"`
+	Hits     []memorySearchHit           `json:"hits"`
 }
 
 type memoryStore struct {
@@ -242,7 +252,7 @@ func (s *memoryStore) search(scope memoryScope, query, target string, limit int)
 	terms := memorySearchTerms(query)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result := memorySearchResult{Scope: scope, Query: query, Hits: []memorySearchHit{}}
+	result := memorySearchResult{Scope: scope, Query: query, Mode: "lexical", Hits: []memorySearchHit{}}
 	for _, currentTarget := range targets {
 		for index, entry := range s.readEntriesLocked(scope, currentTarget) {
 			if scanMemoryContent(entry) != nil {
@@ -250,7 +260,7 @@ func (s *memoryStore) search(scope memoryScope, query, target string, limit int)
 			}
 			score := lexicalMemoryScore(strings.ToLower(entry), strings.ToLower(query), terms)
 			if score > 0 {
-				result.Hits = append(result.Hits, memorySearchHit{Target: currentTarget, Entry: entry, Score: score, Index: index})
+				result.Hits = append(result.Hits, memorySearchHit{Target: currentTarget, Entry: entry, Score: score, Index: index, Mode: "lexical"})
 			}
 		}
 	}
@@ -267,6 +277,29 @@ func (s *memoryStore) search(scope memoryScope, query, target string, limit int)
 		result.Hits = result.Hits[:limit]
 	}
 	return result, nil
+}
+
+func (s *memoryStore) searchCandidates(scope memoryScope, target string) ([]memorySearchHit, error) {
+	targets := []string{memoryTargetUser, memoryTargetMemory}
+	if strings.TrimSpace(target) != "" {
+		normalized, err := normalizeMemoryTarget(target)
+		if err != nil {
+			return nil, err
+		}
+		targets = []string{normalized}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []memorySearchHit
+	for _, currentTarget := range targets {
+		for index, entry := range s.readEntriesLocked(scope, currentTarget) {
+			if scanMemoryContent(entry) != nil {
+				continue
+			}
+			out = append(out, memorySearchHit{Target: currentTarget, Entry: entry, Index: index})
+		}
+	}
+	return out, nil
 }
 
 func memorySearchTerms(query string) []string {
