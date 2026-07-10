@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -120,6 +121,16 @@ func TestTCPRoundTrip(t *testing.T) {
 	}
 	if err := c.Call("ping", map[string]any{}, &out); err != nil || !out.OK {
 		t.Fatalf("ping over tcp: %v %+v", err, out)
+	}
+}
+
+func TestTCPRejectsNonLoopbackListenAddress(t *testing.T) {
+	s := NewServer()
+	defer s.Close()
+	for _, addr := range []string{"0.0.0.0:0", "[::]:0", ":0"} {
+		if err := s.ListenTCP(addr); err == nil || !strings.Contains(err.Error(), "restricted to explicit loopback") {
+			t.Fatalf("ListenTCP(%q) error = %v, want loopback restriction", addr, err)
+		}
 	}
 }
 

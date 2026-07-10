@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
+
+	"github.com/Nebutra/carina/go/rpc"
 )
 
 func TestProtocolEventCatalogMatchesSchemaEnum(t *testing.T) {
@@ -33,40 +36,96 @@ func TestProtocolEventCatalogMatchesSchemaEnum(t *testing.T) {
 	}
 }
 
-func TestProtocolMethodsIncludeAbsorbedSurfaces(t *testing.T) {
+type protocolMethod struct {
+	Method            string          `json:"method"`
+	Scope             rpc.Scope       `json:"scope"`
+	Remote            bool            `json:"remote"`
+	Stream            bool            `json:"stream,omitempty"`
+	DynamicScope      bool            `json:"dynamic_scope,omitempty"`
+	ControlPlaneWrite bool            `json:"control_plane_write,omitempty"`
+	Conditional       string          `json:"conditional,omitempty"`
+	Params            json.RawMessage `json:"params"`
+	Result            json.RawMessage `json:"result"`
+}
+
+func TestProtocolMethodRegistryMatchesDaemonBidirectionally(t *testing.T) {
 	root := repoRootFromHere(t)
 	var methods struct {
-		APIs map[string][]struct {
-			Method string         `json:"method"`
-			Params map[string]any `json:"params"`
-		} `json:"apis"`
+		APIs map[string][]protocolMethod `json:"apis"`
 	}
 	readProtocolJSON(t, filepath.Join(root, "protocol", "jsonrpc", "methods.json"), &methods)
 
-	memorySearch := methodByName(methods.APIs["memory"], "memory.search")
-	if memorySearch == nil {
-		t.Fatal("methods.json missing memory.search")
-	}
-	if memorySearch.Params["mode"] == nil || memorySearch.Params["model"] == nil {
-		t.Fatalf("memory.search params must expose mode/model for compatibility: %+v", memorySearch.Params)
-	}
-	for _, method := range []string{"schedule.create", "schedule.list", "schedule.pause", "schedule.resume", "schedule.delete"} {
-		if methodByName(methods.APIs["schedule"], method) == nil {
-			t.Fatalf("methods.json missing %s", method)
+	catalog := make(map[string]protocolMethod)
+	for group, records := range methods.APIs {
+		for _, record := range records {
+			if record.Method == "" || record.Scope == "" || len(record.Params) == 0 || len(record.Result) == 0 {
+				t.Fatalf("protocol group %s contains incomplete record: %+v", group, record)
+			}
+			if !rpc.ValidScope(record.Scope) {
+				t.Fatalf("protocol method %s has invalid scope %q", record.Method, record.Scope)
+			}
+			if _, duplicate := catalog[record.Method]; duplicate {
+				t.Fatalf("protocol method %s is registered more than once", record.Method)
+			}
+			catalog[record.Method] = record
 		}
 	}
-	if methodByName(methods.APIs["backpressure"], "backpressure.report") == nil {
-		t.Fatal("methods.json missing backpressure.report")
+
+	base := &Daemon{server: rpc.NewServer()}
+	base.registerMethods()
+	baseMethods := descriptorMap(base.server.MethodDescriptors())
+	if _, ok := baseMethods["gateway.token.issue"]; ok {
+		t.Fatal("gateway.token.issue must not register without a signing key")
 	}
-	if methodByName(methods.APIs["backpressure"], "backpressure.status") == nil {
-		t.Fatal("methods.json missing backpressure.status")
+
+	withConditional := &Daemon{server: rpc.NewServer(), gatewayTokens: &rpc.GatewayTokenIssuer{}}
+	withConditional.registerMethods()
+	actual := descriptorMap(withConditional.server.MethodDescriptors())
+
+	var missing, fictional, mismatched []string
+	for name, desc := range actual {
+		record, ok := catalog[name]
+		if !ok {
+			missing = append(missing, name)
+			continue
+		}
+		if desc.Scope != record.Scope || desc.Remote != record.Remote || desc.Stream != record.Stream ||
+			desc.DynamicScope != record.DynamicScope || desc.ControlPlaneWrite != record.ControlPlaneWrite || !desc.Advertise {
+			mismatched = append(mismatched, name)
+		}
 	}
-	if methodByName(methods.APIs["debug"], "debug.snapshot") == nil {
-		t.Fatal("methods.json missing debug.snapshot")
+	for name := range catalog {
+		if _, ok := actual[name]; !ok {
+			fictional = append(fictional, name)
+		}
 	}
-	if methodByName(methods.APIs["debug"], "debug.correlation.search") == nil {
-		t.Fatal("methods.json missing debug.correlation.search")
+	for _, names := range [][]string{missing, fictional, mismatched} {
+		sort.Strings(names)
 	}
+	if len(missing) > 0 || len(fictional) > 0 || len(mismatched) > 0 {
+		t.Fatalf("protocol registry drift: missing=%v fictional=%v descriptor_mismatch=%v", missing, fictional, mismatched)
+	}
+	for name, record := range catalog {
+		_, registeredByDefault := baseMethods[name]
+		if record.Conditional == "" && !registeredByDefault {
+			t.Fatalf("unconditional protocol method %s is not registered by default", name)
+		}
+		if record.Conditional != "" && registeredByDefault {
+			t.Fatalf("conditional protocol method %s unexpectedly registers by default", name)
+		}
+	}
+	conditional := catalog["gateway.token.issue"]
+	if conditional.Conditional != "gateway_token_signing_key_file" {
+		t.Fatalf("gateway.token.issue conditional marker = %q", conditional.Conditional)
+	}
+}
+
+func descriptorMap(descriptors []rpc.MethodDescriptor) map[string]rpc.MethodDescriptor {
+	out := make(map[string]rpc.MethodDescriptor, len(descriptors))
+	for _, descriptor := range descriptors {
+		out[descriptor.Method] = descriptor
+	}
+	return out
 }
 
 func readProtocolJSON(t *testing.T, path string, out any) {
@@ -78,19 +137,4 @@ func readProtocolJSON(t *testing.T, path string, out any) {
 	if err := json.Unmarshal(raw, out); err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
-}
-
-func methodByName(methods []struct {
-	Method string         `json:"method"`
-	Params map[string]any `json:"params"`
-}, name string) *struct {
-	Method string         `json:"method"`
-	Params map[string]any `json:"params"`
-} {
-	for i := range methods {
-		if methods[i].Method == name {
-			return &methods[i]
-		}
-	}
-	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 
 	"golang.org/x/sys/unix"
@@ -366,11 +367,29 @@ func (s *Server) releaseLock() {
 }
 
 func (s *Server) ListenTCP(addr string) error {
+	if err := ValidateLoopbackTCPAddress(addr); err != nil {
+		return err
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("rpc: listen tcp %s: %w", addr, err)
 	}
 	return s.accept(ln, OriginRemote)
+}
+
+// ValidateLoopbackTCPAddress permits the legacy bare TCP transport only as an
+// explicit local diagnostic path. Network-facing clients must use an
+// authenticated Gateway transport instead.
+func ValidateLoopbackTCPAddress(addr string) error {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return fmt.Errorf("rpc: invalid tcp listen address %q: %w", addr, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("rpc: unauthenticated tcp is restricted to explicit loopback addresses")
+	}
+	return nil
 }
 
 func (s *Server) accept(ln net.Listener, origin Origin) error {

@@ -1,14 +1,17 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Nebutra/carina/go/rpc"
 	"github.com/Nebutra/carina/go/scheduler"
@@ -85,13 +88,13 @@ func (h *gatewayHTTP) handleChatCompletions(w http.ResponseWriter, r *http.Reque
 		h.writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if req.Stream {
-		h.writeError(w, http.StatusBadRequest, "unsupported", "streaming chat completions are not implemented")
-		return
-	}
 	prompt := chatPrompt(req.Messages)
 	if strings.TrimSpace(prompt) == "" {
 		h.writeError(w, http.StatusBadRequest, "invalid_request", "messages are required")
+		return
+	}
+	if req.Stream {
+		h.handleChatCompletionsStream(w, r, req, prompt)
 		return
 	}
 	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, "")
@@ -119,6 +122,277 @@ func (h *gatewayHTTP) handleChatCompletions(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("X-Carina-Task-ID", task.TaskID)
 	w.Header().Set("X-Carina-Session-ID", sessionID)
 	h.writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *gatewayHTTP) handleChatCompletionsStream(w http.ResponseWriter, r *http.Request, req chatCompletionRequest, prompt string) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		h.writeError(w, http.StatusInternalServerError, "streaming_unavailable", "response writer does not support streaming")
+		return
+	}
+	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, "")
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "submit_failed", err.Error())
+		return
+	}
+
+	stream := &chatCompletionSSE{
+		ctx:     r.Context(),
+		w:       w,
+		flusher: flusher,
+		id:      "chatcmpl_" + task.TaskID,
+		created: time.Now().Unix(),
+		model:   normalizedGatewayModel(req.Model),
+	}
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Carina-Task-ID", task.TaskID)
+	w.Header().Set("X-Carina-Session-ID", sessionID)
+	w.WriteHeader(http.StatusOK)
+
+	// Carina currently emits discrete governed task/session events, not model
+	// token chunks. Preserve that truth in the stream: role first, then honest
+	// event/status deltas, then the final task summary.
+	if err := stream.chunk(map[string]any{"role": "assistant"}, nil); err != nil {
+		return
+	}
+
+	const pollInterval = 100 * time.Millisecond
+	const heartbeatInterval = 15 * time.Second
+	poll := time.NewTicker(pollInterval)
+	defer poll.Stop()
+	heartbeat := time.NewTicker(heartbeatInterval)
+	defer heartbeat.Stop()
+
+	cursor := 0
+	lastStatus := ""
+	eventReadDegraded := false
+	for {
+		current, exists := h.d.sched.Get(task.TaskID)
+		if !exists {
+			current = &scheduler.Task{TaskID: task.TaskID, Status: "queued"}
+		}
+		if current.Status != lastStatus {
+			if err := stream.content(fmt.Sprintf("Carina task status: %s.\n", current.Status)); err != nil {
+				return
+			}
+			lastStatus = current.Status
+		}
+
+		events, nextCursor, err := h.gatewayTaskEvents(sessionID, task.TaskID, cursor)
+		if err != nil {
+			if !eventReadDegraded {
+				if writeErr := stream.content("Carina event replay is temporarily unavailable; task status remains live.\n"); writeErr != nil {
+					return
+				}
+				eventReadDegraded = true
+			}
+		} else {
+			cursor = nextCursor
+			for _, event := range events {
+				if delta := gatewayEventDelta(event); delta != "" {
+					if err := stream.content(delta); err != nil {
+						return
+					}
+				}
+			}
+		}
+
+		if gatewayTaskTerminal(current.Status) {
+			if content := strings.TrimSpace(taskMessage(current, sessionID)); content != "" {
+				if err := stream.content(content); err != nil {
+					return
+				}
+			}
+			finish := "stop"
+			if err := stream.chunk(map[string]any{}, &finish); err != nil {
+				return
+			}
+			_ = stream.done()
+			return
+		}
+
+		select {
+		case <-r.Context().Done():
+			return
+		case <-poll.C:
+		case <-heartbeat.C:
+			if err := stream.comment("keep-alive"); err != nil {
+				return
+			}
+		}
+	}
+}
+
+type chatCompletionSSE struct {
+	ctx     context.Context
+	w       io.Writer
+	flusher http.Flusher
+	id      string
+	created int64
+	model   string
+}
+
+func (s *chatCompletionSSE) content(content string) error {
+	if content == "" {
+		return nil
+	}
+	return s.chunk(map[string]any{"content": content}, nil)
+}
+
+func (s *chatCompletionSSE) chunk(delta map[string]any, finishReason *string) error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	chunk := map[string]any{
+		"id":      s.id,
+		"object":  "chat.completion.chunk",
+		"created": s.created,
+		"model":   s.model,
+		"choices": []map[string]any{{
+			"index":         0,
+			"delta":         delta,
+			"finish_reason": finishReason,
+		}},
+	}
+	raw, err := json.Marshal(chunk)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(s.w, "data: %s\n\n", raw); err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
+}
+
+func (s *chatCompletionSSE) comment(comment string) error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(s.w, ": %s\n\n", comment); err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
+}
+
+func (s *chatCompletionSSE) done() error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(s.w, "data: [DONE]\n\n"); err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
+}
+
+func (h *gatewayHTTP) gatewayTaskEvents(sessionID, taskID string, since int) ([]itemAuditEvent, int, error) {
+	raw, err := h.d.kern.ReadEvents(sessionID)
+	if err != nil {
+		return nil, since, err
+	}
+	var all []itemAuditEvent
+	if err := json.Unmarshal(raw, &all); err != nil {
+		return nil, since, fmt.Errorf("decode gateway task events: %w", err)
+	}
+	if since < 0 {
+		since = 0
+	}
+	if since > len(all) {
+		since = len(all)
+	}
+	filtered := make([]itemAuditEvent, 0, len(all)-since)
+	for _, event := range all[since:] {
+		if event.TaskID == taskID {
+			filtered = append(filtered, event)
+		}
+	}
+	return filtered, len(all), nil
+}
+
+func gatewayEventDelta(event itemAuditEvent) string {
+	switch event.Type {
+	case "TaskCreated":
+		if status := gatewayPayloadString(event.Payload, "status"); status != "" {
+			return fmt.Sprintf("Carina task event: %s.\n", sanitizeGatewayDelta(status, 120))
+		}
+		return "Carina task accepted.\n"
+	case "ModelRequested":
+		return "Carina requested a model response.\n"
+	case "RoutingOutcome":
+		status := sanitizeGatewayDelta(gatewayPayloadString(event.Payload, "status"), 80)
+		if status == "" {
+			return "Carina model routing completed.\n"
+		}
+		return fmt.Sprintf("Carina model routing completed: %s.\n", status)
+	case "ModelResponded":
+		if gatewayPayloadString(event.Payload, "error") != "" {
+			return "Carina model request failed.\n"
+		}
+		return "Carina received a model response.\n"
+	case "CommandStarted":
+		command := sanitizeGatewayDelta(gatewayPayloadString(event.Payload, "command"), 240)
+		if command == "" {
+			return "Carina started a command.\n"
+		}
+		return fmt.Sprintf("Carina started command: %s\n", command)
+	case "CommandOutput":
+		chunk := sanitizeGatewayDelta(gatewayPayloadString(event.Payload, "chunk"), 400)
+		if chunk == "" {
+			return ""
+		}
+		return "Carina command output:\n" + chunk + "\n"
+	case "CommandExited":
+		if code, ok := event.Payload["exit_code"]; ok {
+			return fmt.Sprintf("Carina command exited with code %v.\n", code)
+		}
+		return "Carina command exited.\n"
+	case "ContextCompacted":
+		return "Carina compacted the task context.\n"
+	case "ToolApproved":
+		return "Carina tool action approved.\n"
+	case "ToolDenied":
+		return "Carina tool action denied.\n"
+	case "PatchProposed":
+		return "Carina proposed a workspace patch.\n"
+	case "PatchApplied":
+		return "Carina applied a workspace patch.\n"
+	case "PatchFailed":
+		return "Carina workspace patch failed.\n"
+	case "RollbackStarted":
+		return "Carina started rolling back a workspace patch.\n"
+	case "RollbackCompleted":
+		return "Carina rolled back a workspace patch.\n"
+	default:
+		return ""
+	}
+}
+
+func gatewayPayloadString(payload map[string]any, key string) string {
+	if payload == nil {
+		return ""
+	}
+	value, _ := payload[key].(string)
+	return value
+}
+
+func sanitizeGatewayDelta(value string, maxRunes int) string {
+	value = strings.TrimSpace(value)
+	var b strings.Builder
+	for _, r := range value {
+		if r == '\n' || r == '\t' || !unicode.IsControl(r) {
+			b.WriteRune(r)
+		}
+	}
+	runes := []rune(b.String())
+	if maxRunes > 0 && len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "..."
+	}
+	return string(runes)
 }
 
 func (h *gatewayHTTP) handleResponses(w http.ResponseWriter, r *http.Request) {

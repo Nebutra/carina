@@ -67,10 +67,20 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 		return nil, fmt.Errorf("%s: api key credential not set", a.id)
 	}
 	model, responseModel, override := a.resolveModel(req)
+	messages := any([]map[string]string{{"role": "user", "content": req.Prompt}})
+	if req.StablePrefix != "" {
+		messages = []map[string]any{{
+			"role": "user",
+			"content": []map[string]any{
+				{"type": "text", "text": req.StablePrefix, "cache_control": map[string]string{"type": "ephemeral"}},
+				{"type": "text", "text": req.VolatileSuffix},
+			},
+		}}
+	}
 	bodyMap := map[string]any{
 		"model":      model,
 		"max_tokens": 2048,
-		"messages":   []map[string]string{{"role": "user", "content": req.Prompt}},
+		"messages":   messages,
 	}
 	mergeRawBody(bodyMap, a.body)
 	mergeRawBody(bodyMap, override.Body)
@@ -98,8 +108,10 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 			Text string `json:"text"`
 		} `json:"content"`
 		Usage struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
+			InputTokens         int `json:"input_tokens"`
+			OutputTokens        int `json:"output_tokens"`
+			CacheCreationTokens int `json:"cache_creation_input_tokens"`
+			CacheReadTokens     int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -110,11 +122,13 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 		text += c.Text
 	}
 	return &modelrouter.Response{
-		Provider:     a.Name(),
-		Model:        responseModel,
-		Text:         text,
-		InputTokens:  out.Usage.InputTokens,
-		OutputTokens: out.Usage.OutputTokens,
+		Provider:         a.Name(),
+		Model:            responseModel,
+		Text:             text,
+		InputTokens:      out.Usage.InputTokens,
+		OutputTokens:     out.Usage.OutputTokens,
+		CacheReadTokens:  out.Usage.CacheReadTokens,
+		CacheWriteTokens: out.Usage.CacheCreationTokens,
 	}, nil
 }
 

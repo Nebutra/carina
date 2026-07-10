@@ -3,7 +3,12 @@
 package worker
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,17 +51,45 @@ func capabilitiesFor(kind Kind) []string {
 }
 
 type Pool struct {
-	mu      sync.RWMutex
-	workers map[string]*Worker
+	mu             sync.RWMutex
+	workers        map[string]*Worker
+	credentialHash map[string][sha256.Size]byte
 }
 
 func NewPool() *Pool {
-	return &Pool{workers: make(map[string]*Worker)}
+	return &Pool{
+		workers:        make(map[string]*Worker),
+		credentialHash: make(map[string][sha256.Size]byte),
+	}
 }
 
 func (p *Pool) Register(name string, kind Kind) *Worker {
+	w := newWorker(name, kind)
+	p.mu.Lock()
+	p.workers[w.WorkerID] = w
+	p.mu.Unlock()
+	return w
+}
+
+// RegisterAuthenticated registers a worker and returns its bearer credential.
+// The opaque credential is returned once; Pool retains only its SHA-256 hash.
+func (p *Pool) RegisterAuthenticated(name string, kind Kind) (*Worker, string, error) {
+	credentialBytes := make([]byte, 32)
+	if _, err := rand.Read(credentialBytes); err != nil {
+		return nil, "", fmt.Errorf("worker: generate credential: %w", err)
+	}
+	credential := base64.RawURLEncoding.EncodeToString(credentialBytes)
+	w := newWorker(name, kind)
+	p.mu.Lock()
+	p.workers[w.WorkerID] = w
+	p.credentialHash[w.WorkerID] = sha256.Sum256([]byte(credential))
+	p.mu.Unlock()
+	return w, credential, nil
+}
+
+func newWorker(name string, kind Kind) *Worker {
 	now := time.Now().UTC()
-	w := &Worker{
+	return &Worker{
 		WorkerID:      sessionstore.NewID("wrk"),
 		Name:          name,
 		Kind:          kind,
@@ -66,10 +99,20 @@ func (p *Pool) Register(name string, kind Kind) *Worker {
 		RegisteredAt:  now,
 		LastHeartbeat: now,
 	}
-	p.mu.Lock()
-	p.workers[w.WorkerID] = w
-	p.mu.Unlock()
-	return w
+}
+
+// Authenticate verifies that credential belongs to workerID without revealing
+// whether the worker or credential was the mismatched input.
+func (p *Pool) Authenticate(workerID, credential string) bool {
+	workerID = strings.TrimSpace(workerID)
+	credential = strings.TrimSpace(credential)
+	candidate := sha256.Sum256([]byte(credential))
+	p.mu.RLock()
+	expected, hasCredential := p.credentialHash[workerID]
+	_, hasWorker := p.workers[workerID]
+	p.mu.RUnlock()
+	return workerID != "" && credential != "" && hasWorker && hasCredential &&
+		subtle.ConstantTimeCompare(candidate[:], expected[:]) == 1
 }
 
 func (p *Pool) Heartbeat(workerID string) error {
@@ -92,6 +135,7 @@ func (p *Pool) Revoke(workerID string) error {
 		return fmt.Errorf("worker: unknown worker %s", workerID)
 	}
 	delete(p.workers, workerID)
+	delete(p.credentialHash, workerID)
 	return nil
 }
 

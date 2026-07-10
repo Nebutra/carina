@@ -37,7 +37,7 @@ func TestOpenAIChatProvider(t *testing.T) {
 			t.Fatalf("bad body: %+v", body)
 		}
 		w.Header().Set("content-type", "application/json")
-		w.Write([]byte(`{"choices":[{"message":{"content":"chat ok"}}],"usage":{"prompt_tokens":2,"completion_tokens":3}}`))
+		w.Write([]byte(`{"choices":[{"message":{"content":"chat ok"}}],"usage":{"prompt_tokens":7,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":5}}}`))
 	}))
 	defer srv.Close()
 	store := testAuthStore(t)
@@ -53,7 +53,7 @@ func TestOpenAIChatProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
-	if resp.Provider != "openrouter" || resp.Text != "chat ok" || resp.InputTokens != 2 || resp.OutputTokens != 3 {
+	if resp.Provider != "openrouter" || resp.Text != "chat ok" || resp.InputTokens != 2 || resp.OutputTokens != 3 || resp.CacheReadTokens != 5 {
 		t.Fatalf("bad response: %+v", resp)
 	}
 }
@@ -125,7 +125,7 @@ func TestOpenAIResponsesProvider(t *testing.T) {
 			t.Fatalf("bad body: %+v", body)
 		}
 		w.Header().Set("content-type", "application/json")
-		w.Write([]byte(`{"output_text":"responses ok","usage":{"input_tokens":4,"output_tokens":5}}`))
+		w.Write([]byte(`{"output_text":"responses ok","usage":{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cached_tokens":6}}}`))
 	}))
 	defer srv.Close()
 	store := testAuthStore(t)
@@ -141,7 +141,7 @@ func TestOpenAIResponsesProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
-	if resp.Text != "responses ok" || resp.Model != "gpt-5" || resp.InputTokens != 4 || resp.OutputTokens != 5 {
+	if resp.Text != "responses ok" || resp.Model != "gpt-5" || resp.InputTokens != 4 || resp.OutputTokens != 5 || resp.CacheReadTokens != 6 {
 		t.Fatalf("bad response: %+v", resp)
 	}
 }

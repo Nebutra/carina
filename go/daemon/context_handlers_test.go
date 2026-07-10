@@ -46,17 +46,6 @@ func TestContextRetrieveRequiresRef(t *testing.T) {
 	}
 }
 
-func TestHeadroomToolResponseParsing(t *testing.T) {
-	compressed := parseHeadroomCompressResponse("original text", `{"compressed":"summary","hash":"abc","original_tokens":10,"compressed_tokens":3,"savings_percent":70,"transforms":["summarize"]}`)
-	if compressed.Content != "summary" || compressed.OriginalRef != "abc" || compressed.OriginalTokens != 10 || compressed.CompressedTokens != 3 || len(compressed.Transforms) != 1 {
-		t.Fatalf("unexpected parsed compression: %+v", compressed)
-	}
-	retrieved := parseHeadroomRetrieveResponse("abc", `{"original_content":"original text","source":"ccr"}`)
-	if retrieved.Content != "original text" || retrieved.Source != "ccr" || retrieved.Ref != "abc" {
-		t.Fatalf("unexpected parsed retrieve: %+v", retrieved)
-	}
-}
-
 func mustRawJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(v)

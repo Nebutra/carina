@@ -30,3 +30,34 @@ func TestAsyncSteering(t *testing.T) {
 		t.Fatal("mailbox should be empty after draining")
 	}
 }
+
+func TestTaskSteerRejectsUnknownAndTerminalTasks(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
+
+	if _, err := d.handleTaskSteer(mustJSON(t, map[string]any{
+		"task_id": task.TaskID,
+		"message": " also add tests ",
+	})); err != nil {
+		t.Fatalf("queued task should accept steering: %v", err)
+	}
+	if got := d.drainMailbox(task.TaskID); len(got) != 1 || got[0] != "also add tests" {
+		t.Fatalf("steering mailbox = %#v", got)
+	}
+
+	d.sched.SetStatus(task.TaskID, "completed")
+	if _, err := d.handleTaskSteer(mustJSON(t, map[string]any{
+		"task_id": task.TaskID,
+		"message": "too late",
+	})); err == nil || !strings.Contains(err.Error(), "cannot be steered") {
+		t.Fatalf("terminal task steer error = %v", err)
+	}
+	if _, err := d.handleTaskSteer(mustJSON(t, map[string]any{
+		"task_id": "task_missing",
+		"message": "hello",
+	})); err == nil || !strings.Contains(err.Error(), "unknown task") {
+		t.Fatalf("unknown task steer error = %v", err)
+	}
+}

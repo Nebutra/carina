@@ -12,16 +12,20 @@ import (
 )
 
 type Request struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
+	Model          string `json:"model"`
+	Prompt         string `json:"prompt"`
+	StablePrefix   string `json:"stable_prefix,omitempty"`
+	VolatileSuffix string `json:"volatile_suffix,omitempty"`
 }
 
 type Response struct {
-	Provider     string `json:"provider"`
-	Model        string `json:"model"`
-	Text         string `json:"text"`
-	InputTokens  int    `json:"input_tokens"`
-	OutputTokens int    `json:"output_tokens"`
+	Provider         string `json:"provider"`
+	Model            string `json:"model"`
+	Text             string `json:"text"`
+	InputTokens      int    `json:"input_tokens"`
+	OutputTokens     int    `json:"output_tokens"`
+	CacheReadTokens  int    `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int    `json:"cache_write_tokens,omitempty"`
 }
 
 // Provider is implemented by model backends (Anthropic, OpenAI, local, plugin).
@@ -31,9 +35,11 @@ type Provider interface {
 }
 
 type Usage struct {
-	Requests     int `json:"requests"`
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	Requests         int `json:"requests"`
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
 
 type Router struct {
@@ -118,4 +124,6 @@ func (r *Router) recordUsage(name string, resp *Response) {
 	u.Requests++
 	u.InputTokens += resp.InputTokens
 	u.OutputTokens += resp.OutputTokens
+	u.CacheReadTokens += resp.CacheReadTokens
+	u.CacheWriteTokens += resp.CacheWriteTokens
 }

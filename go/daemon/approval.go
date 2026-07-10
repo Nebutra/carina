@@ -24,8 +24,11 @@ func (d *Daemon) SetInteractiveApproval(on bool) { d.interactiveApproval.Store(o
 // it asks the operator and only approves on an explicit allow. Returns the
 // (possibly upgraded) decision and whether it is now allowed.
 func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
+	if approved, ok := d.approveFromStoredGrant(sess, dec); ok {
+		return approved, true
+	}
 	if d.interactiveApproval.Load() {
-		resolved, granted := d.awaitInteractiveApproval(sess, task, dec, label)
+		resolved, granted, scope := d.awaitInteractiveApproval(sess, task, dec, label)
 		if !granted {
 			return dec, false
 		}
@@ -43,6 +46,13 @@ func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Tas
 		approved, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "operator", "")
 		if err != nil || approved.Decision != "allowed" {
 			return dec, false
+		}
+		if err := d.rememberApprovalGrant(sess, approved, scope, "operator", ""); err != nil {
+			// The current one-time approval remains valid, but a failed durable
+			// grant must never be treated as a broader scope.
+			d.record(sess.SessionID, "ToolApproved", task.TaskID, "go", map[string]any{
+				"status": "approval_grant_failed", "requested_scope": scope, "error": err.Error(),
+			}, dec.DecisionID)
 		}
 		return approved, true
 	}
@@ -62,7 +72,7 @@ func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Tas
 // (=> denied), or the daemon shuts down. Returns the already-kernel-resolved
 // decision when the unblocking RPC call resolved one (nil if resolution was
 // only signaled, not resolved), and whether the wait ended granted.
-func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
+func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) (*kernel.Decision, bool, string) {
 	ch := make(chan approvalSignal, 1)
 	d.approvalMu.Lock()
 	d.pendingApprovals[dec.DecisionID] = ch
@@ -95,6 +105,15 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 			ev["diff"] = patch.Diff
 		}
 	}
+	// Persist the reviewable permission request before publishing it live. A
+	// reconnect can reconcile this event with the later approval_resolved event
+	// by decision_id without minting a second decision or approval prompt.
+	if err := d.kern.RecordEvent(sess.SessionID, "ToolRequested", task.TaskID, "go", map[string]any{
+		"status": "permission_requested", "decision_id": dec.DecisionID, "request": ev,
+	}, dec.DecisionID); err != nil {
+		d.sched.SetStatus(task.TaskID, "running")
+		return nil, false, approvalScopeOnce
+	}
 	d.events.Publish(sess.SessionID, ev)
 
 	timeout := d.approvalTimeout
@@ -105,14 +124,14 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 	select {
 	case sig = <-ch:
 	case <-time.After(timeout):
-		sig = approvalSignal{granted: false}
+		sig = approvalSignal{granted: false, scope: approvalScopeOnce}
 	case <-d.stopCh:
-		sig = approvalSignal{granted: false}
+		sig = approvalSignal{granted: false, scope: approvalScopeOnce}
 	}
 	d.sched.SetStatus(task.TaskID, "running")
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "operator",
-		map[string]any{"status": "approval_resolved", "decision_id": dec.DecisionID, "granted": sig.granted}, dec.DecisionID)
-	return sig.resolved, sig.granted
+		map[string]any{"status": "approval_resolved", "decision_id": dec.DecisionID, "granted": sig.granted, "scope": sig.scope}, dec.DecisionID)
+	return sig.resolved, sig.granted, sig.scope
 }
 
 // approvalSignal carries an operator's verdict into a blocked
@@ -123,6 +142,7 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 type approvalSignal struct {
 	resolved *kernel.Decision
 	granted  bool
+	scope    string
 }
 
 // handleApprovalResolve records an operator's verdict for a pending interactive
@@ -131,14 +151,25 @@ func (d *Daemon) handleApprovalResolve(params json.RawMessage) (any, error) {
 	var p struct {
 		DecisionID string `json:"decision_id"`
 		Approve    bool   `json:"approve"`
+		Scope      string `json:"scope"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if !d.signalPendingApproval(p.DecisionID, nil, p.Approve) {
+	scope, err := normalizeApprovalScope(p.Scope)
+	if err != nil {
+		return nil, err
+	}
+	if !p.Approve {
+		scope = approvalScopeOnce
+	}
+	if p.Approve && scope != approvalScopeOnce {
+		return nil, fmt.Errorf("scoped approval requires task.action.approve so grant persistence can be confirmed")
+	}
+	if !d.signalPendingApproval(p.DecisionID, nil, p.Approve, scope) {
 		return nil, fmt.Errorf("no pending approval for decision %s", p.DecisionID)
 	}
-	return map[string]any{"decision_id": p.DecisionID, "resolved": p.Approve}, nil
+	return map[string]any{"decision_id": p.DecisionID, "resolved": p.Approve, "scope": scope}, nil
 }
 
 // signalPendingApproval unblocks an in-flight awaitInteractiveApproval wait
@@ -153,7 +184,7 @@ func (d *Daemon) handleApprovalResolve(params json.RawMessage) (any, error) {
 // wait doesn't imply it was ever pending — most approvals resolve a
 // synchronous RPC gate, e.g. a patch gate or a queued command, with nothing
 // blocked in awaitInteractiveApproval, so a false return is not an error).
-func (d *Daemon) signalPendingApproval(decisionID string, resolved *kernel.Decision, granted bool) bool {
+func (d *Daemon) signalPendingApproval(decisionID string, resolved *kernel.Decision, granted bool, scope string) bool {
 	d.approvalMu.Lock()
 	ch, ok := d.pendingApprovals[decisionID]
 	d.approvalMu.Unlock()
@@ -161,7 +192,7 @@ func (d *Daemon) signalPendingApproval(decisionID string, resolved *kernel.Decis
 		return false
 	}
 	select {
-	case ch <- approvalSignal{resolved: resolved, granted: granted}:
+	case ch <- approvalSignal{resolved: resolved, granted: granted, scope: scope}:
 	default: // already resolved; ignore the duplicate
 	}
 	return true

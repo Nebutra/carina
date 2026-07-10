@@ -37,6 +37,31 @@ func TestFallbackToSecondProvider(t *testing.T) {
 	}
 }
 
+func TestUsageIncludesCacheTokens(t *testing.T) {
+	r := New()
+	r.RegisterProvider(providerFunc{name: "anthropic", complete: func(_ context.Context, req Request) (*Response, error) {
+		return &Response{Provider: "anthropic", Model: req.Model, Text: "ok", InputTokens: 2, OutputTokens: 3, CacheReadTokens: 5, CacheWriteTokens: 7}, nil
+	}})
+
+	if _, err := r.Complete(context.Background(), Request{Model: "claude", Prompt: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	got := r.UsageByProvider()["anthropic"]
+	if got.InputTokens != 2 || got.OutputTokens != 3 || got.CacheReadTokens != 5 || got.CacheWriteTokens != 7 {
+		t.Fatalf("usage = %+v", got)
+	}
+}
+
+type providerFunc struct {
+	name     string
+	complete func(context.Context, Request) (*Response, error)
+}
+
+func (p providerFunc) Name() string { return p.name }
+func (p providerFunc) Complete(ctx context.Context, req Request) (*Response, error) {
+	return p.complete(ctx, req)
+}
+
 func TestTargetedProviderModel(t *testing.T) {
 	r := New()
 	r.RegisterProvider(&fakeProvider{name: "anthropic", fail: true})

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -185,6 +186,10 @@ func TestPrivateMCPServerHiddenFromPublicSurface(t *testing.T) {
 	if tools := m.Tools(); len(tools) != 0 {
 		t.Fatalf("private tools should be hidden: %+v", tools)
 	}
+	schemas, err := m.ToolSchemas("private")
+	if err != nil || len(schemas["echo"]) == 0 {
+		t.Fatalf("private adapter schema unavailable: schemas=%v err=%v", schemas, err)
+	}
 	if _, err := m.CallPublic("private", "echo", map[string]any{"x": 1}); err == nil {
 		t.Fatal("public call should reject private server")
 	}
@@ -194,5 +199,35 @@ func TestPrivateMCPServerHiddenFromPublicSurface(t *testing.T) {
 	}
 	if !strings.Contains(out, `"x"`) {
 		t.Fatalf("unexpected private call output: %q", out)
+	}
+}
+
+func TestMCPCallContextHonorsCancellation(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "slow_mcp.py")
+	server := `import sys, json, time
+for line in sys.stdin:
+    msg=json.loads(line); mid=msg.get("id"); method=msg.get("method")
+    if method == "initialize": result={"protocolVersion":"2024-11-05","capabilities":{}}
+    elif method == "tools/list": result={"tools":[{"name":"slow","inputSchema":{"type":"object"}}]}
+    elif method == "prompts/list": result={"prompts":[]}
+    elif method == "tools/call":
+        time.sleep(2); result={"content":[{"type":"text","text":"late"}]}
+    elif method and method.startswith("notifications/"): continue
+    else: result={}
+    sys.stdout.write(json.dumps({"jsonrpc":"2.0","id":mid,"result":result})+"\n"); sys.stdout.flush()
+`
+	if err := os.WriteFile(script, []byte(server), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager()
+	defer m.Close()
+	if err := m.ConnectPrivate("slow", Server{Command: "python3", Args: []string{script}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := m.CallContext(ctx, "slow", "slow", nil); err == nil || !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("CallContext cancellation error = %v", err)
 	}
 }

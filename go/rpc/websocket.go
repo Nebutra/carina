@@ -40,6 +40,9 @@ func (s *Server) ListenWebSocketWithOptions(addr string, opts WebSocketOptions) 
 	if strings.TrimSpace(opts.Path) == "" {
 		opts.Path = defaultGatewayWebSocketPath
 	}
+	if opts.TokenVerifier == nil {
+		return fmt.Errorf("rpc: websocket gateway requires a token verifier")
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("rpc: listen websocket %s: %w", addr, err)
@@ -60,6 +63,10 @@ func (s *Server) ListenWebSocketWithOptions(addr string, opts WebSocketOptions) 
 }
 
 func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, opts WebSocketOptions) {
+	if opts.TokenVerifier == nil {
+		http.Error(w, "websocket gateway authentication unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -133,53 +140,44 @@ func (s *Server) requireWebSocketHello(conn net.Conn, verifier GatewayTokenVerif
 			return nil, err
 		}
 	}
-	tokenAuthenticated := false
-	var scopes []Scope
-	if verifier != nil {
-		if strings.TrimSpace(hello.Token) == "" {
-			err := fmt.Errorf("gateway token required")
-			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
-			return nil, err
-		}
-		claims, err := verifier.Verify(hello.Token, "ws")
-		if err != nil {
-			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
-			return nil, err
-		}
-		if hello.Role != "" && hello.Role != claims.Role {
-			err := fmt.Errorf("gateway token role mismatch")
-			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
-			return nil, err
-		}
-		scopes, err = IntersectScopes(claims.Scopes, hello.Scopes)
-		if err != nil {
-			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
-			return nil, err
-		}
-		hello.Role = claims.Role
-		hello.Scopes = scopes
-		req.Params, _ = json.Marshal(hello)
-		tokenAuthenticated = true
-	} else {
-		var err error
-		_, scopes, _, err = NegotiateScopes(hello.Role, hello.Scopes)
-		if err != nil {
-			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
-			return nil, err
-		}
+	if verifier == nil {
+		err := fmt.Errorf("gateway token verifier unavailable")
+		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
+		return nil, err
 	}
+	if strings.TrimSpace(hello.Token) == "" {
+		err := fmt.Errorf("gateway token required")
+		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
+		return nil, err
+	}
+	claims, err := verifier.Verify(hello.Token, "ws")
+	if err != nil {
+		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: "gateway token invalid"}})
+		return nil, err
+	}
+	if hello.Role != "" && hello.Role != claims.Role {
+		err := fmt.Errorf("gateway token role mismatch")
+		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
+		return nil, err
+	}
+	scopes, err := IntersectScopes(claims.Scopes, hello.Scopes)
+	if err != nil {
+		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
+		return nil, err
+	}
+	hello.Role = claims.Role
+	hello.Scopes = scopes
+	req.Params, _ = json.Marshal(hello)
 	resp := s.dispatch(req)
-	if tokenAuthenticated {
-		if result, ok := resp.Result.(HelloResponse); ok {
-			result.Role = hello.Role
-			result.Scopes = scopes
-			if result.Auth == nil {
-				result.Auth = map[string]any{}
-			}
-			result.Auth["grant_type"] = "gateway_token"
-			result.Auth["transport"] = "ws"
-			resp.Result = result
+	if result, ok := resp.Result.(HelloResponse); ok {
+		result.Role = hello.Role
+		result.Scopes = scopes
+		if result.Auth == nil {
+			result.Auth = map[string]any{}
 		}
+		result.Auth["grant_type"] = "gateway_token"
+		result.Auth["transport"] = "ws"
+		resp.Result = result
 	}
 	_ = enc.Encode(resp)
 	if resp.Error != nil {

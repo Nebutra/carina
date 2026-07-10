@@ -27,6 +27,7 @@ import (
 	"github.com/Nebutra/carina/go/mcp"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/nebutra"
+	"github.com/Nebutra/carina/go/product"
 	"github.com/Nebutra/carina/go/provider"
 	"github.com/Nebutra/carina/go/rpc"
 	"github.com/Nebutra/carina/go/scheduler"
@@ -35,7 +36,7 @@ import (
 	"github.com/Nebutra/carina/go/worker"
 )
 
-const Version = "0.5.0"
+const Version = product.Version
 
 // Options configures external binaries and storage.
 type Options struct {
@@ -164,11 +165,14 @@ type Daemon struct {
 	loopWG   sync.WaitGroup
 	taskWG   sync.WaitGroup
 
-	interactiveApproval atomic.Bool                    // when true, requires_approval pauses for an operator decision (hot-reloadable)
-	debugRPCEnabled     atomic.Bool                    // exposes debug.* and collects debug trace (hot-reloadable, default off)
-	approvalTimeout     time.Duration                  // how long to wait for an interactive approval (0 => 5m)
-	pendingApprovals    map[string]chan approvalSignal // decision_id -> resolver channel
+	interactiveApproval atomic.Bool                     // when true, requires_approval pauses for an operator decision (hot-reloadable)
+	debugRPCEnabled     atomic.Bool                     // exposes debug.* and collects debug trace (hot-reloadable, default off)
+	approvalTimeout     time.Duration                   // how long to wait for an interactive approval (0 => 5m)
+	pendingApprovals    map[string]chan approvalSignal  // decision_id -> resolver channel
+	pendingQuestions    map[string]*pendingUserQuestion // question_id -> blocked ask_user tool
+	approvalGrants      *approvalGrantStore             // exact session/project grants, persisted under stateDir
 	approvalMu          sync.Mutex
+	questionMu          sync.Mutex
 	patchGateRetention  time.Duration // how long a resolved patch gate survives before being swept (0 => 1h)
 
 	subagentParentTask map[string]string // childSessionID -> parentTaskID (leader-bridge linkage)
@@ -180,6 +184,7 @@ type Daemon struct {
 	authChain          *auth.Chain              // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
 	authStore          *auth.Store              // local BYOK credential store (doctor's per-provider probe)
 	providerCatalog    provider.Catalog         // runtime provider catalog (doctor's per-provider probe)
+	usage              *usageStore              // durable per-task/session model usage and cost accounting
 	history            *history.History         // shared cross-process prompt history
 	memory             *memoryStore             // governed local long-term memory
 	schedules          *scheduler.ScheduleStore // persistent cron/at/every definitions
@@ -290,6 +295,7 @@ func New(opts Options) (*Daemon, error) {
 	providerCatalog := loadRuntimeProviderCatalog(opts.Offline)
 	d.authStore = authStore
 	d.providerCatalog = providerCatalog
+	d.usage = newUsageStore(opts.StateDir)
 	registerProviders(d.router, opts.Offline, authStore, providerCatalog)
 	// Embeddings (V2 semantic layer): BYOK only, credential-gated at
 	// registration so no provider means the layer is silently off.
@@ -318,6 +324,8 @@ func New(opts Options) (*Daemon, error) {
 	d.planMode = map[string]bool{}
 	d.stopCh = make(chan struct{})
 	d.pendingApprovals = map[string]chan approvalSignal{}
+	d.pendingQuestions = map[string]*pendingUserQuestion{}
+	d.approvalGrants = newApprovalGrantStore(opts.StateDir)
 	d.interactiveApproval.Store(opts.InteractiveApproval)
 	d.debugRPCEnabled.Store(opts.EnableDebugRPC)
 	d.subagentParentTask = map[string]string{}
@@ -494,6 +502,9 @@ func (d *Daemon) RunTCP(addr string) error {
 // RunGatewayWebSocket serves the descriptor-backed Gateway skeleton over
 // WebSocket. It is default-off and uses the remote transport allowlist.
 func (d *Daemon) RunGatewayWebSocket(addr string, allowedOrigins []string) error {
+	if d.gatewayTokens == nil {
+		return fmt.Errorf("gateway websocket requires gateway_token_signing_key_file")
+	}
 	return d.server.ListenWebSocketWithOptions(addr, rpc.WebSocketOptions{
 		Path:           "/gateway",
 		AllowedOrigins: allowedOrigins,
@@ -601,6 +612,7 @@ func (d *Daemon) connectContextEngineMCP(eng contextengine.Engine) (bool, error)
 	}
 	connector, ok := eng.(interface {
 		ManagedMCPServer() (string, contextengine.MCPServer, bool)
+		AttachManagedMCP(contextengine.ManagedMCPAdapter) error
 		MarkManagedMCPConnected(error)
 	})
 	if !ok {
@@ -611,7 +623,13 @@ func (d *Daemon) connectContextEngineMCP(eng contextengine.Engine) (bool, error)
 		return false, nil
 	}
 	err := d.mcp.ConnectPrivate(name, mcp.Server{Command: spec.Command, Args: spec.Args, Env: spec.Env})
+	if err == nil {
+		err = connector.AttachManagedMCP(d.mcp)
+	}
 	connector.MarkManagedMCPConnected(err)
+	if err != nil {
+		d.mcp.Disconnect(name)
+	}
 	if err != nil && eng.Status().ConfiguredEngine == contextengine.ModeHeadroom {
 		return true, err
 	}
@@ -622,6 +640,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("daemon.status", rpc.ScopeRead, true, d.handleStatus)
 	d.registerRPC("daemon.metrics", rpc.ScopeRead, true, d.handleMetrics)
 	d.registerRPC("daemon.doctor", rpc.ScopeRead, true, d.handleDoctor)
+	d.registerRPC("usage.cost", rpc.ScopeRead, true, d.handleUsageCost)
 	d.registerRPC("backpressure.status", rpc.ScopeRead, true, d.handleBackpressureStatus)
 	d.registerRPC("debug.snapshot", rpc.ScopeAdmin, false, d.handleDebugSnapshot)
 	d.registerRPC("debug.correlation.search", rpc.ScopeAdmin, false, d.handleDebugCorrelation)
@@ -653,6 +672,8 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("session.approve_plan", rpc.ScopeWrite, false, d.handleApprovePlan)
 	d.registerRPCDynamic("session.add_dir", rpc.ScopeAdmin, false, d.handleAddDir, d.addDirScope, true)
 	d.registerRPC("task.approval.resolve", rpc.ScopeAdmin, false, d.handleApprovalResolve, true)
+	d.registerRPC("task.user.answer", rpc.ScopeWrite, false, d.handleUserAnswer)
+	d.registerRPC("task.user.pending", rpc.ScopeRead, false, d.handlePendingUserQuestions)
 	d.registerRPC("task.btw", rpc.ScopeWrite, false, d.handleTaskBtw)
 	d.registerRPC("history.recent", rpc.ScopeRead, false, d.handleHistoryRecent)
 	d.registerRPC("memory.list", rpc.ScopeRead, false, d.handleMemoryList)
@@ -700,7 +721,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("worker.register", rpc.ScopeWorker, true, d.handleWorkerRegister)
 	d.registerRPC("worker.heartbeat", rpc.ScopeWorker, true, d.handleWorkerHeartbeat)
 	d.registerRPC("worker.list", rpc.ScopeRead, true, d.handleWorkerList)
-	d.registerRPC("worker.revoke", rpc.ScopeAdmin, false, d.handleWorkerRevoke, true)
+	d.registerRPC("worker.revoke", rpc.ScopeWorker, true, d.handleWorkerRevoke, true)
 	d.registerRPC("backpressure.report", rpc.ScopeWorker, true, d.handleBackpressureReport)
 
 	// Work-dispatch bridge: enqueue is control-plane (local); poll/renew/report
@@ -930,13 +951,11 @@ func (d *Daemon) handleContextStats(_ json.RawMessage) (any, error) {
 		return nil, err
 	}
 	out := map[string]any{"local": st}
-	if d.headroomMCPConnected() {
-		raw, err := d.mcp.Call(contextengine.ManagedMCPServerName, "headroom_stats", nil)
-		if err != nil {
-			out["headroom_error"] = err.Error()
-		} else {
-			out["headroom"] = decodeHeadroomToolOutput(raw)
-		}
+	if st.Headroom != nil {
+		out["headroom"] = st.Headroom
+	}
+	if st.HeadroomError != "" {
+		out["headroom_error"] = st.HeadroomError
 	}
 	return out, nil
 }
@@ -966,24 +985,32 @@ func (d *Daemon) handleContextCompress(params json.RawMessage) (any, error) {
 		Content:   p.Content,
 		Pinned:    p.Pinned,
 	}
-	if d.headroomMCPConnected() {
-		raw, err := d.mcp.Call(contextengine.ManagedMCPServerName, "headroom_compress", map[string]any{"content": p.Content})
-		if err != nil {
-			return nil, err
-		}
-		return parseHeadroomCompressResponse(p.Content, raw), nil
-	}
 	if d.contextEng == nil {
 		return nil, fmt.Errorf("context engine is not configured")
 	}
-	return d.contextEng.Compress(context.Background(), req)
+	res, err := d.contextEng.Compress(context.Background(), req)
+	if err != nil {
+		return nil, err
+	}
+	if p.SessionID != "" && d.kern != nil {
+		d.record(p.SessionID, "TaskCreated", p.TaskID, "go", map[string]any{
+			"status": "context_compressed", "engine": res.Engine, "turn": p.Turn, "kind": p.Kind, "tool": p.Tool,
+			"original_bytes": res.OriginalBytes, "compressed_bytes": res.CompressedBytes,
+			"original_tokens": res.OriginalTokens, "compressed_tokens": res.CompressedTokens,
+			"savings_percent": res.SavingsPercent, "transforms": res.Transforms,
+			"original_sha256": res.OriginalSHA256, "original_ref": res.OriginalRef,
+		}, "")
+	}
+	return res, nil
 }
 
 func (d *Daemon) handleContextRetrieve(params json.RawMessage) (any, error) {
 	var p struct {
-		Hash  string `json:"hash"`
-		Ref   string `json:"ref"`
-		Query string `json:"query"`
+		SessionID string `json:"session_id"`
+		TaskID    string `json:"task_id"`
+		Hash      string `json:"hash"`
+		Ref       string `json:"ref"`
+		Query     string `json:"query"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -995,21 +1022,23 @@ func (d *Daemon) handleContextRetrieve(params json.RawMessage) (any, error) {
 	if ref == "" {
 		return nil, fmt.Errorf("hash or ref is required")
 	}
-	if d.headroomMCPConnected() {
-		args := map[string]any{"hash": ref}
-		if strings.TrimSpace(p.Query) != "" {
-			args["query"] = strings.TrimSpace(p.Query)
-		}
-		raw, err := d.mcp.Call(contextengine.ManagedMCPServerName, "headroom_retrieve", args)
-		if err != nil {
-			return nil, err
-		}
-		return parseHeadroomRetrieveResponse(ref, raw), nil
+	if strings.TrimSpace(p.Query) != "" {
+		return nil, fmt.Errorf("context retrieve query is unavailable: pinned Headroom managed MCP supports hash retrieval only")
 	}
 	if d.contextEng == nil {
 		return nil, fmt.Errorf("context engine is not configured")
 	}
-	return d.contextEng.Retrieve(context.Background(), ref)
+	res, err := d.contextEng.Retrieve(context.Background(), ref)
+	if err != nil {
+		return nil, err
+	}
+	if p.SessionID != "" && d.kern != nil {
+		d.record(p.SessionID, "TaskCreated", p.TaskID, "go", map[string]any{
+			"status": "context_retrieved", "engine": res.Engine, "ref": res.Ref, "source": res.Source,
+			"original_bytes": res.OriginalBytes, "sha256": res.SHA256,
+		}, "")
+	}
+	return res, nil
 }
 
 func (d *Daemon) contextStatus() any {
@@ -1024,125 +1053,6 @@ func (d *Daemon) contextDoctor() any {
 		return map[string]any{"ok": true, "status": d.contextStatus()}
 	}
 	return d.contextEng.Doctor()
-}
-
-func (d *Daemon) headroomMCPConnected() bool {
-	if d == nil || d.contextEng == nil || d.mcp == nil {
-		return false
-	}
-	st := d.contextEng.Status()
-	return st.EffectiveEngine == contextengine.ModeHeadroom && st.ManagedMCPConnected
-}
-
-func decodeHeadroomToolOutput(raw string) any {
-	var obj any
-	if json.Unmarshal([]byte(raw), &obj) == nil {
-		return obj
-	}
-	return map[string]any{"text": raw}
-}
-
-func parseHeadroomCompressResponse(original, raw string) contextengine.CompressResponse {
-	res := contextengine.CompressResponse{
-		Content:         raw,
-		OriginalBytes:   len(original),
-		CompressedBytes: len(raw),
-		Ratio:           compressionRatio(len(original), len(raw)),
-		Engine:          contextengine.ModeHeadroom,
-	}
-	sum := sha256.Sum256([]byte(original))
-	res.OriginalSHA256 = hex.EncodeToString(sum[:])
-	var obj map[string]any
-	if json.Unmarshal([]byte(raw), &obj) != nil {
-		return res
-	}
-	if s, ok := headroomStringField(obj, "compressed"); ok {
-		res.Content = s
-		res.CompressedBytes = len(s)
-		res.Ratio = compressionRatio(len(original), len(s))
-	}
-	if s, ok := headroomStringField(obj, "hash"); ok {
-		res.OriginalRef = s
-	}
-	if n, ok := numberField(obj, "original_tokens"); ok {
-		res.OriginalTokens = int(n)
-	}
-	if n, ok := numberField(obj, "compressed_tokens"); ok {
-		res.CompressedTokens = int(n)
-	}
-	if n, ok := numberField(obj, "savings_percent"); ok {
-		res.SavingsPercent = n
-	}
-	if transforms, ok := headroomStringSliceField(obj, "transforms"); ok {
-		res.Transforms = transforms
-	}
-	return res
-}
-
-func parseHeadroomRetrieveResponse(ref, raw string) contextengine.RetrieveResponse {
-	res := contextengine.RetrieveResponse{Ref: ref, Content: raw, OriginalBytes: len(raw), Engine: contextengine.ModeHeadroom}
-	var obj map[string]any
-	if json.Unmarshal([]byte(raw), &obj) != nil {
-		sum := sha256.Sum256([]byte(raw))
-		res.SHA256 = hex.EncodeToString(sum[:])
-		return res
-	}
-	if s, ok := headroomStringField(obj, "original_content"); ok {
-		res.Content = s
-		res.OriginalBytes = len(s)
-		sum := sha256.Sum256([]byte(s))
-		res.SHA256 = hex.EncodeToString(sum[:])
-	}
-	if s, ok := headroomStringField(obj, "source"); ok {
-		res.Source = s
-	}
-	if results, ok := obj["results"]; ok {
-		res.Results = results
-		if res.Content == "" {
-			if b, err := json.MarshalIndent(results, "", "  "); err == nil {
-				res.Content = string(b)
-				res.OriginalBytes = len(res.Content)
-			}
-		}
-	}
-	return res
-}
-
-func compressionRatio(original, compressed int) float64 {
-	if original <= 0 {
-		return 1
-	}
-	return float64(compressed) / float64(original)
-}
-
-func headroomStringField(obj map[string]any, key string) (string, bool) {
-	v, ok := obj[key].(string)
-	return v, ok
-}
-
-func numberField(obj map[string]any, key string) (float64, bool) {
-	switch v := obj[key].(type) {
-	case float64:
-		return v, true
-	case int:
-		return float64(v), true
-	default:
-		return 0, false
-	}
-}
-
-func headroomStringSliceField(obj map[string]any, key string) ([]string, bool) {
-	raw, ok := obj[key].([]any)
-	if !ok {
-		return nil, false
-	}
-	out := make([]string, 0, len(raw))
-	for _, v := range raw {
-		if s, ok := v.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out, true
 }
 
 func (d *Daemon) handleMetrics(_ json.RawMessage) (any, error) {
@@ -1595,6 +1505,9 @@ func (d *Daemon) handleMemoryWrite(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if approved, ok := d.approveFromStoredGrant(sess, decision); ok {
+		decision = approved
+	}
 	switch decision.Decision {
 	case "denied":
 		return map[string]any{"decision": decision}, nil
@@ -1852,11 +1765,22 @@ func (d *Daemon) handleTaskSteer(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
+	p.TaskID = strings.TrimSpace(p.TaskID)
+	p.Message = strings.TrimSpace(p.Message)
 	if p.TaskID == "" || p.Message == "" {
 		return nil, fmt.Errorf("task_id and message are required")
 	}
+	task, ok := d.sched.Get(p.TaskID)
+	if !ok {
+		return nil, fmt.Errorf("unknown task %s", p.TaskID)
+	}
+	switch task.Status {
+	case "queued", "running", "waiting_approval":
+	default:
+		return nil, fmt.Errorf("task %s is %s and cannot be steered", p.TaskID, task.Status)
+	}
 	d.steer(p.TaskID, p.Message)
-	return map[string]any{"queued": true}, nil
+	return map[string]any{"queued": true, "task_id": p.TaskID, "status": task.Status}, nil
 }
 
 func (d *Daemon) steer(taskID, message string) {
@@ -2034,12 +1958,17 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 		DecisionID string `json:"decision_id"`
 		Approver   string `json:"approver"`
 		Role       string `json:"role"`
+		Scope      string `json:"scope"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
 	if p.Approver == "" {
 		p.Approver = "user"
+	}
+	scope, err := normalizeApprovalScope(p.Scope)
+	if err != nil {
+		return nil, err
 	}
 	// A patch gate's approval window is enforced regardless of call order:
 	// checkPatchGate only discovers an elapsed window when
@@ -2056,16 +1985,41 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	actualScope := scope
+	grantError := ""
+	if decision.Decision == "allowed" && scope != approvalScopeOnce {
+		sess, ok := d.store.Get(p.SessionID)
+		if !ok {
+			actualScope = approvalScopeOnce
+			grantError = "unknown session " + p.SessionID
+		} else if err := d.rememberApprovalGrant(sess, decision, scope, p.Approver, p.Role); err != nil {
+			actualScope = approvalScopeOnce
+			grantError = err.Error()
+			d.record(p.SessionID, "ToolApproved", "", "go", map[string]any{
+				"status": "approval_grant_failed", "requested_scope": scope, "error": grantError,
+			}, p.DecisionID)
+		}
+	}
+	response := func(result any) map[string]any {
+		out := map[string]any{"decision": decision, "scope": actualScope}
+		if result != nil {
+			out["result"] = result
+		}
+		if grantError != "" {
+			out["grant_error"] = grantError
+		}
+		return out
+	}
 	// Unblock a live awaitInteractiveApproval wait on this decision (an
 	// agent-originated requires_approval pause), if one is pending. This is
 	// the RPC surface the TUI's approval overlay calls (task.action.approve)
 	// — it must resolve the same wait task.approval.resolve does, or the
 	// operator's verdict is recorded as allowed while the gated action still
 	// times out to denied.
-	d.signalPendingApproval(p.DecisionID, decision, decision.Decision == "allowed")
+	d.signalPendingApproval(p.DecisionID, decision, decision.Decision == "allowed", actualScope)
 	// A role-rejected approval does not execute the pending command.
 	if decision.Decision != "allowed" {
-		return map[string]any{"decision": decision}, nil
+		return response(nil), nil
 	}
 
 	// If the approval unblocks a queued command, execute it now.
@@ -2078,7 +2032,7 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"decision": decision, "result": result}, nil
+		return response(result), nil
 	}
 	d.mu.Lock()
 	memPending, ok := d.pendingMemWrites[p.DecisionID]
@@ -2093,7 +2047,7 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"decision": decision, "result": result}, nil
+		return response(result), nil
 	}
 	// If the approval resolves a patch gate, unlock the apply for that patch.
 	d.mu.Lock()
@@ -2102,10 +2056,12 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 			gate.status = "allowed"
 		}
 		d.mu.Unlock()
-		return map[string]any{"decision": decision, "patch_id": patchID}, nil
+		out := response(nil)
+		out["patch_id"] = patchID
+		return out, nil
 	}
 	d.mu.Unlock()
-	return map[string]any{"decision": decision}, nil
+	return response(nil), nil
 }
 
 func (d *Daemon) handleDeny(params json.RawMessage) (any, error) {
@@ -2128,7 +2084,7 @@ func (d *Daemon) handleDeny(params json.RawMessage) (any, error) {
 	// Unblock a live awaitInteractiveApproval wait on this decision, same as
 	// handleApprove — a TUI deny must resolve the agent's pause immediately,
 	// not leave it to time out.
-	d.signalPendingApproval(p.DecisionID, denied, false)
+	d.signalPendingApproval(p.DecisionID, denied, false, approvalScopeOnce)
 	d.mu.Lock()
 	delete(d.pendingCmds, p.DecisionID)
 	delete(d.pendingMemWrites, p.DecisionID)
@@ -2394,6 +2350,11 @@ func (d *Daemon) registerPatchGate(sessionID, patchID, taskID string) (*kernel.D
 	if err != nil {
 		return nil, err
 	}
+	if sess, ok := d.store.Get(sessionID); ok {
+		if approved, matched := d.approveFromStoredGrant(sess, decision); matched {
+			decision = approved
+		}
+	}
 	d.mu.Lock()
 	d.sweepPatchGatesLocked()
 	d.patchGates[patchID] = &patchGate{
@@ -2629,6 +2590,9 @@ func (d *Daemon) handleCommandExec(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if approved, ok := d.approveFromStoredGrant(sess, decision); ok {
+		decision = approved
+	}
 	switch decision.Decision {
 	case "denied":
 		return map[string]any{"decision": decision}, nil
@@ -2811,18 +2775,35 @@ func (d *Daemon) handleWorkerRegister(params json.RawMessage) (any, error) {
 	if p.Kind == "" {
 		p.Kind = "remote"
 	}
-	return d.pool.Register(p.Name, worker.Kind(p.Kind)), nil
+	kind := worker.Kind(p.Kind)
+	switch kind {
+	case worker.Remote, worker.CI, worker.Sandbox:
+	default:
+		return nil, fmt.Errorf("unsupported worker kind %q", p.Kind)
+	}
+	w, credential, err := d.pool.RegisterAuthenticated(strings.TrimSpace(p.Name), kind)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"worker_id":         w.WorkerID,
+		"worker_credential": credential,
+	}, nil
 }
 
 func (d *Daemon) handleWorkerHeartbeat(params json.RawMessage) (any, error) {
 	var p struct {
-		WorkerID string `json:"worker_id"`
+		WorkerID         string `json:"worker_id"`
+		WorkerCredential string `json:"worker_credential"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if err := d.pool.Heartbeat(p.WorkerID); err != nil {
+	if err := d.authenticateWorker(p.WorkerID, p.WorkerCredential); err != nil {
 		return nil, err
+	}
+	if err := d.pool.Heartbeat(p.WorkerID); err != nil {
+		return nil, fmt.Errorf("%s", workerAuthenticationError)
 	}
 	return map[string]any{"ok": true}, nil
 }
@@ -2833,13 +2814,17 @@ func (d *Daemon) handleWorkerList(_ json.RawMessage) (any, error) {
 
 func (d *Daemon) handleWorkerRevoke(params json.RawMessage) (any, error) {
 	var p struct {
-		WorkerID string `json:"worker_id"`
+		WorkerID         string `json:"worker_id"`
+		WorkerCredential string `json:"worker_credential"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if err := d.pool.Revoke(p.WorkerID); err != nil {
+	if err := d.authenticateWorker(p.WorkerID, p.WorkerCredential); err != nil {
 		return nil, err
+	}
+	if err := d.pool.Revoke(p.WorkerID); err != nil {
+		return nil, fmt.Errorf("%s", workerAuthenticationError)
 	}
 	return map[string]any{"ok": true}, nil
 }

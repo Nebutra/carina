@@ -30,6 +30,7 @@ const toolsHelp = `Available tools:
 - {"tool":"run","command":["prog","arg"]}      run a command (sandboxed; risky commands are denied)
 - {"tool":"patch","path":"rel/path","content":"FULL new file content"}   propose+apply an edit (transactional, rollbackable)
 - {"tool":"memory","target":"memory|user","action":"add|replace|remove|batch","content":"fact","old_text":"unique substring","operations":[...]}   update governed long-term memory
+- {"tool":"ask_user","prompt":"Which approach should I use?","options":[{"label":"Minimal fix","value":"minimal","description":"Smallest safe change"},{"label":"Refactor","value":"refactor"}]}   pause for a structured operator choice
 - {"tool":"code.search","query":"free text or identifier"}      ranked code search (BM25+exact)
 - {"tool":"code.symbols","name":"SymbolName"}                   definitions + references
 - {"tool":"code.map"}                                           compact ranked repo map
@@ -72,17 +73,19 @@ Writes (patch/run/memory) must stay one action per turn — never put them in a 
 // from the top level (flat form the model naturally emits) or from a nested
 // "action" object (see parseAction).
 type action struct {
-	Thought    string            `json:"thought"`
-	Tool       string            `json:"tool"`
-	Action     json.RawMessage   `json:"action,omitempty"`
-	Path       string            `json:"path"`
-	Pattern    string            `json:"pattern"`
-	Command    []string          `json:"command"`
-	Content    string            `json:"content"`
-	Summary    string            `json:"summary"`
-	Target     string            `json:"target"`
-	OldText    string            `json:"old_text"`
-	Operations []memoryOperation `json:"operations,omitempty"`
+	Thought    string               `json:"thought"`
+	Tool       string               `json:"tool"`
+	Action     json.RawMessage      `json:"action,omitempty"`
+	Path       string               `json:"path"`
+	Pattern    string               `json:"pattern"`
+	Command    []string             `json:"command"`
+	Content    string               `json:"content"`
+	Summary    string               `json:"summary"`
+	Target     string               `json:"target"`
+	OldText    string               `json:"old_text"`
+	Operations []memoryOperation    `json:"operations,omitempty"`
+	Prompt     string               `json:"prompt,omitempty"`
+	Options    []userQuestionOption `json:"options,omitempty"`
 	// code intelligence tools (code.search / code.symbols)
 	Query string `json:"query"`
 	Name  string `json:"name"`
@@ -158,9 +161,14 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 	verifyAttempts := 0
 	// A cheap summarizer for compaction: reuse the reasoner on the head.
 	summarize := func(head string) (string, error) {
-		return thinkWithRetry(ctx, d.summarizeReasoner(),
-			"Summarize this agent transcript in <=200 words, keeping: the task, decisions made, "+
-				"patches applied (ids), unresolved errors. Drop raw tool output.\n\n"+head)
+		prompt := "Summarize this agent transcript in <=200 words, keeping: the task, decisions made, " +
+			"patches applied (ids), unresolved errors. Drop raw tool output.\n\n" + head
+		result, err := thinkWithRetryModelResult(ctx, d.summarizeReasoner(), "", prompt)
+		if err == nil {
+			_ = d.usage.record(sess.SessionID, task.TaskID, result.Usage)
+			d.sched.AddTokens(task.TaskID, result.Usage.totalTokens())
+		}
+		return result.Text, err
 	}
 
 	// Persistent project/user instructions are prepended to the system prompt
@@ -213,9 +221,11 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		// consuming a real turn (up to maxRequeries).
 		var act action
 		var raw string
+		turnTokens := 0
 		ok := false
 		for requery := 0; requery <= maxRequeries; requery++ {
 			var err error
+			var result ReasonerResult
 			requestedModel := taskModel(task)
 			promptHash := sha256Hex(prompt)
 			evidenceID := routingEvidenceID(task.TaskID, turn, requery, promptHash)
@@ -227,7 +237,12 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 				"prompt_sha256":          promptHash,
 			}, "")
 			started := time.Now()
-			raw, err = thinkWithRetryModel(ctx, d.reasoner, task.Model, prompt)
+			if requery == 0 {
+				result, err = thinkWithRetryModelSegments(ctx, d.reasoner, task.Model, seg)
+			} else {
+				result, err = thinkWithRetryModelResult(ctx, d.reasoner, task.Model, prompt)
+			}
+			raw = result.Text
 			outcome := map[string]any{
 				"turn": turn, "requery": requery, "requested_model": requestedModel,
 				"reasoner": d.reasoner.Name(), "latency_ms": time.Since(started).Milliseconds(),
@@ -240,7 +255,13 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 				outcome["error"] = truncate(err.Error(), 300)
 			} else {
 				outcome["status"] = "succeeded"
-				outcome["output_tokens_estimated"] = estimateTokens(raw)
+				outcome["provider"] = result.Usage.Provider
+				outcome["model"] = result.Usage.Model
+				outcome["input_tokens"] = result.Usage.InputTokens
+				outcome["output_tokens"] = result.Usage.OutputTokens
+				outcome["cache_read_tokens"] = result.Usage.CacheReadTokens
+				outcome["cache_write_tokens"] = result.Usage.CacheWriteTokens
+				outcome["usage_estimated"] = result.Usage.Estimated
 				outcome["response_sha256"] = sha256Hex(raw)
 			}
 			d.record(sess.SessionID, "RoutingOutcome", task.TaskID, "go", outcome, "")
@@ -248,8 +269,10 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 				d.degrade(sess, task, tr, "reasoner error: "+err.Error())
 				return
 			}
+			_ = d.usage.record(sess.SessionID, task.TaskID, result.Usage)
+			turnTokens += result.Usage.totalTokens()
 			d.record(sess.SessionID, "ModelResponded", task.TaskID, "model",
-				map[string]any{"turn": turn, "text": sanitizeModelResponseForAudit(raw)}, "")
+				map[string]any{"turn": turn, "text": sanitizeModelResponseForAudit(raw), "usage": result.Usage}, "")
 			a, perr := parseAction(raw)
 			if perr == nil {
 				act, ok = a, true
@@ -265,7 +288,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 
 		// Meter token spend and enforce the per-task budget (safety brake for
 		// runaway autonomous loops).
-		d.sched.AddTokens(task.TaskID, estimateTokens(prompt)+estimateTokens(raw))
+		d.sched.AddTokens(task.TaskID, turnTokens)
 		if mtt := d.maxTaskTokens.Load(); mtt > 0 {
 			if t, ok := d.sched.Get(task.TaskID); ok && int64(t.TokensUsed) > mtt {
 				d.degrade(sess, task, tr, fmt.Sprintf("token budget exceeded (%d > %d tokens)", t.TokensUsed, mtt))
@@ -341,9 +364,14 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 				continue
 			}
 			obs := d.executeBatch(sess, task, act.Actions)
+			compressedObs, err := d.compressObservation(ctx, sess, task, turn, "batch", obs, false)
+			if err != nil {
+				d.degrade(sess, task, tr, "context compression failed: "+err.Error())
+				return
+			}
 			guard.tick() // reads make no edit
 			tr.addTurn(Turn{Thought: act.Thought, Tool: "batch",
-				ActionBrief: briefBatch(act.Actions), Obs: Observation{Content: obs}})
+				ActionBrief: briefBatch(act.Actions), Obs: compressedObs})
 			d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot})
 			continue
 		}
@@ -365,13 +393,18 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 
 		obs := d.executeAction(sess, task, &act)
 		pinned := act.Tool == "run" || act.Tool == "patch" // keep test/patch results
+		compressedObs, err := d.compressObservation(ctx, sess, task, turn, act.Tool, obs, pinned)
+		if err != nil {
+			d.degrade(sess, task, tr, "context compression failed: "+err.Error())
+			return
+		}
 		if act.Tool == "patch" && strings.Contains(obs, "applied") {
 			guard.madeProgress()
 		} else {
 			guard.tick()
 		}
 		tr.addTurn(Turn{Thought: act.Thought, Tool: act.Tool,
-			ActionBrief: briefAction(&act), Obs: Observation{Content: obs, Pinned: pinned}})
+			ActionBrief: briefAction(&act), Obs: compressedObs})
 		// Checkpoint after each completed turn so a crash can resume here.
 		d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot})
 	}
@@ -457,6 +490,8 @@ func briefAction(a *action) string {
 		return "search " + a.Pattern
 	case "run":
 		return "run [" + strings.Join(a.Command, " ") + "]"
+	case "ask_user":
+		return "ask_user " + brief(a.Prompt, 80)
 	case "code.search":
 		return "code.search " + a.Query
 	case "code.symbols":
@@ -625,6 +660,9 @@ func (d *Daemon) dispatchAction(sess *sessionstore.Session, task *scheduler.Task
 
 	case "memory":
 		return d.agentMemory(sess, task, act)
+
+	case "ask_user":
+		return d.askUser(sess, task, act.Prompt, act.Options)
 
 	case "code.search":
 		return d.agentCodeSearch(sess, task, act)

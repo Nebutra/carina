@@ -1,97 +1,130 @@
 {
-  "$comment": "Carina JSON-RPC 2.0 method registry (MVP draft). Transport: unix socket (~/.carina/daemon.sock) or stdio, newline-delimited JSON. Server->client notifications use method 'event' with an Event payload (see ../schemas/event.schema.json).",
-  "version": "0.1.0",
+  "$comment": "Authoritative Carina JSON-RPC 2.0 registry. Each entry mirrors a daemon MethodDescriptor; params/result document the wire contract. Transport is newline-delimited JSON over the local socket or authenticated Gateway transports.",
+  "version": "1.0.0",
   "apis": {
     "gateway": [
-      { "method": "gateway.hello", "params": { "protocol_version": "number?", "client_id": "string?", "role": "operator|observer|worker|node?", "scopes": "Scope[]?", "token": "string?" }, "result": "GatewayHello" },
-      { "method": "gateway.methods", "params": {}, "result": { "version": "string", "methods": "MethodDescriptor[]" } },
-      { "method": "gateway.resolve_scope", "params": { "method": "string", "params": "object?" }, "result": { "method": "string", "scope": "Scope", "dynamic_scope": "boolean" } },
-      { "method": "gateway.token.issue", "params": { "subject": "string?", "role": "operator|observer|worker|node?", "scopes": "Scope[]", "routes": "string[]?", "ttl_seconds": "number?", "transport": "ws|http|plugin?" }, "result": { "token": "string", "claims": "GatewayTokenClaims" }, "availability": "local-only; registered only when gateway_token_signing_key_file is configured" }
-    ],
-    "session": [
-      { "method": "session.create", "params": { "workspace_root": "string", "profile": "string" }, "result": "Session" },
-      { "method": "session.get", "params": { "session_id": "string" }, "result": "Session" },
-      { "method": "session.list", "params": {}, "result": "Session[]" },
-      { "method": "session.pause", "params": { "session_id": "string" }, "result": "Session" },
-      { "method": "session.resume", "params": { "session_id": "string" }, "result": "Session" },
-      { "method": "session.close", "params": { "session_id": "string" }, "result": "Session" },
-      { "method": "session.export", "params": { "session_id": "string", "format": "jsonl|sqlite" }, "result": { "path": "string" } },
-      { "method": "session.replay", "params": { "session_id": "string" }, "result": "Event[]" },
-      { "method": "session.items", "params": { "session_id": "string" }, "result": "SessionItemEvent[]" }
-    ],
-    "memory": [
-      { "method": "memory.list", "params": { "session_id": "string", "target": "memory|user?" }, "result": "MemoryState", "availability": "local-only" },
-      { "method": "memory.context", "params": { "session_id": "string" }, "result": { "scope": "MemoryScope", "context": "string" }, "availability": "local-only" },
-      { "method": "memory.search", "params": { "session_id": "string", "query": "string", "target": "memory|user?", "limit": "number?", "mode": "lexical|semantic|auto?", "model": "provider/model?" }, "result": "MemorySearchResult", "availability": "local-only; curated entries only; semantic mode uses BYOK embeddings when configured" },
-      { "method": "memory.write", "params": { "session_id": "string", "target": "memory|user?", "action": "add|replace|remove|batch", "content": "string?", "old_text": "string?", "operations": "MemoryOperation[]?" }, "result": "{ decision: PermissionDecision, result?: MemoryWriteResult }", "availability": "local-only; control-plane write; MemoryWrite capability-gated" }
-    ],
-    "schedule": [
-      { "method": "schedule.create", "params": { "session_id": "string", "prompt": "string", "kind": "at|every|cron", "expression": "string" }, "result": "Schedule", "availability": "local-only; control-plane write" },
-      { "method": "schedule.list", "params": {}, "result": "{ schedules: Schedule[] }", "availability": "local-only" },
-      { "method": "schedule.pause", "params": { "schedule_id": "string" }, "result": "Schedule", "availability": "local-only; control-plane write" },
-      { "method": "schedule.resume", "params": { "schedule_id": "string" }, "result": "Schedule", "availability": "local-only; control-plane write" },
-      { "method": "schedule.delete", "params": { "schedule_id": "string" }, "result": "{ deleted: boolean, schedule_id: string }", "availability": "local-only; control-plane write" }
-    ],
-    "context": [
-      { "method": "context.status", "params": {}, "result": "ContextEngineStatus", "availability": "local-only" },
-      { "method": "context.doctor", "params": {}, "result": "{ ok: boolean, status: ContextEngineStatus }", "availability": "local-only" },
-      { "method": "context.stats", "params": {}, "result": "{ local: ContextEngineStats, headroom?: object, headroom_error?: string }", "availability": "local-only" },
-      { "method": "context.compress", "params": { "content": "string", "session_id": "string?", "task_id": "string?", "turn": "number?", "kind": "string?", "tool": "string?", "pinned": "boolean?" }, "result": "ContextCompressResponse", "availability": "local-only diagnostic/write surface" },
-      { "method": "context.retrieve", "params": { "hash": "string?", "ref": "string?", "query": "string?" }, "result": "ContextRetrieveResponse", "availability": "local-only diagnostic surface; not remote-exposed" }
-    ],
-    "task": [
-      { "method": "task.submit", "params": { "session_id": "string", "prompt": "string" }, "result": "Task" },
-      { "method": "task.cancel", "params": { "task_id": "string" }, "result": "Task" },
-      { "method": "task.status", "params": { "task_id": "string" }, "result": "Task" },
-      { "method": "task.events.stream", "params": { "task_id": "string" }, "result": "subscription" },
-      { "method": "task.action.approve", "params": { "session_id": "string", "decision_id": "string", "approver": "string?", "role": "string?" }, "result": "{ decision: PermissionDecision, result?: any }" },
-      { "method": "task.action.deny", "params": { "session_id": "string", "decision_id": "string", "approver": "string?", "reason": "string" }, "result": "PermissionDecision" }
-    ],
-    "workspace": [
-      { "method": "workspace.open", "params": { "root_path": "string" }, "result": "Workspace" },
-      { "method": "workspace.scan", "params": { "workspace_id": "string" }, "result": { "files": "number", "skipped": "number" } },
-      { "method": "workspace.tree", "params": { "workspace_id": "string", "max_depth": "number?" }, "result": "TreeNode[]" },
-      { "method": "workspace.search", "params": { "workspace_id": "string", "pattern": "string", "glob": "string?" }, "result": "Match[]" },
-      { "method": "workspace.file.get", "params": { "workspace_id": "string", "path": "string" }, "result": { "content": "string", "hash": "string" } },
-      { "method": "workspace.patch.propose", "params": { "session_id": "string", "diff": "string", "reason": "string" }, "result": "PatchTransaction" },
-      { "method": "workspace.patch.apply", "params": { "patch_id": "string" }, "result": "PatchTransaction" },
-      { "method": "workspace.patch.rollback", "params": { "patch_id": "string" }, "result": "PatchTransaction" }
-    ],
-    "capability": [
-      { "method": "capability.file.read", "params": { "session_id": "string", "path": "string" }, "result": "PermissionDecision" },
-      { "method": "capability.file.write", "params": { "session_id": "string", "path": "string" }, "result": "PermissionDecision" },
-      { "method": "capability.command.exec", "params": { "session_id": "string", "command": "string" }, "result": "PermissionDecision" },
-      { "method": "capability.network.access", "params": { "session_id": "string", "host": "string" }, "result": "PermissionDecision" },
-      { "method": "capability.secret.read", "params": { "session_id": "string", "name": "string" }, "result": "PermissionDecision" },
-      { "method": "capability.patch.apply", "params": { "session_id": "string", "patch_id": "string" }, "result": "PermissionDecision" }
-    ],
-    "worker": [
-      { "method": "worker.register", "params": { "name": "string", "kind": "local|remote|ci|sandbox" }, "result": { "worker_id": "string" } },
-      { "method": "worker.heartbeat", "params": { "worker_id": "string" }, "result": { "ok": "boolean" } },
-      { "method": "worker.assign", "params": { "worker_id": "string", "task_id": "string" }, "result": "Task" },
-      { "method": "worker.output.stream", "params": { "worker_id": "string" }, "result": "subscription" },
-      { "method": "worker.revoke", "params": { "worker_id": "string" }, "result": { "ok": "boolean" } }
-    ],
-    "backpressure": [
-      { "method": "backpressure.report", "params": { "worker_id": "string", "queue_depth": "number?", "inflight": "number?", "mem_usage_permille": "number?", "proc_load_permille": "number?", "est_drain_ms": "number?", "seq": "number?" }, "result": "{ accepted: boolean, report: PressureReport, directive: ThrottleDirective }", "availability": "remote worker; advisory only; TTL-bound; not a scheduler scoring or authorization input" },
-      { "method": "backpressure.status", "params": {}, "result": "{ reports: PressureReport[], directives: ThrottleDirective[], ttl_seconds: number, scheduler: object }", "availability": "remote read; diagnostic status only" }
-    ],
-    "debug": [
-      { "method": "debug.snapshot", "params": { "limit": "number?", "component": "string?" }, "result": "{ enabled: boolean, events: DebugTraceEvent[], dropped: number, capacity: number }", "availability": "local-only admin; requires enable_debug_rpc; non-authoritative diagnostic side-channel" },
-      { "method": "debug.correlation.search", "params": { "correlation_id": "string", "limit": "number?" }, "result": "{ enabled: boolean, correlation_id: string, events: DebugTraceEvent[], dropped: number, capacity: number }", "availability": "local-only admin; requires enable_debug_rpc; must not feed audit, auth, memory, routing, or scheduling decisions" }
-    ],
-    "command": [
-      { "method": "command.exec", "params": { "session_id": "string", "task_id": "string?", "argv": "string[]" }, "result": { "decision": "PermissionDecision", "result": "CommandResult?" } }
-    ],
-    "audit": [
-      { "method": "audit.report", "params": { "session_id": "string" }, "result": "AuditReport" }
-    ],
-    "stream": [
-      { "method": "session.events.stream", "params": { "session_id": "string" }, "result": "subscription", "notifications": "event" }
+      { "method": "gateway.hello", "scope": "read", "remote": true, "params": { "protocol_version": "number?", "client_id": "string?", "role": "operator|observer|worker|node?", "scopes": "Scope[]?", "token": "string?" }, "result": "GatewayHello" },
+      { "method": "gateway.methods", "scope": "read", "remote": true, "params": {}, "result": "{ version: string, methods: MethodDescriptor[] }" },
+      { "method": "gateway.resolve_scope", "scope": "read", "remote": false, "params": { "method": "string", "params": "object?" }, "result": "{ method: string, scope: Scope, dynamic_scope: boolean }" },
+      { "method": "gateway.token.issue", "scope": "admin", "remote": false, "control_plane_write": true, "conditional": "gateway_token_signing_key_file", "params": { "subject": "string?", "role": "operator|observer|worker|node?", "scopes": "Scope[]", "routes": "string[]?", "ttl_seconds": "number?", "transport": "ws|http|plugin?" }, "result": "{ token: string, claims: GatewayTokenClaims }" }
     ],
     "daemon": [
-      { "method": "daemon.status", "params": {}, "result": { "version": "string", "uptime_seconds": "number", "sessions": "number", "tasks": "number", "workers": "number", "tools": "boolean" } },
-      { "method": "daemon.metrics", "params": {}, "result": { "tasks_by_status": "object", "model_usage": "object", "subscribers": "number" } }
+      { "method": "daemon.status", "scope": "read", "remote": true, "params": {}, "result": "DaemonStatus" },
+      { "method": "daemon.metrics", "scope": "read", "remote": true, "params": {}, "result": "DaemonMetrics" },
+      { "method": "daemon.doctor", "scope": "read", "remote": true, "params": {}, "result": "DoctorReport" },
+      { "method": "daemon.remote.disable", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "on": "boolean" }, "result": "{ remote_disabled: boolean }" },
+      { "method": "daemon.reload", "scope": "admin", "remote": false, "control_plane_write": true, "params": {}, "result": "{ reloaded: boolean }" }
+    ],
+    "usage": [
+      { "method": "usage.cost", "scope": "read", "remote": true, "params": { "session_id": "string?", "task_id": "string?" }, "result": "UsageCostReport" }
+    ],
+    "agent": [
+      { "method": "agent.list", "scope": "read", "remote": true, "params": { "session_id": "string?", "workspace_root": "string?", "include_hidden": "boolean?" }, "result": "{ agents: Agent[] }" }
+    ],
+    "session": [
+      { "method": "session.create", "scope": "write", "remote": false, "params": { "workspace_root": "string", "profile": "string?", "approval_mode": "string?" }, "result": "Session" },
+      { "method": "session.get", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "Session" },
+      { "method": "session.list", "scope": "read", "remote": true, "params": {}, "result": "Session[]" },
+      { "method": "session.pause", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "Session" },
+      { "method": "session.resume", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "Session" },
+      { "method": "session.close", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "Session" },
+      { "method": "session.replay", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "Event[]" },
+      { "method": "session.items", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "SessionItemEvent[]" },
+      { "method": "session.attach", "scope": "read", "remote": true, "params": { "session_id": "string", "since": "number?" }, "result": "{ events: Event[], from: number, cursor: number }" },
+      { "method": "session.fork", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "Session" },
+      { "method": "session.plan_mode", "scope": "write", "remote": false, "params": { "session_id": "string", "on": "boolean" }, "result": "{ session_id: string, plan_mode: boolean }" },
+      { "method": "session.approve_plan", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "object" },
+      { "method": "session.add_dir", "scope": "admin", "remote": false, "dynamic_scope": true, "control_plane_write": true, "params": { "session_id": "string", "path": "string" }, "result": "object" },
+      { "method": "session.events.stream", "scope": "stream", "remote": true, "stream": true, "params": { "session_id": "string" }, "result": "subscription", "notifications": "event" }
+    ],
+    "task": [
+      { "method": "task.submit", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string", "agent": "string?", "model": "string?" }, "result": "Task" },
+      { "method": "task.status", "scope": "read", "remote": true, "params": { "task_id": "string" }, "result": "Task" },
+      { "method": "task.list", "scope": "read", "remote": true, "params": { "session_id": "string?" }, "result": "Task[]" },
+      { "method": "task.result", "scope": "read", "remote": true, "params": { "task_id": "string" }, "result": "TaskResult" },
+      { "method": "task.cancel", "scope": "write", "remote": false, "params": { "task_id": "string" }, "result": "Task" },
+      { "method": "task.steer", "scope": "write", "remote": false, "params": { "task_id": "string", "message": "string" }, "result": "{ queued: boolean, task_id: string, status: string }" },
+      { "method": "task.action.approve", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "decision_id": "string", "approver": "string?", "role": "string?", "scope": "once|session|project?" }, "result": "object" },
+      { "method": "task.action.deny", "scope": "admin", "remote": false, "dynamic_scope": true, "control_plane_write": true, "params": { "session_id": "string", "decision_id": "string", "approver": "string?", "reason": "string" }, "result": "PermissionDecision" },
+      { "method": "task.approval.resolve", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "decision_id": "string", "allow": "boolean", "approver": "string?", "scope": "once|session|project?" }, "result": "object" },
+      { "method": "task.user.answer", "scope": "write", "remote": false, "params": { "question_id": "string", "value": "string" }, "result": "{ question_id: string, accepted: boolean, value: string }" },
+      { "method": "task.user.pending", "scope": "read", "remote": false, "params": {}, "result": "{ question_ids: string[] }" },
+      { "method": "task.btw", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string" }, "result": "Task" }
+    ],
+    "history": [
+      { "method": "history.recent", "scope": "read", "remote": false, "params": { "limit": "number?" }, "result": "{ entries: HistoryEntry[] }" }
+    ],
+    "memory": [
+      { "method": "memory.list", "scope": "read", "remote": false, "params": { "session_id": "string", "target": "memory|user?" }, "result": "MemoryState" },
+      { "method": "memory.context", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ scope: MemoryScope, context: string }" },
+      { "method": "memory.search", "scope": "read", "remote": false, "params": { "session_id": "string", "query": "string", "target": "memory|user?", "limit": "number?", "mode": "lexical|semantic|auto?", "model": "provider/model?" }, "result": "MemorySearchResult" },
+      { "method": "memory.status", "scope": "read", "remote": false, "params": { "session_id": "string?" }, "result": "MemoryStatus" },
+      { "method": "memory.write", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "target": "memory|user?", "action": "add|replace|remove|batch", "content": "string?", "old_text": "string?", "operations": "MemoryOperation[]?" }, "result": "object" }
+    ],
+    "schedule": [
+      { "method": "schedule.create", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "prompt": "string", "kind": "at|every|cron", "expression": "string" }, "result": "Schedule" },
+      { "method": "schedule.list", "scope": "read", "remote": false, "params": {}, "result": "{ schedules: Schedule[] }" },
+      { "method": "schedule.pause", "scope": "write", "remote": false, "control_plane_write": true, "params": { "schedule_id": "string" }, "result": "Schedule" },
+      { "method": "schedule.resume", "scope": "write", "remote": false, "control_plane_write": true, "params": { "schedule_id": "string" }, "result": "Schedule" },
+      { "method": "schedule.delete", "scope": "write", "remote": false, "control_plane_write": true, "params": { "schedule_id": "string" }, "result": "{ deleted: boolean, schedule_id: string }" }
+    ],
+    "context": [
+      { "method": "context.status", "scope": "read", "remote": false, "params": {}, "result": "ContextEngineStatus" },
+      { "method": "context.doctor", "scope": "read", "remote": false, "params": {}, "result": "{ ok: boolean, status: ContextEngineStatus }" },
+      { "method": "context.stats", "scope": "read", "remote": false, "params": {}, "result": "ContextEngineStats" },
+      { "method": "context.retrieve", "scope": "read", "remote": false, "params": { "hash": "string?", "ref": "string?" }, "result": "ContextRetrieveResponse" },
+      { "method": "context.compress", "scope": "write", "remote": false, "params": { "content": "string", "session_id": "string?", "task_id": "string?", "turn": "number?", "kind": "string?", "tool": "string?", "pinned": "boolean?" }, "result": "ContextCompressResponse" }
+    ],
+    "workspace": [
+      { "method": "workspace.tree", "scope": "read", "remote": false, "params": { "session_id": "string", "max_depth": "number?" }, "result": "TreeNode[]" },
+      { "method": "workspace.search", "scope": "read", "remote": false, "params": { "session_id": "string", "pattern": "string", "glob": "string?" }, "result": "Match[]" },
+      { "method": "workspace.file.get", "scope": "read", "remote": false, "params": { "session_id": "string", "path": "string" }, "result": "{ content: string, hash: string }" },
+      { "method": "workspace.trust", "scope": "admin", "remote": false, "dynamic_scope": true, "control_plane_write": true, "params": { "session_id": "string", "trusted": "boolean" }, "result": "object" },
+      { "method": "workspace.patch.propose", "scope": "write", "remote": false, "dynamic_scope": true, "params": { "session_id": "string", "diff": "string?", "files": "PatchFile[]?", "reason": "string?" }, "result": "PatchTransaction" },
+      { "method": "workspace.patch.apply", "scope": "write", "remote": false, "params": { "session_id": "string?", "patch_id": "string" }, "result": "PatchTransaction" },
+      { "method": "workspace.patch.rollback", "scope": "write", "remote": false, "params": { "session_id": "string?", "patch_id": "string" }, "result": "PatchTransaction" },
+      { "method": "workspace.patch.list", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "PatchTransaction[]" },
+      { "method": "workspace.patch.show", "scope": "read", "remote": false, "params": { "session_id": "string", "patch_id": "string" }, "result": "PatchTransaction" }
+    ],
+    "command": [
+      { "method": "command.list", "scope": "read", "remote": true, "params": {}, "result": "{ commands: Command[] }" },
+      { "method": "command.exec", "scope": "write", "remote": false, "params": { "session_id": "string", "task_id": "string?", "argv": "string[]" }, "result": "{ decision: PermissionDecision, result: CommandResult? }" }
+    ],
+    "audit": [
+      { "method": "audit.report", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "AuditReport" },
+      { "method": "audit.export", "scope": "read", "remote": true, "params": { "session_id": "string", "format": "jsonl|sqlite?" }, "result": "object" },
+      { "method": "audit.verify", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "AuditVerification" }
+    ],
+    "profile": [
+      { "method": "profile.describe", "scope": "read", "remote": true, "params": { "profile": "string?", "session_id": "string?" }, "result": "PermissionProfile" }
+    ],
+    "secret": [
+      { "method": "secret.grant", "scope": "admin", "remote": false, "control_plane_write": true, "params": "object", "result": "object" },
+      { "method": "secret.request", "scope": "admin", "remote": false, "control_plane_write": true, "params": "object", "result": "object" }
+    ],
+    "plugin": [
+      { "method": "plugin.inspect", "scope": "read", "remote": false, "params": "object", "result": "object" },
+      { "method": "plugin.run", "scope": "admin", "remote": false, "control_plane_write": true, "params": "object", "result": "object" }
+    ],
+    "worker": [
+      { "method": "worker.register", "scope": "worker", "remote": true, "params": { "name": "string", "kind": "remote|ci|sandbox?" }, "result": "{ worker_id: string, worker_credential: string } (credential returned once; server stores only a hash)" },
+      { "method": "worker.heartbeat", "scope": "worker", "remote": true, "params": { "worker_id": "string", "worker_credential": "string" }, "result": "{ ok: boolean }" },
+      { "method": "worker.list", "scope": "read", "remote": true, "params": {}, "result": "Worker[]" },
+      { "method": "worker.revoke", "scope": "worker", "remote": true, "control_plane_write": true, "params": { "worker_id": "string", "worker_credential": "string" }, "result": "{ ok: boolean }" }
+    ],
+    "backpressure": [
+      { "method": "backpressure.report", "scope": "worker", "remote": true, "params": "PressureReport + { worker_credential: string }", "result": "{ accepted: boolean, report: PressureReport, directive: ThrottleDirective }" },
+      { "method": "backpressure.status", "scope": "read", "remote": true, "params": {}, "result": "BackpressureStatus" }
+    ],
+    "work": [
+      { "method": "work.submit", "scope": "admin", "remote": false, "control_plane_write": true, "params": "WorkSubmission", "result": "WorkItem" },
+      { "method": "work.poll", "scope": "worker", "remote": true, "params": { "worker_id": "string", "worker_credential": "string", "ttl_ms": "number?" }, "result": "WorkLease?" },
+      { "method": "work.renew", "scope": "worker", "remote": true, "params": { "worker_id": "string", "worker_credential": "string", "task_id": "string", "ttl_ms": "number?" }, "result": "{ ok: boolean, cancelled: boolean? }" },
+      { "method": "work.report", "scope": "worker", "remote": true, "params": "WorkReport + { worker_credential: string }", "result": "{ ok: boolean }" }
+    ],
+    "debug": [
+      { "method": "debug.snapshot", "scope": "admin", "remote": false, "params": { "limit": "number?", "component": "string?" }, "result": "DebugSnapshot" },
+      { "method": "debug.correlation.search", "scope": "admin", "remote": false, "params": { "correlation_id": "string", "limit": "number?" }, "result": "DebugSnapshot" }
     ]
   }
 }

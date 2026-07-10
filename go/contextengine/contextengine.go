@@ -7,8 +7,7 @@ package contextengine
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -84,6 +83,9 @@ type Stats struct {
 	Phase            string `json:"phase"`
 	CompressionCalls int64  `json:"compression_calls"`
 	RetrievalCalls   int64  `json:"retrieval_calls"`
+	FallbackCalls    int64  `json:"fallback_calls,omitempty"`
+	Headroom         any    `json:"headroom,omitempty"`
+	HeadroomError    string `json:"headroom_error,omitempty"`
 }
 
 type Status struct {
@@ -99,6 +101,12 @@ type Status struct {
 	HeadroomTokenBudget int    `json:"headroom_token_budget,omitempty"`
 	ManagedMCPConnected bool   `json:"managed_mcp_connected,omitempty"`
 	ManagedMCPServer    string `json:"managed_mcp_server,omitempty"`
+	AdapterReady        bool   `json:"adapter_ready,omitempty"`
+	CompressAvailable   bool   `json:"compress_available,omitempty"`
+	RetrieveAvailable   bool   `json:"retrieve_available,omitempty"`
+	StatsAvailable      bool   `json:"stats_available,omitempty"`
+	Degraded            bool   `json:"degraded,omitempty"`
+	LastError           string `json:"last_error,omitempty"`
 	Reason              string `json:"reason,omitempty"`
 }
 
@@ -117,12 +125,22 @@ type Engine interface {
 	Close() error
 }
 
+// ManagedMCPAdapter is the narrow private bridge from the context engine to
+// Carina's MCP manager. ToolSchemas must reflect the actual tools/list response;
+// the engine refuses to guess names or argument shapes.
+type ManagedMCPAdapter interface {
+	ToolSchemas(server string) (map[string]json.RawMessage, error)
+	CallContext(context.Context, string, string, map[string]any) (string, error)
+}
+
 type Manager struct {
 	mu               sync.Mutex
 	cfg              Config
 	status           Status
 	compressionCalls int64
 	retrievalCalls   int64
+	fallbackCalls    int64
+	adapter          ManagedMCPAdapter
 }
 
 func DefaultConfig(stateDir string) Config {
@@ -299,38 +317,76 @@ func bundledCandidates() []string {
 	return out
 }
 
-func (m *Manager) Compress(_ context.Context, req CompressRequest) (CompressResponse, error) {
+func (m *Manager) Compress(ctx context.Context, req CompressRequest) (CompressResponse, error) {
 	m.mu.Lock()
 	m.compressionCalls++
-	engine := m.status.EffectiveEngine
+	status := m.status
+	adapter := m.adapter
 	m.mu.Unlock()
-	sum := sha256.Sum256([]byte(req.Content))
-	return CompressResponse{
-		Content:         req.Content,
-		OriginalSHA256:  hex.EncodeToString(sum[:]),
-		OriginalBytes:   len(req.Content),
-		CompressedBytes: len(req.Content),
-		Ratio:           1,
-		Engine:          engine,
-	}, nil
+	if req.Pinned || status.EffectiveEngine != ModeHeadroom {
+		return noopCompressResponse(req.Content, status.EffectiveEngine), nil
+	}
+	if !status.AdapterReady || !status.CompressAvailable || adapter == nil {
+		return m.compressionFailure(req.Content, fmt.Errorf("managed Headroom compression adapter is unavailable"))
+	}
+	raw, err := adapter.CallContext(ctx, ManagedMCPServerName, "headroom_compress", map[string]any{"content": req.Content})
+	if err != nil {
+		return m.compressionFailure(req.Content, err)
+	}
+	res, err := parseHeadroomCompress(req.Content, raw)
+	if err != nil {
+		return m.compressionFailure(req.Content, err)
+	}
+	return res, nil
 }
 
-func (m *Manager) Retrieve(_ context.Context, ref string) (RetrieveResponse, error) {
+func (m *Manager) Retrieve(ctx context.Context, ref string) (RetrieveResponse, error) {
 	m.mu.Lock()
 	m.retrievalCalls++
+	status := m.status
+	adapter := m.adapter
 	m.mu.Unlock()
-	return RetrieveResponse{}, fmt.Errorf("contextengine: retrieve %q unavailable in discovery phase", ref)
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return RetrieveResponse{}, fmt.Errorf("contextengine: retrieve ref is required")
+	}
+	if status.EffectiveEngine != ModeHeadroom || !status.AdapterReady || !status.RetrieveAvailable || adapter == nil {
+		return RetrieveResponse{}, fmt.Errorf("contextengine: retrieve %q unavailable: managed Headroom did not advertise headroom_retrieve", ref)
+	}
+	raw, err := adapter.CallContext(ctx, ManagedMCPServerName, "headroom_retrieve", map[string]any{"hash": ref})
+	if err != nil {
+		return RetrieveResponse{}, fmt.Errorf("contextengine: headroom retrieve: %w", err)
+	}
+	return parseHeadroomRetrieve(ref, raw)
 }
 
-func (m *Manager) Stats(context.Context) (Stats, error) {
+func (m *Manager) Stats(ctx context.Context) (Stats, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	return Stats{
+	stats := Stats{
 		Engine:           m.status.EffectiveEngine,
 		Phase:            m.status.Phase,
 		CompressionCalls: m.compressionCalls,
 		RetrievalCalls:   m.retrievalCalls,
-	}, nil
+		FallbackCalls:    m.fallbackCalls,
+	}
+	adapter := m.adapter
+	available := m.status.EffectiveEngine == ModeHeadroom && m.status.AdapterReady && m.status.StatsAvailable
+	m.mu.Unlock()
+	if !available || adapter == nil {
+		return stats, nil
+	}
+	raw, err := adapter.CallContext(ctx, ManagedMCPServerName, "headroom_stats", nil)
+	if err != nil {
+		stats.HeadroomError = err.Error()
+		return stats, nil
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		stats.HeadroomError = "invalid headroom_stats JSON: " + err.Error()
+		return stats, nil
+	}
+	stats.Headroom = decoded
+	return stats, nil
 }
 
 func (m *Manager) Status() Status {
@@ -341,10 +397,11 @@ func (m *Manager) Status() Status {
 
 func (m *Manager) Doctor() map[string]any {
 	st := m.Status()
-	ok := st.ConfiguredEngine != ModeHeadroom || (st.HeadroomAvailable && (st.HeadroomMode != HeadroomModeManagedMCP || st.ManagedMCPConnected))
+	ok := st.ConfiguredEngine != ModeHeadroom || (st.HeadroomAvailable && st.ManagedMCPConnected && st.AdapterReady && st.CompressAvailable && st.Phase != PhaseFailed && st.LastError == "")
 	return map[string]any{
-		"ok":     ok,
-		"status": st,
+		"ok":       ok,
+		"degraded": st.Degraded,
+		"status":   st,
 	}
 }
 
@@ -375,12 +432,30 @@ func (m *Manager) MarkManagedMCPConnected(err error) {
 	if err != nil {
 		m.status.Phase = PhaseFailed
 		m.status.ManagedMCPConnected = false
-		m.status.Reason = "managed Headroom MCP failed: " + err.Error()
+		m.status.AdapterReady = false
+		m.status.LastError = err.Error()
+		if m.cfg.ContextEngine == ModeAuto {
+			m.fallbackCalls++
+			m.status.EffectiveEngine = ModeNoop
+			m.status.Degraded = true
+			m.status.Reason = "managed Headroom MCP failed; auto mode degraded to noop: " + err.Error()
+		} else {
+			m.status.Reason = "managed Headroom MCP failed: " + err.Error()
+		}
 		return
 	}
 	m.status.Phase = PhaseManagedMCP
 	m.status.ManagedMCPConnected = true
-	m.status.Reason = "managed Headroom MCP connected; compression adapter not yet active"
+	m.status.LastError = ""
+	m.status.Degraded = false
+	if m.cfg.ContextEngine == ModeAuto && m.status.HeadroomAvailable {
+		m.status.EffectiveEngine = ModeHeadroom
+	}
+	if m.status.AdapterReady && m.status.CompressAvailable {
+		m.status.Reason = "managed Headroom MCP connected; compression adapter active"
+	} else {
+		m.status.Reason = "managed Headroom MCP connected; compression tool schema not attached"
+	}
 }
 
 func (m *Manager) headroomEnvLocked() map[string]string {

@@ -146,18 +146,21 @@ func clampPermille(n int) int {
 }
 
 func (d *Daemon) handleBackpressureReport(params json.RawMessage) (any, error) {
-	var p PressureReport
+	var p struct {
+		PressureReport
+		WorkerCredential string `json:"worker_credential"`
+	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
 	if strings.TrimSpace(p.WorkerID) == "" {
 		return nil, fmt.Errorf("worker_id is required")
 	}
-	if _, ok := d.pool.Get(p.WorkerID); !ok {
-		return nil, fmt.Errorf("unknown worker %s", p.WorkerID)
+	if err := d.authenticateWorker(p.WorkerID, p.WorkerCredential); err != nil {
+		return nil, err
 	}
 	_ = d.pool.Heartbeat(p.WorkerID)
-	report, directive := d.backpressure.report(p, time.Now().UTC())
+	report, directive := d.backpressure.report(p.PressureReport, time.Now().UTC())
 	d.emitDebug("backpressure", "report", report.WorkerID, map[string]string{
 		"worker_id": report.WorkerID,
 		"level":     directive.Level,

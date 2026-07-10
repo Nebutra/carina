@@ -1,8 +1,11 @@
 package daemon_test
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -89,6 +92,245 @@ func TestGatewayHTTPAuthFailures(t *testing.T) {
 	}
 }
 
+func TestGatewayHTTPChatCompletionStream(t *testing.T) {
+	d, sock, httpAddr := startGatewayHTTPDaemon(t)
+	defer d.Close()
+	d.SetReasoner(gatewayStreamReasoner{})
+
+	c, err := rpc.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	token := issueGatewayHTTPToken(t, c, []string{"write"}, []string{"/v1/chat/completions"})
+
+	body := map[string]any{
+		"model":  "carina/default",
+		"stream": true,
+		"messages": []map[string]any{{
+			"role": "user", "content": "verify the gateway stream",
+		}},
+		"metadata": map[string]any{"workspace_root": t.TempDir()},
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, "http://"+httpAddr+"/v1/chat/completions", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		got, _ := io.ReadAll(resp.Body)
+		t.Fatalf("stream status %d: %s", resp.StatusCode, got)
+	}
+	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
+		t.Fatalf("stream content type = %q", got)
+	}
+	if resp.Header.Get("X-Carina-Task-ID") == "" || resp.Header.Get("X-Carina-Session-ID") == "" {
+		t.Fatalf("stream response missing Carina task/session headers: %+v", resp.Header)
+	}
+
+	chunks, done := readChatCompletionStream(t, resp.Body)
+	if !done {
+		t.Fatal("stream did not end with data: [DONE]")
+	}
+	if len(chunks) < 4 {
+		t.Fatalf("expected role, progress, final content, and finish chunks; got %d: %+v", len(chunks), chunks)
+	}
+	first := chunks[0]
+	if first.Object != "chat.completion.chunk" || first.ID == "" || first.Model != "carina/default" || first.Created == 0 {
+		t.Fatalf("invalid first chunk envelope: %+v", first)
+	}
+	if len(first.Choices) != 1 || first.Choices[0].Index != 0 || first.Choices[0].Delta.Role != "assistant" || first.Choices[0].FinishReason != nil {
+		t.Fatalf("first chunk must establish assistant role: %+v", first)
+	}
+
+	var content strings.Builder
+	for i, chunk := range chunks {
+		if chunk.Object != "chat.completion.chunk" || chunk.ID != first.ID || chunk.Model != first.Model || chunk.Created != first.Created {
+			t.Fatalf("chunk %d envelope changed within one stream: %+v", i, chunk)
+		}
+		if len(chunk.Choices) != 1 {
+			t.Fatalf("chunk %d choices = %+v", i, chunk.Choices)
+		}
+		content.WriteString(chunk.Choices[0].Delta.Content)
+	}
+	if !strings.Contains(content.String(), "Carina task status:") || !strings.Contains(content.String(), "gateway stream complete") {
+		t.Fatalf("stream must expose real progress and final result, got %q", content.String())
+	}
+	last := chunks[len(chunks)-1]
+	if last.Choices[0].FinishReason == nil || *last.Choices[0].FinishReason != "stop" {
+		t.Fatalf("last chunk finish_reason = %+v", last.Choices[0].FinishReason)
+	}
+	if last.Choices[0].Delta.Role != "" || last.Choices[0].Delta.Content != "" {
+		t.Fatalf("terminal chunk delta must be empty: %+v", last.Choices[0].Delta)
+	}
+}
+
+func TestGatewayHTTPChatCompletionStreamKeepsRouteAndScopeAuthorization(t *testing.T) {
+	d, sock, httpAddr := startGatewayHTTPDaemon(t)
+	defer d.Close()
+
+	c, err := rpc.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	routeDenied := issueGatewayHTTPToken(t, c, []string{"write"}, []string{"/tools/invoke"})
+	scopeDenied := issueGatewayHTTPToken(t, c, []string{"read"}, []string{"/v1/chat/completions"})
+	body := map[string]any{
+		"model":  "carina/default",
+		"stream": true,
+		"messages": []map[string]any{{
+			"role": "user", "content": "must not submit",
+		}},
+	}
+
+	for name, tc := range map[string]struct {
+		token string
+		want  string
+	}{
+		"route": {token: routeDenied, want: "route not granted"},
+		"scope": {token: scopeDenied, want: "scope not granted"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp := httpJSON(t, http.MethodPost, "http://"+httpAddr+"/v1/chat/completions", tc.token, body)
+			if resp.Code != http.StatusForbidden || !strings.Contains(resp.Body, tc.want) {
+				t.Fatalf("authorization response %d: %s", resp.Code, resp.Body)
+			}
+			if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+				t.Fatalf("authorization failure must be JSON, got headers %+v", resp.Header)
+			}
+			if resp.Header.Get("X-Carina-Task-ID") != "" {
+				t.Fatalf("authorization failure submitted a task: %+v", resp.Header)
+			}
+		})
+	}
+}
+
+func TestGatewayHTTPChatCompletionStreamClientDisconnectReturnsPromptly(t *testing.T) {
+	d, sock, httpAddr := startGatewayHTTPDaemon(t)
+	defer d.Close()
+	d.SetReasoner(gatewayStreamReasoner{delay: 500 * time.Millisecond})
+
+	c, err := rpc.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	token := issueGatewayHTTPToken(t, c, []string{"write"}, []string{"/v1/chat/completions"})
+	raw, err := json.Marshal(map[string]any{
+		"model":  "carina/default",
+		"stream": true,
+		"messages": []map[string]any{{
+			"role": "user", "content": "stay active briefly",
+		}},
+		"metadata": map[string]any{"workspace_root": t.TempDir()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+httpAddr+"/v1/chat/completions", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(resp.Body)
+	if _, err := reader.ReadString('\n'); err != nil {
+		resp.Body.Close()
+		t.Fatalf("read first streamed chunk: %v", err)
+	}
+	cancel()
+	drained := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, reader)
+		_ = resp.Body.Close()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("stream body did not close promptly after client cancellation")
+	}
+
+	var status map[string]any
+	if err := c.Call("daemon.status", map[string]any{}, &status); err != nil {
+		t.Fatalf("daemon stopped serving after stream disconnect: %v", err)
+	}
+}
+
+type gatewayStreamReasoner struct {
+	delay time.Duration
+}
+
+func (r gatewayStreamReasoner) Name() string { return "gateway-stream-test" }
+
+func (r gatewayStreamReasoner) Think(ctx context.Context, _ string) (string, error) {
+	if r.delay > 0 {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(r.delay):
+		}
+	}
+	return `{"tool":"done","summary":"gateway stream complete"}`, nil
+}
+
+type gatewayChatCompletionChunk struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	Model   string `json:"model"`
+	Choices []struct {
+		Index int `json:"index"`
+		Delta struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"delta"`
+		FinishReason *string `json:"finish_reason"`
+	} `json:"choices"`
+}
+
+func readChatCompletionStream(t *testing.T, body io.Reader) ([]gatewayChatCompletionChunk, bool) {
+	t.Helper()
+	var chunks []gatewayChatCompletionChunk
+	scanner := bufio.NewScanner(body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			return chunks, true
+		}
+		var chunk gatewayChatCompletionChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			t.Fatalf("decode SSE chunk %q: %v", data, err)
+		}
+		chunks = append(chunks, chunk)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read SSE stream: %v", err)
+	}
+	return chunks, false
+}
+
 func TestGatewayHTTPRequiresTokenSigner(t *testing.T) {
 	repoRoot := repoRoot(t)
 	kernelBin := firstExisting(
@@ -162,8 +404,9 @@ func issueGatewayTokenTransport(t *testing.T, c *rpc.Client, scopes, routes []st
 }
 
 type httpTestResponse struct {
-	Code int
-	Body string
+	Code   int
+	Body   string
+	Header http.Header
 }
 
 func httpJSON(t *testing.T, method, url, token string, body any) httpTestResponse {
@@ -195,7 +438,7 @@ func httpJSON(t *testing.T, method, url, token string, body any) httpTestRespons
 	defer resp.Body.Close()
 	var buf bytes.Buffer
 	_, _ = buf.ReadFrom(resp.Body)
-	return httpTestResponse{Code: resp.StatusCode, Body: buf.String()}
+	return httpTestResponse{Code: resp.StatusCode, Body: buf.String(), Header: resp.Header.Clone()}
 }
 
 func freeTCPAddr(t *testing.T) string {

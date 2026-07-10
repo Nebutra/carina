@@ -50,15 +50,16 @@ func TestRemoteWorkerAndEventStream(t *testing.T) {
 	}
 	defer wc.Close()
 	var reg struct {
-		WorkerID string `json:"worker_id"`
+		WorkerID         string `json:"worker_id"`
+		WorkerCredential string `json:"worker_credential"`
 	}
 	if err := wc.Call("worker.register", map[string]any{"name": "ci-1", "kind": "ci"}, &reg); err != nil {
 		t.Fatalf("worker.register: %v", err)
 	}
-	if reg.WorkerID == "" {
-		t.Fatal("expected a worker id")
+	if reg.WorkerID == "" || reg.WorkerCredential == "" {
+		t.Fatalf("expected worker id and credential, got %+v", reg)
 	}
-	if err := wc.Call("worker.heartbeat", map[string]any{"worker_id": reg.WorkerID}, &struct{}{}); err != nil {
+	if err := wc.Call("worker.heartbeat", map[string]any{"worker_id": reg.WorkerID, "worker_credential": reg.WorkerCredential}, &struct{}{}); err != nil {
 		t.Fatalf("worker.heartbeat: %v", err)
 	}
 	var workers []map[string]any

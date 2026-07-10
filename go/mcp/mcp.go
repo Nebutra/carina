@@ -8,6 +8,7 @@ package mcp
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Nebutra/carina/go/product"
 )
 
 const (
@@ -150,7 +153,7 @@ func (c *Client) connect() error {
 	if err := c.call("initialize", map[string]any{
 		"protocolVersion": protocolVersion,
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "carina", "version": "0.5.0"},
+		"clientInfo":      map[string]any{"name": "carina", "version": product.Version},
 	}, nil); err != nil {
 		c.close()
 		return err
@@ -194,6 +197,12 @@ func (c *Client) readLoop(stdout io.Reader) {
 }
 
 func (c *Client) call(method string, params any, result any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	return c.callContext(ctx, method, params, result)
+}
+
+func (c *Client) callContext(ctx context.Context, method string, params any, result any) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -232,11 +241,11 @@ func (c *Client) call(method string, params any, result any) error {
 			return json.Unmarshal(resp.Result, result)
 		}
 		return nil
-	case <-time.After(callTimeout):
+	case <-ctx.Done():
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
-		return fmt.Errorf("mcp %s: timeout after %s", method, callTimeout)
+		return fmt.Errorf("mcp %s: %w", method, ctx.Err())
 	}
 }
 
@@ -251,11 +260,17 @@ func (c *Client) notify(method string, params any) error {
 
 // callTool invokes an MCP tool and flattens its text content.
 func (c *Client) callTool(name string, args map[string]any) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	return c.callToolContext(ctx, name, args)
+}
+
+func (c *Client) callToolContext(ctx context.Context, name string, args map[string]any) (string, error) {
 	if args == nil {
 		args = map[string]any{}
 	}
 	var res toolCallResult
-	if err := c.call("tools/call", map[string]any{"name": name, "arguments": args}, &res); err != nil {
+	if err := c.callContext(ctx, "tools/call", map[string]any{"name": name, "arguments": args}, &res); err != nil {
 		return "", err
 	}
 	var out string
@@ -476,6 +491,14 @@ func (m *Manager) Prompts() []Prompt {
 
 // Call invokes a tool on a server, reconnecting once if the server has died.
 func (m *Manager) Call(server, tool string, args map[string]any) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	return m.CallContext(ctx, server, tool, args)
+}
+
+// CallContext invokes a tool with caller-owned cancellation. Managed internal
+// adapters use this so a cancelled task does not wait for the fixed MCP timeout.
+func (m *Manager) CallContext(ctx context.Context, server, tool string, args map[string]any) (string, error) {
 	m.mu.Lock()
 	c := m.clients[server]
 	m.mu.Unlock()
@@ -487,7 +510,40 @@ func (m *Manager) Call(server, tool string, args map[string]any) (string, error)
 			return "", fmt.Errorf("mcp server %q is down: %w", server, err)
 		}
 	}
-	return c.callTool(tool, args)
+	if !c.hasTool(tool) {
+		return "", fmt.Errorf("mcp server %q did not advertise tool %q", server, tool)
+	}
+	return c.callToolContext(ctx, tool, args)
+}
+
+func (c *Client) hasTool(name string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, tool := range c.tools {
+		if tool.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ToolSchemas returns the discovered tools for one server, including private
+// managed servers. It is an internal adapter surface; public agent discovery
+// remains filtered by Tools().
+func (m *Manager) ToolSchemas(server string) (map[string]json.RawMessage, error) {
+	m.mu.Lock()
+	c := m.clients[server]
+	m.mu.Unlock()
+	if c == nil {
+		return nil, fmt.Errorf("unknown mcp server %q", server)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]json.RawMessage, len(c.tools))
+	for _, tool := range c.tools {
+		out[tool.Name] = append(json.RawMessage(nil), tool.InputSchema...)
+	}
+	return out, nil
 }
 
 // CallPublic invokes a user-configured MCP tool. Internal/private servers are

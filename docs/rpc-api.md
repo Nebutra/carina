@@ -1,6 +1,6 @@
 # RPC API
 
-Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. Optional remote TCP, WebSocket Gateway, and HTTP Gateway listeners are disabled by default. gRPC is a later optimization. Machine-readable registry: [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json).
+Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. Bare TCP is restricted to explicit loopback addresses for diagnostics; network-facing clients use the authenticated WebSocket or HTTP Gateway. All optional listeners are disabled by default. gRPC is a later optimization. Machine-readable registry: [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json).
 
 Notifications (server → client) stream events; every payload conforms to [`protocol/schemas/`](../protocol/schemas/).
 
@@ -57,15 +57,15 @@ pass because of a developer's global install.
 
 Optional WebSocket Gateway:
 
-- enable explicitly with `carina-daemon -gateway-ws 127.0.0.1:8777`, config
-  key `gateway_ws`, or env `CARINA_GATEWAY_WS`;
+- enable explicitly with `carina-daemon -gateway-ws 127.0.0.1:8777 -gateway-token-signing-key-file ~/.carina/gateway-token.key`, config key `gateway_ws`, or env `CARINA_GATEWAY_WS`;
 - endpoint path is `/gateway`;
 - browser requests with an `Origin` header are rejected unless the exact value
   is configured through `-gateway-ws-origins`, `gateway_ws_origins`, or
   `CARINA_GATEWAY_WS_ORIGINS`;
 - first text frame must be a JSON-RPC `gateway.hello` request;
-- when `gateway_token_signing_key_file` is configured, `gateway.hello` must
-  include a signed scoped Gateway token bound to `transport: "ws"`;
+- startup fails closed when no `gateway_token_signing_key_file` / token verifier
+  is configured; every `gateway.hello` must include a signed scoped Gateway
+  token bound to `transport: "ws"`;
 - later frames are JSON-RPC requests constrained by descriptor `remote`, the
   remote kill-switch, negotiated or token-bound scopes, and dynamic scope
   resolution.
@@ -252,6 +252,13 @@ Each returns a `PermissionDecision` (see schema). Side effects only proceed on `
 ## Worker API
 
 `worker.register` · `worker.heartbeat` · `worker.list` · `worker.revoke`
+
+`worker.register` returns `{worker_id, worker_credential}` once. The daemon
+stores only the credential hash. `worker.heartbeat`, `worker.revoke`,
+`backpressure.report`, `work.poll`, `work.renew`, and `work.report` require both
+fields and reject a credential presented for a different worker ID with the
+same non-enumerating authentication error. Credentials are excluded from
+worker list/status, audit events, and diagnostic logs.
 
 ## Example
 

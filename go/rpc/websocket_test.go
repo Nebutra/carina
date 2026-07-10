@@ -15,6 +15,15 @@ import (
 	"time"
 )
 
+func TestWebSocketGatewayRequiresTokenVerifierBeforeListen(t *testing.T) {
+	s := NewServer()
+	defer s.Close()
+	err := s.ListenWebSocket("127.0.0.1:0", "/gateway", nil)
+	if err == nil || !strings.Contains(err.Error(), "requires a token verifier") {
+		t.Fatalf("ListenWebSocket without verifier error = %v", err)
+	}
+}
+
 func TestWebSocketGatewayRoundTripAndRemotePolicy(t *testing.T) {
 	s := NewServer()
 	if err := s.RegisterMethod(MethodDescriptor{Method: "daemon.status", Scope: ScopeRead, Remote: true}, func(_ json.RawMessage) (any, error) {
@@ -44,7 +53,9 @@ func TestWebSocketGatewayRoundTripAndRemotePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := freeTCPAddr(t)
-	go func() { _ = s.ListenWebSocket(addr, "/gateway", nil) }()
+	go func() {
+		_ = s.ListenWebSocketWithOptions(addr, WebSocketOptions{Path: "/gateway", TokenVerifier: testWebSocketIssuer(t)})
+	}()
 	defer s.Close()
 	waitTCP(t, addr)
 
@@ -72,7 +83,7 @@ func TestWebSocketGatewayRoundTripAndRemotePolicy(t *testing.T) {
 	}
 
 	s.SetRemoteDisabled(true)
-	resp = wsCall(t, addr, "", Request{JSONRPC: "2.0", ID: rawID(t, 5), Method: "gateway.hello", Params: mustJSON(t, map[string]any{})})
+	resp = wsCall(t, addr, "", Request{JSONRPC: "2.0", ID: rawID(t, 5), Method: "gateway.hello", Params: mustJSON(t, map[string]any{"token": testWebSocketToken(t, RoleOperator, []Scope{ScopeRead})})})
 	if resp.Error == nil || !strings.Contains(resp.Error.Message, "remote access is disabled") {
 		t.Fatalf("remote kill-switch should block websocket, got %+v", resp.Error)
 	}
@@ -191,7 +202,9 @@ func TestWebSocketStreamNotificationAfterHello(t *testing.T) {
 	}
 
 	addr := freeTCPAddr(t)
-	go func() { _ = s.ListenWebSocket(addr, "/gateway", nil) }()
+	go func() {
+		_ = s.ListenWebSocketWithOptions(addr, WebSocketOptions{Path: "/gateway", TokenVerifier: testWebSocketIssuer(t)})
+	}()
 	defer s.Close()
 	waitTCP(t, addr)
 
@@ -202,7 +215,7 @@ func TestWebSocketStreamNotificationAfterHello(t *testing.T) {
 	}
 	defer c.conn.SetReadDeadline(time.Time{})
 
-	writeWSRequest(t, c, Request{JSONRPC: "2.0", ID: rawID(t, 1), Method: "gateway.hello", Params: mustJSON(t, map[string]any{})})
+	writeWSRequest(t, c, Request{JSONRPC: "2.0", ID: rawID(t, 1), Method: "gateway.hello", Params: mustJSON(t, map[string]any{"token": testWebSocketToken(t, RoleOperator, []Scope{ScopeRead, ScopeStream})})})
 	helloPayload, err := c.readText()
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +306,9 @@ func TestWebSocketRequiresHelloBeforeDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := freeTCPAddr(t)
-	go func() { _ = s.ListenWebSocket(addr, "/gateway", nil) }()
+	go func() {
+		_ = s.ListenWebSocketWithOptions(addr, WebSocketOptions{Path: "/gateway", TokenVerifier: testWebSocketIssuer(t)})
+	}()
 	defer s.Close()
 	waitTCP(t, addr)
 
@@ -327,7 +342,9 @@ func TestWebSocketOriginAllowlist(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := freeTCPAddr(t)
-	go func() { _ = s.ListenWebSocket(addr, "/gateway", []string{"https://app.example"}) }()
+	go func() {
+		_ = s.ListenWebSocketWithOptions(addr, WebSocketOptions{Path: "/gateway", AllowedOrigins: []string{"https://app.example"}, TokenVerifier: testWebSocketIssuer(t)})
+	}()
 	defer s.Close()
 	waitTCP(t, addr)
 
@@ -337,7 +354,7 @@ func TestWebSocketOriginAllowlist(t *testing.T) {
 	if status := wsHandshakeStatus(t, addr, ""); status != http.StatusSwitchingProtocols {
 		t.Fatalf("native client without Origin status = %d, want 101", status)
 	}
-	resp := wsCall(t, addr, "https://app.example", Request{JSONRPC: "2.0", ID: rawID(t, 1), Method: "gateway.hello", Params: mustJSON(t, map[string]any{})})
+	resp := wsCall(t, addr, "https://app.example", Request{JSONRPC: "2.0", ID: rawID(t, 1), Method: "gateway.hello", Params: mustJSON(t, map[string]any{"token": testWebSocketToken(t, RoleOperator, []Scope{ScopeRead})})})
 	if resp.Error != nil {
 		t.Fatalf("allowed origin should call gateway.hello: %+v", resp.Error)
 	}
@@ -355,6 +372,15 @@ func wsCall(t *testing.T, addr, origin string, req Request) Response {
 
 func wsCallWithHello(t *testing.T, addr, origin string, helloParams map[string]any, req Request) Response {
 	t.Helper()
+	if _, ok := helloParams["token"]; !ok {
+		role := RoleOperator
+		scopes := []Scope{ScopeRead, ScopeWrite, ScopeAdmin, ScopeStream}
+		if helloParams["role"] == string(RoleWorker) || helloParams["role"] == RoleWorker {
+			role = RoleWorker
+			scopes = []Scope{ScopeWorker}
+		}
+		helloParams["token"] = testWebSocketToken(t, role, scopes)
+	}
 	c := wsDial(t, addr, origin)
 	defer c.conn.Close()
 	if req.Method != "gateway.hello" {
@@ -394,6 +420,24 @@ func wsCallWithHello(t *testing.T, addr, origin string, helloParams map[string]a
 		t.Fatalf("decode websocket response %q: %v", string(payload), err)
 	}
 	return resp
+}
+
+func testWebSocketIssuer(t *testing.T) *GatewayTokenIssuer {
+	t.Helper()
+	issuer, err := NewGatewayTokenIssuer([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return issuer
+}
+
+func testWebSocketToken(t *testing.T, role Role, scopes []Scope) string {
+	t.Helper()
+	token, _, err := testWebSocketIssuer(t).Issue("websocket-test", role, scopes, time.Minute, "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
 }
 
 func writeWSRequest(t *testing.T, c *wsTestConn, req Request) {

@@ -216,6 +216,9 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
+			PromptDetails    struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -228,12 +231,14 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 	if text == "" {
 		return nil, fmt.Errorf("%s: empty response", o.id)
 	}
+	cached := clampCachedTokens(out.Usage.PromptDetails.CachedTokens, out.Usage.PromptTokens)
 	return &modelrouter.Response{
-		Provider:     o.Name(),
-		Model:        responseModel,
-		Text:         text,
-		InputTokens:  out.Usage.PromptTokens,
-		OutputTokens: out.Usage.CompletionTokens,
+		Provider:        o.Name(),
+		Model:           responseModel,
+		Text:            text,
+		InputTokens:     out.Usage.PromptTokens - cached,
+		OutputTokens:    out.Usage.CompletionTokens,
+		CacheReadTokens: cached,
 	}, nil
 }
 
@@ -279,6 +284,9 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 		Usage struct {
 			InputTokens  int `json:"input_tokens"`
 			OutputTokens int `json:"output_tokens"`
+			InputDetails struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"input_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -295,13 +303,25 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 	if text == "" {
 		return nil, fmt.Errorf("%s: empty response", o.id)
 	}
+	cached := clampCachedTokens(out.Usage.InputDetails.CachedTokens, out.Usage.InputTokens)
 	return &modelrouter.Response{
-		Provider:     o.Name(),
-		Model:        responseModel,
-		Text:         text,
-		InputTokens:  out.Usage.InputTokens,
-		OutputTokens: out.Usage.OutputTokens,
+		Provider:        o.Name(),
+		Model:           responseModel,
+		Text:            text,
+		InputTokens:     out.Usage.InputTokens - cached,
+		OutputTokens:    out.Usage.OutputTokens,
+		CacheReadTokens: cached,
 	}, nil
+}
+
+func clampCachedTokens(cached, total int) int {
+	if cached < 0 {
+		return 0
+	}
+	if cached > total {
+		return total
+	}
+	return cached
 }
 
 type geminiProvider struct{ providerBase }

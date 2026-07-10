@@ -167,14 +167,18 @@ func TestDaemonHandlerSurface(t *testing.T) {
 
 	// worker lifecycle
 	var reg struct {
-		WorkerID string `json:"worker_id"`
+		WorkerID         string `json:"worker_id"`
+		WorkerCredential string `json:"worker_credential"`
 	}
 	if err := c.Call("worker.register", map[string]any{"name": "w", "kind": "ci"}, &reg); err != nil {
 		t.Fatal(err)
 	}
-	must("worker.heartbeat", map[string]any{"worker_id": reg.WorkerID})
+	if reg.WorkerID == "" || reg.WorkerCredential == "" {
+		t.Fatalf("worker.register missing id/credential: %+v", reg)
+	}
+	must("worker.heartbeat", map[string]any{"worker_id": reg.WorkerID, "worker_credential": reg.WorkerCredential})
 	must("worker.list", map[string]any{})
-	must("worker.revoke", map[string]any{"worker_id": reg.WorkerID})
+	must("worker.revoke", map[string]any{"worker_id": reg.WorkerID, "worker_credential": reg.WorkerCredential})
 
 	// session + workspace
 	var sess struct {

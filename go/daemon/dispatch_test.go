@@ -24,7 +24,10 @@ func TestWorkDispatchBridge(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
-	wk := d.pool.Register("remote-1", worker.Remote)
+	wk, credential, err := d.pool.RegisterAuthenticated("remote-1", worker.Remote)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Control plane enqueues work for remote execution.
 	subRes, err := d.handleWorkSubmit(mustJSON(t, map[string]any{
@@ -45,7 +48,7 @@ func TestWorkDispatchBridge(t *testing.T) {
 	// High worker pressure is an explicit, TTL-bound advisory signal: poll
 	// returns empty with a directive and does not lease the queued task.
 	pressureRes, err := d.handleBackpressureReport(mustJSON(t, map[string]any{
-		"worker_id": wk.WorkerID, "mem_usage_permille": 960, "queue_depth": 20, "seq": 1}))
+		"worker_id": wk.WorkerID, "worker_credential": credential, "mem_usage_permille": 960, "queue_depth": 20, "seq": 1}))
 	if err != nil {
 		t.Fatalf("backpressure.report high: %v", err)
 	}
@@ -53,7 +56,7 @@ func TestWorkDispatchBridge(t *testing.T) {
 		t.Fatalf("first pressure report should be accepted: %+v", pressureRes)
 	}
 	throttled, err := d.handleWorkPoll(mustJSON(t, map[string]any{
-		"worker_id": wk.WorkerID, "ttl_ms": 5000}))
+		"worker_id": wk.WorkerID, "worker_credential": credential, "ttl_ms": 5000}))
 	if err != nil {
 		t.Fatalf("throttled work.poll: %v", err)
 	}
@@ -68,7 +71,7 @@ func TestWorkDispatchBridge(t *testing.T) {
 		t.Fatalf("throttled poll must not mutate queued task: %+v", queued)
 	}
 	pressureRes, err = d.handleBackpressureReport(mustJSON(t, map[string]any{
-		"worker_id": wk.WorkerID, "mem_usage_permille": 100, "queue_depth": 0, "seq": 2}))
+		"worker_id": wk.WorkerID, "worker_credential": credential, "mem_usage_permille": 100, "queue_depth": 0, "seq": 2}))
 	if err != nil {
 		t.Fatalf("backpressure.report recovery: %v", err)
 	}
@@ -76,7 +79,7 @@ func TestWorkDispatchBridge(t *testing.T) {
 		t.Fatalf("recovered pressure should clear throttling: %+v", directive)
 	}
 	staleRes, err := d.handleBackpressureReport(mustJSON(t, map[string]any{
-		"worker_id": wk.WorkerID, "mem_usage_permille": 990, "seq": 1}))
+		"worker_id": wk.WorkerID, "worker_credential": credential, "mem_usage_permille": 990, "seq": 1}))
 	if err != nil {
 		t.Fatalf("backpressure.report stale: %v", err)
 	}
@@ -86,7 +89,7 @@ func TestWorkDispatchBridge(t *testing.T) {
 
 	// The registered worker leases the task.
 	pollRes, err := d.handleWorkPoll(mustJSON(t, map[string]any{
-		"worker_id": wk.WorkerID, "ttl_ms": 5000}))
+		"worker_id": wk.WorkerID, "worker_credential": credential, "ttl_ms": 5000}))
 	if err != nil {
 		t.Fatalf("work.poll: %v", err)
 	}
@@ -96,7 +99,7 @@ func TestWorkDispatchBridge(t *testing.T) {
 	}
 
 	// The queue is now empty.
-	empty, err := d.handleWorkPoll(mustJSON(t, map[string]any{"worker_id": wk.WorkerID}))
+	empty, err := d.handleWorkPoll(mustJSON(t, map[string]any{"worker_id": wk.WorkerID, "worker_credential": credential}))
 	if err != nil {
 		t.Fatalf("empty poll: %v", err)
 	}
@@ -106,11 +109,11 @@ func TestWorkDispatchBridge(t *testing.T) {
 
 	// The worker renews mid-execution, then reports completion.
 	if _, err := d.handleWorkRenew(mustJSON(t, map[string]any{
-		"worker_id": wk.WorkerID, "task_id": task.TaskID, "ttl_ms": 5000})); err != nil {
+		"worker_id": wk.WorkerID, "worker_credential": credential, "task_id": task.TaskID, "ttl_ms": 5000})); err != nil {
 		t.Fatalf("work.renew: %v", err)
 	}
 	if _, err := d.handleWorkReport(mustJSON(t, map[string]any{
-		"worker_id": wk.WorkerID, "task_id": task.TaskID,
+		"worker_id": wk.WorkerID, "worker_credential": credential, "task_id": task.TaskID,
 		"status": "completed", "summary": "shipped"})); err != nil {
 		t.Fatalf("work.report: %v", err)
 	}
@@ -124,13 +127,16 @@ func TestBackpressureStatusIncludesSchedulerContext(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
-	wk := d.pool.Register("remote-1", worker.Remote)
+	wk, credential, err := d.pool.RegisterAuthenticated("remote-1", worker.Remote)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := d.handleWorkSubmit(mustJSON(t, map[string]any{
 		"session_id": sess.SessionID, "prompt": "queued"})); err != nil {
 		t.Fatalf("work.submit: %v", err)
 	}
 	if _, err := d.handleBackpressureReport(mustJSON(t, map[string]any{
-		"worker_id": wk.WorkerID, "queue_depth": 9, "inflight": 1, "seq": 1})); err != nil {
+		"worker_id": wk.WorkerID, "worker_credential": credential, "queue_depth": 9, "inflight": 1, "seq": 1})); err != nil {
 		t.Fatalf("backpressure.report: %v", err)
 	}
 	status, err := d.handleBackpressureStatus(nil)

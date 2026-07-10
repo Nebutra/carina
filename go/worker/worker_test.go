@@ -1,6 +1,10 @@
 package worker
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestRegisterAssignsFieldsAndCapabilities(t *testing.T) {
 	p := NewPool()
@@ -44,6 +48,45 @@ func TestHeartbeatAndRevoke(t *testing.T) {
 	}
 	if err := p.Revoke("wrk_missing"); err == nil {
 		t.Fatal("revoke of unknown worker should error")
+	}
+}
+
+func TestAuthenticatedRegistrationBindsOpaqueCredential(t *testing.T) {
+	p := NewPool()
+	w, credential, err := p.RegisterAuthenticated("remote-1", Remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential == "" || credential == w.WorkerID {
+		t.Fatalf("credential must be non-empty and opaque: worker=%q credential=%q", w.WorkerID, credential)
+	}
+	if !p.Authenticate(w.WorkerID, credential) {
+		t.Fatal("issued credential should authenticate its worker")
+	}
+	if p.Authenticate(w.WorkerID, credential+"x") {
+		t.Fatal("wrong credential should be rejected")
+	}
+	other, otherCredential, err := p.RegisterAuthenticated("remote-2", Remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Authenticate(other.WorkerID, credential) || p.Authenticate(w.WorkerID, otherCredential) {
+		t.Fatal("credentials must be bound to exactly one worker id")
+	}
+	if err := p.Revoke(w.WorkerID); err != nil {
+		t.Fatal(err)
+	}
+	if p.Authenticate(w.WorkerID, credential) {
+		t.Fatal("revocation must invalidate the credential")
+	}
+	for _, listed := range p.List() {
+		raw, err := json.Marshal(listed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), otherCredential) || strings.Contains(string(raw), "credential") {
+			t.Fatalf("worker list leaked credential material: %s", raw)
+		}
 	}
 }
 

@@ -159,6 +159,10 @@ func TestManagedMCPConnectionStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	adapter := &fakeManagedMCP{schemas: headroomSchemas(true), outputs: map[string]string{}}
+	if err := m.AttachManagedMCP(adapter); err != nil {
+		t.Fatal(err)
+	}
 	m.MarkManagedMCPConnected(nil)
 	st := m.Status()
 	if !st.ManagedMCPConnected || st.Phase != PhaseManagedMCP || st.ManagedMCPServer != "headroom" {

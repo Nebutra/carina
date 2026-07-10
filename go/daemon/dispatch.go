@@ -65,14 +65,15 @@ func (d *Daemon) handleWorkSubmit(params json.RawMessage) (any, error) {
 // Polling also counts as a heartbeat (the worker is demonstrably alive).
 func (d *Daemon) handleWorkPoll(params json.RawMessage) (any, error) {
 	var p struct {
-		WorkerID string `json:"worker_id"`
-		TTLMs    int    `json:"ttl_ms"`
+		WorkerID         string `json:"worker_id"`
+		WorkerCredential string `json:"worker_credential"`
+		TTLMs            int    `json:"ttl_ms"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if _, ok := d.pool.Get(p.WorkerID); !ok {
-		return nil, fmt.Errorf("unknown worker %s (register first)", p.WorkerID)
+	if err := d.authenticateWorker(p.WorkerID, p.WorkerCredential); err != nil {
+		return nil, err
 	}
 	_ = d.pool.Heartbeat(p.WorkerID)
 	directive := d.backpressure.directive(p.WorkerID, time.Now().UTC())
@@ -102,17 +103,21 @@ func (d *Daemon) handleWorkPoll(params json.RawMessage) (any, error) {
 // handleWorkRenew extends a held lease (the worker's mid-execution heartbeat).
 func (d *Daemon) handleWorkRenew(params json.RawMessage) (any, error) {
 	var p struct {
-		WorkerID string `json:"worker_id"`
-		TaskID   string `json:"task_id"`
-		TTLMs    int    `json:"ttl_ms"`
+		WorkerID         string `json:"worker_id"`
+		WorkerCredential string `json:"worker_credential"`
+		TaskID           string `json:"task_id"`
+		TTLMs            int    `json:"ttl_ms"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if _, ok := d.pool.Get(p.WorkerID); !ok {
-		return nil, fmt.Errorf("unknown worker %s", p.WorkerID)
+	if err := d.authenticateWorker(p.WorkerID, p.WorkerCredential); err != nil {
+		return nil, err
 	}
 	_ = d.pool.Heartbeat(p.WorkerID)
+	if task, ok := d.sched.Get(p.TaskID); ok && task.Status == "cancelled" {
+		return map[string]any{"ok": false, "cancelled": true}, nil
+	}
 	if err := d.sched.RenewLease(p.TaskID, p.WorkerID, time.Duration(p.TTLMs)*time.Millisecond); err != nil {
 		return nil, err
 	}
@@ -123,17 +128,21 @@ func (d *Daemon) handleWorkRenew(params json.RawMessage) (any, error) {
 // idempotent (safe redelivery) and rejects reports from a non-owning worker.
 func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 	var p struct {
-		WorkerID string   `json:"worker_id"`
-		TaskID   string   `json:"task_id"`
-		Status   string   `json:"status"`
-		Summary  string   `json:"summary"`
-		Patches  []string `json:"patches"`
+		WorkerID         string   `json:"worker_id"`
+		WorkerCredential string   `json:"worker_credential"`
+		TaskID           string   `json:"task_id"`
+		Status           string   `json:"status"`
+		Summary          string   `json:"summary"`
+		Patches          []string `json:"patches"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if _, ok := d.pool.Get(p.WorkerID); !ok {
-		return nil, fmt.Errorf("unknown worker %s", p.WorkerID)
+	if err := d.authenticateWorker(p.WorkerID, p.WorkerCredential); err != nil {
+		return nil, err
+	}
+	if task, ok := d.sched.Get(p.TaskID); ok && task.Status == "cancelled" {
+		return map[string]any{"ok": false, "cancelled": true}, nil
 	}
 	if err := d.sched.Report(p.TaskID, p.WorkerID, p.Status, p.Summary, p.Patches); err != nil {
 		return nil, err

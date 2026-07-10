@@ -19,10 +19,19 @@ import (
 // by an elision placeholder or dropped into a summary; the original always
 // remains in the event log.
 type Observation struct {
-	Tool    string
-	Content string
-	Pinned  bool // failing tests / current edit / patch result — never elided
-	Elided  bool
+	Tool              string   `json:"tool,omitempty"`
+	Content           string   `json:"content"`
+	Pinned            bool     `json:"pinned,omitempty"` // failing tests / current edit / patch result — never elided
+	Elided            bool     `json:"elided,omitempty"`
+	OriginalRef       string   `json:"original_ref,omitempty"`
+	OriginalSHA256    string   `json:"original_sha256,omitempty"`
+	CompressionEngine string   `json:"compression_engine,omitempty"`
+	OriginalBytes     int      `json:"original_bytes,omitempty"`
+	CompressedBytes   int      `json:"compressed_bytes,omitempty"`
+	OriginalTokens    int      `json:"original_tokens,omitempty"`
+	CompressedTokens  int      `json:"compressed_tokens,omitempty"`
+	SavingsPercent    float64  `json:"savings_percent,omitempty"`
+	Transforms        []string `json:"transforms,omitempty"`
 }
 
 // Turn is one model decision + its observation.

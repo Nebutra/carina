@@ -164,8 +164,14 @@ func (d *Daemon) runSubagentLoop(sess *sessionstore.Session, task *scheduler.Tas
 			continue
 		}
 		obs := d.executeAction(sess, task, &act)
+		pinned := act.Tool == "run" || act.Tool == "patch"
+		compressedObs, err := d.compressObservation(ctx, sess, task, turn, act.Tool, obs, pinned)
+		if err != nil {
+			d.sched.SetStatus(task.TaskID, "failed")
+			return "subagent failed: context compression failed: " + err.Error()
+		}
 		tr.addTurn(Turn{Thought: act.Thought, Tool: act.Tool, ActionBrief: briefAction(&act),
-			Obs: Observation{Content: obs, Pinned: act.Tool == "run" || act.Tool == "patch"}})
+			Obs: compressedObs})
 	}
 	d.sched.SetStatus(task.TaskID, "degraded")
 	if tr.Summary != "" {

@@ -26,6 +26,27 @@ type modelAwareReasoner interface {
 	ThinkModel(ctx context.Context, model, prompt string) (string, error)
 }
 
+// ReasonerResult is the optional structured result returned by production
+// reasoners. Reasoner intentionally remains unchanged so existing plugins and
+// test doubles continue to compile; callers fall back to explicit estimates
+// when a reasoner does not implement the richer interface.
+type ReasonerResult struct {
+	Text  string
+	Usage ModelUsage
+}
+
+type resultReasoner interface {
+	ThinkResult(ctx context.Context, prompt string) (ReasonerResult, error)
+}
+
+type modelResultReasoner interface {
+	ThinkModelResult(ctx context.Context, model, prompt string) (ReasonerResult, error)
+}
+
+type segmentedModelResultReasoner interface {
+	ThinkModelSegments(ctx context.Context, model, stablePrefix, volatileSuffix string) (ReasonerResult, error)
+}
+
 // retryBaseDelay is the initial backoff; overridable in tests.
 var retryBaseDelay = 2 * time.Second
 
@@ -43,11 +64,24 @@ func thinkWithRetry(ctx context.Context, r Reasoner, prompt string) (string, err
 }
 
 func thinkWithRetryModel(ctx context.Context, r Reasoner, model, prompt string) (string, error) {
+	result, err := thinkWithRetryModelResult(ctx, r, model, prompt)
+	return result.Text, err
+}
+
+func thinkWithRetryModelResult(ctx context.Context, r Reasoner, model, prompt string) (ReasonerResult, error) {
+	return thinkWithRetrySegments(ctx, r, model, prompt, "", "")
+}
+
+func thinkWithRetryModelSegments(ctx context.Context, r Reasoner, model string, segments promptSegments) (ReasonerResult, error) {
+	return thinkWithRetrySegments(ctx, r, model, segments.full(), segments.StablePrefix, segments.VolatileSuffix)
+}
+
+func thinkWithRetrySegments(ctx context.Context, r Reasoner, model, prompt, stablePrefix, volatileSuffix string) (ReasonerResult, error) {
 	const maxAttempts = 4
 	delay := retryBaseDelay
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		out, err := thinkOnce(ctx, r, model, prompt)
+		out, err := thinkOnceResult(ctx, r, model, prompt, stablePrefix, volatileSuffix)
 		if err == nil {
 			return out, nil
 		}
@@ -58,7 +92,7 @@ func thinkWithRetryModel(ctx context.Context, r Reasoner, model, prompt string) 
 		wait := retryDelay(lastErr, delay)
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return ReasonerResult{}, ctx.Err()
 		case <-time.After(wait):
 		}
 		delay *= 2
@@ -66,7 +100,7 @@ func thinkWithRetryModel(ctx context.Context, r Reasoner, model, prompt string) 
 			delay = 30 * time.Second
 		}
 	}
-	return "", fmt.Errorf("reasoner failed after %d attempts: %w", maxAttempts, lastErr)
+	return ReasonerResult{}, fmt.Errorf("reasoner failed after %d attempts: %w", maxAttempts, lastErr)
 }
 
 func retryDelay(err error, fallback time.Duration) time.Duration {
@@ -83,12 +117,61 @@ func retryDelay(err error, fallback time.Duration) time.Duration {
 }
 
 func thinkOnce(ctx context.Context, r Reasoner, model, prompt string) (string, error) {
-	if model != "" {
-		if mr, ok := r.(modelAwareReasoner); ok {
-			return mr.ThinkModel(ctx, model, prompt)
+	result, err := thinkOnceResult(ctx, r, model, prompt, "", "")
+	return result.Text, err
+}
+
+func thinkOnceResult(ctx context.Context, r Reasoner, model, prompt, stablePrefix, volatileSuffix string) (ReasonerResult, error) {
+	if stablePrefix != "" {
+		if sr, ok := r.(segmentedModelResultReasoner); ok {
+			result, err := sr.ThinkModelSegments(ctx, model, stablePrefix, volatileSuffix)
+			return normalizeReasonerResult(result, err, r, model, prompt)
 		}
 	}
-	return r.Think(ctx, prompt)
+	if model != "" {
+		if mr, ok := r.(modelResultReasoner); ok {
+			result, err := mr.ThinkModelResult(ctx, model, prompt)
+			return normalizeReasonerResult(result, err, r, model, prompt)
+		}
+		if mr, ok := r.(modelAwareReasoner); ok {
+			out, err := mr.ThinkModel(ctx, model, prompt)
+			return estimatedReasonerResult(out, err, r.Name(), model, prompt)
+		}
+	}
+	if rr, ok := r.(resultReasoner); ok {
+		result, err := rr.ThinkResult(ctx, prompt)
+		return normalizeReasonerResult(result, err, r, model, prompt)
+	}
+	out, err := r.Think(ctx, prompt)
+	return estimatedReasonerResult(out, err, r.Name(), model, prompt)
+}
+
+func normalizeReasonerResult(result ReasonerResult, err error, r Reasoner, model, prompt string) (ReasonerResult, error) {
+	if err != nil {
+		return ReasonerResult{}, err
+	}
+	if result.Usage.Provider == "" {
+		result.Usage.Provider = r.Name()
+	}
+	if result.Usage.Model == "" {
+		result.Usage.Model = model
+	}
+	if result.Usage.totalTokens() == 0 {
+		result.Usage.InputTokens = estimateTokens(prompt)
+		result.Usage.OutputTokens = estimateTokens(result.Text)
+		result.Usage.Estimated = true
+	}
+	return result, nil
+}
+
+func estimatedReasonerResult(out string, err error, provider, model, prompt string) (ReasonerResult, error) {
+	if err != nil {
+		return ReasonerResult{}, err
+	}
+	return ReasonerResult{Text: out, Usage: ModelUsage{
+		Provider: provider, Model: model, InputTokens: estimateTokens(prompt),
+		OutputTokens: estimateTokens(out), Estimated: true,
+	}}, nil
 }
 
 // ---- model-router reasoner ------------------------------------------------
@@ -109,17 +192,42 @@ func (r *routerReasoner) Think(ctx context.Context, prompt string) (string, erro
 }
 
 func (r *routerReasoner) ThinkModel(ctx context.Context, model, prompt string) (string, error) {
+	result, err := r.ThinkModelResult(ctx, model, prompt)
+	return result.Text, err
+}
+
+func (r *routerReasoner) ThinkResult(ctx context.Context, prompt string) (ReasonerResult, error) {
+	return r.ThinkModelResult(ctx, r.model, prompt)
+}
+
+func (r *routerReasoner) ThinkModelResult(ctx context.Context, model, prompt string) (ReasonerResult, error) {
+	return r.complete(ctx, model, modelrouter.Request{Model: model, Prompt: prompt})
+}
+
+func (r *routerReasoner) ThinkModelSegments(ctx context.Context, model, stablePrefix, volatileSuffix string) (ReasonerResult, error) {
+	return r.complete(ctx, model, modelrouter.Request{
+		Model: model, Prompt: stablePrefix + volatileSuffix,
+		StablePrefix: stablePrefix, VolatileSuffix: volatileSuffix,
+	})
+}
+
+func (r *routerReasoner) complete(ctx context.Context, model string, req modelrouter.Request) (ReasonerResult, error) {
 	if strings.TrimSpace(model) == "" {
 		model = "default"
+		req.Model = model
 	}
-	resp, err := r.router.Complete(ctx, modelrouter.Request{Model: model, Prompt: prompt})
+	resp, err := r.router.Complete(ctx, req)
 	if err != nil {
-		return "", err
+		return ReasonerResult{}, err
 	}
 	if resp.Provider == "mock" {
-		return "", fmt.Errorf("model-router: no runtime model provider resolved")
+		return ReasonerResult{}, fmt.Errorf("model-router: no runtime model provider resolved")
 	}
-	return strings.TrimSpace(resp.Text), nil
+	return ReasonerResult{Text: strings.TrimSpace(resp.Text), Usage: ModelUsage{
+		Provider: resp.Provider, Model: resp.Model, InputTokens: resp.InputTokens,
+		OutputTokens: resp.OutputTokens, CacheReadTokens: resp.CacheReadTokens,
+		CacheWriteTokens: resp.CacheWriteTokens,
+	}}, nil
 }
 
 // ---- claude CLI reasoner ---------------------------------------------------
@@ -168,6 +276,11 @@ func newClaudeCLIReasonerModel(model string) (*claudeCLIReasoner, error) {
 func (r *claudeCLIReasoner) Name() string { return "claude-cli" }
 
 func (r *claudeCLIReasoner) Think(ctx context.Context, prompt string) (string, error) {
+	result, err := r.ThinkResult(ctx, prompt)
+	return result.Text, err
+}
+
+func (r *claudeCLIReasoner) ThinkResult(ctx context.Context, prompt string) (ReasonerResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
@@ -189,20 +302,35 @@ func (r *claudeCLIReasoner) Think(ctx context.Context, prompt string) (string, e
 
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("claude reasoner: %w", err)
+		return ReasonerResult{}, fmt.Errorf("claude reasoner: %w", err)
 	}
 	var resp struct {
 		Result  string `json:"result"`
 		IsError bool   `json:"is_error"`
 		Subtype string `json:"subtype"`
+		Model   string `json:"model"`
+		Usage   struct {
+			InputTokens         int `json:"input_tokens"`
+			OutputTokens        int `json:"output_tokens"`
+			CacheCreationTokens int `json:"cache_creation_input_tokens"`
+			CacheReadTokens     int `json:"cache_read_input_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {
-		return "", fmt.Errorf("claude reasoner: decode: %w (%s)", err, truncate(string(out), 200))
+		return ReasonerResult{}, fmt.Errorf("claude reasoner: decode: %w (%s)", err, truncate(string(out), 200))
 	}
 	if resp.IsError {
-		return "", fmt.Errorf("claude reasoner error: %s", resp.Subtype)
+		return ReasonerResult{}, fmt.Errorf("claude reasoner error: %s", resp.Subtype)
 	}
-	return strings.TrimSpace(resp.Result), nil
+	model := resp.Model
+	if model == "" {
+		model = r.model
+	}
+	return ReasonerResult{Text: strings.TrimSpace(resp.Result), Usage: ModelUsage{
+		Provider: "anthropic", Model: model, InputTokens: resp.Usage.InputTokens,
+		OutputTokens: resp.Usage.OutputTokens, CacheReadTokens: resp.Usage.CacheReadTokens,
+		CacheWriteTokens: resp.Usage.CacheCreationTokens,
+	}}, nil
 }
 
 func (r *claudeCLIReasoner) Close() {
