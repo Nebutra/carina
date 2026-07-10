@@ -4,17 +4,15 @@ class Carina < Formula
   version "__VERSION__"
   license "MIT"
 
-  depends_on :macos
-
-  on_arm do
+  if Hardware::CPU.arm?
     url "__RELEASE_BASE_URL__/carina___VERSION___darwin_arm64.tar.gz"
     sha256 "__DARWIN_ARM64_SHA256__"
-  end
-
-  on_intel do
+  else
     url "__RELEASE_BASE_URL__/carina___VERSION___darwin_amd64.tar.gz"
     sha256 "__DARWIN_AMD64_SHA256__"
   end
+
+  depends_on :macos
 
   def install
     bin.install Dir["bin/carina*"]

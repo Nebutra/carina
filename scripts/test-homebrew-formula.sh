@@ -14,6 +14,7 @@ OUTPUT="$tmp/Formula/carina.rb" \
 formula="$tmp/Formula/carina.rb"
 grep -Fq 'version "0.6.0"' "$formula"
 grep -Fq 'https://github.com/Nebutra/carina/releases/download/v0.6.0/' "$formula"
+grep -Fq 'if Hardware::CPU.arm?' "$formula"
 grep -Fq 'carina_0.6.0_darwin_arm64.tar.gz' "$formula"
 grep -Fq 'carina_0.6.0_darwin_amd64.tar.gz' "$formula"
 grep -Fq "$(printf 'a%.0s' {1..64})" "$formula"
