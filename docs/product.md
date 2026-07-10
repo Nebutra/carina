@@ -62,18 +62,30 @@ Current strengths:
 - control-plane and capability boundary exist;
 - audit and patch provenance are implemented;
 - provider/BYOK support is broad enough for practical testing;
+- provider-native token/cache accounting and persistent cost reporting are
+  available through `carina cost`;
 - scoped HTTP Gateway exposes agent-first `/v1` and read-only tool invoke when
   explicitly enabled;
-- source builds and tests are usable.
+- TypeScript, Python, and Go SDKs provide typed core parity for attach/event
+  stream, fork, cost, steering, and structured question answers, with bounded
+  calls and disconnect propagation;
+- the terminal product surface includes typed events, task/subagent status,
+  structured approvals and questions, steering, and reconnect recovery;
+- checksummed macOS/Homebrew distribution and fail-closed Apple
+  signing/notarization automation are present;
+- source builds and tests are usable;
 - Nebutra Cloud identity/sync has an explicit boundary contract, with sync off
   by default.
 
 Current gaps:
 
-- checksummed macOS packages and the official Homebrew tap are available;
-- Apple notarization, Linux packages, and npm installation are not published;
-- dashboard/TUI is not polished;
-- SDK parity is incomplete;
+- the first credentialed, Apple-accepted tag run is still required before
+  notarization can be claimed for a public artifact;
+- Linux packages and npm installation are not published;
+- there is no graphical dashboard or editor integration; the polished surface
+  is terminal-first;
+- less-common control-plane RPCs still use the SDKs' generic `call` escape
+  hatch rather than dedicated wrappers;
 - Windows is not supported;
-- production remote-worker operations need separate deployment documentation.
+- production remote-worker operations need separate deployment documentation;
 - the Nebutra Cloud sync connector is not implemented yet.

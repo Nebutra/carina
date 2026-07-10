@@ -19,21 +19,54 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Go for product version validation
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+
       - name: Validate release tag
         run: |
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           version="${GITHUB_REF_NAME#v}"
-          cli_version="$(sed -nE 's/^const cliVersion = "([^"]+)"/\1/p' apps/carina-cli/main.go)"
-          test -n "$cli_version"
-          test "$version" = "$cli_version"
+          product_version="$(go run ./scripts/product-version.go)"
+          test -n "$product_version"
+          test "$version" = "$product_version"
           git fetch origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
       - name: Validate Homebrew formula template
         run: ./scripts/test-homebrew-formula.sh
 
-  build:
+      - name: Validate signing automation
+        run: ./scripts/test-sign-and-notarize-release.sh
+
+  release-secrets:
     needs: validate
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require Apple release credentials
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          APPLE_DEVELOPER_ID_APPLICATION_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_IDENTITY }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          test -n "$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64"
+          test -n "$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD"
+          test -n "$APPLE_DEVELOPER_ID_APPLICATION_IDENTITY"
+          test -n "$APPLE_NOTARY_APPLE_ID"
+          test -n "$APPLE_NOTARY_TEAM_ID"
+          test -n "$APPLE_NOTARY_PASSWORD"
+          [[ "$APPLE_DEVELOPER_ID_APPLICATION_IDENTITY" == "Developer ID Application:"* ]]
+          [[ "$APPLE_NOTARY_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]
+
+  build:
+    needs:
+      - validate
+      - release-secrets
     strategy:
       fail-fast: false
       matrix:
@@ -73,6 +106,30 @@ jobs:
           test -f "dist/carina_${version}_darwin_${{ matrix.goarch }}.tar.gz"
           test -f "dist/carina_${version}_darwin_${{ matrix.goarch }}.tar.gz.sha256"
 
+      - name: Sign and notarize release archive
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          APPLE_DEVELOPER_ID_APPLICATION_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_IDENTITY }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ARCHIVE="$GITHUB_WORKSPACE/dist/carina_${version}_darwin_${{ matrix.goarch }}.tar.gz" \
+            ./scripts/sign-and-notarize-release.sh
+
+      - name: Preserve signing diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: carina-signing-diagnostics-${{ matrix.goarch }}
+          path: |
+            dist/carina_*.tar.gz.notary.json
+            dist/carina_*.tar.gz.signing.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Smoke test Homebrew install
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -93,6 +150,8 @@ jobs:
           path: |
             dist/carina_*.tar.gz
             dist/carina_*.tar.gz.sha256
+            dist/carina_*.tar.gz.notary.json
+            dist/carina_*.tar.gz.signing.txt
           if-no-files-found: error
           retention-days: 7
 
@@ -112,6 +171,8 @@ jobs:
         run: |
           test "$(find dist -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')" = "2"
           test "$(find dist -maxdepth 1 -name '*.tar.gz.sha256' | wc -l | tr -d ' ')" = "2"
+          test "$(find dist -maxdepth 1 -name '*.tar.gz.notary.json' | wc -l | tr -d ' ')" = "2"
+          test "$(find dist -maxdepth 1 -name '*.tar.gz.signing.txt' | wc -l | tr -d ' ')" = "2"
           (cd dist && sha256sum -c ./*.tar.gz.sha256)
           cat dist/*.tar.gz.sha256 | sort -k2 > dist/SHA256SUMS
 
@@ -120,10 +181,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.tar.gz.sha256 dist/SHA256SUMS \
+            gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.tar.gz.sha256 \
+              dist/*.tar.gz.notary.json dist/*.tar.gz.signing.txt dist/SHA256SUMS \
               --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.tar.gz.sha256 dist/SHA256SUMS \
+            gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.tar.gz.sha256 \
+              dist/*.tar.gz.notary.json dist/*.tar.gz.signing.txt dist/SHA256SUMS \
               --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
               --title "Carina ${GITHUB_REF_NAME#v}"
           fi

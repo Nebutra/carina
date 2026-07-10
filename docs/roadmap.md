@@ -15,12 +15,15 @@ Today:
 - checksummed Apple Silicon and Intel macOS releases;
 - official `Nebutra/homebrew-tap` Formula with install/upgrade smoke tests;
 - GitHub build provenance for release archives;
-- no Apple code signing or notarization yet.
+- fail-closed Developer ID signing and Apple notarization automation for future
+  tag releases, with per-release notary JSON and Gatekeeper reports; the first
+  credentialed Apple-accepted run remains externally verifiable release work.
 
 Planned install channels:
 
-1. **Signed/notarized releases**: add Apple signing/notarization, Linux
-   archives, SBOMs, and expanded provenance verification.
+1. **Release trust expansion**: validate the signing/notarization automation on
+   every public tag, then add Linux archives, SBOMs, and expanded provenance
+   verification.
 2. **Linuxbrew**: extend the Nebutra-maintained Formula after Linux archives
    pass clean-machine installation tests. Bundled Headroom remains gated on a
    reproducible standalone artifact for every supported architecture.
@@ -49,7 +52,10 @@ Near-term polish work:
 
 - keep README and quickstart centered on user workflows rather than internal
   language split;
-- improve TUI/dashboard status views;
+- validate the typed TUI, structured question, reconnect, and narrow/CJK paths
+  against real provider sessions on supported terminal profiles;
+- decide whether a separate graphical dashboard is warranted; it is not part
+  of the current terminal-first runtime promise;
 - document production deployment profiles for remote workers;
 - improve SDK parity across TypeScript, Python, and Go;
 - publish security and contributor processes before broad external adoption.

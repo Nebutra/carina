@@ -39,10 +39,10 @@ Build a current-platform release candidate with:
 make release-package
 ```
 
-To force a release version:
+To build the product version declared by `go/product` explicitly:
 
 ```bash
-VERSION=0.6.0 make release-package
+VERSION=0.6.1 make release-package
 ```
 
 The package command writes to `dist/`:
@@ -71,14 +71,14 @@ mismatches are warnings in the package manifest, not hidden state.
 Use existing artifacts without rebuilding:
 
 ```bash
-SKIP_BUILD=1 VERSION=0.6.0 ./scripts/package-release.sh
+SKIP_BUILD=1 VERSION=0.6.1 ./scripts/package-release.sh
 ```
 
 If Zig is unavailable but `zig/zig-out/bin/carina-*` artifacts already exist,
 reuse them explicitly:
 
 ```bash
-SKIP_ZIG=1 VERSION=0.6.0 make release-package
+SKIP_ZIG=1 VERSION=0.6.1 make release-package
 ```
 
 `SKIP_BUILD=1` and `SKIP_ZIG=1` are recorded as warnings in `MANIFEST.json` and
@@ -143,6 +143,62 @@ Pushing a tag matching `v<major>.<minor>.<patch>` runs
 The release is rejected before publication if either architecture fails to
 build or install.
 
+### Apple signing and notarization
+
+Tag releases are fail-closed on Apple release credentials. Before either
+architecture starts building, the workflow requires all of these repository
+secrets:
+
+- `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`: base64-encoded PKCS#12 export of
+  the Developer ID Application certificate and private key;
+- `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`: password used for that PKCS#12
+  export;
+- `APPLE_DEVELOPER_ID_APPLICATION_IDENTITY`: the complete `Developer ID
+  Application: ...` identity shown by `security find-identity`;
+- `APPLE_NOTARY_APPLE_ID`: Apple ID used for the notary service;
+- `APPLE_NOTARY_TEAM_ID`: ten-character Apple Developer team ID;
+- `APPLE_NOTARY_PASSWORD`: app-specific password for the notary Apple ID.
+
+For example, encode the certificate locally without committing it:
+
+```bash
+base64 -i DeveloperIDApplication.p12 | pbcopy
+```
+
+`scripts/sign-and-notarize-release.sh` imports the certificate into a temporary
+keychain, signs every Mach-O file in the existing architecture archive with a
+secure timestamp and hardened runtime, refreshes the package manifest and
+internal checksums, and submits a zip of the signed package with `notarytool`.
+It only replaces the contents and checksum of the existing
+`carina_<version>_darwin_<arch>.tar.gz`; release filenames and Homebrew URLs do
+not change.
+
+After Apple returns `Accepted`, the script runs strict `codesign` verification,
+`codesign --check-notarization`, and `spctl --assess --type execute` for every
+signed binary. It then publishes these audit companions beside each archive:
+
+- `<archive>.notary.json`: the complete machine-readable `notarytool` result;
+- `<archive>.signing.txt`: per-binary signature, notarization, and Gatekeeper
+  assessment output.
+
+Carina currently ships standalone command-line Mach-O files in a tar archive,
+not an app bundle, pkg, or dmg. Apple does not support stapling a ticket to
+these raw executables or to the tar file. Gatekeeper verification therefore
+uses Apple's online notarization ticket, and the release workflow treats a
+failed `codesign --check-notarization` or `spctl` assessment as fatal.
+
+The automation and its missing-secret paths can be checked without Apple
+credentials:
+
+```bash
+./scripts/test-sign-and-notarize-release.sh
+```
+
+A real notarization cannot be validated from a source checkout without the
+certificate, notary credentials, and Apple service. Successful shell tests are
+not evidence that Apple accepted a release; the published notary JSON and
+signing report are that evidence.
+
 ## Homebrew Channel
 
 Install the published Formula with:
@@ -159,7 +215,6 @@ injects versioned release URLs and both architecture checksums.
 
 - hosted installer;
 - published npm install package;
-- Apple code signing and notarization;
 - SBOM publication and provenance verification documentation;
 - Linux release and Linuxbrew path;
 - Windows release path.

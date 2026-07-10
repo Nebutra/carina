@@ -48,7 +48,10 @@ Implemented:
 - Policy enforcement assumes commands run through the Carina daemon/toolchain.
 - HTTPS MITM credential injection expands trust inside the child process and
   must be enabled only for reviewed hosts.
-- Alpha release artifacts are not yet signed.
+- Tag-release automation fails closed unless Developer ID signing and Apple
+  notarization succeed. Existing releases must still be treated as unsigned
+  unless their release page contains the generated notary JSON and signing
+  report; repository tests alone are not proof of Apple acceptance.
 
 ## Secrets
 
@@ -59,6 +62,7 @@ secret values.
 
 ## Supported Versions
 
-No stable public release line exists yet. Use the latest `main` only if you are
-comfortable with source-first alpha behavior.
-
+The current source line targets Carina Runtime `0.6.1`; SDK packages are
+independently versioned at `0.2.0` and declare runtime compatibility in their
+package API. No stable support window exists yet, so use the latest `main` only
+if you are comfortable with source-first alpha behavior.

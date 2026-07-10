@@ -84,11 +84,16 @@ Implemented in this repository:
 
 Not yet treated as product-complete:
 
-- Apple-notarized releases, Linux packages, and an npm install channel;
+- the first credentialed Apple-accepted public release, Linux packages, and an
+  npm install channel; signing/notarization automation is fail-closed and ready
+  for tag releases;
 - contributor and security process beyond the initial documents in this repo;
-- polished TUI/dashboard;
+- a graphical dashboard or editor integration; the terminal TUI now provides
+  typed events, structured approvals/questions, steering, and reconnect recovery;
 - Windows support;
-- SDK parity across TypeScript, Python, and Go;
+- dedicated SDK wrappers for every less-common control-plane RPC (the three
+  SDKs cover the core attach/stream/fork/cost/steer/question workflow and retain
+  a generic JSON-RPC call escape hatch);
 - production guide for clustered remote-worker fleets.
 
 ## Install With Homebrew
@@ -318,8 +323,9 @@ Alpha limitations:
 - OS sandbox backends exist, but production profiles need deployment review.
 - Policy correctness depends on routing commands through the Carina daemon and
   toolchain.
-- Release archives have checksums and GitHub build provenance, but Apple code
-  signing and notarization are not complete yet.
+- Tag-release automation fails closed on Developer ID signing and Apple
+  notarization. A release is only considered notarized when its release page
+  contains Apple-accepted notary JSON and the generated signing report.
 
 See [SECURITY.md](SECURITY.md) and [docs/security-model.md](docs/security-model.md).
 

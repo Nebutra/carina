@@ -4,12 +4,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-extract_go_const() {
-  local file="$1"
-  local name="$2"
-  sed -nE "s/^const ${name} = \"([^\"]+)\"/\\1/p" "$file" | head -n 1
-}
-
 extract_toml_version() {
   local file="$1"
   sed -nE 's/^version = "([^"]+)"/\1/p' "$file" | head -n 1
@@ -81,15 +75,20 @@ lock_artifact_value() {
   ' "$file"
 }
 
-cli_version="$(extract_go_const apps/carina-cli/main.go cliVersion)"
-daemon_version="$(extract_go_const go/daemon/daemon.go Version)"
+product_version="$(go run ./scripts/product-version.go)"
+cli_version="$product_version"
+daemon_version="$product_version"
 cargo_version="$(extract_toml_version Cargo.toml)"
 ts_sdk_version="$(extract_json_version sdk/typescript/package.json)"
 py_sdk_version="$(extract_toml_version sdk/python/pyproject.toml)"
 
-version="${VERSION:-$cli_version}"
+version="${VERSION:-$product_version}"
 if [[ -z "$version" ]]; then
-  printf 'package-release: VERSION is required when CLI version cannot be parsed\n' >&2
+  printf 'package-release: VERSION is required when product version cannot be loaded\n' >&2
+  exit 1
+fi
+if [[ "$version" != "$product_version" ]]; then
+  printf 'package-release: VERSION %s does not match product version %s\n' "$version" "$product_version" >&2
   exit 1
 fi
 

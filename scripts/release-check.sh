@@ -16,6 +16,13 @@ if (( ${#missing[@]} > 0 )); then
   exit 127
 fi
 
+zig_version="$(zig version)"
+if [[ ! "$zig_version" =~ ^0\.15\. ]]; then
+  printf 'release-check: unsupported Zig version %s (required: 0.15.x)\n' "$zig_version" >&2
+  printf 'Install Zig 0.15.1, matching CI, then retry.\n' >&2
+  exit 127
+fi
+
 echo "==> build Go apps, Rust workspace, and Zig tools"
 make all
 
@@ -33,5 +40,8 @@ go test -race ./go/daemon ./go/config ./apps/carina-daemon
 
 echo "==> Homebrew formula template"
 ./scripts/test-homebrew-formula.sh
+
+echo "==> macOS signing/notarization automation"
+./scripts/test-sign-and-notarize-release.sh
 
 echo "release-check: ok"

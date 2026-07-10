@@ -16,6 +16,18 @@ jobs:
         with:
           go-version: "1.25"
 
+      - name: Set up Node for TypeScript SDK conformance
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+
+      - name: Set up Python for Python SDK conformance
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -42,6 +54,21 @@ jobs:
           CARINA_KERNEL_BIN: ${{ github.workspace }}/target/release/carina-kernel-service
         run: go test -race -coverpkg=./go/... -coverprofile=cover.out ./go/... && go tool cover -func=cover.out | tail -1
 
+      - name: Product version and Go SDK conformance
+        run: |
+          test "$(go run ./scripts/product-version.go)" = "0.6.1"
+          go test -race ./sdk/go
+
+      - name: TypeScript SDK conformance
+        working-directory: sdk/typescript
+        run: npm ci && npm test
+
+      - name: Python SDK conformance
+        working-directory: sdk/python
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -v
+
       - name: Build CLI binaries
         run: |
           go build -o bin/carina ./apps/carina-cli
@@ -54,7 +81,10 @@ jobs:
           CARINA_KERNEL_BIN: ${{ github.workspace }}/target/release/carina-kernel-service
         run: bash scripts/ci-gates.sh
 
-      - name: Performance benchmarks (§14)
+      - name: Benchmark gate logic
+        run: bash scripts/test-bench-gate.sh
+
+      - name: Performance benchmarks (§13)
         run: bash scripts/bench.sh 10000
 
       - name: Validate Homebrew formula template

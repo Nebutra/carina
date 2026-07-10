@@ -1,4 +1,4 @@
-.PHONY: all go rust zig sdk-ts test rust-test go-test release-check release-package homebrew-formula-test homebrew-install-test clean
+.PHONY: all go rust zig sdk-ts test rust-test go-test bench-gate-test release-check release-package homebrew-formula-test homebrew-install-test clean
 
 all: go rust zig
 
@@ -10,6 +10,9 @@ go:
 	go vet ./...
 
 test: rust-test go-test
+
+bench-gate-test:
+	bash scripts/test-bench-gate.sh
 
 rust-test:
 	cargo test --workspace
