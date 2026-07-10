@@ -15,6 +15,7 @@ import (
 
 	"github.com/Nebutra/carina/go/config"
 	"github.com/Nebutra/carina/go/daemon"
+	"github.com/Nebutra/carina/go/rpc"
 )
 
 func main() {
@@ -33,7 +34,7 @@ func main() {
 
 	stateDir := flag.String("state", cfg.StateDir, "session/event storage directory")
 	socket := flag.String("socket", cfg.Socket, "unix socket path")
-	tcp := flag.String("tcp", cfg.TCP, "optional TCP listen address for remote workers, e.g. :7777")
+	tcp := flag.String("tcp", cfg.TCP, "optional loopback-only diagnostic TCP address, e.g. 127.0.0.1:7777")
 	gatewayHTTP := flag.String("gateway-http", cfg.GatewayHTTP, "optional HTTP Gateway listen address, e.g. 127.0.0.1:8787")
 	gatewayHTTPOrigins := flag.String("gateway-http-origins", strings.Join(cfg.GatewayHTTPOrigins, ","), "comma-separated allowed browser Origin values for -gateway-http")
 	gatewayWS := flag.String("gateway-ws", cfg.GatewayWS, "optional WebSocket Gateway listen address, e.g. 127.0.0.1:8777")
@@ -63,6 +64,9 @@ func main() {
 	headroomProxyPort := flag.Int("headroom-proxy-port", cfg.HeadroomProxyPort, "Headroom localhost proxy port (0 = choose later)")
 	headroomTokenBudget := flag.Int("headroom-token-budget", cfg.HeadroomTokenBudget, "Headroom context token budget")
 	flag.Parse()
+	if err := validateListenerSecurity(*tcp, *gatewayWS, *gatewayTokenSigningKeyFile); err != nil {
+		log.Fatalf("carina-daemon: %v", err)
+	}
 
 	// Record which flags the operator set explicitly, so they stay the highest-
 	// precedence layer across SIGHUP reloads (a reload must not clobber them).
@@ -221,6 +225,18 @@ func main() {
 	if err := d.Run(*socket); err != nil {
 		log.Fatalf("carina-daemon: %v", err)
 	}
+}
+
+func validateListenerSecurity(tcpAddr, gatewayWSAddr, gatewayTokenSigningKeyFile string) error {
+	if strings.TrimSpace(tcpAddr) != "" {
+		if err := rpc.ValidateLoopbackTCPAddress(tcpAddr); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(gatewayWSAddr) != "" && strings.TrimSpace(gatewayTokenSigningKeyFile) == "" {
+		return fmt.Errorf("gateway websocket requires -gateway-token-signing-key-file")
+	}
+	return nil
 }
 
 // splitList parses a comma-separated flag value into a trimmed, non-empty slice.
