@@ -23,6 +23,8 @@ import (
 
 	"github.com/Nebutra/carina/go/auth"
 	"github.com/Nebutra/carina/go/provider"
+	"github.com/Nebutra/carina/go/ttyutil"
+	"github.com/Nebutra/carina/go/tui"
 )
 
 const cliVersion = "0.6.0"
@@ -35,9 +37,12 @@ Usage:
 Start and run:
   carina init                                      create ~/.carina and print daemon hint
   carina status                                    show daemon health and counters
-  carina run [--agent name] [--model provider/model] "<prompt>"
-                                                   create a safe-edit session in cwd and submit a task
-  carina ask [--agent name] [--model provider/model] "<prompt>"
+  carina doctor [--json]                           pass/warn/fail diagnostics with copy-paste fixes
+  carina run [--agent name] [--model provider/model] "<prompt>" [--background]
+                                                   create a safe-edit session in cwd, submit a task, and
+                                                   wait for it to finish (exits with its governance
+                                                   outcome); --background returns as soon as it is queued
+  carina ask [--agent name] [--model provider/model] "<prompt>" [--background]
                                                    alias for run
   carina agents list                               list available agent modes
   carina commands list                             list slash commands
@@ -45,7 +50,7 @@ Start and run:
 Inspect sessions:
   carina sessions                                  list sessions
   carina resume <session_id> [prompt|-]            continue or inspect a session
-  carina watch <session_id>                        stream live events
+  carina watch <session_id> [--json]                stream live events (--json emits typed control_request frames)
   carina items <session_id>                        replay normalized thread/turn/item events
   carina search <session_id> <text>                search the workspace through the daemon
 
@@ -113,13 +118,18 @@ Daemon:
 
 func main() {
 	if len(os.Args) < 2 {
+		if action := decideBareInvocation(ttyutil.IsTTY(os.Stdin), ttyutil.IsTTY(os.Stdout)); action == bareActionLaunchTUI {
+			os.Exit(runBareTUI().ExitCode())
+		}
 		fmt.Print(usage)
-		os.Exit(2)
+		os.Exit(tui.OutcomeUsage.ExitCode())
 	}
-	if err := run(os.Args[1], os.Args[2:]); err != nil {
+	err := run(os.Args[1], os.Args[2:])
+	outcome := classifyExitCode(err)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
-		os.Exit(1)
 	}
+	os.Exit(outcome.ExitCode())
 }
 
 func run(cmd string, args []string) error {
@@ -152,13 +162,25 @@ func run(cmd string, args []string) error {
 		}
 	}
 
-	c, err := dialDaemon()
+	// Every governed subcommand from here down shares one init gate
+	// (P1.8 startup discipline): help/version/completion and the native
+	// passthrough above never reach this line.
+	c, err := initGate(cmd)
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	if c != nil {
+		defer c.Close()
+	}
 
 	switch cmd {
+	case "doctor":
+		// c is nil exactly when initGate's doctor kill-switch fired
+		// (CARINA_DOCTOR_DISABLE set): cmdDoctor renders the same disabled
+		// report the daemon itself would, without ever dialing. The returned
+		// error (nil on an all-PASS report) carries the doctor-specific
+		// WARN/FAIL classification for classifyExitCode.
+		return cmdDoctor(c, args)
 	case "status":
 		return call(c, "daemon.status", map[string]any{})
 	case "metrics":
@@ -177,9 +199,15 @@ func run(cmd string, args []string) error {
 		return cmdContext(c, args)
 
 	case "run", "ask":
-		// --background is accepted for clarity; tasks always run in the
-		// daemon and survive CLI exit (PRD §5.2/§10.2), so this is the
-		// default behavior.
+		// The task always runs in the daemon and survives CLI exit (PRD
+		// §5.2/§10.2) either way; --background additionally opts the CLI
+		// process itself out of waiting for the outcome (P1.5(b)): by
+		// default (foreground) `carina run` blocks until the task reaches
+		// a terminal state and exits with that outcome's governance-
+		// distinct code, matching the plan's exit criterion — without it,
+		// run() returned nil the instant task.submit's RPC round trip
+		// succeeded and a genuinely failed/policy-denied run exited 0.
+		background := hasFlag(args, "--background")
 		args = dropFlag(args, "--background")
 		prompt, model, agent, err := parseRunArgs(args)
 		if err != nil {
@@ -203,11 +231,24 @@ func run(cmd string, args []string) error {
 		if agent != "" {
 			params["agent"] = agent
 		}
-		if err := call(c, "task.submit", params); err != nil {
+		var task map[string]any
+		if err := c.Call("task.submit", params, &task); err != nil {
 			return err
 		}
-		printResumeHint(sess.SessionID)
-		return nil
+		if err := printJSON(task); err != nil {
+			return err
+		}
+		if background {
+			printResumeHint(sess.SessionID)
+			return nil
+		}
+		taskID, _ := task["task_id"].(string)
+		if taskID == "" {
+			printResumeHint(sess.SessionID)
+			return nil
+		}
+		fmt.Println("waiting for the task to finish (ctrl-c to stop watching; the task keeps running) ...")
+		return runWaitForTask(c, taskID, runWaitForTaskDefaultTimeout, nil)
 
 	case "resume":
 		return cmdResume(c, args)
@@ -233,10 +274,11 @@ func run(cmd string, args []string) error {
 		return callArg(c, "session.close", args, "session_id")
 
 	case "watch":
-		if len(args) < 1 {
-			return fmt.Errorf("usage: carina watch <session_id>")
+		sessionID, jsonOut, err := parseWatchArgs(args)
+		if err != nil {
+			return err
 		}
-		return watch(c, args[0])
+		return watch(c, sessionID, jsonOut)
 
 	case "search":
 		if len(args) < 2 {
@@ -393,7 +435,7 @@ func cmdResume(c *rpcClient, args []string) error {
 		return err
 	}
 	if opts.watch {
-		return watch(c, sess.SessionID)
+		return watch(c, sess.SessionID, opts.json)
 	}
 	if !opts.json {
 		printResumeHint(sess.SessionID)
@@ -519,6 +561,16 @@ func dropFlag(args []string, flag string) []string {
 		}
 	}
 	return out
+}
+
+// hasFlag reports whether a boolean flag is present in args.
+func hasFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag {
+			return true
+		}
+	}
+	return false
 }
 
 func cmdInit() error {
@@ -1193,18 +1245,55 @@ func cmdSecret(c *rpcClient, args []string) error {
 	}
 }
 
-func watch(c *rpcClient, sessionID string) error {
+// parseWatchArgs splits `carina watch <session_id> [--json]`'s positional
+// session_id from the --json pipe-mode flag (P1.5(c)): with --json, watch
+// emits typed control_request frames via controlFrameForEvent instead of
+// dumping raw event JSON, so a CI bot/wrapper script can grep stdout for
+// frame=control_request per the plan's documented pipe-mode contract.
+func parseWatchArgs(args []string) (sessionID string, jsonOut bool, err error) {
+	var positional []string
+	for _, a := range args {
+		if a == "--json" {
+			jsonOut = true
+			continue
+		}
+		positional = append(positional, a)
+	}
+	if len(positional) < 1 {
+		return "", false, fmt.Errorf("usage: carina watch <session_id> [--json]")
+	}
+	return positional[0], jsonOut, nil
+}
+
+func watch(c *rpcClient, sessionID string, jsonOut bool) error {
 	if err := c.Call("session.events.stream", map[string]any{"session_id": sessionID}, nil); err != nil {
 		return err
 	}
-	fmt.Printf("watching %s (ctrl-c to stop)\n", sessionID)
+	if !jsonOut {
+		fmt.Printf("watching %s (ctrl-c to stop)\n", sessionID)
+	}
 	for {
 		method, params, err := c.ReadNotification()
 		if err != nil {
 			return err
 		}
-		if method == "event" {
+		if method != "event" {
+			continue
+		}
+		if !jsonOut {
 			fmt.Println(string(params))
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal(params, &event); err != nil {
+			continue
+		}
+		if frame, ok := controlFrameForEvent(event); ok {
+			out, err := json.Marshal(frame)
+			if err != nil {
+				continue
+			}
+			fmt.Println(string(out))
 		}
 	}
 }

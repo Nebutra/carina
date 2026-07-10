@@ -11,6 +11,8 @@ import (
 	"net"
 	"os"
 	"sync"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -63,25 +65,79 @@ type StreamHandler func(params json.RawMessage, sub *Subscription) error
 
 // Subscription pushes server notifications to one connection.
 type Subscription struct {
-	mu   sync.Mutex
-	enc  *json.Encoder
+	w    *connWriter
 	done chan struct{}
 }
 
-// Notify sends a server notification (no id) to the subscriber.
+// Notify sends a server notification (no id) to the subscriber. The frame is
+// enqueued on the connection's single-writer drain loop (connWriter), so it
+// preserves wire order relative to any other frame — request response or
+// notification — enqueued for the same connection, regardless of which
+// goroutine calls Notify or when its own encode happens to complete. See
+// P1.8 (docs/plans/agent-cli-productization.md): an approval-resolution
+// event enqueued before a later request's response must never be observed
+// on the wire after it.
 func (s *Subscription) Notify(method string, params any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	select {
 	case <-s.done:
 		return fmt.Errorf("subscription closed")
 	default:
 	}
-	return s.enc.Encode(Response{JSONRPC: "2.0", Result: nil, Error: nil, ID: nil}.withNotify(method, params))
+	return s.w.enqueue(Response{JSONRPC: "2.0", Result: nil, Error: nil, ID: nil}.withNotify(method, params))
 }
 
 // Done reports when the subscriber disconnected.
 func (s *Subscription) Done() <-chan struct{} { return s.done }
+
+// connWriter is the single writer goroutine for one connection: every frame
+// destined for the wire — request responses from serveWithScopes and
+// notifications from any Subscription tied to this connection — is enqueued
+// here and encoded strictly in enqueue order by one goroutine. This is the
+// P1.8 single-writer-drain hardener: without it, serveWithScopes's own
+// enc.Encode(response) call and a concurrent Subscription.Notify call race
+// on the same underlying net.Conn with no coordination between them, so
+// wire order can diverge from enqueue order — misrepresenting event
+// ordering to a watching client (approval events overtaking the tool call
+// they govern).
+type connWriter struct {
+	enc     *json.Encoder
+	queue   chan any
+	done    chan struct{}
+	stopped chan struct{}
+}
+
+func newConnWriter(enc *json.Encoder, done chan struct{}) *connWriter {
+	w := &connWriter{enc: enc, queue: make(chan any, 256), done: done, stopped: make(chan struct{})}
+	go w.drain()
+	return w
+}
+
+// drain is the single writer goroutine: it encodes queued frames one at a
+// time, in the order they were enqueued, until the connection is done.
+func (w *connWriter) drain() {
+	defer close(w.stopped)
+	for {
+		select {
+		case frame := <-w.queue:
+			_ = w.enc.Encode(frame)
+		case <-w.done:
+			return
+		}
+	}
+}
+
+// enqueue hands a frame to the single writer goroutine and blocks until it
+// has been accepted onto the queue (not until it has been written), so
+// callers observe a bounded, ordered handoff rather than an unbounded
+// buffer racing writer fairness.
+func (w *connWriter) enqueue(frame any) error {
+	select {
+	case w.queue <- frame:
+		return nil
+	case <-w.done:
+		return fmt.Errorf("connection closed")
+	}
+}
 
 // notification is encoded instead of Response for server-initiated messages.
 type notification struct {
@@ -104,6 +160,7 @@ type Server struct {
 	remoteSafe     map[string]bool // methods a Remote origin may call
 	remoteDisabled bool            // kill-switch: refuse all Remote calls
 	strictMethods  bool            // refuse registered handlers without descriptors
+	lockFile       *os.File        // ListenUnix's cross-process advisory lock (P1.8), nil until acquired
 }
 
 func NewServer() *Server {
@@ -260,13 +317,52 @@ func (s *Server) ResolveScope(method string, params json.RawMessage) (Scope, boo
 	return scope, true, nil
 }
 
+// ListenUnix binds a unix socket for RPC, first acquiring an exclusive
+// advisory lock (flock) on a sibling ".lock" file next to socketPath (P1.8
+// startup discipline). This is the cross-process mutual-exclusion guard: a
+// second daemon instance racing to bind the same socketPath — e.g. two bare
+// `carina` invocations both auto-starting carina-daemon on a fresh machine
+// — fails fast with ErrSocketInUse instead of os.Remove-ing the socket path
+// a live first instance is already listening on and silently stealing it.
+// The lock is held for the lifetime of the listener (released on Close, or
+// automatically by the OS if the process dies), so a stale socket left by a
+// daemon that exited without cleanup (killed, crashed) has no live lock
+// holder and a fresh ListenUnix can still reclaim it.
 func (s *Server) ListenUnix(socketPath string) error {
+	lockPath := socketPath + ".lock"
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("rpc: open lock %s: %w", lockPath, err)
+	}
+	if err := unix.Flock(int(lockFile.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		_ = lockFile.Close()
+		return fmt.Errorf("rpc: acquire lock %s: %w: %w", lockPath, err, ErrSocketInUse)
+	}
+	s.mu.Lock()
+	s.lockFile = lockFile
+	s.mu.Unlock()
+
 	_ = os.Remove(socketPath)
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
+		s.releaseLock()
 		return fmt.Errorf("rpc: listen %s: %w", socketPath, err)
 	}
 	return s.accept(ln, OriginLocal)
+}
+
+// releaseLock unlocks and closes the ListenUnix advisory lock file, if one
+// was acquired. Safe to call multiple times.
+func (s *Server) releaseLock() {
+	s.mu.Lock()
+	lockFile := s.lockFile
+	s.lockFile = nil
+	s.mu.Unlock()
+	if lockFile == nil {
+		return
+	}
+	_ = unix.Flock(int(lockFile.Fd()), unix.LOCK_UN)
+	_ = lockFile.Close()
 }
 
 func (s *Server) ListenTCP(addr string) error {
@@ -292,10 +388,11 @@ func (s *Server) accept(ln net.Listener, origin Origin) error {
 
 func (s *Server) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, ln := range s.listeners {
 		_ = ln.Close()
 	}
+	s.mu.Unlock()
+	s.releaseLock()
 	return nil
 }
 
@@ -309,6 +406,26 @@ func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	enc := json.NewEncoder(conn)
 	done := make(chan struct{})
+	// Single-writer drain: every frame for this connection — request
+	// responses below and any Subscription.Notify from a stream handler
+	// registered on it — funnels through one channel and one writer
+	// goroutine, so wire order always matches enqueue order (P1.8).
+	w := newConnWriter(enc, done)
+	// Wait for drain() to actually exit before conn.Close() runs. Defers
+	// are LIFO, so registration order here matters: close(done) must run
+	// BEFORE <-w.stopped (drain()'s select is gated on done to return), and
+	// both must run before conn.Close(). Without waiting on w.stopped, a
+	// frame that enqueue() already reported as accepted can be mid-Encode
+	// inside drain()'s single writer goroutine at the exact moment
+	// close(done) fires; conn.Close() racing that in-flight Encode from a
+	// different goroutine can silently drop the frame (drain() discards
+	// the Encode error), even though its caller already observed a nil
+	// error from enqueue()/Notify. Blocking here bounds shutdown to
+	// whatever is already queued — it does not wait for new frames, since
+	// done is already closed and drain() will not pick up anything
+	// enqueued after that (enqueue() itself returns an error once done
+	// fires).
+	defer func() { <-w.stopped }()
 	defer close(done)
 
 	for scanner.Scan() {
@@ -318,23 +435,23 @@ func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
 		}
 		var req Request
 		if err := json.Unmarshal(line, &req); err != nil {
-			_ = enc.Encode(Response{JSONRPC: "2.0", Error: &Error{Code: CodeParseError, Message: err.Error()}})
+			_ = w.enqueue(Response{JSONRPC: "2.0", Error: &Error{Code: CodeParseError, Message: err.Error()}})
 			continue
 		}
 
 		// Enforce transport-origin restriction before doing any work.
 		if ok, reason := s.remoteAuthorized(req.Method, origin); !ok {
-			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: reason}})
+			_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: reason}})
 			continue
 		}
 		if scopes != nil {
 			scope, _, err := s.ResolveScope(req.Method, req.Params)
 			if err != nil {
-				_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: err.Error()}})
+				_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: err.Error()}})
 				continue
 			}
 			if !scopeAllowed(scope, scopes) {
-				_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: "method scope not negotiated: " + req.Method + " requires " + string(scope)}})
+				_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: "method scope not negotiated: " + req.Method + " requires " + string(scope)}})
 				continue
 			}
 		}
@@ -347,19 +464,19 @@ func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
 		s.mu.RUnlock()
 		if isStream {
 			if strict && !classified {
-				_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: "method not classified: " + req.Method}})
+				_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: "method not classified: " + req.Method}})
 				continue
 			}
-			sub := &Subscription{enc: enc, done: done}
+			sub := &Subscription{w: w, done: done}
 			if err := streamHandler(req.Params, sub); err != nil {
-				_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInternalError, Message: err.Error()}})
+				_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInternalError, Message: err.Error()}})
 				continue
 			}
-			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"subscribed": true}})
+			_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"subscribed": true}})
 			continue
 		}
 
-		_ = enc.Encode(s.dispatch(req))
+		_ = w.enqueue(s.dispatch(req))
 	}
 }
 

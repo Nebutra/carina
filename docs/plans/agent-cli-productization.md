@@ -125,7 +125,15 @@ the approval moment, and *trust* that interrupts, failures, and outputs are
 truthfully represented. Everything here closes a "stubbed" or "missing" row
 in §2 using plumbing that already exists.
 
-#### P1.1 Kernel-backed approval surface (the flagship)
+#### P1.1 Kernel-backed approval surface (the flagship) — **Shipped**
+
+*As-built: kernel `patchGates` + `go/daemon/approval.go`'s*
+*`awaitInteractiveApproval`/`signalPendingApproval` single choke point, the*
+*`go/tui` approval overlay rendering the real reviewable artifact (colored*
+*unified diff for `PatchApply` via `ev["diff"]`), and a real*
+*`task.action.approve`/`task.action.deny` round trip that resolves the same*
+*wait whether it arrives via `task.approval.resolve` or the general RPC*
+*surface. Landed in f1ba5cf.*
 
 *Source: Leader Permission Bridge + shouldDefer reviewable payloads +
 AskUserQuestion structured options + grant scoping + hidden approval-field
@@ -153,7 +161,24 @@ Carina fit: the Leader Bridge collapses to nothing extra — the kernel already
 *is* the bridge. Skip Claude Code's classifier tier (make it an explicit
 policy rule) and its mailbox fallback (the daemon is always the mediator).
 
-#### P1.2 Canonicalize → validate → decide tool pipeline
+#### P1.2 Canonicalize → validate → decide tool pipeline — **Shipped**
+
+*As-built: `go/toolnorm` (`Canonicalize`/`Validate`) is the shared,*
+*side-effect-free normalizer — path expansion, fixed-point stripping of*
+*env-prefixes and no-op-for-policy wrapper commands (`timeout`, `nice`,*
+*`env`) — wired into `go/daemon/agent.go`'s `agentRun` ahead of the kernel*
+*decision: `Validate()` rejects empty/unresolvable/workspace-escaping*
+*commands with a teachable `{code, message}` and never dials the kernel or*
+*touches the audit chain for that rejection; a validated command's*
+*`WrapperStripped` form is what `crates/carina-policy` classifies and*
+*`canon.Command`/`canon.Argv` are what the audit chain and the actually*
+*executed process both use, so audit and execution can never diverge on*
+*phrasing. Scope reduction vs. the original text: the explicit*
+*`sandboxed: yes/no` result-envelope field is not yet threaded through (no OS*
+*sandbox exists to report on yet); tracked as a Phase 2/3 follow-up when an*
+*OS-level sandbox lands, not silently dropped — the precedence rule itself*
+*(policy verdicts outrank any future sandbox) is already the only order*
+*`agentRun` implements.*
 
 *Source: input normalization + two-phase validateInput/checkPermissions +
 sandbox-precedence principle — merged.*
@@ -170,9 +195,16 @@ Kernel-integrity **prerequisite** for P1.1 and P2.1:
   self-corrects without burning a human approval. Users are never asked to
   approve garbage; the audit records decisions, not typos.
 - Document and encode precedence: **policy verdicts outrank any future OS
-  sandbox**; `sandboxed: yes/no` joins degrade-status in the result envelope.
+  sandbox**; `sandboxed: yes/no` joins degrade-status in the result envelope
+  (deferred — see as-built note above).
 
-#### P1.3 Failure-state and degrade taxonomy, surfaced end-to-end
+#### P1.3 Failure-state and degrade taxonomy, surfaced end-to-end — **Shipped**
+
+*As-built: the degrade-status enum and initiator field are computed*
+*daemon-side and rendered through `go/microcopy`'s Degrade register (the*
+*shared engine P1.7 ships); `go/tui` and the CLI's `classifyExitCode`*
+*(`apps/carina-cli/exitcode.go`) consume the same `tui.Outcome` enum so a*
+*degrade never silently collapses to a generic failure. Landed in f1ba5cf.*
 
 *Source: failure microcopy taxonomy + expected-kill suppression + glanceable
 tri-state vocabulary — merged.*
@@ -188,7 +220,13 @@ are recorded unconditionally. Adopt the four-glyph status vocabulary —
 `✓ ok / ⚿ needs-auth / ✗ failed / ~ degraded` — across all status surfaces
 (exact glyphs are a brand question, §6).
 
-#### P1.4 Cascading interrupt as an audited governance event
+#### P1.4 Cascading interrupt as an audited governance event — **Shipped**
+
+*As-built: the Ctrl-C cascade (two presses inside a bounded window exit the*
+*TUI; `task.cancel` mapping) is wired end-to-end and verified under a real*
+*PTY harness (`go/tui/pty_integration_test.go`, tmux-backed) — the terminal*
+*is confirmed never left in raw mode and the governance exit code is*
+*asserted on screen. Landed in f1ba5cf.*
 
 *Source: interrupt/abort patterns (both) — merged.*
 
@@ -200,7 +238,51 @@ synthetic `tool_use_interrupted` transcript records so both the model and the
 auditor see exactly what an interrupt stopped. Hero framing Claude Code
 cannot match: *the audit trail shows what your Ctrl-C killed.*
 
-#### P1.5 One engine, two renderers + pipe-mode approval frames + exit codes
+#### P1.5 One engine, two renderers + pipe-mode approval frames + exit codes — **Shipped (with documented v1 pipe-mode scope reduction)**
+
+*As-built:*
+
+- *(a) One engine, two renderers, bare-invocation TTY switch: bare `carina`*
+  *(no subcommand) now decides via `decideBareInvocation` — real TTY on both*
+  *stdin and stdout launches the interactive Bubble Tea TUI in-process*
+  *(`runBareTUI` in `apps/carina-cli/bare_launch.go`, importing `go/tui`*
+  *directly exactly as `apps/carina-tui` does, no exec/fork); anything piped*
+  *or redirected preserves the original usage+exit-2 behavior. `runBareTUI`*
+  *auto-starts `carina-daemon` on an unreachable socket*
+  *(`ensureDaemonReachable`, bounded retry/backoff) and resumes the most*
+  *recent session for `cwd` via `resumeMostRecentOrFresh`, falling through to*
+  *a fresh session exactly as `carina run` already did. Verified end-to-end*
+  *under a real tmux PTY harness against a live daemon+kernel+Zig-tools*
+  *stack for this closure workflow: bare `carina` ran the first-launch*
+  *`carina doctor` auto-check once, attached to a fresh session, rendered the*
+  *transcript/prompt chrome, and a Ctrl-C Ctrl-C cascade exited 0 leaving the*
+  *pty in canonical (non-raw) mode.*
+- *(b) Governance-distinct exit codes: `classifyExitCode`*
+  *(`apps/carina-cli/exitcode.go`) maps every one-shot command's terminal*
+  *error onto the SAME `tui.Outcome` enum `go/tui/model.go` already defines*
+  *and `apps/carina-tui` already reuses — not a second enum. `carina run`/`ask`*
+  *now block in the foreground by default until the task reaches a terminal*
+  *state and exit with that state's governance code; `--background` opts out.*
+  *Frozen enum: OK / usage / runtime error / policy-denied / user-denied /*
+  *daemon-unreachable / degraded-partial (doctor's WARN/FAIL folds into*
+  *degraded-partial via `doctorOutcomeError`).*
+- *(c) Pipe-mode frames — v1 scope reduction, tracked as a follow-up rather*
+  *than silently dropped: `carina watch --json` emits typed, one-directional*
+  *`{"frame":"control_request", decision_id, capability, resource, reason,*
+  *label, diff, session_id, task_id}` NDJSON frames*
+  *(`controlFrameForEvent` in `apps/carina-cli/watch_json.go`) whenever a*
+  *`permission.request` event streams past, so a CI bot/wrapper script can*
+  *grep stdout for `frame=control_request` without a TTY. The plan's*
+  *originally-scoped bidirectional half — accepting a typed*
+  *`control_response` back on the same process's stdin — was deliberately*
+  *NOT implemented in v1: the already-shipped, already-tested*
+  *`carina approve`/`carina deny <session_id> <decision_id>` commands are the*
+  *v1 resolution path (a second concurrent process call), which is*
+  *sufficient for the CI-bot/wrapper-script use case P1.5(c) exists for and*
+  *reuses proven code instead of adding a new stdin-framing protocol surface*
+  *this workflow's scope did not require. Follow-up: fold*
+  *`control_response` stdin framing into `carina watch --json` directly if a*
+  *future single-process pipe-mode caller needs it.*
 
 *Source: headless/interactive thin-skins + dual-mode commands + NDJSON
 control protocol — merged and reframed.*
@@ -222,7 +304,23 @@ Formalize what is currently accidental:
   approval-timeout, `5` daemon-unreachable, `6` degraded-partial. Frozen in
   docs as a compatibility contract.
 
-#### P1.6 `carina doctor` — three-state diagnostics with copy-paste fixes
+#### P1.6 `carina doctor` — three-state diagnostics with copy-paste fixes — **Shipped**
+
+*As-built: `carina doctor [--json]` (`apps/carina-cli/doctor.go`) renders*
+*PASS/WARN/FAIL for kernel reachability, state-dir writability, Zig*
+*native-tool presence, the reasoner, the context engine, per-language LSP*
+*server presence (`go/daemon/doctor_probes.go`'s `lspProbe`, with a*
+*copy-paste install command per missing server), per-provider BYOK key*
+*resolution (`byokProbe`, store-then-env precedence), and enterprise*
+*policy-bundle freshness (`policyBundleStale` — catches the case where*
+*`bundle.toml`/`trusted-keys`/`approval.json` changed on disk since the*
+*daemon's last restart, since `ApplyConfig`'s SIGHUP/config reload*
+*deliberately never re-inits kernel/policy wiring). Honors the*
+*`CARINA_DOCTOR_DISABLE` kill-switch for locked-down deployments (returns a*
+*minimal disabled report without touching the kernel or any credential).*
+*Runs automatically, once, on the first bare `carina` launch on a machine*
+*(`maybeAutoRunDoctor`, exercised in this workflow's live PTY smoke test) to*
+*double as onboarding — never repeats after that first run.*
 
 *Source: doctor/diagnostics pattern.*
 
@@ -235,40 +333,67 @@ remediation command per failure ("Run: `carina-daemon &`"). Honor a
 kill-switch env for locked-down deployments. **Run automatically on first
 launch** to double as onboarding (audit flags onboarding as absent).
 
-#### P1.7 Microcopy engine v1 — Governed + Degrade registers, en + zh
+#### P1.7 Microcopy engine v1 — Governed + Degrade registers, en + zh — **Shipped**
+
+*As-built: `go/microcopy` ships the deterministic Governed and Degrade*
+*registers consumed by P1.1's approval overlay and P1.3's degrade-status*
+*rendering, `microcopy.DetectLocale()` locale detection (wired into*
+*`runBareTUI`), and suppression for non-interactive/`--json`/`--plain`*
+*output paths per `docs/brand/brand-brief.md` §4 — governance moments always*
+*use the Governed register, never Ambient. Ambient register and LLM*
+*widening remain P3, as originally scoped.*
 
 Full spec in §4. Phase 1 ships the deterministic core: `go/microcopy`
 package, Governed and Degrade registers (the ones P1.1 and P1.3 consume),
 locale detection, suppression rules for `--json/--plain/!isatty`. Ambient
 register and LLM widening are P3.
 
-#### P1.8 Integrity and ordering hardeners (small, near-zero cost, do first)
+#### P1.8 Integrity and ordering hardeners (small, near-zero cost, do first) — **Shipped**
 
-- **Write-ahead persistence of the user turn** (*source: transcript
-  write-ahead pattern*): persist and audit-chain-append the user's
-  instruction *before* dispatch in `go/daemon/agent.go`, so crash-resume and
-  the audit trail can never disagree about whether an instruction was given.
-  Directly hardens the just-shipped session-resume flow.
-- **Single-writer drain loop per client connection** (*source: connection
-  write-ordering pattern*): verify and, where absent, enforce in
-  `go/rpc/server.go` and `go/daemon/bus.go` that all goroutines enqueue to
-  one channel with one writer goroutine per connection. Extra-critical for
-  Carina: an approval event overtaking the tool-call event it governs
-  misrepresents the audit narrative to a watching client.
-- **Startup discipline** (*source: zero-import fast-path + preAction init
-  gating + fire-then-await, adapted*): Go compilation makes import cost moot;
-  the Carina equivalent is **dial cost**. help/version/completion and the
-  <100ms native passthrough never touch socket, config, or kernel. All
-  governed subcommands share one init gate establishing the daemon session
-  and policy context (kills the forgot-to-init bug class). Multiple startup
-  I/Os (dial, policy snapshot, resume-file read) fire as goroutines at
-  `main()` start and join at the gate — goroutine pipelining, explicitly
-  *not* the JS module-order side-effect hack (§5.9).
+*As-built (all three land and are pinned by dedicated tests):*
 
-**Phase 1 exit criteria:** a foreground `carina run` streams events with
-rendered microcopy, pauses inline on an approval with a visible diff, honors
-Ctrl-C as an audited cancel, exits with a governance-distinct code, and
-`carina doctor` gets a new machine from zero to green.
+- *Write-ahead: `handleTaskSubmit`'s synchronous sequence — kernel*
+  *audit-chain append of `TaskCreated` carrying the submitted prompt, then*
+  *durable `persistRun` — completes strictly before the reasoner goroutine's*
+  *first dispatch can run, pinned by*
+  *`go/daemon/writeahead_order_test.go`'s `TestWriteAheadTaskCreatedPrecedesReasonerDispatch`*
+  *(a synchronization gate via a blocking reasoner double, not a timing*
+  *assumption).*
+- *Single-writer drain: `go/rpc/server.go`'s `connWriter` is the one writer*
+  *goroutine per connection — every frame (request responses from*
+  *`serveWithScopes` and notifications from any `Subscription.Notify`) funnels*
+  *through one buffered channel and is encoded strictly in enqueue order,*
+  *closing the exact race the plan called out (an approval event overtaking*
+  *the tool-call event it governs). Pinned by*
+  *`go/rpc/single_writer_drain_test.go`. Shutdown ordering is also*
+  *hardened: `serveWithScopes` blocks on the writer's `stopped` channel*
+  *before closing the connection, so an in-flight `Encode` can never be*
+  *silently dropped by a racing `conn.Close()`.*
+- *Startup discipline: `apps/carina-cli/main.go`'s dispatcher gates*
+  *help/version/completion and the native Zig passthrough*
+  *(`scan`/`grep`/`diff`/`pty`/`run-native`/`patch-native`) before the shared*
+  *`initGate` call — those paths never touch socket, config, or kernel.*
+  *Every governed subcommand shares one `initGate`. A companion hardener not*
+  *in the original text but required to make auto-start*
+  *(P1.5(a)) safe: `go/rpc/server.go`'s `ListenUnix` now acquires a*
+  *cross-process advisory `flock` (`ErrSocketInUse`) before binding, so two*
+  *racing `carina-daemon` auto-starts on a fresh machine fail closed instead*
+  *of one silently stealing the other's live socket.*
+
+**Phase 1 exit criteria — confirmed holding, all four clauses:** a foreground
+`carina run` streams events with rendered microcopy (P1.3/P1.7), pauses
+inline on an approval with a visible diff (P1.1, real unified diff for
+`PatchApply` decisions), honors Ctrl-C as an audited cancel (P1.4, PTY-verified
+cascade with a clean non-raw-mode exit), exits with a governance-distinct
+code (P1.5(b), `classifyExitCode` → shared `tui.Outcome`), and `carina doctor`
+gets a new machine from zero to green (P1.6, auto-runs once on first bare
+`carina` launch; live-verified in this workflow's PTY smoke test — a fresh
+state dir produced an all-PASS-or-expected-WARN report with copy-paste
+remediation for each WARN). **Phase 1 is fully complete**: P1.1–P1.8 are all
+shipped, `cargo test --workspace` and `go test ./...` are green, and the bare
+`carina` invocation is confirmed under a live tmux PTY harness against a real
+daemon + Rust kernel + Zig tools to enter the interactive TUI rather than
+print usage.
 
 ### Phase 2 — Governance differentiation (things Claude Code structurally cannot offer)
 

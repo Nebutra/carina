@@ -10,15 +10,32 @@ import (
 	"time"
 )
 
+// defaultCallTimeout bounds every Client.Call when the caller never sets an
+// explicit timeout via SetCallTimeout: a diagnostic tool like `carina
+// doctor` must fail fast and observably rather than hang forever if the
+// daemon accepts the connection but its handler (or the kernel child
+// process behind it) never responds.
+const defaultCallTimeout = 15 * time.Second
+
+// deadlineSetter is satisfied by net.Conn (and any other transport that
+// supports a read deadline). Call uses it, when present, to bound how long
+// it waits for a response; transports that don't support deadlines (e.g. a
+// plain io.Pipe in a unit test) simply never get one applied.
+type deadlineSetter interface {
+	SetReadDeadline(t time.Time) error
+}
+
 // Client is a blocking JSON-RPC 2.0 client over any line-delimited JSON
 // transport: the daemon unix socket (CLI/SDK) or a child process's stdio
 // (the Rust kernel service).
 type Client struct {
-	mu     sync.Mutex
-	w      io.Writer
-	r      *bufio.Reader
-	closer io.Closer
-	nextID int64
+	mu          sync.Mutex
+	w           io.Writer
+	r           *bufio.Reader
+	closer      io.Closer
+	nextID      int64
+	deadlineSet deadlineSetter // nil if the transport doesn't support read deadlines
+	callTimeout time.Duration  // 0 means defaultCallTimeout
 
 	// notifications receives server-initiated messages (method calls
 	// without a request id), e.g. streamed events. May be nil.
@@ -29,7 +46,7 @@ type Client struct {
 func Dial(socketPath string) (*Client, error) {
 	conn, err := net.DialTimeout("unix", socketPath, 3*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("rpc: dial %s: %w (is the daemon running? try `carina-daemon`)", socketPath, err)
+		return nil, fmt.Errorf("rpc: dial %s: %w (is the daemon running? try `carina-daemon`): %w", socketPath, err, ErrDaemonUnreachable)
 	}
 	return NewClient(conn, conn, conn), nil
 }
@@ -43,10 +60,37 @@ func DialTCP(addr string) (*Client, error) {
 	return NewClient(conn, conn, conn), nil
 }
 
-// NewClient wraps an arbitrary transport. closer may be nil.
+// NewClient wraps an arbitrary transport. closer may be nil. If r also
+// implements deadlineSetter (as net.Conn does), Call bounds its wait for a
+// response with the client's call timeout (SetCallTimeout, or
+// defaultCallTimeout).
 func NewClient(w io.Writer, r io.Reader, closer io.Closer) *Client {
 	reader := bufio.NewReaderSize(r, 1<<20)
-	return &Client{w: w, r: reader, closer: closer}
+	c := &Client{w: w, r: reader, closer: closer}
+	if ds, ok := r.(deadlineSetter); ok {
+		c.deadlineSet = ds
+	}
+	return c
+}
+
+// callTimeoutDisabled is SetCallTimeout's sentinel for "block indefinitely,
+// no per-call bound" — distinct from the zero value of callTimeout (never
+// called SetCallTimeout at all), which means "use defaultCallTimeout".
+const callTimeoutDisabled = -1 * time.Nanosecond
+
+// SetCallTimeout overrides the default bound (defaultCallTimeout) on how
+// long Call waits for a response before returning ErrCallTimeout. Pass a
+// negative duration to disable the timeout entirely (block indefinitely) —
+// used by long-lived streaming-adjacent callers that intentionally want no
+// per-call bound.
+func (c *Client) SetCallTimeout(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if d < 0 {
+		c.callTimeout = callTimeoutDisabled
+		return
+	}
+	c.callTimeout = d
 }
 
 // OnNotify installs a handler for server notifications (requests without
@@ -79,9 +123,23 @@ func (c *Client) Call(method string, params any, result any) error {
 		return fmt.Errorf("rpc: write: %w", err)
 	}
 
+	if c.deadlineSet != nil {
+		timeout := c.callTimeout
+		if timeout == 0 {
+			timeout = defaultCallTimeout
+		}
+		if timeout > 0 {
+			_ = c.deadlineSet.SetReadDeadline(time.Now().Add(timeout))
+			defer func() { _ = c.deadlineSet.SetReadDeadline(time.Time{}) }()
+		}
+	}
+
 	for {
 		line, err := c.r.ReadBytes('\n')
 		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				return fmt.Errorf("rpc: call %s: %w: %w", method, err, ErrCallTimeout)
+			}
 			return fmt.Errorf("rpc: read: %w", err)
 		}
 		var resp struct {

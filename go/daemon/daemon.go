@@ -27,6 +27,7 @@ import (
 	"github.com/Nebutra/carina/go/mcp"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/nebutra"
+	"github.com/Nebutra/carina/go/provider"
 	"github.com/Nebutra/carina/go/rpc"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
@@ -107,6 +108,7 @@ type Daemon struct {
 	started time.Time
 
 	org            *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
+	policyDir      string            // opts.PolicyDir, kept for doctor's policyBundleStale freshness probe
 	stateDir       string
 	socketPath     string
 	cloudEndpoint  string
@@ -170,6 +172,8 @@ type Daemon struct {
 	reload func() error // config reload closure (SIGHUP/RPC); nil until SetReloader
 
 	authChain          *auth.Chain             // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
+	authStore          *auth.Store             // local BYOK credential store (doctor's per-provider probe)
+	providerCatalog    provider.Catalog        // runtime provider catalog (doctor's per-provider probe)
 	history            *history.History        // shared cross-process prompt history
 	memory             *memoryStore            // governed local long-term memory
 	gatewayTokens      *rpc.GatewayTokenIssuer // optional scoped Gateway token signer/verifier
@@ -246,6 +250,7 @@ func New(opts Options) (*Daemon, error) {
 		tools:               tools,
 		events:              NewBus(),
 		org:                 loadOrgPolicy(opts.PolicyDir),
+		policyDir:           opts.PolicyDir,
 		stateDir:            opts.StateDir,
 		cloudEndpoint:       cloudEndpoint,
 		syncMode:            syncMode,
@@ -273,6 +278,8 @@ func New(opts Options) (*Daemon, error) {
 		func() (string, error) { return os.Getenv("CARINA_NEBUTRA_TOKEN"), nil },
 	)
 	providerCatalog := loadRuntimeProviderCatalog(opts.Offline)
+	d.authStore = authStore
+	d.providerCatalog = providerCatalog
 	registerProviders(d.router, opts.Offline, authStore, providerCatalog)
 	// Embeddings (V2 semantic layer): BYOK only, credential-gated at
 	// registration so no provider means the layer is silently off.
@@ -752,17 +759,44 @@ func (d *Daemon) handleWorkspaceTrust(params json.RawMessage) (any, error) {
 }
 
 // handleDoctor runs independent health probes and returns a self-diagnosis
-// (kernel reachable, native tools present, state dir writable, reasoner wired).
+// (kernel reachable, native tools present, state dir writable, reasoner
+// wired, LSP servers present, BYOK provider keys resolvable, context/index
+// health). Honors the CARINA_DOCTOR_DISABLE kill-switch (P1.6): when set,
+// returns a minimal disabled report without touching the kernel, tools, or
+// any provider credential — the intended behavior for locked-down
+// deployments that do not want doctor's probes running at all.
 func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
+	if doctorDisabled(os.Getenv) {
+		return map[string]any{
+			"version":  Version,
+			"disabled": true,
+			"reason":   "CARINA_DOCTOR_DISABLE is set; probes did not run",
+		}, nil
+	}
+
 	probe := func(fn func() error) map[string]any {
 		if err := fn(); err != nil {
 			return map[string]any{"ok": false, "error": err.Error()}
 		}
 		return map[string]any{"ok": true}
 	}
+
+	byokStatuses := byokProbe(byokProviderList(d.providerCatalog), func(providerID string) bool {
+		if d.authStore == nil {
+			return false
+		}
+		_, ok, err := d.authStore.Get(providerID)
+		return err == nil && ok
+	}, os.Getenv)
+
+	lspStatuses := lspProbe(realLookPath)
+
+	policyStale, policyReason := policyBundleStale(d.policyDir, d.org)
+
 	return map[string]any{
-		"version": Version,
-		"kernel":  probe(func() error { _, err := d.kern.ClassifyCommand("echo ok"); return err }),
+		"version":  Version,
+		"disabled": false,
+		"kernel":   probe(func() error { _, err := d.kern.ClassifyCommand("echo ok"); return err }),
 		"state_dir_writable": probe(func() error {
 			f := filepath.Join(d.stateDir, ".doctor")
 			if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
@@ -775,6 +809,22 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 		// Resolved credential SOURCE only — never the value. "" = unauthenticated.
 		"auth":           map[string]any{"source": d.authChain.ResolvedSource()},
 		"context_engine": d.contextDoctor(),
+		"lsp":            map[string]any{"servers": lspStatuses},
+		"byok": map[string]any{
+			"any_resolved": anyProviderResolved(byokStatuses),
+			"providers":    byokStatuses,
+		},
+		// policy reports whether the enterprise policy bundle loaded at this
+		// daemon's startup still matches what is on disk (reload.go
+		// intentionally never re-inits kernel/policy wiring on SIGHUP/config
+		// reload — only a restart applies a bundle.toml/trusted-keys/
+		// approval.json edit). configured is false when no PolicyDir is
+		// set at all (nothing to go stale).
+		"policy": map[string]any{
+			"configured": d.policyDir != "",
+			"stale":      policyStale,
+			"reason":     policyReason,
+		},
 	}, nil
 }
 
@@ -1649,8 +1699,23 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	if len(p.OutputSchema) > 0 {
 		d.sched.SetOutputSchema(task.TaskID, p.OutputSchema)
 	}
-	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
-		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt, "model": task.Model, "agent": task.Agent}, "")
+	// Write-ahead (P1.8): the defining instruction must be durably
+	// audit-chain-appended BEFORE any goroutine is dispatched to act on it,
+	// and — unlike every other d.record() call site, which is fire-and-
+	// forget — a FAILED append here must refuse the submission rather than
+	// let an ungoverned task run whose instruction the audit trail can
+	// never attest to. Call the kernel directly (bypassing d.record, whose
+	// signature intentionally swallows the error for its many best-effort
+	// callers) so this one write-ahead call can be checked.
+	writeAheadPayload := map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt, "model": task.Model, "agent": task.Agent}
+	if err := d.kern.RecordEvent(sess.SessionID, "TaskCreated", task.TaskID, "go", writeAheadPayload, ""); err != nil {
+		_, _ = d.sched.Cancel(task.TaskID)
+		return nil, fmt.Errorf("task_submit_failed: write-ahead audit-chain append failed, task was not dispatched: %w", err)
+	}
+	d.events.Publish(sess.SessionID, map[string]any{
+		"session_id": sess.SessionID, "task_id": task.TaskID, "type": "TaskCreated", "actor": "go",
+		"timestamp": time.Now().UTC().Format(time.RFC3339), "payload": writeAheadPayload,
+	})
 	_ = d.history.Append(prompt) // shared cross-process prompt history (best-effort)
 	d.persistRun(task.TaskID)
 

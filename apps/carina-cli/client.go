@@ -11,12 +11,80 @@ import (
 
 type rpcClient = rpc.Client
 
-func dialDaemon() (*rpcClient, error) {
+// dialHook lets tests observe/replace the actual dial without touching a
+// real socket. Production code always goes through initGate, the single
+// seam allowed to call dialHook (P1.8 startup discipline).
+var dialHook = func() (*rpcClient, error) {
 	socket, err := defaultSocketPath()
 	if err != nil {
 		return nil, err
 	}
 	return rpc.Dial(socket)
+}
+
+// dialDaemon is kept as a direct dial path for callers outside run()'s
+// governed-command switch (e.g. future standalone tooling); run() itself
+// goes through initGate so ungated commands never reach a dial.
+func dialDaemon() (*rpcClient, error) { return dialHook() }
+
+// ungatedCommands is the explicit allowlist of carina subcommands that must
+// never touch the daemon socket, config, or kernel (P1.8 startup
+// discipline): help/version/completion and the <100ms native passthrough.
+// This is deliberately an explicit allowlist rather than a set of ad hoc
+// early returns in run(), so it is impossible to add a new governed
+// subcommand without deciding whether it belongs here.
+var ungatedCommands = map[string]bool{
+	"version": true, "--version": true, "-v": true,
+	"help": true, "-h": true, "--help": true,
+	"scan": true, "grep": true, "diff": true, "pty": true,
+	"run-native": true, "patch-native": true,
+	"auth": true, "providers": true,
+}
+
+// initGate is the shared startup init-gate (P1.8 startup discipline): every
+// governed subcommand's startup I/O joins here, and it is the ONLY place
+// that may call dialHook. Commands in ungatedCommands return immediately
+// without ever touching the socket, config, or kernel — help/version/
+// completion and the <100ms native passthrough stay fast and offline.
+//
+// For governed commands, startup I/O fires as goroutines at the gate and is
+// joined here rather than sequentially blocking one after another —
+// goroutine pipelining (explicitly not the JS module-order side-effect
+// hack, plan §5.9). Today the only real startup I/O is the daemon dial;
+// this is the single seam a future policy-snapshot read or resume-file read
+// joins by adding another goroutine + channel below, instead of being
+// bolted on ad hoc inside an individual command handler.
+func initGate(cmd string) (*rpcClient, error) {
+	if ungatedCommands[cmd] {
+		return nil, nil
+	}
+	// carina doctor's own kill-switch (P1.6): CARINA_DOCTOR_DISABLE must stop
+	// doctor before it ever dials the daemon, not just suppress its probes
+	// server-side — a locked-down deployment that sets this env wants zero
+	// socket traffic from doctor, including the dial itself.
+	if cmd == "doctor" && doctorDisabled(os.Getenv) {
+		return nil, nil
+	}
+
+	type dialResult struct {
+		client *rpcClient
+		err    error
+	}
+	dialCh := make(chan dialResult, 1)
+	go func() {
+		c, err := dialHook()
+		dialCh <- dialResult{client: c, err: err}
+	}()
+
+	// Additional startup I/O (policy snapshot, resume-file read) would fire
+	// as its own goroutine here and be joined below, alongside dialCh, so
+	// every governed subcommand pays for them concurrently rather than in
+	// sequence.
+	res := <-dialCh
+	if res.err != nil {
+		return nil, res.err
+	}
+	return res.client, nil
 }
 
 func readAllStdin() (string, error) {

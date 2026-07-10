@@ -13,6 +13,7 @@ import (
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
+	"github.com/Nebutra/carina/go/toolnorm"
 )
 
 const (
@@ -734,43 +735,59 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 	return result
 }
 
-// agentRun executes a command the agent proposed: kernel decision first
-// (destructive => denied; risky => auto-approved in autonomous mode), then
-// Zig carina-run. Every step is audited.
+// agentRun executes a command the agent proposed: canonicalize -> validate
+// -> decide (P1.2 of docs/plans/agent-cli-productization.md §3 Phase 1),
+// then Zig carina-run. Canonicalize expands paths and peels no-op-for-policy
+// wrappers (timeout, nice, env) to a fixed point so crates/carina-policy
+// classifies the same rule regardless of phrasing; Validate runs
+// side-effect-free syntactic checks (empty command, unresolvable binary,
+// workspace-escaping path) ahead of the kernel decision so the model
+// self-corrects on a typo without ever burning a human approval — no
+// permission.request is published and nothing is audited for a rejection at
+// this stage. Once past validation, the kernel decision (destructive =>
+// denied; risky => auto-approved in autonomous mode) and every subsequent
+// step is audited using the canonical form, so the audit chain always
+// records the command actually authorized, not whatever raw string the
+// model happened to emit.
 func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv []string) string {
 	if d.requireTrust.Load() && !d.trust.isTrusted(sess.WorkspaceRoot) {
 		return "DENIED: workspace not trusted — approve it first (workspace.trust)"
 	}
-	command := strings.Join(argv, " ")
-	dec, err := d.kern.Request(sess.SessionID, "CommandExec", command, task.TaskID)
+	canon := toolnorm.Canonicalize(argv, sess.WorkspaceRoot)
+	if ok, code, msg := canon.Validate(); !ok {
+		return "error: [" + code + "] " + msg
+	}
+	command := canon.Command
+	classifyAs := canon.WrapperStripped
+	dec, err := d.kern.Request(sess.SessionID, "CommandExec", classifyAs, task.TaskID)
 	if err != nil {
 		return "error: " + err.Error()
 	}
 	switch dec.Decision {
 	case "denied":
 		// A subagent may escalate a refused command to its parent's authority.
-		if esc, ok := d.escalateToParent(sess, task, "CommandExec", command, command); ok {
+		if esc, ok := d.escalateToParent(sess, task, "CommandExec", classifyAs, command); ok {
 			dec = esc
 		} else {
 			return "DENIED by policy: " + dec.Reason
 		}
 	case "requires_approval":
-		approved, ok := d.resolveApprovalOrEscalate(sess, task, dec, "CommandExec", command, command)
+		approved, ok := d.resolveApprovalOrEscalate(sess, task, dec, "CommandExec", classifyAs, command)
 		if !ok {
 			return "requires approval (not granted): " + dec.Reason
 		}
 		dec = approved
 	}
 
-	risk, _ := d.kern.ClassifyCommand(command)
+	risk, _ := d.kern.ClassifyCommand(classifyAs)
 	commandID := sessionstore.NewID("cmd")
 	started := map[string]any{"command_id": commandID, "command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk}
-	if mutatesPackages(command) {
+	if mutatesPackages(classifyAs) {
 		started["package_mutation"] = true
 	}
 	d.record(sess.SessionID, "CommandStarted", task.TaskID, "zig", started, dec.DecisionID)
 
-	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
+	result, err := d.tools.Run(canon.Argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
 	// A mutating-capable command may have rewritten files the patch hooks
 	// never see (git checkout, sed -i, codegen): drop the built-index flag so
 	// the next code.* call re-syncs against current disk (conservative even
