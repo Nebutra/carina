@@ -33,10 +33,20 @@ tapped=1
 tap_root="$(brew --repository "$TAP")"
 archive_dir="$(cd "$(dirname "$ARCHIVE")" && pwd)"
 sha256="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
+darwin_arm64_sha256="$(printf 'a%.0s' {1..64})"
+darwin_amd64_sha256="$(printf 'b%.0s' {1..64})"
+case "$GOARCH" in
+  arm64) darwin_arm64_sha256="$sha256" ;;
+  amd64) darwin_amd64_sha256="$sha256" ;;
+  *)
+    printf 'test-homebrew-install: unsupported GOARCH: %s\n' "$GOARCH" >&2
+    exit 2
+    ;;
+esac
 
 VERSION="$VERSION" \
-DARWIN_ARM64_SHA256="$sha256" \
-DARWIN_AMD64_SHA256="$sha256" \
+DARWIN_ARM64_SHA256="$darwin_arm64_sha256" \
+DARWIN_AMD64_SHA256="$darwin_amd64_sha256" \
 RELEASE_BASE_URL="file://$archive_dir" \
 OUTPUT="$tap_root/Formula/carina.rb" \
   "$ROOT/scripts/render-homebrew-formula.sh"
