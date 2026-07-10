@@ -62,7 +62,8 @@ secret values.
 
 ## Supported Versions
 
-The current source line targets Carina Runtime `0.6.1`; SDK packages are
-independently versioned at `0.2.0` and declare runtime compatibility in their
-package API. No stable support window exists yet, so use the latest `main` only
-if you are comfortable with source-first alpha behavior.
+The current source line targets Carina Runtime `0.6.1`; the TypeScript and
+Python SDK packages are independently versioned at `0.2.0`, while the Go SDK
+follows the repository tag. Each declares runtime compatibility in its package
+API. No stable support window exists yet, so use the latest `main` only if you
+are comfortable with source-first alpha behavior.

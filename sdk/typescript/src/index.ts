@@ -1,13 +1,9 @@
-/**
- * Carina TypeScript SDK (Phase 0).
- *
- * A thin JSON-RPC 2.0 client for the carina-daemon unix socket. The Agent
- * Surface (and any IDE/CI integration) talks to the runtime exclusively
- * through this protocol — see protocol/jsonrpc/methods.json.
- */
+/** Carina JSON-RPC SDK for Runtime 0.6.1. */
 import { createConnection, type Socket } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+
+export const compatibleRuntimeVersion = '0.6.1'
 
 export interface Session {
   session_id: string
@@ -30,7 +26,7 @@ export interface Task {
 }
 
 export interface CarinaEvent {
-  event_id: string
+  event_id?: string
   session_id: string
   task_id?: string
   type: string
@@ -39,11 +35,32 @@ export interface CarinaEvent {
   permission_decision_id?: string
 }
 
-export interface PatchFile {
-  path: string
-  new_content: string
+export interface SessionAttachment {
+  events: CarinaEvent[]
+  from: number
+  cursor: number
 }
 
+export interface UsageCostRow {
+  provider: string
+  model: string
+  requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  cost_usd: number
+  pricing_known: boolean
+  estimated: boolean
+}
+
+export interface UsageCostReport {
+  providers: UsageCostRow[]
+  totals: Omit<UsageCostRow, 'provider' | 'model' | 'estimated'>
+  estimated: boolean
+}
+
+export interface PatchFile { path: string; new_content: string }
 export interface Patch {
   patch_id: string
   session_id: string
@@ -54,7 +71,6 @@ export interface Patch {
   approval_status: string
   rollback_pointer?: string
 }
-
 export interface Decision {
   decision_id: string
   capability: string
@@ -63,18 +79,10 @@ export interface Decision {
   reason: string
   policy_id: string
 }
-
 export interface ExecResult {
   decision: Decision
-  result?: {
-    exit_code: number
-    duration_ms: number
-    stdout: string[]
-    stderr: string[]
-    timed_out: boolean
-  }
+  result?: { exit_code: number; duration_ms: number; stdout: string[]; stderr: string[]; timed_out: boolean }
 }
-
 export interface AuditReport {
   session_id: string
   total_events: number
@@ -84,104 +92,163 @@ export interface AuditReport {
   commands: unknown[]
 }
 
-interface RpcError {
-  code: number
-  message: string
+interface RpcError { code: number; message: string }
+interface PendingCall {
+  resolve: (value: unknown) => void
+  reject: (error: Error) => void
+  timer: ReturnType<typeof setTimeout>
+}
+type NotificationHandler = (method: string, params: unknown) => void
+
+export class CarinaRpcError extends Error {
+  constructor(public readonly code: number, message: string) {
+    super(`rpc ${code}: ${message}`)
+    this.name = 'CarinaRpcError'
+  }
+}
+
+export class CarinaTransportError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CarinaTransportError'
+  }
 }
 
 export const defaultSocketPath = (): string => join(homedir(), '.carina', 'daemon.sock')
 
 export class CarinaClient {
   private socket: Socket | null = null
+  private connecting: Promise<void> | null = null
   private nextId = 0
   private buffer = ''
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
+  private pending = new Map<number, PendingCall>()
+  private notifications = new Set<NotificationHandler>()
 
-  constructor(private readonly socketPath: string = defaultSocketPath()) {}
+  constructor(
+    private readonly socketPath: string = defaultSocketPath(),
+    private readonly callTimeoutMs = 15_000,
+  ) {
+    if (!Number.isFinite(callTimeoutMs) || callTimeoutMs <= 0) throw new Error('callTimeoutMs must be positive')
+  }
 
   async connect(): Promise<void> {
-    if (this.socket) return
-    await new Promise<void>((resolve, reject) => {
+    if (this.socket && !this.socket.destroyed) return
+    if (this.connecting) return this.connecting
+    this.connecting = new Promise<void>((resolve, reject) => {
       const socket = createConnection(this.socketPath)
+      const failConnect = (error: Error): void => {
+        socket.destroy()
+        reject(new CarinaTransportError(`cannot reach carina-daemon at ${this.socketPath}: ${error.message}`))
+      }
+      socket.once('error', failConnect)
       socket.once('connect', () => {
+        socket.off('error', failConnect)
         this.socket = socket
         socket.on('data', (chunk) => this.onData(chunk.toString('utf8')))
+        socket.on('error', (error) => this.handleDisconnect(socket, new CarinaTransportError(error.message)))
+        socket.on('end', () => this.handleDisconnect(socket, new CarinaTransportError('carina-daemon closed the connection')))
+        socket.on('close', () => this.handleDisconnect(socket, new CarinaTransportError('carina-daemon connection closed')))
         resolve()
       })
-      socket.once('error', (err) =>
-        reject(new Error(`cannot reach carina-daemon at ${this.socketPath}: ${err.message}`)),
-      )
-    })
+    }).finally(() => { this.connecting = null })
+    return this.connecting
   }
 
   async call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     await this.connect()
+    const socket = this.socket
+    if (!socket || socket.destroyed) throw new CarinaTransportError('carina-daemon is disconnected')
     const id = ++this.nextId
-    const payload = JSON.stringify({ jsonrpc: '2.0', id, method, params })
+    const payload = JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n'
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: (v) => resolve(v as T), reject })
-      this.socket!.write(payload + '\n')
+      const timer = setTimeout(() => {
+        this.pending.delete(id)
+        reject(new CarinaTransportError(`rpc ${method} timed out after ${this.callTimeoutMs}ms`))
+      }, this.callTimeoutMs)
+      this.pending.set(id, {
+        timer,
+        resolve: (value) => { clearTimeout(timer); resolve(value as T) },
+        reject: (error) => { clearTimeout(timer); reject(error) },
+      })
+      socket.write(payload, (error) => {
+        if (!error) return
+        const pending = this.pending.get(id)
+        if (!pending) return
+        this.pending.delete(id)
+        pending.reject(new CarinaTransportError(`rpc ${method} write failed: ${error.message}`))
+      })
     })
   }
 
-  // ---- sessions & tasks ----
   createSession(workspaceRoot: string, profile = 'safe-edit'): Promise<Session> {
-    return this.call<Session>('session.create', { workspace_root: workspaceRoot, profile })
+    return this.call('session.create', { workspace_root: workspaceRoot, profile })
   }
-
-  listSessions(): Promise<Session[]> {
-    return this.call<Session[]>('session.list')
-  }
-
+  listSessions(): Promise<Session[]> { return this.call('session.list') }
   submitTask(sessionId: string, prompt: string): Promise<Task> {
-    return this.call<Task>('task.submit', { session_id: sessionId, prompt })
+    return this.call('task.submit', { session_id: sessionId, prompt })
+  }
+  replaySession(sessionId: string): Promise<CarinaEvent[]> { return this.call('session.replay', { session_id: sessionId }) }
+  attachSession(sessionId: string, since = 0): Promise<SessionAttachment> {
+    return this.call('session.attach', { session_id: sessionId, since })
+  }
+  forkSession(sessionId: string): Promise<Session> { return this.call('session.fork', { session_id: sessionId }) }
+  cost(sessionId?: string, taskId?: string): Promise<UsageCostReport> {
+    return this.call('usage.cost', { ...(sessionId ? { session_id: sessionId } : {}), ...(taskId ? { task_id: taskId } : {}) })
+  }
+  steerTask(taskId: string, message: string): Promise<{ queued: boolean; task_id: string; status: string }> {
+    return this.call('task.steer', { task_id: taskId, message })
+  }
+  answerQuestion(questionId: string, value: string): Promise<{ question_id: string; accepted: boolean; value: string }> {
+    return this.call('task.user.answer', { question_id: questionId, value })
   }
 
-  replaySession(sessionId: string): Promise<CarinaEvent[]> {
-    return this.call<CarinaEvent[]>('session.replay', { session_id: sessionId })
+  async streamSessionEvents(sessionId: string, handler: (event: CarinaEvent) => void): Promise<() => void> {
+    const listener: NotificationHandler = (method, params) => {
+      if (method !== 'event' || typeof params !== 'object' || params === null) return
+      const event = params as CarinaEvent
+      if (event.session_id === sessionId) handler(event)
+    }
+    this.notifications.add(listener)
+    try {
+      await this.call('session.events.stream', { session_id: sessionId })
+    } catch (error) {
+      this.notifications.delete(listener)
+      throw error
+    }
+    return () => this.notifications.delete(listener)
   }
 
-  // ---- workspace & patches ----
   search(sessionId: string, pattern: string): Promise<Array<{ file: string; line: number; text: string }>> {
     return this.call('workspace.search', { session_id: sessionId, pattern })
   }
-
   getFile(sessionId: string, path: string): Promise<{ content: string; hash: string }> {
     return this.call('workspace.file.get', { session_id: sessionId, path })
   }
-
   proposePatch(sessionId: string, files: PatchFile[], reason = ''): Promise<Patch> {
-    return this.call<Patch>('workspace.patch.propose', { session_id: sessionId, reason, files })
+    return this.call('workspace.patch.propose', { session_id: sessionId, reason, files })
   }
-
   applyPatch(sessionId: string, patchId: string): Promise<Patch> {
-    return this.call<Patch>('workspace.patch.apply', { session_id: sessionId, patch_id: patchId })
+    return this.call('workspace.patch.apply', { session_id: sessionId, patch_id: patchId })
   }
-
   rollbackPatch(sessionId: string, patchId: string): Promise<Patch> {
-    return this.call<Patch>('workspace.patch.rollback', { session_id: sessionId, patch_id: patchId })
+    return this.call('workspace.patch.rollback', { session_id: sessionId, patch_id: patchId })
   }
-
-  // ---- commands, approvals, audit ----
   exec(sessionId: string, argv: string[], taskId?: string): Promise<ExecResult> {
-    return this.call<ExecResult>('command.exec', { session_id: sessionId, argv, task_id: taskId })
+    return this.call('command.exec', { session_id: sessionId, argv, ...(taskId ? { task_id: taskId } : {}) })
   }
-
   approve(sessionId: string, decisionId: string): Promise<unknown> {
     return this.call('task.action.approve', { session_id: sessionId, decision_id: decisionId })
   }
-
   deny(sessionId: string, decisionId: string, reason = 'denied'): Promise<unknown> {
     return this.call('task.action.deny', { session_id: sessionId, decision_id: decisionId, reason })
   }
-
-  auditReport(sessionId: string): Promise<AuditReport> {
-    return this.call<AuditReport>('audit.report', { session_id: sessionId })
-  }
+  auditReport(sessionId: string): Promise<AuditReport> { return this.call('audit.report', { session_id: sessionId }) }
 
   close(): void {
-    this.socket?.end()
+    const socket = this.socket
     this.socket = null
+    socket?.destroy()
+    this.failPending(new CarinaTransportError('Carina client closed'))
   }
 
   private onData(chunk: string): void {
@@ -192,19 +259,32 @@ export class CarinaClient {
       this.buffer = this.buffer.slice(newline + 1)
       if (!line.trim()) continue
       try {
-        const msg = JSON.parse(line) as { id?: number; result?: unknown; error?: RpcError }
-        if (msg.id === undefined) continue // server notification (event stream)
+        const msg = JSON.parse(line) as { id?: number; method?: string; params?: unknown; result?: unknown; error?: RpcError }
+        if (msg.id === undefined) {
+          if (msg.method) for (const handler of this.notifications) handler(msg.method, msg.params)
+          continue
+        }
         const waiter = this.pending.get(msg.id)
         if (!waiter) continue
         this.pending.delete(msg.id)
-        if (msg.error) {
-          waiter.reject(new Error(`rpc ${msg.error.code}: ${msg.error.message}`))
-        } else {
-          waiter.resolve(msg.result)
-        }
+        if (msg.error) waiter.reject(new CarinaRpcError(msg.error.code, msg.error.message))
+        else waiter.resolve(msg.result)
       } catch {
-        // ignore malformed frames; the daemon is line-delimited JSON
+        // A malformed frame cannot be correlated safely; the call timeout still bounds pending work.
       }
     }
+  }
+
+  private handleDisconnect(socket: Socket, error: Error): void {
+    if (this.socket !== socket) return
+    this.socket = null
+    this.buffer = ''
+    this.failPending(error)
+  }
+
+  private failPending(error: Error): void {
+    const pending = [...this.pending.values()]
+    this.pending.clear()
+    for (const call of pending) call.reject(error)
   }
 }
