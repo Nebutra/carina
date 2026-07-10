@@ -63,6 +63,27 @@ func TestMemoryStoreAppliesBoundedMutations(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreSearchesCuratedEntries(t *testing.T) {
+	store := newMemoryStore(t.TempDir())
+	scope := memoryScope{Profile: "local", WorkspaceHash: "project"}
+	for _, content := range []string{
+		"Release validation runs scripts/release-check.sh.",
+		"Prefer focused Go tests during development.",
+		"Documentation is maintained in docs/.",
+	} {
+		if _, err := store.apply(scope, memoryWriteRequest{Action: "add", Target: "memory", Content: content}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := store.search(scope, "release validation", "memory", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Hits) == 0 || !strings.Contains(result.Hits[0].Entry, "release-check.sh") {
+		t.Fatalf("unexpected search result: %+v", result)
+	}
+}
+
 func TestMemoryScopeUsesNebutraCanonicalIdentity(t *testing.T) {
 	t.Setenv("CARINA_NEBUTRA_IDENTITY_JSON", `{"provider":"nebutra","userId":"user_123","organizationId":"org_456","claimsVersion":"v1"}`)
 	t.Setenv("CARINA_NEBUTRA_TOKEN", "")

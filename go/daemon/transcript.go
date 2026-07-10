@@ -3,8 +3,10 @@ package daemon
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // The agent's view of history is a *bounded projection* of the append-only
@@ -34,10 +36,21 @@ type Turn struct {
 
 // Transcript is the model-facing conversation state.
 type Transcript struct {
-	Task    string
-	Summary string // rolling summary of compacted-away head turns
-	Turns   []Turn
-	policy  CompactionPolicy
+	Task               string
+	Summary            string // rolling summary of compacted-away head turns
+	Turns              []Turn
+	CompactionReceipts []CompactionReceipt `json:"compaction_receipts,omitempty"`
+	policy             CompactionPolicy
+}
+
+type CompactionReceipt struct {
+	Version        int       `json:"version"`
+	CreatedAt      time.Time `json:"created_at"`
+	FirstTurn      int       `json:"first_turn"`
+	LastTurn       int       `json:"last_turn"`
+	RemovedTurns   int       `json:"removed_turns"`
+	PreimageSHA256 string    `json:"preimage_sha256"`
+	SummarySHA256  string    `json:"summary_sha256"`
 }
 
 // CompactionPolicy bounds the model view (char-budget based; claude-cli does
@@ -94,10 +107,12 @@ func (t *Transcript) size() int { return len(t.render()) }
 // observations (keeping the most recent KeepRecent turns verbatim). Step 2:
 // if still over budget, fold the head turns into the rolling Summary via the
 // provided summarizer (a cheap model call). The audit log is untouched.
-func (t *Transcript) compact(summarize func(head string) (string, error)) {
+func (t *Transcript) compact(summarize func(head string) (string, error)) *CompactionReceipt {
 	if t.size() <= t.policy.MaxChars {
-		return
+		return nil
 	}
+	preCompactionSummary := t.Summary
+	preCompactionTurns := append([]Turn(nil), t.Turns...)
 	// Step 1: elide.
 	cutoff := len(t.Turns) - t.policy.KeepRecent
 	for i := 0; i < cutoff; i++ {
@@ -106,13 +121,13 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) {
 		}
 	}
 	if t.size() <= t.policy.MaxChars || len(t.Turns) <= t.policy.SummarizeAfter {
-		return
+		return nil
 	}
 	// Step 2: summarize the head (all but the recent tail) into Summary.
 	tail := t.policy.KeepRecent
 	headEnd := len(t.Turns) - tail
 	if headEnd <= 0 {
-		return
+		return nil
 	}
 	var head strings.Builder
 	if t.Summary != "" {
@@ -122,9 +137,31 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) {
 		fmt.Fprintf(&head, "turn %d: %s -> %s\n", turn.Index, turn.ActionBrief, brief(turn.Obs.Content, 200))
 	}
 	if summary, err := summarize(head.String()); err == nil && summary != "" {
+		preimageHash := compactionPreimageHash(preCompactionSummary, preCompactionTurns[:headEnd])
+		firstTurn, lastTurn := t.Turns[0].Index, t.Turns[headEnd-1].Index
 		t.Summary = summary
 		t.Turns = t.Turns[headEnd:]
+		receipt := CompactionReceipt{
+			Version: 1, CreatedAt: time.Now().UTC(), FirstTurn: firstTurn, LastTurn: lastTurn,
+			RemovedTurns: headEnd, PreimageSHA256: preimageHash, SummarySHA256: sha256Hex(summary),
+		}
+		t.CompactionReceipts = append(t.CompactionReceipts, receipt)
+		return &receipt
 	}
+	return nil
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func compactionPreimageHash(previousSummary string, turns []Turn) string {
+	raw, _ := json.Marshal(struct {
+		PreviousSummary string `json:"previous_summary"`
+		Turns           []Turn `json:"turns"`
+	}{PreviousSummary: previousSummary, Turns: turns})
+	return sha256Hex(string(raw))
 }
 
 func brief(s string, n int) string {

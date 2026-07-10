@@ -17,12 +17,17 @@ use time::OffsetDateTime;
 /// The genesis hash that seeds every session's chain.
 pub const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
-/// The twenty canonical event types (PRD §8.2).
+/// Canonical event types (PRD §8.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventType {
     TaskCreated,
     ModelRequested,
     ModelResponded,
+    RoutingDecision,
+    RoutingOutcome,
+    ContextCompacted,
+    ScheduleChanged,
+    ScheduleTriggered,
     ToolRequested,
     ToolApproved,
     ToolDenied,

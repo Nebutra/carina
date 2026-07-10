@@ -171,13 +171,14 @@ type Daemon struct {
 
 	reload func() error // config reload closure (SIGHUP/RPC); nil until SetReloader
 
-	authChain          *auth.Chain             // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
-	authStore          *auth.Store             // local BYOK credential store (doctor's per-provider probe)
-	providerCatalog    provider.Catalog        // runtime provider catalog (doctor's per-provider probe)
-	history            *history.History        // shared cross-process prompt history
-	memory             *memoryStore            // governed local long-term memory
-	gatewayTokens      *rpc.GatewayTokenIssuer // optional scoped Gateway token signer/verifier
-	gatewayTokenMaxTTL time.Duration           // max TTL for locally issued scoped Gateway tokens
+	authChain          *auth.Chain              // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
+	authStore          *auth.Store              // local BYOK credential store (doctor's per-provider probe)
+	providerCatalog    provider.Catalog         // runtime provider catalog (doctor's per-provider probe)
+	history            *history.History         // shared cross-process prompt history
+	memory             *memoryStore             // governed local long-term memory
+	schedules          *scheduler.ScheduleStore // persistent cron/at/every definitions
+	gatewayTokens      *rpc.GatewayTokenIssuer  // optional scoped Gateway token signer/verifier
+	gatewayTokenMaxTTL time.Duration            // max TTL for locally issued scoped Gateway tokens
 	gatewayHTTPServers []*http.Server
 	gatewayResponses   map[string]string // response id -> session id for /v1/responses continuity
 }
@@ -260,6 +261,7 @@ func New(opts Options) (*Daemon, error) {
 		patchGates:          make(map[string]*patchGate),
 		patchGateByDecision: make(map[string]string),
 		memory:              newMemoryStore(opts.StateDir),
+		schedules:           scheduler.OpenScheduleStore(opts.StateDir),
 		contextEng:          contextEng,
 		gatewayTokens:       gatewayTokens,
 		gatewayTokenMaxTTL:  gatewayTokenMaxTTL,
@@ -403,6 +405,7 @@ func New(opts Options) (*Daemon, error) {
 	}
 	d.recover()
 	d.resumeRuns()
+	go d.runScheduleLoop()
 	return d, nil
 }
 
@@ -610,8 +613,14 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("history.recent", rpc.ScopeRead, false, d.handleHistoryRecent)
 	d.registerRPC("memory.list", rpc.ScopeRead, false, d.handleMemoryList)
 	d.registerRPC("memory.context", rpc.ScopeRead, false, d.handleMemoryContext)
+	d.registerRPC("memory.search", rpc.ScopeRead, false, d.handleMemorySearch)
 	d.registerRPC("memory.status", rpc.ScopeRead, false, d.handleMemoryStatus)
 	d.registerRPC("memory.write", rpc.ScopeWrite, false, d.handleMemoryWrite, true)
+	d.registerRPC("schedule.create", rpc.ScopeWrite, false, d.handleScheduleCreate, true)
+	d.registerRPC("schedule.list", rpc.ScopeRead, false, d.handleScheduleList)
+	d.registerRPC("schedule.pause", rpc.ScopeWrite, false, d.handleSchedulePause, true)
+	d.registerRPC("schedule.resume", rpc.ScopeWrite, false, d.handleScheduleResume, true)
+	d.registerRPC("schedule.delete", rpc.ScopeWrite, false, d.handleScheduleDelete, true)
 
 	d.registerRPC("task.submit", rpc.ScopeWrite, false, d.handleTaskSubmit)
 	d.registerRPC("task.status", rpc.ScopeRead, true, d.handleTaskStatus)
@@ -1442,6 +1451,23 @@ func (d *Daemon) handleMemoryContext(params json.RawMessage) (any, error) {
 		"scope":   scope,
 		"context": d.memory.contextBlock(scope),
 	}, nil
+}
+
+func (d *Daemon) handleMemorySearch(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		Query     string `json:"query"`
+		Target    string `json:"target"`
+		Limit     int    `json:"limit"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	sess, ok := d.store.Get(p.SessionID)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	}
+	return d.memory.search(memoryScopeFromSession(sess), p.Query, p.Target, p.Limit)
 }
 
 func (d *Daemon) handleMemoryStatus(params json.RawMessage) (any, error) {

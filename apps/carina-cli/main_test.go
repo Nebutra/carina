@@ -250,6 +250,14 @@ func TestMemoryRPCBuildsStatusAndWrite(t *testing.T) {
 	if method != "memory.write" || params["target"] != "user" || params["action"] != "add" || params["content"] != "Remember the preferred editor." {
 		t.Fatalf("unexpected write rpc: %s %+v", method, params)
 	}
+
+	method, params, err = memoryRPC([]string{"search", "sess_1", "release", "checks"}, func() (string, error) { return "", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != "memory.search" || params["query"] != "release checks" {
+		t.Fatalf("unexpected search rpc: %s %+v", method, params)
+	}
 }
 
 func TestMemoryRPCRejectsIncompleteWrite(t *testing.T) {

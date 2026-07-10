@@ -117,9 +117,11 @@ func (d *Daemon) runSubagentLoop(sess *sessionstore.Session, task *scheduler.Tas
 		map[string]any{"subagent": spec.Name, "model": taskModel(task), "prompt": task.UserPrompt}, "")
 
 	for turn := 1; turn <= maxTurns; turn++ {
-		tr.compact(func(head string) (string, error) {
+		if receipt := tr.compact(func(head string) (string, error) {
 			return thinkWithRetry(ctx, d.summarizeReasoner(), "Summarize concisely:\n"+head)
-		})
+		}); receipt != nil {
+			d.record(sess.SessionID, "ContextCompacted", task.TaskID, "go", map[string]any{"receipt": receipt}, "")
+		}
 		seg := buildPromptSegments(sysPrompt, task.UserPrompt, tr.render(), "Next action as one JSON object.")
 		prompt := seg.full()
 

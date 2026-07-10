@@ -202,7 +202,9 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		}
 
 		// Bound the model view (audit log keeps everything).
-		tr.compact(summarize)
+		if receipt := tr.compact(summarize); receipt != nil {
+			d.record(sess.SessionID, "ContextCompacted", task.TaskID, "go", map[string]any{"receipt": receipt}, "")
+		}
 		seg := buildPromptSegments(sysPrompt, task.UserPrompt, tr.render(),
 			"Respond with the next action as a single JSON object.")
 		prompt := seg.full() // StablePrefix is cacheable across turns; suffix is volatile
@@ -214,7 +216,27 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		ok := false
 		for requery := 0; requery <= maxRequeries; requery++ {
 			var err error
+			requestedModel := taskModel(task)
+			d.record(sess.SessionID, "RoutingDecision", task.TaskID, "go", map[string]any{
+				"turn": turn, "requery": requery, "requested_model": requestedModel,
+				"reasoner": d.reasoner.Name(), "policy": "explicit_or_default",
+				"input_tokens_estimated": estimateTokens(prompt),
+			}, "")
+			started := time.Now()
 			raw, err = thinkWithRetryModel(ctx, d.reasoner, task.Model, prompt)
+			outcome := map[string]any{
+				"turn": turn, "requery": requery, "requested_model": requestedModel,
+				"reasoner": d.reasoner.Name(), "latency_ms": time.Since(started).Milliseconds(),
+				"input_tokens_estimated": estimateTokens(prompt),
+			}
+			if err != nil {
+				outcome["status"] = "failed"
+				outcome["error"] = truncate(err.Error(), 300)
+			} else {
+				outcome["status"] = "succeeded"
+				outcome["output_tokens_estimated"] = estimateTokens(raw)
+			}
+			d.record(sess.SessionID, "RoutingOutcome", task.TaskID, "go", outcome, "")
 			if err != nil {
 				d.degrade(sess, task, tr, "reasoner error: "+err.Error())
 				return

@@ -22,7 +22,15 @@
     "memory": [
       { "method": "memory.list", "params": { "session_id": "string", "target": "memory|user?" }, "result": "MemoryState", "availability": "local-only" },
       { "method": "memory.context", "params": { "session_id": "string" }, "result": { "scope": "MemoryScope", "context": "string" }, "availability": "local-only" },
+      { "method": "memory.search", "params": { "session_id": "string", "query": "string", "target": "memory|user?", "limit": "number?" }, "result": "MemorySearchResult", "availability": "local-only; curated entries only" },
       { "method": "memory.write", "params": { "session_id": "string", "target": "memory|user?", "action": "add|replace|remove|batch", "content": "string?", "old_text": "string?", "operations": "MemoryOperation[]?" }, "result": "{ decision: PermissionDecision, result?: MemoryWriteResult }", "availability": "local-only; control-plane write; MemoryWrite capability-gated" }
+    ],
+    "schedule": [
+      { "method": "schedule.create", "params": { "session_id": "string", "prompt": "string", "kind": "at|every|cron", "expression": "string" }, "result": "Schedule", "availability": "local-only; control-plane write" },
+      { "method": "schedule.list", "params": {}, "result": "{ schedules: Schedule[] }", "availability": "local-only" },
+      { "method": "schedule.pause", "params": { "schedule_id": "string" }, "result": "Schedule", "availability": "local-only; control-plane write" },
+      { "method": "schedule.resume", "params": { "schedule_id": "string" }, "result": "Schedule", "availability": "local-only; control-plane write" },
+      { "method": "schedule.delete", "params": { "schedule_id": "string" }, "result": "{ deleted: boolean, schedule_id: string }", "availability": "local-only; control-plane write" }
     ],
     "context": [
       { "method": "context.status", "params": {}, "result": "ContextEngineStatus", "availability": "local-only" },

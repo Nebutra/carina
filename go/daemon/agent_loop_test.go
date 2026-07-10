@@ -82,7 +82,7 @@ func TestAgentLoopExecutesThroughKernel(t *testing.T) {
 			types[s] = true
 		}
 	}
-	for _, want := range []string{"FileRead", "PatchProposed", "PatchApplied", "CommandStarted", "CommandExited"} {
+	for _, want := range []string{"RoutingDecision", "RoutingOutcome", "FileRead", "PatchProposed", "PatchApplied", "CommandStarted", "CommandExited"} {
 		if !types[want] {
 			t.Errorf("missing audit event %q; saw %v", want, keys(types))
 		}

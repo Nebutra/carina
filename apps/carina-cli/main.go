@@ -58,6 +58,7 @@ Memory:
   carina memory status <session_id>                 show local memory scope, provider, and sync boundary
   carina memory list <session_id> <memory|user>      list governed memory entries
   carina memory context <session_id>                 render the recalled-memory prompt block
+  carina memory search <session_id> <query>           search curated local memory entries
   carina memory write <session_id> <memory|user> add <content|->
                                                    request a memory add
   carina memory write <session_id> <memory|user> replace <old_text> <content|->
@@ -71,6 +72,11 @@ Context engine:
   carina context stats                              show local and Headroom context-engine counters
   carina context compress <content|->               compress content through the native context engine
   carina context retrieve <hash> [query]             retrieve original context from Headroom CCR
+
+Schedules:
+  carina schedule list                               list persistent schedules
+  carina schedule create <session_id> <at|every|cron> <expression> <prompt>
+  carina schedule pause|resume|delete <schedule_id>  manage a persistent schedule
 
 Audit and rollback:
   carina audit <session_id>                        replay the raw session event stream
@@ -197,6 +203,8 @@ func run(cmd string, args []string) error {
 		return cmdMemory(c, args)
 	case "context":
 		return cmdContext(c, args)
+	case "schedule":
+		return cmdSchedule(c, args)
 
 	case "run", "ask":
 		// The task always runs in the daemon and survives CLI exit (PRD
@@ -804,6 +812,11 @@ func memoryRPC(args []string, readInput func() (string, error)) (string, map[str
 			return "", nil, fmt.Errorf("usage: carina memory context <session_id>")
 		}
 		return "memory.context", map[string]any{"session_id": args[1]}, nil
+	case "search":
+		if len(args) < 3 {
+			return "", nil, fmt.Errorf("usage: carina memory search <session_id> <query>")
+		}
+		return "memory.search", map[string]any{"session_id": args[1], "query": strings.Join(args[2:], " ")}, nil
 	case "write":
 		if len(args) < 4 {
 			return "", nil, fmt.Errorf("usage: carina memory write <session_id> <memory|user> <add|replace|remove> ...")
@@ -838,6 +851,33 @@ func memoryRPC(args []string, readInput func() (string, error)) (string, map[str
 		return "memory.write", params, nil
 	default:
 		return "", nil, fmt.Errorf("usage: carina memory <status|list|context|write> ...")
+	}
+}
+
+func cmdSchedule(c *rpcClient, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: carina schedule <list|create|pause|resume|delete> ...")
+	}
+	switch args[0] {
+	case "list", "ls":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: carina schedule list")
+		}
+		return call(c, "schedule.list", map[string]any{})
+	case "create":
+		if len(args) < 5 {
+			return fmt.Errorf("usage: carina schedule create <session_id> <at|every|cron> <expression> <prompt>")
+		}
+		return call(c, "schedule.create", map[string]any{
+			"session_id": args[1], "kind": args[2], "expression": args[3], "prompt": strings.Join(args[4:], " "),
+		})
+	case "pause", "resume", "delete":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: carina schedule %s <schedule_id>", args[0])
+		}
+		return call(c, "schedule."+args[0], map[string]any{"schedule_id": args[1]})
+	default:
+		return fmt.Errorf("usage: carina schedule <list|create|pause|resume|delete> ...")
 	}
 }
 

@@ -23,8 +23,9 @@ func TestTranscriptCompactionElidesThenSummarizes(t *testing.T) {
 		pinned := i == 9                       // last one pinned
 		tr.addTurn(Turn{Tool: "read", ActionBrief: "read f", Obs: Observation{Content: content, Pinned: pinned}})
 	}
+	wantPreimage := compactionPreimageHash(tr.Summary, tr.Turns[:len(tr.Turns)-tr.policy.KeepRecent])
 	summarizeCalled := false
-	tr.compact(func(head string) (string, error) {
+	receipt := tr.compact(func(head string) (string, error) {
 		summarizeCalled = true
 		return "SUMMARY: read many files", nil
 	})
@@ -35,6 +36,15 @@ func TestTranscriptCompactionElidesThenSummarizes(t *testing.T) {
 	}
 	if tr.Summary == "" {
 		t.Fatal("summary should be set")
+	}
+	if receipt == nil || receipt.RemovedTurns == 0 || receipt.PreimageSHA256 == "" || receipt.SummarySHA256 == "" {
+		t.Fatalf("compaction receipt missing integrity fields: %+v", receipt)
+	}
+	if receipt.SummarySHA256 != sha256Hex(tr.Summary) {
+		t.Fatalf("summary receipt hash does not verify: %+v", receipt)
+	}
+	if receipt.PreimageSHA256 != wantPreimage {
+		t.Fatalf("preimage receipt hash does not verify: %+v", receipt)
 	}
 	// The most-recent (pinned) turn must survive verbatim.
 	last := tr.Turns[len(tr.Turns)-1]

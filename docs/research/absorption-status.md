@@ -316,6 +316,30 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   storage, external semantic-provider status, and Nebutra sync status. Approval
   deny-path tests confirm rejected memory writes do not persist.
 
+**Wave 20 — OpenSquilla mechanism absorption (landed)**
+- [x] **Routing decision/outcome evidence** (`go/daemon/agent.go`,
+  `protocol/events`): every model attempt records requested model, reasoner,
+  routing policy, estimated input/output tokens, latency, and success/failure
+  as separate events. This supplies the contract for future shadow evaluation
+  without importing OpenSquilla's ML router or automatic promotion stack.
+- [x] **Curated local memory retrieval** (`go/daemon/memory_store.go`): added
+  deterministic lexical ranking over capability-approved `memory` and `user`
+  entries through local-only `memory.search` and the CLI. Raw turns and audit
+  transcripts remain excluded from recall.
+- [x] **Persistent schedules** (`go/scheduler/schedules.go`,
+  `go/daemon/schedules.go`): atomic local persistence now supports `at`,
+  `every`, and five-field `cron`, with create/list/pause/resume/delete RPC and
+  CLI surfaces. Due runs re-enter normal task submission, preserving
+  write-ahead audit, kernel policy, budgets, checkpoints, and completion.
+- [x] **Compaction receipts** (`go/daemon/transcript.go`): successful summary
+  compaction persists a versioned receipt with covered turn range, removed
+  count, preimage SHA-256, summary SHA-256, and timestamp. Receipts survive
+  checkpoints and emit `ContextCompacted`; failed summaries keep old history.
+- [x] **Selective absorption boundary**: Carina did not import OpenSquilla's
+  Python monolith, model artifacts, automatic self-training/promotion,
+  all-pipeline fail-open behavior, raw-turn memory capture, or process-local
+  security state. The Rust capability kernel remains authoritative.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
@@ -338,9 +362,15 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   Shipping those backends still requires a Nebutra connector with identity,
   deletion, retention, and conflict policy; the local source-first runtime no
   longer presents them as implicit TODOs.
+- OpenSquilla ML routing remains intentionally deferred until routing evidence
+  has enough independently verified samples for shadow evaluation, canarying,
+  and automatic rollback. The shipped contract is evidence-first and does not
+  self-train on model-judged success.
 
 ## Test status
-Current verification for the memory product-closure update: `go test ./go/... ./apps/...`
-(247 tests), `go test ./go/daemon` (126 tests), `go test ./apps/carina-cli`
-(10 tests), `go test -race ./go/daemon` (126 tests), and `git diff --check`.
-Rust code was not changed in this closure pass.
+Current verification for the OpenSquilla mechanism absorption update:
+
+- `git diff --check`
+- `jq empty protocol/jsonrpc/methods.json protocol/events/events.json protocol/schemas/event.schema.json`
+- `CARINA_KERNEL_BIN=$PWD/target/debug/carina-kernel-service go test ./go/... ./apps/...`
+- `cargo test -p carina-audit -p carina-kernel`
