@@ -12,6 +12,7 @@ func TestApplyConfigHotReload(t *testing.T) {
 	if err := d.ApplyConfig(config.Config{
 		MaxTaskTokens:         999,
 		InteractiveApproval:   true,
+		EnableDebugRPC:        true,
 		RequireWorkspaceTrust: true,
 		SandboxCommands:       true,
 		EgressAllow:           []string{"example.com"},
@@ -23,6 +24,9 @@ func TestApplyConfigHotReload(t *testing.T) {
 	}
 	if !d.interactiveApproval.Load() {
 		t.Error("interactive approval not applied")
+	}
+	if !d.debugRPCEnabled.Load() {
+		t.Error("debug rpc not applied")
 	}
 	if !d.requireTrust.Load() {
 		t.Error("require trust not applied")

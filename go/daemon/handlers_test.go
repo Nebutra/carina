@@ -50,6 +50,10 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	// daemon-level
 	must("daemon.status", map[string]any{})
 	must("daemon.metrics", map[string]any{})
+	must("backpressure.status", map[string]any{})
+	if err := c.Call("debug.snapshot", map[string]any{}, nil); err == nil {
+		t.Fatal("debug.snapshot should be disabled unless enable_debug_rpc is set")
+	}
 	must("context.status", map[string]any{})
 	must("context.doctor", map[string]any{})
 	must("context.stats", map[string]any{})
@@ -78,6 +82,10 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	seenSessionResume := false
 	seenContextStatus := false
 	seenContextStats := false
+	seenBackpressureStatus := false
+	seenBackpressureReport := false
+	seenDebugSnapshot := false
+	seenDebugCorrelation := false
 	for _, m := range methods.Methods {
 		switch m.Method {
 		case "daemon.status":
@@ -90,6 +98,14 @@ func TestDaemonHandlerSurface(t *testing.T) {
 			seenContextStatus = m.Scope == "read" && !m.Remote
 		case "context.stats":
 			seenContextStats = m.Scope == "read" && !m.Remote
+		case "backpressure.status":
+			seenBackpressureStatus = m.Scope == "read" && m.Remote
+		case "backpressure.report":
+			seenBackpressureReport = m.Scope == "worker" && m.Remote
+		case "debug.snapshot":
+			seenDebugSnapshot = m.Scope == "admin" && !m.Remote
+		case "debug.correlation.search":
+			seenDebugCorrelation = m.Scope == "admin" && !m.Remote
 		case "workspace.patch.propose":
 			seenPatchPropose = m.Scope == "write" && m.DynamicScope
 		case "memory.status":
@@ -110,9 +126,9 @@ func TestDaemonHandlerSurface(t *testing.T) {
 			seenScheduleDelete = m.Scope == "write" && !m.Remote
 		}
 	}
-	if !seenStatus || !seenSubmit || !seenSessionResume || !seenContextStatus || !seenContextStats || !seenPatchPropose || !seenMemoryStatus || !seenMemorySearch || !seenMemoryWrite || !seenScheduleCreate || !seenScheduleList || !seenSchedulePause || !seenScheduleResume || !seenScheduleDelete {
-		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v resume=%v context_status=%v context_stats=%v patch=%v memory_status=%v memory_search=%v memory_write=%v schedule_create=%v schedule_list=%v schedule_pause=%v schedule_resume=%v schedule_delete=%v",
-			seenStatus, seenSubmit, seenSessionResume, seenContextStatus, seenContextStats, seenPatchPropose, seenMemoryStatus, seenMemorySearch, seenMemoryWrite, seenScheduleCreate, seenScheduleList, seenSchedulePause, seenScheduleResume, seenScheduleDelete)
+	if !seenStatus || !seenSubmit || !seenSessionResume || !seenContextStatus || !seenContextStats || !seenBackpressureStatus || !seenBackpressureReport || !seenDebugSnapshot || !seenDebugCorrelation || !seenPatchPropose || !seenMemoryStatus || !seenMemorySearch || !seenMemoryWrite || !seenScheduleCreate || !seenScheduleList || !seenSchedulePause || !seenScheduleResume || !seenScheduleDelete {
+		t.Fatalf("gateway.methods missing expected descriptors: status=%v submit=%v resume=%v context_status=%v context_stats=%v backpressure_status=%v backpressure_report=%v debug_snapshot=%v debug_correlation=%v patch=%v memory_status=%v memory_search=%v memory_write=%v schedule_create=%v schedule_list=%v schedule_pause=%v schedule_resume=%v schedule_delete=%v",
+			seenStatus, seenSubmit, seenSessionResume, seenContextStatus, seenContextStats, seenBackpressureStatus, seenBackpressureReport, seenDebugSnapshot, seenDebugCorrelation, seenPatchPropose, seenMemoryStatus, seenMemorySearch, seenMemoryWrite, seenScheduleCreate, seenScheduleList, seenSchedulePause, seenScheduleResume, seenScheduleDelete)
 	}
 	var hello struct {
 		Role     string   `json:"role"`

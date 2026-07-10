@@ -72,6 +72,14 @@
       { "method": "worker.output.stream", "params": { "worker_id": "string" }, "result": "subscription" },
       { "method": "worker.revoke", "params": { "worker_id": "string" }, "result": { "ok": "boolean" } }
     ],
+    "backpressure": [
+      { "method": "backpressure.report", "params": { "worker_id": "string", "queue_depth": "number?", "inflight": "number?", "mem_usage_permille": "number?", "proc_load_permille": "number?", "est_drain_ms": "number?", "seq": "number?" }, "result": "{ accepted: boolean, report: PressureReport, directive: ThrottleDirective }", "availability": "remote worker; advisory only; TTL-bound; not a scheduler scoring or authorization input" },
+      { "method": "backpressure.status", "params": {}, "result": "{ reports: PressureReport[], directives: ThrottleDirective[], ttl_seconds: number, scheduler: object }", "availability": "remote read; diagnostic status only" }
+    ],
+    "debug": [
+      { "method": "debug.snapshot", "params": { "limit": "number?", "component": "string?" }, "result": "{ enabled: boolean, events: DebugTraceEvent[], dropped: number, capacity: number }", "availability": "local-only admin; requires enable_debug_rpc; non-authoritative diagnostic side-channel" },
+      { "method": "debug.correlation.search", "params": { "correlation_id": "string", "limit": "number?" }, "result": "{ enabled: boolean, correlation_id: string, events: DebugTraceEvent[], dropped: number, capacity: number }", "availability": "local-only admin; requires enable_debug_rpc; must not feed audit, auth, memory, routing, or scheduling decisions" }
+    ],
     "command": [
       { "method": "command.exec", "params": { "session_id": "string", "task_id": "string?", "argv": "string[]" }, "result": { "decision": "PermissionDecision", "result": "CommandResult?" } }
     ],

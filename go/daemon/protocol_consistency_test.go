@@ -33,7 +33,7 @@ func TestProtocolEventCatalogMatchesSchemaEnum(t *testing.T) {
 	}
 }
 
-func TestProtocolMethodsIncludeMemorySearchModesAndSchedules(t *testing.T) {
+func TestProtocolMethodsIncludeAbsorbedSurfaces(t *testing.T) {
 	root := repoRootFromHere(t)
 	var methods struct {
 		APIs map[string][]struct {
@@ -54,6 +54,18 @@ func TestProtocolMethodsIncludeMemorySearchModesAndSchedules(t *testing.T) {
 		if methodByName(methods.APIs["schedule"], method) == nil {
 			t.Fatalf("methods.json missing %s", method)
 		}
+	}
+	if methodByName(methods.APIs["backpressure"], "backpressure.report") == nil {
+		t.Fatal("methods.json missing backpressure.report")
+	}
+	if methodByName(methods.APIs["backpressure"], "backpressure.status") == nil {
+		t.Fatal("methods.json missing backpressure.status")
+	}
+	if methodByName(methods.APIs["debug"], "debug.snapshot") == nil {
+		t.Fatal("methods.json missing debug.snapshot")
+	}
+	if methodByName(methods.APIs["debug"], "debug.correlation.search") == nil {
+		t.Fatal("methods.json missing debug.correlation.search")
 	}
 }
 

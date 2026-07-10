@@ -56,6 +56,18 @@ func TestUsageIncludesGatewayWSProbe(t *testing.T) {
 	}
 }
 
+func TestUsageIncludesBackpressureAndDebugCommands(t *testing.T) {
+	for _, want := range []string{
+		"carina backpressure status",
+		"carina debug snapshot [limit]",
+		"carina debug trace <correlation_id> [limit]",
+	} {
+		if !strings.Contains(usage, want) {
+			t.Fatalf("usage missing %q:\n%s", want, usage)
+		}
+	}
+}
+
 func TestUsageIncludesMemoryCommands(t *testing.T) {
 	for _, want := range []string{
 		"Memory:",
@@ -229,6 +241,81 @@ func TestCmdContextStatsCompressRetrieve(t *testing.T) {
 	}
 	if retrieved["hash"] != "abc" || retrieved["query"] != "needle" {
 		t.Fatalf("retrieve params = %#v", retrieved)
+	}
+}
+
+func TestCmdBackpressureStatus(t *testing.T) {
+	s := rpc.NewServer()
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "backpressure.status", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
+		return map[string]any{"ttl_seconds": 30, "reports": []any{}, "directives": []any{}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	addr := freeTCPAddr(t)
+	go func() { _ = s.ListenTCP(addr) }()
+	defer s.Close()
+	waitTCP(t, addr)
+	c, err := rpc.DialTCP(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	out, err := captureStdout(t, func() error { return cmdBackpressure(c, []string{"status"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"ttl_seconds": 30`) {
+		t.Fatalf("backpressure status output missing ttl:\n%s", out)
+	}
+}
+
+func TestCmdDebugSnapshotAndTrace(t *testing.T) {
+	s := rpc.NewServer()
+	var snapshotParams map[string]any
+	var traceParams map[string]any
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "debug.snapshot", Scope: rpc.ScopeAdmin, Remote: true}, func(params json.RawMessage) (any, error) {
+		if err := json.Unmarshal(params, &snapshotParams); err != nil {
+			return nil, err
+		}
+		return map[string]any{"enabled": true, "events": []any{map[string]any{"component": "scheduler"}}, "capacity": 4096}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "debug.correlation.search", Scope: rpc.ScopeAdmin, Remote: true}, func(params json.RawMessage) (any, error) {
+		if err := json.Unmarshal(params, &traceParams); err != nil {
+			return nil, err
+		}
+		return map[string]any{"enabled": true, "correlation_id": traceParams["correlation_id"], "events": []any{}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	addr := freeTCPAddr(t)
+	go func() { _ = s.ListenTCP(addr) }()
+	defer s.Close()
+	waitTCP(t, addr)
+	c, err := rpc.DialTCP(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	if out, err := captureStdout(t, func() error { return cmdDebug(c, []string{"snapshot", "2"}) }); err != nil {
+		t.Fatal(err)
+	} else if !strings.Contains(out, `"enabled": true`) {
+		t.Fatalf("debug snapshot output missing enabled:\n%s", out)
+	}
+	if snapshotParams["limit"].(float64) != 2 {
+		t.Fatalf("snapshot limit not forwarded: %+v", snapshotParams)
+	}
+	if _, err := captureStdout(t, func() error { return cmdDebug(c, []string{"trace", "task_1", "5"}) }); err != nil {
+		t.Fatal(err)
+	}
+	if traceParams["correlation_id"] != "task_1" || traceParams["limit"].(float64) != 5 {
+		t.Fatalf("trace params not forwarded: %+v", traceParams)
+	}
+	if err := cmdDebug(c, []string{"snapshot", "0"}); err == nil {
+		t.Fatal("non-positive debug limit should error")
 	}
 }
 

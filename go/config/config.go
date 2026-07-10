@@ -45,6 +45,7 @@ type Config struct {
 	EgressAllow                []string `json:"egress_allow"`
 	SandboxCommands            bool     `json:"sandbox_commands"`
 	InteractiveApproval        bool     `json:"interactive_approval"`
+	EnableDebugRPC             bool     `json:"enable_debug_rpc"`
 	SummarizerModel            string   `json:"summarizer_model"`
 	RiskReviewMode             string   `json:"risk_review_mode"`
 	RiskReviewModel            string   `json:"risk_review_model"`
@@ -139,6 +140,7 @@ func mergeEnv(cfg *Config) {
 	envBool("CARINA_ENABLE_EGRESS_PROXY", &cfg.EnableEgressProxy)
 	envBool("CARINA_SANDBOX_COMMANDS", &cfg.SandboxCommands)
 	envBool("CARINA_INTERACTIVE_APPROVAL", &cfg.InteractiveApproval)
+	envBool("CARINA_ENABLE_DEBUG_RPC", &cfg.EnableDebugRPC)
 	envInt("CARINA_MAX_CONCURRENT_TASKS", &cfg.MaxConcurrentTasks)
 	envInt("CARINA_MAX_TASK_TOKENS", &cfg.MaxTaskTokens)
 	envInt("CARINA_HEADROOM_PROXY_PORT", &cfg.HeadroomProxyPort)

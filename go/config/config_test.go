@@ -41,7 +41,7 @@ func TestCascadePrecedence(t *testing.T) {
 	home := t.TempDir()
 	proj := t.TempDir()
 
-	writeConfig(t, home, `{"offline": true, "max_task_tokens": 100, "tools_dir": "/g/tools", "gateway_http": "127.0.0.1:7000", "gateway_http_origins": ["https://api.example"], "gateway_ws": "127.0.0.1:7001", "gateway_ws_origins": ["https://app.example"], "gateway_token_signing_key_file": "/g/token.key", "gateway_token_max_ttl_seconds": 600, "summarizer_model": "cheap", "risk_review_model": "guardian", "context_engine": "noop", "headroom_mode": "managed_mcp", "headroom_token_budget": 1234}`)
+	writeConfig(t, home, `{"offline": true, "max_task_tokens": 100, "tools_dir": "/g/tools", "gateway_http": "127.0.0.1:7000", "gateway_http_origins": ["https://api.example"], "gateway_ws": "127.0.0.1:7001", "gateway_ws_origins": ["https://app.example"], "gateway_token_signing_key_file": "/g/token.key", "gateway_token_max_ttl_seconds": 600, "enable_debug_rpc": true, "summarizer_model": "cheap", "risk_review_model": "guardian", "context_engine": "noop", "headroom_mode": "managed_mcp", "headroom_token_budget": 1234}`)
 	writeConfig(t, proj, `{"max_task_tokens": 200, "tools_dir": "/p/tools", "risk_review_mode": "enforce", "headroom_mode": "proxy"}`)
 	t.Setenv("CARINA_TOOLS_DIR", "/e/tools")
 	t.Setenv("CARINA_RISK_REVIEW_MODE", "advisory")
@@ -49,6 +49,7 @@ func TestCascadePrecedence(t *testing.T) {
 	t.Setenv("CARINA_NEBUTRA_CLOUD_ENDPOINT", "https://nebutra.example")
 	t.Setenv("CARINA_CONTEXT_ENGINE", "headroom")
 	t.Setenv("CARINA_HEADROOM_PROXY_PORT", "7777")
+	t.Setenv("CARINA_ENABLE_DEBUG_RPC", "false")
 
 	cfg, err := Load(home, proj)
 	if err != nil {
@@ -81,6 +82,9 @@ func TestCascadePrecedence(t *testing.T) {
 	}
 	if cfg.GatewayTokenMaxTTLSeconds != 300 {
 		t.Errorf("gateway_token_max_ttl_seconds: env should override global, got %d", cfg.GatewayTokenMaxTTLSeconds)
+	}
+	if cfg.EnableDebugRPC {
+		t.Errorf("enable_debug_rpc: env false should override global true")
 	}
 	if cfg.SummarizerModel != "cheap" {
 		t.Errorf("summarizer_model should fall through from global, got %q", cfg.SummarizerModel)

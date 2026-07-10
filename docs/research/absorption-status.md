@@ -348,6 +348,32 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   submitted task goroutines are joined briefly on close, while protocol tests
   lock event enum/schema consistency and the new memory/schedule RPC surface.
 
+**Wave 21 — Backpressure and diagnostic side-channel closure (landed)**
+- [x] **Adaptive backpressure signal** (`go/daemon/backpressure.go`,
+  `go/daemon/dispatch.go`, `protocol/jsonrpc/methods.json`): workers can
+  report queue depth, inflight work, memory pressure, process load, estimated
+  drain time, and monotonic sequence ids through `backpressure.report`.
+  Daemon returns a TTL-bound advisory `ThrottleDirective`; `work.poll` only
+  pauses leasing when the directive explicitly sets `max_inflight=0`. The
+  signal is not a scheduler scoring input, authorization input, memory input,
+  or route-promotion signal.
+- [x] **Backpressure observability** (`daemon.status`, `daemon.metrics`,
+  `backpressure.status`, `apps/carina-cli`): status exposes only compact
+  counts, while `backpressure.status` shows current reports, directives, TTL,
+  dispatch depth, task counts, and worker count. `carina backpressure status`
+  gives operators a direct diagnostic surface without scraping audit logs.
+- [x] **Non-authoritative debug attribution side-channel**
+  (`go/daemon/debug_trace.go`, `apps/carina-daemon`, `apps/carina-cli`):
+  `debug.snapshot` and `debug.correlation.search` expose a fixed-capacity
+  in-memory ring buffer for local admin diagnostics only. It is disabled by
+  default (`enable_debug_rpc=false` / `CARINA_ENABLE_DEBUG_RPC=false` /
+  no `-debug-rpc`) and, while disabled, collection is also off.
+- [x] **Debug authority boundary**: debug trace events are not persisted, not
+  exported into the hash-chain audit stream, not used by permission, memory,
+  route, or scheduling decisions, and are unavailable on the remote RPC
+  allowlist. They can explain behavior during incident triage, but cannot
+  become evidence or policy input.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
@@ -374,9 +400,12 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   has enough independently verified samples for shadow evaluation, canarying,
   and automatic rollback. The shipped contract is evidence-first and does not
   self-train on model-judged success.
+- OpenSquilla-style implicit single-process backpressure and debug logs were
+  intentionally not absorbed. Carina now has explicit TTL/seq backpressure and
+  a local-only non-authoritative debug side-channel instead.
 
 ## Test status
-Current verification for the OpenSquilla mechanism absorption update:
+Current verification for the OpenSquilla/backpressure/debug absorption update:
 
 - `git diff --check`
 - `jq empty protocol/jsonrpc/methods.json protocol/events/events.json protocol/schemas/event.schema.json`

@@ -51,6 +51,7 @@ func main() {
 	egress := flag.Bool("egress", cfg.EnableEgressProxy, "route command network through a deny-by-default egress proxy")
 	egressAllow := flag.String("egress-allow", strings.Join(cfg.EgressAllow, ","), "comma-separated hosts allowed when -egress is on")
 	interactiveApproval := flag.Bool("interactive-approval", cfg.InteractiveApproval, "pause for an operator decision on requires_approval instead of auto-approving")
+	enableDebugRPC := flag.Bool("debug-rpc", cfg.EnableDebugRPC, "enable local-only debug.* RPC inspection endpoints and in-memory trace collection")
 	riskReviewMode := flag.String("risk-review-mode", cfg.RiskReviewMode, "autonomous approval risk review mode: off|advisory|enforce")
 	riskReviewModel := flag.String("risk-review-model", cfg.RiskReviewModel, "optional model for Nebutra Risk Review (default: local heuristic)")
 	nebutraCloud := flag.String("nebutra-cloud", cfg.NebutraCloudEndpoint, "Nebutra Cloud endpoint for identity/sync boundary")
@@ -93,6 +94,7 @@ func main() {
 		EnableEgressProxy:          *egress,
 		EgressAllow:                splitList(*egressAllow),
 		InteractiveApproval:        *interactiveApproval,
+		EnableDebugRPC:             *enableDebugRPC,
 		RiskReviewMode:             *riskReviewMode,
 		RiskReviewModel:            *riskReviewModel,
 		NebutraCloudEndpoint:       *nebutraCloud,
@@ -122,6 +124,9 @@ func main() {
 		}
 		if pinned["interactive-approval"] {
 			nc.InteractiveApproval = *interactiveApproval
+		}
+		if pinned["debug-rpc"] {
+			nc.EnableDebugRPC = *enableDebugRPC
 		}
 		if pinned["risk-review-mode"] {
 			nc.RiskReviewMode = *riskReviewMode

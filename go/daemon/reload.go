@@ -11,7 +11,7 @@ import (
 
 // ApplyConfig live-applies the hot-reloadable subset of a config to a running
 // daemon (no restart): the per-task token budget, interactive-approval mode,
-// risk-review mode, workspace-trust gate, command sandbox, and egress allowlist.
+// debug RPC/trace, risk-review mode, workspace-trust gate, command sandbox, and egress allowlist.
 // It validates first and returns WITHOUT mutating on failure, so a bad reload
 // keeps the last-good config.
 //
@@ -52,6 +52,7 @@ func (d *Daemon) ApplyConfig(cfg config.Config) error {
 	}
 	d.maxTaskTokens.Store(int64(cfg.MaxTaskTokens))
 	d.interactiveApproval.Store(cfg.InteractiveApproval)
+	d.debugRPCEnabled.Store(cfg.EnableDebugRPC)
 	d.requireTrust.Store(cfg.RequireWorkspaceTrust)
 	d.sandbox.Store(cfg.SandboxCommands)
 	if d.egress != nil {

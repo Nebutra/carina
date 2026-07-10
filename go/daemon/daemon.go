@@ -53,6 +53,7 @@ type Options struct {
 	EgressAllow                []string           // hosts allowed when the egress proxy is enabled
 	SandboxCommands            bool               // run commands under an OS syscall sandbox (macOS sandbox-exec)
 	InteractiveApproval        bool               // requires_approval pauses for an operator decision instead of auto-approving
+	EnableDebugRPC             bool               // expose local-only debug.* diagnostic RPCs and collect their in-memory trace
 	EgressCredentials          []EgressCredential // per-host credentials injected at the egress boundary
 	VerifierModel              string             // model for the independent done-verifier ("" => verifier off)
 	RiskReviewMode             string             // off|advisory|enforce for autonomous approval review ("" => advisory)
@@ -97,15 +98,17 @@ type pendingMemoryWrite struct {
 }
 
 type Daemon struct {
-	store   *sessionstore.Store
-	sched   *scheduler.Scheduler
-	pool    *worker.Pool
-	router  *modelrouter.Router
-	server  *rpc.Server
-	kern    *kernel.Service
-	tools   *toolchain.Toolchain
-	events  *Bus
-	started time.Time
+	store        *sessionstore.Store
+	sched        *scheduler.Scheduler
+	pool         *worker.Pool
+	backpressure *backpressureManager
+	router       *modelrouter.Router
+	server       *rpc.Server
+	kern         *kernel.Service
+	tools        *toolchain.Toolchain
+	events       *Bus
+	debugTrace   *debugTrace
+	started      time.Time
 
 	org            *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
 	policyDir      string            // opts.PolicyDir, kept for doctor's policyBundleStale freshness probe
@@ -162,6 +165,7 @@ type Daemon struct {
 	taskWG   sync.WaitGroup
 
 	interactiveApproval atomic.Bool                    // when true, requires_approval pauses for an operator decision (hot-reloadable)
+	debugRPCEnabled     atomic.Bool                    // exposes debug.* and collects debug trace (hot-reloadable, default off)
 	approvalTimeout     time.Duration                  // how long to wait for an interactive approval (0 => 5m)
 	pendingApprovals    map[string]chan approvalSignal // decision_id -> resolver channel
 	approvalMu          sync.Mutex
@@ -247,11 +251,13 @@ func New(opts Options) (*Daemon, error) {
 		store:               store,
 		sched:               scheduler.New(),
 		pool:                worker.NewPool(),
+		backpressure:        newBackpressureManager(),
 		router:              modelrouter.New(),
 		server:              rpc.NewServer(),
 		kern:                kern,
 		tools:               tools,
 		events:              NewBus(),
+		debugTrace:          newDebugTrace(defaultDebugTraceCapacity),
 		org:                 loadOrgPolicy(opts.PolicyDir),
 		policyDir:           opts.PolicyDir,
 		stateDir:            opts.StateDir,
@@ -313,6 +319,7 @@ func New(opts Options) (*Daemon, error) {
 	d.stopCh = make(chan struct{})
 	d.pendingApprovals = map[string]chan approvalSignal{}
 	d.interactiveApproval.Store(opts.InteractiveApproval)
+	d.debugRPCEnabled.Store(opts.EnableDebugRPC)
 	d.subagentParentTask = map[string]string{}
 	d.escalationCounts = map[string]int{}
 	// Shared cross-process prompt history (survives restarts; multiple daemons
@@ -615,6 +622,9 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("daemon.status", rpc.ScopeRead, true, d.handleStatus)
 	d.registerRPC("daemon.metrics", rpc.ScopeRead, true, d.handleMetrics)
 	d.registerRPC("daemon.doctor", rpc.ScopeRead, true, d.handleDoctor)
+	d.registerRPC("backpressure.status", rpc.ScopeRead, true, d.handleBackpressureStatus)
+	d.registerRPC("debug.snapshot", rpc.ScopeAdmin, false, d.handleDebugSnapshot)
+	d.registerRPC("debug.correlation.search", rpc.ScopeAdmin, false, d.handleDebugCorrelation)
 	d.registerRPC("context.status", rpc.ScopeRead, false, d.handleContextStatus)
 	d.registerRPC("context.doctor", rpc.ScopeRead, false, d.handleContextDoctor)
 	d.registerRPC("context.stats", rpc.ScopeRead, false, d.handleContextStats)
@@ -691,6 +701,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("worker.heartbeat", rpc.ScopeWorker, true, d.handleWorkerHeartbeat)
 	d.registerRPC("worker.list", rpc.ScopeRead, true, d.handleWorkerList)
 	d.registerRPC("worker.revoke", rpc.ScopeAdmin, false, d.handleWorkerRevoke, true)
+	d.registerRPC("backpressure.report", rpc.ScopeWorker, true, d.handleBackpressureReport)
 
 	// Work-dispatch bridge: enqueue is control-plane (local); poll/renew/report
 	// are the remote worker's lease protocol.
@@ -884,6 +895,8 @@ func (d *Daemon) handleStatus(_ json.RawMessage) (any, error) {
 		"tasks":           d.sched.Count(),
 		"active_workers":  len(d.pool.List()),
 		"workers":         len(d.pool.List()),
+		"backpressure":    d.backpressure.summary(time.Now().UTC()),
+		"debug_trace":     map[string]any{"enabled": d.debugRPCEnabled.Load()},
 		"tools":           d.tools.Available(),
 		"rpc_endpoint":    d.socketPath,
 		"event_log_path":  filepath.Join(d.stateDir, "events"),
@@ -1139,6 +1152,8 @@ func (d *Daemon) handleMetrics(_ json.RawMessage) (any, error) {
 		"tasks_by_status": d.sched.CountByStatus(),
 		"model_usage":     d.router.UsageByProvider(),
 		"subscribers":     d.events.SubscriberCount(),
+		"backpressure":    d.backpressure.snapshot(time.Now().UTC()),
+		"debug_trace":     d.debugTraceStats(),
 	}, nil
 }
 

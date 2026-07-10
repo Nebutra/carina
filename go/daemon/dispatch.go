@@ -54,6 +54,10 @@ func (d *Daemon) handleWorkSubmit(params json.RawMessage) (any, error) {
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt, "mode": "dispatch"}, "")
 	d.persistRun(task.TaskID)
+	d.emitDebug("scheduler", "work_submitted", task.TaskID, map[string]string{
+		"session_id": sess.SessionID,
+		"task_id":    task.TaskID,
+	})
 	return task, nil
 }
 
@@ -71,14 +75,28 @@ func (d *Daemon) handleWorkPoll(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("unknown worker %s (register first)", p.WorkerID)
 	}
 	_ = d.pool.Heartbeat(p.WorkerID)
+	directive := d.backpressure.directive(p.WorkerID, time.Now().UTC())
+	if directive.MaxInflight == 0 {
+		d.emitDebug("backpressure", "poll_throttled", p.WorkerID, map[string]string{
+			"worker_id": p.WorkerID,
+			"level":     directive.Level,
+			"reason":    directive.Reason,
+		})
+		return map[string]any{"empty": true, "backpressure": directive}, nil
+	}
 	task, ok := d.sched.Lease(p.WorkerID, time.Duration(p.TTLMs)*time.Millisecond)
 	if !ok {
-		return map[string]any{"empty": true}, nil
+		return map[string]any{"empty": true, "backpressure": directive}, nil
 	}
 	d.record(task.SessionID, "TaskCreated", task.TaskID, "worker",
 		map[string]any{"status": "leased", "worker_id": p.WorkerID, "attempts": task.Attempts}, "")
 	d.persistRun(task.TaskID)
-	return map[string]any{"task": task}, nil
+	d.emitDebug("scheduler", "work_leased", task.TaskID, map[string]string{
+		"worker_id": p.WorkerID,
+		"task_id":   task.TaskID,
+		"level":     directive.Level,
+	})
+	return map[string]any{"task": task, "backpressure": directive}, nil
 }
 
 // handleWorkRenew extends a held lease (the worker's mid-execution heartbeat).
@@ -128,6 +146,11 @@ func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 	d.record(sessionID, "TaskCreated", p.TaskID, "worker",
 		map[string]any{"status": p.Status, "worker_id": p.WorkerID, "reported": true}, "")
 	d.persistRun(p.TaskID)
+	d.emitDebug("worker", "work_reported", p.TaskID, map[string]string{
+		"worker_id": p.WorkerID,
+		"task_id":   p.TaskID,
+		"status":    p.Status,
+	})
 	d.emitCompletion(sessionID, task)
 	return map[string]any{"ok": true}, nil
 }

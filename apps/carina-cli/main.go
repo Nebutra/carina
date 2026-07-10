@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -110,6 +111,9 @@ Gateway and RPC:
   carina gateway hello [role]                       negotiate Gateway role/scope discovery
   carina gateway methods                            list RPC methods with scope/exposure metadata
   carina gateway ws-probe <ws-url> [role]           probe Gateway WebSocket handshake and hello
+  carina backpressure status                         show worker pressure reports and throttle directives
+  carina debug snapshot [limit]                      show local-only diagnostic trace events
+  carina debug trace <correlation_id> [limit]        search diagnostic trace by correlation id
 
 Native tools, no daemon:
   carina scan [path]                                workspace file tree
@@ -200,6 +204,10 @@ func run(cmd string, args []string) error {
 		return cmdCommands(c, args)
 	case "gateway":
 		return cmdGateway(c, args)
+	case "backpressure":
+		return cmdBackpressure(c, args)
+	case "debug":
+		return cmdDebug(c, args)
 	case "memory":
 		return cmdMemory(c, args)
 	case "context":
@@ -733,6 +741,65 @@ func cmdGateway(c *rpcClient, args []string) error {
 	default:
 		return fmt.Errorf("usage: carina gateway <hello|methods|ws-probe> [role]")
 	}
+}
+
+func cmdBackpressure(c *rpcClient, args []string) error {
+	if len(args) == 0 {
+		args = []string{"status"}
+	}
+	switch args[0] {
+	case "status":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: carina backpressure status")
+		}
+		return call(c, "backpressure.status", map[string]any{})
+	default:
+		return fmt.Errorf("usage: carina backpressure status")
+	}
+}
+
+func cmdDebug(c *rpcClient, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: carina debug <snapshot|trace> ...")
+	}
+	switch args[0] {
+	case "snapshot":
+		if len(args) > 2 {
+			return fmt.Errorf("usage: carina debug snapshot [limit]")
+		}
+		params := map[string]any{}
+		if len(args) == 2 {
+			limit, err := parseLimit(args[1])
+			if err != nil {
+				return err
+			}
+			params["limit"] = limit
+		}
+		return call(c, "debug.snapshot", params)
+	case "trace":
+		if len(args) < 2 || len(args) > 3 {
+			return fmt.Errorf("usage: carina debug trace <correlation_id> [limit]")
+		}
+		params := map[string]any{"correlation_id": args[1]}
+		if len(args) == 3 {
+			limit, err := parseLimit(args[2])
+			if err != nil {
+				return err
+			}
+			params["limit"] = limit
+		}
+		return call(c, "debug.correlation.search", params)
+	default:
+		return fmt.Errorf("usage: carina debug <snapshot|trace> ...")
+	}
+}
+
+func parseLimit(raw string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("limit must be a positive integer")
+	}
+	return n, nil
 }
 
 func cmdMemory(c *rpcClient, args []string) error {
