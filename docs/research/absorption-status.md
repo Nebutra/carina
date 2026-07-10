@@ -271,13 +271,13 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   also recorded in the package manifest.
 - [x] **Install-channel templates without false publication claims**
   (`packaging/homebrew`, `packaging/npm`): added Homebrew and npm templates as
-  publish-time scaffolding only. The docs keep public Homebrew/npm channels in
-  the roadmap until signed/checksummed release artifacts and clean-machine
-  smoke tests exist.
+  publish-time scaffolding. The Homebrew template is now rendered by the
+  tag-driven macOS release workflow into `Nebutra/homebrew-tap`; npm remains
+  unpublished.
 - [x] **README/release/roadmap sync** (`README*.md`, `docs/release.md`,
-  `docs/roadmap.md`): documented the source-first alpha state, local package
-  command, package verification, and planned install channels without claiming
-  live public packages.
+  `docs/roadmap.md`): documented the alpha state, local package command,
+  package verification, live macOS Homebrew channel, and remaining release
+  gaps.
 
 **Wave 19 — Hermes Agent memory absorption (landed)**
 - [x] **Governed local long-term memory** (`go/daemon/memory_store.go`):

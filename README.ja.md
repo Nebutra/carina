@@ -18,7 +18,7 @@
 
 Carina は、AI コーディングエージェントのためのローカルファーストなランタイム層です。エディタ、チャットアプリ、ホステッドサンドボックスではありません。エージェントとマシンの間に入り、ファイル読み取り、編集、コマンド、ネットワークアクセス、プラグイン、secret を明示的なポリシーの後ろに置きます。
 
-このリポジトリは、ソースビルド、ローカル実験、自社の Agent 実行基盤を設計するチームに向いています。まだ alpha です。安定したパッケージ、公開インストーラー、磨き込まれた dashboard は未完成です。
+このリポジトリは、ソースビルド、ローカル実験、自社の Agent 実行基盤を設計するチームに向いています。まだ alpha です。macOS パッケージは Nebutra Homebrew tap から利用できますが、Apple notarization、Linux パッケージ、npm 配布、磨き込まれた dashboard は未完成です。
 
 ## Why Carina
 
@@ -70,12 +70,33 @@ Carina が提供するもの：
 
 まだ product-complete ではないもの：
 
-- signed public release、Homebrew tap、npm のインストールチャネル；
+- Apple notarization、Linux package、npm のインストールチャネル；
 - contributor/security process の完成；
 - polished TUI/dashboard；
 - Windows support；
 - TypeScript、Python、Go SDK の parity；
 - remote-worker fleet の production guide。
+
+## Homebrew Install
+
+Apple Silicon と Intel macOS 向け package を Nebutra 公式 tap からインストールできます：
+
+```bash
+brew install Nebutra/tap/carina
+```
+
+この fully-qualified command は tap を追加して Carina Formula を trust します。
+初回インストール後は `brew install carina` でも同じ Formula を解決できます。
+
+Upgrade は Homebrew の標準フローを使います：
+
+```bash
+brew update
+brew upgrade carina
+```
+
+`brew update carina` は有効な Homebrew command ではありません。
+インストール後に daemon は自動起動しません。
 
 ## Quickstart From Source
 
@@ -249,7 +270,8 @@ Alpha limitations:
 - Carina itself is not a VM or complete container isolation system.
 - OS sandbox backends exist, but production profiles need deployment review.
 - Policy correctness depends on routing commands through the Carina daemon and toolchain.
-- Public release signing and supply-chain provenance are not complete yet.
+- Release archive には checksum と GitHub build provenance がありますが、
+  Apple code signing と notarization は未完成です。
 
 See [SECURITY.md](SECURITY.md) and [docs/security-model.md](docs/security-model.md).
 

@@ -57,6 +57,9 @@ jobs:
       - name: Performance benchmarks (§14)
         run: bash scripts/bench.sh 10000
 
+      - name: Validate Homebrew formula template
+        run: bash scripts/test-homebrew-formula.sh
+
   no-node-runtime:
     # Proves the runtime needs no Node: a clean container without node/npm.
     runs-on: ubuntu-latest

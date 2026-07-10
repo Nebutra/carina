@@ -1,4 +1,4 @@
-.PHONY: all go rust zig sdk-ts test rust-test go-test release-check release-package clean
+.PHONY: all go rust zig sdk-ts test rust-test go-test release-check release-package homebrew-formula-test homebrew-install-test clean
 
 all: go rust zig
 
@@ -32,6 +32,12 @@ release-check:
 
 release-package:
 	./scripts/package-release.sh
+
+homebrew-formula-test:
+	./scripts/test-homebrew-formula.sh
+
+homebrew-install-test:
+	VERSION=$${VERSION:?VERSION is required} ./scripts/test-homebrew-install.sh
 
 clean:
 	rm -rf bin target zig/zig-out zig/.zig-cache

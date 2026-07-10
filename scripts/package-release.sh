@@ -154,7 +154,7 @@ copy_file bin/carina-tui "$stage/bin/carina-tui"
 copy_file target/release/carina-kernel-service "$stage/bin/carina-kernel-service"
 
 if [[ "${SKIP_HEADROOM:-0}" == "1" ]]; then
-  warnings+=("SKIP_HEADROOM=1: packaged without bundled Headroom; do not use this archive for public releases")
+  warnings+=("SKIP_HEADROOM=1: packaged without optional Headroom; context_engine=auto will use the noop fallback")
   headroom_status="skipped"
 else
   need_file "$headroom_lock"
@@ -206,11 +206,7 @@ copy_file docs/roadmap.md "$stage/docs/roadmap.md"
 copy_file docs/rpc-api.md "$stage/docs/rpc-api.md"
 
 for label_value in \
-  "cli:$cli_version" \
-  "daemon:$daemon_version" \
-  "cargo:$cargo_version" \
-  "typescript_sdk:$ts_sdk_version" \
-  "python_sdk:$py_sdk_version"; do
+  "cli:$cli_version"; do
   label="${label_value%%:*}"
   value="${label_value#*:}"
   if [[ -n "$value" && "$value" != "$version" ]]; then

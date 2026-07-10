@@ -18,7 +18,7 @@
 
 Carina 是一个本地优先的 AI 编程智能体运行时。它不是编辑器、聊天产品，也不是托管沙箱。它位于智能体和机器之间，让文件读取、代码修改、命令、网络访问、插件和 secret 都先经过明确策略，再真正发生。
 
-当前仓库适合源码构建、本地实验，以及团队设计自己的 Agent 执行底座。它仍处于 alpha：稳定二进制发布、公开安装器和完整 dashboard 还没有完成。
+当前仓库适合源码构建、本地实验，以及团队设计自己的 Agent 执行底座。它仍处于 alpha。macOS 公开安装包已经通过 Nebutra Homebrew tap 提供；Apple notarization、Linux 安装包、npm 分发和完整 dashboard 仍在推进。
 
 ## 为什么用 Carina
 
@@ -70,12 +70,33 @@ Carina 提供：
 
 还没有产品化完成：
 
-- 签名公开 release、Homebrew tap 和 npm 安装渠道；
+- Apple notarization、Linux 安装包和 npm 安装渠道；
 - 完整 contributor/security 流程；
 - 打磨后的 TUI/dashboard；
 - Windows 支持；
 - TypeScript、Python、Go SDK 能力对齐；
 - 远程 worker 集群的生产部署指南。
+
+## 使用 Homebrew 安装
+
+Carina 通过 Nebutra 官方 tap 提供 Apple Silicon 和 Intel macOS 安装包：
+
+```bash
+brew install Nebutra/tap/carina
+```
+
+这个完整名称会添加 tap 并信任 Carina Formula。首次安装后，
+`brew install carina` 会解析到同一个 Formula。
+
+使用 Homebrew 的标准流程升级：
+
+```bash
+brew update
+brew upgrade carina
+```
+
+`brew update carina` 不是有效的 Homebrew 命令；`brew update` 更新包索引，
+`brew upgrade carina` 升级已安装的 Carina。安装后不会自动启动 daemon。
 
 ## 从源码快速开始
 
@@ -246,7 +267,8 @@ Alpha 限制：
 - Carina 本身不是 VM，也不是完整容器隔离系统。
 - OS sandbox backend 已存在，但生产 profile 需要部署前评审。
 - 策略正确性依赖命令通过 Carina daemon 和 toolchain 执行。
-- 公开发布签名和供应链 provenance 还未完成。
+- 发布归档已有 checksum 和 GitHub build provenance，但 Apple code signing
+  和 notarization 还未完成。
 
 见 [SECURITY.md](SECURITY.md) 和 [docs/security-model.md](docs/security-model.md)。
 

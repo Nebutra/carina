@@ -1,8 +1,9 @@
 # Release Process
 
-Carina is currently a source-first alpha. This document describes the local
-release gate and the intended path to signed public releases. Install-channel
-planning lives in [docs/roadmap.md](roadmap.md).
+Carina is currently an alpha with automated macOS GitHub releases and an
+official Homebrew tap. This document describes the local release gate and the
+tag-driven public release path. Future channels are tracked in
+[docs/roadmap.md](roadmap.md).
 
 ## Current Source-First Release Gate
 
@@ -18,7 +19,8 @@ The script validates:
 - Rust workspace checks/tests;
 - Zig native tool build;
 - Go package tests;
-- targeted race coverage for the daemon/config control plane.
+- targeted race coverage for the daemon/config control plane;
+- Homebrew Formula template rendering.
 
 Manual equivalent:
 
@@ -52,9 +54,8 @@ The package command writes to `dist/`:
   `checksums.txt`.
 
 The archive includes Go CLIs, the Rust kernel service, Zig native tools matching
-`zig/zig-out/bin/carina-*`, the pinned Headroom executable as `bin/headroom`,
-README, LICENSE, SECURITY, and release docs. It smoke-tests `bin/carina
---version` and `bin/headroom --help` from the staged package.
+`zig/zig-out/bin/carina-*`, README, LICENSE, SECURITY, and release docs. It
+smoke-tests `bin/carina --version` from the staged package.
 
 Headroom is an upstream-maintained component pinned by
 `integrations/headroom.lock`. Release builders must provide the prepared
@@ -83,8 +84,11 @@ SKIP_ZIG=1 VERSION=0.6.0 make release-package
 `SKIP_BUILD=1` and `SKIP_ZIG=1` are recorded as warnings in `MANIFEST.json` and
 `VERSION_CHECK.txt`.
 
-For local development only, `SKIP_HEADROOM=1` permits packaging without bundled
-Headroom and records a warning. Public release artifacts must not use it.
+`SKIP_HEADROOM=1` packages without the optional Headroom integration and records
+that decision in the manifest. The Homebrew release uses this mode because
+Headroom does not yet publish a reproducible standalone executable for both
+supported macOS architectures. In `context_engine=auto`, Carina safely falls
+back to the noop context engine.
 
 Verify an archive:
 
@@ -109,7 +113,7 @@ tar -xzf carina_<version>_<goos>_<goarch>.tar.gz
 - Zig tools from `zig/zig-out/bin`
 - Rust `carina-kernel-service` under `target/release`
 
-These are local build outputs, not signed release artifacts.
+These are local build outputs, not public release artifacts.
 
 ## Versioning
 
@@ -122,39 +126,40 @@ Current version declarations are split while the project is alpha:
 
 A public release should align these or document why they differ.
 
-## Public Release Checklist
+## Automated macOS Release
 
-Before a non-source public release:
+Pushing a tag matching `v<major>.<minor>.<patch>` runs
+`.github/workflows/release.yml`. The workflow:
 
-- decide release version and changelog;
-- run `make release-check`;
-- build macOS and Linux artifacts;
-- produce checksums;
-- sign artifacts;
-- attach provenance/SBOM where available;
-- publish release notes;
-- update installer/Homebrew tap;
-- update npm install package when applicable;
-- verify install from a clean machine.
+- requires the tag version to match the CLI version and the tag commit to be on
+  `main`;
+- builds on native Apple Silicon and Intel GitHub-hosted runners;
+- installs each archive through a temporary Homebrew tap and runs `brew test`;
+- publishes archives, per-archive checksums, and `SHA256SUMS`;
+- creates GitHub build provenance attestations;
+- renders and pushes `Formula/carina.rb` to `Nebutra/homebrew-tap` through a
+  repository-scoped SSH deploy key.
 
-## Install Channel Templates
+The release is rejected before publication if either architecture fails to
+build or install.
 
-Templates are checked in but not published:
+## Homebrew Channel
 
-- Homebrew formula template:
-  `packaging/homebrew/carina.rb.template`;
-- npm installer package template:
-  `packaging/npm/package.json.template`.
+Install the published Formula with:
 
-Planned channels are tracked in [docs/roadmap.md](roadmap.md). A rendered
-Homebrew formula or npm package must point at signed or checksummed release
-archives and must pass a clean-machine smoke test before public promotion.
+```bash
+brew install Nebutra/tap/carina
+```
+
+Upgrade with `brew update && brew upgrade carina`. The Formula source template
+is `packaging/homebrew/carina.rb.template`; `scripts/render-homebrew-formula.sh`
+injects versioned release URLs and both architecture checksums.
 
 ## Not Yet Implemented
 
 - hosted installer;
-- published Homebrew tap;
 - published npm install package;
-- artifact signing;
-- SBOM/provenance automation;
+- Apple code signing and notarization;
+- SBOM publication and provenance verification documentation;
+- Linux release and Linuxbrew path;
 - Windows release path.

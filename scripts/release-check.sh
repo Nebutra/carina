@@ -31,4 +31,7 @@ cargo test
 echo "==> targeted Go race tests"
 go test -race ./go/daemon ./go/config ./apps/carina-daemon
 
+echo "==> Homebrew formula template"
+./scripts/test-homebrew-formula.sh
+
 echo "release-check: ok"

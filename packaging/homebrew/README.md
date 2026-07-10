@@ -1,14 +1,25 @@
-# Homebrew Template
+# Homebrew Formula Source
 
-This directory is a publish-time template, not a live Nebutra tap.
+This directory contains the source template for the live
+[`Nebutra/homebrew-tap`](https://github.com/Nebutra/homebrew-tap).
 
-To publish a Homebrew formula later:
+On a `v<version>` tag, `.github/workflows/release.yml`:
 
-1. Run `make release-check`.
-2. Run `VERSION=<version> make release-package` on the target platform.
-3. Upload the archive and checksum to a GitHub release.
-4. Replace `__VERSION__` and `__SHA256__` in `carina.rb.template`.
-5. Commit the rendered formula to a Nebutra-maintained tap.
-6. Smoke test with `brew install --build-from-source ./carina.rb` or the tap URL.
+1. builds native Apple Silicon and Intel archives;
+2. installs each archive through a temporary Homebrew tap and runs `brew test`;
+3. publishes checksums and GitHub build provenance;
+4. renders `Formula/carina.rb` with both archive SHA-256 values;
+5. updates the official tap through a repository-scoped deploy key.
 
-The formula must not auto-start `carina-daemon`; service startup stays explicit.
+Render a Formula locally with:
+
+```bash
+VERSION=0.6.0 \
+DARWIN_ARM64_SHA256=<sha256> \
+DARWIN_AMD64_SHA256=<sha256> \
+./scripts/render-homebrew-formula.sh
+```
+
+The Formula does not auto-start `carina-daemon`. The optional Headroom context
+engine is not bundled in the Homebrew package until all supported architectures
+have a reproducible standalone artifact.

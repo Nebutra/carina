@@ -1,7 +1,7 @@
 # Roadmap
 
-Carina is currently a source-first alpha. This roadmap records intended product
-direction, not committed dates.
+Carina is currently an alpha with source builds and a public macOS Homebrew
+channel. This roadmap records intended product direction, not committed dates.
 
 ## Install And Release Channels
 
@@ -12,16 +12,18 @@ Today:
 - current-platform release candidate archives with `make release-package`;
 - local binaries under `bin/`;
 - local archives, checksums, and manifests under `dist/`;
-- no signed public packages yet.
+- checksummed Apple Silicon and Intel macOS releases;
+- official `Nebutra/homebrew-tap` Formula with install/upgrade smoke tests;
+- GitHub build provenance for release archives;
+- no Apple code signing or notarization yet.
 
 Planned install channels:
 
-1. **Signed GitHub releases**: macOS and Linux archives, checksums, release
-   notes, and provenance/SBOM where available.
-2. **Homebrew tap**: a Nebutra-maintained formula for macOS and Linuxbrew.
-   It should install `carina`, `carina-daemon`, `carina-worker`,
-   `carina-tui`, bundled `headroom`, and native tools. Service startup should
-   stay explicit rather than auto-starting a daemon during install.
+1. **Signed/notarized releases**: add Apple signing/notarization, Linux
+   archives, SBOMs, and expanded provenance verification.
+2. **Linuxbrew**: extend the Nebutra-maintained Formula after Linux archives
+   pass clean-machine installation tests. Bundled Headroom remains gated on a
+   reproducible standalone artifact for every supported architecture.
 3. **npm ecosystem package**: an `@nebutra/carina` package for JavaScript and
    TypeScript users. It should be a thin installer/launcher for platform
    binaries, not a second Node.js runtime. TypeScript SDK packages should stay

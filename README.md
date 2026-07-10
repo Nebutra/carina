@@ -22,9 +22,10 @@ machine, so file reads, edits, commands, network access, plugins, and secrets go
 through explicit policy before they happen.
 
 The current repository is useful for source builds, local experimentation, and
-teams designing their own agent execution substrate. It is still alpha:
-packaged releases, public installer flows, and polished dashboards are not done
-yet.
+teams designing their own agent execution substrate. It is still alpha. Public
+macOS packages are available through the Nebutra Homebrew tap, while Apple
+notarization, Linux packages, npm distribution, and polished dashboards remain
+in progress.
 
 ## Why Carina
 
@@ -83,12 +84,35 @@ Implemented in this repository:
 
 Not yet treated as product-complete:
 
-- signed public releases, Homebrew tap, and npm install channel;
+- Apple-notarized releases, Linux packages, and an npm install channel;
 - contributor and security process beyond the initial documents in this repo;
 - polished TUI/dashboard;
 - Windows support;
 - SDK parity across TypeScript, Python, and Go;
 - production guide for clustered remote-worker fleets.
+
+## Install With Homebrew
+
+Carina publishes checksummed macOS packages for Apple Silicon and Intel through
+the official Nebutra tap:
+
+```bash
+brew install Nebutra/tap/carina
+```
+
+The fully qualified command taps and trusts the Carina formula. After that,
+`brew install carina` resolves the same formula.
+
+Upgrade Carina with Homebrew's standard update flow:
+
+```bash
+brew update
+brew upgrade carina
+```
+
+`brew update carina` is not a valid Homebrew command; `brew update` refreshes
+package metadata and `brew upgrade carina` upgrades the installed formula.
+Carina does not auto-start the daemon after installation.
 
 ## Quickstart From Source
 
@@ -294,7 +318,8 @@ Alpha limitations:
 - OS sandbox backends exist, but production profiles need deployment review.
 - Policy correctness depends on routing commands through the Carina daemon and
   toolchain.
-- Public release signing and supply-chain provenance are not complete yet.
+- Release archives have checksums and GitHub build provenance, but Apple code
+  signing and notarization are not complete yet.
 
 See [SECURITY.md](SECURITY.md) and [docs/security-model.md](docs/security-model.md).
 
