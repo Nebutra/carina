@@ -457,16 +457,46 @@ KiloCode source-review decisions are tracked separately in
   into the existing `Store.Put` call and surfaces a boolean
   `artifact_truncated` flag without leaking raw preview text into the
   audited tool-lifecycle payload.
-- **Everything else deferred or rejected**: the remaining Cline and Codebuff
-  candidate mechanisms evaluated in this wave resolved to `defer`, `reject`,
-  or `already_done` against ground truth — the two still open
-  (`agentic_summary_template`, `mode_switch_notice`) remain blocked because
-  their only integration seam sits inside `go/daemon/agent.go`/
-  `go/daemon/daemon.go`/`go/daemon/subagent.go`, which have carried a
-  recurring pattern of large in-flight, unrelated diffs across every attempt
-  so far. Full per-item verification, reasoning, and verdicts live in
-  `docs/research/cline-absorption.md` and `docs/research/codebuff-absorption.md`;
-  the deferred and rejected items are carried below under Remaining.
+- **Structured compaction summary template** (`go/daemon/agent.go`,
+  `go/daemon/transcript.go`, commit `1de7fcc`): `compact()`'s rolling
+  `Transcript.Summary` now has a Goal/Done/InProgress/Blocked/Highlights/
+  Next/Files(read+modified) shape (`SummaryContent`,
+  `renderSummaryTemplate`, fail-closed `parseSummaryContent`) instead of
+  unstructured prose, wired into `agent.go`'s `runLoopContext` summarize
+  closure; the Files section is derived deterministically from transcript
+  turns, not model recall, and falls back to raw prose if the model doesn't
+  follow the structured shape.
+- **Plan/Act mode-switch mailbox notice** (`go/daemon/daemon.go`, commit
+  `1fbb4b8`): `noticePlanModeSwitch` extends the two-tier
+  `steer_vs_queue_priority` `taskMailbox` so `session.plan_mode` and
+  `session.approve_plan` queue an urgent notice for a session's active task,
+  making a mid-run plan/act switch legible at the next turn boundary instead
+  of only discoverable via a tool denial.
+- **Token-triggered compaction combiner** (`go/daemon/transcript.go`, commit
+  `5898e17`): `CompactionPolicy.MaxTokens` plus a `shouldCompact()` combiner
+  ORs the existing char-based trigger with a token-estimate trigger
+  (reusing `agent.go`'s `estimateTokens`), composing with rather than
+  duplicating the dual-threshold `triggerChars()` machinery; `MaxTokens=0`
+  stays byte-identical to prior behavior. This is codebuff's
+  `context_pruner_agent` candidate, landed on the second attempt after an
+  earlier validated-but-reverted attempt.
+- **Campaign closed out**: every one of the 15 original Cline/Codebuff
+  candidates now has a final, landed-or-permanently-resolved status — 10
+  absorbed (9 from Cline: dual-threshold compaction trigger, line-shift-
+  tolerant diagnostics delta, tightened loop detection, the consecutive-
+  failure circuit breaker, path-keyed stale-read elision, the two-tier
+  steering mailbox, head+tail artifact preview truncation, the structured
+  compaction summary template, and mode-switch mailbox notice; 1 from
+  Codebuff: the token-triggered compaction combiner), 2 deliberately
+  rejected (Cline's diff-error escalation text and fuzzy SEARCH/REPLACE
+  cascade, mismatched to carina's full-file patch model), and 1 already
+  present (codebuff's repo-map symbol scoring, via PageRank). Two further
+  codebuff candidates — subagent-level rewind and Best-of-N generation —
+  remain genuinely deferred on multi-file scope/sequencing grounds unrelated
+  to this wave's dirty-file churn, and were never expected to land in this
+  campaign. Full per-item verification, reasoning, and verdicts live in
+  `docs/research/cline-absorption.md` and
+  `docs/research/codebuff-absorption.md`.
 
 ## ✅ Remaining
 
@@ -497,25 +527,27 @@ KiloCode source-review decisions are tracked separately in
 - OpenSquilla-style implicit single-process backpressure and debug logs were
   intentionally not absorbed. Carina now has explicit TTL/seq backpressure and
   a local-only non-authoritative debug side-channel instead.
-- Cline items reviewed and adopted-in-principle but still deferred pending a
-  clean (non-dirty) seam in `go/daemon/agent.go` / `go/daemon/daemon.go` /
-  `go/daemon/subagent.go`: a structured agentic summary template, and
-  mode-switch notice injection via the existing (now two-tier) steer mailbox.
-  Cline's diff-error three-tier escalation text and its fuzzy SEARCH/REPLACE
-  patch-matching cascade were intentionally rejected as mismatched to
-  Carina's full-file patch design and prior "no permissive fuzzy edits"
-  precedent. Full per-item verification and reasoning:
-  `docs/research/cline-absorption.md`.
-- Codebuff items reviewed: symbol-importance code-map scoring was found
-  already present via PageRank in `crates/carina-index/src/repomap.rs` and
-  needs no absorption. Token-triggered context-pruning was implemented and
-  tested green this pass but reverted rather than committed after
-  `go/daemon/daemon.go` turned dirty with unrelated concurrent work
-  mid-attempt — ready to re-land as-is. Subagent-level checkpoint rewind and
-  Best-of-N generation with a selector remain deferred on further multi-file
-  design work (subagent resume/RPC session scoping; audited parallel
-  fan-out) rather than on a dirty-file seam. Full per-item verification and
-  reasoning: `docs/research/codebuff-absorption.md`.
+- Cline absorption is fully closed out: all nine mechanisms this review found
+  real value in are landed, including the structured agentic summary
+  template and mode-switch notice injection (via the two-tier steer
+  mailbox), both of which needed multiple attempts to find a clean,
+  non-dirty window in `go/daemon/agent.go` / `go/daemon/daemon.go` /
+  `go/daemon/subagent.go`. Cline's diff-error three-tier escalation text and
+  its fuzzy SEARCH/REPLACE patch-matching cascade were intentionally
+  rejected as mismatched to Carina's full-file patch design and prior "no
+  permissive fuzzy edits" precedent. Full per-item verification and
+  reasoning: `docs/research/cline-absorption.md`.
+- Codebuff's actionable scope is closed out: symbol-importance code-map
+  scoring was found already present via PageRank in
+  `crates/carina-index/src/repomap.rs` and needed no absorption;
+  token-triggered context-pruning landed on a second attempt after an
+  earlier validated implementation was reverted (not committed) when
+  `go/daemon/daemon.go` turned dirty mid-attempt. Subagent-level checkpoint
+  rewind and Best-of-N generation with a selector remain genuinely deferred
+  on further multi-file design work (subagent resume/RPC session scoping;
+  audited parallel fan-out) that this campaign never intended to cover —
+  not on any dirty-file seam. Full per-item verification and reasoning:
+  `docs/research/codebuff-absorption.md`.
 
 ## Test status
 Current verification for the product-surface closure:

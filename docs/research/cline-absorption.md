@@ -83,10 +83,40 @@ kernel, and append-only audit log as the single authority.
   payload (`safeOutputMetadata`'s hash-only redaction stays load-bearing) —
   the full preview is reachable via the existing `handleArtifactRead` RPC.
   5 new tests across `store_test.go` and `tool_lifecycle_test.go`.
+- **Structured compaction summary template** (`agentic_summary_template`,
+  `go/daemon/agent.go`, `go/daemon/transcript.go`, commit `1de7fcc`). Landed
+  on the fourth attempt once `agent.go`/`daemon.go`/`subagent.go` cleared the
+  concurrent-work seam that blocked the first three. `SummaryContent`
+  (Goal/Done/InProgress/Blocked/Highlights/Next/FilesRead/FilesModified) plus
+  `renderSummaryTemplate` and a fail-closed `parseSummaryContent` (falls back
+  to raw prose, never fabricates structure, if the model doesn't follow the
+  shape) replace the old unstructured "Summarize... <=200 words" instruction.
+  `filesTouched` derives the Files section deterministically from the
+  transcript's own turns (`ActionBrief` read/patch entries), not model
+  recall. Wired into `runLoopContext`'s summarize closure in `agent.go`;
+  `Transcript.Summary` stays a plain string, so `checkpoint.go`/`subagent.go`
+  needed no changes. `subagent.go`'s separate lighter-weight summarizer was
+  deliberately left untouched, out of this item's scope. 5 new tests in
+  `transcript_test.go` cover render/parse round-trip, fail-closed parsing of
+  unstructured prose, deterministic files dedup/ordering, and an end-to-end
+  `compact()` pass through the full pipeline.
+- **Plan/Act mode-switch notice injection** (`mode_switch_notice`,
+  `go/daemon/daemon.go`, commit `1fbb4b8`). Landed by extending the now-landed
+  two-tier `steer_vs_queue_priority` `taskMailbox` rather than the old
+  single-tier mailbox this item's design was originally sketched against.
+  `noticePlanModeSwitch(sessionID, on)` looks up the session's active task via
+  the existing `activeChannelTask` helper and queues an urgent-tier
+  `steerWithPriority` notice; wired into `handlePlanMode` and
+  `handleApprovePlan`, the two RPC handlers that can flip plan mode mid-run.
+  Deliberately does not touch the two task-start-time `setPlanMode` call
+  sites in `agent.go` (mode is already reflected in the first turn's prompt
+  there, so a mailbox notice would be redundant) or `isPlanMode`'s
+  enforcement gate — this is context legibility only, no enforcement change.
+  2 new tests in `planmode_test.go` cover urgent-ahead-of-normal draining and
+  the no-active-task no-op case.
 
-Everything else from this review either mismatches carina's architecture,
-contradicts a prior rejection, or still lacks a clean (non-dirty-blocklisted)
-integration seam. See Deferred below for the two items still parked.
+All nine mechanisms this review found real value in are now landed. The two
+rejections stand on their original architectural grounds (see below).
 
 ## Deliberately Rejected
 
@@ -116,96 +146,41 @@ integration seam. See Deferred below for the two items still parked.
 
 ## Deferred
 
-Two candidates remain open. Both are architecturally accepted — extensions of
-already-adopted patterns, no fail-closed or kernel-authority concern — but
-still need a clean, reviewable window in `go/daemon/agent.go` /
-`go/daemon/daemon.go` / `go/daemon/subagent.go` to wire in. This is now the
-third documented attempt for both; the repo's dirty-file churn during this
-absorption effort has consistently outpaced single-item wiring passes, so
-each attempt below is condensed to current status rather than re-narrated in
-full — see git history on this file for the earlier blow-by-blow accounts if
-needed.
-
-Five siblings that were parked alongside these two — `stale_read_dedup`,
-`mistake_tracker`, `loop_detection`, `steer_vs_queue_priority`, and
-`mid_truncation` — have since landed; see Absorbed above.
-
-- **Structured compaction summary template** (`agentic_summary_template`,
-  partially present). `CompactionReceipt` (`transcript.go:55-63`) already
-  gives carina a stronger integrity guarantee than Cline has (dual SHA-256
-  hash chain over the compaction event; Cline has no cryptographic binding on
-  its summary at all). What's missing is the summary *content* shape: Cline
-  types Goal/State(Done|InProgress|Blocked)/Highlights/Next/Files(read+
-  modified); carina's is unstructured prose from one hand-written
-  instruction (`agent.go:184-185`, "Summarize... <=200 words"), no parser, no
-  schema. Additive, does not touch the kernel. A standalone `SummaryContent`
-  struct plus template/parse helper could land in a new file today, but it
-  delivers zero behavioral value until wired into `agent.go`'s summarizer
-  call site.
-  **Status after three attempts**: blocked each time by `agent.go`/
-  `daemon.go`(/`subagent.go`) being dirty with unrelated concurrent work at
-  the moment of the precondition check — first a `runTaskContext`/
-  `lifecycleCallID`/`go/runtimecontract` context-cancellation wave, most
-  recently (this pass) a `lifecycleCallID` field plus tool-call lifecycle
-  plumbing in `agent.go`, new `taskContexts`/`taskCancels`/`activeToolCalls`
-  maps and a `runArtifactGC` loop in `daemon.go`, and an `executeSpawn` →
-  `executeSpawnOutcome` refactor in `subagent.go` — all with mtimes seconds
-  to minutes old, i.e. actively being written, not stale leftovers. Zero
-  edits made each time. Re-run once all three files are confirmed clean (or
-  carry only this run's own prior-item edits); the design above is still the
-  intended shape.
-
-- **Plan/Act mode-switch notice injection** (`mode_switch_notice`, partially
-  present). Architecturally the same shape as the already-adopted "steer"
-  pattern (mailbox drained at turn boundary, injected as a pinned user turn)
-  — this is extending an accepted pattern to a second event source, not
-  adopting a new mechanism, and it never touches enforcement, only context
-  legibility, so there's no fail-closed concern blocking it on principle.
-  Every touch point (`setPlanMode`/`isPlanMode`/`handlePlanMode`/
-  `handleApprovePlan`/`planMode` map in `daemon.go`, and the turn-loop
-  consumer in `agent.go`) sits in the dirty files, with mailbox/plan-mode
-  state as private `*Daemon` fields — no exported seam a new file could hook
-  without editing either.
-  **Status after two attempts**: blocked each time on the same dirty-file
-  precondition as `agentic_summary_template` above (the two items share the
-  same blocking files and were checked together this pass); most recently
-  `agent.go`/`daemon.go`/`subagent.go` were all modified by the concurrent
-  wave described there. Zero edits made. Re-run once the same three files
-  clear; note the now-landed two-tier `steer_vs_queue_priority` mailbox
-  (`daemon.go`'s `taskMailbox`) is the pattern to extend for the second event
-  source, not the old single-tier mailbox this item's design was originally
-  sketched against.
+None. Both items that were open as of the prior pass —
+`agentic_summary_template` and `mode_switch_notice` — landed this pass once
+`agent.go`/`daemon.go`/`subagent.go` presented a clean, reviewable window;
+see Absorbed above for the final shape and commits. This closes out every
+mechanism this review found real value in.
 
 ## Trade-offs
 
-This review round absorbed five previously-deferred mechanisms outright once
-`agent.go`/`daemon.go`/`subagent.go` returned to a clean, reviewable base:
-tightened loop detection (canonical action signature + cumulative hard-stop
-threshold), a consecutive-failure circuit breaker (`MistakeTracker`),
-path-keyed stale-read elision, a two-tier urgent/normal steering mailbox, and
-head+tail-aware artifact preview truncation (completing the
-`mid_truncation`/artifact-store integration this doc had previously called
-"blocked on both: a half-built carina mechanism already covers the target
-problem"). Combined with the two design-revision fixes from the prior pass
-(dual-threshold compaction trigger, line-shift-tolerant diagnostics delta),
-seven of the nine mechanisms this review found real value in are now landed.
-Two mechanisms were rejected outright because they solve a failure mode
-(fuzzy anchor-matching in hunk-based patches) that carina's
-full-file-replacement-plus-hash-conflict patch model does not have and has
-already declined to introduce, per `kilocode-absorption.md`.
+This is the closing pass for the Cline absorption review: all nine
+mechanisms this review found real value in are now landed, across four
+separate passes as `agent.go`/`daemon.go`/`subagent.go` cycled between dirty
+and clean. Two design-revision fixes (dual-threshold compaction trigger,
+line-shift-tolerant diagnostics delta) landed early once identified — both
+were cheap, under 150 lines including tests, and shipped the same session
+they were caught. Five mechanisms (tightened loop detection, the
+consecutive-failure circuit breaker, path-keyed stale-read elision, the
+two-tier steering mailbox, and head+tail artifact preview truncation) landed
+together in one coherent pass once a genuinely concurrent, unrelated wave of
+edits to the three core files finally settled. The last two
+(`agentic_summary_template`, `mode_switch_notice`) took three and two
+respective attempts to find that same clean window before finally landing —
+`mode_switch_notice` in particular ended up depending on
+`steer_vs_queue_priority` having landed first, since its design was revised
+to extend the new two-tier mailbox rather than the single-tier one it was
+originally sketched against.
 
-The lesson from the earlier rounds held: "blocked on design revision" and
-"blocked on dirty file" are different kinds of blockers and should be
-triaged differently. The design-revision fixes were cheap once identified
-(both under 150 lines including tests) and landed the same session they were
-caught. The dirty-file blocks were a genuine external constraint — a
-concurrent, unrelated wave actively committing to `agent.go`/`daemon.go`/
-`subagent.go` — that no amount of design work resolved; only a wait for a
-stable base did, and once that base arrived, all five ready items landed in
-one coherent pass rather than six separate contentious edits, exactly as
-earlier attempts had planned. The two mechanisms still open
-(`agentic_summary_template`, `mode_switch_notice`) remain blocked on that
-same seam as of this pass — the wave has not been a one-time event but a
-recurring condition of this codebase's churn rate, so both should be
-re-attempted opportunistically rather than scheduled for a specific future
-session.
+The recurring lesson across this whole review: "blocked on design revision"
+and "blocked on dirty file" are different kinds of blockers and should be
+triaged differently. Design-revision blockers get fixed with design work.
+Dirty-file blockers are a property of the codebase's churn rate, not of the
+item — they get fixed by waiting for (or opportunistically catching) a clean
+window and then moving fast once it appears, exactly as happened here. Two
+mechanisms were rejected outright, on architectural grounds unrelated to
+file-dirtiness, because they solve a failure mode (fuzzy anchor-matching in
+hunk-based patches) that carina's full-file-replacement-plus-hash-conflict
+patch model does not have and has already declined to introduce, per
+`kilocode-absorption.md`. With those two rejections and all nine absorptions
+final, this review is fully closed out.

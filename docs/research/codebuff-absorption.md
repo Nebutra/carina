@@ -7,10 +7,33 @@ kernel, and append-only audit log as the single authority.
 
 ## Absorbed
 
-None this round. All four candidate mechanisms either duplicate capability
-carina already has under a different (and in one case more principled)
-design, or require control-flow and RPC-boundary work that is not safe to
-land against currently in-flight call sites.
+- **Token-triggered, tool-aware context pruning** (`context_pruner_agent`,
+  `go/daemon/transcript.go`, commit `5898e17`). Landed on the second attempt
+  after the first was reverted when `daemon.go` turned dirty mid-attempt (see
+  prior revision of this doc for that account). `CompactionPolicy.MaxTokens`
+  (default 0, byte-identical to prior char-only behavior) plus a
+  `shouldCompact()` combiner that ORs the existing char-based trigger
+  (`t.size() > triggerChars()`) with a token-estimate trigger
+  (`estimateTokens(t.render()) > MaxTokens`, reusing `agent.go`'s existing
+  `estimateTokens` helper). Composes with, rather than duplicates,
+  `dual_threshold_compaction`'s `triggerChars()`/`ReserveChars`/
+  `ThresholdRatio` machinery — `shouldCompact()` calls `triggerChars()`
+  internally, so both mechanisms stack. Wired into both of `compact()`'s
+  existing gates, replacing the two `t.size() <= trigger` checks. 4 new tests
+  in `transcript_test.go`: `MaxTokens=0` parity with the char-only trigger,
+  token trigger firing below the char budget, token trigger correctly not
+  firing when set high, and `compact()` proceeding through both gates on the
+  token trigger alone. This resolves the `context_pruner_agent` slice of
+  `absorption-plan.md`'s Wave 2 "multi-tier compaction" TODO that remained
+  open after the circuit-breaker and pinned-preservation pieces landed
+  earlier; rebuild-with-key-files remains a separate, still-open item outside
+  this review's four original candidates.
+
+Of the four candidate mechanisms this review evaluated, one duplicated
+capability carina already has under a different (and arguably more
+principled) design (see Already Present), and two require control-flow and
+RPC-boundary work judged out of scope for this campaign on genuine
+sequencing grounds (see Deferred).
 
 ## Already Present
 
@@ -30,55 +53,10 @@ land against currently in-flight call sites.
 
 ## Deferred
 
-- **Token-triggered, tool-aware context pruning with 80/20 head+tail
-  truncation** (`context_pruner_agent`). Carina already has a real, audited,
-  tested compaction pipeline — `transcript.go`'s `compact()` plus
-  `context_compression.go`'s `compressObservation()`, both wired from
-  `agent.go` and `subagent.go`, with a circuit breaker, pinned-observation
-  protection, and hash-chained compaction receipts. But none of codebuff's
-  three specific mechanisms are present: the trigger is a flat char budget
-  (`MaxChars=24000`), not a token count, and there is no 5-minute
-  prompt-cache-expiry co-trigger (`promptcache.go` is an unrelated
-  stable-prefix/volatile-suffix split for provider-side cost caching, not a
-  pruning signal); truncation is head-only
-  (`Content[:ToolOutputMax]+"...[truncated]"`), not an 80/20 head+tail split;
-  and `contextengine.CompressRequest` carries `Tool`/`Kind` fields that are
-  never branched on anywhere (zero call sites) — one uniform elision policy
-  handles every tool type. Subagent output is filtered, but via full
-  return-value isolation (only `act.Summary` crosses back,
-  `subagent.go:88-94`) rather than a configurable denylist — architecturally
-  stronger than codebuff's blacklist, not a gap to close. `absorption-plan.md`
-  already lists "Multi-tier compaction (token trigger + circuit breaker +
-  verbatim-user + rebuild-with-key-files)" as an open Wave 2 item, so this is
-  roadmapped, not newly discovered; the circuit-breaker and pinned-preservation
-  pieces of that TODO are in fact already done, leaving only token-trigger and
-  rebuild-with-key-files genuinely open. The head-only-vs-80/20 truncation
-  slice of this item is now further narrowed by `cline-absorption.md`'s
-  `mid_truncation`, which landed genuine head+tail preservation at the
-  artifact-preview layer (`go/artifact/store.go`'s `makePreview`, commit
-  `a8be846`) — the remaining gap here is specifically the transcript-level
-  token trigger, not head+tail truncation generally.
-  **Attempted once, blocked on a dirty-file seam appearing mid-edit**: the
-  initial precondition check passed (`transcript.go` clean, no dependency on
-  `agent.go`/`daemon.go` for the trigger logic itself), so a scoped
-  `CompactionPolicy.MaxTokens` field plus a `shouldCompact()` combiner
-  (char-trigger OR token-estimate-trigger, reusing `agent.go`'s existing
-  `estimateTokens()` helper; `MaxTokens=0` default is byte-identical to prior
-  behavior) was implemented and wired into both of `compact()`'s existing
-  gates, with 4 new tests added to `transcript_test.go` — all green
-  (`go build`, `go vet`, and a full targeted test run all passed). Before
-  committing, `go/daemon/daemon.go` — one of the files this pass's
-  precondition requires be clean or carry only this run's own prior-item
-  edits — was found modified by an unrelated concurrent approval-scope/
-  mailbox refactor (`approval.go`, `approval_scope_store.go`, `ecosystem.go`,
-  `user_question.go`), not attributable to any item in this run. Per the
-  dirty-file precondition, the edits were reverted via
-  `git checkout -- go/daemon/transcript.go go/daemon/transcript_test.go`
-  rather than committed against a moving target; both files confirmed
-  zero-diff afterward. The design above is validated (build/vet/test all
-  passed before the revert) and ready to re-land as-is once `daemon.go` and
-  siblings next present a clean, reviewable window — no rework needed, just
-  re-application.
+Two candidates remain deferred, both on genuine multi-file scope/sequencing
+grounds rather than on any dirty-file blocker. `context_pruner_agent`, the
+third deferred candidate as of the prior pass, has since landed — see
+Absorbed above.
 
 - **Agent-level (subagent) rewind.** `go/daemon/subagent.go`'s
   `runSubagentLoop` never calls `d.runs.saveCheckpoint`/`saveCheckpointChecked`,
@@ -135,27 +113,37 @@ on any conflict with carina's governance model.
 
 ## Trade-offs
 
-This review round has still shipped no codebuff-attributed code, but the
-picture has narrowed. Its value is in closing the loop on four candidates:
-one turned out to already be implemented (repo map symbol scoring, via
-PageRank rather than codebuff's formula, and now recorded so a future pass
-doesn't re-review it), one (tool-aware head+tail truncation) has effectively
-been subsumed by `cline-absorption.md`'s `mid_truncation` landing at the
-artifact-preview layer, and two are real, precedented, roadmapped items that
-are deliberately not being rushed. Token-triggered compaction is deferred
-purely on timing, and closer than it looks: a scoped implementation was
-actually written, tested green, and ready to commit this pass, but was
-reverted rather than landed because `go/daemon/daemon.go` — one of the files
-its dirty-blocklist precondition covers — turned dirty with unrelated
-concurrent work between the start of the attempt and the commit step. The
-design is validated and sitting ready for a clean re-application, not stuck
-on an open design question. Subagent-level rewind is deferred on scope — the
-storage half is a one-file addition, but the resume/RPC half requires a new
-control-flow primitive and deliberate session-boundary relaxation, which is
-multi-file design work that shouldn't be forced into this pass. Best-of-N is
-deferred on sequencing — it depends on parallel fan-out/join and
-evaluator-optimizer primitives that don't exist yet as audited
-infrastructure, and forcing it in early would mean either unbounded replica
-cost or a half-built selector with no bounded seam to gate it, both of which
-conflict with carina's "no unconditional concurrency without a kernel-gated
-seam" precedent.
+This is the closing pass for the codebuff absorption review's actionable
+scope. Of the four candidates originally identified, one turned out to
+already be implemented (repo map symbol scoring, via PageRank rather than
+codebuff's formula, now recorded so a future pass doesn't re-review it), and
+one — token-triggered context pruning (`context_pruner_agent`) — has now
+landed after two attempts: the first was reverted, unlanded but fully
+validated, when `go/daemon/daemon.go` turned dirty with unrelated concurrent
+work between the start of the attempt and the commit step; the second, once
+`transcript.go` and its test file presented a clean window again, landed the
+same design that had already been build/vet/test-validated the first time.
+The tool-aware-truncation slice of the original candidate had separately
+already been subsumed by `cline-absorption.md`'s `mid_truncation` landing
+genuine head+tail preservation at the artifact-preview layer.
+
+The remaining two candidates — subagent-level rewind and Best-of-N generation
+— are genuinely deferred on scope and sequencing, not on any dirty-file
+blocker, and were never expected to land in this campaign. Subagent-level
+rewind needs a new resume/RPC control-flow primitive plus deliberate
+session-boundary relaxation in the checkpoint RPCs — real multi-file design
+work, not a patch, and lower payoff-per-engineering-dollar than the
+already-landed session-level rewind it would echo, since subagents are
+intentionally cheap and disposable. Best-of-N depends on parallel
+fan-out/join and evaluator-optimizer primitives that don't exist yet as
+audited infrastructure; forcing it in early would mean either unbounded
+replica cost or a half-built selector with no bounded seam to gate it, both
+of which conflict with carina's "no unconditional concurrency without a
+kernel-gated seam" precedent. Both remain correctly sequenced behind
+prerequisite infrastructure that this review does not have standing to build
+as a side effect.
+
+With `context_pruner_agent` landed, the repo-map item confirmed already
+present, and the two remaining items deferred on grounds unrelated to this
+codebase's file-dirtiness churn, this review's actionable scope is fully
+closed out.
