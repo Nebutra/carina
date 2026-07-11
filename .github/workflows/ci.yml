@@ -9,8 +9,8 @@ jobs:
   windows-worker-contract:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
       - name: Windows worker containment contract
@@ -22,22 +22,22 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.25"
 
       - name: Set up Node for TypeScript SDK conformance
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: sdk/typescript/package-lock.json
 
       - name: Set up Python for Python SDK conformance
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -131,7 +131,7 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:bookworm-slim
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Assert no Node present
         run: |
           ! command -v node && ! command -v npm && echo "no node/npm in image"
