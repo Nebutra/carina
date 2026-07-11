@@ -72,7 +72,7 @@ Implemented in this repository:
 | Area | What exists today |
 |---|---|
 | Sessions and tasks | Daemon-backed sessions, background runs, event streams, attach/replay, task steering |
-| Agent loop | ReAct-style loop, structured actions, prompt compaction, success checks, verifier, risk review |
+| Agent loop | ReAct-style loop, structured actions, dual-threshold/token-triggered prompt compaction, structured compaction summaries, canonical-signature loop detection, consecutive-failure circuit breaker, success checks, verifier, risk review |
 | Memory | Local governed memory store with `memory` / Nebutra-scoped `user` targets, frozen per-run prompt snapshot, native `memory` tool, CLI/RPC inspection, and kernel-gated `MemoryWrite` audit |
 | Permissions | Built-in profiles, approval modes, approval overlays with justifications, workspace trust, sub-agent attenuation |
 | Audit | Hash-chained event log, audit export, verification, normalized `session.items` stream, turn net diff |

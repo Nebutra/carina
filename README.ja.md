@@ -56,7 +56,7 @@ Carina が提供するもの：
 | Area | Today |
 |---|---|
 | Sessions and tasks | daemon session、background run、event stream、attach/replay、task steering |
-| Agent loop | ReAct loop、structured action、prompt compaction、success check、verifier、risk review |
+| Agent loop | ReAct loop、structured action、dual-threshold/token-triggered prompt compaction、structured compaction summary、canonical-signature loop detection、consecutive-failure circuit breaker、success check、verifier、risk review |
 | Memory | local governed memory store with `memory` / `user` targets, frozen per-run prompt snapshot, native `memory` tool, local `memory.*` RPC, and kernel-gated `MemoryWrite` audit |
 | Permissions | built-in profile、approval mode、justification 付き approval overlay、workspace trust、sub-agent attenuation |
 | Audit | hash-chained event log、audit export、verify、normalized `session.items`、turn net diff |
@@ -76,7 +76,8 @@ Carina が提供するもの：
   packaging、SBOM、provenance、conformance は実装済みですが、npm package
   と trusted-publisher binding は未作成；
 - contributor/security process の完成；
-- polished TUI/dashboard；
+- graphical dashboard やエディタ統合；terminal TUI は現在 typed event、
+  structured approval/question、steering、reconnect recovery を提供済み；
 - Windows support；
 - TypeScript、Python、Go SDK の parity；
 - remote-worker fleet の production guide。

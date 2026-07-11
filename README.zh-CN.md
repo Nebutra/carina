@@ -56,7 +56,7 @@ Carina 提供：
 | 领域 | 当前能力 |
 |---|---|
 | 会话和任务 | daemon 会话、后台任务、事件流、attach/replay、task steering |
-| Agent loop | ReAct loop、结构化 action、prompt compaction、success check、verifier、risk review |
+| Agent loop | ReAct loop、结构化 action、双阈值/token 触发的 prompt compaction、结构化压缩摘要、规范签名 loop detection、连续失败熔断器、success check、verifier、risk review |
 | Memory | 本地受控记忆库，区分 `memory` / `user` target；每次运行使用冻结 prompt snapshot；原生 `memory` tool、本地 `memory.*` RPC、kernel-gated `MemoryWrite` 审计 |
 | 权限 | 内置 profile、approval mode、带理由的 approval overlay、workspace trust、子智能体权限衰减 |
 | 审计 | 哈希链事件日志、audit export、verify、规范化 `session.items`、turn net diff |
@@ -76,7 +76,8 @@ Carina 提供：
   provenance 和 conformance 已实现，但 npm package 和 trusted publisher
   绑定尚未建立；
 - 完整 contributor/security 流程；
-- 打磨后的 TUI/dashboard；
+- 图形化 dashboard 或编辑器集成；终端 TUI 目前已提供 typed event、结构化
+  approval/question、steering、reconnect recovery；
 - Windows 支持；
 - TypeScript、Python、Go SDK 能力对齐；
 - 远程 worker 集群的生产部署指南。
