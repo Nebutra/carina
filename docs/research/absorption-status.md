@@ -591,6 +591,27 @@ branches PENDING MERGE, 1 already covered — nothing in this wave is on main ye
   analysis: `codex-claudecode-benchmark.md`, "Deep-tradeoff follow-up
   (same day)".
 
+**Wave 26 — Image content-block closeout (landed)**
+- [x] **End-to-end image delivery** (`go/daemon/media.go`, `agent.go`,
+  `reasoner.go`, `promptcache.go`, `tool_lifecycle.go`, `anthropic.go`,
+  `provider_adapters.go`, `go/model-router`): closed the producer and
+  delivery halves the Wave-25 MediaRef plumbing deliberately left open,
+  discharging its kill criterion. Reading an image file (magic-byte
+  allowlist) now ingests bytes into the artifact store and yields
+  placeholder+MediaRef on both dispatch paths — binary never enters the
+  transcript. When the task's model affirmatively declares image input in
+  the provider catalog (fail-closed on empty/unknown/default model strings),
+  `collectRequestMedia` resolves live, non-elided refs (caps: 4 parts /
+  4 MiB) and attaches them via a `mediaSegmentedReasoner` capability-upgrade
+  interface; Anthropic (base64 source blocks after the cache_control text
+  blocks), OpenAI chat (`image_url` data URI), OpenAI responses
+  (`input_image`), and Gemini (`inline_data`) adapters encode media, while
+  text-only reasoners silently degrade to the placeholders already in the
+  transcript. Raw bytes remain unrepresentable in transcript, checkpoint,
+  and audit payloads by construction. The bundled "context-aware dynamic
+  skill prompts" half was split into its own checklist line and remains
+  open (prompt-assembly work, distinct capability).
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
