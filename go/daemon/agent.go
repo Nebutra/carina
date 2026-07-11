@@ -805,6 +805,9 @@ func (d *Daemon) contextForTask(taskID string) context.Context {
 }
 
 func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
+	if act.Tool != "done" && !d.toolAllowed(sess.SessionID, act.Tool) {
+		return toolDenied(fmt.Sprintf("DENIED: this session's agent spec does not permit the %q tool", act.Tool), "tool_not_allowed")
+	}
 	switch act.Tool {
 	case "run", "patch", "memory", "mcp", "spawn", "workflow":
 	default:

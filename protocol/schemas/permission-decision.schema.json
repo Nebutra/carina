@@ -10,7 +10,7 @@
       "enum": [
         "FileRead", "FileWrite", "CommandExec", "NetworkAccess", "SecretRead",
         "GitOperation", "PatchApply", "ProcessSpawn", "PluginLoad", "RemoteExecute",
-        "MemoryWrite", "CodeIndex", "ContextCompress"
+        "MemoryWrite", "CodeIndex", "ContextCompress", "SubagentSpawn"
       ]
     },
     "requested_by": { "enum": ["agent", "plugin", "user"] },
