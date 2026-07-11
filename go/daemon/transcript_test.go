@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -11,6 +12,28 @@ func TestTranscriptTruncatesOversizedObservation(t *testing.T) {
 	tr.addTurn(Turn{Tool: "read", ActionBrief: "read big", Obs: Observation{Content: big}})
 	if len(tr.Turns[0].Obs.Content) > tr.policy.ToolOutputMax+20 {
 		t.Fatalf("observation not truncated: %d", len(tr.Turns[0].Obs.Content))
+	}
+}
+
+func TestTranscriptTruncationPreservesTailSignal(t *testing.T) {
+	tr := newTranscript("build")
+	tr.policy.ToolOutputMax = 160
+	var output strings.Builder
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&output, "compiling package %d\n", i)
+	}
+	output.WriteString("FINAL: tests failed\n")
+
+	tr.addTurn(Turn{ActionBrief: "run tests", Obs: Observation{Content: output.String()}})
+	got := tr.Turns[0].Obs.Content
+	if len(got) > tr.policy.ToolOutputMax {
+		t.Fatalf("preview exceeded byte budget: %d > %d", len(got), tr.policy.ToolOutputMax)
+	}
+	if !strings.HasPrefix(got, "compiling package 0\n") || !strings.HasSuffix(got, "FINAL: tests failed\n") {
+		t.Fatalf("head+tail signal not preserved: %q", got)
+	}
+	if !strings.Contains(got, "bytes omitted") {
+		t.Fatalf("preview did not disclose truncation: %q", got)
 	}
 }
 

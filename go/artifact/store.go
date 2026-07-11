@@ -823,6 +823,13 @@ func makePreview(raw []byte, maxBytes, maxLines int) (string, bool, bool) {
 	return head + marker + tail, true, true
 }
 
+// Preview returns the same bounded, UTF-8-safe head+tail projection stored in
+// artifact metadata. Callers that need a model-facing projection can reuse
+// the retention-tested truncation contract without duplicating it.
+func Preview(raw []byte, maxBytes, maxLines int) (string, bool, bool) {
+	return makePreview(raw, maxBytes, maxLines)
+}
+
 // headBudget returns the leading slice of raw bounded by maxBytes and
 // maxLines, each either >=0 (an explicit budget, 0 meaning "show nothing")
 // or -1 meaning "no limit on this dimension". UTF-8-boundary-safe.

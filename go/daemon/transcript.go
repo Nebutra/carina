@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/Nebutra/carina/go/artifact"
 )
 
 // The agent's view of history is a *bounded projection* of the append-only
@@ -99,7 +101,10 @@ func newTranscript(task string) *Transcript {
 // supersedeStaleReads.
 func (t *Transcript) addTurn(turn Turn) {
 	if len(turn.Obs.Content) > t.policy.ToolOutputMax && !turn.Obs.Pinned {
-		turn.Obs.Content = turn.Obs.Content[:t.policy.ToolOutputMax] + "…[truncated]"
+		preview, _, valid := artifact.Preview([]byte(turn.Obs.Content), t.policy.ToolOutputMax, 0)
+		if valid {
+			turn.Obs.Content = preview
+		}
 	}
 	if turn.Path != "" {
 		t.supersedeStaleReads(turn.Path)
