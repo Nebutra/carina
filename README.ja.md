@@ -18,7 +18,7 @@
 
 Carina は、AI コーディングエージェントのためのローカルファーストなランタイム層です。エディタ、チャットアプリ、ホステッドサンドボックスではありません。エージェントとマシンの間に入り、ファイル読み取り、編集、コマンド、ネットワークアクセス、プラグイン、secret を明示的なポリシーの後ろに置きます。
 
-このリポジトリは、ソースビルド、ローカル実験、自社の Agent 実行基盤を設計するチームに向いています。まだ alpha です。macOS パッケージは Nebutra Homebrew tap から利用できますが、Apple notarization、Linux パッケージ、npm 配布、磨き込まれた dashboard は未完成です。
+このリポジトリは、ソースビルド、ローカル実験、自社の Agent 実行基盤を設計するチームに向いています。まだ alpha です。macOS パッケージは Nebutra Homebrew tap から利用できます。Apple signing/notarization の自動化は実装済みですが、release credential を待っています。Linux archive と npm trusted publishing は release pipeline に実装済みですが、最初の public release は未完了です。polished dashboard は現在の terminal-first alpha の範囲外です。
 
 ## Why Carina
 
@@ -70,7 +70,11 @@ Carina が提供するもの：
 
 まだ product-complete ではないもの：
 
-- Apple notarization、Linux package、npm のインストールチャネル；
+- Apple に受理される credentialed signing/notarization public release；
+  fail-closed automation は実装済みですが、Apple credential は未設定；
+- Linux archive と npm trusted publishing の最初の public release；build、
+  packaging、SBOM、provenance、conformance は実装済みですが、npm package
+  と trusted-publisher binding は未作成；
 - contributor/security process の完成；
 - polished TUI/dashboard；
 - Windows support；
@@ -270,8 +274,9 @@ Alpha limitations:
 - Carina itself is not a VM or complete container isolation system.
 - OS sandbox backends exist, but production profiles need deployment review.
 - Policy correctness depends on routing commands through the Carina daemon and toolchain.
-- Release archive には checksum と GitHub build provenance がありますが、
-  Apple code signing と notarization は未完成です。
+- Release archive には checksum と GitHub build provenance があります。
+  Apple code signing と notarization の automation は実装済みですが、
+  credentialed かつ Apple-accepted な public release はまだ完了していません。
 
 See [SECURITY.md](SECURITY.md) and [docs/security-model.md](docs/security-model.md).
 

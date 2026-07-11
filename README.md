@@ -23,9 +23,11 @@ through explicit policy before they happen.
 
 The current repository is useful for source builds, local experimentation, and
 teams designing their own agent execution substrate. It is still alpha. Public
-macOS packages are available through the Nebutra Homebrew tap, while Apple
-notarization, Linux packages, npm distribution, and polished dashboards remain
-in progress.
+macOS packages are available through the Nebutra Homebrew tap. Apple signing
+and notarization automation is implemented but awaits release credentials.
+Linux archives and npm trusted publishing are implemented in the release
+pipeline but have not completed their first public release. Polished dashboards
+remain out of scope for the current terminal-first alpha.
 
 ## Why Carina
 
@@ -84,9 +86,12 @@ Implemented in this repository:
 
 Not yet treated as product-complete:
 
-- the first credentialed Apple-accepted public release, Linux packages, and an
-  npm install channel; signing/notarization automation is fail-closed and ready
-  for tag releases;
+- the first credentialed Apple-accepted public release; fail-closed signing and
+  notarization automation is ready, but the required Apple credentials have not
+  been provisioned;
+- the first public Linux archive and npm trusted-publishing release; their
+  build, packaging, SBOM, provenance, and conformance paths are implemented but
+  the npm packages and trusted-publisher bindings have not been established;
 - contributor and security process beyond the initial documents in this repo;
 - a graphical dashboard or editor integration; the terminal TUI now provides
   typed events, structured approvals/questions, steering, and reconnect recovery;

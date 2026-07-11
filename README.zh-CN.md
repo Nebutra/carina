@@ -18,7 +18,7 @@
 
 Carina 是一个本地优先的 AI 编程智能体运行时。它不是编辑器、聊天产品，也不是托管沙箱。它位于智能体和机器之间，让文件读取、代码修改、命令、网络访问、插件和 secret 都先经过明确策略，再真正发生。
 
-当前仓库适合源码构建、本地实验，以及团队设计自己的 Agent 执行底座。它仍处于 alpha。macOS 公开安装包已经通过 Nebutra Homebrew tap 提供；Apple notarization、Linux 安装包、npm 分发和完整 dashboard 仍在推进。
+当前仓库适合源码构建、本地实验，以及团队设计自己的 Agent 执行底座。它仍处于 alpha。macOS 公开安装包已经通过 Nebutra Homebrew tap 提供；Apple 签名和 notarization 自动化已经实现，但仍等待发布凭据。Linux 归档和 npm trusted publishing 已进入发布流水线，但尚未完成首次公开发布。完整 dashboard 不在当前 terminal-first alpha 的范围内。
 
 ## 为什么用 Carina
 
@@ -70,7 +70,11 @@ Carina 提供：
 
 还没有产品化完成：
 
-- Apple notarization、Linux 安装包和 npm 安装渠道；
+- 首次通过 Apple 验收的签名和 notarization 公开发布；自动化已经
+  fail-closed 落地，但所需 Apple 凭据尚未配置；
+- 首次 Linux 归档和 npm trusted publishing 公开发布；构建、打包、SBOM、
+  provenance 和 conformance 已实现，但 npm package 和 trusted publisher
+  绑定尚未建立；
 - 完整 contributor/security 流程；
 - 打磨后的 TUI/dashboard；
 - Windows 支持；
@@ -267,8 +271,9 @@ Alpha 限制：
 - Carina 本身不是 VM，也不是完整容器隔离系统。
 - OS sandbox backend 已存在，但生产 profile 需要部署前评审。
 - 策略正确性依赖命令通过 Carina daemon 和 toolchain 执行。
-- 发布归档已有 checksum 和 GitHub build provenance，但 Apple code signing
-  和 notarization 还未完成。
+- 发布归档已有 checksum 和 GitHub build provenance。Apple code signing 和
+  notarization 自动化已经实现，但尚未完成一次带真实凭据、通过 Apple
+  验收的公开发布。
 
 见 [SECURITY.md](SECURITY.md) 和 [docs/security-model.md](docs/security-model.md)。
 
