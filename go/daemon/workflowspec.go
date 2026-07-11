@@ -16,6 +16,14 @@ type WorkflowStep struct {
 	Agent string   `json:"agent"`
 	Task  string   `json:"task"`
 	Needs []string `json:"needs,omitempty"`
+
+	// FailFast only applies under ExecutionMode "streaming" (see WorkflowSpec).
+	// A failing step normally isolates: only its transitive-only dependents are
+	// skipped, independent branches keep running. FailFast=true restores the
+	// old "one failure kills the whole run" behavior for a specific step that
+	// really is on the critical path — the caller opts a step INTO fail-fast,
+	// rather than the whole run defaulting to it.
+	FailFast bool `json:"fail_fast,omitempty"`
 }
 
 // WorkflowSpec is a declarative multi-step agent pipeline. It is the Carina
@@ -27,7 +35,22 @@ type WorkflowSpec struct {
 	Description string         `json:"description"`
 	Steps       []WorkflowStep `json:"steps"`
 	Source      string         `json:"-"` // "user" | "project"
+
+	// ExecutionMode selects the scheduler: "" or "bsp" (default, unchanged
+	// since this field was added) runs runWorkflow — batch-by-dependency-level,
+	// a step only starts once every step in the previous level has finished,
+	// and any single step failure aborts the whole run. "streaming" runs
+	// runWorkflowStreaming — a step starts the instant its own dependencies
+	// resolve, independent of how long sibling steps in the same "level" take,
+	// with a higher step-count ceiling and per-step opt-in FailFast (default:
+	// isolate a failure to its own dependents, keep unrelated branches going).
+	// See docs/plans/2026-07-12-agent-swarm-dag-orchestration-design.md §5 for
+	// why these are two execution semantics over one shared graph schema
+	// rather than two competing engines.
+	ExecutionMode string `json:"execution_mode,omitempty"`
 }
+
+func (s *WorkflowSpec) streaming() bool { return s.ExecutionMode == "streaming" }
 
 func parseWorkflowSpec(raw []byte) (*WorkflowSpec, error) {
 	var s WorkflowSpec
@@ -80,6 +103,11 @@ func loadWorkflowsFromDir(dir, source string, out map[string]*WorkflowSpec) {
 // validate rejects malformed DAGs: empty/duplicate ids, dangling deps, and
 // dependency cycles (caught by the topological sort).
 func (s *WorkflowSpec) validate() error {
+	switch s.ExecutionMode {
+	case "", "bsp", "streaming":
+	default:
+		return fmt.Errorf("workflow %q has unknown execution_mode %q (want \"bsp\" or \"streaming\")", s.Name, s.ExecutionMode)
+	}
 	ids := map[string]bool{}
 	for _, st := range s.Steps {
 		if st.ID == "" {
