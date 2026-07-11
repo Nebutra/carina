@@ -2,4 +2,4 @@
 // runtime binary. SDKs and kernel components retain independent semver.
 package product
 
-const Version = "0.6.1"
+const Version = "0.6.2"

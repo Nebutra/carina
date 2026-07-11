@@ -14,6 +14,8 @@ Today:
 - local archives, checksums, and manifests under `dist/`;
 - checksummed Apple Silicon and Intel macOS releases;
 - official `Nebutra/homebrew-tap` Formula with install/upgrade smoke tests;
+- operator session review, channel crash reconciliation, artifact inspection,
+  and usage/cost commands included in the release CLI smoke surface;
 - GitHub build provenance for release archives;
 - fail-closed Developer ID signing and Apple notarization automation for future
   tag releases, with per-release notary JSON and Gatekeeper reports; the first

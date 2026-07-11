@@ -242,6 +242,14 @@ Each returns a `PermissionDecision` (see schema). Side effects only proceed on `
 
 - `command.exec` — propose a command; returns a decision (and result if allowed).
 - `session.items` — normalized `thread.started` / `turn.started` / `item.*` / `turn.*` stream for UI and SDK consumers; `session.replay` remains the raw audit stream.
+- `session.review` — deterministic governance-oriented projection over
+  `session.items`, including changes, commands, tools, policy/risk records,
+  artifact references, summary/state, projection version, and source cursor.
+- `channel.event.pending` — local-admin list of ambiguous `effect_started` or
+  `effect_applied` channel deliveries after a crash.
+- `channel.event.reconcile` — local-admin, explicitly confirmed decision that
+  an ambiguous event was `executed` (commit its receipt) or `not_executed`
+  (release it for retry). Carina never chooses this outcome automatically.
 - `audit.report` — summary (violations, files, commands); `audit.export` — full bundle for centralized audit.
 - `profile.describe` — capability-graph view of the session profile.
 - `secret.grant` / `secret.request` — handle-based secrets; plaintext never crosses the boundary.

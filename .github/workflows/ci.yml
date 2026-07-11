@@ -56,7 +56,7 @@ jobs:
 
       - name: Product version and Go SDK conformance
         run: |
-          test "$(go run ./scripts/product-version.go)" = "0.6.1"
+          test "$(go run ./scripts/product-version.go)" = "0.6.2"
           go test -race ./sdk/go
 
       - name: TypeScript SDK conformance

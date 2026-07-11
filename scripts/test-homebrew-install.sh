@@ -55,6 +55,9 @@ HOMEBREW_NO_AUTO_UPDATE=1 brew style "$tap_root/Formula/carina.rb"
 HOMEBREW_NO_AUTO_UPDATE=1 brew install --formula "$TAP/carina"
 installed=1
 HOMEBREW_NO_AUTO_UPDATE=1 brew test "$TAP/carina"
+# Exercise the supported upgrade command as well as first install. With the
+# same local Formula this is an idempotent no-op, but catches tap/name errors.
+HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade --formula "$TAP/carina"
 
 prefix="$(brew --prefix carina)"
 if [[ "$("$prefix/bin/carina" --version)" != "carina $VERSION" ]]; then

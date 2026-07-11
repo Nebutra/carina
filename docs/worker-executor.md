@@ -101,6 +101,13 @@ kills the whole group so descendant processes cannot survive a timed-out or revo
 lease. Other platforms fall back to terminating the direct executor process; their
 executor implementation must not detach descendants.
 
+This limitation is a deployment capability boundary, not a best-effort security
+claim. Operators that require fail-closed descendant cancellation must schedule
+such work only to Darwin/Linux workers until an equivalent native containment
+primitive is implemented for the target platform. Carina does not currently claim
+Windows descendant-process containment and does not emulate it by process-name
+scanning.
+
 The daemon issues `worker_credential` once during registration. The worker sends it
 with heartbeat, revoke, backpressure, poll, renew, and report calls. Treat that
 credential as a process secret and do not place it in executor input, command-line

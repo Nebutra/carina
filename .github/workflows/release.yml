@@ -24,6 +24,19 @@ jobs:
         with:
           go-version: "1.25"
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.1
+
       - name: Validate release tag
         run: |
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
@@ -33,6 +46,29 @@ jobs:
           test "$version" = "$product_version"
           git fetch origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Validate release version matrix
+        run: ./scripts/test-version-matrix.sh
+
+      - name: Build release test dependencies
+        run: |
+          make all
+          cargo build --release -p carina-kernel --bin carina-kernel-service
+
+      - name: Run Go and Rust release gates
+        env:
+          CARINA_KERNEL_BIN: ${{ github.workspace }}/target/release/carina-kernel-service
+        run: |
+          go test ./go/... ./apps/...
+          go vet ./...
+          cargo test --workspace
+
+      - name: Run SDK conformance gates
+        run: |
+          go test -race ./sdk/go
+          (cd sdk/typescript && npm ci && npm test)
+          PYTHONPATH=sdk/python/src python3 -m unittest discover -s sdk/python/tests
+          node packaging/npm/test.mjs
 
       - name: Validate Homebrew formula template
         run: ./scripts/test-homebrew-formula.sh

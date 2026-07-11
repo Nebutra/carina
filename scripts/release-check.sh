@@ -31,6 +31,11 @@ cargo build --release -p carina-kernel --bin carina-kernel-service
 
 echo "==> Go tests"
 go test ./go/... ./apps/...
+go test ./apps/carina-cli -run 'TestOperatorCommandsRequireExplicitCoordinates'
+
+echo "==> npm launcher version matrix"
+node packaging/npm/test.mjs
+./scripts/test-version-matrix.sh
 
 echo "==> Rust tests"
 cargo test
