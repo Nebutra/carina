@@ -236,7 +236,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 			return "(subagent mistake tracker: too many consecutive tool failures)"
 		}
 		pinned := act.Tool == "run" || act.Tool == "patch"
-		compressedObs, err := d.compressObservation(ctx, sess, task, turn, act.Tool, obs, pinned)
+		compressedObs, err := d.compressObservation(ctx, sess, task, tr, turn, act.Tool, obs, pinned)
 		if err != nil {
 			d.sched.SetStatus(task.TaskID, "failed")
 			return "subagent failed: context compression failed: " + err.Error()
