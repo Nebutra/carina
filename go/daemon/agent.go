@@ -814,6 +814,11 @@ func (d *Daemon) contextForTask(taskID string) context.Context {
 }
 
 func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
+	// Allow-list (ToolNames) first, then deny-list (RestrictedTools) — "done"
+	// is exempt from both, it must never be blockable.
+	if act.Tool != "done" && !d.toolAllowed(sess.SessionID, act.Tool) {
+		return toolDenied(fmt.Sprintf("DENIED: this session's agent spec does not permit the %q tool", act.Tool), "tool_not_allowed")
+	}
 	if raw, ok := d.restrictedTools.Load(sess.SessionID); ok {
 		if restricted, _ := raw.(map[string]bool); restricted[act.Tool] {
 			return toolDenied("DENIED: this subagent cannot call tool "+act.Tool+"; return proposed content in the done summary instead", "tool_restricted")

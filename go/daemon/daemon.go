@@ -156,6 +156,16 @@ type Daemon struct {
 
 	codeIntelStatus sync.Map // session -> codeIntelStatus (V3: semantic-layer health on daemon.status.code_intel)
 
+	// allowedTools/allowedSpawnAgents hold a spawned session's declarative
+	// AgentSpec.ToolNames/SpawnableAgents allow-lists (session -> map[string]bool)
+	// for the duration that session is actively running. Absent/nil means
+	// unrestricted (the default for every spec that doesn't set these
+	// fields) — additive constraints layered on top of the Rust-enforced
+	// Profile ceiling, never a grant beyond it. Set in spawnSubagentContext,
+	// cleared when that session's run finishes.
+	allowedTools       sync.Map
+	allowedSpawnAgents sync.Map
+
 	embedModelDefault string // "<provider>/<model>" of the default embeddings backend ("" = semantic layer off)
 
 	trust          *trustStore  // trusted workspace roots

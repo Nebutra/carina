@@ -23,6 +23,7 @@ pub enum Capability {
     MemoryWrite,
     CodeIndex,
     ContextCompress,
+    SubagentSpawn,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -565,6 +566,26 @@ impl PolicyEngine {
                 (
                     Verdict::Allowed,
                     "context compression is a reversible, session-scoped internal adapter".into(),
+                )
+            }
+            Capability::SubagentSpawn => {
+                // Delegating work to an isolated child session is mediated
+                // (approval), same posture as PluginLoad's existing spawn gate
+                // — this variant exists so the request carries a typed,
+                // dedicated identity (resource embeds the requested agent
+                // name and its attenuated child profile, e.g.
+                // "agent:code-reviewer:profile:safe-edit") instead of being
+                // folded into PluginLoad's generic "MCP tool load OR subagent
+                // spawn OR workflow run" bucket, so a future PolicyBundle can
+                // differentiate spawn requests by agent/profile without
+                // touching MCP or workflow policy. The child ⊆ parent
+                // capability-attenuation invariant is enforced separately in
+                // Go (attenuate()) before this request is even made — this
+                // gate governs whether delegation may happen at all, not what
+                // the child is capable of once it exists.
+                (
+                    Verdict::RequiresApproval,
+                    "subagent spawn requires approval".into(),
                 )
             }
         }

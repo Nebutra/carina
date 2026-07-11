@@ -30,24 +30,15 @@ func (d *Daemon) executeSpawnOutcome(parent *sessionstore.Session, parentTask *s
 	if parent.Depth >= maxSubagentDepth {
 		return toolDenied("DENIED: max subagent depth reached (no deeper nesting)", "depth_limit")
 	}
-	// Spawning is itself a gated effect.
-	dec, err := d.kern.Request(parent.SessionID, "PluginLoad", "spawn_subagent", parentTask.TaskID)
-	if err != nil {
-		return toolFailed("spawn governance error: "+err.Error(), "governance_error")
-	}
-	if dec.Decision == "denied" {
-		return toolDenied("DENIED: this session may not spawn subagents", "policy_denied")
-	}
-	if dec.Decision == "requires_approval" {
-		approved, ok := d.resolveApprovalOrEscalate(parent, parentTask, dec, "PluginLoad", "spawn_subagent", "spawn subagent")
-		if !ok {
-			return toolDenied("requires approval (not granted): "+dec.Reason, "approval_denied")
-		}
-		dec = approved
-	}
 	if err := d.ensureActiveToolStarted(parentTask.TaskID); err != nil {
 		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
 	}
+	// Spawning is a gated, audited effect — the actual Capability::SubagentSpawn
+	// request happens per-agent inside spawnSubagentContext (below), which
+	// runs for both the single-agent and parallel fan-out cases, and is the
+	// single choke point workflow.go's spawn-fanout also goes through. A
+	// denial/refused-approval surfaces as an error string in that subagent's
+	// own result, not a toolDenied here.
 
 	if len(act.Tasks) > 0 {
 		// Parallel fan-out (goroutine per subagent).
@@ -106,9 +97,32 @@ func (d *Daemon) spawnSubagentContextID(ctx context.Context, parent *sessionstor
 	if taskDesc == "" {
 		return "error: spawn needs a task for the subagent", ""
 	}
+	if !d.spawnAllowed(parent.SessionID, agentName) {
+		return fmt.Sprintf("DENIED: this session's agent spec does not permit spawning %q", agentName), ""
+	}
 
 	// Capability monotonic decrease: child ⊆ parent.
 	childProfile := attenuate(parent.PermissionProfile, spec.Profile)
+
+	// Delegation is itself a gated, audited effect — dedicated capability
+	// (not folded into PluginLoad) so the resource carries structured
+	// identity a future PolicyBundle can differentiate on.
+	spawnResource := fmt.Sprintf("agent:%s:profile:%s", agentName, childProfile)
+	dec, err := d.kern.Request(parent.SessionID, "SubagentSpawn", spawnResource, parentTask.TaskID)
+	if err != nil {
+		return "spawn governance error: " + err.Error(), ""
+	}
+	if dec.Decision == "denied" {
+		return "DENIED: this session may not spawn subagents", ""
+	}
+	if dec.Decision == "requires_approval" {
+		approved, ok := d.resolveApprovalOrEscalate(parent, parentTask, dec, "SubagentSpawn", spawnResource, "spawn "+agentName)
+		if !ok {
+			return "requires approval (not granted): " + dec.Reason, ""
+		}
+		dec = approved
+	}
+
 	child, err := d.store.CreateSubSession(parent.WorkspaceRoot, childProfile, parent.ApprovalMode, parent.SessionID, parent.Depth+1)
 	if err != nil {
 		return "spawn failed: " + err.Error(), ""
@@ -120,12 +134,20 @@ func (d *Daemon) spawnSubagentContextID(ctx context.Context, parent *sessionstor
 		d.restrictedTools.Store(child.SessionID, spec.RestrictedTools)
 		defer d.restrictedTools.Delete(child.SessionID)
 	}
+	if len(spec.ToolNames) > 0 {
+		d.allowedTools.Store(child.SessionID, toSet(spec.ToolNames))
+		defer d.allowedTools.Delete(child.SessionID)
+	}
+	if len(spec.SpawnableAgents) > 0 {
+		d.allowedSpawnAgents.Store(child.SessionID, toSet(spec.SpawnableAgents))
+		defer d.allowedSpawnAgents.Delete(child.SessionID)
+	}
 
 	// Audit the delegation on the parent, linking to the child session.
 	d.record(parent.SessionID, "ToolApproved", parentTask.TaskID, "go", map[string]any{
 		"spawn_agent": agentName, "child_session": child.SessionID,
 		"child_profile": childProfile, "depth": child.Depth, "task": taskDesc,
-	}, "")
+	}, dec.DecisionID)
 
 	childTask := d.sched.SubmitWithGoalModelAgent(child.SessionID, child.WorkspaceID, taskDesc, spec.Model, spec.Name, nil)
 	// Record the parent-task linkage so the leader bridge can escalate a refused
@@ -141,6 +163,38 @@ func (d *Daemon) spawnSubagentContextID(ctx context.Context, parent *sessionstor
 		"result_summary": truncate(summary, 300),
 	}, "")
 	return summary, child.SessionID
+}
+
+// spawnAllowed reports whether sessionID's own AgentSpec.SpawnableAgents
+// allow-list (if any was set when it was spawned) permits delegating to
+// agentName. No entry in allowedSpawnAgents means unrestricted.
+func (d *Daemon) spawnAllowed(sessionID, agentName string) bool {
+	v, ok := d.allowedSpawnAgents.Load(sessionID)
+	if !ok {
+		return true
+	}
+	set, _ := v.(map[string]bool)
+	return set[agentName]
+}
+
+// toolAllowed reports whether sessionID's own AgentSpec.ToolNames allow-list
+// (if any was set when it was spawned) permits dispatching toolName. No
+// entry in allowedTools means unrestricted.
+func (d *Daemon) toolAllowed(sessionID, toolName string) bool {
+	v, ok := d.allowedTools.Load(sessionID)
+	if !ok {
+		return true
+	}
+	set, _ := v.(map[string]bool)
+	return set[toolName]
+}
+
+func toSet(names []string) map[string]bool {
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	return set
 }
 
 // runSubagentLoop runs a bounded ReAct loop for a subagent, using its own

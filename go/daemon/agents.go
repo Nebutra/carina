@@ -32,17 +32,49 @@ type AgentSpec struct {
 	// ahead of kernel.patch.apply — see crates/carina-kernel/src/bin/
 	// carina-kernel-service.rs patch_propose). A restricted tool is refused
 	// before it ever reaches the dispatch switch, so it can never create that
-	// state at all, regardless of profile.
+	// state at all, regardless of profile. RestrictedTools is a DENY-list;
+	// ToolNames below is an ALLOW-list — the two answer different questions
+	// (best_of_n's candidate-drafter denies a few dangerous tools while
+	// otherwise allowing everything its profile permits; a spec using
+	// ToolNames instead allows only a specific short list). Both can be set;
+	// dispatchActionOutcome checks the allow-list first, then the deny-list.
 	RestrictedTools map[string]bool
+
+	// ToolNames, when non-empty, is an additive Go-side declarative allow-list:
+	// a session spawned under this spec may only dispatch tools named here.
+	// Empty means unrestricted (all tools this session's profile otherwise
+	// permits) — the default, preserving behavior for every spec that doesn't
+	// set this. This is a constraint layered ON TOP OF the Rust-enforced
+	// Profile ceiling; it can only narrow what the profile already allows, it
+	// never grants anything the kernel would otherwise deny.
+	ToolNames []string
+	// SpawnableAgents, when non-empty, is an additive allow-list restricting
+	// which agent names a session spawned under this spec may itself spawn
+	// via the spawn/workflow tools. Empty means unrestricted (any agent name
+	// the profile permits) — the default.
+	SpawnableAgents []string
+	// InputSchema/OutputSchema are optional, opaque single-line JSON Schema
+	// documents describing the expected shape of this agent's task input and
+	// "done" summary output. Carina does not currently validate against
+	// them — they are advertised (agent.list) for prompt-construction and
+	// tooling to consume, the same "declarative, data-only" posture as the
+	// rest of the manifest. Not present in the current frontmatter format
+	// means empty.
+	InputSchema  string
+	OutputSchema string
 }
 
 type AgentInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Profile     string `json:"profile,omitempty"`
-	Model       string `json:"model,omitempty"`
-	Mode        string `json:"mode,omitempty"`
-	Source      string `json:"source,omitempty"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description,omitempty"`
+	Profile         string   `json:"profile,omitempty"`
+	Model           string   `json:"model,omitempty"`
+	Mode            string   `json:"mode,omitempty"`
+	Source          string   `json:"source,omitempty"`
+	ToolNames       []string `json:"tool_names,omitempty"`
+	SpawnableAgents []string `json:"spawnable_agents,omitempty"`
+	InputSchema     string   `json:"input_schema,omitempty"`
+	OutputSchema    string   `json:"output_schema,omitempty"`
 }
 
 // profileRank orders the built-in profiles by how permissive they are, so a
@@ -156,12 +188,16 @@ func sortedAgentInfos(specs map[string]*AgentSpec, includeHidden bool) []AgentIn
 			continue
 		}
 		out = append(out, AgentInfo{
-			Name:        spec.Name,
-			Description: spec.Description,
-			Profile:     spec.Profile,
-			Model:       spec.Model,
-			Mode:        spec.Mode,
-			Source:      spec.Source,
+			Name:            spec.Name,
+			Description:     spec.Description,
+			Profile:         spec.Profile,
+			Model:           spec.Model,
+			Mode:            spec.Mode,
+			Source:          spec.Source,
+			ToolNames:       spec.ToolNames,
+			SpawnableAgents: spec.SpawnableAgents,
+			InputSchema:     spec.InputSchema,
+			OutputSchema:    spec.OutputSchema,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -229,10 +265,36 @@ func parseAgentSpec(content string) *AgentSpec {
 			if n, err := strconv.Atoi(val); err == nil {
 				spec.MaxTurns = n
 			}
+		case "tool_names":
+			spec.ToolNames = splitCommaList(val)
+		case "spawnable_agents":
+			spec.SpawnableAgents = splitCommaList(val)
+		case "input_schema":
+			spec.InputSchema = val
+		case "output_schema":
+			spec.OutputSchema = val
 		}
 	}
 	if spec.Mode == "" {
 		spec.Mode = "subagent"
 	}
 	return spec
+}
+
+// splitCommaList parses a comma-separated frontmatter value ("a, b, c") into
+// a trimmed, non-empty slice. Matches the existing single-line frontmatter
+// style (no nested YAML/JSON list syntax) used throughout parseAgentSpec.
+func splitCommaList(val string) []string {
+	if strings.TrimSpace(val) == "" {
+		return nil
+	}
+	parts := strings.Split(val, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
