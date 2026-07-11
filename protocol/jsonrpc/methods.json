@@ -43,12 +43,12 @@
       { "method": "session.replay", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "Event[]" },
       { "method": "session.items", "scope": "read", "remote": true, "params": { "session_id": "string", "cursor": "signed opaque exclusive cursor?", "limit": "integer 1..200?" }, "result": "SessionItemEvent[] when pagination omitted; otherwise { data: SessionItemEvent[], next_cursor: string?, projection_version: string }", "errors": "-32010 invalid_cursor|cursor_expired with recovery data" },
       { "method": "session.review", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "SessionReview" },
-      { "method": "session.attach", "scope": "read", "remote": true, "params": { "session_id": "string", "since": "number?" }, "result": "{ events: Event[], from: number, cursor: number }" },
+      { "method": "session.attach", "scope": "read", "remote": true, "params": { "session_id": "string", "since": "number?", "event_mode": "compat|canonical? (default compat)" }, "result": "{ events: Event[], from: number, cursor: number, event_mode: compat|canonical }; cursor always advances over raw audit positions" },
       { "method": "session.fork", "scope": "write", "remote": false, "params": { "session_id": "string", "last_task_id": "string?", "through_turn": "integer? >= 1" }, "result": "Session with fork lineage" },
       { "method": "session.plan_mode", "scope": "write", "remote": false, "params": { "session_id": "string", "on": "boolean" }, "result": "{ session_id: string, plan_mode: boolean }" },
       { "method": "session.approve_plan", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "object" },
       { "method": "session.add_dir", "scope": "admin", "remote": false, "dynamic_scope": true, "control_plane_write": true, "params": { "session_id": "string", "path": "string" }, "result": "object" },
-      { "method": "session.events.stream", "scope": "stream", "remote": true, "stream": true, "params": { "session_id": "string", "since": "integer? >= 0" }, "result": "{ subscription_id: string, cursor: integer, replayed: integer }", "notifications": "event" },
+      { "method": "session.events.stream", "scope": "stream", "remote": true, "stream": true, "params": { "session_id": "string", "since": "integer? >= 0", "event_mode": "compat|canonical? (default compat)" }, "result": "{ subscription_id: string, cursor: integer, replayed: integer, event_mode: string }", "notifications": "event (projected after authoritative audit persistence; canonical events include raw_cursor, the exclusive raw audit position)" },
       { "method": "session.events.unsubscribe", "scope": "stream", "remote": true, "params": { "subscription_id": "string" }, "result": "{ unsubscribed: boolean }" }
     ],
     "checkpoint": [
@@ -166,7 +166,7 @@
       { "method": "plugin.run", "scope": "admin", "remote": false, "control_plane_write": true, "params": "object", "result": "object" }
     ],
     "worker": [
-      { "method": "worker.register", "scope": "worker", "remote": true, "params": { "name": "string", "kind": "remote|ci|sandbox?" }, "result": "{ worker_id: string, worker_credential: string } (credential returned once; server stores only a hash)" },
+      { "method": "worker.register", "scope": "worker", "remote": true, "params": { "name": "string", "kind": "remote|ci|sandbox?", "process_tree_containment": "none|unix_pgrp_v1|windows_job_v1" }, "result": "{ worker_id: string, worker_credential: string } (credential returned once; server stores only a hash)" },
       { "method": "worker.heartbeat", "scope": "worker", "remote": true, "params": { "worker_id": "string", "worker_credential": "string" }, "result": "{ ok: boolean }" },
       { "method": "worker.list", "scope": "read", "remote": true, "params": {}, "result": "Worker[]" },
       { "method": "worker.revoke", "scope": "worker", "remote": true, "control_plane_write": true, "params": { "worker_id": "string", "worker_credential": "string" }, "result": "{ ok: boolean }" }
@@ -176,7 +176,7 @@
       { "method": "backpressure.status", "scope": "read", "remote": true, "params": {}, "result": "BackpressureStatus" }
     ],
     "work": [
-      { "method": "work.submit", "scope": "admin", "remote": false, "control_plane_write": true, "params": "WorkSubmission", "result": "WorkItem" },
+      { "method": "work.submit", "scope": "admin", "remote": false, "control_plane_write": true, "params": "WorkSubmission + { required_worker_capabilities: string[]? }", "result": "WorkItem" },
       { "method": "work.poll", "scope": "worker", "remote": true, "params": { "worker_id": "string", "worker_credential": "string", "ttl_ms": "number?" }, "result": "WorkLease?" },
       { "method": "work.renew", "scope": "worker", "remote": true, "params": { "worker_id": "string", "worker_credential": "string", "task_id": "string", "lease_generation": "integer >= 1", "ttl_ms": "number?" }, "result": "{ ok: boolean, cancelled: boolean? }" },
       { "method": "work.report", "scope": "worker", "remote": true, "params": "WorkReport + { worker_credential: string, lease_generation: integer >= 1 }", "result": "{ ok: boolean }" }

@@ -303,6 +303,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			var err error
 			var result ReasonerResult
 			requestedModel := taskModel(task)
+			governanceProvider := retryGovernanceProvider(d.reasoner, requestedModel)
 			promptHash := sha256Hex(prompt)
 			evidenceID := routingEvidenceID(task.TaskID, turn, requery, promptHash)
 			d.record(sess.SessionID, "RoutingDecision", task.TaskID, "go", map[string]any{
@@ -314,18 +315,25 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			}, "")
 			started := time.Now()
 			reasonerCtx := withRetryObserver(ctx, func(retry retryAttempt) {
+				governance := map[string]any{}
+				if d.retryGovernance != nil {
+					governance = d.retryGovernance.snapshot(governanceProvider)
+				}
 				errEnv := runtimecontract.ErrorEnvelope{
 					Code: retry.Error.Code, Category: runtimecontract.ErrorCategory(retry.Error.Category),
 					Message: "provider request failed", UserAction: retry.Error.UserAction,
 					CorrelationID: retry.Error.CorrelationID,
 					Retry:         runtimecontract.RetryAfter(retry.Delay, retry.Attempt, retry.MaxAttempts, time.Now()),
-					Metadata:      map[string]any{"provider": retry.Error.Provider, "http_status": retry.Error.HTTPStatus},
+					Metadata:      map[string]any{"provider": retry.Error.Provider, "http_status": retry.Error.HTTPStatus, "governance": governance},
 				}
 				d.record(sess.SessionID, "RoutingRetryScheduled", task.TaskID, "go", map[string]any{
 					"evidence_id": evidenceID, "attempt": retry.Attempt, "max_attempts": retry.MaxAttempts,
 					"error": errEnv,
 				}, "")
 			})
+			if d.retryGovernance != nil {
+				reasonerCtx = withRetryGovernance(reasonerCtx, d.retryGovernance, governanceProvider)
+			}
 			if requery == 0 {
 				result, err = thinkWithRetryModelSegments(reasonerCtx, d.reasoner, task.Model, seg)
 			} else {

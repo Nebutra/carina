@@ -90,6 +90,8 @@ test('resolve approval uses canonical approve param', async () => {
   assert.equal('allow' in params, false)
 })
 
+test('event subscription preserves raw cursor contract',async()=>{let params;await withServer((request,socket)=>{params=request.params;socket.write(JSON.stringify({jsonrpc:'2.0',id:request.id,result:{subscription_id:'sub',cursor:17,replayed:2,event_mode:'canonical'}})+'\n')},async socketPath=>{const client=new CarinaClient(socketPath,500);const result=await client.subscribeSessionEventsFrom('s',11,'canonical');assert.equal(result.cursor,17);assert.equal(result.event_mode,'canonical');client.close()});assert.equal(params.since,11)})
+
 test('disconnect rejects every pending call immediately', async () => {
   await withServer((_request, socket) => socket.destroy(), async (socketPath) => {
     const client = new CarinaClient(socketPath, 5_000)

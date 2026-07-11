@@ -52,6 +52,15 @@ type, schema/version, content reference, provenance, and policy labels. Renderin
 belongs to Nebutra web/IDE/mobile surfaces and never grants filesystem or shell
 authority back to the artifact.
 
+Tool-output artifacts use bounded retention tiers: `ephemeral` defaults to 24
+hours, `normal` to 30 days, and `pinned` to 180 days with a hard one-year
+maximum. Pinning is therefore a longer operational retention choice, not an
+unbounded legal hold. The store reports only low-cardinality aggregate counts
+and byte totals; session, task, call, and artifact identifiers remain in audit
+records rather than metric labels. Generic `artifact.stat` and `artifact.read`
+RPC methods remain local-only. Any future remote download surface requires a
+separate exact-scope, short-lived, single-use capability and download audit.
+
 ## SDK conformance
 
 Go, TypeScript, and Python expose typed workflow, worker, approval, doctor,
@@ -61,3 +70,20 @@ authoritative. Packaged-daemon CI can opt into a real read-only smoke test:
 ```bash
 CARINA_CONFORMANCE_SOCKET=/path/to/daemon.sock go test ./sdk/go -run RealDaemon
 ```
+
+## Event compatibility and retry governance
+
+Session attach and event streaming accept `compat` (default) or `canonical`.
+Both modes use the same exclusive raw-audit cursor: filtered compatibility
+events never change cursor positions, so a client may reconnect or switch modes
+without duplicates or gaps. Stream subscription results expose the initial raw
+cursor, replayed count, and effective mode. Every canonical event also carries
+`raw_cursor`; clients persist the latest delivered cursor rather than counting
+rendered events.
+
+Provider retry budgets and circuit breakers are isolated by requested
+`provider/model` route. An untargeted router request uses a separate stable
+default-route key. Half-open permits exactly one concurrent probe; a successful
+or non-retryable response closes the availability breaker, while a retryable
+failure reopens it. Retry sleeps do not hold the probe permit or consume a
+budget token until the next attempt is admitted.

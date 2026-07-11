@@ -365,8 +365,8 @@ impl Service {
         if let Some(decision_id) = p.get("permission_decision_id").and_then(Value::as_str) {
             event = event.with_decision(decision_id);
         }
-        ctx.kernel.record_event(&event).map_err(err_str)?;
-        Ok(json!({"event_id": event.event_id}))
+        let cursor = ctx.kernel.record_event_with_cursor(&event).map_err(err_str)?;
+        Ok(json!({"event_id": event.event_id, "cursor": cursor}))
     }
 
     fn audit_read(&mut self, p: &Value) -> Result<Value, String> {

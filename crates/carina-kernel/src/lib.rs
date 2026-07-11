@@ -444,6 +444,12 @@ impl Kernel {
         Ok(())
     }
 
+    /// Records an event and returns the exclusive raw audit cursor without
+    /// replaying the JSONL log.
+    pub fn record_event_with_cursor(&self, event: &Event) -> Result<usize, KernelError> {
+        Ok(self.audit.append_with_cursor(event)?)
+    }
+
     /// Runs a WASM plugin under this session's policy (PRD §8.7). Every
     /// capability the plugin requests is gated by both its manifest and the
     /// session profile, and each decision is written to the audit log.

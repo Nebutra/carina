@@ -195,8 +195,14 @@ pub struct VerifyReport {
 /// Append-only, hash-chained JSONL audit log for a single session.
 pub struct AuditLog {
     path: PathBuf,
-    /// Chain head; the next appended event links to this.
-    last_hash: Mutex<String>,
+    /// Chain head and length are updated atomically for each append so callers
+    /// can use the returned length as the exclusive raw audit cursor.
+    state: Mutex<AuditState>,
+}
+
+struct AuditState {
+    last_hash: String,
+    event_count: usize,
 }
 
 impl AuditLog {
@@ -207,23 +213,35 @@ impl AuditLog {
         std::fs::create_dir_all(dir)?;
         let log = Self {
             path: dir.join(format!("{session_id}.events.jsonl")),
-            last_hash: Mutex::new(GENESIS_HASH.to_string()),
+            state: Mutex::new(AuditState {
+                last_hash: GENESIS_HASH.to_string(),
+                event_count: 0,
+            }),
         };
         // Recover the chain head from the last event on disk.
         let events = log.read_all()?;
+        let mut state = log.state.lock().unwrap();
+        state.event_count = events.len();
         if let Some(last) = events.last() {
             if !last.event_hash.is_empty() {
-                *log.last_hash.lock().unwrap() = last.event_hash.clone();
+                state.last_hash = last.event_hash.clone();
             }
         }
+        drop(state);
         Ok(log)
     }
 
     /// Appends one event, linking it into the hash chain. The log is never
     /// rewritten or truncated.
     pub fn append(&self, event: &Event) -> Result<(), AuditError> {
-        let mut head = self.last_hash.lock().unwrap();
-        let prev = head.clone();
+        self.append_with_cursor(event).map(|_| ())
+    }
+
+    /// Appends one event and returns the exclusive raw audit cursor (the
+    /// number of durable events after this append).
+    pub fn append_with_cursor(&self, event: &Event) -> Result<usize, AuditError> {
+        let mut state = self.state.lock().unwrap();
+        let prev = state.last_hash.clone();
         let mut linked = event.clone();
         linked.prev_hash = prev.clone();
         linked.event_hash = linked.compute_hash(&prev);
@@ -233,8 +251,9 @@ impl AuditLog {
         file.write_all(line.as_bytes())?;
         file.write_all(b"\n")?;
 
-        *head = linked.event_hash;
-        Ok(())
+        state.last_hash = linked.event_hash;
+        state.event_count += 1;
+        Ok(state.event_count)
     }
 
     /// Replays the full event stream in append order.

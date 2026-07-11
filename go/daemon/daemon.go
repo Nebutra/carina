@@ -157,7 +157,6 @@ type Daemon struct {
 	trust         *trustStore  // trusted workspace roots
 	requireTrust  atomic.Bool  // deny command exec in untrusted workspaces (hot-reloadable)
 	maxTaskTokens atomic.Int64 // per-task token budget (0 => unlimited; hot-reloadable)
-
 	mailbox               map[string]*taskMailbox // task -> pending steering messages, urgent-first
 	mailboxMu             sync.Mutex
 	taskContexts          map[string]context.Context
@@ -1570,8 +1569,8 @@ func (d *Daemon) handleSessionAttach(params json.RawMessage) (any, error) {
 	var events any = all[since:]
 	if mode == eventModeCanonical {
 		projectedEvents := make([]any, 0, len(all)-since)
-		for _, event := range all[since:] {
-			if projected, ok := projectEvent(mode, event); ok {
+		for index, event := range all[since:] {
+			if projected, ok := projectEvent(mode, event, since+index+1); ok {
 				projectedEvents = append(projectedEvents, projected)
 			}
 		}
@@ -2038,13 +2037,14 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	// signature intentionally swallows the error for its many best-effort
 	// callers) so this one write-ahead call can be checked.
 	writeAheadPayload := map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt, "model": task.Model, "agent": task.Agent}
-	if err := d.kern.RecordEvent(sess.SessionID, "TaskCreated", task.TaskID, "go", writeAheadPayload, ""); err != nil {
+	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "TaskCreated", task.TaskID, "go", writeAheadPayload, "")
+	if err != nil {
 		_, _ = d.sched.Cancel(task.TaskID)
 		return nil, fmt.Errorf("task_submit_failed: write-ahead audit-chain append failed, task was not dispatched: %w", err)
 	}
 	d.events.Publish(sess.SessionID, map[string]any{
 		"session_id": sess.SessionID, "task_id": task.TaskID, "type": "TaskCreated", "actor": "go",
-		"timestamp": time.Now().UTC().Format(time.RFC3339), "payload": writeAheadPayload,
+		"timestamp": time.Now().UTC().Format(time.RFC3339), "payload": writeAheadPayload, internalRawAuditCursor: cursor,
 	})
 	_ = d.history.Append(prompt) // shared cross-process prompt history (best-effort)
 	d.persistRun(task.TaskID)
@@ -3241,8 +3241,8 @@ func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription
 			since = len(all)
 		}
 		deliver := make([]any, 0, len(all)-since)
-		for _, event := range all[since:] {
-			if projected, ok := projectEvent(mode, event); ok {
+		for index, event := range all[since:] {
+			if projected, ok := projectEvent(mode, event, since+index+1); ok {
 				deliver = append(deliver, projected)
 			}
 		}
@@ -3284,16 +3284,18 @@ func (d *Daemon) record(sessionID, eventType, taskID, actor string, payload map[
 	_ = d.recordChecked(sessionID, eventType, taskID, actor, payload, decisionID)
 }
 func (d *Daemon) recordChecked(sessionID, eventType, taskID, actor string, payload map[string]any, decisionID string) error {
-	if err := d.kern.RecordEvent(sessionID, eventType, taskID, actor, payload, decisionID); err != nil {
+	cursor, err := d.kern.RecordEventWithCursor(sessionID, eventType, taskID, actor, payload, decisionID)
+	if err != nil {
 		return err
 	}
 	d.events.Publish(sessionID, map[string]any{
-		"session_id": sessionID,
-		"task_id":    taskID,
-		"type":       eventType,
-		"actor":      actor,
-		"timestamp":  time.Now().UTC().Format(time.RFC3339),
-		"payload":    payload,
+		"session_id":           sessionID,
+		"task_id":              taskID,
+		"type":                 eventType,
+		"actor":                actor,
+		"timestamp":            time.Now().UTC().Format(time.RFC3339),
+		"payload":              payload,
+		internalRawAuditCursor: cursor,
 	})
 	return nil
 }

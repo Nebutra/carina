@@ -35,11 +35,17 @@ class CarinaEvent(TypedDict, total=False):
     type: str
     timestamp: str
     payload: dict[str, Any]
+    raw_cursor: int
 
 
 SessionAttachment = TypedDict(
     "SessionAttachment",
-    {"events": list[CarinaEvent], "from": int, "cursor": int},
+    {"events": list[CarinaEvent], "from": int, "cursor": int, "event_mode": str},
+)
+
+EventSubscription = TypedDict(
+    "EventSubscription",
+    {"subscription_id": str, "cursor": int, "replayed": int, "event_mode": str},
 )
 
 
@@ -198,8 +204,8 @@ class CarinaClient:
     def replay_session(self, session_id: str) -> list[CarinaEvent]:
         return self.call("session.replay", {"session_id": session_id})
 
-    def attach_session(self, session_id: str, since: int = 0) -> dict[str, Any]:
-        return self.call("session.attach", {"session_id": session_id, "since": since})
+    def attach_session(self, session_id: str, since: int = 0, event_mode: str = "compat") -> dict[str, Any]:
+        return self.call("session.attach", {"session_id": session_id, "since": since, "event_mode": event_mode})
 
     def review_session(self, session_id: str) -> SessionReview:
         return self.call("session.review", {"session_id": session_id})
@@ -330,8 +336,12 @@ class CarinaClient:
     def set_extension_enabled(self, name: str, enabled: bool) -> dict[str, Any]:
         return self.call("extension.enable" if enabled else "extension.disable", {"name": name})
 
-    def subscribe_session_events(self, session_id: str) -> str:
-        result = self.call("session.events.stream", {"session_id": session_id}) or {}
+    def subscribe_session_events_from(self, session_id: str, since: int = 0, event_mode: str = "compat") -> EventSubscription:
+        result = self.call("session.events.stream", {"session_id": session_id, "since": since, "event_mode": event_mode}) or {}
+        return result
+
+    def subscribe_session_events(self, session_id: str, event_mode: str = "compat") -> str:
+        result = self.subscribe_session_events_from(session_id, 0, event_mode)
         return str(result.get("subscription_id", ""))
 
     def unsubscribe_session_events(self, subscription_id: str) -> None:
@@ -350,11 +360,11 @@ class CarinaClient:
                     with self._notification_lock:
                         return self._notifications.popleft()
 
-    def stream_session_events(self, session_id: str) -> Iterator[CarinaEvent]:
+    def stream_session_events(self, session_id: str, event_mode: str = "compat") -> Iterator[CarinaEvent]:
         listener_id = self._add_session_listener(session_id)
         subscription_id = ""
         try:
-            subscription_id = self.subscribe_session_events(session_id)
+            subscription_id = self.subscribe_session_events(session_id, event_mode)
             while True:
                 events = self._drain_session_listener(listener_id)
                 if events:

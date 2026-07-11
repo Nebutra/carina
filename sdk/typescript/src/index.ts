@@ -34,13 +34,16 @@ export interface CarinaEvent {
   timestamp: string
   payload?: Record<string, unknown>
   permission_decision_id?: string
+  raw_cursor?: number
 }
 
 export interface SessionAttachment {
   events: CarinaEvent[]
   from: number
   cursor: number
+  event_mode: 'compat'|'canonical'
 }
+export interface EventSubscription { subscription_id:string;cursor:number;replayed:number;event_mode:'compat'|'canonical' }
 
 export interface ReviewItem { id: string; type: string; status: string; task_id?: string; details?: Record<string, unknown> }
 export interface SessionReview {
@@ -236,8 +239,8 @@ export class CarinaClient {
     return this.call('task.submit', { session_id: sessionId, prompt, success_criteria: successCriteria })
   }
   replaySession(sessionId: string): Promise<CarinaEvent[]> { return this.call('session.replay', { session_id: sessionId }) }
-  attachSession(sessionId: string, since = 0): Promise<SessionAttachment> {
-    return this.call('session.attach', { session_id: sessionId, since })
+  attachSession(sessionId: string, since = 0, eventMode: 'compat'|'canonical' = 'compat'): Promise<SessionAttachment> {
+    return this.call('session.attach', { session_id: sessionId, since, event_mode: eventMode })
   }
   reviewSession(sessionId: string): Promise<SessionReview> { return this.call('session.review', { session_id: sessionId }) }
   listSessionItems(sessionId:string,cursor='',limit=50):Promise<SessionItemsPage>{return this.call('session.items',{session_id:sessionId,limit,...(cursor?{cursor}:{})})}
@@ -286,7 +289,7 @@ export class CarinaClient {
   async resumeThread(sessionId: string): Promise<CarinaThread> { await this.initialize();return new CarinaThread(this,await this.getSession(sessionId)) }
   async forkThread(sessionId: string, boundary: { lastTaskId?: string; throughTurn?: number } = {}): Promise<CarinaThread> { await this.initialize();const session=await this.call<Session>('session.fork',{session_id:sessionId,...(boundary.lastTaskId?{last_task_id:boundary.lastTaskId}:{}),...(boundary.throughTurn?{through_turn:boundary.throughTurn}:{})});return new CarinaThread(this,session) }
 
-  async streamSessionEvents(sessionId: string, handler: (event: CarinaEvent) => void): Promise<() => Promise<void>> {
+  async streamSessionEvents(sessionId: string, handler: (event: CarinaEvent) => void, eventMode: 'compat'|'canonical' = 'compat'): Promise<() => Promise<void>> {
     const listener: NotificationHandler = (method, params) => {
       if (method !== 'event' || typeof params !== 'object' || params === null) return
       const event = params as CarinaEvent
@@ -294,7 +297,7 @@ export class CarinaClient {
     }
     this.notifications.add(listener)
     try {
-      const subscription = await this.call<{subscription_id?:string}>('session.events.stream', { session_id: sessionId })
+      const subscription = await this.call<{subscription_id?:string}>('session.events.stream', { session_id: sessionId, event_mode: eventMode })
       return async () => {
         this.notifications.delete(listener)
         if (subscription.subscription_id) await this.call('session.events.unsubscribe', { subscription_id: subscription.subscription_id }).catch(() => {})
@@ -304,6 +307,8 @@ export class CarinaClient {
       throw error
     }
   }
+
+  subscribeSessionEventsFrom(sessionId:string,since=0,eventMode:'compat'|'canonical'='compat'):Promise<EventSubscription>{return this.call('session.events.stream',{session_id:sessionId,since,event_mode:eventMode})}
 
   search(sessionId: string, pattern: string): Promise<Array<{ file: string; line: number; text: string }>> {
     return this.call('workspace.search', { session_id: sessionId, pattern })

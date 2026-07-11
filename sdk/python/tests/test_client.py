@@ -131,6 +131,20 @@ class ClientTest(unittest.TestCase):
             "task.user.answer", "session.events.stream",
         ])
 
+    def test_event_subscription_preserves_raw_cursor_contract(self) -> None:
+        captured: list[dict[str, Any]] = []
+        def handler(request: dict[str, Any], conn: socket.socket) -> None:
+            captured.append(request["params"])
+            result = {"subscription_id":"sub","cursor":17,"replayed":2,"event_mode":"canonical"}
+            conn.sendall(json.dumps({"jsonrpc":"2.0","id":request["id"],"result":result}).encode()+b"\n")
+        with daemon_server(handler) as path:
+            client=CarinaClient(path,timeout=.5)
+            result=client.subscribe_session_events_from("s",11,"canonical")
+            self.assertEqual(result["cursor"],17)
+            self.assertEqual(result["event_mode"],"canonical")
+            client.close()
+        self.assertEqual(captured[0]["since"],11)
+
     def test_run_streamed_emits_authoritative_events_and_unsubscribes(self) -> None:
         methods: list[str] = []
         def handler(request: dict[str, Any], conn: socket.socket) -> None:

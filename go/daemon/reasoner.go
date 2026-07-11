@@ -135,12 +135,24 @@ func thinkWithRetryPolicy(ctx context.Context, r Reasoner, model, prompt, stable
 	delay := policy.BaseDelay
 	var lastErr error
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
+		governance, provider := retryGovernanceFrom(ctx)
+		if governance != nil {
+			if err := governance.admit(provider, attempt > 1); err != nil {
+				return ReasonerResult{}, err
+			}
+		}
 		out, err := thinkOnceResult(ctx, r, model, prompt, stablePrefix, volatileSuffix)
 		if err == nil {
+			if governance != nil {
+				governance.observe(provider, providerErrorInfo{}, true)
+			}
 			return out, nil
 		}
 		lastErr = err
 		info := classifyProviderError(err)
+		if governance != nil {
+			governance.observe(provider, info, false)
+		}
 		if !info.Retryable || attempt == policy.MaxAttempts {
 			break
 		}
@@ -184,6 +196,15 @@ func classifyProviderError(err error) providerErrorInfo {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return providerErrorInfo{Code: "request_deadline_exceeded", Category: "timeout", Retryable: false}
+	}
+	if errors.Is(err, errCircuitOpen) {
+		return providerErrorInfo{Code: "provider_circuit_open", Category: "unavailable", UserAction: "wait for the provider circuit probe or choose another provider", Retryable: false}
+	}
+	if errors.Is(err, errRetryBudgetExceeded) {
+		return providerErrorInfo{Code: "retry_budget_exhausted", Category: "unavailable", UserAction: "wait for the daemon-local retry budget to refill", Retryable: false}
+	}
+	if errors.Is(err, errRetryPressure) {
+		return providerErrorInfo{Code: "retry_paused_by_backpressure", Category: "unavailable", UserAction: "wait for scheduler pressure to recover", Retryable: false}
 	}
 	var classified providerErrorClassifier
 	if errors.As(err, &classified) {

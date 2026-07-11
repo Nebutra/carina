@@ -52,12 +52,21 @@ type Event struct {
 	Type      string         `json:"type"`
 	Timestamp string         `json:"timestamp"`
 	Payload   map[string]any `json:"payload,omitempty"`
+	RawCursor int            `json:"raw_cursor,omitempty"`
 }
 
 type SessionAttachment struct {
-	Events []json.RawMessage `json:"events"`
-	From   int               `json:"from"`
-	Cursor int               `json:"cursor"`
+	Events    []json.RawMessage `json:"events"`
+	From      int               `json:"from"`
+	Cursor    int               `json:"cursor"`
+	EventMode string            `json:"event_mode"`
+}
+
+type EventSubscription struct {
+	SubscriptionID string `json:"subscription_id"`
+	Cursor         int    `json:"cursor"`
+	Replayed       int    `json:"replayed"`
+	EventMode      string `json:"event_mode"`
 }
 
 type ReviewItem struct {
@@ -536,8 +545,12 @@ func (c *Client) SubmitGoal(sessionID, prompt string, criteria []SuccessCheck) (
 }
 
 func (c *Client) AttachSession(sessionID string, since int) (SessionAttachment, error) {
+	return c.AttachSessionMode(sessionID, since, "compat")
+}
+
+func (c *Client) AttachSessionMode(sessionID string, since int, eventMode string) (SessionAttachment, error) {
 	var out SessionAttachment
-	err := c.Call("session.attach", map[string]any{"session_id": sessionID, "since": since}, &out)
+	err := c.Call("session.attach", map[string]any{"session_id": sessionID, "since": since, "event_mode": eventMode}, &out)
 	return out, err
 }
 
@@ -593,11 +606,18 @@ func (c *Client) SubscribeSessionEvents(sessionID string) error {
 }
 
 func (c *Client) StartSessionEventStream(sessionID string) (string, error) {
-	var out struct {
-		SubscriptionID string `json:"subscription_id"`
-	}
-	err := c.Call("session.events.stream", map[string]any{"session_id": sessionID}, &out)
+	return c.StartSessionEventStreamMode(sessionID, "compat")
+}
+
+func (c *Client) StartSessionEventStreamMode(sessionID, eventMode string) (string, error) {
+	out, err := c.StartSessionEventStreamFrom(sessionID, 0, eventMode)
 	return out.SubscriptionID, err
+}
+
+func (c *Client) StartSessionEventStreamFrom(sessionID string, since int, eventMode string) (EventSubscription, error) {
+	var out EventSubscription
+	err := c.Call("session.events.stream", map[string]any{"session_id": sessionID, "since": since, "event_mode": eventMode}, &out)
+	return out, err
 }
 
 func (c *Client) UnsubscribeSessionEvents(subscriptionID string) error {
