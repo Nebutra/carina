@@ -163,3 +163,67 @@ func TestLoopGuardRepeatAndStall(t *testing.T) {
 		t.Fatal("progress should reset the stall counter")
 	}
 }
+
+func TestLoopGuardHardRepeatedTripsOnSingleSignature(t *testing.T) {
+	g := newLoopGuard()
+	g.MaxHardRepeat = 4
+	// The same signature repeated: mistakes only start accumulating once a
+	// signature has been seen more than once (the first occurrence is not a
+	// mistake — it's the original attempt).
+	if _, hard := g.observe("read", "a.go"); hard {
+		t.Fatal("first occurrence must not count as a mistake")
+	}
+	if g.hardStop() {
+		t.Fatal("should not be hard-stopped yet")
+	}
+	for i := 0; i < 4; i++ {
+		g.observe("read", "a.go")
+	}
+	if !g.hardStop() {
+		t.Fatalf("should be hard-stopped after %d mistakes, got mistakes=%d", g.MaxHardRepeat, g.mistakes)
+	}
+}
+
+func TestLoopGuardHardRepeatedTripsAcrossRotatingSignatures(t *testing.T) {
+	// A model that rotates between a few repeated actions (never hitting the
+	// per-signature MaxRepeat threshold) must still trip the hard stop, since
+	// the mistake counter is cumulative across all signatures, not per-key.
+	g := newLoopGuard()
+	g.MaxRepeat = 10 // high enough that no single signature trips repeated()
+	g.MaxHardRepeat = 4
+	sigs := []string{"a.go", "b.go", "c.go"}
+	tripped := false
+	for round := 0; round < 3 && !tripped; round++ {
+		for _, s := range sigs {
+			if _, hard := g.observe("read", s); hard {
+				tripped = true
+				break
+			}
+		}
+	}
+	if !tripped {
+		t.Fatalf("rotating between repeated signatures should still trip the hard stop; mistakes=%d", g.mistakes)
+	}
+}
+
+func TestLoopGuardHardRepeatDisabledWhenZero(t *testing.T) {
+	g := newLoopGuard()
+	g.MaxHardRepeat = 0
+	for i := 0; i < 20; i++ {
+		if _, hard := g.observe("read", "a.go"); hard {
+			t.Fatal("MaxHardRepeat=0 must disable the hard stop, not trip immediately")
+		}
+	}
+}
+
+func TestActionSignatureIncludesBatchPayloadButNotThought(t *testing.T) {
+	first := action{Thought: "one", Actions: []action{{Tool: "read", Path: "a.go"}}}
+	second := action{Thought: "two", Actions: []action{{Tool: "read", Path: "b.go"}}}
+	if first.signature() == second.signature() {
+		t.Fatal("different batch payloads must have different signatures")
+	}
+	second.Actions[0].Path = "a.go"
+	if first.signature() != second.signature() {
+		t.Fatal("thought text must not affect the action signature")
+	}
+}

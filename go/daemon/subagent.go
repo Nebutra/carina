@@ -208,8 +208,16 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 			tr.addTurn(Turn{Tool: "system", ActionBrief: "no-spawn", Obs: Observation{Content: "subagents cannot spawn; do the work directly or finish"}})
 			continue
 		}
-		fp := act.Tool + ":" + act.Path + ":" + strings.Join(act.Command, " ") + ":" + act.Pattern
-		if guard.repeated(act.Tool, fp) {
+		// Same canonical, all-fields signature the main loop uses (agent.go's
+		// runLoopContext) so subagents get the same tightened loop detection
+		// instead of a narrower hand-picked fingerprint.
+		sig := act.signature()
+		softRepeat, hardRepeat := guard.observe(act.Tool, sig)
+		if hardRepeat {
+			d.sched.SetStatus(task.TaskID, "degraded")
+			return "(subagent loop guard: repeated actions with no progress)"
+		}
+		if softRepeat {
 			tr.addTurn(Turn{Tool: act.Tool, ActionBrief: briefAction(&act),
 				Obs: Observation{Content: "repeated action; change approach or finish with done"}})
 			continue

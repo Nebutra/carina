@@ -220,24 +220,49 @@ func brief(s string, n int) string {
 // LoopGuard detects unproductive loops: the same action repeated, or many
 // turns with no state change (no edit). This is the loop-safety net the
 // research found missing in most agents.
+//
+// Beyond the soft nudge-at-MaxRepeat, LoopGuard also tracks a cumulative
+// mistake count across *all* repeated fingerprints seen so far (not just the
+// count of one signature). A model that dodges the per-signature threshold by
+// rotating between a handful of repeated actions still trips the hard limit
+// once its total mistake count crosses MaxHardRepeat, so the hard stop can't
+// be evaded by cycling through variations.
 type LoopGuard struct {
 	seen           map[string]int
 	MaxRepeat      int
 	turnsSinceEdit int
 	MaxNoProgress  int
+	mistakes       int
+	MaxHardRepeat  int
 }
 
 func newLoopGuard() *LoopGuard {
-	return &LoopGuard{seen: map[string]int{}, MaxRepeat: 3, MaxNoProgress: 6}
+	return &LoopGuard{seen: map[string]int{}, MaxRepeat: 3, MaxNoProgress: 6, MaxHardRepeat: 6}
 }
 
 // fingerprint records an action; returns true if it has been repeated too
 // many times (caller should nudge or abort).
 func (g *LoopGuard) repeated(tool, arg string) bool {
+	soft, _ := g.observe(tool, arg)
+	return soft
+}
+
+// observe records one action exactly once and returns the soft-nudge and
+// hard-stop decisions for that observation.
+func (g *LoopGuard) observe(tool, arg string) (bool, bool) {
 	h := sha256.Sum256([]byte(tool + "\x00" + arg))
 	key := hex.EncodeToString(h[:8])
 	g.seen[key]++
-	return g.seen[key] >= g.MaxRepeat
+	if g.seen[key] > 1 {
+		g.mistakes++
+	}
+	return g.seen[key] >= g.MaxRepeat, g.hardStop()
+}
+
+// hardStop reports whether the cumulative mistake count has crossed
+// MaxHardRepeat without recording a new observation.
+func (g *LoopGuard) hardStop() bool {
+	return g.MaxHardRepeat > 0 && g.mistakes >= g.MaxHardRepeat
 }
 
 // progress resets the no-progress counter (call after a patch/edit); tick

@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -111,6 +113,32 @@ type action struct {
 type SpawnTask struct {
 	Agent string `json:"agent"`
 	Task  string `json:"task"`
+}
+
+// signature returns a canonical fingerprint of the action's parameters, for
+// LoopGuard's repeat detection. It covers every parameter field (Path,
+// Pattern, Command, Content, Target, OldText, Operations, Query, Name, Agent,
+// Task, Tasks, Workflow, MCPServer/MCPTool/Args, ...) rather than a
+// hand-picked subset, so a stuck model can't dodge detection by varying a
+// field the old fingerprint (agent.go's five hard-coded fields) ignored.
+//
+// Thought is deliberately excluded: it is free-form
+// reasoning text a stuck model could reword every turn to evade detection
+// without changing what it actually does. Action is the raw nested-form input;
+// parseAction has already projected it into the typed fields. Actions remains
+// included because it is the actual payload of a parallel batch.
+func (a *action) signature() string {
+	cp := *a
+	cp.Thought = ""
+	cp.Action = nil
+	raw, err := json.Marshal(cp)
+	if err != nil {
+		// Fall back to the tool name alone; extremely unlikely (all action
+		// fields are plain JSON-safe types) but must never panic or block.
+		return a.Tool
+	}
+	h := sha256.Sum256(raw)
+	return hex.EncodeToString(h[:])
 }
 
 // runTask drives one agent task to completion (PRD §18). Every side effect is
@@ -428,7 +456,12 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess)})
 				continue
 			}
-			if guard.repeated("batch", briefBatch(act.Actions)) {
+			softRepeat, hardRepeat := guard.observe("batch", act.signature())
+			if hardRepeat {
+				d.degrade(sess, task, tr, "loop guard: repeated batch actions with no progress (hard threshold)")
+				return
+			}
+			if softRepeat {
 				tr.addTurn(Turn{Tool: "batch", ActionBrief: briefBatch(act.Actions),
 					Obs: Observation{Content: "You repeated this batch with no new result. Change approach, or use done."}})
 				continue
@@ -446,9 +479,19 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			continue
 		}
 
-		// Loop safety: catch repeated actions and no-progress stalls.
-		fp := act.Tool + ":" + act.Path + ":" + strings.Join(act.Command, " ") + ":" + act.Pattern + ":" + act.Query + ":" + act.Name
-		if guard.repeated(act.Tool, fp) {
+		// Loop safety: catch repeated actions and no-progress stalls. The
+		// signature covers every parameter field (not a hand-picked subset),
+		// so rewording an ignored field can't dodge detection. A hard
+		// threshold on cumulative mistakes (rotating between a few repeated
+		// actions still counts against the same budget) escalates straight
+		// to degrade instead of nudging forever.
+		sig := act.signature()
+		softRepeat, hardRepeat := guard.observe(act.Tool, sig)
+		if hardRepeat {
+			d.degrade(sess, task, tr, "loop guard: repeated actions with no progress (hard threshold)")
+			return
+		}
+		if softRepeat {
 			tr.addTurn(Turn{Thought: act.Thought, Tool: act.Tool,
 				ActionBrief: briefAction(&act),
 				Obs:         Observation{Content: "You have repeated this exact action several times with no new result. Change approach, or use {\"tool\":\"done\"} if finished."}})

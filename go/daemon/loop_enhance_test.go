@@ -3,6 +3,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -66,6 +67,37 @@ func TestLoopGracefulDegradeOnMaxTurns(t *testing.T) {
 	tk, _ := d.sched.Get(task.TaskID)
 	if tk.Status != "degraded" {
 		t.Fatalf("runaway loop should degrade gracefully, got %s", tk.Status)
+	}
+}
+
+// TestLoopHardStopDegradesBeforeMaxTurns: a model that repeats the exact same
+// read must trip LoopGuard's hard threshold (tightened loop detection) and
+// degrade well before exhausting maxAgentTurns, proving the hard stop — not
+// just the turn-limit backstop — is what ends the run.
+func TestLoopHardStopDegradesBeforeMaxTurns(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	os.WriteFile(filepath.Join(ws, "a.txt"), []byte("hi\n"), 0o600)
+	// Same exact action every turn, well beyond MaxHardRepeat but under
+	// maxAgentTurns (14): if the hard stop didn't fire, this scripted
+	// reasoner would exhaust its steps and the run would hang on requery
+	// instead of degrading.
+	steps := make([]string, 10)
+	for i := range steps {
+		steps[i] = `{"tool":"read","path":"a.txt"}`
+	}
+	d.SetReasoner(&scriptedReasoner{steps: steps})
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "loop forever")
+	d.runTask(sess, task)
+
+	tk, ok := d.sched.Get(task.TaskID)
+	if !ok || tk.Status != "degraded" {
+		t.Fatalf("hard loop guard should degrade the task, got %+v (ok=%v)", tk, ok)
+	}
+	if !strings.Contains(tk.Summary, "loop guard") {
+		t.Fatalf("degrade reason should mention the loop guard, got %q", tk.Summary)
 	}
 }
 
