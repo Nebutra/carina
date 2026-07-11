@@ -74,6 +74,7 @@ type runCheckpoint struct {
 	Turn           int         `json:"turn"`
 	Transcript     *Transcript `json:"transcript"`
 	MemorySnapshot string      `json:"memory_snapshot,omitempty"`
+	AppliedPatches []string    `json:"applied_patches,omitempty"`
 }
 
 func (r *runStore) saveCheckpoint(taskID string, cp *runCheckpoint) {

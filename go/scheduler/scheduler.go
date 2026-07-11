@@ -177,6 +177,17 @@ func (s *Scheduler) SetResult(taskID, summary string, patches []string) {
 	s.tasks[taskID] = &updated
 }
 
+func (s *Scheduler) SetAppliedPatches(taskID string, patches []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.tasks[taskID]; ok {
+		updated := *t
+		updated.AppliedPatches = append([]string(nil), patches...)
+		updated.UpdatedAt = time.Now().UTC()
+		s.tasks[taskID] = &updated
+	}
+}
+
 // SetOutputSchema records the required keys the task's final JSON output must
 // contain (structured output for headless/programmatic runs).
 func (s *Scheduler) SetOutputSchema(taskID string, keys []string) {
@@ -220,6 +231,24 @@ func (s *Scheduler) List() []*Task {
 		out = append(out, t)
 	}
 	return out
+}
+
+// Remove deletes a terminal task from the operator roster. Active work must be
+// cancelled first so removing a row can never orphan execution.
+func (s *Scheduler) Remove(taskID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[taskID]
+	if !ok {
+		return fmt.Errorf("scheduler: unknown task %s", taskID)
+	}
+	switch t.Status {
+	case "completed", "failed", "cancelled", "degraded":
+	default:
+		return fmt.Errorf("scheduler: task %s is still %s", taskID, t.Status)
+	}
+	delete(s.tasks, taskID)
+	return nil
 }
 
 // Load reinserts a persisted task on daemon startup (run-registry recovery). It
