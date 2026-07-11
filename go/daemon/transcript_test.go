@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -144,6 +145,167 @@ func TestTranscriptCompactionElidesThenSummarizes(t *testing.T) {
 	last := tr.Turns[len(tr.Turns)-1]
 	if last.Obs.Elided {
 		t.Fatal("recent/pinned turn must not be elided")
+	}
+}
+
+// TestRenderSummaryTemplateOmitsEmptySections proves renderSummaryTemplate
+// never emits a dangling heading (e.g. "Blocked:") when that section has no
+// items — a compaction summary for a task with nothing blocked should not
+// carry a bullet-less "Blocked:" line.
+func TestRenderSummaryTemplateOmitsEmptySections(t *testing.T) {
+	sc := SummaryContent{
+		Goal: "fix the bug",
+		Done: []string{"reproduced the failure"},
+		Next: []string{"patch the root cause"},
+	}
+	got := renderSummaryTemplate(sc)
+	if !strings.Contains(got, "Goal: fix the bug") {
+		t.Fatalf("missing goal line: %q", got)
+	}
+	if !strings.Contains(got, "Done:\n- reproduced the failure") {
+		t.Fatalf("missing done section: %q", got)
+	}
+	if !strings.Contains(got, "Next:\n- patch the root cause") {
+		t.Fatalf("missing next section: %q", got)
+	}
+	for _, heading := range []string{headingInProgress, headingBlocked, headingHighlights, headingFilesRead, headingFilesMod} {
+		if strings.Contains(got, heading) {
+			t.Fatalf("empty section %q must be omitted entirely, got:\n%s", heading, got)
+		}
+	}
+}
+
+// TestParseSummaryContentRoundTripsRenderedTemplate proves render+parse
+// compose: a SummaryContent rendered by renderSummaryTemplate must parse back
+// into an equivalent SummaryContent, so a caller can recover structure from
+// an already-compacted Transcript.Summary.
+func TestParseSummaryContentRoundTripsRenderedTemplate(t *testing.T) {
+	sc := SummaryContent{
+		Goal:          "ship the feature",
+		Done:          []string{"wrote the parser", "wrote the renderer"},
+		InProgress:    []string{"wiring into agent.go"},
+		Blocked:       []string{"waiting on kernel review"},
+		Highlights:    []string{"chose deterministic Files extraction over model recall"},
+		Next:          []string{"add tests"},
+		FilesRead:     []string{"go/daemon/transcript.go"},
+		FilesModified: []string{"go/daemon/agent.go"},
+	}
+	rendered := renderSummaryTemplate(sc)
+	got, ok := parseSummaryContent(rendered)
+	if !ok {
+		t.Fatalf("parse failed on renderer's own output:\n%s", rendered)
+	}
+	if got.Goal != sc.Goal {
+		t.Fatalf("Goal mismatch: got %q want %q", got.Goal, sc.Goal)
+	}
+	for _, pair := range []struct {
+		name      string
+		got, want []string
+	}{
+		{"Done", got.Done, sc.Done},
+		{"InProgress", got.InProgress, sc.InProgress},
+		{"Blocked", got.Blocked, sc.Blocked},
+		{"Highlights", got.Highlights, sc.Highlights},
+		{"Next", got.Next, sc.Next},
+		{"FilesRead", got.FilesRead, sc.FilesRead},
+		{"FilesModified", got.FilesModified, sc.FilesModified},
+	} {
+		if strings.Join(pair.got, "|") != strings.Join(pair.want, "|") {
+			t.Fatalf("%s mismatch: got %v want %v", pair.name, pair.got, pair.want)
+		}
+	}
+}
+
+// TestParseSummaryContentFailsClosedOnUnstructuredProse proves the parser
+// does not fabricate structure from plain prose (e.g. a model that ignored
+// the structured-prompt instruction and replied with free text, or a
+// pre-template Transcript.Summary from before this change) — callers must
+// treat text without a recognizable "Goal:" heading as opaque prose, exactly
+// as compact() did before this template existed.
+func TestParseSummaryContentFailsClosedOnUnstructuredProse(t *testing.T) {
+	_, ok := parseSummaryContent("Fixed the bug in the parser and added tests.")
+	if ok {
+		t.Fatal("unstructured prose without a Goal: heading must not parse as structured")
+	}
+}
+
+// TestFilesTouchedDerivesFromTranscriptNotModel proves the Files(read+
+// modified) section is computed deterministically from the transcript's own
+// turns (ActionBrief "read <path>" / "patch <path>", set by briefAction),
+// deduplicated in first-seen order, and untouched by non-read/patch tools.
+func TestFilesTouchedDerivesFromTranscriptNotModel(t *testing.T) {
+	turns := []Turn{
+		{Tool: "read", ActionBrief: "read a.go"},
+		{Tool: "run", ActionBrief: "run [go test]"},
+		{Tool: "read", ActionBrief: "read b.go"},
+		{Tool: "patch", ActionBrief: "patch a.go"},
+		{Tool: "read", ActionBrief: "read a.go"},   // re-read: must not duplicate
+		{Tool: "patch", ActionBrief: "patch a.go"}, // re-patch: must not duplicate
+	}
+	read, modified := filesTouched(turns)
+	if strings.Join(read, ",") != "a.go,b.go" {
+		t.Fatalf("FilesRead = %v, want [a.go b.go]", read)
+	}
+	if strings.Join(modified, ",") != "a.go" {
+		t.Fatalf("FilesModified = %v, want [a.go]", modified)
+	}
+}
+
+// TestFilesTouchedCapsAtMaxFiles proves a long-running task's Files sections
+// cannot grow unboundedly with the rest of the compaction summary.
+func TestFilesTouchedCapsAtMaxFiles(t *testing.T) {
+	var turns []Turn
+	for i := 0; i < 30; i++ {
+		turns = append(turns, Turn{Tool: "read", ActionBrief: fmt.Sprintf("read f%d.go", i)})
+	}
+	read, _ := filesTouched(turns)
+	if len(read) != 20 {
+		t.Fatalf("FilesRead should cap at 20, got %d", len(read))
+	}
+}
+
+// TestCompactionSummaryUsesStructuredTemplateEndToEnd drives compact() with a
+// summarizer shaped like agent.go's runLoopContext closure (structured
+// prompt -> parseSummaryContent -> deterministic Files -> renderSummaryTemplate)
+// to prove the whole composition survives being called through compact(),
+// including landing in the CompactionReceipt's SummarySHA256.
+func TestCompactionSummaryUsesStructuredTemplateEndToEnd(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.policy = CompactionPolicy{MaxChars: 800, KeepRecent: 2, ToolOutputMax: 400, SummarizeAfter: 4}
+	for i := 0; i < 8; i++ {
+		content := strings.Repeat("data ", 60)
+		tr.addTurn(Turn{Tool: "read", ActionBrief: fmt.Sprintf("read f%d.go", i), Obs: Observation{Content: content}})
+	}
+	tr.addTurn(Turn{Tool: "patch", ActionBrief: "patch f0.go", Obs: Observation{Content: "applied", Pinned: true}})
+	for i := 0; i < 3; i++ {
+		content := strings.Repeat("data ", 60)
+		tr.addTurn(Turn{Tool: "read", ActionBrief: fmt.Sprintf("read g%d.go", i), Obs: Observation{Content: content}})
+	}
+
+	summarizeLikeAgent := func(head string) (string, error) {
+		modelReply := "Goal: fix the bug\nDone:\n- read the source files\nNext:\n- verify the patch\n"
+		sc, ok := parseSummaryContent(modelReply)
+		if !ok {
+			return modelReply, nil
+		}
+		sc.FilesRead, sc.FilesModified = filesTouched(tr.Turns)
+		return renderSummaryTemplate(sc), nil
+	}
+	receipt := tr.compact(summarizeLikeAgent)
+	if receipt == nil {
+		t.Fatal("expected compaction to fire")
+	}
+	if !strings.HasPrefix(tr.Summary, "Goal: fix the bug") {
+		t.Fatalf("summary should start with the structured Goal line, got:\n%s", tr.Summary)
+	}
+	if !strings.Contains(tr.Summary, "Files Read:") || !strings.Contains(tr.Summary, "f0.go") {
+		t.Fatalf("summary should carry a deterministic Files Read section, got:\n%s", tr.Summary)
+	}
+	if !strings.Contains(tr.Summary, "Files Modified:\n- f0.go") {
+		t.Fatalf("summary should carry a deterministic Files Modified section, got:\n%s", tr.Summary)
+	}
+	if receipt.SummarySHA256 != sha256Hex(tr.Summary) {
+		t.Fatalf("compaction receipt hash must verify against the structured summary")
 	}
 }
 
@@ -315,6 +477,48 @@ func TestCompactFiresOnTokenTriggerAlone(t *testing.T) {
 	})
 	if !summarizeCalled || receipt == nil {
 		t.Fatalf("compact() must fire off the token-estimate trigger alone when the char trigger is unmet (summarizeCalled=%v receipt=%v)", summarizeCalled, receipt)
+	}
+}
+
+func TestSummaryTemplateRoundTripAndOmissions(t *testing.T) {
+	want := SummaryContent{
+		Goal:          "ship the runtime",
+		Done:          []string{"closed lifecycle gaps"},
+		InProgress:    []string{"validate release"},
+		Highlights:    []string{"raw cursors are durable"},
+		Next:          []string{"publish the tag"},
+		FilesRead:     []string{"README.md"},
+		FilesModified: []string{"go/daemon/agent.go"},
+	}
+	rendered := renderSummaryTemplate(want)
+	if strings.Contains(rendered, headingBlocked) {
+		t.Fatalf("empty blocked section was rendered: %q", rendered)
+	}
+	got, ok := parseSummaryContent(rendered)
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("round trip = %#v, %v; want %#v", got, ok, want)
+	}
+	if _, ok := parseSummaryContent("unstructured prose"); ok {
+		t.Fatal("unstructured summary was accepted as structured")
+	}
+}
+
+func TestFilesTouchedIsGroundedDeduplicatedAndBounded(t *testing.T) {
+	turns := []Turn{
+		{Tool: "read", ActionBrief: "read README.md"},
+		{Tool: "read", ActionBrief: "read README.md"},
+		{Tool: "patch", ActionBrief: "patch go/daemon/agent.go"},
+		{Tool: "search", ActionBrief: "search ignored"},
+	}
+	for i := 0; i < 25; i++ {
+		turns = append(turns, Turn{Tool: "read", ActionBrief: fmt.Sprintf("read file-%02d", i)})
+	}
+	read, modified := filesTouched(turns)
+	if len(read) != 20 || read[0] != "README.md" {
+		t.Fatalf("read files = %#v", read)
+	}
+	if !reflect.DeepEqual(modified, []string{"go/daemon/agent.go"}) {
+		t.Fatalf("modified files = %#v", modified)
 	}
 }
 

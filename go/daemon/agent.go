@@ -231,16 +231,40 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 	guard := newLoopGuard()
 	mistakes := newMistakeTracker()
 	verifyAttempts := 0
-	// A cheap summarizer for compaction: reuse the reasoner on the head.
+	// A cheap summarizer for compaction: reuse the reasoner on the head. The
+	// prompt asks for the structured Goal/State(Done|InProgress|Blocked)/
+	// Highlights/Next shape (matching Cline's compaction summary template —
+	// see docs/research/cline-absorption.md's agentic_summary_template
+	// entry); the model's response is parsed back into a SummaryContent and
+	// re-rendered with a factual Files(read+modified) section computed from
+	// the transcript itself (filesTouched), not from what the model recalls.
+	// compact() calls this before truncating tr.Turns to the kept tail, so the
+	// derived file lists describe the current pre-compaction working set.
 	summarize := func(head string) (string, error) {
-		prompt := "Summarize this agent transcript in <=200 words, keeping: the task, decisions made, " +
-			"patches applied (ids), unresolved errors. Drop raw tool output.\n\n" + head
+		prompt := "Summarize this agent transcript for a rolling compaction summary. " +
+			"Respond in EXACTLY this structure (omit a list section entirely if it has no items; keep each bullet short):\n" +
+			"Goal: <one line stating the overall task>\n" +
+			"Done:\n- <completed item>\n" +
+			"In Progress:\n- <partially done item>\n" +
+			"Blocked:\n- <blocked item and why>\n" +
+			"Highlights:\n- <key decision or finding worth remembering>\n" +
+			"Next:\n- <concrete next step>\n\n" +
+			"Drop raw tool output; do not include a Files section (it is added automatically).\n\n" + head
 		result, err := thinkWithRetryModelResult(ctx, d.summarizeReasoner(), "", prompt)
-		if err == nil {
-			_ = d.usage.record(sess.SessionID, task.TaskID, result.Usage)
-			d.sched.AddTokens(task.TaskID, result.Usage.totalTokens())
+		if err != nil {
+			return "", err
 		}
-		return result.Text, err
+		_ = d.usage.record(sess.SessionID, task.TaskID, result.Usage)
+		d.sched.AddTokens(task.TaskID, result.Usage.totalTokens())
+		sc, ok := parseSummaryContent(result.Text)
+		if !ok {
+			// Model did not follow the structured shape; fall back to its raw
+			// text as prose, matching pre-template behavior exactly rather
+			// than risking a malformed or empty summary.
+			return result.Text, nil
+		}
+		sc.FilesRead, sc.FilesModified = filesTouched(tr.Turns)
+		return renderSummaryTemplate(sc), nil
 	}
 
 	// Persistent project/user instructions are prepended to the system prompt

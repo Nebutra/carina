@@ -266,6 +266,159 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 	return nil
 }
 
+// SummaryContent is the structured shape of a compaction summary: Cline
+// types its rolling summary as Goal/State(Done|InProgress|Blocked)/
+// Highlights/Next/Files(read+modified); carina's compact() previously stored
+// unstructured prose from a single hand-written instruction ("Summarize...
+// <=200 words"). This gives the same rolling Transcript.Summary string field
+// a predictable internal shape without changing its type or any persisted
+// schema — renderSummaryTemplate still produces a plain string, so
+// checkpoint.go/subagent.go/render() (all of which treat Summary as prose)
+// need no changes.
+//
+// FilesRead/FilesModified are deliberately NOT filled from model output:
+// filesTouched derives them from the transcript's own turns (Tool=="read"/
+// "patch" ActionBrief), so the "Files" section is a factual record grounded
+// in what actually ran through the kernel, not something the model could get
+// wrong or omit.
+type SummaryContent struct {
+	Goal          string
+	Done          []string
+	InProgress    []string
+	Blocked       []string
+	Highlights    []string
+	Next          []string
+	FilesRead     []string
+	FilesModified []string
+}
+
+// summaryTemplateHeadings are the section markers renderSummaryTemplate
+// writes and parseSummaryContent looks for. Keeping them as a shared slice
+// of (heading, field-setter) pairs would be overkill for five sections; they
+// are duplicated as literal strings in both functions instead, with this
+// comment as the single place documenting that the two must stay in sync.
+const (
+	headingGoal       = "Goal:"
+	headingDone       = "Done:"
+	headingInProgress = "In Progress:"
+	headingBlocked    = "Blocked:"
+	headingHighlights = "Highlights:"
+	headingNext       = "Next:"
+	headingFilesRead  = "Files Read:"
+	headingFilesMod   = "Files Modified:"
+)
+
+// renderSummaryTemplate formats a SummaryContent into the plain-text shape
+// stored in Transcript.Summary. Empty list sections are omitted entirely
+// (a compaction with nothing blocked, e.g., should not render a dangling
+// "Blocked:" heading with no bullets under it).
+func renderSummaryTemplate(sc SummaryContent) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s\n", headingGoal, strings.TrimSpace(sc.Goal))
+	writeSummaryList(&b, headingDone, sc.Done)
+	writeSummaryList(&b, headingInProgress, sc.InProgress)
+	writeSummaryList(&b, headingBlocked, sc.Blocked)
+	writeSummaryList(&b, headingHighlights, sc.Highlights)
+	writeSummaryList(&b, headingNext, sc.Next)
+	writeSummaryList(&b, headingFilesRead, sc.FilesRead)
+	writeSummaryList(&b, headingFilesMod, sc.FilesModified)
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func writeSummaryList(b *strings.Builder, heading string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "%s\n", heading)
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		fmt.Fprintf(b, "- %s\n", item)
+	}
+}
+
+// parseSummaryContent best-effort parses a renderSummaryTemplate-shaped
+// string back into a SummaryContent. It is fail-closed in the sense that
+// mirrors the rest of this file's compaction machinery: if the text has no
+// recognizable "Goal:" heading (the one required section), ok is false and
+// callers must not assume the returned SummaryContent reflects the text —
+// prior behavior (treating the whole string as opaque prose) still applies.
+// This lets a caller (or future tooling/inspection) recover structure from
+// an already-compacted Transcript.Summary without requiring a parallel
+// structured field or a persistence-format change.
+func parseSummaryContent(text string) (SummaryContent, bool) {
+	var sc SummaryContent
+	lines := strings.Split(text, "\n")
+	var current *[]string
+	sawGoal := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, headingGoal):
+			sc.Goal = strings.TrimSpace(strings.TrimPrefix(trimmed, headingGoal))
+			current = nil
+			sawGoal = true
+		case trimmed == headingDone:
+			current = &sc.Done
+		case trimmed == headingInProgress:
+			current = &sc.InProgress
+		case trimmed == headingBlocked:
+			current = &sc.Blocked
+		case trimmed == headingHighlights:
+			current = &sc.Highlights
+		case trimmed == headingNext:
+			current = &sc.Next
+		case trimmed == headingFilesRead:
+			current = &sc.FilesRead
+		case trimmed == headingFilesMod:
+			current = &sc.FilesModified
+		case strings.HasPrefix(trimmed, "- ") && current != nil:
+			*current = append(*current, strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+		}
+	}
+	if !sawGoal {
+		return SummaryContent{}, false
+	}
+	return sc, true
+}
+
+// filesTouched derives the Files(read+modified) section deterministically
+// from the transcript's own turns rather than trusting the model to recall
+// which files it read or changed: ActionBrief for "read" and "patch" tools
+// is always exactly "<tool> <path>" (see briefAction in agent.go), so this
+// is a factual read of what already ran through the kernel, not a
+// re-summarization. Order is first-seen, deduplicated; both are capped so a
+// long-running task's summary can't grow unboundedly with the rest of the
+// template.
+func filesTouched(turns []Turn) (read, modified []string) {
+	const maxFiles = 20
+	seenRead := map[string]bool{}
+	seenMod := map[string]bool{}
+	for _, turn := range turns {
+		switch turn.Tool {
+		case "read":
+			path := strings.TrimSpace(strings.TrimPrefix(turn.ActionBrief, "read "))
+			if path != "" && !seenRead[path] {
+				seenRead[path] = true
+				if len(read) < maxFiles {
+					read = append(read, path)
+				}
+			}
+		case "patch":
+			path := strings.TrimSpace(strings.TrimPrefix(turn.ActionBrief, "patch "))
+			if path != "" && !seenMod[path] {
+				seenMod[path] = true
+				if len(modified) < maxFiles {
+					modified = append(modified, path)
+				}
+			}
+		}
+	}
+	return read, modified
+}
+
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
