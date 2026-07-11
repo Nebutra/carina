@@ -296,11 +296,21 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		sysPrompt = "OUTPUT STYLE (apply to your presentation):\n" + style + "\n\n" + sysPrompt
 	}
 	if tools := d.mcp.Tools(); len(tools) > 0 {
+		// Above the index threshold, tighten per-tool descriptions so a large
+		// connected-server surface doesn't bloat the stable prompt prefix; in
+		// both regimes mcp_find recovers full descriptions + input schemas on
+		// demand (the index never includes schemas).
+		const mcpToolIndexThreshold = 20
+		descLimit := 120
+		if len(tools) > mcpToolIndexThreshold {
+			descLimit = 60
+		}
 		var b strings.Builder
 		b.WriteString("\n\nMCP TOOLS (call via {\"tool\":\"mcp\",\"mcp_server\":\"<server>\",\"mcp_tool\":\"<name>\",\"args\":{...}}):\n")
 		for _, t := range tools {
-			fmt.Fprintf(&b, "- mcp__%s__%s: %s\n", t.Server, t.Name, truncate(t.Description, 120))
+			fmt.Fprintf(&b, "- mcp__%s__%s: %s\n", t.Server, t.Name, truncate(t.Description, descLimit))
 		}
+		b.WriteString("Use {\"tool\":\"mcp_find\",\"query\":\"free text\"} to search these MCP tools and fetch their full input schemas before calling one.\n")
 		sysPrompt += b.String()
 	}
 
@@ -901,6 +911,8 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 		return d.agentMemoryOutcome(sess, task, act)
 	case "mcp":
 		return d.callMCPOutcome(sess, task, act)
+	case "mcp_find":
+		return d.mcpFindOutcome(sess, task, act)
 	case "spawn":
 		return d.executeSpawnOutcome(sess, task, act)
 	case "workflow":

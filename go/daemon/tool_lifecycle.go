@@ -381,7 +381,7 @@ func safeErrorMetadata(display, category string) map[string]any {
 
 func toolKind(tool string) string {
 	switch tool {
-	case "read", "list", "search", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact":
+	case "read", "list", "search", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact", "mcp_find":
 		return "read"
 	case "patch", "memory":
 		return "write"
@@ -423,7 +423,7 @@ func redactedToolArguments(act *action) map[string]any {
 		args["target"] = act.Target
 	case "ask_user":
 		args["option_count"] = len(act.Options)
-	case "code.search":
+	case "code.search", "mcp_find":
 		args["query"] = act.Query
 	case "code.symbols", "code.def", "code.refs", "code.impact":
 		args["name"] = act.Name
