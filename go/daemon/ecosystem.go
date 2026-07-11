@@ -113,6 +113,9 @@ func (d *Daemon) handleWorkflowResume(p json.RawMessage) (any, error) {
 	if detail.Run.Status != workflowui.Interrupted {
 		return d.workflowRuns.Transition(req.RunID, workflowui.Running)
 	}
+	if !detail.Run.Resumable {
+		return nil, fmt.Errorf("workflow %s is blocked and requires manual reconciliation: %s", req.RunID, detail.Run.InterruptionReason)
+	}
 	sess, ok := d.store.Get(detail.Run.SessionID)
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", detail.Run.SessionID)
