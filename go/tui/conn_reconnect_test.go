@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -167,20 +168,23 @@ func startFakeDaemon(t *testing.T, bin, dir string) *fakeDaemon {
 		"CARINA_FAKEDAEMON_SOCKET="+sock,
 		"CARINA_FAKEDAEMON_EVENTS="+eventsPath,
 	)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	var logs bytes.Buffer
+	cmd.Stdout = &logs
+	cmd.Stderr = &logs
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start fakedaemon: %v", err)
 	}
 	fd := &fakeDaemon{cmd: cmd, sock: sock, eventsPath: eventsPath}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(sock); err == nil {
 			return fd
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("fakedaemon socket never appeared at %s", sock)
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	t.Fatalf("fakedaemon socket never appeared at %s; output:\n%s", sock, logs.String())
 	return fd
 }
 
