@@ -24,8 +24,6 @@ type toolExecutionOutcome struct {
 	errorCategory string
 }
 
-const toolArtifactTTL = 30 * 24 * time.Hour
-
 func toolCompleted(display string) toolExecutionOutcome {
 	return toolExecutionOutcome{display: display, status: "completed"}
 }
@@ -293,13 +291,25 @@ func (d *Daemon) finishToolCall(sess *sessionstore.Session, task *scheduler.Task
 	contractStatus := runtimecontract.ToolCallStatus(outcome.status)
 	env := runtimecontract.ToolCallEnvelope{CallID: call.id, SessionID: sess.SessionID, TaskID: task.TaskID, Tool: call.tool, Status: contractStatus, CreatedAt: call.created, UpdatedAt: time.Now().UTC()}
 	if outcome.display != "" && d.artifacts != nil {
-		meta, err := d.artifacts.Put([]byte(outcome.display), artifact.PutOptions{Scope: artifact.Scope{SessionID: sess.SessionID, TaskID: task.TaskID, CallID: call.id}, MediaType: "text/plain; charset=utf-8", TTL: toolArtifactTTL})
+		meta, err := d.artifacts.Put([]byte(outcome.display), artifact.PutOptions{
+			Scope: artifact.Scope{SessionID: sess.SessionID, TaskID: task.TaskID, CallID: call.id},
+			MediaType: "text/plain; charset=utf-8", Retention: artifact.RetentionNormal,
+			// Bound the stored preview so a large command/tool output still
+			// gets a head+tail-aware Metadata.Preview (see makePreview):
+			// mirrors transcript.go's ToolOutputMax so the artifact-level
+			// preview and the model-facing observation truncate at the same
+			// scale. The preview itself never enters the audit payload below
+			// (safeOutputMetadata stays hash-only) — it is only reachable by
+			// a caller with scope access via Store.Read/artifact RPC.
+			PreviewBytes: defaultCompactionPolicy().ToolOutputMax,
+		})
 		if err == nil {
 			env.ArtifactIDs = []string{meta.ID}
 			payload["artifact_ids"] = env.ArtifactIDs
 			outputMetadata["artifact_id"] = meta.ID
 			outputMetadata["scope"] = meta.Scope
 			outputMetadata["artifact_status"] = "available"
+			outputMetadata["artifact_truncated"] = meta.Truncated
 		} else {
 			outputMetadata["artifact_status"] = "unavailable"
 			outputMetadata["artifact_error"] = artifactErrorCode(err)

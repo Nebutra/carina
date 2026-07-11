@@ -8,8 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Nebutra/carina/go/artifact"
 )
 
 func TestApprovalLifecycleUsesSameCallIDBeforeStarted(t *testing.T) {
@@ -403,5 +406,69 @@ func TestArtifactReadIsBoundedAndPaged(t *testing.T) {
 	bad, _ := json.Marshal(map[string]any{"session_id": sess.SessionID, "artifact_id": artifactID, "limit": maxArtifactReadBytes + 1})
 	if _, err := d.handleArtifactRead(bad); err == nil {
 		t.Fatal("oversized artifact read limit accepted")
+	}
+}
+
+// TestFinishToolCallStoresHeadTailPreviewForOversizedOutput is the
+// mid_truncation regression test: a command whose output exceeds the
+// transcript's ToolOutputMax must still store a head+tail-aware
+// Metadata.Preview in the artifact object (not a head-only cut that would
+// drop the final "done" line), while the authoritative ToolCallCompleted
+// audit payload continues to carry only a redacted hash — never the raw
+// preview text itself.
+func TestFinishToolCallStoresHeadTailPreviewForOversizedOutput(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "oversized output")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run big command")
+
+	var artifactID string
+	var truncatedFlag any
+	d.events.Tap(func(sessionID string, event map[string]any) {
+		if event["type"] != "ToolCallCompleted" {
+			return
+		}
+		payload, _ := event["payload"].(map[string]any)
+		if ids, ok := payload["artifact_ids"].([]string); ok && len(ids) > 0 {
+			artifactID = ids[0]
+		}
+		if output, ok := payload["output"].(map[string]any); ok {
+			truncatedFlag = output["artifact_truncated"]
+			if _, leaked := output["preview"]; leaked {
+				t.Fatal("raw preview text leaked into authoritative audit payload")
+			}
+		}
+	})
+
+	call := toolCallLifecycle{id: newToolCallID(), tool: "run", kind: "command", created: time.Now().UTC(), sequence: &atomic.Int64{}}
+	var body strings.Builder
+	for i := 0; i < 400; i++ {
+		body.WriteString("compiling step\n")
+	}
+	body.WriteString("done: build succeeded\n")
+	outcome := toolCompleted(body.String())
+	if err := d.finishToolCall(sess, task, call, outcome); err != nil {
+		t.Fatal(err)
+	}
+	if artifactID == "" {
+		t.Fatal("no artifact recorded for oversized output")
+	}
+	if truncatedFlag != true {
+		t.Fatalf("artifact_truncated = %v, want true", truncatedFlag)
+	}
+
+	_, meta, err := d.artifacts.Read(artifact.Scope{SessionID: sess.SessionID, TaskID: task.TaskID, CallID: call.id}, artifactID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !meta.Truncated {
+		t.Fatalf("stored artifact metadata not marked truncated: %+v", meta)
+	}
+	if !strings.HasPrefix(meta.Preview, "compiling step\n") {
+		t.Fatalf("preview lost the head: %q", meta.Preview)
+	}
+	if !strings.HasSuffix(meta.Preview, "done: build succeeded\n") {
+		t.Fatalf("head-only preview would have dropped the tail signal: %q", meta.Preview)
 	}
 }

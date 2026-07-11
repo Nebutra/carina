@@ -80,7 +80,10 @@ func TestStorePutReadAndScopeEnforcement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(meta.ID) != 64 || meta.Preview != "first line\nsecond line\n" || !meta.Truncated {
+	// PreviewLines: 2 with 3 lines of content forces a head+tail split: the
+	// preview keeps the first line and the last line with an elision marker
+	// between them, instead of a head-only cut that would drop "third".
+	if len(meta.ID) != 64 || meta.Preview != "first line\n\n… [12 bytes omitted] …\nthird" || !meta.Truncated {
 		t.Fatalf("unexpected metadata: %+v", meta)
 	}
 	got, stat, err := store.Read(scope, meta.ID)
@@ -178,7 +181,9 @@ func TestPreviewIsUTF8SafeAndBinaryIsNotLeaked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.Preview != "ab世" || !utf8.ValidString(meta.Preview) || !meta.Truncated || !meta.PreviewUTF8 {
+	// Five bytes cannot hold both content ends plus the elision marker, so the
+	// preview falls back to the longest UTF-8-safe head within the hard budget.
+	if meta.Preview != "ab世" || len(meta.Preview) > 5 || !utf8.ValidString(meta.Preview) || !meta.Truncated || !meta.PreviewUTF8 {
 		t.Fatalf("bad preview: %+v", meta)
 	}
 	binary, err := store.Put([]byte{0xff, 0x00, 0x01}, PutOptions{Scope: Scope{SessionID: "s"}, PreviewBytes: 10})
@@ -316,5 +321,185 @@ func TestConcurrentQuotaSafety(t *testing.T) {
 	}
 	if succeeded != 1 || rejected != 1 {
 		t.Fatalf("succeeded=%d rejected=%d", succeeded, rejected)
+	}
+}
+
+func TestRetentionTiersAreBounded(t *testing.T) {
+	now := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
+	store, err := New(t.TempDir(), Config{EphemeralTTL: time.Hour, NormalTTL: 24 * time.Hour, PinnedTTL: 7 * 24 * time.Hour, MaxPinnedTTL: 30 * 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		tier RetentionTier
+		want time.Duration
+	}{
+		{"ephemeral", RetentionEphemeral, time.Hour},
+		{"normal", RetentionNormal, 24 * time.Hour},
+		{"pinned", RetentionPinned, 7 * 24 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta, err := store.Put([]byte(tc.name), PutOptions{Scope: Scope{SessionID: "s_" + tc.name}, Now: now, Retention: tc.tier})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta.ExpiresAt == nil || !meta.ExpiresAt.Equal(now.Add(tc.want)) {
+				t.Fatalf("expires_at = %v", meta.ExpiresAt)
+			}
+			if meta.Retention != tc.tier {
+				t.Fatalf("retention = %q", meta.Retention)
+			}
+		})
+	}
+	if _, err := store.Put([]byte("x"), PutOptions{Scope: Scope{SessionID: "s_bad"}, Retention: RetentionPinned, TTL: 31 * 24 * time.Hour}); err == nil {
+		t.Fatal("unbounded pinned retention succeeded")
+	}
+	if _, err := store.Put([]byte("x"), PutOptions{Scope: Scope{SessionID: "s_invalid"}, Retention: "forever"}); err == nil {
+		t.Fatal("invalid retention tier succeeded")
+	}
+}
+
+func TestRetentionConfigurationRequiresMonotonicTTLs(t *testing.T) {
+	for _, cfg := range []Config{
+		{EphemeralTTL: 48 * time.Hour, NormalTTL: 24 * time.Hour},
+		{NormalTTL: 8 * 24 * time.Hour, PinnedTTL: 7 * 24 * time.Hour},
+		{PinnedTTL: 31 * 24 * time.Hour, MaxPinnedTTL: 30 * 24 * time.Hour},
+	} {
+		if _, err := New(t.TempDir(), cfg); err == nil {
+			t.Fatalf("New accepted non-monotonic retention config: %+v", cfg)
+		}
+	}
+}
+
+func TestMetricsUseLowCardinalityByteCounters(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := store.Put([]byte("hello"), PutOptions{Scope: Scope{SessionID: "s"}, Retention: RetentionNormal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Read(meta.Scope, meta.ID); err != nil {
+		t.Fatal(err)
+	}
+	m := store.Metrics()
+	if m.Puts != 1 || m.Reads != 1 || m.PutBytes != 5 || m.ReadBytes != 5 {
+		t.Fatalf("metrics = %+v", m)
+	}
+	u, err := store.Usage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.ReferencesByRetention[RetentionNormal] != 1 {
+		t.Fatalf("retention usage = %+v", u.ReferencesByRetention)
+	}
+}
+
+// TestPreviewPreservesTailSignal is the mid_truncation regression case: a
+// command output whose actionable signal (the final "build failed" line) is
+// far past a head-only cutoff must still surface in the preview. A head-only
+// makePreview would show 500+ lines of noise and silently drop the outcome.
+func TestPreviewPreservesTailSignal(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw []byte
+	for i := 0; i < 500; i++ {
+		raw = append(raw, fmt.Appendf(nil, "line %d: compiling...\n", i)...)
+	}
+	raw = append(raw, []byte("FINAL: build failed with 3 errors\n")...)
+	meta, err := store.Put(raw, PutOptions{Scope: Scope{SessionID: "s"}, PreviewBytes: 400, PreviewLines: 40})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !meta.Truncated {
+		t.Fatalf("expected truncation for %d-byte input", len(raw))
+	}
+	if !strings.HasPrefix(meta.Preview, "line 0: compiling...\n") {
+		t.Fatalf("preview lost the head: %q", meta.Preview)
+	}
+	if !strings.HasSuffix(meta.Preview, "FINAL: build failed with 3 errors\n") {
+		t.Fatalf("preview dropped the tail signal: %q", meta.Preview)
+	}
+	if !strings.Contains(meta.Preview, "omitted") {
+		t.Fatalf("preview does not disclose the elided middle: %q", meta.Preview)
+	}
+}
+
+// TestPreviewSkipsSplitWhenContentFits ensures small content that already
+// fits the budget is returned verbatim, with no marker and Truncated=false —
+// the head+tail split only activates when a cut is actually needed.
+func TestPreviewSkipsSplitWhenContentFits(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := store.Put([]byte("ok\n"), PutOptions{Scope: Scope{SessionID: "s"}, PreviewBytes: 4096, PreviewLines: 200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Truncated || meta.Preview != "ok\n" || strings.Contains(meta.Preview, "omitted") {
+		t.Fatalf("unexpected split on content that fits budget: %+v", meta)
+	}
+}
+
+// TestPreviewFallsBackToHeadOnlyUnderTinyBudget covers the degenerate case
+// where PreviewLines: 1 leaves the tail half of the line-split with a zero
+// line budget (head takes the only line slot) — the preview must still be
+// valid (head-only) rather than emit a bare marker with nothing after it.
+func TestPreviewFallsBackToHeadOnlyUnderTinyBudget(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := store.Put([]byte("abcdefghij\nmore\n"), PutOptions{Scope: Scope{SessionID: "s"}, PreviewLines: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Preview != "abcdefghij\n" || !meta.Truncated || strings.Contains(meta.Preview, "omitted") {
+		t.Fatalf("expected head-only fallback under PreviewLines: 1: %+v", meta)
+	}
+}
+
+func TestPreviewByteBudgetIncludesElisionMarker(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := store.Put([]byte("abcdefghijklmnopqrstuvwxyz"), PutOptions{
+		Scope: Scope{SessionID: "s"}, PreviewBytes: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meta.Preview) > 24 {
+		t.Fatalf("preview exceeds byte budget: got %d bytes: %q", len(meta.Preview), meta.Preview)
+	}
+	if !meta.Truncated {
+		t.Fatal("expected truncated preview")
+	}
+}
+
+// TestPreviewLineSplitBiasesHeadOnOddBudget locks in the odd-maxLines split
+// rule (head gets the ceil half) so the allocation between head/tail stays
+// deterministic across refactors.
+func TestPreviewLineSplitBiasesHeadOnOddBudget(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("l1\nl2\nl3\nl4\nl5\n")
+	meta, err := store.Put(raw, PutOptions{Scope: Scope{SessionID: "s"}, PreviewLines: 3, PreviewBytes: 4096})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// maxLines=3 -> head gets ceil(3/2)=2 lines ("l1\nl2\n"), tail gets 1
+	// ("l5\n"); the 6 bytes of "l3\nl4\n" in between are omitted.
+	want := "l1\nl2\n\n… [6 bytes omitted] …\nl5\n"
+	if meta.Preview != want || !meta.Truncated {
+		t.Fatalf("preview = %q, want %q (truncated=%v)", meta.Preview, want, meta.Truncated)
 	}
 }
