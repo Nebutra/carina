@@ -108,6 +108,17 @@ type WorkflowSpec struct {
 	// why these are two execution semantics over one shared graph schema
 	// rather than two competing engines.
 	ExecutionMode string `json:"execution_mode,omitempty"`
+
+	// TokenBudget, streaming-mode only, is an optional aggregate ceiling
+	// (design §9's "budget tree" root) across every step's subagent token
+	// usage for this ENTIRE run — not per-step (that's the existing
+	// per-task go/daemon/budget.go mechanism, untouched). 0 means
+	// unlimited, matching the zero-means-off convention d.maxTaskTokens
+	// already uses. Once aggregate spend meets the ceiling, the streaming
+	// coordinator stops admitting new steps (marking them skipped with an
+	// audited reason) but never kills a step already in flight — see
+	// streamCoordinator.maybeDispatch.
+	TokenBudget int `json:"token_budget,omitempty"`
 }
 
 func (s *WorkflowSpec) streaming() bool { return s.ExecutionMode == "streaming" }

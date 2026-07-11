@@ -53,10 +53,11 @@ const (
 )
 
 type streamingStepResult struct {
-	id     string
-	kind   stepOutcomeKind
-	output string
-	errMsg string
+	id         string
+	kind       stepOutcomeKind
+	output     string
+	errMsg     string
+	tokensUsed int // 0 for remote-dispatched steps: the external executor result schema carries no token count (see workflow_remote.go)
 }
 
 // streamCoordinator owns ALL streaming-workflow graph state (dependency
@@ -93,6 +94,21 @@ type streamCoordinator struct {
 	totalSteps         int // grows if generator steps inject new nodes
 	resolvedCount      int
 	remainingToResolve int
+
+	// Budget tree + observability rollup (Agent Swarm design §9/§10):
+	// aggregate counters maintained incrementally (not recomputed by
+	// scanning byID on every event) so they stay cheap at hundreds of
+	// steps. budgetSpent accumulates every terminal step's tokensUsed
+	// regardless of outcome — a step that burned tokens before failing
+	// still counts against the run's budget. completed/failed/skipped are
+	// FINAL-state counts; runningCount is steps currently dispatched and
+	// awaiting a result (incremented in dispatch(), decremented at the top
+	// of handleResult()).
+	budgetSpent    int
+	completedCount int
+	failedCount    int
+	skippedCount   int
+	runningCount   int
 
 	runCtx  context.Context
 	cancel  context.CancelFunc
@@ -164,6 +180,7 @@ func (d *Daemon) runWorkflowStreaming(parent *sessionstore.Session, parentTask *
 			sc.terminal[id] = stepDone
 			sc.snapshot[id] = r
 			sc.resolvedCount++
+			sc.completedCount++ // seed the rollup so a resumed run's counts include already-done steps, not just newly-resolved ones
 		}
 	}
 	for _, st := range spec.Steps {
@@ -252,6 +269,7 @@ func (sc *streamCoordinator) dispatch(id string) {
 		inputSnapshot[k] = v
 	}
 	st := sc.byID[id]
+	sc.runningCount++
 	go func() {
 		select {
 		case sc.sem <- struct{}{}:
@@ -270,6 +288,18 @@ func (sc *streamCoordinator) dispatch(id string) {
 // upstream failure uses — conditional branching and failure isolation share
 // one mechanism.
 func (sc *streamCoordinator) maybeDispatch(id string) {
+	// Budget-tree enforcement (design §9): once the run's aggregate spend
+	// meets its declared ceiling, refuse to admit any NEW step — but never
+	// kill a step already in flight (runningCount steps finish naturally;
+	// see handleResult). Tokens are monotonic (never refunded), so "pause
+	// until headroom frees up" isn't meaningful here the way it would be for
+	// a renewable resource — the correct terminal behavior is to skip
+	// remaining not-yet-dispatched steps with a clear, audited reason
+	// rather than either silently truncating the run or aborting it outright.
+	if sc.spec.TokenBudget > 0 && sc.budgetSpent >= sc.spec.TokenBudget {
+		sc.markSkipped(id, fmt.Sprintf("workflow token budget exhausted (%d/%d tokens spent)", sc.budgetSpent, sc.spec.TokenBudget))
+		return
+	}
 	st := sc.byID[id]
 	if len(st.When) > 0 {
 		data := make(map[string]any, len(sc.outputs))
@@ -293,10 +323,39 @@ func (sc *streamCoordinator) markSkipped(id, reason string) {
 	sc.terminal[id] = stepSkipped
 	sc.resolvedCount++
 	sc.remainingToResolve--
+	sc.skippedCount++
 	sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", map[string]any{
 		"status": "workflow_step_skipped", "workflow": sc.spec.Name, "run_id": sc.runID, "step": id, "reason": reason,
 	}, "")
 	sc.skipQueue = append(sc.skipQueue, id)
+}
+
+// rollupPayload is the aggregated, coordinator-side observability view
+// (design §10): "N completed / M running / K failed / remaining budget",
+// NOT a per-step firehose. This is what a large-scale (hundreds-of-steps)
+// subscriber sees by default; per-step detail remains available exactly as
+// before via the existing "workflow_step_*" events on the same session's
+// event stream — a client that wants to drill into one step's full detail
+// still can, but doesn't have to consume it just to watch overall progress.
+func (sc *streamCoordinator) rollupPayload() map[string]any {
+	queued := sc.totalSteps - sc.completedCount - sc.failedCount - sc.skippedCount - sc.runningCount
+	if queued < 0 {
+		queued = 0 // defensive: totalSteps can grow mid-run via generator injection between reads
+	}
+	payload := map[string]any{
+		"total": sc.totalSteps, "completed": sc.completedCount, "failed": sc.failedCount,
+		"skipped": sc.skippedCount, "running": sc.runningCount, "queued": queued,
+		"budget_spent": sc.budgetSpent,
+	}
+	if sc.spec.TokenBudget > 0 {
+		remaining := sc.spec.TokenBudget - sc.budgetSpent
+		if remaining < 0 {
+			remaining = 0
+		}
+		payload["budget_limit"] = sc.spec.TokenBudget
+		payload["budget_remaining"] = remaining
+	}
+	return payload
 }
 
 // propagate is called once a step (fromID) has resolved, decrementing every
@@ -328,9 +387,12 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 	}
 	sc.resolvedCount++
 	sc.remainingToResolve--
+	sc.runningCount-- // balances dispatch()'s increment — every dispatched step ends up here exactly once
+	sc.budgetSpent += res.tokensUsed
 	switch res.kind {
 	case stepDone:
 		sc.terminal[res.id] = stepDone
+		sc.completedCount++
 		sc.outputs[res.id] = res.output
 		sc.snapshot[res.id] = stepResult{Status: "completed", Output: res.output}
 		full := make(map[string]stepResult, len(sc.snapshot))
@@ -362,6 +424,7 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 		sc.propagate(res.id, false)
 	case stepFailed:
 		sc.terminal[res.id] = stepFailed
+		sc.failedCount++
 		sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", map[string]any{
 			"status": "workflow_step_failed", "workflow": sc.spec.Name, "run_id": sc.runID, "step": res.id,
 			"error": res.errMsg, "fail_fast": sc.byID[res.id].FailFast,
@@ -374,6 +437,7 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 		sc.propagate(res.id, true)
 	case stepSkipped:
 		sc.terminal[res.id] = stepSkipped
+		sc.skippedCount++
 		sc.propagate(res.id, true)
 	}
 	// Drain any skip-chain reactions queued by propagate()/markSkipped()
@@ -384,6 +448,11 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 		sc.skipQueue = sc.skipQueue[1:]
 		sc.propagate(id, true)
 	}
+	rollup := sc.rollupPayload()
+	rollup["status"] = "workflow_progress_rollup"
+	rollup["workflow"] = sc.spec.Name
+	rollup["run_id"] = sc.runID
+	sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", rollup, "")
 }
 
 // runStreamingStep executes exactly one step (interpolation, structured
@@ -452,28 +521,51 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 	}, "")
 
 	binding := &swarmChannelBinding{broker: channels, stepID: st.ID, subscribed: st.ConsumesChannel}
-	summary, _ := d.spawnSubagentContextIDBound(ctx, parent, parentTask, st.Agent, taskText, binding)
+	summary, childSessionID := d.spawnSubagentContextIDBound(ctx, parent, parentTask, st.Agent, taskText, binding)
+	// Attribute this step's cost to the run's aggregate budget (design §9)
+	// regardless of outcome — a step that burned tokens before failing
+	// still counts. childSessionID is "" if spawn was refused before a
+	// child session ever existed (denied capability, unknown agent, etc.),
+	// in which case there is nothing to look up and cost is correctly 0.
+	tokensUsed := 0
+	if childSessionID != "" {
+		tokensUsed = d.sessionTotalTokens(childSessionID)
+	}
 	if err := ctx.Err(); err != nil {
-		return streamingStepResult{id: st.ID, kind: stepSkipped, errMsg: "workflow cancelled"}
+		return streamingStepResult{id: st.ID, kind: stepSkipped, errMsg: "workflow cancelled", tokensUsed: tokensUsed}
 	}
 	if spawnFailed(summary) {
 		_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
 			WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,
 			StepID: st.ID, TaskID: parentTask.TaskID,
 		}, carinatelemetry.Cost{}, time.Since(startedAt), "failed")
-		return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: summary}
+		return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: summary, tokensUsed: tokensUsed}
 	}
 
 	if d.workflowRuns != nil {
 		now := time.Now().UTC()
 		_, managedErr := d.workflowRuns.Detail(runID)
 		if _, err := d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: workflowui.Completed, FinishedAt: &now, Output: summary}); managedErr == nil && err != nil {
-			return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: fmt.Sprintf("completed but operator state persistence failed: %v", err)}
+			return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: fmt.Sprintf("completed but operator state persistence failed: %v", err), tokensUsed: tokensUsed}
 		}
 	}
 	_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
 		WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,
 		StepID: st.ID, TaskID: parentTask.TaskID,
 	}, carinatelemetry.Cost{}, time.Since(startedAt), "completed")
-	return streamingStepResult{id: st.ID, kind: stepDone, output: summary}
+	return streamingStepResult{id: st.ID, kind: stepDone, output: summary, tokensUsed: tokensUsed}
+}
+
+// sessionTotalTokens sums TokensUsed across every scheduler task ever
+// created under sessionID (normally exactly one, for a spawned subagent
+// child session) — used to attribute a completed streaming-workflow step's
+// cost to its run's aggregate budget (streamCoordinator.budgetSpent).
+func (d *Daemon) sessionTotalTokens(sessionID string) int {
+	total := 0
+	for _, t := range d.sched.List() {
+		if t.SessionID == sessionID {
+			total += t.TokensUsed
+		}
+	}
+	return total
 }
