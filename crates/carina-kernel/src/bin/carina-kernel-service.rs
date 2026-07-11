@@ -1187,6 +1187,7 @@ impl Service {
         let session_id = str_param(p, "session_id")?;
         let state_dir = self.state_dir.clone();
         let ctx = self.ctx(p)?;
+        let started = std::time::Instant::now();
 
         let mut opts = carina_index::RepoMapOptions::default();
         if let Some(budget) = p.get("token_budget").and_then(Value::as_u64) {
@@ -1195,9 +1196,33 @@ impl Service {
         if let Some(focus) = p.get("focus_paths").and_then(Value::as_array) {
             opts.focus_paths = focus.iter().filter_map(Value::as_str).map(String::from).collect();
         }
-        index_gate(ctx, &session_id, format!("index map budget={}", opts.token_budget))?;
+        let decision = index_gate(ctx, &session_id, format!("index map budget={}", opts.token_budget))?;
         let index = existing_index(&state_dir, ctx)?;
         let map = index.repo_map(&opts).map_err(index_err)?;
+
+        // Decision-linked completion status event (same idiom as
+        // index_embed_completed / index_edges_stored) — no new EventType
+        // variants. Aggregate, low-cardinality counts only: how much of the
+        // ranked symbol/file set survived the token-budget cut, not a
+        // per-symbol or per-file trail.
+        let event = Event::new(
+            &session_id,
+            EventType::ToolApproved,
+            json!({
+                "status": "index_map_completed",
+                "symbols_total": map.symbols_total,
+                "symbols_included": map.symbols_included,
+                "symbols_dropped_count": map.symbols_total - map.symbols_included,
+                "files_total": map.files_total,
+                "files_included": map.files_included,
+                "token_budget": opts.token_budget,
+                "token_estimate": map.token_estimate,
+                "duration_ms": started.elapsed().as_millis() as u64,
+            }),
+        )
+        .with_decision(&decision.decision_id);
+        ctx.kernel.record_event(&event).map_err(err_str)?;
+
         Ok(json!({
             "map": map.text,
             "ranked": map.ranked,
