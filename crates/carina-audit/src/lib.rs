@@ -356,6 +356,22 @@ mod tests {
     }
 
     #[test]
+    fn append_cursor_is_monotonic_and_survives_reopen() {
+        let dir = tmp("cursor");
+        let log = AuditLog::open(&dir, "cursor").unwrap();
+        let one = Event::new("cursor", EventType::TaskCreated, serde_json::json!({}));
+        let two = Event::new("cursor", EventType::TaskCreated, serde_json::json!({}));
+        assert_eq!(log.append_with_cursor(&one).unwrap(), 1);
+        assert_eq!(log.append_with_cursor(&two).unwrap(), 2);
+        drop(log);
+
+        let reopened = AuditLog::open(&dir, "cursor").unwrap();
+        let three = Event::new("cursor", EventType::TaskCreated, serde_json::json!({}));
+        assert_eq!(reopened.append_with_cursor(&three).unwrap(), 3);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn intact_chain_verifies() {
         let dir = tmp("intact");
         let log = AuditLog::open(&dir, "s").unwrap();
