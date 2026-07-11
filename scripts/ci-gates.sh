@@ -50,7 +50,18 @@ printf 'x TODO y\n' > "$GATE_TMP/ws/f.txt"
 CARINA_TOOLS_DIR="$GATE_TMP/tools" "$DAEMON" -socket "$GATE_TMP/d.sock" -state "$GATE_TMP/st" \
   -kernel "$KERNEL" -tools "$GATE_TMP/tools" -policy "$GATE_TMP/np" >"$GATE_TMP/d.log" 2>&1 &
 DPID=$!
-for _ in $(seq 1 100); do [ -S "$GATE_TMP/d.sock" ] && break; sleep 0.05; done
+for _ in $(seq 1 300); do
+  [ -S "$GATE_TMP/d.sock" ] && break
+  if ! kill -0 "$DPID" 2>/dev/null; then
+    cat "$GATE_TMP/d.log" >&2
+    fail "16.4/16.5 daemon exited before socket readiness"
+  fi
+  sleep 0.05
+done
+if [ ! -S "$GATE_TMP/d.sock" ]; then
+  cat "$GATE_TMP/d.log" >&2
+  fail "16.4/16.5 daemon socket readiness timed out"
+fi
 
 python3 - "$GATE_TMP/d.sock" <<'PY' || exit 1
 import socket, json, sys, os
