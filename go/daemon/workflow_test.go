@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,6 +184,280 @@ func TestWorkflowResume(t *testing.T) {
 		{ID: "b", Agent: "worker", Task: "B<${a}>", Needs: []string{"a"}},
 	}}
 	out, err := d.runWorkflow(parent, parentTask, spec, "", runID)
+	if err != nil {
+		t.Fatalf("resume failed: %v", err)
+	}
+	if out["a"] != "CACHED_A" {
+		t.Fatalf("completed step should be skipped and reused, got %q", out["a"])
+	}
+	if !strings.Contains(out["b"], "CACHED_A") {
+		t.Fatalf("downstream should use cached output, got %q", out["b"])
+	}
+}
+
+// extractTaskLine pulls the "TASK: ..." line out of a subagent prompt, same
+// extraction taskEchoReasoner uses.
+func extractTaskLine(prompt string) string {
+	for _, line := range strings.Split(prompt, "\n") {
+		if strings.HasPrefix(line, "TASK: ") {
+			return strings.TrimPrefix(line, "TASK: ")
+		}
+	}
+	return ""
+}
+
+// delayedEchoReasoner is taskEchoReasoner plus a controllable block: any task
+// containing slowMarker blocks in Think() until proceed is closed. Used to
+// prove the streaming scheduler dispatches a fast step's dependent without
+// waiting for an unrelated, still-running sibling — the batch/BSP scheduler
+// cannot do this by construction (it waits for the whole "level" via
+// wg.Wait() before computing the next level).
+type delayedEchoReasoner struct {
+	slowMarker string
+	proceed    chan struct{}
+}
+
+func (delayedEchoReasoner) Name() string { return "delayed-echo" }
+func (r delayedEchoReasoner) Think(ctx context.Context, prompt string) (string, error) {
+	task := extractTaskLine(prompt)
+	if strings.Contains(task, r.slowMarker) {
+		select {
+		case <-r.proceed:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	b, _ := json.Marshal(map[string]string{"tool": "done", "summary": "did[" + task + "]"})
+	return string(b), nil
+}
+
+// TestWorkflowStreamingDoesNotBarrierOnSlowSibling is the core proof of P1's
+// value: "slow" and "fast" are both root steps (no deps between them); "dep"
+// depends only on "fast". Under the batch/BSP scheduler both root steps
+// would be in the same level, and "dep" (the next level) could not start
+// until wg.Wait() returns for the WHOLE level — i.e. not until "slow"
+// finishes too. Under streaming, "dep" must start the instant "fast"
+// resolves, regardless of "slow" still being blocked.
+func TestWorkflowStreamingDoesNotBarrierOnSlowSibling(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	reasoner := delayedEchoReasoner{slowMarker: "SLOW_STEP", proceed: make(chan struct{})}
+	d.SetReasoner(reasoner)
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	spec := &WorkflowSpec{Name: "no-barrier", ExecutionMode: "streaming", Steps: []WorkflowStep{
+		{ID: "slow", Agent: "worker", Task: "SLOW_STEP"},
+		{ID: "fast", Agent: "worker", Task: "FAST_STEP"},
+		{ID: "dep", Agent: "worker", Task: "DEP<${fast}>", Needs: []string{"fast"}},
+	}}
+
+	type runResult struct {
+		out map[string]string
+		err error
+	}
+	resultCh := make(chan runResult, 1)
+	go func() {
+		out, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-no-barrier")
+		resultCh <- runResult{out, err}
+	}()
+
+	// Poll for "dep" to complete while "slow" is still deliberately blocked —
+	// this can only happen if the scheduler dispatched dep without waiting
+	// for slow. 2s budget in 10ms steps; fails closed (t.Fatal) on timeout.
+	deadline := time.After(2 * time.Second)
+	depStarted := false
+	for !depStarted {
+		select {
+		case <-deadline:
+			t.Fatal("dep's dependency (fast) never resolved while slow stayed blocked — scheduler appears to be barriering like BSP")
+		case <-time.After(10 * time.Millisecond):
+			run, _ := newWFRunStore(d.stateDir).load("run-no-barrier")
+			if _, ok := run["dep"]; ok {
+				depStarted = true
+			}
+		}
+	}
+	close(reasoner.proceed)
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("workflow failed: %v", r.err)
+		}
+		if !strings.Contains(r.out["dep"], r.out["fast"]) {
+			t.Fatalf("dep should have interpolated fast's output: dep=%q fast=%q", r.out["dep"], r.out["fast"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("workflow did not complete after releasing the slow step")
+	}
+}
+
+// TestWorkflowStreamingIsolatesFailureToItsOwnDependents: "root" fails (an
+// unknown agent — a real, deterministic failure, not a scripted error);
+// "dependent" (needs root) must be skipped, not run; "independent" (no
+// relation to root) must still complete normally. This is the direct
+// contrast with the batch scheduler's "one failure kills the whole run"
+// (workflow.go:245).
+func TestWorkflowStreamingIsolatesFailureToItsOwnDependents(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	d.SetReasoner(taskEchoReasoner{})
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	spec := &WorkflowSpec{Name: "isolate", ExecutionMode: "streaming", Steps: []WorkflowStep{
+		{ID: "root", Agent: "does-not-exist", Task: "boom"}, // deterministic "unknown agent" failure
+		{ID: "dependent", Agent: "worker", Task: "should be skipped", Needs: []string{"root"}},
+		{ID: "independent", Agent: "worker", Task: "unrelated work"},
+	}}
+
+	out, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-isolate")
+	if err != nil {
+		t.Fatalf("expected the run to succeed overall (isolate is the default), got error: %v", err)
+	}
+	if _, ok := out["dependent"]; ok {
+		t.Fatalf("dependent must be skipped (never ran), got output: %q", out["dependent"])
+	}
+	if !strings.Contains(out["independent"], "unrelated work") {
+		t.Fatalf("independent step must complete normally, got: %q", out["independent"])
+	}
+}
+
+// TestWorkflowStreamingFailFastAbortsWholeRun: same shape as the isolate
+// test, but "root" opts into FailFast — the whole run must abort with an
+// error, restoring the old "one failure kills the run" behavior for a step
+// that really is on the critical path.
+func TestWorkflowStreamingFailFastAbortsWholeRun(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	d.SetReasoner(taskEchoReasoner{})
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	spec := &WorkflowSpec{Name: "fail-fast", ExecutionMode: "streaming", Steps: []WorkflowStep{
+		{ID: "root", Agent: "does-not-exist", Task: "boom", FailFast: true},
+		{ID: "dependent", Agent: "worker", Task: "should be skipped", Needs: []string{"root"}},
+	}}
+
+	_, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-fail-fast")
+	if err == nil {
+		t.Fatal("expected FailFast step's failure to abort the whole run")
+	}
+	if !strings.Contains(err.Error(), "root") {
+		t.Fatalf("error should identify the failing step, got: %v", err)
+	}
+}
+
+// TestWorkflowExecutionModeValidation: an unknown execution_mode is rejected
+// up front, same fail-fast-at-declare-time posture as cycle/dangling-dep
+// validation.
+func TestWorkflowExecutionModeValidation(t *testing.T) {
+	spec := &WorkflowSpec{Name: "bad-mode", ExecutionMode: "quantum", Steps: []WorkflowStep{
+		{ID: "a", Agent: "worker", Task: "x"},
+	}}
+	if err := spec.validate(); err == nil {
+		t.Fatal("unknown execution_mode should be rejected")
+	}
+}
+
+// TestWorkflowStreamingStepLimit: a graph over maxStreamingWorkflowSteps is
+// rejected before any step runs.
+func TestWorkflowStreamingStepLimit(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	d.SetReasoner(taskEchoReasoner{})
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	steps := make([]WorkflowStep, maxStreamingWorkflowSteps+1)
+	for i := range steps {
+		steps[i] = WorkflowStep{ID: fmt.Sprintf("s%d", i), Agent: "worker", Task: "x"}
+	}
+	spec := &WorkflowSpec{Name: "too-big", ExecutionMode: "streaming", Steps: steps}
+
+	_, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-too-big")
+	if err == nil {
+		t.Fatal("expected the step-count ceiling to reject this workflow")
+	}
+}
+
+// TestWorkflowStreamingWideFanOutFanIn is a real scale check, not just a
+// small-graph correctness check: 200 independent root steps all feed into
+// one join step. This exercises the bounded worker pool under genuine
+// contention (200 ready steps competing for defaultStreamingWorkflowConcurrency
+// slots) and the join step's in-degree correctly reaching 0 only once all
+// 200 have resolved.
+func TestWorkflowStreamingWideFanOutFanIn(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	d.SetReasoner(taskEchoReasoner{})
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	const width = 200
+	steps := make([]WorkflowStep, 0, width+1)
+	joinNeeds := make([]string, 0, width)
+	for i := 0; i < width; i++ {
+		id := fmt.Sprintf("leaf%d", i)
+		steps = append(steps, WorkflowStep{ID: id, Agent: "worker", Task: id})
+		joinNeeds = append(joinNeeds, id)
+	}
+	steps = append(steps, WorkflowStep{ID: "join", Agent: "worker", Task: "join", Needs: joinNeeds})
+	spec := &WorkflowSpec{Name: "wide", ExecutionMode: "streaming", Steps: steps}
+
+	start := time.Now()
+	out, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-wide")
+	if err != nil {
+		t.Fatalf("wide fan-out/fan-in failed: %v", err)
+	}
+	if len(out) != width+1 {
+		t.Fatalf("want %d step outputs, got %d", width+1, len(out))
+	}
+	if _, ok := out["join"]; !ok {
+		t.Fatal("join step never ran")
+	}
+	t.Logf("200-leaf fan-out/fan-in completed in %s with concurrency=%d", time.Since(start), defaultStreamingWorkflowConcurrency)
+}
+
+// TestWorkflowStreamingResume: mirrors TestWorkflowResume for the streaming
+// scheduler — the streaming path recomputes live in-degree from scratch
+// around already-completed steps (genuinely new code, not shared with the
+// batch scheduler's resume path), so this exercises that logic directly.
+func TestWorkflowStreamingResume(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	d.SetReasoner(taskEchoReasoner{})
+
+	const runID = "run-streaming-resume"
+	newWFRunStore(d.stateDir).save(runID, map[string]stepResult{
+		"a": {Status: "completed", Output: "CACHED_A"},
+	})
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "resume pipeline")
+
+	spec := &WorkflowSpec{Name: "resumable-streaming", ExecutionMode: "streaming", Steps: []WorkflowStep{
+		{ID: "a", Agent: "worker", Task: "stepA"},
+		{ID: "b", Agent: "worker", Task: "B<${a}>", Needs: []string{"a"}},
+	}}
+	out, err := d.runWorkflowStreaming(parent, parentTask, spec, "", runID)
 	if err != nil {
 		t.Fatalf("resume failed: %v", err)
 	}

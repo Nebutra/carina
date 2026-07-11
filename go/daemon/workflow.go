@@ -56,7 +56,11 @@ func (d *Daemon) executeWorkflowOutcome(sess *sessionstore.Session, task *schedu
 	}
 
 	runID := sessionstore.NewID("wf")
-	outputs, err := d.runWorkflow(sess, task, spec, act.Task, runID)
+	runFn := d.runWorkflow
+	if spec.streaming() {
+		runFn = d.runWorkflowStreaming
+	}
+	outputs, err := runFn(sess, task, spec, act.Task, runID)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return toolExecutionOutcome{display: fmt.Sprintf("workflow %q cancelled (run %s)", spec.Name, runID), status: "cancelled", errorCategory: "operator_cancelled"}
