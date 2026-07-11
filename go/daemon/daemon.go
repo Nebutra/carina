@@ -80,6 +80,7 @@ type Options struct {
 	HeadroomTokenBudget        int                // budget for context blocks
 	ExtensionTrustedRoots      []string           // local roots allowed as extension install sources
 	TelemetryWriter            io.Writer          // nil keeps OpenTelemetry export disabled
+	BestOfNEnabled             bool               // opt-in: expose the best_of_n tool (default false — off)
 }
 
 // EgressCredential authenticates outbound requests to a host by injecting a
@@ -132,6 +133,7 @@ type Daemon struct {
 	summarizer     Reasoner     // optional cheaper model for compaction/summarization
 	verifier       Reasoner     // optional independent "judge" for done-claims (nil => default-lenient)
 	riskReviewer   Reasoner     // optional independent approval reviewer (nil => deterministic heuristic)
+	judgeReasoner  Reasoner     // optional independent best-of-n judge (nil => falls back to d.reasoner, then a deterministic heuristic)
 	riskReviewMode atomic.Value // string: off|advisory|enforce, hot-reloadable
 
 	mu                  sync.Mutex
@@ -146,6 +148,8 @@ type Daemon struct {
 	readProv   map[string]map[string]string // session -> relpath -> sha256 of last read (dirty-write guard)
 	readProvMu sync.Mutex
 
+	restrictedTools sync.Map // session -> map[string]bool of tool verbs this session's loop must never dispatch (set for best-of-n candidate drafters)
+
 	indexBuilt sync.Map // session -> true once the code index was lazily built (code.* tools)
 
 	indexSnapshot sync.Map // session -> *sweepSnapshot from the last index sync (V4 mtime staleness sweep)
@@ -154,9 +158,11 @@ type Daemon struct {
 
 	embedModelDefault string // "<provider>/<model>" of the default embeddings backend ("" = semantic layer off)
 
-	trust         *trustStore  // trusted workspace roots
-	requireTrust  atomic.Bool  // deny command exec in untrusted workspaces (hot-reloadable)
-	maxTaskTokens atomic.Int64 // per-task token budget (0 => unlimited; hot-reloadable)
+	trust          *trustStore  // trusted workspace roots
+	requireTrust   atomic.Bool  // deny command exec in untrusted workspaces (hot-reloadable)
+	maxTaskTokens  atomic.Int64 // per-task token budget (0 => unlimited; hot-reloadable)
+	bestOfNEnabled atomic.Bool  // opt-in: expose/allow the best_of_n tool (default false — off; hot-reloadable)
+
 	mailbox               map[string]*taskMailbox // task -> pending steering messages, urgent-first
 	mailboxMu             sync.Mutex
 	taskContexts          map[string]context.Context
@@ -415,6 +421,7 @@ func New(opts Options) (*Daemon, error) {
 	d.trust = newTrustStore(opts.StateDir)
 	d.requireTrust.Store(opts.RequireWorkspaceTrust)
 	d.maxTaskTokens.Store(int64(opts.MaxTaskTokens))
+	d.bestOfNEnabled.Store(opts.BestOfNEnabled)
 	d.sandbox.Store(opts.SandboxCommands)
 	d.safeMode = opts.SafeMode
 	d.mailbox = map[string]*taskMailbox{}
@@ -2307,6 +2314,21 @@ func (d *Daemon) recordRead(sessionID, path, content string) {
 		d.readProv[sessionID] = map[string]string{}
 	}
 	d.readProv[sessionID][path] = hex.EncodeToString(h[:])
+}
+
+// lastReadHash returns the sha256 (hex) this session last recorded for path
+// via recordRead, and whether any read was ever recorded at all. Used to
+// transfer real read-provenance between sessions (see bestofn.go) instead of
+// re-stamping current disk content, which would make drift undetectable.
+func (d *Daemon) lastReadHash(sessionID, path string) (string, bool) {
+	d.readProvMu.Lock()
+	defer d.readProvMu.Unlock()
+	m := d.readProv[sessionID]
+	if m == nil {
+		return "", false
+	}
+	h, ok := m[path]
+	return h, ok
 }
 
 // checkWriteProvenance rejects a full-file overwrite that would clobber an

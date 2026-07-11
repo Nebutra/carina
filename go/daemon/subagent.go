@@ -85,26 +85,40 @@ func (d *Daemon) spawnSubagent(parent *sessionstore.Session, parentTask *schedul
 }
 
 func (d *Daemon) spawnSubagentContext(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, agentName, taskDesc string) string {
+	summary, _ := d.spawnSubagentContextID(ctx, parent, parentTask, agentName, taskDesc)
+	return summary
+}
+
+// spawnSubagentContextID is spawnSubagentContext plus the child session ID,
+// for callers that need to correlate a subagent's result back to what that
+// child session actually read/wrote (see bestofn.go, which uses this to
+// establish real write-provenance for a winning candidate instead of
+// self-seeding it at submission time).
+func (d *Daemon) spawnSubagentContextID(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, agentName, taskDesc string) (string, string) {
 	if ctx.Err() != nil {
-		return "subagent cancelled"
+		return "subagent cancelled", ""
 	}
 	specs := loadAgentSpecs(parent.WorkspaceRoot)
 	spec := specs[agentName]
 	if spec == nil {
-		return fmt.Sprintf("unknown agent %q (available: %s)", agentName, strings.Join(specNames(specs), ", "))
+		return fmt.Sprintf("unknown agent %q (available: %s)", agentName, strings.Join(specNames(specs), ", ")), ""
 	}
 	if taskDesc == "" {
-		return "error: spawn needs a task for the subagent"
+		return "error: spawn needs a task for the subagent", ""
 	}
 
 	// Capability monotonic decrease: child ⊆ parent.
 	childProfile := attenuate(parent.PermissionProfile, spec.Profile)
 	child, err := d.store.CreateSubSession(parent.WorkspaceRoot, childProfile, parent.ApprovalMode, parent.SessionID, parent.Depth+1)
 	if err != nil {
-		return "spawn failed: " + err.Error()
+		return "spawn failed: " + err.Error(), ""
 	}
 	if err := d.kern.InitSessionFull(child.SessionID, child.WorkspaceRoot, childProfile, parent.ApprovalMode, d.org); err != nil {
-		return "spawn init failed: " + err.Error()
+		return "spawn init failed: " + err.Error(), ""
+	}
+	if len(spec.RestrictedTools) > 0 {
+		d.restrictedTools.Store(child.SessionID, spec.RestrictedTools)
+		defer d.restrictedTools.Delete(child.SessionID)
 	}
 
 	// Audit the delegation on the parent, linking to the child session.
@@ -126,7 +140,7 @@ func (d *Daemon) spawnSubagentContext(ctx context.Context, parent *sessionstore.
 		"spawn_agent": agentName, "child_session": child.SessionID,
 		"result_summary": truncate(summary, 300),
 	}, "")
-	return summary
+	return summary, child.SessionID
 }
 
 // runSubagentLoop runs a bounded ReAct loop for a subagent, using its own

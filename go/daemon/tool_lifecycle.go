@@ -387,7 +387,7 @@ func toolKind(tool string) string {
 		return "write"
 	case "run":
 		return "command"
-	case "spawn", "workflow":
+	case "spawn", "workflow", "best_of_n":
 		return "delegation"
 	case "mcp":
 		return "mcp"
@@ -414,6 +414,8 @@ func redactedToolArguments(act *action) map[string]any {
 		args["agent"], args["task_count"] = act.Agent, max(1, len(act.Tasks))
 	case "workflow":
 		args["workflow"] = act.Workflow
+	case "best_of_n":
+		args["n"] = act.N
 	case "mcp":
 		args["mcp_server"], args["mcp_tool"] = act.MCPServer, act.MCPTool
 		args["argument_keys"] = sortedMapKeys(act.Args)
