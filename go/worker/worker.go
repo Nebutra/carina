@@ -17,23 +17,30 @@ import (
 
 type Kind string
 
+type ProcessTreeContainment string
+
 const (
 	Local   Kind = "local"
 	Remote  Kind = "remote"
 	CI      Kind = "ci"
 	Sandbox Kind = "sandbox"
+
+	ContainmentNone         ProcessTreeContainment = "none"
+	ContainmentUnixPgrpV1   ProcessTreeContainment = "unix_pgrp_v1"
+	ContainmentWindowsJobV1 ProcessTreeContainment = "windows_job_v1"
 )
 
 type Worker struct {
-	WorkerID      string    `json:"worker_id"`
-	Name          string    `json:"name"`
-	Kind          Kind      `json:"kind"`
-	Type          Kind      `json:"type"` // alias of Kind for §5.4 compatibility
-	Status        string    `json:"status"`
-	CurrentTask   string    `json:"current_task"`
-	Capabilities  []string  `json:"capabilities"`
-	RegisteredAt  time.Time `json:"registered_at"`
-	LastHeartbeat time.Time `json:"last_heartbeat"`
+	WorkerID               string                 `json:"worker_id"`
+	Name                   string                 `json:"name"`
+	Kind                   Kind                   `json:"kind"`
+	Type                   Kind                   `json:"type"` // alias of Kind for §5.4 compatibility
+	Status                 string                 `json:"status"`
+	CurrentTask            string                 `json:"current_task"`
+	Capabilities           []string               `json:"capabilities"`
+	ProcessTreeContainment ProcessTreeContainment `json:"process_tree_containment"`
+	RegisteredAt           time.Time              `json:"registered_at"`
+	LastHeartbeat          time.Time              `json:"last_heartbeat"`
 }
 
 // capabilitiesFor returns the capability set a worker kind may exercise.
@@ -74,12 +81,20 @@ func (p *Pool) Register(name string, kind Kind) *Worker {
 // RegisterAuthenticated registers a worker and returns its bearer credential.
 // The opaque credential is returned once; Pool retains only its SHA-256 hash.
 func (p *Pool) RegisterAuthenticated(name string, kind Kind) (*Worker, string, error) {
+	return p.RegisterAuthenticatedWithContainment(name, kind, ContainmentNone)
+}
+
+func (p *Pool) RegisterAuthenticatedWithContainment(name string, kind Kind, containment ProcessTreeContainment) (*Worker, string, error) {
+	if !ValidProcessTreeContainment(containment) {
+		return nil, "", fmt.Errorf("worker: unsupported process tree containment %q", containment)
+	}
 	credentialBytes := make([]byte, 32)
 	if _, err := rand.Read(credentialBytes); err != nil {
 		return nil, "", fmt.Errorf("worker: generate credential: %w", err)
 	}
 	credential := base64.RawURLEncoding.EncodeToString(credentialBytes)
 	w := newWorker(name, kind)
+	w.ProcessTreeContainment = containment
 	p.mu.Lock()
 	p.workers[w.WorkerID] = w
 	p.credentialHash[w.WorkerID] = sha256.Sum256([]byte(credential))
@@ -87,17 +102,55 @@ func (p *Pool) RegisterAuthenticated(name string, kind Kind) (*Worker, string, e
 	return w, credential, nil
 }
 
+func ValidProcessTreeContainment(value ProcessTreeContainment) bool {
+	switch value {
+	case ContainmentNone, ContainmentUnixPgrpV1, ContainmentWindowsJobV1:
+		return true
+	default:
+		return false
+	}
+}
+
+func (w *Worker) Supports(required []string) bool {
+	declared := make(map[string]bool, len(w.Capabilities))
+	for _, capability := range w.Capabilities {
+		declared[capability] = true
+	}
+	for _, capability := range required {
+		switch capability {
+		case "process_tree_containment":
+			if w.ProcessTreeContainment == ContainmentNone {
+				return false
+			}
+		case "process_tree_containment:unix_pgrp_v1":
+			if w.ProcessTreeContainment != ContainmentUnixPgrpV1 {
+				return false
+			}
+		case "process_tree_containment:windows_job_v1":
+			if w.ProcessTreeContainment != ContainmentWindowsJobV1 {
+				return false
+			}
+		default:
+			if !declared[capability] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func newWorker(name string, kind Kind) *Worker {
 	now := time.Now().UTC()
 	return &Worker{
-		WorkerID:      sessionstore.NewID("wrk"),
-		Name:          name,
-		Kind:          kind,
-		Type:          kind,
-		Status:        "idle",
-		Capabilities:  capabilitiesFor(kind),
-		RegisteredAt:  now,
-		LastHeartbeat: now,
+		WorkerID:               sessionstore.NewID("wrk"),
+		Name:                   name,
+		Kind:                   kind,
+		Type:                   kind,
+		Status:                 "idle",
+		Capabilities:           capabilitiesFor(kind),
+		ProcessTreeContainment: ContainmentNone,
+		RegisteredAt:           now,
+		LastHeartbeat:          now,
 	}
 }
 

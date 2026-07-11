@@ -100,3 +100,23 @@ func TestCapabilitiesForKinds(t *testing.T) {
 		}
 	}
 }
+
+func TestProcessTreeContainmentCapabilities(t *testing.T) {
+	p := NewPool()
+	w, _, err := p.RegisterAuthenticatedWithContainment("unix", Remote, ContainmentUnixPgrpV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.Supports([]string{"process_tree_containment", "process_tree_containment:unix_pgrp_v1"}) {
+		t.Fatalf("unix worker should satisfy its containment capability: %+v", w)
+	}
+	if w.Supports([]string{"process_tree_containment:windows_job_v1"}) || w.Supports([]string{"unknown"}) {
+		t.Fatal("worker must fail closed for mismatched or unknown requirements")
+	}
+	if !w.Supports([]string{"CommandExec"}) || w.Supports([]string{"FileWrite"}) {
+		t.Fatal("worker must match its declared execution capabilities")
+	}
+	if _, _, err := p.RegisterAuthenticatedWithContainment("bad", Remote, "taskkill"); err == nil {
+		t.Fatal("unsupported containment claims must be rejected")
+	}
+}

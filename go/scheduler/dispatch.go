@@ -15,17 +15,22 @@ const defaultLeaseTTL = 30 * time.Second
 // bridge. Unlike Submit (which the local daemon runs in-process), a dispatched
 // task waits on a dedicated queue until a remote worker leases it with Lease.
 func (s *Scheduler) SubmitForDispatch(sessionID, workspaceID, prompt string, criteria []SuccessCheck) *Task {
+	return s.SubmitForDispatchWithCapabilities(sessionID, workspaceID, prompt, criteria, nil)
+}
+
+func (s *Scheduler) SubmitForDispatchWithCapabilities(sessionID, workspaceID, prompt string, criteria []SuccessCheck, required []string) *Task {
 	now := time.Now().UTC()
 	task := &Task{
-		TaskID:          sessionstore.NewID("task"),
-		SessionID:       sessionID,
-		WorkspaceID:     workspaceID,
-		Status:          "queued",
-		UserPrompt:      prompt,
-		SuccessCriteria: criteria,
-		Mode:            "dispatch",
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		TaskID:                     sessionstore.NewID("task"),
+		SessionID:                  sessionID,
+		WorkspaceID:                workspaceID,
+		Status:                     "queued",
+		UserPrompt:                 prompt,
+		SuccessCriteria:            criteria,
+		Mode:                       "dispatch",
+		RequiredWorkerCapabilities: append([]string(nil), required...),
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
 	}
 	s.mu.Lock()
 	s.tasks[task.TaskID] = task
@@ -39,17 +44,29 @@ func (s *Scheduler) SubmitForDispatch(sessionID, workspaceID, prompt string, cri
 // (nil, false) when nothing is queued. If the worker dies without reporting,
 // ReapExpiredLeases re-queues the task once the lease lapses (at-least-once).
 func (s *Scheduler) Lease(workerID string, ttl time.Duration) (*Task, bool) {
+	// Without a capability matcher the scheduler has no evidence that the
+	// worker satisfies a governed requirement, so only unguarded legacy tasks
+	// are eligible.
+	return s.LeaseMatching(workerID, ttl, func(required []string) bool { return len(required) == 0 })
+}
+
+func (s *Scheduler) LeaseMatching(workerID string, ttl time.Duration, supports func([]string) bool) (*Task, bool) {
 	if ttl <= 0 {
 		ttl = defaultLeaseTTL
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for len(s.dispatchQueue) > 0 {
+	queued := len(s.dispatchQueue)
+	for scanned := 0; scanned < queued && len(s.dispatchQueue) > 0; scanned++ {
 		id := s.dispatchQueue[0]
 		s.dispatchQueue = s.dispatchQueue[1:]
 		t, ok := s.tasks[id]
 		if !ok || t.Status != "queued" {
 			continue // dropped or already claimed — skip stale queue entry
+		}
+		if supports != nil && !supports(t.RequiredWorkerCapabilities) {
+			s.dispatchQueue = append(s.dispatchQueue, id)
+			continue
 		}
 		now := time.Now().UTC()
 		updated := *t

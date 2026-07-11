@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -388,7 +386,7 @@ func (s *Server) ListenUnix(socketPath string) error {
 	if err != nil {
 		return fmt.Errorf("rpc: open lock %s: %w", lockPath, err)
 	}
-	if err := unix.Flock(int(lockFile.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+	if err := acquireSocketLock(lockFile); err != nil {
 		_ = lockFile.Close()
 		return fmt.Errorf("rpc: acquire lock %s: %w: %w", lockPath, err, ErrSocketInUse)
 	}
@@ -415,7 +413,7 @@ func (s *Server) releaseLock() {
 	if lockFile == nil {
 		return
 	}
-	_ = unix.Flock(int(lockFile.Fd()), unix.LOCK_UN)
+	_ = releaseSocketLock(lockFile)
 	_ = lockFile.Close()
 }
 

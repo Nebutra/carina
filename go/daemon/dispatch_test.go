@@ -124,6 +124,46 @@ func TestWorkDispatchBridge(t *testing.T) {
 	}
 }
 
+func TestWorkPollFailsClosedOnContainmentRequirement(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	plain, plainCredential, err := d.pool.RegisterAuthenticated("plain", worker.Remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contained, containedCredential, err := d.pool.RegisterAuthenticatedWithContainment("contained", worker.Remote, worker.ContainmentUnixPgrpV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	submitted, err := d.handleWorkSubmit(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "prompt": "requires containment",
+		"required_worker_capabilities": []string{"process_tree_containment"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := submitted.(*scheduler.Task)
+
+	result, err := d.handleWorkPoll(mustJSON(t, map[string]any{"worker_id": plain.WorkerID, "worker_credential": plainCredential}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.(map[string]any)["empty"] != true {
+		t.Fatalf("uncontained worker must not receive guarded work: %+v", result)
+	}
+	if queued, _ := d.sched.Get(task.TaskID); queued.Status != "queued" {
+		t.Fatalf("guarded task must remain queued: %+v", queued)
+	}
+	result, err = d.handleWorkPoll(mustJSON(t, map[string]any{"worker_id": contained.WorkerID, "worker_credential": containedCredential}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leased, ok := result.(map[string]any)["task"].(*scheduler.Task); !ok || leased.TaskID != task.TaskID {
+		t.Fatalf("contained worker should receive guarded task: %+v", result)
+	}
+}
+
 func TestBackpressureStatusIncludesSchedulerContext(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()

@@ -108,6 +108,24 @@ primitive is implemented for the target platform. Carina does not currently clai
 Windows descendant-process containment and does not emulate it by process-name
 scanning.
 
+Workers register a typed `process_tree_containment` value. Darwin/Linux workers
+advertise `unix_pgrp_v1`; Windows and other platforms advertise `none`. Dispatch
+tasks may require `process_tree_containment` (any governed implementation) or an
+exact implementation such as `process_tree_containment:unix_pgrp_v1`. The daemon
+keeps an unmatched task queued and leases it only to a matching worker. Unknown
+requirements fail closed at submission.
+
+Remote dispatch defaults to requiring `process_tree_containment`; callers do
+not need to opt in. Consequently the official Windows worker registers but does
+not lease executor tasks until `windows_job_v1` passes conformance. This avoids
+silently weakening cancellation just because a task omitted a capability list.
+
+Windows must not advertise `windows_job_v1` until a native Job Object guard can
+create the executor suspended, assign it to a kill-on-close Job, resume it, and
+pass descendant-process conformance on Windows CI. `CREATE_NEW_PROCESS_GROUP`,
+`taskkill /T`, and assigning a running process to a Job are not accepted as
+equivalent containment because they leave escape races.
+
 The daemon issues `worker_credential` once during registration. The worker sends it
 with heartbeat, revoke, backpressure, poll, renew, and report calls. Treat that
 credential as a process secret and do not place it in executor input, command-line

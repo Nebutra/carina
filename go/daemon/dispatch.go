@@ -36,9 +36,10 @@ func (d *Daemon) reapLeases() {
 // not on the remote allowlist). The task waits until a worker leases it.
 func (d *Daemon) handleWorkSubmit(params json.RawMessage) (any, error) {
 	var p struct {
-		SessionID       string                   `json:"session_id"`
-		Prompt          string                   `json:"prompt"`
-		SuccessCriteria []scheduler.SuccessCheck `json:"success_criteria"`
+		SessionID                  string                   `json:"session_id"`
+		Prompt                     string                   `json:"prompt"`
+		SuccessCriteria            []scheduler.SuccessCheck `json:"success_criteria"`
+		RequiredWorkerCapabilities []string                 `json:"required_worker_capabilities"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -50,7 +51,12 @@ func (d *Daemon) handleWorkSubmit(params json.RawMessage) (any, error) {
 	if sess.Status != "active" {
 		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
 	}
-	task := d.sched.SubmitForDispatch(sess.SessionID, sess.WorkspaceID, p.Prompt, p.SuccessCriteria)
+	for _, capability := range p.RequiredWorkerCapabilities {
+		if capability != "process_tree_containment" && capability != "process_tree_containment:unix_pgrp_v1" && capability != "process_tree_containment:windows_job_v1" {
+			return nil, fmt.Errorf("unsupported required worker capability %q", capability)
+		}
+	}
+	task := d.sched.SubmitForDispatchWithCapabilities(sess.SessionID, sess.WorkspaceID, p.Prompt, p.SuccessCriteria, p.RequiredWorkerCapabilities)
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt, "mode": "dispatch"}, "")
 	d.persistRun(task.TaskID)
@@ -85,7 +91,11 @@ func (d *Daemon) handleWorkPoll(params json.RawMessage) (any, error) {
 		})
 		return map[string]any{"empty": true, "backpressure": directive}, nil
 	}
-	task, ok := d.sched.Lease(p.WorkerID, time.Duration(p.TTLMs)*time.Millisecond)
+	w, ok := d.pool.Get(p.WorkerID)
+	if !ok {
+		return nil, fmt.Errorf("worker authentication failed")
+	}
+	task, ok := d.sched.LeaseMatching(p.WorkerID, time.Duration(p.TTLMs)*time.Millisecond, w.Supports)
 	if !ok {
 		return map[string]any{"empty": true, "backpressure": directive}, nil
 	}

@@ -42,10 +42,11 @@ type Task struct {
 	OutputSchema    json.RawMessage `json:"output_schema,omitempty"` // complete JSON Schema for final output
 	// Work-dispatch lease (remote execution via the bridge). Empty for tasks the
 	// local daemon runs in-process.
-	LeaseOwner      string    `json:"lease_owner,omitempty"`      // worker holding the dispatch lease
-	LeaseExpiry     time.Time `json:"lease_expiry,omitempty"`     // visibility timeout; once past, the task is re-queued
-	LeaseGeneration int       `json:"lease_generation,omitempty"` // fencing token; changes on every successful lease
-	Attempts        int       `json:"attempts,omitempty"`         // dispatch delivery attempts (at-least-once)
+	LeaseOwner                 string    `json:"lease_owner,omitempty"`      // worker holding the dispatch lease
+	LeaseExpiry                time.Time `json:"lease_expiry,omitempty"`     // visibility timeout; once past, the task is re-queued
+	LeaseGeneration            int       `json:"lease_generation,omitempty"` // fencing token; changes on every successful lease
+	Attempts                   int       `json:"attempts,omitempty"`         // dispatch delivery attempts (at-least-once)
+	RequiredWorkerCapabilities []string  `json:"required_worker_capabilities,omitempty"`
 }
 
 type Scheduler struct {

@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+func leaseAny(s *Scheduler, workerID string, ttl time.Duration) (*Task, bool) {
+	return s.LeaseMatching(workerID, ttl, func([]string) bool { return true })
+}
+
 func TestDispatchLeaseLifecycle(t *testing.T) {
 	s := New()
 	task := s.SubmitForDispatch("sess_1", "ws_1", "do work", nil)
@@ -13,7 +17,7 @@ func TestDispatchLeaseLifecycle(t *testing.T) {
 	}
 
 	// Lease claims it for worker A.
-	leased, ok := s.Lease("wrk_A", 5*time.Second)
+	leased, ok := leaseAny(s, "wrk_A", 5*time.Second)
 	if !ok || leased.TaskID != task.TaskID {
 		t.Fatalf("lease should return the queued task")
 	}
@@ -25,7 +29,7 @@ func TestDispatchLeaseLifecycle(t *testing.T) {
 	}
 
 	// A second poll gets nothing.
-	if _, ok := s.Lease("wrk_B", 5*time.Second); ok {
+	if _, ok := leaseAny(s, "wrk_B", 5*time.Second); ok {
 		t.Fatal("empty queue must not yield a lease")
 	}
 
@@ -42,10 +46,39 @@ func TestDispatchLeaseLifecycle(t *testing.T) {
 	}
 }
 
+func TestLeaseMatchingPreservesUnsupportedTasks(t *testing.T) {
+	s := New()
+	guarded := s.SubmitForDispatchWithCapabilities("sess_1", "ws_1", "guarded", nil, []string{"process_tree_containment"})
+	plain := s.SubmitForDispatchWithCapabilities("sess_1", "ws_1", "plain", nil, []string{"CommandExec"})
+
+	leased, ok := s.LeaseMatching("wrk_plain", time.Second, func(required []string) bool { return len(required) == 1 && required[0] == "CommandExec" })
+	if !ok || leased.TaskID != plain.TaskID {
+		t.Fatalf("plain worker should skip guarded work and lease plain task: %+v", leased)
+	}
+	if queued, _ := s.Get(guarded.TaskID); queued.Status != "queued" {
+		t.Fatalf("unsupported guarded task must remain queued: %+v", queued)
+	}
+	leased, ok = s.LeaseMatching("wrk_guarded", time.Second, func([]string) bool { return true })
+	if !ok || leased.TaskID != guarded.TaskID {
+		t.Fatalf("capable worker should later lease preserved guarded task: %+v", leased)
+	}
+}
+
+func TestLegacyDispatchDoesNotInventProcessTreeContainment(t *testing.T) {
+	s := New()
+	task := s.SubmitForDispatch("sess", "ws", "work", nil)
+	if len(task.RequiredWorkerCapabilities) != 0 {
+		t.Fatalf("legacy dispatch unexpectedly requires capabilities: %+v", task.RequiredWorkerCapabilities)
+	}
+	if leased, ok := s.LeaseMatching("legacy", time.Second, func(required []string) bool { return len(required) == 0 }); !ok || leased == nil {
+		t.Fatal("legacy worker could not lease unguarded dispatch task")
+	}
+}
+
 func TestDispatchLeaseOwnershipEnforced(t *testing.T) {
 	s := New()
 	task := s.SubmitForDispatch("sess_1", "ws_1", "do work", nil)
-	leased, ok := s.Lease("wrk_A", 5*time.Second)
+	leased, ok := leaseAny(s, "wrk_A", 5*time.Second)
 	if !ok {
 		t.Fatal("lease failed")
 	}
@@ -61,7 +94,7 @@ func TestDispatchLeaseOwnershipEnforced(t *testing.T) {
 func TestDispatchReapReQueuesExpiredLease(t *testing.T) {
 	s := New()
 	task := s.SubmitForDispatch("sess_1", "ws_1", "do work", nil)
-	leased, _ := s.Lease("wrk_A", 10*time.Millisecond)
+	leased, _ := leaseAny(s, "wrk_A", 10*time.Millisecond)
 
 	// Before expiry: nothing reaped.
 	if got := s.ReapExpiredLeases(leased.LeaseExpiry.Add(-time.Second)); len(got) != 0 {
@@ -78,7 +111,7 @@ func TestDispatchReapReQueuesExpiredLease(t *testing.T) {
 
 	// A new worker leases it (second attempt); the crashed worker's late report
 	// must not clobber the reassignment.
-	release, ok := s.Lease("wrk_B", 5*time.Second)
+	release, ok := leaseAny(s, "wrk_B", 5*time.Second)
 	if !ok || release.Attempts != 2 {
 		t.Fatalf("redelivery should bump attempts to 2, got %+v", release)
 	}
@@ -93,7 +126,7 @@ func TestDispatchReapReQueuesExpiredLease(t *testing.T) {
 func TestDispatchReportIsIdempotent(t *testing.T) {
 	s := New()
 	task := s.SubmitForDispatch("sess_1", "ws_1", "do work", nil)
-	leased, _ := s.Lease("wrk_A", 5*time.Second)
+	leased, _ := leaseAny(s, "wrk_A", 5*time.Second)
 	if err := s.Report(task.TaskID, "wrk_A", leased.LeaseGeneration, "completed", "ok", nil); err != nil {
 		t.Fatalf("first report failed: %v", err)
 	}
@@ -110,9 +143,9 @@ func TestDispatchReportIsIdempotent(t *testing.T) {
 func TestDispatchLeaseGenerationFencesSameWorkerRestart(t *testing.T) {
 	s := New()
 	task := s.SubmitForDispatch("sess_1", "ws_1", "do work", nil)
-	first, _ := s.Lease("wrk_A", 10*time.Millisecond)
+	first, _ := leaseAny(s, "wrk_A", 10*time.Millisecond)
 	s.ReapExpiredLeases(first.LeaseExpiry.Add(time.Second))
-	second, ok := s.Lease("wrk_A", time.Second)
+	second, ok := leaseAny(s, "wrk_A", time.Second)
 	if !ok || second.LeaseGeneration <= first.LeaseGeneration {
 		t.Fatalf("lease generation did not advance: first=%d second=%d", first.LeaseGeneration, second.LeaseGeneration)
 	}
@@ -135,7 +168,7 @@ func TestDispatchIgnoresInProcessTasks(t *testing.T) {
 	if got := s.ReapExpiredLeases(time.Now().Add(time.Hour)); len(got) != 0 {
 		t.Fatalf("in-process task must not be reaped, got %v", got)
 	}
-	if _, ok := s.Lease("wrk_A", time.Second); ok {
+	if _, ok := leaseAny(s, "wrk_A", time.Second); ok {
 		t.Fatal("in-process task must not be leaseable via the dispatch queue")
 	}
 }

@@ -6,6 +6,19 @@ on:
   pull_request:
 
 jobs:
+  windows-worker-contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Windows worker containment contract
+        shell: pwsh
+        run: |
+          go test ./go/worker ./go/scheduler ./apps/carina-worker
+          go build -o bin/carina-worker.exe ./apps/carina-worker
+
   build-and-test:
     runs-on: ubuntu-latest
     steps:
@@ -49,10 +62,26 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
+      - name: Cross-compile Windows worker contract
+        run: |
+          GOOS=windows GOARCH=amd64 go test -c -o /tmp/carina-worker-windows.test.exe ./apps/carina-worker
+          GOOS=windows GOARCH=amd64 go build -o /tmp/carina-worker.exe ./apps/carina-worker
+
       - name: Go test with coverage (E2E across Go/Rust/Zig)
         env:
           CARINA_KERNEL_BIN: ${{ github.workspace }}/target/release/carina-kernel-service
         run: go test -race -coverpkg=./go/... -coverprofile=cover.out ./go/... && go tool cover -func=cover.out | tail -1
+
+      - name: Cross-compile worker containment and socket locking
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go test -c -o /tmp/carina-rpc-darwin.test ./go/rpc
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go test -c -o /tmp/carina-worker-darwin.test ./apps/carina-worker
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o /tmp/carina-rpc-linux.test ./go/rpc
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o /tmp/carina-worker-linux.test ./apps/carina-worker
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -c -o /tmp/carina-rpc-windows.test.exe ./go/rpc
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/carina-daemon-darwin ./apps/carina-daemon
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/carina-daemon-linux ./apps/carina-daemon
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /tmp/carina-daemon-windows.exe ./apps/carina-daemon
 
       - name: Product version and Go SDK conformance
         run: |
