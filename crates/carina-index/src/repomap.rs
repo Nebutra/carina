@@ -49,6 +49,14 @@ pub struct RepoMap {
     pub text: String,
     pub ranked: Vec<RankedSymbol>,
     pub token_estimate: usize,
+    /// Total symbols found in the index before the token-budget cut.
+    pub symbols_total: usize,
+    /// Symbols actually rendered into `text` within the token budget.
+    pub symbols_included: usize,
+    /// Total distinct files with at least one symbol in the index.
+    pub files_total: usize,
+    /// Distinct files that got at least one symbol line rendered into `text`.
+    pub files_included: usize,
 }
 
 /// Confidence-weighted PageRank over the symbol graph. Pure, unit-testable.
@@ -184,6 +192,10 @@ pub(crate) fn build(store: &Store, opts: &RepoMapOptions) -> Result<RepoMap, Ind
             None => by_file.push((path, vec![index])),
         }
     }
+    let symbols_total = rows.len();
+    let files_total = by_file.len();
+    let mut symbols_included = 0usize;
+    let mut files_included = 0usize;
     'render: for (path, members) in &by_file {
         let header = format!("{path}:\n");
         let mut header_pending = true;
@@ -203,8 +215,10 @@ pub(crate) fn build(store: &Store, opts: &RepoMapOptions) -> Result<RepoMap, Ind
             if header_pending {
                 text.push_str(&header);
                 header_pending = false;
+                files_included += 1;
             }
             text.push_str(&line);
+            symbols_included += 1;
         }
     }
 
@@ -213,6 +227,10 @@ pub(crate) fn build(store: &Store, opts: &RepoMapOptions) -> Result<RepoMap, Ind
         text,
         ranked,
         token_estimate,
+        symbols_total,
+        symbols_included,
+        files_total,
+        files_included,
     })
 }
 
@@ -376,5 +394,51 @@ mod tests {
             rank_of(&focused, "caller_one") > rank_of(&unfocused, "caller_one"),
             "focusing b.rs must raise caller_one's rank"
         );
+    }
+
+    #[test]
+    fn repo_map_counts_totals_and_included_under_budget() {
+        let idx = fixture_index();
+        // A generous budget should include every symbol and every file.
+        let map = idx
+            .repo_map(&RepoMapOptions {
+                token_budget: 10_000,
+                ..RepoMapOptions::default()
+            })
+            .expect("repo_map");
+        assert_eq!(map.symbols_total, 3, "fixture has 3 symbols");
+        assert_eq!(map.files_total, 3, "fixture has 3 files");
+        assert_eq!(map.symbols_included, map.symbols_total);
+        assert_eq!(map.files_included, map.files_total);
+    }
+
+    #[test]
+    fn repo_map_counts_dropped_items_under_tight_budget() {
+        let idx = fixture_index();
+        let map = idx
+            .repo_map(&RepoMapOptions {
+                token_budget: 1,
+                ..RepoMapOptions::default()
+            })
+            .expect("repo_map");
+        assert!(map.symbols_total >= map.symbols_included);
+        assert!(map.files_total >= map.files_included);
+        assert!(
+            map.symbols_included < map.symbols_total,
+            "a budget of 1 token must drop at least one symbol: {} included of {} total",
+            map.symbols_included,
+            map.symbols_total
+        );
+    }
+
+    #[test]
+    fn repo_map_counts_are_zero_on_empty_index() {
+        let idx = CodeIndex::in_memory().expect("in-memory index");
+        let map = idx.repo_map(&RepoMapOptions::default()).expect("repo_map");
+        assert_eq!(map.symbols_total, 0);
+        assert_eq!(map.symbols_included, 0);
+        assert_eq!(map.files_total, 0);
+        assert_eq!(map.files_included, 0);
+        assert!(map.text.is_empty());
     }
 }
