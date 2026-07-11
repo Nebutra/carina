@@ -64,7 +64,11 @@ pub(crate) struct PendingSymbol {
 pub(crate) struct PendingReference {
     pub symbol_index: Option<usize>,
     pub name: String,
+    // Retained for extraction diagnostics and parser fixture assertions. The
+    // production store resolves references by enclosing symbol and name.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub line: u32,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub text: String,
 }
 
