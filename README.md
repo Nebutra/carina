@@ -81,7 +81,7 @@ Implemented in this repository:
 | Network and secrets | Deny-by-default egress proxy, allowlists, daemon-side credential injection, explicit per-host HTTPS MITM opt-in |
 | Models | BYOK auth chain, provider catalog, OpenAI/Anthropic/Gemini/OpenRouter-style runtime adapters, catalog-gated image input for vision-capable models (raw bytes stay in the artifact store, never in transcripts or audit) |
 | Context engine | Native context-engine boundary with bundled/configured Headroom discovery, managed private MCP transport, and `carina context` diagnostics |
-| Integration | MCP client/server with tool search (`mcp_find`), WASM plugin boundary with org/user/project tighten-only enable merge, workers, workflow DAGs |
+| Integration | MCP client/server with tool search (`mcp_find`), WASM plugin boundary with org/user/project tighten-only enable merge, workers, workflow DAGs (batch and streaming — conditional/dynamic graphs, live inter-step channels, remote worker-pool dispatch, run-wide budgets; see [`docs/workflows.md`](docs/workflows.md)) |
 | Nebutra boundary | Local runtime stays authoritative; identity and multi-endpoint sync are scoped to Nebutra Cloud (`nebutra.com`) |
 
 Not yet treated as product-complete:

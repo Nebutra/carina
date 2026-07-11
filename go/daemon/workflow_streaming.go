@@ -336,12 +336,7 @@ func (sc *streamCoordinator) markSkipped(id, reason string) {
 	// default of Queued forever, and workflow.detail's aggregate
 	// (Completed+Failed+Skipped)/Total would never reach 100% for a run
 	// that genuinely finished.
-	if sc.d.workflowRuns != nil {
-		if _, managedErr := sc.d.workflowRuns.Detail(sc.runID); managedErr == nil {
-			now := time.Now().UTC()
-			_, _ = sc.d.workflowRuns.UpdateStep(sc.runID, workflowui.Step{ID: id, Status: workflowui.Skipped, FinishedAt: &now, Error: reason})
-		}
-	}
+	sc.d.updateWorkflowUIStepBestEffort(sc.runID, workflowui.Step{ID: id, Status: workflowui.Skipped, Error: reason})
 	sc.skipQueue = append(sc.skipQueue, id)
 }
 
@@ -464,6 +459,12 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 	case stepSkipped:
 		sc.terminal[res.id] = stepSkipped
 		sc.skippedCount++
+		// Covers dispatch()'s own pre-execution cancellation path (a step
+		// cancelled while still waiting for a worker-pool slot, before
+		// runStreamingStep ever ran) — the ONLY stepSkipped source that
+		// isn't already covered by runStreamingStep's own
+		// updateWorkflowUIStepBestEffort call or markSkipped's.
+		sc.d.updateWorkflowUIStepBestEffort(sc.runID, workflowui.Step{ID: res.id, Status: workflowui.Skipped, Error: res.errMsg})
 		sc.propagate(res.id, true)
 	}
 	// Drain any skip-chain reactions queued by propagate()/markSkipped()
@@ -558,6 +559,11 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 		tokensUsed = d.sessionTotalTokens(childSessionID)
 	}
 	if err := ctx.Err(); err != nil {
+		// workflowui recording for every stepSkipped outcome — this one and
+		// dispatch()'s own pre-execution cancellation path alike — is
+		// centralized in the coordinator's handleResult (both flow through
+		// the same streamingStepResult{kind: stepSkipped} shape), so nothing
+		// to do here beyond returning it.
 		return streamingStepResult{id: st.ID, kind: stepSkipped, errMsg: "workflow cancelled", tokensUsed: tokensUsed}
 	}
 	if spawnFailed(summary) {
@@ -565,6 +571,16 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 			WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,
 			StepID: st.ID, TaskID: parentTask.TaskID,
 		}, carinatelemetry.Cost{}, time.Since(startedAt), "failed")
+		// Found via a real end-to-end smoke test (carina workflow run against
+		// a live daemon, no LLM provider configured): a step whose SPAWN
+		// itself fails used to leave its workflowui.Step permanently stuck at
+		// the "Running" status set above, even though the coordinator's own
+		// graph state correctly resolved it as failed and cascaded skips to
+		// its dependents — workflow.detail/`carina workflow status` showed a
+		// "completed" run with one step frozen at "running" forever. Same bug
+		// class as markSkipped's fix above, just a different code path that
+		// missed it.
+		d.updateWorkflowUIStepBestEffort(runID, workflowui.Step{ID: st.ID, Status: workflowui.Failed, Error: summary})
 		return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: summary, tokensUsed: tokensUsed}
 	}
 
@@ -580,6 +596,26 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 		StepID: st.ID, TaskID: parentTask.TaskID,
 	}, carinatelemetry.Cost{}, time.Since(startedAt), "completed")
 	return streamingStepResult{id: st.ID, kind: stepDone, output: summary, tokensUsed: tokensUsed}
+}
+
+// updateWorkflowUIStepBestEffort records a step's terminal workflowui.Step
+// status for an ALREADY-bad outcome (failed, cancelled/skipped) — unlike the
+// success path above, a persistence failure here doesn't get escalated into
+// changing the step's own outcome (it's already terminal-bad; there's
+// nothing better to escalate it TO), just best-effort recorded so
+// workflow.detail/`carina workflow status` don't show it frozen at
+// "running" forever. Sets FinishedAt so a caller can tell it actually
+// resolved, not merely that step.Status differs from the default.
+func (d *Daemon) updateWorkflowUIStepBestEffort(runID string, step workflowui.Step) {
+	if d.workflowRuns == nil {
+		return
+	}
+	if _, managedErr := d.workflowRuns.Detail(runID); managedErr != nil {
+		return
+	}
+	now := time.Now().UTC()
+	step.FinishedAt = &now
+	_, _ = d.workflowRuns.UpdateStep(runID, step)
 }
 
 // sessionTotalTokens sums TokensUsed across every scheduler task ever

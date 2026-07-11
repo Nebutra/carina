@@ -140,7 +140,7 @@ func renderUsageCost(w io.Writer, result usageCostResult) {
 
 func cmdWorker(c *rpcClient, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: carina worker <list|register|heartbeat|revoke> ...")
+		return fmt.Errorf("usage: carina worker <list|register|heartbeat|revoke> ...\n  carina worker register <name> [remote|ci] [--pool <tag>]...")
 	}
 	switch args[0] {
 	case "list", "ls":
@@ -149,17 +149,7 @@ func cmdWorker(c *rpcClient, args []string) error {
 		}
 		return call(c, "worker.list", map[string]any{})
 	case "register":
-		if len(args) < 2 || len(args) > 3 || strings.TrimSpace(args[1]) == "" {
-			return fmt.Errorf("usage: carina worker register <name> [remote|ci]")
-		}
-		kind := "remote"
-		if len(args) == 3 {
-			kind = strings.ToLower(strings.TrimSpace(args[2]))
-		}
-		if kind != "remote" && kind != "ci" {
-			return fmt.Errorf("worker kind must be remote or ci")
-		}
-		return call(c, "worker.register", map[string]any{"name": strings.TrimSpace(args[1]), "kind": kind})
+		return cmdWorkerRegister(c, args[1:])
 	case "heartbeat":
 		return workerCredentialCall(c, args, "heartbeat", "worker.heartbeat")
 	case "revoke":
@@ -167,6 +157,45 @@ func cmdWorker(c *rpcClient, args []string) error {
 	default:
 		return fmt.Errorf("unknown worker subcommand %q", args[0])
 	}
+}
+
+// cmdWorkerRegister parses `carina worker register <name> [remote|ci] [--pool
+// <tag>]...` — --pool is repeatable and matches a streaming workflow step's
+// `"affinity":{"worker_pool":"<tag>"}` (go/daemon/workflow_remote.go); the
+// daemon (handleWorkerRegister) is the authoritative validator for tag
+// charset/length/count, this is just argument parsing.
+func cmdWorkerRegister(c *rpcClient, args []string) error {
+	var name, kind string
+	var pools []string
+	positional := make([]string, 0, 2)
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--pool":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return fmt.Errorf("--pool requires a tag")
+			}
+			pools = append(pools, strings.TrimSpace(args[i+1]))
+			i++
+		default:
+			positional = append(positional, args[i])
+		}
+	}
+	if len(positional) < 1 || len(positional) > 2 || strings.TrimSpace(positional[0]) == "" {
+		return fmt.Errorf("usage: carina worker register <name> [remote|ci] [--pool <tag>]...")
+	}
+	name = strings.TrimSpace(positional[0])
+	kind = "remote"
+	if len(positional) == 2 {
+		kind = strings.ToLower(strings.TrimSpace(positional[1]))
+	}
+	if kind != "remote" && kind != "ci" {
+		return fmt.Errorf("worker kind must be remote or ci")
+	}
+	params := map[string]any{"name": name, "kind": kind}
+	if len(pools) > 0 {
+		params["pools"] = pools
+	}
+	return call(c, "worker.register", params)
 }
 
 func workerCredentialCall(c *rpcClient, args []string, subcommand, method string) error {
@@ -341,6 +370,7 @@ var completionSubcommands = map[string][]string{
 	"providers": {"list"},
 	"schedule":  {"list", "create", "pause", "resume", "delete"},
 	"worker":    {"list", "register", "heartbeat", "revoke"},
+	"workflow":  {"run", "list", "status", "pause", "resume", "stop", "restart"},
 }
 
 var completionRootCommands = []string{
@@ -349,7 +379,7 @@ var completionRootCommands = []string{
 	"fork", "gateway", "grep", "help", "init", "items", "memory", "metrics", "patch",
 	"patch-native", "plugin", "profile", "providers", "pty", "replay", "report", "resume",
 	"run", "run-native", "scan", "schedule", "search", "secret", "sessions", "status", "steer",
-	"verify", "version", "watch", "worker", "workers",
+	"verify", "version", "watch", "worker", "workers", "workflow", "workflows",
 }
 
 func cmdCompletion(args []string) error {

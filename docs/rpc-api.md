@@ -7,7 +7,8 @@ Notifications (server → client) stream events; every payload conforms to [`pro
 This document covers a curated subset of the registered surface;
 [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json) is the
 complete, authoritative registry. Groups not summarized here include `agent.*`,
-`session.checkpoint.*`, `workflow.*`, `schedule.*`, `channel.sender.*` /
+`session.checkpoint.*`, `workflow.*` (usage guide:
+[`docs/workflows.md`](workflows.md)), `schedule.*`, `channel.sender.*` /
 `channel.event.inject`, `extension.*`, `worktree.*`,
 `usage.*`/`telemetry.*`/`history.*`/`debug.*`, and `work.*`.
 
@@ -298,6 +299,11 @@ stores only the credential hash. `worker.heartbeat`, `worker.revoke`,
 fields and reject a credential presented for a different worker ID with the
 same non-enumerating authentication error. Credentials are excluded from
 worker list/status, audit events, and diagnostic logs.
+
+`worker.register` also accepts an optional `pools: string[]` (at most 8
+tags, each 1-64 lowercase letters/digits/dash/underscore) declaring
+`worker_pool:<tag>` capabilities — see
+[worker pool affinity](worker-executor.md#worker-pool-affinity).
 
 Every successful `work.poll` claim also returns `lease_generation`, a monotonic
 fencing token for that task. The worker must echo it in `work.renew` and

@@ -1,0 +1,20 @@
+{
+  "name": "remote-build",
+  "description": "Demonstrates remote dispatch and worker-pool affinity — requires at least one real carina-worker process registered before this run will complete: `carina-worker --gateway <url> --gateway-token-file <path> --executor <program> --pool gpu-heavy` (or `carina worker register my-worker remote --pool gpu-heavy` for a worker you run some other way). Without a matching worker, the \"train\" step's dispatched task sits queued until the run's timeout. See docs/guides/agent-swarm-workflows.md#remote-dispatch.",
+  "execution_mode": "streaming",
+  "steps": [
+    {
+      "id": "prepare",
+      "agent": "scout",
+      "task": "Summarize the current build/training configuration in this workspace."
+    },
+    {
+      "id": "train",
+      "agent": "unused-for-remote-steps",
+      "needs": ["prepare"],
+      "remote": true,
+      "affinity": {"worker_pool": "gpu-heavy"},
+      "task": "Run the GPU training/build job described by:\n${prepare}"
+    }
+  ]
+}

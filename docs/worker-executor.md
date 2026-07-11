@@ -51,6 +51,23 @@ Operational timing can be configured with:
 - `--drain-timeout` (default `30s`)
 - `--heartbeat` (default `10s`)
 
+## Worker Pool Affinity
+
+`--pool <tag>` (repeatable) declares a `worker_pool:<tag>` capability at
+registration time, e.g. `--pool gpu-heavy --pool eu-west`. A streaming
+workflow step declaring `"remote": true, "affinity": {"worker_pool":
+"gpu-heavy"}` (see [workflows.md](workflows.md#remote-dispatch)) can only be
+leased by a worker that registered with that exact tag — the daemon's
+`worker.register` handler is the authoritative validator (at most 8 tags per
+worker, each 1-64 lowercase letters/digits/dash/underscore); `carina-worker`'s
+own `--pool` flag parsing is a client-side fast-fail mirror, not the trust
+boundary. A worker started without `--pool` can only ever lease steps that
+declare no affinity requirement at all.
+
+Registering through `carina worker register <name> [remote|ci] --pool <tag>`
+(rather than running the `carina-worker` binary) sets the same tags via the
+same RPC field.
+
 ## Input
 
 For each lease, the worker starts one executor process and writes the daemon's

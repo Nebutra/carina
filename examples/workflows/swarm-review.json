@@ -1,0 +1,43 @@
+{
+  "name": "swarm-review",
+  "description": "Streaming-mode variant of review.json — bugs/perf start the instant scan resolves instead of waiting for a shared batch level, a conditional edge skips the whole review when nothing changed, a generator step can spin up extra reviewers for a large changeset, and a run-wide token budget caps total spend. Run with: carina workflow run swarm-review. See protocol/schemas/workflow-graph.schema.json for every field's exact meaning.",
+  "execution_mode": "streaming",
+  "token_budget": 200000,
+  "steps": [
+    {
+      "id": "scan",
+      "agent": "scout",
+      "task": "List the files changed in the working tree. Finish with a JSON object: {\"files\": [\"path1\", \"path2\", ...], \"count\": <number of files>}."
+    },
+    {
+      "id": "bugs",
+      "agent": "reviewer",
+      "needs": ["scan"],
+      "when": {">": [{"var": "scan.count"}, 0]},
+      "input": {"files": "${scan.files}"},
+      "task": "Review the given files for correctness bugs."
+    },
+    {
+      "id": "perf",
+      "agent": "reviewer",
+      "needs": ["scan"],
+      "when": {">": [{"var": "scan.count"}, 0]},
+      "input": {"files": "${scan.files}"},
+      "consumes_channel": ["review-progress"],
+      "task": "Review the given files for performance issues. If \"bugs\" publishes anything to the \"review-progress\" channel while you work, take it into account."
+    },
+    {
+      "id": "extra-reviewers",
+      "agent": "reviewer",
+      "needs": ["scan"],
+      "kind": "generator",
+      "task": "If scan.count is greater than 20, use spawn_steps to add one additional reviewer step per extra 20 files, each reviewing a distinct slice of scan.files for style and test coverage. If scan.count is 20 or fewer, finish with an empty spawn_steps list — nothing to add."
+    },
+    {
+      "id": "report",
+      "agent": "writer",
+      "needs": ["bugs", "perf"],
+      "task": "Synthesize one prioritized review from:\nBUGS:\n${bugs}\n\nPERF:\n${perf}"
+    }
+  ]
+}

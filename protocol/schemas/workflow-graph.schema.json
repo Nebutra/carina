@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://carina.nebutra.com/schemas/workflow-graph.schema.json",
+  "title": "Workflow graph",
+  "description": "A .carina/workflows/<name>.json file (go/daemon/workflowspec.go's WorkflowSpec/WorkflowStep). Covers both the batch/BSP scheduler (default) and the streaming scheduler (execution_mode: streaming — Agent Swarm DAG orchestration design, docs/plans/2026-07-12-agent-swarm-dag-orchestration-design.md); fields marked streaming-mode-only are accepted but inert under bsp.",
+  "type": "object",
+  "required": ["name", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {"type": "string", "description": "Workflow identifier; matches the filename by convention but is looked up by this value, not the filename."},
+    "description": {"type": "string"},
+    "execution_mode": {
+      "enum": ["", "bsp", "streaming"],
+      "default": "bsp",
+      "description": "bsp (default): batch-by-dependency-level, a step starts only once every step in the previous level finished, any single failure aborts the whole run. streaming: a step starts the instant its own dependencies resolve, failures isolate to their own dependents by default, and every field below marked streaming-mode-only becomes meaningful."
+    },
+    "token_budget": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Streaming-mode only. Aggregate token ceiling across every step's subagent usage for this ENTIRE run (0 = unlimited). Once spend meets the ceiling, not-yet-dispatched steps are skipped with an audited reason; steps already running are never killed."
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/step"}
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "required": ["id", "agent", "task"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "description": "Unique within the workflow (and within any steps a generator step later injects)."},
+        "agent": {"type": "string", "description": "Name of an AgentSpec to spawn for this step. Ignored (but still required by validate()) for a Remote step — the external worker's configured executor runs verbatim task text, not a named agent."},
+        "task": {"type": "string", "description": "Task text handed to the spawned subagent (or, if remote/affinity, the dispatched task's prompt). Supports ${step_id} whole-output and ${step_id.field.path} typed dotted-path interpolation from completed dependencies' JSON output."},
+        "needs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Control-dependency step ids — this step will not start until every listed step has resolved (completed, failed, or skipped)."
+        },
+        "fail_fast": {
+          "type": "boolean",
+          "default": false,
+          "description": "Streaming-mode only. A failing step normally isolates: only its transitive-only dependents are skipped, independent branches keep running. Set true to restore the old \"one failure kills the whole run\" behavior for a step genuinely on the critical path."
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "description": "Streaming-mode only. Structured field-by-field input resolved from dependencies' JSON output and appended to the interpolated task as a labeled JSON block. Each value is either \"${step_id}\" (the whole prior output) or \"${step_id.a.b.c}\" (a typed dot-path into it, parsed as JSON — not string-substituted)."
+        },
+        "when": {
+          "description": "Streaming-mode only. A JSONLogic-compatible boolean expression (go/daemon/workflow_condition.go — {\"var\":...}, ==, !=, >, <, >=, and, or, not; sandboxed, never executable code) evaluated once this step's dependencies resolve, against their JSON-parsed outputs. A falsy or erroring result skips the step through the same isolate-propagation path an upstream failure uses; malformed expressions fail closed (skip, never silently proceed)."
+        },
+        "kind": {
+          "enum": ["", "generator"],
+          "default": "",
+          "description": "Streaming-mode only. \"generator\" additionally parses this step's done summary for a spawn_steps envelope ({\"spawn_steps\":[{...new WorkflowStep objects...}],\"rationale\":\"...\"}) and injects the declared new nodes into the still-running graph — structurally cycle-safe (a new step may depend on an existing/sibling step, never the reverse), bounded by a generation-depth ceiling and the run's total step-count ceiling."
+        },
+        "consumes_channel": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Streaming-mode only. Swarm channel names (go/daemon/swarm_channel.go) this step subscribes to for LIVE messages from still-running sibling/upstream steps — distinct from needs/input, which only ever hand off a dependency's terminal output. The subscribed step calls the \"swarm_receive\" tool during its own run to pull anything published since it last checked. Publishing (the \"swarm_publish\" tool) needs no subscription and is available to every streaming step regardless of this field."
+        },
+        "remote": {
+          "type": "boolean",
+          "default": false,
+          "description": "Streaming-mode only. Routes this step through the cross-process dispatch/lease/report pipeline (an external worker process — e.g. apps/carina-worker — executes it, potentially on a different machine) instead of an in-process subagent. Gated by Capability::RemoteDispatch (RequiresApproval by default), a strictly stronger trust decision than the same-process SubagentSpawn gate every other step uses."
+        },
+        "affinity": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "description": "Streaming-mode only. Scheduling hint for cluster mode; a non-empty affinity also implies remote. The \"worker_pool\" key becomes a required worker capability (\"worker_pool:<value>\") that only a worker registered with that tag (worker.register's \"pools\" param, or `carina-worker --pool <tag>` / `carina worker register ... --pool <tag>`) may lease — an affinity-tagged step can never be silently picked up by an unrelated pool.",
+          "properties": {
+            "worker_pool": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"}
+          }
+        }
+      }
+    }
+  }
+}

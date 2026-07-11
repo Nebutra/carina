@@ -136,9 +136,22 @@ Gateway and RPC:
 Workers:
   carina workers                                    list registered workers
   carina worker list                                list registered workers
-  carina worker register <name> [remote|ci]         register a remote execution worker
+  carina worker register <name> [remote|ci] [--pool <tag>]...
+                                                   register a remote execution worker; --pool declares a
+                                                   worker_pool affinity tag (repeatable), matching a streaming
+                                                   workflow step's "affinity":{"worker_pool":"<tag>"}
   carina worker heartbeat <worker_id> [credential]  refresh a worker heartbeat (or CARINA_WORKER_CREDENTIAL)
   carina worker revoke <worker_id> [credential]     revoke a worker (or CARINA_WORKER_CREDENTIAL)
+
+Workflows:
+  carina workflow run <name> ["input"] [--session <id>] [--json] [--background]
+                                                   run a .carina/workflows/<name>.json workflow (creates a
+                                                   safe-edit session in cwd if --session is omitted); waits
+                                                   and prints live progress unless --background is given
+  carina workflow list [--json]                     list workflow runs
+  carina workflow status <run_id> [--json]          show a run's progress, per-step status, and token/cost
+  carina workflow pause|resume|stop|restart <run_id>
+                                                   control a paused/running workflow run
 
 Native tools, no daemon:
   carina scan [path]                                workspace file tree
@@ -261,6 +274,8 @@ func run(cmd string, args []string) error {
 		return cmdSession(c, args)
 	case "channel":
 		return cmdChannel(c, args)
+	case "workflow", "workflows":
+		return cmdWorkflow(c, args)
 
 	case "run", "ask":
 		// The task always runs in the daemon and survives CLI exit (PRD

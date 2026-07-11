@@ -127,6 +127,61 @@ func TestHandleWorkflowRunStreamingSkippedStepReflectsInDetail(t *testing.T) {
 	}
 }
 
+// TestHandleWorkflowRunStreamingFailedStepReflectsInDetailNotStuckRunning is
+// the regression test for a bug found via a live end-to-end smoke test
+// (carina workflow run against a real daemon): a step whose SPAWN itself
+// fails (e.g. an unknown agent name) used to leave its workflowui.Step
+// permanently stuck at "running" — set right before spawn, never updated
+// away from it on the failure path — even though the coordinator's own
+// graph state correctly resolved it as failed and propagated skips to its
+// dependents. `carina workflow status`/workflow.detail showed a "completed"
+// run with one step frozen at "running" forever.
+func TestHandleWorkflowRunStreamingFailedStepReflectsInDetailNotStuckRunning(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	d.SetReasoner(taskEchoReasoner{})
+	writeWorkflowSpecFile(t, ws, `{
+		"name": "rpc-fail",
+		"execution_mode": "streaming",
+		"steps": [
+			{"id": "bad", "agent": "does-not-exist", "task": "X"},
+			{"id": "dependent", "agent": "worker", "task": "Y", "needs": ["bad"]}
+		]
+	}`)
+
+	sess, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "full-workspace", "on_request", nil)
+
+	res, err := d.handleWorkflowRun(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "workflow": "rpc-fail", "input": "",
+	}))
+	if err != nil {
+		t.Fatalf("workflow.run: %v", err)
+	}
+	run := res.(workflowui.Run)
+
+	detail := waitForTerminalRun(t, d, run.ID)
+	if detail.Failed != 1 || detail.Skipped != 1 || detail.Progress != 1.0 {
+		t.Fatalf("expected 1 failed + 1 skipped with progress=1.0, got %+v", detail)
+	}
+	for _, st := range detail.Run.Steps {
+		switch st.ID {
+		case "bad":
+			if st.Status != workflowui.Failed {
+				t.Fatalf(`expected "bad"'s workflowui status to be %q (not stuck at %q), got %q`, workflowui.Failed, workflowui.Running, st.Status)
+			}
+			if st.FinishedAt == nil {
+				t.Fatal(`expected "bad" to have a FinishedAt once resolved`)
+			}
+		case "dependent":
+			if st.Status != workflowui.Skipped {
+				t.Fatalf("expected dependent's workflowui status to be %q, got %q", workflowui.Skipped, st.Status)
+			}
+		}
+	}
+}
+
 // TestHandleWorkerRegisterValidatesPoolTags is the server-side authoritative
 // validation for --pool (apps/carina-worker's own check is a client-side
 // fast-fail mirror, not the trust boundary).
