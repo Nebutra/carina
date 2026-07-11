@@ -15,9 +15,18 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/Nebutra/carina/go/statefmt"
 )
 
+// SessionVersion is the on-disk format version stamped onto session rows.
+// Per-store versioning (see go/statefmt): unstamped legacy rows load as v1;
+// rows stamped by a newer binary are quarantined, never skipped-then-
+// overwritten.
+const SessionVersion = 1
+
 type Session struct {
+	Version           int       `json:"version,omitempty"`
 	SessionID         string    `json:"session_id"`
 	WorkspaceID       string    `json:"workspace_id"`
 	WorkspaceRoot     string    `json:"workspace_root"`
@@ -90,12 +99,16 @@ func (s *Store) load() error {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(s.dir, "sessions", e.Name()))
-		if err != nil {
-			continue
+		path := filepath.Join(s.dir, "sessions", e.Name())
+		raw, version, ok := statefmt.ReadVersioned(path, SessionVersion)
+		if !ok {
+			continue // missing, or future-version row already quarantined
 		}
 		var sess Session
 		if err := json.Unmarshal(raw, &sess); err != nil {
+			// Corrupt row: quarantine instead of skipping — a skipped file is
+			// silently overwritten by the next Save of the same session ID.
+			_ = statefmt.Quarantine(path, version)
 			continue
 		}
 		s.sessions[sess.SessionID] = &sess
@@ -211,10 +224,13 @@ func (s *Store) Delete(sessionID string) error {
 	return nil
 }
 
-// persist atomically writes a session row (temp + rename).
+// persist atomically writes a session row (temp + rename), stamped with the
+// current format version.
 func (s *Store) persist(sess *Session) error {
 	path := filepath.Join(s.dir, "sessions", sess.SessionID+".json")
-	raw, err := json.MarshalIndent(sess, "", "  ")
+	row := *sess
+	row.Version = SessionVersion
+	raw, err := json.MarshalIndent(&row, "", "  ")
 	if err != nil {
 		return fmt.Errorf("sessionstore: marshal: %w", err)
 	}

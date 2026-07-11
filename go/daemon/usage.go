@@ -10,9 +10,15 @@ import (
 	"sync"
 
 	"github.com/Nebutra/carina/go/provider"
+	"github.com/Nebutra/carina/go/statefmt"
 )
 
 const usageCostScale = 1_000_000
+
+// usageStoreVersion is this store's on-disk format version. Versioning is
+// per-store (see go/statefmt): each store bumps independently when — and only
+// when — its own shape changes incompatibly.
+const usageStoreVersion = 1
 
 // ModelUsage is the provider-neutral token accounting contract. InputTokens
 // excludes cache hits; cache reads and writes are kept separate so costs are
@@ -51,12 +57,17 @@ type usageEnvelope struct {
 
 func newUsageStore(stateDir string) *usageStore {
 	s := &usageStore{path: filepath.Join(stateDir, "model-usage.json"), records: map[string]*usageAggregate{}}
-	raw, err := os.ReadFile(s.path)
-	if err != nil {
+	raw, version, ok := statefmt.ReadVersioned(s.path, usageStoreVersion)
+	if !ok {
+		// Missing file, or a future-version file already quarantined by
+		// ReadVersioned — either way start empty without destroying anything.
 		return s
 	}
 	var env usageEnvelope
-	if json.Unmarshal(raw, &env) != nil || env.Version != 1 {
+	if json.Unmarshal(raw, &env) != nil {
+		// Corrupt payload: quarantine instead of silently proceeding empty and
+		// letting the next record() overwrite the evidence.
+		_ = statefmt.Quarantine(s.path, version)
 		return s
 	}
 	for _, record := range env.Records {
@@ -118,7 +129,7 @@ func (s *usageStore) persistLocked() error {
 		return usageKey(records[i].SessionID, records[i].TaskID, records[i].Provider, records[i].Model) <
 			usageKey(records[j].SessionID, records[j].TaskID, records[j].Provider, records[j].Model)
 	})
-	raw, err := json.MarshalIndent(usageEnvelope{Version: 1, Records: records}, "", "  ")
+	raw, err := json.MarshalIndent(usageEnvelope{Version: usageStoreVersion, Records: records}, "", "  ")
 	if err != nil {
 		return err
 	}

@@ -102,3 +102,63 @@ func TestRunStoreKeepsCheckpointHistoryAndLatest(t *testing.T) {
 		t.Fatalf("history after delete=%+v", got)
 	}
 }
+
+func TestRunStoreFutureCheckpointQuarantinedAndResumeFallsBack(t *testing.T) {
+	runs := newRunStore(filepath.Join(t.TempDir(), "state"))
+	runs.saveCheckpoint("task-v", &runCheckpoint{Turn: 1, Transcript: newTranscript("prompt")})
+	// Simulate a checkpoint written by a newer binary (e.g. after a downgrade).
+	path := filepath.Join(runs.dir, "task-v.ckpt.json")
+	future := `{"version": 2, "turn": 9, "transcript": null, "opaque_future_field": true}`
+	if err := os.WriteFile(path, []byte(future), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cp := runs.loadCheckpoint("task-v"); cp != nil {
+		t.Fatalf("future checkpoint must not be resumed: %+v", cp)
+	}
+	moved, err := filepath.Glob(path + ".v2.*.quarantine")
+	if err != nil || len(moved) != 1 {
+		t.Fatalf("future checkpoint must be quarantined, got %v err=%v", moved, err)
+	}
+	kept, err := os.ReadFile(moved[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(kept) != future {
+		t.Fatalf("quarantine must preserve original bytes: %s", kept)
+	}
+	// With latest quarantined, resume falls back cleanly (fresh start).
+	if cp := runs.loadCheckpoint("task-v"); cp != nil {
+		t.Fatalf("second load must also fall back, got %+v", cp)
+	}
+}
+
+func TestRunStoreLoadsLegacyUnstampedTaskAndQuarantinesFuture(t *testing.T) {
+	runs := newRunStore(filepath.Join(t.TempDir(), "state"))
+	if err := os.WriteFile(filepath.Join(runs.dir, "legacy.json"), []byte(`{"task_id": "legacy", "status": "completed"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runs.dir, "future.json"), []byte(`{"version": 2, "task_id": "future", "status": "completed"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runs.save(&scheduler.Task{TaskID: "stamped", Status: "completed"})
+
+	got := runs.load()
+	loaded := map[string]bool{}
+	for _, task := range got {
+		loaded[task.TaskID] = true
+	}
+	if len(got) != 2 || !loaded["legacy"] || !loaded["stamped"] {
+		t.Fatalf("load = %+v, want legacy+stamped only", loaded)
+	}
+	moved, err := filepath.Glob(filepath.Join(runs.dir, "future.json.v2.*.quarantine"))
+	if err != nil || len(moved) != 1 {
+		t.Fatalf("future task row must be quarantined, got %v err=%v", moved, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(runs.dir, "stamped.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"version": 1`) {
+		t.Fatalf("saved task row must be stamped v1: %s", raw)
+	}
+}

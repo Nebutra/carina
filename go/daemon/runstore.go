@@ -10,7 +10,14 @@ import (
 	"sync"
 
 	"github.com/Nebutra/carina/go/scheduler"
+	"github.com/Nebutra/carina/go/statefmt"
 )
+
+// runStoreVersion is the on-disk format version stamped onto task records and
+// run checkpoints. Per-store versioning (see go/statefmt): a future-stamped
+// file is quarantined on read and the run resumes fresh rather than
+// misreading a checkpoint written by a newer binary.
+const runStoreVersion = 1
 
 // runStore persists background-run records — one JSON file per task under
 // <stateDir>/runs — so the run registry (status, summary, applied patches)
@@ -34,7 +41,11 @@ func (r *runStore) save(task *scheduler.Task) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	raw, err := json.MarshalIndent(task, "", "  ")
+	row := struct {
+		Version int `json:"version"`
+		*scheduler.Task
+	}{Version: runStoreVersion, Task: task}
+	raw, err := json.MarshalIndent(row, "", "  ")
 	if err != nil {
 		return
 	}
@@ -58,14 +69,14 @@ func (r *runStore) load() []*scheduler.Task {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(r.dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		var t scheduler.Task
 		if _, err := os.Stat(filepath.Join(r.dir, strings.TrimSuffix(e.Name(), ".json")+".tombstone")); err == nil {
 			continue
 		}
+		raw, _, ok := statefmt.ReadVersioned(filepath.Join(r.dir, e.Name()), runStoreVersion)
+		if !ok {
+			continue
+		}
+		var t scheduler.Task
 		if json.Unmarshal(raw, &t) == nil && t.TaskID != "" {
 			out = append(out, &t)
 		}
@@ -157,6 +168,7 @@ func (r *runStore) reconcileRestoreJournals() ([]string, error) {
 // (compacted) transcript. The audit log remains the full source of truth; this
 // is only what the agent loop needs to continue from where it left off.
 type runCheckpoint struct {
+	Version        int         `json:"version,omitempty"`
 	Turn           int         `json:"turn"`
 	Transcript     *Transcript `json:"transcript"`
 	MemorySnapshot string      `json:"memory_snapshot,omitempty"`
@@ -170,7 +182,9 @@ func (r *runStore) saveCheckpoint(taskID string, cp *runCheckpoint) {
 func (r *runStore) saveCheckpointChecked(taskID string, cp *runCheckpoint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	raw, err := json.Marshal(cp)
+	row := *cp
+	row.Version = runStoreVersion
+	raw, err := json.Marshal(&row)
 	if err != nil {
 		return err
 	}
@@ -198,21 +212,13 @@ func (r *runStore) saveCheckpointChecked(taskID string, cp *runCheckpoint) error
 func (r *runStore) loadCheckpoint(taskID string) *runCheckpoint {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	raw, err := os.ReadFile(filepath.Join(r.dir, taskID+".ckpt.json"))
-	if err != nil {
-		return nil
-	}
-	return decodeRunCheckpoint(raw)
+	return readRunCheckpoint(filepath.Join(r.dir, taskID+".ckpt.json"))
 }
 
 func (r *runStore) loadCheckpointTurn(taskID string, turn int) *runCheckpoint {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	raw, err := os.ReadFile(filepath.Join(r.dir, taskID+".ckpts", fmt.Sprintf("%020d.json", turn)))
-	if err != nil {
-		return nil
-	}
-	return decodeRunCheckpoint(raw)
+	return readRunCheckpoint(filepath.Join(r.dir, taskID+".ckpts", fmt.Sprintf("%020d.json", turn)))
 }
 
 func (r *runStore) listCheckpoints(taskID string) []*runCheckpoint {
@@ -239,9 +245,13 @@ func (r *runStore) listCheckpoints(taskID string) []*runCheckpoint {
 	return out
 }
 
+// readRunCheckpoint reads one checkpoint file. A checkpoint stamped by a
+// newer binary is quarantined (never deleted) and nil is returned, so the
+// resume path falls back to a fresh start instead of misreading a future
+// format.
 func readRunCheckpoint(path string) *runCheckpoint {
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	raw, _, ok := statefmt.ReadVersioned(path, runStoreVersion)
+	if !ok {
 		return nil
 	}
 	return decodeRunCheckpoint(raw)
