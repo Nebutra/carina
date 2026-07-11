@@ -535,6 +535,62 @@ KiloCode source-review decisions are tracked separately in
   changelog-evolution findings, and carina's landed-or-planned response for
   all 7 items live in `docs/research/codex-claudecode-benchmark.md`.
 
+**Wave 25 — Deep-tradeoff closeout of the final 7 items (6 landed on isolated
+branches PENDING MERGE, 1 already covered — nothing in this wave is on main yet)**
+- Same-day follow-up to Wave 24: re-ran all 7 items against the repository's
+  *current* state after it changed materially within hours of the benchmark —
+  `Turn.Path` landed (`38ba80e`) along with the rest of the compaction-seam
+  churn (`5898e17`, `1de7fcc`, `f15efa1`), and the `feat/public-subagent-dsl`
+  merge started and then completed into main (`da96a34`) during the analysis
+  itself. Unlike every prior wave, this wave's code did NOT ship as merged
+  commits: each item was implemented and tested on its own isolated feature
+  branch cut to avoid the then-in-flight merge surface, and those branches
+  await merge to main. Honest framing: until merged, these gaps are closed on
+  branches, not in the product.
+- [ ] **Multi-tier compaction** (verbatim-user preservation + v2 receipt +
+  deterministic `keyFiles()` substrate; Part-B reinjection scoped out) —
+  branch `feat/absorb-multi-tier-compaction` @ `d1f7478657f0`, pending merge.
+- [ ] **Managed-locked config keys** (`go/config/managed.go`,
+  `/etc/carina/managed.json`, fail-closed lock validation + flag-collision
+  abort + tighten-only re-apply; project-source-filtering half stays dead per
+  the conceded `trustStore` objection) — branch
+  `feat/absorb-setting-source-allowlist` @ `0984bdb3e892`, pending merge.
+- [ ] **Tri-level extension enable-merge** (safe_mode > org > project > user;
+  org tier from `<PolicyDir>/extensions.json`, project tier disable-only and
+  never persisted; git-marketplace/signing half stays rejected) — branch
+  `feat/absorb-plugin-bundles-marketplace` @ `5e4a7ac16a92`, pending merge.
+- [ ] **Versioned state stamping + quarantine-not-delete** (new leaf
+  `go/statefmt` wired into the three object-envelope stores; fixes
+  `usage.go`'s destroy-on-future-version defect; bare-array stores excluded
+  as a breaking shape change; upgrade-ladder still correctly deferred) —
+  branch `feat/absorb-state-migration` @ `32f0023e0300`, pending merge.
+- [ ] **MCP-scoped tool search** (`mcp_find`: stateless weighted token-overlap
+  over name/description/schema, hidden-server exclusion, full `InputSchema`
+  on demand — schema-on-demand correctness, since `NamespacedTool` strips all
+  MCP schemas today; health-gated pool assembly excised) — branch
+  `feat/absorb-tool-pool-toolsearch` @ `e0a82b57bd91`, pending merge.
+- [ ] **MediaRef image plumbing** (`go/daemon/media.go` + `Observation.MediaRefs`;
+  bytes-never-in-prompt by construction with regression tests for the invariant
+  Claude Code shipped broken twice; no live vision wiring, delete-if-unproduced
+  kill criterion recorded) — branch `feat/absorb-content-block-images` @
+  `b8c31c9a8e07`, pending merge.
+- [x] **Coordinator restricted-orchestrator role** — closed as
+  `already_covered` by the subagent-dsl merge in main `da96a34`: dedicated
+  kernel-gated `Capability::SubagentSpawn`, daemon-enforced
+  `AgentSpec.ToolNames`, and per-hop `SpawnableAgents` enforcement (closing
+  the Claude Code v2.1.186 nested-spawn class of bug), with tests. The prior
+  Rust "orchestrator" Profile design was found mechanistically wrong (Profile
+  has no spawn axis; `attenuate()` clamping would make a read-only
+  coordinator's workers read-only). Three non-blocking follow-ups recorded;
+  reopens if main's merge resolution drops the gates.
+- Verdict discipline: of Wave 24's adversarial objections, the ones that held
+  (trustStore scoping, `SignatureVerifier` falsity, reinjection conflict
+  exposure, bare-array stamping breakage, pool-state review debt) were
+  conceded and cut out of scope; only the objections whose factual basis
+  expired against live git state were overturned. Full per-item trade-off
+  analysis: `codex-claudecode-benchmark.md`, "Deep-tradeoff follow-up
+  (same day)".
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The

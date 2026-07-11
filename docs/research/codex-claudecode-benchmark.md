@@ -997,3 +997,117 @@ immune to that specific class of bug for anything that already routes
 through it — which is itself the strongest argument for keeping every one
 of these four remaining items on that same enforcement path when they do
 eventually land.
+
+---
+
+## Deep-tradeoff follow-up (same day)
+
+The benchmark above was written as a 0-commit pass; a same-day deep-tradeoff
+pass then re-ran all 7 items against the repository's *current* state, because
+that state changed materially within hours of the benchmark being written.
+What changed:
+
+- **`Turn.Path` landed** (`38ba80e`, stale-read dedup via `supersedeStaleReads`),
+  together with the rest of the compaction-seam churn the benchmark had flagged
+  as in-flight (`5898e17` token trigger, `1de7fcc` summary template, `f15efa1`
+  compress-once-over-budget).
+- **The `feat/public-subagent-dsl` merge started — and completed — during the
+  pass.** At analysis start it was the in-flight hot seam blocking anything
+  touching `agent.go`/`subagent.go`/`daemon.go`; by mid-analysis it was fully
+  merged into main (`da96a34`, verified via `merge-base --is-ancestor` against
+  its tip `f499cd4`). Two of the seven verdicts below flipped because of this
+  single fact.
+- `best_of_n` landed on main (`a815532`) as a plain `dispatchActionOutcome`
+  switch case — direct precedent falsifying the "blocked on `buildTool()`"
+  reasoning recorded above.
+
+Per-item final verdicts. **Six items landed as code on isolated feature
+branches; these are BRANCHES AWAITING MERGE, not merged commits — nothing
+below has reached main.** One item closed as already covered. None were
+re-deferred; none were rejected.
+
+| Item | Benchmark verdict | Final verdict | Branch (pending merge) |
+|---|---|---|---|
+| Multi-tier compaction (verbatim-user + key-files substrate) | defer | land_in_branch | `feat/absorb-multi-tier-compaction` @ `d1f7478657f0` |
+| Setting-source allowlist (managed-locked keys slice) | defer | land_in_branch | `feat/absorb-setting-source-allowlist` @ `0984bdb3e892` |
+| Plugin bundles + marketplace (tri-level enable-merge slice) | defer | land_in_branch | `feat/absorb-plugin-bundles-marketplace` @ `5e4a7ac16a92` |
+| Versioned config/state migration (stamp + quarantine slice) | design_only | land_in_branch | `feat/absorb-state-migration` @ `32f0023e0300` |
+| Coordinator/orchestrator restricted role | design_only | **already_covered** | — (covered by the subagent-dsl merge in main) |
+| Deferred lazy tool-pool + ToolSearch (MCP-scoped) | design_only | land_in_branch | `feat/absorb-tool-pool-toolsearch` @ `e0a82b57bd91` |
+| Content-block images (MediaRef plumbing slice) | design_only | land_in_branch | `feat/absorb-content-block-images` @ `b8c31c9a8e07` |
+
+### Which adversarial objections were resolved vs. conceded
+
+The benchmark's adversarial downgrades were not overturned wholesale; each was
+split into the part that held and the part whose factual basis expired.
+
+**Resolved (blocker verifiably gone or falsified):**
+
+- *Multi-tier compaction*: all three named blockers are gone — `Turn.Path`
+  landed, `CompactionReceipt.Version` already exists with exactly one preimage
+  consumer (so the v2 folded-set preimage is a versioned, non-breaking
+  redefinition), and the same-seam concurrent work merged. The failure mode is
+  confirmed live (`compact()` Step 2 folds Pinned user steer turns
+  unconditionally) and is not self-healing.
+- *Setting-source allowlist*: the surviving half targets a verified, uncovered
+  failure mode — kernel policy bundles never see config keys, and `policy_dir`
+  itself is overridable by env/flag, so the org bundle cannot protect its own
+  delivery path. Managed-locked keys close that with zero overlap with the
+  in-flight merge.
+- *Plugin bundles*: the candidate prerequisite ("no org-policy config channel")
+  is factually present — `PolicyDir → loadOrgPolicy` is a live overlay channel;
+  the tri-level enable-merge the review itself pre-approved for splitting
+  landed on that seam.
+- *Tool-pool/ToolSearch*: the `buildTool()` prerequisite is falsified by the
+  codebase's own pattern (five tools including hours-old `best_of_n` landed as
+  plain switch cases), and the hot-`agent.go` blocker dissolved when the merge
+  completed mid-analysis with both wiring hunks byte-identical. Fresh reading
+  also strengthened the case: `NamespacedTool` strips `InputSchema`, so carina
+  surfaces *no* MCP schemas at any server count — `mcp_find` is schema-on-demand
+  correctness, not just token economy.
+- *State migration*: the "no v2 exists" blocker binds the upgrade-ladder layer,
+  not the reserve slice — and `usage.go:59+121` doesn't merely ignore a
+  future-version file, it destroys it on the next write; every deferred week
+  ships more binaries with that behavior permanently baked in.
+- *Content-block images*: withheld previously only because the benchmark was a
+  0-commit pass; the plumbing half was already isolated as safely additive.
+
+**Conceded (objection stands; scope cut around it):**
+
+- *Setting-source allowlist*: the project-source-filtering half stays dead —
+  `trustStore` owns the untrusted-repo threat, exactly as the adversarial
+  review said.
+- *Plugin bundles*: the git-marketplace + signing half stays rejected — the
+  `SignatureVerifier` reuse claim was and remains false; git-clone is a new
+  trust surface needing its own pass.
+- *Multi-tier compaction*: Part-B content reinjection is scoped out (touches
+  three merge-hot files; its failure mode self-heals in one turn); only the
+  deterministic `KeyFiles` selection substrate landed. The seed's own
+  `Turn.Path`-on-patch suggestion was additionally verified to be a regression
+  and avoided.
+- *State migration*: the seed's blanket-stamping premise is false for the four
+  bare-array stores (trust.json, approval-grants, schedules, workflowrun) —
+  wrapping them is a breaking shape change; they are excluded.
+- *Tool-pool*: health-gated pool assembly is excised — new shared state that
+  deserves its own review.
+- *Coordinator role*: the conflict objection is conceded and **superseded** —
+  the subagent-dsl merge shipped the enforcement substance outright (dedicated
+  `Capability::SubagentSpawn`, daemon-enforced `AgentSpec.ToolNames`,
+  per-hop `SpawnableAgents` via `spawnAllowed`, with tests). Deeper analysis
+  showed the prior Rust "orchestrator" Profile design was mechanistically wrong
+  anyway (Profile has no spawn axis; `attenuate()`'s child≤parent clamp would
+  make a read-only coordinator's workers read-only too). Verdict:
+  already_covered, with three recorded non-blocking follow-ups (built-in
+  coordinator preset; primary-session `ToolNames` coverage gap; PolicyBundle
+  differentiation on the typed spawn resource) and a kill criterion: if main's
+  conflict resolution drops the gates, the item reopens.
+
+### Landing discipline
+
+All six branches were cut to avoid the in-flight merge surface (or, for the
+two post-merge items, cut from main's tip `da96a34`), were verified green on
+their own and adjacent test suites (pre-existing zig-toolchain environmental
+failures reproduced identically at clean base), and are **not pushed and not
+merged**. Cross-branch ordering note recorded at land time: if both compaction
+and MediaRef land, compaction merges first and the MediaRef slice rebases on
+top (same file, disjoint functions).
