@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Nebutra/carina/go/scheduler"
@@ -62,11 +63,55 @@ func (r *runStore) load() []*scheduler.Task {
 			continue
 		}
 		var t scheduler.Task
+		if _, err := os.Stat(filepath.Join(r.dir, strings.TrimSuffix(e.Name(), ".json")+".tombstone")); err == nil {
+			continue
+		}
 		if json.Unmarshal(raw, &t) == nil && t.TaskID != "" {
 			out = append(out, &t)
 		}
 	}
 	return out
+}
+
+func (r *runStore) tombstone(taskID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p := filepath.Join(r.dir, taskID+".tombstone")
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, []byte("removed\n"), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		return err
+	}
+	_ = os.Remove(filepath.Join(r.dir, taskID+".json"))
+	_ = os.Remove(filepath.Join(r.dir, taskID+".ckpt.json"))
+	_ = os.RemoveAll(filepath.Join(r.dir, taskID+".ckpts"))
+	return nil
+}
+
+func (r *runStore) writeRestoreJournal(taskID string, value any) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	p := filepath.Join(r.dir, taskID+".restore.json")
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
+}
+func (r *runStore) clearRestoreJournal(taskID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	err := os.Remove(filepath.Join(r.dir, taskID+".restore.json"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 // runCheckpoint is the resumable model-view of a run: the turn reached and the
@@ -80,26 +125,35 @@ type runCheckpoint struct {
 }
 
 func (r *runStore) saveCheckpoint(taskID string, cp *runCheckpoint) {
+	_ = r.saveCheckpointChecked(taskID, cp)
+}
+
+func (r *runStore) saveCheckpointChecked(taskID string, cp *runCheckpoint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	raw, err := json.Marshal(cp)
 	if err != nil {
-		return
-	}
-	p := filepath.Join(r.dir, taskID+".ckpt.json")
-	tmp := p + ".tmp"
-	if os.WriteFile(tmp, raw, 0o600) == nil {
-		_ = os.Rename(tmp, p)
+		return err
 	}
 	historyDir := filepath.Join(r.dir, taskID+".ckpts")
-	if os.MkdirAll(historyDir, 0o700) != nil {
-		return
+	if err := os.MkdirAll(historyDir, 0o700); err != nil {
+		return err
 	}
 	historyPath := filepath.Join(historyDir, fmt.Sprintf("%020d.json", cp.Turn))
 	historyTmp := historyPath + ".tmp"
-	if os.WriteFile(historyTmp, raw, 0o600) == nil {
-		_ = os.Rename(historyTmp, historyPath)
+	if err := os.WriteFile(historyTmp, raw, 0o600); err != nil {
+		return err
 	}
+	if err := os.Rename(historyTmp, historyPath); err != nil {
+		return err
+	}
+	// Publish latest only after the immutable history entry is durable.
+	p := filepath.Join(r.dir, taskID+".ckpt.json")
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
 }
 
 func (r *runStore) loadCheckpoint(taskID string) *runCheckpoint {

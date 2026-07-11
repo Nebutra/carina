@@ -69,15 +69,41 @@ func (d *Daemon) handleCheckpointRestore(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Preflight every rollback pointer before mutating the first file. This
+	// prevents a known-invalid later patch from leaving a partially restored tree.
+	for _, patchID := range rollback {
+		patch, err := d.kern.PatchShow(task.SessionID, patchID)
+		if err != nil {
+			return nil, fmt.Errorf("checkpoint restore preflight %s: %w", patchID, err)
+		}
+		if patch.Status != "applied" || strings.TrimSpace(patch.RollbackPointer) == "" {
+			return nil, fmt.Errorf("checkpoint restore preflight %s: patch is not rollbackable", patchID)
+		}
+	}
+	journal := map[string]any{"checkpoint_id": p.CheckpointID, "pending": rollback, "completed": []string{}}
+	if err := d.runs.writeRestoreJournal(task.TaskID, journal); err != nil {
+		return nil, fmt.Errorf("checkpoint restore journal: %w", err)
+	}
+	completed := make([]string, 0, len(rollback))
 	for i := len(rollback) - 1; i >= 0; i-- {
 		if _, err := d.kern.PatchRollback(task.SessionID, rollback[i]); err != nil {
+			journal["completed"] = completed
+			journal["failed_patch"] = rollback[i]
+			_ = d.runs.writeRestoreJournal(task.TaskID, journal)
 			return nil, fmt.Errorf("checkpoint restore rollback %s: %w", rollback[i], err)
+		}
+		completed = append(completed, rollback[i])
+		journal["completed"] = completed
+		if err := d.runs.writeRestoreJournal(task.TaskID, journal); err != nil {
+			return nil, fmt.Errorf("checkpoint restore progress journal: %w", err)
 		}
 	}
 	d.sched.SetAppliedPatches(task.TaskID, cp.AppliedPatches)
 	d.sched.SetStatus(task.TaskID, "paused")
-	d.runs.saveCheckpoint(task.TaskID, cp)
 	d.record(task.SessionID, "TaskCreated", task.TaskID, "operator", map[string]any{"status": "checkpoint_restored", "turn": cp.Turn, "rolled_back": rollback}, "")
+	if err := d.runs.clearRestoreJournal(task.TaskID); err != nil {
+		return nil, fmt.Errorf("checkpoint restore completed but journal cleanup failed: %w", err)
+	}
 	return map[string]any{"restored": true, "checkpoint_id": checkpointID(task, cp), "task_id": task.TaskID, "turn": cp.Turn, "rolled_back": rollback, "status": "paused"}, nil
 }
 func (d *Daemon) checkpoint(params json.RawMessage) (*scheduler.Task, *runCheckpoint, checkpointParams, error) {

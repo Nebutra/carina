@@ -169,6 +169,26 @@ func (s *Store) SetStatus(sessionID, status string) (*Session, error) {
 	return &updated, nil
 }
 
+// Delete removes a terminal session from durable recovery state.
+func (s *Store) Delete(sessionID string) error {
+	s.mu.Lock()
+	sess, ok := s.sessions[sessionID]
+	if !ok {
+		s.mu.Unlock()
+		return nil
+	}
+	if sess.Status != "closed" {
+		s.mu.Unlock()
+		return fmt.Errorf("sessionstore: session %s is %s, not closed", sessionID, sess.Status)
+	}
+	delete(s.sessions, sessionID)
+	s.mu.Unlock()
+	if err := os.Remove(filepath.Join(s.dir, "sessions", sessionID+".json")); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("sessionstore: delete: %w", err)
+	}
+	return nil
+}
+
 // persist atomically writes a session row (temp + rename).
 func (s *Store) persist(sess *Session) error {
 	path := filepath.Join(s.dir, "sessions", sess.SessionID+".json")

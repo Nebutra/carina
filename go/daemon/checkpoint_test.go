@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"github.com/Nebutra/carina/go/scheduler"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -12,6 +14,51 @@ func TestPatchSuffixRejectsDivergedLineage(t *testing.T) {
 	}
 	if _, err := patchSuffix([]string{"p1", "other"}, []string{"p1", "p2"}); err == nil {
 		t.Fatal("expected divergent lineage refusal")
+	}
+}
+
+func TestRunStoreCheckpointPublishIsHistoryFirst(t *testing.T) {
+	runs := newRunStore(filepath.Join(t.TempDir(), "state"))
+	if err := runs.saveCheckpointChecked("task", &runCheckpoint{Turn: 1, Transcript: newTranscript("x")}); err != nil {
+		t.Fatal(err)
+	}
+	// Replacing the history directory with a file injects a history write failure.
+	if err := os.RemoveAll(filepath.Join(runs.dir, "task.ckpts")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runs.dir, "task.ckpts"), []byte("blocked"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runs.saveCheckpointChecked("task", &runCheckpoint{Turn: 2, Transcript: newTranscript("x")}); err == nil {
+		t.Fatal("expected history failure")
+	}
+	if latest := runs.loadCheckpoint("task"); latest == nil || latest.Turn != 1 {
+		t.Fatalf("latest advanced without history: %+v", latest)
+	}
+}
+
+func TestRunStoreTombstonePreventsRestartResurrection(t *testing.T) {
+	runs := newRunStore(filepath.Join(t.TempDir(), "state"))
+	task := &scheduler.Task{TaskID: "task", Status: "completed"}
+	runs.save(task)
+	if err := runs.tombstone(task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if got := runs.load(); len(got) != 0 {
+		t.Fatalf("tombstoned run resurrected: %+v", got)
+	}
+}
+
+func TestAgentDispatchRollsBackSessionOnSubmitFailure(t *testing.T) {
+	d := newDaemonAt(t, t.TempDir())
+	defer d.Close()
+	before := len(d.store.List())
+	_, err := d.handleAgentDispatch(agentViewRaw(map[string]any{"workspace_root": t.TempDir(), "prompt": "x", "agent": "does-not-exist"}))
+	if err == nil {
+		t.Fatal("expected submit failure")
+	}
+	if got := len(d.store.List()); got != before {
+		t.Fatalf("session leaked: before=%d after=%d", before, got)
 	}
 }
 

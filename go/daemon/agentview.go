@@ -28,7 +28,8 @@ func (d *Daemon) handleAgentPeek(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	for _, group := range [][]agentview.Entry{d.agentRoster().NeedsInput, d.agentRoster().Working, d.agentRoster().Completed} {
+	roster := d.agentRoster()
+	for _, group := range [][]agentview.Entry{roster.NeedsInput, roster.Working, roster.Completed} {
 		for _, e := range group {
 			if e.TaskID == p.TaskID {
 				return e, nil
@@ -70,10 +71,45 @@ func (d *Daemon) handleAgentRemove(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown task %s", p.TaskID)
 	}
+	switch t.Status {
+	case "completed", "failed", "cancelled", "degraded":
+	default:
+		return nil, fmt.Errorf("scheduler: task %s is still %s", p.TaskID, t.Status)
+	}
+	if err := d.runs.tombstone(p.TaskID); err != nil {
+		return nil, fmt.Errorf("durable removal: %w", err)
+	}
 	if err := d.sched.Remove(p.TaskID); err != nil {
 		return nil, err
 	}
-	return map[string]any{"removed": true, "task_id": p.TaskID, "session_id": t.SessionID}, nil
+	remaining := false
+	for _, other := range d.sched.List() {
+		if other.SessionID == t.SessionID {
+			remaining = true
+			break
+		}
+	}
+	warnings := []string{}
+	if !remaining {
+		meta := d.agentView.Snapshot()[t.SessionID]
+		if _, err := d.store.SetStatus(t.SessionID, "closed"); err != nil {
+			warnings = append(warnings, err.Error())
+		} else if err := d.store.Delete(t.SessionID); err != nil {
+			warnings = append(warnings, err.Error())
+		}
+		if err := d.agentView.Delete(t.SessionID); err != nil {
+			warnings = append(warnings, err.Error())
+		}
+		if meta.WorktreeID != "" {
+			if _, err := d.worktrees.Unlock(meta.WorktreeID, t.SessionID); err != nil {
+				warnings = append(warnings, err.Error())
+			}
+			if err := d.worktrees.Cleanup(meta.WorktreeID, "", false); err != nil {
+				warnings = append(warnings, err.Error())
+			}
+		}
+	}
+	return map[string]any{"removed": true, "task_id": p.TaskID, "session_id": t.SessionID, "cleanup_warnings": warnings}, nil
 }
 
 func (d *Daemon) handleAgentMetadataSet(params json.RawMessage) (any, error) {
@@ -116,6 +152,13 @@ func (d *Daemon) handleAgentDispatch(params json.RawMessage) (any, error) {
 	if strings.TrimSpace(p.Prompt) == "" {
 		return nil, fmt.Errorf("prompt is required")
 	}
+	agentName := strings.TrimSpace(p.Agent)
+	if agentName == "" {
+		agentName = "build"
+	}
+	if loadAgentSpecs(p.WorkspaceRoot)[agentName] == nil {
+		return nil, fmt.Errorf("unknown agent %q", agentName)
+	}
 	workspace := p.WorkspaceRoot
 	var worktreeID string
 	if p.Isolate {
@@ -126,21 +169,39 @@ func (d *Daemon) handleAgentDispatch(params json.RawMessage) (any, error) {
 		}
 		workspace = rec.Path
 	}
-	sessAny, err := d.handleSessionCreate(agentViewRaw(map[string]any{"workspace_root": workspace, "profile": p.Profile, "approval_mode": p.ApprovalMode}))
+	sess, err := d.store.CreateSessionMode(workspace, p.Profile, p.ApprovalMode)
 	if err != nil {
 		if worktreeID != "" {
 			_ = d.worktrees.Cleanup(worktreeID, worktreeID, true)
 		}
 		return nil, err
 	}
-	sess := sessAny.(*sessionstore.Session)
-	if worktreeID != "" {
-		_, _ = d.worktrees.Lock(worktreeID, sess.SessionID)
+	rollback := func(cause error) error {
+		_, _ = d.store.SetStatus(sess.SessionID, "closed")
+		_ = d.store.Delete(sess.SessionID)
+		_ = d.agentView.Delete(sess.SessionID)
+		if worktreeID != "" {
+			_, _ = d.worktrees.Unlock(worktreeID, sess.SessionID)
+			if e := d.worktrees.Cleanup(worktreeID, "", true); e != nil {
+				return fmt.Errorf("%w (worktree rollback: %v)", cause, e)
+			}
+		}
+		return cause
 	}
-	_ = d.agentView.Set(sess.SessionID, agentview.Metadata{Title: p.Title, Branch: p.Branch, WorktreeID: worktreeID})
+	if err := d.kern.InitSessionFull(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile, sess.ApprovalMode, d.org); err != nil {
+		return nil, rollback(fmt.Errorf("kernel session init: %w", err))
+	}
+	if worktreeID != "" {
+		if _, err = d.worktrees.Lock(worktreeID, sess.SessionID); err != nil {
+			return nil, rollback(err)
+		}
+	}
+	if err = d.agentView.Set(sess.SessionID, agentview.Metadata{Title: p.Title, Branch: p.Branch, WorktreeID: worktreeID}); err != nil {
+		return nil, rollback(err)
+	}
 	taskAny, err := d.handleTaskSubmit(agentViewRaw(map[string]any{"session_id": sess.SessionID, "prompt": p.Prompt, "agent": p.Agent, "model": p.Model}))
 	if err != nil {
-		return nil, err
+		return nil, rollback(err)
 	}
 	return map[string]any{"session": sess, "task": taskAny, "worktree_id": worktreeID}, nil
 }
