@@ -47,6 +47,20 @@ def daemon_server(
 
 
 class ClientTest(unittest.TestCase):
+    def test_resolve_approval_uses_canonical_approve_param(self) -> None:
+        captured: list[dict[str, Any]] = []
+
+        def handler(request: dict[str, Any], conn: socket.socket) -> None:
+            captured.append(request["params"])
+            conn.sendall(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": {"resolved": True}}).encode() + b"\n")
+
+        with daemon_server(handler) as path:
+            client = CarinaClient(path, timeout=.5)
+            client.resolve_approval("decision-1", True, "sdk", "once")
+            client.close()
+        self.assertTrue(captured[0]["approve"])
+        self.assertNotIn("allow", captured[0])
+
     def test_session_listener_dispatch_is_independent_and_bounded(self) -> None:
         client = CarinaClient(timeout=.5)
         first = client._add_session_listener("s")

@@ -76,6 +76,20 @@ test('typed parity wrappers and event subscription use canonical RPC methods', a
   ])
 })
 
+test('resolve approval uses canonical approve param', async () => {
+  let params
+  await withServer((request, socket) => {
+    params = request.params
+    socket.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { resolved: true } }) + '\n')
+  }, async (socketPath) => {
+    const client = new CarinaClient(socketPath, 500)
+    await client.resolveApproval('decision-1', true, 'sdk', 'once')
+    client.close()
+  })
+  assert.equal(params.approve, true)
+  assert.equal('allow' in params, false)
+})
+
 test('disconnect rejects every pending call immediately', async () => {
   await withServer((_request, socket) => socket.destroy(), async (socketPath) => {
     const client = new CarinaClient(socketPath, 5_000)

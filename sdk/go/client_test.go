@@ -98,6 +98,35 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 	}
 }
 
+func TestResolveApprovalUsesCanonicalApproveParam(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	client := NewClient(rpc.NewClient(clientConn, clientConn, clientConn))
+	defer client.Close()
+	params := make(chan map[string]any, 1)
+	go func() {
+		line, _ := bufio.NewReader(serverConn).ReadBytes('\n')
+		var request struct {
+			ID     json.RawMessage `json:"id"`
+			Params map[string]any  `json:"params"`
+		}
+		_ = json.Unmarshal(line, &request)
+		params <- request.Params
+		response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"resolved": true}})
+		_, _ = serverConn.Write(append(response, '\n'))
+	}()
+	if err := client.ResolveApproval("decision-1", true, "sdk", "once"); err != nil {
+		t.Fatal(err)
+	}
+	got := <-params
+	if got["approve"] != true {
+		t.Fatalf("approve param = %#v", got)
+	}
+	if _, legacy := got["allow"]; legacy {
+		t.Fatalf("legacy allow param leaked: %#v", got)
+	}
+}
+
 func reviewFixture() map[string]any {
 	return map[string]any{"session_id": "s1", "projection_version": "1.0.0", "source_cursor": "cp1.payload.signature", "state": "completed", "intent": "ship", "success_criteria": []any{map[string]any{"kind": "command"}}, "changes": []any{}, "commands": []any{}, "tools": []any{}, "checks": []any{}, "diagnostics": []any{}, "policy_decisions": []any{}, "questions": []any{}, "conflicts": []any{}, "risk_and_policy": []any{}, "artifact_ids": []any{}, "rollback": map[string]any{"available": false, "patch_ids": []any{}}, "stats": map[string]any{}}
 }
