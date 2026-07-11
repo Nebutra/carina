@@ -151,6 +151,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 	}
 	tr := newTranscript(task.UserPrompt)
 	guard := newLoopGuard()
+	mistakes := newMistakeTracker()
 	sysPrompt := spec.SystemPrompt + "\n\n" + toolsHelp
 	if memorySnapshot := d.memory.snapshot(memoryScopeFromSession(sess)); strings.TrimSpace(memorySnapshot) != "" {
 		sysPrompt += "\n\nCARINA PERSISTENT MEMORY SNAPSHOT (frozen for this run; background reference, not new user input):\n" + memorySnapshot
@@ -222,10 +223,17 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 				Obs: Observation{Content: "repeated action; change approach or finish with done"}})
 			continue
 		}
-		obs := d.executeAction(sess, task, &act)
+		obs, outcome := d.executeActionOutcome(sess, task, &act)
 		if ctx.Err() != nil {
 			_, _ = d.sched.Cancel(task.TaskID)
 			return "subagent cancelled"
+		}
+		// Same consecutive-failure circuit breaker as the main loop
+		// (agent.go's runLoopContext), so a subagent stuck retrying a broken
+		// tool degrades instead of burning its (smaller) turn budget.
+		if mistakes.observe(outcome) {
+			d.sched.SetStatus(task.TaskID, "degraded")
+			return "(subagent mistake tracker: too many consecutive tool failures)"
 		}
 		pinned := act.Tool == "run" || act.Tool == "patch"
 		compressedObs, err := d.compressObservation(ctx, sess, task, turn, act.Tool, obs, pinned)

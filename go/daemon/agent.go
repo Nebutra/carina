@@ -229,6 +229,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		task = t
 	}
 	guard := newLoopGuard()
+	mistakes := newMistakeTracker()
 	verifyAttempts := 0
 	// A cheap summarizer for compaction: reuse the reasoner on the head.
 	summarize := func(head string) (string, error) {
@@ -507,7 +508,18 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		if ctx.Err() != nil || taskCancelled(d, task.TaskID) {
 			return
 		}
-		obs := d.executeAction(sess, task, &act)
+		obs, outcome := d.executeActionOutcome(sess, task, &act)
+		// Consecutive-failure circuit breaker: a model that keeps hitting the
+		// same broken tool (or rotates across several failing tools) burns
+		// its turn budget one governance/execution failure at a time without
+		// ever tripping LoopGuard (each attempt can have a distinct
+		// signature). MistakeTracker tracks the streak independently of
+		// LoopGuard's identical-action fingerprinting and degrades once it
+		// crosses MaxConsecutive; any completed outcome resets the streak.
+		if mistakes.observe(outcome) {
+			d.degrade(sess, task, tr, "mistake tracker: too many consecutive tool failures ("+outcome.errorCategory+")")
+			return
+		}
 		pinned := act.Tool == "run" || act.Tool == "patch" // keep test/patch results
 		compressedObs, err := d.compressObservation(ctx, sess, task, turn, act.Tool, obs, pinned)
 		if err != nil {
@@ -690,9 +702,21 @@ func (d *Daemon) executeBatch(sess *sessionstore.Session, task *scheduler.Task, 
 // hook that exits 2 blocks the action (its stderr is the feedback); PostToolUse
 // hooks observe the result. The kernel+toolchain dispatch is dispatchAction.
 func (d *Daemon) executeAction(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+	obs, _ := d.executeActionOutcome(sess, task, act)
+	return obs
+}
+
+// executeActionOutcome is executeAction plus the toolExecutionOutcome status
+// ("completed"/"failed"/"denied"/"timed_out"/"cancelled") that produced the
+// display string, so callers that need to react to *why* an action ended
+// (e.g. MistakeTracker's consecutive-failure circuit breaker in runLoop) can
+// do so without re-parsing the display text. executeAction remains the
+// display-only convenience wrapper used by every other call site.
+func (d *Daemon) executeActionOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) (string, toolExecutionOutcome) {
 	call, err := d.beginToolCall(sess, task, act)
 	if err != nil {
-		return "governance error: " + err.Error()
+		outcome := toolFailed("governance error: "+err.Error(), "audit_persistence_error")
+		return outcome.display, outcome
 	}
 	d.installActiveToolCall(sess, task, call)
 	act.lifecycleCallID = call.id
@@ -700,18 +724,20 @@ func (d *Daemon) executeAction(sess *sessionstore.Session, task *scheduler.Task,
 	if blocked, reason := d.runPreToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, "")); blocked {
 		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 			map[string]any{"status": "hook_blocked", "tool": act.Tool, "reason": reason}, "")
-		obs := "BLOCKED by hook: " + reason
-		if err := d.finishToolCall(sess, task, call, toolDenied(obs, "hook_denied")); err != nil {
-			return "governance error: " + err.Error()
+		outcome := toolDenied("BLOCKED by hook: "+reason, "hook_denied")
+		if err := d.finishToolCall(sess, task, call, outcome); err != nil {
+			failed := toolFailed("governance error: "+err.Error(), "audit_persistence_error")
+			return failed.display, failed
 		}
-		return obs
+		return outcome.display, outcome
 	}
 	if d.isPlanMode(sess.SessionID) && (act.Tool == "patch" || act.Tool == "run" || act.Tool == "memory") {
-		obs := "BLOCKED: plan mode active — explore read-only and present a plan; the operator must approve it (session.approve_plan) before edits, commands, or memory writes"
-		if err := d.finishToolCall(sess, task, call, toolDenied(obs, "plan_mode")); err != nil {
-			return "governance error: " + err.Error()
+		outcome := toolDenied("BLOCKED: plan mode active — explore read-only and present a plan; the operator must approve it (session.approve_plan) before edits, commands, or memory writes", "plan_mode")
+		if err := d.finishToolCall(sess, task, call, outcome); err != nil {
+			failed := toolFailed("governance error: "+err.Error(), "audit_persistence_error")
+			return failed.display, failed
 		}
-		return obs
+		return outcome.display, outcome
 	}
 	outcome := d.dispatchActionOutcome(sess, task, act)
 	switch d.activeToolTerminal(task.TaskID) {
@@ -722,9 +748,10 @@ func (d *Daemon) executeAction(sess *sessionstore.Session, task *scheduler.Task,
 	}
 	d.runPostToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, outcome.display))
 	if err := d.finishToolCall(sess, task, call, outcome); err != nil {
-		return "governance error: " + err.Error()
+		failed := toolFailed("governance error: "+err.Error(), "audit_persistence_error")
+		return failed.display, failed
 	}
-	return outcome.display
+	return outcome.display, outcome
 }
 
 func (d *Daemon) contextForTask(taskID string) context.Context {

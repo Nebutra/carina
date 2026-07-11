@@ -55,6 +55,54 @@ func classifyLegacyToolResult(display string) toolExecutionOutcome {
 	return toolCompleted(display)
 }
 
+// MistakeTracker is a consecutive-failure circuit breaker over
+// toolExecutionOutcome.status: it counts back-to-back non-"completed"
+// outcomes ("failed", "denied", "timed_out", "cancelled") and reports a trip
+// once the streak crosses MaxConsecutive, so a model that keeps hitting the
+// same (or different) broken tool call doesn't burn the rest of its turn
+// budget one failure at a time. Any "completed" outcome resets the streak —
+// this tracks *consecutive* failures, not a lifetime total (that's
+// LoopGuard's MaxHardRepeat's job, which fires on repeated identical
+// actions regardless of outcome). Shape mirrors LoopGuard
+// (go/daemon/transcript.go): a small struct with an observe-style method and
+// a threshold field, fully unit-testable standalone.
+type MistakeTracker struct {
+	consecutive    int
+	MaxConsecutive int
+	lastCategory   string
+}
+
+func newMistakeTracker() *MistakeTracker {
+	return &MistakeTracker{MaxConsecutive: 3}
+}
+
+// observe records one tool outcome and reports whether the consecutive
+// non-completed streak has crossed MaxConsecutive (caller should treat this
+// as a trip — e.g. degrade the task — rather than continue looping).
+func (m *MistakeTracker) observe(outcome toolExecutionOutcome) bool {
+	if outcome.status == "completed" {
+		m.consecutive = 0
+		m.lastCategory = ""
+		return false
+	}
+	m.consecutive++
+	m.lastCategory = outcome.errorCategory
+	return m.tripped()
+}
+
+// tripped reports whether the current consecutive-failure streak has
+// crossed MaxConsecutive without recording a new observation.
+func (m *MistakeTracker) tripped() bool {
+	return m.MaxConsecutive > 0 && m.consecutive >= m.MaxConsecutive
+}
+
+// reset clears the consecutive-failure streak (e.g. after a nudge the
+// caller wants to give one more clean chance to before tripping again).
+func (m *MistakeTracker) reset() {
+	m.consecutive = 0
+	m.lastCategory = ""
+}
+
 type toolCallLifecycle struct {
 	id       string
 	tool     string
