@@ -53,6 +53,84 @@ func TestTranscriptCompactionElidesThenSummarizes(t *testing.T) {
 	}
 }
 
+func TestTriggerCharsDefaultsToMaxChars(t *testing.T) {
+	tr := newTranscript("task")
+	tr.policy = CompactionPolicy{MaxChars: 24000}
+	if got := tr.triggerChars(); got != 24000 {
+		t.Fatalf("zero ReserveChars/ThresholdRatio must reduce to MaxChars, got %d", got)
+	}
+}
+
+func TestTriggerCharsDualBound(t *testing.T) {
+	cases := []struct {
+		name           string
+		maxChars       int
+		reserveChars   int
+		thresholdRatio float64
+		want           int
+	}{
+		// Large window: a small fixed reserve leaves more usable room than a
+		// proportional cut would, so the reserve-based bound wins.
+		{"large window reserve wins", 100000, 2000, 0.9, 98000},
+		// Small window: the fixed reserve alone would trigger overly early
+		// (6000/8000 = 75%), so the more generous ratio-based bound wins.
+		{"small window ratio wins", 8000, 2000, 0.9, 7200},
+		// Reserve larger than MaxChars must floor at zero, never negative.
+		{"reserve exceeds max floors at zero", 1000, 5000, 0, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tr := newTranscript("task")
+			tr.policy = CompactionPolicy{MaxChars: c.maxChars, ReserveChars: c.reserveChars, ThresholdRatio: c.thresholdRatio}
+			if got := tr.triggerChars(); got != c.want {
+				t.Fatalf("triggerChars() = %d, want %d", got, c.want)
+			}
+		})
+	}
+}
+
+// TestCompactUsesConsistentTriggerAcrossBothGates is the regression test for
+// the bug the dual-threshold review caught: compact() used to compare
+// t.size() against t.policy.MaxChars independently at two call sites, so a
+// lowered effective trigger could apply to the elide gate while the
+// summarize-decision gate silently kept using the old, higher MaxChars. This
+// reuses the exact turn/content shape already proven (in
+// TestTranscriptCompactionElidesThenSummarizes) to drive both gates when
+// MaxChars=800, but reaches that same effective trigger via ReserveChars/
+// ThresholdRatio with MaxChars set two orders of magnitude higher — so this
+// only passes if BOTH gates are reading the computed trigger (800) instead
+// of the much larger raw MaxChars (100000), which the pre-fix code would
+// have used at the second (summarize-decision) gate.
+func TestCompactUsesConsistentTriggerAcrossBothGates(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.policy = CompactionPolicy{
+		// trigger = max(100000-99200, 100000*0.008) = max(800, 800) = 800.
+		MaxChars: 100000, ReserveChars: 99200, ThresholdRatio: 0.008,
+		KeepRecent: 2, ToolOutputMax: 400, SummarizeAfter: 4,
+	}
+	if got := tr.triggerChars(); got != 800 {
+		t.Fatalf("fixture assumption broken: triggerChars() = %d, want 800", got)
+	}
+	for i := 0; i < 10; i++ {
+		content := strings.Repeat("data ", 60) // ~300 chars each
+		tr.addTurn(Turn{Tool: "read", ActionBrief: "read f", Obs: Observation{Content: content}})
+	}
+	if tr.size() <= 800 {
+		t.Fatalf("test fixture must exceed the lowered trigger (800) for compact() to proceed at all: size=%d", tr.size())
+	}
+	if tr.size() >= tr.policy.MaxChars {
+		t.Fatalf("test fixture must stay well under the raw MaxChars (%d) — the whole point is proving the lowered trigger, not MaxChars, drives compaction: size=%d", tr.policy.MaxChars, tr.size())
+	}
+	summarizeCalled := false
+	receipt := tr.compact(func(head string) (string, error) {
+		summarizeCalled = true
+		return "SUMMARY: read many files", nil
+	})
+	if !summarizeCalled || receipt == nil {
+		t.Fatalf("summarize gate must fire off the same lowered trigger as the elide gate, not stale MaxChars semantics (summarizeCalled=%v receipt=%v)", summarizeCalled, receipt)
+	}
+}
+
 func TestLoopGuardRepeatAndStall(t *testing.T) {
 	g := newLoopGuard()
 	g.MaxRepeat = 3

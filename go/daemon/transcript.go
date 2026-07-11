@@ -69,6 +69,12 @@ type CompactionPolicy struct {
 	KeepRecent     int // keep this many most-recent turns verbatim
 	ToolOutputMax  int // truncate any single observation to this many chars
 	SummarizeAfter int // if still over budget after eliding, summarize the head
+
+	// ReserveChars and ThresholdRatio are an optional dual bound on the
+	// effective trigger (see triggerChars): if both are zero (the default)
+	// the trigger is exactly MaxChars, matching prior behavior byte for byte.
+	ReserveChars   int     // if >0, floor the trigger at MaxChars-ReserveChars
+	ThresholdRatio float64 // if >0, also allow the trigger up to MaxChars*ThresholdRatio
 }
 
 func defaultCompactionPolicy() CompactionPolicy {
@@ -112,12 +118,42 @@ func (t *Transcript) render() string {
 // size is the current rendered char count.
 func (t *Transcript) size() int { return len(t.render()) }
 
+// triggerChars is the single effective char-budget threshold used by BOTH
+// compaction gates in compact() below. Before this, each gate compared
+// against t.policy.MaxChars independently — harmless while both stayed
+// literally identical, but a latent bug: a future change to one gate's
+// threshold (e.g. an incremental token/ratio-based trigger, as scoped in
+// absorption-plan.md's Wave 2 "multi-tier compaction" item) could silently
+// leave the other gate on stale semantics, so elision would fire at a
+// different effective budget than the summarize-decision gate expects,
+// undermining the audit-completeness guarantee compaction receipts exist to
+// provide. Routing both gates through one function makes that class of bug
+// structurally impossible.
+//
+// The formula mirrors a token-budget technique (trigger = max(budget -
+// reserve, budget * ratio)) adapted to carina's char-based policy: with the
+// default ReserveChars=0/ThresholdRatio=0 it reduces to exactly MaxChars
+// (today's behavior, unchanged). Configuring both lets a large MaxChars keep
+// a small fixed reserve instead of wasting a large proportional chunk, while
+// a small MaxChars still gets the more generous ratio-based bound.
+func (t *Transcript) triggerChars() int {
+	trigger := t.policy.MaxChars - t.policy.ReserveChars
+	if ratioBound := int(float64(t.policy.MaxChars) * t.policy.ThresholdRatio); ratioBound > trigger {
+		trigger = ratioBound
+	}
+	if trigger < 0 {
+		trigger = 0
+	}
+	return trigger
+}
+
 // compact enforces the char budget. Step 1: elide old, non-pinned
 // observations (keeping the most recent KeepRecent turns verbatim). Step 2:
 // if still over budget, fold the head turns into the rolling Summary via the
 // provided summarizer (a cheap model call). The audit log is untouched.
 func (t *Transcript) compact(summarize func(head string) (string, error)) *CompactionReceipt {
-	if t.size() <= t.policy.MaxChars {
+	trigger := t.triggerChars()
+	if t.size() <= trigger {
 		return nil
 	}
 	preCompactionSummary := t.Summary
@@ -129,7 +165,7 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 			t.Turns[i].Obs.Elided = true
 		}
 	}
-	if t.size() <= t.policy.MaxChars || len(t.Turns) <= t.policy.SummarizeAfter {
+	if t.size() <= trigger || len(t.Turns) <= t.policy.SummarizeAfter {
 		return nil
 	}
 	// Step 2: summarize the head (all but the recent tail) into Summary.
