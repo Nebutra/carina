@@ -181,68 +181,78 @@ skills) ride on the subsystems but are themselves incremental.
 
 ## Tracking checklist
 
+This checklist was frozen unchecked for a long time while `absorption-status.md`
+became the actual live tracker (waves 1–22+, plus the 2026-07-12 cline/codebuff
+campaign). Reconciled 2026-07-12 against `absorption-status.md` and, for a
+handful of ambiguous items, against current code directly (see inline notes).
+Items are checked when the underlying gap is closed, even where the landed
+shape or naming differs from this plan's original sketch — the plan predates
+implementation and several gaps ended up satisfied by a broader or differently
+named mechanism than first scoped. Treat `absorption-status.md` as authoritative
+where the two disagree.
+
 ## Carina Zero-Gap Absorption — Tracking Checklist
 
 ### Wave 1 — Loop & I/O correctness foundations
-- [ ] Shell compound-command decomposition hardening — [S/additive]
-- [ ] Tool-error-as-result contract (call never throws) — [S/additive]
-- [ ] Write-ahead-log ordering (persist user turn before loop) — [S/additive]
-- [ ] Read-before-write invariant + optimistic-lock stale/dirty-write detection — [M/additive]
-- [ ] Duplicate-key JSON detection (fail-closed) — [S/additive]
-- [ ] Model tiering (cheap model for compaction/summarization) — [S/additive]
+- [x] Shell compound-command decomposition hardening — [S/additive]
+- [x] Tool-error-as-result contract (call never throws) — [S/additive] (confirmed already satisfied, `absorption-status.md` Wave 1)
+- [x] Write-ahead-log ordering (persist user turn before loop) — [S/additive] (confirmed already satisfied, `absorption-status.md` Wave 1)
+- [x] Read-before-write invariant + optimistic-lock stale/dirty-write detection — [M/additive]
+- [x] Duplicate-key JSON detection (fail-closed) — [S/additive]
+- [x] Model tiering (cheap model for compaction/summarization) — [S/additive]
 
 ### Wave 2 — Execution-security gating, transport hardening & context bounding
-- [ ] Flag-level read-only whitelist + injection denylist + path/device guards — [M/additive]
-- [ ] Transport-origin allowlist + remote kill-switch + lazy OS-permission acquisition — [M/additive]
-- [ ] Workspace-trust gate (git-root keyed) — [M/additive]
-- [ ] Double-buffered message snapshot for concurrent submits — [S/additive]
-- [ ] Tool-result disk offload + reference substitution + pagination signal — [M/additive]
-- [ ] Multi-tier compaction (token trigger + circuit breaker + verbatim-user + rebuild-with-key-files) — [M/additive]
+- [x] Flag-level read-only whitelist + injection denylist + path/device guards — [M/additive]
+- [x] Transport-origin allowlist + remote kill-switch + lazy OS-permission acquisition — [M/additive]
+- [x] Workspace-trust gate (git-root keyed) — [M/additive]
+- [x] Double-buffered message snapshot for concurrent submits — [S/additive] (satisfied by existing infra — per-task goroutine + own transcript, not a rebuilt snapshot type; see `absorption-status.md`'s "Satisfied by existing infrastructure" note)
+- [x] Tool-result disk offload + reference substitution + pagination signal — [M/additive] (landed as the content-addressed `go/artifact` store with bounded reads, `kilocode-absorption.md`; head+tail-aware preview truncation completed 2026-07-12, `cline-absorption.md`'s `mid_truncation`, commit `a8be846`)
+- [ ] Multi-tier compaction (token trigger + circuit breaker + verbatim-user + rebuild-with-key-files) — [M/additive] (partial: circuit-breaker was already done; token-threshold trigger landed 2026-07-12, `cline-absorption.md`'s `context_pruner_agent`, commit `5898e17`; verbatim-user preservation and the rebuild-with-key-files top tier remain open)
 
 ### Wave 3 — Cost governance, model resilience, durable state registry
-- [ ] Cost & token metering with budget governance (pause-and-approve gate) — [M/additive]
-- [ ] Per-subagent task budget + resource caps (whale protection) — [S/additive]
-- [ ] Resilient model routing (cross-model fallback + typed-error retry + overflow auto-shrink + heartbeat) — [M/additive]
-- [ ] Central side-effect registry + worker-reconnect state rehydration — [M/additive]
-- [ ] Versioned idempotent config/state migration — [S/additive]
-- [ ] Cross-process command/prompt history with chunked lazy load — [S/additive]
+- [x] Cost & token metering with budget governance (pause-and-approve gate) — [M/additive]
+- [x] Per-subagent task budget + resource caps (whale protection) — [S/additive]
+- [x] Resilient model routing (cross-model fallback + typed-error retry + overflow auto-shrink + heartbeat) — [M/additive] (`go/daemon/reasoner.go`'s `retryGovernance`/`thinkWithRetry*`/`retryAfterFromError`/`retryDelay`)
+- [x] Central side-effect registry + worker-reconnect state rehydration — [M/additive] (registry half satisfied by the hash-chained audit log + event bus, per existing infra note; worker-reconnect via the Wave 7 work-dispatch bridge's idempotent, ownership-checked reporting)
+- [ ] Versioned idempotent config/state migration — [S/additive] (no `STATE_VERSION`-style schema migration ladder found in `go/config`/`go/daemon` session or run stores as of this reconciliation — genuinely open, not just differently named)
+- [x] Cross-process command/prompt history with chunked lazy load — [S/additive]
 
 ### Wave 4 — Agent surface: hooks / skills / plan / styles / memory + tool registry + structured output + prompt cache
-- [ ] buildTool() middleware seam (auto gate+audit+metrics) — [M/additive]
-- [ ] Schema-validated structured output for headless runs — [S/additive]
-- [ ] Hooks lifecycle interception (Pre/Post/Stop + exit-2 blocking) — [M/additive]
-- [ ] Skills / slash-command system (governed prompt-workflows) — [M/additive]
-- [ ] Plan mode (propose -> approve -> execute gate) — [S/additive]
-- [ ] Output styles (layered policy-governed system-prompt composition) — [S/additive]
-- [ ] Persistent memory subsystem + hierarchical CARINA.md loading — [M/additive]
-- [ ] Segmented prompt-cache architecture — [M/additive]
+- [x] buildTool() middleware seam (auto gate+audit+metrics) — [M/additive] (satisfied by existing infra — `dispatchAction` gates every tool via the kernel and records it, rather than a separate registry type)
+- [x] Schema-validated structured output for headless runs — [S/additive]
+- [x] Hooks lifecycle interception (Pre/Post/Stop + exit-2 blocking) — [M/additive]
+- [x] Skills / slash-command system (governed prompt-workflows) — [M/additive] (landed as agent modes + slash commands, `absorption-status.md` Wave 11 OpenCode absorption)
+- [x] Plan mode (propose -> approve -> execute gate) — [S/additive]
+- [x] Output styles (layered policy-governed system-prompt composition) — [S/additive]
+- [x] Persistent memory subsystem + hierarchical CARINA.md loading — [M/additive] (deepened well past the original scope by Wave 19's Hermes memory absorption)
+- [x] Segmented prompt-cache architecture — [M/additive] (initial segmentation Wave 10; real per-provider stable/volatile boundary Wave 22)
 
 ### Wave 5 — Multi-agent coordination & advanced session lifecycle
-- [ ] Async steering of a running agent (durable mailbox + turn-boundary drain) — [M/additive]
-- [ ] Leader permission bridge (bounded child->parent escalation) — [M/additive]
-- [ ] Coordinator restricted-orchestrator role + independent async verifier — [M/additive]
-- [ ] Task-notification loop-closing protocol (idempotent completion envelope) — [S/additive]
-- [ ] Intra-turn parallel tool execution with concurrency-safety partition — [M/additive]
-- [ ] Session fork-with-lineage + rewind-to-checkpoint — [M/additive]
-- [ ] Ephemeral non-polluting side query (/btw) — [S/additive]
-- [ ] Attach/tail with replay cursor + reconnect dedup — [M/additive]
+- [x] Async steering of a running agent (durable mailbox + turn-boundary drain) — [M/additive] (two-tier urgent/normal priority added 2026-07-12, `cline-absorption.md`'s `steer_vs_queue_priority`, commit `1281f76`)
+- [x] Leader permission bridge (bounded child->parent escalation) — [M/additive]
+- [ ] Coordinator restricted-orchestrator role + independent async verifier — [M/additive] (partial: the independent-verifier half landed as `go/daemon/verifier.go`'s coordinator/verifier separation, `absorption-status.md` Wave 9; no distinct restricted-orchestrator permission profile with first-class SpawnAgent-only capability was found — delegation currently runs through the general spawn path rather than a dedicated role, so this stays open)
+- [x] Task-notification loop-closing protocol (idempotent completion envelope) — [S/additive]
+- [x] Intra-turn parallel tool execution with concurrency-safety partition — [M/additive]
+- [x] Session fork-with-lineage + rewind-to-checkpoint — [M/additive] (fork-with-lineage Wave 5; rewind served by `session.checkpoint.restore`, not a function literally named "rewind")
+- [x] Ephemeral non-polluting side query (/btw) — [S/additive]
+- [x] Attach/tail with replay cursor + reconnect dedup — [M/additive]
 
 ### Wave 6 — Config cascade, auth chain, permission UX & operational hardening
-- [ ] Per-session setting-source allowlist + config/MCP-layer filtering — [M/additive]
-- [ ] Atomic-write-safe config/spec hot-reload — [M/additive]
-- [ ] Ordered multi-source auth chain + managed-context isolation + apiKeyHelper — [M/additive]
-- [ ] Scoped runtime capability grant (/add-dir) + config precedence cascade — [M/additive]
-- [ ] Interactive + remote permission request/resolve protocol — [M/additive]
-- [ ] Doctor/system-health surface — [S/additive]
-- [ ] Anti-tamper process hardening — [M/additive]
+- [ ] Per-session setting-source allowlist + config/MCP-layer filtering — [M/additive] (a real precedence cascade landed — `go/config`'s defaults → global → project → env → flags, `absorption-status.md` Wave 8 — but the specific 4-layer Managed/User/Project/Runtime shape with managed-locked keys and untrusted-project-source filtering was not confirmed; leaving open rather than claiming an exact match)
+- [x] Atomic-write-safe config/spec hot-reload — [M/additive]
+- [x] Ordered multi-source auth chain + managed-context isolation + apiKeyHelper — [M/additive]
+- [x] Scoped runtime capability grant (/add-dir) + config precedence cascade — [M/additive]
+- [x] Interactive + remote permission request/resolve protocol — [M/additive]
+- [x] Doctor/system-health surface — [S/additive]
+- [x] Anti-tamper process hardening — [M/additive]
 
 ### Wave 7 — Large subsystems (pragmatic MVPs) & dependents
-- [ ] MCP interop: client + server mode — [L/large-subsystem]
-- [ ] Deferred lazy tool-schema + health-gated tool-pool + ToolSearch — [M/additive]
-- [ ] Direct-connect HTTP+WebSocket session API — [M/additive]
-- [ ] Distributed work-dispatch bridge (poll + lease + attenuated creds) — [L/large-subsystem]
-- [ ] Egress proxy (network as gated capability + credential injection) — [L/large-subsystem]
-- [ ] OS-level syscall sandbox (seccomp/namespaces, sandbox-exec/SBPL) — [L/large-subsystem]
-- [ ] Post-edit diagnostics-delta feedback loop + LSP intelligence — [L/large-subsystem]
-- [ ] Composable plugin bundles + git marketplace + tri-level enable merge — [M/additive]
-- [ ] Content-block (image) + context-aware dynamic skill prompts — [M/additive]
+- [x] MCP interop: client + server mode — [L/large-subsystem]
+- [ ] Deferred lazy tool-schema + health-gated tool-pool + ToolSearch — [M/additive] (no evidence of a lazy/searchable tool-pool; carina's native tool surface is small and fixed rather than a large growing inventory the way Claude Code's is, so this may simply not be a live gap — left open rather than closed without evidence)
+- [x] Direct-connect HTTP+WebSocket session API — [M/additive] (landed as the OpenClaw Gateway WS + HTTP transports, `absorption-status.md` Waves 13–17, rather than a bespoke NDJSON/WS front)
+- [x] Distributed work-dispatch bridge (poll + lease + attenuated creds) — [L/large-subsystem]
+- [x] Egress proxy (network as gated capability + credential injection) — [L/large-subsystem]
+- [x] OS-level syscall sandbox (seccomp/namespaces, sandbox-exec/SBPL) — [L/large-subsystem] (macOS Wave 7, Linux bubblewrap Wave 9)
+- [x] Post-edit diagnostics-delta feedback loop + LSP intelligence — [L/large-subsystem] (Stage 1 Wave 7, Stage 2 LSP Wave 9; line-shift-tolerant pre/post delta added 2026-07-12, `cline-absorption.md`'s `pre_post_diagnostics_diff`, commit `1c778bf`)
+- [ ] Composable plugin bundles + git marketplace + tri-level enable merge — [M/additive] (a real extension/marketplace system exists — `go/extensions`, trusted-roots-scoped, referenced in `daemon.go` as "extension marketplace" — but git-clone install specifically and tri-level enterprise-tighten-only merge were not confirmed against code; leaving open rather than claiming an exact match)
+- [ ] Content-block (image) + context-aware dynamic skill prompts — [M/additive] (confirmed absent: `provider_registry.go` excludes `"image"`-tagged models from the reasoner catalog rather than supporting image content blocks in messages; no vision/screenshot input path exists anywhere in `go/model-router` or `go/daemon`, consistent with the "Vision/Screenshot Capability" gap noted in the 2026-07 cline/codebuff comparative review)
