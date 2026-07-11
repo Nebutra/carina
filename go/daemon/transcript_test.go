@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -118,7 +119,15 @@ func TestTranscriptCompactionElidesThenSummarizes(t *testing.T) {
 		pinned := i == 9                       // last one pinned
 		tr.addTurn(Turn{Tool: "read", ActionBrief: "read f", Obs: Observation{Content: content, Pinned: pinned}})
 	}
-	wantPreimage := compactionPreimageHash(tr.Summary, tr.Turns[:len(tr.Turns)-tr.policy.KeepRecent])
+	// Version-2 receipt semantics: the preimage covers the FOLDED head turns
+	// only (Tool!="user"); this head is all reads, so folded == whole head.
+	var folded []Turn
+	for _, turn := range tr.Turns[:len(tr.Turns)-tr.policy.KeepRecent] {
+		if turn.Tool != "user" {
+			folded = append(folded, turn)
+		}
+	}
+	wantPreimage := compactionPreimageHash(tr.Summary, folded)
 	summarizeCalled := false
 	receipt := tr.compact(func(head string) (string, error) {
 		summarizeCalled = true
@@ -135,6 +144,9 @@ func TestTranscriptCompactionElidesThenSummarizes(t *testing.T) {
 	if receipt == nil || receipt.RemovedTurns == 0 || receipt.PreimageSHA256 == "" || receipt.SummarySHA256 == "" {
 		t.Fatalf("compaction receipt missing integrity fields: %+v", receipt)
 	}
+	if receipt.Version != 2 {
+		t.Fatalf("receipt version = %d, want 2 (folded-only preimage semantics)", receipt.Version)
+	}
 	if receipt.SummarySHA256 != sha256Hex(tr.Summary) {
 		t.Fatalf("summary receipt hash does not verify: %+v", receipt)
 	}
@@ -145,6 +157,238 @@ func TestTranscriptCompactionElidesThenSummarizes(t *testing.T) {
 	last := tr.Turns[len(tr.Turns)-1]
 	if last.Obs.Elided {
 		t.Fatal("recent/pinned turn must not be elided")
+	}
+}
+
+// TestCompactionPreservesUserTurnsVerbatim proves compact()'s Step-2
+// partition keeps a user-authored steering turn OUT of the summarize fold
+// even when it is far older than KeepRecent: the turn survives in t.Turns
+// with its content intact, never appears in the summarizer's head input, and
+// the v2 receipt records the partition explicitly.
+func TestCompactionPreservesUserTurnsVerbatim(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.policy = CompactionPolicy{MaxChars: 800, KeepRecent: 2, ToolOutputMax: 400, SummarizeAfter: 4, VerbatimUserMaxChars: 4000}
+	steering := "USER STEERING (incorporate this now): do not use library X"
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read f0", Obs: Observation{Content: strings.Repeat("data ", 60)}})
+	tr.addTurn(Turn{Tool: "user", ActionBrief: "steer", Obs: Observation{Content: steering, Pinned: true}})
+	for i := 0; i < 8; i++ {
+		tr.addTurn(Turn{Tool: "read", ActionBrief: fmt.Sprintf("read f%d", i+1), Obs: Observation{Content: strings.Repeat("data ", 60)}})
+	}
+	var capturedHead string
+	receipt := tr.compact(func(head string) (string, error) {
+		capturedHead = head
+		return "SUMMARY: read many files", nil
+	})
+	if receipt == nil || receipt.Version != 2 {
+		t.Fatalf("expected a v2 compaction receipt, got %+v", receipt)
+	}
+	if strings.Contains(capturedHead, "do not use library X") {
+		t.Fatalf("user steering must not enter the summarize fold, head:\n%s", capturedHead)
+	}
+	// 10 turns, KeepRecent=2 -> head is turns 1..8; one user turn kept, 7 folded.
+	if receipt.RemovedTurns != 7 {
+		t.Fatalf("RemovedTurns = %d, want 7 (folded only, not the whole head)", receipt.RemovedTurns)
+	}
+	if len(receipt.KeptTurnIndices) != 1 || receipt.KeptTurnIndices[0] != 2 {
+		t.Fatalf("KeptTurnIndices = %v, want [2]", receipt.KeptTurnIndices)
+	}
+	if len(tr.Turns) != 3 {
+		t.Fatalf("post-compaction turns = %d, want 3 (1 kept user + 2 tail)", len(tr.Turns))
+	}
+	got := tr.Turns[0]
+	if got.Tool != "user" || got.Obs.Content != steering || got.Obs.Elided {
+		t.Fatalf("steering turn must survive verbatim, got %+v", got)
+	}
+	if got.Index != 2 {
+		t.Fatalf("kept turn must retain its original index, got %d", got.Index)
+	}
+}
+
+// TestCompactionReceiptV2Recompute proves the v2 receipt's integrity fields
+// recompute from first principles: PreimageSHA256 over previous-summary + the
+// folded (non-user) pre-compaction head turns only, and KeptSHA256 over the
+// kept turns exactly as retained.
+func TestCompactionReceiptV2Recompute(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.policy = CompactionPolicy{MaxChars: 800, KeepRecent: 2, ToolOutputMax: 400, SummarizeAfter: 4, VerbatimUserMaxChars: 4000}
+	tr.addTurn(Turn{Tool: "user", ActionBrief: "steer", Obs: Observation{Content: "USER STEERING: prefer the v2 API", Pinned: true}})
+	for i := 0; i < 9; i++ {
+		tr.addTurn(Turn{Tool: "read", ActionBrief: fmt.Sprintf("read f%d", i), Obs: Observation{Content: strings.Repeat("data ", 60)}})
+	}
+	headEnd := len(tr.Turns) - tr.policy.KeepRecent
+	var wantFolded []Turn
+	var wantKeptIdx []int
+	for _, turn := range tr.Turns[:headEnd] {
+		if turn.Tool == "user" {
+			wantKeptIdx = append(wantKeptIdx, turn.Index)
+		} else {
+			wantFolded = append(wantFolded, turn)
+		}
+	}
+	wantPreimage := compactionPreimageHash(tr.Summary, wantFolded)
+	receipt := tr.compact(func(head string) (string, error) { return "SUMMARY: read many files", nil })
+	if receipt == nil || receipt.Version != 2 {
+		t.Fatalf("expected a v2 receipt, got %+v", receipt)
+	}
+	if receipt.PreimageSHA256 != wantPreimage {
+		t.Fatalf("v2 preimage must cover folded turns only: %+v", receipt)
+	}
+	if !reflect.DeepEqual(receipt.KeptTurnIndices, wantKeptIdx) {
+		t.Fatalf("KeptTurnIndices = %v, want %v", receipt.KeptTurnIndices, wantKeptIdx)
+	}
+	keptOut := tr.Turns[:len(tr.Turns)-tr.policy.KeepRecent]
+	if receipt.KeptSHA256 != turnsSHA256(keptOut) {
+		t.Fatalf("KeptSHA256 must recompute over the kept turns as retained: %+v", receipt)
+	}
+}
+
+// TestCompactionVerbatimUserBudgetTruncatesThenElides proves the
+// VerbatimUserMaxChars cap is spent newest-to-oldest with codex's
+// oldest-truncated-first shape: the newest kept turns stay verbatim, the
+// first turn to overflow is truncated via artifact.Preview (disclosed
+// in-band), and older turns are elided with the same OriginalSHA256 fields
+// Step-1 elision uses — bounding growth across repeated compactions.
+func TestCompactionVerbatimUserBudgetTruncatesThenElides(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.policy = CompactionPolicy{MaxChars: 800, KeepRecent: 2, ToolOutputMax: 400, SummarizeAfter: 4, VerbatimUserMaxChars: 2500}
+	userContent := make([]string, 4)
+	for i := range userContent {
+		userContent[i] = fmt.Sprintf("USER STEERING %d: ", i) + strings.Repeat("steer ", 165) // ~1000 chars each
+		tr.addTurn(Turn{Tool: "user", ActionBrief: "steer", Obs: Observation{Content: userContent[i], Pinned: true}})
+	}
+	for i := 0; i < 6; i++ {
+		tr.addTurn(Turn{Tool: "read", ActionBrief: fmt.Sprintf("read f%d", i), Obs: Observation{Content: strings.Repeat("data ", 60)}})
+	}
+	receipt := tr.compact(func(head string) (string, error) { return "SUMMARY: read many files", nil })
+	if receipt == nil {
+		t.Fatal("expected compaction to fire")
+	}
+	kept := tr.Turns[:4]
+	// Newest two kept turns (indices 3, 4) fit the 2500 budget verbatim.
+	for i := 2; i <= 3; i++ {
+		if kept[i].Obs.Elided || kept[i].Obs.Content != userContent[i] {
+			t.Fatalf("kept turn %d must stay verbatim within budget: %+v", i, kept[i].Obs)
+		}
+	}
+	// The next-older turn overflows the remaining budget and is truncated.
+	overflow := kept[1].Obs
+	if overflow.Elided {
+		t.Fatalf("overflow turn must be truncated, not elided: %+v", overflow)
+	}
+	if len(overflow.Content) > 500 {
+		t.Fatalf("overflow turn must be truncated to the remaining budget (500), got %d chars", len(overflow.Content))
+	}
+	if !strings.Contains(overflow.Content, "omitted") {
+		t.Fatalf("truncation must be disclosed in-band: %q", overflow.Content)
+	}
+	// The oldest kept turn is beyond the budget entirely: elided with the same
+	// integrity hash Step-1 elision records.
+	oldest := kept[0].Obs
+	if !oldest.Elided || oldest.OriginalSHA256 != sha256Hex(userContent[0]) {
+		t.Fatalf("oldest kept turn must be elided with the original content hash: %+v", oldest)
+	}
+}
+
+// TestCompactionAllUserHeadSkipsSummarize proves the empty-fold path fails
+// closed: a head made entirely of user turns yields no summarizer call, no
+// receipt, and an untouched transcript (Step-1 elision aside).
+func TestCompactionAllUserHeadSkipsSummarize(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.policy = CompactionPolicy{MaxChars: 200, KeepRecent: 2, ToolOutputMax: 400, SummarizeAfter: 4, VerbatimUserMaxChars: 100000}
+	for i := 0; i < 7; i++ {
+		tr.addTurn(Turn{Tool: "user", ActionBrief: "steer", Obs: Observation{Content: strings.Repeat("steer ", 50), Pinned: true}})
+	}
+	summarizeCalled := false
+	receipt := tr.compact(func(head string) (string, error) {
+		summarizeCalled = true
+		return "SUMMARY", nil
+	})
+	if summarizeCalled {
+		t.Fatal("summarizer must never be called when there is nothing to fold")
+	}
+	if receipt != nil || len(tr.CompactionReceipts) != 0 {
+		t.Fatalf("empty fold must not produce a receipt: %+v", receipt)
+	}
+	if tr.Summary != "" || len(tr.Turns) != 7 {
+		t.Fatalf("empty fold must leave the transcript intact: summary=%q turns=%d", tr.Summary, len(tr.Turns))
+	}
+}
+
+// TestKeyFilesTopKFrequencyOrdering proves keyFiles is a pure, deterministic
+// selector: patch-turn paths counted, ordered by edit count descending with
+// first-seen order breaking ties, deduplicated, capped at k, and blind to
+// non-patch tools.
+func TestKeyFilesTopKFrequencyOrdering(t *testing.T) {
+	turns := []Turn{
+		{Tool: "patch", ActionBrief: "patch b.go"},
+		{Tool: "patch", ActionBrief: "patch a.go"},
+		{Tool: "read", ActionBrief: "read z.go"}, // reads never count
+		{Tool: "patch", ActionBrief: "patch a.go"},
+		{Tool: "patch", ActionBrief: "patch c.go"},
+		{Tool: "patch", ActionBrief: "patch c.go"},
+		{Tool: "patch", ActionBrief: "patch a.go"},
+		{Tool: "patch", ActionBrief: "patch d.go"},
+		{Tool: "patch", ActionBrief: "patch e.go"},
+		{Tool: "patch", ActionBrief: "patch f.go"},
+	}
+	got := keyFiles(turns, 5)
+	// a.go edited 3x, c.go 2x; b/d/e/f tie at 1 and rank by first-seen.
+	want := []string{"a.go", "c.go", "b.go", "d.go", "e.go"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("keyFiles = %v, want %v", got, want)
+	}
+	if out := keyFiles(turns, 0); out != nil {
+		t.Fatalf("k=0 must select nothing, got %v", out)
+	}
+}
+
+// TestCompactionKeptTurnsSurviveCheckpointRoundTrip proves kept user turns
+// and the v2 receipt survive the real checkpoint persistence path
+// (saveCheckpointChecked -> JSON on disk -> loadCheckpoint), so a resumed
+// task still sees its steering verbatim.
+func TestCompactionKeptTurnsSurviveCheckpointRoundTrip(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.policy = CompactionPolicy{MaxChars: 800, KeepRecent: 2, ToolOutputMax: 400, SummarizeAfter: 4, VerbatimUserMaxChars: 4000}
+	steering := "USER STEERING (incorporate this now): do not use library X"
+	tr.addTurn(Turn{Tool: "user", ActionBrief: "steer", Obs: Observation{Content: steering, Pinned: true}})
+	for i := 0; i < 4; i++ {
+		tr.addTurn(Turn{Tool: "read", ActionBrief: fmt.Sprintf("read f%d", i), Obs: Observation{Content: strings.Repeat("data ", 60)}})
+	}
+	// The patch turn sits in the head (all but the KeepRecent tail), so it is
+	// folded and must surface in the receipt's KeyFiles.
+	tr.addTurn(Turn{Tool: "patch", ActionBrief: "patch f0.go", Obs: Observation{Content: "applied"}})
+	for i := 4; i < 8; i++ {
+		tr.addTurn(Turn{Tool: "read", ActionBrief: fmt.Sprintf("read f%d", i), Obs: Observation{Content: strings.Repeat("data ", 60)}})
+	}
+	receipt := tr.compact(func(head string) (string, error) { return "SUMMARY: read many files", nil })
+	if receipt == nil {
+		t.Fatal("expected compaction to fire")
+	}
+	runs := newRunStore(filepath.Join(t.TempDir(), "state"))
+	if err := runs.saveCheckpointChecked("task-verbatim", &runCheckpoint{Turn: 5, Transcript: tr}); err != nil {
+		t.Fatalf("saveCheckpointChecked: %v", err)
+	}
+	loaded := runs.loadCheckpoint("task-verbatim")
+	if loaded == nil || loaded.Transcript == nil {
+		t.Fatal("checkpoint did not round-trip")
+	}
+	got := loaded.Transcript.Turns[0]
+	if got.Tool != "user" || got.Obs.Content != steering || !got.Obs.Pinned || got.Index != 1 {
+		t.Fatalf("kept user turn must survive checkpoint round-trip verbatim, got %+v", got)
+	}
+	if len(loaded.Transcript.CompactionReceipts) != 1 {
+		t.Fatalf("receipts must round-trip, got %d", len(loaded.Transcript.CompactionReceipts))
+	}
+	gotReceipt := loaded.Transcript.CompactionReceipts[0]
+	if gotReceipt.Version != 2 || !reflect.DeepEqual(gotReceipt.KeptTurnIndices, []int{1}) {
+		t.Fatalf("v2 receipt fields must round-trip: %+v", gotReceipt)
+	}
+	if !reflect.DeepEqual(gotReceipt.KeyFiles, []string{"f0.go"}) {
+		t.Fatalf("KeyFiles must round-trip: %+v", gotReceipt.KeyFiles)
+	}
+	keptOut := loaded.Transcript.Turns[:len(loaded.Transcript.Turns)-tr.policy.KeepRecent]
+	if gotReceipt.KeptSHA256 != turnsSHA256(keptOut) {
+		t.Fatalf("KeptSHA256 must verify against the reloaded kept turns: %+v", gotReceipt)
 	}
 }
 

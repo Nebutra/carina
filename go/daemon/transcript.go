@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -55,14 +56,33 @@ type Transcript struct {
 	policy             CompactionPolicy
 }
 
+// CompactionReceipt is the auditable record of one Step-2 summarize fold.
+// Semantics are versioned:
+//
+//   - Version 1 (historical; still valid for old checkpoints and audit
+//     entries): the whole head [FirstTurn..LastTurn] was folded into the
+//     rolling summary, and PreimageSHA256 covers previous-summary + the
+//     entire pre-compaction head.
+//   - Version 2 (current): the head is partitioned into user-authored turns
+//     (kept verbatim in the transcript — see compact()) and everything else
+//     (folded). PreimageSHA256 covers previous-summary + the FOLDED turns
+//     only; FirstTurn/LastTurn/RemovedTurns likewise describe the folded set.
+//     KeptTurnIndices records which head turns were partitioned out,
+//     KeptSHA256 hashes the kept turns exactly as retained (post
+//     verbatim-budget truncation/elision), and KeyFiles is the deterministic
+//     top-K most-edited files among the folded turns — the substrate a later
+//     content-reinjection tier consumes.
 type CompactionReceipt struct {
-	Version        int       `json:"version"`
-	CreatedAt      time.Time `json:"created_at"`
-	FirstTurn      int       `json:"first_turn"`
-	LastTurn       int       `json:"last_turn"`
-	RemovedTurns   int       `json:"removed_turns"`
-	PreimageSHA256 string    `json:"preimage_sha256"`
-	SummarySHA256  string    `json:"summary_sha256"`
+	Version         int       `json:"version"`
+	CreatedAt       time.Time `json:"created_at"`
+	FirstTurn       int       `json:"first_turn"`
+	LastTurn        int       `json:"last_turn"`
+	RemovedTurns    int       `json:"removed_turns"`
+	PreimageSHA256  string    `json:"preimage_sha256"`
+	SummarySHA256   string    `json:"summary_sha256"`
+	KeptTurnIndices []int     `json:"kept_turn_indices,omitempty"`
+	KeptSHA256      string    `json:"kept_sha256,omitempty"`
+	KeyFiles        []string  `json:"key_files,omitempty"`
 }
 
 // CompactionPolicy bounds the model view (char-budget based; claude-cli does
@@ -79,6 +99,19 @@ type CompactionPolicy struct {
 	ReserveChars   int     // if >0, floor the trigger at MaxChars-ReserveChars
 	ThresholdRatio float64 // if >0, also allow the trigger up to MaxChars*ThresholdRatio
 
+	// VerbatimUserMaxChars bounds the total verbatim content of user-authored
+	// turns (Tool=="user": steering drains, fork-task notices) that compact()'s
+	// Step-2 partition keeps out of the summarize fold. The budget is spent
+	// newest-to-oldest: the newest kept turns stay verbatim, the first turn to
+	// overflow is truncated (artifact.Preview, oldest-content-first shape), and
+	// anything older is elided with the same Elided/OriginalSHA256 fields
+	// Step-1 elision uses — so render() and the audit trail treat them
+	// identically, and growth stays bounded across repeated compactions (kept
+	// turns re-enter later partitions under the same cap). Zero (the zero
+	// value) disables the cap, matching MaxTokens' zero-disables convention;
+	// defaultCompactionPolicy sets 4000.
+	VerbatimUserMaxChars int
+
 	// MaxTokens is an optional token-estimate co-trigger (see shouldCompact):
 	// if zero (the default) it never fires, so behavior is byte-identical to
 	// before this field existed. When set, compaction fires once either the
@@ -92,10 +125,11 @@ type CompactionPolicy struct {
 
 func defaultCompactionPolicy() CompactionPolicy {
 	return CompactionPolicy{
-		MaxChars:       24000,
-		KeepRecent:     3,
-		ToolOutputMax:  2000,
-		SummarizeAfter: 6,
+		MaxChars:             24000,
+		KeepRecent:           3,
+		ToolOutputMax:        2000,
+		SummarizeAfter:       6,
+		VerbatimUserMaxChars: 4000,
 	}
 }
 
@@ -220,8 +254,14 @@ func (t *Transcript) shouldCompact() bool {
 
 // compact enforces the char budget. Step 1: elide old, non-pinned
 // observations (keeping the most recent KeepRecent turns verbatim). Step 2:
-// if still over budget, fold the head turns into the rolling Summary via the
-// provided summarizer (a cheap model call). The audit log is untouched.
+// if still over budget, partition the head (all but the recent tail) into
+// user-authored turns (Tool=="user": steering drains, fork-task notices —
+// kept verbatim, bounded by VerbatimUserMaxChars) and everything else, and
+// fold only the latter into the rolling Summary via the provided summarizer
+// (a cheap model call). User turns are preserved structurally rather than
+// trusted to survive a model-written summary: a compaction that folds
+// "don't use X" into prose loses the correction and the model cannot know
+// what it forgot. The audit log is untouched.
 func (t *Transcript) compact(summarize func(head string) (string, error)) *CompactionReceipt {
 	if !t.shouldCompact() {
 		return nil
@@ -244,26 +284,123 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 	if headEnd <= 0 {
 		return nil
 	}
+	// Partition the head. kept turns retain their original ascending Index
+	// values (indices are already non-contiguous post-compaction, so no
+	// reorder is needed). foldedPre carries the pre-Step-1 copies of the
+	// folded turns so the receipt preimage covers pre-compaction state,
+	// exactly as v1 did for the whole head.
+	var kept, folded, foldedPre []Turn
+	var keptIdx []int
+	for i, turn := range t.Turns[:headEnd] {
+		if turn.Tool == "user" {
+			kept = append(kept, turn)
+			keptIdx = append(keptIdx, turn.Index)
+		} else {
+			folded = append(folded, turn)
+			foldedPre = append(foldedPre, preCompactionTurns[i])
+		}
+	}
+	if len(folded) == 0 {
+		// Nothing to fold — the head is entirely user turns and Step-1
+		// elision already ran. Fail closed: no summarizer call, no receipt.
+		return nil
+	}
 	var head strings.Builder
 	if t.Summary != "" {
 		fmt.Fprintf(&head, "%s\n", t.Summary)
 	}
-	for _, turn := range t.Turns[:headEnd] {
+	for _, turn := range folded {
 		fmt.Fprintf(&head, "turn %d: %s -> %s\n", turn.Index, turn.ActionBrief, brief(turn.Obs.Content, 200))
 	}
 	if summary, err := summarize(head.String()); err == nil && summary != "" {
-		preimageHash := compactionPreimageHash(preCompactionSummary, preCompactionTurns[:headEnd])
-		firstTurn, lastTurn := t.Turns[0].Index, t.Turns[headEnd-1].Index
+		preimageHash := compactionPreimageHash(preCompactionSummary, foldedPre)
+		firstTurn, lastTurn := folded[0].Index, folded[len(folded)-1].Index
 		t.Summary = summary
-		t.Turns = t.Turns[headEnd:]
+		kept = applyVerbatimUserBudget(kept, t.policy.VerbatimUserMaxChars)
+		t.Turns = append(kept, t.Turns[headEnd:]...)
 		receipt := CompactionReceipt{
-			Version: 1, CreatedAt: time.Now().UTC(), FirstTurn: firstTurn, LastTurn: lastTurn,
-			RemovedTurns: headEnd, PreimageSHA256: preimageHash, SummarySHA256: sha256Hex(summary),
+			Version: 2, CreatedAt: time.Now().UTC(), FirstTurn: firstTurn, LastTurn: lastTurn,
+			RemovedTurns: len(folded), PreimageSHA256: preimageHash, SummarySHA256: sha256Hex(summary),
+			KeptTurnIndices: keptIdx, KeyFiles: keyFiles(folded, 5),
+		}
+		if len(kept) > 0 {
+			receipt.KeptSHA256 = turnsSHA256(kept)
 		}
 		t.CompactionReceipts = append(t.CompactionReceipts, receipt)
 		return &receipt
 	}
 	return nil
+}
+
+// applyVerbatimUserBudget spends maxChars of verbatim budget over the kept
+// user turns, newest to oldest: turns that fit stay verbatim, the first turn
+// to overflow is truncated to the remaining budget via artifact.Preview (the
+// same head+tail projection addTurn uses, so truncation is disclosed
+// in-band), and older turns beyond the budget are elided with the same
+// Elided/OriginalSHA256 fields Step-1 elision uses — render() and the audit
+// trail treat them identically. Already-elided turns cost nothing (they
+// render as a short placeholder). The budget applies regardless of Pinned:
+// user turns are created pinned precisely so Step-1 never touches them, and
+// this cap is the deliberate bound that keeps that exemption from growing the
+// transcript without limit. maxChars<=0 disables the cap.
+func applyVerbatimUserBudget(kept []Turn, maxChars int) []Turn {
+	if maxChars <= 0 {
+		return kept
+	}
+	remaining := maxChars
+	for i := len(kept) - 1; i >= 0; i-- {
+		obs := &kept[i].Obs
+		if obs.Elided {
+			continue
+		}
+		if len(obs.Content) <= remaining {
+			remaining -= len(obs.Content)
+			continue
+		}
+		if remaining > 0 {
+			if preview, _, valid := artifact.Preview([]byte(obs.Content), remaining, 0); valid {
+				obs.Content = preview
+			}
+			remaining = 0
+			continue
+		}
+		obs.OriginalSHA256 = sha256Hex(obs.Content)
+		obs.Elided = true
+	}
+	return kept
+}
+
+// keyFiles is the deterministic key-file selector recorded on v2 compaction
+// receipts: the top-k most-edited paths among turns, counting Tool=="patch"
+// ActionBriefs via the same "<tool> <path>" parsing filesTouched ships,
+// ordered by edit count descending with first-seen order breaking ties. It is
+// a pure function of the folded turns — a factual record of what actually ran
+// through the kernel, not model recall — and the substrate a later
+// content-reinjection tier consumes.
+func keyFiles(turns []Turn, k int) []string {
+	if k <= 0 {
+		return nil
+	}
+	counts := map[string]int{}
+	var order []string // first-seen path order
+	for _, turn := range turns {
+		if turn.Tool != "patch" {
+			continue
+		}
+		path := strings.TrimSpace(strings.TrimPrefix(turn.ActionBrief, "patch "))
+		if path == "" {
+			continue
+		}
+		if counts[path] == 0 {
+			order = append(order, path)
+		}
+		counts[path]++
+	}
+	sort.SliceStable(order, func(i, j int) bool { return counts[order[i]] > counts[order[j]] })
+	if len(order) > k {
+		order = order[:k]
+	}
+	return order
 }
 
 // SummaryContent is the structured shape of a compaction summary: Cline
@@ -422,6 +559,13 @@ func filesTouched(turns []Turn) (read, modified []string) {
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+// turnsSHA256 hashes a slice of turns exactly as they would persist (JSON
+// shape), for the v2 receipt's KeptSHA256 field.
+func turnsSHA256(turns []Turn) string {
+	raw, _ := json.Marshal(turns)
+	return sha256Hex(string(raw))
 }
 
 func compactionPreimageHash(previousSummary string, turns []Turn) string {
