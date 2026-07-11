@@ -2,6 +2,9 @@ package daemon
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	modelrouter "github.com/Nebutra/carina/go/model-router"
@@ -86,5 +89,83 @@ func TestUsageStoreAggregatesFiltersCostsAndPersists(t *testing.T) {
 	all := reloaded.costs("", "", catalog)
 	if len(all.Providers) != 2 || all.Totals.PricingKnown {
 		t.Fatalf("persisted/unknown pricing response = %+v", all)
+	}
+}
+
+func quarantineFiles(t *testing.T, pattern string) []string {
+	t.Helper()
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return matches
+}
+
+func TestUsageStoreQuarantinesFutureVersionInsteadOfOverwriting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "model-usage.json")
+	future := `{"version": 2, "records": [{"session_id": "s", "task_id": "t", "provider": "p", "model": "m", "requests": 1}]}`
+	if err := os.WriteFile(path, []byte(future), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newUsageStore(dir)
+	if len(s.records) != 0 {
+		t.Fatalf("future-version records must not be trusted: %+v", s.records)
+	}
+	// The destroy path: the very next record() used to rewrite the file as v1
+	// over the future-version original.
+	if err := s.record("sess", "task", ModelUsage{Provider: "anthropic", Model: "claude", InputTokens: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	moved := quarantineFiles(t, path+".v2.*.quarantine")
+	if len(moved) != 1 {
+		t.Fatalf("want exactly one quarantine file, got %v", moved)
+	}
+	kept, err := os.ReadFile(moved[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(kept) != future {
+		t.Fatalf("original future-version bytes destroyed: %s", kept)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"version": 1`) {
+		t.Fatalf("rewritten store must be stamped v1: %s", raw)
+	}
+}
+
+func TestUsageStoreQuarantinesCorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "model-usage.json")
+	if err := os.WriteFile(path, []byte(`{"version": 1, "records": [`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := newUsageStore(dir)
+	if len(s.records) != 0 {
+		t.Fatalf("corrupt file must load empty: %+v", s.records)
+	}
+	if moved := quarantineFiles(t, path+".v*.quarantine"); len(moved) != 1 {
+		t.Fatalf("corrupt file must be quarantined, got %v", moved)
+	}
+}
+
+func TestUsageStoreLoadsLegacyUnstampedEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "model-usage.json")
+	legacy := `{"records": [{"session_id": "s", "task_id": "t", "provider": "anthropic", "model": "claude", "input_tokens": 5, "requests": 1}]}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := newUsageStore(dir)
+	if len(s.records) != 1 {
+		t.Fatalf("legacy unstamped envelope must load as v1: %+v", s.records)
+	}
+	if moved := quarantineFiles(t, path+".v*.quarantine"); len(moved) != 0 {
+		t.Fatalf("legacy file must never be quarantined, got %v", moved)
 	}
 }

@@ -103,6 +103,91 @@ func TestReadEventsCorrupt(t *testing.T) {
 	}
 }
 
+func TestLoadsLegacyUnstampedSessionRow(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sessions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{"session_id": "sess_legacy", "workspace_id": "ws_1", "status": "active", "permission_profile": "safe-edit"}`)
+	if err := os.WriteFile(filepath.Join(dir, "sessions", "sess_legacy.json"), legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.Get("sess_legacy"); !ok {
+		t.Fatal("legacy unstamped session row must still load")
+	}
+}
+
+func TestPersistStampsSessionVersion(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	sess, err := s.CreateSession("/repo", "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "sessions", sess.SessionID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &row); err != nil || row.Version != SessionVersion {
+		t.Fatalf("persisted row version = %d (err=%v), want %d", row.Version, err, SessionVersion)
+	}
+}
+
+func TestFutureVersionSessionRowQuarantinedNotLoaded(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sessions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	future := `{"version": 2, "session_id": "sess_future", "status": "active"}`
+	path := filepath.Join(dir, "sessions", "sess_future.json")
+	if err := os.WriteFile(path, []byte(future), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.Get("sess_future"); ok {
+		t.Fatal("future-version session row must not be trusted")
+	}
+	moved, err := filepath.Glob(path + ".v2.*.quarantine")
+	if err != nil || len(moved) != 1 {
+		t.Fatalf("future row must be quarantined, got %v err=%v", moved, err)
+	}
+	kept, err := os.ReadFile(moved[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(kept) != future {
+		t.Fatalf("quarantine must preserve original bytes: %s", kept)
+	}
+}
+
+func TestCorruptSessionRowQuarantinedNotSkipped(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sessions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "sessions", "sess_bad.json")
+	if err := os.WriteFile(path, []byte(`{"session_id": "sess_bad", "depth": "not-a-number"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(dir); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := filepath.Glob(path + ".v*.quarantine")
+	if err != nil || len(moved) != 1 {
+		t.Fatalf("corrupt row must be quarantined (not skip-then-overwrite), got %v err=%v", moved, err)
+	}
+}
+
 func TestLoadIgnoresNonJSON(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := Open(dir)
