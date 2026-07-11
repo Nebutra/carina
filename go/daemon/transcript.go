@@ -78,6 +78,16 @@ type CompactionPolicy struct {
 	// the trigger is exactly MaxChars, matching prior behavior byte for byte.
 	ReserveChars   int     // if >0, floor the trigger at MaxChars-ReserveChars
 	ThresholdRatio float64 // if >0, also allow the trigger up to MaxChars*ThresholdRatio
+
+	// MaxTokens is an optional token-estimate co-trigger (see shouldCompact):
+	// if zero (the default) it never fires, so behavior is byte-identical to
+	// before this field existed. When set, compaction fires once either the
+	// char-based trigger (triggerChars) OR the estimated token count crosses
+	// MaxTokens — whichever comes first. Carina has no cheap exact token
+	// count (see the CompactionPolicy doc comment above), so this reuses
+	// agent.go's existing estimateTokens() approximation rather than adding a
+	// second estimator.
+	MaxTokens int
 }
 
 func defaultCompactionPolicy() CompactionPolicy {
@@ -185,13 +195,35 @@ func (t *Transcript) triggerChars() int {
 	return trigger
 }
 
+// shouldCompact is the single combiner both of compact()'s gates below call:
+// compaction is due once EITHER the char-based trigger (triggerChars, see
+// above) OR the token-estimate trigger (MaxTokens, via agent.go's
+// estimateTokens helper) fires. MaxTokens=0 (the default) makes the
+// token-estimate side of the OR permanently false, so shouldCompact() reduces
+// to the plain t.size() > triggerChars() check that predates this field —
+// byte-identical to prior behavior for every existing caller/policy.
+//
+// This mirrors codebuff's token-triggered compaction while staying scoped to
+// carina's existing char-budget machinery rather than replacing it: carina
+// has no cheap exact token count (see the CompactionPolicy doc comment), so
+// MaxTokens is an additional early-fire signal layered on top of the
+// char-based trigger, not a replacement for it.
+func (t *Transcript) shouldCompact() bool {
+	if t.size() > t.triggerChars() {
+		return true
+	}
+	if t.policy.MaxTokens > 0 && estimateTokens(t.render()) > t.policy.MaxTokens {
+		return true
+	}
+	return false
+}
+
 // compact enforces the char budget. Step 1: elide old, non-pinned
 // observations (keeping the most recent KeepRecent turns verbatim). Step 2:
 // if still over budget, fold the head turns into the rolling Summary via the
 // provided summarizer (a cheap model call). The audit log is untouched.
 func (t *Transcript) compact(summarize func(head string) (string, error)) *CompactionReceipt {
-	trigger := t.triggerChars()
-	if t.size() <= trigger {
+	if !t.shouldCompact() {
 		return nil
 	}
 	preCompactionSummary := t.Summary
@@ -203,7 +235,7 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 			t.Turns[i].Obs.Elided = true
 		}
 	}
-	if t.size() <= trigger || len(t.Turns) <= t.policy.SummarizeAfter {
+	if !t.shouldCompact() || len(t.Turns) <= t.policy.SummarizeAfter {
 		return nil
 	}
 	// Step 2: summarize the head (all but the recent tail) into Summary.

@@ -225,6 +225,99 @@ func TestCompactUsesConsistentTriggerAcrossBothGates(t *testing.T) {
 	}
 }
 
+// TestShouldCompactMaxTokensZeroMatchesCharTriggerOnly is the byte-identical
+// regression test for MaxTokens' default: with MaxTokens unset (zero), the
+// combiner must reduce to exactly the pre-existing t.size() > triggerChars()
+// check, both below and above the char trigger.
+func TestShouldCompactMaxTokensZeroMatchesCharTriggerOnly(t *testing.T) {
+	tr := newTranscript("task")
+	tr.policy = CompactionPolicy{MaxChars: 800, KeepRecent: 2, ToolOutputMax: 400, SummarizeAfter: 4}
+	if tr.shouldCompact() {
+		t.Fatal("empty transcript under the char budget must not trigger compaction")
+	}
+	for i := 0; i < 10; i++ {
+		content := strings.Repeat("data ", 60) // ~300 chars each
+		tr.addTurn(Turn{Tool: "read", ActionBrief: "read f", Obs: Observation{Content: content}})
+	}
+	if tr.size() <= tr.policy.MaxChars {
+		t.Fatalf("fixture must exceed MaxChars to prove the char-trigger side of the OR: size=%d", tr.size())
+	}
+	if !tr.shouldCompact() {
+		t.Fatal("over-budget transcript must trigger compaction via the char trigger alone")
+	}
+}
+
+// TestShouldCompactMaxTokensFiresBelowCharTrigger proves the token-estimate
+// side of the OR can fire compaction even while comfortably under the char
+// budget — the whole point of a token co-trigger being additive, not a
+// replacement for the char trigger.
+func TestShouldCompactMaxTokensFiresBelowCharTrigger(t *testing.T) {
+	tr := newTranscript("task")
+	tr.policy = CompactionPolicy{MaxChars: 1_000_000, KeepRecent: 2, ToolOutputMax: 100_000, SummarizeAfter: 4}
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read f", Obs: Observation{Content: strings.Repeat("data ", 60)}})
+	if tr.size() >= tr.policy.MaxChars {
+		t.Fatalf("fixture must stay well under MaxChars: size=%d", tr.size())
+	}
+	if tr.shouldCompact() {
+		t.Fatal("MaxTokens=0 (unset) must never trigger compaction on its own")
+	}
+	tr.policy.MaxTokens = estimateTokens(tr.render()) - 1
+	if !tr.shouldCompact() {
+		t.Fatal("MaxTokens set below the current estimated token count must trigger compaction even though the char budget is not exceeded")
+	}
+}
+
+// TestShouldCompactMaxTokensAboveCurrentDoesNotFire confirms MaxTokens only
+// contributes a positive trigger, never suppresses the (still-unmet) char
+// trigger nor fires early when the estimate is comfortably under it.
+func TestShouldCompactMaxTokensAboveCurrentDoesNotFire(t *testing.T) {
+	tr := newTranscript("task")
+	tr.policy = CompactionPolicy{MaxChars: 1_000_000, KeepRecent: 2, ToolOutputMax: 100_000, SummarizeAfter: 4, MaxTokens: 1_000_000}
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read f", Obs: Observation{Content: strings.Repeat("data ", 60)}})
+	if tr.shouldCompact() {
+		t.Fatal("MaxTokens far above the current estimate must not trigger compaction")
+	}
+}
+
+// TestCompactFiresOnTokenTriggerAlone drives compact() itself (not just
+// shouldCompact) through the token-estimate trigger while MaxChars is set so
+// high the char trigger never fires, proving both of compact()'s gates read
+// the combiner rather than the old size()<=triggerChars() checks.
+func TestCompactFiresOnTokenTriggerAlone(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.policy = CompactionPolicy{
+		MaxChars: 1_000_000, KeepRecent: 2, ToolOutputMax: 100_000, SummarizeAfter: 4,
+	}
+	for i := 0; i < 10; i++ {
+		content := strings.Repeat("data ", 60) // ~300 chars each
+		tr.addTurn(Turn{Tool: "read", ActionBrief: "read f", Obs: Observation{Content: content}})
+	}
+	if tr.size() >= tr.policy.MaxChars {
+		t.Fatalf("fixture must stay well under MaxChars — the whole point is proving MaxTokens, not MaxChars, drives compaction: size=%d", tr.size())
+	}
+	// compact()'s second (summarize-decision) gate re-checks shouldCompact()
+	// AFTER step 1 has already elided the head turns, which shrinks the
+	// rendered estimate substantially (elided turns render as a short
+	// placeholder). MaxTokens must stay below that post-elision estimate, not
+	// just the pre-elision one, so the token trigger — not MaxChars, which
+	// stays unmet throughout — is what carries compact() through both gates.
+	cutoff := len(tr.Turns) - tr.policy.KeepRecent
+	postElisionTurns := append([]Turn(nil), tr.Turns...)
+	for i := 0; i < cutoff; i++ {
+		postElisionTurns[i].Obs.Elided = true
+	}
+	postElisionTranscript := &Transcript{Task: tr.Task, Summary: tr.Summary, Turns: postElisionTurns}
+	tr.policy.MaxTokens = estimateTokens(postElisionTranscript.render()) - 1
+	summarizeCalled := false
+	receipt := tr.compact(func(head string) (string, error) {
+		summarizeCalled = true
+		return "SUMMARY: read many files", nil
+	})
+	if !summarizeCalled || receipt == nil {
+		t.Fatalf("compact() must fire off the token-estimate trigger alone when the char trigger is unmet (summarizeCalled=%v receipt=%v)", summarizeCalled, receipt)
+	}
+}
+
 func TestLoopGuardRepeatAndStall(t *testing.T) {
 	g := newLoopGuard()
 	g.MaxRepeat = 3
