@@ -108,7 +108,7 @@
     ],
     "extension": [
       { "method": "extension.install", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "source": "trusted local directory" }, "result": "InstalledExtension" },
-      { "method": "extension.list", "scope": "read", "remote": false, "params": {}, "result": "ExtensionInventory" },
+      { "method": "extension.list", "scope": "read", "remote": false, "params": { "workspace_root": "string? absolute path; when present, project-tier disables from <workspace_root>/.carina/extensions.json are merged into effective_enabled per request (disable-only, never persisted)" }, "result": "ExtensionInventory" },
       { "method": "extension.enable", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "name": "string" }, "result": "InstalledExtension" },
       { "method": "extension.disable", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "name": "string" }, "result": "InstalledExtension" },
       { "method": "extension.update", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "name": "string" }, "result": "InstalledExtension" },

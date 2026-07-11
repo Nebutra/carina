@@ -360,6 +360,10 @@ func New(opts Options) (*Daemon, error) {
 		_ = kern.Close()
 		return nil, fmt.Errorf("daemon: extension marketplace: %w", err)
 	}
+	if err = d.extensions.SetOrgPolicy(extensions.LoadOrgPolicy(opts.PolicyDir)); err != nil {
+		_ = kern.Close()
+		return nil, fmt.Errorf("daemon: extension org policy: %w", err)
+	}
 	d.telemetry = carinatelemetry.New(opts.TelemetryWriter)
 	d.compactionBreaker = newCompactionCircuitBreaker()
 	d.retryGovernance = newRetryGovernance(time.Now)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Nebutra/carina/go/channels"
+	"github.com/Nebutra/carina/go/extensions"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 	"github.com/Nebutra/carina/go/workflowui"
@@ -327,8 +328,21 @@ func (d *Daemon) handleExtensionInstall(params json.RawMessage) (any, error) {
 	}
 	return d.extensions.Install(p.Source)
 }
-func (d *Daemon) handleExtensionList(json.RawMessage) (any, error) {
-	return d.extensions.Inventory(), nil
+func (d *Daemon) handleExtensionList(params json.RawMessage) (any, error) {
+	var p struct {
+		WorkspaceRoot string `json:"workspace_root"`
+	}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+	}
+	if p.WorkspaceRoot == "" {
+		return d.extensions.Inventory(), nil
+	}
+	// Project disables are a per-request view: the mask is disable-only by
+	// schema and never persisted, so it cannot loosen daemon state.
+	return d.extensions.InventoryForWorkspace(extensions.LoadProjectPolicy(p.WorkspaceRoot)), nil
 }
 func (d *Daemon) extensionEnabled(params json.RawMessage, on bool) (any, error) {
 	var p struct {
