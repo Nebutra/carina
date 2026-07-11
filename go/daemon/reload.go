@@ -11,9 +11,9 @@ import (
 
 // ApplyConfig live-applies the hot-reloadable subset of a config to a running
 // daemon (no restart): the per-task token budget, interactive-approval mode,
-// debug RPC/trace, risk-review mode, workspace-trust gate, command sandbox, and egress allowlist.
-// It validates first and returns WITHOUT mutating on failure, so a bad reload
-// keeps the last-good config.
+// debug RPC/trace, risk-review mode, workspace-trust gate, command sandbox,
+// best_of_n opt-in, and egress allowlist. It validates first and returns
+// WITHOUT mutating on failure, so a bad reload keeps the last-good config.
 //
 // Restart-only knobs — listeners (unix/TCP/WebSocket Gateway), kernel/tools/
 // policy wiring, the concurrency cap (d.runSem is sized once), offline/provider
@@ -55,6 +55,7 @@ func (d *Daemon) ApplyConfig(cfg config.Config) error {
 	d.debugRPCEnabled.Store(cfg.EnableDebugRPC)
 	d.requireTrust.Store(cfg.RequireWorkspaceTrust)
 	d.sandbox.Store(cfg.SandboxCommands)
+	d.bestOfNEnabled.Store(cfg.BestOfNEnabled)
 	if d.egress != nil {
 		d.egress.SetGate(egress.Allowlist(cfg.EgressAllow))
 	}

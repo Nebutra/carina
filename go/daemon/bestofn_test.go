@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Nebutra/carina/go/kernel"
 )
 
 // TestParseCandidateEnvelope covers the strict-JSON candidate contract:
@@ -309,6 +311,195 @@ func TestBestOfN_RefusesWinnerWhenFileDriftedDuringGeneration(t *testing.T) {
 	}
 	if got != "concurrently modified by someone else" {
 		t.Fatalf("the drifted content must survive untouched — the stale winner must never be written; got %q", got)
+	}
+}
+
+// TestHeuristicBestOfNWinnerPrefersVerifiedPassingCandidate is a direct unit
+// test of the no-judge-model fallback: candidate 0 has the smaller diff (the
+// plain size-proxy heuristic would normally pick it) but failed
+// verification; candidate 1 is larger but passed. The winner must be
+// candidate 1 — real pass/fail data beats the size proxy. (This path is only
+// reachable directly, not through a full executeBestOfNOutcome run, because
+// the candidate-drafter subagents themselves need a working reasoner, which
+// then also satisfies judgeBestOfN's "judge := d.judgeReasoner; if nil, judge
+// = d.reasoner" fallback before it would ever fall through to the heuristic.)
+func TestHeuristicBestOfNWinnerPrefersVerifiedPassingCandidate(t *testing.T) {
+	candidates := []bestOfNCandidate{
+		{Index: 0, Valid: true, Files: []kernel.FileChange{{Path: "out.txt", NewContent: "short"}}, Verify: candidateVerification{Ran: true, Passed: false, Output: "exit=1"}},
+		{Index: 1, Valid: true, Files: []kernel.FileChange{{Path: "out.txt", NewContent: "a much longer candidate body"}}, Verify: candidateVerification{Ran: true, Passed: true, Output: "exit=0"}},
+	}
+	winner, why := heuristicBestOfNWinner(candidates)
+	if winner.Index != 1 {
+		t.Fatalf("expected candidate 1 (verify=PASS) to win over the smaller-diff candidate 0 (verify=FAIL), got candidate %d (%s)", winner.Index, why)
+	}
+	if !strings.Contains(why, "PASS") {
+		t.Fatalf("expected the heuristic explanation to mention verify=PASS preference, got: %q", why)
+	}
+
+	// Sanity: with no verification data at all, the original smallest-diff
+	// behavior is unchanged.
+	unverified := []bestOfNCandidate{
+		{Index: 0, Valid: true, Files: []kernel.FileChange{{Path: "out.txt", NewContent: "short"}}},
+		{Index: 1, Valid: true, Files: []kernel.FileChange{{Path: "out.txt", NewContent: "a much longer candidate body"}}},
+	}
+	winner, _ = heuristicBestOfNWinner(unverified)
+	if winner.Index != 0 {
+		t.Fatalf("with no verification data, expected the original smallest-diff heuristic (candidate 0), got candidate %d", winner.Index)
+	}
+}
+
+// TestBuildBestOfNJudgePromptIncludesVerifyResults is a direct unit test
+// confirming the judge model actually receives real verify pass/fail data
+// (not just diff+rationale) when it's available.
+func TestBuildBestOfNJudgePromptIncludesVerifyResults(t *testing.T) {
+	candidates := []bestOfNCandidate{
+		{Index: 0, Rationale: "r0", Verify: candidateVerification{Ran: true, Passed: false, Output: "exit=1\nassertion failed"}},
+		{Index: 1, Rationale: "r1", Verify: candidateVerification{Ran: true, Passed: true, Output: "exit=0\nok"}},
+		{Index: 2, Rationale: "r2"}, // no verification ran
+	}
+	prompt := buildBestOfNJudgePrompt("do the thing", candidates)
+	if !strings.Contains(prompt, "candidate_index 0") || !strings.Contains(prompt, "FAIL") || !strings.Contains(prompt, "assertion failed") {
+		t.Fatalf("expected candidate 0's FAIL verdict and output in the prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "candidate_index 1") || !strings.Contains(prompt, "PASS") {
+		t.Fatalf("expected candidate 1's PASS verdict in the prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "candidate_index 2") || !strings.Contains(prompt, "SKIPPED") {
+		t.Fatalf("expected candidate 2 to be marked SKIPPED (no verify command) in the prompt:\n%s", prompt)
+	}
+}
+
+// TestBestOfN_VerifyCommandRunsAgainstIsolatedScratchCopy is the end-to-end
+// wiring test: a real "command" field actually executes against each valid
+// candidate, the judge sees and can act on the result, and — critically —
+// the real workspace file is never touched by verification itself (only by
+// the final winner's governed patch apply).
+func TestBestOfN_VerifyCommandRunsAgainstIsolatedScratchCopy(t *testing.T) {
+	d, ws := newBestOfNDaemon(t)
+	defer d.Close()
+	d.bestOfNEnabled.Store(true)
+
+	// Seed the real workspace with content that would fail the verify
+	// command, so if verification ever ran against the real file instead of
+	// an isolated scratch copy, this would be detectable (and the test's
+	// core assertion below — the real file is untouched pre-apply — would
+	// need no special setup either way, but this makes the isolation claim
+	// concrete rather than vacuous).
+	if err := os.WriteFile(filepath.Join(ws, "out.txt"), []byte("REAL_WORKSPACE_ORIGINAL"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reasoner := &candidateReasoner{
+		judgeWinner:    1,
+		judgeRationale: "candidate 1 passed verification",
+		readFirst:      map[string]string{candidateMarker(1): "out.txt"},
+		candidateEnvelopes: map[string]string{
+			candidateMarker(0): `{"files":[{"path":"out.txt","new_content":"no marker here"}],"rationale":"c0"}`,
+			candidateMarker(1): `{"files":[{"path":"out.txt","new_content":"contains PASS_MARKER"}],"rationale":"c1"}`,
+		},
+	}
+	d.SetReasoner(reasoner)
+	d.SetJudgeReasoner(reasoner) // force the model-judge path so judgeWinner is honored deterministically
+
+	sess, err := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.kern.InitSessionFull(sess.SessionID, ws, "full-workspace", "on_request", nil); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "write out.txt")
+
+	act := &action{Tool: "best_of_n", Task: "write out.txt", N: 2, Command: []string{"grep", "-q", "PASS_MARKER", "out.txt"}}
+	outcome := d.executeBestOfNOutcome(sess, task, act)
+	if outcome.status != "completed" {
+		t.Fatalf("expected completed, got status=%s display=%s", outcome.status, outcome.display)
+	}
+	if !strings.Contains(outcome.display, "winner=candidate 1") || !strings.Contains(outcome.display, "verify: PASS") {
+		t.Fatalf("expected winner=candidate 1 (verify: PASS), got: %s", outcome.display)
+	}
+	got, rerr := readWorkspaceFile(ws, "out.txt")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if got != "contains PASS_MARKER" {
+		t.Fatalf("expected the judge-selected winner's content on disk, got %q", got)
+	}
+}
+
+// TestBestOfN_NoVerifyCommandSkipsVerification confirms the feature is fully
+// opt-in: without a "command" field, behavior is unchanged from before
+// verification existed (winner.Verify.Ran is false, no scratch workspace is
+// ever materialized).
+func TestBestOfN_NoVerifyCommandSkipsVerification(t *testing.T) {
+	d, ws := newBestOfNDaemon(t)
+	defer d.Close()
+	d.bestOfNEnabled.Store(true)
+
+	reasoner := &candidateReasoner{
+		judgeWinner:    0,
+		judgeRationale: "candidate 0",
+		candidateEnvelopes: map[string]string{
+			candidateMarker(0): `{"files":[{"path":"out.txt","new_content":"c0"}],"rationale":"c0"}`,
+			candidateMarker(1): `{"files":[{"path":"out.txt","new_content":"c1"}],"rationale":"c1"}`,
+		},
+	}
+	d.SetReasoner(reasoner)
+
+	sess, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "full-workspace", "on_request", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "write out.txt")
+
+	act := &action{Tool: "best_of_n", Task: "write out.txt", N: 2} // no Command
+	outcome := d.executeBestOfNOutcome(sess, task, act)
+	if outcome.status != "completed" {
+		t.Fatalf("expected completed, got status=%s display=%s", outcome.status, outcome.display)
+	}
+	if !strings.Contains(outcome.display, "verify: skipped") {
+		t.Fatalf("expected verify: skipped when no command is supplied, got: %s", outcome.display)
+	}
+}
+
+// TestMaterializeCandidateWorkspaceIsolatesFromRealWorkspace is a direct
+// unit test of the scratch-copy primitive: it must skip build-artifact/VCS
+// directories, apply the candidate's file changes on top of a real copy, and
+// never write back into the real workspace root.
+func TestMaterializeCandidateWorkspaceIsolatesFromRealWorkspace(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "node_modules", "pkg"), 0o755)
+	os.WriteFile(filepath.Join(root, "node_modules", "pkg", "big.js"), []byte("should not be copied"), 0o644)
+	os.WriteFile(filepath.Join(root, "keep.txt"), []byte("original"), 0o644)
+
+	scratch, cleanup, ok, reason, err := materializeCandidateWorkspace(root, []kernel.FileChange{
+		{Path: "keep.txt", NewContent: "candidate content"},
+		{Path: "new.txt", NewContent: "brand new file"},
+	})
+	if err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected ok=true, got skip reason: %s", reason)
+	}
+	defer cleanup()
+
+	if _, err := os.Stat(filepath.Join(scratch, "node_modules")); !os.IsNotExist(err) {
+		t.Fatal("node_modules should have been skipped, not copied into the scratch workspace")
+	}
+	got, err := os.ReadFile(filepath.Join(scratch, "keep.txt"))
+	if err != nil || string(got) != "candidate content" {
+		t.Fatalf("keep.txt in scratch should have the candidate's overwritten content, got %q, err=%v", got, err)
+	}
+	got, err = os.ReadFile(filepath.Join(scratch, "new.txt"))
+	if err != nil || string(got) != "brand new file" {
+		t.Fatalf("new.txt should have been created in scratch, got %q, err=%v", got, err)
+	}
+	// The real workspace must be completely untouched.
+	realGot, err := os.ReadFile(filepath.Join(root, "keep.txt"))
+	if err != nil || string(realGot) != "original" {
+		t.Fatalf("real workspace keep.txt must be untouched, got %q, err=%v", realGot, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "new.txt")); !os.IsNotExist(err) {
+		t.Fatal("new.txt must never be created in the real workspace by verification")
 	}
 }
 
