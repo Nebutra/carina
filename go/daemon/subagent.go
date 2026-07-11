@@ -241,8 +241,14 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 			d.sched.SetStatus(task.TaskID, "failed")
 			return "subagent failed: context compression failed: " + err.Error()
 		}
-		tr.addTurn(Turn{Thought: act.Thought, Tool: act.Tool, ActionBrief: briefAction(&act),
-			Obs: compressedObs})
+		newTurn := Turn{Thought: act.Thought, Tool: act.Tool, ActionBrief: briefAction(&act),
+			Obs: compressedObs}
+		// Same path-keyed stale-read dedup as the main loop (agent.go's
+		// runLoopContext) — see Transcript.supersedeStaleReads.
+		if act.Tool == "read" {
+			newTurn.Path = act.Path
+		}
+		tr.addTurn(newTurn)
 	}
 	d.sched.SetStatus(task.TaskID, "degraded")
 	if tr.Summary != "" {

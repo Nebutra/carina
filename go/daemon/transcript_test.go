@@ -14,6 +14,77 @@ func TestTranscriptTruncatesOversizedObservation(t *testing.T) {
 	}
 }
 
+func TestAddTurnSupersedesStaleReadOfSamePath(t *testing.T) {
+	tr := newTranscript("task")
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.go", Path: "a.go", Obs: Observation{Content: "v1"}})
+	if tr.Turns[0].Obs.Elided {
+		t.Fatal("first read of a.go must not start elided")
+	}
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.go", Path: "a.go", Obs: Observation{Content: "v2"}})
+	if !tr.Turns[0].Obs.Elided {
+		t.Fatal("earlier read of a.go should be elided once a.go is read again")
+	}
+	if tr.Turns[0].Obs.OriginalSHA256 != sha256Hex("v1") {
+		t.Fatalf("elided turn should carry the original content hash, got %q", tr.Turns[0].Obs.OriginalSHA256)
+	}
+	if tr.Turns[1].Obs.Elided {
+		t.Fatal("the new (latest) read must stay verbatim")
+	}
+	if tr.Turns[1].Obs.Content != "v2" {
+		t.Fatalf("latest read content must be untouched, got %q", tr.Turns[1].Obs.Content)
+	}
+}
+
+func TestAddTurnStaleReadDedupIsPathScoped(t *testing.T) {
+	tr := newTranscript("task")
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.go", Path: "a.go", Obs: Observation{Content: "va"}})
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read b.go", Path: "b.go", Obs: Observation{Content: "vb"}})
+	if tr.Turns[0].Obs.Elided {
+		t.Fatal("reading a different path (b.go) must not elide a.go's read")
+	}
+	if tr.Turns[1].Obs.Elided {
+		t.Fatal("first read of b.go must not start elided")
+	}
+}
+
+func TestAddTurnStaleReadDedupSkipsPinnedAndNonReadTurns(t *testing.T) {
+	tr := newTranscript("task")
+	// A pinned read (e.g. explicitly kept for the current investigation) must
+	// never be elided, matching compact()'s contract for pinned observations.
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.go", Path: "a.go", Obs: Observation{Content: "v1", Pinned: true}})
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.go", Path: "a.go", Obs: Observation{Content: "v2"}})
+	if tr.Turns[0].Obs.Elided {
+		t.Fatal("pinned read must never be elided by stale-read dedup")
+	}
+	// Turns without a Path (e.g. search/list/patch) must never trip dedup,
+	// even if their ActionBrief happens to mention a path-like string.
+	tr2 := newTranscript("task")
+	tr2.addTurn(Turn{Tool: "search", ActionBrief: "search a.go", Obs: Observation{Content: "match a.go:1"}})
+	tr2.addTurn(Turn{Tool: "read", ActionBrief: "read a.go", Path: "a.go", Obs: Observation{Content: "v1"}})
+	if tr2.Turns[0].Obs.Elided {
+		t.Fatal("a Path-less turn must never be elided by stale-read dedup")
+	}
+}
+
+func TestAddTurnStaleReadDedupDoesNotDoubleElide(t *testing.T) {
+	tr := newTranscript("task")
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.go", Path: "a.go", Obs: Observation{Content: "v1"}})
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.go", Path: "a.go", Obs: Observation{Content: "v2"}})
+	firstHash := tr.Turns[0].Obs.OriginalSHA256
+	// A third read must elide the second (now-stale) read, and must leave the
+	// already-elided first turn untouched rather than re-hashing it.
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.go", Path: "a.go", Obs: Observation{Content: "v3"}})
+	if tr.Turns[0].Obs.OriginalSHA256 != firstHash {
+		t.Fatal("already-elided turn must not be re-processed")
+	}
+	if !tr.Turns[1].Obs.Elided || tr.Turns[1].Obs.OriginalSHA256 != sha256Hex("v2") {
+		t.Fatal("second read must be elided once a third read of the same path lands")
+	}
+	if tr.Turns[2].Obs.Elided {
+		t.Fatal("the latest (third) read must stay verbatim")
+	}
+}
+
 func TestTranscriptCompactionElidesThenSummarizes(t *testing.T) {
 	tr := newTranscript("fix the bug")
 	tr.policy = CompactionPolicy{MaxChars: 800, KeepRecent: 2, ToolOutputMax: 400, SummarizeAfter: 4}

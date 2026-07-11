@@ -40,6 +40,7 @@ type Turn struct {
 	Thought     string
 	Tool        string
 	ActionBrief string // e.g. `read greet.py` / `run [go test]`
+	Path        string // set for read-family tools; drives supersedeStaleReads
 	Obs         Observation
 }
 
@@ -91,12 +92,44 @@ func newTranscript(task string) *Transcript {
 }
 
 // addTurn records a completed turn, truncating oversized observations up front.
+// A new turn carrying a Path (a read-family tool) first supersedes any
+// earlier, still-verbatim turn of the identical path: the earlier read is now
+// stale (this turn proves the model has the current content), so keeping both
+// copies verbatim in the model view only burns budget for no benefit — see
+// supersedeStaleReads.
 func (t *Transcript) addTurn(turn Turn) {
 	if len(turn.Obs.Content) > t.policy.ToolOutputMax && !turn.Obs.Pinned {
 		turn.Obs.Content = turn.Obs.Content[:t.policy.ToolOutputMax] + "…[truncated]"
 	}
+	if turn.Path != "" {
+		t.supersedeStaleReads(turn.Path)
+	}
 	turn.Index = len(t.Turns) + 1
 	t.Turns = append(t.Turns, turn)
+}
+
+// supersedeStaleReads elides every earlier, non-pinned, not-yet-elided turn
+// whose Path matches path: a fresh read of the same path makes those earlier
+// copies stale re-reads, redundant with the turn about to be appended. This
+// is path-keyed elision, the narrow counterpart to compact()'s age-based
+// elision — both use the same Observation.Elided/OriginalSHA256 fields, so
+// render() and the audit trail treat them identically regardless of which
+// gate elided the turn. Pinned observations (e.g. a read pinned as part of a
+// current investigation) are never touched, matching compact()'s contract.
+// The audit log (recorded at read time via FileRead events) is untouched —
+// this only narrows the model-facing projection.
+func (t *Transcript) supersedeStaleReads(path string) int {
+	elided := 0
+	for i := range t.Turns {
+		turn := &t.Turns[i]
+		if turn.Path != path || turn.Obs.Pinned || turn.Obs.Elided {
+			continue
+		}
+		turn.Obs.OriginalSHA256 = sha256Hex(turn.Obs.Content)
+		turn.Obs.Elided = true
+		elided++
+	}
+	return elided
 }
 
 // render projects the transcript into the prompt body the model sees.

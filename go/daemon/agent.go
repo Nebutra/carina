@@ -531,8 +531,17 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		} else {
 			guard.tick()
 		}
-		tr.addTurn(Turn{Thought: act.Thought, Tool: act.Tool,
-			ActionBrief: briefAction(&act), Obs: compressedObs})
+		newTurn := Turn{Thought: act.Thought, Tool: act.Tool,
+			ActionBrief: briefAction(&act), Obs: compressedObs}
+		// Path-keyed stale-read dedup: a re-read of the same path this turn
+		// supersedes any earlier verbatim read of it (see
+		// Transcript.supersedeStaleReads). Scoped to "read" only — "search"/
+		// "list" results are query- or workspace-shaped, not identified by a
+		// single stable path, so they are left to age-based compaction.
+		if act.Tool == "read" {
+			newTurn.Path = act.Path
+		}
+		tr.addTurn(newTurn)
 		// Checkpoint after each completed turn so a crash can resume here.
 		d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess)})
 	}
