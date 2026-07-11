@@ -11,13 +11,23 @@
     "views": { "carina": [{ "id": "carina.agents", "name": "Agent View" }] },
     "commands": [
       { "command": "carina.refresh", "title": "Carina: Refresh Agent View" },
+      { "command": "carina.inspect", "title": "Carina: Inspect Session" },
       { "command": "carina.attach", "title": "Carina: Attach Session" },
       { "command": "carina.steer", "title": "Carina: Steer Task" },
       { "command": "carina.approve", "title": "Carina: Resolve Approval" },
       { "command": "carina.answer", "title": "Carina: Answer Question" },
       { "command": "carina.previewPatch", "title": "Carina: Preview Patch" }
     ],
-    "menus": { "view/title": [{ "command": "carina.refresh", "when": "view == carina.agents", "group": "navigation" }] },
+    "menus": {
+      "view/title": [{ "command": "carina.refresh", "when": "view == carina.agents", "group": "navigation" }],
+      "view/item/context": [
+        { "command": "carina.inspect", "when": "view == carina.agents && viewItem =~ /carinaAgent/", "group": "inline" },
+        { "command": "carina.steer", "when": "viewItem == carinaAgent.working", "group": "carina@1" },
+        { "command": "carina.approve", "when": "viewItem == carinaAgent.needs_input", "group": "carina@2" },
+        { "command": "carina.answer", "when": "viewItem == carinaAgent.needs_input", "group": "carina@3" },
+        { "command": "carina.previewPatch", "when": "view == carina.agents && viewItem =~ /carinaAgent/", "group": "carina@4" }
+      ]
+    },
     "configuration": {
       "title": "Carina",
       "properties": {
