@@ -13,6 +13,13 @@ subagent reaches its boundary, then no new step starts. Restart creates a new
 run ID and preserves the attempt lineage. Save writes a normal Carina command,
 not executable workflow state.
 
+Workflows declare an `execution_mode`: `bsp` (the default; barrier-synchronized
+waves, with pause/stop honored between waves) or `streaming` (each step starts
+as soon as its dependencies resolve, with bounded concurrency, per-step
+`fail_fast`, and failure isolated to a step's own dependents). Streaming runs
+currently apply pause/stop via context cancellation rather than wave-boundary
+checks.
+
 ## Trusted Channels and Monitor
 
 An external sender must be registered locally with a minimum 32-byte HMAC
