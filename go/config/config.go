@@ -46,6 +46,7 @@ type Config struct {
 	SandboxCommands            bool     `json:"sandbox_commands"`
 	InteractiveApproval        bool     `json:"interactive_approval"`
 	EnableDebugRPC             bool     `json:"enable_debug_rpc"`
+	BestOfNEnabled             bool     `json:"best_of_n_enabled"`
 	SummarizerModel            string   `json:"summarizer_model"`
 	RiskReviewMode             string   `json:"risk_review_mode"`
 	RiskReviewModel            string   `json:"risk_review_model"`
@@ -141,6 +142,7 @@ func mergeEnv(cfg *Config) {
 	envBool("CARINA_SANDBOX_COMMANDS", &cfg.SandboxCommands)
 	envBool("CARINA_INTERACTIVE_APPROVAL", &cfg.InteractiveApproval)
 	envBool("CARINA_ENABLE_DEBUG_RPC", &cfg.EnableDebugRPC)
+	envBool("CARINA_BEST_OF_N_ENABLED", &cfg.BestOfNEnabled)
 	envInt("CARINA_MAX_CONCURRENT_TASKS", &cfg.MaxConcurrentTasks)
 	envInt("CARINA_MAX_TASK_TOKENS", &cfg.MaxTaskTokens)
 	envInt("CARINA_HEADROOM_PROXY_PORT", &cfg.HeadroomProxyPort)

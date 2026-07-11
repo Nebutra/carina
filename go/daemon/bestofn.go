@@ -26,10 +26,16 @@ const (
 // executeBestOfNOutcome.
 const bestOfNToolHelp = `EXPERIMENTAL — best-of-n patch generation (top-level only, opt-in):
 - {"tool":"best_of_n","task":"description of the change","n":3}
+- {"tool":"best_of_n","task":"description of the change","n":3,"command":["go","test","./..."]}
 Generates N independent candidate drafts in parallel, judges them against the
 task, and applies only the winning patch. N-1 discarded candidates are never
 proposed or applied. Requires operator approval and an explicit cost preview
-before it launches (N parallel model calls cost roughly Nx a single patch).`
+before it launches (N parallel model calls cost roughly Nx a single patch).
+Optional "command": if set, each valid candidate is verified by running that
+command against an isolated scratch copy of its own proposed changes (never
+the real workspace) before judging — the judge sees real pass/fail results,
+not just diff+rationale. Governed like any other command execution
+(CommandExec capability + risk classification).`
 
 // bestOfNCandidate is one candidate drafter's parsed, unapplied proposal. It
 // lives entirely in Go memory — it is never passed to kernel.patch.propose
@@ -45,6 +51,7 @@ type bestOfNCandidate struct {
 	Rationale      string
 	RawSummary     string
 	ChildSessionID string // the candidate-drafter session that authored Files
+	Verify         candidateVerification
 }
 
 // candidateEnvelope is the strict JSON shape a candidate-drafter subagent
@@ -194,6 +201,29 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 		return toolExecutionOutcome{display: "best_of_n cancelled", status: "cancelled", errorCategory: "operator_cancelled"}
 	}
 
+	// Optional verification: if the caller supplied a command, run it against
+	// each valid candidate's own isolated scratch copy before judging, so the
+	// judge sees real pass/fail results instead of diff+rationale alone.
+	// Skipped entirely (not an error) when no command is given, matching the
+	// pre-verification behavior.
+	if len(act.Command) > 0 {
+		var vwg sync.WaitGroup
+		for i := range candidates {
+			if !candidates[i].Valid {
+				continue
+			}
+			vwg.Add(1)
+			go func(i int) {
+				defer vwg.Done()
+				candidates[i].Verify = d.verifyCandidate(ctx, sess, task, act.Command, candidates[i].Index, candidates[i].Files)
+			}(i)
+		}
+		vwg.Wait()
+		if ctx.Err() != nil {
+			return toolExecutionOutcome{display: "best_of_n cancelled", status: "cancelled", errorCategory: "operator_cancelled"}
+		}
+	}
+
 	winner, judgeRationale, jerr := d.judgeBestOfN(ctx, sess, task, act.Task, candidates)
 	if jerr != nil {
 		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
@@ -205,6 +235,7 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
 		"status": "best_of_n_result", "run_id": runID, "n": n, "outcome": "winner_selected",
 		"winner_index": winner.Index, "judge_rationale": truncate(judgeRationale, 400),
+		"winner_verify_ran": winner.Verify.Ran, "winner_verify_passed": winner.Verify.Passed,
 	}, "")
 
 	// Submission of the winner ONLY: the winning content was authored by a
@@ -253,8 +284,18 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 	if outcome.status != "completed" {
 		return outcome
 	}
-	return toolCompleted(fmt.Sprintf("best_of_n (run %s): %d/%d candidates valid; winner=candidate %d.\n%s",
-		runID, countValid(candidates), n, winner.Index, outcome.display))
+	return toolCompleted(fmt.Sprintf("best_of_n (run %s): %d/%d candidates valid; winner=candidate %d (verify: %s).\n%s",
+		runID, countValid(candidates), n, winner.Index, verifySummaryLabel(winner.Verify), outcome.display))
+}
+
+func verifySummaryLabel(v candidateVerification) string {
+	if !v.Ran {
+		return "skipped"
+	}
+	if v.Passed {
+		return "PASS"
+	}
+	return "FAIL"
 }
 
 func countValid(candidates []bestOfNCandidate) int {

@@ -54,6 +54,7 @@ func main() {
 	egressAllow := flag.String("egress-allow", strings.Join(cfg.EgressAllow, ","), "comma-separated hosts allowed when -egress is on")
 	interactiveApproval := flag.Bool("interactive-approval", cfg.InteractiveApproval, "pause for an operator decision on requires_approval instead of auto-approving")
 	enableDebugRPC := flag.Bool("debug-rpc", cfg.EnableDebugRPC, "enable local-only debug.* RPC inspection endpoints and in-memory trace collection")
+	bestOfNEnabled := flag.Bool("best-of-n", cfg.BestOfNEnabled, "opt-in: expose the best_of_n tool (experimental; N parallel candidate generations cost roughly Nx a single patch)")
 	riskReviewMode := flag.String("risk-review-mode", cfg.RiskReviewMode, "autonomous approval risk review mode: off|advisory|enforce")
 	riskReviewModel := flag.String("risk-review-model", cfg.RiskReviewModel, "optional model for Nebutra Risk Review (default: local heuristic)")
 	nebutraCloud := flag.String("nebutra-cloud", cfg.NebutraCloudEndpoint, "Nebutra Cloud endpoint for identity/sync boundary")
@@ -101,6 +102,7 @@ func main() {
 		EgressAllow:                splitList(*egressAllow),
 		InteractiveApproval:        *interactiveApproval,
 		EnableDebugRPC:             *enableDebugRPC,
+		BestOfNEnabled:             *bestOfNEnabled,
 		RiskReviewMode:             *riskReviewMode,
 		RiskReviewModel:            *riskReviewModel,
 		NebutraCloudEndpoint:       *nebutraCloud,

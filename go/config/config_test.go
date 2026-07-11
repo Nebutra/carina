@@ -122,6 +122,40 @@ func TestCascadePrecedence(t *testing.T) {
 	}
 }
 
+// TestBestOfNEnabledCascade covers the config surface for the opt-in
+// best_of_n tool: defaults to off, a config file can turn it on, and
+// CARINA_BEST_OF_N_ENABLED overrides both.
+func TestBestOfNEnabledCascade(t *testing.T) {
+	scrubCarinaEnv(t)
+	home := t.TempDir()
+
+	cfg, err := Load(home, t.TempDir())
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.BestOfNEnabled {
+		t.Fatal("best_of_n_enabled must default to false")
+	}
+
+	writeConfig(t, home, `{"best_of_n_enabled": true}`)
+	cfg, err = Load(home, t.TempDir())
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !cfg.BestOfNEnabled {
+		t.Fatal("best_of_n_enabled: config file should turn it on")
+	}
+
+	t.Setenv("CARINA_BEST_OF_N_ENABLED", "false")
+	cfg, err = Load(home, t.TempDir())
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.BestOfNEnabled {
+		t.Fatal("best_of_n_enabled: env var should override the config file")
+	}
+}
+
 func TestNoFilesYieldsDefaults(t *testing.T) {
 	scrubCarinaEnv(t)
 	home := t.TempDir()

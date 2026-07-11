@@ -30,6 +30,13 @@ Rules:
 - winner_index MUST be one of the candidate indices listed below.
 - Prefer the candidate that most correctly and completely satisfies the task
   with the smallest, clearest diff.
+- If a "verify" result is shown for a candidate, it is a REAL command run
+  against that candidate's own isolated copy of the change, not a claim the
+  candidate made about itself — weight it heavily. A candidate marked
+  verify=PASS should beat one marked verify=FAIL unless the failing
+  candidate is overwhelmingly more correct on the merits and the passing one
+  is a false positive (e.g. passes only because it changed nothing
+  meaningful). If verify=SKIPPED, judge on the diff/rationale alone as usual.
 - If no candidate is acceptable, you may still choose the least-bad one and
   say so in the rationale — the caller enforces its own pass/fail gate
   independently of your choice.`
@@ -64,7 +71,8 @@ func (d *Daemon) judgeBestOfN(ctx context.Context, sess *sessionstore.Session, t
 	if judge == nil {
 		// No model configured at all (e.g. offline/test mode): deterministic,
 		// fully-reproducible fallback — never a silent "first candidate wins".
-		return heuristicBestOfNWinner(valid), "heuristic: no judge reasoner configured; picked candidate with smallest diff", nil
+		winner, why := heuristicBestOfNWinner(valid)
+		return winner, why, nil
 	}
 
 	jctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -86,18 +94,33 @@ func (d *Daemon) judgeBestOfN(ctx context.Context, sess *sessionstore.Session, t
 	return bestOfNCandidate{}, "", fmt.Errorf("judge chose winner_index %d which is not among the %d valid candidates", verdict.WinnerIndex, len(valid))
 }
 
-// heuristicBestOfNWinner deterministically picks the candidate with the
-// smallest total new_content size (a cheap proxy for "smallest, most
-// targeted change") when no judge model is available.
-func heuristicBestOfNWinner(valid []bestOfNCandidate) bestOfNCandidate {
-	best := valid[0]
+// heuristicBestOfNWinner deterministically picks a winner when no judge
+// model is available. If verification ran and at least one candidate
+// passed, the winner is chosen (by smallest diff) among the PASSING
+// candidates only — real pass/fail data beats a size proxy. Otherwise (no
+// verification, or none passed) it falls back to the smallest total
+// new_content size, the same heuristic used before verification existed.
+func heuristicBestOfNWinner(valid []bestOfNCandidate) (bestOfNCandidate, string) {
+	pool := valid
+	why := "heuristic: no judge reasoner configured; picked candidate with smallest diff"
+	passing := make([]bestOfNCandidate, 0, len(valid))
+	for _, c := range valid {
+		if c.Verify.Ran && c.Verify.Passed {
+			passing = append(passing, c)
+		}
+	}
+	if len(passing) > 0 {
+		pool = passing
+		why = "heuristic: no judge reasoner configured; picked smallest diff among verify=PASS candidates"
+	}
+	best := pool[0]
 	bestSize := candidateSize(best)
-	for _, c := range valid[1:] {
+	for _, c := range pool[1:] {
 		if s := candidateSize(c); s < bestSize {
 			best, bestSize = c, s
 		}
 	}
-	return best
+	return best, why
 }
 
 func candidateSize(c bestOfNCandidate) int {
@@ -113,12 +136,25 @@ func buildBestOfNJudgePrompt(originalTask string, valid []bestOfNCandidate) stri
 	b.WriteString(bestOfNJudgePrompt)
 	fmt.Fprintf(&b, "\n\nOriginal task:\n%s\n\nCandidates:\n", originalTask)
 	for _, c := range valid {
-		fmt.Fprintf(&b, "\n=== candidate_index %d ===\nrationale: %s\nfiles:\n", c.Index, truncate(c.Rationale, 300))
+		fmt.Fprintf(&b, "\n=== candidate_index %d ===\nrationale: %s\nverify: %s\nfiles:\n", c.Index, truncate(c.Rationale, 300), verifyStatusLabel(c.Verify))
 		for _, f := range c.Files {
 			fmt.Fprintf(&b, "--- %s ---\n%s\n", f.Path, truncate(f.NewContent, 2000))
 		}
 	}
 	return b.String()
+}
+
+func verifyStatusLabel(v candidateVerification) string {
+	if !v.Ran {
+		if v.SkipWhy != "" {
+			return "SKIPPED (" + v.SkipWhy + ")"
+		}
+		return "SKIPPED (no verify command supplied)"
+	}
+	if v.Passed {
+		return "PASS\n" + truncate(v.Output, 500)
+	}
+	return "FAIL\n" + truncate(v.Output, 500)
 }
 
 func parseBestOfNJudgeVerdict(raw string) (bestOfNJudgeVerdict, error) {
