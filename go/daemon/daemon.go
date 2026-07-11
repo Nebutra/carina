@@ -1662,6 +1662,7 @@ func (d *Daemon) handlePlanMode(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("session_id is required")
 	}
 	d.setPlanMode(p.SessionID, p.On)
+	d.noticePlanModeSwitch(p.SessionID, p.On)
 	return map[string]any{"session_id": p.SessionID, "plan_mode": p.On}, nil
 }
 
@@ -1702,6 +1703,7 @@ func (d *Daemon) handleApprovePlan(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	d.setPlanMode(id, false)
+	d.noticePlanModeSwitch(id, false)
 	return map[string]any{"session_id": id, "plan_mode": false, "approved": true}, nil
 }
 
@@ -1967,6 +1969,29 @@ func (d *Daemon) isPlanMode(sessionID string) bool {
 	d.planMu.Lock()
 	defer d.planMu.Unlock()
 	return d.planMode[sessionID]
+}
+
+// noticePlanModeSwitch queues an urgent mailbox notice for a session's active
+// task when plan/act mode is toggled mid-run, so a task already executing
+// sees the switch at the next turn boundary instead of only inferring it
+// from a subsequent tool denial. Same shape as the channel-event notice in
+// ecosystem.go's handleChannelEventInject: urgent-tier steerWithPriority,
+// drained by the existing loop in agent.go's runLoopContext. This never
+// touches enforcement (isPlanMode / the plan-mode tool gate is unchanged) —
+// it only makes the switch legible to the model. A no-op if the session has
+// no active task (e.g. the mode is set before a task is submitted).
+func (d *Daemon) noticePlanModeSwitch(sessionID string, on bool) {
+	task := d.activeChannelTask(sessionID)
+	if task == nil {
+		return
+	}
+	var msg string
+	if on {
+		msg = "MODE SWITCH: plan mode is now ON — explore read-only and present a plan; edits, commands, and memory writes are blocked until the operator approves it (session.approve_plan)"
+	} else {
+		msg = "MODE SWITCH: plan mode is now OFF — the plan was approved (or plan mode was cleared); edits, commands, and memory writes are permitted again"
+	}
+	d.steerWithPriority(task.TaskID, msg, steerUrgent)
 }
 
 // ---- tasks ----------------------------------------------------------------
