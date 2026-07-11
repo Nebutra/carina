@@ -64,6 +64,7 @@ export interface WorkflowRun { id: string; workflow: string; session_id: string;
 export interface Worker { worker_id: string; name: string; kind: string; status: string }
 export interface ChannelEvent { id: string; sender_id: string; session_id: string; kind: string; timestamp: string; payload?: Record<string, unknown>; permission_decision_id?: string; permission_allow?: boolean }
 export interface Extension { manifest: { name: string; version: string; estimated_prompt_tokens?: number }; source: string; enabled: boolean; trusted: boolean }
+export interface RuntimeInfo { runtime_version: string; protocol_version: string; minimum_protocol_version?: string; capabilities: Record<string, unknown> }
 export interface AgentViewEntry { session_id: string; task_id?: string; state: string; title?: string; summary?: string; workspace_root?: string; updated_at?: string }
 export interface AgentView { needs_input: AgentViewEntry[]; working: AgentViewEntry[]; completed: AgentViewEntry[] }
 export interface SuccessCheck { kind: string; path?: string; pattern?: string; command?: string[] }
@@ -214,6 +215,7 @@ export class CarinaClient {
     return this.call('task.user.answer', { question_id: questionId, value })
   }
   listWorkflows(): Promise<WorkflowRun[]> { return this.call('workflow.list') }
+  initialize(clientName = '@carina/sdk', clientVersion = '0.2.0'): Promise<RuntimeInfo> { return this.call('runtime.initialize', { protocol_version: '1.1.0', client_name: clientName, client_version: clientVersion }) }
   workflowDetail(runId: string): Promise<Record<string, unknown>> { return this.call('workflow.detail', { run_id: runId }) }
   runWorkflow(sessionId: string, workflow: string, input = ''): Promise<WorkflowRun> { return this.call('workflow.run', { session_id: sessionId, workflow, input }) }
   pauseWorkflow(runId: string): Promise<WorkflowRun> { return this.call('workflow.pause', { run_id: runId }) }

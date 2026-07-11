@@ -106,6 +106,13 @@ type Extension struct {
 	Trusted bool   `json:"trusted"`
 }
 
+type RuntimeInfo struct {
+	RuntimeVersion         string         `json:"runtime_version"`
+	ProtocolVersion        string         `json:"protocol_version"`
+	MinimumProtocolVersion string         `json:"minimum_protocol_version,omitempty"`
+	Capabilities           map[string]any `json:"capabilities"`
+}
+
 type AgentViewEntry struct {
 	SessionID     string `json:"session_id"`
 	TaskID        string `json:"task_id,omitempty"`
@@ -243,6 +250,11 @@ func (c *Client) ReadEvent() (Event, error) {
 func (c *Client) ListWorkflows() ([]WorkflowRun, error) {
 	var out []WorkflowRun
 	err := c.Call("workflow.list", map[string]any{}, &out)
+	return out, err
+}
+func (c *Client) Initialize(clientName, clientVersion string) (RuntimeInfo, error) {
+	var out RuntimeInfo
+	err := c.Call("runtime.initialize", map[string]any{"protocol_version": "1.1.0", "client_name": clientName, "client_version": clientVersion}, &out)
 	return out, err
 }
 func (c *Client) WorkflowDetail(runID string) (map[string]any, error) {

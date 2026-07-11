@@ -17,6 +17,13 @@ func TestRealDaemonConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	info, err := c.Initialize("carina-sdk-go", "0.6.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ProtocolVersion == "" {
+		t.Fatal("daemon omitted protocol version")
+	}
 	if _, err = c.Doctor(); err != nil {
 		t.Fatal(err)
 	}

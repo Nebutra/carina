@@ -93,7 +93,33 @@ func (d *Daemon) handleWorkflowPause(p json.RawMessage) (any, error) {
 	return d.workflowTransition(p, workflowui.Paused)
 }
 func (d *Daemon) handleWorkflowResume(p json.RawMessage) (any, error) {
-	return d.workflowTransition(p, workflowui.Running)
+	var req struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal(p, &req); err != nil {
+		return nil, err
+	}
+	detail, err := d.workflowRuns.Detail(req.RunID)
+	if err != nil {
+		return nil, err
+	}
+	if detail.Run.Status != workflowui.Interrupted {
+		return d.workflowRuns.Transition(req.RunID, workflowui.Running)
+	}
+	run, err := d.workflowRuns.Transition(req.RunID, workflowui.Queued)
+	if err != nil {
+		return nil, err
+	}
+	sess, ok := d.store.Get(run.SessionID)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", run.SessionID)
+	}
+	spec := loadWorkflowSpecs(sess.WorkspaceRoot)[run.Workflow]
+	if spec == nil {
+		return nil, fmt.Errorf("unknown workflow %q", run.Workflow)
+	}
+	d.startWorkflowControlRun(sess, spec, run)
+	return run, nil
 }
 func (d *Daemon) handleWorkflowStop(p json.RawMessage) (any, error) {
 	return d.workflowTransition(p, workflowui.Stopped)
@@ -146,7 +172,7 @@ func (d *Daemon) handleWorkflowSave(params json.RawMessage) (any, error) {
 func (d *Daemon) handleChannelSenderRegister(params json.RawMessage) (any, error) {
 	var p struct {
 		ID                 string   `json:"id"`
-		Secret             string   `json:"secret"`
+		SecretEnv          string   `json:"secret_env"`
 		Sessions           []string `json:"sessions"`
 		Kinds              []string `json:"kinds"`
 		CanRelayPermission bool     `json:"can_relay_permission"`
@@ -154,7 +180,10 @@ func (d *Daemon) handleChannelSenderRegister(params json.RawMessage) (any, error
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, err
 	}
-	if err := d.channels.Register(channels.Sender{ID: p.ID, Secret: []byte(p.Secret), Sessions: p.Sessions, Kinds: p.Kinds, CanRelayPermission: p.CanRelayPermission}); err != nil {
+	if p.SecretEnv == "" {
+		return nil, fmt.Errorf("secret_env is required")
+	}
+	if err := d.channels.Register(channels.Sender{ID: p.ID, SecretRef: "env:" + p.SecretEnv, Sessions: p.Sessions, Kinds: p.Kinds, CanRelayPermission: p.CanRelayPermission}); err != nil {
 		return nil, err
 	}
 	return map[string]any{"registered": true, "sender_id": p.ID}, nil
@@ -170,20 +199,31 @@ func (d *Daemon) handleChannelEventInject(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, err
 	}
-	receipt, err := d.channels.Ingest(p.Event, p.Signature)
+	reservation, err := d.channels.Reserve(p.Event, p.Signature)
 	if err != nil {
 		return nil, err
 	}
+	receipt := reservation.Receipt
 	if receipt.Duplicate {
 		return receipt, nil
 	}
-	d.events.Publish(p.Event.SessionID, map[string]any{"type": "ExternalEvent", "session_id": p.Event.SessionID, "timestamp": time.Now().UTC(), "payload": map[string]any{"event_id": p.Event.ID, "sender_id": p.Event.SenderID, "kind": p.Event.Kind, "data": p.Event.Payload}})
+	committed := false
+	defer func() {
+		if !committed {
+			d.channels.Abort(reservation)
+		}
+	}()
 	if p.Event.PermissionDecisionID != "" && p.Event.PermissionAllow != nil {
 		raw, _ := json.Marshal(map[string]any{"decision_id": p.Event.PermissionDecisionID, "allow": *p.Event.PermissionAllow, "approver": "channel:" + p.Event.SenderID, "scope": "once"})
 		if _, err := d.handleApprovalResolve(raw); err != nil {
 			return nil, fmt.Errorf("channel permission relay: %w", err)
 		}
 	}
+	d.events.Publish(p.Event.SessionID, map[string]any{"type": "ExternalEvent", "session_id": p.Event.SessionID, "timestamp": time.Now().UTC(), "payload": map[string]any{"event_id": p.Event.ID, "sender_id": p.Event.SenderID, "kind": p.Event.Kind, "data": p.Event.Payload}})
+	if err := d.channels.Commit(reservation); err != nil {
+		return nil, err
+	}
+	committed = true
 	return receipt, nil
 }
 
@@ -236,5 +276,5 @@ func (d *Daemon) handleExtensionSafeMode(params json.RawMessage) (any, error) {
 	return d.extensions.Inventory(), nil
 }
 func (d *Daemon) handleTelemetryStatus(json.RawMessage) (any, error) {
-	return map[string]any{"enabled": d.telemetry.Enabled(), "schema_url": "https://opentelemetry.io/schemas/1.27.0"}, nil
+	return map[string]any{"enabled": d.telemetry.Enabled(), "format": "carina-telemetry-json-v1", "otlp": false}, nil
 }

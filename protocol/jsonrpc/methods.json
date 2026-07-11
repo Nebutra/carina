@@ -1,7 +1,12 @@
 {
   "$comment": "Authoritative Carina JSON-RPC 2.0 registry. Each entry mirrors a daemon MethodDescriptor; params/result document the wire contract. Transport is newline-delimited JSON over the local socket or authenticated Gateway transports.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "apis": {
+    "runtime": [
+      { "method": "runtime.initialize", "scope": "read", "remote": true, "params": { "protocol_version": "semver?", "client_name": "string?", "client_version": "semver?" }, "result": "RuntimeInitializeResult" },
+      { "method": "runtime.capabilities", "scope": "read", "remote": true, "params": {}, "result": "{ runtime_version: semver, protocol_version: semver, capabilities: object }" },
+      { "method": "runtime.registry_schema", "scope": "read", "remote": true, "params": {}, "result": "JSON Schema Draft 2020-12" }
+    ],
     "gateway": [
       { "method": "gateway.hello", "scope": "read", "remote": true, "params": { "protocol_version": "number?", "client_id": "string?", "role": "operator|observer|worker|node?", "scopes": "Scope[]?", "token": "string?" }, "result": "GatewayHello" },
       { "method": "gateway.methods", "scope": "read", "remote": true, "params": {}, "result": "{ version: string, methods: MethodDescriptor[] }" },
@@ -92,7 +97,7 @@
       { "method": "workflow.save", "scope": "write", "remote": false, "control_plane_write": true, "params": { "run_id": "string", "name": "string" }, "result": "{ path: string }" }
     ],
     "channel": [
-      { "method": "channel.sender.register", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "id": "string", "secret": "string", "sessions": "string[]", "kinds": "string[]", "can_relay_permission": "boolean?" }, "result": "{ registered: boolean, sender_id: string }" },
+      { "method": "channel.sender.register", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "id": "string", "secret_env": "CARINA_CHANNEL_*", "sessions": "string[]", "kinds": "string[]", "can_relay_permission": "boolean?" }, "result": "{ registered: boolean, sender_id: string }" },
       { "method": "channel.sender.list", "scope": "admin", "remote": false, "params": {}, "result": "ChannelSender[] (secrets omitted)" },
       { "method": "channel.event.inject", "scope": "admin", "remote": true, "control_plane_write": true, "params": { "event": "ChannelEvent", "signature": "hex-hmac-sha256" }, "result": "ChannelReceipt" }
     ],
@@ -105,7 +110,7 @@
       { "method": "extension.safe_mode", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "on": "boolean" }, "result": "ExtensionInventory" }
     ],
     "telemetry": [
-      { "method": "telemetry.status", "scope": "read", "remote": true, "params": {}, "result": "{ enabled: boolean, schema_url: string }" }
+      { "method": "telemetry.status", "scope": "read", "remote": true, "params": {}, "result": "{ enabled: boolean, format: carina-telemetry-json-v1, otlp: false }" }
     ],
     "context": [
       { "method": "context.status", "scope": "read", "remote": false, "params": {}, "result": "ContextEngineStatus" },

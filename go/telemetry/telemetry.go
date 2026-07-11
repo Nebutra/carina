@@ -1,6 +1,5 @@
-// Package telemetry emits OpenTelemetry-compatible JSON records without
-// forcing an exporter dependency on local installations. It is disabled unless
-// an io.Writer is explicitly configured.
+// Package telemetry emits Carina's documented newline JSON telemetry format.
+// It is not OTLP and does not claim wire compatibility with OpenTelemetry.
 package telemetry
 
 import (
@@ -10,7 +9,7 @@ import (
 	"time"
 )
 
-const SchemaURL = "https://opentelemetry.io/schemas/1.27.0"
+const Format = "carina-telemetry-json-v1"
 
 type Attribution struct {
 	TenantID    string `json:"tenant_id,omitempty"`
@@ -34,7 +33,7 @@ type Cost struct {
 	Estimated        bool    `json:"estimated"`
 }
 type Record struct {
-	SchemaURL  string         `json:"schema_url"`
+	Format     string         `json:"format"`
 	Kind       string         `json:"kind"`
 	Name       string         `json:"name"`
 	TraceID    string         `json:"trace_id,omitempty"`
@@ -60,8 +59,8 @@ func (e *Exporter) Emit(r Record) error {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if r.SchemaURL == "" {
-		r.SchemaURL = SchemaURL
+	if r.Format == "" {
+		r.Format = Format
 	}
 	if r.Timestamp.IsZero() {
 		r.Timestamp = e.now().UTC()

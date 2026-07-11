@@ -18,12 +18,13 @@ import (
 type Status string
 
 const (
-	Queued    Status = "queued"
-	Running   Status = "running"
-	Paused    Status = "paused"
-	Completed Status = "completed"
-	Failed    Status = "failed"
-	Stopped   Status = "stopped"
+	Queued      Status = "queued"
+	Running     Status = "running"
+	Paused      Status = "paused"
+	Completed   Status = "completed"
+	Failed      Status = "failed"
+	Stopped     Status = "stopped"
+	Interrupted Status = "interrupted"
 )
 
 type Step struct {
@@ -39,15 +40,18 @@ type Step struct {
 }
 
 type Run struct {
-	ID        string    `json:"id"`
-	Workflow  string    `json:"workflow"`
-	SessionID string    `json:"session_id"`
-	Input     string    `json:"input,omitempty"`
-	Status    Status    `json:"status"`
-	Attempt   int       `json:"attempt"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Steps     []Step    `json:"steps"`
+	ID                 string     `json:"id"`
+	Workflow           string     `json:"workflow"`
+	SessionID          string     `json:"session_id"`
+	Input              string     `json:"input,omitempty"`
+	Status             Status     `json:"status"`
+	Attempt            int        `json:"attempt"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	Steps              []Step     `json:"steps"`
+	Resumable          bool       `json:"resumable,omitempty"`
+	InterruptedAt      *time.Time `json:"interrupted_at,omitempty"`
+	InterruptionReason string     `json:"interruption_reason,omitempty"`
 }
 
 type Detail struct {
@@ -147,7 +151,7 @@ func (s *Store) Transition(id string, target Status) (Run, error) {
 	if !ok {
 		return Run{}, os.ErrNotExist
 	}
-	allowed := map[Status]map[Status]bool{Queued: {Running: true, Paused: true, Stopped: true}, Running: {Paused: true, Completed: true, Failed: true, Stopped: true}, Paused: {Running: true, Stopped: true}, Failed: {Queued: true}, Stopped: {Queued: true}}
+	allowed := map[Status]map[Status]bool{Queued: {Running: true, Paused: true, Stopped: true}, Running: {Paused: true, Completed: true, Failed: true, Stopped: true, Interrupted: true}, Paused: {Running: true, Stopped: true, Interrupted: true}, Interrupted: {Queued: true, Stopped: true}, Failed: {Queued: true}, Stopped: {Queued: true}}
 	if !allowed[r.Status][target] {
 		return Run{}, fmt.Errorf("workflowui: invalid transition %s -> %s", r.Status, target)
 	}
@@ -155,6 +159,37 @@ func (s *Store) Transition(id string, target Status) (Run, error) {
 	r.UpdatedAt = s.now().UTC()
 	s.runs[id] = r
 	return r, s.persistLocked()
+}
+
+// ReconcileStartup marks process-owned runs interrupted while retaining
+// completed outputs. An uncommitted running step is safe to retry.
+func (s *Store) ReconcileStartup(reason string) ([]Run, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now().UTC()
+	var changed []Run
+	for id, r := range s.runs {
+		if r.Status != Running && r.Status != Paused {
+			continue
+		}
+		r.Status = Interrupted
+		r.Resumable = true
+		r.InterruptedAt = &now
+		r.InterruptionReason = reason
+		r.UpdatedAt = now
+		for i := range r.Steps {
+			if r.Steps[i].Status == Running {
+				r.Steps[i].Status = Queued
+				r.Steps[i].StartedAt = nil
+			}
+		}
+		s.runs[id] = r
+		changed = append(changed, r)
+	}
+	if len(changed) == 0 {
+		return nil, nil
+	}
+	return changed, s.persistLocked()
 }
 
 func (s *Store) Restart(id, newID string) (Run, error) {
@@ -179,6 +214,9 @@ func (s *Store) Restart(id, newID string) (Run, error) {
 	old.Attempt++
 	old.CreatedAt = now
 	old.UpdatedAt = now
+	old.Resumable = false
+	old.InterruptedAt = nil
+	old.InterruptionReason = ""
 	for i := range old.Steps {
 		old.Steps[i] = Step{ID: old.Steps[i].ID, Status: Queued}
 	}

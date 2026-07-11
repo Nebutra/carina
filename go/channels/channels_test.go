@@ -1,7 +1,11 @@
 package channels
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -27,6 +31,81 @@ func TestGatingSignatureDedupAndPermissionRelay(t *testing.T) {
 	e.PermissionDecisionID = "d"
 	if _, err = r.Ingest(e, Sign(secret, e)); err == nil {
 		t.Fatal("permission relay should fail closed")
+	}
+}
+
+func TestAbortAllowsRetryAndConcurrentReserveIsExclusive(t *testing.T) {
+	r := New(time.Minute, time.Hour)
+	secret := []byte(strings.Repeat("c", 32))
+	_ = r.Register(Sender{ID: "x", Secret: secret, Sessions: []string{"s"}, Kinds: []string{"k"}})
+	now := time.Now().UTC()
+	r.now = func() time.Time { return now }
+	e := Event{ID: "e", SenderID: "x", SessionID: "s", Kind: "k", Timestamp: now}
+	sig := Sign(secret, e)
+	first, err := r.Reserve(e, sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if _, err := r.Reserve(e, sig); err == nil {
+			t.Error("concurrent reservation accepted")
+		}
+	}()
+	wg.Wait()
+	r.Abort(first)
+	retry, err := r.Reserve(e, sig)
+	if err != nil {
+		t.Fatalf("retry after failed side effect: %v", err)
+	}
+	if err := r.Commit(retry); err != nil {
+		t.Fatal(err)
+	}
+	dup, err := r.Reserve(e, sig)
+	if err != nil || !dup.Receipt.Duplicate {
+		t.Fatalf("duplicate=%+v err=%v", dup, err)
+	}
+}
+
+func TestOpenPersistsPolicyAndCommittedSeenWithoutSecret(t *testing.T) {
+	dir := t.TempDir()
+	secret := []byte(strings.Repeat("r", 32))
+	resolver := func(ref string) ([]byte, error) {
+		if ref != "env:CARINA_CHANNEL_CI" {
+			return nil, errors.New("bad ref")
+		}
+		return secret, nil
+	}
+	r, err := Open(dir, time.Minute, time.Hour, resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.Register(Sender{ID: "ci", SecretRef: "env:CARINA_CHANNEL_CI", Sessions: []string{"s"}, Kinds: []string{"k"}}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	r.now = func() time.Time { return now }
+	e := Event{ID: "1", SenderID: "ci", SessionID: "s", Kind: "k", Timestamp: now}
+	if _, err = r.Ingest(e, Sign(secret, e)); err != nil {
+		t.Fatal(err)
+	}
+	r2, err := Open(dir, time.Minute, time.Hour, resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2.now = func() time.Time { return now }
+	res, err := r2.Reserve(e, Sign(secret, e))
+	if err != nil || !res.Receipt.Duplicate {
+		t.Fatalf("%+v %v", res, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "channels.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), strings.Repeat("r", 32)) {
+		t.Fatal("secret persisted")
 	}
 }
 

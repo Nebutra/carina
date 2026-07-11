@@ -155,6 +155,9 @@ class CarinaClient:
     def list_workflows(self) -> list[dict[str, Any]]:
         return self.call("workflow.list")
 
+    def initialize(self, client_name: str = "carina-sdk", client_version: str = __version__) -> dict[str, Any]:
+        return self.call("runtime.initialize", {"protocol_version": "1.1.0", "client_name": client_name, "client_version": client_version})
+
     def workflow_detail(self, run_id: str) -> dict[str, Any]:
         return self.call("workflow.detail", {"run_id": run_id})
 

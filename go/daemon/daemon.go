@@ -308,7 +308,24 @@ func New(opts Options) (*Daemon, error) {
 		_ = kern.Close()
 		return nil, fmt.Errorf("daemon: workflow run store: %w", err)
 	}
-	d.channels = channels.New(5*time.Minute, 24*time.Hour)
+	if _, err = d.workflowRuns.ReconcileStartup("daemon restarted before the run reached a terminal state"); err != nil {
+		_ = kern.Close()
+		return nil, fmt.Errorf("daemon: reconcile workflow runs: %w", err)
+	}
+	d.channels, err = channels.Open(opts.StateDir, 5*time.Minute, 24*time.Hour, func(ref string) ([]byte, error) {
+		if !strings.HasPrefix(ref, "env:CARINA_CHANNEL_") {
+			return nil, fmt.Errorf("unsupported channel secret handle")
+		}
+		value := os.Getenv(strings.TrimPrefix(ref, "env:"))
+		if value == "" {
+			return nil, fmt.Errorf("channel secret is not configured")
+		}
+		return []byte(value), nil
+	})
+	if err != nil {
+		_ = kern.Close()
+		return nil, fmt.Errorf("daemon: channels: %w", err)
+	}
 	trustedExtensionRoots := append([]string{}, opts.ExtensionTrustedRoots...)
 	trustedExtensionRoots = append(trustedExtensionRoots, filepath.Join(opts.StateDir, "extension-sources"))
 	d.extensions, err = extensions.New(opts.StateDir, Version, trustedExtensionRoots)
@@ -677,6 +694,9 @@ func (d *Daemon) connectContextEngineMCP(eng contextengine.Engine) (bool, error)
 }
 
 func (d *Daemon) registerMethods() {
+	d.registerRPC("runtime.initialize", rpc.ScopeRead, true, d.handleRuntimeInitialize)
+	d.registerRPC("runtime.capabilities", rpc.ScopeRead, true, d.handleRuntimeCapabilities)
+	d.registerRPC("runtime.registry_schema", rpc.ScopeRead, true, d.handleRuntimeSchema)
 	d.registerRPC("daemon.status", rpc.ScopeRead, true, d.handleStatus)
 	d.registerRPC("daemon.metrics", rpc.ScopeRead, true, d.handleMetrics)
 	d.registerRPC("daemon.doctor", rpc.ScopeRead, true, d.handleDoctor)
@@ -951,7 +971,7 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 
 	policyStale, policyReason := policyBundleStale(d.policyDir, d.org)
 
-	return map[string]any{
+	report := map[string]any{
 		"version":  Version,
 		"disabled": false,
 		"kernel":   probe(func() error { _, err := d.kern.ClassifyCommand("echo ok"); return err }),
@@ -983,7 +1003,28 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 			"stale":      policyStale,
 			"reason":     policyReason,
 		},
-	}, nil
+	}
+	fixPlan := []map[string]any{}
+	interrupted := 0
+	for _, run := range d.workflowRuns.List() {
+		if run.Status == workflowui.Interrupted {
+			interrupted++
+		}
+	}
+	if interrupted > 0 {
+		fixPlan = append(fixPlan, map[string]any{"check": "workflow_runs", "severity": "warn", "issue": fmt.Sprintf("%d workflow run(s) were interrupted", interrupted), "action": "inspect workflow.detail, then call workflow.resume or workflow.stop", "automatic": false})
+	}
+	if len(d.channels.Senders()) == 0 {
+		fixPlan = append(fixPlan, map[string]any{"check": "channels", "severity": "info", "issue": "no trusted channel senders configured", "action": "set CARINA_CHANNEL_* and register a sender with channel.sender.register", "automatic": false})
+	}
+	inv := d.extensions.Inventory()
+	if inv.SafeMode {
+		fixPlan = append(fixPlan, map[string]any{"check": "extensions", "severity": "info", "issue": "extension safe mode is enabled", "action": "keep enabled for diagnosis or explicitly disable with extension.safe_mode", "automatic": false})
+	}
+	report["runtime_protocol"] = map[string]any{"version": runtimeProtocolVersion, "negotiation": "runtime.initialize"}
+	report["telemetry"] = map[string]any{"enabled": d.telemetry.Enabled(), "format": "carina-telemetry-json-v1", "otlp": false}
+	report["fix_plan"] = fixPlan
+	return report, nil
 }
 
 // ---- daemon ---------------------------------------------------------------

@@ -19,7 +19,7 @@ func TestDefaultOffAndAttributedRecord(t *testing.T) {
 	if err := json.Unmarshal(b.Bytes(), &r); err != nil {
 		t.Fatal(err)
 	}
-	if r.SchemaURL != SchemaURL || r.Attributes.StepID != "s" || r.Cost.USD != .1 {
+	if r.Format != Format || r.Attributes.StepID != "s" || r.Cost.USD != .1 {
 		t.Fatalf("%+v", r)
 	}
 }

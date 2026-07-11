@@ -24,12 +24,13 @@ structured `ExternalEvent` envelopes; payload text is never executed directly.
 
 ## Telemetry and cost attribution
 
-Telemetry is disabled by default. `Options.TelemetryWriter` enables newline JSON
-records using an OpenTelemetry schema URL. Trace, metric, and log records can
+Telemetry is disabled by default. `Options.TelemetryWriter` enables Carina's
+versioned `carina-telemetry-json-v1` newline JSON format. It is not OTLP and
+does not claim OpenTelemetry wire compatibility. Trace, metric, and log records can
 attribute usage to tenant, workspace, session, workflow, step, task, provider,
 model, plugin, and worker. Cost records carry request, input/output/cache token
-counts, USD, and an estimated flag. Deployments can adapt the writer to OTLP
-without imposing an exporter dependency on local installations.
+counts, USD, and an estimated flag. A future OTLP exporter must perform an
+explicit mapping instead of relabeling these records.
 
 ## Local marketplace
 
