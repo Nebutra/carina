@@ -167,6 +167,40 @@ func TestWorkflowStreamingBudgetExhaustionSkipsRemainingStepsWithoutAbortingRun(
 	}
 }
 
+// TestWorkflowStreamingRollupIncludesChannelActivityStats proves swarm
+// channel activity (P3) is actually visible in the P5 aggregate rollup —
+// previously a real observability gap: an operator watching only the
+// rollup stream had no way to tell a swarm channel was even in use.
+func TestWorkflowStreamingRollupIncludesChannelActivityStats(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeChannelWorkerAgent(t, ws)
+	d.SetReasoner(&swarmChannelTestReasoner{publishMarker: "PUBLISH_STEP"})
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	sub := newFakeEventSub("rollup-channel-stats")
+	d.events.Subscribe(parent.SessionID, sub)
+
+	spec := &WorkflowSpec{Name: "rollup-channel", ExecutionMode: "streaming", Steps: []WorkflowStep{
+		{ID: "publisher", Agent: "channel-worker", Task: "PUBLISH_STEP"},
+	}}
+	if _, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-rollup-channel"); err != nil {
+		t.Fatalf("workflow failed: %v", err)
+	}
+
+	rollup := lastRollup(t, sub)
+	published, _ := rollup["channel_messages_published"].(int)
+	if published < 1 {
+		t.Fatalf("expected the rollup to reflect at least 1 published swarm message, got: %+v", rollup)
+	}
+	if _, hasEvicted := rollup["channel_messages_evicted"]; hasEvicted {
+		t.Fatalf("no eviction happened in this run, channel_messages_evicted should be absent, got: %+v", rollup)
+	}
+}
+
 func TestWorkflowStreamingNoBudgetMeansUnlimited(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()

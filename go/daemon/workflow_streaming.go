@@ -370,6 +370,17 @@ func (sc *streamCoordinator) rollupPayload() map[string]any {
 		payload["budget_limit"] = sc.spec.TokenBudget
 		payload["budget_remaining"] = remaining
 	}
+	// Swarm channel activity (P3) was previously invisible to the P5
+	// aggregate view entirely — a real observability gap, not just a
+	// missing nice-to-have: an operator watching only the rollup stream had
+	// no way to tell a swarm channel was even in use, let alone whether it
+	// was healthy (steadily evicting under load) or quiet.
+	if published, evicted := sc.channels.stats(); published > 0 {
+		payload["channel_messages_published"] = published
+		if evicted > 0 {
+			payload["channel_messages_evicted"] = evicted
+		}
+	}
 	return payload
 }
 

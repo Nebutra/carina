@@ -18,6 +18,23 @@ type swarmChannelMessage struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+// maxMessagesPerChannel bounds how many messages one channel retains at
+// once. Modeled directly on a real, documented incident in Claude Code's own
+// Teammate messaging system (its TEAMMATE_MESSAGES_UI_CAP = 50): 292 agents
+// spawned within two minutes drove one session to 36.8GB of retained
+// message history ("whale session") from unbounded per-teammate retention.
+// A swarm run can have hundreds of concurrently-publishing steps; without a
+// cap, a high-frequency publisher with a slow or absent subscriber grows
+// this channel's log for the run's entire lifetime. Set well above Claude
+// Code's UI-facing 50 (this is workflow data, not a terminal display), but
+// still a hard bound. Eviction drops the OLDEST messages first and is
+// audited (see publish()) — a late/slow subscriber silently catches up from
+// the retained window rather than the full history, the same tradeoff
+// Claude Code's own cap makes.
+// A var (not const) so tests can shrink it temporarily to exercise eviction
+// without hundreds of real publish calls; production code never mutates it.
+var maxMessagesPerChannel = 500
+
 // swarmChannelBroker is an in-process pub/sub bus scoped to exactly one
 // streaming workflow run (owned by that run's streamCoordinator), giving
 // steps declared via WorkflowStep.ConsumesChannel a way to receive messages
@@ -35,40 +52,69 @@ type swarmChannelMessage struct {
 // real identity and every publish is a governed, audited effect", not the
 // wire protocol.
 //
-// Every message ever published in a run is retained for that run's
-// lifetime (bounded — one workflow run has a bounded step count and a
-// bounded generator-injection ceiling, so this cannot grow unboundedly the
-// way a long-lived process-wide bus could).
+// Deliberately NOT persisted to disk, unlike Claude Code's own filesystem
+// mailbox (which needs durability because a Teammate can sit idle across a
+// long-lived process and must survive a restart): Carina's streaming-
+// workflow resume semantics (wfRunStore) only ever replay COMPLETED steps'
+// terminal output — a step still mid-execution when the daemon crashes is
+// not resumable at all and gets re-dispatched as a fresh subagent run with
+// fresh, empty channel state. A crash loses the publishing/subscribing
+// steps themselves, not just their in-flight messages, so persisting this
+// broker's contents would not improve recoverability — it would solve a
+// problem Carina's architecture doesn't actually have. Revisit only if
+// step-level resume ever starts preserving in-flight (not just completed)
+// steps.
 type swarmChannelBroker struct {
 	mu       sync.Mutex
 	nextSeq  int
-	messages map[string][]swarmChannelMessage // channel -> append-only log
-	cursor   map[string]map[string]int        // stepID -> channel -> next unread index
+	messages map[string][]swarmChannelMessage // channel -> retained window, oldest-evicted-first once over maxMessagesPerChannel
+	cursor   map[string]map[string]int        // stepID -> channel -> highest seq already delivered (0 = none yet)
+	evicted  map[string]int                   // channel -> total messages evicted so far (for audit + rollup)
 }
 
 func newSwarmChannelBroker() *swarmChannelBroker {
 	return &swarmChannelBroker{
 		messages: map[string][]swarmChannelMessage{},
 		cursor:   map[string]map[string]int{},
+		evicted:  map[string]int{},
 	}
 }
 
-func (b *swarmChannelBroker) publish(channel, fromStep string, payload json.RawMessage) swarmChannelMessage {
+// publish appends a message and evicts the oldest entries if the channel is
+// now over cap. Returns the published message plus the channel's running
+// eviction total and whether THIS call caused a new eviction (so the caller
+// can decide when to emit an audit event, instead of logging on every single
+// publish once a channel is steadily over cap).
+func (b *swarmChannelBroker) publish(channel, fromStep string, payload json.RawMessage) (msg swarmChannelMessage, evictedTotal int, evictedNow bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.nextSeq++
-	msg := swarmChannelMessage{Seq: b.nextSeq, Channel: channel, From: fromStep, Payload: payload}
-	b.messages[channel] = append(b.messages[channel], msg)
-	return msg
+	msg = swarmChannelMessage{Seq: b.nextSeq, Channel: channel, From: fromStep, Payload: payload}
+	log := append(b.messages[channel], msg)
+	if len(log) > maxMessagesPerChannel {
+		drop := len(log) - maxMessagesPerChannel
+		log = append([]swarmChannelMessage(nil), log[drop:]...) // fresh backing array: don't retain evicted entries via the old slice's capacity
+		b.evicted[channel] += drop
+		evictedNow = true
+	}
+	b.messages[channel] = log
+	return msg, b.evicted[channel], evictedNow
 }
 
-// receive returns every message published on any of channels since stepID
-// last called receive for that channel, then advances stepID's cursor so a
-// repeat call doesn't redeliver. A step only ever sees channels it actually
-// asked about — receive never scans channels outside the requested set,
-// even ones with pending messages, so a step cannot eavesdrop on a channel
-// it wasn't handed by the caller (dispatchActionOutcome only ever passes
-// the step's own ConsumesChannel list — see swarmReceiveOutcome).
+// receive returns every message published on any of channels with a seq
+// greater than what stepID has already been delivered for that channel
+// (cursors are tracked by SEQUENCE NUMBER, not slice index, specifically so
+// front-eviction in publish() can never desync a cursor — an index-based
+// cursor would silently skip or re-deliver messages once the log's front
+// gets trimmed). A step only ever sees channels it actually asked about —
+// receive never scans channels outside the requested set, even ones with
+// pending messages, so a step cannot eavesdrop on a channel it wasn't
+// handed by the caller (dispatchActionOutcome only ever passes the step's
+// own ConsumesChannel list — see swarmReceiveOutcome). A slow subscriber
+// whose cursor has fallen behind the retained window simply catches up from
+// the oldest message still retained — it has no way to know how many were
+// evicted before it caught up; swarmReceiveOutcome surfaces that count
+// separately so the caller isn't silently left in the dark.
 func (b *swarmChannelBroker) receive(stepID string, channels []string) []swarmChannelMessage {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -77,14 +123,39 @@ func (b *swarmChannelBroker) receive(stepID string, channels []string) []swarmCh
 	}
 	var out []swarmChannelMessage
 	for _, ch := range channels {
-		log := b.messages[ch]
-		start := b.cursor[stepID][ch]
-		if start < len(log) {
-			out = append(out, log[start:]...)
-			b.cursor[stepID][ch] = len(log)
+		last := b.cursor[stepID][ch]
+		for _, m := range b.messages[ch] {
+			if m.Seq > last {
+				out = append(out, m)
+			}
+		}
+		if log := b.messages[ch]; len(log) > 0 {
+			b.cursor[stepID][ch] = log[len(log)-1].Seq
 		}
 	}
 	return out
+}
+
+// evictedCount reports the total number of messages evicted so far for
+// channel (0 if the channel was never over cap).
+func (b *swarmChannelBroker) evictedCount(channel string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.evicted[channel]
+}
+
+// stats reports run-wide totals for the P5 observability rollup: how many
+// messages have ever been published across every channel in this run, and
+// how many were evicted under the per-channel cap. Cheap — bounded by the
+// number of distinct channels a run actually used, not by message volume.
+func (b *swarmChannelBroker) stats() (published, evicted int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	published = b.nextSeq
+	for _, n := range b.evicted {
+		evicted += n
+	}
+	return published, evicted
 }
 
 // swarmChannelBinding is registered on a spawned child session for exactly
@@ -185,10 +256,19 @@ func (d *Daemon) swarmPublishOutcome(sess *sessionstore.Session, task *scheduler
 	if len(payload) == 0 {
 		payload = json.RawMessage("null")
 	}
-	msg := binding.broker.publish(act.Channel, binding.stepID, payload)
+	msg, evictedTotal, evictedNow := binding.broker.publish(act.Channel, binding.stepID, payload)
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
 		"status": "swarm_channel_published", "channel": act.Channel, "from_step": binding.stepID, "seq": msg.Seq,
 	}, dec.DecisionID)
+	if evictedNow {
+		// Audited once per eviction EVENT, not once per publish while a
+		// channel stays over cap — logging every single publish once
+		// steady-state eviction kicks in would itself become the firehose
+		// problem this cap exists to prevent.
+		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+			"status": "swarm_channel_evicted", "channel": act.Channel, "cap": maxMessagesPerChannel, "evicted_total": evictedTotal,
+		}, "")
+	}
 	return toolCompleted(fmt.Sprintf("published to %q (seq %d)", act.Channel, msg.Seq))
 }
 
@@ -222,12 +302,23 @@ func (d *Daemon) swarmReceiveOutcome(sess *sessionstore.Session, task *scheduler
 		return toolCompleted("this step has no consumes_channel subscriptions")
 	}
 	msgs := binding.broker.receive(binding.stepID, channels)
+	// A slow subscriber has no other way to learn some messages never made
+	// it into the retained window (see maxMessagesPerChannel) — surface it
+	// as a plain heads-up rather than leaving it silently invisible.
+	evictedTotal := 0
+	for _, ch := range channels {
+		evictedTotal += binding.broker.evictedCount(ch)
+	}
+	evictedNote := ""
+	if evictedTotal > 0 {
+		evictedNote = fmt.Sprintf("\n\n(note: %d older message(s) on the queried channel(s) were evicted under the %d-message-per-channel cap before you read them)", evictedTotal, maxMessagesPerChannel)
+	}
 	if len(msgs) == 0 {
-		return toolCompleted("no new messages")
+		return toolCompleted("no new messages" + evictedNote)
 	}
 	b, err := json.MarshalIndent(msgs, "", "  ")
 	if err != nil {
 		return toolFailed("error: "+err.Error(), "tool_error")
 	}
-	return toolCompleted(string(b))
+	return toolCompleted(string(b) + evictedNote)
 }
