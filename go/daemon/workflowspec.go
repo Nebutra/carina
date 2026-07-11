@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +25,34 @@ type WorkflowStep struct {
 	// really is on the critical path — the caller opts a step INTO fail-fast,
 	// rather than the whole run defaulting to it.
 	FailFast bool `json:"fail_fast,omitempty"`
+
+	// Input, when non-empty, is resolved field-by-field (each value may be
+	// "${step_id}" — the whole prior output — or "${step_id.a.b.c}" — a
+	// dot-path into that output PARSED AS JSON, typed rather than
+	// string-substituted) and appended to the interpolated Task as a labeled
+	// JSON block the subagent is told to treat as structured parameters.
+	// Additive on top of the existing ${step_id} whole-string interpolation
+	// in Task, not a replacement for it — streaming and bsp both honor Task
+	// interpolation; only streaming resolves Input (see runWorkflowStreaming).
+	Input map[string]string `json:"input,omitempty"`
+
+	// When, if set, is a small JSONLogic-compatible boolean expression (see
+	// workflow_condition.go) evaluated once the step's dependencies resolve,
+	// against a data context built from their JSON-parsed outputs (a
+	// non-JSON output is exposed as {"raw": "<the string>"}). A falsy
+	// result skips the step through the exact same isolate-propagation path
+	// an upstream failure uses — conditional branching and failure isolation
+	// are the same mechanism, not two different ones. Streaming-mode only.
+	When json.RawMessage `json:"when,omitempty"`
+
+	// Kind selects step behavior: "" (default) is a normal agent step;
+	// "generator" additionally parses the step's "done" summary for a
+	// spawn_steps envelope (see workflow_generator.go) and injects the
+	// declared new nodes into the still-running graph. Streaming-mode only —
+	// the batch scheduler's per-level barrier has no natural "graph changed
+	// mid-run" hook without restructuring its loop, and dynamic graphs are
+	// exactly the kind of large/irregular shape streaming mode exists for.
+	Kind string `json:"kind,omitempty"`
 }
 
 // WorkflowSpec is a declarative multi-step agent pipeline. It is the Carina
@@ -118,6 +147,11 @@ func (s *WorkflowSpec) validate() error {
 		}
 		if st.Agent == "" {
 			return fmt.Errorf("workflow step %q has no agent", st.ID)
+		}
+		switch st.Kind {
+		case "", "generator":
+		default:
+			return fmt.Errorf("workflow step %q has unknown kind %q (want \"\" or \"generator\")", st.ID, st.Kind)
 		}
 		ids[st.ID] = true
 	}

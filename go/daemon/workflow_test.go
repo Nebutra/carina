@@ -434,6 +434,236 @@ func TestWorkflowStreamingWideFanOutFanIn(t *testing.T) {
 	t.Logf("200-leaf fan-out/fan-in completed in %s with concurrency=%d", time.Since(start), defaultStreamingWorkflowConcurrency)
 }
 
+// scriptedJSONReasoner returns a fixed literal "done" summary for any task
+// containing a configured marker (used to script JSON envelopes: condition
+// data, structured-input sources, generator spawn_steps), and falls back to
+// taskEchoReasoner's plain echo behavior otherwise. If captureMark is set,
+// the full prompt for any matching task is also pushed onto captured (for
+// tests asserting on exactly what a subagent was told, e.g. resolved
+// structured input).
+type scriptedJSONReasoner struct {
+	byMarker    map[string]string
+	captureMark string
+	captured    chan string
+}
+
+func (r *scriptedJSONReasoner) Name() string { return "scripted-json" }
+func (r *scriptedJSONReasoner) Think(_ context.Context, prompt string) (string, error) {
+	task := extractTaskLine(prompt)
+	if r.captureMark != "" && strings.Contains(task, r.captureMark) {
+		select {
+		case r.captured <- prompt:
+		default:
+		}
+	}
+	for marker, summary := range r.byMarker {
+		if strings.Contains(task, marker) {
+			b, _ := json.Marshal(map[string]string{"tool": "done", "summary": summary})
+			return string(b), nil
+		}
+	}
+	b, _ := json.Marshal(map[string]string{"tool": "done", "summary": "did[" + task + "]"})
+	return string(b), nil
+}
+
+// TestWorkflowStreamingConditionalEdgeSkipsWhenFalse: two mutually exclusive
+// downstream branches each gated by a When condition on the same upstream
+// step's JSON output; exactly the branch matching the actual verdict runs.
+func TestWorkflowStreamingConditionalEdgeSkipsWhenFalse(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	reasoner := &scriptedJSONReasoner{byMarker: map[string]string{
+		"REVIEW_STEP": `{"verdict":"reject","score":2}`,
+	}}
+	d.SetReasoner(reasoner)
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	spec := &WorkflowSpec{Name: "conditional", ExecutionMode: "streaming", Steps: []WorkflowStep{
+		{ID: "review", Agent: "worker", Task: "REVIEW_STEP"},
+		{ID: "approve_path", Agent: "worker", Task: "APPROVE", Needs: []string{"review"},
+			When: json.RawMessage(`{"==": [{"var":"review.verdict"}, "approve"]}`)},
+		{ID: "reject_path", Agent: "worker", Task: "REJECT", Needs: []string{"review"},
+			When: json.RawMessage(`{"==": [{"var":"review.verdict"}, "reject"]}`)},
+	}}
+	out, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-conditional")
+	if err != nil {
+		t.Fatalf("workflow failed: %v", err)
+	}
+	if _, ok := out["approve_path"]; ok {
+		t.Fatal("approve_path should have been skipped (condition false)")
+	}
+	if _, ok := out["reject_path"]; !ok {
+		t.Fatal("reject_path should have run (condition true)")
+	}
+}
+
+// TestWorkflowStreamingStructuredInputResolvesTypedFields verifies a
+// downstream step's Input actually resolves into real typed JSON (a number
+// stays a number) in the prompt the subagent receives, plus a
+// partial-template field interpolates as a string like Task always has.
+func TestWorkflowStreamingStructuredInputResolvesTypedFields(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	captured := make(chan string, 1)
+	reasoner := &scriptedJSONReasoner{
+		byMarker:    map[string]string{"SOURCE_STEP": `{"count":42,"label":"widgets"}`},
+		captureMark: "CONSUME_STEP",
+		captured:    captured,
+	}
+	d.SetReasoner(reasoner)
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	spec := &WorkflowSpec{Name: "structured-input", ExecutionMode: "streaming", Steps: []WorkflowStep{
+		{ID: "source", Agent: "worker", Task: "SOURCE_STEP"},
+		{ID: "consume", Agent: "worker", Task: "CONSUME_STEP", Needs: []string{"source"},
+			Input: map[string]string{"n": "${source.count}", "l": "${source.label}", "msg": "count is ${source.count}"}},
+	}}
+	_, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-structured-input")
+	if err != nil {
+		t.Fatalf("workflow failed: %v", err)
+	}
+
+	select {
+	case prompt := <-captured:
+		if !strings.Contains(prompt, `"n": 42`) {
+			t.Fatalf("expected typed number n=42 in prompt:\n%s", prompt)
+		}
+		if !strings.Contains(prompt, `"l": "widgets"`) {
+			t.Fatalf("expected string field l=widgets in prompt:\n%s", prompt)
+		}
+		if !strings.Contains(prompt, "count is 42") {
+			t.Fatalf("expected interpolated msg in prompt:\n%s", prompt)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("consume step's prompt was never captured")
+	}
+}
+
+// TestWorkflowStreamingGeneratorInjectsNewSteps: a generator step's
+// spawn_steps envelope actually extends the running graph, and the new step
+// runs and contributes to the final output map.
+func TestWorkflowStreamingGeneratorInjectsNewSteps(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	reasoner := &scriptedJSONReasoner{byMarker: map[string]string{
+		"GEN_STEP": `{"spawn_steps":[{"id":"spawned","agent":"worker","task":"SPAWNED_TASK"}],"rationale":"need one more step"}`,
+	}}
+	d.SetReasoner(reasoner)
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	spec := &WorkflowSpec{Name: "generator", ExecutionMode: "streaming", Steps: []WorkflowStep{
+		{ID: "gen", Agent: "worker", Task: "GEN_STEP", Kind: "generator"},
+	}}
+	out, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-generator")
+	if err != nil {
+		t.Fatalf("workflow failed: %v", err)
+	}
+	if _, ok := out["spawned"]; !ok {
+		t.Fatalf("dynamically spawned step never ran, got outputs: %v", out)
+	}
+	if !strings.Contains(out["spawned"], "SPAWNED_TASK") {
+		t.Fatalf("spawned step's output doesn't reflect its task, got: %q", out["spawned"])
+	}
+}
+
+// TestWorkflowStreamingGeneratorChainDependsOnSpawnedStep: the generator's
+// spawn_steps declares a downstream step that needs the newly-spawned
+// sibling — proves cross-references within one injection batch resolve.
+func TestWorkflowStreamingGeneratorChainDependsOnSpawnedStep(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	reasoner := &scriptedJSONReasoner{byMarker: map[string]string{
+		"GEN_STEP": `{"spawn_steps":[` +
+			`{"id":"first","agent":"worker","task":"FIRST_TASK"},` +
+			`{"id":"second","agent":"worker","task":"SECOND<${first}>","needs":["first"]}` +
+			`]}`,
+	}}
+	d.SetReasoner(reasoner)
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	spec := &WorkflowSpec{Name: "generator-chain", ExecutionMode: "streaming", Steps: []WorkflowStep{
+		{ID: "gen", Agent: "worker", Task: "GEN_STEP", Kind: "generator"},
+	}}
+	out, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-generator-chain")
+	if err != nil {
+		t.Fatalf("workflow failed: %v", err)
+	}
+	if _, ok := out["first"]; !ok {
+		t.Fatal("first spawned step never ran")
+	}
+	if !strings.Contains(out["second"], out["first"]) {
+		t.Fatalf("second spawned step should have first's output interpolated: first=%q second=%q", out["first"], out["second"])
+	}
+}
+
+// The following exercise injectGeneratedSteps' validation directly on a
+// manually-constructed coordinator, without a live daemon/reasoner — every
+// case here returns an error BEFORE the function ever touches sc.d/sc.parent,
+// which is what makes this safe with those fields left as nil zero values.
+
+func TestInjectGeneratedStepsRejectsCollidingID(t *testing.T) {
+	sc := &streamCoordinator{byID: map[string]WorkflowStep{"existing": {ID: "existing", Agent: "worker"}}, genDepth: map[string]int{}, totalSteps: 1}
+	err := sc.injectGeneratedSteps("gen", `{"spawn_steps":[{"id":"existing","agent":"worker","task":"x"}]}`)
+	if err == nil {
+		t.Fatal("expected a collision error")
+	}
+}
+
+func TestInjectGeneratedStepsRejectsUnknownNeeds(t *testing.T) {
+	sc := &streamCoordinator{byID: map[string]WorkflowStep{}, genDepth: map[string]int{}, totalSteps: 0}
+	err := sc.injectGeneratedSteps("gen", `{"spawn_steps":[{"id":"a","agent":"worker","task":"x","needs":["ghost"]}]}`)
+	if err == nil {
+		t.Fatal("expected an unknown-needs error")
+	}
+}
+
+func TestInjectGeneratedStepsRejectsCycleAmongSiblings(t *testing.T) {
+	sc := &streamCoordinator{byID: map[string]WorkflowStep{}, genDepth: map[string]int{}, totalSteps: 0}
+	err := sc.injectGeneratedSteps("gen", `{"spawn_steps":[{"id":"a","agent":"worker","task":"x","needs":["b"]},{"id":"b","agent":"worker","task":"y","needs":["a"]}]}`)
+	if err == nil {
+		t.Fatal("expected a cycle error")
+	}
+}
+
+func TestInjectGeneratedStepsRejectsExceedingMaxDepth(t *testing.T) {
+	sc := &streamCoordinator{byID: map[string]WorkflowStep{}, genDepth: map[string]int{"gen": maxGeneratorDepth}, totalSteps: 0}
+	err := sc.injectGeneratedSteps("gen", `{"spawn_steps":[{"id":"a","agent":"worker","task":"x"}]}`)
+	if err == nil {
+		t.Fatal("expected a max-generator-depth error")
+	}
+}
+
+func TestInjectGeneratedStepsRejectsExceedingStepLimit(t *testing.T) {
+	sc := &streamCoordinator{byID: map[string]WorkflowStep{}, genDepth: map[string]int{}, totalSteps: maxStreamingWorkflowSteps}
+	err := sc.injectGeneratedSteps("gen", `{"spawn_steps":[{"id":"a","agent":"worker","task":"x"}]}`)
+	if err == nil {
+		t.Fatal("expected a step-limit error")
+	}
+}
+
+func TestInjectGeneratedStepsToleratesNonEnvelopeOutput(t *testing.T) {
+	sc := &streamCoordinator{byID: map[string]WorkflowStep{}, genDepth: map[string]int{}, totalSteps: 0}
+	if err := sc.injectGeneratedSteps("gen", "just some free-text summary, not an envelope"); err != nil {
+		t.Fatalf("a generator that produced no envelope should be a no-op, not an error: %v", err)
+	}
+}
+
 // TestWorkflowStreamingResume: mirrors TestWorkflowResume for the streaming
 // scheduler — the streaming path recomputes live in-degree from scratch
 // around already-completed steps (genuinely new code, not shared with the
