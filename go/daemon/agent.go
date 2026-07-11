@@ -101,6 +101,8 @@ type action struct {
 	Tasks []SpawnTask `json:"tasks"`
 	// workflow tool
 	Workflow string `json:"workflow"`
+	// best_of_n tool
+	N int `json:"n,omitempty"`
 	// mcp tool
 	MCPServer string         `json:"mcp_server"`
 	MCPTool   string         `json:"mcp_tool"`
@@ -270,6 +272,13 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 	// Persistent project/user instructions are prepended to the system prompt
 	// so the agent follows repo-specific conventions.
 	sysPrompt := systemPrompt
+	if d.bestOfNEnabled.Load() {
+		// Only mentioned when the opt-in feature is actually on — belt-and-
+		// suspenders on top of the hard feature_disabled denial in
+		// executeBestOfNOutcome, so a model never even sees the tool exists
+		// when the operator hasn't enabled it.
+		sysPrompt += "\n\n" + bestOfNToolHelp
+	}
 	agents := loadAgentSpecs(sess.WorkspaceRoot)
 	if d.safeMode {
 		agents = builtinAgentSpecs()
@@ -805,8 +814,13 @@ func (d *Daemon) contextForTask(taskID string) context.Context {
 }
 
 func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
+	if raw, ok := d.restrictedTools.Load(sess.SessionID); ok {
+		if restricted, _ := raw.(map[string]bool); restricted[act.Tool] {
+			return toolDenied("DENIED: this subagent cannot call tool "+act.Tool+"; return proposed content in the done summary instead", "tool_restricted")
+		}
+	}
 	switch act.Tool {
-	case "run", "patch", "memory", "mcp", "spawn", "workflow":
+	case "run", "patch", "memory", "mcp", "spawn", "workflow", "best_of_n":
 	default:
 		if err := d.ensureToolCallStarted(act.lifecycleCallID); err != nil {
 			return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
@@ -886,6 +900,8 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 		return d.executeSpawnOutcome(sess, task, act)
 	case "workflow":
 		return d.executeWorkflowOutcome(sess, task, act)
+	case "best_of_n":
+		return d.executeBestOfNOutcome(sess, task, act)
 	case "ask_user":
 		return d.askUserOutcome(sess, task, act.Prompt, act.Options)
 	case "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact":
@@ -1072,8 +1088,36 @@ func (d *Daemon) agentPatchOutcome(sess *sessionstore.Session, task *scheduler.T
 	if err := d.checkWriteProvenance(sess.SessionID, path, resolveIn(sess.WorkspaceRoot, path)); err != nil {
 		return toolDenied("DENIED: "+err.Error(), "write_provenance_denied")
 	}
-	patch, err := d.kern.PatchPropose(sess.SessionID, task.TaskID, "agent edit",
-		[]kernel.FileChange{{Path: path, NewContent: content}})
+	return d.proposeAndApplyPatch(sess, task, "agent edit", []kernel.FileChange{{Path: path, NewContent: content}})
+}
+
+// proposeAndApplyPatch is the single shared path that ever calls
+// kernel.patch.propose + kernel.patch.apply for a real, governed multi-file
+// edit: propose -> gate -> approve/escalate -> apply, with the same
+// diagnostics/index-invalidation tail as the original single-file agentPatch
+// call site. Both the interactive agent's "patch" tool (reason="agent edit")
+// and best-of-n's judge-selected winner submission (reason="best-of-n
+// winner...") route through this one function, so the governance-critical
+// invariant that discarded candidates never touch PatchTransaction state is
+// enforced by construction (there is exactly one call site that can create a
+// real Proposed/Applied patch), not by convention.
+//
+// Callers MUST have already seeded read provenance (recordRead) for every
+// affected path in files, or checkWriteProvenance-equivalent discipline,
+// before calling this — proposeAndApplyPatch itself does not re-check
+// provenance because best-of-n's winner content was authored by a candidate
+// session, not sess, so the orchestrator seeds provenance explicitly (see
+// bestofn.go).
+func (d *Daemon) proposeAndApplyPatch(sess *sessionstore.Session, task *scheduler.Task, reason string, files []kernel.FileChange) toolExecutionOutcome {
+	if len(files) == 0 {
+		return toolFailed("error: patch needs at least one file", "invalid_arguments")
+	}
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.Path
+	}
+	label := "patch " + strings.Join(paths, ", ")
+	patch, err := d.kern.PatchPropose(sess.SessionID, task.TaskID, reason, files)
 	if err != nil {
 		return toolFailed("patch propose failed: "+err.Error(), "patch_propose_error")
 	}
@@ -1088,14 +1132,14 @@ func (d *Daemon) agentPatchOutcome(sess *sessionstore.Session, task *scheduler.T
 	approver := "agent"
 	switch dec.Decision {
 	case "denied":
-		if esc, ok := d.escalateToParent(sess, task, "PatchApply", patch.PatchID, "patch "+path); ok {
+		if esc, ok := d.escalateToParent(sess, task, "PatchApply", patch.PatchID, label); ok {
 			dec = esc
 			approver = "operator"
 		} else {
 			return toolDenied("DENIED by policy: "+dec.Reason, "policy_denied")
 		}
 	case "requires_approval":
-		approved, ok := d.resolveApprovalOrEscalate(sess, task, dec, "PatchApply", patch.PatchID, "patch "+path)
+		approved, ok := d.resolveApprovalOrEscalate(sess, task, dec, "PatchApply", patch.PatchID, label)
 		if !ok {
 			return toolDenied("requires approval (not granted): "+dec.Reason, "approval_denied")
 		}
@@ -1114,26 +1158,31 @@ func (d *Daemon) agentPatchOutcome(sess *sessionstore.Session, task *scheduler.T
 	if err != nil {
 		return toolFailed("patch apply failed (nothing written): "+err.Error(), "patch_apply_error")
 	}
-	// The agent's edit is now the on-disk truth; record it so a follow-up edit
-	// in the same run isn't flagged as a blind overwrite.
-	d.recordRead(sess.SessionID, path, content)
+	var b strings.Builder
+	fmt.Fprintf(&b, "patch %s applied to %s (status=%s, rollbackable)", applied.PatchID, label, applied.Status)
+	for _, f := range files {
+		// The edit is now the on-disk truth; record it so a follow-up edit in
+		// the same run isn't flagged as a blind overwrite.
+		d.recordRead(sess.SessionID, f.Path, f.NewContent)
+		// Post-edit diagnostics: surface compile/parse errors this edit
+		// introduced, so the agent can self-correct on the next turn instead
+		// of turns later.
+		if diag := checkEdited(resolveIn(sess.WorkspaceRoot, f.Path)); diag != "" {
+			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+				map[string]any{"status": "post_edit_diagnostics", "path": f.Path, "diagnostics": truncate(diag, 500)}, "")
+			fmt.Fprintf(&b, "\n[diagnostics] %s introduced errors:\n%s", f.Path, truncate(diag, 1000))
+		}
+		// Semantic (LSP) diagnostics augment the syntax probe when a language
+		// server is installed — type errors and undefined symbols a parse
+		// check can't see.
+		if sem := d.semanticDiagnostics(resolveIn(sess.WorkspaceRoot, f.Path), sess.WorkspaceRoot); sem != "" {
+			fmt.Fprintf(&b, "\n[semantic] %s has type errors:\n%s", f.Path, truncate(sem, 1000))
+		}
+	}
 	// Keep the code index in step with the write (best-effort; an index error
 	// never fails the patch).
-	d.invalidateIndex(sess.SessionID, []string{path})
-	result := fmt.Sprintf("patch %s applied to %s (status=%s, rollbackable)", applied.PatchID, path, applied.Status)
-	// Post-edit diagnostics: surface compile/parse errors this edit introduced,
-	// so the agent can self-correct on the next turn instead of turns later.
-	if diag := checkEdited(resolveIn(sess.WorkspaceRoot, path)); diag != "" {
-		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
-			map[string]any{"status": "post_edit_diagnostics", "path": path, "diagnostics": truncate(diag, 500)}, "")
-		result += "\n[diagnostics] this edit introduced errors:\n" + truncate(diag, 1000)
-	}
-	// Semantic (LSP) diagnostics augment the syntax probe when a language server
-	// is installed — type errors and undefined symbols a parse check can't see.
-	if sem := d.semanticDiagnostics(resolveIn(sess.WorkspaceRoot, path), sess.WorkspaceRoot); sem != "" {
-		result += "\n[semantic] this edit has type errors:\n" + truncate(sem, 1000)
-	}
-	return toolCompleted(result)
+	d.invalidateIndex(sess.SessionID, paths)
+	return toolCompleted(b.String())
 }
 
 // agentRun executes a command the agent proposed: canonicalize -> validate

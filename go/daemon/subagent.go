@@ -106,6 +106,10 @@ func (d *Daemon) spawnSubagentContext(ctx context.Context, parent *sessionstore.
 	if err := d.kern.InitSessionFull(child.SessionID, child.WorkspaceRoot, childProfile, parent.ApprovalMode, d.org); err != nil {
 		return "spawn init failed: " + err.Error()
 	}
+	if len(spec.RestrictedTools) > 0 {
+		d.restrictedTools.Store(child.SessionID, spec.RestrictedTools)
+		defer d.restrictedTools.Delete(child.SessionID)
+	}
 
 	// Audit the delegation on the parent, linking to the child session.
 	d.record(parent.SessionID, "ToolApproved", parentTask.TaskID, "go", map[string]any{

@@ -23,6 +23,17 @@ type AgentSpec struct {
 	MaxTurns     int
 	SystemPrompt string
 	Source       string // "built-in" | "user" | "project"
+
+	// RestrictedTools names tool verbs this agent's loop must never dispatch,
+	// enforced in dispatchActionOutcome before the tool switch (belt-and-
+	// suspenders on top of Profile: Profile denies an effect at the kernel
+	// capability gate, but some kernel calls create real governed state before
+	// any gate check exists (e.g. kernel.patch.propose has no capability gate
+	// ahead of kernel.patch.apply — see crates/carina-kernel/src/bin/
+	// carina-kernel-service.rs patch_propose). A restricted tool is refused
+	// before it ever reaches the dispatch switch, so it can never create that
+	// state at all, regardless of profile.
+	RestrictedTools map[string]bool
 }
 
 type AgentInfo struct {
@@ -113,6 +124,27 @@ func builtinAgentSpecs() map[string]*AgentSpec {
 			MaxTurns:     6,
 			Source:       "built-in",
 			SystemPrompt: "You are a codebase exploration specialist. Use list, search, and read. Do not edit files or run commands. Return exact paths and findings.",
+		},
+		"candidate-drafter": {
+			Name:            "candidate-drafter",
+			Description:     "Hidden read-only drafter used by best_of_n to produce a proposed diff without ever applying it.",
+			Profile:         "read-only",
+			Mode:            "subagent",
+			Hidden:          true,
+			MaxTurns:        8,
+			Source:          "built-in",
+			RestrictedTools: map[string]bool{"patch": true, "run": true, "memory": true, "spawn": true, "workflow": true, "mcp": true},
+			SystemPrompt: `You are a candidate-drafter for Carina's best-of-n patch generation. You
+explore the workspace (list/read/search/code.*) and design a full-file edit,
+but you NEVER apply it yourself — the "patch" tool is unavailable to you and
+will be denied if you try. Instead, finish with "done" whose "summary" field
+is STRICT JSON (no markdown fences, no prose) with this exact shape:
+
+{"files":[{"path":"rel/path","new_content":"FULL new file content"}],"rationale":"why this change satisfies the task"}
+
+Include the complete new content for every file you touch. If you cannot
+produce a valid candidate, still finish with "done" and an empty "files"
+array plus a "rationale" explaining why.`,
 		},
 	}
 }
