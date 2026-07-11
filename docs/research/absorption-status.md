@@ -498,6 +498,43 @@ KiloCode source-review decisions are tracked separately in
   `docs/research/cline-absorption.md` and
   `docs/research/codebuff-absorption.md`.
 
+**Wave 24 — Codex/Claude Code benchmark of the final 7 tracking items (no code landed)**
+- This wave ran the final 7 open items in `absorption-plan.md`'s tracking
+  checklist against 4 sources (`openai/codex` source, Claude Code official
+  docs + changelog evolution, Codex CLI docs, and the local
+  `claude-code-notes` source-analysis collection). All 7 were re-confirmed
+  as real, externally-corroborated gaps with no architectural mismatch to
+  carina — but 0 reached commit this pass. 3 reached `design_only`
+  (versioned idempotent config/state migration, the coordinator restricted-
+  orchestrator role, and deferred lazy tool-schema + ToolSearch, plus
+  content-block image support bundled with the skill-prompts item) with a
+  concrete Go-shaped design recorded and no code, blocked on either a
+  not-yet-existing prerequisite abstraction (`buildTool()`) or a hot,
+  actively-churned landing file (`agent.go`/`subagent.go`) this task was
+  instructed not to touch. 4 reached `defer`, and in 3 of those 4 an
+  initial `adopt` verdict was downgraded by adversarial re-review after
+  re-checking the design against carina's actual current code state rather
+  than the design doc's own claims: multi-tier compaction's verbatim-user-
+  preservation and rebuild-with-key-files tiers (the `EverModifiedFiles`/
+  `addTurn` file-tracking mechanism doesn't match how `Turn.Path` is
+  actually populated, and the hash-preimage rework for the verbatim
+  partition was never actually specified); the layered setting-source
+  allowlist (the threat model conflated the daemon's launch-time cwd
+  config with per-task untrusted-repo config, which carina's existing
+  `trustStore` already scopes correctly); and composable plugin bundles +
+  git marketplace (the load-bearing claim that ed25519 signature
+  verification could reuse existing-but-unused kernel machinery,
+  `carina-plugin-runtime::SignatureVerifier`, turned out to be factually
+  wrong about what that machinery does). None of the 7 were rejected
+  outright. The recurring lesson: a design doc's own claims about reusing
+  existing machinery or matching existing data shapes need to be verified
+  against the actual current code, not taken at face value, before a verdict
+  of `adopt` is safe — catching that gap in research is far cheaper than
+  catching it after a commit breaks audit hash-chain continuity or ships an
+  incorrect security claim. Full per-item verification, source comparison,
+  changelog-evolution findings, and carina's landed-or-planned response for
+  all 7 items live in `docs/research/codex-claudecode-benchmark.md`.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
