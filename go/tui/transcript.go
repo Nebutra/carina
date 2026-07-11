@@ -40,6 +40,7 @@ const (
 // transient event. It intentionally contains no generic JSON rendering path:
 // unknown payloads get a compact system label instead of becoming the UI.
 type eventPresentation struct {
+	Key         string
 	Kind        presentationKind
 	Status      presentationStatus
 	Timestamp   string
@@ -54,6 +55,7 @@ type eventPresentation struct {
 // entry caches its rendered form. Typed entries retain their presentation so
 // a resize or explicit fold toggle only re-renders the affected projection.
 type entry struct {
+	key          string
 	rendered     string
 	presentation *eventPresentation
 }
@@ -70,7 +72,24 @@ func (t *transcript) push(rendered string) {
 
 func (t *transcript) pushPresentation(p eventPresentation, th theme.Theme, width int) {
 	pCopy := p
+	if pCopy.Key != "" {
+		for i := range t.entries {
+			if t.entries[i].key != pCopy.Key {
+				continue
+			}
+			// Preserve the operator's fold choice while lifecycle updates replace
+			// the semantic state of the same authoritative call.
+			if old := t.entries[i].presentation; old != nil && old.Collapsible && pCopy.Collapsible {
+				pCopy.Collapsed = old.Collapsed
+			}
+			t.entries[i].presentation = &pCopy
+			t.entries[i].rendered = pCopy.render(th, width)
+			t.rebuildLines()
+			return
+		}
+	}
 	t.entries = append(t.entries, entry{
+		key:          pCopy.Key,
 		presentation: &pCopy,
 		rendered:     pCopy.render(th, width),
 	})
@@ -216,6 +235,15 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 	}
 
 	switch typ {
+	case "ToolCallRequested", "ToolCallApprovalRequired", "ToolCallStarted", "ToolCallCompleted", "ToolCallFailed", "ToolCallDenied", "ToolCallCancelled":
+		p = presentAuthoritativeToolCall(p, typ, payload)
+	case "RuntimeStageChanged":
+		p.Kind, p.Title = presentationSystem, "runtime"
+		p.Status = lifecycleStatus(firstValue(payload, "status", "stage"))
+		p.Summary = joinValues(payload, "stage", "status", "tool", "call_id")
+		if callID := str(payload["call_id"]); callID != "" {
+			p.Key = "stage:" + callID
+		}
 	case "permission.request":
 		p.Kind, p.Status, p.Title = presentationGovernance, statusNeedsAuth, "approval "+str(ev["decision_id"])
 		p.Summary = microcopy.Governed(microcopy.GovernedApprovalRequired, microcopy.Args{
@@ -262,6 +290,31 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 	}
 
 	p.Summary = sanitize(p.Summary)
+	return p
+}
+
+func presentAuthoritativeToolCall(p eventPresentation, typ string, payload map[string]any) eventPresentation {
+	p.Kind, p.Title = presentationTool, "tool"
+	callID := str(payload["call_id"])
+	if callID != "" {
+		p.Key = "tool:" + callID
+	}
+	p.Summary = joinValues(payload, "tool", "kind", "status")
+	p.Status = statusRunning
+	switch typ {
+	case "ToolCallApprovalRequired":
+		p.Status = statusNeedsAuth
+	case "ToolCallCompleted":
+		p.Status = statusSuccess
+	case "ToolCallFailed", "ToolCallDenied", "ToolCallCancelled":
+		p.Status = statusFailure
+	}
+	p.Body = selectedBody(payload, "call_id", "reason", "error", "duration_ms")
+	if ids := valueString(payload["artifact_ids"]); ids != "" {
+		p.Body = append(p.Body, "artifact: "+ids, "open: carina artifact read <session_id> <artifact_id>")
+	}
+	p.Collapsible = len(p.Body) > 0
+	p.Collapsed = len(p.Body) > 0
 	return p
 }
 

@@ -16,7 +16,8 @@
       { "command": "carina.steer", "title": "Carina: Steer Task" },
       { "command": "carina.approve", "title": "Carina: Resolve Approval" },
       { "command": "carina.answer", "title": "Carina: Answer Question" },
-      { "command": "carina.previewPatch", "title": "Carina: Preview Patch" }
+      { "command": "carina.previewPatch", "title": "Carina: Preview Patch" },
+      { "command": "carina.openArtifact", "title": "Carina: Open Artifact" }
     ],
     "menus": {
       "view/title": [{ "command": "carina.refresh", "when": "view == carina.agents", "group": "navigation" }],

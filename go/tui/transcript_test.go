@@ -22,6 +22,30 @@ func TestTranscriptCachesRenderedEntries(t *testing.T) {
 	}
 }
 
+func TestAuthoritativeToolLifecycleUpdatesByCallID(t *testing.T) {
+	th := theme.New(theme.Mono)
+	var tr transcript
+	tr.pushPresentation(presentEvent(map[string]any{"type": "ToolCallStarted", "payload": map[string]any{"call_id": "c1", "tool": "run", "status": "running"}}, th, "en"), th, 120)
+	tr.pushPresentation(presentEvent(map[string]any{"type": "ToolCallCompleted", "payload": map[string]any{"call_id": "c1", "tool": "run", "status": "completed", "artifact_ids": []any{"sha256:abc"}}}, th, "en"), th, 120)
+	if len(tr.entries) != 1 {
+		t.Fatalf("entries = %d, want lifecycle merged into one", len(tr.entries))
+	}
+	tr.toggleLastCollapsible(th, 120)
+	got := strings.Join(tr.lines, "\n")
+	for _, want := range []string{"completed", "sha256:abc", "carina artifact read"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("timeline missing %q: %q", want, got)
+		}
+	}
+}
+
+func TestRuntimeStageUsesStableCallKey(t *testing.T) {
+	p := presentEvent(map[string]any{"type": "RuntimeStageChanged", "payload": map[string]any{"call_id": "c1", "stage": "executing", "status": "running"}}, theme.New(theme.Mono), "en")
+	if p.Key != "stage:c1" || !strings.Contains(p.Summary, "executing") {
+		t.Fatalf("presentation = %#v", p)
+	}
+}
+
 func TestRenderEventGenericCommandLine(t *testing.T) {
 	th := theme.New(theme.Mono)
 	line := renderEvent(map[string]any{

@@ -6,6 +6,9 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { RpcClient } from '../dist/rpc.js'
 
+const extension=fs.readFileSync(new URL('../src/extension.ts',import.meta.url),'utf8')
+test('session inspection is paged and artifacts are bounded',()=>{assert.match(extension,/session\.items/);assert.match(extension,/MAX_TIMELINE_PAGES/);assert.match(extension,/artifact\.read/);assert.match(extension,/preview_utf8/);assert.match(extension,/showSaveDialog/);assert.doesNotMatch(extension,/function transcript\(es:Event\[\]\)/)})
+
 const waitFor=(check,ms=3000)=>new Promise((resolve,reject)=>{const started=Date.now();const tick=()=>{if(check())return resolve();if(Date.now()-started>ms)return reject(new Error('condition timed out'));setTimeout(tick,10)};tick()})
 test('rpc consumes notifications and reconnects after disconnect',async()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'carina-vscode-')),sock=path.join(dir,'d.sock');let connection,connections=0

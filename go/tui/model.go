@@ -209,6 +209,8 @@ func (m *Model) pushEvent(ev map[string]any) {
 	m.vp.SetContentLines(m.tr.lines)
 	added := len(m.tr.lines) - before
 	if added < 1 {
+		// An in-place lifecycle update is still unseen activity, but should not
+		// pretend that a whole replacement block was appended.
 		added = 1
 	}
 	if m.followTail {
