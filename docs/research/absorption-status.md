@@ -409,13 +409,32 @@ KiloCode source-review decisions are tracked separately in
   only proof that Apple accepted a release.
 
 **Wave 23 — Cline & Codebuff mechanism absorption (landed)**
-- **Review closed with zero commits this round**: every Cline and Codebuff
-  candidate mechanism evaluated in this wave resolved to `defer`, `reject`, or
-  `already_done` against ground truth; none reached `status='committed'`, so
-  there are no landed bullets to record here. Full per-item verification,
+- **Consistent dual-threshold compaction trigger** (`go/daemon/transcript.go`):
+  `compact()`'s two `MaxChars`-gated branches were independently hardcoded —
+  harmless while identical, but a latent bug where an incremental change to
+  one gate could silently desync it from the other, undermining the
+  audit-completeness guarantee compaction receipts exist to provide. Both
+  gates now read a single `triggerChars()` (`max(MaxChars-ReserveChars,
+  MaxChars*ThresholdRatio)`, char-based analog of a token-budget dual-bound
+  technique); default `ReserveChars=0`/`ThresholdRatio=0` reduces to exactly
+  prior behavior.
+- **Line-shift-tolerant pre/post-edit diagnostics delta**
+  (`go/daemon/diagnostics.go`): `diagnosticsDelta(before, after)` matches
+  checker output by message content (location stripped) instead of raw line
+  number, grouped into per-diagnostic blocks, so an edit that shifts an
+  unrelated pre-existing error's line number no longer makes it look newly
+  introduced (reproduced directly with `gofmt` during review). Standalone and
+  tested; wiring `checkEdited` to run before *and* after an edit (today only
+  after) is a deferred one-line `agent.go` change pending that file clearing
+  the in-flight-work blocklist below.
+- **Everything else deferred or rejected**: every other Cline and Codebuff
+  candidate mechanism evaluated in this wave resolved to `defer`, `reject`,
+  or `already_done` against ground truth — most because the only integration
+  seam sits inside `go/daemon/agent.go`/`go/daemon/daemon.go`, both carrying
+  large in-flight, unrelated diffs this session. Full per-item verification,
   reasoning, and verdicts live in `docs/research/cline-absorption.md` and
-  `docs/research/codebuff-absorption.md`; the adopted-in-principle-but-deferred
-  and rejected items are carried below under Remaining.
+  `docs/research/codebuff-absorption.md`; the deferred and rejected items are
+  carried below under Remaining.
 
 ## ✅ Remaining
 

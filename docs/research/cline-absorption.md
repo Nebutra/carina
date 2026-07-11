@@ -8,10 +8,19 @@ kernel, and append-only audit log as the single authority.
 
 ## Absorbed
 
-None landed as commits this round. Every candidate mechanism from this review
-either mismatches carina's architecture, contradicts a prior rejection, or
-lacked a clean (non-dirty-blocklisted) integration seam at review time. See
-Deferred below for the items with real value once their seam clears.
+- **Consistent dual-threshold compaction trigger** (`dual_threshold_compaction`,
+  `go/daemon/transcript.go`, commit `a817f21`). See Deferred below for the
+  design flaw the adversarial pass caught and how it was fixed.
+- **Line-shift-tolerant pre/post-edit diagnostics delta**
+  (`pre_post_diagnostics_diff`, `go/daemon/diagnostics.go`, commit `1c778bf`).
+  Standalone algorithm landed and tested; behavioral wiring (calling it before
+  *and* after an edit) is a one-line `agent.go` change, still deferred — see
+  below.
+
+Everything else from this review either mismatches carina's architecture,
+contradicts a prior rejection, or lacked a clean (non-dirty-blocklisted)
+integration seam at review time. See Deferred below for the items with real
+value once their seam clears.
 
 ## Deliberately Rejected
 
@@ -46,7 +55,9 @@ one of two grounds: no clean (non-dirty) file seam existed at review time, or
 the design as reviewed needed revision before it was safe to land. None of
 these are rejections — they are scoped for a follow-on pass once the relevant
 files settle, matching the `absorption-status.md` Wave 13–16 pattern where
-"follow-on phases remain separate" rather than abandoned.
+"follow-on phases remain separate" rather than abandoned. Two of the
+design-revision items have since been fixed and landed standalone (see below,
+and Absorbed above); the rest remain open.
 
 **Blocked on dirty-file seam (`go/daemon/agent.go`, `go/daemon/daemon.go`)**
 
@@ -135,48 +146,52 @@ returns to a clean, reviewable base:
   choosing which channel to write into. A standalone `SteerPriority`
   enum/policy type would sit inert and untestable-in-context until wired in.
 
-**Blocked on design revision (adversarially downgraded, not seam-blocked)**
+**Design-revision items — fixed and landed standalone (wiring still deferred)**
 
-- **Pre/post-edit diagnostics diff** (`pre_post_diagnostics_diff`). Correctly
-  stays clear of `PatchApply`, kernel gating, and `checkWriteProvenance`, and
-  the file-touch/cost analysis (S-sized, isolated to `diagnostics.go` + a
-  small `agent.go` diff) is right. But the reviewed algorithm — exact-line-
-  match set-diff against diagnostics that embed absolute line numbers — is
-  functionally broken for the common case: any edit that shifts line count
-  above a pre-existing unrelated error reports that stale error as newly
+Both items below were adversarially downgraded pending a design fix, not a
+dirty-file seam. The fix was S-sized and touched only clean files, so it
+landed immediately as its own commit; only the behavioral wiring into
+`agent.go` remains deferred.
+
+- **Pre/post-edit diagnostics diff** (`pre_post_diagnostics_diff`, **fixed,
+  landed as `1c778bf`**). The reviewed algorithm — exact-line-match set-diff
+  against diagnostics that embed absolute line numbers — was functionally
+  broken for the common case: any edit that shifts line count above a
+  pre-existing unrelated error would report that stale error as newly
   introduced, the opposite of the goal (reproduced directly with `gofmt`).
-  `absorption-plan.md:246` already flags "Post-edit diagnostics-delta
-  feedback loop + LSP intelligence" as not-yet-absorbed, but bundles in
-  already-completed Stage 2 LSP work; the actual missing slice — diff a
-  pre-edit error set against the post-edit set from the existing `checkEdited`
-  and `semanticDiagnostics` probes — is S-sized, not the L the plan implies.
-  Must change before landing: key the diff on `(file, message)` content (or a
-  line-shift-tolerant window) instead of raw line number, and add a test case
-  covering "pre-existing error whose line number shifted due to an unrelated
-  insertion elsewhere in the file" (absent from the four cases reviewed).
-  Once the matching key is line-shift-tolerant this is a clean, low-risk
-  adopt against `agent.go`'s pre-apply snapshot point.
+  `diagnosticsDelta(before, after)` in `go/daemon/diagnostics.go` now groups
+  checker output into blocks (`diagnosticBlocks`) and matches by message
+  content with the line/col location stripped (`diagnosticKey`), covering
+  gofmt/node's single-line and py_compile's multi-line
+  `File "...", line N` shapes; rustc's arrow-location line is deliberately
+  left as a continuation, not a block boundary, to avoid fragmenting one
+  diagnostic into two. Five new tests in `diagnostics_test.go` cover the
+  reproduced line-shift case, a genuinely new error, the Python multi-line
+  case, and the two empty-input edges. What's still deferred: calling
+  `checkEdited` before AND after an edit (today it only runs after) is a
+  one-line change at the `agent.go` call site — parked until that file is
+  off the in-flight-work blocklist.
 
-- **Dual-threshold compaction trigger formula** (`dual_threshold_compaction`).
-  The proposal's description of current code is accurate
-  (`transcript.go:65-72`: single `MaxChars` gate, char-based by design because
-  "claude-cli does not expose token counts cheaply") and `transcript.go`/
-  `transcript_test.go` are both clean. `absorption-plan.md:60-61,200` already
-  scopes a token/ratio-threshold trigger as an additive Wave 2 item, which is
-  direct precedent for adopting the trigger-formula slice on its own (the
-  circuit-breaker/verbatim-user/rebuild-tier pieces are separate, larger
-  scope, not part of this decision). The reviewed design is incomplete in a
-  way that matters, though: it patches only one of `compact()`'s two
-  `MaxChars`-gated branches, leaving the internal gate at line 132 on the old
-  semantics — so lowering the effective trigger threshold would cause
+- **Dual-threshold compaction trigger formula** (`dual_threshold_compaction`,
+  **fixed, landed as `a817f21`**). The reviewed design was incomplete in a
+  way that mattered: it would have patched only one of `compact()`'s two
+  `MaxChars`-gated branches (`transcript.go`), leaving the other on stale
+  semantics — lowering the effective trigger would have caused
   destructive-but-unreceipted elision to fire silently more often, undermining
-  the audit-completeness invariant the proposal claims is untouched. Must
-  change before landing: address line 132 consistently (apply the same
-  `triggerThreshold()` there, or explicitly justify keeping it at `MaxChars`),
-  and add a test exercising the elide-only path at the new lower threshold
-  that asserts either a receipt is produced or the return value correctly
-  reflects modified content. Scoping fix, not a rejection — stays S/M sized
-  once the two-gate issue is folded in.
+  the audit-completeness invariant the proposal claimed was untouched. Both
+  gates in `go/daemon/transcript.go`'s `compact()` now read a single
+  `triggerChars()` (`trigger = max(MaxChars-ReserveChars,
+  MaxChars*ThresholdRatio)`, mirroring a token-budget technique adapted to
+  carina's char-based policy), so the two gates cannot structurally drift
+  again. Default `ReserveChars=0`/`ThresholdRatio=0` reduces to exactly
+  today's `MaxChars` behavior — zero runtime change unless a caller opts in.
+  New tests cover the default no-op case, the dual-bound formula across
+  large/small/degenerate windows, and a regression test
+  (`TestCompactUsesConsistentTriggerAcrossBothGates`) that only passes if
+  both gates honor the same lowered trigger. Nothing further deferred here —
+  `triggerChars()` is real, live logic inside `compact()` today; only opting
+  a caller into non-default `ReserveChars`/`ThresholdRatio` values (a policy
+  choice, not a code change) remains open.
 
 **Blocked on both: a currently-half-built carina mechanism already covers the
 target problem**
@@ -203,15 +218,26 @@ target problem**
 
 ## Trade-offs
 
-This review round absorbed nothing outright: every mechanism with real value
-either (a) needed a design fix before it was safe (diagnostics diff, dual-
-threshold compaction), (b) only integrates through `agent.go` or `daemon.go`,
-both mid-diff and dirty-blocklisted this session, or (c) targets a problem
+This review round absorbed two mechanisms outright (dual-threshold compaction
+trigger consistency, line-shift-tolerant diagnostics delta) — both needed a
+design fix the adversarial pass caught before they were safe to land, and
+both fixes were small enough (S-sized, clean files) to land the same session
+rather than sit in the queue behind the dirty-file blocker. Everything else
+with real value either (a) only integrates through `agent.go` or `daemon.go`,
+both mid-diff and dirty-blocklisted this session, or (b) targets a problem
 carina is already mid-solving with a different, half-built mechanism
 (artifact-backed truncation). Two mechanisms were rejected outright because
 they solve a failure mode (fuzzy anchor-matching in hunk-based patches) that
 carina's full-file-replacement-plus-hash-conflict patch model does not have
 and has already declined to introduce, per `kilocode-absorption.md`.
+
+The lesson worth keeping: "blocked on design revision" and "blocked on dirty
+file" are different kinds of blockers and should be triaged differently. The
+former is often cheap to actually fix once identified (both fixes above were
+under 150 lines including tests); the latter is a genuine external
+constraint (a concurrent, unrelated wave actively committing to the same
+files) that no amount of design work resolves — only time and a stable base
+does.
 
 The cost of deferring instead of forcing these in now is coordination debt,
 not lost value: standalone struct/policy code (loop-guard signature, mistake
