@@ -34,10 +34,11 @@ of the record — "the idea is sound but the landing window or the spec isn't
 ready" is a different kind of finding than "reject," and conflating the two
 would lose information a future pass needs.
 
-Outcome for this pass: **0 of 7 items reached commit.** 3 reached
+Outcome for this pass: **0 of 7 items reached commit.** 4 reached
 `design_only` (an architecture/interface decision is recorded, no code
-lands), and 4 reached `defer` (either downgraded from `adopt` by adversarial
-review, or independently assessed as not ready). No item was rejected
+lands), and 3 reached `defer` (downgraded from `adopt` by adversarial
+review after a design claim didn't hold up against actual current code).
+No item was rejected
 outright — all seven are real, externally-corroborated gaps; none were
 found to be a poor architectural fit for carina. See Trade-offs at the end
 for why a 0-commit pass is still a productive outcome for this campaign.
