@@ -45,3 +45,21 @@ func TestTokenBudgetGovernor(t *testing.T) {
 		t.Fatalf("budget=%d", extended.TokenBudget)
 	}
 }
+
+func TestBudgetExtensionRefusesMissingCheckpointWithoutChangingState(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
+	d.sched.SetTokenBudget(task.TaskID, 10)
+	d.sched.SetStatus(task.TaskID, "needs_input")
+	raw, _ := json.Marshal(map[string]any{"task_id": task.TaskID, "additional_tokens": 100, "approver": "test"})
+	if _, err := d.handleTaskBudgetExtend(raw); err == nil || !strings.Contains(err.Error(), "no durable checkpoint") {
+		t.Fatalf("expected safe resume refusal, got %v", err)
+	}
+	got, _ := d.sched.Get(task.TaskID)
+	if got.Status != "needs_input" || got.TokenBudget != 10 {
+		t.Fatalf("failed extension mutated task: %+v", got)
+	}
+}

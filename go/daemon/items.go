@@ -190,6 +190,8 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 	seenTurns := map[string]bool{}
 	openByID := map[string]*commandProjection{}
 	openByTask := map[string][]*commandProjection{}
+	toolCalls := map[string]*SessionItem{}
+	activeRunByTask := map[string]string{}
 	patches := map[string]*patchProjection{}
 	patchesByTask := map[string][]string{}
 	emittedDiff := map[string]bool{}
@@ -212,6 +214,54 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 		}
 
 		switch ev.Type {
+		case "ToolCallRequested":
+			callID := stringField(ev.Payload, "call_id")
+			if callID == "" {
+				callID = fallbackItemID("tool", ev, i)
+			}
+			item := &SessionItem{
+				ID: callID, Type: "tool_call", Status: "requested", TaskID: ev.TaskID,
+				StartedAt: ev.Timestamp, Details: copyMap(ev.Payload),
+			}
+			toolCalls[callID] = item
+			if stringField(ev.Payload, "tool") == "run" {
+				activeRunByTask[ev.TaskID] = callID
+			}
+			out = append(out, itemEvent("item.started", sessionID, ev, item))
+
+		case "ToolCallStarted":
+			callID := stringField(ev.Payload, "call_id")
+			item := toolCalls[callID]
+			if item == nil {
+				item = newToolCallItem(ev, callID, i)
+				toolCalls[item.ID] = item
+			}
+			item.Status = "running"
+			mergeMap(item.Details, ev.Payload)
+			out = append(out, itemEvent("item.updated", sessionID, ev, item))
+
+		case "ToolCallCompleted", "ToolCallFailed", "ToolCallDenied", "ToolCallCancelled":
+			callID := stringField(ev.Payload, "call_id")
+			item := toolCalls[callID]
+			if item == nil {
+				item = newToolCallItem(ev, callID, i)
+			}
+			item.Status = toolCallItemStatus(ev.Type)
+			item.CompletedAt = ev.Timestamp
+			mergeMap(item.Details, ev.Payload)
+			out = append(out, itemEvent("item.completed", sessionID, ev, item))
+			delete(toolCalls, item.ID)
+			if activeRunByTask[ev.TaskID] == item.ID {
+				delete(activeRunByTask, ev.TaskID)
+			}
+
+		case "RuntimeStageChanged":
+			out = append(out, SessionItemEvent{
+				Type: "runtime.stage_changed", SessionID: nonempty(sessionID, ev.SessionID),
+				TurnID: ev.TaskID, TaskID: ev.TaskID, ItemID: stringField(ev.Payload, "call_id"),
+				SourceEventID: ev.EventID, Timestamp: ev.Timestamp, Details: copyMap(ev.Payload),
+			})
+
 		case "ModelResponded":
 			item := &SessionItem{
 				ID:          fallbackItemID("msg", ev, i),
@@ -231,6 +281,9 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			}
 
 		case "CommandStarted":
+			if activeRunByTask[ev.TaskID] != "" {
+				break
+			}
 			item := newCommandItem(ev, fallbackItemID("cmd", ev, i))
 			cmd := &commandProjection{item: item}
 			openByID[item.ID] = cmd
@@ -238,6 +291,9 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			out = append(out, itemEvent("item.started", sessionID, ev, item))
 
 		case "CommandOutput":
+			if activeRunByTask[ev.TaskID] != "" {
+				break
+			}
 			cmd := findOpenCommand(ev, openByID, openByTask)
 			if cmd == nil {
 				cmd = &commandProjection{item: newCommandItem(ev, fallbackItemID("cmd", ev, i))}
@@ -258,6 +314,9 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			out = append(out, itemEvent("item.updated", sessionID, ev, cmd.item))
 
 		case "CommandExited":
+			if activeRunByTask[ev.TaskID] != "" {
+				break
+			}
 			cmd := findOpenCommand(ev, openByID, openByTask)
 			if cmd == nil {
 				cmd = &commandProjection{item: newCommandItem(ev, fallbackItemID("cmd", ev, i))}
@@ -312,6 +371,38 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 		}
 	}
 	return out
+}
+
+func newToolCallItem(ev itemAuditEvent, callID string, index int) *SessionItem {
+	if callID == "" {
+		callID = fallbackItemID("tool", ev, index)
+	}
+	return &SessionItem{
+		ID: callID, Type: "tool_call", Status: "running", TaskID: ev.TaskID,
+		StartedAt: ev.Timestamp, Details: copyMap(ev.Payload),
+	}
+}
+
+func toolCallItemStatus(eventType string) string {
+	switch eventType {
+	case "ToolCallCompleted":
+		return "completed"
+	case "ToolCallDenied":
+		return "denied"
+	case "ToolCallCancelled":
+		return "cancelled"
+	default:
+		return "failed"
+	}
+}
+
+func mergeMap(dst, src map[string]any) {
+	if dst == nil {
+		return
+	}
+	for key, value := range src {
+		dst[key] = value
+	}
 }
 
 func newCommandItem(ev itemAuditEvent, fallbackID string) *SessionItem {

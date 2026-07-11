@@ -123,7 +123,7 @@ func TestLeaseWorkerPollExecuteRenewReport(t *testing.T) {
 		case "work.poll":
 			pollCount++
 			if pollCount == 1 {
-				return setResult(result, map[string]any{"task": map[string]any{"task_id": "task_1", "user_prompt": "build"}})
+				return setResult(result, map[string]any{"task": map[string]any{"task_id": "task_1", "user_prompt": "build", "lease_generation": 1}})
 			}
 			return setResult(result, map[string]any{"empty": true})
 		case "work.renew":
@@ -219,7 +219,7 @@ func TestLeaseWorkerHonorsMaxConcurrency(t *testing.T) {
 		case "work.poll":
 			polls++
 			if polls <= 3 {
-				return setResult(result, map[string]any{"task": map[string]any{"task_id": fmt.Sprintf("task_%d", polls)}})
+				return setResult(result, map[string]any{"task": map[string]any{"task_id": fmt.Sprintf("task_%d", polls), "lease_generation": 1}})
 			}
 			return setResult(result, map[string]any{"empty": true})
 		case "work.renew":
@@ -315,7 +315,7 @@ func TestLeaseWorkerServerCancellationStopsExecutorWithoutReport(t *testing.T) {
 		case "work.poll":
 			pollCount++
 			if pollCount == 1 {
-				return setResult(result, map[string]any{"task": map[string]any{"task_id": "task_cancel"}})
+				return setResult(result, map[string]any{"task": map[string]any{"task_id": "task_cancel", "lease_generation": 1}})
 			}
 			cancel()
 			return setResult(result, map[string]any{"empty": true})
@@ -364,7 +364,7 @@ func TestLeaseWorkerReportsExecutorFailure(t *testing.T) {
 		case "work.poll":
 			polls++
 			if polls == 1 {
-				return setResult(result, map[string]any{"task": map[string]any{"task_id": "task_fail"}})
+				return setResult(result, map[string]any{"task": map[string]any{"task_id": "task_fail", "lease_generation": 1}})
 			}
 			return setResult(result, map[string]any{"empty": true})
 		case "work.report":
@@ -408,7 +408,7 @@ func TestLeaseWorkerSIGTERMDrainsExistingLease(t *testing.T) {
 		case "work.poll":
 			pollCount++
 			if pollCount == 1 {
-				return setResult(result, map[string]any{"task": map[string]any{"task_id": "task_drain"}})
+				return setResult(result, map[string]any{"task": map[string]any{"task_id": "task_drain", "lease_generation": 1}})
 			}
 			return setResult(result, map[string]any{"empty": true})
 		case "work.renew":
@@ -450,7 +450,7 @@ func TestLeaseWorkerDrainDeadlineSuppressesCompletion(t *testing.T) {
 		case "work.poll":
 			polls++
 			if polls == 1 {
-				return setResult(result, map[string]any{"task": map[string]any{"task_id": "task_deadline"}})
+				return setResult(result, map[string]any{"task": map[string]any{"task_id": "task_deadline", "lease_generation": 1}})
 			}
 			return setResult(result, map[string]any{"empty": true})
 		case "work.renew":
@@ -496,7 +496,7 @@ func TestLeaseWorkerRenewFailureCancelsAfterTwoAttempts(t *testing.T) {
 		case "work.poll":
 			polls++
 			if polls == 1 {
-				return setResult(result, map[string]any{"task": map[string]any{"task_id": "task_lost"}})
+				return setResult(result, map[string]any{"task": map[string]any{"task_id": "task_lost", "lease_generation": 1}})
 			}
 			cancel()
 			return setResult(result, map[string]any{"empty": true})

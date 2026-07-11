@@ -12,10 +12,12 @@ from typing import Any, Iterator, TypedDict
 
 __version__ = "0.2.0"
 compatible_runtime_version = "0.6.1"
+_stream_queue_limit = 64
 __all__ = [
     "CarinaClient",
     "CarinaRpcError",
-	"CarinaThread",
+    "CarinaStreamOverflow",
+    "CarinaThread",
     "SessionAttachment",
     "UsageCostReport",
     "compatible_runtime_version",
@@ -55,6 +57,10 @@ class CarinaRpcError(RuntimeError):
         self.message = message
 
 
+class CarinaStreamOverflow(RuntimeError):
+    pass
+
+
 class CarinaClient:
     """Thread-safe blocking client with bounded calls and event notifications."""
 
@@ -71,7 +77,10 @@ class CarinaClient:
         self._buffer = b""
         self._next_id = 0
         self._lock = threading.Lock()
-        self._notifications: deque[tuple[str, Any]] = deque()
+        self._notifications: deque[tuple[str, Any]] = deque(maxlen=_stream_queue_limit)
+        self._notification_lock = threading.Lock()
+        self._next_listener_id = 0
+        self._session_notifications: dict[int, dict[str, Any]] = {}
 
     def connect(self) -> None:
         if self._sock is not None:
@@ -104,7 +113,7 @@ class CarinaClient:
                 while True:
                     response = self._read_message()
                     if "id" not in response and response.get("method"):
-                        self._notifications.append((response["method"], response.get("params")))
+                        self._dispatch_notification(response["method"], response.get("params"))
                         continue
                     if response.get("id") != request_id:
                         continue
@@ -175,7 +184,7 @@ class CarinaClient:
         return self.call("workflow.list")
 
     def initialize(self, client_name: str = "carina-sdk", client_version: str = __version__) -> dict[str, Any]:
-        return self.call("runtime.initialize", {"protocol_version": "1.1.0", "schema_version": "1.1.0", "client_name": client_name, "client_version": client_version})
+        return self.call("runtime.initialize", {"protocol_version": "1.2.0", "schema_version": "1.2.0", "client_name": client_name, "client_version": client_version})
 
     def workflow_detail(self, run_id: str) -> dict[str, Any]:
         return self.call("workflow.detail", {"run_id": run_id})
@@ -231,25 +240,90 @@ class CarinaClient:
     def set_extension_enabled(self, name: str, enabled: bool) -> dict[str, Any]:
         return self.call("extension.enable" if enabled else "extension.disable", {"name": name})
 
-    def subscribe_session_events(self, session_id: str) -> None:
-        self.call("session.events.stream", {"session_id": session_id})
+    def subscribe_session_events(self, session_id: str) -> str:
+        result = self.call("session.events.stream", {"session_id": session_id}) or {}
+        return str(result.get("subscription_id", ""))
+
+    def unsubscribe_session_events(self, subscription_id: str) -> None:
+        self.call("session.events.unsubscribe", {"subscription_id": subscription_id})
 
     def read_notification(self) -> tuple[str, Any]:
-        if self._notifications:
-            return self._notifications.popleft()
+        with self._notification_lock:
+            if self._notifications:
+                return self._notifications.popleft()
         with self._lock:
             self.connect()
             while True:
                 message = self._read_message()
                 if "id" not in message and message.get("method"):
-                    return message["method"], message.get("params")
+                    self._dispatch_notification(message["method"], message.get("params"))
+                    with self._notification_lock:
+                        return self._notifications.popleft()
 
     def stream_session_events(self, session_id: str) -> Iterator[CarinaEvent]:
-        self.subscribe_session_events(session_id)
-        while True:
-            method, params = self.read_notification()
-            if method == "event" and isinstance(params, dict) and params.get("session_id") == session_id:
-                yield params
+        listener_id = self._add_session_listener(session_id)
+        subscription_id = ""
+        try:
+            subscription_id = self.subscribe_session_events(session_id)
+            while True:
+                events = self._drain_session_listener(listener_id)
+                if events:
+                    yield from events
+                    continue
+                with self._lock:
+                    self.connect(); message = self._read_message()
+                    if "id" not in message and message.get("method"):
+                        self._dispatch_notification(message["method"], message.get("params"))
+        finally:
+            self._remove_session_listener(listener_id)
+            if subscription_id:
+                try:
+                    self.unsubscribe_session_events(subscription_id)
+                except Exception:
+                    pass
+
+    def _dispatch_notification(self, method: str, params: Any) -> None:
+        with self._notification_lock:
+            self._notifications.append((method, params))
+            if method == "event" and isinstance(params, dict):
+                session_id = params.get("session_id")
+                for stream in self._session_notifications.values():
+                    if stream["session_id"] != session_id or stream["overflow"]:
+                        continue
+                    queue: deque[CarinaEvent] = stream["queue"]
+                    if len(queue) >= _stream_queue_limit:
+                        stream["overflow"] = True
+                    else:
+                        queue.append(params)
+
+    def _add_session_listener(self, session_id: str) -> int:
+        with self._notification_lock:
+            self._next_listener_id += 1
+            listener_id = self._next_listener_id
+            self._session_notifications[listener_id] = {
+                "session_id": session_id,
+                "queue": deque(),
+                "overflow": False,
+            }
+            return listener_id
+
+    def _remove_session_listener(self, listener_id: int) -> None:
+        with self._notification_lock:
+            self._session_notifications.pop(listener_id, None)
+
+    def _drain_session_listener(self, listener_id: int) -> list[CarinaEvent]:
+        with self._notification_lock:
+            entry = self._session_notifications.get(listener_id)
+            if entry is None:
+                return []
+            queue: deque[CarinaEvent] = entry["queue"]
+            events = list(queue)
+            queue.clear()
+            overflow = entry["overflow"]
+            if overflow:
+                entry["overflow"] = False
+                raise CarinaStreamOverflow("Carina event stream overflow")
+            return events
 
     def search(self, session_id: str, pattern: str) -> list[dict[str, Any]]:
         return self.call("workspace.search", {"session_id": session_id, "pattern": pattern})
@@ -333,7 +407,43 @@ class CarinaThread:
             time.sleep(poll_interval)
 
     def run_streamed(self, prompt: str, **options: Any) -> Iterator[dict[str, Any]]:
-        # The blocking SDK presents lifecycle deltas while polling; raw event
-        # subscriptions remain available through stream_session_events.
-        result = self.run(prompt, **options)
-        yield {"type": "turn.completed", "result": result}
+        output_schema = options.get("output_schema")
+        cancel = options.get("cancel")
+        poll_interval = options.get("poll_interval", .05)
+        session_id = self.session["session_id"]
+        listener_id = self.client._add_session_listener(session_id)
+        subscription_id = ""
+        task_id = ""
+        try:
+            subscription_id = self.client.subscribe_session_events(session_id)
+            params: dict[str, Any] = {"session_id": self.session["session_id"], "prompt": prompt}
+            if output_schema is not None:
+                params["output_schema"] = output_schema
+            task = self.client.call("task.submit", params)
+            task_id = task["task_id"]
+            while True:
+                for event in self.client._drain_session_listener(listener_id):
+                    yield {"type": "event", "event": event}
+                if cancel is not None and cancel.is_set():
+                    self.client.call("task.cancel", {"task_id": task_id})
+                    raise InterruptedError("Carina run cancelled")
+                current = self.client.call("task.result", {"task_id": task_id})
+                if current["status"] in {"completed", "degraded", "failed", "cancelled", "needs_input"}:
+                    for event in self.client._drain_session_listener(listener_id):
+                        yield {"type": "event", "event": event}
+                    result: dict[str, Any] = {"task": current, "final_response": current.get("summary", "")}
+                    if output_schema is not None:
+                        try:
+                            result["structured_output"] = json.loads(result["final_response"])
+                        except json.JSONDecodeError:
+                            pass
+                    yield {"type": "turn.completed", "result": result}
+                    return
+                time.sleep(poll_interval)
+        finally:
+            self.client._remove_session_listener(listener_id)
+            if subscription_id:
+                try:
+                    self.client.unsubscribe_session_events(subscription_id)
+                except Exception:
+                    pass

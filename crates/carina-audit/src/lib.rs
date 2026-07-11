@@ -31,6 +31,14 @@ pub enum EventType {
     ToolRequested,
     ToolApproved,
     ToolDenied,
+    ToolCallRequested,
+    ToolCallApprovalRequired,
+    ToolCallStarted,
+    ToolCallCompleted,
+    ToolCallFailed,
+    ToolCallDenied,
+    ToolCallCancelled,
+    RuntimeStageChanged,
     FileRead,
     FileWriteProposed,
     PatchProposed,
@@ -44,6 +52,8 @@ pub enum EventType {
     PolicyViolation,
     RollbackStarted,
     RollbackCompleted,
+    SessionPaused,
+    SessionResumed,
     SessionClosed,
 }
 
@@ -67,6 +77,10 @@ pub enum Actor {
     Agent,
     /// A WASM plugin.
     Plugin,
+    /// A human operator acting through a governed client.
+    Operator,
+    /// A remote worker reporting governed execution state.
+    Worker,
 }
 
 impl Actor {
@@ -78,6 +92,8 @@ impl Actor {
             "user" | "User" => Actor::User,
             "agent" | "Agent" => Actor::Agent,
             "plugin" | "Plugin" => Actor::Plugin,
+            "operator" | "Operator" => Actor::Operator,
+            "worker" | "Worker" => Actor::Worker,
             _ => Actor::Rust,
         }
     }

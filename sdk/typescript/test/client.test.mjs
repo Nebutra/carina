@@ -44,6 +44,8 @@ test('typed parity wrappers and event subscription use canonical RPC methods', a
     if (request.method === 'usage.cost') result = { providers: [], totals: {}, estimated: false }
     if (request.method === 'task.steer') result = { queued: true, task_id: request.params.task_id, status: 'running' }
     if (request.method === 'task.user.answer') result = { question_id: request.params.question_id, accepted: true, value: request.params.value }
+    if (request.method === 'session.events.stream') result = { subscription_id: 'sub_1', cursor: 0, replayed: 0 }
+    if (request.method === 'session.events.unsubscribe') result = { unsubscribed: true }
     socket.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\n')
     if (request.method === 'session.events.stream') {
       setImmediate(() => socket.write(JSON.stringify({
@@ -58,12 +60,15 @@ test('typed parity wrappers and event subscription use canonical RPC methods', a
     assert.equal((await client.cost('s1')).estimated, false)
     assert.equal((await client.steerTask('t1', 'continue')).queued, true)
     assert.equal((await client.answerQuestion('q1', 'yes')).accepted, true)
-    const event = new Promise((resolve) => client.streamSessionEvents('s1', resolve))
+    let resolveEvent
+    const event = new Promise((resolve) => { resolveEvent = resolve })
+    const stop = await client.streamSessionEvents('s1', resolveEvent)
     assert.equal((await event).type, 'ModelResponded')
+    await stop()
     client.close()
   })
   assert.deepEqual(methods, [
-    'session.attach', 'session.fork', 'usage.cost', 'task.steer', 'task.user.answer', 'session.events.stream',
+    'session.attach', 'session.fork', 'usage.cost', 'task.steer', 'task.user.answer', 'session.events.stream', 'session.events.unsubscribe',
   ])
 })
 

@@ -60,6 +60,13 @@ type Service struct {
 	client *rpc.Client
 }
 
+const EventSchemaVersion = "0.2.0"
+
+type handshake struct {
+	OK                 bool   `json:"ok"`
+	EventSchemaVersion string `json:"event_schema_version"`
+}
+
 // Start launches the kernel binary with the given state directory. toolsDir
 // is passed through as CARINA_TOOLS_DIR so the kernel can delegate patch writes
 // to carina-patch-native (PRD §4.4).
@@ -89,9 +96,14 @@ func Start(binPath, stateDir, toolsDir string) (*Service, error) {
 		return nil, fmt.Errorf("kernel: start %s: %w", binPath, err)
 	}
 	svc := &Service{cmd: cmd, client: rpc.NewClient(stdin, stdout, nil)}
-	if err := svc.client.Call("ping", map[string]any{}, nil); err != nil {
+	var hello handshake
+	if err := svc.client.Call("ping", map[string]any{}, &hello); err != nil {
 		_ = cmd.Process.Kill()
 		return nil, fmt.Errorf("kernel: handshake failed: %w", err)
+	}
+	if !hello.OK || hello.EventSchemaVersion != EventSchemaVersion {
+		_ = cmd.Process.Kill()
+		return nil, fmt.Errorf("kernel: incompatible event schema %q (want %s)", hello.EventSchemaVersion, EventSchemaVersion)
 	}
 	return svc, nil
 }

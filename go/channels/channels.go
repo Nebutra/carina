@@ -46,6 +46,14 @@ type reservationRecord struct {
 	State     string    `json:"state"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+type Incident struct {
+	SenderID  string    `json:"sender_id"`
+	EventID   string    `json:"event_id"`
+	SessionID string    `json:"session_id"`
+	Kind      string    `json:"kind"`
+	State     string    `json:"state"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
 type Registry struct {
 	mu                  sync.Mutex
 	senders             map[string]Sender
@@ -95,14 +103,20 @@ func Open(stateDir string, maxSkew, timeToLive time.Duration, resolver func(stri
 		r.seen = disk.Seen
 	}
 	if disk.Pending != nil {
-		r.pending = disk.Pending
+		r.pending = make(map[string]reservationRecord, len(disk.Pending))
+		for key, rec := range disk.Pending {
+			if rec.Event.SenderID != "" && rec.Event.ID != "" {
+				key = reservationKey(rec.Event.SenderID, rec.Event.ID)
+			}
+			r.pending[key] = rec
+		}
 	}
 	return r, nil
 }
 func (r *Registry) Register(s Sender) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if s.ID == "" || (len(s.Secret) < 32 && s.SecretRef == "") {
+	if s.ID == "" || strings.ContainsRune(s.ID, '\x00') || (len(s.Secret) < 32 && s.SecretRef == "") {
 		return errors.New("channels: sender id and a secret handle are required")
 	}
 	if s.SecretRef != "" && r.resolveSecret == nil {
@@ -155,7 +169,7 @@ func (r *Registry) Reserve(e Event, signature string) (Reservation, error) {
 		return Reservation{}, errors.New("channels: untrusted sender")
 	}
 	now := r.now().UTC()
-	if e.ID == "" || e.SessionID == "" || e.Kind == "" {
+	if e.ID == "" || e.SessionID == "" || e.Kind == "" || strings.ContainsRune(e.ID, '\x00') {
 		return Reservation{}, errors.New("channels: id, session_id and kind are required")
 	}
 	if delta := now.Sub(e.Timestamp); delta > r.maxSkew || delta < -r.maxSkew {
@@ -185,8 +199,11 @@ func (r *Registry) Reserve(e Event, signature string) (Reservation, error) {
 			delete(r.seen, id)
 		}
 	}
-	key := e.SenderID + ":" + e.ID
+	key := reservationKey(e.SenderID, e.ID)
 	if _, ok := r.seen[key]; ok {
+		return Reservation{Receipt: Receipt{Accepted: true, Duplicate: true, Event: e}}, nil
+	}
+	if _, ok := r.seen[legacyReservationKey(e.SenderID, e.ID)]; ok {
 		return Reservation{Receipt: Receipt{Accepted: true, Duplicate: true, Event: e}}, nil
 	}
 	if rec, ok := r.pending[key]; ok {
@@ -237,13 +254,39 @@ func (r *Registry) MarkEffectApplied(res Reservation) error {
 	return r.persistLocked()
 }
 
+// MarkEffectStarted durably closes the automatic-retry window before a caller
+// begins any external or permission side effect. After this point a restart
+// requires explicit reconciliation because the runtime cannot know whether the
+// side effect completed immediately before a crash.
+func (r *Registry) MarkEffectStarted(res Reservation) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.pending[res.Key]
+	if !ok || rec.Token != res.Token || rec.State != "reserved" {
+		return errors.New("channels: invalid reservation")
+	}
+	old := rec
+	rec.State = "effect_started"
+	rec.UpdatedAt = r.now().UTC()
+	r.pending[res.Key] = rec
+	if err := r.persistLocked(); err != nil {
+		r.pending[res.Key] = old
+		return err
+	}
+	return nil
+}
+
 // Reconcile resolves a durable crash reservation. commitApplied is only valid
 // for effect_applied records; reserved records can only be aborted for retry.
 func (r *Registry) Reconcile(senderID, eventID string, commitApplied bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	key := senderID + ":" + eventID
+	key := reservationKey(senderID, eventID)
 	rec, ok := r.pending[key]
+	if !ok {
+		key = legacyReservationKey(senderID, eventID)
+		rec, ok = r.pending[key]
+	}
 	if !ok {
 		return os.ErrNotExist
 	}
@@ -252,20 +295,75 @@ func (r *Registry) Reconcile(senderID, eventID string, commitApplied bool) error
 			return errors.New("channels: cannot commit a reservation without a recorded side effect")
 		}
 		delete(r.pending, key)
-		r.seen[key] = r.now().UTC()
+		r.seen[reservationKey(senderID, eventID)] = r.now().UTC()
 	} else {
-		if rec.State == "effect_applied" {
+		if rec.State == "effect_applied" || rec.State == "effect_started" {
 			return errors.New("channels: applied side effect requires idempotent commit or manual compensation")
 		}
 		delete(r.pending, key)
 	}
 	if err := r.persistLocked(); err != nil {
-		delete(r.seen, key)
+		delete(r.seen, reservationKey(senderID, eventID))
 		r.pending[key] = rec
 		return err
 	}
 	return nil
 }
+
+// ReconcileConfirmed is the operator-authorized crash decision. The caller
+// must explicitly attest whether the effect executed; automatic paths never
+// invoke this method.
+func (r *Registry) ReconcileConfirmed(senderID, eventID string, executed bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := reservationKey(senderID, eventID)
+	rec, ok := r.pending[key]
+	if !ok {
+		key = legacyReservationKey(senderID, eventID)
+		rec, ok = r.pending[key]
+	}
+	if !ok {
+		return os.ErrNotExist
+	}
+	if rec.State != "effect_started" && rec.State != "effect_applied" {
+		return errors.New("channels: only started/applied effects require crash reconciliation")
+	}
+	if executed {
+		delete(r.pending, key)
+		r.seen[reservationKey(senderID, eventID)] = r.now().UTC()
+	} else {
+		delete(r.pending, key)
+	}
+	if err := r.persistLocked(); err != nil {
+		delete(r.seen, reservationKey(senderID, eventID))
+		r.pending[key] = rec
+		return err
+	}
+	return nil
+}
+
+func (r *Registry) Incidents() []Incident {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := []Incident{}
+	for _, rec := range r.pending {
+		if rec.State != "effect_started" && rec.State != "effect_applied" {
+			continue
+		}
+		out = append(out, Incident{SenderID: rec.Event.SenderID, EventID: rec.Event.ID, SessionID: rec.Event.SessionID, Kind: rec.Event.Kind, State: rec.State, UpdatedAt: rec.UpdatedAt})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.Before(out[j].UpdatedAt) })
+	return out
+}
+
+func reservationKey(senderID, eventID string) string {
+	return senderID + "\x00" + eventID
+}
+
+func legacyReservationKey(senderID, eventID string) string {
+	return senderID + ":" + eventID
+}
+
 func (r *Registry) Abort(res Reservation) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

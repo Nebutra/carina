@@ -69,6 +69,41 @@ func TestAbortAllowsRetryAndConcurrentReserveIsExclusive(t *testing.T) {
 	}
 }
 
+func TestEffectStartedCannotBeAbortedOrRetriedAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	secret := []byte(strings.Repeat("z", 32))
+	resolver := func(string) ([]byte, error) { return secret, nil }
+	r, err := Open(dir, time.Minute, time.Hour, resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.Register(Sender{ID: "ci", SecretRef: "env:CARINA_CHANNEL_CI", Sessions: []string{"s"}, Kinds: []string{"build"}}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	r.now = func() time.Time { return now }
+	e := Event{ID: "evt", SenderID: "ci", SessionID: "s", Kind: "build", Timestamp: now}
+	res, err := r.Reserve(e, Sign(secret, e))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.MarkEffectStarted(res); err != nil {
+		t.Fatal(err)
+	}
+	r.Abort(res)
+	r2, err := Open(dir, time.Minute, time.Hour, resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2.now = func() time.Time { return now }
+	if _, err = r2.Reserve(e, Sign(secret, e)); err == nil || !strings.Contains(err.Error(), "already reserved") {
+		t.Fatalf("effect-started event was retried: %v", err)
+	}
+	if err = r2.Reconcile("ci", "evt", false); err == nil {
+		t.Fatal("effect-started event was aborted without manual compensation")
+	}
+}
+
 func TestOpenPersistsPolicyAndCommittedSeenWithoutSecret(t *testing.T) {
 	dir := t.TempDir()
 	secret := []byte(strings.Repeat("r", 32))
@@ -139,6 +174,27 @@ func TestRejectsWrongTargetAndStale(t *testing.T) {
 	}
 }
 
+func TestDeduplicationKeyDoesNotAliasColonDelimitedIDs(t *testing.T) {
+	r := New(time.Minute, time.Hour)
+	secret := []byte(strings.Repeat("d", 32))
+	for _, senderID := range []string{"a:b", "a"} {
+		if err := r.Register(Sender{ID: senderID, Secret: secret, Sessions: []string{"s"}, Kinds: []string{"k"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UTC()
+	r.now = func() time.Time { return now }
+	first := Event{ID: "c", SenderID: "a:b", SessionID: "s", Kind: "k", Timestamp: now}
+	second := Event{ID: "b:c", SenderID: "a", SessionID: "s", Kind: "k", Timestamp: now}
+	if _, err := r.Ingest(first, Sign(secret, first)); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := r.Ingest(second, Sign(secret, second))
+	if err != nil || receipt.Duplicate {
+		t.Fatalf("distinct sender/event pair aliased: %+v %v", receipt, err)
+	}
+}
+
 func TestCrashReservationRequiresExplicitReconciliation(t *testing.T) {
 	dir := t.TempDir()
 	secret := []byte(strings.Repeat("z", 32))
@@ -174,5 +230,52 @@ func TestCrashReservationRequiresExplicitReconciliation(t *testing.T) {
 	dup, err := restarted.Reserve(e, Sign(secret, e))
 	if err != nil || !dup.Receipt.Duplicate {
 		t.Fatalf("reconciled receipt not idempotent: %+v %v", dup, err)
+	}
+}
+
+func TestConfirmedCrashOutcomesAreDurable(t *testing.T) {
+	for _, executed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "not_executed", true: "executed"}[executed], func(t *testing.T) {
+			dir := t.TempDir()
+			secret := []byte(strings.Repeat("q", 32))
+			resolver := func(string) ([]byte, error) { return secret, nil }
+			r, _ := Open(dir, time.Minute, time.Hour, resolver)
+			_ = r.Register(Sender{ID: "x", SecretRef: "env:CARINA_CHANNEL_X", Sessions: []string{"s"}, Kinds: []string{"k"}})
+			now := time.Now().UTC()
+			r.now = func() time.Time { return now }
+			e := Event{ID: "e", SenderID: "x", SessionID: "s", Kind: "k", Timestamp: now}
+			res, err := r.Reserve(e, Sign(secret, e))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = r.MarkEffectStarted(res); err != nil {
+				t.Fatal(err)
+			}
+			if executed {
+				if err = r.MarkEffectApplied(res); err != nil {
+					t.Fatal(err)
+				}
+			}
+			restarted, err := Open(dir, time.Minute, time.Hour, resolver)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(restarted.Incidents()) != 1 {
+				t.Fatal("missing incident")
+			}
+			if err = restarted.ReconcileConfirmed("x", "e", executed); err != nil {
+				t.Fatal(err)
+			}
+			again, _ := Open(dir, time.Minute, time.Hour, resolver)
+			again.now = func() time.Time { return now }
+			retry, err := again.Reserve(e, Sign(secret, e))
+			if executed {
+				if err != nil || !retry.Receipt.Duplicate {
+					t.Fatalf("executed event replayed: %+v %v", retry, err)
+				}
+			} else if err != nil || retry.Receipt.Duplicate {
+				t.Fatalf("unexecuted event was not retryable: %+v %v", retry, err)
+			}
+		})
 	}
 }

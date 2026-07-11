@@ -106,6 +106,7 @@ func (d *Daemon) handleWorkRenew(params json.RawMessage) (any, error) {
 		WorkerID         string `json:"worker_id"`
 		WorkerCredential string `json:"worker_credential"`
 		TaskID           string `json:"task_id"`
+		LeaseGeneration  int    `json:"lease_generation"`
 		TTLMs            int    `json:"ttl_ms"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -118,7 +119,7 @@ func (d *Daemon) handleWorkRenew(params json.RawMessage) (any, error) {
 	if task, ok := d.sched.Get(p.TaskID); ok && task.Status == "cancelled" {
 		return map[string]any{"ok": false, "cancelled": true}, nil
 	}
-	if err := d.sched.RenewLease(p.TaskID, p.WorkerID, time.Duration(p.TTLMs)*time.Millisecond); err != nil {
+	if err := d.sched.RenewLease(p.TaskID, p.WorkerID, p.LeaseGeneration, time.Duration(p.TTLMs)*time.Millisecond); err != nil {
 		return nil, err
 	}
 	return map[string]any{"ok": true}, nil
@@ -131,6 +132,7 @@ func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 		WorkerID         string   `json:"worker_id"`
 		WorkerCredential string   `json:"worker_credential"`
 		TaskID           string   `json:"task_id"`
+		LeaseGeneration  int      `json:"lease_generation"`
 		Status           string   `json:"status"`
 		Summary          string   `json:"summary"`
 		Patches          []string `json:"patches"`
@@ -144,7 +146,7 @@ func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 	if task, ok := d.sched.Get(p.TaskID); ok && task.Status == "cancelled" {
 		return map[string]any{"ok": false, "cancelled": true}, nil
 	}
-	if err := d.sched.Report(p.TaskID, p.WorkerID, p.Status, p.Summary, p.Patches); err != nil {
+	if err := d.sched.Report(p.TaskID, p.WorkerID, p.LeaseGeneration, p.Status, p.Summary, p.Patches); err != nil {
 		return nil, err
 	}
 	var task *scheduler.Task

@@ -1,11 +1,27 @@
 package protocolschema
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+type eventRegistry struct {
+	Types []struct {
+		Name string `json:"name"`
+	} `json:"types"`
+}
+
+type eventSchema struct {
+	Properties struct {
+		Type struct {
+			Enum []string `json:"enum"`
+		} `json:"type"`
+	} `json:"properties"`
+}
 
 func TestCheckedInRegistryAndSchema(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
@@ -28,5 +44,69 @@ func TestCheckedInRegistryAndSchema(t *testing.T) {
 	generated := GenerateTypeScript(bundle)
 	if !strings.Contains(generated, "session.fork") || !strings.Contains(generated, "session.events.unsubscribe") {
 		t.Fatal("generated TS bundle missing stable methods")
+	}
+}
+
+func TestCheckedInEventRegistryMatchesSchema(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(file), "..", "..", "protocol")
+	registryRaw, err := os.ReadFile(filepath.Join(root, "events", "events.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schemaRaw, err := os.ReadFile(filepath.Join(root, "schemas", "event.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var registry eventRegistry
+	var schema eventSchema
+	if err := json.Unmarshal(registryRaw, &registry); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(schemaRaw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	want := make(map[string]bool, len(registry.Types))
+	for _, typ := range registry.Types {
+		if typ.Name == "" || want[typ.Name] {
+			t.Fatalf("invalid or duplicate event type %q", typ.Name)
+		}
+		want[typ.Name] = true
+	}
+	got := make(map[string]bool, len(schema.Properties.Type.Enum))
+	for _, name := range schema.Properties.Type.Enum {
+		got[name] = true
+	}
+	for name := range want {
+		if !got[name] {
+			t.Errorf("event %s is missing from event.schema.json", name)
+		}
+	}
+	for name := range got {
+		if !want[name] {
+			t.Errorf("schema event %s is missing from events.json", name)
+		}
+	}
+}
+
+func TestLifecycleEventSchemaHasConditionalPayloadContracts(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "protocol", "schemas", "event.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err = json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	rules, ok := schema["allOf"].([]any)
+	if !ok || len(rules) < 4 {
+		t.Fatalf("conditional lifecycle rules missing: %T len=%d", schema["allOf"], len(rules))
+	}
+	encoded := string(raw)
+	for _, field := range []string{`"call_id"`, `"artifact_ids"`, `"sequence"`, `"output_preview"`} {
+		if !strings.Contains(encoded, field) {
+			t.Errorf("schema missing lifecycle field/rule %s", field)
+		}
 	}
 }

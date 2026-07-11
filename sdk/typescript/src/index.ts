@@ -219,7 +219,7 @@ export class CarinaClient {
     return this.call('task.user.answer', { question_id: questionId, value })
   }
   listWorkflows(): Promise<WorkflowRun[]> { return this.call('workflow.list') }
-  initialize(clientName = '@carina/sdk', clientVersion = '0.2.0'): Promise<RuntimeInfo> { return this.call('runtime.initialize', { protocol_version: '1.1.0', schema_version: '1.1.0', client_name: clientName, client_version: clientVersion }) }
+  initialize(clientName = '@carina/sdk', clientVersion = '0.2.0'): Promise<RuntimeInfo> { return this.call('runtime.initialize', { protocol_version: '1.2.0', schema_version: '1.2.0', client_name: clientName, client_version: clientVersion }) }
   workflowDetail(runId: string): Promise<Record<string, unknown>> { return this.call('workflow.detail', { run_id: runId }) }
   runWorkflow(sessionId: string, workflow: string, input = ''): Promise<WorkflowRun> { return this.call('workflow.run', { session_id: sessionId, workflow, input }) }
   pauseWorkflow(runId: string): Promise<WorkflowRun> { return this.call('workflow.pause', { run_id: runId }) }
@@ -243,7 +243,7 @@ export class CarinaClient {
   async resumeThread(sessionId: string): Promise<CarinaThread> { await this.initialize();return new CarinaThread(this,await this.getSession(sessionId)) }
   async forkThread(sessionId: string, boundary: { lastTaskId?: string; throughTurn?: number } = {}): Promise<CarinaThread> { await this.initialize();const session=await this.call<Session>('session.fork',{session_id:sessionId,...(boundary.lastTaskId?{last_task_id:boundary.lastTaskId}:{}),...(boundary.throughTurn?{through_turn:boundary.throughTurn}:{})});return new CarinaThread(this,session) }
 
-  async streamSessionEvents(sessionId: string, handler: (event: CarinaEvent) => void): Promise<() => void> {
+  async streamSessionEvents(sessionId: string, handler: (event: CarinaEvent) => void): Promise<() => Promise<void>> {
     const listener: NotificationHandler = (method, params) => {
       if (method !== 'event' || typeof params !== 'object' || params === null) return
       const event = params as CarinaEvent
@@ -251,12 +251,15 @@ export class CarinaClient {
     }
     this.notifications.add(listener)
     try {
-      await this.call('session.events.stream', { session_id: sessionId })
+      const subscription = await this.call<{subscription_id?:string}>('session.events.stream', { session_id: sessionId })
+      return async () => {
+        this.notifications.delete(listener)
+        if (subscription.subscription_id) await this.call('session.events.unsubscribe', { subscription_id: subscription.subscription_id }).catch(() => {})
+      }
     } catch (error) {
       this.notifications.delete(listener)
       throw error
     }
-    return () => this.notifications.delete(listener)
   }
 
   search(sessionId: string, pattern: string): Promise<Array<{ file: string; line: number; text: string }>> {
@@ -340,6 +343,6 @@ export class CarinaThread {
     try { for (;;) { if(options.signal?.aborted)throw options.signal.reason??new Error('aborted');const current=await this.client.call<Task>('task.result',{task_id:task.task_id});if(['completed','degraded','failed','cancelled','needs_input'].includes(current.status)){let structuredOutput:unknown;try{structuredOutput=options.outputSchema?JSON.parse((current as Task & {summary?:string}).summary??''):undefined}catch{};return{task:current,finalResponse:(current as Task & {summary?:string}).summary??'',structuredOutput}};await new Promise(r=>setTimeout(r,options.pollIntervalMs??50))} } finally { options.signal?.removeEventListener('abort',cancel) }
   }
   async runStreamed(input: string, options: RunOptions = {}): Promise<{events: AsyncGenerator<CarinaEvent|{type:'turn.completed';result:TurnResult}>}> {
-    const queue:CarinaEvent[]=[];let wake:(()=>void)|undefined;const stop=await this.client.streamSessionEvents(this.session.session_id,e=>{queue.push(e);wake?.();wake=undefined});const run=this.run(input,options);async function* events(){try{for(;;){while(queue.length)yield queue.shift()!;const done=await Promise.race([run.then(result=>({result})),new Promise<null>(resolve=>{wake=()=>resolve(null)})]);if(done){yield{type:'turn.completed' as const,result:done.result};return}}}finally{stop()}};return{events:events()}
+    const queue:CarinaEvent[]=[];let wake:(()=>void)|undefined;const stop=await this.client.streamSessionEvents(this.session.session_id,e=>{queue.push(e);wake?.();wake=undefined});const run=this.run(input,options);async function* events(){try{for(;;){while(queue.length)yield queue.shift()!;const done=await Promise.race([run.then(result=>({result})),new Promise<null>(resolve=>{wake=()=>resolve(null)})]);if(done){yield{type:'turn.completed' as const,result:done.result};return}}}finally{await stop()}};return{events:events()}
   }
 }

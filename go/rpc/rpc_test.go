@@ -1,12 +1,14 @@
 package rpc
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -119,6 +121,43 @@ func TestStreamReturnsSubscriptionIdentityAndCatchUpCursor(t *testing.T) {
 	}
 	if got.SubscriptionID == "" || got.Cursor != 12 || got.Replayed != 3 {
 		t.Fatalf("unexpected stream result: %+v", got)
+	}
+}
+
+func TestNotificationListenersCoexistAndCancelIndependently(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	defer serverSide.Close()
+	client := NewClient(clientSide, clientSide, clientSide)
+	defer client.Close()
+	var mu sync.Mutex
+	var first, second, legacy int
+	client.OnNotify(func(string, json.RawMessage) { mu.Lock(); legacy++; mu.Unlock() })
+	cancelFirst := client.AddNotificationListener(func(string, json.RawMessage) { mu.Lock(); first++; mu.Unlock() })
+	client.AddNotificationListener(func(string, json.RawMessage) { mu.Lock(); second++; mu.Unlock() })
+	go func() {
+		reader := bufio.NewReader(serverSide)
+		for i := 0; i < 2; i++ {
+			line, _ := reader.ReadBytes('\n')
+			var req Request
+			_ = json.Unmarshal(line, &req)
+			note, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "event", "params": map[string]any{"n": i}})
+			_, _ = serverSide.Write(append(note, '\n'))
+			resp, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{}})
+			_, _ = serverSide.Write(append(resp, '\n'))
+		}
+	}()
+	if err := client.Call("one", map[string]any{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	cancelFirst()
+	cancelFirst()
+	if err := client.Call("two", map[string]any{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if first != 1 || second != 2 || legacy != 2 {
+		t.Fatalf("listener calls first=%d second=%d legacy=%d", first, second, legacy)
 	}
 }
 

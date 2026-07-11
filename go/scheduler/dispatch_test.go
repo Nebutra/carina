@@ -17,7 +17,7 @@ func TestDispatchLeaseLifecycle(t *testing.T) {
 	if !ok || leased.TaskID != task.TaskID {
 		t.Fatalf("lease should return the queued task")
 	}
-	if leased.Status != "running" || leased.LeaseOwner != "wrk_A" || leased.Attempts != 1 {
+	if leased.Status != "running" || leased.LeaseOwner != "wrk_A" || leased.Attempts != 1 || leased.LeaseGeneration != 1 {
 		t.Fatalf("leased task not stamped: %+v", leased)
 	}
 	if s.DispatchDepth() != 0 {
@@ -30,10 +30,10 @@ func TestDispatchLeaseLifecycle(t *testing.T) {
 	}
 
 	// Owner renews, then reports completion.
-	if err := s.RenewLease(task.TaskID, "wrk_A", 5*time.Second); err != nil {
+	if err := s.RenewLease(task.TaskID, "wrk_A", leased.LeaseGeneration, 5*time.Second); err != nil {
 		t.Fatalf("owner renew failed: %v", err)
 	}
-	if err := s.Report(task.TaskID, "wrk_A", "completed", "done", []string{"patch_1"}); err != nil {
+	if err := s.Report(task.TaskID, "wrk_A", leased.LeaseGeneration, "completed", "done", []string{"patch_1"}); err != nil {
 		t.Fatalf("report failed: %v", err)
 	}
 	got, _ := s.Get(task.TaskID)
@@ -45,14 +45,15 @@ func TestDispatchLeaseLifecycle(t *testing.T) {
 func TestDispatchLeaseOwnershipEnforced(t *testing.T) {
 	s := New()
 	task := s.SubmitForDispatch("sess_1", "ws_1", "do work", nil)
-	if _, ok := s.Lease("wrk_A", 5*time.Second); !ok {
+	leased, ok := s.Lease("wrk_A", 5*time.Second)
+	if !ok {
 		t.Fatal("lease failed")
 	}
 	// A non-owner cannot renew or report.
-	if err := s.RenewLease(task.TaskID, "wrk_B", time.Second); err == nil {
+	if err := s.RenewLease(task.TaskID, "wrk_B", leased.LeaseGeneration, time.Second); err == nil {
 		t.Fatal("non-owner renew must be rejected")
 	}
-	if err := s.Report(task.TaskID, "wrk_B", "completed", "hijack", nil); err == nil {
+	if err := s.Report(task.TaskID, "wrk_B", leased.LeaseGeneration, "completed", "hijack", nil); err == nil {
 		t.Fatal("non-owner report must be rejected")
 	}
 }
@@ -81,10 +82,10 @@ func TestDispatchReapReQueuesExpiredLease(t *testing.T) {
 	if !ok || release.Attempts != 2 {
 		t.Fatalf("redelivery should bump attempts to 2, got %+v", release)
 	}
-	if err := s.Report(task.TaskID, "wrk_A", "failed", "stale", nil); err == nil {
+	if err := s.Report(task.TaskID, "wrk_A", leased.LeaseGeneration, "failed", "stale", nil); err == nil {
 		t.Fatal("stale worker (reaped) report must be rejected")
 	}
-	if err := s.Report(task.TaskID, "wrk_B", "completed", "ok", nil); err != nil {
+	if err := s.Report(task.TaskID, "wrk_B", release.LeaseGeneration, "completed", "ok", nil); err != nil {
 		t.Fatalf("new owner report failed: %v", err)
 	}
 }
@@ -92,17 +93,37 @@ func TestDispatchReapReQueuesExpiredLease(t *testing.T) {
 func TestDispatchReportIsIdempotent(t *testing.T) {
 	s := New()
 	task := s.SubmitForDispatch("sess_1", "ws_1", "do work", nil)
-	s.Lease("wrk_A", 5*time.Second)
-	if err := s.Report(task.TaskID, "wrk_A", "completed", "ok", nil); err != nil {
+	leased, _ := s.Lease("wrk_A", 5*time.Second)
+	if err := s.Report(task.TaskID, "wrk_A", leased.LeaseGeneration, "completed", "ok", nil); err != nil {
 		t.Fatalf("first report failed: %v", err)
 	}
 	// A duplicate delivery of the same report is a safe no-op.
-	if err := s.Report(task.TaskID, "wrk_A", "completed", "ok-again", nil); err != nil {
+	if err := s.Report(task.TaskID, "wrk_A", leased.LeaseGeneration, "completed", "ok-again", nil); err != nil {
 		t.Fatalf("duplicate report must be a no-op, got %v", err)
 	}
 	got, _ := s.Get(task.TaskID)
 	if got.Summary != "ok" {
 		t.Fatalf("duplicate report must not overwrite the result, got %q", got.Summary)
+	}
+}
+
+func TestDispatchLeaseGenerationFencesSameWorkerRestart(t *testing.T) {
+	s := New()
+	task := s.SubmitForDispatch("sess_1", "ws_1", "do work", nil)
+	first, _ := s.Lease("wrk_A", 10*time.Millisecond)
+	s.ReapExpiredLeases(first.LeaseExpiry.Add(time.Second))
+	second, ok := s.Lease("wrk_A", time.Second)
+	if !ok || second.LeaseGeneration <= first.LeaseGeneration {
+		t.Fatalf("lease generation did not advance: first=%d second=%d", first.LeaseGeneration, second.LeaseGeneration)
+	}
+	if err := s.RenewLease(task.TaskID, "wrk_A", first.LeaseGeneration, time.Second); err == nil {
+		t.Fatal("stale generation from the same worker id must not renew")
+	}
+	if err := s.Report(task.TaskID, "wrk_A", first.LeaseGeneration, "completed", "stale", nil); err == nil {
+		t.Fatal("stale generation from the same worker id must not report")
+	}
+	if err := s.Report(task.TaskID, "wrk_A", second.LeaseGeneration, "completed", "fresh", nil); err != nil {
+		t.Fatalf("current generation report failed: %v", err)
 	}
 }
 

@@ -1,6 +1,6 @@
 {
   "$comment": "Canonical event type enumeration (PRD §8.2). The event log is append-only; every event carries timestamp + session_id; side-effect events carry permission_decision_id.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "types": [
     { "name": "TaskCreated", "side_effect": false, "payload": ["task_id", "user_prompt"] },
     { "name": "ModelRequested", "side_effect": false, "payload": ["provider", "model", "input_tokens"] },
@@ -13,6 +13,14 @@
     { "name": "ToolRequested", "side_effect": false, "payload": ["tool", "arguments"] },
     { "name": "ToolApproved", "side_effect": false, "payload": ["tool", "decision_id"] },
     { "name": "ToolDenied", "side_effect": false, "payload": ["tool", "decision_id", "reason"] },
+    { "name": "ToolCallRequested", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "arguments"] },
+    { "name": "ToolCallApprovalRequired", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "decision_id"] },
+    { "name": "ToolCallStarted", "side_effect": false, "payload": ["call_id", "tool", "kind", "status"] },
+    { "name": "ToolCallCompleted", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "output", "artifact_ids"] },
+    { "name": "ToolCallFailed", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "error"] },
+    { "name": "ToolCallDenied", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "error"] },
+    { "name": "ToolCallCancelled", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "error"] },
+    { "name": "RuntimeStageChanged", "side_effect": false, "payload": ["stage_id", "stage", "status", "sequence"] },
     { "name": "FileRead", "side_effect": true, "payload": ["path", "bytes"] },
     { "name": "FileWriteProposed", "side_effect": false, "payload": ["path", "patch_id"] },
     { "name": "PatchProposed", "side_effect": false, "payload": ["patch_id", "affected_files", "reason"] },
@@ -26,6 +34,8 @@
     { "name": "PolicyViolation", "side_effect": false, "payload": ["capability", "resource", "policy_id"] },
     { "name": "RollbackStarted", "side_effect": true, "payload": ["patch_id", "rollback_pointer"] },
     { "name": "RollbackCompleted", "side_effect": false, "payload": ["patch_id"] },
+    { "name": "SessionPaused", "side_effect": false, "payload": ["reason"] },
+    { "name": "SessionResumed", "side_effect": false, "payload": ["reason"] },
     { "name": "SessionClosed", "side_effect": false, "payload": ["reason"] }
   ]
 }

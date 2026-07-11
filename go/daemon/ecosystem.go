@@ -207,6 +207,36 @@ func (d *Daemon) handleChannelSenderRegister(params json.RawMessage) (any, error
 func (d *Daemon) handleChannelSenderList(json.RawMessage) (any, error) {
 	return d.channels.Senders(), nil
 }
+func (d *Daemon) handleChannelEventPending(json.RawMessage) (any, error) {
+	return map[string]any{"incidents": d.channels.Incidents()}, nil
+}
+func (d *Daemon) handleChannelEventReconcile(params json.RawMessage) (any, error) {
+	var p struct {
+		SenderID  string `json:"sender_id"`
+		EventID   string `json:"event_id"`
+		Outcome   string `json:"outcome"`
+		Confirmed bool   `json:"confirmed"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+	if !p.Confirmed {
+		return nil, fmt.Errorf("channel reconciliation requires confirmed=true")
+	}
+	var executed bool
+	switch p.Outcome {
+	case "executed":
+		executed = true
+	case "not_executed":
+		executed = false
+	default:
+		return nil, fmt.Errorf("outcome must be executed or not_executed")
+	}
+	if err := d.channels.ReconcileConfirmed(p.SenderID, p.EventID, executed); err != nil {
+		return nil, err
+	}
+	return map[string]any{"reconciled": true, "sender_id": p.SenderID, "event_id": p.EventID, "outcome": p.Outcome}, nil
+}
 func (d *Daemon) handleChannelEventInject(params json.RawMessage) (any, error) {
 	var p struct {
 		Event     channels.Event `json:"event"`
@@ -223,19 +253,39 @@ func (d *Daemon) handleChannelEventInject(params json.RawMessage) (any, error) {
 	if receipt.Duplicate {
 		return receipt, nil
 	}
+	task := d.activeChannelTask(p.Event.SessionID)
+	if task == nil && p.Event.PermissionDecisionID == "" {
+		d.channels.Abort(reservation)
+		return nil, fmt.Errorf("channel event has no active task in session %s", p.Event.SessionID)
+	}
 	committed := false
 	defer func() {
 		if !committed {
 			d.channels.Abort(reservation)
 		}
 	}()
+	if err := d.channels.MarkEffectStarted(reservation); err != nil {
+		return nil, fmt.Errorf("channel effect start journal: %w", err)
+	}
 	if p.Event.PermissionDecisionID != "" && p.Event.PermissionAllow != nil {
 		raw, _ := json.Marshal(map[string]any{"decision_id": p.Event.PermissionDecisionID, "allow": *p.Event.PermissionAllow, "approver": "channel:" + p.Event.SenderID, "scope": "once"})
 		if _, err := d.handleApprovalResolve(raw); err != nil {
 			return nil, fmt.Errorf("channel permission relay: %w", err)
 		}
 	}
-	d.events.Publish(p.Event.SessionID, map[string]any{"type": "ExternalEvent", "session_id": p.Event.SessionID, "timestamp": time.Now().UTC(), "payload": map[string]any{"event_id": p.Event.ID, "sender_id": p.Event.SenderID, "kind": p.Event.Kind, "data": p.Event.Payload}})
+	taskID := ""
+	if task != nil {
+		taskID = task.TaskID
+	}
+	payload := map[string]any{"status": "external_event", "event_id": p.Event.ID, "sender_id": p.Event.SenderID, "kind": p.Event.Kind, "data": p.Event.Payload}
+	if err := d.kern.RecordEvent(p.Event.SessionID, "TaskCreated", taskID, "channel", payload, p.Event.PermissionDecisionID); err != nil {
+		return nil, fmt.Errorf("channel audit append: %w", err)
+	}
+	d.events.Publish(p.Event.SessionID, map[string]any{"type": "ExternalEvent", "session_id": p.Event.SessionID, "task_id": taskID, "timestamp": time.Now().UTC(), "payload": payload})
+	if task != nil {
+		data, _ := json.Marshal(p.Event.Payload)
+		d.steer(task.TaskID, fmt.Sprintf("CHANNEL EVENT %s from %s (event %s): %s", p.Event.Kind, p.Event.SenderID, p.Event.ID, data))
+	}
 	if err := d.channels.MarkEffectApplied(reservation); err != nil {
 		return nil, fmt.Errorf("channel side effect applied but journal update failed: %w", err)
 	}
@@ -244,6 +294,24 @@ func (d *Daemon) handleChannelEventInject(params json.RawMessage) (any, error) {
 	}
 	committed = true
 	return receipt, nil
+}
+
+func (d *Daemon) activeChannelTask(sessionID string) *scheduler.Task {
+	var selected *scheduler.Task
+	for _, task := range d.sched.List() {
+		if task.SessionID != sessionID {
+			continue
+		}
+		switch task.Status {
+		case "queued", "running", "waiting_approval", "needs_input":
+		default:
+			continue
+		}
+		if selected == nil || task.UpdatedAt.After(selected.UpdatedAt) {
+			selected = task
+		}
+	}
+	return selected
 }
 
 func (d *Daemon) handleExtensionInstall(params json.RawMessage) (any, error) {

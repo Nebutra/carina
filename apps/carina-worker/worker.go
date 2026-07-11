@@ -167,16 +167,17 @@ func (w *leaseWorker) pollLoop(ctx context.Context) error {
 		backoff = w.cfg.PollMinBackoff
 
 		var task struct {
-			TaskID string `json:"task_id"`
+			TaskID          string `json:"task_id"`
+			LeaseGeneration int    `json:"lease_generation"`
 		}
-		if err := json.Unmarshal(response.Task, &task); err != nil || strings.TrimSpace(task.TaskID) == "" {
+		if err := json.Unmarshal(response.Task, &task); err != nil || strings.TrimSpace(task.TaskID) == "" || task.LeaseGeneration <= 0 {
 			<-sem
-			w.logger.Printf("carina-worker: daemon returned a lease without a valid task_id")
+			w.logger.Printf("carina-worker: daemon returned a lease without a valid task id and generation")
 			continue
 		}
 		if ctx.Err() != nil {
 			<-sem
-			w.report(task.TaskID, failedResult("worker stopped before executor start"))
+			w.report(task.TaskID, task.LeaseGeneration, failedResult("worker stopped before executor start"))
 			return nil
 		}
 		w.inflight.Add(1)
@@ -193,6 +194,13 @@ func (w *leaseWorker) pollLoop(ctx context.Context) error {
 }
 
 func (w *leaseWorker) executeLease(taskID string, raw json.RawMessage) {
+	var task struct {
+		LeaseGeneration int `json:"lease_generation"`
+	}
+	if err := json.Unmarshal(raw, &task); err != nil || task.LeaseGeneration <= 0 {
+		w.logger.Printf("carina-worker: lease %s has no valid generation", taskID)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), w.cfg.ExecutorTimeout)
 	lease := &activeLease{cancel: cancel}
 	w.activeMu.Lock()
@@ -208,7 +216,7 @@ func (w *leaseWorker) executeLease(taskID string, raw json.RawMessage) {
 	renewDone := make(chan struct{})
 	go func() {
 		defer close(renewDone)
-		w.renewLoop(ctx, taskID, lease)
+		w.renewLoop(ctx, taskID, task.LeaseGeneration, lease)
 	}()
 	result := w.executor.Execute(ctx, raw)
 	cancel()
@@ -216,10 +224,10 @@ func (w *leaseWorker) executeLease(taskID string, raw json.RawMessage) {
 	if lease.lost.Load() || lease.stopping.Load() {
 		return
 	}
-	w.report(taskID, result)
+	w.report(taskID, task.LeaseGeneration, result)
 }
 
-func (w *leaseWorker) renewLoop(ctx context.Context, taskID string, lease *activeLease) {
+func (w *leaseWorker) renewLoop(ctx context.Context, taskID string, generation int, lease *activeLease) {
 	ticker := time.NewTicker(w.cfg.RenewInterval)
 	defer ticker.Stop()
 	failures := 0
@@ -230,8 +238,9 @@ func (w *leaseWorker) renewLoop(ctx context.Context, taskID string, lease *activ
 		case <-ticker.C:
 			var response renewResponse
 			err := w.call("work.renew", map[string]any{
-				"task_id": taskID,
-				"ttl_ms":  w.cfg.LeaseTTL.Milliseconds(),
+				"task_id":          taskID,
+				"lease_generation": generation,
+				"ttl_ms":           w.cfg.LeaseTTL.Milliseconds(),
 			}, &response)
 			if err != nil {
 				failures++
@@ -253,12 +262,13 @@ func (w *leaseWorker) renewLoop(ctx context.Context, taskID string, lease *activ
 	}
 }
 
-func (w *leaseWorker) report(taskID string, result executionResult) {
+func (w *leaseWorker) report(taskID string, generation int, result executionResult) {
 	if err := w.call("work.report", map[string]any{
-		"task_id": taskID,
-		"status":  result.Status,
-		"summary": result.Summary,
-		"patches": result.Patches,
+		"task_id":          taskID,
+		"lease_generation": generation,
+		"status":           result.Status,
+		"summary":          result.Summary,
+		"patches":          result.Patches,
 	}, nil); err != nil {
 		w.logger.Printf("carina-worker: report %s failed: %v", taskID, err)
 	}

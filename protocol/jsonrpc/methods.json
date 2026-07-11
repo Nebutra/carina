@@ -1,6 +1,6 @@
 {
   "$comment": "Authoritative Carina JSON-RPC 2.0 registry. Each entry mirrors a daemon MethodDescriptor; params/result document the wire contract. Transport is newline-delimited JSON over the local socket or authenticated Gateway transports.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "apis": {
     "runtime": [
       { "method": "runtime.initialize", "scope": "read", "remote": true, "params": { "protocol_version": "semver?", "schema_version": "semver? exact bundle match", "client_name": "string?", "client_version": "semver?" }, "result": "RuntimeInitializeResult" },
@@ -101,7 +101,9 @@
     "channel": [
       { "method": "channel.sender.register", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "id": "string", "secret_env": "CARINA_CHANNEL_*", "sessions": "string[]", "kinds": "string[]", "can_relay_permission": "boolean?" }, "result": "{ registered: boolean, sender_id: string }" },
       { "method": "channel.sender.list", "scope": "admin", "remote": false, "params": {}, "result": "ChannelSender[] (secrets omitted)" },
-      { "method": "channel.event.inject", "scope": "admin", "remote": true, "control_plane_write": true, "params": { "event": "ChannelEvent", "signature": "hex-hmac-sha256" }, "result": "ChannelReceipt" }
+      { "method": "channel.event.inject", "scope": "admin", "remote": true, "control_plane_write": true, "params": { "event": "ChannelEvent", "signature": "hex-hmac-sha256" }, "result": "ChannelReceipt" },
+      { "method": "channel.event.pending", "scope": "admin", "remote": false, "params": {}, "result": "{ incidents: ChannelIncident[] }" },
+      { "method": "channel.event.reconcile", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "sender_id": "string", "event_id": "string", "outcome": "executed|not_executed", "confirmed": "boolean" }, "result": "ChannelReconcileResult" }
     ],
     "extension": [
       { "method": "extension.install", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "source": "trusted local directory" }, "result": "InstalledExtension" },
@@ -113,6 +115,10 @@
     ],
     "telemetry": [
       { "method": "telemetry.status", "scope": "read", "remote": true, "params": {}, "result": "{ enabled: boolean, format: carina-telemetry-json-v1, otlp: false }" }
+    ],
+    "artifact": [
+      { "method": "artifact.stat", "scope": "read", "remote": false, "params": { "session_id": "string", "task_id": "string?", "call_id": "string?", "artifact_id": "sha256" }, "result": "ArtifactMetadata" },
+      { "method": "artifact.read", "scope": "read", "remote": false, "params": { "session_id": "string", "task_id": "string?", "call_id": "string?", "artifact_id": "sha256", "offset": "integer? >= 0", "limit": "integer? 0..1048576" }, "result": "{ metadata: ArtifactMetadata, offset: integer, next_offset: integer, eof: boolean, content_base64: string }" }
     ],
     "context": [
       { "method": "context.status", "scope": "read", "remote": false, "params": {}, "result": "ContextEngineStatus" },
@@ -171,8 +177,8 @@
     "work": [
       { "method": "work.submit", "scope": "admin", "remote": false, "control_plane_write": true, "params": "WorkSubmission", "result": "WorkItem" },
       { "method": "work.poll", "scope": "worker", "remote": true, "params": { "worker_id": "string", "worker_credential": "string", "ttl_ms": "number?" }, "result": "WorkLease?" },
-      { "method": "work.renew", "scope": "worker", "remote": true, "params": { "worker_id": "string", "worker_credential": "string", "task_id": "string", "ttl_ms": "number?" }, "result": "{ ok: boolean, cancelled: boolean? }" },
-      { "method": "work.report", "scope": "worker", "remote": true, "params": "WorkReport + { worker_credential: string }", "result": "{ ok: boolean }" }
+      { "method": "work.renew", "scope": "worker", "remote": true, "params": { "worker_id": "string", "worker_credential": "string", "task_id": "string", "lease_generation": "integer >= 1", "ttl_ms": "number?" }, "result": "{ ok: boolean, cancelled: boolean? }" },
+      { "method": "work.report", "scope": "worker", "remote": true, "params": "WorkReport + { worker_credential: string, lease_generation: integer >= 1 }", "result": "{ ok: boolean }" }
     ],
     "debug": [
       { "method": "debug.snapshot", "scope": "admin", "remote": false, "params": { "limit": "number?", "component": "string?" }, "result": "DebugSnapshot" },

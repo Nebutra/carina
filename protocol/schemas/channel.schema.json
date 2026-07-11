@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://carina.nebutra.com/schemas/channel.schema.json",
+  "title": "Channel crash reconciliation",
+  "$defs": {
+    "incident": {
+      "type": "object",
+      "required": ["sender_id", "event_id", "session_id", "kind", "state", "updated_at"],
+      "properties": {
+        "sender_id": {"type": "string"}, "event_id": {"type": "string"},
+        "session_id": {"type": "string"}, "kind": {"type": "string"},
+        "state": {"enum": ["effect_started", "effect_applied"]},
+        "updated_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "reconcile": {
+      "type": "object",
+      "required": ["sender_id", "event_id", "outcome", "confirmed"],
+      "properties": {
+        "sender_id": {"type": "string"}, "event_id": {"type": "string"},
+        "outcome": {"enum": ["executed", "not_executed"]},
+        "confirmed": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  }
+}

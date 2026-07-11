@@ -57,6 +57,7 @@ func (s *Scheduler) Lease(workerID string, ttl time.Duration) (*Task, bool) {
 		updated.LeaseOwner = workerID
 		updated.LeaseExpiry = now.Add(ttl)
 		updated.Attempts = t.Attempts + 1
+		updated.LeaseGeneration = updated.Attempts
 		updated.UpdatedAt = now
 		s.tasks[id] = &updated
 		return &updated, true
@@ -66,7 +67,7 @@ func (s *Scheduler) Lease(workerID string, ttl time.Duration) (*Task, bool) {
 
 // RenewLease extends a held lease — the worker's heartbeat while it executes.
 // Only the current lease owner may renew, and only while the task is running.
-func (s *Scheduler) RenewLease(taskID, workerID string, ttl time.Duration) error {
+func (s *Scheduler) RenewLease(taskID, workerID string, generation int, ttl time.Duration) error {
 	if ttl <= 0 {
 		ttl = defaultLeaseTTL
 	}
@@ -82,6 +83,9 @@ func (s *Scheduler) RenewLease(taskID, workerID string, ttl time.Duration) error
 	if t.LeaseOwner != workerID {
 		return fmt.Errorf("scheduler: task %s is leased by another worker", taskID)
 	}
+	if generation != t.LeaseGeneration {
+		return fmt.Errorf("scheduler: task %s lease generation is stale", taskID)
+	}
 	updated := *t
 	updated.LeaseExpiry = time.Now().UTC().Add(ttl)
 	updated.UpdatedAt = time.Now().UTC()
@@ -94,7 +98,7 @@ func (s *Scheduler) RenewLease(taskID, workerID string, ttl time.Duration) error
 // no-op, so at-least-once redelivery is safe. A report from a non-owner is
 // rejected (a stale worker whose lease was reaped and reassigned cannot clobber
 // the new owner's result).
-func (s *Scheduler) Report(taskID, workerID, status, summary string, patches []string) error {
+func (s *Scheduler) Report(taskID, workerID string, generation int, status, summary string, patches []string) error {
 	if !isTerminal(status) {
 		return fmt.Errorf("scheduler: %q is not a terminal status", status)
 	}
@@ -109,6 +113,9 @@ func (s *Scheduler) Report(taskID, workerID, status, summary string, patches []s
 	}
 	if t.LeaseOwner != workerID {
 		return fmt.Errorf("scheduler: task %s is leased by another worker", taskID)
+	}
+	if generation != t.LeaseGeneration {
+		return fmt.Errorf("scheduler: task %s lease generation is stale", taskID)
 	}
 	updated := *t
 	updated.Status = status

@@ -4,15 +4,20 @@ package sdk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/Nebutra/carina/go/rpc"
 )
 
 const CompatibleRuntimeVersion = "0.6.1"
+const streamQueueLimit = 64
+
+var ErrStreamOverflow = errors.New("sdk: event stream overflow")
 
 type Client struct {
 	*rpc.Client
@@ -280,15 +285,121 @@ func (t *Thread) Run(ctx context.Context, prompt string, opts RunOptions) (TurnR
 	}
 }
 func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts RunOptions) <-chan StreamEvent {
-	out := make(chan StreamEvent, 1)
+	out := make(chan StreamEvent, 32)
 	go func() {
 		defer close(out)
-		result, err := t.Run(ctx, prompt, opts)
+		emitTerminal := func(event StreamEvent) {
+			for {
+				select {
+				case out <- event:
+					return
+				default:
+					// Preserve an explicit terminal outcome even when the consumer
+					// fell behind; an older progress event is less important than
+					// knowing the stream overflowed, failed, or completed.
+					select {
+					case <-out:
+					default:
+					}
+				}
+			}
+		}
+		inbox := make(chan Event, streamQueueLimit)
+		overloaded := make(chan struct{})
+		var overloadOnce sync.Once
+		removeListener := t.client.AddNotificationListener(func(method string, params json.RawMessage) {
+			if method != "event" {
+				return
+			}
+			var event Event
+			if json.Unmarshal(params, &event) == nil && event.SessionID == t.Session.SessionID {
+				select {
+				case inbox <- event:
+				default:
+					overloadOnce.Do(func() { close(overloaded) })
+				}
+			}
+		})
+		defer removeListener()
+		drain := func() error {
+			for {
+				select {
+				case <-overloaded:
+					return ErrStreamOverflow
+				default:
+				}
+				select {
+				case event := <-inbox:
+					select {
+					case out <- StreamEvent{Type: "event", Event: &event}:
+					default:
+						return ErrStreamOverflow
+					}
+				default:
+					return nil
+				}
+			}
+		}
+
+		subscriptionID, err := t.client.StartSessionEventStream(t.Session.SessionID)
 		if err != nil {
-			out <- StreamEvent{Type: "turn.failed", Err: err}
+			emitTerminal(StreamEvent{Type: "turn.failed", Err: err})
 			return
 		}
-		out <- StreamEvent{Type: "turn.completed", Result: &result}
+		defer func() {
+			_ = drain()
+			if subscriptionID != "" {
+				_ = t.client.UnsubscribeSessionEvents(subscriptionID)
+			}
+		}()
+
+		params := map[string]any{"session_id": t.Session.SessionID, "prompt": prompt}
+		if len(opts.OutputSchema) > 0 {
+			params["output_schema"] = json.RawMessage(opts.OutputSchema)
+		}
+		var task Task
+		if err := t.client.Call("task.submit", params, &task); err != nil {
+			emitTerminal(StreamEvent{Type: "turn.failed", Err: err})
+			return
+		}
+		if err := drain(); err != nil {
+			_ = t.client.Call("task.cancel", map[string]any{"task_id": task.TaskID}, nil)
+			emitTerminal(StreamEvent{Type: "turn.failed", Err: err})
+			return
+		}
+		interval := opts.PollInterval
+		if interval <= 0 {
+			interval = 50 * time.Millisecond
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				_ = t.client.Call("task.cancel", map[string]any{"task_id": task.TaskID}, nil)
+				_ = drain()
+				emitTerminal(StreamEvent{Type: "turn.failed", Err: ctx.Err()})
+				return
+			case <-time.After(interval):
+			}
+			var current Task
+			if err := t.client.Call("task.result", map[string]any{"task_id": task.TaskID}, &current); err != nil {
+				emitTerminal(StreamEvent{Type: "turn.failed", Err: err})
+				return
+			}
+			if err := drain(); err != nil {
+				_ = t.client.Call("task.cancel", map[string]any{"task_id": task.TaskID}, nil)
+				emitTerminal(StreamEvent{Type: "turn.failed", Err: err})
+				return
+			}
+			switch current.Status {
+			case "completed", "degraded", "failed", "cancelled", "needs_input":
+				result := TurnResult{Task: current, FinalResponse: current.Summary}
+				if len(opts.OutputSchema) > 0 {
+					_ = json.Unmarshal([]byte(current.Summary), &result.StructuredOutput)
+				}
+				emitTerminal(StreamEvent{Type: "turn.completed", Result: &result})
+				return
+			}
+		}
 	}()
 	return out
 }
@@ -333,7 +444,20 @@ func (c *Client) AnswerQuestion(questionID, value string) error {
 }
 
 func (c *Client) SubscribeSessionEvents(sessionID string) error {
-	return c.Call("session.events.stream", map[string]any{"session_id": sessionID}, nil)
+	_, err := c.StartSessionEventStream(sessionID)
+	return err
+}
+
+func (c *Client) StartSessionEventStream(sessionID string) (string, error) {
+	var out struct {
+		SubscriptionID string `json:"subscription_id"`
+	}
+	err := c.Call("session.events.stream", map[string]any{"session_id": sessionID}, &out)
+	return out.SubscriptionID, err
+}
+
+func (c *Client) UnsubscribeSessionEvents(subscriptionID string) error {
+	return c.Call("session.events.unsubscribe", map[string]any{"subscription_id": subscriptionID}, nil)
 }
 
 func (c *Client) ReadEvent() (Event, error) {
@@ -360,7 +484,7 @@ func (c *Client) ListWorkflows() ([]WorkflowRun, error) {
 }
 func (c *Client) Initialize(clientName, clientVersion string) (RuntimeInfo, error) {
 	var out RuntimeInfo
-	err := c.Call("runtime.initialize", map[string]any{"protocol_version": "1.1.0", "schema_version": "1.1.0", "client_name": clientName, "client_version": clientVersion}, &out)
+	err := c.Call("runtime.initialize", map[string]any{"protocol_version": "1.2.0", "schema_version": "1.2.0", "client_name": clientName, "client_version": clientVersion}, &out)
 	return out, err
 }
 func (c *Client) WorkflowDetail(runID string) (map[string]any, error) {

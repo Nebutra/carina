@@ -9,7 +9,7 @@ import (
 	"github.com/Nebutra/carina/go/protocolschema"
 )
 
-const runtimeProtocolVersion = "1.1.0"
+const runtimeProtocolVersion = "1.2.0"
 
 func protocolMajor(v string) (int, error) {
 	part := strings.SplitN(strings.TrimPrefix(v, "v"), ".", 2)[0]
@@ -26,7 +26,7 @@ func (d *Daemon) runtimeCapabilities() map[string]any {
 			methods[desc.Method] = true
 		}
 	}
-	return map[string]any{"workflow_control": methods["workflow.run"] && methods["workflow.resume"], "trusted_channels": methods["channel.event.inject"], "extension_inventory": methods["extension.list"], "agent_view": methods["agent.view"], "checkpoint_restore": methods["session.checkpoint.restore"], "worktree_isolation": methods["worktree.create"], "event_unsubscribe": methods["session.events.unsubscribe"], "pagination": methods["session.items"], "telemetry_format": "carina-telemetry-json-v1", "telemetry_enabled": d.telemetry != nil && d.telemetry.Enabled(), "safe_mode": d.safeMode, "sdk_conformance": true}
+	return map[string]any{"workflow_control": methods["workflow.run"] && methods["workflow.resume"], "trusted_channels": methods["channel.event.inject"], "extension_inventory": methods["extension.list"], "agent_view": methods["agent.view"], "checkpoint_restore": methods["session.checkpoint.restore"], "worktree_isolation": methods["worktree.create"], "event_unsubscribe": methods["session.events.unsubscribe"], "pagination": methods["session.items"], "event_schema_version": "0.2.0", "tool_call_lifecycle": true, "runtime_stage_timeline": true, "telemetry_format": "carina-telemetry-json-v1", "telemetry_enabled": d.telemetry != nil && d.telemetry.Enabled(), "safe_mode": d.safeMode, "sdk_conformance": true}
 }
 func (d *Daemon) handleRuntimeInitialize(params json.RawMessage) (any, error) {
 	var p struct {
@@ -43,8 +43,8 @@ func (d *Daemon) handleRuntimeInitialize(params json.RawMessage) (any, error) {
 	if p.ProtocolVersion == "" {
 		p.ProtocolVersion = "1.0.0"
 	}
-	if p.SchemaVersion != "" && p.SchemaVersion != "1.1.0" {
-		return nil, fmt.Errorf("protocol schema mismatch: client %s, server 1.1.0", p.SchemaVersion)
+	if p.SchemaVersion != "" && p.SchemaVersion != "1.2.0" {
+		return nil, fmt.Errorf("protocol schema mismatch: client %s, server 1.2.0", p.SchemaVersion)
 	}
 	clientMajor, err := protocolMajor(p.ProtocolVersion)
 	if err != nil {
@@ -54,7 +54,7 @@ func (d *Daemon) handleRuntimeInitialize(params json.RawMessage) (any, error) {
 	if clientMajor != serverMajor {
 		return nil, fmt.Errorf("incompatible protocol major: client %s, server %s", p.ProtocolVersion, runtimeProtocolVersion)
 	}
-	return map[string]any{"runtime_version": Version, "protocol_version": runtimeProtocolVersion, "schema_version": "1.1.0", "minimum_protocol_version": "1.0.0", "client_name": p.ClientName, "client_version": p.ClientVersion, "capabilities": d.runtimeCapabilities(), "legacy_calls_allowed": true, "legacy_deprecation": "clients should initialize before other calls; enforcement is planned for protocol 2.0"}, nil
+	return map[string]any{"runtime_version": Version, "protocol_version": runtimeProtocolVersion, "schema_version": "1.2.0", "minimum_protocol_version": "1.0.0", "client_name": p.ClientName, "client_version": p.ClientVersion, "capabilities": d.runtimeCapabilities(), "legacy_calls_allowed": true, "legacy_deprecation": "clients should initialize before other calls; enforcement is planned for protocol 2.0"}, nil
 }
 func (d *Daemon) handleRuntimeCapabilities(json.RawMessage) (any, error) {
 	return map[string]any{"runtime_version": Version, "protocol_version": runtimeProtocolVersion, "capabilities": d.runtimeCapabilities()}, nil

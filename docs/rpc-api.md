@@ -260,6 +260,13 @@ fields and reject a credential presented for a different worker ID with the
 same non-enumerating authentication error. Credentials are excluded from
 worker list/status, audit events, and diagnostic logs.
 
+Every successful `work.poll` claim also returns `lease_generation`, a monotonic
+fencing token for that task. The worker must echo it in `work.renew` and
+`work.report`. Reassignment increments the generation even when the same
+`worker_id` claims the task again, so a delayed execution branch from an older
+lease cannot renew or publish a terminal result. Delivery remains at-least-once;
+generation fencing prevents stale ownership from becoming authoritative.
+
 ## Example
 
 ```json

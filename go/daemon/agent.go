@@ -314,7 +314,12 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		// runaway autonomous loops).
 		d.sched.AddTokens(task.TaskID, turnTokens)
 		if t, ok := d.sched.Get(task.TaskID); ok && t.TokenBudget > 0 && t.TokensUsed > t.TokenBudget {
-			d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn - 1, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess)})
+			if err := d.runs.saveCheckpointChecked(task.TaskID, &runCheckpoint{Turn: turn - 1, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess)}); err != nil {
+				d.sched.SetStatus(task.TaskID, "failed")
+				d.sched.SetResult(task.TaskID, "token budget exceeded but the resume checkpoint could not be persisted: "+err.Error(), d.appliedPatchIDs(sess))
+				d.persistRun(task.TaskID)
+				return
+			}
 			d.sched.SetStatus(task.TaskID, "needs_input")
 			d.sched.SetResult(task.TaskID, fmt.Sprintf("token budget exceeded (%d > %d); approval required to extend", t.TokensUsed, t.TokenBudget), d.appliedPatchIDs(sess))
 			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{"status": "budget_extension_required", "tokens_used": t.TokensUsed, "token_budget": t.TokenBudget, "decision_id": "budget_" + task.TaskID}, "")
@@ -588,17 +593,107 @@ func (d *Daemon) executeBatch(sess *sessionstore.Session, task *scheduler.Task, 
 // hook that exits 2 blocks the action (its stderr is the feedback); PostToolUse
 // hooks observe the result. The kernel+toolchain dispatch is dispatchAction.
 func (d *Daemon) executeAction(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+	call, err := d.beginToolCall(sess, task, act)
+	if err != nil {
+		return "governance error: " + err.Error()
+	}
 	if blocked, reason := d.runPreToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, "")); blocked {
 		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 			map[string]any{"status": "hook_blocked", "tool": act.Tool, "reason": reason}, "")
-		return "BLOCKED by hook: " + reason
+		obs := "BLOCKED by hook: " + reason
+		d.finishToolCall(sess, task, call, toolDenied(obs, "hook_denied"))
+		return obs
 	}
 	if d.isPlanMode(sess.SessionID) && (act.Tool == "patch" || act.Tool == "run" || act.Tool == "memory") {
-		return "BLOCKED: plan mode active — explore read-only and present a plan; the operator must approve it (session.approve_plan) before edits, commands, or memory writes"
+		obs := "BLOCKED: plan mode active — explore read-only and present a plan; the operator must approve it (session.approve_plan) before edits, commands, or memory writes"
+		d.finishToolCall(sess, task, call, toolDenied(obs, "plan_mode"))
+		return obs
 	}
-	obs := d.dispatchAction(sess, task, act)
-	d.runPostToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, obs))
-	return obs
+	if err := d.startToolCall(sess, task, call); err != nil {
+		return "governance error: " + err.Error()
+	}
+	outcome := d.dispatchActionOutcome(sess, task, act)
+	d.runPostToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, outcome.display))
+	d.finishToolCall(sess, task, call, outcome)
+	return outcome.display
+}
+
+func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
+	switch act.Tool {
+	case "list":
+		dec, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.TaskID)
+		if err != nil {
+			return toolFailed("error: "+err.Error(), "governance_error")
+		}
+		if dec.Decision != "allowed" {
+			return toolDenied("DENIED: cannot read workspace", "policy_denied")
+		}
+		files, err := d.tools.Scan(sess.WorkspaceRoot)
+		if err != nil {
+			return toolFailed("error: "+err.Error(), "tool_error")
+		}
+		d.record(sess.SessionID, "FileRead", task.TaskID, "zig", map[string]any{"resource": sess.WorkspaceRoot, "bytes": len(files)}, dec.DecisionID)
+		var b strings.Builder
+		for i, f := range files {
+			if i >= 200 {
+				break
+			}
+			fmt.Fprintf(&b, "%s (%d bytes, %s)\n", f.Path, f.Size, f.Language)
+		}
+		return toolCompleted(b.String())
+	case "read":
+		abs := resolveIn(sess.WorkspaceRoot, act.Path)
+		dec, err := d.kern.Request(sess.SessionID, "FileRead", abs, task.TaskID)
+		if err != nil {
+			return toolFailed("error: "+err.Error(), "governance_error")
+		}
+		if dec.Decision != "allowed" {
+			return toolDenied("DENIED: "+dec.Reason, "policy_denied")
+		}
+		content, err := os.ReadFile(abs)
+		if err != nil {
+			return toolFailed("error: "+err.Error(), "io_error")
+		}
+		d.record(sess.SessionID, "FileRead", task.TaskID, "go", map[string]any{"path": abs, "bytes": len(content)}, dec.DecisionID)
+		d.recordRead(sess.SessionID, act.Path, string(content))
+		return toolCompleted(string(content))
+	case "search":
+		dec, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.TaskID)
+		if err != nil {
+			return toolFailed("error: "+err.Error(), "governance_error")
+		}
+		if dec.Decision != "allowed" {
+			return toolDenied("DENIED: cannot search workspace", "policy_denied")
+		}
+		matches, err := d.tools.Grep(act.Pattern, sess.WorkspaceRoot)
+		if err != nil {
+			return toolFailed("error: "+err.Error(), "tool_error")
+		}
+		d.record(sess.SessionID, "FileRead", task.TaskID, "zig", map[string]any{"resource": sess.WorkspaceRoot, "pattern": act.Pattern, "matches": len(matches)}, dec.DecisionID)
+		if len(matches) == 0 {
+			return toolCompleted("no matches")
+		}
+		var b strings.Builder
+		for i, m := range matches {
+			if i >= 50 {
+				break
+			}
+			fmt.Fprintf(&b, "%s:%d: %s\n", m.File, m.Line, m.Text)
+		}
+		return toolCompleted(b.String())
+	case "run":
+		return d.agentRunOutcome(sess, task, act.Command)
+	case "patch":
+		return d.agentPatchOutcome(sess, task, act.Path, act.Content)
+	case "memory":
+		return d.agentMemoryOutcome(sess, task, act)
+	case "mcp":
+		return d.callMCPOutcome(sess, task, act)
+	case "spawn", "workflow", "ask_user", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact":
+		return classifyLegacyToolResult(d.dispatchAction(sess, task, act))
+	default:
+		return toolFailed("unknown tool: "+act.Tool, "unknown_tool")
+	}
 }
 
 // dispatchAction runs one tool action through the kernel + toolchain and
@@ -714,6 +809,10 @@ func (d *Daemon) dispatchAction(sess *sessionstore.Session, task *scheduler.Task
 }
 
 func (d *Daemon) agentMemory(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+	return d.agentMemoryOutcome(sess, task, act).display
+}
+
+func (d *Daemon) agentMemoryOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
 	req := memoryWriteRequest{
 		Action:     string(act.Action),
 		Target:     act.Target,
@@ -725,28 +824,28 @@ func (d *Daemon) agentMemory(sess *sessionstore.Session, task *scheduler.Task, a
 	scope := memoryScopeFromSession(sess)
 	summary, err := summarizeMemoryWrite(scope, req)
 	if err != nil {
-		return "memory error: " + err.Error()
+		return toolFailed("memory error: "+err.Error(), "invalid_memory_write")
 	}
 	dec, err := d.kern.Request(sess.SessionID, "MemoryWrite", summary.Resource, task.TaskID)
 	if err != nil {
-		return "memory error: " + err.Error()
+		return toolFailed("memory error: "+err.Error(), "governance_error")
 	}
 	switch dec.Decision {
 	case "denied":
-		return "DENIED by policy: " + dec.Reason
+		return toolDenied("DENIED by policy: "+dec.Reason, "policy_denied")
 	case "requires_approval":
 		approved, ok := d.resolveApproval(sess, task, dec, "memory "+summary.Action+" "+summary.Target)
 		if !ok {
-			return "requires approval (not granted): " + dec.Reason
+			return toolDenied("requires approval (not granted): "+dec.Reason, "approval_denied")
 		}
 		dec = approved
 	}
 	result, err := d.applyMemoryWrite(sess, task.TaskID, req, dec, scope, summary)
 	if err != nil {
-		return "memory error: " + err.Error()
+		return toolFailed("memory error: "+err.Error(), "memory_write_error")
 	}
 	raw, _ := json.Marshal(result)
-	return string(raw)
+	return toolCompleted(string(raw))
 }
 
 // agentPatch proposes and applies a full-file edit through the kernel's
@@ -759,18 +858,22 @@ func (d *Daemon) agentMemory(sess *sessionstore.Session, task *scheduler.Task, a
 // (agentRun) — it never self-approves as approver="agent" behind the
 // operator's back.
 func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, path, content string) string {
+	return d.agentPatchOutcome(sess, task, path, content).display
+}
+
+func (d *Daemon) agentPatchOutcome(sess *sessionstore.Session, task *scheduler.Task, path, content string) toolExecutionOutcome {
 	if path == "" {
-		return "error: patch needs a path"
+		return toolFailed("error: patch needs a path", "invalid_arguments")
 	}
 	// Read-before-write: refuse to clobber a file the agent never read, or one
 	// that drifted since it read it (dirty write).
 	if err := d.checkWriteProvenance(sess.SessionID, path, resolveIn(sess.WorkspaceRoot, path)); err != nil {
-		return "DENIED: " + err.Error()
+		return toolDenied("DENIED: "+err.Error(), "write_provenance_denied")
 	}
 	patch, err := d.kern.PatchPropose(sess.SessionID, task.TaskID, "agent edit",
 		[]kernel.FileChange{{Path: path, NewContent: content}})
 	if err != nil {
-		return "patch propose failed: " + err.Error()
+		return toolFailed("patch propose failed: "+err.Error(), "patch_propose_error")
 	}
 	// Gate the apply the same way workspace.patch.propose does: mint the
 	// PatchApply decision now and remember it so a concurrent
@@ -778,7 +881,7 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 	// state, instead of leaving this apply ungoverned.
 	dec, err := d.registerPatchGate(sess.SessionID, patch.PatchID, task.TaskID)
 	if err != nil {
-		return "patch gate failed: " + err.Error()
+		return toolFailed("patch gate failed: "+err.Error(), "governance_error")
 	}
 	approver := "agent"
 	switch dec.Decision {
@@ -787,12 +890,12 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 			dec = esc
 			approver = "operator"
 		} else {
-			return "DENIED by policy: " + dec.Reason
+			return toolDenied("DENIED by policy: "+dec.Reason, "policy_denied")
 		}
 	case "requires_approval":
 		approved, ok := d.resolveApprovalOrEscalate(sess, task, dec, "PatchApply", patch.PatchID, "patch "+path)
 		if !ok {
-			return "requires approval (not granted): " + dec.Reason
+			return toolDenied("requires approval (not granted): "+dec.Reason, "approval_denied")
 		}
 		dec = approved
 		approver = "operator"
@@ -804,7 +907,7 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 	d.mu.Unlock()
 	applied, err := d.kern.PatchApply(sess.SessionID, patch.PatchID, approver)
 	if err != nil {
-		return "patch apply failed (nothing written): " + err.Error()
+		return toolFailed("patch apply failed (nothing written): "+err.Error(), "patch_apply_error")
 	}
 	// The agent's edit is now the on-disk truth; record it so a follow-up edit
 	// in the same run isn't flagged as a blind overwrite.
@@ -825,7 +928,7 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 	if sem := d.semanticDiagnostics(resolveIn(sess.WorkspaceRoot, path), sess.WorkspaceRoot); sem != "" {
 		result += "\n[semantic] this edit has type errors:\n" + truncate(sem, 1000)
 	}
-	return result
+	return toolCompleted(result)
 }
 
 // agentRun executes a command the agent proposed: canonicalize -> validate
@@ -843,18 +946,22 @@ func (d *Daemon) agentPatch(sess *sessionstore.Session, task *scheduler.Task, pa
 // records the command actually authorized, not whatever raw string the
 // model happened to emit.
 func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv []string) string {
+	return d.agentRunOutcome(sess, task, argv).display
+}
+
+func (d *Daemon) agentRunOutcome(sess *sessionstore.Session, task *scheduler.Task, argv []string) toolExecutionOutcome {
 	if d.requireTrust.Load() && !d.trust.isTrusted(sess.WorkspaceRoot) {
-		return "DENIED: workspace not trusted — approve it first (workspace.trust)"
+		return toolDenied("DENIED: workspace not trusted — approve it first (workspace.trust)", "workspace_untrusted")
 	}
 	canon := toolnorm.Canonicalize(argv, sess.WorkspaceRoot)
 	if ok, code, msg := canon.Validate(); !ok {
-		return "error: [" + code + "] " + msg
+		return toolFailed("error: ["+code+"] "+msg, "invalid_command")
 	}
 	command := canon.Command
 	classifyAs := canon.WrapperStripped
 	dec, err := d.kern.Request(sess.SessionID, "CommandExec", classifyAs, task.TaskID)
 	if err != nil {
-		return "error: " + err.Error()
+		return toolFailed("error: "+err.Error(), "governance_error")
 	}
 	switch dec.Decision {
 	case "denied":
@@ -862,12 +969,12 @@ func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv
 		if esc, ok := d.escalateToParent(sess, task, "CommandExec", classifyAs, command); ok {
 			dec = esc
 		} else {
-			return "DENIED by policy: " + dec.Reason
+			return toolDenied("DENIED by policy: "+dec.Reason, "policy_denied")
 		}
 	case "requires_approval":
 		approved, ok := d.resolveApprovalOrEscalate(sess, task, dec, "CommandExec", classifyAs, command)
 		if !ok {
-			return "requires approval (not granted): " + dec.Reason
+			return toolDenied("requires approval (not granted): "+dec.Reason, "approval_denied")
 		}
 		dec = approved
 	}
@@ -878,7 +985,9 @@ func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv
 	if mutatesPackages(classifyAs) {
 		started["package_mutation"] = true
 	}
-	d.record(sess.SessionID, "CommandStarted", task.TaskID, "zig", started, dec.DecisionID)
+	if err := d.recordChecked(sess.SessionID, "CommandStarted", task.TaskID, "zig", started, dec.DecisionID); err != nil {
+		return toolFailed("governance error: command start was not persisted", "audit_persistence_error")
+	}
 
 	result, err := d.tools.Run(canon.Argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
 	// A mutating-capable command may have rewritten files the patch hooks
@@ -890,7 +999,7 @@ func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv
 	}
 	if err != nil {
 		d.record(sess.SessionID, "CommandExited", task.TaskID, "zig", map[string]any{"command_id": commandID, "exit_code": -1, "error": err.Error()}, "")
-		return "command error: " + err.Error()
+		return toolFailed("command error: "+err.Error(), "runner_error")
 	}
 	stdout := strings.Join(result.Stdout, "\n")
 	if red, e := d.kern.Redact(sess.SessionID, stdout); e == nil {
@@ -904,7 +1013,14 @@ func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv
 	if len(result.Stderr) > 0 {
 		fmt.Fprintf(&b, "\n[stderr] %s", strings.Join(result.Stderr, "\n"))
 	}
-	return b.String()
+	display := b.String()
+	if result.TimedOut {
+		return toolTimedOut(display)
+	}
+	if result.ExitCode != 0 {
+		return toolFailed(display, "nonzero_exit")
+	}
+	return toolCompleted(display)
 }
 
 // callMCP proxies a tool call to an external MCP server. Like every other
@@ -912,12 +1028,16 @@ func (d *Daemon) agentRun(sess *sessionstore.Session, task *scheduler.Task, argv
 // tools are subject to the same policy + approval as native tools; the result
 // is redacted before it enters the transcript/log.
 func (d *Daemon) callMCP(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+	return d.callMCPOutcome(sess, task, act).display
+}
+
+func (d *Daemon) callMCPOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
 	if act.MCPServer == "" || act.MCPTool == "" {
-		return "error: mcp needs mcp_server and mcp_tool"
+		return toolFailed("error: mcp needs mcp_server and mcp_tool", "invalid_arguments")
 	}
 	dec, err := d.kern.Request(sess.SessionID, "PluginLoad", "mcp:"+act.MCPServer+"/"+act.MCPTool, task.TaskID)
 	if err != nil {
-		return "error: " + err.Error()
+		return toolFailed("error: "+err.Error(), "governance_error")
 	}
 	mcpResource := "mcp:" + act.MCPServer + "/" + act.MCPTool
 	switch dec.Decision {
@@ -925,12 +1045,12 @@ func (d *Daemon) callMCP(sess *sessionstore.Session, task *scheduler.Task, act *
 		if esc, ok := d.escalateToParent(sess, task, "PluginLoad", mcpResource, mcpResource); ok {
 			dec = esc
 		} else {
-			return "DENIED by policy: " + dec.Reason
+			return toolDenied("DENIED by policy: "+dec.Reason, "policy_denied")
 		}
 	case "requires_approval":
 		approved, ok := d.resolveApprovalOrEscalate(sess, task, dec, "PluginLoad", mcpResource, mcpResource)
 		if !ok {
-			return "requires approval (not granted): " + dec.Reason
+			return toolDenied("requires approval (not granted): "+dec.Reason, "approval_denied")
 		}
 		dec = approved
 	}
@@ -939,14 +1059,14 @@ func (d *Daemon) callMCP(sess *sessionstore.Session, task *scheduler.Task, act *
 
 	out, err := d.mcp.CallPublic(act.MCPServer, act.MCPTool, act.Args)
 	if err != nil {
-		return "mcp error: " + err.Error()
+		return toolFailed("mcp error: "+err.Error(), "mcp_error")
 	}
 	if red, e := d.kern.Redact(sess.SessionID, out); e == nil {
 		out = red
 	}
 	d.record(sess.SessionID, "ModelResponded", task.TaskID, "go",
 		map[string]any{"mcp_server": act.MCPServer, "mcp_tool": act.MCPTool, "result": truncate(out, 300)}, "")
-	return out
+	return toolCompleted(out)
 }
 
 func resolveIn(root, path string) string {

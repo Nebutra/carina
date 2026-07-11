@@ -99,14 +99,20 @@ func TestWorkerCredentialReturnedOnceAndAbsentFromList(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := submitted.(*scheduler.Task)
-	if _, err := d.handleWorkPoll(mustJSON(t, map[string]any{
+	poll, err := d.handleWorkPoll(mustJSON(t, map[string]any{
 		"worker_id": registered.workerID, "worker_credential": registered.credential,
-	})); err != nil {
+	}))
+	if err != nil {
 		t.Fatal(err)
+	}
+	leased := poll.(map[string]any)["task"].(*scheduler.Task)
+	if leased.LeaseGeneration <= 0 {
+		t.Fatalf("leased task has no generation: %+v", leased)
 	}
 	if _, err := d.handleWorkReport(mustJSON(t, map[string]any{
 		"worker_id": registered.workerID, "worker_credential": registered.credential,
-		"task_id": task.TaskID, "status": "failed", "summary": "expected test failure",
+		"task_id": task.TaskID, "lease_generation": leased.LeaseGeneration,
+		"status": "failed", "summary": "expected test failure",
 	})); err != nil {
 		t.Fatal(err)
 	}

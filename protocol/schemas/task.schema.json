@@ -12,6 +12,11 @@
     "user_prompt": { "type": "string" },
     "created_at": { "type": "string", "format": "date-time" },
     "updated_at": { "type": "string", "format": "date-time" },
-    "risk_level": { "type": "integer", "minimum": 0, "maximum": 5 }
+    "risk_level": { "type": "integer", "minimum": 0, "maximum": 5 },
+    "mode": { "enum": ["foreground", "background", "dispatch"] },
+    "lease_owner": { "type": "string", "minLength": 1 },
+    "lease_expiry": { "type": "string", "format": "date-time" },
+    "lease_generation": { "type": "integer", "minimum": 1 },
+    "attempts": { "type": "integer", "minimum": 0 }
   }
 }

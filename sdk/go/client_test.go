@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -84,6 +86,240 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 	if got := <-methods; !reflect.DeepEqual(got, want) {
 		t.Fatalf("methods = %v, want %v", got, want)
 	}
+}
+
+func TestRunStreamedEmitsAuthoritativeEventsAndUnsubscribes(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	client := NewClient(rpc.NewClient(clientConn, clientConn, clientConn))
+	defer client.Close()
+	methods := make(chan []string, 1)
+	go func() {
+		reader := bufio.NewReader(serverConn)
+		var seen []string
+		for len(seen) < 4 {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				return
+			}
+			var req struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			_ = json.Unmarshal(line, &req)
+			seen = append(seen, req.Method)
+			var result any = map[string]any{}
+			switch req.Method {
+			case "session.events.stream":
+				result = map[string]any{"subscription_id": "sub-1"}
+			case "task.submit":
+				result = map[string]any{"task_id": "t", "session_id": "s", "status": "queued"}
+			case "task.result":
+				note, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "event", "params": map[string]any{"session_id": "s", "task_id": "t", "type": "ModelResponded", "timestamp": "now"}})
+				_, _ = serverConn.Write(append(note, '\n'))
+				result = map[string]any{"task_id": "t", "session_id": "s", "status": "completed", "summary": "ok"}
+			}
+			response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+			_, _ = serverConn.Write(append(response, '\n'))
+		}
+		methods <- seen
+	}()
+	thread := &Thread{client: client, Session: Session{SessionID: "s"}}
+	var got []StreamEvent
+	for event := range thread.RunStreamed(context.Background(), "go", RunOptions{PollInterval: time.Millisecond}) {
+		got = append(got, event)
+	}
+	if len(got) != 2 || got[0].Type != "event" || got[0].Event.Type != "ModelResponded" || got[1].Type != "turn.completed" {
+		t.Fatalf("stream = %+v", got)
+	}
+	want := []string{"session.events.stream", "task.submit", "task.result", "session.events.unsubscribe"}
+	if seen := <-methods; !reflect.DeepEqual(seen, want) {
+		t.Fatalf("methods = %v, want %v", seen, want)
+	}
+}
+
+func TestRunStreamedCancellationCancelsTaskAndUnsubscribes(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	client := NewClient(rpc.NewClient(clientConn, clientConn, clientConn))
+	defer client.Close()
+	methods := make(chan []string, 1)
+	go func() {
+		reader := bufio.NewReader(serverConn)
+		var seen []string
+		for len(seen) < 4 {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				return
+			}
+			var req struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			_ = json.Unmarshal(line, &req)
+			seen = append(seen, req.Method)
+			result := any(map[string]any{})
+			if req.Method == "session.events.stream" {
+				result = map[string]any{"subscription_id": "sub-cancel"}
+			} else if req.Method == "task.submit" {
+				result = map[string]any{"task_id": "t", "session_id": "s", "status": "queued"}
+			}
+			response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+			_, _ = serverConn.Write(append(response, '\n'))
+		}
+		methods <- seen
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	thread := &Thread{client: client, Session: Session{SessionID: "s"}}
+	var last StreamEvent
+	for event := range thread.RunStreamed(ctx, "go", RunOptions{PollInterval: time.Millisecond}) {
+		last = event
+	}
+	if !errors.Is(last.Err, context.Canceled) {
+		t.Fatalf("stream error = %v, want context.Canceled", last.Err)
+	}
+	want := []string{"session.events.stream", "task.submit", "task.cancel", "session.events.unsubscribe"}
+	if seen := <-methods; !reflect.DeepEqual(seen, want) {
+		t.Fatalf("methods = %v, want %v", seen, want)
+	}
+}
+
+func TestConcurrentRunStreamedRoutesEventsBySession(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	client := NewClient(rpc.NewClient(clientConn, clientConn, clientConn))
+	defer client.Close()
+	var mu sync.Mutex
+	unsubscribed := map[string]bool{}
+	go func() {
+		reader := bufio.NewReader(serverConn)
+		for {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				return
+			}
+			var req struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+				Params map[string]any  `json:"params"`
+			}
+			_ = json.Unmarshal(line, &req)
+			var result any = map[string]any{}
+			session, _ := req.Params["session_id"].(string)
+			switch req.Method {
+			case "session.events.stream":
+				result = map[string]any{"subscription_id": "sub-" + session}
+			case "task.submit":
+				result = map[string]any{"task_id": "task-" + session, "session_id": session, "status": "queued"}
+			case "task.result":
+				task, _ := req.Params["task_id"].(string)
+				session = strings.TrimPrefix(task, "task-")
+				note, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "event", "params": map[string]any{"session_id": session, "task_id": task, "type": "ModelResponded"}})
+				_, _ = serverConn.Write(append(note, '\n'))
+				result = map[string]any{"task_id": task, "session_id": session, "status": "completed", "summary": session}
+			case "session.events.unsubscribe":
+				mu.Lock()
+				unsubscribed[req.Params["subscription_id"].(string)] = true
+				mu.Unlock()
+			}
+			response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+			_, _ = serverConn.Write(append(response, '\n'))
+		}
+	}()
+	threads := []*Thread{{client: client, Session: Session{SessionID: "s1"}}, {client: client, Session: Session{SessionID: "s2"}}}
+	results := make(chan string, 2)
+	for _, thread := range threads {
+		go func(th *Thread) {
+			var session string
+			for event := range th.RunStreamed(context.Background(), "go", RunOptions{PollInterval: time.Millisecond}) {
+				if event.Event != nil {
+					session = event.Event.SessionID
+				}
+			}
+			results <- session
+		}(thread)
+	}
+	got := map[string]bool{<-results: true, <-results: true}
+	if !got["s1"] || !got["s2"] {
+		t.Fatalf("cross-routed streams: %+v", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !unsubscribed["sub-s1"] || !unsubscribed["sub-s2"] {
+		t.Fatalf("subscriptions leaked: %+v", unsubscribed)
+	}
+}
+
+func TestRunStreamedAbandonedConsumerCancelsAndUnsubscribes(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	client := NewClient(rpc.NewClient(clientConn, clientConn, clientConn))
+	defer client.Close()
+	done := make(chan []string, 1)
+	go func() {
+		reader := bufio.NewReader(serverConn)
+		var seen []string
+		for {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				return
+			}
+			var req struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			_ = json.Unmarshal(line, &req)
+			seen = append(seen, req.Method)
+			var result any = map[string]any{}
+			switch req.Method {
+			case "session.events.stream":
+				result = map[string]any{"subscription_id": "sub-s"}
+			case "task.submit":
+				result = map[string]any{"task_id": "t", "session_id": "s", "status": "queued"}
+			case "task.result":
+				for i := 0; i < 100; i++ {
+					note, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "event", "params": map[string]any{"session_id": "s", "task_id": "t", "type": "Output", "payload": map[string]any{"n": i}}})
+					_, _ = serverConn.Write(append(note, '\n'))
+				}
+				result = map[string]any{"task_id": "t", "session_id": "s", "status": "running"}
+			}
+			response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+			_, _ = serverConn.Write(append(response, '\n'))
+			if req.Method == "session.events.unsubscribe" {
+				done <- seen
+				return
+			}
+		}
+	}()
+	thread := &Thread{client: client, Session: Session{SessionID: "s"}}
+	stream := thread.RunStreamed(context.Background(), "go", RunOptions{PollInterval: time.Millisecond})
+	select {
+	case seen := <-done:
+		if !containsString(seen, "task.cancel") || !containsString(seen, "session.events.unsubscribe") {
+			t.Fatalf("missing cleanup: %v", seen)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("abandoned consumer left RunStreamed blocked")
+	}
+	var streamErr error
+	for event := range stream {
+		if event.Err != nil {
+			streamErr = event.Err
+		}
+	}
+	if !errors.Is(streamErr, ErrStreamOverflow) {
+		t.Fatalf("stream error = %v, want ErrStreamOverflow", streamErr)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestHighLevelThreadRunNegotiatesAndUsesSchema(t *testing.T) {

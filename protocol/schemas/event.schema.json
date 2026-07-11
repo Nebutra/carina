@@ -36,6 +36,14 @@
         "ToolRequested",
         "ToolApproved",
         "ToolDenied",
+        "ToolCallRequested",
+        "ToolCallApprovalRequired",
+        "ToolCallStarted",
+        "ToolCallCompleted",
+        "ToolCallFailed",
+        "ToolCallDenied",
+        "ToolCallCancelled",
+        "RuntimeStageChanged",
         "FileRead",
         "FileWriteProposed",
         "PatchProposed",
@@ -49,6 +57,8 @@
         "PolicyViolation",
         "RollbackStarted",
         "RollbackCompleted",
+        "SessionPaused",
+        "SessionResumed",
         "SessionClosed"
       ]
     },
@@ -71,7 +81,9 @@
         "model",
         "user",
         "agent",
-        "plugin"
+        "plugin",
+        "operator",
+        "worker"
       ],
       "description": "language layer that produced the event"
     },
@@ -83,5 +95,31 @@
       "type": "string",
       "description": "sha256(prev_hash || canonical(event)); tamper-evident chain"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "ToolCallRequested" } }, "required": ["type"] },
+      "then": { "required": ["payload"], "properties": { "payload": { "required": ["call_id", "tool", "kind", "status", "arguments"], "properties": { "status": { "const": "pending" }, "arguments": { "type": "object" } } } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "ToolCallStarted" } }, "required": ["type"] },
+      "then": { "required": ["payload"], "properties": { "payload": { "required": ["call_id", "tool", "kind", "status"], "properties": { "status": { "const": "running" } } } } }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["ToolCallCompleted", "ToolCallFailed", "ToolCallDenied", "ToolCallCancelled"] } }, "required": ["type"] },
+      "then": { "required": ["payload"], "properties": { "payload": { "required": ["call_id", "tool", "kind", "status"], "not": { "required": ["output_preview"] } } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "ToolCallCompleted" } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "required": ["output", "artifact_ids"], "properties": { "status": { "const": "completed" }, "output": { "type": "object", "required": ["sha256", "bytes", "redacted", "artifact_status"], "properties": { "artifact_status": { "enum": ["available", "unavailable", "not_created"] } } }, "artifact_ids": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } } } } }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["ToolCallFailed", "ToolCallDenied", "ToolCallCancelled"] } }, "required": ["type"] },
+      "then": { "properties": { "payload": { "required": ["error"], "properties": { "error": { "type": "object", "required": ["code", "category", "message"] } } } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "RuntimeStageChanged" } }, "required": ["type"] },
+      "then": { "required": ["payload"], "properties": { "payload": { "required": ["stage_id", "stage", "status", "sequence", "call_id"] } } }
+    }
+  ]
 }

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Nebutra/carina/go/agentview"
+	"github.com/Nebutra/carina/go/artifact"
 	"github.com/Nebutra/carina/go/auth"
 	"github.com/Nebutra/carina/go/channels"
 	"github.com/Nebutra/carina/go/contextengine"
@@ -210,6 +211,7 @@ type Daemon struct {
 	extensions         *extensions.Marketplace
 	telemetry          *carinatelemetry.Exporter
 	compactionBreaker  *compactionCircuitBreaker
+	artifacts          *artifact.Store
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -336,6 +338,15 @@ func New(opts Options) (*Daemon, error) {
 	}
 	d.telemetry = carinatelemetry.New(opts.TelemetryWriter)
 	d.compactionBreaker = newCompactionCircuitBreaker()
+	d.artifacts, err = artifact.New(filepath.Join(opts.StateDir, "artifacts"))
+	if err != nil {
+		_ = kern.Close()
+		return nil, fmt.Errorf("daemon: artifact store: %w", err)
+	}
+	if _, err = d.artifacts.GC(time.Now()); err != nil {
+		_ = kern.Close()
+		return nil, fmt.Errorf("daemon: artifact gc: %w", err)
+	}
 	d.riskReviewMode.Store(riskReviewMode)
 	_ = hardenProcess() // Linux: non-dumpable, anti-ptrace (best-effort)
 	d.registerMethods()
@@ -788,6 +799,8 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("channel.sender.register", rpc.ScopeAdmin, false, d.handleChannelSenderRegister, true)
 	d.registerRPC("channel.sender.list", rpc.ScopeAdmin, false, d.handleChannelSenderList)
 	d.registerRPC("channel.event.inject", rpc.ScopeAdmin, true, d.handleChannelEventInject, true)
+	d.registerRPC("channel.event.pending", rpc.ScopeAdmin, false, d.handleChannelEventPending)
+	d.registerRPC("channel.event.reconcile", rpc.ScopeAdmin, false, d.handleChannelEventReconcile, true)
 	d.registerRPC("extension.install", rpc.ScopeAdmin, false, d.handleExtensionInstall, true)
 	d.registerRPC("extension.list", rpc.ScopeRead, false, d.handleExtensionList)
 	d.registerRPC("extension.enable", rpc.ScopeAdmin, false, d.handleExtensionEnable, true)
@@ -795,6 +808,8 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("extension.update", rpc.ScopeAdmin, false, d.handleExtensionUpdate, true)
 	d.registerRPC("extension.safe_mode", rpc.ScopeAdmin, false, d.handleExtensionSafeMode, true)
 	d.registerRPC("telemetry.status", rpc.ScopeRead, true, d.handleTelemetryStatus)
+	d.registerRPC("artifact.stat", rpc.ScopeRead, false, d.handleArtifactStat)
+	d.registerRPC("artifact.read", rpc.ScopeRead, false, d.handleArtifactRead)
 
 	d.registerRPC("task.submit", rpc.ScopeWrite, false, d.handleTaskSubmit)
 	d.registerRPC("task.status", rpc.ScopeRead, true, d.handleTaskStatus)
@@ -1034,6 +1049,11 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 	}
 	if len(d.channels.Senders()) == 0 {
 		fixPlan = append(fixPlan, map[string]any{"check": "channels", "severity": "info", "issue": "no trusted channel senders configured", "action": "set CARINA_CHANNEL_* and register a sender with channel.sender.register", "automatic": false})
+	}
+	channelIncidents := d.channels.Incidents()
+	report["channels"] = map[string]any{"pending_reconciliation": channelIncidents, "ok": len(channelIncidents) == 0}
+	if len(channelIncidents) > 0 {
+		fixPlan = append(fixPlan, map[string]any{"check": "channels", "severity": "error", "issue": fmt.Sprintf("%d channel event(s) require crash reconciliation", len(channelIncidents)), "action": "inspect channel.event.pending, verify the external side effect, then call channel.event.reconcile with confirmed=true", "automatic": false})
 	}
 	inv := d.extensions.Inventory()
 	if inv.SafeMode {
@@ -3028,7 +3048,12 @@ func (d *Daemon) handleEventUnsubscribe(params json.RawMessage) (any, error) {
 // produced the effect (go/rust/zig/model/user) so the audit trail shows
 // the Go → Rust → Zig control flow (PRD §4.1).
 func (d *Daemon) record(sessionID, eventType, taskID, actor string, payload map[string]any, decisionID string) {
-	_ = d.kern.RecordEvent(sessionID, eventType, taskID, actor, payload, decisionID)
+	_ = d.recordChecked(sessionID, eventType, taskID, actor, payload, decisionID)
+}
+func (d *Daemon) recordChecked(sessionID, eventType, taskID, actor string, payload map[string]any, decisionID string) error {
+	if err := d.kern.RecordEvent(sessionID, eventType, taskID, actor, payload, decisionID); err != nil {
+		return err
+	}
 	d.events.Publish(sessionID, map[string]any{
 		"session_id": sessionID,
 		"task_id":    taskID,
@@ -3037,6 +3062,7 @@ func (d *Daemon) record(sessionID, eventType, taskID, actor string, payload map[
 		"timestamp":  time.Now().UTC().Format(time.RFC3339),
 		"payload":    payload,
 	})
+	return nil
 }
 
 // ---- workers ----------------------------------------------------------------

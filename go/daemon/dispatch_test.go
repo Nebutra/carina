@@ -94,7 +94,7 @@ func TestWorkDispatchBridge(t *testing.T) {
 		t.Fatalf("work.poll: %v", err)
 	}
 	leased, ok := pollRes.(map[string]any)["task"].(*scheduler.Task)
-	if !ok || leased.TaskID != task.TaskID || leased.LeaseOwner != wk.WorkerID {
+	if !ok || leased.TaskID != task.TaskID || leased.LeaseOwner != wk.WorkerID || leased.LeaseGeneration <= 0 {
 		t.Fatalf("poll did not lease the task: %+v", pollRes)
 	}
 
@@ -109,12 +109,13 @@ func TestWorkDispatchBridge(t *testing.T) {
 
 	// The worker renews mid-execution, then reports completion.
 	if _, err := d.handleWorkRenew(mustJSON(t, map[string]any{
-		"worker_id": wk.WorkerID, "worker_credential": credential, "task_id": task.TaskID, "ttl_ms": 5000})); err != nil {
+		"worker_id": wk.WorkerID, "worker_credential": credential, "task_id": task.TaskID,
+		"lease_generation": leased.LeaseGeneration, "ttl_ms": 5000})); err != nil {
 		t.Fatalf("work.renew: %v", err)
 	}
 	if _, err := d.handleWorkReport(mustJSON(t, map[string]any{
 		"worker_id": wk.WorkerID, "worker_credential": credential, "task_id": task.TaskID,
-		"status": "completed", "summary": "shipped"})); err != nil {
+		"lease_generation": leased.LeaseGeneration, "status": "completed", "summary": "shipped"})); err != nil {
 		t.Fatalf("work.report: %v", err)
 	}
 	got, _ := d.sched.Get(task.TaskID)

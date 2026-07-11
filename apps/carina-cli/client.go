@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -19,7 +21,19 @@ var dialHook = func() (*rpcClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return rpc.Dial(socket)
+	c, err := rpc.Dial(socket)
+	if err != nil {
+		return nil, err
+	}
+	var initialized map[string]any
+	if err := c.Call("runtime.initialize", map[string]any{"protocol_version": "1.2.0", "schema_version": "1.2.0", "client_name": "carina-cli", "client_version": cliVersion}, &initialized); err != nil {
+		var rpcErr *rpc.Error
+		if !errors.As(err, &rpcErr) || rpcErr.Code != rpc.CodeMethodNotFound {
+			_ = c.Close()
+			return nil, fmt.Errorf("runtime initialize: %w", err)
+		}
+	}
+	return c, nil
 }
 
 // dialDaemon is kept as a direct dial path for callers outside run()'s

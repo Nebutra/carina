@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from carina_sdk import CarinaClient, compatible_runtime_version
+from carina_sdk import CarinaClient, CarinaStreamOverflow, CarinaThread, compatible_runtime_version
 
 
 @contextmanager
@@ -47,6 +47,25 @@ def daemon_server(
 
 
 class ClientTest(unittest.TestCase):
+    def test_session_listener_dispatch_is_independent_and_bounded(self) -> None:
+        client = CarinaClient(timeout=.5)
+        first = client._add_session_listener("s")
+        second = client._add_session_listener("s")
+        other = client._add_session_listener("other")
+        client._dispatch_notification("event", {"session_id": "s", "type": "one"})
+        self.assertEqual([event["type"] for event in client._drain_session_listener(first)], ["one"])
+        self.assertEqual([event["type"] for event in client._drain_session_listener(second)], ["one"])
+        self.assertEqual(client._drain_session_listener(other), [])
+
+        client._remove_session_listener(first)
+        client._dispatch_notification("event", {"session_id": "s", "type": "two"})
+        self.assertEqual([event["type"] for event in client._drain_session_listener(second)], ["two"])
+
+        for index in range(65):
+            client._dispatch_notification("event", {"session_id": "other", "type": "burst", "index": index})
+        with self.assertRaises(CarinaStreamOverflow):
+            client._drain_session_listener(other)
+
     def test_typed_parity_and_stream(self) -> None:
         methods: list[str] = []
 
@@ -63,6 +82,8 @@ class ClientTest(unittest.TestCase):
                 result = {"queued": True, "task_id": "t1", "status": "running"}
             elif request["method"] == "task.user.answer":
                 result = {"question_id": "q1", "accepted": True, "value": "yes"}
+            elif request["method"] == "session.events.stream":
+                result = {"subscription_id": "sub-1"}
             conn.sendall(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}).encode() + b"\n")
             if request["method"] == "session.events.stream":
                 conn.sendall(json.dumps({
@@ -89,6 +110,69 @@ class ClientTest(unittest.TestCase):
             "session.attach", "session.fork", "usage.cost", "task.steer",
             "task.user.answer", "session.events.stream",
         ])
+
+    def test_run_streamed_emits_authoritative_events_and_unsubscribes(self) -> None:
+        methods: list[str] = []
+        def handler(request: dict[str, Any], conn: socket.socket) -> None:
+            methods.append(request["method"])
+            result: Any = {}
+            if request["method"] == "session.events.stream":
+                result = {"subscription_id": "sub-1"}
+            elif request["method"] == "task.submit":
+                result = {"task_id": "t", "session_id": "s", "status": "queued"}
+            elif request["method"] == "task.result":
+                conn.sendall(json.dumps({
+                    "jsonrpc": "2.0", "method": "event",
+                    "params": {"session_id": "s", "task_id": "t", "type": "ModelResponded", "timestamp": "now"},
+                }).encode() + b"\n")
+                result = {"task_id": "t", "session_id": "s", "status": "completed", "summary": "ok"}
+            conn.sendall(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}).encode() + b"\n")
+        with daemon_server(handler) as path:
+            client = CarinaClient(path, timeout=.5)
+            thread = CarinaThread(client, {"session_id": "s"})
+            streamed = list(thread.run_streamed("go", poll_interval=.001))
+            client.close()
+        self.assertEqual([item["type"] for item in streamed], ["event", "turn.completed"])
+        self.assertEqual(streamed[0]["event"]["type"], "ModelResponded")
+        self.assertEqual(methods, ["session.events.stream", "task.submit", "task.result", "session.events.unsubscribe"])
+
+    def test_run_streamed_cancellation_cancels_task_and_unsubscribes(self) -> None:
+        methods: list[str] = []
+        def handler(request: dict[str, Any], conn: socket.socket) -> None:
+            methods.append(request["method"])
+            result: Any = {"subscription_id": "sub-cancel"} if request["method"] == "session.events.stream" else {}
+            if request["method"] == "task.submit":
+                result = {"task_id": "t", "session_id": "s", "status": "queued"}
+            conn.sendall(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}).encode() + b"\n")
+        with daemon_server(handler) as path:
+            client = CarinaClient(path, timeout=.5)
+            cancelled = threading.Event(); cancelled.set()
+            with self.assertRaises(InterruptedError):
+                list(CarinaThread(client, {"session_id": "s"}).run_streamed("go", cancel=cancelled, poll_interval=.001))
+            client.close()
+        self.assertEqual(methods, ["session.events.stream", "task.submit", "task.cancel", "session.events.unsubscribe"])
+
+    def test_concurrent_run_streamed_routes_by_session_and_cleans_up(self) -> None:
+        methods: list[tuple[str, str]] = []
+        def handler(request: dict[str, Any], conn: socket.socket) -> None:
+            params=request.get("params",{});session=params.get("session_id","");result:Any={}
+            if request["method"]=="session.events.stream":result={"subscription_id":"sub-"+session}
+            elif request["method"]=="task.submit":result={"task_id":"task-"+session,"session_id":session,"status":"queued"}
+            elif request["method"]=="task.result":
+                session=params["task_id"].removeprefix("task-");conn.sendall(json.dumps({"jsonrpc":"2.0","method":"event","params":{"session_id":session,"task_id":params["task_id"],"type":"ModelResponded"}}).encode()+b"\n");result={"task_id":params["task_id"],"session_id":session,"status":"completed","summary":session}
+            elif request["method"]=="session.events.unsubscribe":session=params["subscription_id"].removeprefix("sub-")
+            methods.append((request["method"],session));conn.sendall(json.dumps({"jsonrpc":"2.0","id":request["id"],"result":result}).encode()+b"\n")
+        with daemon_server(handler) as path:
+            client=CarinaClient(path,timeout=.5);results:dict[str,list[dict[str,Any]]]={}
+            def consume(session:str)->None:results[session]=list(CarinaThread(client,{"session_id":session}).run_streamed("go",poll_interval=.001))
+            workers=[threading.Thread(target=consume,args=(session,)) for session in ("s1","s2")]
+            for worker in workers:worker.start()
+            for worker in workers:worker.join(timeout=2)
+            client.close()
+        self.assertTrue(all(not worker.is_alive() for worker in workers));self.assertEqual(results["s1"][0]["event"]["session_id"],"s1");self.assertEqual(results["s2"][0]["event"]["session_id"],"s2");self.assertIn(("session.events.unsubscribe","s1"),methods);self.assertIn(("session.events.unsubscribe","s2"),methods)
+
+    def test_session_listener_preserves_other_notifications(self) -> None:
+        client=CarinaClient("/unused");listener=client._add_session_listener("s1");client._dispatch_notification("event",{"session_id":"s2","type":"Other"});client._dispatch_notification("event",{"session_id":"s1","type":"Mine"});self.assertEqual([event["type"] for event in client._drain_session_listener(listener)],["Mine"]);self.assertEqual(client.read_notification()[1]["session_id"],"s2");self.assertEqual(client.read_notification()[1]["session_id"],"s1");client._remove_session_listener(listener)
 
     def test_disconnect_fails_pending_call(self) -> None:
         def handler(_request: dict[str, Any], conn: socket.socket) -> None:

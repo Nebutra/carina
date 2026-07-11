@@ -39,8 +39,10 @@ type Client struct {
 
 	// notifications receives server-initiated messages (method calls
 	// without a request id), e.g. streamed events. May be nil.
-	notifyMu sync.Mutex
-	onNotify func(method string, params json.RawMessage)
+	notifyMu        sync.Mutex
+	onNotify        func(method string, params json.RawMessage)
+	nextListenerID  uint64
+	notifyListeners map[uint64]func(method string, params json.RawMessage)
 }
 
 func Dial(socketPath string) (*Client, error) {
@@ -66,7 +68,7 @@ func DialTCP(addr string) (*Client, error) {
 // defaultCallTimeout).
 func NewClient(w io.Writer, r io.Reader, closer io.Closer) *Client {
 	reader := bufio.NewReaderSize(r, 1<<20)
-	c := &Client{w: w, r: reader, closer: closer}
+	c := &Client{w: w, r: reader, closer: closer, notifyListeners: make(map[uint64]func(string, json.RawMessage))}
 	if ds, ok := r.(deadlineSetter); ok {
 		c.deadlineSet = ds
 	}
@@ -99,6 +101,40 @@ func (c *Client) OnNotify(fn func(method string, params json.RawMessage)) {
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
 	c.onNotify = fn
+}
+
+// AddNotificationListener registers an independent notification listener and
+// returns an idempotent cancellation function. Unlike OnNotify, listeners do
+// not replace each other, so concurrent SDK streams can safely coexist.
+// Listeners run synchronously in wire order and must return promptly; they must
+// not call back into Client.Call, which owns the connection read lock.
+func (c *Client) AddNotificationListener(fn func(method string, params json.RawMessage)) func() {
+	if fn == nil {
+		return func() {}
+	}
+	c.notifyMu.Lock()
+	c.nextListenerID++
+	id := c.nextListenerID
+	c.notifyListeners[id] = fn
+	c.notifyMu.Unlock()
+	var once sync.Once
+	return func() { once.Do(func() { c.notifyMu.Lock(); delete(c.notifyListeners, id); c.notifyMu.Unlock() }) }
+}
+
+func (c *Client) dispatchNotification(method string, params json.RawMessage) {
+	c.notifyMu.Lock()
+	legacy := c.onNotify
+	listeners := make([]func(string, json.RawMessage), 0, len(c.notifyListeners))
+	for _, fn := range c.notifyListeners {
+		listeners = append(listeners, fn)
+	}
+	c.notifyMu.Unlock()
+	if legacy != nil {
+		legacy(method, params)
+	}
+	for _, fn := range listeners {
+		fn(method, params)
+	}
 }
 
 // Call performs a single request/response round trip. result may be nil.
@@ -154,11 +190,8 @@ func (c *Client) Call(method string, params any, result any) error {
 		}
 		// Notification: no id, has method.
 		if len(resp.ID) == 0 || string(resp.ID) == "null" {
-			c.notifyMu.Lock()
-			fn := c.onNotify
-			c.notifyMu.Unlock()
-			if fn != nil && resp.Method != "" {
-				fn(resp.Method, resp.Params)
+			if resp.Method != "" {
+				c.dispatchNotification(resp.Method, resp.Params)
 			}
 			continue
 		}
@@ -194,6 +227,7 @@ func (c *Client) ReadNotification() (string, json.RawMessage, error) {
 			continue
 		}
 		if (len(msg.ID) == 0 || string(msg.ID) == "null") && msg.Method != "" {
+			c.dispatchNotification(msg.Method, msg.Params)
 			return msg.Method, msg.Params, nil
 		}
 	}
