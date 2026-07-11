@@ -427,14 +427,46 @@ KiloCode source-review decisions are tracked separately in
   tested; wiring `checkEdited` to run before *and* after an edit (today only
   after) is a deferred one-line `agent.go` change pending that file clearing
   the in-flight-work blocklist below.
-- **Everything else deferred or rejected**: every other Cline and Codebuff
-  candidate mechanism evaluated in this wave resolved to `defer`, `reject`,
-  or `already_done` against ground truth — most because the only integration
-  seam sits inside `go/daemon/agent.go`/`go/daemon/daemon.go`, both carrying
-  large in-flight, unrelated diffs this session. Full per-item verification,
-  reasoning, and verdicts live in `docs/research/cline-absorption.md` and
-  `docs/research/codebuff-absorption.md`; the deferred and rejected items are
-  carried below under Remaining.
+- **Tightened loop detection** (`go/daemon/transcript.go`, `agent.go`,
+  `subagent.go`, commit `b6051dd`): `action.signature()` replaces
+  `LoopGuard`'s hand-picked 5-field fingerprint with a canonical JSON-hash
+  over every parameter field except free-form `Thought`, plus a cumulative
+  `MaxHardRepeat` mistake counter (`LoopGuard.observe`/`hardStop`) so a model
+  rotating between several repeated actions still trips a hard stop and
+  degrades, wired consistently into both the main and subagent loops.
+- **Consecutive-failure circuit breaker** (`go/daemon/tool_lifecycle.go`,
+  `agent.go`, `subagent.go`, commit `694e3cc`): `MistakeTracker` degrades a
+  task after `MaxConsecutive` (default 3) non-`"completed"` tool outcomes in
+  a row, independent of `LoopGuard`'s identical-action fingerprinting —
+  catches a model rotating across several *different* failing tool calls.
+- **Path-keyed stale-read elision** (`go/daemon/transcript.go`, `agent.go`,
+  `subagent.go`, commit `38ba80e`): `Transcript.supersedeStaleReads` elides
+  an earlier, non-pinned read of the same path when a new turn re-reads it,
+  reusing the existing age-based elision fields keyed on path identity
+  instead of turn age.
+- **Two-tier urgent/normal steering mailbox** (`go/daemon/daemon.go`,
+  `ecosystem.go`, commit `1281f76`): `task.steer` gained a `priority` param
+  and a `taskMailbox` with urgent/normal FIFO tiers (urgent always drained
+  first); channel-driven external events (e.g. CI failures) now preempt
+  queued routine steering via `steerUrgent`.
+- **Head+tail-aware artifact preview truncation** (`go/artifact/store.go`,
+  `go/daemon/tool_lifecycle.go`, commit `a8be846`): `makePreview()` now keeps
+  both ends of an oversized tool/command output (head + tail + an "N bytes
+  omitted" marker) instead of a head-only cut, completing the artifact-store
+  wiring `mid_truncation` had scoped; `finishToolCall` wires `PreviewBytes`
+  into the existing `Store.Put` call and surfaces a boolean
+  `artifact_truncated` flag without leaking raw preview text into the
+  audited tool-lifecycle payload.
+- **Everything else deferred or rejected**: the remaining Cline and Codebuff
+  candidate mechanisms evaluated in this wave resolved to `defer`, `reject`,
+  or `already_done` against ground truth — the two still open
+  (`agentic_summary_template`, `mode_switch_notice`) remain blocked because
+  their only integration seam sits inside `go/daemon/agent.go`/
+  `go/daemon/daemon.go`/`go/daemon/subagent.go`, which have carried a
+  recurring pattern of large in-flight, unrelated diffs across every attempt
+  so far. Full per-item verification, reasoning, and verdicts live in
+  `docs/research/cline-absorption.md` and `docs/research/codebuff-absorption.md`;
+  the deferred and rejected items are carried below under Remaining.
 
 ## ✅ Remaining
 
@@ -465,27 +497,24 @@ KiloCode source-review decisions are tracked separately in
 - OpenSquilla-style implicit single-process backpressure and debug logs were
   intentionally not absorbed. Carina now has explicit TTL/seq backpressure and
   a local-only non-authoritative debug side-channel instead.
-- Cline items reviewed and adopted-in-principle but deferred pending a clean
-  (non-dirty) seam in `go/daemon/agent.go` / `go/daemon/transcript.go` /
-  `go/daemon/daemon.go`: path-keyed stale-read elision, artifact-store
-  head+tail truncation wiring, pre/post-edit diagnostics diffing with a
-  line-shift-tolerant match key, a consecutive-failure `MistakeTracker`,
-  tightened `LoopGuard` signature/threshold, dual-threshold char-based
-  compaction trigger, structured agentic summary template, and mode-switch
-  notice injection via the existing steer mailbox. Cline's diff-error
-  three-tier escalation text and its fuzzy SEARCH/REPLACE patch-matching
-  cascade were intentionally rejected as mismatched to Carina's full-file
-  patch design and prior "no permissive fuzzy edits" precedent. Steer-vs-queue
-  priority delivery was reviewed and deferred for the same dirty-file reason.
-  Full per-item verification and reasoning: `docs/research/cline-absorption.md`.
+- Cline items reviewed and adopted-in-principle but still deferred pending a
+  clean (non-dirty) seam in `go/daemon/agent.go` / `go/daemon/daemon.go` /
+  `go/daemon/subagent.go`: a structured agentic summary template, and
+  mode-switch notice injection via the existing (now two-tier) steer mailbox.
+  Cline's diff-error three-tier escalation text and its fuzzy SEARCH/REPLACE
+  patch-matching cascade were intentionally rejected as mismatched to
+  Carina's full-file patch design and prior "no permissive fuzzy edits"
+  precedent. Full per-item verification and reasoning:
+  `docs/research/cline-absorption.md`.
 - Codebuff items reviewed: symbol-importance code-map scoring was found
   already present via PageRank in `crates/carina-index/src/repomap.rs` and
-  needs no absorption. Context-pruner dual-trigger pruning, subagent-level
-  checkpoint rewind, and Best-of-N generation with a selector were reviewed
-  and deferred — each is architecturally compatible and roadmapped, but
-  requires either a clean seam in currently-dirty `go/daemon/agent.go` or
-  further multi-file design work (subagent resume/RPC session scoping;
-  audited parallel fan-out) before landing. Full per-item verification and
+  needs no absorption. Token-triggered context-pruning was implemented and
+  tested green this pass but reverted rather than committed after
+  `go/daemon/daemon.go` turned dirty with unrelated concurrent work
+  mid-attempt — ready to re-land as-is. Subagent-level checkpoint rewind and
+  Best-of-N generation with a selector remain deferred on further multi-file
+  design work (subagent resume/RPC session scoping; audited parallel
+  fan-out) rather than on a dirty-file seam. Full per-item verification and
   reasoning: `docs/research/codebuff-absorption.md`.
 
 ## Test status

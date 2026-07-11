@@ -16,11 +16,77 @@ kernel, and append-only audit log as the single authority.
   Standalone algorithm landed and tested; behavioral wiring (calling it before
   *and* after an edit) is a one-line `agent.go` change, still deferred — see
   below.
+- **Tightened loop detection** (`loop_detection`, `go/daemon/transcript.go`,
+  `go/daemon/agent.go`, `go/daemon/subagent.go`, commit `b6051dd`). Once
+  `agent.go`/`daemon.go`/`subagent.go` returned to a clean base, the design
+  sketched below landed as written: `action.signature()` replaces the
+  hand-picked 5-field fingerprint with a canonical JSON-hash over every
+  parameter field except free-form `Thought`, and `LoopGuard` gained a
+  cumulative `MaxHardRepeat` mistake counter (`observe`/`hardStop`) so a
+  model rotating between several repeated actions still trips a hard stop
+  even when no single signature crosses the soft-nudge threshold. Wired into
+  both the main loop and the subagent loop, calling `d.degrade(...)` once
+  hard-stopped, avoiding the inconsistent half-measure this doc warned
+  against. Tests: `TestLoopGuardHardRepeatedTripsOnSingleSignature`,
+  `TestLoopGuardHardRepeatedTripsAcrossRotatingSignatures`,
+  `TestLoopGuardHardRepeatDisabledWhenZero`,
+  `TestActionSignatureCanonicalAcrossAllFields`,
+  `TestActionSignatureExcludesThought`, `TestActionSignatureIncludesActions`,
+  `TestActionSignatureStableAndDeterministic`,
+  `TestActionSignatureIncludesBatchPayloadButNotThought`, and an end-to-end
+  `TestLoopHardStopDegradesBeforeMaxTurns`.
+- **Consecutive-failure circuit breaker** (`mistake_tracker`,
+  `go/daemon/tool_lifecycle.go`, `go/daemon/agent.go`, `go/daemon/subagent.go`,
+  commit `694e3cc`). `MistakeTracker` mirrors `LoopGuard`'s shape: it counts
+  consecutive non-`"completed"` `toolExecutionOutcome` statuses and degrades
+  once the streak crosses `MaxConsecutive` (default 3), catching a model
+  rotating across several *different* failing tool calls — orthogonal to
+  `LoopGuard`, which only fires on identical repeated actions. The blocker
+  this doc identified (`executeAction` narrowing the outcome to a display
+  `string` before it reached `runLoop`) was fixed additively: the existing
+  body moved into a new sibling `executeActionOutcome`, leaving
+  `executeAction`'s signature and ~90 existing call sites untouched. Wired
+  into both the main and subagent loops. Tests: 8 new cases in
+  `mistake_tracker_test.go`, including two end-to-end integration tests using
+  the `newLoopDaemon`/`scriptedReasoner` harness.
+- **Read-path dedup for stale re-reads** (`stale_read_dedup`,
+  `go/daemon/transcript.go`, `go/daemon/agent.go`, `go/daemon/subagent.go`,
+  commit `38ba80e`). `Transcript.supersedeStaleReads`, called from `addTurn`
+  whenever the new turn carries a `Path`, elides any earlier non-pinned,
+  not-yet-elided turn that read the identical path — the same
+  `Observation.Elided`/`OriginalSHA256` mechanism `compact()`'s age-based
+  elision already uses, keyed on path identity instead of turn age. Wired at
+  the `"read"`-tool `addTurn` call sites in both loops; search/list/batch
+  results are untouched since they aren't identified by one stable path.
+  Four new tests in `transcript_test.go` cover basic supersede-with-hash,
+  path-scoping, pinned/path-less immunity, and no double-processing of an
+  already-elided turn.
+- **Steer-vs-queue delivery priority** (`steer_vs_queue_priority`,
+  `go/daemon/daemon.go`, `go/daemon/ecosystem.go`, commit `1281f76`). A new
+  `taskMailbox` (urgent/normal `[]string` tiers, urgent always drained first,
+  FIFO within each tier) plus a fail-closed `steerPriority`/
+  `parseSteerPriority` and a `priority` param on `task.steer`. The existing
+  `steer()` remains a normal-priority convenience wrapper so unrelated call
+  sites are unaffected. `ecosystem.go`'s channel-event call site now uses
+  `steerUrgent` so external events (e.g. CI failures) preempt queued routine
+  steering for a running task. 6 new tests in `steering_test.go`.
+- **Mid-command-output truncation, head+tail preserved** (`mid_truncation`,
+  `go/artifact/store.go`, `go/daemon/tool_lifecycle.go`, commit `a8be846`).
+  `makePreview()` now builds a genuine head+tail preview (head slice + tail
+  slice joined by an "N bytes omitted" marker; line-budget split
+  ceil-biased to head, byte-budget split evenly) instead of pure head-only
+  truncation, completing the artifact-store wiring this doc said was the
+  correct integration surface. `finishToolCall` now passes `PreviewBytes`
+  (reusing `transcript.go`'s `ToolOutputMax`) into its existing `Store.Put`
+  call and surfaces a boolean `artifact_truncated` output flag; the raw
+  preview text is deliberately kept out of the audited `ToolCallCompleted`
+  payload (`safeOutputMetadata`'s hash-only redaction stays load-bearing) —
+  the full preview is reachable via the existing `handleArtifactRead` RPC.
+  5 new tests across `store_test.go` and `tool_lifecycle_test.go`.
 
 Everything else from this review either mismatches carina's architecture,
-contradicts a prior rejection, or lacked a clean (non-dirty-blocklisted)
-integration seam at review time. See Deferred below for the items with real
-value once their seam clears.
+contradicts a prior rejection, or still lacks a clean (non-dirty-blocklisted)
+integration seam. See Deferred below for the two items still parked.
 
 ## Deliberately Rejected
 
@@ -50,137 +116,19 @@ value once their seam clears.
 
 ## Deferred
 
-Every remaining candidate from this review has real value but was blocked on
-one of two grounds: no clean (non-dirty) file seam existed at review time, or
-the design as reviewed needed revision before it was safe to land. None of
-these are rejections — they are scoped for a follow-on pass once the relevant
-files settle, matching the `absorption-status.md` Wave 13–16 pattern where
-"follow-on phases remain separate" rather than abandoned. Two of the
-design-revision items have since been fixed and landed standalone (see below,
-and Absorbed above); the rest remain open.
+Two candidates remain open. Both are architecturally accepted — extensions of
+already-adopted patterns, no fail-closed or kernel-authority concern — but
+still need a clean, reviewable window in `go/daemon/agent.go` /
+`go/daemon/daemon.go` / `go/daemon/subagent.go` to wire in. This is now the
+third documented attempt for both; the repo's dirty-file churn during this
+absorption effort has consistently outpaced single-item wiring passes, so
+each attempt below is condensed to current status rather than re-narrated in
+full — see git history on this file for the earlier blow-by-blow accounts if
+needed.
 
-**Blocked on dirty-file seam (`go/daemon/agent.go`, `go/daemon/daemon.go`)**
-
-`agent.go` carried a large in-flight diff this session (154 insertions / 34
-deletions, plus new `tool_lifecycle.go` / `artifact_rpc.go`), and
-`daemon.go` is on the same dirty blocklist. Six candidates need a wiring
-change inside one of these two files and therefore stay parked until the file
-returns to a clean, reviewable base:
-
-A follow-on wiring pass was attempted and blocked again on the same seam,
-this time by a substantially larger concurrent wave: `git status --short`
-showed `agent.go`, `daemon.go`, and `subagent.go` all modified with a
-coherent, unrelated diff (new `runTaskContext`/`resumeTaskContext`/
-`runLoopContext` context-cancellation plumbing, a new `lifecycleCallID` field
-on the `action` struct, a new `go/runtimecontract` import), and `git diff
---stat` across the repo showed 78 files changed (2751-2906 insertions / ~206-
-211 deletions depending on the exact moment sampled) spanning
-`apps/carina-cli`, `crates/*`, `go/artifact`, `go/rpc`, `go/scheduler`,
-`go/toolchain`, `go/tui`, `sdk/*`, `integrations/*`, `packaging/npm`, CI
-workflow files, and more — consistent with a large concurrent process
-actively sweeping the tree, not a stale leftover. `HEAD` was confirmed at
-`30fefdc` (docs-only) with no intervening commit explaining the dirty state.
-One item (`loop_detection`) got far enough to add a canonical
-`actionSignature()` + `hardStop()` to the clean `transcript.go` before the
-concurrent wave was detected mid-edit into `agent.go`; that edit never
-applied (the `Edit` call errored before writing), and the `transcript.go`
-change was reverted via `git checkout --` to leave zero attributable diff.
-The other five items stopped before making any edits. Re-run once
-`agent.go`/`daemon.go`/`subagent.go` are confirmed clean (or carry only this
-run's own edits) — see each item's note below for what was inspected this
-time.
-
-- **Read-path dedup for stale re-reads** (`stale_read_dedup`). The narrow,
-  useful slice of Cline's mechanism — supersede a repeated read of the same
-  path within a `Transcript` with an elision placeholder, reusing the
-  existing `Observation.Elided`/`OriginalRef`/`OriginalSHA256` fields — is
-  real incremental value analogous to `compact()`'s existing age-based
-  elision, just keyed on path identity instead of turn age. Cline's other
-  half, batching stale rewrites until ~65KB to protect an incrementally
-  extending KV-cache prefix, does not transplant: carina's `CacheBreakpoint`
-  only covers system+task, and the transcript (all reads included) is already
-  fully in the volatile suffix re-encoded every turn, so there is no rolling
-  cache-invalidation problem to protect against. The blocker is that the only
-  integration point — tracking "this turn was a read of path X" — is
-  `agent.go`'s `addTurn` call sites (~lines 412-437), inside the dirty diff.
-  **Re-attempted and re-blocked**: stopped before any edit. The task's premise
-  that the earlier wave "has since been reverted to a clean base" did not
-  hold — `git status --short` showed all three files still modified, and
-  `git diff --stat` showed 78 files changed (2751 insertions / 206 deletions)
-  across `apps/carina-cli`, `crates/*`, `go/artifact`, `go/daemon/*`, `go/rpc`,
-  `go/tui`, `integrations/*`, `sdk/*`, `protocol/*`, `packaging/npm`, and
-  `scripts`. Inspecting `agent.go`'s diff directly confirmed substantive,
-  unrelated work (context-cancellation plumbing: `runTaskContext`/
-  `runLoopContext`, a new `go/runtimecontract` import, `lifecycleCallID` on
-  `action`) not attributable to any earlier item this run (commit log ends at
-  clean docs commit `30fefdc`). No files created, edited, staged, or
-  committed.
-
-- **Consecutive-failure circuit breaker** (`mistake_tracker`). The signal
-  already exists as `toolExecutionOutcome.status`
-  (`go/daemon/tool_lifecycle.go:20-42`), computed in `dispatchActionOutcome`,
-  but `executeAction` narrows its return type to a display `string`
-  (`agent.go:595,618`) before the status reaches `runLoop`, the only place a
-  per-turn tracker could consume it. The standalone tracker struct is a
-  trivial, fully unit-testable addition directly analogous to the
-  already-adopted `LoopGuard` and `compactionCircuitBreaker` shapes — no
-  architectural objection — but `runLoop`'s action-dispatch section
-  (`agent.go` ~lines 424-437) is interleaved with in-progress `LoopGuard`/
-  `guard.tick()`/checkpoint edits in the current diff.
-  **Re-attempted and re-blocked**: stopped before any edit. `git status
-  --short` showed `agent.go` (+134/-…), `daemon.go` (+105/-8), and
-  `subagent.go` (+29/-8) all modified with a coherent ~232-line diff
-  introducing `runTaskContext`/`resumeTaskContext`/`runLoopContext`, a new
-  `errors` import, a new `go/runtimecontract` import, and `lifecycleCallID` on
-  `action` — not the reverted-to-clean state the task description assumed,
-  and not produced by this item (zero edits were made before the check ran).
-  `git log` shows no intervening commit explaining the dirty state past
-  `30fefdc`. Recommend re-running once `agent.go`/`daemon.go`/`subagent.go`
-  are confirmed clean.
-
-- **Tightened loop detection** (`loop_detection`, partially present).
-  `LoopGuard` (`go/daemon/transcript.go:184-211`) already does soft-nudge-at-3
-  with a tested fingerprint+stall detector (`TestLoopGuardRepeatAndStall`)
-  wired into both the main and subagent loops. Cline adds a canonicalized
-  full-param signature (vs. five hand-picked fields) and a second hard
-  threshold with mistake-count bookkeeping. The signature/struct improvement
-  could land standalone in the clean `transcript.go`, but the call sites that
-  would consume a hard-threshold signal — `guard.repeated(...)`, the
-  nudge-vs-degrade branch — sit in `agent.go` ~lines 391-432, inside the dirty
-  diff (`newLoopGuard()` itself is inside a dirty hunk). `subagent.go`'s call
-  sites are clean, but shipping a hard interrupt only for subagents and not
-  the primary loop would be an inconsistent half-measure, worse than not
-  shipping. Existing soft-nudge + `stalled()`/`MaxTurns` already bound
-  worst-case damage, so this is real polish, not an urgent gap-fill.
-  **Re-attempted and re-blocked, furthest of the six this round**: the
-  initial dirty-blocklist check passed (blocklist matched exactly;
-  `agent.go`/`daemon.go`/`subagent.go` clean), so work began — a canonical
-  `actionSignature()` + `hardStop()` mistake-bookkeeping landed in the clean
-  `transcript.go` (mirroring the design sketch above), and wiring began into
-  `agent.go`'s loop-safety block (`action.signatureParams()` plus a hard-stop
-  degrade branch). Mid-edit, the harness reported `agent.go` "modified since
-  read" by something other than this item; re-reading showed the large,
-  unrelated `runTaskContext`/`lifecycleCallID`/`go/runtimecontract` wave
-  described in the section intro had landed concurrently, and `daemon.go`/
-  `subagent.go` had also gone dirty along with ~70 other files repo-wide. The
-  `agent.go` edit never applied (the `Edit` call errored pre-write, so
-  `agent.go` on disk only ever held the concurrent wave's content), so the
-  only revert needed was `git checkout -- go/daemon/transcript.go`; confirmed
-  clean afterward via `git status --short`. No files were created, so no
-  `git clean` was needed. Design notes for the retry: `LoopGuard.repeated`
-  currently hand-picks 5-6 action fields per call site (`agent.go`'s
-  single-action branch, `subagent.go`'s narrower 4-field one); fix is a
-  JSON-marshal-based canonical signature over all non-`Thought`/non-`Actions`
-  parameter fields (`Thought` must stay excluded — free-form reasoning text
-  would let a stuck model dodge detection by rephrasing), plus a second
-  `MaxHardRepeat` threshold with a cumulative mistake counter on `LoopGuard`
-  so the hard stop can't be evaded by rotating between several repeated
-  actions. Wire `hardStop()` into `agent.go`'s nudge branch to call
-  `d.degrade(...)` instead of nudging again once hit, and update
-  `subagent.go`'s call site to the same canonical signature for consistency
-  (per this doc's warning against an inconsistent half-measure). Needs a
-  fresh re-read of all three files once the wave settles — do not trust line
-  numbers from this attempt.
+Five siblings that were parked alongside these two — `stale_read_dedup`,
+`mistake_tracker`, `loop_detection`, `steer_vs_queue_priority`, and
+`mid_truncation` — have since landed; see Absorbed above.
 
 - **Structured compaction summary template** (`agentic_summary_template`,
   partially present). `CompactionReceipt` (`transcript.go:55-63`) already
@@ -193,186 +141,71 @@ time.
   schema. Additive, does not touch the kernel. A standalone `SummaryContent`
   struct plus template/parse helper could land in a new file today, but it
   delivers zero behavioral value until wired into `agent.go`'s summarizer
-  call site — the wrong moment to stack onto an already-large in-flight diff.
-  **Re-attempted and re-blocked**: stopped before any edit per the
-  dirty-blocklist precondition. `git status --short` showed
-  `agent.go`/`daemon.go`/`subagent.go` all modified (`agent.go` adds a
-  `lifecycleCallID` field and `go/runtimecontract` import plus tool-call
-  lifecycle plumbing; `daemon.go` adds `taskContexts`/`taskCancels`/
-  `activeToolCalls` maps and a `runArtifactGC` background loop wired to
-  `d.artifacts`; `subagent.go` refactors `executeSpawn` into
-  `executeSpawnOutcome` with approval-escalation helpers) — corresponding to
-  the `go/artifact`, `go/runtimecontract`, and `go/daemon/tool_lifecycle.go`
-  work already untracked at session start. None of the three files are
-  committed (still `M` against `HEAD` `30fefdc`, docs-only), and their mtimes
-  were within seconds/minutes of the check, i.e. actively being written, not
-  a stale leftover from an earlier item in this run. No files created,
-  modified, staged, or committed.
+  call site.
+  **Status after three attempts**: blocked each time by `agent.go`/
+  `daemon.go`(/`subagent.go`) being dirty with unrelated concurrent work at
+  the moment of the precondition check — first a `runTaskContext`/
+  `lifecycleCallID`/`go/runtimecontract` context-cancellation wave, most
+  recently (this pass) a `lifecycleCallID` field plus tool-call lifecycle
+  plumbing in `agent.go`, new `taskContexts`/`taskCancels`/`activeToolCalls`
+  maps and a `runArtifactGC` loop in `daemon.go`, and an `executeSpawn` →
+  `executeSpawnOutcome` refactor in `subagent.go` — all with mtimes seconds
+  to minutes old, i.e. actively being written, not stale leftovers. Zero
+  edits made each time. Re-run once all three files are confirmed clean (or
+  carry only this run's own prior-item edits); the design above is still the
+  intended shape.
 
 - **Plan/Act mode-switch notice injection** (`mode_switch_notice`, partially
   present). Architecturally the same shape as the already-adopted "steer"
-  pattern (`agent.go:229-234`: mailbox drained at turn boundary, injected as
-  a pinned user turn) — this is extending an accepted pattern to a second
-  event source, not adopting a new mechanism, and it never touches
-  enforcement, only context legibility, so there's no fail-closed concern
-  blocking it on principle. Every touch point (`setPlanMode`/`isPlanMode`/
-  `handlePlanMode`/`handleApprovePlan`/`planMode` map at `daemon.go:1557-1610,
-  1860-1874`, and the turn-loop consumer at `agent.go:229-234,607-609`) sits
-  in the two dirty files, with mailbox/plan-mode state as private `*Daemon`
-  fields — no exported seam a new file could hook without editing either.
-  **Re-attempted and re-blocked**: stopped before any edit. The dirty-file
-  precondition required confirming `agent.go`/`daemon.go`/`subagent.go`
-  clean; instead `git status --short` showed all three modified
-  (`agent.go` +134/-…, `daemon.go` +121/-…, `subagent.go` +73/-…), and
-  `git diff HEAD --stat` showed 78 files changed repo-wide — a much larger
-  and different set than the documented known-dirty list (also touching
-  `apps/carina-cli/main.go`, `go/artifact/store.go`, `crates/carina-policy`,
-  `.github/workflows/{ci,release}.yml`, `sdk/go/client.go`,
-  `go/daemon/items.go`, `go/daemon/reasoner.go`,
-  `go/daemon/context_compression.go`). Inspecting `agent.go`'s diff confirmed
-  the same unrelated context-threading refactor (`runTaskContext`/
-  `resumeTaskContext`/`runLoopContext`, `go/runtimecontract` import,
-  `lifecycleCallID` field) seen on the other five items. No edits made,
-  nothing staged or committed; working tree left untouched.
-
-- **Steer-vs-queue delivery priority** (`steer_vs_queue_priority`, partially
-  present). Today there is exactly one delivery mode — unconditional append
-  to a per-task `[]string`, drained only at the next turn boundary
-  (`daemon.go:2020-2036`, `agent.go:222-234`) — with no priority field and no
-  mid-flight interruption anywhere in the codebase. Wave 5's
-  `absorption-status.md` claim ("redirect a running/background agent via
-  `task.steer`") matches the code exactly; this is an unbuilt enhancement, not
-  a broken promise. A real fix needs a two-tier mailbox touching the mailbox
-  struct, `steer()`, `drainMailbox()`, and turn-loop consumption — all in
-  `daemon.go`/`agent.go` — plus the `ecosystem.go` call site (also dirty)
-  choosing which channel to write into. A standalone `SteerPriority`
-  enum/policy type would sit inert and untestable-in-context until wired in.
-  **Re-attempted and re-blocked**: stopped before any edit. The task's premise
-  that the wave "has since been reverted back to a clean base" did not hold —
-  `git status --short` showed a 78-file, 2906-insertion/211-deletion
-  uncommitted diff spanning far more than the daemon package (`apps/
-  carina-cli`, `crates/carina-kernel`, `crates/carina-policy`, `go/artifact`,
-  `go/rpc`, `go/scheduler`, `go/toolchain`, `go/tui`, `sdk/go`, `sdk/python`,
-  `sdk/typescript`, `integrations/vscode`, `integrations/web`,
-  `packaging/npm`, protocol schema files, CI workflow files, docs), including
-  `agent.go`/`daemon.go`/`subagent.go` — exactly the files this item's
-  two-tier mailbox design would need to touch. `git log --oneline -3` showed
-  `HEAD` at `30fefdc`, confirming the dirty state is live uncommitted work,
-  not an intervening commit. No files read for editing, no edits made, no
-  commands run beyond `git status`/`log`/`diff`, nothing staged or committed.
-
-**Design-revision items — fixed and landed standalone (wiring still deferred)**
-
-Both items below were adversarially downgraded pending a design fix, not a
-dirty-file seam. The fix was S-sized and touched only clean files, so it
-landed immediately as its own commit; only the behavioral wiring into
-`agent.go` remains deferred.
-
-- **Pre/post-edit diagnostics diff** (`pre_post_diagnostics_diff`, **fixed,
-  landed as `1c778bf`**). The reviewed algorithm — exact-line-match set-diff
-  against diagnostics that embed absolute line numbers — was functionally
-  broken for the common case: any edit that shifts line count above a
-  pre-existing unrelated error would report that stale error as newly
-  introduced, the opposite of the goal (reproduced directly with `gofmt`).
-  `diagnosticsDelta(before, after)` in `go/daemon/diagnostics.go` now groups
-  checker output into blocks (`diagnosticBlocks`) and matches by message
-  content with the line/col location stripped (`diagnosticKey`), covering
-  gofmt/node's single-line and py_compile's multi-line
-  `File "...", line N` shapes; rustc's arrow-location line is deliberately
-  left as a continuation, not a block boundary, to avoid fragmenting one
-  diagnostic into two. Five new tests in `diagnostics_test.go` cover the
-  reproduced line-shift case, a genuinely new error, the Python multi-line
-  case, and the two empty-input edges. What's still deferred: calling
-  `checkEdited` before AND after an edit (today it only runs after) is a
-  one-line change at the `agent.go` call site — parked until that file is
-  off the in-flight-work blocklist.
-
-- **Dual-threshold compaction trigger formula** (`dual_threshold_compaction`,
-  **fixed, landed as `a817f21`**). The reviewed design was incomplete in a
-  way that mattered: it would have patched only one of `compact()`'s two
-  `MaxChars`-gated branches (`transcript.go`), leaving the other on stale
-  semantics — lowering the effective trigger would have caused
-  destructive-but-unreceipted elision to fire silently more often, undermining
-  the audit-completeness invariant the proposal claimed was untouched. Both
-  gates in `go/daemon/transcript.go`'s `compact()` now read a single
-  `triggerChars()` (`trigger = max(MaxChars-ReserveChars,
-  MaxChars*ThresholdRatio)`, mirroring a token-budget technique adapted to
-  carina's char-based policy), so the two gates cannot structurally drift
-  again. Default `ReserveChars=0`/`ThresholdRatio=0` reduces to exactly
-  today's `MaxChars` behavior — zero runtime change unless a caller opts in.
-  New tests cover the default no-op case, the dual-bound formula across
-  large/small/degenerate windows, and a regression test
-  (`TestCompactUsesConsistentTriggerAcrossBothGates`) that only passes if
-  both gates honor the same lowered trigger. Nothing further deferred here —
-  `triggerChars()` is real, live logic inside `compact()` today; only opting
-  a caller into non-default `ReserveChars`/`ThresholdRatio` values (a policy
-  choice, not a code change) remains open.
-
-**Blocked on both: a currently-half-built carina mechanism already covers the
-target problem**
-
-- **Mid-command-output truncation, head+tail preserved** (`mid_truncation`).
-  Not a new idea for carina — `absorption-plan.md:55-56` already scopes
-  "Tool-result disk offload... substitute a head+tail preview with a
-  `read_result` pagination signal" verbatim, and `go/artifact/store.go`
-  (untracked, new, tested via `store_test.go`) has already started this work
-  with `Store.Put`'s `PreviewBytes`/`PreviewLines` — except `makePreview()`
-  today is still pure head-only truncation (`raw[:end]`), so even the new
-  package hasn't yet delivered head+tail. Three call sites currently do
-  independent head-only cuts (`agent.go:1213` `truncate`, `transcript.go:88-
-  91` `addTurn`, and `artifact/store.go`'s `makePreview`), with `artifact_rpc.go`
-  exposing the store over RPC but not yet wired into `agent.go`'s
-  `CommandOutput`/transcript path. Landing an isolated head+tail patch on any
-  one of the three would very likely be obsoleted by the in-flight artifact-
-  offload wiring within the same wave — the correct integration surface, per
-  precedent set by `kilocode-absorption.md`'s already-adopted "content-
-  addressed tool-output artifacts... bounded reads" line, is finishing
-  `go/artifact.Store`'s wiring into `agent.go`'s `CommandOutput` path
-  (oversized output → `Store.Put` with a head+tail-aware `makePreview` →
-  transcript shows preview + pointer), not an ad hoc slice in `transcript.go`.
+  pattern (mailbox drained at turn boundary, injected as a pinned user turn)
+  — this is extending an accepted pattern to a second event source, not
+  adopting a new mechanism, and it never touches enforcement, only context
+  legibility, so there's no fail-closed concern blocking it on principle.
+  Every touch point (`setPlanMode`/`isPlanMode`/`handlePlanMode`/
+  `handleApprovePlan`/`planMode` map in `daemon.go`, and the turn-loop
+  consumer in `agent.go`) sits in the dirty files, with mailbox/plan-mode
+  state as private `*Daemon` fields — no exported seam a new file could hook
+  without editing either.
+  **Status after two attempts**: blocked each time on the same dirty-file
+  precondition as `agentic_summary_template` above (the two items share the
+  same blocking files and were checked together this pass); most recently
+  `agent.go`/`daemon.go`/`subagent.go` were all modified by the concurrent
+  wave described there. Zero edits made. Re-run once the same three files
+  clear; note the now-landed two-tier `steer_vs_queue_priority` mailbox
+  (`daemon.go`'s `taskMailbox`) is the pattern to extend for the second event
+  source, not the old single-tier mailbox this item's design was originally
+  sketched against.
 
 ## Trade-offs
 
-This review round absorbed two mechanisms outright (dual-threshold compaction
-trigger consistency, line-shift-tolerant diagnostics delta) — both needed a
-design fix the adversarial pass caught before they were safe to land, and
-both fixes were small enough (S-sized, clean files) to land the same session
-rather than sit in the queue behind the dirty-file blocker. Everything else
-with real value either (a) only integrates through `agent.go` or `daemon.go`,
-both mid-diff and dirty-blocklisted this session, or (b) targets a problem
-carina is already mid-solving with a different, half-built mechanism
-(artifact-backed truncation). Two mechanisms were rejected outright because
-they solve a failure mode (fuzzy anchor-matching in hunk-based patches) that
-carina's full-file-replacement-plus-hash-conflict patch model does not have
-and has already declined to introduce, per `kilocode-absorption.md`.
+This review round absorbed five previously-deferred mechanisms outright once
+`agent.go`/`daemon.go`/`subagent.go` returned to a clean, reviewable base:
+tightened loop detection (canonical action signature + cumulative hard-stop
+threshold), a consecutive-failure circuit breaker (`MistakeTracker`),
+path-keyed stale-read elision, a two-tier urgent/normal steering mailbox, and
+head+tail-aware artifact preview truncation (completing the
+`mid_truncation`/artifact-store integration this doc had previously called
+"blocked on both: a half-built carina mechanism already covers the target
+problem"). Combined with the two design-revision fixes from the prior pass
+(dual-threshold compaction trigger, line-shift-tolerant diagnostics delta),
+seven of the nine mechanisms this review found real value in are now landed.
+Two mechanisms were rejected outright because they solve a failure mode
+(fuzzy anchor-matching in hunk-based patches) that carina's
+full-file-replacement-plus-hash-conflict patch model does not have and has
+already declined to introduce, per `kilocode-absorption.md`.
 
-The lesson worth keeping: "blocked on design revision" and "blocked on dirty
-file" are different kinds of blockers and should be triaged differently. The
-former is often cheap to actually fix once identified (both fixes above were
-under 150 lines including tests); the latter is a genuine external
-constraint (a concurrent, unrelated wave actively committing to the same
-files) that no amount of design work resolves — only time and a stable base
-does.
-
-A follow-on wiring pass confirmed this the hard way: all six deferred items
-above were re-attempted, and all six re-blocked on the same seam, this time
-against a wave roughly an order of magnitude larger than the one first
-observed — 78 files changed repo-wide (~2750-2900 insertions) rather than
-`agent.go` alone. `loop_detection` got furthest (a real edit landed in the
-clean `transcript.go` before the concurrent wave was detected and the edit
-had to be reverted); the other five stopped at the precondition check with
-zero edits made. This is evidence *for*, not against, treating dirty-file
-blocks as a scheduling problem rather than a design problem — no amount of
-re-attempting made progress while the tree stayed in motion.
-
-The cost of deferring instead of forcing these in now is coordination debt,
-not lost value: standalone struct/policy code (loop-guard signature, mistake
-tracker, summary template, path-dedup policy) can be written and unit-tested
-in clean files today, but each delivers zero behavioral change until a
-follow-on commit wires it into the same handful of `agent.go`/`daemon.go`
-call sites once those files next come off the dirty blocklist. Bundling that
-wiring into one coherent pass, rather than six separate contentious edits to
-the busiest files in the tree, is worth the wait. The one exception —
-mid-truncation — has no standalone piece worth writing separately at all,
-since its outcome is fully subsumed by finishing the artifact-store wiring
-already in progress.
+The lesson from the earlier rounds held: "blocked on design revision" and
+"blocked on dirty file" are different kinds of blockers and should be
+triaged differently. The design-revision fixes were cheap once identified
+(both under 150 lines including tests) and landed the same session they were
+caught. The dirty-file blocks were a genuine external constraint — a
+concurrent, unrelated wave actively committing to `agent.go`/`daemon.go`/
+`subagent.go` — that no amount of design work resolved; only a wait for a
+stable base did, and once that base arrived, all five ready items landed in
+one coherent pass rather than six separate contentious edits, exactly as
+earlier attempts had planned. The two mechanisms still open
+(`agentic_summary_template`, `mode_switch_notice`) remain blocked on that
+same seam as of this pass — the wave has not been a one-time event but a
+recurring condition of this codebase's churn rate, so both should be
+re-attempted opportunistically rather than scheduled for a specific future
+session.

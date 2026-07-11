@@ -31,15 +31,16 @@ land against currently in-flight call sites.
 ## Deferred
 
 - **Token-triggered, tool-aware context pruning with 80/20 head+tail
-  truncation.** Carina already has a real, audited, tested compaction
-  pipeline — `transcript.go`'s `compact()` plus `context_compression.go`'s
-  `compressObservation()`, both wired from `agent.go` and `subagent.go`, with
-  a circuit breaker, pinned-observation protection, and hash-chained
-  compaction receipts. But none of codebuff's three specific mechanisms are
-  present: the trigger is a flat char budget (`MaxChars=24000`), not a
-  token count, and there is no 5-minute prompt-cache-expiry co-trigger
-  (`promptcache.go` is an unrelated stable-prefix/volatile-suffix split for
-  provider-side cost caching, not a pruning signal); truncation is head-only
+  truncation** (`context_pruner_agent`). Carina already has a real, audited,
+  tested compaction pipeline — `transcript.go`'s `compact()` plus
+  `context_compression.go`'s `compressObservation()`, both wired from
+  `agent.go` and `subagent.go`, with a circuit breaker, pinned-observation
+  protection, and hash-chained compaction receipts. But none of codebuff's
+  three specific mechanisms are present: the trigger is a flat char budget
+  (`MaxChars=24000`), not a token count, and there is no 5-minute
+  prompt-cache-expiry co-trigger (`promptcache.go` is an unrelated
+  stable-prefix/volatile-suffix split for provider-side cost caching, not a
+  pruning signal); truncation is head-only
   (`Content[:ToolOutputMax]+"...[truncated]"`), not an 80/20 head+tail split;
   and `contextengine.CompressRequest` carries `Tool`/`Kind` fields that are
   never branched on anywhere (zero call sites) — one uniform elision policy
@@ -51,11 +52,33 @@ land against currently in-flight call sites.
   verbatim-user + rebuild-with-key-files)" as an open Wave 2 item, so this is
   roadmapped, not newly discovered; the circuit-breaker and pinned-preservation
   pieces of that TODO are in fact already done, leaving only token-trigger and
-  rebuild-with-key-files genuinely open. The real trigger/dispatch call site
-  (`go/daemon/agent.go`, where `tr.compact` and `compressObservation` are
-  actually invoked per turn) is dirty right now, so any change that makes a
-  *behavioral* difference in the loop would land against a moving target.
-  Revisit once `agent.go`'s current changes land.
+  rebuild-with-key-files genuinely open. The head-only-vs-80/20 truncation
+  slice of this item is now further narrowed by `cline-absorption.md`'s
+  `mid_truncation`, which landed genuine head+tail preservation at the
+  artifact-preview layer (`go/artifact/store.go`'s `makePreview`, commit
+  `a8be846`) — the remaining gap here is specifically the transcript-level
+  token trigger, not head+tail truncation generally.
+  **Attempted once, blocked on a dirty-file seam appearing mid-edit**: the
+  initial precondition check passed (`transcript.go` clean, no dependency on
+  `agent.go`/`daemon.go` for the trigger logic itself), so a scoped
+  `CompactionPolicy.MaxTokens` field plus a `shouldCompact()` combiner
+  (char-trigger OR token-estimate-trigger, reusing `agent.go`'s existing
+  `estimateTokens()` helper; `MaxTokens=0` default is byte-identical to prior
+  behavior) was implemented and wired into both of `compact()`'s existing
+  gates, with 4 new tests added to `transcript_test.go` — all green
+  (`go build`, `go vet`, and a full targeted test run all passed). Before
+  committing, `go/daemon/daemon.go` — one of the files this pass's
+  precondition requires be clean or carry only this run's own prior-item
+  edits — was found modified by an unrelated concurrent approval-scope/
+  mailbox refactor (`approval.go`, `approval_scope_store.go`, `ecosystem.go`,
+  `user_question.go`), not attributable to any item in this run. Per the
+  dirty-file precondition, the edits were reverted via
+  `git checkout -- go/daemon/transcript.go go/daemon/transcript_test.go`
+  rather than committed against a moving target; both files confirmed
+  zero-diff afterward. The design above is validated (build/vet/test all
+  passed before the revert) and ready to re-land as-is once `daemon.go` and
+  siblings next present a clean, reviewable window — no rework needed, just
+  re-application.
 
 - **Agent-level (subagent) rewind.** `go/daemon/subagent.go`'s
   `runSubagentLoop` never calls `d.runs.saveCheckpoint`/`saveCheckpointChecked`,
@@ -112,20 +135,27 @@ on any conflict with carina's governance model.
 
 ## Trade-offs
 
-This review round shipped no code. Its value is in closing the loop on four
-candidates: one turned out to already be implemented (repo map symbol
-scoring, via PageRank rather than codebuff's formula, and now recorded so a
-future pass doesn't re-review it) and three are real, precedented, roadmapped
-items that are deliberately not being rushed. Token-triggered compaction and
-tool-aware truncation are deferred purely on timing — the call sites that
-would make the change behavioral (`go/daemon/agent.go`) are mid-flight-dirty,
-and landing there now risks reviewing against a moving target. Subagent-level
-rewind is deferred on scope — the storage half is a one-file addition, but the
-resume/RPC half requires a new control-flow primitive and deliberate
-session-boundary relaxation, which is multi-file design work that shouldn't
-be forced into this pass. Best-of-N is deferred on sequencing — it depends on
-parallel fan-out/join and evaluator-optimizer primitives that don't exist yet
-as audited infrastructure, and forcing it in early would mean either
-unbounded replica cost or a half-built selector with no bounded seam to gate
-it, both of which conflict with carina's "no unconditional concurrency
-without a kernel-gated seam" precedent.
+This review round has still shipped no codebuff-attributed code, but the
+picture has narrowed. Its value is in closing the loop on four candidates:
+one turned out to already be implemented (repo map symbol scoring, via
+PageRank rather than codebuff's formula, and now recorded so a future pass
+doesn't re-review it), one (tool-aware head+tail truncation) has effectively
+been subsumed by `cline-absorption.md`'s `mid_truncation` landing at the
+artifact-preview layer, and two are real, precedented, roadmapped items that
+are deliberately not being rushed. Token-triggered compaction is deferred
+purely on timing, and closer than it looks: a scoped implementation was
+actually written, tested green, and ready to commit this pass, but was
+reverted rather than landed because `go/daemon/daemon.go` — one of the files
+its dirty-blocklist precondition covers — turned dirty with unrelated
+concurrent work between the start of the attempt and the commit step. The
+design is validated and sitting ready for a clean re-application, not stuck
+on an open design question. Subagent-level rewind is deferred on scope — the
+storage half is a one-file addition, but the resume/RPC half requires a new
+control-flow primitive and deliberate session-boundary relaxation, which is
+multi-file design work that shouldn't be forced into this pass. Best-of-N is
+deferred on sequencing — it depends on parallel fan-out/join and
+evaluator-optimizer primitives that don't exist yet as audited
+infrastructure, and forcing it in early would mean either unbounded replica
+cost or a half-built selector with no bounded seam to gate it, both of which
+conflict with carina's "no unconditional concurrency without a kernel-gated
+seam" precedent.
