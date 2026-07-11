@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,10 +40,15 @@ type Installed struct {
 	InstalledAt  time.Time `json:"installed_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
+type InventoryEntry struct {
+	Installed
+	EffectiveEnabled bool   `json:"effective_enabled"`
+	EnableProvenance string `json:"enable_provenance"`
+}
 type Inventory struct {
-	Plugins           []Installed `json:"plugins"`
-	SafeMode          bool        `json:"safe_mode"`
-	TotalPromptTokens int         `json:"total_prompt_tokens"`
+	Plugins           []InventoryEntry `json:"plugins"`
+	SafeMode          bool             `json:"safe_mode"`
+	TotalPromptTokens int              `json:"total_prompt_tokens"`
 }
 type Marketplace struct {
 	mu             sync.Mutex
@@ -52,6 +56,7 @@ type Marketplace struct {
 	trustedRoots   []string
 	plugins        map[string]Installed
 	safeMode       bool
+	orgPolicy      OrgExtensionPolicy
 	runtimeVersion string
 }
 
@@ -132,6 +137,9 @@ func (m *Marketplace) SetEnabled(name string, on bool) (Installed, error) {
 	if on && m.safeMode {
 		return Installed{}, errors.New("extensions: safe mode disables all extensions")
 	}
+	if on && m.orgPolicy.disables(name) {
+		return Installed{}, ErrOrgDisabled
+	}
 	p.Enabled = on
 	p.UpdatedAt = time.Now().UTC()
 	m.plugins[name] = p
@@ -151,17 +159,7 @@ func (m *Marketplace) SetSafeMode(on bool) error {
 	return m.persistLocked()
 }
 func (m *Marketplace) Inventory() Inventory {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := Inventory{SafeMode: m.safeMode}
-	for _, p := range m.plugins {
-		out.Plugins = append(out.Plugins, p)
-		if p.Enabled {
-			out.TotalPromptTokens += p.Manifest.EstimatedPromptTokens
-		}
-	}
-	sort.Slice(out.Plugins, func(i, j int) bool { return out.Plugins[i].Manifest.Name < out.Plugins[j].Manifest.Name })
-	return out
+	return m.InventoryForWorkspace(ProjectExtensionPolicy{})
 }
 func (m *Marketplace) dependenciesAvailable(man Manifest) error {
 	for _, d := range man.Dependencies {
