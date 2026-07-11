@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nebutra/carina/go/artifact"
 	carinajsonschema "github.com/Nebutra/carina/go/jsonschema"
 	"github.com/Nebutra/carina/go/kernel"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
@@ -334,6 +335,12 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		}
 		seg := buildPromptSegments(sysPrompt, task.UserPrompt, tr.render(),
 			"Respond with the next action as a single JSON object.")
+		// Vision delivery: if the task's model affirmatively declares image
+		// input in the provider catalog, resolve the transcript's live
+		// MediaRefs from the artifact store and attach them to this call.
+		// Text-only models (and requery fallbacks below) get placeholders
+		// only — collectRequestMedia is fail-closed on every lookup.
+		seg.Media = d.collectRequestMedia(sess.SessionID, task.Model, tr)
 		prompt := seg.full() // StablePrefix is cacheable across turns; suffix is volatile
 
 		// inner requery loop: malformed actions are re-asked without
@@ -584,6 +591,9 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		}
 		newTurn := Turn{Thought: act.Thought, Tool: act.Tool,
 			ActionBrief: briefAction(&act), Obs: compressedObs}
+		// Media produced by the tool rides the observation as refs only —
+		// display/compression above saw just the placeholder text.
+		newTurn.Obs.MediaRefs = outcome.mediaRefs
 		// Path-keyed stale-read dedup: a re-read of the same path this turn
 		// supersedes any earlier verbatim read of it (see
 		// Transcript.supersedeStaleReads). Scoped to "read" only — "search"/
@@ -878,6 +888,18 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 		}
 		d.record(sess.SessionID, "FileRead", task.TaskID, "go", map[string]any{"path": abs, "bytes": len(content)}, dec.DecisionID)
 		d.recordRead(sess.SessionID, act.Path, string(content))
+		// Image reads become MediaRefs: bytes go to the artifact store, the
+		// transcript gets only a placeholder line, and a vision-capable model
+		// receives the content via collectRequestMedia on the next turn. A
+		// failed ingest (store quota, oversized object) is an error result
+		// rather than binary dumped into the transcript.
+		if _, isImage := sniffImageMediaType(content); isImage {
+			ref, ierr := ingestImageMedia(d.artifacts, artifact.Scope{SessionID: sess.SessionID}, "read "+act.Path, content)
+			if ierr != nil {
+				return toolFailed("error: "+ierr.Error(), "io_error")
+			}
+			return toolCompletedMedia(ref.placeholder(), ref)
+		}
 		return toolCompleted(string(content))
 	case "search":
 		dec, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.TaskID)
@@ -968,6 +990,16 @@ func (d *Daemon) dispatchAction(sess *sessionstore.Session, task *scheduler.Task
 		d.record(sess.SessionID, "FileRead", task.TaskID, "go",
 			map[string]any{"path": abs, "bytes": len(content)}, dec.DecisionID)
 		d.recordRead(sess.SessionID, act.Path, string(content))
+		// Legacy string path (MCP server adapter): image bytes still go to
+		// the artifact store and the caller gets the placeholder — raw
+		// binary never flows out as a tool result string.
+		if _, isImage := sniffImageMediaType(content); isImage {
+			ref, ierr := ingestImageMedia(d.artifacts, artifact.Scope{SessionID: sess.SessionID}, "read "+act.Path, content)
+			if ierr != nil {
+				return "error: " + ierr.Error()
+			}
+			return ref.placeholder()
+		}
 		return string(content)
 
 	case "search":

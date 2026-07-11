@@ -49,6 +49,15 @@ type segmentedModelResultReasoner interface {
 	ThinkModelSegments(ctx context.Context, model, stablePrefix, volatileSuffix string) (ReasonerResult, error)
 }
 
+// mediaSegmentedReasoner is the capability-upgrade interface for reasoners
+// that can deliver image parts to the model (same optional-assertion pattern
+// as segmentedModelResultReasoner above). Reasoners that don't implement it
+// silently receive text only — the transcript already renders every MediaRef
+// as a textual placeholder, so degradation is graceful by construction.
+type mediaSegmentedReasoner interface {
+	ThinkModelSegmentsMedia(ctx context.Context, model, stablePrefix, volatileSuffix string, media []modelrouter.MediaPart) (ReasonerResult, error)
+}
+
 // retryBaseDelay is the initial backoff; overridable in tests.
 var retryBaseDelay = 2 * time.Second
 
@@ -108,14 +117,14 @@ func thinkWithRetryModelResult(ctx context.Context, r Reasoner, model, prompt st
 }
 
 func thinkWithRetryModelSegments(ctx context.Context, r Reasoner, model string, segments promptSegments) (ReasonerResult, error) {
-	return thinkWithRetrySegments(ctx, r, model, segments.full(), segments.StablePrefix, segments.VolatileSuffix)
+	return thinkWithRetrySegments(ctx, r, model, segments.full(), segments.StablePrefix, segments.VolatileSuffix, segments.Media...)
 }
 
-func thinkWithRetrySegments(ctx context.Context, r Reasoner, model, prompt, stablePrefix, volatileSuffix string) (ReasonerResult, error) {
-	return thinkWithRetryPolicy(ctx, r, model, prompt, stablePrefix, volatileSuffix, defaultRetryPolicy())
+func thinkWithRetrySegments(ctx context.Context, r Reasoner, model, prompt, stablePrefix, volatileSuffix string, media ...modelrouter.MediaPart) (ReasonerResult, error) {
+	return thinkWithRetryPolicy(ctx, r, model, prompt, stablePrefix, volatileSuffix, defaultRetryPolicy(), media...)
 }
 
-func thinkWithRetryPolicy(ctx context.Context, r Reasoner, model, prompt, stablePrefix, volatileSuffix string, policy retryPolicy) (ReasonerResult, error) {
+func thinkWithRetryPolicy(ctx context.Context, r Reasoner, model, prompt, stablePrefix, volatileSuffix string, policy retryPolicy, media ...modelrouter.MediaPart) (ReasonerResult, error) {
 	if policy.MaxAttempts < 1 {
 		policy.MaxAttempts = 1
 	}
@@ -141,7 +150,7 @@ func thinkWithRetryPolicy(ctx context.Context, r Reasoner, model, prompt, stable
 				return ReasonerResult{}, err
 			}
 		}
-		out, err := thinkOnceResult(ctx, r, model, prompt, stablePrefix, volatileSuffix)
+		out, err := thinkOnceResult(ctx, r, model, prompt, stablePrefix, volatileSuffix, media...)
 		if err == nil {
 			if governance != nil {
 				governance.observe(provider, providerErrorInfo{}, true)
@@ -235,7 +244,17 @@ func thinkOnce(ctx context.Context, r Reasoner, model, prompt string) (string, e
 	return result.Text, err
 }
 
-func thinkOnceResult(ctx context.Context, r Reasoner, model, prompt, stablePrefix, volatileSuffix string) (ReasonerResult, error) {
+func thinkOnceResult(ctx context.Context, r Reasoner, model, prompt, stablePrefix, volatileSuffix string, media ...modelrouter.MediaPart) (ReasonerResult, error) {
+	// Media-capable reasoners get the image parts alongside the segments.
+	// Everything below this block drops media silently — the transcript
+	// already carries a textual placeholder per MediaRef, so a text-only
+	// reasoner (claude-cli, scripted test reasoners) degrades gracefully.
+	if len(media) > 0 {
+		if mr, ok := r.(mediaSegmentedReasoner); ok {
+			result, err := mr.ThinkModelSegmentsMedia(ctx, model, stablePrefix, volatileSuffix, media)
+			return normalizeReasonerResult(result, err, r, model, prompt)
+		}
+	}
 	if stablePrefix != "" {
 		if sr, ok := r.(segmentedModelResultReasoner); ok {
 			result, err := sr.ThinkModelSegments(ctx, model, stablePrefix, volatileSuffix)
@@ -322,6 +341,18 @@ func (r *routerReasoner) ThinkModelSegments(ctx context.Context, model, stablePr
 	return r.complete(ctx, model, modelrouter.Request{
 		Model: model, Prompt: stablePrefix + volatileSuffix,
 		StablePrefix: stablePrefix, VolatileSuffix: volatileSuffix,
+	})
+}
+
+func (r *routerReasoner) ThinkModelSegmentsMedia(ctx context.Context, model, stablePrefix, volatileSuffix string, media []modelrouter.MediaPart) (ReasonerResult, error) {
+	prompt := stablePrefix + volatileSuffix
+	if prompt == "" {
+		prompt = volatileSuffix
+	}
+	return r.complete(ctx, model, modelrouter.Request{
+		Model: model, Prompt: prompt,
+		StablePrefix: stablePrefix, VolatileSuffix: volatileSuffix,
+		Media: media,
 	})
 }
 

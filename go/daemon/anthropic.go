@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -68,14 +69,19 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 	}
 	model, responseModel, override := a.resolveModel(req)
 	messages := any([]map[string]string{{"role": "user", "content": req.Prompt}})
-	if req.StablePrefix != "" {
-		messages = []map[string]any{{
-			"role": "user",
-			"content": []map[string]any{
-				{"type": "text", "text": req.StablePrefix, "cache_control": map[string]string{"type": "ephemeral"}},
-				{"type": "text", "text": req.VolatileSuffix},
-			},
-		}}
+	if req.StablePrefix != "" || len(req.Media) > 0 {
+		blocks := make([]map[string]any, 0, 2+len(req.Media))
+		if req.StablePrefix != "" {
+			blocks = append(blocks,
+				map[string]any{"type": "text", "text": req.StablePrefix, "cache_control": map[string]string{"type": "ephemeral"}},
+				map[string]any{"type": "text", "text": req.VolatileSuffix})
+		} else {
+			blocks = append(blocks, map[string]any{"type": "text", "text": req.Prompt})
+		}
+		// Image blocks go after the text so the cache_control breakpoint on
+		// the stable prefix is unaffected; media is inherently volatile.
+		blocks = append(blocks, anthropicImageBlocks(req.Media)...)
+		messages = []map[string]any{{"role": "user", "content": blocks}}
 	}
 	bodyMap := map[string]any{
 		"model":      model,
@@ -130,6 +136,26 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 		CacheReadTokens:  out.Usage.CacheReadTokens,
 		CacheWriteTokens: out.Usage.CacheCreationTokens,
 	}, nil
+}
+
+// anthropicImageBlocks encodes request media as Anthropic Messages API image
+// content blocks (base64 source). Empty media yields nil (no blocks).
+func anthropicImageBlocks(media []modelrouter.MediaPart) []map[string]any {
+	if len(media) == 0 {
+		return nil
+	}
+	blocks := make([]map[string]any, 0, len(media))
+	for _, m := range media {
+		blocks = append(blocks, map[string]any{
+			"type": "image",
+			"source": map[string]any{
+				"type":       "base64",
+				"media_type": m.MediaType,
+				"data":       base64.StdEncoding.EncodeToString(m.Data),
+			},
+		})
+	}
+	return blocks
 }
 
 func (a *anthropicProvider) resolveModel(req modelrouter.Request) (apiModel, responseModel string, override requestOverride) {

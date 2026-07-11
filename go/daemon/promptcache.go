@@ -1,6 +1,10 @@
 package daemon
 
-import "fmt"
+import (
+	"fmt"
+
+	modelrouter "github.com/Nebutra/carina/go/model-router"
+)
 
 // promptSegments splits an agent prompt into a stable prefix (system prompt +
 // task — byte-identical across every turn of a run) and a volatile suffix (the
@@ -10,6 +14,12 @@ import "fmt"
 type promptSegments struct {
 	StablePrefix   string
 	VolatileSuffix string
+	// Media carries image parts for vision-capable models this turn. It is
+	// NOT part of the cacheable prefix (adapters append image blocks after
+	// the text blocks, so the cache breakpoint is unaffected) and does not
+	// participate in full()/CacheBreakpoint math — media is request payload,
+	// not prompt text.
+	Media []modelrouter.MediaPart
 }
 
 // buildPromptSegments assembles the segments. closing is the trailing

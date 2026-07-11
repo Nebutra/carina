@@ -22,10 +22,19 @@ type toolExecutionOutcome struct {
 	display       string
 	status        string
 	errorCategory string
+	// mediaRefs carries content-addressed references to non-text payloads
+	// (images) the tool produced; display holds only their textual
+	// placeholders. The loop copies these onto the turn's Observation so a
+	// vision-capable model can receive the bytes on later turns.
+	mediaRefs []MediaRef
 }
 
 func toolCompleted(display string) toolExecutionOutcome {
 	return toolExecutionOutcome{display: display, status: "completed"}
+}
+
+func toolCompletedMedia(display string, refs ...MediaRef) toolExecutionOutcome {
+	return toolExecutionOutcome{display: display, status: "completed", mediaRefs: refs}
 }
 
 func toolFailed(display, category string) toolExecutionOutcome {

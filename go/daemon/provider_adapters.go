@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,6 +17,12 @@ import (
 )
 
 const providerHTTPTimeout = 120 * time.Second
+
+// mediaDataURI encodes one request media part as a data: URI, the shape the
+// OpenAI-style chat (image_url) and responses (input_image) APIs accept.
+func mediaDataURI(m modelrouter.MediaPart) string {
+	return "data:" + m.MediaType + ";base64," + base64.StdEncoding.EncodeToString(m.Data)
+}
 
 type providerBase struct {
 	id           string
@@ -219,10 +226,21 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 		return nil, err
 	}
 	model, responseModel, override := o.resolveModel(req)
+	content := any(req.Prompt)
+	if len(req.Media) > 0 {
+		parts := []map[string]any{{"type": "text", "text": req.Prompt}}
+		for _, m := range req.Media {
+			parts = append(parts, map[string]any{
+				"type":      "image_url",
+				"image_url": map[string]string{"url": mediaDataURI(m)},
+			})
+		}
+		content = parts
+	}
 	bodyMap := map[string]any{
 		"model":      model,
 		"max_tokens": 2048,
-		"messages":   []map[string]string{{"role": "user", "content": req.Prompt}},
+		"messages":   []map[string]any{{"role": "user", "content": content}},
 	}
 	mergeRawBody(bodyMap, o.body)
 	mergeRawBody(bodyMap, override.Body)
@@ -286,9 +304,20 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 		return nil, err
 	}
 	model, responseModel, override := o.resolveModel(req)
+	input := any(req.Prompt)
+	if len(req.Media) > 0 {
+		parts := []map[string]any{{"type": "input_text", "text": req.Prompt}}
+		for _, m := range req.Media {
+			parts = append(parts, map[string]any{
+				"type":      "input_image",
+				"image_url": mediaDataURI(m),
+			})
+		}
+		input = []map[string]any{{"role": "user", "content": parts}}
+	}
 	bodyMap := map[string]any{
 		"model":             model,
-		"input":             req.Prompt,
+		"input":             input,
 		"max_output_tokens": 2048,
 	}
 	mergeRawBody(bodyMap, o.body)
@@ -377,9 +406,18 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 	if err != nil {
 		return nil, err
 	}
+	parts := []map[string]any{{"text": req.Prompt}}
+	for _, m := range req.Media {
+		parts = append(parts, map[string]any{
+			"inline_data": map[string]string{
+				"mime_type": m.MediaType,
+				"data":      base64.StdEncoding.EncodeToString(m.Data),
+			},
+		})
+	}
 	bodyMap := map[string]any{
 		"contents": []map[string]any{{
-			"parts": []map[string]string{{"text": req.Prompt}},
+			"parts": parts,
 		}},
 		"generationConfig": map[string]any{"maxOutputTokens": 2048},
 	}

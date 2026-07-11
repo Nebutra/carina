@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Nebutra/carina/go/artifact"
+	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/provider"
 )
 
@@ -95,11 +97,80 @@ func (m MediaRef) placeholder() string {
 }
 
 // modelSupportsImageInput reports whether a catalog model declares "image"
-// among its input modalities. Deliberately NOT called from any live request
-// path yet: it exists so a future prompt-assembly change gates image content
-// per-turn BEFORE any provider I/O (fail-closed: nil/absent modalities means
-// no image support), instead of discovering mid-request that the model is
-// text-only. Reuses provider_registry.go's containsStringFold.
+// among its input modalities (fail-closed: nil/absent modalities means no
+// image support). This is the per-turn gate collectRequestMedia applies
+// BEFORE any provider I/O, so a text-only model never has image bytes
+// resolved, encoded, or transmitted on its behalf. Reuses
+// provider_registry.go's containsStringFold.
 func modelSupportsImageInput(m provider.Model) bool {
 	return m.Modalities != nil && containsStringFold(m.Modalities.Input, "image")
+}
+
+// Request media budget: at most 4 images totaling at most 4 MiB per model
+// call. Newest-first selection mirrors the transcript's own bias (recent
+// context wins); anything over budget stays placeholder-only. The caps are
+// deliberately conservative — provider limits are higher (Anthropic ~5 MB
+// per image), but every attached image is re-sent on EVERY subsequent turn
+// until the referencing turn is elided, so the real cost is per-turn, not
+// per-request.
+const (
+	maxRequestMediaParts = 4
+	maxRequestMediaBytes = 4 << 20
+)
+
+// catalogModelImageCapable resolves whether the task's model string refers to
+// a catalog entry that declares image input. The model string is the routing
+// form "provider/model..." (targetedModel splits on the first slash). Empty
+// or unresolvable model strings — the default-model path, bare model ids not
+// in the catalog, offline mocks — return false: media is only ever attached
+// when the model is explicitly known to accept it (fail-closed).
+func catalogModelImageCapable(cat provider.Catalog, model string) bool {
+	providerID, modelID, ok := strings.Cut(strings.TrimSpace(model), "/")
+	if !ok || providerID == "" || modelID == "" {
+		return false
+	}
+	info, ok := cat[providerID]
+	if !ok {
+		return false
+	}
+	m, ok := info.Models[modelID]
+	if !ok {
+		return false
+	}
+	return modelSupportsImageInput(m)
+}
+
+// collectRequestMedia walks the transcript newest-first and resolves the
+// MediaRefs a vision-capable model should receive this turn, reading bytes
+// back from the artifact store. Returns nil (attach nothing) when the model
+// is not affirmatively image-capable per the catalog, when the transcript
+// carries no live refs, or when the store no longer holds the content
+// (TTL/GC expiry) — in every such case the model still sees the textual
+// placeholder that render() already emits for each MediaRef. Elided
+// observations contribute nothing: elision means "removed from the model
+// view", and media follows the same rule.
+func (d *Daemon) collectRequestMedia(sessionID, model string, tr *Transcript) []modelrouter.MediaPart {
+	if d.artifacts == nil || tr == nil || !catalogModelImageCapable(d.providerCatalog, model) {
+		return nil
+	}
+	var parts []modelrouter.MediaPart
+	var total int64
+	for i := len(tr.Turns) - 1; i >= 0 && len(parts) < maxRequestMediaParts; i-- {
+		turn := tr.Turns[i]
+		if turn.Obs.Elided {
+			continue
+		}
+		for _, ref := range turn.Obs.MediaRefs {
+			if len(parts) >= maxRequestMediaParts || total+ref.Bytes > maxRequestMediaBytes {
+				break
+			}
+			raw, _, err := d.artifacts.Read(artifact.Scope{SessionID: sessionID}, ref.ArtifactID)
+			if err != nil {
+				continue // expired/GC'd: placeholder-only, never an error
+			}
+			parts = append(parts, modelrouter.MediaPart{MediaType: ref.MediaType, Data: raw})
+			total += int64(len(raw))
+		}
+	}
+	return parts
 }

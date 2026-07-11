@@ -16,6 +16,21 @@ type Request struct {
 	Prompt         string `json:"prompt"`
 	StablePrefix   string `json:"stable_prefix,omitempty"`
 	VolatileSuffix string `json:"volatile_suffix,omitempty"`
+	// Media carries image parts for vision-capable models. Raw bytes here,
+	// provider-specific encoding (base64 data URI vs source block) in each
+	// adapter. Callers are responsible for gating on the model's declared
+	// input modalities BEFORE attaching media; adapters that predate media
+	// support simply ignore the field, so a text-only path degrades to
+	// whatever textual placeholder the caller already put in the prompt.
+	Media []MediaPart `json:"media,omitempty"`
+}
+
+// MediaPart is one image attached to a request. MediaType is a sniffed,
+// allowlisted MIME type (image/png, image/jpeg, image/gif, image/webp);
+// Data is the raw bytes, never pre-encoded.
+type MediaPart struct {
+	MediaType string `json:"media_type"`
+	Data      []byte `json:"data"`
 }
 
 type Response struct {
