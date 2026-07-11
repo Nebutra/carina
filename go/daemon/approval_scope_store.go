@@ -237,17 +237,21 @@ func (d *Daemon) rememberApprovalGrant(sess *sessionstore.Session, dec *kernel.D
 	} else {
 		auditPayload["session_id"] = sess.SessionID
 	}
+	var cursor int
 	if err := d.approvalGrants.add(grant, func() error {
-		return d.kern.RecordEvent(sess.SessionID, "ToolApproved", "", "user", auditPayload, dec.DecisionID)
+		var err error
+		cursor, err = d.kern.RecordEventWithCursor(sess.SessionID, "ToolApproved", "", "user", auditPayload, dec.DecisionID)
+		return err
 	}); err != nil {
 		return err
 	}
 	d.events.Publish(sess.SessionID, map[string]any{
-		"session_id": sess.SessionID,
-		"type":       "ToolApproved",
-		"actor":      "user",
-		"timestamp":  time.Now().UTC().Format(time.RFC3339),
-		"payload":    auditPayload,
+		"session_id":           sess.SessionID,
+		"type":                 "ToolApproved",
+		"actor":                "user",
+		"timestamp":            time.Now().UTC().Format(time.RFC3339),
+		"payload":              auditPayload,
+		internalRawAuditCursor: cursor,
 	})
 	return nil
 }

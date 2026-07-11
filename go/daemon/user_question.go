@@ -110,12 +110,14 @@ func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.Task
 		"options":     options,
 		"timestamp":   time.Now().UTC().Format(time.RFC3339),
 	}
-	if err := d.kern.RecordEvent(sess.SessionID, "ToolRequested", task.TaskID, "go", map[string]any{
+	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "ToolRequested", task.TaskID, "go", map[string]any{
 		"status": "user_question_requested", "question_id": questionID, "request": ev,
-	}, ""); err != nil {
+	}, "")
+	if err != nil {
 		d.sched.SetStatus(task.TaskID, "running")
 		return toolFailed("ask_user error: persist request: "+err.Error(), "audit_persistence_error")
 	}
+	ev[internalRawAuditCursor] = cursor
 	d.events.Publish(sess.SessionID, ev)
 
 	timeout := d.approvalTimeout
