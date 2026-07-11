@@ -114,8 +114,8 @@ between local, Docker, VM, cloud, or organization infrastructure.
 
 This is good product architecture because execution placement is not smeared
 through the chat UI. It is a backend/workspace choice. Carina's daemon, worker,
-Gateway, SDK, and Nebutra boundary can express a stronger version of the same
-idea, but the concept is not yet equally visible in the UX.
+Gateway, SDK, Web System view, and Nebutra boundary express the same placement
+concept without coupling it to chat UX.
 
 ### 5. Context condensation
 
@@ -233,19 +233,17 @@ verification must be first-class, not hidden behind a generic event timeline.
 - Local and remote worker substrate.
 - Context condensation and cost/budget accounting.
 
-### Behind
+### Gaps addressed in the current scope
 
-- No formally documented canonical conversation reduction contract.
-- No obvious generation-fenced single-writer lease around session execution.
-- Event cursor retention, compaction, handoff, and deduplication semantics are
-  not yet a public protocol contract.
-- Remote worker placement is less mature and less visible to users.
-- Web and VS Code clients are functional operator shells, not complete review
-  workspaces.
-- Stress coverage is not yet organized around distributed/event-stream failure
-  modes at OpenHands' breadth.
-- Extension taxonomy and discovery are implemented more deeply than they are
-  explained or navigated in the product.
+- Canonical conversation reduction is specified and version-negotiated.
+- Remote leases carry generation fencing and reject stale ownership.
+- Cursor, handoff, deduplication, slow-consumer, and recovery semantics are
+  public and tested.
+- Runtime placement is visible through Runs/System and typed SDK contracts.
+- Web and VS Code consume the authoritative review/timeline projection.
+- Distributed recovery has targeted failure tests; packaged-daemon conformance
+  remains an opt-in CI gate and should keep expanding.
+- Extension taxonomy is exposed through registry APIs and the System view.
 
 ## UX and DX target
 
@@ -333,7 +331,7 @@ Acceptance: kill and restart the daemon during model call, command execution,
 approval wait, event handoff, and worker reassignment without duplicate side
 effects or missing visible items.
 
-### P1: UX and distributed reliability
+### P1: UX and distributed reliability (current-scope closure)
 
 1. Replace the web raw-event inspector with Inbox, Runs, Review, Graph, System.
 2. Upgrade VS Code from tree plus generated Markdown into a webview-based review
@@ -348,7 +346,7 @@ effects or missing visible items.
 Acceptance: clients recover from forced disconnects and render the same final
 review without full reload, duplicate actions, or unbounded memory growth.
 
-### P2: ecosystem polish
+### P2: ecosystem polish (current-scope closure or accepted ADR)
 
 1. Present profiles, skills, hooks, plugins, MCP servers, workers, and context
    engines through a shared registry/status API with distinct trust semantics.

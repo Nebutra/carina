@@ -73,7 +73,8 @@ explicit answer for deleted or compacted prefixes.
 
 Chosen for normalized items and future review pagination. It can encode stream,
 projection version, epoch, and position while allowing storage changes.
-Raw `session.attach` integer offsets remain temporarily for compatibility.
+Raw `session.attach` integer offsets are a permanent compatibility and audit
+surface; application clients use signed projection cursors.
 
 ### Required behavior
 
