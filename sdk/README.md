@@ -9,7 +9,7 @@ repository tag. All three currently target Carina Runtime `0.6.2` and use the au
 |-----|---------|--------|
 | TypeScript | `@carina/sdk` | Typed core parity, async event callbacks, bounded concurrent calls |
 | Python | `carina-sdk` | Typed core parity, blocking event iterator, bounded calls |
-| Go | `github.com/Nebutra/carina/sdk/go` | Typed core parity over the native RPC client |
+| Go | `github.com/Nebutra/carina/sdk/go` | Typed core parity over the native RPC client, typed event stream with bounded overflow-safe delivery |
 
 ```ts
 import { CarinaClient } from '@carina/sdk'
@@ -19,9 +19,11 @@ await carina.submitTask(session.session_id, 'fix failing tests')
 console.log(await carina.replaySession(session.session_id))
 ```
 
-Typed parity covers session attach/stream/fork, usage, steering and questions,
-plus workflow control, workers, approval relay, doctor, agent inventory,
-trusted channel injection, and the local extension inventory. Transport
+Typed parity covers session attach/stream/fork, resumable threads
+(start/resume/fork with streamed turns), usage, steering and questions,
+checkpoints (list/preview/summarize/restore), artifact inspection and verified
+download, plus workflow control, workers, approval relay, doctor, agent
+inventory, trusted channel injection, and the local extension inventory. Transport
 failures reject or raise pending calls instead of leaving them suspended. Use
 the public `call` method for less common registry methods. Security and hosting
 boundaries are documented in [runtime ecosystem contracts](../docs/runtime-ecosystem.md).
