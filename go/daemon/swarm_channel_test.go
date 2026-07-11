@@ -227,10 +227,20 @@ func TestWorkflowStreamingChannelDeliversLiveMessageToConcurrentSubscriber(t *te
 	}
 }
 
-func TestSwarmChannelInstructionSuffixOnlyAppearsWhenConsumesChannelIsSet(t *testing.T) {
-	if s := swarmChannelInstructionSuffix(nil); s != "" {
-		t.Fatalf("expected no suffix for an empty subscription list, got %q", s)
+func TestSwarmChannelInstructionSuffixAlwaysMentionsPublishEvenWithoutSubscriptions(t *testing.T) {
+	// swarm_publish needs no subscription to use, so a publish-only step
+	// (no consumes_channel) must still be told the tool exists — otherwise
+	// a real model has no way to discover it.
+	s := swarmChannelInstructionSuffix(nil)
+	if !strings.Contains(s, "swarm_publish") {
+		t.Fatalf("expected swarm_publish to be mentioned even with no subscriptions, got %q", s)
 	}
+	if strings.Contains(s, "swarm_receive") {
+		t.Fatalf("swarm_receive should only be mentioned when the step actually has subscriptions, got %q", s)
+	}
+}
+
+func TestSwarmChannelInstructionSuffixMentionsReceiveAndChannelsWhenSubscribed(t *testing.T) {
 	s := swarmChannelInstructionSuffix([]string{"progress", "alerts"})
 	if !strings.Contains(s, `"progress"`) || !strings.Contains(s, `"alerts"`) {
 		t.Fatalf("expected both channel names quoted in the suffix, got %q", s)

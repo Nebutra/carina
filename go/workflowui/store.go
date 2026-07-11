@@ -25,6 +25,15 @@ const (
 	Failed      Status = "failed"
 	Stopped     Status = "stopped"
 	Interrupted Status = "interrupted"
+	// Skipped is a STEP-level status only (never a Run-level one — it is
+	// not part of Transition's allowed map below). The streaming scheduler's
+	// isolate-on-failure semantics (go/daemon/workflow_streaming.go) mean a
+	// step can resolve without ever running at all — an upstream failure, a
+	// false conditional edge, or an exhausted run-level token budget — and
+	// that is a distinct, real terminal state from Failed (which means the
+	// step DID run and errored) or the Queued default (which would
+	// incorrectly read as "still pending" forever after the run finishes).
+	Skipped Status = "skipped"
 )
 
 type Step struct {
@@ -57,6 +66,8 @@ type Run struct {
 type Detail struct {
 	Run          Run     `json:"run"`
 	Completed    int     `json:"completed"`
+	Failed       int     `json:"failed"`
+	Skipped      int     `json:"skipped"`
 	Total        int     `json:"total"`
 	Progress     float64 `json:"progress"`
 	InputTokens  int64   `json:"input_tokens"`
@@ -135,15 +146,26 @@ func (s *Store) Detail(id string) (Detail, error) {
 func detail(r Run) Detail {
 	d := Detail{Run: r, Total: len(r.Steps)}
 	for _, st := range r.Steps {
-		if st.Status == Completed {
+		switch st.Status {
+		case Completed:
 			d.Completed++
+		case Failed:
+			d.Failed++
+		case Skipped:
+			d.Skipped++
 		}
 		d.InputTokens += st.InputTokens
 		d.OutputTokens += st.OutputTokens
 		d.CostUSD += st.CostUSD
 	}
 	if d.Total > 0 {
-		d.Progress = float64(d.Completed) / float64(d.Total)
+		// Progress is "fraction of steps that have reached a terminal
+		// state", not just Completed — a streaming run's isolate semantics
+		// (go/daemon/workflow_streaming.go) mean Failed and Skipped are
+		// just as terminal/resolved as Completed; only counting Completed
+		// would make a run with real (isolated) failures look stuck well
+		// short of 100% even after every step has actually resolved.
+		d.Progress = float64(d.Completed+d.Failed+d.Skipped) / float64(d.Total)
 	}
 	return d
 }

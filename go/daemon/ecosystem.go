@@ -56,7 +56,17 @@ func (d *Daemon) startWorkflowControlRun(sess *sessionstore.Session, spec *Workf
 			return
 		}
 		task := &scheduler.Task{TaskID: sessionstore.NewID("task"), SessionID: sess.SessionID, WorkspaceID: sess.WorkspaceID, Status: "running", UserPrompt: run.Input, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
-		outputs, runErr := d.runWorkflow(sess, task, spec, run.Input, run.ID)
+		// The RPC control-plane entry point (workflow.run) must honor
+		// execution_mode exactly like the model-driven "workflow" tool call
+		// already does (executeWorkflowOutcome in workflow.go) — this used
+		// to unconditionally call the BSP runWorkflow, silently ignoring
+		// "execution_mode":"streaming" for every run started this way (the
+		// only way an external client/CLI actually starts a workflow run).
+		runFn := d.runWorkflow
+		if spec.streaming() {
+			runFn = d.runWorkflowStreaming
+		}
+		outputs, runErr := runFn(sess, task, spec, run.Input, run.ID)
 		if runErr != nil {
 			detail, detailErr := d.workflowRuns.Detail(run.ID)
 			if detailErr == nil && detail.Run.Status != workflowui.Stopped && detail.Run.Status != workflowui.Interrupted {
@@ -66,8 +76,21 @@ func (d *Daemon) startWorkflowControlRun(sess *sessionstore.Session, spec *Workf
 			}
 			return
 		}
+		// A streaming run's isolate semantics mean runErr can be nil even
+		// though some steps failed or were skipped — those steps are NOT in
+		// outputs, and already have their true terminal status recorded
+		// live (runStreamingStep for Completed/Failed, markSkipped for
+		// Skipped — see workflow_streaming.go). Only steps actually present
+		// in outputs get (re-)marked Completed here; for the BSP path this
+		// is every step (BSP aborts entirely on any single failure, so a
+		// nil runErr there really does mean all steps completed) and is a
+		// harmless idempotent re-write of what runWorkflow already recorded.
 		for _, st := range spec.Steps {
-			if _, err := d.workflowRuns.UpdateStep(run.ID, workflowui.Step{ID: st.ID, Status: workflowui.Completed, Output: outputs[st.ID]}); err != nil {
+			out, ok := outputs[st.ID]
+			if !ok {
+				continue
+			}
+			if _, err := d.workflowRuns.UpdateStep(run.ID, workflowui.Step{ID: st.ID, Status: workflowui.Completed, Output: out}); err != nil {
 				_, _ = d.workflowRuns.MarkInterrupted(run.ID, "result completed but final step persistence failed: "+err.Error())
 				return
 			}

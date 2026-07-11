@@ -183,6 +183,26 @@ func TestLeaseWorkerPollExecuteRenewReport(t *testing.T) {
 	}
 }
 
+func TestRegisterSendsDeclaredPoolTags(t *testing.T) {
+	fake := &fakeCaller{handler: func(_ string, _ map[string]any, result any) error {
+		return setResult(result, registration{WorkerID: "wrk_pool", WorkerCredential: "cred_pool"})
+	}}
+	cfg := testWorkerConfig()
+	cfg.Pools = stringList{"gpu-heavy", "eu-west"}
+	w := newLeaseWorker(fake, nil, cfg, log.New(io.Discard, "", 0))
+	if err := w.register(); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	calls := fake.snapshot()
+	if len(calls) != 1 || calls[0].method != "worker.register" {
+		t.Fatalf("expected exactly one worker.register call, got %+v", calls)
+	}
+	pools, ok := calls[0].params["pools"].([]any)
+	if !ok || len(pools) != 2 || pools[0] != "gpu-heavy" || pools[1] != "eu-west" {
+		t.Fatalf("expected pools=[gpu-heavy eu-west] in worker.register params, got %#v", calls[0].params["pools"])
+	}
+}
+
 func TestWorkerAuthorityCallsAlwaysCarryCredential(t *testing.T) {
 	fake := &fakeCaller{handler: func(_ string, _ map[string]any, _ any) error { return nil }}
 	w := newLeaseWorker(fake, nil, testWorkerConfig(), log.New(io.Discard, "", 0))

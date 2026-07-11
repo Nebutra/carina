@@ -86,7 +86,10 @@ func (w *leaseWorker) Run(stopPolling context.Context) error {
 }
 
 func (w *leaseWorker) register() error {
-	if err := w.caller.Call("worker.register", map[string]any{"name": w.cfg.Name, "kind": w.cfg.Kind, "process_tree_containment": runtimeProcessTreeContainment()}, &w.reg); err != nil {
+	if err := w.caller.Call("worker.register", map[string]any{
+		"name": w.cfg.Name, "kind": w.cfg.Kind, "process_tree_containment": runtimeProcessTreeContainment(),
+		"pools": []string(w.cfg.Pools),
+	}, &w.reg); err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
 	if strings.TrimSpace(w.reg.WorkerID) == "" || strings.TrimSpace(w.reg.WorkerCredential) == "" {

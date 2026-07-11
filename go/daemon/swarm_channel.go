@@ -99,24 +99,32 @@ type swarmChannelBinding struct {
 	subscribed []string
 }
 
-// swarmChannelInstructionSuffix is appended to a streaming-mode step's task
-// text when it declares consumes_channel, so the subagent knows it can pull
-// live messages from still-running upstream/sibling steps mid-run instead of
-// only ever seeing a finished dependency's terminal output.
+// swarmChannelInstructionSuffix is appended to EVERY streaming-mode step's
+// task text (not only ones that declare consumes_channel — see the
+// publish-only note below): swarm_publish is available to any step
+// regardless of subscriptions, so a publish-only step must be told the tool
+// exists too, or a real model has no way to discover it (unlike
+// consumes_channel, which only ever needs to inform a SUBSCRIBING step).
+// This used to be conditioned entirely on len(subscribed) > 0, which meant a
+// step that only wanted to publish progress — never subscribing to
+// anything — was never told "swarm_publish" exists at all.
 func swarmChannelInstructionSuffix(subscribed []string) string {
-	if len(subscribed) == 0 {
-		return ""
-	}
-	return fmt.Sprintf(`
+	publishNote := `
 
-This step is subscribed to the following swarm channel(s): %s. Other steps in
-this workflow run may publish live progress/messages to these channels WHILE
-THEY ARE STILL RUNNING (not just after they finish). Call the "swarm_receive"
-tool (optionally with a "channel" field to check just one) at any point to
-pull new messages since you last checked; it returns immediately with
-whatever is available, possibly nothing. You may also call "swarm_publish"
-with {"channel":"...","payload":{...}} to send a message to any channel,
-whether or not you are subscribed to it.`, joinQuoted(subscribed))
+You may call the "swarm_publish" tool ({"channel":"...","payload":{...}}) at
+any point to send a live message to other steps in this workflow run — no
+subscription needed to send.`
+	if len(subscribed) == 0 {
+		return publishNote
+	}
+	return publishNote + fmt.Sprintf(`
+
+This step is ALSO subscribed to the following swarm channel(s): %s. Other
+steps in this run may publish to these channels WHILE THEY ARE STILL RUNNING
+(not just after they finish). Call the "swarm_receive" tool (optionally with
+a "channel" field to check just one) at any point to pull new messages since
+you last checked; it returns immediately with whatever is available,
+possibly nothing.`, joinQuoted(subscribed))
 }
 
 func joinQuoted(ss []string) string {

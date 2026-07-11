@@ -166,7 +166,7 @@
       { "method": "plugin.run", "scope": "admin", "remote": false, "control_plane_write": true, "params": "object", "result": "object" }
     ],
     "worker": [
-      { "method": "worker.register", "scope": "worker", "remote": true, "params": { "name": "string", "kind": "remote|ci|sandbox?", "process_tree_containment": "none|unix_pgrp_v1|windows_job_v1" }, "result": "{ worker_id: string, worker_credential: string } (credential returned once; server stores only a hash)" },
+      { "method": "worker.register", "scope": "worker", "remote": true, "params": { "name": "string", "kind": "remote|ci|sandbox?", "process_tree_containment": "none|unix_pgrp_v1|windows_job_v1", "pools": "string[]? (worker_pool:<tag> capability tags, max 8, each 1-64 lowercase alnum/dash/underscore; matches a streaming workflow step's affinity.worker_pool)" }, "result": "{ worker_id: string, worker_credential: string } (credential returned once; server stores only a hash)" },
       { "method": "worker.heartbeat", "scope": "worker", "remote": true, "params": { "worker_id": "string", "worker_credential": "string" }, "result": "{ ok: boolean }" },
       { "method": "worker.list", "scope": "read", "remote": true, "params": {}, "result": "Worker[]" },
       { "method": "worker.revoke", "scope": "worker", "remote": true, "control_plane_write": true, "params": { "worker_id": "string", "worker_credential": "string" }, "result": "{ ok: boolean }" }

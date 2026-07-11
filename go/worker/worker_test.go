@@ -22,6 +22,27 @@ func TestRegisterAssignsFieldsAndCapabilities(t *testing.T) {
 	}
 }
 
+func TestRegisterAuthenticatedWithPoolsAddsCapabilityTags(t *testing.T) {
+	p := NewPool()
+	w, _, err := p.RegisterAuthenticatedWithPools("gpu-worker", Remote, ContainmentNone, []string{"gpu-heavy", "eu-west"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.Supports([]string{"worker_pool:gpu-heavy"}) {
+		t.Fatalf("expected the declared pool tag to be a supported capability, got %+v", w.Capabilities)
+	}
+	if !w.Supports([]string{"worker_pool:eu-west"}) {
+		t.Fatalf("expected the second declared pool tag to be a supported capability, got %+v", w.Capabilities)
+	}
+	if w.Supports([]string{"worker_pool:never-declared"}) {
+		t.Fatal("a pool tag never declared at registration must not be supported")
+	}
+	// The base Remote-kind capabilities are still present, not replaced.
+	if !w.Supports([]string{"CommandExec"}) {
+		t.Fatalf("declaring pools should not drop the kind's base capabilities, got %+v", w.Capabilities)
+	}
+}
+
 func TestHeartbeatAndRevoke(t *testing.T) {
 	p := NewPool()
 	w := p.Register("w", Remote)

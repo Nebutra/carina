@@ -3371,11 +3371,37 @@ func (d *Daemon) recordChecked(sessionID, eventType, taskID, actor string, paylo
 
 // ---- workers ----------------------------------------------------------------
 
+// maxWorkerRegisterPools/maxWorkerPoolTagLength/validWorkerPoolTag bound and
+// sanitize the "worker_pool:<tag>" capability tags a registering worker may
+// self-declare — this RPC boundary is the authoritative validation point
+// (go/worker.Pool.RegisterAuthenticatedWithPools trusts its caller); a
+// malformed or oversized tag here would otherwise flow straight into the
+// scheduler's capability-matching namespace.
+const (
+	maxWorkerRegisterPools = 8
+	maxWorkerPoolTagLength = 64
+)
+
+func validWorkerPoolTag(tag string) bool {
+	if tag == "" || len(tag) > maxWorkerPoolTagLength {
+		return false
+	}
+	for _, r := range tag {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (d *Daemon) handleWorkerRegister(params json.RawMessage) (any, error) {
 	var p struct {
 		Name                   string                        `json:"name"`
 		Kind                   string                        `json:"kind"`
 		ProcessTreeContainment worker.ProcessTreeContainment `json:"process_tree_containment"`
+		Pools                  []string                      `json:"pools,omitempty"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -3392,7 +3418,15 @@ func (d *Daemon) handleWorkerRegister(params json.RawMessage) (any, error) {
 	default:
 		return nil, fmt.Errorf("unsupported worker kind %q", p.Kind)
 	}
-	w, credential, err := d.pool.RegisterAuthenticatedWithContainment(strings.TrimSpace(p.Name), kind, p.ProcessTreeContainment)
+	if len(p.Pools) > maxWorkerRegisterPools {
+		return nil, fmt.Errorf("at most %d pool tags may be declared", maxWorkerRegisterPools)
+	}
+	for _, tag := range p.Pools {
+		if !validWorkerPoolTag(tag) {
+			return nil, fmt.Errorf("invalid pool tag %q: must be 1-%d lowercase letters, digits, dashes, or underscores", tag, maxWorkerPoolTagLength)
+		}
+	}
+	w, credential, err := d.pool.RegisterAuthenticatedWithPools(strings.TrimSpace(p.Name), kind, p.ProcessTreeContainment, p.Pools)
 	if err != nil {
 		return nil, err
 	}

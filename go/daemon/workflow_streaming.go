@@ -327,6 +327,21 @@ func (sc *streamCoordinator) markSkipped(id, reason string) {
 	sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", map[string]any{
 		"status": "workflow_step_skipped", "workflow": sc.spec.Name, "run_id": sc.runID, "step": id, "reason": reason,
 	}, "")
+	// markSkipped resolves a step WITHOUT ever calling runStreamingStep (a
+	// condition-false edge, a cascaded upstream failure, or an exhausted
+	// run-level token budget), so — unlike every other terminal path, which
+	// records its own workflowui.Step update — this is the only place that
+	// needs to persist the step's live status itself. Without this, a
+	// skipped step's operator-facing record would sit at its Create()-time
+	// default of Queued forever, and workflow.detail's aggregate
+	// (Completed+Failed+Skipped)/Total would never reach 100% for a run
+	// that genuinely finished.
+	if sc.d.workflowRuns != nil {
+		if _, managedErr := sc.d.workflowRuns.Detail(sc.runID); managedErr == nil {
+			now := time.Now().UTC()
+			_, _ = sc.d.workflowRuns.UpdateStep(sc.runID, workflowui.Step{ID: id, Status: workflowui.Skipped, FinishedAt: &now, Error: reason})
+		}
+	}
 	sc.skipQueue = append(sc.skipQueue, id)
 }
 

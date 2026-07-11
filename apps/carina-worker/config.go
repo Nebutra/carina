@@ -23,6 +23,7 @@ type workerConfig struct {
 	GatewayTokenFile  string
 	Name              string
 	Kind              string
+	Pools             stringList // worker_pool tags this worker advertises (Agent Swarm design §4.1 affinity); server-side validated in handleWorkerRegister, not trusted from this client value alone
 	Executor          string
 	ExecutorArgs      stringList
 	MaxConcurrency    int
@@ -98,7 +99,39 @@ func (c workerConfig) validate() error {
 	if c.DrainTimeout <= 0 {
 		return fmt.Errorf("--drain-timeout must be positive")
 	}
+	if len(c.Pools) > maxWorkerPools {
+		return fmt.Errorf("--pool may be given at most %d times", maxWorkerPools)
+	}
+	for _, p := range c.Pools {
+		if !validPoolTag(p) {
+			return fmt.Errorf("--pool %q is invalid: must be 1-%d lowercase letters, digits, dashes, or underscores", p, maxPoolTagLength)
+		}
+	}
 	return nil
+}
+
+// maxWorkerPools/maxPoolTagLength/validPoolTag are a client-side fast-fail
+// mirroring the daemon's own authoritative validation in
+// go/daemon/daemon.go's handleWorkerRegister — this catches a typo before
+// ever dialing, but the daemon re-validates independently rather than
+// trusting whatever this process sends.
+const (
+	maxWorkerPools   = 8
+	maxPoolTagLength = 64
+)
+
+func validPoolTag(tag string) bool {
+	if tag == "" || len(tag) > maxPoolTagLength {
+		return false
+	}
+	for _, r := range tag {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func validateLoopbackServer(address string) error {

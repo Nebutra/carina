@@ -24,6 +24,34 @@ func TestParseConfig(t *testing.T) {
 	}
 }
 
+func TestParseConfigAcceptsRepeatablePoolFlag(t *testing.T) {
+	cfg, err := parseConfig([]string{
+		"--server", "127.0.0.1:7777",
+		"--executor", "/opt/carina/executor",
+		"--pool", "gpu-heavy",
+		"--pool", "eu-west",
+	})
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	if len(cfg.Pools) != 2 || cfg.Pools[0] != "gpu-heavy" || cfg.Pools[1] != "eu-west" {
+		t.Fatalf("Pools = %+v", cfg.Pools)
+	}
+}
+
+func TestParseConfigRejectsInvalidOrExcessivePoolTags(t *testing.T) {
+	if _, err := parseConfig([]string{"--server", "127.0.0.1:7777", "--executor", "e", "--pool", "GPU Heavy!"}); err == nil {
+		t.Fatal("expected an invalid pool tag (uppercase/space/punctuation) to be rejected")
+	}
+	args := []string{"--server", "127.0.0.1:7777", "--executor", "e"}
+	for i := 0; i < maxWorkerPools+1; i++ {
+		args = append(args, "--pool", "p")
+	}
+	if _, err := parseConfig(args); err == nil {
+		t.Fatalf("expected more than %d --pool flags to be rejected", maxWorkerPools)
+	}
+}
+
 func TestParseConfigRejectsUnsafeTimingAndMissingExecutor(t *testing.T) {
 	for _, args := range [][]string{
 		{"--server", "127.0.0.1:7777"},

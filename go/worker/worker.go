@@ -85,6 +85,20 @@ func (p *Pool) RegisterAuthenticated(name string, kind Kind) (*Worker, string, e
 }
 
 func (p *Pool) RegisterAuthenticatedWithContainment(name string, kind Kind, containment ProcessTreeContainment) (*Worker, string, error) {
+	return p.RegisterAuthenticatedWithPools(name, kind, containment, nil)
+}
+
+// RegisterAuthenticatedWithPools is RegisterAuthenticatedWithContainment plus
+// self-declared "worker_pool:<tag>" capability tags (Agent Swarm design
+// §4.1's affinity hint) — this is what lets a real operator run
+// `carina-worker --pool gpu-heavy` and have a streaming workflow step
+// declaring `"affinity":{"worker_pool":"gpu-heavy"}` actually route to it via
+// scheduler.LeaseMatching's existing Supports() check, instead of that path
+// only being reachable by a test mutating Worker.Capabilities directly.
+// pools is assumed ALREADY VALIDATED by the caller (the RPC boundary in
+// go/daemon/daemon.go's handleWorkerRegister) — this is the trusted-internal
+// side of that trust boundary, not itself a sanitizer.
+func (p *Pool) RegisterAuthenticatedWithPools(name string, kind Kind, containment ProcessTreeContainment, pools []string) (*Worker, string, error) {
 	if !ValidProcessTreeContainment(containment) {
 		return nil, "", fmt.Errorf("worker: unsupported process tree containment %q", containment)
 	}
@@ -95,6 +109,9 @@ func (p *Pool) RegisterAuthenticatedWithContainment(name string, kind Kind, cont
 	credential := base64.RawURLEncoding.EncodeToString(credentialBytes)
 	w := newWorker(name, kind)
 	w.ProcessTreeContainment = containment
+	for _, tag := range pools {
+		w.Capabilities = append(w.Capabilities, "worker_pool:"+tag)
+	}
 	p.mu.Lock()
 	p.workers[w.WorkerID] = w
 	p.credentialHash[w.WorkerID] = sha256.Sum256([]byte(credential))

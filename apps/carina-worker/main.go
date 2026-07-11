@@ -65,6 +65,7 @@ func parseConfig(args []string) (workerConfig, error) {
 	fs.StringVar(&cfg.GatewayTokenFile, "gateway-token-file", "", "private file containing the Gateway token")
 	fs.StringVar(&cfg.Name, "name", cfg.Name, "worker name")
 	fs.StringVar(&cfg.Kind, "kind", cfg.Kind, "worker kind: remote|ci|sandbox")
+	fs.Var(&cfg.Pools, "pool", "worker-pool capability tag this worker advertises, e.g. gpu-heavy (repeatable); matches a streaming workflow step's affinity.worker_pool")
 	fs.DurationVar(&cfg.HeartbeatInterval, "heartbeat", cfg.HeartbeatInterval, "heartbeat interval")
 	fs.DurationVar(&cfg.LeaseTTL, "lease-ttl", cfg.LeaseTTL, "lease visibility timeout")
 	fs.DurationVar(&cfg.RenewInterval, "renew-interval", cfg.RenewInterval, "lease renewal interval")
@@ -96,6 +97,11 @@ not carina-worker, is responsible for controlled workspace or sandbox setup.
 Remote workers should use --gateway with a private --gateway-token-file or the
 CARINA_GATEWAY_TOKEN environment variable. --server is loopback-only and is
 intended for a local daemon or an operator-authenticated tunnel.
+
+--pool declares a capability tag (repeatable) so a streaming workflow step
+with "affinity":{"worker_pool":"gpu-heavy"} only lands on a worker that
+advertised --pool gpu-heavy; a worker with no --pool flags only receives
+steps with no affinity requirement.
 `
 
 type workerRPCClient interface {
