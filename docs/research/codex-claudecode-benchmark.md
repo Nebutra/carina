@@ -1021,12 +1021,14 @@ What changed:
   switch case — direct precedent falsifying the "blocked on `buildTool()`"
   reasoning recorded above.
 
-Per-item final verdicts. **Six items landed as code on isolated feature
-branches; these are BRANCHES AWAITING MERGE, not merged commits — nothing
-below has reached main.** One item closed as already covered. None were
-re-deferred; none were rejected.
+Per-item final verdicts. Six items landed as code on isolated feature
+branches and were subsequently all merged to main the same day (merge
+window opened once the subagent-dsl merge resolved; full build + vet +
+package tests green after each merge, full go/daemon suite green after the
+two transcript.go branches merged together). One item closed as already
+covered. None were re-deferred; none were rejected.
 
-| Item | Benchmark verdict | Final verdict | Branch (pending merge) |
+| Item | Benchmark verdict | Final verdict | Branch (merged to main) |
 |---|---|---|---|
 | Multi-tier compaction (verbatim-user + key-files substrate) | defer | land_in_branch | `feat/absorb-multi-tier-compaction` @ `d1f7478657f0` |
 | Setting-source allowlist (managed-locked keys slice) | defer | land_in_branch | `feat/absorb-setting-source-allowlist` @ `0984bdb3e892` |
