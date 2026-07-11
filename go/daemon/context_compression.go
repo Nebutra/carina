@@ -116,9 +116,22 @@ func (d *Daemon) gateContextCompressRPC(sessionID, taskID, resource string) (boo
 // compressObservation rewrites only the model-facing projection. The original
 // tool lifecycle remains in the audit chain, while the reversible Headroom ref
 // and Carina-computed preimage hash travel with the checkpointed observation.
-func (d *Daemon) compressObservation(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task, turn int, tool, content string, pinned bool) (Observation, error) {
+//
+// The Headroom round trip is only invoked when the transcript is actually
+// near/over budget: the trigger is tr.size() >= tr.triggerChars(), the exact
+// same effective threshold Transcript.compact() uses (see transcript.go), so
+// both stay converged on one budget definition instead of drifting apart. A
+// transcript nowhere near its char budget gets addTurn's existing hard
+// ToolOutputMax truncation only, not a Headroom round trip for every single
+// observation. A nil tr (no size information available) fails open toward
+// compressing rather than silently skipping, so a caller that can't supply a
+// live transcript still gets reversible compression by default.
+func (d *Daemon) compressObservation(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, turn int, tool, content string, pinned bool) (Observation, error) {
 	obs := Observation{Tool: tool, Content: content, Pinned: pinned}
 	if pinned || d.contextEng == nil || content == "" {
+		return obs, nil
+	}
+	if tr != nil && tr.size() < tr.triggerChars() {
 		return obs, nil
 	}
 	if d.compactionBreaker != nil && d.compactionBreaker.isOpen(task.TaskID) {

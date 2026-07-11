@@ -500,7 +500,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				continue
 			}
 			obs := d.executeBatch(sess, task, act.Actions)
-			compressedObs, err := d.compressObservation(ctx, sess, task, turn, "batch", obs, false)
+			compressedObs, err := d.compressObservation(ctx, sess, task, tr, turn, "batch", obs, false)
 			if err != nil {
 				d.degrade(sess, task, tr, "context compression failed: "+err.Error())
 				return
@@ -553,7 +553,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			return
 		}
 		pinned := act.Tool == "run" || act.Tool == "patch" // keep test/patch results
-		compressedObs, err := d.compressObservation(ctx, sess, task, turn, act.Tool, obs, pinned)
+		compressedObs, err := d.compressObservation(ctx, sess, task, tr, turn, act.Tool, obs, pinned)
 		if err != nil {
 			d.degrade(sess, task, tr, "context compression failed: "+err.Error())
 			return
