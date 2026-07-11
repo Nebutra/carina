@@ -72,16 +72,16 @@ Implemented in this repository:
 | Area | What exists today |
 |---|---|
 | Sessions and tasks | Daemon-backed sessions, background runs, event streams, attach/replay, task steering |
-| Agent loop | ReAct-style loop, structured actions, dual-threshold/token-triggered prompt compaction, structured compaction summaries, canonical-signature loop detection, consecutive-failure circuit breaker, success checks, verifier, risk review |
+| Agent loop | ReAct-style loop, structured actions, dual-threshold/token-triggered prompt compaction with verbatim-user preservation, structured compaction summaries, canonical-signature loop detection, consecutive-failure circuit breaker, opt-in best-of-N patch generation, success checks, verifier, risk review |
 | Memory | Local governed memory store with `memory` / Nebutra-scoped `user` targets, frozen per-run prompt snapshot, native `memory` tool, CLI/RPC inspection, and kernel-gated `MemoryWrite` audit |
-| Permissions | Built-in profiles, approval modes, approval overlays with justifications, workspace trust, sub-agent attenuation |
+| Permissions | Built-in profiles, approval modes, approval overlays with justifications, workspace trust, org-locked config keys, declarative sub-agent manifests with per-agent tool allow-lists and a kernel-gated spawn capability |
 | Audit | Hash-chained event log, audit export, verification, normalized `session.items` stream, turn net diff |
 | File changes | Transactional patch propose/apply/rollback and post-edit diagnostics |
 | Commands | Risk classification, approval gates, command output events, optional OS sandbox backend |
 | Network and secrets | Deny-by-default egress proxy, allowlists, daemon-side credential injection, explicit per-host HTTPS MITM opt-in |
-| Models | BYOK auth chain, provider catalog, OpenAI/Anthropic/Gemini/OpenRouter-style runtime adapters |
+| Models | BYOK auth chain, provider catalog, OpenAI/Anthropic/Gemini/OpenRouter-style runtime adapters, catalog-gated image input for vision-capable models (raw bytes stay in the artifact store, never in transcripts or audit) |
 | Context engine | Native context-engine boundary with bundled/configured Headroom discovery, managed private MCP transport, and `carina context` diagnostics |
-| Integration | MCP client/server, WASM plugin boundary, workers, workflow DAGs |
+| Integration | MCP client/server with tool search (`mcp_find`), WASM plugin boundary with org/user/project tighten-only enable merge, workers, workflow DAGs |
 | Nebutra boundary | Local runtime stays authoritative; identity and multi-endpoint sync are scoped to Nebutra Cloud (`nebutra.com`) |
 
 Not yet treated as product-complete:

@@ -56,16 +56,16 @@ Carina 提供：
 | 领域 | 当前能力 |
 |---|---|
 | 会话和任务 | daemon 会话、后台任务、事件流、attach/replay、task steering |
-| Agent loop | ReAct loop、结构化 action、双阈值/token 触发的 prompt compaction、结构化压缩摘要、规范签名 loop detection、连续失败熔断器、success check、verifier、risk review |
+| Agent loop | ReAct loop、结构化 action、双阈值/token 触发且逐字保留用户消息的 prompt compaction、结构化压缩摘要、规范签名 loop detection、连续失败熔断器、可选 best-of-N patch 生成、success check、verifier、risk review |
 | Memory | 本地受控记忆库，区分 `memory` / `user` target；每次运行使用冻结 prompt snapshot；原生 `memory` tool、本地 `memory.*` RPC、kernel-gated `MemoryWrite` 审计 |
-| 权限 | 内置 profile、approval mode、带理由的 approval overlay、workspace trust、子智能体权限衰减 |
+| 权限 | 内置 profile、approval mode、带理由的 approval overlay、workspace trust、org 锁定配置键、声明式子智能体 manifest（每 agent 工具白名单 + kernel-gated spawn capability）|
 | 审计 | 哈希链事件日志、audit export、verify、规范化 `session.items`、turn net diff |
 | 文件修改 | 事务性 patch propose/apply/rollback 和 post-edit diagnostics |
 | 命令 | 风险分类、审批 gate、命令输出事件、可选 OS sandbox backend |
 | 网络和 secret | 默认拒绝的 egress proxy、allowlist、daemon 侧凭证注入、显式 per-host HTTPS MITM opt-in |
-| 模型 | BYOK auth chain、provider catalog、OpenAI/Anthropic/Gemini/OpenRouter 风格 adapter |
+| 模型 | BYOK auth chain、provider catalog、OpenAI/Anthropic/Gemini/OpenRouter 风格 adapter、catalog 门控的图片输入（原始字节只存 artifact store，永不进 transcript/审计）|
 | Context engine | 原生 context engine 边界、bundled/configured Headroom 发现、私有 managed MCP transport、`carina context` 诊断 |
-| 集成 | MCP client/server、WASM plugin boundary、worker、workflow DAG |
+| 集成 | MCP client/server（含 `mcp_find` 工具搜索）、WASM plugin boundary（org/user/project 只紧不松 enable merge）、worker、workflow DAG |
 | Nebutra 边界 | 本地 runtime 保持动作权威；身份和多端同步归 Nebutra Cloud（`nebutra.com`）边界 |
 
 还没有产品化完成：

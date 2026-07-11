@@ -56,16 +56,16 @@ Carina が提供するもの：
 | Area | Today |
 |---|---|
 | Sessions and tasks | daemon session、background run、event stream、attach/replay、task steering |
-| Agent loop | ReAct loop、structured action、dual-threshold/token-triggered prompt compaction、structured compaction summary、canonical-signature loop detection、consecutive-failure circuit breaker、success check、verifier、risk review |
+| Agent loop | ReAct loop、structured action、dual-threshold/token-triggered prompt compaction（verbatim-user preservation 付き）、structured compaction summary、canonical-signature loop detection、consecutive-failure circuit breaker、opt-in best-of-N patch generation、success check、verifier、risk review |
 | Memory | local governed memory store with `memory` / `user` targets, frozen per-run prompt snapshot, native `memory` tool, local `memory.*` RPC, and kernel-gated `MemoryWrite` audit |
-| Permissions | built-in profile、approval mode、justification 付き approval overlay、workspace trust、sub-agent attenuation |
+| Permissions | built-in profile、approval mode、justification 付き approval overlay、workspace trust、org-locked config keys、per-agent tool allow-list と kernel-gated spawn capability を持つ宣言的 sub-agent manifest |
 | Audit | hash-chained event log、audit export、verify、normalized `session.items`、turn net diff |
 | File changes | transactional patch propose/apply/rollback、post-edit diagnostics |
 | Commands | risk classification、approval gate、command output event、optional OS sandbox backend |
 | Network and secrets | deny-by-default egress proxy、allowlist、daemon-side credential injection、explicit per-host HTTPS MITM opt-in |
-| Models | BYOK auth chain、provider catalog、OpenAI/Anthropic/Gemini/OpenRouter-style adapter |
+| Models | BYOK auth chain、provider catalog、OpenAI/Anthropic/Gemini/OpenRouter-style adapter、catalog-gated image input（raw bytes は artifact store のみ、transcript/audit には不出）|
 | Context engine | native context-engine boundary、bundled/configured Headroom discovery、private managed MCP transport、`carina context` diagnostics |
-| Integration | MCP client/server、WASM plugin boundary、worker、workflow DAG |
+| Integration | MCP client/server（`mcp_find` tool search 付き）、WASM plugin boundary（org/user/project tighten-only enable merge）、worker、workflow DAG |
 | Nebutra boundary | ローカル runtime が action authority を維持し、identity と multi-endpoint sync は Nebutra Cloud（`nebutra.com`）の境界に置く |
 
 まだ product-complete ではないもの：
