@@ -1,7 +1,7 @@
 # Release Process
 
-Carina is currently an alpha with automated macOS GitHub releases and an
-official Homebrew tap. This document describes the local release gate and the
+Carina is currently an alpha with automated macOS and Linux GitHub releases
+and an official Homebrew tap. This document describes the local release gate and the
 tag-driven public release path. Future channels are tracked in
 [docs/roadmap.md](roadmap.md).
 
@@ -117,16 +117,18 @@ These are local build outputs, not public release artifacts.
 
 ## Versioning
 
-Current version declarations are split while the project is alpha:
+Every Go runtime binary shares the single product version declared in
+`go/product/version.go`; the CLI and daemon source their version constants
+from it. Independent semver remains for:
 
-- CLI version: `apps/carina-cli/main.go`
-- daemon version: `go/daemon/daemon.go`
 - Rust workspace version: `Cargo.toml`
 - SDK package versions under each SDK directory
 
-A public release should align these or document why they differ.
+`VERSION_CHECK.txt` records the full version matrix, and
+`scripts/test-version-matrix.sh` validates it during `make release-check` and
+tag releases.
 
-## Automated macOS Release
+## Automated Tag Release
 
 Pushing a tag matching `v<major>.<minor>.<patch>` runs
 `.github/workflows/release.yml`. The workflow:
@@ -226,5 +228,6 @@ injects versioned release URLs and both architecture checksums.
 - hosted installer;
 - published npm install package;
 - SBOM publication and provenance verification documentation;
-- Linux release and Linuxbrew path;
+- Linuxbrew path (Linux release archives are already built,
+  conformance-tested, attested, and published by the tag workflow);
 - Windows release path.

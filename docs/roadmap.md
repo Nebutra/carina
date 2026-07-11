@@ -97,8 +97,9 @@ Near-term polish work:
   language split;
 - validate the typed TUI, structured question, reconnect, and narrow/CJK paths
   against real provider sessions on supported terminal profiles;
-- decide whether a separate graphical dashboard is warranted; it is not part
-  of the current terminal-first runtime promise;
+- harden and distribute the existing web operator dashboard and VS Code
+  extension (packaging, marketplace publication, docs); the runtime promise
+  remains terminal-first;
 - document production deployment profiles for remote workers;
 - improve SDK parity across TypeScript, Python, and Go;
 - publish security and contributor processes before broad external adoption.

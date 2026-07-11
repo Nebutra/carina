@@ -71,6 +71,9 @@ Current strengths:
   calls and disconnect propagation;
 - the terminal product surface includes typed events, task/subagent status,
   structured approvals and questions, steering, and reconnect recovery;
+- a local-first web operator dashboard and a VS Code extension consume the
+  authoritative `agent.view` roster with session inspection, steering,
+  approval/question resolution, and reconnect recovery;
 - checksummed macOS/Homebrew distribution and fail-closed Apple
   signing/notarization automation are present;
 - source builds and tests are usable;
@@ -82,8 +85,9 @@ Current gaps:
 - the first credentialed, Apple-accepted tag run is still required before
   notarization can be claimed for a public artifact;
 - Linux packages and npm installation are not published;
-- there is no graphical dashboard or editor integration; the polished surface
-  is terminal-first;
+- the web operator dashboard and VS Code extension are new operator clients
+  and are not yet packaged or marketplace-published; the polished product
+  surface remains terminal-first;
 - less-common control-plane RPCs still use the SDKs' generic `call` escape
   hatch rather than dedicated wrappers;
 - Windows is not supported;
