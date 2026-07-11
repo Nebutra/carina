@@ -35,6 +35,13 @@ type requestOverride struct {
 	Body    map[string]json.RawMessage
 }
 
+type providerCredentialError struct{ provider string }
+
+func (e providerCredentialError) Error() string { return e.provider + ": credential not set" }
+func (e providerCredentialError) ProviderError() providerErrorInfo {
+	return providerErrorInfo{Code: "provider_credential_missing", Category: "authentication", Provider: e.provider, UserAction: "configure a provider credential", Retryable: false}
+}
+
 func (p *providerBase) name() string { return p.id }
 
 func (p *providerBase) model(req modelrouter.Request) string {
@@ -64,14 +71,14 @@ func (p *providerBase) credential() (auth.Credential, bool, error) {
 		if p.noAuth {
 			return auth.Credential{}, false, nil
 		}
-		return auth.Credential{}, false, fmt.Errorf("%s: credential not set", p.id)
+		return auth.Credential{}, false, providerCredentialError{provider: p.id}
 	}
 	cred, ok := p.auth.Resolve()
 	if !ok || strings.TrimSpace(cred.Value) == "" {
 		if p.noAuth {
 			return auth.Credential{}, false, nil
 		}
-		return auth.Credential{}, false, fmt.Errorf("%s: credential not set", p.id)
+		return auth.Credential{}, false, providerCredentialError{provider: p.id}
 	}
 	return cred, true, nil
 }
@@ -124,9 +131,10 @@ func mergeRawBody(dst map[string]any, body map[string]json.RawMessage) {
 }
 
 type providerStatusError struct {
-	provider string
-	status   int
-	retry    time.Duration
+	provider  string
+	status    int
+	retry     time.Duration
+	requestID string
 }
 
 func (e providerStatusError) Error() string {
@@ -140,8 +148,38 @@ func (e providerStatusError) RetryAfter() (time.Duration, bool) {
 	return e.retry, e.retry > 0
 }
 
+func (e providerStatusError) ProviderError() providerErrorInfo {
+	info := providerErrorInfo{Code: "provider_http_error", Category: "internal", Retryable: false, Provider: e.provider, HTTPStatus: e.status, CorrelationID: e.requestID}
+	switch {
+	case e.status == http.StatusPaymentRequired:
+		info.Code, info.Category, info.UserAction = "provider_quota_exhausted", "rate_limit", "increase quota or choose another provider"
+	case e.status == http.StatusUnauthorized:
+		info.Code, info.Category, info.UserAction = "provider_authentication_failed", "authentication", "check the provider credential"
+	case e.status == http.StatusForbidden:
+		info.Code, info.Category, info.UserAction = "provider_permission_denied", "permission", "check provider account and model permissions"
+	case e.status == http.StatusTooManyRequests:
+		info.Code, info.Category, info.Retryable, info.UserAction = "provider_rate_limited", "rate_limit", true, "wait or choose another provider"
+	case e.status == http.StatusRequestTimeout || e.status == http.StatusTooEarly:
+		info.Code, info.Category, info.Retryable = "provider_timeout", "timeout", true
+	case e.status == http.StatusConflict:
+		info.Code, info.Category, info.Retryable = "provider_conflict", "conflict", true
+	case e.status >= 500:
+		info.Code, info.Category, info.Retryable = "provider_unavailable", "unavailable", true
+	case e.status >= 400:
+		info.Code, info.Category, info.UserAction = "provider_invalid_request", "invalid_input", "check the model and request configuration"
+	}
+	return info
+}
+
 func statusError(provider string, resp *http.Response) error {
-	return providerStatusError{provider: provider, status: resp.StatusCode, retry: retryAfter(resp.Header, time.Now())}
+	requestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	if requestID == "" {
+		requestID = strings.TrimSpace(resp.Header.Get("request-id"))
+	}
+	if len(requestID) > 128 {
+		requestID = requestID[:128]
+	}
+	return providerStatusError{provider: provider, status: resp.StatusCode, retry: retryAfter(resp.Header, time.Now()), requestID: requestID}
 }
 
 func retryAfter(h http.Header, now time.Time) time.Duration {

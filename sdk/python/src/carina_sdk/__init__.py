@@ -1,8 +1,10 @@
-"""Blocking Carina JSON-RPC SDK compatible with Runtime 0.6.1."""
+"""Blocking Carina JSON-RPC SDK compatible with Runtime 0.6.2."""
 
 from __future__ import annotations
 
 import json
+import base64
+import hashlib
 import socket
 import threading
 import time
@@ -11,7 +13,7 @@ from pathlib import Path
 from typing import Any, Iterator, TypedDict
 
 __version__ = "0.2.0"
-compatible_runtime_version = "0.6.1"
+compatible_runtime_version = "0.6.2"
 _stream_queue_limit = 64
 __all__ = [
     "CarinaClient",
@@ -19,6 +21,7 @@ __all__ = [
     "CarinaStreamOverflow",
     "CarinaThread",
     "SessionAttachment",
+    "SessionReview",
     "UsageCostReport",
     "compatible_runtime_version",
     "default_socket_path",
@@ -46,15 +49,50 @@ class UsageCostReport(TypedDict):
     estimated: bool
 
 
+class SessionReview(TypedDict):
+    session_id: str
+    projection_version: str
+    source_cursor: str
+    state: str
+    summary: str
+    waiting_reason: str
+    intent: str
+    success_criteria: list[Any]
+    changes: list[dict[str, Any]]
+    commands: list[dict[str, Any]]
+    tools: list[dict[str, Any]]
+    checks: list[dict[str, Any]]
+    diagnostics: list[dict[str, Any]]
+    policy_decisions: list[dict[str, Any]]
+    questions: list[dict[str, Any]]
+    conflicts: list[dict[str, Any]]
+    risk_and_policy: list[dict[str, Any]]
+    artifact_ids: list[str]
+    rollback: dict[str, Any]
+    stats: dict[str, int]
+
+class ArtifactMetadata(TypedDict, total=False):
+    id: str
+    scope: dict[str, str]
+    media_type: str
+    bytes: int
+    created_at: str
+    expires_at: str
+    preview: str
+    truncated: bool
+    preview_utf8: bool
+
+
 def default_socket_path() -> Path:
     return Path.home() / ".carina" / "daemon.sock"
 
 
 class CarinaRpcError(RuntimeError):
-    def __init__(self, code: int, message: str) -> None:
+    def __init__(self, code: int, message: str, data: Any = None) -> None:
         super().__init__(f"rpc {code}: {message}")
         self.code = code
         self.message = message
+        self.data = data
 
 
 class CarinaStreamOverflow(RuntimeError):
@@ -119,7 +157,7 @@ class CarinaClient:
                         continue
                     if response.get("error"):
                         err = response["error"]
-                        raise CarinaRpcError(err.get("code", -1), err.get("message", "unknown"))
+                        raise CarinaRpcError(err.get("code", -1), err.get("message", "unknown"), err.get("data"))
                     return response.get("result")
             except socket.timeout as err:
                 self._disconnect()
@@ -163,6 +201,15 @@ class CarinaClient:
     def attach_session(self, session_id: str, since: int = 0) -> dict[str, Any]:
         return self.call("session.attach", {"session_id": session_id, "since": since})
 
+    def review_session(self, session_id: str) -> SessionReview:
+        return self.call("session.review", {"session_id": session_id})
+
+    def list_session_items(self, session_id: str, cursor: str | None = None, limit: int = 50) -> dict[str, Any]:
+        params: dict[str, Any] = {"session_id": session_id, "limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        return self.call("session.items", params)
+
     def fork_session(self, session_id: str) -> dict[str, Any]:
         return self.call("session.fork", {"session_id": session_id})
 
@@ -184,7 +231,17 @@ class CarinaClient:
         return self.call("workflow.list")
 
     def initialize(self, client_name: str = "carina-sdk", client_version: str = __version__) -> dict[str, Any]:
-        return self.call("runtime.initialize", {"protocol_version": "1.2.0", "schema_version": "1.2.0", "client_name": client_name, "client_version": client_version})
+        info = self.call("runtime.initialize", {"protocol_version": "1.2.0", "schema_version": "1.2.0", "projection_version": "1.0.0", "client_name": client_name, "client_version": client_version})
+        protocol = str(info.get("protocol_version", ""))
+        if protocol.removeprefix("v").split(".", 1)[0] != "1":
+            raise RuntimeError(f"sdk: incompatible runtime protocol {protocol!r}")
+        capabilities = info.get("capabilities")
+        if not isinstance(capabilities, dict) or capabilities.get("tool_call_lifecycle") is not True:
+            raise RuntimeError("sdk: runtime lacks required tool_call_lifecycle capability")
+        event_schema = str(capabilities.get("event_schema_version", "")).removeprefix("v").split(".")
+        if len(event_schema) != 3 or event_schema[:2] != ["0", "3"]:
+            raise RuntimeError(f"sdk: incompatible event schema {capabilities.get('event_schema_version')!r}; require 0.3.x")
+        return info
 
     def workflow_detail(self, run_id: str) -> dict[str, Any]:
         return self.call("workflow.detail", {"run_id": run_id})
@@ -208,10 +265,43 @@ class CarinaClient:
         return self.call("worker.list")
 
     def resolve_approval(self, decision_id: str, allow: bool, approver: str = "", scope: str = "once") -> Any:
-        return self.call("task.approval.resolve", {"decision_id": decision_id, "allow": allow, "approver": approver, "scope": scope})
+        return self.call("task.approval.resolve", {"decision_id": decision_id, "approve": allow, "approver": approver, "scope": scope})
 
     def doctor(self) -> dict[str, Any]:
         return self.call("daemon.doctor")
+
+    @staticmethod
+    def _artifact_params(session_id: str, artifact_id: str, task_id: str = "", call_id: str = "") -> dict[str, Any]:
+        return {"session_id": session_id, "artifact_id": artifact_id, "task_id": task_id, "call_id": call_id}
+
+    def stat_artifact(self, session_id: str, artifact_id: str, task_id: str = "", call_id: str = "") -> ArtifactMetadata:
+        return self.call("artifact.stat", self._artifact_params(session_id, artifact_id, task_id, call_id))
+
+    def read_artifact_page(self, session_id: str, artifact_id: str, offset: int = 0, limit: int = 65536, task_id: str = "", call_id: str = "") -> dict[str, Any]:
+        if offset < 0 or not 0 < limit <= 1048576:
+            raise ValueError("offset must be non-negative and limit must be 1..1048576")
+        params = self._artifact_params(session_id, artifact_id, task_id, call_id)
+        params.update({"offset": offset, "limit": limit})
+        return self.call("artifact.read", params)
+
+    def download_artifact(self, session_id: str, artifact_id: str, max_bytes: int, task_id: str = "", call_id: str = "") -> tuple[bytes, ArtifactMetadata]:
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        output = bytearray(); offset = 0; metadata: ArtifactMetadata = {}
+        while True:
+            page = self.read_artifact_page(session_id, artifact_id, offset, 1048576, task_id, call_id)
+            metadata = page["metadata"]
+            chunk = base64.b64decode(page["content_base64"], validate=True)
+            if len(output) + len(chunk) > max_bytes:
+                raise ValueError(f"artifact exceeds download limit {max_bytes}")
+            output.extend(chunk)
+            if page["eof"]: break
+            next_offset = int(page["next_offset"])
+            if next_offset <= offset: raise RuntimeError("artifact pagination did not advance")
+            offset = next_offset
+        if hashlib.sha256(output).hexdigest() != artifact_id:
+            raise RuntimeError("artifact digest mismatch")
+        return bytes(output), metadata
 
     def list_agents(self, workspace_root: str = "") -> dict[str, Any]:
         return self.call("agent.list", {"workspace_root": workspace_root})

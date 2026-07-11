@@ -162,6 +162,10 @@ func (d *Daemon) heuristicRiskReview(dec *kernel.Decision) riskReviewAssessment 
 		assessment.Risk = "medium"
 		assessment.Authorization = "medium"
 		assessment.Rationale = "plugin/MCP access is policy-mediated and should remain audited"
+	case "ContextCompress":
+		assessment.Risk = "low"
+		assessment.Authorization = "high"
+		assessment.Rationale = "context compression is a reversible, session-scoped transform (original content stays hash-addressable); an org bundle tightened it, so approve unless another signal says otherwise"
 	case "MemoryWrite":
 		assessment.Risk = "medium"
 		assessment.Authorization = "medium"

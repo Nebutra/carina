@@ -1,20 +1,24 @@
-// Package sdk provides typed JSON-RPC wrappers for Carina Runtime 0.6.1.
+// Package sdk provides typed JSON-RPC wrappers for Carina Runtime 0.6.2.
 package sdk
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Nebutra/carina/go/rpc"
 )
 
-const CompatibleRuntimeVersion = "0.6.1"
+const CompatibleRuntimeVersion = "0.6.2"
 const streamQueueLimit = 64
 
 var ErrStreamOverflow = errors.New("sdk: event stream overflow")
@@ -54,6 +58,77 @@ type SessionAttachment struct {
 	Events []json.RawMessage `json:"events"`
 	From   int               `json:"from"`
 	Cursor int               `json:"cursor"`
+}
+
+type ReviewItem struct {
+	ID      string         `json:"id"`
+	Type    string         `json:"type"`
+	Status  string         `json:"status"`
+	TaskID  string         `json:"task_id,omitempty"`
+	Details map[string]any `json:"details,omitempty"`
+}
+
+type SessionReview struct {
+	SessionID         string         `json:"session_id"`
+	ProjectionVersion string         `json:"projection_version"`
+	SourceCursor      string         `json:"source_cursor"`
+	State             string         `json:"state"`
+	Summary           string         `json:"summary,omitempty"`
+	WaitingReason     string         `json:"waiting_reason,omitempty"`
+	Intent            string         `json:"intent,omitempty"`
+	SuccessCriteria   []any          `json:"success_criteria"`
+	Changes           []ReviewItem   `json:"changes"`
+	Commands          []ReviewItem   `json:"commands"`
+	Tools             []ReviewItem   `json:"tools"`
+	Checks            []ReviewItem   `json:"checks"`
+	Diagnostics       []ReviewItem   `json:"diagnostics"`
+	PolicyDecisions   []ReviewItem   `json:"policy_decisions"`
+	Questions         []ReviewItem   `json:"questions"`
+	Conflicts         []ReviewItem   `json:"conflicts"`
+	RiskAndPolicy     []ReviewItem   `json:"risk_and_policy"`
+	ArtifactIDs       []string       `json:"artifact_ids"`
+	Rollback          map[string]any `json:"rollback"`
+	Stats             map[string]int `json:"stats"`
+}
+
+type SessionItemEvent struct {
+	Type          string         `json:"type"`
+	SessionID     string         `json:"session_id"`
+	TurnID        string         `json:"turn_id,omitempty"`
+	TaskID        string         `json:"task_id,omitempty"`
+	ItemID        string         `json:"item_id,omitempty"`
+	SourceEventID string         `json:"source_event_id,omitempty"`
+	Timestamp     string         `json:"timestamp,omitempty"`
+	Details       map[string]any `json:"details,omitempty"`
+	Item          *ReviewItem    `json:"item,omitempty"`
+}
+type SessionItemsPage struct {
+	Data              []SessionItemEvent `json:"data"`
+	NextCursor        string             `json:"next_cursor,omitempty"`
+	ProjectionVersion string             `json:"projection_version"`
+}
+type CursorRecovery struct {
+	Code              string `json:"code"`
+	ProjectionVersion string `json:"projection_version"`
+	Recovery          string `json:"recovery"`
+	SnapshotMethod    string `json:"snapshot_method"`
+	EarliestCursor    string `json:"earliest_cursor,omitempty"`
+}
+
+func CursorRecoveryFromError(err error) (CursorRecovery, bool) {
+	var rpcErr *rpc.Error
+	if !errors.As(err, &rpcErr) || rpcErr.Code != -32010 {
+		return CursorRecovery{}, false
+	}
+	raw, marshalErr := json.Marshal(rpcErr.Data)
+	if marshalErr != nil {
+		return CursorRecovery{}, false
+	}
+	var recovery CursorRecovery
+	if json.Unmarshal(raw, &recovery) != nil || recovery.Code == "" {
+		return CursorRecovery{}, false
+	}
+	return recovery, true
 }
 
 type UsageCostRow struct {
@@ -116,9 +191,35 @@ type Extension struct {
 type RuntimeInfo struct {
 	RuntimeVersion         string         `json:"runtime_version"`
 	ProtocolVersion        string         `json:"protocol_version"`
+	ProjectionVersion      string         `json:"projection_version,omitempty"`
 	MinimumProtocolVersion string         `json:"minimum_protocol_version,omitempty"`
 	Capabilities           map[string]any `json:"capabilities"`
 }
+
+func validateRuntimeInfo(info RuntimeInfo) error {
+	version := strings.TrimPrefix(info.ProtocolVersion, "v")
+	major := strings.SplitN(version, ".", 2)[0]
+	if major != "1" {
+		return fmt.Errorf("sdk: incompatible runtime protocol %q", info.ProtocolVersion)
+	}
+	if enabled, ok := info.Capabilities["tool_call_lifecycle"].(bool); !ok || !enabled {
+		return errors.New("sdk: runtime lacks required tool_call_lifecycle capability")
+	}
+	if !compatibleEventSchema(info.Capabilities["event_schema_version"]) {
+		return fmt.Errorf("sdk: incompatible event schema %q; require 0.3.x", info.Capabilities["event_schema_version"])
+	}
+	return nil
+}
+
+func compatibleEventSchema(raw any) bool {
+	v, ok := raw.(string)
+	if !ok {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(v, "v"), ".")
+	return len(parts) == 3 && parts[0] == "0" && parts[1] == "3"
+}
+
 type RunOptions struct {
 	OutputSchema json.RawMessage
 	PollInterval time.Duration
@@ -168,6 +269,30 @@ type Checkpoint struct {
 	Turn           int      `json:"turn"`
 	Summary        string   `json:"summary,omitempty"`
 	AppliedPatches []string `json:"applied_patches"`
+}
+
+type ArtifactScope struct {
+	SessionID string `json:"session_id"`
+	TaskID    string `json:"task_id,omitempty"`
+	CallID    string `json:"call_id,omitempty"`
+}
+type ArtifactMetadata struct {
+	ID          string        `json:"id"`
+	Scope       ArtifactScope `json:"scope"`
+	MediaType   string        `json:"media_type,omitempty"`
+	Bytes       int64         `json:"bytes"`
+	CreatedAt   string        `json:"created_at"`
+	ExpiresAt   string        `json:"expires_at,omitempty"`
+	Preview     string        `json:"preview,omitempty"`
+	Truncated   bool          `json:"truncated"`
+	PreviewUTF8 bool          `json:"preview_utf8"`
+}
+type ArtifactReadPage struct {
+	Metadata      ArtifactMetadata `json:"metadata"`
+	Offset        int64            `json:"offset"`
+	NextOffset    int64            `json:"next_offset"`
+	EOF           bool             `json:"eof"`
+	ContentBase64 string           `json:"content_base64"`
 }
 
 func DefaultSocketPath() (string, error) {
@@ -416,6 +541,25 @@ func (c *Client) AttachSession(sessionID string, since int) (SessionAttachment, 
 	return out, err
 }
 
+func (c *Client) ReviewSession(sessionID string) (SessionReview, error) {
+	var out SessionReview
+	err := c.Call("session.review", map[string]any{"session_id": sessionID}, &out)
+	return out, err
+}
+
+func (c *Client) ListSessionItems(sessionID, cursor string, limit int) (SessionItemsPage, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	params := map[string]any{"session_id": sessionID, "limit": limit}
+	if cursor != "" {
+		params["cursor"] = cursor
+	}
+	var out SessionItemsPage
+	err := c.Call("session.items", params, &out)
+	return out, err
+}
+
 func (c *Client) ForkSession(sessionID string) (Session, error) {
 	var out Session
 	err := c.Call("session.fork", map[string]any{"session_id": sessionID}, &out)
@@ -484,7 +628,10 @@ func (c *Client) ListWorkflows() ([]WorkflowRun, error) {
 }
 func (c *Client) Initialize(clientName, clientVersion string) (RuntimeInfo, error) {
 	var out RuntimeInfo
-	err := c.Call("runtime.initialize", map[string]any{"protocol_version": "1.2.0", "schema_version": "1.2.0", "client_name": clientName, "client_version": clientVersion}, &out)
+	err := c.Call("runtime.initialize", map[string]any{"protocol_version": "1.2.0", "schema_version": "1.2.0", "projection_version": "1.0.0", "client_name": clientName, "client_version": clientVersion}, &out)
+	if err == nil {
+		err = validateRuntimeInfo(out)
+	}
 	return out, err
 }
 func (c *Client) WorkflowDetail(runID string) (map[string]any, error) {
@@ -522,7 +669,7 @@ func (c *Client) ListWorkers() ([]Worker, error) {
 	return out, err
 }
 func (c *Client) ResolveApproval(decisionID string, allow bool, approver, scope string) error {
-	return c.Call("task.approval.resolve", map[string]any{"decision_id": decisionID, "allow": allow, "approver": approver, "scope": scope}, nil)
+	return c.Call("task.approval.resolve", map[string]any{"decision_id": decisionID, "approve": allow, "approver": approver, "scope": scope}, nil)
 }
 func (c *Client) Doctor() (map[string]any, error) {
 	var out map[string]any
@@ -577,4 +724,56 @@ func (c *Client) SetExtensionEnabled(name string, on bool) (Extension, error) {
 	}
 	err := c.Call(method, map[string]any{"name": name}, &out)
 	return out, err
+}
+
+func artifactParams(scope ArtifactScope, id string) map[string]any {
+	return map[string]any{"session_id": scope.SessionID, "task_id": scope.TaskID, "call_id": scope.CallID, "artifact_id": id}
+}
+func (c *Client) StatArtifact(scope ArtifactScope, id string) (ArtifactMetadata, error) {
+	var out ArtifactMetadata
+	err := c.Call("artifact.stat", artifactParams(scope, id), &out)
+	return out, err
+}
+func (c *Client) ReadArtifactPage(scope ArtifactScope, id string, offset, limit int64) (ArtifactReadPage, error) {
+	p := artifactParams(scope, id)
+	p["offset"] = offset
+	p["limit"] = limit
+	var out ArtifactReadPage
+	err := c.Call("artifact.read", p, &out)
+	return out, err
+}
+func (c *Client) DownloadArtifact(scope ArtifactScope, id string, maxBytes int64) ([]byte, ArtifactMetadata, error) {
+	if maxBytes <= 0 {
+		return nil, ArtifactMetadata{}, errors.New("sdk: maxBytes must be positive")
+	}
+	var all []byte
+	var meta ArtifactMetadata
+	var off int64
+	for {
+		page, err := c.ReadArtifactPage(scope, id, off, 1<<20)
+		if err != nil {
+			return nil, meta, err
+		}
+		meta = page.Metadata
+		chunk, err := base64.StdEncoding.DecodeString(page.ContentBase64)
+		if err != nil {
+			return nil, meta, fmt.Errorf("sdk: decode artifact page: %w", err)
+		}
+		if int64(len(all)+len(chunk)) > maxBytes {
+			return nil, meta, fmt.Errorf("sdk: artifact exceeds download limit %d", maxBytes)
+		}
+		all = append(all, chunk...)
+		if page.EOF {
+			break
+		}
+		if page.NextOffset <= off {
+			return nil, meta, errors.New("sdk: artifact pagination did not advance")
+		}
+		off = page.NextOffset
+	}
+	sum := sha256.Sum256(all)
+	if hex.EncodeToString(sum[:]) != id {
+		return nil, meta, errors.New("sdk: artifact digest mismatch")
+	}
+	return all, meta, nil
 }

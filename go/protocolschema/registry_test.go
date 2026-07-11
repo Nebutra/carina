@@ -11,7 +11,8 @@ import (
 
 type eventRegistry struct {
 	Types []struct {
-		Name string `json:"name"`
+		Name    string   `json:"name"`
+		Payload []string `json:"payload"`
 	} `json:"types"`
 }
 
@@ -107,6 +108,47 @@ func TestLifecycleEventSchemaHasConditionalPayloadContracts(t *testing.T) {
 	for _, field := range []string{`"call_id"`, `"artifact_ids"`, `"sequence"`, `"output_preview"`} {
 		if !strings.Contains(encoded, field) {
 			t.Errorf("schema missing lifecycle field/rule %s", field)
+		}
+	}
+}
+
+func TestConditionalEventPayloadsCoverRegistryContract(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(file), "..", "..", "protocol")
+	registryRaw, _ := os.ReadFile(filepath.Join(root, "events", "events.json"))
+	schemaRaw, _ := os.ReadFile(filepath.Join(root, "schemas", "event.schema.json"))
+	var registry eventRegistry
+	var schema map[string]any
+	if err := json.Unmarshal(registryRaw, &registry); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(schemaRaw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]map[string]bool{}
+	for _, event := range registry.Types {
+		want[event.Name] = map[string]bool{}
+		for _, field := range event.Payload {
+			want[event.Name][field] = true
+		}
+	}
+	for _, rawRule := range schema["allOf"].([]any) {
+		rule, _ := rawRule.(map[string]any)
+		ifPart, _ := rule["if"].(map[string]any)
+		props, _ := ifPart["properties"].(map[string]any)
+		typeRule, _ := props["type"].(map[string]any)
+		name, _ := typeRule["const"].(string)
+		if name == "" {
+			continue
+		}
+		then, _ := rule["then"].(map[string]any)
+		thenProps, _ := then["properties"].(map[string]any)
+		payload, _ := thenProps["payload"].(map[string]any)
+		required, _ := payload["required"].([]any)
+		for _, field := range required {
+			if s, ok := field.(string); ok && !want[name][s] {
+				t.Errorf("schema requires %s.%s but events.json does not declare it", name, s)
+			}
 		}
 	}
 }

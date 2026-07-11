@@ -25,7 +25,7 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 	go func() {
 		reader := bufio.NewReader(serverConn)
 		seen := []string{}
-		for len(seen) < 6 {
+		for len(seen) < 8 {
 			line, err := reader.ReadBytes('\n')
 			if err != nil {
 				return
@@ -42,6 +42,10 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 				result = map[string]any{"events": []any{}, "from": 3, "cursor": 7}
 			case "session.fork":
 				result = map[string]any{"session_id": "child"}
+			case "session.review":
+				result = reviewFixture()
+			case "session.items":
+				result = map[string]any{"data": []any{map[string]any{"type": "turn.started", "session_id": "s1", "task_id": "t1"}}, "next_cursor": "cp1.payload.signature", "projection_version": "1.0.0"}
 			case "usage.cost":
 				result = map[string]any{"providers": []any{}, "totals": map[string]any{}, "estimated": false}
 			}
@@ -57,7 +61,7 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 		methods <- seen
 	}()
 
-	if CompatibleRuntimeVersion != "0.6.1" {
+	if CompatibleRuntimeVersion != "0.6.2" {
 		t.Fatalf("compatibility version = %s", CompatibleRuntimeVersion)
 	}
 	if attached, err := client.AttachSession("s1", 3); err != nil || attached.Cursor != 7 {
@@ -65,6 +69,12 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 	}
 	if forked, err := client.ForkSession("s1"); err != nil || forked.SessionID != "child" {
 		t.Fatalf("fork = %+v, %v", forked, err)
+	}
+	if review, err := client.ReviewSession("s1"); err != nil || review.State != "completed" || review.ProjectionVersion != "1.0.0" {
+		t.Fatalf("review = %+v, %v", review, err)
+	}
+	if page, err := client.ListSessionItems("s1", "", 1); err != nil || len(page.Data) != 1 || page.NextCursor == "" {
+		t.Fatalf("items = %+v, %v", page, err)
 	}
 	if report, err := client.Cost("s1", ""); err != nil || report.Estimated {
 		t.Fatalf("cost = %+v, %v", report, err)
@@ -82,9 +92,21 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 	if err != nil || event.Type != "ModelResponded" {
 		t.Fatalf("event = %+v, %v", event, err)
 	}
-	want := []string{"session.attach", "session.fork", "usage.cost", "task.steer", "task.user.answer", "session.events.stream"}
+	want := []string{"session.attach", "session.fork", "session.review", "session.items", "usage.cost", "task.steer", "task.user.answer", "session.events.stream"}
 	if got := <-methods; !reflect.DeepEqual(got, want) {
 		t.Fatalf("methods = %v, want %v", got, want)
+	}
+}
+
+func reviewFixture() map[string]any {
+	return map[string]any{"session_id": "s1", "projection_version": "1.0.0", "source_cursor": "cp1.payload.signature", "state": "completed", "intent": "ship", "success_criteria": []any{map[string]any{"kind": "command"}}, "changes": []any{}, "commands": []any{}, "tools": []any{}, "checks": []any{}, "diagnostics": []any{}, "policy_decisions": []any{}, "questions": []any{}, "conflicts": []any{}, "risk_and_policy": []any{}, "artifact_ids": []any{}, "rollback": map[string]any{"available": false, "patch_ids": []any{}}, "stats": map[string]any{}}
+}
+
+func TestCursorRecoveryFromTypedRPCError(t *testing.T) {
+	source := CursorRecovery{Code: "cursor_expired", ProjectionVersion: "1.0.0", Recovery: "snapshot", SnapshotMethod: "session.items", EarliestCursor: "cp1.x.y"}
+	recovery, ok := CursorRecoveryFromError(&rpc.Error{Code: -32010, Message: "cursor_expired", Data: source})
+	if !ok || recovery.Code != "cursor_expired" || recovery.EarliestCursor == "" {
+		t.Fatalf("typed cursor recovery lost: %+v %v", recovery, ok)
 	}
 }
 
@@ -346,7 +368,7 @@ func TestHighLevelThreadRunNegotiatesAndUsesSchema(t *testing.T) {
 			var result any = map[string]any{}
 			switch req.Method {
 			case "runtime.initialize":
-				result = map[string]any{"runtime_version": "0.6.1", "protocol_version": "1.1.0", "capabilities": map[string]any{}}
+				result = map[string]any{"runtime_version": "0.6.2", "protocol_version": "1.2.0", "projection_version": "1.0.0", "capabilities": map[string]any{"tool_call_lifecycle": true, "event_schema_version": "0.3.0"}}
 			case "session.create":
 				result = map[string]any{"session_id": "s", "workspace_id": "w", "workspace_root": "/tmp", "status": "active"}
 			case "task.submit":
@@ -401,4 +423,20 @@ func TestDisconnectAndTimeoutFailCalls(t *testing.T) {
 			t.Fatalf("error = %v, want ErrCallTimeout", err)
 		}
 	})
+}
+
+func TestRuntimeInfoValidation(t *testing.T) {
+	valid := RuntimeInfo{ProtocolVersion: "1.9.0", Capabilities: map[string]any{"tool_call_lifecycle": true, "event_schema_version": "0.3.9"}}
+	if err := validateRuntimeInfo(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []RuntimeInfo{
+		{ProtocolVersion: "2.0.0", Capabilities: map[string]any{"tool_call_lifecycle": true}},
+		{ProtocolVersion: "1.2.0", Capabilities: map[string]any{}},
+		{ProtocolVersion: "1.2.0", Capabilities: map[string]any{"tool_call_lifecycle": true, "event_schema_version": "0.4.0"}},
+	} {
+		if err := validateRuntimeInfo(invalid); err == nil {
+			t.Fatalf("accepted %+v", invalid)
+		}
+	}
 }

@@ -23,6 +23,19 @@ func TestParseRunArgsModel(t *testing.T) {
 	}
 }
 
+func TestValidateCLIEventSchema(t *testing.T) {
+	for _, v := range []string{"0.3.0", "0.3.9", "v0.3.1"} {
+		if err := validateCLIEventSchema(map[string]any{"capabilities": map[string]any{"event_schema_version": v}}); err != nil {
+			t.Fatalf("%s: %v", v, err)
+		}
+	}
+	for _, v := range []string{"", "0.2.9", "0.4.0", "1.3.0"} {
+		if err := validateCLIEventSchema(map[string]any{"capabilities": map[string]any{"event_schema_version": v}}); err == nil {
+			t.Fatalf("accepted %q", v)
+		}
+	}
+}
+
 func TestParseRunArgsShortModel(t *testing.T) {
 	prompt, model, agent, err := parseRunArgs([]string{"-m", "openai/gpt-5", "-a", "plan", "ship it"})
 	if err != nil {

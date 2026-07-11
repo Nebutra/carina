@@ -7,9 +7,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Nebutra/carina/go/auth"
 	"github.com/Nebutra/carina/go/product"
@@ -58,6 +61,9 @@ Inspect sessions:
   carina steer <task_id> <message>                 redirect a running task at its next turn boundary
   carina answer <question_id> <value>              answer a structured agent question
   carina items <session_id>                        replay normalized thread/turn/item events
+  carina session review <session_id>               show the governance-oriented session projection
+  carina artifact stat <session_id> <artifact_id> [--task id] [--call id]
+  carina artifact read <session_id> <artifact_id> [--task id] [--call id] [--output path] [--max-bytes n] [--verify]
   carina search <session_id> <text>                search the workspace through the daemon
   carina checkpoint list <session_id>              list conversation/code checkpoints
   carina checkpoint preview <session_id> <id>      preview a rewind without changing state
@@ -124,6 +130,8 @@ Gateway and RPC:
   carina backpressure status                         show worker pressure reports and throttle directives
   carina debug snapshot [limit]                      show local-only diagnostic trace events
   carina debug trace <correlation_id> [limit]        search diagnostic trace by correlation id
+  carina channel pending                             list channel crash incidents requiring reconciliation
+  carina channel reconcile <sender> <event> <executed|not-executed> --yes
 
 Workers:
   carina workers                                    list registered workers
@@ -249,6 +257,10 @@ func run(cmd string, args []string) error {
 		return cmdSchedule(c, args)
 	case "checkpoint":
 		return cmdCheckpoint(c, args)
+	case "session":
+		return cmdSession(c, args)
+	case "channel":
+		return cmdChannel(c, args)
 
 	case "run", "ask":
 		// The task always runs in the daemon and survives CLI exit (PRD
@@ -316,6 +328,8 @@ func run(cmd string, args []string) error {
 			return fmt.Errorf("usage: carina items <session_id>")
 		}
 		return call(c, "session.items", map[string]any{"session_id": args[0]})
+	case "artifact":
+		return cmdArtifact(c, args)
 	case "report":
 		return callArg(c, "audit.report", args, "session_id")
 	case "export":
@@ -1207,6 +1221,91 @@ func writeClientWebSocketText(conn net.Conn, payload []byte) error {
 		return err
 	}
 	_, err := conn.Write(masked)
+	return err
+}
+
+func cmdArtifact(c *rpcClient, args []string) error {
+	if len(args) < 3 || (args[0] != "stat" && args[0] != "read") {
+		return fmt.Errorf("usage: carina artifact <stat|read> <session_id> <artifact_id> [--task id] [--call id] [--output path] [--max-bytes n] [--verify]")
+	}
+	mode, sessionID, id := args[0], args[1], args[2]
+	params := map[string]any{"session_id": sessionID, "artifact_id": id}
+	output := ""
+	maxBytes := int64(64 << 20)
+	verify := false
+	for i := 3; i < len(args); i++ {
+		switch args[i] {
+		case "--verify":
+			verify = true
+		case "--task", "--call", "--output", "--max-bytes":
+			if i+1 >= len(args) {
+				return fmt.Errorf("%s requires a value", args[i])
+			}
+			v := args[i+1]
+			i++
+			switch args[i-1] {
+			case "--task":
+				params["task_id"] = v
+			case "--call":
+				params["call_id"] = v
+			case "--output":
+				output = v
+			case "--max-bytes":
+				n, e := strconv.ParseInt(v, 10, 64)
+				if e != nil || n <= 0 {
+					return fmt.Errorf("--max-bytes must be positive")
+				}
+				maxBytes = n
+			}
+		default:
+			return fmt.Errorf("unknown artifact option %s", args[i])
+		}
+	}
+	if mode == "stat" {
+		return call(c, "artifact.stat", params)
+	}
+	var content []byte
+	var offset int64
+	for {
+		params["offset"] = offset
+		params["limit"] = int64(1 << 20)
+		var page struct {
+			NextOffset int64  `json:"next_offset"`
+			EOF        bool   `json:"eof"`
+			Content    string `json:"content_base64"`
+		}
+		if err := c.Call("artifact.read", params, &page); err != nil {
+			return err
+		}
+		chunk, err := base64.StdEncoding.DecodeString(page.Content)
+		if err != nil {
+			return fmt.Errorf("decode artifact: %w", err)
+		}
+		if int64(len(content)+len(chunk)) > maxBytes {
+			return fmt.Errorf("artifact exceeds --max-bytes %d", maxBytes)
+		}
+		content = append(content, chunk...)
+		if page.EOF {
+			break
+		}
+		if page.NextOffset <= offset {
+			return fmt.Errorf("artifact pagination did not advance")
+		}
+		offset = page.NextOffset
+	}
+	if verify {
+		sum := sha256.Sum256(content)
+		if hex.EncodeToString(sum[:]) != id {
+			return fmt.Errorf("artifact digest verification failed")
+		}
+	}
+	if output != "" {
+		return os.WriteFile(output, content, 0o600)
+	}
+	if ttyutil.IsTTY(os.Stdout) && !utf8.Valid(content) {
+		return fmt.Errorf("refusing to write binary artifact to terminal; use --output <path>")
+	}
+	_, err := os.Stdout.Write(content)
 	return err
 }
 

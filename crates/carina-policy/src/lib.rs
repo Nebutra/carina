@@ -22,6 +22,7 @@ pub enum Capability {
     RemoteExecute,
     MemoryWrite,
     CodeIndex,
+    ContextCompress,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -550,6 +551,21 @@ impl PolicyEngine {
                 } else {
                     (Verdict::Denied, "profile denies FileRead".into())
                 }
+            }
+            Capability::ContextCompress => {
+                // The managed Headroom adapter is a session-scoped, reversible
+                // transform (compressed output always carries an OriginalRef/
+                // OriginalSHA256 back to the untouched content — see
+                // context_compression.go). It is allowed by default so routine
+                // per-observation compression doesn't stall on approval, but the
+                // request is still policy-evaluated and audited like every other
+                // capability: an org PolicyBundle can still tighten this to
+                // RequiresApproval or Denied (`evaluate_with_bundle` only ever
+                // tightens, never loosens).
+                (
+                    Verdict::Allowed,
+                    "context compression is a reversible, session-scoped internal adapter".into(),
+                )
             }
         }
     }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Nebutra/carina/go/artifact"
@@ -55,14 +56,146 @@ func classifyLegacyToolResult(display string) toolExecutionOutcome {
 }
 
 type toolCallLifecycle struct {
-	id      string
-	tool    string
-	kind    string
-	created time.Time
+	id       string
+	tool     string
+	kind     string
+	created  time.Time
+	sequence *atomic.Int64
+}
+
+func (c toolCallLifecycle) nextSequence() int { return int(c.sequence.Add(1)) }
+
+type activeToolCall struct {
+	call           toolCallLifecycle
+	sess           *sessionstore.Session
+	task           *scheduler.Task
+	started        bool
+	terminalStatus string
+}
+
+func (d *Daemon) markActiveToolTerminal(taskID, status string) {
+	d.activeToolCallMu.Lock()
+	for callID := range d.activeToolCallsByTask[taskID] {
+		if active := d.activeToolCalls[callID]; active != nil {
+			active.terminalStatus = status
+		}
+	}
+	d.activeToolCallMu.Unlock()
+}
+
+func (d *Daemon) activeToolTerminal(taskID string) string {
+	d.activeToolCallMu.Lock()
+	defer d.activeToolCallMu.Unlock()
+	for callID := range d.activeToolCallsByTask[taskID] {
+		if active := d.activeToolCalls[callID]; active != nil && active.terminalStatus != "" {
+			return active.terminalStatus
+		}
+	}
+	return ""
+}
+
+func (d *Daemon) installActiveToolCall(sess *sessionstore.Session, task *scheduler.Task, call toolCallLifecycle) {
+	d.activeToolCallMu.Lock()
+	d.activeToolCalls[call.id] = &activeToolCall{call: call, sess: sess, task: task}
+	if d.activeToolCallsByTask[task.TaskID] == nil {
+		d.activeToolCallsByTask[task.TaskID] = map[string]struct{}{}
+	}
+	d.activeToolCallsByTask[task.TaskID][call.id] = struct{}{}
+	d.activeToolCallMu.Unlock()
+}
+
+func (d *Daemon) clearActiveToolCall(taskID, callID string) {
+	d.activeToolCallMu.Lock()
+	delete(d.activeToolCalls, callID)
+	delete(d.activeToolCallsByTask[taskID], callID)
+	if len(d.activeToolCallsByTask[taskID]) == 0 {
+		delete(d.activeToolCallsByTask, taskID)
+	}
+	d.activeToolCallMu.Unlock()
+}
+
+func (d *Daemon) startInstalledToolCall(sess *sessionstore.Session, task *scheduler.Task, call toolCallLifecycle) error {
+	d.activeToolCallMu.Lock()
+	d.activeToolCallMu.Unlock()
+	if err := d.startToolCall(sess, task, call); err != nil {
+		return err
+	}
+	d.activeToolCallMu.Lock()
+	if active := d.activeToolCalls[call.id]; active != nil {
+		active.started = true
+	}
+	d.activeToolCallMu.Unlock()
+	return nil
+}
+
+func (d *Daemon) ensureActiveToolStarted(taskID string) error {
+	d.activeToolCallMu.Lock()
+	var active *activeToolCall
+	for callID := range d.activeToolCallsByTask[taskID] {
+		if candidate := d.activeToolCalls[callID]; candidate != nil && !candidate.started {
+			active = candidate
+			break
+		}
+	}
+	if active == nil || active.started {
+		d.activeToolCallMu.Unlock()
+		return nil
+	}
+	d.activeToolCallMu.Unlock()
+	if err := d.startToolCall(active.sess, active.task, active.call); err != nil {
+		return err
+	}
+	d.activeToolCallMu.Lock()
+	if current := d.activeToolCalls[active.call.id]; current != nil {
+		current.started = true
+	}
+	d.activeToolCallMu.Unlock()
+	return nil
+}
+
+func (d *Daemon) ensureToolCallStarted(callID string) error {
+	d.activeToolCallMu.Lock()
+	active := d.activeToolCalls[callID]
+	if active == nil || active.started {
+		d.activeToolCallMu.Unlock()
+		return nil
+	}
+	d.activeToolCallMu.Unlock()
+	if err := d.startToolCall(active.sess, active.task, active.call); err != nil {
+		return err
+	}
+	d.activeToolCallMu.Lock()
+	if current := d.activeToolCalls[callID]; current != nil {
+		current.started = true
+	}
+	d.activeToolCallMu.Unlock()
+	return nil
+}
+
+func (d *Daemon) markActiveToolApprovalRequired(taskID, decisionID string) error {
+	d.activeToolCallMu.Lock()
+	var active *activeToolCall
+	for callID := range d.activeToolCallsByTask[taskID] {
+		if candidate := d.activeToolCalls[callID]; candidate != nil && !candidate.started {
+			active = candidate
+			break
+		}
+	}
+	d.activeToolCallMu.Unlock()
+	if active == nil {
+		return nil
+	}
+	if err := d.recordStrict(active.sess.SessionID, "ToolCallApprovalRequired", active.task.TaskID, "go", map[string]any{
+		"call_id": active.call.id, "tool": active.call.tool, "kind": active.call.kind,
+		"status": "awaiting_approval", "decision_id": decisionID,
+	}, decisionID); err != nil {
+		return err
+	}
+	return d.recordRuntimeStageStrict(active.sess, active.task, active.call, active.call.nextSequence(), "tool.awaiting_approval", "awaiting_approval")
 }
 
 func (d *Daemon) beginToolCall(sess *sessionstore.Session, task *scheduler.Task, act *action) (toolCallLifecycle, error) {
-	call := toolCallLifecycle{id: newToolCallID(), tool: act.Tool, kind: toolKind(act.Tool), created: time.Now().UTC()}
+	call := toolCallLifecycle{id: newToolCallID(), tool: act.Tool, kind: toolKind(act.Tool), created: time.Now().UTC(), sequence: &atomic.Int64{}}
 	args, _ := json.Marshal(redactedToolArguments(act))
 	env := runtimecontract.ToolCallEnvelope{CallID: call.id, SessionID: sess.SessionID, TaskID: task.TaskID, Tool: call.tool, Status: runtimecontract.ToolCallPending, Arguments: args, CreatedAt: call.created, UpdatedAt: call.created}
 	if err := env.Validate(); err != nil {
@@ -74,7 +207,7 @@ func (d *Daemon) beginToolCall(sess *sessionstore.Session, task *scheduler.Task,
 	}, ""); err != nil {
 		return call, err
 	}
-	if err := d.recordRuntimeStageStrict(sess, task, call, 1, "tool.requested", "running"); err != nil {
+	if err := d.recordRuntimeStageStrict(sess, task, call, call.nextSequence(), "tool.requested", "running"); err != nil {
 		return call, err
 	}
 	return call, nil
@@ -91,10 +224,10 @@ func (d *Daemon) startToolCall(sess *sessionstore.Session, task *scheduler.Task,
 	}, ""); err != nil {
 		return err
 	}
-	return d.recordRuntimeStageStrict(sess, task, call, 2, "tool.executing", "running")
+	return d.recordRuntimeStageStrict(sess, task, call, call.nextSequence(), "tool.executing", "running")
 }
 
-func (d *Daemon) finishToolCall(sess *sessionstore.Session, task *scheduler.Task, call toolCallLifecycle, outcome toolExecutionOutcome) {
+func (d *Daemon) finishToolCall(sess *sessionstore.Session, task *scheduler.Task, call toolCallLifecycle, outcome toolExecutionOutcome) error {
 	eventType := map[string]string{
 		"completed": "ToolCallCompleted", "failed": "ToolCallFailed", "denied": "ToolCallDenied",
 		"cancelled": "ToolCallCancelled", "timed_out": "ToolCallFailed",
@@ -137,8 +270,13 @@ func (d *Daemon) finishToolCall(sess *sessionstore.Session, task *scheduler.Task
 	if err := env.Validate(); err != nil {
 		payload["contract_error"] = err.Error()
 	}
-	d.record(sess.SessionID, eventType, task.TaskID, "go", payload, "")
-	d.recordRuntimeStage(sess, task, call, 3, "tool."+outcome.status, outcome.status)
+	if err := d.recordStrict(sess.SessionID, eventType, task.TaskID, "go", payload, ""); err != nil {
+		return err
+	}
+	if err := d.recordRuntimeStageStrict(sess, task, call, call.nextSequence(), "tool."+outcome.status, outcome.status); err != nil {
+		return fmt.Errorf("persist terminal runtime stage for %s: %w", call.id, err)
+	}
+	return nil
 }
 
 func artifactErrorCode(err error) string {

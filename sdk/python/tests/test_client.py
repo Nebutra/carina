@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from carina_sdk import CarinaClient, CarinaStreamOverflow, CarinaThread, compatible_runtime_version
+from carina_sdk import CarinaClient, CarinaRpcError, CarinaStreamOverflow, CarinaThread, compatible_runtime_version
 
 
 @contextmanager
@@ -76,6 +76,10 @@ class ClientTest(unittest.TestCase):
                 result = {"events": [], "from": request["params"]["since"], "cursor": 7}
             elif request["method"] == "session.fork":
                 result = {"session_id": "child"}
+            elif request["method"] == "session.review":
+                result={"session_id":"s1","projection_version":"1.0.0","source_cursor":"cp1.payload.signature","state":"completed","intent":"ship","success_criteria":[{"kind":"command"}],"changes":[],"commands":[],"tools":[],"checks":[],"diagnostics":[],"policy_decisions":[],"questions":[],"conflicts":[],"risk_and_policy":[],"artifact_ids":[],"rollback":{"available":False,"patch_ids":[]},"stats":{}}
+            elif request["method"] == "session.items":
+                result={"data":[{"type":"turn.started","session_id":"s1","task_id":"t1"}],"next_cursor":"cp1.payload.signature","projection_version":"1.0.0"}
             elif request["method"] == "usage.cost":
                 result = {"providers": [], "totals": {}, "estimated": False}
             elif request["method"] == "task.steer":
@@ -94,9 +98,11 @@ class ClientTest(unittest.TestCase):
 
         with daemon_server(handler) as path:
             client = CarinaClient(path, timeout=0.5)
-            self.assertEqual(compatible_runtime_version, "0.6.1")
+            self.assertEqual(compatible_runtime_version, "0.6.2")
             self.assertEqual(client.attach_session("s1", 3)["cursor"], 7)
             self.assertEqual(client.fork_session("s1")["session_id"], "child")
+            self.assertEqual(client.review_session("s1")["projection_version"], "1.0.0")
+            self.assertEqual(client.list_session_items("s1",limit=1)["data"][0]["task_id"],"t1")
             self.assertFalse(client.cost("s1")["estimated"])
             self.assertTrue(client.steer_task("t1", "continue")["queued"])
             self.assertTrue(client.answer_question("q1", "yes")["accepted"])
@@ -107,7 +113,7 @@ class ClientTest(unittest.TestCase):
             client.close()
 
         self.assertEqual(methods, [
-            "session.attach", "session.fork", "usage.cost", "task.steer",
+            "session.attach", "session.fork", "session.review", "session.items", "usage.cost", "task.steer",
             "task.user.answer", "session.events.stream",
         ])
 
@@ -185,6 +191,13 @@ class ClientTest(unittest.TestCase):
                 client.call("daemon.status")
             self.assertLess(time.monotonic() - started, 1)
 
+    def test_typed_cursor_recovery_survives_transport(self) -> None:
+        def handler(request:dict[str,Any],conn:socket.socket)->None:conn.sendall(json.dumps({"jsonrpc":"2.0","id":request["id"],"error":{"code":-32010,"message":"cursor_expired","data":{"code":"cursor_expired","projection_version":"1.0.0","recovery":"snapshot","snapshot_method":"session.items","earliest_cursor":"cp1.x.y"}}}).encode()+b"\n")
+        with daemon_server(handler) as path:
+            client=CarinaClient(path,timeout=.5)
+            with self.assertRaises(CarinaRpcError) as raised:client.list_session_items("s","bad",1)
+            self.assertEqual(raised.exception.code,-32010);self.assertEqual(raised.exception.data["code"],"cursor_expired");client.close()
+
     def test_timeout_bounds_unresponsive_daemon(self) -> None:
         with daemon_server(lambda _request, _conn: None) as path:
             client = CarinaClient(path, timeout=0.03)
@@ -195,7 +208,7 @@ class ClientTest(unittest.TestCase):
         submitted: list[dict[str, Any]] = []
         def handler(request: dict[str, Any], conn: socket.socket) -> None:
             result: Any = {}
-            if request["method"] == "runtime.initialize": result = {"runtime_version":"0.6.1","protocol_version":"1.1.0","capabilities":{}}
+            if request["method"] == "runtime.initialize": result = {"runtime_version":"0.6.2","protocol_version":"1.2.0","projection_version":"1.0.0","capabilities":{"tool_call_lifecycle":True,"event_schema_version":"0.3.0"}}
             elif request["method"] == "session.create": result = {"session_id":"s","workspace_id":"w","workspace_root":"/tmp","status":"active"}
             elif request["method"] == "task.submit": submitted.append(request["params"]); result = {"task_id":"t","status":"queued"}
             elif request["method"] == "task.result": result = {"task_id":"t","status":"completed","summary":"{\"status\":\"ok\"}"}
@@ -203,6 +216,19 @@ class ClientTest(unittest.TestCase):
         with daemon_server(handler) as path:
             client=CarinaClient(path,timeout=.5);thread=client.start_thread("/tmp");schema={"type":"object","properties":{"status":{"type":"string"}},"required":["status"]};result=thread.run("status",output_schema=schema,poll_interval=.001);self.assertEqual(result["structured_output"],{"status":"ok"});client.close()
         self.assertEqual(submitted[0]["output_schema"],schema)
+
+    def test_initialize_rejects_incompatible_protocol_and_missing_capability(self) -> None:
+        for result in (
+            {"runtime_version":"x","protocol_version":"2.0.0","capabilities":{"tool_call_lifecycle":True}},
+            {"runtime_version":"x","protocol_version":"1.2.0","capabilities":{}},
+			{"runtime_version":"x","protocol_version":"1.2.0","capabilities":{"tool_call_lifecycle":True,"event_schema_version":"0.4.0"}},
+        ):
+            def handler(request: dict[str, Any], conn: socket.socket, response=result) -> None:
+                conn.sendall(json.dumps({"jsonrpc":"2.0","id":request["id"],"result":response}).encode()+b"\n")
+            with daemon_server(handler) as path:
+                client = CarinaClient(path, timeout=.5)
+                with self.assertRaises(RuntimeError): client.initialize()
+                client.close()
 
 
 if __name__ == "__main__":

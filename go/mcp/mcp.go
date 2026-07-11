@@ -549,13 +549,20 @@ func (m *Manager) ToolSchemas(server string) (map[string]json.RawMessage, error)
 // CallPublic invokes a user-configured MCP tool. Internal/private servers are
 // deliberately unreachable through the agent action surface.
 func (m *Manager) CallPublic(server, tool string, args map[string]any) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	return m.CallPublicContext(ctx, server, tool, args)
+}
+
+// CallPublicContext invokes a public tool with caller-owned cancellation.
+func (m *Manager) CallPublicContext(ctx context.Context, server, tool string, args map[string]any) (string, error) {
 	m.mu.Lock()
 	hidden := m.hidden[server]
 	m.mu.Unlock()
 	if hidden {
 		return "", fmt.Errorf("mcp server %q is private", server)
 	}
-	return m.Call(server, tool, args)
+	return m.CallContext(ctx, server, tool, args)
 }
 
 // GetPrompt renders a prompt on a server, reconnecting once if the server has died.

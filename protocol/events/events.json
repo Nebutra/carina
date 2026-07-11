@@ -1,12 +1,13 @@
 {
   "$comment": "Canonical event type enumeration (PRD §8.2). The event log is append-only; every event carries timestamp + session_id; side-effect events carry permission_decision_id.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "types": [
     { "name": "TaskCreated", "side_effect": false, "payload": ["task_id", "user_prompt"] },
     { "name": "ModelRequested", "side_effect": false, "payload": ["provider", "model", "input_tokens"] },
     { "name": "ModelResponded", "side_effect": false, "payload": ["provider", "model", "output_tokens", "stop_reason"] },
     { "name": "RoutingDecision", "side_effect": false, "payload": ["evidence_id", "requested_model", "reasoner", "policy", "prompt_sha256", "input_tokens_estimated"] },
     { "name": "RoutingOutcome", "side_effect": false, "payload": ["evidence_id", "requested_model", "status", "latency_ms", "prompt_sha256", "response_sha256", "output_tokens_estimated"] },
+    { "name": "RoutingRetryScheduled", "side_effect": false, "payload": ["evidence_id", "attempt", "max_attempts", "error"] },
     { "name": "ContextCompacted", "side_effect": false, "payload": ["receipt"] },
     { "name": "ScheduleChanged", "side_effect": false, "payload": ["action", "schedule_id"] },
     { "name": "ScheduleTriggered", "side_effect": false, "payload": ["schedule_id", "status"] },
@@ -20,7 +21,7 @@
     { "name": "ToolCallFailed", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "error"] },
     { "name": "ToolCallDenied", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "error"] },
     { "name": "ToolCallCancelled", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "error"] },
-    { "name": "RuntimeStageChanged", "side_effect": false, "payload": ["stage_id", "stage", "status", "sequence"] },
+    { "name": "RuntimeStageChanged", "side_effect": false, "payload": ["stage_id", "stage", "status", "sequence", "call_id"] },
     { "name": "FileRead", "side_effect": true, "payload": ["path", "bytes"] },
     { "name": "FileWriteProposed", "side_effect": false, "payload": ["path", "patch_id"] },
     { "name": "PatchProposed", "side_effect": false, "payload": ["patch_id", "affected_files", "reason"] },

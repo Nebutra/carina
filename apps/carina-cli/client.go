@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/Nebutra/carina/go/rpc"
 )
@@ -32,8 +33,21 @@ var dialHook = func() (*rpcClient, error) {
 			_ = c.Close()
 			return nil, fmt.Errorf("runtime initialize: %w", err)
 		}
+	} else if err := validateCLIEventSchema(initialized); err != nil {
+		_ = c.Close()
+		return nil, err
 	}
 	return c, nil
+}
+
+func validateCLIEventSchema(info map[string]any) error {
+	caps, _ := info["capabilities"].(map[string]any)
+	v, _ := caps["event_schema_version"].(string)
+	parts := strings.Split(strings.TrimPrefix(v, "v"), ".")
+	if len(parts) != 3 || parts[0] != "0" || parts[1] != "3" {
+		return fmt.Errorf("runtime initialize: incompatible event schema %q; require 0.3.x", v)
+	}
+	return nil
 }
 
 // dialDaemon is kept as a direct dial path for callers outside run()'s

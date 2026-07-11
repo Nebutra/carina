@@ -27,7 +27,7 @@ func TestToolCallEnvelopeValidationAndJSON(t *testing.T) {
 }
 
 func TestToolCallTransitions(t *testing.T) {
-	valid := [][2]ToolCallStatus{{ToolCallPending, ToolCallAwaitingApproval}, {ToolCallAwaitingApproval, ToolCallRunning}, {ToolCallRunning, ToolCallCompleted}, {ToolCallRunning, ToolCallDenied}}
+	valid := [][2]ToolCallStatus{{ToolCallPending, ToolCallAwaitingApproval}, {ToolCallPending, ToolCallDenied}, {ToolCallAwaitingApproval, ToolCallRunning}, {ToolCallAwaitingApproval, ToolCallDenied}, {ToolCallRunning, ToolCallCompleted}, {ToolCallRunning, ToolCallDenied}}
 	for _, pair := range valid {
 		if err := ValidateTransition(pair[0], pair[1]); err != nil {
 			t.Errorf("%s -> %s: %v", pair[0], pair[1], err)

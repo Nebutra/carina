@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,62 @@ import (
 	"time"
 	"unicode/utf8"
 )
+
+func TestRunPeriodicGCStopsWithContext(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.RunPeriodicGC(ctx, 5*time.Millisecond, time.Now) }()
+	deadline := time.Now().Add(time.Second)
+	for s.Metrics().GCRuns < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunPeriodicGC error = %v", err)
+	}
+	if s.Metrics().GCRuns < 2 {
+		t.Fatalf("GC runs = %d, want at least 2", s.Metrics().GCRuns)
+	}
+}
+
+func TestRunPeriodicGCRecoversAfterTransientError(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(s.root, "refs", "bad.json")
+	if err = os.WriteFile(bad, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.RunPeriodicGC(ctx, 2*time.Millisecond, time.Now) }()
+	deadline := time.Now().Add(time.Second)
+	for s.Metrics().GCErrors < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if s.Health().OK {
+		t.Fatal("health remained OK after GC error")
+	}
+	if err = os.Remove(bad); err != nil {
+		t.Fatal(err)
+	}
+	for (s.Metrics().LastGC == nil || s.Metrics().LastGC.Error != "") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !s.Health().OK {
+		t.Fatalf("health did not recover: %+v", s.Health())
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+}
 
 func TestStorePutReadAndScopeEnforcement(t *testing.T) {
 	store, err := New(t.TempDir())
@@ -40,6 +97,58 @@ func TestStorePutReadAndScopeEnforcement(t *testing.T) {
 	encoded := strings.Join([]string{meta.ID, meta.MediaType, meta.Scope.SessionID}, " ")
 	if strings.Contains(encoded, store.root) {
 		t.Fatal("public metadata exposed local path")
+	}
+}
+
+func TestDeleteSessionRefsPreservesSharedObject(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("shared")
+	a, err := s.Put(raw, PutOptions{Scope: Scope{SessionID: "s1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Put(raw, PutOptions{Scope: Scope{SessionID: "s2"}}); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := s.DeleteSessionRefs("s1")
+	if err != nil || removed != 1 {
+		t.Fatalf("removed=%d err=%v", removed, err)
+	}
+	if _, _, err = s.Read(Scope{SessionID: "s1"}, a.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("s1 read err=%v", err)
+	}
+	if got, _, err := s.Read(Scope{SessionID: "s2"}, a.ID); err != nil || string(got) != "shared" {
+		t.Fatalf("shared object lost: %q %v", got, err)
+	}
+	gc, err := s.GC(time.Now())
+	if err != nil || gc.ObjectsRemoved != 0 {
+		t.Fatalf("gc=%+v err=%v", gc, err)
+	}
+}
+
+func TestUsageMetricsAndExpiredGC(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err = s.Put([]byte("abc"), PutOptions{Scope: Scope{SessionID: "s"}, Now: now, TTL: time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	u, err := s.Usage()
+	if err != nil || u.PhysicalBytes != 3 || u.ReferenceCount != 1 || u.LogicalReferenceBytes != 3 {
+		t.Fatalf("usage=%+v err=%v", u, err)
+	}
+	g, err := s.GC(now.Add(2 * time.Second))
+	if err != nil || g.ReferencesRemoved != 1 || g.ObjectsRemoved != 1 || g.BytesReclaimed != 3 {
+		t.Fatalf("gc=%+v err=%v", g, err)
+	}
+	m := s.Metrics()
+	if m.Puts != 1 || m.GCRuns != 1 || m.LastGC == nil {
+		t.Fatalf("metrics=%+v", m)
 	}
 }
 

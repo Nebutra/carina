@@ -7,6 +7,7 @@ package rpc
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -51,6 +52,7 @@ type Response struct {
 type Error struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 func (e *Error) Error() string { return fmt.Sprintf("rpc error %d: %s", e.Code, e.Message) }
@@ -539,7 +541,7 @@ func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
 			}
 			sub := &Subscription{id: nextSubscriptionID(), w: w, done: done, close: conn.Close}
 			if err := streamHandler(req.Params, sub); err != nil {
-				_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInternalError, Message: err.Error()}})
+				_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: responseError(err)})
 				continue
 			}
 			result := sub.result
@@ -580,9 +582,17 @@ func (s *Server) dispatch(req Request) Response {
 	}
 	result, err := h(req.Params)
 	if err != nil {
-		resp.Error = &Error{Code: CodeInternalError, Message: err.Error()}
+		resp.Error = responseError(err)
 		return resp
 	}
 	resp.Result = result
 	return resp
+}
+
+func responseError(err error) *Error {
+	var rpcErr *Error
+	if errors.As(err, &rpcErr) {
+		return rpcErr
+	}
+	return &Error{Code: CodeInternalError, Message: err.Error()}
 }

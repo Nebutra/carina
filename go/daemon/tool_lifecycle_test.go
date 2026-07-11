@@ -1,13 +1,118 @@
 package daemon
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
+
+func TestApprovalLifecycleUsesSameCallIDBeforeStarted(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	d.SetInteractiveApproval(true)
+	d.approvalTimeout = 5 * time.Second
+	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "patch")
+	if err := os.WriteFile(filepath.Join(ws, "a.txt"), []byte("before"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.recordRead(sess.SessionID, "a.txt", "before")
+
+	var types []string
+	var callIDs []string
+	d.events.Tap(func(_ string, event map[string]any) {
+		typ, _ := event["type"].(string)
+		if strings.HasPrefix(typ, "ToolCall") {
+			types = append(types, typ)
+		}
+		if payload, ok := event["payload"].(map[string]any); ok {
+			if id, _ := payload["call_id"].(string); id != "" {
+				callIDs = append(callIDs, id)
+			}
+		}
+	})
+	done := make(chan string, 1)
+	go func() { done <- d.executeAction(sess, task, &action{Tool: "patch", Path: "a.txt", Content: "after"}) }()
+	var decisionID string
+	deadline := time.After(2 * time.Second)
+	for decisionID == "" {
+		select {
+		case <-deadline:
+			t.Fatal("approval request not observed")
+		default:
+			d.approvalMu.Lock()
+			for id := range d.pendingApprovals {
+				decisionID = id
+			}
+			d.approvalMu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if _, err := d.handleApprovalResolve(mustJSON(t, map[string]any{"decision_id": decisionID, "approve": true})); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-done; !strings.Contains(got, "applied") {
+		t.Fatalf("patch result = %q", got)
+	}
+	want := []string{"ToolCallRequested", "ToolCallApprovalRequired", "ToolCallStarted", "ToolCallCompleted"}
+	if len(types) != len(want) {
+		t.Fatalf("tool lifecycle types = %#v", types)
+	}
+	for i := range want {
+		if types[i] != want[i] {
+			t.Fatalf("types[%d]=%s want %s", i, types[i], want[i])
+		}
+	}
+	for _, id := range callIDs {
+		if id != callIDs[0] {
+			t.Fatalf("call ids differ: %#v", callIDs)
+		}
+	}
+}
+
+func TestBatchToolLifecycleCallIDsAreIsolated(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "batch")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "batch")
+	_ = os.WriteFile(filepath.Join(ws, "a.txt"), []byte("a"), 0o600)
+	_ = os.WriteFile(filepath.Join(ws, "b.txt"), []byte("b"), 0o600)
+	var mu sync.Mutex
+	requested := map[string]bool{}
+	completed := map[string]bool{}
+	d.events.Tap(func(_ string, event map[string]any) {
+		payload, _ := event["payload"].(map[string]any)
+		id, _ := payload["call_id"].(string)
+		if id == "" {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		switch event["type"] {
+		case "ToolCallRequested":
+			requested[id] = true
+		case "ToolCallCompleted":
+			completed[id] = true
+		}
+	})
+	d.executeBatch(sess, task, []action{{Tool: "read", Path: "a.txt"}, {Tool: "read", Path: "b.txt"}})
+	if len(requested) != 2 || len(completed) != 2 {
+		t.Fatalf("requested=%v completed=%v", requested, completed)
+	}
+	for id := range requested {
+		if !completed[id] {
+			t.Fatalf("call %s did not complete independently", id)
+		}
+	}
+}
 
 func TestExecuteActionEmitsAuthoritativeToolLifecycle(t *testing.T) {
 	d, ws := newLoopDaemon(t)
@@ -129,6 +234,71 @@ func TestLifecyclePersistenceFailurePreventsPatchSideEffect(t *testing.T) {
 	}
 	if string(raw) != "before\n" {
 		t.Fatalf("patch ran despite failed lifecycle persistence: %q", raw)
+	}
+}
+
+func TestTerminalLifecyclePersistenceFailureIsSurfaced(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	sess, _ := d.store.CreateSession(ws, "strict terminal lifecycle")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "read")
+	if err := os.WriteFile(filepath.Join(ws, "readable.txt"), []byte("observed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	d.events.Tap(func(_ string, event map[string]any) {
+		if !closed && event["type"] == "FileRead" {
+			closed = true
+			_ = d.kern.Close()
+		}
+	})
+	got := d.executeAction(sess, task, &action{Tool: "read", Path: "readable.txt"})
+	if !strings.HasPrefix(got, "governance error: persist ToolCallCompleted:") {
+		t.Fatalf("terminal persistence failure was hidden: %q", got)
+	}
+}
+
+func TestTerminalRuntimeStagePersistenceFailureIsSurfaced(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	sess, _ := d.store.CreateSession(ws, "strict terminal stage")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "read")
+	if err := os.WriteFile(filepath.Join(ws, "readable.txt"), []byte("observed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	d.events.Tap(func(_ string, event map[string]any) {
+		if !closed && event["type"] == "ToolCallCompleted" {
+			closed = true
+			_ = d.kern.Close()
+		}
+	})
+	got := d.executeAction(sess, task, &action{Tool: "read", Path: "readable.txt"})
+	if !strings.Contains(got, "governance error: persist terminal runtime stage") {
+		t.Fatalf("terminal stage persistence failure was hidden: %q", got)
+	}
+}
+
+func TestCancelledBeforeRunContextRegistrationDoesNotStart(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	reasoner := &promptRecordingReasoner{steps: []string{`{"tool":"done","summary":"should not run"}`}}
+	d.SetReasoner(reasoner)
+	sess, _ := d.store.CreateSession(ws, "cancel before start")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "cancel me")
+	if _, err := d.sched.Cancel(task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	d.withTaskContext(task.TaskID, func(ctx context.Context) {
+		d.runTaskContext(ctx, sess, task)
+	})
+	if len(reasoner.prompts) != 0 {
+		t.Fatalf("cancelled task reached reasoner: %#v", reasoner.prompts)
+	}
+	current, _ := d.sched.Get(task.TaskID)
+	if current.Status != "cancelled" {
+		t.Fatalf("task status = %s, want cancelled", current.Status)
 	}
 }
 

@@ -3,10 +3,12 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // taskEchoReasoner finishes immediately, echoing the step's TASK line into the
@@ -115,6 +117,45 @@ func TestWorkflowDAGParallelAndInterpolation(t *testing.T) {
 	// d must contain both b's and c's outputs (ran last, after both).
 	if !strings.Contains(out["d"], out["b"]) || !strings.Contains(out["d"], out["c"]) {
 		t.Fatalf("d did not see b and c: b=%q c=%q d=%q", out["b"], out["c"], out["d"])
+	}
+}
+
+func TestWorkflowCancellationPropagatesToRunningSubagent(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	reasoner := &cancellationBlockingReasoner{started: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
+	d.SetReasoner(reasoner)
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+	spec := &WorkflowSpec{Name: "cancel", Steps: []WorkflowStep{{ID: "a", Agent: "worker", Task: "wait"}}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go d.withTaskParentContext(ctx, parentTask.TaskID, func(context.Context) {
+		_, err := d.runWorkflow(parent, parentTask, spec, "", "run-cancel")
+		result <- err
+	})
+	select {
+	case <-reasoner.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("workflow subagent did not start")
+	}
+	cancel()
+	select {
+	case <-reasoner.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("workflow subagent did not observe cancellation")
+	}
+	close(reasoner.release)
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("workflow error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("workflow did not exit after cancellation")
 	}
 }
 

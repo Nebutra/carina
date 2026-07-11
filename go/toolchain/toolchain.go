@@ -6,6 +6,7 @@ package toolchain
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -108,6 +109,10 @@ func (t *Toolchain) Grep(pattern, root string) ([]Match, error) {
 // appended to the child's environment (used to inject HTTP(S)_PROXY when the
 // egress proxy is active); nil leaves the inherited environment untouched.
 func (t *Toolchain) Run(argv []string, cwd string, timeout time.Duration, extraEnv []string, sandbox bool) (*CommandResult, error) {
+	return t.RunContext(context.Background(), argv, cwd, timeout, extraEnv, sandbox)
+}
+
+func (t *Toolchain) RunContext(ctx context.Context, argv []string, cwd string, timeout time.Duration, extraEnv []string, sandbox bool) (*CommandResult, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("toolchain: empty command")
 	}
@@ -117,7 +122,7 @@ func (t *Toolchain) Run(argv []string, cwd string, timeout time.Duration, extraE
 	}
 	args = append(args, "--")
 	args = append(args, argv...)
-	out, err := t.runJSONLines(timeout+10*time.Second, extraEnv, t.tool("carina-run"), args...)
+	out, err := t.runJSONLinesContext(ctx, timeout+10*time.Second, extraEnv, t.tool("carina-run"), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +155,12 @@ func (t *Toolchain) Run(argv []string, cwd string, timeout time.Duration, extraE
 }
 
 func (t *Toolchain) runJSONLines(timeout time.Duration, env []string, bin string, args ...string) ([]json.RawMessage, error) {
-	cmd := exec.Command(bin, args...)
+	return t.runJSONLinesContext(context.Background(), timeout, env, bin, args...)
+}
+
+func (t *Toolchain) runJSONLinesContext(ctx context.Context, timeout time.Duration, env []string, bin string, args ...string) ([]json.RawMessage, error) {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	configureCommandProcess(cmd)
 	if env != nil {
 		cmd.Env = append(os.Environ(), env...)
 	}
@@ -164,8 +174,12 @@ func (t *Toolchain) runJSONLines(timeout time.Duration, env []string, bin string
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {
+	case <-ctx.Done():
+		killCommandProcess(cmd)
+		<-done
+		return nil, context.Cause(ctx)
 	case <-time.After(timeout):
-		_ = cmd.Process.Kill()
+		killCommandProcess(cmd)
 		<-done
 		return nil, fmt.Errorf("toolchain: %s timed out after %s", bin, timeout)
 	case err := <-done:

@@ -46,6 +46,21 @@ func TestCancelAndStatuses(t *testing.T) {
 	}
 }
 
+func TestCancelledTaskCannotBeRevived(t *testing.T) {
+	s := New()
+	task := s.Submit("s", "w", "cancel")
+	if _, err := s.Cancel(task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{"running", "completed", "failed", "degraded"} {
+		s.SetStatus(task.TaskID, status)
+	}
+	got, _ := s.Get(task.TaskID)
+	if got.Status != "cancelled" {
+		t.Fatalf("cancelled task revived as %s", got.Status)
+	}
+}
+
 func TestCountByStatusAndSetStatus(t *testing.T) {
 	s := New()
 	t1 := s.Submit("s", "w", "1")

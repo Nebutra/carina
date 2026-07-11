@@ -3,6 +3,7 @@ package artifact
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,9 +14,59 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
+
+// RunPeriodicGC survives transient scan failures. Failures remain visible in
+// Metrics/Health while retries use bounded exponential backoff plus jitter.
+func (s *Store) RunPeriodicGC(ctx context.Context, interval time.Duration, now func() time.Time) error {
+	if interval <= 0 {
+		return errors.New("artifact: GC interval must be positive")
+	}
+	if now == nil {
+		now = time.Now
+	}
+	failures := 0
+	for {
+		if _, err := s.GC(now()); err != nil {
+			failures++
+		} else {
+			failures = 0
+		}
+		delay := gcRetryDelay(interval, failures, now().UnixNano())
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func gcRetryDelay(interval time.Duration, failures int, entropy int64) time.Duration {
+	base := interval
+	if failures > 0 {
+		shift := failures
+		if shift > 5 {
+			shift = 5
+		}
+		base = interval * time.Duration(1<<shift)
+		if base > 15*time.Minute {
+			base = 15 * time.Minute
+		}
+	}
+	window := base / 5
+	if window <= 0 {
+		return base
+	}
+	if entropy < 0 {
+		entropy = -entropy
+	}
+	return base + time.Duration(entropy%int64(window))
+}
 
 var (
 	ErrNotFound       = errors.New("artifact not found")
@@ -65,9 +116,76 @@ type Config struct {
 }
 
 type Store struct {
-	root string
-	cfg  Config
-	mu   sync.RWMutex
+	root         string
+	cfg          Config
+	mu           sync.RWMutex
+	puts         atomic.Uint64
+	reads        atomic.Uint64
+	quotaRejects atomic.Uint64
+	gcRuns       atomic.Uint64
+	gcErrors     atomic.Uint64
+	lastGCMu     sync.RWMutex
+	lastGC       *GCStatus
+}
+
+type Usage struct {
+	PhysicalBytes         int64 `json:"physical_bytes"`
+	ObjectCount           int   `json:"object_count"`
+	LogicalReferenceBytes int64 `json:"logical_reference_bytes"`
+	ReferenceCount        int   `json:"reference_count"`
+	MaxStoreBytes         int64 `json:"max_store_bytes"`
+	MaxSessionBytes       int64 `json:"max_session_bytes"`
+	MaxObjectBytes        int64 `json:"max_object_bytes"`
+}
+
+type Health struct {
+	OK       bool   `json:"ok"`
+	RootMode string `json:"root_mode,omitempty"`
+	Usage    Usage  `json:"usage"`
+	Error    string `json:"error,omitempty"`
+}
+
+func (s *Store) Health() Health {
+	u, err := s.Usage()
+	h := Health{OK: err == nil, Usage: u}
+	if info, statErr := os.Stat(s.root); statErr != nil {
+		if err == nil {
+			err = statErr
+		}
+		h.OK = false
+	} else {
+		h.RootMode = fmt.Sprintf("%04o", info.Mode().Perm())
+		if info.Mode().Perm()&0o077 != 0 {
+			h.OK = false
+			if err == nil {
+				err = errors.New("artifact root is accessible by group or other users")
+			}
+		}
+	}
+	if err != nil {
+		h.Error = err.Error()
+	}
+	if m := s.Metrics(); m.LastGC != nil && m.LastGC.Error != "" {
+		h.OK = false
+		h.Error = m.LastGC.Error
+	}
+	return h
+}
+
+type GCStatus struct {
+	StartedAt  time.Time `json:"started_at"`
+	DurationMS int64     `json:"duration_ms"`
+	Result     GCResult  `json:"result"`
+	Error      string    `json:"error,omitempty"`
+}
+
+type Metrics struct {
+	Puts         uint64    `json:"puts"`
+	Reads        uint64    `json:"reads"`
+	QuotaRejects uint64    `json:"quota_rejects"`
+	GCRuns       uint64    `json:"gc_runs"`
+	GCErrors     uint64    `json:"gc_errors"`
+	LastGC       *GCStatus `json:"last_gc,omitempty"`
 }
 
 // New initializes a store with safe defaults. A single optional Config may
@@ -98,6 +216,12 @@ func New(root string, configs ...Config) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("artifact: resolve root: %w", err)
 	}
+	if err := os.MkdirAll(abs, 0o700); err != nil {
+		return nil, fmt.Errorf("artifact: prepare root: %w", err)
+	}
+	if err := os.Chmod(abs, 0o700); err != nil {
+		return nil, fmt.Errorf("artifact: secure root: %w", err)
+	}
 	for _, dir := range []string{"objects", "refs"} {
 		if err := os.MkdirAll(filepath.Join(abs, dir), 0o700); err != nil {
 			return nil, fmt.Errorf("artifact: prepare %s: %w", dir, err)
@@ -121,6 +245,9 @@ func (s *Store) Put(raw []byte, opts PutOptions) (Metadata, error) {
 	sum := sha256.Sum256(raw)
 	id := hex.EncodeToString(sum[:])
 	if err := s.checkQuota(opts.Scope.SessionID, id, int64(len(raw))); err != nil {
+		if errors.Is(err, ErrQuotaExceeded) {
+			s.quotaRejects.Add(1)
+		}
 		return Metadata{}, err
 	}
 	if err := s.writeObject(id, raw); err != nil {
@@ -144,6 +271,7 @@ func (s *Store) Put(raw []byte, opts PutOptions) (Metadata, error) {
 	if err := atomicWrite(s.refPath(opts.Scope, id), encoded, 0o600); err != nil {
 		return Metadata{}, fmt.Errorf("artifact: write reference: %w", err)
 	}
+	s.puts.Add(1)
 	return meta, nil
 }
 
@@ -198,6 +326,7 @@ func (s *Store) Read(scope Scope, id string) ([]byte, Metadata, error) {
 	if hex.EncodeToString(sum[:]) != id || int64(len(raw)) != meta.Bytes {
 		return nil, Metadata{}, errors.New("artifact: object integrity check failed")
 	}
+	s.reads.Add(1)
 	return raw, meta, nil
 }
 
@@ -209,8 +338,10 @@ type GCResult struct {
 
 // GC removes expired references followed by unreferenced content objects.
 func (s *Store) GC(now time.Time) (GCResult, error) {
+	started := time.Now().UTC()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer func() { s.gcRuns.Add(1) }()
 	if now.IsZero() {
 		now = time.Now().UTC()
 	} else {
@@ -246,6 +377,8 @@ func (s *Store) GC(now time.Time) (GCResult, error) {
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
+		s.recordGC(started, result, err)
+		s.gcErrors.Add(1)
 		return result, err
 	}
 	err = filepath.WalkDir(filepath.Join(s.root, "objects"), func(path string, d os.DirEntry, walkErr error) error {
@@ -270,9 +403,102 @@ func (s *Store) GC(now time.Time) (GCResult, error) {
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
+		s.recordGC(started, result, err)
+		s.gcErrors.Add(1)
 		return result, err
 	}
+	s.recordGC(started, result, nil)
 	return result, nil
+}
+
+func (s *Store) recordGC(started time.Time, result GCResult, err error) {
+	status := &GCStatus{StartedAt: started, DurationMS: time.Since(started).Milliseconds(), Result: result}
+	if err != nil {
+		status.Error = err.Error()
+	}
+	s.lastGCMu.Lock()
+	s.lastGC = status
+	s.lastGCMu.Unlock()
+}
+
+func (s *Store) Metrics() Metrics {
+	s.lastGCMu.RLock()
+	var last *GCStatus
+	if s.lastGC != nil {
+		copy := *s.lastGC
+		last = &copy
+	}
+	s.lastGCMu.RUnlock()
+	return Metrics{Puts: s.puts.Load(), Reads: s.reads.Load(), QuotaRejects: s.quotaRejects.Load(), GCRuns: s.gcRuns.Load(), GCErrors: s.gcErrors.Load(), LastGC: last}
+}
+
+func (s *Store) Usage() (Usage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	u := Usage{MaxStoreBytes: s.cfg.MaxStoreBytes, MaxSessionBytes: s.cfg.MaxSessionBytes, MaxObjectBytes: s.cfg.MaxObjectBytes}
+	err := filepath.WalkDir(filepath.Join(s.root, "objects"), func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		u.ObjectCount++
+		u.PhysicalBytes += info.Size()
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		return u, err
+	}
+	err = filepath.WalkDir(filepath.Join(s.root, "refs"), func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || filepath.Ext(path) != ".json" {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var m Metadata
+		if err = json.Unmarshal(raw, &m); err != nil {
+			return err
+		}
+		u.ReferenceCount++
+		u.LogicalReferenceBytes += m.Bytes
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		return u, err
+	}
+	return u, nil
+}
+
+// DeleteSessionRefs removes logical references owned by sessionID. Shared
+// content objects remain until GC proves that no other scope references them.
+func (s *Store) DeleteSessionRefs(sessionID string) (int, error) {
+	if err := validateScope(Scope{SessionID: sessionID}); err != nil {
+		return 0, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root := filepath.Join(s.root, "refs", sessionID)
+	count := 0
+	_ = filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && filepath.Ext(d.Name()) == ".json" {
+			count++
+		}
+		return nil
+	})
+	if err := os.RemoveAll(root); err != nil {
+		return 0, fmt.Errorf("artifact: delete session references: %w", err)
+	}
+	return count, nil
 }
 
 func (s *Store) checkQuota(sessionID, id string, objectBytes int64) error {

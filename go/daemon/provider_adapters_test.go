@@ -291,6 +291,31 @@ func TestProviderStatusErrorCarriesRetryAfter(t *testing.T) {
 	}
 }
 
+func TestProviderStatusErrorClassification(t *testing.T) {
+	tests := []struct {
+		status    int
+		category  string
+		retryable bool
+	}{
+		{400, "invalid_input", false}, {401, "authentication", false}, {402, "rate_limit", false}, {403, "permission", false},
+		{429, "rate_limit", true}, {503, "unavailable", true},
+	}
+	for _, test := range tests {
+		info := providerStatusError{provider: "p", status: test.status}.ProviderError()
+		if info.Category != test.category || info.Retryable != test.retryable {
+			t.Errorf("status %d: %+v", test.status, info)
+		}
+	}
+}
+
+func TestMissingCredentialIsActionableAndNotRetryable(t *testing.T) {
+	_, _, err := (&providerBase{id: "openai"}).credential()
+	info := classifyProviderError(err)
+	if info.Category != "authentication" || info.Retryable || info.UserAction == "" {
+		t.Fatalf("classification=%+v", info)
+	}
+}
+
 func TestChooseCatalogModelScoresTextReasoningModels(t *testing.T) {
 	got := chooseCatalogModel(map[string]provider.Model{
 		"new-embedding": {

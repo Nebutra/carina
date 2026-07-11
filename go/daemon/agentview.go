@@ -96,6 +96,8 @@ func (d *Daemon) handleAgentRemove(params json.RawMessage) (any, error) {
 			warnings = append(warnings, err.Error())
 		} else if err := d.store.Delete(t.SessionID); err != nil {
 			warnings = append(warnings, err.Error())
+		} else if _, err := d.artifacts.DeleteSessionRefs(t.SessionID); err != nil {
+			warnings = append(warnings, err.Error())
 		}
 		if err := d.agentView.Delete(t.SessionID); err != nil {
 			warnings = append(warnings, err.Error())
@@ -179,6 +181,7 @@ func (d *Daemon) handleAgentDispatch(params json.RawMessage) (any, error) {
 	rollback := func(cause error) error {
 		_, _ = d.store.SetStatus(sess.SessionID, "closed")
 		_ = d.store.Delete(sess.SessionID)
+		_, _ = d.artifacts.DeleteSessionRefs(sess.SessionID)
 		_ = d.agentView.Delete(sess.SessionID)
 		if worktreeID != "" {
 			_, _ = d.worktrees.Unlock(worktreeID, sess.SessionID)

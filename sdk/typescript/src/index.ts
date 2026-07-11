@@ -1,9 +1,10 @@
-/** Carina JSON-RPC SDK for Runtime 0.6.1. */
+/** Carina JSON-RPC SDK for Runtime 0.6.2. */
 import { createConnection, type Socket } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 
-export const compatibleRuntimeVersion = '0.6.1'
+export const compatibleRuntimeVersion = '0.6.2'
 
 export interface Session {
   session_id: string
@@ -41,6 +42,33 @@ export interface SessionAttachment {
   cursor: number
 }
 
+export interface ReviewItem { id: string; type: string; status: string; task_id?: string; details?: Record<string, unknown> }
+export interface SessionReview {
+  session_id: string
+  projection_version: string
+  source_cursor: string
+  state: string
+  summary?: string
+  waiting_reason?: string
+  intent?: string
+  success_criteria: unknown[]
+  changes: ReviewItem[]
+  commands: ReviewItem[]
+  tools: ReviewItem[]
+  checks: ReviewItem[]
+  diagnostics: ReviewItem[]
+  policy_decisions: ReviewItem[]
+  questions: ReviewItem[]
+  conflicts: ReviewItem[]
+  risk_and_policy: ReviewItem[]
+  artifact_ids: string[]
+  rollback: { available: boolean; patch_ids: string[] }
+  stats: Record<string, number>
+}
+export interface SessionItemEvent { type:string;session_id:string;turn_id?:string;task_id?:string;item_id?:string;source_event_id?:string;timestamp?:string;details?:Record<string,unknown>;item?:ReviewItem }
+export interface SessionItemsPage { data:SessionItemEvent[];next_cursor?:string;projection_version:string }
+export interface CursorRecovery { code:'invalid_cursor'|'cursor_expired';projection_version:string;recovery:string;snapshot_method:'session.items';earliest_cursor?:string }
+
 export interface UsageCostRow {
   provider: string
   model: string
@@ -64,7 +92,7 @@ export interface WorkflowRun { id: string; workflow: string; session_id: string;
 export interface Worker { worker_id: string; name: string; kind: string; status: string }
 export interface ChannelEvent { id: string; sender_id: string; session_id: string; kind: string; timestamp: string; payload?: Record<string, unknown>; permission_decision_id?: string; permission_allow?: boolean }
 export interface Extension { manifest: { name: string; version: string; estimated_prompt_tokens?: number }; source: string; enabled: boolean; trusted: boolean }
-export interface RuntimeInfo { runtime_version: string; protocol_version: string; minimum_protocol_version?: string; capabilities: Record<string, unknown> }
+export interface RuntimeInfo { runtime_version: string; protocol_version: string; projection_version?: string; minimum_protocol_version?: string; capabilities: Record<string, unknown> }
 export type JsonSchema = Record<string, unknown>
 export interface RunOptions { outputSchema?: JsonSchema; signal?: AbortSignal; pollIntervalMs?: number }
 export interface TurnResult { task: Task; finalResponse: string; structuredOutput?: unknown }
@@ -72,6 +100,9 @@ export interface AgentViewEntry { session_id: string; task_id?: string; state: s
 export interface AgentView { needs_input: AgentViewEntry[]; working: AgentViewEntry[]; completed: AgentViewEntry[] }
 export interface SuccessCheck { kind: string; path?: string; pattern?: string; command?: string[] }
 export interface Checkpoint { checkpoint_id: string; task_id: string; session_id: string; turn: number; summary?: string; applied_patches: string[] }
+export interface ArtifactScope { session_id: string; task_id?: string; call_id?: string }
+export interface ArtifactMetadata { id:string; scope:ArtifactScope; media_type?:string; bytes:number; created_at:string; expires_at?:string; preview?:string; truncated:boolean; preview_utf8:boolean }
+export interface ArtifactReadPage { metadata:ArtifactMetadata; offset:number; next_offset:number; eof:boolean; content_base64:string }
 
 export interface PatchFile { path: string; new_content: string }
 export interface Patch {
@@ -105,7 +136,7 @@ export interface AuditReport {
   commands: unknown[]
 }
 
-interface RpcError { code: number; message: string }
+interface RpcError { code: number; message: string; data?: unknown }
 interface PendingCall {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
@@ -114,7 +145,7 @@ interface PendingCall {
 type NotificationHandler = (method: string, params: unknown) => void
 
 export class CarinaRpcError extends Error {
-  constructor(public readonly code: number, message: string) {
+  constructor(public readonly code: number, message: string, public readonly data?: unknown) {
     super(`rpc ${code}: ${message}`)
     this.name = 'CarinaRpcError'
   }
@@ -208,6 +239,8 @@ export class CarinaClient {
   attachSession(sessionId: string, since = 0): Promise<SessionAttachment> {
     return this.call('session.attach', { session_id: sessionId, since })
   }
+  reviewSession(sessionId: string): Promise<SessionReview> { return this.call('session.review', { session_id: sessionId }) }
+  listSessionItems(sessionId:string,cursor='',limit=50):Promise<SessionItemsPage>{return this.call('session.items',{session_id:sessionId,limit,...(cursor?{cursor}:{})})}
   forkSession(sessionId: string): Promise<Session> { return this.call('session.fork', { session_id: sessionId }) }
   cost(sessionId?: string, taskId?: string): Promise<UsageCostReport> {
     return this.call('usage.cost', { ...(sessionId ? { session_id: sessionId } : {}), ...(taskId ? { task_id: taskId } : {}) })
@@ -219,7 +252,14 @@ export class CarinaClient {
     return this.call('task.user.answer', { question_id: questionId, value })
   }
   listWorkflows(): Promise<WorkflowRun[]> { return this.call('workflow.list') }
-  initialize(clientName = '@carina/sdk', clientVersion = '0.2.0'): Promise<RuntimeInfo> { return this.call('runtime.initialize', { protocol_version: '1.2.0', schema_version: '1.2.0', client_name: clientName, client_version: clientVersion }) }
+  async initialize(clientName = '@carina/sdk', clientVersion = '0.2.0'): Promise<RuntimeInfo> {
+    const info = await this.call<RuntimeInfo>('runtime.initialize', { protocol_version: '1.2.0', schema_version: '1.2.0', projection_version: '1.0.0', client_name: clientName, client_version: clientVersion })
+    if (info.protocol_version.replace(/^v/, '').split('.')[0] !== '1') throw new Error(`sdk: incompatible runtime protocol ${JSON.stringify(info.protocol_version)}`)
+    if (info.capabilities?.tool_call_lifecycle !== true) throw new Error('sdk: runtime lacks required tool_call_lifecycle capability')
+    const eventSchema=String(info.capabilities?.event_schema_version??'').replace(/^v/,'').split('.')
+    if(eventSchema.length!==3||eventSchema[0]!=='0'||eventSchema[1]!=='3')throw new Error(`sdk: incompatible event schema ${String(info.capabilities?.event_schema_version)}; require 0.3.x`)
+    return info
+  }
   workflowDetail(runId: string): Promise<Record<string, unknown>> { return this.call('workflow.detail', { run_id: runId }) }
   runWorkflow(sessionId: string, workflow: string, input = ''): Promise<WorkflowRun> { return this.call('workflow.run', { session_id: sessionId, workflow, input }) }
   pauseWorkflow(runId: string): Promise<WorkflowRun> { return this.call('workflow.pause', { run_id: runId }) }
@@ -227,8 +267,11 @@ export class CarinaClient {
   stopWorkflow(runId: string): Promise<WorkflowRun> { return this.call('workflow.stop', { run_id: runId }) }
   restartWorkflow(runId: string): Promise<WorkflowRun> { return this.call('workflow.restart', { run_id: runId }) }
   listWorkers(): Promise<Worker[]> { return this.call('worker.list') }
-  resolveApproval(decisionId: string, allow: boolean, approver = '', scope: 'once'|'session'|'project' = 'once'): Promise<void> { return this.call('task.approval.resolve', { decision_id: decisionId, allow, approver, scope }) }
+  resolveApproval(decisionId: string, allow: boolean, approver = '', scope: 'once'|'session'|'project' = 'once'): Promise<void> { return this.call('task.approval.resolve', { decision_id: decisionId, approve: allow, approver, scope }) }
   doctor(): Promise<Record<string, unknown>> { return this.call('daemon.doctor') }
+  statArtifact(scope:ArtifactScope,artifactId:string):Promise<ArtifactMetadata>{return this.call('artifact.stat',{...scope,artifact_id:artifactId})}
+  readArtifactPage(scope:ArtifactScope,artifactId:string,offset=0,limit=65536):Promise<ArtifactReadPage>{if(offset<0||limit<1||limit>1048576)return Promise.reject(new RangeError('offset must be non-negative and limit must be 1..1048576'));return this.call('artifact.read',{...scope,artifact_id:artifactId,offset,limit})}
+  async downloadArtifact(scope:ArtifactScope,artifactId:string,maxBytes:number):Promise<{content:Buffer;metadata:ArtifactMetadata}>{if(maxBytes<=0)throw new RangeError('maxBytes must be positive');const chunks:Buffer[]=[];let size=0,offset=0,metadata:ArtifactMetadata|undefined;for(;;){const page=await this.readArtifactPage(scope,artifactId,offset,1048576);metadata=page.metadata;const chunk=Buffer.from(page.content_base64,'base64');size+=chunk.length;if(size>maxBytes)throw new RangeError(`artifact exceeds download limit ${maxBytes}`);chunks.push(chunk);if(page.eof)break;if(page.next_offset<=offset)throw new Error('artifact pagination did not advance');offset=page.next_offset}const content=Buffer.concat(chunks);if(createHash('sha256').update(content).digest('hex')!==artifactId)throw new Error('artifact digest mismatch');return{content,metadata:metadata!}}
   listAgents(workspaceRoot = ''): Promise<Record<string, unknown>> { return this.call('agent.list', { workspace_root: workspaceRoot }) }
   agentView(): Promise<AgentView> { return this.call('agent.view') }
   listCheckpoints(sessionId: string): Promise<Checkpoint[]> { return this.call('session.checkpoint.list', { session_id: sessionId }) }
@@ -311,7 +354,7 @@ export class CarinaClient {
         const waiter = this.pending.get(msg.id)
         if (!waiter) continue
         this.pending.delete(msg.id)
-        if (msg.error) waiter.reject(new CarinaRpcError(msg.error.code, msg.error.message))
+        if (msg.error) waiter.reject(new CarinaRpcError(msg.error.code, msg.error.message, msg.error.data))
         else waiter.resolve(msg.result)
       } catch {
         // A malformed frame cannot be correlated safely; the call timeout still bounds pending work.

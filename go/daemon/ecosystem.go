@@ -268,7 +268,7 @@ func (d *Daemon) handleChannelEventInject(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("channel effect start journal: %w", err)
 	}
 	if p.Event.PermissionDecisionID != "" && p.Event.PermissionAllow != nil {
-		raw, _ := json.Marshal(map[string]any{"decision_id": p.Event.PermissionDecisionID, "allow": *p.Event.PermissionAllow, "approver": "channel:" + p.Event.SenderID, "scope": "once"})
+		raw, _ := json.Marshal(map[string]any{"decision_id": p.Event.PermissionDecisionID, "approve": *p.Event.PermissionAllow, "approver": "channel:" + p.Event.SenderID, "scope": "once"})
 		if _, err := d.handleApprovalResolve(raw); err != nil {
 			return nil, fmt.Errorf("channel permission relay: %w", err)
 		}

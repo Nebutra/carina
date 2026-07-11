@@ -2,8 +2,11 @@ package daemon
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/Nebutra/carina/go/kernel"
 )
 
 // awaitPermissionRequest returns a channel that receives the decision_id of the
@@ -93,6 +96,127 @@ func TestInteractiveApprovalTimeoutDenies(t *testing.T) {
 	}
 	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "running" {
 		t.Fatalf("task should return to running after timeout, got %s", tk.Status)
+	}
+	if _, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "late-operator", ""); err == nil {
+		t.Fatal("timed-out kernel decision remained approvable")
+	}
+}
+
+func TestInteractivePatchApprovalTimeoutClosesPatchGate(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	d.SetInteractiveApproval(true)
+	d.approvalTimeout = 30 * time.Millisecond
+	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "patch")
+	patchID, decisionID, decision := proposeGovernedPatch(t, d, sess.SessionID, "timeout.txt", "after\n")
+	if decision != "requires_approval" {
+		t.Fatalf("decision = %s", decision)
+	}
+	dec, err := d.kernDecisionForPatch(sess.SessionID, patchID, decisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := d.resolveApproval(sess, task, dec, "apply patch"); ok {
+		t.Fatal("timed-out patch approval was allowed")
+	}
+	d.mu.Lock()
+	status := d.patchGates[patchID].status
+	d.mu.Unlock()
+	if status != "expired" {
+		t.Fatalf("patch gate status = %s, want expired", status)
+	}
+	if _, err := d.handleApprove(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "decision_id": decisionID,
+	})); err == nil || !strings.Contains(err.Error(), "approval_expired") {
+		t.Fatalf("late patch approval error = %v", err)
+	}
+}
+
+func (d *Daemon) kernDecisionForPatch(sessionID, patchID, decisionID string) (*kernel.Decision, error) {
+	// The decision is already in the kernel pending map. Reconstruct the public
+	// envelope used by resolveApproval without minting a second decision.
+	return &kernel.Decision{
+		DecisionID: decisionID, Decision: "requires_approval",
+		Capability: "PatchApply", Resource: patchID,
+	}, nil
+}
+
+func TestApprovalResolveAcceptsCanonicalAndLegacyBooleans(t *testing.T) {
+	tests := []struct {
+		name   string
+		params map[string]any
+	}{
+		{name: "canonical", params: map[string]any{"approve": true}},
+		{name: "legacy", params: map[string]any{"allow": true}},
+		{name: "matching aliases", params: map[string]any{"approve": true, "allow": true}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			d, ws := newLoopDaemon(t)
+			defer d.Close()
+			d.SetInteractiveApproval(true)
+			sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
+			d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
+			task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run")
+			dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+			reqs := permissionRequests(d)
+			result := make(chan bool, 1)
+			go func() { _, ok := d.resolveApproval(sess, task, dec, "install"); result <- ok }()
+			select {
+			case <-reqs:
+			case <-time.After(2 * time.Second):
+				t.Fatal("permission request not published")
+			}
+			params := map[string]any{"decision_id": dec.DecisionID}
+			for key, value := range test.params {
+				params[key] = value
+			}
+			if _, err := d.handleApprovalResolve(mustJSON(t, params)); err != nil {
+				t.Fatal(err)
+			}
+			if !<-result {
+				t.Fatal("approval was not granted")
+			}
+		})
+	}
+}
+
+func TestApprovalResolveRejectsMissingOrConflictingBoolean(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	d.SetInteractiveApproval(true)
+	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run")
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	reqs := permissionRequests(d)
+	result := make(chan bool, 1)
+	go func() { _, ok := d.resolveApproval(sess, task, dec, "install"); result <- ok }()
+	select {
+	case <-reqs:
+	case <-time.After(2 * time.Second):
+		t.Fatal("permission request not published")
+	}
+	if _, err := d.handleApprovalResolve(mustJSON(t, map[string]any{"decision_id": dec.DecisionID})); err == nil {
+		t.Fatal("missing approve/allow was accepted")
+	}
+	if _, err := d.handleApprovalResolve(mustJSON(t, map[string]any{
+		"decision_id": dec.DecisionID, "approve": true, "allow": false,
+	})); err == nil {
+		t.Fatal("conflicting approve/allow was accepted")
+	}
+	if _, err := d.handleApprovalResolve(mustJSON(t, map[string]any{
+		"decision_id": dec.DecisionID, "approve": false,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if <-result {
+		t.Fatal("cleanup denial unexpectedly granted approval")
+	}
+	if _, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "late", ""); err == nil {
+		t.Fatal("denied decision remained pending")
 	}
 }
 

@@ -1,12 +1,19 @@
 package daemon
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strconv"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Nebutra/carina/go/rpc"
 )
 
 type itemAuditEvent struct {
@@ -75,6 +82,101 @@ var sessionItemsCache = struct {
 }{entries: make(map[string]itemCacheEntry)}
 
 const sessionItemsCacheLimit = 128
+const sessionProjectionVersion = "1.0.0"
+
+type projectionCursorClaims struct {
+	Version    int    `json:"v"`
+	SessionID  string `json:"sid"`
+	Projection string `json:"projection"`
+	Epoch      string `json:"epoch"`
+	Position   int    `json:"position"`
+}
+type projectionCursorAuthority struct{ key []byte }
+
+var projectionCursorAuthorities = struct {
+	sync.Mutex
+	byStateDir map[string]*projectionCursorAuthority
+}{byStateDir: make(map[string]*projectionCursorAuthority)}
+
+type ProjectionCursorError struct {
+	Code              string `json:"code"`
+	ProjectionVersion string `json:"projection_version"`
+	Recovery          string `json:"recovery"`
+	SnapshotMethod    string `json:"snapshot_method"`
+	EarliestCursor    string `json:"earliest_cursor,omitempty"`
+}
+
+func (d *Daemon) projectionCursorAuthority() (*projectionCursorAuthority, error) {
+	projectionCursorAuthorities.Lock()
+	defer projectionCursorAuthorities.Unlock()
+	if authority := projectionCursorAuthorities.byStateDir[d.stateDir]; authority != nil {
+		return authority, nil
+	}
+	if err := os.MkdirAll(d.stateDir, 0o700); err != nil {
+		return nil, fmt.Errorf("projection cursor state: %w", err)
+	}
+	path := filepath.Join(d.stateDir, "projection-cursor.key")
+	key, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		key = make([]byte, 32)
+		if _, err = rand.Read(key); err != nil {
+			return nil, fmt.Errorf("projection cursor entropy: %w", err)
+		}
+		createErr := persistProjectionCursorKey(d.stateDir, path, key)
+		if os.IsExist(createErr) {
+			key, err = os.ReadFile(path)
+		} else {
+			err = createErr
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("projection cursor key: %w", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("projection cursor key must have mode 0600")
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("projection cursor key must be 32 bytes")
+	}
+	authority := &projectionCursorAuthority{key: append([]byte{}, key...)}
+	projectionCursorAuthorities.byStateDir[d.stateDir] = authority
+	return authority, nil
+}
+
+func persistProjectionCursorKey(stateDir, path string, key []byte) error {
+	file, err := os.CreateTemp(stateDir, ".projection-cursor-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := file.Name()
+	defer os.Remove(tmp)
+	if err = file.Chmod(0o600); err == nil {
+		_, err = file.Write(key)
+	}
+	if err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err = os.Link(tmp, path); err != nil {
+		return err
+	}
+	dir, openErr := os.Open(stateDir)
+	if openErr == nil {
+		syncErr := dir.Sync()
+		_ = dir.Close()
+		if syncErr != nil {
+			return syncErr
+		}
+	}
+	return nil
+}
 
 func (d *Daemon) handleSessionItems(params json.RawMessage) (any, error) {
 	var p struct {
@@ -88,7 +190,30 @@ func (d *Daemon) handleSessionItems(params json.RawMessage) (any, error) {
 	if p.SessionID == "" {
 		return nil, fmt.Errorf("session_id required")
 	}
-	id := p.SessionID
+	items, err := d.loadSessionItems(p.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	if len(p.Cursor) == 0 && p.Limit == nil {
+		return items, nil
+	}
+	authority, err := d.projectionCursorAuthority()
+	if err != nil {
+		return nil, err
+	}
+	epoch := projectionEpoch(items)
+	cursor, err := authority.decode(p.SessionID, epoch, p.Cursor)
+	if err != nil {
+		return nil, err
+	}
+	limit := 50
+	if p.Limit != nil {
+		limit = *p.Limit
+	}
+	return paginateSessionItems(authority, p.SessionID, epoch, items, cursor, limit)
+}
+
+func (d *Daemon) loadSessionItems(id string) ([]SessionItemEvent, error) {
 	raw, err := d.kern.ReadEvents(id)
 	if err != nil {
 		return nil, err
@@ -120,26 +245,15 @@ func (d *Daemon) handleSessionItems(params json.RawMessage) (any, error) {
 	}
 	items := append([]SessionItemEvent(nil), cached.items...)
 	sessionItemsCache.Unlock()
-	if len(p.Cursor) == 0 && p.Limit == nil {
-		return items, nil
-	}
-	cursor, err := decodeItemsCursor(p.Cursor)
-	if err != nil {
-		return nil, err
-	}
-	limit := 50
-	if p.Limit != nil {
-		limit = *p.Limit
-	}
-	return paginateSessionItems(items, cursor, limit)
+	return items, nil
 }
 
-func paginateSessionItems(items []SessionItemEvent, cursor, limit int) (map[string]any, error) {
+func paginateSessionItems(authority *projectionCursorAuthority, sessionID, epoch string, items []SessionItemEvent, cursor, limit int) (map[string]any, error) {
 	if cursor < 0 {
 		return nil, fmt.Errorf("cursor must be non-negative")
 	}
 	if cursor > len(items) {
-		cursor = len(items)
+		return nil, authority.cursorFailure("cursor_expired", sessionID, epoch, "fetch a fresh session.items snapshot without cursor")
 	}
 	if limit < 1 || limit > 200 {
 		return nil, fmt.Errorf("limit must be between 1 and 200")
@@ -148,31 +262,208 @@ func paginateSessionItems(items []SessionItemEvent, cursor, limit int) (map[stri
 	if end > len(items) {
 		end = len(items)
 	}
-	result := map[string]any{"data": items[cursor:end]}
+	result := map[string]any{"data": items[cursor:end], "projection_version": sessionProjectionVersion}
 	if end < len(items) {
-		result["next_cursor"] = encodeItemsCursor(end)
+		result["next_cursor"] = authority.encode(sessionID, epoch, end)
 	}
 	return result, nil
 }
 
-func encodeItemsCursor(index int) string { return fmt.Sprintf("items:v1:%d", index) }
-func decodeItemsCursor(raw json.RawMessage) (int, error) {
+func (a *projectionCursorAuthority) encode(sessionID, epoch string, index int) string {
+	return a.encodeClaims(projectionCursorClaims{Version: 1, SessionID: sessionID, Projection: sessionProjectionVersion, Epoch: epoch, Position: index})
+}
+func (a *projectionCursorAuthority) encodeClaims(claims projectionCursorClaims) string {
+	payload, _ := json.Marshal(claims)
+	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	mac := hmac.New(sha256.New, a.key)
+	_, _ = mac.Write([]byte(encoded))
+	return "cp1." + encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+func (a *projectionCursorAuthority) decode(sessionID, epoch string, raw json.RawMessage) (int, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return 0, nil
 	}
 	var cursor string
 	if err := json.Unmarshal(raw, &cursor); err != nil {
-		return 0, fmt.Errorf("cursor must be an opaque string")
+		return 0, a.cursorFailure("invalid_cursor", sessionID, epoch, "discard the cursor and request session.items without cursor")
 	}
-	const prefix = "items:v1:"
-	if !strings.HasPrefix(cursor, prefix) {
-		return 0, fmt.Errorf("invalid session.items cursor")
+	parts := strings.Split(cursor, ".")
+	if len(parts) != 3 || parts[0] != "cp1" {
+		return 0, a.cursorFailure("invalid_cursor", sessionID, epoch, "discard the cursor and request session.items without cursor")
 	}
-	index, err := strconv.Atoi(strings.TrimPrefix(cursor, prefix))
-	if err != nil || index < 0 {
-		return 0, fmt.Errorf("invalid session.items cursor")
+	mac := hmac.New(sha256.New, a.key)
+	_, _ = mac.Write([]byte(parts[1]))
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || !hmac.Equal(signature, mac.Sum(nil)) {
+		return 0, a.cursorFailure("invalid_cursor", sessionID, epoch, "discard the cursor and request session.items without cursor")
 	}
-	return index, nil
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return 0, a.cursorFailure("invalid_cursor", sessionID, epoch, "discard the cursor and request session.items without cursor")
+	}
+	var claims projectionCursorClaims
+	if json.Unmarshal(payload, &claims) != nil || claims.Version != 1 || claims.SessionID != sessionID || claims.Projection != sessionProjectionVersion || claims.Position < 0 {
+		return 0, a.cursorFailure("invalid_cursor", sessionID, epoch, "discard the cursor and request session.items without cursor")
+	}
+	if claims.Epoch != epoch {
+		return 0, a.cursorFailure("cursor_expired", sessionID, epoch, "fetch a fresh snapshot; the projection epoch changed")
+	}
+	return claims.Position, nil
+}
+
+func (a *projectionCursorAuthority) cursorFailure(code, sessionID, epoch, hint string) *rpc.Error {
+	data := ProjectionCursorError{Code: code, ProjectionVersion: sessionProjectionVersion, Recovery: hint, SnapshotMethod: "session.items", EarliestCursor: a.encode(sessionID, epoch, 0)}
+	return &rpc.Error{Code: -32010, Message: code, Data: data}
+}
+func projectionEpoch(items []SessionItemEvent) string {
+	source := "empty"
+	if len(items) > 0 {
+		source = nonempty(items[0].SourceEventID, items[0].SessionID)
+	}
+	sum := sha256.Sum256([]byte(sessionProjectionVersion + "\x00" + source))
+	return base64.RawURLEncoding.EncodeToString(sum[:12])
+}
+
+type SessionReview struct {
+	SessionID         string         `json:"session_id"`
+	ProjectionVersion string         `json:"projection_version"`
+	SourceCursor      string         `json:"source_cursor"`
+	State             string         `json:"state"`
+	Summary           string         `json:"summary,omitempty"`
+	WaitingReason     string         `json:"waiting_reason,omitempty"`
+	Intent            string         `json:"intent,omitempty"`
+	SuccessCriteria   []any          `json:"success_criteria"`
+	Changes           []*SessionItem `json:"changes"`
+	Commands          []*SessionItem `json:"commands"`
+	Tools             []*SessionItem `json:"tools"`
+	Checks            []*SessionItem `json:"checks"`
+	Diagnostics       []*SessionItem `json:"diagnostics"`
+	PolicyDecisions   []*SessionItem `json:"policy_decisions"`
+	Questions         []*SessionItem `json:"questions"`
+	Conflicts         []*SessionItem `json:"conflicts"`
+	RiskAndPolicy     []*SessionItem `json:"risk_and_policy"`
+	Artifacts         []string       `json:"artifact_ids"`
+	Rollback          map[string]any `json:"rollback"`
+	Stats             map[string]int `json:"stats"`
+}
+
+func (d *Daemon) handleSessionReview(params json.RawMessage) (any, error) {
+	id, err := sessionID(params)
+	if err != nil {
+		return nil, err
+	}
+	items, err := d.loadSessionItems(id)
+	if err != nil {
+		return nil, err
+	}
+	authority, err := d.projectionCursorAuthority()
+	if err != nil {
+		return nil, err
+	}
+	return projectSessionReview(id, items, authority.encode(id, projectionEpoch(items), len(items))), nil
+}
+
+func projectSessionReview(sessionID string, events []SessionItemEvent, sourceCursor string) SessionReview {
+	review := SessionReview{
+		SessionID: sessionID, ProjectionVersion: sessionProjectionVersion,
+		SourceCursor: sourceCursor, State: "active",
+		Changes: []*SessionItem{}, Commands: []*SessionItem{}, Tools: []*SessionItem{},
+		Checks: []*SessionItem{}, Diagnostics: []*SessionItem{}, PolicyDecisions: []*SessionItem{}, Questions: []*SessionItem{}, Conflicts: []*SessionItem{},
+		SuccessCriteria: []any{}, RiskAndPolicy: []*SessionItem{}, Artifacts: []string{}, Rollback: map[string]any{"available": false, "patch_ids": []string{}}, Stats: map[string]int{},
+	}
+	artifacts := map[string]bool{}
+	rollbackIDs := []string{}
+	itemsByID := map[string]*SessionItem{}
+	itemOrder := []string{}
+	for _, event := range events {
+		switch event.Type {
+		case "turn.started":
+			review.State = "active"
+			review.Summary = ""
+			review.WaitingReason = ""
+			if intent := nonempty(stringField(event.Details, "prompt"), stringField(event.Details, "user_prompt")); intent != "" {
+				review.Intent = intent
+			}
+			if criteria, ok := event.Details["success_criteria"].([]any); ok {
+				review.SuccessCriteria = append([]any{}, criteria...)
+			}
+		case "turn.completed":
+			review.State = "completed"
+			review.Summary = stringField(event.Details, "summary")
+		case "turn.failed":
+			review.State = nonempty(stringField(event.Details, "status"), "failed")
+			review.Summary = nonempty(stringField(event.Details, "summary"), stringField(event.Details, "error"))
+		case "thread.completed":
+			review.State = "completed"
+		}
+		item := event.Item
+		if item == nil || item.ID == "" {
+			continue
+		}
+		key := item.Type + "\x00" + item.ID
+		if _, exists := itemsByID[key]; !exists {
+			itemOrder = append(itemOrder, key)
+		}
+		itemsByID[key] = cloneItem(item)
+	}
+	for _, key := range itemOrder {
+		item := itemsByID[key]
+		review.Stats[item.Type]++
+		switch item.Type {
+		case "file_change", "turn_net_diff":
+			review.Changes = append(review.Changes, cloneItem(item))
+		case "command_execution":
+			review.Commands = append(review.Commands, cloneItem(item))
+		case "tool_call":
+			tool := stringField(item.Details, "tool")
+			kind := stringField(item.Details, "kind")
+			if tool == "run" || kind == "command" {
+				review.Commands = append(review.Commands, cloneItem(item))
+			} else {
+				review.Tools = append(review.Tools, cloneItem(item))
+			}
+			if tool == "goal_check" || kind == "goal_check" || item.Details["check"] == true || item.Details["verification"] == true {
+				review.Checks = append(review.Checks, cloneItem(item))
+			}
+		case "approval", "question":
+			review.Questions = append(review.Questions, cloneItem(item))
+			if item.Status == "requested" {
+				if item.Type == "approval" {
+					review.WaitingReason = "waiting_approval"
+				} else {
+					review.WaitingReason = "waiting_input"
+				}
+			}
+		case "risk_review", "error":
+			review.RiskAndPolicy = append(review.RiskAndPolicy, cloneItem(item))
+			if item.Type == "risk_review" {
+				review.PolicyDecisions = append(review.PolicyDecisions, cloneItem(item))
+			} else {
+				review.Diagnostics = append(review.Diagnostics, cloneItem(item))
+			}
+		}
+		if item.Type == "file_change" && strings.Contains(strings.ToLower(stringField(item.Details, "error")), "conflict") {
+			review.Conflicts = append(review.Conflicts, cloneItem(item))
+		}
+		if item.Type == "turn_net_diff" {
+			for _, patch := range mapSliceField(item.Details, "patches") {
+				if stringField(patch, "status") == "applied" && stringField(patch, "rollback_pointer") != "" {
+					rollbackIDs = appendUnique(rollbackIDs, stringField(patch, "patch_id"))
+				}
+			}
+		}
+		for _, artifactID := range stringSliceField(item.Details, "artifact_ids") {
+			if !artifacts[artifactID] {
+				artifacts[artifactID] = true
+				review.Artifacts = append(review.Artifacts, artifactID)
+			}
+		}
+	}
+	if review.WaitingReason != "" && review.State == "active" {
+		review.State = "needs_input"
+	}
+	review.Rollback = map[string]any{"available": len(rollbackIDs) > 0, "patch_ids": rollbackIDs}
+	return review
 }
 
 func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionItemEvent {
@@ -214,6 +505,25 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 		}
 
 		switch ev.Type {
+		case "ToolRequested":
+			status := stringField(ev.Payload, "status")
+			if status == "permission_requested" || status == "user_question_requested" {
+				kind := "approval"
+				if status == "user_question_requested" {
+					kind = "question"
+				}
+				details := copyMap(ev.Payload)
+				if request, ok := ev.Payload["request"].(map[string]any); ok {
+					mergeMap(details, request)
+				}
+				id := nonempty(stringField(details, "decision_id"), stringField(details, "question_id"))
+				if id == "" {
+					id = fallbackItemID(kind, ev, i)
+				}
+				item := &SessionItem{ID: id, Type: kind, Status: "requested", TaskID: ev.TaskID, StartedAt: ev.Timestamp, Details: details}
+				out = append(out, itemEvent("item.started", sessionID, ev, item))
+			}
+
 		case "ToolCallRequested":
 			callID := stringField(ev.Payload, "call_id")
 			if callID == "" {
@@ -247,6 +557,9 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 				item = newToolCallItem(ev, callID, i)
 			}
 			item.Status = toolCallItemStatus(ev.Type)
+			if payloadStatus := stringField(ev.Payload, "status"); payloadStatus == "timed_out" {
+				item.Status = payloadStatus
+			}
 			item.CompletedAt = ev.Timestamp
 			mergeMap(item.Details, ev.Payload)
 			out = append(out, itemEvent("item.completed", sessionID, ev, item))
@@ -358,6 +671,21 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 		if ev.Type == "TaskCreated" {
 			if status := stringField(ev.Payload, "status"); status != "" {
 				switch status {
+				case "approval_resolved", "user_question_resolved":
+					kind := "approval"
+					id := stringField(ev.Payload, "decision_id")
+					if status == "user_question_resolved" {
+						kind = "question"
+						id = stringField(ev.Payload, "question_id")
+					}
+					if id == "" {
+						id = fallbackItemID(kind, ev, i)
+					}
+					item := &SessionItem{ID: id, Type: kind, Status: "resolved", TaskID: ev.TaskID, StartedAt: ev.Timestamp, CompletedAt: ev.Timestamp, Details: copyMap(ev.Payload)}
+					out = append(out, itemEvent("item.completed", sessionID, ev, item))
+				case "post_edit_diagnostics":
+					item := &SessionItem{ID: fallbackItemID("diag", ev, i), Type: "error", Status: "failed", TaskID: ev.TaskID, StartedAt: ev.Timestamp, CompletedAt: ev.Timestamp, Details: copyMap(ev.Payload)}
+					out = append(out, itemEvent("item.completed", sessionID, ev, item))
 				case "risk_review":
 					out = append(out, riskReviewEvent(sessionID, ev, fallbackItemID("risk", ev, i)))
 				case "completed":
@@ -608,11 +936,30 @@ func turnEvent(eventType, sessionID string, ev itemAuditEvent, details map[strin
 
 func turnStartDetails(ev itemAuditEvent) map[string]any {
 	details := map[string]any{}
-	copySelected(details, ev.Payload, "status", "prompt", "model", "agent")
+	copySelected(details, ev.Payload, "status", "prompt", "user_prompt", "model", "agent", "success_criteria")
 	if ev.Type != "" {
 		details["source_type"] = ev.Type
 	}
 	return details
+}
+
+func mapSliceField(m map[string]any, key string) []map[string]any {
+	if m == nil {
+		return nil
+	}
+	switch list := m[key].(type) {
+	case []map[string]any:
+		return append([]map[string]any{}, list...)
+	case []any:
+		out := make([]map[string]any, 0, len(list))
+		for _, value := range list {
+			if item, ok := value.(map[string]any); ok {
+				out = append(out, item)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func modelResponseDetails(ev itemAuditEvent) map[string]any {

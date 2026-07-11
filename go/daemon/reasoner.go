@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -52,6 +54,39 @@ var retryBaseDelay = 2 * time.Second
 
 const retryHeaderMaxDelay = 2 * time.Minute
 
+type providerErrorInfo struct {
+	Code, Category, UserAction, CorrelationID, Provider string
+	HTTPStatus                                          int
+	Retryable                                           bool
+}
+
+type providerErrorClassifier interface{ ProviderError() providerErrorInfo }
+
+type retryPolicy struct {
+	MaxAttempts int
+	MaxElapsed  time.Duration
+	BaseDelay   time.Duration
+	MaxDelay    time.Duration
+	RandFloat64 func() float64
+	Now         func() time.Time
+}
+
+type retryAttempt struct {
+	Attempt, MaxAttempts int
+	Delay                time.Duration
+	Error                providerErrorInfo
+}
+
+type retryObserverKey struct{}
+
+func withRetryObserver(ctx context.Context, observer func(retryAttempt)) context.Context {
+	return context.WithValue(ctx, retryObserverKey{}, observer)
+}
+
+func defaultRetryPolicy() retryPolicy {
+	return retryPolicy{MaxAttempts: 4, MaxElapsed: 2 * time.Minute, BaseDelay: retryBaseDelay, MaxDelay: 30 * time.Second, RandFloat64: rand.Float64, Now: time.Now}
+}
+
 type retryAfterProvider interface {
 	RetryAfter() (time.Duration, bool)
 }
@@ -77,30 +112,88 @@ func thinkWithRetryModelSegments(ctx context.Context, r Reasoner, model string, 
 }
 
 func thinkWithRetrySegments(ctx context.Context, r Reasoner, model, prompt, stablePrefix, volatileSuffix string) (ReasonerResult, error) {
-	const maxAttempts = 4
-	delay := retryBaseDelay
+	return thinkWithRetryPolicy(ctx, r, model, prompt, stablePrefix, volatileSuffix, defaultRetryPolicy())
+}
+
+func thinkWithRetryPolicy(ctx context.Context, r Reasoner, model, prompt, stablePrefix, volatileSuffix string, policy retryPolicy) (ReasonerResult, error) {
+	if policy.MaxAttempts < 1 {
+		policy.MaxAttempts = 1
+	}
+	if policy.BaseDelay <= 0 {
+		policy.BaseDelay = retryBaseDelay
+	}
+	if policy.MaxDelay <= 0 {
+		policy.MaxDelay = 30 * time.Second
+	}
+	if policy.RandFloat64 == nil {
+		policy.RandFloat64 = rand.Float64
+	}
+	if policy.Now == nil {
+		policy.Now = time.Now
+	}
+	started := policy.Now()
+	delay := policy.BaseDelay
 	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
+	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
 		out, err := thinkOnceResult(ctx, r, model, prompt, stablePrefix, volatileSuffix)
 		if err == nil {
 			return out, nil
 		}
 		lastErr = err
-		if attempt == maxAttempts {
+		info := classifyProviderError(err)
+		if !info.Retryable || attempt == policy.MaxAttempts {
 			break
 		}
 		wait := retryDelay(lastErr, delay)
+		if _, header := retryAfterFromError(lastErr); !header {
+			wait = time.Duration(policy.RandFloat64() * float64(wait))
+		}
+		if policy.MaxElapsed > 0 && policy.Now().Sub(started)+wait > policy.MaxElapsed {
+			break
+		}
+		if observer, ok := ctx.Value(retryObserverKey{}).(func(retryAttempt)); ok {
+			observer(retryAttempt{Attempt: attempt, MaxAttempts: policy.MaxAttempts, Delay: wait, Error: info})
+		}
 		select {
 		case <-ctx.Done():
 			return ReasonerResult{}, ctx.Err()
 		case <-time.After(wait):
 		}
 		delay *= 2
-		if delay > 30*time.Second {
-			delay = 30 * time.Second
+		if delay > policy.MaxDelay {
+			delay = policy.MaxDelay
 		}
 	}
-	return ReasonerResult{}, fmt.Errorf("reasoner failed after %d attempts: %w", maxAttempts, lastErr)
+	return ReasonerResult{}, fmt.Errorf("reasoner failed: %w", lastErr)
+}
+
+func retryAfterFromError(err error) (time.Duration, bool) {
+	var p retryAfterProvider
+	if errors.As(err, &p) {
+		return p.RetryAfter()
+	}
+	return 0, false
+}
+
+func classifyProviderError(err error) providerErrorInfo {
+	if err == nil {
+		return providerErrorInfo{}
+	}
+	if errors.Is(err, context.Canceled) {
+		return providerErrorInfo{Code: "request_cancelled", Category: "timeout", Retryable: false}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return providerErrorInfo{Code: "request_deadline_exceeded", Category: "timeout", Retryable: false}
+	}
+	var classified providerErrorClassifier
+	if errors.As(err, &classified) {
+		return classified.ProviderError()
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return providerErrorInfo{Code: "provider_transport_error", Category: "unavailable", Retryable: true}
+	}
+	return providerErrorInfo{Code: "reasoner_internal_error", Category: "internal", Retryable: false}
 }
 
 func retryDelay(err error, fallback time.Duration) time.Duration {
@@ -368,7 +461,7 @@ func (f *flakyReasoner) Name() string { return "flaky" }
 func (f *flakyReasoner) Think(_ context.Context, _ string) (string, error) {
 	f.calls++
 	if f.calls <= f.failFirst {
-		return "", fmt.Errorf("simulated transport error %d", f.calls)
+		return "", providerStatusError{provider: "flaky", status: 503, requestID: fmt.Sprintf("retry-%d", f.calls)}
 	}
 	return f.then, nil
 }

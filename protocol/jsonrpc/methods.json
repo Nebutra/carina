@@ -3,7 +3,7 @@
   "version": "1.2.0",
   "apis": {
     "runtime": [
-      { "method": "runtime.initialize", "scope": "read", "remote": true, "params": { "protocol_version": "semver?", "schema_version": "semver? exact bundle match", "client_name": "string?", "client_version": "semver?" }, "result": "RuntimeInitializeResult" },
+      { "method": "runtime.initialize", "scope": "read", "remote": true, "params": { "protocol_version": "semver?", "schema_version": "semver? compatible major", "projection_version": "semver? exact reducer match", "client_name": "string?", "client_version": "semver?" }, "result": "RuntimeInitializeResult" },
       { "method": "runtime.capabilities", "scope": "read", "remote": true, "params": {}, "result": "{ runtime_version: semver, protocol_version: semver, capabilities: object }" },
       { "method": "runtime.registry_schema", "scope": "read", "remote": true, "params": {}, "result": "JSON Schema Draft 2020-12" }
     ],
@@ -41,7 +41,8 @@
       { "method": "session.resume", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "Session" },
       { "method": "session.close", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "Session" },
       { "method": "session.replay", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "Event[]" },
-      { "method": "session.items", "scope": "read", "remote": true, "params": { "session_id": "string", "cursor": "opaque string?", "limit": "integer 1..200?" }, "result": "SessionItemEvent[] when pagination omitted; otherwise { data: SessionItemEvent[], next_cursor: string? }" },
+      { "method": "session.items", "scope": "read", "remote": true, "params": { "session_id": "string", "cursor": "signed opaque exclusive cursor?", "limit": "integer 1..200?" }, "result": "SessionItemEvent[] when pagination omitted; otherwise { data: SessionItemEvent[], next_cursor: string?, projection_version: string }", "errors": "-32010 invalid_cursor|cursor_expired with recovery data" },
+      { "method": "session.review", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "SessionReview" },
       { "method": "session.attach", "scope": "read", "remote": true, "params": { "session_id": "string", "since": "number?" }, "result": "{ events: Event[], from: number, cursor: number }" },
       { "method": "session.fork", "scope": "write", "remote": false, "params": { "session_id": "string", "last_task_id": "string?", "through_turn": "integer? >= 1" }, "result": "Session with fork lineage" },
       { "method": "session.plan_mode", "scope": "write", "remote": false, "params": { "session_id": "string", "on": "boolean" }, "result": "{ session_id: string, plan_mode: boolean }" },
@@ -66,7 +67,7 @@
       { "method": "task.budget.extend", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "task_id": "string", "additional_tokens": "integer > 0", "approver": "string?" }, "result": "Task" },
       { "method": "task.action.approve", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "decision_id": "string", "approver": "string?", "role": "string?", "scope": "once|session|project?" }, "result": "object" },
       { "method": "task.action.deny", "scope": "admin", "remote": false, "dynamic_scope": true, "control_plane_write": true, "params": { "session_id": "string", "decision_id": "string", "approver": "string?", "reason": "string" }, "result": "PermissionDecision" },
-      { "method": "task.approval.resolve", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "decision_id": "string", "allow": "boolean", "approver": "string?", "scope": "once|session|project?" }, "result": "object" },
+      { "method": "task.approval.resolve", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "decision_id": "string", "approve": "boolean", "approver": "string?", "scope": "once|session|project?" }, "result": "object" },
       { "method": "task.user.answer", "scope": "write", "remote": false, "params": { "question_id": "string", "value": "string" }, "result": "{ question_id: string, accepted: boolean, value: string }" },
       { "method": "task.user.pending", "scope": "read", "remote": false, "params": {}, "result": "{ question_ids: string[] }" },
       { "method": "task.btw", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string" }, "result": "Task" }

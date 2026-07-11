@@ -157,6 +157,10 @@ func (s *Scheduler) transition(taskID, status string) (*Task, error) {
 	if !ok {
 		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
+	if t.Status == "cancelled" && status != "cancelled" {
+		copy := *t
+		return &copy, fmt.Errorf("scheduler: cancelled task %s is terminal", taskID)
+	}
 	updated := *t
 	updated.Status = status
 	updated.UpdatedAt = time.Now().UTC()

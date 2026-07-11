@@ -1,6 +1,8 @@
 package toolchain
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +18,26 @@ func toolsDir(t *testing.T) string {
 		t.Skip("zig tools not built")
 	}
 	return dir
+}
+
+func TestRunContextCancellation(t *testing.T) {
+	tc := New(toolsDir(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := tc.RunContext(ctx, []string{"sleep", "30"}, t.TempDir(), time.Minute, nil, false)
+		done <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("RunContext error = %v, want context.Canceled", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("RunContext did not stop promptly after cancellation")
+	}
 }
 
 func TestNewAndDir(t *testing.T) {

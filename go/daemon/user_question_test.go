@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,55 @@ func TestAgentLoopUsesStructuredUserAnswer(t *testing.T) {
 	}
 	if got, _ := d.sched.Get(task.TaskID); got.Status != "completed" {
 		t.Fatalf("task status = %s, want completed", got.Status)
+	}
+}
+
+func TestAskUserCancellationDoesNotRestoreRunningStatus(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(workspace, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "choose")
+
+	questions := make(chan map[string]any, 1)
+	d.events.Tap(func(_ string, ev map[string]any) {
+		if ev["type"] == "user.question" {
+			questions <- ev
+		}
+	})
+	result := make(chan toolExecutionOutcome, 1)
+	go d.withTaskContext(task.TaskID, func(context.Context) {
+		result <- d.askUserOutcome(sess, task, "Which approach?", []userQuestionOption{
+			{Label: "Minimal fix", Value: "minimal"},
+			{Label: "Refactor", Value: "refactor"},
+		})
+	})
+	var questionID string
+	select {
+	case question := <-questions:
+		questionID, _ = question["question_id"].(string)
+	case <-time.After(2 * time.Second):
+		t.Fatal("user.question was not published")
+	}
+	if _, err := d.handleTaskCancel(mustJSON(t, map[string]any{"task_id": task.TaskID})); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case outcome := <-result:
+		if outcome.status != "cancelled" {
+			t.Fatalf("outcome = %#v", outcome)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ask_user did not stop after cancellation")
+	}
+	current, _ := d.sched.Get(task.TaskID)
+	if current.Status != "cancelled" {
+		t.Fatalf("task status = %s, want cancelled", current.Status)
+	}
+	if _, err := d.handleUserAnswer(mustJSON(t, map[string]any{
+		"question_id": questionID, "value": "minimal",
+	})); err == nil {
+		t.Fatal("late answer was accepted after cancellation")
 	}
 }
 

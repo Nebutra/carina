@@ -95,7 +95,7 @@ impl Service {
 
     fn dispatch(&mut self, method: &str, p: &Value) -> Result<Value, String> {
         match method {
-            "ping" => Ok(json!({"ok": true, "event_schema_version": "0.2.0"})),
+            "ping" => Ok(json!({"ok": true, "event_schema_version": "0.3.0"})),
             "kernel.session.init" => self.session_init(p),
             "kernel.session.add_dir" => self.session_add_dir(p),
             "kernel.request" => self.capability_request(p),

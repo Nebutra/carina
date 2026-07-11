@@ -287,6 +287,16 @@ func doctorChecks(report map[string]any) []doctorCheck {
 			out = append(out, doctorCheck{name: "state_dir_permissions", state: "WARN", detail: "state directory mode is " + mode, remediation: "carina doctor --fix --yes"})
 		}
 	}
+	if artifacts, ok := report["artifact_store"].(map[string]any); ok {
+		okValue, _ := artifacts["ok"].(bool)
+		chk := doctorCheck{name: "artifact_store", state: "PASS", detail: "artifact store metadata and usage readable"}
+		if !okValue {
+			chk.state = "FAIL"
+			chk.detail = "artifact store health check failed"
+			chk.remediation = "check ~/.carina/state/artifacts permissions and disk space"
+		}
+		out = append(out, chk)
+	}
 	if tools, ok := report["tools"].(map[string]any); ok {
 		available, _ := tools["available"].(bool)
 		dir, _ := tools["dir"].(string)

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	carinajsonschema "github.com/Nebutra/carina/go/jsonschema"
 	"github.com/Nebutra/carina/go/kernel"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
+	"github.com/Nebutra/carina/go/runtimecontract"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 	"github.com/Nebutra/carina/go/toolnorm"
@@ -74,19 +76,20 @@ Writes (patch/run/memory) must stay one action per turn — never put them in a 
 // from the top level (flat form the model naturally emits) or from a nested
 // "action" object (see parseAction).
 type action struct {
-	Thought    string               `json:"thought"`
-	Tool       string               `json:"tool"`
-	Action     json.RawMessage      `json:"action,omitempty"`
-	Path       string               `json:"path"`
-	Pattern    string               `json:"pattern"`
-	Command    []string             `json:"command"`
-	Content    string               `json:"content"`
-	Summary    string               `json:"summary"`
-	Target     string               `json:"target"`
-	OldText    string               `json:"old_text"`
-	Operations []memoryOperation    `json:"operations,omitempty"`
-	Prompt     string               `json:"prompt,omitempty"`
-	Options    []userQuestionOption `json:"options,omitempty"`
+	lifecycleCallID string
+	Thought         string               `json:"thought"`
+	Tool            string               `json:"tool"`
+	Action          json.RawMessage      `json:"action,omitempty"`
+	Path            string               `json:"path"`
+	Pattern         string               `json:"pattern"`
+	Command         []string             `json:"command"`
+	Content         string               `json:"content"`
+	Summary         string               `json:"summary"`
+	Target          string               `json:"target"`
+	OldText         string               `json:"old_text"`
+	Operations      []memoryOperation    `json:"operations,omitempty"`
+	Prompt          string               `json:"prompt,omitempty"`
+	Options         []userQuestionOption `json:"options,omitempty"`
 	// code intelligence tools (code.search / code.symbols)
 	Query string `json:"query"`
 	Name  string `json:"name"`
@@ -115,6 +118,13 @@ type SpawnTask struct {
 // the reasoner only decides. If no reasoner is configured, it falls back to
 // the mock single-shot loop so the runtime still works offline.
 func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
+	d.runTaskContext(context.Background(), sess, task)
+}
+
+func (d *Daemon) runTaskContext(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task) {
+	if ctx.Err() != nil || taskCancelled(d, task.TaskID) {
+		return
+	}
 	d.sched.SetStatus(task.TaskID, "running")
 	if task.Agent == "plan" {
 		d.setPlanMode(sess.SessionID, true)
@@ -146,7 +156,7 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 		memorySnapshot = cp.MemorySnapshot
 		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{"status": "fork_context_restored", "source_task_id": sess.ForkedFromTaskID, "through_turn": sess.ForkedThroughTurn}, "")
 	}
-	d.runLoop(sess, task, tr, 1, memorySnapshot)
+	d.runLoopContext(ctx, sess, task, tr, 1, memorySnapshot)
 }
 
 // resumeTask continues a background run from a persisted transcript checkpoint
@@ -154,6 +164,13 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 // the transcript and the audit log, so only the NEXT action runs — completed
 // work is never re-executed.
 func (d *Daemon) resumeTask(sess *sessionstore.Session, task *scheduler.Task, cp *runCheckpoint) {
+	d.resumeTaskContext(context.Background(), sess, task, cp)
+}
+
+func (d *Daemon) resumeTaskContext(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task, cp *runCheckpoint) {
+	if ctx.Err() != nil || taskCancelled(d, task.TaskID) {
+		return
+	}
 	d.sched.SetStatus(task.TaskID, "running")
 	if task.Agent == "plan" {
 		d.setPlanMode(sess.SessionID, true)
@@ -164,19 +181,25 @@ func (d *Daemon) resumeTask(sess *sessionstore.Session, task *scheduler.Task, cp
 	}
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
 		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "agent": taskAgent(task), "prompt": task.UserPrompt, "resumed_from_turn": cp.Turn}, "")
-	d.runLoop(sess, task, cp.Transcript, cp.Turn+1, cp.MemorySnapshot)
+	d.runLoopContext(ctx, sess, task, cp.Transcript, cp.Turn+1, cp.MemorySnapshot)
 }
 
 // runLoop is the ReAct loop shared by fresh (runTask) and resumed (resumeTask)
 // runs. It checkpoints the transcript after each turn, so a daemon crash loses
 // at most one in-flight action.
 func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, startTurn int, memorySnapshot string) {
+	d.runLoopContext(context.Background(), sess, task, tr, startTurn, memorySnapshot)
+}
+
+func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, startTurn int, memorySnapshot string) {
+	if ctx.Err() != nil || taskCancelled(d, task.TaskID) {
+		return
+	}
 	// Refresh the task so settings applied after submit (output schema, mode)
 	// are visible — the scheduler replaces the row on each update.
 	if t, ok := d.sched.Get(task.TaskID); ok {
 		task = t
 	}
-	ctx := context.Background()
 	guard := newLoopGuard()
 	verifyAttempts := 0
 	// A cheap summarizer for compaction: reuse the reasoner on the head.
@@ -261,10 +284,23 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 				"prompt_sha256":          promptHash,
 			}, "")
 			started := time.Now()
+			reasonerCtx := withRetryObserver(ctx, func(retry retryAttempt) {
+				errEnv := runtimecontract.ErrorEnvelope{
+					Code: retry.Error.Code, Category: runtimecontract.ErrorCategory(retry.Error.Category),
+					Message: "provider request failed", UserAction: retry.Error.UserAction,
+					CorrelationID: retry.Error.CorrelationID,
+					Retry:         runtimecontract.RetryAfter(retry.Delay, retry.Attempt, retry.MaxAttempts, time.Now()),
+					Metadata:      map[string]any{"provider": retry.Error.Provider, "http_status": retry.Error.HTTPStatus},
+				}
+				d.record(sess.SessionID, "RoutingRetryScheduled", task.TaskID, "go", map[string]any{
+					"evidence_id": evidenceID, "attempt": retry.Attempt, "max_attempts": retry.MaxAttempts,
+					"error": errEnv,
+				}, "")
+			})
 			if requery == 0 {
-				result, err = thinkWithRetryModelSegments(ctx, d.reasoner, task.Model, seg)
+				result, err = thinkWithRetryModelSegments(reasonerCtx, d.reasoner, task.Model, seg)
 			} else {
-				result, err = thinkWithRetryModelResult(ctx, d.reasoner, task.Model, prompt)
+				result, err = thinkWithRetryModelResult(reasonerCtx, d.reasoner, task.Model, prompt)
 			}
 			raw = result.Text
 			outcome := map[string]any{
@@ -276,7 +312,8 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 			}
 			if err != nil {
 				outcome["status"] = "failed"
-				outcome["error"] = truncate(err.Error(), 300)
+				info := classifyProviderError(err)
+				outcome["error"] = runtimecontract.ErrorEnvelope{Code: info.Code, Category: runtimecontract.ErrorCategory(info.Category), Message: "provider request failed", UserAction: info.UserAction, CorrelationID: info.CorrelationID, Retry: runtimecontract.NoRetry(), Metadata: map[string]any{"provider": info.Provider, "http_status": info.HTTPStatus}}
 			} else {
 				outcome["status"] = "succeeded"
 				outcome["provider"] = result.Usage.Provider
@@ -290,6 +327,9 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 			}
 			d.record(sess.SessionID, "RoutingOutcome", task.TaskID, "go", outcome, "")
 			if err != nil {
+				if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+					return
+				}
 				d.degrade(sess, task, tr, "reasoner error: "+err.Error())
 				return
 			}
@@ -421,6 +461,9 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 			guard.madeProgress() // reset so we give one more chance, then degrade
 		}
 
+		if ctx.Err() != nil || taskCancelled(d, task.TaskID) {
+			return
+		}
 		obs := d.executeAction(sess, task, &act)
 		pinned := act.Tool == "run" || act.Tool == "patch" // keep test/patch results
 		compressedObs, err := d.compressObservation(ctx, sess, task, turn, act.Tool, obs, pinned)
@@ -440,6 +483,11 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 	}
 
 	d.degrade(sess, task, tr, "reached max turns without done")
+}
+
+func taskCancelled(d *Daemon, taskID string) bool {
+	task, ok := d.sched.Get(taskID)
+	return ok && task.Status == "cancelled"
 }
 
 // checkSuccessCriteria runs each objective criterion through the kernel +
@@ -474,6 +522,9 @@ func (d *Daemon) checkSuccessCriteria(sess *sessionstore.Session, task *schedule
 // finish marks a task completed with the model's summary and persists the run
 // record (summary + applied patches) so it stays queryable after restart.
 func (d *Daemon) finish(sess *sessionstore.Session, task *scheduler.Task, summary string) {
+	if current, ok := d.sched.Get(task.TaskID); ok && current.Status == "cancelled" {
+		return
+	}
 	d.sched.SetStatus(task.TaskID, "completed")
 	d.sched.SetResult(task.TaskID, summary, d.appliedPatchIDs(sess))
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
@@ -501,6 +552,9 @@ func (d *Daemon) appliedPatchIDs(sess *sessionstore.Session) []string {
 // it reports partial progress (applied patches survive and are rollbackable)
 // rather than a bare failure (the SWE-agent "autosubmit" idea).
 func (d *Daemon) degrade(sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, reason string) {
+	if current, ok := d.sched.Get(task.TaskID); ok && current.Status == "cancelled" {
+		return
+	}
 	applied := d.appliedPatchIDs(sess)
 	d.sched.SetStatus(task.TaskID, "degraded")
 	d.sched.SetResult(task.TaskID, reason, applied)
@@ -597,28 +651,56 @@ func (d *Daemon) executeAction(sess *sessionstore.Session, task *scheduler.Task,
 	if err != nil {
 		return "governance error: " + err.Error()
 	}
+	d.installActiveToolCall(sess, task, call)
+	act.lifecycleCallID = call.id
+	defer d.clearActiveToolCall(task.TaskID, call.id)
 	if blocked, reason := d.runPreToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, "")); blocked {
 		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 			map[string]any{"status": "hook_blocked", "tool": act.Tool, "reason": reason}, "")
 		obs := "BLOCKED by hook: " + reason
-		d.finishToolCall(sess, task, call, toolDenied(obs, "hook_denied"))
+		if err := d.finishToolCall(sess, task, call, toolDenied(obs, "hook_denied")); err != nil {
+			return "governance error: " + err.Error()
+		}
 		return obs
 	}
 	if d.isPlanMode(sess.SessionID) && (act.Tool == "patch" || act.Tool == "run" || act.Tool == "memory") {
 		obs := "BLOCKED: plan mode active — explore read-only and present a plan; the operator must approve it (session.approve_plan) before edits, commands, or memory writes"
-		d.finishToolCall(sess, task, call, toolDenied(obs, "plan_mode"))
+		if err := d.finishToolCall(sess, task, call, toolDenied(obs, "plan_mode")); err != nil {
+			return "governance error: " + err.Error()
+		}
 		return obs
 	}
-	if err := d.startToolCall(sess, task, call); err != nil {
+	outcome := d.dispatchActionOutcome(sess, task, act)
+	switch d.activeToolTerminal(task.TaskID) {
+	case "cancelled":
+		outcome = toolExecutionOutcome{display: "cancelled", status: "cancelled", errorCategory: "cancelled"}
+	case "timed_out":
+		outcome = toolTimedOut("approval timed out")
+	}
+	d.runPostToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, outcome.display))
+	if err := d.finishToolCall(sess, task, call, outcome); err != nil {
 		return "governance error: " + err.Error()
 	}
-	outcome := d.dispatchActionOutcome(sess, task, act)
-	d.runPostToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, outcome.display))
-	d.finishToolCall(sess, task, call, outcome)
 	return outcome.display
 }
 
+func (d *Daemon) contextForTask(taskID string) context.Context {
+	d.taskContextMu.Lock()
+	defer d.taskContextMu.Unlock()
+	if ctx := d.taskContexts[taskID]; ctx != nil {
+		return ctx
+	}
+	return context.Background()
+}
+
 func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
+	switch act.Tool {
+	case "run", "patch", "memory", "mcp", "spawn", "workflow":
+	default:
+		if err := d.ensureToolCallStarted(act.lifecycleCallID); err != nil {
+			return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
+		}
+	}
 	switch act.Tool {
 	case "list":
 		dec, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.TaskID)
@@ -689,7 +771,13 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 		return d.agentMemoryOutcome(sess, task, act)
 	case "mcp":
 		return d.callMCPOutcome(sess, task, act)
-	case "spawn", "workflow", "ask_user", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact":
+	case "spawn":
+		return d.executeSpawnOutcome(sess, task, act)
+	case "workflow":
+		return d.executeWorkflowOutcome(sess, task, act)
+	case "ask_user":
+		return d.askUserOutcome(sess, task, act.Prompt, act.Options)
+	case "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact":
 		return classifyLegacyToolResult(d.dispatchAction(sess, task, act))
 	default:
 		return toolFailed("unknown tool: "+act.Tool, "unknown_tool")
@@ -840,6 +928,9 @@ func (d *Daemon) agentMemoryOutcome(sess *sessionstore.Session, task *scheduler.
 		}
 		dec = approved
 	}
+	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
+	}
 	result, err := d.applyMemoryWrite(sess, task.TaskID, req, dec, scope, summary)
 	if err != nil {
 		return toolFailed("memory error: "+err.Error(), "memory_write_error")
@@ -905,6 +996,9 @@ func (d *Daemon) agentPatchOutcome(sess *sessionstore.Session, task *scheduler.T
 		gate.status = "allowed"
 	}
 	d.mu.Unlock()
+	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
+	}
 	applied, err := d.kern.PatchApply(sess.SessionID, patch.PatchID, approver)
 	if err != nil {
 		return toolFailed("patch apply failed (nothing written): "+err.Error(), "patch_apply_error")
@@ -978,6 +1072,9 @@ func (d *Daemon) agentRunOutcome(sess *sessionstore.Session, task *scheduler.Tas
 		}
 		dec = approved
 	}
+	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
+	}
 
 	risk, _ := d.kern.ClassifyCommand(classifyAs)
 	commandID := sessionstore.NewID("cmd")
@@ -989,7 +1086,7 @@ func (d *Daemon) agentRunOutcome(sess *sessionstore.Session, task *scheduler.Tas
 		return toolFailed("governance error: command start was not persisted", "audit_persistence_error")
 	}
 
-	result, err := d.tools.Run(canon.Argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
+	result, err := d.tools.RunContext(d.contextForTask(task.TaskID), canon.Argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
 	// A mutating-capable command may have rewritten files the patch hooks
 	// never see (git checkout, sed -i, codegen): drop the built-index flag so
 	// the next code.* call re-syncs against current disk (conservative even
@@ -999,6 +1096,9 @@ func (d *Daemon) agentRunOutcome(sess *sessionstore.Session, task *scheduler.Tas
 	}
 	if err != nil {
 		d.record(sess.SessionID, "CommandExited", task.TaskID, "zig", map[string]any{"command_id": commandID, "exit_code": -1, "error": err.Error()}, "")
+		if errors.Is(err, context.Canceled) {
+			return toolExecutionOutcome{display: "command cancelled", status: "cancelled", errorCategory: "operator_cancelled"}
+		}
 		return toolFailed("command error: "+err.Error(), "runner_error")
 	}
 	stdout := strings.Join(result.Stdout, "\n")
@@ -1054,11 +1154,17 @@ func (d *Daemon) callMCPOutcome(sess *sessionstore.Session, task *scheduler.Task
 		}
 		dec = approved
 	}
+	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
+	}
 	d.record(sess.SessionID, "ToolApproved", task.TaskID, "go",
 		map[string]any{"mcp_server": act.MCPServer, "mcp_tool": act.MCPTool}, dec.DecisionID)
 
-	out, err := d.mcp.CallPublic(act.MCPServer, act.MCPTool, act.Args)
+	out, err := d.mcp.CallPublicContext(d.contextForTask(task.TaskID), act.MCPServer, act.MCPTool, act.Args)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return toolExecutionOutcome{display: "mcp call cancelled", status: "cancelled", errorCategory: "operator_cancelled"}
+		}
 		return toolFailed("mcp error: "+err.Error(), "mcp_error")
 	}
 	if red, e := d.kern.Redact(sess.SessionID, out); e == nil {
@@ -1189,6 +1295,10 @@ func parseAction(raw string) (action, error) {
 // runMockTask is the offline fallback: read the workspace, ask the mock
 // model, record the trace. Keeps the runtime functional without a reasoner.
 func (d *Daemon) runMockTask(sess *sessionstore.Session, task *scheduler.Task) {
+	d.runMockTaskContext(d.contextForTask(task.TaskID), sess, task)
+}
+
+func (d *Daemon) runMockTaskContext(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task) {
 	decision, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.TaskID)
 	if err == nil && decision.Decision == "allowed" {
 		if files, err := d.tools.Scan(sess.WorkspaceRoot); err == nil {
@@ -1198,7 +1308,7 @@ func (d *Daemon) runMockTask(sess *sessionstore.Session, task *scheduler.Task) {
 	}
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
 		map[string]any{"prompt": task.UserPrompt, "model": taskModel(task)}, "")
-	resp, err := d.router.Complete(context.Background(), modelrouter.Request{Model: taskModel(task), Prompt: task.UserPrompt})
+	resp, err := d.router.Complete(ctx, modelrouter.Request{Model: taskModel(task), Prompt: task.UserPrompt})
 	if err != nil {
 		d.sched.SetStatus(task.TaskID, "failed")
 		d.record(sess.SessionID, "ModelResponded", task.TaskID, "model", map[string]any{"error": err.Error()}, "")

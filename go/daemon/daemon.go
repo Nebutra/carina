@@ -158,8 +158,14 @@ type Daemon struct {
 	requireTrust  atomic.Bool  // deny command exec in untrusted workspaces (hot-reloadable)
 	maxTaskTokens atomic.Int64 // per-task token budget (0 => unlimited; hot-reloadable)
 
-	mailbox   map[string][]string // task -> pending steering messages
-	mailboxMu sync.Mutex
+	mailbox               map[string][]string // task -> pending steering messages
+	mailboxMu             sync.Mutex
+	taskContexts          map[string]context.Context
+	taskCancels           map[string]context.CancelCauseFunc
+	taskContextMu         sync.Mutex
+	activeToolCalls       map[string]*activeToolCall // call_id -> call
+	activeToolCallsByTask map[string]map[string]struct{}
+	activeToolCallMu      sync.Mutex
 
 	planMode map[string]bool // session -> plan mode (read-only until approved)
 	planMu   sync.Mutex
@@ -213,6 +219,8 @@ type Daemon struct {
 	compactionBreaker  *compactionCircuitBreaker
 	artifacts          *artifact.Store
 }
+
+const artifactGCInterval = 30 * time.Minute
 
 func New(opts Options) (*Daemon, error) {
 	if opts.StateDir == "" {
@@ -400,8 +408,14 @@ func New(opts Options) (*Daemon, error) {
 	d.sandbox.Store(opts.SandboxCommands)
 	d.safeMode = opts.SafeMode
 	d.mailbox = map[string][]string{}
+	d.taskContexts = map[string]context.Context{}
+	d.taskCancels = map[string]context.CancelCauseFunc{}
+	d.activeToolCalls = map[string]*activeToolCall{}
+	d.activeToolCallsByTask = map[string]map[string]struct{}{}
 	d.planMode = map[string]bool{}
 	d.stopCh = make(chan struct{})
+	d.loopWG.Add(1)
+	go d.runArtifactGC()
 	d.pendingApprovals = map[string]chan approvalSignal{}
 	d.pendingQuestions = map[string]*pendingUserQuestion{}
 	d.approvalGrants = newApprovalGrantStore(opts.StateDir)
@@ -604,6 +618,15 @@ func (d *Daemon) Close() error {
 		if d.stopCh != nil {
 			close(d.stopCh)
 		}
+		d.taskContextMu.Lock()
+		cancels := make([]context.CancelCauseFunc, 0, len(d.taskCancels))
+		for _, cancel := range d.taskCancels {
+			cancels = append(cancels, cancel)
+		}
+		d.taskContextMu.Unlock()
+		for _, cancel := range cancels {
+			cancel(context.Canceled)
+		}
 	})
 	_ = d.server.Close()
 	waitGroupWithTimeout(&d.loopWG, 2*time.Second)
@@ -621,6 +644,20 @@ func (d *Daemon) Close() error {
 		_ = srv.Close()
 	}
 	return d.kern.Close()
+}
+
+func (d *Daemon) runArtifactGC() {
+	defer d.loopWG.Done()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-d.stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	_ = d.artifacts.RunPeriodicGC(ctx, artifactGCInterval, time.Now)
 }
 
 func (d *Daemon) startBackgroundLoop(fn func()) {
@@ -763,6 +800,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("session.close", rpc.ScopeWrite, false, d.handleSessionClose)
 	d.registerRPC("session.replay", rpc.ScopeRead, true, d.handleSessionReplay)
 	d.registerRPC("session.items", rpc.ScopeRead, true, d.handleSessionItems)
+	d.registerRPC("session.review", rpc.ScopeRead, true, d.handleSessionReview)
 	d.registerRPC("session.attach", rpc.ScopeRead, true, d.handleSessionAttach)
 	d.registerRPC("session.events.unsubscribe", rpc.ScopeStream, true, d.handleEventUnsubscribe)
 	d.registerRPC("session.fork", rpc.ScopeWrite, false, d.handleSessionFork)
@@ -1034,6 +1072,8 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 			"reason":     policyReason,
 		},
 	}
+	artifactHealth := d.artifacts.Health()
+	report["artifact_store"] = map[string]any{"ok": artifactHealth.OK, "health": artifactHealth, "metrics": d.artifacts.Metrics()}
 	if info, err := os.Stat(d.stateDir); err == nil {
 		report["state_dir_permissions"] = map[string]any{"ok": info.Mode().Perm() == 0o700, "mode": fmt.Sprintf("%04o", info.Mode().Perm())}
 	}
@@ -1176,6 +1216,15 @@ func (d *Daemon) handleContextCompress(params json.RawMessage) (any, error) {
 	if d.contextEng == nil {
 		return nil, fmt.Errorf("context engine is not configured")
 	}
+	if p.SessionID != "" && d.kern != nil {
+		allowed, dec, err := d.gateContextCompressRPC(p.SessionID, p.TaskID, "headroom_compress")
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return nil, fmt.Errorf("context compression denied by policy: %s", dec.Reason)
+		}
+	}
 	res, err := d.contextEng.Compress(context.Background(), req)
 	if err != nil {
 		return nil, err
@@ -1216,6 +1265,15 @@ func (d *Daemon) handleContextRetrieve(params json.RawMessage) (any, error) {
 	if d.contextEng == nil {
 		return nil, fmt.Errorf("context engine is not configured")
 	}
+	if p.SessionID != "" && d.kern != nil {
+		allowed, dec, err := d.gateContextCompressRPC(p.SessionID, p.TaskID, "headroom_retrieve")
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return nil, fmt.Errorf("context retrieve denied by policy: %s", dec.Reason)
+		}
+	}
 	res, err := d.contextEng.Retrieve(context.Background(), ref)
 	if err != nil {
 		return nil, err
@@ -1244,6 +1302,11 @@ func (d *Daemon) contextDoctor() any {
 }
 
 func (d *Daemon) handleMetrics(_ json.RawMessage) (any, error) {
+	artifactUsage, artifactErr := d.artifacts.Usage()
+	artifactMetrics := map[string]any{"usage": artifactUsage, "operations": d.artifacts.Metrics()}
+	if artifactErr != nil {
+		artifactMetrics["error"] = artifactErr.Error()
+	}
 	return map[string]any{
 		"version":         Version,
 		"uptime_seconds":  int(time.Since(d.started).Seconds()),
@@ -1252,6 +1315,7 @@ func (d *Daemon) handleMetrics(_ json.RawMessage) (any, error) {
 		"subscribers":     d.events.SubscriberCount(),
 		"backpressure":    d.backpressure.snapshot(time.Now().UTC()),
 		"debug_trace":     d.debugTraceStats(),
+		"artifacts":       artifactMetrics,
 	}, nil
 }
 
@@ -1984,7 +2048,18 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.emitCompletion(task.SessionID, task)
+	d.record(task.SessionID, "TaskCreated", task.TaskID, "operator", map[string]any{
+		"status": "cancelled", "reason": "operator_cancelled",
+	}, "")
+	d.persistRun(task.TaskID)
+	d.taskContextMu.Lock()
+	cancel := d.taskCancels[p.TaskID]
+	d.taskContextMu.Unlock()
+	if cancel != nil {
+		cancel(context.Canceled)
+	} else {
+		d.emitCompletion(task.SessionID, task)
+	}
 	return task, nil
 }
 
@@ -2119,8 +2194,12 @@ func (d *Daemon) checkWriteProvenance(sessionID, relpath, abspath string) error 
 // guardRun runs a background agent function under a concurrency cap and a panic
 // guard: a panic marks that one run failed (recorded + persisted) instead of
 // crashing the daemon and taking every other run with it.
-func (d *Daemon) guardRun(sess *sessionstore.Session, task *scheduler.Task, run func()) {
-	d.runSem <- struct{}{}
+func (d *Daemon) guardRun(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task, run func()) {
+	select {
+	case d.runSem <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
 	defer func() { <-d.runSem }()
 	defer func() {
 		if r := recover(); r != nil {
@@ -2136,11 +2215,39 @@ func (d *Daemon) guardRun(sess *sessionstore.Session, task *scheduler.Task, run 
 }
 
 func (d *Daemon) runTaskGuarded(sess *sessionstore.Session, task *scheduler.Task) {
-	d.guardRun(sess, task, func() { d.runTask(sess, task) })
+	d.withTaskContext(task.TaskID, func(ctx context.Context) {
+		d.guardRun(ctx, sess, task, func() { d.runTaskContext(ctx, sess, task) })
+	})
+	if current, ok := d.sched.Get(task.TaskID); ok && current.Status == "cancelled" {
+		d.emitCompletion(sess.SessionID, current)
+	}
+}
+
+func (d *Daemon) withTaskContext(taskID string, run func(context.Context)) {
+	d.withTaskParentContext(context.Background(), taskID, run)
+}
+
+func (d *Daemon) withTaskParentContext(parent context.Context, taskID string, run func(context.Context)) {
+	ctx, cancel := context.WithCancelCause(parent)
+	d.taskContextMu.Lock()
+	d.taskContexts[taskID], d.taskCancels[taskID] = ctx, cancel
+	d.taskContextMu.Unlock()
+	defer func() {
+		d.taskContextMu.Lock()
+		delete(d.taskContexts, taskID)
+		delete(d.taskCancels, taskID)
+		d.taskContextMu.Unlock()
+	}()
+	run(ctx)
 }
 
 func (d *Daemon) resumeTaskGuarded(sess *sessionstore.Session, task *scheduler.Task, cp *runCheckpoint) {
-	d.guardRun(sess, task, func() { d.resumeTask(sess, task, cp) })
+	d.withTaskContext(task.TaskID, func(ctx context.Context) {
+		d.guardRun(ctx, sess, task, func() { d.resumeTaskContext(ctx, sess, task, cp) })
+	})
+	if current, ok := d.sched.Get(task.TaskID); ok && current.Status == "cancelled" {
+		d.emitCompletion(sess.SessionID, current)
+	}
 }
 
 // markInterrupted records that a mid-flight run could not be resumed after a

@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -19,27 +21,47 @@ const maxWorkflowSteps = 64
 // launch a workflow (bounding nesting), and starting one is gated by the
 // capability kernel just like spawning a subagent.
 func (d *Daemon) executeWorkflow(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+	return d.executeWorkflowOutcome(sess, task, act).display
+}
+
+func (d *Daemon) executeWorkflowOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
 	if sess.Depth > 0 {
-		return "DENIED: workflows run at the top level only (not inside a subagent)"
+		return toolDenied("DENIED: workflows run at the top level only (not inside a subagent)", "depth_limit")
 	}
 	if act.Workflow == "" {
-		return "error: workflow needs a 'workflow' name"
+		return toolFailed("error: workflow needs a 'workflow' name", "invalid_input")
 	}
 	specs := loadWorkflowSpecs(sess.WorkspaceRoot)
 	spec := specs[act.Workflow]
 	if spec == nil {
-		return fmt.Sprintf("unknown workflow %q (available: %s)", act.Workflow, strings.Join(workflowNames(specs), ", "))
+		return toolFailed(fmt.Sprintf("unknown workflow %q (available: %s)", act.Workflow, strings.Join(workflowNames(specs), ", ")), "invalid_input")
 	}
 	// Starting a workflow is a gated effect (same capability as spawning).
 	dec, err := d.kern.Request(sess.SessionID, "PluginLoad", "run_workflow", task.TaskID)
-	if err == nil && dec.Decision == "denied" {
-		return "DENIED: this session may not run workflows"
+	if err != nil {
+		return toolFailed("workflow governance error: "+err.Error(), "governance_error")
+	}
+	if dec.Decision == "denied" {
+		return toolDenied("DENIED: this session may not run workflows", "policy_denied")
+	}
+	if dec.Decision == "requires_approval" {
+		approved, ok := d.resolveApprovalOrEscalate(sess, task, dec, "PluginLoad", "run_workflow", "run workflow "+act.Workflow)
+		if !ok {
+			return toolDenied("requires approval (not granted): "+dec.Reason, "approval_denied")
+		}
+		dec = approved
+	}
+	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
 	}
 
 	runID := sessionstore.NewID("wf")
 	outputs, err := d.runWorkflow(sess, task, spec, act.Task, runID)
 	if err != nil {
-		return fmt.Sprintf("workflow %q error (run %s): %s", spec.Name, runID, err.Error())
+		if errors.Is(err, context.Canceled) {
+			return toolExecutionOutcome{display: fmt.Sprintf("workflow %q cancelled (run %s)", spec.Name, runID), status: "cancelled", errorCategory: "operator_cancelled"}
+		}
+		return toolFailed(fmt.Sprintf("workflow %q error (run %s): %s", spec.Name, runID, err.Error()), "workflow_error")
 	}
 
 	var b strings.Builder
@@ -47,7 +69,7 @@ func (d *Daemon) executeWorkflow(sess *sessionstore.Session, task *scheduler.Tas
 	for _, st := range spec.Steps {
 		fmt.Fprintf(&b, "=== %s (%s) ===\n%s\n", st.ID, st.Agent, truncate(outputs[st.ID], 400))
 	}
-	return b.String()
+	return toolCompleted(b.String())
 }
 
 // runWorkflow executes a workflow DAG: a step runs as soon as all its
@@ -57,6 +79,10 @@ func (d *Daemon) executeWorkflow(sess *sessionstore.Session, task *scheduler.Tas
 // every completed step is persisted so a crashed/paused run can resume without
 // re-doing finished work. The parent session's audit log records the whole run.
 func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler.Task, spec *WorkflowSpec, input, runID string) (map[string]string, error) {
+	ctx := d.contextForTask(parentTask.TaskID)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := spec.validate(); err != nil {
 		return nil, err
 	}
@@ -87,6 +113,9 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 
 	remaining := len(spec.Steps) - len(done)
 	for remaining > 0 {
+		if err := ctx.Err(); err != nil {
+			return outputs, err
+		}
 		if d.workflowRuns != nil {
 			for {
 				detail, err := d.workflowRuns.Detail(runID)
@@ -98,6 +127,8 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 				}
 				if detail.Run.Status == workflowui.Paused {
 					select {
+					case <-ctx.Done():
+						return outputs, ctx.Err()
 					case <-d.stopCh:
 						return outputs, fmt.Errorf("daemon stopping")
 					case <-time.After(100 * time.Millisecond):
@@ -138,6 +169,10 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 			wg.Add(1)
 			go func(i int, st WorkflowStep) {
 				defer wg.Done()
+				if err := ctx.Err(); err != nil {
+					errs[i] = err
+					return
+				}
 				startedAt := time.Now().UTC()
 				if d.workflowRuns != nil {
 					now := startedAt
@@ -156,7 +191,11 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 					"workflow": spec.Name, "run_id": runID, "step": st.ID, "agent": st.Agent,
 				}, "")
 
-				summary := d.spawnSubagent(parent, parentTask, st.Agent, taskText)
+				summary := d.spawnSubagentContext(ctx, parent, parentTask, st.Agent, taskText)
+				if err := ctx.Err(); err != nil {
+					errs[i] = err
+					return
+				}
 				if spawnFailed(summary) {
 					errs[i] = fmt.Errorf("step %q: %s", st.ID, summary)
 					_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
@@ -230,7 +269,7 @@ func interpolate(s, input string, outputs map[string]string) string {
 // hit its turn limit returns a degraded summary, which is NOT fatal — it flows
 // downstream like any other output.
 func spawnFailed(summary string) bool {
-	for _, p := range []string{"unknown agent", "spawn failed", "spawn init failed", "error: spawn"} {
+	for _, p := range []string{"unknown agent", "spawn failed", "spawn init failed", "error: spawn", "subagent cancelled"} {
 		if strings.HasPrefix(summary, p) {
 			return true
 		}

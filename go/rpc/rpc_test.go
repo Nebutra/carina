@@ -3,6 +3,7 @@ package rpc
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -23,7 +24,7 @@ func TestServerClientRoundTrip(t *testing.T) {
 		return map[string]string{"echo": p.Msg}, nil
 	})
 	s.Register("boom", func(_ json.RawMessage) (any, error) {
-		return nil, &Error{Code: CodeInternalError, Message: "kaboom"}
+		return nil, &Error{Code: -32010, Message: "kaboom", Data: map[string]any{"code": "cursor_expired"}}
 	})
 
 	sock := filepath.Join(t.TempDir(), "s.sock")
@@ -51,9 +52,21 @@ func TestServerClientRoundTrip(t *testing.T) {
 	if err := c.Call("nope", map[string]any{}, nil); err == nil {
 		t.Fatal("unknown method should error")
 	}
-	// Handler error is surfaced.
+	// Typed handler errors preserve their application code and recovery data.
 	if err := c.Call("boom", map[string]any{}, nil); err == nil {
 		t.Fatal("handler error should surface")
+	} else {
+		var rpcErr *Error
+		if !errors.As(err, &rpcErr) {
+			t.Fatalf("expected rpc error, got %T: %v", err, err)
+		}
+		if rpcErr.Code != -32010 {
+			t.Fatalf("rpc error code = %d, want -32010", rpcErr.Code)
+		}
+		data, ok := rpcErr.Data.(map[string]any)
+		if !ok || data["code"] != "cursor_expired" {
+			t.Fatalf("rpc error data = %#v", rpcErr.Data)
+		}
 	}
 }
 

@@ -2,27 +2,38 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+
+	"github.com/Nebutra/carina/go/rpc"
 )
 
 func TestPaginateSessionItemsStableCursor(t *testing.T) {
+	authority := &projectionCursorAuthority{key: []byte("01234567890123456789012345678901")}
+	epoch := "epoch-1"
 	items := make([]SessionItemEvent, 7)
 	for i := range items {
 		items[i].ItemID = string(rune('a' + i))
 	}
-	first, err := paginateSessionItems(items, 0, 3)
+	first, err := paginateSessionItems(authority, "sess_1", epoch, items, 0, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
 	page := first["data"].([]SessionItemEvent)
-	if len(page) != 3 || first["next_cursor"] != "items:v1:3" {
+	nextCursor, ok := first["next_cursor"].(string)
+	if len(page) != 3 || !ok || strings.Contains(nextCursor, "sess_1") || first["projection_version"] != sessionProjectionVersion {
 		t.Fatalf("unexpected first page: %+v", first)
 	}
-	next, err := decodeItemsCursor(json.RawMessage(`"items:v1:3"`))
+	nextRaw, _ := json.Marshal(nextCursor)
+	next, err := authority.decode("sess_1", epoch, nextRaw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := paginateSessionItems(items, next, 3)
+	second, err := paginateSessionItems(authority, "sess_1", epoch, items, next, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,14 +41,144 @@ func TestPaginateSessionItemsStableCursor(t *testing.T) {
 	if got[0].ItemID != "d" {
 		t.Fatalf("cursor skipped or duplicated items: %+v", got)
 	}
-	if _, err := paginateSessionItems(items, -1, 3); err == nil {
+	if _, err := paginateSessionItems(authority, "sess_1", epoch, items, -1, 3); err == nil {
 		t.Fatal("negative cursor accepted")
 	}
-	if _, err := paginateSessionItems(items, 0, 201); err == nil {
+	if _, err := paginateSessionItems(authority, "sess_1", epoch, items, 0, 201); err == nil {
 		t.Fatal("oversized limit accepted")
 	}
-	if _, err := decodeItemsCursor(json.RawMessage(`"broken"`)); err == nil {
+	if _, err := authority.decode("sess_1", epoch, json.RawMessage(`"broken"`)); err == nil {
 		t.Fatal("invalid opaque cursor accepted")
+	}
+	if _, err := authority.decode("sess_2", epoch, nextRaw); err == nil {
+		t.Fatal("cross-session cursor accepted")
+	}
+	expired := authority.encodeClaims(projectionCursorClaims{Version: 1, SessionID: "sess_1", Projection: sessionProjectionVersion, Epoch: "retired", Position: 3})
+	expiredRaw, _ := json.Marshal(expired)
+	_, err = authority.decode("sess_1", epoch, expiredRaw)
+	var cursorErr *rpc.Error
+	if !errors.As(err, &cursorErr) || cursorErr.Message != "cursor_expired" || cursorErr.Data == nil {
+		t.Fatalf("typed expiry recovery missing: %#v", err)
+	}
+	if _, err := paginateSessionItems(authority, "sess_1", epoch, items, len(items)+1, 3); err == nil {
+		t.Fatal("expired cursor was silently clamped")
+	}
+}
+
+func TestProjectionCursorKeyPersistsAcrossDaemonRestart(t *testing.T) {
+	stateDir := t.TempDir()
+	firstDaemon := &Daemon{stateDir: stateDir}
+	first, err := firstDaemon.projectionCursorAuthority()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor := first.encode("sess", "epoch", 4)
+	projectionCursorAuthorities.Lock()
+	delete(projectionCursorAuthorities.byStateDir, stateDir)
+	projectionCursorAuthorities.Unlock()
+	second, err := (&Daemon{stateDir: stateDir}).projectionCursorAuthority()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(cursor)
+	position, err := second.decode("sess", "epoch", raw)
+	if err != nil || position != 4 {
+		t.Fatalf("cursor did not survive restart: position=%d err=%v", position, err)
+	}
+	info, err := os.Stat(filepath.Join(stateDir, "projection-cursor.key"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("cursor key permissions=%v err=%v", info.Mode().Perm(), err)
+	}
+}
+
+func TestProjectionCursorKeyRejectsPartialFile(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stateDir, "projection-cursor.key"), []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	projectionCursorAuthorities.Lock()
+	delete(projectionCursorAuthorities.byStateDir, stateDir)
+	projectionCursorAuthorities.Unlock()
+	if _, err := (&Daemon{stateDir: stateDir}).projectionCursorAuthority(); err == nil || !strings.Contains(err.Error(), "32 bytes") {
+		t.Fatalf("corrupt key did not fail closed: %v", err)
+	}
+}
+
+func TestPersistProjectionCursorKeyConcurrentPublish(t *testing.T) {
+	stateDir := t.TempDir()
+	path := filepath.Join(stateDir, "projection-cursor.key")
+	keys := [][]byte{[]byte("01234567890123456789012345678901"), []byte("abcdefghijklmnopqrstuvwxyzABCDEF")}
+	errs := make([]error, len(keys))
+	var wg sync.WaitGroup
+	for i := range keys {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = persistProjectionCursorKey(stateDir, path, keys[i])
+		}(i)
+	}
+	wg.Wait()
+	winners := 0
+	for _, err := range errs {
+		if err == nil {
+			winners++
+		} else if !os.IsExist(err) {
+			t.Fatalf("unexpected concurrent publish error: %v", err)
+		}
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil || winners != 1 || len(stored) != 32 {
+		t.Fatalf("atomic publish failed: winners=%d len=%d err=%v", winners, len(stored), err)
+	}
+	if string(stored) != string(keys[0]) && string(stored) != string(keys[1]) {
+		t.Fatalf("stored key is torn: %q", stored)
+	}
+}
+
+func TestProjectSessionReviewDeterministic(t *testing.T) {
+	items := projectSessionItems("sess_1", []itemAuditEvent{
+		{EventID: "evt_1", SessionID: "sess_1", TaskID: "task_1", Type: "TaskCreated", Payload: map[string]any{"status": "submitted", "user_prompt": "ship", "success_criteria": []any{map[string]any{"kind": "command", "command": []any{"go", "test", "./..."}}}}},
+		{EventID: "evt_q1", SessionID: "sess_1", TaskID: "task_1", Type: "ToolRequested", Payload: map[string]any{"status": "user_question_requested", "question_id": "q1", "request": map[string]any{"prompt": "Proceed?", "options": []any{"yes", "no"}}}},
+		{EventID: "evt_q2", SessionID: "sess_1", TaskID: "task_1", Type: "TaskCreated", Payload: map[string]any{"status": "user_question_resolved", "question_id": "q1", "value": "yes"}},
+		{EventID: "evt_p1", SessionID: "sess_1", TaskID: "task_1", Type: "PatchProposed", Payload: map[string]any{"patch_id": "p1", "affected_files": []any{"a.go"}}},
+		{EventID: "evt_p2", SessionID: "sess_1", Type: "PatchApplied", Payload: map[string]any{"patch_id": "p1", "rollback_pointer": "rb1"}},
+		{EventID: "evt_2", SessionID: "sess_1", TaskID: "task_1", Type: "ToolCallCompleted", Payload: map[string]any{"call_id": "call_1", "tool": "run", "kind": "command", "status": "completed", "artifact_ids": []any{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}},
+		{EventID: "evt_3", SessionID: "sess_1", TaskID: "task_1", Type: "TaskCreated", Payload: map[string]any{"status": "completed", "summary": "shipped"}},
+	})
+	first := projectSessionReview("sess_1", items, "cursor")
+	second := projectSessionReview("sess_1", items, "cursor")
+	a, _ := json.Marshal(first)
+	b, _ := json.Marshal(second)
+	if string(a) != string(b) {
+		t.Fatalf("review projection is not deterministic:\n%s\n%s", a, b)
+	}
+	if first.State != "completed" || first.Summary != "shipped" || first.Intent != "ship" || len(first.SuccessCriteria) != 1 || len(first.Commands) != 1 || len(first.Tools) != 0 || len(first.Questions) != 1 || first.Questions[0].Status != "resolved" || len(first.Artifacts) != 1 || first.Rollback["available"] != true {
+		t.Fatalf("unexpected review: %+v", first)
+	}
+}
+
+func TestProjectSessionReviewLatestTurnAndWaitingState(t *testing.T) {
+	events := []SessionItemEvent{
+		{Type: "turn.started", TurnID: "t1", Details: map[string]any{"prompt": "first"}},
+		{Type: "turn.completed", TurnID: "t1", Details: map[string]any{"summary": "old"}},
+		{Type: "turn.started", TurnID: "t2", Details: map[string]any{"prompt": "second"}},
+		{Type: "item.started", Item: &SessionItem{ID: "approve-1", Type: "approval", Status: "requested"}},
+	}
+	review := projectSessionReview("s", events, "cursor")
+	if review.State != "needs_input" || review.WaitingReason != "waiting_approval" || review.Summary != "" || review.Intent != "second" {
+		t.Fatalf("latest turn/waiting state not reduced: %+v", review)
+	}
+	events = append(events, SessionItemEvent{Type: "item.completed", Item: &SessionItem{ID: "approve-1", Type: "approval", Status: "resolved"}})
+	review = projectSessionReview("s", events, "cursor")
+	if review.State != "active" || review.WaitingReason != "" || len(review.Questions) != 1 || review.Questions[0].Status != "resolved" {
+		t.Fatalf("resolved approval did not clear wait: %+v", review)
+	}
+}
+
+func TestProjectSessionReviewClassifiesGoalCheck(t *testing.T) {
+	review := projectSessionReview("s", []SessionItemEvent{{Type: "item.completed", Item: &SessionItem{ID: "check-1", Type: "tool_call", Status: "completed", Details: map[string]any{"tool": "goal_check"}}}}, "cursor")
+	if len(review.Checks) != 1 || len(review.Tools) != 1 || len(review.Commands) != 0 {
+		t.Fatalf("goal_check classification: %+v", review)
 	}
 }
 
@@ -279,6 +420,17 @@ func TestProjectSessionItemsTurnNetDiff(t *testing.T) {
 	}
 	if !hasString(diff.Details["reverted_files"], "scratch.txt") {
 		t.Fatalf("reverted file missing: %+v", diff.Details)
+	}
+}
+
+func TestProjectSessionItemsPreservesToolTimeout(t *testing.T) {
+	events := []itemAuditEvent{
+		{EventID: "evt_1", SessionID: "sess_1", TaskID: "task_1", Type: "ToolCallStarted", Timestamp: "2026-07-07T00:00:01Z", Payload: map[string]any{"call_id": "call_1", "tool": "run", "status": "running"}},
+		{EventID: "evt_2", SessionID: "sess_1", TaskID: "task_1", Type: "ToolCallFailed", Timestamp: "2026-07-07T00:00:02Z", Payload: map[string]any{"call_id": "call_1", "tool": "run", "status": "timed_out"}},
+	}
+	item := findItem(t, projectSessionItems("sess_1", events), "item.completed", "tool_call")
+	if item.Status != "timed_out" {
+		t.Fatalf("status=%q", item.Status)
 	}
 }
 

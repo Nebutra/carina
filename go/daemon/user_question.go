@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Nebutra/carina/go/scheduler"
@@ -27,6 +28,8 @@ type userQuestionAnswer struct {
 }
 
 type pendingUserQuestion struct {
+	mu        sync.Mutex
+	resolved  bool
 	sessionID string
 	taskID    string
 	options   map[string]userQuestionOption
@@ -63,9 +66,16 @@ func normalizeUserQuestion(prompt string, options []userQuestionOption) (string,
 }
 
 func (d *Daemon) askUser(sess *sessionstore.Session, task *scheduler.Task, prompt string, options []userQuestionOption) string {
+	return d.askUserOutcome(sess, task, prompt, options).display
+}
+
+func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.Task, prompt string, options []userQuestionOption) toolExecutionOutcome {
 	prompt, options, err := normalizeUserQuestion(prompt, options)
 	if err != nil {
-		return "ask_user error: " + err.Error()
+		return toolFailed("ask_user error: "+err.Error(), "invalid_input")
+	}
+	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
 	}
 	questionID := sessionstore.NewID("question")
 	optionMap := make(map[string]userQuestionOption, len(options))
@@ -104,7 +114,7 @@ func (d *Daemon) askUser(sess *sessionstore.Session, task *scheduler.Task, promp
 		"status": "user_question_requested", "question_id": questionID, "request": ev,
 	}, ""); err != nil {
 		d.sched.SetStatus(task.TaskID, "running")
-		return "ask_user error: persist request: " + err.Error()
+		return toolFailed("ask_user error: persist request: "+err.Error(), "audit_persistence_error")
 	}
 	d.events.Publish(sess.SessionID, ev)
 
@@ -112,14 +122,30 @@ func (d *Daemon) askUser(sess *sessionstore.Session, task *scheduler.Task, promp
 	if timeout <= 0 {
 		timeout = defaultApprovalTimeout
 	}
+	ctx := d.contextForTask(task.TaskID)
 	var answer userQuestionAnswer
 	timedOut := false
+	cancelled := false
 	select {
 	case answer = <-pending.answer:
+	case <-ctx.Done():
+		cancelled = true
 	case <-time.After(timeout):
 		timedOut = true
 	case <-d.stopCh:
-		timedOut = true
+		cancelled = true
+	}
+	if ctx.Err() != nil || taskCancelled(d, task.TaskID) {
+		cancelled = true
+	}
+	pending.mu.Lock()
+	pending.resolved = true
+	pending.mu.Unlock()
+	if cancelled {
+		d.record(sess.SessionID, "TaskCreated", task.TaskID, "operator", map[string]any{
+			"status": "user_question_resolved", "question_id": questionID, "cancelled": true,
+		}, "")
+		return toolExecutionOutcome{display: "User question cancelled.", status: "cancelled", errorCategory: "operator_cancelled"}
 	}
 	d.sched.SetStatus(task.TaskID, "running")
 	payload := map[string]any{
@@ -128,10 +154,10 @@ func (d *Daemon) askUser(sess *sessionstore.Session, task *scheduler.Task, promp
 	}
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "operator", payload, "")
 	if timedOut {
-		return "User did not answer the structured question before it expired. Continue with the safest reversible option or ask again if the choice is required."
+		return toolTimedOut("User did not answer the structured question before it expired. Continue with the safest reversible option or ask again if the choice is required.")
 	}
 	option := optionMap[answer.Value]
-	return fmt.Sprintf("User selected %q (value: %s).", option.Label, option.Value)
+	return toolCompleted(fmt.Sprintf("User selected %q (value: %s).", option.Label, option.Value))
 }
 
 func (d *Daemon) handleUserAnswer(params json.RawMessage) (any, error) {
@@ -156,8 +182,14 @@ func (d *Daemon) handleUserAnswer(params json.RawMessage) (any, error) {
 	if _, ok := pending.options[p.Value]; !ok {
 		return nil, fmt.Errorf("invalid answer %q for question %s", p.Value, p.QuestionID)
 	}
+	pending.mu.Lock()
+	defer pending.mu.Unlock()
+	if pending.resolved {
+		return nil, fmt.Errorf("user question %s is already resolved", p.QuestionID)
+	}
 	select {
 	case pending.answer <- userQuestionAnswer{Value: p.Value}:
+		pending.resolved = true
 	default:
 		return nil, fmt.Errorf("user question %s is already resolved", p.QuestionID)
 	}

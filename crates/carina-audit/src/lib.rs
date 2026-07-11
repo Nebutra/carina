@@ -25,6 +25,7 @@ pub enum EventType {
     ModelResponded,
     RoutingDecision,
     RoutingOutcome,
+    RoutingRetryScheduled,
     ContextCompacted,
     ScheduleChanged,
     ScheduleTriggered,

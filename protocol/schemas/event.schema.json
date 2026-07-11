@@ -30,6 +30,7 @@
         "ModelResponded",
         "RoutingDecision",
         "RoutingOutcome",
+        "RoutingRetryScheduled",
         "ContextCompacted",
         "ScheduleChanged",
         "ScheduleTriggered",
@@ -97,6 +98,14 @@
     }
   },
   "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "RoutingRetryScheduled" } }, "required": ["type"] },
+      "then": { "required": ["payload"], "properties": { "payload": { "required": ["evidence_id", "attempt", "max_attempts", "error"], "properties": { "attempt": { "type": "integer", "minimum": 1 }, "max_attempts": { "type": "integer", "minimum": 1 }, "error": { "type": "object", "required": ["code", "category", "message", "retry"] } } } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "ToolCallApprovalRequired" } }, "required": ["type"] },
+      "then": { "required": ["payload"], "properties": { "payload": { "required": ["call_id", "tool", "kind", "status", "decision_id"], "properties": { "status": { "const": "awaiting_approval" }, "decision_id": { "type": "string", "pattern": "^perm_" } } } } }
+    },
     {
       "if": { "properties": { "type": { "const": "ToolCallRequested" } }, "required": ["type"] },
       "then": { "required": ["payload"], "properties": { "payload": { "required": ["call_id", "tool", "kind", "status", "arguments"], "properties": { "status": { "const": "pending" }, "arguments": { "type": "object" } } } } }

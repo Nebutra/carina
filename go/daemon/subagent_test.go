@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestAttenuateChildNeverExceedsParent(t *testing.T) {
@@ -103,5 +105,42 @@ func TestSubagentDepthLimit(t *testing.T) {
 	obs := d.executeSpawn(deep, task, &action{Tool: "spawn", Agent: "scout", Task: "y"})
 	if !contains(obs, "depth") {
 		t.Fatalf("spawn at max depth should be refused, got: %s", obs)
+	}
+}
+
+func TestSubagentLoopHonorsParentCancellation(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	reasoner := &cancellationBlockingReasoner{started: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
+	d.SetReasoner(reasoner)
+	sess, _ := d.store.CreateSession(ws, "read-only")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "read-only", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "wait")
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan string, 1)
+	go func() { result <- d.runSubagentLoopContext(ctx, sess, task, &AgentSpec{Name: "worker", MaxTurns: 2}) }()
+	select {
+	case <-reasoner.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("subagent reasoner did not start")
+	}
+	cancel()
+	select {
+	case <-reasoner.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("subagent reasoner did not observe cancellation")
+	}
+	close(reasoner.release)
+	select {
+	case got := <-result:
+		if got != "subagent cancelled" {
+			t.Fatalf("result = %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("subagent did not exit after cancellation")
+	}
+	current, _ := d.sched.Get(task.TaskID)
+	if current.Status != "cancelled" {
+		t.Fatalf("task status = %s", current.Status)
 	}
 }

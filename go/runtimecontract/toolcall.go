@@ -65,8 +65,8 @@ func ValidateTransition(from, to ToolCallStatus) error {
 		return errors.New("runtimecontract: transition contains invalid status")
 	}
 	allowed := map[ToolCallStatus]map[ToolCallStatus]bool{
-		ToolCallPending:          {ToolCallAwaitingApproval: true, ToolCallRunning: true, ToolCallCancelled: true, ToolCallTimedOut: true, ToolCallFailed: true},
-		ToolCallAwaitingApproval: {ToolCallRunning: true, ToolCallCancelled: true, ToolCallTimedOut: true, ToolCallFailed: true},
+		ToolCallPending:          {ToolCallAwaitingApproval: true, ToolCallRunning: true, ToolCallDenied: true, ToolCallCancelled: true, ToolCallTimedOut: true, ToolCallFailed: true},
+		ToolCallAwaitingApproval: {ToolCallRunning: true, ToolCallDenied: true, ToolCallCancelled: true, ToolCallTimedOut: true, ToolCallFailed: true},
 		ToolCallRunning:          {ToolCallCompleted: true, ToolCallFailed: true, ToolCallDenied: true, ToolCallCancelled: true, ToolCallTimedOut: true},
 	}
 	if !allowed[from][to] {
