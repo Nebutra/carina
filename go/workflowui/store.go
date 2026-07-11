@@ -104,7 +104,11 @@ func (s *Store) Create(run Run) (Run, error) {
 		run.Steps[i].Status = Queued
 	}
 	s.runs[run.ID] = run
-	return run, s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		delete(s.runs, run.ID)
+		return Run{}, err
+	}
+	return run, nil
 }
 
 func (s *Store) List() []Run {
@@ -157,8 +161,13 @@ func (s *Store) Transition(id string, target Status) (Run, error) {
 	}
 	r.Status = target
 	r.UpdatedAt = s.now().UTC()
+	old := s.runs[id]
 	s.runs[id] = r
-	return r, s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		s.runs[id] = old
+		return Run{}, err
+	}
+	return r, nil
 }
 
 // ReconcileStartup marks process-owned runs interrupted while retaining
@@ -168,6 +177,7 @@ func (s *Store) ReconcileStartup(reason string) ([]Run, error) {
 	defer s.mu.Unlock()
 	now := s.now().UTC()
 	var changed []Run
+	old := make(map[string]Run)
 	for id, r := range s.runs {
 		if r.Status != Running && r.Status != Paused {
 			continue
@@ -183,13 +193,20 @@ func (s *Store) ReconcileStartup(reason string) ([]Run, error) {
 				r.Steps[i].StartedAt = nil
 			}
 		}
+		old[id] = s.runs[id]
 		s.runs[id] = r
 		changed = append(changed, r)
 	}
 	if len(changed) == 0 {
 		return nil, nil
 	}
-	return changed, s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		for id, r := range old {
+			s.runs[id] = r
+		}
+		return nil, err
+	}
+	return changed, nil
 }
 
 func (s *Store) Restart(id, newID string) (Run, error) {
@@ -221,7 +238,11 @@ func (s *Store) Restart(id, newID string) (Run, error) {
 		old.Steps[i] = Step{ID: old.Steps[i].ID, Status: Queued}
 	}
 	s.runs[newID] = old
-	return old, s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		delete(s.runs, newID)
+		return Run{}, err
+	}
+	return old, nil
 }
 
 func (s *Store) UpdateStep(runID string, step Step) (Run, error) {
@@ -243,8 +264,37 @@ func (s *Store) UpdateStep(runID string, step Step) (Run, error) {
 		return Run{}, fmt.Errorf("workflowui: unknown step %q", step.ID)
 	}
 	r.UpdatedAt = s.now().UTC()
+	original := s.runs[runID]
 	s.runs[runID] = r
-	return r, s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		s.runs[runID] = original
+		return Run{}, err
+	}
+	return r, nil
+}
+
+// MarkInterrupted records an explicit recovery state after an external side
+// effect succeeded but its normal result transition could not be persisted.
+func (s *Store) MarkInterrupted(id, reason string) (Run, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.runs[id]
+	if !ok {
+		return Run{}, os.ErrNotExist
+	}
+	old := r
+	now := s.now().UTC()
+	r.Status = Interrupted
+	r.Resumable = false
+	r.InterruptedAt = &now
+	r.InterruptionReason = reason
+	r.UpdatedAt = now
+	s.runs[id] = r
+	if err := s.persistLocked(); err != nil {
+		s.runs[id] = old
+		return Run{}, err
+	}
+	return r, nil
 }
 
 func (s *Store) SaveCommand(id, dir, name string) (string, error) {

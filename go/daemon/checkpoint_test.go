@@ -4,6 +4,7 @@ import (
 	"github.com/Nebutra/carina/go/scheduler"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -46,6 +47,24 @@ func TestRunStoreTombstonePreventsRestartResurrection(t *testing.T) {
 	}
 	if got := runs.load(); len(got) != 0 {
 		t.Fatalf("tombstoned run resurrected: %+v", got)
+	}
+}
+
+func TestRestoreJournalBecomesBlockedOnRestart(t *testing.T) {
+	runs := newRunStore(filepath.Join(t.TempDir(), "state"))
+	if err := runs.writeRestoreJournal("task", map[string]any{"pending": []string{"p1"}}); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := runs.reconcileRestoreJournals()
+	if err != nil || len(ids) != 1 || ids[0] != "task" {
+		t.Fatalf("ids=%v err=%v", ids, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(runs.dir, "task.restore.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "blocked_reconciliation_required") {
+		t.Fatalf("journal not blocked: %s", raw)
 	}
 }
 

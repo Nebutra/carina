@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -33,28 +34,34 @@ func (w *wfRunStore) path(runID string) string {
 }
 
 // load returns the persisted step results for a run (empty map if none).
-func (w *wfRunStore) load(runID string) map[string]stepResult {
+func (w *wfRunStore) load(runID string) (map[string]stepResult, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	out := map[string]stepResult{}
 	raw, err := os.ReadFile(w.path(runID))
 	if err != nil {
-		return out
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return nil, err
 	}
-	_ = json.Unmarshal(raw, &out)
-	return out
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("workflow result journal corrupt: %w", err)
+	}
+	return out, nil
 }
 
 // save atomically writes the full result set for a run (temp + rename).
-func (w *wfRunStore) save(runID string, results map[string]stepResult) {
+func (w *wfRunStore) save(runID string, results map[string]stepResult) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	raw, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
 	tmp := w.path(runID) + ".tmp"
-	if os.WriteFile(tmp, raw, 0o600) == nil {
-		_ = os.Rename(tmp, w.path(runID))
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
 	}
+	return os.Rename(tmp, w.path(runID))
 }

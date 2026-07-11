@@ -40,11 +40,17 @@ type Receipt struct {
 	Duplicate bool  `json:"duplicate"`
 	Event     Event `json:"event"`
 }
+type reservationRecord struct {
+	Token     string    `json:"token"`
+	Event     Event     `json:"event"`
+	State     string    `json:"state"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
 type Registry struct {
 	mu                  sync.Mutex
 	senders             map[string]Sender
 	seen                map[string]time.Time
-	pending             map[string]string
+	pending             map[string]reservationRecord
 	path                string
 	resolveSecret       func(string) ([]byte, error)
 	maxSkew, timeToLive time.Duration
@@ -58,7 +64,7 @@ func New(maxSkew, timeToLive time.Duration) *Registry {
 	if timeToLive <= 0 {
 		timeToLive = 24 * time.Hour
 	}
-	return &Registry{senders: map[string]Sender{}, seen: map[string]time.Time{}, pending: map[string]string{}, maxSkew: maxSkew, timeToLive: timeToLive, now: time.Now}
+	return &Registry{senders: map[string]Sender{}, seen: map[string]time.Time{}, pending: map[string]reservationRecord{}, maxSkew: maxSkew, timeToLive: timeToLive, now: time.Now}
 }
 
 // Open loads non-secret sender policy and committed deduplication receipts.
@@ -75,8 +81,9 @@ func Open(stateDir string, maxSkew, timeToLive time.Duration, resolver func(stri
 		return nil, err
 	}
 	var disk struct {
-		Senders map[string]Sender    `json:"senders"`
-		Seen    map[string]time.Time `json:"seen"`
+		Senders map[string]Sender            `json:"senders"`
+		Seen    map[string]time.Time         `json:"seen"`
+		Pending map[string]reservationRecord `json:"pending"`
 	}
 	if err := json.Unmarshal(raw, &disk); err != nil {
 		return nil, fmt.Errorf("channels: load: %w", err)
@@ -86,6 +93,9 @@ func Open(stateDir string, maxSkew, timeToLive time.Duration, resolver func(stri
 	}
 	if disk.Seen != nil {
 		r.seen = disk.Seen
+	}
+	if disk.Pending != nil {
+		r.pending = disk.Pending
 	}
 	return r, nil
 }
@@ -179,11 +189,18 @@ func (r *Registry) Reserve(e Event, signature string) (Reservation, error) {
 	if _, ok := r.seen[key]; ok {
 		return Reservation{Receipt: Receipt{Accepted: true, Duplicate: true, Event: e}}, nil
 	}
-	if _, ok := r.pending[key]; ok {
-		return Reservation{}, errors.New("channels: event is already being processed")
+	if rec, ok := r.pending[key]; ok {
+		if rec.State == "effect_applied" {
+			return Reservation{}, errors.New("channels: event side effect was applied before a crash; manual reconcile or idempotent commit required")
+		}
+		return Reservation{}, errors.New("channels: event is already reserved; retry requires abort/reconcile")
 	}
 	token := Sign(secret, Event{ID: e.ID, SenderID: e.SenderID, SessionID: e.SessionID, Kind: "reservation", Timestamp: now})
-	r.pending[key] = token
+	r.pending[key] = reservationRecord{Token: token, Event: e, State: "reserved", UpdatedAt: now}
+	if err := r.persistLocked(); err != nil {
+		delete(r.pending, key)
+		return Reservation{}, err
+	}
 	return Reservation{Key: key, Token: token, Receipt: Receipt{Accepted: true, Event: e}}, nil
 }
 
@@ -193,18 +210,68 @@ func (r *Registry) Commit(res Reservation) error {
 	if res.Receipt.Duplicate {
 		return nil
 	}
-	if res.Key == "" || r.pending[res.Key] != res.Token {
+	rec, ok := r.pending[res.Key]
+	if res.Key == "" || !ok || rec.Token != res.Token {
 		return errors.New("channels: invalid reservation")
 	}
+	old := rec
 	delete(r.pending, res.Key)
 	r.seen[res.Key] = r.now().UTC()
+	if err := r.persistLocked(); err != nil {
+		delete(r.seen, res.Key)
+		r.pending[res.Key] = old
+		return err
+	}
+	return nil
+}
+func (r *Registry) MarkEffectApplied(res Reservation) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.pending[res.Key]
+	if !ok || rec.Token != res.Token {
+		return errors.New("channels: invalid reservation")
+	}
+	rec.State = "effect_applied"
+	rec.UpdatedAt = r.now().UTC()
+	r.pending[res.Key] = rec
 	return r.persistLocked()
+}
+
+// Reconcile resolves a durable crash reservation. commitApplied is only valid
+// for effect_applied records; reserved records can only be aborted for retry.
+func (r *Registry) Reconcile(senderID, eventID string, commitApplied bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := senderID + ":" + eventID
+	rec, ok := r.pending[key]
+	if !ok {
+		return os.ErrNotExist
+	}
+	if commitApplied {
+		if rec.State != "effect_applied" {
+			return errors.New("channels: cannot commit a reservation without a recorded side effect")
+		}
+		delete(r.pending, key)
+		r.seen[key] = r.now().UTC()
+	} else {
+		if rec.State == "effect_applied" {
+			return errors.New("channels: applied side effect requires idempotent commit or manual compensation")
+		}
+		delete(r.pending, key)
+	}
+	if err := r.persistLocked(); err != nil {
+		delete(r.seen, key)
+		r.pending[key] = rec
+		return err
+	}
+	return nil
 }
 func (r *Registry) Abort(res Reservation) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.pending[res.Key] == res.Token {
+	if rec, ok := r.pending[res.Key]; ok && rec.Token == res.Token && rec.State == "reserved" {
 		delete(r.pending, res.Key)
+		_ = r.persistLocked()
 	}
 }
 func (r *Registry) Ingest(e Event, signature string) (Receipt, error) {
@@ -240,9 +307,10 @@ func (r *Registry) persistLocked() error {
 		senders[id] = s
 	}
 	raw, err := json.MarshalIndent(struct {
-		Senders map[string]Sender    `json:"senders"`
-		Seen    map[string]time.Time `json:"seen"`
-	}{senders, r.seen}, "", "  ")
+		Senders map[string]Sender            `json:"senders"`
+		Seen    map[string]time.Time         `json:"seen"`
+		Pending map[string]reservationRecord `json:"pending,omitempty"`
+	}{senders, r.seen, r.pending}, "", "  ")
 	if err != nil {
 		return err
 	}

@@ -114,6 +114,45 @@ func (r *runStore) clearRestoreJournal(taskID string) error {
 	return err
 }
 
+func (r *runStore) reconcileRestoreJournals() ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entries, err := os.ReadDir(r.dir)
+	if err != nil {
+		return nil, err
+	}
+	blocked := []string{}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".restore.json") {
+			continue
+		}
+		p := filepath.Join(r.dir, e.Name())
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return nil, err
+		}
+		var row map[string]any
+		if json.Unmarshal(raw, &row) != nil {
+			return nil, fmt.Errorf("restore journal %s is corrupt", e.Name())
+		}
+		row["state"] = "blocked_reconciliation_required"
+		row["recovery_reason"] = "daemon restarted with an incomplete checkpoint restore"
+		updated, err := json.MarshalIndent(row, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		tmp := p + ".tmp"
+		if err = os.WriteFile(tmp, updated, 0o600); err != nil {
+			return nil, err
+		}
+		if err = os.Rename(tmp, p); err != nil {
+			return nil, err
+		}
+		blocked = append(blocked, strings.TrimSuffix(e.Name(), ".restore.json"))
+	}
+	return blocked, nil
+}
+
 // runCheckpoint is the resumable model-view of a run: the turn reached and the
 // (compacted) transcript. The audit log remains the full source of truth; this
 // is only what the agent loop needs to continue from where it left off.

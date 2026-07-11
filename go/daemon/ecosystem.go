@@ -57,16 +57,23 @@ func (d *Daemon) startWorkflowControlRun(sess *sessionstore.Session, spec *Workf
 		task := &scheduler.Task{TaskID: sessionstore.NewID("task"), SessionID: sess.SessionID, WorkspaceID: sess.WorkspaceID, Status: "running", UserPrompt: run.Input, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 		outputs, runErr := d.runWorkflow(sess, task, spec, run.Input, run.ID)
 		if runErr != nil {
-			detail, _ := d.workflowRuns.Detail(run.ID)
-			if detail.Run.Status != workflowui.Stopped {
-				_, _ = d.workflowRuns.Transition(run.ID, workflowui.Failed)
+			detail, detailErr := d.workflowRuns.Detail(run.ID)
+			if detailErr == nil && detail.Run.Status != workflowui.Stopped && detail.Run.Status != workflowui.Interrupted {
+				if _, e := d.workflowRuns.Transition(run.ID, workflowui.Failed); e != nil {
+					_, _ = d.workflowRuns.MarkInterrupted(run.ID, "execution failed and failure status could not be persisted: "+e.Error())
+				}
 			}
 			return
 		}
 		for _, st := range spec.Steps {
-			_, _ = d.workflowRuns.UpdateStep(run.ID, workflowui.Step{ID: st.ID, Status: workflowui.Completed, Output: outputs[st.ID]})
+			if _, err := d.workflowRuns.UpdateStep(run.ID, workflowui.Step{ID: st.ID, Status: workflowui.Completed, Output: outputs[st.ID]}); err != nil {
+				_, _ = d.workflowRuns.MarkInterrupted(run.ID, "result completed but final step persistence failed: "+err.Error())
+				return
+			}
 		}
-		_, _ = d.workflowRuns.Transition(run.ID, workflowui.Completed)
+		if _, err := d.workflowRuns.Transition(run.ID, workflowui.Completed); err != nil {
+			_, _ = d.workflowRuns.MarkInterrupted(run.ID, "result completed but terminal status persistence failed: "+err.Error())
+		}
 	}()
 }
 
@@ -106,17 +113,20 @@ func (d *Daemon) handleWorkflowResume(p json.RawMessage) (any, error) {
 	if detail.Run.Status != workflowui.Interrupted {
 		return d.workflowRuns.Transition(req.RunID, workflowui.Running)
 	}
+	sess, ok := d.store.Get(detail.Run.SessionID)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", detail.Run.SessionID)
+	}
+	spec := loadWorkflowSpecs(sess.WorkspaceRoot)[detail.Run.Workflow]
+	if spec == nil {
+		return nil, fmt.Errorf("unknown workflow %q", detail.Run.Workflow)
+	}
+	if err := spec.validate(); err != nil {
+		return nil, err
+	}
 	run, err := d.workflowRuns.Transition(req.RunID, workflowui.Queued)
 	if err != nil {
 		return nil, err
-	}
-	sess, ok := d.store.Get(run.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", run.SessionID)
-	}
-	spec := loadWorkflowSpecs(sess.WorkspaceRoot)[run.Workflow]
-	if spec == nil {
-		return nil, fmt.Errorf("unknown workflow %q", run.Workflow)
 	}
 	d.startWorkflowControlRun(sess, spec, run)
 	return run, nil
@@ -135,10 +145,6 @@ func (d *Daemon) handleWorkflowRestart(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	run, err := d.workflowRuns.Restart(p.RunID, sessionstore.NewID("wf"))
-	if err != nil {
-		return nil, err
-	}
 	sess, ok := d.store.Get(old.Run.SessionID)
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", old.Run.SessionID)
@@ -146,6 +152,13 @@ func (d *Daemon) handleWorkflowRestart(params json.RawMessage) (any, error) {
 	spec := loadWorkflowSpecs(sess.WorkspaceRoot)[old.Run.Workflow]
 	if spec == nil {
 		return nil, fmt.Errorf("unknown workflow %q", old.Run.Workflow)
+	}
+	if err := spec.validate(); err != nil {
+		return nil, err
+	}
+	run, err := d.workflowRuns.Restart(p.RunID, sessionstore.NewID("wf"))
+	if err != nil {
+		return nil, err
 	}
 	d.startWorkflowControlRun(sess, spec, run)
 	return run, nil
@@ -220,6 +233,9 @@ func (d *Daemon) handleChannelEventInject(params json.RawMessage) (any, error) {
 		}
 	}
 	d.events.Publish(p.Event.SessionID, map[string]any{"type": "ExternalEvent", "session_id": p.Event.SessionID, "timestamp": time.Now().UTC(), "payload": map[string]any{"event_id": p.Event.ID, "sender_id": p.Event.SenderID, "kind": p.Event.Kind, "data": p.Event.Payload}})
+	if err := d.channels.MarkEffectApplied(reservation); err != nil {
+		return nil, fmt.Errorf("channel side effect applied but journal update failed: %w", err)
+	}
 	if err := d.channels.Commit(reservation); err != nil {
 		return nil, err
 	}

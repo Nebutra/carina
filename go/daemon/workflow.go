@@ -65,7 +65,10 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 	}
 
 	store := newWFRunStore(d.stateDir)
-	persisted := store.load(runID)
+	persisted, err := store.load(runID)
+	if err != nil {
+		return nil, err
+	}
 
 	var mu sync.Mutex
 	outputs := map[string]string{}
@@ -138,7 +141,12 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 				startedAt := time.Now().UTC()
 				if d.workflowRuns != nil {
 					now := startedAt
-					_, _ = d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: workflowui.Running, StartedAt: &now})
+					if _, managedErr := d.workflowRuns.Detail(runID); managedErr == nil {
+						if _, err := d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: workflowui.Running, StartedAt: &now}); err != nil {
+							errs[i] = fmt.Errorf("step %q refused before execution because running state could not persist: %w", st.ID, err)
+							return
+						}
+					}
 				}
 				mu.Lock()
 				taskText := interpolate(st.Task, input, outputs)
@@ -167,10 +175,20 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 					snapshot[k] = v
 				}
 				mu.Unlock()
-				store.save(runID, snapshot)
+				if err := store.save(runID, snapshot); err != nil {
+					errs[i] = fmt.Errorf("step %q side effect completed but result persistence failed; manual reconciliation required: %w", st.ID, err)
+					if d.workflowRuns != nil {
+						_, _ = d.workflowRuns.MarkInterrupted(runID, errs[i].Error())
+					}
+					return
+				}
 				if d.workflowRuns != nil {
 					now := time.Now().UTC()
-					_, _ = d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: workflowui.Completed, FinishedAt: &now, Output: summary})
+					_, managedErr := d.workflowRuns.Detail(runID)
+					if _, err := d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: workflowui.Completed, FinishedAt: &now, Output: summary}); managedErr == nil && err != nil {
+						errs[i] = fmt.Errorf("step %q completed but operator state persistence failed: %w", st.ID, err)
+						return
+					}
 				}
 				_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
 					WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,

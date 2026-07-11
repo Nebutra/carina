@@ -138,3 +138,41 @@ func TestRejectsWrongTargetAndStale(t *testing.T) {
 		t.Fatal("stale accepted")
 	}
 }
+
+func TestCrashReservationRequiresExplicitReconciliation(t *testing.T) {
+	dir := t.TempDir()
+	secret := []byte(strings.Repeat("z", 32))
+	resolver := func(string) ([]byte, error) { return secret, nil }
+	r, err := Open(dir, time.Minute, time.Hour, resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.Register(Sender{ID: "x", SecretRef: "env:CARINA_CHANNEL_X", Sessions: []string{"s"}, Kinds: []string{"k"}}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	r.now = func() time.Time { return now }
+	e := Event{ID: "e", SenderID: "x", SessionID: "s", Kind: "k", Timestamp: now}
+	res, err := r.Reserve(e, Sign(secret, e))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.MarkEffectApplied(res); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := Open(dir, time.Minute, time.Hour, resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.now = func() time.Time { return now }
+	if _, err = restarted.Reserve(e, Sign(secret, e)); err == nil || !strings.Contains(err.Error(), "manual reconcile") {
+		t.Fatalf("silent replay allowed: %v", err)
+	}
+	if err = restarted.Reconcile("x", "e", true); err != nil {
+		t.Fatal(err)
+	}
+	dup, err := restarted.Reserve(e, Sign(secret, e))
+	if err != nil || !dup.Receipt.Duplicate {
+		t.Fatalf("reconciled receipt not idempotent: %+v %v", dup, err)
+	}
+}

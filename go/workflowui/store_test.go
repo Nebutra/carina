@@ -1,6 +1,9 @@
 package workflowui
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestLifecycleProgressRestartAndSave(t *testing.T) {
 	s, err := New(t.TempDir())
@@ -39,6 +42,24 @@ func TestLifecycleProgressRestartAndSave(t *testing.T) {
 	}
 	if _, err = s.SaveCommand("r2", t.TempDir(), "review-saved"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPersistFailureDoesNotAdvanceMemoryState(t *testing.T) {
+	s, _ := New(t.TempDir())
+	_, _ = s.Create(Run{ID: "r", Workflow: "w"})
+	if err := os.Remove(s.path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(s.path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Transition("r", Running); err == nil {
+		t.Fatal("expected persistence failure")
+	}
+	d, _ := s.Detail("r")
+	if d.Run.Status != Queued {
+		t.Fatalf("memory advanced to %s", d.Run.Status)
 	}
 }
 
