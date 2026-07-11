@@ -115,10 +115,13 @@ exact implementation such as `process_tree_containment:unix_pgrp_v1`. The daemon
 keeps an unmatched task queued and leases it only to a matching worker. Unknown
 requirements fail closed at submission.
 
-Remote dispatch defaults to requiring `process_tree_containment`; callers do
-not need to opt in. Consequently the official Windows worker registers but does
-not lease executor tasks until `windows_job_v1` passes conformance. This avoids
-silently weakening cancellation just because a task omitted a capability list.
+Dispatch tasks that omit `required_worker_capabilities` are leaseable by any
+registered worker, including workers advertising containment `none`. Callers
+that need fail-closed descendant cancellation must opt in by submitting with
+`required_worker_capabilities: ["process_tree_containment"]`; such a task stays
+queued until a worker with a governed containment implementation leases it, so
+the official Windows worker registers but does not lease it until
+`windows_job_v1` passes conformance.
 
 Windows must not advertise `windows_job_v1` until a native Job Object guard can
 create the executor suspended, assign it to a kill-on-close Job, resume it, and
