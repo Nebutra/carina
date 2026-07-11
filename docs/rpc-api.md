@@ -4,10 +4,20 @@ Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or 
 
 Notifications (server → client) stream events; every payload conforms to [`protocol/schemas/`](../protocol/schemas/).
 
+This document covers a curated subset of the registered surface;
+[`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json) is the
+complete, authoritative registry. Groups not summarized here include `agent.*`,
+`session.checkpoint.*`, `workflow.*`, `schedule.*`, `channel.sender.*` /
+`channel.event.inject`, `extension.*`, `worktree.*`,
+`usage.*`/`telemetry.*`/`history.*`/`debug.*`, and `work.*`.
+
 ## Gateway / Daemon API
 
 | Method | Purpose |
 |--------|---------|
+| `runtime.initialize` | runtime negotiation entrypoint: client identity, requested projection version, negotiated contract |
+| `runtime.capabilities` | advertised runtime capabilities |
+| `runtime.registry_schema` | machine-readable method registry schema |
 | `gateway.hello` | versioned Gateway handshake snapshot: requested role, negotiated scopes, feature list, method catalog, policy notes |
 | `gateway.methods` | live method catalog: method name, scope, remote exposure, stream flag, discovery flag, control-plane-write metadata |
 | `gateway.resolve_scope` | local-only diagnostic for resolving a method's effective scope from request params |
@@ -15,6 +25,8 @@ Notifications (server → client) stream events; every payload conforms to [`pro
 | `daemon.status` | daemon process/runtime status |
 | `daemon.metrics` | runtime metrics |
 | `daemon.doctor` | independent health probes |
+| `daemon.remote.disable` | remote kill-switch: disable remote-exposed method dispatch |
+| `daemon.reload` | reload daemon configuration |
 | `context.status` | local-only native context engine and bundled Headroom status |
 | `context.doctor` | local-only context engine health probe |
 | `context.stats` | local-only local/Headroom compression counters |
@@ -171,9 +183,11 @@ Dynamic scopes:
 | `session.list` | list sessions |
 | `session.pause` / `session.resume` | suspend / continue |
 | `session.close` | terminate |
-| `session.export` | export as JSONL / SQLite bundle |
 | `session.replay` | replay the event stream |
 | `session.items` | replay the normalized item stream derived from audit events |
+
+JSONL / SQLite export is provided by `audit.export` (`format: jsonl|sqlite`),
+not a `session.*` method.
 
 ## Task API
 
@@ -182,8 +196,11 @@ Dynamic scopes:
 | `task.submit` | submit a prompt/task into a session |
 | `task.cancel` | cancel a running task |
 | `task.status` | query task state |
-| `task.events.stream` | subscribe to the task event stream |
 | `task.action.approve` / `task.action.deny` | resolve pending approval requests |
+
+Task events are consumed through `session.events.stream` (with a `since`
+cursor and `event_mode`), documented below; there is no separate task event
+stream.
 
 ## Memory API
 
@@ -215,11 +232,14 @@ content hash, not raw memory text.
 
 | Method | Purpose |
 |--------|---------|
-| `workspace.open` / `workspace.scan` | register + index a workspace |
+| `worktree.create` / `list` / `enter` / `lock` / `unlock` / `cleanup` | isolated worktree lifecycle |
 | `workspace.tree` | file tree (via `carina-scan`) |
 | `workspace.search` | structured search (via `carina-grep`) |
 | `workspace.file.get` | read a file (FileRead capability) |
 | `workspace.patch.propose` / `apply` / `rollback` | transactional patch operations |
+
+There is no separate workspace registration method: a workspace is bound at
+`session.create` time via the `workspace_root` param.
 
 Patch applies are approval-gated: `workspace.patch.propose` requests the
 `PatchApply` capability and returns the decision as `apply_decision` alongside
@@ -229,14 +249,25 @@ with `task.action.approve`; a decision resolved by `task.action.deny`, or left
 unresolved past the approval window, refuses permanently and the patch must be
 re-proposed.
 
+## Artifact API
+
+| Method | Purpose |
+|--------|---------|
+| `artifact.stat` | metadata for a stored artifact (`session_id`, optional `task_id`/`call_id`, sha256 `artifact_id`) |
+| `artifact.read` | paged base64 content read with `offset`/`limit` (max 1 MiB per page); returns `{metadata, offset, next_offset, eof, content_base64}` |
+
+Both methods are `read` scope and local-only. They back the artifact
+references surfaced by `session.review` and the item stream.
+
 ## Capability API (kernel-facing)
 
-`capability.file.read` · `capability.file.write` · `capability.command.exec` · `capability.network.access` · `capability.secret.read` · `capability.patch.apply`
+Capabilities are not client-callable `capability.*` RPC methods. The daemon
+requests them from the capability kernel through the kernel-facing
+`kernel.request` method. Kernel capability types include `FileRead`,
+`FileWrite`, `CommandExec`, `NetworkAccess`, `SecretRead`, and `PatchApply`,
+plus mediated runtime capabilities such as `MemoryWrite`.
 
-Kernel capability types also include mediated runtime capabilities that are not
-exposed as standalone `capability.*` RPC methods, including `MemoryWrite`.
-
-Each returns a `PermissionDecision` (see schema). Side effects only proceed on `allowed`.
+Each request returns a `PermissionDecision` (see schema). Side effects only proceed on `allowed`.
 
 ## Command / Audit / Secret / Plugin / Enterprise
 
@@ -274,6 +305,10 @@ fencing token for that task. The worker must echo it in `work.renew` and
 `worker_id` claims the task again, so a delayed execution branch from an older
 lease cannot renew or publish a terminal result. Delivery remains at-least-once;
 generation fencing prevents stale ownership from becoming authoritative.
+
+Workers report pressure through `backpressure.report` (worker scope) and any
+`read`-scoped client can inspect the aggregate state with
+`backpressure.status`.
 
 ## Example
 

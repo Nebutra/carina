@@ -41,25 +41,35 @@ version from the same log produces byte-equivalent semantic items.
 
 ## Item families
 
-The minimum stable families are:
+The stream is delivered through a fixed set of event wrappers:
 
-- `thread.started`, `thread.updated`, `thread.completed`;
-- `turn.started`, `turn.completed`, `turn.degraded`;
-- `item.user_message`, `item.agent_message`;
-- `item.tool_call.started`, `item.tool_call.completed`;
-- `item.approval.requested`, `item.approval.resolved`;
-- `item.question.requested`, `item.question.resolved`;
-- `item.patch.proposed`, `item.patch.applied`, `item.patch.rolled_back`;
-- `item.check.completed`;
-- `item.compaction.completed`;
-- `item.task.linked` for sub-agent, workflow, fork, and worker lineage;
-- `item.artifact.created`;
-- `item.policy.decision`;
-- `item.runtime.changed`.
+- `thread.started`, `thread.completed`;
+- `turn.started`, `turn.completed`, `turn.failed` (the `turn.failed` payload
+  carries a `status` of `degraded`, `failed`, or `cancelled`);
+- `item.started`, `item.updated`, `item.completed`.
 
-Unknown raw events are preserved in the audit log. A reducer may emit
-`item.unknown` for diagnostic clients, but stable clients must not derive
-business state from it.
+User prompts are folded into `turn.started` details rather than emitted as a
+separate item family. Each `item.*` wrapper carries a `SessionItem` whose
+`type` is one of the stable families:
+
+- `tool_call` (lifecycle statuses `requested` → `running` → `completed`,
+  delivered as `item.started` / `item.updated` / `item.completed`);
+- `agent_message`;
+- `command_execution`;
+- `file_change`;
+- `turn_net_diff`;
+- `approval`, `question` (resolutions complete the same logical item);
+- `risk_review` for policy/risk decisions;
+- `error`;
+- `runtime.stage_changed`.
+
+Compaction lineage, task lineage (sub-agent, workflow, fork, worker), and
+dedicated artifact-creation items are planned families that are not yet
+emitted by the reducer.
+
+Unknown raw events are preserved in the audit log; the reducer does not emit
+them as items, and stable clients must not derive business state from
+unrecognized item types.
 
 ## Reduction rules
 

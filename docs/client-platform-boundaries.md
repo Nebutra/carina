@@ -12,8 +12,8 @@ duplicate authority.
 | Browser/computer use | Future sandboxed worker adapter | Never an implicit runtime capability |
 | Artifacts | Runtime emits typed references, provenance and policy labels | Rendering and sharing belong to clients/Nebutra Cloud |
 
-Distribution sources live under `packaging/`: native npm packages, Linux
-tar/deb/rpm recipes, and non-root daemon/worker container images. Release builds
-must publish checksums, SPDX SBOMs, and platform provenance/attestations. A file
-or template in this repository is not a claim that the corresponding package is
-already public.
+Distribution sources live under `packaging/`: native npm packages, a Homebrew
+formula template, Linux tar/deb/rpm recipes, and non-root daemon/worker
+container images. Release builds must publish checksums, SPDX SBOMs, and
+platform provenance/attestations. A file or template in this repository is not
+a claim that the corresponding package is already public.
