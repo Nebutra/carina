@@ -16,9 +16,15 @@ type Watcher struct {
 	stop     chan struct{}
 }
 
-// WatchPaths returns the config files the cascade reads for a home+project pair.
-func WatchPaths(home, projectDir string) []string {
-	paths := []string{filepath.Join(home, ".carina", "config.json")}
+// WatchPaths returns the config files the cascade reads for a home+project
+// pair plus the managed file ("" skips it), so managed-file edits trigger the
+// same auto-reload as user config edits.
+func WatchPaths(home, projectDir, managedPath string) []string {
+	var paths []string
+	if managedPath != "" {
+		paths = append(paths, managedPath)
+	}
+	paths = append(paths, filepath.Join(home, ".carina", "config.json"))
 	if projectDir != "" {
 		paths = append(paths, filepath.Join(projectDir, ".carina", "config.json"))
 	}

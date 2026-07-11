@@ -2,12 +2,17 @@
 // layers overriding earlier ones:
 //
 //  1. built-in defaults
-//  2. global   ~/.carina/config.json
-//  3. project  <projectDir>/.carina/config.json
-//  4. environment (CARINA_*)
+//  2. managed  /etc/carina/managed.json (org-managed values, optional)
+//  3. global   ~/.carina/config.json
+//  4. project  <projectDir>/.carina/config.json
+//  5. environment (CARINA_*)
+//
+// Keys named in the managed file's locked_keys list are then re-applied from
+// the managed values, so layers 3-5 cannot override them (tighten-only).
 //
 // The caller (the daemon entrypoint) applies command-line flags as a final,
-// highest-precedence layer on top of the resolved config.
+// highest-precedence layer on top of the resolved config; the daemon
+// entrypoint fails closed when an explicitly-set flag collides with a lock.
 package config
 
 import (
@@ -76,20 +81,50 @@ func Defaults(home string) Config {
 	}
 }
 
-// Load resolves the config cascade. Missing files are skipped; a malformed file
-// is a hard error (fail fast rather than silently run mis-configured).
+// Load resolves the config cascade using the platform-default managed path.
+// Missing files are skipped; a malformed file is a hard error (fail fast
+// rather than silently run mis-configured).
 func Load(home, projectDir string) (Config, error) {
+	cfg, _, err := LoadWithManaged(home, projectDir, DefaultManagedPath())
+	return cfg, err
+}
+
+// LoadWithManaged resolves the config cascade with an explicit managed-file
+// path ("" disables the managed layer). The returned LockReport is nil when no
+// managed file is present; otherwise it names the locked keys and their source
+// for provenance in errors and logs.
+func LoadWithManaged(home, projectDir, managedPath string) (Config, *LockReport, error) {
 	cfg := Defaults(home)
+	var managed *Managed
+	if managedPath != "" {
+		m, err := loadManaged(managedPath)
+		if err != nil {
+			return cfg, nil, err
+		}
+		managed = m
+	}
+	if managed != nil {
+		if err := managed.apply(&cfg, managedPath); err != nil {
+			return cfg, nil, err
+		}
+	}
 	if err := mergeFile(&cfg, filepath.Join(home, ".carina", "config.json")); err != nil {
-		return cfg, err
+		return cfg, nil, err
 	}
 	if projectDir != "" {
 		if err := mergeFile(&cfg, filepath.Join(projectDir, ".carina", "config.json")); err != nil {
-			return cfg, err
+			return cfg, nil, err
 		}
 	}
 	mergeEnv(&cfg)
-	return cfg, cfg.Validate()
+	var report *LockReport
+	if managed != nil {
+		if err := managed.applyLocked(&cfg, managedPath); err != nil {
+			return cfg, nil, err
+		}
+		report = managed.report(managedPath)
+	}
+	return cfg, report, cfg.Validate()
 }
 
 // mergeFile overlays a JSON file onto cfg. Unmarshaling into the existing struct
