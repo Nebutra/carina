@@ -65,7 +65,34 @@ carina plugin run <session> plugin.toml module.wasm module.sig
 Verified end to end by `TestSignedPluginEnforcement` (unsigned refused,
 rogue-signed refused, trusted-signed runs).
 
-## 4. Centralized audit — `carina export`
+## 4. Extension lockdown — `extensions.json`
+
+`<PolicyDir>/extensions.json` is the org tier of the tri-level extension
+enable merge (`safe_mode > org > project > user`). It is disable-only: it can
+switch extensions off but structurally cannot enable anything, and an
+org-disabled extension cannot be re-enabled by project or user config
+(`ErrOrgDisabled`). A present-but-malformed or unreadable file fails closed
+to disable-all — a broken org lockdown never silently loosens.
+
+```json
+{ "disabled": ["some-extension"], "disable_all": false }
+```
+
+## 5. Managed configuration — `/etc/carina/managed.json`
+
+An admin-owned managed file (`/etc/carina/managed.json` on Unix,
+`C:\ProgramData\carina\managed.json` on Windows) carries `values` plus
+`locked_keys`. Locked keys are re-applied after every other config layer
+(defaults → managed → global → project → env), so no global file, project
+file, or environment variable can override them, and an explicitly-set CLI
+flag that conflicts with a locked key is a startup error naming the lock's
+source. The file is watched, so managed edits trigger a reload.
+
+```json
+{ "values": { "offline": true }, "locked_keys": ["offline"] }
+```
+
+## 6. Centralized audit — `carina export`
 
 ```bash
 carina export <session_id>   # full audit bundle: profile + every event, in order
@@ -78,7 +105,7 @@ Future Nebutra Cloud audit sync should upload explicit bundles or checkpoints
 from this surface, preserving local event hashes rather than rewriting local
 history.
 
-## 5. Offline mode
+## 7. Offline mode
 
 ```bash
 carina-daemon --offline   # only the mock model provider; no request leaves the host
@@ -91,5 +118,7 @@ carina-daemon --offline   # only the mock model provider; no request leaves the 
 | Org-wide mandatory denies | policy bundle, tighten-only | `policy_bundle_only_tightens`, `TestEnterprisePolicyBundleAndRBAC` |
 | Role-gated approval | approval policy + `approve_as` | `TestRBACApprovalRequiresRole` |
 | Signed plugins | ed25519 verify before run | `TestSignedPluginEnforcement`, `signing::tests` |
+| Extension lockdown | org tier of the enable merge, fail-closed | `TestEffectiveEnabledTruthTable`, `TestLoadOrgPolicyMissingZeroAndMalformedFailsClosed` |
+| Managed-locked config | locked keys re-applied after all layers | `TestManagedLockedKeySurvivesAllLayers`, `TestManagedReloadReappliesLocks` |
 | Centralized audit | `audit.export` | `TestEnterprisePolicyBundleAndRBAC` |
 | Offline mode | provider registration gate | — |

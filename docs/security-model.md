@@ -12,18 +12,19 @@
 
 ## Capabilities
 
-Every side effect is one of ten capability types:
+Every side effect is one of fourteen capability types (see `protocol/capabilities/capabilities.json`):
 
 ```
 FileRead  FileWrite  CommandExec  NetworkAccess  SecretRead
 GitOperation  PatchApply  ProcessSpawn  PluginLoad  RemoteExecute
+MemoryWrite  CodeIndex  ContextCompress  SubagentSpawn
 ```
 
-A capability request carries: requesting principal (agent / plugin / user), resource (path, command, host), session id, and task id. The kernel returns a `PermissionDecision` (allow / deny / require-approval) with the policy that produced it. Every decision is an audit event; side-effect events reference their decision id.
+A capability request carries: requesting principal (agent / plugin / user), resource (path, command, host), session id, and task id. The kernel returns a `PermissionDecision` (allow / deny / require-approval) with the policy that produced it. Every decision is an audit event; side-effect events reference their decision id. `SubagentSpawn` requests carry a typed resource of the form `agent:NAME:profile:PROFILE` and require approval by default; the child's capabilities are attenuated to a subset of the parent's before the spawn.
 
 ## Permission profiles
 
-Built-in profiles (see `protocol/capabilities/profiles/`):
+Built-in profiles (see `builtin_profiles` in `protocol/capabilities/capabilities.json` and `Profile::builtin` in `crates/carina-policy`; TOML examples for the first four live in `protocol/capabilities/profiles/`):
 
 | Profile | Summary |
 |---------|---------|
@@ -68,6 +69,7 @@ Deleting many files · modifying lockfiles · installing dependencies · executi
 ## Audit guarantees
 
 - Event log is append-only; every event has a timestamp and session id.
+- Raw image/media bytes never enter the transcript, checkpoints, or audit log — only content-hash `MediaRef`s appear; bytes are resolved from the media object store at provider-call time.
 - Any file's modification history is queryable: which agent, which task, which patch, when.
 - Every allow/deny is explainable: the decision records the policy and reason.
 - Success metrics: 100% interception of out-of-workspace access, zero secret plaintext in logs, 100% interception of high-risk commands, every side effect has an audit event.

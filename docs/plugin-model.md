@@ -44,4 +44,4 @@ Undeclared capability use is rejected by the kernel and logged as `PolicyViolati
 
 install (manifest review + permission display) → load (`PluginLoad` capability check) → run (capability-scoped host calls, audited) → uninstall.
 
-Phase 5 adds signed plugin packages and a remote registry.
+Signed plugin packages are enforced today: when any key is present in the policy directory's `trusted-keys`, every module must carry a valid ed25519 signature before instantiation (see [docs/enterprise.md §3](enterprise.md)). A remote plugin registry is future work.
