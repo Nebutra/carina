@@ -3,6 +3,9 @@
 Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced in
 `absorption-plan.md`) are absorbed. Every item below shipped as a tested commit.
 
+KiloCode source-review decisions are tracked separately in
+[`kilocode-absorption.md`](kilocode-absorption.md).
+
 ## ✅ Done — this campaign (waves 1–6 core)
 
 **Wave 1 — loop / IO correctness**
@@ -405,6 +408,15 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
   and publish notary/signing evidence. A real credentialed tag run remains the
   only proof that Apple accepted a release.
 
+**Wave 23 — Cline & Codebuff mechanism absorption (landed)**
+- **Review closed with zero commits this round**: every Cline and Codebuff
+  candidate mechanism evaluated in this wave resolved to `defer`, `reject`, or
+  `already_done` against ground truth; none reached `status='committed'`, so
+  there are no landed bullets to record here. Full per-item verification,
+  reasoning, and verdicts live in `docs/research/cline-absorption.md` and
+  `docs/research/codebuff-absorption.md`; the adopted-in-principle-but-deferred
+  and rejected items are carried below under Remaining.
+
 ## ✅ Remaining
 
 - No known capability gaps remain in the Claude Code absorption track. The
@@ -434,6 +446,28 @@ Tracking which Claude Code gaps (from `claude-code-gap-analysis.md`, sequenced i
 - OpenSquilla-style implicit single-process backpressure and debug logs were
   intentionally not absorbed. Carina now has explicit TTL/seq backpressure and
   a local-only non-authoritative debug side-channel instead.
+- Cline items reviewed and adopted-in-principle but deferred pending a clean
+  (non-dirty) seam in `go/daemon/agent.go` / `go/daemon/transcript.go` /
+  `go/daemon/daemon.go`: path-keyed stale-read elision, artifact-store
+  head+tail truncation wiring, pre/post-edit diagnostics diffing with a
+  line-shift-tolerant match key, a consecutive-failure `MistakeTracker`,
+  tightened `LoopGuard` signature/threshold, dual-threshold char-based
+  compaction trigger, structured agentic summary template, and mode-switch
+  notice injection via the existing steer mailbox. Cline's diff-error
+  three-tier escalation text and its fuzzy SEARCH/REPLACE patch-matching
+  cascade were intentionally rejected as mismatched to Carina's full-file
+  patch design and prior "no permissive fuzzy edits" precedent. Steer-vs-queue
+  priority delivery was reviewed and deferred for the same dirty-file reason.
+  Full per-item verification and reasoning: `docs/research/cline-absorption.md`.
+- Codebuff items reviewed: symbol-importance code-map scoring was found
+  already present via PageRank in `crates/carina-index/src/repomap.rs` and
+  needs no absorption. Context-pruner dual-trigger pruning, subagent-level
+  checkpoint rewind, and Best-of-N generation with a selector were reviewed
+  and deferred — each is architecturally compatible and roadmapped, but
+  requires either a clean seam in currently-dirty `go/daemon/agent.go` or
+  further multi-file design work (subagent resume/RPC session scoping;
+  audited parallel fan-out) before landing. Full per-item verification and
+  reasoning: `docs/research/codebuff-absorption.md`.
 
 ## Test status
 Current verification for the product-surface closure:
