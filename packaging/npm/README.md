@@ -1,23 +1,20 @@
-# npm Installer Template
+# npm Native Launcher
 
-This directory is a publish-time template for a future `@nebutra/carina`
-installer package. It is not a published package and is intentionally separate
-from the TypeScript SDK under `sdk/typescript`.
-
-The npm package should stay thin:
-
-- download or bundle signed platform archives from the GitHub release;
-- expose small launcher scripts for `carina`, `carina-daemon`, and `carina-tui`;
-- keep SDK APIs in separate SDK packages;
-- never start the daemon during install.
+This directory contains the publishable `@nebutra/carina` launcher package. It
+selects an OS/architecture-specific optional package and directly executes its
+native binary. It never downloads code in `postinstall` and never starts the
+daemon during installation. SDK APIs remain in `sdk/typescript`.
 
 Publish checklist:
 
 1. Run `make release-check`.
 2. Run `VERSION=<version> make release-package` for each supported platform.
 3. Verify archive checksums.
-4. Render `package.json.template` with the release version.
-5. Copy `bin/carina.js.template` for each launcher name and add platform binary
-   acquisition in `scripts/postinstall.js`.
-6. Smoke test `npm pack` and `npm install -g <tarball>`.
-7. Publish only after GitHub release artifacts are signed or checksummed.
+4. Build each package from `platform-package.json.template`, including native
+   binaries, `SHA256SUMS`, SPDX SBOM, and provenance statement.
+5. Publish platform packages before the launcher package.
+6. Smoke test `npm pack` and a global install from the packed tarballs.
+7. Publish only after the release assets are attested and checksummed.
+
+The files here are release inputs; their presence does not mean the npm package
+has already been published.

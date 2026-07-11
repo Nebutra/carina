@@ -1,0 +1,21 @@
+name: carina
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${VERSION}
+section: utils
+priority: optional
+maintainer: Nebutra <opensource@nebutra.com>
+description: Local-first governed Agent Runtime
+license: MIT
+homepage: https://github.com/Nebutra/carina
+contents:
+  - src: ./dist/stage/bin/carina
+    dst: /usr/bin/carina
+  - src: ./dist/stage/bin/carina-daemon
+    dst: /usr/bin/carina-daemon
+  - src: ./dist/stage/bin/carina-worker
+    dst: /usr/bin/carina-worker
+  - src: ./dist/stage/bin/carina-tui
+    dst: /usr/bin/carina-tui
+  - src: ./dist/stage/bin/carina-kernel-service
+    dst: /usr/lib/carina/carina-kernel-service

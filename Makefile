@@ -1,4 +1,4 @@
-.PHONY: all go rust zig sdk-ts test rust-test go-test bench-gate-test release-check release-package homebrew-formula-test homebrew-install-test clean
+.PHONY: all go rust zig sdk-ts test rust-test go-test bench-gate-test release-check release-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
 
 all: go rust zig
 
@@ -41,6 +41,12 @@ homebrew-formula-test:
 
 homebrew-install-test:
 	VERSION=$${VERSION:?VERSION is required} ./scripts/test-homebrew-install.sh
+
+platform-smoke:
+	./scripts/test-platform-packaging.sh
+
+vscode-test:
+	cd integrations/vscode && npm install && npm test
 
 clean:
 	rm -rf bin target zig/zig-out zig/.zig-cache

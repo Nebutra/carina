@@ -63,6 +63,13 @@ jobs:
         working-directory: sdk/typescript
         run: npm ci && npm test
 
+      - name: VS Code operator extension
+        working-directory: integrations/vscode
+        run: npm ci && npm test
+
+      - name: Web and distribution surface smoke tests
+        run: ./scripts/test-platform-packaging.sh
+
       - name: Python SDK conformance
         working-directory: sdk/python
         env:

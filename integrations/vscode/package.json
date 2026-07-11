@@ -1,0 +1,31 @@
+{
+  "name": "carina-vscode",
+  "displayName": "Carina Agent Runtime",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "vscode": "^1.95.0" },
+  "main": "./dist/extension.js",
+  "activationEvents": ["onView:carina.agents", "onCommand:carina.refresh"],
+  "contributes": {
+    "viewsContainers": { "activitybar": [{ "id": "carina", "title": "Carina", "icon": "media/carina.svg" }] },
+    "views": { "carina": [{ "id": "carina.agents", "name": "Agent View" }] },
+    "commands": [
+      { "command": "carina.refresh", "title": "Carina: Refresh Agent View" },
+      { "command": "carina.attach", "title": "Carina: Attach Session" },
+      { "command": "carina.steer", "title": "Carina: Steer Task" },
+      { "command": "carina.approve", "title": "Carina: Resolve Approval" },
+      { "command": "carina.answer", "title": "Carina: Answer Question" },
+      { "command": "carina.previewPatch", "title": "Carina: Preview Patch" }
+    ],
+    "menus": { "view/title": [{ "command": "carina.refresh", "when": "view == carina.agents", "group": "navigation" }] },
+    "configuration": {
+      "title": "Carina",
+      "properties": {
+        "carina.socketPath": { "type": "string", "default": "", "description": "Daemon Unix socket; empty uses ~/.carina/daemon.sock." },
+        "carina.refreshIntervalMs": { "type": "number", "default": 3000, "minimum": 1000 }
+      }
+    }
+  },
+  "scripts": { "build": "tsc -p .", "test": "npm run build && node --test test/*.test.mjs" },
+  "devDependencies": { "@types/node": "^22.0.0", "@types/vscode": "^1.95.0", "typescript": "^5.7.0" }
+}

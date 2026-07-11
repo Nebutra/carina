@@ -1,0 +1,9 @@
+{
+  "name": "@nebutra/carina-__PLATFORM__-__ARCH__",
+  "version": "__VERSION__",
+  "description": "Carina native binaries for __PLATFORM__-__ARCH__",
+  "license": "MIT",
+  "os": ["__PLATFORM__"],
+  "cpu": ["__NPM_ARCH__"],
+  "files": ["bin", "SHA256SUMS", "SBOM.spdx.json", "provenance.json"]
+}
