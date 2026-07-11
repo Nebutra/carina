@@ -45,6 +45,7 @@ func main() {
 	toolsDir := flag.String("tools", cfg.ToolsDir, "zig native tools directory (default: auto-discover)")
 	policyDir := flag.String("policy", cfg.PolicyDir, "enterprise org-policy directory")
 	offline := flag.Bool("offline", cfg.Offline, "offline mode: disable network model providers")
+	safeMode := flag.Bool("safe-mode", false, "disable hooks, plugins, MCP, and project commands/agents")
 	maxConcurrent := flag.Int("max-concurrent", cfg.MaxConcurrentTasks, "cap on concurrent background runs")
 	maxTokens := flag.Int("max-task-tokens", cfg.MaxTaskTokens, "per-task token budget (0 = unlimited)")
 	requireTrust := flag.Bool("require-trust", cfg.RequireWorkspaceTrust, "deny command exec in untrusted workspaces")
@@ -91,6 +92,7 @@ func main() {
 		ToolsDir:                   *toolsDir,
 		PolicyDir:                  *policyDir,
 		Offline:                    *offline,
+		SafeMode:                   *safeMode,
 		MaxConcurrentTasks:         *maxConcurrent,
 		MaxTaskTokens:              *maxTokens,
 		RequireWorkspaceTrust:      *requireTrust,

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Nebutra/carina/go/scheduler"
+	carinatelemetry "github.com/Nebutra/carina/go/telemetry"
 )
 
 // emitCompletion publishes the structured "task done" envelope on the event bus
@@ -38,4 +39,14 @@ func (d *Daemon) emitCompletion(sessionID string, task *scheduler.Task) {
 		"duration_ms":     durationMs,
 		"timestamp":       time.Now().UTC().Format(time.RFC3339),
 	})
+	_ = d.telemetry.Metric("carina.task.completed", carinatelemetry.Attribution{
+		WorkspaceID: t.WorkspaceID,
+		SessionID:   sessionID,
+		TaskID:      t.TaskID,
+	}, carinatelemetry.Cost{Requests: int64(t.Attempts), InputTokens: int64(t.TokensUsed)})
+	_ = d.telemetry.Log("carina.task.outcome", carinatelemetry.Attribution{
+		WorkspaceID: t.WorkspaceID,
+		SessionID:   sessionID,
+		TaskID:      t.TaskID,
+	}, map[string]any{"status": t.Status, "duration_ms": durationMs, "mode": t.Mode})
 }

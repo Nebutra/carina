@@ -69,6 +69,9 @@ func commandArgumentHints(args []CommandArgument) []string {
 
 func (d *Daemon) expandTaskSlashCommand(input, workspaceRoot string) (*ExpandedCommand, bool, error) {
 	specs := d.commandSpecs(workspaceRoot)
+	if d.safeMode {
+		specs = builtinCommandSpecs()
+	}
 	name, args, ok, err := parseSlashCommand(input)
 	if err != nil || !ok {
 		return nil, ok, err

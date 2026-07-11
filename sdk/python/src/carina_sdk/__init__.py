@@ -126,6 +126,9 @@ class CarinaClient:
     def submit_task(self, session_id: str, prompt: str) -> dict[str, Any]:
         return self.call("task.submit", {"session_id": session_id, "prompt": prompt})
 
+    def submit_goal(self, session_id: str, prompt: str, success_criteria: list[dict[str, Any]]) -> dict[str, Any]:
+        return self.call("task.submit", {"session_id": session_id, "prompt": prompt, "success_criteria": success_criteria})
+
     def replay_session(self, session_id: str) -> list[CarinaEvent]:
         return self.call("session.replay", {"session_id": session_id})
 
@@ -181,6 +184,21 @@ class CarinaClient:
 
     def list_agents(self, workspace_root: str = "") -> dict[str, Any]:
         return self.call("agent.list", {"workspace_root": workspace_root})
+
+    def agent_view(self) -> dict[str, list[dict[str, Any]]]:
+        return self.call("agent.view")
+
+    def list_checkpoints(self, session_id: str) -> list[dict[str, Any]]:
+        return self.call("session.checkpoint.list", {"session_id": session_id})
+
+    def preview_checkpoint(self, session_id: str, checkpoint_id: str) -> dict[str, Any]:
+        return self.call("session.checkpoint.preview", {"session_id": session_id, "checkpoint_id": checkpoint_id})
+
+    def summarize_checkpoint(self, session_id: str, checkpoint_id: str) -> dict[str, Any]:
+        return self.call("session.checkpoint.summarize", {"session_id": session_id, "checkpoint_id": checkpoint_id})
+
+    def restore_checkpoint(self, session_id: str, checkpoint_id: str, confirmed: bool = False) -> dict[str, Any]:
+        return self.call("session.checkpoint.restore", {"session_id": session_id, "checkpoint_id": checkpoint_id, "confirmed": confirmed})
 
     def inject_channel_event(self, event: dict[str, Any], signature: str) -> dict[str, Any]:
         return self.call("channel.event.inject", {"event": event, "signature": signature})

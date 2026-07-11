@@ -106,6 +106,37 @@ type Extension struct {
 	Trusted bool   `json:"trusted"`
 }
 
+type AgentViewEntry struct {
+	SessionID     string `json:"session_id"`
+	TaskID        string `json:"task_id,omitempty"`
+	State         string `json:"state"`
+	Title         string `json:"title,omitempty"`
+	Summary       string `json:"summary,omitempty"`
+	WorkspaceRoot string `json:"workspace_root,omitempty"`
+}
+
+type AgentView struct {
+	NeedsInput []AgentViewEntry `json:"needs_input"`
+	Working    []AgentViewEntry `json:"working"`
+	Completed  []AgentViewEntry `json:"completed"`
+}
+
+type SuccessCheck struct {
+	Kind    string   `json:"kind"`
+	Path    string   `json:"path,omitempty"`
+	Pattern string   `json:"pattern,omitempty"`
+	Command []string `json:"command,omitempty"`
+}
+
+type Checkpoint struct {
+	CheckpointID   string   `json:"checkpoint_id"`
+	TaskID         string   `json:"task_id"`
+	SessionID      string   `json:"session_id"`
+	Turn           int      `json:"turn"`
+	Summary        string   `json:"summary,omitempty"`
+	AppliedPatches []string `json:"applied_patches"`
+}
+
 func DefaultSocketPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -146,6 +177,12 @@ func (c *Client) CreateSession(workspaceRoot, profile string) (Session, error) {
 func (c *Client) SubmitTask(sessionID, prompt string) (Task, error) {
 	var out Task
 	err := c.Call("task.submit", map[string]any{"session_id": sessionID, "prompt": prompt}, &out)
+	return out, err
+}
+
+func (c *Client) SubmitGoal(sessionID, prompt string, criteria []SuccessCheck) (Task, error) {
+	var out Task
+	err := c.Call("task.submit", map[string]any{"session_id": sessionID, "prompt": prompt, "success_criteria": criteria}, &out)
 	return out, err
 }
 
@@ -253,6 +290,31 @@ func (c *Client) Doctor() (map[string]any, error) {
 func (c *Client) ListAgents(workspaceRoot string) (map[string]any, error) {
 	var out map[string]any
 	err := c.Call("agent.list", map[string]any{"workspace_root": workspaceRoot}, &out)
+	return out, err
+}
+func (c *Client) AgentView() (AgentView, error) {
+	var out AgentView
+	err := c.Call("agent.view", map[string]any{}, &out)
+	return out, err
+}
+func (c *Client) ListCheckpoints(sessionID string) ([]Checkpoint, error) {
+	var out []Checkpoint
+	err := c.Call("session.checkpoint.list", map[string]any{"session_id": sessionID}, &out)
+	return out, err
+}
+func (c *Client) PreviewCheckpoint(sessionID, checkpointID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.Call("session.checkpoint.preview", map[string]any{"session_id": sessionID, "checkpoint_id": checkpointID}, &out)
+	return out, err
+}
+func (c *Client) SummarizeCheckpoint(sessionID, checkpointID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.Call("session.checkpoint.summarize", map[string]any{"session_id": sessionID, "checkpoint_id": checkpointID}, &out)
+	return out, err
+}
+func (c *Client) RestoreCheckpoint(sessionID, checkpointID string, confirmed bool) (map[string]any, error) {
+	var out map[string]any
+	err := c.Call("session.checkpoint.restore", map[string]any{"session_id": sessionID, "checkpoint_id": checkpointID, "confirmed": confirmed}, &out)
 	return out, err
 }
 func (c *Client) InjectChannelEvent(event ChannelEvent, signature string) (map[string]any, error) {

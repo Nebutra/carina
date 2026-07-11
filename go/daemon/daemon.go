@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,9 +20,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Nebutra/carina/go/agentview"
 	"github.com/Nebutra/carina/go/auth"
+	"github.com/Nebutra/carina/go/channels"
 	"github.com/Nebutra/carina/go/contextengine"
 	"github.com/Nebutra/carina/go/egress"
+	"github.com/Nebutra/carina/go/extensions"
 	"github.com/Nebutra/carina/go/history"
 	"github.com/Nebutra/carina/go/kernel"
 	"github.com/Nebutra/carina/go/mcp"
@@ -32,8 +36,11 @@ import (
 	"github.com/Nebutra/carina/go/rpc"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
+	carinatelemetry "github.com/Nebutra/carina/go/telemetry"
 	"github.com/Nebutra/carina/go/toolchain"
 	"github.com/Nebutra/carina/go/worker"
+	"github.com/Nebutra/carina/go/workflowui"
+	"github.com/Nebutra/carina/go/worktree"
 )
 
 const Version = product.Version
@@ -45,6 +52,7 @@ type Options struct {
 	ToolsDir  string // zig tools directory ("" = auto-discover)
 	PolicyDir string // enterprise org-policy directory ("" = none)
 	Offline   bool   // disable network model providers (PRD §5: offline mode)
+	SafeMode  bool   // disable user/project extensions while retaining built-ins and policy
 
 	MaxConcurrentTasks int // cap on concurrent background runs (0 => default 8)
 
@@ -69,6 +77,8 @@ type Options struct {
 	HeadroomMode               string             // managed_mcp|sidecar|proxy
 	HeadroomProxyPort          int                // 0 => choose later
 	HeadroomTokenBudget        int                // budget for context blocks
+	ExtensionTrustedRoots      []string           // local roots allowed as extension install sources
+	TelemetryWriter            io.Writer          // nil keeps OpenTelemetry export disabled
 }
 
 // EgressCredential authenticates outbound requests to a host by injecting a
@@ -159,6 +169,7 @@ type Daemon struct {
 	egressURL    string
 	egressCAPath string      // process-local CA bundle for MITM-enabled children
 	sandbox      atomic.Bool // run commands under an OS syscall sandbox (hot-reloadable)
+	safeMode     bool
 
 	stopCh   chan struct{} // closed on Close; stops background loops (lease reaper)
 	stopOnce sync.Once
@@ -192,6 +203,12 @@ type Daemon struct {
 	gatewayTokenMaxTTL time.Duration            // max TTL for locally issued scoped Gateway tokens
 	gatewayHTTPServers []*http.Server
 	gatewayResponses   map[string]string // response id -> session id for /v1/responses continuity
+	agentView          *agentview.Store
+	worktrees          *worktree.Manager
+	workflowRuns       *workflowui.Store
+	channels           *channels.Registry
+	extensions         *extensions.Marketplace
+	telemetry          *carinatelemetry.Exporter
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -280,6 +297,26 @@ func New(opts Options) (*Daemon, error) {
 		gatewayTokenMaxTTL:  gatewayTokenMaxTTL,
 		gatewayResponses:    map[string]string{},
 	}
+	d.agentView = agentview.Open(opts.StateDir)
+	d.worktrees, err = worktree.New(opts.StateDir)
+	if err != nil {
+		_ = kern.Close()
+		return nil, fmt.Errorf("daemon: worktree manager: %w", err)
+	}
+	d.workflowRuns, err = workflowui.New(opts.StateDir)
+	if err != nil {
+		_ = kern.Close()
+		return nil, fmt.Errorf("daemon: workflow run store: %w", err)
+	}
+	d.channels = channels.New(5*time.Minute, 24*time.Hour)
+	trustedExtensionRoots := append([]string{}, opts.ExtensionTrustedRoots...)
+	trustedExtensionRoots = append(trustedExtensionRoots, filepath.Join(opts.StateDir, "extension-sources"))
+	d.extensions, err = extensions.New(opts.StateDir, Version, trustedExtensionRoots)
+	if err != nil {
+		_ = kern.Close()
+		return nil, fmt.Errorf("daemon: extension marketplace: %w", err)
+	}
+	d.telemetry = carinatelemetry.New(opts.TelemetryWriter)
 	d.riskReviewMode.Store(riskReviewMode)
 	_ = hardenProcess() // Linux: non-dumpable, anti-ptrace (best-effort)
 	d.registerMethods()
@@ -320,6 +357,7 @@ func New(opts Options) (*Daemon, error) {
 	d.requireTrust.Store(opts.RequireWorkspaceTrust)
 	d.maxTaskTokens.Store(int64(opts.MaxTaskTokens))
 	d.sandbox.Store(opts.SandboxCommands)
+	d.safeMode = opts.SafeMode
 	d.mailbox = map[string][]string{}
 	d.planMode = map[string]bool{}
 	d.stopCh = make(chan struct{})
@@ -339,8 +377,10 @@ func New(opts Options) (*Daemon, error) {
 		_ = d.kern.Close()
 		return nil, fmt.Errorf("daemon: managed Headroom MCP: %w", err)
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		d.mcp.LoadAndConnect(filepath.Join(home, ".carina", "mcp.json"))
+	if !opts.SafeMode {
+		if home, err := os.UserHomeDir(); err == nil {
+			d.mcp.LoadAndConnect(filepath.Join(home, ".carina", "mcp.json"))
+		}
 	}
 	if opts.EnableEgressProxy {
 		allow := append([]string{}, opts.EgressAllow...)
@@ -656,6 +696,19 @@ func (d *Daemon) registerMethods() {
 		d.registerRPC("gateway.token.issue", rpc.ScopeAdmin, false, d.handleGatewayTokenIssue, true)
 	}
 	d.registerRPC("agent.list", rpc.ScopeRead, true, d.handleAgentList)
+	d.registerRPC("agent.view", rpc.ScopeRead, true, d.handleAgentView)
+	d.registerRPC("agent.peek", rpc.ScopeRead, true, d.handleAgentPeek)
+	d.registerRPC("agent.recap", rpc.ScopeRead, true, d.handleAgentRecap)
+	d.registerRPC("agent.dispatch", rpc.ScopeWrite, false, d.handleAgentDispatch, true)
+	d.registerRPC("agent.stop", rpc.ScopeWrite, false, d.handleAgentStop)
+	d.registerRPC("agent.remove", rpc.ScopeWrite, false, d.handleAgentRemove)
+	d.registerRPC("agent.metadata.set", rpc.ScopeWrite, false, d.handleAgentMetadataSet)
+	d.registerRPC("worktree.create", rpc.ScopeWrite, false, d.handleWorktreeCreate, true)
+	d.registerRPC("worktree.list", rpc.ScopeRead, false, d.handleWorktreeList)
+	d.registerRPC("worktree.enter", rpc.ScopeWrite, false, d.handleWorktreeEnter, true)
+	d.registerRPC("worktree.lock", rpc.ScopeWrite, false, d.handleWorktreeLock, true)
+	d.registerRPC("worktree.unlock", rpc.ScopeWrite, false, d.handleWorktreeUnlock, true)
+	d.registerRPC("worktree.cleanup", rpc.ScopeWrite, false, d.handleWorktreeCleanup, true)
 	d.registerRPC("command.list", rpc.ScopeRead, true, d.handleCommandList)
 
 	d.registerRPC("session.create", rpc.ScopeWrite, false, d.handleSessionCreate)
@@ -668,6 +721,10 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("session.items", rpc.ScopeRead, true, d.handleSessionItems)
 	d.registerRPC("session.attach", rpc.ScopeRead, true, d.handleSessionAttach)
 	d.registerRPC("session.fork", rpc.ScopeWrite, false, d.handleSessionFork)
+	d.registerRPC("session.checkpoint.list", rpc.ScopeRead, false, d.handleCheckpointList)
+	d.registerRPC("session.checkpoint.preview", rpc.ScopeRead, false, d.handleCheckpointPreview)
+	d.registerRPC("session.checkpoint.summarize", rpc.ScopeRead, false, d.handleCheckpointSummarize)
+	d.registerRPC("session.checkpoint.restore", rpc.ScopeWrite, false, d.handleCheckpointRestore, true)
 	d.registerRPC("session.plan_mode", rpc.ScopeWrite, false, d.handlePlanMode)
 	d.registerRPC("session.approve_plan", rpc.ScopeWrite, false, d.handleApprovePlan)
 	d.registerRPCDynamic("session.add_dir", rpc.ScopeAdmin, false, d.handleAddDir, d.addDirScope, true)
@@ -686,6 +743,24 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("schedule.pause", rpc.ScopeWrite, false, d.handleSchedulePause, true)
 	d.registerRPC("schedule.resume", rpc.ScopeWrite, false, d.handleScheduleResume, true)
 	d.registerRPC("schedule.delete", rpc.ScopeWrite, false, d.handleScheduleDelete, true)
+	d.registerRPC("workflow.run", rpc.ScopeWrite, false, d.handleWorkflowRun, true)
+	d.registerRPC("workflow.list", rpc.ScopeRead, true, d.handleWorkflowList)
+	d.registerRPC("workflow.detail", rpc.ScopeRead, true, d.handleWorkflowDetail)
+	d.registerRPC("workflow.pause", rpc.ScopeWrite, false, d.handleWorkflowPause, true)
+	d.registerRPC("workflow.resume", rpc.ScopeWrite, false, d.handleWorkflowResume, true)
+	d.registerRPC("workflow.stop", rpc.ScopeWrite, false, d.handleWorkflowStop, true)
+	d.registerRPC("workflow.restart", rpc.ScopeWrite, false, d.handleWorkflowRestart, true)
+	d.registerRPC("workflow.save", rpc.ScopeWrite, false, d.handleWorkflowSave, true)
+	d.registerRPC("channel.sender.register", rpc.ScopeAdmin, false, d.handleChannelSenderRegister, true)
+	d.registerRPC("channel.sender.list", rpc.ScopeAdmin, false, d.handleChannelSenderList)
+	d.registerRPC("channel.event.inject", rpc.ScopeAdmin, true, d.handleChannelEventInject, true)
+	d.registerRPC("extension.install", rpc.ScopeAdmin, false, d.handleExtensionInstall, true)
+	d.registerRPC("extension.list", rpc.ScopeRead, false, d.handleExtensionList)
+	d.registerRPC("extension.enable", rpc.ScopeAdmin, false, d.handleExtensionEnable, true)
+	d.registerRPC("extension.disable", rpc.ScopeAdmin, false, d.handleExtensionDisable, true)
+	d.registerRPC("extension.update", rpc.ScopeAdmin, false, d.handleExtensionUpdate, true)
+	d.registerRPC("extension.safe_mode", rpc.ScopeAdmin, false, d.handleExtensionSafeMode, true)
+	d.registerRPC("telemetry.status", rpc.ScopeRead, true, d.handleTelemetryStatus)
 
 	d.registerRPC("task.submit", rpc.ScopeWrite, false, d.handleTaskSubmit)
 	d.registerRPC("task.status", rpc.ScopeRead, true, d.handleTaskStatus)
@@ -792,7 +867,11 @@ func (d *Daemon) handleAgentList(params json.RawMessage) (any, error) {
 		}
 		root = sess.WorkspaceRoot
 	}
-	return map[string]any{"agents": sortedAgentInfos(loadAgentSpecs(root), p.IncludeHidden)}, nil
+	specs := loadAgentSpecs(root)
+	if d.safeMode {
+		specs = builtinAgentSpecs()
+	}
+	return map[string]any{"agents": sortedAgentInfos(specs, p.IncludeHidden)}, nil
 }
 
 func (d *Daemon) handleCommandList(params json.RawMessage) (any, error) {
@@ -813,7 +892,11 @@ func (d *Daemon) handleCommandList(params json.RawMessage) (any, error) {
 		}
 		root = sess.WorkspaceRoot
 	}
-	return map[string]any{"commands": sortedCommandInfos(d.commandSpecs(root))}, nil
+	specs := d.commandSpecs(root)
+	if d.safeMode {
+		specs = builtinCommandSpecs()
+	}
+	return map[string]any{"commands": sortedCommandInfos(specs)}, nil
 }
 
 // handleWorkspaceTrust marks a workspace root trusted/untrusted for command
@@ -1686,6 +1769,9 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		agent = "build"
 	}
 	agents := loadAgentSpecs(sess.WorkspaceRoot)
+	if d.safeMode {
+		agents = builtinAgentSpecs()
+	}
 	spec := agents[agent]
 	if spec == nil {
 		return nil, fmt.Errorf("unknown agent %q", agent)
@@ -2722,6 +2808,9 @@ func (d *Daemon) handlePluginInspect(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) handlePluginRun(params json.RawMessage) (any, error) {
+	if d.safeMode {
+		return nil, fmt.Errorf("safe_mode: plugins are disabled; restart without --safe-mode after reviewing configuration")
+	}
 	var p struct {
 		SessionID       string `json:"session_id"`
 		ManifestTOML    string `json:"manifest_toml"`

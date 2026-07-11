@@ -174,10 +174,14 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 	// Persistent project/user instructions are prepended to the system prompt
 	// so the agent follows repo-specific conventions.
 	sysPrompt := systemPrompt
-	if spec := loadAgentSpecs(sess.WorkspaceRoot)[taskAgent(task)]; spec != nil && strings.TrimSpace(spec.SystemPrompt) != "" {
+	agents := loadAgentSpecs(sess.WorkspaceRoot)
+	if d.safeMode {
+		agents = builtinAgentSpecs()
+	}
+	if spec := agents[taskAgent(task)]; spec != nil && strings.TrimSpace(spec.SystemPrompt) != "" {
 		sysPrompt = strings.TrimSpace(spec.SystemPrompt) + "\n\n" + systemPrompt
 	}
-	if mem := loadMemory(sess.WorkspaceRoot); mem != "" {
+	if mem := loadMemory(sess.WorkspaceRoot); mem != "" && !d.safeMode {
 		sysPrompt += "\n\nPROJECT INSTRUCTIONS (Nebutra/Carina — follow them):\n" + mem
 	}
 	if strings.TrimSpace(memorySnapshot) != "" {
@@ -355,7 +359,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 					Content: "Parallel batches are read-only (list/read/search); these are not: " + strings.Join(bad, ", ") +
 						". Run writes (patch/run) one action per turn."}})
 				guard.tick()
-				d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot})
+				d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess)})
 				continue
 			}
 			if guard.repeated("batch", briefBatch(act.Actions)) {
@@ -372,7 +376,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 			guard.tick() // reads make no edit
 			tr.addTurn(Turn{Thought: act.Thought, Tool: "batch",
 				ActionBrief: briefBatch(act.Actions), Obs: compressedObs})
-			d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot})
+			d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess)})
 			continue
 		}
 
@@ -406,7 +410,7 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		tr.addTurn(Turn{Thought: act.Thought, Tool: act.Tool,
 			ActionBrief: briefAction(&act), Obs: compressedObs})
 		// Checkpoint after each completed turn so a crash can resume here.
-		d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot})
+		d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess)})
 	}
 
 	d.degrade(sess, task, tr, "reached max turns without done")
@@ -449,7 +453,8 @@ func (d *Daemon) finish(sess *sessionstore.Session, task *scheduler.Task, summar
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 		map[string]any{"status": "completed", "summary": summary}, "")
 	d.persistRun(task.TaskID)
-	d.runs.deleteCheckpoint(task.TaskID)
+	// Retain the final model-view checkpoint for operator rewind/recap. Recovery
+	// only resumes non-terminal task states, so retention cannot rerun the task.
 	d.emitCompletion(sess.SessionID, task)
 }
 
@@ -478,7 +483,7 @@ func (d *Daemon) degrade(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		"turns": len(tr.Turns), "applied_patches": applied,
 	}, "")
 	d.persistRun(task.TaskID)
-	d.runs.deleteCheckpoint(task.TaskID)
+	// Retain the last checkpoint for governed rewind after degraded completion.
 	d.emitCompletion(sess.SessionID, task)
 }
 

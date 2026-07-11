@@ -64,6 +64,10 @@ export interface WorkflowRun { id: string; workflow: string; session_id: string;
 export interface Worker { worker_id: string; name: string; kind: string; status: string }
 export interface ChannelEvent { id: string; sender_id: string; session_id: string; kind: string; timestamp: string; payload?: Record<string, unknown>; permission_decision_id?: string; permission_allow?: boolean }
 export interface Extension { manifest: { name: string; version: string; estimated_prompt_tokens?: number }; source: string; enabled: boolean; trusted: boolean }
+export interface AgentViewEntry { session_id: string; task_id?: string; state: string; title?: string; summary?: string; workspace_root?: string; updated_at?: string }
+export interface AgentView { needs_input: AgentViewEntry[]; working: AgentViewEntry[]; completed: AgentViewEntry[] }
+export interface SuccessCheck { kind: string; path?: string; pattern?: string; command?: string[] }
+export interface Checkpoint { checkpoint_id: string; task_id: string; session_id: string; turn: number; summary?: string; applied_patches: string[] }
 
 export interface PatchFile { path: string; new_content: string }
 export interface Patch {
@@ -192,6 +196,9 @@ export class CarinaClient {
   submitTask(sessionId: string, prompt: string): Promise<Task> {
     return this.call('task.submit', { session_id: sessionId, prompt })
   }
+  submitGoal(sessionId: string, prompt: string, successCriteria: SuccessCheck[]): Promise<Task> {
+    return this.call('task.submit', { session_id: sessionId, prompt, success_criteria: successCriteria })
+  }
   replaySession(sessionId: string): Promise<CarinaEvent[]> { return this.call('session.replay', { session_id: sessionId }) }
   attachSession(sessionId: string, since = 0): Promise<SessionAttachment> {
     return this.call('session.attach', { session_id: sessionId, since })
@@ -217,6 +224,11 @@ export class CarinaClient {
   resolveApproval(decisionId: string, allow: boolean, approver = '', scope: 'once'|'session'|'project' = 'once'): Promise<void> { return this.call('task.approval.resolve', { decision_id: decisionId, allow, approver, scope }) }
   doctor(): Promise<Record<string, unknown>> { return this.call('daemon.doctor') }
   listAgents(workspaceRoot = ''): Promise<Record<string, unknown>> { return this.call('agent.list', { workspace_root: workspaceRoot }) }
+  agentView(): Promise<AgentView> { return this.call('agent.view') }
+  listCheckpoints(sessionId: string): Promise<Checkpoint[]> { return this.call('session.checkpoint.list', { session_id: sessionId }) }
+  previewCheckpoint(sessionId: string, checkpointId: string): Promise<Record<string, unknown>> { return this.call('session.checkpoint.preview', { session_id: sessionId, checkpoint_id: checkpointId }) }
+  summarizeCheckpoint(sessionId: string, checkpointId: string): Promise<Record<string, unknown>> { return this.call('session.checkpoint.summarize', { session_id: sessionId, checkpoint_id: checkpointId }) }
+  restoreCheckpoint(sessionId: string, checkpointId: string, confirmed = false): Promise<Record<string, unknown>> { return this.call('session.checkpoint.restore', { session_id: sessionId, checkpoint_id: checkpointId, confirmed }) }
   injectChannelEvent(event: ChannelEvent, signature: string): Promise<Record<string, unknown>> { return this.call('channel.event.inject', { event, signature }) }
   listExtensions(): Promise<{ plugins: Extension[]; safe_mode: boolean; total_prompt_tokens: number }> { return this.call('extension.list') }
   setExtensionEnabled(name: string, enabled: boolean): Promise<Extension> { return this.call(enabled ? 'extension.enable' : 'extension.disable', { name }) }

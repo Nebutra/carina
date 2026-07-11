@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
+	carinatelemetry "github.com/Nebutra/carina/go/telemetry"
+	"github.com/Nebutra/carina/go/workflowui"
 )
 
 const maxWorkflowSteps = 64
@@ -81,6 +84,26 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 
 	remaining := len(spec.Steps) - len(done)
 	for remaining > 0 {
+		if d.workflowRuns != nil {
+			for {
+				detail, err := d.workflowRuns.Detail(runID)
+				if err != nil {
+					break
+				} // legacy tool-initiated workflow run
+				if detail.Run.Status == workflowui.Stopped {
+					return outputs, fmt.Errorf("workflow stopped by operator")
+				}
+				if detail.Run.Status == workflowui.Paused {
+					select {
+					case <-d.stopCh:
+						return outputs, fmt.Errorf("daemon stopping")
+					case <-time.After(100 * time.Millisecond):
+						continue
+					}
+				}
+				break
+			}
+		}
 		// Collect every step whose dependencies are all satisfied.
 		mu.Lock()
 		var ready []WorkflowStep
@@ -112,6 +135,11 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 			wg.Add(1)
 			go func(i int, st WorkflowStep) {
 				defer wg.Done()
+				startedAt := time.Now().UTC()
+				if d.workflowRuns != nil {
+					now := startedAt
+					_, _ = d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: workflowui.Running, StartedAt: &now})
+				}
 				mu.Lock()
 				taskText := interpolate(st.Task, input, outputs)
 				mu.Unlock()
@@ -123,6 +151,10 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 				summary := d.spawnSubagent(parent, parentTask, st.Agent, taskText)
 				if spawnFailed(summary) {
 					errs[i] = fmt.Errorf("step %q: %s", st.ID, summary)
+					_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
+						WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,
+						StepID: st.ID, TaskID: parentTask.TaskID,
+					}, carinatelemetry.Cost{}, time.Since(startedAt), "failed")
 					return
 				}
 
@@ -136,6 +168,14 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 				}
 				mu.Unlock()
 				store.save(runID, snapshot)
+				if d.workflowRuns != nil {
+					now := time.Now().UTC()
+					_, _ = d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: workflowui.Completed, FinishedAt: &now, Output: summary})
+				}
+				_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
+					WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,
+					StepID: st.ID, TaskID: parentTask.TaskID,
+				}, carinatelemetry.Cost{}, time.Since(startedAt), "completed")
 			}(i, st)
 		}
 		wg.Wait()

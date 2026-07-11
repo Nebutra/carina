@@ -67,6 +67,9 @@ func hookPayload(act *action, result string) []byte {
 // runPreToolHooks runs matching PreToolUse hooks; if any exits 2 the action is
 // blocked and the hook's stderr is returned as the reason.
 func (d *Daemon) runPreToolHooks(ws, tool string, payload []byte) (bool, string) {
+	if d.safeMode {
+		return false, ""
+	}
 	for _, h := range loadHooks(ws) {
 		if !h.matches("PreToolUse", tool) || len(h.Command) == 0 {
 			continue
@@ -85,6 +88,9 @@ func (d *Daemon) runPreToolHooks(ws, tool string, payload []byte) (bool, string)
 
 // runPostToolHooks runs matching PostToolUse hooks (observe-only).
 func (d *Daemon) runPostToolHooks(ws, tool string, payload []byte) {
+	if d.safeMode {
+		return
+	}
 	for _, h := range loadHooks(ws) {
 		if !h.matches("PostToolUse", tool) || len(h.Command) == 0 {
 			continue

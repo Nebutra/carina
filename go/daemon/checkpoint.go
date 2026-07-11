@@ -27,7 +27,7 @@ func (d *Daemon) handleCheckpointList(params json.RawMessage) (any, error) {
 		if task.SessionID != p.SessionID {
 			continue
 		}
-		if cp := d.runs.loadCheckpoint(task.TaskID); cp != nil {
+		for _, cp := range d.runs.listCheckpoints(task.TaskID) {
 			out = append(out, checkpointInfo(task, cp))
 		}
 	}
@@ -96,7 +96,12 @@ func (d *Daemon) checkpoint(params json.RawMessage) (*scheduler.Task, *runCheckp
 	if !found || task.SessionID != p.SessionID {
 		return nil, nil, p, fmt.Errorf("checkpoint does not belong to session %s", p.SessionID)
 	}
-	cp := d.runs.loadCheckpoint(taskID)
+	_, turnText, _ := strings.Cut(p.CheckpointID, ":")
+	var turn int
+	if _, err := fmt.Sscanf(turnText, "%d", &turn); err != nil || turn < 1 {
+		return nil, nil, p, fmt.Errorf("invalid checkpoint_id %q", p.CheckpointID)
+	}
+	cp := d.runs.loadCheckpointTurn(taskID, turn)
 	if cp == nil || checkpointID(task, cp) != p.CheckpointID {
 		return nil, nil, p, fmt.Errorf("checkpoint %s is no longer available", p.CheckpointID)
 	}

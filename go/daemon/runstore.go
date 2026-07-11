@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/Nebutra/carina/go/scheduler"
@@ -89,6 +91,15 @@ func (r *runStore) saveCheckpoint(taskID string, cp *runCheckpoint) {
 	if os.WriteFile(tmp, raw, 0o600) == nil {
 		_ = os.Rename(tmp, p)
 	}
+	historyDir := filepath.Join(r.dir, taskID+".ckpts")
+	if os.MkdirAll(historyDir, 0o700) != nil {
+		return
+	}
+	historyPath := filepath.Join(historyDir, fmt.Sprintf("%020d.json", cp.Turn))
+	historyTmp := historyPath + ".tmp"
+	if os.WriteFile(historyTmp, raw, 0o600) == nil {
+		_ = os.Rename(historyTmp, historyPath)
+	}
 }
 
 func (r *runStore) loadCheckpoint(taskID string) *runCheckpoint {
@@ -98,11 +109,56 @@ func (r *runStore) loadCheckpoint(taskID string) *runCheckpoint {
 	if err != nil {
 		return nil
 	}
+	return decodeRunCheckpoint(raw)
+}
+
+func (r *runStore) loadCheckpointTurn(taskID string, turn int) *runCheckpoint {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	raw, err := os.ReadFile(filepath.Join(r.dir, taskID+".ckpts", fmt.Sprintf("%020d.json", turn)))
+	if err != nil {
+		return nil
+	}
+	return decodeRunCheckpoint(raw)
+}
+
+func (r *runStore) listCheckpoints(taskID string) []*runCheckpoint {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	dir := filepath.Join(r.dir, taskID+".ckpts")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if cp := readRunCheckpoint(filepath.Join(r.dir, taskID+".ckpt.json")); cp != nil {
+			return []*runCheckpoint{cp}
+		}
+		return nil
+	}
+	out := make([]*runCheckpoint, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		if cp := readRunCheckpoint(filepath.Join(dir, entry.Name())); cp != nil {
+			out = append(out, cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Turn < out[j].Turn })
+	return out
+}
+
+func readRunCheckpoint(path string) *runCheckpoint {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return decodeRunCheckpoint(raw)
+}
+
+func decodeRunCheckpoint(raw []byte) *runCheckpoint {
 	var cp runCheckpoint
 	if json.Unmarshal(raw, &cp) != nil || cp.Transcript == nil {
 		return nil
 	}
-	// The compaction policy is unexported and does not serialize; restore it.
 	cp.Transcript.policy = defaultCompactionPolicy()
 	return &cp
 }
@@ -111,4 +167,5 @@ func (r *runStore) deleteCheckpoint(taskID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	_ = os.Remove(filepath.Join(r.dir, taskID+".ckpt.json"))
+	_ = os.RemoveAll(filepath.Join(r.dir, taskID+".ckpts"))
 }
