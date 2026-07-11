@@ -158,7 +158,7 @@ type Daemon struct {
 	requireTrust  atomic.Bool  // deny command exec in untrusted workspaces (hot-reloadable)
 	maxTaskTokens atomic.Int64 // per-task token budget (0 => unlimited; hot-reloadable)
 
-	mailbox               map[string][]string // task -> pending steering messages
+	mailbox               map[string]*taskMailbox // task -> pending steering messages, urgent-first
 	mailboxMu             sync.Mutex
 	taskContexts          map[string]context.Context
 	taskCancels           map[string]context.CancelCauseFunc
@@ -217,6 +217,7 @@ type Daemon struct {
 	extensions         *extensions.Marketplace
 	telemetry          *carinatelemetry.Exporter
 	compactionBreaker  *compactionCircuitBreaker
+	retryGovernance    *retryGovernance
 	artifacts          *artifact.Store
 }
 
@@ -346,6 +347,16 @@ func New(opts Options) (*Daemon, error) {
 	}
 	d.telemetry = carinatelemetry.New(opts.TelemetryWriter)
 	d.compactionBreaker = newCompactionCircuitBreaker()
+	d.retryGovernance = newRetryGovernance(time.Now)
+	d.retryGovernance.pressure = func() string {
+		if d.sched.DispatchDepth() >= 16 {
+			return "pause"
+		}
+		if d.sched.DispatchDepth() >= 8 {
+			return "throttle"
+		}
+		return "none"
+	}
 	d.artifacts, err = artifact.New(filepath.Join(opts.StateDir, "artifacts"))
 	if err != nil {
 		_ = kern.Close()
@@ -407,7 +418,7 @@ func New(opts Options) (*Daemon, error) {
 	d.maxTaskTokens.Store(int64(opts.MaxTaskTokens))
 	d.sandbox.Store(opts.SandboxCommands)
 	d.safeMode = opts.SafeMode
-	d.mailbox = map[string][]string{}
+	d.mailbox = map[string]*taskMailbox{}
 	d.taskContexts = map[string]context.Context{}
 	d.taskCancels = map[string]context.CancelCauseFunc{}
 	d.activeToolCalls = map[string]*activeToolCall{}
@@ -1307,6 +1318,11 @@ func (d *Daemon) handleMetrics(_ json.RawMessage) (any, error) {
 	if artifactErr != nil {
 		artifactMetrics["error"] = artifactErr.Error()
 	}
+	retryMetrics := map[string]any{"scope": "daemon", "enabled": false}
+	if d.retryGovernance != nil {
+		retryMetrics = d.retryGovernance.metricsSnapshot()
+		retryMetrics["enabled"] = true
+	}
 	return map[string]any{
 		"version":         Version,
 		"uptime_seconds":  int(time.Since(d.started).Seconds()),
@@ -1316,6 +1332,7 @@ func (d *Daemon) handleMetrics(_ json.RawMessage) (any, error) {
 		"backpressure":    d.backpressure.snapshot(time.Now().UTC()),
 		"debug_trace":     d.debugTraceStats(),
 		"artifacts":       artifactMetrics,
+		"provider_retry":  retryMetrics,
 	}, nil
 }
 
@@ -1523,12 +1540,17 @@ func (d *Daemon) handleSessionAttach(params json.RawMessage) (any, error) {
 	var p struct {
 		SessionID string `json:"session_id"`
 		Since     int    `json:"since"`
+		EventMode string `json:"event_mode"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
 	if p.SessionID == "" {
 		return nil, fmt.Errorf("session_id required")
+	}
+	mode, err := parseEventMode(p.EventMode)
+	if err != nil {
+		return nil, err
 	}
 	raw, err := d.kern.ReadEvents(p.SessionID)
 	if err != nil {
@@ -1545,10 +1567,21 @@ func (d *Daemon) handleSessionAttach(params json.RawMessage) (any, error) {
 	if since > len(all) {
 		since = len(all) // cursor ahead of the log (e.g. after a compaction) => nothing new
 	}
+	var events any = all[since:]
+	if mode == eventModeCanonical {
+		projectedEvents := make([]any, 0, len(all)-since)
+		for _, event := range all[since:] {
+			if projected, ok := projectEvent(mode, event); ok {
+				projectedEvents = append(projectedEvents, projected)
+			}
+		}
+		events = projectedEvents
+	}
 	return map[string]any{
-		"events": all[since:],
-		"from":   since,
-		"cursor": len(all),
+		"events":     events,
+		"from":       since,
+		"cursor":     len(all),
+		"event_mode": mode,
 	}, nil
 }
 
@@ -2063,13 +2096,76 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 	return task, nil
 }
 
+// steerPriority selects which mailbox tier a steering message is queued
+// into. Urgent messages are drained (and thus folded into the transcript)
+// ahead of any normal-tier backlog at the next turn boundary, so a
+// time-sensitive redirect (e.g. an external channel event) does not sit
+// behind a pile of routine steering notes.
+type steerPriority string
+
+const (
+	steerNormal steerPriority = "normal"
+	steerUrgent steerPriority = "urgent"
+)
+
+func parseSteerPriority(raw string) (steerPriority, error) {
+	switch steerPriority(strings.TrimSpace(raw)) {
+	case "", steerNormal:
+		return steerNormal, nil
+	case steerUrgent:
+		return steerUrgent, nil
+	default:
+		return "", fmt.Errorf("invalid priority %q (want normal|urgent)", raw)
+	}
+}
+
+// taskMailbox is a two-tier FIFO queue: urgent messages are always drained
+// before normal ones, preserving arrival order within each tier.
+type taskMailbox struct {
+	urgent []string
+	normal []string
+}
+
+func (m *taskMailbox) push(priority steerPriority, message string) {
+	if priority == steerUrgent {
+		m.urgent = append(m.urgent, message)
+		return
+	}
+	m.normal = append(m.normal, message)
+}
+
+func (m *taskMailbox) empty() bool {
+	return m == nil || (len(m.urgent) == 0 && len(m.normal) == 0)
+}
+
+// drain returns queued messages urgent-first, normal-second, each in FIFO
+// arrival order within its tier.
+func (m *taskMailbox) drain() []string {
+	if m == nil {
+		return nil
+	}
+	if len(m.urgent) == 0 {
+		return m.normal
+	}
+	if len(m.normal) == 0 {
+		return m.urgent
+	}
+	out := make([]string, 0, len(m.urgent)+len(m.normal))
+	out = append(out, m.urgent...)
+	out = append(out, m.normal...)
+	return out
+}
+
 // handleTaskSteer queues a steering message for a running task; the agent loop
 // drains it at the next turn boundary and folds it into the transcript, so you
-// can redirect a running (background) agent without restarting it.
+// can redirect a running (background) agent without restarting it. An
+// "urgent" priority jumps ahead of any queued normal-priority messages for
+// the same task without discarding or reordering either tier internally.
 func (d *Daemon) handleTaskSteer(params json.RawMessage) (any, error) {
 	var p struct {
-		TaskID  string `json:"task_id"`
-		Message string `json:"message"`
+		TaskID   string `json:"task_id"`
+		Message  string `json:"message"`
+		Priority string `json:"priority"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -2078,6 +2174,10 @@ func (d *Daemon) handleTaskSteer(params json.RawMessage) (any, error) {
 	p.Message = strings.TrimSpace(p.Message)
 	if p.TaskID == "" || p.Message == "" {
 		return nil, fmt.Errorf("task_id and message are required")
+	}
+	priority, err := parseSteerPriority(p.Priority)
+	if err != nil {
+		return nil, err
 	}
 	task, ok := d.sched.Get(p.TaskID)
 	if !ok {
@@ -2088,24 +2188,42 @@ func (d *Daemon) handleTaskSteer(params json.RawMessage) (any, error) {
 	default:
 		return nil, fmt.Errorf("task %s is %s and cannot be steered", p.TaskID, task.Status)
 	}
-	d.steer(p.TaskID, p.Message)
-	return map[string]any{"queued": true, "task_id": p.TaskID, "status": task.Status}, nil
+	d.steerWithPriority(p.TaskID, p.Message, priority)
+	return map[string]any{"queued": true, "task_id": p.TaskID, "status": task.Status, "priority": string(priority)}, nil
 }
 
+// steer queues a normal-priority steering message. Kept for existing call
+// sites that do not need to express priority.
 func (d *Daemon) steer(taskID, message string) {
+	d.steerWithPriority(taskID, message, steerNormal)
+}
+
+// steerWithPriority queues a steering message into the given tier.
+func (d *Daemon) steerWithPriority(taskID, message string, priority steerPriority) {
 	if strings.TrimSpace(message) == "" {
 		return
 	}
 	d.mailboxMu.Lock()
-	d.mailbox[taskID] = append(d.mailbox[taskID], message)
+	box := d.mailbox[taskID]
+	if box == nil {
+		box = &taskMailbox{}
+		d.mailbox[taskID] = box
+	}
+	box.push(priority, message)
 	d.mailboxMu.Unlock()
 }
 
-// drainMailbox returns and clears a task's pending steering messages.
+// drainMailbox returns and clears a task's pending steering messages,
+// urgent-tier messages first.
 func (d *Daemon) drainMailbox(taskID string) []string {
 	d.mailboxMu.Lock()
 	defer d.mailboxMu.Unlock()
-	msgs := d.mailbox[taskID]
+	box := d.mailbox[taskID]
+	if box.empty() {
+		delete(d.mailbox, taskID)
+		return nil
+	}
+	msgs := box.drain()
 	delete(d.mailbox, taskID)
 	return msgs
 }
@@ -3085,12 +3203,17 @@ func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription
 	var p struct {
 		SessionID string `json:"session_id"`
 		Since     int    `json:"since"`
+		EventMode string `json:"event_mode"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return fmt.Errorf("invalid params: %w", err)
 	}
 	if p.SessionID == "" {
 		return fmt.Errorf("session_id required")
+	}
+	mode, err := parseEventMode(p.EventMode)
+	if err != nil {
+		return err
 	}
 	if p.Since < 0 {
 		p.Since = 0
@@ -3103,7 +3226,8 @@ func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription
 	if err := json.Unmarshal(baselineRaw, &baseline); err != nil {
 		return fmt.Errorf("event stream baseline: %w", err)
 	}
-	id, cursor, replayed, err := d.events.SubscribeCatchUp(p.SessionID, sub, func() ([]any, int, map[string]int, error) {
+	projectedSub := projectingSubscriber{eventSubscriber: sub, mode: mode}
+	id, cursor, replayed, err := d.events.SubscribeCatchUp(p.SessionID, projectedSub, func() ([]any, int, map[string]int, error) {
 		raw, readErr := d.kern.ReadEvents(p.SessionID)
 		if readErr != nil {
 			return nil, 0, nil, readErr
@@ -3118,7 +3242,9 @@ func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription
 		}
 		deliver := make([]any, 0, len(all)-since)
 		for _, event := range all[since:] {
-			deliver = append(deliver, event)
+			if projected, ok := projectEvent(mode, event); ok {
+				deliver = append(deliver, projected)
+			}
 		}
 		overlap := make(map[string]int)
 		start := len(baseline)
@@ -3133,7 +3259,7 @@ func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription
 	if err != nil {
 		return err
 	}
-	sub.SetResult(map[string]any{"subscription_id": id, "cursor": cursor, "replayed": replayed})
+	sub.SetResult(map[string]any{"subscription_id": id, "cursor": cursor, "replayed": replayed, "event_mode": mode})
 	return nil
 }
 
@@ -3176,8 +3302,9 @@ func (d *Daemon) recordChecked(sessionID, eventType, taskID, actor string, paylo
 
 func (d *Daemon) handleWorkerRegister(params json.RawMessage) (any, error) {
 	var p struct {
-		Name string `json:"name"`
-		Kind string `json:"kind"`
+		Name                   string                        `json:"name"`
+		Kind                   string                        `json:"kind"`
+		ProcessTreeContainment worker.ProcessTreeContainment `json:"process_tree_containment"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -3185,13 +3312,16 @@ func (d *Daemon) handleWorkerRegister(params json.RawMessage) (any, error) {
 	if p.Kind == "" {
 		p.Kind = "remote"
 	}
+	if p.ProcessTreeContainment == "" {
+		p.ProcessTreeContainment = worker.ContainmentNone
+	}
 	kind := worker.Kind(p.Kind)
 	switch kind {
 	case worker.Remote, worker.CI, worker.Sandbox:
 	default:
 		return nil, fmt.Errorf("unsupported worker kind %q", p.Kind)
 	}
-	w, credential, err := d.pool.RegisterAuthenticated(strings.TrimSpace(p.Name), kind)
+	w, credential, err := d.pool.RegisterAuthenticatedWithContainment(strings.TrimSpace(p.Name), kind, p.ProcessTreeContainment)
 	if err != nil {
 		return nil, err
 	}
