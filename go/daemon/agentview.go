@@ -157,6 +157,18 @@ func (d *Daemon) handleWorktreeCreate(params json.RawMessage) (any, error) {
 	return d.worktrees.Create(q["id"], q["repo_root"], q["base_ref"], q["branch"], q["owner"])
 }
 func (d *Daemon) handleWorktreeList(_ json.RawMessage) (any, error) { return d.worktrees.List() }
+func (d *Daemon) handleWorktreeEnter(params json.RawMessage) (any, error) {
+	var p struct {
+		ID    string `json:"id"`
+		Owner string `json:"owner"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+	// Enter also acquires the ownership lock, making the returned path safe to
+	// hand to a session without a competing agent cleaning it up.
+	return d.worktrees.Lock(p.ID, p.Owner)
+}
 func (d *Daemon) handleWorktreeLock(params json.RawMessage) (any, error) {
 	var p struct {
 		ID    string `json:"id"`
