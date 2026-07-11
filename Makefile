@@ -25,7 +25,7 @@ rust:
 	cargo check --workspace
 
 zig:
-	cd zig && zig build
+	cd zig && ../scripts/zig-tool.sh build
 
 sdk-ts:
 	cd sdk/typescript && npm install && npm run build

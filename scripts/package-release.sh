@@ -104,9 +104,9 @@ if (( ${#missing[@]} > 0 )); then
   printf 'package-release: missing required tool(s): %s\n' "${missing[*]}" >&2
   exit 127
 fi
-if [[ "${SKIP_BUILD:-0}" != "1" && "${SKIP_ZIG:-0}" != "1" ]] && ! command -v zig >/dev/null 2>&1; then
+if [[ "${SKIP_BUILD:-0}" != "1" && "${SKIP_ZIG:-0}" != "1" ]] && ! "$ROOT/scripts/zig-tool.sh" version >/dev/null 2>&1; then
   printf 'package-release: missing required tool: zig\n' >&2
-  printf 'Install Zig 0.15.x, or set SKIP_ZIG=1 to package existing zig/zig-out/bin/carina-* artifacts.\n' >&2
+  printf 'Install Zig 0.15.1, enable the pinned installer, or set SKIP_ZIG=1 to package existing Zig artifacts.\n' >&2
   exit 127
 fi
 
@@ -136,7 +136,7 @@ if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
     warnings+=("SKIP_ZIG=1: reused existing zig/zig-out/bin/carina-* artifacts without rebuilding Zig tools")
   else
     printf '==> build Zig native tools\n'
-    (cd zig && zig build)
+    (cd zig && ../scripts/zig-tool.sh build)
   fi
 else
   printf '==> SKIP_BUILD=1: packaging existing local artifacts\n'
@@ -185,17 +185,10 @@ else
   headroom_status="bundled"
 fi
 
-zig_count=0
-if [[ -d zig/zig-out/bin ]]; then
-  for tool in zig/zig-out/bin/carina-*; do
-    [[ -f "$tool" ]] || continue
-    cp "$tool" "$stage/bin/$(basename "$tool")"
-    zig_count=$((zig_count + 1))
-  done
-fi
-if (( zig_count == 0 )); then
-  warnings+=("no Zig native tools were packaged from zig/zig-out/bin/carina-*")
-fi
+for name in carina-scan carina-grep carina-diff carina-run carina-pty carina-patch-native; do
+  copy_file "zig/zig-out/bin/$name" "$stage/bin/$name"
+  chmod 755 "$stage/bin/$name"
+done
 
 copy_file README.md "$stage/README.md"
 copy_file LICENSE "$stage/LICENSE"

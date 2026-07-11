@@ -24,6 +24,21 @@ Legacy command, patch, and approval events remain during the compatibility
 window. `session.items` prefers the new lifecycle when both representations are
 present and retains the old projection for historical logs.
 
+Provider retry governance is deliberately process-local. Each daemon applies a
+provider-keyed sliding-window circuit breaker and token-bucket retry budget,
+bounded again by the per-request attempt and elapsed-time policy. Scheduler
+pressure can pause retry admission; sleeping retries do not retain admission
+permits. Runtime capabilities report the scope as `daemon`, so this mechanism
+must not be interpreted as a distributed circuit breaker or global budget.
+
+Raw audit persistence remains invariant across client views. `session.attach`
+and `session.events.stream` default to `compat`; clients may request
+`canonical`, which hides only the duplicate `ToolRequested`, `ToolApproved`,
+and `ToolDenied` lifecycle records after persistence. Command, patch, policy,
+and capability events remain visible because they are authoritative audit
+facts. Cursors always advance over raw audit positions, including filtered
+records.
+
 ## Deliberately Rejected
 
 - Tool status inferred from display strings.
@@ -46,3 +61,7 @@ The first implementation wraps native tools and the existing governed MCP,
 patch, memory, delegation, and code-intelligence paths without deleting legacy
 events. Removal of legacy emission is a protocol-major decision, not cleanup
 for this change.
+
+Cross-daemon retry budgets and provider circuits remain deferred until Carina
+has a consistency service with leases and fencing. A local file or best-effort
+broadcast must not be presented as distributed retry governance.

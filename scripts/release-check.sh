@@ -5,23 +5,18 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 missing=()
-for tool in go cargo zig; do
+for tool in go cargo node npm python3 curl tar; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     missing+=("$tool")
   fi
 done
 if (( ${#missing[@]} > 0 )); then
   printf 'release-check: missing required tool(s): %s\n' "${missing[*]}" >&2
-  printf 'Install Go 1.25+, Rust 1.85+, and Zig 0.15.x, then retry.\n' >&2
+  printf 'Install Go 1.25+, Rust 1.85+, Node 24+, Python 3, curl, and tar; Zig 0.15.1 is installed from a pinned archive when needed.\n' >&2
   exit 127
 fi
 
-zig_version="$(zig version)"
-if [[ ! "$zig_version" =~ ^0\.15\. ]]; then
-  printf 'release-check: unsupported Zig version %s (required: 0.15.x)\n' "$zig_version" >&2
-  printf 'Install Zig 0.15.1, matching CI, then retry.\n' >&2
-  exit 127
-fi
+"$ROOT/scripts/zig-tool.sh" version >/dev/null
 
 echo "==> build Go apps, Rust workspace, and Zig tools"
 make all
@@ -48,5 +43,10 @@ echo "==> Homebrew formula template"
 
 echo "==> macOS signing/notarization automation"
 ./scripts/test-sign-and-notarize-release.sh
+
+echo "==> packaged archive SDK conformance"
+version="$(go run ./scripts/product-version.go)"
+VERSION="$version" SKIP_BUILD=1 SKIP_HEADROOM=1 ./scripts/package-release.sh
+ARCHIVE="$ROOT/dist/carina_${version}_$(go env GOOS)_$(go env GOARCH).tar.gz" ./scripts/test-packaged-conformance.sh
 
 echo "release-check: ok"

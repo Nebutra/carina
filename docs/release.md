@@ -131,6 +131,16 @@ A public release should align these or document why they differ.
 Pushing a tag matching `v<major>.<minor>.<patch>` runs
 `.github/workflows/release.yml`. The workflow:
 
+- pins Zig `0.15.1`; local release checks may select the same isolated binary
+  through `CARINA_ZIG_BIN` or install a checksum-verified copy with
+  `scripts/install-zig-tool.sh`;
+- builds native macOS and Linux archives for `arm64` and `amd64`;
+- starts the daemon from each packaged archive and runs the Go, Python, and
+  TypeScript read-only conformance contract against its Unix socket;
+- publishes the four native npm packages before the launcher using npm trusted
+  publishing and provenance. A rerun accepts an existing package only when its
+  registry integrity digest exactly matches the locally packed tarball;
+
 - requires the tag version to match the CLI version and the tag commit to be on
   `main`;
 - builds on native Apple Silicon and Intel GitHub-hosted runners;

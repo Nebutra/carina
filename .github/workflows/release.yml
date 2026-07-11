@@ -45,7 +45,7 @@ jobs:
           test -n "$product_version"
           test "$version" = "$product_version"
           git fetch origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          test "$GITHUB_SHA" = "$(git rev-parse origin/main)"
 
       - name: Validate release version matrix
         run: ./scripts/test-version-matrix.sh
@@ -133,6 +133,11 @@ jobs:
         with:
           version: 0.15.1
 
+      - name: Set up Node for packaged SDK conformance
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
       - name: Build release archive
         env:
           SKIP_HEADROOM: "1"
@@ -154,6 +159,12 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           ARCHIVE="$GITHUB_WORKSPACE/dist/carina_${version}_darwin_${{ matrix.goarch }}.tar.gz" \
             ./scripts/sign-and-notarize-release.sh
+
+      - name: Test packaged daemon SDK conformance
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ARCHIVE="$GITHUB_WORKSPACE/dist/carina_${version}_darwin_${{ matrix.goarch }}.tar.gz" \
+            ./scripts/test-packaged-conformance.sh
 
       - name: Preserve signing diagnostics
         if: ${{ always() }}
@@ -192,7 +203,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: build
+    needs: [build, build-linux, publish-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -202,13 +213,23 @@ jobs:
           pattern: carina-darwin-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: carina-linux-*
+          path: dist
+          merge-multiple: true
 
       - name: Verify release assets
         run: |
-          test "$(find dist -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')" = "2"
-          test "$(find dist -maxdepth 1 -name '*.tar.gz.sha256' | wc -l | tr -d ' ')" = "2"
-          test "$(find dist -maxdepth 1 -name '*.tar.gz.notary.json' | wc -l | tr -d ' ')" = "2"
-          test "$(find dist -maxdepth 1 -name '*.tar.gz.signing.txt' | wc -l | tr -d ' ')" = "2"
+          version="${GITHUB_REF_NAME#v}"
+          for target in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
+            test -f "dist/carina_${version}_${target}.tar.gz"
+            test -f "dist/carina_${version}_${target}.tar.gz.sha256"
+          done
+          for arch in arm64 amd64; do
+            test -f "dist/carina_${version}_darwin_${arch}.tar.gz.notary.json"
+            test -f "dist/carina_${version}_darwin_${arch}.tar.gz.signing.txt"
+          done
           (cd dist && sha256sum -c ./*.tar.gz.sha256)
           cat dist/*.tar.gz.sha256 | sort -k2 > dist/SHA256SUMS
 
@@ -226,6 +247,95 @@ jobs:
               --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
               --title "Carina ${GITHUB_REF_NAME#v}"
           fi
+
+  build-linux:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goarch: amd64
+          - runner: ubuntu-24.04-arm
+            goarch: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with: { go-version: "1.25" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.15.1 }
+      - uses: actions/setup-node@v6
+        with: { node-version: "24" }
+      - name: Build Linux release archive
+        env:
+          SKIP_HEADROOM: "1"
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          VERSION="$version" ./scripts/package-release.sh
+      - name: Test packaged daemon SDK conformance
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ARCHIVE="$GITHUB_WORKSPACE/dist/carina_${version}_linux_${{ matrix.goarch }}.tar.gz" ./scripts/test-packaged-conformance.sh
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/carina_*.tar.gz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: carina-linux-${{ matrix.goarch }}
+          path: |
+            dist/carina_*.tar.gz
+            dist/carina_*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-npm:
+    needs: [build, build-linux]
+    runs-on: ubuntu-latest
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: carina-*
+          path: dist
+          merge-multiple: true
+      - uses: anchore/sbom-action/download-syft@v0
+      - name: Assemble and pack native npm packages
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          VERSION="$version" ./scripts/package-npm-release.sh
+      - name: Publish platform packages before launcher with trusted publishing
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          publish_or_verify() {
+            package="$1"
+            name="$(node -p "require('./${package}/package.json').name")"
+            tarball="$(find "$package" -maxdepth 1 -name '*.tgz' -print -quit)"
+            test -n "$tarball"
+            integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w0)"
+            remote="$(npm view "${name}@${version}" dist.integrity 2>/dev/null || true)"
+            if [[ -n "$remote" ]]; then
+              [[ "$remote" == "$integrity" ]] || { echo "existing ${name}@${version} digest mismatch" >&2; exit 1; }
+              echo "verified existing ${name}@${version}"
+              return
+            fi
+            npm publish "$tarball" --access public --provenance
+          }
+          for package in dist/npm/@nebutra+carina-*; do publish_or_verify "$package"; done
+          publish_or_verify dist/npm/@nebutra+carina
 
   update-homebrew-tap:
     needs: publish
