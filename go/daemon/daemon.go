@@ -158,10 +158,10 @@ type Daemon struct {
 
 	embedModelDefault string // "<provider>/<model>" of the default embeddings backend ("" = semantic layer off)
 
-	trust         *trustStore  // trusted workspace roots
-	requireTrust  atomic.Bool  // deny command exec in untrusted workspaces (hot-reloadable)
-	maxTaskTokens atomic.Int64 // per-task token budget (0 => unlimited; hot-reloadable)
-	bestOfNEnabled atomic.Bool // opt-in: expose/allow the best_of_n tool (default false — off; hot-reloadable)
+	trust          *trustStore  // trusted workspace roots
+	requireTrust   atomic.Bool  // deny command exec in untrusted workspaces (hot-reloadable)
+	maxTaskTokens  atomic.Int64 // per-task token budget (0 => unlimited; hot-reloadable)
+	bestOfNEnabled atomic.Bool  // opt-in: expose/allow the best_of_n tool (default false — off; hot-reloadable)
 
 	mailbox               map[string]*taskMailbox // task -> pending steering messages, urgent-first
 	mailboxMu             sync.Mutex
@@ -2289,6 +2289,21 @@ func (d *Daemon) recordRead(sessionID, path, content string) {
 		d.readProv[sessionID] = map[string]string{}
 	}
 	d.readProv[sessionID][path] = hex.EncodeToString(h[:])
+}
+
+// lastReadHash returns the sha256 (hex) this session last recorded for path
+// via recordRead, and whether any read was ever recorded at all. Used to
+// transfer real read-provenance between sessions (see bestofn.go) instead of
+// re-stamping current disk content, which would make drift undetectable.
+func (d *Daemon) lastReadHash(sessionID, path string) (string, bool) {
+	d.readProvMu.Lock()
+	defer d.readProvMu.Unlock()
+	m := d.readProv[sessionID]
+	if m == nil {
+		return "", false
+	}
+	h, ok := m[path]
+	return h, ok
 }
 
 // checkWriteProvenance rejects a full-file overwrite that would clobber an

@@ -60,6 +60,21 @@ type candidateReasoner struct {
 	// using an index counter keyed by prompt content is unreliable, so instead
 	// candidates are identified by a marker embedded in the task text).
 	candidateEnvelopes map[string]string // marker substring -> raw "done" summary content
+
+	// readFirst, when set for a marker, scripts that candidate's FIRST turn as
+	// a real "read" tool call (so its child session records genuine
+	// write-provenance via the gated read path) before its second turn
+	// returns the "done" envelope from candidateEnvelopes. Used to test the
+	// write-provenance drift check, which only has anything to compare
+	// against once a candidate has actually read a file.
+	readFirst map[string]string // marker -> relative path to read on turn 1
+	// onSecondTurn, when set for a marker, runs immediately before that
+	// candidate's second (post-read) turn response is returned — used to
+	// deterministically simulate a concurrent write landing on disk between
+	// when the candidate read a file and when the orchestrator submits the
+	// winner, without depending on real goroutine timing.
+	onSecondTurn map[string]func()
+	callCount    map[string]int // marker -> candidate turns served so far
 }
 
 func (r *candidateReasoner) Name() string { return "candidate-test-reasoner" }
@@ -79,9 +94,20 @@ func (r *candidateReasoner) Think(_ context.Context, prompt string) (string, err
 		return string(b), nil
 	}
 	// Candidate-drafter turn: find which variant this is via the marker we
-	// embedded in the task text, and return its scripted "done" summary.
+	// embedded in the task text, and return its scripted response.
 	for marker, summary := range r.candidateEnvelopes {
 		if strings.Contains(prompt, marker) {
+			if r.callCount == nil {
+				r.callCount = map[string]int{}
+			}
+			r.callCount[marker]++
+			if path, ok := r.readFirst[marker]; ok && r.callCount[marker] == 1 {
+				b, _ := json.Marshal(map[string]string{"tool": "read", "path": path})
+				return string(b), nil
+			}
+			if hook, ok := r.onSecondTurn[marker]; ok {
+				hook()
+			}
 			b, _ := json.Marshal(map[string]string{"tool": "done", "summary": summary})
 			return string(b), nil
 		}
@@ -172,6 +198,117 @@ func TestBestOfN_WinnerOnlyPatchApplied(t *testing.T) {
 	}
 	if got != "from candidate 1" {
 		t.Fatalf("expected winner's content on disk, got %q", got)
+	}
+}
+
+// TestBestOfN_WinnerOverwritesExistingFileItActuallyRead is the write-
+// provenance happy path for an EXISTING file (TestBestOfN_WinnerOnlyPatchApplied
+// only covers a brand-new file, which never touches checkWriteProvenance at
+// all): the winning candidate reads existing.txt via the gated "read" tool
+// before drafting, nothing else touches the file, and submission must
+// succeed with the winner's content on disk.
+func TestBestOfN_WinnerOverwritesExistingFileItActuallyRead(t *testing.T) {
+	d, ws := newBestOfNDaemon(t)
+	defer d.Close()
+	d.bestOfNEnabled.Store(true)
+
+	if err := os.WriteFile(filepath.Join(ws, "existing.txt"), []byte("original content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reasoner := &candidateReasoner{
+		judgeWinner:    0,
+		judgeRationale: "candidate 0 wins",
+		readFirst:      map[string]string{candidateMarker(0): "existing.txt"},
+		candidateEnvelopes: map[string]string{
+			candidateMarker(0): `{"files":[{"path":"existing.txt","new_content":"from candidate 0, post-read"}],"rationale":"c0"}`,
+			candidateMarker(1): `{"files":[{"path":"existing.txt","new_content":"from candidate 1"}],"rationale":"c1"}`,
+		},
+	}
+	d.SetReasoner(reasoner)
+
+	sess, err := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.kern.InitSessionFull(sess.SessionID, ws, "full-workspace", "on_request", nil); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "edit existing.txt")
+
+	act := &action{Tool: "best_of_n", Task: "edit existing.txt", N: 2}
+	outcome := d.executeBestOfNOutcome(sess, task, act)
+	if outcome.status != "completed" {
+		t.Fatalf("expected completed when the winner actually read the file first, got status=%s display=%s", outcome.status, outcome.display)
+	}
+	got, rerr := readWorkspaceFile(ws, "existing.txt")
+	if rerr != nil {
+		t.Fatalf("existing.txt should still exist: %v", rerr)
+	}
+	if got != "from candidate 0, post-read" {
+		t.Fatalf("expected winner's content on disk, got %q", got)
+	}
+}
+
+// TestBestOfN_RefusesWinnerWhenFileDriftedDuringGeneration is the regression
+// test for the write-provenance bypass a security review found: the winning
+// candidate reads existing.txt, but the file is modified on disk (simulating
+// a concurrent writer) after that read and before the orchestrator submits
+// the winner — exactly the multi-minute N-way parallel candidate-generation
+// window where this matters most. The old code self-seeded provenance from
+// whatever was on disk at submission time, silently clobbering the drift.
+// The fix must detect the mismatch and refuse, leaving the drifted content
+// (not the winner's stale-based patch) on disk.
+func TestBestOfN_RefusesWinnerWhenFileDriftedDuringGeneration(t *testing.T) {
+	d, ws := newBestOfNDaemon(t)
+	defer d.Close()
+	d.bestOfNEnabled.Store(true)
+
+	if err := os.WriteFile(filepath.Join(ws, "existing.txt"), []byte("original content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reasoner := &candidateReasoner{
+		judgeWinner:    0,
+		judgeRationale: "candidate 0 wins",
+		readFirst:      map[string]string{candidateMarker(0): "existing.txt"},
+		onSecondTurn: map[string]func(){
+			// Simulate a concurrent writer landing between the winning
+			// candidate's read and the orchestrator's submission.
+			candidateMarker(0): func() {
+				_ = os.WriteFile(filepath.Join(ws, "existing.txt"), []byte("concurrently modified by someone else"), 0o644)
+			},
+		},
+		candidateEnvelopes: map[string]string{
+			candidateMarker(0): `{"files":[{"path":"existing.txt","new_content":"from candidate 0, based on stale read"}],"rationale":"c0"}`,
+			candidateMarker(1): `{"files":[{"path":"existing.txt","new_content":"from candidate 1"}],"rationale":"c1"}`,
+		},
+	}
+	d.SetReasoner(reasoner)
+
+	sess, err := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.kern.InitSessionFull(sess.SessionID, ws, "full-workspace", "on_request", nil); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "edit existing.txt")
+
+	act := &action{Tool: "best_of_n", Task: "edit existing.txt", N: 2}
+	outcome := d.executeBestOfNOutcome(sess, task, act)
+	if outcome.status == "completed" {
+		t.Fatalf("expected refusal when the file drifted during candidate generation, got completed: %+v", outcome)
+	}
+	if outcome.errorCategory != "write_provenance_stale" {
+		t.Fatalf("expected errorCategory=write_provenance_stale, got %q (display=%s)", outcome.errorCategory, outcome.display)
+	}
+	got, rerr := readWorkspaceFile(ws, "existing.txt")
+	if rerr != nil {
+		t.Fatalf("existing.txt should still exist: %v", rerr)
+	}
+	if got != "concurrently modified by someone else" {
+		t.Fatalf("the drifted content must survive untouched — the stale winner must never be written; got %q", got)
 	}
 }
 

@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -36,12 +38,13 @@ before it launches (N parallel model calls cost roughly Nx a single patch).`
 // is kept (Valid=false) so the result event can report it, not silently
 // dropped.
 type bestOfNCandidate struct {
-	Index      int
-	Valid      bool
-	InvalidWhy string
-	Files      []kernel.FileChange
-	Rationale  string
-	RawSummary string
+	Index          int
+	Valid          bool
+	InvalidWhy     string
+	Files          []kernel.FileChange
+	Rationale      string
+	RawSummary     string
+	ChildSessionID string // the candidate-drafter session that authored Files
 }
 
 // candidateEnvelope is the strict JSON shape a candidate-drafter subagent
@@ -172,8 +175,8 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 		go func(i int) {
 			defer wg.Done()
 			variantTask := fmt.Sprintf("%s\n\n(You are variant %d of %d independent candidate drafts for this task. Produce your own best attempt.)", act.Task, i+1, n)
-			summary := d.spawnSubagentContext(ctx, sess, task, "candidate-drafter", variantTask)
-			cand := bestOfNCandidate{Index: i, RawSummary: summary}
+			summary, childSessionID := d.spawnSubagentContextID(ctx, sess, task, "candidate-drafter", variantTask)
+			cand := bestOfNCandidate{Index: i, RawSummary: summary, ChildSessionID: childSessionID}
 			files, rationale, perr := parseCandidateEnvelope(summary)
 			if perr != nil {
 				cand.Valid = false
@@ -204,17 +207,46 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 		"winner_index": winner.Index, "judge_rationale": truncate(judgeRationale, 400),
 	}, "")
 
-	// Submission of the winner ONLY: seed read-provenance for the orchestrator
-	// session (the winning content was authored by a candidate's own child
-	// session, not sess, so checkWriteProvenance's normal "you must have read
-	// it" guard is satisfied here by explicitly recording the current on-disk
-	// content as read before the propose call — mirroring what agentPatchOutcome
-	// already does after every successful apply).
+	// Submission of the winner ONLY: the winning content was authored by a
+	// candidate's own child session over a potentially multi-minute N-way
+	// parallel drafting window, not by sess — so checkWriteProvenance's normal
+	// "you must have read it, and it must not have drifted" guard needs real
+	// data transferred from that child session, not a same-instant self-seed
+	// of whatever happens to be on disk right now (that would make drift
+	// during the candidate-generation window undetectable — exactly the
+	// scenario where a multi-minute parallel-fanout race is most likely).
+	// For each file: if the child actually read it via the gated "read" tool,
+	// compare that recorded hash against the CURRENT on-disk content. A
+	// mismatch means something changed the file after the child read it and
+	// before submission — refuse, don't silently clobber. A file the child
+	// never read (but that exists on disk) is refused outright, same as the
+	// normal agentPatchOutcome blind-overwrite guard.
 	for _, f := range winner.Files {
 		abs := resolveIn(sess.WorkspaceRoot, f.Path)
-		if cur, err := os.ReadFile(abs); err == nil {
-			d.recordRead(sess.SessionID, f.Path, string(cur))
+		cur, readErr := os.ReadFile(abs)
+		fileExists := readErr == nil
+		if !fileExists {
+			continue // new file: nothing to clobber; checkWriteProvenance already allows this
 		}
+		childHash, childRead := "", false
+		if winner.ChildSessionID != "" {
+			childHash, childRead = d.lastReadHash(winner.ChildSessionID, f.Path)
+		}
+		if !childRead {
+			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+				"status": "best_of_n_result", "run_id": runID, "n": n, "outcome": "provenance_refused", "path": f.Path,
+			}, "")
+			return toolFailed(fmt.Sprintf("best_of_n: refusing to write %q — the winning candidate's session never read it first", f.Path), "write_provenance_refused")
+		}
+		curSum := sha256.Sum256(cur)
+		curHash := hex.EncodeToString(curSum[:])
+		if childHash != curHash {
+			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+				"status": "best_of_n_result", "run_id": runID, "n": n, "outcome": "provenance_stale", "path": f.Path,
+			}, "")
+			return toolFailed(fmt.Sprintf("best_of_n: %q changed since the winning candidate read it — re-run", f.Path), "write_provenance_stale")
+		}
+		d.recordRead(sess.SessionID, f.Path, string(cur))
 	}
 	reason := fmt.Sprintf("best-of-n winner (n=%d, candidate %d, judge: %s)", n, winner.Index, truncate(judgeRationale, 200))
 	outcome := d.proposeAndApplyPatch(sess, task, reason, winner.Files)
