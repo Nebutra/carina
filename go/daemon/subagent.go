@@ -86,6 +86,17 @@ func (d *Daemon) spawnSubagentContext(ctx context.Context, parent *sessionstore.
 // establish real write-provenance for a winning candidate instead of
 // self-seeding it at submission time).
 func (d *Daemon) spawnSubagentContextID(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, agentName, taskDesc string) (string, string) {
+	return d.spawnSubagentContextIDBound(ctx, parent, parentTask, agentName, taskDesc, nil)
+}
+
+// spawnSubagentContextIDBound is spawnSubagentContextID plus an optional
+// swarmChannelBinding (nil for every caller except runStreamingStep),
+// registered on the child session for the exact duration of its synchronous
+// run so a mid-run "swarm_publish"/"swarm_receive" tool call can find the
+// right run-scoped broker (see swarm_channel.go) — same
+// Store-before/deferred-Delete-after lifetime pattern already used below for
+// restrictedTools/allowedTools/allowedSpawnAgents.
+func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, agentName, taskDesc string, binding *swarmChannelBinding) (string, string) {
 	if ctx.Err() != nil {
 		return "subagent cancelled", ""
 	}
@@ -141,6 +152,10 @@ func (d *Daemon) spawnSubagentContextID(ctx context.Context, parent *sessionstor
 	if len(spec.SpawnableAgents) > 0 {
 		d.allowedSpawnAgents.Store(child.SessionID, toSet(spec.SpawnableAgents))
 		defer d.allowedSpawnAgents.Delete(child.SessionID)
+	}
+	if binding != nil {
+		d.swarmChannels.Store(child.SessionID, binding)
+		defer d.swarmChannels.Delete(child.SessionID)
 	}
 
 	// Audit the delegation on the parent, linking to the child session.

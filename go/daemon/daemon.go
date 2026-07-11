@@ -166,6 +166,14 @@ type Daemon struct {
 	allowedTools       sync.Map
 	allowedSpawnAgents sync.Map
 
+	// swarmChannels binds a spawned child session (by session ID) to the
+	// swarmChannelBroker of the streaming workflow run it's executing a step
+	// for, plus that step's own id and consumes_channel subscriptions — set
+	// by spawnSubagentContextIDBound for the duration of the child's
+	// synchronous run, so swarm_publish/swarm_receive tool calls made
+	// mid-run can find the right broker (go/daemon/swarm_channel.go).
+	swarmChannels sync.Map
+
 	embedModelDefault string // "<provider>/<model>" of the default embeddings backend ("" = semantic layer off)
 
 	trust          *trustStore  // trusted workspace roots

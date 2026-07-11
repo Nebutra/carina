@@ -84,6 +84,12 @@ type streamCoordinator struct {
 	liveIndegree map[string]int
 	snapshot     map[string]stepResult
 
+	// channels is one swarmChannelBroker shared by every step in THIS run,
+	// giving steps that declare consumes_channel a way to receive live
+	// messages from still-running siblings (see swarm_channel.go) — never
+	// nil once run() has initialized it.
+	channels *swarmChannelBroker
+
 	totalSteps         int // grows if generator steps inject new nodes
 	resolvedCount      int
 	remainingToResolve int
@@ -140,6 +146,7 @@ func (d *Daemon) runWorkflowStreaming(parent *sessionstore.Session, parentTask *
 		liveIndegree: map[string]int{},
 		snapshot:     map[string]stepResult{},
 		skipQueue:    make([]string, 0, 8),
+		channels:     newSwarmChannelBroker(),
 	}
 	for _, st := range spec.Steps {
 		sc.byID[st.ID] = st
@@ -253,7 +260,7 @@ func (sc *streamCoordinator) dispatch(id string) {
 			return
 		}
 		defer func() { <-sc.sem }()
-		sc.results <- sc.d.runStreamingStep(sc.runCtx, sc.parent, sc.parentTask, sc.spec, sc.runID, st, sc.input, inputSnapshot)
+		sc.results <- sc.d.runStreamingStep(sc.runCtx, sc.parent, sc.parentTask, sc.spec, sc.runID, st, sc.input, inputSnapshot, sc.channels)
 	}()
 }
 
@@ -384,7 +391,7 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 // runWorkflow's per-step body, and reports the outcome on the caller-owned
 // results channel instead of mutating shared state directly — this function
 // touches no graph bookkeeping at all.
-func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, spec *WorkflowSpec, runID string, st WorkflowStep, input string, outputsSoFar map[string]string) streamingStepResult {
+func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, spec *WorkflowSpec, runID string, st WorkflowStep, input string, outputsSoFar map[string]string, channels *swarmChannelBroker) streamingStepResult {
 	if err := ctx.Err(); err != nil {
 		return streamingStepResult{id: st.ID, kind: stepSkipped, errMsg: "workflow cancelled"}
 	}
@@ -410,12 +417,14 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 	if st.Kind == "generator" {
 		taskText += generatorInstructionSuffix
 	}
+	taskText += swarmChannelInstructionSuffix(st.ConsumesChannel)
 
 	d.record(parent.SessionID, "ToolApproved", parentTask.TaskID, "go", map[string]any{
 		"workflow": spec.Name, "run_id": runID, "step": st.ID, "agent": st.Agent, "execution_mode": "streaming",
 	}, "")
 
-	summary := d.spawnSubagentContext(ctx, parent, parentTask, st.Agent, taskText)
+	binding := &swarmChannelBinding{broker: channels, stepID: st.ID, subscribed: st.ConsumesChannel}
+	summary, _ := d.spawnSubagentContextIDBound(ctx, parent, parentTask, st.Agent, taskText, binding)
 	if err := ctx.Err(); err != nil {
 		return streamingStepResult{id: st.ID, kind: stepSkipped, errMsg: "workflow cancelled"}
 	}

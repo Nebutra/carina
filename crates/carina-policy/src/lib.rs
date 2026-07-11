@@ -24,6 +24,7 @@ pub enum Capability {
     CodeIndex,
     ContextCompress,
     SubagentSpawn,
+    SwarmMessage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -586,6 +587,24 @@ impl PolicyEngine {
                 (
                     Verdict::RequiresApproval,
                     "subagent spawn requires approval".into(),
+                )
+            }
+            Capability::SwarmMessage => {
+                // High-frequency, session-scoped runtime messaging between
+                // workflow-graph nodes (Agent Swarm design §6/§11): a running
+                // step publishes to a named channel that other steps
+                // subscribed via `consumes_channel` receive without waiting
+                // for the publisher to finish. Allowed by default like
+                // ContextCompress — gating every publish behind approval
+                // would make live inter-node messaging unusable — but every
+                // publish is still policy-evaluated and audited, and an org
+                // PolicyBundle can tighten this (evaluate_with_bundle only
+                // ever tightens, never loosens). resource carries
+                // "channel:<name>" so a bundle can restrict specific channels
+                // without blocking messaging altogether.
+                (
+                    Verdict::Allowed,
+                    "swarm channel publish is a session-scoped, audited runtime message".into(),
                 )
             }
         }

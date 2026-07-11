@@ -53,6 +53,15 @@ type WorkflowStep struct {
 	// mid-run" hook without restructuring its loop, and dynamic graphs are
 	// exactly the kind of large/irregular shape streaming mode exists for.
 	Kind string `json:"kind,omitempty"`
+
+	// ConsumesChannel names swarm channels (see swarm_channel.go) this step
+	// subscribes to for live, mid-run messages from other steps — distinct
+	// from Needs/Input, which only ever hand off a dependency's TERMINAL
+	// output. A subscribed step calls the "swarm_receive" tool during its own
+	// run to pull anything published since it last checked; publishing (via
+	// "swarm_publish") requires no subscription and is open to every step.
+	// Streaming-mode only, same rationale as Input/When/Kind above.
+	ConsumesChannel []string `json:"consumes_channel,omitempty"`
 }
 
 // WorkflowSpec is a declarative multi-step agent pipeline. It is the Carina

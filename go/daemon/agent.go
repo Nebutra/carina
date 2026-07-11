@@ -108,6 +108,9 @@ type action struct {
 	MCPServer string         `json:"mcp_server"`
 	MCPTool   string         `json:"mcp_tool"`
 	Args      map[string]any `json:"args"`
+	// swarm_publish / swarm_receive tools
+	Channel string          `json:"channel,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 	// intra-turn parallel batch of read-only actions (list/read/search)
 	Actions []action `json:"actions,omitempty"`
 }
@@ -941,6 +944,10 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 		return d.executeWorkflowOutcome(sess, task, act)
 	case "best_of_n":
 		return d.executeBestOfNOutcome(sess, task, act)
+	case "swarm_publish":
+		return d.swarmPublishOutcome(sess, task, act)
+	case "swarm_receive":
+		return d.swarmReceiveOutcome(sess, task, act)
 	case "ask_user":
 		return d.askUserOutcome(sess, task, act.Prompt, act.Options)
 	case "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact":
