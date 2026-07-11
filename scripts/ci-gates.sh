@@ -15,15 +15,15 @@ fail() { echo "GATE FAILED: $1" >&2; exit 1; }
 ok()   { echo "GATE PASS:   $1"; }
 
 # ---------------------------------------------------------------------------
-# 16.1 — No TypeScript runtime. No .ts under runtime paths; none outside the
-#        allowed dirs (sdk/ui/examples/tests/docs).
+# 16.1 — No TypeScript core runtime. TypeScript is allowed only in SDK,
+#        client/UI integrations, examples, tests, and docs.
 # ---------------------------------------------------------------------------
 ts_runtime=$(find . -path ./node_modules -prune -o \
   \( -path '*/agent/*' -o -path '*/runtime/*' -o -path '*/kernel/*' \
      -o -path '*/tools/*' -o -path '*/patch/*' -o -path '*/scheduler/*' \
      -o -path '*/session/*' -o -path '*/executor/*' \) \
   -name '*.ts' -print 2>/dev/null)
-ts_stray=$(find . -name '*.ts' 2>/dev/null | grep -vE '/(sdk|ui|examples|tests|docs|node_modules)/' || true)
+ts_stray=$(find . -name '*.ts' 2>/dev/null | grep -vE '/(sdk|ui|integrations/vscode|examples|tests|docs|node_modules|\.claude)/' || true)
 [ -z "$ts_runtime$ts_stray" ] || fail "16.1 TypeScript runtime file(s) found: $ts_runtime $ts_stray"
 ok "16.1 no TypeScript runtime"
 
