@@ -62,6 +62,28 @@ type WorkflowStep struct {
 	// "swarm_publish") requires no subscription and is open to every step.
 	// Streaming-mode only, same rationale as Input/When/Kind above.
 	ConsumesChannel []string `json:"consumes_channel,omitempty"`
+
+	// Remote, when true, routes this step through the existing cross-process
+	// dispatch/lease/report pipeline (go/scheduler/dispatch.go +
+	// go/daemon/dispatch.go's work.poll/work.renew/work.report RPCs —
+	// apps/carina-worker already implements a real external worker process
+	// against that exact surface) instead of spawning an in-process
+	// subagent — this is what actually lets a step run on a different
+	// machine (Agent Swarm design §7). Gated by Capability::RemoteDispatch,
+	// a strictly stronger trust decision than the same-process
+	// SubagentSpawn gate every other step uses. Streaming-mode only.
+	Remote bool `json:"remote,omitempty"`
+
+	// Affinity is an optional scheduling hint for cluster mode (Agent Swarm
+	// design §4.1's "affinity": {"worker_pool": "..."}). A non-empty
+	// Affinity also implies Remote — a step that cares which worker pool it
+	// lands on is, by definition, asking to be dispatched to a worker rather
+	// than run in this daemon's own process. The "worker_pool" key becomes a
+	// required worker capability ("worker_pool:<name>") that
+	// scheduler.LeaseMatching only offers to a worker whose registered
+	// Capabilities include it, so an affinity-tagged step can never be
+	// silently picked up by an unrelated pool.
+	Affinity map[string]string `json:"affinity,omitempty"`
 }
 
 // WorkflowSpec is a declarative multi-step agent pipeline. It is the Carina

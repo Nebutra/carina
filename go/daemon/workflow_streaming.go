@@ -419,6 +419,34 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 	}
 	taskText += swarmChannelInstructionSuffix(st.ConsumesChannel)
 
+	// Remote or affinity-tagged steps skip the in-process subagent path
+	// entirely — swarm channel binding, "ToolApproved" recording, and
+	// telemetry are handled inside runStreamingStepRemote/its own dispatch
+	// bookkeeping, since the execution itself happens in a different
+	// process (see workflow_remote.go).
+	if st.Remote || len(st.Affinity) > 0 {
+		res := d.runStreamingStepRemote(ctx, parent, parentTask, spec, runID, st, taskText)
+		if d.workflowRuns != nil {
+			now := time.Now().UTC()
+			if _, managedErr := d.workflowRuns.Detail(runID); managedErr == nil {
+				uiStatus := workflowui.Completed
+				if res.kind != stepDone {
+					uiStatus = workflowui.Failed
+				}
+				_, _ = d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: uiStatus, FinishedAt: &now, Output: res.output})
+			}
+		}
+		outcome := "failed"
+		if res.kind == stepDone {
+			outcome = "completed"
+		}
+		_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
+			WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,
+			StepID: st.ID, TaskID: parentTask.TaskID,
+		}, carinatelemetry.Cost{}, time.Since(startedAt), outcome)
+		return res
+	}
+
 	d.record(parent.SessionID, "ToolApproved", parentTask.TaskID, "go", map[string]any{
 		"workflow": spec.Name, "run_id": runID, "step": st.ID, "agent": st.Agent, "execution_mode": "streaming",
 	}, "")

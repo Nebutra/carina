@@ -25,6 +25,7 @@ pub enum Capability {
     ContextCompress,
     SubagentSpawn,
     SwarmMessage,
+    RemoteDispatch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -605,6 +606,22 @@ impl PolicyEngine {
                 (
                     Verdict::Allowed,
                     "swarm channel publish is a session-scoped, audited runtime message".into(),
+                )
+            }
+            Capability::RemoteDispatch => {
+                // Placing a task on the cross-process dispatch queue (Agent
+                // Swarm design §7) means an EXTERNAL worker process —
+                // potentially on a different machine, authenticated only by
+                // a bearer credential rather than living inside this
+                // daemon's own attenuate() chain — will execute it and its
+                // side effects. That is a different-magnitude trust
+                // decision than SubagentSpawn's same-process, capability-
+                // attenuated child session, so it gets its own gate rather
+                // than reusing a weaker one, and defaults to
+                // RequiresApproval rather than Allowed.
+                (
+                    Verdict::RequiresApproval,
+                    "dispatching to an external worker process requires approval".into(),
                 )
             }
         }
