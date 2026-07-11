@@ -17,6 +17,7 @@ func (m *Model) layout() {
 	statusHeight := 1
 	bannerHeight := 1
 	taskHeight := len(m.taskTreeLines())
+	suggestHeight := len(m.suggestPanelLines())
 	vw := m.width - 2
 	if vw < 1 {
 		vw = 1
@@ -34,8 +35,8 @@ func (m *Model) layout() {
 	}
 	m.input.MaxHeight = maxInputHeight
 	m.input.SetWidth(iw)
-	inputHeight := m.input.Height() + 2                                         // input border
-	vh := m.height - inputHeight - statusHeight - bannerHeight - taskHeight - 2 // transcript border
+	inputHeight := m.input.Height() + 2                                                         // input border
+	vh := m.height - inputHeight - statusHeight - bannerHeight - taskHeight - suggestHeight - 2 // transcript border
 	if vh < 1 {
 		vh = 1
 	}
@@ -46,6 +47,31 @@ func (m *Model) layout() {
 	if m.followTail {
 		m.vp.GotoBottom()
 	}
+}
+
+// suggestPanelLines renders the mention/slash suggestion panel as plain
+// lines (not a full-frame overlay — the operator is still mid-typing, so
+// unlike the approval/question overlays this must not take over the
+// screen). Empty when no panel is open, which is what makes it safe to use
+// both for layout height reservation and for View()'s own render.
+func (m *Model) suggestPanelLines() []string {
+	if m.suggest == nil || len(m.suggest.Matches) == 0 {
+		return nil
+	}
+	title := "files"
+	if m.suggest.Kind == mentionCommand {
+		title = "commands"
+	}
+	lines := make([]string, 0, len(m.suggest.Matches)+1)
+	lines = append(lines, m.th.Style(theme.RoleMuted).Render(fmt.Sprintf("%s (1-%d to pick, esc to dismiss)", title, len(m.suggest.Matches))))
+	prefixChar := "@"
+	if m.suggest.Kind == mentionCommand {
+		prefixChar = "/"
+	}
+	for i, match := range m.suggest.Matches {
+		lines = append(lines, fmt.Sprintf("  %d %s%s", i+1, prefixChar, match))
+	}
+	return lines
 }
 
 func (m *Model) transcriptWidth() int {
@@ -111,6 +137,10 @@ func (m *Model) View() tea.View {
 	frame := m.borderStyle(lipgloss.RoundedBorder()).Width(maxInt(m.width-2, 1))
 	b.WriteString(frame.Render(m.vp.View()))
 	b.WriteString("\n")
+	if panelLines := m.suggestPanelLines(); len(panelLines) > 0 {
+		b.WriteString(strings.Join(panelLines, "\n"))
+		b.WriteString("\n")
+	}
 	b.WriteString(frame.Render(m.input.View()))
 	b.WriteString("\n")
 
