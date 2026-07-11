@@ -23,6 +23,56 @@ type Registry struct {
 	Version string              `json:"version"`
 	APIs    map[string][]Method `json:"apis"`
 }
+type MethodSchema struct {
+	Params map[string]any `json:"params"`
+	Result map[string]any `json:"result"`
+}
+type Bundle struct {
+	Version string                  `json:"version"`
+	Methods map[string]MethodSchema `json:"methods"`
+	Defs    map[string]any          `json:"$defs"`
+}
+
+func LoadBundle(path string, registry Registry) (Bundle, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Bundle{}, err
+	}
+	var b Bundle
+	if err = json.Unmarshal(raw, &b); err != nil {
+		return Bundle{}, err
+	}
+	if b.Version != registry.Version {
+		return Bundle{}, fmt.Errorf("schema bundle version %s != registry %s", b.Version, registry.Version)
+	}
+	known := map[string]bool{}
+	for _, m := range Methods(registry) {
+		known[m] = true
+	}
+	for name, s := range b.Methods {
+		if !known[name] {
+			return Bundle{}, fmt.Errorf("schema for unknown method %s", name)
+		}
+		if s.Params == nil || s.Result == nil {
+			return Bundle{}, fmt.Errorf("schema %s missing params/result", name)
+		}
+	}
+	return b, nil
+}
+func GenerateTypeScript(b Bundle) string {
+	names := make([]string, 0, len(b.Methods))
+	for n := range b.Methods {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var out strings.Builder
+	out.WriteString("// Generated from protocol/jsonrpc/schema-bundle.json.\nexport interface CarinaMethodSchemas {\n")
+	for _, n := range names {
+		fmt.Fprintf(&out, "  %q: { params: unknown; result: unknown }\n", n)
+	}
+	out.WriteString("}\n")
+	return out.String()
+}
 
 func Load(path string) (Registry, error) {
 	raw, err := os.ReadFile(path)

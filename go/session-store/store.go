@@ -25,8 +25,30 @@ type Session struct {
 	PermissionProfile string    `json:"permission_profile"`
 	ApprovalMode      string    `json:"approval_mode,omitempty"` // untrusted|on_request|never
 	ParentID          string    `json:"parent_id,omitempty"`     // set for subagent sessions
-	Depth             int       `json:"depth"`                   // 0 = main; bounded to prevent runaway nesting
+	ForkedFromTaskID  string    `json:"forked_from_task_id,omitempty"`
+	ForkedThroughTurn int       `json:"forked_through_turn,omitempty"`
+	Depth             int       `json:"depth"` // 0 = main; bounded to prevent runaway nesting
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+// SetForkLineage persists the immutable model-context boundary inherited by a
+// fork. Audit events remain in the parent log and are referenced, not copied.
+func (s *Store) SetForkLineage(sessionID, taskID string, turn int) (*Session, error) {
+	s.mu.Lock()
+	sess, ok := s.sessions[sessionID]
+	if !ok {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("sessionstore: unknown session %s", sessionID)
+	}
+	updated := *sess
+	updated.ForkedFromTaskID = taskID
+	updated.ForkedThroughTurn = turn
+	s.sessions[sessionID] = &updated
+	s.mu.Unlock()
+	if err := s.persist(&updated); err != nil {
+		return nil, err
+	}
+	return &updated, nil
 }
 
 // Event mirrors protocol/schemas/event.schema.json.

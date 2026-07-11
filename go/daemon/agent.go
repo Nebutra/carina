@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	carinajsonschema "github.com/Nebutra/carina/go/jsonschema"
 	"github.com/Nebutra/carina/go/kernel"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/scheduler"
@@ -126,7 +127,26 @@ func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
 		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "agent": taskAgent(task), "prompt": task.UserPrompt}, "")
-	d.runLoop(sess, task, newTranscript(task.UserPrompt), 1, d.memory.snapshot(memoryScopeFromSession(sess)))
+	tr := newTranscript(task.UserPrompt)
+	memorySnapshot := d.memory.snapshot(memoryScopeFromSession(sess))
+	if sess.ForkedFromTaskID != "" {
+		cp := d.runs.loadCheckpointTurn(sess.ForkedFromTaskID, sess.ForkedThroughTurn)
+		if cp == nil {
+			d.degrade(sess, task, tr, "fork lineage checkpoint is unavailable")
+			return
+		}
+		raw, _ := json.Marshal(cp.Transcript)
+		if json.Unmarshal(raw, &tr) != nil || tr == nil {
+			d.degrade(sess, task, newTranscript(task.UserPrompt), "fork lineage checkpoint is corrupt")
+			return
+		}
+		tr.policy = defaultCompactionPolicy()
+		tr.Task = task.UserPrompt
+		tr.addTurn(Turn{Tool: "user", ActionBrief: "fork-task", Obs: Observation{Content: "FORK TASK (continue from inherited context): " + task.UserPrompt, Pinned: true}})
+		memorySnapshot = cp.MemorySnapshot
+		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{"status": "fork_context_restored", "source_task_id": sess.ForkedFromTaskID, "through_turn": sess.ForkedThroughTurn}, "")
+	}
+	d.runLoop(sess, task, tr, 1, memorySnapshot)
 }
 
 // resumeTask continues a background run from a persisted transcript checkpoint
@@ -293,11 +313,13 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		// Meter token spend and enforce the per-task budget (safety brake for
 		// runaway autonomous loops).
 		d.sched.AddTokens(task.TaskID, turnTokens)
-		if mtt := d.maxTaskTokens.Load(); mtt > 0 {
-			if t, ok := d.sched.Get(task.TaskID); ok && int64(t.TokensUsed) > mtt {
-				d.degrade(sess, task, tr, fmt.Sprintf("token budget exceeded (%d > %d tokens)", t.TokensUsed, mtt))
-				return
-			}
+		if t, ok := d.sched.Get(task.TaskID); ok && t.TokenBudget > 0 && t.TokensUsed > t.TokenBudget {
+			d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn - 1, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess)})
+			d.sched.SetStatus(task.TaskID, "needs_input")
+			d.sched.SetResult(task.TaskID, fmt.Sprintf("token budget exceeded (%d > %d); approval required to extend", t.TokensUsed, t.TokenBudget), d.appliedPatchIDs(sess))
+			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{"status": "budget_extension_required", "tokens_used": t.TokensUsed, "token_budget": t.TokenBudget, "decision_id": "budget_" + task.TaskID}, "")
+			d.persistRun(task.TaskID)
+			return
 		}
 
 		if act.Tool == "done" {
@@ -320,15 +342,14 @@ func (d *Daemon) runLoop(sess *sessionstore.Session, task *scheduler.Task, tr *T
 				}
 			}
 			if len(task.OutputSchema) > 0 {
-				if missing := validateOutput(act.Summary, task.OutputSchema); len(missing) > 0 {
+				if missing := carinajsonschema.ValidateJSON(act.Summary, task.OutputSchema); len(missing) > 0 {
 					verifyAttempts++
 					if verifyAttempts > maxVerifyAttempts {
 						d.degrade(sess, task, tr, "final output never matched the required schema")
 						return
 					}
 					tr.addTurn(Turn{Tool: "system", ActionBrief: "output-schema", Obs: Observation{Pinned: true,
-						Content: "Your 'done' summary must be a JSON object containing keys: " + strings.Join(task.OutputSchema, ", ") +
-							" (missing/invalid: " + strings.Join(missing, ", ") + "). Re-emit done with a valid JSON summary."}})
+						Content: "Your 'done' summary must conform to the requested JSON Schema (errors: " + strings.Join(missing, ", ") + "). Re-emit done with a valid JSON summary."}})
 					continue
 				}
 			}

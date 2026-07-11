@@ -209,6 +209,7 @@ type Daemon struct {
 	channels           *channels.Registry
 	extensions         *extensions.Marketplace
 	telemetry          *carinatelemetry.Exporter
+	compactionBreaker  *compactionCircuitBreaker
 }
 
 func New(opts Options) (*Daemon, error) {
@@ -334,6 +335,7 @@ func New(opts Options) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: extension marketplace: %w", err)
 	}
 	d.telemetry = carinatelemetry.New(opts.TelemetryWriter)
+	d.compactionBreaker = newCompactionCircuitBreaker()
 	d.riskReviewMode.Store(riskReviewMode)
 	_ = hardenProcess() // Linux: non-dumpable, anti-ptrace (best-effort)
 	d.registerMethods()
@@ -363,6 +365,17 @@ func New(opts Options) (*Daemon, error) {
 	d.runs = newRunStore(opts.StateDir)
 	for _, t := range d.runs.load() {
 		d.sched.Load(t)
+	}
+	blockedRestores, err := d.runs.reconcileRestoreJournals()
+	if err != nil {
+		_ = d.kern.Close()
+		return nil, fmt.Errorf("daemon: reconcile checkpoint restore journals: %w", err)
+	}
+	for _, taskID := range blockedRestores {
+		if task, ok := d.sched.Get(taskID); ok {
+			d.sched.SetStatus(taskID, "paused")
+			d.sched.SetResult(taskID, "checkpoint restore interrupted; manual reconciliation required", task.AppliedPatches)
+		}
 	}
 	maxConcurrent := opts.MaxConcurrentTasks
 	if maxConcurrent <= 0 {
@@ -740,6 +753,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("session.replay", rpc.ScopeRead, true, d.handleSessionReplay)
 	d.registerRPC("session.items", rpc.ScopeRead, true, d.handleSessionItems)
 	d.registerRPC("session.attach", rpc.ScopeRead, true, d.handleSessionAttach)
+	d.registerRPC("session.events.unsubscribe", rpc.ScopeStream, true, d.handleEventUnsubscribe)
 	d.registerRPC("session.fork", rpc.ScopeWrite, false, d.handleSessionFork)
 	d.registerRPC("session.checkpoint.list", rpc.ScopeRead, false, d.handleCheckpointList)
 	d.registerRPC("session.checkpoint.preview", rpc.ScopeRead, false, d.handleCheckpointPreview)
@@ -788,6 +802,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("task.result", rpc.ScopeRead, true, d.handleTaskResult)
 	d.registerRPC("task.cancel", rpc.ScopeWrite, false, d.handleTaskCancel)
 	d.registerRPC("task.steer", rpc.ScopeWrite, false, d.handleTaskSteer)
+	d.registerRPC("task.budget.extend", rpc.ScopeAdmin, false, d.handleTaskBudgetExtend, true)
 	d.registerRPC("task.action.approve", rpc.ScopeAdmin, false, d.handleApprove, true)
 	d.registerRPCDynamic("task.action.deny", rpc.ScopeAdmin, false, d.handleDeny, d.taskActionDenyScope, true)
 
@@ -1004,6 +1019,9 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 			"reason":     policyReason,
 		},
 	}
+	if info, err := os.Stat(d.stateDir); err == nil {
+		report["state_dir_permissions"] = map[string]any{"ok": info.Mode().Perm() == 0o700, "mode": fmt.Sprintf("%04o", info.Mode().Perm())}
+	}
 	fixPlan := []map[string]any{}
 	interrupted := 0
 	for _, run := range d.workflowRuns.List() {
@@ -1021,8 +1039,34 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 	if inv.SafeMode {
 		fixPlan = append(fixPlan, map[string]any{"check": "extensions", "severity": "info", "issue": "extension safe mode is enabled", "action": "keep enabled for diagnosis or explicitly disable with extension.safe_mode", "automatic": false})
 	}
+	restoreJournals, _ := filepath.Glob(filepath.Join(d.stateDir, "runs", "*.restore.json"))
+	report["restore"] = map[string]any{"pending_journals": len(restoreJournals), "ok": len(restoreJournals) == 0}
+	if len(restoreJournals) > 0 {
+		fixPlan = append(fixPlan, map[string]any{"check": "restore", "severity": "warn", "issue": fmt.Sprintf("%d restore journal(s) require verification", len(restoreJournals)), "action": "inspect session.checkpoint.preview before retrying or clearing a restore journal", "automatic": false})
+	}
+	launcher := map[string]any{"ok": false}
+	if exe, err := os.Executable(); err == nil {
+		if info, err := os.Stat(exe); err == nil {
+			launcher = map[string]any{"ok": !info.IsDir() && info.Mode()&0o111 != 0, "path": exe}
+		}
+	}
+	report["launcher"] = launcher
+	if launcher["ok"] != true {
+		fixPlan = append(fixPlan, map[string]any{"check": "launcher", "severity": "warn", "issue": "current launcher is not executable", "action": "reinstall Carina from a signed package", "automatic": false})
+	}
+	channel := strings.TrimSpace(os.Getenv("CARINA_UPDATE_CHANNEL"))
+	if channel == "" {
+		channel = "stable"
+	}
+	validChannel := channel == "stable" || channel == "beta" || channel == "nightly"
+	report["update_channel"] = map[string]any{"ok": validChannel, "channel": channel}
+	if !validChannel {
+		fixPlan = append(fixPlan, map[string]any{"check": "update_channel", "severity": "warn", "issue": "unknown update channel " + channel, "action": "set CARINA_UPDATE_CHANNEL to stable, beta, or nightly", "automatic": false})
+	}
+	report["channels"] = map[string]any{"configured_senders": len(d.channels.Senders()), "secret_policy": "env:CARINA_CHANNEL_*"}
 	report["runtime_protocol"] = map[string]any{"version": runtimeProtocolVersion, "negotiation": "runtime.initialize"}
 	report["telemetry"] = map[string]any{"enabled": d.telemetry.Enabled(), "format": "carina-telemetry-json-v1", "otlp": false}
+	report["compaction_circuit"] = d.compactionBreaker.snapshot()
 	report["fix_plan"] = fixPlan
 	return report, nil
 }
@@ -1428,23 +1472,63 @@ func (d *Daemon) handleSessionAttach(params json.RawMessage) (any, error) {
 // profile, and approval mode, linked to the source as its parent (lineage), so
 // you can explore an alternate line of work without disturbing the original.
 func (d *Daemon) handleSessionFork(params json.RawMessage) (any, error) {
-	id, err := sessionID(params)
-	if err != nil {
-		return nil, err
+	var p struct {
+		SessionID   string `json:"session_id"`
+		LastTaskID  string `json:"last_task_id"`
+		ThroughTurn int    `json:"through_turn"`
 	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if p.SessionID == "" {
+		return nil, fmt.Errorf("session_id is required")
+	}
+	id := p.SessionID
 	src, ok := d.store.Get(id)
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", id)
+	}
+	var sourceTask *scheduler.Task
+	for _, task := range d.sched.List() {
+		if task.SessionID != id {
+			continue
+		}
+		switch task.Status {
+		case "running", "queued", "waiting_approval", "paused":
+			return nil, fmt.Errorf("cannot fork session %s while task %s is %s", id, task.TaskID, task.Status)
+		}
+		if p.LastTaskID != "" && task.TaskID == p.LastTaskID {
+			sourceTask = task
+		}
+		if p.LastTaskID == "" && (sourceTask == nil || task.UpdatedAt.After(sourceTask.UpdatedAt)) {
+			sourceTask = task
+		}
+	}
+	if sourceTask == nil {
+		return nil, fmt.Errorf("cannot fork session %s without a completed task checkpoint", id)
+	}
+	cp := d.runs.loadCheckpoint(sourceTask.TaskID)
+	if p.ThroughTurn > 0 {
+		cp = d.runs.loadCheckpointTurn(sourceTask.TaskID, p.ThroughTurn)
+	}
+	if cp == nil {
+		return nil, fmt.Errorf("fork boundary not found for task %s", sourceTask.TaskID)
 	}
 	child, err := d.store.CreateSubSession(src.WorkspaceRoot, src.PermissionProfile, src.ApprovalMode, src.SessionID, src.Depth+1)
 	if err != nil {
 		return nil, err
 	}
 	if err := d.kern.InitSessionFull(child.SessionID, child.WorkspaceRoot, child.PermissionProfile, child.ApprovalMode, d.org); err != nil {
+		_, _ = d.store.SetStatus(child.SessionID, "closed")
+		_ = d.store.Delete(child.SessionID)
 		return nil, fmt.Errorf("fork init: %w", err)
 	}
+	child, err = d.store.SetForkLineage(child.SessionID, sourceTask.TaskID, cp.Turn)
+	if err != nil {
+		return nil, fmt.Errorf("fork lineage: %w", err)
+	}
 	d.record(child.SessionID, "TaskCreated", "", "go",
-		map[string]any{"status": "forked", "parent": src.SessionID}, "")
+		map[string]any{"status": "forked", "parent": src.SessionID, "source_task_id": sourceTask.TaskID, "through_turn": cp.Turn}, "")
 	return child, nil
 }
 
@@ -1778,7 +1862,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		Model           string                   `json:"model"`
 		Agent           string                   `json:"agent"`
 		SuccessCriteria []scheduler.SuccessCheck `json:"success_criteria"`
-		OutputSchema    []string                 `json:"output_schema"`
+		OutputSchema    json.RawMessage          `json:"output_schema"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1821,6 +1905,9 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		model = spec.Model
 	}
 	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, prompt, model, agent, p.SuccessCriteria)
+	if budget := d.maxTaskTokens.Load(); budget > 0 {
+		d.sched.SetTokenBudget(task.TaskID, int(budget))
+	}
 	d.sched.SetMode(task.TaskID, "background")
 	if len(p.OutputSchema) > 0 {
 		d.sched.SetOutputSchema(task.TaskID, p.OutputSchema)
@@ -2868,12 +2955,72 @@ func (d *Daemon) handlePluginRun(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription) error {
-	id, err := sessionID(params)
+	var p struct {
+		SessionID string `json:"session_id"`
+		Since     int    `json:"since"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return fmt.Errorf("invalid params: %w", err)
+	}
+	if p.SessionID == "" {
+		return fmt.Errorf("session_id required")
+	}
+	if p.Since < 0 {
+		p.Since = 0
+	}
+	baselineRaw, err := d.kern.ReadEvents(p.SessionID)
 	if err != nil {
 		return err
 	}
-	d.events.Subscribe(id, sub)
+	var baseline []json.RawMessage
+	if err := json.Unmarshal(baselineRaw, &baseline); err != nil {
+		return fmt.Errorf("event stream baseline: %w", err)
+	}
+	id, cursor, replayed, err := d.events.SubscribeCatchUp(p.SessionID, sub, func() ([]any, int, map[string]int, error) {
+		raw, readErr := d.kern.ReadEvents(p.SessionID)
+		if readErr != nil {
+			return nil, 0, nil, readErr
+		}
+		var all []json.RawMessage
+		if decodeErr := json.Unmarshal(raw, &all); decodeErr != nil {
+			return nil, 0, nil, decodeErr
+		}
+		since := p.Since
+		if since > len(all) {
+			since = len(all)
+		}
+		deliver := make([]any, 0, len(all)-since)
+		for _, event := range all[since:] {
+			deliver = append(deliver, event)
+		}
+		overlap := make(map[string]int)
+		start := len(baseline)
+		if start > len(all) {
+			start = len(all)
+		}
+		for _, event := range all[start:] {
+			overlap[eventKey(event)]++
+		}
+		return deliver, len(all), overlap, nil
+	})
+	if err != nil {
+		return err
+	}
+	sub.SetResult(map[string]any{"subscription_id": id, "cursor": cursor, "replayed": replayed})
 	return nil
+}
+
+func (d *Daemon) handleEventUnsubscribe(params json.RawMessage) (any, error) {
+	var p struct {
+		SubscriptionID string `json:"subscription_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if p.SubscriptionID == "" {
+		return nil, fmt.Errorf("subscription_id required")
+	}
+	return map[string]any{"unsubscribed": d.events.Unsubscribe(p.SubscriptionID)}, nil
 }
 
 // record appends an event through the kernel (single audit writer) and

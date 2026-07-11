@@ -1,6 +1,45 @@
 package daemon
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestPaginateSessionItemsStableCursor(t *testing.T) {
+	items := make([]SessionItemEvent, 7)
+	for i := range items {
+		items[i].ItemID = string(rune('a' + i))
+	}
+	first, err := paginateSessionItems(items, 0, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := first["data"].([]SessionItemEvent)
+	if len(page) != 3 || first["next_cursor"] != "items:v1:3" {
+		t.Fatalf("unexpected first page: %+v", first)
+	}
+	next, err := decodeItemsCursor(json.RawMessage(`"items:v1:3"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := paginateSessionItems(items, next, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := second["data"].([]SessionItemEvent)
+	if got[0].ItemID != "d" {
+		t.Fatalf("cursor skipped or duplicated items: %+v", got)
+	}
+	if _, err := paginateSessionItems(items, -1, 3); err == nil {
+		t.Fatal("negative cursor accepted")
+	}
+	if _, err := paginateSessionItems(items, 0, 201); err == nil {
+		t.Fatal("oversized limit accepted")
+	}
+	if _, err := decodeItemsCursor(json.RawMessage(`"broken"`)); err == nil {
+		t.Fatal("invalid opaque cursor accepted")
+	}
+}
 
 func TestProjectSessionItemsCommandAndTurn(t *testing.T) {
 	events := []itemAuditEvent{

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 from collections import deque
 from pathlib import Path
 from typing import Any, Iterator, TypedDict
@@ -14,6 +15,7 @@ compatible_runtime_version = "0.6.1"
 __all__ = [
     "CarinaClient",
     "CarinaRpcError",
+	"CarinaThread",
     "SessionAttachment",
     "UsageCostReport",
     "compatible_runtime_version",
@@ -120,6 +122,23 @@ class CarinaClient:
     def create_session(self, workspace_root: str, profile: str = "safe-edit") -> dict[str, Any]:
         return self.call("session.create", {"workspace_root": workspace_root, "profile": profile})
 
+    def get_session(self, session_id: str) -> dict[str, Any]:
+        return self.call("session.get", {"session_id": session_id})
+
+    def start_thread(self, working_directory: str, profile: str = "safe-edit") -> CarinaThread:
+        self.initialize()
+        return CarinaThread(self, self.create_session(working_directory, profile))
+
+    def resume_thread(self, session_id: str) -> CarinaThread:
+        self.initialize()
+        return CarinaThread(self, self.get_session(session_id))
+
+    def fork_thread(self, session_id: str, last_task_id: str | None = None, through_turn: int | None = None) -> CarinaThread:
+        self.initialize(); params: dict[str, Any] = {"session_id": session_id}
+        if last_task_id: params["last_task_id"] = last_task_id
+        if through_turn: params["through_turn"] = through_turn
+        return CarinaThread(self, self.call("session.fork", params))
+
     def list_sessions(self) -> list[dict[str, Any]]:
         return self.call("session.list")
 
@@ -156,7 +175,7 @@ class CarinaClient:
         return self.call("workflow.list")
 
     def initialize(self, client_name: str = "carina-sdk", client_version: str = __version__) -> dict[str, Any]:
-        return self.call("runtime.initialize", {"protocol_version": "1.1.0", "client_name": client_name, "client_version": client_version})
+        return self.call("runtime.initialize", {"protocol_version": "1.1.0", "schema_version": "1.1.0", "client_name": client_name, "client_version": client_version})
 
     def workflow_detail(self, run_id: str) -> dict[str, Any]:
         return self.call("workflow.detail", {"run_id": run_id})
@@ -287,3 +306,34 @@ class CarinaClient:
             self._buffer += chunk
         line, self._buffer = self._buffer.split(b"\n", 1)
         return json.loads(line)
+
+
+class CarinaThread:
+    def __init__(self, client: CarinaClient, session: dict[str, Any]) -> None:
+        self.client, self.session = client, session
+
+    def fork(self, last_task_id: str | None = None, through_turn: int | None = None) -> CarinaThread:
+        return self.client.fork_thread(self.session["session_id"], last_task_id, through_turn)
+
+    def run(self, prompt: str, *, output_schema: dict[str, Any] | None = None, cancel: threading.Event | None = None, poll_interval: float = .05) -> dict[str, Any]:
+        params: dict[str, Any] = {"session_id": self.session["session_id"], "prompt": prompt}
+        if output_schema is not None: params["output_schema"] = output_schema
+        task = self.client.call("task.submit", params); task_id = task["task_id"]
+        while True:
+            if cancel is not None and cancel.is_set():
+                self.client.call("task.cancel", {"task_id": task_id})
+                raise InterruptedError("Carina run cancelled")
+            current = self.client.call("task.result", {"task_id": task_id})
+            if current["status"] in {"completed", "degraded", "failed", "cancelled", "needs_input"}:
+                result: dict[str, Any] = {"task": current, "final_response": current.get("summary", "")}
+                if output_schema is not None:
+                    try: result["structured_output"] = json.loads(result["final_response"])
+                    except json.JSONDecodeError: pass
+                return result
+            time.sleep(poll_interval)
+
+    def run_streamed(self, prompt: str, **options: Any) -> Iterator[dict[str, Any]]:
+        # The blocking SDK presents lifecycle deltas while polling; raw event
+        # subscriptions remain available through stream_session_events.
+        result = self.run(prompt, **options)
+        yield {"type": "turn.completed", "result": result}

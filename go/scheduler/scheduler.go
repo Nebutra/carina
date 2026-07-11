@@ -4,6 +4,7 @@
 package scheduler
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -22,22 +23,23 @@ type SuccessCheck struct {
 
 // Task mirrors protocol/schemas/task.schema.json.
 type Task struct {
-	TaskID          string         `json:"task_id"`
-	SessionID       string         `json:"session_id"`
-	WorkspaceID     string         `json:"workspace_id"`
-	Status          string         `json:"status"` // queued | running | paused | waiting_approval | completed | degraded | failed | cancelled
-	UserPrompt      string         `json:"user_prompt"`
-	Model           string         `json:"model,omitempty"` // provider/model override; empty => daemon default
-	Agent           string         `json:"agent,omitempty"` // agent mode/persona override; empty => build/default
-	SuccessCriteria []SuccessCheck `json:"success_criteria,omitempty"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
-	RiskLevel       int            `json:"risk_level"`
-	Mode            string         `json:"mode,omitempty"`            // foreground | background
-	Summary         string         `json:"summary,omitempty"`         // final result / degrade reason
-	AppliedPatches  []string       `json:"applied_patches,omitempty"` // rollbackable patch ids
-	TokensUsed      int            `json:"tokens_used,omitempty"`     // metered token spend (budget governance)
-	OutputSchema    []string       `json:"output_schema,omitempty"`   // required keys in the final JSON output
+	TaskID          string          `json:"task_id"`
+	SessionID       string          `json:"session_id"`
+	WorkspaceID     string          `json:"workspace_id"`
+	Status          string          `json:"status"` // queued | running | paused | waiting_approval | completed | degraded | failed | cancelled
+	UserPrompt      string          `json:"user_prompt"`
+	Model           string          `json:"model,omitempty"` // provider/model override; empty => daemon default
+	Agent           string          `json:"agent,omitempty"` // agent mode/persona override; empty => build/default
+	SuccessCriteria []SuccessCheck  `json:"success_criteria,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+	RiskLevel       int             `json:"risk_level"`
+	Mode            string          `json:"mode,omitempty"`            // foreground | background
+	Summary         string          `json:"summary,omitempty"`         // final result / degrade reason
+	AppliedPatches  []string        `json:"applied_patches,omitempty"` // rollbackable patch ids
+	TokensUsed      int             `json:"tokens_used,omitempty"`     // metered token spend (budget governance)
+	TokenBudget     int             `json:"token_budget,omitempty"`
+	OutputSchema    json.RawMessage `json:"output_schema,omitempty"` // complete JSON Schema for final output
 	// Work-dispatch lease (remote execution via the bridge). Empty for tasks the
 	// local daemon runs in-process.
 	LeaseOwner  string    `json:"lease_owner,omitempty"`  // worker holding the dispatch lease
@@ -190,12 +192,12 @@ func (s *Scheduler) SetAppliedPatches(taskID string, patches []string) {
 
 // SetOutputSchema records the required keys the task's final JSON output must
 // contain (structured output for headless/programmatic runs).
-func (s *Scheduler) SetOutputSchema(taskID string, keys []string) {
+func (s *Scheduler) SetOutputSchema(taskID string, schema json.RawMessage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if t, ok := s.tasks[taskID]; ok {
 		updated := *t
-		updated.OutputSchema = keys
+		updated.OutputSchema = append(json.RawMessage(nil), schema...)
 		s.tasks[taskID] = &updated
 	}
 }
@@ -207,6 +209,16 @@ func (s *Scheduler) AddTokens(taskID string, n int) {
 	if t, ok := s.tasks[taskID]; ok {
 		updated := *t
 		updated.TokensUsed += n
+		s.tasks[taskID] = &updated
+	}
+}
+func (s *Scheduler) SetTokenBudget(taskID string, budget int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.tasks[taskID]; ok {
+		updated := *t
+		updated.TokenBudget = budget
+		updated.UpdatedAt = time.Now().UTC()
 		s.tasks[taskID] = &updated
 	}
 }

@@ -82,3 +82,9 @@ test('call timeout bounds an unresponsive daemon', async () => {
     client.close()
   })
 })
+
+test('high-level thread run negotiates and forwards full JSON Schema', async () => {
+  const methods=[];let submitted
+  await withServer((request,socket)=>{methods.push(request.method);let result={};if(request.method==='runtime.initialize')result={runtime_version:'0.6.1',protocol_version:'1.1.0',capabilities:{}};if(request.method==='session.create')result={session_id:'s',workspace_id:'w',workspace_root:'/tmp',status:'active',permission_profile:'safe-edit',created_at:'now'};if(request.method==='task.submit'){submitted=request.params;result={task_id:'t',session_id:'s',workspace_id:'w',status:'queued',user_prompt:'status'}};if(request.method==='task.result')result={task_id:'t',session_id:'s',workspace_id:'w',status:'completed',user_prompt:'status',summary:'{"status":"ok"}'};socket.write(JSON.stringify({jsonrpc:'2.0',id:request.id,result})+'\n')},async socketPath=>{const client=new CarinaClient(socketPath,500);const thread=await client.startThread({workingDirectory:'/tmp'});const schema={type:'object',properties:{status:{type:'string'}},required:['status'],additionalProperties:false};const turn=await thread.run('status',{outputSchema:schema,pollIntervalMs:1});assert.deepEqual(turn.structuredOutput,{status:'ok'});client.close()})
+  assert.deepEqual(submitted.output_schema,{type:'object',properties:{status:{type:'string'}},required:['status'],additionalProperties:false});assert.deepEqual(methods,['runtime.initialize','session.create','task.submit','task.result'])
+})

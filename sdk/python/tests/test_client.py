@@ -107,6 +107,19 @@ class ClientTest(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 client.call("daemon.status")
 
+    def test_high_level_thread_run(self) -> None:
+        submitted: list[dict[str, Any]] = []
+        def handler(request: dict[str, Any], conn: socket.socket) -> None:
+            result: Any = {}
+            if request["method"] == "runtime.initialize": result = {"runtime_version":"0.6.1","protocol_version":"1.1.0","capabilities":{}}
+            elif request["method"] == "session.create": result = {"session_id":"s","workspace_id":"w","workspace_root":"/tmp","status":"active"}
+            elif request["method"] == "task.submit": submitted.append(request["params"]); result = {"task_id":"t","status":"queued"}
+            elif request["method"] == "task.result": result = {"task_id":"t","status":"completed","summary":"{\"status\":\"ok\"}"}
+            conn.sendall(json.dumps({"jsonrpc":"2.0","id":request["id"],"result":result}).encode()+b"\n")
+        with daemon_server(handler) as path:
+            client=CarinaClient(path,timeout=.5);thread=client.start_thread("/tmp");schema={"type":"object","properties":{"status":{"type":"string"}},"required":["status"]};result=thread.run("status",output_schema=schema,poll_interval=.001);self.assertEqual(result["structured_output"],{"status":"ok"});client.close()
+        self.assertEqual(submitted[0]["output_schema"],schema)
+
 
 if __name__ == "__main__":
     unittest.main()

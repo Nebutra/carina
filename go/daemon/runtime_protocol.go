@@ -20,13 +20,20 @@ func protocolMajor(v string) (int, error) {
 	return n, nil
 }
 func (d *Daemon) runtimeCapabilities() map[string]any {
-	return map[string]any{"workflow_control": true, "trusted_channels": true, "extension_inventory": true, "agent_view": true, "checkpoint_restore": true, "worktree_isolation": true, "telemetry_format": "carina-telemetry-json-v1", "sdk_conformance": true}
+	methods := map[string]bool{}
+	if d.server != nil {
+		for _, desc := range d.server.MethodDescriptors() {
+			methods[desc.Method] = true
+		}
+	}
+	return map[string]any{"workflow_control": methods["workflow.run"] && methods["workflow.resume"], "trusted_channels": methods["channel.event.inject"], "extension_inventory": methods["extension.list"], "agent_view": methods["agent.view"], "checkpoint_restore": methods["session.checkpoint.restore"], "worktree_isolation": methods["worktree.create"], "event_unsubscribe": methods["session.events.unsubscribe"], "pagination": methods["session.items"], "telemetry_format": "carina-telemetry-json-v1", "telemetry_enabled": d.telemetry != nil && d.telemetry.Enabled(), "safe_mode": d.safeMode, "sdk_conformance": true}
 }
 func (d *Daemon) handleRuntimeInitialize(params json.RawMessage) (any, error) {
 	var p struct {
 		ProtocolVersion string `json:"protocol_version"`
 		ClientName      string `json:"client_name"`
 		ClientVersion   string `json:"client_version"`
+		SchemaVersion   string `json:"schema_version"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -36,6 +43,9 @@ func (d *Daemon) handleRuntimeInitialize(params json.RawMessage) (any, error) {
 	if p.ProtocolVersion == "" {
 		p.ProtocolVersion = "1.0.0"
 	}
+	if p.SchemaVersion != "" && p.SchemaVersion != "1.1.0" {
+		return nil, fmt.Errorf("protocol schema mismatch: client %s, server 1.1.0", p.SchemaVersion)
+	}
 	clientMajor, err := protocolMajor(p.ProtocolVersion)
 	if err != nil {
 		return nil, err
@@ -44,7 +54,7 @@ func (d *Daemon) handleRuntimeInitialize(params json.RawMessage) (any, error) {
 	if clientMajor != serverMajor {
 		return nil, fmt.Errorf("incompatible protocol major: client %s, server %s", p.ProtocolVersion, runtimeProtocolVersion)
 	}
-	return map[string]any{"runtime_version": Version, "protocol_version": runtimeProtocolVersion, "minimum_protocol_version": "1.0.0", "client_name": p.ClientName, "client_version": p.ClientVersion, "capabilities": d.runtimeCapabilities()}, nil
+	return map[string]any{"runtime_version": Version, "protocol_version": runtimeProtocolVersion, "schema_version": "1.1.0", "minimum_protocol_version": "1.0.0", "client_name": p.ClientName, "client_version": p.ClientVersion, "capabilities": d.runtimeCapabilities(), "legacy_calls_allowed": true, "legacy_deprecation": "clients should initialize before other calls; enforcement is planned for protocol 2.0"}, nil
 }
 func (d *Daemon) handleRuntimeCapabilities(json.RawMessage) (any, error) {
 	return map[string]any{"runtime_version": Version, "protocol_version": runtimeProtocolVersion, "capabilities": d.runtimeCapabilities()}, nil

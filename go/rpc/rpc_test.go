@@ -2,7 +2,9 @@ package rpc
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,6 +90,35 @@ func TestStreamNotifications(t *testing.T) {
 	_ = json.Unmarshal(params, &ev)
 	if ev.Type != "ping" {
 		t.Fatalf("expected ping, got %q", ev.Type)
+	}
+}
+
+func TestStreamReturnsSubscriptionIdentityAndCatchUpCursor(t *testing.T) {
+	s := NewServer()
+	s.RegisterStream("sub.cursor", func(_ json.RawMessage, sub *Subscription) error {
+		sub.SetResult(map[string]any{"subscription_id": sub.ID(), "cursor": 12, "replayed": 3})
+		return nil
+	})
+	sock := filepath.Join(os.TempDir(), fmt.Sprintf("carina-cursor-%d.sock", time.Now().UnixNano()))
+	defer os.Remove(sock)
+	go func() { _ = s.ListenUnix(sock) }()
+	defer s.Close()
+	waitSock(t, sock)
+	c, err := Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	var got struct {
+		SubscriptionID string `json:"subscription_id"`
+		Cursor         int    `json:"cursor"`
+		Replayed       int    `json:"replayed"`
+	}
+	if err := c.Call("sub.cursor", map[string]any{"since": 9}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.SubscriptionID == "" || got.Cursor != 12 || got.Replayed != 3 {
+		t.Fatalf("unexpected stream result: %+v", got)
 	}
 }
 

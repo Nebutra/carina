@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ func TestStructuredOutputValidation(t *testing.T) {
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "produce json")
-	d.sched.SetOutputSchema(task.TaskID, []string{"answer"})
+	d.sched.SetOutputSchema(task.TaskID, json.RawMessage(`{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"],"additionalProperties":false}`))
 
 	d.SetReasoner(&scriptedReasoner{steps: []string{
 		`{"tool":"done","summary":"just some prose, not json"}`, // rejected

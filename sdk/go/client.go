@@ -2,6 +2,7 @@
 package sdk
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -32,6 +33,7 @@ type Task struct {
 	WorkspaceID string `json:"workspace_id"`
 	Status      string `json:"status"`
 	UserPrompt  string `json:"user_prompt"`
+	Summary     string `json:"summary,omitempty"`
 }
 
 type Event struct {
@@ -112,6 +114,25 @@ type RuntimeInfo struct {
 	MinimumProtocolVersion string         `json:"minimum_protocol_version,omitempty"`
 	Capabilities           map[string]any `json:"capabilities"`
 }
+type RunOptions struct {
+	OutputSchema json.RawMessage
+	PollInterval time.Duration
+}
+type TurnResult struct {
+	Task             Task   `json:"task"`
+	FinalResponse    string `json:"final_response"`
+	StructuredOutput any    `json:"structured_output,omitempty"`
+}
+type StreamEvent struct {
+	Type   string      `json:"type"`
+	Event  *Event      `json:"event,omitempty"`
+	Result *TurnResult `json:"result,omitempty"`
+	Err    error       `json:"-"`
+}
+type Thread struct {
+	client  *Client
+	Session Session
+}
 
 type AgentViewEntry struct {
 	SessionID     string `json:"session_id"`
@@ -186,6 +207,91 @@ func (c *Client) SubmitTask(sessionID, prompt string) (Task, error) {
 	err := c.Call("task.submit", map[string]any{"session_id": sessionID, "prompt": prompt}, &out)
 	return out, err
 }
+func (c *Client) StartThread(workspaceRoot, profile string) (*Thread, error) {
+	if _, err := c.Initialize("carina-sdk-go", CompatibleRuntimeVersion); err != nil {
+		return nil, err
+	}
+	s, err := c.CreateSession(workspaceRoot, profile)
+	if err != nil {
+		return nil, err
+	}
+	return &Thread{client: c, Session: s}, nil
+}
+func (c *Client) ResumeThread(sessionID string) (*Thread, error) {
+	if _, err := c.Initialize("carina-sdk-go", CompatibleRuntimeVersion); err != nil {
+		return nil, err
+	}
+	var s Session
+	err := c.Call("session.get", map[string]any{"session_id": sessionID}, &s)
+	if err != nil {
+		return nil, err
+	}
+	return &Thread{client: c, Session: s}, nil
+}
+func (c *Client) ForkThread(sessionID, lastTaskID string, throughTurn int) (*Thread, error) {
+	params := map[string]any{"session_id": sessionID}
+	if lastTaskID != "" {
+		params["last_task_id"] = lastTaskID
+	}
+	if throughTurn > 0 {
+		params["through_turn"] = throughTurn
+	}
+	var s Session
+	if err := c.Call("session.fork", params, &s); err != nil {
+		return nil, err
+	}
+	return &Thread{client: c, Session: s}, nil
+}
+func (t *Thread) Fork(lastTaskID string, throughTurn int) (*Thread, error) {
+	return t.client.ForkThread(t.Session.SessionID, lastTaskID, throughTurn)
+}
+func (t *Thread) Run(ctx context.Context, prompt string, opts RunOptions) (TurnResult, error) {
+	params := map[string]any{"session_id": t.Session.SessionID, "prompt": prompt}
+	if len(opts.OutputSchema) > 0 {
+		params["output_schema"] = json.RawMessage(opts.OutputSchema)
+	}
+	var task Task
+	if err := t.client.Call("task.submit", params, &task); err != nil {
+		return TurnResult{}, err
+	}
+	interval := opts.PollInterval
+	if interval <= 0 {
+		interval = 50 * time.Millisecond
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			_ = t.client.Call("task.cancel", map[string]any{"task_id": task.TaskID}, nil)
+			return TurnResult{}, ctx.Err()
+		case <-time.After(interval):
+		}
+		var current Task
+		if err := t.client.Call("task.result", map[string]any{"task_id": task.TaskID}, &current); err != nil {
+			return TurnResult{}, err
+		}
+		switch current.Status {
+		case "completed", "degraded", "failed", "cancelled", "needs_input":
+			result := TurnResult{Task: current, FinalResponse: current.Summary}
+			if len(opts.OutputSchema) > 0 {
+				_ = json.Unmarshal([]byte(current.Summary), &result.StructuredOutput)
+			}
+			return result, nil
+		}
+	}
+}
+func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts RunOptions) <-chan StreamEvent {
+	out := make(chan StreamEvent, 1)
+	go func() {
+		defer close(out)
+		result, err := t.Run(ctx, prompt, opts)
+		if err != nil {
+			out <- StreamEvent{Type: "turn.failed", Err: err}
+			return
+		}
+		out <- StreamEvent{Type: "turn.completed", Result: &result}
+	}()
+	return out
+}
 
 func (c *Client) SubmitGoal(sessionID, prompt string, criteria []SuccessCheck) (Task, error) {
 	var out Task
@@ -254,7 +360,7 @@ func (c *Client) ListWorkflows() ([]WorkflowRun, error) {
 }
 func (c *Client) Initialize(clientName, clientVersion string) (RuntimeInfo, error) {
 	var out RuntimeInfo
-	err := c.Call("runtime.initialize", map[string]any{"protocol_version": "1.1.0", "client_name": clientName, "client_version": clientVersion}, &out)
+	err := c.Call("runtime.initialize", map[string]any{"protocol_version": "1.1.0", "schema_version": "1.1.0", "client_name": clientName, "client_version": clientVersion}, &out)
 	return out, err
 }
 func (c *Client) WorkflowDetail(runID string) (map[string]any, error) {

@@ -280,6 +280,13 @@ func doctorChecks(report map[string]any) []doctorCheck {
 			"state directory writable",
 			"check permissions on ~/.carina/state"))
 	}
+	if perms, ok := report["state_dir_permissions"].(map[string]any); ok {
+		good, _ := perms["ok"].(bool)
+		if !good {
+			mode, _ := perms["mode"].(string)
+			out = append(out, doctorCheck{name: "state_dir_permissions", state: "WARN", detail: "state directory mode is " + mode, remediation: "carina doctor --fix --yes"})
+		}
+	}
 	if tools, ok := report["tools"].(map[string]any); ok {
 		available, _ := tools["available"].(bool)
 		dir, _ := tools["dir"].(string)

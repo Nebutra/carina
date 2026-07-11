@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/sys/unix"
 )
@@ -66,9 +67,22 @@ type StreamHandler func(params json.RawMessage, sub *Subscription) error
 
 // Subscription pushes server notifications to one connection.
 type Subscription struct {
-	w    *connWriter
-	done chan struct{}
+	id     string
+	w      *connWriter
+	done   chan struct{}
+	close  func() error
+	result any
 }
+
+var subscriptionSequence atomic.Uint64
+
+func nextSubscriptionID() string { return fmt.Sprintf("sub_%d", subscriptionSequence.Add(1)) }
+
+func (s *Subscription) ID() string { return s.id }
+
+// SetResult lets a stream handler return catch-up metadata in the subscribe
+// response without changing the handler signature.
+func (s *Subscription) SetResult(result any) { s.result = result }
 
 // Notify sends a server notification (no id) to the subscriber. The frame is
 // enqueued on the connection's single-writer drain loop (connWriter), so it
@@ -85,6 +99,27 @@ func (s *Subscription) Notify(method string, params any) error {
 	default:
 	}
 	return s.w.enqueue(Response{JSONRPC: "2.0", Result: nil, Error: nil, ID: nil}.withNotify(method, params))
+}
+
+var ErrSlowConsumer = fmt.Errorf("rpc: slow consumer queue full")
+
+// TryNotify never blocks a publisher. A full connection queue is surfaced as
+// ErrSlowConsumer so the owner can disconnect that subscriber and require a
+// cursor-based catch-up on reconnect.
+func (s *Subscription) TryNotify(method string, params any) error {
+	select {
+	case <-s.done:
+		return fmt.Errorf("subscription closed")
+	default:
+	}
+	return s.w.tryEnqueue(Response{JSONRPC: "2.0"}.withNotify(method, params))
+}
+
+func (s *Subscription) Disconnect() error {
+	if s.close == nil {
+		return nil
+	}
+	return s.close()
 }
 
 // Done reports when the subscriber disconnected.
@@ -137,6 +172,22 @@ func (w *connWriter) enqueue(frame any) error {
 		return nil
 	case <-w.done:
 		return fmt.Errorf("connection closed")
+	}
+}
+
+func (w *connWriter) tryEnqueue(frame any) error {
+	select {
+	case <-w.done:
+		return fmt.Errorf("connection closed")
+	default:
+	}
+	select {
+	case w.queue <- frame:
+		return nil
+	case <-w.done:
+		return fmt.Errorf("connection closed")
+	default:
+		return ErrSlowConsumer
 	}
 }
 
@@ -486,12 +537,16 @@ func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
 				_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: "method not classified: " + req.Method}})
 				continue
 			}
-			sub := &Subscription{w: w, done: done}
+			sub := &Subscription{id: nextSubscriptionID(), w: w, done: done, close: conn.Close}
 			if err := streamHandler(req.Params, sub); err != nil {
 				_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInternalError, Message: err.Error()}})
 				continue
 			}
-			_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"subscribed": true}})
+			result := sub.result
+			if result == nil {
+				result = map[string]any{"subscribed": true, "subscription_id": sub.ID()}
+			}
+			_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Result: result})
 			continue
 		}
 

@@ -3,7 +3,10 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 type itemAuditEvent struct {
@@ -60,11 +63,32 @@ type patchProjection struct {
 	rollbackPointer string
 }
 
+type itemCacheEntry struct {
+	eventCount int
+	items      []SessionItemEvent
+	used       time.Time
+}
+
+var sessionItemsCache = struct {
+	sync.Mutex
+	entries map[string]itemCacheEntry
+}{entries: make(map[string]itemCacheEntry)}
+
+const sessionItemsCacheLimit = 128
+
 func (d *Daemon) handleSessionItems(params json.RawMessage) (any, error) {
-	id, err := sessionID(params)
-	if err != nil {
-		return nil, err
+	var p struct {
+		SessionID string          `json:"session_id"`
+		Cursor    json.RawMessage `json:"cursor"`
+		Limit     *int            `json:"limit"`
 	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if p.SessionID == "" {
+		return nil, fmt.Errorf("session_id required")
+	}
+	id := p.SessionID
 	raw, err := d.kern.ReadEvents(id)
 	if err != nil {
 		return nil, err
@@ -73,7 +97,82 @@ func (d *Daemon) handleSessionItems(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(raw, &events); err != nil {
 		return nil, fmt.Errorf("session.items: decode audit events: %w", err)
 	}
-	return projectSessionItems(id, events), nil
+	cacheKey := fmt.Sprintf("%p:%s", d, id)
+	now := time.Now()
+	sessionItemsCache.Lock()
+	cached, ok := sessionItemsCache.entries[cacheKey]
+	if !ok || cached.eventCount != len(events) {
+		cached = itemCacheEntry{eventCount: len(events), items: projectSessionItems(id, events), used: now}
+		sessionItemsCache.entries[cacheKey] = cached
+	} else {
+		cached.used = now
+		sessionItemsCache.entries[cacheKey] = cached
+	}
+	if len(sessionItemsCache.entries) > sessionItemsCacheLimit {
+		oldestKey := ""
+		var oldest time.Time
+		for key, entry := range sessionItemsCache.entries {
+			if oldestKey == "" || entry.used.Before(oldest) {
+				oldestKey, oldest = key, entry.used
+			}
+		}
+		delete(sessionItemsCache.entries, oldestKey)
+	}
+	items := append([]SessionItemEvent(nil), cached.items...)
+	sessionItemsCache.Unlock()
+	if len(p.Cursor) == 0 && p.Limit == nil {
+		return items, nil
+	}
+	cursor, err := decodeItemsCursor(p.Cursor)
+	if err != nil {
+		return nil, err
+	}
+	limit := 50
+	if p.Limit != nil {
+		limit = *p.Limit
+	}
+	return paginateSessionItems(items, cursor, limit)
+}
+
+func paginateSessionItems(items []SessionItemEvent, cursor, limit int) (map[string]any, error) {
+	if cursor < 0 {
+		return nil, fmt.Errorf("cursor must be non-negative")
+	}
+	if cursor > len(items) {
+		cursor = len(items)
+	}
+	if limit < 1 || limit > 200 {
+		return nil, fmt.Errorf("limit must be between 1 and 200")
+	}
+	end := cursor + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	result := map[string]any{"data": items[cursor:end]}
+	if end < len(items) {
+		result["next_cursor"] = encodeItemsCursor(end)
+	}
+	return result, nil
+}
+
+func encodeItemsCursor(index int) string { return fmt.Sprintf("items:v1:%d", index) }
+func decodeItemsCursor(raw json.RawMessage) (int, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, nil
+	}
+	var cursor string
+	if err := json.Unmarshal(raw, &cursor); err != nil {
+		return 0, fmt.Errorf("cursor must be an opaque string")
+	}
+	const prefix = "items:v1:"
+	if !strings.HasPrefix(cursor, prefix) {
+		return 0, fmt.Errorf("invalid session.items cursor")
+	}
+	index, err := strconv.Atoi(strings.TrimPrefix(cursor, prefix))
+	if err != nil || index < 0 {
+		return 0, fmt.Errorf("invalid session.items cursor")
+	}
+	return index, nil
 }
 
 func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionItemEvent {

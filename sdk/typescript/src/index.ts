@@ -65,6 +65,9 @@ export interface Worker { worker_id: string; name: string; kind: string; status:
 export interface ChannelEvent { id: string; sender_id: string; session_id: string; kind: string; timestamp: string; payload?: Record<string, unknown>; permission_decision_id?: string; permission_allow?: boolean }
 export interface Extension { manifest: { name: string; version: string; estimated_prompt_tokens?: number }; source: string; enabled: boolean; trusted: boolean }
 export interface RuntimeInfo { runtime_version: string; protocol_version: string; minimum_protocol_version?: string; capabilities: Record<string, unknown> }
+export type JsonSchema = Record<string, unknown>
+export interface RunOptions { outputSchema?: JsonSchema; signal?: AbortSignal; pollIntervalMs?: number }
+export interface TurnResult { task: Task; finalResponse: string; structuredOutput?: unknown }
 export interface AgentViewEntry { session_id: string; task_id?: string; state: string; title?: string; summary?: string; workspace_root?: string; updated_at?: string }
 export interface AgentView { needs_input: AgentViewEntry[]; working: AgentViewEntry[]; completed: AgentViewEntry[] }
 export interface SuccessCheck { kind: string; path?: string; pattern?: string; command?: string[] }
@@ -193,6 +196,7 @@ export class CarinaClient {
   createSession(workspaceRoot: string, profile = 'safe-edit'): Promise<Session> {
     return this.call('session.create', { workspace_root: workspaceRoot, profile })
   }
+  getSession(sessionId: string): Promise<Session> { return this.call('session.get', { session_id: sessionId }) }
   listSessions(): Promise<Session[]> { return this.call('session.list') }
   submitTask(sessionId: string, prompt: string): Promise<Task> {
     return this.call('task.submit', { session_id: sessionId, prompt })
@@ -215,7 +219,7 @@ export class CarinaClient {
     return this.call('task.user.answer', { question_id: questionId, value })
   }
   listWorkflows(): Promise<WorkflowRun[]> { return this.call('workflow.list') }
-  initialize(clientName = '@carina/sdk', clientVersion = '0.2.0'): Promise<RuntimeInfo> { return this.call('runtime.initialize', { protocol_version: '1.1.0', client_name: clientName, client_version: clientVersion }) }
+  initialize(clientName = '@carina/sdk', clientVersion = '0.2.0'): Promise<RuntimeInfo> { return this.call('runtime.initialize', { protocol_version: '1.1.0', schema_version: '1.1.0', client_name: clientName, client_version: clientVersion }) }
   workflowDetail(runId: string): Promise<Record<string, unknown>> { return this.call('workflow.detail', { run_id: runId }) }
   runWorkflow(sessionId: string, workflow: string, input = ''): Promise<WorkflowRun> { return this.call('workflow.run', { session_id: sessionId, workflow, input }) }
   pauseWorkflow(runId: string): Promise<WorkflowRun> { return this.call('workflow.pause', { run_id: runId }) }
@@ -234,6 +238,10 @@ export class CarinaClient {
   injectChannelEvent(event: ChannelEvent, signature: string): Promise<Record<string, unknown>> { return this.call('channel.event.inject', { event, signature }) }
   listExtensions(): Promise<{ plugins: Extension[]; safe_mode: boolean; total_prompt_tokens: number }> { return this.call('extension.list') }
   setExtensionEnabled(name: string, enabled: boolean): Promise<Extension> { return this.call(enabled ? 'extension.enable' : 'extension.disable', { name }) }
+
+  async startThread(options: { workingDirectory: string; profile?: string } ): Promise<CarinaThread> { await this.initialize();const session=await this.createSession(options.workingDirectory,options.profile);return new CarinaThread(this,session) }
+  async resumeThread(sessionId: string): Promise<CarinaThread> { await this.initialize();return new CarinaThread(this,await this.getSession(sessionId)) }
+  async forkThread(sessionId: string, boundary: { lastTaskId?: string; throughTurn?: number } = {}): Promise<CarinaThread> { await this.initialize();const session=await this.call<Session>('session.fork',{session_id:sessionId,...(boundary.lastTaskId?{last_task_id:boundary.lastTaskId}:{}),...(boundary.throughTurn?{through_turn:boundary.throughTurn}:{})});return new CarinaThread(this,session) }
 
   async streamSessionEvents(sessionId: string, handler: (event: CarinaEvent) => void): Promise<() => void> {
     const listener: NotificationHandler = (method, params) => {
@@ -319,5 +327,19 @@ export class CarinaClient {
     const pending = [...this.pending.values()]
     this.pending.clear()
     for (const call of pending) call.reject(error)
+  }
+}
+
+export class CarinaThread {
+  constructor(private readonly client: CarinaClient, public readonly session: Session) {}
+  async fork(boundary: { lastTaskId?: string; throughTurn?: number } = {}): Promise<CarinaThread> { return this.client.forkThread(this.session.session_id,boundary) }
+  async run(input: string, options: RunOptions = {}): Promise<TurnResult> {
+    if (options.signal?.aborted) throw options.signal.reason ?? new Error('aborted')
+    const task=await this.client.call<Task>('task.submit',{session_id:this.session.session_id,prompt:input,...(options.outputSchema?{output_schema:options.outputSchema}:{})})
+    const cancel=()=>{void this.client.call('task.cancel',{task_id:task.task_id}).catch(()=>{})};options.signal?.addEventListener('abort',cancel,{once:true})
+    try { for (;;) { if(options.signal?.aborted)throw options.signal.reason??new Error('aborted');const current=await this.client.call<Task>('task.result',{task_id:task.task_id});if(['completed','degraded','failed','cancelled','needs_input'].includes(current.status)){let structuredOutput:unknown;try{structuredOutput=options.outputSchema?JSON.parse((current as Task & {summary?:string}).summary??''):undefined}catch{};return{task:current,finalResponse:(current as Task & {summary?:string}).summary??'',structuredOutput}};await new Promise(r=>setTimeout(r,options.pollIntervalMs??50))} } finally { options.signal?.removeEventListener('abort',cancel) }
+  }
+  async runStreamed(input: string, options: RunOptions = {}): Promise<{events: AsyncGenerator<CarinaEvent|{type:'turn.completed';result:TurnResult}>}> {
+    const queue:CarinaEvent[]=[];let wake:(()=>void)|undefined;const stop=await this.client.streamSessionEvents(this.session.session_id,e=>{queue.push(e);wake?.();wake=undefined});const run=this.run(input,options);async function* events(){try{for(;;){while(queue.length)yield queue.shift()!;const done=await Promise.race([run.then(result=>({result})),new Promise<null>(resolve=>{wake=()=>resolve(null)})]);if(done){yield{type:'turn.completed' as const,result:done.result};return}}}finally{stop()}};return{events:events()}
   }
 }

@@ -88,7 +88,7 @@ func TestCompressObservationSkipsPinnedContent(t *testing.T) {
 	}
 }
 
-func TestCompressObservationExplicitFailureIsAudited(t *testing.T) {
+func TestCompressObservationFailureIsAuditedAndCircuitBreaks(t *testing.T) {
 	d, workspace := newLoopDaemon(t)
 	defer d.Close()
 	sess, _ := d.store.CreateSession(workspace, "safe-edit")
@@ -99,11 +99,17 @@ func TestCompressObservationExplicitFailureIsAudited(t *testing.T) {
 		status: contextengine.Status{ConfiguredEngine: contextengine.ModeHeadroom, EffectiveEngine: contextengine.ModeHeadroom},
 	}
 	const original = "raw original must stay out of new audit event"
-	if _, err := d.compressObservation(context.Background(), sess, task, 1, "read", original, false); err == nil {
-		t.Fatal("explicit compression failure was swallowed")
+	for i := 1; i <= 4; i++ {
+		obs, err := d.compressObservation(context.Background(), sess, task, i, "read", original, false)
+		if err != nil || obs.Content != original {
+			t.Fatalf("failure must preserve original: %+v %v", obs, err)
+		}
+	}
+	if engine := d.contextEng.(*stubContextEngine); engine.calls != 3 {
+		t.Fatalf("circuit did not stop retries: calls=%d", engine.calls)
 	}
 	raw, _ := d.kern.ReadEvents(sess.SessionID)
-	if !strings.Contains(string(raw), "context_engine_failed") || strings.Contains(string(raw), original) {
+	if !strings.Contains(string(raw), "context_engine_failed") || !strings.Contains(string(raw), "context_compaction_circuit_open") || strings.Contains(string(raw), original) {
 		t.Fatalf("failure audit is missing or leaked content: %s", raw)
 	}
 }
