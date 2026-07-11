@@ -60,6 +60,11 @@ export interface UsageCostReport {
   estimated: boolean
 }
 
+export interface WorkflowRun { id: string; workflow: string; session_id: string; status: string; attempt: number; progress?: number }
+export interface Worker { worker_id: string; name: string; kind: string; status: string }
+export interface ChannelEvent { id: string; sender_id: string; session_id: string; kind: string; timestamp: string; payload?: Record<string, unknown>; permission_decision_id?: string; permission_allow?: boolean }
+export interface Extension { manifest: { name: string; version: string; estimated_prompt_tokens?: number }; source: string; enabled: boolean; trusted: boolean }
+
 export interface PatchFile { path: string; new_content: string }
 export interface Patch {
   patch_id: string
@@ -201,6 +206,20 @@ export class CarinaClient {
   answerQuestion(questionId: string, value: string): Promise<{ question_id: string; accepted: boolean; value: string }> {
     return this.call('task.user.answer', { question_id: questionId, value })
   }
+  listWorkflows(): Promise<WorkflowRun[]> { return this.call('workflow.list') }
+  workflowDetail(runId: string): Promise<Record<string, unknown>> { return this.call('workflow.detail', { run_id: runId }) }
+  runWorkflow(sessionId: string, workflow: string, input = ''): Promise<WorkflowRun> { return this.call('workflow.run', { session_id: sessionId, workflow, input }) }
+  pauseWorkflow(runId: string): Promise<WorkflowRun> { return this.call('workflow.pause', { run_id: runId }) }
+  resumeWorkflow(runId: string): Promise<WorkflowRun> { return this.call('workflow.resume', { run_id: runId }) }
+  stopWorkflow(runId: string): Promise<WorkflowRun> { return this.call('workflow.stop', { run_id: runId }) }
+  restartWorkflow(runId: string): Promise<WorkflowRun> { return this.call('workflow.restart', { run_id: runId }) }
+  listWorkers(): Promise<Worker[]> { return this.call('worker.list') }
+  resolveApproval(decisionId: string, allow: boolean, approver = '', scope: 'once'|'session'|'project' = 'once'): Promise<void> { return this.call('task.approval.resolve', { decision_id: decisionId, allow, approver, scope }) }
+  doctor(): Promise<Record<string, unknown>> { return this.call('daemon.doctor') }
+  listAgents(workspaceRoot = ''): Promise<Record<string, unknown>> { return this.call('agent.list', { workspace_root: workspaceRoot }) }
+  injectChannelEvent(event: ChannelEvent, signature: string): Promise<Record<string, unknown>> { return this.call('channel.event.inject', { event, signature }) }
+  listExtensions(): Promise<{ plugins: Extension[]; safe_mode: boolean; total_prompt_tokens: number }> { return this.call('extension.list') }
+  setExtensionEnabled(name: string, enabled: boolean): Promise<Extension> { return this.call(enabled ? 'extension.enable' : 'extension.disable', { name }) }
 
   async streamSessionEvents(sessionId: string, handler: (event: CarinaEvent) => void): Promise<() => void> {
     const listener: NotificationHandler = (method, params) => {

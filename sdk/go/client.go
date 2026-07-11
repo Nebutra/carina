@@ -68,6 +68,44 @@ type UsageCostReport struct {
 	Estimated bool           `json:"estimated"`
 }
 
+type WorkflowRun struct {
+	ID        string  `json:"id"`
+	Workflow  string  `json:"workflow"`
+	SessionID string  `json:"session_id"`
+	Status    string  `json:"status"`
+	Attempt   int     `json:"attempt"`
+	Progress  float64 `json:"progress,omitempty"`
+}
+
+type Worker struct {
+	WorkerID string `json:"worker_id"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Status   string `json:"status"`
+}
+
+type ChannelEvent struct {
+	ID                   string         `json:"id"`
+	SenderID             string         `json:"sender_id"`
+	SessionID            string         `json:"session_id"`
+	Kind                 string         `json:"kind"`
+	Timestamp            time.Time      `json:"timestamp"`
+	Payload              map[string]any `json:"payload,omitempty"`
+	PermissionDecisionID string         `json:"permission_decision_id,omitempty"`
+	PermissionAllow      *bool          `json:"permission_allow,omitempty"`
+}
+
+type Extension struct {
+	Manifest struct {
+		Name                  string `json:"name"`
+		Version               string `json:"version"`
+		EstimatedPromptTokens int    `json:"estimated_prompt_tokens"`
+	} `json:"manifest"`
+	Source  string `json:"source"`
+	Enabled bool   `json:"enabled"`
+	Trusted bool   `json:"trusted"`
+}
+
 func DefaultSocketPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -163,4 +201,76 @@ func (c *Client) ReadEvent() (Event, error) {
 		}
 		return event, nil
 	}
+}
+
+func (c *Client) ListWorkflows() ([]WorkflowRun, error) {
+	var out []WorkflowRun
+	err := c.Call("workflow.list", map[string]any{}, &out)
+	return out, err
+}
+func (c *Client) WorkflowDetail(runID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.Call("workflow.detail", map[string]any{"run_id": runID}, &out)
+	return out, err
+}
+func (c *Client) RunWorkflow(sessionID, workflow, input string) (WorkflowRun, error) {
+	var out WorkflowRun
+	err := c.Call("workflow.run", map[string]any{"session_id": sessionID, "workflow": workflow, "input": input}, &out)
+	return out, err
+}
+func (c *Client) PauseWorkflow(runID string) (WorkflowRun, error) {
+	return c.workflowTransition("workflow.pause", runID)
+}
+func (c *Client) ResumeWorkflow(runID string) (WorkflowRun, error) {
+	return c.workflowTransition("workflow.resume", runID)
+}
+func (c *Client) StopWorkflow(runID string) (WorkflowRun, error) {
+	return c.workflowTransition("workflow.stop", runID)
+}
+func (c *Client) RestartWorkflow(runID string) (WorkflowRun, error) {
+	var out WorkflowRun
+	err := c.Call("workflow.restart", map[string]any{"run_id": runID}, &out)
+	return out, err
+}
+func (c *Client) workflowTransition(method, runID string) (WorkflowRun, error) {
+	var out WorkflowRun
+	err := c.Call(method, map[string]any{"run_id": runID}, &out)
+	return out, err
+}
+func (c *Client) ListWorkers() ([]Worker, error) {
+	var out []Worker
+	err := c.Call("worker.list", map[string]any{}, &out)
+	return out, err
+}
+func (c *Client) ResolveApproval(decisionID string, allow bool, approver, scope string) error {
+	return c.Call("task.approval.resolve", map[string]any{"decision_id": decisionID, "allow": allow, "approver": approver, "scope": scope}, nil)
+}
+func (c *Client) Doctor() (map[string]any, error) {
+	var out map[string]any
+	err := c.Call("daemon.doctor", map[string]any{}, &out)
+	return out, err
+}
+func (c *Client) ListAgents(workspaceRoot string) (map[string]any, error) {
+	var out map[string]any
+	err := c.Call("agent.list", map[string]any{"workspace_root": workspaceRoot}, &out)
+	return out, err
+}
+func (c *Client) InjectChannelEvent(event ChannelEvent, signature string) (map[string]any, error) {
+	var out map[string]any
+	err := c.Call("channel.event.inject", map[string]any{"event": event, "signature": signature}, &out)
+	return out, err
+}
+func (c *Client) ListExtensions() (map[string]any, error) {
+	var out map[string]any
+	err := c.Call("extension.list", map[string]any{}, &out)
+	return out, err
+}
+func (c *Client) SetExtensionEnabled(name string, on bool) (Extension, error) {
+	var out Extension
+	method := "extension.disable"
+	if on {
+		method = "extension.enable"
+	}
+	err := c.Call(method, map[string]any{"name": name}, &out)
+	return out, err
 }

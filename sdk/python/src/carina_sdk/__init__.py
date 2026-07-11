@@ -149,6 +149,48 @@ class CarinaClient:
     def answer_question(self, question_id: str, value: str) -> dict[str, Any]:
         return self.call("task.user.answer", {"question_id": question_id, "value": value})
 
+    def list_workflows(self) -> list[dict[str, Any]]:
+        return self.call("workflow.list")
+
+    def workflow_detail(self, run_id: str) -> dict[str, Any]:
+        return self.call("workflow.detail", {"run_id": run_id})
+
+    def run_workflow(self, session_id: str, workflow: str, input: str = "") -> dict[str, Any]:
+        return self.call("workflow.run", {"session_id": session_id, "workflow": workflow, "input": input})
+
+    def pause_workflow(self, run_id: str) -> dict[str, Any]:
+        return self.call("workflow.pause", {"run_id": run_id})
+
+    def resume_workflow(self, run_id: str) -> dict[str, Any]:
+        return self.call("workflow.resume", {"run_id": run_id})
+
+    def stop_workflow(self, run_id: str) -> dict[str, Any]:
+        return self.call("workflow.stop", {"run_id": run_id})
+
+    def restart_workflow(self, run_id: str) -> dict[str, Any]:
+        return self.call("workflow.restart", {"run_id": run_id})
+
+    def list_workers(self) -> list[dict[str, Any]]:
+        return self.call("worker.list")
+
+    def resolve_approval(self, decision_id: str, allow: bool, approver: str = "", scope: str = "once") -> Any:
+        return self.call("task.approval.resolve", {"decision_id": decision_id, "allow": allow, "approver": approver, "scope": scope})
+
+    def doctor(self) -> dict[str, Any]:
+        return self.call("daemon.doctor")
+
+    def list_agents(self, workspace_root: str = "") -> dict[str, Any]:
+        return self.call("agent.list", {"workspace_root": workspace_root})
+
+    def inject_channel_event(self, event: dict[str, Any], signature: str) -> dict[str, Any]:
+        return self.call("channel.event.inject", {"event": event, "signature": signature})
+
+    def list_extensions(self) -> dict[str, Any]:
+        return self.call("extension.list")
+
+    def set_extension_enabled(self, name: str, enabled: bool) -> dict[str, Any]:
+        return self.call("extension.enable" if enabled else "extension.disable", {"name": name})
+
     def subscribe_session_events(self, session_id: str) -> None:
         self.call("session.events.stream", {"session_id": session_id})
 

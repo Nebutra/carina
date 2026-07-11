@@ -19,11 +19,12 @@ await carina.submitTask(session.session_id, 'fix failing tests')
 console.log(await carina.replaySession(session.session_id))
 ```
 
-Core parity covers `session.attach`, `session.events.stream`, `session.fork`,
-`usage.cost`, `task.steer`, and `task.user.answer`. Transport failures reject or
-raise pending calls instead of leaving them suspended. The SDKs do not promise
-one wrapper per daemon RPC yet; use the public `call` method for less common
-registry methods.
+Typed parity covers session attach/stream/fork, usage, steering and questions,
+plus workflow control, workers, approval relay, doctor, agent inventory,
+trusted channel injection, and the local extension inventory. Transport
+failures reject or raise pending calls instead of leaving them suspended. Use
+the public `call` method for less common registry methods. Security and hosting
+boundaries are documented in [runtime ecosystem contracts](../docs/runtime-ecosystem.md).
 
 Run conformance tests with:
 
@@ -32,3 +33,6 @@ Run conformance tests with:
 (cd sdk/python && PYTHONPATH=src python3 -m unittest discover -s tests -v)
 go test -race ./sdk/go
 ```
+
+Packaged-daemon CI can enable the opt-in read-only smoke contract with
+`CARINA_CONFORMANCE_SOCKET=/path/to/daemon.sock`.
