@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -131,6 +129,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.push(m.th.Style(theme.RoleTitle).Render(msg.label) + "\n" + msg.text)
 		return m, nil
 
+	case suggestDebounceMsg:
+		return m, m.handleSuggestDebounce(msg)
+
+	case suggestResultMsg:
+		m.handleSuggestResult(msg)
+		return m, nil
+
 	case tea.PasteMsg:
 		return m, m.handlePaste(msg)
 
@@ -143,7 +148,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.layout()
-	return m, cmd
+	return m, tea.Batch(cmd, m.refreshSuggestTrigger())
+}
+
+// refreshSuggestTrigger re-evaluates the mention/slash trigger at the
+// textarea's current cursor position after the input itself has processed a
+// message (a keypress, paste, etc. that isn't otherwise intercepted by
+// handleKey). It is the one place trigger detection is driven from, so it
+// runs uniformly regardless of what edited the input.
+func (m *Model) refreshSuggestTrigger() tea.Cmd {
+	if m.approval != nil || m.question != nil {
+		// Overlays own the keyboard; a mention panel must not appear behind
+		// or interfere with them.
+		return nil
+	}
+	row := m.input.Line()
+	line := currentLine(m.input.Value(), row)
+	tr := detectTrigger(line, m.input.Column())
+	if tr.Kind == mentionNone {
+		if m.suggest != nil {
+			m.closeSuggest()
+		}
+		return nil
+	}
+	if m.suggest != nil && m.suggest.Row == row && m.suggest.Start == tr.Start && m.suggest.Query == tr.Query {
+		return nil // no change since the last fetch/schedule
+	}
+	return m.triggerSuggest(tr, row)
 }
 
 // handleEvent renders a streamed event and reacts to governance moments.
@@ -193,6 +224,15 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		}
 		return nil, true // the overlay owns the keyboard while open
 	}
+	// The mention/slash suggestion panel is a transient, non-modal aid: it
+	// never takes the keyboard away from the approval/question overlays
+	// (those are already handled and returned above, so reaching here means
+	// neither is open) and only intercepts a small set of keys itself.
+	if m.suggest != nil {
+		if cmd, handled := m.suggestKey(key); handled {
+			return cmd, true
+		}
+	}
 	switch key {
 	case "pgup":
 		m.vp.PageUp()
@@ -225,11 +265,6 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	case "?":
 		m.showHelp()
 		return nil, true
-	case "tab":
-		if strings.HasPrefix(strings.TrimSpace(m.input.Value()), "@") {
-			m.showFileSuggestions()
-			return nil, true
-		}
 	}
 	if key == "enter" {
 		return m.submit(), true
@@ -237,36 +272,35 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	return nil, false
 }
 
-func (m *Model) showFileSuggestions() {
-	root := m.workspaceRoot
-	if root == "" {
-		root, _ = os.Getwd()
-	}
-	prefix := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), "@")
-	dir, base := filepath.Split(prefix)
-	entries, err := os.ReadDir(filepath.Join(root, dir))
-	if err != nil {
-		m.push("- path suggestions unavailable: " + err.Error())
-		return
-	}
-	var matches []string
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), base) {
-			name := filepath.ToSlash(filepath.Join(dir, e.Name()))
-			if e.IsDir() {
-				name += "/"
-			}
-			matches = append(matches, "@"+name)
-			if len(matches) == 8 {
-				break
-			}
+// suggestKey handles keys while the mention/slash suggestion panel is open.
+// Selection uses number keys 1-9 (mirroring the existing approval-overlay
+// numeric-selection convention: y/1/2/3/n/4 in the block above), matching
+// the panel's own displayed numbering. esc closes the panel without
+// modifying the input, mirroring the approval esc-dismiss convention. Any
+// other key besides the trigger's own editing keys is treated as "the
+// operator moved on" and closes the panel without swallowing the
+// keystroke — it still falls through to the textarea.
+func (m *Model) suggestKey(key string) (tea.Cmd, bool) {
+	switch key {
+	case "esc":
+		m.closeSuggest()
+		return nil, true
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		idx := int(key[0] - '1')
+		if idx < len(m.suggest.Matches) {
+			m.applySuggestSelection(idx)
+			return nil, true
 		}
+		// Out of range for the current match count: not a selection: let it
+		// fall through as ordinary typed input instead of silently eating a
+		// digit the operator meant to type.
+		return nil, false
 	}
-	if len(matches) == 0 {
-		m.push("- no path matches @" + prefix)
-		return
-	}
-	m.push(m.th.Style(theme.RoleTitle).Render("files") + "\n  " + strings.Join(matches, "\n  "))
+	// Navigation/editing keys that plausibly continue shaping the query
+	// (backspace, arrows, plain character keys) are left unhandled here so
+	// they reach the textarea and the input path's own trigger re-detection
+	// (refreshSuggestTrigger) naturally updates or closes the panel.
+	return nil, false
 }
 
 // ctrlC implements the cascading interrupt (P1.4): first press cancels the
@@ -370,7 +404,9 @@ func (m *Model) showHelp() {
 		"  /recap                 compact current-session recap\n" +
 		"  /mode <build|plan>     show or change interaction mode\n" +
 		"  !<command>             governed shell command\n" +
-		"  @<path>                reference a workspace path\n" +
+		"  @<path|agent>          reference a workspace path or agent - suggestions appear as you type\n" +
+		"  /<command>             at the start of the line - suggestions appear as you type\n" +
+		"  1-9 to pick a suggestion · esc to dismiss the panel\n" +
 		"  pgup/pgdown scroll · alt+home/end jump · ctrl+o expand · ctrl+c cancel")
 }
 

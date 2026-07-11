@@ -142,6 +142,15 @@ type Model struct {
 	ctrlCHint        string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
 	mode             string
 	outcome          Outcome
+
+	// Mention/slash suggestion panel (@-file, @-agent, /-command). See
+	// suggest.go for the debounce/fetch flow and mention.go for trigger
+	// detection.
+	suggest       *suggestState
+	suggestGen    int // monotonic; discards stale debounce/fetch results
+	treeCache     []treeEntry
+	treeCacheAt   time.Time
+	treeCacheRoot string
 }
 
 type surfaceResultMsg struct{ label, text string }
