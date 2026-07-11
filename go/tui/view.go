@@ -126,7 +126,7 @@ func (m *Model) View() tea.View {
 		activity += fmt.Sprintf(" · %d new", m.unseenLines)
 	}
 	statusLine := m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
-		" carina · %s · %s · %d lines", status, activity, len(m.tr.lines)))
+		" carina · %s · mode %s · %s · %d lines", status, m.mode, activity, len(m.tr.lines)))
 	b.WriteString(fitLine(statusLine, maxInt(m.width, 1)))
 
 	content := b.String()

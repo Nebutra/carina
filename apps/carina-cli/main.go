@@ -39,7 +39,7 @@ Usage:
 Start and run:
   carina init                                      create ~/.carina and print daemon hint
   carina status                                    show daemon health and counters
-  carina doctor [--json]                           pass/warn/fail diagnostics with copy-paste fixes
+  carina doctor [--json] [--fix [--yes]]           diagnostics; repairs require explicit --yes
   carina run [--agent name] [--model provider/model] "<prompt>" [--background]
                                                    create a safe-edit session in cwd, submit a task, and
                                                    wait for it to finish (exits with its governance
@@ -59,6 +59,11 @@ Inspect sessions:
   carina answer <question_id> <value>              answer a structured agent question
   carina items <session_id>                        replay normalized thread/turn/item events
   carina search <session_id> <text>                search the workspace through the daemon
+  carina checkpoint list <session_id>              list conversation/code checkpoints
+  carina checkpoint preview <session_id> <id>      preview a rewind without changing state
+  carina checkpoint restore <session_id> <id> --yes
+                                                   restore code and conversation (destructive)
+  carina checkpoint summarize <session_id> <id>    summarize a checkpoint without restoring it
 
 Memory:
   carina memory status <session_id>                 show local memory scope, provider, and sync boundary
@@ -242,6 +247,8 @@ func run(cmd string, args []string) error {
 		return cmdContext(c, args)
 	case "schedule":
 		return cmdSchedule(c, args)
+	case "checkpoint":
+		return cmdCheckpoint(c, args)
 
 	case "run", "ask":
 		// The task always runs in the daemon and survives CLI exit (PRD

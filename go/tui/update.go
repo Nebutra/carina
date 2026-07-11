@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -124,6 +127,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case rpcErrMsg:
 		m.push(fmt.Sprintf("%s rpc: %s", glyphFailed(m.th), msg.err.Error()))
 		return m, nil
+	case surfaceResultMsg:
+		m.push(m.th.Style(theme.RoleTitle).Render(msg.label) + "\n" + msg.text)
+		return m, nil
 
 	case tea.PasteMsg:
 		return m, m.handlePaste(msg)
@@ -216,11 +222,51 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 			}
 		}
 		return nil, true
+	case "?":
+		m.showHelp()
+		return nil, true
+	case "tab":
+		if strings.HasPrefix(strings.TrimSpace(m.input.Value()), "@") {
+			m.showFileSuggestions()
+			return nil, true
+		}
 	}
 	if key == "enter" {
 		return m.submit(), true
 	}
 	return nil, false
+}
+
+func (m *Model) showFileSuggestions() {
+	root := m.workspaceRoot
+	if root == "" {
+		root, _ = os.Getwd()
+	}
+	prefix := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), "@")
+	dir, base := filepath.Split(prefix)
+	entries, err := os.ReadDir(filepath.Join(root, dir))
+	if err != nil {
+		m.push("- path suggestions unavailable: " + err.Error())
+		return
+	}
+	var matches []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), base) {
+			name := filepath.ToSlash(filepath.Join(dir, e.Name()))
+			if e.IsDir() {
+				name += "/"
+			}
+			matches = append(matches, "@"+name)
+			if len(matches) == 8 {
+				break
+			}
+		}
+	}
+	if len(matches) == 0 {
+		m.push("- no path matches @" + prefix)
+		return
+	}
+	m.push(m.th.Style(theme.RoleTitle).Render("files") + "\n  " + strings.Join(matches, "\n  "))
 }
 
 // ctrlC implements the cascading interrupt (P1.4): first press cancels the
@@ -276,6 +322,12 @@ func (m *Model) submit() tea.Cmd {
 	m.input.Reset()
 	m.pendingPaste = nil
 	m.layout()
+	if strings.HasPrefix(text, "/") {
+		return m.slashCommand(text)
+	}
+	if strings.HasPrefix(text, "!") {
+		return m.shellCommand(strings.TrimSpace(strings.TrimPrefix(text, "!")))
+	}
 	prompt := text
 	if len(paste) > 0 {
 		prompt = strings.TrimSpace(text + "\n" + strings.Join(paste, "\n"))
@@ -306,6 +358,101 @@ func (m *Model) submit() tea.Cmd {
 			return rpcErrMsg{err: err}
 		}
 		return taskSubmittedMsg{taskID: out.TaskID}
+	}
+}
+
+func (m *Model) showHelp() {
+	m.push(m.th.Style(theme.RoleTitle).Render("commands") + "\n" +
+		"  /help                 commands and keybindings\n" +
+		"  /agents               available agent modes\n" +
+		"  /checkpoints          rewind points for this session\n" +
+		"  /search <text>         search visible transcript\n" +
+		"  /recap                 compact current-session recap\n" +
+		"  /mode <build|plan>     show or change interaction mode\n" +
+		"  !<command>             governed shell command\n" +
+		"  @<path>                reference a workspace path\n" +
+		"  pgup/pgdown scroll · alt+home/end jump · ctrl+o expand · ctrl+c cancel")
+}
+
+func (m *Model) slashCommand(text string) tea.Cmd {
+	parts := strings.Fields(text)
+	name := strings.TrimPrefix(parts[0], "/")
+	switch name {
+	case "help", "keys":
+		m.showHelp()
+		return nil
+	case "search":
+		if len(parts) < 2 {
+			m.push("usage: /search <text>")
+			return nil
+		}
+		q := strings.ToLower(strings.Join(parts[1:], " "))
+		hits := 0
+		for _, line := range m.tr.lines {
+			if strings.Contains(strings.ToLower(line), q) {
+				m.push("- " + line)
+				hits++
+			}
+		}
+		m.push(fmt.Sprintf("- transcript search: %d match(es)", hits))
+		return nil
+	case "recap":
+		start := len(m.tr.lines) - 12
+		if start < 0 {
+			start = 0
+		}
+		m.push(m.th.Style(theme.RoleTitle).Render("recap") + "\n" + strings.Join(m.tr.lines[start:], "\n"))
+		return nil
+	case "mode":
+		if len(parts) != 2 || (parts[1] != "build" && parts[1] != "plan") {
+			m.push("usage: /mode <build|plan>")
+			return nil
+		}
+		m.mode = parts[1]
+		return m.querySurface("session.plan_mode", map[string]any{"session_id": m.sessionID, "on": m.mode == "plan"}, "mode "+m.mode)
+	case "agents":
+		return m.querySurface("agent.list", map[string]any{"session_id": m.sessionID}, "agents")
+	case "checkpoints":
+		return m.querySurface("session.checkpoint.list", map[string]any{"session_id": m.sessionID}, "checkpoints")
+	default:
+		m.push("unknown command /" + name + "; use /help")
+		return nil
+	}
+}
+
+func (m *Model) querySurface(method string, params map[string]any, label string) tea.Cmd {
+	call := m.call
+	return func() tea.Msg {
+		if call == nil {
+			return rpcErrMsg{err: errors.New("daemon not connected")}
+		}
+		var out any
+		if err := call.Call(method, params, &out); err != nil {
+			return rpcErrMsg{err: err}
+		}
+		raw, _ := json.MarshalIndent(out, "", "  ")
+		return surfaceResultMsg{label: label, text: string(raw)}
+	}
+}
+func (m *Model) shellCommand(command string) tea.Cmd {
+	if command == "" {
+		m.push("usage: !<command>")
+		return nil
+	}
+	argv := strings.Fields(command)
+	call := m.call
+	sid := m.sessionID
+	m.push(m.th.Style(theme.RoleTitle).Render("you (shell) ") + command)
+	return func() tea.Msg {
+		if call == nil {
+			return rpcErrMsg{err: errors.New("daemon not connected")}
+		}
+		var out any
+		if err := call.Call("command.exec", map[string]any{"session_id": sid, "argv": argv}, &out); err != nil {
+			return rpcErrMsg{err: err}
+		}
+		raw, _ := json.MarshalIndent(out, "", "  ")
+		return surfaceResultMsg{label: "shell", text: string(raw)}
 	}
 }
 

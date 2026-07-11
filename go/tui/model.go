@@ -111,10 +111,11 @@ type Options struct {
 
 // Model is the root Bubble Tea model.
 type Model struct {
-	th     theme.Theme
-	locale string
-	socket string
-	now    func() time.Time
+	th            theme.Theme
+	locale        string
+	socket        string
+	workspaceRoot string
+	now           func() time.Time
 
 	width, height int
 	vp            viewport.Model
@@ -139,8 +140,11 @@ type Model struct {
 	pendingPaste     []string
 	lastCtrlC        time.Time
 	ctrlCHint        string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
+	mode             string
 	outcome          Outcome
 }
+
+type surfaceResultMsg struct{ label, text string }
 
 // New builds the root model. It renders nothing until the program runs.
 func New(o Options) *Model {
@@ -163,6 +167,7 @@ func New(o Options) *Model {
 		th:               o.Theme,
 		locale:           o.Locale,
 		socket:           o.Socket,
+		workspaceRoot:    o.WorkspaceRoot,
 		now:              o.Now,
 		vp:               viewport.New(),
 		input:            ti,
@@ -172,6 +177,7 @@ func New(o Options) *Model {
 		questionResolved: make(map[string]bool),
 		width:            80,
 		height:           24,
+		mode:             "build",
 	}
 	m.layout()
 	return m

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Nebutra/carina/go/doctorfix"
 	"github.com/Nebutra/carina/go/tui"
 )
 
@@ -112,9 +113,17 @@ func maybeAutoRunDoctor(call Caller) {
 // exactly like every other governed command's.
 func cmdDoctor(c *rpcClient, args []string) error {
 	jsonOut := false
+	fix, yes := false, false
 	for _, a := range args {
-		if a == "--json" {
+		switch a {
+		case "--json":
 			jsonOut = true
+		case "--fix":
+			fix = true
+		case "--yes":
+			yes = true
+		default:
+			return fmt.Errorf("usage: carina doctor [--json] [--fix [--yes]]")
 		}
 	}
 	var report map[string]any
@@ -145,6 +154,30 @@ func cmdDoctor(c *rpcClient, args []string) error {
 	}
 	if disabled {
 		return nil
+	}
+	if fix {
+		checks := doctorChecks(report)
+		findings := make([]doctorfix.Finding, 0, len(checks))
+		for _, chk := range checks {
+			findings = append(findings, doctorfix.Finding{Name: chk.name, State: chk.state, Detail: chk.detail})
+		}
+		home, _ := os.UserHomeDir()
+		actions := doctorfix.Plan(findings, home)
+		if len(actions) == 0 {
+			fmt.Println("doctor fix: no safe automatic repairs available")
+		} else {
+			fmt.Println("doctor fix plan:")
+			for _, action := range actions {
+				fmt.Printf("  - %s: %s\n", action.Name, action.Description)
+			}
+			if !yes {
+				return fmt.Errorf("repairs were not applied; review the plan and rerun with --fix --yes")
+			}
+			if err := doctorfix.Apply(actions, true); err != nil {
+				return err
+			}
+			fmt.Printf("doctor fix: applied %d repair(s); rerun `carina doctor` to verify\n", len(actions))
+		}
 	}
 	outcome := doctorOutcome(report)
 	if auditChk != nil && auditChk.state == "FAIL" {
