@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/Nebutra/carina/go/artifact"
 )
 
 func TestTranscriptTruncatesOversizedObservation(t *testing.T) {
@@ -848,6 +851,150 @@ func TestLoopGuardHardRepeatDisabledWhenZero(t *testing.T) {
 		if _, hard := g.observe("read", "a.go"); hard {
 			t.Fatal("MaxHardRepeat=0 must disable the hard stop, not trip immediately")
 		}
+	}
+}
+
+// TestRenderEmitsMediaPlaceholderNeverContent is the regression test for the
+// twice-regressed invariant (Claude Code shipped crash-instead-of-placeholder
+// in v2.1.157 and again in v2.1.187): raw media bytes seeded with distinctive
+// sentinels must NEVER appear in render() output — only the placeholder line.
+func TestRenderEmitsMediaPlaceholderNeverContent(t *testing.T) {
+	store := newTestArtifactStore(t)
+	scope := artifact.Scope{SessionID: "sess-1"}
+	sentinel := "NEVER_IN_PROMPT_5a4b3c2d"
+	ref, err := ingestImageMedia(store, scope, "tool:screenshot", fakePNG(sentinel))
+	if err != nil {
+		t.Fatalf("ingestImageMedia: %v", err)
+	}
+	tr := newTranscript("look at the screenshot")
+	tr.addTurn(Turn{Tool: "screenshot", ActionBrief: "screenshot app", Obs: Observation{
+		Content:   "captured main window",
+		MediaRefs: []MediaRef{ref},
+	}})
+	got := tr.render()
+	if !strings.Contains(got, ref.placeholder()) {
+		t.Fatalf("render must emit the media placeholder line, got:\n%s", got)
+	}
+	if strings.Contains(got, sentinel) || strings.Contains(got, "data:") || strings.Contains(got, "base64") {
+		t.Fatalf("render leaked raw media bytes or a data URL:\n%s", got)
+	}
+	if !strings.Contains(got, "captured main window") {
+		t.Fatalf("text content must still render alongside the placeholder:\n%s", got)
+	}
+}
+
+// TestRenderElidedTurnSuppressesMediaPlaceholders proves elision covers media
+// placeholders exactly like Content: an elided turn renders only the elision
+// marker, and a pinned turn's MediaRefs survive compact() verbatim.
+func TestRenderElidedTurnSuppressesMediaPlaceholders(t *testing.T) {
+	ref := MediaRef{ArtifactID: strings.Repeat("ab", 32), MediaType: "image/png", Bytes: 48213}
+	tr := newTranscript("task")
+	tr.addTurn(Turn{Tool: "screenshot", ActionBrief: "screenshot app", Obs: Observation{
+		Content: "captured", Elided: true, MediaRefs: []MediaRef{ref},
+	}})
+	got := tr.render()
+	if strings.Contains(got, ref.placeholder()) || strings.Contains(got, "image/png") {
+		t.Fatalf("elided turn must suppress media placeholders, got:\n%s", got)
+	}
+	if !strings.Contains(got, "[elided to save context]") {
+		t.Fatalf("elided turn must render the elision marker, got:\n%s", got)
+	}
+}
+
+// TestCompactPreservesPinnedMediaRefs drives compact() over a transcript whose
+// pinned turn carries MediaRefs: the pinned turn must survive un-elided with
+// its refs intact, while older media turns elide exactly like Content — the
+// "MediaRefs elidable unless pinned" contract falling out of the existing
+// Pinned/Elided machinery with no compaction code changes.
+func TestCompactPreservesPinnedMediaRefs(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.policy = CompactionPolicy{MaxChars: 800, KeepRecent: 2, ToolOutputMax: 400, SummarizeAfter: 4}
+	oldRef := MediaRef{ArtifactID: strings.Repeat("cd", 32), MediaType: "image/gif", Bytes: 10}
+	tr.addTurn(Turn{Tool: "screenshot", ActionBrief: "screenshot old", Obs: Observation{
+		Content: strings.Repeat("data ", 60), MediaRefs: []MediaRef{oldRef},
+	}})
+	for i := 0; i < 8; i++ {
+		tr.addTurn(Turn{Tool: "read", ActionBrief: "read f", Obs: Observation{Content: strings.Repeat("data ", 60)}})
+	}
+	pinnedRef := MediaRef{ArtifactID: strings.Repeat("ef", 32), MediaType: "image/png", Bytes: 48213}
+	tr.addTurn(Turn{Tool: "screenshot", ActionBrief: "screenshot app", Obs: Observation{
+		Content: "current failure screenshot", Pinned: true, MediaRefs: []MediaRef{pinnedRef},
+	}})
+	if receipt := tr.compact(func(string) (string, error) { return "SUMMARY", nil }); receipt == nil {
+		t.Fatal("fixture must trigger compaction")
+	}
+	got := tr.render()
+	if !strings.Contains(got, pinnedRef.placeholder()) {
+		t.Fatalf("pinned turn's media placeholder must survive compaction, got:\n%s", got)
+	}
+	if strings.Contains(got, oldRef.placeholder()) {
+		t.Fatalf("compacted-away turn's media placeholder must not survive, got:\n%s", got)
+	}
+	last := tr.Turns[len(tr.Turns)-1]
+	if last.Obs.Elided || len(last.Obs.MediaRefs) != 1 || last.Obs.MediaRefs[0] != pinnedRef {
+		t.Fatalf("pinned turn must keep its MediaRefs verbatim: %+v", last.Obs)
+	}
+}
+
+// TestPreimageHashStableWithoutMediaRefs guards audit-receipt continuity:
+// a media-free Turn must marshal with no media_refs key at all (omitempty on
+// a nil slice), so compactionPreimageHash — and therefore every existing
+// CompactionReceipt.PreimageSHA256 and checkpoint byte stream — is unchanged
+// by this field's existence. The golden hash freezes the preimage format for
+// this fixture; it may only change with a deliberate, audited format bump.
+func TestPreimageHashStableWithoutMediaRefs(t *testing.T) {
+	turns := []Turn{
+		{Index: 1, Thought: "inspect", Tool: "read", ActionBrief: "read a.go", Path: "a.go", Obs: Observation{Tool: "read", Content: "package a"}},
+		{Index: 2, Tool: "run", ActionBrief: "run [go test]", Obs: Observation{Content: "ok", Pinned: true}},
+	}
+	raw, err := json.Marshal(turns)
+	if err != nil {
+		t.Fatalf("marshal turns: %v", err)
+	}
+	if strings.Contains(string(raw), "media_refs") {
+		t.Fatalf("media-free turns must marshal without a media_refs key:\n%s", raw)
+	}
+	const golden = "3465d1245cc33b0553ace71bed25a979d9b40bab2308294570689564fea98847"
+	if got := compactionPreimageHash("prior summary", turns); got != golden {
+		t.Fatalf("compaction preimage hash changed for a media-free transcript:\ngot  %s\nwant %s", got, golden)
+	}
+}
+
+// TestCheckpointRoundTripPreservesMediaRefs proves the immutable .ckpts
+// history carries MediaRefs with zero runstore changes (serialization rides
+// the existing json.Marshal of *Transcript), and that a pre-existing
+// checkpoint JSON written before this field existed still decodes.
+func TestCheckpointRoundTripPreservesMediaRefs(t *testing.T) {
+	runs := newRunStore(filepath.Join(t.TempDir(), "state"))
+	ref := MediaRef{ArtifactID: strings.Repeat("ab", 32), MediaType: "image/webp", Bytes: 7, Origin: "paste"}
+	tr := newTranscript("task")
+	tr.addTurn(Turn{Tool: "screenshot", ActionBrief: "screenshot app", Obs: Observation{
+		Content: "captured", MediaRefs: []MediaRef{ref},
+	}})
+	if err := runs.saveCheckpointChecked("task-media", &runCheckpoint{Turn: 1, Transcript: tr}); err != nil {
+		t.Fatalf("saveCheckpointChecked: %v", err)
+	}
+	cp := runs.loadCheckpoint("task-media")
+	if cp == nil || cp.Transcript == nil || len(cp.Transcript.Turns) != 1 {
+		t.Fatalf("checkpoint did not round-trip: %+v", cp)
+	}
+	got := cp.Transcript.Turns[0].Obs.MediaRefs
+	if len(got) != 1 || got[0] != ref {
+		t.Fatalf("MediaRefs not preserved through checkpoint round-trip: %+v", got)
+	}
+	// The immutable per-turn history entry must carry them too.
+	if hist := runs.loadCheckpointTurn("task-media", 1); hist == nil || len(hist.Transcript.Turns[0].Obs.MediaRefs) != 1 {
+		t.Fatalf("per-turn history checkpoint lost MediaRefs: %+v", hist)
+	}
+	// Backward compat: a checkpoint written before media_refs existed decodes
+	// to turns with nil MediaRefs, not an error.
+	legacy := []byte(`{"turn":1,"transcript":{"Task":"old","Summary":"","Turns":[{"Index":1,"Thought":"","Tool":"read","ActionBrief":"read a.go","Path":"a.go","Obs":{"content":"package a"}}]}}`)
+	cp = decodeRunCheckpoint(legacy)
+	if cp == nil || len(cp.Transcript.Turns) != 1 {
+		t.Fatalf("legacy checkpoint without media_refs must decode: %+v", cp)
+	}
+	if cp.Transcript.Turns[0].Obs.MediaRefs != nil {
+		t.Fatalf("legacy checkpoint must decode with nil MediaRefs, got %+v", cp.Transcript.Turns[0].Obs.MediaRefs)
 	}
 }
 

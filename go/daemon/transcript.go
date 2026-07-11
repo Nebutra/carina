@@ -35,6 +35,12 @@ type Observation struct {
 	CompressedTokens  int      `json:"compressed_tokens,omitempty"`
 	SavingsPercent    float64  `json:"savings_percent,omitempty"`
 	Transforms        []string `json:"transforms,omitempty"`
+	// MediaRefs are content-addressed references (see media.go) to non-text
+	// media produced by this observation. Only the placeholder line ever
+	// reaches the model view (see render); raw bytes stay in the artifact
+	// store. omitempty keeps media-free turns byte-identical in checkpoints
+	// and compaction-receipt preimages to before this field existed.
+	MediaRefs []MediaRef `json:"media_refs,omitempty"`
 }
 
 // Turn is one model decision + its observation.
@@ -190,7 +196,14 @@ func (t *Transcript) render() string {
 	for _, turn := range t.Turns {
 		obs := turn.Obs.Content
 		if turn.Obs.Elided {
+			// Elision covers the whole observation, media placeholders
+			// included — "[elided to save context]" already accounts for them,
+			// exactly as it does for Content.
 			obs = "[elided to save context]"
+		} else {
+			for _, ref := range turn.Obs.MediaRefs {
+				obs += "\n" + ref.placeholder()
+			}
 		}
 		fmt.Fprintf(&b, "turn %d: %s\nobservation: %s\n\n", turn.Index, turn.ActionBrief, obs)
 	}
