@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -24,12 +25,18 @@ func main() {
 		log.Fatalf("carina-daemon: %v", err)
 	}
 
-	// Resolve the layered config (defaults → global → project → env). Flags,
-	// parsed below, are the final highest-precedence layer via their defaults.
+	// Resolve the layered config (defaults → managed → global → project → env,
+	// with managed-locked keys re-applied last). Flags, parsed below, are the
+	// final highest-precedence layer via their defaults — except keys locked by
+	// the managed file, where an explicitly-set flag is a startup error.
 	cwd, _ := os.Getwd()
-	cfg, err := config.Load(home, cwd)
+	managedPath := config.DefaultManagedPath()
+	cfg, locks, err := config.LoadWithManaged(home, cwd, managedPath)
 	if err != nil {
 		log.Fatalf("carina-daemon: %v", err)
+	}
+	if locks != nil && len(locks.Keys) > 0 {
+		log.Printf("carina-daemon: managed config %s locks keys: %s", locks.Source, strings.Join(locks.Keys, ", "))
 	}
 
 	stateDir := flag.String("state", cfg.StateDir, "session/event storage directory")
@@ -74,6 +81,13 @@ func main() {
 	// precedence layer across SIGHUP reloads (a reload must not clobber them).
 	pinned := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { pinned[f.Name] = true })
+
+	// Fail closed with provenance when an explicitly-set flag would override a
+	// managed-locked key: better an abort naming the lock's source than a
+	// silently ignored org policy or a silently ignored operator intent.
+	if err := validateLockedFlags(pinned, locks); err != nil {
+		log.Fatalf("carina-daemon: %v", err)
+	}
 
 	// Bridge the resolved summarizer model into the env the daemon reads, unless
 	// the operator already set it explicitly.
@@ -121,49 +135,54 @@ func main() {
 	}
 
 	// Config hot-reload: re-run the cascade and live-apply the reloadable subset,
-	// re-pinning any operator-set CLI flags so they remain highest-precedence.
+	// re-pinning any operator-set CLI flags so they remain highest-precedence —
+	// unless the (freshly re-read) managed file locks the key, in which case the
+	// lock re-applied inside LoadWithManaged wins across SIGHUP/auto-reload.
 	reload := func() error {
-		nc, err := config.Load(home, cwd)
+		nc, nlocks, err := config.LoadWithManaged(home, cwd, managedPath)
 		if err != nil {
 			return err
 		}
-		if pinned["max-task-tokens"] {
+		repin := func(flagName string) bool {
+			return pinned[flagName] && !nlocks.Locked(flagConfigKeys[flagName])
+		}
+		if repin("max-task-tokens") {
 			nc.MaxTaskTokens = *maxTokens
 		}
-		if pinned["interactive-approval"] {
+		if repin("interactive-approval") {
 			nc.InteractiveApproval = *interactiveApproval
 		}
-		if pinned["debug-rpc"] {
+		if repin("debug-rpc") {
 			nc.EnableDebugRPC = *enableDebugRPC
 		}
-		if pinned["risk-review-mode"] {
+		if repin("risk-review-mode") {
 			nc.RiskReviewMode = *riskReviewMode
 		}
-		if pinned["require-trust"] {
+		if repin("require-trust") {
 			nc.RequireWorkspaceTrust = *requireTrust
 		}
-		if pinned["sandbox"] {
+		if repin("sandbox") {
 			nc.SandboxCommands = *sandbox
 		}
-		if pinned["egress-allow"] {
+		if repin("egress-allow") {
 			nc.EgressAllow = splitList(*egressAllow)
 		}
-		if pinned["context-engine"] {
+		if repin("context-engine") {
 			nc.ContextEngine = *contextEngine
 		}
-		if pinned["headroom-bin"] {
+		if repin("headroom-bin") {
 			nc.HeadroomBin = *headroomBin
 		}
-		if pinned["headroom-state-dir"] {
+		if repin("headroom-state-dir") {
 			nc.HeadroomStateDir = *headroomStateDir
 		}
-		if pinned["headroom-mode"] {
+		if repin("headroom-mode") {
 			nc.HeadroomMode = *headroomMode
 		}
-		if pinned["headroom-proxy-port"] {
+		if repin("headroom-proxy-port") {
 			nc.HeadroomProxyPort = *headroomProxyPort
 		}
-		if pinned["headroom-token-budget"] {
+		if repin("headroom-token-budget") {
 			nc.HeadroomTokenBudget = *headroomTokenBudget
 		}
 		return d.ApplyConfig(nc)
@@ -172,7 +191,7 @@ func main() {
 
 	// Auto-reload: watch the config files and reload on change (complements
 	// SIGHUP for environments that can't signal the daemon).
-	watcher := config.NewWatcher(config.WatchPaths(home, cwd), 0, func() { // 0 => default 3s
+	watcher := config.NewWatcher(config.WatchPaths(home, cwd, managedPath), 0, func() { // 0 => default 3s
 		if err := reload(); err != nil {
 			log.Printf("carina-daemon: auto-reload failed (keeping last-good): %v", err)
 		} else {
@@ -229,6 +248,66 @@ func main() {
 	if err := d.Run(*socket); err != nil {
 		log.Fatalf("carina-daemon: %v", err)
 	}
+}
+
+// flagConfigKeys maps each CLI flag to the config-file key it overrides
+// (flags with no config counterpart, e.g. -safe-mode, are absent).
+var flagConfigKeys = map[string]string{
+	"state":                          "state_dir",
+	"socket":                         "socket",
+	"tcp":                            "tcp",
+	"gateway-http":                   "gateway_http",
+	"gateway-http-origins":           "gateway_http_origins",
+	"gateway-ws":                     "gateway_ws",
+	"gateway-ws-origins":             "gateway_ws_origins",
+	"gateway-token-signing-key-file": "gateway_token_signing_key_file",
+	"gateway-token-max-ttl":          "gateway_token_max_ttl_seconds",
+	"kernel":                         "kernel_bin",
+	"tools":                          "tools_dir",
+	"policy":                         "policy_dir",
+	"offline":                        "offline",
+	"max-concurrent":                 "max_concurrent_tasks",
+	"max-task-tokens":                "max_task_tokens",
+	"require-trust":                  "require_workspace_trust",
+	"sandbox":                        "sandbox_commands",
+	"egress":                         "enable_egress_proxy",
+	"egress-allow":                   "egress_allow",
+	"interactive-approval":           "interactive_approval",
+	"debug-rpc":                      "enable_debug_rpc",
+	"risk-review-mode":               "risk_review_mode",
+	"risk-review-model":              "risk_review_model",
+	"nebutra-cloud":                  "nebutra_cloud_endpoint",
+	"nebutra-sync-mode":              "nebutra_sync_mode",
+	"context-engine":                 "context_engine",
+	"headroom-bin":                   "headroom_bin",
+	"headroom-state-dir":             "headroom_state_dir",
+	"headroom-mode":                  "headroom_mode",
+	"headroom-proxy-port":            "headroom_proxy_port",
+	"headroom-token-budget":          "headroom_token_budget",
+}
+
+// validateLockedFlags fails closed when an explicitly-set CLI flag collides
+// with a managed-locked config key, naming both the key and the managed file
+// so the operator sees exactly which policy blocked the override.
+func validateLockedFlags(pinned map[string]bool, locks *config.LockReport) error {
+	if locks == nil {
+		return nil
+	}
+	names := make([]string, 0, len(pinned))
+	for name := range pinned {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		key, ok := flagConfigKeys[name]
+		if !ok {
+			continue
+		}
+		if locks.Locked(key) {
+			return fmt.Errorf("flag -%s overrides config key %q locked by managed config %s", name, key, locks.Source)
+		}
+	}
+	return nil
 }
 
 func validateListenerSecurity(tcpAddr, gatewayWSAddr, gatewayTokenSigningKeyFile string) error {
