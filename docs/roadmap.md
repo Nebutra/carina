@@ -52,9 +52,10 @@ Audited 2026-07-12. Secret values must never be committed to this repository.
 | --- | --- | --- |
 | Homebrew tap | Ready | The repository secret `HOMEBREW_TAP_DEPLOY_KEY` exists, and the writable deploy key is verified on `Nebutra/homebrew-tap`. |
 | Apple signing and notarization | Blocked | Create the protected GitHub `codesigning` environment, add all six required secrets, and approve the first two-architecture signing deployment. |
-| npm trusted publishing | Blocked | The launcher and native packages are not yet present in npm, the local machine is not authenticated to npm, and the GitHub `npm-release` environment has not been created. |
+| npm trusted publishing | Blocked | The launcher and native packages are not yet present in npm, the GitHub `npm-release` environment has not been created, and the five trusted-publisher bindings are not confirmed. |
 
-Apple release provisioning requires these GitHub repository secrets:
+Apple release provisioning requires these GitHub `codesigning` environment
+secrets:
 
 - `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`;
 - `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`;
