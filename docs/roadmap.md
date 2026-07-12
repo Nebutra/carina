@@ -8,7 +8,9 @@ channel. This roadmap records intended product direction, not committed dates.
 Today:
 
 - source build from Git with `make all`;
-- local release gate with `make release-check`;
+- CI-equivalent technical release gate with `make release-check`;
+- structured local readiness report with `make release-preflight`, and strict
+  online external readiness enforcement with `make release-ready`;
 - current-platform release candidate archives with `make release-package`;
 - local binaries under `bin/`;
 - local archives, checksums, and manifests under `dist/`;
@@ -16,8 +18,8 @@ Today:
 - official `Nebutra/homebrew-tap` Formula with install/upgrade smoke tests;
 - verified, writable `Carina release workflow` deploy key for
   `Nebutra/homebrew-tap`;
-- Linux `amd64` and `arm64` archive jobs with checksums, SBOMs, provenance,
-  and packaged-daemon SDK conformance;
+- Linux `amd64` and `arm64` archive jobs with checksums, provenance, and
+  packaged-daemon SDK conformance;
 - npm launcher and native platform package assembly with OIDC trusted
   publishing and provenance support;
 - operator session review, channel crash reconciliation, artifact inspection,
@@ -49,7 +51,7 @@ Audited 2026-07-12. Secret values must never be committed to this repository.
 | Channel | Readiness | Remaining external work |
 | --- | --- | --- |
 | Homebrew tap | Ready | The repository secret `HOMEBREW_TAP_DEPLOY_KEY` exists, and the writable deploy key is verified on `Nebutra/homebrew-tap`. |
-| Apple signing and notarization | Blocked | No local Developer ID identity or certificate export was found, and all six required GitHub repository secrets are absent. |
+| Apple signing and notarization | Blocked | Create the protected GitHub `codesigning` environment, add all six required secrets, and approve the first two-architecture signing deployment. |
 | npm trusted publishing | Blocked | The launcher and native packages are not yet present in npm, the local machine is not authenticated to npm, and the GitHub `npm-release` environment has not been created. |
 
 Apple release provisioning requires these GitHub repository secrets:
@@ -60,6 +62,11 @@ Apple release provisioning requires these GitHub repository secrets:
 - `APPLE_NOTARY_APPLE_ID`;
 - `APPLE_NOTARY_TEAM_ID`;
 - `APPLE_NOTARY_PASSWORD`.
+
+Store or expose these secrets only through the protected `codesigning`
+environment used by the native macOS build matrix. Configure required
+reviewers before the first tag so signing credentials are not available to an
+unapproved job.
 
 The certificate must be a Developer ID Application certificate with its
 private key exported as PKCS#12. `APPLE_NOTARY_PASSWORD` must be an app-specific
@@ -74,12 +81,17 @@ The npm bootstrap sequence is:
 2. Create the `npm-release` environment in `Nebutra/carina`.
 3. Bind every package's npm trusted publisher to organization `Nebutra`,
    repository `carina`, workflow `release.yml`, and environment `npm-release`.
-4. Perform the first tag publication with GitHub OIDC and
+4. Set repository variable `NPM_TRUSTED_PUBLISHERS_CONFIRMED=true` only after
+   verifying all five bindings.
+5. Perform the first tag publication with GitHub OIDC and
    `npm publish --provenance`; do not add a long-lived `NPM_TOKEN` fallback.
 
 Release-channel acceptance criteria:
 
 - `make release-check` passes on a clean release machine;
+- `make release-ready` reports zero `FAIL` and zero `BLOCKED` gates; its JSON
+  report distinguishes missing external credentials from skipped
+  platform-specific checks;
 - artifacts are signed or have published checksums before public promotion;
 - Homebrew install, npm global install, and source install each have a smoke
   test;
@@ -88,6 +100,11 @@ Release-channel acceptance criteria:
 - installed CLI help uses only `carina` naming;
 - uninstall instructions remove binaries, service files, and local state
   locations clearly.
+
+The technical pipeline is implemented, but implementation is not publication.
+Until the credentialed tag workflow produces Accepted Apple notary JSON for
+both Darwin archives and completes npm OIDC publication, those channels remain
+blocked in the table above.
 
 ## Product Polish
 

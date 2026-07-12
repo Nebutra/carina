@@ -5,5 +5,5 @@
   "license": "MIT",
   "os": ["__PLATFORM__"],
   "cpu": ["__NPM_ARCH__"],
-  "files": ["bin", "SHA256SUMS", "SBOM.spdx.json", "provenance.json"]
+  "files": ["bin", "SHA256SUMS", "SBOM.spdx.json"]
 }

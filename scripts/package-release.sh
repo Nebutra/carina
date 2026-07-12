@@ -136,7 +136,7 @@ if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
     warnings+=("SKIP_ZIG=1: reused existing zig/zig-out/bin/carina-* artifacts without rebuilding Zig tools")
   else
     printf '==> build Zig native tools\n'
-    (cd zig && ../scripts/zig-tool.sh build)
+    "$ROOT/scripts/build-zig-tools.sh"
   fi
 else
   printf '==> SKIP_BUILD=1: packaging existing local artifacts\n'

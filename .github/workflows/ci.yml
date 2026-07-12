@@ -9,8 +9,10 @@ jobs:
   windows-worker-contract:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: "1.25"
       - name: Windows worker containment contract
@@ -22,36 +24,39 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: "1.25"
 
       - name: Set up Node for TypeScript SDK conformance
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: sdk/typescript/package-lock.json
 
       - name: Set up Python for Python SDK conformance
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.96.1"
 
       - name: Set up Zig
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: 0.15.1
 
       - name: Build Zig native tools
-        working-directory: zig
-        run: zig build
+        run: ./scripts/build-zig-tools.sh
 
       - name: Cargo test (capability kernel)
         run: cargo test --workspace
@@ -126,12 +131,20 @@ jobs:
       - name: Validate Homebrew formula template
         run: bash scripts/test-homebrew-formula.sh
 
+      - name: Release preflight contracts and failure classification
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          PATH="$(go env GOPATH)/bin:$PATH" actionlint .github/workflows/ci.yml .github/workflows/release.yml
+          PATH="$(go env GOPATH)/bin:$PATH" make release-preflight-test
+
   no-node-runtime:
     # Proves the runtime needs no Node: a clean container without node/npm.
     runs-on: ubuntu-latest
     container: debian:bookworm-slim
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: Assert no Node present
         run: |
           ! command -v node && ! command -v npm && echo "no node/npm in image"

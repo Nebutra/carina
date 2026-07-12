@@ -1,4 +1,4 @@
-.PHONY: all go rust zig sdk-ts test rust-test go-test bench-gate-test release-check release-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
+.PHONY: all go rust zig sdk-ts test rust-test go-test bench-gate-test release-check release-preflight release-ready release-preflight-test release-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
 
 all: go rust zig
 
@@ -25,13 +25,22 @@ rust:
 	cargo check --workspace
 
 zig:
-	cd zig && ../scripts/zig-tool.sh build
+	./scripts/build-zig-tools.sh
 
 sdk-ts:
 	cd sdk/typescript && npm install && npm run build
 
 release-check:
 	./scripts/release-check.sh
+
+release-preflight:
+	./scripts/release-preflight.sh
+
+release-ready:
+	./scripts/release-preflight.sh --strict --online
+
+release-preflight-test:
+	./scripts/test-release-preflight.sh
 
 release-package:
 	./scripts/package-release.sh

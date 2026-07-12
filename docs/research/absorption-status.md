@@ -547,29 +547,29 @@ branches PENDING MERGE, 1 already covered — nothing in this wave is on main ye
   branch cut to avoid the then-in-flight merge surface, and those branches
   await merge to main. Honest framing: until merged, these gaps are closed on
   branches, not in the product.
-- [ ] **Multi-tier compaction** (verbatim-user preservation + v2 receipt +
+- [x] **Multi-tier compaction** (verbatim-user preservation + v2 receipt +
   deterministic `keyFiles()` substrate; Part-B reinjection scoped out) —
   branch `feat/absorb-multi-tier-compaction` @ `d1f7478657f0`, merged to main 2026-07-12.
-- [ ] **Managed-locked config keys** (`go/config/managed.go`,
+- [x] **Managed-locked config keys** (`go/config/managed.go`,
   `/etc/carina/managed.json`, fail-closed lock validation + flag-collision
   abort + tighten-only re-apply; project-source-filtering half stays dead per
   the conceded `trustStore` objection) — branch
   `feat/absorb-setting-source-allowlist` @ `0984bdb3e892`, merged to main 2026-07-12.
-- [ ] **Tri-level extension enable-merge** (safe_mode > org > project > user;
+- [x] **Tri-level extension enable-merge** (safe_mode > org > project > user;
   org tier from `<PolicyDir>/extensions.json`, project tier disable-only and
   never persisted; git-marketplace/signing half stays rejected) — branch
   `feat/absorb-plugin-bundles-marketplace` @ `5e4a7ac16a92`, merged to main 2026-07-12.
-- [ ] **Versioned state stamping + quarantine-not-delete** (new leaf
+- [x] **Versioned state stamping + quarantine-not-delete** (new leaf
   `go/statefmt` wired into the three object-envelope stores; fixes
   `usage.go`'s destroy-on-future-version defect; bare-array stores excluded
   as a breaking shape change; upgrade-ladder still correctly deferred) —
   branch `feat/absorb-state-migration` @ `32f0023e0300`, merged to main 2026-07-12.
-- [ ] **MCP-scoped tool search** (`mcp_find`: stateless weighted token-overlap
+- [x] **MCP-scoped tool search** (`mcp_find`: stateless weighted token-overlap
   over name/description/schema, hidden-server exclusion, full `InputSchema`
   on demand — schema-on-demand correctness, since `NamespacedTool` strips all
   MCP schemas today; health-gated pool assembly excised) — branch
   `feat/absorb-tool-pool-toolsearch` @ `e0a82b57bd91`, merged to main 2026-07-12.
-- [ ] **MediaRef image plumbing** (`go/daemon/media.go` + `Observation.MediaRefs`;
+- [x] **MediaRef image plumbing** (`go/daemon/media.go` + `Observation.MediaRefs`;
   bytes-never-in-prompt by construction with regression tests for the invariant
   Claude Code shipped broken twice; no live vision wiring, delete-if-unproduced
   kill criterion recorded) — branch `feat/absorb-content-block-images` @

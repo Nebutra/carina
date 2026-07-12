@@ -11,10 +11,14 @@ Publish checklist:
 2. Run `VERSION=<version> make release-package` for each supported platform.
 3. Verify archive checksums.
 4. Build each package from `platform-package.json.template`, including native
-   binaries, `SHA256SUMS`, SPDX SBOM, and provenance statement.
-5. Publish platform packages before the launcher package.
-6. Smoke test `npm pack` and a global install from the packed tarballs.
-7. Publish only after the release assets are attested and checksummed.
+   binaries (the five services/CLIs and all six Zig tools), `SHA256SUMS`, and
+   an SPDX SBOM. Do not put a self-asserted provenance statement in the tarball.
+5. Publish platform packages before the launcher package with
+   `npm publish --provenance`; npm's OIDC flow creates the provenance evidence.
+6. Freeze all five tarballs in one checksum-verified GitHub draft-release
+   bundle before the first npm publish. Every retry must reuse that bundle.
+7. Smoke test `npm pack` and an offline global install from the packed tarballs.
+8. Publish only after the release assets are attested and checksummed.
 
 The files here are release inputs; their presence does not mean the npm package
 has already been published.

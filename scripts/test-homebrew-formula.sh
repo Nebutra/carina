@@ -24,4 +24,12 @@ if grep -Eq '__[A-Z0-9_]+__' "$formula"; then
   exit 1
 fi
 
+"$ROOT/scripts/check-homebrew-version.sh" "" 0.6.2
+"$ROOT/scripts/check-homebrew-version.sh" 0.6.2 0.6.2
+"$ROOT/scripts/check-homebrew-version.sh" 0.6.1 0.6.2
+if "$ROOT/scripts/check-homebrew-version.sh" 0.7.0 0.6.2 >/dev/null 2>&1; then
+  echo "test-homebrew-formula: downgrade was accepted" >&2
+  exit 1
+fi
+
 printf 'test-homebrew-formula: ok\n'

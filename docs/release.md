@@ -13,22 +13,79 @@ Before tagging or publishing anything from this repository, run:
 make release-check
 ```
 
-The script validates:
+This is the same technical gate used by the tag workflow. It is strict: a
+failed gate or an unclean/out-of-sync release source returns non-zero. It
+validates:
 
-- Go app builds;
-- Rust workspace checks/tests;
-- Zig native tool build;
-- Go package tests;
-- targeted race coverage for the daemon/config control plane;
-- Homebrew Formula template rendering.
+- pinned Go 1.25, Rust 1.96.1, Node 24, Python 3.12, and Zig 0.15.1 toolchains;
+- locally installed `actionlint` 1.7.12 for the offline workflow gate (strict
+  online mode may fetch that exact Go module when the binary is absent);
+- product/package/workflow version agreement and workflow lint;
+- Go app builds, vet, application tests, and runtime race tests;
+- Rust workspace and release kernel builds/tests;
+- Go, Python, and TypeScript SDK conformance;
+- VS Code, web, npm launcher, native acceptance, and benchmark gates;
+- current-platform archive manifest/checksums and packaged-daemon conformance;
+- exact four-platform release-asset and five-package npm assembly, frozen
+  bundle, and offline global-install contracts;
+- Homebrew Formula rendering/install where the host supports it;
+- signing/notarization automation dry-run behavior.
+
+Carina compiles its six Zig tools directly with the pinned compiler instead of
+using Zig's host build runner. On macOS the tools target macOS 13.0 or later;
+this keeps local builds working on newer macOS releases even when Zig 0.15.1's
+host runner cannot link against the newest SDK.
+
+The local Homebrew install/upgrade gate is reported as `BLOCKED` when the
+machine's Command Line Tools are older than Homebrew's current minimum. That is
+a host prerequisite, not a product test failure; release CI still runs the
+same temporary-tap test on both supported macOS architectures.
+
+For a developer-readable report that records missing Apple/npm prerequisites
+without stopping after `BLOCKED`, run:
+
+```bash
+make release-preflight
+```
+
+For final release readiness, including read-only GitHub/npm prerequisite
+checks, run:
+
+```bash
+make release-ready
+```
+
+The normal developer preflight is offline. `make release-ready` opts into
+read-only GitHub/npm queries; neither mode invokes a publication API. Accepted
+notary JSON is a post-build/pre-publish evidence gate, so a source-tree
+preflight reports it as `SKIP`, while the tag workflow requires it before
+creating the GitHub Release.
+
+Every mode writes `dist/release-preflight.json` plus per-gate logs. Statuses
+mean:
+
+- `PASS`: the gate executed and its evidence matched;
+- `FAIL`: a technical check failed; every mode exits 1;
+- `BLOCKED`: required release state or external configuration is absent;
+  developer preflight continues, while strict mode exits 2;
+- `SKIP`: the gate is inapplicable on this host or was explicitly excluded,
+  never a substitute for a required credential.
+
+These commands never push, tag, publish, sign with dummy credentials, or call
+Apple/npm publication endpoints.
 
 Manual equivalent:
 
 ```bash
 make all
-go test ./go/... ./apps/...
-cargo test
-go test -race ./go/daemon ./go/config ./apps/carina-daemon
+cargo build --release -p carina-kernel --bin carina-kernel-service
+CARINA_KERNEL_BIN="$PWD/target/release/carina-kernel-service" go test -race ./go/...
+CARINA_KERNEL_BIN="$PWD/target/release/carina-kernel-service" go test ./apps/...
+cargo test --workspace
+go test -race ./sdk/go
+(cd sdk/typescript && npm ci && npm test)
+(cd integrations/vscode && npm ci && npm test)
+./scripts/test-platform-packaging.sh
 ```
 
 ## Local Release Package
@@ -139,18 +196,34 @@ Pushing a tag matching `v<major>.<minor>.<patch>` runs
 - builds native macOS and Linux archives for `arm64` and `amd64`;
 - starts the daemon from each packaged archive and runs the Go, Python, and
   TypeScript read-only conformance contract against its Unix socket;
+- freezes the four native npm packages plus launcher as one checksum-verified
+  bundle on a draft GitHub Release before the first registry write. Full and
+  partial reruns reuse those exact tarballs even when Apple timestamped signing
+  would make a rebuilt archive byte-different;
 - publishes the four native npm packages before the launcher using npm trusted
-  publishing and provenance. A rerun accepts an existing package only when its
-  registry integrity digest exactly matches the locally packed tarball;
+  publishing and provenance. Existing registry packages must match the frozen
+  tarball integrity exactly;
+- keeps self-asserted provenance out of npm tarballs: package checksums and
+  deterministic SBOMs are generated with pinned Syft 1.46.0, while provenance is created only by
+  `npm publish --provenance` through the registry's OIDC flow;
 
-- requires the tag version to match the CLI version and the tag commit to be on
-  `main`;
+- requires the tag version to match the CLI version and the tag commit to equal
+  `origin/main` exactly;
+- verifies the `npm-release` environment, all five package bootstrap entries,
+  and the Homebrew deploy key before public artifacts are promoted;
 - builds on native Apple Silicon and Intel GitHub-hosted runners;
 - installs each archive through a temporary Homebrew tap and runs `brew test`;
 - publishes archives, per-archive checksums, and `SHA256SUMS`;
 - creates GitHub build provenance attestations;
-- renders and pushes `Formula/carina.rb` to `Nebutra/homebrew-tap` through a
+- serializes all tag versions through one Homebrew tap update group, refreshes
+  `main`, refuses Formula downgrades, then pushes `Formula/carina.rb` through a
   repository-scoped SSH deploy key.
+
+Once the draft becomes public, all 14 release assets are immutable. A full
+workflow rerun downloads and verifies the existing native archives, signing
+evidence, checksum manifest, and frozen npm bundle instead of overwriting them.
+The Homebrew Formula always derives its checksums from that public Release, so
+a retry cannot point the tap at newly rebuilt bytes.
 
 The release is rejected before publication if either architecture fails to
 build or install.
@@ -158,8 +231,8 @@ build or install.
 ### Apple signing and notarization
 
 Tag releases are fail-closed on Apple release credentials. Before either
-architecture starts building, the workflow requires all of these repository
-secrets:
+architecture starts building, the workflow requires all of these protected
+`codesigning` environment secrets:
 
 - `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`: base64-encoded PKCS#12 export of
   the Developer ID Application certificate and private key;
@@ -170,6 +243,15 @@ secrets:
 - `APPLE_NOTARY_APPLE_ID`: Apple ID used for the notary service;
 - `APPLE_NOTARY_TEAM_ID`: ten-character Apple Developer team ID;
 - `APPLE_NOTARY_PASSWORD`: app-specific password for the notary Apple ID.
+
+The macOS build matrix is bound to the protected `codesigning` GitHub
+environment. That environment must exist and should require reviewers before
+these secrets are exposed to either architecture job.
+
+After configuring the five npm trusted-publisher bindings, set the non-secret
+repository variable `NPM_TRUSTED_PUBLISHERS_CONFIRMED=true`. The tag workflow
+checks this attestation before expensive build/signing work; the registry's
+OIDC publication and provenance remain the authoritative runtime proof.
 
 For example, encode the certificate locally without committing it:
 
@@ -226,7 +308,8 @@ injects versioned release URLs and both architecture checksums.
 ## Not Yet Implemented
 
 - hosted installer;
-- published npm install package;
+- first public npm trusted-publisher release (the launcher/native package
+  assembly and OIDC workflow are implemented);
 - SBOM publication and provenance verification documentation;
 - Linuxbrew path (Linux release archives are already built,
   conformance-tested, attested, and published by the tag workflow);
