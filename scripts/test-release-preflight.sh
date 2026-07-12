@@ -24,6 +24,11 @@ data = json.load(open(sys.argv[1]))
 for gate in data.get("gates", []):
     if gate.get("status") == "FAIL":
         print(f'{gate["gate"]}: {gate["detail"]} log={gate.get("log")}')
+        if gate.get("log"):
+            try:
+                print(open(gate["log"], encoding="utf-8").read())
+            except OSError as error:
+                print(f"cannot read gate log: {error}")
 PY
 }
 
