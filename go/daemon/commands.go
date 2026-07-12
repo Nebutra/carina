@@ -15,7 +15,7 @@ type CommandSpec struct {
 	Agent       string
 	Model       string
 	Template    string
-	Source      string // "built-in" | "user" | "project" | "mcp"
+	Source      string // "built-in" | "user" | "project" | "skill" | "mcp"
 	Subtask     bool
 	Hints       []string
 	MCPServer   string

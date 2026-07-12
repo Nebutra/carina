@@ -317,6 +317,13 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		b.WriteString("Use {\"tool\":\"mcp_find\",\"query\":\"free text\"} to search these MCP tools and fetch their full input schemas before calling one.\n")
 		sysPrompt += b.String()
 	}
+	// Skills use progressive disclosure: a bounded metadata catalog is always
+	// available, while only explicitly mentioned (or strictly opted-in,
+	// trigger-matched) bodies enter this task's stable prompt prefix. Selection
+	// is local and deterministic; it never adds a classifier/model call.
+	if skills := buildDynamicSkillPrompt(sess.WorkspaceRoot, task.UserPrompt, d.commandSpecs(sess.WorkspaceRoot), d.safeMode); skills != "" {
+		sysPrompt += "\n\n" + skills
+	}
 
 	for turn := startTurn; turn <= maxAgentTurns; turn++ {
 		if t, ok := d.sched.Get(task.TaskID); ok && t.Status == "cancelled" {

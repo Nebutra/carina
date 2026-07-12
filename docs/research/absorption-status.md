@@ -609,8 +609,15 @@ branches PENDING MERGE, 1 already covered — nothing in this wave is on main ye
   text-only reasoners silently degrade to the placeholders already in the
   transcript. Raw bytes remain unrepresentable in transcript, checkpoint,
   and audit payloads by construction. The bundled "context-aware dynamic
-  skill prompts" half was split into its own checklist line and remains
-  open (prompt-assembly work, distinct capability).
+  skill prompts" half is now also closed in `go/daemon/skill_prompts.go`:
+  bounded deterministic metadata stays in the task's stable prompt prefix;
+  full bodies load only for explicit `$name`/unambiguous `/name` invocation
+  or an operator-enabled exact declared trigger; existing slash commands win
+  collisions; safe mode, disabled/malformed skills, and invocation policy
+  fail closed with model-visible warnings. Selection is local and adds no
+  model/API call. `go/daemon/skill_prompts_test.go` covers explicit, implicit,
+  disabled, over-budget, no-match, collision, malformed, and cache-stability
+  behavior.
 
 ## ✅ Remaining
 

@@ -9,6 +9,16 @@ import (
 
 func (d *Daemon) commandSpecs(workspaceRoot string) map[string]*CommandSpec {
 	specs := loadCommandSpecs(workspaceRoot)
+	if d != nil && !d.safeMode {
+		for name, skill := range loadSkillSpecs(workspaceRoot) {
+			if _, exists := specs[name]; exists {
+				continue
+			}
+			if command := skillCommandSpec(skill); command != nil {
+				specs[name] = command
+			}
+		}
+	}
 	if d == nil || d.mcp == nil {
 		return specs
 	}

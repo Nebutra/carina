@@ -274,6 +274,33 @@ Built-ins include `build`, `plan`, `general`, and `explore`. User and project
 overrides live under `~/.carina/agents`, `<repo>/.carina/agents`,
 `~/.carina/commands`, and `<repo>/.carina/commands`.
 
+Prompt skills use progressive disclosure. Put a skill in
+`~/.carina/skills/<name>/SKILL.md` or
+`<repo>/.carina/skills/<name>/SKILL.md`, then invoke it explicitly as `$name`
+inside a task or as `/name` when no existing slash command has that name.
+Existing commands always win collisions. Example:
+
+```markdown
+---
+name: security-review
+description: Review a change for concrete security risks.
+when-to-use: Authentication, authorization, secrets, or untrusted input.
+user-invocable: true
+implicit-invocation: true
+triggers: [security audit, threat model]
+allowed-tools: [read, search]
+---
+Inspect the requested change. Trace each finding from source to sink and cite
+the affected files.
+```
+
+Only bounded metadata is always present in the model prompt; the full body is
+loaded for an explicit mention. Implicit matching is off by default and uses
+only exact declared triggers when enabled with
+`CARINA_IMPLICIT_SKILL_PROMPTS=true`. Disable skills fail-closed with
+`CARINA_DISABLED_SKILLS=name-a,name-b`. `allowed-tools` is non-granting
+guidance: the selected agent profile and capability kernel remain authoritative.
+
 ### Embedding
 
 Use JSON-RPC, SDKs, or MCP server mode when Carina should sit behind another UI:
