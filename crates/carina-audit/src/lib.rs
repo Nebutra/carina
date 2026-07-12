@@ -126,7 +126,11 @@ pub struct Event {
 }
 
 impl Event {
-    pub fn new(session_id: impl Into<String>, event_type: EventType, payload: serde_json::Value) -> Self {
+    pub fn new(
+        session_id: impl Into<String>,
+        event_type: EventType,
+        payload: serde_json::Value,
+    ) -> Self {
         Self {
             event_id: new_event_id(),
             session_id: session_id.into(),
@@ -178,6 +182,8 @@ pub enum AuditError {
     Io(#[from] std::io::Error),
     #[error("audit serialization: {0}")]
     Serde(#[from] serde_json::Error),
+    #[error("audit log is poisoned after a failed append; reopen it before retrying")]
+    Poisoned,
 }
 
 /// The result of verifying a session's hash chain.
@@ -195,14 +201,17 @@ pub struct VerifyReport {
 /// Append-only, hash-chained JSONL audit log for a single session.
 pub struct AuditLog {
     path: PathBuf,
-    /// Chain head and length are updated atomically for each append so callers
-    /// can use the returned length as the exclusive raw audit cursor.
+    /// Chain state and the file handle share one append critical section.
     state: Mutex<AuditState>,
 }
 
 struct AuditState {
     last_hash: String,
     event_count: usize,
+    file: std::fs::File,
+    poisoned: bool,
+    #[cfg(test)]
+    fail_next_persist: bool,
 }
 
 impl AuditLog {
@@ -211,24 +220,30 @@ impl AuditLog {
     /// after a restart.
     pub fn open(dir: &Path, session_id: &str) -> Result<Self, AuditError> {
         std::fs::create_dir_all(dir)?;
-        let log = Self {
-            path: dir.join(format!("{session_id}.events.jsonl")),
-            state: Mutex::new(AuditState {
-                last_hash: GENESIS_HASH.to_string(),
-                event_count: 0,
-            }),
-        };
-        // Recover the chain head from the last event on disk.
-        let events = log.read_all()?;
-        let mut state = log.state.lock().unwrap();
-        state.event_count = events.len();
+        let path = dir.join(format!("{session_id}.events.jsonl"));
+        // Recover the chain head before opening the persistent append handle.
+        let events = read_all_from(&path)?;
+        let mut last_hash = GENESIS_HASH.to_string();
         if let Some(last) = events.last() {
             if !last.event_hash.is_empty() {
-                state.last_hash = last.event_hash.clone();
+                last_hash = last.event_hash.clone();
             }
         }
-        drop(state);
-        Ok(log)
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        // Retrying open must also retry directory durability if an earlier
+        // attempt created the file but failed before syncing its directory.
+        sync_parent_dir(&path)?;
+        Ok(Self {
+            path,
+            state: Mutex::new(AuditState {
+                last_hash,
+                event_count: events.len(),
+                file,
+                poisoned: false,
+                #[cfg(test)]
+                fail_next_persist: false,
+            }),
+        })
     }
 
     /// Appends one event, linking it into the hash chain. The log is never
@@ -238,18 +253,33 @@ impl AuditLog {
     }
 
     /// Appends one event and returns the exclusive raw audit cursor (the
-    /// number of durable events after this append).
+    /// number of durable events after this append) — "durable" now actually
+    /// means fsynced, not merely handed to the OS's write() buffer.
     pub fn append_with_cursor(&self, event: &Event) -> Result<usize, AuditError> {
         let mut state = self.state.lock().unwrap();
+        if state.poisoned {
+            return Err(AuditError::Poisoned);
+        }
         let prev = state.last_hash.clone();
         let mut linked = event.clone();
         linked.prev_hash = prev.clone();
         linked.event_hash = linked.compute_hash(&prev);
 
-        let mut file = OpenOptions::new().create(true).append(true).open(&self.path)?;
         let line = serde_json::to_string(&linked)?;
-        file.write_all(line.as_bytes())?;
-        file.write_all(b"\n")?;
+        #[cfg(test)]
+        let persisted = if std::mem::take(&mut state.fail_next_persist) {
+            Err(std::io::Error::other("injected audit persist failure"))
+        } else {
+            persist_line(&mut state.file, &line)
+        };
+        #[cfg(not(test))]
+        let persisted = persist_line(&mut state.file, &line);
+        if let Err(error) = persisted {
+            // A failed write or fsync can leave unknown bytes on disk. Do not
+            // compute another event from a stale in-memory chain head.
+            state.poisoned = true;
+            return Err(error.into());
+        }
 
         state.last_hash = linked.event_hash;
         state.event_count += 1;
@@ -258,19 +288,7 @@ impl AuditLog {
 
     /// Replays the full event stream in append order.
     pub fn read_all(&self) -> Result<Vec<Event>, AuditError> {
-        if !self.path.exists() {
-            return Ok(vec![]);
-        }
-        let reader = BufReader::new(std::fs::File::open(&self.path)?);
-        let mut events = Vec::new();
-        for line in reader.lines() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            events.push(serde_json::from_str(&line)?);
-        }
-        Ok(events)
+        read_all_from(&self.path)
     }
 
     /// Recomputes the chain and reports the first tampering, if any
@@ -318,6 +336,41 @@ impl AuditLog {
     }
 }
 
+fn persist_line(file: &mut std::fs::File, line: &str) -> Result<(), std::io::Error> {
+    file.write_all(line.as_bytes())?;
+    file.write_all(b"\n")?;
+    file.sync_all()
+}
+
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) -> Result<(), std::io::Error> {
+    Ok(())
+}
+
+fn read_all_from(path: &Path) -> Result<Vec<Event>, AuditError> {
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let reader = BufReader::new(std::fs::File::open(path)?);
+    let mut events = Vec::new();
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        events.push(serde_json::from_str(&line)?);
+    }
+    Ok(events)
+}
+
 fn short(h: &str) -> String {
     h.chars().take(12).collect()
 }
@@ -337,7 +390,10 @@ mod tests {
 
     fn tmp(name: &str) -> PathBuf {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let n = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         std::env::temp_dir().join(format!("carina-audit-{name}-{}-{n:x}", std::process::id()))
     }
 
@@ -345,14 +401,19 @@ mod tests {
     fn append_then_replay_roundtrip() {
         let dir = tmp("roundtrip");
         let log = AuditLog::open(&dir, "sess_test").unwrap();
-        let ev = Event::new("sess_test", EventType::TaskCreated, serde_json::json!({"task_id": "task_1"}));
+        let ev = Event::new(
+            "sess_test",
+            EventType::TaskCreated,
+            serde_json::json!({"task_id": "task_1"}),
+        );
         log.append(&ev).unwrap();
         let events = log.read_all().unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, EventType::TaskCreated);
         assert!(!events[0].event_hash.is_empty());
         assert_eq!(events[0].prev_hash, GENESIS_HASH);
-        std::fs::remove_dir_all(&dir).ok();
+        drop(log);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -368,7 +429,8 @@ mod tests {
         let reopened = AuditLog::open(&dir, "cursor").unwrap();
         let three = Event::new("cursor", EventType::TaskCreated, serde_json::json!({}));
         assert_eq!(reopened.append_with_cursor(&three).unwrap(), 3);
-        std::fs::remove_dir_all(&dir).ok();
+        drop(reopened);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -376,12 +438,18 @@ mod tests {
         let dir = tmp("intact");
         let log = AuditLog::open(&dir, "s").unwrap();
         for i in 0..5 {
-            log.append(&Event::new("s", EventType::FileRead, serde_json::json!({"i": i}))).unwrap();
+            log.append(&Event::new(
+                "s",
+                EventType::FileRead,
+                serde_json::json!({"i": i}),
+            ))
+            .unwrap();
         }
         let report = log.verify().unwrap();
         assert!(report.ok, "{:?}", report.reason);
         assert_eq!(report.event_count, 5);
-        std::fs::remove_dir_all(&dir).ok();
+        drop(log);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -390,7 +458,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let log = AuditLog::open(&dir, "s").unwrap();
         for i in 0..4 {
-            log.append(&Event::new("s", EventType::CommandStarted, serde_json::json!({"cmd": i}))).unwrap();
+            log.append(&Event::new(
+                "s",
+                EventType::CommandStarted,
+                serde_json::json!({"cmd": i}),
+            ))
+            .unwrap();
         }
         // Rewrite the file with a mutated middle event.
         let mut events = log.read_all().unwrap();
@@ -405,7 +478,8 @@ mod tests {
         let report = log.verify().unwrap();
         assert!(!report.ok);
         assert_eq!(report.broken_at, Some(2));
-        std::fs::remove_dir_all(&dir).ok();
+        drop(log);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -413,7 +487,12 @@ mod tests {
         let dir = tmp("delete");
         let log = AuditLog::open(&dir, "s").unwrap();
         for i in 0..4 {
-            log.append(&Event::new("s", EventType::FileRead, serde_json::json!({"i": i}))).unwrap();
+            log.append(&Event::new(
+                "s",
+                EventType::FileRead,
+                serde_json::json!({"i": i}),
+            ))
+            .unwrap();
         }
         let mut events = log.read_all().unwrap();
         events.remove(1); // drop an event
@@ -424,7 +503,8 @@ mod tests {
         }
         std::fs::write(log.path(), out).unwrap();
         assert!(!log.verify().unwrap().ok);
-        std::fs::remove_dir_all(&dir).ok();
+        drop(log);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -432,24 +512,110 @@ mod tests {
         let dir = tmp("reopen");
         {
             let log = AuditLog::open(&dir, "s").unwrap();
-            log.append(&Event::new("s", EventType::TaskCreated, serde_json::json!({}))).unwrap();
+            log.append(&Event::new(
+                "s",
+                EventType::TaskCreated,
+                serde_json::json!({}),
+            ))
+            .unwrap();
         }
         // Reopen and append more; the chain must stay valid.
         let log = AuditLog::open(&dir, "s").unwrap();
-        log.append(&Event::new("s", EventType::SessionClosed, serde_json::json!({}))).unwrap();
+        log.append(&Event::new(
+            "s",
+            EventType::SessionClosed,
+            serde_json::json!({}),
+        ))
+        .unwrap();
         let report = log.verify().unwrap();
         assert!(report.ok, "{:?}", report.reason);
         assert_eq!(report.event_count, 2);
-        std::fs::remove_dir_all(&dir).ok();
+        drop(log);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn actor_is_recorded() {
         let dir = tmp("actor");
         let log = AuditLog::open(&dir, "s").unwrap();
-        log.append(&Event::new("s", EventType::TaskCreated, serde_json::json!({})).with_actor(Actor::Go)).unwrap();
+        log.append(
+            &Event::new("s", EventType::TaskCreated, serde_json::json!({})).with_actor(Actor::Go),
+        )
+        .unwrap();
         let events = log.read_all().unwrap();
         assert_eq!(events[0].actor, Actor::Go);
-        std::fs::remove_dir_all(&dir).ok();
+        drop(log);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_appends_through_shared_handle_stay_correctly_chained() {
+        let dir = tmp("concurrent");
+        let log = std::sync::Arc::new(AuditLog::open(&dir, "s").unwrap());
+        let threads = 8;
+        let per_thread = 25;
+        let mut handles = Vec::new();
+        for t in 0..threads {
+            let log = log.clone();
+            handles.push(std::thread::spawn(move || {
+                let mut cursors = Vec::with_capacity(per_thread);
+                for i in 0..per_thread {
+                    let cursor = log
+                        .append_with_cursor(&Event::new(
+                            "s",
+                            EventType::FileRead,
+                            serde_json::json!({"thread": t, "i": i}),
+                        ))
+                        .unwrap();
+                    cursors.push(cursor);
+                }
+                cursors
+            }));
+        }
+        let mut all_cursors = Vec::new();
+        for h in handles {
+            all_cursors.extend(h.join().unwrap());
+        }
+
+        all_cursors.sort_unstable();
+        let expected: Vec<usize> = (1..=threads * per_thread).collect();
+        assert_eq!(
+            all_cursors, expected,
+            "cursor values must be exactly 1..=N with no gaps or duplicates"
+        );
+
+        let report = log.verify().unwrap();
+        assert!(report.ok, "{:?}", report.reason);
+        assert_eq!(report.event_count, threads * per_thread);
+        drop(log);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn persist_failure_poisoning_rejects_further_appends() {
+        let dir = tmp("poisoned");
+        let log = AuditLog::open(&dir, "s").unwrap();
+        log.state.lock().unwrap().fail_next_persist = true;
+
+        let first_error = log
+            .append(&Event::new(
+                "s",
+                EventType::TaskCreated,
+                serde_json::json!({}),
+            ))
+            .unwrap_err();
+        assert!(matches!(first_error, AuditError::Io(_)));
+
+        let second_error = log
+            .append(&Event::new(
+                "s",
+                EventType::TaskCreated,
+                serde_json::json!({}),
+            ))
+            .unwrap_err();
+        assert!(matches!(second_error, AuditError::Poisoned));
+        assert!(log.read_all().unwrap().is_empty());
+        drop(log);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
