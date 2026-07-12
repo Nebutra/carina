@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/Nebutra/carina/go/scheduler"
 	"github.com/Nebutra/carina/go/worker"
@@ -115,12 +116,39 @@ func TestWorkDispatchBridge(t *testing.T) {
 	}
 	if _, err := d.handleWorkReport(mustJSON(t, map[string]any{
 		"worker_id": wk.WorkerID, "worker_credential": credential, "task_id": task.TaskID,
-		"lease_generation": leased.LeaseGeneration, "status": "completed", "summary": "shipped"})); err != nil {
+		"lease_generation": leased.LeaseGeneration, "status": "completed", "summary": "shipped",
+		"usage": map[string]any{"input_tokens": 11, "output_tokens": 7}})); err != nil {
 		t.Fatalf("work.report: %v", err)
 	}
 	got, _ := d.sched.Get(task.TaskID)
-	if got.Status != "completed" || got.Summary != "shipped" || got.LeaseOwner != "" {
+	if got.Status != "completed" || got.Summary != "shipped" || got.LeaseOwner != "" || got.TokensUsed != 18 || !got.TokenUsageObserved {
 		t.Fatalf("report did not finalize the task: %+v", got)
+	}
+}
+
+func TestWorkReportRejectsInvalidUsageBeforeFinalizingLease(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	wk, credential, err := d.pool.RegisterAuthenticated("usage-worker", worker.Remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.SubmitForDispatch(sess.SessionID, sess.WorkspaceID, "meter me", nil)
+	leased, ok := d.sched.LeaseMatching(wk.WorkerID, time.Second, func([]string) bool { return true })
+	if !ok {
+		t.Fatal("lease failed")
+	}
+	if _, err := d.handleWorkReport(mustJSON(t, map[string]any{
+		"worker_id": wk.WorkerID, "worker_credential": credential, "task_id": task.TaskID,
+		"lease_generation": leased.LeaseGeneration, "status": "completed", "summary": "invalid",
+		"usage": map[string]any{"input_tokens": -1},
+	})); err == nil {
+		t.Fatal("negative remote usage must fail closed")
+	}
+	got, _ := d.sched.Get(task.TaskID)
+	if got.Status != "running" || got.LeaseOwner != wk.WorkerID {
+		t.Fatalf("invalid report must not finalize the lease: %+v", got)
 	}
 }
 

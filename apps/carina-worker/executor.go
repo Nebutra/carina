@@ -8,9 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
-	"time"
 )
 
 const (
@@ -20,6 +18,7 @@ const (
 	maxExecutorPatches           = 1024
 	maxExecutorChannelMessages   = 64
 	maxExecutorChannelNameLength = 128
+	maxExecutorReportedTokens    = 1_000_000_000
 )
 
 // executorChannelMessage is the executor-result counterpart to
@@ -44,6 +43,7 @@ type executionResult struct {
 	Status          string                   `json:"status"`
 	Summary         string                   `json:"summary"`
 	Patches         []string                 `json:"patches"`
+	Usage           *executorTokenUsage      `json:"usage,omitempty"`
 	ChannelMessages []executorChannelMessage `json:"channel_messages,omitempty"`
 }
 
@@ -52,7 +52,29 @@ type executionResultWire struct {
 	Status          *string                  `json:"status"`
 	Summary         *string                  `json:"summary"`
 	Patches         *[]string                `json:"patches"`
+	Usage           *executorTokenUsage      `json:"usage,omitempty"`
 	ChannelMessages []executorChannelMessage `json:"channel_messages,omitempty"`
+}
+
+type executorTokenUsage struct {
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+}
+
+func (u executorTokenUsage) total() (int, error) {
+	total := 0
+	for _, value := range []int{u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens} {
+		if value < 0 {
+			return 0, fmt.Errorf("executor usage token counts must be non-negative")
+		}
+		if value > maxExecutorReportedTokens-total {
+			return 0, fmt.Errorf("executor usage exceeded %d tokens", maxExecutorReportedTokens)
+		}
+		total += value
+	}
+	return total, nil
 }
 
 type taskExecutor interface {
@@ -69,17 +91,9 @@ func newCommandExecutor(program string, args []string) *commandExecutor {
 }
 
 func (e *commandExecutor) Execute(ctx context.Context, task json.RawMessage) executionResult {
-	cmd := exec.CommandContext(ctx, e.program, e.args...)
-	configureExecutorCommand(cmd)
-	cmd.Cancel = func() error { return killExecutorProcess(cmd) }
-	cmd.WaitDelay = 2 * time.Second
-	cmd.Env = executorEnvironment()
-	cmd.Stdin = bytes.NewReader(task)
 	stdout := &limitedBuffer{limit: maxExecutorOutput}
 	stderr := &limitedBuffer{limit: maxExecutorOutput}
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	err := cmd.Run()
+	err := runExecutorCommand(ctx, e.program, e.args, executorEnvironment(), task, stdout, stderr)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return failedResult("executor timed out")
@@ -87,7 +101,7 @@ func (e *commandExecutor) Execute(ctx context.Context, task json.RawMessage) exe
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return failedResult("executor cancelled")
 		}
-		var exitErr *exec.ExitError
+		var exitErr interface{ ExitCode() int }
 		if errors.As(err, &exitErr) {
 			return failedResult(fmt.Sprintf("executor exited with status %d", exitErr.ExitCode()))
 		}
@@ -114,6 +128,7 @@ func (e *commandExecutor) Execute(ctx context.Context, task json.RawMessage) exe
 		Status:          *wire.Status,
 		Summary:         *wire.Summary,
 		Patches:         *wire.Patches,
+		Usage:           wire.Usage,
 		ChannelMessages: wire.ChannelMessages,
 	}
 	if err := validateExecutionResult(result); err != nil {
@@ -140,6 +155,11 @@ func validateExecutionResult(result executionResult) error {
 	for _, patch := range result.Patches {
 		if strings.TrimSpace(patch) == "" {
 			return fmt.Errorf("executor returned an empty patch id")
+		}
+	}
+	if result.Usage != nil {
+		if _, err := result.Usage.total(); err != nil {
+			return err
 		}
 	}
 	if len(result.ChannelMessages) > maxExecutorChannelMessages {

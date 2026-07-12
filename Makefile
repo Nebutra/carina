@@ -1,4 +1,4 @@
-.PHONY: all go rust zig sdk-ts test rust-test go-test swarm-integration-test bench-gate-test release-check release-preflight release-ready release-preflight-test release-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
+.PHONY: all go rust zig sdk-ts test rust-test go-test swarm-integration-test bench-gate-test audit-bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
 
 all: go rust zig
 
@@ -13,6 +13,9 @@ test: rust-test go-test
 
 bench-gate-test:
 	bash scripts/test-bench-gate.sh
+
+audit-bench:
+	bash scripts/bench-audit.sh
 
 rust-test:
 	cargo test --workspace
@@ -56,6 +59,9 @@ release-preflight-test:
 
 release-package:
 	./scripts/package-release.sh
+
+integration-package:
+	./scripts/package-integrations.sh
 
 homebrew-formula-test:
 	./scripts/test-homebrew-formula.sh

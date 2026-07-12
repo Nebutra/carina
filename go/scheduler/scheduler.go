@@ -23,23 +23,24 @@ type SuccessCheck struct {
 
 // Task mirrors protocol/schemas/task.schema.json.
 type Task struct {
-	TaskID          string          `json:"task_id"`
-	SessionID       string          `json:"session_id"`
-	WorkspaceID     string          `json:"workspace_id"`
-	Status          string          `json:"status"` // queued | running | paused | waiting_approval | completed | degraded | failed | cancelled
-	UserPrompt      string          `json:"user_prompt"`
-	Model           string          `json:"model,omitempty"` // provider/model override; empty => daemon default
-	Agent           string          `json:"agent,omitempty"` // agent mode/persona override; empty => build/default
-	SuccessCriteria []SuccessCheck  `json:"success_criteria,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
-	RiskLevel       int             `json:"risk_level"`
-	Mode            string          `json:"mode,omitempty"`            // foreground | background
-	Summary         string          `json:"summary,omitempty"`         // final result / degrade reason
-	AppliedPatches  []string        `json:"applied_patches,omitempty"` // rollbackable patch ids
-	TokensUsed      int             `json:"tokens_used,omitempty"`     // metered token spend (budget governance)
-	TokenBudget     int             `json:"token_budget,omitempty"`
-	OutputSchema    json.RawMessage `json:"output_schema,omitempty"` // complete JSON Schema for final output
+	TaskID             string          `json:"task_id"`
+	SessionID          string          `json:"session_id"`
+	WorkspaceID        string          `json:"workspace_id"`
+	Status             string          `json:"status"` // queued | running | paused | waiting_approval | completed | degraded | failed | cancelled
+	UserPrompt         string          `json:"user_prompt"`
+	Model              string          `json:"model,omitempty"` // provider/model override; empty => daemon default
+	Agent              string          `json:"agent,omitempty"` // agent mode/persona override; empty => build/default
+	SuccessCriteria    []SuccessCheck  `json:"success_criteria,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
+	RiskLevel          int             `json:"risk_level"`
+	Mode               string          `json:"mode,omitempty"`            // foreground | background
+	Summary            string          `json:"summary,omitempty"`         // final result / degrade reason
+	AppliedPatches     []string        `json:"applied_patches,omitempty"` // rollbackable patch ids
+	TokensUsed         int             `json:"tokens_used,omitempty"`     // metered token spend (budget governance)
+	TokenUsageObserved bool            `json:"token_usage_observed,omitempty"`
+	TokenBudget        int             `json:"token_budget,omitempty"`
+	OutputSchema       json.RawMessage `json:"output_schema,omitempty"` // complete JSON Schema for final output
 	// Work-dispatch lease (remote execution via the bridge). Empty for tasks the
 	// local daemon runs in-process.
 	LeaseOwner                 string    `json:"lease_owner,omitempty"`      // worker holding the dispatch lease

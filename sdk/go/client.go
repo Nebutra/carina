@@ -271,6 +271,17 @@ type SuccessCheck struct {
 	Command []string `json:"command,omitempty"`
 }
 
+type SearchResult struct {
+	File string `json:"file"`
+	Line int    `json:"line"`
+	Text string `json:"text"`
+}
+
+type WorkspaceFile struct {
+	Content string `json:"content"`
+	Hash    string `json:"hash"`
+}
+
 type Checkpoint struct {
 	CheckpointID   string   `json:"checkpoint_id"`
 	TaskID         string   `json:"task_id"`
@@ -338,6 +349,24 @@ func (c *Client) CreateSession(workspaceRoot, profile string) (Session, error) {
 	}
 	var out Session
 	err := c.Call("session.create", map[string]any{"workspace_root": workspaceRoot, "profile": profile}, &out)
+	return out, err
+}
+
+func (c *Client) GetSession(sessionID string) (Session, error) {
+	var out Session
+	err := c.Call("session.get", map[string]any{"session_id": sessionID}, &out)
+	return out, err
+}
+
+func (c *Client) ListSessions() ([]Session, error) {
+	var out []Session
+	err := c.Call("session.list", map[string]any{}, &out)
+	return out, err
+}
+
+func (c *Client) ReplaySession(sessionID string) ([]Event, error) {
+	var out []Event
+	err := c.Call("session.replay", map[string]any{"session_id": sessionID}, &out)
 	return out, err
 }
 
@@ -686,6 +715,52 @@ func (c *Client) workflowTransition(method, runID string) (WorkflowRun, error) {
 func (c *Client) ListWorkers() ([]Worker, error) {
 	var out []Worker
 	err := c.Call("worker.list", map[string]any{}, &out)
+	return out, err
+}
+
+func (c *Client) SearchWorkspace(sessionID, pattern string) ([]SearchResult, error) {
+	var out []SearchResult
+	err := c.Call("workspace.search", map[string]any{"session_id": sessionID, "pattern": pattern}, &out)
+	return out, err
+}
+
+func (c *Client) GetWorkspaceFile(sessionID, path string) (WorkspaceFile, error) {
+	var out WorkspaceFile
+	err := c.Call("workspace.file.get", map[string]any{"session_id": sessionID, "path": path}, &out)
+	return out, err
+}
+
+func (c *Client) ProposePatch(sessionID string, files []map[string]string, reason string) (map[string]any, error) {
+	var out map[string]any
+	err := c.Call("workspace.patch.propose", map[string]any{"session_id": sessionID, "files": files, "reason": reason}, &out)
+	return out, err
+}
+
+func (c *Client) ApplyPatch(sessionID, patchID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.Call("workspace.patch.apply", map[string]any{"session_id": sessionID, "patch_id": patchID}, &out)
+	return out, err
+}
+
+func (c *Client) RollbackPatch(sessionID, patchID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.Call("workspace.patch.rollback", map[string]any{"session_id": sessionID, "patch_id": patchID}, &out)
+	return out, err
+}
+
+func (c *Client) Exec(sessionID string, argv []string, taskID string) (map[string]any, error) {
+	params := map[string]any{"session_id": sessionID, "argv": argv}
+	if taskID != "" {
+		params["task_id"] = taskID
+	}
+	var out map[string]any
+	err := c.Call("command.exec", params, &out)
+	return out, err
+}
+
+func (c *Client) AuditReport(sessionID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.Call("audit.report", map[string]any{"session_id": sessionID}, &out)
 	return out, err
 }
 func (c *Client) ResolveApproval(decisionID string, allow bool, approver, scope string) error {

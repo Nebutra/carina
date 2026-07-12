@@ -1,0 +1,29 @@
+[Unit]
+Description=Carina remote worker
+Documentation=https://github.com/Nebutra/carina/blob/main/docs/deployment/remote-workers.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+EnvironmentFile=/etc/carina/worker.env
+LoadCredential=gateway-token:/etc/carina/worker.token
+ExecStart=/usr/bin/carina-worker --gateway ${CARINA_GATEWAY_URL} --gateway-token-file %d/gateway-token --executor ${CARINA_EXECUTOR} $CARINA_WORKER_ARGS
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=2min
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

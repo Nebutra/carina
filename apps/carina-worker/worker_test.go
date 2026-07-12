@@ -145,7 +145,8 @@ func TestLeaseWorkerPollExecuteRenewReport(t *testing.T) {
 	executor := &blockingExecutor{
 		started: make(chan json.RawMessage, 1),
 		release: make(chan struct{}),
-		result:  executionResult{SchemaVersion: executorResultSchema, Status: "completed", Summary: "done", Patches: []string{"patch_1"}},
+		result: executionResult{SchemaVersion: executorResultSchema, Status: "completed", Summary: "done", Patches: []string{"patch_1"},
+			Usage: &executorTokenUsage{InputTokens: 8, OutputTokens: 3, CacheReadTokens: 2}},
 	}
 	w := newLeaseWorker(fake, executor, testWorkerConfig(), log.New(io.Discard, "", 0))
 	done := make(chan error, 1)
@@ -169,6 +170,10 @@ func TestLeaseWorkerPollExecuteRenewReport(t *testing.T) {
 	}
 	if report["status"] != "completed" || report["summary"] != "done" {
 		t.Fatalf("report = %#v", report)
+	}
+	usage, ok := report["usage"].(map[string]any)
+	if !ok || usage["input_tokens"] != float64(8) || usage["output_tokens"] != float64(3) || usage["cache_read_tokens"] != float64(2) {
+		t.Fatalf("report usage = %#v", report["usage"])
 	}
 	if err := <-done; err != nil {
 		t.Fatalf("Run: %v", err)

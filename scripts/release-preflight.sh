@@ -95,6 +95,9 @@ run_gate toolchain build "required toolchains are pinned and available" check_to
 run_gate version_matrix release "product/package/workflow versions agree" ./scripts/test-version-matrix.sh
 run_gate workflow_lint release "GitHub Actions syntax and DAG are valid" lint_workflows
 run_gate release_asset_contract package "exact four-archive and signing-result contract rejects omissions" ./scripts/test-verify-release-assets.sh
+run_gate linux_package_contract package "deb/rpm package checksums reject omissions and corruption" ./scripts/test-verify-linux-packages.sh
+run_gate windows_worker_package_contract package "Windows worker package checksums and contents reject corruption" ./scripts/test-verify-windows-worker-packages.sh
+run_gate integration_package_contract package "VSIX and web operator packages reject omissions and corruption" ./scripts/test-verify-integration-packages.sh
 run_gate signing_dry_run signing "signing automation rejects missing/invalid credentials" ./scripts/test-sign-and-notarize-release.sh
 run_gate homebrew_formula package "Homebrew Formula renders without placeholders" ./scripts/test-homebrew-formula.sh
 run_gate npm_package_contract package "five complete npm tarballs freeze reproducibly and pass offline global install" ./scripts/test-package-npm-release.sh

@@ -22,6 +22,10 @@ import (
 // the test's own goroutine) — only the goroutine-safe t.Errorf, matching
 // `go vet`'s tests analyzer.
 func simulateRemoteWorker(t *testing.T, d *Daemon, workerID, credential, status, summary string) string {
+	return simulateRemoteWorkerWithUsage(t, d, workerID, credential, status, summary, nil)
+}
+
+func simulateRemoteWorkerWithUsage(t *testing.T, d *Daemon, workerID, credential, status, summary string, usage map[string]any) string {
 	t.Helper()
 	poll := func(v any) (json.RawMessage, error) { return json.Marshal(v) }
 	deadline := time.Now().Add(5 * time.Second)
@@ -38,11 +42,15 @@ func simulateRemoteWorker(t *testing.T, d *Daemon, workerID, credential, status,
 			continue
 		}
 		leased := m["task"].(*scheduler.Task)
-		reportParams, _ := poll(map[string]any{
+		report := map[string]any{
 			"worker_id": workerID, "worker_credential": credential,
 			"task_id": leased.TaskID, "lease_generation": leased.LeaseGeneration,
 			"status": status, "summary": summary,
-		})
+		}
+		if usage != nil {
+			report["usage"] = usage
+		}
+		reportParams, _ := poll(report)
 		if _, err := d.handleWorkReport(reportParams); err != nil {
 			t.Errorf("work.report: %v", err)
 			return ""
@@ -118,6 +126,33 @@ func TestWorkflowStreamingRemoteStepDispatchesLeasesAndCompletes(t *testing.T) {
 	rollup := lastRollup(t, sub)
 	if rollup["unmetered_steps"] != 1 || rollup["budget_spent_is_complete"] != false || rollup["budget_enforcement"] != "observed_usage_only" {
 		t.Fatalf("remote token usage must be presented as unavailable, never as a measured zero: %+v", rollup)
+	}
+}
+
+func TestWorkflowStreamingRemoteStepAccountsReportedUsage(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	wk, credential, err := d.pool.RegisterAuthenticated("remote-metered", worker.Remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run metered pipeline")
+	sub := newFakeEventSub("remote-metered-rollup")
+	d.events.Subscribe(parent.SessionID, sub)
+
+	go simulateRemoteWorkerWithUsage(t, d, wk.WorkerID, credential, "completed", "metered remote result", map[string]any{
+		"input_tokens": 100, "output_tokens": 40, "cache_read_tokens": 10,
+	})
+	spec := &WorkflowSpec{Name: "remote-metered", ExecutionMode: "streaming", Steps: []WorkflowStep{{ID: "offload", Agent: "worker", Task: "REMOTE_METERED", Remote: true}}}
+	if _, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-remote-metered"); err != nil {
+		t.Fatalf("workflow failed: %v", err)
+	}
+	rollup := lastRollup(t, sub)
+	if rollup["budget_spent"] != 150 || rollup["unmetered_steps"] != nil || rollup["budget_spent_is_complete"] != true || rollup["budget_enforcement"] != "complete" {
+		t.Fatalf("remote reported usage must participate in complete budget accounting: %+v", rollup)
 	}
 }
 

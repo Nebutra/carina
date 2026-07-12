@@ -26,8 +26,9 @@ validates:
 - Go, Python, and TypeScript SDK conformance;
 - VS Code, web, npm launcher, native acceptance, and benchmark gates;
 - current-platform archive manifest/checksums and packaged-daemon conformance;
-- exact four-platform release-asset and five-package npm assembly, frozen
-  bundle, and offline global-install contracts;
+- exact native archive, deb/rpm, Windows worker, VSIX/Web/installer, and
+  five-package npm assembly contracts, including frozen bundle and offline
+  global-install verification;
 - Homebrew Formula rendering/install where the host supports it;
 - signing/notarization automation dry-run behavior.
 
@@ -193,7 +194,10 @@ Pushing a tag matching `v<major>.<minor>.<patch>` runs
 - pins Zig `0.15.1`; local release checks may select the same isolated binary
   through `CARINA_ZIG_BIN` or install a checksum-verified copy with
   `scripts/install-zig-tool.sh`;
-- builds native macOS and Linux archives for `arm64` and `amd64`;
+- builds native macOS and Linux archives for `arm64` and `amd64`, deb/rpm
+  packages, and contained Windows worker ZIPs;
+- packages the VS Code extension, static Web Operator, and checksum-enforcing
+  installer as independently verified release assets;
 - starts the daemon from each packaged archive and runs the Go, Python, and
   TypeScript read-only conformance contract against its Unix socket;
 - freezes the four native npm packages plus launcher as one checksum-verified
@@ -219,9 +223,10 @@ Pushing a tag matching `v<major>.<minor>.<patch>` runs
   `main`, refuses Formula downgrades, then pushes `Formula/carina.rb` through a
   repository-scoped SSH deploy key.
 
-Once the draft becomes public, all 14 release assets are immutable. A full
+Once the draft becomes public, all 32 release assets are immutable. A full
 workflow rerun downloads and verifies the existing native archives, signing
-evidence, checksum manifest, and frozen npm bundle instead of overwriting them.
+evidence, OS packages, operator clients, installer, checksum manifest, and
+frozen npm bundle instead of overwriting them.
 The Homebrew Formula always derives its checksums from that public Release, so
 a retry cannot point the tap at newly rebuilt bytes.
 
@@ -305,12 +310,10 @@ Upgrade with `brew update && brew upgrade carina`. The Formula source template
 is `packaging/homebrew/carina.rb.template`; `scripts/render-homebrew-formula.sh`
 injects versioned release URLs and both architecture checksums.
 
-## Not Yet Implemented
+## External Activation Still Required
 
-- hosted installer;
-- first public npm trusted-publisher release (the launcher/native package
-  assembly and OIDC workflow are implemented);
-- SBOM publication and provenance verification documentation;
-- Linuxbrew path (Linux release archives are already built,
-  conformance-tested, attested, and published by the tag workflow);
-- Windows release path.
+The repository ships the checksum-enforcing installer, Linuxbrew Formula,
+deb/rpm packages, Windows worker ZIP, VSIX, Web Operator archive, container
+Dockerfiles, SBOM generation, provenance, and verification contracts. Public
+activation still requires the credentials, publisher identities, registries,
+upstream review, hosting, and tag permissions listed in the Roadmap.

@@ -108,9 +108,9 @@ func (d *Daemon) runStreamingStepRemote(ctx context.Context, parent *sessionstor
 			}
 			switch t.Status {
 			case "completed":
-				return streamingStepResult{id: st.ID, kind: stepDone, output: t.Summary}
+				return streamingStepResult{id: st.ID, kind: stepDone, output: t.Summary, tokensUsed: t.TokensUsed, tokenUsageObserved: t.TokenUsageObserved}
 			case "failed", "degraded":
-				return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: fmt.Sprintf("remote worker reported %s: %s", t.Status, t.Summary)}
+				return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: fmt.Sprintf("remote worker reported %s: %s", t.Status, t.Summary), tokensUsed: t.TokensUsed, tokenUsageObserved: t.TokenUsageObserved}
 			case "cancelled":
 				return streamingStepResult{id: st.ID, kind: stepSkipped, errMsg: "dispatched task was cancelled"}
 			default:

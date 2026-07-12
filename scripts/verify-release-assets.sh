@@ -15,11 +15,15 @@ sha256_file() {
 }
 
 archives=()
-[[ "$(find "$DIST" -maxdepth 1 -type f -name "carina_${VERSION}_*.tar.gz" | wc -l | tr -d ' ')" == "4" ]] || {
+native_archive_count="$(find "$DIST" -maxdepth 1 -type f -name "carina_${VERSION}_*.tar.gz" \
+  | grep -Ec "/carina_${VERSION}_(darwin|linux)_[^.]+\.tar\.gz$" || true)"
+native_checksum_count="$(find "$DIST" -maxdepth 1 -type f -name "carina_${VERSION}_*.tar.gz.sha256" \
+  | grep -Ec "/carina_${VERSION}_(darwin|linux)_[^.]+\.tar\.gz\.sha256$" || true)"
+[[ "$native_archive_count" == "4" ]] || {
   echo "verify-release-assets: expected exactly four archives for $VERSION" >&2
   exit 1
 }
-[[ "$(find "$DIST" -maxdepth 1 -type f -name "carina_${VERSION}_*.tar.gz.sha256" | wc -l | tr -d ' ')" == "4" ]] || {
+[[ "$native_checksum_count" == "4" ]] || {
   echo "verify-release-assets: expected exactly four archive checksums for $VERSION" >&2
   exit 1
 }

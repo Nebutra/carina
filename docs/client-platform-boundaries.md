@@ -6,8 +6,8 @@ duplicate authority.
 
 | Surface | Supported contract | Boundary |
 |---|---|---|
-| VS Code | Local daemon socket, Agent View and explicit operator commands | IDE client only; daemon remains authoritative |
-| Web | Read-first WebSocket Gateway with scoped, short-lived tokens | No token persistence; writes require operator scope and confirmation |
+| VS Code | Checksummed VSIX, local daemon socket, Agent View and explicit operator commands | IDE client only; daemon remains authoritative |
+| Web | Checksummed static release archive and read-first WebSocket Gateway with scoped, short-lived tokens | No token persistence; writes require operator scope and confirmation |
 | Desktop/mobile | Future client over the same Gateway and event contracts | Not embedded in the runtime |
 | Browser/computer use | Future sandboxed worker adapter | Never an implicit runtime capability |
 | Artifacts | Runtime emits typed references, provenance and policy labels | Rendering and sharing belong to clients/Nebutra Cloud |

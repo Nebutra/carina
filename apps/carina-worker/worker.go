@@ -278,6 +278,9 @@ func (w *leaseWorker) reportWithRetry(ctx context.Context, taskID string, genera
 	if len(result.ChannelMessages) > 0 {
 		params["channel_messages"] = result.ChannelMessages
 	}
+	if result.Usage != nil {
+		params["usage"] = result.Usage
+	}
 	backoff := w.cfg.PollMinBackoff
 	for attempt := 1; attempt <= 3; attempt++ {
 		if ctx.Err() != nil {

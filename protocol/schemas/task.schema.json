@@ -14,6 +14,8 @@
     "updated_at": { "type": "string", "format": "date-time" },
     "risk_level": { "type": "integer", "minimum": 0, "maximum": 5 },
     "mode": { "enum": ["foreground", "background", "dispatch"] },
+    "tokens_used": { "type": "integer", "minimum": 0 },
+    "token_usage_observed": { "type": "boolean" },
     "lease_owner": { "type": "string", "minLength": 1 },
     "lease_expiry": { "type": "string", "format": "date-time" },
     "lease_generation": { "type": "integer", "minimum": 1 },

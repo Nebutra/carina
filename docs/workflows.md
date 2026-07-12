@@ -209,12 +209,16 @@ a step already running is never killed — tokens are never refunded, so
 "pause until headroom frees up" isn't meaningful the way it would be for a
 renewable resource.
 
-The current remote worker result schema does not carry token usage. A remote
-step is therefore reported as **unmetered**, not as zero: rollups include
-`unmetered_steps`, `budget_spent_is_complete: false`, and
+The remote worker result schema accepts optional input/output/cache token usage.
+When an executor reports it, the daemon records the total atomically with the
+fenced terminal report and includes it in the run budget. Complete rollups expose
+`budget_spent_is_complete: true` and `budget_enforcement: "complete"`.
+
+Older or non-model executors may omit usage. Only those steps are reported as
+**unmetered**, not as zero: rollups include `unmetered_steps`,
+`budget_spent_is_complete: false`, and
 `budget_enforcement: "observed_usage_only"`; CLI status prints the same
-limitation. A `token_budget` can only enforce observed local usage until the
-remote result contract gains metering.
+limitation.
 
 ## Observability
 

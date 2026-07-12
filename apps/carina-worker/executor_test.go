@@ -68,7 +68,8 @@ func TestCarinaExecutorHelperProcess(t *testing.T) {
 	case "sleep":
 		time.Sleep(time.Second)
 	case "descendant":
-		child := exec.Command("sleep", "30")
+		child := exec.Command(os.Args[0], "-test.run=TestCarinaExecutorHelperProcess", "--", "leaf")
+		child.Env = append(os.Environ(), "GO_WANT_CARINA_EXECUTOR_HELPER=1")
 		if err := child.Start(); err != nil {
 			os.Exit(8)
 		}
@@ -76,6 +77,8 @@ func TestCarinaExecutorHelperProcess(t *testing.T) {
 			os.Exit(9)
 		}
 		_ = child.Wait()
+	case "leaf":
+		time.Sleep(30 * time.Second)
 	case "environment":
 		value := "absent"
 		if os.Getenv("CARINA_GATEWAY_TOKEN") != "" {
@@ -87,7 +90,7 @@ func TestCarinaExecutorHelperProcess(t *testing.T) {
 }
 
 func TestValidateExecutionResult(t *testing.T) {
-	valid := executionResult{SchemaVersion: executorResultSchema, Status: "degraded", Summary: "partial", Patches: []string{"patch_1"}}
+	valid := executionResult{SchemaVersion: executorResultSchema, Status: "degraded", Summary: "partial", Patches: []string{"patch_1"}, Usage: &executorTokenUsage{InputTokens: 10, OutputTokens: 5}}
 	if err := validateExecutionResult(valid); err != nil {
 		t.Fatalf("valid result: %v", err)
 	}
@@ -95,6 +98,9 @@ func TestValidateExecutionResult(t *testing.T) {
 		{Status: "completed"},
 		{SchemaVersion: executorResultSchema, Status: "cancelled"},
 		{SchemaVersion: executorResultSchema, Status: "completed", Patches: []string{""}},
+		{SchemaVersion: executorResultSchema, Status: "completed", Usage: &executorTokenUsage{InputTokens: -1}},
+		{SchemaVersion: executorResultSchema, Status: "completed", Usage: &executorTokenUsage{InputTokens: maxExecutorReportedTokens, OutputTokens: 1}},
+		{SchemaVersion: executorResultSchema, Status: "completed", Usage: &executorTokenUsage{InputTokens: int(^uint(0) >> 1), OutputTokens: int(^uint(0) >> 1)}},
 	} {
 		if err := validateExecutionResult(bad); err == nil {
 			t.Fatalf("expected invalid result: %+v", bad)

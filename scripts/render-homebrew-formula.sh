@@ -8,6 +8,8 @@ OUTPUT="${OUTPUT:-$ROOT/dist/homebrew/Formula/carina.rb}"
 version="${VERSION:-}"
 darwin_arm64_sha256="${DARWIN_ARM64_SHA256:-}"
 darwin_amd64_sha256="${DARWIN_AMD64_SHA256:-}"
+linux_arm64_sha256="${LINUX_ARM64_SHA256:-}"
+linux_amd64_sha256="${LINUX_AMD64_SHA256:-}"
 release_base_url="${RELEASE_BASE_URL:-https://github.com/Nebutra/carina/releases/download/v${version}}"
 
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
@@ -17,7 +19,9 @@ fi
 
 for pair in \
   "DARWIN_ARM64_SHA256:$darwin_arm64_sha256" \
-  "DARWIN_AMD64_SHA256:$darwin_amd64_sha256"; do
+  "DARWIN_AMD64_SHA256:$darwin_amd64_sha256" \
+  "LINUX_ARM64_SHA256:$linux_arm64_sha256" \
+  "LINUX_AMD64_SHA256:$linux_amd64_sha256"; do
   name="${pair%%:*}"
   value="${pair#*:}"
   if [[ ! "$value" =~ ^[0-9a-f]{64}$ ]]; then
@@ -44,6 +48,8 @@ sed \
   -e "s|__VERSION__|$version|g" \
   -e "s|__DARWIN_ARM64_SHA256__|$darwin_arm64_sha256|g" \
   -e "s|__DARWIN_AMD64_SHA256__|$darwin_amd64_sha256|g" \
+  -e "s|__LINUX_ARM64_SHA256__|$linux_arm64_sha256|g" \
+  -e "s|__LINUX_AMD64_SHA256__|$linux_amd64_sha256|g" \
   -e "s|__RELEASE_BASE_URL__|$release_base_url|g" \
   "$TEMPLATE" > "$tmp"
 

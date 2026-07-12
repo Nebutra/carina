@@ -18,4 +18,20 @@ contents:
   - src: ./dist/stage/bin/carina-tui
     dst: /usr/bin/carina-tui
   - src: ./dist/stage/bin/carina-kernel-service
-    dst: /usr/lib/carina/carina-kernel-service
+    dst: /usr/bin/carina-kernel-service
+  - src: ./dist/stage/bin/carina-diff
+    dst: /usr/bin/carina-diff
+  - src: ./dist/stage/bin/carina-grep
+    dst: /usr/bin/carina-grep
+  - src: ./dist/stage/bin/carina-patch-native
+    dst: /usr/bin/carina-patch-native
+  - src: ./dist/stage/bin/carina-pty
+    dst: /usr/bin/carina-pty
+  - src: ./dist/stage/bin/carina-run
+    dst: /usr/bin/carina-run
+  - src: ./dist/stage/bin/carina-scan
+    dst: /usr/bin/carina-scan
+  - src: ./packaging/systemd/carina-worker.service
+    dst: /usr/share/doc/carina/examples/carina-worker.service
+  - src: ./packaging/systemd/worker.env.example
+    dst: /usr/share/doc/carina/examples/worker.env.example

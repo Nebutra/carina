@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose a product or developer-experience improvement
+title: "[feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Describe the workflow and failure mode, not only the desired implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Security and compatibility considerations
+      description: Note policy, approval, audit, protocol, or migration effects.

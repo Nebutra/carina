@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"reflect"
 	"strings"
@@ -14,6 +15,95 @@ import (
 
 	"github.com/Nebutra/carina/go/rpc"
 )
+
+func TestCommonControlPlaneWrappers(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	client := NewClient(rpc.NewClient(clientConn, clientConn, clientConn))
+	defer client.Close()
+
+	want := []string{
+		"session.get", "session.list", "session.replay", "workspace.search",
+		"workspace.file.get", "workspace.patch.propose", "workspace.patch.apply",
+		"workspace.patch.rollback", "command.exec", "audit.report",
+	}
+	done := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(serverConn)
+		for i, method := range want {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				done <- err
+				return
+			}
+			var request struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if err := json.Unmarshal(line, &request); err != nil {
+				done <- err
+				return
+			}
+			if request.Method != method {
+				done <- fmt.Errorf("call %d method = %s, want %s", i, request.Method, method)
+				return
+			}
+			result := any(map[string]any{})
+			switch method {
+			case "session.get":
+				result = map[string]any{"session_id": "s1"}
+			case "session.list":
+				result = []any{map[string]any{"session_id": "s1"}}
+			case "session.replay":
+				result = []any{map[string]any{"session_id": "s1", "type": "TaskCreated", "timestamp": "now"}}
+			case "workspace.search":
+				result = []any{map[string]any{"file": "a.go", "line": 3, "text": "TODO"}}
+			case "workspace.file.get":
+				result = map[string]any{"content": "package a", "hash": "abc"}
+			}
+			response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
+			if _, err := serverConn.Write(append(response, '\n')); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+
+	if session, err := client.GetSession("s1"); err != nil || session.SessionID != "s1" {
+		t.Fatalf("get session: %+v %v", session, err)
+	}
+	if sessions, err := client.ListSessions(); err != nil || len(sessions) != 1 {
+		t.Fatalf("list sessions: %+v %v", sessions, err)
+	}
+	if events, err := client.ReplaySession("s1"); err != nil || len(events) != 1 {
+		t.Fatalf("replay: %+v %v", events, err)
+	}
+	if hits, err := client.SearchWorkspace("s1", "TODO"); err != nil || len(hits) != 1 || hits[0].Line != 3 {
+		t.Fatalf("search: %+v %v", hits, err)
+	}
+	if file, err := client.GetWorkspaceFile("s1", "a.go"); err != nil || file.Hash != "abc" {
+		t.Fatalf("file: %+v %v", file, err)
+	}
+	if _, err := client.ProposePatch("s1", []map[string]string{{"path": "a.go", "content": "package b"}}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ApplyPatch("s1", "p1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RollbackPatch("s1", "p1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Exec("s1", []string{"go", "test", "./..."}, "t1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.AuditReport("s1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestTypedParityAndEventSubscription(t *testing.T) {
 	clientConn, serverConn := net.Pipe()

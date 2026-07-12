@@ -462,6 +462,7 @@ func (sc *streamCoordinator) rollupPayload() map[string]any {
 		payload["budget_enforcement"] = "observed_usage_only"
 	} else {
 		payload["budget_spent_is_complete"] = true
+		payload["budget_enforcement"] = "complete"
 	}
 	if sc.spec.TokenBudget > 0 {
 		remaining := sc.spec.TokenBudget - sc.budgetSpent

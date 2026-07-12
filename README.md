@@ -25,9 +25,10 @@ The current repository is useful for source builds, local experimentation, and
 teams designing their own agent execution substrate. It is still alpha. Public
 macOS packages are available through the Nebutra Homebrew tap. Apple signing
 and notarization automation is implemented but awaits release credentials.
-Linux archives and npm trusted publishing are implemented in the release
-pipeline but have not completed their first public release. Polished dashboards
-remain out of scope for the current terminal-first alpha.
+Linux archives/packages, npm trusted publishing, Windows worker, containers,
+and packaged VS Code/Web Operator clients are implemented in the release
+pipeline but still need their external registries, publishers, or credentials
+activated.
 
 ## Why Carina
 
@@ -84,22 +85,23 @@ Implemented in this repository:
 | Integration | MCP client/server with tool search (`mcp_find`), WASM plugin boundary with org/user/project tighten-only enable merge, workers, workflow DAGs (batch and streaming — conditional/dynamic graphs, live inter-step channels, remote worker-pool dispatch, run-wide budgets; see [`docs/workflows.md`](docs/workflows.md)) |
 | Nebutra boundary | Local runtime stays authoritative; identity and multi-endpoint sync are scoped to Nebutra Cloud (`nebutra.com`) |
 
-Not yet treated as product-complete:
+External activation still required:
 
 - the first credentialed Apple-accepted public release; fail-closed signing and
   notarization automation is ready, but the required Apple credentials have not
   been provisioned;
-- the first public Linux archive and npm trusted-publishing release; their
-  build, packaging, SBOM, provenance, and conformance paths are implemented but
-  the npm packages and trusted-publisher bindings have not been established;
-- contributor and security process beyond the initial documents in this repo;
-- a graphical dashboard or editor integration; the terminal TUI now provides
-  typed events, structured approvals/questions, steering, and reconnect recovery;
-- Windows support;
-- dedicated SDK wrappers for every less-common control-plane RPC (the three
-  SDKs cover the core attach/stream/fork/cost/steer/question workflow and retain
-  a generic JSON-RPC call escape hatch);
-- production guide for clustered remote-worker fleets.
+- public Linux/npm/container publication; build, package, SBOM, provenance, and
+  conformance paths are implemented, while external publisher/registry setup is
+  not;
+- Marketplace/hosting activation for the packaged VS Code and Web Operator
+  clients;
+- Homebrew Core review for untapped `brew install carina`; the maintained
+  Nebutra tap is available now;
+- real-provider/CJK/terminal validation requiring external credentials and
+  representative hardware;
+- Nebutra Cloud API, tenant, identity, and retention contracts. Local sync
+  remains deliberately off;
+- Windows is supported for the remote worker package, not a desktop daemon/CLI.
 
 ## Install With Homebrew
 

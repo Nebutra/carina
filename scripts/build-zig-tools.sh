@@ -78,6 +78,8 @@ done
 }
 
 if [[ -e "$output" ]]; then
+  # Enter recovery state before the rename. A signal delivered immediately
+  # after mv must still make cleanup restore the previous output.
   had_output=1
   if ! mv "$output" "$backup"; then
     had_output=0

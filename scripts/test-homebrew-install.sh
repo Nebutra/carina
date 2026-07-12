@@ -47,6 +47,8 @@ esac
 VERSION="$VERSION" \
 DARWIN_ARM64_SHA256="$darwin_arm64_sha256" \
 DARWIN_AMD64_SHA256="$darwin_amd64_sha256" \
+LINUX_ARM64_SHA256="$(printf 'c%.0s' {1..64})" \
+LINUX_AMD64_SHA256="$(printf 'd%.0s' {1..64})" \
 RELEASE_BASE_URL="file://$archive_dir" \
 OUTPUT="$tap_root/Formula/carina.rb" \
   "$ROOT/scripts/render-homebrew-formula.sh"

@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible Carina runtime or client defect
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include tokens, secrets, private source, or unredacted audit bundles.
+  - type: input
+    id: version
+    attributes:
+      label: Carina version
+      placeholder: carina version
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options: [CLI, TUI, daemon, worker, SDK, VS Code, web operator, packaging]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Minimal commands, configuration, and inputs with sensitive data removed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Include OS, architecture, terminal, provider category, and relevant logs.

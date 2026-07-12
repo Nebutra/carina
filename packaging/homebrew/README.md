@@ -5,7 +5,7 @@ This directory contains the source template for the live
 
 On a `v<version>` tag, `.github/workflows/release.yml`:
 
-1. builds native Apple Silicon and Intel archives;
+1. builds native macOS and Linux archives for arm64 and amd64;
 2. installs each archive through a temporary Homebrew tap and runs `brew test`;
 3. publishes checksums and GitHub build provenance;
 4. renders `Formula/carina.rb` with both archive SHA-256 values;
@@ -17,6 +17,8 @@ Render a Formula locally with:
 VERSION="$(go run ./scripts/product-version.go)" \
 DARWIN_ARM64_SHA256=<sha256> \
 DARWIN_AMD64_SHA256=<sha256> \
+LINUX_ARM64_SHA256=<sha256> \
+LINUX_AMD64_SHA256=<sha256> \
 ./scripts/render-homebrew-formula.sh
 ```
 

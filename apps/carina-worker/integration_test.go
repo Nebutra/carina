@@ -125,7 +125,7 @@ func writeIntegrationExecutor(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "integration-executor.sh")
-	script := "#!/bin/sh\ncat >/dev/null\necho '{\"schema_version\":\"carina.worker.result.v1\",\"status\":\"completed\",\"summary\":\"handled by a real separate carina-worker process\",\"patches\":[]}'\n"
+	script := "#!/bin/sh\ncat >/dev/null\necho '{\"schema_version\":\"carina.worker.result.v1\",\"status\":\"completed\",\"summary\":\"handled by a real separate carina-worker process\",\"patches\":[],\"usage\":{\"input_tokens\":30,\"output_tokens\":12,\"cache_read_tokens\":0,\"cache_write_tokens\":0}}'\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -259,6 +259,15 @@ func TestSwarmRemoteDispatchAcrossRealProcesses(t *testing.T) {
 	output, _ := step["output"].(string)
 	if output != "handled by a real separate carina-worker process" {
 		t.Fatalf("expected the step's output to be the real external executor's summary, got %q", output)
+	}
+	if tokens, _ := step["tokens_used"].(float64); tokens != 42 {
+		t.Fatalf("expected measured remote usage of 42 tokens, got %#v", step["tokens_used"])
+	}
+	if observed, _ := step["token_usage_status"].(string); observed != "observed" {
+		t.Fatalf("expected remote token usage to be marked observed: %#v", step)
+	}
+	if unmetered, _ := runInfo["unmetered_steps"].(float64); unmetered != 0 {
+		t.Fatalf("expected a complete measured rollup, got unmetered_steps=%v", runInfo["unmetered_steps"])
 	}
 	fmt.Printf("integration: streaming workflow step completed via a real, separate carina-worker process (run=%s)\n", run.ID)
 }

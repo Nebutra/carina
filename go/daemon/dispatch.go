@@ -141,6 +141,29 @@ func (d *Daemon) handleWorkRenew(params json.RawMessage) (any, error) {
 // is deliberately independent of maxMessagesPerChannel (the broker's own
 // per-channel retention cap), which still applies on top per channel.
 const maxRemoteChannelMessagesPerReport = 64
+const maxRemoteReportedTokens = 1_000_000_000
+
+type remoteTokenUsage struct {
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+}
+
+func (u remoteTokenUsage) total() (int, error) {
+	values := []int{u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens}
+	total := 0
+	for _, value := range values {
+		if value < 0 {
+			return 0, fmt.Errorf("usage token counts must be non-negative")
+		}
+		if value > maxRemoteReportedTokens-total {
+			return 0, fmt.Errorf("usage exceeds %d tokens", maxRemoteReportedTokens)
+		}
+		total += value
+	}
+	return total, nil
+}
 
 // handleWorkReport records a worker's terminal result for a leased task. It is
 // idempotent (safe redelivery) and rejects reports from a non-owning worker.
@@ -153,6 +176,7 @@ func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 		Status           string                 `json:"status"`
 		Summary          string                 `json:"summary"`
 		Patches          []string               `json:"patches"`
+		Usage            *remoteTokenUsage      `json:"usage,omitempty"`
 		ChannelMessages  []remoteChannelMessage `json:"channel_messages,omitempty"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -164,10 +188,19 @@ func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 	if len(p.ChannelMessages) > maxRemoteChannelMessagesPerReport {
 		return nil, fmt.Errorf("at most %d channel_messages may be reported at once", maxRemoteChannelMessagesPerReport)
 	}
+	tokensUsed := 0
+	usageObserved := p.Usage != nil
+	if p.Usage != nil {
+		var err error
+		tokensUsed, err = p.Usage.total()
+		if err != nil {
+			return nil, err
+		}
+	}
 	if task, ok := d.sched.Get(p.TaskID); ok && task.Status == "cancelled" {
 		return map[string]any{"ok": false, "cancelled": true}, nil
 	}
-	if err := d.sched.Report(p.TaskID, p.WorkerID, p.LeaseGeneration, p.Status, p.Summary, p.Patches); err != nil {
+	if err := d.sched.ReportWithUsage(p.TaskID, p.WorkerID, p.LeaseGeneration, p.Status, p.Summary, p.Patches, tokensUsed, usageObserved); err != nil {
 		return nil, err
 	}
 	var task *scheduler.Task
@@ -189,7 +222,7 @@ func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 		}
 	}
 	d.record(sessionID, "TaskCreated", p.TaskID, "worker",
-		map[string]any{"status": p.Status, "worker_id": p.WorkerID, "reported": true}, "")
+		map[string]any{"status": p.Status, "worker_id": p.WorkerID, "reported": true, "tokens_used": tokensUsed, "token_usage_observed": usageObserved}, "")
 	d.persistRun(p.TaskID)
 	d.emitDebug("worker", "work_reported", p.TaskID, map[string]string{
 		"worker_id": p.WorkerID,

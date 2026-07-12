@@ -1,20 +1,21 @@
-//go:build !darwin && !linux
+//go:build !darwin && !linux && !windows
 
 package main
 
 import (
-	"os"
+	"bytes"
+	"context"
+	"io"
 	"os/exec"
+	"time"
 )
 
-func configureExecutorCommand(_ *exec.Cmd) {}
-
-// Platforms without Unix process groups fall back to terminating the direct
-// executor process. Operators on those platforms must ensure their executor
-// does not leave detached descendants.
-func killExecutorProcess(cmd *exec.Cmd) error {
-	if cmd.Process == nil {
-		return os.ErrProcessDone
-	}
-	return cmd.Process.Kill()
+func runExecutorCommand(ctx context.Context, program string, args, env []string, stdin []byte, stdout, stderr io.Writer) error {
+	cmd := exec.CommandContext(ctx, program, args...)
+	cmd.WaitDelay = 2 * time.Second
+	cmd.Env = env
+	cmd.Stdin = bytes.NewReader(stdin)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
 }

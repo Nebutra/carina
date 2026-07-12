@@ -18,7 +18,7 @@
 
 Carina は、AI コーディングエージェントのためのローカルファーストなランタイム層です。エディタ、チャットアプリ、ホステッドサンドボックスではありません。エージェントとマシンの間に入り、ファイル読み取り、編集、コマンド、ネットワークアクセス、プラグイン、secret を明示的なポリシーの後ろに置きます。
 
-このリポジトリは、ソースビルド、ローカル実験、自社の Agent 実行基盤を設計するチームに向いています。まだ alpha です。macOS パッケージは Nebutra Homebrew tap から利用できます。Apple signing/notarization の自動化は実装済みですが、release credential を待っています。Linux archive と npm trusted publishing は release pipeline に実装済みですが、最初の public release は未完了です。polished dashboard は現在の terminal-first alpha の範囲外です。
+このリポジトリは、ソースビルド、ローカル実験、自社の Agent 実行基盤を設計するチームに向いています。まだ alpha です。macOS パッケージは Nebutra Homebrew tap から利用できます。Apple signing/notarization の自動化は実装済みですが、release credential を待っています。Linux archive/package、npm、Windows worker、container、package 済み VS Code/Web Operator client は release pipeline に入り、残作業は外部 registry、publisher、credential、hosting の有効化です。
 
 ## Why Carina
 
@@ -68,19 +68,16 @@ Carina が提供するもの：
 | Integration | MCP client/server（`mcp_find` tool search 付き）、WASM plugin boundary（org/user/project tighten-only enable merge）、worker、workflow DAG |
 | Nebutra boundary | ローカル runtime が action authority を維持し、identity と multi-endpoint sync は Nebutra Cloud（`nebutra.com`）の境界に置く |
 
-まだ product-complete ではないもの：
+外部 activation が必要なもの：
 
 - Apple に受理される credentialed signing/notarization public release；
   fail-closed automation は実装済みですが、Apple credential は未設定；
-- Linux archive と npm trusted publishing の最初の public release；build、
-  packaging、SBOM、provenance、conformance は実装済みですが、npm package
-  と trusted-publisher binding は未作成；
-- contributor/security process の完成；
-- graphical dashboard やエディタ統合；terminal TUI は現在 typed event、
-  structured approval/question、steering、reconnect recovery を提供済み；
-- Windows support；
-- TypeScript、Python、Go SDK の parity；
-- remote-worker fleet の production guide。
+- Linux/npm/container の public registry と trusted publisher 設定；
+- package 済み VS Code/Web Operator client の Marketplace/hosting 公開；
+- tap 未追加の `brew install carina` に必要な Homebrew Core upstream review；
+- real provider credential と代表的 terminal hardware を使う CJK/reconnect 検証；
+- Nebutra Cloud API、tenant、identity、retention contract；local sync は off；
+- Windows は remote worker package のみを support し、desktop daemon/CLI は非対応。
 
 ## Homebrew Install
 

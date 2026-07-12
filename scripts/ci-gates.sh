@@ -18,7 +18,7 @@ ok()   { echo "GATE PASS:   $1"; }
 # 16.1 — No TypeScript core runtime. TypeScript is allowed only in SDK,
 #        client/UI integrations, examples, tests, and docs.
 # ---------------------------------------------------------------------------
-ts_runtime=$(find . -path ./node_modules -prune -o \
+ts_runtime=$(find . -type d -name node_modules -prune -o \
   \( -path '*/agent/*' -o -path '*/runtime/*' -o -path '*/kernel/*' \
      -o -path '*/tools/*' -o -path '*/patch/*' -o -path '*/scheduler/*' \
      -o -path '*/session/*' -o -path '*/executor/*' \) \

@@ -3,14 +3,26 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
-func configureExecutorCommand(cmd *exec.Cmd) {
+func runExecutorCommand(ctx context.Context, program string, args, env []string, stdin []byte, stdout, stderr io.Writer) error {
+	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return killExecutorProcess(cmd) }
+	cmd.WaitDelay = 2 * time.Second
+	cmd.Env = env
+	cmd.Stdin = bytes.NewReader(stdin)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
 }
 
 func killExecutorProcess(cmd *exec.Cmd) error {

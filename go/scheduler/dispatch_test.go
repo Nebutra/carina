@@ -127,16 +127,16 @@ func TestDispatchReportIsIdempotent(t *testing.T) {
 	s := New()
 	task := s.SubmitForDispatch("sess_1", "ws_1", "do work", nil)
 	leased, _ := leaseAny(s, "wrk_A", 5*time.Second)
-	if err := s.Report(task.TaskID, "wrk_A", leased.LeaseGeneration, "completed", "ok", nil); err != nil {
+	if err := s.ReportWithUsage(task.TaskID, "wrk_A", leased.LeaseGeneration, "completed", "ok", nil, 17, true); err != nil {
 		t.Fatalf("first report failed: %v", err)
 	}
 	// A duplicate delivery of the same report is a safe no-op.
-	if err := s.Report(task.TaskID, "wrk_A", leased.LeaseGeneration, "completed", "ok-again", nil); err != nil {
+	if err := s.ReportWithUsage(task.TaskID, "wrk_A", leased.LeaseGeneration, "completed", "ok-again", nil, 99, true); err != nil {
 		t.Fatalf("duplicate report must be a no-op, got %v", err)
 	}
 	got, _ := s.Get(task.TaskID)
-	if got.Summary != "ok" {
-		t.Fatalf("duplicate report must not overwrite the result, got %q", got.Summary)
+	if got.Summary != "ok" || got.TokensUsed != 17 || !got.TokenUsageObserved {
+		t.Fatalf("duplicate report must not overwrite the result or usage, got %+v", got)
 	}
 }
 

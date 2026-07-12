@@ -18,7 +18,7 @@
 
 Carina 是一个本地优先的 AI 编程智能体运行时。它不是编辑器、聊天产品，也不是托管沙箱。它位于智能体和机器之间，让文件读取、代码修改、命令、网络访问、插件和 secret 都先经过明确策略，再真正发生。
 
-当前仓库适合源码构建、本地实验，以及团队设计自己的 Agent 执行底座。它仍处于 alpha。macOS 公开安装包已经通过 Nebutra Homebrew tap 提供；Apple 签名和 notarization 自动化已经实现，但仍等待发布凭据。Linux 归档和 npm trusted publishing 已进入发布流水线，但尚未完成首次公开发布。完整 dashboard 不在当前 terminal-first alpha 的范围内。
+当前仓库适合源码构建、本地实验，以及团队设计自己的 Agent 执行底座。它仍处于 alpha。macOS 公开安装包已经通过 Nebutra Homebrew tap 提供；Apple 签名和 notarization 自动化已经实现，但仍等待发布凭据。Linux 归档/系统包、npm、Windows worker、容器以及已打包的 VS Code/Web Operator 客户端均已进入发布流水线，剩余工作是外部 registry、publisher、凭据和托管激活。
 
 ## 为什么用 Carina
 
@@ -68,19 +68,16 @@ Carina 提供：
 | 集成 | MCP client/server（含 `mcp_find` 工具搜索）、WASM plugin boundary（org/user/project 只紧不松 enable merge）、worker、workflow DAG |
 | Nebutra 边界 | 本地 runtime 保持动作权威；身份和多端同步归 Nebutra Cloud（`nebutra.com`）边界 |
 
-还没有产品化完成：
+仍需外部激活：
 
 - 首次通过 Apple 验收的签名和 notarization 公开发布；自动化已经
   fail-closed 落地，但所需 Apple 凭据尚未配置；
-- 首次 Linux 归档和 npm trusted publishing 公开发布；构建、打包、SBOM、
-  provenance 和 conformance 已实现，但 npm package 和 trusted publisher
-  绑定尚未建立；
-- 完整 contributor/security 流程；
-- 图形化 dashboard 或编辑器集成；终端 TUI 目前已提供 typed event、结构化
-  approval/question、steering、reconnect recovery；
-- Windows 支持；
-- TypeScript、Python、Go SDK 能力对齐；
-- 远程 worker 集群的生产部署指南。
+- Linux/npm/container 的公开 registry 与 trusted publisher 配置；
+- 已打包 VS Code/Web Operator 客户端的 Marketplace 与托管发布；
+- 让未添加 tap 的 `brew install carina` 生效所需的 Homebrew Core 上游审核；
+- 需要真实 provider 凭据和代表性终端硬件的 CJK/reconnect 验证；
+- Nebutra Cloud 的 API、tenant、identity、retention 外部合同；本地 sync 默认关闭；
+- Windows 当前支持远程 worker 包，不宣称桌面 daemon/CLI。
 
 ## 使用 Homebrew 安装
 

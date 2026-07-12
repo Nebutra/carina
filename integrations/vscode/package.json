@@ -1,10 +1,14 @@
 {
   "name": "carina-vscode",
   "displayName": "Carina Agent Runtime",
-  "version": "0.1.0",
+  "version": "0.6.2",
+  "publisher": "nebutra",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Nebutra/carina.git" },
   "private": true,
   "engines": { "vscode": "^1.95.0" },
   "main": "./dist/extension.js",
+  "files": ["dist/**", "media/**", "README.md", "LICENSE"],
   "activationEvents": ["onView:carina.agents", "onCommand:carina.refresh"],
   "contributes": {
     "viewsContainers": { "activitybar": [{ "id": "carina", "title": "Carina", "icon": "media/carina.svg" }] },
@@ -37,6 +41,15 @@
       }
     }
   },
-  "scripts": { "build": "tsc -p .", "test": "npm run build && node --test test/*.test.mjs" },
-  "devDependencies": { "@types/node": "^22.0.0", "@types/vscode": "^1.95.0", "typescript": "^5.7.0" }
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "package": "npm run build && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "3.9.2",
+    "typescript": "^5.7.0"
+  }
 }

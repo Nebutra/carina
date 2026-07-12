@@ -74,22 +74,23 @@ Current strengths:
 - a local-first web operator dashboard and a VS Code extension consume the
   authoritative `agent.view` roster with session inspection, steering,
   approval/question resolution, and reconnect recovery;
-- checksummed macOS/Homebrew distribution and fail-closed Apple
-  signing/notarization automation are present;
+- checksummed macOS/Linux archives, deb/rpm, Windows worker, Homebrew/Linuxbrew,
+  npm, installer, VSIX/Web Operator, and container build automation are present;
 - source builds and tests are usable;
 - Nebutra Cloud identity/sync has an explicit boundary contract, with sync off
   by default.
 
-Current gaps:
+External activation gaps:
 
 - the first credentialed, Apple-accepted tag run is still required before
   notarization can be claimed for a public artifact;
-- Linux packages and npm installation are not published;
-- the web operator dashboard and VS Code extension are new operator clients
-  and are not yet packaged or marketplace-published; the polished product
-  surface remains terminal-first;
-- less-common control-plane RPCs still use the SDKs' generic `call` escape
-  hatch rather than dedicated wrappers;
-- Windows is not supported;
-- production remote-worker operations need separate deployment documentation;
-- the Nebutra Cloud sync connector is not implemented yet.
+- Linux/npm/container packages still need their public registries and trusted
+  publisher identities activated;
+- the packaged web operator and VS Code extension still need hosted and
+  marketplace publication;
+- Homebrew Core installation still requires upstream review; the Nebutra tap
+  already works;
+- Windows support is intentionally limited to the remote worker package;
+- real provider/terminal validation requires external credentials and hardware;
+- Nebutra Cloud sync remains off until its service API, staging tenant,
+  identity, retention, and credential contracts exist.

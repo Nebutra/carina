@@ -5,7 +5,7 @@ RUN go mod download
 COPY apps apps
 COPY go go
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/carina-daemon ./apps/carina-daemon
-FROM rust:1-bookworm AS rust
+FROM rust:1.96.1-bookworm AS rust
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates

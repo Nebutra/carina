@@ -86,7 +86,13 @@ The executor must exit zero and emit one JSON value on stdout:
   "schema_version": "carina.worker.result.v1",
   "status": "completed",
   "summary": "Tests passed and the requested change was produced",
-  "patches": ["patch_01J..."]
+  "patches": ["patch_01J..."],
+  "usage": {
+    "input_tokens": 1200,
+    "output_tokens": 340,
+    "cache_read_tokens": 80,
+    "cache_write_tokens": 0
+  }
 }
 ```
 
@@ -95,6 +101,14 @@ identifiers already created through an authorized integration; a path or an
 arbitrary diff is not a patch identifier. The worker rejects unknown fields,
 unsupported schema versions, multiple JSON values, output larger than 4 MiB,
 empty patch identifiers, and more than 1024 patch identifiers.
+
+`usage` is optional for executors that do not invoke a metered model. When it
+is present, every count must be non-negative and the combined result must not
+exceed one billion tokens. The daemon records it inside the same fenced,
+idempotent lease-report transaction as the terminal result, so retries cannot
+double-count spend. Streaming workflow budgets include reported remote usage;
+an older or uninstrumented executor that omits `usage` remains explicitly
+`unmetered`, never a measured zero.
 
 A non-zero exit, timeout, invalid JSON, or invalid result contract is reported as
 `failed`. Executor stderr is kept out of the task summary because it may contain
@@ -156,19 +170,16 @@ remaining executors are cancelled and their leases are left for the daemon's
 at-least-once reaper; they are not falsely reported as completed.
 
 On Darwin and Linux, every executor runs in its own process group and cancellation
-kills the whole group so descendant processes cannot survive a timed-out or revoked
-lease. Other platforms fall back to terminating the direct executor process; their
-executor implementation must not detach descendants.
-
-This limitation is a deployment capability boundary, not a best-effort security
-claim. Operators that require fail-closed descendant cancellation must schedule
-such work only to Darwin/Linux workers until an equivalent native containment
-primitive is implemented for the target platform. Carina does not currently claim
-Windows descendant-process containment and does not emulate it by process-name
-scanning.
+kills the whole group. On Windows 10+, the worker creates a
+`KILL_ON_JOB_CLOSE` Job and supplies it through the creation-time Job List
+attribute, so the executor belongs to the Job before its first instruction can
+run. Cancellation, timeout, or executor completion closes the Job and terminates
+remaining descendants. No process-name scanning or post-start assignment race is
+used.
 
 Workers register a typed `process_tree_containment` value. Darwin/Linux workers
-advertise `unix_pgrp_v1`; Windows and other platforms advertise `none`. Dispatch
+advertise `unix_pgrp_v1`; Windows workers advertise `windows_job_v1`; other
+platforms advertise `none`. Dispatch
 tasks may require `process_tree_containment` (any governed implementation) or an
 exact implementation such as `process_tree_containment:unix_pgrp_v1`. The daemon
 keeps an unmatched task queued and leases it only to a matching worker. Unknown
@@ -178,15 +189,9 @@ Dispatch tasks that omit `required_worker_capabilities` are leaseable by any
 registered worker, including workers advertising containment `none`. Callers
 that need fail-closed descendant cancellation must opt in by submitting with
 `required_worker_capabilities: ["process_tree_containment"]`; such a task stays
-queued until a worker with a governed containment implementation leases it, so
-the official Windows worker registers but does not lease it until
-`windows_job_v1` passes conformance.
-
-Windows must not advertise `windows_job_v1` until a native Job Object guard can
-create the executor suspended, assign it to a kill-on-close Job, resume it, and
-pass descendant-process conformance on Windows CI. `CREATE_NEW_PROCESS_GROUP`,
-`taskkill /T`, and assigning a running process to a Job are not accepted as
-equivalent containment because they leave escape races.
+queued until a worker with a governed containment implementation leases it.
+Windows CI runs a descendant-process cancellation contract before the worker is
+allowed to advertise `windows_job_v1`.
 
 The daemon issues `worker_credential` once during registration. The worker sends it
 with heartbeat, revoke, backpressure, poll, renew, and report calls. Treat that

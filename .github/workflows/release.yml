@@ -226,8 +226,46 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-integrations:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with: { go-version: "1.25" }
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with: { node-version: "24" }
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with: { python-version: "3.12" }
+      - name: Build operator client packages
+        run: VERSION="${GITHUB_REF_NAME#v}" ./scripts/package-integrations.sh
+      - uses: actions/attest-build-provenance@78e6cbd37d0ac1a40113c04f2037dacf1ea3f12e # v4
+        with:
+          subject-path: |
+            dist/carina_*_vscode.vsix
+            dist/carina_*_web-operator.tar.gz
+            dist/carina-install.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: carina-integrations
+          path: |
+            dist/carina_*_vscode.vsix
+            dist/carina_*_vscode.vsix.sha256
+            dist/carina_*_web-operator.tar.gz
+            dist/carina_*_web-operator.tar.gz.sha256
+            dist/carina-install.sh
+            dist/carina-install.sh.sha256
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
-    needs: [build, build-linux, publish-npm]
+    needs: [build, build-linux, build-windows-worker, build-integrations, publish-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -245,6 +283,15 @@ jobs:
           pattern: carina-linux-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: carina-windows-worker-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: carina-integrations
+          path: dist
 
       - name: Verify release assets
         run: VERSION="${GITHUB_REF_NAME#v}" REQUIRE_SIGNING=1 ./scripts/verify-release-assets.sh
@@ -262,9 +309,23 @@ jobs:
             {
               echo SHA256SUMS
               echo "carina_${version}_npm_packages.tar.gz"
+              echo "carina_${version}_vscode.vsix"
+              echo "carina_${version}_vscode.vsix.sha256"
+              echo "carina_${version}_web-operator.tar.gz"
+              echo "carina_${version}_web-operator.tar.gz.sha256"
+              echo "carina-install.sh"
+              echo "carina-install.sh.sha256"
               for target in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
                 echo "carina_${version}_${target}.tar.gz"
                 echo "carina_${version}_${target}.tar.gz.sha256"
+              done
+              for arch in arm64 amd64; do
+                for ext in deb rpm; do
+                  echo "carina_${version}_linux_${arch}.${ext}"
+                  echo "carina_${version}_linux_${arch}.${ext}.sha256"
+                done
+                echo "carina-worker_${version}_windows_${arch}.zip"
+                echo "carina-worker_${version}_windows_${arch}.zip.sha256"
               done
               for arch in arm64 amd64; do
                 echo "carina_${version}_darwin_${arch}.tar.gz.notary.json"
@@ -274,11 +335,17 @@ jobs:
             cmp published/assets.expected published/assets.actual
             gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --dir published/native -p "carina_${version}_darwin_*" \
-              -p "carina_${version}_linux_*" -p SHA256SUMS
+              -p "carina_${version}_linux_*" -p "carina-worker_${version}_windows_*" \
+              -p "carina_${version}_vscode.vsix*" -p "carina_${version}_web-operator.tar.gz*" \
+              -p "carina-install.sh*" \
+              -p SHA256SUMS
             gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --dir published/npm -p "carina_${version}_npm_packages.tar.gz"
             cp published/native/SHA256SUMS published/SHA256SUMS.expected
             DIST=published/native VERSION="$version" REQUIRE_SIGNING=1 ./scripts/verify-release-assets.sh
+            DIST=published/native VERSION="$version" ./scripts/verify-linux-packages.sh
+            DIST=published/native VERSION="$version" ./scripts/verify-windows-worker-packages.sh
+            DIST=published/native VERSION="$version" ./scripts/verify-integration-packages.sh
             cmp published/SHA256SUMS.expected published/native/SHA256SUMS
             VERSION="$version" BUNDLE="published/npm/carina_${version}_npm_packages.tar.gz" \
               ./scripts/verify-npm-release-bundle.sh
@@ -286,7 +353,10 @@ jobs:
             exit 0
           fi
           gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.tar.gz.sha256 \
-            dist/*.tar.gz.notary.json dist/*.tar.gz.signing.txt dist/SHA256SUMS \
+            dist/*.tar.gz.notary.json dist/*.tar.gz.signing.txt dist/*.deb dist/*.deb.sha256 \
+            dist/*.rpm dist/*.rpm.sha256 dist/*.zip dist/*.zip.sha256 dist/SHA256SUMS \
+            dist/*.vsix dist/*.vsix.sha256 \
+            dist/carina-install.sh dist/carina-install.sh.sha256 \
             --repo "$GITHUB_REPOSITORY" --clobber
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --draft=false --latest
@@ -312,6 +382,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with: { go-version: "1.25" }
+      - name: Install pinned nFPM
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.1
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: "1.96.1"
@@ -327,6 +399,9 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           VERSION="$version" ./scripts/package-release.sh
+          VERSION="$version" GOARCH="${{ matrix.goarch }}" \
+            ARCHIVE="$GITHUB_WORKSPACE/dist/carina_${version}_linux_${{ matrix.goarch }}.tar.gz" \
+            ./scripts/package-linux.sh
       - name: Test packaged daemon SDK conformance
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -340,6 +415,44 @@ jobs:
           path: |
             dist/carina_*.tar.gz
             dist/carina_*.tar.gz.sha256
+            dist/carina_*.deb
+            dist/carina_*.deb.sha256
+            dist/carina_*.rpm
+            dist/carina_*.rpm.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  build-windows-worker:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with: { go-version: "1.25" }
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with: { python-version: "3.12" }
+      - name: Build deterministic Windows worker package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}" GOARCH="${{ matrix.goarch }}" ./scripts/package-windows-worker.sh
+      - uses: actions/attest-build-provenance@78e6cbd37d0ac1a40113c04f2037dacf1ea3f12e # v4
+        with:
+          subject-path: dist/carina-worker_*.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: carina-windows-worker-${{ matrix.goarch }}
+          path: |
+            dist/carina-worker_*.zip
+            dist/carina-worker_*.zip.sha256
           if-no-files-found: error
           retention-days: 7
 
@@ -485,23 +598,28 @@ jobs:
           current="$(sed -n 's/^  version "\([^"]*\)"/\1/p' Formula/carina.rb 2>/dev/null || true)"
           "$GITHUB_WORKSPACE/carina/scripts/check-homebrew-version.sh" "$current" "${GITHUB_REF_NAME#v}"
 
-      - name: Download immutable published Darwin checksums
+      - name: Download immutable published platform checksums
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p dist
           gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --dir dist -p "carina_${version}_darwin_*.tar.gz.sha256"
+            --dir dist -p "carina_${version}_darwin_*.tar.gz.sha256" \
+            -p "carina_${version}_linux_*.tar.gz.sha256"
 
       - name: Render Formula
         run: |
           version="${GITHUB_REF_NAME#v}"
           arm64_sha="$(awk '{print $1}' "dist/carina_${version}_darwin_arm64.tar.gz.sha256")"
           amd64_sha="$(awk '{print $1}' "dist/carina_${version}_darwin_amd64.tar.gz.sha256")"
+          linux_arm64_sha="$(awk '{print $1}' "dist/carina_${version}_linux_arm64.tar.gz.sha256")"
+          linux_amd64_sha="$(awk '{print $1}' "dist/carina_${version}_linux_amd64.tar.gz.sha256")"
           VERSION="$version" \
           DARWIN_ARM64_SHA256="$arm64_sha" \
           DARWIN_AMD64_SHA256="$amd64_sha" \
+          LINUX_ARM64_SHA256="$linux_arm64_sha" \
+          LINUX_AMD64_SHA256="$linux_amd64_sha" \
           OUTPUT="$GITHUB_WORKSPACE/homebrew-tap/Formula/carina.rb" \
             "$GITHUB_WORKSPACE/carina/scripts/render-homebrew-formula.sh"
 

@@ -116,8 +116,21 @@ func (s *Scheduler) RenewLease(taskID, workerID string, generation int, ttl time
 // rejected (a stale worker whose lease was reaped and reassigned cannot clobber
 // the new owner's result).
 func (s *Scheduler) Report(taskID, workerID string, generation int, status, summary string, patches []string) error {
+	return s.ReportWithUsage(taskID, workerID, generation, status, summary, patches, 0, false)
+}
+
+// ReportWithUsage atomically records a terminal dispatch result and its
+// optional executor-observed token spend. Keeping usage inside the fenced,
+// idempotent report transaction prevents duplicate delivery from double-counting.
+func (s *Scheduler) ReportWithUsage(taskID, workerID string, generation int, status, summary string, patches []string, tokensUsed int, usageObserved bool) error {
 	if !isTerminal(status) {
 		return fmt.Errorf("scheduler: %q is not a terminal status", status)
+	}
+	if tokensUsed < 0 {
+		return fmt.Errorf("scheduler: tokens_used must be non-negative")
+	}
+	if !usageObserved && tokensUsed != 0 {
+		return fmt.Errorf("scheduler: unobserved usage cannot report tokens")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -138,6 +151,8 @@ func (s *Scheduler) Report(taskID, workerID string, generation int, status, summ
 	updated.Status = status
 	updated.Summary = summary
 	updated.AppliedPatches = patches
+	updated.TokensUsed = tokensUsed
+	updated.TokenUsageObserved = usageObserved
 	updated.LeaseOwner = ""
 	updated.LeaseExpiry = time.Time{}
 	updated.UpdatedAt = time.Now().UTC()

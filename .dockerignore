@@ -1,0 +1,12 @@
+.git
+.github
+.claude
+.codex
+bin
+dist
+target
+**/node_modules
+zig/.zig-cache
+zig/zig-out
+*.log
+.DS_Store

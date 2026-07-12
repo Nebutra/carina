@@ -1,61 +1,58 @@
 # Roadmap
 
-Carina is currently an alpha with source builds and a public macOS Homebrew
-channel. This roadmap records intended product direction, not committed dates.
+Carina is an alpha Agent Runtime. Repository-owned product work identified in
+the July 2026 productization audit is closed on `main`; this document now tracks
+only activation, publication, and validation work that depends on external
+services, credentials, hardware, tenants, or repository-administrator access.
+It does not assign committed dates.
 
-## Install And Release Channels
+## Repository Closure
 
-Today:
+The source tree and release workflows include:
 
-- source build from Git with `make all`;
-- CI-equivalent technical release gate with `make release-check`;
-- structured local readiness report with `make release-preflight`, and strict
-  online external readiness enforcement with `make release-ready`;
-- current-platform release candidate archives with `make release-package`;
-- local binaries under `bin/`;
-- local archives, checksums, and manifests under `dist/`;
-- checksummed Apple Silicon and Intel macOS releases;
-- official `Nebutra/homebrew-tap` Formula with install/upgrade smoke tests;
-- verified, writable `Carina release workflow` deploy key for
-  `Nebutra/homebrew-tap`;
-- Linux `amd64` and `arm64` archive jobs with checksums, provenance, and
-  packaged-daemon SDK conformance;
-- npm launcher and native platform package assembly with OIDC trusted
-  publishing and provenance support;
-- operator session review, channel crash reconciliation, artifact inspection,
-  and usage/cost commands included in the release CLI smoke surface;
-- GitHub build provenance for release archives;
-- fail-closed Developer ID signing and Apple notarization automation for future
-  tag releases, with per-release notary JSON and Gatekeeper reports; the first
-  credentialed Apple-accepted run remains externally verifiable release work.
+- macOS and Linux `arm64`/`amd64` archives, Linux deb/rpm packages, and a
+  Windows `carina-worker` package;
+- Homebrew tap and Linuxbrew Formula rendering plus install/upgrade contracts;
+- npm launcher/native package assembly with immutable retry bundles and OIDC
+  trusted-publishing support;
+- a checksum-enforcing shell installer;
+- non-root daemon and worker container images that are built in CI;
+- packaged VS Code and static Web Operator clients with checksums and release
+  provenance;
+- TypeScript, Python, and Go typed SDK parity for common session, workspace,
+  patch, command, audit, workflow, worker, approval, checkpoint, artifact, and
+  event-stream operations;
+- remote executor token accounting, idempotent scheduler rollups, Unix process
+  groups, and Windows kill-on-close Job Object containment;
+- production remote-worker deployment guidance and hardened systemd examples;
+- audit durability tests and a measured EPS/p99 performance decision gate;
+- security policy, contributor guidance, issue forms, and a pull-request
+  checklist.
 
-Planned install channels:
+The Nebutra Cloud boundary remains intentionally disabled by default. Carina
+does not invent a cloud protocol before the external service contract exists,
+and local policy, audit, approval, and rollback remain authoritative.
 
-1. **Credentialed Apple release**: provision the Developer ID and notarization
-   credentials below, then validate the fail-closed signing/notarization path
-   on a public tag for both macOS architectures.
-2. **First npm trusted release**: establish the `@nebutra` packages and npm
-   trusted-publisher bindings, then verify the OIDC-only publication path on a
-   public tag. The launcher remains a thin platform-binary installer rather
-   than a second Node.js runtime.
-3. **Linuxbrew**: extend the Nebutra-maintained Formula after Linux archives
-   pass clean-machine installation tests. Bundled Headroom remains gated on a
-   reproducible standalone artifact for every supported architecture.
-4. **Later channels**: shell installer, Linux distro packages, Docker images
-   for daemon/worker roles, and Windows packages after Windows support exists.
+## External Activation
 
-### Release Credential Readiness
-
-Audited 2026-07-12. Secret values must never be committed to this repository.
-
-| Channel | Readiness | Remaining external work |
+| Work | Why it is external | Completion evidence |
 | --- | --- | --- |
-| Homebrew tap | Ready | The repository secret `HOMEBREW_TAP_DEPLOY_KEY` exists, and the writable deploy key is verified on `Nebutra/homebrew-tap`. |
-| Apple signing and notarization | Blocked | Create the protected GitHub `codesigning` environment, add all six required secrets, and approve the first two-architecture signing deployment. |
-| npm trusted publishing | Blocked | The launcher and native packages are not yet present in npm, the GitHub `npm-release` environment has not been created, and the five trusted-publisher bindings are not confirmed. |
+| Apple signing and notarization | Requires Developer ID certificate, Apple notary account, protected GitHub environment, secrets, and approvers | Both Darwin assets have Accepted notary JSON, verified Team ID, signature, and Gatekeeper reports |
+| npm public packages | Requires `@nebutra` package ownership, `npm-release` environment, and five trusted-publisher bindings | OIDC-only `npm publish --provenance` succeeds and immutable package integrity matches the release bundle |
+| Homebrew Core `brew install carina` | Requires a Homebrew Core formula submission and upstream review; `Nebutra/tap/carina` is already the maintained channel | Core formula is merged and clean-machine install/upgrade passes on macOS and Linux |
+| VS Code Marketplace / Open VSX | Requires publisher identities, marketplace tokens/OIDC support, listings, and review | Published extension digest matches the release VSIX and installs on a clean profile |
+| Container registry | Requires registry namespace, credentials/OIDC, retention, signing policy, and public visibility decision | Multi-arch daemon/worker manifests, provenance, SBOM, and signature verification are public |
+| Hosted Web Operator and installer URL | Requires DNS, TLS, hosting/CDN, origin allowlists, and operating ownership | Hosted assets match release digests and WSS/origin/caching checks pass |
+| Real provider and terminal matrix | Requires paid provider credentials plus representative terminal/OS hardware | Recorded canaries cover CJK input, narrow layouts, reconnect, approval/question flows, and provider streaming |
+| Nebutra Cloud connector activation | Requires a versioned API contract, staging tenant, OIDC/device identity, client credentials, retention/redaction policy, and service SLOs | Contract tests pass against staging and sync/handoff is opt-in, revocable, audited, and local-authority preserving |
+| GitHub governance | Requires repository administrator access | Branch protection, required checks/reviews, private vulnerability reporting, and environment protection are enabled |
+| Bundled Headroom artifacts | Requires reproducible upstream binaries and checksums for every supported release target | All platform artifacts are pinned, verified, and packaged without `SKIP_HEADROOM=1` |
+| Public release promotion | Requires release/tag write permission and the external gates above | A non-draft tag release passes the immutable full-asset verification path |
 
-Apple release provisioning requires these GitHub `codesigning` environment
-secrets:
+## Release Credentials
+
+Secret values must never be committed. Apple automation expects these secrets
+in a protected `codesigning` GitHub environment:
 
 - `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`;
 - `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`;
@@ -64,75 +61,25 @@ secrets:
 - `APPLE_NOTARY_TEAM_ID`;
 - `APPLE_NOTARY_PASSWORD`.
 
-Store or expose these secrets only through the protected `codesigning`
-environment used by the native macOS build matrix. Configure required
-reviewers before the first tag so signing credentials are not available to an
-unapproved job.
+The npm bootstrap requires public ownership of `@nebutra/carina` and its four
+native packages, a protected `npm-release` environment, and trusted-publisher
+bindings to `Nebutra/carina` / `release.yml`. Set
+`NPM_TRUSTED_PUBLISHERS_CONFIRMED=true` only after all five bindings are
+verified. Do not add long-lived token fallbacks.
 
-The certificate must be a Developer ID Application certificate with its
-private key exported as PKCS#12. `APPLE_NOTARY_PASSWORD` must be an app-specific
-password for the notarization Apple ID. The first credentialed run must verify
-the signature, Team ID, notarization result, and Gatekeeper acceptance rather
-than treating secret presence as completion.
+The Homebrew tap update requires `HOMEBREW_TAP_DEPLOY_KEY`. Homebrew Core
+acceptance is a separate upstream process and is not implied by tap readiness.
 
-The npm bootstrap sequence is:
+## Deliberate Non-Goals
 
-1. Authenticate an npm account with publish permission for the `@nebutra`
-   scope and establish `@nebutra/carina` plus its four native platform packages.
-2. Create the `npm-release` environment in `Nebutra/carina`.
-3. Bind every package's npm trusted publisher to organization `Nebutra`,
-   repository `carina`, workflow `release.yml`, and environment `npm-release`.
-4. Set repository variable `NPM_TRUSTED_PUBLISHERS_CONFIRMED=true` only after
-   verifying all five bindings.
-5. Perform the first tag publication with GitHub OIDC and
-   `npm publish --provenance`; do not add a long-lived `NPM_TOKEN` fallback.
+- A Windows desktop daemon/CLI is not claimed; the supported Windows artifact
+  is the contained remote worker.
+- Carina is not a VM or a replacement for an executor's workspace/container
+  isolation.
+- Cloud sync is not enabled until the Nebutra service contract and tenant
+  controls exist.
+- Release scripts and local tests are not evidence that an external registry,
+  marketplace, Apple service, or hosted deployment accepted an artifact.
 
-Release-channel acceptance criteria:
-
-- `make release-check` passes on a clean release machine;
-- `make release-ready` reports zero `FAIL` and zero `BLOCKED` gates; its JSON
-  report distinguishes missing external credentials from skipped
-  platform-specific checks;
-- artifacts are signed or have published checksums before public promotion;
-- Homebrew install, npm global install, and source install each have a smoke
-  test;
-- bundled Headroom is pinned by `integrations/headroom.lock` and verified by
-  checksum during release packaging;
-- installed CLI help uses only `carina` naming;
-- uninstall instructions remove binaries, service files, and local state
-  locations clearly.
-
-The technical pipeline is implemented, but implementation is not publication.
-Until the credentialed tag workflow produces Accepted Apple notary JSON for
-both Darwin archives and completes npm OIDC publication, those channels remain
-blocked in the table above.
-
-## Product Polish
-
-Near-term polish work:
-
-- keep README and quickstart centered on user workflows rather than internal
-  language split;
-- validate the typed TUI, structured question, reconnect, and narrow/CJK paths
-  against real provider sessions on supported terminal profiles;
-- harden and distribute the existing web operator dashboard and VS Code
-  extension (packaging, marketplace publication, docs); the runtime promise
-  remains terminal-first;
-- document production deployment profiles for remote workers;
-- improve SDK parity across TypeScript, Python, and Go;
-- publish security and contributor processes before broad external adoption.
-
-## Nebutra Cloud Identity And Sync
-
-Carina should not grow a Codex-style app server inside the local runtime. The
-multi-endpoint product layer belongs to Nebutra Cloud (`nebutra.com`).
-
-Planned sequence:
-
-1. Keep `nebutra_sync_mode=off` as the only source-first alpha behavior.
-2. Add a Nebutra-authenticated endpoint/device registry.
-3. Add metadata sync for endpoint/session indexes and status summaries.
-4. Add explicit audit-bundle sync with redaction and retention controls.
-5. Add remote handoff through existing daemon RPC, approval, and audit paths.
-
-See [Nebutra Cloud boundary](nebutra-cloud-boundary.md).
+See [release operations](release.md), [remote workers](deployment/remote-workers.md),
+and the [Nebutra Cloud boundary](nebutra-cloud-boundary.md).

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Nebutra/carina/security/policy
+    about: Use the private process in SECURITY.md; do not open a public issue.
