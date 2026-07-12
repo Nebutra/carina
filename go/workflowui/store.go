@@ -46,6 +46,17 @@ type Step struct {
 	InputTokens  int64      `json:"input_tokens,omitempty"`
 	OutputTokens int64      `json:"output_tokens,omitempty"`
 	CostUSD      float64    `json:"cost_usd,omitempty"`
+	// TokensUsed is the aggregate token count observed for this step when the
+	// executor exposes one. TokenUsageStatus is "observed" even when the count
+	// is zero, and "unavailable_remote" when an external worker's result schema
+	// cannot report usage. Keeping the status separate avoids presenting an
+	// unobservable remote cost as a measured zero.
+	TokensUsed       int64  `json:"tokens_used,omitempty"`
+	TokenUsageStatus string `json:"token_usage_status,omitempty"`
+	// DefinitionHash identifies the immutable workflow-step definition. Dynamic
+	// AddSteps replays are only idempotent when this hash matches; reusing an ID
+	// for different work is a conflict, not a replay.
+	DefinitionHash string `json:"definition_hash,omitempty"`
 }
 
 type Run struct {
@@ -64,15 +75,17 @@ type Run struct {
 }
 
 type Detail struct {
-	Run          Run     `json:"run"`
-	Completed    int     `json:"completed"`
-	Failed       int     `json:"failed"`
-	Skipped      int     `json:"skipped"`
-	Total        int     `json:"total"`
-	Progress     float64 `json:"progress"`
-	InputTokens  int64   `json:"input_tokens"`
-	OutputTokens int64   `json:"output_tokens"`
-	CostUSD      float64 `json:"cost_usd"`
+	Run            Run     `json:"run"`
+	Completed      int     `json:"completed"`
+	Failed         int     `json:"failed"`
+	Skipped        int     `json:"skipped"`
+	Total          int     `json:"total"`
+	Progress       float64 `json:"progress"`
+	InputTokens    int64   `json:"input_tokens"`
+	OutputTokens   int64   `json:"output_tokens"`
+	CostUSD        float64 `json:"cost_usd"`
+	TokensUsed     int64   `json:"tokens_used"`
+	UnmeteredSteps int     `json:"unmetered_steps"`
 }
 
 type Store struct {
@@ -157,6 +170,10 @@ func detail(r Run) Detail {
 		d.InputTokens += st.InputTokens
 		d.OutputTokens += st.OutputTokens
 		d.CostUSD += st.CostUSD
+		d.TokensUsed += st.TokensUsed
+		if st.TokenUsageStatus == "unavailable_remote" {
+			d.UnmeteredSteps++
+		}
 	}
 	if d.Total > 0 {
 		// Progress is "fraction of steps that have reached a terminal
@@ -170,6 +187,57 @@ func detail(r Run) Detail {
 	return d
 }
 
+// AddSteps atomically extends a run with dynamically generated steps. Replays
+// are idempotent only when an existing ID carries the same immutable
+// DefinitionHash; same-ID/different-definition input fails closed. Duplicate
+// IDs within one request are rejected before any state is changed.
+func (s *Store) AddSteps(runID string, steps []Step) (Run, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.runs[runID]
+	if !ok {
+		return Run{}, os.ErrNotExist
+	}
+	seen := make(map[string]struct{}, len(steps))
+	for _, step := range steps {
+		if strings.TrimSpace(step.ID) == "" {
+			return Run{}, errors.New("workflowui: step id is required")
+		}
+		if _, duplicate := seen[step.ID]; duplicate {
+			return Run{}, fmt.Errorf("workflowui: duplicate added step %q", step.ID)
+		}
+		seen[step.ID] = struct{}{}
+	}
+	existing := make(map[string]int, len(r.Steps))
+	for i, step := range r.Steps {
+		existing[step.ID] = i
+	}
+	changed := false
+	for _, step := range steps {
+		if i, replay := existing[step.ID]; replay {
+			if r.Steps[i].DefinitionHash != step.DefinitionHash {
+				return Run{}, fmt.Errorf("workflowui: step %q conflicts with an existing definition", step.ID)
+			}
+			continue
+		}
+		step.Status = Queued
+		r.Steps = append(r.Steps, step)
+		existing[step.ID] = len(r.Steps) - 1
+		changed = true
+	}
+	if !changed {
+		return r, nil
+	}
+	r.UpdatedAt = s.now().UTC()
+	original := s.runs[runID]
+	s.runs[runID] = r
+	if err := s.persistLocked(); err != nil {
+		s.runs[runID] = original
+		return Run{}, err
+	}
+	return r, nil
+}
+
 func (s *Store) Transition(id string, target Status) (Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -177,7 +245,7 @@ func (s *Store) Transition(id string, target Status) (Run, error) {
 	if !ok {
 		return Run{}, os.ErrNotExist
 	}
-	allowed := map[Status]map[Status]bool{Queued: {Running: true, Paused: true, Stopped: true}, Running: {Paused: true, Completed: true, Failed: true, Stopped: true, Interrupted: true}, Paused: {Running: true, Stopped: true, Interrupted: true}, Interrupted: {Queued: true, Stopped: true}, Failed: {Queued: true}, Stopped: {Queued: true}}
+	allowed := map[Status]map[Status]bool{Queued: {Running: true, Paused: true, Stopped: true}, Running: {Paused: true, Completed: true, Failed: true, Stopped: true, Interrupted: true}, Paused: {Running: true, Completed: true, Failed: true, Stopped: true, Interrupted: true}, Interrupted: {Queued: true, Stopped: true}, Failed: {Queued: true}, Stopped: {Queued: true}}
 	if !allowed[r.Status][target] {
 		return Run{}, fmt.Errorf("workflowui: invalid transition %s -> %s", r.Status, target)
 	}
@@ -257,7 +325,7 @@ func (s *Store) Restart(id, newID string) (Run, error) {
 	old.InterruptedAt = nil
 	old.InterruptionReason = ""
 	for i := range old.Steps {
-		old.Steps[i] = Step{ID: old.Steps[i].ID, Status: Queued}
+		old.Steps[i] = Step{ID: old.Steps[i].ID, Status: Queued, DefinitionHash: old.Steps[i].DefinitionHash}
 	}
 	s.runs[newID] = old
 	if err := s.persistLocked(); err != nil {
@@ -277,6 +345,9 @@ func (s *Store) UpdateStep(runID string, step Step) (Run, error) {
 	found := false
 	for i := range r.Steps {
 		if r.Steps[i].ID == step.ID {
+			if step.DefinitionHash == "" {
+				step.DefinitionHash = r.Steps[i].DefinitionHash
+			}
 			r.Steps[i] = step
 			found = true
 			break

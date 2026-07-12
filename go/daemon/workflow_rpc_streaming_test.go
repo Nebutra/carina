@@ -1,13 +1,40 @@
 package daemon
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Nebutra/carina/go/workflowui"
 )
+
+type workflowPauseReasoner struct {
+	calls         atomic.Int32
+	firstStarted  chan struct{}
+	firstRelease  chan struct{}
+	secondStarted chan struct{}
+}
+
+func (r *workflowPauseReasoner) Name() string { return "workflow-pause" }
+func (r *workflowPauseReasoner) Think(ctx context.Context, _ string) (string, error) {
+	call := r.calls.Add(1)
+	if call == 1 {
+		close(r.firstStarted)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-r.firstRelease:
+		}
+	} else if call == 2 {
+		close(r.secondStarted)
+	}
+	raw, _ := json.Marshal(map[string]string{"tool": "done", "summary": "ok"})
+	return string(raw), nil
+}
 
 func writeWorkflowSpecFile(t *testing.T, ws string, raw string) {
 	t.Helper()
@@ -78,6 +105,92 @@ func TestHandleWorkflowRunHonorsStreamingExecutionMode(t *testing.T) {
 	}
 	if detail.Completed != 2 || detail.Total != 2 || detail.Progress != 1.0 {
 		t.Fatalf("expected 2/2 completed steps with progress=1.0, got %+v", detail)
+	}
+	for _, step := range detail.Run.Steps {
+		if step.DefinitionHash == "" || step.TokenUsageStatus != "observed" || step.FinishedAt == nil {
+			t.Fatalf("streaming finalization erased live step metadata: %+v", step)
+		}
+	}
+}
+
+func TestWorkflowStopCancelsTheLiveExecution(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	reasoner := &cancellationBlockingReasoner{started: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
+	d.SetReasoner(reasoner)
+	writeWorkflowSpecFile(t, ws, `{"name":"rpc-stop","execution_mode":"streaming","steps":[{"id":"a","agent":"worker","task":"WAIT"}]}`)
+	sess, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "full-workspace", "on_request", nil)
+	res, err := d.handleWorkflowRun(mustJSON(t, map[string]any{"session_id": sess.SessionID, "workflow": "rpc-stop"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := res.(workflowui.Run)
+	select {
+	case <-reasoner.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("workflow subagent never started")
+	}
+	if _, err := d.handleWorkflowStop(mustJSON(t, map[string]any{"run_id": run.ID})); err != nil {
+		t.Fatalf("workflow.stop: %v", err)
+	}
+	select {
+	case <-reasoner.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("workflow.stop changed UI state but did not cancel the live subagent")
+	}
+	close(reasoner.release)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		detail, _ := d.workflowRuns.Detail(run.ID)
+		if detail.Run.Status == workflowui.Stopped && detail.Skipped == 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	detail, _ := d.workflowRuns.Detail(run.ID)
+	t.Fatalf("stopped run did not settle its active step honestly: %+v", detail)
+}
+
+func TestWorkflowPauseStopsNewAdmissionButLetsInflightFinish(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	reasoner := &workflowPauseReasoner{firstStarted: make(chan struct{}), firstRelease: make(chan struct{}), secondStarted: make(chan struct{})}
+	d.SetReasoner(reasoner)
+	writeWorkflowSpecFile(t, ws, `{"name":"rpc-pause","execution_mode":"streaming","steps":[{"id":"a","agent":"worker","task":"A"},{"id":"b","agent":"worker","task":"B","needs":["a"]}]}`)
+	sess, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "full-workspace", "on_request", nil)
+	res, err := d.handleWorkflowRun(mustJSON(t, map[string]any{"session_id": sess.SessionID, "workflow": "rpc-pause"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := res.(workflowui.Run)
+	<-reasoner.firstStarted
+	if _, err := d.handleWorkflowPause(mustJSON(t, map[string]any{"run_id": run.ID})); err != nil {
+		t.Fatalf("workflow.pause: %v", err)
+	}
+	close(reasoner.firstRelease)
+	select {
+	case <-reasoner.secondStarted:
+		t.Fatal("a dependency-released step was admitted while the run was paused")
+	case <-time.After(200 * time.Millisecond):
+	}
+	detail, _ := d.workflowRuns.Detail(run.ID)
+	if detail.Run.Status != workflowui.Paused || detail.Completed != 1 {
+		t.Fatalf("pause must let the in-flight step finish while retaining paused status: %+v", detail)
+	}
+	if _, err := d.handleWorkflowResume(mustJSON(t, map[string]any{"run_id": run.ID})); err != nil {
+		t.Fatalf("workflow.resume: %v", err)
+	}
+	select {
+	case <-reasoner.secondStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("resume did not release the ready step")
+	}
+	if detail = waitForTerminalRun(t, d, run.ID); detail.Run.Status != workflowui.Completed || detail.Completed != 2 {
+		t.Fatalf("resumed workflow did not complete: %+v", detail)
 	}
 }
 
@@ -179,6 +292,55 @@ func TestHandleWorkflowRunStreamingFailedStepReflectsInDetailNotStuckRunning(t *
 				t.Fatalf("expected dependent's workflowui status to be %q, got %q", workflowui.Skipped, st.Status)
 			}
 		}
+	}
+}
+
+func TestWorkflowGeneratorAddsDynamicStepsToOperatorDetail(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	d.SetReasoner(&scriptedJSONReasoner{byMarker: map[string]string{
+		"GEN_STEP": `{"spawn_steps":[{"id":"spawned","agent":"worker","task":"SPAWNED"}]}`,
+	}})
+	writeWorkflowSpecFile(t, ws, `{"name":"rpc-generator","execution_mode":"streaming","steps":[{"id":"gen","agent":"worker","task":"GEN_STEP","kind":"generator"}]}`)
+	sess, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "full-workspace", "on_request", nil)
+	res, err := d.handleWorkflowRun(mustJSON(t, map[string]any{"session_id": sess.SessionID, "workflow": "rpc-generator"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail := waitForTerminalRun(t, d, res.(workflowui.Run).ID)
+	if detail.Total != 2 || detail.Completed != 2 || detail.Progress != 1 {
+		t.Fatalf("dynamic step is missing from workflow.detail: %+v", detail)
+	}
+	found := false
+	for _, step := range detail.Run.Steps {
+		if step.ID == "spawned" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("dynamic step is absent from operator-facing steps: %+v", detail.Run.Steps)
+	}
+}
+
+func TestWorkflowGeneratorValidationFailureIsARealFailedStep(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	d.SetReasoner(&scriptedJSONReasoner{byMarker: map[string]string{
+		"GEN_BAD": `{"spawn_steps":[{"id":"spawned","task":"missing agent"}]}`,
+	}})
+	writeWorkflowSpecFile(t, ws, `{"name":"rpc-generator-bad","execution_mode":"streaming","steps":[{"id":"gen","agent":"worker","task":"GEN_BAD","kind":"generator"},{"id":"dependent","agent":"worker","task":"NEVER","needs":["gen"]}]}`)
+	sess, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "full-workspace", "on_request", nil)
+	res, err := d.handleWorkflowRun(mustJSON(t, map[string]any{"session_id": sess.SessionID, "workflow": "rpc-generator-bad"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail := waitForTerminalRun(t, d, res.(workflowui.Run).ID)
+	if detail.Failed != 1 || detail.Skipped != 1 || detail.Completed != 0 || detail.Progress != 1 {
+		t.Fatalf("invalid generator output was not propagated as failure: %+v", detail)
 	}
 }
 

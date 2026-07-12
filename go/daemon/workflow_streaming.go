@@ -57,7 +57,10 @@ type streamingStepResult struct {
 	kind       stepOutcomeKind
 	output     string
 	errMsg     string
-	tokensUsed int // 0 for remote-dispatched steps: the external executor result schema carries no token count (see workflow_remote.go)
+	tokensUsed int
+	// tokenUsageObserved distinguishes a measured zero from an external
+	// executor whose result schema carries no usage at all.
+	tokenUsageObserved bool
 }
 
 // streamCoordinator owns ALL streaming-workflow graph state (dependency
@@ -78,6 +81,8 @@ type streamCoordinator struct {
 	byID       map[string]WorkflowStep
 	dependents map[string][]string
 	genDepth   map[string]int
+	genOrigin  map[string]string
+	generated  []persistedGeneratedStep
 
 	outputs      map[string]string
 	terminal     map[string]stepOutcomeKind
@@ -89,7 +94,9 @@ type streamCoordinator struct {
 	// giving steps that declare consumes_channel a way to receive live
 	// messages from still-running siblings (see swarm_channel.go) — never
 	// nil once run() has initialized it.
-	channels *swarmChannelBroker
+	channels    *swarmChannelBroker
+	control     *workflowRunControl
+	pausedReady map[string]bool
 
 	totalSteps         int // grows if generator steps inject new nodes
 	resolvedCount      int
@@ -105,6 +112,7 @@ type streamCoordinator struct {
 	// awaiting a result (incremented in dispatch(), decremented at the top
 	// of handleResult()).
 	budgetSpent    int
+	unmeteredCount int
 	completedCount int
 	failedCount    int
 	skippedCount   int
@@ -150,12 +158,17 @@ func (d *Daemon) runWorkflowStreaming(parent *sessionstore.Session, parentTask *
 	if err != nil {
 		return nil, err
 	}
+	persistedGenerated, err := store.loadGenerated(runID)
+	if err != nil {
+		return nil, err
+	}
 
 	sc := &streamCoordinator{
 		d: d, parent: parent, parentTask: parentTask, spec: spec, input: input, runID: runID, store: store,
 		byID:         make(map[string]WorkflowStep, len(spec.Steps)),
 		dependents:   make(map[string][]string, len(spec.Steps)),
 		genDepth:     make(map[string]int, len(spec.Steps)),
+		genOrigin:    make(map[string]string),
 		outputs:      map[string]string{},
 		terminal:     map[string]stepOutcomeKind{},
 		skipPending:  map[string]bool{},
@@ -163,19 +176,38 @@ func (d *Daemon) runWorkflowStreaming(parent *sessionstore.Session, parentTask *
 		snapshot:     map[string]stepResult{},
 		skipQueue:    make([]string, 0, 8),
 		channels:     newSwarmChannelBroker(),
+		control:      d.workflowControl(runID),
+		pausedReady:  map[string]bool{},
 	}
 	for _, st := range spec.Steps {
 		sc.byID[st.ID] = st
 	}
-	for _, st := range spec.Steps {
+	if err := sc.restoreGeneratedSteps(persistedGenerated); err != nil {
+		return nil, err
+	}
+	for _, st := range sc.byID {
 		for _, n := range st.Needs {
 			sc.dependents[n] = append(sc.dependents[n], st.ID)
 		}
 	}
-	sc.totalSteps = len(spec.Steps)
+	sc.totalSteps = len(sc.byID)
+	if len(persistedGenerated) > 0 && d.workflowRuns != nil {
+		steps := make([]workflowui.Step, 0, len(persistedGenerated))
+		for _, generated := range persistedGenerated {
+			steps = append(steps, workflowui.Step{ID: generated.Step.ID, DefinitionHash: workflowStepDefinitionHash(generated.Step)})
+		}
+		if _, managedErr := d.workflowRuns.Detail(runID); managedErr == nil {
+			if _, err := d.workflowRuns.AddSteps(runID, steps); err != nil {
+				return nil, fmt.Errorf("restore generated workflow UI steps: %w", err)
+			}
+		}
+	}
 
 	for id, r := range persisted {
 		if r.Status == "completed" {
+			if _, exists := sc.byID[id]; !exists {
+				return nil, fmt.Errorf("workflow result journal contains unknown step %q; graph recovery is incomplete", id)
+			}
 			sc.outputs[id] = r.Output
 			sc.terminal[id] = stepDone
 			sc.snapshot[id] = r
@@ -183,7 +215,7 @@ func (d *Daemon) runWorkflowStreaming(parent *sessionstore.Session, parentTask *
 			sc.completedCount++ // seed the rollup so a resumed run's counts include already-done steps, not just newly-resolved ones
 		}
 	}
-	for _, st := range spec.Steps {
+	for _, st := range sc.byID {
 		if _, done := sc.terminal[st.ID]; done {
 			continue
 		}
@@ -195,16 +227,16 @@ func (d *Daemon) runWorkflowStreaming(parent *sessionstore.Session, parentTask *
 		}
 		sc.liveIndegree[st.ID] = n
 	}
-	sc.remainingToResolve = len(spec.Steps) - sc.resolvedCount
+	sc.remainingToResolve = sc.totalSteps - sc.resolvedCount
 
 	d.record(parent.SessionID, "TaskCreated", parentTask.TaskID, "go", map[string]any{
 		"status": "workflow_started", "workflow": spec.Name, "run_id": runID,
-		"steps": len(spec.Steps), "execution_mode": "streaming", "resumed": sc.resolvedCount,
+		"steps": sc.totalSteps, "execution_mode": "streaming", "resumed": sc.resolvedCount,
 	}, "")
 
 	concurrency := defaultStreamingWorkflowConcurrency
-	if concurrency > len(spec.Steps) {
-		concurrency = len(spec.Steps)
+	if concurrency > sc.totalSteps {
+		concurrency = sc.totalSteps
 	}
 	if concurrency < 1 {
 		concurrency = 1
@@ -218,7 +250,7 @@ func (d *Daemon) runWorkflowStreaming(parent *sessionstore.Session, parentTask *
 	// and a buffered channel's capacity can't be changed after creation.
 	sc.results = make(chan streamingStepResult, maxStreamingWorkflowSteps)
 
-	for _, st := range spec.Steps {
+	for _, st := range sc.byID {
 		if _, done := sc.terminal[st.ID]; done {
 			continue
 		}
@@ -231,15 +263,26 @@ func (d *Daemon) runWorkflowStreaming(parent *sessionstore.Session, parentTask *
 }
 
 func (sc *streamCoordinator) run() (map[string]string, error) {
+	var wake <-chan struct{}
+	if sc.control != nil {
+		wake = sc.control.wake
+	}
 	for sc.remainingToResolve > 0 {
 		select {
 		case <-sc.runCtx.Done():
 			if sc.fatal == nil {
 				sc.fatal = sc.runCtx.Err()
 			}
+			for id := range sc.byID {
+				if _, terminal := sc.terminal[id]; !terminal {
+					sc.markSkipped(id, "workflow stopped before this step reached a terminal state")
+				}
+			}
 			return sc.outputs, sc.fatal
 		case res := <-sc.results:
 			sc.handleResult(res)
+		case <-wake:
+			sc.dispatchPausedReady()
 		}
 	}
 
@@ -274,7 +317,7 @@ func (sc *streamCoordinator) dispatch(id string) {
 		select {
 		case sc.sem <- struct{}{}:
 		case <-sc.runCtx.Done():
-			sc.results <- streamingStepResult{id: id, kind: stepSkipped, errMsg: "workflow cancelled before this step started"}
+			sc.results <- streamingStepResult{id: id, kind: stepSkipped, errMsg: "workflow cancelled before this step started", tokenUsageObserved: true}
 			return
 		}
 		defer func() { <-sc.sem }()
@@ -288,6 +331,10 @@ func (sc *streamCoordinator) dispatch(id string) {
 // upstream failure uses — conditional branching and failure isolation share
 // one mechanism.
 func (sc *streamCoordinator) maybeDispatch(id string) {
+	if sc.control != nil && sc.control.isPaused() {
+		sc.pausedReady[id] = true
+		return
+	}
 	// Budget-tree enforcement (design §9): once the run's aggregate spend
 	// meets its declared ceiling, refuse to admit any NEW step — but never
 	// kill a step already in flight (runningCount steps finish naturally;
@@ -317,6 +364,22 @@ func (sc *streamCoordinator) maybeDispatch(id string) {
 		}
 	}
 	sc.dispatch(id)
+}
+
+func (sc *streamCoordinator) dispatchPausedReady() {
+	if sc.control != nil && sc.control.isPaused() {
+		return
+	}
+	ready := make([]string, 0, len(sc.pausedReady))
+	for id := range sc.pausedReady {
+		ready = append(ready, id)
+	}
+	for _, id := range ready {
+		delete(sc.pausedReady, id)
+		if _, terminal := sc.terminal[id]; !terminal {
+			sc.maybeDispatch(id)
+		}
+	}
 }
 
 func (sc *streamCoordinator) markSkipped(id, reason string) {
@@ -355,7 +418,15 @@ func (sc *streamCoordinator) rollupPayload() map[string]any {
 	payload := map[string]any{
 		"total": sc.totalSteps, "completed": sc.completedCount, "failed": sc.failedCount,
 		"skipped": sc.skippedCount, "running": sc.runningCount, "queued": queued,
-		"budget_spent": sc.budgetSpent,
+		"budget_spent":          sc.budgetSpent,
+		"budget_spent_observed": sc.budgetSpent,
+	}
+	if sc.unmeteredCount > 0 {
+		payload["unmetered_steps"] = sc.unmeteredCount
+		payload["budget_spent_is_complete"] = false
+		payload["budget_enforcement"] = "observed_usage_only"
+	} else {
+		payload["budget_spent_is_complete"] = true
 	}
 	if sc.spec.TokenBudget > 0 {
 		remaining := sc.spec.TokenBudget - sc.budgetSpent
@@ -410,8 +481,31 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 	sc.remainingToResolve--
 	sc.runningCount-- // balances dispatch()'s increment — every dispatched step ends up here exactly once
 	sc.budgetSpent += res.tokensUsed
+	if !res.tokenUsageObserved {
+		sc.unmeteredCount++
+	}
 	switch res.kind {
 	case stepDone:
+		if sc.byID[res.id].Kind == "generator" {
+			if err := sc.injectGeneratedSteps(res.id, res.output); err != nil {
+				sc.terminal[res.id] = stepFailed
+				sc.failedCount++
+				sc.d.updateWorkflowUIStepBestEffort(sc.runID, workflowui.Step{
+					ID: res.id, Status: workflowui.Failed, Error: err.Error(), TokensUsed: int64(res.tokensUsed), TokenUsageStatus: observedUsageStatus(res.tokenUsageObserved),
+				})
+				sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", map[string]any{
+					"status": "workflow_generator_invalid", "workflow": sc.spec.Name, "run_id": sc.runID,
+					"step": res.id, "error": err.Error(),
+				}, "")
+				if sc.byID[res.id].FailFast {
+					sc.fatal = fmt.Errorf("generator step %q: %w", res.id, err)
+					sc.cancel()
+					return
+				}
+				sc.propagate(res.id, true)
+				break
+			}
+		}
 		sc.terminal[res.id] = stepDone
 		sc.completedCount++
 		sc.outputs[res.id] = res.output
@@ -424,23 +518,6 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 			sc.fatal = fmt.Errorf("step %q side effect completed but result persistence failed; manual reconciliation required: %w", res.id, err)
 			sc.cancel()
 			return
-		}
-		if sc.byID[res.id].Kind == "generator" {
-			if err := sc.injectGeneratedSteps(res.id, res.output); err != nil {
-				// A generator producing a bad envelope is a step-level
-				// failure, not a whole-run fatal error by default — same
-				// isolate posture as any other step, unless it opted into
-				// FailFast.
-				sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", map[string]any{
-					"status": "workflow_generator_invalid", "workflow": sc.spec.Name, "run_id": sc.runID,
-					"step": res.id, "error": err.Error(),
-				}, "")
-				if sc.byID[res.id].FailFast {
-					sc.fatal = fmt.Errorf("generator step %q: %w", res.id, err)
-					sc.cancel()
-					return
-				}
-			}
 		}
 		sc.propagate(res.id, false)
 	case stepFailed:
@@ -489,14 +566,14 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 // touches no graph bookkeeping at all.
 func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, spec *WorkflowSpec, runID string, st WorkflowStep, input string, outputsSoFar map[string]string, channels *swarmChannelBroker) streamingStepResult {
 	if err := ctx.Err(); err != nil {
-		return streamingStepResult{id: st.ID, kind: stepSkipped, errMsg: "workflow cancelled"}
+		return streamingStepResult{id: st.ID, kind: stepSkipped, errMsg: "workflow cancelled", tokenUsageObserved: true}
 	}
 	startedAt := time.Now().UTC()
 	if d.workflowRuns != nil {
 		now := startedAt
-		if _, managedErr := d.workflowRuns.Detail(runID); managedErr == nil {
+		if detail, managedErr := d.workflowRuns.Detail(runID); managedErr == nil && workflowRunAcceptsStepUpdate(detail.Run.Status) {
 			if _, err := d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: workflowui.Running, StartedAt: &now}); err != nil {
-				return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: fmt.Sprintf("refused before execution because running state could not persist: %v", err)}
+				return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: fmt.Sprintf("refused before execution because running state could not persist: %v", err), tokenUsageObserved: true}
 			}
 		}
 	}
@@ -524,12 +601,14 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 		res := d.runStreamingStepRemote(ctx, parent, parentTask, spec, runID, st, taskText)
 		if d.workflowRuns != nil {
 			now := time.Now().UTC()
-			if _, managedErr := d.workflowRuns.Detail(runID); managedErr == nil {
+			if detail, managedErr := d.workflowRuns.Detail(runID); managedErr == nil && workflowRunAcceptsStepUpdate(detail.Run.Status) {
 				uiStatus := workflowui.Completed
-				if res.kind != stepDone {
+				if res.kind == stepFailed {
 					uiStatus = workflowui.Failed
+				} else if res.kind == stepSkipped {
+					uiStatus = workflowui.Skipped
 				}
-				_, _ = d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: uiStatus, FinishedAt: &now, Output: res.output})
+				_, _ = d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: uiStatus, FinishedAt: &now, Output: res.output, Error: res.errMsg, TokensUsed: int64(res.tokensUsed), TokenUsageStatus: observedUsageStatus(res.tokenUsageObserved)})
 			}
 		}
 		outcome := "failed"
@@ -564,7 +643,7 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 		// centralized in the coordinator's handleResult (both flow through
 		// the same streamingStepResult{kind: stepSkipped} shape), so nothing
 		// to do here beyond returning it.
-		return streamingStepResult{id: st.ID, kind: stepSkipped, errMsg: "workflow cancelled", tokensUsed: tokensUsed}
+		return streamingStepResult{id: st.ID, kind: stepSkipped, errMsg: "workflow cancelled", tokensUsed: tokensUsed, tokenUsageObserved: true}
 	}
 	if spawnFailed(summary) {
 		_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
@@ -580,22 +659,31 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 		// "completed" run with one step frozen at "running" forever. Same bug
 		// class as markSkipped's fix above, just a different code path that
 		// missed it.
-		d.updateWorkflowUIStepBestEffort(runID, workflowui.Step{ID: st.ID, Status: workflowui.Failed, Error: summary})
-		return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: summary, tokensUsed: tokensUsed}
+		d.updateWorkflowUIStepBestEffort(runID, workflowui.Step{ID: st.ID, Status: workflowui.Failed, Error: summary, TokensUsed: int64(tokensUsed), TokenUsageStatus: "observed"})
+		return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: summary, tokensUsed: tokensUsed, tokenUsageObserved: true}
 	}
 
 	if d.workflowRuns != nil {
 		now := time.Now().UTC()
-		_, managedErr := d.workflowRuns.Detail(runID)
-		if _, err := d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: workflowui.Completed, FinishedAt: &now, Output: summary}); managedErr == nil && err != nil {
-			return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: fmt.Sprintf("completed but operator state persistence failed: %v", err), tokensUsed: tokensUsed}
+		detail, managedErr := d.workflowRuns.Detail(runID)
+		if managedErr == nil && workflowRunAcceptsStepUpdate(detail.Run.Status) {
+			if _, err := d.workflowRuns.UpdateStep(runID, workflowui.Step{ID: st.ID, Status: workflowui.Completed, FinishedAt: &now, Output: summary, TokensUsed: int64(tokensUsed), TokenUsageStatus: "observed"}); err != nil {
+				return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: fmt.Sprintf("completed but operator state persistence failed: %v", err), tokensUsed: tokensUsed, tokenUsageObserved: true}
+			}
 		}
 	}
 	_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
 		WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,
 		StepID: st.ID, TaskID: parentTask.TaskID,
 	}, carinatelemetry.Cost{}, time.Since(startedAt), "completed")
-	return streamingStepResult{id: st.ID, kind: stepDone, output: summary, tokensUsed: tokensUsed}
+	return streamingStepResult{id: st.ID, kind: stepDone, output: summary, tokensUsed: tokensUsed, tokenUsageObserved: true}
+}
+
+func observedUsageStatus(observed bool) string {
+	if observed {
+		return "observed"
+	}
+	return "unavailable_remote"
 }
 
 // updateWorkflowUIStepBestEffort records a step's terminal workflowui.Step
@@ -610,12 +698,17 @@ func (d *Daemon) updateWorkflowUIStepBestEffort(runID string, step workflowui.St
 	if d.workflowRuns == nil {
 		return
 	}
-	if _, managedErr := d.workflowRuns.Detail(runID); managedErr != nil {
+	detail, managedErr := d.workflowRuns.Detail(runID)
+	if managedErr != nil || (!workflowRunAcceptsStepUpdate(detail.Run.Status) && step.Status != workflowui.Skipped) {
 		return
 	}
 	now := time.Now().UTC()
 	step.FinishedAt = &now
 	_, _ = d.workflowRuns.UpdateStep(runID, step)
+}
+
+func workflowRunAcceptsStepUpdate(status workflowui.Status) bool {
+	return status != workflowui.Stopped && status != workflowui.Interrupted && status != workflowui.Completed && status != workflowui.Failed
 }
 
 // sessionTotalTokens sums TokensUsed across every scheduler task ever

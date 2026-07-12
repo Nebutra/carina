@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -223,6 +224,44 @@ func TestWorkerAuthorityCallsAlwaysCarryCredential(t *testing.T) {
 		if call.params["worker_id"] != "wrk_auth" || call.params["worker_credential"] != "cred_auth" {
 			t.Fatalf("%s missing auth: %#v", call.method, call.params)
 		}
+	}
+}
+
+func TestReportRetriesOneTransientFailureWithIdenticalFencedPayload(t *testing.T) {
+	var attempts int
+	fake := &fakeCaller{handler: func(method string, _ map[string]any, _ any) error {
+		if method != "work.report" {
+			return nil
+		}
+		attempts++
+		if attempts == 1 {
+			return io.ErrUnexpectedEOF
+		}
+		return nil
+	}}
+	w := newLeaseWorker(fake, nil, testWorkerConfig(), log.New(io.Discard, "", 0))
+	w.reg = registration{WorkerID: "wrk", WorkerCredential: "cred"}
+	w.reportWithRetry(context.Background(), "task", 7, executionResult{Status: "completed", Summary: "done", Patches: []string{"p"}})
+	if attempts != 2 {
+		t.Fatalf("transient report attempts=%d, want 2", attempts)
+	}
+	calls := fake.snapshot()
+	if len(calls) != 2 || !reflect.DeepEqual(calls[0].params, calls[1].params) {
+		t.Fatalf("report retry changed the fenced idempotency payload: %+v", calls)
+	}
+}
+
+func TestReportLeaseLossStopsRetryImmediately(t *testing.T) {
+	var attempts int
+	fake := &fakeCaller{handler: func(_ string, _ map[string]any, _ any) error {
+		attempts++
+		return errors.New("stale lease_generation: task leased by another worker")
+	}}
+	w := newLeaseWorker(fake, nil, testWorkerConfig(), log.New(io.Discard, "", 0))
+	w.reg = registration{WorkerID: "wrk", WorkerCredential: "cred"}
+	w.reportWithRetry(context.Background(), "task", 3, executionResult{Status: "completed", Summary: "stale"})
+	if attempts != 1 {
+		t.Fatalf("lost lease must not be retried, attempts=%d", attempts)
 	}
 }
 

@@ -64,6 +64,8 @@ func TestWorkflowStreamingRemoteStepDispatchesLeasesAndCompletes(t *testing.T) {
 	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
 	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
 	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+	sub := newFakeEventSub("remote-unmetered-rollup")
+	d.events.Subscribe(parent.SessionID, sub)
 
 	go simulateRemoteWorker(t, d, wk.WorkerID, credential, "completed", "did the remote thing")
 
@@ -76,6 +78,10 @@ func TestWorkflowStreamingRemoteStepDispatchesLeasesAndCompletes(t *testing.T) {
 	}
 	if out["offload"] != "did the remote thing" {
 		t.Fatalf("expected the remote worker's report summary as the step output, got %q", out["offload"])
+	}
+	rollup := lastRollup(t, sub)
+	if rollup["unmetered_steps"] != 1 || rollup["budget_spent_is_complete"] != false || rollup["budget_enforcement"] != "observed_usage_only" {
+		t.Fatalf("remote token usage must be presented as unavailable, never as a measured zero: %+v", rollup)
 	}
 }
 

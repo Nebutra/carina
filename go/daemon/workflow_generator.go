@@ -3,6 +3,9 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
+
+	"github.com/Nebutra/carina/go/workflowui"
 )
 
 // generatorInstructionSuffix is appended to a "generator" step's task text so
@@ -28,6 +31,36 @@ an empty array.`
 type generatorEnvelope struct {
 	SpawnSteps []WorkflowStep `json:"spawn_steps"`
 	Rationale  string         `json:"rationale"`
+}
+
+func (sc *streamCoordinator) restoreGeneratedSteps(persisted []persistedGeneratedStep) error {
+	if len(persisted)+len(sc.byID) > maxStreamingWorkflowSteps {
+		return fmt.Errorf("persisted generated graph exceeds the %d-step limit", maxStreamingWorkflowSteps)
+	}
+	for _, generated := range persisted {
+		st := generated.Step
+		if generated.GeneratorID == "" || generated.Depth < 1 || generated.Depth > maxGeneratorDepth {
+			return fmt.Errorf("persisted generated step %q has invalid origin metadata", st.ID)
+		}
+		if _, ok := sc.byID[generated.GeneratorID]; !ok {
+			return fmt.Errorf("persisted generated step %q references unknown generator %q", st.ID, generated.GeneratorID)
+		}
+		if st.ID == "" || st.Agent == "" {
+			return fmt.Errorf("persisted generated step has an invalid id or agent")
+		}
+		if _, collision := sc.byID[st.ID]; collision {
+			return fmt.Errorf("persisted generated step id %q collides with another definition", st.ID)
+		}
+		sc.byID[st.ID] = st
+		sc.genDepth[st.ID] = generated.Depth
+		sc.genOrigin[st.ID] = generated.GeneratorID
+		sc.generated = append(sc.generated, generated)
+	}
+	steps := make([]WorkflowStep, 0, len(sc.byID))
+	for _, st := range sc.byID {
+		steps = append(steps, st)
+	}
+	return (&WorkflowSpec{Name: sc.spec.Name, ExecutionMode: "streaming", Steps: steps}).validate()
 }
 
 // parseGeneratorEnvelope strictly parses a generator step's done summary. A
@@ -62,67 +95,113 @@ func (sc *streamCoordinator) injectGeneratedSteps(generatorID string, output str
 	if depth > maxGeneratorDepth {
 		return fmt.Errorf("generator step %q would exceed the max generator depth (%d)", generatorID, maxGeneratorDepth)
 	}
-	if sc.totalSteps+len(env.SpawnSteps) > maxStreamingWorkflowSteps {
-		return fmt.Errorf("generator step %q would push the workflow over the %d-step limit (currently %d, adding %d)",
-			generatorID, maxStreamingWorkflowSteps, sc.totalSteps, len(env.SpawnSteps))
+	// Every generated node has an implicit causal dependency on the generator
+	// that declared it. Materialize that edge so crash recovery cannot dispatch
+	// a restored node before an uncommitted generator replay has completed.
+	for i := range env.SpawnSteps {
+		if !containsString(env.SpawnSteps[i].Needs, generatorID) {
+			env.SpawnSteps[i].Needs = append(env.SpawnSteps[i].Needs, generatorID)
+		}
 	}
 
-	newIDs := make(map[string]bool, len(env.SpawnSteps))
+	declaredIDs := make(map[string]bool, len(env.SpawnSteps))
+	addedIDs := make(map[string]bool, len(env.SpawnSteps))
 	for _, st := range env.SpawnSteps {
 		if st.ID == "" {
 			return fmt.Errorf("generator step %q: a spawned step has an empty id", generatorID)
 		}
-		if _, exists := sc.byID[st.ID]; exists {
-			return fmt.Errorf("generator step %q: spawned step id %q collides with an existing step", generatorID, st.ID)
-		}
-		if newIDs[st.ID] {
+		if declaredIDs[st.ID] {
 			return fmt.Errorf("generator step %q: spawned step id %q is declared twice", generatorID, st.ID)
+		}
+		declaredIDs[st.ID] = true
+		if existing, exists := sc.byID[st.ID]; exists {
+			if sc.genOrigin[st.ID] == generatorID && reflect.DeepEqual(existing, st) {
+				continue
+			}
+			return fmt.Errorf("generator step %q: spawned step id %q collides with an existing step", generatorID, st.ID)
 		}
 		if st.Agent == "" {
 			return fmt.Errorf("generator step %q: spawned step %q has no agent", generatorID, st.ID)
 		}
-		switch st.Kind {
-		case "", "generator":
-		default:
-			return fmt.Errorf("generator step %q: spawned step %q has unknown kind %q", generatorID, st.ID, st.Kind)
+		if err := validateWorkflowStepFeatures(st, true); err != nil {
+			return fmt.Errorf("generator step %q: %w", generatorID, err)
 		}
-		newIDs[st.ID] = true
+		addedIDs[st.ID] = true
+	}
+	newCount := len(addedIDs)
+	if sc.totalSteps+newCount > maxStreamingWorkflowSteps {
+		return fmt.Errorf("generator step %q would push the workflow over the %d-step limit (currently %d, adding %d)",
+			generatorID, maxStreamingWorkflowSteps, sc.totalSteps, newCount)
 	}
 	for _, st := range env.SpawnSteps {
 		for _, n := range st.Needs {
 			if n == st.ID {
 				return fmt.Errorf("generator step %q: spawned step %q depends on itself", generatorID, st.ID)
 			}
-			if _, existsOld := sc.byID[n]; !existsOld && !newIDs[n] {
+			if _, existsOld := sc.byID[n]; !existsOld && !declaredIDs[n] {
 				return fmt.Errorf("generator step %q: spawned step %q needs unknown step %q", generatorID, st.ID, n)
 			}
 		}
 	}
-	if cycle := cyclicAmongNewSteps(env.SpawnSteps, newIDs); cycle != "" {
+	if cycle := cyclicAmongNewSteps(env.SpawnSteps, declaredIDs); cycle != "" {
 		return fmt.Errorf("generator step %q: spawned steps have a dependency cycle involving %q", generatorID, cycle)
 	}
 
-	// All validated — merge into the live graph. Register every new step's
+	// Journal the graph mutation before the generator result is committed. If
+	// the process dies between these writes, replay sees the same definitions
+	// and is idempotent; it cannot silently lose already-admitted work.
+	before := append([]persistedGeneratedStep(nil), sc.generated...)
+	next := append([]persistedGeneratedStep(nil), before...)
+	uiSteps := make([]workflowui.Step, 0, len(env.SpawnSteps))
+	for _, st := range env.SpawnSteps {
+		uiSteps = append(uiSteps, workflowui.Step{ID: st.ID, DefinitionHash: workflowStepDefinitionHash(st)})
+		if _, exists := sc.byID[st.ID]; !exists {
+			next = append(next, persistedGeneratedStep{Step: st, GeneratorID: generatorID, Depth: depth})
+		}
+	}
+	if err := sc.store.saveGenerated(sc.runID, next); err != nil {
+		return fmt.Errorf("persist generated graph: %w", err)
+	}
+	if sc.d.workflowRuns != nil {
+		if _, managedErr := sc.d.workflowRuns.Detail(sc.runID); managedErr == nil {
+			if _, err := sc.d.workflowRuns.AddSteps(sc.runID, uiSteps); err != nil {
+				if rollbackErr := sc.store.saveGenerated(sc.runID, before); rollbackErr != nil {
+					return fmt.Errorf("persist generated UI steps: %v (graph rollback also failed: %v)", err, rollbackErr)
+				}
+				return fmt.Errorf("persist generated UI steps: %w", err)
+			}
+		}
+	}
+	sc.generated = next
+
+	// All validated and persisted — merge into the live graph. Register every new step's
 	// identity and dependency edges first, THEN compute in-degree and
 	// (maybe) dispatch, so cross-references between siblings in this same
 	// batch resolve correctly regardless of slice order.
 	for _, st := range env.SpawnSteps {
+		if !addedIDs[st.ID] {
+			continue // idempotent replay after graph journal commit
+		}
 		sc.byID[st.ID] = st
 		sc.genDepth[st.ID] = depth
+		sc.genOrigin[st.ID] = generatorID
 		for _, n := range st.Needs {
 			sc.dependents[n] = append(sc.dependents[n], st.ID)
 		}
 	}
-	sc.totalSteps += len(env.SpawnSteps)
-	sc.remainingToResolve += len(env.SpawnSteps)
+	sc.totalSteps += newCount
+	sc.remainingToResolve += newCount
 
 	sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", map[string]any{
 		"status": "workflow_steps_injected", "workflow": sc.spec.Name, "run_id": sc.runID,
-		"generator_step": generatorID, "spawned": len(env.SpawnSteps), "gen_depth": depth,
+		"generator_step": generatorID, "spawned": newCount, "gen_depth": depth,
 		"rationale": truncate(env.Rationale, 300),
 	}, "")
 
 	for _, st := range env.SpawnSteps {
+		if !addedIDs[st.ID] {
+			continue
+		}
 		n := 0
 		for _, dep := range st.Needs {
 			if sc.terminal[dep] != stepDone {
@@ -135,6 +214,15 @@ func (sc *streamCoordinator) injectGeneratedSteps(generatorID string, output str
 		}
 	}
 	return nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // cyclicAmongNewSteps checks only the dependency edges that stay entirely

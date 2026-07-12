@@ -95,3 +95,34 @@ func TestRestartReconcileMarksLiveRunsResumable(t *testing.T) {
 		t.Fatalf("non-idempotent: %+v %v", again, err)
 	}
 }
+
+func TestAddStepsIsAtomicIdempotentAndRejectsConflictingDefinitions(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(Run{ID: "r", Workflow: "dynamic", Steps: []Step{{ID: "gen", DefinitionHash: "sha256:gen"}}}); err != nil {
+		t.Fatal(err)
+	}
+	added := []Step{{ID: "a", DefinitionHash: "sha256:a"}, {ID: "b", DefinitionHash: "sha256:b"}}
+	if _, err := s.AddSteps("r", added); err != nil {
+		t.Fatalf("add dynamic steps: %v", err)
+	}
+	if _, err := s.AddSteps("r", added); err != nil {
+		t.Fatalf("identical replay must be idempotent: %v", err)
+	}
+	detail, _ := s.Detail("r")
+	if detail.Total != 3 {
+		t.Fatalf("idempotent replay duplicated steps: %+v", detail.Run.Steps)
+	}
+	if _, err := s.AddSteps("r", []Step{{ID: "a", DefinitionHash: "sha256:different"}}); err == nil {
+		t.Fatal("same id with a different definition hash must be rejected")
+	}
+	if _, err := s.AddSteps("r", []Step{{ID: "c", DefinitionHash: "x"}, {ID: "c", DefinitionHash: "x"}}); err == nil {
+		t.Fatal("duplicate ids in one atomic add must be rejected")
+	}
+	detail, _ = s.Detail("r")
+	if detail.Total != 3 {
+		t.Fatalf("failed atomic add mutated the run: %+v", detail.Run.Steps)
+	}
+}

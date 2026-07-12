@@ -68,7 +68,7 @@ func (d *Daemon) runStreamingStepRemote(ctx context.Context, parent *sessionstor
 	}
 	allowed, dec := d.gateRemoteDispatch(parent, parentTask, resource)
 	if !allowed {
-		return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: "DENIED: " + dec.Reason}
+		return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: "DENIED: " + dec.Reason, tokenUsageObserved: true}
 	}
 
 	var required []string

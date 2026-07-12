@@ -156,6 +156,12 @@ func renderWorkflowDetail(w io.Writer, d workflowui.Detail) {
 	if d.InputTokens > 0 || d.OutputTokens > 0 {
 		fmt.Fprintf(w, "tokens:   input=%d output=%d cost_usd=%.6f\n", d.InputTokens, d.OutputTokens, d.CostUSD)
 	}
+	if d.TokensUsed > 0 || d.UnmeteredSteps > 0 {
+		fmt.Fprintf(w, "usage:    observed_tokens=%d unmetered_steps=%d\n", d.TokensUsed, d.UnmeteredSteps)
+		if d.UnmeteredSteps > 0 {
+			fmt.Fprintln(w, "          remote executor usage unavailable; budget totals are observed-only")
+		}
+	}
 	if d.Run.InterruptionReason != "" {
 		fmt.Fprintf(w, "interrupted: %s\n", d.Run.InterruptionReason)
 	}
@@ -164,6 +170,9 @@ func renderWorkflowDetail(w io.Writer, d workflowui.Detail) {
 		line := fmt.Sprintf("  %-20s %-10s", st.ID, st.Status)
 		if st.Error != "" {
 			line += " error=" + truncateForTable(st.Error, 60)
+		}
+		if st.TokenUsageStatus == "unavailable_remote" {
+			line += " tokens=unavailable(remote)"
 		}
 		fmt.Fprintln(w, line)
 	}

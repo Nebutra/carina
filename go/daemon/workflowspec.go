@@ -1,12 +1,19 @@
 package daemon
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+func workflowStepDefinitionHash(step WorkflowStep) string {
+	raw, _ := json.Marshal(step)
+	sum := sha256.Sum256(raw)
+	return fmt.Sprintf("sha256:%x", sum[:])
+}
 
 // WorkflowStep is one node in a workflow DAG: it delegates to a named agent
 // (an AgentSpec) with a task, and may depend on earlier steps. The task text
@@ -179,6 +186,12 @@ func (s *WorkflowSpec) validate() error {
 	default:
 		return fmt.Errorf("workflow %q has unknown execution_mode %q (want \"bsp\" or \"streaming\")", s.Name, s.ExecutionMode)
 	}
+	if s.TokenBudget < 0 {
+		return fmt.Errorf("workflow %q token_budget must be non-negative", s.Name)
+	}
+	if !s.streaming() && s.TokenBudget != 0 {
+		return fmt.Errorf("workflow %q token_budget requires execution_mode %q", s.Name, "streaming")
+	}
 	ids := map[string]bool{}
 	for _, st := range s.Steps {
 		if st.ID == "" {
@@ -190,10 +203,8 @@ func (s *WorkflowSpec) validate() error {
 		if st.Agent == "" {
 			return fmt.Errorf("workflow step %q has no agent", st.ID)
 		}
-		switch st.Kind {
-		case "", "generator":
-		default:
-			return fmt.Errorf("workflow step %q has unknown kind %q (want \"\" or \"generator\")", st.ID, st.Kind)
+		if err := validateWorkflowStepFeatures(st, s.streaming()); err != nil {
+			return err
 		}
 		ids[st.ID] = true
 	}
@@ -209,6 +220,37 @@ func (s *WorkflowSpec) validate() error {
 	}
 	if _, err := s.topoOrder(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateWorkflowStepFeatures(st WorkflowStep, streaming bool) error {
+	switch st.Kind {
+	case "", "generator":
+	default:
+		return fmt.Errorf("workflow step %q has unknown kind %q (want \"\" or \"generator\")", st.ID, st.Kind)
+	}
+	if !streaming && (st.FailFast || len(st.Input) > 0 || len(st.When) > 0 || st.Kind != "" || len(st.ConsumesChannel) > 0 || st.Remote || len(st.Affinity) > 0) {
+		return fmt.Errorf("workflow step %q uses streaming-only fields but execution_mode is not %q", st.ID, "streaming")
+	}
+	for key, value := range st.Affinity {
+		if key != "worker_pool" {
+			return fmt.Errorf("workflow step %q has unsupported affinity key %q", st.ID, key)
+		}
+		if !validWorkerPoolTag(value) {
+			return fmt.Errorf("workflow step %q has invalid worker_pool affinity %q", st.ID, value)
+		}
+	}
+	seenChannels := map[string]bool{}
+	for _, channel := range st.ConsumesChannel {
+		channel = strings.TrimSpace(channel)
+		if channel == "" || len(channel) > 128 {
+			return fmt.Errorf("workflow step %q has an invalid swarm channel name", st.ID)
+		}
+		if seenChannels[channel] {
+			return fmt.Errorf("workflow step %q subscribes to swarm channel %q more than once", st.ID, channel)
+		}
+		seenChannels[channel] = true
 	}
 	return nil
 }

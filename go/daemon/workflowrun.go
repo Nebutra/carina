@@ -16,6 +16,16 @@ type stepResult struct {
 	Output string `json:"output"`
 }
 
+// persistedGeneratedStep is the durable part of a dynamic graph mutation.
+// Generator output is journaled before the generator itself is committed as
+// completed, so a crash can only cause an idempotent replay, never lose nodes
+// that were already admitted to the run.
+type persistedGeneratedStep struct {
+	Step        WorkflowStep `json:"step"`
+	GeneratorID string       `json:"generator_id"`
+	Depth       int          `json:"depth"`
+}
+
 // wfRunStore persists per-run step results as one JSON file per run under
 // <stateDir>/wf-runs. It is safe for concurrent use by parallel steps.
 type wfRunStore struct {
@@ -31,6 +41,10 @@ func newWFRunStore(stateDir string) *wfRunStore {
 
 func (w *wfRunStore) path(runID string) string {
 	return filepath.Join(w.dir, runID+".json")
+}
+
+func (w *wfRunStore) graphPath(runID string) string {
+	return filepath.Join(w.dir, runID+".graph.json")
 }
 
 // load returns the persisted step results for a run (empty map if none).
@@ -60,8 +74,41 @@ func (w *wfRunStore) save(runID string, results map[string]stepResult) error {
 		return err
 	}
 	tmp := w.path(runID) + ".tmp"
+	defer os.Remove(tmp)
 	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, w.path(runID))
+}
+
+func (w *wfRunStore) loadGenerated(runID string) ([]persistedGeneratedStep, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var out []persistedGeneratedStep
+	raw, err := os.ReadFile(w.graphPath(runID))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return nil, err
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("workflow generated-graph journal corrupt: %w", err)
+	}
+	return out, nil
+}
+
+func (w *wfRunStore) saveGenerated(runID string, steps []persistedGeneratedStep) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	raw, err := json.MarshalIndent(steps, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := w.graphPath(runID) + ".tmp"
+	defer os.Remove(tmp)
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, w.graphPath(runID))
 }

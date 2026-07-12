@@ -108,6 +108,14 @@ bounded exponential backoff. Two consecutive renewal failures, an explicit daemo
 cancellation, or a lease-ownership error cancels the executor and suppresses a stale
 terminal report.
 
+Terminal reporting keeps lease renewal active and retries at most three times with
+bounded exponential backoff, but only for clearly transient transport/502/503/504
+failures. Authentication, validation, stale-generation, cancellation, and lost-lease
+errors are never retried. Every retry uses the identical
+`task_id`+`lease_generation`+result payload; once renewal says the lease is invalid,
+the worker cancels the report path immediately so an old generation cannot overwrite
+new work.
+
 On SIGINT or SIGTERM, the worker stops polling and drains existing executors. Work
 that finishes inside `--drain-timeout` is reported normally. At the drain deadline,
 remaining executors are cancelled and their leases are left for the daemon's

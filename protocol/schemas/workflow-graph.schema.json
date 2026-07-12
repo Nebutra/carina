@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://carina.nebutra.com/schemas/workflow-graph.schema.json",
   "title": "Workflow graph",
-  "description": "A .carina/workflows/<name>.json file (go/daemon/workflowspec.go's WorkflowSpec/WorkflowStep). Covers both the batch/BSP scheduler (default) and the streaming scheduler (execution_mode: streaming — Agent Swarm DAG orchestration design, docs/plans/2026-07-12-agent-swarm-dag-orchestration-design.md); fields marked streaming-mode-only are accepted but inert under bsp.",
+  "description": "A .carina/workflows/<name>.json file (go/daemon/workflowspec.go's WorkflowSpec/WorkflowStep). Covers both the batch/BSP scheduler (default) and the streaming scheduler. Streaming-only fields fail validation under BSP instead of being silently ignored.",
   "type": "object",
   "required": ["name", "steps"],
   "additionalProperties": false,
@@ -26,6 +26,29 @@
       "items": {"$ref": "#/$defs/step"}
     }
   },
+  "allOf": [
+    {
+      "if": {"properties": {"execution_mode": {"enum": ["", "bsp"]}}},
+      "then": {
+        "properties": {
+          "token_budget": {"const": 0},
+          "steps": {
+            "items": {
+              "allOf": [
+                {"properties": {"fail_fast": {"const": false}}},
+                {"properties": {"input": {"maxProperties": 0}}},
+                {"not": {"required": ["when"]}},
+                {"properties": {"kind": {"const": ""}}},
+                {"properties": {"consumes_channel": {"maxItems": 0}}},
+                {"properties": {"remote": {"const": false}}},
+                {"properties": {"affinity": {"maxProperties": 0}}}
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "step": {
       "type": "object",
@@ -60,7 +83,8 @@
         },
         "consumes_channel": {
           "type": "array",
-          "items": {"type": "string"},
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128},
           "description": "Streaming-mode only. Swarm channel names (go/daemon/swarm_channel.go) this step subscribes to for LIVE messages from still-running sibling/upstream steps — distinct from needs/input, which only ever hand off a dependency's terminal output. The subscribed step calls the \"swarm_receive\" tool during its own run to pull anything published since it last checked. Publishing (the \"swarm_publish\" tool) needs no subscription and is available to every streaming step regardless of this field."
         },
         "remote": {
@@ -70,7 +94,7 @@
         },
         "affinity": {
           "type": "object",
-          "additionalProperties": {"type": "string"},
+          "additionalProperties": false,
           "description": "Streaming-mode only. Scheduling hint for cluster mode; a non-empty affinity also implies remote. The \"worker_pool\" key becomes a required worker capability (\"worker_pool:<value>\") that only a worker registered with that tag (worker.register's \"pools\" param, or `carina-worker --pool <tag>` / `carina worker register ... --pool <tag>`) may lease — an affinity-tagged step can never be silently picked up by an unrelated pool.",
           "properties": {
             "worker_pool": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"}

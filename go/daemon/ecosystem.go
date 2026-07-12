@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -37,24 +38,36 @@ func (d *Daemon) handleWorkflowRun(params json.RawMessage) (any, error) {
 	runID := sessionstore.NewID("wf")
 	steps := make([]workflowui.Step, 0, len(spec.Steps))
 	for _, st := range spec.Steps {
-		steps = append(steps, workflowui.Step{ID: st.ID})
+		steps = append(steps, workflowui.Step{ID: st.ID, DefinitionHash: workflowStepDefinitionHash(st)})
 	}
 	run, err := d.workflowRuns.Create(workflowui.Run{ID: runID, Workflow: p.Workflow, SessionID: p.SessionID, Input: p.Input, Steps: steps})
 	if err != nil {
 		return nil, err
 	}
-	d.startWorkflowControlRun(sess, spec, run)
-	return run, nil
+	if err := d.startWorkflowControlRun(sess, spec, run); err != nil {
+		_, _ = d.workflowRuns.MarkInterrupted(run.ID, "workflow execution could not start: "+err.Error())
+		return nil, err
+	}
+	detail, err := d.workflowRuns.Detail(run.ID)
+	if err != nil {
+		return nil, err
+	}
+	return detail.Run, nil
 }
 
-func (d *Daemon) startWorkflowControlRun(sess *sessionstore.Session, spec *WorkflowSpec, run workflowui.Run) {
+func (d *Daemon) startWorkflowControlRun(sess *sessionstore.Session, spec *WorkflowSpec, run workflowui.Run) error {
+	control, err := d.createWorkflowControl(run.ID)
+	if err != nil {
+		return err
+	}
+	if _, err := d.workflowRuns.Transition(run.ID, workflowui.Running); err != nil {
+		d.removeWorkflowControl(run.ID, control)
+		return err
+	}
 	d.taskWG.Add(1)
 	go func() {
 		defer d.taskWG.Done()
-		_, err := d.workflowRuns.Transition(run.ID, workflowui.Running)
-		if err != nil {
-			return
-		}
+		defer d.removeWorkflowControl(run.ID, control)
 		task := &scheduler.Task{TaskID: sessionstore.NewID("task"), SessionID: sess.SessionID, WorkspaceID: sess.WorkspaceID, Status: "running", UserPrompt: run.Input, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 		// The RPC control-plane entry point (workflow.run) must honor
 		// execution_mode exactly like the model-driven "workflow" tool call
@@ -66,7 +79,11 @@ func (d *Daemon) startWorkflowControlRun(sess *sessionstore.Session, spec *Workf
 		if spec.streaming() {
 			runFn = d.runWorkflowStreaming
 		}
-		outputs, runErr := runFn(sess, task, spec, run.Input, run.ID)
+		var outputs map[string]string
+		var runErr error
+		d.withTaskParentContext(control.ctx, task.TaskID, func(context.Context) {
+			outputs, runErr = runFn(sess, task, spec, run.Input, run.ID)
+		})
 		if runErr != nil {
 			detail, detailErr := d.workflowRuns.Detail(run.ID)
 			if detailErr == nil && detail.Run.Status != workflowui.Stopped && detail.Run.Status != workflowui.Interrupted {
@@ -76,29 +93,28 @@ func (d *Daemon) startWorkflowControlRun(sess *sessionstore.Session, spec *Workf
 			}
 			return
 		}
-		// A streaming run's isolate semantics mean runErr can be nil even
-		// though some steps failed or were skipped — those steps are NOT in
-		// outputs, and already have their true terminal status recorded
-		// live (runStreamingStep for Completed/Failed, markSkipped for
-		// Skipped — see workflow_streaming.go). Only steps actually present
-		// in outputs get (re-)marked Completed here; for the BSP path this
-		// is every step (BSP aborts entirely on any single failure, so a
-		// nil runErr there really does mean all steps completed) and is a
-		// harmless idempotent re-write of what runWorkflow already recorded.
-		for _, st := range spec.Steps {
-			out, ok := outputs[st.ID]
-			if !ok {
-				continue
-			}
-			if _, err := d.workflowRuns.UpdateStep(run.ID, workflowui.Step{ID: st.ID, Status: workflowui.Completed, Output: out}); err != nil {
-				_, _ = d.workflowRuns.MarkInterrupted(run.ID, "result completed but final step persistence failed: "+err.Error())
-				return
+		// Streaming records every terminal step live, including dynamic nodes
+		// and usage-observation metadata. Rewriting its static outputs here would
+		// erase FinishedAt/token status (and omit generated nodes). BSP still
+		// needs this final materialization because its older executor owns a
+		// simpler live status path.
+		if !spec.streaming() {
+			for _, st := range spec.Steps {
+				out, ok := outputs[st.ID]
+				if !ok {
+					continue
+				}
+				if _, err := d.workflowRuns.UpdateStep(run.ID, workflowui.Step{ID: st.ID, Status: workflowui.Completed, Output: out}); err != nil {
+					_, _ = d.workflowRuns.MarkInterrupted(run.ID, "result completed but final step persistence failed: "+err.Error())
+					return
+				}
 			}
 		}
 		if _, err := d.workflowRuns.Transition(run.ID, workflowui.Completed); err != nil {
 			_, _ = d.workflowRuns.MarkInterrupted(run.ID, "result completed but terminal status persistence failed: "+err.Error())
 		}
 	}()
+	return nil
 }
 
 func (d *Daemon) handleWorkflowList(json.RawMessage) (any, error) { return d.workflowRuns.List(), nil }
@@ -121,7 +137,25 @@ func (d *Daemon) workflowTransition(params json.RawMessage, status workflowui.St
 	return d.workflowRuns.Transition(p.RunID, status)
 }
 func (d *Daemon) handleWorkflowPause(p json.RawMessage) (any, error) {
-	return d.workflowTransition(p, workflowui.Paused)
+	var req struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal(p, &req); err != nil {
+		return nil, err
+	}
+	control := d.workflowControl(req.RunID)
+	if control == nil {
+		return nil, fmt.Errorf("workflow %s has no active execution", req.RunID)
+	}
+	if err := control.setPaused(true); err != nil {
+		return nil, err
+	}
+	run, err := d.workflowRuns.Transition(req.RunID, workflowui.Paused)
+	if err != nil {
+		_ = control.setPaused(false)
+		return nil, err
+	}
+	return run, nil
 }
 func (d *Daemon) handleWorkflowResume(p json.RawMessage) (any, error) {
 	var req struct {
@@ -134,8 +168,22 @@ func (d *Daemon) handleWorkflowResume(p json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if detail.Run.Status == workflowui.Paused {
+		control := d.workflowControl(req.RunID)
+		if control == nil {
+			return nil, fmt.Errorf("workflow %s has no active execution", req.RunID)
+		}
+		run, err := d.workflowRuns.Transition(req.RunID, workflowui.Running)
+		if err != nil {
+			return nil, err
+		}
+		if err := control.setPaused(false); err != nil {
+			return nil, err
+		}
+		return run, nil
+	}
 	if detail.Run.Status != workflowui.Interrupted {
-		return d.workflowRuns.Transition(req.RunID, workflowui.Running)
+		return nil, fmt.Errorf("workflow %s is %s, only paused or interrupted runs can resume", req.RunID, detail.Run.Status)
 	}
 	if !detail.Run.Resumable {
 		return nil, fmt.Errorf("workflow %s is blocked and requires manual reconciliation: %s", req.RunID, detail.Run.InterruptionReason)
@@ -155,11 +203,30 @@ func (d *Daemon) handleWorkflowResume(p json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.startWorkflowControlRun(sess, spec, run)
-	return run, nil
+	if err := d.startWorkflowControlRun(sess, spec, run); err != nil {
+		return nil, err
+	}
+	detail, err = d.workflowRuns.Detail(run.ID)
+	if err != nil {
+		return nil, err
+	}
+	return detail.Run, nil
 }
 func (d *Daemon) handleWorkflowStop(p json.RawMessage) (any, error) {
-	return d.workflowTransition(p, workflowui.Stopped)
+	var req struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal(p, &req); err != nil {
+		return nil, err
+	}
+	run, err := d.workflowRuns.Transition(req.RunID, workflowui.Stopped)
+	if err != nil {
+		return nil, err
+	}
+	if control := d.workflowControl(req.RunID); control != nil {
+		control.cancel(context.Canceled)
+	}
+	return run, nil
 }
 func (d *Daemon) handleWorkflowRestart(params json.RawMessage) (any, error) {
 	var p struct {
@@ -187,8 +254,14 @@ func (d *Daemon) handleWorkflowRestart(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.startWorkflowControlRun(sess, spec, run)
-	return run, nil
+	if err := d.startWorkflowControlRun(sess, spec, run); err != nil {
+		return nil, err
+	}
+	detail, err := d.workflowRuns.Detail(run.ID)
+	if err != nil {
+		return nil, err
+	}
+	return detail.Run, nil
 }
 func (d *Daemon) handleWorkflowSave(params json.RawMessage) (any, error) {
 	var p struct {

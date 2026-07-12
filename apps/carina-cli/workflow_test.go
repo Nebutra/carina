@@ -265,12 +265,12 @@ func TestRenderWorkflowDetail(t *testing.T) {
 	renderWorkflowDetail(&b, workflowui.Detail{
 		Run: workflowui.Run{ID: "wf_1", Workflow: "review", Status: workflowui.Completed, Steps: []workflowui.Step{
 			{ID: "scan", Status: workflowui.Completed},
-			{ID: "fix", Status: workflowui.Skipped},
+			{ID: "fix", Status: workflowui.Skipped, TokenUsageStatus: "unavailable_remote"},
 		}},
-		Completed: 1, Skipped: 1, Total: 2, Progress: 1.0, InputTokens: 100, OutputTokens: 40, CostUSD: 0.01,
+		Completed: 1, Skipped: 1, Total: 2, Progress: 1.0, InputTokens: 100, OutputTokens: 40, CostUSD: 0.01, TokensUsed: 140, UnmeteredSteps: 1,
 	})
 	out := b.String()
-	for _, want := range []string{"wf_1", "review", "completed", "100%", "scan", "fix", "skipped", "input=100"} {
+	for _, want := range []string{"wf_1", "review", "completed", "100%", "scan", "fix", "skipped", "input=100", "observed_tokens=140", "unmetered_steps=1", "tokens=unavailable(remote)", "observed-only"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in rendered detail, got:\n%s", want, out)
 		}

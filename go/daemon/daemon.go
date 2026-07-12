@@ -236,6 +236,8 @@ type Daemon struct {
 	agentView          *agentview.Store
 	worktrees          *worktree.Manager
 	workflowRuns       *workflowui.Store
+	workflowControls   map[string]*workflowRunControl
+	workflowControlMu  sync.Mutex
 	channels           *channels.Registry
 	extensions         *extensions.Marketplace
 	telemetry          *carinatelemetry.Exporter
@@ -343,6 +345,7 @@ func New(opts Options) (*Daemon, error) {
 		_ = kern.Close()
 		return nil, fmt.Errorf("daemon: workflow run store: %w", err)
 	}
+	d.workflowControls = map[string]*workflowRunControl{}
 	if _, err = d.workflowRuns.ReconcileStartup("daemon restarted before the run reached a terminal state"); err != nil {
 		_ = kern.Close()
 		return nil, fmt.Errorf("daemon: reconcile workflow runs: %w", err)
@@ -666,6 +669,7 @@ func (d *Daemon) Close() error {
 		for _, cancel := range cancels {
 			cancel(context.Canceled)
 		}
+		d.cancelWorkflowControls()
 	})
 	_ = d.server.Close()
 	waitGroupWithTimeout(&d.loopWG, 2*time.Second)

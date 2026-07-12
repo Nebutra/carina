@@ -54,6 +54,15 @@ internally — see [Observability](#observability) below) until the run
 reaches a terminal state, then exits non-zero for anything other than
 `completed` — scriptable the same way `carina run`/`ask` are.
 
+Control commands operate on the live execution, not just its display record:
+
+- `stop` cancels the run context shared by local subagents and remote dispatch
+  waits, then leaves the durable run in `stopped`.
+- `pause` stops admission of newly-ready nodes. Work already running is not
+  suspended or killed and may finish while the run remains `paused`.
+- `resume` releases nodes that became ready while paused. `restart` creates a
+  new run ID and attempt from a terminal run.
+
 Everything above is also reachable directly over RPC (`workflow.run`,
 `workflow.list`, `workflow.detail`, `workflow.pause`/`resume`/`stop`/`restart`
 — see [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json)) or
@@ -124,6 +133,14 @@ injection. Bounded by a generation-depth ceiling and the run's total
 step-count ceiling — a runaway generator hits a hard wall, not an
 unbounded graph.
 
+Generated definitions are journaled before the generator result is committed,
+and every generated node has an implicit causal dependency on its generator.
+After a daemon restart, the graph is restored before scheduling continues. An
+identical generator replay is idempotent; reusing the same step ID with a
+different definition hash fails closed. Dynamic nodes are added to
+`workflow.detail`/`carina workflow status`, so totals and progress include the
+graph that actually ran rather than only the static file.
+
 ### Live inter-step messaging (swarm channels)
 
 `needs`/`input` only ever hand a dependent a *finished* step's output. To
@@ -183,6 +200,13 @@ a step already running is never killed — tokens are never refunded, so
 "pause until headroom frees up" isn't meaningful the way it would be for a
 renewable resource.
 
+The current remote worker result schema does not carry token usage. A remote
+step is therefore reported as **unmetered**, not as zero: rollups include
+`unmetered_steps`, `budget_spent_is_complete: false`, and
+`budget_enforcement: "observed_usage_only"`; CLI status prints the same
+limitation. A `token_budget` can only enforce observed local usage until the
+remote result contract gains metering.
+
 ## Observability
 
 `carina workflow status <run_id>` (or `workflow.detail` over RPC) reports
@@ -196,3 +220,7 @@ swarm-channel activity (`channel_messages_published`,
 `channel_messages_evicted` when nonzero) — the aggregated view a large run
 (hundreds of steps) is meant to be watched through, as opposed to
 subscribing to every individual step's full event stream.
+
+The operator detail is durable across daemon restarts. Step usage has an
+explicit observation status, allowing clients to distinguish a measured zero
+from unavailable remote metering.

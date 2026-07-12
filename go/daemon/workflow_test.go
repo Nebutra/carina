@@ -8,8 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Nebutra/carina/go/workflowui"
 )
 
 // taskEchoReasoner finishes immediately, echoing the step's TASK line into the
@@ -29,6 +32,35 @@ func (taskEchoReasoner) Think(_ context.Context, prompt string) (string, error) 
 	}
 	b, _ := json.Marshal(map[string]string{"tool": "done", "summary": "did[" + task + "]"})
 	return string(b), nil
+}
+
+type concurrencyTrackingReasoner struct {
+	active  atomic.Int32
+	maximum atomic.Int32
+	started chan struct{}
+	release chan struct{}
+}
+
+func (r *concurrencyTrackingReasoner) Name() string { return "concurrency-tracking" }
+func (r *concurrencyTrackingReasoner) Think(ctx context.Context, _ string) (string, error) {
+	active := r.active.Add(1)
+	defer r.active.Add(-1)
+	for {
+		maximum := r.maximum.Load()
+		if active <= maximum || r.maximum.CompareAndSwap(maximum, active) {
+			break
+		}
+	}
+	select {
+	case r.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-r.release:
+	}
+	return `{"tool":"done","summary":"ok"}`, nil
 }
 
 func writeWorkerAgent(t *testing.T, ws string) {
@@ -79,6 +111,55 @@ func TestWorkflowCycleDetected(t *testing.T) {
 	}}
 	if err := bad.validate(); err == nil {
 		t.Fatal("dangling dep should be rejected")
+	}
+}
+
+func TestWorkflowStreamingOnlyFieldsFailClosedUnderBSP(t *testing.T) {
+	cases := []WorkflowSpec{
+		{Name: "budget", TokenBudget: 1, Steps: []WorkflowStep{{ID: "a", Agent: "worker", Task: "x"}}},
+		{Name: "remote", Steps: []WorkflowStep{{ID: "a", Agent: "worker", Task: "x", Remote: true}}},
+		{Name: "condition", Steps: []WorkflowStep{{ID: "a", Agent: "worker", Task: "x", When: json.RawMessage(`true`)}}},
+		{Name: "generator", Steps: []WorkflowStep{{ID: "a", Agent: "worker", Task: "x", Kind: "generator"}}},
+		{Name: "channel", Steps: []WorkflowStep{{ID: "a", Agent: "worker", Task: "x", ConsumesChannel: []string{"progress"}}}},
+	}
+	for _, spec := range cases {
+		if err := spec.validate(); err == nil || !strings.Contains(err.Error(), "streaming") {
+			t.Fatalf("%s must fail with an execution_mode=streaming hint, got %v", spec.Name, err)
+		}
+		spec.ExecutionMode = "streaming"
+		if err := spec.validate(); err != nil {
+			t.Fatalf("%s should validate in streaming mode: %v", spec.Name, err)
+		}
+	}
+}
+
+func TestWorkflowAffinityContractRejectsUnknownOrInvalidPools(t *testing.T) {
+	for _, affinity := range []map[string]string{{"region": "eu"}, {"worker_pool": "GPU Heavy!"}, {"worker_pool": ""}} {
+		spec := WorkflowSpec{Name: "affinity", ExecutionMode: "streaming", Steps: []WorkflowStep{{ID: "a", Agent: "worker", Task: "x", Affinity: affinity}}}
+		if err := spec.validate(); err == nil {
+			t.Fatalf("invalid affinity must fail closed: %#v", affinity)
+		}
+	}
+	valid := WorkflowSpec{Name: "affinity", ExecutionMode: "streaming", Steps: []WorkflowStep{{ID: "a", Agent: "worker", Task: "x", Affinity: map[string]string{"worker_pool": "gpu-heavy"}}}}
+	if err := valid.validate(); err != nil {
+		t.Fatalf("valid affinity rejected: %v", err)
+	}
+}
+
+func TestWorkflowJSONSchemaMatchesFailClosedRuntimeContract(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "protocol", "schemas", "workflow-graph.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("workflow schema is invalid JSON: %v", err)
+	}
+	encoded := string(raw)
+	for _, required := range []string{`"allOf"`, `"token_budget": {"const": 0}`, `"additionalProperties": false`, `"uniqueItems": true`} {
+		if !strings.Contains(encoded, required) {
+			t.Fatalf("workflow schema is missing fail-closed contract %s", required)
+		}
 	}
 }
 
@@ -434,6 +515,42 @@ func TestWorkflowStreamingWideFanOutFanIn(t *testing.T) {
 	t.Logf("200-leaf fan-out/fan-in completed in %s with concurrency=%d", time.Since(start), defaultStreamingWorkflowConcurrency)
 }
 
+func TestWorkflowStreamingHardCapsTwoHundredReadyNodes(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	reasoner := &concurrencyTrackingReasoner{started: make(chan struct{}, 256), release: make(chan struct{})}
+	d.SetReasoner(reasoner)
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "bounded swarm")
+	steps := make([]WorkflowStep, 200)
+	for i := range steps {
+		steps[i] = WorkflowStep{ID: fmt.Sprintf("n%d", i), Agent: "worker", Task: "work"}
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := d.runWorkflowStreaming(parent, parentTask, &WorkflowSpec{Name: "bounded", ExecutionMode: "streaming", Steps: steps}, "", "run-bounded")
+		done <- err
+	}()
+	deadline := time.After(3 * time.Second)
+	for reasoner.maximum.Load() < defaultStreamingWorkflowConcurrency {
+		select {
+		case <-reasoner.started:
+		case <-deadline:
+			t.Fatalf("scheduler never filled its %d slots (max=%d)", defaultStreamingWorkflowConcurrency, reasoner.maximum.Load())
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := reasoner.maximum.Load(); got != defaultStreamingWorkflowConcurrency {
+		t.Fatalf("200 ready nodes exceeded the hard concurrency cap: max=%d cap=%d", got, defaultStreamingWorkflowConcurrency)
+	}
+	close(reasoner.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 // scriptedJSONReasoner returns a fixed literal "done" summary for any task
 // containing a configured marker (used to script JSON envelopes: condition
 // data, structured-input sources, generator spawn_steps), and falls back to
@@ -609,6 +726,54 @@ func TestWorkflowStreamingGeneratorChainDependsOnSpawnedStep(t *testing.T) {
 	}
 	if !strings.Contains(out["second"], out["first"]) {
 		t.Fatalf("second spawned step should have first's output interpolated: first=%q second=%q", out["first"], out["second"])
+	}
+}
+
+func TestWorkflowStreamingRestoresAndIdempotentlyReplaysGeneratedGraph(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeWorkerAgent(t, ws)
+	d.SetReasoner(&scriptedJSONReasoner{byMarker: map[string]string{
+		"GEN_STEP": `{"spawn_steps":[{"id":"spawned","agent":"worker","task":"SPAWNED_TASK"}]}`,
+	}})
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "resume generated graph")
+	const runID = "run-generated-replay"
+	gen := WorkflowStep{ID: "gen", Agent: "worker", Task: "GEN_STEP", Kind: "generator"}
+	spawned := WorkflowStep{ID: "spawned", Agent: "worker", Task: "SPAWNED_TASK", Needs: []string{"gen"}}
+	if err := newWFRunStore(d.stateDir).saveGenerated(runID, []persistedGeneratedStep{{Step: spawned, GeneratorID: "gen", Depth: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.workflowRuns.Create(workflowui.Run{ID: runID, Workflow: "generated-replay", SessionID: parent.SessionID, Steps: []workflowui.Step{
+		{ID: "gen", DefinitionHash: workflowStepDefinitionHash(gen)},
+		{ID: "spawned", DefinitionHash: workflowStepDefinitionHash(spawned)},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.workflowRuns.Transition(runID, workflowui.Running); err != nil {
+		t.Fatal(err)
+	}
+	out, err := d.runWorkflowStreaming(parent, parentTask, &WorkflowSpec{Name: "generated-replay", ExecutionMode: "streaming", Steps: []WorkflowStep{gen}}, "", runID)
+	if err != nil {
+		t.Fatalf("restored generated graph failed: %v", err)
+	}
+	if _, ok := out["spawned"]; !ok {
+		t.Fatalf("restored dynamic step did not run: %v", out)
+	}
+	detail, _ := d.workflowRuns.Detail(runID)
+	if detail.Total != 2 || detail.Completed != 2 {
+		t.Fatalf("UI replay duplicated or lost the restored dynamic step: %+v", detail)
+	}
+}
+
+func TestWorkflowGeneratedGraphJournalFailsClosedWhenCorrupt(t *testing.T) {
+	store := newWFRunStore(t.TempDir())
+	if err := os.WriteFile(store.graphPath("corrupt"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.loadGenerated("corrupt"); err == nil {
+		t.Fatal("corrupt generated graph journal must fail closed")
 	}
 }
 

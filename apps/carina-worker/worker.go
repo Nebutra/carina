@@ -180,7 +180,7 @@ func (w *leaseWorker) pollLoop(ctx context.Context) error {
 		}
 		if ctx.Err() != nil {
 			<-sem
-			w.report(task.TaskID, task.LeaseGeneration, failedResult("worker stopped before executor start"))
+			w.reportWithRetry(context.Background(), task.TaskID, task.LeaseGeneration, failedResult("worker stopped before executor start"))
 			return nil
 		}
 		w.inflight.Add(1)
@@ -204,13 +204,15 @@ func (w *leaseWorker) executeLease(taskID string, raw json.RawMessage) {
 		w.logger.Printf("carina-worker: lease %s has no valid generation", taskID)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), w.cfg.ExecutorTimeout)
-	lease := &activeLease{cancel: cancel}
+	leaseCtx, cancelLease := context.WithCancel(context.Background())
+	execCtx, cancelExec := context.WithTimeout(leaseCtx, w.cfg.ExecutorTimeout)
+	lease := &activeLease{cancel: cancelLease}
 	w.activeMu.Lock()
 	w.active[taskID] = lease
 	w.activeMu.Unlock()
 	defer func() {
-		cancel()
+		cancelExec()
+		cancelLease()
 		w.activeMu.Lock()
 		delete(w.active, taskID)
 		w.activeMu.Unlock()
@@ -219,15 +221,18 @@ func (w *leaseWorker) executeLease(taskID string, raw json.RawMessage) {
 	renewDone := make(chan struct{})
 	go func() {
 		defer close(renewDone)
-		w.renewLoop(ctx, taskID, task.LeaseGeneration, lease)
+		w.renewLoop(leaseCtx, taskID, task.LeaseGeneration, lease)
 	}()
-	result := w.executor.Execute(ctx, raw)
-	cancel()
-	<-renewDone
+	result := w.executor.Execute(execCtx, raw)
+	cancelExec()
 	if lease.lost.Load() || lease.stopping.Load() {
+		cancelLease()
+		<-renewDone
 		return
 	}
-	w.report(taskID, task.LeaseGeneration, result)
+	w.reportWithRetry(leaseCtx, taskID, task.LeaseGeneration, result)
+	cancelLease()
+	<-renewDone
 }
 
 func (w *leaseWorker) renewLoop(ctx context.Context, taskID string, generation int, lease *activeLease) {
@@ -265,16 +270,49 @@ func (w *leaseWorker) renewLoop(ctx context.Context, taskID string, generation i
 	}
 }
 
-func (w *leaseWorker) report(taskID string, generation int, result executionResult) {
-	if err := w.call("work.report", map[string]any{
-		"task_id":          taskID,
-		"lease_generation": generation,
-		"status":           result.Status,
-		"summary":          result.Summary,
-		"patches":          result.Patches,
-	}, nil); err != nil {
-		w.logger.Printf("carina-worker: report %s failed: %v", taskID, err)
+func (w *leaseWorker) reportWithRetry(ctx context.Context, taskID string, generation int, result executionResult) {
+	params := map[string]any{
+		"task_id": taskID, "lease_generation": generation,
+		"status": result.Status, "summary": result.Summary, "patches": result.Patches,
 	}
+	backoff := w.cfg.PollMinBackoff
+	for attempt := 1; attempt <= 3; attempt++ {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := w.call("work.report", params, nil); err == nil {
+			return
+		} else if leaseLostError(err) {
+			w.logger.Printf("carina-worker: report %s rejected because the lease was lost: %v", taskID, err)
+			return
+		} else if !transientReportError(err) {
+			w.logger.Printf("carina-worker: report %s rejected without retry: %v", taskID, err)
+			return
+		} else if attempt == 3 {
+			w.logger.Printf("carina-worker: report %s failed after %d attempts: %v", taskID, attempt, err)
+			return
+		} else {
+			w.logger.Printf("carina-worker: report %s attempt %d failed: %v", taskID, attempt, err)
+		}
+		if !waitContext(ctx, backoff) {
+			return
+		}
+		backoff = nextBackoff(backoff, w.cfg.PollMaxBackoff)
+	}
+}
+
+func transientReportError(err error) bool {
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"connection reset", "connection refused", "broken pipe", "unexpected eof",
+		"i/o timeout", "context deadline exceeded", "temporarily unavailable",
+		"bad gateway", "service unavailable", "gateway timeout", "http 502", "http 503", "http 504",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *leaseWorker) drain() {
