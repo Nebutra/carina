@@ -829,6 +829,67 @@ func TestInjectGeneratedStepsToleratesNonEnvelopeOutput(t *testing.T) {
 	}
 }
 
+// TestCheckGeneratorInjectionRateEnforcesSlidingWindow is a pure unit test
+// (no Daemon) of the rate limiter's window arithmetic: events older than
+// generatorInjectionWindow don't count against the limit, events inside it
+// do, and the check must never mutate genInjectEvents itself (the caller —
+// injectGeneratedSteps — only appends after every other check, including
+// approval, has actually passed).
+func TestCheckGeneratorInjectionRateEnforcesSlidingWindow(t *testing.T) {
+	now := time.Now()
+	sc := &streamCoordinator{genInjectEvents: []genInjectEvent{
+		{at: now.Add(-2 * generatorInjectionWindow), count: maxGeneratorNodesPerWindow}, // expired, must not count
+		{at: now.Add(-time.Second), count: maxGeneratorNodesPerWindow - 5},              // still inside the window
+	}}
+	if err := sc.checkGeneratorInjectionRate(5); err != nil {
+		t.Fatalf("expected exactly-at-limit (in-window sum + newCount == limit) to be allowed, got: %v", err)
+	}
+	if err := sc.checkGeneratorInjectionRate(6); err == nil {
+		t.Fatal("expected one more than the limit to be rejected")
+	}
+	if len(sc.genInjectEvents) != 1 {
+		t.Fatalf("expected the expired event to have been trimmed, got %d events", len(sc.genInjectEvents))
+	}
+}
+
+func TestRequestSwarmSpawnApprovalIfThresholdCrossedSkipsBelowThreshold(t *testing.T) {
+	// sc.d is deliberately nil — if this call ever touched it despite
+	// totalSteps being below the threshold, the test would panic instead of
+	// passing, which is exactly the assertion: small graphs never reach the
+	// kernel for this capability at all.
+	sc := &streamCoordinator{totalSteps: swarmSpawnApprovalThreshold - 1}
+	if err := sc.requestSwarmSpawnApprovalIfThresholdCrossed("gen", 1); err != nil {
+		t.Fatalf("expected no error below the threshold, got: %v", err)
+	}
+}
+
+func TestRequestSwarmSpawnApprovalIfThresholdCrossedGatesAboveThreshold(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	sc := &streamCoordinator{d: d, parent: parent, parentTask: parentTask, totalSteps: swarmSpawnApprovalThreshold}
+	if err := sc.requestSwarmSpawnApprovalIfThresholdCrossed("gen", 3); err != nil {
+		t.Fatalf("expected the request to succeed (auto-approved in this test harness), got: %v", err)
+	}
+}
+
+func TestInjectGeneratedStepsRejectsBurstOverRateLimit(t *testing.T) {
+	sc := &streamCoordinator{
+		byID: map[string]WorkflowStep{}, genDepth: map[string]int{}, totalSteps: 0,
+		genInjectEvents: []genInjectEvent{{at: time.Now(), count: maxGeneratorNodesPerWindow}},
+	}
+	err := sc.injectGeneratedSteps("gen", `{"spawn_steps":[{"id":"a","agent":"worker","task":"x"}]}`)
+	if err == nil {
+		t.Fatal("expected the injection to be refused for exceeding the rate window, not silently truncated")
+	}
+	if _, exists := sc.byID["a"]; exists {
+		t.Fatal("a rate-refused injection must not have merged any part of the batch into the live graph")
+	}
+}
+
 // TestWorkflowStreamingResume: mirrors TestWorkflowResume for the streaming
 // scheduler — the streaming path recomputes live in-degree from scratch
 // around already-completed steps (genuinely new code, not shared with the

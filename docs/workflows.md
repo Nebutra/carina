@@ -186,6 +186,15 @@ approval — a stronger, separate gate from the same-process `SubagentSpawn`
 every local step uses, since it hands execution to a process authenticated
 only by a bearer credential, potentially on a different machine.
 
+A remote step can still participate in [swarm channels](#live-inter-step-messaging-swarm-channels):
+its executor result may include `channel_messages`, delivered as a batch
+when the worker reports (not continuously while it runs — see
+[worker-executor.md](worker-executor.md#publishing-to-a-swarm-channel)).
+`consumes_channel` isn't available to a remote step itself (the external
+executor has no in-process tool-dispatch loop to call `swarm_receive`
+through), but a local step subscribed to the same channel receives whatever
+the remote step published.
+
 ### Run-wide token budget
 
 ```json

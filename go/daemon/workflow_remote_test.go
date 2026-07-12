@@ -53,6 +53,42 @@ func simulateRemoteWorker(t *testing.T, d *Daemon, workerID, credential, status,
 	return ""
 }
 
+// simulateRemoteWorkerWithChannelMessages is simulateRemoteWorker plus an
+// optional work.report "channel_messages" payload — the real carina-worker
+// wire shape a real executor's executionResult.ChannelMessages produces
+// (apps/carina-worker/executor.go), used to test the remote-step
+// counterpart of swarm_publish (go/daemon/dispatch.go's handleWorkReport).
+func simulateRemoteWorkerWithChannelMessages(t *testing.T, d *Daemon, workerID, credential, status, summary string, channelMessages []map[string]any) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		pollParams, _ := json.Marshal(map[string]any{"worker_id": workerID, "worker_credential": credential, "ttl_ms": 5000})
+		res, err := d.handleWorkPoll(pollParams)
+		if err != nil {
+			t.Errorf("work.poll: %v", err)
+			return ""
+		}
+		m := res.(map[string]any)
+		if m["empty"] == true {
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
+		leased := m["task"].(*scheduler.Task)
+		reportParams, _ := json.Marshal(map[string]any{
+			"worker_id": workerID, "worker_credential": credential,
+			"task_id": leased.TaskID, "lease_generation": leased.LeaseGeneration,
+			"status": status, "summary": summary, "channel_messages": channelMessages,
+		})
+		if _, err := d.handleWorkReport(reportParams); err != nil {
+			t.Errorf("work.report: %v", err)
+			return ""
+		}
+		return leased.TaskID
+	}
+	t.Errorf("simulateRemoteWorkerWithChannelMessages: no task was ever leased within the deadline")
+	return ""
+}
+
 func TestWorkflowStreamingRemoteStepDispatchesLeasesAndCompletes(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
@@ -155,7 +191,7 @@ func TestWorkflowStreamingRemoteStepCancelledStopsWaitingAndCancelsDispatchTask(
 	time.AfterFunc(30*time.Millisecond, cancel)
 
 	res := d.runStreamingStepRemote(ctx, parent, parentTask, &WorkflowSpec{Name: "remote-cancel"}, "run-remote-cancel",
-		WorkflowStep{ID: "offload", Task: "NEVER_LEASED_STEP", Remote: true}, "NEVER_LEASED_STEP")
+		WorkflowStep{ID: "offload", Task: "NEVER_LEASED_STEP", Remote: true}, "NEVER_LEASED_STEP", newSwarmChannelBroker())
 	if res.kind != stepSkipped {
 		t.Fatalf("expected a cancelled wait to resolve as skipped, got kind=%v errMsg=%q", res.kind, res.errMsg)
 	}
@@ -235,5 +271,102 @@ func TestWorkflowStreamingRemoteStepAffinityRestrictsRequiredWorkerCapabilities(
 	case leakedTaskID := <-plainSawTask:
 		t.Fatalf("a worker without the gpu-heavy pool capability must never lease an affinity-tagged task, but leased %q", leakedTaskID)
 	default:
+	}
+}
+
+// remoteChannelSubscriberReasoner scripts a subscribe-only role for testing
+// that a REMOTE step's work.report channel_messages actually reach a LOCAL
+// step subscribed to the same swarm channel — the two steps share no
+// needs/data edge, so this only works if handleWorkReport's
+// publishRemoteChannelMessagesBestEffort correctly routed the message into
+// the run's broker via the dispatch-task binding.
+type remoteChannelSubscriberReasoner struct {
+	subscribeMarker, expectedPayloadFragment string
+}
+
+func (r *remoteChannelSubscriberReasoner) Name() string { return "remote-channel-subscriber" }
+func (r *remoteChannelSubscriberReasoner) Think(_ context.Context, prompt string) (string, error) {
+	task := extractTaskLine(prompt)
+	if !strings.Contains(task, r.subscribeMarker) {
+		b, _ := json.Marshal(map[string]string{"tool": "done", "summary": "did[" + task + "]"})
+		return string(b), nil
+	}
+	if strings.Contains(prompt, r.expectedPayloadFragment) {
+		b, _ := json.Marshal(map[string]string{"tool": "done", "summary": "received: " + r.expectedPayloadFragment})
+		return string(b), nil
+	}
+	b, _ := json.Marshal(map[string]any{"tool": "swarm_receive"})
+	return string(b), nil
+}
+
+// TestWorkflowStreamingRemoteStepPublishesToSwarmChannelViaWorkReport closes
+// the "remote steps can't participate in swarm channels at all" gap: a
+// remote-dispatched step's work.report includes channel_messages, and a
+// concurrently-running LOCAL step subscribed to that channel actually
+// receives it — proving the daemon's dispatchSwarmBindings correctly routes
+// a real external worker's report into the run's live swarm channel broker.
+func TestWorkflowStreamingRemoteStepPublishesToSwarmChannelViaWorkReport(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeChannelWorkerAgent(t, ws)
+	wk, credential, err := d.pool.RegisterAuthenticated("remote-1", worker.Remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.SetReasoner(&remoteChannelSubscriberReasoner{subscribeMarker: "SUBSCRIBE_STEP", expectedPayloadFragment: "halfway-from-remote"})
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	go simulateRemoteWorkerWithChannelMessages(t, d, wk.WorkerID, credential, "completed", "remote step done",
+		[]map[string]any{{"channel": "progress", "payload": map[string]string{"status": "halfway-from-remote"}}})
+
+	spec := &WorkflowSpec{Name: "remote-channel-publish", ExecutionMode: "streaming", Steps: []WorkflowStep{
+		{ID: "offload", Agent: "irrelevant-for-remote", Task: "REMOTE_STEP", Remote: true},
+		{ID: "subscriber", Agent: "channel-worker", Task: "SUBSCRIBE_STEP", ConsumesChannel: []string{"progress"}},
+	}}
+	out, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-remote-channel-publish")
+	if err != nil {
+		t.Fatalf("workflow failed: %v", err)
+	}
+	if !strings.Contains(out["subscriber"], "halfway-from-remote") {
+		t.Fatalf("expected the local subscriber to receive the remote step's published message, got: %q", out["subscriber"])
+	}
+}
+
+// TestHandleWorkReportRejectsTooManyChannelMessages is the RPC-boundary
+// validation test for maxRemoteChannelMessagesPerReport.
+func TestHandleWorkReportRejectsTooManyChannelMessages(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	wk, credential, err := d.pool.RegisterAuthenticated("remote-1", worker.Remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	task := d.sched.SubmitForDispatch(sess.SessionID, sess.WorkspaceID, "x", nil)
+
+	pollParams, _ := json.Marshal(map[string]any{"worker_id": wk.WorkerID, "worker_credential": credential, "ttl_ms": 5000})
+	res, err := d.handleWorkPoll(pollParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leased := res.(map[string]any)["task"].(*scheduler.Task)
+	if leased.TaskID != task.TaskID {
+		t.Fatalf("expected to lease the submitted task, got %q", leased.TaskID)
+	}
+
+	tooMany := make([]map[string]any, maxRemoteChannelMessagesPerReport+1)
+	for i := range tooMany {
+		tooMany[i] = map[string]any{"channel": "progress", "payload": "x"}
+	}
+	reportParams, _ := json.Marshal(map[string]any{
+		"worker_id": wk.WorkerID, "worker_credential": credential,
+		"task_id": leased.TaskID, "lease_generation": leased.LeaseGeneration,
+		"status": "completed", "summary": "done", "channel_messages": tooMany,
+	})
+	if _, err := d.handleWorkReport(reportParams); err == nil {
+		t.Fatalf("expected more than %d channel_messages to be rejected", maxRemoteChannelMessagesPerReport)
 	}
 }

@@ -553,9 +553,15 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		// so rewording an ignored field can't dodge detection. A hard
 		// threshold on cumulative mistakes (rotating between a few repeated
 		// actions still counts against the same budget) escalates straight
-		// to degrade instead of nudging forever.
-		sig := act.signature()
-		softRepeat, hardRepeat := guard.observe(act.Tool, sig)
+		// to degrade instead of nudging forever. swarm_receive is exempt:
+		// polling a channel for a not-yet-arrived message is EXPECTED to
+		// look identical call to call — legitimate waiting, not the
+		// stuck-model pattern this guard exists to catch. Still bounded by
+		// the ordinary max-turns ceiling, just not by this hard-stop.
+		var softRepeat, hardRepeat bool
+		if act.Tool != "swarm_receive" {
+			softRepeat, hardRepeat = guard.observe(act.Tool, act.signature())
+		}
 		if hardRepeat {
 			d.degrade(sess, task, tr, "loop guard: repeated actions with no progress (hard threshold)")
 			return

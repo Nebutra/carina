@@ -272,6 +272,55 @@ func (d *Daemon) swarmPublishOutcome(sess *sessionstore.Session, task *scheduler
 	return toolCompleted(fmt.Sprintf("published to %q (seq %d)", act.Channel, msg.Seq))
 }
 
+// remoteChannelMessage is one entry in work.report's optional
+// "channel_messages" array (see handleWorkReport, dispatch.go) — a remote-
+// dispatched step's counterpart to swarm_publish, since the external
+// executor process has no in-process tool-dispatch loop to call that tool
+// through. carina.worker.result.v1 mirrors this shape (apps/carina-worker/
+// executor.go's executionResult.ChannelMessages).
+type remoteChannelMessage struct {
+	Channel string          `json:"channel"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// publishRemoteChannelMessagesBestEffort applies the exact same governance
+// gate, broker.publish, and eviction-audit sequence swarmPublishOutcome uses
+// for an in-process step, to each of a leased worker's reported channel
+// messages — best-effort per message (one denied/invalid entry doesn't fail
+// the whole work.report call, since the step's own completion/failure must
+// still be recorded regardless of channel-message validity; each failure is
+// still audited, never silently dropped).
+func (d *Daemon) publishRemoteChannelMessagesBestEffort(sess *sessionstore.Session, task *scheduler.Task, binding *swarmChannelBinding, messages []remoteChannelMessage) {
+	for _, m := range messages {
+		if m.Channel == "" {
+			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+				"status": "swarm_channel_publish_refused", "reason": "empty channel", "from_step": binding.stepID,
+			}, "")
+			continue
+		}
+		allowed, dec := d.gateSwarmMessage(sess, task, m.Channel)
+		if !allowed {
+			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+				"status": "swarm_channel_publish_refused", "channel": m.Channel, "from_step": binding.stepID, "reason": dec.Reason,
+			}, dec.DecisionID)
+			continue
+		}
+		payload := m.Payload
+		if len(payload) == 0 {
+			payload = json.RawMessage("null")
+		}
+		msg, evictedTotal, evictedNow := binding.broker.publish(m.Channel, binding.stepID, payload)
+		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+			"status": "swarm_channel_published", "channel": m.Channel, "from_step": binding.stepID, "seq": msg.Seq, "via": "remote_report",
+		}, dec.DecisionID)
+		if evictedNow {
+			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+				"status": "swarm_channel_evicted", "channel": m.Channel, "cap": maxMessagesPerChannel, "evicted_total": evictedTotal,
+			}, "")
+		}
+	}
+}
+
 // swarmReceiveOutcome handles the "swarm_receive" tool: returns every new
 // message on the requesting step's subscribed channel(s) since it last
 // checked. An empty "channel" field means "all channels this step

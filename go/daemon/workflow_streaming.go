@@ -36,6 +36,33 @@ const defaultStreamingWorkflowConcurrency = 16
 // while still running forever.
 const maxGeneratorDepth = 5
 
+// generatorInjectionWindow/maxGeneratorNodesPerWindow bound the RATE of
+// dynamic graph growth, independent of maxGeneratorDepth/
+// maxStreamingWorkflowSteps above: a chain of otherwise-valid generators —
+// each individually within the depth and total-step caps — could still
+// inject in rapid bursts, a "graph-scale DoS" the design doc's own §13
+// flagged as needing finer throttling than a hard cap alone provides
+// ("每分钟最多注入 N 个节点"). See streamCoordinator.checkGeneratorInjectionRate.
+const (
+	generatorInjectionWindow   = 60 * time.Second
+	maxGeneratorNodesPerWindow = 100
+)
+
+// swarmSpawnApprovalThreshold is the graph-size point past which every
+// further generator injection re-triggers Capability::SwarmSpawn approval
+// (design doc §11/§13's originally-proposed mitigation) — ordinary, small
+// graphs never see this gate at all; once a run has grown large enough to
+// matter, further unattended growth needs a decision, not silent continuation.
+const swarmSpawnApprovalThreshold = maxStreamingWorkflowSteps / 2
+
+// genInjectEvent records one generator injection for the sliding-window
+// rate check — count, not just a timestamp, since one call can inject a
+// batch of many nodes at once.
+type genInjectEvent struct {
+	at    time.Time
+	count int
+}
+
 // stepOutcomeKind is the terminal state of one streaming-mode step.
 // stepUnresolved is deliberately the zero value: several maps below are read
 // with a plain equality check (not the two-value `v, ok := ...` form), and a
@@ -83,6 +110,14 @@ type streamCoordinator struct {
 	genDepth   map[string]int
 	genOrigin  map[string]string
 	generated  []persistedGeneratedStep
+
+	// genInjectEvents is the sliding window checkGeneratorInjectionRate
+	// reads/trims on every injection — deliberately NOT persisted across a
+	// daemon restart (unlike sc.generated): the rate limit protects THIS
+	// process's live scheduling loop from a burst, not the graph's
+	// durable definition, so restarting with a fresh window is correct,
+	// not a gap.
+	genInjectEvents []genInjectEvent
 
 	outputs      map[string]string
 	terminal     map[string]stepOutcomeKind
@@ -598,7 +633,7 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 	// bookkeeping, since the execution itself happens in a different
 	// process (see workflow_remote.go).
 	if st.Remote || len(st.Affinity) > 0 {
-		res := d.runStreamingStepRemote(ctx, parent, parentTask, spec, runID, st, taskText)
+		res := d.runStreamingStepRemote(ctx, parent, parentTask, spec, runID, st, taskText, channels)
 		if d.workflowRuns != nil {
 			now := time.Now().UTC()
 			if detail, managedErr := d.workflowRuns.Detail(runID); managedErr == nil && workflowRunAcceptsStepUpdate(detail.Run.Status) {

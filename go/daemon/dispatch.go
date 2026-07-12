@@ -135,23 +135,34 @@ func (d *Daemon) handleWorkRenew(params json.RawMessage) (any, error) {
 	return map[string]any{"ok": true}, nil
 }
 
+// maxRemoteChannelMessagesPerReport bounds work.report's optional
+// "channel_messages" array — an RPC-boundary sanity limit against a buggy or
+// malicious worker/executor reporting an unbounded batch in one call. This
+// is deliberately independent of maxMessagesPerChannel (the broker's own
+// per-channel retention cap), which still applies on top per channel.
+const maxRemoteChannelMessagesPerReport = 64
+
 // handleWorkReport records a worker's terminal result for a leased task. It is
 // idempotent (safe redelivery) and rejects reports from a non-owning worker.
 func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 	var p struct {
-		WorkerID         string   `json:"worker_id"`
-		WorkerCredential string   `json:"worker_credential"`
-		TaskID           string   `json:"task_id"`
-		LeaseGeneration  int      `json:"lease_generation"`
-		Status           string   `json:"status"`
-		Summary          string   `json:"summary"`
-		Patches          []string `json:"patches"`
+		WorkerID         string                 `json:"worker_id"`
+		WorkerCredential string                 `json:"worker_credential"`
+		TaskID           string                 `json:"task_id"`
+		LeaseGeneration  int                    `json:"lease_generation"`
+		Status           string                 `json:"status"`
+		Summary          string                 `json:"summary"`
+		Patches          []string               `json:"patches"`
+		ChannelMessages  []remoteChannelMessage `json:"channel_messages,omitempty"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
 	if err := d.authenticateWorker(p.WorkerID, p.WorkerCredential); err != nil {
 		return nil, err
+	}
+	if len(p.ChannelMessages) > maxRemoteChannelMessagesPerReport {
+		return nil, fmt.Errorf("at most %d channel_messages may be reported at once", maxRemoteChannelMessagesPerReport)
 	}
 	if task, ok := d.sched.Get(p.TaskID); ok && task.Status == "cancelled" {
 		return map[string]any{"ok": false, "cancelled": true}, nil
@@ -163,6 +174,19 @@ func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 	sessionID := ""
 	if t, ok := d.sched.Get(p.TaskID); ok {
 		task, sessionID = t, t.SessionID
+	}
+	// A dispatch task that a streaming workflow step routed here (see
+	// runStreamingStepRemote) has a swarm channel binding registered for its
+	// entire lease lifetime; anything else (a plain work.submit task with no
+	// workflow behind it) has none, and channel_messages — if a worker sent
+	// any anyway — are simply not publishable, not a hard error, since the
+	// worker's terminal report itself must still be recorded either way.
+	if len(p.ChannelMessages) > 0 && task != nil {
+		if raw, ok := d.dispatchSwarmBindings.Load(p.TaskID); ok {
+			if sess, ok := d.store.Get(sessionID); ok {
+				d.publishRemoteChannelMessagesBestEffort(sess, task, raw.(*swarmChannelBinding), p.ChannelMessages)
+			}
+		}
 	}
 	d.record(sessionID, "TaskCreated", p.TaskID, "worker",
 		map[string]any{"status": p.Status, "worker_id": p.WorkerID, "reported": true}, "")

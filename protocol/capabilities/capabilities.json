@@ -4,7 +4,7 @@
   "capabilities": [
     "FileRead", "FileWrite", "CommandExec", "NetworkAccess", "SecretRead",
     "GitOperation", "PatchApply", "ProcessSpawn", "PluginLoad", "RemoteExecute",
-    "MemoryWrite", "CodeIndex", "ContextCompress", "SubagentSpawn", "SwarmMessage", "RemoteDispatch"
+    "MemoryWrite", "CodeIndex", "ContextCompress", "SubagentSpawn", "SwarmMessage", "RemoteDispatch", "SwarmSpawn"
   ],
   "command_risk_levels": [
     { "level": 0, "class": "read-only commands", "default": "auto_allow" },

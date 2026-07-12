@@ -174,6 +174,17 @@ type Daemon struct {
 	// mid-run can find the right broker (go/daemon/swarm_channel.go).
 	swarmChannels sync.Map
 
+	// dispatchSwarmBindings is swarmChannels' remote-execution counterpart:
+	// binds a DISPATCH TASK ID (not a session ID — a remote step never gets
+	// a local session at all) to the same *swarmChannelBinding shape, set by
+	// runStreamingStepRemote for the lifetime of that dispatch. A leased
+	// worker's work.report can include "channel_messages" to publish through
+	// it (see handleWorkReport in dispatch.go) — batched at report time
+	// since the executor result contract is one JSON value at the end, not a
+	// live stream, so this is coarser than a local step's participation but
+	// real (see workflow_remote.go's binding-registration comment for why).
+	dispatchSwarmBindings sync.Map
+
 	embedModelDefault string // "<provider>/<model>" of the default embeddings backend ("" = semantic layer off)
 
 	trust          *trustStore  // trusted workspace roots

@@ -14,26 +14,45 @@ import (
 )
 
 const (
-	executorResultSchema = "carina.worker.result.v1"
-	maxExecutorOutput    = 4 << 20
-	maxExecutorSummary   = 16 << 10
-	maxExecutorPatches   = 1024
+	executorResultSchema         = "carina.worker.result.v1"
+	maxExecutorOutput            = 4 << 20
+	maxExecutorSummary           = 16 << 10
+	maxExecutorPatches           = 1024
+	maxExecutorChannelMessages   = 64
+	maxExecutorChannelNameLength = 128
 )
+
+// executorChannelMessage is the executor-result counterpart to
+// go/daemon/swarm_channel.go's remoteChannelMessage — a remote-dispatched
+// streaming-workflow step's way to publish into its run's swarm channel
+// broker (Agent Swarm design §6), since the external executor process has
+// no in-process tool-dispatch loop to call "swarm_publish" through. Batched
+// at report time, not truly live: the executor result contract is one JSON
+// value at the very end, not a stream, so these surface when the step
+// finishes, not continuously while it runs. The daemon (handleWorkReport)
+// is the authoritative validator; this is optional and ignored entirely by
+// a task that isn't a swarm-workflow dispatch.
+type executorChannelMessage struct {
+	Channel string          `json:"channel"`
+	Payload json.RawMessage `json:"payload"`
+}
 
 // executionResult is the only result shape accepted from an external executor.
 // Versioning prevents an old executable from silently changing task semantics.
 type executionResult struct {
-	SchemaVersion string   `json:"schema_version"`
-	Status        string   `json:"status"`
-	Summary       string   `json:"summary"`
-	Patches       []string `json:"patches"`
+	SchemaVersion   string                   `json:"schema_version"`
+	Status          string                   `json:"status"`
+	Summary         string                   `json:"summary"`
+	Patches         []string                 `json:"patches"`
+	ChannelMessages []executorChannelMessage `json:"channel_messages,omitempty"`
 }
 
 type executionResultWire struct {
-	SchemaVersion *string   `json:"schema_version"`
-	Status        *string   `json:"status"`
-	Summary       *string   `json:"summary"`
-	Patches       *[]string `json:"patches"`
+	SchemaVersion   *string                  `json:"schema_version"`
+	Status          *string                  `json:"status"`
+	Summary         *string                  `json:"summary"`
+	Patches         *[]string                `json:"patches"`
+	ChannelMessages []executorChannelMessage `json:"channel_messages,omitempty"`
 }
 
 type taskExecutor interface {
@@ -91,10 +110,11 @@ func (e *commandExecutor) Execute(ctx context.Context, task json.RawMessage) exe
 		return failedResult("executor result is missing a required field")
 	}
 	result := executionResult{
-		SchemaVersion: *wire.SchemaVersion,
-		Status:        *wire.Status,
-		Summary:       *wire.Summary,
-		Patches:       *wire.Patches,
+		SchemaVersion:   *wire.SchemaVersion,
+		Status:          *wire.Status,
+		Summary:         *wire.Summary,
+		Patches:         *wire.Patches,
+		ChannelMessages: wire.ChannelMessages,
 	}
 	if err := validateExecutionResult(result); err != nil {
 		return failedResult(err.Error())
@@ -120,6 +140,17 @@ func validateExecutionResult(result executionResult) error {
 	for _, patch := range result.Patches {
 		if strings.TrimSpace(patch) == "" {
 			return fmt.Errorf("executor returned an empty patch id")
+		}
+	}
+	if len(result.ChannelMessages) > maxExecutorChannelMessages {
+		return fmt.Errorf("executor returned too many channel_messages (max %d)", maxExecutorChannelMessages)
+	}
+	for _, m := range result.ChannelMessages {
+		if strings.TrimSpace(m.Channel) == "" {
+			return fmt.Errorf("executor returned a channel_messages entry with an empty channel")
+		}
+		if len(m.Channel) > maxExecutorChannelNameLength {
+			return fmt.Errorf("executor returned a channel name longer than %d characters", maxExecutorChannelNameLength)
 		}
 	}
 	return nil

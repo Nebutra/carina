@@ -61,7 +61,7 @@ func (d *Daemon) gateRemoteDispatch(parent *sessionstore.Session, parentTask *sc
 // from the same per-step goroutine dispatch() already spawns for local
 // steps — no coordinator-side concurrency change needed, only which of the
 // two execution paths runStreamingStep picks.
-func (d *Daemon) runStreamingStepRemote(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, spec *WorkflowSpec, runID string, st WorkflowStep, taskText string) streamingStepResult {
+func (d *Daemon) runStreamingStepRemote(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, spec *WorkflowSpec, runID string, st WorkflowStep, taskText string, channels *swarmChannelBroker) streamingStepResult {
 	resource := fmt.Sprintf("step:%s:workflow:%s", st.ID, spec.Name)
 	if pool := st.Affinity["worker_pool"]; pool != "" {
 		resource += ":pool:" + pool
@@ -80,6 +80,19 @@ func (d *Daemon) runStreamingStepRemote(ctx context.Context, parent *sessionstor
 		"status": "workflow_step_dispatched_remote", "workflow": spec.Name, "run_id": runID, "step": st.ID,
 		"dispatch_task_id": task.TaskID, "required_worker_capabilities": required,
 	}, dec.DecisionID)
+
+	// Binds this dispatch task to the run's swarm channel broker so a
+	// leased worker can publish into it via work.report's optional
+	// "channel_messages" (see handleWorkReport) — the remote-execution
+	// counterpart to swarmChannelBinding's in-process session binding
+	// (swarm_channel.go). Batched at report time, not truly live: the
+	// executor result contract is one JSON value at the very end, not a
+	// stream, so a remote step's messages surface when it finishes, not
+	// continuously while it runs — a real but coarser participation than a
+	// local step's, documented rather than silently absent.
+	binding := &swarmChannelBinding{broker: channels, stepID: st.ID}
+	d.dispatchSwarmBindings.Store(task.TaskID, binding)
+	defer d.dispatchSwarmBindings.Delete(task.TaskID)
 
 	ticker := time.NewTicker(remoteDispatchPollInterval)
 	defer ticker.Stop()

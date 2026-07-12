@@ -26,6 +26,7 @@ pub enum Capability {
     SubagentSpawn,
     SwarmMessage,
     RemoteDispatch,
+    SwarmSpawn,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -622,6 +623,24 @@ impl PolicyEngine {
                 (
                     Verdict::RequiresApproval,
                     "dispatching to an external worker process requires approval".into(),
+                )
+            }
+            Capability::SwarmSpawn => {
+                // A generator step (Agent Swarm design §4.3) dynamically
+                // extending the graph is itself a governed effect once the
+                // run has grown large enough to matter — this is the design
+                // doc §13/§11's originally-proposed mitigation for a
+                // runaway/malicious generator: "hard cap + approval-gated
+                // SwarmSpawn re-triggers approval once graph size crosses a
+                // threshold" (a Go-side decision — see
+                // streamCoordinator.injectGeneratedSteps — of WHEN to
+                // request this; every request that reaches the kernel is
+                // uniformly RequiresApproval here, resource carries the
+                // current/requested graph size for the approver to judge).
+                // Small, ordinary graphs never hit this gate at all.
+                (
+                    Verdict::RequiresApproval,
+                    "dynamic graph growth beyond the run's size threshold requires approval".into(),
                 )
             }
         }

@@ -27,6 +27,80 @@ func writeChannelWorkerAgent(t *testing.T, ws string) {
 	}
 }
 
+// writeLongPollWorkerAgent allows enough turns to prove swarm_receive's loop-
+// guard exemption: max_turns higher than the (pre-fix) hard-repeat threshold
+// that used to kill a step for polling the same tool repeatedly.
+func writeLongPollWorkerAgent(t *testing.T, ws string) {
+	t.Helper()
+	dir := filepath.Join(ws, ".carina", "agents")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := "---\nname: long-poll-worker\ndescription: poll swarm_receive many times\nprofile: read-only\nmax_turns: 10\n---\nYou are a worker.\n"
+	if err := os.WriteFile(filepath.Join(dir, "long-poll-worker.md"), []byte(spec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// alwaysPollingReasoner calls swarm_receive an identical number of times in
+// a row (no varying arguments — the exact shape the loop guard's action
+// signature would otherwise treat as "no progress") before finishing.
+type alwaysPollingReasoner struct {
+	marker string
+	polls  int32
+}
+
+func (r *alwaysPollingReasoner) Name() string { return "always-polling" }
+func (r *alwaysPollingReasoner) Think(_ context.Context, prompt string) (string, error) {
+	task := extractTaskLine(prompt)
+	if !strings.Contains(task, r.marker) {
+		b, _ := json.Marshal(map[string]string{"tool": "done", "summary": "did[" + task + "]"})
+		return string(b), nil
+	}
+	n := atomic.AddInt32(&r.polls, 1)
+	if n < 9 { // more than the old hard-repeat threshold (~7 identical calls)
+		b, _ := json.Marshal(map[string]any{"tool": "swarm_receive"})
+		return string(b), nil
+	}
+	b, _ := json.Marshal(map[string]string{"tool": "done", "summary": "finished after polling"})
+	return string(b), nil
+}
+
+// TestSwarmReceiveIsExemptFromTheIdenticalActionLoopGuard is the regression
+// test for a real bug a live end-to-end run surfaced (~1/10 flake rate on
+// TestWorkflowStreamingRemoteStepPublishesToSwarmChannelViaWorkReport): a
+// step legitimately polling swarm_receive while waiting for a message that
+// hasn't arrived yet looks IDENTICAL call to call to the generic loop guard
+// (LoopGuard.observe zeroes the Thought field before fingerprinting, so
+// even a real model's varying reasoning text wouldn't dodge it) — after
+// ~7 identical polls the guard used to hard-stop the step as "stuck", even
+// though repeated polling is the CORRECT way to use this tool, not a bug.
+func TestSwarmReceiveIsExemptFromTheIdenticalActionLoopGuard(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeLongPollWorkerAgent(t, ws)
+	reasoner := &alwaysPollingReasoner{marker: "POLL_STEP"}
+	d.SetReasoner(reasoner)
+
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "run pipeline")
+
+	spec := &WorkflowSpec{Name: "long-poll", ExecutionMode: "streaming", Steps: []WorkflowStep{
+		{ID: "poller", Agent: "long-poll-worker", Task: "POLL_STEP", ConsumesChannel: []string{"progress"}},
+	}}
+	out, err := d.runWorkflowStreaming(parent, parentTask, spec, "", "run-long-poll")
+	if err != nil {
+		t.Fatalf("workflow failed: %v", err)
+	}
+	if out["poller"] != "finished after polling" {
+		t.Fatalf("expected the step to finish normally after polling, got %q (this is the loop-guard-killed-a-legitimate-poller bug if it says \"subagent loop guard\")", out["poller"])
+	}
+	if got := atomic.LoadInt32(&reasoner.polls); got < 9 {
+		t.Fatalf("expected at least 9 swarm_receive polls to have actually happened, got %d", got)
+	}
+}
+
 // withShrunkChannelCap temporarily lowers maxMessagesPerChannel so a test
 // can exercise real eviction without hundreds of publish calls, restoring
 // the production value on cleanup.

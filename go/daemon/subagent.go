@@ -294,9 +294,16 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		}
 		// Same canonical, all-fields signature the main loop uses (agent.go's
 		// runLoopContext) so subagents get the same tightened loop detection
-		// instead of a narrower hand-picked fingerprint.
-		sig := act.signature()
-		softRepeat, hardRepeat := guard.observe(act.Tool, sig)
+		// instead of a narrower hand-picked fingerprint. swarm_receive is
+		// exempt: polling a channel for a not-yet-arrived message is
+		// EXPECTED to look identical call to call — that's legitimate
+		// waiting, not the stuck-model pattern this guard exists to catch.
+		// It's still bounded by the ordinary max-turns ceiling (subagentMaxTurns),
+		// just not by the identical-action hard-stop.
+		var softRepeat, hardRepeat bool
+		if act.Tool != "swarm_receive" {
+			softRepeat, hardRepeat = guard.observe(act.Tool, act.signature())
+		}
 		if hardRepeat {
 			d.sched.SetStatus(task.TaskID, "degraded")
 			return "(subagent loop guard: repeated actions with no progress)"

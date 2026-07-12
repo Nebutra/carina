@@ -179,7 +179,7 @@
       { "method": "work.submit", "scope": "admin", "remote": false, "control_plane_write": true, "params": "WorkSubmission + { required_worker_capabilities: string[]? }", "result": "WorkItem" },
       { "method": "work.poll", "scope": "worker", "remote": true, "params": { "worker_id": "string", "worker_credential": "string", "ttl_ms": "number?" }, "result": "WorkLease?" },
       { "method": "work.renew", "scope": "worker", "remote": true, "params": { "worker_id": "string", "worker_credential": "string", "task_id": "string", "lease_generation": "integer >= 1", "ttl_ms": "number?" }, "result": "{ ok: boolean, cancelled: boolean? }" },
-      { "method": "work.report", "scope": "worker", "remote": true, "params": "WorkReport + { worker_credential: string, lease_generation: integer >= 1 }", "result": "{ ok: boolean }" }
+      { "method": "work.report", "scope": "worker", "remote": true, "params": "WorkReport + { worker_credential: string, lease_generation: integer >= 1, channel_messages: [{channel: string, payload: any}]? (max 64; routed into the dispatch task's swarm channel broker if it belongs to a streaming workflow's remote step, otherwise ignored — see docs/worker-executor.md#publishing-to-a-swarm-channel) }", "result": "{ ok: boolean }" }
     ],
     "debug": [
       { "method": "debug.snapshot", "scope": "admin", "remote": false, "params": { "limit": "number?", "component": "string?" }, "result": "DebugSnapshot" },

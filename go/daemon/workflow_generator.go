@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/Nebutra/carina/go/workflowui"
 )
@@ -147,6 +148,22 @@ func (sc *streamCoordinator) injectGeneratedSteps(generatorID string, output str
 		return fmt.Errorf("generator step %q: spawned steps have a dependency cycle involving %q", generatorID, cycle)
 	}
 
+	// Structurally valid — now the governance checks (rate + threshold
+	// approval) before anything is journaled/merged. Both fail closed:
+	// neither silently truncates the batch, they refuse the whole
+	// injection so a caller sees a clear reason rather than a partially
+	// applied mutation.
+	if err := sc.checkGeneratorInjectionRate(newCount); err != nil {
+		return fmt.Errorf("generator step %q: %w", generatorID, err)
+	}
+	if err := sc.requestSwarmSpawnApprovalIfThresholdCrossed(generatorID, newCount); err != nil {
+		return fmt.Errorf("generator step %q: %w", generatorID, err)
+	}
+	// Record against the rate window only now that every check actually
+	// passed — a denied/refused injection must not consume rate budget it
+	// never used.
+	sc.genInjectEvents = append(sc.genInjectEvents, genInjectEvent{at: time.Now(), count: newCount})
+
 	// Journal the graph mutation before the generator result is committed. If
 	// the process dies between these writes, replay sees the same definitions
 	// and is idempotent; it cannot silently lose already-admitted work.
@@ -211,6 +228,61 @@ func (sc *streamCoordinator) injectGeneratedSteps(generatorID string, output str
 		sc.liveIndegree[st.ID] = n
 		if n == 0 {
 			sc.maybeDispatch(st.ID)
+		}
+	}
+	return nil
+}
+
+// checkGeneratorInjectionRate enforces maxGeneratorNodesPerWindow within
+// generatorInjectionWindow — independent of maxGeneratorDepth/
+// maxStreamingWorkflowSteps, this bounds the RATE of dynamic graph growth,
+// not just its eventual total: a chain of generators each individually
+// within the depth/total caps could otherwise still inject in rapid bursts.
+// Trims expired events as a side effect on every call (no separate GC
+// needed — the window is only ever read at injection time). Does NOT
+// record newCount itself; the caller records only once every check
+// (including approval) has actually passed, so a refused injection never
+// consumes rate budget it never used.
+func (sc *streamCoordinator) checkGeneratorInjectionRate(newCount int) error {
+	cutoff := time.Now().Add(-generatorInjectionWindow)
+	kept := sc.genInjectEvents[:0]
+	sum := 0
+	for _, e := range sc.genInjectEvents {
+		if e.at.After(cutoff) {
+			kept = append(kept, e)
+			sum += e.count
+		}
+	}
+	sc.genInjectEvents = kept
+	if sum+newCount > maxGeneratorNodesPerWindow {
+		return fmt.Errorf("generator injection rate exceeded: %d node(s) already injected across this run in the last %s, refusing %d more (limit %d per window)",
+			sum, generatorInjectionWindow, newCount, maxGeneratorNodesPerWindow)
+	}
+	return nil
+}
+
+// requestSwarmSpawnApprovalIfThresholdCrossed re-triggers
+// Capability::SwarmSpawn approval (Agent Swarm design §11/§13's originally-
+// proposed mitigation) once the run's graph has already grown past
+// swarmSpawnApprovalThreshold — small, ordinary graphs never request this
+// capability at all; once a run is large enough to matter, every further
+// injection needs a governed decision instead of silently continuing to grow.
+func (sc *streamCoordinator) requestSwarmSpawnApprovalIfThresholdCrossed(generatorID string, newCount int) error {
+	if sc.totalSteps < swarmSpawnApprovalThreshold {
+		return nil
+	}
+	resource := fmt.Sprintf("generator:%s:current_size:%d:requested:%d", generatorID, sc.totalSteps, newCount)
+	dec, err := sc.d.kern.Request(sc.parent.SessionID, "SwarmSpawn", resource, sc.parentTask.TaskID)
+	if err != nil {
+		return fmt.Errorf("swarm spawn governance error: %w", err)
+	}
+	switch dec.Decision {
+	case "denied":
+		return fmt.Errorf("DENIED: dynamic graph growth beyond %d steps requires approval, and this request was denied", swarmSpawnApprovalThreshold)
+	case "requires_approval":
+		if _, ok := sc.d.resolveApprovalOrEscalate(sc.parent, sc.parentTask, dec, "SwarmSpawn", resource,
+			fmt.Sprintf("grow workflow graph past %d steps (generator %s, +%d nodes)", swarmSpawnApprovalThreshold, generatorID, newCount)); !ok {
+			return fmt.Errorf("requires approval (not granted): %s", dec.Reason)
 		}
 	}
 	return nil

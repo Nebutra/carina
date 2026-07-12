@@ -100,6 +100,40 @@ A non-zero exit, timeout, invalid JSON, or invalid result contract is reported a
 `failed`. Executor stderr is kept out of the task summary because it may contain
 host-local or sensitive details.
 
+### Publishing to a swarm channel
+
+If the leased task is a streaming-workflow step declared `"remote": true`
+(see [workflows.md](workflows.md#remote-dispatch)), the executor may include
+an optional `channel_messages` array to publish into that run's swarm
+channel — the remote counterpart of the `swarm_publish` tool an in-process
+step calls directly, since the executor has no in-process tool-dispatch loop
+to call it through:
+
+```json
+{
+  "schema_version": "carina.worker.result.v1",
+  "status": "completed",
+  "summary": "Training run finished",
+  "patches": [],
+  "channel_messages": [
+    {"channel": "progress", "payload": {"status": "epoch 10/10 complete"}}
+  ]
+}
+```
+
+At most 64 entries, each with a non-empty `channel` (max 128 characters);
+`payload` is arbitrary JSON. These are delivered as a **batch when
+work.report is called**, not continuously while the executor runs — the
+result contract is one JSON value at the end, not a stream, so a remote
+step's channel activity is coarser than a local step's (which can publish
+at any point mid-run). A task that isn't a swarm-workflow dispatch simply
+has nowhere to route `channel_messages`; the daemon accepts and ignores
+them rather than failing the report. Governed by the same
+`Capability::SwarmMessage` gate and per-channel retention cap
+(`docs/workflows.md`'s [live inter-step messaging](workflows.md#live-inter-step-messaging-swarm-channels)
+section) as an in-process publish — an invalid or denied entry is skipped
+and audited, not a fatal error for the whole report.
+
 ## Lease And Shutdown Semantics
 
 The worker polls only when it has a free concurrency slot, renews each active lease,
