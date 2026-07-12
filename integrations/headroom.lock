@@ -11,21 +11,27 @@ published_at = "2026-07-03T19:22:40Z"
 protocol = "managed_mcp"
 entrypoint = "headroom"
 license = "Apache-2.0"
+python_version = "3.12"
+pyinstaller_version = "6.21.0"
+dependency_cutoff = "2026-07-04T00:00:00Z"
+requirements_lock = "integrations/headroom-requirements.lock"
 
 [artifacts.darwin-arm64]
 source_url = "https://github.com/headroomlabs-ai/headroom/releases/download/v0.30.0/headroom_ai-0.30.0-cp310-abi3-macosx_11_0_arm64.whl"
 source_sha256 = "9b10f4dec6451fce652fdb775e7dc7a999e98d3ee853d1eb569a7e2e550d79c5"
-bundle_path = "vendor/headroom/darwin-arm64/headroom"
-bundle_sha256 = ""
+bundle_path = "dist/headroom/darwin-arm64/headroom"
+
+[artifacts.darwin-amd64]
+source_url = "https://github.com/headroomlabs-ai/headroom/releases/download/v0.30.0/headroom_ai-0.30.0.tar.gz"
+source_sha256 = "ede80f5a81f4d438301048a2123b266f1b2705d361018b172ad9f2487aca6c95"
+bundle_path = "dist/headroom/darwin-amd64/headroom"
 
 [artifacts.linux-arm64]
 source_url = "https://github.com/headroomlabs-ai/headroom/releases/download/v0.30.0/headroom_ai-0.30.0-cp310-abi3-manylinux_2_28_aarch64.whl"
 source_sha256 = "bd067a43485b65fd8d71956efbe43e2af2a8ce72dd68e4b48ee5cbfad03b2b91"
-bundle_path = "vendor/headroom/linux-arm64/headroom"
-bundle_sha256 = ""
+bundle_path = "dist/headroom/linux-arm64/headroom"
 
 [artifacts.linux-amd64]
 source_url = "https://github.com/headroomlabs-ai/headroom/releases/download/v0.30.0/headroom_ai-0.30.0-cp310-abi3-manylinux_2_28_x86_64.whl"
 source_sha256 = "0e66a3241901ab62606ab0cf2b241f32d3a5ac9cf0cbda099fcc86519dd1700d"
-bundle_path = "vendor/headroom/linux-amd64/headroom"
-bundle_sha256 = ""
+bundle_path = "dist/headroom/linux-amd64/headroom"

@@ -163,8 +163,6 @@ jobs:
           node-version: "24"
 
       - name: Build release archive
-        env:
-          SKIP_HEADROOM: "1"
         run: |
           version="${GITHUB_REF_NAME#v}"
           VERSION="$version" ./scripts/package-release.sh
@@ -394,8 +392,6 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with: { node-version: "24" }
       - name: Build Linux release archive
-        env:
-          SKIP_HEADROOM: "1"
         run: |
           version="${GITHUB_REF_NAME#v}"
           VERSION="$version" ./scripts/package-release.sh

@@ -36,7 +36,7 @@ for tuple in darwin:arm64 linux:arm64 darwin:amd64 linux:amd64; do
   mkdir -p "$work/$stage/bin"
   for binary in \
     carina carina-daemon carina-worker carina-tui carina-kernel-service \
-    carina-scan carina-grep carina-diff carina-patch-native carina-run carina-pty; do
+    carina-scan carina-grep carina-diff carina-patch-native carina-run carina-pty headroom; do
     printf '#!/bin/sh\nexit 0\n' > "$work/$stage/bin/$binary"
     chmod +x "$work/$stage/bin/$binary"
   done
@@ -61,7 +61,7 @@ for package in \
     exit 1
   fi
   if [[ "$package" != "@nebutra+carina" ]]; then
-    [[ "$(tar -tzf "$tarball" | grep -c '^package/bin/carina')" == "11" ]] || {
+    [[ "$(tar -tzf "$tarball" | grep -Ec '^package/bin/(carina|headroom)')" == "12" ]] || {
       echo "test-package-npm-release: $package does not contain the complete native toolchain" >&2
       exit 1
     }

@@ -46,7 +46,6 @@ and local policy, audit, approval, and rollback remain authoritative.
 | Real provider and terminal matrix | Requires paid provider credentials plus representative terminal/OS hardware | Recorded canaries cover CJK input, narrow layouts, reconnect, approval/question flows, and provider streaming |
 | Nebutra Cloud connector activation | Requires a versioned API contract, staging tenant, OIDC/device identity, client credentials, retention/redaction policy, and service SLOs | Contract tests pass against staging and sync/handoff is opt-in, revocable, audited, and local-authority preserving |
 | GitHub governance | Requires repository administrator access | Branch protection, required checks/reviews, private vulnerability reporting, and environment protection are enabled |
-| Bundled Headroom artifacts | Requires reproducible upstream binaries and checksums for every supported release target | All platform artifacts are pinned, verified, and packaged without `SKIP_HEADROOM=1` |
 | Public release promotion | Requires release/tag write permission and the external gates above | A non-draft tag release passes the immutable full-asset verification path |
 
 ## Release Credentials

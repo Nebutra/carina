@@ -31,6 +31,8 @@ contents:
     dst: /usr/bin/carina-run
   - src: ./dist/stage/bin/carina-scan
     dst: /usr/bin/carina-scan
+  - src: ./dist/stage/bin/headroom
+    dst: /usr/bin/headroom
   - src: ./packaging/systemd/carina-worker.service
     dst: /usr/share/doc/carina/examples/carina-worker.service
   - src: ./packaging/systemd/worker.env.example

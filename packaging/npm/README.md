@@ -11,7 +11,7 @@ Publish checklist:
 2. Run `VERSION=<version> make release-package` for each supported platform.
 3. Verify archive checksums.
 4. Build each package from `platform-package.json.template`, including native
-   binaries (the five services/CLIs and all six Zig tools), `SHA256SUMS`, and
+   binaries (the five services/CLIs, all six Zig tools, and Headroom), `SHA256SUMS`, and
    an SPDX SBOM. Do not put a self-asserted provenance statement in the tarball.
 5. Publish platform packages before the launcher package with
    `npm publish --provenance`; npm's OIDC flow creates the provenance evidence.

@@ -161,17 +161,24 @@ else
   headroom_source_url="$(lock_artifact_value "$headroom_lock" "$headroom_target" source_url)"
   headroom_source_sha256="$(lock_artifact_value "$headroom_lock" "$headroom_target" source_sha256)"
   headroom_bundle_path="$(lock_artifact_value "$headroom_lock" "$headroom_target" bundle_path)"
-  headroom_bundle_sha256="${HEADROOM_BUNDLE_SHA256:-$(lock_artifact_value "$headroom_lock" "$headroom_target" bundle_sha256)}"
   if [[ -z "$headroom_bundle_path" || -z "$headroom_source_url" || -z "$headroom_source_sha256" ]]; then
     printf 'package-release: no Headroom lock entry for target %s in %s\n' "$headroom_target" "$headroom_lock" >&2
     exit 1
   fi
-  headroom_src="${HEADROOM_BIN:-$ROOT/$headroom_bundle_path}"
-  need_file "$headroom_src"
-  if [[ -z "$headroom_bundle_sha256" ]]; then
-    printf 'package-release: missing Headroom bundle_sha256 for %s; update %s or set HEADROOM_BUNDLE_SHA256\n' "$headroom_target" "$headroom_lock" >&2
-    exit 1
+  if [[ -n "${HEADROOM_BIN:-}" ]]; then
+    headroom_src="$HEADROOM_BIN"
+    if [[ -z "${HEADROOM_BUNDLE_SHA256:-}" ]]; then
+      printf 'package-release: HEADROOM_BUNDLE_SHA256 is required with HEADROOM_BIN\n' >&2
+      exit 1
+    fi
+    headroom_bundle_sha256="$HEADROOM_BUNDLE_SHA256"
+  else
+    headroom_src="$ROOT/$headroom_bundle_path"
+    printf '==> build pinned Headroom bundle for %s\n' "$headroom_target"
+    HEADROOM_TARGET="$headroom_target" OUTPUT="$headroom_src" "$ROOT/scripts/build-headroom-bundle.sh"
+    headroom_bundle_sha256="$(sha256_file "$headroom_src")"
   fi
+  need_file "$headroom_src"
   actual_headroom_sha="$(sha256_file "$headroom_src")"
   if [[ "$actual_headroom_sha" != "$headroom_bundle_sha256" ]]; then
     printf 'package-release: Headroom sha256 mismatch for %s\n' "$headroom_src" >&2

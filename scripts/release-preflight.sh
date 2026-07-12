@@ -102,6 +102,7 @@ run_gate signing_dry_run signing "signing automation rejects missing/invalid cre
 run_gate homebrew_formula package "Homebrew Formula renders without placeholders" ./scripts/test-homebrew-formula.sh
 run_gate npm_package_contract package "five complete npm tarballs freeze reproducibly and pass offline global install" ./scripts/test-package-npm-release.sh
 run_gate zig_build_contract build "pinned Zig direct-build path validates all six tools before replacing outputs" ./scripts/test-build-zig-tools.sh
+run_gate headroom_build_contract package "all release targets have pinned sources and hashed build dependencies" ./scripts/test-headroom-build-contract.sh
 
 if [[ "$allow_dirty" == "1" ]]; then
   record source_clean SKIP source "--allow-dirty explicitly disabled release cleanliness enforcement"
@@ -144,7 +145,7 @@ if [[ "$mode" == "full" ]]; then
   run_gate acceptance test "native runtime acceptance gates" bash -c 'CARINA_KERNEL_BIN="$PWD/target/release/carina-kernel-service" ./scripts/ci-gates.sh'
   run_gate benchmark test "benchmark regression gate" ./scripts/bench.sh 10000
   version="$(go run ./scripts/product-version.go 2>/dev/null || true)"
-  if run_gate archive package "current-platform archive and manifest" env VERSION="$version" SKIP_BUILD=1 SKIP_HEADROOM=1 ./scripts/package-release.sh; then
+  if run_gate archive package "current-platform archive and manifest with bundled Headroom" env VERSION="$version" SKIP_BUILD=1 ./scripts/package-release.sh; then
     package_ok=1
     archive="$dist/carina_${version}_$(go env GOOS)_$(go env GOARCH).tar.gz"
     run_gate archive_conformance package "packaged daemon passes all three SDK contracts" env ARCHIVE="$archive" ./scripts/test-packaged-conformance.sh
@@ -161,7 +162,11 @@ if [[ "$mode" == "full" ]]; then
     record archive_conformance SKIP package "archive build failed"
     record homebrew_install SKIP package "archive build failed"
   fi
-  record headroom_bundle SKIP package "release policy explicitly uses SKIP_HEADROOM=1 until reproducible cross-platform bundles exist"
+  if [[ "$package_ok" == "1" ]]; then
+    record headroom_bundle PASS package "pinned Headroom bundle passed CLI and MCP protocol verification"
+  else
+    record headroom_bundle SKIP package "archive build failed"
+  fi
 else
   record full_ci_suite SKIP test "--check-only requested contract validation without long build/test gates"
 fi

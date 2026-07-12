@@ -108,7 +108,15 @@ jobs:
         run: npm ci && npm test
 
       - name: Web and distribution surface smoke tests
-        run: ./scripts/test-platform-packaging.sh
+        run: |
+          ./scripts/test-platform-packaging.sh
+          ./scripts/test-headroom-build-contract.sh
+
+      - name: Build and verify pinned Headroom bundle
+        env:
+          HEADROOM_TARGET: linux-amd64
+          OUTPUT: /tmp/carina-headroom
+        run: ./scripts/build-headroom-bundle.sh
 
       - name: Build non-root container images
         run: |

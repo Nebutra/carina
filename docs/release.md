@@ -116,11 +116,12 @@ The archive includes Go CLIs, the Rust kernel service, Zig native tools matching
 smoke-tests `bin/carina --version` from the staged package.
 
 Headroom is an upstream-maintained component pinned by
-`integrations/headroom.lock`. Release builders must provide the prepared
-platform executable at the lockfile's `bundle_path`; `package-release.sh`
-verifies the pinned SHA-256 and fails the package if the artifact is missing or
-does not match. The daemon does not download Headroom at startup and does not
-install anything into the user's global Python, npm, pipx, or uv environment.
+`integrations/headroom.lock`. `package-release.sh` downloads the target's
+SHA-256-pinned wheel or source distribution, installs the hash-locked build
+dependencies from `integrations/headroom-requirements.lock`, builds a standalone
+executable, and verifies both its CLI and managed MCP tools before packaging it.
+The daemon never downloads Headroom at startup and nothing is installed into the
+user's global Python, npm, pipx, or uv environment.
 
 `VERSION_CHECK.txt` records CLI, daemon, Rust workspace, TypeScript SDK, and
 Python SDK versions, plus the bundled Headroom pin and source artifact. Version
@@ -142,11 +143,10 @@ SKIP_ZIG=1 VERSION=0.6.2 make release-package
 `SKIP_BUILD=1` and `SKIP_ZIG=1` are recorded as warnings in `MANIFEST.json` and
 `VERSION_CHECK.txt`.
 
-`SKIP_HEADROOM=1` packages without the optional Headroom integration and records
-that decision in the manifest. The Homebrew release uses this mode because
-Headroom does not yet publish a reproducible standalone executable for both
-supported macOS architectures. In `context_engine=auto`, Carina safely falls
-back to the noop context engine.
+`SKIP_HEADROOM=1` remains an explicit developer-only escape hatch for offline
+local package experiments and is recorded in the manifest. Tagged releases do
+not use it. In `context_engine=auto`, Carina selects the bundled Headroom engine
+after its health check and safely falls back to noop if startup later fails.
 
 Verify an archive:
 

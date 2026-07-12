@@ -36,13 +36,13 @@ class Carina < Formula
       Start it explicitly:
         carina-daemon
 
-      The optional Headroom context engine is not bundled in the Homebrew package yet.
+      The Headroom context engine is bundled and selected automatically when healthy.
     EOS
   end
 
   test do
     assert_match "carina #{version}", shell_output("#{bin}/carina --version")
-    %w[carina-daemon carina-worker carina-tui carina-kernel-service].each do |executable|
+    %w[carina-daemon carina-worker carina-tui carina-kernel-service headroom].each do |executable|
       assert_predicate bin/executable, :executable?
     end
   end
