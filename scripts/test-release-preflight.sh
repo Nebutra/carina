@@ -12,6 +12,21 @@ exit 0
 SH
 chmod +x "$work/bin/actionlint"
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+dump_failures() {
+  local report="$1"
+  [[ -f "$report" ]] || return 0
+  python3 - "$report" <<'PY' >&2
+import json, sys
+data = json.load(open(sys.argv[1]))
+for gate in data.get("gates", []):
+    if gate.get("status") == "FAIL":
+        print(f'{gate["gate"]}: {gate["detail"]} log={gate.get("log")}')
+PY
+}
+
 report="$work/failure.json"
 set +e
 CARINA_PREFLIGHT_TESTING=1 CARINA_PREFLIGHT_FAIL_GATE=version_matrix CARINA_PREFLIGHT_REPORT="$report" \
@@ -31,7 +46,7 @@ CARINA_PREFLIGHT_TESTING=1 CARINA_PREFLIGHT_EXTERNAL_OFFLINE=1 CARINA_PREFLIGHT_
   CARINA_PREFLIGHT_DIST="$work/dist-developer" env PATH="$work/bin:$PATH" "$ROOT/scripts/release-preflight.sh" --check-only --allow-dirty >/dev/null 2>&1
 code=$?
 set -e
-[[ "$code" == "0" ]] || { echo "test-release-preflight: developer blocker exit=$code want=0" >&2; exit 1; }
+[[ "$code" == "0" ]] || { dump_failures "$report"; echo "test-release-preflight: developer blocker exit=$code want=0" >&2; exit 1; }
 python3 - "$report" <<'PY'
 import json, sys
 data=json.load(open(sys.argv[1]))
@@ -76,7 +91,7 @@ mkdir -p "$complete"
 for arch in arm64 amd64; do
   archive="$complete/carina_${version}_darwin_${arch}.tar.gz"
   printf '%s\n' "$arch" > "$archive"
-  digest="$(shasum -a 256 "$archive" | awk '{print $1}')"
+  digest="$(sha256_file "$archive")"
   printf '%s  %s\n' "$digest" "$(basename "$archive")" > "$archive.sha256"
   printf '{"status":"Accepted","id":"submission-%s"}\n' "$arch" > "$archive.notary.json"
   printf 'verified %s\n' "$arch" > "$archive.signing.txt"

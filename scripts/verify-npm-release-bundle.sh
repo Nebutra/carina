@@ -34,7 +34,11 @@ cmp "$work/expected-listing" "$listing" || {
   exit 1
 }
 tar -xzf "$BUNDLE" -C "$work"
-(cd "$work/npm" && shasum -a 256 -c SHA256SUMS >/dev/null)
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd "$work/npm" && sha256sum -c SHA256SUMS >/dev/null)
+else
+  (cd "$work/npm" && shasum -a 256 -c SHA256SUMS >/dev/null)
+fi
 
 for index in "${!expected[@]}"; do
   tarball="$work/npm/${expected[$index]}"

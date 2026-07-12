@@ -25,6 +25,9 @@ done
 SH
 chmod +x "$work/bin/syft"
 version="$(cd "$ROOT" && go run ./scripts/product-version.go)"
+sha256_manifest() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi
+}
 
 for tuple in darwin:arm64 linux:arm64 darwin:amd64 linux:amd64; do
   platform="${tuple%%:*}"
@@ -44,7 +47,7 @@ counter="$work/syft-counter"
 (cd "$ROOT" && PATH="$work/bin:$PATH" SYFT_COUNTER_FILE="$counter" DIST_DIR="$dist" VERSION="$version" ./scripts/package-npm-release.sh)
 [[ "$(find "$dist/npm" -name '*.tgz' | wc -l | tr -d ' ')" == "5" ]]
 first_digests="$work/first-digests"
-(cd "$dist/npm" && shasum -a 256 */*.tgz | sort -k2) > "$first_digests"
+(cd "$dist/npm" && sha256_manifest */*.tgz | sort -k2) > "$first_digests"
 for package in \
   @nebutra+carina \
   @nebutra+carina-darwin-arm64 \
@@ -78,9 +81,9 @@ done
 
 bundle="$dist/carina_${version}_npm_packages.tar.gz"
 (cd "$ROOT" && DIST_DIR="$dist" VERSION="$version" ./scripts/package-npm-bundle.sh >/dev/null)
-first_bundle_digest="$(shasum -a 256 "$bundle" | awk '{print $1}')"
+first_bundle_digest="$(sha256_manifest "$bundle" | awk '{print $1}')"
 (cd "$ROOT" && DIST_DIR="$dist" VERSION="$version" ./scripts/package-npm-bundle.sh >/dev/null)
-[[ "$(shasum -a 256 "$bundle" | awk '{print $1}')" == "$first_bundle_digest" ]]
+[[ "$(sha256_manifest "$bundle" | awk '{print $1}')" == "$first_bundle_digest" ]]
 (cd "$ROOT" && VERSION="$version" BUNDLE="$bundle" OUTPUT_DIR="$work/frozen" ./scripts/verify-npm-release-bundle.sh >/dev/null)
 [[ "$(find "$work/frozen" -type f -name '*.tgz' | wc -l | tr -d ' ')" == "5" ]]
 cp "$bundle" "$work/corrupt-bundle.tar.gz"
@@ -92,7 +95,7 @@ fi
 
 (cd "$ROOT" && PATH="$work/bin:$PATH" SYFT_COUNTER_FILE="$counter" DIST_DIR="$dist" VERSION="$version" ./scripts/package-npm-release.sh)
 second_digests="$work/second-digests"
-(cd "$dist/npm" && shasum -a 256 */*.tgz | sort -k2) > "$second_digests"
+(cd "$dist/npm" && sha256_manifest */*.tgz | sort -k2) > "$second_digests"
 cmp "$first_digests" "$second_digests" || {
   echo "test-package-npm-release: repeated assembly changed npm tarball bytes" >&2
   exit 1

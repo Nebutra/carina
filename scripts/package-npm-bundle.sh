@@ -14,6 +14,9 @@ expected=(
   "nebutra-carina-linux-arm64-${VERSION}.tgz"
   "nebutra-carina-linux-x64-${VERSION}.tgz"
 )
+sha256_manifest() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi
+}
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/carina-npm-bundle.XXXXXX")"
 tmp_bundle="$BUNDLE.tmp.$$"
@@ -30,7 +33,7 @@ done
   echo "package-npm-bundle: expected exactly five npm tarballs" >&2
   exit 1
 }
-(cd "$work/npm" && shasum -a 256 "${expected[@]}" > SHA256SUMS)
+(cd "$work/npm" && sha256_manifest "${expected[@]}" > SHA256SUMS)
 
 WORK="$work" OUTPUT="$tmp_bundle" python3 <<'PY'
 import gzip
