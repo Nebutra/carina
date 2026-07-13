@@ -21,6 +21,7 @@ type rootLayout struct {
 	showBanner     bool
 	showTopSpacer  bool
 	taskLines      int
+	queueLines     int
 	pasteLines     int
 	suggestLines   int
 	historyLines   int
@@ -133,11 +134,13 @@ func (m *Model) calculateLayout() rootLayout {
 		remaining--
 	}
 
-	// Paste previews and suggestions are part of the active typing flow, then
+	// Queued follow-ups, paste previews and suggestions are part of the active typing flow, then
 	// task context, then connection state. Each is bounded by the rows left
 	// after core controls.
 	l.suggestLines = minInt(len(m.suggestPanelLines()), remaining)
 	remaining -= l.suggestLines
+	l.queueLines = minInt(len(m.queuePanelLines()), remaining)
+	remaining -= l.queueLines
 	l.pasteLines = minInt(len(m.pastePanelLines()), remaining)
 	remaining -= l.pasteLines
 	l.taskLines = minInt(len(m.taskTreeLines()), remaining)
@@ -167,6 +170,7 @@ func (m *Model) calculateLayout() rootLayout {
 		}
 	}
 	y += l.suggestLines
+	y += l.queueLines
 	y += l.pasteLines
 	l.historyY = y
 	y += l.historyLines
@@ -256,6 +260,30 @@ func (m *Model) pastePanelLines() []string {
 		}
 		line := fmt.Sprintf("  [%d] %d lines, %d chars: %s", i+1, count, len([]rune(content)), summary)
 		lines = append(lines, m.th.Style(theme.RoleInfo).Render(line))
+	}
+	return lines
+}
+
+func (m *Model) queuePanelLines() []string {
+	total := m.followUps.len()
+	if total == 0 {
+		return nil
+	}
+	lines := []string{m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
+		"queued follow-ups: %d (%s queues, %s edits latest)", total,
+		m.keys.label(KeyContextComposer, ActionComposerQueue),
+		m.keys.label(KeyContextComposer, ActionComposerRecallQueue)))}
+	shown := minInt(total, 3)
+	for i := 0; i < shown; i++ {
+		draft := m.followUps.drafts[i]
+		summary := strings.TrimSpace(sanitize(firstLine(draft.Text)))
+		if summary == "" {
+			summary = "(pasted content)"
+		}
+		if len(draft.Paste) > 0 {
+			summary += fmt.Sprintf(" +%d paste item(s)", len(draft.Paste))
+		}
+		lines = append(lines, m.th.Style(theme.RoleInfo).Render(fmt.Sprintf("  %d. %s", i+1, summary)))
 	}
 	return lines
 }
@@ -350,6 +378,15 @@ func (m *Model) View() tea.View {
 		}
 		b.WriteString("\n")
 	}
+	if queueLines := m.queuePanelLines(); l.queueLines > 0 {
+		for i, line := range queueLines[:l.queueLines] {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(fitRenderedLine(line, l.width))
+		}
+		b.WriteString("\n")
+	}
 	if pasteLines := m.pastePanelLines(); l.pasteLines > 0 {
 		for i, line := range pasteLines[:l.pasteLines] {
 			if i > 0 {
@@ -375,13 +412,18 @@ func (m *Model) View() tea.View {
 		status = "session " + m.sessionID
 	}
 	activity := "ready"
-	if m.submitting != nil {
+	if m.editor != nil {
+		activity = "editing draft"
+	} else if m.submitting != nil {
 		activity = "sending " + string(m.submitting.kind)
 	} else if m.inFlightTaskID != "" {
 		activity = "running " + m.inFlightTaskID
 	}
 	if m.unseenLines > 0 {
 		activity += fmt.Sprintf(" · %d new", m.unseenLines)
+	}
+	if m.followUps.len() > 0 {
+		activity += fmt.Sprintf(" · %d queued", m.followUps.len())
 	}
 	statusLine := m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
 		" carina · %s · mode %s · %s · %s help", status, m.mode, activity,
@@ -408,6 +450,8 @@ func (m *Model) View() tea.View {
 		modal := fitViewBlock(m.helpOverlayView(), l.width, l.height, true)
 		content = lipgloss.Place(l.width, l.height,
 			lipgloss.Center, lipgloss.Center, modal)
+	} else if m.transcriptPager != nil {
+		content = m.transcriptPagerView(l.width, l.height)
 	}
 
 	v := tea.NewView(content)
@@ -418,7 +462,8 @@ func (m *Model) View() tea.View {
 	// A nil declared cursor makes Bubble Tea hide the terminal cursor. This is
 	// intentional while an overlay owns input, and whenever a zero-sized host
 	// has not supplied a usable cell grid yet (R21).
-	if !m.helpOpen && m.question == nil && m.approval == nil && m.width > 0 && m.height > 0 {
+	if !m.helpOpen && m.question == nil && m.approval == nil && m.transcriptPager == nil &&
+		m.editor == nil && m.width > 0 && m.height > 0 {
 		if m.historySearch != nil {
 			cursor := m.input.Cursor()
 			if cursor == nil {

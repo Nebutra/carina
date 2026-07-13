@@ -12,6 +12,7 @@ import (
 )
 
 func (m *Model) showHelp() {
+	m.closeSuggest()
 	m.helpOpen = true
 	m.helpScroll = 0
 	m.lastCtrlC = time.Time{}
@@ -31,6 +32,9 @@ func (m *Model) helpBodyLines() []string {
 	lines := []string{
 		"Commands",
 		"  /help                 commands and keybindings",
+		"  /editor               edit the current draft in VISUAL/EDITOR",
+		"  /copy                 copy the latest rendered agent response",
+		"  /transcript           open the plain-text transcript pager",
 		"  /agents               available agent modes",
 		"  /checkpoints          rewind points for this session",
 		"  /search <text>         search visible transcript",

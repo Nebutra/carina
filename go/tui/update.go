@@ -87,23 +87,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case EventMsg:
-		m.handleEvent(msg.Raw)
-		return m, nil
+		return m, m.handleEvent(msg.Raw)
 
 	case submissionDoneMsg:
-		m.handleSubmissionDone(msg)
-		return m, nil
+		return m, m.handleSubmissionDone(msg)
 
 	case cancelDoneMsg:
 		if msg.err != nil {
 			m.push(fmt.Sprintf("%s cancel failed for task %s: %s", glyphFailed(m.th), msg.taskID, msg.err.Error()))
 			return m, nil
 		}
-		if m.inFlightTaskID == msg.taskID {
+		cancelledActive := m.inFlightTaskID == msg.taskID
+		if cancelledActive {
 			m.inFlightTaskID = ""
 		}
 		m.tasks.setTask(msg.taskID, "cancelled")
 		m.push(m.th.Style(theme.RoleMuted).Render("- cancel recorded for task " + msg.taskID))
+		if cancelledActive {
+			m.restoreQueuedDrafts("task cancellation")
+		}
 		m.layout()
 		return m, nil
 
@@ -126,6 +128,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.push(m.th.Style(theme.RoleTitle).Render(msg.label) + "\n" + msg.text)
 		return m, nil
 
+	case externalEditorDoneMsg:
+		return m, m.handleExternalEditorDone(msg)
+
+	case clipboardDoneMsg:
+		m.handleClipboardDone(msg)
+		return m, nil
+
 	case suggestDebounceMsg:
 		return m, m.handleSuggestDebounce(msg)
 
@@ -138,7 +147,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Governance overlays exclusively own input while open, including while
 		// their RPC is resolving. Never let a terminal paste mutate the hidden
 		// composer behind the modal.
-		if m.approval != nil || m.question != nil || m.submitting != nil {
+		if m.approval != nil || m.question != nil || m.submitting != nil || m.editor != nil ||
+			m.helpOpen || m.transcriptPager != nil {
 			return m, nil
 		}
 		if m.historySearch != nil {
@@ -156,7 +166,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleMouseWheel(msg)
 
 	case tea.KeyPressMsg:
-		if m.approval != nil || m.question != nil || m.historySearch != nil || m.submitting != nil {
+		if m.editor != nil {
+			m.pasteBurst.reset()
+			return m, nil
+		}
+		if m.approval != nil || m.question != nil || m.historySearch != nil ||
+			m.submitting != nil || m.helpOpen || m.transcriptPager != nil {
 			m.pasteBurst.reset()
 		} else if cmd, handled := m.handlePasteBurstKey(msg); handled {
 			return m, cmd
@@ -199,22 +214,20 @@ func (m *Model) refreshSuggestTrigger() tea.Cmd {
 }
 
 // handleEvent renders a streamed event and reacts to governance moments.
-func (m *Model) handleEvent(ev map[string]any) {
+func (m *Model) handleEvent(ev map[string]any) tea.Cmd {
 	m.pushEvent(ev)
 	m.tasks.observeEvent(ev)
 	m.observeQuestionResolution(ev)
 	m.observeApprovalResolution(ev)
+	cmd := m.handleTaskTerminalEvent(ev)
 	switch str(ev["type"]) {
 	case "permission.request":
 		m.openApproval(ev)
 	case "user.question":
 		m.openQuestion(ev)
-	case "task.completed":
-		if id := str(ev["task_id"]); id != "" && id == m.inFlightTaskID {
-			m.inFlightTaskID = ""
-		}
 	}
 	m.layout()
+	return cmd
 }
 
 // handleKey processes one key. It returns handled=false for keys that belong
@@ -262,13 +275,14 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		}
 		return nil, true
 	}
-
 	// Reverse search owns every key while visible. In particular Ctrl+C must
 	// restore the exact draft instead of arming the global exit cascade.
 	if m.historySearch != nil {
 		return m.historySearchKey(key)
 	}
-
+	if m.transcriptPager != nil {
+		return m.transcriptPagerKey(key)
+	}
 	// The mention/slash suggestion panel is a transient, non-modal aid: it
 	// never takes the keyboard away from the approval/question overlays
 	// (those are already handled and returned above, so reaching here means
@@ -285,7 +299,6 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 			return nil, true
 		}
 	}
-
 	if m.submitting != nil {
 		switch {
 		case m.keys.matches(KeyContextGlobal, ActionGlobalHelp, key):
@@ -299,6 +312,9 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 			// Preserve the exact draft and caret until the RPC acknowledges it.
 			return nil, true
 		}
+	}
+	if cmd, handled := m.handleWorkspaceKey(key); handled {
+		return cmd, true
 	}
 	if m.keys.matches(KeyContextComposer, ActionComposerHistorySearch, key) {
 		return nil, m.beginHistorySearch()
@@ -383,6 +399,11 @@ func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
 	if m.approval != nil {
 		m.approval.Scroll += delta
 		m.clampApprovalScroll()
+		return nil
+	}
+	if m.transcriptPager != nil {
+		m.transcriptPager.scrollBy(delta)
+		m.clampTranscriptPagerScroll(m.transcriptPagerLines())
 		return nil
 	}
 	var cmd tea.Cmd
@@ -507,6 +528,11 @@ func (m *Model) submit() tea.Cmd {
 	if text == "" && len(paste) == 0 {
 		return nil
 	}
+	if text == "/editor" {
+		draft.Text = ""
+		m.input.Reset()
+		return m.beginExternalEditor(draft)
+	}
 	if strings.HasPrefix(text, "/") {
 		cmd := m.slashCommand(text)
 		if validSlashCommand(text) {
@@ -559,6 +585,10 @@ func draftLabel(draft promptDraft) string {
 }
 
 func (m *Model) beginSubmission(kind submissionKind, target string, draft promptDraft) tea.Cmd {
+	return m.beginSubmissionSource(kind, target, draft, false)
+}
+
+func (m *Model) beginSubmissionSource(kind submissionKind, target string, draft promptDraft, fromQueue bool) tea.Cmd {
 	if m.submitting != nil {
 		return nil
 	}
@@ -574,6 +604,7 @@ func (m *Model) beginSubmission(kind submissionKind, target string, draft prompt
 		target:       target,
 		draft:        draft,
 		consumePaste: kind != submissionShell,
+		fromQueue:    fromQueue,
 	}
 	m.submitting = state
 	m.closeSuggest()
@@ -610,16 +641,34 @@ func (m *Model) submitShell(draft promptDraft, command string) tea.Cmd {
 	return m.beginSubmission(submissionShell, command, draft)
 }
 
-func (m *Model) handleSubmissionDone(msg submissionDoneMsg) {
+func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 	state := m.submitting
 	if state == nil || state.generation != msg.generation {
-		return
+		return nil
 	}
 	m.submitting = nil
 	if msg.err != nil {
 		m.push(fmt.Sprintf("%s %s failed: %s; draft kept for retry", glyphFailed(m.th), state.kind, msg.err.Error()))
+		if state.fromQueue {
+			m.restoreQueuedDrafts("automatic submission failure")
+		}
 		m.layout()
-		return
+		return nil
+	}
+	if state.fromQueue {
+		queued, ok := m.followUps.front()
+		if !ok || !draftsEqual(queued, state.draft) {
+			// The composer is frozen while a submission is pending, so this can
+			// only indicate an internal ordering bug. Restore the submitted draft
+			// rather than silently dropping it.
+			if !ok {
+				m.followUps.enqueue(state.draft)
+			}
+			m.restoreQueuedDrafts("queue ordering failure")
+			m.push(fmt.Sprintf("%s queued follow-up ordering changed; drafts restored", glyphFailed(m.th)))
+			return nil
+		}
+		_, _ = m.followUps.popFront()
 	}
 	m.commitDraft(state.draft, state.consumePaste)
 	shown := draftLabel(state.draft)
@@ -637,6 +686,10 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) {
 		m.push(m.th.Style(theme.RoleTitle).Render("shell") + "\n" + msg.result)
 	}
 	m.layout()
+	if (state.kind == submissionSteer || state.fromQueue) && m.inFlightTaskID == "" {
+		return m.maybeSubmitNextQueued()
+	}
+	return nil
 }
 
 func (m *Model) commitDraft(draft promptDraft, consumePaste bool) {
@@ -747,6 +800,11 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		return m.querySurface("agent.list", map[string]any{"session_id": m.sessionID}, "agents")
 	case "checkpoints":
 		return m.querySurface("session.checkpoint.list", map[string]any{"session_id": m.sessionID}, "checkpoints")
+	case "copy":
+		return m.copyLastAgentProjection()
+	case "transcript":
+		m.openTranscriptPager()
+		return nil
 	default:
 		m.push("unknown command /" + name + "; use /help")
 		return nil
@@ -759,7 +817,7 @@ func validSlashCommand(text string) bool {
 		return false
 	}
 	switch strings.TrimPrefix(parts[0], "/") {
-	case "help", "keys", "recap", "agents", "checkpoints":
+	case "help", "keys", "recap", "agents", "checkpoints", "copy", "transcript":
 		return true
 	case "search":
 		return len(parts) >= 2

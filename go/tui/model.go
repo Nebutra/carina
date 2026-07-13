@@ -16,6 +16,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -93,6 +94,7 @@ type submissionState struct {
 	target       string
 	draft        promptDraft
 	consumePaste bool
+	fromQueue    bool
 }
 
 type submissionDoneMsg struct {
@@ -118,6 +120,15 @@ type approvalDoneMsg struct {
 }
 
 type rpcErrMsg struct {
+	err error
+}
+
+type externalEditorDoneMsg struct {
+	generation int
+	err        error
+}
+
+type clipboardDoneMsg struct {
 	err error
 }
 
@@ -175,8 +186,15 @@ type Model struct {
 	inFlightTaskID     string
 	pendingPaste       []string
 	pasteBurst         pasteBurstState
+	followUps          inputQueue
 	submitting         *submissionState
 	submissionGen      int
+	editor             *externalEditorSession
+	editorGen          int
+	queueRestoreReason string
+	transcriptPager    *transcriptPagerState
+	getenv             func(string) string
+	clipboardWrite     func(string) error
 	history            []promptDraft
 	historyPos         int
 	historyScratch     promptDraft
@@ -251,6 +269,8 @@ func NewChecked(o Options) (*Model, error) {
 		socket:           o.Socket,
 		workspaceRoot:    o.WorkspaceRoot,
 		now:              o.Now,
+		getenv:           os.Getenv,
+		clipboardWrite:   systemClipboardWrite,
 		vp:               viewport.New(),
 		input:            ti,
 		keys:             keys,

@@ -25,13 +25,17 @@ const (
 type KeyAction string
 
 const (
-	ActionGlobalHelp      KeyAction = "global.help"
-	ActionGlobalInterrupt KeyAction = "global.interrupt"
-	ActionGlobalRedraw    KeyAction = "global.redraw"
-	ActionGlobalExit      KeyAction = "global.exit"
+	ActionGlobalHelp       KeyAction = "global.help"
+	ActionGlobalInterrupt  KeyAction = "global.interrupt"
+	ActionGlobalRedraw     KeyAction = "global.redraw"
+	ActionGlobalExit       KeyAction = "global.exit"
+	ActionGlobalTranscript KeyAction = "global.transcript"
 
 	ActionComposerSubmit          KeyAction = "composer.submit"
 	ActionComposerNewline         KeyAction = "composer.newline"
+	ActionComposerQueue           KeyAction = "composer.queue"
+	ActionComposerRecallQueue     KeyAction = "composer.recall-queue"
+	ActionComposerExternalEditor  KeyAction = "composer.external-editor"
 	ActionComposerUndoPaste       KeyAction = "composer.undo-paste"
 	ActionComposerHistoryPrevious KeyAction = "composer.history-previous"
 	ActionComposerHistoryNext     KeyAction = "composer.history-next"
@@ -103,9 +107,13 @@ func defaultKeyBindings() []keyBinding {
 		{KeyContextGlobal, ActionGlobalInterrupt, []string{"ctrl+c"}, "cancel, clear, or exit"},
 		{KeyContextGlobal, ActionGlobalRedraw, []string{"ctrl+l"}, "redraw terminal"},
 		{KeyContextGlobal, ActionGlobalExit, []string{"ctrl+d"}, "exit when input is empty"},
+		{KeyContextGlobal, ActionGlobalTranscript, []string{"alt+r"}, "open plain transcript"},
 
 		{KeyContextComposer, ActionComposerSubmit, []string{"enter"}, "submit or steer"},
 		{KeyContextComposer, ActionComposerNewline, []string{"shift+enter", "alt+enter", "ctrl+j"}, "insert newline"},
+		{KeyContextComposer, ActionComposerQueue, []string{"tab"}, "queue next turn while running"},
+		{KeyContextComposer, ActionComposerRecallQueue, []string{"alt+up"}, "edit latest queued turn"},
+		{KeyContextComposer, ActionComposerExternalEditor, []string{"ctrl+g"}, "edit draft externally"},
 		{KeyContextComposer, ActionComposerUndoPaste, []string{"ctrl+z"}, "remove latest pasted item"},
 		{KeyContextComposer, ActionComposerHistoryPrevious, []string{"ctrl+p", "up"}, "previous prompt"},
 		{KeyContextComposer, ActionComposerHistoryNext, []string{"ctrl+n", "down"}, "next prompt"},

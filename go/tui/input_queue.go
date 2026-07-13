@@ -13,6 +13,13 @@ func (q *inputQueue) enqueue(draft promptDraft) {
 	q.drafts = append(q.drafts, cloneDraft(draft))
 }
 
+func (q *inputQueue) front() (promptDraft, bool) {
+	if len(q.drafts) == 0 {
+		return promptDraft{}, false
+	}
+	return cloneDraft(q.drafts[0]), true
+}
+
 func (q *inputQueue) popFront() (promptDraft, bool) {
 	if len(q.drafts) == 0 {
 		return promptDraft{}, false
