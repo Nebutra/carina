@@ -41,7 +41,7 @@ func TestPasteDoesNotMutateComposerBehindGovernanceModal(t *testing.T) {
 				m, _ := newTestModel(nil)
 				m.input.SetValue("visible draft")
 				m.pendingPaste = []string{"existing paste"}
-				m.pasteBurst.observeASCII(m.now(), 2)
+				m.pasteBurst.observeASCII(m.now(), pasteBurstMinChars)
 				modal.open(m)
 
 				_, cmd := m.Update(tea.PasteMsg{Content: paste.content})
@@ -216,13 +216,17 @@ func TestPasteBurstTimingBoundaries(t *testing.T) {
 		t.Fatal("one character must not establish a burst")
 	}
 	state.observeASCII(t0.Add(pasteBurstCharInterval), 1)
-	if !state.structuralKeyIsText(t0.Add(pasteBurstCharInterval)) {
-		t.Fatal("second character at the inclusive interval boundary did not establish a burst")
+	if state.structuralKeyIsText(t0.Add(pasteBurstCharInterval)) {
+		t.Fatal("two characters must remain below the conservative burst threshold")
 	}
-	if !state.structuralKeyIsText(t0.Add(pasteBurstCharInterval + pasteBurstEnterWindow)) {
+	state.observeASCII(t0.Add(2*pasteBurstCharInterval), 1)
+	if !state.structuralKeyIsText(t0.Add(2 * pasteBurstCharInterval)) {
+		t.Fatal("third character at the inclusive interval boundary did not establish a burst")
+	}
+	if !state.structuralKeyIsText(t0.Add(2*pasteBurstCharInterval + pasteBurstEnterWindow)) {
 		t.Fatal("structural window should be inclusive at its boundary")
 	}
-	if state.structuralKeyIsText(t0.Add(pasteBurstCharInterval + pasteBurstEnterWindow + time.Nanosecond)) {
+	if state.structuralKeyIsText(t0.Add(2*pasteBurstCharInterval + pasteBurstEnterWindow + time.Nanosecond)) {
 		t.Fatal("structural window remained active past its boundary")
 	}
 }

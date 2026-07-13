@@ -14,7 +14,7 @@ import (
 const (
 	pasteBurstCharInterval = 8 * time.Millisecond
 	pasteBurstEnterWindow  = 120 * time.Millisecond
-	pasteBurstMinChars     = 2
+	pasteBurstMinChars     = 3
 )
 
 type pasteBurstState struct {
