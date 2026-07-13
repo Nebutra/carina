@@ -36,7 +36,11 @@ const (
 	ActionComposerQueue           KeyAction = "composer.queue"
 	ActionComposerRecallQueue     KeyAction = "composer.recall-queue"
 	ActionComposerExternalEditor  KeyAction = "composer.external-editor"
-	ActionComposerUndoPaste       KeyAction = "composer.undo-paste"
+	ActionComposerUndo            KeyAction = "composer.undo"
+	ActionComposerRedo            KeyAction = "composer.redo"
+	// ActionComposerUndoPaste is kept as a source-compatible alias for early
+	// embedders; Ctrl+Z now undoes text after pending paste items are exhausted.
+	ActionComposerUndoPaste = ActionComposerUndo
 	ActionComposerHistoryPrevious KeyAction = "composer.history-previous"
 	ActionComposerHistoryNext     KeyAction = "composer.history-next"
 	ActionComposerHistorySearch   KeyAction = "composer.history-search"
@@ -114,7 +118,8 @@ func defaultKeyBindings() []keyBinding {
 		{KeyContextComposer, ActionComposerQueue, []string{"tab"}, "queue next turn while running"},
 		{KeyContextComposer, ActionComposerRecallQueue, []string{"alt+up"}, "edit latest queued turn"},
 		{KeyContextComposer, ActionComposerExternalEditor, []string{"ctrl+g"}, "edit draft externally"},
-		{KeyContextComposer, ActionComposerUndoPaste, []string{"ctrl+z"}, "remove latest pasted item"},
+		{KeyContextComposer, ActionComposerUndo, []string{"ctrl+z"}, "undo paste or last edit"},
+		{KeyContextComposer, ActionComposerRedo, []string{"ctrl+shift+z"}, "redo last edit"},
 		{KeyContextComposer, ActionComposerHistoryPrevious, []string{"ctrl+p", "up"}, "previous prompt"},
 		{KeyContextComposer, ActionComposerHistoryNext, []string{"ctrl+n", "down"}, "next prompt"},
 		{KeyContextComposer, ActionComposerHistorySearch, []string{"ctrl+r"}, "search prompt history"},

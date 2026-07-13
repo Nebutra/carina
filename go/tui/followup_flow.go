@@ -42,6 +42,7 @@ func (m *Model) recallLastFollowUp() bool {
 		m.followUps.enqueue(current)
 	}
 	m.restoreDraft(draft)
+	m.resetComposerUndo()
 	m.push(m.th.Style(theme.RoleMuted).Render("- recalled latest follow-up for editing"))
 	m.layout()
 	return true
@@ -50,6 +51,7 @@ func (m *Model) recallLastFollowUp() bool {
 func (m *Model) clearComposerDraft() {
 	m.input.Reset()
 	m.pendingPaste = nil
+	m.resetComposerUndo()
 	if m.suggest != nil {
 		m.closeSuggest()
 	}
@@ -83,6 +85,7 @@ func (m *Model) restoreQueuedDrafts(reason string) {
 	}
 	merged := mergeDraftsForRestore(drafts, m.currentDraft())
 	m.restoreDraft(merged)
+	m.resetComposerUndo()
 	m.push(m.th.Style(theme.RoleMuted).Render(fmt.Sprintf("- restored %d queued follow-up(s) after %s", len(drafts), reason)))
 	m.layout()
 }

@@ -41,6 +41,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastCtrlC = time.Time{}
 		m.ctrlCHint = ""
 	}
+	var (
+		composerBefore composerSnapshot
+		composerKey    tea.KeyPressMsg
+		trackComposer  bool
+	)
 
 	switch msg := msg.(type) {
 
@@ -160,7 +165,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		return m, m.handlePaste(msg)
+		before := m.composerSnapshot()
+		pasteCount := len(m.pendingPaste)
+		cmd := m.handlePaste(msg)
+		if len(m.pendingPaste) > pasteCount {
+			m.composerExternalMutation()
+		} else {
+			m.recordComposerEdit(before, composerEditPaste)
+		}
+		return m, cmd
 
 	case tea.MouseWheelMsg:
 		return m, m.handleMouseWheel(msg)
@@ -173,8 +186,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.approval != nil || m.question != nil || m.historySearch != nil ||
 			m.submitting != nil || m.helpOpen || m.transcriptPager != nil {
 			m.pasteBurst.reset()
-		} else if cmd, handled := m.handlePasteBurstKey(msg); handled {
-			return m, cmd
+		} else {
+			composerBefore = m.composerSnapshot()
+			composerKey = msg
+			trackComposer = true
+			if cmd, handled := m.handlePasteBurstKey(msg); handled {
+				m.recordComposerEdit(composerBefore, composerEditTyping)
+				return m, cmd
+			}
 		}
 		if cmd, handled := m.handleKey(msg.String()); handled {
 			return m, cmd
@@ -184,6 +203,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.layout()
+	if trackComposer {
+		m.recordComposerEdit(composerBefore, composerKeyEditKind(composerKey))
+	}
 	return m, tea.Batch(cmd, m.refreshSuggestTrigger())
 }
 
@@ -222,8 +244,10 @@ func (m *Model) handleEvent(ev map[string]any) tea.Cmd {
 	cmd := m.handleTaskTerminalEvent(ev)
 	switch str(ev["type"]) {
 	case "permission.request":
+		m.breakComposerUndoGroup()
 		m.openApproval(ev)
 	case "user.question":
+		m.breakComposerUndoGroup()
 		m.openQuestion(ev)
 	}
 	m.layout()
@@ -288,10 +312,13 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	// (those are already handled and returned above, so reaching here means
 	// neither is open) and only intercepts a small set of keys itself.
 	if m.suggest != nil && m.calculateLayout().suggestLines > 0 {
+		before := m.composerSnapshot()
 		if cmd, handled := m.suggestKey(key); handled {
+			m.recordComposerEdit(before, composerEditOther)
 			return cmd, true
 		}
 		if m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
+			m.breakComposerUndoGroup()
 			m.closeSuggest()
 			m.lastCtrlC = time.Time{}
 			m.ctrlCHint = ""
@@ -302,11 +329,14 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	if m.submitting != nil {
 		switch {
 		case m.keys.matches(KeyContextGlobal, ActionGlobalHelp, key):
+			m.breakComposerUndoGroup()
 			m.showHelp()
 			return nil, true
 		case m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key):
+			m.breakComposerUndoGroup()
 			return tea.ClearScreen, true
 		case m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key):
+			m.breakComposerUndoGroup()
 			return m.ctrlC(), true
 		default:
 			// Preserve the exact draft and caret until the RPC acknowledges it.
@@ -317,11 +347,18 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		return cmd, true
 	}
 	if m.keys.matches(KeyContextComposer, ActionComposerHistorySearch, key) {
+		m.breakComposerUndoGroup()
 		return nil, m.beginHistorySearch()
 	}
-	if len(m.pendingPaste) > 0 && m.keys.matches(KeyContextComposer, ActionComposerUndoPaste, key) {
-		m.pendingPaste = m.pendingPaste[:len(m.pendingPaste)-1]
-		m.layout()
+	if m.keys.matches(KeyContextComposer, ActionComposerUndo, key) {
+		if m.undoLatestPendingPaste() {
+			return nil, true
+		}
+		m.undoComposer()
+		return nil, true
+	}
+	if m.keys.matches(KeyContextComposer, ActionComposerRedo, key) {
+		m.redoComposer()
 		return nil, true
 	}
 	if m.keys.matches(KeyContextComposer, ActionComposerHistoryPrevious, key) &&
@@ -333,6 +370,7 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		return nil, m.moveHistory(1)
 	}
 	if m.keys.matches(KeyContextComposer, ActionComposerSubmit, key) {
+		m.breakComposerUndoGroup()
 		return m.submit(), true
 	}
 	if m.keys.matches(KeyContextComposer, ActionComposerNewline, key) {
@@ -341,10 +379,12 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 
 	switch {
 	case m.keys.matches(KeyContextPager, ActionPagerPageUp, key):
+		m.breakComposerUndoGroup()
 		m.vp.PageUp()
 		m.followTail = false
 		return nil, true
 	case m.keys.matches(KeyContextPager, ActionPagerPageDown, key):
+		m.breakComposerUndoGroup()
 		m.vp.PageDown()
 		if m.vp.AtBottom() {
 			m.followTail = true
@@ -352,15 +392,18 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		}
 		return nil, true
 	case m.keys.matches(KeyContextPager, ActionPagerTop, key):
+		m.breakComposerUndoGroup()
 		m.vp.GotoTop()
 		m.followTail = false
 		return nil, true
 	case m.keys.matches(KeyContextPager, ActionPagerBottom, key):
+		m.breakComposerUndoGroup()
 		m.vp.GotoBottom()
 		m.followTail = true
 		m.unseenLines = 0
 		return nil, true
 	case m.keys.matches(KeyContextPager, ActionPagerToggleDetail, key):
+		m.breakComposerUndoGroup()
 		if m.tr.toggleLastCollapsible(m.th, m.transcriptWidth()) {
 			m.vp.SetContentLines(m.tr.lines)
 			if m.followTail {
@@ -369,13 +412,17 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		}
 		return nil, true
 	case m.keys.matches(KeyContextGlobal, ActionGlobalHelp, key):
+		m.breakComposerUndoGroup()
 		m.showHelp()
 		return nil, true
 	case m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key):
+		m.breakComposerUndoGroup()
 		return tea.ClearScreen, true
 	case m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key):
+		m.breakComposerUndoGroup()
 		return m.ctrlC(), true
 	case m.keys.matches(KeyContextGlobal, ActionGlobalExit, key):
+		m.breakComposerUndoGroup()
 		return m.ctrlD()
 	}
 	return nil, false
@@ -483,6 +530,7 @@ func (m *Model) ctrlC() tea.Cmd {
 		m.historyScratch = promptDraft{}
 		m.input.Reset()
 		m.pendingPaste = nil
+		m.resetComposerUndo()
 		m.closeSuggest()
 		m.layout()
 		m.push(m.th.Style(theme.RoleMuted).Render("- draft cleared; use prompt history to restore it"))
@@ -594,9 +642,11 @@ func (m *Model) beginSubmissionSource(kind submissionKind, target string, draft 
 	}
 	call := m.call
 	if call == nil {
+		m.breakComposerUndoGroup()
 		m.push(fmt.Sprintf("%s not connected: draft kept for retry", glyphFailed(m.th)))
 		return nil
 	}
+	m.breakComposerUndoGroup()
 	m.submissionGen++
 	state := &submissionState{
 		generation:   m.submissionGen,
@@ -707,6 +757,7 @@ func (m *Model) commitDraft(draft promptDraft, consumePaste bool) {
 	m.recordHistory(consumed)
 	m.historyPos = len(m.history)
 	m.historyScratch = promptDraft{}
+	m.resetComposerUndo()
 	m.layout()
 }
 
@@ -730,6 +781,7 @@ func (m *Model) moveHistory(direction int) bool {
 	if m.historyPos < 0 || m.historyPos > len(m.history) {
 		m.historyPos = len(m.history)
 	}
+	m.composerExternalMutation()
 	if direction < 0 {
 		if m.historyPos == len(m.history) {
 			m.historyScratch = m.currentDraft()

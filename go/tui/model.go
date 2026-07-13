@@ -200,6 +200,7 @@ type Model struct {
 	historyScratch     promptDraft
 	historyLoadGen     int
 	historySearch      *historySearchState
+	composerUndo       composerUndoState
 	lastCtrlC          time.Time
 	ctrlCHint          string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
 	mode               string

@@ -75,6 +75,7 @@ func (m *Model) handleExternalEditorDone(msg externalEditorDoneMsg) tea.Cmd {
 	if err != nil {
 		m.push(fmt.Sprintf("%s %s; draft restored", glyphFailed(m.th), err.Error()))
 	} else {
+		m.resetComposerUndo()
 		m.push(m.th.Style(theme.RoleMuted).Render("- external editor draft applied"))
 	}
 	m.layout()

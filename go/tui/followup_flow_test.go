@@ -206,8 +206,8 @@ func TestSafeQueuedSlashRunsLocallyBeforeNextFollowUp(t *testing.T) {
 	if len(fc.calls) != 1 || fc.calls[0].method != "task.submit" {
 		t.Fatalf("safe slash made unexpected RPC calls: %#v", fc.calls)
 	}
-	if !strings.Contains(transcriptText(m), "commands and keybindings") {
-		t.Fatalf("queued /help did not run locally:\n%s", transcriptText(m))
+	if !m.helpOpen || !strings.Contains(strings.Join(m.helpBodyLines(), "\n"), "commands and keybindings") {
+		t.Fatalf("queued /help did not open local help: open=%v", m.helpOpen)
 	}
 }
 
