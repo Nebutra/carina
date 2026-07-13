@@ -195,6 +195,10 @@ func TestSlashAndShellCommandsDoNotConsumePendingPaste(t *testing.T) {
 	if m.input.Value() != "" || len(m.pendingPaste) != 1 {
 		t.Fatalf("slash command consumed unrelated paste: text=%q paste=%#v", m.input.Value(), m.pendingPaste)
 	}
+	if !m.helpOpen {
+		t.Fatal("/help must open the immediate help overlay")
+	}
+	m.closeHelp()
 
 	m.input.SetValue("!printf ok")
 	cmd, _ = m.handleKey("enter")

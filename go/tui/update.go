@@ -33,7 +33,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// exits) the moment the cancel RPC's result arrives.
 	switch kp := msg.(type) {
 	case tea.KeyPressMsg:
-		if kp.String() != "ctrl+c" {
+		if !m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, kp.String()) {
 			m.lastCtrlC = time.Time{}
 			m.ctrlCHint = ""
 		}
@@ -221,21 +221,54 @@ func (m *Model) handleEvent(ev map[string]any) {
 // to the input box; Update forwards those (grapheme handling lives in
 // bubbles' textinput).
 func (m *Model) handleKey(key string) (tea.Cmd, bool) {
-	// Governance overlays remain the top modal surface. Otherwise history
-	// search owns the keyboard before global Ctrl+C so cancellation restores
-	// its exact draft instead of interrupting a task or arming exit.
-	if m.historySearch != nil && m.question == nil && m.approval == nil {
+	// Governance is always the highest visual/input context. It must not be
+	// covered by help or a transient search panel.
+	if m.question != nil {
+		if cmd, handled := m.questionKey(key); handled {
+			return cmd, true
+		}
+		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) {
+			return tea.ClearScreen, true
+		}
+		if m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
+			return m.ctrlC(), true
+		}
+		return nil, true
+	}
+	if m.approval != nil {
+		if cmd, handled := m.approvalKey(key); handled {
+			return cmd, true
+		}
+		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) {
+			return tea.ClearScreen, true
+		}
+		if m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
+			return m.ctrlC(), true
+		}
+		return nil, true
+	}
+
+	// Help is a real overlay rather than transcript output. It owns navigation
+	// and close keys, while redraw remains globally available.
+	if m.helpOpen {
+		if cmd, handled := m.helpKey(key); handled {
+			return cmd, true
+		}
+		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) {
+			return tea.ClearScreen, true
+		}
+		if m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
+			m.closeHelp()
+		}
+		return nil, true
+	}
+
+	// Reverse search owns every key while visible. In particular Ctrl+C must
+	// restore the exact draft instead of arming the global exit cascade.
+	if m.historySearch != nil {
 		return m.historySearchKey(key)
 	}
-	if key == "ctrl+c" {
-		return m.ctrlC(), true
-	}
-	if cmd, handled := m.questionKey(key); handled {
-		return cmd, true
-	}
-	if cmd, handled := m.approvalKey(key); handled {
-		return cmd, true
-	}
+
 	// The mention/slash suggestion panel is a transient, non-modal aid: it
 	// never takes the keyboard away from the approval/question overlays
 	// (those are already handled and returned above, so reaching here means
@@ -244,29 +277,74 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		if cmd, handled := m.suggestKey(key); handled {
 			return cmd, true
 		}
+		if m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
+			m.closeSuggest()
+			m.lastCtrlC = time.Time{}
+			m.ctrlCHint = ""
+			m.layout()
+			return nil, true
+		}
 	}
-	switch key {
-	case "pgup":
+
+	if m.submitting != nil {
+		switch {
+		case m.keys.matches(KeyContextGlobal, ActionGlobalHelp, key):
+			m.showHelp()
+			return nil, true
+		case m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key):
+			return tea.ClearScreen, true
+		case m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key):
+			return m.ctrlC(), true
+		default:
+			// Preserve the exact draft and caret until the RPC acknowledges it.
+			return nil, true
+		}
+	}
+	if m.keys.matches(KeyContextComposer, ActionComposerHistorySearch, key) {
+		return nil, m.beginHistorySearch()
+	}
+	if len(m.pendingPaste) > 0 && m.keys.matches(KeyContextComposer, ActionComposerUndoPaste, key) {
+		m.pendingPaste = m.pendingPaste[:len(m.pendingPaste)-1]
+		m.layout()
+		return nil, true
+	}
+	if m.keys.matches(KeyContextComposer, ActionComposerHistoryPrevious, key) &&
+		(canonicalKey(key) != "up" || m.atHistoryBoundary(-1)) {
+		return nil, m.moveHistory(-1)
+	}
+	if m.keys.matches(KeyContextComposer, ActionComposerHistoryNext, key) &&
+		(canonicalKey(key) != "down" || m.atHistoryBoundary(1)) {
+		return nil, m.moveHistory(1)
+	}
+	if m.keys.matches(KeyContextComposer, ActionComposerSubmit, key) {
+		return m.submit(), true
+	}
+	if m.keys.matches(KeyContextComposer, ActionComposerNewline, key) {
+		return nil, false
+	}
+
+	switch {
+	case m.keys.matches(KeyContextPager, ActionPagerPageUp, key):
 		m.vp.PageUp()
 		m.followTail = false
 		return nil, true
-	case "pgdown":
+	case m.keys.matches(KeyContextPager, ActionPagerPageDown, key):
 		m.vp.PageDown()
 		if m.vp.AtBottom() {
 			m.followTail = true
 			m.unseenLines = 0
 		}
 		return nil, true
-	case "alt+home":
+	case m.keys.matches(KeyContextPager, ActionPagerTop, key):
 		m.vp.GotoTop()
 		m.followTail = false
 		return nil, true
-	case "alt+end":
+	case m.keys.matches(KeyContextPager, ActionPagerBottom, key):
 		m.vp.GotoBottom()
 		m.followTail = true
 		m.unseenLines = 0
 		return nil, true
-	case "ctrl+o":
+	case m.keys.matches(KeyContextPager, ActionPagerToggleDetail, key):
 		if m.tr.toggleLastCollapsible(m.th, m.transcriptWidth()) {
 			m.vp.SetContentLines(m.tr.lines)
 			if m.followTail {
@@ -274,31 +352,15 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 			}
 		}
 		return nil, true
-	case "f1":
+	case m.keys.matches(KeyContextGlobal, ActionGlobalHelp, key):
 		m.showHelp()
 		return nil, true
-	}
-	if m.submitting != nil {
-		// Preserve the exact draft and caret until the RPC acknowledges it.
-		// This also makes rapid repeated Enter presses idempotent.
-		return nil, true
-	}
-	if key == "ctrl+r" {
-		return nil, m.beginHistorySearch()
-	}
-	if len(m.pendingPaste) > 0 && key == "ctrl+z" {
-		m.pendingPaste = m.pendingPaste[:len(m.pendingPaste)-1]
-		m.layout()
-		return nil, true
-	}
-	if key == "ctrl+p" || (key == "up" && m.atHistoryBoundary(-1)) {
-		return nil, m.moveHistory(-1)
-	}
-	if key == "ctrl+n" || (key == "down" && m.atHistoryBoundary(1)) {
-		return nil, m.moveHistory(1)
-	}
-	if key == "enter" {
-		return m.submit(), true
+	case m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key):
+		return tea.ClearScreen, true
+	case m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key):
+		return m.ctrlC(), true
+	case m.keys.matches(KeyContextGlobal, ActionGlobalExit, key):
+		return m.ctrlD()
 	}
 	return nil, false
 }
@@ -337,21 +399,21 @@ func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
 // move, tab/enter accepts, and esc dismisses. Printable characters, including
 // digits, remain prompt input rather than hidden accelerators.
 func (m *Model) suggestKey(key string) (tea.Cmd, bool) {
-	switch key {
-	case "esc":
+	switch {
+	case m.keys.matches(KeyContextSuggestion, ActionSuggestionDismiss, key):
 		m.closeSuggest()
 		return nil, true
-	case "up", "ctrl+p":
+	case m.keys.matches(KeyContextSuggestion, ActionSuggestionPrevious, key):
 		if len(m.suggest.Matches) > 0 {
 			m.suggest.Selected = (m.suggest.Selected - 1 + len(m.suggest.Matches)) % len(m.suggest.Matches)
 		}
 		return nil, true
-	case "down", "ctrl+n":
+	case m.keys.matches(KeyContextSuggestion, ActionSuggestionNext, key):
 		if len(m.suggest.Matches) > 0 {
 			m.suggest.Selected = (m.suggest.Selected + 1) % len(m.suggest.Matches)
 		}
 		return nil, true
-	case "tab", "enter":
+	case m.keys.matches(KeyContextSuggestion, ActionSuggestionAccept, key):
 		if len(m.suggest.Matches) > 0 {
 			m.applySuggestSelection(m.suggest.Selected)
 		}
@@ -375,6 +437,10 @@ func (m *Model) ctrlC() tea.Cmd {
 		m.ctrlCHint = ""
 		return tea.Quit
 	}
+	if m.submitting != nil {
+		m.push(m.th.Style(theme.RoleMuted).Render("- submission is being acknowledged; press ctrl+c again within 2s to exit"))
+		return nil
+	}
 	const hintText = "- press ctrl+c again within 2s to exit"
 	hint := m.th.Style(theme.RoleMuted).Render(hintText)
 	// Recorded plain (not just pushed to the transcript): while the
@@ -390,8 +456,34 @@ func (m *Model) ctrlC() tea.Cmd {
 		m.push(hint)
 		return m.cancelTask(tid)
 	}
+	if draft := m.currentDraft(); draft.Text != "" || len(draft.Paste) > 0 {
+		m.recordHistory(draft)
+		m.historyPos = len(m.history)
+		m.historyScratch = promptDraft{}
+		m.input.Reset()
+		m.pendingPaste = nil
+		m.closeSuggest()
+		m.layout()
+		m.push(m.th.Style(theme.RoleMuted).Render("- draft cleared; use prompt history to restore it"))
+		m.push(hint)
+		return nil
+	}
 	m.push(hint)
 	return nil
+}
+
+func (m *Model) ctrlD() (tea.Cmd, bool) {
+	if m.approval != nil || m.question != nil || m.helpOpen {
+		return nil, true
+	}
+	if draft := m.currentDraft(); draft.Text != "" || len(draft.Paste) > 0 {
+		// Let bubbles retain its standard Ctrl-D delete-forward behavior.
+		return nil, false
+	}
+	if m.inFlightTaskID != "" || m.submitting != nil {
+		return nil, true
+	}
+	return tea.Quit, true
 }
 
 func (m *Model) cancelTask(taskID string) tea.Cmd {
@@ -613,24 +705,6 @@ func (m *Model) restoreDraft(draft promptDraft) {
 	m.pendingPaste = append([]string(nil), draft.Paste...)
 	m.closeSuggest()
 	m.layout()
-}
-
-func (m *Model) showHelp() {
-	m.push(m.th.Style(theme.RoleTitle).Render("commands") + "\n" +
-		"  /help                 commands and keybindings\n" +
-		"  /agents               available agent modes\n" +
-		"  /checkpoints          rewind points for this session\n" +
-		"  /search <text>         search visible transcript\n" +
-		"  /recap                 compact current-session recap\n" +
-		"  /mode <build|plan>     show or change interaction mode\n" +
-		"  !<command>             governed shell command\n" +
-		"  @<path|agent>          reference a workspace path or agent - suggestions appear as you type\n" +
-		"  /<command>             at the start of the line - suggestions appear as you type\n" +
-		"  arrows choose · tab/enter completes · esc dismisses suggestions\n" +
-		"  up/down or ctrl+p/n recalls prompt history at input boundaries\n" +
-		"  ctrl+r searches prompt history · ctrl+s moves to a newer match\n" +
-		"  shift+enter newline · ctrl+z undo latest paste · mouse/pgup/pgdown scroll\n" +
-		"  alt+home/end jump · ctrl+o expand · f1 help · ctrl+c cancel")
 }
 
 func (m *Model) slashCommand(text string) tea.Cmd {

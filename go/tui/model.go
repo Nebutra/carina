@@ -15,6 +15,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -128,6 +129,9 @@ type Options struct {
 	SessionID     string // reuse an existing session; empty creates one
 	WorkspaceRoot string
 	Now           func() time.Time
+	// Keybindings replaces selected action bindings after defaults are loaded.
+	// Embedders accepting user-controlled overrides should call NewChecked.
+	Keybindings []KeyBindingOverride
 }
 
 // Model is the root Bubble Tea model.
@@ -145,6 +149,10 @@ type Model struct {
 	tr            transcript
 	followTail    bool
 	unseenLines   int
+	keys          runtimeKeymap
+	keymapErr     error
+	helpOpen      bool
+	helpScroll    int
 
 	sessionID string
 	call      Caller
@@ -191,10 +199,29 @@ type Model struct {
 
 type surfaceResultMsg struct{ label, text string }
 
-// New builds the root model. It renders nothing until the program runs.
+// New builds the root model. Invalid optional overrides visibly degrade to the
+// defaults; callers that require a hard startup error use NewChecked.
 func New(o Options) *Model {
+	m, err := NewChecked(o)
+	if err == nil {
+		return m
+	}
+	fallback := o
+	fallback.Keybindings = nil
+	m, _ = NewChecked(fallback)
+	m.keymapErr = err
+	m.push(m.th.Style(theme.RoleError).Render("keybindings: " + err.Error()))
+	return m
+}
+
+// NewChecked rejects malformed, unknown, or conflicting keybinding overrides.
+func NewChecked(o Options) (*Model, error) {
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	keys, err := newRuntimeKeymap(o.Keybindings)
+	if err != nil {
+		return nil, err
 	}
 	ti := textarea.New()
 	ti.Prompt = "> "
@@ -209,10 +236,14 @@ func New(o Options) *Model {
 	// virtual cursor only paints a cell in the returned string; it cannot move
 	// the terminal cursor to the logical caret (R13/R21).
 	ti.SetVirtualCursor(false)
-	ti.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j", "shift+enter"))
+	ti.KeyMap.InsertNewline = key.NewBinding(key.WithKeys(keys.keys(KeyContextComposer, ActionComposerNewline)...))
 	// Keep the placeholder ASCII so its width stays predictable across the
 	// terminal profiles covered by the PTY tests.
-	ti.Placeholder = "type an instruction - enter submits, shift+enter adds a line, f1 opens help"
+	ti.Placeholder = fmt.Sprintf("type an instruction - %s submits, %s adds a line, %s opens help",
+		primaryKeyLabel(keys.keys(KeyContextComposer, ActionComposerSubmit)),
+		primaryKeyLabel(keys.keys(KeyContextComposer, ActionComposerNewline)),
+		primaryKeyLabel(keys.keys(KeyContextGlobal, ActionGlobalHelp)),
+	)
 	_ = ti.Focus()
 	m := &Model{
 		th:               o.Theme,
@@ -222,6 +253,7 @@ func New(o Options) *Model {
 		now:              o.Now,
 		vp:               viewport.New(),
 		input:            ti,
+		keys:             keys,
 		conn:             ConnConnecting,
 		followTail:       true,
 		questionSeen:     make(map[string]bool),
@@ -235,7 +267,7 @@ func New(o Options) *Model {
 		mode:             "build",
 	}
 	m.layout()
-	return m
+	return m, nil
 }
 
 // inputStyles keeps the third-party textarea inside Carina's terminal

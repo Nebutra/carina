@@ -1,0 +1,268 @@
+package tui
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/Nebutra/carina/go/tui/theme"
+)
+
+func TestKeymapRejectsSameContextConflictWithActionableError(t *testing.T) {
+	_, err := NewChecked(Options{
+		Theme: theme.New(theme.Mono),
+		Keybindings: []KeyBindingOverride{
+			{Context: KeyContextGlobal, Action: ActionGlobalRedraw, Keys: []string{"f1"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("same-context conflict was accepted")
+	}
+	for _, want := range []string{"context \"global\"", "f1", "global.help", "global.redraw"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("conflict error missing %q: %v", want, err)
+		}
+	}
+
+	_, err = NewChecked(Options{
+		Theme: theme.New(theme.Mono),
+		Keybindings: []KeyBindingOverride{
+			{Context: KeyContextQuestion, Action: ActionQuestionPrevious, Keys: []string{"1"}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "question.answer") {
+		t.Fatalf("range conflict was not detected: %v", err)
+	}
+
+	_, err = NewChecked(Options{
+		Theme: theme.New(theme.Mono),
+		Keybindings: []KeyBindingOverride{
+			{Context: KeyContextApproval, Action: ActionApprovalSession, Keys: []string{"1"}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "approval.once") {
+		t.Fatalf("approval numeric conflict was not detected: %v", err)
+	}
+}
+
+func TestKeymapOverrideDrivesDispatchPlaceholderStatusAndHelp(t *testing.T) {
+	m, err := NewChecked(Options{
+		Theme:  theme.New(theme.Mono),
+		Locale: "en",
+		Keybindings: []KeyBindingOverride{
+			{Context: KeyContextGlobal, Action: ActionGlobalHelp, Keys: []string{"ctrl+h"}},
+			{Context: KeyContextComposer, Action: ActionComposerSubmit, Keys: []string{"ctrl+enter"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if _, handled := m.handleKey("f1"); handled {
+		t.Fatal("overridden default help key is still active")
+	}
+	if _, handled := m.handleKey("ctrl+h"); !handled || !m.helpOpen {
+		t.Fatal("overridden help key did not open help")
+	}
+	body := strings.Join(m.helpBodyLines(), "\n")
+	for _, want := range []string{"ctrl+h", "show keyboard help", "ctrl+enter", "submit or steer"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dynamic help missing %q:\n%s", want, body)
+		}
+	}
+	m.closeHelp()
+	view := m.View().Content
+	if !strings.Contains(view, "ctrl+h help") || !strings.Contains(m.input.Placeholder, "ctrl+enter submits") {
+		t.Fatalf("visible hints drifted from runtime bindings:\n%s\nplaceholder=%q", view, m.input.Placeholder)
+	}
+}
+
+func TestFocusedContextWinsOverOverlappingGlobalOverride(t *testing.T) {
+	m, err := NewChecked(Options{
+		Theme: theme.New(theme.Mono),
+		Keybindings: []KeyBindingOverride{
+			{Context: KeyContextGlobal, Action: ActionGlobalHelp, Keys: []string{"enter"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.input.SetValue("submit me")
+	cmd, handled := m.handleKey("enter")
+	if !handled || cmd != nil || m.helpOpen {
+		t.Fatalf("composer submit did not win context precedence: handled=%v cmd=%v help=%v", handled, cmd != nil, m.helpOpen)
+	}
+}
+
+func TestDefaultNumericGovernanceBindingsRemainDistinct(t *testing.T) {
+	keys, err := newRuntimeKeymap(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		key    string
+		action KeyAction
+	}{
+		{"1", ActionApprovalOnce}, {"2", ActionApprovalSession},
+		{"3", ActionApprovalProject}, {"4", ActionApprovalDeny},
+	}
+	for _, tc := range cases {
+		if !keys.matches(KeyContextApproval, tc.action, tc.key) {
+			t.Errorf("approval key %q does not match %s", tc.key, tc.action)
+		}
+	}
+
+	fc := &fakeCaller{handler: map[string]any{"task.user.answer": nil}}
+	m, _ := newTestModel(fc)
+	options := make([]questionOption, 9)
+	for i := range options {
+		options[i] = questionOption{Label: "answer", Value: string(rune('a' + i))}
+	}
+	m.question = &questionState{QuestionID: "q_numeric", Options: options}
+	cmd, handled := m.questionKey("7")
+	if !handled || cmd == nil || !m.question.Resolving || m.question.Selected != 6 {
+		t.Fatalf("numeric question selection did not choose index 6: handled=%v selected=%d", handled, m.question.Selected)
+	}
+	drain(m, cmd)
+}
+
+func TestHelpIsImmediateAboveScrolledTranscriptAndNarrowViewCanExit(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	for i := 0; i < 80; i++ {
+		m.push("history line")
+	}
+	m.handleKey("pgup")
+	offset := m.vp.YOffset()
+	cmd, handled := m.handleKey("f1")
+	if !handled || cmd != nil || !m.helpOpen {
+		t.Fatal("F1 did not open help synchronously")
+	}
+	if view := m.View().Content; !strings.Contains(view, "Carina help") || strings.Contains(view, "history line") {
+		t.Fatalf("help was not the immediate visible surface:\n%s", view)
+	}
+	if m.vp.YOffset() != offset {
+		t.Fatal("opening help moved the transcript read position")
+	}
+	m.Update(tea.WindowSizeMsg{Width: 12, Height: 1})
+	if _, handled := m.handleKey("esc"); !handled || m.helpOpen {
+		t.Fatal("narrow help overlay could not be closed")
+	}
+}
+
+func TestGovernanceModalStaysAboveHelpAndOwnsOrdinaryKeys(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	m.showHelp()
+	m.Update(permissionRequestEvent("perm_over_help"))
+	if view := m.View().Content; !strings.Contains(view, "Approval required") || strings.Contains(view, "Carina help") {
+		t.Fatalf("help covered governance modal:\n%s", view)
+	}
+	if _, handled := m.handleKey("f1"); !handled || !m.helpOpen {
+		t.Fatal("governance modal did not consume F1 without changing underlying help state")
+	}
+}
+
+func TestCtrlCSemanticPriorityAndDraftRecovery(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{"task.cancel": nil}}
+	m, clock := newTestModel(fc)
+	m.inFlightTaskID = "tsk_running"
+	m.suggest = &suggestState{Kind: mentionCommand, Matches: []string{"help"}}
+	if _, handled := m.handleKey("ctrl+c"); !handled || m.suggest != nil {
+		t.Fatal("search-like suggestion did not consume Ctrl+C first")
+	}
+	if len(fc.calls) != 0 || m.inFlightTaskID == "" {
+		t.Fatal("suggestion Ctrl+C leaked into task cancellation")
+	}
+
+	cmd, _ := m.handleKey("ctrl+c")
+	drain(m, cmd)
+	if len(fc.calls) != 1 || fc.last().method != "task.cancel" {
+		t.Fatal("running Ctrl+C did not cancel the task")
+	}
+
+	clock.advance(3 * time.Second)
+	m.input.SetValue("recover this")
+	m.pendingPaste = []string{"pasted\ncontent"}
+	if cmd, handled := m.handleKey("ctrl+c"); !handled || cmd != nil {
+		t.Fatal("draft Ctrl+C should synchronously clear without quitting")
+	}
+	if m.input.Value() != "" || len(m.pendingPaste) != 0 {
+		t.Fatal("draft Ctrl+C did not clear the complete composer")
+	}
+	if _, handled := m.handleKey("ctrl+p"); !handled {
+		t.Fatal("cleared draft was not recoverable from prompt history")
+	}
+	if m.input.Value() != "recover this" || len(m.pendingPaste) != 1 {
+		t.Fatalf("recovered draft mismatch: text=%q paste=%#v", m.input.Value(), m.pendingPaste)
+	}
+}
+
+func TestCtrlDStateMatrixAndCtrlLPreservesDraft(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	cmd, handled := m.handleKey("ctrl+d")
+	if !handled || cmd == nil {
+		t.Fatal("idle empty Ctrl+D must exit")
+	}
+	if _, quit := cmd().(tea.QuitMsg); !quit {
+		t.Fatal("idle empty Ctrl+D did not return tea.Quit")
+	}
+
+	m.input.SetValue("ab")
+	m.input.SetCursorColumn(0)
+	m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	if got := m.input.Value(); got != "b" {
+		t.Fatalf("non-empty Ctrl+D lost textarea delete-forward: %q", got)
+	}
+
+	m.input.SetValue("draft")
+	m.pendingPaste = []string{"keep\nme"}
+	cmd, handled = m.handleKey("ctrl+l")
+	if !handled || cmd == nil {
+		t.Fatal("Ctrl+L did not request a redraw")
+	}
+	if _, quit := cmd().(tea.QuitMsg); quit {
+		t.Fatal("Ctrl+L unexpectedly quit")
+	}
+	if m.input.Value() != "draft" || len(m.pendingPaste) != 1 {
+		t.Fatal("Ctrl+L changed the draft")
+	}
+
+	m.input.Reset()
+	m.pendingPaste = nil
+	m.inFlightTaskID = "tsk_running"
+	if cmd, handled = m.handleKey("ctrl+d"); !handled || cmd != nil {
+		t.Fatal("empty Ctrl+D must be inert while a task is running")
+	}
+	m.inFlightTaskID = ""
+	m.approval = &approvalState{DecisionID: "perm_d", Action: "command.exec"}
+	if cmd, handled = m.handleKey("ctrl+d"); !handled || cmd != nil {
+		t.Fatal("Ctrl+D must not exit through a governance modal")
+	}
+}
+
+func TestOverriddenInterruptRetainsDoublePressState(t *testing.T) {
+	clock := &testClock{now: time.Unix(100, 0)}
+	m, err := NewChecked(Options{
+		Now: func() time.Time { return clock.now },
+		Keybindings: []KeyBindingOverride{{
+			Context: KeyContextGlobal,
+			Action:  ActionGlobalInterrupt,
+			Keys:    []string{"ctrl+x"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}); cmd != nil {
+		t.Fatal("first overridden interrupt should only arm exit")
+	}
+	clock.advance(time.Second)
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}); cmd == nil {
+		t.Fatal("second overridden interrupt did not exit")
+	} else if _, quit := cmd().(tea.QuitMsg); !quit {
+		t.Fatal("second overridden interrupt did not return tea.Quit")
+	}
+}

@@ -157,26 +157,26 @@ func (m *Model) historySearchKey(key string) (tea.Cmd, bool) {
 	if search == nil {
 		return nil, false
 	}
-	switch key {
-	case "ctrl+r", "up":
+	switch {
+	case m.keys.matches(KeyContextHistory, ActionHistoryPrevious, key):
 		m.stepHistorySearch(-1)
-	case "ctrl+s", "down":
+	case m.keys.matches(KeyContextHistory, ActionHistoryNext, key):
 		m.stepHistorySearch(1)
-	case "enter":
+	case m.keys.matches(KeyContextHistory, ActionHistoryAccept, key):
 		if search.status == historySearchMatch {
 			m.historySearch = nil
 			m.historyPos = len(m.history)
 			m.historyScratch = promptDraft{}
 			m.layout()
 		}
-	case "esc", "ctrl+c":
+	case m.keys.matches(KeyContextHistory, ActionHistoryCancel, key):
 		m.cancelHistorySearch()
-	case "backspace", "ctrl+h":
+	case canonicalKey(key) == "backspace" || canonicalKey(key) == "ctrl+h":
 		runes := []rune(search.query)
 		if len(runes) > 0 {
 			m.updateHistorySearchQuery(string(runes[:len(runes)-1]))
 		}
-	case "ctrl+u":
+	case canonicalKey(key) == "ctrl+u":
 		m.updateHistorySearchQuery("")
 	default:
 		if text, ok := historySearchInput(key); ok {
@@ -328,7 +328,11 @@ func (m *Model) historySearchPresentation(width int) (string, string, string) {
 	}
 	if width >= 64 {
 		return "reverse-i-search: ", search.query,
-			"  " + status + "  ctrl+r/up older  ctrl+s/down newer  enter accept  esc cancel"
+			"  " + status + "  " +
+				m.keys.label(KeyContextHistory, ActionHistoryPrevious) + " older  " +
+				m.keys.label(KeyContextHistory, ActionHistoryNext) + " newer  " +
+				m.keys.label(KeyContextHistory, ActionHistoryAccept) + " accept  " +
+				m.keys.label(KeyContextHistory, ActionHistoryCancel) + " cancel"
 	}
 	if width >= 24 {
 		return "history " + status + ": ", search.query, ""

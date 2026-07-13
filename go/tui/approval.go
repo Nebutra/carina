@@ -312,33 +312,29 @@ func (m *Model) approvalKey(key string) (tea.Cmd, bool) {
 	if ap.Resolving {
 		return nil, true
 	}
-	switch key {
-	case "y", "1", "enter":
+	switch {
+	case m.keys.matches(KeyContextApproval, ActionApprovalOnce, key):
 		return m.resolveApproval("once", true), true
-	case "2":
+	case m.keys.matches(KeyContextApproval, ActionApprovalSession, key):
 		return m.resolveApproval("session", true), true
-	case "3":
+	case m.keys.matches(KeyContextApproval, ActionApprovalProject, key):
 		return m.resolveApproval("project", true), true
-	case "n", "4":
+	case m.keys.matches(KeyContextApproval, ActionApprovalDeny, key):
 		return m.resolveApproval("deny", false), true
-	case "esc":
-		// Escape is a governance action, not a local dismissal: map it to the
-		// daemon's explicit deny RPC and keep the overlay resolving until ACK.
-		return m.resolveApproval("deny", false), true
-	case "up", "k":
+	case m.keys.matches(KeyContextApproval, ActionApprovalUp, key):
 		ap.Scroll--
-	case "down", "j":
+	case m.keys.matches(KeyContextApproval, ActionApprovalDown, key):
 		ap.Scroll++
-	case "pgup":
+	case m.keys.matches(KeyContextApproval, ActionApprovalPageUp, key):
 		ap.Scroll -= m.approvalViewportHeight()
-	case "pgdown", " ":
+	case m.keys.matches(KeyContextApproval, ActionApprovalPageDown, key):
 		ap.Scroll += m.approvalViewportHeight()
-	case "home":
+	case m.keys.matches(KeyContextApproval, ActionApprovalTop, key):
 		ap.Scroll = 0
-	case "end":
+	case m.keys.matches(KeyContextApproval, ActionApprovalBottom, key):
 		ap.Scroll = len(m.approvalBodyLines())
 	default:
-		return nil, true
+		return nil, false
 	}
 	m.clampApprovalScroll()
 	return nil, true
@@ -423,12 +419,25 @@ func (m *Model) overlayView() string {
 	end := minInt(start+m.approvalViewportHeight(), len(body))
 	visibleBody := body[start:end]
 
-	footer := "[y/1/enter] approve once  [2] session  [3] project  [esc/n/4] deny"
+	footer := fmt.Sprintf("[%s] approve once  [%s] session  [%s] project  [%s] deny",
+		m.keys.label(KeyContextApproval, ActionApprovalOnce),
+		m.keys.label(KeyContextApproval, ActionApprovalSession),
+		m.keys.label(KeyContextApproval, ActionApprovalProject),
+		m.keys.label(KeyContextApproval, ActionApprovalDeny),
+	)
 	if contentWidth < 56 {
-		footer = "[1] allow once  [2/3] broader  [esc/4] deny"
+		footer = fmt.Sprintf("[%s] allow  [%s/%s] broader  [%s] deny",
+			primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalOnce)),
+			primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalSession)),
+			primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalProject)),
+			primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalDeny)),
+		)
 	}
 	if contentWidth < 34 {
-		footer = "[1] allow  [esc/4] deny"
+		footer = fmt.Sprintf("[%s] allow  [%s] deny",
+			primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalOnce)),
+			primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalDeny)),
+		)
 	}
 	if ap.Resolving {
 		footer = "Resolving decision..."

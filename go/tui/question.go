@@ -187,34 +187,36 @@ func (m *Model) questionKey(key string) (tea.Cmd, bool) {
 		q.Error = "No answer options are available. Waiting for the agent to update this question."
 		return nil, true
 	}
-	n, err := strconv.Atoi(key)
-	if err == nil && n >= 1 && n <= len(q.Options) && n <= 9 {
-		return m.answerQuestion(n - 1), true
-	}
-	switch key {
-	case "up", "k", "shift+tab":
+	switch {
+	case m.keys.matches(KeyContextQuestion, ActionQuestionAnswer, key):
+		n, err := strconv.Atoi(key)
+		if err == nil && n >= 1 && n <= len(q.Options) && n <= 9 {
+			return m.answerQuestion(n - 1), true
+		}
+		return m.answerQuestion(q.Selected), true
+	case m.keys.matches(KeyContextQuestion, ActionQuestionPrevious, key):
 		q.Selected = (q.Selected - 1 + len(q.Options)) % len(q.Options)
 		m.ensureQuestionSelectionVisible()
-	case "down", "j", "tab":
+	case m.keys.matches(KeyContextQuestion, ActionQuestionNext, key):
 		q.Selected = (q.Selected + 1) % len(q.Options)
 		m.ensureQuestionSelectionVisible()
-	case "enter", " ":
-		return m.answerQuestion(q.Selected), true
-	case "pgup":
+	case m.keys.matches(KeyContextQuestion, ActionQuestionPageUp, key):
 		q.Scroll -= m.questionViewportHeight()
 		m.clampQuestionScroll()
-	case "pgdown":
+	case m.keys.matches(KeyContextQuestion, ActionQuestionPageDown, key):
 		q.Scroll += m.questionViewportHeight()
 		m.clampQuestionScroll()
-	case "home":
+	case m.keys.matches(KeyContextQuestion, ActionQuestionTop, key):
 		q.Scroll = 0
-	case "end":
+	case m.keys.matches(KeyContextQuestion, ActionQuestionBottom, key):
 		q.Scroll = len(m.questionBodyLines())
 		m.clampQuestionScroll()
-	case "esc":
+	case m.keys.matches(KeyContextQuestion, ActionQuestionCancel, key):
 		// task.user.answer has no cancellation counterpart. Keep the pending
 		// server question visible instead of silently orphaning the task.
 		q.Error = "This question is still pending. Choose an answer; Esc cannot dismiss it."
+	default:
+		return nil, false
 	}
 	return nil, true
 }
@@ -238,12 +240,20 @@ func (m *Model) questionOverlayView() string {
 	for _, line := range body[start:end] {
 		lines = append(lines, fitLine(line, contentWidth))
 	}
-	footer := "[up/down/tab] select  [enter/space/1-9] answer"
+	footer := fmt.Sprintf("[%s/%s] select  [%s] answer",
+		m.keys.label(KeyContextQuestion, ActionQuestionPrevious),
+		m.keys.label(KeyContextQuestion, ActionQuestionNext),
+		m.keys.label(KeyContextQuestion, ActionQuestionAnswer),
+	)
 	if contentWidth < 44 {
-		footer = "[up/down] pick  [enter] answer"
+		footer = fmt.Sprintf("[%s/%s] pick  [%s] answer",
+			primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionPrevious)),
+			primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionNext)),
+			primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionAnswer)),
+		)
 	}
 	if contentWidth < 28 {
-		footer = "[enter] answer"
+		footer = fmt.Sprintf("[%s] answer", primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionAnswer)))
 	}
 	if q.Resolving {
 		footer = "Sending answer..."

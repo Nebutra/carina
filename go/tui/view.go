@@ -191,7 +191,13 @@ func (m *Model) suggestPanelLines() []string {
 		title = "commands"
 	}
 	lines := make([]string, 0, len(m.suggest.Matches)+1)
-	lines = append(lines, m.th.Style(theme.RoleMuted).Render(title+" (up/down select, tab/enter complete, esc close)"))
+	lines = append(lines, m.th.Style(theme.RoleMuted).Render(fmt.Sprintf("%s (%s/%s select, %s complete, %s close)",
+		title,
+		m.keys.label(KeyContextSuggestion, ActionSuggestionPrevious),
+		m.keys.label(KeyContextSuggestion, ActionSuggestionNext),
+		m.keys.label(KeyContextSuggestion, ActionSuggestionAccept),
+		m.keys.label(KeyContextSuggestion, ActionSuggestionDismiss),
+	)))
 	prefixChar := "@"
 	if m.suggest.Kind == mentionCommand {
 		prefixChar = "/"
@@ -378,7 +384,8 @@ func (m *Model) View() tea.View {
 		activity += fmt.Sprintf(" · %d new", m.unseenLines)
 	}
 	statusLine := m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
-		" carina · %s · mode %s · %s · f1 help", status, m.mode, activity))
+		" carina · %s · mode %s · %s · %s help", status, m.mode, activity,
+		primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalHelp))))
 	if l.showStatus {
 		b.WriteString(fitRenderedLine(statusLine, l.width))
 	}
@@ -397,6 +404,10 @@ func (m *Model) View() tea.View {
 		modal := fitViewBlock(m.overlayView(), l.width, l.height, true)
 		content = lipgloss.Place(l.width, l.height,
 			lipgloss.Center, lipgloss.Center, modal)
+	} else if m.helpOpen {
+		modal := fitViewBlock(m.helpOverlayView(), l.width, l.height, true)
+		content = lipgloss.Place(l.width, l.height,
+			lipgloss.Center, lipgloss.Center, modal)
 	}
 
 	v := tea.NewView(content)
@@ -407,7 +418,7 @@ func (m *Model) View() tea.View {
 	// A nil declared cursor makes Bubble Tea hide the terminal cursor. This is
 	// intentional while an overlay owns input, and whenever a zero-sized host
 	// has not supplied a usable cell grid yet (R21).
-	if m.question == nil && m.approval == nil && m.width > 0 && m.height > 0 {
+	if !m.helpOpen && m.question == nil && m.approval == nil && m.width > 0 && m.height > 0 {
 		if m.historySearch != nil {
 			cursor := m.input.Cursor()
 			if cursor == nil {
