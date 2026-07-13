@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -153,6 +154,29 @@ func TestHistorySearchPasteOnlyEditsQueryAndCancelRestoresPendingPaste(t *testin
 	pressHistoryKey(t, m, "ctrl+c")
 	if got := m.currentDraft(); got.Text != "original draft" || len(got.Paste) != 1 || got.Paste[0] != "existing\npaste" {
 		t.Fatalf("cancel after search paste restored %+v", got)
+	}
+}
+
+func TestHistorySearchKeysBypassPasteBurstStructuralCapture(t *testing.T) {
+	now := time.Unix(100, 0)
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en", Now: func() time.Time { return now }})
+	m.history = []promptDraft{{Text: "abc result"}}
+	m.historyPos = len(m.history)
+	startHistorySearch(t, m)
+
+	for _, r := range "abc" {
+		m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
+		now = now.Add(time.Millisecond)
+	}
+	if m.pasteBurst.structuralKeyIsText(now) {
+		t.Fatal("history query activated the composer paste-burst window")
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.historySearch != nil {
+		t.Fatal("Enter was captured as paste text instead of accepting history search")
+	}
+	if got := m.input.Value(); got != "abc result" || strings.Contains(got, "\n") {
+		t.Fatalf("accepted history draft = %q", got)
 	}
 }
 

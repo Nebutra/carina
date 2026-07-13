@@ -156,7 +156,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleMouseWheel(msg)
 
 	case tea.KeyPressMsg:
-		if m.approval != nil || m.question != nil || m.submitting != nil {
+		if m.approval != nil || m.question != nil || m.historySearch != nil || m.submitting != nil {
 			m.pasteBurst.reset()
 		} else if cmd, handled := m.handlePasteBurstKey(msg); handled {
 			return m, cmd
