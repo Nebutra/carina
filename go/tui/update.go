@@ -55,7 +55,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.conn = ConnConnected
 		m.attempt = 0
 		m.push(m.th.Style(theme.RoleMuted).Render("- attached to " + msg.SessionID))
-		return m, nil
+		return m, m.loadRecentHistory(msg.Call)
 
 	case TaskActiveMsg:
 		if msg.TaskID != "" && msg.TaskID != m.inFlightTaskID {
@@ -115,6 +115,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleQuestionDone(msg)
 		return m, nil
 
+	case historyLoadedMsg:
+		m.handleHistoryLoaded(msg)
+		return m, nil
+
 	case rpcErrMsg:
 		m.push(fmt.Sprintf("%s rpc: %s", glyphFailed(m.th), msg.err.Error()))
 		return m, nil
@@ -135,6 +139,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// their RPC is resolving. Never let a terminal paste mutate the hidden
 		// composer behind the modal.
 		if m.approval != nil || m.question != nil || m.submitting != nil {
+			return m, nil
+		}
+		if m.historySearch != nil {
+			// Modal precedence is approval/question > history search > normal
+			// composer paste handling. A hidden search never lets pasted bytes
+			// leak into pendingPaste behind a governance overlay.
+			if m.approval == nil && m.question == nil {
+				m.appendHistorySearchQuery(msg.Content)
+			}
 			return m, nil
 		}
 		return m, m.handlePaste(msg)
@@ -208,6 +221,12 @@ func (m *Model) handleEvent(ev map[string]any) {
 // to the input box; Update forwards those (grapheme handling lives in
 // bubbles' textinput).
 func (m *Model) handleKey(key string) (tea.Cmd, bool) {
+	// Governance overlays remain the top modal surface. Otherwise history
+	// search owns the keyboard before global Ctrl+C so cancellation restores
+	// its exact draft instead of interrupting a task or arming exit.
+	if m.historySearch != nil && m.question == nil && m.approval == nil {
+		return m.historySearchKey(key)
+	}
 	if key == "ctrl+c" {
 		return m.ctrlC(), true
 	}
@@ -263,6 +282,9 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		// Preserve the exact draft and caret until the RPC acknowledges it.
 		// This also makes rapid repeated Enter presses idempotent.
 		return nil, true
+	}
+	if key == "ctrl+r" {
+		return nil, m.beginHistorySearch()
 	}
 	if len(m.pendingPaste) > 0 && key == "ctrl+z" {
 		m.pendingPaste = m.pendingPaste[:len(m.pendingPaste)-1]
@@ -545,10 +567,7 @@ func (m *Model) commitDraft(draft promptDraft, consumePaste bool) {
 
 func (m *Model) recordHistory(draft promptDraft) {
 	draft.Paste = append([]string(nil), draft.Paste...)
-	if len(m.history) > 0 && draftsEqual(m.history[len(m.history)-1], draft) {
-		return
-	}
-	m.history = append(m.history, draft)
+	m.history = mergePromptHistory(nil, append(m.history, draft))
 }
 
 func (m *Model) atHistoryBoundary(direction int) bool {
@@ -609,6 +628,7 @@ func (m *Model) showHelp() {
 		"  /<command>             at the start of the line - suggestions appear as you type\n" +
 		"  arrows choose · tab/enter completes · esc dismisses suggestions\n" +
 		"  up/down or ctrl+p/n recalls prompt history at input boundaries\n" +
+		"  ctrl+r searches prompt history · ctrl+s moves to a newer match\n" +
 		"  shift+enter newline · ctrl+z undo latest paste · mouse/pgup/pgdown scroll\n" +
 		"  alt+home/end jump · ctrl+o expand · f1 help · ctrl+c cancel")
 }

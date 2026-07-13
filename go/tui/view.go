@@ -23,11 +23,13 @@ type rootLayout struct {
 	taskLines      int
 	pasteLines     int
 	suggestLines   int
+	historyLines   int
 	showTranscript bool
 	showStatus     bool
 	viewportHeight int
 	inputHeight    int
 	inputX, inputY int
+	historyY       int
 }
 
 // layout recomputes component sizes. The prompt grows with its content but is
@@ -58,7 +60,9 @@ func (m *Model) configureInput() {
 		h = 1
 	}
 	framed := w >= 6 && h >= 7
-	showStatus := h >= 2
+	// At two rows an active history search uses the non-input row for its
+	// query/status instead of the generic status bar.
+	showStatus := h >= 2 && (m.historySearch == nil || h >= 3)
 	if w < 4 {
 		m.input.Prompt = ""
 	} else {
@@ -106,7 +110,7 @@ func (m *Model) calculateLayout() rootLayout {
 		h = 1
 	}
 
-	l := rootLayout{width: w, height: h, showStatus: h >= 2}
+	l := rootLayout{width: w, height: h, showStatus: h >= 2 && (m.historySearch == nil || h >= 3)}
 	l.framed = w >= 6 && h >= 7
 	l.inputHeight = m.input.Height()
 
@@ -117,6 +121,10 @@ func (m *Model) calculateLayout() rootLayout {
 	}
 	remaining := h - l.inputHeight - borderRows
 	if l.showStatus {
+		remaining--
+	}
+	if m.historySearch != nil && remaining > 0 {
+		l.historyLines = 1
 		remaining--
 	}
 	if remaining > 0 {
@@ -160,6 +168,8 @@ func (m *Model) calculateLayout() rootLayout {
 	}
 	y += l.suggestLines
 	y += l.pasteLines
+	l.historyY = y
+	y += l.historyLines
 	if l.framed {
 		y++ // input frame's top border
 	}
@@ -343,6 +353,10 @@ func (m *Model) View() tea.View {
 		}
 		b.WriteString("\n")
 	}
+	if l.historyLines > 0 {
+		b.WriteString(m.historySearchPanelLine(l.width))
+		b.WriteString("\n")
+	}
 	if l.framed {
 		b.WriteString(frame.Render(m.input.View()))
 	} else {
@@ -370,6 +384,11 @@ func (m *Model) View() tea.View {
 	}
 
 	content := fitViewBlock(strings.TrimSuffix(b.String(), "\n"), l.width, l.height, false)
+	if m.historySearch != nil && l.historyLines == 0 {
+		// In a one-row terminal the search prompt is more actionable than a
+		// stale textarea preview. The accepted draft returns on Enter.
+		content = m.historySearchPanelLine(l.width)
+	}
 	if m.question != nil {
 		modal := fitViewBlock(m.questionOverlayView(), l.width, l.height, true)
 		content = lipgloss.Place(l.width, l.height,
@@ -389,7 +408,18 @@ func (m *Model) View() tea.View {
 	// intentional while an overlay owns input, and whenever a zero-sized host
 	// has not supplied a usable cell grid yet (R21).
 	if m.question == nil && m.approval == nil && m.width > 0 && m.height > 0 {
-		if cursor := m.input.Cursor(); cursor != nil {
+		if m.historySearch != nil {
+			cursor := m.input.Cursor()
+			if cursor == nil {
+				cursor = tea.NewCursor(0, 0)
+			}
+			cursor.Position.X = m.historySearchCursorX(l.width)
+			cursor.Position.Y = 0
+			if l.historyLines > 0 {
+				cursor.Position.Y = l.historyY
+			}
+			v.Cursor = cursor
+		} else if cursor := m.input.Cursor(); cursor != nil {
 			cursor.Position.X = clampInt(cursor.Position.X+l.inputX, 0, l.width-1)
 			cursor.Position.Y = clampInt(cursor.Position.Y+l.inputY, 0, l.height-1)
 			v.Cursor = cursor
