@@ -22,6 +22,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Nebutra/carina/go/tui/theme"
 )
@@ -72,12 +73,32 @@ type (
 	}
 )
 
-type taskSubmittedMsg struct {
-	taskID string
+type promptDraft struct {
+	Text  string
+	Paste []string
 }
 
-type taskSteeredMsg struct {
-	taskID string
+type submissionKind string
+
+const (
+	submissionTask  submissionKind = "task"
+	submissionSteer submissionKind = "steer"
+	submissionShell submissionKind = "shell"
+)
+
+type submissionState struct {
+	generation   int
+	kind         submissionKind
+	target       string
+	draft        promptDraft
+	consumePaste bool
+}
+
+type submissionDoneMsg struct {
+	generation int
+	taskID     string
+	result     string
+	err        error
 }
 
 type cancelDoneMsg struct {
@@ -118,6 +139,7 @@ type Model struct {
 	now           func() time.Time
 
 	width, height int
+	root          rootLayout
 	vp            viewport.Model
 	input         textarea.Model
 	tr            transcript
@@ -129,19 +151,30 @@ type Model struct {
 	conn      ConnState
 	attempt   int
 
-	approval         *approvalState
-	approvalQueue    []map[string]any // permission.request envelopes queued while an overlay is open
-	question         *questionState
-	questionQueue    []map[string]any
-	questionSeen     map[string]bool
-	questionResolved map[string]bool
-	tasks            taskGraph
-	inFlightTaskID   string
-	pendingPaste     []string
-	lastCtrlC        time.Time
-	ctrlCHint        string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
-	mode             string
-	outcome          Outcome
+	approval           *approvalState
+	approvalQueue      []map[string]any // permission.request envelopes queued while an overlay is open
+	approvalSeen       map[string]bool
+	approvalResolved   map[string]bool
+	approvalPending    map[string]approvalResolutionSnapshot
+	approvalOrder      map[string]uint64
+	approvalNextSeq    uint64
+	approvalOutcomeSeq uint64
+	question           *questionState
+	questionQueue      []map[string]any
+	questionSeen       map[string]bool
+	questionResolved   map[string]bool
+	tasks              taskGraph
+	inFlightTaskID     string
+	pendingPaste       []string
+	submitting         *submissionState
+	submissionGen      int
+	history            []promptDraft
+	historyPos         int
+	historyScratch     promptDraft
+	lastCtrlC          time.Time
+	ctrlCHint          string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
+	mode               string
+	outcome            Outcome
 
 	// Mention/slash suggestion panel (@-file, @-agent, /-command). See
 	// suggest.go for the debounce/fetch flow and mention.go for trigger
@@ -167,10 +200,16 @@ func New(o Options) *Model {
 	ti.MinHeight = 1
 	ti.MaxHeight = 6
 	ti.MaxContentHeight = 1000
+	ti.SetStyles(inputStyles(o.Theme))
+	// Bubble Tea's declared cursor is the terminal cursor and therefore the
+	// anchor used by IMEs for their candidate window. The textarea's default
+	// virtual cursor only paints a cell in the returned string; it cannot move
+	// the terminal cursor to the logical caret (R13/R21).
+	ti.SetVirtualCursor(false)
 	ti.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j", "shift+enter"))
 	// Keep the placeholder ASCII so its width stays predictable across the
 	// terminal profiles covered by the PTY tests.
-	ti.Placeholder = "type an instruction - enter submits, ctrl+c cancels"
+	ti.Placeholder = "type an instruction - enter submits, shift+enter adds a line, f1 opens help"
 	_ = ti.Focus()
 	m := &Model{
 		th:               o.Theme,
@@ -184,12 +223,54 @@ func New(o Options) *Model {
 		followTail:       true,
 		questionSeen:     make(map[string]bool),
 		questionResolved: make(map[string]bool),
+		approvalSeen:     make(map[string]bool),
+		approvalResolved: make(map[string]bool),
+		approvalPending:  make(map[string]approvalResolutionSnapshot),
+		approvalOrder:    make(map[string]uint64),
 		width:            80,
 		height:           24,
 		mode:             "build",
 	}
 	m.layout()
 	return m
+}
+
+// inputStyles keeps the third-party textarea inside Carina's terminal
+// capability contract. Bubbles defaults include explicit black/white ANSI
+// colors, which would otherwise leak through NO_COLOR/Mono rendering.
+func inputStyles(th theme.Theme) textarea.Styles {
+	plain := lipgloss.NewStyle()
+	text := th.Style(theme.RoleText)
+	muted := th.Style(theme.RoleMuted)
+	prompt := th.Style(theme.RoleInfo)
+	s := textarea.Styles{
+		Focused: textarea.StyleState{
+			Base:             plain,
+			CursorLine:       plain,
+			CursorLineNumber: muted,
+			EndOfBuffer:      muted,
+			LineNumber:       muted,
+			Placeholder:      muted,
+			Prompt:           prompt,
+			Text:             text,
+		},
+		Blurred: textarea.StyleState{
+			Base:             plain,
+			CursorLine:       plain,
+			CursorLineNumber: muted,
+			EndOfBuffer:      muted,
+			LineNumber:       muted,
+			Placeholder:      muted,
+			Prompt:           prompt,
+			Text:             text,
+		},
+		Cursor: textarea.CursorStyle{
+			Color: th.Color(theme.RoleText),
+			Shape: tea.CursorBar,
+			Blink: true,
+		},
+	}
+	return s
 }
 
 // Init implements tea.Model.

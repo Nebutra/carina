@@ -23,9 +23,8 @@ var errSuggestNotConnected = errors.New("daemon not connected")
 // once the operator pauses.
 const suggestDebounce = 150 * time.Millisecond
 
-// suggestMaxResults caps how many matches are ever shown, so the panel stays
-// a fixed, glanceable size and stays within the number-key (1-9) selection
-// range.
+// suggestMaxResults caps how many matches are ever shown, so the keyboard-
+// navigable panel stays a fixed, glanceable size.
 const suggestMaxResults = 8
 
 // treeCacheTTL bounds how often workspace.tree is re-fetched to build the
@@ -55,11 +54,12 @@ type treeEntry struct {
 // the way the approval/question overlays correctly do — the operator is
 // still mid-typing while it is open.
 type suggestState struct {
-	Kind    mentionKind
-	Query   string
-	Matches []string // display form as it should be spliced into the input, without the trigger char
-	Start   int      // rune offset of the trigger character within the current line
-	Row     int      // textarea row the trigger belongs to
+	Kind     mentionKind
+	Query    string
+	Matches  []string // display form as it should be spliced into the input, without the trigger char
+	Selected int      // keyboard-highlighted match; always clamped to Matches
+	Start    int      // rune offset of the trigger character within the current line
+	Row      int      // textarea row the trigger belongs to
 }
 
 // suggestDebounceMsg fires suggestDebounce after a trigger's query last
@@ -224,11 +224,12 @@ func (m *Model) handleSuggestResult(msg suggestResultMsg) {
 		return
 	}
 	m.suggest = &suggestState{
-		Kind:    msg.trigger.Kind,
-		Query:   msg.trigger.Query,
-		Matches: msg.matches,
-		Start:   msg.trigger.Start,
-		Row:     msg.row,
+		Kind:     msg.trigger.Kind,
+		Query:    msg.trigger.Query,
+		Matches:  msg.matches,
+		Selected: 0,
+		Start:    msg.trigger.Start,
+		Row:      msg.row,
 	}
 }
 

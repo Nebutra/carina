@@ -90,15 +90,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleEvent(msg.Raw)
 		return m, nil
 
-	case taskSubmittedMsg:
-		m.inFlightTaskID = msg.taskID
-		m.tasks.setTask(msg.taskID, "running")
-		m.push(m.th.Style(theme.RoleMuted).Render("- task " + msg.taskID + " submitted"))
-		m.layout()
-		return m, nil
-
-	case taskSteeredMsg:
-		m.push(m.th.Style(theme.RoleMuted).Render("- steering queued for task " + msg.taskID))
+	case submissionDoneMsg:
+		m.handleSubmissionDone(msg)
 		return m, nil
 
 	case cancelDoneMsg:
@@ -137,7 +130,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.PasteMsg:
+		if m.submitting != nil {
+			return m, nil
+		}
 		return m, m.handlePaste(msg)
+
+	case tea.MouseWheelMsg:
+		return m, m.handleMouseWheel(msg)
 
 	case tea.KeyPressMsg:
 		if cmd, handled := m.handleKey(msg.String()); handled {
@@ -182,6 +181,7 @@ func (m *Model) handleEvent(ev map[string]any) {
 	m.pushEvent(ev)
 	m.tasks.observeEvent(ev)
 	m.observeQuestionResolution(ev)
+	m.observeApprovalResolution(ev)
 	switch str(ev["type"]) {
 	case "permission.request":
 		m.openApproval(ev)
@@ -205,30 +205,14 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	if cmd, handled := m.questionKey(key); handled {
 		return cmd, true
 	}
-	if m.approval != nil {
-		switch key {
-		case "y", "1":
-			return m.resolveApproval("once", true), true
-		case "2":
-			return m.resolveApproval("session", true), true
-		case "3":
-			return m.resolveApproval("project", true), true
-		case "n", "4":
-			return m.resolveApproval("deny", false), true
-		case "esc":
-			id := m.approval.DecisionID
-			m.nextQueuedApproval()
-			m.push(m.th.Style(theme.RoleMuted).Render(
-				"- approval prompt dismissed; decision " + id + " is still pending server-side"))
-			return nil, true
-		}
-		return nil, true // the overlay owns the keyboard while open
+	if cmd, handled := m.approvalKey(key); handled {
+		return cmd, true
 	}
 	// The mention/slash suggestion panel is a transient, non-modal aid: it
 	// never takes the keyboard away from the approval/question overlays
 	// (those are already handled and returned above, so reaching here means
 	// neither is open) and only intercepts a small set of keys itself.
-	if m.suggest != nil {
+	if m.suggest != nil && m.calculateLayout().suggestLines > 0 {
 		if cmd, handled := m.suggestKey(key); handled {
 			return cmd, true
 		}
@@ -262,9 +246,25 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 			}
 		}
 		return nil, true
-	case "?":
+	case "f1":
 		m.showHelp()
 		return nil, true
+	}
+	if m.submitting != nil {
+		// Preserve the exact draft and caret until the RPC acknowledges it.
+		// This also makes rapid repeated Enter presses idempotent.
+		return nil, true
+	}
+	if len(m.pendingPaste) > 0 && key == "ctrl+z" {
+		m.pendingPaste = m.pendingPaste[:len(m.pendingPaste)-1]
+		m.layout()
+		return nil, true
+	}
+	if key == "ctrl+p" || (key == "up" && m.atHistoryBoundary(-1)) {
+		return nil, m.moveHistory(-1)
+	}
+	if key == "ctrl+n" || (key == "down" && m.atHistoryBoundary(1)) {
+		return nil, m.moveHistory(1)
 	}
 	if key == "enter" {
 		return m.submit(), true
@@ -272,29 +272,59 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	return nil, false
 }
 
+func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
+	delta := 0
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		delta = -3
+	case tea.MouseWheelDown:
+		delta = 3
+	default:
+		return nil
+	}
+	if m.question != nil {
+		m.question.Scroll += delta
+		m.clampQuestionScroll()
+		return nil
+	}
+	if m.approval != nil {
+		m.approval.Scroll += delta
+		m.clampApprovalScroll()
+		return nil
+	}
+	var cmd tea.Cmd
+	m.vp, cmd = m.vp.Update(msg)
+	m.followTail = m.vp.AtBottom()
+	if m.followTail {
+		m.unseenLines = 0
+	}
+	return cmd
+}
+
 // suggestKey handles keys while the mention/slash suggestion panel is open.
-// Selection uses number keys 1-9 (mirroring the existing approval-overlay
-// numeric-selection convention: y/1/2/3/n/4 in the block above), matching
-// the panel's own displayed numbering. esc closes the panel without
-// modifying the input, mirroring the approval esc-dismiss convention. Any
-// other key besides the trigger's own editing keys is treated as "the
-// operator moved on" and closes the panel without swallowing the
-// keystroke — it still falls through to the textarea.
+// Selection follows common completion-menu conventions: arrows or ctrl+p/n
+// move, tab/enter accepts, and esc dismisses. Printable characters, including
+// digits, remain prompt input rather than hidden accelerators.
 func (m *Model) suggestKey(key string) (tea.Cmd, bool) {
 	switch key {
 	case "esc":
 		m.closeSuggest()
 		return nil, true
-	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		idx := int(key[0] - '1')
-		if idx < len(m.suggest.Matches) {
-			m.applySuggestSelection(idx)
-			return nil, true
+	case "up", "ctrl+p":
+		if len(m.suggest.Matches) > 0 {
+			m.suggest.Selected = (m.suggest.Selected - 1 + len(m.suggest.Matches)) % len(m.suggest.Matches)
 		}
-		// Out of range for the current match count: not a selection: let it
-		// fall through as ordinary typed input instead of silently eating a
-		// digit the operator meant to type.
-		return nil, false
+		return nil, true
+	case "down", "ctrl+n":
+		if len(m.suggest.Matches) > 0 {
+			m.suggest.Selected = (m.suggest.Selected + 1) % len(m.suggest.Matches)
+		}
+		return nil, true
+	case "tab", "enter":
+		if len(m.suggest.Matches) > 0 {
+			m.applySuggestSelection(m.suggest.Selected)
+		}
+		return nil, true
 	}
 	// Navigation/editing keys that plausibly continue shaping the query
 	// (backspace, arrows, plain character keys) are left unhandled here so
@@ -348,51 +378,213 @@ func (m *Model) cancelTask(taskID string) tea.Cmd {
 // surface becomes steering: the operator can redirect the current loop without
 // cancelling it or accidentally starting a second concurrent task.
 func (m *Model) submit() tea.Cmd {
-	text := strings.TrimSpace(m.input.Value())
-	paste := m.pendingPaste
+	draft := m.currentDraft()
+	text := strings.TrimSpace(draft.Text)
+	paste := draft.Paste
 	if text == "" && len(paste) == 0 {
 		return nil
 	}
-	m.input.Reset()
-	m.pendingPaste = nil
-	m.layout()
 	if strings.HasPrefix(text, "/") {
-		return m.slashCommand(text)
+		cmd := m.slashCommand(text)
+		if validSlashCommand(text) {
+			m.commitDraft(draft, false)
+		}
+		return cmd
 	}
 	if strings.HasPrefix(text, "!") {
-		return m.shellCommand(strings.TrimSpace(strings.TrimPrefix(text, "!")))
-	}
-	prompt := text
-	if len(paste) > 0 {
-		prompt = strings.TrimSpace(text + "\n" + strings.Join(paste, "\n"))
-	}
-	shown := text
-	if shown == "" {
-		shown = "[pasted content]"
+		return m.submitShell(draft, strings.TrimSpace(strings.TrimPrefix(text, "!")))
 	}
 	if m.inFlightTaskID != "" {
-		taskID := m.inFlightTaskID
-		m.push(m.th.Style(theme.RoleTitle).Render("you (steer) ") + shown)
-		return m.steerTask(taskID, prompt)
+		return m.beginSubmission(submissionSteer, m.inFlightTaskID, draft)
 	}
-	m.push(m.th.Style(theme.RoleTitle).Render("you ") + shown)
-	call, sid := m.call, m.sessionID
-	if call == nil {
-		m.push(fmt.Sprintf("%s not connected: the instruction was not sent", glyphFailed(m.th)))
+	return m.beginSubmission(submissionTask, "", draft)
+}
+
+func (m *Model) currentDraft() promptDraft {
+	return promptDraft{Text: m.input.Value(), Paste: append([]string(nil), m.pendingPaste...)}
+}
+
+func draftsEqual(a, b promptDraft) bool {
+	if a.Text != b.Text || len(a.Paste) != len(b.Paste) {
+		return false
+	}
+	for i := range a.Paste {
+		if a.Paste[i] != b.Paste[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func draftPrompt(draft promptDraft) string {
+	text := strings.TrimSpace(draft.Text)
+	paste := strings.Join(draft.Paste, "\n")
+	if text == "" {
+		return paste
+	}
+	if paste == "" {
+		return text
+	}
+	return text + "\n" + paste
+}
+
+func draftLabel(draft promptDraft) string {
+	if text := strings.TrimSpace(draft.Text); text != "" {
+		return text
+	}
+	return "[pasted content]"
+}
+
+func (m *Model) beginSubmission(kind submissionKind, target string, draft promptDraft) tea.Cmd {
+	if m.submitting != nil {
 		return nil
 	}
-	return func() tea.Msg {
-		var out struct {
-			TaskID string `json:"task_id"`
-		}
-		if err := call.Call("task.submit", map[string]any{
-			"session_id": sid,
-			"prompt":     prompt,
-		}, &out); err != nil {
-			return rpcErrMsg{err: err}
-		}
-		return taskSubmittedMsg{taskID: out.TaskID}
+	call := m.call
+	if call == nil {
+		m.push(fmt.Sprintf("%s not connected: draft kept for retry", glyphFailed(m.th)))
+		return nil
 	}
+	m.submissionGen++
+	state := &submissionState{
+		generation:   m.submissionGen,
+		kind:         kind,
+		target:       target,
+		draft:        draft,
+		consumePaste: kind != submissionShell,
+	}
+	m.submitting = state
+	m.closeSuggest()
+	m.layout()
+	prompt, sid, generation := draftPrompt(draft), m.sessionID, state.generation
+	return func() tea.Msg {
+		switch kind {
+		case submissionSteer:
+			err := call.Call("task.steer", map[string]any{"task_id": target, "message": prompt}, nil)
+			return submissionDoneMsg{generation: generation, taskID: target, err: err}
+		case submissionShell:
+			var out any
+			err := call.Call("command.exec", map[string]any{"session_id": sid, "argv": strings.Fields(target)}, &out)
+			raw, _ := json.MarshalIndent(out, "", "  ")
+			return submissionDoneMsg{generation: generation, result: string(raw), err: err}
+		default:
+			var out struct {
+				TaskID string `json:"task_id"`
+			}
+			err := call.Call("task.submit", map[string]any{"session_id": sid, "prompt": prompt}, &out)
+			if err == nil && out.TaskID == "" {
+				err = errors.New("daemon returned an empty task_id")
+			}
+			return submissionDoneMsg{generation: generation, taskID: out.TaskID, err: err}
+		}
+	}
+}
+
+func (m *Model) submitShell(draft promptDraft, command string) tea.Cmd {
+	if command == "" {
+		m.push("usage: !<command>")
+		return nil
+	}
+	return m.beginSubmission(submissionShell, command, draft)
+}
+
+func (m *Model) handleSubmissionDone(msg submissionDoneMsg) {
+	state := m.submitting
+	if state == nil || state.generation != msg.generation {
+		return
+	}
+	m.submitting = nil
+	if msg.err != nil {
+		m.push(fmt.Sprintf("%s %s failed: %s; draft kept for retry", glyphFailed(m.th), state.kind, msg.err.Error()))
+		m.layout()
+		return
+	}
+	m.commitDraft(state.draft, state.consumePaste)
+	shown := draftLabel(state.draft)
+	switch state.kind {
+	case submissionTask:
+		m.push(m.th.Style(theme.RoleTitle).Render("you ") + shown)
+		m.inFlightTaskID = msg.taskID
+		m.tasks.setTask(msg.taskID, "running")
+		m.push(m.th.Style(theme.RoleMuted).Render("- task " + msg.taskID + " submitted"))
+	case submissionSteer:
+		m.push(m.th.Style(theme.RoleTitle).Render("you (steer) ") + shown)
+		m.push(m.th.Style(theme.RoleMuted).Render("- steering queued for task " + msg.taskID))
+	case submissionShell:
+		m.push(m.th.Style(theme.RoleTitle).Render("you (shell) ") + state.target)
+		m.push(m.th.Style(theme.RoleTitle).Render("shell") + "\n" + msg.result)
+	}
+	m.layout()
+}
+
+func (m *Model) commitDraft(draft promptDraft, consumePaste bool) {
+	current := m.currentDraft()
+	if current.Text == draft.Text && (!consumePaste || draftsEqual(current, draft)) {
+		m.input.Reset()
+		if consumePaste {
+			m.pendingPaste = nil
+		}
+	}
+	consumed := promptDraft{Text: draft.Text}
+	if consumePaste {
+		consumed.Paste = draft.Paste
+	}
+	m.recordHistory(consumed)
+	m.historyPos = len(m.history)
+	m.historyScratch = promptDraft{}
+	m.layout()
+}
+
+func (m *Model) recordHistory(draft promptDraft) {
+	draft.Paste = append([]string(nil), draft.Paste...)
+	if len(m.history) > 0 && draftsEqual(m.history[len(m.history)-1], draft) {
+		return
+	}
+	m.history = append(m.history, draft)
+}
+
+func (m *Model) atHistoryBoundary(direction int) bool {
+	info := m.input.LineInfo()
+	if direction < 0 {
+		return m.input.Line() == 0 && info.RowOffset == 0
+	}
+	return m.input.Line() == m.input.LineCount()-1 && info.RowOffset+1 >= info.Height
+}
+
+func (m *Model) moveHistory(direction int) bool {
+	if len(m.history) == 0 {
+		return false
+	}
+	if m.historyPos < 0 || m.historyPos > len(m.history) {
+		m.historyPos = len(m.history)
+	}
+	if direction < 0 {
+		if m.historyPos == len(m.history) {
+			m.historyScratch = m.currentDraft()
+		}
+		if m.historyPos == 0 {
+			return true
+		}
+		m.historyPos--
+		m.restoreDraft(m.history[m.historyPos])
+		return true
+	}
+	if m.historyPos >= len(m.history) {
+		return true
+	}
+	m.historyPos++
+	if m.historyPos == len(m.history) {
+		m.restoreDraft(m.historyScratch)
+	} else {
+		m.restoreDraft(m.history[m.historyPos])
+	}
+	return true
+}
+
+func (m *Model) restoreDraft(draft promptDraft) {
+	m.input.SetValue(draft.Text)
+	m.pendingPaste = append([]string(nil), draft.Paste...)
+	m.closeSuggest()
+	m.layout()
 }
 
 func (m *Model) showHelp() {
@@ -406,8 +598,10 @@ func (m *Model) showHelp() {
 		"  !<command>             governed shell command\n" +
 		"  @<path|agent>          reference a workspace path or agent - suggestions appear as you type\n" +
 		"  /<command>             at the start of the line - suggestions appear as you type\n" +
-		"  1-9 to pick a suggestion · esc to dismiss the panel\n" +
-		"  pgup/pgdown scroll · alt+home/end jump · ctrl+o expand · ctrl+c cancel")
+		"  arrows choose · tab/enter completes · esc dismisses suggestions\n" +
+		"  up/down or ctrl+p/n recalls prompt history at input boundaries\n" +
+		"  shift+enter newline · ctrl+z undo latest paste · mouse/pgup/pgdown scroll\n" +
+		"  alt+home/end jump · ctrl+o expand · f1 help · ctrl+c cancel")
 }
 
 func (m *Model) slashCommand(text string) tea.Cmd {
@@ -456,6 +650,23 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 	}
 }
 
+func validSlashCommand(text string) bool {
+	parts := strings.Fields(text)
+	if len(parts) == 0 {
+		return false
+	}
+	switch strings.TrimPrefix(parts[0], "/") {
+	case "help", "keys", "recap", "agents", "checkpoints":
+		return true
+	case "search":
+		return len(parts) >= 2
+	case "mode":
+		return len(parts) == 2 && (parts[1] == "build" || parts[1] == "plan")
+	default:
+		return false
+	}
+}
+
 func (m *Model) querySurface(method string, params map[string]any, label string) tea.Cmd {
 	call := m.call
 	return func() tea.Msg {
@@ -470,52 +681,15 @@ func (m *Model) querySurface(method string, params map[string]any, label string)
 		return surfaceResultMsg{label: label, text: string(raw)}
 	}
 }
-func (m *Model) shellCommand(command string) tea.Cmd {
-	if command == "" {
-		m.push("usage: !<command>")
-		return nil
-	}
-	argv := strings.Fields(command)
-	call := m.call
-	sid := m.sessionID
-	m.push(m.th.Style(theme.RoleTitle).Render("you (shell) ") + command)
-	return func() tea.Msg {
-		if call == nil {
-			return rpcErrMsg{err: errors.New("daemon not connected")}
-		}
-		var out any
-		if err := call.Call("command.exec", map[string]any{"session_id": sid, "argv": argv}, &out); err != nil {
-			return rpcErrMsg{err: err}
-		}
-		raw, _ := json.MarshalIndent(out, "", "  ")
-		return surfaceResultMsg{label: "shell", text: string(raw)}
-	}
-}
-
-func (m *Model) steerTask(taskID, prompt string) tea.Cmd {
-	call := m.call
-	return func() tea.Msg {
-		if call == nil {
-			return rpcErrMsg{err: errors.New("daemon not connected")}
-		}
-		if err := call.Call("task.steer", map[string]any{
-			"task_id": taskID,
-			"message": prompt,
-		}, nil); err != nil {
-			return rpcErrMsg{err: err}
-		}
-		return taskSteeredMsg{taskID: taskID}
-	}
-}
 
 // handlePaste normalizes bracketed-paste content (terminals paste \r line
-// endings — spike sharp edge) and collapses multi-line pastes to a visible
-// notice; the content is held and folded into the next submission.
+// endings — spike sharp edge). Multi-line payloads stay out of the textarea
+// but are rendered beside it as visible, independently undoable draft items.
 func (m *Model) handlePaste(msg tea.PasteMsg) tea.Cmd {
 	content := strings.ReplaceAll(strings.ReplaceAll(msg.Content, "\r\n", "\n"), "\r", "\n")
 	if n := strings.Count(content, "\n") + 1; n > 1 {
 		m.pendingPaste = append(m.pendingPaste, content)
-		m.push(m.th.Style(theme.RoleMuted).Render(fmt.Sprintf("[Pasted %d lines]", n)))
+		m.layout()
 		return nil
 	}
 	m.input.InsertString(content)

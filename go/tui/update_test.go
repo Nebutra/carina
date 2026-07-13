@@ -312,10 +312,12 @@ func TestSecondPermissionRequestQueuesInsteadOfClobbering(t *testing.T) {
 	}
 }
 
-// TestEscDismissesOverlayThenSurfacesQueuedRequest: dismissing (esc) the open
-// overlay must also advance to the next queued request, not just clear it.
-func TestEscDismissesOverlayThenSurfacesQueuedRequest(t *testing.T) {
-	fc := &fakeCaller{}
+// Esc is an explicit deny action. The current overlay stays resolving until
+// the daemon acknowledges it, then the next queued request surfaces.
+func TestEscDeniesCurrentApprovalThenSurfacesQueuedRequest(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{
+		"task.action.deny": map[string]any{"decision_id": "perm_1", "decision": "denied"},
+	}}
 	m, _ := newTestModel(fc)
 	m.Update(permissionRequestEvent("perm_1"))
 	m.Update(permissionRequestEvent("perm_2"))
@@ -323,25 +325,30 @@ func TestEscDismissesOverlayThenSurfacesQueuedRequest(t *testing.T) {
 	cmd, _ := m.handleKey("esc")
 	drain(m, cmd)
 
-	if m.approval == nil || m.approval.DecisionID != "perm_2" {
-		t.Fatalf("dismissing the first overlay must surface the queued one; got %+v", m.approval)
+	if m.approval == nil || m.approval.DecisionID != "perm_2" || len(m.approvalQueue) != 0 {
+		t.Fatalf("acknowledged Esc denial did not advance the queue: active=%+v queued=%d", m.approval, len(m.approvalQueue))
+	}
+	if len(fc.calls) != 1 || fc.last().method != "task.action.deny" {
+		t.Fatalf("Esc issued unexpected RPC calls: %v", fc.calls)
 	}
 }
 
-func TestEscDismissesOverlayWithoutResolving(t *testing.T) {
-	fc := &fakeCaller{}
+func TestEscDeniesApprovalThroughRPC(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{
+		"task.action.deny": map[string]any{"decision_id": "perm_1", "decision": "denied"},
+	}}
 	m, _ := newTestModel(fc)
 	m.Update(permissionRequestEvent("perm_1"))
 	cmd, _ := m.handleKey("esc")
 	drain(m, cmd)
 	if m.approval != nil {
-		t.Error("overlay still open after esc")
+		t.Error("acknowledged Esc denial left the overlay open")
 	}
-	if len(fc.calls) != 0 {
-		t.Errorf("esc must not resolve the decision; rpc calls = %v", fc.calls)
+	if len(fc.calls) != 1 || fc.last().method != "task.action.deny" {
+		t.Errorf("Esc must explicitly deny once; rpc calls = %v", fc.calls)
 	}
-	if !strings.Contains(transcriptText(m), "perm_1") {
-		t.Error("dismissal must remain observable in the transcript")
+	if !strings.Contains(transcriptText(m), "Denied") {
+		t.Error("Esc denial is not observable in the transcript")
 	}
 }
 
@@ -469,11 +476,14 @@ func TestPasteCollapse(t *testing.T) {
 	}}
 	m, _ := newTestModel(fc)
 
-	// Multi-line paste (with \r endings, as tmux delivers them) collapses to
-	// a visible notice and is held for the next submission.
+	// Multi-line paste (with \r endings, as tmux delivers them) becomes a
+	// visible composer item and is held for the next submission.
 	m.Update(tea.PasteMsg{Content: "line one\rline two\rline three"})
-	if !strings.Contains(transcriptText(m), "[Pasted 3 lines]") {
-		t.Errorf("transcript missing paste collapse notice:\n%s", transcriptText(m))
+	if !strings.Contains(m.View().Content, "3 lines") || !strings.Contains(m.View().Content, "line one") {
+		t.Errorf("composer missing paste preview:\n%s", m.View().Content)
+	}
+	if strings.Contains(transcriptText(m), "Pasted") {
+		t.Errorf("ephemeral paste state must not pollute transcript:\n%s", transcriptText(m))
 	}
 	if m.input.Value() != "" {
 		t.Errorf("multi-line paste leaked into input: %q", m.input.Value())

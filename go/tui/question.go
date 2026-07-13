@@ -24,6 +24,10 @@ type questionState struct {
 	TaskID     string
 	Prompt     string
 	Options    []questionOption
+	Selected   int
+	Scroll     int
+	Resolving  bool
+	Error      string
 }
 
 type questionDoneMsg struct {
@@ -110,9 +114,12 @@ func buildQuestionState(ev map[string]any) *questionState {
 
 func (m *Model) answerQuestion(index int) tea.Cmd {
 	q, call := m.question, m.call
-	if q == nil || index < 0 || index >= len(q.Options) {
+	if q == nil || q.Resolving || index < 0 || index >= len(q.Options) {
 		return nil
 	}
+	q.Selected = index
+	q.Resolving = true
+	q.Error = ""
 	option := q.Options[index]
 	return func() tea.Msg {
 		if call == nil {
@@ -134,7 +141,14 @@ func (m *Model) answerQuestion(index int) tea.Cmd {
 }
 
 func (m *Model) handleQuestionDone(msg questionDoneMsg) {
+	// A server event may resolve this question while the answer RPC is still
+	// in flight. Never let that stale completion close a newer overlay.
+	if m.question == nil || m.question.QuestionID != msg.questionID {
+		return
+	}
 	if msg.err != nil {
+		m.question.Resolving = false
+		m.question.Error = "Answer failed: " + msg.err.Error() + ". Press Enter to retry."
 		m.push(fmt.Sprintf("%s answer failed for question %s: %s", glyphFailed(m.th), msg.questionID, msg.err.Error()))
 		return
 	}
@@ -157,9 +171,7 @@ func (m *Model) nextQueuedQuestion() {
 		}
 	}
 	if len(m.approvalQueue) > 0 {
-		ev := m.approvalQueue[0]
-		m.approvalQueue = m.approvalQueue[1:]
-		m.approval = m.buildApprovalState(ev)
+		m.nextQueuedApproval()
 	}
 }
 
@@ -167,9 +179,42 @@ func (m *Model) questionKey(key string) (tea.Cmd, bool) {
 	if m.question == nil {
 		return nil, false
 	}
+	q := m.question
+	if q.Resolving {
+		return nil, true
+	}
+	if len(q.Options) == 0 {
+		q.Error = "No answer options are available. Waiting for the agent to update this question."
+		return nil, true
+	}
 	n, err := strconv.Atoi(key)
-	if err == nil && n >= 1 && n <= len(m.question.Options) && n <= 9 {
+	if err == nil && n >= 1 && n <= len(q.Options) && n <= 9 {
 		return m.answerQuestion(n - 1), true
+	}
+	switch key {
+	case "up", "k", "shift+tab":
+		q.Selected = (q.Selected - 1 + len(q.Options)) % len(q.Options)
+		m.ensureQuestionSelectionVisible()
+	case "down", "j", "tab":
+		q.Selected = (q.Selected + 1) % len(q.Options)
+		m.ensureQuestionSelectionVisible()
+	case "enter", " ":
+		return m.answerQuestion(q.Selected), true
+	case "pgup":
+		q.Scroll -= m.questionViewportHeight()
+		m.clampQuestionScroll()
+	case "pgdown":
+		q.Scroll += m.questionViewportHeight()
+		m.clampQuestionScroll()
+	case "home":
+		q.Scroll = 0
+	case "end":
+		q.Scroll = len(m.questionBodyLines())
+		m.clampQuestionScroll()
+	case "esc":
+		// task.user.answer has no cancellation counterpart. Keep the pending
+		// server question visible instead of silently orphaning the task.
+		q.Error = "This question is still pending. Choose an answer; Esc cannot dismiss it."
 	}
 	return nil, true
 }
@@ -180,35 +225,146 @@ func (m *Model) questionOverlayView() string {
 		return ""
 	}
 	outerWidth := maxInt(m.width, 1)
-	contentWidth := outerWidth - 6
+	contentWidth := outerWidth - 8
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
-	var lines []string
-	lines = append(lines, fitLine(m.th.Style(theme.RoleWarning).Render("Agent needs input"), contentWidth))
-	lines = append(lines, "")
-	for _, line := range strings.Split(ansi.Wordwrap(q.Prompt, contentWidth, ""), "\n") {
-		lines = append(lines, fitLine(line, contentWidth))
-	}
-	lines = append(lines, "")
-	for i, option := range q.Options {
-		if i >= 9 {
-			break
-		}
-		line := fmt.Sprintf("[%d] %s", i+1, option.Label)
-		if option.Description != "" {
-			line += " - " + option.Description
-		}
-		lines = append(lines, fitLine(line, contentWidth))
-	}
-	lines = append(lines, "", fitLine(m.th.Style(theme.RoleMuted).Render("Press a number to answer"), contentWidth))
-	if m.ctrlCHint != "" {
-		lines = append(lines, fitLine(m.th.Style(theme.RoleMuted).Render(m.ctrlCHint), contentWidth))
-	}
+	body := m.questionBodyLines()
+	m.clampQuestionScroll()
+	start := q.Scroll
+	end := minInt(start+m.questionViewportHeight(), len(body))
 
-	style := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(0, 1).Width(contentWidth)
+	lines := []string{fitRenderedLine(m.th.Style(theme.RoleWarning).Render("Agent needs input"), contentWidth), ""}
+	for _, line := range body[start:end] {
+		lines = append(lines, fitLine(line, contentWidth))
+	}
+	footer := "[up/down/tab] select  [enter/space/1-9] answer"
+	if contentWidth < 44 {
+		footer = "[up/down] pick  [enter] answer"
+	}
+	if contentWidth < 28 {
+		footer = "[enter] answer"
+	}
+	if q.Resolving {
+		footer = "Sending answer..."
+	} else if len(body) > m.questionViewportHeight() {
+		if contentWidth >= 44 {
+			footer += fmt.Sprintf("  [pgup/pgdown] scroll %d-%d/%d", start+1, end, len(body))
+		} else {
+			footer += fmt.Sprintf("  %d-%d/%d", start+1, end, len(body))
+		}
+	}
+	if q.Error != "" {
+		lines = append(lines, fitRenderedLine(m.th.Style(theme.RoleError).Render(sanitize(q.Error)), contentWidth))
+	}
+	if m.ctrlCHint != "" {
+		lines = append(lines, fitRenderedLine(m.th.Style(theme.RoleMuted).Render(m.ctrlCHint), contentWidth))
+	}
+	// Footer remains the final content row so the root modal clipper can keep
+	// the primary action visible in extremely short terminals.
+	lines = append(lines, "", fitRenderedLine(m.th.Style(theme.RoleMuted).Render(footer), contentWidth))
+
+	style := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(0, 1)
 	if c := m.th.Color(theme.RoleWarning); c != nil {
 		style = style.BorderForeground(c)
 	}
 	return style.Render(strings.Join(lines, "\n"))
+}
+
+func (m *Model) questionContentWidth() int {
+	return maxInt(m.width-8, 1)
+}
+
+func (m *Model) questionBodyLines() []string {
+	q := m.question
+	if q == nil {
+		return nil
+	}
+	width := m.questionContentWidth()
+	lines := wrappedOverlayLines(q.Prompt, width)
+	lines = append(lines, "")
+	for i, option := range q.Options {
+		marker := "  "
+		if i == q.Selected {
+			marker = "> "
+		}
+		number := "    "
+		if i < 9 {
+			number = fmt.Sprintf("[%d] ", i+1)
+		}
+		line := marker + number + option.Label
+		if option.Description != "" {
+			line += " - " + option.Description
+		}
+		wrapped := wrappedOverlayLines(line, width)
+		lines = append(lines, wrapped...)
+	}
+	return lines
+}
+
+func wrappedOverlayLines(value string, width int) []string {
+	wrapped := ansi.Wordwrap(sanitize(value), maxInt(width, 1), "")
+	lines := strings.Split(wrapped, "\n")
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func (m *Model) questionViewportHeight() int {
+	reserved := 6 // border, title, spacing, and anchored footer
+	if m.question != nil && m.question.Error != "" {
+		reserved++
+	}
+	if m.ctrlCHint != "" {
+		reserved++
+	}
+	return maxInt(m.height-reserved, 1)
+}
+
+func (m *Model) clampQuestionScroll() {
+	if m.question == nil {
+		return
+	}
+	maxScroll := maxInt(len(m.questionBodyLines())-m.questionViewportHeight(), 0)
+	if m.question.Scroll < 0 {
+		m.question.Scroll = 0
+	}
+	if m.question.Scroll > maxScroll {
+		m.question.Scroll = maxScroll
+	}
+}
+
+func (m *Model) ensureQuestionSelectionVisible() {
+	q := m.question
+	if q == nil {
+		return
+	}
+	width := m.questionContentWidth()
+	line := len(wrappedOverlayLines(q.Prompt, width)) + 1
+	selectedStart, selectedEnd := line, line
+	for i, option := range q.Options {
+		number := "    "
+		if i < 9 {
+			number = fmt.Sprintf("[%d] ", i+1)
+		}
+		value := "  " + number + option.Label
+		if option.Description != "" {
+			value += " - " + option.Description
+		}
+		height := len(wrappedOverlayLines(value, width))
+		if i == q.Selected {
+			selectedStart, selectedEnd = line, line+height-1
+			break
+		}
+		line += height
+	}
+	viewportHeight := m.questionViewportHeight()
+	if selectedStart < q.Scroll {
+		q.Scroll = selectedStart
+	}
+	if selectedEnd >= q.Scroll+viewportHeight {
+		q.Scroll = selectedEnd - viewportHeight + 1
+	}
+	m.clampQuestionScroll()
 }

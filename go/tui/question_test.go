@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func userQuestionEvent(id string) EventMsg {
@@ -89,6 +92,9 @@ func TestQuestionRPCFailureKeepsOverlayOpen(t *testing.T) {
 	if !strings.Contains(transcriptText(m), errTestRPC.Error()) {
 		t.Fatal("failed answer is not visible in the transcript")
 	}
+	if m.question.Resolving || !strings.Contains(ansi.Strip(m.questionOverlayView()), "Press Enter to retry") {
+		t.Fatal("failed answer must return to a visible, retryable state")
+	}
 }
 
 func TestQuestionRestoresSteeringAndExternalResolutionClosesOverlay(t *testing.T) {
@@ -105,6 +111,168 @@ func TestQuestionRestoresSteeringAndExternalResolutionClosesOverlay(t *testing.T
 	}})
 	if m.question != nil || !m.questionResolved["q_external"] {
 		t.Fatalf("external resolution did not close question: active=%+v resolved=%v", m.question, m.questionResolved)
+	}
+}
+
+func TestQuestionArrowTabEnterAndNumericKeysAreConsistent(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{"task.user.answer": nil}}
+	m, _ := newTestModel(fc)
+	m.Update(userQuestionEvent("q_keys"))
+
+	if cmd, handled := m.questionKey("down"); !handled || cmd != nil || m.question.Selected != 1 {
+		t.Fatalf("down selection = %d, want 1", m.question.Selected)
+	}
+	if cmd, handled := m.questionKey("tab"); !handled || cmd != nil || m.question.Selected != 0 {
+		t.Fatalf("tab must wrap selection, got %d", m.question.Selected)
+	}
+	if cmd, _ := m.questionKey("up"); cmd != nil || m.question.Selected != 1 {
+		t.Fatalf("up must wrap selection, got %d", m.question.Selected)
+	}
+	cmd, handled := m.questionKey("enter")
+	if !handled || cmd == nil {
+		t.Fatal("Enter did not submit the highlighted option")
+	}
+	drain(m, cmd)
+	if got := fc.last().params["value"]; got != "stage" {
+		t.Fatalf("Enter submitted %v, want highlighted value stage", got)
+	}
+
+	m.Update(userQuestionEvent("q_number"))
+	cmd, _ = m.questionKey("1")
+	drain(m, cmd)
+	if got := fc.last().params["value"]; got != "prod" {
+		t.Fatalf("numeric shortcut submitted %v, want prod", got)
+	}
+}
+
+func TestQuestionResolvingSuppressesDuplicateRPC(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{"task.user.answer": nil}}
+	m, _ := newTestModel(fc)
+	m.Update(userQuestionEvent("q_once"))
+
+	first, _ := m.questionKey("enter")
+	if first == nil || !m.question.Resolving {
+		t.Fatal("answer must synchronously enter resolving state")
+	}
+	second, handled := m.questionKey("enter")
+	if !handled || second != nil {
+		t.Fatal("repeated Enter must be consumed without another command")
+	}
+	if !strings.Contains(ansi.Strip(m.questionOverlayView()), "Sending answer") {
+		t.Fatal("question busy state is not visible")
+	}
+	drain(m, first)
+	if len(fc.calls) != 1 {
+		t.Fatalf("answer RPC calls = %d, want exactly 1", len(fc.calls))
+	}
+}
+
+func TestQuestionFailureRetriesWithoutAdvancingQueue(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{"task.user.answer": errTestRPC}}
+	m, _ := newTestModel(fc)
+	m.Update(userQuestionEvent("q_retry_current"))
+	m.Update(userQuestionEvent("q_after_retry"))
+
+	cmd, _ := m.questionKey("2")
+	drain(m, cmd)
+	if m.question == nil || m.question.QuestionID != "q_retry_current" || m.question.Selected != 1 {
+		t.Fatalf("failed answer lost current selection: active=%+v", m.question)
+	}
+	if len(m.questionQueue) != 1 {
+		t.Fatalf("failed answer changed queue length to %d", len(m.questionQueue))
+	}
+
+	fc.handler["task.user.answer"] = nil
+	cmd, _ = m.questionKey("enter")
+	drain(m, cmd)
+	if m.question == nil || m.question.QuestionID != "q_after_retry" {
+		t.Fatalf("successful retry did not advance exactly once: active=%+v", m.question)
+	}
+	if got := fc.last().params["value"]; got != "stage" {
+		t.Fatalf("retry lost selected value: got %v", got)
+	}
+}
+
+func TestQuestionEscapeRefusesToOrphanPendingQuestion(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.Update(userQuestionEvent("q_pending"))
+
+	cmd, handled := m.questionKey("esc")
+	if !handled || cmd != nil || m.question == nil {
+		t.Fatal("Esc must keep and consume the pending question")
+	}
+	if !strings.Contains(ansi.Strip(m.questionOverlayView()), "Esc cannot dismiss") {
+		t.Fatal("Esc refusal is not explained in the question overlay")
+	}
+}
+
+func TestQuestionLongContentScrollsWithFooterAnchored(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.Update(userQuestionEvent("q_long"))
+	m.height = 12
+	m.question.Prompt = strings.Repeat("review this context carefully ", 20)
+	m.question.Options = make([]questionOption, 12)
+	for i := range m.question.Options {
+		m.question.Options[i] = questionOption{
+			Label:       fmt.Sprintf("Option %d", i+1),
+			Value:       fmt.Sprintf("option-%d", i+1),
+			Description: strings.Repeat("detailed consequence ", 4),
+		}
+	}
+
+	before := ansi.Strip(m.questionOverlayView())
+	if got := len(strings.Split(before, "\n")); got > m.height {
+		t.Fatalf("question overlay height = %d, terminal height = %d", got, m.height)
+	}
+	if !containsAll(before, "select", "answer", "scroll") {
+		t.Fatalf("anchored question footer missing:\n%s", before)
+	}
+	_, _ = m.questionKey("pgdown")
+	after := ansi.Strip(m.questionOverlayView())
+	if m.question.Scroll == 0 || before == after {
+		t.Fatal("PageDown did not move the question viewport")
+	}
+	if !containsAll(after, "select", "answer") {
+		t.Fatal("question actions disappeared after scrolling")
+	}
+}
+
+func TestQuestionZeroOptionsIsDefensiveAndDoesNotPanic(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.question = &questionState{QuestionID: "q_empty", Prompt: "No choices arrived"}
+
+	cmd, handled := m.questionKey("down")
+	if !handled || cmd != nil {
+		t.Fatal("empty question must consume overlay input without a command")
+	}
+	if !strings.Contains(ansi.Strip(m.questionOverlayView()), "No answer options") {
+		t.Fatal("empty question does not explain its recoverable state")
+	}
+}
+
+func TestQuestionNarrowFooterKeepsAnswerActionVisible(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.Update(userQuestionEvent("q_narrow"))
+	m.width = 30
+	m.height = 10
+
+	view := ansi.Strip(m.questionOverlayView())
+	if !strings.Contains(view, "answer") {
+		t.Fatalf("narrow question footer lost its primary action:\n%s", view)
+	}
+	if got := len(strings.Split(view, "\n")); got > m.height {
+		t.Fatalf("narrow question height = %d, terminal height = %d", got, m.height)
+	}
+}
+
+func TestQuestionFooterSurvivesOneRowModalDegradation(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.Update(userQuestionEvent("q_tiny"))
+	m.width, m.height = 30, 1
+
+	view := ansi.Strip(m.View().Content)
+	if !strings.Contains(view, "answer") {
+		t.Fatalf("one-row question lost its action footer: %q", view)
 	}
 }
 

@@ -6,47 +6,165 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
+// rootLayout is the single source of truth for both rendering and physical
+// cursor placement. Keeping these values together prevents a visually correct
+// textarea from publishing a stale IME anchor after a resize or panel change.
+type rootLayout struct {
+	width, height  int
+	framed         bool
+	showBanner     bool
+	showTopSpacer  bool
+	taskLines      int
+	pasteLines     int
+	suggestLines   int
+	showTranscript bool
+	showStatus     bool
+	viewportHeight int
+	inputHeight    int
+	inputX, inputY int
+}
+
 // layout recomputes component sizes. The prompt grows with its content but is
 // capped so the transcript always keeps the majority of the terminal.
 func (m *Model) layout() {
-	statusHeight := 1
-	bannerHeight := 1
-	taskHeight := len(m.taskTreeLines())
-	suggestHeight := len(m.suggestPanelLines())
-	vw := m.width - 2
-	if vw < 1 {
-		vw = 1
+	m.configureInput()
+	l := m.calculateLayout()
+	m.root = l
+	contentWidth := l.width
+	if l.framed {
+		contentWidth = maxInt(l.width-2, 1)
 	}
-	iw := m.width - 8
-	if iw < 1 {
-		iw = 1
-	}
-	maxInputHeight := m.height / 3
-	if maxInputHeight < 3 {
-		maxInputHeight = 3
-	}
-	if maxInputHeight > 10 {
-		maxInputHeight = 10
-	}
-	m.input.MaxHeight = maxInputHeight
-	m.input.SetWidth(iw)
-	inputHeight := m.input.Height() + 2                                                         // input border
-	vh := m.height - inputHeight - statusHeight - bannerHeight - taskHeight - suggestHeight - 2 // transcript border
-	if vh < 1 {
-		vh = 1
-	}
-	m.vp.SetWidth(vw)
-	m.vp.SetHeight(vh)
+	m.vp.SetWidth(contentWidth)
+	m.vp.SetHeight(maxInt(l.viewportHeight, 1))
 	m.tr.resizePresentations(m.th, m.transcriptWidth())
 	m.vp.SetContentLines(m.tr.lines)
 	if m.followTail {
 		m.vp.GotoBottom()
 	}
+}
+
+func (m *Model) configureInput() {
+	w, h := m.width, m.height
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	framed := w >= 6 && h >= 7
+	showStatus := h >= 2
+	if w < 4 {
+		m.input.Prompt = ""
+	} else {
+		m.input.Prompt = "> "
+	}
+	inputWidth := w
+	if framed {
+		inputWidth = maxInt(w-2, 1)
+	}
+
+	maxInputHeight := h / 3
+	if maxInputHeight < 1 {
+		maxInputHeight = 1
+	}
+	if maxInputHeight > 10 {
+		maxInputHeight = 10
+	}
+	reserved := 0
+	if showStatus {
+		reserved++
+	}
+	if framed {
+		reserved += 5 // two borders per region plus one transcript row
+	} else if h-reserved > 1 {
+		reserved++ // one transcript row
+	}
+	if available := h - reserved; available < maxInputHeight {
+		maxInputHeight = maxInt(available, 1)
+	}
+	m.input.MaxHeight = maxInputHeight
+	m.input.SetWidth(inputWidth)
+}
+
+// calculateLayout allocates rows in interaction order. The input is always
+// retained; status and one transcript row follow when space permits. Decorative
+// borders appear only when both can fit without pushing the footer below the
+// terminal. Suggest/task/banner rows consume remaining headroom and are
+// truncated before the transcript is allowed to disappear.
+func (m *Model) calculateLayout() rootLayout {
+	w, h := m.width, m.height
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+
+	l := rootLayout{width: w, height: h, showStatus: h >= 2}
+	l.framed = w >= 6 && h >= 7
+	l.inputHeight = m.input.Height()
+
+	borderRows := 0
+	if l.framed {
+		borderRows = 4
+		l.inputX = 1
+	}
+	remaining := h - l.inputHeight - borderRows
+	if l.showStatus {
+		remaining--
+	}
+	if remaining > 0 {
+		l.showTranscript = true
+		l.viewportHeight = 1
+		remaining--
+	}
+
+	// Paste previews and suggestions are part of the active typing flow, then
+	// task context, then connection state. Each is bounded by the rows left
+	// after core controls.
+	l.suggestLines = minInt(len(m.suggestPanelLines()), remaining)
+	remaining -= l.suggestLines
+	l.pasteLines = minInt(len(m.pastePanelLines()), remaining)
+	remaining -= l.pasteLines
+	l.taskLines = minInt(len(m.taskTreeLines()), remaining)
+	remaining -= l.taskLines
+	if m.banner() != "" && remaining > 0 {
+		l.showBanner = true
+		remaining--
+	} else if remaining > 0 {
+		// Preserve the normal view's quiet top breathing room, but make it the
+		// first thing dropped in a constrained terminal.
+		l.showTopSpacer = true
+		remaining--
+	}
+	if l.showTranscript {
+		l.viewportHeight += remaining
+	}
+
+	y := 0
+	if l.showBanner || l.showTopSpacer {
+		y++
+	}
+	y += l.taskLines
+	if l.showTranscript {
+		y += l.viewportHeight
+		if l.framed {
+			y += 2
+		}
+	}
+	y += l.suggestLines
+	y += l.pasteLines
+	if l.framed {
+		y++ // input frame's top border
+	}
+	l.inputY = y
+	return l
 }
 
 // suggestPanelLines renders the mention/slash suggestion panel as plain
@@ -63,20 +181,72 @@ func (m *Model) suggestPanelLines() []string {
 		title = "commands"
 	}
 	lines := make([]string, 0, len(m.suggest.Matches)+1)
-	lines = append(lines, m.th.Style(theme.RoleMuted).Render(fmt.Sprintf("%s (1-%d to pick, esc to dismiss)", title, len(m.suggest.Matches))))
+	lines = append(lines, m.th.Style(theme.RoleMuted).Render(title+" (up/down select, tab/enter complete, esc close)"))
 	prefixChar := "@"
 	if m.suggest.Kind == mentionCommand {
 		prefixChar = "/"
 	}
 	for i, match := range m.suggest.Matches {
-		lines = append(lines, fmt.Sprintf("  %d %s%s", i+1, prefixChar, match))
+		marker := "  "
+		style := m.th.Style(theme.RoleText)
+		if i == m.suggest.Selected {
+			marker = "> "
+			style = m.th.Style(theme.RoleTitle)
+		}
+		lines = append(lines, style.Render(marker+prefixChar+match))
+	}
+	return lines
+}
+
+func (m *Model) visibleSuggestPanelLines(limit int) []string {
+	all := m.suggestPanelLines()
+	if limit <= 0 || len(all) == 0 {
+		return nil
+	}
+	if len(all) <= limit {
+		return all
+	}
+	selected := clampInt(m.suggest.Selected, 0, len(m.suggest.Matches)-1) + 1
+	if limit == 1 {
+		return []string{all[selected]}
+	}
+	slots := limit - 1
+	start := selected - slots + 1
+	if start < 1 {
+		start = 1
+	}
+	maxStart := len(all) - slots
+	if start > maxStart {
+		start = maxStart
+	}
+	return append([]string{all[0]}, all[start:start+slots]...)
+}
+
+func (m *Model) pastePanelLines() []string {
+	if len(m.pendingPaste) == 0 {
+		return nil
+	}
+	lines := []string{m.th.Style(theme.RoleMuted).Render("pasted draft items (ctrl+z removes the latest)")}
+	start := maxInt(len(m.pendingPaste)-3, 0)
+	if start > 0 {
+		lines = append(lines, m.th.Style(theme.RoleMuted).Render(fmt.Sprintf("  ... %d earlier item(s)", start)))
+	}
+	for i := start; i < len(m.pendingPaste); i++ {
+		content := m.pendingPaste[i]
+		count := strings.Count(content, "\n") + 1
+		summary := strings.TrimSpace(sanitize(strings.Split(content, "\n")[0]))
+		if summary == "" {
+			summary = "(blank first line)"
+		}
+		line := fmt.Sprintf("  [%d] %d lines, %d chars: %s", i+1, count, len([]rune(content)), summary)
+		lines = append(lines, m.th.Style(theme.RoleInfo).Render(line))
 	}
 	return lines
 }
 
 func (m *Model) transcriptWidth() int {
-	if m.width-4 > 0 {
-		return m.width - 4
+	if m.width-2 > 0 {
+		return m.width - 2
 	}
 	return 1
 }
@@ -122,26 +292,62 @@ func (m *Model) borderStyle(border lipgloss.Border) lipgloss.Style {
 
 // View implements tea.Model.
 func (m *Model) View() tea.View {
+	// Update normally calls layout whenever a section changes. Reconcile here
+	// as a defensive boundary for direct model construction in embedders and
+	// for asynchronous state transitions that change a conditional row.
+	if next := m.calculateLayout(); next != m.root {
+		m.layout()
+	}
+	l := m.root
 	var b strings.Builder
 
-	if bn := m.banner(); bn != "" {
-		b.WriteString(m.th.Style(theme.RoleWarning).Render(bn))
+	if l.showBanner {
+		b.WriteString(fitRenderedLine(m.th.Style(theme.RoleWarning).Render(m.banner()), l.width))
 	}
-	b.WriteString("\n")
-
-	if taskLines := m.taskTreeLines(); len(taskLines) > 0 {
-		b.WriteString(strings.Join(taskLines, "\n"))
+	if l.showBanner || l.showTopSpacer {
 		b.WriteString("\n")
 	}
 
-	frame := m.borderStyle(lipgloss.RoundedBorder()).Width(maxInt(m.width-2, 1))
-	b.WriteString(frame.Render(m.vp.View()))
-	b.WriteString("\n")
-	if panelLines := m.suggestPanelLines(); len(panelLines) > 0 {
-		b.WriteString(strings.Join(panelLines, "\n"))
+	if taskLines := m.taskTreeLines(); l.taskLines > 0 {
+		b.WriteString(strings.Join(taskLines[:l.taskLines], "\n"))
 		b.WriteString("\n")
 	}
-	b.WriteString(frame.Render(m.input.View()))
+
+	// Lip Gloss v2 Width is the final styled block width, including borders.
+	// Passing the terminal width therefore produces a complete right edge
+	// without exceeding the cell grid.
+	frame := m.borderStyle(lipgloss.RoundedBorder()).Width(l.width)
+	if l.showTranscript {
+		if l.framed {
+			b.WriteString(frame.Render(m.vp.View()))
+		} else {
+			b.WriteString(m.vp.View())
+		}
+		b.WriteString("\n")
+	}
+	if panelLines := m.visibleSuggestPanelLines(l.suggestLines); len(panelLines) > 0 {
+		for i, line := range panelLines {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(fitRenderedLine(line, l.width))
+		}
+		b.WriteString("\n")
+	}
+	if pasteLines := m.pastePanelLines(); l.pasteLines > 0 {
+		for i, line := range pasteLines[:l.pasteLines] {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(fitRenderedLine(line, l.width))
+		}
+		b.WriteString("\n")
+	}
+	if l.framed {
+		b.WriteString(frame.Render(m.input.View()))
+	} else {
+		b.WriteString(m.input.View())
+	}
 	b.WriteString("\n")
 
 	status := "not attached"
@@ -149,30 +355,104 @@ func (m *Model) View() tea.View {
 		status = "session " + m.sessionID
 	}
 	activity := "ready"
-	if m.inFlightTaskID != "" {
+	if m.submitting != nil {
+		activity = "sending " + string(m.submitting.kind)
+	} else if m.inFlightTaskID != "" {
 		activity = "running " + m.inFlightTaskID
 	}
 	if m.unseenLines > 0 {
 		activity += fmt.Sprintf(" · %d new", m.unseenLines)
 	}
 	statusLine := m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
-		" carina · %s · mode %s · %s · %d lines", status, m.mode, activity, len(m.tr.lines)))
-	b.WriteString(fitLine(statusLine, maxInt(m.width, 1)))
+		" carina · %s · mode %s · %s · f1 help", status, m.mode, activity))
+	if l.showStatus {
+		b.WriteString(fitRenderedLine(statusLine, l.width))
+	}
 
-	content := b.String()
+	content := fitViewBlock(strings.TrimSuffix(b.String(), "\n"), l.width, l.height, false)
 	if m.question != nil {
-		content = lipgloss.Place(maxInt(m.width, 1), maxInt(m.height, 1),
-			lipgloss.Center, lipgloss.Center, m.questionOverlayView())
+		modal := fitViewBlock(m.questionOverlayView(), l.width, l.height, true)
+		content = lipgloss.Place(l.width, l.height,
+			lipgloss.Center, lipgloss.Center, modal)
 	} else if m.approval != nil {
-		// Spike-proven overlay: full-frame replacement via lipgloss.Place.
-		// The v2 Layers API is still unexercised upstream (spike sharp edge);
-		// revisit when the declared-cursor work (R21) lands.
-		content = lipgloss.Place(maxInt(m.width, 1), maxInt(m.height, 1),
-			lipgloss.Center, lipgloss.Center, m.overlayView())
+		modal := fitViewBlock(m.overlayView(), l.width, l.height, true)
+		content = lipgloss.Place(l.width, l.height,
+			lipgloss.Center, lipgloss.Center, modal)
 	}
 
 	v := tea.NewView(content)
 	v.AltScreen = true
+	v.OnMouse = func(msg tea.MouseMsg) tea.Cmd {
+		return func() tea.Msg { return msg }
+	}
+	// A nil declared cursor makes Bubble Tea hide the terminal cursor. This is
+	// intentional while an overlay owns input, and whenever a zero-sized host
+	// has not supplied a usable cell grid yet (R21).
+	if m.question == nil && m.approval == nil && m.width > 0 && m.height > 0 {
+		if cursor := m.input.Cursor(); cursor != nil {
+			cursor.Position.X = clampInt(cursor.Position.X+l.inputX, 0, l.width-1)
+			cursor.Position.Y = clampInt(cursor.Position.Y+l.inputY, 0, l.height-1)
+			v.Cursor = cursor
+		}
+	}
+	return v
+}
+
+// fitViewBlock is the final safety boundary for cells rendered by components
+// that do not know the root terminal size. Modal degradation keeps the title
+// and final action row; losing the middle is preferable to hiding the controls.
+func fitViewBlock(content string, width, height int, modal bool) string {
+	if width <= 0 || height <= 0 || content == "" {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) > height {
+		if modal {
+			switch height {
+			case 1:
+				// Modal renderers end with an action/footer row followed by a
+				// bottom border. In the last available cell, the action is the
+				// only useful survivor.
+				lines = []string{lines[len(lines)-2]}
+			case 2:
+				lines = []string{lines[0], lines[len(lines)-2]}
+			default:
+				tail := lines[len(lines)-2:]
+				lines = append(lines[:height-2], tail...)
+			}
+		} else {
+			lines = lines[:height]
+		}
+	}
+	for i := range lines {
+		lines[i] = fitRenderedLine(lines[i], width)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// fitRenderedLine clips an already-rendered line by terminal cells while
+// preserving its ANSI styling. Sanitization belongs at the data boundary;
+// applying fitLine here would strip the theme's escape sequences as well.
+func fitRenderedLine(line string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(line) <= width {
+		return line
+	}
+	if width == 1 {
+		return ansi.Truncate(line, 1, "")
+	}
+	return ansi.Truncate(line, width, "…")
+}
+
+func clampInt(v, low, high int) int {
+	if v < low {
+		return low
+	}
+	if v > high {
+		return high
+	}
 	return v
 }
 
