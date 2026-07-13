@@ -130,7 +130,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.PasteMsg:
-		if m.submitting != nil {
+		m.pasteBurst.reset()
+		// Governance overlays exclusively own input while open, including while
+		// their RPC is resolving. Never let a terminal paste mutate the hidden
+		// composer behind the modal.
+		if m.approval != nil || m.question != nil || m.submitting != nil {
 			return m, nil
 		}
 		return m, m.handlePaste(msg)
@@ -139,6 +143,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleMouseWheel(msg)
 
 	case tea.KeyPressMsg:
+		if m.approval != nil || m.question != nil || m.submitting != nil {
+			m.pasteBurst.reset()
+		} else if cmd, handled := m.handlePasteBurstKey(msg); handled {
+			return m, cmd
+		}
 		if cmd, handled := m.handleKey(msg.String()); handled {
 			return m, cmd
 		}
@@ -693,6 +702,12 @@ func (m *Model) handlePaste(msg tea.PasteMsg) tea.Cmd {
 		return nil
 	}
 	m.input.InsertString(content)
+	// A paste can atomically change the whole trigger/query. Hide the old
+	// selection immediately; refreshSuggestTrigger will either schedule the
+	// new query or leave the panel closed.
+	if m.suggest != nil {
+		m.closeSuggest()
+	}
 	m.layout()
-	return nil
+	return m.refreshSuggestTrigger()
 }

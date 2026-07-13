@@ -166,6 +166,7 @@ type Model struct {
 	tasks              taskGraph
 	inFlightTaskID     string
 	pendingPaste       []string
+	pasteBurst         pasteBurstState
 	submitting         *submissionState
 	submissionGen      int
 	history            []promptDraft
