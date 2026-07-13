@@ -137,12 +137,14 @@ func TestRapidASCIIEnterIsInsertedAsPasteNewline(t *testing.T) {
 	clock.advance(time.Millisecond)
 	m.Update(keyText("b"))
 	clock.advance(time.Millisecond)
+	m.Update(keyText("c"))
+	clock.advance(time.Millisecond)
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if cmd != nil {
 		t.Fatal("Enter inside a paste burst attempted to submit")
 	}
-	if got := m.input.Value(); got != "ab\n" {
+	if got := m.input.Value(); got != "abc\n" {
 		t.Fatalf("burst Enter produced %q, want a literal newline", got)
 	}
 	if len(fc.calls) != 0 {
@@ -157,6 +159,26 @@ func TestRapidASCIIEnterIsInsertedAsPasteNewline(t *testing.T) {
 	drain(m, cmd)
 	if len(fc.calls) != 1 || fc.calls[0].method != "task.submit" {
 		t.Fatalf("normal Enter after burst called %#v", fc.calls)
+	}
+}
+
+func TestRapidTwoCharacterCommandStillSubmits(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{
+		"task.submit": map[string]any{"task_id": "tsk_short"},
+	}}
+	m, clock := newTestModel(fc)
+	m.Update(keyText("l"))
+	clock.advance(time.Millisecond)
+	m.Update(keyText("s"))
+	clock.advance(time.Millisecond)
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if cmd == nil {
+		t.Fatal("rapid two-character command was mistaken for a paste burst")
+	}
+	drain(m, cmd)
+	if len(fc.calls) != 1 || fc.calls[0].method != "task.submit" {
+		t.Fatalf("rapid two-character command called %#v", fc.calls)
 	}
 }
 
