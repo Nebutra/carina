@@ -17,6 +17,7 @@ export interface Session {
 
 export interface Task {
   task_id: string
+  client_submission_id?: string
   session_id: string
   workspace_id: string
   status: string
@@ -97,7 +98,7 @@ export interface ChannelEvent { id: string; sender_id: string; session_id: strin
 export interface Extension { manifest: { name: string; version: string; estimated_prompt_tokens?: number }; source: string; enabled: boolean; trusted: boolean }
 export interface RuntimeInfo { runtime_version: string; protocol_version: string; projection_version?: string; minimum_protocol_version?: string; capabilities: Record<string, unknown> }
 export type JsonSchema = Record<string, unknown>
-export interface RunOptions { outputSchema?: JsonSchema; signal?: AbortSignal; pollIntervalMs?: number }
+export interface RunOptions { outputSchema?: JsonSchema; signal?: AbortSignal; pollIntervalMs?: number; clientSubmissionId?: string }
 export interface TurnResult { task: Task; finalResponse: string; structuredOutput?: unknown }
 export interface AgentViewEntry { session_id: string; task_id?: string; state: string; title?: string; summary?: string; workspace_root?: string; updated_at?: string }
 export interface AgentView { needs_input: AgentViewEntry[]; working: AgentViewEntry[]; completed: AgentViewEntry[] }
@@ -232,11 +233,11 @@ export class CarinaClient {
   }
   getSession(sessionId: string): Promise<Session> { return this.call('session.get', { session_id: sessionId }) }
   listSessions(): Promise<Session[]> { return this.call('session.list') }
-  submitTask(sessionId: string, prompt: string): Promise<Task> {
-    return this.call('task.submit', { session_id: sessionId, prompt })
+  submitTask(sessionId: string, prompt: string, clientSubmissionId?: string): Promise<Task> {
+    return this.call('task.submit', { session_id: sessionId, prompt, ...(clientSubmissionId ? { client_submission_id: clientSubmissionId } : {}) })
   }
-  submitGoal(sessionId: string, prompt: string, successCriteria: SuccessCheck[]): Promise<Task> {
-    return this.call('task.submit', { session_id: sessionId, prompt, success_criteria: successCriteria })
+  submitGoal(sessionId: string, prompt: string, successCriteria: SuccessCheck[], clientSubmissionId?: string): Promise<Task> {
+    return this.call('task.submit', { session_id: sessionId, prompt, success_criteria: successCriteria, ...(clientSubmissionId ? { client_submission_id: clientSubmissionId } : {}) })
   }
   replaySession(sessionId: string): Promise<CarinaEvent[]> { return this.call('session.replay', { session_id: sessionId }) }
   attachSession(sessionId: string, since = 0, eventMode: 'compat'|'canonical' = 'compat'): Promise<SessionAttachment> {
@@ -386,7 +387,7 @@ export class CarinaThread {
   async fork(boundary: { lastTaskId?: string; throughTurn?: number } = {}): Promise<CarinaThread> { return this.client.forkThread(this.session.session_id,boundary) }
   async run(input: string, options: RunOptions = {}): Promise<TurnResult> {
     if (options.signal?.aborted) throw options.signal.reason ?? new Error('aborted')
-    const task=await this.client.call<Task>('task.submit',{session_id:this.session.session_id,prompt:input,...(options.outputSchema?{output_schema:options.outputSchema}:{})})
+    const task=await this.client.call<Task>('task.submit',{session_id:this.session.session_id,prompt:input,...(options.clientSubmissionId?{client_submission_id:options.clientSubmissionId}:{}),...(options.outputSchema?{output_schema:options.outputSchema}:{})})
     const cancel=()=>{void this.client.call('task.cancel',{task_id:task.task_id}).catch(()=>{})};options.signal?.addEventListener('abort',cancel,{once:true})
     try { for (;;) { if(options.signal?.aborted)throw options.signal.reason??new Error('aborted');const current=await this.client.call<Task>('task.result',{task_id:task.task_id});if(['completed','degraded','failed','cancelled','needs_input'].includes(current.status)){let structuredOutput:unknown;try{structuredOutput=options.outputSchema?JSON.parse((current as Task & {summary?:string}).summary??''):undefined}catch{};return{task:current,finalResponse:(current as Task & {summary?:string}).summary??'',structuredOutput}};await new Promise(r=>setTimeout(r,options.pollIntervalMs??50))} } finally { options.signal?.removeEventListener('abort',cancel) }
   }

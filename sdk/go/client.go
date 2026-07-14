@@ -37,12 +37,13 @@ type Session struct {
 }
 
 type Task struct {
-	TaskID      string `json:"task_id"`
-	SessionID   string `json:"session_id"`
-	WorkspaceID string `json:"workspace_id"`
-	Status      string `json:"status"`
-	UserPrompt  string `json:"user_prompt"`
-	Summary     string `json:"summary,omitempty"`
+	TaskID             string `json:"task_id"`
+	ClientSubmissionID string `json:"client_submission_id,omitempty"`
+	SessionID          string `json:"session_id"`
+	WorkspaceID        string `json:"workspace_id"`
+	Status             string `json:"status"`
+	UserPrompt         string `json:"user_prompt"`
+	Summary            string `json:"summary,omitempty"`
 }
 
 type Event struct {
@@ -230,8 +231,9 @@ func compatibleEventSchema(raw any) bool {
 }
 
 type RunOptions struct {
-	OutputSchema json.RawMessage
-	PollInterval time.Duration
+	OutputSchema       json.RawMessage
+	PollInterval       time.Duration
+	ClientSubmissionID string
 }
 type TurnResult struct {
 	Task             Task   `json:"task"`
@@ -371,9 +373,21 @@ func (c *Client) ReplaySession(sessionID string) ([]Event, error) {
 }
 
 func (c *Client) SubmitTask(sessionID, prompt string) (Task, error) {
+	return c.SubmitTaskIdempotent(sessionID, prompt, "")
+}
+
+func (c *Client) SubmitTaskIdempotent(sessionID, prompt, clientSubmissionID string) (Task, error) {
 	var out Task
-	err := c.Call("task.submit", map[string]any{"session_id": sessionID, "prompt": prompt}, &out)
+	err := c.Call("task.submit", taskSubmitParams(sessionID, prompt, clientSubmissionID), &out)
 	return out, err
+}
+
+func taskSubmitParams(sessionID, prompt, clientSubmissionID string) map[string]any {
+	params := map[string]any{"session_id": sessionID, "prompt": prompt}
+	if clientSubmissionID != "" {
+		params["client_submission_id"] = clientSubmissionID
+	}
+	return params
 }
 func (c *Client) StartThread(workspaceRoot, profile string) (*Thread, error) {
 	if _, err := c.Initialize("carina-sdk-go", CompatibleRuntimeVersion); err != nil {
@@ -414,7 +428,7 @@ func (t *Thread) Fork(lastTaskID string, throughTurn int) (*Thread, error) {
 	return t.client.ForkThread(t.Session.SessionID, lastTaskID, throughTurn)
 }
 func (t *Thread) Run(ctx context.Context, prompt string, opts RunOptions) (TurnResult, error) {
-	params := map[string]any{"session_id": t.Session.SessionID, "prompt": prompt}
+	params := taskSubmitParams(t.Session.SessionID, prompt, opts.ClientSubmissionID)
 	if len(opts.OutputSchema) > 0 {
 		params["output_schema"] = json.RawMessage(opts.OutputSchema)
 	}
@@ -516,7 +530,7 @@ func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts RunOptions
 			}
 		}()
 
-		params := map[string]any{"session_id": t.Session.SessionID, "prompt": prompt}
+		params := taskSubmitParams(t.Session.SessionID, prompt, opts.ClientSubmissionID)
 		if len(opts.OutputSchema) > 0 {
 			params["output_schema"] = json.RawMessage(opts.OutputSchema)
 		}
@@ -568,8 +582,14 @@ func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts RunOptions
 }
 
 func (c *Client) SubmitGoal(sessionID, prompt string, criteria []SuccessCheck) (Task, error) {
+	return c.SubmitGoalIdempotent(sessionID, prompt, criteria, "")
+}
+
+func (c *Client) SubmitGoalIdempotent(sessionID, prompt string, criteria []SuccessCheck, clientSubmissionID string) (Task, error) {
 	var out Task
-	err := c.Call("task.submit", map[string]any{"session_id": sessionID, "prompt": prompt, "success_criteria": criteria}, &out)
+	params := taskSubmitParams(sessionID, prompt, clientSubmissionID)
+	params["success_criteria"] = criteria
+	err := c.Call("task.submit", params, &out)
 	return out, err
 }
 

@@ -58,7 +58,7 @@
       { "method": "session.checkpoint.restore", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "checkpoint_id": "string", "confirmed": "boolean" }, "result": "CheckpointRestoreResult" }
     ],
     "task": [
-      { "method": "task.submit", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string", "agent": "string?", "model": "string?", "output_schema": "JSON Schema Draft 2020-12 object?" }, "result": "Task" },
+      { "method": "task.submit", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string", "client_submission_id": "string?", "agent": "string?", "model": "string?", "output_schema": "JSON Schema Draft 2020-12 object?" }, "result": "Task" },
       { "method": "task.status", "scope": "read", "remote": true, "params": { "task_id": "string" }, "result": "Task" },
       { "method": "task.list", "scope": "read", "remote": true, "params": { "session_id": "string?" }, "result": "Task[]" },
       { "method": "task.result", "scope": "read", "remote": true, "params": { "task_id": "string" }, "result": "TaskResult" },

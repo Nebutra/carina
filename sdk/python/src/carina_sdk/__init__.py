@@ -19,6 +19,7 @@ __all__ = [
     "CarinaClient",
     "CarinaRpcError",
     "CarinaStreamOverflow",
+    "CarinaTask",
     "CarinaThread",
     "SessionAttachment",
     "SessionReview",
@@ -26,6 +27,16 @@ __all__ = [
     "compatible_runtime_version",
     "default_socket_path",
 ]
+
+
+class CarinaTask(TypedDict, total=False):
+    task_id: str
+    client_submission_id: str
+    session_id: str
+    workspace_id: str
+    status: str
+    user_prompt: str
+    summary: str
 
 
 class CarinaEvent(TypedDict, total=False):
@@ -195,11 +206,17 @@ class CarinaClient:
     def list_sessions(self) -> list[dict[str, Any]]:
         return self.call("session.list")
 
-    def submit_task(self, session_id: str, prompt: str) -> dict[str, Any]:
-        return self.call("task.submit", {"session_id": session_id, "prompt": prompt})
+    def submit_task(self, session_id: str, prompt: str, client_submission_id: str | None = None) -> CarinaTask:
+        params: dict[str, Any] = {"session_id": session_id, "prompt": prompt}
+        if client_submission_id is not None:
+            params["client_submission_id"] = client_submission_id
+        return self.call("task.submit", params)
 
-    def submit_goal(self, session_id: str, prompt: str, success_criteria: list[dict[str, Any]]) -> dict[str, Any]:
-        return self.call("task.submit", {"session_id": session_id, "prompt": prompt, "success_criteria": success_criteria})
+    def submit_goal(self, session_id: str, prompt: str, success_criteria: list[dict[str, Any]], client_submission_id: str | None = None) -> CarinaTask:
+        params: dict[str, Any] = {"session_id": session_id, "prompt": prompt, "success_criteria": success_criteria}
+        if client_submission_id is not None:
+            params["client_submission_id"] = client_submission_id
+        return self.call("task.submit", params)
 
     def replay_session(self, session_id: str) -> list[CarinaEvent]:
         return self.call("session.replay", {"session_id": session_id})
@@ -489,9 +506,10 @@ class CarinaThread:
     def fork(self, last_task_id: str | None = None, through_turn: int | None = None) -> CarinaThread:
         return self.client.fork_thread(self.session["session_id"], last_task_id, through_turn)
 
-    def run(self, prompt: str, *, output_schema: dict[str, Any] | None = None, cancel: threading.Event | None = None, poll_interval: float = .05) -> dict[str, Any]:
+    def run(self, prompt: str, *, output_schema: dict[str, Any] | None = None, client_submission_id: str | None = None, cancel: threading.Event | None = None, poll_interval: float = .05) -> dict[str, Any]:
         params: dict[str, Any] = {"session_id": self.session["session_id"], "prompt": prompt}
         if output_schema is not None: params["output_schema"] = output_schema
+        if client_submission_id is not None: params["client_submission_id"] = client_submission_id
         task = self.client.call("task.submit", params); task_id = task["task_id"]
         while True:
             if cancel is not None and cancel.is_set():
@@ -508,6 +526,7 @@ class CarinaThread:
 
     def run_streamed(self, prompt: str, **options: Any) -> Iterator[dict[str, Any]]:
         output_schema = options.get("output_schema")
+        client_submission_id = options.get("client_submission_id")
         cancel = options.get("cancel")
         poll_interval = options.get("poll_interval", .05)
         session_id = self.session["session_id"]
@@ -519,6 +538,8 @@ class CarinaThread:
             params: dict[str, Any] = {"session_id": self.session["session_id"], "prompt": prompt}
             if output_schema is not None:
                 params["output_schema"] = output_schema
+            if client_submission_id is not None:
+                params["client_submission_id"] = client_submission_id
             task = self.client.call("task.submit", params)
             task_id = task["task_id"]
             while True:

@@ -141,6 +141,8 @@ type Daemon struct {
 	pendingMemWrites    map[string]pendingMemoryWrite // decision_id -> memory write awaiting approval
 	patchGates          map[string]*patchGate         // patch_id -> PatchApply decision state
 	patchGateByDecision map[string]string             // decision_id -> patch_id
+	submissionMu        sync.Mutex
+	taskSubmissions     map[string]string // session_id + client_submission_id -> task_id
 
 	runs   *runStore     // durable background-run registry (survives restart)
 	runSem chan struct{} // concurrency cap for background runs
@@ -338,6 +340,7 @@ func New(opts Options) (*Daemon, error) {
 		pendingMemWrites:    make(map[string]pendingMemoryWrite),
 		patchGates:          make(map[string]*patchGate),
 		patchGateByDecision: make(map[string]string),
+		taskSubmissions:     make(map[string]string),
 		memory:              newMemoryStore(opts.StateDir),
 		schedules:           scheduler.OpenScheduleStore(opts.StateDir),
 		contextEng:          contextEng,
@@ -436,6 +439,9 @@ func New(opts Options) (*Daemon, error) {
 	d.runs = newRunStore(opts.StateDir)
 	for _, t := range d.runs.load() {
 		d.sched.Load(t)
+		if t.ClientSubmissionID != "" {
+			d.taskSubmissions[taskSubmissionKey(t.SessionID, t.ClientSubmissionID)] = t.TaskID
+		}
 	}
 	blockedRestores, err := d.runs.reconcileRestoreJournals()
 	if err != nil {
@@ -2040,15 +2046,18 @@ func (d *Daemon) noticePlanModeSwitch(sessionID string, on bool) {
 
 // ---- tasks ----------------------------------------------------------------
 
+type taskSubmitParams struct {
+	SessionID          string                   `json:"session_id"`
+	ClientSubmissionID *string                  `json:"client_submission_id"`
+	Prompt             string                   `json:"prompt"`
+	Model              string                   `json:"model"`
+	Agent              string                   `json:"agent"`
+	SuccessCriteria    []scheduler.SuccessCheck `json:"success_criteria"`
+	OutputSchema       json.RawMessage          `json:"output_schema"`
+}
+
 func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
-	var p struct {
-		SessionID       string                   `json:"session_id"`
-		Prompt          string                   `json:"prompt"`
-		Model           string                   `json:"model"`
-		Agent           string                   `json:"agent"`
-		SuccessCriteria []scheduler.SuccessCheck `json:"success_criteria"`
-		OutputSchema    json.RawMessage          `json:"output_schema"`
-	}
+	var p taskSubmitParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
@@ -2058,6 +2067,27 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	}
 	if sess.Status != "active" {
 		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
+	}
+	submissionFingerprint := ""
+	clientSubmissionID := ""
+	if p.ClientSubmissionID != nil {
+		clientSubmissionID = *p.ClientSubmissionID
+		if !validClientSubmissionID(clientSubmissionID) {
+			return nil, fmt.Errorf("client_submission_id must be a 1-128 byte ASCII token using letters, digits, '.', '_', ':', or '-'")
+		}
+		submissionFingerprint = taskSubmissionFingerprint(p)
+		key := taskSubmissionKey(p.SessionID, clientSubmissionID)
+		d.submissionMu.Lock()
+		defer d.submissionMu.Unlock()
+		if taskID := d.taskSubmissions[key]; taskID != "" {
+			if task, exists := d.sched.Get(taskID); exists {
+				if task.ClientSubmissionFingerprint != submissionFingerprint {
+					return nil, fmt.Errorf("client_submission_id %q was already used for a different request", clientSubmissionID)
+				}
+				return task, nil
+			}
+			delete(d.taskSubmissions, key)
+		}
 	}
 	prompt := p.Prompt
 	model := p.Model
@@ -2090,6 +2120,9 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		model = spec.Model
 	}
 	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, prompt, model, agent, p.SuccessCriteria)
+	if clientSubmissionID != "" {
+		d.sched.SetClientSubmission(task.TaskID, clientSubmissionID, submissionFingerprint)
+	}
 	if budget := d.maxTaskTokens.Load(); budget > 0 {
 		d.sched.SetTokenBudget(task.TaskID, int(budget))
 	}
@@ -2116,13 +2149,52 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		"timestamp": time.Now().UTC().Format(time.RFC3339), "payload": writeAheadPayload, internalRawAuditCursor: cursor,
 	})
 	_ = d.history.Append(prompt) // shared cross-process prompt history (best-effort)
-	d.persistRun(task.TaskID)
+	if err := d.runs.saveChecked(task); err != nil {
+		_, _ = d.sched.Cancel(task.TaskID)
+		return nil, fmt.Errorf("task_submit_failed: durable submission record failed, task was not dispatched: %w", err)
+	}
+	if clientSubmissionID != "" {
+		d.taskSubmissions[taskSubmissionKey(p.SessionID, clientSubmissionID)] = task.TaskID
+	}
 
 	d.startTask(func() { d.runTaskGuarded(sess, task) })
 	if t, ok := d.sched.Get(task.TaskID); ok {
 		return t, nil
 	}
 	return task, nil
+}
+
+func taskSubmissionKey(sessionID, clientSubmissionID string) string {
+	return sessionID + "\x00" + clientSubmissionID
+}
+
+func taskSubmissionFingerprint(p taskSubmitParams) string {
+	p.SessionID = ""
+	p.ClientSubmissionID = nil
+	if len(p.OutputSchema) > 0 {
+		var schema any
+		if json.Unmarshal(p.OutputSchema, &schema) == nil {
+			p.OutputSchema, _ = json.Marshal(schema)
+		}
+	}
+	raw, _ := json.Marshal(p)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func validClientSubmissionID(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '.' || c == '_' || c == ':' || c == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (d *Daemon) handleTaskStatus(params json.RawMessage) (any, error) {
