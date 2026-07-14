@@ -3,8 +3,33 @@ package tui
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 )
+
+// ParseKeyBindingOverrides converts the config-file action map (for example
+// {"composer.submit": ["ctrl+enter"]}) into typed runtime overrides.
+func ParseKeyBindingOverrides(spec map[string][]string) ([]KeyBindingOverride, error) {
+	actions := make([]string, 0, len(spec))
+	for action := range spec {
+		actions = append(actions, action)
+	}
+	sort.Strings(actions)
+	overrides := make([]KeyBindingOverride, 0, len(actions))
+	for _, rawAction := range actions {
+		context, _, ok := strings.Cut(rawAction, ".")
+		if !ok || context == "" {
+			return nil, fmt.Errorf("keybinding action %q must use <context>.<action>", rawAction)
+		}
+		overrides = append(overrides, KeyBindingOverride{
+			Context: KeyContext(context),
+			Action:  KeyAction(rawAction),
+			Keys:    append([]string(nil), spec[rawAction]...),
+		})
+	}
+	return overrides, nil
+}
 
 // KeyContext identifies one focused input surface. The same physical key may
 // intentionally mean different things in different contexts.
@@ -31,16 +56,17 @@ const (
 	ActionGlobalExit       KeyAction = "global.exit"
 	ActionGlobalTranscript KeyAction = "global.transcript"
 
-	ActionComposerSubmit          KeyAction = "composer.submit"
-	ActionComposerNewline         KeyAction = "composer.newline"
-	ActionComposerQueue           KeyAction = "composer.queue"
-	ActionComposerRecallQueue     KeyAction = "composer.recall-queue"
-	ActionComposerExternalEditor  KeyAction = "composer.external-editor"
-	ActionComposerUndo            KeyAction = "composer.undo"
-	ActionComposerRedo            KeyAction = "composer.redo"
+	ActionComposerSubmit         KeyAction = "composer.submit"
+	ActionComposerSubmitNew      KeyAction = "composer.submit-new"
+	ActionComposerNewline        KeyAction = "composer.newline"
+	ActionComposerQueue          KeyAction = "composer.queue"
+	ActionComposerRecallQueue    KeyAction = "composer.recall-queue"
+	ActionComposerExternalEditor KeyAction = "composer.external-editor"
+	ActionComposerUndo           KeyAction = "composer.undo"
+	ActionComposerRedo           KeyAction = "composer.redo"
 	// ActionComposerUndoPaste is kept as a source-compatible alias for early
 	// embedders; Ctrl+Z now undoes text after pending paste items are exhausted.
-	ActionComposerUndoPaste = ActionComposerUndo
+	ActionComposerUndoPaste                 = ActionComposerUndo
 	ActionComposerHistoryPrevious KeyAction = "composer.history-previous"
 	ActionComposerHistoryNext     KeyAction = "composer.history-next"
 	ActionComposerHistorySearch   KeyAction = "composer.history-search"
@@ -74,6 +100,8 @@ const (
 	ActionHistoryNext     KeyAction = "history.next"
 	ActionHistoryAccept   KeyAction = "history.accept"
 	ActionHistoryCancel   KeyAction = "history.cancel"
+	ActionHistoryDelete   KeyAction = "history.delete"
+	ActionHistoryClear    KeyAction = "history.clear"
 
 	ActionPagerUp           KeyAction = "pager.up"
 	ActionPagerDown         KeyAction = "pager.down"
@@ -86,7 +114,8 @@ const (
 )
 
 // KeyBindingOverride replaces all keys for one known context/action pair. An
-// empty Keys slice explicitly unbinds the action.
+// empty Keys slice explicitly unbinds an optional action. Safety-critical
+// actions that are the only escape/commit path cannot be unbound.
 type KeyBindingOverride struct {
 	Context KeyContext
 	Action  KeyAction
@@ -114,6 +143,7 @@ func defaultKeyBindings() []keyBinding {
 		{KeyContextGlobal, ActionGlobalTranscript, []string{"alt+r"}, "open plain transcript"},
 
 		{KeyContextComposer, ActionComposerSubmit, []string{"enter"}, "submit or steer"},
+		{KeyContextComposer, ActionComposerSubmitNew, []string{"alt+s"}, "force a distinct submission"},
 		{KeyContextComposer, ActionComposerNewline, []string{"shift+enter", "alt+enter", "ctrl+j"}, "insert newline"},
 		{KeyContextComposer, ActionComposerQueue, []string{"tab"}, "queue next turn while running"},
 		{KeyContextComposer, ActionComposerRecallQueue, []string{"alt+up"}, "edit latest queued turn"},
@@ -153,13 +183,15 @@ func defaultKeyBindings() []keyBinding {
 		{KeyContextHistory, ActionHistoryNext, []string{"ctrl+s", "down"}, "newer match"},
 		{KeyContextHistory, ActionHistoryAccept, []string{"enter", "tab"}, "accept match"},
 		{KeyContextHistory, ActionHistoryCancel, []string{"esc", "ctrl+c"}, "cancel search"},
+		{KeyContextHistory, ActionHistoryDelete, []string{"backspace", "ctrl+h"}, "delete query character"},
+		{KeyContextHistory, ActionHistoryClear, []string{"ctrl+u"}, "clear search query"},
 
 		{KeyContextPager, ActionPagerUp, []string{"up", "k"}, "scroll up"},
 		{KeyContextPager, ActionPagerDown, []string{"down", "j"}, "scroll down"},
 		{KeyContextPager, ActionPagerPageUp, []string{"pgup"}, "page up"},
-		{KeyContextPager, ActionPagerPageDown, []string{"pgdown"}, "page down"},
-		{KeyContextPager, ActionPagerTop, []string{"alt+home"}, "jump to top"},
-		{KeyContextPager, ActionPagerBottom, []string{"alt+end"}, "jump to bottom"},
+		{KeyContextPager, ActionPagerPageDown, []string{"pgdown", " "}, "page down"},
+		{KeyContextPager, ActionPagerTop, []string{"home", "alt+home"}, "jump to top"},
+		{KeyContextPager, ActionPagerBottom, []string{"end", "alt+end"}, "jump to bottom"},
 		{KeyContextPager, ActionPagerClose, []string{"esc", "q", "ctrl+c"}, "close overlay"},
 		{KeyContextPager, ActionPagerToggleDetail, []string{"ctrl+o"}, "expand latest result"},
 	}
@@ -225,6 +257,25 @@ func newRuntimeKeymap(overrides []KeyBindingOverride) (runtimeKeymap, error) {
 		}
 		byContext[def.Context][def.Action] = def
 	}
+	required := []struct {
+		context KeyContext
+		action  KeyAction
+	}{
+		{KeyContextGlobal, ActionGlobalInterrupt},
+		{KeyContextComposer, ActionComposerSubmit},
+		{KeyContextApproval, ActionApprovalOnce},
+		{KeyContextApproval, ActionApprovalDeny},
+		{KeyContextQuestion, ActionQuestionPrevious},
+		{KeyContextQuestion, ActionQuestionNext},
+		{KeyContextQuestion, ActionQuestionAnswer},
+		{KeyContextHistory, ActionHistoryCancel},
+		{KeyContextPager, ActionPagerClose},
+	}
+	for _, item := range required {
+		if len(byContext[item.context][item.action].Keys) == 0 {
+			return runtimeKeymap{}, fmt.Errorf("keybinding %q in context %q cannot be unbound", item.action, item.context)
+		}
+	}
 	return runtimeKeymap{bindings: byContext, order: defs}, nil
 }
 
@@ -241,16 +292,66 @@ func normalizeKeySpec(raw string) (string, error) {
 		"pageup": "pgup", "page-up": "pgup", "pagedown": "pgdown", "page-down": "pgdown",
 		"uparrow": "up", "downarrow": "down",
 	}
-	if alias, ok := aliases[key]; ok {
-		key = alias
-	}
-	for _, modifier := range []string{"ctrl", "alt", "shift"} {
+	for _, modifier := range []string{"ctrl", "alt", "shift", "meta", "hyper", "super"} {
 		key = strings.Replace(key, modifier+"-", modifier+"+", 1)
 	}
 	if strings.ContainsAny(key, "\r\n\t") || (strings.Contains(key, " ") && key != " ") {
 		return "", fmt.Errorf("invalid key %q", raw)
 	}
-	return key, nil
+	if key == "+" {
+		return key, nil
+	}
+	parts := strings.Split(key, "+")
+	base := parts[len(parts)-1]
+	if alias, ok := aliases[base]; ok {
+		base = alias
+	}
+	if base == "" || (base == " " && len(parts) > 1) || !validKeyBase(base) {
+		return "", fmt.Errorf("invalid key %q", raw)
+	}
+	modifierOrder := []string{"ctrl", "alt", "shift", "meta", "hyper", "super"}
+	want := make(map[string]bool, len(parts)-1)
+	for _, modifier := range parts[:len(parts)-1] {
+		if modifier == "" {
+			return "", fmt.Errorf("invalid key %q", raw)
+		}
+		known := false
+		for _, candidate := range modifierOrder {
+			if modifier == candidate {
+				known = true
+				break
+			}
+		}
+		if !known || want[modifier] {
+			return "", fmt.Errorf("invalid modifier %q in key %q", modifier, raw)
+		}
+		want[modifier] = true
+	}
+	ordered := make([]string, 0, len(want)+1)
+	for _, modifier := range modifierOrder {
+		if want[modifier] {
+			ordered = append(ordered, modifier)
+		}
+	}
+	ordered = append(ordered, base)
+	return strings.Join(ordered, "+"), nil
+}
+
+func validKeyBase(base string) bool {
+	if base == "1-9" {
+		return true
+	}
+	switch base {
+	case "esc", "enter", "tab", "backspace", "delete", "insert", "up", "down", "left", "right",
+		"home", "end", "pgup", "pgdown":
+		return true
+	}
+	if strings.HasPrefix(base, "f") {
+		n, err := strconv.Atoi(strings.TrimPrefix(base, "f"))
+		return err == nil && n >= 1 && n <= 24
+	}
+	runes := []rune(base)
+	return len(runes) == 1 && !unicode.IsControl(runes[0])
 }
 
 func canonicalKey(raw string) string {

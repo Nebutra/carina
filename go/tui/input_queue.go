@@ -53,6 +53,7 @@ func (q *inputQueue) drain() []promptDraft {
 }
 
 func cloneDraft(draft promptDraft) promptDraft {
+	draft.Prefix = append([]string(nil), draft.Prefix...)
 	draft.Paste = append([]string(nil), draft.Paste...)
 	return draft
 }

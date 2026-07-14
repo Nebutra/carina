@@ -243,22 +243,32 @@ func (m *Model) visibleSuggestPanelLines(limit int) []string {
 }
 
 func (m *Model) pastePanelLines() []string {
-	if len(m.pendingPaste) == 0 {
+	total := len(m.pendingPrefix) + len(m.pendingPaste)
+	if total == 0 {
 		return nil
 	}
-	lines := []string{m.th.Style(theme.RoleMuted).Render("pasted draft items (ctrl+z removes the latest)")}
-	start := maxInt(len(m.pendingPaste)-3, 0)
+	lines := []string{m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
+		"pasted draft items and restored turns (%s removes the latest)",
+		m.keys.label(KeyContextComposer, ActionComposerUndo)))}
+	start := maxInt(total-3, 0)
 	if start > 0 {
 		lines = append(lines, m.th.Style(theme.RoleMuted).Render(fmt.Sprintf("  ... %d earlier item(s)", start)))
 	}
-	for i := start; i < len(m.pendingPaste); i++ {
-		content := m.pendingPaste[i]
+	for i := start; i < total; i++ {
+		kind := "paste"
+		content := ""
+		if i < len(m.pendingPrefix) {
+			kind = "restored"
+			content = m.pendingPrefix[i]
+		} else {
+			content = m.pendingPaste[i-len(m.pendingPrefix)]
+		}
 		count := strings.Count(content, "\n") + 1
 		summary := strings.TrimSpace(sanitize(strings.Split(content, "\n")[0]))
 		if summary == "" {
 			summary = "(blank first line)"
 		}
-		line := fmt.Sprintf("  [%d] %d lines, %d chars: %s", i+1, count, len([]rune(content)), summary)
+		line := fmt.Sprintf("  [%d %s] %d lines, %d chars: %s", i+1, kind, count, len([]rune(content)), summary)
 		lines = append(lines, m.th.Style(theme.RoleInfo).Render(line))
 	}
 	return lines

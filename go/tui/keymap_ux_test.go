@@ -47,6 +47,30 @@ func TestKeymapRejectsSameContextConflictWithActionableError(t *testing.T) {
 	}
 }
 
+func TestKeymapCanonicalizesModifierOrderAndRejectsUnreachableSpecs(t *testing.T) {
+	keys, err := newRuntimeKeymap([]KeyBindingOverride{{
+		Context: KeyContextHistory,
+		Action:  ActionHistoryCancel,
+		Keys:    []string{"shift+ctrl+x"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !keys.matches(KeyContextHistory, ActionHistoryCancel, "ctrl+shift+x") {
+		t.Fatal("modifier order was not canonicalized to Bubble Tea event order")
+	}
+	for _, spec := range []string{"ctrl+ctrl+x", "banana+x", "ctrl+not-a-key", "ctrl+"} {
+		_, err := newRuntimeKeymap([]KeyBindingOverride{{
+			Context: KeyContextHistory,
+			Action:  ActionHistoryCancel,
+			Keys:    []string{spec},
+		}})
+		if err == nil {
+			t.Fatalf("unreachable key spec %q was accepted", spec)
+		}
+	}
+}
+
 func TestKeymapOverrideDrivesDispatchPlaceholderStatusAndHelp(t *testing.T) {
 	m, err := NewChecked(Options{
 		Theme:  theme.New(theme.Mono),
@@ -93,6 +117,55 @@ func TestFocusedContextWinsOverOverlappingGlobalOverride(t *testing.T) {
 	cmd, handled := m.handleKey("enter")
 	if !handled || cmd != nil || m.helpOpen {
 		t.Fatalf("composer submit did not win context precedence: handled=%v cmd=%v help=%v", handled, cmd != nil, m.helpOpen)
+	}
+}
+
+func TestComposerWinsOverOverlappingGlobalTranscriptOverride(t *testing.T) {
+	m, err := NewChecked(Options{
+		Theme: theme.New(theme.Mono),
+		Keybindings: []KeyBindingOverride{{
+			Context: KeyContextGlobal,
+			Action:  ActionGlobalTranscript,
+			Keys:    []string{"enter"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.input.SetValue("submit me")
+	if _, handled := m.handleKey("enter"); !handled || m.transcriptPager != nil {
+		t.Fatalf("global transcript overrode focused submit: handled=%v pager=%#v", handled, m.transcriptPager)
+	}
+}
+
+func TestFocusedModalCancelWinsOverOverlappingGlobalRedraw(t *testing.T) {
+	m, err := NewChecked(Options{
+		Theme: theme.New(theme.Mono),
+		Keybindings: []KeyBindingOverride{{
+			Context: KeyContextGlobal,
+			Action:  ActionGlobalRedraw,
+			Keys:    []string{"esc"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m.recordHistory(promptDraft{Text: "previous"})
+	if !m.beginHistorySearch() {
+		t.Fatal("history search did not open")
+	}
+	if cmd := m.historySearchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc}); cmd != nil || m.historySearch != nil {
+		t.Fatalf("history cancel lost focused priority: cmd=%v search=%#v", cmd != nil, m.historySearch)
+	}
+
+	m.openTranscriptPager()
+	if m.transcriptPager == nil {
+		t.Fatal("transcript pager did not open")
+	}
+	if cmd, handled := m.handleKey("esc"); !handled || cmd != nil || m.transcriptPager != nil {
+		t.Fatalf("pager close lost focused priority: handled=%v cmd=%v pager=%#v",
+			handled, cmd != nil, m.transcriptPager)
 	}
 }
 
@@ -259,10 +332,94 @@ func TestOverriddenInterruptRetainsDoublePressState(t *testing.T) {
 	if _, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}); cmd != nil {
 		t.Fatal("first overridden interrupt should only arm exit")
 	}
+	if got := transcriptText(m); !strings.Contains(got, "press ctrl+x again") || strings.Contains(got, "press ctrl+c again") {
+		t.Fatalf("interrupt hint drifted from override: %q", got)
+	}
 	clock.advance(time.Second)
 	if _, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}); cmd == nil {
 		t.Fatal("second overridden interrupt did not exit")
 	} else if _, quit := cmd().(tea.QuitMsg); !quit {
 		t.Fatal("second overridden interrupt did not return tea.Quit")
+	}
+}
+
+func TestResolvingGovernanceStillAllowsInterruptAndRedraw(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		open func(*Model)
+	}{
+		{"approval", func(m *Model) { m.approval = &approvalState{DecisionID: "p", Resolving: true} }},
+		{"question", func(m *Model) { m.question = &questionState{QuestionID: "q", Resolving: true} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fc := &fakeCaller{handler: map[string]any{"task.cancel": nil}}
+			m, _ := newTestModel(fc)
+			m.inFlightTaskID = "tsk_running"
+			tc.open(m)
+			cmd, handled := m.handleKey("ctrl+l")
+			if !handled || cmd == nil {
+				t.Fatal("resolving governance swallowed redraw")
+			}
+			cmd, handled = m.handleKey("ctrl+c")
+			if !handled || cmd == nil {
+				t.Fatal("resolving governance swallowed interrupt")
+			}
+			drain(m, cmd)
+			if len(fc.calls) != 1 || fc.calls[0].method != "task.cancel" {
+				t.Fatalf("interrupt calls = %#v", fc.calls)
+			}
+		})
+	}
+}
+
+func TestHelpMouseWheelOwnsVisibleOverlay(t *testing.T) {
+	m, _ := newTestModel(nil)
+	for i := 0; i < 40; i++ {
+		m.push("line")
+	}
+	m.vp.PageUp()
+	m.showHelp()
+	transcriptOffset := m.vp.YOffset()
+	m.handleMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if m.helpScroll == 0 || m.vp.YOffset() != transcriptOffset {
+		t.Fatalf("help wheel leaked to transcript: help=%d transcript=%d->%d", m.helpScroll, transcriptOffset, m.vp.YOffset())
+	}
+}
+
+func TestHistoryAndTranscriptSurfacesKeepGlobalRedraw(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.history = []promptDraft{{Text: "history"}}
+	startHistorySearch(t, m)
+	if cmd, handled := m.handleKey("ctrl+l"); !handled || cmd == nil {
+		t.Fatal("history search swallowed global redraw")
+	}
+	composerKey(t, m, "esc")
+	m.handleKey("alt+r")
+	if cmd, handled := m.handleKey("ctrl+l"); !handled || cmd == nil {
+		t.Fatal("transcript pager swallowed global redraw")
+	}
+}
+
+func TestCriticalKeybindingsCannotBeUnbound(t *testing.T) {
+	_, err := NewChecked(Options{Keybindings: []KeyBindingOverride{{
+		Context: KeyContextHistory,
+		Action:  ActionHistoryCancel,
+		Keys:    []string{},
+	}}})
+	if err == nil || !strings.Contains(err.Error(), "cannot be unbound") {
+		t.Fatalf("critical unbind was accepted: %v", err)
+	}
+}
+
+func TestParseKeyBindingOverridesUsesActionContext(t *testing.T) {
+	overrides, err := ParseKeyBindingOverrides(map[string][]string{
+		"composer.submit": {"ctrl+enter"},
+		"global.help":     {"ctrl+h"},
+	})
+	if err != nil || len(overrides) != 2 {
+		t.Fatalf("parse overrides = %#v, %v", overrides, err)
+	}
+	if overrides[0].Context != KeyContextComposer || overrides[0].Action != ActionComposerSubmit {
+		t.Fatalf("first override = %#v", overrides[0])
 	}
 }

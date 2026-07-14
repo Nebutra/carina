@@ -310,6 +310,10 @@ func (m *Model) approvalKey(key string) (tea.Cmd, bool) {
 	}
 	ap := m.approval
 	if ap.Resolving {
+		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) ||
+			m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
+			return nil, false
+		}
 		return nil, true
 	}
 	switch {
@@ -443,7 +447,12 @@ func (m *Model) overlayView() string {
 		footer = "Resolving decision..."
 	} else if len(body) > m.approvalViewportHeight() {
 		if contentWidth >= 56 {
-			footer += fmt.Sprintf("  [up/down/pgup/pgdown] scroll %d-%d/%d", start+1, end, len(body))
+			footer += fmt.Sprintf("  [%s/%s/%s/%s] scroll %d-%d/%d",
+				primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalUp)),
+				primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalDown)),
+				primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalPageUp)),
+				primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalPageDown)),
+				start+1, end, len(body))
 		} else {
 			footer += fmt.Sprintf("  %d-%d/%d", start+1, end, len(body))
 		}

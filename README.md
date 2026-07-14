@@ -126,6 +126,30 @@ brew upgrade carina
 package metadata and `brew upgrade carina` upgrades the installed formula.
 Carina does not auto-start the daemon after installation.
 
+## TUI Keybindings
+
+The interactive TUI reads key overrides from the normal global and project
+configuration cascade (`~/.carina/config.json` and `.carina/config.json`).
+Bindings are keyed by the semantic action names shown in the F1 help overlay:
+
+```json
+{
+  "tui_keybindings": {
+    "global.help": ["ctrl+h"],
+    "composer.submit": ["ctrl+enter"],
+    "composer.external-editor": ["ctrl+g"]
+  }
+}
+```
+
+Unknown actions, conflicting keys in the same context, and unbound critical
+approval/search escape actions fail at startup with an actionable error.
+Task submissions are journaled under the configured state directory before
+dispatch. If an acknowledgement is lost or the TUI restarts, Carina reconciles
+the same idempotency key instead of silently creating a duplicate task. Use the
+`composer.submit-new` binding (default `Alt+S`) only when a distinct submission
+is intentional.
+
 ## Quickstart From Source
 
 Requirements:

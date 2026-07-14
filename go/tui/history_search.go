@@ -31,7 +31,7 @@ const (
 // from the textarea preview, while original preserves the complete draft for
 // lossless Esc/Ctrl+C cancellation.
 type historySearchState struct {
-	original promptDraft
+	original composerSnapshot
 	query    string
 	status   historySearchStatus
 	matches  []int // history indexes, newest first
@@ -94,6 +94,7 @@ func mergePromptHistory(remote []string, local []promptDraft) []promptDraft {
 		}
 	}
 	for _, draft := range local {
+		draft.Prefix = append([]string(nil), draft.Prefix...)
 		draft.Paste = append([]string(nil), draft.Paste...)
 		if historyDraftKey(draft) != "" {
 			combined = append(combined, draft)
@@ -139,7 +140,7 @@ func (m *Model) beginHistorySearch() bool {
 	}
 	m.closeSuggest()
 	m.historySearch = &historySearchState{
-		original: m.currentDraft(),
+		original: m.composerSnapshot(),
 		status:   historySearchIdle,
 		position: -1,
 	}
@@ -153,6 +154,25 @@ func (m *Model) beginHistorySearch() bool {
 // Callers route overlays first, then this method, so governance prompts retain
 // modal priority without allowing global Ctrl+C to destroy a search draft.
 func (m *Model) historySearchKey(key string) (tea.Cmd, bool) {
+	text := key
+	if strings.Contains(key, "+") {
+		text = ""
+	}
+	switch key {
+	case "up", "down", "left", "right", "enter", "tab", "esc", "backspace", "delete", "home", "end", "pgup", "pgdown":
+		text = ""
+	case "space":
+		text = " "
+	}
+	return m.historySearchKeyText(key, text)
+}
+
+func (m *Model) historySearchKeyPress(msg tea.KeyPressMsg) tea.Cmd {
+	cmd, _ := m.historySearchKeyText(msg.String(), msg.Key().Text)
+	return cmd
+}
+
+func (m *Model) historySearchKeyText(key, text string) (tea.Cmd, bool) {
 	search := m.historySearch
 	if search == nil {
 		return nil, false
@@ -164,23 +184,30 @@ func (m *Model) historySearchKey(key string) (tea.Cmd, bool) {
 		m.stepHistorySearch(1)
 	case m.keys.matches(KeyContextHistory, ActionHistoryAccept, key):
 		if search.status == historySearchMatch {
+			before := search.original
 			m.historySearch = nil
 			m.historyPos = len(m.history)
 			m.historyScratch = promptDraft{}
+			m.recordComposerEdit(before, composerEditOther)
 			m.layout()
+			return m.resumeQueuedAfterTransient(), true
 		}
 	case m.keys.matches(KeyContextHistory, ActionHistoryCancel, key):
-		m.cancelHistorySearch()
-	case canonicalKey(key) == "backspace" || canonicalKey(key) == "ctrl+h":
+		return m.cancelHistorySearch(), true
+	case m.keys.matches(KeyContextHistory, ActionHistoryDelete, key):
 		runes := []rune(search.query)
 		if len(runes) > 0 {
 			m.updateHistorySearchQuery(string(runes[:len(runes)-1]))
 		}
-	case canonicalKey(key) == "ctrl+u":
+	case m.keys.matches(KeyContextHistory, ActionHistoryClear, key):
 		m.updateHistorySearchQuery("")
 	default:
-		if text, ok := historySearchInput(key); ok {
+		if text, ok := historySearchInput(text); ok {
 			m.updateHistorySearchQuery(search.query + text)
+			return nil, true
+		}
+		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) {
+			return tea.ClearScreen, true
 		}
 	}
 	return nil, true
@@ -191,8 +218,13 @@ func historySearchInput(key string) (string, bool) {
 		return " ", true
 	}
 	runes := []rune(key)
-	if len(runes) != 1 || !unicode.IsPrint(runes[0]) {
+	if len(runes) == 0 {
 		return "", false
+	}
+	for _, r := range runes {
+		if unicode.IsControl(r) || r == '\n' || r == '\r' || r == '\t' {
+			return "", false
+		}
 	}
 	return key, true
 }
@@ -216,12 +248,12 @@ func (m *Model) updateHistorySearchQuery(query string) {
 	search.matches = m.historyMatches(query)
 	if query == "" {
 		search.status = historySearchIdle
-		m.restoreDraft(search.original)
+		m.restoreComposerSnapshot(search.original)
 		return
 	}
 	if len(search.matches) == 0 {
 		search.status = historySearchNoMatch
-		m.restoreDraft(search.original)
+		m.restoreComposerSnapshot(search.original)
 		return
 	}
 	m.stepHistorySearch(-1)
@@ -253,7 +285,7 @@ func (m *Model) stepHistorySearch(direction int) {
 	}
 	if len(search.matches) == 0 {
 		search.status = historySearchNoMatch
-		m.restoreDraft(search.original)
+		m.restoreComposerSnapshot(search.original)
 		return
 	}
 	if direction < 0 {
@@ -270,10 +302,10 @@ func (m *Model) stepHistorySearch(direction int) {
 	m.restoreDraft(m.history[search.matches[search.position]])
 }
 
-func (m *Model) cancelHistorySearch() {
+func (m *Model) cancelHistorySearch() tea.Cmd {
 	search := m.historySearch
 	if search == nil {
-		return
+		return nil
 	}
 	original := search.original
 	m.historySearch = nil
@@ -283,7 +315,8 @@ func (m *Model) cancelHistorySearch() {
 	// global double-press exit gesture.
 	m.lastCtrlC = time.Time{}
 	m.ctrlCHint = ""
-	m.restoreDraft(original)
+	m.restoreComposerSnapshot(original)
+	return m.resumeQueuedAfterTransient()
 }
 
 func (m *Model) reconcileHistorySearchAfterMerge() {
@@ -308,7 +341,7 @@ func (m *Model) reconcileHistorySearchAfterMerge() {
 	}
 	if len(search.matches) == 0 {
 		search.status = historySearchNoMatch
-		m.restoreDraft(search.original)
+		m.restoreComposerSnapshot(search.original)
 		return
 	}
 	m.stepHistorySearch(-1)

@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Nebutra/carina/go/config"
 	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/tui"
 	"github.com/Nebutra/carina/go/tui/theme"
@@ -43,16 +44,50 @@ func run(args []string, stderr io.Writer) int {
 		loc = microcopy.DetectLocale()
 	}
 	th := theme.New(theme.Detect(os.Getenv, true))
+	projectRoot := *workspace
+	if projectRoot == "" {
+		projectRoot, _ = os.Getwd()
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(stderr, "carina-tui: resolve home: %v\n", err)
+		return tui.OutcomeRuntimeError.ExitCode()
+	}
+	cfg, err := config.Load(home, projectRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "carina-tui: %v\n", err)
+		return tui.OutcomeRuntimeError.ExitCode()
+	}
+	keybindings, err := tui.ParseKeyBindingOverrides(cfg.TUIKeybindings)
+	if err != nil {
+		fmt.Fprintf(stderr, "carina-tui: %v\n", err)
+		return tui.OutcomeUsage.ExitCode()
+	}
+	sessionID := *session
+	if sessionID == "" {
+		sessionID, err = tui.LatestPendingSubmissionSession(cfg.StateDir, projectRoot)
+		if err != nil {
+			fmt.Fprintf(stderr, "carina-tui: submission recovery: %v\n", err)
+			return tui.OutcomeRuntimeError.ExitCode()
+		}
+	}
 
-	model := tui.New(tui.Options{
+	model, err := tui.NewChecked(tui.Options{
 		Theme:         th,
 		Locale:        loc,
 		Socket:        *socket,
-		SessionID:     *session,
-		WorkspaceRoot: *workspace,
+		SessionID:     sessionID,
+		WorkspaceRoot: projectRoot,
+		StateDir:      cfg.StateDir,
+		Keybindings:   keybindings,
 	})
+	if err != nil {
+		fmt.Fprintf(stderr, "carina-tui: %v\n", err)
+		return tui.OutcomeUsage.ExitCode()
+	}
+	defer model.Close()
 	prog := tea.NewProgram(model)
-	tui.Connect(prog, *socket, *session, *workspace)
+	tui.Connect(prog, *socket, sessionID, projectRoot)
 
 	final, err := prog.Run()
 	if err != nil {

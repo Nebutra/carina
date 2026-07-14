@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/mattn/go-shellwords"
 
 	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/tui/theme"
@@ -60,10 +61,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.conn = ConnConnected
 		m.attempt = 0
 		m.push(m.th.Style(theme.RoleMuted).Render("- attached to " + msg.SessionID))
-		return m, m.loadRecentHistory(msg.Call)
+		m.submissionLeaseErr = m.submissions.acquire(msg.SessionID)
+		if m.submissionLeaseErr != nil {
+			m.push(fmt.Sprintf("%s task submission is read-only in this TUI: %s", glyphFailed(m.th), m.submissionLeaseErr.Error()))
+		}
+		reconcile := m.restoreSubmissionJournal()
+		history := m.loadRecentHistory(msg.Call)
+		if reconcile != nil {
+			return m, tea.Batch(history, reconcile)
+		}
+		return m, history
 
 	case TaskActiveMsg:
 		if msg.TaskID != "" && msg.TaskID != m.inFlightTaskID {
+			if node := m.tasks.nodes[msg.TaskID]; node != nil && terminalTaskStatus(node.Status) {
+				return m, nil
+			}
 			m.inFlightTaskID = msg.TaskID
 			m.tasks.setTask(msg.TaskID, "running")
 			m.push(m.th.Style(theme.RoleMuted).Render("- active task " + msg.TaskID + " restored"))
@@ -116,11 +129,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case approvalDoneMsg:
 		m.handleApprovalDone(msg)
-		return m, nil
+		return m, m.maybeSubmitNextQueued()
 
 	case questionDoneMsg:
 		m.handleQuestionDone(msg)
-		return m, nil
+		return m, m.maybeSubmitNextQueued()
 
 	case historyLoadedMsg:
 		m.handleHistoryLoaded(msg)
@@ -131,14 +144,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case surfaceResultMsg:
 		m.push(m.th.Style(theme.RoleTitle).Render(msg.label) + "\n" + msg.text)
-		return m, nil
+		return m, m.maybeSubmitNextQueued()
 
 	case externalEditorDoneMsg:
 		return m, m.handleExternalEditorDone(msg)
 
 	case clipboardDoneMsg:
 		m.handleClipboardDone(msg)
-		return m, nil
+		return m, m.maybeSubmitNextQueued()
 
 	case suggestDebounceMsg:
 		return m, m.handleSuggestDebounce(msg)
@@ -182,6 +195,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.editor != nil {
 			m.pasteBurst.reset()
 			return m, nil
+		}
+		if m.historySearch != nil && m.approval == nil && m.question == nil {
+			m.pasteBurst.reset()
+			return m, m.historySearchKeyPress(msg)
 		}
 		if m.approval != nil || m.question != nil || m.historySearch != nil ||
 			m.submitting != nil || m.helpOpen || m.transcriptPager != nil {
@@ -237,6 +254,8 @@ func (m *Model) refreshSuggestTrigger() tea.Cmd {
 
 // handleEvent renders a streamed event and reacts to governance moments.
 func (m *Model) handleEvent(ev map[string]any) tea.Cmd {
+	hadApproval := m.approval != nil
+	hadQuestion := m.question != nil
 	m.pushEvent(ev)
 	m.tasks.observeEvent(ev)
 	m.observeQuestionResolution(ev)
@@ -251,6 +270,10 @@ func (m *Model) handleEvent(ev map[string]any) tea.Cmd {
 		m.openQuestion(ev)
 	}
 	m.layout()
+	overlayClosed := (hadApproval && m.approval == nil) || (hadQuestion && m.question == nil)
+	if cmd == nil && overlayClosed {
+		cmd = m.maybeSubmitNextQueued()
+	}
 	return cmd
 }
 
@@ -296,6 +319,7 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		}
 		if m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
 			m.closeHelp()
+			return m.resumeQueuedAfterTransient(), true
 		}
 		return nil, true
 	}
@@ -371,7 +395,11 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	}
 	if m.keys.matches(KeyContextComposer, ActionComposerSubmit, key) {
 		m.breakComposerUndoGroup()
-		return m.submit(), true
+		return m.submitWithIntent(false), true
+	}
+	if m.keys.matches(KeyContextComposer, ActionComposerSubmitNew, key) {
+		m.breakComposerUndoGroup()
+		return m.submitWithIntent(true), true
 	}
 	if m.keys.matches(KeyContextComposer, ActionComposerNewline, key) {
 		return nil, false
@@ -415,6 +443,10 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		m.breakComposerUndoGroup()
 		m.showHelp()
 		return nil, true
+	case m.keys.matches(KeyContextGlobal, ActionGlobalTranscript, key):
+		m.breakComposerUndoGroup()
+		m.openTranscriptPager()
+		return nil, true
 	case m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key):
 		m.breakComposerUndoGroup()
 		return tea.ClearScreen, true
@@ -446,6 +478,11 @@ func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
 	if m.approval != nil {
 		m.approval.Scroll += delta
 		m.clampApprovalScroll()
+		return nil
+	}
+	if m.helpOpen {
+		m.helpScroll += delta
+		m.clampHelpScroll()
 		return nil
 	}
 	if m.transcriptPager != nil {
@@ -499,6 +536,7 @@ func (m *Model) suggestKey(key string) (tea.Cmd, bool) {
 // exits. Never a silent kill, never an accidental quit.
 func (m *Model) ctrlC() tea.Cmd {
 	now := m.now()
+	interruptKey := primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalInterrupt))
 	armed := !m.lastCtrlC.IsZero() && now.Sub(m.lastCtrlC) <= ctrlCWindow
 	m.lastCtrlC = now
 	if armed {
@@ -506,10 +544,11 @@ func (m *Model) ctrlC() tea.Cmd {
 		return tea.Quit
 	}
 	if m.submitting != nil {
-		m.push(m.th.Style(theme.RoleMuted).Render("- submission is being acknowledged; press ctrl+c again within 2s to exit"))
+		m.push(m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
+			"- submission is being acknowledged; press %s again within 2s to exit", interruptKey)))
 		return nil
 	}
-	const hintText = "- press ctrl+c again within 2s to exit"
+	hintText := fmt.Sprintf("- press %s again within 2s to exit", interruptKey)
 	hint := m.th.Style(theme.RoleMuted).Render(hintText)
 	// Recorded plain (not just pushed to the transcript): while the
 	// approval overlay is open, View() replaces the whole frame with the
@@ -524,18 +563,34 @@ func (m *Model) ctrlC() tea.Cmd {
 		m.push(hint)
 		return m.cancelTask(tid)
 	}
-	if draft := m.currentDraft(); draft.Text != "" || len(draft.Paste) > 0 {
-		m.recordHistory(draft)
+	if m.retrySubmission != nil {
+		m.push(m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
+			"- submission outcome is unknown; Enter reconciles it, %s explicitly starts a distinct task, and a second %s exits with recovery preserved",
+			m.keys.label(KeyContextComposer, ActionComposerSubmitNew), interruptKey)))
+		m.push(hint)
+		return nil
+	}
+	if draft := m.currentDraft(); draft.Text != "" || len(draft.Prefix) > 0 || len(draft.Paste) > 0 {
+		recoverable := historyDraftKey(draft) != ""
+		if recoverable {
+			m.recordHistory(draft)
+		}
 		m.historyPos = len(m.history)
 		m.historyScratch = promptDraft{}
 		m.input.Reset()
+		m.pendingPrefix = nil
 		m.pendingPaste = nil
+		m.queueRecallPending = false
 		m.resetComposerUndo()
 		m.closeSuggest()
 		m.layout()
-		m.push(m.th.Style(theme.RoleMuted).Render("- draft cleared; use prompt history to restore it"))
+		message := "- empty draft cleared"
+		if recoverable {
+			message = "- draft cleared; use prompt history to restore it"
+		}
+		m.push(m.th.Style(theme.RoleMuted).Render(message))
 		m.push(hint)
-		return nil
+		return m.maybeSubmitNextQueued()
 	}
 	m.push(hint)
 	return nil
@@ -545,7 +600,7 @@ func (m *Model) ctrlD() (tea.Cmd, bool) {
 	if m.approval != nil || m.question != nil || m.helpOpen {
 		return nil, true
 	}
-	if draft := m.currentDraft(); draft.Text != "" || len(draft.Paste) > 0 {
+	if draft := m.currentDraft(); draft.Text != "" || len(draft.Prefix) > 0 || len(draft.Paste) > 0 {
 		// Let bubbles retain its standard Ctrl-D delete-forward behavior.
 		return nil, false
 	}
@@ -570,40 +625,80 @@ func (m *Model) cancelTask(taskID string) tea.Cmd {
 // surface becomes steering: the operator can redirect the current loop without
 // cancelling it or accidentally starting a second concurrent task.
 func (m *Model) submit() tea.Cmd {
+	return m.submitWithIntent(false)
+}
+
+func (m *Model) submitWithIntent(forceNew bool) tea.Cmd {
 	draft := m.currentDraft()
 	text := strings.TrimSpace(draft.Text)
 	paste := draft.Paste
-	if text == "" && len(paste) == 0 {
+	if text == "" && len(draft.Prefix) == 0 && len(paste) == 0 {
 		return nil
 	}
-	if text == "/editor" {
+	if len(draft.Prefix) == 0 && text == "/editor" {
+		original := cloneDraft(draft)
+		originalSnapshot := m.composerSnapshot()
 		draft.Text = ""
 		m.input.Reset()
-		return m.beginExternalEditor(draft)
-	}
-	if strings.HasPrefix(text, "/") {
-		cmd := m.slashCommand(text)
-		if validSlashCommand(text) {
-			m.commitDraft(draft, false)
+		cmd := m.beginExternalEditorWithSnapshot(draft, originalSnapshot)
+		if m.editor == nil {
+			m.restoreDraft(original)
+			return nil
 		}
 		return cmd
 	}
-	if strings.HasPrefix(text, "!") {
-		return m.submitShell(draft, strings.TrimSpace(strings.TrimPrefix(text, "!")))
+	if len(draft.Prefix) == 0 && strings.HasPrefix(text, "/") {
+		cmd := m.slashCommand(text)
+		if validSlashCommand(text) {
+			m.queueRecallPending = false
+			m.commitDraft(draft, false)
+			if cmd == nil && !m.helpOpen && m.transcriptPager == nil {
+				return m.maybeSubmitNextQueued()
+			}
+		}
+		return cmd
+	}
+	if len(draft.Prefix) == 0 && strings.HasPrefix(text, "!") {
+		cmd := m.submitShell(draft, strings.TrimSpace(strings.TrimPrefix(text, "!")))
+		if cmd != nil {
+			m.queueRecallPending = false
+		}
+		return cmd
+	}
+	if m.retrySubmission != nil {
+		cmd := m.beginSubmissionSourceWithIntent(submissionTask, "", draft, false, forceNew)
+		if cmd != nil {
+			m.queueRecallPending = false
+		}
+		return cmd
 	}
 	if m.inFlightTaskID != "" {
+		m.queueRecallPending = false
 		return m.beginSubmission(submissionSteer, m.inFlightTaskID, draft)
 	}
-	return m.beginSubmission(submissionTask, "", draft)
+	cmd := m.beginSubmissionSourceWithIntent(submissionTask, "", draft, false, forceNew)
+	if cmd != nil {
+		m.queueRecallPending = false
+	}
+	return cmd
 }
 
 func (m *Model) currentDraft() promptDraft {
-	return promptDraft{Text: m.input.Value(), Paste: append([]string(nil), m.pendingPaste...)}
+	return promptDraft{
+		Prefix: append([]string(nil), m.pendingPrefix...),
+		Text:   m.input.Value(),
+		Paste:  append([]string(nil), m.pendingPaste...),
+	}
 }
 
 func draftsEqual(a, b promptDraft) bool {
-	if a.Text != b.Text || len(a.Paste) != len(b.Paste) {
+	if a.Text != b.Text || len(a.Prefix) != len(b.Prefix) || len(a.Paste) != len(b.Paste) {
 		return false
+	}
+	for i := range a.Prefix {
+		if a.Prefix[i] != b.Prefix[i] {
+			return false
+		}
 	}
 	for i := range a.Paste {
 		if a.Paste[i] != b.Paste[i] {
@@ -614,20 +709,21 @@ func draftsEqual(a, b promptDraft) bool {
 }
 
 func draftPrompt(draft promptDraft) string {
+	parts := append([]string(nil), draft.Prefix...)
 	text := strings.TrimSpace(draft.Text)
-	paste := strings.Join(draft.Paste, "\n")
-	if text == "" {
-		return paste
+	if text != "" {
+		parts = append(parts, text)
 	}
-	if paste == "" {
-		return text
-	}
-	return text + "\n" + paste
+	parts = append(parts, draft.Paste...)
+	return strings.Join(parts, "\n")
 }
 
 func draftLabel(draft promptDraft) string {
 	if text := strings.TrimSpace(draft.Text); text != "" {
 		return text
+	}
+	if len(draft.Prefix) > 0 {
+		return "[restored content]"
 	}
 	return "[pasted content]"
 }
@@ -637,8 +733,28 @@ func (m *Model) beginSubmission(kind submissionKind, target string, draft prompt
 }
 
 func (m *Model) beginSubmissionSource(kind submissionKind, target string, draft promptDraft, fromQueue bool) tea.Cmd {
+	return m.beginSubmissionSourceWithIntent(kind, target, draft, fromQueue, false)
+}
+
+func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target string, draft promptDraft, fromQueue, forceNew bool) tea.Cmd {
 	if m.submitting != nil {
 		return nil
+	}
+	var shellArgv []string
+	if kind == submissionShell {
+		var err error
+		shellArgv, err = shellwords.Parse(target)
+		if err != nil || len(shellArgv) == 0 {
+			if err == nil {
+				err = errors.New("command is empty")
+			}
+			m.push(fmt.Sprintf("%s command parse failed: %s; draft kept for retry", glyphFailed(m.th), err.Error()))
+			if fromQueue {
+				m.restoreQueuedDrafts("invalid queued command")
+			}
+			m.layout()
+			return nil
+		}
 	}
 	call := m.call
 	if call == nil {
@@ -648,6 +764,34 @@ func (m *Model) beginSubmissionSource(kind submissionKind, target string, draft 
 	}
 	m.breakComposerUndoGroup()
 	m.submissionGen++
+	clientID := ""
+	prompt := draftPrompt(draft)
+	if kind == submissionTask {
+		if m.submissionLeaseErr != nil {
+			m.push(fmt.Sprintf("%s task submission is unavailable: %s", glyphFailed(m.th), m.submissionLeaseErr.Error()))
+			m.layout()
+			return nil
+		}
+		if retry := m.retrySubmission; retry != nil && !forceNew {
+			if retry.prompt != prompt {
+				m.push(fmt.Sprintf("%s an unacknowledged submission is pending; restore its exact prompt or use %s to explicitly create a new task",
+					glyphFailed(m.th), m.keys.label(KeyContextComposer, ActionComposerSubmitNew)))
+				m.layout()
+				return nil
+			}
+			clientID = retry.clientID
+		} else {
+			clientID = newClientSubmissionID(m.submissionGen, m.now().UnixNano())
+		}
+		retry := submissionRetry{clientID: clientID, prompt: prompt, draft: cloneDraft(draft)}
+		if err := m.submissions.save(m.sessionID, retry); err != nil {
+			m.push(fmt.Sprintf("%s submission was not sent because its recovery record could not be saved: %s",
+				glyphFailed(m.th), err.Error()))
+			m.layout()
+			return nil
+		}
+		m.retrySubmission = &retry
+	}
 	state := &submissionState{
 		generation:   m.submissionGen,
 		kind:         kind,
@@ -655,11 +799,12 @@ func (m *Model) beginSubmissionSource(kind submissionKind, target string, draft 
 		draft:        draft,
 		consumePaste: kind != submissionShell,
 		fromQueue:    fromQueue,
+		clientID:     clientID,
 	}
 	m.submitting = state
 	m.closeSuggest()
 	m.layout()
-	prompt, sid, generation := draftPrompt(draft), m.sessionID, state.generation
+	sid, generation := m.sessionID, state.generation
 	return func() tea.Msg {
 		switch kind {
 		case submissionSteer:
@@ -667,18 +812,21 @@ func (m *Model) beginSubmissionSource(kind submissionKind, target string, draft 
 			return submissionDoneMsg{generation: generation, taskID: target, err: err}
 		case submissionShell:
 			var out any
-			err := call.Call("command.exec", map[string]any{"session_id": sid, "argv": strings.Fields(target)}, &out)
+			err := call.Call("command.exec", map[string]any{"session_id": sid, "argv": shellArgv}, &out)
 			raw, _ := json.MarshalIndent(out, "", "  ")
 			return submissionDoneMsg{generation: generation, result: string(raw), err: err}
 		default:
 			var out struct {
 				TaskID string `json:"task_id"`
+				Status string `json:"status"`
 			}
-			err := call.Call("task.submit", map[string]any{"session_id": sid, "prompt": prompt}, &out)
+			err := call.Call("task.submit", map[string]any{
+				"session_id": sid, "prompt": prompt, "client_submission_id": clientID,
+			}, &out)
 			if err == nil && out.TaskID == "" {
 				err = errors.New("daemon returned an empty task_id")
 			}
-			return submissionDoneMsg{generation: generation, taskID: out.TaskID, err: err}
+			return submissionDoneMsg{generation: generation, taskID: out.TaskID, status: out.Status, err: err}
 		}
 	}
 }
@@ -698,9 +846,19 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 	}
 	m.submitting = nil
 	if msg.err != nil {
-		m.push(fmt.Sprintf("%s %s failed: %s; draft kept for retry", glyphFailed(m.th), state.kind, msg.err.Error()))
-		if state.fromQueue {
-			m.restoreQueuedDrafts("automatic submission failure")
+		m.clearEarlyTerminals(state.generation)
+		if state.kind == submissionTask {
+			m.retrySubmission = &submissionRetry{clientID: state.clientID, prompt: draftPrompt(state.draft), draft: cloneDraft(state.draft)}
+			m.push(fmt.Sprintf("%s task submission was not acknowledged: %s; draft kept for retry with idempotency key %s",
+				glyphFailed(m.th), msg.err.Error(), state.clientID))
+			if state.fromQueue {
+				m.recallQueuedSubmissionForRetry()
+			}
+		} else {
+			m.push(fmt.Sprintf("%s %s failed: %s; draft kept for retry", glyphFailed(m.th), state.kind, msg.err.Error()))
+			if state.fromQueue {
+				m.restoreQueuedDrafts("automatic submission failure")
+			}
 		}
 		m.layout()
 		return nil
@@ -720,13 +878,34 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 		}
 		_, _ = m.followUps.popFront()
 	}
-	m.commitDraft(state.draft, state.consumePaste)
+	earlySuccessful, earlyTerminal := m.takeEarlyTerminal(msg.taskID, state.generation)
+	if terminal, successful := taskStatusTerminal(msg.status); terminal {
+		earlyTerminal, earlySuccessful = true, successful
+		m.tasks.setTask(msg.taskID, strings.ToLower(strings.TrimSpace(msg.status)))
+		if m.inFlightTaskID == msg.taskID {
+			m.inFlightTaskID = ""
+		}
+	}
+	if state.clientID != "" && m.retrySubmission != nil && m.retrySubmission.clientID == state.clientID {
+		m.retrySubmission = nil
+		if err := m.submissions.clear(m.sessionID, state.clientID); err != nil {
+			m.push(fmt.Sprintf("%s task acknowledged, but its local recovery record could not be cleared: %s",
+				glyphFailed(m.th), err.Error()))
+		}
+	}
+	if state.fromQueue || state.background {
+		m.commitBackgroundDraft(state.draft, state.consumePaste)
+	} else {
+		m.commitDraft(state.draft, state.consumePaste)
+	}
 	shown := draftLabel(state.draft)
 	switch state.kind {
 	case submissionTask:
 		m.push(m.th.Style(theme.RoleTitle).Render("you ") + shown)
-		m.inFlightTaskID = msg.taskID
-		m.tasks.setTask(msg.taskID, "running")
+		if !earlyTerminal {
+			m.inFlightTaskID = msg.taskID
+			m.tasks.setTask(msg.taskID, "running")
+		}
 		m.push(m.th.Style(theme.RoleMuted).Render("- task " + msg.taskID + " submitted"))
 	case submissionSteer:
 		m.push(m.th.Style(theme.RoleTitle).Render("you (steer) ") + shown)
@@ -736,10 +915,67 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 		m.push(m.th.Style(theme.RoleTitle).Render("shell") + "\n" + msg.result)
 	}
 	m.layout()
+	if earlyTerminal {
+		if !earlySuccessful {
+			m.restoreQueuedDrafts("task failure")
+			return nil
+		}
+		return m.maybeSubmitNextQueued()
+	}
 	if (state.kind == submissionSteer || state.fromQueue) && m.inFlightTaskID == "" {
 		return m.maybeSubmitNextQueued()
 	}
 	return nil
+}
+
+func (m *Model) commitBackgroundDraft(draft promptDraft, consumePaste bool) {
+	consumed := promptDraft{Prefix: append([]string(nil), draft.Prefix...), Text: draft.Text}
+	if consumePaste {
+		consumed.Paste = draft.Paste
+	}
+	m.recordHistoryPreservingNavigation(consumed)
+	m.layout()
+}
+
+func (m *Model) recordHistoryPreservingNavigation(draft promptDraft) {
+	oldLen, oldPos := len(m.history), m.historyPos
+	scratch := cloneDraft(m.historyScratch)
+	var navigated *promptDraft
+	if oldPos >= 0 && oldPos < oldLen {
+		copy := cloneDraft(m.history[oldPos])
+		navigated = &copy
+	}
+	m.recordHistory(draft)
+	switch {
+	case navigated != nil:
+		m.historyPos = findDraft(m.history, *navigated)
+		if m.historyPos < 0 {
+			m.historyPos = len(m.history)
+		}
+	case oldPos >= oldLen:
+		m.historyPos = len(m.history)
+	default:
+		m.historyPos = clampInt(oldPos, 0, len(m.history))
+	}
+	m.historyScratch = scratch
+}
+
+func (m *Model) takeEarlyTerminal(taskID string, generation int) (bool, bool) {
+	terminal, ok := m.earlyTerminals[taskID]
+	if !ok || terminal.generation != generation {
+		m.clearEarlyTerminals(generation)
+		return false, false
+	}
+	m.clearEarlyTerminals(generation)
+	return terminal.successful, true
+}
+
+func (m *Model) clearEarlyTerminals(generation int) {
+	for taskID, terminal := range m.earlyTerminals {
+		if terminal.generation == generation {
+			delete(m.earlyTerminals, taskID)
+		}
+	}
 }
 
 func (m *Model) commitDraft(draft promptDraft, consumePaste bool) {
@@ -747,10 +983,11 @@ func (m *Model) commitDraft(draft promptDraft, consumePaste bool) {
 	if current.Text == draft.Text && (!consumePaste || draftsEqual(current, draft)) {
 		m.input.Reset()
 		if consumePaste {
+			m.pendingPrefix = nil
 			m.pendingPaste = nil
 		}
 	}
-	consumed := promptDraft{Text: draft.Text}
+	consumed := promptDraft{Prefix: append([]string(nil), draft.Prefix...), Text: draft.Text}
 	if consumePaste {
 		consumed.Paste = draft.Paste
 	}
@@ -762,6 +999,7 @@ func (m *Model) commitDraft(draft promptDraft, consumePaste bool) {
 }
 
 func (m *Model) recordHistory(draft promptDraft) {
+	draft.Prefix = append([]string(nil), draft.Prefix...)
 	draft.Paste = append([]string(nil), draft.Paste...)
 	m.history = mergePromptHistory(nil, append(m.history, draft))
 }
@@ -778,10 +1016,11 @@ func (m *Model) moveHistory(direction int) bool {
 	if len(m.history) == 0 {
 		return false
 	}
+	before := m.composerSnapshot()
+	m.breakComposerUndoGroup()
 	if m.historyPos < 0 || m.historyPos > len(m.history) {
 		m.historyPos = len(m.history)
 	}
-	m.composerExternalMutation()
 	if direction < 0 {
 		if m.historyPos == len(m.history) {
 			m.historyScratch = m.currentDraft()
@@ -791,6 +1030,7 @@ func (m *Model) moveHistory(direction int) bool {
 		}
 		m.historyPos--
 		m.restoreDraft(m.history[m.historyPos])
+		m.recordComposerEdit(before, composerEditOther)
 		return true
 	}
 	if m.historyPos >= len(m.history) {
@@ -802,11 +1042,13 @@ func (m *Model) moveHistory(direction int) bool {
 	} else {
 		m.restoreDraft(m.history[m.historyPos])
 	}
+	m.recordComposerEdit(before, composerEditOther)
 	return true
 }
 
 func (m *Model) restoreDraft(draft promptDraft) {
 	m.input.SetValue(draft.Text)
+	m.pendingPrefix = append([]string(nil), draft.Prefix...)
 	m.pendingPaste = append([]string(nil), draft.Paste...)
 	m.closeSuggest()
 	m.layout()

@@ -10,7 +10,7 @@ import (
 )
 
 func draftEmpty(draft promptDraft) bool {
-	return strings.TrimSpace(draft.Text) == "" && len(draft.Paste) == 0
+	return strings.TrimSpace(draft.Text) == "" && len(draft.Prefix) == 0 && len(draft.Paste) == 0
 }
 
 func (m *Model) enqueueFollowUp() bool {
@@ -50,6 +50,7 @@ func (m *Model) recallLastFollowUp() bool {
 
 func (m *Model) clearComposerDraft() {
 	m.input.Reset()
+	m.pendingPrefix = nil
 	m.pendingPaste = nil
 	m.resetComposerUndo()
 	if m.suggest != nil {
@@ -59,23 +60,20 @@ func (m *Model) clearComposerDraft() {
 }
 
 func mergeDraftsForRestore(drafts []promptDraft, current promptDraft) promptDraft {
-	parts := make([]string, 0, len(drafts)+1)
-	pastes := make([]string, 0)
-	appendDraft := func(draft promptDraft) {
-		if draft.Text != "" {
-			parts = append(parts, draft.Text)
-		}
-		pastes = append(pastes, draft.Paste...)
-	}
+	prefix := make([]string, 0, len(drafts)+len(current.Prefix))
 	for _, draft := range drafts {
-		appendDraft(draft)
+		prefix = append(prefix, draftPrompt(draft))
 	}
-	appendDraft(current)
-	return promptDraft{Text: strings.Join(parts, "\n"), Paste: pastes}
+	prefix = append(prefix, current.Prefix...)
+	return promptDraft{
+		Prefix: prefix,
+		Text:   current.Text,
+		Paste:  append([]string(nil), current.Paste...),
+	}
 }
 
 func (m *Model) restoreQueuedDrafts(reason string) {
-	if m.editor != nil {
+	if m.editor != nil || m.historySearch != nil {
 		m.queueRestoreReason = reason
 		return
 	}
@@ -90,9 +88,20 @@ func (m *Model) restoreQueuedDrafts(reason string) {
 	m.layout()
 }
 
+func (m *Model) resumeQueuedAfterTransient() tea.Cmd {
+	if m.queueRestoreReason != "" {
+		reason := m.queueRestoreReason
+		m.queueRestoreReason = ""
+		m.restoreQueuedDrafts(reason)
+		return nil
+	}
+	return m.maybeSubmitNextQueued()
+}
+
 func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 	if m.followUps.len() == 0 || m.inFlightTaskID != "" || m.submitting != nil ||
-		m.approval != nil || m.question != nil || m.editor != nil {
+		m.approval != nil || m.question != nil || m.editor != nil || m.helpOpen ||
+		m.historySearch != nil || m.transcriptPager != nil || m.queueRecallPending || m.retrySubmission != nil {
 		return nil
 	}
 	for m.followUps.len() > 0 {
@@ -101,7 +110,7 @@ func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 			return nil
 		}
 		text := strings.TrimSpace(draft.Text)
-		if len(draft.Paste) == 0 && strings.HasPrefix(text, "!") {
+		if len(draft.Prefix) == 0 && len(draft.Paste) == 0 && strings.HasPrefix(text, "!") {
 			command := strings.TrimSpace(strings.TrimPrefix(text, "!"))
 			if command == "" {
 				m.restoreQueuedDrafts("invalid queued shell command")
@@ -110,10 +119,9 @@ func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 			}
 			return m.beginSubmissionSource(submissionShell, command, draft, true)
 		}
-		if len(draft.Paste) == 0 && strings.HasPrefix(text, "/") {
+		if len(draft.Prefix) == 0 && len(draft.Paste) == 0 && strings.HasPrefix(text, "/") {
 			if !safeQueuedSlash(text) {
-				m.restoreQueuedDrafts("interactive queued command")
-				m.push(m.th.Style(theme.RoleMuted).Render("- queued slash command restored; review and run it from the composer"))
+				m.recallQueuedCommandForReview()
 				return nil
 			}
 			queued, _ := m.followUps.popFront()
@@ -121,6 +129,9 @@ func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 			m.historyPos = len(m.history)
 			_ = m.slashCommand(text) // safeQueuedSlash commands are synchronous.
 			m.layout()
+			if m.helpOpen || m.transcriptPager != nil || m.historySearch != nil {
+				return nil
+			}
 			continue
 		}
 		if m.call == nil {
@@ -131,6 +142,47 @@ func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 		return m.beginSubmissionSource(submissionTask, "", draft, true)
 	}
 	return nil
+}
+
+func (m *Model) recallQueuedCommandForReview() {
+	draft, ok := m.followUps.popFront()
+	if !ok {
+		return
+	}
+	if current := m.currentDraft(); !draftEmpty(current) {
+		m.followUps.enqueue(current)
+	}
+	m.restoreDraft(draft)
+	m.resetComposerUndo()
+	m.queueRecallPending = true
+	m.push(m.th.Style(theme.RoleMuted).Render("- queued slash command recalled; review and run it from the composer"))
+	m.layout()
+}
+
+func (m *Model) recallQueuedSubmissionForRetry() {
+	draft, ok := m.followUps.popFront()
+	if !ok {
+		return
+	}
+	if current := m.currentDraft(); !draftEmpty(current) {
+		m.followUps.enqueue(current)
+	}
+	m.restoreDraft(draft)
+	m.resetComposerUndo()
+	m.queueRecallPending = true
+	m.push(m.th.Style(theme.RoleMuted).Render("- unacknowledged queued submission recalled; Enter retries idempotently"))
+	m.layout()
+}
+
+func taskStatusTerminal(status string) (terminal, successful bool) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed":
+		return true, true
+	case "failed", "cancelled", "canceled", "degraded", "aborted", "denied":
+		return true, false
+	default:
+		return false, false
+	}
 }
 
 func safeQueuedSlash(text string) bool {
@@ -155,7 +207,7 @@ func taskTerminalResult(ev map[string]any) (terminal, successful bool) {
 	if status == "" {
 		status = strings.ToLower(firstValue(payload, "status", "outcome"))
 	}
-	failure := strings.Contains(status, "fail") || strings.Contains(status, "cancel") ||
+	failure := strings.Contains(status, "fail") || strings.Contains(status, "cancel") || strings.Contains(status, "degrad") ||
 		strings.Contains(status, "denied") || strings.Contains(status, "abort")
 	switch typ {
 	case "task.completed", "taskcomplete", "taskcompleted":
@@ -179,6 +231,16 @@ func (m *Model) handleTaskTerminalEvent(ev map[string]any) tea.Cmd {
 		}
 	}
 	if m.inFlightTaskID == "" || id != m.inFlightTaskID {
+		if id != "" && m.inFlightTaskID == "" && m.submitting != nil &&
+			m.submitting.kind == submissionTask {
+			if m.earlyTerminals == nil || len(m.earlyTerminals) >= 32 {
+				m.earlyTerminals = make(map[string]earlyTaskTerminal)
+			}
+			m.earlyTerminals[id] = earlyTaskTerminal{
+				generation: m.submitting.generation,
+				successful: successful,
+			}
+		}
 		return nil
 	}
 	m.inFlightTaskID = ""

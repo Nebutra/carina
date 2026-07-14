@@ -134,6 +134,7 @@ func (m *Model) restoreComposerSnapshot(snapshot composerSnapshot) {
 		m.input.CursorDown()
 	}
 	m.input.SetCursorColumn(snapshot.col)
+	m.pendingPrefix = append([]string(nil), snapshot.draft.Prefix...)
 	m.pendingPaste = append([]string(nil), snapshot.draft.Paste...)
 	m.historyPos = len(m.history)
 	m.historyScratch = promptDraft{}
@@ -147,15 +148,41 @@ func (m *Model) restoreComposerSnapshot(snapshot composerSnapshot) {
 // textarea edit history. Rebase stored snapshots at the same index so a later
 // text undo cannot resurrect the explicitly removed paste.
 func (m *Model) undoLatestPendingPaste() bool {
-	if len(m.pendingPaste) == 0 {
+	if len(m.pendingPaste) > 0 {
+		index := len(m.pendingPaste) - 1
+		m.pendingPaste = m.pendingPaste[:index]
+		m.composerUndo.dropPasteAt(index)
+		m.composerExternalMutation()
+		m.layout()
+		return true
+	}
+	if len(m.pendingPrefix) == 0 {
 		return false
 	}
-	index := len(m.pendingPaste) - 1
-	m.pendingPaste = m.pendingPaste[:index]
-	m.composerUndo.dropPasteAt(index)
+	index := len(m.pendingPrefix) - 1
+	m.pendingPrefix = m.pendingPrefix[:index]
+	m.composerUndo.dropPrefixAt(index)
 	m.composerExternalMutation()
 	m.layout()
 	return true
+}
+
+func (s *composerUndoState) dropPrefixAt(index int) {
+	remove := func(snapshot *composerSnapshot) {
+		if index < 0 || index >= len(snapshot.draft.Prefix) {
+			return
+		}
+		prefix := append([]string(nil), snapshot.draft.Prefix...)
+		snapshot.draft.Prefix = append(prefix[:index], prefix[index+1:]...)
+	}
+	for i := range s.undo {
+		remove(&s.undo[i].before)
+		remove(&s.undo[i].after)
+	}
+	for i := range s.redo {
+		remove(&s.redo[i].before)
+		remove(&s.redo[i].after)
+	}
 }
 
 func (s *composerUndoState) dropPasteAt(index int) {
@@ -182,8 +209,22 @@ func composerKeyEditKind(msg tea.KeyPressMsg) composerEditKind {
 		key.Mod.Contains(tea.ModMeta) || key.Mod.Contains(tea.ModHyper) || key.Mod.Contains(tea.ModSuper) {
 		return composerEditOther
 	}
-	for _, r := range key.Text {
-		if !unicode.IsPrint(r) {
+	runes := []rune(key.Text)
+	if len(runes) > 1 {
+		for _, r := range runes {
+			if r == '\u200d' {
+				// A terminal that commits the whole ZWJ grapheme in one event has
+				// already supplied an atomic edit. Split-event ZWJ sequences still
+				// flow through the typing group below.
+				return composerEditOther
+			}
+		}
+	}
+	for _, r := range runes {
+		// Format runes such as the emoji ZWJ are not unicode.IsPrint, but they
+		// are part of the same grapheme the operator is composing. Only actual
+		// control characters split the typing transaction.
+		if unicode.IsControl(r) || r == '\n' || r == '\r' || r == '\t' {
 			return composerEditOther
 		}
 	}

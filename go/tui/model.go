@@ -76,8 +76,9 @@ type (
 )
 
 type promptDraft struct {
-	Text  string
-	Paste []string
+	Prefix []string `json:"prefix,omitempty"`
+	Text   string   `json:"text,omitempty"`
+	Paste  []string `json:"paste,omitempty"`
 }
 
 type submissionKind string
@@ -95,13 +96,27 @@ type submissionState struct {
 	draft        promptDraft
 	consumePaste bool
 	fromQueue    bool
+	background   bool
+	clientID     string
+}
+
+type submissionRetry struct {
+	clientID string
+	prompt   string
+	draft    promptDraft
 }
 
 type submissionDoneMsg struct {
 	generation int
 	taskID     string
 	result     string
+	status     string
 	err        error
+}
+
+type earlyTaskTerminal struct {
+	generation int
+	successful bool
 }
 
 type cancelDoneMsg struct {
@@ -139,6 +154,7 @@ type Options struct {
 	Socket        string
 	SessionID     string // reuse an existing session; empty creates one
 	WorkspaceRoot string
+	StateDir      string // durable local TUI state; empty disables submission recovery
 	Now           func() time.Time
 	// Keybindings replaces selected action bindings after defaults are loaded.
 	// Embedders accepting user-controlled overrides should call NewChecked.
@@ -151,6 +167,7 @@ type Model struct {
 	locale        string
 	socket        string
 	workspaceRoot string
+	submissions   submissionJournal
 	now           func() time.Time
 
 	width, height int
@@ -185,10 +202,15 @@ type Model struct {
 	tasks              taskGraph
 	inFlightTaskID     string
 	pendingPaste       []string
+	pendingPrefix      []string
 	pasteBurst         pasteBurstState
 	followUps          inputQueue
 	submitting         *submissionState
 	submissionGen      int
+	earlyTerminals     map[string]earlyTaskTerminal
+	retrySubmission    *submissionRetry
+	submissionLeaseErr error
+	queueRecallPending bool
 	editor             *externalEditorSession
 	editorGen          int
 	queueRestoreReason string
@@ -269,6 +291,7 @@ func NewChecked(o Options) (*Model, error) {
 		locale:           o.Locale,
 		socket:           o.Socket,
 		workspaceRoot:    o.WorkspaceRoot,
+		submissions:      newSubmissionJournal(o.StateDir, o.WorkspaceRoot),
 		now:              o.Now,
 		getenv:           os.Getenv,
 		clipboardWrite:   systemClipboardWrite,
@@ -289,6 +312,12 @@ func NewChecked(o Options) (*Model, error) {
 	}
 	m.layout()
 	return m, nil
+}
+
+// Close releases process-scoped TUI resources such as the single-writer
+// submission lease. Frontends should defer it after constructing a model.
+func (m *Model) Close() {
+	m.submissions.close()
 }
 
 // inputStyles keeps the third-party textarea inside Carina's terminal

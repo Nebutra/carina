@@ -200,8 +200,9 @@ func TestNonASCIIIMECommitIsImmediateAndDoesNotSuppressEnter(t *testing.T) {
 	// Establish an ASCII burst first: the IME commit must break this window.
 	m.Update(keyText("a"))
 	m.Update(keyText("b"))
+	m.Update(keyText("c"))
 	m.Update(tea.KeyPressMsg{Text: "你", Code: '你'})
-	if got := m.input.Value(); got != "ab你" {
+	if got := m.input.Value(); got != "abc你" {
 		t.Fatalf("IME commit was not visible in the same Update: %q", got)
 	}
 
@@ -209,7 +210,7 @@ func TestNonASCIIIMECommitIsImmediateAndDoesNotSuppressEnter(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Enter after an IME commit was incorrectly retained as burst text")
 	}
-	if got := m.input.Value(); got != "ab你" {
+	if got := m.input.Value(); got != "abc你" {
 		t.Fatalf("Enter after IME inserted a newline: %q", got)
 	}
 	drain(m, cmd)

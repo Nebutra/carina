@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Nebutra/carina/go/config"
 	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/rpc"
 	"github.com/Nebutra/carina/go/tui"
@@ -53,6 +54,21 @@ func runBareTUI() tui.Outcome {
 		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
 		return tui.OutcomeRuntimeError
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "carina: resolve home: %v\n", err)
+		return tui.OutcomeRuntimeError
+	}
+	cfg, err := config.Load(home, cwd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
+		return tui.OutcomeRuntimeError
+	}
+	keybindings, err := tui.ParseKeyBindingOverrides(cfg.TUIKeybindings)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
+		return tui.OutcomeUsage
+	}
 
 	call, err := ensureDaemonReachable(socket)
 	if err != nil {
@@ -62,18 +78,33 @@ func runBareTUI() tui.Outcome {
 
 	maybeAutoRunDoctor(call)
 
-	sessionID := resumeMostRecentOrFresh(call, cwd)
+	sessionID, err := tui.LatestPendingSubmissionSession(cfg.StateDir, cwd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "carina: submission recovery: %v\n", err)
+		call.Close()
+		return tui.OutcomeRuntimeError
+	}
+	if sessionID == "" {
+		sessionID = resumeMostRecentOrFresh(call, cwd)
+	}
 	call.Close()
 
 	loc := microcopy.DetectLocale()
 	th := theme.New(theme.Detect(os.Getenv, true))
-	model := tui.New(tui.Options{
+	model, err := tui.NewChecked(tui.Options{
 		Theme:         th,
 		Locale:        loc,
 		Socket:        socket,
 		SessionID:     sessionID,
 		WorkspaceRoot: cwd,
+		StateDir:      cfg.StateDir,
+		Keybindings:   keybindings,
 	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
+		return tui.OutcomeUsage
+	}
+	defer model.Close()
 	prog := tea.NewProgram(model)
 	tui.Connect(prog, socket, sessionID, cwd)
 

@@ -148,13 +148,14 @@ func (m *Model) handleQuestionDone(msg questionDoneMsg) {
 	}
 	if msg.err != nil {
 		m.question.Resolving = false
-		m.question.Error = "Answer failed: " + msg.err.Error() + ". Press Enter to retry."
+		m.question.Error = fmt.Sprintf("Answer failed: %s. Press [%s] to retry.", msg.err.Error(),
+			primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionAnswer)))
 		m.push(fmt.Sprintf("%s answer failed for question %s: %s", glyphFailed(m.th), msg.questionID, msg.err.Error()))
 		return
 	}
 	m.questionResolved[msg.questionID] = true
 	m.push(fmt.Sprintf("%s answered %s: %s", glyphOK(m.th), msg.questionID, msg.label))
-	if msg.taskID != "" {
+	if msg.taskID != "" && msg.taskID == m.inFlightTaskID {
 		m.tasks.setTask(msg.taskID, "running")
 	}
 	m.nextQueuedQuestion()
@@ -181,9 +182,17 @@ func (m *Model) questionKey(key string) (tea.Cmd, bool) {
 	}
 	q := m.question
 	if q.Resolving {
+		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) ||
+			m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
+			return nil, false
+		}
 		return nil, true
 	}
 	if len(q.Options) == 0 {
+		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) ||
+			m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
+			return nil, false
+		}
 		q.Error = "No answer options are available. Waiting for the agent to update this question."
 		return nil, true
 	}
@@ -259,7 +268,10 @@ func (m *Model) questionOverlayView() string {
 		footer = "Sending answer..."
 	} else if len(body) > m.questionViewportHeight() {
 		if contentWidth >= 44 {
-			footer += fmt.Sprintf("  [pgup/pgdown] scroll %d-%d/%d", start+1, end, len(body))
+			footer += fmt.Sprintf("  [%s/%s] scroll %d-%d/%d",
+				m.keys.label(KeyContextQuestion, ActionQuestionPageUp),
+				m.keys.label(KeyContextQuestion, ActionQuestionPageDown),
+				start+1, end, len(body))
 		} else {
 			footer += fmt.Sprintf("  %d-%d/%d", start+1, end, len(body))
 		}

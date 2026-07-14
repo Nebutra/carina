@@ -15,16 +15,16 @@ import (
 type externalEditorSession struct {
 	generation int
 	draft      externalEditorDraft
+	original   composerSnapshot
+	holdsQueue bool
 }
 
 type transcriptPagerState struct {
-	text   string
 	scroll int
 }
 
-// handleWorkspaceKey is the one mapping boundary for product-level composer
-// actions. A semantic keymap can replace these strings later without touching
-// queue, editor, clipboard, or pager state transitions.
+// handleWorkspaceKey owns focused composer actions. Global actions stay in
+// handleKey's final switch so focused bindings always win overlapping keys.
 func (m *Model) handleWorkspaceKey(key string) (tea.Cmd, bool) {
 	switch {
 	case m.keys.matches(KeyContextComposer, ActionComposerQueue, key):
@@ -35,26 +35,32 @@ func (m *Model) handleWorkspaceKey(key string) (tea.Cmd, bool) {
 		return nil, m.recallLastFollowUp()
 	case m.keys.matches(KeyContextComposer, ActionComposerExternalEditor, key):
 		return m.beginExternalEditor(m.currentDraft()), true
-	case m.keys.matches(KeyContextGlobal, ActionGlobalTranscript, key):
-		m.openTranscriptPager()
-		return nil, true
 	}
 	return nil, false
 }
 
 func (m *Model) beginExternalEditor(draft promptDraft) tea.Cmd {
+	return m.beginExternalEditorWithSnapshot(draft, m.composerSnapshot())
+}
+
+func (m *Model) beginExternalEditorWithSnapshot(draft promptDraft, original composerSnapshot) tea.Cmd {
 	if m.editor != nil || m.submitting != nil || m.approval != nil || m.question != nil {
 		return nil
 	}
+	m.breakComposerUndoGroup()
 	state, process, err := prepareExternalEditor(draft, m.getenv)
 	if err != nil {
-		m.restoreDraft(draft)
 		m.push(fmt.Sprintf("%s external editor: %s", glyphFailed(m.th), err.Error()))
 		return nil
 	}
 	m.editorGen++
 	generation := m.editorGen
-	m.editor = &externalEditorSession{generation: generation, draft: state}
+	m.editor = &externalEditorSession{
+		generation: generation,
+		draft:      state,
+		original:   original,
+		holdsQueue: m.queueRecallPending,
+	}
 	if m.suggest != nil {
 		m.closeSuggest()
 	}
@@ -71,18 +77,20 @@ func (m *Model) handleExternalEditorDone(msg externalEditorDoneMsg) tea.Cmd {
 	}
 	m.editor = nil
 	draft, err := finishExternalEditor(session.draft, msg.err)
-	m.restoreDraft(draft)
 	if err != nil {
+		m.restoreComposerSnapshot(session.original)
 		m.push(fmt.Sprintf("%s %s; draft restored", glyphFailed(m.th), err.Error()))
 	} else {
-		m.resetComposerUndo()
+		m.restoreDraft(draft)
+		m.recordComposerEdit(session.original, composerEditOther)
 		m.push(m.th.Style(theme.RoleMuted).Render("- external editor draft applied"))
 	}
 	m.layout()
 	if m.queueRestoreReason != "" {
-		reason := m.queueRestoreReason
-		m.queueRestoreReason = ""
-		m.restoreQueuedDrafts(reason)
+		return m.resumeQueuedAfterTransient()
+	}
+	if session.holdsQueue {
+		m.queueRecallPending = true
 		return nil
 	}
 	return m.maybeSubmitNextQueued()
@@ -126,6 +134,7 @@ func systemClipboardWrite(text string) error {
 			{name: "xsel", args: []string{"--clipboard", "--input"}},
 		}
 	}
+	var failures []string
 	for _, candidate := range candidates {
 		path, err := exec.LookPath(candidate.name)
 		if err != nil {
@@ -134,35 +143,41 @@ func systemClipboardWrite(text string) error {
 		cmd := exec.Command(path, candidate.args...)
 		cmd.Stdin = strings.NewReader(text)
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("%s: %w", candidate.name, err)
+			failures = append(failures, fmt.Sprintf("%s: %s", candidate.name, err.Error()))
+			continue
 		}
 		return nil
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("clipboard helpers failed: %s", strings.Join(failures, "; "))
 	}
 	return fmt.Errorf("no clipboard helper found")
 }
 
 func (m *Model) openTranscriptPager() {
+	m.breakComposerUndoGroup()
 	m.closeSuggest()
-	text := m.tr.plainText()
-	if text == "" {
-		text = "(transcript is empty)"
-	}
-	m.transcriptPager = &transcriptPagerState{text: text}
+	m.transcriptPager = &transcriptPagerState{}
 	m.layout()
 }
 
-func (m *Model) closeTranscriptPager() {
+func (m *Model) closeTranscriptPager() tea.Cmd {
 	m.transcriptPager = nil
 	m.layout()
+	return m.resumeQueuedAfterTransient()
 }
 
 func (m *Model) transcriptPagerLines() []string {
 	if m.transcriptPager == nil {
 		return nil
 	}
+	text := m.tr.plainText()
+	if text == "" {
+		text = "(transcript is empty)"
+	}
 	width := maxInt(m.width, 1)
 	var lines []string
-	for _, line := range strings.Split(m.transcriptPager.text, "\n") {
+	for _, line := range strings.Split(text, "\n") {
 		wrapped := ansi.Hardwrap(line, width, true)
 		lines = append(lines, strings.Split(wrapped, "\n")...)
 	}
@@ -194,7 +209,7 @@ func (m *Model) transcriptPagerKey(key string) (tea.Cmd, bool) {
 	switch {
 	case m.keys.matches(KeyContextPager, ActionPagerClose, key),
 		m.keys.matches(KeyContextGlobal, ActionGlobalTranscript, key):
-		m.closeTranscriptPager()
+		return m.closeTranscriptPager(), true
 	case m.keys.matches(KeyContextPager, ActionPagerUp, key):
 		m.transcriptPager.scroll--
 	case m.keys.matches(KeyContextPager, ActionPagerDown, key):
@@ -207,6 +222,8 @@ func (m *Model) transcriptPagerKey(key string) (tea.Cmd, bool) {
 		m.transcriptPager.scroll = 0
 	case m.keys.matches(KeyContextPager, ActionPagerBottom, key):
 		m.transcriptPager.scroll = len(lines)
+	case m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key):
+		return tea.ClearScreen, true
 	default:
 		return nil, true
 	}
@@ -219,7 +236,8 @@ func (m *Model) transcriptPagerView(width, height int) string {
 		return ""
 	}
 	if height == 1 {
-		return fitRenderedLine("transcript - esc closes", width)
+		return fitRenderedLine(fmt.Sprintf("transcript - %s closes",
+			m.keys.label(KeyContextPager, ActionPagerClose)), width)
 	}
 	lines := m.transcriptPagerLines()
 	m.clampTranscriptPagerScroll(lines)

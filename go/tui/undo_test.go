@@ -70,6 +70,22 @@ func TestComposerUndoCJKAndEmojiUseWholeSnapshots(t *testing.T) {
 	}
 }
 
+func TestComposerUndoGroupsSplitZWJGrapheme(t *testing.T) {
+	m, clock := newTestModel(nil)
+	composerType(t, m, "👨")
+	clock.advance(20 * time.Millisecond)
+	composerType(t, m, "\u200d")
+	clock.advance(20 * time.Millisecond)
+	composerType(t, m, "💻")
+	if got := m.input.Value(); got != "👨‍💻" {
+		t.Fatalf("split grapheme input = %q", got)
+	}
+	composerKey(t, m, "ctrl+z")
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("split grapheme undo left partial sequence: %q", got)
+	}
+}
+
 func TestComposerUndoPendingPastePriorityDoesNotResurrectPaste(t *testing.T) {
 	m, clock := newTestModel(nil)
 	composerType(t, m, "A")

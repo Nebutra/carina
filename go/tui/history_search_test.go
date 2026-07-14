@@ -180,6 +180,76 @@ func TestHistorySearchKeysBypassPasteBurstStructuralCapture(t *testing.T) {
 	}
 }
 
+func TestHistorySearchAcceptIsUndoableReplacement(t *testing.T) {
+	m, _ := newTestModel(nil)
+	composerType(t, m, "draft")
+	m.history = []promptDraft{{Text: "history result"}}
+	m.historyPos = len(m.history)
+	startHistorySearch(t, m)
+	typeHistoryQuery(t, m, "history")
+	composerKey(t, m, "enter")
+	if got := m.input.Value(); got != "history result" {
+		t.Fatalf("accepted history = %q", got)
+	}
+	composerKey(t, m, "ctrl+z")
+	if got := m.input.Value(); got != "draft" {
+		t.Fatalf("undo after accepted history = %q", got)
+	}
+}
+
+func TestHistoryRecallIsUndoableReplacement(t *testing.T) {
+	m, _ := newTestModel(nil)
+	composerType(t, m, "draft")
+	m.history = []promptDraft{{Text: "history result"}}
+	m.historyPos = len(m.history)
+	if _, handled := m.handleKey("ctrl+p"); !handled {
+		t.Fatal("history recall was not handled")
+	}
+	composerKey(t, m, "ctrl+z")
+	if got := m.input.Value(); got != "draft" {
+		t.Fatalf("undo after history recall = %q", got)
+	}
+}
+
+func TestHistorySearchCancelRestoresExactCaret(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.input.SetValue("alpha\nbeta")
+	m.input.MoveToBegin()
+	m.input.CursorDown()
+	m.input.SetCursorColumn(2)
+	wantRow, wantCol := m.input.Line(), m.input.Column()
+	m.history = []promptDraft{{Text: "alpha match"}}
+	m.historyPos = len(m.history)
+	startHistorySearch(t, m)
+	typeHistoryQuery(t, m, "alpha")
+	composerKey(t, m, "esc")
+	if m.input.Line() != wantRow || m.input.Column() != wantCol {
+		t.Fatalf("cancel caret = %d:%d, want %d:%d", m.input.Line(), m.input.Column(), wantRow, wantCol)
+	}
+}
+
+func TestHistorySearchAcceptsMultiRuneIMECommit(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.history = []promptDraft{{Text: "部署 application"}}
+	m.historyPos = len(m.history)
+	startHistorySearch(t, m)
+	m.Update(tea.KeyPressMsg{Text: "部署", Code: tea.KeyExtended})
+	if m.historySearch == nil || m.historySearch.query != "部署" || m.input.Value() != "部署 application" {
+		t.Fatalf("multi-rune IME query was ignored: search=%#v input=%q", m.historySearch, m.input.Value())
+	}
+}
+
+func TestHistorySearchAcceptsZWJEmojiCommit(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.history = []promptDraft{{Text: "👨‍💻 deployment"}}
+	m.historyPos = len(m.history)
+	startHistorySearch(t, m)
+	m.Update(tea.KeyPressMsg{Text: "👨‍💻", Code: tea.KeyExtended})
+	if m.historySearch == nil || m.historySearch.query != "👨‍💻" || m.input.Value() != "👨‍💻 deployment" {
+		t.Fatalf("ZWJ IME query was ignored: search=%#v input=%q", m.historySearch, m.input.Value())
+	}
+}
+
 func TestHistorySearchTraversalSkipsDuplicatesAndMovesBothDirections(t *testing.T) {
 	m, _ := newTestModel(nil)
 	// Seed directly to cover legacy persistent duplicates as well as the

@@ -92,7 +92,7 @@ func TestQuestionRPCFailureKeepsOverlayOpen(t *testing.T) {
 	if !strings.Contains(transcriptText(m), errTestRPC.Error()) {
 		t.Fatal("failed answer is not visible in the transcript")
 	}
-	if m.question.Resolving || !strings.Contains(ansi.Strip(m.questionOverlayView()), "Press Enter to retry") {
+	if m.question.Resolving || !strings.Contains(ansi.Strip(m.questionOverlayView()), "Press [enter] to retry") {
 		t.Fatal("failed answer must return to a visible, retryable state")
 	}
 }

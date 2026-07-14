@@ -60,6 +60,8 @@ func TestExternalEditorFailureRestoresExactDraft(t *testing.T) {
 	m.getenv = func(string) string { return "false" }
 	original := promptDraft{Text: "keep", Paste: []string{"one", "two"}}
 	m.restoreDraft(original)
+	m.input.SetCursorColumn(2)
+	wantRow, wantCol := m.input.Line(), m.input.Column()
 	cmd := m.beginExternalEditor(original)
 	if cmd == nil || m.editor == nil {
 		t.Fatal("editor did not start")
@@ -69,8 +71,30 @@ func TestExternalEditorFailureRestoresExactDraft(t *testing.T) {
 	if got := m.currentDraft(); !draftsEqual(got, original) {
 		t.Fatalf("editor failure draft = %#v", got)
 	}
+	if m.input.Line() != wantRow || m.input.Column() != wantCol {
+		t.Fatalf("editor failure caret = %d:%d, want %d:%d", m.input.Line(), m.input.Column(), wantRow, wantCol)
+	}
 	if _, err := os.Stat(state.draft.path); !os.IsNotExist(err) {
 		t.Fatalf("failed editor temp file remained: %v", err)
+	}
+}
+
+func TestExternalEditorSuccessIsUndoableReplacement(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.getenv = func(string) string { return "true" }
+	composerType(t, m, "before")
+	cmd := m.beginExternalEditor(m.currentDraft())
+	if cmd == nil || m.editor == nil {
+		t.Fatal("editor did not start")
+	}
+	session := m.editor
+	if err := os.WriteFile(session.draft.path, []byte("after"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.Update(externalEditorDoneMsg{generation: session.generation})
+	composerKey(t, m, "ctrl+z")
+	if got := m.input.Value(); got != "before" {
+		t.Fatalf("undo after editor = %q", got)
 	}
 }
 
@@ -93,11 +117,11 @@ func TestTaskFailureDuringEditorDefersQueueRestoreUntilEditedDraftReturns(t *tes
 		t.Fatal(err)
 	}
 	m.Update(externalEditorDoneMsg{generation: session.generation})
-	if m.followUps.len() != 0 || m.input.Value() != "queued\nedited" {
+	if m.followUps.len() != 0 || m.input.Value() != "edited" || draftPrompt(m.currentDraft()) != "queued\nqueued paste\nedited" {
 		t.Fatalf("deferred restore lost queue/editor result: queue=%#v input=%q", m.followUps.drafts, m.input.Value())
 	}
-	if got := m.pendingPaste; len(got) != 1 || got[0] != "queued paste" {
-		t.Fatalf("deferred restore lost paste: %#v", got)
+	if len(m.pendingPrefix) != 1 || m.pendingPrefix[0] != "queued\nqueued paste" {
+		t.Fatalf("deferred restore lost detached segment: %#v", m.pendingPrefix)
 	}
 }
 
@@ -175,7 +199,7 @@ func TestTranscriptPagerIsPlainScrollableAndRestoresCursor(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		m.push(m.th.Style(theme.RoleInfo).Render("line with long text"))
 	}
-	if _, handled := m.handleWorkspaceKey("alt+r"); !handled || m.transcriptPager == nil {
+	if _, handled := m.handleKey("alt+r"); !handled || m.transcriptPager == nil {
 		t.Fatal("Alt+R did not open transcript pager")
 	}
 	view := m.View()

@@ -40,7 +40,7 @@ func (m *Model) helpBodyLines() []string {
 		"  /search <text>         search visible transcript",
 		"  /recap                 compact current-session recap",
 		"  /mode <build|plan>     change interaction mode",
-		"  !<command>             governed shell command",
+		"  !<command>             governed argv command; quotes supported",
 		"  @<path|agent>          reference a path or agent",
 		"",
 		"Keybindings",
@@ -68,6 +68,7 @@ func (m *Model) helpKey(key string) (tea.Cmd, bool) {
 	case m.keys.matches(KeyContextPager, ActionPagerClose, key),
 		m.keys.matches(KeyContextGlobal, ActionGlobalHelp, key):
 		m.closeHelp()
+		return m.resumeQueuedAfterTransient(), true
 	case m.keys.matches(KeyContextPager, ActionPagerUp, key):
 		m.helpScroll--
 	case m.keys.matches(KeyContextPager, ActionPagerDown, key):

@@ -159,13 +159,21 @@ func TestTUIUnderPTY(t *testing.T) {
 	// The TUI must never leave the terminal in raw mode: after exit, the
 	// pane's shell tty still has canonical mode and echo enabled.
 	sttyPath := filepath.Join(state, "stty.txt")
-	if _, err := tm("send-keys", "-t", "main", fmt.Sprintf("stty -a > %q 2>&1; echo STTY_DONE", sttyPath), "Enter"); err != nil {
+	const sttyComplete = "__CARINA_STTY_COMPLETE__"
+	if _, err := tm("send-keys", "-t", "main", fmt.Sprintf(
+		"stty -a > %q 2>&1; printf '\\n%s\\n' >> %q", sttyPath, sttyComplete, sttyPath), "Enter"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor("stty capture", "STTY_DONE", 10*time.Second)
-	sttyOut, err := os.ReadFile(sttyPath)
-	if err != nil {
-		t.Fatalf("read stty output: %v", err)
+	deadline := time.Now().Add(10 * time.Second)
+	var sttyOut []byte
+	for !strings.Contains(string(sttyOut), sttyComplete) && time.Now().Before(deadline) {
+		sttyOut, _ = os.ReadFile(sttyPath)
+		if !strings.Contains(string(sttyOut), sttyComplete) {
+			time.Sleep(25 * time.Millisecond)
+		}
+	}
+	if !strings.Contains(string(sttyOut), sttyComplete) {
+		t.Fatal("stty capture did not produce output")
 	}
 	tokens := strings.FieldsFunc(string(sttyOut), func(r rune) bool {
 		return r == ' ' || r == '\t' || r == '\n' || r == ';'

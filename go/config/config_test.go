@@ -247,3 +247,22 @@ func TestHeadroomBudgetValidationFailsFast(t *testing.T) {
 		t.Fatal("negative headroom token budget must be rejected")
 	}
 }
+
+func TestTUIKeybindingsMergeAcrossGlobalAndProjectConfig(t *testing.T) {
+	scrubCarinaEnv(t)
+	home := t.TempDir()
+	project := t.TempDir()
+	writeConfig(t, home, `{"tui_keybindings":{"global.help":["ctrl+h"]}}`)
+	writeConfig(t, project, `{"tui_keybindings":{"composer.submit":["ctrl+enter"]}}`)
+	cfg, err := Load(home, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{
+		"global.help":     {"ctrl+h"},
+		"composer.submit": {"ctrl+enter"},
+	}
+	if !reflect.DeepEqual(cfg.TUIKeybindings, want) {
+		t.Fatalf("tui keybindings = %#v, want %#v", cfg.TUIKeybindings, want)
+	}
+}
