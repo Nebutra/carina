@@ -81,7 +81,8 @@
       { "method": "memory.context", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ scope: MemoryScope, context: string }" },
       { "method": "memory.search", "scope": "read", "remote": false, "params": { "session_id": "string", "query": "string", "target": "memory|user?", "limit": "number?", "mode": "lexical|semantic|auto?", "model": "provider/model?" }, "result": "MemorySearchResult" },
       { "method": "memory.status", "scope": "read", "remote": false, "params": { "session_id": "string?" }, "result": "MemoryStatus" },
-      { "method": "memory.write", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "target": "memory|user?", "action": "add|replace|remove|batch", "content": "string?", "old_text": "string?", "operations": "MemoryOperation[]?" }, "result": "object" }
+      { "method": "memory.write", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "target": "memory|user?", "action": "add|replace|remove|batch", "content": "string?", "old_text": "string?", "operations": "MemoryOperation[]?" }, "result": "object" },
+      { "method": "memory.projection.authorize", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "session_id": "string" }, "result": "{ projections: MemoryProjectionWriteResult[] }" }
     ],
     "schedule": [
       { "method": "schedule.create", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "prompt": "string", "kind": "at|every|cron", "expression": "string" }, "result": "Schedule" },

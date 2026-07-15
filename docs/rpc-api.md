@@ -209,8 +209,9 @@ stream.
 |--------|---------|
 | `memory.list` | list local memory entries for `target=memory` or `target=user` |
 | `memory.context` | render the fenced recalled-memory context block for the session |
-| `memory.status` | inspect local storage paths, identity scope, semantic-provider status, and Nebutra sync status |
+| `memory.status` | inspect local authority/search, cached external recall health, identity scope, and Nebutra sync status |
 | `memory.write` | add, replace, remove, or batch memory entries through the `MemoryWrite` capability |
+| `memory.projection.authorize` | request/reissue the approvals needed to project canonical local memory to HMS |
 
 `target=user` is scoped by Nebutra identity metadata when available. The daemon
 uses `CARINA_NEBUTRA_IDENTITY_JSON` first, then the claims payload in
@@ -228,6 +229,20 @@ the write is queued and the response contains only the decision.
 `task.action.approve` applies the pending write, while `task.action.deny`
 discards it. Audit payloads record target/scope/action, operation count, and
 content hash, not raw memory text.
+
+An optional HMS provider supports `off`, `hms-shadow`, and `hms-hybrid` recall.
+It never changes local write/delete authority. Shadow evidence does not enter
+prompts; hybrid evidence is frozen into the task checkpoint as a fenced,
+low-trust tool observation.
+
+HMS projection is a separate, disabled-by-default setting. After the local
+commit, a durable desired-state outbox reconciles replace updates and delete
+tombstones. Projection independently requires `NetworkAccess` and
+`MemoryExternalize`; `MemoryWrite` approval is not sufficient. Pending
+projection authorization can be resolved through `task.action.approve` or
+reissued after restart with `memory.projection.authorize`. Projection failure
+or denial never rolls back canonical local memory. See
+[`integrations/hms-memory.md`](integrations/hms-memory.md).
 
 ## Workspace API
 

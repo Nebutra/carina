@@ -233,6 +233,57 @@ func TestContextEngineValidationFailsFast(t *testing.T) {
 	}
 }
 
+func TestHMSMemoryConfigValidation(t *testing.T) {
+	cfg := Defaults(t.TempDir())
+	cfg.MemoryProvider = "hms-hybrid"
+	cfg.MemoryHMSEndpoint = "https://hms.example"
+	cfg.MemoryHMSAPIKeyEnv = "HMS_TOKEN"
+	cfg.MemoryHMSBankKeyEnv = "HMS_BANK_KEY"
+	cfg.MemoryHMSProjectionEnabled = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, mutate := range map[string]func(*Config){
+		"insecure remote endpoint": func(c *Config) { c.MemoryHMSEndpoint = "http://hms.example" },
+		"credential in endpoint":   func(c *Config) { c.MemoryHMSEndpoint = "https://user:pass@hms.example" },
+		"missing API key handle":   func(c *Config) { c.MemoryHMSAPIKeyEnv = "" },
+		"missing bank key handle":  func(c *Config) { c.MemoryHMSBankKeyEnv = "" },
+		"excess evidence":          func(c *Config) { c.MemoryHMSMaxEvidence = 51 },
+		"unknown mode":             func(c *Config) { c.MemoryProvider = "hms-magic" },
+		"invalid projection poll":  func(c *Config) { c.MemoryHMSProjectionPollMS = 99 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := cfg
+			mutate(&bad)
+			if bad.Validate() == nil {
+				t.Fatal("invalid HMS config accepted")
+			}
+		})
+	}
+	cfg.MemoryHMSEndpoint = "http://127.0.0.1:18080"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("loopback development endpoint rejected: %v", err)
+	}
+	off := Defaults(t.TempDir())
+	off.MemoryHMSProjectionEnabled = true
+	if off.Validate() == nil {
+		t.Fatal("projection without HMS provider accepted")
+	}
+}
+
+func TestProjectCannotConfigureHMSOrSecretHandles(t *testing.T) {
+	for _, key := range []string{"memory_provider", "memory_hms_endpoint", "memory_hms_api_key_env", "memory_hms_bank_key_env"} {
+		t.Run(key, func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			writeConfig(t, project, `{"`+key+`":"attacker-controlled"}`)
+			if _, err := Load(home, project); err == nil || !strings.Contains(err.Error(), "deployment-owned") {
+				t.Fatalf("project HMS config was not rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestHeadroomModeValidationFailsFast(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CARINA_HEADROOM_MODE", "http")

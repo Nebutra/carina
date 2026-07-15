@@ -21,6 +21,7 @@ pub enum Capability {
     PluginLoad,
     RemoteExecute,
     MemoryWrite,
+    MemoryExternalize,
     CodeIndex,
     ContextCompress,
     SubagentSpawn,
@@ -543,6 +544,10 @@ impl PolicyEngine {
             Capability::MemoryWrite => (
                 Verdict::RequiresApproval,
                 "persistent memory write requires approval".into(),
+            ),
+            Capability::MemoryExternalize => (
+                Verdict::RequiresApproval,
+                "external memory projection requires approval".into(),
             ),
             Capability::CodeIndex => {
                 // Derived read access: ingestion is FileRead-gated per path, so
@@ -1488,6 +1493,55 @@ require_approval = ["PatchApply"]
             &req(Capability::MemoryWrite, resource),
         );
         assert_eq!(denied.decision, Verdict::Denied);
+    }
+
+    #[test]
+    fn memory_externalize_is_independent_and_policy_bundle_controllable() {
+        let profile = Profile::safe_edit();
+        let root = Path::new("/tmp/ws");
+        let resource = "provider=hms bank=bank_01 action=retain entry=entry_01 revision=1";
+
+        let base = PolicyEngine::evaluate(
+            &profile,
+            root,
+            &req(Capability::MemoryExternalize, resource),
+        );
+        assert_eq!(base.decision, Verdict::RequiresApproval);
+        assert!(base.reason.contains("external memory projection"));
+
+        let require_bundle = PolicyBundle::from_toml(
+            "name = \"reviewed\"\nrequire_approval = [\"MemoryExternalize\"]\n",
+        )
+        .unwrap();
+        let reviewed = PolicyEngine::evaluate_with_bundle(
+            &profile,
+            Some(&require_bundle),
+            root,
+            &req(Capability::MemoryExternalize, resource),
+        );
+        assert_eq!(reviewed.decision, Verdict::RequiresApproval);
+
+        let deny_bundle = PolicyBundle::from_toml(
+            "name = \"local-only\"\ndeny_capabilities = [\"MemoryExternalize\"]\n",
+        )
+        .unwrap();
+        let denied = PolicyEngine::evaluate_with_bundle(
+            &profile,
+            Some(&deny_bundle),
+            root,
+            &req(Capability::MemoryExternalize, resource),
+        );
+        assert_eq!(denied.decision, Verdict::Denied);
+
+        // MemoryWrite remains a separate permission: policy can deny external
+        // projection without changing the local persistent-write decision.
+        let local_write = PolicyEngine::evaluate_with_bundle(
+            &profile,
+            Some(&deny_bundle),
+            root,
+            &req(Capability::MemoryWrite, "target=memory action=add"),
+        );
+        assert_eq!(local_write.decision, Verdict::RequiresApproval);
     }
 
     #[test]

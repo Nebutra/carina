@@ -189,6 +189,10 @@ func (d *Daemon) runTaskContext(ctx context.Context, sess *sessionstore.Session,
 		tr.addTurn(Turn{Tool: "user", ActionBrief: "fork-task", Obs: Observation{Content: "FORK TASK (continue from inherited context): " + task.UserPrompt, Pinned: true}})
 		memorySnapshot = cp.MemorySnapshot
 		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{"status": "fork_context_restored", "source_task_id": sess.ForkedFromTaskID, "through_turn": sess.ForkedThroughTurn}, "")
+	} else {
+		if evidence := d.buildTaskMemoryEvidence(ctx, sess, task); evidence != "" {
+			tr.addTurn(Turn{Tool: "memory_recall", ActionBrief: "hms-evidence", Obs: Observation{Content: evidence, Pinned: true}})
+		}
 	}
 	d.runLoopContext(ctx, sess, task, tr, 1, memorySnapshot)
 }

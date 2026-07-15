@@ -83,6 +83,7 @@ Memory:
   carina memory write <session_id> <memory|user> replace <old_text> <content|->
                                                    request a memory replacement
   carina memory write <session_id> <memory|user> remove <old_text>
+  carina memory projection-authorize <session_id>    request governed HMS projection approval
                                                    request a memory removal
 
 Context engine:
@@ -962,6 +963,11 @@ func memoryRPC(args []string, readInput func() (string, error)) (string, map[str
 			return "", nil, fmt.Errorf("usage: carina memory context <session_id>")
 		}
 		return "memory.context", map[string]any{"session_id": args[1]}, nil
+	case "projection-authorize":
+		if len(args) != 2 {
+			return "", nil, fmt.Errorf("usage: carina memory projection-authorize <session_id>")
+		}
+		return "memory.projection.authorize", map[string]any{"session_id": args[1]}, nil
 	case "search":
 		mode := ""
 		rest := args[1:]

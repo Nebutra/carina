@@ -86,6 +86,7 @@ func TestUsageIncludesMemoryCommands(t *testing.T) {
 		"Memory:",
 		"carina memory status <session_id>",
 		"carina memory write <session_id> <memory|user> add <content|->",
+		"carina memory projection-authorize <session_id>",
 	} {
 		if !strings.Contains(usage, want) {
 			t.Fatalf("usage missing %q:\n%s", want, usage)
@@ -425,6 +426,10 @@ func TestMemoryRPCBuildsStatusAndWrite(t *testing.T) {
 	}
 	if method != "memory.status" || params["session_id"] != "sess_1" {
 		t.Fatalf("unexpected status rpc: %s %+v", method, params)
+	}
+	method, params, err = memoryRPC([]string{"projection-authorize", "sess_1"}, func() (string, error) { return "", nil })
+	if err != nil || method != "memory.projection.authorize" || params["session_id"] != "sess_1" {
+		t.Fatalf("unexpected projection authorize rpc: %s %+v %v", method, params, err)
 	}
 
 	method, params, err = memoryRPC([]string{"write", "sess_1", "user", "add", "-"}, func() (string, error) {

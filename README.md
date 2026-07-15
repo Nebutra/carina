@@ -302,9 +302,11 @@ are bounded and content-scanned, and are audited by target/scope/action/content
 hash rather than by raw memory text.
 
 `carina memory status <session_id>` reports local storage paths, identity
-scope, external semantic-provider status, and Nebutra Cloud sync status.
-External semantic memory providers and Nebutra Cloud memory sync are explicit
-`local-only` / `off` boundaries in the source-first alpha.
+scope, cached external-provider health, HMS projection state, and Nebutra Cloud
+sync status. HMS recall and governed projection are explicit, restart-only
+opt-ins. Projection uses a durable desired-state outbox and requires
+`NetworkAccess` plus `MemoryExternalize` independently of `MemoryWrite`;
+Nebutra Cloud memory sync remains off.
 
 ### Native Context Engine
 

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Nebutra/carina/go/config"
 	"github.com/Nebutra/carina/go/daemon"
@@ -72,6 +73,14 @@ func main() {
 	headroomMode := flag.String("headroom-mode", cfg.HeadroomMode, "Headroom integration mode: managed_mcp|sidecar|proxy")
 	headroomProxyPort := flag.Int("headroom-proxy-port", cfg.HeadroomProxyPort, "Headroom localhost proxy port (0 = choose later)")
 	headroomTokenBudget := flag.Int("headroom-token-budget", cfg.HeadroomTokenBudget, "Headroom context token budget")
+	memoryProvider := flag.String("memory-provider", cfg.MemoryProvider, "memory recall provider: off|hms-shadow|hms-hybrid")
+	memoryHMSEndpoint := flag.String("memory-hms-endpoint", cfg.MemoryHMSEndpoint, "HMS base URL (HTTPS or loopback HTTP)")
+	memoryHMSAPIKeyEnv := flag.String("memory-hms-api-key-env", cfg.MemoryHMSAPIKeyEnv, "daemon environment variable containing the HMS bearer token")
+	memoryHMSTimeoutMS := flag.Int("memory-hms-timeout-ms", cfg.MemoryHMSTimeoutMS, "HMS recall timeout in milliseconds")
+	memoryHMSMaxEvidence := flag.Int("memory-hms-max-evidence", cfg.MemoryHMSMaxEvidence, "maximum HMS evidence rows frozen into a task")
+	memoryHMSBankKeyEnv := flag.String("memory-hms-bank-key-env", cfg.MemoryHMSBankKeyEnv, "daemon environment variable containing the HMS bank derivation key")
+	memoryHMSProjectionEnabled := flag.Bool("memory-hms-projection", cfg.MemoryHMSProjectionEnabled, "project approved local memory state into HMS")
+	memoryHMSProjectionPollMS := flag.Int("memory-hms-projection-poll-ms", cfg.MemoryHMSProjectionPollMS, "HMS projection worker poll interval in milliseconds")
 	flag.Parse()
 	if err := validateListenerSecurity(*tcp, *gatewayWS, *gatewayTokenSigningKeyFile); err != nil {
 		log.Fatalf("carina-daemon: %v", err)
@@ -129,6 +138,14 @@ func main() {
 		HeadroomMode:               *headroomMode,
 		HeadroomProxyPort:          *headroomProxyPort,
 		HeadroomTokenBudget:        *headroomTokenBudget,
+		MemoryProvider:             *memoryProvider,
+		MemoryHMSEndpoint:          *memoryHMSEndpoint,
+		MemoryHMSAPIKeyEnv:         *memoryHMSAPIKeyEnv,
+		MemoryHMSTimeout:           time.Duration(*memoryHMSTimeoutMS) * time.Millisecond,
+		MemoryHMSMaxEvidence:       *memoryHMSMaxEvidence,
+		MemoryHMSBankKeyEnv:        *memoryHMSBankKeyEnv,
+		MemoryHMSProjectionEnabled: *memoryHMSProjectionEnabled,
+		MemoryHMSProjectionPoll:    time.Duration(*memoryHMSProjectionPollMS) * time.Millisecond,
 	})
 	if err != nil {
 		log.Fatalf("carina-daemon: %v", err)
@@ -284,6 +301,14 @@ var flagConfigKeys = map[string]string{
 	"headroom-mode":                  "headroom_mode",
 	"headroom-proxy-port":            "headroom_proxy_port",
 	"headroom-token-budget":          "headroom_token_budget",
+	"memory-provider":                "memory_provider",
+	"memory-hms-endpoint":            "memory_hms_endpoint",
+	"memory-hms-api-key-env":         "memory_hms_api_key_env",
+	"memory-hms-timeout-ms":          "memory_hms_timeout_ms",
+	"memory-hms-max-evidence":        "memory_hms_max_evidence",
+	"memory-hms-bank-key-env":        "memory_hms_bank_key_env",
+	"memory-hms-projection":          "memory_hms_projection_enabled",
+	"memory-hms-projection-poll-ms":  "memory_hms_projection_poll_ms",
 }
 
 // validateLockedFlags fails closed when an explicitly-set CLI flag collides

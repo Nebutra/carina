@@ -78,6 +78,14 @@ type Options struct {
 	HeadroomMode               string             // managed_mcp|sidecar|proxy
 	HeadroomProxyPort          int                // 0 => choose later
 	HeadroomTokenBudget        int                // budget for context blocks
+	MemoryProvider             string             // off|hms-shadow|hms-hybrid
+	MemoryHMSEndpoint          string             // deployment-owned HMS endpoint
+	MemoryHMSAPIKeyEnv         string             // env var containing HMS bearer token
+	MemoryHMSTimeout           time.Duration      // total recall deadline
+	MemoryHMSMaxEvidence       int                // maximum recalled evidence rows
+	MemoryHMSBankKeyEnv        string             // env var containing bank-ID HMAC key
+	MemoryHMSProjectionEnabled bool               // opt-in external projection of approved local memory
+	MemoryHMSProjectionPoll    time.Duration      // durable projection worker cadence
 	ExtensionTrustedRoots      []string           // local roots allowed as extension install sources
 	TelemetryWriter            io.Writer          // nil keeps OpenTelemetry export disabled
 	BestOfNEnabled             bool               // opt-in: expose the best_of_n tool (default false — off)
@@ -110,6 +118,13 @@ type pendingMemoryWrite struct {
 	summary   memoryWriteSummary
 }
 
+type pendingMemoryProjection struct {
+	sessionID  string
+	documentID string
+	generation uint64
+	stage      string
+}
+
 type Daemon struct {
 	store        *sessionstore.Store
 	sched        *scheduler.Scheduler
@@ -136,13 +151,14 @@ type Daemon struct {
 	judgeReasoner  Reasoner     // optional independent best-of-n judge (nil => falls back to d.reasoner, then a deterministic heuristic)
 	riskReviewMode atomic.Value // string: off|advisory|enforce, hot-reloadable
 
-	mu                  sync.Mutex
-	pendingCmds         map[string]pendingCommand     // decision_id -> command awaiting approval
-	pendingMemWrites    map[string]pendingMemoryWrite // decision_id -> memory write awaiting approval
-	patchGates          map[string]*patchGate         // patch_id -> PatchApply decision state
-	patchGateByDecision map[string]string             // decision_id -> patch_id
-	submissionMu        sync.Mutex
-	taskSubmissions     map[string]string // session_id + client_submission_id -> task_id
+	mu                    sync.Mutex
+	pendingCmds           map[string]pendingCommand          // decision_id -> command awaiting approval
+	pendingMemWrites      map[string]pendingMemoryWrite      // decision_id -> memory write awaiting approval
+	pendingMemProjections map[string]pendingMemoryProjection // decision_id -> HMS projection awaiting externalization approval
+	patchGates            map[string]*patchGate              // patch_id -> PatchApply decision state
+	patchGateByDecision   map[string]string                  // decision_id -> patch_id
+	submissionMu          sync.Mutex
+	taskSubmissions       map[string]string // session_id + client_submission_id -> task_id
 
 	runs   *runStore     // durable background-run registry (survives restart)
 	runSem chan struct{} // concurrency cap for background runs
@@ -240,28 +256,34 @@ type Daemon struct {
 
 	reload func() error // config reload closure (SIGHUP/RPC); nil until SetReloader
 
-	authChain          *auth.Chain              // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
-	authStore          *auth.Store              // local BYOK credential store (doctor's per-provider probe)
-	providerCatalog    provider.Catalog         // runtime provider catalog (doctor's per-provider probe)
-	usage              *usageStore              // durable per-task/session model usage and cost accounting
-	history            *history.History         // shared cross-process prompt history
-	memory             *memoryStore             // governed local long-term memory
-	schedules          *scheduler.ScheduleStore // persistent cron/at/every definitions
-	gatewayTokens      *rpc.GatewayTokenIssuer  // optional scoped Gateway token signer/verifier
-	gatewayTokenMaxTTL time.Duration            // max TTL for locally issued scoped Gateway tokens
-	gatewayHTTPServers []*http.Server
-	gatewayResponses   map[string]string // response id -> session id for /v1/responses continuity
-	agentView          *agentview.Store
-	worktrees          *worktree.Manager
-	workflowRuns       *workflowui.Store
-	workflowControls   map[string]*workflowRunControl
-	workflowControlMu  sync.Mutex
-	channels           *channels.Registry
-	extensions         *extensions.Marketplace
-	telemetry          *carinatelemetry.Exporter
-	compactionBreaker  *compactionCircuitBreaker
-	retryGovernance    *retryGovernance
-	artifacts          *artifact.Store
+	authChain                *auth.Chain        // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
+	authStore                *auth.Store        // local BYOK credential store (doctor's per-provider probe)
+	providerCatalog          provider.Catalog   // runtime provider catalog (doctor's per-provider probe)
+	usage                    *usageStore        // durable per-task/session model usage and cost accounting
+	history                  *history.History   // shared cross-process prompt history
+	memory                   *memoryStore       // governed local long-term memory
+	memoryHMS                *hmsRecallProvider // optional derived recall provider; local store stays authoritative
+	memoryHMSAPIKeyEnv       string
+	memoryProjection         *memoryProjectionStore // durable desired-state outbox (optional)
+	memoryProjectionExecutor memoryProjectionExecutor
+	memoryProjectionPoll     time.Duration
+	memoryProjectionWriteMu  sync.Mutex
+	schedules                *scheduler.ScheduleStore // persistent cron/at/every definitions
+	gatewayTokens            *rpc.GatewayTokenIssuer  // optional scoped Gateway token signer/verifier
+	gatewayTokenMaxTTL       time.Duration            // max TTL for locally issued scoped Gateway tokens
+	gatewayHTTPServers       []*http.Server
+	gatewayResponses         map[string]string // response id -> session id for /v1/responses continuity
+	agentView                *agentview.Store
+	worktrees                *worktree.Manager
+	workflowRuns             *workflowui.Store
+	workflowControls         map[string]*workflowRunControl
+	workflowControlMu        sync.Mutex
+	channels                 *channels.Registry
+	extensions               *extensions.Marketplace
+	telemetry                *carinatelemetry.Exporter
+	compactionBreaker        *compactionCircuitBreaker
+	retryGovernance          *retryGovernance
+	artifacts                *artifact.Store
 }
 
 const artifactGCInterval = 30 * time.Minute
@@ -325,33 +347,88 @@ func New(opts Options) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: cannot start capability kernel: %w", err)
 	}
 	d := &Daemon{
-		store:               store,
-		sched:               scheduler.New(),
-		pool:                worker.NewPool(),
-		backpressure:        newBackpressureManager(),
-		router:              modelrouter.New(),
-		server:              rpc.NewServer(),
-		kern:                kern,
-		tools:               tools,
-		events:              NewBus(),
-		debugTrace:          newDebugTrace(defaultDebugTraceCapacity),
-		org:                 loadOrgPolicy(opts.PolicyDir),
-		policyDir:           opts.PolicyDir,
-		stateDir:            opts.StateDir,
-		cloudEndpoint:       cloudEndpoint,
-		syncMode:            syncMode,
-		started:             time.Now().UTC(),
-		pendingCmds:         make(map[string]pendingCommand),
-		pendingMemWrites:    make(map[string]pendingMemoryWrite),
-		patchGates:          make(map[string]*patchGate),
-		patchGateByDecision: make(map[string]string),
-		taskSubmissions:     make(map[string]string),
-		memory:              newMemoryStore(opts.StateDir),
-		schedules:           scheduler.OpenScheduleStore(opts.StateDir),
-		contextEng:          contextEng,
-		gatewayTokens:       gatewayTokens,
-		gatewayTokenMaxTTL:  gatewayTokenMaxTTL,
-		gatewayResponses:    map[string]string{},
+		store:                 store,
+		sched:                 scheduler.New(),
+		pool:                  worker.NewPool(),
+		backpressure:          newBackpressureManager(),
+		router:                modelrouter.New(),
+		server:                rpc.NewServer(),
+		kern:                  kern,
+		tools:                 tools,
+		events:                NewBus(),
+		debugTrace:            newDebugTrace(defaultDebugTraceCapacity),
+		org:                   loadOrgPolicy(opts.PolicyDir),
+		policyDir:             opts.PolicyDir,
+		stateDir:              opts.StateDir,
+		cloudEndpoint:         cloudEndpoint,
+		syncMode:              syncMode,
+		started:               time.Now().UTC(),
+		pendingCmds:           make(map[string]pendingCommand),
+		pendingMemWrites:      make(map[string]pendingMemoryWrite),
+		pendingMemProjections: make(map[string]pendingMemoryProjection),
+		patchGates:            make(map[string]*patchGate),
+		patchGateByDecision:   make(map[string]string),
+		taskSubmissions:       make(map[string]string),
+		memory:                newMemoryStore(opts.StateDir),
+		schedules:             scheduler.OpenScheduleStore(opts.StateDir),
+		contextEng:            contextEng,
+		gatewayTokens:         gatewayTokens,
+		gatewayTokenMaxTTL:    gatewayTokenMaxTTL,
+		gatewayResponses:      map[string]string{},
+	}
+	if mode := strings.ToLower(strings.TrimSpace(opts.MemoryProvider)); mode != "" && mode != memoryProviderOff {
+		if opts.Offline {
+			_ = kern.Close()
+			return nil, fmt.Errorf("daemon: memory provider %s is incompatible with offline mode", mode)
+		}
+		apiKey := ""
+		if name := strings.TrimSpace(opts.MemoryHMSAPIKeyEnv); name != "" {
+			apiKey = os.Getenv(name)
+		}
+		if apiKey == "" {
+			_ = kern.Close()
+			return nil, fmt.Errorf("daemon: HMS API key env %q is empty", opts.MemoryHMSAPIKeyEnv)
+		}
+		bankKey := os.Getenv(strings.TrimSpace(opts.MemoryHMSBankKeyEnv))
+		timeout := opts.MemoryHMSTimeout
+		if timeout == 0 {
+			timeout = 3 * time.Second
+		}
+		maxEvidence := opts.MemoryHMSMaxEvidence
+		if maxEvidence == 0 {
+			maxEvidence = 8
+		}
+		d.memoryHMS, err = newHMSRecallProvider(mode, opts.MemoryHMSEndpoint, apiKey, []byte(bankKey), timeout, maxEvidence)
+		if err != nil {
+			_ = kern.Close()
+			return nil, fmt.Errorf("daemon: configure HMS memory provider: %w", err)
+		}
+		d.memoryHMSAPIKeyEnv = opts.MemoryHMSAPIKeyEnv
+	}
+	if opts.MemoryHMSProjectionEnabled {
+		if d.memoryHMS == nil {
+			_ = kern.Close()
+			return nil, fmt.Errorf("daemon: HMS projection requires an HMS memory provider")
+		}
+		if opts.MemoryHMSProjectionPoll != 0 && (opts.MemoryHMSProjectionPoll < 100*time.Millisecond || opts.MemoryHMSProjectionPoll > time.Minute) {
+			_ = kern.Close()
+			return nil, fmt.Errorf("daemon: HMS projection poll interval must be between 100ms and 60s")
+		}
+		d.memoryProjection, err = newMemoryProjectionStore(opts.StateDir)
+		if err != nil {
+			_ = kern.Close()
+			return nil, fmt.Errorf("daemon: open memory projection outbox: %w", err)
+		}
+		if err := d.memoryProjection.ReauthorizePending(); err != nil {
+			_ = kern.Close()
+			return nil, fmt.Errorf("daemon: reauthorize memory projection outbox: %w", err)
+		}
+		d.memoryProjectionExecutor = auditedProjectionExecutor{d: d, next: hmsOutboxExecutor{provider: d.memoryHMS}}
+		d.memoryProjectionPoll = opts.MemoryHMSProjectionPoll
+		if d.memoryProjectionPoll <= 0 {
+			d.memoryProjectionPoll = time.Second
+		}
+		d.reconcileDirtyMemoryProjections()
 	}
 	d.agentView = agentview.Open(opts.StateDir)
 	d.worktrees, err = worktree.New(opts.StateDir)
@@ -494,6 +571,9 @@ func New(opts Options) (*Daemon, error) {
 	// can append concurrently).
 	d.history = history.New(filepath.Join(opts.StateDir, "history"))
 	d.startBackgroundLoop(d.reapLeases) // re-queue dispatch tasks abandoned by crashed workers
+	if d.memoryProjection != nil {
+		d.startBackgroundLoop(d.runMemoryProjectionLoop)
+	}
 	d.mcp = mcp.NewManager()
 	if _, err := d.connectContextEngineMCP(d.contextEng); err != nil {
 		_ = d.kern.Close()
@@ -705,6 +785,9 @@ func (d *Daemon) Close() error {
 	if d.contextEng != nil {
 		_ = d.contextEng.Close()
 	}
+	if d.memoryHMS != nil {
+		d.memoryHMS.Close()
+	}
 	if d.egress != nil {
 		_ = d.egress.Close()
 	}
@@ -889,6 +972,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("memory.search", rpc.ScopeRead, false, d.handleMemorySearch)
 	d.registerRPC("memory.status", rpc.ScopeRead, false, d.handleMemoryStatus)
 	d.registerRPC("memory.write", rpc.ScopeWrite, false, d.handleMemoryWrite, true)
+	d.registerRPC("memory.projection.authorize", rpc.ScopeAdmin, false, d.handleMemoryProjectionAuthorize, true)
 	d.registerRPC("schedule.create", rpc.ScopeWrite, false, d.handleScheduleCreate, true)
 	d.registerRPC("schedule.list", rpc.ScopeRead, false, d.handleScheduleList)
 	d.registerRPC("schedule.pause", rpc.ScopeWrite, false, d.handleSchedulePause, true)
@@ -1141,12 +1225,39 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 			"reason":     policyReason,
 		},
 	}
+	if d.memoryHMS == nil {
+		report["hms_memory"] = map[string]any{"configured": false, "ok": true}
+	} else {
+		h := d.memoryHMS.Health()
+		projection := d.memoryProjectionStatus()
+		projectionOK := true
+		if d.memoryProjection != nil {
+			ps := d.memoryProjection.Status()
+			projectionOK = ps.Dirty == 0 && ps.Failed == 0
+		}
+		report["hms_memory"] = map[string]any{
+			"configured": true, "credential_resolved": d.memoryHMS.apiKey != "",
+			"credential_source": "env:" + d.memoryHMSAPIKeyEnv,
+			"endpoint_host":     h.EndpointHost, "last_state": h.LastState,
+			"last_success": h.LastSuccess, "projection": projection,
+			"ok":     (h.LastState == "ok" || h.LastState == "not_checked") && projectionOK,
+			"reason": "reachability is cached from governed session calls; doctor does not bypass NetworkAccess",
+		}
+	}
 	artifactHealth := d.artifacts.Health()
 	report["artifact_store"] = map[string]any{"ok": artifactHealth.OK, "health": artifactHealth, "metrics": d.artifacts.Metrics()}
 	if info, err := os.Stat(d.stateDir); err == nil {
 		report["state_dir_permissions"] = map[string]any{"ok": info.Mode().Perm() == 0o700, "mode": fmt.Sprintf("%04o", info.Mode().Perm())}
 	}
 	fixPlan := []map[string]any{}
+	if d.memoryProjection != nil {
+		ps := d.memoryProjection.Status()
+		if ps.Dirty > 0 || ps.Failed > 0 {
+			fixPlan = append(fixPlan, map[string]any{"check": "hms_memory_projection", "severity": "error", "issue": fmt.Sprintf("%d dirty and %d failed projection(s)", ps.Dirty, ps.Failed), "action": "repair HMS/configuration, then run memory.projection.authorize for the affected session", "automatic": false})
+		} else if ps.Blocked > 0 {
+			fixPlan = append(fixPlan, map[string]any{"check": "hms_memory_projection", "severity": "warn", "issue": fmt.Sprintf("%d projection(s) await authorization", ps.Blocked), "action": "review and resolve the projection approval", "automatic": false})
+		}
+	}
 	interrupted := 0
 	for _, run := range d.workflowRuns.List() {
 		if run.Status == workflowui.Interrupted {
@@ -1826,11 +1937,25 @@ func (d *Daemon) handleMemoryStatus(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("unknown session %s", id)
 	}
 	scope := memoryScopeFromSession(sess)
-	semanticProvider := map[string]any{
+	recallProvider := map[string]any{
 		"enabled":  false,
-		"provider": "local-only",
-		"reason":   "external semantic/vector memory provider is not configured in the source-first runtime",
-		"contract": "future providers must preserve MemoryWrite policy, local deletion semantics, and Nebutra identity scope",
+		"provider": "off",
+		"reason":   "external recall provider is not configured",
+	}
+	if d.memoryHMS != nil {
+		h := d.memoryHMS.Health()
+		recallProvider = map[string]any{
+			"enabled": true, "provider": "hms", "mode": h.Mode,
+			"adapter_version": h.Adapter, "endpoint_host": h.EndpointHost,
+			"last_state": h.LastState, "last_reason": h.LastReason,
+			"configured": h.Configured, "authorized": h.Authorized,
+			"last_attempt": h.LastAttempt, "last_success": h.LastSuccess,
+			"last_latency_ms": h.LastLatency, "last_evidence_count": h.LastEvidence,
+			"authority": "local Carina memory remains authoritative; HMS evidence is derived and untrusted",
+		}
+	}
+	semanticProvider := map[string]any{
+		"enabled": false, "provider": "local-only",
 	}
 	if modelID := d.embeddingsModelID(); modelID != "" {
 		semanticProvider = map[string]any{
@@ -1848,6 +1973,8 @@ func (d *Daemon) handleMemoryStatus(params json.RawMessage) (any, error) {
 			"user_path":   d.memory.pathFor(scope, memoryTargetUser),
 		},
 		"semantic_provider": semanticProvider,
+		"recall_provider":   recallProvider,
+		"projection":        d.memoryProjectionStatus(),
 		"nebutra_cloud_sync": map[string]any{
 			"enabled":   d.syncMode != nebutra.SyncModeOff,
 			"endpoint":  d.cloudEndpoint,
@@ -1984,13 +2111,30 @@ func memoryWriteHash(req memoryWriteRequest) string {
 }
 
 func (d *Daemon) applyMemoryWrite(sess *sessionstore.Session, taskID string, req memoryWriteRequest, decision *kernel.Decision, scope memoryScope, summary memoryWriteSummary) (memoryWriteResult, error) {
+	// The WAL marker, canonical mutation, and desired-state materialization are
+	// one per-document transaction. Without this lock two approved writes to the
+	// same target can publish a stale desired generation.
+	d.memoryProjectionWriteMu.Lock()
+	defer d.memoryProjectionWriteMu.Unlock()
+	dirty, err := d.prepareMemoryProjection(sess, scope, summary.Target)
+	if err != nil {
+		return memoryWriteResult{}, fmt.Errorf("memory projection write-ahead: %w", err)
+	}
 	result, err := d.memory.apply(scope, req)
 	if err != nil {
+		if dirty != nil {
+			_ = d.memoryProjection.DiscardDirty(dirty.DocumentID, dirty.Generation)
+		}
 		return memoryWriteResult{}, err
 	}
 	result.DecisionID = decision.DecisionID
 	result.ContentSHA256 = summary.ContentSHA256
 	result.OperationCount = summary.OperationCount
+	if result.Success {
+		result.Projection = d.finishMemoryProjection(sess, dirty)
+	} else if dirty != nil {
+		_ = d.memoryProjection.DiscardDirty(dirty.DocumentID, dirty.Generation)
+	}
 	payload := map[string]any{
 		"status":          "memory_write",
 		"target":          summary.Target,
@@ -2659,6 +2803,16 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 	d.signalPendingApproval(p.DecisionID, decision, decision.Decision == "allowed", actualScope)
 	// A role-rejected approval does not execute the pending command.
 	if decision.Decision != "allowed" {
+		d.mu.Lock()
+		pendingProjection, projectionOK := d.pendingMemProjections[p.DecisionID]
+		delete(d.pendingMemProjections, p.DecisionID)
+		d.mu.Unlock()
+		if projectionOK && d.memoryProjection != nil {
+			if intent, exists := d.memoryProjection.Get(pendingProjection.documentID, pendingProjection.generation); exists {
+				_ = d.memoryProjection.SetBlockedReason(intent.DocumentID, intent.Generation, "authorization_denied")
+				d.recordMemoryProjection(intent, projectionBlocked, "authorization_denied", p.DecisionID)
+			}
+		}
 		return response(nil), nil
 	}
 
@@ -2675,8 +2829,44 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 		return response(result), nil
 	}
 	d.mu.Lock()
+	pendingProjection, projectionOK := d.pendingMemProjections[p.DecisionID]
+	delete(d.pendingMemProjections, p.DecisionID)
+	d.mu.Unlock()
+	if projectionOK && d.memoryProjection != nil {
+		intent, exists := d.memoryProjection.Get(pendingProjection.documentID, pendingProjection.generation)
+		if !exists {
+			return nil, fmt.Errorf("memory projection generation is stale")
+		}
+		sess, exists := d.store.Get(pendingProjection.sessionID)
+		if !exists {
+			return nil, fmt.Errorf("unknown session %s", pendingProjection.sessionID)
+		}
+		var projection *memoryProjectionWriteResult
+		if pendingProjection.stage == projectionApprovalNetwork {
+			if err := d.memoryProjection.SetNetworkDecision(intent.DocumentID, intent.Generation, p.DecisionID); err != nil {
+				return nil, err
+			}
+			intent.NetworkDecisionID = p.DecisionID
+			projection = d.authorizeMemoryProjectionAfterNetwork(sess, intent, "")
+		} else {
+			if err := d.memoryProjection.Authorize(intent.DocumentID, intent.Generation, p.DecisionID); err != nil {
+				return nil, err
+			}
+			d.recordMemoryProjection(intent, projectionPending, "", p.DecisionID)
+			projection = &memoryProjectionWriteResult{Enabled: true, Status: projectionPending, DocumentID: intent.DocumentID, Revision: intent.Revision, DecisionID: p.DecisionID, Decision: "allowed"}
+		}
+		return response(projection), nil
+	}
+	d.mu.Lock()
 	memPending, ok := d.pendingMemWrites[p.DecisionID]
 	delete(d.pendingMemWrites, p.DecisionID)
+	if pending, ok := d.pendingMemProjections[p.DecisionID]; ok {
+		if intent, exists := d.memoryProjection.Get(pending.documentID, pending.generation); exists {
+			_ = d.memoryProjection.SetBlockedReason(intent.DocumentID, intent.Generation, "authorization_denied")
+			d.recordMemoryProjection(intent, projectionBlocked, "authorization_denied", p.DecisionID)
+		}
+		delete(d.pendingMemProjections, p.DecisionID)
+	}
 	d.mu.Unlock()
 	if ok {
 		sess, ok := d.store.Get(memPending.sessionID)
@@ -2728,6 +2918,8 @@ func (d *Daemon) handleDeny(params json.RawMessage) (any, error) {
 	d.mu.Lock()
 	delete(d.pendingCmds, p.DecisionID)
 	delete(d.pendingMemWrites, p.DecisionID)
+	pendingProjection, projectionOK := d.pendingMemProjections[p.DecisionID]
+	delete(d.pendingMemProjections, p.DecisionID)
 	// A denied patch gate refuses every later apply of that patch.
 	if patchID, ok := d.patchGateByDecision[p.DecisionID]; ok {
 		if gate := d.patchGates[patchID]; gate != nil && gate.status == "requires_approval" {
@@ -2735,6 +2927,12 @@ func (d *Daemon) handleDeny(params json.RawMessage) (any, error) {
 		}
 	}
 	d.mu.Unlock()
+	if projectionOK && d.memoryProjection != nil {
+		if intent, exists := d.memoryProjection.Get(pendingProjection.documentID, pendingProjection.generation); exists {
+			_ = d.memoryProjection.SetBlockedReason(intent.DocumentID, intent.Generation, "authorization_denied")
+			d.recordMemoryProjection(intent, projectionBlocked, "authorization_denied", p.DecisionID)
+		}
+	}
 	return denied, nil
 }
 

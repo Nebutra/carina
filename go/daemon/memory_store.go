@@ -61,19 +61,29 @@ type memoryState struct {
 }
 
 type memoryWriteResult struct {
-	Success        bool        `json:"success"`
-	Done           bool        `json:"done"`
-	Target         string      `json:"target,omitempty"`
-	Scope          memoryScope `json:"scope"`
-	DecisionID     string      `json:"decision_id,omitempty"`
-	ContentSHA256  string      `json:"content_sha256,omitempty"`
-	OperationCount int         `json:"operation_count,omitempty"`
-	Message        string      `json:"message,omitempty"`
-	Error          string      `json:"error,omitempty"`
-	Usage          string      `json:"usage,omitempty"`
-	EntryCount     int         `json:"entry_count,omitempty"`
-	CurrentEntries []string    `json:"current_entries,omitempty"`
-	Matches        []string    `json:"matches,omitempty"`
+	Success        bool                         `json:"success"`
+	Done           bool                         `json:"done"`
+	Target         string                       `json:"target,omitempty"`
+	Scope          memoryScope                  `json:"scope"`
+	DecisionID     string                       `json:"decision_id,omitempty"`
+	ContentSHA256  string                       `json:"content_sha256,omitempty"`
+	OperationCount int                          `json:"operation_count,omitempty"`
+	Message        string                       `json:"message,omitempty"`
+	Error          string                       `json:"error,omitempty"`
+	Usage          string                       `json:"usage,omitempty"`
+	EntryCount     int                          `json:"entry_count,omitempty"`
+	CurrentEntries []string                     `json:"current_entries,omitempty"`
+	Matches        []string                     `json:"matches,omitempty"`
+	Projection     *memoryProjectionWriteResult `json:"projection,omitempty"`
+}
+
+type memoryProjectionWriteResult struct {
+	Enabled    bool   `json:"enabled"`
+	Status     string `json:"status"`
+	DocumentID string `json:"document_id,omitempty"`
+	Revision   string `json:"revision,omitempty"`
+	DecisionID string `json:"decision_id,omitempty"`
+	Decision   string `json:"decision,omitempty"`
 }
 
 type memorySearchHit struct {
@@ -535,10 +545,32 @@ func (s *memoryStore) writeEntriesLocked(scope memoryScope, target string, entri
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(strings.Join(entries, memoryDelimiter)), 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if _, err = f.Write([]byte(strings.Join(entries, memoryDelimiter))); err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err = os.Rename(tmp, path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	err = dir.Sync()
+	if closeErr := dir.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 func (s *memoryStore) pathFor(scope memoryScope, target string) string {

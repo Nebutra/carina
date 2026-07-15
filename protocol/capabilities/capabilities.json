@@ -1,10 +1,10 @@
 {
   "$comment": "Capability types (PRD §8.3) and command risk levels (PRD §8.8).",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "capabilities": [
     "FileRead", "FileWrite", "CommandExec", "NetworkAccess", "SecretRead",
     "GitOperation", "PatchApply", "ProcessSpawn", "PluginLoad", "RemoteExecute",
-    "MemoryWrite", "CodeIndex", "ContextCompress", "SubagentSpawn", "SwarmMessage", "RemoteDispatch", "SwarmSpawn"
+    "MemoryWrite", "MemoryExternalize", "CodeIndex", "ContextCompress", "SubagentSpawn", "SwarmMessage", "RemoteDispatch", "SwarmSpawn"
   ],
   "command_risk_levels": [
     { "level": 0, "class": "read-only commands", "default": "auto_allow" },

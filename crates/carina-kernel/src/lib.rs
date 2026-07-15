@@ -711,6 +711,45 @@ mod tests {
     }
 
     #[test]
+    fn memory_write_approval_does_not_authorize_externalization() {
+        let dir = tmp("memory-externalize-overlay");
+        let kernel = Kernel::new("sess_memory", "/tmp/ws", "safe-edit", &dir).unwrap();
+        let local_write = kernel
+            .request(CapabilityRequest {
+                capability: Capability::MemoryWrite,
+                requested_by: carina_policy::Principal::Agent,
+                resource: "provider=hms action=retain entry=entry_01".into(),
+                session_id: "sess_memory".into(),
+                task_id: None,
+            })
+            .unwrap();
+        assert_eq!(local_write.decision, Verdict::RequiresApproval);
+        kernel
+            .approve_for_session_with_justification(
+                &local_write,
+                "alice",
+                "allow local persistent memory writes",
+            )
+            .unwrap();
+
+        // Even with the same resource prefix, the overlay key includes the
+        // capability. Local persistence therefore cannot confer permission to
+        // disclose the content to an external memory provider.
+        let externalize = kernel
+            .request(CapabilityRequest {
+                capability: Capability::MemoryExternalize,
+                requested_by: carina_policy::Principal::Agent,
+                resource: "provider=hms action=retain entry=entry_02".into(),
+                session_id: "sess_memory".into(),
+                task_id: None,
+            })
+            .unwrap();
+        assert_eq!(externalize.decision, Verdict::RequiresApproval);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn approval_overlay_never_rescues_denied_decision() {
         let dir = tmp("overlay-deny");
         let kernel = Kernel::new("sess_overlay_deny", "/tmp/ws", "safe-edit", &dir).unwrap();

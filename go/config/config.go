@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -69,6 +70,14 @@ type Config struct {
 	HeadroomMode               string              `json:"headroom_mode"`
 	HeadroomProxyPort          int                 `json:"headroom_proxy_port"`
 	HeadroomTokenBudget        int                 `json:"headroom_token_budget"`
+	MemoryProvider             string              `json:"memory_provider"`
+	MemoryHMSEndpoint          string              `json:"memory_hms_endpoint"`
+	MemoryHMSAPIKeyEnv         string              `json:"memory_hms_api_key_env"`
+	MemoryHMSTimeoutMS         int                 `json:"memory_hms_timeout_ms"`
+	MemoryHMSMaxEvidence       int                 `json:"memory_hms_max_evidence"`
+	MemoryHMSBankKeyEnv        string              `json:"memory_hms_bank_key_env"`
+	MemoryHMSProjectionEnabled bool                `json:"memory_hms_projection_enabled"`
+	MemoryHMSProjectionPollMS  int                 `json:"memory_hms_projection_poll_ms"`
 	TUIKeybindings             map[string][]string `json:"tui_keybindings"`
 	TUILocale                  string              `json:"tui_locale"`
 	TUIAlternateScreen         string              `json:"tui_alternate_screen"`
@@ -88,6 +97,10 @@ func Defaults(home string) Config {
 		ContextEngine:             contextengine.ModeAuto,
 		HeadroomMode:              contextengine.HeadroomModeManagedMCP,
 		HeadroomTokenBudget:       4000,
+		MemoryProvider:            "off",
+		MemoryHMSTimeoutMS:        3000,
+		MemoryHMSMaxEvidence:      8,
+		MemoryHMSProjectionPollMS: 1000,
 		TUIAlternateScreen:        "auto",
 	}
 }
@@ -123,7 +136,11 @@ func LoadWithManaged(home, projectDir, managedPath string) (Config, *LockReport,
 		return cfg, nil, err
 	}
 	if projectDir != "" {
-		if err := mergeFile(&cfg, filepath.Join(projectDir, ".carina", "config.json")); err != nil {
+		projectPath := filepath.Join(projectDir, ".carina", "config.json")
+		if err := rejectProjectMemoryProviderConfig(projectPath); err != nil {
+			return cfg, nil, err
+		}
+		if err := mergeFile(&cfg, projectPath); err != nil {
 			return cfg, nil, err
 		}
 	}
@@ -197,11 +214,47 @@ func mergeEnv(cfg *Config) {
 	envInt("CARINA_MAX_TASK_TOKENS", &cfg.MaxTaskTokens)
 	envInt("CARINA_HEADROOM_PROXY_PORT", &cfg.HeadroomProxyPort)
 	envInt("CARINA_HEADROOM_TOKEN_BUDGET", &cfg.HeadroomTokenBudget)
+	envStr("CARINA_MEMORY_PROVIDER", &cfg.MemoryProvider)
+	envStr("CARINA_MEMORY_HMS_ENDPOINT", &cfg.MemoryHMSEndpoint)
+	envStr("CARINA_MEMORY_HMS_API_KEY_ENV", &cfg.MemoryHMSAPIKeyEnv)
+	envInt("CARINA_MEMORY_HMS_TIMEOUT_MS", &cfg.MemoryHMSTimeoutMS)
+	envInt("CARINA_MEMORY_HMS_MAX_EVIDENCE", &cfg.MemoryHMSMaxEvidence)
+	envStr("CARINA_MEMORY_HMS_BANK_KEY_ENV", &cfg.MemoryHMSBankKeyEnv)
+	envBool("CARINA_MEMORY_HMS_PROJECTION_ENABLED", &cfg.MemoryHMSProjectionEnabled)
+	envInt("CARINA_MEMORY_HMS_PROJECTION_POLL_MS", &cfg.MemoryHMSProjectionPollMS)
 	envList("CARINA_EGRESS_ALLOW", &cfg.EgressAllow)
 }
 
 // Validate rejects nonsensical values (fail fast at startup).
 func (c Config) Validate() error {
+	provider := strings.ToLower(strings.TrimSpace(c.MemoryProvider))
+	switch provider {
+	case "", "off":
+	case "hms-shadow", "hms-hybrid":
+		if err := validateMemoryHMSEndpoint(c.MemoryHMSEndpoint); err != nil {
+			return err
+		}
+		if strings.TrimSpace(c.MemoryHMSBankKeyEnv) == "" {
+			return fmt.Errorf("config: memory_hms_bank_key_env is required when memory_provider=%s", provider)
+		}
+		if strings.TrimSpace(c.MemoryHMSAPIKeyEnv) == "" {
+			return fmt.Errorf("config: memory_hms_api_key_env is required when memory_provider=%s", provider)
+		}
+		if c.MemoryHMSTimeoutMS < 100 || c.MemoryHMSTimeoutMS > 30000 {
+			return fmt.Errorf("config: memory_hms_timeout_ms must be between 100 and 30000")
+		}
+		if c.MemoryHMSMaxEvidence < 1 || c.MemoryHMSMaxEvidence > 50 {
+			return fmt.Errorf("config: memory_hms_max_evidence must be between 1 and 50")
+		}
+		if c.MemoryHMSProjectionPollMS < 100 || c.MemoryHMSProjectionPollMS > 60000 {
+			return fmt.Errorf("config: memory_hms_projection_poll_ms must be between 100 and 60000")
+		}
+	default:
+		return fmt.Errorf("config: memory_provider must be one of off, hms-shadow, hms-hybrid")
+	}
+	if c.MemoryHMSProjectionEnabled && provider != "hms-shadow" && provider != "hms-hybrid" {
+		return fmt.Errorf("config: memory_hms_projection_enabled requires an HMS memory provider")
+	}
 	if strings.TrimSpace(c.TUILocale) != "" {
 		if _, err := microcopy.CanonicalLocale(c.TUILocale); err != nil {
 			return fmt.Errorf("config: tui_locale: %w", ErrInvalidTUILocale)
@@ -240,6 +293,48 @@ func (c Config) Validate() error {
 		return fmt.Errorf("config: %w", err)
 	}
 	return nil
+}
+
+var projectRestrictedMemoryKeys = map[string]bool{
+	"memory_provider": true, "memory_hms_endpoint": true,
+	"memory_hms_api_key_env": true, "memory_hms_timeout_ms": true,
+	"memory_hms_max_evidence": true, "memory_hms_bank_key_env": true,
+	"memory_hms_projection_enabled": true, "memory_hms_projection_poll_ms": true,
+}
+
+func rejectProjectMemoryProviderConfig(path string) error {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("config: read %s: %w", path, err)
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil
+	} // mergeFile reports the canonical parse error.
+	for key := range values {
+		if projectRestrictedMemoryKeys[key] {
+			return fmt.Errorf("config: project file %s cannot set deployment-owned key %q", path, key)
+		}
+	}
+	return nil
+}
+
+func validateMemoryHMSEndpoint(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("config: memory_hms_endpoint must be an absolute URL without credentials, query, or fragment")
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	host := strings.ToLower(u.Hostname())
+	if u.Scheme == "http" && (host == "127.0.0.1" || host == "localhost" || host == "::1") {
+		return nil
+	}
+	return fmt.Errorf("config: memory_hms_endpoint must use https (http is allowed only for loopback)")
 }
 
 func envStr(key string, dst *string) {
