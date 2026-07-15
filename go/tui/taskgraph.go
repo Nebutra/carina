@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
@@ -75,6 +74,8 @@ func normalizeTaskStatus(status string) string {
 		return "waiting"
 	case status == "queued":
 		return "queued"
+	case status == "paused" || status == "checkpoint_restored":
+		return "paused"
 	default:
 		return "running"
 	}
@@ -150,14 +151,14 @@ func (g *taskGraph) completeChildren(parentID, status string) {
 func (g *taskGraph) activeCount() int {
 	n := 0
 	for _, node := range g.nodes {
-		if !terminalTaskStatus(node.Status) {
+		if node.Status != "paused" && !terminalTaskStatus(node.Status) {
 			n++
 		}
 	}
 	return n
 }
 
-func (g *taskGraph) lines(th theme.Theme, width, limit int) []string {
+func (g *taskGraph) lines(m *Model, width, limit int) []string {
 	if width <= 0 || limit <= 0 || len(g.nodes) == 0 {
 		return nil
 	}
@@ -189,11 +190,8 @@ func (g *taskGraph) lines(th theme.Theme, width, limit int) []string {
 		}
 	}
 
-	header := fmt.Sprintf("tasks · %d active", g.activeCount())
-	if completed > 0 {
-		header += fmt.Sprintf(" · %d done", completed)
-	}
-	out := []string{fitLine(th.Style(theme.RoleMuted).Render(header), width)}
+	header := m.text(MsgTasksHeader, MessageArgs{"active": g.activeCount(), "done": completed})
+	out := []string{fitLine(m.th.Style(theme.RoleMuted).Render(header), width)}
 	for _, node := range visible {
 		if len(out) >= limit {
 			break
@@ -202,18 +200,55 @@ func (g *taskGraph) lines(th theme.Theme, width, limit int) []string {
 		if node.ParentID != "" {
 			prefix = "  `-"
 		}
-		glyph := taskStatusGlyph(th, node.Status)
+		glyph := taskStatusGlyph(m.th, node.Status)
 		label := node.Label
 		if label == "" {
 			label = node.ID
 		}
-		line := fmt.Sprintf("%s %s %s · %s", prefix, glyph, node.Kind, label)
+		line := m.text(MsgTaskLine, MessageArgs{
+			"prefix": prefix, "glyph": glyph, "kind": m.taskKindText(node.Kind),
+			"label": label, "status": m.taskStatusText(node.Status),
+		})
 		out = append(out, fitLine(line, width))
 	}
 	if len(visible)+1 > limit {
-		out[limit-1] = fitLine(fmt.Sprintf("  +%d more", len(visible)-(limit-1)), width)
+		out[limit-1] = fitLine(m.countText(MsgTasksMore, len(visible)-(limit-1), nil), width)
 	}
 	return out
+}
+
+func (m *Model) taskKindText(kind string) string {
+	switch kind {
+	case "subagent":
+		return m.text(MsgTranscriptSubagent, nil)
+	case "workflow":
+		return m.text(MsgTranscriptWorkflow, nil)
+	case "step":
+		return m.text(MsgTranscriptStep, nil)
+	default:
+		return m.text(MsgTranscriptTask, nil)
+	}
+}
+
+func (m *Model) taskStatusText(status string) string {
+	switch status {
+	case "completed":
+		return m.text(MsgTaskStatusCompleted, nil)
+	case "failed":
+		return m.text(MsgTaskStatusFailed, nil)
+	case "cancelled":
+		return m.text(MsgTaskStatusCancelled, nil)
+	case "degraded":
+		return m.text(MsgTaskStatusDegraded, nil)
+	case "waiting":
+		return m.text(MsgTaskStatusWaiting, nil)
+	case "queued":
+		return m.text(MsgTaskStatusQueued, nil)
+	case "paused":
+		return m.text(MsgTaskStatusPaused, nil)
+	default:
+		return m.text(MsgTaskStatusRunning, nil)
+	}
 }
 
 func taskStatusGlyph(th theme.Theme, status string) string {
@@ -224,6 +259,8 @@ func taskStatusGlyph(th theme.Theme, status string) string {
 		return glyphFailed(th)
 	case "waiting":
 		return glyphNeedsAuth(th)
+	case "paused":
+		return glyphNeutral(th)
 	default:
 		return glyphRunning(th)
 	}

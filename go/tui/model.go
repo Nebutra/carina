@@ -15,12 +15,10 @@
 package tui
 
 import (
-	"fmt"
 	"os"
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -97,7 +95,12 @@ type submissionState struct {
 	consumePaste bool
 	fromQueue    bool
 	background   bool
-	clientID     string
+	// composerDetached means the interactive composer has moved on to a
+	// distinct next draft while this immutable submission snapshot waits for
+	// its RPC acknowledgement. Queue and background submissions already have
+	// independent composer ownership and do not need this transition.
+	composerDetached bool
+	clientID         string
 }
 
 type submissionRetry struct {
@@ -150,7 +153,7 @@ type clipboardDoneMsg struct {
 // Options configures a Model.
 type Options struct {
 	Theme         theme.Theme
-	Locale        string // normalized microcopy locale (en, zh)
+	Locale        string // BCP-47/POSIX UI locale; normalized by NewChecked
 	Socket        string
 	SessionID     string // reuse an existing session; empty creates one
 	WorkspaceRoot string
@@ -158,7 +161,9 @@ type Options struct {
 	Now           func() time.Time
 	// Keybindings replaces selected action bindings after defaults are loaded.
 	// Embedders accepting user-controlled overrides should call NewChecked.
-	Keybindings []KeyBindingOverride
+	Keybindings       []KeyBindingOverride
+	NoAlternateScreen bool
+	KeymapUpdater     KeymapUpdateFunc
 }
 
 // Model is the root Bubble Tea model.
@@ -170,17 +175,25 @@ type Model struct {
 	submissions   submissionJournal
 	now           func() time.Time
 
-	width, height int
-	root          rootLayout
-	vp            viewport.Model
-	input         textarea.Model
-	tr            transcript
-	followTail    bool
-	unseenLines   int
-	keys          runtimeKeymap
-	keymapErr     error
-	helpOpen      bool
-	helpScroll    int
+	width, height    int
+	root             rootLayout
+	vp               viewport.Model
+	input            textarea.Model
+	tr               transcript
+	followTail       bool
+	unseenLines      int
+	terminalBlurred  bool
+	unreadAttention  int
+	attentionAlerted bool
+	attentionSeen    map[string]struct{}
+	attentionOrder   []string
+	keys             runtimeKeymap
+	chord            chordState
+	keymapErr        error
+	keymapUpdater    KeymapUpdateFunc
+	keymapEditor     *keymapEditorState
+	helpOpen         bool
+	helpScroll       int
 
 	sessionID string
 	call      Caller
@@ -215,6 +228,8 @@ type Model struct {
 	editorGen          int
 	queueRestoreReason string
 	transcriptPager    *transcriptPagerState
+	checkpointPicker   *checkpointPickerState
+	pausedRestore      *checkpointRestoreResult
 	getenv             func(string) string
 	clipboardWrite     func(string) error
 	history            []promptDraft
@@ -225,6 +240,8 @@ type Model struct {
 	composerUndo       composerUndoState
 	lastCtrlC          time.Time
 	ctrlCHint          string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
+	rewindPrimed       bool
+	noAlternateScreen  bool
 	mode               string
 	outcome            Outcome
 
@@ -251,7 +268,7 @@ func New(o Options) *Model {
 	fallback.Keybindings = nil
 	m, _ = NewChecked(fallback)
 	m.keymapErr = err
-	m.push(m.th.Style(theme.RoleError).Render("keybindings: " + err.Error()))
+	m.push(m.th.Style(theme.RoleError).Render(m.text(MsgKeybindingsError, MessageArgs{"error": err.Error()})))
 	return m
 }
 
@@ -260,6 +277,7 @@ func NewChecked(o Options) (*Model, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
+	o.Locale = string(normalizeUILocale(o.Locale))
 	keys, err := newRuntimeKeymap(o.Keybindings)
 	if err != nil {
 		return nil, err
@@ -277,38 +295,38 @@ func NewChecked(o Options) (*Model, error) {
 	// virtual cursor only paints a cell in the returned string; it cannot move
 	// the terminal cursor to the logical caret (R13/R21).
 	ti.SetVirtualCursor(false)
-	ti.KeyMap.InsertNewline = key.NewBinding(key.WithKeys(keys.keys(KeyContextComposer, ActionComposerNewline)...))
-	// Keep the placeholder ASCII so its width stays predictable across the
-	// terminal profiles covered by the PTY tests.
-	ti.Placeholder = fmt.Sprintf("type an instruction - %s submits, %s adds a line, %s opens help",
-		primaryKeyLabel(keys.keys(KeyContextComposer, ActionComposerSubmit)),
-		primaryKeyLabel(keys.keys(KeyContextComposer, ActionComposerNewline)),
-		primaryKeyLabel(keys.keys(KeyContextGlobal, ActionGlobalHelp)),
-	)
+	installEditorKeymap(&ti, keys)
+	ti.Placeholder = newLocalizer(o.Locale).Text(MsgPlaceholderInstruction, MessageArgs{
+		"submit":  primaryKeyLabel(keys.keys(KeyContextComposer, ActionComposerSubmit)),
+		"newline": primaryKeyLabel(keys.keys(KeyContextComposer, ActionComposerNewline)),
+		"help":    primaryKeyLabel(keys.keys(KeyContextGlobal, ActionGlobalHelp)),
+	})
 	_ = ti.Focus()
 	m := &Model{
-		th:               o.Theme,
-		locale:           o.Locale,
-		socket:           o.Socket,
-		workspaceRoot:    o.WorkspaceRoot,
-		submissions:      newSubmissionJournal(o.StateDir, o.WorkspaceRoot),
-		now:              o.Now,
-		getenv:           os.Getenv,
-		clipboardWrite:   systemClipboardWrite,
-		vp:               viewport.New(),
-		input:            ti,
-		keys:             keys,
-		conn:             ConnConnecting,
-		followTail:       true,
-		questionSeen:     make(map[string]bool),
-		questionResolved: make(map[string]bool),
-		approvalSeen:     make(map[string]bool),
-		approvalResolved: make(map[string]bool),
-		approvalPending:  make(map[string]approvalResolutionSnapshot),
-		approvalOrder:    make(map[string]uint64),
-		width:            80,
-		height:           24,
-		mode:             "build",
+		th:                o.Theme,
+		locale:            o.Locale,
+		socket:            o.Socket,
+		workspaceRoot:     o.WorkspaceRoot,
+		submissions:       newSubmissionJournal(o.StateDir, o.WorkspaceRoot),
+		now:               o.Now,
+		getenv:            os.Getenv,
+		clipboardWrite:    systemClipboardWrite,
+		vp:                viewport.New(),
+		input:             ti,
+		keys:              keys,
+		keymapUpdater:     o.KeymapUpdater,
+		noAlternateScreen: o.NoAlternateScreen,
+		conn:              ConnConnecting,
+		followTail:        true,
+		questionSeen:      make(map[string]bool),
+		questionResolved:  make(map[string]bool),
+		approvalSeen:      make(map[string]bool),
+		approvalResolved:  make(map[string]bool),
+		approvalPending:   make(map[string]approvalResolutionSnapshot),
+		approvalOrder:     make(map[string]uint64),
+		width:             80,
+		height:            24,
+		mode:              "build",
 	}
 	m.layout()
 	return m, nil

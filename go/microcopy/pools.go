@@ -16,9 +16,12 @@ import (
 var poolFS embed.FS
 
 // template is a Governed or Degrade register entry: locale → constant
-// template body, plus the declared placeholder names the linter enforces.
+// template body, declared placeholder names, and machine-auditable Governed
+// facts/terminology metadata.
 type template struct {
 	Placeholders []string          `json:"placeholders"`
+	Facts        []string          `json:"facts"`
+	Terms        []string          `json:"terms"`
 	Text         map[string]string `json:"-"`
 	res          []*regexp.Regexp  // anchored per-locale shapes, for Is()
 }
@@ -61,7 +64,20 @@ type poolRegistry struct {
 	ambientIndex map[string]bool
 }
 
+var governedTermVocabulary = map[string]struct{}{
+	"action": {}, "agent": {}, "approval": {}, "audit_chain": {},
+	"audit_record": {}, "checkpoint": {}, "command": {}, "decision": {},
+	"external_endpoint": {}, "operator": {}, "policy": {}, "restore_point": {},
+	"rollback": {}, "scope": {}, "secret": {}, "transaction": {}, "transcript": {},
+}
+
+var metadataID = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
 var registry = loadRegistry()
+
+var registeredRegistries = map[int]*poolRegistry{
+	registry.version: registry,
+}
 
 func loadRegistry() *poolRegistry {
 	r := &poolRegistry{ambientIndex: map[string]bool{}}
@@ -82,11 +98,91 @@ func loadRegistry() *poolRegistry {
 			}
 		}
 	}
+	governedVersion, governed := decodeTemplates("pools/governed.json")
+	degradeVersion, degrade := decodeTemplates("pools/degrade.json")
+	if err := validatePoolVersions(r.ambient.Version, governedVersion, degradeVersion); err != nil {
+		panic(err)
+	}
 	r.version = r.ambient.Version
-
-	r.governed = decodeTemplates("pools/governed.json")
-	r.degrade = decodeTemplates("pools/degrade.json")
+	r.governed = governed
+	r.degrade = degrade
+	r.validateLocaleParity()
 	return r
+}
+
+func validatePoolVersions(ambient, governed, degrade int) error {
+	if ambient <= 0 || ambient != governed || ambient != degrade {
+		return fmt.Errorf("microcopy: pool version mismatch: ambient=%d governed=%d degrade=%d", ambient, governed, degrade)
+	}
+	return nil
+}
+
+// ResolvePoolVersion reports the effective registered version. Unknown
+// requests explicitly fall back to the embedded default and return exact=false.
+func ResolvePoolVersion(requested int) (effective int, exact bool) {
+	if _, ok := registeredRegistries[requested]; ok {
+		return requested, true
+	}
+	return registry.version, false
+}
+
+func registryForVersion(requested int) *poolRegistry {
+	effective, _ := ResolvePoolVersion(requested)
+	return registeredRegistries[effective]
+}
+
+func (r *poolRegistry) validateLocaleParity() {
+	baseContexts := r.ambient.Locales["en"]
+	for _, locale := range supportedLocales {
+		contexts := r.ambient.Locales[locale]
+		for context := range baseContexts {
+			if len(contexts[context]) == 0 {
+				panic(fmt.Sprintf("microcopy: ambient locale %s missing context %s", locale, context))
+			}
+		}
+		for _, ov := range r.ambient.Overrides {
+			if len(ov.Locales[locale]) == 0 {
+				panic(fmt.Sprintf("microcopy: ambient locale %s missing override %s", locale, ov.Pattern))
+			}
+		}
+	}
+	for register, templates := range map[string]map[string]*template{
+		"governed": r.governed,
+		"degrade":  r.degrade,
+	} {
+		for key, tmpl := range templates {
+			if register == "governed" {
+				if err := validateGovernedMetadata(key, tmpl); err != nil {
+					panic(err)
+				}
+			}
+			for _, locale := range supportedLocales {
+				if strings.TrimSpace(tmpl.Text[locale]) == "" {
+					panic(fmt.Sprintf("microcopy: %s %s missing locale %s", register, key, locale))
+				}
+			}
+		}
+	}
+}
+
+func validateGovernedMetadata(key string, tmpl *template) error {
+	if len(tmpl.Facts) == 0 || len(tmpl.Terms) == 0 {
+		return fmt.Errorf("microcopy: governed %s requires facts and terms metadata", key)
+	}
+	seen := map[string]bool{}
+	for _, fact := range tmpl.Facts {
+		if !metadataID.MatchString(fact) || seen["fact:"+fact] {
+			return fmt.Errorf("microcopy: governed %s invalid or duplicate fact %q", key, fact)
+		}
+		seen["fact:"+fact] = true
+	}
+	for _, term := range tmpl.Terms {
+		if _, ok := governedTermVocabulary[term]; !ok || seen["term:"+term] {
+			return fmt.Errorf("microcopy: governed %s invalid or duplicate term %q", key, term)
+		}
+		seen["term:"+term] = true
+	}
+	return nil
 }
 
 // templateFile is the on-disk shape of governed.json / degrade.json: every
@@ -96,16 +192,27 @@ type templateFile struct {
 	Templates map[string]map[string]json.RawMessage `json:"templates"`
 }
 
-func decodeTemplates(path string) map[string]*template {
+func decodeTemplates(path string) (int, map[string]*template) {
 	var f templateFile
 	mustDecode(path, &f)
 	out := make(map[string]*template, len(f.Templates))
 	for key, entry := range f.Templates {
 		t := &template{Text: map[string]string{}}
 		for field, raw := range entry {
-			if field == "placeholders" {
+			switch field {
+			case "placeholders":
 				if err := json.Unmarshal(raw, &t.Placeholders); err != nil {
 					panic(fmt.Sprintf("microcopy: %s %s placeholders: %v", path, key, err))
+				}
+				continue
+			case "facts":
+				if err := json.Unmarshal(raw, &t.Facts); err != nil {
+					panic(fmt.Sprintf("microcopy: %s %s facts: %v", path, key, err))
+				}
+				continue
+			case "terms":
+				if err := json.Unmarshal(raw, &t.Terms); err != nil {
+					panic(fmt.Sprintf("microcopy: %s %s terms: %v", path, key, err))
 				}
 				continue
 			}
@@ -120,7 +227,7 @@ func decodeTemplates(path string) map[string]*template {
 		}
 		out[key] = t
 	}
-	return out
+	return f.Version, out
 }
 
 // templateShape compiles an anchored regexp matching any rendering of the

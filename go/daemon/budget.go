@@ -6,6 +6,8 @@ import (
 )
 
 func (d *Daemon) handleTaskBudgetExtend(params json.RawMessage) (any, error) {
+	d.checkpointMu.Lock()
+	defer d.checkpointMu.Unlock()
 	var p struct {
 		TaskID           string `json:"task_id"`
 		AdditionalTokens int    `json:"additional_tokens"`
@@ -28,6 +30,9 @@ func (d *Daemon) handleTaskBudgetExtend(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", task.SessionID)
 	}
+	fence := d.sessionExecutionFence(task.SessionID)
+	fence.RLock()
+	defer fence.RUnlock()
 	cp := d.runs.loadCheckpoint(task.TaskID)
 	if cp == nil {
 		return nil, fmt.Errorf("task %s has no durable checkpoint and cannot be resumed safely", task.TaskID)

@@ -17,6 +17,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,8 +25,13 @@ import (
 	"strings"
 
 	"github.com/Nebutra/carina/go/contextengine"
+	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/nebutra"
 )
+
+// ErrInvalidTUILocale lets launchers render a fully localized validation
+// message instead of embedding an English parser error in another locale.
+var ErrInvalidTUILocale = errors.New("invalid tui_locale")
 
 // Config is the resolved daemon configuration. JSON tags name the keys accepted
 // in the config files.
@@ -64,6 +70,8 @@ type Config struct {
 	HeadroomProxyPort          int                 `json:"headroom_proxy_port"`
 	HeadroomTokenBudget        int                 `json:"headroom_token_budget"`
 	TUIKeybindings             map[string][]string `json:"tui_keybindings"`
+	TUILocale                  string              `json:"tui_locale"`
+	TUIAlternateScreen         string              `json:"tui_alternate_screen"`
 }
 
 // Defaults returns the built-in baseline, anchored at the user's ~/.carina dir.
@@ -80,6 +88,7 @@ func Defaults(home string) Config {
 		ContextEngine:             contextengine.ModeAuto,
 		HeadroomMode:              contextengine.HeadroomModeManagedMCP,
 		HeadroomTokenBudget:       4000,
+		TUIAlternateScreen:        "auto",
 	}
 }
 
@@ -140,6 +149,9 @@ func mergeFile(cfg *Config, path string) error {
 	if err != nil {
 		return fmt.Errorf("config: read %s: %w", path, err)
 	}
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return fmt.Errorf("config: parse %s: %w", path, err)
+	}
 	dec := json.NewDecoder(strings.NewReader(string(data)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(cfg); err != nil {
@@ -172,6 +184,8 @@ func mergeEnv(cfg *Config) {
 	envStr("CARINA_HEADROOM_BIN", &cfg.HeadroomBin)
 	envStr("CARINA_HEADROOM_STATE_DIR", &cfg.HeadroomStateDir)
 	envStr("CARINA_HEADROOM_MODE", &cfg.HeadroomMode)
+	envStr("CARINA_TUI_LOCALE", &cfg.TUILocale)
+	envStr("CARINA_TUI_ALTERNATE_SCREEN", &cfg.TUIAlternateScreen)
 	envBool("CARINA_OFFLINE", &cfg.Offline)
 	envBool("CARINA_REQUIRE_WORKSPACE_TRUST", &cfg.RequireWorkspaceTrust)
 	envBool("CARINA_ENABLE_EGRESS_PROXY", &cfg.EnableEgressProxy)
@@ -188,6 +202,11 @@ func mergeEnv(cfg *Config) {
 
 // Validate rejects nonsensical values (fail fast at startup).
 func (c Config) Validate() error {
+	if strings.TrimSpace(c.TUILocale) != "" {
+		if _, err := microcopy.CanonicalLocale(c.TUILocale); err != nil {
+			return fmt.Errorf("config: tui_locale: %w", ErrInvalidTUILocale)
+		}
+	}
 	if c.MaxTaskTokens < 0 {
 		return fmt.Errorf("config: max_task_tokens must be >= 0, got %d", c.MaxTaskTokens)
 	}
@@ -199,6 +218,9 @@ func (c Config) Validate() error {
 	}
 	if mode := strings.ToLower(strings.TrimSpace(c.RiskReviewMode)); mode != "" && mode != "off" && mode != "advisory" && mode != "enforce" {
 		return fmt.Errorf("config: risk_review_mode must be one of off, advisory, enforce")
+	}
+	if mode := strings.ToLower(strings.TrimSpace(c.TUIAlternateScreen)); mode != "" && mode != "auto" && mode != "always" && mode != "never" {
+		return fmt.Errorf("config: tui_alternate_screen must be one of auto, always, never")
 	}
 	if _, err := nebutra.NormalizeCloudEndpoint(c.NebutraCloudEndpoint); err != nil {
 		return fmt.Errorf("config: %w", err)

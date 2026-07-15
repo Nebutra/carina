@@ -75,3 +75,52 @@ func TestCountByStatusAndSetStatus(t *testing.T) {
 		t.Fatalf("Count should be 2, got %d", s.Count())
 	}
 }
+
+func TestCheckpointRestoreAndResumeTransitionsAreAtomic(t *testing.T) {
+	s := New()
+	task := s.Submit("s", "w", "restore")
+	s.SetStatus(task.TaskID, "completed")
+
+	restored, err := s.RestoreCheckpoint(task.TaskID, []string{"p1"})
+	if err != nil || restored.Status != "paused" || len(restored.AppliedPatches) != 1 {
+		t.Fatalf("restore transition = %+v, err=%v", restored, err)
+	}
+	running, err := s.Resume(task.TaskID)
+	if err != nil || running.Status != "running" {
+		t.Fatalf("resume transition = %+v, err=%v", running, err)
+	}
+	if _, err := s.Resume(task.TaskID); err == nil {
+		t.Fatal("a running task must not be claimed by resume twice")
+	}
+}
+
+func TestReconciliationRequiredBlocksResume(t *testing.T) {
+	s := New()
+	task := s.Submit("s", "w", "restore")
+	s.SetStatus(task.TaskID, "paused")
+	blocked, err := s.MarkReconciliationRequired(task.TaskID, "retry restore")
+	if err != nil || !blocked.ReconciliationRequired || blocked.BlockedReason != "retry restore" {
+		t.Fatalf("blocked transition = %+v, err=%v", blocked, err)
+	}
+	if _, err := s.Resume(task.TaskID); err == nil {
+		t.Fatal("reconciliation-required task must not resume")
+	}
+}
+
+func TestCancelledTaskRejectsRestoreAndReconciliation(t *testing.T) {
+	s := New()
+	task := s.Submit("s", "w", "cancel")
+	if _, err := s.Cancel(task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RestoreCheckpoint(task.TaskID, []string{"p1"}); err == nil {
+		t.Fatal("cancelled task must reject checkpoint restore")
+	}
+	if _, err := s.MarkReconciliationRequired(task.TaskID, "blocked"); err == nil {
+		t.Fatal("cancelled task must reject reconciliation transition")
+	}
+	current, _ := s.Get(task.TaskID)
+	if current.Status != "cancelled" {
+		t.Fatalf("cancelled task revived as %s", current.Status)
+	}
+}

@@ -39,7 +39,9 @@ type Task struct {
 	Mode                        string          `json:"mode,omitempty"`            // foreground | background
 	Summary                     string          `json:"summary,omitempty"`         // final result / degrade reason
 	AppliedPatches              []string        `json:"applied_patches,omitempty"` // rollbackable patch ids
-	TokensUsed                  int             `json:"tokens_used,omitempty"`     // metered token spend (budget governance)
+	ReconciliationRequired      bool            `json:"reconciliation_required,omitempty"`
+	BlockedReason               string          `json:"blocked_reason,omitempty"`
+	TokensUsed                  int             `json:"tokens_used,omitempty"` // metered token spend (budget governance)
 	TokenUsageObserved          bool            `json:"token_usage_observed,omitempty"`
 	TokenBudget                 int             `json:"token_budget,omitempty"`
 	OutputSchema                json.RawMessage `json:"output_schema,omitempty"` // complete JSON Schema for final output
@@ -207,6 +209,76 @@ func (s *Scheduler) SetAppliedPatches(taskID string, patches []string) {
 		updated.UpdatedAt = time.Now().UTC()
 		s.tasks[taskID] = &updated
 	}
+}
+
+// RestoreCheckpoint atomically moves a task to the paused checkpoint state.
+// Keeping the patch lineage and lifecycle state in one scheduler mutation
+// prevents observers from seeing a restored patch set paired with an old
+// terminal status.
+func (s *Scheduler) RestoreCheckpoint(taskID string, patches []string) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[taskID]
+	if !ok {
+		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
+	}
+	if t.Status == "cancelled" {
+		return nil, fmt.Errorf("scheduler: cancelled task %s is terminal", taskID)
+	}
+	updated := *t
+	updated.Status = "paused"
+	updated.AppliedPatches = append([]string(nil), patches...)
+	updated.ReconciliationRequired = false
+	updated.BlockedReason = ""
+	updated.UpdatedAt = time.Now().UTC()
+	s.tasks[taskID] = &updated
+	return &updated, nil
+}
+
+// MarkReconciliationRequired keeps a failed restore non-runnable until the
+// same restore target is retried and committed successfully.
+func (s *Scheduler) MarkReconciliationRequired(taskID, reason string, patches ...[]string) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[taskID]
+	if !ok {
+		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
+	}
+	if t.Status == "cancelled" {
+		return nil, fmt.Errorf("scheduler: cancelled task %s is terminal", taskID)
+	}
+	updated := *t
+	updated.Status = "paused"
+	updated.ReconciliationRequired = true
+	updated.BlockedReason = reason
+	if len(patches) > 0 {
+		updated.AppliedPatches = append([]string(nil), patches[0]...)
+	}
+	updated.UpdatedAt = time.Now().UTC()
+	s.tasks[taskID] = &updated
+	return &updated, nil
+}
+
+// Resume atomically claims a paused task for execution. Callers must persist
+// the returned running row before starting the agent loop.
+func (s *Scheduler) Resume(taskID string) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[taskID]
+	if !ok {
+		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
+	}
+	if t.Status != "paused" {
+		return nil, fmt.Errorf("scheduler: task %s is %s, not paused", taskID, t.Status)
+	}
+	if t.ReconciliationRequired {
+		return nil, fmt.Errorf("scheduler: task %s requires checkpoint reconciliation: %s", taskID, t.BlockedReason)
+	}
+	updated := *t
+	updated.Status = "running"
+	updated.UpdatedAt = time.Now().UTC()
+	s.tasks[taskID] = &updated
+	return &updated, nil
 }
 
 // SetOutputSchema records the required keys the task's final JSON output must

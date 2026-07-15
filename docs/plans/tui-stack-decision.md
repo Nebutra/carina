@@ -1,8 +1,12 @@
 # TUI Stack Decision
 
-**Status:** Decision proposed, pending two time-boxed spikes (§4).
+**Status:** Accepted and implemented. The automatable spike and production
+interaction gates are represented in repository tests/benchmarks; true desktop
+IME and credentialed provider/terminal runs remain external release evidence.
 **Date:** 2026-07-09.
-**Scope:** Which framework/language `apps/carina-tui` is built on, before it grows past its current 125-line stub (the P3.1 "architecture locked before line 126" checkpoint).
+**Last reviewed:** 2026-07-15.
+**Scope:** Why the production `apps/carina-tui` uses Go and Bubble Tea v2, which
+interaction contracts were adopted, and where automated evidence ends.
 **Inputs:** `docs/plans/agent-cli-productization.md` (§P1, §P3, §4 microcopy, §6 brand questions), `docs/brand/brand-brief.md` (§2 palette/ANSI token table), a mid-2026 landscape survey of Rust TUI frameworks, an Ink/Claude-Code internals analysis, and a Carina integration audit (RPC contract, Go vs Rust client paths, layer-model boundaries).
 
 **Provenance note:** landscape claims below (stars, release dates, issue numbers) come from a survey conducted against primary sources (repos, release pages, issue trackers) as of June–July 2026 and are reproduced here with their evidence markers. Claims are tagged **[verified]** (primary source seen in the survey) or **[claimed/unverified]** (inference or absence-of-evidence). Nothing in this document was answered from memory where the survey said evidence was missing — those gaps are listed as unknowns in §2.4 and become spike pass/fail criteria in §4.
@@ -11,7 +15,7 @@
 
 ## 0. Decision in one paragraph
 
-**Build the TUI in Go on Bubble Tea v2 + lipgloss + bubbles (Charm stack), as `apps/carina-tui` in the existing Go module.** Runner-up: **Rust ratatui**, adopted only if the Go spike fails its zh-input or transcript-latency gates (§3.3). The user's starting hypothesis — the React model, ideally in Rust — does not survive the matrix: the only genuinely React-model Rust framework that is alive (iocraft) has open CJK text-input bugs and bus factor 1, which disqualifies it against Carina's zh-first-class requirement; and the requirements decomposition (§1.3) shows that what "React" actually buys is a rendering-pipeline checklist that Bubble Tea v2's new cell-diffing renderer satisfies natively, without a VDOM. Meanwhile the integration audit is lopsided: a Go TUI reuses `go/rpc`, the typed domain structs, socket discovery, and the P1.5/P3.1 shared data layer for free (~zero plumbing LoC); a Rust TUI must build the repo's first Rust JSON-RPC *client*, hand-maintain wire types in a second language forever, and either forfeit or forcibly relocate the plan-mandated shared renderer engine.
+**The TUI is built in Go on Bubble Tea v2 + lipgloss + bubbles (Charm stack), as `apps/carina-tui` in the existing Go module.** Runner-up: **Rust ratatui**, adopted only if the Go spike fails its zh-input or transcript-latency gates (§3.3). The user's starting hypothesis — the React model, ideally in Rust — does not survive the matrix: the only genuinely React-model Rust framework that is alive (iocraft) has open CJK text-input bugs and bus factor 1, which disqualifies it against Carina's zh-first-class requirement; and the requirements decomposition (§1.3) shows that what "React" actually buys is a rendering-pipeline checklist that Bubble Tea v2's new cell-diffing renderer satisfies natively, without a VDOM. Meanwhile the integration audit is lopsided: a Go TUI reuses `go/rpc`, the typed domain structs, socket discovery, and the P1.5/P3.1 shared data layer for free (~zero plumbing LoC); a Rust TUI must build the repo's first Rust JSON-RPC *client*, hand-maintain wire types in a second language forever, and either forfeit or forcibly relocate the plan-mandated shared renderer engine.
 
 ---
 
@@ -23,7 +27,7 @@
 |----|-------------|--------|
 | R1 | **Approval prompt whose body is a reviewable artifact**: colored unified diff for patch decisions, canonicalized command for exec, plan text for mode changes; 2–4 structured options (once/session/project/deny-with-reason); resolves `decision_id` over existing RPC (`task.approval.resolve` / `task.action.approve`) | P1.1 |
 | R2 | **Streaming session transcript** with collapse/expand; entries with kernel verdict `read-only-allow` collapse by default (governance as visual hierarchy) | P3.1 |
-| R3 | **Static/dynamic region split**: committed transcript lines flow to native terminal scrollback once; only the live region re-renders | Ink-lessons checklist (b)(f) |
+| R3 | **Terminal history escape hatches**: a full-screen viewport for focused operation, an explicit normal-buffer mode for native terminal history, and a plain transcript pager. A strict commit-once static/dynamic renderer is reconsidered only if measured product evidence shows these modes are insufficient | Ink-lessons checklist (b)(f); resolution in §5.3 |
 | R4 | **Task progress pills** rendered from **server-side computed** pill segments (`/status` RPC) — client renders truth, doesn't compute it | P3.2 |
 | R5 | **Audit views**: audit browser, pager for long replays | P3.1, P3.5 |
 | R6 | **Degrade statuses end-to-end**: four-glyph vocabulary (`✓ ⚿ ✗ ~`) with ASCII/NO_COLOR fallbacks; distinct microcopy per initiator | P1.3 |
@@ -165,16 +169,22 @@ Revisit **iocraft** (not adopt) only if all of: #208/#206-class CJK input bugs a
 
 ---
 
-## 4. Spike plan (1–2 days each, run in parallel)
+## 4. Spike protocol (completed 2026-07-09)
 
-Both spikes implement the **same script** against the **real daemon** (no mocks): connect to `~/.carina/daemon.sock` on two connections (calls + event stream, per `go/rpc/client.go`'s demux pattern), `session.attach` + `session.events.stream`, render a live streaming transcript, and when a `permission.request` event arrives, render an approval prompt whose body is a colored unified diff, resolve it via `task.approval.resolve {decision_id}`.
+Both spikes implemented the **same script** against the **real daemon** (no
+mocks): connect to `~/.carina/daemon.sock` on two connections (calls + event
+stream, per `go/rpc/client.go`'s demux pattern), `session.attach` plus
+`session.events.stream`, render a live streaming transcript, and resolve a
+reviewable approval over the existing decision RPCs. The tables below preserve
+the protocol used to make the decision; the as-run evidence is recorded after
+the Appendix.
 
 ### 4.1 Common pass/fail gates
 
 | # | Gate | Pass criterion |
 |---|------|----------------|
 | G1 | Live approval prompt | `permission.request` → prompt with 4 options + colored diff body (use a real `patch-transaction` payload); approve/deny round-trips `decision_id`; Escape always closes (never locks cursor) |
-| G2 | Streaming transcript | 2,000-line transcript, 30 events/sec injected: collapse/expand a read-only-allow entry works mid-stream; no visible tearing; committed lines land in native scrollback (static/dynamic split, R3) |
+| G2 | Streaming transcript | 2,000-line transcript, 30 events/sec injected: collapse/expand a read-only-allow entry works mid-stream and no visible tearing occurs. Terminal-buffer strategy is resolved separately under R3 rather than silently counted as a renderer pass |
 | G3 | zh input — width | Type `carina 审批测试 with mixed 中英 text` into the input: cursor lands on correct cells throughout; backspace deletes by grapheme; paste of 10 CJK lines triggers bracketed-paste collapse |
 | G4 | zh input — IME | macOS Pinyin **and** fcitx5 (Linux VM): candidate window appears at the caret cell, not at 0,0 or a stale position; committed text inserts correctly. (In-composition echo inside the TUI is *not* required — R15.) |
 | G5 | Idle CPU | < 1% of one core with a spinner + pill visible, measured over 60s (`ps`/`top` sampling) |
@@ -198,48 +208,73 @@ Both spikes implement the **same script** against the **real daemon** (no mocks)
 
 ---
 
-## 5. Productization path (Go winner)
+## 5. Production implementation
 
-### 5.1 Layout
+### 5.1 Shipped structure
 
-```
-apps/carina-tui/            # grows from the 125-line stub; bin target unchanged
-  main.go                   # flags, locale/isatty detection, tea.NewProgram
-  app/                      # root model: routing, layers/overlays, declared-cursor registry (R21)
-  views/                    # one package per P3.1 view, in plan order:
-    approvals/              #   P1.1 data — first view
-    patchreview/            #   diff viewer (shared diff renderer below)
-    sessions/               #   picker/graph (P2.2 data)
-    audit/                  #   audit browser + pager
-  components/               # pill, statusglyphs, transcript (collapse/expand + entry cache), input
-  theme/                    # brand token table (§5.2)
-go/tuiengine/  (or extend the P1.5 engine package)   # the "one engine": typed view-models
-                            # computed from RPC results, consumed by BOTH the CLI renderer
-                            # and apps/carina-tui — this package is the C2 contract, no
-                            # lipgloss import allowed here
-go/rpc/                     # unchanged; TUI uses two connections (calls + event stream)
+The production shape stayed deliberately flatter than the proposed spike
+layout:
+
+```text
+apps/carina-tui/main.go      launcher, flags, config, keymap watch, connection
+go/tui/                      root model, transcript, composer, overlays, PTY tests
+go/tui/theme/                terminal capability detection and semantic tokens
+go/config/                   layered TUI configuration and atomic keymap writes
+go/rpc/                      typed call and event-stream transport shared with CLI
 ```
 
-Dependency delta: Bubble Tea v2 + lipgloss + bubbles + chroma in the root `go.mod` — the module's first third-party UI deps; pure Go, cross-compiles in the existing pipeline, `no-node-runtime` CI unaffected.
+Keeping interaction components in one `go/tui` package made modal input
+ownership, submission transactions, and cursor arbitration explicit without
+introducing a second UI-domain layer. The launcher remains thin, while the
+daemon and RPC contracts remain authoritative for approvals, checkpoints,
+history, and task state.
 
-### 5.2 Brand tokens (C3)
+### 5.2 Interaction contracts adopted
 
-`apps/carina-tui/theme/tokens.go` transcribes brand-brief §2 verbatim: each token = `{name, truecolor hex, ansi256 fallback, mono fallback}`; semantic map (error→Carina Crimson/132, warning→Star Gold/137, success→Core Glow/139, info→Blue Giant/189, muted→Dust Mauve/96) is the only way views obtain color — no hardcoded ANSI (R22's Ink lesson). lipgloss `AdaptiveColor`/profile detection handles truecolor→256→mono; NO_COLOR and `--plain` collapse to the four-glyph ASCII set (P1.3, brand §6 Q2). When the brand kit ships its TUI theme token table file, `tokens.go` becomes generated-from or checked-against it.
+The final interaction design incorporates the transferable lessons from the
+Claude Code internals notes and the current Codex TUI without copying either
+framework architecture:
 
-### 5.3 Microcopy engine (C4)
+| Contract | Production resolution |
+| --- | --- |
+| Input ownership | Governance overlays own all input. During submission acknowledgement, the submitted snapshot remains frozen and type-ahead creates an independent next draft; asynchronous ACK/failure cannot overwrite it |
+| Fast control path | `Esc` interrupts an active turn; `Ctrl+C` retains the cancel/clear/exit cascade; help and redraw remain available while acknowledgement is pending |
+| Non-linear conversation | Double `Esc` from an idle empty composer opens checkpoints; selection fetches a rollback preview and restore requires explicit `y` plus `Enter` confirmation |
+| Semantic keys | Chat, composer, editor, suggestion, approval, question, history, and pager actions are semantic bindings. Validation derives conflicts from contexts that can actually be active together, keeps printable pager controls overlay-only, protects composer text and editor Home/End, folds terminal-equivalent keys, and rejects ambiguous chord prefixes; the pre-dispatch chord state machine provides a visible pending state, timeout, Esc cancellation, and unmatched-key replay |
+| Keymap DX | `/keymap` browses and captures replacements/alternates, uses `Ctrl+V` quoted-insert for literal Escape/Enter steps, atomically persists project config, and applies a validated snapshot. Common modifier aliases are normalized; duplicate JSON actions fail with their object path instead of silently using the last value; managed/global/project edits hot-reload and invalid edits keep the last-good keymap |
+| Recall scope | Durable prompt history carries session/workspace metadata. The TUI asks for workspace scope so unrelated repositories do not leak into default recall/search |
+| Terminal mechanics | The view declares the physical cursor, enables bracketed paste and mouse wheel delivery, routes scrolling to the focused surface, and recomputes dimensions on resize |
+| Background attention | Terminal focus reporting gates an unread-attention latch. Approval, question, and terminal task events emit BEL plus OSC 9/777 once per blur interval; refocusing clears the latch and status count |
+| Regression evidence | Model tests cover ownership and overlay races; the PTY harness covers real resize/paste/wheel/multiline input/CJK terminal bytes where available; a production `View()` benchmark provides a stable render-regression target |
 
-Direct import of `go/microcopy` (P1.7): Governed register strings for approval prompts (`decision_id` asks), Degrade register for status labels, Ambient register for spinners at P3.4. Locale resolution (`--locale` > env > `en`; zh first-class) happens once at TUI init and is passed to both microcopy and the theme layer. Suppression rules (`--json/--plain/!isatty`) already live in the engine — the TUI adds nothing.
+### 5.3 Scrollback decision
 
-### 5.4 Delivery sequencing (aligns to the plan)
+The strict Ink-style commit-once design considered during the spike was not
+implemented and is not counted as a hidden pass. Carina instead exposes three
+explicit modes:
 
-1. **After P1.1/P1.5 land** (approval data + engine exist): spike hardens into `views/approvals` — first shippable TUI view.
-2. P3.1 cluster: first-paint discipline (R9), stdin buffering, verdict-collapsed transcript.
-3. P3.2 pill (server-side segments), P3.3 reconnect state machine, P3.5 bell/OSC-9 + NO_COLOR themes.
-4. zh test matrix (R15) enters CI as a manual release-gate checklist until automatable.
+1. The default alternate-screen viewport for a stable interactive layout.
+2. `carina-tui --no-alt-screen` or `tui_alternate_screen=never` for the normal
+   terminal buffer and native history.
+3. `Alt+R` or `/transcript` for a plain, inspectable transcript pager.
 
-### 5.5 Distribution
+This closes the product need without coupling transcript storage to terminal
+painting. A commit-once static/dynamic renderer is a deliberate non-goal until
+measured user evidence demonstrates that all three supported modes are
+insufficient.
 
-Zero new work: Makefile `go:` target already builds `bin/carina-tui`; `scripts/package-release.sh:153` already stages it into the release tarball; homebrew/npm launcher templates unchanged. Binary grows by the Charm deps (single static Go binary, no runtime deps). The `no-node-runtime` CI job passes by construction.
+### 5.4 Evidence boundary and distribution
+
+Repository automation can verify CJK cell width, grapheme edits, cursor
+coordinates, bracketed paste, PTY resize, mouse reports, key dispatch,
+checkpoint confirmation, and render regressions. It cannot honestly verify a
+desktop IME candidate window, modifier-assisted text selection in every
+terminal, or a credentialed provider stream on representative hardware. Those
+remain release-matrix work in `docs/roadmap.md`, not source-code TODOs.
+
+The Makefile builds `bin/carina-tui`, release packaging stages it with the
+other binaries, and the Homebrew/npm launch paths require no Node.js runtime
+for the TUI itself.
 
 ---
 
@@ -266,7 +301,11 @@ Stack actually used: `charm.land/bubbletea/v2` **v2.0.8**, bubbles v2.1.1, lipgl
 | G3 cjk | **PASS** (automated) / **PENDING-HUMAN** (IME) | Re-run: required zh lines rendered; `carina 审批测试 with mixed 中英 text` typed through tmux PTY; 7 backspaces deleted grapheme-per-keypress; bracketed paste collapsed to `[Pasted 11 lines]`; **all 31 bordered rows exactly 108 display columns** (east-asian-width check) — zero tearing. |
 | G4 perf | **PASS** | Re-run, 100 ev/s × 10 s (1000 events): **frame render p95 9.38 ms** (spike: 10.98) vs 16 ms gate; event→flush p95 16.5 ms vs 33 ms criterion; **idle CPU 0.00 % mean / 0.0 % max** over 30×1 s ps samples (spike: 0.60 %) vs 1 % gate. |
 
-¹ The `permission.request` *event* emission was not exercised live in either spike (requires the agent loop + a real model provider); pending state, decision_id roundtrip, queued-command execution and streamed resume are all real daemon state. The event-render path must be integration-tested in P1.1.
+¹ The spike itself did not drive a credentialed model through
+`awaitInteractiveApproval`. The production repository now covers durable and
+live `permission.request` projection, `decision_id` round trips, reconnect
+replay, approve/deny behavior, and patch-gate enforcement. A real-provider run
+remains part of the external release matrix.
 
 ### Gate table — ratatui 0.30.2 (Rust), `crates/spike-tui-ratatui/` + `spikes/tui-ratatui/`
 
@@ -283,25 +322,37 @@ G9-rs (plumbing honesty): first Rust JSON-RPC client = 106 code LoC, but **zero 
 
 **Bubble Tea v2 (Go) is confirmed as the TUI stack.** Per §4's decision rule: both spikes passed all automatable gates, so Go wins on §2.3's gating rows (C2 shared data layer, team-stack coherence, ≈0 plumbing — all empirically confirmed: the Go spike needed no new plumbing code while the Rust spike hand-wrote a client and still dodged the typed layer). **No reversal trigger fired**: the zh gates passed automated verification on both sides (trigger 1 requires a Go IME failure *and* a Rust pass — both IME runs are still PENDING-HUMAN, below); perf gates passed with wide margin on both sides (trigger 2 requires a Go failure); Charm's v2 cadence is active at v2.0.8 (trigger 3). ratatui remains the standing runner-up **with passing spike results now on file** — if the human fcitx5 run fails on Bubble Tea and passes on ratatui, trigger 1 fires and §3.2 applies.
 
-### Open human-verification items (the 5-minute checklists)
+### External human-verification items
 
 Both spikes' IME composition tests are **PENDING-HUMAN** (true IME composition cannot be automated; binaries are built). Run the checklists in `spikes/tui-bubbletea/README.md` ("Manual IME checklist") and `spikes/tui-ratatui/README.md` ("5-minute manual IME checklist") on macOS Pinyin first, then fcitx5/Wayland (the decisive platform for bubbletea#874), recording pass/fail per platform in those files. The Bubble Tea run gates trigger-1; the ratatui run is the comparison arm.
 
-### P1 implementation consequences (what the spikes revealed)
+These checks are release evidence, not missing repository implementation. They
+must also record normal-buffer/alternate-screen behavior and terminal text
+selection while mouse reporting is enabled.
+
+### Production consequences (resolved after the spikes)
 
 **Adopt / keep:**
-- Pin `charm.land/bubbletea/v2` v2.0.8 + `charm.land/bubbles/v2` v2.1.1 + `charm.land/lipgloss/v2` v2.0.5 (already in `go.mod` from the spike; `go.sum` is the repo's first third-party Go lockfile — review it once, deliberately).
-- The two-connection `go/rpc` pattern (calls + `session.events.stream`, `program.Send` from the stream goroutine) works unchanged — lift it into `apps/carina-tui` as-is.
-- CJK width/grapheme handling is correct out-of-the-box in viewport/textinput/lipgloss borders — write no custom width math; add the east-asian-width alignment check from the spikes as a CI-able capture test.
-- `PatchTransaction.diff` is plain unified diff — a ~30-line manual span colorizer suffices for the P1.1 approval body; defer chroma to syntax-highlighted views.
-- Renderer coalescing + a dumb append-only line cache holds 100 ev/s at ~1 ms View cost to 1k lines; implement the real R18 per-entry cache before 10k-line transcripts.
 
-**Avoid / fix / watch (framework sharp edges found):**
+- Bubble Tea v2, bubbles v2, and lipgloss v2 remain the production stack; the
+  typed Go RPC/event path is shared with the CLI.
+- CJK width/grapheme handling stays in the upstream terminal libraries, while
+  Carina owns physical cursor placement, modal cursor arbitration, paste
+  normalization, and narrow-layout clamping.
+- Approval bodies use the daemon's reviewable artifacts and preserve the exact
+  `decision_id`; patch apply verifies the prior capability decision.
+- The production transcript has cached presentations, collapse/expand, a raw
+  pager, focused wheel routing, and a repeatable `View()` benchmark.
+- Submission acknowledgement, queue ownership, and overlay input are modeled
+  as explicit transactions rather than timing assumptions.
+
+**Retained framework cautions:**
+
 - `tea.WithOutput` silently disables rendering unless the writer implements `term.File` (`Fd/Read/Close`) — R22 instrumentation wrappers must forward `Fd`.
-- bubbles v2 `textinput` panics on negative width pre-`WindowSizeMsg` — clamp in layout code; its `placeholderView` mixes display-width with rune indexing — avoid CJK placeholders until audited/upstreamed.
-- `tea.PasteMsg.Content` arrives with `\r` line endings — normalize before paste-collapse counting (R14).
-- v2 Layers API is still unexercised (spike used `lipgloss.Place` frame replacement for the overlay) — the layers/declared-cursor (R21) decision is open and must be settled when `views/approvals` is built.
-- The `permission.request` event render path is untested against a live emission — P1.1 needs an integration test that drives the real agent loop (or a stub provider) through `awaitInteractiveApproval`.
-- **Daemon gap found by the ratatui spike:** `workspace.patch.apply` does not verify a prior capability approval (the kernel records the approval at apply time with the given approver) — close this in P1.1 before the approval UI ships, or the UI is theater.
-- R3 (static/dynamic scrollback split) was not attempted in either spike — still open engineering for P3.1, with the altscreen viewport as the fallback.
-- Track bubbletea#874 until the fcitx5 human run is recorded; keep the ratatui spike + evidence on file per the Appendix.
+- Component widths must remain clamped before the first `WindowSizeMsg`, and
+  paste content must continue normalizing carriage returns before line counts.
+- Overlay composition intentionally uses one modal owner and explicit cursor
+  suppression; adopting the v2 Layers API would require new ownership tests,
+  not just a visual refactor.
+- Track bubbletea#874 until the fcitx5 human run is recorded; keep the ratatui
+  spike and evidence as the comparison arm.

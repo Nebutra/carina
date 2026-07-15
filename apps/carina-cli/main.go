@@ -26,6 +26,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Nebutra/carina/go/auth"
+	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/product"
 	"github.com/Nebutra/carina/go/provider"
 	"github.com/Nebutra/carina/go/ttyutil"
@@ -174,7 +175,7 @@ func main() {
 		if action := decideBareInvocation(ttyutil.IsTTY(os.Stdin), ttyutil.IsTTY(os.Stdout)); action == bareActionLaunchTUI {
 			os.Exit(runBareTUI().ExitCode())
 		}
-		fmt.Print(usage)
+		fmt.Println(microcopy.Bootstrap(microcopy.BootstrapBareUsage, nil, microcopy.DetectBootstrapLocale()))
 		os.Exit(tui.OutcomeUsage.ExitCode())
 	}
 	err := run(os.Args[1], os.Args[2:])
@@ -1565,10 +1566,10 @@ func parseWatchArgs(args []string) (sessionID string, jsonOut bool, err error) {
 		}
 		positional = append(positional, a)
 	}
-	if len(positional) < 1 {
+	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
 		return "", false, fmt.Errorf("usage: carina watch <session_id> [--json]")
 	}
-	return positional[0], jsonOut, nil
+	return strings.TrimSpace(positional[0]), jsonOut, nil
 }
 
 func watch(c *rpcClient, sessionID string, jsonOut bool) error {

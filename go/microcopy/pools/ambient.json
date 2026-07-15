@@ -9,6 +9,18 @@
         ],
         "zh": [
           "会话已恢复。原样奉还，且有据可查。"
+        ],
+        "ja": [
+          "セッションを再開しました。中断したところから続けます。"
+        ],
+        "ko": [
+          "세션을 다시 시작했습니다. 중단된 지점에서 이어갑니다."
+        ],
+        "es": [
+          "Sesión reanudada. El trabajo continúa desde el punto anterior."
+        ],
+        "fr": [
+          "Session reprise. Le travail continue là où il s’était arrêté."
         ]
       }
     }
@@ -119,6 +131,178 @@
       ],
       "policy": [
         "规则在前，动作在后。"
+      ]
+    },
+    "ja": {
+      "generic": [
+        "準備が整いました。必要なときにどうぞ。",
+        "静かに待機しています。"
+      ],
+      "codeintel": [
+        "シンボルをたどっています。推測はしません。",
+        "索引を準備しています。少しだけお待ちください。"
+      ],
+      "patch": [
+        "差分を順に確認しています。",
+        "変更箇所をそろえています。"
+      ],
+      "session": [
+        "続きから再開します。",
+        "記録を古い順に読み込んでいます。"
+      ],
+      "audit": [
+        "監査記録を順に確認しています。",
+        "すべての項目を照合しています。"
+      ],
+      "agent": [
+        "エージェントが処理中です。記録も進んでいます。"
+      ],
+      "kernel": [
+        "先にカーネルへ確認しています。"
+      ],
+      "provider": [
+        "モデルからの応答を待っています。"
+      ],
+      "git": [
+        "履歴を読み取っています。書き換えはしません。"
+      ],
+      "file": [
+        "必要な範囲だけ読み取っています。"
+      ],
+      "terminal": [
+        "コマンドを実行しています。出力を待っています。"
+      ],
+      "policy": [
+        "先にポリシーを確認しています。"
+      ]
+    },
+    "ko": {
+      "generic": [
+        "준비되었습니다. 필요할 때 시작하세요.",
+        "조용히 대기 중입니다."
+      ],
+      "codeintel": [
+        "심볼을 따라가고 있습니다. 추측하지 않습니다.",
+        "인덱스를 준비 중입니다. 잠시만 기다려 주세요."
+      ],
+      "patch": [
+        "변경 내용을 순서대로 맞추고 있습니다.",
+        "차이를 차분히 확인하고 있습니다."
+      ],
+      "session": [
+        "이어서 진행합니다.",
+        "기록을 오래된 순서대로 불러오고 있습니다."
+      ],
+      "audit": [
+        "감사 기록을 순서대로 확인하고 있습니다.",
+        "모든 항목을 대조하고 있습니다."
+      ],
+      "agent": [
+        "에이전트가 작업 중입니다. 기록도 함께 남고 있습니다."
+      ],
+      "kernel": [
+        "먼저 커널에 확인하고 있습니다."
+      ],
+      "provider": [
+        "모델의 응답을 기다리고 있습니다."
+      ],
+      "git": [
+        "기록을 읽고 있습니다. 변경하지 않습니다."
+      ],
+      "file": [
+        "요청된 범위만 읽고 있습니다."
+      ],
+      "terminal": [
+        "명령을 실행 중입니다. 출력을 기다리고 있습니다."
+      ],
+      "policy": [
+        "작업 전에 정책을 확인하고 있습니다."
+      ]
+    },
+    "es": {
+      "generic": [
+        "Todo preparado. Cuando quiera.",
+        "En espera, sin prisa."
+      ],
+      "codeintel": [
+        "Siguiendo símbolos, sin suposiciones.",
+        "Preparando el índice. Tomará un momento."
+      ],
+      "patch": [
+        "Ordenando los cambios.",
+        "Revisando cada bloque."
+      ],
+      "session": [
+        "Retomando el contexto.",
+        "Cargando el registro en orden."
+      ],
+      "audit": [
+        "Verificando cada entrada.",
+        "Revisando la cadena completa."
+      ],
+      "agent": [
+        "El agente está trabajando. El registro también."
+      ],
+      "kernel": [
+        "Consultando primero al núcleo."
+      ],
+      "provider": [
+        "Esperando la respuesta del modelo."
+      ],
+      "git": [
+        "Leyendo el historial, sin modificarlo."
+      ],
+      "file": [
+        "Leyendo solo lo solicitado."
+      ],
+      "terminal": [
+        "Ejecutando el comando. Esperando la salida."
+      ],
+      "policy": [
+        "Primero las reglas, luego la acción."
+      ]
+    },
+    "fr": {
+      "generic": [
+        "Tout est prêt. À vous de choisir quand commencer.",
+        "En attente, sans urgence."
+      ],
+      "codeintel": [
+        "Parcours des symboles, sans supposition.",
+        "Préparation de l’index. Encore un instant."
+      ],
+      "patch": [
+        "Alignement des modifications dans l’ordre.",
+        "Vérification de chaque bloc."
+      ],
+      "session": [
+        "Reprise du fil.",
+        "Chargement du journal dans l’ordre."
+      ],
+      "audit": [
+        "Vérification de chaque entrée.",
+        "Contrôle de la chaîne complète."
+      ],
+      "agent": [
+        "L’agent travaille. Le journal se remplit."
+      ],
+      "kernel": [
+        "Consultation du noyau avant d’agir."
+      ],
+      "provider": [
+        "En attente de la réponse du modèle."
+      ],
+      "git": [
+        "Lecture de l’historique, sans le modifier."
+      ],
+      "file": [
+        "Lecture limitée à la demande."
+      ],
+      "terminal": [
+        "Exécution de la commande. Sortie en attente."
+      ],
+      "policy": [
+        "Les règles d’abord, l’action ensuite."
       ]
     }
   }

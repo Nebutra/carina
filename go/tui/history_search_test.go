@@ -81,30 +81,44 @@ func TestLateHistoryGenerationCannotReplaceNewerMerge(t *testing.T) {
 }
 
 func TestHistorySearchCancelRestoresExactDraftAndPaste(t *testing.T) {
-	for _, cancelKey := range []string{"esc", "ctrl+c"} {
-		t.Run(cancelKey, func(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.history = []promptDraft{{Text: "deploy production", Paste: []string{"matched\npaste"}}}
+	m.historyPos = len(m.history)
+	m.input.SetValue("unfinished 中文 draft")
+	m.pendingPaste = []string{"original\npaste", "second item"}
+
+	startHistorySearch(t, m)
+	typeHistoryQuery(t, m, "deploy")
+	if m.input.Value() != "deploy production" {
+		t.Fatalf("match was not previewed: %q", m.input.Value())
+	}
+	cmd, handled := m.handleKey("ctrl+c")
+	if !handled || cmd != nil || m.historySearch != nil {
+		t.Fatal("search cancellation leaked to the global key handler")
+	}
+	got := m.currentDraft()
+	want := promptDraft{Text: "unfinished 中文 draft", Paste: []string{"original\npaste", "second item"}}
+	if !draftsEqual(got, want) {
+		t.Fatalf("cancel restored %+v, want %+v", got, want)
+	}
+	if !m.lastCtrlC.IsZero() || m.ctrlCHint != "" {
+		t.Fatal("search Ctrl+C armed the global double-press exit state")
+	}
+}
+
+func TestHistorySearchEscapeAndTabAcceptEditableMatch(t *testing.T) {
+	for _, key := range []string{"esc", "tab"} {
+		t.Run(key, func(t *testing.T) {
 			m, _ := newTestModel(nil)
 			m.history = []promptDraft{{Text: "deploy production", Paste: []string{"matched\npaste"}}}
-			m.historyPos = len(m.history)
-			m.input.SetValue("unfinished 中文 draft")
-			m.pendingPaste = []string{"original\npaste", "second item"}
-
+			m.input.SetValue("original")
 			startHistorySearch(t, m)
 			typeHistoryQuery(t, m, "deploy")
-			if m.input.Value() != "deploy production" {
-				t.Fatalf("match was not previewed: %q", m.input.Value())
+			if cmd, handled := m.handleKey(key); !handled || cmd != nil || m.historySearch != nil {
+				t.Fatalf("%s did not accept the match for editing", key)
 			}
-			cmd, handled := m.handleKey(cancelKey)
-			if !handled || cmd != nil || m.historySearch != nil {
-				t.Fatal("search cancellation leaked to the global key handler")
-			}
-			got := m.currentDraft()
-			want := promptDraft{Text: "unfinished 中文 draft", Paste: []string{"original\npaste", "second item"}}
-			if !draftsEqual(got, want) {
-				t.Fatalf("cancel restored %+v, want %+v", got, want)
-			}
-			if !m.lastCtrlC.IsZero() || m.ctrlCHint != "" {
-				t.Fatal("search Ctrl+C armed the global double-press exit state")
+			if got := m.currentDraft(); got.Text != "deploy production" || len(got.Paste) != 1 {
+				t.Fatalf("accepted draft = %+v", got)
 			}
 		})
 	}
@@ -187,7 +201,7 @@ func TestHistorySearchAcceptIsUndoableReplacement(t *testing.T) {
 	m.historyPos = len(m.history)
 	startHistorySearch(t, m)
 	typeHistoryQuery(t, m, "history")
-	composerKey(t, m, "enter")
+	composerKey(t, m, "tab")
 	if got := m.input.Value(); got != "history result" {
 		t.Fatalf("accepted history = %q", got)
 	}
@@ -222,7 +236,7 @@ func TestHistorySearchCancelRestoresExactCaret(t *testing.T) {
 	m.historyPos = len(m.history)
 	startHistorySearch(t, m)
 	typeHistoryQuery(t, m, "alpha")
-	composerKey(t, m, "esc")
+	composerKey(t, m, "ctrl+c")
 	if m.input.Line() != wantRow || m.input.Column() != wantCol {
 		t.Fatalf("cancel caret = %d:%d, want %d:%d", m.input.Line(), m.input.Column(), wantRow, wantCol)
 	}
@@ -271,7 +285,7 @@ func TestHistorySearchTraversalSkipsDuplicatesAndMovesBothDirections(t *testing.
 	assertDraftText(t, m, "deploy beta")
 	pressHistoryKey(t, m, "ctrl+r")
 	assertDraftText(t, m, "deploy beta") // oldest boundary is stable
-	pressHistoryKey(t, m, "ctrl+s")
+	pressHistoryKey(t, m, "down")
 	assertDraftText(t, m, "deploy alpha")
 	pressHistoryKey(t, m, "down")
 	assertDraftText(t, m, "deploy gamma")
@@ -295,15 +309,78 @@ func TestHistorySearchCJKAndAcceptAsEditableDraft(t *testing.T) {
 	pressHistoryKey(t, m, "down")
 	assertDraftText(t, m, "部署到上海")
 
-	cmd, handled := m.handleKey("enter")
+	cmd, handled := m.handleKey("tab")
 	if !handled || cmd != nil || m.historySearch != nil {
-		t.Fatal("Enter did not accept the current match as an editable draft")
+		t.Fatal("Tab did not accept the current match as an editable draft")
 	}
 	if got := m.currentDraft(); got.Text != "部署到上海" || len(got.Paste) != 1 || got.Paste[0] != "保留附件说明" {
 		t.Fatalf("accepted CJK draft lost content: %+v", got)
 	}
 	if _, handled := m.handleKey("!"); handled {
 		t.Fatal("accepted match is not editable by the normal textarea")
+	}
+}
+
+func TestHistorySearchEnterAcceptsAndImmediatelyExecutes(t *testing.T) {
+	caller := &fakeCaller{handler: map[string]any{
+		"history.recent": map[string]any{"entries": []string{}},
+		"task.submit":    map[string]any{"task_id": "tsk_history", "status": "queued"},
+	}}
+	m, _ := newTestModel(caller)
+	m.history = []promptDraft{{Text: "deploy production"}}
+	m.historyPos = len(m.history)
+	startHistorySearch(t, m)
+	typeHistoryQuery(t, m, "deploy")
+	cmd, handled := m.handleKey("enter")
+	if !handled || cmd == nil || m.historySearch != nil {
+		t.Fatalf("Enter execution state: handled=%v cmd=%v search=%#v", handled, cmd != nil, m.historySearch)
+	}
+	drain(m, cmd)
+	if last := caller.last(); last.method != "task.submit" || last.params["prompt"] != "deploy production" {
+		t.Fatalf("history Enter RPC = %+v", last)
+	}
+}
+
+func TestHistorySearchScopeCycleLoadsAsynchronouslyAndDropsStaleResults(t *testing.T) {
+	caller := &fakeCaller{handler: map[string]any{
+		"history.recent": map[string]any{"entries": []string{"global deploy"}},
+	}}
+	m, _ := newTestModel(nil)
+	m.call = caller
+	m.sessionID = "sess_scope"
+	m.history = []promptDraft{{Text: "workspace deploy"}}
+	startHistorySearch(t, m)
+	typeHistoryQuery(t, m, "deploy")
+
+	cmd, handled := m.handleKey("ctrl+s")
+	if !handled || cmd == nil || m.historySearch.scope != historyScopeGlobal || !m.historySearch.loading {
+		t.Fatalf("scope cycle state = handled=%v cmd=%v search=%#v", handled, cmd != nil, m.historySearch)
+	}
+	query := m.historySearch.query
+	assertDraftText(t, m, "workspace deploy")
+	drain(m, cmd)
+	if m.historySearch.query != query || m.historySearch.scope != historyScopeGlobal || m.historySearch.loading {
+		t.Fatalf("scope load lost state: %#v", m.historySearch)
+	}
+	assertDraftText(t, m, "global deploy")
+	if last := caller.last(); last.params["scope"] != "global" || last.params["session_id"] != "sess_scope" {
+		t.Fatalf("scope RPC = %+v", last)
+	}
+
+	cmd, _ = m.handleKey("ctrl+s")
+	currentGeneration := m.historySearch.loadGeneration
+	m.handleHistoryLoaded(historyLoadedMsg{
+		generation: currentGeneration - 1,
+		search:     true,
+		scope:      historyScopeGlobal,
+		entries:    []string{"stale deploy"},
+	})
+	if got := m.input.Value(); got != "global deploy" {
+		t.Fatalf("stale scope response changed preview: %q", got)
+	}
+	drain(m, cmd)
+	if m.historySearch.scope != historyScopeSession || m.historySearch.query != query {
+		t.Fatalf("session scope load lost query: %#v", m.historySearch)
 	}
 }
 

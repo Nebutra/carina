@@ -48,6 +48,89 @@ func TestCheckedInRegistryAndSchema(t *testing.T) {
 	}
 }
 
+func TestSchemaBundleCoversSDKEventModeAndGoalContract(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(file), "..", "..")
+	registry, err := Load(filepath.Join(root, "protocol", "jsonrpc", "methods.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := LoadBundle(filepath.Join(root, "protocol", "jsonrpc", "schema-bundle.json"), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stream := bundle.Methods["session.events.stream"]
+	params, _ := stream.Params["properties"].(map[string]any)
+	if _, ok := params["event_mode"]; !ok {
+		t.Fatal("session.events.stream schema must accept event_mode")
+	}
+	result, _ := stream.Result["properties"].(map[string]any)
+	if _, ok := result["event_mode"]; !ok {
+		t.Fatal("session.events.stream schema must return event_mode")
+	}
+
+	submit := bundle.Methods["task.submit"]
+	submitParams, _ := submit.Params["properties"].(map[string]any)
+	if _, ok := submitParams["success_criteria"]; !ok {
+		t.Fatal("task.submit schema must accept success_criteria")
+	}
+	successCheck, _ := bundle.Defs["success_check"].(map[string]any)
+	properties, _ := successCheck["properties"].(map[string]any)
+	command, _ := properties["command"].(map[string]any)
+	if command["type"] != "string" {
+		t.Fatalf("success_check.command schema = %+v, want string", command)
+	}
+	for _, method := range registry.APIs["task"] {
+		if method.Method != "task.submit" {
+			continue
+		}
+		params, _ := method.Params.(map[string]any)
+		if _, ok := params["success_criteria"]; !ok {
+			t.Fatal("task.submit registry must document success_criteria")
+		}
+		return
+	}
+	t.Fatal("task.submit missing from registry")
+}
+
+func TestSchemaBundleCoversCheckpointRestoreAndTaskResume(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(file), "..", "..")
+	registry, err := Load(filepath.Join(root, "protocol", "jsonrpc", "methods.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := LoadBundle(filepath.Join(root, "protocol", "jsonrpc", "schema-bundle.json"), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"session.checkpoint.list", "session.checkpoint.preview", "session.checkpoint.summarize", "session.checkpoint.restore", "task.resume"} {
+		if _, ok := bundle.Methods[method]; !ok {
+			t.Errorf("schema bundle missing %s", method)
+		}
+	}
+	resume := bundle.Methods["task.resume"]
+	params, _ := resume.Params["properties"].(map[string]any)
+	if _, ok := params["task_id"]; !ok {
+		t.Fatal("task.resume schema must require task_id")
+	}
+	restore := bundle.Methods["session.checkpoint.restore"]
+	required, _ := restore.Result["required"].([]any)
+	if !containsAnyString(required, "idempotent") || !containsAnyString(required, "reconciliation_required") {
+		t.Fatalf("checkpoint restore result schema lacks reconciliation contract: %+v", required)
+	}
+}
+
+func containsAnyString(values []any, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCheckedInEventRegistryMatchesSchema(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	root := filepath.Join(filepath.Dir(file), "..", "..", "protocol")

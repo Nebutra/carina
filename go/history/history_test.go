@@ -2,7 +2,9 @@ package history
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -30,9 +32,9 @@ func TestAppendAndRecentTail(t *testing.T) {
 
 func TestAppendCollapsesAndSkipsBlank(t *testing.T) {
 	h := New(filepath.Join(t.TempDir(), "hist"))
-	h.Append("line1\nline2")
-	h.Append("   ")
-	h.Append("")
+	_ = h.Append("line1\nline2")
+	_ = h.Append("   ")
+	_ = h.Append("")
 	got, _ := h.Recent(0)
 	if len(got) != 1 || got[0] != "line1 line2" {
 		t.Fatalf("multiline collapse / blank-skip wrong: %v", got)
@@ -51,9 +53,9 @@ func TestMissingFileIsEmpty(t *testing.T) {
 // lines intact (the cross-process safety property).
 func TestConcurrentAppendNoCorruption(t *testing.T) {
 	h := New(filepath.Join(t.TempDir(), "hist"))
-	const N = 64
+	const n = 64
 	var wg sync.WaitGroup
-	for i := 0; i < N; i++ {
+	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -63,17 +65,59 @@ func TestConcurrentAppendNoCorruption(t *testing.T) {
 	wg.Wait()
 
 	got, _ := h.Recent(0)
-	if len(got) != N {
-		t.Fatalf("expected %d entries, got %d", N, len(got))
+	if len(got) != n {
+		t.Fatalf("expected %d entries, got %d", n, len(got))
 	}
 	seen := map[string]bool{}
-	for _, l := range got {
-		if !strings.HasPrefix(l, "entry-") || len(l) != len("entry-0000") {
-			t.Fatalf("corrupted/interleaved line: %q", l)
+	for _, line := range got {
+		if !strings.HasPrefix(line, "entry-") || len(line) != len("entry-0000") {
+			t.Fatalf("corrupted/interleaved line: %q", line)
 		}
-		seen[l] = true
+		seen[line] = true
 	}
-	if len(seen) != N {
-		t.Fatalf("expected %d distinct clean lines, got %d", N, len(seen))
+	if len(seen) != n {
+		t.Fatalf("expected %d distinct clean lines, got %d", n, len(seen))
+	}
+}
+
+func TestStructuredHistoryReadsLegacyLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history")
+	if err := os.WriteFile(path, []byte("legacy prompt\n{\"text\":\"legacy json prompt\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := New(path)
+	if err := h.AppendScoped(Entry{
+		Text: "scoped\nprompt", SessionID: "sess_1", WorkspaceRoot: "/workspace",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.RecentEntries(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Entry{
+		{Text: "legacy prompt"},
+		{Text: `{"text":"legacy json prompt"}`},
+		{Text: "scoped prompt", SessionID: "sess_1", WorkspaceRoot: "/workspace"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("entries = %#v, want %#v", got, want)
+	}
+}
+
+func TestRecentStructuredHistoryRetainsNewestEntries(t *testing.T) {
+	h := New(filepath.Join(t.TempDir(), "history"))
+	for _, text := range []string{"one", "two", "three"} {
+		if err := h.AppendScoped(Entry{Text: text, SessionID: "sess"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := h.Recent(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"two", "three"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("recent = %v, want %v", got, want)
 	}
 }

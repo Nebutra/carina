@@ -45,6 +45,11 @@ test('typed parity wrappers and event subscription use canonical RPC methods', a
     if (request.method === 'session.items') result = { data:[{type:'turn.started',session_id:'s1',task_id:'t1'}],next_cursor:'cp1.payload.signature',projection_version:'1.0.0' }
     if (request.method === 'usage.cost') result = { providers: [], totals: {}, estimated: false }
     if (request.method === 'task.steer') result = { queued: true, task_id: request.params.task_id, status: 'running' }
+    if (request.method === 'task.resume') result = { task_id: request.params.task_id, session_id: 's1', status: 'running' }
+    const checkpoint = { checkpoint_id:'t1:1:9',created_at:'2026-07-14T00:00:00Z',sequence:'00000000000000000009',task_id:'t1',session_id:'s1',turn:1,applied_patches:[] }
+    if (request.method === 'session.checkpoint.preview') result = { checkpoint,conversation_turns:1,rollback_patches:[],will_resume:'paused' }
+    if (request.method === 'session.checkpoint.summarize') result = { checkpoint_id:checkpoint.checkpoint_id,task_id:'t1',turn:1,recent:[] }
+    if (request.method === 'session.checkpoint.restore') result = { restored:true,checkpoint_id:checkpoint.checkpoint_id,task_id:'t1',turn:1,rolled_back:[],status:'paused',idempotent:true,reconciliation_required:false,journal_cleanup_pending:false }
     if (request.method === 'task.user.answer') result = { question_id: request.params.question_id, accepted: true, value: request.params.value }
     if (request.method === 'session.events.stream') result = { subscription_id: 'sub_1', cursor: 0, replayed: 0 }
     if (request.method === 'session.events.unsubscribe') result = { unsubscribed: true }
@@ -63,6 +68,10 @@ test('typed parity wrappers and event subscription use canonical RPC methods', a
     assert.equal((await client.listSessionItems('s1','',1)).data[0].task_id,'t1')
     assert.equal((await client.cost('s1')).estimated, false)
     assert.equal((await client.steerTask('t1', 'continue')).queued, true)
+    assert.equal((await client.resumeTask('t1')).status, 'running')
+    assert.equal((await client.previewCheckpoint('s1', 't1:1:9')).checkpoint.sequence, '00000000000000000009')
+    assert.equal((await client.summarizeCheckpoint('s1', 't1:1:9')).turn, 1)
+    assert.equal((await client.restoreCheckpoint('s1', 't1:1:9', true)).idempotent, true)
     assert.equal((await client.answerQuestion('q1', 'yes')).accepted, true)
     let resolveEvent
     const event = new Promise((resolve) => { resolveEvent = resolve })
@@ -72,7 +81,7 @@ test('typed parity wrappers and event subscription use canonical RPC methods', a
     client.close()
   })
   assert.deepEqual(methods, [
-    'session.attach', 'session.fork', 'session.review', 'session.items', 'usage.cost', 'task.steer', 'task.user.answer', 'session.events.stream', 'session.events.unsubscribe',
+    'session.attach', 'session.fork', 'session.review', 'session.items', 'usage.cost', 'task.steer', 'task.resume', 'session.checkpoint.preview', 'session.checkpoint.summarize', 'session.checkpoint.restore', 'task.user.answer', 'session.events.stream', 'session.events.unsubscribe',
   ])
 })
 

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -190,18 +189,18 @@ func (m *Model) suggestPanelLines() []string {
 	if m.suggest == nil || len(m.suggest.Matches) == 0 {
 		return nil
 	}
-	title := "files"
+	title := m.text(MsgSuggestFiles, nil)
 	if m.suggest.Kind == mentionCommand {
-		title = "commands"
+		title = m.text(MsgSuggestCommands, nil)
 	}
 	lines := make([]string, 0, len(m.suggest.Matches)+1)
-	lines = append(lines, m.th.Style(theme.RoleMuted).Render(fmt.Sprintf("%s (%s/%s select, %s complete, %s close)",
-		title,
-		m.keys.label(KeyContextSuggestion, ActionSuggestionPrevious),
-		m.keys.label(KeyContextSuggestion, ActionSuggestionNext),
-		m.keys.label(KeyContextSuggestion, ActionSuggestionAccept),
-		m.keys.label(KeyContextSuggestion, ActionSuggestionDismiss),
-	)))
+	lines = append(lines, m.th.Style(theme.RoleMuted).Render(m.text(MsgSuggestHeader, MessageArgs{
+		"title":    title,
+		"previous": m.keys.label(KeyContextSuggestion, ActionSuggestionPrevious),
+		"next":     m.keys.label(KeyContextSuggestion, ActionSuggestionNext),
+		"accept":   m.keys.label(KeyContextSuggestion, ActionSuggestionAccept),
+		"dismiss":  m.keys.label(KeyContextSuggestion, ActionSuggestionDismiss),
+	})))
 	prefixChar := "@"
 	if m.suggest.Kind == mentionCommand {
 		prefixChar = "/"
@@ -247,18 +246,18 @@ func (m *Model) pastePanelLines() []string {
 	if total == 0 {
 		return nil
 	}
-	lines := []string{m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
-		"pasted draft items and restored turns (%s removes the latest)",
-		m.keys.label(KeyContextComposer, ActionComposerUndo)))}
+	lines := []string{m.th.Style(theme.RoleMuted).Render(m.text(MsgPasteHeader, MessageArgs{
+		"undo": m.keys.label(KeyContextComposer, ActionComposerUndo),
+	}))}
 	start := maxInt(total-3, 0)
 	if start > 0 {
-		lines = append(lines, m.th.Style(theme.RoleMuted).Render(fmt.Sprintf("  ... %d earlier item(s)", start)))
+		lines = append(lines, m.th.Style(theme.RoleMuted).Render(m.countText(MsgPasteEarlier, start, nil)))
 	}
 	for i := start; i < total; i++ {
-		kind := "paste"
+		kind := m.text(MsgPasteKindPaste, nil)
 		content := ""
 		if i < len(m.pendingPrefix) {
-			kind = "restored"
+			kind = m.text(MsgPasteKindRestored, nil)
 			content = m.pendingPrefix[i]
 		} else {
 			content = m.pendingPaste[i-len(m.pendingPrefix)]
@@ -266,9 +265,12 @@ func (m *Model) pastePanelLines() []string {
 		count := strings.Count(content, "\n") + 1
 		summary := strings.TrimSpace(sanitize(strings.Split(content, "\n")[0]))
 		if summary == "" {
-			summary = "(blank first line)"
+			summary = m.text(MsgPasteBlankFirstLine, nil)
 		}
-		line := fmt.Sprintf("  [%d %s] %d lines, %d chars: %s", i+1, kind, count, len([]rune(content)), summary)
+		line := m.text(MsgPasteItem, MessageArgs{
+			"index": i + 1, "kind": kind, "lines": count,
+			"chars": len([]rune(content)), "summary": summary,
+		})
 		lines = append(lines, m.th.Style(theme.RoleInfo).Render(line))
 	}
 	return lines
@@ -279,21 +281,21 @@ func (m *Model) queuePanelLines() []string {
 	if total == 0 {
 		return nil
 	}
-	lines := []string{m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
-		"queued follow-ups: %d (%s queues, %s edits latest)", total,
-		m.keys.label(KeyContextComposer, ActionComposerQueue),
-		m.keys.label(KeyContextComposer, ActionComposerRecallQueue)))}
+	lines := []string{m.th.Style(theme.RoleMuted).Render(m.countText(MsgQueueHeader, total, MessageArgs{
+		"queue": m.keys.label(KeyContextComposer, ActionComposerQueue),
+		"edit":  m.keys.label(KeyContextComposer, ActionComposerRecallQueue),
+	}))}
 	shown := minInt(total, 3)
 	for i := 0; i < shown; i++ {
 		draft := m.followUps.drafts[i]
 		summary := strings.TrimSpace(sanitize(firstLine(draft.Text)))
 		if summary == "" {
-			summary = "(pasted content)"
+			summary = m.text(MsgQueuePastedContent, nil)
 		}
 		if len(draft.Paste) > 0 {
-			summary += fmt.Sprintf(" +%d paste item(s)", len(draft.Paste))
+			summary += m.countText(MsgQueuePasteItems, len(draft.Paste), nil)
 		}
-		lines = append(lines, m.th.Style(theme.RoleInfo).Render(fmt.Sprintf("  %d. %s", i+1, summary)))
+		lines = append(lines, m.th.Style(theme.RoleInfo).Render(m.text(MsgQueueItem, MessageArgs{"index": i + 1, "summary": summary})))
 	}
 	return lines
 }
@@ -306,7 +308,7 @@ func (m *Model) transcriptWidth() int {
 }
 
 func (m *Model) taskTreeLines() []string {
-	return m.tasks.lines(m.th, maxInt(m.width-2, 1), 4)
+	return m.tasks.lines(m, maxInt(m.width-2, 1), 4)
 }
 
 // banner returns the degrade line shown while the daemon link is down —
@@ -318,17 +320,7 @@ func (m *Model) banner() string {
 			microcopy.Args{"socket": m.socket},
 			microcopy.WithLocale(m.locale), microcopy.WithPlain(m.plain()))
 		if m.conn == ConnReconnecting {
-			// m.locale may be an unnormalized flag value ("zh-CN",
-			// "zh_TW.UTF-8") — main.go only normalizes the DetectLocale
-			// fallback, not an explicit --locale. Normalize here the same
-			// way Governed/Degrade/Loading do internally, so the suffix
-			// matches the (already-normalized) Degrade text it's appended
-			// to instead of silently falling back to English.
-			if microcopy.NormalizeLocale(m.locale) == "zh" {
-				line += fmt.Sprintf("（正在重连，第 %d 次）", m.attempt)
-			} else {
-				line += fmt.Sprintf(" (reconnecting, attempt %d)", m.attempt)
-			}
+			line += m.text(MsgReconnectAttempt, MessageArgs{"attempt": m.attempt})
 		}
 		return line
 	default:
@@ -417,27 +409,34 @@ func (m *Model) View() tea.View {
 	}
 	b.WriteString("\n")
 
-	status := "not attached"
+	status := m.text(MsgStatusNotAttached, nil)
 	if m.sessionID != "" {
-		status = "session " + m.sessionID
+		status = m.text(MsgStatusSession, MessageArgs{"id": m.sessionID})
 	}
-	activity := "ready"
+	activity := m.text(MsgStatusReady, nil)
 	if m.editor != nil {
-		activity = "editing draft"
+		activity = m.text(MsgStatusEditingDraft, nil)
 	} else if m.submitting != nil {
-		activity = "sending " + string(m.submitting.kind)
+		activity = m.text(MsgStatusSending, MessageArgs{"kind": string(m.submitting.kind)})
 	} else if m.inFlightTaskID != "" {
-		activity = "running " + m.inFlightTaskID
+		activity = m.text(MsgStatusRunning, MessageArgs{"task": m.inFlightTaskID})
 	}
 	if m.unseenLines > 0 {
-		activity += fmt.Sprintf(" · %d new", m.unseenLines)
+		activity += " · " + m.countText(MsgStatusNew, m.unseenLines, nil)
 	}
 	if m.followUps.len() > 0 {
-		activity += fmt.Sprintf(" · %d queued", m.followUps.len())
+		activity += " · " + m.countText(MsgStatusQueued, m.followUps.len(), nil)
 	}
-	statusLine := m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
-		" carina · %s · mode %s · %s · %s help", status, m.mode, activity,
-		primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalHelp))))
+	if m.unreadAttention > 0 {
+		activity += " · " + m.countText(MsgStatusAttention, m.unreadAttention, nil)
+	}
+	if m.chord.hint != "" {
+		activity += " · " + m.text(MsgStatusChord, MessageArgs{"hint": m.chord.hint})
+	}
+	statusLine := m.th.Style(theme.RoleMuted).Render(m.text(MsgStatusFooter, MessageArgs{
+		"session": status, "mode": m.mode, "activity": activity,
+		"help": primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalHelp)),
+	}))
 	if l.showStatus {
 		b.WriteString(fitRenderedLine(statusLine, l.width))
 	}
@@ -456,6 +455,14 @@ func (m *Model) View() tea.View {
 		modal := fitViewBlock(m.overlayView(), l.width, l.height, true)
 		content = lipgloss.Place(l.width, l.height,
 			lipgloss.Center, lipgloss.Center, modal)
+	} else if m.checkpointPicker != nil {
+		modal := fitViewBlock(m.checkpointPickerView(), l.width, l.height, true)
+		content = lipgloss.Place(l.width, l.height,
+			lipgloss.Center, lipgloss.Center, modal)
+	} else if m.keymapEditor != nil {
+		modal := fitViewBlock(m.keymapEditorView(), l.width, l.height, true)
+		content = lipgloss.Place(l.width, l.height,
+			lipgloss.Center, lipgloss.Center, modal)
 	} else if m.helpOpen {
 		modal := fitViewBlock(m.helpOverlayView(), l.width, l.height, true)
 		content = lipgloss.Place(l.width, l.height,
@@ -465,7 +472,13 @@ func (m *Model) View() tea.View {
 	}
 
 	v := tea.NewView(content)
-	v.AltScreen = true
+	v.AltScreen = !m.noAlternateScreen
+	v.ReportFocus = true
+	// Cell motion is the smallest terminal mouse mode that delivers wheel
+	// events without claiming passive pointer movement. Mouse tracking makes
+	// unmodified drag belong to the app; terminals conventionally retain native
+	// text selection through their modifier-assisted selection gesture.
+	v.MouseMode = tea.MouseModeCellMotion
 	v.OnMouse = func(msg tea.MouseMsg) tea.Cmd {
 		return func() tea.Msg { return msg }
 	}
@@ -473,6 +486,7 @@ func (m *Model) View() tea.View {
 	// intentional while an overlay owns input, and whenever a zero-sized host
 	// has not supplied a usable cell grid yet (R21).
 	if !m.helpOpen && m.question == nil && m.approval == nil && m.transcriptPager == nil &&
+		m.checkpointPicker == nil && m.keymapEditor == nil &&
 		m.editor == nil && m.width > 0 && m.height > 0 {
 		if m.historySearch != nil {
 			cursor := m.input.Cursor()

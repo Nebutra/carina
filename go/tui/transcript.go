@@ -42,6 +42,7 @@ const (
 type eventPresentation struct {
 	Key         string
 	Kind        presentationKind
+	KindLabel   string
 	Status      presentationStatus
 	Timestamp   string
 	Title       string
@@ -50,6 +51,8 @@ type eventPresentation struct {
 	Depth       int
 	Collapsible bool
 	Collapsed   bool
+	OpenLabel   string
+	FoldLabel   string
 }
 
 // entry caches its rendered form. Typed entries retain their presentation so
@@ -184,14 +187,26 @@ func (p eventPresentation) render(th theme.Theme, width int) string {
 		glyph = glyphNeedsAuth(th)
 	}
 	indent := strings.Repeat("  ", maxInt(p.Depth, 0))
-	header := strings.TrimSpace(strings.Join(nonEmpty(p.Timestamp, glyph, string(p.Kind), p.Title), " "))
+	kind := p.KindLabel
+	if kind == "" {
+		kind = string(p.Kind)
+	}
+	header := strings.TrimSpace(strings.Join(nonEmpty(p.Timestamp, glyph, kind, p.Title), " "))
 	if p.Summary != "" {
 		header += " " + p.Summary
 	}
 	if p.Collapsible && len(p.Body) > 0 {
-		fold := "[open]"
+		open := p.OpenLabel
+		if open == "" {
+			open = "open"
+		}
+		fold := "[" + open + "]"
 		if p.Collapsed {
-			fold = fmt.Sprintf("[+%d]", len(p.Body))
+			label := p.FoldLabel
+			if label == "" {
+				label = "+{count}"
+			}
+			fold = "[" + strings.ReplaceAll(label, "{count}", fmt.Sprintf("%d", len(p.Body))) + "]"
 		}
 		header += " " + muted.Render(fold)
 	}
@@ -290,7 +305,82 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 	}
 
 	p.Summary = sanitize(p.Summary)
+	localizePresentation(&p, newLocalizer(locale))
 	return p
+}
+
+func localizePresentation(p *eventPresentation, l localizer) {
+	p.OpenLabel = l.Text(MsgTranscriptOpen, nil)
+	p.FoldLabel = l.Text(MsgTranscriptCollapsed, MessageArgs{"count": "{count}"})
+	switch p.Kind {
+	case presentationAgent:
+		p.KindLabel = l.Text(MsgTranscriptAgent, nil)
+	case presentationTool:
+		p.KindLabel = l.Text(MsgTranscriptTool, nil)
+	case presentationCommand:
+		p.KindLabel = l.Text(MsgTranscriptCommand, nil)
+	case presentationFile:
+		p.KindLabel = l.Text(MsgTranscriptKindFile, nil)
+	case presentationContext:
+		p.KindLabel = l.Text(MsgTranscriptKindContext, nil)
+	case presentationGovernance:
+		p.KindLabel = l.Text(MsgTranscriptKindGovernance, nil)
+	case presentationSubagent:
+		p.KindLabel = l.Text(MsgTranscriptSubagent, nil)
+	case presentationWorkflow:
+		p.KindLabel = l.Text(MsgTranscriptWorkflow, nil)
+	default:
+		p.KindLabel = l.Text(MsgTranscriptKindSystem, nil)
+	}
+	switch p.Title {
+	case "runtime":
+		p.Title = l.Text(MsgTranscriptRuntime, nil)
+	case "question":
+		p.Title = l.Text(MsgTranscriptQuestion, nil)
+	case "task":
+		p.Title = l.Text(MsgTranscriptTask, nil)
+	case "model":
+		p.Title = l.Text(MsgTranscriptModel, nil)
+	case "context compacted":
+		p.Title = l.Text(MsgTranscriptContextCompacted, nil)
+	case "tool":
+		p.Title = l.Text(MsgTranscriptTool, nil)
+	case "workflow":
+		p.Title = l.Text(MsgTranscriptWorkflow, nil)
+	case "subagent":
+		p.Title = l.Text(MsgTranscriptSubagent, nil)
+	case "agent":
+		p.Title = l.Text(MsgTranscriptAgent, nil)
+	case "step":
+		p.Title = l.Text(MsgTranscriptStep, nil)
+	case "command":
+		p.Title = l.Text(MsgTranscriptCommand, nil)
+	case "output":
+		p.Title = l.Text(MsgTranscriptOutput, nil)
+	}
+	if strings.HasPrefix(p.Title, "approval ") {
+		p.Title = l.Text(MsgTranscriptApproval, MessageArgs{"id": strings.TrimPrefix(p.Title, "approval ")})
+	}
+	switch {
+	case p.Summary == "completed":
+		p.Summary = l.Text(MsgTranscriptCompleted, nil)
+	case p.Summary == "response received":
+		p.Summary = l.Text(MsgTranscriptResponseReceived, nil)
+	case strings.HasPrefix(p.Summary, "selected "):
+		p.Summary = l.Text(MsgTranscriptSelected, MessageArgs{"tool": strings.TrimPrefix(p.Summary, "selected ")})
+	case strings.HasSuffix(p.Summary, " started"):
+		p.Summary = l.Text(MsgTranscriptStarted, MessageArgs{"agent": strings.TrimSuffix(p.Summary, " started")})
+	case strings.HasPrefix(p.Summary, "exit "):
+		p.Summary = l.Text(MsgTranscriptExit, MessageArgs{"code": strings.TrimPrefix(p.Summary, "exit ")})
+	}
+	for i, line := range p.Body {
+		switch {
+		case strings.HasPrefix(line, "artifact: "):
+			p.Body[i] = l.Text(MsgTranscriptArtifact, MessageArgs{"ids": strings.TrimPrefix(line, "artifact: ")})
+		case line == "open: carina artifact read <session_id> <artifact_id>":
+			p.Body[i] = l.Text(MsgTranscriptOpenArtifact, nil)
+		}
+	}
 }
 
 func presentAuthoritativeToolCall(p eventPresentation, typ string, payload map[string]any) eventPresentation {

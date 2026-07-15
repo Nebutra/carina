@@ -98,6 +98,14 @@ class ClientTest(unittest.TestCase):
                 result = {"providers": [], "totals": {}, "estimated": False}
             elif request["method"] == "task.steer":
                 result = {"queued": True, "task_id": "t1", "status": "running"}
+            elif request["method"] == "task.resume":
+                result = {"task_id": "t1", "session_id": "s1", "status": "running"}
+            elif request["method"] == "session.checkpoint.preview":
+                result = {"checkpoint":{"checkpoint_id":"t1:1:9","created_at":"2026-07-14T00:00:00Z","sequence":"00000000000000000009","task_id":"t1","session_id":"s1","turn":1,"applied_patches":[]},"conversation_turns":1,"rollback_patches":[],"will_resume":"paused"}
+            elif request["method"] == "session.checkpoint.summarize":
+                result = {"checkpoint_id":"t1:1:9","task_id":"t1","turn":1,"recent":[]}
+            elif request["method"] == "session.checkpoint.restore":
+                result = {"restored":True,"checkpoint_id":"t1:1:9","task_id":"t1","turn":1,"rolled_back":[],"status":"paused","idempotent":True,"reconciliation_required":False,"journal_cleanup_pending":False}
             elif request["method"] == "task.user.answer":
                 result = {"question_id": "q1", "accepted": True, "value": "yes"}
             elif request["method"] == "session.events.stream":
@@ -119,6 +127,10 @@ class ClientTest(unittest.TestCase):
             self.assertEqual(client.list_session_items("s1",limit=1)["data"][0]["task_id"],"t1")
             self.assertFalse(client.cost("s1")["estimated"])
             self.assertTrue(client.steer_task("t1", "continue")["queued"])
+            self.assertEqual(client.resume_task("t1")["status"], "running")
+            self.assertEqual(client.preview_checkpoint("s1", "t1:1:9")["checkpoint"]["sequence"], "00000000000000000009")
+            self.assertEqual(client.summarize_checkpoint("s1", "t1:1:9")["turn"], 1)
+            self.assertTrue(client.restore_checkpoint("s1", "t1:1:9", True)["idempotent"])
             self.assertTrue(client.answer_question("q1", "yes")["accepted"])
             client.subscribe_session_events("s1")
             method, event = client.read_notification()
@@ -127,7 +139,8 @@ class ClientTest(unittest.TestCase):
             client.close()
 
         self.assertEqual(methods, [
-            "session.attach", "session.fork", "session.review", "session.items", "usage.cost", "task.steer",
+            "session.attach", "session.fork", "session.review", "session.items", "usage.cost", "task.steer", "task.resume",
+            "session.checkpoint.preview", "session.checkpoint.summarize", "session.checkpoint.restore",
             "task.user.answer", "session.events.stream",
         ])
 

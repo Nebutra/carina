@@ -22,9 +22,26 @@ export interface Task {
   workspace_id: string
   status: string
   user_prompt: string
+  model?: string
+  agent?: string
+  success_criteria?: SuccessCheck[]
   created_at: string
   updated_at: string
   risk_level: number
+  mode?: string
+  summary?: string
+  applied_patches?: string[]
+  reconciliation_required?: boolean
+  blocked_reason?: string
+  tokens_used?: number
+  token_usage_observed?: boolean
+  token_budget?: number
+  output_schema?: JsonSchema
+  lease_owner?: string
+  lease_expiry?: string
+  lease_generation?: number
+  attempts?: number
+  required_worker_capabilities?: string[]
 }
 
 export interface CarinaEvent {
@@ -35,6 +52,9 @@ export interface CarinaEvent {
   timestamp: string
   payload?: Record<string, unknown>
   permission_decision_id?: string
+  actor?: 'go' | 'rust' | 'zig' | 'model' | 'user' | 'agent' | 'plugin' | 'operator' | 'worker'
+  prev_hash?: string
+  event_hash?: string
   raw_cursor?: number
 }
 
@@ -102,8 +122,11 @@ export interface RunOptions { outputSchema?: JsonSchema; signal?: AbortSignal; p
 export interface TurnResult { task: Task; finalResponse: string; structuredOutput?: unknown }
 export interface AgentViewEntry { session_id: string; task_id?: string; state: string; title?: string; summary?: string; workspace_root?: string; updated_at?: string }
 export interface AgentView { needs_input: AgentViewEntry[]; working: AgentViewEntry[]; completed: AgentViewEntry[] }
-export interface SuccessCheck { kind: string; path?: string; pattern?: string; command?: string[] }
-export interface Checkpoint { checkpoint_id: string; task_id: string; session_id: string; turn: number; summary?: string; applied_patches: string[] }
+export interface SuccessCheck { kind: string; path?: string; pattern?: string; command?: string }
+export interface Checkpoint { checkpoint_id: string; parent_checkpoint_id?: string; created_at: string; sequence: string; task_id: string; session_id: string; turn: number; summary?: string; applied_patches: string[] }
+export interface CheckpointPreview { checkpoint: Checkpoint; conversation_turns: number; summary?: string; rollback_patches: string[]; will_resume: 'paused' }
+export interface CheckpointSummary { checkpoint_id: string; task_id: string; turn: number; summary?: string; recent: Record<string, unknown>[] }
+export interface CheckpointRestoreResult { restored: true; checkpoint_id: string; task_id: string; turn: number; rolled_back: string[]; status: 'paused'; idempotent: boolean; reconciliation_required: false; journal_cleanup_pending: boolean }
 export interface ArtifactScope { session_id: string; task_id?: string; call_id?: string }
 export interface ArtifactMetadata { id:string; scope:ArtifactScope; media_type?:string; bytes:number; created_at:string; expires_at?:string; preview?:string; truncated:boolean; preview_utf8:boolean }
 export interface ArtifactReadPage { metadata:ArtifactMetadata; offset:number; next_offset:number; eof:boolean; content_base64:string }
@@ -279,9 +302,10 @@ export class CarinaClient {
   listAgents(workspaceRoot = ''): Promise<Record<string, unknown>> { return this.call('agent.list', { workspace_root: workspaceRoot }) }
   agentView(): Promise<AgentView> { return this.call('agent.view') }
   listCheckpoints(sessionId: string): Promise<Checkpoint[]> { return this.call('session.checkpoint.list', { session_id: sessionId }) }
-  previewCheckpoint(sessionId: string, checkpointId: string): Promise<Record<string, unknown>> { return this.call('session.checkpoint.preview', { session_id: sessionId, checkpoint_id: checkpointId }) }
-  summarizeCheckpoint(sessionId: string, checkpointId: string): Promise<Record<string, unknown>> { return this.call('session.checkpoint.summarize', { session_id: sessionId, checkpoint_id: checkpointId }) }
-  restoreCheckpoint(sessionId: string, checkpointId: string, confirmed = false): Promise<Record<string, unknown>> { return this.call('session.checkpoint.restore', { session_id: sessionId, checkpoint_id: checkpointId, confirmed }) }
+  previewCheckpoint(sessionId: string, checkpointId: string): Promise<CheckpointPreview> { return this.call('session.checkpoint.preview', { session_id: sessionId, checkpoint_id: checkpointId }) }
+  summarizeCheckpoint(sessionId: string, checkpointId: string): Promise<CheckpointSummary> { return this.call('session.checkpoint.summarize', { session_id: sessionId, checkpoint_id: checkpointId }) }
+  restoreCheckpoint(sessionId: string, checkpointId: string, confirmed = false): Promise<CheckpointRestoreResult> { return this.call('session.checkpoint.restore', { session_id: sessionId, checkpoint_id: checkpointId, confirmed }) }
+  resumeTask(taskId: string): Promise<Task> { return this.call('task.resume', { task_id: taskId }) }
   injectChannelEvent(event: ChannelEvent, signature: string): Promise<Record<string, unknown>> { return this.call('channel.event.inject', { event, signature }) }
   listExtensions(): Promise<{ plugins: Extension[]; safe_mode: boolean; total_prompt_tokens: number }> { return this.call('extension.list') }
   setExtensionEnabled(name: string, enabled: boolean): Promise<Extension> { return this.call(enabled ? 'extension.enable' : 'extension.disable', { name }) }

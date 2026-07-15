@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 	"unicode"
@@ -13,8 +14,18 @@ import (
 
 const recentHistoryLimit = 200
 
+type historyScope string
+
+const (
+	historyScopeSession   historyScope = "session"
+	historyScopeWorkspace historyScope = "workspace"
+	historyScopeGlobal    historyScope = "global"
+)
+
 type historyLoadedMsg struct {
 	generation int
+	search     bool
+	scope      historyScope
 	entries    []string
 	err        error
 }
@@ -29,13 +40,19 @@ const (
 
 // historySearchState owns one Ctrl+R interaction. Query input stays separate
 // from the textarea preview, while original preserves the complete draft for
-// lossless Esc/Ctrl+C cancellation.
+// lossless Ctrl+C cancellation.
 type historySearchState struct {
-	original composerSnapshot
-	query    string
-	status   historySearchStatus
-	matches  []int // history indexes, newest first
-	position int
+	original       composerSnapshot
+	query          string
+	status         historySearchStatus
+	matches        []int // history indexes, newest first
+	position       int
+	scope          historyScope
+	loadedScope    historyScope
+	entries        []promptDraft
+	loading        bool
+	loadGeneration int
+	loadError      string
 }
 
 func (m *Model) loadRecentHistory(call Caller) tea.Cmd {
@@ -44,16 +61,54 @@ func (m *Model) loadRecentHistory(call Caller) tea.Cmd {
 	}
 	m.historyLoadGen++
 	generation := m.historyLoadGen
+	return m.loadHistoryScope(call, historyScopeWorkspace, generation, false)
+}
+
+func (m *Model) loadHistoryScope(call Caller, scope historyScope, generation int, search bool) tea.Cmd {
+	sessionID := m.sessionID
 	return func() tea.Msg {
+		if call == nil {
+			return historyLoadedMsg{generation: generation, search: search, scope: scope, err: fmt.Errorf("daemon not connected")}
+		}
 		var out struct {
 			Entries []string `json:"entries"`
 		}
-		err := call.Call("history.recent", map[string]any{"limit": recentHistoryLimit}, &out)
-		return historyLoadedMsg{generation: generation, entries: out.Entries, err: err}
+		err := call.Call("history.recent", map[string]any{
+			"limit": recentHistoryLimit, "scope": string(scope), "session_id": sessionID,
+		}, &out)
+		return historyLoadedMsg{generation: generation, search: search, scope: scope, entries: out.Entries, err: err}
 	}
 }
 
 func (m *Model) handleHistoryLoaded(msg historyLoadedMsg) {
+	if msg.search {
+		search := m.historySearch
+		if search == nil || msg.generation != search.loadGeneration || msg.scope != search.scope {
+			return
+		}
+		search.loading = false
+		if msg.err != nil {
+			if search.loadedScope != "" {
+				search.scope = search.loadedScope
+				search.loadError = m.text(MsgHistoryLoadKept, MessageArgs{
+					"scope": m.historyScopeText(msg.scope), "kept": m.historyScopeText(search.loadedScope),
+				})
+			} else {
+				search.entries = nil
+				search.matches = nil
+				search.position = -1
+				search.status = historySearchNoMatch
+				search.loadError = m.text(MsgHistoryLoadCleared, MessageArgs{"scope": m.historyScopeText(msg.scope)})
+				m.restoreComposerSnapshot(search.original)
+			}
+			return
+		}
+		search.loadError = ""
+		search.loadedScope = msg.scope
+		search.entries = promptDraftsFromStrings(msg.entries)
+		m.reconcileHistorySearchEntries()
+		return
+	}
 	// An unsupported daemon and a lost connection are expected downgrade paths.
 	// History improves recall, but must never interrupt the active composer.
 	if msg.err != nil || msg.generation != m.historyLoadGen {
@@ -79,7 +134,28 @@ func (m *Model) handleHistoryLoaded(msg historyLoadedMsg) {
 	default:
 		m.historyPos = clampInt(oldPos, 0, len(m.history))
 	}
-	m.reconcileHistorySearchAfterMerge()
+	if m.historySearch != nil && m.historySearch.loadedScope == historyScopeWorkspace {
+		m.historySearch.entries = clonePromptHistory(m.history)
+		m.reconcileHistorySearchEntries()
+	}
+}
+
+func promptDraftsFromStrings(entries []string) []promptDraft {
+	result := make([]promptDraft, 0, len(entries))
+	for _, entry := range entries {
+		if strings.TrimSpace(entry) != "" {
+			result = append(result, promptDraft{Text: entry})
+		}
+	}
+	return mergePromptHistory(nil, result)
+}
+
+func clonePromptHistory(entries []promptDraft) []promptDraft {
+	result := make([]promptDraft, len(entries))
+	for i := range entries {
+		result[i] = cloneDraft(entries[i])
+	}
+	return result
 }
 
 // mergePromptHistory treats the daemon result as the older prefix and the
@@ -140,9 +216,12 @@ func (m *Model) beginHistorySearch() bool {
 	}
 	m.closeSuggest()
 	m.historySearch = &historySearchState{
-		original: m.composerSnapshot(),
-		status:   historySearchIdle,
-		position: -1,
+		original:    m.composerSnapshot(),
+		status:      historySearchIdle,
+		position:    -1,
+		scope:       historyScopeWorkspace,
+		loadedScope: historyScopeWorkspace,
+		entries:     clonePromptHistory(m.history),
 	}
 	m.historyPos = len(m.history)
 	m.historyScratch = promptDraft{}
@@ -177,23 +256,27 @@ func (m *Model) historySearchKeyText(key, text string) (tea.Cmd, bool) {
 	if search == nil {
 		return nil, false
 	}
+	if search.loading && (m.keys.matches(KeyContextHistory, ActionHistoryPrevious, key) ||
+		m.keys.matches(KeyContextHistory, ActionHistoryNext, key) ||
+		m.keys.matches(KeyContextHistory, ActionHistoryExecute, key) ||
+		m.keys.matches(KeyContextHistory, ActionHistoryAccept, key)) {
+		return nil, true
+	}
 	switch {
 	case m.keys.matches(KeyContextHistory, ActionHistoryPrevious, key):
 		m.stepHistorySearch(-1)
 	case m.keys.matches(KeyContextHistory, ActionHistoryNext, key):
 		m.stepHistorySearch(1)
-	case m.keys.matches(KeyContextHistory, ActionHistoryAccept, key):
+	case m.keys.matches(KeyContextHistory, ActionHistoryExecute, key):
 		if search.status == historySearchMatch {
-			before := search.original
-			m.historySearch = nil
-			m.historyPos = len(m.history)
-			m.historyScratch = promptDraft{}
-			m.recordComposerEdit(before, composerEditOther)
-			m.layout()
-			return m.resumeQueuedAfterTransient(), true
+			return m.acceptHistorySearch(true), true
 		}
+	case m.keys.matches(KeyContextHistory, ActionHistoryAccept, key):
+		return m.acceptHistorySearch(false), true
 	case m.keys.matches(KeyContextHistory, ActionHistoryCancel, key):
 		return m.cancelHistorySearch(), true
+	case m.keys.matches(KeyContextHistory, ActionHistoryCycleScope, key):
+		return m.cycleHistorySearchScope(), true
 	case m.keys.matches(KeyContextHistory, ActionHistoryDelete, key):
 		runes := []rune(search.query)
 		if len(runes) > 0 {
@@ -245,7 +328,7 @@ func (m *Model) updateHistorySearchQuery(query string) {
 	}
 	search.query = query
 	search.position = -1
-	search.matches = m.historyMatches(query)
+	search.matches = historyMatchesIn(search.entries, query)
 	if query == "" {
 		search.status = historySearchIdle
 		m.restoreComposerSnapshot(search.original)
@@ -260,14 +343,22 @@ func (m *Model) updateHistorySearchQuery(query string) {
 }
 
 func (m *Model) historyMatches(query string) []int {
+	entries := m.history
+	if m.historySearch != nil {
+		entries = m.historySearch.entries
+	}
+	return historyMatchesIn(entries, query)
+}
+
+func historyMatchesIn(entries []promptDraft, query string) []int {
 	query = strings.ToLower(query)
 	if query == "" {
 		return nil
 	}
 	seen := make(map[string]bool)
 	matches := make([]int, 0)
-	for i := len(m.history) - 1; i >= 0; i-- {
-		draft := m.history[i]
+	for i := len(entries) - 1; i >= 0; i-- {
+		draft := entries[i]
 		key := historyDraftKey(draft)
 		if key == "" || seen[key] || !strings.Contains(strings.ToLower(draftPrompt(draft)), query) {
 			continue
@@ -299,7 +390,46 @@ func (m *Model) stepHistorySearch(direction int) {
 		search.position = 0
 	}
 	search.status = historySearchMatch
-	m.restoreDraft(m.history[search.matches[search.position]])
+	m.restoreDraft(search.entries[search.matches[search.position]])
+}
+
+func (m *Model) acceptHistorySearch(execute bool) tea.Cmd {
+	search := m.historySearch
+	if search == nil {
+		return nil
+	}
+	before := search.original
+	if search.status != historySearchMatch {
+		m.restoreComposerSnapshot(search.original)
+	}
+	m.historySearch = nil
+	m.historyPos = len(m.history)
+	m.historyScratch = promptDraft{}
+	m.recordComposerEdit(before, composerEditOther)
+	m.layout()
+	if execute {
+		return m.submitWithIntent(false)
+	}
+	return m.resumeQueuedAfterTransient()
+}
+
+func (m *Model) cycleHistorySearchScope() tea.Cmd {
+	search := m.historySearch
+	if search == nil {
+		return nil
+	}
+	switch search.scope {
+	case historyScopeSession:
+		search.scope = historyScopeWorkspace
+	case historyScopeWorkspace:
+		search.scope = historyScopeGlobal
+	default:
+		search.scope = historyScopeSession
+	}
+	search.loading = true
+	search.loadError = ""
+	search.loadGeneration++
+	return m.loadHistoryScope(m.call, search.scope, search.loadGeneration, true)
 }
 
 func (m *Model) cancelHistorySearch() tea.Cmd {
@@ -320,6 +450,13 @@ func (m *Model) cancelHistorySearch() tea.Cmd {
 }
 
 func (m *Model) reconcileHistorySearchAfterMerge() {
+	if m.historySearch != nil && m.historySearch.loadedScope == historyScopeWorkspace {
+		m.historySearch.entries = clonePromptHistory(m.history)
+	}
+	m.reconcileHistorySearchEntries()
+}
+
+func (m *Model) reconcileHistorySearchEntries() {
 	search := m.historySearch
 	if search == nil || search.query == "" {
 		return
@@ -328,10 +465,10 @@ func (m *Model) reconcileHistorySearchAfterMerge() {
 	if search.status == historySearchMatch {
 		currentKey = historyDraftKey(m.currentDraft())
 	}
-	search.matches = m.historyMatches(search.query)
+	search.matches = historyMatchesIn(search.entries, search.query)
 	search.position = -1
 	for position, index := range search.matches {
-		if historyDraftKey(m.history[index]) == currentKey {
+		if historyDraftKey(search.entries[index]) == currentKey {
 			search.position = position
 			break
 		}
@@ -352,25 +489,51 @@ func (m *Model) historySearchPresentation(width int) (string, string, string) {
 	if search == nil {
 		return "", "", ""
 	}
-	status := "type to search"
+	status := m.text(MsgHistoryTypeToSearch, nil)
 	switch search.status {
 	case historySearchMatch:
-		status = "match"
+		status = m.text(MsgHistoryMatch, nil)
 	case historySearchNoMatch:
-		status = "no match"
+		status = m.text(MsgHistoryNoMatch, nil)
 	}
+	if search.loading {
+		status = m.text(MsgHistoryLoading, nil)
+	} else if search.loadError != "" {
+		status = search.loadError
+	}
+	scope := m.historyScopeText(search.scope)
+	marker := "\ufff0"
+	args := MessageArgs{"query": marker, "scope": scope, "status": status}
+	var rendered string
 	if width >= 64 {
-		return "reverse-i-search: ", search.query,
-			"  " + status + "  " +
-				m.keys.label(KeyContextHistory, ActionHistoryPrevious) + " older  " +
-				m.keys.label(KeyContextHistory, ActionHistoryNext) + " newer  " +
-				m.keys.label(KeyContextHistory, ActionHistoryAccept) + " accept  " +
-				m.keys.label(KeyContextHistory, ActionHistoryCancel) + " cancel"
+		args["older"] = m.keys.label(KeyContextHistory, ActionHistoryPrevious)
+		args["newer"] = m.keys.label(KeyContextHistory, ActionHistoryNext)
+		args["run"] = m.keys.label(KeyContextHistory, ActionHistoryExecute)
+		args["edit"] = m.keys.label(KeyContextHistory, ActionHistoryAccept)
+		args["cycle"] = m.keys.label(KeyContextHistory, ActionHistoryCycleScope)
+		args["cancel"] = m.keys.label(KeyContextHistory, ActionHistoryCancel)
+		rendered = m.text(MsgHistoryWide, args)
+	} else if width >= 24 {
+		rendered = m.text(MsgHistoryMedium, args)
+	} else {
+		rendered = m.text(MsgHistoryTiny, args)
 	}
-	if width >= 24 {
-		return "history " + status + ": ", search.query, ""
+	prefix, suffix, ok := strings.Cut(rendered, marker)
+	if !ok {
+		return rendered, search.query, ""
 	}
-	return "?" + status + ":", search.query, ""
+	return prefix, search.query, suffix
+}
+
+func (m *Model) historyScopeText(scope historyScope) string {
+	switch scope {
+	case historyScopeSession:
+		return m.text(MsgHistoryScopeSession, nil)
+	case historyScopeGlobal:
+		return m.text(MsgHistoryScopeGlobal, nil)
+	default:
+		return m.text(MsgHistoryScopeWorkspace, nil)
+	}
 }
 
 func (m *Model) historySearchPanelLine(width int) string {

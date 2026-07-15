@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -23,7 +22,7 @@ func (m *Model) enqueueFollowUp() bool {
 	}
 	m.followUps.enqueue(draft)
 	m.clearComposerDraft()
-	m.push(m.th.Style(theme.RoleMuted).Render(fmt.Sprintf("- queued follow-up %d", m.followUps.len())))
+	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgFollowupQueued, MessageArgs{"count": m.followUps.len()})))
 	m.layout()
 	return true
 }
@@ -43,7 +42,7 @@ func (m *Model) recallLastFollowUp() bool {
 	}
 	m.restoreDraft(draft)
 	m.resetComposerUndo()
-	m.push(m.th.Style(theme.RoleMuted).Render("- recalled latest follow-up for editing"))
+	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgFollowupRecalled, nil)))
 	m.layout()
 	return true
 }
@@ -73,7 +72,7 @@ func mergeDraftsForRestore(drafts []promptDraft, current promptDraft) promptDraf
 }
 
 func (m *Model) restoreQueuedDrafts(reason string) {
-	if m.editor != nil || m.historySearch != nil {
+	if m.editor != nil || m.historySearch != nil || m.checkpointPicker != nil || m.keymapEditor != nil {
 		m.queueRestoreReason = reason
 		return
 	}
@@ -84,7 +83,7 @@ func (m *Model) restoreQueuedDrafts(reason string) {
 	merged := mergeDraftsForRestore(drafts, m.currentDraft())
 	m.restoreDraft(merged)
 	m.resetComposerUndo()
-	m.push(m.th.Style(theme.RoleMuted).Render(fmt.Sprintf("- restored %d queued follow-up(s) after %s", len(drafts), reason)))
+	m.push(m.th.Style(theme.RoleMuted).Render(m.countText(MsgFollowupRestored, len(drafts), nil)))
 	m.layout()
 }
 
@@ -101,7 +100,8 @@ func (m *Model) resumeQueuedAfterTransient() tea.Cmd {
 func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 	if m.followUps.len() == 0 || m.inFlightTaskID != "" || m.submitting != nil ||
 		m.approval != nil || m.question != nil || m.editor != nil || m.helpOpen ||
-		m.historySearch != nil || m.transcriptPager != nil || m.queueRecallPending || m.retrySubmission != nil {
+		m.historySearch != nil || m.transcriptPager != nil || m.checkpointPicker != nil ||
+		m.keymapEditor != nil || m.queueRecallPending || m.retrySubmission != nil {
 		return nil
 	}
 	for m.followUps.len() > 0 {
@@ -114,7 +114,7 @@ func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 			command := strings.TrimSpace(strings.TrimPrefix(text, "!"))
 			if command == "" {
 				m.restoreQueuedDrafts("invalid queued shell command")
-				m.push(fmt.Sprintf("%s queued shell command is empty; drafts restored", glyphFailed(m.th)))
+				m.push(m.text(MsgFollowupShellEmpty, MessageArgs{"glyph": glyphFailed(m.th)}))
 				return nil
 			}
 			return m.beginSubmissionSource(submissionShell, command, draft, true)
@@ -129,14 +129,15 @@ func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 			m.historyPos = len(m.history)
 			_ = m.slashCommand(text) // safeQueuedSlash commands are synchronous.
 			m.layout()
-			if m.helpOpen || m.transcriptPager != nil || m.historySearch != nil {
+			if m.helpOpen || m.transcriptPager != nil || m.historySearch != nil ||
+				m.checkpointPicker != nil || m.keymapEditor != nil {
 				return nil
 			}
 			continue
 		}
 		if m.call == nil {
 			m.restoreQueuedDrafts("automatic submission failure")
-			m.push(fmt.Sprintf("%s automatic follow-up submission failed: daemon not connected", glyphFailed(m.th)))
+			m.push(m.text(MsgFollowupDisconnected, MessageArgs{"glyph": glyphFailed(m.th)}))
 			return nil
 		}
 		return m.beginSubmissionSource(submissionTask, "", draft, true)
@@ -155,7 +156,7 @@ func (m *Model) recallQueuedCommandForReview() {
 	m.restoreDraft(draft)
 	m.resetComposerUndo()
 	m.queueRecallPending = true
-	m.push(m.th.Style(theme.RoleMuted).Render("- queued slash command recalled; review and run it from the composer"))
+	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgFollowupSlashRecalled, nil)))
 	m.layout()
 }
 
@@ -170,7 +171,7 @@ func (m *Model) recallQueuedSubmissionForRetry() {
 	m.restoreDraft(draft)
 	m.resetComposerUndo()
 	m.queueRecallPending = true
-	m.push(m.th.Style(theme.RoleMuted).Render("- unacknowledged queued submission recalled; Enter retries idempotently"))
+	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgFollowupRetryRecalled, nil)))
 	m.layout()
 }
 

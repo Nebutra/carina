@@ -9,6 +9,7 @@ package tui_test
 // support it (no tmux, no kernel/zig builds, CI without a PTY).
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	runewidth "github.com/mattn/go-runewidth"
 
 	"github.com/Nebutra/carina/go/rpc"
@@ -92,6 +94,10 @@ func TestTUIUnderPTY(t *testing.T) {
 		t.Skipf("cannot create tmux session (no PTY in this environment?): %v: %s", err, out)
 	}
 	t.Cleanup(func() { _, _ = tm("kill-server") })
+	rawPath := filepath.Join(state, "pty.raw")
+	if out, err := tm("pipe-pane", "-o", "-t", "main", fmt.Sprintf("cat >> %q", rawPath)); err != nil {
+		t.Fatalf("capture raw PTY output: %v: %s", err, out)
+	}
 	capture := func() string {
 		out, _ := tm("capture-pane", "-t", "main", "-p")
 		return out
@@ -107,14 +113,154 @@ func TestTUIUnderPTY(t *testing.T) {
 		t.Fatalf("timed out waiting for %s (%q); daemon log %s; screen:\n%s", what, substr, logPath, capture())
 		return ""
 	}
+	waitForScreen := func(what string, timeout time.Duration, predicate func(string) bool) string {
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			if scr := capture(); predicate(scr) {
+				return scr
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for %s; daemon log %s; screen:\n%s", what, logPath, capture())
+		return ""
+	}
+	readRaw := func() []byte {
+		data, _ := os.ReadFile(rawPath)
+		return data
+	}
+	waitForRaw := func(what string, offset int, timeout time.Duration, sequences ...string) []byte {
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			data := readRaw()
+			if offset > len(data) {
+				offset = len(data)
+			}
+			tail := data[offset:]
+			found := true
+			for _, sequence := range sequences {
+				if !bytes.Contains(tail, []byte(sequence)) {
+					found = false
+					break
+				}
+			}
+			if found {
+				return data
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for raw PTY output %s after byte %d", what, offset)
+		return nil
+	}
 
 	// Launch the TUI in the pane, recording its exit code for the
 	// governance-exit-code assertion.
-	cmdline := fmt.Sprintf("%q -socket %q -workspace %q -locale zh; echo EXIT_CODE=$?", tuiBin, sock, ws)
+	cmdline := fmt.Sprintf("CARINA_LOCALE=en LC_ALL=C %q -socket %q -workspace %q -locale en; echo EXIT_CODE=$?", tuiBin, sock, ws)
 	if _, err := tm("send-keys", "-t", "main", cmdline, "Enter"); err != nil {
 		t.Fatalf("send-keys: %v", err)
 	}
 	waitFor("session attach", "attached to", 30*time.Second)
+
+	// Bubble Tea must ask the real terminal for both bracketed-paste and SGR
+	// cell-motion mouse reports. OnMouse alone is insufficient: without these
+	// bytes, a terminal never sends wheel events to the application.
+	waitForRaw("input protocol enablement", 0, 10*time.Second,
+		ansi.SetModeBracketedPaste,
+		ansi.SetModeMouseButtonEvent,
+		ansi.SetModeMouseExtSgr,
+	)
+
+	// SIGWINCH reaches the production model through the PTY and the rendered
+	// frame follows both a constrained and expanded pane width.
+	if out, err := tm("resize-window", "-t", "main", "-x", "72", "-y", "18"); err != nil {
+		t.Fatalf("resize small: %v: %s", err, out)
+	}
+	waitForScreen("72-column resize", 10*time.Second, func(screen string) bool {
+		return screenHasBorderWidth(screen, 72)
+	})
+	if out, err := tm("resize-window", "-t", "main", "-x", "96", "-y", "28"); err != nil {
+		t.Fatalf("resize large: %v: %s", err, out)
+	}
+	waitForScreen("96-column resize", 10*time.Second, func(screen string) bool {
+		return screenHasBorderWidth(screen, 96)
+	})
+
+	// tmux -p wraps this payload in the terminal's real bracketed-paste
+	// protocol because the application enabled it above. A multi-line paste is
+	// a visible draft item and must never execute its shell-looking second line.
+	blockedPath := filepath.Join(state, "paste-must-not-execute")
+	pasteMarker := "PTY_BRACKETED_PASTE"
+	payload := pasteMarker + "\n!touch " + blockedPath
+	if out, err := tm("set-buffer", "-b", "carina-pty-paste", payload); err != nil {
+		t.Fatalf("set paste buffer: %v: %s", err, out)
+	}
+	if out, err := tm("paste-buffer", "-p", "-d", "-b", "carina-pty-paste", "-t", "main"); err != nil {
+		t.Fatalf("bracketed paste: %v: %s", err, out)
+	}
+	waitFor("multi-line paste draft", pasteMarker, 10*time.Second)
+	waitFor("multi-line paste protection", "pasted draft items", 10*time.Second)
+	time.Sleep(200 * time.Millisecond)
+	if _, err := os.Stat(blockedPath); !os.IsNotExist(err) {
+		t.Fatalf("multi-line paste executed hidden content: stat error %v", err)
+	}
+	if _, err := tm("send-keys", "-t", "main", "C-z"); err != nil {
+		t.Fatal(err)
+	}
+	waitForScreen("paste undo", 10*time.Second, func(screen string) bool {
+		return !strings.Contains(screen, pasteMarker) && !strings.Contains(screen, "pasted draft items")
+	})
+
+	// Exercise both newline paths as terminal bytes. Ctrl-J is the portable
+	// fallback; CSI-u Shift+Enter is what modern terminals emit when they can
+	// disambiguate a modified Enter key.
+	typeLiteral := func(text string) {
+		t.Helper()
+		if out, err := tm("send-keys", "-l", "-t", "main", text); err != nil {
+			t.Fatalf("type %q: %v: %s", text, err, out)
+		}
+	}
+	typeLiteral("PTY_CTRLJ_FIRST")
+	if _, err := tm("send-keys", "-t", "main", "C-j"); err != nil {
+		t.Fatal(err)
+	}
+	typeLiteral("PTY_CTRLJ_SECOND")
+	scr := waitFor("Ctrl-J multiline draft", "PTY_CTRLJ_SECOND", 10*time.Second)
+	assertMarkersOnDistinctRows(t, scr, "PTY_CTRLJ_FIRST", "PTY_CTRLJ_SECOND")
+	typeLiteral("_PTY_SHIFT_FIRST")
+	typeLiteral("\x1b[13;2u")
+	typeLiteral("PTY_SHIFT_SECOND")
+	scr = waitFor("Shift-Enter multiline draft", "PTY_SHIFT_SECOND", 10*time.Second)
+	assertMarkersOnDistinctRows(t, scr, "PTY_SHIFT_FIRST", "PTY_SHIFT_SECOND")
+	if _, err := tm("send-keys", "-t", "main", "C-c"); err != nil {
+		t.Fatal(err)
+	}
+	waitForScreen("multiline draft clear", 10*time.Second, func(screen string) bool {
+		return !strings.Contains(screen, "PTY_CTRLJ_FIRST") && !strings.Contains(screen, "PTY_SHIFT_SECOND")
+	})
+
+	// Opening help removes the declared composer cursor. Feed a real SGR wheel
+	// report into the pane and observe the overlay scroll, then verify closing
+	// help restores a physical cursor through the renderer protocol.
+	rawOffset := len(readRaw())
+	if _, err := tm("send-keys", "-t", "main", "F1"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("help overlay", "Carina help", 10*time.Second)
+	waitForRaw("cursor hidden for help", rawOffset, 10*time.Second, ansi.HideCursor)
+	wheelDown := ansi.MouseSgr(ansi.EncodeMouseButton(ansi.MouseWheelDown, false, false, false, false), 5, 5, false)
+	for range 2 {
+		typeLiteral(wheelDown)
+	}
+	waitForScreen("help wheel scroll", 10*time.Second, func(screen string) bool {
+		return strings.Contains(screen, "Carina help") && !strings.Contains(screen, "Commands")
+	})
+	rawOffset = len(readRaw())
+	if _, err := tm("send-keys", "-t", "main", "Escape"); err != nil {
+		t.Fatal(err)
+	}
+	waitForScreen("help close", 10*time.Second, func(screen string) bool {
+		return !strings.Contains(screen, "Carina help")
+	})
+	waitForRaw("composer cursor restored", rawOffset, 10*time.Second, ansi.ShowCursor)
 
 	// Drive real events through the daemon from outside, like a second
 	// client: command.exec publishes CommandStarted/Output/Exited envelopes
@@ -140,7 +286,7 @@ func TestTUIUnderPTY(t *testing.T) {
 	}
 
 	// Transcript: the zh output must appear, streamed live.
-	scr := waitFor("zh transcript line", "你好", 20*time.Second)
+	scr = waitFor("zh transcript line", "你好", 20*time.Second)
 
 	// zh alignment: every border row must occupy the same display width —
 	// east-asian-width correctness (CJK = 2 columns), the spike's G3 check.
@@ -155,6 +301,11 @@ func TestTUIUnderPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	scr = waitFor("clean TUI exit", "EXIT_CODE=0", 30*time.Second)
+	waitForRaw("input protocol reset", 0, 10*time.Second,
+		ansi.ResetModeBracketedPaste,
+		ansi.ResetModeMouseButtonEvent,
+		ansi.ResetModeMouseExtSgr,
+	)
 
 	// The TUI must never leave the terminal in raw mode: after exit, the
 	// pane's shell tty still has canonical mode and echo enabled.
@@ -194,11 +345,61 @@ func TestTUIUnderPTY(t *testing.T) {
 	assertToken("echo")
 }
 
+func screenHasBorderWidth(screen string, width int) bool {
+	for _, line := range strings.Split(screen, "\n") {
+		trimmed := strings.TrimRight(line, " ")
+		if strings.HasPrefix(trimmed, "╭") && runewidth.StringWidth(trimmed) == width {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCapturedBorderWidth(t *testing.T) {
+	const frameWidth = 24
+	for _, tc := range []struct {
+		name string
+		row  string
+		want int
+		ok   bool
+	}{
+		{name: "literal cells", row: "│" + strings.Repeat(" ", frameWidth-2) + "│", want: frameWidth, ok: true},
+		{name: "hard tabs clamp at margin", row: "│prompt\t\t\t│", want: frameWidth, ok: true},
+		{name: "missing closing border", row: "│prompt", ok: false},
+		{name: "content after tab is not normalized", row: "│prompt\tcontent│", want: 16, ok: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := capturedBorderWidth(tc.row, frameWidth)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("capturedBorderWidth(%q) = (%d, %v), want (%d, %v)", tc.row, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func assertMarkersOnDistinctRows(t *testing.T, screen, first, second string) {
+	t.Helper()
+	firstRow, secondRow := -1, -1
+	for row, line := range strings.Split(screen, "\n") {
+		if strings.Contains(line, first) {
+			firstRow = row
+		}
+		if strings.Contains(line, second) {
+			secondRow = row
+		}
+	}
+	if firstRow < 0 || secondRow < 0 {
+		t.Fatalf("multiline markers missing: %q row=%d, %q row=%d\n%s", first, firstRow, second, secondRow, screen)
+	}
+	if firstRow == secondRow {
+		t.Fatalf("newline input rendered both markers on row %d:\n%s", firstRow, screen)
+	}
+}
+
 // assertBorderAlignment checks that every frame row (rounded-border rows and
 // content rows delimited by │) renders to the same display column count.
 func assertBorderAlignment(t *testing.T, screen string) {
 	t.Helper()
-	var widths []int
 	var rows []string
 	for _, line := range strings.Split(screen, "\n") {
 		trimmed := strings.TrimRight(line, " ")
@@ -207,18 +408,65 @@ func assertBorderAlignment(t *testing.T, screen string) {
 		}
 		r := []rune(trimmed)[0]
 		if r == '╭' || r == '╰' || r == '│' {
-			widths = append(widths, runewidth.StringWidth(trimmed))
 			rows = append(rows, trimmed)
 		}
 	}
-	if len(widths) < 3 {
+	if len(rows) < 3 {
 		t.Fatalf("no bordered rows captured:\n%s", screen)
 	}
-	for i, w := range widths {
-		if w != widths[0] {
-			t.Errorf("zh alignment broken: row %d is %d cols, want %d: %q", i, w, widths[0], rows[i])
+	want := runewidth.StringWidth(rows[0])
+	for i, row := range rows {
+		w, ok := capturedBorderWidth(row, want)
+		if !ok {
+			t.Errorf("zh alignment broken: row %d has no closing border: %q", i, row)
+			continue
+		}
+		if w != want {
+			t.Errorf("zh alignment broken: row %d is %d cols, want %d: %q", i, w, want, row)
 		}
 	}
+}
+
+// capturedBorderWidth reproduces terminal tab stops for tmux capture-pane.
+// Bubble Tea's renderer uses hard tabs to skip unchanged blank cells; tmux 3.7
+// preserves those bytes instead of expanding them back to spaces. At the right
+// margin, a horizontal tab clamps to the final cell, where the renderer writes
+// the closing border. We only apply that clamp when tabs are immediately
+// followed by the closing border, so malformed content is not normalized away.
+func capturedBorderWidth(row string, frameWidth int) (int, bool) {
+	runes := []rune(row)
+	if len(runes) == 0 {
+		return 0, false
+	}
+	closing := runes[len(runes)-1]
+	if closing != '│' && closing != '╮' && closing != '╯' {
+		return 0, false
+	}
+	width := 0
+	for i, r := range runes {
+		if r != '\t' {
+			width += runewidth.RuneWidth(r)
+			continue
+		}
+		next := width + 8 - width%8
+		if onlyTabsBeforeClosingBorder(runes[i+1:]) && next >= frameWidth {
+			next = frameWidth - 1
+		}
+		width = next
+	}
+	return width, true
+}
+
+func onlyTabsBeforeClosingBorder(rest []rune) bool {
+	if len(rest) == 0 {
+		return false
+	}
+	for _, r := range rest[:len(rest)-1] {
+		if r != '\t' {
+			return false
+		}
+	}
+	return true
 }
 
 func goBuild(t *testing.T, root, out, pkg string) {

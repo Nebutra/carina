@@ -50,7 +50,7 @@ func (m *Model) beginExternalEditorWithSnapshot(draft promptDraft, original comp
 	m.breakComposerUndoGroup()
 	state, process, err := prepareExternalEditor(draft, m.getenv)
 	if err != nil {
-		m.push(fmt.Sprintf("%s external editor: %s", glyphFailed(m.th), err.Error()))
+		m.push(m.text(MsgWorkspaceExternalEditor, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
 		return nil
 	}
 	m.editorGen++
@@ -79,11 +79,11 @@ func (m *Model) handleExternalEditorDone(msg externalEditorDoneMsg) tea.Cmd {
 	draft, err := finishExternalEditor(session.draft, msg.err)
 	if err != nil {
 		m.restoreComposerSnapshot(session.original)
-		m.push(fmt.Sprintf("%s %s; draft restored", glyphFailed(m.th), err.Error()))
+		m.push(m.text(MsgWorkspaceDraftRestored, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
 	} else {
 		m.restoreDraft(draft)
 		m.recordComposerEdit(session.original, composerEditOther)
-		m.push(m.th.Style(theme.RoleMuted).Render("- external editor draft applied"))
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgWorkspaceEditorApplied, nil)))
 	}
 	m.layout()
 	if m.queueRestoreReason != "" {
@@ -99,7 +99,7 @@ func (m *Model) handleExternalEditorDone(msg externalEditorDoneMsg) tea.Cmd {
 func (m *Model) copyLastAgentProjection() tea.Cmd {
 	text := m.tr.lastAgentText()
 	if text == "" {
-		m.push(fmt.Sprintf("%s nothing to copy: no rendered agent response", glyphFailed(m.th)))
+		m.push(m.text(MsgWorkspaceNothingToCopy, MessageArgs{"glyph": glyphFailed(m.th)}))
 		return nil
 	}
 	write := m.clipboardWrite
@@ -110,10 +110,10 @@ func (m *Model) copyLastAgentProjection() tea.Cmd {
 
 func (m *Model) handleClipboardDone(msg clipboardDoneMsg) {
 	if msg.err != nil {
-		m.push(fmt.Sprintf("%s copy failed: %s", glyphFailed(m.th), msg.err.Error()))
+		m.push(m.text(MsgWorkspaceCopyFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}))
 		return
 	}
-	m.push(m.th.Style(theme.RoleMuted).Render("- copied last agent response"))
+	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgWorkspaceCopied, nil)))
 }
 
 func systemClipboardWrite(text string) error {
@@ -173,7 +173,7 @@ func (m *Model) transcriptPagerLines() []string {
 	}
 	text := m.tr.plainText()
 	if text == "" {
-		text = "(transcript is empty)"
+		text = m.text(MsgWorkspaceTranscriptEmpty, nil)
 	}
 	width := maxInt(m.width, 1)
 	var lines []string
@@ -236,8 +236,9 @@ func (m *Model) transcriptPagerView(width, height int) string {
 		return ""
 	}
 	if height == 1 {
-		return fitRenderedLine(fmt.Sprintf("transcript - %s closes",
-			m.keys.label(KeyContextPager, ActionPagerClose)), width)
+		return fitRenderedLine(m.text(MsgWorkspaceTranscriptTiny, MessageArgs{
+			"close": m.keys.label(KeyContextPager, ActionPagerClose),
+		}), width)
 	}
 	lines := m.transcriptPagerLines()
 	m.clampTranscriptPagerScroll(lines)
@@ -245,13 +246,14 @@ func (m *Model) transcriptPagerView(width, height int) string {
 	start := m.transcriptPager.scroll
 	end := minInt(start+page, len(lines))
 	visible := append([]string(nil), lines[start:end]...)
-	header := fitRenderedLine(fmt.Sprintf("transcript · %d lines", len(lines)), width)
-	footer := fitRenderedLine(fmt.Sprintf("%s/%s scroll · %s/%s page · %s close",
-		m.keys.label(KeyContextPager, ActionPagerUp),
-		m.keys.label(KeyContextPager, ActionPagerDown),
-		m.keys.label(KeyContextPager, ActionPagerPageUp),
-		m.keys.label(KeyContextPager, ActionPagerPageDown),
-		m.keys.label(KeyContextPager, ActionPagerClose)), width)
+	header := fitRenderedLine(m.countText(MsgWorkspaceTranscriptHeader, len(lines), nil), width)
+	footer := fitRenderedLine(m.text(MsgWorkspaceTranscriptFooter, MessageArgs{
+		"up":        m.keys.label(KeyContextPager, ActionPagerUp),
+		"down":      m.keys.label(KeyContextPager, ActionPagerDown),
+		"page_up":   m.keys.label(KeyContextPager, ActionPagerPageUp),
+		"page_down": m.keys.label(KeyContextPager, ActionPagerPageDown),
+		"close":     m.keys.label(KeyContextPager, ActionPagerClose),
+	}), width)
 	out := []string{header}
 	out = append(out, visible...)
 	for len(out) < height-1 {

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,24 +9,43 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Nebutra/carina/go/scheduler"
 	"github.com/Nebutra/carina/go/statefmt"
 )
 
-// runStoreVersion is the on-disk format version stamped onto task records and
-// run checkpoints. Per-store versioning (see go/statefmt): a future-stamped
-// file is quarantined on read and the run resumes fresh rather than
-// misreading a checkpoint written by a newer binary.
+// Task rows remain v1. Checkpoints evolved independently to v2 when durable
+// ids, lineage, timestamps, and sequences were added. A v2 reader accepts v1
+// checkpoints, while a v1 binary quarantines v2 rather than misreading them.
 const runStoreVersion = 1
+const checkpointStoreVersion = 2
 
 // runStore persists background-run records — one JSON file per task under
 // <stateDir>/runs — so the run registry (status, summary, applied patches)
 // survives a daemon restart. This is the durable, queryable *record* of a run;
 // resuming the live agent loop is a separate concern (transcript checkpoint).
 type runStore struct {
-	mu  sync.Mutex
-	dir string
+	mu                      sync.Mutex
+	dir                     string
+	lastCheckpointSequence  int64
+	restoreJournalWriteHook func(taskID string, journal *restoreJournal) error
+}
+
+const restoreJournalVersion = 1
+
+type restoreJournal struct {
+	Version              int      `json:"version"`
+	OperationID          string   `json:"operation_id"`
+	CheckpointID         string   `json:"checkpoint_id"`
+	TargetTurn           int      `json:"target_turn"`
+	TargetAppliedPatches []string `json:"target_applied_patches,omitempty"`
+	Pending              []string `json:"pending,omitempty"`
+	Completed            []string `json:"completed,omitempty"`
+	State                string   `json:"state"`
+	Failure              string   `json:"failure,omitempty"`
+	RecoveryAction       string   `json:"recovery_action,omitempty"`
+	UpdatedAt            string   `json:"updated_at"`
 }
 
 func newRunStore(stateDir string) *runStore {
@@ -79,6 +99,9 @@ func (r *runStore) load() []*scheduler.Task {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue
 		}
+		if strings.HasSuffix(e.Name(), ".ckpt.json") || strings.HasSuffix(e.Name(), ".restore.json") {
+			continue
+		}
 		if _, err := os.Stat(filepath.Join(r.dir, strings.TrimSuffix(e.Name(), ".json")+".tombstone")); err == nil {
 			continue
 		}
@@ -118,6 +141,11 @@ func (r *runStore) tombstone(taskID string) error {
 func (r *runStore) writeRestoreJournal(taskID string, value any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if journal, ok := value.(*restoreJournal); ok && r.restoreJournalWriteHook != nil {
+		if err := r.restoreJournalWriteHook(taskID, journal); err != nil {
+			return err
+		}
+	}
 	raw, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
@@ -128,6 +156,33 @@ func (r *runStore) writeRestoreJournal(taskID string, value any) error {
 		return err
 	}
 	return os.Rename(tmp, p)
+}
+
+func (r *runStore) isTombstoned(taskID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, err := os.Stat(filepath.Join(r.dir, taskID+".tombstone"))
+	return err == nil
+}
+
+func (r *runStore) loadRestoreJournal(taskID string) (*restoreJournal, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	raw, err := os.ReadFile(filepath.Join(r.dir, taskID+".restore.json"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var journal restoreJournal
+	if err := json.Unmarshal(raw, &journal); err != nil {
+		return nil, err
+	}
+	if journal.CheckpointID == "" {
+		return nil, fmt.Errorf("restore journal for %s is missing checkpoint_id", taskID)
+	}
+	return &journal, nil
 }
 func (r *runStore) clearRestoreJournal(taskID string) error {
 	r.mu.Lock()
@@ -156,12 +211,19 @@ func (r *runStore) reconcileRestoreJournals() ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		var row map[string]any
-		if json.Unmarshal(raw, &row) != nil {
+		var row restoreJournal
+		if json.Unmarshal(raw, &row) != nil || row.CheckpointID == "" {
 			return nil, fmt.Errorf("restore journal %s is corrupt", e.Name())
 		}
-		row["state"] = "blocked_reconciliation_required"
-		row["recovery_reason"] = "daemon restarted with an incomplete checkpoint restore"
+		if row.State == "committed" {
+			_ = os.Remove(p)
+			continue
+		}
+		row.Version = restoreJournalVersion
+		row.State = "blocked_reconciliation_required"
+		row.Failure = "daemon restarted with an incomplete checkpoint restore"
+		row.RecoveryAction = "retry session.checkpoint.restore with the same checkpoint_id"
+		row.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		updated, err := json.MarshalIndent(row, "", "  ")
 		if err != nil {
 			return nil, err
@@ -182,11 +244,15 @@ func (r *runStore) reconcileRestoreJournals() ([]string, error) {
 // (compacted) transcript. The audit log remains the full source of truth; this
 // is only what the agent loop needs to continue from where it left off.
 type runCheckpoint struct {
-	Version        int         `json:"version,omitempty"`
-	Turn           int         `json:"turn"`
-	Transcript     *Transcript `json:"transcript"`
-	MemorySnapshot string      `json:"memory_snapshot,omitempty"`
-	AppliedPatches []string    `json:"applied_patches,omitempty"`
+	Version            int         `json:"version,omitempty"`
+	CheckpointID       string      `json:"checkpoint_id,omitempty"`
+	ParentCheckpointID string      `json:"parent_checkpoint_id,omitempty"`
+	CreatedAt          string      `json:"created_at,omitempty"`
+	Sequence           int64       `json:"sequence,omitempty"`
+	Turn               int         `json:"turn"`
+	Transcript         *Transcript `json:"transcript"`
+	MemorySnapshot     string      `json:"memory_snapshot,omitempty"`
+	AppliedPatches     []string    `json:"applied_patches,omitempty"`
 }
 
 func (r *runStore) saveCheckpoint(taskID string, cp *runCheckpoint) {
@@ -196,9 +262,18 @@ func (r *runStore) saveCheckpoint(taskID string, cp *runCheckpoint) {
 func (r *runStore) saveCheckpointChecked(taskID string, cp *runCheckpoint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	row := *cp
-	row.Version = runStoreVersion
-	raw, err := json.Marshal(&row)
+	if cp == nil || cp.Transcript == nil {
+		return fmt.Errorf("checkpoint transcript is required")
+	}
+	if cp.CheckpointID == "" {
+		cp.Sequence = r.nextCheckpointSequenceLocked()
+		cp.CreatedAt = time.Unix(0, cp.Sequence).UTC().Format(time.RFC3339Nano)
+		if latest := readRunCheckpoint(filepath.Join(r.dir, taskID+".ckpt.json")); latest != nil {
+			cp.ParentCheckpointID = runCheckpointID(taskID, latest)
+		}
+		cp.CheckpointID = fmt.Sprintf("%s:%d:%d", taskID, cp.Turn, cp.Sequence)
+	}
+	raw, err := encodeRunCheckpoint(cp)
 	if err != nil {
 		return err
 	}
@@ -206,13 +281,25 @@ func (r *runStore) saveCheckpointChecked(taskID string, cp *runCheckpoint) error
 	if err := os.MkdirAll(historyDir, 0o700); err != nil {
 		return err
 	}
-	historyPath := filepath.Join(historyDir, fmt.Sprintf("%020d.json", cp.Turn))
-	historyTmp := historyPath + ".tmp"
-	if err := os.WriteFile(historyTmp, raw, 0o600); err != nil {
+	historyPath := filepath.Join(historyDir, fmt.Sprintf("%020d.json", cp.Sequence))
+	if _, err := os.Stat(historyPath); err == nil {
+		existing, readErr := os.ReadFile(historyPath)
+		if readErr != nil {
+			return readErr
+		}
+		if !bytes.Equal(existing, raw) {
+			return fmt.Errorf("checkpoint history entry conflicts with immutable checkpoint %s", cp.CheckpointID)
+		}
+	} else if !os.IsNotExist(err) {
 		return err
-	}
-	if err := os.Rename(historyTmp, historyPath); err != nil {
-		return err
+	} else {
+		historyTmp := historyPath + ".tmp"
+		if err := os.WriteFile(historyTmp, raw, 0o600); err != nil {
+			return err
+		}
+		if err := os.Rename(historyTmp, historyPath); err != nil {
+			return err
+		}
 	}
 	// Publish latest only after the immutable history entry is durable.
 	p := filepath.Join(r.dir, taskID+".ckpt.json")
@@ -221,6 +308,62 @@ func (r *runStore) saveCheckpointChecked(taskID string, cp *runCheckpoint) error
 		return err
 	}
 	return os.Rename(tmp, p)
+}
+
+func (r *runStore) nextCheckpointSequenceLocked() int64 {
+	// The sequence doubles as a globally comparable creation instant. Keeping
+	// it monotonic across every task survives wall-clock rollback after restart
+	// via the initial history scan.
+	next := time.Now().UTC().UnixNano()
+	if r.lastCheckpointSequence == 0 {
+		runEntries, _ := os.ReadDir(r.dir)
+		for _, runEntry := range runEntries {
+			if !runEntry.IsDir() || !strings.HasSuffix(runEntry.Name(), ".ckpts") {
+				continue
+			}
+			dir := filepath.Join(r.dir, runEntry.Name())
+			checkpointEntries, _ := os.ReadDir(dir)
+			for _, entry := range checkpointEntries {
+				if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+					continue
+				}
+				if cp := readRunCheckpoint(filepath.Join(dir, entry.Name())); cp != nil && cp.Sequence > r.lastCheckpointSequence {
+					r.lastCheckpointSequence = cp.Sequence
+				}
+			}
+		}
+	}
+	if next <= r.lastCheckpointSequence {
+		next = r.lastCheckpointSequence + 1
+	}
+	r.lastCheckpointSequence = next
+	return next
+}
+
+// publishCheckpointLatest atomically moves an existing historical checkpoint
+// to the resumable latest pointer without rewriting its immutable history row.
+func (r *runStore) publishCheckpointLatest(taskID string, cp *runCheckpoint) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	raw, err := encodeRunCheckpoint(cp)
+	if err != nil {
+		return err
+	}
+	p := filepath.Join(r.dir, taskID+".ckpt.json")
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
+}
+
+func encodeRunCheckpoint(cp *runCheckpoint) ([]byte, error) {
+	if cp == nil || cp.Transcript == nil {
+		return nil, fmt.Errorf("checkpoint transcript is required")
+	}
+	row := *cp
+	row.Version = checkpointStoreVersion
+	return json.Marshal(&row)
 }
 
 func (r *runStore) loadCheckpoint(taskID string) *runCheckpoint {
@@ -232,16 +375,43 @@ func (r *runStore) loadCheckpoint(taskID string) *runCheckpoint {
 func (r *runStore) loadCheckpointTurn(taskID string, turn int) *runCheckpoint {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return readRunCheckpoint(filepath.Join(r.dir, taskID+".ckpts", fmt.Sprintf("%020d.json", turn)))
+	var selected *runCheckpoint
+	for _, cp := range r.listCheckpointsLocked(taskID) {
+		if cp.Turn == turn {
+			selected = cp
+		}
+	}
+	return selected
+}
+
+func (r *runStore) loadCheckpointID(taskID, checkpointID string) *runCheckpoint {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, cp := range r.listCheckpointsLocked(taskID) {
+		if runCheckpointID(taskID, cp) == checkpointID {
+			return cp
+		}
+	}
+	return nil
 }
 
 func (r *runStore) listCheckpoints(taskID string) []*runCheckpoint {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.listCheckpointsLocked(taskID)
+}
+
+func (r *runStore) listCheckpointsLocked(taskID string) []*runCheckpoint {
 	dir := filepath.Join(r.dir, taskID+".ckpts")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		if cp := readRunCheckpoint(filepath.Join(r.dir, taskID+".ckpt.json")); cp != nil {
+		latestPath := filepath.Join(r.dir, taskID+".ckpt.json")
+		if cp := readRunCheckpoint(latestPath); cp != nil {
+			if cp.CreatedAt == "" {
+				if info, statErr := os.Stat(latestPath); statErr == nil {
+					cp.CreatedAt = info.ModTime().UTC().Format(time.RFC3339Nano)
+				}
+			}
 			return []*runCheckpoint{cp}
 		}
 		return nil
@@ -251,12 +421,41 @@ func (r *runStore) listCheckpoints(taskID string) []*runCheckpoint {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		if cp := readRunCheckpoint(filepath.Join(dir, entry.Name())); cp != nil {
+		path := filepath.Join(dir, entry.Name())
+		if cp := readRunCheckpoint(path); cp != nil {
+			if cp.CreatedAt == "" {
+				if info, err := entry.Info(); err == nil {
+					cp.CreatedAt = info.ModTime().UTC().Format(time.RFC3339Nano)
+				}
+			}
 			out = append(out, cp)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Turn < out[j].Turn })
+	sort.Slice(out, func(i, j int) bool {
+		leftTime := checkpointCreatedAt(out[i])
+		rightTime := checkpointCreatedAt(out[j])
+		if !leftTime.Equal(rightTime) {
+			return leftTime.Before(rightTime)
+		}
+		if out[i].Sequence != out[j].Sequence {
+			return out[i].Sequence < out[j].Sequence
+		}
+		if out[i].Turn != out[j].Turn {
+			return out[i].Turn < out[j].Turn
+		}
+		return runCheckpointID(taskID, out[i]) < runCheckpointID(taskID, out[j])
+	})
 	return out
+}
+
+func runCheckpointID(taskID string, cp *runCheckpoint) string {
+	if cp != nil && cp.CheckpointID != "" {
+		return cp.CheckpointID
+	}
+	if cp == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", taskID, cp.Turn)
 }
 
 // readRunCheckpoint reads one checkpoint file. A checkpoint stamped by a
@@ -264,7 +463,7 @@ func (r *runStore) listCheckpoints(taskID string) []*runCheckpoint {
 // resume path falls back to a fresh start instead of misreading a future
 // format.
 func readRunCheckpoint(path string) *runCheckpoint {
-	raw, _, ok := statefmt.ReadVersioned(path, runStoreVersion)
+	raw, _, ok := statefmt.ReadVersioned(path, checkpointStoreVersion)
 	if !ok {
 		return nil
 	}

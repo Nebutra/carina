@@ -5,7 +5,8 @@ workflows, cost, and needs-input state. It consumes session notifications and
 resynchronizes snapshots after reconnect with bounded exponential backoff. Serve
 this directory over HTTP and connect it to the daemon's WebSocket Gateway. Remote
 endpoints require `wss://`; plain `ws://` is accepted only for explicit loopback
-IPs. Tokens are held in page memory only.
+IPs, including `ws://127.0.0.1:8765` with or without a path. Gateway URLs with
+embedded credentials are rejected. Tokens are held in page memory only.
 
 The dashboard requests observer read/stream scope by default. Operator mode
 reconnects with a separately issued operator token and requested write/admin

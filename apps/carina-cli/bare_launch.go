@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -43,36 +45,46 @@ var daemonReachableDeadline = 10 * time.Second
 // go/tui in-process — no exec/fork, apps/carina-cli imports go/tui directly
 // exactly as apps/carina-tui/main.go does.
 func runBareTUI() tui.Outcome {
+	bootstrapLocale := microcopy.DetectBootstrapLocale()
 	socket, err := defaultSocketPath()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
+		fmt.Fprintln(os.Stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
 		return tui.OutcomeRuntimeError
 	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
+		fmt.Fprintln(os.Stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
 		return tui.OutcomeRuntimeError
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "carina: resolve home: %v\n", err)
+		fmt.Fprintln(os.Stderr, microcopy.Bootstrap(microcopy.BootstrapResolveHomeFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
 		return tui.OutcomeRuntimeError
 	}
 	cfg, err := config.Load(home, cwd)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
+		if errors.Is(err, config.ErrInvalidTUILocale) {
+			fmt.Fprintln(os.Stderr, microcopy.Bootstrap(microcopy.BootstrapLocaleInvalid, nil, bootstrapLocale))
+			return tui.OutcomeUsage
+		}
+		fmt.Fprintln(os.Stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
 		return tui.OutcomeRuntimeError
+	}
+	loc, err := resolveBareTUILocale(cfg.TUILocale)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, microcopy.Bootstrap(microcopy.BootstrapLocaleInvalid, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
+		return tui.OutcomeUsage
 	}
 	keybindings, err := tui.ParseKeyBindingOverrides(cfg.TUIKeybindings)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
+		fmt.Fprintln(os.Stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": err.Error()}, loc))
 		return tui.OutcomeUsage
 	}
 
 	call, err := ensureDaemonReachable(socket)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
+		fmt.Fprintln(os.Stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, loc))
 		return tui.OutcomeDaemonUnreachable
 	}
 
@@ -80,7 +92,7 @@ func runBareTUI() tui.Outcome {
 
 	sessionID, err := tui.LatestPendingSubmissionSession(cfg.StateDir, cwd)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "carina: submission recovery: %v\n", err)
+		fmt.Fprintln(os.Stderr, microcopy.Bootstrap(microcopy.BootstrapRecoveryFailed, microcopy.Args{"reason": err.Error()}, loc))
 		call.Close()
 		return tui.OutcomeRuntimeError
 	}
@@ -89,34 +101,63 @@ func runBareTUI() tui.Outcome {
 	}
 	call.Close()
 
-	loc := microcopy.DetectLocale()
 	th := theme.New(theme.Detect(os.Getenv, true))
 	model, err := tui.NewChecked(tui.Options{
-		Theme:         th,
-		Locale:        loc,
-		Socket:        socket,
-		SessionID:     sessionID,
-		WorkspaceRoot: cwd,
-		StateDir:      cfg.StateDir,
-		Keybindings:   keybindings,
+		Theme:             th,
+		Locale:            loc,
+		Socket:            socket,
+		SessionID:         sessionID,
+		WorkspaceRoot:     cwd,
+		StateDir:          cfg.StateDir,
+		Keybindings:       keybindings,
+		NoAlternateScreen: strings.EqualFold(cfg.TUIAlternateScreen, "never"),
+		KeymapUpdater:     bareTUIKeymapUpdater(home, cwd),
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
+		fmt.Fprintln(os.Stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, loc))
 		return tui.OutcomeUsage
 	}
 	defer model.Close()
 	prog := tea.NewProgram(model)
+	watchCtx, stopWatching := context.WithCancel(context.Background())
+	defer stopWatching()
+	go tui.WatchKeybindings(watchCtx, home, cwd, prog)
 	tui.Connect(prog, socket, sessionID, cwd)
 
 	final, err := prog.Run()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "carina: %v\n", err)
+		fmt.Fprintln(os.Stderr, microcopy.Bootstrap(microcopy.BootstrapRuntimeFailed, microcopy.Args{"reason": err.Error()}, loc))
 		return tui.OutcomeRuntimeError
 	}
 	if m, ok := final.(*tui.Model); ok {
 		return m.Outcome()
 	}
 	return tui.OutcomeOK
+}
+
+func resolveBareTUILocale(configLocale string) (string, error) {
+	return microcopy.ResolveLocale("", configLocale)
+}
+
+func bareTUIKeymapUpdater(home, projectRoot string) tui.KeymapUpdateFunc {
+	path := filepath.Join(projectRoot, ".carina", "config.json")
+	return func(action string, keys []string, remove bool) ([]tui.KeyBindingOverride, error) {
+		_, locks, err := config.LoadWithManaged(home, projectRoot, config.DefaultManagedPath())
+		if err != nil {
+			return nil, err
+		}
+		if locks.Locked("tui_keybindings") {
+			return nil, fmt.Errorf("tui_keybindings is locked by %s", locks.Source)
+		}
+		if err := config.UpdateTUIKeybinding(path, action, keys, remove); err != nil {
+			return nil, err
+		}
+		cfg, err := config.Load(home, projectRoot)
+		if err != nil {
+			return nil, err
+		}
+		return tui.ParseKeyBindingOverrides(cfg.TUIKeybindings)
+	}
 }
 
 // resumeMostRecentOrFresh resolves the session bare `carina` should attach

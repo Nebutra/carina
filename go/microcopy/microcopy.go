@@ -11,27 +11,29 @@
 // registers are distinct Go types with distinct constructors drawing from
 // physically separate pools, so a playful line can never leak into a decision
 // prompt; the daemon emits stable machine codes only and clients map
-// code → copy here. The en and zh pools are peers, authored independently
-// rather than translated.
+// code → copy here. The en, zh, ja, ko, es and fr pools are peers, authored
+// in the same register rather than assembled at runtime.
 package microcopy
 
 import (
 	"os"
+	"strconv"
 	"strings"
 )
 
 // Args carries named placeholder values for Governed and Degrade templates.
 // Placeholders are written {name} in the pool files — templates, not fmt
 // verbs — so the pool linter can verify each template names every declared
-// placeholder. A missing argument is left visible as the literal {name}.
+// placeholder. Values are sanitized before rendering; missing or empty
+// arguments select safe localized fallback copy.
 type Args map[string]string
 
 // Code identifies a Governed register template. Governed copy is never
 // generated at runtime; the constants below are the whole vocabulary.
 type Code string
 
-// Governed template codes. Each has a code-reviewed en and zh template in
-// pools/governed.json.
+// Governed template codes. Each has a code-reviewed template for every
+// locale returned by SupportedLocales in pools/governed.json.
 const (
 	GovernedApprovalRequired   Code = "approval.required"
 	GovernedApprovalGranted    Code = "approval.granted"
@@ -53,7 +55,8 @@ const (
 // doctor-remediable daemon-unreachable state.
 type DegradeStatus string
 
-// Degrade status codes. Each has an en and zh template in pools/degrade.json.
+// Degrade status codes. Each has a template for every locale returned by
+// SupportedLocales in pools/degrade.json.
 const (
 	DegradeInterruptedByUser   DegradeStatus = "interrupted.user"
 	DegradeInterruptedByPolicy DegradeStatus = "interrupted.policy"
@@ -69,9 +72,32 @@ const (
 	DegradeLookupImprecise     DegradeStatus = "lookup_imprecise"
 )
 
-// plainLoading is the bare-verb suppression line the Ambient register
-// collapses to under --json/--plain/!isatty.
-const plainLoading = "Loading..."
+var plainLoading = map[string]string{
+	"en": "Loading...",
+	"zh": "加载中…",
+	"ja": "読み込み中…",
+	"ko": "불러오는 중…",
+	"es": "Cargando…",
+	"fr": "Chargement…",
+}
+
+var governedFallback = map[string]string{
+	"en": "This action needs review. No action was taken.",
+	"zh": "此操作需要审查。尚未执行任何操作。",
+	"ja": "この操作には確認が必要です。操作は実行されていません。",
+	"ko": "이 작업은 검토가 필요합니다. 아무 작업도 실행되지 않았습니다.",
+	"es": "Esta acción requiere revisión. No se ejecutó ninguna acción.",
+	"fr": "Cette action doit être examinée. Aucune action n’a été exécutée.",
+}
+
+var degradeFallback = map[string]string{
+	"en": "The operation did not complete. Fix: carina doctor",
+	"zh": "操作未完成。修复：carina doctor",
+	"ja": "操作は完了しませんでした。修正方法: carina doctor",
+	"ko": "작업이 완료되지 않았습니다. 수정 방법: carina doctor",
+	"es": "La operación no se completó. Solución: carina doctor",
+	"fr": "L’opération n’a pas abouti. Correctif : carina doctor",
+}
 
 type options struct {
 	locale      string
@@ -84,9 +110,9 @@ type options struct {
 // WithPoolVersion.
 type Option func(*options)
 
-// WithLocale selects the copy locale. Values normalize by prefix (zh* → zh,
-// en* → en); unsupported locales fall back to en. When absent, the locale
-// comes from DetectLocale.
+// WithLocale selects the copy locale. BCP47-ish and POSIX values normalize to
+// an authored base language; unsupported locales fall back to en. When absent,
+// the locale comes from DetectLocale.
 func WithLocale(locale string) Option {
 	return func(o *options) { o.locale = locale }
 }
@@ -105,8 +131,9 @@ func WithPlain(plain bool) Option {
 	return func(o *options) { o.plain = plain }
 }
 
-// WithPoolVersion pins the pool version for snapshot tests. Unknown versions
-// fall back to the embedded pools (version 1).
+// WithPoolVersion selects a registered catalog version. Unknown versions
+// explicitly fall back to the current embedded catalog; ResolvePoolVersion
+// exposes whether the request was exact.
 func WithPoolVersion(v int) Option {
 	return func(o *options) { o.poolVersion = v }
 }
@@ -129,39 +156,53 @@ func resolveOptions(opts []Option) options {
 // over the context pool, which wins over the generic pool.
 func Loading(seed string, opts ...Option) string {
 	o := resolveOptions(opts)
-	if o.plain {
-		return plainLoading
-	}
+	r := registryForVersion(o.poolVersion)
 	locale := NormalizeLocale(o.locale)
+	if o.plain {
+		return plainLoading[locale]
+	}
 	if o.session != "" {
 		seed = seed + "|" + o.session
 	}
-	for _, ov := range registry.ambient.Overrides {
+	for _, ov := range r.ambient.Overrides {
 		if ov.re.MatchString(seed) {
 			if pool := ov.Locales[locale]; len(pool) > 0 {
 				return pool[pick(seed, len(pool))]
 			}
 		}
 	}
-	pool := registry.ambientPool(locale, resolveContext(seed))
+	pool := r.ambientPool(locale, resolveContext(seed))
 	if len(pool) == 0 {
-		return plainLoading
+		return plainLoading[locale]
 	}
 	return pool[pick(seed, len(pool))]
 }
 
 // Governed renders a Governed register template: full sentences, exact
 // nouns, no personality. Anything that asks for a decision or lands in the
-// audit narrative goes through here. A missing argument stays visible as the
-// literal placeholder; an unknown code returns an explicit marker — neither
-// is ever silently swallowed.
+// audit narrative goes through here. Missing arguments and unknown codes
+// return safe localized fallback copy; internal identifiers and placeholder
+// tokens are never exposed to the user.
 func Governed(code Code, args Args, opts ...Option) string {
 	o := resolveOptions(opts)
-	tmpl, ok := registry.governed[string(code)]
-	if !ok {
-		return "Unknown governed microcopy code: " + string(code) + "."
+	r := registryForVersion(o.poolVersion)
+	locale := NormalizeLocale(o.locale)
+	if code == GovernedDestructiveConfirm && strings.TrimSpace(args["count_label"]) == "" {
+		count, err := strconv.Atoi(strings.TrimSpace(args["count"]))
+		if err != nil {
+			return governedFallback[locale]
+		}
+		return GovernedCount(code, count, args, opts...)
 	}
-	return substitute(tmpl.text(NormalizeLocale(o.locale)), args)
+	tmpl, ok := r.governed[string(code)]
+	if !ok {
+		return governedFallback[locale]
+	}
+	line, valid := renderTemplate(tmpl.text(locale), args)
+	if !valid || strings.TrimSpace(line) == "" {
+		return governedFallback[locale]
+	}
+	return line
 }
 
 // Degrade renders a Degrade register line: calm-factual statement plus a
@@ -169,15 +210,35 @@ func Governed(code Code, args Args, opts ...Option) string {
 // output strips glyphs.
 func Degrade(status DegradeStatus, args Args, opts ...Option) string {
 	o := resolveOptions(opts)
-	tmpl, ok := registry.degrade[string(status)]
-	if !ok {
-		return "Unknown degrade status: " + string(status) + "."
+	r := registryForVersion(o.poolVersion)
+	locale := NormalizeLocale(o.locale)
+	if status == DegradeTimedOut && strings.TrimSpace(args["duration"]) == "" {
+		count, err := strconv.Atoi(strings.TrimSpace(args["seconds"]))
+		if err != nil {
+			return degradeFallbackLine(locale, o.plain)
+		}
+		return DegradeCount(status, count, args, opts...)
 	}
-	line := substitute(tmpl.text(NormalizeLocale(o.locale)), args)
+	tmpl, ok := r.degrade[string(status)]
+	if !ok {
+		return degradeFallbackLine(locale, o.plain)
+	}
+	line, valid := renderTemplate(tmpl.text(locale), args)
+	if !valid || strings.TrimSpace(line) == "" {
+		return degradeFallbackLine(locale, o.plain)
+	}
 	if o.plain {
 		return line
 	}
 	return degradeGlyph(status) + line
+}
+
+func degradeFallbackLine(locale string, plain bool) string {
+	line := degradeFallback[locale]
+	if plain {
+		return line
+	}
+	return "~ " + line
 }
 
 func degradeGlyph(status DegradeStatus) string {
@@ -191,8 +252,21 @@ func degradeGlyph(status DegradeStatus) string {
 // the membership test renderers use to distinguish placeholder copy from
 // real content.
 func Is(value string) bool {
-	if value == plainLoading {
-		return true
+	for _, line := range plainLoading {
+		if value == line {
+			return true
+		}
+	}
+	for _, line := range governedFallback {
+		if value == line {
+			return true
+		}
+	}
+	stripped := strings.TrimPrefix(strings.TrimPrefix(value, "~ "), "✓ ")
+	for _, line := range degradeFallback {
+		if stripped == line {
+			return true
+		}
 	}
 	if registry.ambientIndex[value] {
 		return true
@@ -202,7 +276,6 @@ func Is(value string) bool {
 			return true
 		}
 	}
-	stripped := strings.TrimPrefix(strings.TrimPrefix(value, "~ "), "✓ ")
 	for _, tmpl := range registry.degrade {
 		if tmpl.matches(stripped) {
 			return true
@@ -211,23 +284,39 @@ func Is(value string) bool {
 	return false
 }
 
-// DetectLocale resolves the copy locale from the environment:
-// CARINA_LOCALE > LC_ALL > LC_MESSAGES > LANG > en. The --locale flag and the
-// config cascade are client-side layers applied above this via WithLocale.
+// DetectLocale resolves the general copy locale from the environment:
+// CARINA_LOCALE > LC_ALL > LC_MESSAGES > LANG > en.
 func DetectLocale() string {
-	for _, key := range []string{"CARINA_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
+	if v := os.Getenv("CARINA_LOCALE"); v != "" {
+		return NormalizeLocale(v)
+	}
+	return DetectSystemLocale()
+}
+
+// ResolveLocale applies the TUI precedence contract once at startup. Explicit
+// flag, environment and config choices are validated; only OS locale detection
+// silently falls back to English.
+// --locale > CARINA_LOCALE > config tui_locale > system locale > en.
+// CARINA_TUI_LOCALE participates through config tui_locale.
+func ResolveLocale(flagLocale, configLocale string) (string, error) {
+	if strings.TrimSpace(flagLocale) != "" {
+		return CanonicalLocale(flagLocale)
+	}
+	if v := os.Getenv("CARINA_LOCALE"); v != "" {
+		return CanonicalLocale(v)
+	}
+	if strings.TrimSpace(configLocale) != "" {
+		return CanonicalLocale(configLocale)
+	}
+	return DetectSystemLocale(), nil
+}
+
+// DetectSystemLocale resolves only the operating-system locale variables.
+func DetectSystemLocale() string {
+	for _, key := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
 		if v := os.Getenv(key); v != "" {
 			return NormalizeLocale(v)
 		}
 	}
 	return "en"
-}
-
-// substitute slot-fills {name} placeholders. Unknown args are ignored;
-// missing args leave the placeholder visible.
-func substitute(text string, args Args) string {
-	for k, v := range args {
-		text = strings.ReplaceAll(text, "{"+k+"}", v)
-	}
-	return text
 }

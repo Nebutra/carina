@@ -1,0 +1,183 @@
+package tui
+
+const (
+	MsgPlaceholderInstruction MessageID = "composer.placeholder.instruction"
+	MsgKeybindingsError       MessageID = "composer.keybindings.error"
+	MsgSuggestFiles           MessageID = "suggest.files"
+	MsgSuggestCommands        MessageID = "suggest.commands"
+	MsgSuggestHeader          MessageID = "suggest.header"
+	MsgPasteHeader            MessageID = "paste.header"
+	MsgPasteEarlier           MessageID = "paste.earlier"
+	MsgPasteBlankFirstLine    MessageID = "paste.blank_first_line"
+	MsgPasteItem              MessageID = "paste.item"
+	MsgPasteKindPaste         MessageID = "paste.kind.paste"
+	MsgPasteKindRestored      MessageID = "paste.kind.restored"
+	MsgQueueHeader            MessageID = "queue.header"
+	MsgQueuePastedContent     MessageID = "queue.pasted_content"
+	MsgQueuePasteItems        MessageID = "queue.paste_items"
+	MsgQueueItem              MessageID = "queue.item"
+	MsgReconnectAttempt       MessageID = "connection.reconnect_attempt"
+	MsgStatusNotAttached      MessageID = "status.not_attached"
+	MsgStatusSession          MessageID = "status.session"
+	MsgStatusReady            MessageID = "status.ready"
+	MsgStatusEditingDraft     MessageID = "status.editing_draft"
+	MsgStatusSending          MessageID = "status.sending"
+	MsgStatusRunning          MessageID = "status.running"
+	MsgStatusNew              MessageID = "status.new"
+	MsgStatusQueued           MessageID = "status.queued"
+	MsgStatusAttention        MessageID = "status.attention"
+	MsgStatusChord            MessageID = "status.chord"
+	MsgStatusFooter           MessageID = "status.footer"
+
+	MsgHelpTitle              MessageID = "help.title"
+	MsgHelpCommands           MessageID = "help.commands"
+	MsgHelpKeybindings        MessageID = "help.keybindings"
+	MsgHelpCloseScroll        MessageID = "help.close_scroll"
+	MsgHelpCommandHelp        MessageID = "help.command.help"
+	MsgHelpCommandEditor      MessageID = "help.command.editor"
+	MsgHelpCommandCopy        MessageID = "help.command.copy"
+	MsgHelpCommandTranscript  MessageID = "help.command.transcript"
+	MsgHelpCommandKeymap      MessageID = "help.command.keymap"
+	MsgHelpCommandAgents      MessageID = "help.command.agents"
+	MsgHelpCommandCheckpoints MessageID = "help.command.checkpoints"
+	MsgHelpCommandResume      MessageID = "help.command.resume"
+	MsgHelpCommandSearch      MessageID = "help.command.search"
+	MsgHelpCommandRecap       MessageID = "help.command.recap"
+	MsgHelpCommandMode        MessageID = "help.command.mode"
+	MsgHelpCommandShell       MessageID = "help.command.shell"
+	MsgHelpCommandMention     MessageID = "help.command.mention"
+
+	MsgApprovalRPCFailed    MessageID = "approval.rpc_failed"
+	MsgApprovalRetry        MessageID = "approval.retry"
+	MsgApprovalResource     MessageID = "approval.resource"
+	MsgApprovalPolicy       MessageID = "approval.policy"
+	MsgApprovalFooterWide   MessageID = "approval.footer.wide"
+	MsgApprovalFooterMedium MessageID = "approval.footer.medium"
+	MsgApprovalFooterNarrow MessageID = "approval.footer.narrow"
+	MsgApprovalResolving    MessageID = "approval.resolving"
+	MsgApprovalScroll       MessageID = "approval.scroll"
+	MsgApprovalPolicyDetail MessageID = "approval.policy_detail"
+
+	MsgQuestionTitle         MessageID = "question.title"
+	MsgQuestionAnswerFailed  MessageID = "question.answer_failed"
+	MsgQuestionAnswerLogFail MessageID = "question.answer_log_failed"
+	MsgQuestionAnswered      MessageID = "question.answered"
+	MsgQuestionNoOptions     MessageID = "question.no_options"
+	MsgQuestionCannotDismiss MessageID = "question.cannot_dismiss"
+	MsgQuestionFooterWide    MessageID = "question.footer.wide"
+	MsgQuestionFooterMedium  MessageID = "question.footer.medium"
+	MsgQuestionFooterNarrow  MessageID = "question.footer.narrow"
+	MsgQuestionSending       MessageID = "question.sending"
+	MsgQuestionScroll        MessageID = "question.scroll"
+
+	MsgHistoryTypeToSearch   MessageID = "history.type_to_search"
+	MsgHistoryMatch          MessageID = "history.match"
+	MsgHistoryNoMatch        MessageID = "history.no_match"
+	MsgHistoryLoading        MessageID = "history.loading"
+	MsgHistoryLoadKept       MessageID = "history.load_kept"
+	MsgHistoryLoadCleared    MessageID = "history.load_cleared"
+	MsgHistoryWide           MessageID = "history.wide"
+	MsgHistoryMedium         MessageID = "history.medium"
+	MsgHistoryTiny           MessageID = "history.tiny"
+	MsgHistoryScopeSession   MessageID = "history.scope.session"
+	MsgHistoryScopeWorkspace MessageID = "history.scope.workspace"
+	MsgHistoryScopeGlobal    MessageID = "history.scope.global"
+
+	MsgAttentionApproval     MessageID = "attention.approval"
+	MsgAttentionInput        MessageID = "attention.input"
+	MsgAttentionTaskFinished MessageID = "attention.task_finished"
+)
+
+var baseCatalogRows = []catalogRow{
+	catalog(MsgPlaceholderInstruction,
+		"Type an instruction - {submit} submits, {newline} adds a line, {help} opens help",
+		"输入指令 - {submit} 提交，{newline} 换行，{help} 打开帮助",
+		"指示を入力 - {submit} で送信、{newline} で改行、{help} でヘルプ",
+		"지시를 입력하세요 - {submit} 제출, {newline} 줄바꿈, {help} 도움말",
+		"Escribe una instrucción: {submit} envía, {newline} añade una línea y {help} abre la ayuda",
+		"Saisissez une instruction : {submit} envoie, {newline} ajoute une ligne et {help} ouvre l’aide"),
+	catalog(MsgKeybindingsError, "Keybindings: {error}", "按键绑定：{error}", "キーバインド: {error}", "키 바인딩: {error}", "Atajos de teclado: {error}", "Raccourcis clavier : {error}"),
+	catalog(MsgSuggestFiles, "files", "文件", "ファイル", "파일", "archivos", "fichiers"),
+	catalog(MsgSuggestCommands, "commands", "命令", "コマンド", "명령", "comandos", "commandes"),
+	catalog(MsgSuggestHeader, "{title} ({previous}/{next} select, {accept} complete, {dismiss} close)", "{title}（{previous}/{next} 选择，{accept} 补全，{dismiss} 关闭）", "{title}（{previous}/{next} 選択、{accept} 補完、{dismiss} 閉じる）", "{title} ({previous}/{next} 선택, {accept} 완성, {dismiss} 닫기)", "{title} ({previous}/{next} selecciona, {accept} completa, {dismiss} cierra)", "{title} ({previous}/{next} sélectionne, {accept} complète, {dismiss} ferme)"),
+	catalog(MsgPasteHeader, "pasted draft items and restored turns ({undo} removes the latest)", "已粘贴的草稿项与恢复轮次（{undo} 移除最新一项）", "貼り付けた下書きと復元ターン（{undo} で最新を削除）", "붙여넣은 초안과 복원된 턴 ({undo}로 최신 항목 제거)", "Elementos pegados y turnos restaurados ({undo} elimina el último)", "Éléments collés et tours restaurés ({undo} supprime le dernier)"),
+	{ID: MsgPasteEarlier, EN: "  ... {count} earlier items", ZH: "  ... 更早的 {count} 项", JA: "  ... 以前の {count} 件", KO: "  ... 이전 {count}개 항목", ES: "  ... {count} elementos anteriores", FR: "  ... {count} éléments précédents", ENOne: "  ... {count} earlier item", ZHOne: "  ... 更早的 {count} 项", JAOne: "  ... 以前の {count} 件", KOOne: "  ... 이전 {count}개 항목", ESOne: "  ... {count} elemento anterior", FROne: "  ... {count} élément précédent"},
+	catalog(MsgPasteBlankFirstLine, "(blank first line)", "（首行为空）", "（先頭行は空白）", "(첫 줄 비어 있음)", "(primera línea vacía)", "(première ligne vide)"),
+	catalog(MsgPasteKindPaste, "paste", "粘贴", "貼り付け", "붙여넣기", "pegado", "collé"),
+	catalog(MsgPasteKindRestored, "restored", "已恢复", "復元", "복원됨", "restaurado", "restauré"),
+	catalog(MsgPasteItem, "  [{index} {kind}] {lines} lines, {chars} chars: {summary}", "  [{index} {kind}] {lines} 行，{chars} 个字符：{summary}", "  [{index} {kind}] {lines} 行、{chars} 文字: {summary}", "  [{index} {kind}] {lines}줄, {chars}자: {summary}", "  [{index} {kind}] {lines} líneas, {chars} caracteres: {summary}", "  [{index} {kind}] {lines} lignes, {chars} caractères : {summary}"),
+	{ID: MsgQueueHeader, EN: "queued follow-ups: {count} ({queue} queues, {edit} edits latest)", ZH: "排队中的后续指令：{count}（{queue} 入队，{edit} 编辑最新一项）", JA: "待機中のフォローアップ: {count}（{queue} で追加、{edit} で最新を編集）", KO: "대기 중인 후속 요청: {count} ({queue} 대기열 추가, {edit} 최신 항목 편집)", ES: "Seguimientos en cola: {count} ({queue} encola, {edit} edita el último)", FR: "Suites en file : {count} ({queue} ajoute, {edit} modifie la dernière)", ENOne: "queued follow-up: {count} ({queue} queues, {edit} edits it)", ZHOne: "排队中的后续指令：{count}（{queue} 入队，{edit} 编辑）", JAOne: "待機中のフォローアップ: {count}（{queue} で追加、{edit} で編集）", KOOne: "대기 중인 후속 요청: {count} ({queue} 대기열 추가, {edit} 편집)", ESOne: "Seguimiento en cola: {count} ({queue} encola, {edit} lo edita)", FROne: "Suite en file : {count} ({queue} ajoute, {edit} la modifie)"},
+	catalog(MsgQueuePastedContent, "(pasted content)", "（粘贴内容）", "（貼り付け内容）", "(붙여넣은 내용)", "(contenido pegado)", "(contenu collé)"),
+	{ID: MsgQueuePasteItems, EN: " +{count} paste items", ZH: " +{count} 个粘贴项", JA: " +{count} 件の貼り付け", KO: " +붙여넣기 {count}개", ES: " +{count} elementos pegados", FR: " +{count} éléments collés", ENOne: " +{count} paste item", ZHOne: " +{count} 个粘贴项", JAOne: " +{count} 件の貼り付け", KOOne: " +붙여넣기 {count}개", ESOne: " +{count} elemento pegado", FROne: " +{count} élément collé"},
+	catalog(MsgQueueItem, "  {index}. {summary}", "  {index}. {summary}", "  {index}. {summary}", "  {index}. {summary}", "  {index}. {summary}", "  {index}. {summary}"),
+	catalog(MsgReconnectAttempt, " (reconnecting, attempt {attempt})", "（正在重连，第 {attempt} 次）", "（再接続中、{attempt} 回目）", " (재연결 중, {attempt}번째 시도)", " (reconectando, intento {attempt})", " (reconnexion, tentative {attempt})"),
+	catalog(MsgStatusNotAttached, "not attached", "未连接会话", "未接続", "연결되지 않음", "sin sesión", "sans session"),
+	catalog(MsgStatusSession, "session {id}", "会话 {id}", "セッション {id}", "세션 {id}", "sesión {id}", "session {id}"),
+	catalog(MsgStatusReady, "ready", "就绪", "準備完了", "준비됨", "listo", "prêt"),
+	catalog(MsgStatusEditingDraft, "editing draft", "正在编辑草稿", "下書きを編集中", "초안 편집 중", "editando borrador", "modification du brouillon"),
+	catalog(MsgStatusSending, "sending {kind}", "正在发送 {kind}", "{kind} を送信中", "{kind} 전송 중", "enviando {kind}", "envoi de {kind}"),
+	catalog(MsgStatusRunning, "running {task}", "正在运行 {task}", "実行中 {task}", "실행 중 {task}", "ejecutando {task}", "exécution de {task}"),
+	{ID: MsgStatusNew, EN: "{count} new lines", ZH: "{count} 行新内容", JA: "新着 {count} 行", KO: "새 줄 {count}개", ES: "{count} líneas nuevas", FR: "{count} nouvelles lignes", ENOne: "{count} new line", ZHOne: "{count} 行新内容", JAOne: "新着 {count} 行", KOOne: "새 줄 {count}개", ESOne: "{count} línea nueva", FROne: "{count} nouvelle ligne"},
+	{ID: MsgStatusQueued, EN: "{count} queued", ZH: "{count} 项排队中", JA: "{count} 件待機", KO: "{count}개 대기", ES: "{count} en cola", FR: "{count} en file", ENOne: "{count} queued", ZHOne: "{count} 项排队中", JAOne: "{count} 件待機", KOOne: "{count}개 대기", ESOne: "{count} en cola", FROne: "{count} en file"},
+	{ID: MsgStatusAttention, EN: "{count} attention", ZH: "{count} 项待处理", JA: "要確認 {count} 件", KO: "확인 필요 {count}개", ES: "{count} requieren atención", FR: "{count} demandent votre attention", ENOne: "{count} attention", ZHOne: "{count} 项待处理", JAOne: "要確認 {count} 件", KOOne: "확인 필요 {count}개", ESOne: "{count} requiere atención", FROne: "{count} demande votre attention"},
+	catalog(MsgStatusChord, "chord {hint}", "组合键 {hint}", "コード {hint}", "키 조합 {hint}", "secuencia {hint}", "séquence {hint}"),
+	catalog(MsgStatusFooter, " carina · {session} · mode {mode} · {activity} · {help} help", " carina · {session} · 模式 {mode} · {activity} · {help} 帮助", " carina · {session} · モード {mode} · {activity} · {help} ヘルプ", " carina · {session} · 모드 {mode} · {activity} · {help} 도움말", " carina · {session} · modo {mode} · {activity} · {help} ayuda", " carina · {session} · mode {mode} · {activity} · {help} aide"),
+
+	catalog(MsgHelpTitle, "Carina help", "Carina 帮助", "Carina ヘルプ", "Carina 도움말", "Ayuda de Carina", "Aide de Carina"),
+	catalog(MsgHelpCommands, "Commands", "命令", "コマンド", "명령", "Comandos", "Commandes"),
+	catalog(MsgHelpKeybindings, "Keybindings", "按键绑定", "キーバインド", "키 바인딩", "Atajos de teclado", "Raccourcis clavier"),
+	catalog(MsgHelpCloseScroll, "[{close}] close  [{up}/{down}] scroll", "[{close}] 关闭  [{up}/{down}] 滚动", "[{close}] 閉じる  [{up}/{down}] スクロール", "[{close}] 닫기  [{up}/{down}] 스크롤", "[{close}] cerrar  [{up}/{down}] desplazar", "[{close}] fermer  [{up}/{down}] défiler"),
+	catalog(MsgHelpCommandHelp, "  /help                 commands and keybindings", "  /help                 命令与按键绑定", "  /help                 コマンドとキーバインド", "  /help                 명령과 키 바인딩", "  /help                 comandos y atajos", "  /help                 commandes et raccourcis"),
+	catalog(MsgHelpCommandEditor, "  /editor               edit the current draft in VISUAL/EDITOR", "  /editor               使用 VISUAL/EDITOR 编辑当前草稿", "  /editor               VISUAL/EDITOR で下書きを編集", "  /editor               VISUAL/EDITOR에서 현재 초안 편집", "  /editor               editar el borrador en VISUAL/EDITOR", "  /editor               modifier le brouillon dans VISUAL/EDITOR"),
+	catalog(MsgHelpCommandCopy, "  /copy                 copy the latest rendered agent response", "  /copy                 复制最近渲染的 Agent 回复", "  /copy                 最新の Agent 応答をコピー", "  /copy                 최근 렌더링된 Agent 응답 복사", "  /copy                 copiar la última respuesta del Agent", "  /copy                 copier la dernière réponse de l’Agent"),
+	catalog(MsgHelpCommandTranscript, "  /transcript           open the plain-text transcript pager", "  /transcript           打开纯文本记录查看器", "  /transcript           プレーンテキスト履歴を開く", "  /transcript           일반 텍스트 기록 보기", "  /transcript           abrir el historial en texto", "  /transcript           ouvrir l’historique en texte"),
+	catalog(MsgHelpCommandKeymap, "  /keymap               inspect and edit active keybindings", "  /keymap               查看并编辑当前按键绑定", "  /keymap               現在のキーバインドを確認・編集", "  /keymap               활성 키 바인딩 확인 및 편집", "  /keymap               revisar y editar los atajos activos", "  /keymap               consulter et modifier les raccourcis actifs"),
+	catalog(MsgHelpCommandAgents, "  /agents               available agent modes", "  /agents               可用的 Agent 模式", "  /agents               利用可能な Agent モード", "  /agents               사용 가능한 Agent 모드", "  /agents               modos de Agent disponibles", "  /agents               modes d’Agent disponibles"),
+	catalog(MsgHelpCommandCheckpoints, "  /checkpoints          restore a rewind point into a paused task", "  /checkpoints          将回退点恢复为暂停任务", "  /checkpoints          巻き戻し点を一時停止タスクとして復元", "  /checkpoints          되돌리기 지점을 일시 중지 작업으로 복원", "  /checkpoints          restaurar un punto en una tarea pausada", "  /checkpoints          restaurer un point dans une tâche en pause"),
+	catalog(MsgHelpCommandResume, "  /resume [task_id]     resume a restored task; ID works after restart", "  /resume [task_id]     继续已恢复任务；重启后可使用 ID", "  /resume [task_id]     復元タスクを再開。再起動後も ID 可", "  /resume [task_id]     복원된 작업 재개, 재시작 후 ID 사용 가능", "  /resume [task_id]     reanudar una tarea; el ID sirve tras reiniciar", "  /resume [task_id]     reprendre une tâche ; l’ID reste utilisable après redémarrage"),
+	catalog(MsgHelpCommandSearch, "  /search <text>         search visible transcript", "  /search <text>         搜索可见记录", "  /search <text>         表示中の履歴を検索", "  /search <text>         보이는 기록 검색", "  /search <text>         buscar en el historial visible", "  /search <text>         rechercher dans l’historique visible"),
+	catalog(MsgHelpCommandRecap, "  /recap                 compact current-session recap", "  /recap                 当前会话的精简回顾", "  /recap                 現在のセッションを要約", "  /recap                 현재 세션 요약", "  /recap                 resumen compacto de la sesión", "  /recap                 récapitulatif compact de la session"),
+	catalog(MsgHelpCommandMode, "  /mode <build|plan>     change interaction mode", "  /mode <build|plan>     切换交互模式", "  /mode <build|plan>     対話モードを変更", "  /mode <build|plan>     상호작용 모드 변경", "  /mode <build|plan>     cambiar el modo de interacción", "  /mode <build|plan>     changer le mode d’interaction"),
+	catalog(MsgHelpCommandShell, "  !<command>             governed argv command; quotes supported", "  !<command>             受治理的 argv 命令；支持引号", "  !<command>             管理対象の argv コマンド。引用符対応", "  !<command>             통제되는 argv 명령, 따옴표 지원", "  !<command>             comando argv gobernado; admite comillas", "  !<command>             commande argv gouvernée ; guillemets pris en charge"),
+	catalog(MsgHelpCommandMention, "  @<path|agent>          reference a path or agent", "  @<path|agent>          引用路径或 Agent", "  @<path|agent>          パスまたは Agent を参照", "  @<path|agent>          경로 또는 Agent 참조", "  @<path|agent>          referenciar una ruta o un Agent", "  @<path|agent>          référencer un chemin ou un Agent"),
+
+	catalog(MsgApprovalRPCFailed, "{glyph} approval request failed: {error}", "{glyph} 审批请求失败：{error}", "{glyph} 承認リクエスト失敗: {error}", "{glyph} 승인 요청 실패: {error}", "{glyph} falló la solicitud de aprobación: {error}", "{glyph} échec de la demande d’approbation : {error}"),
+	catalog(MsgApprovalRetry, "Approval failed: {error}. Press the decision key to retry.", "审批失败：{error}。按决策键重试。", "承認に失敗: {error}。判断キーで再試行してください。", "승인 실패: {error}. 결정 키를 눌러 다시 시도하세요.", "La aprobación falló: {error}. Pulsa una tecla de decisión para reintentar.", "Échec de l’approbation : {error}. Appuyez sur une touche de décision pour réessayer."),
+	catalog(MsgApprovalResource, "resource: {value}", "资源：{value}", "リソース: {value}", "리소스: {value}", "recurso: {value}", "ressource : {value}"),
+	catalog(MsgApprovalPolicy, "policy: {value}", "策略：{value}", "ポリシー: {value}", "정책: {value}", "política: {value}", "politique : {value}"),
+	catalog(MsgApprovalFooterWide, "[{once}] approve once  [{session}] session  [{project}] project  [{deny}] deny", "[{once}] 单次批准  [{session}] 会话  [{project}] 项目  [{deny}] 拒绝", "[{once}] 今回のみ  [{session}] セッション  [{project}] プロジェクト  [{deny}] 拒否", "[{once}] 한 번 승인  [{session}] 세션  [{project}] 프로젝트  [{deny}] 거부", "[{once}] aprobar una vez  [{session}] sesión  [{project}] proyecto  [{deny}] denegar", "[{once}] une fois  [{session}] session  [{project}] projet  [{deny}] refuser"),
+	catalog(MsgApprovalFooterMedium, "[{once}] allow  [{session}/{project}] broader  [{deny}] deny", "[{once}] 允许  [{session}/{project}] 扩大范围  [{deny}] 拒绝", "[{once}] 許可  [{session}/{project}] 範囲拡大  [{deny}] 拒否", "[{once}] 허용  [{session}/{project}] 범위 확대  [{deny}] 거부", "[{once}] permitir  [{session}/{project}] ampliar  [{deny}] denegar", "[{once}] autoriser  [{session}/{project}] élargir  [{deny}] refuser"),
+	catalog(MsgApprovalFooterNarrow, "[{once}] allow  [{deny}] deny", "[{once}] 允许  [{deny}] 拒绝", "[{once}] 許可  [{deny}] 拒否", "[{once}] 허용  [{deny}] 거부", "[{once}] permitir  [{deny}] denegar", "[{once}] autoriser  [{deny}] refuser"),
+	catalog(MsgApprovalResolving, "Resolving decision...", "正在提交决策...", "判断を送信中...", "결정 처리 중...", "Resolviendo la decisión...", "Traitement de la décision..."),
+	catalog(MsgApprovalScroll, "  [{up}/{down}/{page_up}/{page_down}] scroll {start}-{end}/{total}", "  [{up}/{down}/{page_up}/{page_down}] 滚动 {start}-{end}/{total}", "  [{up}/{down}/{page_up}/{page_down}] スクロール {start}-{end}/{total}", "  [{up}/{down}/{page_up}/{page_down}] 스크롤 {start}-{end}/{total}", "  [{up}/{down}/{page_up}/{page_down}] desplazar {start}-{end}/{total}", "  [{up}/{down}/{page_up}/{page_down}] défiler {start}-{end}/{total}"),
+	catalog(MsgApprovalPolicyDetail, "{glyph} policy: {detail}", "{glyph} 策略：{detail}", "{glyph} ポリシー: {detail}", "{glyph} 정책: {detail}", "{glyph} política: {detail}", "{glyph} politique : {detail}"),
+
+	catalog(MsgQuestionTitle, "Agent needs input", "Agent 需要输入", "Agent が入力を求めています", "Agent에 입력이 필요합니다", "El Agent necesita información", "L’Agent attend une réponse"),
+	catalog(MsgQuestionAnswerFailed, "Answer failed: {error}. Press [{retry}] to retry.", "回答失败：{error}。按 [{retry}] 重试。", "回答に失敗: {error}。[{retry}] で再試行。", "응답 실패: {error}. [{retry}]로 다시 시도하세요.", "La respuesta falló: {error}. Pulsa [{retry}] para reintentar.", "Échec de la réponse : {error}. Appuyez sur [{retry}] pour réessayer."),
+	catalog(MsgQuestionAnswerLogFail, "{glyph} answer failed for question {id}: {error}", "{glyph} 问题 {id} 回答失败：{error}", "{glyph} 質問 {id} の回答失敗: {error}", "{glyph} 질문 {id} 응답 실패: {error}", "{glyph} falló la respuesta a {id}: {error}", "{glyph} échec de la réponse à {id} : {error}"),
+	catalog(MsgQuestionAnswered, "{glyph} answered {id}: {label}", "{glyph} 已回答 {id}：{label}", "{glyph} {id} に回答: {label}", "{glyph} {id} 응답 완료: {label}", "{glyph} respuesta a {id}: {label}", "{glyph} réponse à {id} : {label}"),
+	catalog(MsgQuestionNoOptions, "No answer options are available. Waiting for the Agent to update this question.", "暂无可选答案。正在等待 Agent 更新问题。", "回答候補がありません。Agent による質問の更新を待っています。", "선택 가능한 답변이 없습니다. Agent의 질문 업데이트를 기다리는 중입니다.", "No hay opciones disponibles. Esperando a que el Agent actualice la pregunta.", "Aucune réponse n’est disponible. En attente de la mise à jour de l’Agent."),
+	catalog(MsgQuestionCannotDismiss, "This question is still pending. Choose an answer; Esc cannot dismiss it.", "此问题仍在等待回答。请选择答案；Esc 无法关闭。", "この質問は未回答です。回答を選択してください。Esc では閉じられません。", "이 질문은 아직 대기 중입니다. 답변을 선택하세요. Esc로 닫을 수 없습니다.", "La pregunta sigue pendiente. Elige una respuesta; Esc no puede cerrarla.", "Cette question est toujours en attente. Choisissez une réponse ; Échap ne peut pas la fermer."),
+	catalog(MsgQuestionFooterWide, "[{previous}/{next}] select  [{answer}] answer", "[{previous}/{next}] 选择  [{answer}] 回答", "[{previous}/{next}] 選択  [{answer}] 回答", "[{previous}/{next}] 선택  [{answer}] 응답", "[{previous}/{next}] seleccionar  [{answer}] responder", "[{previous}/{next}] sélectionner  [{answer}] répondre"),
+	catalog(MsgQuestionFooterMedium, "[{previous}/{next}] pick  [{answer}] answer", "[{previous}/{next}] 选择  [{answer}] 回答", "[{previous}/{next}] 選択  [{answer}] 回答", "[{previous}/{next}] 선택  [{answer}] 응답", "[{previous}/{next}] elegir  [{answer}] responder", "[{previous}/{next}] choisir  [{answer}] répondre"),
+	catalog(MsgQuestionFooterNarrow, "[{answer}] answer", "[{answer}] 回答", "[{answer}] 回答", "[{answer}] 응답", "[{answer}] responder", "[{answer}] répondre"),
+	catalog(MsgQuestionSending, "Sending answer...", "正在发送回答...", "回答を送信中...", "응답 전송 중...", "Enviando la respuesta...", "Envoi de la réponse..."),
+	catalog(MsgQuestionScroll, "  [{page_up}/{page_down}] scroll {start}-{end}/{total}", "  [{page_up}/{page_down}] 滚动 {start}-{end}/{total}", "  [{page_up}/{page_down}] スクロール {start}-{end}/{total}", "  [{page_up}/{page_down}] 스크롤 {start}-{end}/{total}", "  [{page_up}/{page_down}] desplazar {start}-{end}/{total}", "  [{page_up}/{page_down}] défiler {start}-{end}/{total}"),
+
+	catalog(MsgHistoryTypeToSearch, "type to search", "输入以搜索", "入力して検索", "입력하여 검색", "escribe para buscar", "saisissez pour rechercher"),
+	catalog(MsgHistoryMatch, "match", "匹配", "一致", "일치", "coincidencia", "résultat"),
+	catalog(MsgHistoryNoMatch, "no match", "无匹配", "一致なし", "일치 없음", "sin coincidencias", "aucun résultat"),
+	catalog(MsgHistoryLoading, "loading", "加载中", "読み込み中", "불러오는 중", "cargando", "chargement"),
+	catalog(MsgHistoryLoadKept, "{scope} load failed; {kept} kept", "{scope} 加载失败；保留 {kept}", "{scope} の読み込み失敗。{kept} を保持", "{scope} 불러오기 실패, {kept} 유지", "falló la carga de {scope}; se conserva {kept}", "échec du chargement de {scope} ; {kept} conservé"),
+	catalog(MsgHistoryLoadCleared, "{scope} load failed; results cleared", "{scope} 加载失败；结果已清空", "{scope} の読み込み失敗。結果を消去", "{scope} 불러오기 실패, 결과 삭제됨", "falló la carga de {scope}; resultados borrados", "échec du chargement de {scope} ; résultats effacés"),
+	catalog(MsgHistoryWide, "reverse-i-search: {query}  {scope} · {status}  {older} older  {newer} newer  {run} run  {edit} edit  {cycle} scope  {cancel} cancel", "反向搜索：{query}  {scope} · {status}  {older} 更早  {newer} 更新  {run} 运行  {edit} 编辑  {cycle} 范围  {cancel} 取消", "履歴検索: {query}  {scope} · {status}  {older} 前へ  {newer} 次へ  {run} 実行  {edit} 編集  {cycle} 範囲  {cancel} 取消", "기록 검색: {query}  {scope} · {status}  {older} 이전  {newer} 다음  {run} 실행  {edit} 편집  {cycle} 범위  {cancel} 취소", "búsqueda inversa: {query}  {scope} · {status}  {older} anterior  {newer} siguiente  {run} ejecutar  {edit} editar  {cycle} ámbito  {cancel} cancelar", "recherche inverse : {query}  {scope} · {status}  {older} précédent  {newer} suivant  {run} exécuter  {edit} modifier  {cycle} portée  {cancel} annuler"),
+	catalog(MsgHistoryMedium, "history {scope} · {status}: {query}", "历史 {scope} · {status}：{query}", "履歴 {scope} · {status}: {query}", "기록 {scope} · {status}: {query}", "historial {scope} · {status}: {query}", "historique {scope} · {status} : {query}"),
+	catalog(MsgHistoryTiny, "?{status}:{query}", "?{status}:{query}", "?{status}:{query}", "?{status}:{query}", "?{status}:{query}", "?{status}:{query}"),
+	catalog(MsgHistoryScopeSession, "session", "会话", "セッション", "세션", "sesión", "session"),
+	catalog(MsgHistoryScopeWorkspace, "workspace", "工作区", "ワークスペース", "워크스페이스", "espacio", "espace"),
+	catalog(MsgHistoryScopeGlobal, "global", "全局", "全体", "전체", "global", "global"),
+
+	catalog(MsgAttentionApproval, "Approval required", "需要审批", "承認が必要です", "승인이 필요합니다", "Se requiere aprobación", "Approbation requise"),
+	catalog(MsgAttentionInput, "Input required", "需要输入", "入力が必要です", "입력이 필요합니다", "Se requiere información", "Réponse requise"),
+	catalog(MsgAttentionTaskFinished, "Task finished", "任务已结束", "タスクが終了しました", "작업이 완료되었습니다", "La tarea ha finalizado", "Tâche terminée"),
+}

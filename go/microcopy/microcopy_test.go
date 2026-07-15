@@ -10,7 +10,7 @@ import (
 // not polluted by the host or CI job environment.
 func scrubLocaleEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"CARINA_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
+	for _, key := range []string{"CARINA_LOCALE", "CARINA_TUI_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
 		if val, ok := os.LookupEnv(key); ok {
 			t.Setenv(key, val) // registers restore-on-cleanup
 			os.Unsetenv(key)
@@ -24,7 +24,7 @@ func TestLoadingDeterministic(t *testing.T) {
 	seeds := []string{"code.search", "kernel.patch.apply", "session.resume",
 		"task.action.approve", "workspace.patch.propose", "audit.verify",
 		"command.exec", "totally.unknown.method", ""}
-	for _, locale := range []string{"en", "zh"} {
+	for _, locale := range SupportedLocales() {
 		for _, seed := range seeds {
 			a := Loading(seed, WithLocale(locale), WithPoolVersion(1))
 			b := Loading(seed, WithLocale(locale), WithPoolVersion(1))
@@ -35,6 +35,17 @@ func TestLoadingDeterministic(t *testing.T) {
 				t.Errorf("Loading(%q, %s) returned empty line", seed, locale)
 			}
 		}
+	}
+}
+
+func TestSupportedLocalesReturnsSnapshot(t *testing.T) {
+	first := SupportedLocales()
+	if len(first) != 6 {
+		t.Fatalf("supported locale count = %d, want 6", len(first))
+	}
+	first[0] = "mutated"
+	if got := SupportedLocales()[0]; got != "en" {
+		t.Fatalf("SupportedLocales leaked mutable storage: first locale = %q", got)
 	}
 }
 
@@ -64,7 +75,7 @@ func TestLoadingContextRouting(t *testing.T) {
 		{"agent.turn", "agent"},
 		{"zzz.unmatched", "generic"},
 	}
-	for _, locale := range []string{"en", "zh"} {
+	for _, locale := range SupportedLocales() {
 		for _, tc := range cases {
 			got := Loading(tc.seed, WithLocale(locale))
 			pool := registry.ambientPool(locale, tc.context)
@@ -91,8 +102,8 @@ func TestLoadingOverridePattern(t *testing.T) {
 	}
 }
 
-// TestLoadingLocaleNormalization: zh*/en* prefixes normalize; everything
-// else falls back to en.
+// TestLoadingLocaleNormalization covers BCP47-ish and POSIX locale shapes;
+// unsupported values fall back to en.
 func TestLoadingLocaleNormalization(t *testing.T) {
 	cases := []struct {
 		raw  string
@@ -100,14 +111,21 @@ func TestLoadingLocaleNormalization(t *testing.T) {
 	}{
 		{"zh", "zh"},
 		{"zh-CN", "zh"},
-		{"zh_TW.UTF-8", "zh"},
-		{"ZH_HK", "zh"},
+		{"zh-Hans", "zh"},
+		{"zh_Hans_CN.UTF-8", "zh"},
+		{"zh_TW.UTF-8", "en"},
+		{"ZH_HK", "en"},
+		{"zh-Hant", "en"},
 		{"en", "en"},
 		{"en_US.UTF-8", "en"},
-		{"fr_FR", "en"},
-		{"ja_JP", "en"},
+		{"ja_JP", "ja"},
+		{"ja-JP-u-ca-japanese", "ja"},
+		{"ko_KR.UTF-8", "ko"},
+		{"es-419", "es"},
+		{"fr_FR@euro", "fr"},
 		{"", "en"},
 		{"C", "en"},
+		{"de-DE", "en"},
 	}
 	for _, tc := range cases {
 		if got := NormalizeLocale(tc.raw); got != tc.want {
@@ -139,11 +157,10 @@ func TestLoadingSessionSalt(t *testing.T) {
 // TestLoadingPlainSuppression: under --json/--plain/!isatty the Ambient
 // register collapses to a bare verb; Governed and Degrade still render.
 func TestLoadingPlainSuppression(t *testing.T) {
-	if got := Loading("code.search", WithLocale("en"), WithPlain(true)); got != "Loading..." {
-		t.Errorf("plain Loading = %q, want %q", got, "Loading...")
-	}
-	if got := Loading("code.search", WithLocale("zh"), WithPlain(true)); got != "Loading..." {
-		t.Errorf("plain zh Loading = %q, want %q", got, "Loading...")
+	for _, locale := range SupportedLocales() {
+		if got := Loading("code.search", WithLocale(locale), WithPlain(true)); got != plainLoading[locale] {
+			t.Errorf("plain Loading(%s) = %q, want %q", locale, got, plainLoading[locale])
+		}
 	}
 	gov := Governed(GovernedPolicyDenied, Args{"rule_id": "r", "action": "a", "audit_id": "x"}, WithPlain(true))
 	if gov == "" || gov == "Loading..." {
@@ -221,25 +238,29 @@ func TestGovernedTemplates(t *testing.T) {
 	}
 }
 
-// TestGovernedMissingArgObservable: a missing argument stays visible as the
-// literal placeholder — never silently swallowed.
-func TestGovernedMissingArgObservable(t *testing.T) {
+// TestGovernedMissingArgUsesSafeFallback: missing fields never expose a raw
+// placeholder token or an internal identifier.
+func TestGovernedMissingArgUsesSafeFallback(t *testing.T) {
 	got := Governed(GovernedApprovalRequired, Args{"action": "write"}, WithLocale("en"))
-	if !strings.Contains(got, "{path}") || !strings.Contains(got, "{decision_id}") {
-		t.Errorf("missing args must remain visible, got %q", got)
+	if got != governedFallback["en"] || strings.Contains(got, "{") {
+		t.Errorf("missing args must select safe fallback, got %q", got)
 	}
 }
 
-// TestGovernedLocaleParity: every governed code has an en and a zh template,
-// authored (never byte-identical unless placeholder-only content).
+// TestGovernedLocaleParity: every governed code has a non-empty, independently
+// authored template in every supported locale.
 func TestGovernedLocaleParity(t *testing.T) {
 	for code, tmpl := range registry.governed {
-		en, zh := tmpl.Text["en"], tmpl.Text["zh"]
-		if en == "" || zh == "" {
-			t.Errorf("governed %s missing a locale (en=%q zh=%q)", code, en, zh)
-		}
-		if en == zh {
-			t.Errorf("governed %s zh template is a copy of en: %q", code, en)
+		seen := map[string]string{}
+		for _, locale := range SupportedLocales() {
+			body := tmpl.Text[locale]
+			if strings.TrimSpace(body) == "" {
+				t.Errorf("governed %s missing locale %s", code, locale)
+			}
+			if prior, ok := seen[body]; ok {
+				t.Errorf("governed %s locales %s and %s are byte-identical", code, prior, locale)
+			}
+			seen[body] = locale
 		}
 	}
 }
@@ -260,15 +281,15 @@ func TestDegradeTemplates(t *testing.T) {
 		{DegradeInterruptedByAgent, Args{"agent_id": "agent-7"}, "zh",
 			[]string{"已被代理 agent-7 停止"}, "~ "},
 		{DegradeTimedOut, Args{"seconds": "30", "action": "code.search"}, "en",
-			[]string{"Timed out after 30s", "carina doctor"}, "~ "},
-		{DegradeBackgrounded, Args{"task_id": "t-9"}, "en",
-			[]string{"background", "carina watch t-9"}, "~ "},
+			[]string{"Timed out after 30 seconds", "carina doctor"}, "~ "},
+		{DegradeBackgrounded, Args{"task_id": "t-9", "session_id": "s-4"}, "en",
+			[]string{"background", "task t-9", "carina watch s-4"}, "~ "},
 		{DegradeConflict, Args{"path": "go/daemon/agent.go"}, "en",
 			[]string{"Conflict", "go/daemon/agent.go", "Nothing was overwritten"}, "~ "},
 		{DegradeDone, nil, "en", []string{"Done"}, "✓ "},
 		{DegradeDone, nil, "zh", []string{"完成"}, "✓ "},
 		{DegradePartial, Args{"applied": "3", "total": "5", "tx_id": "41"}, "en",
-			[]string{"3 of 5", "carina log --tx 41"}, "~ "},
+			[]string{"transaction 41", "3/5", "audit trail"}, "~ "},
 		{DegradeDaemonUnreachable, Args{"socket": "/tmp/carina.sock"}, "en",
 			[]string{"Daemon unreachable", "/tmp/carina.sock", "carina-daemon &"}, "~ "},
 		{DegradeSemanticOff, Args{"reason": "embedder-offline"}, "en",
@@ -320,8 +341,10 @@ func TestDegradeCoversTaxonomy(t *testing.T) {
 			t.Errorf("degrade status %s has no template", s)
 			continue
 		}
-		if tmpl.Text["en"] == "" || tmpl.Text["zh"] == "" {
-			t.Errorf("degrade status %s missing a locale", s)
+		for _, locale := range SupportedLocales() {
+			if strings.TrimSpace(tmpl.Text[locale]) == "" {
+				t.Errorf("degrade status %s missing locale %s", s, locale)
+			}
 		}
 		seen[string(s)] = true
 	}
@@ -370,7 +393,7 @@ func TestRegisterSegregation(t *testing.T) {
 			filler[ph] = "x"
 		}
 	}
-	for _, locale := range []string{"en", "zh"} {
+	for _, locale := range SupportedLocales() {
 		for code := range registry.governed {
 			got := Governed(Code(code), filler, WithLocale(locale))
 			if registry.isAmbientLine(got) {
@@ -386,7 +409,7 @@ func TestRegisterSegregation(t *testing.T) {
 	}
 	// And the other direction: no ambient line ever matches a governed or
 	// degrade template shape.
-	for _, locale := range []string{"en", "zh"} {
+	for _, locale := range SupportedLocales() {
 		for context := range registry.ambient.Locales[locale] {
 			for _, line := range registry.ambientPool(locale, context) {
 				if matchesTemplate(line, registry.governed) || matchesTemplate(line, registry.degrade) {
@@ -431,27 +454,17 @@ func TestIsMembership(t *testing.T) {
 	}
 }
 
-// TestAmbientPoolsAuthoredIndependently: zh pools are authored, not
-// translated — pool sizes are asserted independently and must not be forced
-// into a 1:1 line mapping.
+// TestAmbientPoolsAuthoredIndependently verifies complete context coverage in
+// every locale without requiring one-to-one translated line counts.
 func TestAmbientPoolsAuthoredIndependently(t *testing.T) {
-	enTotal, zhTotal := registry.ambientCount("en"), registry.ambientCount("zh")
-	if enTotal == 0 || zhTotal == 0 {
-		t.Fatalf("empty ambient pools: en=%d zh=%d", enTotal, zhTotal)
-	}
-	if enTotal == zhTotal {
-		t.Errorf("en (%d) and zh (%d) ambient pools are size-identical; zh must be authored, not mapped 1:1", enTotal, zhTotal)
-	}
-	// Both locales must cover every context that the other covers (parity of
-	// coverage, not of line counts).
-	for context := range registry.ambient.Locales["en"] {
-		if len(registry.ambient.Locales["zh"][context]) == 0 {
-			t.Errorf("zh has no ambient pool for context %s", context)
+	for _, locale := range SupportedLocales() {
+		if total := registry.ambientCount(locale); total == 0 {
+			t.Fatalf("empty ambient pool for %s", locale)
 		}
-	}
-	for context := range registry.ambient.Locales["zh"] {
-		if len(registry.ambient.Locales["en"][context]) == 0 {
-			t.Errorf("en has no ambient pool for context %s", context)
+		for context := range registry.ambient.Locales["en"] {
+			if len(registry.ambient.Locales[locale][context]) == 0 {
+				t.Errorf("%s has no ambient pool for context %s", locale, context)
+			}
 		}
 	}
 }
@@ -470,13 +483,77 @@ func TestDetectLocale(t *testing.T) {
 	if got := DetectLocale(); got != "en" {
 		t.Errorf("LC_MESSAGES should outrank LANG, got %q", got)
 	}
-	t.Setenv("LC_ALL", "zh_TW.UTF-8")
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
 	if got := DetectLocale(); got != "zh" {
 		t.Errorf("LC_ALL should outrank LC_MESSAGES, got %q", got)
 	}
 	t.Setenv("CARINA_LOCALE", "en")
 	if got := DetectLocale(); got != "en" {
 		t.Errorf("CARINA_LOCALE should outrank everything, got %q", got)
+	}
+}
+
+func TestResolveLocalePrecedence(t *testing.T) {
+	scrubLocaleEnv(t)
+	t.Setenv("LANG", "ja_JP.UTF-8")
+	t.Setenv("LC_MESSAGES", "es_ES.UTF-8")
+	t.Setenv("LC_ALL", "fr_FR.UTF-8")
+	t.Setenv("CARINA_LOCALE", "ko_KR.UTF-8")
+
+	if got, err := ResolveLocale("zh-CN", "es-ES"); err != nil || got != "zh" {
+		t.Fatalf("flag locale = %q, want zh", got)
+	}
+	if got, err := ResolveLocale("", "es-ES"); err != nil || got != "ko" {
+		t.Fatalf("CARINA_LOCALE = %q, want ko", got)
+	}
+	t.Setenv("CARINA_LOCALE", "")
+	if got, err := ResolveLocale("", "es-ES"); err != nil || got != "es" {
+		t.Fatalf("config locale = %q, want es", got)
+	}
+	if got, err := ResolveLocale("", ""); err != nil || got != "fr" {
+		t.Fatalf("system locale = %q, want fr", got)
+	}
+}
+
+func TestUnknownCopyFallbackNeverLeaksIdentifierOrReturnsEmpty(t *testing.T) {
+	for _, locale := range SupportedLocales() {
+		govID := "internal.governed.identifier"
+		gov := Governed(Code(govID), nil, WithLocale(locale))
+		if strings.TrimSpace(gov) == "" || strings.Contains(gov, govID) {
+			t.Errorf("governed fallback(%s) = %q", locale, gov)
+		}
+
+		degradeID := "internal.degrade.identifier"
+		deg := Degrade(DegradeStatus(degradeID), nil, WithLocale(locale))
+		if strings.TrimSpace(deg) == "" || strings.Contains(deg, degradeID) {
+			t.Errorf("degrade fallback(%s) = %q", locale, deg)
+		}
+	}
+}
+
+func TestTemplatePlaceholderParityAcrossLocales(t *testing.T) {
+	for register, templates := range map[string]map[string]*template{
+		"governed": registry.governed,
+		"degrade":  registry.degrade,
+	} {
+		for key, tmpl := range templates {
+			for _, locale := range SupportedLocales() {
+				body := tmpl.Text[locale]
+				got := map[string]bool{}
+				for _, token := range placeholderShape.FindAllString(body, -1) {
+					got[strings.Trim(token, "{}")] = true
+				}
+				for _, name := range tmpl.Placeholders {
+					if !got[name] {
+						t.Errorf("%s/%s/%s missing {%s}", register, locale, key, name)
+					}
+					delete(got, name)
+				}
+				for name := range got {
+					t.Errorf("%s/%s/%s has undeclared {%s}", register, locale, key, name)
+				}
+			}
+		}
 	}
 }
 

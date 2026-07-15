@@ -238,8 +238,8 @@ func (m *Model) handleApprovalDone(msg approvalDoneMsg) {
 	}
 	if msg.err != nil {
 		m.approval.Resolving = false
-		m.approval.Error = "Approval failed: " + msg.err.Error() + ". Press the decision key to retry."
-		m.push(fmt.Sprintf("%s approval RPC failed: %s", glyphFailed(m.th), msg.err.Error()))
+		m.approval.Error = m.text(MsgApprovalRetry, MessageArgs{"error": msg.err.Error()})
+		m.push(m.text(MsgApprovalRPCFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}))
 		return
 	}
 	m.nextQueuedApproval()
@@ -288,7 +288,7 @@ func (m *Model) recordApprovalOutcome(msg approvalDoneMsg) {
 		}, opts...)))
 		if msg.initiator == "policy" {
 			if msg.detail != "" {
-				m.push(fmt.Sprintf("%s policy: %s", glyphNeutral(m.th), msg.detail))
+				m.push(m.text(MsgApprovalPolicyDetail, MessageArgs{"glyph": glyphNeutral(m.th), "detail": msg.detail}))
 			}
 			if updatesOutcome {
 				m.outcome = OutcomePolicyDenied
@@ -358,10 +358,10 @@ func (m *Model) approvalBodyLines() []string {
 		appendWrapped("$ " + ap.Label)
 	}
 	if ap.Resource != "" && ap.Resource != ap.Label {
-		appendWrapped("resource: " + ap.Resource)
+		appendWrapped(m.text(MsgApprovalResource, MessageArgs{"value": ap.Resource}))
 	}
 	if ap.Reason != "" {
-		appendWrapped("policy: " + ap.Reason)
+		appendWrapped(m.text(MsgApprovalPolicy, MessageArgs{"value": ap.Reason}))
 	}
 	for _, line := range ap.Body {
 		appendWrapped(line)
@@ -423,36 +423,39 @@ func (m *Model) overlayView() string {
 	end := minInt(start+m.approvalViewportHeight(), len(body))
 	visibleBody := body[start:end]
 
-	footer := fmt.Sprintf("[%s] approve once  [%s] session  [%s] project  [%s] deny",
-		m.keys.label(KeyContextApproval, ActionApprovalOnce),
-		m.keys.label(KeyContextApproval, ActionApprovalSession),
-		m.keys.label(KeyContextApproval, ActionApprovalProject),
-		m.keys.label(KeyContextApproval, ActionApprovalDeny),
-	)
+	footerArgs := MessageArgs{
+		"once":    m.keys.label(KeyContextApproval, ActionApprovalOnce),
+		"session": m.keys.label(KeyContextApproval, ActionApprovalSession),
+		"project": m.keys.label(KeyContextApproval, ActionApprovalProject),
+		"deny":    m.keys.label(KeyContextApproval, ActionApprovalDeny),
+	}
+	footer := m.text(MsgApprovalFooterWide, footerArgs)
 	if contentWidth < 56 {
-		footer = fmt.Sprintf("[%s] allow  [%s/%s] broader  [%s] deny",
-			primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalOnce)),
-			primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalSession)),
-			primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalProject)),
-			primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalDeny)),
-		)
+		footerArgs = MessageArgs{
+			"once":    primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalOnce)),
+			"session": primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalSession)),
+			"project": primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalProject)),
+			"deny":    primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalDeny)),
+		}
+		footer = m.text(MsgApprovalFooterMedium, footerArgs)
 	}
 	if contentWidth < 34 {
-		footer = fmt.Sprintf("[%s] allow  [%s] deny",
-			primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalOnce)),
-			primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalDeny)),
-		)
+		footer = m.text(MsgApprovalFooterNarrow, MessageArgs{
+			"once": primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalOnce)),
+			"deny": primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalDeny)),
+		})
 	}
 	if ap.Resolving {
-		footer = "Resolving decision..."
+		footer = m.text(MsgApprovalResolving, nil)
 	} else if len(body) > m.approvalViewportHeight() {
 		if contentWidth >= 56 {
-			footer += fmt.Sprintf("  [%s/%s/%s/%s] scroll %d-%d/%d",
-				primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalUp)),
-				primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalDown)),
-				primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalPageUp)),
-				primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalPageDown)),
-				start+1, end, len(body))
+			footer += m.text(MsgApprovalScroll, MessageArgs{
+				"up":        primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalUp)),
+				"down":      primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalDown)),
+				"page_up":   primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalPageUp)),
+				"page_down": primaryKeyLabel(m.keys.keys(KeyContextApproval, ActionApprovalPageDown)),
+				"start":     start + 1, "end": end, "total": len(body),
+			})
 		} else {
 			footer += fmt.Sprintf("  %d-%d/%d", start+1, end, len(body))
 		}

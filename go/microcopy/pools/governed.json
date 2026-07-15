@@ -3,58 +3,124 @@
   "templates": {
     "approval.required": {
       "placeholders": ["action", "path", "decision_id"],
+      "facts": ["approval_required", "no_default", "decision_pending"],
+      "terms": ["agent", "approval", "decision"],
       "en": "Approval required: agent requests {action} on {path}. No default. Decision {decision_id} is pending.",
-      "zh": "需要授权：代理请求对 {path} 执行 {action}。无默认选项。决定 {decision_id} 等待处理。"
+      "zh": "需要授权：代理请求对 {path} 执行 {action}。无默认选项。决定 {decision_id} 等待处理。",
+      "ja": "承認が必要です。エージェントが {path} に対する {action} を要求しています。既定の選択肢はありません。決定 {decision_id} は保留中です。",
+      "ko": "승인이 필요합니다. 에이전트 요청: {path}에서 {action}. 기본 선택은 없습니다. 결정 {decision_id} 처리 대기 중입니다.",
+      "es": "Aprobación requerida: el agente solicita {action} en {path}. No hay una opción predeterminada. La decisión {decision_id} está pendiente.",
+      "fr": "Approbation requise : l’agent demande {action} sur {path}. Aucun choix par défaut. La décision {decision_id} est en attente."
     },
     "approval.granted": {
       "placeholders": ["action", "scope", "decision_id"],
+      "facts": ["approval_granted", "scope_recorded", "decision_audited"],
+      "terms": ["approval", "scope", "decision", "audit_chain"],
       "en": "Approved: {action}. Scope: {scope}. Decision {decision_id} is recorded in the audit chain.",
-      "zh": "已批准：{action}。范围：{scope}。决定 {decision_id} 已记入审计链。"
+      "zh": "已批准：{action}。范围：{scope}。决定 {decision_id} 已记入审计链。",
+      "ja": "承認されました。操作: {action}。スコープ: {scope}。決定 {decision_id} は監査チェーンに記録されました。",
+      "ko": "승인되었습니다: {action}. 범위: {scope}. 결정 {decision_id} 감사 체인에 기록되었습니다.",
+      "es": "Aprobado: {action}. Alcance: {scope}. La decisión {decision_id} se registró en la cadena de auditoría.",
+      "fr": "Approuvé : {action}. Périmètre : {scope}. La décision {decision_id} est enregistrée dans la chaîne d’audit."
     },
     "approval.denied": {
       "placeholders": ["action", "decision_id"],
-      "en": "Denied: {action}. Decision {decision_id} is recorded in the audit chain. The command was not executed.",
-      "zh": "已拒绝：{action}。决定 {decision_id} 已记入审计链。命令未被执行。"
+      "facts": ["approval_denied", "decision_audited", "requested_action_not_executed"],
+      "terms": ["approval", "decision", "audit_chain", "action"],
+      "en": "Denied: {action}. Decision {decision_id} is recorded in the audit chain. The requested action was not executed.",
+      "zh": "已拒绝：{action}。决定 {decision_id} 已记入审计链。所请求的操作未被执行。",
+      "ja": "拒否されました。操作: {action}。決定 {decision_id} は監査チェーンに記録されました。要求された操作は実行されていません。",
+      "ko": "거부되었습니다: {action}. 결정 {decision_id} 감사 체인에 기록되었습니다. 요청한 작업은 실행되지 않았습니다.",
+      "es": "Denegado: {action}. La decisión {decision_id} se registró en la cadena de auditoría. La acción solicitada no se ejecutó.",
+      "fr": "Refusé : {action}. La décision {decision_id} est enregistrée dans la chaîne d’audit. L’action demandée n’a pas été exécutée."
     },
     "policy.denied": {
       "placeholders": ["rule_id", "action", "audit_id"],
+      "facts": ["policy_denied", "action_not_attempted", "audit_entry_written"],
+      "terms": ["policy", "action", "audit_record"],
       "en": "Denied by policy {rule_id}: {action} was not attempted. Audit entry {audit_id} written.",
-      "zh": "已被策略 {rule_id} 拒绝：{action} 未被发起。审计条目 {audit_id} 已写入。"
+      "zh": "已被策略 {rule_id} 拒绝：{action} 未被发起。审计条目 {audit_id} 已写入。",
+      "ja": "ポリシー {rule_id} により拒否されました。{action} は試行されていません。監査エントリ {audit_id} が書き込まれました。",
+      "ko": "정책 {rule_id}에 따라 거부되었습니다. 시도하지 않은 작업: {action}. 감사 항목 {audit_id} 작성을 완료했습니다.",
+      "es": "Denegado por la política {rule_id}: no se intentó {action}. Se escribió la entrada de auditoría {audit_id}.",
+      "fr": "Refusé par la politique {rule_id} : {action} n’a pas été tentée. L’entrée d’audit {audit_id} a été écrite."
     },
     "policy.updated": {
       "placeholders": ["tightened", "loosened"],
-      "en": "Policy bundle updated: {tightened} rules tightened, {loosened} loosened. Loosening requires explicit operator approval.",
-      "zh": "策略包已更新：收紧 {tightened} 条，放宽 {loosened} 条。放宽须操作者明确批准。"
+      "facts": ["policy_bundle_updated", "tightened_count_reported", "loosened_count_reported", "loosening_requires_operator_approval"],
+      "terms": ["policy", "operator", "approval"],
+      "en": "Policy bundle updated. Tightened rules: {tightened}. Loosened rules: {loosened}. Loosening requires explicit operator approval.",
+      "zh": "策略包已更新。收紧规则数：{tightened}。放宽规则数：{loosened}。放宽须操作者明确批准。",
+      "ja": "ポリシーバンドルが更新されました。強化したルール数: {tightened}。緩和したルール数: {loosened}。緩和にはオペレーターの明示的な承認が必要です。",
+      "ko": "정책 번들이 업데이트되었습니다. 강화한 규칙 수: {tightened}. 완화한 규칙 수: {loosened}. 완화하려면 운영자의 명시적 승인이 필요합니다.",
+      "es": "Paquete de políticas actualizado. Reglas restringidas: {tightened}. Reglas flexibilizadas: {loosened}. La flexibilización requiere la aprobación explícita del operador.",
+      "fr": "Ensemble de politiques mis à jour. Règles durcies : {tightened}. Règles assouplies : {loosened}. Tout assouplissement exige l’approbation explicite de l’opérateur."
     },
     "destructive.confirm": {
-      "placeholders": ["command", "count"],
-      "en": "Destructive action: {command} ({count} files). A restore point will be created first. Confirm to proceed.",
-      "zh": "破坏性操作：{command}（{count} 个文件）。将先创建还原点。确认后执行。"
+      "placeholders": ["command", "count_label"],
+      "facts": ["destructive_action", "affected_file_count", "restore_point_precedes_action", "explicit_confirmation_required"],
+      "terms": ["command", "restore_point", "approval"],
+      "en": "Destructive action: {command} ({count_label}). A restore point will be created first. Confirm to proceed.",
+      "zh": "破坏性操作：{command}（{count_label}）。将先创建还原点。确认后执行。",
+      "ja": "破壊的な操作です。コマンド: {command}。対象: {count_label}。先に復元ポイントを作成します。続行する場合は確認してください。",
+      "ko": "파괴적 작업입니다. 명령: {command}. 대상: {count_label}. 먼저 복원 지점을 생성합니다. 계속하려면 확인하십시오.",
+      "es": "Acción destructiva: {command} ({count_label}). Primero se creará un punto de restauración. Confirme para continuar.",
+      "fr": "Action destructive : {command} ({count_label}). Un point de restauration sera d’abord créé. Confirmez pour continuer."
     },
     "rollback.complete": {
       "placeholders": ["count", "checkpoint_id"],
-      "en": "Rollback complete. {count} file changes reverted to checkpoint {checkpoint_id}. Nothing outside the transaction was touched.",
-      "zh": "回滚完成。{count} 处文件改动已还原至检查点 {checkpoint_id}。事务之外未触碰任何内容。"
+      "facts": ["rollback_completed", "reverted_change_count", "checkpoint_target", "transaction_boundary_preserved"],
+      "terms": ["rollback", "checkpoint", "transaction"],
+      "en": "Rollback complete. File changes reverted: {count}. Checkpoint: {checkpoint_id}. Nothing outside the transaction was touched.",
+      "zh": "回滚完成。已还原文件改动数：{count}。检查点：{checkpoint_id}。事务之外未触碰任何内容。",
+      "ja": "ロールバックが完了しました。復元したファイル変更数: {count}。チェックポイント: {checkpoint_id}。トランザクション外には変更を加えていません。",
+      "ko": "롤백을 완료했습니다. 되돌린 파일 변경 수: {count}. 체크포인트: {checkpoint_id}. 트랜잭션 밖의 내용은 변경하지 않았습니다.",
+      "es": "Reversión completada. Cambios de archivo revertidos: {count}. Punto de control: {checkpoint_id}. No se modificó nada fuera de la transacción.",
+      "fr": "Restauration terminée. Modifications de fichiers annulées : {count}. Point de contrôle : {checkpoint_id}. Rien en dehors de la transaction n’a été modifié."
     },
     "checkpoint.created": {
-      "placeholders": ["action", "checkpoint_id"],
-      "en": "Checkpoint created before {action}. Undo at any time with: carina rollback {checkpoint_id}.",
-      "zh": "执行 {action} 前已创建检查点。随时可撤销：carina rollback {checkpoint_id}。"
+      "placeholders": ["action", "session_id", "checkpoint_id"],
+      "facts": ["checkpoint_created_before_action", "checkpoint_preview_command_available", "checkpoint_restore_command_available", "restore_requires_explicit_confirmation"],
+      "terms": ["checkpoint", "restore_point", "action"],
+      "en": "Checkpoint created before {action}. Preview it with: `carina checkpoint preview {session_id} {checkpoint_id}`. After review, restore it with: `carina checkpoint restore {session_id} {checkpoint_id} --yes`.",
+      "zh": "执行 {action} 前已创建检查点。先预览：`carina checkpoint preview {session_id} {checkpoint_id}`。审阅后恢复：`carina checkpoint restore {session_id} {checkpoint_id} --yes`。",
+      "ja": "{action} の実行前にチェックポイントを作成しました。まず `carina checkpoint preview {session_id} {checkpoint_id}` で確認してください。確認後の復元: `carina checkpoint restore {session_id} {checkpoint_id} --yes`。",
+      "ko": "{action} 실행 전에 체크포인트를 생성했습니다. 먼저 `carina checkpoint preview {session_id} {checkpoint_id}` 명령으로 확인하세요. 확인 후 복원: `carina checkpoint restore {session_id} {checkpoint_id} --yes`.",
+      "es": "Se creó un punto de control antes de {action}. Revíselo con: `carina checkpoint preview {session_id} {checkpoint_id}`. Tras revisarlo, restáurelo con: `carina checkpoint restore {session_id} {checkpoint_id} --yes`.",
+      "fr": "Un point de contrôle a été créé avant {action}. Examinez-le avec : `carina checkpoint preview {session_id} {checkpoint_id}`. Après examen, restaurez-le avec : `carina checkpoint restore {session_id} {checkpoint_id} --yes`."
     },
     "audit.verified": {
       "placeholders": ["count", "head"],
-      "en": "Audit chain verified: {count} entries, head {head}, no gaps, no rewrites.",
-      "zh": "审计链校验通过：{count} 条记录，链头 {head}，无缺口，无改写。"
+      "facts": ["audit_chain_verified", "entry_count_reported", "head_reported", "no_gaps", "no_rewrites"],
+      "terms": ["audit_chain", "audit_record"],
+      "en": "Audit chain verified. Entries: {count}. Head: {head}. No gaps or rewrites.",
+      "zh": "审计链校验通过。记录数：{count}。链头：{head}。无缺口，无改写。",
+      "ja": "監査チェーンを検証しました。エントリ数: {count}。ヘッド: {head}。欠落および書き換えはありません。",
+      "ko": "감사 체인 검증을 완료했습니다. 항목 수: {count}. 헤드: {head}. 누락과 재작성은 없습니다.",
+      "es": "Cadena de auditoría verificada. Entradas: {count}. Cabecera: {head}. Sin lagunas ni reescrituras.",
+      "fr": "Chaîne d’audit vérifiée. Entrées : {count}. Tête : {head}. Aucune lacune ni réécriture."
     },
     "secret.redacted": {
       "placeholders": [],
-      "en": "Secret detected in agent output. Redacted from display; the original is recorded in the encrypted audit store only.",
-      "zh": "在代理输出中检测到密钥。显示已脱敏；原文仅记录于加密审计存储。"
+      "facts": ["secret_detected", "display_redacted", "transcript_redacted", "audit_record_redacted", "original_not_retained"],
+      "terms": ["agent", "secret", "transcript", "audit_record"],
+      "en": "Secret detected in agent output. The display, transcript, and audit record contain only the redacted value. The original is not retained.",
+      "zh": "在代理输出中检测到密钥。显示、转录和审计记录仅包含脱敏值。原文不会保留。",
+      "ja": "エージェントの出力でシークレットを検出しました。表示、トランスクリプト、監査記録にはマスクされた値のみ含まれます。原文は保持されません。",
+      "ko": "에이전트 출력에서 기밀 정보를 감지했습니다. 화면, 기록, 감사 항목에는 마스크 처리된 값만 포함됩니다. 원문은 보관하지 않습니다.",
+      "es": "Se detectó un secreto en la salida del agente. La pantalla, la transcripción y el registro de auditoría solo contienen el valor oculto. El original no se conserva.",
+      "fr": "Un secret a été détecté dans la sortie de l’agent. L’affichage, la transcription et l’enregistrement d’audit contiennent uniquement la valeur masquée. L’original n’est pas conservé."
     },
     "egress.confirm": {
       "placeholders": ["subject", "endpoint"],
+      "facts": ["external_transfer", "subject_identified", "endpoint_identified", "explicit_confirmation_required"],
+      "terms": ["action", "external_endpoint", "approval"],
       "en": "This action sends {subject} to an external endpoint ({endpoint}). Proceed?",
-      "zh": "此操作将把 {subject} 发送至外部端点（{endpoint}）。是否继续？"
+      "zh": "此操作将把 {subject} 发送至外部端点（{endpoint}）。是否继续？",
+      "ja": "この操作は {subject} を外部エンドポイント ({endpoint}) に送信します。続行しますか？",
+      "ko": "외부 엔드포인트({endpoint})로 전송할 항목: {subject}. 계속하시겠습니까?",
+      "es": "Esta acción envía {subject} a un punto de conexión externo ({endpoint}). ¿Desea continuar?",
+      "fr": "Cette action envoie {subject} vers un point de terminaison externe ({endpoint}). Continuer ?"
     }
   }
 }

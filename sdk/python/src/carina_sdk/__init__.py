@@ -20,23 +20,109 @@ __all__ = [
     "CarinaRpcError",
     "CarinaStreamOverflow",
     "CarinaTask",
+    "Checkpoint",
+    "CheckpointPreview",
+    "CheckpointRestoreResult",
+    "CheckpointSummary",
     "CarinaThread",
     "SessionAttachment",
     "SessionReview",
+    "SuccessCheck",
     "UsageCostReport",
     "compatible_runtime_version",
     "default_socket_path",
 ]
 
 
-class CarinaTask(TypedDict, total=False):
+class _CarinaTaskRequired(TypedDict):
     task_id: str
-    client_submission_id: str
     session_id: str
     workspace_id: str
     status: str
     user_prompt: str
+    created_at: str
+    updated_at: str
+    risk_level: int
+
+
+class CarinaTask(_CarinaTaskRequired, total=False):
+    client_submission_id: str
+    model: str
+    agent: str
+    success_criteria: list[SuccessCheck]
+    mode: str
     summary: str
+    applied_patches: list[str]
+    reconciliation_required: bool
+    blocked_reason: str
+    tokens_used: int
+    token_usage_observed: bool
+    token_budget: int
+    output_schema: dict[str, Any]
+    lease_owner: str
+    lease_expiry: str
+    lease_generation: int
+    attempts: int
+    required_worker_capabilities: list[str]
+
+
+class _CheckpointRequired(TypedDict):
+    checkpoint_id: str
+    created_at: str
+    sequence: str
+    task_id: str
+    session_id: str
+    turn: int
+    applied_patches: list[str]
+
+
+class Checkpoint(_CheckpointRequired, total=False):
+    parent_checkpoint_id: str
+    summary: str
+
+
+class _CheckpointPreviewRequired(TypedDict):
+    checkpoint: Checkpoint
+    conversation_turns: int
+    rollback_patches: list[str]
+    will_resume: str
+
+
+class CheckpointPreview(_CheckpointPreviewRequired, total=False):
+    summary: str
+
+
+class _CheckpointSummaryRequired(TypedDict):
+    checkpoint_id: str
+    task_id: str
+    turn: int
+    recent: list[dict[str, Any]]
+
+
+class CheckpointSummary(_CheckpointSummaryRequired, total=False):
+    summary: str
+
+
+class CheckpointRestoreResult(TypedDict):
+    restored: bool
+    checkpoint_id: str
+    task_id: str
+    turn: int
+    rolled_back: list[str]
+    status: str
+    idempotent: bool
+    reconciliation_required: bool
+    journal_cleanup_pending: bool
+
+
+class _SuccessCheckRequired(TypedDict):
+    kind: str
+
+
+class SuccessCheck(_SuccessCheckRequired, total=False):
+    path: str
+    pattern: str
+    command: str
 
 
 class CarinaEvent(TypedDict, total=False):
@@ -46,6 +132,10 @@ class CarinaEvent(TypedDict, total=False):
     type: str
     timestamp: str
     payload: dict[str, Any]
+    permission_decision_id: str
+    actor: str
+    prev_hash: str
+    event_hash: str
     raw_cursor: int
 
 
@@ -212,7 +302,7 @@ class CarinaClient:
             params["client_submission_id"] = client_submission_id
         return self.call("task.submit", params)
 
-    def submit_goal(self, session_id: str, prompt: str, success_criteria: list[dict[str, Any]], client_submission_id: str | None = None) -> CarinaTask:
+    def submit_goal(self, session_id: str, prompt: str, success_criteria: list[SuccessCheck], client_submission_id: str | None = None) -> CarinaTask:
         params: dict[str, Any] = {"session_id": session_id, "prompt": prompt, "success_criteria": success_criteria}
         if client_submission_id is not None:
             params["client_submission_id"] = client_submission_id
@@ -332,17 +422,20 @@ class CarinaClient:
     def agent_view(self) -> dict[str, list[dict[str, Any]]]:
         return self.call("agent.view")
 
-    def list_checkpoints(self, session_id: str) -> list[dict[str, Any]]:
+    def list_checkpoints(self, session_id: str) -> list[Checkpoint]:
         return self.call("session.checkpoint.list", {"session_id": session_id})
 
-    def preview_checkpoint(self, session_id: str, checkpoint_id: str) -> dict[str, Any]:
+    def preview_checkpoint(self, session_id: str, checkpoint_id: str) -> CheckpointPreview:
         return self.call("session.checkpoint.preview", {"session_id": session_id, "checkpoint_id": checkpoint_id})
 
-    def summarize_checkpoint(self, session_id: str, checkpoint_id: str) -> dict[str, Any]:
+    def summarize_checkpoint(self, session_id: str, checkpoint_id: str) -> CheckpointSummary:
         return self.call("session.checkpoint.summarize", {"session_id": session_id, "checkpoint_id": checkpoint_id})
 
-    def restore_checkpoint(self, session_id: str, checkpoint_id: str, confirmed: bool = False) -> dict[str, Any]:
+    def restore_checkpoint(self, session_id: str, checkpoint_id: str, confirmed: bool = False) -> CheckpointRestoreResult:
         return self.call("session.checkpoint.restore", {"session_id": session_id, "checkpoint_id": checkpoint_id, "confirmed": confirmed})
+
+    def resume_task(self, task_id: str) -> CarinaTask:
+        return self.call("task.resume", {"task_id": task_id})
 
     def inject_channel_event(self, event: dict[str, Any], signature: str) -> dict[str, Any]:
         return self.call("channel.event.inject", {"event": event, "signature": signature})

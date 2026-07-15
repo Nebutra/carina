@@ -30,22 +30,24 @@ func (m *Model) closeHelp() {
 
 func (m *Model) helpBodyLines() []string {
 	lines := []string{
-		"Commands",
-		"  /help                 commands and keybindings",
-		"  /editor               edit the current draft in VISUAL/EDITOR",
-		"  /copy                 copy the latest rendered agent response",
-		"  /transcript           open the plain-text transcript pager",
-		"  /agents               available agent modes",
-		"  /checkpoints          rewind points for this session",
-		"  /search <text>         search visible transcript",
-		"  /recap                 compact current-session recap",
-		"  /mode <build|plan>     change interaction mode",
-		"  !<command>             governed argv command; quotes supported",
-		"  @<path|agent>          reference a path or agent",
+		m.text(MsgHelpCommands, nil),
+		m.text(MsgHelpCommandHelp, nil),
+		m.text(MsgHelpCommandEditor, nil),
+		m.text(MsgHelpCommandCopy, nil),
+		m.text(MsgHelpCommandTranscript, nil),
+		m.text(MsgHelpCommandKeymap, nil),
+		m.text(MsgHelpCommandAgents, nil),
+		m.text(MsgHelpCommandCheckpoints, nil),
+		m.text(MsgHelpCommandResume, nil),
+		m.text(MsgHelpCommandSearch, nil),
+		m.text(MsgHelpCommandRecap, nil),
+		m.text(MsgHelpCommandMode, nil),
+		m.text(MsgHelpCommandShell, nil),
+		m.text(MsgHelpCommandMention, nil),
 		"",
-		"Keybindings",
+		m.text(MsgHelpKeybindings, nil),
 	}
-	return append(lines, m.keys.helpLines()...)
+	return append(lines, m.keys.helpLines(m)...)
 }
 
 func (m *Model) helpViewportHeight() int {
@@ -97,15 +99,15 @@ func (m *Model) helpOverlayView() string {
 	m.clampHelpScroll()
 	start := m.helpScroll
 	end := minInt(start+m.helpViewportHeight(), len(body))
-	lines := []string{m.th.Style(theme.RoleWarning).Render("Carina help"), ""}
+	lines := []string{m.th.Style(theme.RoleWarning).Render(m.text(MsgHelpTitle, nil)), ""}
 	for _, line := range body[start:end] {
 		lines = append(lines, fitRenderedLine(line, contentWidth))
 	}
-	footer := fmt.Sprintf("[%s] close  [%s/%s] scroll",
-		m.keys.label(KeyContextPager, ActionPagerClose),
-		m.keys.label(KeyContextPager, ActionPagerUp),
-		m.keys.label(KeyContextPager, ActionPagerDown),
-	)
+	footer := m.text(MsgHelpCloseScroll, MessageArgs{
+		"close": m.keys.label(KeyContextPager, ActionPagerClose),
+		"up":    m.keys.label(KeyContextPager, ActionPagerUp),
+		"down":  m.keys.label(KeyContextPager, ActionPagerDown),
+	})
 	if len(body) > m.helpViewportHeight() {
 		footer += fmt.Sprintf("  %d-%d/%d", start+1, end, len(body))
 	}

@@ -27,12 +27,13 @@ export class RpcClient {
       const initialFailure = (error: Error) => { socket.destroy(); fail(error) }
       socket.once('error', initialFailure)
       socket.once('connect', () => {
+        if (this.disposed) { socket.destroy(); fail(new Error('client disposed')); return }
         socket.removeListener('error', initialFailure); this.socket = socket; this.buffer = ''; this.backoffMs = 250
         socket.on('data', b => this.read(b.toString())); socket.on('error', e => this.disconnect(socket, e)); socket.on('close', () => this.disconnect(socket, new Error('daemon disconnected')))
         this.emitState('connected'); ok()
       })
     }).finally(() => { this.connecting = undefined })
-    try { await this.connecting } catch (e) { this.emitState('stale', asError(e)); this.scheduleReconnect(); throw e }
+    try { await this.connecting } catch (e) { if (!this.disposed) { this.emitState('stale', asError(e)); this.scheduleReconnect() } throw e }
   }
   async call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     await this.connect(); const socket = this.socket; if (!socket || socket.destroyed) throw new Error('daemon disconnected')
@@ -42,9 +43,9 @@ export class RpcClient {
       this.pending.set(id, { ok: v => ok(v as T), fail, timer }); socket.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
     })
   }
-  dispose(): void { this.disposed = true; if (this.reconnectTimer) clearTimeout(this.reconnectTimer); this.socket?.destroy(); this.failPending(new Error('client disposed')); this.emitState('disposed') }
+  dispose(): void { this.disposed = true; if (this.reconnectTimer) clearTimeout(this.reconnectTimer); const socket=this.socket;this.socket=undefined;socket?.destroy(); this.failPending(new Error('client disposed')); this.emitState('disposed') }
   private read(chunk: string): void { this.buffer += chunk; for (;;) { const i=this.buffer.indexOf('\n'); if(i<0)return; const line=this.buffer.slice(0,i);this.buffer=this.buffer.slice(i+1);if(!line)continue;let msg:any;try{msg=JSON.parse(line)}catch{continue} if(msg.id!==undefined){const p=this.pending.get(msg.id);if(!p)continue;this.pending.delete(msg.id);clearTimeout(p.timer);msg.error?p.fail(new Error(msg.error.message)):p.ok(msg.result)}else if(msg.method){for(const fn of this.notifications)fn(msg.method,msg.params)}} }
-  private disconnect(socket: Socket,error: Error): void { if(this.socket!==socket)return;this.socket=undefined;this.failPending(error);this.emitState('stale',error);this.scheduleReconnect() }
+  private disconnect(socket: Socket,error: Error): void { if(this.socket!==socket)return;this.socket=undefined;if(this.disposed)return;this.failPending(error);this.emitState('stale',error);this.scheduleReconnect() }
   private failPending(error: Error): void { for(const p of this.pending.values()){clearTimeout(p.timer);p.fail(error)}this.pending.clear() }
   private scheduleReconnect(): void { if(this.disposed||this.reconnectTimer)return;const delay=this.backoffMs;this.backoffMs=Math.min(this.backoffMs*2,10_000);this.reconnectTimer=setTimeout(()=>{this.reconnectTimer=undefined;void this.connect().catch(()=>{})},delay) }
   private emitState(state: ConnectionState,error?: Error): void { for(const fn of this.states)fn(state,error) }

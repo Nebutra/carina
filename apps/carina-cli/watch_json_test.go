@@ -46,6 +46,12 @@ func TestParseWatchArgsRequiresSessionID(t *testing.T) {
 	if _, _, err := parseWatchArgs([]string{"--json"}); err == nil {
 		t.Fatal("expected a usage error when only --json is given (no session_id)")
 	}
+	if _, _, err := parseWatchArgs([]string{""}); err == nil {
+		t.Fatal("expected an empty session_id to be rejected")
+	}
+	if _, _, err := parseWatchArgs([]string{"sess_1", "sess_2"}); err == nil {
+		t.Fatal("expected an extra positional argument to be rejected")
+	}
 }
 
 // TestControlFrameForEventBuildsControlRequestFromPermissionRequest pins

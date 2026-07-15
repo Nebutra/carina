@@ -74,7 +74,10 @@ func TestTaskGraphBuildsSubagentAndWorkflowHierarchy(t *testing.T) {
 		"type": "ToolApproved", "task_id": "task_main",
 		"payload": map[string]any{"workflow": "release", "run_id": "wf_1", "step": "test", "agent": "qa"},
 	})
-	text := strings.Join(graph.lines(theme.New(theme.Mono), 80, 8), "\n")
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
+	defer m.Close()
+	m.tasks = graph
+	text := strings.Join(graph.lines(m, 80, 8), "\n")
 	for _, want := range []string{"subagent", "reviewer", "workflow", "release", "step", "test qa", "  `-"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("task tree missing %q:\n%s", want, text)

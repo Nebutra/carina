@@ -69,3 +69,30 @@ func TestLatestSessionForWorkspaceNoMatchFallsThrough(t *testing.T) {
 		t.Fatalf("expected ok=false when no session matches cwd, got id=%q", id)
 	}
 }
+
+func TestResolveBareTUILocalePrecedence(t *testing.T) {
+	for _, key := range []string{"CARINA_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("LANG", "ja_JP.UTF-8")
+	if got, err := resolveBareTUILocale("fr-FR"); err != nil || got != "fr" {
+		t.Fatalf("config tui_locale = %q, want fr", got)
+	}
+	t.Setenv("CARINA_LOCALE", "es-419")
+	if got, err := resolveBareTUILocale("fr-FR"); err != nil || got != "es" {
+		t.Fatalf("CARINA_LOCALE = %q, want es", got)
+	}
+}
+
+func TestResolveBareTUILocaleRejectsExplicitUnsupportedValues(t *testing.T) {
+	for _, key := range []string{"CARINA_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
+		t.Setenv(key, "")
+	}
+	if _, err := resolveBareTUILocale("zh-Hant"); err == nil {
+		t.Fatal("unsupported tui_locale must fail")
+	}
+	t.Setenv("CARINA_LOCALE", "de-DE")
+	if _, err := resolveBareTUILocale(""); err == nil {
+		t.Fatal("unsupported CARINA_LOCALE must fail")
+	}
+}

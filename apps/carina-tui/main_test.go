@@ -25,3 +25,113 @@ func TestRunRequiresTTY(t *testing.T) {
 		t.Fatalf("stderr missing TTY guidance: %q", errOut.String())
 	}
 }
+
+func TestResolveTUILocalePrecedence(t *testing.T) {
+	for _, key := range []string{"CARINA_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	t.Setenv("LC_MESSAGES", "es_ES.UTF-8")
+	t.Setenv("LC_ALL", "fr_FR.UTF-8")
+	t.Setenv("CARINA_LOCALE", "ko_KR.UTF-8")
+
+	if got, err := resolveTUILocale("ja-JP", "es-ES"); err != nil || got != "ja" {
+		t.Fatalf("flag locale = %q, want ja", got)
+	}
+	if got, err := resolveTUILocale("", "es-ES"); err != nil || got != "ko" {
+		t.Fatalf("CARINA_LOCALE = %q, want ko", got)
+	}
+	t.Setenv("CARINA_LOCALE", "")
+	if got, err := resolveTUILocale("", "es-ES"); err != nil || got != "es" {
+		t.Fatalf("config tui_locale = %q, want es", got)
+	}
+	if got, err := resolveTUILocale("", ""); err != nil || got != "fr" {
+		t.Fatalf("system locale = %q, want fr", got)
+	}
+}
+
+func TestResolveTUILocaleRejectsExplicitUnsupportedValues(t *testing.T) {
+	for _, key := range []string{"CARINA_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
+		t.Setenv(key, "")
+	}
+	if _, err := resolveTUILocale("zh-TW", ""); err == nil {
+		t.Fatal("unsupported --locale must fail")
+	}
+	t.Setenv("CARINA_LOCALE", "de-DE")
+	if _, err := resolveTUILocale("", ""); err == nil {
+		t.Fatal("unsupported CARINA_LOCALE must fail")
+	}
+}
+
+func TestLocalizedBootstrapUsageAndLocaleError(t *testing.T) {
+	for _, key := range []string{"CARINA_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("LANG", "zh_CN.UTF-8")
+
+	var help strings.Builder
+	if got := run([]string{"--help"}, &help); got != 2 {
+		t.Fatalf("help exit = %d, want usage", got)
+	}
+	for _, english := range []string{"unix socket", "attach to an existing", "workspace root", "copy locale", "preserve native scrollback"} {
+		if strings.Contains(strings.ToLower(help.String()), english) {
+			t.Errorf("localized help contains English description %q: %q", english, help.String())
+		}
+	}
+
+	var invalid strings.Builder
+	if got := run([]string{"--locale", "de-DE"}, &invalid); got != 2 {
+		t.Fatalf("invalid locale exit = %d, want usage", got)
+	}
+	if strings.Contains(invalid.String(), "unsupported locale") || !strings.Contains(invalid.String(), "支持") {
+		t.Fatalf("invalid locale message is mixed or not localized: %q", invalid.String())
+	}
+
+	t.Setenv("CARINA_LOCALE", "de-DE")
+	var envInvalid strings.Builder
+	if got := run(nil, &envInvalid); got != 2 {
+		t.Fatalf("invalid env locale exit = %d, want usage", got)
+	}
+	if strings.Contains(envInvalid.String(), "interactive terminal") || !strings.Contains(envInvalid.String(), "支持") {
+		t.Fatalf("invalid env locale was not rejected before TTY startup: %q", envInvalid.String())
+	}
+}
+
+func TestExplicitLocaleSelectsBootstrapHelpBeforeParse(t *testing.T) {
+	for _, key := range []string{"CARINA_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
+		t.Setenv(key, "")
+	}
+	for _, args := range [][]string{{"--locale", "ja", "--help"}, {"--locale=ja", "--help"}} {
+		var help strings.Builder
+		if got := run(args, &help); got != 2 {
+			t.Fatalf("run(%v) = %d, want usage", args, got)
+		}
+		if !strings.Contains(help.String(), "使い方") || !strings.Contains(help.String(), "Carina デーモン") {
+			t.Errorf("run(%v) did not use explicit locale for help: %q", args, help.String())
+		}
+		if strings.Contains(help.String(), "Carina daemon Unix socket") {
+			t.Errorf("run(%v) leaked English help: %q", args, help.String())
+		}
+	}
+}
+
+func TestLocalePrescanDoesNotBypassFormalParseErrors(t *testing.T) {
+	for _, key := range []string{"CARINA_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
+		t.Setenv(key, "")
+	}
+	var missing strings.Builder
+	if got := run([]string{"--locale"}, &missing); got != 2 {
+		t.Fatalf("missing locale value exit = %d, want usage", got)
+	}
+	if !strings.Contains(missing.String(), "flag needs an argument") {
+		t.Fatalf("missing locale value did not reach flag.Parse: %q", missing.String())
+	}
+
+	var invalid strings.Builder
+	if got := run([]string{"--locale", "zh-Hant", "--help"}, &invalid); got != 2 {
+		t.Fatalf("invalid locale before help exit = %d, want usage", got)
+	}
+	if !strings.Contains(invalid.String(), "Locale selection is invalid") || strings.Contains(invalid.String(), "Usage:") {
+		t.Fatalf("invalid locale was treated as help instead of a parse error: %q", invalid.String())
+	}
+}

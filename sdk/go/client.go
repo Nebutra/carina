@@ -37,23 +37,46 @@ type Session struct {
 }
 
 type Task struct {
-	TaskID             string `json:"task_id"`
-	ClientSubmissionID string `json:"client_submission_id,omitempty"`
-	SessionID          string `json:"session_id"`
-	WorkspaceID        string `json:"workspace_id"`
-	Status             string `json:"status"`
-	UserPrompt         string `json:"user_prompt"`
-	Summary            string `json:"summary,omitempty"`
+	TaskID                     string          `json:"task_id"`
+	ClientSubmissionID         string          `json:"client_submission_id,omitempty"`
+	SessionID                  string          `json:"session_id"`
+	WorkspaceID                string          `json:"workspace_id"`
+	Status                     string          `json:"status"`
+	UserPrompt                 string          `json:"user_prompt"`
+	Model                      string          `json:"model,omitempty"`
+	Agent                      string          `json:"agent,omitempty"`
+	SuccessCriteria            []SuccessCheck  `json:"success_criteria,omitempty"`
+	CreatedAt                  string          `json:"created_at"`
+	UpdatedAt                  string          `json:"updated_at"`
+	RiskLevel                  int             `json:"risk_level"`
+	Mode                       string          `json:"mode,omitempty"`
+	Summary                    string          `json:"summary,omitempty"`
+	AppliedPatches             []string        `json:"applied_patches,omitempty"`
+	ReconciliationRequired     bool            `json:"reconciliation_required,omitempty"`
+	BlockedReason              string          `json:"blocked_reason,omitempty"`
+	TokensUsed                 int             `json:"tokens_used,omitempty"`
+	TokenUsageObserved         bool            `json:"token_usage_observed,omitempty"`
+	TokenBudget                int             `json:"token_budget,omitempty"`
+	OutputSchema               json.RawMessage `json:"output_schema,omitempty"`
+	LeaseOwner                 string          `json:"lease_owner,omitempty"`
+	LeaseExpiry                string          `json:"lease_expiry,omitempty"`
+	LeaseGeneration            int             `json:"lease_generation,omitempty"`
+	Attempts                   int             `json:"attempts,omitempty"`
+	RequiredWorkerCapabilities []string        `json:"required_worker_capabilities,omitempty"`
 }
 
 type Event struct {
-	EventID   string         `json:"event_id,omitempty"`
-	SessionID string         `json:"session_id"`
-	TaskID    string         `json:"task_id,omitempty"`
-	Type      string         `json:"type"`
-	Timestamp string         `json:"timestamp"`
-	Payload   map[string]any `json:"payload,omitempty"`
-	RawCursor int            `json:"raw_cursor,omitempty"`
+	EventID              string         `json:"event_id,omitempty"`
+	SessionID            string         `json:"session_id"`
+	TaskID               string         `json:"task_id,omitempty"`
+	Type                 string         `json:"type"`
+	Timestamp            string         `json:"timestamp"`
+	Payload              map[string]any `json:"payload,omitempty"`
+	PermissionDecisionID string         `json:"permission_decision_id,omitempty"`
+	Actor                string         `json:"actor,omitempty"`
+	PrevHash             string         `json:"prev_hash,omitempty"`
+	EventHash            string         `json:"event_hash,omitempty"`
+	RawCursor            int            `json:"raw_cursor,omitempty"`
 }
 
 type SessionAttachment struct {
@@ -267,10 +290,10 @@ type AgentView struct {
 }
 
 type SuccessCheck struct {
-	Kind    string   `json:"kind"`
-	Path    string   `json:"path,omitempty"`
-	Pattern string   `json:"pattern,omitempty"`
-	Command []string `json:"command,omitempty"`
+	Kind    string `json:"kind"`
+	Path    string `json:"path,omitempty"`
+	Pattern string `json:"pattern,omitempty"`
+	Command string `json:"command,omitempty"`
 }
 
 type SearchResult struct {
@@ -285,12 +308,43 @@ type WorkspaceFile struct {
 }
 
 type Checkpoint struct {
-	CheckpointID   string   `json:"checkpoint_id"`
-	TaskID         string   `json:"task_id"`
-	SessionID      string   `json:"session_id"`
-	Turn           int      `json:"turn"`
-	Summary        string   `json:"summary,omitempty"`
-	AppliedPatches []string `json:"applied_patches"`
+	CheckpointID       string   `json:"checkpoint_id"`
+	ParentCheckpointID string   `json:"parent_checkpoint_id,omitempty"`
+	CreatedAt          string   `json:"created_at"`
+	Sequence           string   `json:"sequence"`
+	TaskID             string   `json:"task_id"`
+	SessionID          string   `json:"session_id"`
+	Turn               int      `json:"turn"`
+	Summary            string   `json:"summary,omitempty"`
+	AppliedPatches     []string `json:"applied_patches"`
+}
+
+type CheckpointPreview struct {
+	Checkpoint        Checkpoint `json:"checkpoint"`
+	ConversationTurns int        `json:"conversation_turns"`
+	Summary           string     `json:"summary,omitempty"`
+	RollbackPatches   []string   `json:"rollback_patches"`
+	WillResume        string     `json:"will_resume"`
+}
+
+type CheckpointSummary struct {
+	CheckpointID string           `json:"checkpoint_id"`
+	TaskID       string           `json:"task_id"`
+	Turn         int              `json:"turn"`
+	Summary      string           `json:"summary,omitempty"`
+	Recent       []map[string]any `json:"recent"`
+}
+
+type CheckpointRestoreResult struct {
+	Restored               bool     `json:"restored"`
+	CheckpointID           string   `json:"checkpoint_id"`
+	TaskID                 string   `json:"task_id"`
+	Turn                   int      `json:"turn"`
+	RolledBack             []string `json:"rolled_back"`
+	Status                 string   `json:"status"`
+	Idempotent             bool     `json:"idempotent"`
+	ReconciliationRequired bool     `json:"reconciliation_required"`
+	JournalCleanupPending  bool     `json:"journal_cleanup_pending"`
 }
 
 type ArtifactScope struct {
@@ -806,19 +860,24 @@ func (c *Client) ListCheckpoints(sessionID string) ([]Checkpoint, error) {
 	err := c.Call("session.checkpoint.list", map[string]any{"session_id": sessionID}, &out)
 	return out, err
 }
-func (c *Client) PreviewCheckpoint(sessionID, checkpointID string) (map[string]any, error) {
-	var out map[string]any
+func (c *Client) PreviewCheckpoint(sessionID, checkpointID string) (CheckpointPreview, error) {
+	var out CheckpointPreview
 	err := c.Call("session.checkpoint.preview", map[string]any{"session_id": sessionID, "checkpoint_id": checkpointID}, &out)
 	return out, err
 }
-func (c *Client) SummarizeCheckpoint(sessionID, checkpointID string) (map[string]any, error) {
-	var out map[string]any
+func (c *Client) SummarizeCheckpoint(sessionID, checkpointID string) (CheckpointSummary, error) {
+	var out CheckpointSummary
 	err := c.Call("session.checkpoint.summarize", map[string]any{"session_id": sessionID, "checkpoint_id": checkpointID}, &out)
 	return out, err
 }
-func (c *Client) RestoreCheckpoint(sessionID, checkpointID string, confirmed bool) (map[string]any, error) {
-	var out map[string]any
+func (c *Client) RestoreCheckpoint(sessionID, checkpointID string, confirmed bool) (CheckpointRestoreResult, error) {
+	var out CheckpointRestoreResult
 	err := c.Call("session.checkpoint.restore", map[string]any{"session_id": sessionID, "checkpoint_id": checkpointID, "confirmed": confirmed}, &out)
+	return out, err
+}
+func (c *Client) ResumeTask(taskID string) (Task, error) {
+	var out Task
+	err := c.Call("task.resume", map[string]any{"task_id": taskID}, &out)
 	return out, err
 }
 func (c *Client) InjectChannelEvent(event ChannelEvent, signature string) (map[string]any, error) {

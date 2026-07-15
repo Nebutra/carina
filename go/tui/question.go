@@ -148,13 +148,19 @@ func (m *Model) handleQuestionDone(msg questionDoneMsg) {
 	}
 	if msg.err != nil {
 		m.question.Resolving = false
-		m.question.Error = fmt.Sprintf("Answer failed: %s. Press [%s] to retry.", msg.err.Error(),
-			primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionAnswer)))
-		m.push(fmt.Sprintf("%s answer failed for question %s: %s", glyphFailed(m.th), msg.questionID, msg.err.Error()))
+		m.question.Error = m.text(MsgQuestionAnswerFailed, MessageArgs{
+			"error": msg.err.Error(),
+			"retry": primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionAnswer)),
+		})
+		m.push(m.text(MsgQuestionAnswerLogFail, MessageArgs{
+			"glyph": glyphFailed(m.th), "id": msg.questionID, "error": msg.err.Error(),
+		}))
 		return
 	}
 	m.questionResolved[msg.questionID] = true
-	m.push(fmt.Sprintf("%s answered %s: %s", glyphOK(m.th), msg.questionID, msg.label))
+	m.push(m.text(MsgQuestionAnswered, MessageArgs{
+		"glyph": glyphOK(m.th), "id": msg.questionID, "label": msg.label,
+	}))
 	if msg.taskID != "" && msg.taskID == m.inFlightTaskID {
 		m.tasks.setTask(msg.taskID, "running")
 	}
@@ -193,7 +199,7 @@ func (m *Model) questionKey(key string) (tea.Cmd, bool) {
 			m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
 			return nil, false
 		}
-		q.Error = "No answer options are available. Waiting for the agent to update this question."
+		q.Error = m.text(MsgQuestionNoOptions, nil)
 		return nil, true
 	}
 	switch {
@@ -223,7 +229,7 @@ func (m *Model) questionKey(key string) (tea.Cmd, bool) {
 	case m.keys.matches(KeyContextQuestion, ActionQuestionCancel, key):
 		// task.user.answer has no cancellation counterpart. Keep the pending
 		// server question visible instead of silently orphaning the task.
-		q.Error = "This question is still pending. Choose an answer; Esc cannot dismiss it."
+		q.Error = m.text(MsgQuestionCannotDismiss, nil)
 	default:
 		return nil, false
 	}
@@ -245,33 +251,36 @@ func (m *Model) questionOverlayView() string {
 	start := q.Scroll
 	end := minInt(start+m.questionViewportHeight(), len(body))
 
-	lines := []string{fitRenderedLine(m.th.Style(theme.RoleWarning).Render("Agent needs input"), contentWidth), ""}
+	lines := []string{fitRenderedLine(m.th.Style(theme.RoleWarning).Render(m.text(MsgQuestionTitle, nil)), contentWidth), ""}
 	for _, line := range body[start:end] {
 		lines = append(lines, fitLine(line, contentWidth))
 	}
-	footer := fmt.Sprintf("[%s/%s] select  [%s] answer",
-		m.keys.label(KeyContextQuestion, ActionQuestionPrevious),
-		m.keys.label(KeyContextQuestion, ActionQuestionNext),
-		m.keys.label(KeyContextQuestion, ActionQuestionAnswer),
-	)
+	footer := m.text(MsgQuestionFooterWide, MessageArgs{
+		"previous": m.keys.label(KeyContextQuestion, ActionQuestionPrevious),
+		"next":     m.keys.label(KeyContextQuestion, ActionQuestionNext),
+		"answer":   m.keys.label(KeyContextQuestion, ActionQuestionAnswer),
+	})
 	if contentWidth < 44 {
-		footer = fmt.Sprintf("[%s/%s] pick  [%s] answer",
-			primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionPrevious)),
-			primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionNext)),
-			primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionAnswer)),
-		)
+		footer = m.text(MsgQuestionFooterMedium, MessageArgs{
+			"previous": primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionPrevious)),
+			"next":     primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionNext)),
+			"answer":   primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionAnswer)),
+		})
 	}
 	if contentWidth < 28 {
-		footer = fmt.Sprintf("[%s] answer", primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionAnswer)))
+		footer = m.text(MsgQuestionFooterNarrow, MessageArgs{
+			"answer": primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionAnswer)),
+		})
 	}
 	if q.Resolving {
-		footer = "Sending answer..."
+		footer = m.text(MsgQuestionSending, nil)
 	} else if len(body) > m.questionViewportHeight() {
 		if contentWidth >= 44 {
-			footer += fmt.Sprintf("  [%s/%s] scroll %d-%d/%d",
-				m.keys.label(KeyContextQuestion, ActionQuestionPageUp),
-				m.keys.label(KeyContextQuestion, ActionQuestionPageDown),
-				start+1, end, len(body))
+			footer += m.text(MsgQuestionScroll, MessageArgs{
+				"page_up":   m.keys.label(KeyContextQuestion, ActionQuestionPageUp),
+				"page_down": m.keys.label(KeyContextQuestion, ActionQuestionPageDown),
+				"start":     start + 1, "end": end, "total": len(body),
+			})
 		} else {
 			footer += fmt.Sprintf("  %d-%d/%d", start+1, end, len(body))
 		}

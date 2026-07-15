@@ -522,7 +522,9 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 					Content: "Parallel batches are read-only (list/read/search); these are not: " + strings.Join(bad, ", ") +
 						". Run writes (patch/run) one action per turn."}})
 				guard.tick()
-				d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess)})
+				if !d.persistTurnCheckpoint(sess, task, tr, turn, memorySnapshot) {
+					return
+				}
 				continue
 			}
 			softRepeat, hardRepeat := guard.observe("batch", act.signature())
@@ -544,7 +546,9 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			guard.tick() // reads make no edit
 			tr.addTurn(Turn{Thought: act.Thought, Tool: "batch",
 				ActionBrief: briefBatch(act.Actions), Obs: compressedObs})
-			d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess)})
+			if !d.persistTurnCheckpoint(sess, task, tr, turn, memorySnapshot) {
+				return
+			}
 			continue
 		}
 
@@ -620,10 +624,23 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		}
 		tr.addTurn(newTurn)
 		// Checkpoint after each completed turn so a crash can resume here.
-		d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess)})
+		if !d.persistTurnCheckpoint(sess, task, tr, turn, memorySnapshot) {
+			return
+		}
 	}
 
 	d.degrade(sess, task, tr, "reached max turns without done")
+}
+
+func (d *Daemon) persistTurnCheckpoint(sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, turn int, memorySnapshot string) bool {
+	err := d.runs.saveCheckpointChecked(task.TaskID, &runCheckpoint{
+		Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess),
+	})
+	if err == nil {
+		return true
+	}
+	d.degrade(sess, task, tr, "checkpoint persistence failed before the next action; run stopped to prevent stale replay: "+err.Error())
+	return false
 }
 
 func taskCancelled(d *Daemon, taskID string) bool {

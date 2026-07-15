@@ -32,15 +32,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// aren't "unrelated activity", and disarming on them would break the
 	// documented cascade (first press cancels, second press within 2s
 	// exits) the moment the cancel RPC's result arrives.
-	switch kp := msg.(type) {
-	case tea.KeyPressMsg:
-		if !m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, kp.String()) {
-			m.lastCtrlC = time.Time{}
-			m.ctrlCHint = ""
-		}
+	switch msg.(type) {
 	case tea.PasteMsg:
 		m.lastCtrlC = time.Time{}
 		m.ctrlCHint = ""
+		m.rewindPrimed = false
+		m.clearChord()
 	}
 	var (
 		composerBefore composerSnapshot
@@ -55,15 +52,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout()
 		return m, nil
 
+	case tea.BlurMsg:
+		m.terminalBlurredNow()
+		return m, nil
+
+	case tea.FocusMsg:
+		m.terminalFocusedNow()
+		return m, nil
+
 	case SessionReadyMsg:
 		m.sessionID = msg.SessionID
 		m.call = msg.Call
 		m.conn = ConnConnected
 		m.attempt = 0
-		m.push(m.th.Style(theme.RoleMuted).Render("- attached to " + msg.SessionID))
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateAttached, MessageArgs{"session": msg.SessionID})))
 		m.submissionLeaseErr = m.submissions.acquire(msg.SessionID)
 		if m.submissionLeaseErr != nil {
-			m.push(fmt.Sprintf("%s task submission is read-only in this TUI: %s", glyphFailed(m.th), m.submissionLeaseErr.Error()))
+			m.push(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}))
 		}
 		reconcile := m.restoreSubmissionJournal()
 		history := m.loadRecentHistory(msg.Call)
@@ -79,7 +84,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.inFlightTaskID = msg.TaskID
 			m.tasks.setTask(msg.TaskID, "running")
-			m.push(m.th.Style(theme.RoleMuted).Render("- active task " + msg.TaskID + " restored"))
+			m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateActiveRestored, MessageArgs{"task": msg.TaskID})))
 			m.layout()
 		}
 		return m, nil
@@ -101,7 +106,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ConnRestoredMsg:
 		m.conn = ConnConnected
 		m.attempt = 0
-		m.push(m.th.Style(theme.RoleMuted).Render("- reconnected: live event stream resumed"))
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateReconnected, nil)))
 		return m, nil
 
 	case EventMsg:
@@ -112,7 +117,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case cancelDoneMsg:
 		if msg.err != nil {
-			m.push(fmt.Sprintf("%s cancel failed for task %s: %s", glyphFailed(m.th), msg.taskID, msg.err.Error()))
+			m.push(m.text(MsgUpdateCancelFailed, MessageArgs{"glyph": glyphFailed(m.th), "task": msg.taskID, "error": msg.err.Error()}))
 			return m, nil
 		}
 		cancelledActive := m.inFlightTaskID == msg.taskID
@@ -120,7 +125,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inFlightTaskID = ""
 		}
 		m.tasks.setTask(msg.taskID, "cancelled")
-		m.push(m.th.Style(theme.RoleMuted).Render("- cancel recorded for task " + msg.taskID))
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateCancelRecorded, MessageArgs{"task": msg.taskID})))
 		if cancelledActive {
 			m.restoreQueuedDrafts("task cancellation")
 		}
@@ -139,8 +144,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleHistoryLoaded(msg)
 		return m, nil
 
+	case KeymapReloadMsg:
+		m.handleKeymapReload(msg)
+		return m, nil
+
+	case keymapUpdatedMsg:
+		m.handleKeymapUpdated(msg)
+		return m, nil
+
+	case checkpointListMsg:
+		m.handleCheckpointList(msg)
+		return m, nil
+
+	case checkpointPreviewMsg:
+		m.handleCheckpointPreview(msg)
+		return m, nil
+
+	case checkpointRestoreMsg:
+		m.handleCheckpointRestore(msg)
+		return m, nil
+
+	case checkpointResumeMsg:
+		m.handleCheckpointResume(msg)
+		return m, nil
+
+	case chordTimeoutMsg:
+		m.handleChordTimeout(msg)
+		return m, nil
+
 	case rpcErrMsg:
-		m.push(fmt.Sprintf("%s rpc: %s", glyphFailed(m.th), msg.err.Error()))
+		m.push(m.text(MsgUpdateRPCFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}))
 		return m, nil
 	case surfaceResultMsg:
 		m.push(m.th.Style(theme.RoleTitle).Render(msg.label) + "\n" + msg.text)
@@ -165,8 +198,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Governance overlays exclusively own input while open, including while
 		// their RPC is resolving. Never let a terminal paste mutate the hidden
 		// composer behind the modal.
-		if m.approval != nil || m.question != nil || m.submitting != nil || m.editor != nil ||
-			m.helpOpen || m.transcriptPager != nil {
+		if m.approval != nil || m.question != nil || m.editor != nil ||
+			m.helpOpen || m.transcriptPager != nil || m.checkpointPicker != nil || m.keymapEditor != nil {
 			return m, nil
 		}
 		if m.historySearch != nil {
@@ -177,6 +210,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.appendHistorySearchQuery(msg.Content)
 			}
 			return m, nil
+		}
+		if m.submitting != nil && msg.Content != "" && !submissionHasIndependentComposer(m.submitting) {
+			m.beginSubmissionTypeAhead()
 		}
 		before := m.composerSnapshot()
 		pasteCount := len(m.pendingPaste)
@@ -194,14 +230,43 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		if m.editor != nil {
 			m.pasteBurst.reset()
+			m.maintainConfirmationStateForKey(msg.String())
 			return m, nil
+		}
+		resolved, chordCmd, chordConsumed := m.resolveChordKey(msg.String())
+		if chordConsumed {
+			m.pasteBurst.reset()
+			return m, chordCmd
+		}
+		m.maintainConfirmationStateForKey(resolved)
+		if resolved != msg.String() {
+			m.pasteBurst.reset()
+			if cmd, handled := m.handleKey(resolved); handled {
+				return m, cmd
+			}
+			before := m.composerSnapshot()
+			synthetic := tea.KeyPressMsg{Text: resolved}
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(synthetic)
+			m.layout()
+			m.recordComposerEdit(before, composerEditOther)
+			return m, tea.Batch(cmd, m.refreshSuggestTrigger())
 		}
 		if m.historySearch != nil && m.approval == nil && m.question == nil {
 			m.pasteBurst.reset()
 			return m, m.historySearchKeyPress(msg)
 		}
+		composerSurfaceAvailable := m.approval == nil && m.question == nil &&
+			m.historySearch == nil && !m.helpOpen && m.transcriptPager == nil &&
+			m.checkpointPicker == nil && m.keymapEditor == nil
+		if composerSurfaceAvailable && m.submitting != nil && !submissionHasIndependentComposer(m.submitting) &&
+			m.keyStartsSubmissionTypeAhead(msg) {
+			m.beginSubmissionTypeAhead()
+		}
+		submissionBlocksComposer := m.submitting != nil && !submissionHasIndependentComposer(m.submitting)
 		if m.approval != nil || m.question != nil || m.historySearch != nil ||
-			m.submitting != nil || m.helpOpen || m.transcriptPager != nil {
+			submissionBlocksComposer || m.helpOpen || m.transcriptPager != nil ||
+			m.checkpointPicker != nil || m.keymapEditor != nil {
 			m.pasteBurst.reset()
 		} else {
 			composerBefore = m.composerSnapshot()
@@ -224,6 +289,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.recordComposerEdit(composerBefore, composerKeyEditKind(composerKey))
 	}
 	return m, tea.Batch(cmd, m.refreshSuggestTrigger())
+}
+
+// maintainConfirmationStateForKey runs after chord resolution so confirmation
+// gestures follow semantic actions rather than the physical final key in a
+// chord. A consumed prefix keeps the current state until the chord resolves or
+// times out; any resolved, unrelated action disarms it immediately.
+func (m *Model) maintainConfirmationStateForKey(key string) {
+	if !m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
+		m.lastCtrlC = time.Time{}
+		m.ctrlCHint = ""
+	}
+	if !m.keys.matches(KeyContextChat, ActionChatRewind, key) {
+		m.rewindPrimed = false
+	}
 }
 
 // refreshSuggestTrigger re-evaluates the mention/slash trigger at the
@@ -256,6 +335,7 @@ func (m *Model) refreshSuggestTrigger() tea.Cmd {
 func (m *Model) handleEvent(ev map[string]any) tea.Cmd {
 	hadApproval := m.approval != nil
 	hadQuestion := m.question != nil
+	attentionCmd := m.noteAttention(ev)
 	m.pushEvent(ev)
 	m.tasks.observeEvent(ev)
 	m.observeQuestionResolution(ev)
@@ -274,7 +354,7 @@ func (m *Model) handleEvent(ev map[string]any) tea.Cmd {
 	if cmd == nil && overlayClosed {
 		cmd = m.maybeSubmitNextQueued()
 	}
-	return cmd
+	return tea.Batch(cmd, attentionCmd)
 }
 
 // handleKey processes one key. It returns handled=false for keys that belong
@@ -306,6 +386,12 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 			return m.ctrlC(), true
 		}
 		return nil, true
+	}
+	if m.checkpointPicker != nil {
+		return m.checkpointPickerKey(key)
+	}
+	if m.keymapEditor != nil {
+		return m.keymapEditorKey(key)
 	}
 
 	// Help is a real overlay rather than transcript output. It owns navigation
@@ -350,6 +436,14 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 			return nil, true
 		}
 	}
+	if m.inFlightTaskID != "" && m.keys.matches(KeyContextChat, ActionChatInterrupt, key) {
+		m.breakComposerUndoGroup()
+		m.rewindPrimed = false
+		taskID := m.inFlightTaskID
+		m.push(microcopy.Degrade(microcopy.DegradeInterruptedByUser, nil,
+			microcopy.WithLocale(m.locale), microcopy.WithPlain(m.plain())))
+		return m.cancelTask(taskID), true
+	}
 	if m.submitting != nil {
 		switch {
 		case m.keys.matches(KeyContextGlobal, ActionGlobalHelp, key):
@@ -362,10 +456,48 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		case m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key):
 			m.breakComposerUndoGroup()
 			return m.ctrlC(), true
-		default:
-			// Preserve the exact draft and caret until the RPC acknowledges it.
+		}
+		if !submissionHasIndependentComposer(m.submitting) {
+			// Preserve the exact submitted draft and caret until input explicitly
+			// starts a distinct next draft.
 			return nil, true
 		}
+		switch {
+		case m.keys.matches(KeyContextComposer, ActionComposerSubmit, key),
+			m.keys.matches(KeyContextComposer, ActionComposerSubmitNew, key),
+			m.keys.matches(KeyContextComposer, ActionComposerQueue, key),
+			m.keys.matches(KeyContextComposer, ActionComposerRecallQueue, key),
+			m.keys.matches(KeyContextComposer, ActionComposerExternalEditor, key),
+			m.keys.matches(KeyContextComposer, ActionComposerHistorySearch, key),
+			m.keys.matches(KeyContextComposer, ActionComposerHistoryPrevious, key),
+			m.keys.matches(KeyContextComposer, ActionComposerHistoryNext, key):
+			return nil, true
+		case m.keys.matches(KeyContextComposer, ActionComposerUndo, key):
+			if m.undoLatestPendingPaste() {
+				return nil, true
+			}
+			m.undoComposer()
+			return nil, true
+		case m.keys.matches(KeyContextComposer, ActionComposerRedo, key):
+			m.redoComposer()
+			return nil, true
+		default:
+			// Textarea editing belongs to the independent next draft. Enter and
+			// other submission commands above remain deduplicated until the ACK.
+			return nil, false
+		}
+	}
+	if m.keys.matches(KeyContextChat, ActionChatRewind, key) && m.inFlightTaskID == "" &&
+		m.retrySubmission == nil && historyDraftKey(m.currentDraft()) == "" {
+		m.breakComposerUndoGroup()
+		if m.rewindPrimed {
+			return m.openCheckpointPicker(), true
+		}
+		m.rewindPrimed = true
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateRewindAgain, MessageArgs{
+			"rewind": primaryKeyLabel(m.keys.keys(KeyContextChat, ActionChatRewind)),
+		})))
+		return nil, true
 	}
 	if cmd, handled := m.handleWorkspaceKey(key); handled {
 		return cmd, true
@@ -406,12 +538,14 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	}
 
 	switch {
-	case m.keys.matches(KeyContextPager, ActionPagerPageUp, key):
+	case transcriptKeyAllowed(ActionPagerPageUp, canonicalKey(key)) &&
+		m.keys.matches(KeyContextPager, ActionPagerPageUp, key):
 		m.breakComposerUndoGroup()
 		m.vp.PageUp()
 		m.followTail = false
 		return nil, true
-	case m.keys.matches(KeyContextPager, ActionPagerPageDown, key):
+	case transcriptKeyAllowed(ActionPagerPageDown, canonicalKey(key)) &&
+		m.keys.matches(KeyContextPager, ActionPagerPageDown, key):
 		m.breakComposerUndoGroup()
 		m.vp.PageDown()
 		if m.vp.AtBottom() {
@@ -419,18 +553,21 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 			m.unseenLines = 0
 		}
 		return nil, true
-	case m.keys.matches(KeyContextPager, ActionPagerTop, key):
+	case transcriptKeyAllowed(ActionPagerTop, canonicalKey(key)) &&
+		m.keys.matches(KeyContextPager, ActionPagerTop, key):
 		m.breakComposerUndoGroup()
 		m.vp.GotoTop()
 		m.followTail = false
 		return nil, true
-	case m.keys.matches(KeyContextPager, ActionPagerBottom, key):
+	case transcriptKeyAllowed(ActionPagerBottom, canonicalKey(key)) &&
+		m.keys.matches(KeyContextPager, ActionPagerBottom, key):
 		m.breakComposerUndoGroup()
 		m.vp.GotoBottom()
 		m.followTail = true
 		m.unseenLines = 0
 		return nil, true
-	case m.keys.matches(KeyContextPager, ActionPagerToggleDetail, key):
+	case transcriptKeyAllowed(ActionPagerToggleDetail, canonicalKey(key)) &&
+		m.keys.matches(KeyContextPager, ActionPagerToggleDetail, key):
 		m.breakComposerUndoGroup()
 		if m.tr.toggleLastCollapsible(m.th, m.transcriptWidth()) {
 			m.vp.SetContentLines(m.tr.lines)
@@ -490,6 +627,22 @@ func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
 		m.clampTranscriptPagerScroll(m.transcriptPagerLines())
 		return nil
 	}
+	if m.checkpointPicker != nil {
+		state := m.checkpointPicker
+		if state.preview == nil && !state.loading && !state.restoring {
+			state.selected += delta
+			state.clamp(m.checkpointPickerPageHeight())
+		}
+		return nil
+	}
+	if m.keymapEditor != nil {
+		state := m.keymapEditor
+		if state.mode == keymapBrowse && !state.pending {
+			state.selected += delta
+			state.clamp(m.keymapEditorPageHeight())
+		}
+		return nil
+	}
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
 	m.followTail = m.vp.AtBottom()
@@ -544,11 +697,10 @@ func (m *Model) ctrlC() tea.Cmd {
 		return tea.Quit
 	}
 	if m.submitting != nil {
-		m.push(m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
-			"- submission is being acknowledged; press %s again within 2s to exit", interruptKey)))
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateSubmissionAck, MessageArgs{"interrupt": interruptKey})))
 		return nil
 	}
-	hintText := fmt.Sprintf("- press %s again within 2s to exit", interruptKey)
+	hintText := m.text(MsgUpdateExitHint, MessageArgs{"interrupt": interruptKey})
 	hint := m.th.Style(theme.RoleMuted).Render(hintText)
 	// Recorded plain (not just pushed to the transcript): while the
 	// approval overlay is open, View() replaces the whole frame with the
@@ -564,9 +716,9 @@ func (m *Model) ctrlC() tea.Cmd {
 		return m.cancelTask(tid)
 	}
 	if m.retrySubmission != nil {
-		m.push(m.th.Style(theme.RoleMuted).Render(fmt.Sprintf(
-			"- submission outcome is unknown; Enter reconciles it, %s explicitly starts a distinct task, and a second %s exits with recovery preserved",
-			m.keys.label(KeyContextComposer, ActionComposerSubmitNew), interruptKey)))
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateUnknownSubmission, MessageArgs{
+			"new": m.keys.label(KeyContextComposer, ActionComposerSubmitNew), "interrupt": interruptKey,
+		})))
 		m.push(hint)
 		return nil
 	}
@@ -584,9 +736,9 @@ func (m *Model) ctrlC() tea.Cmd {
 		m.resetComposerUndo()
 		m.closeSuggest()
 		m.layout()
-		message := "- empty draft cleared"
+		message := m.text(MsgUpdateDraftCleared, nil)
 		if recoverable {
-			message = "- draft cleared; use prompt history to restore it"
+			message = m.text(MsgUpdateDraftClearedRecover, nil)
 		}
 		m.push(m.th.Style(theme.RoleMuted).Render(message))
 		m.push(hint)
@@ -597,7 +749,7 @@ func (m *Model) ctrlC() tea.Cmd {
 }
 
 func (m *Model) ctrlD() (tea.Cmd, bool) {
-	if m.approval != nil || m.question != nil || m.helpOpen {
+	if m.approval != nil || m.question != nil || m.helpOpen || m.checkpointPicker != nil || m.keymapEditor != nil {
 		return nil, true
 	}
 	if draft := m.currentDraft(); draft.Text != "" || len(draft.Prefix) > 0 || len(draft.Paste) > 0 {
@@ -652,7 +804,8 @@ func (m *Model) submitWithIntent(forceNew bool) tea.Cmd {
 		if validSlashCommand(text) {
 			m.queueRecallPending = false
 			m.commitDraft(draft, false)
-			if cmd == nil && !m.helpOpen && m.transcriptPager == nil {
+			if cmd == nil && !m.helpOpen && m.transcriptPager == nil &&
+				m.checkpointPicker == nil && m.keymapEditor == nil {
 				return m.maybeSubmitNextQueued()
 			}
 		}
@@ -748,7 +901,7 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 			if err == nil {
 				err = errors.New("command is empty")
 			}
-			m.push(fmt.Sprintf("%s command parse failed: %s; draft kept for retry", glyphFailed(m.th), err.Error()))
+			m.push(m.text(MsgUpdateCommandParseFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
 			if fromQueue {
 				m.restoreQueuedDrafts("invalid queued command")
 			}
@@ -759,23 +912,25 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 	call := m.call
 	if call == nil {
 		m.breakComposerUndoGroup()
-		m.push(fmt.Sprintf("%s not connected: draft kept for retry", glyphFailed(m.th)))
+		m.push(m.text(MsgUpdateDisconnectedDraft, MessageArgs{"glyph": glyphFailed(m.th)}))
 		return nil
 	}
 	m.breakComposerUndoGroup()
+	draft = cloneDraft(draft)
 	m.submissionGen++
 	clientID := ""
 	prompt := draftPrompt(draft)
 	if kind == submissionTask {
 		if m.submissionLeaseErr != nil {
-			m.push(fmt.Sprintf("%s task submission is unavailable: %s", glyphFailed(m.th), m.submissionLeaseErr.Error()))
+			m.push(m.text(MsgUpdateSubmissionUnavailable, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}))
 			m.layout()
 			return nil
 		}
 		if retry := m.retrySubmission; retry != nil && !forceNew {
 			if retry.prompt != prompt {
-				m.push(fmt.Sprintf("%s an unacknowledged submission is pending; restore its exact prompt or use %s to explicitly create a new task",
-					glyphFailed(m.th), m.keys.label(KeyContextComposer, ActionComposerSubmitNew)))
+				m.push(m.text(MsgUpdatePendingSubmission, MessageArgs{
+					"glyph": glyphFailed(m.th), "new": m.keys.label(KeyContextComposer, ActionComposerSubmitNew),
+				}))
 				m.layout()
 				return nil
 			}
@@ -785,8 +940,7 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 		}
 		retry := submissionRetry{clientID: clientID, prompt: prompt, draft: cloneDraft(draft)}
 		if err := m.submissions.save(m.sessionID, retry); err != nil {
-			m.push(fmt.Sprintf("%s submission was not sent because its recovery record could not be saved: %s",
-				glyphFailed(m.th), err.Error()))
+			m.push(m.text(MsgUpdateRecoverySaveFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
 			m.layout()
 			return nil
 		}
@@ -796,7 +950,7 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 		generation:   m.submissionGen,
 		kind:         kind,
 		target:       target,
-		draft:        draft,
+		draft:        cloneDraft(draft),
 		consumePaste: kind != submissionShell,
 		fromQueue:    fromQueue,
 		clientID:     clientID,
@@ -833,7 +987,7 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 
 func (m *Model) submitShell(draft promptDraft, command string) tea.Cmd {
 	if command == "" {
-		m.push("usage: !<command>")
+		m.push(m.text(MsgUpdateUsageShell, nil))
 		return nil
 	}
 	return m.beginSubmission(submissionShell, command, draft)
@@ -849,31 +1003,35 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 		m.clearEarlyTerminals(state.generation)
 		if state.kind == submissionTask {
 			m.retrySubmission = &submissionRetry{clientID: state.clientID, prompt: draftPrompt(state.draft), draft: cloneDraft(state.draft)}
-			m.push(fmt.Sprintf("%s task submission was not acknowledged: %s; draft kept for retry with idempotency key %s",
-				glyphFailed(m.th), msg.err.Error(), state.clientID))
+			m.push(m.text(MsgUpdateTaskNotAcknowledged, MessageArgs{
+				"glyph": glyphFailed(m.th), "error": msg.err.Error(), "key": state.clientID,
+			}))
 			if state.fromQueue {
 				m.recallQueuedSubmissionForRetry()
 			}
 		} else {
-			m.push(fmt.Sprintf("%s %s failed: %s; draft kept for retry", glyphFailed(m.th), state.kind, msg.err.Error()))
+			m.push(m.text(MsgUpdateSubmissionFailed, MessageArgs{
+				"glyph": glyphFailed(m.th), "kind": state.kind, "error": msg.err.Error(),
+			}))
 			if state.fromQueue {
 				m.restoreQueuedDrafts("automatic submission failure")
 			}
 		}
+		m.restoreFailedSubmission(state)
 		m.layout()
 		return nil
 	}
 	if state.fromQueue {
 		queued, ok := m.followUps.front()
 		if !ok || !draftsEqual(queued, state.draft) {
-			// The composer is frozen while a submission is pending, so this can
-			// only indicate an internal ordering bug. Restore the submitted draft
-			// rather than silently dropping it.
+			// The submitted queue entry has independent ownership while its ACK is
+			// pending. Restore every owned draft rather than guessing from current
+			// composer text.
 			if !ok {
 				m.followUps.enqueue(state.draft)
 			}
 			m.restoreQueuedDrafts("queue ordering failure")
-			m.push(fmt.Sprintf("%s queued follow-up ordering changed; drafts restored", glyphFailed(m.th)))
+			m.push(m.text(MsgUpdateQueueChanged, MessageArgs{"glyph": glyphFailed(m.th)}))
 			return nil
 		}
 		_, _ = m.followUps.popFront()
@@ -889,11 +1047,10 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 	if state.clientID != "" && m.retrySubmission != nil && m.retrySubmission.clientID == state.clientID {
 		m.retrySubmission = nil
 		if err := m.submissions.clear(m.sessionID, state.clientID); err != nil {
-			m.push(fmt.Sprintf("%s task acknowledged, but its local recovery record could not be cleared: %s",
-				glyphFailed(m.th), err.Error()))
+			m.push(m.text(MsgUpdateRecoveryClearFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
 		}
 	}
-	if state.fromQueue || state.background {
+	if submissionHasIndependentComposer(state) {
 		m.commitBackgroundDraft(state.draft, state.consumePaste)
 	} else {
 		m.commitDraft(state.draft, state.consumePaste)
@@ -901,18 +1058,18 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 	shown := draftLabel(state.draft)
 	switch state.kind {
 	case submissionTask:
-		m.push(m.th.Style(theme.RoleTitle).Render("you ") + shown)
+		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateYou, nil)) + shown)
 		if !earlyTerminal {
 			m.inFlightTaskID = msg.taskID
 			m.tasks.setTask(msg.taskID, "running")
 		}
-		m.push(m.th.Style(theme.RoleMuted).Render("- task " + msg.taskID + " submitted"))
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateTaskSubmitted, MessageArgs{"task": msg.taskID})))
 	case submissionSteer:
-		m.push(m.th.Style(theme.RoleTitle).Render("you (steer) ") + shown)
-		m.push(m.th.Style(theme.RoleMuted).Render("- steering queued for task " + msg.taskID))
+		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateYouSteer, nil)) + shown)
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateSteeringQueued, MessageArgs{"task": msg.taskID})))
 	case submissionShell:
-		m.push(m.th.Style(theme.RoleTitle).Render("you (shell) ") + state.target)
-		m.push(m.th.Style(theme.RoleTitle).Render("shell") + "\n" + msg.result)
+		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateYouShell, nil)) + state.target)
+		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateShell, nil)) + "\n" + msg.result)
 	}
 	m.layout()
 	if earlyTerminal {
@@ -1063,7 +1220,7 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		return nil
 	case "search":
 		if len(parts) < 2 {
-			m.push("usage: /search <text>")
+			m.push(m.text(MsgUpdateUsageSearch, nil))
 			return nil
 		}
 		q := strings.ToLower(strings.Join(parts[1:], " "))
@@ -1074,33 +1231,46 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 				hits++
 			}
 		}
-		m.push(fmt.Sprintf("- transcript search: %d match(es)", hits))
+		m.push(m.countText(MsgUpdateSearchMatches, hits, nil))
 		return nil
 	case "recap":
 		start := len(m.tr.lines) - 12
 		if start < 0 {
 			start = 0
 		}
-		m.push(m.th.Style(theme.RoleTitle).Render("recap") + "\n" + strings.Join(m.tr.lines[start:], "\n"))
+		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateRecap, nil)) + "\n" + strings.Join(m.tr.lines[start:], "\n"))
 		return nil
 	case "mode":
 		if len(parts) != 2 || (parts[1] != "build" && parts[1] != "plan") {
-			m.push("usage: /mode <build|plan>")
+			m.push(m.text(MsgUpdateUsageMode, nil))
 			return nil
 		}
 		m.mode = parts[1]
-		return m.querySurface("session.plan_mode", map[string]any{"session_id": m.sessionID, "on": m.mode == "plan"}, "mode "+m.mode)
+		return m.querySurface("session.plan_mode", map[string]any{"session_id": m.sessionID, "on": m.mode == "plan"}, m.text(MsgUpdateMode, MessageArgs{"mode": m.mode}))
 	case "agents":
-		return m.querySurface("agent.list", map[string]any{"session_id": m.sessionID}, "agents")
+		return m.querySurface("agent.list", map[string]any{"session_id": m.sessionID}, m.text(MsgUpdateAgents, nil))
 	case "checkpoints":
-		return m.querySurface("session.checkpoint.list", map[string]any{"session_id": m.sessionID}, "checkpoints")
+		return m.openCheckpointPicker()
+	case "resume":
+		if len(parts) > 2 {
+			m.push(m.text(MsgUpdateUsageResume, nil))
+			return nil
+		}
+		taskID := ""
+		if len(parts) == 2 {
+			taskID = parts[1]
+		}
+		return m.resumePausedRestore(taskID)
+	case "keymap":
+		m.openKeymapEditor()
+		return nil
 	case "copy":
 		return m.copyLastAgentProjection()
 	case "transcript":
 		m.openTranscriptPager()
 		return nil
 	default:
-		m.push("unknown command /" + name + "; use /help")
+		m.push(m.text(MsgUpdateUnknownCommand, MessageArgs{"command": name}))
 		return nil
 	}
 }
@@ -1111,8 +1281,10 @@ func validSlashCommand(text string) bool {
 		return false
 	}
 	switch strings.TrimPrefix(parts[0], "/") {
-	case "help", "keys", "recap", "agents", "checkpoints", "copy", "transcript":
+	case "help", "keys", "recap", "agents", "checkpoints", "keymap", "copy", "transcript":
 		return true
+	case "resume":
+		return len(parts) <= 2
 	case "search":
 		return len(parts) >= 2
 	case "mode":

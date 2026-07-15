@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Nebutra/carina/go/tui/theme"
@@ -59,7 +61,7 @@ func TestKeymapCanonicalizesModifierOrderAndRejectsUnreachableSpecs(t *testing.T
 	if !keys.matches(KeyContextHistory, ActionHistoryCancel, "ctrl+shift+x") {
 		t.Fatal("modifier order was not canonicalized to Bubble Tea event order")
 	}
-	for _, spec := range []string{"ctrl+ctrl+x", "banana+x", "ctrl+not-a-key", "ctrl+"} {
+	for _, spec := range []string{"ctrl+ctrl+x", "banana+x", "ctrl+not-a-key", "ctrl+", "x ctrl+k", "ctrl+x ctrl+k ctrl+l ctrl+m"} {
 		_, err := newRuntimeKeymap([]KeyBindingOverride{{
 			Context: KeyContextHistory,
 			Action:  ActionHistoryCancel,
@@ -71,12 +73,138 @@ func TestKeymapCanonicalizesModifierOrderAndRejectsUnreachableSpecs(t *testing.T
 	}
 }
 
+func TestKeymapFoldsTraditionalTerminalEquivalentKeys(t *testing.T) {
+	keys, err := newRuntimeKeymap([]KeyBindingOverride{{
+		Context: KeyContextHistory,
+		Action:  ActionHistoryAccept,
+		Keys:    []string{"ctrl+["},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !keys.matches(KeyContextHistory, ActionHistoryAccept, "esc") {
+		t.Fatal("Ctrl+[ and Esc were not treated as the same terminal key")
+	}
+
+	cases := []struct {
+		name   string
+		action KeyAction
+		key    string
+		want   string
+	}{
+		{"enter-ctrl-m", ActionGlobalHelp, "ctrl+m", "composer.submit"},
+		{"tab-ctrl-i", ActionGlobalHelp, "ctrl+i", "composer.queue"},
+		{"esc-ctrl-bracket", ActionGlobalRedraw, "ctrl+[", "chat.interrupt"},
+		{"backspace-ctrl-h", ActionGlobalHelp, "ctrl+h", "editor.delete-backward"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := newRuntimeKeymap([]KeyBindingOverride{{
+				Context: KeyContextGlobal, Action: tc.action, Keys: []string{tc.key},
+			}})
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "rebind one action") {
+				t.Fatalf("terminal-equivalent conflict was not actionable: %v", err)
+			}
+		})
+	}
+}
+
+func TestEditorSemanticBindingsInstallIntoTextarea(t *testing.T) {
+	keys, err := newRuntimeKeymap([]KeyBindingOverride{{
+		Context: KeyContextEditor,
+		Action:  ActionEditorMoveLeft,
+		Keys:    []string{"f12"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := textarea.New()
+	installEditorKeymap(&input, keys)
+
+	cases := []struct {
+		name   string
+		got    []string
+		action KeyAction
+	}{
+		{"move-left", input.KeyMap.CharacterBackward.Keys(), ActionEditorMoveLeft},
+		{"move-right", input.KeyMap.CharacterForward.Keys(), ActionEditorMoveRight},
+		{"move-up", input.KeyMap.LinePrevious.Keys(), ActionEditorMoveUp},
+		{"move-down", input.KeyMap.LineNext.Keys(), ActionEditorMoveDown},
+		{"word-left", input.KeyMap.WordBackward.Keys(), ActionEditorMoveWordLeft},
+		{"word-right", input.KeyMap.WordForward.Keys(), ActionEditorMoveWordRight},
+		{"line-start", input.KeyMap.LineStart.Keys(), ActionEditorMoveLineStart},
+		{"line-end", input.KeyMap.LineEnd.Keys(), ActionEditorMoveLineEnd},
+		{"delete-backward", input.KeyMap.DeleteCharacterBackward.Keys(), ActionEditorDeleteBackward},
+		{"delete-forward", input.KeyMap.DeleteCharacterForward.Keys(), ActionEditorDeleteForward},
+		{"delete-word-backward", input.KeyMap.DeleteWordBackward.Keys(), ActionEditorDeleteWordBackward},
+		{"delete-word-forward", input.KeyMap.DeleteWordForward.Keys(), ActionEditorDeleteWordForward},
+		{"kill-line-start", input.KeyMap.DeleteBeforeCursor.Keys(), ActionEditorKillLineStart},
+		{"kill-line-end", input.KeyMap.DeleteAfterCursor.Keys(), ActionEditorKillLineEnd},
+		{"yank", input.KeyMap.Paste.Keys(), ActionEditorYank},
+		{"newline", input.KeyMap.InsertNewline.Keys(), ActionEditorInsertNewline},
+	}
+	for _, tc := range cases {
+		if want := keys.keys(KeyContextEditor, tc.action); !reflect.DeepEqual(tc.got, want) {
+			t.Errorf("%s textarea keys = %#v, want semantic binding %#v", tc.name, tc.got, want)
+		}
+	}
+	if got := input.KeyMap.CharacterBackward.Keys(); !reflect.DeepEqual(got, []string{"f12"}) {
+		t.Fatalf("editor override was not installed: %#v", got)
+	}
+	if got := input.KeyMap.InsertNewline.Keys(); !reflect.DeepEqual(got, []string{"shift+enter", "alt+enter", "ctrl+j"}) {
+		t.Fatalf("multiline entry regressed: %#v", got)
+	}
+}
+
+func TestBindingDescriptorsAndAtomicOverrideSupportPicker(t *testing.T) {
+	keys, err := newRuntimeKeymap(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptors := keys.BindingDescriptors()
+	if len(descriptors) == 0 || descriptors[0].Action != ActionGlobalHelp {
+		t.Fatalf("binding descriptors are not in stable declaration order: %#v", descriptors)
+	}
+	descriptors[0].Keys[0] = "mutated"
+	if keys.keys(KeyContextGlobal, ActionGlobalHelp)[0] != "f1" {
+		t.Fatal("picker descriptor mutated the live keymap")
+	}
+
+	next, err := keys.withOverride(KeyBindingOverride{
+		Context: KeyContextGlobal, Action: ActionGlobalHelp, Keys: []string{"f2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.matches(KeyContextGlobal, ActionGlobalHelp, "f2") || !keys.matches(KeyContextGlobal, ActionGlobalHelp, "f1") {
+		t.Fatal("atomic override changed the old map or did not build the replacement")
+	}
+	if _, err := next.withOverride(KeyBindingOverride{
+		Context: KeyContextGlobal, Action: ActionGlobalHelp, Keys: []string{"enter"},
+	}); err == nil {
+		t.Fatal("picker replacement accepted a dispatch-path conflict")
+	}
+
+	aliased, err := keys.withOverride(KeyBindingOverride{
+		Context: KeyContextComposer, Action: ActionComposerNewline, Keys: []string{"f12"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(
+		aliased.keys(KeyContextComposer, ActionComposerNewline),
+		aliased.keys(KeyContextEditor, ActionEditorInsertNewline),
+	) {
+		t.Fatal("legacy composer newline drifted from the installed editor binding")
+	}
+}
+
 func TestKeymapOverrideDrivesDispatchPlaceholderStatusAndHelp(t *testing.T) {
 	m, err := NewChecked(Options{
 		Theme:  theme.New(theme.Mono),
 		Locale: "en",
 		Keybindings: []KeyBindingOverride{
-			{Context: KeyContextGlobal, Action: ActionGlobalHelp, Keys: []string{"ctrl+h"}},
+			{Context: KeyContextGlobal, Action: ActionGlobalHelp, Keys: []string{"f2"}},
 			{Context: KeyContextComposer, Action: ActionComposerSubmit, Keys: []string{"ctrl+enter"}},
 		},
 	})
@@ -87,41 +215,36 @@ func TestKeymapOverrideDrivesDispatchPlaceholderStatusAndHelp(t *testing.T) {
 	if _, handled := m.handleKey("f1"); handled {
 		t.Fatal("overridden default help key is still active")
 	}
-	if _, handled := m.handleKey("ctrl+h"); !handled || !m.helpOpen {
+	if _, handled := m.handleKey("f2"); !handled || !m.helpOpen {
 		t.Fatal("overridden help key did not open help")
 	}
 	body := strings.Join(m.helpBodyLines(), "\n")
-	for _, want := range []string{"ctrl+h", "show keyboard help", "ctrl+enter", "submit or steer"} {
+	for _, want := range []string{"f2", "show keyboard help", "ctrl+enter", "submit or steer"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("dynamic help missing %q:\n%s", want, body)
 		}
 	}
 	m.closeHelp()
 	view := m.View().Content
-	if !strings.Contains(view, "ctrl+h help") || !strings.Contains(m.input.Placeholder, "ctrl+enter submits") {
+	if !strings.Contains(view, "f2 help") || !strings.Contains(m.input.Placeholder, "ctrl+enter submits") {
 		t.Fatalf("visible hints drifted from runtime bindings:\n%s\nplaceholder=%q", view, m.input.Placeholder)
 	}
 }
 
-func TestFocusedContextWinsOverOverlappingGlobalOverride(t *testing.T) {
-	m, err := NewChecked(Options{
+func TestDispatchPathRejectsOverlappingGlobalHelp(t *testing.T) {
+	_, err := NewChecked(Options{
 		Theme: theme.New(theme.Mono),
 		Keybindings: []KeyBindingOverride{
 			{Context: KeyContextGlobal, Action: ActionGlobalHelp, Keys: []string{"enter"}},
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m.input.SetValue("submit me")
-	cmd, handled := m.handleKey("enter")
-	if !handled || cmd != nil || m.helpOpen {
-		t.Fatalf("composer submit did not win context precedence: handled=%v cmd=%v help=%v", handled, cmd != nil, m.helpOpen)
+	if err == nil || !strings.Contains(err.Error(), "global.help") || !strings.Contains(err.Error(), "composer.submit") {
+		t.Fatalf("global/composer shadowing was not rejected: %v", err)
 	}
 }
 
-func TestComposerWinsOverOverlappingGlobalTranscriptOverride(t *testing.T) {
-	m, err := NewChecked(Options{
+func TestDispatchPathRejectsOverlappingGlobalTranscript(t *testing.T) {
+	_, err := NewChecked(Options{
 		Theme: theme.New(theme.Mono),
 		Keybindings: []KeyBindingOverride{{
 			Context: KeyContextGlobal,
@@ -129,12 +252,8 @@ func TestComposerWinsOverOverlappingGlobalTranscriptOverride(t *testing.T) {
 			Keys:    []string{"enter"},
 		}},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m.input.SetValue("submit me")
-	if _, handled := m.handleKey("enter"); !handled || m.transcriptPager != nil {
-		t.Fatalf("global transcript overrode focused submit: handled=%v pager=%#v", handled, m.transcriptPager)
+	if err == nil || !strings.Contains(err.Error(), "global.transcript") || !strings.Contains(err.Error(), "composer.submit") {
+		t.Fatalf("global/composer transcript shadowing was not rejected: %v", err)
 	}
 }
 
@@ -142,9 +261,9 @@ func TestFocusedModalCancelWinsOverOverlappingGlobalRedraw(t *testing.T) {
 	m, err := NewChecked(Options{
 		Theme: theme.New(theme.Mono),
 		Keybindings: []KeyBindingOverride{{
-			Context: KeyContextGlobal,
-			Action:  ActionGlobalRedraw,
-			Keys:    []string{"esc"},
+			Context: KeyContextPager,
+			Action:  ActionPagerClose,
+			Keys:    []string{"ctrl+l"},
 		}},
 	})
 	if err != nil {
@@ -163,7 +282,7 @@ func TestFocusedModalCancelWinsOverOverlappingGlobalRedraw(t *testing.T) {
 	if m.transcriptPager == nil {
 		t.Fatal("transcript pager did not open")
 	}
-	if cmd, handled := m.handleKey("esc"); !handled || cmd != nil || m.transcriptPager != nil {
+	if cmd, handled := m.handleKey("ctrl+l"); !handled || cmd != nil || m.transcriptPager != nil {
 		t.Fatalf("pager close lost focused priority: handled=%v cmd=%v pager=%#v",
 			handled, cmd != nil, m.transcriptPager)
 	}

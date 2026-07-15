@@ -60,7 +60,7 @@ func prepareExternalEditor(draft promptDraft, getenv func(string) string) (exter
 func finishExternalEditor(state externalEditorDraft, processErr error) (promptDraft, error) {
 	defer os.Remove(state.path)
 	if processErr != nil {
-		return cloneDraft(state.original), fmt.Errorf("external editor: %w", processErr)
+		return cloneDraft(state.original), processErr
 	}
 	content, err := os.ReadFile(state.path)
 	if err != nil {

@@ -97,15 +97,27 @@ Two registers, matching how the product already speaks:
 - **Repo surfaces** (READMEs, docs) stay GitHub-default type; typography rules apply only to exported/composed images and any future docs site.
 - **DESIGN.md decision:** not needed now — Carina is terminal-native with no web UI. Tokens ship as exact hex inside `visual-identity.md` (the skill's native carrier); a DTCG JSON export is added only when a docs site or GUI surface exists.
 
-### Mark direction — one silhouette + one signal
+### Mark direction — governed action with a return path
 
-Three candidates, described for the kit's logo DAG. All are flat, hard-edged, 2–3 tones, legible at 16 px, and constructed geometry — never rendered nebula.
+The earlier recommendation to use an aperture as the core mark is withdrawn.
+An aperture expresses the brand's visual temperament, but it does not provide
+product-specific evidence: photography, security, optics, and generic gateway
+software can make the same claim. Aperture remains scene and layout grammar only.
 
-**Candidate A — The Aperture (recommended primary).**
-- *Silhouette:* a soft-cornered square (or circle) of Ionized Rose, with an aperture-shaped void cut through it in Void — a circle over a tapered slot, reduced to two primitives.
-- *Signal:* the aperture itself — the mark reads as light *behind* a defined opening; optionally one Starlight star-point inside the circle.
-- *Rationale:* purely formal. Light through an opening is the oldest image of attention and disclosure; two primitives survive at 16 px in flat duotone; the negative space does the work, which matches a brand whose aesthetic argument is restraint. It needs no astronomical justification and gets none.
-- *Banned readings:* padlock, door lock, security-company keyhole cliché, letter Q, person silhouette, exclamation mark.
+The core mark starts from Carina's implemented execution contract: an agent action
+crosses local authority only after a capability decision, writes durable evidence,
+and retains a transaction path back. Exploration uses three formal families:
+
+1. **Cross / Register / Return** — one boundary crossing creates its own indexed
+   counterpart and visible return path.
+2. **Attenuated Passage** — a form exits a decision plane with narrower authority,
+   leaving a fixed registration at the crossing.
+3. **Transaction Pair** — two states share one footprint and one reversible,
+   precisely indexed displacement.
+
+All families are flat, constructed geometry with one controlled event, legible at
+16 px and explainable without an astronomy metaphor. They must avoid arrows, undo
+icons, funnels, filters, portals, shields, locks, chains, initials, or diagrams.
 
 **Candidate B — The Carved Edge.**
 - *Silhouette:* a diagonal sculpted boundary dividing the canvas — emission (Ionized Rose → Carina Crimson) above, Void below — with an irregular but geometric cliff line.
@@ -119,7 +131,12 @@ Three candidates, described for the kit's logo DAG. All are flat, hard-edged, 2�
 - *Rationale:* a formal study in figure and ground for docs illustrations; the interest is the tension between the point and the boundary, nothing more.
 - *Banned readings:* peanut, infinity symbol, atom/electron orbitals, eye, hourglass, padlock. *Risk:* enclosure forms drift toward cliché at small sizes; treat as a secondary illustration motif only.
 
-**Decision for the DAG:** Candidate A is the core-mark seed; B becomes the scene/background grammar (hero, social); C is an illustration motif, not a mark. The wordmark is "Carina" set in the display face, with the aperture mark usable alone at small sizes; full lockup "Nebutra Carina" reserves "Nebutra" in a lighter weight above or beside.
+**Decision for the DAG:** no core mark is locked. The next gate is six isolated
+black-and-white vector operation studies, two per product-derived family. A human
+collision review selects a symbol before color or wordmark work begins. Carved Edge
+remains the scene/background grammar (hero, social); Held Light remains a secondary
+illustration motif. The product wordmark is "Carina"; the full lockup is "Nebutra
+Carina" with "Nebutra" in a lighter supporting weight.
 
 ---
 
@@ -135,15 +152,20 @@ Keep the existing register, verbatim as rules:
 4. Mechanism over marketing — every claim ties to a verifiable artifact: a test name, a file path, a config key, a PRD section.
 5. Structured and tabular: Need→Answer tables, short noun-phrase headings.
 6. Governance vocabulary as identity: policy, audit, rollback, capability, boundary, attenuation, hash-chained, local authority.
-7. Trilingual parity: zh-CN and ja are rewrites in the same register, never machine translations. Fix the internal drift: the Chinese PRD's "Agent OS" register stays internal; public positioning uses "agent runtime" in every locale.
+7. Six-locale parity: en, zh-CN, ja, ko, es, and fr are peer product languages. Each is rewritten in the same register, never assembled from machine-translated fragments. Fix the internal drift: the Chinese PRD's "Agent OS" register stays internal; public positioning uses the locale-native equivalent of "agent runtime" everywhere.
 
 ### CLI microcopy voice (rules for the rules+LLM microcopy engine)
 
-Two registers, with a hard switch:
+Two voice registers, implemented as three isolated domains: Ambient uses the
+field register; Governed and Degrade use the sober register. The switch is
+hard and test-enforced.
 
 - **Field register (default):** dry, brief, occasionally playful. Wit is allowed when nothing is at stake — idle states, progress, success, housekeeping. Jokes are structural (understatement, precision-as-humor), never emoji, never exclamation marks, never at the expense of trust. If a line could make a user doubt that the tool is serious about their machine, cut the joke.
 - **Sober register (mandatory):** any moment touching **permission, policy denial, audit, destructive action, rollback, secrets, or data leaving the machine** switches to sober. Sober lines state: what happened, what changed, how to inspect or undo. Exact nouns, no metaphor, no personality. The register switch is itself a trust signal — users learn that when Carina goes quiet and precise, it matters.
-- **Locale parity:** zh and en are peers. Chinese microcopy is written with locale-native wit (成语-adjacent economy, dry understatement), never translated en jokes. The sober register is identical in discipline across locales.
+- **Locale parity:** en, zh-CN/zh-Hans, ja, ko, es, and fr are peers. The runtime key `zh` means Simplified Chinese; zh-Hant/zh-TW/zh-HK are not claimed until they have an authored catalog. Ambient copy is authored for the locale rather than translating English jokes: Chinese favors concise understatement; Japanese favors calm service language; Korean favors direct, respectful status language; Spanish and French favor natural sentence rhythm over English syntax. Personality remains conservative in every locale.
+- **Governed parity:** permission, policy, audit, rollback, destructive action, secret, and egress copy carries the same facts and certainty in all six languages. It is never humorous, hedged, or generated at runtime.
+- **Degrade parity:** every degraded state names the fact, its user-visible effect, and a concrete inspection or repair step. Commands, paths, hashes, IDs, provider names, and policy names remain byte-for-byte verbatim.
+- **Grammar safety:** do not build sentences by concatenating translated fragments. Use complete locale templates with named placeholders so Japanese and Korean particles, Spanish agreement, French spacing, and CJK punctuation remain authored and reviewable.
 - **Mechanical rules:** lowercase-first fragments allowed in field register; sober register uses full sentences. Hashes, paths, policy names always verbatim in mono. Never anthropomorphize the agent being governed; Carina speaks as the runtime, about the agent, in third person.
 
 ### Calibration lines
@@ -181,11 +203,11 @@ Two registers, with a hard switch:
 3. `destructive action: rm -rf ./build (214 files). a restore point will be created first. confirm to proceed.`
 4. `rollback complete. 12 file changes reverted to checkpoint 7f3d9e. nothing outside the transaction was touched.`
 5. `audit chain verified: 1,204 entries, head 9c4b…e21a, no gaps, no rewrites.`
-6. `secret detected in agent output. redacted from display; original recorded to the encrypted audit store only.`
+6. `secret detected in agent output. display, transcript, and audit record contain only the redacted value. original not retained.`
 7. `policy bundle updated: 2 rules tightened, 0 loosened. loosening requires explicit operator approval.`
-8. `partial failure: 3 of 5 patches applied. applied patches are committed; failed patches left staged. see carina log --tx 41.`
+8. `partial result for transaction 41. applied steps: 3/5. remaining steps did not complete. inspect the audit trail for details.`
 9. `this action sends file contents to an external model endpoint (api.example.com). proceed?`
-10. `checkpoint created before migration. undo at any time with: carina rollback 8a11f0.`
+10. `checkpoint created before migration. preview with: carina checkpoint preview sess-42 8a11f0. after review, restore with: carina checkpoint restore sess-42 8a11f0 --yes.`
 
 **Sober register — zh (10):**
 
@@ -194,11 +216,11 @@ Two registers, with a hard switch:
 3. `破坏性操作：rm -rf ./build（214 个文件）。将先创建还原点。确认后执行。`
 4. `回滚完成。12 处文件改动已还原至检查点 7f3d9e。事务之外未触碰任何内容。`
 5. `审计链校验通过：1,204 条记录，链头 9c4b…e21a，无缺口，无改写。`
-6. `在代理输出中检测到密钥。显示已脱敏；原文仅记录于加密审计存储。`
+6. `在代理输出中检测到密钥。显示、转录和审计记录仅包含脱敏值；原文不会保留。`
 7. `策略包已更新：收紧 2 条，放宽 0 条。放宽须操作者明确批准。`
-8. `部分失败：5 个补丁中 3 个已应用。已应用的补丁已提交；失败补丁保留在暂存区。详见 carina log --tx 41。`
+8. `事务 41 部分完成。已应用步数：3/5。其余步骤未完成。请检查审计记录了解详情。`
 9. `此操作将把文件内容发送至外部模型端点（api.example.com）。是否继续？`
-10. `迁移前已创建检查点。随时可撤销：carina rollback 8a11f0。`
+10. `迁移前已创建检查点。先预览：carina checkpoint preview sess-42 8a11f0。审阅后恢复：carina checkpoint restore sess-42 8a11f0 --yes。`
 
 ---
 
@@ -207,7 +229,7 @@ Two registers, with a hard switch:
 ### Inputs we will feed the skill
 
 1. **Brand philosophy:** the one-sentence brand idea from §1, plus fragments as constraints: name "Nebutra Carina", material metaphor "hydrogen-alpha emission behind dark dust; light through a defined aperture", mood "quiet, exact, warm-dark — matte, smoky, still", disliked old identity "glassy neon blue/teal/violet loop on black".
-2. **`visual-identity.md`** — authored from this brief: name + zh/ja variants, tagline, tone (§4), design philosophy (§1), shape grammar (§3, Candidate A locked as core mark), palette with the exact hex pairs and stated ratios (§2), typography (§3), imagery rules (§1 literalness rules), latent motion ("slow emission drift, sculpting winds"), and negative constraints written as visual risks (§6 verbatim).
+2. **`visual-identity.md`** — authored from this brief: name + zh/ja variants, tagline, tone (§4), design philosophy (§1), the three evidence-backed operation families in §3 with no mark locked before review, palette with the exact hex pairs and stated ratios (§2), typography (§3), imagery rules (§1 literalness rules), latent motion ("slow emission drift, sculpting winds"), and negative constraints written as visual risks (§6 verbatim).
 3. **`brand-kit-inventory.md`** — Carina's real slots: README hero (shared across en/zh-CN/ja), social/OG card, favicon set (staged for the future docs site), docs illustrations (aperture / carved-edge / held-light motifs), CLI banner spec (ANSI, hand-made from the mark — not image-generated), TUI theme token table (§2 ANSI mapping), badge recolor map. No desktop/Tauri app icons — no such surface exists.
 4. **`brand-generation-dag.yaml`** — with the user's nebula reference image injected as a **reference-lock on the foundation board task** (stage 1), so all downstream material vocabulary is sampled from the chosen Hα rendering, not from the model's generic nebula prior.
 5. **Repo scan** (`scripts/scan_brand_assets.py` equivalent): current inventory is one PNG (`docs/assets/carina-hero.png`) + 15 badge URLs across three READMEs + plain-text CLI/TUI. The kit takes the shape of this repo.
@@ -217,9 +239,9 @@ Two registers, with a hard switch:
 | Stage | Asset | Ratio | Refs | Gate |
 |---|---|---|---|---|
 | 1 | Foundation material board (palette/material/mood, no logo) | 16:9 | nebula ref image (reference-lock) | **human approval** |
-| 2 | Symbol motif sheet (aperture constructions, carved edges, held-light studies) | 16:9 | @1 | review |
-| 3 | Core mark seed (Candidate A, flat duotone) | 1:1 | @1 | review |
-| 4 | Production-clean mark (hard-edge fills, legible at 32 px) | 1:1 | @3 | **human approval** |
+| 2 | Six isolated operation studies (two per evidence-backed family; no wordmark) | 1:1 each | none | **human collision review** |
+| 3 | Selected core-mark construction (black and white vector) | 1:1 | approved study from @2 | review |
+| 4 | Production-clean mark (hard-edge fills, legible at 16–32 px) | 1:1 | @3 | **human approval** |
 | 5 | Icon variants (classic / soft / technical / monochrome glyph — mark fixed, material varies) | 1:1 | @4 | review |
 | 6 | Proof sheets (16–48 px legibility, light/dark, family contact sheet) | 16:9 | @4, @5 | **human approval** |
 | 7 | Scenes: README hero (21:9, right third low-noise for text), social/OG (16:9 → export 1200×630), docs backgrounds (Carved Edge grammar) | as listed | @4 | review |

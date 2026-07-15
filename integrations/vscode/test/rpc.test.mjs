@@ -18,3 +18,11 @@ test('rpc consumes notifications and reconnects after disconnect',async()=>{
   connection.destroy();await waitFor(()=>states.includes('stale'));await waitFor(()=>connections>=2);assert.equal((await client.call('agent.view')).working.length,1);assert.equal(states.at(-1),'connected')
   client.dispose();await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true})
 })
+
+test('dispose is terminal even when the socket closes asynchronously',async()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'carina-vscode-')),sock=path.join(dir,'d.sock')
+  const server=net.createServer(c=>c.on('data',b=>{for(const line of b.toString().trim().split('\n')){const q=JSON.parse(line);c.write(JSON.stringify({jsonrpc:'2.0',id:q.id,result:{}})+'\n')}}))
+  await new Promise(r=>server.listen(sock,r));const client=new RpcClient(sock),states=[];client.onState(s=>states.push(s))
+  await client.call('agent.view');client.dispose();await new Promise(r=>setTimeout(r,30));assert.equal(states.at(-1),'disposed')
+  await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true})
+})

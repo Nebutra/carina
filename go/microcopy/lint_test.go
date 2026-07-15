@@ -27,11 +27,17 @@ func TestLintAmbientCatchesSeededViolations(t *testing.T) {
 		{"zh", "干得漂亮！", "exclamation"},
 		{"en", "done \U0001F389", "emoji"},
 		{"zh", "完成 ✨", "emoji"},
+		{"ja", "完了 🎉", "emoji"},
+		{"ko", "완료!", "exclamation"},
 		{"en", "shipping among the stars", "astronomy"},
 		{"en", "a galaxy of options", "astronomy"},
 		{"en", "cosmic-grade caching", "astronomy"},
 		{"zh", "宇宙第一快", "astronomy"},
 		{"zh", "星辰大海，说到做到", "astronomy"},
+		{"ja", "宇宙級の検索", "astronomy"},
+		{"ko", "은하처럼 넓은 검색", "astronomy"},
+		{"es", "una galaxia de opciones", "astronomy"},
+		{"fr", "une recherche cosmique", "astronomy"},
 	}
 	for _, tc := range cases {
 		got := LintAmbientLine(tc.locale, tc.line)
@@ -72,12 +78,16 @@ func TestLintGovernedCatchesSeededViolations(t *testing.T) {
 		// Not a full sentence: no terminal punctuation.
 		{"en", "Approval required: {decision_id}", []string{"decision_id"}, "sentence"},
 		{"zh", "需要授权：{decision_id}", []string{"decision_id"}, "sentence"},
+		{"ja", "承認が必要です: {decision_id}", []string{"decision_id"}, "sentence"},
+		{"ko", "승인이 필요합니다: {decision_id}", []string{"decision_id"}, "sentence"},
 		// Not a full sentence: lowercase fragment (en only).
 		{"en", "approval required: {decision_id}.", []string{"decision_id"}, "sentence"},
 		// Metaphor terms are banned in the Governed register.
 		{"en", "The ledger is sealed: {audit_id}.", []string{"audit_id"}, "metaphor"},
 		{"en", "Rollback done, kettle's yours: {tx_id}.", []string{"tx_id"}, "metaphor"},
 		{"zh", "账本已封存：{audit_id}。", []string{"audit_id"}, "metaphor"},
+		{"ja", "魔法で承認しました: {audit_id}。", []string{"audit_id"}, "metaphor"},
+		{"es", "Aprobado por magia: {audit_id}.", []string{"audit_id"}, "metaphor"},
 		// Exclamation marks and emoji never appear in Governed copy.
 		{"en", "Denied by policy {rule_id}!", []string{"rule_id"}, "exclamation"},
 		{"en", "Approved \U0001F44D decision {decision_id}.", []string{"decision_id"}, "emoji"},

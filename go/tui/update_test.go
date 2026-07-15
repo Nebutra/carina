@@ -641,15 +641,11 @@ func TestZhDegradeBanner(t *testing.T) {
 	}
 }
 
-// TestZhVariantDegradeBanner: main.go passes --locale through to Options.Locale
-// without microcopy normalization (it only normalizes the DetectLocale
-// fallback, not an explicit flag value), so the reconnect-attempt suffix
-// must itself normalize the locale rather than doing a raw == "zh" compare
-// — otherwise a real-world locale variant like "zh-CN" or "zh_TW.UTF-8"
-// gets the (already-normalized, correctly zh) Degrade banner text but the
-// English "(reconnecting, attempt N)" suffix bolted onto it.
+// Simplified Chinese variants use the zh catalog. Traditional Chinese is not
+// yet authored and must fall back to complete English copy rather than mixing
+// a Simplified Chinese banner with an English reconnect suffix.
 func TestZhVariantDegradeBanner(t *testing.T) {
-	for _, loc := range []string{"zh-CN", "zh_TW.UTF-8", "ZH_HK"} {
+	for _, loc := range []string{"zh-CN", "zh-Hans", "zh_CN.UTF-8"} {
 		t.Run(loc, func(t *testing.T) {
 			clock := &testClock{now: time.Unix(0, 0)}
 			m := New(Options{Theme: theme.New(theme.Mono), Locale: loc, Socket: "/tmp/s.sock", Now: func() time.Time { return clock.now }})
@@ -660,6 +656,17 @@ func TestZhVariantDegradeBanner(t *testing.T) {
 			}
 			if !strings.Contains(b, "正在重连") {
 				t.Errorf("banner for locale %q = %q, want zh reconnect suffix, not the en fallback", loc, b)
+			}
+		})
+	}
+	for _, loc := range []string{"zh_TW.UTF-8", "ZH_HK", "zh-Hant"} {
+		t.Run(loc+"_fallback", func(t *testing.T) {
+			clock := &testClock{now: time.Unix(0, 0)}
+			m := New(Options{Theme: theme.New(theme.Mono), Locale: loc, Socket: "/tmp/s.sock", Now: func() time.Time { return clock.now }})
+			m.Update(ReconnectingMsg{Attempt: 2})
+			b := m.banner()
+			if !strings.Contains(b, "Daemon unreachable") || !strings.Contains(b, "reconnecting") || strings.Contains(b, "无法连接守护进程") {
+				t.Errorf("banner for unsupported locale %q = %q, want coherent English fallback", loc, b)
 			}
 		})
 	}

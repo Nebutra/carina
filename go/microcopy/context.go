@@ -1,10 +1,31 @@
 package microcopy
 
 import (
+	"fmt"
 	"hash/fnv"
 	"regexp"
 	"strings"
 )
+
+var supportedLocales = [...]string{"en", "zh", "ja", "ko", "es", "fr"}
+
+// SupportedLocales returns the complete set of authored copy locales. The
+// order is stable; callers receive a copy so package invariants cannot be
+// mutated from outside.
+func SupportedLocales() []string {
+	return append([]string(nil), supportedLocales[:]...)
+}
+
+var supportedLocaleSet = map[string]struct{}{
+	"en": {},
+	"zh": {},
+	"ja": {},
+	"ko": {},
+	"es": {},
+	"fr": {},
+}
+
+var localeSubtag = regexp.MustCompile(`^[a-z0-9]{1,8}$`)
 
 // contextPatterns route a seed (an RPC method or tool name as it appears on
 // the wire) to a Carina-native Ambient context pool. Order matters: the
@@ -38,20 +59,67 @@ func resolveContext(seed string) string {
 	return "generic"
 }
 
-// NormalizeLocale maps a raw locale value ("zh_CN.UTF-8", "en-US") to a
-// supported pool locale by prefix; everything unsupported falls back to en.
+// NormalizeLocale maps a BCP47-ish or POSIX locale value ("zh_CN.UTF-8",
+// "es-419", "ja-JP-u-ca-japanese") to an authored runtime key. The zh key
+// specifically means Simplified Chinese. Encoding and modifier suffixes are
+// ignored; unsupported and empty values fall back to en.
 // Exported so callers that branch on locale themselves (go/tui's degrade
 // banner, for its reconnect-attempt suffix) apply the same normalization
 // Governed/Degrade/Loading already do internally, instead of comparing a
 // raw, unnormalized locale string like "zh-CN" against "zh" and missing it.
 func NormalizeLocale(raw string) string {
-	l := strings.ToLower(strings.TrimSpace(raw))
-	switch {
-	case strings.HasPrefix(l, "zh"):
-		return "zh"
-	default:
-		return "en"
+	if locale, ok := canonicalLocale(raw); ok {
+		return locale
 	}
+	return "en"
+}
+
+// CanonicalLocale validates an explicit user or configuration locale. Unlike
+// NormalizeLocale, it does not silently turn an unsupported explicit choice
+// into English.
+func CanonicalLocale(raw string) (string, error) {
+	if locale, ok := canonicalLocale(raw); ok {
+		return locale, nil
+	}
+	return "", fmt.Errorf("unsupported locale; use en, zh, zh-CN, zh-Hans, ja, ko, es, or fr")
+}
+
+func canonicalLocale(raw string) (string, bool) {
+	l := strings.ToLower(strings.TrimSpace(raw))
+	if i := strings.IndexAny(l, ".@"); i >= 0 {
+		l = l[:i]
+	}
+	l = strings.ReplaceAll(l, "_", "-")
+	parts := strings.Split(l, "-")
+	if len(parts) == 0 || parts[0] == "" {
+		return "", false
+	}
+	for _, part := range parts {
+		if !localeSubtag.MatchString(part) {
+			return "", false
+		}
+	}
+	base := parts[0]
+	if _, ok := supportedLocaleSet[base]; !ok {
+		return "", false
+	}
+	if base != "zh" || len(parts) == 1 {
+		return base, true
+	}
+
+	simplified := false
+	for _, subtag := range parts[1:] {
+		switch subtag {
+		case "hant", "tw", "hk", "mo":
+			return "", false
+		case "hans", "cn", "sg":
+			simplified = true
+		}
+	}
+	if simplified {
+		return "zh", true
+	}
+	return "", false
 }
 
 // pick is the deterministic selector: FNV-1a 32-bit over the seed, modulo

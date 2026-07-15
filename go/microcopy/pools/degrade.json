@@ -4,62 +4,110 @@
     "interrupted.user": {
       "placeholders": [],
       "en": "Stopped by you. Partial results are recorded in the audit chain.",
-      "zh": "已按您的指令停止。部分结果已记录于审计链。"
+      "zh": "已按您的指令停止。部分结果已记录于审计链。",
+      "ja": "ユーザーの指示により停止しました。部分的な結果は監査チェーンに記録されています。",
+      "ko": "사용자 지시로 중단되었습니다. 부분 결과는 감사 체인에 기록되었습니다.",
+      "es": "Detenido por el usuario. Los resultados parciales se registraron en la cadena de auditoría.",
+      "fr": "Arrêt demandé par l’utilisateur. Les résultats partiels sont enregistrés dans la chaîne d’audit."
     },
     "interrupted.policy": {
       "placeholders": ["rule_id"],
       "en": "Stopped by policy {rule_id}. The interrupt and partial results are recorded in the audit chain.",
-      "zh": "已被策略 {rule_id} 停止。中断与部分结果已记录于审计链。"
+      "zh": "已被策略 {rule_id} 停止。中断与部分结果已记录于审计链。",
+      "ja": "ポリシー {rule_id} により停止しました。中断と部分的な結果は監査チェーンに記録されています。",
+      "ko": "정책 {rule_id}에 따라 중단되었습니다. 중단 내용과 부분 결과는 감사 체인에 기록되었습니다.",
+      "es": "Detenido por la política {rule_id}. La interrupción y los resultados parciales se registraron en la cadena de auditoría.",
+      "fr": "Arrêt imposé par la politique {rule_id}. L’interruption et les résultats partiels sont enregistrés dans la chaîne d’audit."
     },
     "interrupted.agent": {
       "placeholders": ["agent_id"],
       "en": "Stopped by agent {agent_id}. The interrupt is recorded in the audit chain.",
-      "zh": "已被代理 {agent_id} 停止。中断已记录于审计链。"
+      "zh": "已被代理 {agent_id} 停止。中断已记录于审计链。",
+      "ja": "エージェント {agent_id} により停止しました。中断は監査チェーンに記録されています。",
+      "ko": "에이전트 {agent_id} 지시로 중단되었습니다. 중단 내용은 감사 체인에 기록되었습니다.",
+      "es": "Detenido por el agente {agent_id}. La interrupción se registró en la cadena de auditoría.",
+      "fr": "Arrêt demandé par l’agent {agent_id}. L’interruption est enregistrée dans la chaîne d’audit."
     },
     "timed_out": {
-      "placeholders": ["seconds", "action"],
-      "en": "Timed out after {seconds}s: {action}. Partial results are kept. Fix: carina doctor",
-      "zh": "超时（{seconds} 秒）：{action}。部分结果已保留。修复：carina doctor"
+      "placeholders": ["duration", "action"],
+      "en": "Timed out after {duration}: {action}. Partial results are kept. Fix: carina doctor",
+      "zh": "超时（{duration}）：{action}。部分结果已保留。修复：carina doctor",
+      "ja": "{duration} 後にタイムアウトしました。操作: {action}。部分的な結果は保持されています。修正方法: carina doctor",
+      "ko": "{duration} 후 시간 초과가 발생했습니다. 작업: {action}. 부분 결과는 유지됩니다. 수정 방법: carina doctor",
+      "es": "Tiempo agotado tras {duration}: {action}. Se conservan los resultados parciales. Solución: carina doctor",
+      "fr": "Délai dépassé après {duration} : {action}. Les résultats partiels sont conservés. Correctif : carina doctor"
     },
     "backgrounded": {
-      "placeholders": ["task_id"],
-      "en": "Moved to background: task {task_id}. Watch with: carina watch {task_id}",
-      "zh": "已转入后台：任务 {task_id}。查看：carina watch {task_id}"
+      "placeholders": ["task_id", "session_id"],
+      "en": "Moved to background: task {task_id}. Watch its session with: carina watch {session_id}",
+      "zh": "已转入后台：任务 {task_id}。查看所在会话：carina watch {session_id}",
+      "ja": "タスク {task_id} をバックグラウンドに移動しました。セッションの確認方法: carina watch {session_id}",
+      "ko": "작업 {task_id}을 백그라운드로 이동했습니다. 세션 확인: carina watch {session_id}",
+      "es": "Tarea {task_id} movida a segundo plano. Consulte su sesión con: carina watch {session_id}",
+      "fr": "Tâche {task_id} placée en arrière-plan. Suivez sa session avec : carina watch {session_id}"
     },
     "conflict": {
       "placeholders": ["path"],
       "en": "Conflict: {path} changed on disk after it was read. Nothing was overwritten. Re-run to retry.",
-      "zh": "冲突：{path} 在读取后被修改。未覆盖任何内容。请重试。"
+      "zh": "冲突：{path} 在读取后被修改。未覆盖任何内容。请重试。",
+      "ja": "競合が発生しました。{path} は読み取り後にディスク上で変更されました。上書きは行っていません。再実行してください。",
+      "ko": "충돌이 발생했습니다. {path} 파일이 읽힌 후 디스크에서 변경되었습니다. 아무것도 덮어쓰지 않았습니다. 다시 실행하십시오.",
+      "es": "Conflicto: {path} cambió en disco después de la lectura. No se sobrescribió nada. Vuelva a ejecutar para reintentar.",
+      "fr": "Conflit : {path} a été modifié sur le disque après sa lecture. Rien n’a été écrasé. Relancez la commande."
     },
     "done": {
       "placeholders": [],
       "en": "Done",
-      "zh": "完成"
+      "zh": "完成",
+      "ja": "完了",
+      "ko": "완료",
+      "es": "Completado",
+      "fr": "Terminé"
     },
     "partial": {
       "placeholders": ["applied", "total", "tx_id"],
-      "en": "Partial: {applied} of {total} steps applied. Applied steps are committed; failed steps are left staged. See: carina log --tx {tx_id}",
-      "zh": "部分完成：{total} 步中 {applied} 步已应用。已应用的更改已提交；失败的更改保留在暂存区。详见：carina log --tx {tx_id}"
+      "en": "Partial result for transaction {tx_id}. Applied steps: {applied}/{total}. The remaining steps did not complete. Inspect the audit trail for details.",
+      "zh": "事务 {tx_id} 部分完成。已应用步数：{applied}/{total}。其余步骤未完成。请检查审计记录了解详情。",
+      "ja": "トランザクション {tx_id} は一部のみ完了しました。適用済みステップ数: {applied}/{total}。残りのステップは完了していません。詳細は監査記録を確認してください。",
+      "ko": "트랜잭션 {tx_id}이 부분 완료되었습니다. 적용된 단계: {applied}/{total}. 나머지 단계는 완료되지 않았습니다. 자세한 내용은 감사 기록을 확인하세요.",
+      "es": "Resultado parcial de la transacción {tx_id}. Pasos aplicados: {applied}/{total}. Los pasos restantes no se completaron. Consulte el registro de auditoría.",
+      "fr": "Résultat partiel pour la transaction {tx_id}. Étapes appliquées : {applied}/{total}. Les étapes restantes n’ont pas abouti. Consultez la piste d’audit."
     },
     "daemon_unreachable": {
       "placeholders": ["socket"],
       "en": "Daemon unreachable at {socket}. Fix: carina-daemon &",
-      "zh": "无法连接守护进程（{socket}）。修复：carina-daemon &"
+      "zh": "无法连接守护进程（{socket}）。修复：carina-daemon &",
+      "ja": "ソケット {socket} でデーモンに到達できません。修正方法: carina-daemon &",
+      "ko": "소켓 {socket}에서 데몬에 연결할 수 없습니다. 수정 방법: carina-daemon &",
+      "es": "No se puede acceder al daemon en {socket}. Solución: carina-daemon &",
+      "fr": "Daemon inaccessible sur {socket}. Correctif : carina-daemon &"
     },
     "semantic_off": {
       "placeholders": ["reason"],
       "en": "Degraded: semantic search offline ({reason}) — lexical results only. Fix: carina doctor",
-      "zh": "已降级：语义检索离线（{reason}），仅返回词法结果。修复：carina doctor"
+      "zh": "已降级：语义检索离线（{reason}），仅返回词法结果。修复：carina doctor",
+      "ja": "機能が制限されています。セマンティック検索がオフラインです ({reason})。字句検索の結果のみ返します。修正方法: carina doctor",
+      "ko": "기능이 제한됩니다. 시맨틱 검색이 오프라인입니다({reason}). 어휘 기반 결과만 제공합니다. 수정 방법: carina doctor",
+      "es": "Modo degradado: la búsqueda semántica está sin conexión ({reason}); solo hay resultados léxicos. Solución: carina doctor",
+      "fr": "Mode dégradé : recherche sémantique hors ligne ({reason}), résultats lexicaux uniquement. Correctif : carina doctor"
     },
     "rerank_off": {
       "placeholders": ["reason"],
       "en": "Degraded: reranker offline ({reason}) — results unranked. Fix: carina doctor",
-      "zh": "已降级：重排序器离线（{reason}），结果未重排。修复：carina doctor"
+      "zh": "已降级：重排序器离线（{reason}），结果未重排。修复：carina doctor",
+      "ja": "機能が制限されています。リランカーがオフラインです ({reason})。結果は再ランク付けされていません。修正方法: carina doctor",
+      "ko": "기능이 제한됩니다. 리랭커가 오프라인입니다({reason}). 결과는 재정렬되지 않았습니다. 수정 방법: carina doctor",
+      "es": "Modo degradado: el reclasificador está sin conexión ({reason}); los resultados no se reordenaron. Solución: carina doctor",
+      "fr": "Mode dégradé : reclasseur hors ligne ({reason}), résultats non reclassés. Correctif : carina doctor"
     },
     "lookup_imprecise": {
       "placeholders": ["tool", "reason"],
       "en": "Degraded: {tool} fell back to tree-sitter precision ({reason}). Fix: carina doctor",
-      "zh": "已降级：{tool} 回退至 tree-sitter 精度（{reason}）。修复：carina doctor"
+      "zh": "已降级：{tool} 回退至 tree-sitter 精度（{reason}）。修复：carina doctor",
+      "ja": "機能が制限されています。{tool} はtree-sitterの精度にフォールバックしました ({reason})。修正方法: carina doctor",
+      "ko": "기능이 제한됩니다. {tool} 정확도가 tree-sitter 수준으로 전환되었습니다({reason}). 수정 방법: carina doctor",
+      "es": "Modo degradado: {tool} recurrió a la precisión de tree-sitter ({reason}). Solución: carina doctor",
+      "fr": "Mode dégradé : {tool} utilise la précision de tree-sitter en repli ({reason}). Correctif : carina doctor"
     }
   }
 }

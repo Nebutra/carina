@@ -229,7 +229,7 @@ func TestComposerUndoDoesNotInterceptHistorySearch(t *testing.T) {
 	if m.historySearch == nil || len(m.composerUndo.undo) != beforeEntries {
 		t.Fatal("composer undo intercepted history-search input")
 	}
-	composerKey(t, m, "esc")
+	composerKey(t, m, "ctrl+c")
 	composerKey(t, m, "ctrl+z")
 	if got := m.input.Value(); got != "" {
 		t.Fatalf("undo stack changed across history search: %q", got)

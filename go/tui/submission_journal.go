@@ -270,7 +270,7 @@ func (m *Model) restoreSubmissionJournal() tea.Cmd {
 	}
 	retry, ok, err := m.submissions.load(m.sessionID)
 	if err != nil {
-		m.push(fmt.Sprintf("%s submission recovery: %s", glyphFailed(m.th), err.Error()))
+		m.push(m.text(MsgSubmissionRecoveryFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
 		return nil
 	}
 	if !ok || m.submitting != nil {
@@ -281,9 +281,9 @@ func (m *Model) restoreSubmissionJournal() tea.Cmd {
 	if !background {
 		m.restoreDraft(retry.draft)
 		m.resetComposerUndo()
-		m.push(m.th.Style(theme.RoleMuted).Render("- restored an unacknowledged submission; reconciling it with the daemon"))
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgSubmissionRestored, nil)))
 	} else {
-		m.push(m.th.Style(theme.RoleMuted).Render("- reconciling an unacknowledged submission in the background; current draft preserved"))
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgSubmissionReconciling, nil)))
 	}
 	cmd := m.beginSubmissionSourceWithIntent(submissionTask, "", retry.draft, false, false)
 	if background && m.submitting != nil {

@@ -126,24 +126,82 @@ brew upgrade carina
 package metadata and `brew upgrade carina` upgrades the installed formula.
 Carina does not auto-start the daemon after installation.
 
-## TUI Keybindings
+## TUI Interaction And Keybindings
+
+Run `carina-tui` directly, or run bare `carina` in an interactive terminal. The
+composer keeps control keys responsive while a task submission is waiting for
+its daemon acknowledgement. Ordinary typing or paste during that interval
+starts an independent next draft; it cannot mutate the frozen, journaled
+submission being reconciled.
+
+The default interaction loop is:
+
+- `Enter` submits while idle and steers the active task; `Tab` queues a later
+  turn and `Alt+Up` recalls the newest queued turn for editing.
+- `Shift+Enter`, `Alt+Enter`, or `Ctrl+J` inserts a newline. `Ctrl+R` searches
+  prompt history scoped to the current workspace, so another repository's
+  prompts do not appear in normal TUI recall.
+- `Esc` interrupts an active task. With an idle, empty composer, press `Esc`
+  twice to open the checkpoint picker. Restore always requires a rollback
+  preview, then `y` and `Enter` confirmation.
+- `Alt+R` opens the plain-text transcript, `F1` opens context-aware help, and
+  the mouse wheel scrolls the currently focused transcript, approval,
+  question, help, keymap, or checkpoint surface.
+
+The TUI normally uses the alternate screen. To keep the rendered session in
+the terminal's normal buffer, use `carina-tui --no-alt-screen`, or set
+`"tui_alternate_screen": "never"` for both `carina-tui` and bare `carina`.
+The accepted values are `auto`, `always`, and `never`.
+
+The TUI ships authored copy for English, Simplified Chinese
+(`zh-CN`/`zh-Hans`, runtime key `zh`), Japanese, Korean, Spanish, and French.
+Select it with `carina-tui --locale`, `CARINA_LOCALE`, `tui_locale` in the
+normal config cascade, or `CARINA_TUI_LOCALE`; the precedence is flag,
+`CARINA_LOCALE`, config, then `LC_ALL`/`LC_MESSAGES`/`LANG`. Traditional
+Chinese (`zh-Hant`, `zh-TW`, `zh-HK`) is not yet shipped. System detection for
+an unsupported locale quietly falls back to English, while an unsupported
+explicit flag, environment value, or config value fails fast instead of
+silently choosing a different language.
 
 The interactive TUI reads key overrides from the normal global and project
 configuration cascade (`~/.carina/config.json` and `.carina/config.json`).
-Bindings are keyed by the semantic action names shown in the F1 help overlay:
+Bindings are keyed by semantic action names shown in the F1 help overlay and
+the `/keymap` picker:
 
 ```json
 {
   "tui_keybindings": {
-    "global.help": ["ctrl+h"],
+    "global.help": ["f2"],
+    "chat.interrupt": ["esc"],
     "composer.submit": ["ctrl+enter"],
-    "composer.external-editor": ["ctrl+g"]
+    "composer.external-editor": ["ctrl+g"],
+    "editor.move-word-left": ["alt+left", "alt+b"]
   }
 }
 ```
 
-Unknown actions, conflicting keys in the same context, and unbound critical
-approval/search escape actions fail at startup with an actionable error.
+Unknown actions, duplicate JSON keys, conflicting keys in the same context, and
+unbound critical approval/search escape actions fail with an actionable error.
+Cross-context bindings are checked against the contexts that can actually be
+active together, including suggestions, normal transcript controls, and legacy
+terminal-equivalent keys such as `Ctrl+[` and `Esc`. Printable pager bindings
+remain overlay-only, so they cannot steal composer text. Modifier aliases such
+as `control`, `option`/`opt`, `cmd`/`command`, and `win` normalize to the runtime
+`ctrl`, `alt`, and `super` vocabulary.
+Multi-key chords use a space-separated value such as `"ctrl+x ctrl+r"`.
+Chord prefixes must start with a reliable modifier key; pending chords are
+visible in the status line, time out after 1.2 seconds, and `Esc` cancels them.
+Ambiguous single-key/chord prefixes are rejected instead of delaying or losing
+ordinary input.
+`/keymap` can replace a binding, add an alternate, or restore the inherited
+value. During capture, `Ctrl+V` quotes the next key: for example, `Ctrl+V Esc`
+records Escape, while `Ctrl+X Ctrl+V Enter` records a chord ending in Enter.
+Bare Escape still cancels and bare Enter still saves, so capture always has a
+reachable exit. The picker writes project `.carina/config.json` atomically and
+applies the validated keymap immediately. External edits to managed, global, or
+project config are hot-reloaded; invalid edits leave the last-good keymap
+active.
+
 Task submissions are journaled under the configured state directory before
 dispatch. If an acknowledgement is lost or the TUI restarts, Carina reconciles
 the same idempotency key instead of silently creating a duplicate task. Use the

@@ -21,12 +21,26 @@ var astronomyZH = []string{
 	"恒星", "彗星", "流星", "超新星", "天体", "太空", "航天", "轨道",
 }
 
+var astronomyTerms = map[string][]string{
+	"ja": {"星雲", "宇宙", "銀河", "星空", "恒星", "惑星", "軌道", "天体", "流星", "彗星"},
+	"ko": {"성운", "우주", "은하", "별빛", "별자리", "행성", "궤도", "천체", "유성", "혜성"},
+	"es": {"nebulosa", "cosmos", "cósmic", "galax", "estelar", "constelaci", "órbita", "universo", "supernova", "astral", "celestial", "planeta", "lunar", "solar", "eclipse", "asteroide", "cometa", "meteor"},
+	"fr": {"nébuleuse", "cosmos", "cosmique", "galax", "stellaire", "constellation", "orbite", "univers", "supernova", "astral", "céleste", "planète", "lunaire", "solaire", "éclipse", "astéroïde", "comète", "météor"},
+}
+
 // Metaphor terms are banned in the Governed and Degrade registers: sober
 // lines use exact nouns — the field register's ledgers and kettles stay in
 // the Ambient pools.
 var metaphorEN = regexp.MustCompile(`(?i)\b(ledgers?|kettles?|drama|magic|journeys?|whimsy|budd(?:y|ies)|vibes?|sparkles?)\b`)
 
 var metaphorZH = []string{"账本", "东风", "魔法", "戏法"}
+
+var metaphorTerms = map[string][]string{
+	"ja": {"魔法", "気分で", "お友達", "キラキラ"},
+	"ko": {"마법", "분위기로", "친구처럼", "반짝"},
+	"es": {"magia", "mágic", "aventura", "colega", "vibras", "chispa"},
+	"fr": {"magie", "magique", "aventure", "copain", "ambiance", "paillettes"},
+}
 
 // LintAmbientLine checks one Ambient line against the field-register rules:
 // no exclamation marks, no emoji, no astronomy/cosmos vocabulary.
@@ -102,6 +116,16 @@ func LintPools() []string {
 			}
 		}
 	}
+	for locale, body := range governedFallback {
+		for _, v := range LintGovernedTemplate(locale, body, nil) {
+			out = append(out, fmt.Sprintf("governed/%s/fallback %q: %s", locale, body, v))
+		}
+	}
+	for locale, body := range degradeFallback {
+		for _, v := range LintDegradeTemplate(locale, body, nil) {
+			out = append(out, fmt.Sprintf("degrade/%s/fallback %q: %s", locale, body, v))
+		}
+	}
 	return out
 }
 
@@ -132,12 +156,23 @@ func lintFullSentence(locale, tmpl string) []string {
 	}
 	last := runes[len(runes)-1]
 	switch locale {
-	case "zh":
+	case "zh", "ja":
 		if last != '。' && last != '？' {
 			return []string{"not a full sentence: must end with 。 or ？"}
 		}
+	case "ko":
+		if last != '.' && last != '?' {
+			return []string{"not a full sentence: must end with . or ?"}
+		}
 	default:
-		if !unicode.IsUpper(runes[0]) {
+		firstLetter := rune(0)
+		for _, r := range runes {
+			if unicode.IsLetter(r) {
+				firstLetter = r
+				break
+			}
+		}
+		if firstLetter == 0 || !unicode.IsUpper(firstLetter) {
 			return []string{"not a full sentence: must start with an uppercase letter"}
 		}
 		if last != '.' && last != '?' {
@@ -152,6 +187,15 @@ func lintMetaphor(locale, s string) []string {
 	if locale == "zh" {
 		for _, term := range metaphorZH {
 			if strings.Contains(s, term) {
+				v = append(v, fmt.Sprintf("metaphor term %q", term))
+			}
+		}
+		return v
+	}
+	if terms, ok := metaphorTerms[locale]; ok {
+		lower := strings.ToLower(s)
+		for _, term := range terms {
+			if strings.Contains(lower, term) {
 				v = append(v, fmt.Sprintf("metaphor term %q", term))
 			}
 		}
@@ -175,6 +219,15 @@ func lintAstronomy(locale, s string) []string {
 	if locale == "zh" {
 		for _, term := range astronomyZH {
 			if strings.Contains(s, term) {
+				v = append(v, fmt.Sprintf("astronomy/cosmos term %q", term))
+			}
+		}
+		return v
+	}
+	if terms, ok := astronomyTerms[locale]; ok {
+		lower := strings.ToLower(s)
+		for _, term := range terms {
+			if strings.Contains(lower, term) {
 				v = append(v, fmt.Sprintf("astronomy/cosmos term %q", term))
 			}
 		}

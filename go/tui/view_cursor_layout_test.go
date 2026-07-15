@@ -75,6 +75,27 @@ func TestOverlayArbitratesAndRestoresPhysicalCursor(t *testing.T) {
 	}
 }
 
+func TestViewEnablesReachableWheelInput(t *testing.T) {
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
+	m.Update(tea.WindowSizeMsg{Width: 36, Height: 10})
+
+	v := m.View()
+	if v.MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("mouse mode = %v, want cell motion", v.MouseMode)
+	}
+	if v.OnMouse == nil {
+		t.Fatal("cell motion enabled without forwarding mouse messages")
+	}
+	wheel := tea.MouseWheelMsg{Button: tea.MouseWheelDown}
+	cmd := v.OnMouse(wheel)
+	if cmd == nil {
+		t.Fatal("mouse handler dropped wheel event")
+	}
+	if got, ok := cmd().(tea.MouseWheelMsg); !ok || got.Button != tea.MouseWheelDown {
+		t.Fatalf("forwarded mouse message = %#v, want wheel down", got)
+	}
+}
+
 func TestViewFitsConstrainedTerminalAndKeepsCursorInBounds(t *testing.T) {
 	for _, width := range []int{1, 2, 3, 4, 5, 6, 12} {
 		for _, height := range []int{1, 2, 3, 4, 6, 7, 10} {

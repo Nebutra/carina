@@ -55,7 +55,10 @@ func TestCommonControlPlaneWrappers(t *testing.T) {
 			case "session.list":
 				result = []any{map[string]any{"session_id": "s1"}}
 			case "session.replay":
-				result = []any{map[string]any{"session_id": "s1", "type": "TaskCreated", "timestamp": "now"}}
+				result = []any{map[string]any{
+					"session_id": "s1", "type": "TaskCreated", "timestamp": "now",
+					"permission_decision_id": "perm_1", "actor": "go", "prev_hash": "prev", "event_hash": "event",
+				}}
 			case "workspace.search":
 				result = []any{map[string]any{"file": "a.go", "line": 3, "text": "TODO"}}
 			case "workspace.file.get":
@@ -78,6 +81,8 @@ func TestCommonControlPlaneWrappers(t *testing.T) {
 	}
 	if events, err := client.ReplaySession("s1"); err != nil || len(events) != 1 {
 		t.Fatalf("replay: %+v %v", events, err)
+	} else if events[0].PermissionDecisionID != "perm_1" || events[0].Actor != "go" || events[0].PrevHash != "prev" || events[0].EventHash != "event" {
+		t.Fatalf("replay audit fields = %+v", events[0])
 	}
 	if hits, err := client.SearchWorkspace("s1", "TODO"); err != nil || len(hits) != 1 || hits[0].Line != 3 {
 		t.Fatalf("search: %+v %v", hits, err)
@@ -99,6 +104,105 @@ func TestCommonControlPlaneWrappers(t *testing.T) {
 	}
 	if _, err := client.AuditReport("s1"); err != nil {
 		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResumeTaskUsesCanonicalRPC(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	client := NewClient(rpc.NewClient(clientConn, clientConn, clientConn))
+	defer client.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		line, err := bufio.NewReader(serverConn).ReadBytes('\n')
+		if err != nil {
+			done <- err
+			return
+		}
+		var request struct {
+			ID     json.RawMessage   `json:"id"`
+			Method string            `json:"method"`
+			Params map[string]string `json:"params"`
+		}
+		if err := json.Unmarshal(line, &request); err != nil {
+			done <- err
+			return
+		}
+		if request.Method != "task.resume" || request.Params["task_id"] != "t1" {
+			done <- fmt.Errorf("request = %+v", request)
+			return
+		}
+		response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"task_id": "t1", "session_id": "s1", "status": "running"}})
+		_, err = serverConn.Write(append(response, '\n'))
+		done <- err
+	}()
+
+	task, err := client.ResumeTask("t1")
+	if err != nil || task.TaskID != "t1" || task.Status != "running" {
+		t.Fatalf("resume task = %+v, err=%v", task, err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckpointTypedWrappersDecodeCanonicalFixtures(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	client := NewClient(rpc.NewClient(clientConn, clientConn, clientConn))
+	defer client.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(serverConn)
+		for _, method := range []string{"session.checkpoint.preview", "session.checkpoint.summarize", "session.checkpoint.restore"} {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				done <- err
+				return
+			}
+			var request struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if err := json.Unmarshal(line, &request); err != nil || request.Method != method {
+				done <- fmt.Errorf("request method = %s, want %s, decode=%v", request.Method, method, err)
+				return
+			}
+			checkpoint := map[string]any{"checkpoint_id": "t:1:9", "created_at": "2026-07-14T00:00:00Z", "sequence": "00000000000000000009", "task_id": "t", "session_id": "s", "turn": 1, "applied_patches": []string{}}
+			var result any
+			switch method {
+			case "session.checkpoint.preview":
+				result = map[string]any{"checkpoint": checkpoint, "conversation_turns": 1, "rollback_patches": []string{}, "will_resume": "paused"}
+			case "session.checkpoint.summarize":
+				result = map[string]any{"checkpoint_id": "t:1:9", "task_id": "t", "turn": 1, "recent": []any{}}
+			case "session.checkpoint.restore":
+				result = map[string]any{"restored": true, "checkpoint_id": "t:1:9", "task_id": "t", "turn": 1, "rolled_back": []string{}, "status": "paused", "idempotent": true, "reconciliation_required": false, "journal_cleanup_pending": false}
+			}
+			response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
+			if _, err := serverConn.Write(append(response, '\n')); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+
+	preview, err := client.PreviewCheckpoint("s", "t:1:9")
+	if err != nil || preview.Checkpoint.Sequence != "00000000000000000009" || preview.WillResume != "paused" {
+		t.Fatalf("preview = %+v, err=%v", preview, err)
+	}
+	summary, err := client.SummarizeCheckpoint("s", "t:1:9")
+	if err != nil || summary.Turn != 1 {
+		t.Fatalf("summary = %+v, err=%v", summary, err)
+	}
+	restored, err := client.RestoreCheckpoint("s", "t:1:9", true)
+	if err != nil || !restored.Restored || !restored.Idempotent {
+		t.Fatalf("restore = %+v, err=%v", restored, err)
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)

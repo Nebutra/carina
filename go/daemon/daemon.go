@@ -146,6 +146,11 @@ type Daemon struct {
 
 	runs   *runStore     // durable background-run registry (survives restart)
 	runSem chan struct{} // concurrency cap for background runs
+	// checkpointMu serializes restore/resume commit boundaries. Both operations
+	// update the kernel patch lineage, latest checkpoint pointer, and durable
+	// task row, so they must never interleave for the same daemon.
+	checkpointMu  sync.Mutex
+	sessionFences sync.Map // session_id -> *sync.RWMutex; restore is writer, execution/mutations are readers
 
 	readProv   map[string]map[string]string // session -> relpath -> sha256 of last read (dirty-write guard)
 	readProvMu sync.Mutex
@@ -449,9 +454,12 @@ func New(opts Options) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: reconcile checkpoint restore journals: %w", err)
 	}
 	for _, taskID := range blockedRestores {
-		if task, ok := d.sched.Get(taskID); ok {
-			d.sched.SetStatus(taskID, "paused")
-			d.sched.SetResult(taskID, "checkpoint restore interrupted; manual reconciliation required", task.AppliedPatches)
+		if _, ok := d.sched.Get(taskID); ok {
+			blocked, _ := d.sched.MarkReconciliationRequired(taskID, "checkpoint restore interrupted by daemon restart; retry the same checkpoint restore to reconcile")
+			if err := d.runs.saveChecked(blocked); err != nil {
+				_ = d.kern.Close()
+				return nil, fmt.Errorf("daemon: persist blocked checkpoint restore %s: %w", taskID, err)
+			}
 		}
 	}
 	maxConcurrent := opts.MaxConcurrentTasks
@@ -910,6 +918,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("artifact.read", rpc.ScopeRead, false, d.handleArtifactRead)
 
 	d.registerRPC("task.submit", rpc.ScopeWrite, false, d.handleTaskSubmit)
+	d.registerRPC("task.resume", rpc.ScopeWrite, false, d.handleTaskResume, true)
 	d.registerRPC("task.status", rpc.ScopeRead, true, d.handleTaskStatus)
 	d.registerRPC("task.list", rpc.ScopeRead, true, d.handleTaskList)
 	d.registerRPC("task.result", rpc.ScopeRead, true, d.handleTaskResult)
@@ -2068,6 +2077,9 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	if sess.Status != "active" {
 		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
 	}
+	fence := d.sessionExecutionFence(sess.SessionID)
+	fence.RLock()
+	defer fence.RUnlock()
 	submissionFingerprint := ""
 	clientSubmissionID := ""
 	if p.ClientSubmissionID != nil {
@@ -2148,7 +2160,9 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		"session_id": sess.SessionID, "task_id": task.TaskID, "type": "TaskCreated", "actor": "go",
 		"timestamp": time.Now().UTC().Format(time.RFC3339), "payload": writeAheadPayload, internalRawAuditCursor: cursor,
 	})
-	_ = d.history.Append(prompt) // shared cross-process prompt history (best-effort)
+	_ = d.history.AppendScoped(history.Entry{ // shared cross-process prompt history (best-effort)
+		Text: prompt, SessionID: sess.SessionID, WorkspaceRoot: sess.WorkspaceRoot,
+	})
 	if err := d.runs.saveChecked(task); err != nil {
 		_, _ = d.sched.Cancel(task.TaskID)
 		return nil, fmt.Errorf("task_submit_failed: durable submission record failed, task was not dispatched: %w", err)
@@ -2212,6 +2226,8 @@ func (d *Daemon) handleTaskStatus(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
+	d.checkpointMu.Lock()
+	defer d.checkpointMu.Unlock()
 	var p struct {
 		TaskID string `json:"task_id"`
 	}
@@ -2225,7 +2241,7 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 	d.record(task.SessionID, "TaskCreated", task.TaskID, "operator", map[string]any{
 		"status": "cancelled", "reason": "operator_cancelled",
 	}, "")
-	d.persistRun(task.TaskID)
+	persistErr := d.runs.saveChecked(task)
 	d.taskContextMu.Lock()
 	cancel := d.taskCancels[p.TaskID]
 	d.taskContextMu.Unlock()
@@ -2233,6 +2249,9 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 		cancel(context.Canceled)
 	} else {
 		d.emitCompletion(task.SessionID, task)
+	}
+	if persistErr != nil {
+		return nil, fmt.Errorf("task_cancel_pending: task is cancelled in memory but durable persistence failed; retry task.cancel: %w", persistErr)
 	}
 	return task, nil
 }
@@ -2489,6 +2508,9 @@ func (d *Daemon) guardRun(ctx context.Context, sess *sessionstore.Session, task 
 }
 
 func (d *Daemon) runTaskGuarded(sess *sessionstore.Session, task *scheduler.Task) {
+	fence := d.sessionExecutionFence(sess.SessionID)
+	fence.RLock()
+	defer fence.RUnlock()
 	d.withTaskContext(task.TaskID, func(ctx context.Context) {
 		d.guardRun(ctx, sess, task, func() { d.runTaskContext(ctx, sess, task) })
 	})
@@ -2516,6 +2538,9 @@ func (d *Daemon) withTaskParentContext(parent context.Context, taskID string, ru
 }
 
 func (d *Daemon) resumeTaskGuarded(sess *sessionstore.Session, task *scheduler.Task, cp *runCheckpoint) {
+	fence := d.sessionExecutionFence(sess.SessionID)
+	fence.RLock()
+	defer fence.RUnlock()
 	d.withTaskContext(task.TaskID, func(ctx context.Context) {
 		d.guardRun(ctx, sess, task, func() { d.resumeTaskContext(ctx, sess, task, cp) })
 	})
@@ -3036,6 +3061,9 @@ func (d *Daemon) handlePatchApply(params json.RawMessage) (any, error) {
 	if p.Approver == "" {
 		p.Approver = "user"
 	}
+	fence := d.sessionExecutionFence(p.SessionID)
+	fence.RLock()
+	defer fence.RUnlock()
 	if err := d.checkPatchGate(p.SessionID, p.PatchID); err != nil {
 		return nil, err
 	}
@@ -3153,6 +3181,9 @@ func (d *Daemon) handlePatchRollback(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
+	fence := d.sessionExecutionFence(p.SessionID)
+	fence.RLock()
+	defer fence.RUnlock()
 	patch, err := d.kern.PatchRollback(p.SessionID, p.PatchID)
 	if err != nil {
 		return nil, err
@@ -3225,6 +3256,9 @@ func (d *Daemon) handleCommandExec(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decision *kernel.Decision) (*toolchain.CommandResult, error) {
+	fence := d.sessionExecutionFence(sessionID)
+	fence.RLock()
+	defer fence.RUnlock()
 	sess, ok := d.store.Get(sessionID)
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", sessionID)

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -264,5 +265,125 @@ func TestTUIKeybindingsMergeAcrossGlobalAndProjectConfig(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.TUIKeybindings, want) {
 		t.Fatalf("tui keybindings = %#v, want %#v", cfg.TUIKeybindings, want)
+	}
+}
+
+func TestTUIKeybindingSameActionMayOverrideAcrossConfigLayers(t *testing.T) {
+	scrubCarinaEnv(t)
+	home := t.TempDir()
+	project := t.TempDir()
+	writeConfig(t, home, `{"tui_keybindings":{"global.help":["f2"]}}`)
+	writeConfig(t, project, `{"tui_keybindings":{"global.help":["f3"]}}`)
+
+	cfg, err := Load(home, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.TUIKeybindings["global.help"]; !reflect.DeepEqual(got, []string{"f3"}) {
+		t.Fatalf("project binding = %#v, want project layer override", got)
+	}
+}
+
+func TestConfigRejectsDuplicateJSONKeys(t *testing.T) {
+	tests := []struct {
+		name      string
+		contents  string
+		duplicate string
+		jsonPath  string
+	}{
+		{name: "root", contents: `{"offline":true,"offline":false}`, duplicate: "offline", jsonPath: "$"},
+		{name: "tui action", contents: `{"tui_keybindings":{"global.help":["f1"],"global.help":["f2"]}}`, duplicate: "global.help", jsonPath: `$["tui_keybindings"]`},
+		{name: "nested object", contents: `{"tui_keybindings":{"global.help":["f1"]},"extra":{"value":1,"value":2}}`, duplicate: "value", jsonPath: `$["extra"]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			path := filepath.Join(home, ".carina", "config.json")
+			writeConfig(t, home, tt.contents)
+			_, err := Load(home, "")
+			if err == nil {
+				t.Fatal("duplicate JSON key must be rejected")
+			}
+			for _, want := range []string{path, tt.duplicate, tt.jsonPath, "remove one"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q does not contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestDuplicateJSONKeyScannerIgnoresStringContentsAndSeparateObjects(t *testing.T) {
+	data := []byte(`{"description":"fake key: \"offline\": true, \"offline\": false","items":[{"name":"same"},{"name":"same"}]}`)
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		t.Fatalf("valid JSON rejected: %v", err)
+	}
+}
+
+func TestTUILocaleLayersThroughDedicatedEnvironmentVariable(t *testing.T) {
+	scrubCarinaEnv(t)
+	home := t.TempDir()
+	project := t.TempDir()
+	writeConfig(t, home, `{"tui_locale":"ja-JP"}`)
+	writeConfig(t, project, `{"tui_locale":"es-ES"}`)
+
+	cfg, err := Load(home, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TUILocale != "es-ES" {
+		t.Fatalf("project tui locale = %q, want es-ES", cfg.TUILocale)
+	}
+
+	t.Setenv("CARINA_TUI_LOCALE", "ko-KR")
+	cfg, err = Load(home, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TUILocale != "ko-KR" {
+		t.Fatalf("environment tui locale = %q, want ko-KR", cfg.TUILocale)
+	}
+}
+
+func TestTUILocaleRejectsUnsupportedExplicitValues(t *testing.T) {
+	scrubCarinaEnv(t)
+	home := t.TempDir()
+	writeConfig(t, home, `{"tui_locale":"zh-TW"}`)
+	if _, err := Load(home, t.TempDir()); !errors.Is(err, ErrInvalidTUILocale) {
+		t.Fatal("unsupported config tui_locale must fail")
+	}
+
+	home = t.TempDir()
+	t.Setenv("CARINA_TUI_LOCALE", "de-DE")
+	if _, err := Load(home, t.TempDir()); !errors.Is(err, ErrInvalidTUILocale) {
+		t.Fatal("unsupported CARINA_TUI_LOCALE must fail")
+	}
+}
+
+func TestTUIAlternateScreenLayersAndValidates(t *testing.T) {
+	scrubCarinaEnv(t)
+	home := t.TempDir()
+	project := t.TempDir()
+	writeConfig(t, home, `{"tui_alternate_screen":"never"}`)
+	cfg, err := Load(home, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TUIAlternateScreen != "never" {
+		t.Fatalf("tui alternate screen = %q, want never", cfg.TUIAlternateScreen)
+	}
+
+	t.Setenv("CARINA_TUI_ALTERNATE_SCREEN", "always")
+	cfg, err = Load(home, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TUIAlternateScreen != "always" {
+		t.Fatalf("env tui alternate screen = %q, want always", cfg.TUIAlternateScreen)
+	}
+
+	t.Setenv("CARINA_TUI_ALTERNATE_SCREEN", "sometimes")
+	if _, err := Load(home, project); err == nil {
+		t.Fatal("invalid tui alternate screen mode must be rejected")
 	}
 }
