@@ -20,7 +20,12 @@ type externalEditorSession struct {
 }
 
 type transcriptPagerState struct {
-	scroll int
+	generation int
+	scroll     int
+	text       string
+	title      string
+	loading    bool
+	err        string
 }
 
 // handleWorkspaceKey owns focused composer actions. Global actions stay in
@@ -161,6 +166,15 @@ func (m *Model) openTranscriptPager() {
 	m.layout()
 }
 
+func (m *Model) openCanonicalTranscriptPager() tea.Cmd {
+	m.breakComposerUndoGroup()
+	m.closeSuggest()
+	m.canonicalGen++
+	m.transcriptPager = &transcriptPagerState{generation: m.canonicalGen, title: m.text(MsgCanonicalTranscriptTitle, nil), loading: true}
+	m.layout()
+	return m.queryCanonicalSurface(canonicalTranscript, "")
+}
+
 func (m *Model) closeTranscriptPager() tea.Cmd {
 	m.transcriptPager = nil
 	m.layout()
@@ -171,7 +185,16 @@ func (m *Model) transcriptPagerLines() []string {
 	if m.transcriptPager == nil {
 		return nil
 	}
-	text := m.tr.plainText()
+	text := m.transcriptPager.text
+	if m.transcriptPager.loading {
+		text = m.text(MsgCanonicalLoading, nil)
+	} else if m.transcriptPager.err != "" {
+		text = m.text(MsgCanonicalUnavailable, MessageArgs{"error": m.transcriptPager.err})
+	} else if text == "" && m.transcriptPager.generation > 0 {
+		text = m.text(MsgCanonicalEmpty, nil)
+	} else if text == "" {
+		text = m.tr.plainText()
+	}
 	if text == "" {
 		text = m.text(MsgWorkspaceTranscriptEmpty, nil)
 	}
@@ -246,7 +269,11 @@ func (m *Model) transcriptPagerView(width, height int) string {
 	start := m.transcriptPager.scroll
 	end := minInt(start+page, len(lines))
 	visible := append([]string(nil), lines[start:end]...)
-	header := fitRenderedLine(m.countText(MsgWorkspaceTranscriptHeader, len(lines), nil), width)
+	headerText := m.countText(MsgWorkspaceTranscriptHeader, len(lines), nil)
+	if m.transcriptPager.title != "" {
+		headerText = m.transcriptPager.title + "  " + headerText
+	}
+	header := fitRenderedLine(headerText, width)
 	footer := fitRenderedLine(m.text(MsgWorkspaceTranscriptFooter, MessageArgs{
 		"up":        m.keys.label(KeyContextPager, ActionPagerUp),
 		"down":      m.keys.label(KeyContextPager, ActionPagerDown),

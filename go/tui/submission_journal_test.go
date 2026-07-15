@@ -18,6 +18,9 @@ func TestSubmissionJournalRoundTripAndPermissions(t *testing.T) {
 		clientID: "tui_persisted",
 		prompt:   "    exact\nbody",
 		draft:    promptDraft{Prefix: []string{"    exact"}, Paste: []string{"body"}},
+		model:    "openai/gpt-5",
+		agent:    "build",
+		mode:     "background",
 	}
 	if err := journal.save("sess_journal", retry); err != nil {
 		t.Fatal(err)
@@ -30,7 +33,7 @@ func TestSubmissionJournalRoundTripAndPermissions(t *testing.T) {
 		t.Fatalf("journal permissions = %o", info.Mode().Perm())
 	}
 	got, ok, err := journal.load("sess_journal")
-	if err != nil || !ok || got.clientID != retry.clientID || got.prompt != retry.prompt || !draftsEqual(got.draft, retry.draft) {
+	if err != nil || !ok || got.clientID != retry.clientID || got.prompt != retry.prompt || !draftsEqual(got.draft, retry.draft) || got.model != retry.model || got.agent != retry.agent || got.mode != retry.mode {
 		t.Fatalf("journal load = %#v ok=%v err=%v", got, ok, err)
 	}
 	if err := journal.clear("sess_journal", "different_id"); err == nil {
@@ -58,6 +61,7 @@ func TestSubmissionJournalReconcilesAcrossModelRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	m1.Update(SessionReadyMsg{SessionID: "sess_restart", Call: firstCaller})
+	m1.model = "openai/gpt-5"
 	m1.input.SetValue("recover after restart")
 	drain(m1, m1.submit())
 	firstID, _ := firstCaller.last().params["client_submission_id"].(string)
@@ -77,6 +81,7 @@ func TestSubmissionJournalReconcilesAcrossModelRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m2.Close()
+	m2.model = "anthropic/claude-sonnet-4-5-20250929"
 	_, cmd := m2.Update(SessionReadyMsg{SessionID: "sess_restart", Call: secondCaller})
 	msg := cmd()
 	batch, ok := msg.(tea.BatchMsg)
@@ -93,7 +98,7 @@ func TestSubmissionJournalReconcilesAcrossModelRestart(t *testing.T) {
 	}
 	retryCall := secondCaller.calls[1]
 	if retryCall.method != "task.submit" || retryCall.params["client_submission_id"] != firstID ||
-		retryCall.params["prompt"] != "recover after restart" {
+		retryCall.params["prompt"] != "recover after restart" || retryCall.params["model"] != "openai/gpt-5" || retryCall.params["mode"] != "background" {
 		t.Fatalf("restart retry = %#v, want id %q", retryCall, firstID)
 	}
 	if m2.retrySubmission != nil || m2.input.Value() != "" {

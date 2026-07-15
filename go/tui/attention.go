@@ -25,9 +25,15 @@ func (m *Model) attentionEventText(ev map[string]any) (string, bool) {
 		return m.text(MsgAttentionInput, nil), true
 	case "task.completed", "taskcomplete", "taskcompleted", "task.failed", "task.cancelled", "task.canceled":
 		return m.text(MsgAttentionTaskFinished, nil), true
+	case "memoryprojectionchanged":
+		status := strings.ToLower(strings.TrimSpace(attentionValue(ev, "status")))
+		if status == "failed" || status == "reconcile" {
+			return m.text(MsgAttentionMemorySync, nil), true
+		}
 	default:
 		return "", false
 	}
+	return "", false
 }
 
 func attentionEventKey(ev map[string]any) string {
@@ -44,6 +50,9 @@ func attentionEventKey(ev map[string]any) string {
 	case "task.completed", "taskcomplete", "taskcompleted", "task.failed", "task.cancelled", "task.canceled":
 		family = "task-terminal"
 		id = attentionValue(ev, "task_id")
+	case "memoryprojectionchanged":
+		family = "memory-projection"
+		id = attentionValue(ev, "document_id") + ":" + attentionValue(ev, "status")
 	}
 	if id != "" {
 		return family + ":" + id

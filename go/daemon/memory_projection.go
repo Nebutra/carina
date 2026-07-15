@@ -24,6 +24,7 @@ const (
 	projectionProcessing = "processing"
 	projectionCompleted  = "completed"
 	projectionFailed     = "failed"
+	projectionReconcile  = "reconcile"
 )
 
 // memoryProjectionIntent is a durable desired state, not an event. Enqueuing a
@@ -44,15 +45,19 @@ type memoryProjectionIntent struct {
 	LeaseToken              string      `json:"lease_token,omitempty"`
 	LeaseExpiresAt          time.Time   `json:"lease_expires_at,omitempty"`
 	LastError               string      `json:"last_error,omitempty"`
+	ErrorCode               string      `json:"error_code,omitempty"`
+	PreviousErrorCode       string      `json:"previous_error_code,omitempty"`
 	DecisionID              string      `json:"decision_id,omitempty"`
 	AuthorizationDecisionID string      `json:"authorization_decision_id,omitempty"`
 	NetworkDecisionID       string      `json:"network_decision_id,omitempty"`
+	NeedsReconcile          bool        `json:"needs_reconcile,omitempty"`
 	CreatedAt               time.Time   `json:"created_at"`
 	UpdatedAt               time.Time   `json:"updated_at"`
 }
 
 type memoryProjectionFile struct {
 	Version         int                                `json:"version"`
+	Endpoint        string                             `json:"endpoint,omitempty"`
 	Items           map[string]*memoryProjectionIntent `json:"items"`
 	LeaseRecoveries uint64                             `json:"lease_recoveries,omitempty"`
 }
@@ -64,9 +69,25 @@ type memoryProjectionStatus struct {
 	Processing      int       `json:"processing"`
 	Completed       int       `json:"completed"`
 	Failed          int       `json:"failed"`
+	Reconcile       int       `json:"reconcile"`
 	Attempts        uint64    `json:"attempts"`
 	LeaseRecoveries uint64    `json:"lease_recoveries"`
 	OldestPendingAt time.Time `json:"oldest_pending_at,omitempty"`
+}
+
+type memoryProjectionItemStatus struct {
+	SessionID         string    `json:"session_id"`
+	DocumentID        string    `json:"document_id"`
+	Target            string    `json:"target"`
+	Generation        uint64    `json:"generation"`
+	Revision          string    `json:"revision"`
+	Status            string    `json:"status"`
+	Attempts          int       `json:"attempts"`
+	MaxAttempts       int       `json:"max_attempts"`
+	ErrorCode         string    `json:"error_code,omitempty"`
+	PreviousErrorCode string    `json:"previous_error_code,omitempty"`
+	NextAttemptAt     time.Time `json:"next_attempt_at,omitempty"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 const memoryProjectionLogicalKey = "canonical-target-state-v1"
@@ -199,6 +220,9 @@ func (s *memoryProjectionStore) MarkDirty(scope memoryScope, target, bankID, ses
 		generation, created = current.Generation+1, current.CreatedAt
 	}
 	item := &memoryProjectionIntent{DocumentID: docID, BankID: bankID, SessionID: sessionID, Scope: scope, Target: target, Generation: generation, Status: projectionDirty, CreatedAt: created, UpdatedAt: now}
+	if current := s.state.Items[docID]; current != nil {
+		item.NeedsReconcile = current.NeedsReconcile
+	}
 	s.state.Items[docID] = item
 	if err := s.saveLocked(); err != nil {
 		return memoryProjectionIntent{}, err
@@ -222,6 +246,9 @@ func (s *memoryProjectionStore) SetDesired(documentID string, generation uint64,
 	}
 	item.Content, item.Tombstone, item.Revision = content, tombstone, memoryProjectionRevision(content, tombstone)
 	item.Status, item.UpdatedAt, item.LastError = projectionBlocked, s.now().UTC(), "authorization_required"
+	if item.NeedsReconcile {
+		item.Status, item.LastError = projectionReconcile, "remote_reconciliation_required"
+	}
 	if err := s.saveLocked(); err != nil {
 		return memoryProjectionIntent{}, err
 	}
@@ -234,6 +261,9 @@ func (s *memoryProjectionStore) SetDecision(documentID string, generation uint64
 	item := s.state.Items[documentID]
 	if item == nil || item.Generation != generation || item.Status != projectionBlocked {
 		return errors.New("memory projection blocked generation is stale")
+	}
+	if item.NeedsReconcile {
+		return errors.New("memory projection requires remote reconciliation")
 	}
 	item.DecisionID, item.UpdatedAt = decisionID, s.now().UTC()
 	return s.saveLocked()
@@ -268,6 +298,9 @@ func (s *memoryProjectionStore) SetNetworkDecision(documentID string, generation
 	if item == nil || item.Generation != generation || item.Status != projectionBlocked {
 		return errors.New("memory projection blocked generation is stale")
 	}
+	if item.NeedsReconcile {
+		return errors.New("memory projection requires remote reconciliation")
+	}
 	old := *item
 	item.NetworkDecisionID, item.UpdatedAt = decisionID, s.now().UTC()
 	if err := s.saveLocked(); err != nil {
@@ -275,6 +308,37 @@ func (s *memoryProjectionStore) SetNetworkDecision(documentID string, generation
 		return err
 	}
 	return nil
+}
+
+// BindEndpoint records the remote authority for this outbox. Switching HMS
+// endpoints invalidates prior completion and authorization state, so every
+// desired document is re-approved and projected to the new endpoint.
+func (s *memoryProjectionStore) BindEndpoint(endpoint string) error {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return errors.New("memory projection endpoint is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.Endpoint == endpoint {
+		return nil
+	}
+	now := s.now().UTC()
+	changed := s.state.Endpoint != ""
+	s.state.Endpoint = endpoint
+	if changed {
+		for _, item := range s.state.Items {
+			if item.Status == projectionDirty {
+				continue
+			}
+			item.Status, item.Attempts = projectionBlocked, 0
+			item.DecisionID, item.AuthorizationDecisionID, item.NetworkDecisionID = "", "", ""
+			item.LeaseToken, item.LeaseExpiresAt, item.NextAttemptAt = "", time.Time{}, time.Time{}
+			item.NeedsReconcile = false
+			item.LastError, item.UpdatedAt = "endpoint_changed_resync_required", now
+		}
+	}
+	return s.saveLocked()
 }
 
 func (s *memoryProjectionStore) Authorize(documentID string, generation uint64, externalizeDecisionID string) error {
@@ -337,21 +401,67 @@ func (s *memoryProjectionStore) Blocked(scope memoryScope) []memoryProjectionInt
 	return out
 }
 
-func (s *memoryProjectionStore) FailedToBlocked(scope memoryScope) error {
+func (s *memoryProjectionStore) RetryFailed(scope memoryScope, documentID string) (memoryProjectionIntent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	changed := false
+	item := s.state.Items[documentID]
+	if item == nil || item.Scope.Profile != scope.Profile || item.Scope.WorkspaceRoot != scope.WorkspaceRoot {
+		return memoryProjectionIntent{}, errors.New("memory projection document not found")
+	}
+	if item.Status != projectionFailed {
+		return memoryProjectionIntent{}, errors.New("memory projection document is not failed")
+	}
+	old := *item
+	item.Status, item.DecisionID, item.AuthorizationDecisionID, item.NetworkDecisionID = projectionBlocked, "", "", ""
+	item.PreviousErrorCode, item.ErrorCode = item.ErrorCode, ""
+	item.LastError, item.UpdatedAt = "manual_retry_requires_authorization", s.now().UTC()
+	if err := s.saveLocked(); err != nil {
+		*item = old
+		return memoryProjectionIntent{}, err
+	}
+	return *item, nil
+}
+
+// Reseed clears an ambiguity fence only after an operator confirms that any
+// prior remote request has quiesced. It never marks the document completed;
+// the current desired state returns to blocked and must be approved again.
+func (s *memoryProjectionStore) Reseed(scope memoryScope, documentID string, remoteQuiesced bool) (memoryProjectionIntent, error) {
+	if !remoteQuiesced {
+		return memoryProjectionIntent{}, errors.New("remote_quiesced confirmation is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item := s.state.Items[documentID]
+	if item == nil || item.Scope.Profile != scope.Profile || item.Scope.WorkspaceRoot != scope.WorkspaceRoot {
+		return memoryProjectionIntent{}, errors.New("memory projection document not found")
+	}
+	if item.Status != projectionReconcile || !item.NeedsReconcile {
+		return memoryProjectionIntent{}, errors.New("memory projection document does not require reconciliation")
+	}
+	old := *item
+	item.Status, item.Attempts, item.NeedsReconcile = projectionBlocked, 0, false
+	item.DecisionID, item.AuthorizationDecisionID, item.NetworkDecisionID = "", "", ""
+	item.LeaseToken, item.LeaseExpiresAt, item.NextAttemptAt = "", time.Time{}, time.Time{}
+	item.LastError, item.UpdatedAt = "manual_reseed_requires_authorization", s.now().UTC()
+	if err := s.saveLocked(); err != nil {
+		*item = old
+		return memoryProjectionIntent{}, err
+	}
+	return *item, nil
+}
+
+func (s *memoryProjectionStore) Items(scope *memoryScope) []memoryProjectionItemStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]memoryProjectionItemStatus, 0, len(s.state.Items))
 	for _, item := range s.state.Items {
-		if item.Status == projectionFailed && item.Scope.Profile == scope.Profile && item.Scope.WorkspaceRoot == scope.WorkspaceRoot {
-			item.Status, item.Attempts, item.DecisionID, item.AuthorizationDecisionID = projectionBlocked, 0, "", ""
-			item.LastError, item.UpdatedAt = "manual_reauthorization_required", s.now().UTC()
-			changed = true
+		if scope != nil && (item.Scope.Profile != scope.Profile || item.Scope.WorkspaceRoot != scope.WorkspaceRoot) {
+			continue
 		}
+		out = append(out, memoryProjectionItemStatus{SessionID: item.SessionID, DocumentID: item.DocumentID, Target: item.Target, Generation: item.Generation, Revision: item.Revision, Status: item.Status, Attempts: item.Attempts, MaxAttempts: s.maxAttempts, ErrorCode: item.ErrorCode, PreviousErrorCode: item.PreviousErrorCode, NextAttemptAt: item.NextAttemptAt, UpdatedAt: item.UpdatedAt})
 	}
-	if !changed {
-		return nil
-	}
-	return s.saveLocked()
+	sort.Slice(out, func(i, j int) bool { return out[i].DocumentID < out[j].DocumentID })
+	return out
 }
 
 func (s *memoryProjectionStore) Dirty() []memoryProjectionIntent {
@@ -418,16 +528,36 @@ func (s *memoryProjectionStore) Complete(claim memoryProjectionIntent, executeEr
 	defer s.mu.Unlock()
 	item := s.state.Items[claim.DocumentID]
 	if item == nil || item.Generation != claim.Generation || item.Status != projectionProcessing || item.LeaseToken != claim.LeaseToken {
+		// A newer local generation may replace the claimed record while the
+		// remote request is in flight. If that older request has an unknown
+		// outcome, fence the current generation too: both address the same stable
+		// HMS document and the older request may still complete later.
+		var ambiguous memoryProjectionAmbiguousError
+		if item != nil && errors.As(executeErr, &ambiguous) {
+			item.Status, item.LastError, item.NextAttemptAt = projectionReconcile, "remote_reconciliation_required", time.Time{}
+			item.ErrorCode = "ambiguous_remote_outcome"
+			item.NeedsReconcile = true
+			item.LeaseToken, item.LeaseExpiresAt, item.UpdatedAt = "", time.Time{}, s.now().UTC()
+			return s.saveLocked()
+		}
 		return errors.New("memory projection lease is stale")
 	}
 	now := s.now().UTC()
 	item.LeaseToken, item.LeaseExpiresAt, item.UpdatedAt = "", time.Time{}, now
 	if executeErr == nil {
-		item.Status, item.LastError, item.NextAttemptAt = projectionCompleted, "", time.Time{}
+		item.Status, item.LastError, item.ErrorCode, item.NextAttemptAt = projectionCompleted, "", "", time.Time{}
 	} else {
+		var ambiguous memoryProjectionAmbiguousError
+		if errors.As(executeErr, &ambiguous) {
+			item.Status, item.LastError, item.NextAttemptAt = projectionReconcile, "remote_reconciliation_required", time.Time{}
+			item.ErrorCode = "ambiguous_remote_outcome"
+			item.NeedsReconcile = true
+			return s.saveLocked()
+		}
 		var permanent memoryProjectionPermanentError
 		isPermanent := errors.As(executeErr, &permanent)
 		item.LastError = boundedProjectionError(isPermanent)
+		item.ErrorCode = classifyProjectionError(executeErr, isPermanent)
 		if isPermanent || item.Attempts >= s.maxAttempts {
 			item.Status, item.NextAttemptAt = projectionFailed, time.Time{}
 		} else {
@@ -436,6 +566,30 @@ func (s *memoryProjectionStore) Complete(claim memoryProjectionIntent, executeEr
 		}
 	}
 	return s.saveLocked()
+}
+
+func classifyProjectionError(err error, permanent bool) string {
+	var httpErr hmsProjectionHTTPError
+	if errors.As(err, &httpErr) {
+		switch httpErr.Status {
+		case 401, 403:
+			return "authorization"
+		case 429:
+			return "throttled"
+		default:
+			return fmt.Sprintf("http_%d", httpErr.Status)
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+	if permanent {
+		return "permanent"
+	}
+	return "transport"
 }
 
 func (s *memoryProjectionStore) ProcessOne(ctx context.Context, executor memoryProjectionExecutor) (bool, error) {
@@ -483,6 +637,8 @@ func (s *memoryProjectionStore) Status() memoryProjectionStatus {
 			status.Completed++
 		case projectionFailed:
 			status.Failed++
+		case projectionReconcile:
+			status.Reconcile++
 		}
 	}
 	return status

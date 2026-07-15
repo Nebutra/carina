@@ -74,6 +74,30 @@ with `task.action.approve`, or reissue stale/missing decisions after restart:
 carina memory projection-authorize <session_id>
 ```
 
+Failed documents are never retried implicitly by that command. Inspect
+`carina memory status <session_id>`, repair the classified cause, and select the
+exact document:
+
+```bash
+carina memory projection-retry <session_id> <document_id>
+carina memory projection-authorize <session_id>
+```
+
+If a synchronous HMS request may have committed but its response could not be
+validated, the document enters `reconcile` and later generations stop. HMS
+does not expose a conditional revision fence or persistent delete tombstone,
+so Carina cannot prove remote quiescence. After confirming externally that all
+prior HMS requests stopped, explicitly reseed and reauthorize:
+
+```bash
+carina memory projection-reseed <session_id> <document_id> --remote-quiesced
+carina memory projection-authorize <session_id>
+```
+
+Reseed reports `remote_state_known=false`; it never marks the document
+complete. Status exposes attempts, maximum attempts, next retry time, and safe
+error codes, never memory content, bank IDs, response bodies, URLs, or secrets.
+
 Denial leaves local memory intact and the projection blocked. Authorization
 changes and worker outcomes emit metadata-only `MemoryProjectionChanged`
 events. Tokens and memory content are never included in capability resources,
@@ -90,9 +114,11 @@ returns to blocked state and must pass `NetworkAccess` and
 `MemoryExternalize` again. This both prevents an approval
 issued for an old endpoint or policy generation from authorizing traffic under
 new deployment configuration and rebuilds canonical state into a replacement
-HMS endpoint. Contract/authentication errors fail permanently;
-transport and service failures retry. The authorize command also moves failed
-items back through authorization after the operator repairs the cause.
+HMS endpoint. Contract/authentication errors fail permanently. Known retryable
+failures use bounded backoff. Any outcome that may have committed remotely but
+cannot be verified enters `reconcile` instead of being retried. Failed items
+require the document-specific retry command after the operator repairs the
+cause.
 
 ## Governance And Evidence
 

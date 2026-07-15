@@ -1,6 +1,6 @@
 {
   "$comment": "Authoritative Carina JSON-RPC 2.0 registry. Each entry mirrors a daemon MethodDescriptor; params/result document the wire contract. Transport is newline-delimited JSON over the local socket or authenticated Gateway transports.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "apis": {
     "runtime": [
       { "method": "runtime.initialize", "scope": "read", "remote": true, "params": { "protocol_version": "semver?", "schema_version": "semver? compatible major", "projection_version": "semver? exact reducer match", "client_name": "string?", "client_version": "semver?" }, "result": "RuntimeInitializeResult" },
@@ -22,6 +22,9 @@
     ],
     "usage": [
       { "method": "usage.cost", "scope": "read", "remote": true, "params": { "session_id": "string?", "task_id": "string?" }, "result": "UsageCostReport" }
+    ],
+    "model": [
+      { "method": "model.list", "scope": "read", "remote": true, "params": {}, "result": "{ default_model: string, providers: ModelProvider[] }" }
     ],
     "agent": [
       { "method": "agent.list", "scope": "read", "remote": true, "params": { "session_id": "string?", "workspace_root": "string?", "include_hidden": "boolean?" }, "result": "{ agents: Agent[] }" },
@@ -46,6 +49,8 @@
       { "method": "session.attach", "scope": "read", "remote": true, "params": { "session_id": "string", "since": "number?", "event_mode": "compat|canonical? (default compat)" }, "result": "{ events: Event[], from: number, cursor: number, event_mode: compat|canonical }; cursor always advances over raw audit positions" },
       { "method": "session.fork", "scope": "write", "remote": false, "params": { "session_id": "string", "last_task_id": "string?", "through_turn": "integer? >= 1" }, "result": "Session with fork lineage" },
       { "method": "session.plan_mode", "scope": "write", "remote": false, "params": { "session_id": "string", "on": "boolean" }, "result": "{ session_id: string, plan_mode: boolean }" },
+      { "method": "session.model.get", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ session_id: string, next_model: string }" },
+      { "method": "session.model.set", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "model": "string" }, "result": "{ session_id: string, next_model: string }" },
       { "method": "session.approve_plan", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "object" },
       { "method": "session.add_dir", "scope": "admin", "remote": false, "dynamic_scope": true, "control_plane_write": true, "params": { "session_id": "string", "path": "string" }, "result": "object" },
       { "method": "session.events.stream", "scope": "stream", "remote": true, "stream": true, "params": { "session_id": "string", "since": "integer? >= 0", "event_mode": "compat|canonical? (default compat)" }, "result": "{ subscription_id: string, cursor: integer, replayed: integer, event_mode: string }", "notifications": "event (projected after authoritative audit persistence; canonical events include raw_cursor, the exclusive raw audit position)" },
@@ -58,7 +63,7 @@
       { "method": "session.checkpoint.restore", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "checkpoint_id": "string", "confirmed": "boolean" }, "result": "CheckpointRestoreResult" }
     ],
     "task": [
-      { "method": "task.submit", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string", "client_submission_id": "string?", "agent": "string?", "model": "string?", "success_criteria": "SuccessCheck[]?", "output_schema": "JSON Schema Draft 2020-12 object?" }, "result": "Task" },
+      { "method": "task.submit", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string", "client_submission_id": "string?", "agent": "string?", "model": "string?", "mode": "background?", "success_criteria": "SuccessCheck[]?", "output_schema": "JSON Schema Draft 2020-12 object?" }, "result": "Task" },
       { "method": "task.resume", "scope": "write", "remote": false, "control_plane_write": true, "params": { "task_id": "string" }, "result": "Task" },
       { "method": "task.status", "scope": "read", "remote": true, "params": { "task_id": "string" }, "result": "Task" },
       { "method": "task.list", "scope": "read", "remote": true, "params": { "session_id": "string?" }, "result": "Task[]" },
@@ -82,7 +87,9 @@
       { "method": "memory.search", "scope": "read", "remote": false, "params": { "session_id": "string", "query": "string", "target": "memory|user?", "limit": "number?", "mode": "lexical|semantic|auto?", "model": "provider/model?" }, "result": "MemorySearchResult" },
       { "method": "memory.status", "scope": "read", "remote": false, "params": { "session_id": "string?" }, "result": "MemoryStatus" },
       { "method": "memory.write", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "target": "memory|user?", "action": "add|replace|remove|batch", "content": "string?", "old_text": "string?", "operations": "MemoryOperation[]?" }, "result": "object" },
-      { "method": "memory.projection.authorize", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "session_id": "string" }, "result": "{ projections: MemoryProjectionWriteResult[] }" }
+      { "method": "memory.projection.authorize", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "session_id": "string" }, "result": "{ projections: MemoryProjectionWriteResult[] }" },
+      { "method": "memory.projection.reseed", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "document_id": "string", "remote_quiesced": "boolean" }, "result": "{ document_id: string, status: blocked, requires_authorization: true, remote_state_known: false }" },
+      { "method": "memory.projection.retry", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "document_id": "string" }, "result": "{ document_id: string, status: blocked, attempts: number, previous_error_code: string, requires_authorization: true }" }
     ],
     "schedule": [
       { "method": "schedule.create", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "prompt": "string", "kind": "at|every|cron", "expression": "string" }, "result": "Schedule" },
@@ -90,6 +97,15 @@
       { "method": "schedule.pause", "scope": "write", "remote": false, "control_plane_write": true, "params": { "schedule_id": "string" }, "result": "Schedule" },
       { "method": "schedule.resume", "scope": "write", "remote": false, "control_plane_write": true, "params": { "schedule_id": "string" }, "result": "Schedule" },
       { "method": "schedule.delete", "scope": "write", "remote": false, "control_plane_write": true, "params": { "schedule_id": "string" }, "result": "{ deleted: boolean, schedule_id: string }" }
+    ],
+    "goal": [
+      { "method": "goal.get", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ goal: SessionGoal? }" },
+      { "method": "goal.set", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "objective": "string", "status": "active|paused|blocked|budget_limited|usage_limited|complete?", "token_budget": "integer >= 0?", "max_continuations": "integer 1..32?" }, "result": "SessionGoal" },
+      { "method": "goal.clear", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string" }, "result": "{ cleared: boolean, session_id: string }" },
+      { "method": "goal.pause", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string" }, "result": "SessionGoal" },
+      { "method": "goal.resume", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string" }, "result": "SessionGoal" },
+      { "method": "goal.complete", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string" }, "result": "SessionGoal" },
+      { "method": "goal.continue", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string" }, "result": "Task" }
     ],
     "workflow": [
       { "method": "workflow.run", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "workflow": "string", "input": "string?" }, "result": "WorkflowRun" },
@@ -127,6 +143,7 @@
       { "method": "context.status", "scope": "read", "remote": false, "params": {}, "result": "ContextEngineStatus" },
       { "method": "context.doctor", "scope": "read", "remote": false, "params": {}, "result": "{ ok: boolean, status: ContextEngineStatus }" },
       { "method": "context.stats", "scope": "read", "remote": false, "params": {}, "result": "ContextEngineStats" },
+      { "method": "context.summary", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "ContextSummary" },
       { "method": "context.retrieve", "scope": "read", "remote": false, "params": { "hash": "string?", "ref": "string?" }, "result": "ContextRetrieveResponse" },
       { "method": "context.compress", "scope": "write", "remote": false, "params": { "content": "string", "session_id": "string?", "task_id": "string?", "turn": "number?", "kind": "string?", "tool": "string?", "pinned": "boolean?" }, "result": "ContextCompressResponse" }
     ],

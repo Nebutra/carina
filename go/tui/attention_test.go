@@ -83,3 +83,16 @@ func TestAttentionOSCUsesFixedTrustedCopy(t *testing.T) {
 		t.Fatalf("runtime-controlled event data reached OSC sequence: %q", sequence)
 	}
 }
+
+func TestMemoryProjectionFailureRequiresAttentionButBlockedDoesNotDuplicateApproval(t *testing.T) {
+	m, _ := newTestModel(nil)
+	for _, status := range []string{"failed", "reconcile"} {
+		text, important := m.attentionEventText(map[string]any{"type": "MemoryProjectionChanged", "payload": map[string]any{"status": status, "document_id": "mem_1"}})
+		if !important || !strings.Contains(text, "Memory sync") {
+			t.Fatalf("status %s did not surface actionable attention: %q %v", status, text, important)
+		}
+	}
+	if _, important := m.attentionEventText(map[string]any{"type": "MemoryProjectionChanged", "payload": map[string]any{"status": "blocked"}}); important {
+		t.Fatal("blocked projection duplicated the permission approval attention")
+	}
+}

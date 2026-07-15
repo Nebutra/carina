@@ -77,6 +77,16 @@ type promptDraft struct {
 	Prefix []string `json:"prefix,omitempty"`
 	Text   string   `json:"text,omitempty"`
 	Paste  []string `json:"paste,omitempty"`
+	Model  string   `json:"model,omitempty"`
+	Agent  string   `json:"agent,omitempty"`
+	Mode   string   `json:"mode,omitempty"`
+}
+
+type submissionEnvelope struct {
+	prompt string
+	model  string
+	agent  string
+	mode   string
 }
 
 type submissionKind string
@@ -101,12 +111,16 @@ type submissionState struct {
 	// independent composer ownership and do not need this transition.
 	composerDetached bool
 	clientID         string
+	envelope         submissionEnvelope
 }
 
 type submissionRetry struct {
 	clientID string
 	prompt   string
 	draft    promptDraft
+	model    string
+	agent    string
+	mode     string
 }
 
 type submissionDoneMsg struct {
@@ -157,6 +171,7 @@ type Options struct {
 	Socket        string
 	SessionID     string // reuse an existing session; empty creates one
 	WorkspaceRoot string
+	Model         string // default model for new tasks; empty means agent/runtime default
 	StateDir      string // durable local TUI state; empty disables submission recovery
 	Now           func() time.Time
 	// Keybindings replaces selected action bindings after defaults are loaded.
@@ -229,6 +244,9 @@ type Model struct {
 	queueRestoreReason string
 	transcriptPager    *transcriptPagerState
 	checkpointPicker   *checkpointPickerState
+	modelPicker        *modelPickerState
+	modelPickerGen     int
+	canonicalGen       int
 	pausedRestore      *checkpointRestoreResult
 	getenv             func(string) string
 	clipboardWrite     func(string) error
@@ -243,6 +261,9 @@ type Model struct {
 	rewindPrimed       bool
 	noAlternateScreen  bool
 	mode               string
+	model              string
+	modelPinned        bool
+	goal               *goalView
 	outcome            Outcome
 
 	// Mention/slash suggestion panel (@-file, @-agent, /-command). See
@@ -256,6 +277,40 @@ type Model struct {
 }
 
 type surfaceResultMsg struct{ label, text string }
+
+type canonicalSurfaceKind string
+
+const (
+	canonicalTranscript canonicalSurfaceKind = "transcript"
+	canonicalSearch     canonicalSurfaceKind = "search"
+	canonicalRecap      canonicalSurfaceKind = "recap"
+)
+
+type canonicalSurfaceMsg struct {
+	generation int
+	kind       canonicalSurfaceKind
+	query      string
+	items      []map[string]any
+	err        error
+}
+
+type modeChangedMsg struct {
+	mode string
+	err  error
+}
+
+type loopResultMsg struct {
+	action    string
+	sessionID string
+	data      map[string]any
+	err       error
+}
+
+type operationalSurfaceMsg struct {
+	kind string
+	data map[string]any
+	err  error
+}
 
 // New builds the root model. Invalid optional overrides visibly degrade to the
 // defaults; callers that require a hard startup error use NewChecked.
@@ -327,6 +382,8 @@ func NewChecked(o Options) (*Model, error) {
 		width:             80,
 		height:            24,
 		mode:              "build",
+		model:             strings.TrimSpace(o.Model),
+		modelPinned:       strings.TrimSpace(o.Model) != "",
 	}
 	m.layout()
 	return m, nil
@@ -397,6 +454,9 @@ func (m *Model) push(rendered string) {
 }
 
 func (m *Model) pushEvent(ev map[string]any) {
+	if !showInPrimaryTranscript(ev) {
+		return
+	}
 	before := len(m.tr.lines)
 	m.tr.pushPresentation(presentEvent(ev, m.th, m.locale), m.th, m.transcriptWidth())
 	m.vp.SetContentLines(m.tr.lines)
@@ -411,6 +471,25 @@ func (m *Model) pushEvent(ev map[string]any) {
 		m.unseenLines = 0
 	} else {
 		m.unseenLines += added
+	}
+}
+
+// The main surface is a conversation, not an audit tail. Detailed routing and
+// lifecycle telemetry remains available through audit/session replay.
+func showInPrimaryTranscript(ev map[string]any) bool {
+	eventType := str(ev["type"])
+	payload, _ := ev["payload"].(map[string]any)
+	switch eventType {
+	case "ModelRequested", "RoutingDecision", "RoutingOutcome", "RuntimeStageChanged",
+		"ToolRequested", "ToolApproved", "ToolDenied", "TaskCreated":
+		return false
+	case "ModelResponded":
+		tool, _, _ := safeModelAction(str(payload["text"]))
+		return tool == "done" || str(payload["spawn_agent"]) != "" || strings.HasPrefix(str(payload["status"]), "workflow_")
+	case "task.completed":
+		return str(ev["status"]) != "completed"
+	default:
+		return true
 	}
 }
 

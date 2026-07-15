@@ -20,6 +20,10 @@ func (m *Model) enqueueFollowUp() bool {
 	if draftEmpty(draft) {
 		return true
 	}
+	// Queue entries own the routing choice made when they were queued. A later
+	// /model switch applies only to later work, not to an existing draft.
+	draft.Model = m.model
+	draft.Mode = "background"
 	m.followUps.enqueue(draft)
 	m.clearComposerDraft()
 	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgFollowupQueued, MessageArgs{"count": m.followUps.len()})))
@@ -72,7 +76,7 @@ func mergeDraftsForRestore(drafts []promptDraft, current promptDraft) promptDraf
 }
 
 func (m *Model) restoreQueuedDrafts(reason string) {
-	if m.editor != nil || m.historySearch != nil || m.checkpointPicker != nil || m.keymapEditor != nil {
+	if m.editor != nil || m.historySearch != nil || m.checkpointPicker != nil || m.modelPicker != nil || m.keymapEditor != nil {
 		m.queueRestoreReason = reason
 		return
 	}
@@ -100,7 +104,7 @@ func (m *Model) resumeQueuedAfterTransient() tea.Cmd {
 func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 	if m.followUps.len() == 0 || m.inFlightTaskID != "" || m.submitting != nil ||
 		m.approval != nil || m.question != nil || m.editor != nil || m.helpOpen ||
-		m.historySearch != nil || m.transcriptPager != nil || m.checkpointPicker != nil ||
+		m.historySearch != nil || m.transcriptPager != nil || m.checkpointPicker != nil || m.modelPicker != nil ||
 		m.keymapEditor != nil || m.queueRecallPending || m.retrySubmission != nil {
 		return nil
 	}
@@ -127,10 +131,13 @@ func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 			queued, _ := m.followUps.popFront()
 			m.recordHistory(queued)
 			m.historyPos = len(m.history)
-			_ = m.slashCommand(text) // safeQueuedSlash commands are synchronous.
+			cmd := m.slashCommand(text)
 			m.layout()
+			if cmd != nil {
+				return cmd
+			}
 			if m.helpOpen || m.transcriptPager != nil || m.historySearch != nil ||
-				m.checkpointPicker != nil || m.keymapEditor != nil {
+				m.checkpointPicker != nil || m.modelPicker != nil || m.keymapEditor != nil {
 				return nil
 			}
 			continue

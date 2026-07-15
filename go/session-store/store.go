@@ -33,11 +33,29 @@ type Session struct {
 	Status            string    `json:"status"` // active | paused | closed
 	PermissionProfile string    `json:"permission_profile"`
 	ApprovalMode      string    `json:"approval_mode,omitempty"` // untrusted|on_request|never
+	NextModel         string    `json:"next_model,omitempty"`    // default model override for subsequent tasks
 	ParentID          string    `json:"parent_id,omitempty"`     // set for subagent sessions
 	ForkedFromTaskID  string    `json:"forked_from_task_id,omitempty"`
 	ForkedThroughTurn int       `json:"forked_through_turn,omitempty"`
 	Depth             int       `json:"depth"` // 0 = main; bounded to prevent runaway nesting
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+func (s *Store) SetNextModel(sessionID, model string) (*Session, error) {
+	s.mu.Lock()
+	sess, ok := s.sessions[sessionID]
+	if !ok {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("sessionstore: unknown session %s", sessionID)
+	}
+	updated := *sess
+	updated.NextModel = model
+	s.sessions[sessionID] = &updated
+	s.mu.Unlock()
+	if err := s.persist(&updated); err != nil {
+		return nil, err
+	}
+	return &updated, nil
 }
 
 // SetForkLineage persists the immutable model-context boundary inherited by a

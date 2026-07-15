@@ -1,5 +1,22 @@
 # RPC API
 
+## Persistent session goals
+
+Carina stores at most one goal per session. `goal.set/get/clear/pause/resume/complete`
+control that durable state; `goal.continue` is an explicit, operator-triggered task
+submission. There is intentionally no unattended continuation loop: ordinary task
+completion does not mark a goal complete or launch another task. `goal.continue`
+fails closed while a session has an in-flight task, after the configured continuation
+limit, or once the goal token budget is exhausted. Interrupting an active TUI task
+pauses the goal.
+
+The returned `SessionGoal` includes `objective`, `status` (`active`, `paused`,
+`blocked`, `budget_limited`, `usage_limited`, or `complete`), `token_budget`,
+`tokens_used`, `time_used_seconds`, timestamps, and continuation counters. The TUI
+surface is `/goal [--tokens N] <objective>` plus
+`/goal clear|pause|resume|complete|continue`; `/goal` alone
+prints the current state.
+
 Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. Bare TCP is restricted to explicit loopback addresses for diagnostics; network-facing clients use the authenticated WebSocket or HTTP Gateway. All optional listeners are disabled by default. gRPC is a later optimization. Machine-readable registry: [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json).
 
 Notifications (server → client) stream events; every payload conforms to [`protocol/schemas/`](../protocol/schemas/).
@@ -212,6 +229,8 @@ stream.
 | `memory.status` | inspect local authority/search, cached external recall health, identity scope, and Nebutra sync status |
 | `memory.write` | add, replace, remove, or batch memory entries through the `MemoryWrite` capability |
 | `memory.projection.authorize` | request/reissue the approvals needed to project canonical local memory to HMS |
+| `memory.projection.retry` | explicitly return one failed HMS document to authorization without resetting attempt history |
+| `memory.projection.reseed` | clear one ambiguous-outcome fence only after confirming prior HMS requests stopped; returns to authorization, never directly to completed |
 
 `target=user` is scoped by Nebutra identity metadata when available. The daemon
 uses `CARINA_NEBUTRA_IDENTITY_JSON` first, then the claims payload in

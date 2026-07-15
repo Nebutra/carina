@@ -365,7 +365,7 @@ var completionSubcommands = map[string][]string{
 	"context":   {"status", "doctor", "stats", "compress", "retrieve"},
 	"daemon":    {"start", "status", "stop", "logs"},
 	"gateway":   {"hello", "methods", "ws-probe"},
-	"memory":    {"status", "list", "context", "search", "write"},
+	"memory":    {"status", "list", "context", "search", "write", "projection-authorize", "projection-retry", "projection-reseed"},
 	"patch":     {"list", "show", "propose", "apply", "rollback"},
 	"providers": {"list"},
 	"schedule":  {"list", "create", "pause", "resume", "delete"},

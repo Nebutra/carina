@@ -67,7 +67,7 @@ func TestApprovedMemoryWriteProjectsAndRemovalTombstones(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d.memoryProjectionExecutor = hmsOutboxExecutor{provider: p}
+	d.memoryProjectionExecutor = auditedProjectionExecutor{d: d, next: hmsOutboxExecutor{provider: p}}
 
 	if err := d.approvalGrants.add(approvalGrant{Scope: approvalScopeProject, WorkspaceRoot: ws, Capability: "NetworkAccess", Resource: "127.0.0.1", SourceDecisionID: "dec_network", Approver: "test", CreatedAt: time.Now().UTC()}, nil); err != nil {
 		t.Fatal(err)
@@ -112,6 +112,10 @@ func TestApprovedMemoryWriteProjectsAndRemovalTombstones(t *testing.T) {
 	}
 	if puts.Load() != 1 {
 		t.Fatalf("retain calls=%d", puts.Load())
+	}
+	audit, err := d.kern.ReadEvents(sess.SessionID)
+	if err != nil || !strings.Contains(string(audit), `"type":"MemoryProjected"`) || !strings.Contains(string(audit), added.Projection.DecisionID) {
+		t.Fatalf("projection side effect is not linked to its authorization decision: %s (%v)", audit, err)
 	}
 
 	removed := write(memoryWriteRequest{Action: "remove", Target: memoryTargetMemory, OldText: "Use focused tests."})

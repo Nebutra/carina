@@ -31,6 +31,8 @@ type Task struct {
 	Status                      string          `json:"status"` // queued | running | paused | waiting_approval | completed | degraded | failed | cancelled
 	UserPrompt                  string          `json:"user_prompt"`
 	Model                       string          `json:"model,omitempty"` // provider/model override; empty => daemon default
+	RequestedModel              string          `json:"requested_model,omitempty"`
+	EffectiveModel              string          `json:"effective_model,omitempty"`
 	Agent                       string          `json:"agent,omitempty"` // agent mode/persona override; empty => build/default
 	SuccessCriteria             []SuccessCheck  `json:"success_criteria,omitempty"`
 	CreatedAt                   time.Time       `json:"created_at"`
@@ -118,6 +120,29 @@ func (s *Scheduler) SetClientSubmission(taskID, clientSubmissionID, fingerprint 
 		task.ClientSubmissionID = clientSubmissionID
 		task.ClientSubmissionFingerprint = fingerprint
 		task.UpdatedAt = time.Now().UTC()
+	}
+}
+
+func (s *Scheduler) SetModelState(taskID, requested, effective string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if task := s.tasks[taskID]; task != nil {
+		updated := *task
+		updated.RequestedModel = requested
+		updated.EffectiveModel = effective
+		updated.UpdatedAt = time.Now().UTC()
+		s.tasks[taskID] = &updated
+	}
+}
+
+func (s *Scheduler) SetEffectiveModel(taskID, effective string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if task := s.tasks[taskID]; task != nil && effective != "" {
+		updated := *task
+		updated.EffectiveModel = effective
+		updated.UpdatedAt = time.Now().UTC()
+		s.tasks[taskID] = &updated
 	}
 }
 

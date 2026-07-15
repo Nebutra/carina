@@ -25,6 +25,53 @@ func TestTaskSubmitStoresModelOverride(t *testing.T) {
 	if task.Model != "openai/gpt-5" {
 		t.Fatalf("model override not stored: %+v", task)
 	}
+	if task.RequestedModel != "openai/gpt-5" || task.EffectiveModel != "openai/gpt-5" || task.Mode != "background" {
+		t.Fatalf("model state/envelope not stored: %+v", task)
+	}
+}
+
+func TestTaskSubmitValidatesProviderModelAndPersistsModelState(t *testing.T) {
+	stateDir := t.TempDir()
+	d := newDaemonAt(t, stateDir)
+	sess, _ := d.store.CreateSession(t.TempDir(), "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, sess.WorkspaceRoot, "safe-edit", nil)
+	if _, err := d.handleTaskSubmit(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "prompt": "bad model", "model": "unknown-provider/model",
+	})); err == nil {
+		t.Fatal("unknown provider model was accepted")
+	}
+	if _, err := d.handleTaskSubmit(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "prompt": "bad model", "model": "openai/gpt-5\nother",
+	})); err == nil {
+		t.Fatal("model with control characters was accepted")
+	}
+	result, err := d.handleTaskSubmit(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "prompt": "valid", "model": "openai/gpt-5", "mode": "background",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := result.(*scheduler.Task)
+	_ = d.Close()
+	expected, ok := d.sched.Get(task.TaskID)
+	if !ok || expected.EffectiveModel == "" {
+		t.Fatalf("effective model was not resolved before persistence: %+v", expected)
+	}
+	d = newDaemonAt(t, stateDir)
+	defer d.Close()
+	reloaded, ok := d.sched.Get(task.TaskID)
+	if !ok || reloaded.RequestedModel != "openai/gpt-5" || reloaded.EffectiveModel != expected.EffectiveModel || reloaded.Mode != "background" {
+		t.Fatalf("durable model state changed: %+v ok=%v", reloaded, ok)
+	}
+}
+
+func TestEffectiveModelName(t *testing.T) {
+	if got := effectiveModelName(ModelUsage{Provider: "openai", Model: "gpt-5"}); got != "openai/gpt-5" {
+		t.Fatalf("effective model = %q", got)
+	}
+	if got := effectiveModelName(ModelUsage{Provider: "openrouter", Model: "openrouter/anthropic/claude"}); got != "openrouter/anthropic/claude" {
+		t.Fatalf("qualified effective model = %q", got)
+	}
 }
 
 func TestTaskSubmitClientSubmissionIDIsConcurrentSafe(t *testing.T) {

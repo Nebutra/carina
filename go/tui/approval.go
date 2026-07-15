@@ -363,6 +363,9 @@ func (m *Model) approvalBodyLines() []string {
 	if ap.Reason != "" {
 		appendWrapped(m.text(MsgApprovalPolicy, MessageArgs{"value": ap.Reason}))
 	}
+	if m.conn != ConnConnected {
+		appendWrapped(m.text(MsgOverlayDisconnected, nil))
+	}
 	for _, line := range ap.Body {
 		appendWrapped(line)
 	}

@@ -260,6 +260,7 @@ type Daemon struct {
 	authStore                *auth.Store        // local BYOK credential store (doctor's per-provider probe)
 	providerCatalog          provider.Catalog   // runtime provider catalog (doctor's per-provider probe)
 	usage                    *usageStore        // durable per-task/session model usage and cost accounting
+	goals                    *goalStore         // one durable operator-controlled goal per session
 	history                  *history.History   // shared cross-process prompt history
 	memory                   *memoryStore       // governed local long-term memory
 	memoryHMS                *hmsRecallProvider // optional derived recall provider; local store stays authoritative
@@ -419,6 +420,10 @@ func New(opts Options) (*Daemon, error) {
 			_ = kern.Close()
 			return nil, fmt.Errorf("daemon: open memory projection outbox: %w", err)
 		}
+		if err := d.memoryProjection.BindEndpoint(d.memoryHMS.endpoint.String()); err != nil {
+			_ = kern.Close()
+			return nil, fmt.Errorf("daemon: bind HMS projection endpoint: %w", err)
+		}
 		if err := d.memoryProjection.ReauthorizePending(); err != nil {
 			_ = kern.Close()
 			return nil, fmt.Errorf("daemon: reauthorize memory projection outbox: %w", err)
@@ -508,6 +513,7 @@ func New(opts Options) (*Daemon, error) {
 	d.authStore = authStore
 	d.providerCatalog = providerCatalog
 	d.usage = newUsageStore(opts.StateDir)
+	d.goals = newGoalStore(opts.StateDir)
 	registerProviders(d.router, opts.Offline, authStore, providerCatalog)
 	// Embeddings (V2 semantic layer): BYOK only, credential-gated at
 	// registration so no provider means the layer is silently off.
@@ -919,6 +925,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("context.status", rpc.ScopeRead, false, d.handleContextStatus)
 	d.registerRPC("context.doctor", rpc.ScopeRead, false, d.handleContextDoctor)
 	d.registerRPC("context.stats", rpc.ScopeRead, false, d.handleContextStats)
+	d.registerRPC("context.summary", rpc.ScopeRead, false, d.handleContextSummary)
 	d.registerRPC("context.retrieve", rpc.ScopeRead, false, d.handleContextRetrieve)
 	d.registerRPC("context.compress", rpc.ScopeWrite, false, d.handleContextCompress)
 	d.registerRPC("gateway.hello", rpc.ScopeRead, true, d.handleGatewayHello)
@@ -928,6 +935,7 @@ func (d *Daemon) registerMethods() {
 		d.registerRPC("gateway.token.issue", rpc.ScopeAdmin, false, d.handleGatewayTokenIssue, true)
 	}
 	d.registerRPC("agent.list", rpc.ScopeRead, true, d.handleAgentList)
+	d.registerRPC("model.list", rpc.ScopeRead, true, d.handleModelList)
 	d.registerRPC("agent.view", rpc.ScopeRead, true, d.handleAgentView)
 	d.registerRPC("agent.peek", rpc.ScopeRead, true, d.handleAgentPeek)
 	d.registerRPC("agent.recap", rpc.ScopeRead, true, d.handleAgentRecap)
@@ -960,6 +968,8 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("session.checkpoint.summarize", rpc.ScopeRead, false, d.handleCheckpointSummarize)
 	d.registerRPC("session.checkpoint.restore", rpc.ScopeWrite, false, d.handleCheckpointRestore, true)
 	d.registerRPC("session.plan_mode", rpc.ScopeWrite, false, d.handlePlanMode)
+	d.registerRPC("session.model.get", rpc.ScopeRead, false, d.handleSessionModelGet)
+	d.registerRPC("session.model.set", rpc.ScopeWrite, false, d.handleSessionModelSet, true)
 	d.registerRPC("session.approve_plan", rpc.ScopeWrite, false, d.handleApprovePlan)
 	d.registerRPCDynamic("session.add_dir", rpc.ScopeAdmin, false, d.handleAddDir, d.addDirScope, true)
 	d.registerRPC("task.approval.resolve", rpc.ScopeAdmin, false, d.handleApprovalResolve, true)
@@ -973,11 +983,20 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("memory.status", rpc.ScopeRead, false, d.handleMemoryStatus)
 	d.registerRPC("memory.write", rpc.ScopeWrite, false, d.handleMemoryWrite, true)
 	d.registerRPC("memory.projection.authorize", rpc.ScopeAdmin, false, d.handleMemoryProjectionAuthorize, true)
+	d.registerRPC("memory.projection.reseed", rpc.ScopeAdmin, false, d.handleMemoryProjectionReseed, true)
+	d.registerRPC("memory.projection.retry", rpc.ScopeAdmin, false, d.handleMemoryProjectionRetry, true)
 	d.registerRPC("schedule.create", rpc.ScopeWrite, false, d.handleScheduleCreate, true)
 	d.registerRPC("schedule.list", rpc.ScopeRead, false, d.handleScheduleList)
 	d.registerRPC("schedule.pause", rpc.ScopeWrite, false, d.handleSchedulePause, true)
 	d.registerRPC("schedule.resume", rpc.ScopeWrite, false, d.handleScheduleResume, true)
 	d.registerRPC("schedule.delete", rpc.ScopeWrite, false, d.handleScheduleDelete, true)
+	d.registerRPC("goal.get", rpc.ScopeRead, false, d.handleGoalGet)
+	d.registerRPC("goal.set", rpc.ScopeWrite, false, d.handleGoalSet, true)
+	d.registerRPC("goal.clear", rpc.ScopeWrite, false, d.handleGoalClear, true)
+	d.registerRPC("goal.pause", rpc.ScopeWrite, false, d.handleGoalPause, true)
+	d.registerRPC("goal.resume", rpc.ScopeWrite, false, d.handleGoalResume, true)
+	d.registerRPC("goal.complete", rpc.ScopeWrite, false, d.handleGoalComplete, true)
+	d.registerRPC("goal.continue", rpc.ScopeWrite, false, d.handleGoalContinue, true)
 	d.registerRPC("workflow.run", rpc.ScopeWrite, false, d.handleWorkflowRun, true)
 	d.registerRPC("workflow.list", rpc.ScopeRead, true, d.handleWorkflowList)
 	d.registerRPC("workflow.detail", rpc.ScopeRead, true, d.handleWorkflowDetail)
@@ -1233,7 +1252,8 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 		projectionOK := true
 		if d.memoryProjection != nil {
 			ps := d.memoryProjection.Status()
-			projectionOK = ps.Dirty == 0 && ps.Failed == 0
+			projectionOK = ps.Dirty == 0 && ps.Failed == 0 && ps.Blocked == 0 && ps.Reconcile == 0
+			projection["affected"] = nonHealthyProjectionItems(d.memoryProjection.Items(nil))
 		}
 		report["hms_memory"] = map[string]any{
 			"configured": true, "credential_resolved": d.memoryHMS.apiKey != "",
@@ -1251,11 +1271,17 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 	}
 	fixPlan := []map[string]any{}
 	if d.memoryProjection != nil {
-		ps := d.memoryProjection.Status()
-		if ps.Dirty > 0 || ps.Failed > 0 {
-			fixPlan = append(fixPlan, map[string]any{"check": "hms_memory_projection", "severity": "error", "issue": fmt.Sprintf("%d dirty and %d failed projection(s)", ps.Dirty, ps.Failed), "action": "repair HMS/configuration, then run memory.projection.authorize for the affected session", "automatic": false})
-		} else if ps.Blocked > 0 {
-			fixPlan = append(fixPlan, map[string]any{"check": "hms_memory_projection", "severity": "warn", "issue": fmt.Sprintf("%d projection(s) await authorization", ps.Blocked), "action": "review and resolve the projection approval", "automatic": false})
+		for _, item := range nonHealthyProjectionItems(d.memoryProjection.Items(nil)) {
+			action, severity := fmt.Sprintf("carina memory projection-authorize %s", item.SessionID), "warn"
+			switch item.Status {
+			case projectionReconcile:
+				severity = "error"
+				action = fmt.Sprintf("carina memory projection-reseed %s %s --remote-quiesced; carina memory projection-authorize %s", item.SessionID, item.DocumentID, item.SessionID)
+			case projectionFailed:
+				severity = "error"
+				action = fmt.Sprintf("carina memory projection-retry %s %s; carina memory projection-authorize %s", item.SessionID, item.DocumentID, item.SessionID)
+			}
+			fixPlan = append(fixPlan, map[string]any{"check": "hms_memory_projection", "severity": severity, "issue": fmt.Sprintf("projection %s is %s (%s)", item.DocumentID, item.Status, item.ErrorCode), "action": action, "automatic": false})
 		}
 	}
 	interrupted := 0
@@ -1836,6 +1862,39 @@ func (d *Daemon) handlePlanMode(params json.RawMessage) (any, error) {
 	return map[string]any{"session_id": p.SessionID, "plan_mode": p.On}, nil
 }
 
+func (d *Daemon) handleSessionModelGet(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	sess, ok := d.store.Get(p.SessionID)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	}
+	return map[string]any{"session_id": sess.SessionID, "next_model": sess.NextModel}, nil
+}
+
+func (d *Daemon) handleSessionModelSet(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		Model     string `json:"model"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	p.Model = strings.TrimSpace(p.Model)
+	if err := d.validateTaskModel(p.Model); err != nil {
+		return nil, err
+	}
+	sess, err := d.store.SetNextModel(p.SessionID, p.Model)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"session_id": sess.SessionID, "next_model": sess.NextModel}, nil
+}
+
 // handleAddDir grants a session an additional allowed root (the /add-dir scoped
 // grant). Local-only: it is never on the remote allowlist, so a remote caller
 // can never widen the sandbox. The directory must already exist.
@@ -1974,7 +2033,7 @@ func (d *Daemon) handleMemoryStatus(params json.RawMessage) (any, error) {
 		},
 		"semantic_provider": semanticProvider,
 		"recall_provider":   recallProvider,
-		"projection":        d.memoryProjectionStatus(),
+		"projection":        d.memoryProjectionStatus(scope),
 		"nebutra_cloud_sync": map[string]any{
 			"enabled":   d.syncMode != nebutra.SyncModeOff,
 			"endpoint":  d.cloudEndpoint,
@@ -2205,6 +2264,7 @@ type taskSubmitParams struct {
 	Prompt             string                   `json:"prompt"`
 	Model              string                   `json:"model"`
 	Agent              string                   `json:"agent"`
+	Mode               string                   `json:"mode"`
 	SuccessCriteria    []scheduler.SuccessCheck `json:"success_criteria"`
 	OutputSchema       json.RawMessage          `json:"output_schema"`
 }
@@ -2220,6 +2280,21 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	}
 	if sess.Status != "active" {
 		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
+	}
+	if strings.TrimSpace(p.Prompt) == "" {
+		return nil, fmt.Errorf("prompt is required")
+	}
+	p.Model = strings.TrimSpace(p.Model)
+	if err := d.validateTaskModel(p.Model); err != nil {
+		return nil, err
+	}
+	p.Agent = strings.TrimSpace(p.Agent)
+	p.Mode = strings.ToLower(strings.TrimSpace(p.Mode))
+	if p.Mode == "" {
+		p.Mode = "background"
+	}
+	if p.Mode != "background" {
+		return nil, fmt.Errorf("task submit mode must be background")
 	}
 	fence := d.sessionExecutionFence(sess.SessionID)
 	fence.RLock()
@@ -2276,15 +2351,25 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		model = spec.Model
 	}
 	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, prompt, model, agent, p.SuccessCriteria)
+	d.sched.SetModelState(task.TaskID, p.Model, taskModel(task))
 	if clientSubmissionID != "" {
 		d.sched.SetClientSubmission(task.TaskID, clientSubmissionID, submissionFingerprint)
 	}
 	if budget := d.maxTaskTokens.Load(); budget > 0 {
 		d.sched.SetTokenBudget(task.TaskID, int(budget))
 	}
-	d.sched.SetMode(task.TaskID, "background")
+	d.sched.SetMode(task.TaskID, p.Mode)
 	if len(p.OutputSchema) > 0 {
 		d.sched.SetOutputSchema(task.TaskID, p.OutputSchema)
+	}
+	// Scheduler setters publish immutable task copies. Capture the final
+	// submission envelope once and use that same row for WAL, persistence, and
+	// the asynchronous execution closure.
+	if frozen, ok := d.sched.Get(task.TaskID); ok {
+		copy := *frozen
+		copy.SuccessCriteria = append([]scheduler.SuccessCheck(nil), frozen.SuccessCriteria...)
+		copy.OutputSchema = append(json.RawMessage(nil), frozen.OutputSchema...)
+		task = &copy
 	}
 	// Write-ahead (P1.8): the defining instruction must be durably
 	// audit-chain-appended BEFORE any goroutine is dispatched to act on it,
@@ -2294,7 +2379,11 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	// never attest to. Call the kernel directly (bypassing d.record, whose
 	// signature intentionally swallows the error for its many best-effort
 	// callers) so this one write-ahead call can be checked.
-	writeAheadPayload := map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt, "model": task.Model, "agent": task.Agent}
+	writeAheadPayload := map[string]any{
+		"task_id": task.TaskID, "user_prompt": task.UserPrompt,
+		"model": task.Model, "requested_model": task.RequestedModel, "effective_model": task.EffectiveModel,
+		"agent": task.Agent, "mode": task.Mode,
+	}
 	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "TaskCreated", task.TaskID, "go", writeAheadPayload, "")
 	if err != nil {
 		_, _ = d.sched.Cancel(task.TaskID)
@@ -2320,6 +2409,23 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		return t, nil
 	}
 	return task, nil
+}
+
+func (d *Daemon) validateTaskModel(model string) error {
+	if model == "" || model == "default" {
+		return nil
+	}
+	if len(model) > 256 || strings.ContainsAny(model, " \t\r\n\x00") {
+		return fmt.Errorf("model must be a non-empty identifier without whitespace (maximum 256 bytes)")
+	}
+	providerID, _, hasProvider := strings.Cut(model, "/")
+	if hasProvider {
+		providerID = normalizeProviderID(providerID)
+		if providerID == "" || d.providerCatalog[providerID].ID == "" {
+			return fmt.Errorf("unknown model provider %q", providerID)
+		}
+	}
+	return nil
 }
 
 func taskSubmissionKey(sessionID, clientSubmissionID string) string {

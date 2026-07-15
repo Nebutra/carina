@@ -10,12 +10,14 @@ import (
 )
 
 type taskNode struct {
-	ID       string
-	ParentID string
-	Kind     string
-	Label    string
-	Status   string
-	Order    int
+	ID             string
+	ParentID       string
+	Kind           string
+	Label          string
+	Status         string
+	RequestedModel string
+	EffectiveModel string
+	Order          int
 }
 
 // taskGraph is a compact projection, not a second source of truth. Durable
@@ -107,7 +109,24 @@ func (g *taskGraph) observeEvent(ev map[string]any) {
 		if label == "" {
 			label = firstValue(payload, "agent", "summary", "reason")
 		}
-		g.ensure(taskID, "", "task", label, status)
+		node := g.ensure(taskID, "", "task", label, status)
+		if node != nil {
+			node.RequestedModel = str(payload["requested_model"])
+			node.EffectiveModel = str(payload["effective_model"])
+		}
+	case "RoutingOutcome":
+		if node := g.ensure(taskID, "", "task", "", ""); node != nil && str(payload["status"]) == "succeeded" {
+			provider, model := str(payload["provider"]), str(payload["model"])
+			if provider != "" && model != "" && !strings.HasPrefix(model, provider+"/") {
+				model = provider + "/" + model
+			}
+			if model != "" {
+				node.EffectiveModel = model
+			}
+			if requested := str(payload["requested_model"]); requested != "" {
+				node.RequestedModel = requested
+			}
+		}
 	case "ToolApproved":
 		if agent := str(payload["spawn_agent"]); agent != "" {
 			child := str(payload["child_session"])

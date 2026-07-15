@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -315,6 +316,8 @@ func (m *Model) taskTreeLines() []string {
 // connection loss is a visible state with a remedy, never a silent freeze.
 func (m *Model) banner() string {
 	switch m.conn {
+	case ConnConnecting:
+		return m.text(MsgConnecting, MessageArgs{"socket": m.socket})
 	case ConnLost, ConnReconnecting:
 		line := microcopy.Degrade(microcopy.DegradeDaemonUnreachable,
 			microcopy.Args{"socket": m.socket},
@@ -420,6 +423,16 @@ func (m *Model) View() tea.View {
 		activity = m.text(MsgStatusSending, MessageArgs{"kind": string(m.submitting.kind)})
 	} else if m.inFlightTaskID != "" {
 		activity = m.text(MsgStatusRunning, MessageArgs{"task": m.inFlightTaskID})
+		if node := m.tasks.nodes[m.inFlightTaskID]; node != nil {
+			requested, effective := node.RequestedModel, node.EffectiveModel
+			if requested == "" {
+				requested = "default"
+			}
+			if effective == "" {
+				effective = "pending"
+			}
+			activity += " · " + m.text(MsgStatusRunningModel, MessageArgs{"requested": requested, "effective": effective})
+		}
 	}
 	if m.unseenLines > 0 {
 		activity += " · " + m.countText(MsgStatusNew, m.unseenLines, nil)
@@ -433,8 +446,19 @@ func (m *Model) View() tea.View {
 	if m.chord.hint != "" {
 		activity += " · " + m.text(MsgStatusChord, MessageArgs{"hint": m.chord.hint})
 	}
+	if m.goal != nil {
+		goal := m.text(MsgStatusGoal, MessageArgs{"status": m.goal.Status})
+		if m.goal.TokenBudget > 0 {
+			goal += fmt.Sprintf(" %d/%d", m.goal.TokensUsed, m.goal.TokenBudget)
+		}
+		activity += " · " + goal
+	}
+	model := m.model
+	if model == "" {
+		model = "default"
+	}
 	statusLine := m.th.Style(theme.RoleMuted).Render(m.text(MsgStatusFooter, MessageArgs{
-		"session": status, "mode": m.mode, "activity": activity,
+		"session": status, "mode": m.mode, "model": model, "activity": activity,
 		"help": primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalHelp)),
 	}))
 	if l.showStatus {
@@ -457,6 +481,10 @@ func (m *Model) View() tea.View {
 			lipgloss.Center, lipgloss.Center, modal)
 	} else if m.checkpointPicker != nil {
 		modal := fitViewBlock(m.checkpointPickerView(), l.width, l.height, true)
+		content = lipgloss.Place(l.width, l.height,
+			lipgloss.Center, lipgloss.Center, modal)
+	} else if m.modelPicker != nil {
+		modal := fitViewBlock(m.modelPickerView(), l.width, l.height, true)
 		content = lipgloss.Place(l.width, l.height,
 			lipgloss.Center, lipgloss.Center, modal)
 	} else if m.keymapEditor != nil {
@@ -486,7 +514,7 @@ func (m *Model) View() tea.View {
 	// intentional while an overlay owns input, and whenever a zero-sized host
 	// has not supplied a usable cell grid yet (R21).
 	if !m.helpOpen && m.question == nil && m.approval == nil && m.transcriptPager == nil &&
-		m.checkpointPicker == nil && m.keymapEditor == nil &&
+		m.checkpointPicker == nil && m.modelPicker == nil && m.keymapEditor == nil &&
 		m.editor == nil && m.width > 0 && m.height > 0 {
 		if m.historySearch != nil {
 			cursor := m.input.Cursor()

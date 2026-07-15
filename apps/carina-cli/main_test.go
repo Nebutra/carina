@@ -87,6 +87,8 @@ func TestUsageIncludesMemoryCommands(t *testing.T) {
 		"carina memory status <session_id>",
 		"carina memory write <session_id> <memory|user> add <content|->",
 		"carina memory projection-authorize <session_id>",
+		"carina memory projection-retry <session_id> <document_id>",
+		"carina memory projection-reseed <session_id> <document_id> --remote-quiesced",
 	} {
 		if !strings.Contains(usage, want) {
 			t.Fatalf("usage missing %q:\n%s", want, usage)
@@ -430,6 +432,17 @@ func TestMemoryRPCBuildsStatusAndWrite(t *testing.T) {
 	method, params, err = memoryRPC([]string{"projection-authorize", "sess_1"}, func() (string, error) { return "", nil })
 	if err != nil || method != "memory.projection.authorize" || params["session_id"] != "sess_1" {
 		t.Fatalf("unexpected projection authorize rpc: %s %+v %v", method, params, err)
+	}
+	method, params, err = memoryRPC([]string{"projection-retry", "sess_1", "mem_1"}, func() (string, error) { return "", nil })
+	if err != nil || method != "memory.projection.retry" || params["document_id"] != "mem_1" {
+		t.Fatalf("unexpected projection retry rpc: %s %+v %v", method, params, err)
+	}
+	if _, _, err = memoryRPC([]string{"projection-reseed", "sess_1", "mem_1"}, func() (string, error) { return "", nil }); err == nil {
+		t.Fatal("projection reseed accepted without --remote-quiesced")
+	}
+	method, params, err = memoryRPC([]string{"projection-reseed", "sess_1", "mem_1", "--remote-quiesced"}, func() (string, error) { return "", nil })
+	if err != nil || method != "memory.projection.reseed" || params["remote_quiesced"] != true {
+		t.Fatalf("unexpected projection reseed rpc: %s %+v %v", method, params, err)
 	}
 
 	method, params, err = memoryRPC([]string{"write", "sess_1", "user", "add", "-"}, func() (string, error) {

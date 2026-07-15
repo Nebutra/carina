@@ -279,6 +279,15 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 			p.Collapsible = true
 			p.Collapsed = false
 		}
+	case "MemoryProjectionChanged":
+		status := strings.ToLower(str(payload["status"]))
+		if status == "failed" || status == "reconcile" {
+			p.Kind, p.Status, p.Title = presentationGovernance, statusNeedsAuth, "memory sync"
+			p.Summary = "Memory sync needs action. Run `carina memory status <session_id>` for the exact recovery command."
+			p.Key = "memory-projection:" + str(payload["document_id"]) + ":" + status
+		} else {
+			p.Summary = joinValues(payload, "target", "status")
+		}
 	case "ModelRequested", "RoutingDecision", "RoutingOutcome":
 		p.Kind, p.Status, p.Title = presentationAgent, statusRunning, "model"
 		p.Summary = firstValue(payload, "status", "requested_model", "model", "reasoner")

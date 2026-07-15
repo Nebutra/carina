@@ -149,9 +149,10 @@ func TestHMSProjectionDeadlineAndResponseLimit(t *testing.T) {
 			_, _ = w.Write([]byte(strings.Repeat("x", hmsMaxResponseBytes+1)))
 		}, time.Second)
 		err := p.Project(context.Background(), projectionDesired())
-		var typed hmsProjectionContractError
-		if !errors.As(err, &typed) || !strings.Contains(err.Error(), "exceeds limit") {
-			t.Fatalf("expected body-limit contract error, got %v", err)
+		var ambiguous memoryProjectionAmbiguousError
+		var contract hmsProjectionContractError
+		if !errors.As(err, &ambiguous) || !errors.As(err, &contract) {
+			t.Fatalf("post-accept body-limit failure must be ambiguous contract error, got %v", err)
 		}
 	})
 }
@@ -165,5 +166,28 @@ func TestHMSProjectionRejectsUnsafeInputBeforeNetwork(t *testing.T) {
 	var typed hmsProjectionContractError
 	if !errors.As(err, &typed) || called {
 		t.Fatalf("unsafe ID must fail locally: called=%v err=%v", called, err)
+	}
+}
+
+func TestHMSProjectionInvalidSuccessResponseIsAmbiguous(t *testing.T) {
+	p := newProjectionTestProvider(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}, time.Second)
+	err := p.Project(context.Background(), projectionDesired())
+	var ambiguous memoryProjectionAmbiguousError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("post-commit contract failure must be ambiguous, got %T %v", err, err)
+	}
+}
+
+func TestHMSProjectionServerErrorIsAmbiguous(t *testing.T) {
+	p := newProjectionTestProvider(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}, time.Second)
+	err := p.Project(context.Background(), projectionDesired())
+	var ambiguous memoryProjectionAmbiguousError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("server error after request acceptance must be ambiguous, got %T %v", err, err)
 	}
 }

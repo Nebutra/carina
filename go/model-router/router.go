@@ -75,6 +75,18 @@ func (r *Router) RegisterProvider(p Provider) {
 	r.providers = append(r.providers, p)
 }
 
+// ProviderNames returns completion provider identities without exposing
+// implementations or credentials.
+func (r *Router) ProviderNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]string, 0, len(r.providers))
+	for _, p := range r.providers {
+		out = append(out, p.Name())
+	}
+	return out
+}
+
 // Complete tries providers in registration order until one succeeds.
 func (r *Router) Complete(ctx context.Context, req Request) (*Response, error) {
 	r.mu.RLock()

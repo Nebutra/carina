@@ -17,6 +17,8 @@ const (
 	MsgQueuePasteItems        MessageID = "queue.paste_items"
 	MsgQueueItem              MessageID = "queue.item"
 	MsgReconnectAttempt       MessageID = "connection.reconnect_attempt"
+	MsgConnecting             MessageID = "connection.connecting"
+	MsgOverlayDisconnected    MessageID = "connection.overlay_disconnected"
 	MsgStatusNotAttached      MessageID = "status.not_attached"
 	MsgStatusSession          MessageID = "status.session"
 	MsgStatusReady            MessageID = "status.ready"
@@ -28,6 +30,8 @@ const (
 	MsgStatusAttention        MessageID = "status.attention"
 	MsgStatusChord            MessageID = "status.chord"
 	MsgStatusFooter           MessageID = "status.footer"
+	MsgStatusGoal             MessageID = "status.goal"
+	MsgStatusRunningModel     MessageID = "status.running_model"
 
 	MsgHelpTitle              MessageID = "help.title"
 	MsgHelpCommands           MessageID = "help.commands"
@@ -43,7 +47,18 @@ const (
 	MsgHelpCommandResume      MessageID = "help.command.resume"
 	MsgHelpCommandSearch      MessageID = "help.command.search"
 	MsgHelpCommandRecap       MessageID = "help.command.recap"
+	MsgHelpCommandStatus      MessageID = "help.command.status"
+	MsgHelpCommandPermissions MessageID = "help.command.permissions"
+	MsgHelpCommandContext     MessageID = "help.command.context"
+	MsgHelpCommandCompact     MessageID = "help.command.compact"
+	MsgHelpCommandConfig      MessageID = "help.command.config"
+	MsgHelpCommandUsage       MessageID = "help.command.usage"
+	MsgHelpCommandReview      MessageID = "help.command.review"
+	MsgHelpCommandMemory      MessageID = "help.command.memory"
+	MsgHelpCommandLoop        MessageID = "help.command.loop"
+	MsgHelpCommandGoal        MessageID = "help.command.goal"
 	MsgHelpCommandMode        MessageID = "help.command.mode"
+	MsgHelpCommandModel       MessageID = "help.command.model"
 	MsgHelpCommandShell       MessageID = "help.command.shell"
 	MsgHelpCommandMention     MessageID = "help.command.mention"
 
@@ -86,6 +101,7 @@ const (
 	MsgAttentionApproval     MessageID = "attention.approval"
 	MsgAttentionInput        MessageID = "attention.input"
 	MsgAttentionTaskFinished MessageID = "attention.task_finished"
+	MsgAttentionMemorySync   MessageID = "attention.memory_sync"
 )
 
 var baseCatalogRows = []catalogRow{
@@ -111,6 +127,8 @@ var baseCatalogRows = []catalogRow{
 	{ID: MsgQueuePasteItems, EN: " +{count} paste items", ZH: " +{count} 个粘贴项", JA: " +{count} 件の貼り付け", KO: " +붙여넣기 {count}개", ES: " +{count} elementos pegados", FR: " +{count} éléments collés", ENOne: " +{count} paste item", ZHOne: " +{count} 个粘贴项", JAOne: " +{count} 件の貼り付け", KOOne: " +붙여넣기 {count}개", ESOne: " +{count} elemento pegado", FROne: " +{count} élément collé"},
 	catalog(MsgQueueItem, "  {index}. {summary}", "  {index}. {summary}", "  {index}. {summary}", "  {index}. {summary}", "  {index}. {summary}", "  {index}. {summary}"),
 	catalog(MsgReconnectAttempt, " (reconnecting, attempt {attempt})", "（正在重连，第 {attempt} 次）", "（再接続中、{attempt} 回目）", " (재연결 중, {attempt}번째 시도)", " (reconectando, intento {attempt})", " (reconnexion, tentative {attempt})"),
+	catalog(MsgConnecting, "Connecting to {socket}...", "正在连接 {socket}……", "{socket} に接続中…", "{socket}에 연결 중...", "Conectando a {socket}...", "Connexion à {socket}…"),
+	catalog(MsgOverlayDisconnected, "Connection unavailable; decisions can be retried after reconnect.", "连接不可用；重连后可重试操作。", "接続できません。再接続後に再試行できます。", "연결할 수 없습니다. 재연결 후 다시 시도할 수 있습니다.", "Conexión no disponible; reintenta tras reconectar.", "Connexion indisponible ; réessayez après reconnexion."),
 	catalog(MsgStatusNotAttached, "not attached", "未连接会话", "未接続", "연결되지 않음", "sin sesión", "sans session"),
 	catalog(MsgStatusSession, "session {id}", "会话 {id}", "セッション {id}", "세션 {id}", "sesión {id}", "session {id}"),
 	catalog(MsgStatusReady, "ready", "就绪", "準備完了", "준비됨", "listo", "prêt"),
@@ -121,7 +139,9 @@ var baseCatalogRows = []catalogRow{
 	{ID: MsgStatusQueued, EN: "{count} queued", ZH: "{count} 项排队中", JA: "{count} 件待機", KO: "{count}개 대기", ES: "{count} en cola", FR: "{count} en file", ENOne: "{count} queued", ZHOne: "{count} 项排队中", JAOne: "{count} 件待機", KOOne: "{count}개 대기", ESOne: "{count} en cola", FROne: "{count} en file"},
 	{ID: MsgStatusAttention, EN: "{count} attention", ZH: "{count} 项待处理", JA: "要確認 {count} 件", KO: "확인 필요 {count}개", ES: "{count} requieren atención", FR: "{count} demandent votre attention", ENOne: "{count} attention", ZHOne: "{count} 项待处理", JAOne: "要確認 {count} 件", KOOne: "확인 필요 {count}개", ESOne: "{count} requiere atención", FROne: "{count} demande votre attention"},
 	catalog(MsgStatusChord, "chord {hint}", "组合键 {hint}", "コード {hint}", "키 조합 {hint}", "secuencia {hint}", "séquence {hint}"),
-	catalog(MsgStatusFooter, " carina · {session} · mode {mode} · {activity} · {help} help", " carina · {session} · 模式 {mode} · {activity} · {help} 帮助", " carina · {session} · モード {mode} · {activity} · {help} ヘルプ", " carina · {session} · 모드 {mode} · {activity} · {help} 도움말", " carina · {session} · modo {mode} · {activity} · {help} ayuda", " carina · {session} · mode {mode} · {activity} · {help} aide"),
+	catalog(MsgStatusFooter, " carina · {session} · {mode} · next {model} · {activity} · {help} help", " carina · {session} · {mode} · 下个模型 {model} · {activity} · {help} 帮助", " carina · {session} · {mode} · 次のモデル {model} · {activity} · {help} ヘルプ", " carina · {session} · {mode} · 다음 모델 {model} · {activity} · {help} 도움말", " carina · {session} · {mode} · siguiente {model} · {activity} · {help} ayuda", " carina · {session} · {mode} · suivant {model} · {activity} · {help} aide"),
+	catalog(MsgStatusGoal, "goal:{status}", "目标:{status}", "目標:{status}", "목표:{status}", "objetivo:{status}", "objectif:{status}"),
+	catalog(MsgStatusRunningModel, "running {requested} → {effective}", "运行中 {requested} → {effective}", "実行中 {requested} → {effective}", "실행 중 {requested} → {effective}", "ejecutando {requested} → {effective}", "en cours {requested} → {effective}"),
 
 	catalog(MsgHelpTitle, "Carina help", "Carina 帮助", "Carina ヘルプ", "Carina 도움말", "Ayuda de Carina", "Aide de Carina"),
 	catalog(MsgHelpCommands, "Commands", "命令", "コマンド", "명령", "Comandos", "Commandes"),
@@ -130,14 +150,25 @@ var baseCatalogRows = []catalogRow{
 	catalog(MsgHelpCommandHelp, "  /help                 commands and keybindings", "  /help                 命令与按键绑定", "  /help                 コマンドとキーバインド", "  /help                 명령과 키 바인딩", "  /help                 comandos y atajos", "  /help                 commandes et raccourcis"),
 	catalog(MsgHelpCommandEditor, "  /editor               edit the current draft in VISUAL/EDITOR", "  /editor               使用 VISUAL/EDITOR 编辑当前草稿", "  /editor               VISUAL/EDITOR で下書きを編集", "  /editor               VISUAL/EDITOR에서 현재 초안 편집", "  /editor               editar el borrador en VISUAL/EDITOR", "  /editor               modifier le brouillon dans VISUAL/EDITOR"),
 	catalog(MsgHelpCommandCopy, "  /copy                 copy the latest rendered agent response", "  /copy                 复制最近渲染的 Agent 回复", "  /copy                 最新の Agent 応答をコピー", "  /copy                 최근 렌더링된 Agent 응답 복사", "  /copy                 copiar la última respuesta del Agent", "  /copy                 copier la dernière réponse de l’Agent"),
-	catalog(MsgHelpCommandTranscript, "  /transcript           open the plain-text transcript pager", "  /transcript           打开纯文本记录查看器", "  /transcript           プレーンテキスト履歴を開く", "  /transcript           일반 텍스트 기록 보기", "  /transcript           abrir el historial en texto", "  /transcript           ouvrir l’historique en texte"),
+	catalog(MsgHelpCommandTranscript, "  /transcript           canonical session items (includes hidden events)", "  /transcript           规范会话记录（含隐藏事件）", "  /transcript           正規セッション履歴（非表示イベントを含む）", "  /transcript           표준 세션 기록(숨겨진 이벤트 포함)", "  /transcript           historial canónico (incluye eventos ocultos)", "  /transcript           historique canonique (événements masqués inclus)"),
 	catalog(MsgHelpCommandKeymap, "  /keymap               inspect and edit active keybindings", "  /keymap               查看并编辑当前按键绑定", "  /keymap               現在のキーバインドを確認・編集", "  /keymap               활성 키 바인딩 확인 및 편집", "  /keymap               revisar y editar los atajos activos", "  /keymap               consulter et modifier les raccourcis actifs"),
 	catalog(MsgHelpCommandAgents, "  /agents               available agent modes", "  /agents               可用的 Agent 模式", "  /agents               利用可能な Agent モード", "  /agents               사용 가능한 Agent 모드", "  /agents               modos de Agent disponibles", "  /agents               modes d’Agent disponibles"),
 	catalog(MsgHelpCommandCheckpoints, "  /checkpoints          restore a rewind point into a paused task", "  /checkpoints          将回退点恢复为暂停任务", "  /checkpoints          巻き戻し点を一時停止タスクとして復元", "  /checkpoints          되돌리기 지점을 일시 중지 작업으로 복원", "  /checkpoints          restaurar un punto en una tarea pausada", "  /checkpoints          restaurer un point dans une tâche en pause"),
 	catalog(MsgHelpCommandResume, "  /resume [task_id]     resume a restored task; ID works after restart", "  /resume [task_id]     继续已恢复任务；重启后可使用 ID", "  /resume [task_id]     復元タスクを再開。再起動後も ID 可", "  /resume [task_id]     복원된 작업 재개, 재시작 후 ID 사용 가능", "  /resume [task_id]     reanudar una tarea; el ID sirve tras reiniciar", "  /resume [task_id]     reprendre une tâche ; l’ID reste utilisable après redémarrage"),
-	catalog(MsgHelpCommandSearch, "  /search <text>         search visible transcript", "  /search <text>         搜索可见记录", "  /search <text>         表示中の履歴を検索", "  /search <text>         보이는 기록 검색", "  /search <text>         buscar en el historial visible", "  /search <text>         rechercher dans l’historique visible"),
-	catalog(MsgHelpCommandRecap, "  /recap                 compact current-session recap", "  /recap                 当前会话的精简回顾", "  /recap                 現在のセッションを要約", "  /recap                 현재 세션 요약", "  /recap                 resumen compacto de la sesión", "  /recap                 récapitulatif compact de la session"),
+	catalog(MsgHelpCommandSearch, "  /search <text>         search canonical session items", "  /search <text>         搜索规范会话记录", "  /search <text>         正規セッション履歴を検索", "  /search <text>         표준 세션 기록 검색", "  /search <text>         buscar elementos canónicos", "  /search <text>         rechercher les éléments canoniques"),
+	catalog(MsgHelpCommandRecap, "  /recap                 latest canonical session items", "  /recap                 最近的规范会话记录", "  /recap                 最新の正規セッション項目", "  /recap                 최신 표준 세션 항목", "  /recap                 últimos elementos canónicos", "  /recap                 derniers éléments canoniques"),
+	catalog(MsgHelpCommandStatus, "  /status                current daemon-backed session status", "  /status                当前会话状态（来自 daemon）", "  /status                daemon の現在のセッション状態", "  /status                daemon 기반 현재 세션 상태", "  /status                estado actual desde el daemon", "  /status                état courant fourni par le daemon"),
+	catalog(MsgHelpCommandPermissions, "  /permissions           effective permission profile", "  /permissions           当前生效的权限配置", "  /permissions           有効な権限プロファイル", "  /permissions           적용 중인 권한 프로필", "  /permissions           perfil de permisos efectivo", "  /permissions           profil d’autorisations effectif"),
+	catalog(MsgHelpCommandContext, "  /context               exact persisted context summary", "  /context               精确的持久化上下文摘要", "  /context               永続コンテキストの正確な概要", "  /context               정확한 영구 컨텍스트 요약", "  /context               resumen exacto del contexto persistido", "  /context               résumé exact du contexte persistant"),
+	catalog(MsgHelpCommandCompact, "  /compact               report checkpoint compaction availability", "  /compact               查看检查点压缩是否可用", "  /compact               チェックポイント圧縮の可否を表示", "  /compact               체크포인트 압축 가능 여부 표시", "  /compact               informar si la compactación está disponible", "  /compact               afficher la disponibilité de la compaction"),
+	catalog(MsgHelpCommandConfig, "  /config                effective runtime status (read-only)", "  /config                运行时有效状态（只读）", "  /config                有効なランタイム状態（読み取り専用）", "  /config                유효 런타임 상태(읽기 전용)", "  /config                estado efectivo (solo lectura)", "  /config                état effectif (lecture seule)"),
+	catalog(MsgHelpCommandUsage, "  /usage                 session token usage and cost", "  /usage                 会话 Token 用量与成本", "  /usage                 セッションのトークン使用量とコスト", "  /usage                 세션 토큰 사용량 및 비용", "  /usage                 uso de tokens y coste de la sesión", "  /usage                 jetons et coût de la session"),
+	catalog(MsgHelpCommandReview, "  /review                read-only session review; does not start code review", "  /review                只读会话审查；不会发起代码审查", "  /review                読み取り専用セッションレビュー", "  /review                읽기 전용 세션 검토", "  /review                revisión de sesión de solo lectura", "  /review                revue de session en lecture seule"),
+	catalog(MsgHelpCommandMemory, "  /memory                persistent memory status", "  /memory                持久记忆状态", "  /memory                永続メモリの状態", "  /memory                영구 메모리 상태", "  /memory                estado de memoria persistente", "  /memory                état de la mémoire persistante"),
+	catalog(MsgHelpCommandLoop, "  /loop [list|<duration> <prompt>|pause|resume|delete <id>]", "  /loop [list|<时长> <指令>|pause|resume|delete <id>]", "  /loop [list|<期間> <指示>|pause|resume|delete <id>]", "  /loop [list|<기간> <지시>|pause|resume|delete <id>]", "  /loop [list|<duración> <instrucción>|pause|resume|delete <id>]", "  /loop [list|<durée> <instruction>|pause|resume|delete <id>]"),
+	catalog(MsgHelpCommandGoal, "  /goal [--tokens N] <objective> | clear|pause|resume|complete|continue", "  /goal [--tokens N] <目标> | clear|pause|resume|complete|continue", "  /goal [--tokens N] <目標> | clear|pause|resume|complete|continue", "  /goal [--tokens N] <목표> | clear|pause|resume|complete|continue", "  /goal [--tokens N] <objetivo> | clear|pause|resume|complete|continue", "  /goal [--tokens N] <objectif> | clear|pause|resume|complete|continue"),
 	catalog(MsgHelpCommandMode, "  /mode <build|plan>     change interaction mode", "  /mode <build|plan>     切换交互模式", "  /mode <build|plan>     対話モードを変更", "  /mode <build|plan>     상호작용 모드 변경", "  /mode <build|plan>     cambiar el modo de interacción", "  /mode <build|plan>     changer le mode d’interaction"),
+	catalog(MsgHelpCommandModel, "  /model [provider/model] show or switch the task model", "  /model [厂商/模型]      查看或切换任务模型", "  /model [provider/model] タスクモデルを表示・切替", "  /model [provider/model] 작업 모델 보기/전환", "  /model [proveedor/modelo] ver o cambiar el modelo", "  /model [fournisseur/modèle] afficher ou changer le modèle"),
 	catalog(MsgHelpCommandShell, "  !<command>             governed argv command; quotes supported", "  !<command>             受治理的 argv 命令；支持引号", "  !<command>             管理対象の argv コマンド。引用符対応", "  !<command>             통제되는 argv 명령, 따옴표 지원", "  !<command>             comando argv gobernado; admite comillas", "  !<command>             commande argv gouvernée ; guillemets pris en charge"),
 	catalog(MsgHelpCommandMention, "  @<path|agent>          reference a path or agent", "  @<path|agent>          引用路径或 Agent", "  @<path|agent>          パスまたは Agent を参照", "  @<path|agent>          경로 또는 Agent 참조", "  @<path|agent>          referenciar una ruta o un Agent", "  @<path|agent>          référencer un chemin ou un Agent"),
 
@@ -180,4 +211,5 @@ var baseCatalogRows = []catalogRow{
 	catalog(MsgAttentionApproval, "Approval required", "需要审批", "承認が必要です", "승인이 필요합니다", "Se requiere aprobación", "Approbation requise"),
 	catalog(MsgAttentionInput, "Input required", "需要输入", "入力が必要です", "입력이 필요합니다", "Se requiere información", "Réponse requise"),
 	catalog(MsgAttentionTaskFinished, "Task finished", "任务已结束", "タスクが終了しました", "작업이 완료되었습니다", "La tarea ha finalizado", "Tâche terminée"),
+	catalog(MsgAttentionMemorySync, "Memory sync needs action", "记忆同步需要处理", "メモリ同期の対応が必要です", "메모리 동기화 조치가 필요합니다", "La sincronización de memoria requiere atención", "La synchronisation mémoire nécessite une action"),
 }

@@ -33,6 +33,9 @@ type submissionJournalRecord struct {
 	ClientID  string      `json:"client_submission_id"`
 	Prompt    string      `json:"prompt"`
 	Draft     promptDraft `json:"draft"`
+	Model     string      `json:"model,omitempty"`
+	Agent     string      `json:"agent,omitempty"`
+	Mode      string      `json:"mode,omitempty"`
 	Workspace string      `json:"workspace_root,omitempty"`
 }
 
@@ -108,6 +111,7 @@ func (j submissionJournal) save(sessionID string, retry submissionRetry) error {
 	record := submissionJournalRecord{
 		Version: submissionJournalVersion, SessionID: sessionID,
 		ClientID: retry.clientID, Prompt: retry.prompt, Draft: cloneDraft(retry.draft),
+		Model: retry.model, Agent: retry.agent, Mode: retry.mode,
 		Workspace: j.workspaceRoot,
 	}
 	raw, err := json.MarshalIndent(record, "", "  ")
@@ -164,7 +168,10 @@ func (j submissionJournal) load(sessionID string) (submissionRetry, bool, error)
 		}
 		return submissionRetry{}, false, fmt.Errorf("invalid submission recovery record")
 	}
-	return submissionRetry{clientID: record.ClientID, prompt: record.Prompt, draft: cloneDraft(record.Draft)}, true, nil
+	return submissionRetry{
+		clientID: record.ClientID, prompt: record.Prompt, draft: cloneDraft(record.Draft),
+		model: record.Model, agent: record.Agent, mode: record.Mode,
+	}, true, nil
 }
 
 func (j submissionJournal) clear(sessionID, clientID string) error {

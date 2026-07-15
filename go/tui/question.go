@@ -313,6 +313,9 @@ func (m *Model) questionBodyLines() []string {
 	}
 	width := m.questionContentWidth()
 	lines := wrappedOverlayLines(q.Prompt, width)
+	if m.conn != ConnConnected {
+		lines = append(lines, m.text(MsgOverlayDisconnected, nil))
+	}
 	lines = append(lines, "")
 	for i, option := range q.Options {
 		marker := "  "

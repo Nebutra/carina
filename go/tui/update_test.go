@@ -605,8 +605,8 @@ func TestReadingHistoryIsNotInterruptedByNewEvents(t *testing.T) {
 
 func TestDegradeBannerLifecycle(t *testing.T) {
 	m, _ := newTestModel(nil) // no session yet
-	if m.banner() != "" {
-		t.Errorf("banner before any failure = %q, want empty", m.banner())
+	if b := m.banner(); !strings.Contains(b, "Connecting") || !strings.Contains(b, "/tmp/test-daemon.sock") {
+		t.Errorf("initial connection banner = %q", b)
 	}
 	m.Update(ConnLostMsg{Err: errors.New("dial unix: no such file")})
 	b := m.banner()

@@ -83,8 +83,12 @@ Memory:
   carina memory write <session_id> <memory|user> replace <old_text> <content|->
                                                    request a memory replacement
   carina memory write <session_id> <memory|user> remove <old_text>
+	                                                   request a memory removal
   carina memory projection-authorize <session_id>    request governed HMS projection approval
-                                                   request a memory removal
+  carina memory projection-retry <session_id> <document_id>
+	                                                   retry one failed projection after repair
+  carina memory projection-reseed <session_id> <document_id> --remote-quiesced
+	                                                   recover one ambiguous projection after external confirmation
 
 Context engine:
   carina context status                             show native context engine and Headroom availability
@@ -968,6 +972,16 @@ func memoryRPC(args []string, readInput func() (string, error)) (string, map[str
 			return "", nil, fmt.Errorf("usage: carina memory projection-authorize <session_id>")
 		}
 		return "memory.projection.authorize", map[string]any{"session_id": args[1]}, nil
+	case "projection-retry":
+		if len(args) != 3 {
+			return "", nil, fmt.Errorf("usage: carina memory projection-retry <session_id> <document_id>")
+		}
+		return "memory.projection.retry", map[string]any{"session_id": args[1], "document_id": args[2]}, nil
+	case "projection-reseed":
+		if len(args) != 4 || args[3] != "--remote-quiesced" {
+			return "", nil, fmt.Errorf("usage: carina memory projection-reseed <session_id> <document_id> --remote-quiesced (requires external confirmation that prior HMS requests have stopped)")
+		}
+		return "memory.projection.reseed", map[string]any{"session_id": args[1], "document_id": args[2], "remote_quiesced": true}, nil
 	case "search":
 		mode := ""
 		rest := args[1:]

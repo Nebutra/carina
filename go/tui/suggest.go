@@ -38,7 +38,7 @@ const treeCacheTTL = 5 * time.Second
 // slashCommand()/showHelp() that do not come from command.list (which lists
 // project/user-defined commands only). Suggestion completion merges this
 // list with the RPC results so the two surfaces cannot silently diverge.
-var builtinCommandNames = []string{"help", "keys", "search", "recap", "mode", "agents", "checkpoints", "resume", "keymap", "editor", "copy", "transcript"}
+var builtinCommandNames = []string{"help", "keys", "search", "recap", "status", "permissions", "context", "compact", "config", "usage", "review", "memory", "loop", "goal", "mode", "model", "agents", "checkpoints", "resume", "keymap", "editor", "copy", "transcript"}
 
 // treeEntry is the subset of toolchain.FileEntry the suggestion panel needs.
 // Kept local (rather than importing go/toolchain) to avoid a new import

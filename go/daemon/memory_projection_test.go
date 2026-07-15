@@ -25,6 +25,29 @@ func projectionScope() memoryScope {
 	return memoryScope{Profile: "profile-a", WorkspaceRoot: "/workspace/a"}
 }
 
+func claimCanonicalProjection(t *testing.T, s *memoryProjectionStore, content string) (memoryProjectionIntent, *memoryProjectionIntent) {
+	t.Helper()
+	dirty, err := s.MarkDirty(projectionScope(), memoryTargetMemory, "bank", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := s.SetDesired(dirty.DocumentID, dirty.Generation, content, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetNetworkDecision(intent.DocumentID, intent.Generation, "network-decision"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Authorize(intent.DocumentID, intent.Generation, "externalize-decision"); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := s.Claim()
+	if err != nil || claim == nil {
+		t.Fatalf("claim=%+v err=%v", claim, err)
+	}
+	return intent, claim
+}
+
 func TestMemoryProjectionStableIdentityAndDesiredStateCoalescing(t *testing.T) {
 	s, _ := projectionTestStore(t)
 	first, err := s.Enqueue(projectionScope(), memoryTargetMemory, "entry-1", "alpha", false)
@@ -180,6 +203,28 @@ func TestMemoryProjectionTombstoneAndPermanentFailure(t *testing.T) {
 	}
 }
 
+func TestMemoryProjectionFailedRetryIsDocumentSpecificAndPreservesAttempts(t *testing.T) {
+	s, _ := projectionTestStore(t)
+	intent, claim := claimCanonicalProjection(t, s, "v1")
+	if err := s.Complete(*claim, permanentMemoryProjectionError(errors.New("rejected"))); err != nil {
+		t.Fatal(err)
+	}
+	before := s.state.Items[intent.DocumentID]
+	if before.Status != projectionFailed || before.Attempts == 0 {
+		t.Fatalf("failed precondition=%+v", before)
+	}
+	retried, err := s.RetryFailed(projectionScope(), intent.DocumentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.Status != projectionBlocked || retried.Attempts != before.Attempts || retried.PreviousErrorCode == "" {
+		t.Fatalf("retry lost failure history: %+v", retried)
+	}
+	if _, err := s.RetryFailed(projectionScope(), intent.DocumentID); err == nil {
+		t.Fatal("non-failed projection was retried implicitly")
+	}
+}
+
 func TestMemoryProjectionAtomicPersistenceAndCorruptionFailure(t *testing.T) {
 	dir := t.TempDir()
 	s, err := newMemoryProjectionStore(dir)
@@ -250,5 +295,90 @@ func TestMemoryProjectionDiscardDirtyOnRejectedLocalWrite(t *testing.T) {
 	}
 	if got := s.Status(); got.Dirty != 0 || len(s.Dirty()) != 0 {
 		t.Fatalf("discard failed: %+v", got)
+	}
+}
+
+func TestMemoryProjectionAmbiguousWriteBlocksLaterGeneration(t *testing.T) {
+	s, _ := projectionTestStore(t)
+	first, claim := claimCanonicalProjection(t, s, "v1")
+	if err := s.Complete(*claim, memoryProjectionAmbiguousError{err: context.DeadlineExceeded}); err != nil {
+		t.Fatal(err)
+	}
+	current := s.state.Items[first.DocumentID]
+	if current.Status != projectionReconcile || !current.NeedsReconcile {
+		t.Fatalf("ambiguous state=%+v", current)
+	}
+	dirty, err := s.MarkDirty(projectionScope(), memoryTargetMemory, "bank", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := s.SetDesired(dirty.DocumentID, dirty.Generation, "v2", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Status != projectionReconcile || !next.NeedsReconcile {
+		t.Fatalf("new generation escaped reconciliation fence: %+v", next)
+	}
+	if claim, err := s.Claim(); err != nil || claim != nil {
+		t.Fatalf("reconciliation state became executable: %+v %v", claim, err)
+	}
+}
+
+func TestMemoryProjectionStaleAmbiguousCompletionFencesCurrentGeneration(t *testing.T) {
+	s, _ := projectionTestStore(t)
+	_, claim := claimCanonicalProjection(t, s, "v1")
+	newer, err := s.MarkDirty(projectionScope(), memoryTargetMemory, "bank", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Complete(*claim, memoryProjectionAmbiguousError{err: context.DeadlineExceeded}); err != nil {
+		t.Fatal(err)
+	}
+	current := s.state.Items[newer.DocumentID]
+	if current.Generation != newer.Generation || current.Status != projectionReconcile || !current.NeedsReconcile {
+		t.Fatalf("stale ambiguous write did not fence current generation: %+v", current)
+	}
+}
+
+func TestMemoryProjectionReseedRequiresExplicitQuiescence(t *testing.T) {
+	s, _ := projectionTestStore(t)
+	intent, claim := claimCanonicalProjection(t, s, "v1")
+	if err := s.Complete(*claim, memoryProjectionAmbiguousError{err: context.DeadlineExceeded}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Reseed(projectionScope(), intent.DocumentID, false); err == nil {
+		t.Fatal("reseed accepted without remote quiescence confirmation")
+	}
+	resolved, err := s.Reseed(projectionScope(), intent.DocumentID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Status != projectionBlocked || resolved.NeedsReconcile || resolved.LastError != "manual_reseed_requires_authorization" {
+		t.Fatalf("reseed pretended remote completion: %+v", resolved)
+	}
+}
+
+func TestMemoryProjectionEndpointSwitchRequiresResync(t *testing.T) {
+	s, _ := projectionTestStore(t)
+	if err := s.BindEndpoint("https://hms-a.example"); err != nil {
+		t.Fatal(err)
+	}
+	intent, err := s.Enqueue(projectionScope(), memoryTargetMemory, "entry", "v1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := s.Claim()
+	if err != nil || claim == nil {
+		t.Fatalf("claim=%+v err=%v", claim, err)
+	}
+	if err := s.Complete(*claim, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BindEndpoint("https://hms-b.example"); err != nil {
+		t.Fatal(err)
+	}
+	got := s.state.Items[intent.DocumentID]
+	if got.Status != projectionBlocked || got.LastError != "endpoint_changed_resync_required" || got.AuthorizationDecisionID != "" {
+		t.Fatalf("endpoint switch did not fence old completion: %+v", got)
 	}
 }

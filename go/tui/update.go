@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -61,10 +62,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case SessionReadyMsg:
+		reconnected := m.sessionID == msg.SessionID && m.conn == ConnConnected
 		m.sessionID = msg.SessionID
 		m.call = msg.Call
 		m.conn = ConnConnected
 		m.attempt = 0
+		if reconnected && m.submissionLeaseErr == nil {
+			return m, nil
+		}
+		if reconnected {
+			// A secondary TUI may already be attached in read-only mode. A fresh
+			// readiness signal is its opportunity to acquire a lease released by
+			// the former writer, without replaying attach/history initialization.
+			m.submissionLeaseErr = m.submissions.acquire(msg.SessionID)
+			if m.submissionLeaseErr != nil {
+				m.push(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}))
+			}
+			return m, nil
+		}
 		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateAttached, MessageArgs{"session": msg.SessionID})))
 		m.submissionLeaseErr = m.submissions.acquire(msg.SessionID)
 		if m.submissionLeaseErr != nil {
@@ -76,6 +91,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(history, reconcile)
 		}
 		return m, history
+
+	case modelPreferenceMsg:
+		m.handleModelPreference(msg)
+		return m, nil
 
 	case TaskActiveMsg:
 		if msg.TaskID != "" && msg.TaskID != m.inFlightTaskID {
@@ -130,6 +149,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.restoreQueuedDrafts("task cancellation")
 		}
 		m.layout()
+		if cancelledActive && m.goal != nil && m.goal.Status == "active" {
+			return m, m.goalCall("pause", "goal.pause", map[string]any{})
+		}
+		return m, nil
+
+	case goalRPCMsg:
+		m.handleGoalRPC(msg)
 		return m, nil
 
 	case approvalDoneMsg:
@@ -168,6 +194,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleCheckpointResume(msg)
 		return m, nil
 
+	case modelListMsg:
+		m.handleModelList(msg)
+		return m, nil
+
 	case chordTimeoutMsg:
 		m.handleChordTimeout(msg)
 		return m, nil
@@ -177,6 +207,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case surfaceResultMsg:
 		m.push(m.th.Style(theme.RoleTitle).Render(msg.label) + "\n" + msg.text)
+		return m, m.maybeSubmitNextQueued()
+
+	case canonicalSurfaceMsg:
+		m.handleCanonicalSurface(msg)
+		return m, m.maybeSubmitNextQueued()
+
+	case operationalSurfaceMsg:
+		m.handleOperationalSurface(msg)
 		return m, m.maybeSubmitNextQueued()
 
 	case externalEditorDoneMsg:
@@ -193,13 +231,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleSuggestResult(msg)
 		return m, nil
 
+	case modeChangedMsg:
+		if msg.err != nil {
+			m.push(m.text(MsgUpdateRPCFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}))
+			return m, nil
+		}
+		m.mode = msg.mode
+		m.push(m.text(MsgUpdateMode, MessageArgs{"mode": msg.mode}))
+		m.layout()
+		return m, m.maybeSubmitNextQueued()
+
+	case loopResultMsg:
+		m.handleLoopResult(msg)
+		return m, m.maybeSubmitNextQueued()
+
 	case tea.PasteMsg:
 		m.pasteBurst.reset()
 		// Governance overlays exclusively own input while open, including while
 		// their RPC is resolving. Never let a terminal paste mutate the hidden
 		// composer behind the modal.
 		if m.approval != nil || m.question != nil || m.editor != nil ||
-			m.helpOpen || m.transcriptPager != nil || m.checkpointPicker != nil || m.keymapEditor != nil {
+			m.helpOpen || m.transcriptPager != nil || m.checkpointPicker != nil || m.modelPicker != nil || m.keymapEditor != nil {
 			return m, nil
 		}
 		if m.historySearch != nil {
@@ -258,7 +310,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		composerSurfaceAvailable := m.approval == nil && m.question == nil &&
 			m.historySearch == nil && !m.helpOpen && m.transcriptPager == nil &&
-			m.checkpointPicker == nil && m.keymapEditor == nil
+			m.checkpointPicker == nil && m.modelPicker == nil && m.keymapEditor == nil
 		if composerSurfaceAvailable && m.submitting != nil && !submissionHasIndependentComposer(m.submitting) &&
 			m.keyStartsSubmissionTypeAhead(msg) {
 			m.beginSubmissionTypeAhead()
@@ -266,7 +318,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		submissionBlocksComposer := m.submitting != nil && !submissionHasIndependentComposer(m.submitting)
 		if m.approval != nil || m.question != nil || m.historySearch != nil ||
 			submissionBlocksComposer || m.helpOpen || m.transcriptPager != nil ||
-			m.checkpointPicker != nil || m.keymapEditor != nil {
+			m.checkpointPicker != nil || m.modelPicker != nil || m.keymapEditor != nil {
 			m.pasteBurst.reset()
 		} else {
 			composerBefore = m.composerSnapshot()
@@ -389,6 +441,9 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	}
 	if m.checkpointPicker != nil {
 		return m.checkpointPickerKey(key)
+	}
+	if m.modelPicker != nil {
+		return m.modelPickerKey(key)
 	}
 	if m.keymapEditor != nil {
 		return m.keymapEditorKey(key)
@@ -749,7 +804,7 @@ func (m *Model) ctrlC() tea.Cmd {
 }
 
 func (m *Model) ctrlD() (tea.Cmd, bool) {
-	if m.approval != nil || m.question != nil || m.helpOpen || m.checkpointPicker != nil || m.keymapEditor != nil {
+	if m.approval != nil || m.question != nil || m.helpOpen || m.checkpointPicker != nil || m.modelPicker != nil || m.keymapEditor != nil {
 		return nil, true
 	}
 	if draft := m.currentDraft(); draft.Text != "" || len(draft.Prefix) > 0 || len(draft.Paste) > 0 {
@@ -805,7 +860,7 @@ func (m *Model) submitWithIntent(forceNew bool) tea.Cmd {
 			m.queueRecallPending = false
 			m.commitDraft(draft, false)
 			if cmd == nil && !m.helpOpen && m.transcriptPager == nil &&
-				m.checkpointPicker == nil && m.keymapEditor == nil {
+				m.checkpointPicker == nil && m.modelPicker == nil && m.keymapEditor == nil {
 				return m.maybeSubmitNextQueued()
 			}
 		}
@@ -845,7 +900,7 @@ func (m *Model) currentDraft() promptDraft {
 }
 
 func draftsEqual(a, b promptDraft) bool {
-	if a.Text != b.Text || len(a.Prefix) != len(b.Prefix) || len(a.Paste) != len(b.Paste) {
+	if a.Text != b.Text || a.Model != b.Model || a.Agent != b.Agent || a.Mode != b.Mode || len(a.Prefix) != len(b.Prefix) || len(a.Paste) != len(b.Paste) {
 		return false
 	}
 	for i := range a.Prefix {
@@ -920,6 +975,13 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 	m.submissionGen++
 	clientID := ""
 	prompt := draftPrompt(draft)
+	envelope := submissionEnvelope{prompt: prompt, model: draft.Model, agent: draft.Agent, mode: draft.Mode}
+	if envelope.model == "" {
+		envelope.model = m.model
+	}
+	if envelope.mode == "" {
+		envelope.mode = "background"
+	}
 	if kind == submissionTask {
 		if m.submissionLeaseErr != nil {
 			m.push(m.text(MsgUpdateSubmissionUnavailable, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}))
@@ -935,10 +997,11 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 				return nil
 			}
 			clientID = retry.clientID
+			envelope = submissionEnvelope{prompt: retry.prompt, model: retry.model, agent: retry.agent, mode: retry.mode}
 		} else {
 			clientID = newClientSubmissionID(m.submissionGen, m.now().UnixNano())
 		}
-		retry := submissionRetry{clientID: clientID, prompt: prompt, draft: cloneDraft(draft)}
+		retry := submissionRetry{clientID: clientID, prompt: envelope.prompt, draft: cloneDraft(draft), model: envelope.model, agent: envelope.agent, mode: envelope.mode}
 		if err := m.submissions.save(m.sessionID, retry); err != nil {
 			m.push(m.text(MsgUpdateRecoverySaveFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
 			m.layout()
@@ -954,11 +1017,12 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 		consumePaste: kind != submissionShell,
 		fromQueue:    fromQueue,
 		clientID:     clientID,
+		envelope:     envelope,
 	}
 	m.submitting = state
 	m.closeSuggest()
 	m.layout()
-	sid, generation := m.sessionID, state.generation
+	sid, generation, wire := m.sessionID, state.generation, state.envelope
 	return func() tea.Msg {
 		switch kind {
 		case submissionSteer:
@@ -970,13 +1034,23 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 			raw, _ := json.MarshalIndent(out, "", "  ")
 			return submissionDoneMsg{generation: generation, result: string(raw), err: err}
 		default:
+			params := map[string]any{
+				"session_id": sid, "prompt": wire.prompt, "client_submission_id": clientID,
+			}
+			if wire.model != "" {
+				params["model"] = wire.model
+			}
+			if wire.agent != "" {
+				params["agent"] = wire.agent
+			}
+			if wire.mode != "" {
+				params["mode"] = wire.mode
+			}
 			var out struct {
 				TaskID string `json:"task_id"`
 				Status string `json:"status"`
 			}
-			err := call.Call("task.submit", map[string]any{
-				"session_id": sid, "prompt": prompt, "client_submission_id": clientID,
-			}, &out)
+			err := call.Call("task.submit", params, &out)
 			if err == nil && out.TaskID == "" {
 				err = errors.New("daemon returned an empty task_id")
 			}
@@ -1002,7 +1076,10 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 	if msg.err != nil {
 		m.clearEarlyTerminals(state.generation)
 		if state.kind == submissionTask {
-			m.retrySubmission = &submissionRetry{clientID: state.clientID, prompt: draftPrompt(state.draft), draft: cloneDraft(state.draft)}
+			m.retrySubmission = &submissionRetry{
+				clientID: state.clientID, prompt: state.envelope.prompt, draft: cloneDraft(state.draft),
+				model: state.envelope.model, agent: state.envelope.agent, mode: state.envelope.mode,
+			}
 			m.push(m.text(MsgUpdateTaskNotAcknowledged, MessageArgs{
 				"glyph": glyphFailed(m.th), "error": msg.err.Error(), "key": state.clientID,
 			}))
@@ -1223,30 +1300,76 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			m.push(m.text(MsgUpdateUsageSearch, nil))
 			return nil
 		}
-		q := strings.ToLower(strings.Join(parts[1:], " "))
-		hits := 0
-		for _, line := range m.tr.lines {
-			if strings.Contains(strings.ToLower(line), q) {
-				m.push("- " + line)
-				hits++
+		if m.call == nil {
+			q := strings.ToLower(strings.Join(parts[1:], " "))
+			hits := 0
+			for _, line := range m.tr.lines {
+				if strings.Contains(strings.ToLower(line), q) {
+					m.push("- " + line)
+					hits++
+				}
 			}
+			m.push(m.countText(MsgUpdateSearchMatches, hits, nil))
+			return nil
 		}
-		m.push(m.countText(MsgUpdateSearchMatches, hits, nil))
-		return nil
+		return m.queryCanonicalSurface(canonicalSearch, strings.Join(parts[1:], " "))
 	case "recap":
-		start := len(m.tr.lines) - 12
-		if start < 0 {
-			start = 0
+		if m.call == nil {
+			start := maxInt(len(m.tr.lines)-12, 0)
+			m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateRecap, nil)) + "\n" + strings.Join(m.tr.lines[start:], "\n"))
+			return nil
 		}
-		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateRecap, nil)) + "\n" + strings.Join(m.tr.lines[start:], "\n"))
+		return m.queryCanonicalSurface(canonicalRecap, "")
+	case "status":
+		return m.queryOperationalSurface("status", "session.get", map[string]any{"session_id": m.sessionID})
+	case "permissions":
+		return m.queryOperationalSurface("permissions", "profile.describe", map[string]any{"session_id": m.sessionID})
+	case "context":
+		return m.queryOperationalSurface("context", "context.summary", map[string]any{"session_id": m.sessionID})
+	case "compact":
+		m.push(m.text(MsgUpdateCompactUnavailable, nil))
 		return nil
+	case "config":
+		return m.queryOperationalSurface("config", "daemon.status", map[string]any{})
+	case "usage":
+		return m.queryOperationalSurface("usage", "usage.cost", map[string]any{"session_id": m.sessionID})
+	case "review":
+		return m.queryOperationalSurface("review (read-only)", "session.review", map[string]any{"session_id": m.sessionID})
+	case "memory":
+		return m.queryOperationalSurface("memory status", "memory.status", map[string]any{"session_id": m.sessionID})
 	case "mode":
 		if len(parts) != 2 || (parts[1] != "build" && parts[1] != "plan") {
 			m.push(m.text(MsgUpdateUsageMode, nil))
 			return nil
 		}
-		m.mode = parts[1]
-		return m.querySurface("session.plan_mode", map[string]any{"session_id": m.sessionID, "on": m.mode == "plan"}, m.text(MsgUpdateMode, MessageArgs{"mode": m.mode}))
+		return m.changeMode(parts[1])
+	case "loop":
+		return m.loopCommand(parts[1:])
+	case "goal":
+		return m.goalCommand(parts[1:])
+	case "model":
+		if len(parts) == 1 {
+			return m.openModelPicker()
+		}
+		if len(parts) != 2 || strings.ContainsAny(parts[1], "\r\n\t") {
+			m.push(m.text(MsgUpdateUsageModel, nil))
+			return nil
+		}
+		if parts[1] == "default" {
+			previous := m.model
+			m.model = ""
+			m.modelPinned = false
+			m.push(m.text(MsgUpdateModelChanged, MessageArgs{"model": parts[1]}))
+			m.layout()
+			return m.persistSessionModel(previous, m.model)
+		} else {
+			previous := m.model
+			m.model = parts[1]
+			m.modelPinned = false
+			m.push(m.text(MsgUpdateModelChanged, MessageArgs{"model": parts[1]}))
+			m.layout()
+			return m.persistSessionModel(previous, m.model)
+		}
 	case "agents":
 		return m.querySurface("agent.list", map[string]any{"session_id": m.sessionID}, m.text(MsgUpdateAgents, nil))
 	case "checkpoints":
@@ -1267,8 +1390,11 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 	case "copy":
 		return m.copyLastAgentProjection()
 	case "transcript":
-		m.openTranscriptPager()
-		return nil
+		if m.call == nil {
+			m.openTranscriptPager()
+			return nil
+		}
+		return m.openCanonicalTranscriptPager()
 	default:
 		m.push(m.text(MsgUpdateUnknownCommand, MessageArgs{"command": name}))
 		return nil
@@ -1281,8 +1407,10 @@ func validSlashCommand(text string) bool {
 		return false
 	}
 	switch strings.TrimPrefix(parts[0], "/") {
-	case "help", "keys", "recap", "agents", "checkpoints", "keymap", "copy", "transcript":
+	case "help", "keys", "recap", "agents", "checkpoints", "keymap", "copy", "transcript", "status", "permissions", "context", "compact", "config", "usage", "review", "memory", "loop", "goal":
 		return true
+	case "model":
+		return len(parts) <= 2
 	case "resume":
 		return len(parts) <= 2
 	case "search":
@@ -1292,6 +1420,224 @@ func validSlashCommand(text string) bool {
 	default:
 		return false
 	}
+}
+
+func (m *Model) queryCanonicalSurface(kind canonicalSurfaceKind, query string) tea.Cmd {
+	call, sessionID := m.call, m.sessionID
+	generation := m.canonicalGen
+	return func() tea.Msg {
+		if call == nil {
+			return canonicalSurfaceMsg{generation: generation, kind: kind, query: query, err: errors.New("daemon not connected")}
+		}
+		var items []map[string]any
+		err := call.Call("session.items", map[string]any{"session_id": sessionID}, &items)
+		return canonicalSurfaceMsg{generation: generation, kind: kind, query: query, items: items, err: err}
+	}
+}
+
+func canonicalItemText(item map[string]any) string {
+	parts := nonEmpty(str(item["timestamp"]), str(item["type"]), str(item["task_id"]), str(item["turn_id"]), str(item["item_id"]), str(item["source_event_id"]))
+	if projected, ok := item["item"].(map[string]any); ok {
+		parts = append(parts, nonEmpty(str(projected["type"]), str(projected["status"]), str(projected["id"]))...)
+		if details, ok := projected["details"].(map[string]any); ok {
+			parts = append(parts, compactMapLines(details, "  ")...)
+		}
+	}
+	if details, ok := item["details"].(map[string]any); ok {
+		parts = append(parts, compactMapLines(details, "  ")...)
+	}
+	return strings.Join(parts, " ")
+}
+
+func (m *Model) handleCanonicalSurface(msg canonicalSurfaceMsg) {
+	if msg.kind == canonicalTranscript {
+		if m.transcriptPager == nil || m.transcriptPager.generation != msg.generation {
+			return
+		}
+		m.transcriptPager.loading = false
+		if msg.err != nil {
+			m.transcriptPager.err = msg.err.Error()
+		} else {
+			parts := make([]string, 0, len(msg.items))
+			for _, item := range msg.items {
+				parts = append(parts, canonicalItemText(item))
+			}
+			m.transcriptPager.text = strings.Join(parts, "\n\n")
+		}
+		m.layout()
+		return
+	}
+	if msg.err != nil {
+		m.push(m.text(MsgUpdateRPCFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}))
+		return
+	}
+	switch msg.kind {
+	case canonicalSearch:
+		query := strings.ToLower(strings.TrimSpace(msg.query))
+		var hits []string
+		for _, item := range msg.items {
+			text := canonicalItemText(item)
+			if strings.Contains(strings.ToLower(text), query) {
+				hits = append(hits, text)
+			}
+		}
+		body := strings.Join(hits, "\n\n")
+		if body == "" {
+			body = m.text(MsgCanonicalSearchEmpty, nil)
+		}
+		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgCanonicalSearchTitle, MessageArgs{"count": len(hits)})) + "\n" + body)
+	case canonicalRecap:
+		items := msg.items
+		if len(items) > 20 {
+			items = items[len(items)-20:]
+		}
+		parts := make([]string, 0, len(items))
+		for _, item := range items {
+			parts = append(parts, canonicalItemText(item))
+		}
+		body := strings.Join(parts, "\n\n")
+		if body == "" {
+			body = m.text(MsgCanonicalRecapEmpty, nil)
+		}
+		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateRecap, nil)) + "\n" + body)
+	}
+}
+
+func (m *Model) queryOperationalSurface(kind, method string, params map[string]any) tea.Cmd {
+	call := m.call
+	return func() tea.Msg {
+		if call == nil {
+			return operationalSurfaceMsg{kind: kind, err: errors.New("daemon not connected")}
+		}
+		var out map[string]any
+		err := call.Call(method, params, &out)
+		return operationalSurfaceMsg{kind: kind, data: out, err: err}
+	}
+}
+
+func (m *Model) changeMode(mode string) tea.Cmd {
+	call, sessionID := m.call, m.sessionID
+	return func() tea.Msg {
+		if call == nil {
+			return modeChangedMsg{mode: mode, err: errors.New("daemon not connected")}
+		}
+		err := call.Call("session.plan_mode", map[string]any{"session_id": sessionID, "on": mode == "plan"}, nil)
+		return modeChangedMsg{mode: mode, err: err}
+	}
+}
+
+func (m *Model) loopCommand(args []string) tea.Cmd {
+	action := "list"
+	params := map[string]any{}
+	method := "schedule.list"
+	switch {
+	case len(args) == 0 || (len(args) == 1 && args[0] == "list"):
+	case len(args) == 2 && (args[0] == "pause" || args[0] == "resume" || args[0] == "delete"):
+		action, method = args[0], "schedule."+args[0]
+		params["schedule_id"] = args[1]
+	case len(args) >= 2:
+		action, method = "create", "schedule.create"
+		params = map[string]any{
+			"session_id": m.sessionID, "kind": "every", "expression": args[0],
+			"prompt": strings.Join(args[1:], " "),
+		}
+	default:
+		m.push(m.text(MsgUpdateUsageLoop, nil))
+		return nil
+	}
+	call, sessionID := m.call, m.sessionID
+	return func() tea.Msg {
+		if call == nil {
+			return loopResultMsg{action: action, sessionID: sessionID, err: errors.New("daemon not connected")}
+		}
+		var out map[string]any
+		err := call.Call(method, params, &out)
+		return loopResultMsg{action: action, sessionID: sessionID, data: out, err: err}
+	}
+}
+
+func (m *Model) handleLoopResult(msg loopResultMsg) {
+	if msg.err != nil {
+		m.push(m.text(MsgUpdateRPCFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}))
+		return
+	}
+	if msg.action != "list" {
+		id := str(msg.data["schedule_id"])
+		m.push(m.text(MsgUpdateLoopChanged, MessageArgs{"action": msg.action, "id": id}))
+		return
+	}
+	raw, _ := msg.data["schedules"].([]any)
+	lines := []string{m.text(MsgUpdateLoopHeader, nil)}
+	count := 0
+	for _, entry := range raw {
+		row, ok := entry.(map[string]any)
+		if !ok || str(row["session_id"]) != msg.sessionID {
+			continue
+		}
+		count++
+		state := "paused"
+		if enabled, _ := row["enabled"].(bool); enabled {
+			state = "active"
+		}
+		lines = append(lines, m.text(MsgUpdateLoopItem, MessageArgs{
+			"id": str(row["schedule_id"]), "state": state, "interval": str(row["expression"]),
+			"next": str(row["next_run_at"]), "prompt": truncate(str(row["prompt"]), 100),
+		}))
+	}
+	if count == 0 {
+		lines = append(lines, m.text(MsgUpdateLoopEmpty, nil))
+	}
+	m.push(strings.Join(lines, "\n"))
+}
+
+func (m *Model) handleOperationalSurface(msg operationalSurfaceMsg) {
+	if msg.err != nil {
+		m.push(m.text(MsgUpdateRPCFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}))
+		return
+	}
+	titleID := map[string]MessageID{
+		"status": MsgOperationalStatusTitle, "permissions": MsgOperationalPermissionsTitle,
+		"context": MsgOperationalContextTitle, "config": MsgOperationalConfigTitle,
+	}[msg.kind]
+	title := m.text(titleID, nil)
+	lines := compactMapLines(msg.data, "")
+	if len(lines) == 0 {
+		lines = []string{m.text(MsgOperationalEmpty, nil)}
+	}
+	m.push(m.th.Style(theme.RoleTitle).Render(title) + "\n" + strings.Join(lines, "\n"))
+}
+
+func compactMapLines(values map[string]any, indent string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var lines []string
+	for _, key := range keys {
+		value := values[key]
+		switch typed := value.(type) {
+		case map[string]any:
+			lines = append(lines, indent+key+":")
+			lines = append(lines, compactMapLines(typed, indent+"  ")...)
+		case []any:
+			if len(typed) == 0 {
+				lines = append(lines, indent+key+": none")
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("%s%s: %d", indent, key, len(typed)))
+			for _, entry := range typed {
+				if object, ok := entry.(map[string]any); ok {
+					lines = append(lines, compactMapLines(object, indent+"  ")...)
+				} else {
+					lines = append(lines, fmt.Sprintf("%s  - %v", indent, entry))
+				}
+			}
+		default:
+			lines = append(lines, fmt.Sprintf("%s%s: %v", indent, key, value))
+		}
+	}
+	return lines
 }
 
 func (m *Model) querySurface(method string, params map[string]any, label string) tea.Cmd {

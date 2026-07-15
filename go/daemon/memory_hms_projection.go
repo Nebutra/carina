@@ -50,6 +50,16 @@ type hmsProjectionOperationError struct {
 	Status      string
 }
 
+// memoryProjectionAmbiguousError means HMS may have committed the side effect,
+// but Carina could not validate the response. Blind retries could reorder a
+// later generation or resurrect a tombstoned document.
+type memoryProjectionAmbiguousError struct{ err error }
+
+func (e memoryProjectionAmbiguousError) Error() string {
+	return "memory hms projection outcome is ambiguous"
+}
+func (e memoryProjectionAmbiguousError) Unwrap() error { return e.err }
+
 func (e hmsProjectionOperationError) Error() string {
 	return fmt.Sprintf("memory hms projection operation %s ended with status %s", e.OperationID, e.Status)
 }
@@ -132,7 +142,11 @@ func (p *hmsRecallProvider) retainProjectedDocument(ctx context.Context, d hmsPr
 	}
 	response, err := p.projectionJSON(ctx, http.MethodPost, projectionPath(d.BankID, "memories"), raw, http.StatusOK)
 	if err != nil {
-		return err
+		var httpErr hmsProjectionHTTPError
+		if errors.As(err, &httpErr) && projectionHTTPKnownNotApplied(httpErr.Status) {
+			return err
+		}
+		return memoryProjectionAmbiguousError{err: err}
 	}
 	var out struct {
 		Success      *bool    `json:"success"`
@@ -143,10 +157,10 @@ func (p *hmsRecallProvider) retainProjectedDocument(ctx context.Context, d hmsPr
 		OperationIDs []string `json:"operation_ids"`
 	}
 	if json.Unmarshal(response, &out) != nil || out.Success == nil || !*out.Success || out.Async == nil || *out.Async || out.ItemsCount == nil || *out.ItemsCount != 1 || out.BankID != d.BankID {
-		return hmsProjectionContractError{Reason: "invalid synchronous retain response"}
+		return memoryProjectionAmbiguousError{err: hmsProjectionContractError{Reason: "invalid synchronous retain response"}}
 	}
 	if out.OperationID != "" || len(out.OperationIDs) != 0 {
-		return hmsProjectionContractError{Reason: "synchronous retain returned operation IDs"}
+		return memoryProjectionAmbiguousError{err: hmsProjectionContractError{Reason: "synchronous retain returned operation IDs"}}
 	}
 	return nil
 }
@@ -205,17 +219,34 @@ func (p *hmsRecallProvider) waitForProjectionOperation(ctx context.Context, bank
 
 func (p *hmsRecallProvider) deleteProjectedDocument(ctx context.Context, bankID, documentID string) error {
 	raw, err := p.projectionJSON(ctx, http.MethodDelete, projectionPath(bankID, "documents", documentID), nil, http.StatusOK, http.StatusNotFound)
-	if err != nil || raw == nil {
-		return err
+	if err != nil {
+		var httpErr hmsProjectionHTTPError
+		if errors.As(err, &httpErr) && projectionHTTPKnownNotApplied(httpErr.Status) {
+			return err
+		}
+		return memoryProjectionAmbiguousError{err: err}
+	}
+	if raw == nil {
+		return nil
 	}
 	var out struct {
 		Success    *bool  `json:"success"`
 		DocumentID string `json:"document_id"`
 	}
 	if json.Unmarshal(raw, &out) != nil || out.Success == nil || !*out.Success || out.DocumentID != documentID {
-		return hmsProjectionContractError{Reason: "invalid delete response"}
+		return memoryProjectionAmbiguousError{err: hmsProjectionContractError{Reason: "invalid delete response"}}
 	}
 	return nil
+}
+
+func projectionHTTPKnownNotApplied(status int) bool {
+	switch status {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+		http.StatusConflict, http.StatusUnprocessableEntity, http.StatusTooManyRequests:
+		return true
+	default:
+		return false
+	}
 }
 
 func projectionPath(bankID string, parts ...string) string {

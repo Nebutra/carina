@@ -34,10 +34,45 @@ const (
 	MsgUpdateRecap                 MessageID = "update.recap"
 	MsgUpdateUsageMode             MessageID = "update.usage_mode"
 	MsgUpdateMode                  MessageID = "update.mode"
+	MsgUpdateUsageModel            MessageID = "update.usage_model"
+	MsgUpdateUsageLoop             MessageID = "update.usage_loop"
+	MsgUpdateLoopHeader            MessageID = "update.loop_header"
+	MsgUpdateLoopItem              MessageID = "update.loop_item"
+	MsgUpdateLoopEmpty             MessageID = "update.loop_empty"
+	MsgUpdateLoopChanged           MessageID = "update.loop_changed"
+	MsgUpdateGoalUsage             MessageID = "update.goal_usage"
+	MsgUpdateGoalFailed            MessageID = "update.goal_failed"
+	MsgUpdateGoalCleared           MessageID = "update.goal_cleared"
+	MsgUpdateGoalNone              MessageID = "update.goal_none"
+	MsgUpdateGoalState             MessageID = "update.goal_state"
+	MsgUpdateGoalBudgetUnlimited   MessageID = "update.goal_budget_unlimited"
+	MsgUpdateGoalBudgetTokens      MessageID = "update.goal_budget_tokens"
+	MsgCanonicalTranscriptTitle    MessageID = "canonical.transcript_title"
+	MsgCanonicalLoading            MessageID = "canonical.loading"
+	MsgCanonicalUnavailable        MessageID = "canonical.unavailable"
+	MsgCanonicalEmpty              MessageID = "canonical.empty"
+	MsgCanonicalSearchTitle        MessageID = "canonical.search_title"
+	MsgCanonicalSearchEmpty        MessageID = "canonical.search_empty"
+	MsgCanonicalRecapEmpty         MessageID = "canonical.recap_empty"
+	MsgOperationalEmpty            MessageID = "operational.empty"
+	MsgOperationalStatusTitle      MessageID = "operational.status_title"
+	MsgOperationalPermissionsTitle MessageID = "operational.permissions_title"
+	MsgOperationalContextTitle     MessageID = "operational.context_title"
+	MsgOperationalConfigTitle      MessageID = "operational.config_title"
+	MsgUpdateModelCurrent          MessageID = "update.model_current"
+	MsgUpdateModelChanged          MessageID = "update.model_changed"
+	MsgModelPickerTitle            MessageID = "model_picker.title"
+	MsgModelPickerLoading          MessageID = "model_picker.loading"
+	MsgModelPickerFailed           MessageID = "model_picker.failed"
+	MsgModelPickerDefault          MessageID = "model_picker.default"
+	MsgModelPickerHelp             MessageID = "model_picker.help"
+	MsgModelPickerPage             MessageID = "model_picker.page"
+	MsgModelPickerEmpty            MessageID = "model_picker.empty"
 	MsgUpdateAgents                MessageID = "update.agents"
 	MsgUpdateUsageResume           MessageID = "update.usage_resume"
 	MsgUpdateUnknownCommand        MessageID = "update.unknown_command"
 	MsgUpdateRewindAgain           MessageID = "update.rewind_again"
+	MsgUpdateCompactUnavailable    MessageID = "update.compact_unavailable"
 	MsgWorkspaceExternalEditor     MessageID = "workspace.external_editor"
 	MsgWorkspaceDraftRestored      MessageID = "workspace.draft_restored"
 	MsgWorkspaceEditorApplied      MessageID = "workspace.editor_applied"
@@ -107,10 +142,45 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgUpdateRecap, "recap", "回顾", "要約", "요약", "resumen", "récapitulatif"),
 	catalog(MsgUpdateUsageMode, "usage: /mode <build|plan>", "用法：/mode <build|plan>", "使用法: /mode <build|plan>", "사용법: /mode <build|plan>", "uso: /mode <build|plan>", "utilisation : /mode <build|plan>"),
 	catalog(MsgUpdateMode, "mode {mode}", "模式 {mode}", "モード {mode}", "모드 {mode}", "modo {mode}", "mode {mode}"),
+	catalog(MsgUpdateUsageModel, "usage: /model <provider/model|default>", "用法：/model <厂商/模型|default>", "使用法: /model <provider/model|default>", "사용법: /model <provider/model|default>", "uso: /model <proveedor/modelo|default>", "utilisation : /model <fournisseur/modèle|default>"),
+	catalog(MsgUpdateUsageLoop, "usage: /loop [list | <duration> <prompt> | pause|resume|delete <schedule_id>]", "用法：/loop [list | <时长> <指令> | pause|resume|delete <计划ID>]", "使用法: /loop [list | <期間> <指示> | pause|resume|delete <ID>]", "사용법: /loop [list | <기간> <지시> | pause|resume|delete <ID>]", "uso: /loop [list | <duración> <instrucción> | pause|resume|delete <id>]", "utilisation : /loop [list | <durée> <instruction> | pause|resume|delete <id>]"),
+	catalog(MsgUpdateLoopHeader, "loops for this session", "当前会话的循环任务", "このセッションのループ", "이 세션의 반복 작업", "bucles de esta sesión", "boucles de cette session"),
+	catalog(MsgUpdateLoopItem, "- {id} · {state} · every {interval} · next {next} · {prompt}", "- {id} · {state} · 每 {interval} · 下次 {next} · {prompt}", "- {id} · {state} · {interval} ごと · 次回 {next} · {prompt}", "- {id} · {state} · {interval}마다 · 다음 {next} · {prompt}", "- {id} · {state} · cada {interval} · próxima {next} · {prompt}", "- {id} · {state} · toutes les {interval} · prochaine {next} · {prompt}"),
+	catalog(MsgUpdateLoopEmpty, "  none", "  无", "  なし", "  없음", "  ninguno", "  aucune"),
+	catalog(MsgUpdateLoopChanged, "loop {action}: {id}", "循环任务 {action}：{id}", "ループ {action}: {id}", "반복 작업 {action}: {id}", "bucle {action}: {id}", "boucle {action} : {id}"),
+	catalog(MsgUpdateGoalUsage, "usage: /goal [--tokens N] <objective> | clear|pause|resume|complete|continue", "用法：/goal [--tokens N] <目标> | clear|pause|resume|complete|continue", "使用法: /goal [--tokens N] <目標> | clear|pause|resume|complete|continue", "사용법: /goal [--tokens N] <목표> | clear|pause|resume|complete|continue", "uso: /goal [--tokens N] <objetivo> | clear|pause|resume|complete|continue", "utilisation : /goal [--tokens N] <objectif> | clear|pause|resume|complete|continue"),
+	catalog(MsgUpdateGoalFailed, "goal {action} failed: {error}", "目标 {action} 失败：{error}", "目標の {action} に失敗: {error}", "목표 {action} 실패: {error}", "falló la acción {action} del objetivo: {error}", "échec de l’action {action} sur l’objectif : {error}"),
+	catalog(MsgUpdateGoalCleared, "goal cleared", "目标已清除", "目標を消去しました", "목표를 지웠습니다", "objetivo eliminado", "objectif effacé"),
+	catalog(MsgUpdateGoalNone, "no persistent goal", "没有持久目标", "永続目標はありません", "영구 목표가 없습니다", "no hay objetivo persistente", "aucun objectif persistant"),
+	catalog(MsgUpdateGoalState, "goal [{status}] {objective} · {budget} · {seconds}s · continuation {used}/{max}", "目标 [{status}] {objective} · {budget} · {seconds}秒 · 续接 {used}/{max}", "目標 [{status}] {objective} · {budget} · {seconds}秒 · 継続 {used}/{max}", "목표 [{status}] {objective} · {budget} · {seconds}초 · 계속 {used}/{max}", "objetivo [{status}] {objective} · {budget} · {seconds}s · continuación {used}/{max}", "objectif [{status}] {objective} · {budget} · {seconds}s · reprise {used}/{max}"),
+	catalog(MsgUpdateGoalBudgetUnlimited, "unlimited", "不限", "無制限", "무제한", "sin límite", "illimité"),
+	catalog(MsgUpdateGoalBudgetTokens, "{used}/{max} tokens", "{used}/{max} Token", "{used}/{max} トークン", "{used}/{max} 토큰", "{used}/{max} tokens", "{used}/{max} jetons"),
+	catalog(MsgCanonicalTranscriptTitle, "canonical transcript", "规范会话记录", "正規セッション履歴", "표준 세션 기록", "historial canónico", "historique canonique"),
+	catalog(MsgCanonicalLoading, "Loading canonical session items...", "正在加载规范会话记录……", "正規セッション項目を読み込み中…", "표준 세션 항목을 불러오는 중...", "Cargando elementos canónicos...", "Chargement des éléments canoniques…"),
+	catalog(MsgCanonicalUnavailable, "Canonical transcript unavailable: {error}", "规范会话记录不可用：{error}", "正規セッション履歴を利用できません: {error}", "표준 세션 기록을 사용할 수 없음: {error}", "Historial canónico no disponible: {error}", "Historique canonique indisponible : {error}"),
+	catalog(MsgCanonicalEmpty, "No canonical session items yet.", "暂无规范会话记录。", "正規セッション項目はまだありません。", "아직 표준 세션 항목이 없습니다.", "Aún no hay elementos canónicos.", "Aucun élément canonique pour le moment."),
+	catalog(MsgCanonicalSearchTitle, "canonical search ({count})", "规范记录搜索（{count}）", "正規履歴検索（{count}）", "표준 기록 검색({count})", "búsqueda canónica ({count})", "recherche canonique ({count})"),
+	catalog(MsgCanonicalSearchEmpty, "No canonical session items matched.", "没有匹配的规范会话记录。", "一致する正規セッション項目はありません。", "일치하는 표준 세션 항목이 없습니다.", "No hay elementos canónicos coincidentes.", "Aucun élément canonique correspondant."),
+	catalog(MsgCanonicalRecapEmpty, "No canonical session items yet.", "暂无可回顾的规范会话记录。", "要約できる正規セッション項目はまだありません。", "요약할 표준 세션 항목이 없습니다.", "Aún no hay elementos canónicos para resumir.", "Aucun élément canonique à récapituler."),
+	catalog(MsgOperationalEmpty, "No data reported by the daemon.", "daemon 未报告数据。", "daemon からデータが報告されていません。", "daemon이 보고한 데이터가 없습니다.", "El daemon no informó datos.", "Aucune donnée signalée par le daemon."),
+	catalog(MsgOperationalStatusTitle, "session status", "会话状态", "セッション状態", "세션 상태", "estado de la sesión", "état de la session"),
+	catalog(MsgOperationalPermissionsTitle, "effective permissions", "有效权限", "有効な権限", "유효 권한", "permisos efectivos", "autorisations effectives"),
+	catalog(MsgOperationalContextTitle, "persisted context summary", "持久上下文摘要", "永続コンテキスト要約", "영구 컨텍스트 요약", "resumen de contexto persistido", "résumé du contexte persistant"),
+	catalog(MsgOperationalConfigTitle, "effective runtime (read-only)", "有效运行时状态（只读）", "有効なランタイム（読み取り専用）", "유효 런타임(읽기 전용)", "runtime efectivo (solo lectura)", "runtime effectif (lecture seule)"),
+	catalog(MsgUpdateModelCurrent, "model: {model}", "模型：{model}", "モデル: {model}", "모델: {model}", "modelo: {model}", "modèle : {model}"),
+	catalog(MsgUpdateModelChanged, "model switched to {model}; applies to new tasks", "模型已切换为 {model}；对新任务生效", "モデルを {model} に変更しました。新しいタスクに適用されます", "모델을 {model}(으)로 전환했습니다. 새 작업부터 적용됩니다", "modelo cambiado a {model}; se aplica a tareas nuevas", "modèle changé pour {model} ; appliqué aux nouvelles tâches"),
+	catalog(MsgModelPickerTitle, "Select model", "选择模型", "モデルを選択", "모델 선택", "Seleccionar modelo", "Choisir un modèle"),
+	catalog(MsgModelPickerLoading, "Loading available models...", "正在加载可用模型……", "利用可能なモデルを読み込み中…", "사용 가능한 모델을 불러오는 중...", "Cargando modelos disponibles...", "Chargement des modèles disponibles…"),
+	catalog(MsgModelPickerFailed, "Unable to load models: {error}", "无法加载模型：{error}", "モデルを読み込めません: {error}", "모델을 불러올 수 없습니다: {error}", "No se pudieron cargar los modelos: {error}", "Impossible de charger les modèles : {error}"),
+	catalog(MsgModelPickerDefault, "Daemon default", "守护进程默认模型", "デーモンの既定値", "데몬 기본값", "Predeterminado del daemon", "Valeur par défaut du daemon"),
+	catalog(MsgModelPickerHelp, "Enter selects · Esc closes · /model <id> accepts advanced IDs", "Enter 选择 · Esc 关闭 · /model <id> 可输入高级模型 ID", "Enter で選択 · Esc で閉じる · /model <id> で高度な ID を指定", "Enter 선택 · Esc 닫기 · /model <id>로 고급 ID 입력", "Enter selecciona · Esc cierra · /model <id> acepta IDs avanzados", "Entrée sélectionne · Échap ferme · /model <id> accepte les identifiants avancés"),
+	catalog(MsgModelPickerPage, "{start}-{end} of {count}", "第 {start}-{end} 项，共 {count} 项", "{count} 件中 {start}-{end}", "{count}개 중 {start}-{end}", "{start}-{end} de {count}", "{start}-{end} sur {count}"),
+	catalog(MsgModelPickerEmpty, "No enumerated provider models; use /model <provider/model> for a dynamic model.", "没有可枚举的厂商模型；动态模型请使用 /model <厂商/模型>。", "列挙可能なモデルはありません。動的モデルには /model <provider/model> を使用してください。", "열거 가능한 모델이 없습니다. 동적 모델은 /model <provider/model>을 사용하세요.", "No hay modelos enumerados; use /model <proveedor/modelo> para un modelo dinámico.", "Aucun modèle énuméré ; utilisez /model <fournisseur/modèle> pour un modèle dynamique."),
 	catalog(MsgUpdateAgents, "agents", "Agent", "Agent", "Agent", "Agents", "Agents"),
 	catalog(MsgUpdateUsageResume, "usage: /resume [task_id]", "用法：/resume [task_id]", "使用法: /resume [task_id]", "사용법: /resume [task_id]", "uso: /resume [task_id]", "utilisation : /resume [task_id]"),
 	catalog(MsgUpdateUnknownCommand, "unknown command /{command}; use /help", "未知命令 /{command}；请使用 /help", "不明なコマンド /{command}。/help を参照", "알 수 없는 명령 /{command}. /help를 사용하세요", "comando desconocido /{command}; usa /help", "commande inconnue /{command} ; utilisez /help"),
 	catalog(MsgUpdateRewindAgain, "- press {rewind} again to choose a rewind point", "- 再按一次 {rewind} 选择回退点", "- {rewind} をもう一度押して巻き戻し点を選択", "- {rewind}를 다시 눌러 되돌리기 지점 선택", "- pulsa {rewind} otra vez para elegir un punto", "- rappuyez sur {rewind} pour choisir un point de retour"),
+	catalog(MsgUpdateCompactUnavailable, "compact unavailable: Carina cannot yet atomically replace the current task checkpoint; context.compress only compresses supplied diagnostic content", "无法压缩：Carina 目前无法原子替换当前任务检查点；context.compress 只压缩传入的诊断内容", "圧縮は利用できません: 現在のタスクのチェックポイントをまだアトミックに置換できません。context.compress は診断用入力のみを圧縮します", "압축을 사용할 수 없습니다: 현재 작업 체크포인트를 아직 원자적으로 교체할 수 없습니다. context.compress는 진단용 입력만 압축합니다", "compactación no disponible: Carina aún no puede reemplazar atómicamente el checkpoint actual; context.compress solo comprime contenido de diagnóstico", "compaction indisponible : Carina ne peut pas encore remplacer atomiquement le checkpoint courant ; context.compress compresse uniquement le contenu de diagnostic fourni"),
 	catalog(MsgWorkspaceExternalEditor, "{glyph} external editor: {error}", "{glyph} 外部编辑器：{error}", "{glyph} 外部エディタ: {error}", "{glyph} 외부 편집기: {error}", "{glyph} editor externo: {error}", "{glyph} éditeur externe : {error}"),
 	catalog(MsgWorkspaceDraftRestored, "{glyph} {error}; draft restored", "{glyph} {error}；草稿已恢复", "{glyph} {error}。下書きを復元", "{glyph} {error}. 초안 복원됨", "{glyph} {error}; borrador restaurado", "{glyph} {error} ; brouillon restauré"),
 	catalog(MsgWorkspaceEditorApplied, "- external editor draft applied", "- 已应用外部编辑器草稿", "- 外部エディタの下書きを適用", "- 외부 편집기 초안 적용됨", "- borrador del editor aplicado", "- brouillon de l’éditeur appliqué"),

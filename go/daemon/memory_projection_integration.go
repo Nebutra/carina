@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,11 +12,73 @@ import (
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
-func (d *Daemon) memoryProjectionStatus() map[string]any {
+func (d *Daemon) memoryProjectionStatus(scopes ...memoryScope) map[string]any {
 	if d.memoryProjection == nil {
 		return map[string]any{"enabled": false}
 	}
-	return map[string]any{"enabled": true, "provider": "hms", "status": d.memoryProjection.Status()}
+	result := map[string]any{"enabled": true, "provider": "hms", "status": d.memoryProjection.Status()}
+	if len(scopes) > 0 {
+		result["documents"] = d.memoryProjection.Items(&scopes[0])
+	}
+	return result
+}
+
+func nonHealthyProjectionItems(items []memoryProjectionItemStatus) []memoryProjectionItemStatus {
+	out := make([]memoryProjectionItemStatus, 0, len(items))
+	for _, item := range items {
+		switch item.Status {
+		case projectionDirty, projectionBlocked, projectionFailed, projectionReconcile:
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func (d *Daemon) handleMemoryProjectionReseed(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID      string `json:"session_id"`
+		DocumentID     string `json:"document_id"`
+		RemoteQuiesced bool   `json:"remote_quiesced"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	sess, ok := d.store.Get(p.SessionID)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	}
+	if d.memoryProjection == nil {
+		return nil, fmt.Errorf("HMS memory projection is disabled")
+	}
+	intent, err := d.memoryProjection.Reseed(memoryScopeFromSession(sess), p.DocumentID, p.RemoteQuiesced)
+	if err != nil {
+		return nil, err
+	}
+	d.recordMemoryProjection(intent, projectionBlocked, "manual_reseed_requires_authorization", "")
+	return map[string]any{"document_id": intent.DocumentID, "status": intent.Status, "requires_authorization": true, "remote_state_known": false}, nil
+}
+
+func (d *Daemon) handleMemoryProjectionRetry(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID  string `json:"session_id"`
+		DocumentID string `json:"document_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	sess, ok := d.store.Get(p.SessionID)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	}
+	if d.memoryProjection == nil {
+		return nil, fmt.Errorf("HMS memory projection is disabled")
+	}
+	intent, err := d.memoryProjection.RetryFailed(memoryScopeFromSession(sess), p.DocumentID)
+	if err != nil {
+		return nil, err
+	}
+	d.recordMemoryProjection(intent, projectionBlocked, "manual_retry_requires_authorization", "")
+	return map[string]any{"document_id": intent.DocumentID, "status": intent.Status, "attempts": intent.Attempts, "previous_error_code": intent.PreviousErrorCode, "requires_authorization": true}, nil
 }
 
 func (d *Daemon) handleMemoryProjectionAuthorize(params json.RawMessage) (any, error) {
@@ -33,9 +96,6 @@ func (d *Daemon) handleMemoryProjectionAuthorize(params json.RawMessage) (any, e
 		return nil, fmt.Errorf("HMS memory projection is disabled")
 	}
 	scope := memoryScopeFromSession(sess)
-	if err := d.memoryProjection.FailedToBlocked(scope); err != nil {
-		return nil, err
-	}
 	blocked := d.memoryProjection.Blocked(scope)
 	results := make([]*memoryProjectionWriteResult, 0, len(blocked))
 	for _, intent := range blocked {
@@ -94,6 +154,10 @@ func (d *Daemon) finishMemoryProjection(sess *sessionstore.Session, dirty *memor
 	intent, err := d.memoryProjection.SetDesired(dirty.DocumentID, dirty.Generation, content, tombstone)
 	if err != nil {
 		return &memoryProjectionWriteResult{Enabled: true, Status: projectionDirty, DocumentID: dirty.DocumentID}
+	}
+	if intent.Status == projectionReconcile {
+		d.recordMemoryProjection(intent, projectionReconcile, "remote_reconciliation_required", "")
+		return &memoryProjectionWriteResult{Enabled: true, Status: projectionReconcile, DocumentID: intent.DocumentID, Revision: intent.Revision}
 	}
 	return d.authorizeMemoryProjection(sess, intent, "")
 }
@@ -210,6 +274,10 @@ func (e auditedProjectionExecutor) execute(ctx context.Context, intent memoryPro
 		"document_id": intent.DocumentID, "revision": intent.Revision, "generation": intent.Generation,
 		"network_decision_id": intent.NetworkDecisionID,
 	}, intent.AuthorizationDecisionID); auditErr != nil {
+		var ambiguous memoryProjectionAmbiguousError
+		if errors.As(err, &ambiguous) {
+			return err
+		}
 		return permanentMemoryProjectionError(fmt.Errorf("projection side effect audit failed"))
 	}
 	return err

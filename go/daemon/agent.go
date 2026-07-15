@@ -33,7 +33,7 @@ const toolsHelp = `Available tools:
 - {"tool":"list"}                              list the workspace file tree
 - {"tool":"read","path":"rel/path"}            read a file
 - {"tool":"search","pattern":"text"}           search the workspace
-- {"tool":"run","command":["prog","arg"]}      run a command (sandboxed; risky commands are denied)
+- {"tool":"run","command":["prog","arg"]}      run a workspace-scoped, policy-gated command (OS sandboxing depends on daemon configuration)
 - {"tool":"patch","path":"rel/path","content":"FULL new file content"}   propose+apply an edit (transactional, rollbackable)
 - {"tool":"memory","target":"memory|user","action":"add|replace|remove|batch","content":"fact","old_text":"unique substring","operations":[...]}   update governed long-term memory
 - {"tool":"ask_user","prompt":"Which approach should I use?","options":[{"label":"Minimal fix","value":"minimal","description":"Smallest safe change"},{"label":"Refactor","value":"refactor"}]}   pause for a structured operator choice
@@ -53,10 +53,10 @@ Rules:
 
 // systemPrompt instructs the reasoner to act as a coding agent that can only
 // affect the world through the Nebutra runtime, one JSON action at a time.
-const systemPrompt = `You are a coding agent running on the Nebutra agent runtime.
-You CANNOT touch the system directly. You act only by emitting ONE tool action
-per turn as a single JSON object, and the Nebutra runtime executes it through
-its security kernel, returning an observation.
+const systemPrompt = `You are a coding agent working in the user's Carina workspace.
+You have no desktop or GUI access. Use the governed workspace tools below; the
+runtime applies configured policy and may additionally apply an OS sandbox.
+Emit ONE tool action per turn as a single JSON object.
 
 ` + toolsHelp + `
 
@@ -280,13 +280,6 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 	// Persistent project/user instructions are prepended to the system prompt
 	// so the agent follows repo-specific conventions.
 	sysPrompt := systemPrompt
-	if d.bestOfNEnabled.Load() {
-		// Only mentioned when the opt-in feature is actually on — belt-and-
-		// suspenders on top of the hard feature_disabled denial in
-		// executeBestOfNOutcome, so a model never even sees the tool exists
-		// when the operator hasn't enabled it.
-		sysPrompt += "\n\n" + bestOfNToolHelp
-	}
 	agents := loadAgentSpecs(sess.WorkspaceRoot)
 	if d.safeMode {
 		agents = builtinAgentSpecs()
@@ -294,6 +287,16 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 	if spec := agents[taskAgent(task)]; spec != nil && strings.TrimSpace(spec.SystemPrompt) != "" {
 		sysPrompt = strings.TrimSpace(spec.SystemPrompt) + "\n\n" + systemPrompt
 	}
+	if d.bestOfNEnabled.Load() {
+		// Append feature-gated tools after agent prompt composition so a custom
+		// persona cannot accidentally erase capabilities enabled by the runtime.
+		sysPrompt += "\n\n" + bestOfNToolHelp
+	}
+	sandboxState := "disabled"
+	if d.sandbox.Load() {
+		sandboxState = "enabled"
+	}
+	sysPrompt += fmt.Sprintf("\n\nRUNTIME SCOPE (authoritative): workspace_root=%q; os_sandbox=%s. You can read and modify this workspace through governed tools. You cannot inspect the desktop or unrelated directories unless an explicit capability grants access.", sess.WorkspaceRoot, sandboxState)
 	if mem := loadMemory(sess.WorkspaceRoot); mem != "" && !d.safeMode {
 		sysPrompt += "\n\nPROJECT INSTRUCTIONS (Nebutra/Carina — follow them):\n" + mem
 	}
@@ -425,6 +428,13 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				outcome["cache_write_tokens"] = result.Usage.CacheWriteTokens
 				outcome["usage_estimated"] = result.Usage.Estimated
 				outcome["response_sha256"] = sha256Hex(raw)
+				if effective := effectiveModelName(result.Usage); effective != "" {
+					d.sched.SetEffectiveModel(task.TaskID, effective)
+					task.EffectiveModel = effective
+					if current, exists := d.sched.Get(task.TaskID); exists {
+						d.runs.save(current)
+					}
+				}
 			}
 			d.record(sess.SessionID, "RoutingOutcome", task.TaskID, "go", outcome, "")
 			if err != nil {
@@ -1564,10 +1574,17 @@ func (d *Daemon) runMockTaskContext(ctx context.Context, sess *sessionstore.Sess
 		d.record(sess.SessionID, "ModelResponded", task.TaskID, "model", map[string]any{"error": err.Error()}, "")
 		return
 	}
+	if effective := effectiveModelName(ModelUsage{Provider: resp.Provider, Model: resp.Model}); effective != "" {
+		d.sched.SetEffectiveModel(task.TaskID, effective)
+		task.EffectiveModel = effective
+	}
 	d.record(sess.SessionID, "ModelResponded", task.TaskID, "model", map[string]any{
 		"provider": resp.Provider, "model": resp.Model, "text": truncate(resp.Text, 500),
 	}, "")
 	d.sched.SetStatus(task.TaskID, "completed")
+	if current, exists := d.sched.Get(task.TaskID); exists {
+		d.runs.save(current)
+	}
 }
 
 func truncate(s string, n int) string {
@@ -1588,6 +1605,18 @@ func taskModel(task *scheduler.Task) string {
 		return strings.TrimSpace(task.Model)
 	}
 	return "default"
+}
+
+func effectiveModelName(usage ModelUsage) string {
+	model := strings.TrimSpace(usage.Model)
+	provider := strings.TrimSpace(usage.Provider)
+	if model == "" {
+		return ""
+	}
+	if provider == "" || strings.HasPrefix(model, provider+"/") {
+		return model
+	}
+	return provider + "/" + model
 }
 
 func routingEvidenceID(taskID string, turn, requery int, promptHash string) string {
