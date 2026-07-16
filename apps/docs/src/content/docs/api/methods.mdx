@@ -1,0 +1,38 @@
+---
+title: Method catalog
+description: Protocol-driven JSON-RPC method catalog synced from protocol/jsonrpc/methods.json.
+sidebar:
+  order: 2.5
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+import RpcCatalog from '../../../components/api/RpcCatalog.astro';
+import VersionSelector from '../../../components/ui/VersionSelector.astro';
+
+# Method catalog
+
+Machine-generated from the authoritative daemon registry. Prefer this page when you need the full method list; narrative guides live under [Overview](/api/overview/) and [JSON-RPC reference](/api/json-rpc/).
+
+<div style="margin: 0 0 1.25rem">
+  <VersionSelector />
+</div>
+
+<Callout variant="tip" title="Stay in sync">
+  From the monorepo root of `apps/docs`, run `pnpm sync-protocol` after protocol changes. CI/docs builds should commit the refreshed `src/data/rpc-catalog.json` when the registry moves.
+</Callout>
+
+## Full registry
+
+<RpcCatalog />
+
+## Scope legend
+
+| Scope | Meaning |
+| --- | --- |
+| `read` | Status, list, replay, catalog, audit |
+| `write` | Mutating session/task/workspace actions |
+| `admin` | Control-plane, secret, config, policy, approval |
+| `worker` | Remote worker lease protocol |
+| `stream` | Long-lived event subscriptions |
+
+`remote: true` means the method may be exposed through the Gateway descriptor catalog when remote surfaces are enabled. `control-plane` flags high-risk control-plane writes.

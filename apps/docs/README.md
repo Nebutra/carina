@@ -21,6 +21,8 @@ pnpm dev          # http://localhost:4321
 | `pnpm build` | Static production build → `dist/` |
 | `pnpm preview` | Preview the production build |
 | `pnpm sync-brand` | Re-sync design tokens, fonts, logos from `docs/brand/` |
+| `pnpm sync-protocol` | Re-sync JSON-RPC catalog from `protocol/jsonrpc/methods.json` |
+| `pnpm sync` | Brand + protocol sync |
 | `pnpm typecheck` | Astro + TypeScript checks |
 
 ## Architecture

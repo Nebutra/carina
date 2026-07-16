@@ -1,10 +1,12 @@
 ---
 /**
- * Header — Starlight brand row + Mintlify-style section tabs.
+ * Header — Starlight brand row + Mintlify-style section tabs + version channel.
  * Tabs = top-level sidebar groups (href = first leaf link).
  * Hidden below md; mobile drawer already exposes groups.
  */
 import Default from '@astrojs/starlight/components/Header.astro';
+import VersionSelector from './ui/VersionSelector.astro';
+import VersionBanner from './VersionBanner.astro';
 
 type SidebarEntry =
   | { type: 'link'; href: string; label: string; isCurrent: boolean }
@@ -55,10 +57,14 @@ const tabs = hasSidebar
               </li>
             ))}
           </ul>
+          <div class="header-tabs__version">
+            <VersionSelector compact />
+          </div>
         </div>
       </nav>
     )
   }
+  <VersionBanner />
 </div>
 
 <style>
@@ -74,9 +80,12 @@ const tabs = hasSidebar
   }
 
   .header-tabs__inner {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 1rem;
     overflow-x: auto;
     scrollbar-width: none;
-    /* Align with Starlight header horizontal padding */
     padding-inline: var(--sl-nav-pad-x, 1rem);
   }
 
@@ -92,6 +101,13 @@ const tabs = hasSidebar
     padding: 0;
     list-style: none;
     min-height: var(--docs-tabs-height);
+    min-width: 0;
+  }
+
+  .header-tabs__version {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
   }
 
   .header-tabs a {

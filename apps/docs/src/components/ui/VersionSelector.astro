@@ -1,41 +1,76 @@
 ---
 /**
- * VersionSelector — placeholder for multi-version docs.
- * Non-interactive until a versions pipeline is wired (e.g. versioned builds).
+ * Docs version switcher — static channels (0.6.x / next).
+ * Preference is stored in localStorage; a site-wide banner reflects the choice.
  */
+import versions from '../../data/versions.json';
+
 interface Props {
-  versions?: string[];
-  current?: string;
-  disabled?: boolean;
+  /** Compact mode for header chrome */
+  compact?: boolean;
 }
 
-const {
-  versions = ['0.6.x', '0.5.x'],
-  current = '0.6.x',
-  disabled = true,
-} = Astro.props;
+const { compact = false } = Astro.props;
+const list = versions.versions;
+const defaultId = versions.default;
 ---
 
-<div class="version-selector" data-disabled={disabled ? 'true' : 'false'}>
-  <label class="version-selector__label" for="docs-version">
-    Version
-  </label>
+<div
+  class:list={['version-selector', compact && 'version-selector--compact']}
+  data-version-root
+  data-default-version={defaultId}
+>
+  {!compact && <label class="version-selector__label" for="docs-version">Version</label>}
   <select
     id="docs-version"
     class="version-selector__select"
-    disabled={disabled}
     aria-label="Documentation version"
-    title={disabled ? 'Version switching coming soon' : 'Select documentation version'}
   >
     {
-      versions.map((v) => (
-        <option value={v} selected={v === current}>
-          {v}
+      list.map((v) => (
+        <option value={v.id} data-badge={v.badge} data-description={v.description}>
+          {v.label}
+          {v.badge === 'preview' ? ' (preview)' : ''}
         </option>
       ))
     }
   </select>
 </div>
+
+<script>
+  const STORAGE_KEY = 'carina-docs-version';
+
+  function applyVersion(id: string) {
+    document.documentElement.dataset.docsVersion = id;
+    document.querySelectorAll<HTMLSelectElement>('[data-version-root] select').forEach((sel) => {
+      if (sel.value !== id) sel.value = id;
+    });
+    document.querySelectorAll<HTMLElement>('[data-version-banner]').forEach((banner) => {
+      const isNext = id === 'next';
+      banner.hidden = !isNext;
+    });
+  }
+
+  function boot() {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    const root = document.querySelector<HTMLElement>('[data-version-root]');
+    const fallback = root?.dataset.defaultVersion || '0.6.x';
+    const initial = stored || fallback;
+    applyVersion(initial);
+
+    document.querySelectorAll<HTMLSelectElement>('[data-version-root] select').forEach((sel) => {
+      if (sel.dataset.bound === '1') return;
+      sel.dataset.bound = '1';
+      sel.addEventListener('change', () => {
+        localStorage.setItem(STORAGE_KEY, sel.value);
+        applyVersion(sel.value);
+      });
+    });
+  }
+
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>
 
 <style>
   .version-selector {
@@ -53,20 +88,20 @@ const {
 
   .version-selector__select {
     appearance: none;
-    background: var(--docs-bg-surface);
+    background-color: var(--docs-bg-surface);
     color: var(--docs-fg);
-    border: 1px solid var(--docs-border);
+    border: 1px solid var(--docs-border-subtle);
     border-radius: var(--docs-radius-md);
-    padding: 0.3rem 1.75rem 0.3rem 0.65rem;
-    font-size: var(--text-caption);
+    padding: 0.3rem 1.7rem 0.3rem 0.6rem;
+    font-size: 0.75rem;
     font-family: var(--docs-font-mono);
     line-height: 1.4;
     cursor: pointer;
     background-image: linear-gradient(45deg, transparent 50%, var(--docs-fg-muted) 50%),
       linear-gradient(135deg, var(--docs-fg-muted) 50%, transparent 50%);
     background-position:
-      calc(100% - 14px) 55%,
-      calc(100% - 10px) 55%;
+      calc(100% - 12px) 55%,
+      calc(100% - 8px) 55%;
     background-size:
       4px 4px,
       4px 4px;
@@ -76,8 +111,8 @@ const {
       background-color var(--docs-transition);
   }
 
-  .version-selector__select:hover:not(:disabled) {
-    border-color: var(--docs-accent);
+  .version-selector__select:hover {
+    border-color: var(--docs-border);
   }
 
   .version-selector__select:focus-visible {
@@ -85,8 +120,8 @@ const {
     outline-offset: 2px;
   }
 
-  .version-selector[data-disabled='true'] .version-selector__select {
-    opacity: 0.7;
-    cursor: not-allowed;
+  .version-selector--compact .version-selector__select {
+    padding-block: 0.25rem;
+    font-size: 0.7rem;
   }
 </style>

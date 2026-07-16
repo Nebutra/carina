@@ -1,0 +1,24 @@
+---
+title: 方法目录
+description: 由 protocol/jsonrpc/methods.json 同步的 JSON-RPC 方法目录。
+---
+
+import Callout from '../../../../components/ui/Callout.astro';
+import RpcCatalog from '../../../../components/api/RpcCatalog.astro';
+import VersionSelector from '../../../../components/ui/VersionSelector.astro';
+
+# 方法目录
+
+从 daemon 权威注册表生成。完整方法列表看本页；叙述性说明见 [概览](/zh-cn/api/overview/) 与 [JSON-RPC 参考](/zh-cn/api/json-rpc/)。
+
+<div style="margin: 0 0 1.25rem">
+  <VersionSelector />
+</div>
+
+<Callout variant="tip" title="保持同步">
+  在 `apps/docs` 下协议变更后执行 `pnpm sync-protocol`，并提交更新后的 `src/data/rpc-catalog.json`。
+</Callout>
+
+## 完整注册表
+
+<RpcCatalog />

@@ -14,7 +14,7 @@ import Card from '../../../components/mdx/Card.astro';
 
 
 <div style="margin: 0 0 1.25rem">
-  <VersionSelector current="0.6.x" />
+  <VersionSelector />
 </div>
 
 Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. Bare TCP is restricted to explicit loopback for diagnostics. Network-facing clients use the authenticated WebSocket or HTTP Gateway. All optional listeners are **disabled by default**.
@@ -132,11 +132,14 @@ The `/v1` facade is **agent-first**, not provider-first. `model` selects a Carin
 
 ## Next
 
-<Cards cols={2}>
+<Cards cols={3}>
   <Card title="Sessions" href="/api/sessions/">
     Create, stream, fork, goals, and checkpoints.
   </Card>
+  <Card title="Method catalog" href="/api/methods/">
+    All 150+ methods from the protocol registry with samples.
+  </Card>
   <Card title="JSON-RPC reference" href="/api/json-rpc/">
-    Method-oriented reference for the local control plane.
+    Method-oriented narrative for the local control plane.
   </Card>
 </Cards>

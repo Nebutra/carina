@@ -1,0 +1,92 @@
+---
+/**
+ * Shown when docs version channel is "next" (preview / protocol-tracking).
+ */
+---
+
+<div class="version-banner" data-version-banner hidden role="status">
+  <span class="version-banner__badge">next</span>
+  <span class="version-banner__text">
+    You are viewing the preview channel — method catalog tracks the in-repo protocol registry.
+  </span>
+  <button type="button" class="version-banner__switch" data-version-switch-stable>
+    Switch to 0.6.x
+  </button>
+</div>
+
+<script>
+  function boot() {
+    document.querySelectorAll<HTMLButtonElement>('[data-version-switch-stable]').forEach((btn) => {
+      if (btn.dataset.bound === '1') return;
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', () => {
+        localStorage.setItem('carina-docs-version', '0.6.x');
+        document.documentElement.dataset.docsVersion = '0.6.x';
+        document.querySelectorAll<HTMLSelectElement>('[data-version-root] select').forEach((sel) => {
+          sel.value = '0.6.x';
+        });
+        document.querySelectorAll<HTMLElement>('[data-version-banner]').forEach((b) => {
+          b.hidden = true;
+        });
+      });
+    });
+  }
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>
+
+<style>
+  .version-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem 0.85rem;
+    padding: 0.45rem var(--sl-nav-pad-x, 1rem);
+    background: color-mix(in srgb, var(--docs-warning) 12%, var(--docs-bg-surface));
+    border-bottom: 1px solid color-mix(in srgb, var(--docs-warning) 35%, var(--docs-border-subtle));
+    font-size: 0.8125rem;
+    color: var(--docs-fg-muted);
+  }
+
+  .version-banner[hidden] {
+    display: none !important;
+  }
+
+  .version-banner__badge {
+    font-family: var(--docs-font-mono);
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--docs-warning);
+    border: 1px solid color-mix(in srgb, var(--docs-warning) 45%, transparent);
+    border-radius: var(--docs-radius-sm);
+    padding: 0.1rem 0.4rem;
+  }
+
+  .version-banner__text {
+    flex: 1;
+    min-width: 12rem;
+  }
+
+  .version-banner__switch {
+    appearance: none;
+    border: 1px solid var(--docs-border-subtle);
+    background: var(--docs-bg);
+    color: var(--docs-fg);
+    font-family: var(--docs-font-sans);
+    font-size: 0.75rem;
+    font-weight: 500;
+    border-radius: var(--docs-radius-full);
+    padding: 0.25rem 0.7rem;
+    cursor: pointer;
+    transition:
+      border-color var(--docs-transition),
+      background-color var(--docs-transition);
+  }
+
+  .version-banner__switch:hover {
+    border-color: var(--docs-border);
+    background: var(--docs-bg-raised);
+  }
+</style>

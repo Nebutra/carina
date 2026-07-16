@@ -156,6 +156,11 @@ export default defineConfig({
               link: '/api/sessions/',
             },
             {
+              label: 'Method catalog',
+              translations: { 'zh-CN': '方法目录' },
+              link: '/api/methods/',
+            },
+            {
               label: 'JSON-RPC reference',
               translations: { 'zh-CN': 'JSON-RPC 参考' },
               link: '/api/json-rpc/',

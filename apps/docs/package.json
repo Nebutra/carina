@@ -11,6 +11,8 @@
     "preview": "astro preview",
     "astro": "astro",
     "sync-brand": "node ./scripts/sync-brand.mjs",
+    "sync-protocol": "node ./scripts/sync-protocol.mjs",
+    "sync": "pnpm sync-brand && pnpm sync-protocol",
     "typecheck": "astro check && tsc --noEmit"
   },
   "engines": {

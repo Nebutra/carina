@@ -1,0 +1,169 @@
+---
+/**
+ * Multi-language request snippets for a JSON-RPC method.
+ */
+interface Props {
+  method: string;
+  params?: Record<string, unknown> | string | object;
+  scope?: string;
+}
+
+const { method, params = {}, scope = 'read' } = Astro.props;
+
+const paramsObj =
+  params && typeof params === 'object' && !Array.isArray(params)
+    ? (params as Record<string, string>)
+    : {};
+
+/** Build a sample params object from type hints (string descriptions). */
+function sampleParams(src: Record<string, string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, hint] of Object.entries(src)) {
+    const h = String(hint).toLowerCase();
+    if (key === 'workspace_root' || key.includes('path') || key.includes('root')) {
+      out[key] = '/repo';
+    } else if (key.includes('session')) {
+      out[key] = 'sess_01J…';
+    } else if (key.includes('profile')) {
+      out[key] = 'safe-edit';
+    } else if (h.includes('boolean')) {
+      out[key] = true;
+    } else if (h.includes('number') || h.includes('integer')) {
+      out[key] = 1;
+    } else if (h.includes('array') || h.includes('[]')) {
+      out[key] = [];
+    } else if (key.includes('prompt') || key.includes('task')) {
+      out[key] = 'Summarize module boundaries';
+    } else {
+      // skip optional-looking keys marked with ?
+      if (String(hint).includes('?') && !key.includes('session')) continue;
+      out[key] = `<${key}>`;
+    }
+  }
+  return out;
+}
+
+const sample = sampleParams(paramsObj);
+const jsonRpc = {
+  jsonrpc: '2.0',
+  id: 1,
+  method,
+  params: sample,
+};
+const jsonText = JSON.stringify(jsonRpc, null, 2);
+const paramsTs = JSON.stringify(sample, null, 2);
+const tsText = `// scope: ${scope}
+const result = await client.request(${JSON.stringify(method)}, ${paramsTs});`;
+const bashText = `printf '%s\\n' '${JSON.stringify(jsonRpc)}' | carina rpc
+# or via CLI when wrapped:
+# carina call ${method}`;
+---
+
+<div class="snippet-tabs" data-snippet-tabs>
+  <div class="snippet-tabs__list" role="tablist" aria-label="Code samples">
+    <button type="button" class="snippet-tabs__tab is-active" role="tab" aria-selected="true" data-panel="json">
+      JSON-RPC
+    </button>
+    <button type="button" class="snippet-tabs__tab" role="tab" aria-selected="false" data-panel="ts">
+      TypeScript
+    </button>
+    <button type="button" class="snippet-tabs__tab" role="tab" aria-selected="false" data-panel="bash">
+      CLI
+    </button>
+  </div>
+  <div class="snippet-tabs__panels">
+    <pre class="snippet-tabs__panel is-active" data-panel="json" role="tabpanel"><code>{jsonText}</code></pre>
+    <pre class="snippet-tabs__panel" data-panel="ts" role="tabpanel" hidden><code>{tsText}</code></pre>
+    <pre class="snippet-tabs__panel" data-panel="bash" role="tabpanel" hidden><code>{bashText}</code></pre>
+  </div>
+</div>
+
+<script>
+  function init(root: Element) {
+    if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
+    root.dataset.ready = '1';
+    const tabs = root.querySelectorAll<HTMLButtonElement>('.snippet-tabs__tab');
+    const panels = root.querySelectorAll<HTMLElement>('.snippet-tabs__panel');
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => {
+        const id = tab.dataset.panel;
+        tabs.forEach((t) => {
+          const on = t === tab;
+          t.classList.toggle('is-active', on);
+          t.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        panels.forEach((p) => {
+          const on = p.dataset.panel === id;
+          p.hidden = !on;
+          p.classList.toggle('is-active', on);
+        });
+      });
+    });
+  }
+  function boot() {
+    document.querySelectorAll('[data-snippet-tabs]').forEach(init);
+  }
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>
+
+<style>
+  .snippet-tabs {
+    margin: var(--spacing-3) 0 0;
+    border: 1px solid var(--carina-border-subtle, var(--docs-border-subtle));
+    border-radius: var(--docs-radius-lg);
+    overflow: hidden;
+    background: var(--carina-surface, var(--docs-bg-raised));
+  }
+
+  .snippet-tabs__list {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--carina-border-subtle, var(--docs-border-subtle));
+    background: var(--carina-surface-raised, var(--docs-bg-surface));
+    padding: 0 0.35rem;
+  }
+
+  .snippet-tabs__tab {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--carina-dust, var(--docs-fg-muted));
+    font-family: var(--docs-font-sans);
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 0.55rem 0.75rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+
+  .snippet-tabs__tab.is-active {
+    color: var(--carina-starlight, var(--docs-fg));
+    border-bottom-color: var(--docs-accent);
+  }
+
+  .snippet-tabs__tab:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: -2px;
+  }
+
+  .snippet-tabs__panel {
+    margin: 0;
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    font-family: var(--docs-font-mono);
+    font-size: 0.75rem;
+    line-height: 1.55;
+    color: var(--carina-starlight, var(--docs-fg));
+  }
+
+  .snippet-tabs__panel[hidden] {
+    display: none;
+  }
+
+  .snippet-tabs__panel code {
+    font-family: inherit;
+    white-space: pre;
+  }
+</style>

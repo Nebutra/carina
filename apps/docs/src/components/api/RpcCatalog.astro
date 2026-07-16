@@ -1,0 +1,303 @@
+---
+/**
+ * Protocol-driven method catalog from src/data/rpc-catalog.json
+ * (synced via pnpm sync-protocol from protocol/jsonrpc/methods.json).
+ */
+import catalog from '../../data/rpc-catalog.json';
+import SnippetTabs from './SnippetTabs.astro';
+
+interface Props {
+  /** Limit to these group ids (default: all) */
+  groups?: string[];
+  /** Show multi-lang snippets under each method */
+  showSnippets?: boolean;
+}
+
+const { groups: only, showSnippets = true } = Astro.props;
+const groupList = only
+  ? catalog.groups.filter((g) => only.includes(g.id))
+  : catalog.groups;
+
+const scopeColor: Record<string, string> = {
+  read: 'var(--docs-info)',
+  write: 'var(--docs-accent)',
+  admin: 'var(--docs-warning)',
+  worker: 'var(--docs-cap-tool)',
+  stream: 'var(--docs-cap-memory)',
+};
+---
+
+<div class="rpc-catalog">
+  <p class="rpc-catalog__meta">
+    Protocol <code>{catalog.protocol_version}</code>
+    · {catalog.method_count} methods
+    · source <code>{catalog.source}</code>
+    · generated {new Date(catalog.generated_at).toISOString().slice(0, 10)}
+  </p>
+
+  <nav class="rpc-catalog__toc" aria-label="API groups">
+    {
+      groupList.map((g) => (
+        <a href={`#group-${g.id}`}>
+          {g.label}
+          <span>{g.methods.length}</span>
+        </a>
+      ))
+    }
+  </nav>
+
+  {
+    groupList.map((group) => (
+      <section class="rpc-group" id={`group-${group.id}`}>
+        <h2 class="rpc-group__title">{group.label}</h2>
+        <div class="rpc-group__list">
+          {group.methods.map((m) => (
+            <details class="rpc-method">
+              <summary>
+                <code class="rpc-method__name">{m.method}</code>
+                <span
+                  class="rpc-method__scope"
+                  style={`--scope-color: ${scopeColor[m.scope] ?? 'var(--docs-fg-muted)'}`}
+                >
+                  {m.scope}
+                </span>
+                {m.remote && <span class="rpc-method__flag">remote</span>}
+                {m.control_plane_write && (
+                  <span class="rpc-method__flag rpc-method__flag--warn">control-plane</span>
+                )}
+              </summary>
+              <div class="rpc-method__body">
+                <div class="rpc-method__cols">
+                  <div>
+                    <h4>Params</h4>
+                    {typeof m.params === 'object' && m.params && Object.keys(m.params).length > 0 ? (
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Field</th>
+                            <th>Type</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(m.params as Record<string, string>).map(([k, v]) => (
+                            <tr>
+                              <td>
+                                <code>{k}</code>
+                              </td>
+                              <td>
+                                <code>{String(v)}</code>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <p class="rpc-method__empty">
+                        <code>{typeof m.params === 'string' ? m.params : '{}'}</code>
+                      </p>
+                    )}
+                    <h4>Result</h4>
+                    <p class="rpc-method__result">
+                      <code>{typeof m.result === 'string' ? m.result : JSON.stringify(m.result)}</code>
+                    </p>
+                  </div>
+                  {showSnippets && typeof m.params === 'object' && (
+                    <div>
+                      <h4>Sample request</h4>
+                      <SnippetTabs
+                        method={m.method}
+                        params={m.params as Record<string, string>}
+                        scope={m.scope}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </details>
+          ))}
+        </div>
+      </section>
+    ))
+  }
+</div>
+
+<style>
+  .rpc-catalog {
+    margin: var(--spacing-6) 0;
+  }
+
+  .rpc-catalog__meta {
+    font-size: 0.8125rem;
+    color: var(--docs-fg-muted);
+    margin: 0 0 var(--spacing-5);
+  }
+
+  .rpc-catalog__meta code {
+    font-size: 0.8em;
+  }
+
+  .rpc-catalog__toc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-bottom: var(--spacing-8);
+  }
+
+  .rpc-catalog__toc a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.55rem;
+    border-radius: var(--docs-radius-full);
+    border: 1px solid var(--docs-border-subtle);
+    background: var(--docs-bg-surface);
+    color: var(--docs-fg-muted);
+    text-decoration: none;
+    font-size: 0.75rem;
+    font-weight: 500;
+    transition:
+      border-color var(--docs-transition),
+      color var(--docs-transition);
+  }
+
+  .rpc-catalog__toc a span {
+    font-family: var(--docs-font-mono);
+    font-size: 0.65rem;
+    color: var(--docs-fg-subtle);
+  }
+
+  .rpc-catalog__toc a:hover {
+    color: var(--docs-fg);
+    border-color: var(--docs-border);
+  }
+
+  .rpc-group {
+    margin-bottom: var(--spacing-10);
+    scroll-margin-top: var(--docs-anchor-offset);
+  }
+
+  .rpc-group__title {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin: 0 0 var(--spacing-3);
+    letter-spacing: -0.015em;
+  }
+
+  .rpc-method {
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-lg);
+    background: var(--docs-bg-surface);
+    margin-bottom: 0.4rem;
+    overflow: hidden;
+  }
+
+  .rpc-method summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem 0.65rem;
+    padding: 0.65rem 0.85rem;
+    transition: background-color var(--docs-transition);
+  }
+
+  .rpc-method summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .rpc-method summary:hover {
+    background: color-mix(in srgb, var(--docs-bg-raised) 70%, transparent);
+  }
+
+  .rpc-method__name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--docs-fg);
+  }
+
+  .rpc-method__scope {
+    font-family: var(--docs-font-mono);
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--scope-color);
+    border: 1px solid color-mix(in srgb, var(--scope-color) 40%, transparent);
+    background: color-mix(in srgb, var(--scope-color) 12%, transparent);
+    border-radius: var(--docs-radius-sm);
+    padding: 0.1rem 0.35rem;
+  }
+
+  .rpc-method__flag {
+    font-size: 0.65rem;
+    font-family: var(--docs-font-mono);
+    color: var(--docs-fg-subtle);
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-sm);
+    padding: 0.08rem 0.3rem;
+  }
+
+  .rpc-method__flag--warn {
+    color: var(--docs-warning);
+    border-color: color-mix(in srgb, var(--docs-warning) 40%, transparent);
+  }
+
+  .rpc-method__body {
+    padding: 0 0.85rem 0.9rem;
+    border-top: 1px solid var(--docs-border-subtle);
+  }
+
+  .rpc-method__cols {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-4);
+    padding-top: var(--spacing-3);
+  }
+
+  @media (min-width: 900px) {
+    .rpc-method__cols {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+    }
+  }
+
+  .rpc-method__body h4 {
+    margin: 0 0 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--docs-fg-subtle);
+  }
+
+  .rpc-method__body table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+    margin-bottom: var(--spacing-3);
+  }
+
+  .rpc-method__body th,
+  .rpc-method__body td {
+    border: 1px solid var(--docs-border-subtle);
+    padding: 0.35rem 0.5rem;
+    text-align: left;
+  }
+
+  .rpc-method__body th {
+    background: var(--docs-bg-raised);
+    font-weight: 500;
+  }
+
+  .rpc-method__result,
+  .rpc-method__empty {
+    margin: 0 0 var(--spacing-3);
+    font-size: 0.8rem;
+  }
+
+  .rpc-method__result code,
+  .rpc-method__empty code {
+    font-size: 0.8em;
+    word-break: break-word;
+  }
+</style>
