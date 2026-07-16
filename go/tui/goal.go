@@ -18,17 +18,18 @@ type goalView struct {
 	MaxContinuations  int    `json:"max_continuations"`
 }
 type goalRPCMsg struct {
-	action  string
-	goal    *goalView
-	cleared bool
-	err     error
+	sessionID string
+	action    string
+	goal      *goalView
+	cleared   bool
+	err       error
 }
 
 func (m *Model) goalCall(action, method string, params map[string]any) tea.Cmd {
 	call, sid := m.call, m.sessionID
 	return func() tea.Msg {
 		if call == nil {
-			return goalRPCMsg{action: action, err: errors.New("daemon not connected")}
+			return goalRPCMsg{sessionID: sid, action: action, err: errors.New("daemon not connected")}
 		}
 		params["session_id"] = sid
 		if method == "goal.get" {
@@ -36,23 +37,23 @@ func (m *Model) goalCall(action, method string, params map[string]any) tea.Cmd {
 				Goal *goalView `json:"goal"`
 			}
 			err := call.Call(method, params, &out)
-			return goalRPCMsg{action: action, goal: out.Goal, err: err}
+			return goalRPCMsg{sessionID: sid, action: action, goal: out.Goal, err: err}
 		}
 		if method == "goal.clear" {
 			var out struct {
 				Cleared bool `json:"cleared"`
 			}
 			err := call.Call(method, params, &out)
-			return goalRPCMsg{action: action, cleared: out.Cleared, err: err}
+			return goalRPCMsg{sessionID: sid, action: action, cleared: out.Cleared, err: err}
 		}
 		if method == "goal.continue" {
 			var out map[string]any
 			err := call.Call(method, params, &out)
-			return goalRPCMsg{action: action, goal: m.goal, err: err}
+			return goalRPCMsg{sessionID: sid, action: action, goal: m.goal, err: err}
 		}
 		var out goalView
 		err := call.Call(method, params, &out)
-		return goalRPCMsg{action: action, goal: &out, err: err}
+		return goalRPCMsg{sessionID: sid, action: action, goal: &out, err: err}
 	}
 }
 func (m *Model) goalCommand(args []string) tea.Cmd {

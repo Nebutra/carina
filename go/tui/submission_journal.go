@@ -28,15 +28,16 @@ type submissionJournal struct {
 }
 
 type submissionJournalRecord struct {
-	Version   int         `json:"version"`
-	SessionID string      `json:"session_id"`
-	ClientID  string      `json:"client_submission_id"`
-	Prompt    string      `json:"prompt"`
-	Draft     promptDraft `json:"draft"`
-	Model     string      `json:"model,omitempty"`
-	Agent     string      `json:"agent,omitempty"`
-	Mode      string      `json:"mode,omitempty"`
-	Workspace string      `json:"workspace_root,omitempty"`
+	Version         int         `json:"version"`
+	SessionID       string      `json:"session_id"`
+	ClientID        string      `json:"client_submission_id"`
+	Prompt          string      `json:"prompt"`
+	Draft           promptDraft `json:"draft"`
+	Model           string      `json:"model,omitempty"`
+	Agent           string      `json:"agent,omitempty"`
+	Mode            string      `json:"mode,omitempty"`
+	ReasoningEffort string      `json:"reasoning_effort,omitempty"`
+	Workspace       string      `json:"workspace_root,omitempty"`
 }
 
 func newSubmissionJournal(stateDir, workspaceRoot string) submissionJournal {
@@ -85,6 +86,32 @@ func (j *submissionJournal) acquire(sessionID string) error {
 	return nil
 }
 
+// transfer acquires the destination lock before releasing the current lock,
+// so a failed switch cannot leave the TUI owning neither session.
+func (j *submissionJournal) transfer(sessionID string) error {
+	if j.dir == "" || sessionID == "" || j.leaseSession == sessionID {
+		return nil
+	}
+	if err := os.MkdirAll(j.dir, 0o700); err != nil {
+		return err
+	}
+	lease, err := os.OpenFile(j.lockPath(sessionID), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := syscall.Flock(int(lease.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = lease.Close()
+		return fmt.Errorf("another TUI owns submissions for session %s", sessionID)
+	}
+	old := j.lease
+	j.lease, j.leaseSession = lease, sessionID
+	if old != nil {
+		_ = syscall.Flock(int(old.Fd()), syscall.LOCK_UN)
+		_ = old.Close()
+	}
+	return nil
+}
+
 func (j *submissionJournal) close() {
 	if j.lease == nil {
 		return
@@ -111,7 +138,7 @@ func (j submissionJournal) save(sessionID string, retry submissionRetry) error {
 	record := submissionJournalRecord{
 		Version: submissionJournalVersion, SessionID: sessionID,
 		ClientID: retry.clientID, Prompt: retry.prompt, Draft: cloneDraft(retry.draft),
-		Model: retry.model, Agent: retry.agent, Mode: retry.mode,
+		Model: retry.model, Agent: retry.agent, Mode: retry.mode, ReasoningEffort: retry.reasoningEffort,
 		Workspace: j.workspaceRoot,
 	}
 	raw, err := json.MarshalIndent(record, "", "  ")
@@ -170,7 +197,7 @@ func (j submissionJournal) load(sessionID string) (submissionRetry, bool, error)
 	}
 	return submissionRetry{
 		clientID: record.ClientID, prompt: record.Prompt, draft: cloneDraft(record.Draft),
-		model: record.Model, agent: record.Agent, mode: record.Mode,
+		model: record.Model, agent: record.Agent, mode: record.Mode, reasoningEffort: record.ReasoningEffort,
 	}, true, nil
 }
 

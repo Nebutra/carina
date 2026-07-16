@@ -20,12 +20,13 @@ type externalEditorSession struct {
 }
 
 type transcriptPagerState struct {
-	generation int
-	scroll     int
-	text       string
-	title      string
-	loading    bool
-	err        string
+	generation  int
+	scroll      int
+	text        string
+	title       string
+	loadingText string
+	loading     bool
+	err         string
 }
 
 // handleWorkspaceKey owns focused composer actions. Global actions stay in
@@ -187,7 +188,10 @@ func (m *Model) transcriptPagerLines() []string {
 	}
 	text := m.transcriptPager.text
 	if m.transcriptPager.loading {
-		text = m.text(MsgCanonicalLoading, nil)
+		text = m.transcriptPager.loadingText
+		if text == "" {
+			text = m.text(MsgCanonicalLoading, nil)
+		}
 	} else if m.transcriptPager.err != "" {
 		text = m.text(MsgCanonicalUnavailable, MessageArgs{"error": m.transcriptPager.err})
 	} else if text == "" && m.transcriptPager.generation > 0 {

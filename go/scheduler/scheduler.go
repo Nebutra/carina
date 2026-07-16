@@ -33,6 +33,8 @@ type Task struct {
 	Model                       string          `json:"model,omitempty"` // provider/model override; empty => daemon default
 	RequestedModel              string          `json:"requested_model,omitempty"`
 	EffectiveModel              string          `json:"effective_model,omitempty"`
+	RequestedReasoningEffort    string          `json:"requested_reasoning_effort,omitempty"`
+	EffectiveReasoningEffort    string          `json:"effective_reasoning_effort,omitempty"`
 	Agent                       string          `json:"agent,omitempty"` // agent mode/persona override; empty => build/default
 	SuccessCriteria             []SuccessCheck  `json:"success_criteria,omitempty"`
 	CreatedAt                   time.Time       `json:"created_at"`
@@ -130,6 +132,18 @@ func (s *Scheduler) SetModelState(taskID, requested, effective string) {
 		updated := *task
 		updated.RequestedModel = requested
 		updated.EffectiveModel = effective
+		updated.UpdatedAt = time.Now().UTC()
+		s.tasks[taskID] = &updated
+	}
+}
+
+func (s *Scheduler) SetReasoningEffortState(taskID, requested, effective string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if task := s.tasks[taskID]; task != nil {
+		updated := *task
+		updated.RequestedReasoningEffort = requested
+		updated.EffectiveReasoningEffort = effective
 		updated.UpdatedAt = time.Now().UTC()
 		s.tasks[taskID] = &updated
 	}

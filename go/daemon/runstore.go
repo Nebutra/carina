@@ -51,7 +51,9 @@ type restoreJournal struct {
 func newRunStore(stateDir string) *runStore {
 	dir := filepath.Join(stateDir, "runs")
 	_ = os.MkdirAll(dir, 0o700)
-	return &runStore{dir: dir}
+	r := &runStore{dir: dir}
+	r.recoverCompactJournals()
+	return r
 }
 
 // save atomically writes a task record (temp + rename).

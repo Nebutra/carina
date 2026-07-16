@@ -48,6 +48,19 @@ type NamespacedTool struct {
 	Description string `json:"description"`
 }
 
+// InventoryServer is a deliberately secret-free operator snapshot. It never
+// includes process argv, environment, schemas, or private managed servers.
+type InventoryServer struct {
+	Name    string          `json:"name"`
+	Health  string          `json:"health"`
+	Tools   []InventoryTool `json:"tools"`
+	Prompts int             `json:"prompts"`
+}
+type InventoryTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
 // Prompt mirrors an MCP prompt definition from prompts/list.
 type Prompt struct {
 	Server      string           `json:"server,omitempty"`
@@ -364,10 +377,11 @@ type Manager struct {
 	mu      sync.Mutex
 	clients map[string]*Client
 	hidden  map[string]bool
+	failed  map[string]bool
 }
 
 func NewManager() *Manager {
-	return &Manager{clients: make(map[string]*Client), hidden: make(map[string]bool)}
+	return &Manager{clients: make(map[string]*Client), hidden: make(map[string]bool), failed: make(map[string]bool)}
 }
 
 // Connect starts one MCP server and registers it under name, replacing any
@@ -391,6 +405,10 @@ func (m *Manager) connect(name string, srv Server, hidden bool) error {
 	}
 	c := newClient(name, srv)
 	if err := c.connect(); err != nil {
+		m.mu.Lock()
+		m.failed[name] = true
+		m.hidden[name] = hidden
+		m.mu.Unlock()
 		return err
 	}
 	m.mu.Lock()
@@ -399,6 +417,7 @@ func (m *Manager) connect(name string, srv Server, hidden bool) error {
 	}
 	m.clients[name] = c
 	m.hidden[name] = hidden
+	delete(m.failed, name)
 	m.mu.Unlock()
 	return nil
 }
@@ -414,6 +433,7 @@ func (m *Manager) Disconnect(name string) {
 	c := m.clients[name]
 	delete(m.clients, name)
 	delete(m.hidden, name)
+	delete(m.failed, name)
 	m.mu.Unlock()
 	if c != nil {
 		c.close()
@@ -593,6 +613,40 @@ func (m *Manager) Servers() []string {
 	return out
 }
 
+func (m *Manager) Inventory(verbose bool) []InventoryServer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]InventoryServer, 0, len(m.clients))
+	for name, c := range m.clients {
+		if m.hidden[name] {
+			continue
+		}
+		c.mu.Lock()
+		row := InventoryServer{Name: name, Health: "connected", Tools: make([]InventoryTool, 0, len(c.tools)), Prompts: len(c.prompts)}
+		if c.closed || c.cmd == nil || c.cmd.ProcessState != nil {
+			row.Health = "disconnected"
+		}
+		for _, tool := range c.tools {
+			item := InventoryTool{Name: tool.Name}
+			if verbose {
+				item.Description = tool.Description
+			}
+			row.Tools = append(row.Tools, item)
+		}
+		c.mu.Unlock()
+		sort.Slice(row.Tools, func(i, j int) bool { return row.Tools[i].Name < row.Tools[j].Name })
+		out = append(out, row)
+	}
+	for name := range m.failed {
+		if m.hidden[name] || m.clients[name] != nil {
+			continue
+		}
+		out = append(out, InventoryServer{Name: name, Health: "disconnected", Tools: []InventoryTool{}})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -600,4 +654,5 @@ func (m *Manager) Close() {
 		c.close()
 	}
 	m.clients = map[string]*Client{}
+	m.failed = map[string]bool{}
 }

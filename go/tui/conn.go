@@ -4,12 +4,80 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Nebutra/carina/go/rpc"
 )
+
+// ConnectionController owns the mutable target of one TUI connection loop.
+// Switching closes the current stream to interrupt ReadNotification; the loop
+// then reconnects at cursor zero with fresh reconciliation trackers.
+type ConnectionController struct {
+	mu         sync.Mutex
+	target     string
+	generation uint64
+	stream     *rpc.Client
+}
+
+func NewConnectionController() *ConnectionController { return &ConnectionController{} }
+
+func (c *ConnectionController) Switch(sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("session id is required")
+	}
+	c.mu.Lock()
+	if c.target == sessionID {
+		c.mu.Unlock()
+		return nil
+	}
+	c.target = sessionID
+	c.generation++
+	stream := c.stream
+	c.mu.Unlock()
+	if stream != nil {
+		_ = stream.Close()
+	}
+	return nil
+}
+
+func (c *ConnectionController) state(initial string) (string, uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.target == "" {
+		c.target = initial
+		if c.generation == 0 {
+			c.generation = 1
+		}
+	}
+	return c.target, c.generation
+}
+
+func (c *ConnectionController) bind(stream *rpc.Client) {
+	c.mu.Lock()
+	c.stream = stream
+	c.mu.Unlock()
+}
+
+func (c *ConnectionController) adoptCreated(sessionID string) {
+	c.mu.Lock()
+	if c.target == "" {
+		c.target = sessionID
+	}
+	c.mu.Unlock()
+}
+
+func (c *ConnectionController) unbind(stream *rpc.Client) {
+	c.mu.Lock()
+	if c.stream == stream {
+		c.stream = nil
+	}
+	c.mu.Unlock()
+}
 
 // Sender delivers messages into the running program from goroutines.
 // *tea.Program satisfies it.
@@ -104,13 +172,13 @@ func (t *questionTracker) forwardTransient(ev map[string]any) bool {
 	return true
 }
 
-func (t *questionTracker) flush(p Sender) {
+func (t *questionTracker) flush(p Sender, sessionID string, generation uint64) {
 	for _, questionID := range t.pendingID {
 		request, ok := t.pending[questionID]
 		if !ok || t.opened[questionID] || t.resolved[questionID] {
 			continue
 		}
-		p.Send(EventMsg{Raw: request})
+		p.Send(EventMsg{SessionID: sessionID, Generation: generation, Raw: request})
 		t.opened[questionID] = true
 	}
 	t.pendingID = t.pendingID[:0]
@@ -190,13 +258,13 @@ func (t *permissionTracker) forwardTransient(ev map[string]any) bool {
 	return true
 }
 
-func (t *permissionTracker) flush(p Sender) {
+func (t *permissionTracker) flush(p Sender, sessionID string, generation uint64) {
 	for _, decisionID := range t.pendingID {
 		request, ok := t.pending[decisionID]
 		if !ok || t.opened[decisionID] || t.resolved[decisionID] {
 			continue
 		}
-		p.Send(EventMsg{Raw: request})
+		p.Send(EventMsg{SessionID: sessionID, Generation: generation, Raw: request})
 		t.opened[decisionID] = true
 	}
 	t.pendingID = t.pendingID[:0]
@@ -324,14 +392,14 @@ func (t *completionTracker) forwardTransient(ev map[string]any) bool {
 	return true
 }
 
-func (t *completionTracker) flush(p Sender) {
+func (t *completionTracker) flush(p Sender, sessionID string, generation uint64) {
 	for _, taskID := range t.pendingID {
 		ev, ok := t.pending[taskID]
 		if !ok {
 			continue
 		}
 		if !t.delivered[taskID] {
-			p.Send(EventMsg{Raw: ev})
+			p.Send(EventMsg{SessionID: sessionID, Generation: generation, Raw: ev})
 			t.delivered[taskID] = true
 		}
 		delete(t.pending, taskID)
@@ -392,23 +460,38 @@ func backoff(attempt int) time.Duration {
 // events are forwarded directly. Every failure surfaces as a message (degrade
 // banner); reconnects are attempted forever with visible attempt counts.
 func Connect(p Sender, socket, sessionID, workspaceRoot string) {
+	ConnectControlled(p, socket, sessionID, workspaceRoot, NewConnectionController())
+}
+
+func ConnectControlled(p Sender, socket, sessionID, workspaceRoot string, controller *ConnectionController) {
 	go func() {
-		sid := sessionID
+		if controller == nil {
+			controller = NewConnectionController()
+		}
+		sid, generation := controller.state(sessionID)
 		cursor := 0
 		connectedOnce := false
 		completions := newCompletionTracker()
 		permissions := newPermissionTracker()
 		questions := newQuestionTracker()
 		for attempt := 0; ; attempt++ {
+			desired, desiredGeneration := controller.state(sessionID)
+			if desired != sid || desiredGeneration != generation {
+				sid, generation, cursor, connectedOnce = desired, desiredGeneration, 0, false
+				completions = newCompletionTracker()
+				permissions = newPermissionTracker()
+				questions = newQuestionTracker()
+				attempt = 0
+			}
 			if attempt > 0 {
-				p.Send(ReconnectingMsg{Attempt: attempt})
+				p.Send(ReconnectingMsg{SessionID: sid, Generation: generation, Attempt: attempt})
 				time.Sleep(backoff(attempt))
 			}
 
 			call, err := rpc.Dial(socket)
 			if err != nil {
 				if attempt == 0 {
-					p.Send(ConnLostMsg{Err: err})
+					p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: err})
 				}
 				continue
 			}
@@ -425,10 +508,11 @@ func Connect(p Sender, socket, sessionID, workspaceRoot string) {
 					"profile":        "safe-edit",
 				}, &out); err != nil {
 					call.Close()
-					p.Send(ConnLostMsg{Err: err})
+					p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: err})
 					continue
 				}
 				sid = out.SessionID
+				controller.adoptCreated(sid)
 			}
 
 			// Pull before subscribing so a resumed session renders its history.
@@ -437,7 +521,7 @@ func Connect(p Sender, socket, sessionID, workspaceRoot string) {
 			initial, err := pullSessionEvents(call, sid, cursor)
 			if err != nil {
 				call.Close()
-				p.Send(ConnLostMsg{Err: fmt.Errorf("session attach: %w", err)})
+				p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: fmt.Errorf("session attach: %w", err)})
 				continue
 			}
 			cursor = initial.Cursor
@@ -445,13 +529,15 @@ func Connect(p Sender, socket, sessionID, workspaceRoot string) {
 			stream, err := rpc.Dial(socket)
 			if err != nil {
 				call.Close()
-				p.Send(ConnLostMsg{Err: err})
+				p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: err})
 				continue
 			}
+			controller.bind(stream)
 			if err := stream.Call("session.events.stream", map[string]any{"session_id": sid}, nil); err != nil {
 				call.Close()
 				stream.Close()
-				p.Send(ConnLostMsg{Err: err})
+				controller.unbind(stream)
+				p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: err})
 				continue
 			}
 
@@ -463,43 +549,48 @@ func Connect(p Sender, socket, sessionID, workspaceRoot string) {
 			if err != nil {
 				call.Close()
 				stream.Close()
-				p.Send(ConnLostMsg{Err: fmt.Errorf("session attach after subscribe: %w", err)})
+				p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: fmt.Errorf("session attach after subscribe: %w", err)})
 				continue
 			}
 			cursor = gap.Cursor
 
 			if attempt > 0 {
-				p.Send(ConnRestoredMsg{SessionID: sid})
+				p.Send(ConnRestoredMsg{SessionID: sid, Generation: generation})
 			}
-			p.Send(SessionReadyMsg{SessionID: sid, Call: call})
+			p.Send(SessionReadyMsg{SessionID: sid, Generation: generation, Call: call})
 			for _, ev := range initial.Events {
-				p.Send(EventMsg{Raw: ev})
+				p.Send(EventMsg{SessionID: sid, Generation: generation, Raw: ev})
 				completions.observeAudit(ev, connectedOnce)
 				permissions.observeAudit(ev)
 				questions.observeAudit(ev)
 			}
 			for _, ev := range gap.Events {
-				p.Send(EventMsg{Raw: ev})
+				p.Send(EventMsg{SessionID: sid, Generation: generation, Raw: ev})
 				completions.observeAudit(ev, connectedOnce)
 				permissions.observeAudit(ev)
 				questions.observeAudit(ev)
 			}
 			if activeTaskID := completions.reconcile(call, sid, connectedOnce); activeTaskID != "" {
-				p.Send(TaskActiveMsg{TaskID: activeTaskID})
+				p.Send(TaskActiveMsg{SessionID: sid, Generation: generation, TaskID: activeTaskID})
 			}
 			if connectedOnce {
-				completions.flush(p)
+				completions.flush(p, sid, generation)
 			}
-			permissions.flush(p)
+			permissions.flush(p, sid, generation)
 			questions.reconcile(call)
-			questions.flush(p)
+			questions.flush(p, sid, generation)
 			connectedOnce = true
 			attempt = 0 // healthy link resets the retry budget
 
 			for {
 				method, params, err := stream.ReadNotification()
 				if err != nil {
-					p.Send(ConnLostMsg{Err: fmt.Errorf("event stream closed: %w", err)})
+					desired, desiredGeneration := controller.state(sessionID)
+					if desired != sid || desiredGeneration != generation {
+						attempt = -1
+					} else {
+						p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: fmt.Errorf("event stream closed: %w", err)})
+					}
 					break
 				}
 				if method != "event" {
@@ -509,18 +600,18 @@ func Connect(p Sender, socket, sessionID, workspaceRoot string) {
 				if json.Unmarshal(params, &ev) == nil {
 					if !durableStreamEvent(ev) {
 						if permissions.forwardTransient(ev) && questions.forwardTransient(ev) && completions.forwardTransient(ev) {
-							p.Send(EventMsg{Raw: ev})
+							p.Send(EventMsg{SessionID: sid, Generation: generation, Raw: ev})
 						}
 						continue
 					}
 					batch, attachErr := pullSessionEvents(call, sid, cursor)
 					if attachErr != nil {
-						p.Send(ConnLostMsg{Err: fmt.Errorf("session attach after event: %w", attachErr)})
+						p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: fmt.Errorf("session attach after event: %w", attachErr)})
 						break
 					}
 					cursor = batch.Cursor
 					for _, replayed := range batch.Events {
-						p.Send(EventMsg{Raw: replayed})
+						p.Send(EventMsg{SessionID: sid, Generation: generation, Raw: replayed})
 						completions.observeAudit(replayed, true)
 						permissions.observeAudit(replayed)
 						questions.observeAudit(replayed)
@@ -528,6 +619,7 @@ func Connect(p Sender, socket, sessionID, workspaceRoot string) {
 				}
 			}
 			call.Close()
+			controller.unbind(stream)
 			stream.Close()
 		}
 	}()

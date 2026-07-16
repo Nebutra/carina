@@ -14,6 +14,8 @@
     "model": { "type": "string" },
     "requested_model": { "type": "string" },
     "effective_model": { "type": "string" },
+    "requested_reasoning_effort": { "type": "string" },
+    "effective_reasoning_effort": { "type": "string" },
     "agent": { "type": "string" },
     "created_at": { "type": "string", "format": "date-time" },
     "updated_at": { "type": "string", "format": "date-time" },

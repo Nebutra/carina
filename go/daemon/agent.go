@@ -170,7 +170,7 @@ func (d *Daemon) runTaskContext(ctx context.Context, sess *sessionstore.Session,
 	}
 
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
-		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "agent": taskAgent(task), "prompt": task.UserPrompt}, "")
+		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "reasoning_effort": task.EffectiveReasoningEffort, "agent": taskAgent(task), "prompt": task.UserPrompt}, "")
 	tr := newTranscript(task.UserPrompt)
 	memorySnapshot := d.memory.snapshot(memoryScopeFromSession(sess))
 	if sess.ForkedFromTaskID != "" {
@@ -218,7 +218,7 @@ func (d *Daemon) resumeTaskContext(ctx context.Context, sess *sessionstore.Sessi
 		return
 	}
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
-		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "agent": taskAgent(task), "prompt": task.UserPrompt, "resumed_from_turn": cp.Turn}, "")
+		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "reasoning_effort": task.EffectiveReasoningEffort, "agent": taskAgent(task), "prompt": task.UserPrompt, "resumed_from_turn": cp.Turn}, "")
 	d.runLoopContext(ctx, sess, task, cp.Transcript, cp.Turn+1, cp.MemorySnapshot)
 }
 
@@ -375,6 +375,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			evidenceID := routingEvidenceID(task.TaskID, turn, requery, promptHash)
 			d.record(sess.SessionID, "RoutingDecision", task.TaskID, "go", map[string]any{
 				"turn": turn, "requery": requery, "requested_model": requestedModel,
+				"requested_reasoning_effort": task.RequestedReasoningEffort, "effective_reasoning_effort": task.EffectiveReasoningEffort,
 				"reasoner": d.reasoner.Name(), "policy": "explicit_or_default",
 				"input_tokens_estimated": estimateTokens(prompt),
 				"evidence_id":            evidenceID,
@@ -401,6 +402,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			if d.retryGovernance != nil {
 				reasonerCtx = withRetryGovernance(reasonerCtx, d.retryGovernance, governanceProvider)
 			}
+			reasonerCtx = withReasoningEffort(reasonerCtx, task.EffectiveReasoningEffort)
 			if requery == 0 {
 				result, err = thinkWithRetryModelSegments(reasonerCtx, d.reasoner, task.Model, seg)
 			} else {
@@ -427,6 +429,8 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				outcome["cache_read_tokens"] = result.Usage.CacheReadTokens
 				outcome["cache_write_tokens"] = result.Usage.CacheWriteTokens
 				outcome["usage_estimated"] = result.Usage.Estimated
+				outcome["requested_reasoning_effort"] = task.RequestedReasoningEffort
+				outcome["effective_reasoning_effort"] = result.Usage.EffectiveReasoningEffort
 				outcome["response_sha256"] = sha256Hex(raw)
 				if effective := effectiveModelName(result.Usage); effective != "" {
 					d.sched.SetEffectiveModel(task.TaskID, effective)
@@ -1567,8 +1571,8 @@ func (d *Daemon) runMockTaskContext(ctx context.Context, sess *sessionstore.Sess
 		}
 	}
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
-		map[string]any{"prompt": task.UserPrompt, "model": taskModel(task)}, "")
-	resp, err := d.router.Complete(ctx, modelrouter.Request{Model: taskModel(task), Prompt: task.UserPrompt})
+		map[string]any{"prompt": task.UserPrompt, "model": taskModel(task), "reasoning_effort": task.EffectiveReasoningEffort}, "")
+	resp, err := d.router.Complete(ctx, modelrouter.Request{Model: taskModel(task), Prompt: task.UserPrompt, ReasoningEffort: task.EffectiveReasoningEffort})
 	if err != nil {
 		d.sched.SetStatus(task.TaskID, "failed")
 		d.record(sess.SessionID, "ModelResponded", task.TaskID, "model", map[string]any{"error": err.Error()}, "")

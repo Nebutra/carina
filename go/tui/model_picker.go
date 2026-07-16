@@ -12,11 +12,13 @@ import (
 )
 
 type modelListModel struct {
-	ID               string            `json:"id"`
-	Name             string            `json:"name"`
-	Available        bool              `json:"available"`
-	Reasoning        bool              `json:"reasoning"`
-	ReasoningOptions []json.RawMessage `json:"reasoning_options"`
+	ID                     string            `json:"id"`
+	Name                   string            `json:"name"`
+	Available              bool              `json:"available"`
+	Reasoning              bool              `json:"reasoning"`
+	ReasoningOptions       []json.RawMessage `json:"reasoning_options"`
+	ReasoningEfforts       []string          `json:"reasoning_efforts"`
+	DefaultReasoningEffort string            `json:"default_reasoning_effort"`
 }
 
 type modelListProvider struct {
@@ -36,9 +38,12 @@ type modelListResponse struct {
 }
 
 type modelPickerItem struct {
-	ID       string
-	Name     string
-	Provider string
+	ID                     string
+	Name                   string
+	Provider               string
+	ReasoningEfforts       []string
+	DefaultReasoningEffort string
+	ReasoningEffort        string
 }
 
 type modelPickerState struct {
@@ -57,33 +62,37 @@ type modelListMsg struct {
 }
 
 type modelPreferenceMsg struct {
-	loaded   bool
-	previous string
-	model    string
-	err      error
+	loaded         bool
+	previous       string
+	model          string
+	previousEffort string
+	effort         string
+	err            error
 }
 
 func loadSessionModel(call Caller, sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		var out struct {
-			NextModel string `json:"next_model"`
+			NextModel           string `json:"next_model"`
+			NextReasoningEffort string `json:"next_reasoning_effort"`
 		}
 		err := call.Call("session.model.get", map[string]any{"session_id": sessionID}, &out)
-		return modelPreferenceMsg{loaded: true, model: out.NextModel, err: err}
+		return modelPreferenceMsg{loaded: true, model: out.NextModel, effort: out.NextReasoningEffort, err: err}
 	}
 }
 
-func (m *Model) persistSessionModel(previous, model string) tea.Cmd {
+func (m *Model) persistSessionModel(previous, previousEffort, model, effort string) tea.Cmd {
 	call, sessionID := m.call, m.sessionID
 	return func() tea.Msg {
 		if call == nil {
 			return modelPreferenceMsg{previous: previous, model: model, err: fmt.Errorf("daemon not connected")}
 		}
 		var out struct {
-			NextModel string `json:"next_model"`
+			NextModel           string `json:"next_model"`
+			NextReasoningEffort string `json:"next_reasoning_effort"`
 		}
-		err := call.Call("session.model.set", map[string]any{"session_id": sessionID, "model": model}, &out)
-		return modelPreferenceMsg{previous: previous, model: model, err: err}
+		err := call.Call("session.model.set", map[string]any{"session_id": sessionID, "model": model, "reasoning_effort": effort}, &out)
+		return modelPreferenceMsg{previous: previous, previousEffort: previousEffort, model: model, effort: effort, err: err}
 	}
 }
 
@@ -91,6 +100,7 @@ func (m *Model) handleModelPreference(msg modelPreferenceMsg) {
 	if msg.loaded {
 		if msg.err == nil && !m.modelPinned {
 			m.model = strings.TrimSpace(msg.model)
+			m.reasoningEffort = strings.TrimSpace(msg.effort)
 			m.layout()
 		}
 		return
@@ -98,6 +108,7 @@ func (m *Model) handleModelPreference(msg modelPreferenceMsg) {
 	if msg.err != nil {
 		if m.model == msg.model {
 			m.model = msg.previous
+			m.reasoningEffort = msg.previousEffort
 		}
 		m.push(m.text(MsgModelPickerFailed, MessageArgs{"error": msg.err.Error()}))
 		m.layout()
@@ -142,7 +153,7 @@ func (m *Model) handleModelList(msg modelListMsg) {
 		}
 		for _, model := range provider.Models {
 			if model.Available {
-				state.items = append(state.items, modelPickerItem{ID: model.ID, Name: model.Name, Provider: provider.Name})
+				state.items = append(state.items, modelPickerItem{ID: model.ID, Name: model.Name, Provider: provider.Name, ReasoningEfforts: model.ReasoningEfforts, DefaultReasoningEffort: model.DefaultReasoningEffort})
 			}
 		}
 		if provider.DynamicModels && len(provider.Models) == 0 && strings.TrimSpace(provider.DefaultModel) != "" {
@@ -160,6 +171,7 @@ func (m *Model) handleModelList(msg modelListMsg) {
 	for i := range state.items {
 		if state.items[i].ID == current {
 			state.selected = i
+			state.items[i].ReasoningEffort = m.reasoningEffort
 			break
 		}
 	}
@@ -201,6 +213,24 @@ func (m *Model) modelPickerKey(key string) (tea.Cmd, bool) {
 		if !state.loading && len(state.items) > 0 {
 			state.selected = (state.selected + 1) % len(state.items)
 		}
+	case "e":
+		if !state.loading && len(state.items) > 0 {
+			item := &state.items[state.selected]
+			if len(item.ReasoningEfforts) > 0 {
+				current := item.ReasoningEffort
+				if current == "" {
+					current = item.DefaultReasoningEffort
+				}
+				next := 0
+				for i, option := range item.ReasoningEfforts {
+					if option == current {
+						next = (i + 1) % len(item.ReasoningEfforts)
+						break
+					}
+				}
+				item.ReasoningEffort = item.ReasoningEfforts[next]
+			}
+		}
 	case "pgup":
 		state.selected -= m.modelPickerPageHeight()
 	case "pgdown":
@@ -215,15 +245,21 @@ func (m *Model) modelPickerKey(key string) (tea.Cmd, bool) {
 		}
 		selected := state.items[state.selected].ID
 		previous := m.model
+		previousEffort := m.reasoningEffort
+		selectedEffort := state.items[state.selected].ReasoningEffort
+		if selectedEffort == "" && len(state.items[state.selected].ReasoningEfforts) > 0 {
+			selectedEffort = state.items[state.selected].DefaultReasoningEffort
+		}
 		if selected == "default" {
 			m.model = ""
 		} else {
 			m.model = selected
 		}
+		m.reasoningEffort = selectedEffort
 		m.modelPicker = nil
 		m.push(m.text(MsgUpdateModelChanged, MessageArgs{"model": selected}))
 		m.layout()
-		return tea.Batch(m.resumeQueuedAfterTransient(), m.persistSessionModel(previous, m.model)), true
+		return tea.Batch(m.resumeQueuedAfterTransient(), m.persistSessionModel(previous, previousEffort, m.model, m.reasoningEffort)), true
 	}
 	state.clamp(m.modelPickerPageHeight())
 	return nil, true
@@ -267,6 +303,11 @@ func (m *Model) modelPickerView() string {
 				prefix = "> "
 			}
 			label := item.ID
+			if effort := item.ReasoningEffort; effort != "" {
+				label += " [effort: " + effort + "]"
+			} else if item.DefaultReasoningEffort != "" {
+				label += " [effort: " + item.DefaultReasoningEffort + "]"
+			}
 			if width >= 28 && strings.TrimSpace(item.Name) != "" {
 				label += "  " + item.Name
 			}

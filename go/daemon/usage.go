@@ -24,13 +24,14 @@ const usageStoreVersion = 1
 // excludes cache hits; cache reads and writes are kept separate so costs are
 // not double-counted across provider-specific response formats.
 type ModelUsage struct {
-	Provider         string `json:"provider"`
-	Model            string `json:"model"`
-	InputTokens      int    `json:"input_tokens"`
-	OutputTokens     int    `json:"output_tokens"`
-	CacheReadTokens  int    `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int    `json:"cache_write_tokens,omitempty"`
-	Estimated        bool   `json:"estimated"`
+	Provider                 string `json:"provider"`
+	Model                    string `json:"model"`
+	InputTokens              int    `json:"input_tokens"`
+	OutputTokens             int    `json:"output_tokens"`
+	CacheReadTokens          int    `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens         int    `json:"cache_write_tokens,omitempty"`
+	Estimated                bool   `json:"estimated"`
+	EffectiveReasoningEffort string `json:"effective_reasoning_effort,omitempty"`
 }
 
 func (u ModelUsage) totalTokens() int {
@@ -84,6 +85,7 @@ func (s *usageStore) record(sessionID, taskID string, usage ModelUsage) error {
 	}
 	usage.Provider = strings.TrimSpace(usage.Provider)
 	usage.Model = strings.TrimSpace(usage.Model)
+	usage.EffectiveReasoningEffort = normalizeReasoningEffort(usage.EffectiveReasoningEffort)
 	if usage.Provider == "" {
 		usage.Provider = "unknown"
 	}
@@ -97,10 +99,10 @@ func (s *usageStore) record(sessionID, taskID string, usage ModelUsage) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := usageKey(sessionID, taskID, usage.Provider, usage.Model)
+	key := usageKey(sessionID, taskID, usage.Provider, usage.Model+"\x00"+usage.EffectiveReasoningEffort)
 	record := s.records[key]
 	if record == nil {
-		record = &usageAggregate{SessionID: sessionID, TaskID: taskID, ModelUsage: ModelUsage{Provider: usage.Provider, Model: usage.Model}}
+		record = &usageAggregate{SessionID: sessionID, TaskID: taskID, ModelUsage: ModelUsage{Provider: usage.Provider, Model: usage.Model, EffectiveReasoningEffort: usage.EffectiveReasoningEffort}}
 		s.records[key] = record
 	}
 	record.Requests++
@@ -145,16 +147,17 @@ func (s *usageStore) persistLocked() error {
 }
 
 type usageCostRow struct {
-	Provider         string  `json:"provider"`
-	Model            string  `json:"model"`
-	Requests         int     `json:"requests"`
-	InputTokens      int     `json:"input_tokens"`
-	OutputTokens     int     `json:"output_tokens"`
-	CacheReadTokens  int     `json:"cache_read_tokens"`
-	CacheWriteTokens int     `json:"cache_write_tokens"`
-	CostUSD          float64 `json:"cost_usd"`
-	PricingKnown     bool    `json:"pricing_known"`
-	Estimated        bool    `json:"estimated"`
+	Provider                 string  `json:"provider"`
+	Model                    string  `json:"model"`
+	Requests                 int     `json:"requests"`
+	InputTokens              int     `json:"input_tokens"`
+	OutputTokens             int     `json:"output_tokens"`
+	CacheReadTokens          int     `json:"cache_read_tokens"`
+	CacheWriteTokens         int     `json:"cache_write_tokens"`
+	CostUSD                  float64 `json:"cost_usd"`
+	PricingKnown             bool    `json:"pricing_known"`
+	Estimated                bool    `json:"estimated"`
+	EffectiveReasoningEffort string  `json:"effective_reasoning_effort,omitempty"`
 }
 
 type usageCostTotals struct {
@@ -181,10 +184,10 @@ func (s *usageStore) costs(sessionID, taskID string, catalog provider.Catalog) u
 			if sessionID != "" && record.SessionID != sessionID || taskID != "" && record.TaskID != taskID {
 				continue
 			}
-			key := usageKey("", "", record.Provider, record.Model)
+			key := usageKey("", "", record.Provider, record.Model+"\x00"+record.EffectiveReasoningEffort)
 			row := grouped[key]
 			if row == nil {
-				row = &usageCostRow{Provider: record.Provider, Model: record.Model, PricingKnown: true}
+				row = &usageCostRow{Provider: record.Provider, Model: record.Model, EffectiveReasoningEffort: record.EffectiveReasoningEffort, PricingKnown: true}
 				grouped[key] = row
 			}
 			row.Requests += record.Requests

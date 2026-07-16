@@ -90,6 +90,14 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 	}
 	mergeRawBody(bodyMap, a.body)
 	mergeRawBody(bodyMap, override.Body)
+	effectiveEffort, err := validateReasoningEffort(nativeReasoningEffortSpec(a.id, model), req.ReasoningEffort)
+	if err != nil {
+		return nil, fmt.Errorf("%s/%s: %w", a.id, model, err)
+	}
+	if effectiveEffort != "" {
+		bodyMap["thinking"] = map[string]any{"type": "adaptive"}
+		bodyMap["output_config"] = map[string]any{"effort": effectiveEffort}
+	}
 	body, _ := json.Marshal(bodyMap)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(a.baseURL, "/")+"/messages", bytes.NewReader(body))
 	if err != nil {
@@ -128,13 +136,14 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 		text += c.Text
 	}
 	return &modelrouter.Response{
-		Provider:         a.Name(),
-		Model:            responseModel,
-		Text:             text,
-		InputTokens:      out.Usage.InputTokens,
-		OutputTokens:     out.Usage.OutputTokens,
-		CacheReadTokens:  out.Usage.CacheReadTokens,
-		CacheWriteTokens: out.Usage.CacheCreationTokens,
+		Provider:                 a.Name(),
+		Model:                    responseModel,
+		Text:                     text,
+		InputTokens:              out.Usage.InputTokens,
+		OutputTokens:             out.Usage.OutputTokens,
+		CacheReadTokens:          out.Usage.CacheReadTokens,
+		CacheWriteTokens:         out.Usage.CacheCreationTokens,
+		EffectiveReasoningEffort: effectiveEffort,
 	}, nil
 }
 

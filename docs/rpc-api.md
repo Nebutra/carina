@@ -1,5 +1,30 @@
 # RPC API
 
+## Read-only operator inspection
+
+`workspace.diff` returns tracked and untracked changes for a session workspace.
+It runs Git with optional locks, fsmonitor, external diff, and textconv disabled;
+it does not refresh the index. Binary contents are omitted, each textual diff is
+capped at 256 KiB, and the response is capped at 1 MiB. The TUI `/diff` command
+opens the result in a pager.
+
+`mcp.inventory` returns public MCP server names, tool names, prompt counts, and
+connection health. `/mcp verbose` additionally shows public tool descriptions.
+Process commands, arguments, environment variables, input schemas, and private
+managed servers are never returned.
+
+## Atomic checkpoint compaction
+
+`session.checkpoint.compact` compacts only a paused task's persisted latest
+checkpoint. It never aliases `context.compress`. Compaction writes a durable WAL,
+appends a new immutable checkpoint whose parent is the source checkpoint, then
+atomically publishes the new latest pointer. The source checkpoint remains
+available. A crash before the audit boundary leaves the old latest untouched; a
+crash after it rolls the prepared transaction forward on restart. Retrying the
+same pending operation is idempotent. Running, queued, approval-waiting, or
+reconciliation-blocked tasks must be paused or resolved first. The TUI surface is
+`/compact`.
+
 ## Persistent session goals
 
 Carina stores at most one goal per session. `goal.set/get/clear/pause/resume/complete`

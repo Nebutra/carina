@@ -12,10 +12,11 @@ import (
 )
 
 type Request struct {
-	Model          string `json:"model"`
-	Prompt         string `json:"prompt"`
-	StablePrefix   string `json:"stable_prefix,omitempty"`
-	VolatileSuffix string `json:"volatile_suffix,omitempty"`
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	Prompt          string `json:"prompt"`
+	StablePrefix    string `json:"stable_prefix,omitempty"`
+	VolatileSuffix  string `json:"volatile_suffix,omitempty"`
 	// Media carries image parts for vision-capable models. Raw bytes here,
 	// provider-specific encoding (base64 data URI vs source block) in each
 	// adapter. Callers are responsible for gating on the model's declared
@@ -34,13 +35,14 @@ type MediaPart struct {
 }
 
 type Response struct {
-	Provider         string `json:"provider"`
-	Model            string `json:"model"`
-	Text             string `json:"text"`
-	InputTokens      int    `json:"input_tokens"`
-	OutputTokens     int    `json:"output_tokens"`
-	CacheReadTokens  int    `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int    `json:"cache_write_tokens,omitempty"`
+	Provider                 string `json:"provider"`
+	Model                    string `json:"model"`
+	Text                     string `json:"text"`
+	InputTokens              int    `json:"input_tokens"`
+	OutputTokens             int    `json:"output_tokens"`
+	CacheReadTokens          int    `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens         int    `json:"cache_write_tokens,omitempty"`
+	EffectiveReasoningEffort string `json:"effective_reasoning_effort,omitempty"`
 }
 
 // Provider is implemented by model backends (Anthropic, OpenAI, local, plugin).

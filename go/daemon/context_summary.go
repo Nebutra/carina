@@ -38,7 +38,7 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 		},
 		"compact": map[string]any{
 			"available": false,
-			"reason":    "no safe operator transaction exists to compact and atomically replace a running task checkpoint; context.compress is diagnostic content compression only",
+			"reason":    "compact requires a persisted checkpoint at a paused task boundary",
 		},
 	}
 	if latest == nil {
@@ -57,6 +57,9 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 		"summary_bytes": len(cp.Transcript.Summary), "compaction_count": len(cp.Transcript.CompactionReceipts),
 		"memory_snapshot_bytes": len(cp.MemorySnapshot),
 		"measurement":           "exact persisted checkpoint bytes; not token or live in-flight context usage",
+	}
+	if latest.Status == "paused" && !latest.ReconciliationRequired {
+		out["compact"] = map[string]any{"available": true, "method": "session.checkpoint.compact", "checkpoint_id": checkpointID(latest, cp), "safety": "WAL-backed immutable child checkpoint; source preserved"}
 	}
 	return out, nil
 }

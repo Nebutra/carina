@@ -22,6 +22,9 @@ func TestContextSummarySeparatesExactCheckpointFactsFromModelContextUsage(t *tes
 	if err := d.runs.saveCheckpointChecked(task.TaskID, cp); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := d.sched.RestoreCheckpoint(task.TaskID, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := d.handleContextSummary(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
 	if err != nil {
@@ -48,7 +51,7 @@ func TestContextSummarySeparatesExactCheckpointFactsFromModelContextUsage(t *tes
 		t.Fatalf("task token accounting = %#v, want 37", taskSummary["tokens_used"])
 	}
 	compact := out["compact"].(map[string]any)
-	if compact["available"].(bool) || !strings.Contains(compact["reason"].(string), "context.compress") {
+	if !compact["available"].(bool) || compact["method"] != "session.checkpoint.compact" {
 		t.Fatalf("compact safety boundary missing: %#v", compact)
 	}
 }

@@ -23,6 +23,7 @@ func (m *Model) enqueueFollowUp() bool {
 	// Queue entries own the routing choice made when they were queued. A later
 	// /model switch applies only to later work, not to an existing draft.
 	draft.Model = m.model
+	draft.ReasoningEffort = m.reasoningEffort
 	draft.Mode = "background"
 	m.followUps.enqueue(draft)
 	m.clearComposerDraft()
@@ -76,7 +77,7 @@ func mergeDraftsForRestore(drafts []promptDraft, current promptDraft) promptDraf
 }
 
 func (m *Model) restoreQueuedDrafts(reason string) {
-	if m.editor != nil || m.historySearch != nil || m.checkpointPicker != nil || m.modelPicker != nil || m.keymapEditor != nil {
+	if m.editor != nil || m.historySearch != nil || m.checkpointPicker != nil || m.modelPicker != nil || m.sessionPicker != nil || m.keymapEditor != nil {
 		m.queueRestoreReason = reason
 		return
 	}
@@ -104,7 +105,7 @@ func (m *Model) resumeQueuedAfterTransient() tea.Cmd {
 func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 	if m.followUps.len() == 0 || m.inFlightTaskID != "" || m.submitting != nil ||
 		m.approval != nil || m.question != nil || m.editor != nil || m.helpOpen ||
-		m.historySearch != nil || m.transcriptPager != nil || m.checkpointPicker != nil || m.modelPicker != nil ||
+		m.historySearch != nil || m.transcriptPager != nil || m.checkpointPicker != nil || m.modelPicker != nil || m.sessionPicker != nil ||
 		m.keymapEditor != nil || m.queueRecallPending || m.retrySubmission != nil {
 		return nil
 	}
@@ -137,7 +138,7 @@ func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 				return cmd
 			}
 			if m.helpOpen || m.transcriptPager != nil || m.historySearch != nil ||
-				m.checkpointPicker != nil || m.modelPicker != nil || m.keymapEditor != nil {
+				m.checkpointPicker != nil || m.modelPicker != nil || m.sessionPicker != nil || m.keymapEditor != nil {
 				return nil
 			}
 			continue

@@ -1,6 +1,6 @@
 {
   "$comment": "Authoritative Carina JSON-RPC 2.0 registry. Each entry mirrors a daemon MethodDescriptor; params/result document the wire contract. Transport is newline-delimited JSON over the local socket or authenticated Gateway transports.",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "apis": {
     "runtime": [
       { "method": "runtime.initialize", "scope": "read", "remote": true, "params": { "protocol_version": "semver?", "schema_version": "semver? compatible major", "projection_version": "semver? exact reducer match", "client_name": "string?", "client_version": "semver?" }, "result": "RuntimeInitializeResult" },
@@ -49,8 +49,8 @@
       { "method": "session.attach", "scope": "read", "remote": true, "params": { "session_id": "string", "since": "number?", "event_mode": "compat|canonical? (default compat)" }, "result": "{ events: Event[], from: number, cursor: number, event_mode: compat|canonical }; cursor always advances over raw audit positions" },
       { "method": "session.fork", "scope": "write", "remote": false, "params": { "session_id": "string", "last_task_id": "string?", "through_turn": "integer? >= 1" }, "result": "Session with fork lineage" },
       { "method": "session.plan_mode", "scope": "write", "remote": false, "params": { "session_id": "string", "on": "boolean" }, "result": "{ session_id: string, plan_mode: boolean }" },
-      { "method": "session.model.get", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ session_id: string, next_model: string }" },
-      { "method": "session.model.set", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "model": "string" }, "result": "{ session_id: string, next_model: string }" },
+      { "method": "session.model.get", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ session_id: string, next_model: string, next_reasoning_effort: string }" },
+      { "method": "session.model.set", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "model": "string", "reasoning_effort": "string?" }, "result": "{ session_id: string, next_model: string, next_reasoning_effort: string }" },
       { "method": "session.approve_plan", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "object" },
       { "method": "session.add_dir", "scope": "admin", "remote": false, "dynamic_scope": true, "control_plane_write": true, "params": { "session_id": "string", "path": "string" }, "result": "object" },
       { "method": "session.events.stream", "scope": "stream", "remote": true, "stream": true, "params": { "session_id": "string", "since": "integer? >= 0", "event_mode": "compat|canonical? (default compat)" }, "result": "{ subscription_id: string, cursor: integer, replayed: integer, event_mode: string }", "notifications": "event (projected after authoritative audit persistence; canonical events include raw_cursor, the exclusive raw audit position)" },
@@ -60,10 +60,11 @@
       { "method": "session.checkpoint.list", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "Checkpoint[]" },
       { "method": "session.checkpoint.preview", "scope": "read", "remote": false, "params": { "session_id": "string", "checkpoint_id": "string" }, "result": "CheckpointPreview" },
       { "method": "session.checkpoint.summarize", "scope": "read", "remote": false, "params": { "session_id": "string", "checkpoint_id": "string" }, "result": "CheckpointSummary" },
-      { "method": "session.checkpoint.restore", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "checkpoint_id": "string", "confirmed": "boolean" }, "result": "CheckpointRestoreResult" }
+      { "method": "session.checkpoint.restore", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "checkpoint_id": "string", "confirmed": "boolean" }, "result": "CheckpointRestoreResult" },
+      { "method": "session.checkpoint.compact", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "task_id": "string? (paused task; defaults to latest paused task)" }, "result": "CheckpointCompactResult" }
     ],
     "task": [
-      { "method": "task.submit", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string", "client_submission_id": "string?", "agent": "string?", "model": "string?", "mode": "background?", "success_criteria": "SuccessCheck[]?", "output_schema": "JSON Schema Draft 2020-12 object?" }, "result": "Task" },
+      { "method": "task.submit", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string", "client_submission_id": "string?", "agent": "string?", "model": "string?", "reasoning_effort": "string?", "mode": "background?", "success_criteria": "SuccessCheck[]?", "output_schema": "JSON Schema Draft 2020-12 object?" }, "result": "Task" },
       { "method": "task.resume", "scope": "write", "remote": false, "control_plane_write": true, "params": { "task_id": "string" }, "result": "Task" },
       { "method": "task.status", "scope": "read", "remote": true, "params": { "task_id": "string" }, "result": "Task" },
       { "method": "task.list", "scope": "read", "remote": true, "params": { "session_id": "string?" }, "result": "Task[]" },
@@ -155,6 +156,7 @@
       { "method": "worktree.unlock", "scope": "write", "remote": false, "control_plane_write": true, "params": { "id": "string", "owner": "string" }, "result": "Worktree" },
       { "method": "worktree.cleanup", "scope": "write", "remote": false, "control_plane_write": true, "params": { "id": "string", "owner": "string", "force": "boolean?" }, "result": "{ removed: boolean, id: string }" },
       { "method": "workspace.tree", "scope": "read", "remote": false, "params": { "session_id": "string", "max_depth": "number?" }, "result": "TreeNode[]" },
+      { "method": "workspace.diff", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "WorkspaceDiffResponse" },
       { "method": "workspace.search", "scope": "read", "remote": false, "params": { "session_id": "string", "pattern": "string", "glob": "string?" }, "result": "Match[]" },
       { "method": "workspace.file.get", "scope": "read", "remote": false, "params": { "session_id": "string", "path": "string" }, "result": "{ content: string, hash: string }" },
       { "method": "workspace.trust", "scope": "admin", "remote": false, "dynamic_scope": true, "control_plane_write": true, "params": { "session_id": "string", "trusted": "boolean" }, "result": "object" },
@@ -163,6 +165,9 @@
       { "method": "workspace.patch.rollback", "scope": "write", "remote": false, "params": { "session_id": "string?", "patch_id": "string" }, "result": "PatchTransaction" },
       { "method": "workspace.patch.list", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "PatchTransaction[]" },
       { "method": "workspace.patch.show", "scope": "read", "remote": false, "params": { "session_id": "string", "patch_id": "string" }, "result": "PatchTransaction" }
+    ],
+    "mcp": [
+      { "method": "mcp.inventory", "scope": "read", "remote": false, "params": { "verbose": "boolean?" }, "result": "{ servers: MCPInventoryServer[], count: integer } (secret-free; private servers omitted)" }
     ],
     "command": [
       { "method": "command.list", "scope": "read", "remote": true, "params": {}, "result": "{ commands: Command[] }" },

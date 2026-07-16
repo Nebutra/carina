@@ -217,6 +217,54 @@ func TestAppendEventDirCollision(t *testing.T) {
 	}
 }
 
+func TestSessionUpdatesPublishOnlyAfterPersistence(t *testing.T) {
+	tests := []struct {
+		name   string
+		update func(*Store, string) error
+		check  func(*Session) bool
+	}{
+		{"model preference", func(s *Store, id string) error {
+			_, err := s.SetNextModelPreference(id, "openai/gpt-5", "high")
+			return err
+		}, func(s *Session) bool { return s.NextModel == "" && s.NextReasoningEffort == "" }},
+		{"fork lineage", func(s *Store, id string) error {
+			_, err := s.SetForkLineage(id, "task_parent", 3)
+			return err
+		}, func(s *Session) bool { return s.ForkedFromTaskID == "" && s.ForkedThroughTurn == 0 }},
+		{"status", func(s *Store, id string) error {
+			_, err := s.SetStatus(id, "paused")
+			return err
+		}, func(s *Session) bool { return s.Status == "active" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			store, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sess, err := store.CreateSession("/repo", "safe-edit")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sessionsDir := filepath.Join(dir, "sessions")
+			if err := os.Rename(sessionsDir, sessionsDir+".bak"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(sessionsDir, []byte("collision"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.update(store, sess.SessionID); err == nil {
+				t.Fatal("update succeeded despite persistence failure")
+			}
+			got, ok := store.Get(sess.SessionID)
+			if !ok || !tc.check(got) {
+				t.Fatalf("failed update leaked into memory: %+v", got)
+			}
+		})
+	}
+}
+
 func TestNewIDPrefix(t *testing.T) {
 	id := NewID("sess")
 	if len(id) < 6 || id[:5] != "sess_" {

@@ -26,35 +26,40 @@ import (
 const SessionVersion = 1
 
 type Session struct {
-	Version           int       `json:"version,omitempty"`
-	SessionID         string    `json:"session_id"`
-	WorkspaceID       string    `json:"workspace_id"`
-	WorkspaceRoot     string    `json:"workspace_root"`
-	Status            string    `json:"status"` // active | paused | closed
-	PermissionProfile string    `json:"permission_profile"`
-	ApprovalMode      string    `json:"approval_mode,omitempty"` // untrusted|on_request|never
-	NextModel         string    `json:"next_model,omitempty"`    // default model override for subsequent tasks
-	ParentID          string    `json:"parent_id,omitempty"`     // set for subagent sessions
-	ForkedFromTaskID  string    `json:"forked_from_task_id,omitempty"`
-	ForkedThroughTurn int       `json:"forked_through_turn,omitempty"`
-	Depth             int       `json:"depth"` // 0 = main; bounded to prevent runaway nesting
-	CreatedAt         time.Time `json:"created_at"`
+	Version             int       `json:"version,omitempty"`
+	SessionID           string    `json:"session_id"`
+	WorkspaceID         string    `json:"workspace_id"`
+	WorkspaceRoot       string    `json:"workspace_root"`
+	Status              string    `json:"status"` // active | paused | closed
+	PermissionProfile   string    `json:"permission_profile"`
+	ApprovalMode        string    `json:"approval_mode,omitempty"` // untrusted|on_request|never
+	NextModel           string    `json:"next_model,omitempty"`    // default model override for subsequent tasks
+	NextReasoningEffort string    `json:"next_reasoning_effort,omitempty"`
+	ParentID            string    `json:"parent_id,omitempty"` // set for subagent sessions
+	ForkedFromTaskID    string    `json:"forked_from_task_id,omitempty"`
+	ForkedThroughTurn   int       `json:"forked_through_turn,omitempty"`
+	Depth               int       `json:"depth"` // 0 = main; bounded to prevent runaway nesting
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 func (s *Store) SetNextModel(sessionID, model string) (*Session, error) {
+	return s.SetNextModelPreference(sessionID, model, "")
+}
+
+func (s *Store) SetNextModelPreference(sessionID, model, effort string) (*Session, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	sess, ok := s.sessions[sessionID]
 	if !ok {
-		s.mu.Unlock()
 		return nil, fmt.Errorf("sessionstore: unknown session %s", sessionID)
 	}
 	updated := *sess
 	updated.NextModel = model
-	s.sessions[sessionID] = &updated
-	s.mu.Unlock()
+	updated.NextReasoningEffort = effort
 	if err := s.persist(&updated); err != nil {
 		return nil, err
 	}
+	s.sessions[sessionID] = &updated
 	return &updated, nil
 }
 
@@ -62,19 +67,18 @@ func (s *Store) SetNextModel(sessionID, model string) (*Session, error) {
 // fork. Audit events remain in the parent log and are referenced, not copied.
 func (s *Store) SetForkLineage(sessionID, taskID string, turn int) (*Session, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	sess, ok := s.sessions[sessionID]
 	if !ok {
-		s.mu.Unlock()
 		return nil, fmt.Errorf("sessionstore: unknown session %s", sessionID)
 	}
 	updated := *sess
 	updated.ForkedFromTaskID = taskID
 	updated.ForkedThroughTurn = turn
-	s.sessions[sessionID] = &updated
-	s.mu.Unlock()
 	if err := s.persist(&updated); err != nil {
 		return nil, err
 	}
+	s.sessions[sessionID] = &updated
 	return &updated, nil
 }
 
@@ -207,18 +211,17 @@ func (s *Store) List() []*Session {
 
 func (s *Store) SetStatus(sessionID, status string) (*Session, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	sess, ok := s.sessions[sessionID]
 	if !ok {
-		s.mu.Unlock()
 		return nil, fmt.Errorf("sessionstore: unknown session %s", sessionID)
 	}
 	updated := *sess
 	updated.Status = status
-	s.sessions[sessionID] = &updated
-	s.mu.Unlock()
 	if err := s.persist(&updated); err != nil {
 		return nil, err
 	}
+	s.sessions[sessionID] = &updated
 	return &updated, nil
 }
 

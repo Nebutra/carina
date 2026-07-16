@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -133,6 +134,37 @@ func TestMCPClientLifecycle(t *testing.T) {
 
 	if _, err := m.Call("nope", "echo", nil); err == nil {
 		t.Fatal("unknown server should error")
+	}
+}
+
+func TestInventoryIsSecretFreeAndHidesPrivateServers(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "server.py")
+	if err := os.WriteFile(script, []byte(mockServerPy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager()
+	defer m.Close()
+	server := Server{Command: "python3", Args: []string{script}, Env: map[string]string{"API_SECRET": "do-not-leak"}}
+	if err := m.Connect("public", server); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ConnectPrivate("private", server); err != nil {
+		t.Fatal(err)
+	}
+	rows := m.Inventory(true)
+	if len(rows) != 1 || rows[0].Name != "public" || rows[0].Health != "connected" {
+		t.Fatalf("inventory=%+v", rows)
+	}
+	raw, _ := json.Marshal(rows)
+	text := string(raw)
+	for _, secret := range []string{"do-not-leak", "API_SECRET", script, "python3"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("inventory leaked %q: %s", secret, text)
+		}
 	}
 }
 

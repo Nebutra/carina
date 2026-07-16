@@ -88,7 +88,7 @@ func TestQuestionTrackerReopensOnlyUnresolvedRequest(t *testing.T) {
 	})
 
 	sender := &fakeSender{}
-	tracker.flush(sender)
+	tracker.flush(sender, "sess_test", 1)
 	messages := sender.snapshot()
 	if len(messages) != 1 {
 		t.Fatalf("flushed questions = %d, want 1", len(messages))
@@ -121,7 +121,7 @@ func TestQuestionTrackerDropsCrashStaleRequest(t *testing.T) {
 	}}
 	tracker.reconcile(call)
 	sender := &fakeSender{}
-	tracker.flush(sender)
+	tracker.flush(sender, "sess_test", 1)
 	if got := len(sender.snapshot()); got != 0 {
 		t.Fatalf("stale questions reopened = %d, want 0", got)
 	}

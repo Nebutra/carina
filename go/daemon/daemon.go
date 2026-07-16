@@ -967,6 +967,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("session.checkpoint.preview", rpc.ScopeRead, false, d.handleCheckpointPreview)
 	d.registerRPC("session.checkpoint.summarize", rpc.ScopeRead, false, d.handleCheckpointSummarize)
 	d.registerRPC("session.checkpoint.restore", rpc.ScopeWrite, false, d.handleCheckpointRestore, true)
+	d.registerRPC("session.checkpoint.compact", rpc.ScopeWrite, false, d.handleCheckpointCompact, true)
 	d.registerRPC("session.plan_mode", rpc.ScopeWrite, false, d.handlePlanMode)
 	d.registerRPC("session.model.get", rpc.ScopeRead, false, d.handleSessionModelGet)
 	d.registerRPC("session.model.set", rpc.ScopeWrite, false, d.handleSessionModelSet, true)
@@ -1032,8 +1033,10 @@ func (d *Daemon) registerMethods() {
 	d.registerRPCDynamic("task.action.deny", rpc.ScopeAdmin, false, d.handleDeny, d.taskActionDenyScope, true)
 
 	d.registerRPC("workspace.tree", rpc.ScopeRead, false, d.handleWorkspaceTree)
+	d.registerRPC("workspace.diff", rpc.ScopeRead, false, d.handleWorkspaceDiff)
 	d.registerRPC("workspace.search", rpc.ScopeRead, false, d.handleWorkspaceSearch)
 	d.registerRPC("workspace.file.get", rpc.ScopeRead, false, d.handleFileGet)
+	d.registerRPC("mcp.inventory", rpc.ScopeRead, false, d.handleMCPInventory)
 	d.registerRPCDynamic("workspace.trust", rpc.ScopeAdmin, false, d.handleWorkspaceTrust, workspaceTrustScope, true)
 	d.registerRPCDynamic("workspace.patch.propose", rpc.ScopeWrite, false, d.handlePatchPropose, patchProposeScope)
 	d.registerRPC("workspace.patch.apply", rpc.ScopeWrite, false, d.handlePatchApply)
@@ -1873,13 +1876,14 @@ func (d *Daemon) handleSessionModelGet(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", p.SessionID)
 	}
-	return map[string]any{"session_id": sess.SessionID, "next_model": sess.NextModel}, nil
+	return map[string]any{"session_id": sess.SessionID, "next_model": sess.NextModel, "next_reasoning_effort": sess.NextReasoningEffort}, nil
 }
 
 func (d *Daemon) handleSessionModelSet(params json.RawMessage) (any, error) {
 	var p struct {
-		SessionID string `json:"session_id"`
-		Model     string `json:"model"`
+		SessionID       string `json:"session_id"`
+		Model           string `json:"model"`
+		ReasoningEffort string `json:"reasoning_effort"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1888,11 +1892,17 @@ func (d *Daemon) handleSessionModelSet(params json.RawMessage) (any, error) {
 	if err := d.validateTaskModel(p.Model); err != nil {
 		return nil, err
 	}
-	sess, err := d.store.SetNextModel(p.SessionID, p.Model)
+	p.ReasoningEffort = normalizeReasoningEffort(p.ReasoningEffort)
+	if p.ReasoningEffort != "" {
+		if _, err := validateReasoningEffort(d.reasoningEffortSpec(p.Model), p.ReasoningEffort); err != nil {
+			return nil, err
+		}
+	}
+	sess, err := d.store.SetNextModelPreference(p.SessionID, p.Model, p.ReasoningEffort)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"session_id": sess.SessionID, "next_model": sess.NextModel}, nil
+	return map[string]any{"session_id": sess.SessionID, "next_model": sess.NextModel, "next_reasoning_effort": sess.NextReasoningEffort}, nil
 }
 
 // handleAddDir grants a session an additional allowed root (the /add-dir scoped
@@ -2265,6 +2275,7 @@ type taskSubmitParams struct {
 	Model              string                   `json:"model"`
 	Agent              string                   `json:"agent"`
 	Mode               string                   `json:"mode"`
+	ReasoningEffort    string                   `json:"reasoning_effort"`
 	SuccessCriteria    []scheduler.SuccessCheck `json:"success_criteria"`
 	OutputSchema       json.RawMessage          `json:"output_schema"`
 }
@@ -2339,6 +2350,9 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	if agent == "" {
 		agent = "build"
 	}
+	if model == "" {
+		model = strings.TrimSpace(sess.NextModel)
+	}
 	agents := loadAgentSpecs(sess.WorkspaceRoot)
 	if d.safeMode {
 		agents = builtinAgentSpecs()
@@ -2350,8 +2364,18 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	if model == "" {
 		model = spec.Model
 	}
+	requestedModel := model
+	requestedEffort := normalizeReasoningEffort(p.ReasoningEffort)
+	if requestedEffort == "" {
+		requestedEffort = normalizeReasoningEffort(sess.NextReasoningEffort)
+	}
+	effectiveEffort, err := validateReasoningEffort(d.reasoningEffortSpec(model), requestedEffort)
+	if err != nil {
+		return nil, err
+	}
 	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, prompt, model, agent, p.SuccessCriteria)
-	d.sched.SetModelState(task.TaskID, p.Model, taskModel(task))
+	d.sched.SetModelState(task.TaskID, requestedModel, taskModel(task))
+	d.sched.SetReasoningEffortState(task.TaskID, requestedEffort, effectiveEffort)
 	if clientSubmissionID != "" {
 		d.sched.SetClientSubmission(task.TaskID, clientSubmissionID, submissionFingerprint)
 	}
@@ -2382,6 +2406,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	writeAheadPayload := map[string]any{
 		"task_id": task.TaskID, "user_prompt": task.UserPrompt,
 		"model": task.Model, "requested_model": task.RequestedModel, "effective_model": task.EffectiveModel,
+		"requested_reasoning_effort": task.RequestedReasoningEffort, "effective_reasoning_effort": task.EffectiveReasoningEffort,
 		"agent": task.Agent, "mode": task.Mode,
 	}
 	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "TaskCreated", task.TaskID, "go", writeAheadPayload, "")

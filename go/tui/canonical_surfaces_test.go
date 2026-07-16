@@ -88,17 +88,18 @@ func TestCompactDoesNotUseDiagnosticCompression(t *testing.T) {
 	if !validSlashCommand("/compact") {
 		t.Fatal("/compact is not registered as a valid slash command")
 	}
-	fc := &fakeCaller{handler: map[string]any{"history.recent": map[string]any{"entries": []string{}}}}
+	fc := &fakeCaller{handler: map[string]any{"history.recent": map[string]any{"entries": []string{}}, "session.checkpoint.compact": map[string]any{"compacted": true, "task_id": "tsk", "checkpoint_id": "tsk:2:3", "status": "paused"}}}
 	m, _ := newTestModel(fc)
 	before := len(fc.calls)
-	if cmd := m.slashCommand("/compact"); cmd != nil {
-		t.Fatal("/compact returned an RPC command")
+	cmd := m.slashCommand("/compact")
+	if cmd == nil {
+		t.Fatal("/compact did not return an RPC command")
 	}
-	if len(fc.calls) != before {
-		t.Fatalf("/compact made an RPC call: %#v", fc.calls[before:])
+	m.Update(cmd())
+	if len(fc.calls) != before+1 || fc.last().method != "session.checkpoint.compact" {
+		t.Fatalf("/compact calls: %#v", fc.calls[before:])
 	}
-	got := m.tr.plainText()
-	if !strings.Contains(got, "atomically replace") || !strings.Contains(got, "context.compress") {
-		t.Fatalf("/compact did not explain the safety boundary:\n%s", got)
+	if fc.last().method == "context.compress" {
+		t.Fatal("/compact used diagnostic context compression")
 	}
 }

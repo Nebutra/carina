@@ -88,6 +88,17 @@ type retryAttempt struct {
 
 type retryObserverKey struct{}
 
+type reasoningEffortContextKey struct{}
+
+func withReasoningEffort(ctx context.Context, effort string) context.Context {
+	return context.WithValue(ctx, reasoningEffortContextKey{}, normalizeReasoningEffort(effort))
+}
+
+func reasoningEffortFrom(ctx context.Context) string {
+	effort, _ := ctx.Value(reasoningEffortContextKey{}).(string)
+	return effort
+}
+
 func withRetryObserver(ctx context.Context, observer func(retryAttempt)) context.Context {
 	return context.WithValue(ctx, retryObserverKey{}, observer)
 }
@@ -334,13 +345,14 @@ func (r *routerReasoner) ThinkResult(ctx context.Context, prompt string) (Reason
 }
 
 func (r *routerReasoner) ThinkModelResult(ctx context.Context, model, prompt string) (ReasonerResult, error) {
-	return r.complete(ctx, model, modelrouter.Request{Model: model, Prompt: prompt})
+	return r.complete(ctx, model, modelrouter.Request{Model: model, Prompt: prompt, ReasoningEffort: reasoningEffortFrom(ctx)})
 }
 
 func (r *routerReasoner) ThinkModelSegments(ctx context.Context, model, stablePrefix, volatileSuffix string) (ReasonerResult, error) {
 	return r.complete(ctx, model, modelrouter.Request{
 		Model: model, Prompt: stablePrefix + volatileSuffix,
-		StablePrefix: stablePrefix, VolatileSuffix: volatileSuffix,
+		ReasoningEffort: reasoningEffortFrom(ctx),
+		StablePrefix:    stablePrefix, VolatileSuffix: volatileSuffix,
 	})
 }
 
@@ -351,7 +363,8 @@ func (r *routerReasoner) ThinkModelSegmentsMedia(ctx context.Context, model, sta
 	}
 	return r.complete(ctx, model, modelrouter.Request{
 		Model: model, Prompt: prompt,
-		StablePrefix: stablePrefix, VolatileSuffix: volatileSuffix,
+		ReasoningEffort: reasoningEffortFrom(ctx),
+		StablePrefix:    stablePrefix, VolatileSuffix: volatileSuffix,
 		Media: media,
 	})
 }
@@ -371,7 +384,8 @@ func (r *routerReasoner) complete(ctx context.Context, model string, req modelro
 	return ReasonerResult{Text: strings.TrimSpace(resp.Text), Usage: ModelUsage{
 		Provider: resp.Provider, Model: resp.Model, InputTokens: resp.InputTokens,
 		OutputTokens: resp.OutputTokens, CacheReadTokens: resp.CacheReadTokens,
-		CacheWriteTokens: resp.CacheWriteTokens,
+		CacheWriteTokens:         resp.CacheWriteTokens,
+		EffectiveReasoningEffort: resp.EffectiveReasoningEffort,
 	}}, nil
 }
 

@@ -23,14 +23,15 @@ const (
 )
 
 type historyLoadedMsg struct {
-	generation  int
-	search      bool
-	scope       historyScope
-	entries     []string
-	err         error
-	modelLoaded bool
-	nextModel   string
-	modelErr    error
+	generation          int
+	search              bool
+	scope               historyScope
+	entries             []string
+	err                 error
+	modelLoaded         bool
+	nextModel           string
+	nextReasoningEffort string
+	modelErr            error
 }
 
 type historySearchStatus int
@@ -67,11 +68,12 @@ func (m *Model) loadRecentHistory(call Caller) tea.Cmd {
 	sessionID := m.sessionID
 	return func() tea.Msg {
 		var historyOut struct {
-			Entries   []string `json:"entries"`
-			NextModel string   `json:"next_model"`
+			Entries             []string `json:"entries"`
+			NextModel           string   `json:"next_model"`
+			NextReasoningEffort string   `json:"next_reasoning_effort"`
 		}
 		historyErr := call.Call("history.recent", map[string]any{"limit": recentHistoryLimit, "scope": string(historyScopeWorkspace), "session_id": sessionID}, &historyOut)
-		return historyLoadedMsg{generation: generation, scope: historyScopeWorkspace, entries: historyOut.Entries, err: historyErr, modelLoaded: historyErr == nil, nextModel: historyOut.NextModel}
+		return historyLoadedMsg{generation: generation, scope: historyScopeWorkspace, entries: historyOut.Entries, err: historyErr, modelLoaded: historyErr == nil, nextModel: historyOut.NextModel, nextReasoningEffort: historyOut.NextReasoningEffort}
 	}
 }
 
@@ -93,7 +95,7 @@ func (m *Model) loadHistoryScope(call Caller, scope historyScope, generation int
 
 func (m *Model) handleHistoryLoaded(msg historyLoadedMsg) {
 	if msg.modelLoaded {
-		m.handleModelPreference(modelPreferenceMsg{loaded: true, model: msg.nextModel, err: msg.modelErr})
+		m.handleModelPreference(modelPreferenceMsg{loaded: true, model: msg.nextModel, effort: msg.nextReasoningEffort, err: msg.modelErr})
 	}
 	if msg.search {
 		search := m.historySearch

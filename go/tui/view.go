@@ -487,6 +487,9 @@ func (m *Model) View() tea.View {
 		modal := fitViewBlock(m.modelPickerView(), l.width, l.height, true)
 		content = lipgloss.Place(l.width, l.height,
 			lipgloss.Center, lipgloss.Center, modal)
+	} else if m.sessionPicker != nil {
+		modal := fitViewBlock(m.sessionPickerView(), l.width, l.height, true)
+		content = lipgloss.Place(l.width, l.height, lipgloss.Center, lipgloss.Center, modal)
 	} else if m.keymapEditor != nil {
 		modal := fitViewBlock(m.keymapEditorView(), l.width, l.height, true)
 		content = lipgloss.Place(l.width, l.height,
@@ -514,7 +517,7 @@ func (m *Model) View() tea.View {
 	// intentional while an overlay owns input, and whenever a zero-sized host
 	// has not supplied a usable cell grid yet (R21).
 	if !m.helpOpen && m.question == nil && m.approval == nil && m.transcriptPager == nil &&
-		m.checkpointPicker == nil && m.modelPicker == nil && m.keymapEditor == nil &&
+		m.checkpointPicker == nil && m.modelPicker == nil && m.sessionPicker == nil && m.keymapEditor == nil &&
 		m.editor == nil && m.width > 0 && m.height > 0 {
 		if m.historySearch != nil {
 			cursor := m.input.Cursor()

@@ -25,28 +25,26 @@ func TestColorDiffStylesLines(t *testing.T) {
 	if len(lines) != 9 {
 		t.Fatalf("got %d lines, want 9", len(lines))
 	}
-	// Adds use the DiffAdd role (Core Glow, 139).
-	if !strings.Contains(lines[5], "38;5;139") {
+	// Diff rendering follows semantic roles, independent of the active palette.
+	if lines[5] != th.Style(theme.RoleDiffAdd).Render("+hello world") {
 		t.Errorf("add line not styled with DiffAdd: %q", lines[5])
 	}
-	if !strings.Contains(lines[6], "38;5;139") {
+	if lines[6] != th.Style(theme.RoleDiffAdd).Render("+你好，世界") {
 		t.Errorf("zh add line not styled with DiffAdd: %q", lines[6])
 	}
-	// Deletes use the DiffDel role (error family, 132).
-	if !strings.Contains(lines[7], "38;5;132") {
+	if lines[7] != th.Style(theme.RoleDiffDel).Render("-old line") {
 		t.Errorf("del line not styled with DiffDel: %q", lines[7])
 	}
-	// Hunk and file headers use the DiffHunk role (Blue Giant, 189) — the
-	// "+++"/"---" file headers must NOT be mistaken for add/del lines.
+	// File/hunk headers must not be mistaken for add/delete body lines.
 	for _, i := range []int{0, 1, 2, 3, 4} {
-		if !strings.Contains(lines[i], "38;5;189") {
+		if lines[i] != th.Style(theme.RoleDiffHunk).Render(strings.Split(sampleDiff, "\n")[i]) {
 			t.Errorf("header line %d not styled as hunk: %q", i, lines[i])
 		}
 	}
-	if strings.Contains(lines[2], "38;5;132") {
+	if lines[2] == th.Style(theme.RoleDiffDel).Render("--- a/hello.txt") {
 		t.Errorf("'--- a/...' header wrongly styled as delete: %q", lines[2])
 	}
-	if strings.Contains(lines[3], "38;5;139") {
+	if lines[3] == th.Style(theme.RoleDiffAdd).Render("+++ b/hello.txt") {
 		t.Errorf("'+++ b/...' header wrongly styled as add: %q", lines[3])
 	}
 	// Context lines stay plain.
@@ -102,7 +100,7 @@ func TestColorDiffNoNewlineMarker(t *testing.T) {
 	if len(lines) != 6 {
 		t.Fatalf("got %d lines, want 6: %q", len(lines), lines)
 	}
-	if !strings.Contains(lines[5], "38;5;189") {
+	if lines[5] != th.Style(theme.RoleDiffHunk).Render("\\ No newline at end of file") {
 		t.Errorf("'\\ No newline' marker not styled as header: %q", lines[5])
 	}
 }
@@ -117,7 +115,7 @@ func TestColorDiffBinaryMarker(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("got %d lines, want 3: %q", len(lines), lines)
 	}
-	if !strings.Contains(lines[2], "38;5;189") {
+	if lines[2] != th.Style(theme.RoleDiffHunk).Render("Binary files a/x and b/x differ") {
 		t.Errorf("binary marker not styled as header: %q", lines[2])
 	}
 }

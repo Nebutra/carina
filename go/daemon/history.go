@@ -30,7 +30,7 @@ func (d *Daemon) handleHistoryRecent(params json.RawMessage) (any, error) {
 	if scope != "global" && scope != "workspace" && scope != "session" {
 		return nil, fmt.Errorf("invalid history scope %q: want session, workspace, or global", p.Scope)
 	}
-	var workspaceRoot, nextModel string
+	var workspaceRoot, nextModel, nextReasoningEffort string
 	if scope != "global" {
 		sess, ok := d.store.Get(p.SessionID)
 		if !ok {
@@ -38,6 +38,7 @@ func (d *Daemon) handleHistoryRecent(params json.RawMessage) (any, error) {
 		}
 		workspaceRoot = sess.WorkspaceRoot
 		nextModel = sess.NextModel
+		nextReasoningEffort = sess.NextReasoningEffort
 	}
 	stored, err := d.history.RecentEntries(0)
 	if err != nil {
@@ -64,5 +65,5 @@ func (d *Daemon) handleHistoryRecent(params json.RawMessage) (any, error) {
 	if entries == nil {
 		entries = []string{}
 	}
-	return map[string]any{"entries": entries, "count": len(entries), "scope": scope, "next_model": nextModel}, nil
+	return map[string]any{"entries": entries, "count": len(entries), "scope": scope, "next_model": nextModel, "next_reasoning_effort": nextReasoningEffort}, nil
 }

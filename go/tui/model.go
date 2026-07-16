@@ -48,45 +48,57 @@ type (
 	// SessionReadyMsg announces a (re)established call connection bound to a
 	// session.
 	SessionReadyMsg struct {
-		SessionID string
-		Call      Caller
+		SessionID  string
+		Generation uint64
+		Call       Caller
 	}
 	// TaskActiveMsg restores the task the prompt should steer after attach.
 	TaskActiveMsg struct {
-		TaskID string
+		SessionID  string
+		Generation uint64
+		TaskID     string
 	}
 	// EventMsg is one session.events.stream envelope.
 	EventMsg struct {
-		Raw map[string]any
+		SessionID  string
+		Generation uint64
+		Raw        map[string]any
 	}
 	// ConnLostMsg reports a failed dial or a dropped event stream.
 	ConnLostMsg struct {
-		Err error
+		SessionID  string
+		Generation uint64
+		Err        error
 	}
 	// ReconnectingMsg reports a reconnect attempt in progress.
 	ReconnectingMsg struct {
-		Attempt int
+		SessionID  string
+		Generation uint64
+		Attempt    int
 	}
 	// ConnRestoredMsg reports a successful reconnect.
 	ConnRestoredMsg struct {
-		SessionID string
+		SessionID  string
+		Generation uint64
 	}
 )
 
 type promptDraft struct {
-	Prefix []string `json:"prefix,omitempty"`
-	Text   string   `json:"text,omitempty"`
-	Paste  []string `json:"paste,omitempty"`
-	Model  string   `json:"model,omitempty"`
-	Agent  string   `json:"agent,omitempty"`
-	Mode   string   `json:"mode,omitempty"`
+	Prefix          []string `json:"prefix,omitempty"`
+	Text            string   `json:"text,omitempty"`
+	Paste           []string `json:"paste,omitempty"`
+	Model           string   `json:"model,omitempty"`
+	Agent           string   `json:"agent,omitempty"`
+	Mode            string   `json:"mode,omitempty"`
+	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
 }
 
 type submissionEnvelope struct {
-	prompt string
-	model  string
-	agent  string
-	mode   string
+	prompt          string
+	model           string
+	agent           string
+	mode            string
+	reasoningEffort string
 }
 
 type submissionKind string
@@ -115,12 +127,13 @@ type submissionState struct {
 }
 
 type submissionRetry struct {
-	clientID string
-	prompt   string
-	draft    promptDraft
-	model    string
-	agent    string
-	mode     string
+	clientID        string
+	prompt          string
+	draft           promptDraft
+	model           string
+	agent           string
+	mode            string
+	reasoningEffort string
 }
 
 type submissionDoneMsg struct {
@@ -171,8 +184,9 @@ type Options struct {
 	Socket        string
 	SessionID     string // reuse an existing session; empty creates one
 	WorkspaceRoot string
-	Model         string // default model for new tasks; empty means agent/runtime default
-	StateDir      string // durable local TUI state; empty disables submission recovery
+	Model         string             // default model for new tasks; empty means agent/runtime default
+	SwitchSession func(string) error // connection-controller hook for session lifecycle commands
+	StateDir      string             // durable local TUI state; empty disables submission recovery
 	Now           func() time.Time
 	// Keybindings replaces selected action bindings after defaults are loaded.
 	// Embedders accepting user-controlled overrides should call NewChecked.
@@ -245,6 +259,7 @@ type Model struct {
 	transcriptPager    *transcriptPagerState
 	checkpointPicker   *checkpointPickerState
 	modelPicker        *modelPickerState
+	sessionPicker      *sessionPickerState
 	modelPickerGen     int
 	canonicalGen       int
 	pausedRestore      *checkpointRestoreResult
@@ -262,7 +277,12 @@ type Model struct {
 	noAlternateScreen  bool
 	mode               string
 	model              string
+	reasoningEffort    string
 	modelPinned        bool
+	switchSession      func(string) error
+	sessionGeneration  uint64
+	sessionOpGen       uint64
+	pendingSessionID   string
 	goal               *goalView
 	outcome            Outcome
 
@@ -276,7 +296,7 @@ type Model struct {
 	treeCacheRoot string
 }
 
-type surfaceResultMsg struct{ label, text string }
+type surfaceResultMsg struct{ sessionID, label, text string }
 
 type canonicalSurfaceKind string
 
@@ -295,8 +315,9 @@ type canonicalSurfaceMsg struct {
 }
 
 type modeChangedMsg struct {
-	mode string
-	err  error
+	sessionID string
+	mode      string
+	err       error
 }
 
 type loopResultMsg struct {
@@ -307,9 +328,16 @@ type loopResultMsg struct {
 }
 
 type operationalSurfaceMsg struct {
-	kind string
-	data map[string]any
-	err  error
+	sessionID string
+	kind      string
+	data      map[string]any
+	err       error
+}
+
+type workspaceDiffMsg struct {
+	generation int
+	data       map[string]any
+	err        error
 }
 
 // New builds the root model. Invalid optional overrides visibly degrade to the
@@ -384,6 +412,7 @@ func NewChecked(o Options) (*Model, error) {
 		mode:              "build",
 		model:             strings.TrimSpace(o.Model),
 		modelPinned:       strings.TrimSpace(o.Model) != "",
+		switchSession:     o.SwitchSession,
 	}
 	m.layout()
 	return m, nil

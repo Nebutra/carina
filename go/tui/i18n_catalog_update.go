@@ -59,6 +59,18 @@ const (
 	MsgOperationalPermissionsTitle MessageID = "operational.permissions_title"
 	MsgOperationalContextTitle     MessageID = "operational.context_title"
 	MsgOperationalConfigTitle      MessageID = "operational.config_title"
+	MsgOperationalMCPTitle         MessageID = "operational.mcp_title"
+	MsgOperationalCompactTitle     MessageID = "operational.compact_title"
+	MsgUpdateUsageCompact          MessageID = "update.usage_compact"
+	MsgUpdateUsageDiff             MessageID = "update.usage_diff"
+	MsgUpdateUsageMCP              MessageID = "update.usage_mcp"
+	MsgDiffTitle                   MessageID = "diff.title"
+	MsgDiffLoading                 MessageID = "diff.loading"
+	MsgDiffFile                    MessageID = "diff.file"
+	MsgDiffBinary                  MessageID = "diff.binary"
+	MsgDiffTruncated               MessageID = "diff.truncated"
+	MsgDiffTotalTruncated          MessageID = "diff.total_truncated"
+	MsgDiffClean                   MessageID = "diff.clean"
 	MsgUpdateModelCurrent          MessageID = "update.model_current"
 	MsgUpdateModelChanged          MessageID = "update.model_changed"
 	MsgModelPickerTitle            MessageID = "model_picker.title"
@@ -68,11 +80,31 @@ const (
 	MsgModelPickerHelp             MessageID = "model_picker.help"
 	MsgModelPickerPage             MessageID = "model_picker.page"
 	MsgModelPickerEmpty            MessageID = "model_picker.empty"
+	MsgSessionPickerTitle          MessageID = "session_picker.title"
+	MsgSessionPickerLoading        MessageID = "session_picker.loading"
+	MsgSessionPickerFailed         MessageID = "session_picker.failed"
+	MsgSessionPickerEmpty          MessageID = "session_picker.empty"
+	MsgSessionPickerHelp           MessageID = "session_picker.help"
+	MsgSessionPickerForkOf         MessageID = "session_picker.fork_of"
+	MsgSessionSwitchBlocked        MessageID = "session_switch.blocked"
+	MsgSessionSwitchDraft          MessageID = "session_switch.blocker.draft"
+	MsgSessionSwitchTask           MessageID = "session_switch.blocker.task"
+	MsgSessionSwitchSubmission     MessageID = "session_switch.blocker.submission"
+	MsgSessionSwitchRetry          MessageID = "session_switch.blocker.retry"
+	MsgSessionSwitchQueue          MessageID = "session_switch.blocker.queue"
+	MsgSessionSwitchGovernance     MessageID = "session_switch.blocker.governance"
+	MsgSessionSwitchEditor         MessageID = "session_switch.blocker.editor"
+	MsgSessionSwitchGoal           MessageID = "session_switch.blocker.goal"
+	MsgSessionActionFailed         MessageID = "session_switch.action_failed"
+	MsgSessionActionInvalid        MessageID = "session_switch.action_invalid"
+	MsgSessionSwitchUnavailable    MessageID = "session_switch.unavailable"
+	MsgSessionSwitchLeaseBlocked   MessageID = "session_switch.lease_blocked"
+	MsgSessionSwitchFailed         MessageID = "session_switch.failed"
+	MsgSessionSwitching            MessageID = "session_switch.switching"
 	MsgUpdateAgents                MessageID = "update.agents"
 	MsgUpdateUsageResume           MessageID = "update.usage_resume"
 	MsgUpdateUnknownCommand        MessageID = "update.unknown_command"
 	MsgUpdateRewindAgain           MessageID = "update.rewind_again"
-	MsgUpdateCompactUnavailable    MessageID = "update.compact_unavailable"
 	MsgWorkspaceExternalEditor     MessageID = "workspace.external_editor"
 	MsgWorkspaceDraftRestored      MessageID = "workspace.draft_restored"
 	MsgWorkspaceEditorApplied      MessageID = "workspace.editor_applied"
@@ -167,20 +199,52 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgOperationalPermissionsTitle, "effective permissions", "有效权限", "有効な権限", "유효 권한", "permisos efectivos", "autorisations effectives"),
 	catalog(MsgOperationalContextTitle, "persisted context summary", "持久上下文摘要", "永続コンテキスト要約", "영구 컨텍스트 요약", "resumen de contexto persistido", "résumé du contexte persistant"),
 	catalog(MsgOperationalConfigTitle, "effective runtime (read-only)", "有效运行时状态（只读）", "有効なランタイム（読み取り専用）", "유효 런타임(읽기 전용)", "runtime efectivo (solo lectura)", "runtime effectif (lecture seule)"),
+	catalog(MsgOperationalMCPTitle, "MCP inventory (read-only)", "MCP 清单（只读）", "MCP インベントリ（読み取り専用）", "MCP 인벤토리(읽기 전용)", "inventario MCP (solo lectura)", "inventaire MCP (lecture seule)"),
+	catalog(MsgOperationalCompactTitle, "checkpoint compact", "检查点压缩", "チェックポイント圧縮", "체크포인트 압축", "compactación del checkpoint", "compaction du checkpoint"),
+	catalog(MsgUpdateUsageCompact, "usage: /compact", "用法：/compact", "使用法: /compact", "사용법: /compact", "uso: /compact", "utilisation : /compact"),
+	catalog(MsgUpdateUsageDiff, "usage: /diff", "用法：/diff", "使用法: /diff", "사용법: /diff", "uso: /diff", "utilisation : /diff"),
+	catalog(MsgUpdateUsageMCP, "usage: /mcp [verbose]", "用法：/mcp [verbose]", "使用法: /mcp [verbose]", "사용법: /mcp [verbose]", "uso: /mcp [verbose]", "utilisation : /mcp [verbose]"),
+	catalog(MsgDiffTitle, "workspace diff (read-only)", "工作区差异（只读）", "ワークスペース差分（読み取り専用）", "작업 공간 diff(읽기 전용)", "diff del espacio de trabajo (solo lectura)", "diff de l’espace de travail (lecture seule)"),
+	catalog(MsgDiffLoading, "Loading workspace diff...", "正在加载工作区差异……", "ワークスペース差分を読み込み中…", "작업 공간 diff 불러오는 중...", "Cargando el diff del espacio de trabajo...", "Chargement du diff de l’espace de travail…"),
+	catalog(MsgDiffFile, "{status} {path}", "{status} {path}", "{status} {path}", "{status} {path}", "{status} {path}", "{status} {path}"),
+	catalog(MsgDiffBinary, "binary content omitted", "二进制内容已省略", "バイナリ内容を省略", "바이너리 내용 생략", "contenido binario omitido", "contenu binaire omis"),
+	catalog(MsgDiffTruncated, "file diff truncated", "文件差异已截断", "ファイル差分を切り詰め", "파일 diff 잘림", "diff de archivo truncado", "diff du fichier tronqué"),
+	catalog(MsgDiffTotalTruncated, "total diff limit reached; remaining files omitted", "已达到差异总大小上限；其余文件已省略", "差分の合計上限に達したため残りを省略", "전체 diff 제한에 도달하여 나머지 파일 생략", "se alcanzó el límite total; se omitieron los archivos restantes", "limite totale atteinte ; fichiers restants omis"),
+	catalog(MsgDiffClean, "working tree clean", "工作区干净", "作業ツリーに変更なし", "작업 트리 변경 없음", "árbol de trabajo limpio", "arbre de travail propre"),
 	catalog(MsgUpdateModelCurrent, "model: {model}", "模型：{model}", "モデル: {model}", "모델: {model}", "modelo: {model}", "modèle : {model}"),
 	catalog(MsgUpdateModelChanged, "model switched to {model}; applies to new tasks", "模型已切换为 {model}；对新任务生效", "モデルを {model} に変更しました。新しいタスクに適用されます", "모델을 {model}(으)로 전환했습니다. 새 작업부터 적용됩니다", "modelo cambiado a {model}; se aplica a tareas nuevas", "modèle changé pour {model} ; appliqué aux nouvelles tâches"),
 	catalog(MsgModelPickerTitle, "Select model", "选择模型", "モデルを選択", "모델 선택", "Seleccionar modelo", "Choisir un modèle"),
 	catalog(MsgModelPickerLoading, "Loading available models...", "正在加载可用模型……", "利用可能なモデルを読み込み中…", "사용 가능한 모델을 불러오는 중...", "Cargando modelos disponibles...", "Chargement des modèles disponibles…"),
 	catalog(MsgModelPickerFailed, "Unable to load models: {error}", "无法加载模型：{error}", "モデルを読み込めません: {error}", "모델을 불러올 수 없습니다: {error}", "No se pudieron cargar los modelos: {error}", "Impossible de charger les modèles : {error}"),
 	catalog(MsgModelPickerDefault, "Daemon default", "守护进程默认模型", "デーモンの既定値", "데몬 기본값", "Predeterminado del daemon", "Valeur par défaut du daemon"),
-	catalog(MsgModelPickerHelp, "Enter selects · Esc closes · /model <id> accepts advanced IDs", "Enter 选择 · Esc 关闭 · /model <id> 可输入高级模型 ID", "Enter で選択 · Esc で閉じる · /model <id> で高度な ID を指定", "Enter 선택 · Esc 닫기 · /model <id>로 고급 ID 입력", "Enter selecciona · Esc cierra · /model <id> acepta IDs avanzados", "Entrée sélectionne · Échap ferme · /model <id> accepte les identifiants avancés"),
+	catalog(MsgModelPickerHelp, "Enter selects · E changes reasoning effort · Esc closes", "Enter 选择 · E 切换推理强度 · Esc 关闭", "Enter で選択 · E で推論強度を変更 · Esc で閉じる", "Enter 선택 · E로 추론 강도 변경 · Esc 닫기", "Enter selecciona · E cambia el esfuerzo de razonamiento · Esc cierra", "Entrée sélectionne · E change l’effort de raisonnement · Échap ferme"),
 	catalog(MsgModelPickerPage, "{start}-{end} of {count}", "第 {start}-{end} 项，共 {count} 项", "{count} 件中 {start}-{end}", "{count}개 중 {start}-{end}", "{start}-{end} de {count}", "{start}-{end} sur {count}"),
 	catalog(MsgModelPickerEmpty, "No enumerated provider models; use /model <provider/model> for a dynamic model.", "没有可枚举的厂商模型；动态模型请使用 /model <厂商/模型>。", "列挙可能なモデルはありません。動的モデルには /model <provider/model> を使用してください。", "열거 가능한 모델이 없습니다. 동적 모델은 /model <provider/model>을 사용하세요.", "No hay modelos enumerados; use /model <proveedor/modelo> para un modelo dinámico.", "Aucun modèle énuméré ; utilisez /model <fournisseur/modèle> pour un modèle dynamique."),
+	catalog(MsgSessionPickerTitle, "Resume session", "恢复会话", "セッションを再開", "세션 재개", "Reanudar sesión", "Reprendre une session"),
+	catalog(MsgSessionPickerLoading, "Loading sessions...", "正在加载会话……", "セッションを読み込み中…", "세션 불러오는 중...", "Cargando sesiones...", "Chargement des sessions…"),
+	catalog(MsgSessionPickerFailed, "Unable to load sessions: {error} (r retries)", "无法加载会话：{error}（按 r 重试）", "セッションを読み込めません: {error}（r で再試行）", "세션을 불러올 수 없음: {error} (r로 재시도)", "No se pudieron cargar las sesiones: {error} (r reintenta)", "Impossible de charger les sessions : {error} (r réessaie)"),
+	catalog(MsgSessionPickerEmpty, "No other resumable sessions.", "没有其他可恢复的会话。", "再開可能な他のセッションはありません。", "재개할 다른 세션이 없습니다.", "No hay otras sesiones reanudables.", "Aucune autre session ne peut être reprise."),
+	catalog(MsgSessionPickerHelp, "Enter resumes · Esc closes", "Enter 恢复 · Esc 关闭", "Enter で再開 · Esc で閉じる", "Enter 재개 · Esc 닫기", "Enter reanuda · Esc cierra", "Entrée reprend · Échap ferme"),
+	catalog(MsgSessionPickerForkOf, "fork of {parent}", "分叉自 {parent}", "{parent} のフォーク", "{parent}에서 포크", "bifurcación de {parent}", "branche de {parent}"),
+	catalog(MsgSessionSwitchBlocked, "Cannot switch sessions: {reason}.", "无法切换会话：{reason}。", "セッションを切り替えられません: {reason}。", "세션을 전환할 수 없음: {reason}.", "No se puede cambiar de sesión: {reason}.", "Impossible de changer de session : {reason}."),
+	catalog(MsgSessionSwitchDraft, "the current draft must be submitted or cleared", "必须先提交或清空当前草稿", "現在の下書きを送信または消去してください", "현재 초안을 제출하거나 지워야 합니다", "debe enviar o borrar el borrador actual", "le brouillon actuel doit être envoyé ou effacé"),
+	catalog(MsgSessionSwitchTask, "an active task is still running", "仍有活动任务在运行", "実行中のタスクがあります", "활성 작업이 아직 실행 중입니다", "aún hay una tarea activa", "une tâche active est encore en cours"),
+	catalog(MsgSessionSwitchSubmission, "a submission is still resolving", "提交仍在处理中", "送信処理がまだ完了していません", "제출이 아직 처리 중입니다", "un envío aún se está procesando", "un envoi est encore en cours"),
+	catalog(MsgSessionSwitchRetry, "a submission retry must be resolved", "必须先处理提交重试", "送信の再試行を解決してください", "제출 재시도를 먼저 처리해야 합니다", "debe resolver el reintento del envío", "la nouvelle tentative d’envoi doit être résolue"),
+	catalog(MsgSessionSwitchQueue, "queued drafts must be submitted or removed", "必须先提交或移除排队草稿", "待機中の下書きを送信または削除してください", "대기 중인 초안을 제출하거나 제거해야 합니다", "debe enviar o eliminar los borradores en cola", "les brouillons en file doivent être envoyés ou supprimés"),
+	catalog(MsgSessionSwitchGovernance, "a governance decision is pending", "仍有治理决策待处理", "ガバナンス判断が保留中です", "거버넌스 결정이 대기 중입니다", "hay una decisión de gobernanza pendiente", "une décision de gouvernance est en attente"),
+	catalog(MsgSessionSwitchEditor, "the external editor is active", "外部编辑器仍处于活动状态", "外部エディタが使用中です", "외부 편집기가 활성 상태입니다", "el editor externo está activo", "l’éditeur externe est actif"),
+	catalog(MsgSessionSwitchGoal, "the current goal must be completed or cleared", "必须先完成或清除当前目标", "現在の目標を完了または消去してください", "현재 목표를 완료하거나 지워야 합니다", "debe completar o borrar el objetivo actual", "l’objectif actuel doit être terminé ou effacé"),
+	catalog(MsgSessionActionFailed, "Session action failed: {error}", "会话操作失败：{error}", "セッション操作に失敗しました: {error}", "세션 작업 실패: {error}", "Falló la acción de sesión: {error}", "Échec de l’action de session : {error}"),
+	catalog(MsgSessionActionInvalid, "Session action returned no session ID.", "会话操作未返回会话 ID。", "セッション操作から ID が返されませんでした。", "세션 작업에서 세션 ID가 반환되지 않았습니다.", "La acción no devolvió un ID de sesión.", "L’action n’a renvoyé aucun ID de session."),
+	catalog(MsgSessionSwitchUnavailable, "Session switching is unavailable in this frontend.", "此客户端不支持切换会话。", "このフロントエンドではセッションを切り替えられません。", "이 프런트엔드에서는 세션 전환을 사용할 수 없습니다.", "El cambio de sesión no está disponible en este cliente.", "Le changement de session n’est pas disponible dans ce client."),
+	catalog(MsgSessionSwitchLeaseBlocked, "Session switch blocked: {error}", "会话切换被阻止：{error}", "セッション切替が拒否されました: {error}", "세션 전환 차단됨: {error}", "Cambio de sesión bloqueado: {error}", "Changement de session bloqué : {error}"),
+	catalog(MsgSessionSwitchFailed, "Session switch failed: {error}", "会话切换失败：{error}", "セッション切替に失敗しました: {error}", "세션 전환 실패: {error}", "Falló el cambio de sesión: {error}", "Échec du changement de session : {error}"),
+	catalog(MsgSessionSwitching, "Switching to session {session}...", "正在切换到会话 {session}……", "セッション {session} に切り替え中…", "세션 {session}(으)로 전환 중...", "Cambiando a la sesión {session}...", "Passage à la session {session}…"),
 	catalog(MsgUpdateAgents, "agents", "Agent", "Agent", "Agent", "Agents", "Agents"),
 	catalog(MsgUpdateUsageResume, "usage: /resume [task_id]", "用法：/resume [task_id]", "使用法: /resume [task_id]", "사용법: /resume [task_id]", "uso: /resume [task_id]", "utilisation : /resume [task_id]"),
 	catalog(MsgUpdateUnknownCommand, "unknown command /{command}; use /help", "未知命令 /{command}；请使用 /help", "不明なコマンド /{command}。/help を参照", "알 수 없는 명령 /{command}. /help를 사용하세요", "comando desconocido /{command}; usa /help", "commande inconnue /{command} ; utilisez /help"),
 	catalog(MsgUpdateRewindAgain, "- press {rewind} again to choose a rewind point", "- 再按一次 {rewind} 选择回退点", "- {rewind} をもう一度押して巻き戻し点を選択", "- {rewind}를 다시 눌러 되돌리기 지점 선택", "- pulsa {rewind} otra vez para elegir un punto", "- rappuyez sur {rewind} pour choisir un point de retour"),
-	catalog(MsgUpdateCompactUnavailable, "compact unavailable: Carina cannot yet atomically replace the current task checkpoint; context.compress only compresses supplied diagnostic content", "无法压缩：Carina 目前无法原子替换当前任务检查点；context.compress 只压缩传入的诊断内容", "圧縮は利用できません: 現在のタスクのチェックポイントをまだアトミックに置換できません。context.compress は診断用入力のみを圧縮します", "압축을 사용할 수 없습니다: 현재 작업 체크포인트를 아직 원자적으로 교체할 수 없습니다. context.compress는 진단용 입력만 압축합니다", "compactación no disponible: Carina aún no puede reemplazar atómicamente el checkpoint actual; context.compress solo comprime contenido de diagnóstico", "compaction indisponible : Carina ne peut pas encore remplacer atomiquement le checkpoint courant ; context.compress compresse uniquement le contenu de diagnostic fourni"),
 	catalog(MsgWorkspaceExternalEditor, "{glyph} external editor: {error}", "{glyph} 外部编辑器：{error}", "{glyph} 外部エディタ: {error}", "{glyph} 외부 편집기: {error}", "{glyph} editor externo: {error}", "{glyph} éditeur externe : {error}"),
 	catalog(MsgWorkspaceDraftRestored, "{glyph} {error}; draft restored", "{glyph} {error}；草稿已恢复", "{glyph} {error}。下書きを復元", "{glyph} {error}. 초안 복원됨", "{glyph} {error}; borrador restaurado", "{glyph} {error} ; brouillon restauré"),
 	catalog(MsgWorkspaceEditorApplied, "- external editor draft applied", "- 已应用外部编辑器草稿", "- 外部エディタの下書きを適用", "- 외부 편집기 초안 적용됨", "- borrador del editor aplicado", "- brouillon de l’éditeur appliqué"),

@@ -62,8 +62,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case SessionReadyMsg:
+		if m.pendingSessionID != "" && msg.SessionID != m.pendingSessionID {
+			return m, nil
+		}
+		if msg.Generation != 0 && msg.Generation < m.sessionGeneration {
+			return m, nil
+		}
 		reconnected := m.sessionID == msg.SessionID && m.conn == ConnConnected
+		if m.sessionID != "" && m.sessionID != msg.SessionID {
+			if err := m.submissions.transfer(msg.SessionID); err != nil {
+				m.submissionLeaseErr = err
+				m.push(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
+				return m, nil
+			}
+			m.resetSessionProjection()
+		}
 		m.sessionID = msg.SessionID
+		m.pendingSessionID = ""
+		if msg.Generation != 0 {
+			m.sessionGeneration = msg.Generation
+		}
 		m.call = msg.Call
 		m.conn = ConnConnected
 		m.attempt = 0
@@ -95,8 +113,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modelPreferenceMsg:
 		m.handleModelPreference(msg)
 		return m, nil
+	case sessionListMsg:
+		m.handleSessionList(msg)
+		m.layout()
+		return m, nil
+	case sessionActionMsg:
+		m.handleSessionAction(msg)
+		return m, nil
 
 	case TaskActiveMsg:
+		if m.pendingSessionID != "" {
+			return m, nil
+		}
+		if msg.Generation != 0 && (msg.SessionID != m.sessionID || msg.Generation != m.sessionGeneration) {
+			return m, nil
+		}
 		if msg.TaskID != "" && msg.TaskID != m.inFlightTaskID {
 			if node := m.tasks.nodes[msg.TaskID]; node != nil && terminalTaskStatus(node.Status) {
 				return m, nil
@@ -109,6 +140,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ConnLostMsg:
+		if m.pendingSessionID != "" {
+			return m, nil
+		}
+		if msg.Generation != 0 && (msg.SessionID != m.sessionID || msg.Generation != m.sessionGeneration) {
+			return m, nil
+		}
 		m.conn = ConnLost
 		m.push(fmt.Sprintf("%s %s", glyphFailed(m.th), microcopy.Degrade(
 			microcopy.DegradeDaemonUnreachable,
@@ -118,17 +155,32 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ReconnectingMsg:
+		if m.pendingSessionID != "" || (msg.Generation != 0 && (msg.SessionID != m.sessionID || msg.Generation != m.sessionGeneration)) {
+			return m, nil
+		}
 		m.conn = ConnReconnecting
 		m.attempt = msg.Attempt
 		return m, nil
 
 	case ConnRestoredMsg:
+		if m.pendingSessionID != "" && msg.SessionID != m.pendingSessionID {
+			return m, nil
+		}
+		if msg.Generation != 0 && (msg.SessionID != m.sessionID || msg.Generation != m.sessionGeneration) {
+			return m, nil
+		}
 		m.conn = ConnConnected
 		m.attempt = 0
 		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateReconnected, nil)))
 		return m, nil
 
 	case EventMsg:
+		if m.pendingSessionID != "" {
+			return m, nil
+		}
+		if msg.Generation != 0 && (msg.SessionID != m.sessionID || msg.Generation != m.sessionGeneration) {
+			return m, nil
+		}
 		return m, m.handleEvent(msg.Raw)
 
 	case submissionDoneMsg:
@@ -155,6 +207,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case goalRPCMsg:
+		if msg.sessionID != "" && msg.sessionID != m.sessionID {
+			return m, nil
+		}
 		m.handleGoalRPC(msg)
 		return m, nil
 
@@ -206,6 +261,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.push(m.text(MsgUpdateRPCFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}))
 		return m, nil
 	case surfaceResultMsg:
+		if msg.sessionID != "" && msg.sessionID != m.sessionID {
+			return m, nil
+		}
 		m.push(m.th.Style(theme.RoleTitle).Render(msg.label) + "\n" + msg.text)
 		return m, m.maybeSubmitNextQueued()
 
@@ -214,8 +272,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.maybeSubmitNextQueued()
 
 	case operationalSurfaceMsg:
+		if msg.sessionID != "" && msg.sessionID != m.sessionID {
+			return m, nil
+		}
 		m.handleOperationalSurface(msg)
 		return m, m.maybeSubmitNextQueued()
+
+	case workspaceDiffMsg:
+		m.handleWorkspaceDiff(msg)
+		return m, nil
 
 	case externalEditorDoneMsg:
 		return m, m.handleExternalEditorDone(msg)
@@ -232,6 +297,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case modeChangedMsg:
+		if msg.sessionID != "" && msg.sessionID != m.sessionID {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.push(m.text(MsgUpdateRPCFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}))
 			return m, nil
@@ -251,7 +319,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// their RPC is resolving. Never let a terminal paste mutate the hidden
 		// composer behind the modal.
 		if m.approval != nil || m.question != nil || m.editor != nil ||
-			m.helpOpen || m.transcriptPager != nil || m.checkpointPicker != nil || m.modelPicker != nil || m.keymapEditor != nil {
+			m.helpOpen || m.transcriptPager != nil || m.checkpointPicker != nil || m.modelPicker != nil || m.sessionPicker != nil || m.keymapEditor != nil {
 			return m, nil
 		}
 		if m.historySearch != nil {
@@ -310,7 +378,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		composerSurfaceAvailable := m.approval == nil && m.question == nil &&
 			m.historySearch == nil && !m.helpOpen && m.transcriptPager == nil &&
-			m.checkpointPicker == nil && m.modelPicker == nil && m.keymapEditor == nil
+			m.checkpointPicker == nil && m.modelPicker == nil && m.sessionPicker == nil && m.keymapEditor == nil
 		if composerSurfaceAvailable && m.submitting != nil && !submissionHasIndependentComposer(m.submitting) &&
 			m.keyStartsSubmissionTypeAhead(msg) {
 			m.beginSubmissionTypeAhead()
@@ -318,7 +386,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		submissionBlocksComposer := m.submitting != nil && !submissionHasIndependentComposer(m.submitting)
 		if m.approval != nil || m.question != nil || m.historySearch != nil ||
 			submissionBlocksComposer || m.helpOpen || m.transcriptPager != nil ||
-			m.checkpointPicker != nil || m.modelPicker != nil || m.keymapEditor != nil {
+			m.checkpointPicker != nil || m.modelPicker != nil || m.sessionPicker != nil || m.keymapEditor != nil {
 			m.pasteBurst.reset()
 		} else {
 			composerBefore = m.composerSnapshot()
@@ -444,6 +512,9 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	}
 	if m.modelPicker != nil {
 		return m.modelPickerKey(key)
+	}
+	if m.sessionPicker != nil {
+		return m.sessionPickerKey(key)
 	}
 	if m.keymapEditor != nil {
 		return m.keymapEditorKey(key)
@@ -804,7 +875,7 @@ func (m *Model) ctrlC() tea.Cmd {
 }
 
 func (m *Model) ctrlD() (tea.Cmd, bool) {
-	if m.approval != nil || m.question != nil || m.helpOpen || m.checkpointPicker != nil || m.modelPicker != nil || m.keymapEditor != nil {
+	if m.approval != nil || m.question != nil || m.helpOpen || m.checkpointPicker != nil || m.modelPicker != nil || m.sessionPicker != nil || m.keymapEditor != nil {
 		return nil, true
 	}
 	if draft := m.currentDraft(); draft.Text != "" || len(draft.Prefix) > 0 || len(draft.Paste) > 0 {
@@ -837,6 +908,10 @@ func (m *Model) submit() tea.Cmd {
 
 func (m *Model) submitWithIntent(forceNew bool) tea.Cmd {
 	draft := m.currentDraft()
+	if m.pendingSessionID != "" {
+		m.push(m.text(MsgSessionSwitching, MessageArgs{"session": m.pendingSessionID}))
+		return nil
+	}
 	text := strings.TrimSpace(draft.Text)
 	paste := draft.Paste
 	if text == "" && len(draft.Prefix) == 0 && len(paste) == 0 {
@@ -855,12 +930,18 @@ func (m *Model) submitWithIntent(forceNew bool) tea.Cmd {
 		return cmd
 	}
 	if len(draft.Prefix) == 0 && strings.HasPrefix(text, "/") {
-		cmd := m.slashCommand(text)
-		if validSlashCommand(text) {
+		valid := validSlashCommand(text)
+		if valid {
+			// Consume the command snapshot before dispatch. Session-switch guards
+			// must distinguish the command being executed from a separate unsent
+			// draft, and async failures remain recoverable through prompt history.
 			m.queueRecallPending = false
 			m.commitDraft(draft, false)
+		}
+		cmd := m.slashCommand(text)
+		if valid {
 			if cmd == nil && !m.helpOpen && m.transcriptPager == nil &&
-				m.checkpointPicker == nil && m.modelPicker == nil && m.keymapEditor == nil {
+				m.checkpointPicker == nil && m.modelPicker == nil && m.sessionPicker == nil && m.keymapEditor == nil {
 				return m.maybeSubmitNextQueued()
 			}
 		}
@@ -900,7 +981,7 @@ func (m *Model) currentDraft() promptDraft {
 }
 
 func draftsEqual(a, b promptDraft) bool {
-	if a.Text != b.Text || a.Model != b.Model || a.Agent != b.Agent || a.Mode != b.Mode || len(a.Prefix) != len(b.Prefix) || len(a.Paste) != len(b.Paste) {
+	if a.Text != b.Text || a.Model != b.Model || a.Agent != b.Agent || a.Mode != b.Mode || a.ReasoningEffort != b.ReasoningEffort || len(a.Prefix) != len(b.Prefix) || len(a.Paste) != len(b.Paste) {
 		return false
 	}
 	for i := range a.Prefix {
@@ -945,6 +1026,10 @@ func (m *Model) beginSubmissionSource(kind submissionKind, target string, draft 
 }
 
 func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target string, draft promptDraft, fromQueue, forceNew bool) tea.Cmd {
+	if m.pendingSessionID != "" {
+		m.push(m.text(MsgSessionSwitching, MessageArgs{"session": m.pendingSessionID}))
+		return nil
+	}
 	if m.submitting != nil {
 		return nil
 	}
@@ -975,9 +1060,12 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 	m.submissionGen++
 	clientID := ""
 	prompt := draftPrompt(draft)
-	envelope := submissionEnvelope{prompt: prompt, model: draft.Model, agent: draft.Agent, mode: draft.Mode}
+	envelope := submissionEnvelope{prompt: prompt, model: draft.Model, agent: draft.Agent, mode: draft.Mode, reasoningEffort: draft.ReasoningEffort}
 	if envelope.model == "" {
 		envelope.model = m.model
+	}
+	if envelope.reasoningEffort == "" {
+		envelope.reasoningEffort = m.reasoningEffort
 	}
 	if envelope.mode == "" {
 		envelope.mode = "background"
@@ -997,11 +1085,11 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 				return nil
 			}
 			clientID = retry.clientID
-			envelope = submissionEnvelope{prompt: retry.prompt, model: retry.model, agent: retry.agent, mode: retry.mode}
+			envelope = submissionEnvelope{prompt: retry.prompt, model: retry.model, agent: retry.agent, mode: retry.mode, reasoningEffort: retry.reasoningEffort}
 		} else {
 			clientID = newClientSubmissionID(m.submissionGen, m.now().UnixNano())
 		}
-		retry := submissionRetry{clientID: clientID, prompt: envelope.prompt, draft: cloneDraft(draft), model: envelope.model, agent: envelope.agent, mode: envelope.mode}
+		retry := submissionRetry{clientID: clientID, prompt: envelope.prompt, draft: cloneDraft(draft), model: envelope.model, agent: envelope.agent, mode: envelope.mode, reasoningEffort: envelope.reasoningEffort}
 		if err := m.submissions.save(m.sessionID, retry); err != nil {
 			m.push(m.text(MsgUpdateRecoverySaveFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
 			m.layout()
@@ -1039,6 +1127,9 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 			}
 			if wire.model != "" {
 				params["model"] = wire.model
+			}
+			if wire.reasoningEffort != "" {
+				params["reasoning_effort"] = wire.reasoningEffort
 			}
 			if wire.agent != "" {
 				params["agent"] = wire.agent
@@ -1078,7 +1169,7 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 		if state.kind == submissionTask {
 			m.retrySubmission = &submissionRetry{
 				clientID: state.clientID, prompt: state.envelope.prompt, draft: cloneDraft(state.draft),
-				model: state.envelope.model, agent: state.envelope.agent, mode: state.envelope.mode,
+				model: state.envelope.model, agent: state.envelope.agent, mode: state.envelope.mode, reasoningEffort: state.envelope.reasoningEffort,
 			}
 			m.push(m.text(MsgUpdateTaskNotAcknowledged, MessageArgs{
 				"glyph": glyphFailed(m.th), "error": msg.err.Error(), "key": state.clientID,
@@ -1288,6 +1379,36 @@ func (m *Model) restoreDraft(draft promptDraft) {
 	m.layout()
 }
 
+func (m *Model) resetSessionProjection() {
+	m.tr = transcript{}
+	m.tasks = taskGraph{}
+	m.inFlightTaskID = ""
+	m.pausedRestore = nil
+	m.approval, m.question = nil, nil
+	m.approvalSeen = make(map[string]bool)
+	m.approvalResolved = make(map[string]bool)
+	m.approvalPending = make(map[string]approvalResolutionSnapshot)
+	m.approvalOrder = make(map[string]uint64)
+	m.questionSeen = make(map[string]bool)
+	m.questionResolved = make(map[string]bool)
+	m.questionQueue = nil
+	m.history = nil
+	m.historyPos = 0
+	m.historyScratch = promptDraft{}
+	m.historyLoadGen++
+	m.canonicalGen++
+	m.goal = nil
+	if !m.modelPinned {
+		m.model, m.reasoningEffort = "", ""
+	}
+	m.unseenLines, m.unreadAttention = 0, 0
+	m.attentionSeen = nil
+	m.attentionOrder = nil
+	m.transcriptPager, m.checkpointPicker, m.modelPicker, m.sessionPicker = nil, nil, nil, nil
+	m.closeSuggest()
+	m.vp.SetContent("")
+}
+
 func (m *Model) slashCommand(text string) tea.Cmd {
 	parts := strings.Fields(text)
 	name := strings.TrimPrefix(parts[0], "/")
@@ -1327,8 +1448,15 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 	case "context":
 		return m.queryOperationalSurface("context", "context.summary", map[string]any{"session_id": m.sessionID})
 	case "compact":
-		m.push(m.text(MsgUpdateCompactUnavailable, nil))
-		return nil
+		if len(parts) != 1 {
+			m.push(m.text(MsgUpdateUsageCompact, nil))
+			return nil
+		}
+		params := map[string]any{"session_id": m.sessionID}
+		if m.pausedRestore != nil && m.pausedRestore.TaskID != "" {
+			params["task_id"] = m.pausedRestore.TaskID
+		}
+		return m.queryOperationalSurface("compact", "session.checkpoint.compact", params)
 	case "config":
 		return m.queryOperationalSurface("config", "daemon.status", map[string]any{})
 	case "usage":
@@ -1337,6 +1465,18 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		return m.queryOperationalSurface("review (read-only)", "session.review", map[string]any{"session_id": m.sessionID})
 	case "memory":
 		return m.queryOperationalSurface("memory status", "memory.status", map[string]any{"session_id": m.sessionID})
+	case "diff":
+		if len(parts) != 1 {
+			m.push(m.text(MsgUpdateUsageDiff, nil))
+			return nil
+		}
+		return m.openWorkspaceDiff()
+	case "mcp":
+		if len(parts) > 2 || (len(parts) == 2 && parts[1] != "verbose") {
+			m.push(m.text(MsgUpdateUsageMCP, nil))
+			return nil
+		}
+		return m.queryOperationalSurface("mcp", "mcp.inventory", map[string]any{"verbose": len(parts) == 2})
 	case "mode":
 		if len(parts) != 2 || (parts[1] != "build" && parts[1] != "plan") {
 			m.push(m.text(MsgUpdateUsageMode, nil))
@@ -1357,24 +1497,56 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		}
 		if parts[1] == "default" {
 			previous := m.model
+			previousEffort := m.reasoningEffort
 			m.model = ""
+			m.reasoningEffort = ""
 			m.modelPinned = false
 			m.push(m.text(MsgUpdateModelChanged, MessageArgs{"model": parts[1]}))
 			m.layout()
-			return m.persistSessionModel(previous, m.model)
+			return m.persistSessionModel(previous, previousEffort, m.model, m.reasoningEffort)
 		} else {
 			previous := m.model
+			previousEffort := m.reasoningEffort
 			m.model = parts[1]
+			m.reasoningEffort = ""
 			m.modelPinned = false
 			m.push(m.text(MsgUpdateModelChanged, MessageArgs{"model": parts[1]}))
 			m.layout()
-			return m.persistSessionModel(previous, m.model)
+			return m.persistSessionModel(previous, previousEffort, m.model, m.reasoningEffort)
 		}
 	case "agents":
 		return m.querySurface("agent.list", map[string]any{"session_id": m.sessionID}, m.text(MsgUpdateAgents, nil))
 	case "checkpoints":
 		return m.openCheckpointPicker()
+	case "new":
+		return m.newSession()
+	case "fork":
+		if len(parts) > 2 {
+			m.push("usage: /fork [task_id]")
+			return nil
+		}
+		taskID := ""
+		if len(parts) == 2 {
+			taskID = parts[1]
+		}
+		return m.forkSession(taskID)
 	case "resume":
+		if len(parts) > 2 {
+			m.push("usage: /resume [session_id]")
+			return nil
+		}
+		if len(parts) == 1 {
+			if m.pausedRestore != nil || m.switchSession == nil {
+				return m.resumePausedRestore("")
+			}
+			return m.openSessionPicker()
+		}
+		if !strings.HasPrefix(parts[1], "sess_") {
+			m.push("/resume task_id is deprecated; use /task-resume task_id")
+			return m.resumePausedRestore(parts[1])
+		}
+		return m.resumeSession(parts[1])
+	case "task-resume":
 		if len(parts) > 2 {
 			m.push(m.text(MsgUpdateUsageResume, nil))
 			return nil
@@ -1407,8 +1579,10 @@ func validSlashCommand(text string) bool {
 		return false
 	}
 	switch strings.TrimPrefix(parts[0], "/") {
-	case "help", "keys", "recap", "agents", "checkpoints", "keymap", "copy", "transcript", "status", "permissions", "context", "compact", "config", "usage", "review", "memory", "loop", "goal":
+	case "help", "keys", "recap", "agents", "checkpoints", "keymap", "copy", "transcript", "status", "permissions", "context", "compact", "config", "usage", "review", "memory", "loop", "goal", "diff", "new", "fork", "task-resume":
 		return true
+	case "mcp":
+		return len(parts) <= 2 && (len(parts) == 1 || parts[1] == "verbose")
 	case "model":
 		return len(parts) <= 2
 	case "resume":
@@ -1505,24 +1679,84 @@ func (m *Model) handleCanonicalSurface(msg canonicalSurfaceMsg) {
 
 func (m *Model) queryOperationalSurface(kind, method string, params map[string]any) tea.Cmd {
 	call := m.call
+	sessionID := m.sessionID
 	return func() tea.Msg {
 		if call == nil {
-			return operationalSurfaceMsg{kind: kind, err: errors.New("daemon not connected")}
+			return operationalSurfaceMsg{sessionID: sessionID, kind: kind, err: errors.New("daemon not connected")}
 		}
 		var out map[string]any
 		err := call.Call(method, params, &out)
-		return operationalSurfaceMsg{kind: kind, data: out, err: err}
+		return operationalSurfaceMsg{sessionID: sessionID, kind: kind, data: out, err: err}
 	}
 }
+
+func (m *Model) openWorkspaceDiff() tea.Cmd {
+	m.closeSuggest()
+	m.canonicalGen++
+	generation := m.canonicalGen
+	m.transcriptPager = &transcriptPagerState{generation: generation, title: m.text(MsgDiffTitle, nil), loadingText: m.text(MsgDiffLoading, nil), loading: true}
+	m.layout()
+	call, sessionID := m.call, m.sessionID
+	return func() tea.Msg {
+		if call == nil {
+			return workspaceDiffMsg{generation: generation, err: errors.New("daemon not connected")}
+		}
+		var out map[string]any
+		err := call.Call("workspace.diff", map[string]any{"session_id": sessionID}, &out)
+		return workspaceDiffMsg{generation: generation, data: out, err: err}
+	}
+}
+
+func (m *Model) handleWorkspaceDiff(msg workspaceDiffMsg) {
+	if m.transcriptPager == nil || m.transcriptPager.generation != msg.generation {
+		return
+	}
+	m.transcriptPager.loading = false
+	if msg.err != nil {
+		m.transcriptPager.err = msg.err.Error()
+		m.layout()
+		return
+	}
+	files, _ := msg.data["files"].([]any)
+	var sections []string
+	for _, raw := range files {
+		row, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		header := m.text(MsgDiffFile, MessageArgs{"status": str(row["status"]), "path": str(row["path"])})
+		switch {
+		case diffBool(row["binary"]):
+			header += " · " + m.text(MsgDiffBinary, nil)
+		case diffBool(row["truncated"]):
+			header += " · " + m.text(MsgDiffTruncated, nil)
+		}
+		body := str(row["diff"])
+		if body != "" {
+			header += "\n" + body
+		}
+		sections = append(sections, header)
+	}
+	if len(sections) == 0 {
+		sections = []string{m.text(MsgDiffClean, nil)}
+	}
+	if diffBool(msg.data["truncated"]) {
+		sections = append(sections, m.text(MsgDiffTotalTruncated, nil))
+	}
+	m.transcriptPager.text = strings.Join(sections, "\n\n")
+	m.layout()
+}
+
+func diffBool(v any) bool { b, _ := v.(bool); return b }
 
 func (m *Model) changeMode(mode string) tea.Cmd {
 	call, sessionID := m.call, m.sessionID
 	return func() tea.Msg {
 		if call == nil {
-			return modeChangedMsg{mode: mode, err: errors.New("daemon not connected")}
+			return modeChangedMsg{sessionID: sessionID, mode: mode, err: errors.New("daemon not connected")}
 		}
 		err := call.Call("session.plan_mode", map[string]any{"session_id": sessionID, "on": mode == "plan"}, nil)
-		return modeChangedMsg{mode: mode, err: err}
+		return modeChangedMsg{sessionID: sessionID, mode: mode, err: err}
 	}
 }
 
@@ -1597,7 +1831,7 @@ func (m *Model) handleOperationalSurface(msg operationalSurfaceMsg) {
 	}
 	titleID := map[string]MessageID{
 		"status": MsgOperationalStatusTitle, "permissions": MsgOperationalPermissionsTitle,
-		"context": MsgOperationalContextTitle, "config": MsgOperationalConfigTitle,
+		"context": MsgOperationalContextTitle, "config": MsgOperationalConfigTitle, "mcp": MsgOperationalMCPTitle, "compact": MsgOperationalCompactTitle,
 	}[msg.kind]
 	title := m.text(titleID, nil)
 	lines := compactMapLines(msg.data, "")
@@ -1642,6 +1876,7 @@ func compactMapLines(values map[string]any, indent string) []string {
 
 func (m *Model) querySurface(method string, params map[string]any, label string) tea.Cmd {
 	call := m.call
+	sessionID := m.sessionID
 	return func() tea.Msg {
 		if call == nil {
 			return rpcErrMsg{err: errors.New("daemon not connected")}
@@ -1651,7 +1886,7 @@ func (m *Model) querySurface(method string, params map[string]any, label string)
 			return rpcErrMsg{err: err}
 		}
 		raw, _ := json.MarshalIndent(out, "", "  ")
-		return surfaceResultMsg{label: label, text: string(raw)}
+		return surfaceResultMsg{sessionID: sessionID, label: label, text: string(raw)}
 	}
 }
 

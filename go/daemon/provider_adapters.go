@@ -137,6 +137,31 @@ func mergeRawBody(dst map[string]any, body map[string]json.RawMessage) {
 	}
 }
 
+func applyNativeReasoningEffort(providerID, model, effort string, body map[string]any) (string, error) {
+	effort = normalizeReasoningEffort(effort)
+	if effort == "" {
+		return "", nil
+	}
+	effective, err := validateReasoningEffort(nativeReasoningEffortSpec(providerID, model), effort)
+	if err != nil {
+		return "", fmt.Errorf("%s/%s: %w", providerID, model, err)
+	}
+	switch normalizeProviderID(providerID) {
+	case "openai", "openrouter":
+		body["reasoning"] = map[string]any{"effort": effective}
+	case "google":
+		config, _ := body["generationConfig"].(map[string]any)
+		if config == nil {
+			config = map[string]any{}
+			body["generationConfig"] = config
+		}
+		config["thinkingConfig"] = map[string]any{"thinkingLevel": strings.ToUpper(effective)}
+	default:
+		return "", fmt.Errorf("%s/%s: reasoning effort is not supported by this adapter", providerID, model)
+	}
+	return effective, nil
+}
+
 type providerStatusError struct {
 	provider  string
 	status    int
@@ -244,6 +269,10 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 	}
 	mergeRawBody(bodyMap, o.body)
 	mergeRawBody(bodyMap, override.Body)
+	effectiveEffort, err := applyNativeReasoningEffort(o.id, model, req.ReasoningEffort, bodyMap)
+	if err != nil {
+		return nil, err
+	}
 	body, _ := json.Marshal(bodyMap)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint("chat/completions"), bytes.NewReader(body))
 	if err != nil {
@@ -289,12 +318,13 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 	}
 	cached := clampCachedTokens(out.Usage.PromptDetails.CachedTokens, out.Usage.PromptTokens)
 	return &modelrouter.Response{
-		Provider:        o.Name(),
-		Model:           responseModel,
-		Text:            text,
-		InputTokens:     out.Usage.PromptTokens - cached,
-		OutputTokens:    out.Usage.CompletionTokens,
-		CacheReadTokens: cached,
+		Provider:                 o.Name(),
+		Model:                    responseModel,
+		Text:                     text,
+		InputTokens:              out.Usage.PromptTokens - cached,
+		OutputTokens:             out.Usage.CompletionTokens,
+		CacheReadTokens:          cached,
+		EffectiveReasoningEffort: effectiveEffort,
 	}, nil
 }
 
@@ -322,6 +352,10 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 	}
 	mergeRawBody(bodyMap, o.body)
 	mergeRawBody(bodyMap, override.Body)
+	effectiveEffort, err := applyNativeReasoningEffort(o.id, model, req.ReasoningEffort, bodyMap)
+	if err != nil {
+		return nil, err
+	}
 	body, _ := json.Marshal(bodyMap)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint("responses"), bytes.NewReader(body))
 	if err != nil {
@@ -372,12 +406,13 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 	}
 	cached := clampCachedTokens(out.Usage.InputDetails.CachedTokens, out.Usage.InputTokens)
 	return &modelrouter.Response{
-		Provider:        o.Name(),
-		Model:           responseModel,
-		Text:            text,
-		InputTokens:     out.Usage.InputTokens - cached,
-		OutputTokens:    out.Usage.OutputTokens,
-		CacheReadTokens: cached,
+		Provider:                 o.Name(),
+		Model:                    responseModel,
+		Text:                     text,
+		InputTokens:              out.Usage.InputTokens - cached,
+		OutputTokens:             out.Usage.OutputTokens,
+		CacheReadTokens:          cached,
+		EffectiveReasoningEffort: effectiveEffort,
 	}, nil
 }
 
@@ -423,6 +458,10 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 	}
 	mergeRawBody(bodyMap, g.body)
 	mergeRawBody(bodyMap, override.Body)
+	effectiveEffort, err := applyNativeReasoningEffort(g.id, model, req.ReasoningEffort, bodyMap)
+	if err != nil {
+		return nil, err
+	}
 	body, _ := json.Marshal(bodyMap)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
@@ -474,11 +513,12 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 		return nil, fmt.Errorf("%s: empty response", g.id)
 	}
 	return &modelrouter.Response{
-		Provider:     g.Name(),
-		Model:        responseModel,
-		Text:         text,
-		InputTokens:  out.UsageMetadata.PromptTokenCount,
-		OutputTokens: out.UsageMetadata.CandidatesTokenCount,
+		Provider:                 g.Name(),
+		Model:                    responseModel,
+		Text:                     text,
+		InputTokens:              out.UsageMetadata.PromptTokenCount,
+		OutputTokens:             out.UsageMetadata.CandidatesTokenCount,
+		EffectiveReasoningEffort: effectiveEffort,
 	}, nil
 }
 

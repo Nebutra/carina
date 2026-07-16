@@ -36,7 +36,8 @@ func TestModelCommandOpensAvailableModelPicker(t *testing.T) {
 			"providers": []map[string]any{{
 				"id": "openai", "name": "OpenAI", "registered": true, "available": true,
 				"auth_source": "env:OPENAI_API_KEY",
-				"models":      []map[string]any{{"id": "openai/gpt-5", "name": "GPT-5", "available": true}},
+				"models": []map[string]any{{"id": "openai/gpt-5", "name": "GPT-5", "available": true,
+					"reasoning_efforts": []string{"low", "medium", "high"}, "default_reasoning_effort": "medium"}},
 			}},
 		},
 		"session.model.set": map[string]any{"next_model": "openai/gpt-5"},
@@ -53,11 +54,17 @@ func TestModelCommandOpensAvailableModelPicker(t *testing.T) {
 	if _, handled := m.modelPickerKey("down"); !handled {
 		t.Fatal("picker did not handle navigation")
 	}
+	if _, handled := m.modelPickerKey("e"); !handled {
+		t.Fatal("picker did not handle effort selection")
+	}
 	if _, handled := m.modelPickerKey("enter"); !handled || m.modelPicker != nil {
 		t.Fatalf("picker selection failed: handled=%v state=%#v", handled, m.modelPicker)
 	}
 	if m.model != "openai/gpt-5" {
 		t.Fatalf("selected model = %q", m.model)
+	}
+	if m.reasoningEffort != "high" {
+		t.Fatalf("selected reasoning effort = %q", m.reasoningEffort)
 	}
 	if strings.Contains(m.View().Content, "inventory-secret") {
 		t.Fatal("picker rendered a credential")
@@ -102,14 +109,19 @@ func TestTaskSubmissionClosureUsesFrozenModel(t *testing.T) {
 	m, _ := newTestModel(fc)
 	m.sessionID = "sess_frozen"
 	m.model = "openai/gpt-5"
+	m.reasoningEffort = "high"
 	cmd := m.beginSubmission(submissionTask, "frozen routing", promptDraft{Text: "frozen routing"})
 	if cmd == nil {
 		t.Fatal("submission command missing")
 	}
 	m.model = "anthropic/claude-sonnet-4-5-20250929"
+	m.reasoningEffort = "low"
 	drain(m, cmd)
 	if got := fc.last().params["model"]; got != "openai/gpt-5" {
 		t.Fatalf("async closure read live model: got %v", got)
+	}
+	if got := fc.last().params["reasoning_effort"]; got != "high" {
+		t.Fatalf("async closure read live effort: got %v", got)
 	}
 }
 
@@ -118,15 +130,17 @@ func TestTaskSubmissionRetryReplaysFrozenEnvelope(t *testing.T) {
 	m, _ := newTestModel(fc)
 	m.sessionID = "sess_retry_model"
 	m.model = "openai/gpt-5"
+	m.reasoningEffort = "high"
 	m.input.SetValue("retry routing")
 	drain(m, m.submit())
 	first := fc.last()
 	firstID := first.params["client_submission_id"]
 	m.model = "anthropic/claude-sonnet-4-5-20250929"
+	m.reasoningEffort = "low"
 	fc.handler["task.submit"] = map[string]any{"task_id": "task_existing", "status": "running"}
 	drain(m, m.submit())
 	second := fc.last()
-	if second.params["client_submission_id"] != firstID || second.params["model"] != first.params["model"] || second.params["mode"] != first.params["mode"] || second.params["prompt"] != first.params["prompt"] {
+	if second.params["client_submission_id"] != firstID || second.params["model"] != first.params["model"] || second.params["reasoning_effort"] != first.params["reasoning_effort"] || second.params["mode"] != first.params["mode"] || second.params["prompt"] != first.params["prompt"] {
 		t.Fatalf("retry changed immutable envelope: first=%#v second=%#v", first.params, second.params)
 	}
 }

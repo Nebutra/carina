@@ -99,6 +99,7 @@ func run(args []string, stderr io.Writer) int {
 		}
 	}
 
+	connectionController := tui.NewConnectionController()
 	model, err := tui.NewChecked(tui.Options{
 		Theme:             th,
 		Locale:            loc,
@@ -109,6 +110,7 @@ func run(args []string, stderr io.Writer) int {
 		Keybindings:       keybindings,
 		NoAlternateScreen: *noAltScreen || strings.EqualFold(cfg.TUIAlternateScreen, "never"),
 		KeymapUpdater:     keymapUpdater(home, projectRoot),
+		SwitchSession:     connectionController.Switch,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, loc))
@@ -119,7 +121,7 @@ func run(args []string, stderr io.Writer) int {
 	watchCtx, stopWatching := context.WithCancel(context.Background())
 	defer stopWatching()
 	go tui.WatchKeybindings(watchCtx, home, projectRoot, prog)
-	tui.Connect(prog, *socket, sessionID, projectRoot)
+	tui.ConnectControlled(prog, *socket, sessionID, projectRoot, connectionController)
 
 	final, err := prog.Run()
 	if err != nil {
