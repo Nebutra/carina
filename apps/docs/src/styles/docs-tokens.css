@@ -94,9 +94,10 @@
   --docs-panel-radius: var(--radius-lg);
   --docs-control-h: var(--size-control-default);
   --docs-control-h-sm: var(--size-control-compact);
-  --docs-nav-height: var(--layout-nav-height);
-  /* Horizontal lockup in 56px nav — keep wordmark readable without crowding chrome */
-  --docs-logo-height: 2.125rem;
+  /* Docs chrome slightly taller than product 56px so a large lockup fits */
+  --docs-nav-height: 64px;
+  /* Aggressive lockup size — dominant brand mark in header */
+  --docs-logo-height: 2.75rem;
   --docs-page-max: var(--layout-page-max);
   --docs-reading-max: var(--layout-reading-max);
   --docs-sidebar-width: 15.5rem;
