@@ -84,6 +84,16 @@ const (
 	RoleBlockquote
 	RoleTableBorder
 	RoleMathApprox
+	// Syntax roles: chroma token categories inside fenced code blocks resolve
+	// to these. The category→role mapping lives in exactly one place
+	// (go/tui/markdown highlight.go); the theme only names the palette slot.
+	// Unmapped tokens stay RoleCodeBlock, and Mono degrades to plain text.
+	RoleSyntaxKeyword
+	RoleSyntaxString
+	RoleSyntaxNumber
+	RoleSyntaxComment
+	RoleSyntaxFunction
+	RoleSyntaxType
 )
 
 // roleToken keeps product semantics separate from Brand Rose, which is reserved
@@ -94,19 +104,19 @@ func roleToken(r Role) Token {
 		return EventRed
 	case RoleWarning:
 		return CopperAmber
-	case RoleSuccess, RoleDiffAdd:
+	case RoleSuccess, RoleDiffAdd, RoleSyntaxString:
 		return SpectralGreen
-	case RoleInfo, RoleDiffHunk, RoleLink:
+	case RoleInfo, RoleDiffHunk, RoleLink, RoleSyntaxFunction:
 		return OxygenBlue
-	case RoleTitle, RoleHeading, RoleListMarker:
+	case RoleTitle, RoleHeading, RoleListMarker, RoleSyntaxType:
 		return IonCyan
-	case RoleMuted, RoleCodeBlock, RoleBlockquote:
+	case RoleMuted, RoleCodeBlock, RoleBlockquote, RoleSyntaxComment:
 		return Dust
 	case RoleBorder, RoleTableBorder:
 		return Border
-	case RoleCodeInline:
+	case RoleCodeInline, RoleSyntaxNumber:
 		return CopperAmber
-	case RoleMathApprox:
+	case RoleMathApprox, RoleSyntaxKeyword:
 		return DustViolet
 	default:
 		return Starlight
@@ -119,6 +129,12 @@ func roleBold(r Role) bool {
 
 func roleUnderline(r Role) bool {
 	return r == RoleLink
+}
+
+// Comments share the Dust token with plain code; the italic attribute is what
+// keeps them distinguishable inside a highlighted block.
+func roleItalic(r Role) bool {
+	return r == RoleSyntaxComment
 }
 
 // Theme renders roles for one detected profile.
@@ -158,6 +174,9 @@ func (t Theme) Style(r Role) lipgloss.Style {
 	}
 	if roleUnderline(r) {
 		s = s.Underline(true)
+	}
+	if roleItalic(r) {
+		s = s.Italic(true)
 	}
 	return s
 }

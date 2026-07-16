@@ -210,12 +210,22 @@ func (g *taskGraph) lines(m *Model, width, limit int) []string {
 	}
 
 	header := m.text(MsgTasksHeader, MessageArgs{"active": g.activeCount(), "done": completed})
-	out := []string{fitLine(m.th.Style(theme.RoleMuted).Render(header), width)}
+	// A single root task is ambient context, not a dashboard. Render it as one
+	// rail; the full header/tree appears only when hierarchy or concurrency
+	// makes the counts useful.
+	compactRoot := len(visible) == 1 && visible[0].ParentID == ""
+	var out []string
+	if !compactRoot {
+		out = append(out, fitLine(m.th.Style(theme.RoleMuted).Render(header), width))
+	}
 	for _, node := range visible {
 		if len(out) >= limit {
 			break
 		}
 		prefix := "-"
+		if compactRoot {
+			prefix = ""
+		}
 		if node.ParentID != "" {
 			prefix = "  `-"
 		}
@@ -230,8 +240,12 @@ func (g *taskGraph) lines(m *Model, width, limit int) []string {
 		})
 		out = append(out, fitLine(line, width))
 	}
-	if len(visible)+1 > limit {
-		out[limit-1] = fitLine(m.countText(MsgTasksMore, len(visible)-(limit-1), nil), width)
+	headerRows := 1
+	if compactRoot {
+		headerRows = 0
+	}
+	if len(visible)+headerRows > limit {
+		out[limit-1] = fitLine(m.countText(MsgTasksMore, len(visible)-(limit-headerRows), nil), width)
 	}
 	return out
 }

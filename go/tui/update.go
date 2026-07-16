@@ -118,10 +118,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		reconcile := m.restoreSubmissionJournal()
 		history := m.loadRecentHistory(msg.Call)
 		status := m.refreshRuntimeStatus()
+		tick := m.scheduleRuntimeStatusTick()
 		if reconcile != nil {
-			return m, tea.Batch(history, reconcile, status)
+			return m, tea.Batch(history, reconcile, status, tick)
 		}
-		return m, tea.Batch(history, status)
+		return m, tea.Batch(history, status, tick)
 
 	case modelPreferenceMsg:
 		if (msg.sessionID != "" && msg.sessionID != m.sessionID) || (msg.generation != 0 && msg.generation != m.sessionGeneration) {
@@ -308,6 +309,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runtimeStatusMsg:
 		m.handleRuntimeStatus(msg)
 		return m, nil
+	case runtimeStatusTickMsg:
+		if msg.generation != 0 && msg.generation != m.sessionGeneration {
+			return m, nil
+		}
+		if m.sessionID == "" || m.call == nil {
+			return m, nil
+		}
+		return m, tea.Batch(m.refreshRuntimeStatus(), m.scheduleRuntimeStatusTick())
+	case commitPromptReadyMsg:
+		if msg.sessionID != "" && msg.sessionID != m.sessionID {
+			return m, nil
+		}
+		return m, m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: msg.prompt}, false, false)
+	case tasksScheduleMsg:
+		m.handleTasksSchedule(msg)
+		return m, nil
 	case dynamicSlashResolvedMsg:
 		return m, m.handleDynamicSlash(msg)
 
@@ -340,10 +357,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = msg.mode
 		m.push(m.text(MsgUpdateMode, MessageArgs{"mode": msg.mode}))
 		m.layout()
+		refresh := m.refreshRuntimeStatus()
 		if strings.TrimSpace(msg.followUpPrompt) != "" {
-			return m, m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: msg.followUpPrompt}, false, false)
+			return m, tea.Batch(refresh, m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: msg.followUpPrompt}, false, false))
 		}
-		return m, m.maybeSubmitNextQueued()
+		return m, tea.Batch(refresh, m.maybeSubmitNextQueued())
 
 	case loopResultMsg:
 		if msg.sessionID != "" && msg.sessionID != m.sessionID {
@@ -354,10 +372,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.PasteMsg:
 		m.pasteBurst.reset()
+		if m.question != nil {
+			if len(m.question.Options) == 0 && !m.question.Resolving {
+				m.appendQuestionText(msg.Content)
+			}
+			return m, nil
+		}
 		// Governance overlays exclusively own input while open, including while
 		// their RPC is resolving. Never let a terminal paste mutate the hidden
 		// composer behind the modal.
-		if m.approval != nil || m.question != nil || m.editor != nil ||
+		if m.approval != nil || m.editor != nil ||
 			m.helpOpen || m.transcriptPager != nil || m.checkpointPicker != nil || m.modelPicker != nil || m.sessionPicker != nil || m.keymapEditor != nil {
 			return m, nil
 		}
@@ -407,9 +431,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			synthetic := tea.KeyPressMsg{Text: resolved}
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(synthetic)
+			m.snapVerticalGraphemeEditorKey(resolved)
 			m.layout()
 			m.recordComposerEdit(before, composerEditOther)
 			return m, tea.Batch(cmd, m.refreshSuggestTrigger())
+		}
+		if m.question != nil && len(m.question.Options) == 0 {
+			m.pasteBurst.reset()
+			cmd, _ := m.questionKeyText(msg.String(), msg.Key().Text)
+			return m, cmd
 		}
 		if m.historySearch != nil && m.approval == nil && m.question == nil {
 			m.pasteBurst.reset()
@@ -443,6 +473,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	if key, ok := msg.(tea.KeyPressMsg); ok {
+		m.snapVerticalGraphemeEditorKey(key.String())
+	}
 	m.layout()
 	if trackComposer {
 		m.recordComposerEdit(composerBefore, composerKeyEditKind(composerKey))
@@ -494,6 +527,13 @@ func (m *Model) refreshSuggestTrigger() tea.Cmd {
 func (m *Model) handleEvent(ev map[string]any) tea.Cmd {
 	hadApproval := m.approval != nil
 	hadQuestion := m.question != nil
+	// Streaming assistant output bypasses the per-event projection: deltas
+	// accumulate into a per-message source whose stable/tail split owns its
+	// own transcript entries (stream.go).
+	if str(ev["type"]) == "ModelOutputDelta" {
+		m.handleStreamEvent(ev)
+		return nil
+	}
 	attentionCmd := m.noteAttention(ev)
 	m.pushEvent(ev)
 	m.tasks.observeEvent(ev)
@@ -662,6 +702,9 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		default:
 			// Textarea editing belongs to the independent next draft. Enter and
 			// other submission commands above remain deduplicated until the ACK.
+			if cmd, handled := m.handleGraphemeEditorKey(key); handled {
+				return cmd, true
+			}
 			return nil, false
 		}
 	}
@@ -713,6 +756,9 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	}
 	if m.keys.matches(KeyContextComposer, ActionComposerNewline, key) {
 		return nil, false
+	}
+	if cmd, handled := m.handleGraphemeEditorKey(key); handled {
+		return cmd, true
 	}
 
 	switch {
@@ -1563,35 +1609,48 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		return m.queryOperationalSurface("doctor", "daemon.doctor", map[string]any{})
 	case "usage", "cost":
 		return m.queryOperationalSurface("usage", "usage.cost", map[string]any{"session_id": m.sessionID})
-	case "review", "commit":
+	case "review":
 		return m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: text}, false, false)
+	case "commit":
+		extra := ""
+		if len(parts) > 1 {
+			extra = strings.Join(parts[1:], " ")
+		}
+		return m.commitWorkflow(extra)
 	case "btw":
 		if len(parts) < 2 {
 			m.push(m.text(MsgUpdateUsageBtw, nil))
 			return nil
 		}
-		side := "Side question (do not change the main task plan; answer briefly):\n\n" + strings.Join(parts[1:], " ")
-		return m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: side}, false, false)
+		return m.btwSideQuestion(strings.Join(parts[1:], " "))
 	case "plan":
 		if len(parts) == 1 {
+			_ = m.ensurePlanFileScaffold()
 			return m.changeMode("plan")
 		}
-		// Enter plan mode then submit the description as the planning prompt.
-		desc := strings.Join(parts[1:], " ")
-		call, sessionID := m.call, m.sessionID
-		return func() tea.Msg {
-			if call != nil {
-				_ = call.Call("session.plan_mode", map[string]any{"session_id": sessionID, "on": true}, nil)
-			}
-			return modeChangedMsg{sessionID: sessionID, mode: "plan", err: nil, followUpPrompt: desc}
-		}
+		return m.enterPlanMode(strings.Join(parts[1:], " "))
 	case "build":
 		return m.changeMode("build")
+	case "approve-plan", "approve_plan":
+		return m.approvePlan()
 	case "view-plan", "show-plan", "plan-view":
 		m.viewPlanSurface()
 		return nil
+	case "explain":
+		m.explainRuntimeSurface()
+		return nil
+	case "inspect", "welcome":
+		return m.inspectSurface()
 	case "tasks", "ps":
-		m.showTasksSurface()
+		return m.showTasksSurfaceAsync()
+	case "extension":
+		if len(parts) == 3 && parts[1] == "enable" {
+			return m.extensionToggle(parts[2], true)
+		}
+		if len(parts) == 3 && parts[1] == "disable" {
+			return m.extensionToggle(parts[2], false)
+		}
+		m.push(m.text(MsgUpdateUsageExtension, nil))
 		return nil
 	case "sessions":
 		return m.openSessionPicker()
@@ -1954,6 +2013,9 @@ func (m *Model) handleWorkspaceDiff(msg workspaceDiffMsg) {
 func diffBool(v any) bool { b, _ := v.(bool); return b }
 
 func (m *Model) changeMode(mode string) tea.Cmd {
+	if mode == "plan" {
+		_ = m.ensurePlanFileScaffold()
+	}
 	call, sessionID := m.call, m.sessionID
 	return func() tea.Msg {
 		if call == nil {
@@ -2073,8 +2135,12 @@ func (m *Model) handleOperationalSurface(msg operationalSurfaceMsg) {
 		"context": MsgOperationalContextTitle, "config": MsgOperationalConfigTitle, "mcp": MsgOperationalMCPTitle, "compact": MsgOperationalCompactTitle,
 		"doctor": MsgOperationalDoctorTitle, "skills": MsgOperationalSkillsTitle, "hooks": MsgOperationalHooksTitle, "extensions": MsgOperationalExtensionsTitle,
 		"usage": MsgOperationalUsageTitle, "review": MsgOperationalReviewTitle, "memory": MsgOperationalMemoryTitle,
+		"inspect": MsgInspectHeader,
 	}[msg.kind]
 	title := m.text(titleID, nil)
+	if titleID == "" {
+		title = msg.kind
+	}
 	lines := m.humanizeOperationalSurface(msg.kind, msg.data)
 	if len(lines) == 0 {
 		lines = []string{m.text(MsgOperationalEmpty, nil)}

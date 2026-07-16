@@ -63,6 +63,13 @@ func TestSemanticRoleMapping(t *testing.T) {
 		RoleBlockquote:  Dust,
 		RoleTableBorder: Border,
 		RoleMathApprox:  DustViolet,
+		// Syntax roles inside highlighted code blocks reuse the same palette.
+		RoleSyntaxKeyword:  DustViolet,
+		RoleSyntaxString:   SpectralGreen,
+		RoleSyntaxNumber:   CopperAmber,
+		RoleSyntaxComment:  Dust,
+		RoleSyntaxFunction: OxygenBlue,
+		RoleSyntaxType:     IonCyan,
 	}
 	for role, tok := range want {
 		if got := roleToken(role); got != tok {
@@ -123,6 +130,19 @@ func TestMarkdownRoleAttributes(t *testing.T) {
 	for _, role := range []Role{RoleHeading, RoleCodeInline, RoleCodeBlock, RoleLink, RoleListMarker, RoleBlockquote, RoleTableBorder, RoleMathApprox} {
 		if out := New(Mono).Style(role).Render("x"); out != "x" {
 			t.Errorf("Mono markdown role %v must be plain, got %q", role, out)
+		}
+	}
+}
+
+// Comments are the one italic syntax role (Dust alone would blend into plain
+// code); every syntax role stays plain under Mono.
+func TestSyntaxRoleAttributes(t *testing.T) {
+	if out := New(ANSI256).Style(RoleSyntaxComment).Render("x"); !strings.Contains(out, "3m") && !strings.Contains(out, ";3;") && !strings.Contains(out, "[3;") {
+		t.Errorf("ANSI256 comment should be italic, got %q", out)
+	}
+	for _, role := range []Role{RoleSyntaxKeyword, RoleSyntaxString, RoleSyntaxNumber, RoleSyntaxComment, RoleSyntaxFunction, RoleSyntaxType} {
+		if out := New(Mono).Style(role).Render("x"); out != "x" {
+			t.Errorf("Mono syntax role %v must be plain, got %q", role, out)
 		}
 	}
 }

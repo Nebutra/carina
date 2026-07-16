@@ -32,6 +32,8 @@ const (
 	MsgStatusFooter           MessageID = "status.footer"
 	MsgStatusGoal             MessageID = "status.goal"
 	MsgStatusRunningModel     MessageID = "status.running_model"
+	MsgStatusSettingsHint     MessageID = "status.settings_hint"
+	MsgStatusHelpHint         MessageID = "status.help_hint"
 
 	MsgHelpTitle                MessageID = "help.title"
 	MsgHelpCommands             MessageID = "help.commands"
@@ -154,6 +156,8 @@ var baseCatalogRows = []catalogRow{
 	{ID: MsgStatusAttention, EN: "{count} attention", ZH: "{count} 项待处理", JA: "要確認 {count} 件", KO: "확인 필요 {count}개", ES: "{count} requieren atención", FR: "{count} demandent votre attention", ENOne: "{count} attention", ZHOne: "{count} 项待处理", JAOne: "要確認 {count} 件", KOOne: "확인 필요 {count}개", ESOne: "{count} requiere atención", FROne: "{count} demande votre attention"},
 	catalog(MsgStatusChord, "chord {hint}", "组合键 {hint}", "コード {hint}", "키 조합 {hint}", "secuencia {hint}", "séquence {hint}"),
 	catalog(MsgStatusFooter, " carina · {session} · {mode} · next {model} · {activity} · {help} help", " carina · {session} · {mode} · 下个模型 {model} · {activity} · {help} 帮助", " carina · {session} · {mode} · 次のモデル {model} · {activity} · {help} ヘルプ", " carina · {session} · {mode} · 다음 모델 {model} · {activity} · {help} 도움말", " carina · {session} · {mode} · siguiente {model} · {activity} · {help} ayuda", " carina · {session} · {mode} · suivant {model} · {activity} · {help} aide"),
+	catalog(MsgStatusSettingsHint, "{key} settings", "{key} 设置", "{key} 設定", "{key} 설정", "{key} ajustes", "{key} réglages"),
+	catalog(MsgStatusHelpHint, "{key} help", "{key} 帮助", "{key} ヘルプ", "{key} 도움말", "{key} ayuda", "{key} aide"),
 	catalog(MsgStatusGoal, "goal:{status}", "目标:{status}", "目標:{status}", "목표:{status}", "objetivo:{status}", "objectif:{status}"),
 	catalog(MsgStatusRunningModel, "running {requested} → {effective}", "运行中 {requested} → {effective}", "実行中 {requested} → {effective}", "실행 중 {requested} → {effective}", "ejecutando {requested} → {effective}", "en cours {requested} → {effective}"),
 

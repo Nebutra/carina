@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Nebutra/carina/go/tui/theme"
 )
@@ -44,10 +45,10 @@ type settingsShellState struct {
 }
 
 type settingsAction struct {
-	Label  string
-	Hint   string
-	Run    func(*Model) tea.Cmd
-	Route  string // optional slash routed through slashCommand
+	Label string
+	Hint  string
+	Run   func(*Model) tea.Cmd
+	Route string // optional slash routed through slashCommand
 }
 
 func (m *Model) openSettings(tab settingsTab) {
@@ -75,8 +76,11 @@ func (m *Model) settingsActions() []settingsAction {
 	switch {
 	case m.settings != nil && m.settings.tab == settingsTabMode:
 		return []settingsAction{
-			{Label: m.text(MsgSettingsActionPlan, nil), Hint: "/mode plan", Route: "/mode plan"},
+			{Label: m.text(MsgSettingsActionPlan, nil), Hint: "/plan", Route: "/plan"},
 			{Label: m.text(MsgSettingsActionBuild, nil), Hint: "/mode build", Route: "/mode build"},
+			{Label: m.text(MsgSettingsActionApprovePlan, nil), Hint: "/approve-plan", Run: func(m *Model) tea.Cmd { return m.approvePlan() }},
+			{Label: m.text(MsgSettingsActionViewPlan, nil), Hint: "/view-plan", Route: "/view-plan"},
+			{Label: m.text(MsgSettingsActionExplain, nil), Hint: "/explain", Route: "/explain"},
 			{Label: m.text(MsgSettingsActionPermissions, nil), Hint: "/permissions", Route: "/permissions"},
 			{Label: m.text(MsgSettingsActionSafeEdit, nil), Hint: "/permissions new safe-edit", Route: "/permissions new safe-edit"},
 			{Label: m.text(MsgSettingsActionFullWorkspace, nil), Hint: "/permissions new full-workspace --yes", Route: "/permissions new full-workspace --yes"},
@@ -98,6 +102,8 @@ func (m *Model) settingsActions() []settingsAction {
 	default:
 		return []settingsAction{
 			{Label: m.text(MsgSettingsActionRefresh, nil), Hint: "reload status", Run: func(m *Model) tea.Cmd { return m.refreshRuntimeStatus() }},
+			{Label: m.text(MsgSettingsActionInspect, nil), Hint: "/inspect", Route: "/inspect"},
+			{Label: m.text(MsgSettingsActionExplain, nil), Hint: "/explain", Route: "/explain"},
 			{Label: m.text(MsgSettingsActionContext, nil), Hint: "/context", Route: "/context"},
 			{Label: m.text(MsgSettingsActionUsage, nil), Hint: "/usage", Route: "/usage"},
 			{Label: m.text(MsgSettingsActionCompactMode, nil), Hint: "/compact-mode", Run: func(m *Model) tea.Cmd {
@@ -107,7 +113,7 @@ func (m *Model) settingsActions() []settingsAction {
 				return nil
 			}},
 			{Label: m.text(MsgSettingsActionModelPicker, nil), Hint: "/model", Route: "/model"},
-			{Label: m.text(MsgSettingsActionPlan, nil), Hint: "/mode plan", Route: "/mode plan"},
+			{Label: m.text(MsgSettingsActionPlan, nil), Hint: "/plan", Route: "/plan"},
 		}
 	}
 }
@@ -259,10 +265,34 @@ func (m *Model) contextStatusLabel() string {
 	return fmt.Sprintf("%d tokens · %s", m.runtime.ContextUsed, stringOr(m.runtime.ContextSource, "provider"))
 }
 
-func (m *Model) statusFooterLine() string {
-	session := m.text(MsgStatusNotAttached, nil)
-	if m.sessionID != "" {
-		session = m.text(MsgStatusSession, MessageArgs{"id": shortID(m.sessionID)})
+type statusFooterItem struct {
+	text string
+	role theme.Role
+}
+
+func statusJoin(items []statusFooterItem) string {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.text) != "" {
+			parts = append(parts, item.text)
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
+func (m *Model) renderStatusItems(items []statusFooterItem) string {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.text) != "" {
+			parts = append(parts, m.th.Style(item.role).Render(item.text))
+		}
+	}
+	return strings.Join(parts, m.th.Style(theme.RoleMuted).Render(" · "))
+}
+
+func (m *Model) statusFooterView(width int) string {
+	if width <= 0 {
+		return ""
 	}
 	model := m.model
 	if model == "" {
@@ -271,28 +301,71 @@ func (m *Model) statusFooterLine() string {
 	if m.reasoningEffort != "" && m.reasoningEffort != "default" {
 		model += "/" + m.reasoningEffort
 	}
-	activity := m.statusActivityText()
-	// Append product chrome tokens that competitors surface continuously.
-	extra := []string{}
-	if p := strings.TrimSpace(m.runtime.Profile); p != "" {
-		extra = append(extra, p)
+	mode := statusFooterItem{text: m.modeLabel(), role: theme.RoleMuted}
+	modelItem := statusFooterItem{text: "model:" + model, role: theme.RoleInfo}
+	profile := statusFooterItem{role: theme.RoleWarning}
+	if value := strings.TrimSpace(m.runtime.Profile); value != "" {
+		profile.text = "profile:" + value
 	}
-	if s := strings.TrimSpace(m.runtime.Sandbox); s != "" && s != "unknown" {
-		extra = append(extra, "sbx:"+s)
+	sandbox := statusFooterItem{role: theme.RoleMuted}
+	if value := strings.TrimSpace(m.runtime.Sandbox); value != "" && value != "unknown" {
+		sandbox.text = "sandbox:" + value
 	}
-	if c := m.contextFooterToken(); c != "-" {
-		extra = append(extra, "ctx:"+c)
+	context := statusFooterItem{role: theme.RoleMuted}
+	if value := m.contextFooterToken(); value != "-" {
+		context.text = "ctx:" + value
 	}
-	if len(extra) > 0 {
-		activity = strings.Join(extra, " · ") + " · " + activity
+	activity := m.statusActivityItem()
+	modelHint := statusFooterItem{text: "/model", role: theme.RoleMuted}
+	settingsHint := statusFooterItem{text: m.text(MsgStatusSettingsHint, MessageArgs{"key": primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalSettings))}), role: theme.RoleMuted}
+	helpHint := statusFooterItem{text: m.text(MsgStatusHelpHint, MessageArgs{"key": primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalHelp))}), role: theme.RoleMuted}
+
+	// Each row is a complete, intentional fallback. This avoids the common
+	// terminal failure mode where one long string is truncated at an arbitrary
+	// byte and leaves the important state off-screen.
+	variants := []struct {
+		left, right []statusFooterItem
+	}{
+		{[]statusFooterItem{mode, modelItem, profile, sandbox}, []statusFooterItem{activity, context, modelHint, settingsHint, helpHint}},
+		{[]statusFooterItem{mode, modelItem, profile, sandbox}, []statusFooterItem{activity, context, modelHint, helpHint}},
+		{[]statusFooterItem{mode, modelItem, profile}, []statusFooterItem{activity, context, modelHint, helpHint}},
+		{[]statusFooterItem{mode, modelItem}, []statusFooterItem{activity, modelHint, helpHint}},
+		{[]statusFooterItem{modelItem}, []statusFooterItem{activity, modelHint}},
+		{[]statusFooterItem{modelItem}, []statusFooterItem{activity}},
+		{nil, []statusFooterItem{activity}},
 	}
-	return m.text(MsgStatusFooter, MessageArgs{
-		"session":  session,
-		"mode":     m.modeLabel(),
-		"model":    model,
-		"activity": activity,
-		"help":     primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalHelp)),
-	})
+	for _, variant := range variants {
+		leftText, rightText := statusJoin(variant.left), statusJoin(variant.right)
+		gap := 0
+		if leftText != "" && rightText != "" {
+			gap = 2
+		}
+		if ansi.StringWidth(leftText)+gap+ansi.StringWidth(rightText) > width {
+			continue
+		}
+		left, right := m.renderStatusItems(variant.left), m.renderStatusItems(variant.right)
+		spaces := width - ansi.StringWidth(left) - ansi.StringWidth(right)
+		if left == "" {
+			spaces = width - ansi.StringWidth(right)
+		}
+		if right == "" {
+			spaces = 0
+		}
+		return fitRenderedLine(left+strings.Repeat(" ", maxInt(spaces, 0))+right, width)
+	}
+	// At operational widths keep the model addressable even when activity has
+	// accumulated goal/queue/attention badges. Truncate the transient side,
+	// never the configuration anchor. Truly tiny terminals fall back to the
+	// activity alone because two illegible fragments are worse than one signal.
+	modelWidth := ansi.StringWidth(modelItem.text)
+	if width >= 32 && width-modelWidth-2 >= 6 {
+		left := m.renderStatusItems([]statusFooterItem{modelItem})
+		rightWidth := width - ansi.StringWidth(left) - 2
+		right := fitRenderedLine(m.th.Style(activity.role).Render(activity.text), rightWidth)
+		spaces := width - ansi.StringWidth(left) - ansi.StringWidth(right)
+		return fitRenderedLine(left+strings.Repeat(" ", maxInt(spaces, 2))+right, width)
+	}
+	return fitRenderedLine(m.th.Style(activity.role).Render(activity.text), width)
 }
 
 func (m *Model) contextFooterToken() string {
@@ -310,16 +383,6 @@ func (m *Model) statusActivityText() string {
 		activity = m.text(MsgStatusSending, MessageArgs{"kind": string(m.submitting.kind)})
 	} else if m.inFlightTaskID != "" {
 		activity = m.text(MsgStatusRunning, MessageArgs{"task": shortID(m.inFlightTaskID)})
-		if node := m.tasks.nodes[m.inFlightTaskID]; node != nil {
-			requested, effective := node.RequestedModel, node.EffectiveModel
-			if requested == "" {
-				requested = "default"
-			}
-			if effective == "" {
-				effective = "pending"
-			}
-			activity += " · " + m.text(MsgStatusRunningModel, MessageArgs{"requested": requested, "effective": effective})
-		}
 	}
 	if m.unseenLines > 0 {
 		activity += " · " + m.countText(MsgStatusNew, m.unseenLines, nil)
@@ -341,6 +404,17 @@ func (m *Model) statusActivityText() string {
 		activity += " · " + goal
 	}
 	return activity
+}
+
+func (m *Model) statusActivityItem() statusFooterItem {
+	role := theme.RoleSuccess
+	if m.inFlightTaskID != "" || m.submitting != nil || m.editor != nil {
+		role = theme.RoleInfo
+	}
+	if m.unreadAttention > 0 || m.chord.hint != "" {
+		role = theme.RoleWarning
+	}
+	return statusFooterItem{text: m.statusActivityText(), role: role}
 }
 
 func shortID(id string) string {
@@ -520,6 +594,8 @@ func (m *Model) humanizeOperationalSurface(kind string, data map[string]any) []s
 		return m.humanizeMCP(data)
 	case "status":
 		return m.humanizeSessionStatus(data)
+	case "inspect":
+		return m.humanizeInspect(data)
 	default:
 		lines := compactMapLines(data, "")
 		return capLines(lines, 40)
@@ -769,25 +845,6 @@ func (m *Model) exportTranscript(path string) tea.Cmd {
 	return nil
 }
 
-func (m *Model) showTasksSurface() {
-	lines := []string{m.th.Style(theme.RoleTitle).Render(m.text(MsgTasksTitle, nil))}
-	if tree := m.taskTreeLines(); len(tree) > 0 {
-		lines = append(lines, tree...)
-	} else {
-		lines = append(lines, m.text(MsgTasksEmpty, nil))
-	}
-	if n := m.followUps.len(); n > 0 {
-		lines = append(lines, "", m.countText(MsgStatusQueued, n, nil))
-		for i, item := range m.followUps.drafts {
-			if i >= 8 {
-				break
-			}
-			lines = append(lines, fmt.Sprintf("  %d. %s", i+1, summarizeDraft(item)))
-		}
-	}
-	m.push(strings.Join(lines, "\n"))
-}
-
 func summarizeDraft(d promptDraft) string {
 	text := strings.TrimSpace(d.Text)
 	if text == "" {
@@ -838,18 +895,6 @@ func (m *Model) initProjectRules() tea.Cmd {
 	}
 	m.push(m.text(MsgUpdateInitCreated, MessageArgs{"path": path}))
 	return nil
-}
-
-func (m *Model) viewPlanSurface() {
-	lines := []string{m.th.Style(theme.RoleTitle).Render(m.text(MsgViewPlanTitle, nil))}
-	lines = append(lines, m.text(MsgViewPlanMode, MessageArgs{"mode": m.modeLabel()}))
-	if m.modeLabel() == "plan" {
-		lines = append(lines, m.text(MsgViewPlanActive, nil))
-	} else {
-		lines = append(lines, m.text(MsgViewPlanInactive, nil))
-	}
-	lines = append(lines, m.text(MsgViewPlanHint, nil))
-	m.push(strings.Join(lines, "\n"))
 }
 
 // resolveDynamicSlash also accepts user-invocable skills so discovery equals execution

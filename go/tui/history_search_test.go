@@ -271,6 +271,18 @@ func TestHistorySearchAcceptsZWJEmojiCommit(t *testing.T) {
 	}
 }
 
+func TestHistorySearchDeletesWholeEmojiGrapheme(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.history = []promptDraft{{Text: "deploy 👩🏽‍💻"}}
+	m.historyPos = len(m.history)
+	startHistorySearch(t, m)
+	m.Update(tea.KeyPressMsg{Text: "deploy 👩🏽‍💻", Code: tea.KeyExtended})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if got := m.historySearch.query; got != "deploy " {
+		t.Fatalf("history backspace split emoji: %q", got)
+	}
+}
+
 func TestHistorySearchTraversalSkipsDuplicatesAndMovesBothDirections(t *testing.T) {
 	m, _ := newTestModel(nil)
 	// Seed directly to cover legacy persistent duplicates as well as the

@@ -140,6 +140,7 @@ func TestEditorSemanticBindingsInstallIntoTextarea(t *testing.T) {
 		{"delete-word-forward", input.KeyMap.DeleteWordForward.Keys(), ActionEditorDeleteWordForward},
 		{"kill-line-start", input.KeyMap.DeleteBeforeCursor.Keys(), ActionEditorKillLineStart},
 		{"kill-line-end", input.KeyMap.DeleteAfterCursor.Keys(), ActionEditorKillLineEnd},
+		{"transpose-backward", input.KeyMap.TransposeCharacterBackward.Keys(), ActionEditorTransposeBackward},
 		{"yank", input.KeyMap.Paste.Keys(), ActionEditorYank},
 		{"newline", input.KeyMap.InsertNewline.Keys(), ActionEditorInsertNewline},
 	}

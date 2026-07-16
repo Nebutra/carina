@@ -122,7 +122,9 @@ func (m *Model) handleHistoryLoaded(msg historyLoadedMsg) {
 		m.reconcileHistorySearchEntries()
 		return
 	}
-	if msg.generation != m.historyLoadGen { return }
+	if msg.generation != m.historyLoadGen {
+		return
+	}
 	if msg.modelLoaded {
 		m.handleModelPreference(modelPreferenceMsg{sessionID: m.sessionID, generation: m.sessionGeneration, loaded: true, model: msg.nextModel, effort: msg.nextReasoningEffort, err: msg.modelErr})
 	}
@@ -295,9 +297,8 @@ func (m *Model) historySearchKeyText(key, text string) (tea.Cmd, bool) {
 	case m.keys.matches(KeyContextHistory, ActionHistoryCycleScope, key):
 		return m.cycleHistorySearchScope(), true
 	case m.keys.matches(KeyContextHistory, ActionHistoryDelete, key):
-		runes := []rune(search.query)
-		if len(runes) > 0 {
-			m.updateHistorySearchQuery(string(runes[:len(runes)-1]))
+		if search.query != "" {
+			m.updateHistorySearchQuery(dropLastGrapheme(search.query))
 		}
 	case m.keys.matches(KeyContextHistory, ActionHistoryClear, key):
 		m.updateHistorySearchQuery("")

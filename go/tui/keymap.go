@@ -98,6 +98,7 @@ const (
 	ActionEditorDeleteWordForward  KeyAction = "editor.delete-word-forward"
 	ActionEditorKillLineStart      KeyAction = "editor.kill-line-start"
 	ActionEditorKillLineEnd        KeyAction = "editor.kill-line-end"
+	ActionEditorTransposeBackward  KeyAction = "editor.transpose-backward"
 	ActionEditorYank               KeyAction = "editor.yank"
 	ActionEditorInsertNewline      KeyAction = "editor.insert-newline"
 
@@ -254,6 +255,7 @@ func defaultKeyBindings() []keyBinding {
 		{KeyContextEditor, ActionEditorDeleteWordForward, []string{"alt+delete", "alt+d"}, "delete word forward"},
 		{KeyContextEditor, ActionEditorKillLineStart, []string{"ctrl+u"}, "delete to line start"},
 		{KeyContextEditor, ActionEditorKillLineEnd, []string{"ctrl+k"}, "delete to line end"},
+		{KeyContextEditor, ActionEditorTransposeBackward, []string{"ctrl+t"}, "transpose characters backward"},
 		{KeyContextEditor, ActionEditorYank, []string{"ctrl+y", "ctrl+v"}, "yank from clipboard"},
 		{KeyContextEditor, ActionEditorInsertNewline, []string{"shift+enter", "alt+enter", "ctrl+j"}, "insert newline"},
 

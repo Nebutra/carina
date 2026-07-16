@@ -208,6 +208,10 @@ func (m *Model) nextQueuedQuestion() {
 }
 
 func (m *Model) questionKey(key string) (tea.Cmd, bool) {
+	return m.questionKeyText(key, key)
+}
+
+func (m *Model) questionKeyText(key, text string) (tea.Cmd, bool) {
 	if m.question == nil {
 		return nil, false
 	}
@@ -231,15 +235,12 @@ func (m *Model) questionKey(key string) (tea.Cmd, bool) {
 			q.Error = m.text(MsgQuestionCannotDismiss, nil)
 			return nil, true
 		case "backspace", "ctrl+h":
-			runes := []rune(q.FreeText)
-			if len(runes) > 0 {
-				q.FreeText = string(runes[:len(runes)-1])
-			}
+			q.FreeText = dropLastGrapheme(q.FreeText)
 			q.Error = ""
 			return nil, true
 		}
-		if len([]rune(key)) == 1 || key == " " {
-			q.FreeText += key
+		if value, ok := historySearchInput(text); ok {
+			q.FreeText += value
 			q.Error = ""
 		}
 		return nil, true
@@ -276,6 +277,20 @@ func (m *Model) questionKey(key string) (tea.Cmd, bool) {
 		return nil, false
 	}
 	return nil, true
+}
+
+func (m *Model) appendQuestionText(value string) {
+	if m.question == nil || len(m.question.Options) != 0 || m.question.Resolving {
+		return
+	}
+	value = sanitize(value)
+	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.ReplaceAll(value, "\r", " ")
+	if value == "" {
+		return
+	}
+	m.question.FreeText += value
+	m.question.Error = ""
 }
 
 func (m *Model) questionOverlayView() string {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Nebutra/carina/go/tui/markdown"
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
@@ -99,6 +100,10 @@ func TestWrapText(t *testing.T) {
 			name: "wide grapheme in one-cell budget still advances", in: "宽字", width: 1,
 			want: []string{"宽", "字"},
 		},
+		{
+			name: "emoji sequences stay atomic", in: "👩🏽‍💻🇨🇳1️⃣", width: 2,
+			want: []string{"👩🏽‍💻", "🇨🇳", "1️⃣"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -127,6 +132,61 @@ func TestWrapTextIsLossless(t *testing.T) {
 	for _, line := range got {
 		if w := ansi.StringWidth(line); w > 24 && !strings.Contains(line, "://") {
 			t.Errorf("non-URL line exceeds width: %d %q", w, line)
+		}
+	}
+}
+
+// An OSC 8 hyperlink whose label wraps must close at every soft break and
+// re-open after the continuation indent: transcript lines are windowed
+// independently by the viewport, so a hyperlink left open at a line end would
+// claim every cell painted after it (later transcript lines, composer,
+// status chrome) with a model-supplied destination whenever the closing line
+// scrolls out of view.
+func TestWrapTextClosesHyperlinkAtSoftBreaks(t *testing.T) {
+	openSeq := "\x1b]8;;https://evil.example/x\x1b\\"
+	in := openSeq + "\x1b[4mclick here for the amazing offer right now\x1b[0m" + osc8Close
+	got := wrapText(in, 20, "", "  ")
+	if len(got) < 2 {
+		t.Fatalf("expected the label to wrap, got %#v", got)
+	}
+	for i, line := range got {
+		opens := strings.Count(line, "\x1b]8;;") - strings.Count(line, osc8Close)
+		closes := strings.Count(line, osc8Close)
+		if opens != closes {
+			t.Errorf("line %d has %d hyperlink opens but %d closes: %q", i, opens, closes, line)
+		}
+		if closes < 1 {
+			t.Errorf("line %d carries no hyperlink at all — the label lost its destination: %q", i, line)
+		}
+		if !strings.Contains(line, "https://evil.example/x") {
+			t.Errorf("line %d does not re-open the original destination: %q", i, line)
+		}
+		if !strings.HasSuffix(line, osc8Close) {
+			t.Errorf("line %d must end with the hyperlink closed: %q", i, line)
+		}
+	}
+	joined := ansi.Strip(strings.Join(got, " "))
+	for _, word := range strings.Fields("click here for the amazing offer right now") {
+		if !strings.Contains(joined, word) {
+			t.Errorf("label word %q lost across the wrap: %q", word, joined)
+		}
+	}
+}
+
+// The same guarantee end to end: markdown link rendering through the real
+// wrapText (the transcript's wiring) never leaves a hyperlink open across a
+// stored viewport line, CJK context included.
+func TestMarkdownLinkWrapKeepsHyperlinkBalancedPerLine(t *testing.T) {
+	th := theme.New(theme.TrueColor)
+	lines := markdown.Render("看看 [click here for the details](https://example.com/x) 结尾", th, 14, "", wrapText)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped output, got %#v", lines)
+	}
+	for i, line := range lines {
+		total := strings.Count(line, "\x1b]8;")
+		closes := strings.Count(line, osc8Close)
+		if opens := total - closes; opens != closes {
+			t.Errorf("line %d hyperlink state unbalanced (%d opens, %d closes): %q", i, opens, closes, line)
 		}
 	}
 }

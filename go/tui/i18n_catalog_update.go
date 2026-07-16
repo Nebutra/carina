@@ -210,6 +210,28 @@ const (
 	MsgViewPlanInactive            MessageID = "view_plan.inactive"
 	MsgViewPlanHint                MessageID = "view_plan.hint"
 
+	MsgSettingsActionApprovePlan   MessageID = "settings.action.approve_plan"
+	MsgSettingsActionViewPlan      MessageID = "settings.action.view_plan"
+	MsgSettingsActionExplain       MessageID = "settings.action.explain"
+	MsgSettingsActionInspect       MessageID = "settings.action.inspect"
+	MsgViewPlanPath                MessageID = "view_plan.path"
+	MsgViewPlanEmpty               MessageID = "view_plan.empty"
+	MsgViewPlanMissing             MessageID = "view_plan.missing"
+	MsgViewPlanPreview             MessageID = "view_plan.preview"
+	MsgUpdateBtwStarted            MessageID = "update.btw_started"
+	MsgExplainTitle                MessageID = "explain.title"
+	MsgExplainMode                 MessageID = "explain.mode"
+	MsgExplainProfile              MessageID = "explain.profile"
+	MsgExplainSandbox              MessageID = "explain.sandbox"
+	MsgExplainApproval             MessageID = "explain.approval"
+	MsgExplainSandboxWhy           MessageID = "explain.sandbox_why"
+	MsgExplainHowToChange          MessageID = "explain.how_to_change"
+	MsgInspectHeader               MessageID = "inspect.header"
+	MsgInspectHint                 MessageID = "inspect.hint"
+	MsgTasksLoopHint               MessageID = "tasks.loop_hint"
+	MsgTasksLoopsHeader            MessageID = "tasks.loops_header"
+	MsgUpdateUsageExtension        MessageID = "update.usage_extension"
+
 	MsgFollowupRestored            MessageID = "followup.restored"
 	MsgFollowupShellEmpty          MessageID = "followup.shell_empty"
 	MsgFollowupDisconnected        MessageID = "followup.disconnected"
@@ -443,5 +465,27 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgViewPlanMode, "current mode: {mode}", "当前模式：{mode}", "現在のモード: {mode}", "현재 모드: {mode}", "modo actual: {mode}", "mode actuel : {mode}"),
 	catalog(MsgViewPlanActive, "Plan mode is ON. Edits, shell, and memory writes stay blocked until you approve the plan.", "计划模式已开启。在批准计划前，编辑、Shell 与记忆写入保持阻断。", "プランモード ON。承認まで編集・Shell・メモリ書き込みは遮断。", "계획 모드 ON. 승인 전 편집/Shell/메모리 쓰기 차단.", "Modo plan ON. Ediciones, shell y memoria bloqueados hasta aprobar.", "Mode plan ON. Éditions, shell et mémoire bloqués jusqu’à approbation."),
 	catalog(MsgViewPlanInactive, "Plan mode is OFF (build). Use /plan to enter planning first.", "计划模式关闭（build）。使用 /plan 先做规划。", "プランモード OFF（build）。先に /plan で計画。", "계획 모드 OFF(build). /plan으로 먼저 계획.", "Modo plan OFF (build). Use /plan para planificar primero.", "Mode plan OFF (build). Utilisez /plan pour planifier d’abord."),
-	catalog(MsgViewPlanHint, "Hint: approve via daemon session.approve_plan when the agent presents a plan.", "提示：Agent 给出计划后，通过 session.approve_plan 批准。", "ヒント: 計画提示後に session.approve_plan で承認。", "팁: 계획이 나오면 session.approve_plan으로 승인.", "Consejo: apruebe con session.approve_plan cuando haya plan.", "Astuce : approuvez via session.approve_plan quand le plan est prêt."),
+	catalog(MsgViewPlanHint, "Hint: run /approve-plan to exit plan mode and allow edits, or /build to leave without approving.", "提示：运行 /approve-plan 退出计划模式并允许编辑，或 /build 直接离开。", "ヒント: /approve-plan で計画承認、/build で退出。", "팁: /approve-plan으로 승인하거나 /build로 종료.", "Consejo: use /approve-plan o /build.", "Astuce : utilisez /approve-plan ou /build."),
+
+	catalog(MsgSettingsActionApprovePlan, "Approve plan (exit plan mode)", "批准计划（退出计划模式）", "計画を承認（プランモード終了）", "계획 승인(계획 모드 종료)", "Aprobar plan (salir de plan)", "Approuver le plan (quitter le mode plan)"),
+	catalog(MsgSettingsActionViewPlan, "View plan file", "查看计划文件", "計画ファイルを表示", "계획 파일 보기", "Ver archivo de plan", "Voir le fichier de plan"),
+	catalog(MsgSettingsActionExplain, "Explain sandbox and permissions", "解释沙箱与权限", "サンドボックスと権限を説明", "샌드박스 및 권한 설명", "Explicar sandbox y permisos", "Expliquer sandbox et autorisations"),
+	catalog(MsgSettingsActionInspect, "Run readiness inspect", "运行就绪检查", "準備状態を検査", "준비 상태 검사", "Inspeccionar preparación", "Inspecter l’état de préparation"),
+	catalog(MsgViewPlanPath, "plan file: {path}", "计划文件：{path}", "計画ファイル: {path}", "계획 파일: {path}", "archivo de plan: {path}", "fichier de plan : {path}"),
+	catalog(MsgViewPlanEmpty, "Plan file exists but is empty.", "计划文件存在但为空。", "計画ファイルは空です。", "계획 파일이 비어 있습니다.", "El archivo de plan está vacío.", "Le fichier de plan est vide."),
+	catalog(MsgViewPlanMissing, "No plan file yet. /plan scaffolds one under .carina/plans/.", "尚无计划文件。/plan 会在 .carina/plans/ 下创建脚手架。", "計画ファイルはまだありません。/plan で .carina/plans/ に作成。", "계획 파일 없음. /plan이 .carina/plans/에 생성합니다.", "Aún no hay plan. /plan crea uno en .carina/plans/.", "Pas encore de plan. /plan en crée un sous .carina/plans/."),
+	catalog(MsgViewPlanPreview, "preview:", "预览：", "プレビュー:", "미리보기:", "vista previa:", "aperçu :"),
+	catalog(MsgUpdateBtwStarted, "side Q&A turn (answer-only; not a session fork)", "侧问轮次（仅回答；非会话分叉）", "脇質問ターン（回答のみ・セッション分岐なし）", "곁질문 턴(답변 전용, 세션 포크 아님)", "turno lateral (solo respuesta; no es un fork)", "tour latéral (réponse seule ; pas de fork)"),
+	catalog(MsgExplainTitle, "Runtime explanation", "运行时说明", "ランタイム説明", "런타임 설명", "Explicación del runtime", "Explication du runtime"),
+	catalog(MsgExplainMode, "interaction mode: {mode}", "交互模式：{mode}", "対話モード: {mode}", "상호작용 모드: {mode}", "modo de interacción: {mode}", "mode d’interaction : {mode}"),
+	catalog(MsgExplainProfile, "permission profile: {profile}", "权限配置：{profile}", "権限プロファイル: {profile}", "권한 프로필: {profile}", "perfil de permisos: {profile}", "profil d’autorisation : {profile}"),
+	catalog(MsgExplainSandbox, "OS command sandbox: {sandbox}", "OS 命令沙箱：{sandbox}", "OS コマンドサンドボックス: {sandbox}", "OS 명령 샌드박스: {sandbox}", "sandbox de comandos OS: {sandbox}", "sandbox des commandes OS : {sandbox}"),
+	catalog(MsgExplainApproval, "interactive tool approval: {approval}", "交互工具审批：{approval}", "対話ツール承認: {approval}", "대화형 도구 승인: {approval}", "aprobación interactiva de herramientas: {approval}", "approbation interactive des outils : {approval}"),
+	catalog(MsgExplainSandboxWhy, "Sandbox isolates agent shell commands when enabled by daemon policy. It is not the same as plan mode (which blocks edits until /approve-plan).", "沙箱在 daemon 策略启用时隔离 Agent 的 Shell 命令。它不同于计划模式（计划模式在 /approve-plan 前阻止编辑）。", "サンドボックスは daemon 方針で有効なとき Agent の Shell を隔離します。プランモード（/approve-plan まで編集遮断）とは別です。", "샌드박스는 daemon 정책이 켜져 있을 때 Agent 셸을 격리합니다. 계획 모드(/approve-plan 전 편집 차단)와는 다릅니다.", "El sandbox aísla el shell del Agent cuando lo exige el daemon. No es el modo plan (bloquea ediciones hasta /approve-plan).", "Le sandbox isole le shell de l’Agent si la politique du daemon l’exige. Ce n’est pas le mode plan (bloque les éditions jusqu’à /approve-plan)."),
+	catalog(MsgExplainHowToChange, "Change profile with /permissions new <safe-edit|full-workspace> [--yes]. Toggle plan with /plan or Shift+Tab. Sandbox is daemon-level (not a silent per-turn YOLO).", "用 /permissions new <safe-edit|full-workspace> [--yes] 更改配置。用 /plan 或 Shift+Tab 切换计划模式。沙箱是 daemon 级策略（不是静默的每轮 YOLO）。", "プロファイルは /permissions new …。プランは /plan または Shift+Tab。サンドボックスは daemon 方針です。", "프로필은 /permissions new …, 계획 모드는 /plan 또는 Shift+Tab. 샌드박스는 daemon 정책입니다.", "Cambie el perfil con /permissions new …. Plan con /plan o Shift+Tab. Sandbox a nivel daemon.", "Profil via /permissions new …. Plan via /plan ou Shift+Tab. Sandbox au niveau daemon."),
+	catalog(MsgInspectHeader, "Readiness inspect", "就绪检查", "準備検査", "준비 검사", "Inspección de preparación", "Inspection de préparation"),
+	catalog(MsgInspectHint, "Next: /settings for control shell, /model to pick a model, /explain for sandbox/permissions.", "下一步：/settings 打开控制面板，/model 选择模型，/explain 查看沙箱与权限。", "次: /settings、/model、/explain。", "다음: /settings, /model, /explain.", "Siguiente: /settings, /model, /explain.", "Ensuite : /settings, /model, /explain."),
+	catalog(MsgTasksLoopHint, "Loops: /loop list  ·  cancel task: Esc while running", "循环任务：/loop list  ·  取消任务：运行中按 Esc", "ループ: /loop list  ·  取消: 実行中 Esc", "루프: /loop list  ·  취소: 실행 중 Esc", "Bucles: /loop list  ·  cancelar: Esc en ejecución", "Boucles : /loop list  ·  annuler : Échap pendant l’exécution"),
+	catalog(MsgTasksLoopsHeader, "scheduled loops", "定时循环", "スケジュール済みループ", "예약된 루프", "bucles programados", "boucles planifiées"),
+	catalog(MsgUpdateUsageExtension, "usage: /extension <enable|disable> <name>", "用法：/extension <enable|disable> <名称>", "使用法: /extension <enable|disable> <name>", "사용법: /extension <enable|disable> <name>", "uso: /extension <enable|disable> <nombre>", "utilisation : /extension <enable|disable> <nom>"),
 }

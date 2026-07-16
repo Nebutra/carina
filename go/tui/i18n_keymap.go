@@ -80,6 +80,7 @@ func buildKeyActionCopy() map[KeyAction]localizedText {
 	add([]KeyAction{ActionEditorDeleteWordForward}, localizedText{"delete next word", "删除后一个词", "次の単語を削除", "다음 단어 삭제", "borrar palabra siguiente", "effacer le mot suivant"})
 	add([]KeyAction{ActionEditorKillLineStart}, localizedText{"delete to line start", "删除到行首", "行頭まで削除", "줄 시작까지 삭제", "borrar hasta el inicio", "effacer jusqu’au début"})
 	add([]KeyAction{ActionEditorKillLineEnd}, localizedText{"delete to line end", "删除到行尾", "行末まで削除", "줄 끝까지 삭제", "borrar hasta el final", "effacer jusqu’à la fin"})
+	add([]KeyAction{ActionEditorTransposeBackward}, localizedText{"transpose characters backward", "向后交换字符", "文字を後方へ入れ替え", "문자를 뒤로 교환", "intercambiar caracteres hacia atrás", "transposer les caractères en arrière"})
 	add([]KeyAction{ActionEditorYank}, localizedText{"paste from clipboard", "从剪贴板粘贴", "クリップボードから貼り付け", "클립보드에서 붙여넣기", "pegar desde el portapapeles", "coller depuis le presse-papiers"})
 	add([]KeyAction{ActionSuggestionAccept}, localizedText{"complete suggestion", "补全建议", "候補を補完", "제안 완성", "completar sugerencia", "compléter la suggestion"})
 	add([]KeyAction{ActionSuggestionDismiss}, localizedText{"dismiss suggestions", "关闭建议", "候補を閉じる", "제안 닫기", "cerrar sugerencias", "fermer les suggestions"})

@@ -25,6 +25,57 @@ func TestTranscriptCachesRenderedEntries(t *testing.T) {
 	}
 }
 
+// The sanitize boundary stops every control character, not just C0: DEL
+// renders destructively on some terminals, and a decoded C1 rune (U+009B is a
+// one-rune CSI introducer, U+009D an OSC introducer) would hand escape
+// sequences to terminals that honor C1, bypassing the boundary entirely.
+func TestSanitizeStripsDELAndC1Controls(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"a\x7fb", "ab"},
+		{"a\u0085b", "ab"},                     // NEL
+		{"a\u009b31mred", "a31mred"},           // C1 CSI + SGR payload
+		{"a\u009d0;title\u009cb", "a0;titleb"}, // C1 OSC ... ST
+		{"keep \u6587\u672c and \u00a1latin-1!", "keep \u6587\u672c and \u00a1latin-1!"},
+	}
+	for _, tc := range cases {
+		if got := sanitize(tc.in); got != tc.want {
+			t.Errorf("sanitize(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// resizePresentations runs inside layout() on every keystroke and must be a
+// no-op unless width or theme actually changed: rendering is pure in (source,
+// theme, width), so the cached entries are already exact.
+func TestResizePresentationsSkipsWhenWidthAndThemeUnchanged(t *testing.T) {
+	th := theme.New(theme.Mono)
+	var tr transcript
+	tr.pushPresentation(eventPresentation{
+		Key:          "k1",
+		Headerless:   true,
+		BodyMarkdown: "resize probe",
+	}, th, 40)
+	// Tamper with the cache: a skipped resize leaves it visible, a real
+	// change re-renders from source.
+	tr.entries[0].setRendered("TAMPERED")
+	tr.rebuildLines()
+	tr.resizePresentations(th, 40)
+	if tr.entries[0].rendered != "TAMPERED" {
+		t.Errorf("unchanged (theme, width) must skip re-rendering, got %q", tr.entries[0].rendered)
+	}
+	tr.resizePresentations(th, 39)
+	if !strings.Contains(tr.entries[0].rendered, "resize probe") {
+		t.Errorf("width change must re-render from source, got %q", tr.entries[0].rendered)
+	}
+	tr.entries[0].setRendered("TAMPERED")
+	tr.resizePresentations(theme.New(theme.ANSI256), 39)
+	if !strings.Contains(ansi.Strip(tr.entries[0].rendered), "resize probe") {
+		t.Errorf("theme change must re-render from source, got %q", tr.entries[0].rendered)
+	}
+}
+
 func TestAuthoritativeToolLifecycleUpdatesByCallID(t *testing.T) {
 	th := theme.New(theme.Mono)
 	var tr transcript

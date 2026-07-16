@@ -210,6 +210,7 @@ type Model struct {
 	vp               viewport.Model
 	input            textarea.Model
 	tr               transcript
+	streams          map[string]*messageStream
 	followTail       bool
 	unseenLines      int
 	terminalBlurred  bool
@@ -520,8 +521,12 @@ func showInPrimaryTranscript(ev map[string]any) bool {
 	payload, _ := ev["payload"].(map[string]any)
 	switch eventType {
 	case "ModelRequested", "RoutingDecision", "RoutingOutcome", "RuntimeStageChanged",
-		"ToolRequested", "ToolApproved", "ToolDenied", "TaskCreated":
+		"ToolRequested", "ToolApproved", "ToolDenied", "TaskCreated",
+		"MemoryRecallRequested", "MemoryWriteRequested", "GoalChangeRequested", "ScheduleChanged":
 		return false
+	case "MemoryProjectionChanged":
+		status := strings.ToLower(str(payload["status"]))
+		return status == "failed" || status == "reconcile"
 	case "ModelResponded":
 		tool, _, _ := safeModelAction(str(payload["text"]))
 		return tool == "done" || str(payload["spawn_agent"]) != "" || strings.HasPrefix(str(payload["status"]), "workflow_")

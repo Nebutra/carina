@@ -44,23 +44,36 @@ func wrapText(s string, width int, initialIndent, subsequentIndent string) []str
 	// open is the running SGR state; openAtStart is the state inherited by the
 	// line currently being assembled, re-emitted after its indent.
 	var open, openAtStart []string
+	// link is the OSC 8 hyperlink left open by written chunks; linkAtStart is
+	// the hyperlink inherited by the current line. Hyperlinks are the one
+	// non-SGR state the renderer emits (markdown link()), and like SGR spans
+	// they close at every soft break and re-open after the indent: transcript
+	// lines are windowed independently by the viewport, so a hyperlink left
+	// open at a line end would claim everything painted after it whenever the
+	// closing line scrolls out of view.
+	var link, linkAtStart string
 
 	budget := func() int { return maxInt(width-ansi.StringWidth(indent), 1) }
 	write := func(chunk string, w int) {
 		cur.WriteString(chunk)
 		curW += w
 		open = advanceSGR(open, chunk)
+		link = advanceOSC8(link, chunk)
 	}
 	flush := func() {
-		line := indent + strings.Join(openAtStart, "") + cur.String()
+		line := indent + linkAtStart + strings.Join(openAtStart, "") + cur.String()
 		if len(open) > 0 {
 			line += "\x1b[0m"
+		}
+		if link != "" {
+			line += osc8Close
 		}
 		lines = append(lines, line)
 		cur.Reset()
 		curW = 0
 		indent = subsequentIndent
 		openAtStart = append([]string(nil), open...)
+		linkAtStart = link
 	}
 
 	pendingSpace := ""
@@ -157,6 +170,34 @@ func isURLToken(tok string) bool {
 		}
 	}
 	return false
+}
+
+// osc8Close terminates an OSC 8 hyperlink: an empty destination.
+const osc8Close = "\x1b]8;;\x1b\\"
+
+// advanceOSC8 tracks the OSC 8 hyperlink a written chunk leaves open so
+// wrapText can close it at a line break and re-open it on the continuation
+// line. The renderer only ever emits ST-terminated OSC 8 sequences (markdown
+// link()), and sanitize() strips inbound escapes, so a plain scan cannot
+// misfire inside other data.
+func advanceOSC8(link, chunk string) string {
+	for {
+		i := strings.Index(chunk, "\x1b]8;")
+		if i < 0 {
+			return link
+		}
+		rest := chunk[i:]
+		j := strings.Index(rest, "\x1b\\")
+		if j < 0 {
+			return link
+		}
+		if seq := rest[:j+2]; seq == osc8Close {
+			link = ""
+		} else {
+			link = seq
+		}
+		chunk = rest[j+2:]
+	}
 }
 
 // advanceSGR tracks which SGR sequences a written chunk leaves open so

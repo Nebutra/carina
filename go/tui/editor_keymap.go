@@ -23,6 +23,7 @@ func installEditorKeymap(input *textarea.Model, keys runtimeKeymap) {
 	input.KeyMap.DeleteWordForward = editorBinding(keys, ActionEditorDeleteWordForward, "delete word forward")
 	input.KeyMap.DeleteBeforeCursor = editorBinding(keys, ActionEditorKillLineStart, "delete to line start")
 	input.KeyMap.DeleteAfterCursor = editorBinding(keys, ActionEditorKillLineEnd, "delete to line end")
+	input.KeyMap.TransposeCharacterBackward = editorBinding(keys, ActionEditorTransposeBackward, "transpose characters backward")
 	input.KeyMap.Paste = editorBinding(keys, ActionEditorYank, "yank from clipboard")
 	input.KeyMap.InsertNewline = editorBinding(keys, ActionEditorInsertNewline, "insert newline")
 }

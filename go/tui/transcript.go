@@ -60,6 +60,16 @@ type eventPresentation struct {
 	// go/tui/markdown at render() time, so resize and profile changes re-render
 	// from source; Body keeps the structured action rows.
 	BodyMarkdown string
+	// Headerless marks a body-only continuation entry: committed stable chunks
+	// and the mutable tail of a streaming assistant message (stream.go) render
+	// under the header the stream's head entry already emitted, so they carry
+	// no header line of their own.
+	Headerless bool
+	// LeadingBlank prepends the block-separator blank line a whole-source
+	// markdown render would have put before this chunk. The stream manager
+	// sets it on every chunk after the first so a streamed message reproduces
+	// the exact line layout of a one-shot render.
+	LeadingBlank bool
 	Depth        int
 	Collapsible  bool
 	Collapsed    bool
@@ -72,17 +82,36 @@ type eventPresentation struct {
 type entry struct {
 	key          string
 	rendered     string
+	lines        []string // rendered split once; rebuildLines concatenates
 	presentation *eventPresentation
+}
+
+// setRendered caches the rendered block and its line split together.
+// rebuildLines runs on every transcript mutation — streaming makes that per
+// delta — so the per-entry strings.Split must happen once per render, not
+// once per rebuild.
+func (e *entry) setRendered(rendered string) {
+	e.rendered = rendered
+	e.lines = strings.Split(rendered, "\n")
 }
 
 type transcript struct {
 	entries []entry
 	lines   []string
+	// renderedTheme/renderedWidth are what every presentation was last
+	// rendered against. layout() calls resizePresentations on every keystroke
+	// and event; unless one of them actually changed, re-rendering the whole
+	// transcript (chroma tokenization included) would burn per-keystroke time
+	// linear in session history.
+	renderedTheme theme.Theme
+	renderedWidth int
 }
 
 func (t *transcript) push(rendered string) {
-	t.entries = append(t.entries, entry{rendered: rendered})
-	t.lines = append(t.lines, strings.Split(rendered, "\n")...)
+	e := entry{}
+	e.setRendered(rendered)
+	t.entries = append(t.entries, e)
+	t.lines = append(t.lines, e.lines...)
 }
 
 // plainExport returns a clipboard/file-friendly transcript without ANSI styling.
@@ -98,36 +127,109 @@ func (t *transcript) plainExport() string {
 }
 
 func (t *transcript) pushPresentation(p eventPresentation, th theme.Theme, width int) {
+	t.upsertPresentationAfter("", p, th, width)
+}
+
+// upsertPresentationAfter replaces the entry carrying p.Key in place, or —
+// when that key is absent — inserts the new entry directly after afterKey
+// instead of appending, so a recreated streaming tail lands inside its own
+// message even when unrelated events arrived meanwhile. Missing anchors
+// degrade to a plain append.
+func (t *transcript) upsertPresentationAfter(afterKey string, p eventPresentation, th theme.Theme, width int) {
+	t.noteRenderParams(th, width)
 	pCopy := p
-	if pCopy.Key != "" {
-		for i := range t.entries {
-			if t.entries[i].key != pCopy.Key {
-				continue
-			}
-			// Preserve the operator's fold choice while lifecycle updates replace
-			// the semantic state of the same authoritative call.
-			if old := t.entries[i].presentation; old != nil && old.Collapsible && pCopy.Collapsible {
-				pCopy.Collapsed = old.Collapsed
-			}
-			t.entries[i].presentation = &pCopy
-			t.entries[i].rendered = pCopy.render(th, width)
-			t.rebuildLines()
-			return
+	if i := t.indexOf(pCopy.Key); i >= 0 {
+		// Preserve the operator's fold choice while lifecycle updates replace
+		// the semantic state of the same authoritative call.
+		if old := t.entries[i].presentation; old != nil && old.Collapsible && pCopy.Collapsible {
+			pCopy.Collapsed = old.Collapsed
 		}
+		t.entries[i].presentation = &pCopy
+		t.entries[i].setRendered(pCopy.render(th, width))
+		t.rebuildLines()
+		return
 	}
-	t.entries = append(t.entries, entry{
-		key:          pCopy.Key,
-		presentation: &pCopy,
-		rendered:     pCopy.render(th, width),
-	})
+	e := entry{key: pCopy.Key, presentation: &pCopy}
+	e.setRendered(pCopy.render(th, width))
+	at := len(t.entries)
+	if i := t.indexOf(afterKey); i >= 0 {
+		at = i + 1
+	}
+	t.insertAt(at, e)
+}
+
+// insertPresentationBefore places a new entry directly before the entry with
+// beforeKey — the streaming manager commits stable chunks into the exact slot
+// its mutable tail occupies. When beforeKey is absent (the tail was empty and
+// removed), the entry lands directly after afterKey — the message's own last
+// entry — so an interleaved event's header can never adopt the chunk. Only
+// when both anchors are missing does it append.
+func (t *transcript) insertPresentationBefore(beforeKey, afterKey string, p eventPresentation, th theme.Theme, width int) {
+	t.noteRenderParams(th, width)
+	pCopy := p
+	e := entry{key: pCopy.Key, presentation: &pCopy}
+	e.setRendered(pCopy.render(th, width))
+	at := len(t.entries)
+	if i := t.indexOf(beforeKey); i >= 0 {
+		at = i
+	} else if i := t.indexOf(afterKey); i >= 0 {
+		at = i + 1
+	}
+	t.insertAt(at, e)
+}
+
+func (t *transcript) insertAt(at int, e entry) {
+	t.entries = append(t.entries[:at], append([]entry{e}, t.entries[at:]...)...)
 	t.rebuildLines()
 }
 
+func (t *transcript) indexOf(key string) int {
+	if key == "" {
+		return -1
+	}
+	for i := range t.entries {
+		if t.entries[i].key == key {
+			return i
+		}
+	}
+	return -1
+}
+
+// removePresentation drops the entry with the given key (the streaming tail
+// once its content has fully committed). It reports whether a removal happened.
+func (t *transcript) removePresentation(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i := range t.entries {
+		if t.entries[i].key == key {
+			t.entries = append(t.entries[:i], t.entries[i+1:]...)
+			t.rebuildLines()
+			return true
+		}
+	}
+	return false
+}
+
+// noteRenderParams records the (theme, width) presentations render against so
+// resizePresentations can tell a real change from a routine layout() pass.
+func (t *transcript) noteRenderParams(th theme.Theme, width int) {
+	t.renderedTheme, t.renderedWidth = th, width
+}
+
 func (t *transcript) resizePresentations(th theme.Theme, width int) {
+	// Rendering is a pure function of (source, theme, width): with both
+	// unchanged since the last render, every cached entry is already exact.
+	// This runs inside layout() — per keystroke — so the skip is what keeps
+	// markdown/chroma re-rendering off the typing path.
+	if width == t.renderedWidth && th == t.renderedTheme && width != 0 {
+		return
+	}
+	t.noteRenderParams(th, width)
 	changed := false
 	for i := range t.entries {
 		if p := t.entries[i].presentation; p != nil {
-			t.entries[i].rendered = p.render(th, width)
+			t.entries[i].setRendered(p.render(th, width))
 			changed = true
 		}
 	}
@@ -143,7 +245,7 @@ func (t *transcript) toggleLastCollapsible(th theme.Theme, width int) bool {
 			continue
 		}
 		p.Collapsed = !p.Collapsed
-		t.entries[i].rendered = p.render(th, width)
+		t.entries[i].setRendered(p.render(th, width))
 		t.rebuildLines()
 		return true
 	}
@@ -152,8 +254,8 @@ func (t *transcript) toggleLastCollapsible(th theme.Theme, width int) bool {
 
 func (t *transcript) rebuildLines() {
 	t.lines = t.lines[:0]
-	for _, e := range t.entries {
-		t.lines = append(t.lines, strings.Split(e.rendered, "\n")...)
+	for i := range t.entries {
+		t.lines = append(t.lines, t.entries[i].lines...)
 	}
 }
 
@@ -238,7 +340,14 @@ func (p eventPresentation) render(th theme.Theme, width int) string {
 		}
 		header += " " + muted.Render(fold)
 	}
-	lines := []string{fitLine(indent+title.Render(header), width)}
+	var lines []string
+	if p.Headerless {
+		if p.LeadingBlank {
+			lines = append(lines, indent+"  ")
+		}
+	} else {
+		lines = append(lines, fitLine(indent+title.Render(header), width))
+	}
 	if !p.Collapsed {
 		bodyIndent := indent + "  "
 		for _, raw := range p.Body {
@@ -727,10 +836,16 @@ func str(v any) string {
 func sanitize(s string) string {
 	s = ansi.Strip(s)
 	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' || r >= ' ' {
+		if r == '\n' || r == '\t' {
 			return r
 		}
-		return -1
+		// DEL and the C1 range (0x80–0x9f) are control characters too: a
+		// decoded U+009B is a one-rune CSI introducer on terminals that honor
+		// C1, so they stop at this boundary exactly like their C0 siblings.
+		if r < ' ' || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return -1
+		}
+		return r
 	}, s)
 }
 

@@ -22,6 +22,7 @@ import (
 	extast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
 
+	"github.com/Nebutra/carina/go/tui/mathapprox"
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
@@ -139,7 +140,7 @@ func (r *renderer) block(n ast.Node, first, rest string) []string {
 	case *ast.List:
 		return r.list(t, first, rest)
 	case *ast.FencedCodeBlock:
-		return r.codeLines(t.Lines(), first, rest)
+		return r.fencedCode(t, first, rest)
 	case *ast.CodeBlock:
 		return r.codeLines(t.Lines(), first, rest)
 	case *ast.ThematicBreak:
@@ -225,19 +226,67 @@ func (r *renderer) list(l *ast.List, first, rest string) []string {
 	return out
 }
 
+// fencedCode renders a fenced block through chroma when the info string names
+// a known language and the guardrails allow it; otherwise it degrades to the
+// plain codeLines path. goldmark's Language() is already the first info-string
+// token. Mono skips tokenization outright: it could only produce plain text.
+func (r *renderer) fencedCode(n *ast.FencedCodeBlock, first, rest string) []string {
+	if r.mono() {
+		return r.codeLines(n.Lines(), first, rest)
+	}
+	var body strings.Builder
+	for i := 0; i < n.Lines().Len(); i++ {
+		body.Write(segValue(n.Lines().At(i), r.src))
+	}
+	tokens, ok := highlightLines(expandTabs(body.String()), string(n.Language(r.src)))
+	if !ok {
+		return r.codeLines(n.Lines(), first, rest)
+	}
+	out := make([]string, 0, len(tokens))
+	indent := first
+	for _, line := range tokens {
+		var b strings.Builder
+		b.WriteString(indent)
+		for _, tok := range line {
+			seg := strings.TrimRight(tok.Value, "\n")
+			if seg == "" {
+				continue
+			}
+			c := roleCtx(theme.RoleCodeBlock)
+			if role, mapped := chromaRole(tok.Type); mapped {
+				c = roleCtx(role)
+			}
+			b.WriteString(r.styled(seg, c))
+		}
+		out = append(out, b.String())
+		indent = rest
+	}
+	return out
+}
+
 // codeLines renders a code block verbatim, one styled line per source line.
 // Code is never soft-wrapped: alignment is meaning; overflow is clipped by
 // the outer cell grid like every other structured transcript body.
-// Highlighting is milestone P2; here the whole block is RoleCodeBlock.
+// Unhighlighted code renders the whole block as RoleCodeBlock.
 func (r *renderer) codeLines(lines *text.Segments, first, rest string) []string {
 	out := make([]string, 0, lines.Len())
 	indent := first
 	for i := 0; i < lines.Len(); i++ {
-		ln := strings.TrimRight(string(segValue(lines.At(i), r.src)), "\n")
+		ln := expandTabs(strings.TrimRight(string(segValue(lines.At(i), r.src)), "\n"))
 		out = append(out, indent+r.styled(ln, roleCtx(theme.RoleCodeBlock)))
 		indent = rest
 	}
 	return out
+}
+
+// expandTabs replaces tabs in code with a fixed four-space stop before any
+// styling happens. Mono returns segments verbatim while color profiles pass
+// through lipgloss (whose Render would expand tabs implicitly), so without
+// this the same block would indent differently under NO_COLOR — and a raw tab
+// byte defeats the cell-width math (ansi.StringWidth, fitLine, the viewport)
+// against the terminal's own eight-column tab stops.
+func expandTabs(s string) string {
+	return strings.ReplaceAll(s, "\t", "    ")
 }
 
 func (r *renderer) rawLines(lines *text.Segments, first, rest string) []string {
@@ -257,11 +306,29 @@ func (r *renderer) inlines(n ast.Node, c ictx) string {
 	var b strings.Builder
 	// Consecutive plain text nodes (goldmark splits link labels finely)
 	// coalesce into one styled run so the output is not per-rune SGR noise.
+	// Flushing runs math detection (P3) over the coalesced text: recognized
+	// TeX spans render as their Unicode approximation, detected-but-
+	// unrecognized spans render verbatim, and both style as RoleMathApprox.
+	// Inline code is exempt — `$x$` inside backticks is code, not math.
 	var pending strings.Builder
 	flush := func() {
-		if pending.Len() > 0 {
-			b.WriteString(r.styled(pending.String(), c))
-			pending.Reset()
+		if pending.Len() == 0 {
+			return
+		}
+		s := pending.String()
+		pending.Reset()
+		if c.hasRole && c.role == theme.RoleCodeInline {
+			b.WriteString(r.styled(s, c))
+			return
+		}
+		for _, seg := range mathapprox.Line(s) {
+			if seg.Math {
+				m := c
+				m.role, m.hasRole = theme.RoleMathApprox, true
+				b.WriteString(r.styled(seg.Text, m))
+				continue
+			}
+			b.WriteString(r.styled(seg.Text, c))
 		}
 	}
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
@@ -354,8 +421,10 @@ func sanitizeDestination(dest string) string {
 
 // table renders a GFM table with natural column widths measured on the same
 // escape-aware cell-width path as the rest of the renderer, so CJK cells
-// align. Width-budgeted column sizing and transposition are milestone P2; an
-// overflowing table clips at the outer cell grid like other structured rows.
+// align. When the natural widths exceed the width budget the widest columns
+// shrink (cells clip with an ellipsis) down to a floor; when even the floor
+// cannot fit, the table transposes to key/value records (Codex-style
+// fallback) so no data is lost to the right edge.
 func (r *renderer) table(t *extast.Table, first, rest string) []string {
 	v, h, x := "│", "─", "┼"
 	if r.mono() {
@@ -397,6 +466,9 @@ func (r *renderer) table(t *extast.Table, first, rest string) []string {
 			widths[i] = maxInt(widths[i], ansi.StringWidth(cell))
 		}
 	}
+	if !fitColumns(widths, r.width-ansi.StringWidth(first)) {
+		return r.transposeTable(rows, headerRows, first, rest)
+	}
 	sep := r.styled(" "+v+" ", roleCtx(theme.RoleTableBorder))
 	var out []string
 	indent := first
@@ -426,7 +498,85 @@ func (r *renderer) table(t *extast.Table, first, rest string) []string {
 	return out
 }
 
+// minTableCol is the narrowest a column shrinks to before the table gives up
+// on columns and transposes: two content cells plus the ellipsis.
+const minTableCol = 3
+
+// tableSepWidth is the rendered width of the " │ " column separator.
+const tableSepWidth = 3
+
+// fitColumns shrinks the natural column widths in place until the row fits
+// the budget, shaving the widest column first so narrow columns keep their
+// alignment. It reports false when even the minTableCol floor cannot fit —
+// the transposition signal. Deterministic: ties shave the leftmost column.
+func fitColumns(widths []int, budget int) bool {
+	total := tableSepWidth * (len(widths) - 1)
+	for _, w := range widths {
+		total += w
+	}
+	for total > budget {
+		widest := -1
+		for i, w := range widths {
+			if w > minTableCol && (widest < 0 || w > widths[widest]) {
+				widest = i
+			}
+		}
+		if widest < 0 {
+			return false
+		}
+		widths[widest]--
+		total--
+	}
+	return true
+}
+
+// transposeTable renders one key/value record per data row: every cell on its
+// own wrapped line under its (bold) header, records separated by a blank
+// line. This is the narrow-terminal fallback — column layout would either
+// clip below legibility or overflow the cell grid.
+func (r *renderer) transposeTable(rows [][]string, headerRows int, first, rest string) []string {
+	if headerRows < 1 || headerRows > len(rows) {
+		return nil
+	}
+	keys := rows[headerRows-1]
+	if headerRows == len(rows) {
+		// Header-only table (a valid GFM table, and the streaming holdback's
+		// in-flight shape): render the header cells one wrapped line each so
+		// the source is never silently dropped at narrow widths.
+		var out []string
+		lineFirst := first
+		for _, key := range keys {
+			out = append(out, r.wrapSegments(key, lineFirst, rest+"  ")...)
+			lineFirst = rest
+		}
+		return out
+	}
+	sep := r.styled(": ", roleCtx(theme.RoleTableBorder))
+	var out []string
+	for _, row := range rows[headerRows:] {
+		if len(out) > 0 {
+			out = append(out, rest)
+		}
+		lineFirst := first
+		if len(out) > 0 {
+			lineFirst = rest
+		}
+		for i, cell := range row {
+			key := ""
+			if i < len(keys) {
+				key = keys[i]
+			}
+			out = append(out, r.wrapSegments(key+sep+cell, lineFirst, rest+"  ")...)
+			lineFirst = rest
+		}
+	}
+	return out
+}
+
 func padCell(cell string, width int, align extast.Alignment) string {
+	if ansi.StringWidth(cell) > width {
+		cell = ansi.Truncate(cell, width, "…")
+	}
 	pad := width - ansi.StringWidth(cell)
 	if pad <= 0 {
 		return cell

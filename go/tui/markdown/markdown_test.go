@@ -64,9 +64,13 @@ func TestRenderMonoGolden(t *testing.T) {
 			want: []string{"> quoted 引用", "> ", "> more"},
 		},
 		{
-			name: "fenced code block is verbatim",
+			// Tabs expand to a deterministic four-space stop: a raw tab byte
+			// would defeat the cell-width math against the terminal's own
+			// eight-column stops, and color profiles (whose lipgloss render
+			// expands tabs implicitly) must match Mono cell for cell.
+			name: "fenced code block is verbatim with tabs expanded",
 			src:  "```go\nfmt.Println(\"你好\")\n\treturn\n```",
-			want: []string{"fmt.Println(\"你好\")", "\treturn"},
+			want: []string{"fmt.Println(\"你好\")", "    return"},
 		},
 		{
 			name:  "thematic break fills the width",
@@ -187,6 +191,85 @@ func TestRenderStylesThroughThemeRoles(t *testing.T) {
 	}
 }
 
+// Math approximation (P3) applies to inline prose across profiles: the
+// Unicode transform is plain text, so Mono keeps it; unrecognized spans stay
+// verbatim; currency and inline code are never math.
+func TestRenderMathApprox(t *testing.T) {
+	th := theme.New(theme.Mono)
+	cases := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{
+			name: "inline dollars transform",
+			src:  "area $\\pi r^2$ done",
+			want: []string{"area π r² done"},
+		},
+		{
+			name: "escaped parens transform",
+			src:  `so \(x^2 + y_1\) holds`,
+			want: []string{"so x² + y₁ holds"},
+		},
+		{
+			name: "display paragraph transforms",
+			src:  "$$\nE = mc^2\n$$",
+			want: []string{"E = mc²"},
+		},
+		{
+			name: "currency stays text",
+			src:  "costs $5 and $10 today",
+			want: []string{"costs $5 and $10 today"},
+		},
+		{
+			name: "escaped dollar stays text",
+			src:  `pay \$x\$ now`,
+			want: []string{"pay $x$ now"},
+		},
+		{
+			name: "unrecognized math renders verbatim",
+			src:  `check $\weird{x}$ later`,
+			want: []string{`check $\weird{x}$ later`},
+		},
+		{
+			name: "inline code is never math",
+			src:  "run `$x^2$` now",
+			want: []string{"run $x^2$ now"},
+		},
+		{
+			name: "math inside a heading",
+			src:  "## Energy $E = mc^2$",
+			want: []string{"## Energy E = mc²"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Render(tc.src, th, 80, "", passWrap)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Render(%q) = %#v, want %#v", tc.src, got, tc.want)
+			}
+		})
+	}
+
+	// Color profiles style both the approximation and the verbatim fallback
+	// through RoleMathApprox: Dust Violet #c6a6ea = rgb(198,166,234).
+	tru := theme.New(theme.TrueColor)
+	math := strings.Join(Render("solve $x^2$ now", tru, 80, "", passWrap), "\n")
+	if !strings.Contains(math, "38;2;198;166;234") {
+		t.Errorf("TrueColor math must use Dust Violet: %q", math)
+	}
+	if got := ansi.Strip(math); got != "solve x² now" {
+		t.Errorf("math plain text = %q", got)
+	}
+	fallback := strings.Join(Render(`odd $\weird{x}$ here`, tru, 80, "", passWrap), "\n")
+	if !strings.Contains(fallback, "38;2;198;166;234") {
+		t.Errorf("verbatim fallback must still style as math: %q", fallback)
+	}
+	if got := ansi.Strip(fallback); got != `odd $\weird{x}$ here` {
+		t.Errorf("fallback must preserve the source: %q", got)
+	}
+}
+
 // The renderer hands prose to the wrapper with the hanging indents that keep
 // list continuations aligned under their text, not under the marker.
 func TestListContinuationIndent(t *testing.T) {
@@ -213,6 +296,117 @@ func TestRenderIsDeterministic(t *testing.T) {
 		if got := Render(src, th, 60, "  ", passWrap); !reflect.DeepEqual(got, first) {
 			t.Fatalf("render %d diverged:\n%v\nvs\n%v", i, got, first)
 		}
+	}
+}
+
+// When natural column widths exceed the width budget, the widest column
+// shrinks and its cells clip with an ellipsis — alignment survives, the cell
+// grid is respected, CJK width math included.
+func TestTableColumnSizingClipsToBudget(t *testing.T) {
+	th := theme.New(theme.Mono)
+	src := "| name | description |\n|------|-------------|\n| a | 一二三四五 long text here |"
+	got := Render(src, th, 20, "", passWrap)
+	want := []string{
+		"name | description  ",
+		"-----+--------------",
+		"a    | 一二三四五 l…",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Render = %#v, want %#v", got, want)
+	}
+	for _, line := range got {
+		if w := ansi.StringWidth(line); w > 20 {
+			t.Errorf("line overflows the budget (%d cells): %q", w, line)
+		}
+	}
+}
+
+// When even minimum-width columns cannot fit, the table transposes to
+// key/value records (Codex-style fallback): one wrapped line per cell under
+// its header, records separated by a blank line.
+func TestTableTransposesWhenColumnsCannotFit(t *testing.T) {
+	th := theme.New(theme.Mono)
+	src := "| key | value |\n|---|---|\n| k1 | v1 |\n| k2 | v2 |"
+	got := Render(src, th, 8, "", passWrap)
+	want := []string{
+		"key: k1",
+		"value: v1",
+		"",
+		"key: k2",
+		"value: v2",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Render = %#v, want %#v", got, want)
+	}
+
+	// Color profiles keep the header cells bold in the transposed form too.
+	colored := strings.Join(Render(src, theme.New(theme.ANSI256), 8, "", passWrap), "\n")
+	if !strings.Contains(colored, "\x1b[1m") && !strings.Contains(colored, "\x1b[1;") {
+		t.Errorf("transposed keys should stay bold: %q", colored)
+	}
+	if !strings.Contains(ansi.Strip(colored), "key: k1") {
+		t.Errorf("transposed plain text lost: %q", ansi.Strip(colored))
+	}
+}
+
+// A header-only table (a valid GFM table, and the exact shape the streaming
+// holdback renders while data rows are still in flight) must not vanish when
+// the width budget forces the transpose fallback: the header cells render one
+// wrapped line each, so no source is lost to the right edge.
+func TestHeaderOnlyTableSurvivesTranspose(t *testing.T) {
+	th := theme.New(theme.Mono)
+	src := "| column-aaaaaaaaaaaaaaa | column-bbbbbbbbbbbbbbb | column-ccccccccccccccc |\n|---|---|---|\n"
+	got := Render(src, th, 10, "", passWrap)
+	want := []string{
+		"column-aaaaaaaaaaaaaaa",
+		"column-bbbbbbbbbbbbbbb",
+		"column-ccccccccccccccc",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Render = %#v, want %#v", got, want)
+	}
+
+	// Color profiles keep the transposed header cells bold, same as the
+	// data-bearing transpose form.
+	colored := strings.Join(Render(src, theme.New(theme.ANSI256), 10, "", passWrap), "\n")
+	if !strings.Contains(colored, "\x1b[1m") && !strings.Contains(colored, "\x1b[1;") {
+		t.Errorf("header-only transpose should keep bold headers: %q", colored)
+	}
+	if !strings.Contains(ansi.Strip(colored), "column-aaaaaaaaaaaaaaa") {
+		t.Errorf("header text lost: %q", ansi.Strip(colored))
+	}
+}
+
+// Tab handling must not diverge between the chroma path, the plain codeLines
+// fallback, and Mono: every path expands tabs to the same four-space stop, so
+// the same block indents identically under NO_COLOR and color profiles and no
+// raw tab byte reaches the cell grid.
+func TestCodeTabsExpandDeterministically(t *testing.T) {
+	srcKnown := "```go\n\tprintln(\"你好\")\n```"
+	srcUnknown := "```zzzunknownlang\n\tprintln(\"你好\")\n```"
+	for _, tc := range []struct {
+		name string
+		src  string
+		th   theme.Theme
+	}{
+		{"mono known language", srcKnown, theme.New(theme.Mono)},
+		{"mono unknown language", srcUnknown, theme.New(theme.Mono)},
+		{"ansi256 chroma path", srcKnown, theme.New(theme.ANSI256)},
+		{"ansi256 codeLines fallback", srcUnknown, theme.New(theme.ANSI256)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Render(tc.src, tc.th, 80, "", passWrap)
+			if len(got) != 1 {
+				t.Fatalf("Render = %#v, want one line", got)
+			}
+			plain := ansi.Strip(got[0])
+			if plain != "    println(\"你好\")" {
+				t.Errorf("plain text = %q, want four-space indent", plain)
+			}
+			if strings.Contains(got[0], "\t") {
+				t.Errorf("raw tab byte leaked into the rendered line: %q", got[0])
+			}
+		})
 	}
 }
 

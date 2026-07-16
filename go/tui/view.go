@@ -18,7 +18,6 @@ type rootLayout struct {
 	width, height  int
 	framed         bool
 	showBanner     bool
-	showTopSpacer  bool
 	taskLines      int
 	queueLines     int
 	pasteLines     int
@@ -38,10 +37,9 @@ func (m *Model) layout() {
 	m.configureInput()
 	l := m.calculateLayout()
 	m.root = l
-	contentWidth := l.width
-	if l.framed {
-		contentWidth = maxInt(l.width-2, 1)
-	}
+	// The transcript is an unframed document surface with one-cell side
+	// breathing room. The composer owns the only persistent border.
+	contentWidth := maxInt(l.width-2, 1)
 	m.vp.SetWidth(contentWidth)
 	m.vp.SetHeight(maxInt(l.viewportHeight, 1))
 	m.tr.resizePresentations(m.th, m.transcriptWidth())
@@ -59,7 +57,7 @@ func (m *Model) configureInput() {
 	if h < 1 {
 		h = 1
 	}
-	framed := w >= 6 && h >= 7
+	framed := w >= 6 && h >= 5
 	// At two rows an active history search uses the non-input row for its
 	// query/status instead of the generic status bar.
 	showStatus := h >= 2 && (m.historySearch == nil || h >= 3)
@@ -85,7 +83,7 @@ func (m *Model) configureInput() {
 		reserved++
 	}
 	if framed {
-		reserved += 5 // two borders per region plus one transcript row
+		reserved += 3 // composer borders plus one transcript row
 	} else if h-reserved > 1 {
 		reserved++ // one transcript row
 	}
@@ -111,12 +109,12 @@ func (m *Model) calculateLayout() rootLayout {
 	}
 
 	l := rootLayout{width: w, height: h, showStatus: h >= 2 && (m.historySearch == nil || h >= 3)}
-	l.framed = w >= 6 && h >= 7
+	l.framed = w >= 6 && h >= 5
 	l.inputHeight = m.input.Height()
 
 	borderRows := 0
 	if l.framed {
-		borderRows = 4
+		borderRows = 2
 		l.inputX = 1
 	}
 	remaining := h - l.inputHeight - borderRows
@@ -151,26 +149,18 @@ func (m *Model) calculateLayout() rootLayout {
 	if m.banner() != "" && remaining > 0 {
 		l.showBanner = true
 		remaining--
-	} else if remaining > 0 && !m.compactMode {
-		// Preserve the normal view's quiet top breathing room, but make it the
-		// first thing dropped in a constrained terminal.
-		l.showTopSpacer = true
-		remaining--
 	}
 	if l.showTranscript {
 		l.viewportHeight += remaining
 	}
 
 	y := 0
-	if l.showBanner || l.showTopSpacer {
+	if l.showBanner {
 		y++
 	}
 	y += l.taskLines
 	if l.showTranscript {
 		y += l.viewportHeight
-		if l.framed {
-			y += 2
-		}
 	}
 	y += l.suggestLines
 	y += l.queueLines
@@ -361,7 +351,7 @@ func (m *Model) View() tea.View {
 	if l.showBanner {
 		b.WriteString(fitRenderedLine(m.th.Style(theme.RoleWarning).Render(m.banner()), l.width))
 	}
-	if l.showBanner || l.showTopSpacer {
+	if l.showBanner {
 		b.WriteString("\n")
 	}
 
@@ -375,11 +365,11 @@ func (m *Model) View() tea.View {
 	// without exceeding the cell grid.
 	frame := m.borderStyle(lipgloss.RoundedBorder()).Width(l.width)
 	if l.showTranscript {
-		if l.framed {
-			b.WriteString(frame.Render(m.vp.View()))
-		} else {
-			b.WriteString(m.vp.View())
+		transcript := m.vp.View()
+		if l.width >= 3 {
+			transcript = lipgloss.NewStyle().Width(l.width).Padding(0, 1).Render(transcript)
 		}
+		b.WriteString(transcript)
 		b.WriteString("\n")
 	}
 	if panelLines := m.visibleSuggestPanelLines(l.suggestLines); len(panelLines) > 0 {
@@ -420,9 +410,8 @@ func (m *Model) View() tea.View {
 	}
 	b.WriteString("\n")
 
-	statusLine := m.th.Style(theme.RoleMuted).Render(m.statusFooterLine())
 	if l.showStatus {
-		b.WriteString(fitRenderedLine(statusLine, l.width))
+		b.WriteString(m.statusFooterView(l.width))
 	}
 
 	content := fitViewBlock(strings.TrimSuffix(b.String(), "\n"), l.width, l.height, false)

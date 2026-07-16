@@ -171,7 +171,8 @@ func TestTUIUnderPTY(t *testing.T) {
 	if _, err := tm("send-keys", "-t", "main", cmdline, "Enter"); err != nil {
 		t.Fatalf("send-keys: %v", err)
 	}
-	waitFor("session attach", "attached to", 30*time.Second)
+	attached := waitFor("session attach", "attached to", 30*time.Second)
+	assertSinglePersistentFrame(t, attached)
 
 	// Bubble Tea must ask the real terminal for both bracketed-paste and SGR
 	// cell-motion mouse reports. OnMouse alone is insufficient: without these
@@ -188,13 +189,13 @@ func TestTUIUnderPTY(t *testing.T) {
 		t.Fatalf("resize small: %v: %s", err, out)
 	}
 	waitForScreen("72-column resize", 10*time.Second, func(screen string) bool {
-		return screenHasBorderWidth(screen, 72)
+		return screenHasBorderWidth(screen, 72) && roundedTopBorderCount(screen) == 1
 	})
 	if out, err := tm("resize-window", "-t", "main", "-x", "96", "-y", "28"); err != nil {
 		t.Fatalf("resize large: %v: %s", err, out)
 	}
 	waitForScreen("96-column resize", 10*time.Second, func(screen string) bool {
-		return screenHasBorderWidth(screen, 96)
+		return screenHasBorderWidth(screen, 96) && roundedTopBorderCount(screen) == 1
 	})
 
 	// tmux -p wraps this payload in the terminal's real bracketed-paste
@@ -366,6 +367,23 @@ func screenHasBorderWidth(screen string, width int) bool {
 		}
 	}
 	return false
+}
+
+func roundedTopBorderCount(screen string) int {
+	count := 0
+	for _, line := range strings.Split(screen, "\n") {
+		if strings.HasPrefix(strings.TrimLeft(line, " "), "╭") {
+			count++
+		}
+	}
+	return count
+}
+
+func assertSinglePersistentFrame(t *testing.T, screen string) {
+	t.Helper()
+	if got := roundedTopBorderCount(screen); got != 1 {
+		t.Fatalf("persistent rounded frames = %d, want composer only:\n%s", got, screen)
+	}
 }
 
 func TestCapturedBorderWidth(t *testing.T) {

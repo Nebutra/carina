@@ -81,6 +81,26 @@ func TestQuestionWithoutOptionsAcceptsFreeText(t *testing.T) {
 	}
 }
 
+func TestQuestionFreeTextTreatsEmojiAsAtomicInput(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.Update(EventMsg{Raw: map[string]any{
+		"type": "user.question", "session_id": "sess_test", "task_id": "tsk_1",
+		"question_id": "q_emoji", "prompt": "Describe it", "options": []any{},
+	}})
+	m.Update(tea.KeyPressMsg{Text: "👩🏽‍💻", Code: tea.KeyExtended})
+	if got := m.question.FreeText; got != "👩🏽‍💻" {
+		t.Fatalf("emoji input = %q", got)
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if got := m.question.FreeText; got != "" {
+		t.Fatalf("backspace split emoji: %q", got)
+	}
+	m.Update(tea.PasteMsg{Content: "🇨🇳\n1️⃣"})
+	if got := m.question.FreeText; got != "🇨🇳 1️⃣" {
+		t.Fatalf("emoji paste = %q", got)
+	}
+}
+
 func TestFreeTextQuestionFailureAndReconnectPreserveDraft(t *testing.T) {
 	fc := &fakeCaller{handler: map[string]any{"task.user.answer": errTestRPC}}
 	m, _ := newTestModel(fc)
