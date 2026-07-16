@@ -1,7 +1,8 @@
 ---
 /**
- * Client-side tab group. Children: <Tab label="...">...</Tab>
- * Labels are read from data-label on rendered tab panels.
+ * Client-side tab group (Code Group / content tabs).
+ * Children: <Tab label="...">...</Tab>
+ * WAI-ARIA: arrow keys, Home/End, roving tabindex.
  */
 import { uniqueId } from './id';
 
@@ -25,10 +26,27 @@ const groupId = uniqueId('tabs');
     if (!list || panels.length === 0) return;
 
     list.innerHTML = '';
+    const buttons: HTMLButtonElement[] = [];
+
+    const select = (i: number, focus = false) => {
+      panels.forEach((p, j) => {
+        p.hidden = j !== i;
+        p.setAttribute('tabindex', j === i ? '0' : '-1');
+      });
+      buttons.forEach((b, j) => {
+        const on = j === i;
+        b.classList.toggle('is-active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+        b.tabIndex = on ? 0 : -1;
+      });
+      if (focus) buttons[i]?.focus();
+    };
+
     panels.forEach((panel, i) => {
       const id = panel.id || `${root.dataset.tabs}-panel-${i}`;
       panel.id = id;
       panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', `${id}-tab`);
       panel.hidden = i !== 0;
 
       const btn = document.createElement('button');
@@ -38,18 +56,24 @@ const groupId = uniqueId('tabs');
       btn.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
       btn.setAttribute('aria-controls', id);
       btn.id = `${id}-tab`;
+      btn.tabIndex = i === 0 ? 0 : -1;
       btn.textContent = panel.dataset.label || `Tab ${i + 1}`;
       if (i === 0) btn.classList.add('is-active');
-      btn.addEventListener('click', () => {
-        panels.forEach((p, j) => {
-          p.hidden = j !== i;
-        });
-        list.querySelectorAll<HTMLButtonElement>('.docs-tabs__tab').forEach((b, j) => {
-          const on = j === i;
-          b.classList.toggle('is-active', on);
-          b.setAttribute('aria-selected', on ? 'true' : 'false');
-        });
+
+      btn.addEventListener('click', () => select(i));
+      btn.addEventListener('keydown', (e) => {
+        const n = buttons.length;
+        let next = i;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (i + 1) % n;
+        else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (i - 1 + n) % n;
+        else if (e.key === 'Home') next = 0;
+        else if (e.key === 'End') next = n - 1;
+        else return;
+        e.preventDefault();
+        select(next, true);
       });
+
+      buttons.push(btn);
       list.appendChild(btn);
     });
   }

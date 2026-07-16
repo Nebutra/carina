@@ -185,4 +185,10 @@ function makeTheme(name, type, c) {
 }
 
 export const carinaDark = makeTheme('carina-dark', 'dark', darkPalette);
+
+/*
+ * Retained for a possible future per-theme code mode; currently unused by
+ * design — code cards are always-dark in both page themes
+ * (user arbitration 2026-07-16, see task prd.md amendments).
+ */
 export const carinaLight = makeTheme('carina-light', 'light', lightPalette);

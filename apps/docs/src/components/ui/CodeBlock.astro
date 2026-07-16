@@ -95,7 +95,7 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
     border-radius: 8px;
     background: var(--polish-code-bg, var(--carina-surface));
     overflow: hidden;
-    box-shadow: inset 0 1px 0 color-mix(in srgb, #f3f0e8 5%, transparent);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--carina-starlight) 5%, transparent);
     transition: border-color var(--docs-transition);
   }
 
@@ -139,7 +139,7 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
     padding: 0.15rem 0.45rem;
     border: 1px solid var(--polish-code-border, var(--carina-border-subtle));
     border-radius: 999px;
-    background: color-mix(in srgb, var(--polish-code-bg, #12181a) 70%, transparent);
+    background: color-mix(in srgb, var(--polish-code-bg) 70%, transparent);
   }
 
   .code-block__copy {
@@ -162,7 +162,7 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
   .code-block__copy:hover {
     color: var(--carina-starlight);
     border-color: var(--carina-border);
-    background: color-mix(in srgb, var(--polish-code-bg, #12181a) 70%, transparent);
+    background: color-mix(in srgb, var(--polish-code-bg) 70%, transparent);
   }
 
   .code-block__copy:focus-visible {
@@ -171,8 +171,8 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
   }
 
   .code-block__copy.is-copied {
-    color: var(--carina-spectral-green, #68d2a3);
-    border-color: color-mix(in srgb, var(--carina-spectral-green, #68d2a3) 40%, transparent);
+    color: var(--carina-spectral-green);
+    border-color: color-mix(in srgb, var(--carina-spectral-green) 40%, transparent);
   }
 
   .code-block__body :global(pre) {

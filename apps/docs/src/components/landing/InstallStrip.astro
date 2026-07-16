@@ -98,10 +98,10 @@ const {
     gap: 0.5rem;
     min-height: 2.75rem;
     padding: 0.35rem 0.4rem 0.35rem 0.9rem;
-    border: 1px solid var(--polish-code-border, #252e31);
+    border: 1px solid var(--polish-code-border);
     border-radius: 10px;
-    background: var(--polish-code-bg, #0f1416);
-    box-shadow: inset 0 1px 0 color-mix(in srgb, #f3f0e8 5%, transparent);
+    background: var(--polish-code-bg);
+    box-shadow: var(--polish-inset-glow);
     text-align: start;
   }
 
@@ -113,7 +113,7 @@ const {
     font-family: var(--docs-font-mono);
     font-size: 0.8125rem;
     line-height: 1.4;
-    color: #e8ebe8;
+    color: var(--polish-code-fg);
     white-space: nowrap;
   }
 
@@ -126,10 +126,10 @@ const {
     flex-shrink: 0;
     min-height: 2rem;
     padding: 0 0.75rem;
-    border: 1px solid #344144;
+    border: 1px solid var(--carina-border);
     border-radius: 6px;
-    background: #151b1e;
-    color: #9aa3a0;
+    background: var(--polish-code-chrome);
+    color: var(--polish-code-muted);
     font-family: var(--docs-font-sans);
     font-size: 0.75rem;
     font-weight: 500;
@@ -141,13 +141,14 @@ const {
   }
 
   .install-strip__copy:hover {
-    color: #e8ebe8;
-    border-color: #4a5557;
+    color: var(--polish-code-fg);
+    /* ≈ #4a5557 — one step lighter than --carina-border for hover */
+    border-color: color-mix(in srgb, var(--carina-border) 80%, var(--carina-dust));
   }
 
   .install-strip__copy.is-copied {
-    color: #68d2a3;
-    border-color: color-mix(in srgb, #68d2a3 45%, #344144);
+    color: var(--polish-code-success-fg);
+    border-color: color-mix(in srgb, var(--carina-spectral-green) 45%, var(--carina-border));
   }
 
   .install-strip__copy:focus-visible {

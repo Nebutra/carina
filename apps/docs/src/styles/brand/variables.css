@@ -26,6 +26,14 @@
   --carina-spectral-green: #68d2a3;
   --carina-event-red: #ff7c78;
 
+  /* Always-dark code card ramp — theme-pinned, not switched by [data-theme] */
+  --carina-code-void: #0f1416;
+  --carina-code-chrome: #151b1e;
+  --carina-code-border: #252e31;
+  --carina-code-fg: #e8ebe8;
+  --carina-code-muted: #9aa3a0;
+  --carina-code-line: #3d4749;
+
   /* Semantic colors */
   --color-background-page: var(--carina-void);
   --color-background-surface: var(--carina-surface);

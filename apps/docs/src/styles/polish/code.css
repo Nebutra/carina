@@ -23,8 +23,8 @@
   .expressive-code .frame {
     position: relative;
     border-radius: 10px !important;
-    border: 1px solid #252e31 !important;
-    background: #0f1416 !important;
+    border: 1px solid var(--polish-code-border) !important;
+    background: var(--polish-code-bg) !important;
     box-shadow: none !important;
     overflow: hidden;
   }
@@ -52,15 +52,15 @@
     margin: 0 !important;
     padding: 0 2.75rem 0 1rem !important;
     border: 0 !important;
-    border-bottom: 1px solid #252e31 !important;
+    border-bottom: 1px solid var(--polish-code-border) !important;
     border-radius: 0 !important;
-    background: #151b1e !important;
+    background: var(--polish-code-chrome) !important;
     text-align: start !important;
   }
 
-  .expressive-code .frame.is-terminal:not(.has-title) .header {
-    /* Untitled terminal sessions still show a slim chrome for copy alignment */
-    min-height: 2.25rem;
+  /* Untitled frames (editor AND terminal) get no chrome band — just the card */
+  .expressive-code .frame:not(.has-title) .header {
+    display: none !important;
   }
 
   .expressive-code .frame .title {
@@ -77,7 +77,7 @@
     font-weight: 500 !important;
     letter-spacing: 0.01em !important;
     line-height: 1.2 !important;
-    color: #9aa3a0 !important;
+    color: var(--polish-code-muted) !important;
     text-transform: none !important;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -101,7 +101,7 @@
 
   /* Line numbers — faint, airy gutter (rehype-pretty / Mintlify) */
   .expressive-code .ec-line .ln {
-    color: #3d4749;
+    color: var(--polish-code-line);
     opacity: 1;
     padding-inline-end: 1.25rem;
     min-width: 2.25rem;
@@ -117,7 +117,7 @@
   .expressive-code .ec-line.mark,
   .expressive-code .ec-line.ins,
   .expressive-code .ec-line.del {
-    background: color-mix(in srgb, #8edbd2 8%, transparent);
+    background: color-mix(in srgb, var(--carina-ion-cyan) 8%, transparent);
   }
 
   /*
@@ -145,7 +145,7 @@
   }
 
   .expressive-code .copy button::before {
-    background-color: #9aa3a0 !important;
+    background-color: var(--polish-code-muted) !important;
   }
 
   .expressive-code .copy button::after {
@@ -161,30 +161,26 @@
   }
 
   .expressive-code .copy button:hover {
-    border-color: #344144 !important;
-    background: #1a2224 !important;
+    border-color: var(--carina-border) !important;
+    background: var(--polish-code-chrome) !important;
   }
 
   .expressive-code .copy button:focus-visible {
     outline: none !important;
-    border-color: color-mix(in srgb, #8edbd2 55%, #344144) !important;
+    border-color: color-mix(in srgb, var(--carina-ion-cyan) 55%, var(--carina-border)) !important;
   }
 
   .expressive-code .copy .feedback {
-    border: 1px solid #2a3d36 !important;
+    border: 1px solid var(--polish-code-success-border) !important;
     border-radius: 6px !important;
-    background: #1a3028 !important;
-    color: #68d2a3 !important;
+    background: var(--polish-code-success-bg) !important;
+    color: var(--polish-code-success-fg) !important;
     font-size: 11px !important;
     font-weight: 500 !important;
     box-shadow: none !important;
   }
 
-  /* frame="none" — still a card, no header (Mintlify short commands) */
-  .expressive-code .frame:not(.has-title):not(.is-terminal) {
-    /* EC may omit header; ensure padding still feels card-like */
-  }
-
+  /* Headerless frames — keep copy pinned inside the code area */
   .expressive-code .frame:not(.has-title) .copy {
     inset-block-start: 0.45rem !important;
   }
@@ -192,7 +188,7 @@
   /* Light page: slightly stronger outer edge so dark cards don't float muddy */
   [data-theme='light'] .expressive-code .frame,
   [data-theme='carina-light'] .expressive-code .frame {
-    border-color: #1e2628 !important;
+    border-color: var(--polish-code-edge-light) !important;
   }
 
   /* Inline code */
@@ -216,9 +212,9 @@
   .snippet-tabs,
   .code-block,
   .term {
-    border: 1px solid #252e31 !important;
+    border: 1px solid var(--polish-code-border) !important;
     border-radius: 10px !important;
-    background: #0f1416 !important;
+    background: var(--polish-code-bg) !important;
     box-shadow: none !important;
     overflow: hidden;
   }
@@ -226,8 +222,8 @@
   .snippet-tabs__list,
   .code-block__chrome,
   .term__chrome {
-    background: #151b1e !important;
-    border-bottom: 1px solid #252e31 !important;
+    background: var(--polish-code-chrome) !important;
+    border-bottom: 1px solid var(--polish-code-border) !important;
   }
 
   .snippet-tabs__panel pre,

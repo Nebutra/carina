@@ -28,13 +28,22 @@
   /*
    * Code always-dark mineral surface (Mintlify signature on light pages).
    * Tuned deeper than page surface for crisp card edge on paper bg.
+   * Ramp primitives live in the brand authority (--carina-code-*).
    */
-  --polish-code-bg: #0f1416;
-  --polish-code-chrome: #151b1e;
-  --polish-code-border: #252e31;
-  --polish-code-fg: #e8ebe8;
-  --polish-code-muted: #9aa3a0;
-  --polish-code-line: #3d4749;
+  --polish-code-bg: var(--carina-code-void);
+  --polish-code-chrome: var(--carina-code-chrome);
+  --polish-code-border: var(--carina-code-border);
+  --polish-code-fg: var(--carina-code-fg);
+  --polish-code-muted: var(--carina-code-muted);
+  --polish-code-line: var(--carina-code-line);
+
+  /* Copy-success feedback chip (spectral green over code void) */
+  --polish-code-success-fg: var(--carina-spectral-green);
+  --polish-code-success-bg: color-mix(in srgb, var(--carina-spectral-green) 18%, var(--carina-code-void));
+  --polish-code-success-border: color-mix(in srgb, var(--carina-spectral-green) 30%, var(--carina-code-void));
+
+  /* Slightly darker outer edge so dark cards don't float muddy on light pages */
+  --polish-code-edge-light: color-mix(in srgb, var(--carina-code-border) 60%, var(--carina-void));
 
   /* Syntax accents mapped to capability taxonomy */
   --polish-syn-keyword: var(--carina-dust-violet);

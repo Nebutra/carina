@@ -190,7 +190,7 @@
     opacity: 0.9;
   }
 
-  /* Tables — hairlines only, quiet hover */
+  /* Tables — hairlines, quiet hover, edge fade on horizontal overflow */
   .sl-markdown-content table {
     display: block;
     width: 100%;
@@ -199,6 +199,10 @@
     border-collapse: collapse;
     font-size: 0.9rem;
     box-shadow: none;
+    scrollbar-width: thin;
+    background:
+      linear-gradient(90deg, var(--docs-bg) 30%, transparent) left center / 1.25rem 100% no-repeat local,
+      linear-gradient(270deg, var(--docs-bg) 30%, transparent) right center / 1.25rem 100% no-repeat local;
   }
 
   .sl-markdown-content thead,
@@ -206,6 +210,7 @@
   .sl-markdown-content tr {
     display: table;
     width: 100%;
+    min-width: 100%;
   }
 
   .sl-markdown-content th,
@@ -268,5 +273,20 @@
     border-color: var(--docs-border);
     background: color-mix(in srgb, var(--docs-fg) 3%, transparent);
     transform: translateY(-1px);
+  }
+
+  /* Heading anchors — quiet until hover (Mintlify-style) */
+  .sl-markdown-content .sl-anchor-link {
+    opacity: 0;
+    margin-inline-start: 0.35rem;
+    color: var(--docs-fg-subtle);
+    text-decoration: none;
+    transition: opacity var(--polish-transition), color var(--polish-transition);
+  }
+
+  .sl-markdown-content :is(h2, h3, h4):hover .sl-anchor-link,
+  .sl-markdown-content .sl-anchor-link:focus-visible {
+    opacity: 1;
+    color: var(--docs-accent);
   }
 }
