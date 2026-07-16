@@ -26,16 +26,15 @@
   --polish-focus-ring: 0 0 0 2px var(--docs-bg), 0 0 0 4px color-mix(in srgb, var(--docs-accent) 55%, transparent);
 
   /*
-   * Code always-dark mineral surface.
-   * Pin to carina primitives (not --color-*) so light theme page stays paper
-   * while code cards remain mineral — Mintlify signature.
+   * Code always-dark mineral surface (Mintlify signature on light pages).
+   * Tuned deeper than page surface for crisp card edge on paper bg.
    */
-  --polish-code-bg: #12181a;
-  --polish-code-chrome: #1a2224;
-  --polish-code-border: #2a3436;
-  --polish-code-fg: var(--carina-starlight);
-  --polish-code-muted: color-mix(in srgb, var(--carina-dust) 88%, transparent);
-  --polish-code-line: color-mix(in srgb, var(--carina-disabled) 50%, transparent);
+  --polish-code-bg: #0f1416;
+  --polish-code-chrome: #151b1e;
+  --polish-code-border: #252e31;
+  --polish-code-fg: #e8ebe8;
+  --polish-code-muted: #9aa3a0;
+  --polish-code-line: #3d4749;
 
   /* Syntax accents mapped to capability taxonomy */
   --polish-syn-keyword: var(--carina-dust-violet);

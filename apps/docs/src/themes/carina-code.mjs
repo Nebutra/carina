@@ -10,45 +10,58 @@
  * tokenColors }) and wraps them in ExpressiveCodeTheme internally.
  */
 
-/** Dark palette — mirrors the `:root` / [data-theme='dark'] brand block. */
+/**
+ * Dark palette — tuned for docs readability (Mintlify always-dark cards).
+ * Slightly deeper bg than surface so light-page contrast is crisp.
+ */
 const darkPalette = {
-  bg: '#141b1d', // --carina-surface (--color-background-surface)
-  fg: '#f3f0e8', // --carina-starlight (--color-text-primary)
-  lineNumber: '#344144', // --carina-border (very faint gutter ink)
-  comment: '#7e8885', // --carina-disabled (--color-text-disabled)
-  keyword: '#c6a6ea', // --carina-dust-violet
-  string: '#68d2a3', // --carina-spectral-green
-  func: '#8edbd2', // --carina-ion-cyan
-  constant: '#e8a85f', // --carina-copper-amber
-  type: '#78bff2', // --carina-oxygen-blue
-  inserted: '#68d2a3', // --carina-spectral-green
-  deleted: '#ff7c78', // --carina-event-red
+  bg: '#0f1416',
+  fg: '#e8ebe8', // soft starlight (less harsh than pure #f3f0e8)
+  lineNumber: '#3d4749',
+  comment: '#6b7572',
+  keyword: '#c6a6ea', // dust-violet
+  string: '#7dcea0', // spectral-green softened
+  func: '#8edbd2', // ion-cyan
+  constant: '#e0b06a', // copper-amber softened
+  type: '#7ab8e8', // oxygen-blue softened
+  parameter: '#b0b7b3', // dust
+  operator: '#8b9490',
+  inserted: '#68d2a3',
+  deleted: '#ff7c78',
 };
 
-/** Light palette — mirrors the [data-theme='light'] brand block. */
+/** Light palette — available if dual-theme code is re-enabled later. */
 const lightPalette = {
-  bg: '#fffdf8', // light --color-background-surface
-  fg: '#182023', // light --color-text-primary
-  lineNumber: '#cfd3ce', // light --color-border (very faint gutter ink)
-  comment: '#7b8583', // light --color-text-disabled
-  keyword: '#6d43b8', // light --color-capability-agent (violet family)
-  string: '#087c58', // light --color-success (spectral-green family)
-  func: '#176f70', // light --color-accent (ion-cyan family)
-  constant: '#8c5a15', // light --color-warning (copper-amber family)
-  type: '#1d6fae', // light --color-info (oxygen-blue family)
-  inserted: '#087c58', // light --color-success
-  deleted: '#c42e45', // light --color-danger (event-red family)
+  bg: '#fffdf8',
+  fg: '#182023',
+  lineNumber: '#cfd3ce',
+  comment: '#7b8583',
+  keyword: '#6d43b8',
+  string: '#087c58',
+  func: '#176f70',
+  constant: '#8c5a15',
+  type: '#1d6fae',
+  parameter: '#5d6868',
+  operator: '#7b8583',
+  inserted: '#087c58',
+  deleted: '#c42e45',
 };
 
-/** Standard TextMate scope coverage from a Carina palette. */
+/** TextMate scopes — enough coverage for bash/json/ts/go in docs. */
 function tokenColors(c) {
   return [
     {
-      scope: ['comment', 'punctuation.definition.comment'],
+      scope: ['comment', 'punctuation.definition.comment', 'string.comment'],
       settings: { foreground: c.comment, fontStyle: 'italic' },
     },
     {
-      scope: ['string', 'string.quoted', 'punctuation.definition.string', 'string.regexp'],
+      scope: [
+        'string',
+        'string.quoted',
+        'string.template',
+        'punctuation.definition.string',
+        'string.regexp',
+      ],
       settings: { foreground: c.string },
     },
     {
@@ -59,12 +72,16 @@ function tokenColors(c) {
       scope: [
         'keyword',
         'keyword.control',
-        'keyword.operator',
+        'keyword.operator.new',
         'storage',
         'storage.type',
         'storage.modifier',
       ],
       settings: { foreground: c.keyword },
+    },
+    {
+      scope: ['keyword.operator', 'keyword.operator.assignment', 'keyword.operator.comparison'],
+      settings: { foreground: c.operator },
     },
     {
       scope: [
@@ -77,7 +94,13 @@ function tokenColors(c) {
       settings: { foreground: c.constant },
     },
     {
-      scope: ['entity.name.function', 'support.function', 'meta.function-call entity.name'],
+      scope: [
+        'entity.name.function',
+        'support.function',
+        'meta.function-call entity.name',
+        'entity.name.command',
+        'support.function.builtin',
+      ],
       settings: { foreground: c.func },
     },
     {
@@ -93,7 +116,16 @@ function tokenColors(c) {
       settings: { foreground: c.type },
     },
     {
-      scope: ['variable', 'variable.parameter', 'variable.other'],
+      scope: [
+        'variable.parameter',
+        'variable.other.option',
+        'entity.name.section.option',
+        'constant.other.option',
+      ],
+      settings: { foreground: c.parameter },
+    },
+    {
+      scope: ['variable', 'variable.other', 'variable.language'],
       settings: { foreground: c.fg },
     },
     {
@@ -101,12 +133,20 @@ function tokenColors(c) {
         'support.type.property-name',
         'entity.other.attribute-name',
         'meta.object-literal.key',
+        'string.json support.type.property-name',
       ],
       settings: { foreground: c.type },
     },
     {
-      scope: ['punctuation', 'meta.brace', 'punctuation.separator', 'punctuation.terminator'],
-      settings: { foreground: c.fg },
+      scope: [
+        'punctuation',
+        'meta.brace',
+        'punctuation.separator',
+        'punctuation.terminator',
+        'punctuation.definition.array',
+        'punctuation.definition.dictionary',
+      ],
+      settings: { foreground: c.operator },
     },
     {
       scope: ['markup.inserted'],

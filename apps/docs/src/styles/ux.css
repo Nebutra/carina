@@ -410,73 +410,10 @@
     margin-top: 1.8em;
   }
 
-  /* ── Code (Expressive Code) — theme-following cards (ref: Claude Docs) ── */
-  .expressive-code {
-    --ec-frm-tooltipSuccessBg: var(--docs-success);
-    --ec-frm-tooltipSuccessFg: var(--docs-bg);
-    --ec-codePadBlk: 0.9rem;
-    --ec-codePadInl: 1rem;
-    font-size: 0.8125rem;
-    margin-block: var(--spacing-5);
-  }
-
-  .expressive-code .frame.is-terminal .header::before {
-    display: none;
-  }
-
-  .expressive-code .frame {
-    border-radius: var(--docs-radius-xl);
-    border: 1px solid var(--docs-code-border);
-    box-shadow: none !important;
-    overflow: hidden;
-    transition: border-color var(--docs-transition);
-  }
-
-  .expressive-code .frame:hover {
-    border-color: var(--docs-border);
-  }
-
-  /* Title bar layout owned by polish/code.css (left label + copy). */
-  .expressive-code .frame.is-terminal:not(.has-title) .header {
-    display: none;
-  }
-
-  .expressive-code .frame pre {
-    border-radius: 0;
-    border: 0;
-  }
-
-  /* Copy: always discoverable on frame hover, Mintlify-like */
-  .expressive-code .copy {
-    inset-block-start: 0.45rem;
-    inset-inline-end: 0.45rem;
-  }
-
-  .expressive-code .copy button {
-    width: 2rem;
-    height: 2rem;
-    border-radius: var(--docs-radius-md);
-    border: 0;
-    background: transparent;
-    opacity: 0.55;
-    transition:
-      opacity var(--docs-transition),
-      background-color var(--docs-transition),
-      border-color var(--docs-transition),
-      transform var(--docs-transition);
-  }
-
-  .expressive-code .frame:hover .copy button,
-  .expressive-code .copy button:focus-visible {
-    opacity: 1;
-  }
-
-  .expressive-code .copy button:hover {
-    background: var(--docs-bg-raised);
-    transform: scale(1.02);
-  }
-
-  /* Inline code chips only — never multi-line pre > code (line-box striping) */
+  /*
+   * Code block chrome is owned by polish/code.css (Mintlify/Fumadocs practice).
+   * Keep only inline-code + strip rules here to avoid cascade fights.
+   */
   .sl-markdown-content :not(pre) > code:not(:where(.expressive-code *)) {
     background: var(--docs-bg-raised);
     border: 1px solid var(--docs-border-subtle);
@@ -492,7 +429,6 @@
     background: transparent !important;
     border: none !important;
     border-radius: 0 !important;
-    padding: 0 !important;
     font-weight: inherit;
     color: inherit;
     box-shadow: none !important;

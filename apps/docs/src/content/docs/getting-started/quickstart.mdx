@@ -13,9 +13,16 @@ import Card from '../../../components/mdx/Card.astro';
 
 From a clean install to a governed session on a local repo.
 
+{/*
+  Code meta follows Mintlify practice:
+  - real filenames in title="…" for multi-line scripts
+  - frame="none" for short one-liner commands (less chrome noise)
+  - language tag always present for highlighting
+*/}
+
 <Steps>
   <Step title="Start the daemon">
-    ```bash title="bash"
+    ```bash title="start-daemon.sh"
     carina-daemon &
     # or
     carina daemon start
@@ -26,13 +33,13 @@ From a clean install to a governed session on a local repo.
   </Step>
 
   <Step title="Open a workspace">
-    ```bash title="bash"
+    ```bash frame="none"
     cd /path/to/your/repo
     ```
   </Step>
 
   <Step title="Run a coding task">
-    ```bash title="bash"
+    ```bash title="run-task.sh"
     carina run "Summarize the top-level architecture of this repo"
     # or fix something concrete
     carina run "fix the failing test in parser.go"
@@ -40,7 +47,7 @@ From a clean install to a governed session on a local repo.
 
     Interactive TUI:
 
-    ```bash title="bash"
+    ```bash frame="none"
     carina
     ```
 
@@ -48,7 +55,7 @@ From a clean install to a governed session on a local repo.
   </Step>
 
   <Step title="Inspect the audit trail">
-    ```bash title="bash"
+    ```bash title="audit.sh"
     carina audit SESSION
     carina audit verify SESSION
     carina audit tail --last 5
@@ -58,7 +65,7 @@ From a clean install to a governed session on a local repo.
   </Step>
 
   <Step title="Patches and rollback">
-    ```bash title="bash"
+    ```bash title="patch.sh"
     carina patch list SESSION
     carina patch rollback PATCH_ID
     ```
@@ -67,15 +74,22 @@ From a clean install to a governed session on a local repo.
 
 ## Optional next steps
 
-```bash title="bash"
+```bash title="install-workflow.sh"
 mkdir -p .carina/workflows
 cp examples/workflows/review.json .carina/workflows/
 carina workflow run review
 ```
 
-```json title="session.create"
-{"jsonrpc":"2.0","id":1,"method":"session.create",
- "params":{"workspace_root":"/repo","profile":"safe-edit"}}
+```json title="session.create.json"
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "session.create",
+  "params": {
+    "workspace_root": "/repo",
+    "profile": "safe-edit"
+  }
+}
 ```
 
 <Cards cols={3}>

@@ -3,7 +3,6 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import tailwindcss from '@tailwindcss/vite';
 import { carinaDark } from './src/themes/carina-code.mjs';
-import { carinaDark, carinaLight } from './src/themes/carina-code.mjs';
 
 /**
  * Carina docs site — Astro + Starlight
@@ -87,44 +86,71 @@ export default defineConfig({
       ],
       // Built-in Pagefind search (keyboard: /, Esc)
       pagefind: true,
-      // Expressive Code — Carina mineral theme (always-dark) + Mintlify chrome.
-      // Custom Shiki theme maps tokens onto the six-color capability palette.
+      /*
+       * Expressive Code — aligned with Mintlify / Fumadocs code-block practice:
+       *  - always-dark mineral surface (readable on light pages)
+       *  - code frames (not macOS terminal chrome)
+       *  - filename in header via title="…" meta; short CLI uses frame="none"
+       *  - copy always present; no drop shadows
+       *  - Carina Shiki theme (six-color capability map)
+       * @see https://www.mintlify.com/docs/create/code
+       * @see https://www.fumadocs.dev/docs/ui/components/codeblock
+       */
       expressiveCode: {
         themes: [carinaDark],
-        // Prefer "code" frames over macOS-terminal chrome for bash/shell.
         defaultProps: {
           frame: 'code',
           wrap: false,
         },
+        frames: {
+          extractFileNameFromCode: true,
+          showCopyToClipboardButton: true,
+          removeCommentsWhenCopyingTerminalFrames: true,
+        },
         styleOverrides: {
-          borderRadius: '8px',
+          borderRadius: '10px',
           borderWidth: '1px',
-          borderColor: 'var(--polish-code-border, #2a3436)',
+          borderColor: '#2a3336',
           codeFontFamily: 'var(--docs-font-mono)',
           uiFontFamily: 'var(--docs-font-sans)',
-          codeFontSize: '0.8125rem',
-          codePaddingBlock: '0.95rem',
-          codePaddingInline: '1.05rem',
-          codeBackground: 'var(--polish-code-bg, #12181a)',
+          codeFontSize: '13px',
+          codeLineHeight: '1.7',
+          codePaddingBlock: '1rem',
+          codePaddingInline: '1.15rem',
+          codeBackground: '#0f1416',
+          uiPaddingBlock: '0.55rem',
+          uiPaddingInline: '0.85rem',
+          uiFontSize: '12px',
           frames: {
             shadowColor: 'transparent',
-            editorBackground: 'var(--polish-code-bg, #12181a)',
-            terminalBackground: 'var(--polish-code-bg, #12181a)',
-            editorTabBarBackground: 'var(--polish-code-chrome, #1a2224)',
-            editorActiveTabBackground: 'var(--polish-code-bg, #12181a)',
-            editorActiveTabForeground: 'var(--polish-code-fg, #f3f0e8)',
+            frameBoxShadowCssValue: 'none',
+            editorBackground: '#0f1416',
+            terminalBackground: '#0f1416',
+            editorTabBarBackground: '#151b1e',
+            editorActiveTabBackground: '#0f1416',
+            editorActiveTabForeground: '#c8cec9',
             editorActiveTabBorderColor: 'transparent',
             editorActiveTabIndicatorTopColor: 'transparent',
+            editorActiveTabIndicatorBottomColor: 'transparent',
             editorActiveTabIndicatorHeight: '0px',
-            editorTabBarBorderBottomColor: 'var(--polish-code-border, #2a3436)',
-            terminalTitlebarBackground: 'var(--polish-code-chrome, #1a2224)',
-            terminalTitlebarBorderBottomColor: 'var(--polish-code-border, #2a3436)',
-            terminalTitlebarForeground: 'var(--polish-code-muted, #b0b7b3)',
+            editorTabBarBorderBottomColor: '#252e31',
+            editorTabBarBorderColor: 'transparent',
+            editorTabsMarginInlineStart: '0',
+            editorTabsMarginBlockStart: '0',
+            editorTabBorderRadius: '0',
+            terminalTitlebarBackground: '#151b1e',
+            terminalTitlebarBorderBottomColor: '#252e31',
+            terminalTitlebarForeground: '#8b9490',
+            terminalTitlebarDotsOpacity: '0',
             inlineButtonBorder: 'transparent',
-            inlineButtonBackground: 'transparent',
-            inlineButtonForeground: 'var(--polish-code-muted, #b0b7b3)',
-            inlineButtonHoverBackground: 'color-mix(in srgb, #f3f0e8 6%, transparent)',
-            inlineButtonHoverForeground: '#f3f0e8',
+            inlineButtonBorderOpacity: '0',
+            inlineButtonBackground: '#1a2224',
+            inlineButtonBackgroundIdleOpacity: '0',
+            inlineButtonBackgroundHoverOrFocusOpacity: '1',
+            inlineButtonBackgroundActiveOpacity: '1',
+            inlineButtonForeground: '#8b9490',
+            tooltipSuccessBackground: '#1a3028',
+            tooltipSuccessForeground: '#68d2a3',
           },
         },
       },
