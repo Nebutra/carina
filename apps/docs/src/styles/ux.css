@@ -444,7 +444,8 @@
     transform: scale(1.02);
   }
 
-  .sl-markdown-content code:not(:where(.expressive-code *)) {
+  /* Inline code chips only — never multi-line pre > code (line-box striping) */
+  .sl-markdown-content :not(pre) > code:not(:where(.expressive-code *)) {
     background: var(--docs-bg-raised);
     border: 1px solid var(--docs-border-subtle);
     border-radius: var(--docs-radius-sm);
@@ -452,6 +453,17 @@
     font-size: 0.875em;
     color: var(--docs-fg);
     font-weight: 500;
+  }
+
+  .sl-markdown-content pre code,
+  .snippet-tabs__panel code {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    font-weight: inherit;
+    color: inherit;
+    box-shadow: none !important;
   }
 
   /* ── Asides ──────────────────────────────────────────────────────── */

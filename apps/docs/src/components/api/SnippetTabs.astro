@@ -162,8 +162,23 @@ const bashText = `printf '%s\\n' '${JSON.stringify(jsonRpc)}' | carina rpc
     display: none;
   }
 
+  /*
+   * Neutralize global inline-code chip styles (background/border/padding).
+   * Multi-line <code> is display:inline — chips paint per line and look broken.
+   */
   .snippet-tabs__panel code {
+    display: block;
     font-family: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    line-height: inherit;
+    color: inherit;
     white-space: pre;
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
   }
 </style>
+
