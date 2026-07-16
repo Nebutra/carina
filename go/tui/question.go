@@ -208,7 +208,17 @@ func (m *Model) nextQueuedQuestion() {
 }
 
 func (m *Model) questionKey(key string) (tea.Cmd, bool) {
-	return m.questionKeyText(key, key)
+	text := key
+	if strings.Contains(key, "+") {
+		text = ""
+	}
+	switch key {
+	case "up", "down", "left", "right", "enter", "tab", "esc", "backspace", "delete", "home", "end", "pgup", "pgdown":
+		text = ""
+	case "space":
+		text = " "
+	}
+	return m.questionKeyText(key, text)
 }
 
 func (m *Model) questionKeyText(key, text string) (tea.Cmd, bool) {

@@ -73,6 +73,16 @@ func TestComposerRepairsCaretInsideGraphemeBeforeEditing(t *testing.T) {
 	}
 }
 
+func TestComposerVerticalMotionCannotLandInsideGrapheme(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m.input.SetValue("ab\n👩🏽‍💻X")
+	m.setComposerCaret(0, 1)
+	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.input.Line() != 1 || !isGraphemeBoundary(graphemeRuneBoundaries("👩🏽‍💻X"), m.input.Column()) {
+		t.Fatalf("vertical motion landed inside grapheme at %d:%d", m.input.Line(), m.input.Column())
+	}
+}
+
 func TestComposerGraphemeEditingPreservesMultilineSemantics(t *testing.T) {
 	m, _ := newTestModel(nil)
 	m.input.SetValue("A👩🏽‍💻\n🇨🇳B")
@@ -94,6 +104,22 @@ func TestComposerTransposesWholeGraphemes(t *testing.T) {
 	composerKey(t, m, "ctrl+t")
 	if got := m.input.Value(); got != "AB👩🏽‍💻" {
 		t.Fatalf("transpose split grapheme: %q", got)
+	}
+}
+
+func TestComposerCustomCharacterBindingKeepsGraphemeSemantics(t *testing.T) {
+	m := New(Options{Keybindings: []KeyBindingOverride{{
+		Context: KeyContextEditor,
+		Action:  ActionEditorMoveLeft,
+		Keys:    []string{"f12"},
+	}}})
+	defer m.Close()
+	m.input.SetValue("A👩🏽‍💻")
+	if cmd, handled := m.handleKey("f12"); !handled || cmd != nil {
+		t.Fatalf("custom move-left binding handled=%v cmd=%v", handled, cmd)
+	}
+	if got := m.input.Column(); got != 1 {
+		t.Fatalf("custom binding split grapheme at rune column %d", got)
 	}
 }
 

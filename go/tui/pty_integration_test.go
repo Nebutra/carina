@@ -232,6 +232,26 @@ func TestTUIUnderPTY(t *testing.T) {
 			t.Fatalf("type %q: %v: %s", text, err, out)
 		}
 	}
+
+	// A real terminal sends an extended emoji as a multi-code-point text
+	// sequence. Horizontal motion and backspace must still treat it as one
+	// editor atom rather than leaving a skin tone, ZWJ, or profession glyph.
+	typeLiteral("PTY_EMOJI_👩🏽‍💻Z")
+	waitFor("extended emoji draft", "👩🏽‍💻", 10*time.Second)
+	if out, err := tm("send-keys", "-t", "main", "Left", "BSpace"); err != nil {
+		t.Fatalf("emoji backspace: %v: %s", err, out)
+	}
+	waitForScreen("atomic emoji backspace", 10*time.Second, func(screen string) bool {
+		return strings.Contains(screen, "PTY_EMOJI_Z") &&
+			!strings.Contains(screen, "👩") && !strings.Contains(screen, "🏽") && !strings.Contains(screen, "💻")
+	})
+	if _, err := tm("send-keys", "-t", "main", "C-c"); err != nil {
+		t.Fatal(err)
+	}
+	waitForScreen("emoji draft clear", 10*time.Second, func(screen string) bool {
+		return !strings.Contains(screen, "PTY_EMOJI_Z")
+	})
+
 	typeLiteral("PTY_CTRLJ_FIRST")
 	if _, err := tm("send-keys", "-t", "main", "C-j"); err != nil {
 		t.Fatal(err)

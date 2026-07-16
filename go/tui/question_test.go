@@ -99,6 +99,10 @@ func TestQuestionFreeTextTreatsEmojiAsAtomicInput(t *testing.T) {
 	if got := m.question.FreeText; got != "🇨🇳 1️⃣" {
 		t.Fatalf("emoji paste = %q", got)
 	}
+	m.questionKey("left")
+	if got := m.question.FreeText; got != "🇨🇳 1️⃣" {
+		t.Fatalf("navigation key leaked into free text: %q", got)
+	}
 }
 
 func TestFreeTextQuestionFailureAndReconnectPreserveDraft(t *testing.T) {
