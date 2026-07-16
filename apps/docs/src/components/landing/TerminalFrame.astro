@@ -22,20 +22,13 @@ const {
 ---
 
 <figure class="term">
+  {/* Slim title bar — no traffic-light dots (matches the EC code-frame chrome) */}
   <div class="term__chrome">
-    <span class="term__dots" aria-hidden="true">
-      <i></i><i></i><i></i>
-    </span>
+    <span class="term__prompt" aria-hidden="true">❯_</span>
     <span class="term__title">{title}</span>
   </div>
-  <pre class="term__body" tabindex="0"><code>{
-    lines.map((line) => (
-      <span class:list={['term__line', line.tone && `term__line--${line.tone}`]}>
-        {line.text}
-        {'\n'}
-      </span>
-    ))
-  }</code></pre>
+  {/* Whitespace inside <pre> is literal — keep each span on a single line. */}
+  <pre class="term__body" tabindex="0"><code>{lines.map((line) => <span class:list={['term__line', line.tone && `term__line--${line.tone}`]}>{line.text}</span>)}</code></pre>
 </figure>
 
 <style>
@@ -58,27 +51,13 @@ const {
     background: var(--carina-surface-raised, var(--docs-bg-surface));
   }
 
-  .term__dots {
-    display: inline-flex;
-    gap: 0.35rem;
-  }
-
-  .term__dots i {
-    width: 0.55rem;
-    height: 0.55rem;
-    border-radius: 999px;
-    background: var(--carina-border, #344144);
-    display: block;
-  }
-
-  .term__dots i:nth-child(1) {
-    background: color-mix(in srgb, var(--docs-danger) 75%, #444);
-  }
-  .term__dots i:nth-child(2) {
-    background: color-mix(in srgb, var(--docs-warning) 75%, #444);
-  }
-  .term__dots i:nth-child(3) {
-    background: color-mix(in srgb, var(--docs-success) 75%, #444);
+  .term__prompt {
+    font-family: var(--docs-font-mono);
+    font-size: 0.7rem;
+    line-height: 1;
+    color: var(--carina-ion-cyan, var(--docs-accent));
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
   }
 
   .term__title {

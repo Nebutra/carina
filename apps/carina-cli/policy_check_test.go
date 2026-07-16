@@ -60,7 +60,7 @@ func TestPolicyCheckWarnWhenStale(t *testing.T) {
 // tightens policy on disk, doctor must not report all-clear.
 func TestDoctorTierEscalatesToWarnOnStalePolicy(t *testing.T) {
 	report := map[string]any{
-		"version":            "0.6.2",
+		"version":            "0.6.3",
 		"disabled":           false,
 		"kernel":             map[string]any{"ok": true},
 		"state_dir_writable": map[string]any{"ok": true},

@@ -1,4 +1,4 @@
-// Package sdk provides typed JSON-RPC wrappers for Carina Runtime 0.6.2.
+// Package sdk provides typed JSON-RPC wrappers for Carina Runtime 0.6.3.
 package sdk
 
 import (
@@ -18,7 +18,7 @@ import (
 	"github.com/Nebutra/carina/go/rpc"
 )
 
-const CompatibleRuntimeVersion = "0.6.2"
+const CompatibleRuntimeVersion = "0.6.3"
 const streamQueueLimit = 64
 
 var ErrStreamOverflow = errors.New("sdk: event stream overflow")

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/carina-linux-assets.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
-version=0.6.2
+version=0.6.3
 for arch in arm64 amd64; do
   for ext in deb rpm; do
     package="$work/carina_${version}_linux_${arch}.$ext"

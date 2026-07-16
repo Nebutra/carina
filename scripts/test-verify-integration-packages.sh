@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/carina-integration-package-test.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
-version="0.6.2"
+version="0.6.3"
 
 python3 - "$work" "$version" <<'PY'
 import gzip, io, json, pathlib, tarfile, sys, zipfile
