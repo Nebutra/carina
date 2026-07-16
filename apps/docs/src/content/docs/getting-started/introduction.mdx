@@ -7,6 +7,7 @@ sidebar:
 
 import Callout from '../../../components/ui/Callout.astro';
 import CategoryTag from '../../../components/ui/CategoryTag.astro';
+import Prompt from '../../../components/mdx/Prompt.astro';
 
 
 Carina is a **local-first AI agent runtime**. It sits at the point where a coding agent leaves conversation and starts acting on a real repository — reading files, running commands, applying patches — under explicit policy control.
@@ -71,3 +72,8 @@ Five layers: Agent Surface · Client Surfaces · Control Plane · Capability Ker
 <Callout variant="tip" title="Start here">
   Jump to [Installation](/getting-started/installation/) then the [Quickstart](/getting-started/quickstart/).
 </Callout>
+
+<Prompt title="Install docs skill" description="Give coding agents Carina docs context (Mintlify-style skill surface).">
+npx skills add https://docs.carina.dev
+# or fetch: curl -fsSL https://docs.carina.dev/skill.md
+</Prompt>

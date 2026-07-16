@@ -1,10 +1,91 @@
 ---
 /**
- * Footer with page feedback (Mintlify-style) above meta + pagination.
+ * Footer: feedback + product links + default Starlight meta/pagination.
  */
 import Default from '@astrojs/starlight/components/Footer.astro';
 import PageFeedback from './PageFeedback.astro';
+
+const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
 ---
 
 <PageFeedback />
+
+{
+  !isSplash && (
+    <div class="docs-footer-links">
+      <div class="docs-footer-links__grid">
+        <div>
+          <p class="docs-footer-links__h">Docs for agents</p>
+          <ul>
+            <li><a href="/llms.txt">llms.txt</a></li>
+            <li><a href="/llms-full.txt">llms-full.txt</a></li>
+            <li><a href="/skill.md">skill.md</a></li>
+            <li><a href="index.md">This page as Markdown</a></li>
+          </ul>
+        </div>
+        <div>
+          <p class="docs-footer-links__h">API</p>
+          <ul>
+            <li><a href="/api/methods/">Method catalog</a></li>
+            <li><a href="/api/versions/">Version channels</a></li>
+            <li><a href="/data/rpc-catalog-next.json">Catalog JSON</a></li>
+          </ul>
+        </div>
+        <div>
+          <p class="docs-footer-links__h">Product</p>
+          <ul>
+            <li><a href="/getting-started/quickstart/">Quickstart</a></li>
+            <li><a href="https://github.com/nebutra/carina" rel="noopener">GitHub</a></li>
+            <li><a href="/deployment/faq/">FAQ</a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 <Default><slot /></Default>
+
+<style>
+  .docs-footer-links {
+    margin-top: var(--spacing-8);
+    padding-top: var(--spacing-6);
+    border-top: 1px solid var(--docs-border-subtle);
+  }
+
+  .docs-footer-links__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: var(--spacing-5);
+    margin-bottom: var(--spacing-6);
+  }
+
+  .docs-footer-links__h {
+    margin: 0 0 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--docs-fg-subtle);
+  }
+
+  .docs-footer-links ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .docs-footer-links li {
+    margin: 0.25rem 0;
+  }
+
+  .docs-footer-links a {
+    font-size: 0.8125rem;
+    color: var(--docs-fg-muted);
+    text-decoration: none;
+  }
+
+  .docs-footer-links a:hover {
+    color: var(--docs-accent);
+  }
+</style>

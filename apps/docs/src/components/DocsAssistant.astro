@@ -1,0 +1,445 @@
+---
+/**
+ * Mintlify-style page AI assistant (client-side).
+ * - Default: Pagefind retrieval + cited snippets + "copy prompt for external LLM"
+ * - Optional: set window.__CARINA_DOCS_AI_ENDPOINT__ to a chat completions proxy
+ */
+---
+
+<div class="docs-ai" data-docs-ai hidden>
+  <div class="docs-ai__panel" role="dialog" aria-label="Ask about this page" aria-modal="true">
+    <header class="docs-ai__head">
+      <div>
+        <p class="docs-ai__title">Ask AI</p>
+        <p class="docs-ai__sub">Answers use this site’s docs (Pagefind). Citations open source pages.</p>
+      </div>
+      <button type="button" class="docs-ai__iconbtn" data-docs-ai-close aria-label="Close">×</button>
+    </header>
+
+    <div class="docs-ai__msgs" data-docs-ai-msgs>
+      <div class="docs-ai__bubble docs-ai__bubble--sys">
+        Ask a question about <strong data-docs-ai-page-title>this page</strong> or the wider Carina docs.
+        Try: “How do I roll back a patch?”
+      </div>
+    </div>
+
+    <form class="docs-ai__form" data-docs-ai-form>
+      <input
+        type="search"
+        class="docs-ai__input"
+        data-docs-ai-input
+        placeholder="Ask a question…"
+        autocomplete="off"
+        enterkeyhint="send"
+      />
+      <button type="submit" class="docs-ai__send">Ask</button>
+    </form>
+    <p class="docs-ai__foot">
+      <button type="button" class="docs-ai__linkbtn" data-docs-ai-copy-prompt>Copy page context for ChatGPT / Claude</button>
+      ·
+      <a class="docs-ai__link" href="/llms.txt">llms.txt</a>
+    </p>
+  </div>
+</div>
+
+<button type="button" class="docs-ai-fab" data-docs-ai-open aria-label="Ask AI about docs" title="Ask AI (⌘I)">
+  <span aria-hidden="true">✦</span>
+  <span class="docs-ai-fab__label">Ask AI</span>
+</button>
+
+<script>
+  type PFResult = {
+    url?: string;
+    meta?: { title?: string };
+    excerpt?: string;
+  };
+
+  function pageTitle() {
+    return (
+      document.querySelector('h1')?.textContent?.trim() ||
+      document.title.replace(/\s*[·|].*$/, '').trim()
+    );
+  }
+
+  function pagePlain() {
+    const el =
+      document.querySelector('.sl-markdown-content') ||
+      document.querySelector('main .content-panel');
+    return (el?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 6000);
+  }
+
+  async function pagefindSearch(q: string): Promise<PFResult[]> {
+    try {
+      // @ts-expect-error pagefind global when UI loaded
+      if (!window.pagefind) {
+        // dynamic import of pagefind when available on static host
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pf = await import(/* @vite-ignore */ '/pagefind/pagefind.js').catch(() => null);
+        if (pf) {
+          // @ts-expect-error assign
+          window.pagefind = await (pf as any).default?.() ?? pf;
+        }
+      }
+      // @ts-expect-error pagefind
+      const pagefind = window.pagefind;
+      if (!pagefind?.search) return [];
+      const res = await pagefind.search(q);
+      const results: PFResult[] = [];
+      for (const r of (res?.results || []).slice(0, 5)) {
+        const data = await r.data();
+        results.push({
+          url: data.url,
+          meta: { title: data.meta?.title },
+          excerpt: data.excerpt,
+        });
+      }
+      return results;
+    } catch {
+      return [];
+    }
+  }
+
+  function initAssistant() {
+    const root = document.querySelector<HTMLElement>('[data-docs-ai]');
+    const openBtn = document.querySelector<HTMLButtonElement>('[data-docs-ai-open]');
+    if (!root || !openBtn || root.dataset.ready === '1') return;
+    root.dataset.ready = '1';
+
+    const msgs = root.querySelector<HTMLElement>('[data-docs-ai-msgs]');
+    const form = root.querySelector<HTMLFormElement>('[data-docs-ai-form]');
+    const input = root.querySelector<HTMLInputElement>('[data-docs-ai-input]');
+    const titleEl = root.querySelector<HTMLElement>('[data-docs-ai-page-title]');
+    const closeBtn = root.querySelector('[data-docs-ai-close]');
+    const copyPromptBtn = root.querySelector('[data-docs-ai-copy-prompt]');
+
+    const setOpen = (on: boolean) => {
+      root.hidden = !on;
+      openBtn.hidden = on;
+      if (on) {
+        if (titleEl) titleEl.textContent = pageTitle();
+        input?.focus();
+      }
+    };
+
+    const addBubble = (html: string, kind: 'user' | 'sys' | 'ai') => {
+      if (!msgs) return;
+      const div = document.createElement('div');
+      div.className = `docs-ai__bubble docs-ai__bubble--${kind}`;
+      div.innerHTML = html;
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+    };
+
+    openBtn.addEventListener('click', () => setOpen(true));
+    closeBtn?.addEventListener('click', () => setOpen(false));
+
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        setOpen(root.hidden);
+      }
+      if (e.key === 'Escape' && !root.hidden) setOpen(false);
+    });
+
+    window.addEventListener('carina:docs-ask-ai', ((e: CustomEvent) => {
+      setOpen(true);
+      const q = e.detail?.question as string | undefined;
+      if (q && input) {
+        input.value = q;
+        form?.requestSubmit();
+      }
+    }) as EventListener);
+
+    copyPromptBtn?.addEventListener('click', async () => {
+      const prompt = [
+        'You are helping with Carina (local-first AI agent runtime) documentation.',
+        `Current page: ${pageTitle()} (${location.href})`,
+        '',
+        'Page content:',
+        pagePlain(),
+        '',
+        'Answer accurately using this context. Prefer citing Carina docs URLs.',
+      ].join('\n');
+      try {
+        await navigator.clipboard.writeText(prompt);
+        copyPromptBtn.textContent = 'Copied context';
+        window.setTimeout(() => {
+          copyPromptBtn.textContent = 'Copy page context for ChatGPT / Claude';
+        }, 1400);
+      } catch {
+        /* ignore */
+      }
+    });
+
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const q = (input?.value || '').trim();
+      if (!q) return;
+      addBubble(q.replace(/</g, '&lt;'), 'user');
+      if (input) input.value = '';
+      addBubble('Searching docs…', 'sys');
+
+      const hits = await pagefindSearch(q);
+      // remove last "searching"
+      msgs?.querySelector('.docs-ai__bubble--sys:last-child')?.remove();
+
+      // optional remote endpoint
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const endpoint = (window as any).__CARINA_DOCS_AI_ENDPOINT__ as string | undefined;
+      if (endpoint) {
+        try {
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              question: q,
+              page: { title: pageTitle(), url: location.href, text: pagePlain() },
+              hits,
+            }),
+          });
+          const data = await res.json();
+          addBubble(String(data.answer || data.message || 'No answer'), 'ai');
+          return;
+        } catch {
+          addBubble('Remote AI endpoint failed — falling back to local retrieval.', 'sys');
+        }
+      }
+
+      if (!hits.length) {
+        addBubble(
+          `No strong matches for “${q.replace(/</g, '&lt;')}”. Try different keywords, or copy page context into your LLM.`,
+          'ai',
+        );
+        // analytics: zero-result
+        window.dispatchEvent(
+          new CustomEvent('carina:docs-search-zero', { detail: { q, source: 'assistant' } }),
+        );
+        return;
+      }
+
+      const pageContext = pagePlain().slice(0, 1200);
+      const cites = hits
+        .map((h, i) => {
+          const title = h.meta?.title || h.url || `Result ${i + 1}`;
+          const url = h.url || '#';
+          const ex = (h.excerpt || '').replace(/</g, '&lt;');
+          return `<li><a href="${url}">${title}</a><div class="docs-ai__ex">${ex}</div></li>`;
+        })
+        .join('');
+
+      addBubble(
+        `<p>Based on docs search for <strong>${q.replace(/</g, '&lt;')}</strong>:</p>
+         <ul class="docs-ai__cites">${cites}</ul>
+         <p class="docs-ai__note">Local retrieval only (no model). Wire <code>window.__CARINA_DOCS_AI_ENDPOINT__</code> for full answers. Current page context (${pageContext.length} chars) is available via “Copy page context”.</p>`,
+        'ai',
+      );
+
+      window.dispatchEvent(
+        new CustomEvent('carina:docs-ai-ask', { detail: { q, hits: hits.length } }),
+      );
+    });
+  }
+
+  initAssistant();
+  document.addEventListener('astro:page-load', initAssistant);
+</script>
+
+<style>
+  .docs-ai-fab {
+    position: fixed;
+    inset-inline-end: 1rem;
+    bottom: 1rem;
+    z-index: 40;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 2.5rem;
+    padding: 0 0.9rem;
+    border-radius: 999px;
+    border: 1px solid var(--docs-border-subtle);
+    background: var(--docs-bg-surface);
+    color: var(--docs-fg);
+    font-family: var(--docs-font-sans);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: none;
+    transition:
+      border-color 150ms ease,
+      background-color 150ms ease;
+  }
+
+  .docs-ai-fab:hover {
+    border-color: color-mix(in srgb, var(--docs-accent) 45%, var(--docs-border));
+    background: color-mix(in srgb, var(--docs-accent) 8%, var(--docs-bg-surface));
+  }
+
+  .docs-ai-fab__label {
+    display: none;
+  }
+
+  @media (min-width: 640px) {
+    .docs-ai-fab__label {
+      display: inline;
+    }
+  }
+
+  .docs-ai {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    padding: 1rem;
+    background: color-mix(in srgb, var(--docs-bg) 35%, transparent);
+    backdrop-filter: blur(4px);
+  }
+
+  .docs-ai[hidden] {
+    display: none !important;
+  }
+
+  .docs-ai__panel {
+    width: min(26rem, 100%);
+    max-height: min(70vh, 36rem);
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 14px;
+    background: var(--docs-bg-surface);
+    overflow: hidden;
+  }
+
+  .docs-ai__head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.75rem 0.85rem;
+    border-bottom: 1px solid var(--docs-border-subtle);
+  }
+
+  .docs-ai__title {
+    margin: 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  .docs-ai__sub {
+    margin: 0.2rem 0 0;
+    font-size: 0.72rem;
+    color: var(--docs-fg-subtle);
+    line-height: 1.35;
+  }
+
+  .docs-ai__iconbtn {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--docs-fg-muted);
+    font-size: 1.25rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .docs-ai__msgs {
+    flex: 1;
+    overflow: auto;
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  .docs-ai__bubble {
+    padding: 0.55rem 0.7rem;
+    border-radius: 10px;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+  }
+
+  .docs-ai__bubble--user {
+    align-self: flex-end;
+    background: color-mix(in srgb, var(--docs-accent) 14%, transparent);
+    color: var(--docs-fg);
+    max-width: 90%;
+  }
+
+  .docs-ai__bubble--sys,
+  .docs-ai__bubble--ai {
+    align-self: stretch;
+    background: var(--docs-bg);
+    border: 1px solid var(--docs-border-subtle);
+    color: var(--docs-fg-muted);
+  }
+
+  .docs-ai__cites {
+    margin: 0.4rem 0;
+    padding-inline-start: 1.1rem;
+  }
+
+  .docs-ai__cites a {
+    color: var(--docs-accent);
+  }
+
+  .docs-ai__ex {
+    font-size: 0.72rem;
+    color: var(--docs-fg-subtle);
+    margin-top: 0.15rem;
+  }
+
+  .docs-ai__note {
+    font-size: 0.72rem;
+    color: var(--docs-fg-subtle);
+  }
+
+  .docs-ai__form {
+    display: flex;
+    gap: 0.35rem;
+    padding: 0.65rem 0.75rem;
+    border-top: 1px solid var(--docs-border-subtle);
+  }
+
+  .docs-ai__input {
+    flex: 1;
+    min-width: 0;
+    height: 2.15rem;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 8px;
+    background: var(--docs-bg);
+    color: var(--docs-fg);
+    padding: 0 0.65rem;
+    font-size: 0.8125rem;
+  }
+
+  .docs-ai__send {
+    appearance: none;
+    border: 1px solid color-mix(in srgb, var(--docs-accent) 50%, transparent);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--docs-accent);
+    font-weight: 600;
+    font-size: 0.8125rem;
+    padding: 0 0.75rem;
+    cursor: pointer;
+  }
+
+  .docs-ai__foot {
+    margin: 0;
+    padding: 0 0.75rem 0.65rem;
+    font-size: 0.7rem;
+    color: var(--docs-fg-subtle);
+  }
+
+  .docs-ai__link,
+  .docs-ai__linkbtn {
+    color: var(--docs-fg-muted);
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+</style>

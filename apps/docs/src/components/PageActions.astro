@@ -71,6 +71,39 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-') || 'page'
         <span class="page-actions__item-desc">View this page as plain text</span>
       </span>
     </button>
+
+    <a
+      class="page-actions__item"
+      role="menuitem"
+      data-action="open-md"
+      href="index.md"
+      target="_blank"
+      rel="noopener"
+    >
+      <span class="page-actions__item-icon" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M6 3.5H3.5v9h9V10" stroke-linejoin="round"></path>
+          <path d="M9 3.5h3.5V7" stroke-linecap="round"></path>
+          <path d="M8 8.5 12.5 4" stroke-linecap="round"></path>
+        </svg>
+      </span>
+      <span class="page-actions__item-text">
+        <span class="page-actions__item-title">Open Markdown URL</span>
+        <span class="page-actions__item-desc">Machine-readable .md export (Mintlify-style)</span>
+      </span>
+    </a>
+
+    <button type="button" class="page-actions__item" role="menuitem" data-action="ask-ai">
+      <span class="page-actions__item-icon" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M8 2.5 9.2 6.2 13 7.5 9.2 8.8 8 12.5 6.8 8.8 3 7.5 6.8 6.2 8 2.5Z" stroke-linejoin="round"></path>
+        </svg>
+      </span>
+      <span class="page-actions__item-text">
+        <span class="page-actions__item-title">Ask AI about this page</span>
+        <span class="page-actions__item-desc">Search docs and draft answers (⌘I)</span>
+      </span>
+    </button>
   </div>
 </div>
 
@@ -236,6 +269,15 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-') || 'page'
       if (dialog instanceof HTMLDialogElement) dialog.showModal();
     });
 
+    root.querySelector('[data-action="ask-ai"]')?.addEventListener('click', () => {
+      closeMenu();
+      window.dispatchEvent(
+        new CustomEvent('carina:docs-ask-ai', {
+          detail: { question: `Explain: ${root.dataset.pageTitle || document.title}` },
+        }),
+      );
+    });
+
     dialogCopy?.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(dialogBody?.textContent || '');
@@ -381,8 +423,13 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-') || 'page'
     color: var(--docs-fg);
     font-family: var(--docs-font-sans);
     text-align: start;
+    text-decoration: none;
     cursor: pointer;
     transition: background-color var(--docs-transition);
+  }
+
+  a.page-actions__item {
+    -webkit-text-fill-color: currentColor;
   }
 
   .page-actions__item:hover,

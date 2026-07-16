@@ -1,0 +1,124 @@
+---
+/**
+ * Mintlify-like parameter field for API / config docs.
+ */
+interface Props {
+  path: string;
+  type?: string;
+  required?: boolean;
+  deprecated?: boolean;
+  default?: string;
+  /** body | query | path | header */
+  body?: boolean;
+  query?: boolean;
+  pathParam?: boolean;
+  header?: boolean;
+}
+
+const {
+  path,
+  type = 'string',
+  required = false,
+  deprecated = false,
+  default: defaultValue,
+  body,
+  query,
+  pathParam,
+  header,
+} = Astro.props;
+
+const location = pathParam ? 'path' : query ? 'query' : header ? 'header' : body ? 'body' : '';
+---
+
+<div class:list={['param-field', deprecated && 'is-deprecated']}>
+  <div class="param-field__head">
+    <code class="param-field__path">{path}</code>
+    <span class="param-field__type">{type}</span>
+    {required && <span class="param-field__badge is-req">required</span>}
+    {deprecated && <span class="param-field__badge is-dep">deprecated</span>}
+    {location && <span class="param-field__badge">{location}</span>}
+    {defaultValue !== undefined && (
+      <span class="param-field__default">
+        default <code>{defaultValue}</code>
+      </span>
+    )}
+  </div>
+  <div class="param-field__body">
+    <slot />
+  </div>
+</div>
+
+<style>
+  .param-field {
+    margin: 0.65rem 0;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--docs-bg-surface) 70%, transparent);
+  }
+
+  .param-field.is-deprecated {
+    opacity: 0.72;
+  }
+
+  .param-field__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.5rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .param-field__path {
+    font-family: var(--docs-font-mono);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--docs-fg);
+  }
+
+  .param-field__type {
+    font-family: var(--docs-font-mono);
+    font-size: 0.72rem;
+    color: var(--docs-accent);
+  }
+
+  .param-field__badge {
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 0.1rem 0.35rem;
+    border-radius: 999px;
+    border: 1px solid var(--docs-border-subtle);
+    color: var(--docs-fg-subtle);
+  }
+
+  .param-field__badge.is-req {
+    color: var(--docs-warning);
+    border-color: color-mix(in srgb, var(--docs-warning) 35%, transparent);
+  }
+
+  .param-field__badge.is-dep {
+    color: var(--docs-danger);
+  }
+
+  .param-field__default {
+    font-size: 0.72rem;
+    color: var(--docs-fg-subtle);
+  }
+
+  .param-field__default code {
+    font-family: var(--docs-font-mono);
+    font-size: 0.72rem;
+  }
+
+  .param-field__body {
+    font-size: 0.875rem;
+    color: var(--docs-fg-muted);
+    line-height: 1.5;
+  }
+
+  .param-field__body :global(p) {
+    margin: 0;
+  }
+</style>

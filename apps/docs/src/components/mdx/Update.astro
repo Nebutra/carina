@@ -1,0 +1,65 @@
+---
+/**
+ * Mintlify-like Update / changelog callout.
+ */
+interface Props {
+  label?: string;
+  date?: string;
+}
+
+const { label = 'Update', date } = Astro.props;
+---
+
+<aside class="docs-update" role="note">
+  <p class="docs-update__meta">
+    <span class="docs-update__label">{label}</span>
+    {date && <time class="docs-update__date">{date}</time>}
+  </p>
+  <div class="docs-update__body">
+    <slot />
+  </div>
+</aside>
+
+<style>
+  .docs-update {
+    margin: var(--spacing-6) 0;
+    padding: var(--spacing-4) var(--spacing-5);
+    border-radius: var(--docs-radius-lg);
+    border: 1px solid color-mix(in srgb, var(--docs-accent) 28%, var(--docs-border-subtle));
+    border-inline-start-width: 2px;
+    border-inline-start-color: color-mix(in srgb, var(--docs-accent) 70%, transparent);
+    background: color-mix(in srgb, var(--docs-accent) 6%, var(--docs-bg-surface));
+  }
+
+  .docs-update__meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: 0 0 0.4rem;
+  }
+
+  .docs-update__label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--docs-accent);
+  }
+
+  .docs-update__date {
+    font-size: 0.75rem;
+    color: var(--docs-fg-subtle);
+    font-family: var(--docs-font-mono);
+  }
+
+  .docs-update__body {
+    font-size: 0.9rem;
+    color: var(--docs-fg-muted);
+    line-height: 1.55;
+  }
+
+  .docs-update__body :global(p) {
+    margin: 0;
+  }
+</style>

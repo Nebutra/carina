@@ -12,7 +12,9 @@
     "astro": "astro",
     "sync-brand": "node ./scripts/sync-brand.mjs",
     "sync-protocol": "node ./scripts/sync-protocol.mjs",
-    "sync": "pnpm sync-brand && pnpm sync-protocol",
+    "generate-ai-surface": "node ./scripts/generate-ai-surface.mjs",
+    "sync": "pnpm sync-brand && pnpm sync-protocol && pnpm generate-ai-surface",
+    "prebuild": "pnpm generate-ai-surface",
     "typecheck": "astro check && tsc --noEmit",
     "lighthouse": "pnpm build && pnpm dlx @lhci/cli@0.14.0 autorun --config=./lighthouserc.cjs"
   },

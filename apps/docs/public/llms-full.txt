@@ -1,0 +1,323 @@
+# Carina Documentation — full index
+
+## Carina
+
+Local-first AI agent runtime with policy, hash-chained audit, and transactional rollback.
+
+- URL: https://docs.carina.dev/
+- Markdown: https://docs.carina.dev/index.md
+
+## Agents overview
+
+ReAct coding agent loop — model decides, kernel authorizes, Zig executes.
+
+- URL: https://docs.carina.dev/agents/overview/
+- Markdown: https://docs.carina.dev/agents/overview/index.md
+
+## Sub-agents
+
+Delegate work with SubagentSpawn and capability attenuation.
+
+- URL: https://docs.carina.dev/agents/sub-agents/
+- Markdown: https://docs.carina.dev/agents/sub-agents/index.md
+
+## JSON-RPC reference
+
+Curated method reference for the local JSON-RPC control plane.
+
+- URL: https://docs.carina.dev/api/json-rpc/
+- Markdown: https://docs.carina.dev/api/json-rpc/index.md
+
+## Method catalog
+
+Protocol-driven JSON-RPC method catalog synced from protocol/jsonrpc/methods.json.
+
+- URL: https://docs.carina.dev/api/methods/
+- Markdown: https://docs.carina.dev/api/methods/index.md
+
+## Runtime API overview
+
+JSON-RPC over unix socket/stdio, optional Gateway, scopes, and SDK surfaces.
+
+- URL: https://docs.carina.dev/api/overview/
+- Markdown: https://docs.carina.dev/api/overview/index.md
+
+## Sessions
+
+Create, control, stream, and export Carina sessions.
+
+- URL: https://docs.carina.dev/api/sessions/
+- Markdown: https://docs.carina.dev/api/sessions/index.md
+
+## API versions
+
+How Carina docs version channels map to protocol catalogs and release lines.
+
+- URL: https://docs.carina.dev/api/versions/
+- Markdown: https://docs.carina.dev/api/versions/index.md
+
+## Audit & rollback
+
+Append-only event log, hash-chain verification, and transactional patch recovery.
+
+- URL: https://docs.carina.dev/concepts/audit/
+- Markdown: https://docs.carina.dev/concepts/audit/index.md
+
+## Policy & capabilities
+
+Capability types, permission profiles, command risk levels, and default security posture.
+
+- URL: https://docs.carina.dev/concepts/policy/
+- Markdown: https://docs.carina.dev/concepts/policy/index.md
+
+## Runtime model
+
+Layered architecture — client surfaces, Go control plane, Rust capability kernel, Zig tools.
+
+- URL: https://docs.carina.dev/concepts/runtime/
+- Markdown: https://docs.carina.dev/concepts/runtime/index.md
+
+## FAQ
+
+Product boundaries, security, offline use, and docs site tokens.
+
+- URL: https://docs.carina.dev/deployment/faq/
+- Markdown: https://docs.carina.dev/deployment/faq/index.md
+
+## Local install
+
+Run the daemon, CLI, and native tools on a developer machine.
+
+- URL: https://docs.carina.dev/deployment/local/
+- Markdown: https://docs.carina.dev/deployment/local/index.md
+
+## Workers
+
+Lease-based remote workers, production profile, drain, and containers.
+
+- URL: https://docs.carina.dev/deployment/workers/
+- Markdown: https://docs.carina.dev/deployment/workers/index.md
+
+## Installation
+
+Install the Carina CLI and daemon on macOS, Linux, or via package managers.
+
+- URL: https://docs.carina.dev/getting-started/installation/
+- Markdown: https://docs.carina.dev/getting-started/installation/index.md
+
+## Introduction
+
+What Carina is, who it is for, and how the runtime is structured.
+
+- URL: https://docs.carina.dev/getting-started/introduction/
+- Markdown: https://docs.carina.dev/getting-started/introduction/index.md
+
+## Quickstart
+
+Start the daemon, run an agent task, inspect audit, and roll back a patch.
+
+- URL: https://docs.carina.dev/getting-started/quickstart/
+- Markdown: https://docs.carina.dev/getting-started/quickstart/index.md
+
+## Memory overview
+
+Governed local memory, MemoryWrite capability, and optional HMS projection.
+
+- URL: https://docs.carina.dev/memory/overview/
+- Markdown: https://docs.carina.dev/memory/overview/index.md
+
+## Traces & audit
+
+Event log, item stream, cost attribution, and hash-chain verification.
+
+- URL: https://docs.carina.dev/observability/traces/
+- Markdown: https://docs.carina.dev/observability/traces/index.md
+
+## MCP integrations
+
+Governed MCP client/server without leaking unconstrained authority.
+
+- URL: https://docs.carina.dev/tools/mcp/
+- Markdown: https://docs.carina.dev/tools/mcp/index.md
+
+## Tools overview
+
+Built-in agent tools, Zig toolchain, and capability mediation.
+
+- URL: https://docs.carina.dev/tools/overview/
+- Markdown: https://docs.carina.dev/tools/overview/index.md
+
+## Workflows overview
+
+Declarative multi-step agent DAGs with attenuated subagents.
+
+- URL: https://docs.carina.dev/workflows/overview/
+- Markdown: https://docs.carina.dev/workflows/overview/index.md
+
+## Tutorial: review pipeline
+
+Run the in-repo review workflow with parallel reviewers and a synthesis step.
+
+- URL: https://docs.carina.dev/workflows/tutorial-review/
+- Markdown: https://docs.carina.dev/workflows/tutorial-review/index.md
+
+## Carina
+
+本地优先的 AI Agent 运行时：策略门控、哈希链审计、可事务回滚。
+
+- URL: https://docs.carina.dev/zh-cn/
+- Markdown: https://docs.carina.dev/zh-cn/index.md
+
+## Agents 概览
+
+ReAct 编程 Agent — 模型决策、内核授权、Zig 执行。
+
+- URL: https://docs.carina.dev/zh-cn/agents/overview/
+- Markdown: https://docs.carina.dev/zh-cn/agents/overview/index.md
+
+## 子 Agent
+
+以衰减后的能力委派工作。
+
+- URL: https://docs.carina.dev/zh-cn/agents/sub-agents/
+- Markdown: https://docs.carina.dev/zh-cn/agents/sub-agents/index.md
+
+## JSON-RPC 参考
+
+本地 JSON-RPC 控制平面方法参考。
+
+- URL: https://docs.carina.dev/zh-cn/api/json-rpc/
+- Markdown: https://docs.carina.dev/zh-cn/api/json-rpc/index.md
+
+## 方法目录
+
+由 protocol/jsonrpc/methods.json 同步的 JSON-RPC 方法目录。
+
+- URL: https://docs.carina.dev/zh-cn/api/methods/
+- Markdown: https://docs.carina.dev/zh-cn/api/methods/index.md
+
+## Runtime API 概览
+
+JSON-RPC、可选 Gateway、作用域与 SDK 表面。
+
+- URL: https://docs.carina.dev/zh-cn/api/overview/
+- Markdown: https://docs.carina.dev/zh-cn/api/overview/index.md
+
+## 会话
+
+创建、附着、引导与关闭会话。
+
+- URL: https://docs.carina.dev/zh-cn/api/sessions/
+- Markdown: https://docs.carina.dev/zh-cn/api/sessions/index.md
+
+## API 版本通道
+
+文档 0.6.x / next 通道与协议目录的对应关系。
+
+- URL: https://docs.carina.dev/zh-cn/api/versions/
+- Markdown: https://docs.carina.dev/zh-cn/api/versions/index.md
+
+## 审计与回滚
+
+哈希链审计与事务补丁恢复。
+
+- URL: https://docs.carina.dev/zh-cn/concepts/audit/
+- Markdown: https://docs.carina.dev/zh-cn/concepts/audit/index.md
+
+## 策略与能力
+
+能力类型、权限配置、命令风险等级与默认安全姿态。
+
+- URL: https://docs.carina.dev/zh-cn/concepts/policy/
+- Markdown: https://docs.carina.dev/zh-cn/concepts/policy/index.md
+
+## 运行时模型
+
+分层架构 — 客户端、Go 控制面、Rust 能力内核、Zig 工具链。
+
+- URL: https://docs.carina.dev/zh-cn/concepts/runtime/
+- Markdown: https://docs.carina.dev/zh-cn/concepts/runtime/index.md
+
+## 常见问题
+
+关于部署、安全与产品边界的常见问题。
+
+- URL: https://docs.carina.dev/zh-cn/deployment/faq/
+- Markdown: https://docs.carina.dev/zh-cn/deployment/faq/index.md
+
+## 本地安装
+
+以本地 daemon 方式运行 Carina。
+
+- URL: https://docs.carina.dev/zh-cn/deployment/local/
+- Markdown: https://docs.carina.dev/zh-cn/deployment/local/index.md
+
+## Workers
+
+基于租约的远程 worker、生产配置与排水升级。
+
+- URL: https://docs.carina.dev/zh-cn/deployment/workers/
+- Markdown: https://docs.carina.dev/zh-cn/deployment/workers/index.md
+
+## 安装
+
+在 macOS、Linux 上安装 Carina CLI 与 daemon。
+
+- URL: https://docs.carina.dev/zh-cn/getting-started/installation/
+- Markdown: https://docs.carina.dev/zh-cn/getting-started/installation/index.md
+
+## 简介
+
+Carina 是什么、面向谁、运行时如何组织。
+
+- URL: https://docs.carina.dev/zh-cn/getting-started/introduction/
+- Markdown: https://docs.carina.dev/zh-cn/getting-started/introduction/index.md
+
+## 快速上手
+
+启动 daemon、运行任务、检查审计、回滚补丁。
+
+- URL: https://docs.carina.dev/zh-cn/getting-started/quickstart/
+- Markdown: https://docs.carina.dev/zh-cn/getting-started/quickstart/index.md
+
+## Memory 概览
+
+会话上下文、检索钩子与持久记录。
+
+- URL: https://docs.carina.dev/zh-cn/memory/overview/
+- Markdown: https://docs.carina.dev/zh-cn/memory/overview/index.md
+
+## 追踪与审计
+
+检视轮次、成本与哈希链审计历史。
+
+- URL: https://docs.carina.dev/zh-cn/observability/traces/
+- Markdown: https://docs.carina.dev/zh-cn/observability/traces/index.md
+
+## MCP 集成
+
+接入 MCP 服务且不泄露无约束权限。
+
+- URL: https://docs.carina.dev/zh-cn/tools/mcp/
+- Markdown: https://docs.carina.dev/zh-cn/tools/mcp/index.md
+
+## Tools 概览
+
+由能力内核中介的内置与外部工具。
+
+- URL: https://docs.carina.dev/zh-cn/tools/overview/
+- Markdown: https://docs.carina.dev/zh-cn/tools/overview/index.md
+
+## Workflows 概览
+
+声明式多步 Agent DAG，能力衰减的子 Agent。
+
+- URL: https://docs.carina.dev/zh-cn/workflows/overview/
+- Markdown: https://docs.carina.dev/zh-cn/workflows/overview/index.md
+
+## 教程：审查流水线
+
+构建带人工检查点的只读审查工作流。
+
+- URL: https://docs.carina.dev/zh-cn/workflows/tutorial-review/
+- Markdown: https://docs.carina.dev/zh-cn/workflows/tutorial-review/index.md

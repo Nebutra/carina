@@ -6,9 +6,15 @@ sidebar:
 ---
 
 import Callout from '../../../components/ui/Callout.astro';
-
+import ParamField from '../../../components/mdx/ParamField.astro';
+import ResponseField from '../../../components/mdx/ResponseField.astro';
+import Update from '../../../components/mdx/Update.astro';
 
 A session binds conversation state, a **permission profile**, and a **workspace root**. Workspaces are bound at `session.create` via `workspace_root` — there is no separate registration method.
+
+<Update label="Docs" date="2026-07-16">
+  Method catalog pages include **Try it** builders and Markdown export (`index.md`) for LLM workflows.
+</Update>
 
 ## Lifecycle
 
@@ -17,6 +23,20 @@ create → (pause / resume) → close
          ↘ submit tasks / stream events
          ↘ fork / checkpoint / goal
 ```
+
+## `session.create` parameters
+
+<ParamField path="workspace_root" type="string" required body>
+  Absolute path to the workspace directory. Bound for the life of the session.
+</ParamField>
+
+<ParamField path="profile" type="string" body default="safe-edit">
+  Permission profile name (e.g. `safe-edit`, `read-only`). Evaluated by the capability kernel.
+</ParamField>
+
+<ResponseField name="session_id" type="string" required>
+  Opaque session identifier used by subsequent `session.*` and `task.*` calls.
+</ResponseField>
 
 ## Core methods
 

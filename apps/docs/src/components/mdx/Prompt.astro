@@ -1,0 +1,146 @@
+---
+/**
+ * Mintlify-like Prompt block — copy install / skill commands for AI tools.
+ */
+interface Props {
+  title?: string;
+  description?: string;
+  /** Show Cursor / copy actions */
+  actions?: Array<'copy' | 'cursor'>;
+}
+
+const {
+  title = 'Install docs skill',
+  description = 'Give your coding agent Carina docs context.',
+  actions = ['copy', 'cursor'],
+} = Astro.props;
+---
+
+<figure class="docs-prompt" data-docs-prompt>
+  <figcaption class="docs-prompt__cap">
+    <span class="docs-prompt__title">{title}</span>
+    <span class="docs-prompt__desc">{description}</span>
+  </figcaption>
+  <div class="docs-prompt__body">
+    <pre class="docs-prompt__pre" data-prompt-text><slot /></pre>
+    <div class="docs-prompt__actions">
+      {
+        actions.includes('copy') && (
+          <button type="button" class="docs-prompt__btn" data-prompt-copy>
+            Copy
+          </button>
+        )
+      }
+      {
+        actions.includes('cursor') && (
+          <a class="docs-prompt__btn" href="/skill.md" target="_blank" rel="noopener">
+            skill.md
+          </a>
+        )
+      }
+    </div>
+  </div>
+</figure>
+
+<script>
+  function init(root: Element) {
+    if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
+    root.dataset.ready = '1';
+    const btn = root.querySelector<HTMLButtonElement>('[data-prompt-copy]');
+    const pre = root.querySelector<HTMLElement>('[data-prompt-text]');
+    btn?.addEventListener('click', async () => {
+      const text = pre?.innerText || '';
+      try {
+        await navigator.clipboard.writeText(text.trim());
+        const prev = btn.textContent;
+        btn.textContent = 'Copied';
+        window.setTimeout(() => {
+          btn.textContent = prev;
+        }, 1200);
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+  function boot() {
+    document.querySelectorAll('[data-docs-prompt]').forEach(init);
+  }
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>
+
+<style>
+  .docs-prompt {
+    margin: var(--spacing-6) 0;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--docs-bg-surface);
+  }
+
+  .docs-prompt__cap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.65rem 0.85rem;
+    border-bottom: 1px solid var(--docs-border-subtle);
+    background: color-mix(in srgb, var(--docs-bg) 40%, var(--docs-bg-surface));
+  }
+
+  .docs-prompt__title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--docs-fg);
+  }
+
+  .docs-prompt__desc {
+    font-size: 0.75rem;
+    color: var(--docs-fg-subtle);
+  }
+
+  .docs-prompt__body {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.75rem 0.85rem;
+  }
+
+  .docs-prompt__pre {
+    flex: 1 1 12rem;
+    margin: 0;
+    font-family: var(--docs-font-mono);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: var(--docs-fg);
+    white-space: pre-wrap;
+  }
+
+  .docs-prompt__actions {
+    display: flex;
+    gap: 0.35rem;
+    flex-shrink: 0;
+  }
+
+  .docs-prompt__btn {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.75rem;
+    padding: 0 0.65rem;
+    border-radius: 999px;
+    border: 1px solid var(--docs-border-subtle);
+    background: transparent;
+    color: var(--docs-fg-muted);
+    font-family: var(--docs-font-sans);
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .docs-prompt__btn:hover {
+    color: var(--docs-fg);
+    border-color: var(--docs-border);
+  }
+</style>

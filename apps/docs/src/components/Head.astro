@@ -1,10 +1,14 @@
 ---
 import Default from '@astrojs/starlight/components/Head.astro';
 import ReadingProgress from './ReadingProgress.astro';
+import DocsAssistant from './DocsAssistant.astro';
 ---
 
 <Default {...Astro.props}><slot /></Default>
+<link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
+<link rel="alternate" type="text/markdown" title="skill.md" href="/skill.md" />
 <ReadingProgress />
+<DocsAssistant />
 <script is:inline>
   (() => {
     const root = document.documentElement;
@@ -14,5 +18,17 @@ import ReadingProgress from './ReadingProgress.astro';
     };
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
+
+    // Analytics hooks (Plausible / gtag / custom)
+    const track = (name, props) => {
+      try {
+        window.dispatchEvent(new CustomEvent(name, { detail: props }));
+        if (window.plausible) window.plausible(name.replace('carina:', ''), { props });
+        if (window.gtag) window.gtag('event', name.replace(/[:.]/g, '_'), props || {});
+      } catch (_) {}
+    };
+    window.addEventListener('carina:docs-feedback', (e) => track('carina:docs-feedback', e.detail));
+    window.addEventListener('carina:docs-search-zero', (e) => track('carina:docs-search-zero', e.detail));
+    window.addEventListener('carina:docs-ai-ask', (e) => track('carina:docs-ai-ask', e.detail));
   })();
 </script>

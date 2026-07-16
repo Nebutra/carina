@@ -1,0 +1,69 @@
+---
+/**
+ * Mintlify-like response field.
+ */
+interface Props {
+  name: string;
+  type?: string;
+  required?: boolean;
+}
+
+const { name, type = 'string', required = false } = Astro.props;
+---
+
+<div class="response-field">
+  <div class="response-field__head">
+    <code class="response-field__name">{name}</code>
+    <span class="response-field__type">{type}</span>
+    {required && <span class="response-field__req">required</span>}
+  </div>
+  <div class="response-field__body">
+    <slot />
+  </div>
+</div>
+
+<style>
+  .response-field {
+    margin: 0.5rem 0;
+    padding: 0.55rem 0 0.55rem 0.75rem;
+    border-inline-start: 2px solid var(--docs-border-subtle);
+  }
+
+  .response-field__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.4rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .response-field__name {
+    font-family: var(--docs-font-mono);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--docs-fg);
+  }
+
+  .response-field__type {
+    font-family: var(--docs-font-mono);
+    font-size: 0.72rem;
+    color: var(--docs-info);
+  }
+
+  .response-field__req {
+    font-size: 0.625rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--docs-warning);
+  }
+
+  .response-field__body {
+    font-size: 0.875rem;
+    color: var(--docs-fg-muted);
+    line-height: 1.5;
+  }
+
+  .response-field__body :global(p) {
+    margin: 0;
+  }
+</style>
