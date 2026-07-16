@@ -101,8 +101,16 @@
   .version-selector__select,
   .mdx-card,
   .feature-card,
+  .feature-card__link,
   .qs-card {
     box-shadow: none !important;
+  }
+
+  /* Focus ring for feature cards is intentional (a11y) — re-enable after kill list */
+  .feature-card__link:focus-visible {
+    box-shadow:
+      0 0 0 2px var(--docs-bg),
+      0 0 0 4px color-mix(in srgb, var(--docs-accent) 55%, transparent) !important;
   }
 
   .pagination-links a {

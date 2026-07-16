@@ -101,8 +101,10 @@
     box-shadow: none;
   }
 
-  /* Feature / quickstart cards — flush grid, no lift (avoids uneven “floating” cards) */
-  .feature-card,
+  /*
+   * Feature cards: styles live in FeatureGrid.astro (component-owned skeleton).
+   * Only qs-card polish here so global hover/lift doesn't fight the equal grid.
+   */
   .qs-card {
     border: 1px solid var(--docs-border-subtle);
     background: color-mix(in srgb, var(--docs-bg-surface) 70%, transparent);
@@ -112,7 +114,6 @@
       background-color var(--polish-transition);
   }
 
-  .feature-card:hover,
   .qs-card:hover {
     border-color: color-mix(in srgb, var(--docs-accent) 35%, var(--docs-border));
     background: color-mix(in srgb, var(--docs-fg) 2%, var(--docs-bg-surface));
@@ -155,6 +156,8 @@
     .quickstart,
     .hero__btn,
     .feature-card,
+    .feature-card__link,
+    .feature-card__arrow,
     .qs-card {
       animation: none !important;
       transition: none !important;
