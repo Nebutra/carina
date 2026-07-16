@@ -57,12 +57,26 @@
     opacity: 0.88;
   }
 
+  /*
+   * Logo sizing only — do NOT set display.
+   * Starlight ships light+dark <img> pair toggled via .light:sl-hidden /
+   * .dark:sl-hidden in @layer starlight. A components-layer `display: block`
+   * would override those hide rules and show two logos at once.
+   */
   .site-title img,
   .site-title svg {
     height: var(--docs-logo-height);
     width: auto;
     max-height: calc(var(--docs-nav-height) - 1.25rem);
-    display: block;
+  }
+
+  /* Reaffirm theme toggle above any later display utilities */
+  [data-theme='light'] .site-title img.light\:sl-hidden {
+    display: none;
+  }
+
+  [data-theme='dark'] .site-title img.dark\:sl-hidden {
+    display: none;
   }
 
   /* Tighter header link spacing */
