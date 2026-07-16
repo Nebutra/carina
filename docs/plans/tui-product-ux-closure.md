@@ -103,4 +103,14 @@ Settings tabs; doctor/skills/hooks/mcp routes.
 | Multi-pane dual-session TUI (view main + side together) | Needs layout product; fork switches session |
 | In-panel model list without leaving settings | Model picker already one keystroke |
 | ACP / remote / marketplace | Ecosystem after shell stability |
-| Always-approve mode | Governance brand |
+| Always-approve without warning | **Shipped with warning**: `/always-approve` + audit + deny/plan/sandbox still apply |
+
+### Wave F — drift + always-approve — **done**
+
+- `/always-approve [on|off|toggle]` via `daemon.set_interactive_approval` (interactive_approval inverted)
+- Enable path always prints a **WARNING** (deny rules, plan mode, sandbox remain)
+- Footer shows `ask` / `always-approve`
+- `/agents` humanized (no raw JSON dump)
+- skills/hooks/extensions help + inventory mutation copy aligned with real capabilities
+- README TUI interaction notes for sticky `!`, plan/approve, always-approve, context pressure
+- `go/tui/.carina/` gitignored

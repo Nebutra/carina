@@ -17,7 +17,52 @@ const defaultApprovalTimeout = 5 * time.Minute
 // SetInteractiveApproval toggles human-in-the-loop approval (used by tests and
 // the entrypoint). When on, a requires_approval decision pauses for an operator
 // verdict instead of being auto-approved.
+//
+// Product naming: interactive_approval=true is "ask"; false is "always-approve"
+// (Grok-style auto-approve of requires_approval). Deny rules and plan mode still apply.
 func (d *Daemon) SetInteractiveApproval(on bool) { d.interactiveApproval.Store(on) }
+
+// handleSetInteractiveApproval is the governed RPC for operator toggles.
+// Params: { "on": bool } — true = ask (pause), false = always-approve (auto).
+func (d *Daemon) handleSetInteractiveApproval(params json.RawMessage) (any, error) {
+	var p struct {
+		On        *bool  `json:"on"`
+		SessionID string `json:"session_id"`
+	}
+	if len(params) > 0 && string(params) != "null" {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+	}
+	if p.On == nil {
+		return nil, fmt.Errorf("on boolean is required")
+	}
+	prev := d.interactiveApproval.Load()
+	d.interactiveApproval.Store(*p.On)
+	mode := "ask"
+	if !*p.On {
+		mode = "always-approve"
+	}
+	prevMode := "ask"
+	if !prev {
+		prevMode = "always-approve"
+	}
+	// Audit even without session — attach session_id when the TUI provides one.
+	payload := map[string]any{
+		"interactive_approval": *p.On,
+		"approval_mode":        mode,
+		"previous_mode":        prevMode,
+		"warning":              "always-approve auto-allows requires_approval tool calls; deny rules, plan mode, and sandbox still apply",
+	}
+	sid := p.SessionID
+	d.record(sid, "InteractiveApprovalChanged", "", "operator", payload, "")
+	return map[string]any{
+		"interactive_approval": *p.On,
+		"approval_mode":        mode,
+		"previous_mode":        prevMode,
+		"warning":              payload["warning"],
+	}, nil
+}
 
 // resolveApproval turns a requires_approval decision into a final one. In
 // autonomous mode (default) it auto-approves as the agent. In interactive mode

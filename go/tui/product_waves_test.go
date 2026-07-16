@@ -199,6 +199,55 @@ func TestBtwForkQueuesPendingQuestion(t *testing.T) {
 	_ = switched
 }
 
+func TestAlwaysApproveToggleCallsDaemon(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{
+		"daemon.set_interactive_approval": map[string]any{
+			"interactive_approval": false, "approval_mode": "always-approve",
+			"previous_mode": "ask", "warning": "tools will auto-run",
+		},
+		"session.get":       map[string]any{"session_id": "sess"},
+		"config.inventory":  map[string]any{"effective": map[string]any{"interactive_approval": false}},
+		"context.summary":   map[string]any{"model_context_tokens": map[string]any{"available": false}},
+	}}
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
+	m.sessionID, m.call = "sess", fc
+	m.runtime.InteractiveApprove = "on"
+	cmd := m.setAlwaysApprove(true)
+	m.Update(cmd())
+	if len(fc.calls) == 0 || fc.calls[0].method != "daemon.set_interactive_approval" {
+		t.Fatalf("calls=%#v", fc.calls)
+	}
+	if fc.calls[0].params["on"] != false {
+		t.Fatalf("always-approve should set interactive on=false, got %#v", fc.calls[0].params)
+	}
+	got := transcriptText(m)
+	if !strings.Contains(strings.ToLower(got), "warning") && !strings.Contains(got, "always-approve") {
+		t.Fatalf("expected warning in transcript:\n%s", got)
+	}
+}
+
+func TestAgentsSurfaceIsHumanized(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{
+		"agent.list": map[string]any{
+			"agents": []any{map[string]any{"name": "explore", "description": "fast search", "profile": "read-only"}},
+		},
+	}}
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
+	m.sessionID, m.call = "sess", fc
+	cmd := m.slashCommand("/agents")
+	m.Update(cmd())
+	got := transcriptText(m)
+	if strings.Contains(got, `"name"`) || strings.Contains(got, "{") {
+		// allow no raw JSON object dump
+		if strings.Contains(got, "{\n") {
+			t.Fatalf("agents should not dump JSON:\n%s", got)
+		}
+	}
+	if !strings.Contains(got, "explore") {
+		t.Fatalf("missing agent name:\n%s", got)
+	}
+}
+
 func TestBtwForkBusyWhileRunning(t *testing.T) {
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	m.inFlightTaskID = "task_1"

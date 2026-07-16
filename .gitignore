@@ -36,3 +36,6 @@ build/
 .DS_Store
 .idea/
 .vscode/
+
+# Local plan scaffolds created during TUI tests
+go/tui/.carina/

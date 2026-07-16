@@ -85,6 +85,7 @@ func (m *Model) settingsActions() []settingsAction {
 			{Label: m.text(MsgSettingsActionApprovePlan, nil), Hint: "/approve-plan", Run: func(m *Model) tea.Cmd { return m.approvePlan() }},
 			{Label: m.text(MsgSettingsActionViewPlan, nil), Hint: "/view-plan", Route: "/view-plan"},
 			{Label: m.text(MsgSettingsActionExplain, nil), Hint: "/explain", Route: "/explain"},
+			{Label: m.text(MsgSettingsActionAlwaysApprove, nil), Hint: "/always-approve", Run: func(m *Model) tea.Cmd { return m.toggleAlwaysApprove() }},
 			{Label: m.text(MsgSettingsActionPermissions, nil), Hint: "/permissions", Route: "/permissions"},
 			{Label: m.text(MsgSettingsActionSafeEdit, nil), Hint: "/permissions new safe-edit", Route: "/permissions new safe-edit"},
 			{Label: m.text(MsgSettingsActionFullWorkspace, nil), Hint: "/permissions new full-workspace --yes", Route: "/permissions new full-workspace --yes"},
@@ -315,6 +316,13 @@ func (m *Model) statusFooterView(width int) string {
 	if value := strings.TrimSpace(m.runtime.Sandbox); value != "" && value != "unknown" {
 		sandbox.text = "sandbox:" + value
 	}
+	approval := statusFooterItem{role: theme.RoleWarning}
+	if am := m.approvalModeLabel(); am == "always-approve" {
+		approval.text = "always-approve"
+	} else if am == "ask" {
+		approval.role = theme.RoleMuted
+		approval.text = "ask"
+	}
 	context := statusFooterItem{role: theme.RoleMuted}
 	if value := m.contextFooterToken(); value != "-" {
 		context.text = "ctx:" + value
@@ -330,9 +338,10 @@ func (m *Model) statusFooterView(width int) string {
 	variants := []struct {
 		left, right []statusFooterItem
 	}{
-		{[]statusFooterItem{mode, modelItem, profile, sandbox}, []statusFooterItem{activity, context, modelHint, settingsHint, helpHint}},
-		{[]statusFooterItem{mode, modelItem, profile, sandbox}, []statusFooterItem{activity, context, modelHint, helpHint}},
-		{[]statusFooterItem{mode, modelItem, profile}, []statusFooterItem{activity, context, modelHint, helpHint}},
+		{[]statusFooterItem{mode, modelItem, profile, sandbox, approval}, []statusFooterItem{activity, context, modelHint, settingsHint, helpHint}},
+		{[]statusFooterItem{mode, modelItem, profile, sandbox, approval}, []statusFooterItem{activity, context, modelHint, helpHint}},
+		{[]statusFooterItem{mode, modelItem, profile, approval}, []statusFooterItem{activity, context, modelHint, helpHint}},
+		{[]statusFooterItem{mode, modelItem, approval}, []statusFooterItem{activity, modelHint, helpHint}},
 		{[]statusFooterItem{mode, modelItem}, []statusFooterItem{activity, modelHint, helpHint}},
 		{[]statusFooterItem{modelItem}, []statusFooterItem{activity, modelHint}},
 		{[]statusFooterItem{modelItem}, []statusFooterItem{activity}},
@@ -674,6 +683,10 @@ func (m *Model) humanizeOperationalSurface(kind string, data map[string]any) []s
 		return m.humanizeSessionStatus(data)
 	case "inspect":
 		return m.humanizeInspect(data)
+	case "agents":
+		return m.humanizeAgents(data)
+	case "always-approve":
+		return compactMapLines(data, "")
 	default:
 		lines := compactMapLines(data, "")
 		return capLines(lines, 40)
@@ -801,6 +814,52 @@ func (m *Model) humanizeSessionStatus(data map[string]any) []string {
 	if profile := str(data["permission_profile"]); profile != "" {
 		m.runtime.Profile = profile
 	}
+	return lines
+}
+
+func (m *Model) humanizeAgents(data map[string]any) []string {
+	lines := []string{m.text(MsgAgentsSummaryHeader, nil)}
+	agents, _ := data["agents"].([]any)
+	if len(agents) == 0 {
+		// Some handlers return a bare list under different keys.
+		for _, key := range []string{"items", "available"} {
+			if arr, ok := data[key].([]any); ok {
+				agents = arr
+				break
+			}
+		}
+	}
+	if len(agents) == 0 {
+		lines = append(lines, m.text(MsgOperationalEmpty, nil))
+		return lines
+	}
+	for i, raw := range agents {
+		if i >= 32 {
+			lines = append(lines, fmt.Sprintf("… +%d more", len(agents)-i))
+			break
+		}
+		row, ok := raw.(map[string]any)
+		if !ok {
+			lines = append(lines, fmt.Sprintf("  - %v", raw))
+			continue
+		}
+		name := str(row["name"])
+		if name == "" {
+			name = str(row["id"])
+		}
+		desc := str(row["description"])
+		profile := str(row["profile"])
+		extra := nonEmpty(profile, str(row["source"]))
+		line := "  - " + name
+		if len(extra) > 0 {
+			line += " · " + strings.Join(extra, " · ")
+		}
+		if desc != "" {
+			line += " — " + desc
+		}
+		lines = append(lines, line)
+	}
+	lines = append(lines, "", m.text(MsgAgentsHint, nil))
 	return lines
 }
 

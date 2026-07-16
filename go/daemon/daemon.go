@@ -1106,6 +1106,9 @@ func (d *Daemon) registerMethods() {
 
 	d.registerRPC("daemon.remote.disable", rpc.ScopeAdmin, false, d.handleRemoteDisable, true)
 	d.registerRPC("daemon.reload", rpc.ScopeAdmin, false, d.handleReload, true)
+	// Local operator control of always-approve (interactive_approval inverted).
+	// Write scope so the TUI can toggle without an admin token; not remote.
+	d.registerRPC("daemon.set_interactive_approval", rpc.ScopeWrite, false, d.handleSetInteractiveApproval, true)
 	d.server.RequireDescriptors(true)
 }
 

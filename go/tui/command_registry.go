@@ -62,6 +62,7 @@ var builtinCommandRegistry = []commandDescriptor{
 	{Name: "approve-plan", Usage: "/approve-plan", Description: "approve plan and exit plan mode", Source: "builtin", Validate: noArgs},
 	{Name: "view-plan", Usage: "/view-plan", Description: "show plan file and approval guidance", Source: "builtin", Validate: noArgs},
 	{Name: "explain", Usage: "/explain", Description: "explain mode, profile, sandbox, approvals", Source: "builtin", Validate: noArgs},
+	{Name: "always-approve", Usage: "/always-approve [on|off|toggle]", Description: "toggle auto-approve of requires_approval (with warning)", Source: "builtin", Validate: anyArgs},
 	{Name: "inspect", Usage: "/inspect", Description: "readiness: doctor + runtime inventory", Source: "builtin", Validate: noArgs},
 	{Name: "welcome", Usage: "/welcome", Description: "alias of /inspect", Source: "builtin", Validate: noArgs},
 	{Name: "tasks", Usage: "/tasks", Description: "active tasks, queue, and loops", Source: "builtin", Validate: noArgs},

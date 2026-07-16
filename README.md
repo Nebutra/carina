@@ -147,6 +147,15 @@ The default interaction loop is:
 - `Alt+R` opens the plain-text transcript, `F1` opens context-aware help, and
   the mouse wheel scrolls the currently focused transcript, approval,
   question, help, keymap, or checkpoint surface.
+- `!` on an empty composer enters **sticky shell mode** (prompt becomes `! `;
+  Enter runs a governed `command.exec`). `Esc` on an empty shell draft returns
+  to chat. One-shot `!cmd` in normal mode still works.
+- `/settings` (or `Ctrl+,`) opens the control shell. `/plan` scaffolds a plan
+  file under `.carina/plans/`; `/approve-plan` exits plan mode. `/always-approve`
+  toggles auto-approval of `requires_approval` tools **with an on-screen
+  warning** (deny rules, plan mode, and OS sandbox still apply).
+- Context pressure notices appear around 80%/90%; auto-compact runs only when
+  a paused checkpoint makes `session.checkpoint.compact` available.
 
 The TUI normally uses the alternate screen. To keep the rendered session in
 the terminal's normal buffer, use `carina-tui --no-alt-screen`, or set

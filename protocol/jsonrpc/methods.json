@@ -18,7 +18,8 @@
       { "method": "daemon.metrics", "scope": "read", "remote": true, "params": {}, "result": "DaemonMetrics" },
       { "method": "daemon.doctor", "scope": "read", "remote": true, "params": {}, "result": "DoctorReport" },
       { "method": "daemon.remote.disable", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "on": "boolean" }, "result": "{ remote_disabled: boolean }" },
-      { "method": "daemon.reload", "scope": "admin", "remote": false, "control_plane_write": true, "params": {}, "result": "{ reloaded: boolean }" }
+      { "method": "daemon.reload", "scope": "admin", "remote": false, "control_plane_write": true, "params": {}, "result": "{ reloaded: boolean }" },
+      { "method": "daemon.set_interactive_approval", "scope": "write", "remote": false, "control_plane_write": true, "params": { "on": "boolean", "session_id": "string?" }, "result": "{ interactive_approval: boolean, approval_mode: ask|always-approve, previous_mode: string, warning: string }" }
     ],
     "usage": [
       { "method": "usage.cost", "scope": "read", "remote": true, "params": { "session_id": "string?", "task_id": "string?" }, "result": "UsageCostReport" }

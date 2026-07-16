@@ -310,6 +310,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.maybeSubmitNextQueued()
 	case runtimeStatusMsg:
 		return m, m.handleRuntimeStatus(msg)
+	case alwaysApproveMsg:
+		m.handleAlwaysApprove(msg)
+		return m, m.refreshRuntimeStatus()
 	case runtimeStatusTickMsg:
 		if msg.generation != 0 && msg.generation != m.sessionGeneration {
 			return m, nil
@@ -1691,6 +1694,22 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 	case "explain":
 		m.explainRuntimeSurface()
 		return nil
+	case "always-approve", "always_approve", "yolo":
+		// Product always-approve with mandatory warning on enable.
+		if len(parts) == 1 {
+			return m.toggleAlwaysApprove()
+		}
+		switch parts[1] {
+		case "on", "true", "1", "enable":
+			return m.setAlwaysApprove(true)
+		case "off", "false", "0", "disable":
+			return m.setAlwaysApprove(false)
+		case "toggle":
+			return m.toggleAlwaysApprove()
+		default:
+			m.push(m.text(MsgUpdateUsageAlwaysApprove, nil))
+			return nil
+		}
 	case "inspect", "welcome":
 		return m.inspectSurface()
 	case "tasks", "ps":
@@ -1844,7 +1863,7 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		m.push(m.text(MsgUpdateEffortChanged, MessageArgs{"effort": parts[1]}))
 		return m.persistSessionModel(m.model, previous, m.model, m.reasoningEffort)
 	case "agents":
-		return m.querySurface("agent.list", map[string]any{"session_id": m.sessionID}, m.text(MsgUpdateAgents, nil))
+		return m.queryOperationalSurface("agents", "agent.list", map[string]any{"session_id": m.sessionID})
 	case "checkpoints":
 		return m.openCheckpointPicker()
 	case "new":
@@ -2187,7 +2206,7 @@ func (m *Model) handleOperationalSurface(msg operationalSurfaceMsg) {
 		"context": MsgOperationalContextTitle, "config": MsgOperationalConfigTitle, "mcp": MsgOperationalMCPTitle, "compact": MsgOperationalCompactTitle,
 		"doctor": MsgOperationalDoctorTitle, "skills": MsgOperationalSkillsTitle, "hooks": MsgOperationalHooksTitle, "extensions": MsgOperationalExtensionsTitle,
 		"usage": MsgOperationalUsageTitle, "review": MsgOperationalReviewTitle, "memory": MsgOperationalMemoryTitle,
-		"inspect": MsgInspectHeader,
+		"inspect": MsgInspectHeader, "agents": MsgAgentsSummaryHeader,
 	}[msg.kind]
 	title := m.text(titleID, nil)
 	if titleID == "" {

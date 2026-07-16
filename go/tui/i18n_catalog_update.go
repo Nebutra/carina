@@ -239,6 +239,16 @@ const (
 	MsgUpdateBtwForkReady      MessageID = "update.btw_fork_ready"
 	MsgUpdateBtwForkBusy       MessageID = "update.btw_fork_busy"
 
+	MsgAlwaysApproveEnabled      MessageID = "always_approve.enabled"
+	MsgAlwaysApproveDisabled     MessageID = "always_approve.disabled"
+	MsgAlwaysApproveWarning      MessageID = "always_approve.warning"
+	MsgUpdateUsageAlwaysApprove  MessageID = "update.usage_always_approve"
+	MsgSettingsActionAlwaysApprove MessageID = "settings.action.always_approve"
+	MsgAgentsSummaryHeader       MessageID = "agents.summary_header"
+	MsgAgentsHint                MessageID = "agents.hint"
+	MsgExplainAlwaysApprove      MessageID = "explain.always_approve"
+	MsgOperationalAgentsTitle    MessageID = "operational.agents_title"
+
 	MsgFollowupRestored            MessageID = "followup.restored"
 	MsgFollowupShellEmpty          MessageID = "followup.shell_empty"
 	MsgFollowupDisconnected        MessageID = "followup.disconnected"
@@ -502,4 +512,14 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgUpdateBtwForkStart, "forking session for side Q&A…", "正在分叉会话以进行侧问…", "脇質問のためセッションをフォーク中…", "곁질문을 위해 세션 포크 중…", "bifurcando sesión para pregunta lateral…", "bifurcation de session pour question latérale…"),
 	catalog(MsgUpdateBtwForkReady, "side Q&A on forked session", "已在分叉会话上开始侧问", "フォーク先で脇質問を開始", "포크된 세션에서 곁질문 시작", "pregunta lateral en sesión bifurcada", "question latérale sur session bifurquée"),
 	catalog(MsgUpdateBtwForkBusy, "cannot /btw --fork while a task is running; wait or use /btw without --fork", "任务运行中无法 /btw --fork；请等待或使用不带 --fork 的 /btw", "タスク実行中は /btw --fork 不可。完了を待つか --fork なしで。", "작업 실행 중에는 /btw --fork 불가. 대기하거나 --fork 없이 사용.", "no se puede /btw --fork con una tarea en curso", "impossible d’utiliser /btw --fork pendant une tâche"),
+
+	catalog(MsgAlwaysApproveEnabled, "always-approve ON", "always-approve 已开启", "always-approve ON", "always-approve 켜짐", "always-approve ACTIVADO", "always-approve ACTIVÉ"),
+	catalog(MsgAlwaysApproveDisabled, "always-approve OFF — back to ask mode", "always-approve 已关闭 — 恢复为 ask", "always-approve OFF — ask に戻る", "always-approve 꺼짐 — ask 모드", "always-approve DESACTIVADO — modo ask", "always-approve DÉSACTIVÉ — mode ask"),
+	catalog(MsgAlwaysApproveWarning, "WARNING: tools with requires_approval will auto-run. Deny rules, plan mode, and OS sandbox still apply. Use /always-approve off to restore prompts.", "警告：requires_approval 工具将自动执行。拒绝规则、计划模式与 OS 沙箱仍然有效。使用 /always-approve off 恢复确认。", "警告: requires_approval ツールは自動実行されます。deny・プランモード・サンドボックスは有効。/always-approve off で確認に戻す。", "경고: requires_approval 도구가 자동 실행됩니다. deny/계획 모드/샌드박스는 유지. /always-approve off로 복원.", "AVISO: las herramientas requires_approval se ejecutan solas. Deny, plan y sandbox siguen. /always-approve off restaura.", "AVERTISSEMENT : les outils requires_approval s’exécutent seuls. Deny, plan et sandbox restent. /always-approve off pour rétablir."),
+	catalog(MsgUpdateUsageAlwaysApprove, "usage: /always-approve [on|off|toggle]", "用法：/always-approve [on|off|toggle]", "使用法: /always-approve [on|off|toggle]", "사용법: /always-approve [on|off|toggle]", "uso: /always-approve [on|off|toggle]", "utilisation : /always-approve [on|off|toggle]"),
+	catalog(MsgSettingsActionAlwaysApprove, "Toggle always-approve (with warning)", "切换 always-approve（带警告）", "always-approve を切替（警告あり）", "always-approve 전환(경고)", "Alternar always-approve (con aviso)", "Basculer always-approve (avec avertissement)"),
+	catalog(MsgAgentsSummaryHeader, "Available agents", "可用 Agent", "利用可能な Agent", "사용 가능한 Agent", "Agents disponibles", "Agents disponibles"),
+	catalog(MsgAgentsHint, "Tip: pass agent via task/model settings; use /settings for control shell.", "提示：任务可通过 agent 设置指定；/settings 打开控制面板。", "ヒント: タスクの agent 設定、/settings で制御シェル。", "팁: 작업 agent 설정 또는 /settings.", "Consejo: configure agent en la tarea; /settings abre el panel.", "Astuce : agent via les réglages de tâche ; /settings pour le panneau."),
+	catalog(MsgExplainAlwaysApprove, "Approval mode: ask pauses on requires_approval; always-approve auto-allows those (WARNING). Toggle with /always-approve. Deny rules and plan mode still block.", "审批模式：ask 在 requires_approval 时暂停；always-approve 自动放行（有警告）。用 /always-approve 切换。拒绝规则与计划模式仍会阻断。", "承認: ask は requires_approval で停止、always-approve は自動許可（警告）。/always-approve で切替。deny とプランは有効。", "승인: ask는 requires_approval 시 대기, always-approve는 자동 허용(경고). /always-approve로 전환. deny/계획 모드 유지.", "Aprobación: ask pausa; always-approve auto-permite (AVISO). /always-approve. Deny y plan siguen.", "Approbation : ask met en pause ; always-approve auto-autorise (AVERTISSEMENT). /always-approve. Deny et plan restent."),
+	catalog(MsgOperationalAgentsTitle, "agents", "agents", "agents", "agents", "agents", "agents"),
 }
