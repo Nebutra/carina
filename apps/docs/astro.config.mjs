@@ -24,6 +24,8 @@ export default defineConfig({
         'Local-first AI agent runtime with policy, hash-chained audit, and transactional rollback.',
       components: {
         Head: './src/components/Head.astro',
+        // Splash/landing: hide default title (Hero owns hierarchy)
+        PageTitle: './src/components/PageTitle.astro',
       },
       logo: {
         src: './src/assets/carina-horizontal-brand.svg',
@@ -51,12 +53,14 @@ export default defineConfig({
         },
       },
       customCss: [
-        // Order: faces → brand tokens → docs API → Starlight map → Tailwind → type roles → UX
+        // Order: faces → brand tokens → docs API → Tailwind → Starlight map → type roles → UX
+        // starlight-theme.css must load AFTER global.css (Tailwind) so its
+        // unlayered --sl-* map outranks starlight-tailwind's default palette.
         './src/styles/fonts.css',
         './src/styles/brand/variables.css',
         './src/styles/docs-tokens.css',
-        './src/styles/starlight-theme.css',
         './src/styles/global.css',
+        './src/styles/starlight-theme.css',
         './src/styles/typography.css',
         './src/styles/ux.css',
       ],

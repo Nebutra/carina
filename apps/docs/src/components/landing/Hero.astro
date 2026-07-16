@@ -190,24 +190,30 @@ const {
 
   .hero__btn--primary {
     background: var(--docs-accent);
-    color: var(--docs-fg-invert);
+    color: var(--docs-on-accent);
     border: 1px solid transparent;
+    /* Beat .sl-markdown-content a { color: accent } so label never washes out */
+    -webkit-text-fill-color: var(--docs-on-accent);
   }
 
   .hero__btn--primary:hover {
     background: var(--docs-accent-hover);
+    color: var(--docs-on-accent);
+    -webkit-text-fill-color: var(--docs-on-accent);
     box-shadow: 0 0 24px color-mix(in srgb, var(--docs-accent) 22%, transparent);
   }
 
   .hero__btn--ghost {
     background: transparent;
     color: var(--docs-fg);
+    -webkit-text-fill-color: var(--docs-fg);
     border: 1px solid var(--docs-border);
   }
 
   .hero__btn--ghost:hover {
     border-color: var(--docs-accent);
     color: var(--docs-accent);
+    -webkit-text-fill-color: var(--docs-accent);
   }
 
   .hero__glow {

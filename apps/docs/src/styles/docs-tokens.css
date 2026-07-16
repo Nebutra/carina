@@ -39,6 +39,12 @@
   --docs-fg-muted: var(--color-text-secondary);
   --docs-fg-subtle: var(--color-text-disabled);
   --docs-fg-invert: var(--color-background-page);
+  /*
+   * Text on solid accent fills (primary buttons).
+   * Dark: void on ion-cyan. Light: paper on deep teal.
+   * Do not reuse --docs-fg-invert alone — light accent is dark, needs light ink.
+   */
+  --docs-on-accent: #0d1214;
 
   /* ── Borders ───────────────────────────────────────────────────── */
   --docs-border: var(--color-border);
@@ -120,4 +126,10 @@
   /* Hero / landing motion (opt-out via prefers-reduced-motion in ux.css) */
   --docs-hero-stagger: 70ms;
   --docs-hero-rise: 14px;
+}
+
+/* Light accent is deep teal — primary button ink must be paper, not void */
+[data-theme='light'],
+[data-theme='carina-light'] {
+  --docs-on-accent: #fffdf8;
 }

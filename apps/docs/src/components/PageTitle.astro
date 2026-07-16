@@ -1,0 +1,14 @@
+---
+/**
+ * Splash/landing pages: render nothing.
+ * Starlight always mounts PageTitle in its own ContentPanel above the
+ * markdown body — that produced the large orphan "Carina" H1 above Hero.
+ * Frontmatter `title` still feeds <title>, sidebar, and SEO via Head.
+ * Hero supplies the visible H1 for the landing outline.
+ */
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+
+const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
+---
+
+{isSplash ? null : <Default />}

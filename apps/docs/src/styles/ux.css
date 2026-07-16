@@ -308,22 +308,44 @@
     border-radius: var(--docs-radius-md);
   }
 
-  /* ── Splash / landing full-bleed ─────────────────────────────────── */
-  [data-template='splash'] .main-frame {
+  /*
+   * Splash / landing full-bleed
+   * Starlight does NOT set data-template on <html>; splash pages simply
+   * omit the sidebar → html:not([data-has-sidebar]).
+   */
+  html:not([data-has-sidebar]) .main-frame {
     padding-inline: 0;
   }
 
-  [data-template='splash'] .content-panel {
+  html:not([data-has-sidebar]) .content-panel {
     padding: 0;
     border: none;
   }
 
-  [data-template='splash'] .sl-container {
+  /* Collapse the empty title ContentPanel above MarkdownContent (PageTitle is null on splash) */
+  html:not([data-has-sidebar]) main > .content-panel:first-child:not(:has(.sl-markdown-content)) {
+    display: none;
+  }
+
+  html:not([data-has-sidebar]) .sl-container {
     max-width: none;
   }
 
-  [data-template='splash'] .sl-markdown-content {
+  html:not([data-has-sidebar]) .sl-markdown-content {
     max-width: none;
+  }
+
+  /* Primary CTAs inside splash markdown must keep on-accent ink */
+  html:not([data-has-sidebar]) .sl-markdown-content a.hero__btn--primary {
+    color: var(--docs-on-accent) !important;
+    -webkit-text-fill-color: var(--docs-on-accent);
+    text-decoration: none;
+  }
+
+  html:not([data-has-sidebar]) .sl-markdown-content a.hero__btn--ghost {
+    color: var(--docs-fg);
+    -webkit-text-fill-color: var(--docs-fg);
+    text-decoration: none;
   }
 
   /* ── Landing entrance motion ─────────────────────────────────────── */
