@@ -125,8 +125,14 @@
     text-decoration-color: color-mix(in srgb, var(--docs-accent) 55%, transparent);
   }
 
-  /* Callouts / asides — hairline card + subtle left accent (Mintlify note tiers) */
-  .starlight-aside {
+  /*
+   * Callouts — one visual language for both:
+   *  - .callout (custom Callout.astro)
+   *  - .starlight-aside (Starlight native)
+   * Mintlify tiers: hairline card + 2px start accent + soft wash.
+   */
+  .starlight-aside,
+  .callout {
     border-radius: var(--radius-lg);
     border: 1px solid var(--docs-border-subtle);
     border-inline-start-width: 2px;
@@ -137,38 +143,50 @@
     line-height: 1.6;
   }
 
-  .starlight-aside--note {
+  .starlight-aside--note,
+  .callout--note {
     border-color: color-mix(in srgb, var(--docs-info) 28%, var(--docs-border-subtle));
     border-inline-start-color: color-mix(in srgb, var(--docs-info) 75%, transparent);
     background: color-mix(in srgb, var(--docs-info) 6%, var(--docs-bg-surface));
   }
 
-  .starlight-aside--tip {
+  .starlight-aside--tip,
+  .callout--tip {
     border-color: color-mix(in srgb, var(--docs-accent) 28%, var(--docs-border-subtle));
     border-inline-start-color: color-mix(in srgb, var(--docs-accent) 75%, transparent);
     background: color-mix(in srgb, var(--docs-accent) 6%, var(--docs-bg-surface));
   }
 
   .starlight-aside--caution,
-  .starlight-aside--warning {
+  .starlight-aside--warning,
+  .callout--warning {
     border-color: color-mix(in srgb, var(--docs-warning) 32%, var(--docs-border-subtle));
     border-inline-start-color: color-mix(in srgb, var(--docs-warning) 80%, transparent);
     background: color-mix(in srgb, var(--docs-warning) 7%, var(--docs-bg-surface));
   }
 
-  .starlight-aside--danger {
+  .starlight-aside--danger,
+  .callout--danger {
     border-color: color-mix(in srgb, var(--docs-danger) 32%, var(--docs-border-subtle));
     border-inline-start-color: color-mix(in srgb, var(--docs-danger) 80%, transparent);
     background: color-mix(in srgb, var(--docs-danger) 7%, var(--docs-bg-surface));
   }
 
-  .starlight-aside__title {
+  .callout--success {
+    border-color: color-mix(in srgb, var(--docs-success) 32%, var(--docs-border-subtle));
+    border-inline-start-color: color-mix(in srgb, var(--docs-success) 80%, transparent);
+    background: color-mix(in srgb, var(--docs-success) 7%, var(--docs-bg-surface));
+  }
+
+  .starlight-aside__title,
+  .callout__title {
     font-size: 0.8125rem;
     font-weight: 600;
     letter-spacing: 0.01em;
   }
 
-  .starlight-aside__icon {
+  .starlight-aside__icon,
+  .callout__icon {
     opacity: 0.9;
   }
 

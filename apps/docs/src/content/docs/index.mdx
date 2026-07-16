@@ -8,6 +8,7 @@ head:
 ---
 
 import Hero from '../../components/landing/Hero.astro';
+import InstallStrip from '../../components/landing/InstallStrip.astro';
 import FeatureGrid from '../../components/landing/FeatureGrid.astro';
 import CodePreview from '../../components/landing/CodePreview.astro';
 import QuickStart from '../../components/landing/QuickStart.astro';
@@ -18,6 +19,8 @@ import QuickStart from '../../components/landing/QuickStart.astro';
   primaryCta={{ label: 'Get started', href: '/getting-started/quickstart/' }}
   secondaryCta={{ label: 'View Runtime API', href: '/api/overview/' }}
 />
+
+<InstallStrip />
 
 <FeatureGrid
   features={[

@@ -107,8 +107,17 @@
   }
 
 /* Two-row sticky offset: brand row + section tabs (≥md + has sidebar) */
-@media (min-width: 50rem) {
+/* Section tabs always render (incl. mobile chips); include in sticky offset. */
+:root[data-has-sidebar] {
+  --docs-nav-height: calc(var(--docs-nav-row-height) + var(--docs-tabs-height));
+  --sl-nav-height: var(--docs-nav-height);
+  --docs-anchor-offset: calc(var(--docs-nav-height) + var(--spacing-4));
+}
+
+@media (max-width: 49.999rem) {
   :root[data-has-sidebar] {
+    /* Mobile chips are slightly taller */
+    --docs-tabs-height: 2.25rem;
     --docs-nav-height: calc(var(--docs-nav-row-height) + var(--docs-tabs-height));
     --sl-nav-height: var(--docs-nav-height);
     --docs-anchor-offset: calc(var(--docs-nav-height) + var(--spacing-4));

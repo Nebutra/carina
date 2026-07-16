@@ -73,7 +73,7 @@ const tabs = hasSidebar
 
   {
     tabs.length > 0 && (
-      <nav class="header-tabs sl-hidden md:sl-block" aria-label="Sections">
+      <nav class="header-tabs" aria-label="Sections">
         <div class="header-tabs__inner">
           <ul>
             {tabs.map((tab) => (
@@ -93,7 +93,7 @@ const tabs = hasSidebar
 </div>
 
 <script>
-  /** Keep sticky offset in sync when the preview version banner shows/hides. */
+  /** Sticky offset + keep active section chip in view on mobile. */
   function syncHeaderOffset() {
     const header = document.querySelector<HTMLElement>('header.header');
     if (!header) return;
@@ -106,8 +106,16 @@ const tabs = hasSidebar
     );
   }
 
+  function scrollActiveTabIntoView() {
+    const active = document.querySelector<HTMLElement>(
+      '.header-tabs a[aria-current="page"]',
+    );
+    active?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  }
+
   function boot() {
     syncHeaderOffset();
+    scrollActiveTabIntoView();
     const banner = document.querySelector('[data-version-banner]');
     if (banner && !banner.hasAttribute('data-offset-bound')) {
       banner.setAttribute('data-offset-bound', '1');
@@ -199,8 +207,23 @@ const tabs = hasSidebar
 
   .header-tabs__inner {
     overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     padding-inline: var(--sl-nav-pad-x, 1rem);
+    /* Fade hint that more sections exist on small screens */
+    mask-image: linear-gradient(
+      90deg,
+      #000 0%,
+      #000 calc(100% - 1.75rem),
+      transparent 100%
+    );
+  }
+
+  @media (min-width: 50rem) {
+    .header-tabs__inner {
+      mask-image: none;
+    }
   }
 
   .header-tabs__inner::-webkit-scrollbar {
@@ -216,6 +239,7 @@ const tabs = hasSidebar
        text rhythm as the sidebar rows (nav pad + 0.65rem) */
     margin-inline-start: -0.65rem;
     padding: 0;
+    padding-inline-end: 1.5rem;
     list-style: none;
     min-height: var(--docs-tabs-height);
   }
@@ -256,5 +280,35 @@ const tabs = hasSidebar
 
   .header-tabs a[aria-current='page']::after {
     background: var(--docs-accent);
+  }
+
+  /* Mobile: slightly denser chips, scroll into view via CSS snap */
+  @media (max-width: 49.999rem) {
+    .header-tabs ul {
+      margin-inline-start: 0;
+      gap: 0.25rem;
+      scroll-snap-type: x proximity;
+    }
+
+    .header-tabs li {
+      scroll-snap-align: start;
+    }
+
+    .header-tabs a {
+      height: 2.125rem;
+      padding: 0 0.7rem;
+      font-size: 0.78rem;
+      border-radius: var(--docs-radius-full);
+      border: 1px solid transparent;
+    }
+
+    .header-tabs a[aria-current='page'] {
+      border-color: color-mix(in srgb, var(--docs-accent) 35%, var(--docs-border-subtle));
+      background: color-mix(in srgb, var(--docs-accent) 8%, transparent);
+    }
+
+    .header-tabs a[aria-current='page']::after {
+      display: none;
+    }
   }
 </style>

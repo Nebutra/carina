@@ -1,7 +1,8 @@
 ---
 /**
- * "Was this page helpful?" — local-only feedback (no backend).
- * Stores a one-shot vote in sessionStorage per path.
+ * "Was this page helpful?"
+ * Local-first: vote stored in sessionStorage; also emits a browser event so
+ * hosts can wire analytics without a hard dependency.
  */
 const path = Astro.url.pathname;
 const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
@@ -20,8 +21,9 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
         </button>
       </div>
       <p class="docs-feedback__thanks" hidden>
-        Thanks for the feedback.
+        Thanks — saved on this device.
       </p>
+      <p class="docs-feedback__hint">Votes stay in your browser until the tab session ends.</p>
     </div>
   )
 }
@@ -35,11 +37,13 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
     const thanks = root.querySelector<HTMLElement>('.docs-feedback__thanks');
     const actions = root.querySelector<HTMLElement>('.docs-feedback__actions');
     const q = root.querySelector<HTMLElement>('.docs-feedback__q');
+    const hint = root.querySelector<HTMLElement>('.docs-feedback__hint');
 
     const showThanks = () => {
       if (thanks) thanks.hidden = false;
       if (actions) actions.hidden = true;
       if (q) q.hidden = true;
+      if (hint) hint.hidden = true;
     };
 
     if (sessionStorage.getItem(key)) {
@@ -49,7 +53,24 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
 
     root.querySelectorAll<HTMLButtonElement>('[data-feedback]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        sessionStorage.setItem(key, btn.dataset.feedback || 'yes');
+        const value = btn.dataset.feedback || 'yes';
+        sessionStorage.setItem(key, value);
+        // Open hook for Plausible / gtag / custom collectors
+        window.dispatchEvent(
+          new CustomEvent('carina:docs-feedback', {
+            detail: { path, value, ts: Date.now() },
+          }),
+        );
+        const w = window as Window & {
+          plausible?: (n: string, o?: { props?: Record<string, string> }) => void;
+          gtag?: (...args: unknown[]) => void;
+        };
+        try {
+          w.plausible?.('docs_feedback', { props: { path, value } });
+          w.gtag?.('event', 'docs_feedback', { page_path: path, value });
+        } catch {
+          /* analytics optional */
+        }
         showThanks();
       });
     });
@@ -73,7 +94,7 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
     padding: var(--spacing-4) var(--spacing-5);
     border: 1px solid var(--docs-border-subtle);
     border-radius: var(--docs-radius-lg);
-    background: var(--docs-bg-surface);
+    background: transparent;
   }
 
   .docs-feedback__q {
@@ -91,7 +112,7 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
   .docs-feedback__btn {
     appearance: none;
     border: 1px solid var(--docs-border-subtle);
-    background: var(--docs-bg);
+    background: transparent;
     color: var(--docs-fg-muted);
     font-family: var(--docs-font-sans);
     font-size: 0.8125rem;
@@ -108,7 +129,7 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
   .docs-feedback__btn:hover {
     color: var(--docs-fg);
     border-color: var(--docs-border);
-    background: var(--docs-bg-raised);
+    background: color-mix(in srgb, var(--docs-fg) 3%, transparent);
   }
 
   .docs-feedback__btn:focus-visible {
@@ -120,5 +141,12 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
     margin: 0;
     font-size: 0.875rem;
     color: var(--docs-fg-muted);
+  }
+
+  .docs-feedback__hint {
+    margin: 0;
+    flex-basis: 100%;
+    font-size: 0.72rem;
+    color: var(--docs-fg-subtle);
   }
 </style>

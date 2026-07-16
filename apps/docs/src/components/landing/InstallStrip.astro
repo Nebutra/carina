@@ -1,0 +1,171 @@
+---
+/**
+ * Homepage one-click install bar (Mintlify / Vercel docs pattern).
+ */
+interface Props {
+  command?: string;
+  href?: string;
+  label?: string;
+}
+
+const {
+  command = 'curl -fsSL https://get.carina.dev | sh',
+  href = '/getting-started/installation/',
+  label = 'Install',
+} = Astro.props;
+---
+
+<section class="install-strip" aria-label="Install Carina">
+  <div class="install-strip__inner">
+    <p class="install-strip__label">{label}</p>
+    <div class="install-strip__bar" data-install-strip>
+      <code class="install-strip__cmd" data-install-cmd>{command}</code>
+      <button
+        type="button"
+        class="install-strip__copy"
+        data-install-copy
+        aria-label="Copy install command"
+      >
+        <span data-install-copy-label>Copy</span>
+      </button>
+    </div>
+    <a class="install-strip__more" href={href}>All install options →</a>
+  </div>
+</section>
+
+<script>
+  function init(root: Element) {
+    if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
+    root.dataset.ready = '1';
+    const btn = root.querySelector<HTMLButtonElement>('[data-install-copy]');
+    const label = root.querySelector<HTMLElement>('[data-install-copy-label]');
+    const cmd = root.querySelector<HTMLElement>('[data-install-cmd]')?.textContent?.trim();
+    if (!btn || !cmd) return;
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(cmd);
+        if (label) {
+          const prev = label.textContent;
+          label.textContent = 'Copied';
+          btn.classList.add('is-copied');
+          window.setTimeout(() => {
+            label.textContent = prev;
+            btn.classList.remove('is-copied');
+          }, 1400);
+        }
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+  function boot() {
+    document.querySelectorAll('[data-install-strip]').forEach(init);
+  }
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>
+
+<style>
+  .install-strip {
+    padding: 0 var(--spacing-6) var(--spacing-10);
+    border-bottom: 1px solid var(--docs-border-subtle);
+  }
+
+  @media (min-width: 768px) {
+    .install-strip {
+      padding: 0 var(--spacing-10) var(--spacing-12);
+    }
+  }
+
+  .install-strip__inner {
+    max-width: 40rem;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .install-strip__label {
+    margin: 0 0 var(--spacing-3);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--docs-fg-subtle);
+  }
+
+  .install-strip__bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    padding: 0.35rem 0.4rem 0.35rem 0.9rem;
+    border: 1px solid var(--polish-code-border, #252e31);
+    border-radius: 10px;
+    background: var(--polish-code-bg, #0f1416);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, #f3f0e8 5%, transparent);
+    text-align: start;
+  }
+
+  .install-strip__cmd {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    font-family: var(--docs-font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    color: #e8ebe8;
+    white-space: nowrap;
+  }
+
+  .install-strip__cmd::-webkit-scrollbar {
+    display: none;
+  }
+
+  .install-strip__copy {
+    appearance: none;
+    flex-shrink: 0;
+    min-height: 2rem;
+    padding: 0 0.75rem;
+    border: 1px solid #344144;
+    border-radius: 6px;
+    background: #151b1e;
+    color: #9aa3a0;
+    font-family: var(--docs-font-sans);
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      color 150ms ease,
+      border-color 150ms ease,
+      background-color 150ms ease;
+  }
+
+  .install-strip__copy:hover {
+    color: #e8ebe8;
+    border-color: #4a5557;
+  }
+
+  .install-strip__copy.is-copied {
+    color: #68d2a3;
+    border-color: color-mix(in srgb, #68d2a3 45%, #344144);
+  }
+
+  .install-strip__copy:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  .install-strip__more {
+    display: inline-block;
+    margin-top: var(--spacing-3);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--docs-fg-muted);
+    text-decoration: none;
+    transition: color 150ms ease;
+  }
+
+  .install-strip__more:hover {
+    color: var(--docs-accent);
+  }
+</style>
