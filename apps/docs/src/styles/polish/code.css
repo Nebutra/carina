@@ -1,6 +1,6 @@
 /**
- * Code blocks — Mintlify-grade chrome.
- * Always-dark mineral surface; left-aligned title bar; no traffic lights.
+ * Code blocks — Mintlify-grade chrome over Expressive Code + shared snippet UI.
+ * Always-dark mineral surface; left label · right copy; Carina syntax theme.
  */
 
 @layer components {
@@ -19,10 +19,8 @@
     --ec-frm-edActTabIndBtmCol: transparent;
     --ec-frm-tooltipSuccessBg: var(--carina-spectral-green);
     --ec-frm-tooltipSuccessFg: var(--carina-void);
-    --ec-codePadBlk: 0.9rem;
-    --ec-codePadInl: 1rem;
-    --ec-codeFontFamily: var(--docs-font-mono);
-    --ec-uiFontFamily: var(--docs-font-mono);
+    --ec-codePadBlk: 0.95rem;
+    --ec-codePadInl: 1.1rem;
     font-size: 0.8125rem;
     line-height: 1.65;
     margin-block: var(--spacing-5);
@@ -31,7 +29,7 @@
 
   .expressive-code .frame {
     position: relative;
-    border-radius: var(--radius-lg);
+    border-radius: 8px;
     border: 1px solid var(--polish-code-border);
     background: var(--polish-code-bg);
     box-shadow: var(--polish-inset-glow) !important;
@@ -40,28 +38,29 @@
   }
 
   .expressive-code .frame:hover {
-    border-color: color-mix(in srgb, var(--carina-border) 80%, var(--carina-ion-cyan) 20%);
+    border-color: color-mix(in srgb, var(--carina-border) 75%, var(--carina-ion-cyan) 25%);
   }
 
-  /* Kill macOS traffic lights + EC terminal bottom pseudo-border */
+  /* Kill macOS traffic lights + EC terminal chrome artifacts */
   .expressive-code .frame.is-terminal .header::before,
-  .expressive-code .frame.is-terminal .header::after {
+  .expressive-code .frame.is-terminal .header::after,
+  .expressive-code .frame .title::before,
+  .expressive-code .frame .title::after {
     display: none !important;
     content: none !important;
   }
 
   /*
-   * Unified title bar (terminal + editor):
-   * left label · right copy — never centered "terminal" in empty chrome.
+   * Title bar: left file/lang · right copy (Mintlify)
    */
   .expressive-code .frame .header {
     display: flex !important;
     align-items: center !important;
     justify-content: flex-start !important;
     gap: 0.5rem;
-    min-height: 2.25rem;
+    min-height: 2.375rem;
     margin: 0 !important;
-    padding: 0 2.75rem 0 0.9rem !important;
+    padding: 0 2.85rem 0 0.85rem !important;
     border: 0 !important;
     border-bottom: 1px solid var(--polish-code-border) !important;
     border-radius: 0 !important;
@@ -73,31 +72,28 @@
     display: none !important;
   }
 
-  /* Flatten editor "tab" chrome into the same left label */
+  /* Flatten EC "tab" into a quiet mono label / pill */
   .expressive-code .frame .title {
     position: static !important;
-    display: inline-flex;
+    display: inline-flex !important;
     align-items: center;
+    max-width: 100%;
     margin: 0 !important;
-    padding: 0 !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    background: transparent !important;
+    padding: 0.2rem 0.5rem !important;
+    border: 1px solid var(--polish-code-border) !important;
+    border-radius: 999px !important;
+    background: color-mix(in srgb, var(--polish-code-bg) 70%, transparent) !important;
     background-clip: border-box !important;
-    font-family: var(--docs-font-mono);
-    font-size: 0.6875rem;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    line-height: 1;
+    font-family: var(--docs-font-mono) !important;
+    font-size: 0.6875rem !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.04em !important;
+    line-height: 1.2 !important;
     color: var(--polish-code-muted) !important;
-    text-transform: none;
-    overflow: visible;
-  }
-
-  .expressive-code .frame .title::after,
-  .expressive-code .frame .title::before {
-    display: none !important;
-    content: none !important;
+    text-transform: none !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .expressive-code .frame pre {
@@ -110,44 +106,67 @@
   .expressive-code .frame pre > code {
     font-family: var(--docs-font-mono);
     font-variant-ligatures: none;
+    font-feature-settings: 'calt' 0, 'liga' 0;
   }
 
-  /* Line numbers — quiet */
   .expressive-code .ec-line .code {
     border-inline-start: none;
   }
 
   .expressive-code .ec-line .ln {
     color: var(--polish-code-line);
-    opacity: 0.65;
-    padding-inline-end: 1rem;
+    opacity: 0.7;
+    padding-inline-end: 1.1rem;
+    min-width: 2rem;
     user-select: none;
   }
 
-  /* Copy sits in the title bar row */
+  /* Copy — quiet icon in chrome row */
   .expressive-code .copy {
-    inset-block-start: 0.3rem !important;
-    inset-inline-end: 0.35rem !important;
-    z-index: 2;
+    inset-block-start: 0.35rem !important;
+    inset-inline-end: 0.4rem !important;
+    z-index: 3;
   }
 
   .expressive-code .copy button {
-    width: 1.75rem;
-    height: 1.75rem;
-    border-radius: var(--radius-sm);
+    width: auto;
+    min-width: 1.85rem;
+    height: 1.85rem;
+    padding-inline: 0.45rem;
+    border-radius: 6px;
     border: 1px solid transparent;
     background: transparent;
-    opacity: 0.4;
+    opacity: 0.45;
     box-shadow: none !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
     transition:
       opacity var(--polish-transition),
       border-color var(--polish-transition),
       background-color var(--polish-transition);
   }
 
-  /* Icon mask needs light ink on mineral chrome */
   .expressive-code .copy button::before {
     background-color: var(--polish-code-muted);
+  }
+
+  /* Text "Copy" label beside icon on wide frames */
+  .expressive-code .copy button::after {
+    content: 'Copy';
+    font-family: var(--docs-font-sans);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    color: var(--polish-code-muted);
+    line-height: 1;
+  }
+
+  @media (max-width: 40rem) {
+    .expressive-code .copy button::after {
+      display: none;
+    }
   }
 
   .expressive-code .frame:hover .copy button,
@@ -157,7 +176,11 @@
 
   .expressive-code .copy button:hover {
     border-color: var(--polish-code-border);
-    background: color-mix(in srgb, var(--polish-code-bg) 70%, transparent);
+    background: color-mix(in srgb, var(--polish-code-bg) 80%, transparent);
+  }
+
+  .expressive-code .copy button:hover::after {
+    color: var(--polish-code-fg);
   }
 
   .expressive-code .copy button:focus-visible {
@@ -166,7 +189,7 @@
   }
 
   .expressive-code .copy .feedback {
-    border-radius: var(--radius-sm);
+    border-radius: 6px;
     border: 1px solid var(--polish-code-border);
     background: var(--polish-code-chrome);
     color: var(--carina-spectral-green);
@@ -176,18 +199,18 @@
     box-shadow: none !important;
   }
 
-  /* Horizontal scroll fade — only when frame is focused/hovered */
+  /* Soft right fade on overflow */
   .expressive-code .frame::after {
     content: '';
     pointer-events: none;
     position: absolute;
-    inset-block: 2.25rem 0;
+    inset-block: 2.375rem 0;
     inset-inline-end: 0;
-    width: 1.75rem;
+    width: 1.5rem;
     background: linear-gradient(
       90deg,
       transparent,
-      color-mix(in srgb, var(--polish-code-bg) 94%, transparent)
+      color-mix(in srgb, var(--polish-code-bg) 96%, transparent)
     );
     opacity: 0;
     transition: opacity var(--polish-transition);
@@ -198,18 +221,16 @@
     opacity: 1;
   }
 
-  /* Frames without title bar: fade from top */
   .expressive-code .frame:not(.has-title)::after {
     inset-block-start: 0;
   }
 
-  /* Light page: dark code needs a slightly stronger outer edge */
   [data-theme='light'] .expressive-code .frame,
   [data-theme='carina-light'] .expressive-code .frame {
-    border-color: color-mix(in srgb, var(--carina-void) 22%, var(--docs-border));
+    border-color: color-mix(in srgb, var(--carina-void) 20%, var(--docs-border));
   }
 
-  /* Inline code — chip only outside pre */
+  /* Inline code chips */
   .sl-markdown-content :not(pre) > code:not(:where(.expressive-code *)) {
     background: color-mix(in srgb, var(--docs-bg-raised) 90%, var(--docs-accent) 4%);
     border: 1px solid var(--docs-border-subtle);
@@ -222,38 +243,40 @@
   }
 
   .sl-markdown-content pre code,
-  .snippet-tabs__panel code {
+  .snippet-tabs__panel code,
+  .snippet-tabs__panel pre,
+  .snippet-tabs__panel pre code {
     background: transparent !important;
     border: none !important;
-    padding: 0 !important;
     box-shadow: none !important;
   }
 
-  /* Snippet tabs + landing terminal mock share mineral chrome */
-  .snippet-tabs {
-    border: 1px solid var(--polish-code-border);
-    border-radius: var(--radius-lg);
-    background: var(--polish-code-bg);
-    box-shadow: var(--polish-inset-glow);
+  .snippet-tabs__panel pre {
+    margin: 0;
   }
 
-  .snippet-tabs__list {
-    background: var(--polish-code-chrome);
-    border-bottom-color: var(--polish-code-border);
-  }
-
-  .snippet-tabs__panel {
-    color: var(--polish-code-fg);
-  }
-
+  /* ── Shared mineral shell (SnippetTabs / CodeBlock / Terminal) ── */
+  .snippet-tabs,
+  .code-block,
   .term {
-    box-shadow: var(--polish-inset-glow) !important;
-    border-color: var(--polish-code-border) !important;
+    border: 1px solid var(--polish-code-border) !important;
+    border-radius: 8px !important;
     background: var(--polish-code-bg) !important;
+    box-shadow: var(--polish-inset-glow) !important;
+    overflow: hidden;
   }
 
+  .snippet-tabs__list,
+  .code-block__chrome,
   .term__chrome {
     background: var(--polish-code-chrome) !important;
-    border-bottom-color: var(--polish-code-border) !important;
+    border-bottom: 1px solid var(--polish-code-border) !important;
+  }
+
+  .snippet-tabs__panel,
+  .code-block__pre,
+  .term__body {
+    color: var(--polish-code-fg);
+    font-family: var(--docs-font-mono);
   }
 }

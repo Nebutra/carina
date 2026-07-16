@@ -2,6 +2,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import tailwindcss from '@tailwindcss/vite';
+import { carinaDark } from './src/themes/carina-code.mjs';
 import { carinaDark, carinaLight } from './src/themes/carina-code.mjs';
 
 /**
@@ -86,24 +87,44 @@ export default defineConfig({
       ],
       // Built-in Pagefind search (keyboard: /, Esc)
       pagefind: true,
-      // Expressive Code — always-dark mineral code cards (Mintlify signature).
-      // Chrome reads polish tokens so blocks stay mineral on light pages too.
+      // Expressive Code — Carina mineral theme (always-dark) + Mintlify chrome.
+      // Custom Shiki theme maps tokens onto the six-color capability palette.
       expressiveCode: {
-        themes: ['github-dark-default'],
+        themes: [carinaDark],
+        // Prefer "code" frames over macOS-terminal chrome for bash/shell.
+        defaultProps: {
+          frame: 'code',
+          wrap: false,
+        },
         styleOverrides: {
-          borderRadius: 'var(--radius-lg)',
+          borderRadius: '8px',
           borderWidth: '1px',
-          borderColor: 'var(--polish-code-border, var(--docs-code-border))',
+          borderColor: 'var(--polish-code-border, #2a3436)',
           codeFontFamily: 'var(--docs-font-mono)',
           uiFontFamily: 'var(--docs-font-sans)',
+          codeFontSize: '0.8125rem',
+          codePaddingBlock: '0.95rem',
+          codePaddingInline: '1.05rem',
+          codeBackground: 'var(--polish-code-bg, #12181a)',
           frames: {
             shadowColor: 'transparent',
-            editorBackground: 'var(--polish-code-bg, var(--carina-surface))',
-            terminalBackground: 'var(--polish-code-bg, var(--carina-surface))',
-            editorTabBarBackground: 'var(--polish-code-chrome, var(--carina-surface-raised))',
-            editorActiveTabBackground: 'var(--polish-code-bg, var(--carina-surface))',
-            terminalTitlebarBackground: 'var(--polish-code-chrome, var(--carina-surface-raised))',
-            terminalTitlebarBorderBottomColor: 'var(--polish-code-border, var(--docs-code-border))',
+            editorBackground: 'var(--polish-code-bg, #12181a)',
+            terminalBackground: 'var(--polish-code-bg, #12181a)',
+            editorTabBarBackground: 'var(--polish-code-chrome, #1a2224)',
+            editorActiveTabBackground: 'var(--polish-code-bg, #12181a)',
+            editorActiveTabForeground: 'var(--polish-code-fg, #f3f0e8)',
+            editorActiveTabBorderColor: 'transparent',
+            editorActiveTabIndicatorTopColor: 'transparent',
+            editorActiveTabIndicatorHeight: '0px',
+            editorTabBarBorderBottomColor: 'var(--polish-code-border, #2a3436)',
+            terminalTitlebarBackground: 'var(--polish-code-chrome, #1a2224)',
+            terminalTitlebarBorderBottomColor: 'var(--polish-code-border, #2a3436)',
+            terminalTitlebarForeground: 'var(--polish-code-muted, #b0b7b3)',
+            inlineButtonBorder: 'transparent',
+            inlineButtonBackground: 'transparent',
+            inlineButtonForeground: 'var(--polish-code-muted, #b0b7b3)',
+            inlineButtonHoverBackground: 'color-mix(in srgb, #f3f0e8 6%, transparent)',
+            inlineButtonHoverForeground: '#f3f0e8',
           },
         },
       },

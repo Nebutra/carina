@@ -1,7 +1,11 @@
 ---
 /**
  * Multi-language request snippets for a JSON-RPC method.
+ * Uses Astro <Code /> (Shiki) + Carina mineral theme for real highlighting.
  */
+import { Code } from 'astro:components';
+import { carinaDark } from '../../themes/carina-code.mjs';
+
 interface Props {
   method: string;
   params?: Record<string, unknown> | string | object;
@@ -57,24 +61,47 @@ carina call ${method}
 
 # equivalent payload:
 # ${JSON.stringify(jsonRpc)}`;
+
+const panels = [
+  { id: 'json', label: 'JSON-RPC', lang: 'json' as const, code: jsonText },
+  { id: 'ts', label: 'TypeScript', lang: 'ts' as const, code: tsText },
+  { id: 'bash', label: 'CLI', lang: 'bash' as const, code: bashText },
+];
 ---
 
 <div class="snippet-tabs" data-snippet-tabs>
   <div class="snippet-tabs__list" role="tablist" aria-label="Code samples">
-    <button type="button" class="snippet-tabs__tab is-active" role="tab" aria-selected="true" data-panel="json">
-      JSON-RPC
-    </button>
-    <button type="button" class="snippet-tabs__tab" role="tab" aria-selected="false" data-panel="ts">
-      TypeScript
-    </button>
-    <button type="button" class="snippet-tabs__tab" role="tab" aria-selected="false" data-panel="bash">
-      CLI
+    {
+      panels.map((p, i) => (
+        <button
+          type="button"
+          class:list={['snippet-tabs__tab', i === 0 && 'is-active']}
+          role="tab"
+          aria-selected={i === 0 ? 'true' : 'false'}
+          data-panel={p.id}
+        >
+          {p.label}
+        </button>
+      ))
+    }
+    <button type="button" class="snippet-tabs__copy" data-snippet-copy aria-label="Copy snippet">
+      Copy
     </button>
   </div>
   <div class="snippet-tabs__panels">
-    <pre class="snippet-tabs__panel is-active" data-panel="json" role="tabpanel"><code>{jsonText}</code></pre>
-    <pre class="snippet-tabs__panel" data-panel="ts" role="tabpanel" hidden><code>{tsText}</code></pre>
-    <pre class="snippet-tabs__panel" data-panel="bash" role="tabpanel" hidden><code>{bashText}</code></pre>
+    {
+      panels.map((p, i) => (
+        <div
+          class:list={['snippet-tabs__panel', i === 0 && 'is-active']}
+          data-panel={p.id}
+          data-code={p.code}
+          role="tabpanel"
+          hidden={i !== 0}
+        >
+          <Code code={p.code} lang={p.lang} theme={carinaDark} />
+        </div>
+      ))
+    }
   </div>
 </div>
 
@@ -84,6 +111,8 @@ carina call ${method}
     root.dataset.ready = '1';
     const tabs = root.querySelectorAll<HTMLButtonElement>('.snippet-tabs__tab');
     const panels = root.querySelectorAll<HTMLElement>('.snippet-tabs__panel');
+    const copyBtn = root.querySelector<HTMLButtonElement>('[data-snippet-copy]');
+
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         const id = tab.dataset.panel;
@@ -99,6 +128,24 @@ carina call ${method}
         });
       });
     });
+
+    copyBtn?.addEventListener('click', async () => {
+      const active = root.querySelector<HTMLElement>('.snippet-tabs__panel.is-active');
+      const text = active?.dataset.code ?? active?.innerText ?? '';
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        const prev = copyBtn.textContent;
+        copyBtn.textContent = 'Copied';
+        copyBtn.classList.add('is-copied');
+        window.setTimeout(() => {
+          copyBtn.textContent = prev;
+          copyBtn.classList.remove('is-copied');
+        }, 1400);
+      } catch {
+        /* ignore */
+      }
+    });
   }
   function boot() {
     document.querySelectorAll('[data-snippet-tabs]').forEach(init);
@@ -110,21 +157,22 @@ carina call ${method}
 <style>
   .snippet-tabs {
     margin: 0;
-    border: 1px solid var(--carina-border-subtle, var(--docs-border-subtle));
-    border-radius: var(--docs-radius-lg);
+    border: 1px solid var(--polish-code-border, var(--carina-border-subtle));
+    border-radius: 8px;
     overflow: hidden;
-    background: var(--carina-surface, #141b1d);
+    background: var(--polish-code-bg, var(--carina-surface));
     max-width: 100%;
+    box-shadow: inset 0 1px 0 color-mix(in srgb, #f3f0e8 5%, transparent);
   }
 
   .snippet-tabs__list {
     display: flex;
     align-items: stretch;
     gap: 0;
-    height: 2.25rem;
-    border-bottom: 1px solid var(--carina-border-subtle, #252f31);
-    background: var(--carina-surface-raised, #1c2527);
-    padding: 0 0.4rem;
+    height: 2.375rem;
+    border-bottom: 1px solid var(--polish-code-border, var(--carina-border-subtle));
+    background: var(--polish-code-chrome, var(--carina-surface-raised));
+    padding: 0 0.35rem 0 0.45rem;
     box-sizing: border-box;
   }
 
@@ -133,43 +181,75 @@ carina call ${method}
     appearance: none;
     border: 0;
     background: transparent;
-    color: var(--carina-dust, #b0b7b3);
+    color: var(--polish-code-muted, var(--carina-dust));
     font-family: var(--docs-font-sans);
     font-size: 0.75rem;
     font-weight: 500;
     line-height: 1;
     height: 100%;
-    padding: 0 0.8rem;
+    padding: 0 0.75rem;
     margin: 0;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    transition: color 160ms ease;
   }
 
   .snippet-tabs__tab::after {
     content: '';
     position: absolute;
-    left: 0.55rem;
-    right: 0.55rem;
+    left: 0.5rem;
+    right: 0.5rem;
     bottom: 0;
-    height: 2px;
+    height: 1.5px;
     border-radius: 1px 1px 0 0;
     background: transparent;
   }
 
   .snippet-tabs__tab.is-active {
-    color: var(--carina-starlight, #f3f0e8);
+    color: var(--polish-code-fg, var(--carina-starlight));
     font-weight: 600;
   }
 
   .snippet-tabs__tab.is-active::after {
-    background: var(--docs-accent, #8edbd2);
+    background: var(--carina-ion-cyan, var(--docs-accent));
   }
 
   .snippet-tabs__tab:focus-visible {
     outline: 2px solid var(--docs-focus);
     outline-offset: -2px;
+  }
+
+  .snippet-tabs__copy {
+    appearance: none;
+    margin-inline-start: auto;
+    align-self: center;
+    height: 1.65rem;
+    padding: 0 0.55rem;
+    border: 1px solid var(--polish-code-border, var(--carina-border-subtle));
+    border-radius: 6px;
+    background: transparent;
+    color: var(--polish-code-muted, var(--carina-dust));
+    font-family: var(--docs-font-sans);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      color 160ms ease,
+      border-color 160ms ease,
+      background-color 160ms ease;
+  }
+
+  .snippet-tabs__copy:hover {
+    color: var(--polish-code-fg, var(--carina-starlight));
+    border-color: var(--carina-border, #344144);
+    background: color-mix(in srgb, var(--polish-code-bg, #12181a) 70%, transparent);
+  }
+
+  .snippet-tabs__copy.is-copied {
+    color: var(--carina-spectral-green, #68d2a3);
+    border-color: color-mix(in srgb, var(--carina-spectral-green, #68d2a3) 40%, transparent);
   }
 
   .snippet-tabs__panels {
@@ -178,13 +258,9 @@ carina call ${method}
 
   .snippet-tabs__panel {
     margin: 0;
-    padding: 0.85rem 1rem;
+    padding: 0;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
-    font-family: var(--docs-font-mono);
-    font-size: 0.75rem;
-    line-height: 1.55;
-    color: var(--carina-starlight, #f3f0e8);
     max-width: 100%;
     scrollbar-width: thin;
     scrollbar-color: #344144 transparent;
@@ -194,21 +270,29 @@ carina call ${method}
     display: none;
   }
 
-  .snippet-tabs__panel code {
+  /* Astro <Code /> shell — strip default padding/borders into our mineral card */
+  .snippet-tabs__panel :global(pre) {
+    margin: 0 !important;
+    padding: 0.9rem 1.05rem !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    overflow-x: auto;
+    font-size: 0.78rem !important;
+    line-height: 1.6 !important;
+    tab-size: 2;
+  }
+
+  .snippet-tabs__panel :global(pre code) {
     display: block;
-    font-family: inherit;
-    font-size: inherit;
-    font-weight: 400;
-    line-height: inherit;
-    color: inherit;
-    /* Prefer wrap for narrow columns; keep long tokens breakable */
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    font-family: var(--docs-font-mono) !important;
+    font-size: inherit !important;
+    font-weight: 400 !important;
+    line-height: inherit !important;
     background: transparent !important;
     border: none !important;
-    border-radius: 0 !important;
     padding: 0 !important;
     box-shadow: none !important;
+    white-space: pre;
   }
 </style>

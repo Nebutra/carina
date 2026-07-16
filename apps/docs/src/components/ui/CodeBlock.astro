@@ -1,9 +1,12 @@
 ---
 /**
- * CodeBlock — enhanced fenced block for custom layouts.
- * Starlight/Expressive Code handles MDX fences; use this in Astro landing/API pages
- * when you need explicit language labels + copy + optional line numbers.
+ * CodeBlock — highlighted mineral code card for Astro/landing/API layouts.
+ * MDX fences use Expressive Code + carina-dark; this component uses the same
+ * Carina Shiki theme via Astro <Code /> for one-off snippets.
  */
+import { Code } from 'astro:components';
+import { carinaDark } from '../../themes/carina-code.mjs';
+
 interface Props {
   code: string;
   lang?: string;
@@ -22,20 +25,20 @@ const {
   copiedLabel = 'Copied',
 } = Astro.props;
 
-const lines = code.replace(/\n$/, '').split('\n');
 const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
 ---
 
 <figure class="code-block" data-lang={lang}>
   <div class="code-block__chrome">
     <div class="code-block__meta">
-      {title && <span class="code-block__title">{title}</span>}
+      {title ? <span class="code-block__title">{title}</span> : null}
       <span class="code-block__lang">{lang}</span>
     </div>
     <button
       type="button"
       class="code-block__copy"
       data-copy-target={uid}
+      data-copy-text={code}
       data-copy-label={copyLabel}
       data-copied-label={copiedLabel}
       aria-label={copyLabel}
@@ -43,16 +46,9 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
       <span class="code-block__copy-label">{copyLabel}</span>
     </button>
   </div>
-  <pre class="code-block__pre" id={uid} tabindex="0"><code class={`language-${lang}`}>{
-    showLineNumbers
-      ? lines.map((line, i) => (
-          <span class="code-block__line">
-            <span class="code-block__gutter" aria-hidden="true">{i + 1}</span>
-            <span class="code-block__content">{line || ' '}</span>
-          </span>
-        ))
-      : code
-  }</code></pre>
+  <div class="code-block__body" id={uid}>
+    <Code code={code} lang={lang} theme={carinaDark} />
+  </div>
 </figure>
 
 <script>
@@ -61,10 +57,13 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
       if (btn.dataset.bound === '1') return;
       btn.dataset.bound = '1';
       btn.addEventListener('click', async () => {
-        const id = btn.dataset.copyTarget;
-        const target = id ? document.getElementById(id) : null;
-        if (!target) return;
-        const text = target.innerText;
+        const text =
+          btn.dataset.copyText ||
+          (btn.dataset.copyTarget
+            ? document.getElementById(btn.dataset.copyTarget)?.innerText
+            : '') ||
+          '';
+        if (!text) return;
         try {
           await navigator.clipboard.writeText(text);
           const label = btn.querySelector('.code-block__copy-label');
@@ -92,15 +91,16 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
    */
   .code-block {
     margin: var(--spacing-6) 0;
-    border: 1px solid var(--carina-border-subtle);
-    border-radius: var(--docs-radius-xl);
-    background: var(--carina-surface);
+    border: 1px solid var(--polish-code-border, var(--carina-border-subtle));
+    border-radius: 8px;
+    background: var(--polish-code-bg, var(--carina-surface));
     overflow: hidden;
+    box-shadow: inset 0 1px 0 color-mix(in srgb, #f3f0e8 5%, transparent);
     transition: border-color var(--docs-transition);
   }
 
   .code-block:hover {
-    border-color: var(--carina-border);
+    border-color: color-mix(in srgb, var(--carina-border) 75%, var(--carina-ion-cyan) 25%);
   }
 
   .code-block__chrome {
@@ -108,22 +108,24 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
     align-items: center;
     justify-content: space-between;
     gap: var(--spacing-3);
-    padding: var(--spacing-2) var(--spacing-3);
-    border-bottom: 1px solid var(--carina-border-subtle);
-    background: var(--carina-surface-raised);
+    min-height: 2.375rem;
+    padding: 0.35rem 0.65rem 0.35rem 0.75rem;
+    border-bottom: 1px solid var(--polish-code-border, var(--carina-border-subtle));
+    background: var(--polish-code-chrome, var(--carina-surface-raised));
   }
 
   .code-block__meta {
     display: flex;
     align-items: center;
-    gap: var(--spacing-3);
+    gap: 0.5rem;
     min-width: 0;
   }
 
   .code-block__title {
     color: var(--carina-starlight);
-    font-size: var(--text-caption);
-    font-weight: var(--font-weight-medium);
+    font-family: var(--docs-font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -131,20 +133,24 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
 
   .code-block__lang {
     font-family: var(--docs-font-mono);
-    font-size: var(--text-micro);
-    color: var(--carina-disabled);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-size: 0.6875rem;
+    color: var(--polish-code-muted, var(--carina-dust));
+    letter-spacing: 0.04em;
+    padding: 0.15rem 0.45rem;
+    border: 1px solid var(--polish-code-border, var(--carina-border-subtle));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--polish-code-bg, #12181a) 70%, transparent);
   }
 
   .code-block__copy {
     appearance: none;
-    border: 1px solid var(--carina-border);
+    border: 1px solid var(--polish-code-border, var(--carina-border-subtle));
     background: transparent;
-    color: var(--carina-dust);
-    border-radius: var(--docs-radius-sm);
+    color: var(--polish-code-muted, var(--carina-dust));
+    border-radius: 6px;
     padding: 0.2rem 0.55rem;
-    font-size: var(--text-caption);
+    font-size: 0.6875rem;
+    font-weight: 500;
     font-family: var(--docs-font-sans);
     cursor: pointer;
     transition:
@@ -156,7 +162,7 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
   .code-block__copy:hover {
     color: var(--carina-starlight);
     border-color: var(--carina-border);
-    background: var(--carina-surface);
+    background: color-mix(in srgb, var(--polish-code-bg, #12181a) 70%, transparent);
   }
 
   .code-block__copy:focus-visible {
@@ -165,34 +171,26 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
   }
 
   .code-block__copy.is-copied {
-    color: var(--docs-success);
-    border-color: color-mix(in srgb, var(--docs-success) 40%, transparent);
+    color: var(--carina-spectral-green, #68d2a3);
+    border-color: color-mix(in srgb, var(--carina-spectral-green, #68d2a3) 40%, transparent);
   }
 
-  .code-block__pre {
-    margin: 0;
-    padding: var(--spacing-4);
+  .code-block__body :global(pre) {
+    margin: 0 !important;
+    padding: 0.95rem 1.1rem !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
     overflow-x: auto;
-    font-family: var(--docs-font-mono);
-    font-size: var(--text-body-sm);
-    line-height: 1.6;
-    color: var(--carina-starlight);
+    font-size: 0.8125rem !important;
+    line-height: 1.65 !important;
     tab-size: 2;
   }
 
-  .code-block__line {
-    display: grid;
-    grid-template-columns: 2.5rem 1fr;
-    gap: var(--spacing-3);
-  }
-
-  .code-block__gutter {
-    text-align: right;
-    color: var(--carina-disabled);
-    user-select: none;
-  }
-
-  .code-block__content {
-    white-space: pre;
+  .code-block__body :global(pre code) {
+    font-family: var(--docs-font-mono) !important;
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
   }
 </style>
