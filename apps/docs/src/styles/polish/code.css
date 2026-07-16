@@ -121,8 +121,9 @@
   }
 
   /*
-   * Copy — always discoverable (Mintlify expectation: users paste commands).
-   * Icon only; no dual "Copy" text fighting the SVG mask.
+   * Copy — EC draws the clipboard glyph on button::after (mask + bg color).
+   * Do NOT zero ::after — that hides the icon and leaves an empty dark square.
+   * ::before is only the button border ring in EC.
    */
   .expressive-code .copy {
     inset-block-start: 0.45rem !important;
@@ -134,9 +135,9 @@
     width: 1.85rem !important;
     height: 1.85rem !important;
     border-radius: 6px !important;
-    border: 1px solid transparent !important;
+    /* Keep EC background transparent so the chrome doesn't double-paint */
     background: transparent !important;
-    opacity: 0.55 !important;
+    opacity: 0.72 !important;
     box-shadow: none !important;
     transition:
       opacity 150ms ease,
@@ -144,30 +145,49 @@
       border-color 150ms ease !important;
   }
 
-  .expressive-code .copy button::before {
-    background-color: var(--polish-code-muted) !important;
+  /* Idle fill under icon — slight chrome so the hit target is visible */
+  .expressive-code .copy button div {
+    background: color-mix(in srgb, var(--polish-code-chrome) 70%, transparent) !important;
+    opacity: 1 !important;
   }
 
+  .expressive-code .copy button::before {
+    /* EC border ring — keep subtle */
+    border-color: color-mix(in srgb, var(--polish-code-muted) 35%, transparent) !important;
+    opacity: 1 !important;
+  }
+
+  /* Glyph = ::after with mask-image: var(--ec-frm-copyIcon) */
   .expressive-code .copy button::after {
-    /* kill any leftover text labels from older polish */
-    content: none !important;
-    display: none !important;
+    background-color: var(--polish-code-fg, var(--carina-code-fg)) !important;
+    opacity: 0.9 !important;
   }
 
   .expressive-code .frame:hover .copy button,
   .expressive-code .copy button:focus-visible,
-  .expressive-code .copy button:hover {
+  .expressive-code .copy button:hover,
+  .expressive-code .copy .feedback.show ~ button {
     opacity: 1 !important;
   }
 
-  .expressive-code .copy button:hover {
-    border-color: var(--carina-border) !important;
+  .expressive-code .copy button:hover,
+  .expressive-code .copy button:focus-visible {
+    background: var(--polish-code-chrome) !important;
+  }
+
+  .expressive-code .copy button:hover div,
+  .expressive-code .copy button:focus-visible div {
+    opacity: 1 !important;
     background: var(--polish-code-chrome) !important;
   }
 
   .expressive-code .copy button:focus-visible {
     outline: none !important;
+  }
+
+  .expressive-code .copy button:focus-visible::before {
     border-color: color-mix(in srgb, var(--carina-ion-cyan) 55%, var(--carina-border)) !important;
+    opacity: 1 !important;
   }
 
   .expressive-code .copy .feedback {
