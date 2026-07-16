@@ -32,16 +32,11 @@
     border: 2px solid transparent;
   }
 
-  /* ── Header ──────────────────────────────────────────────────────── */
-  /*
-   * Two-row header (Claude Code Docs / Mintlify anatomy):
-   * row 1 = brand + search + controls, row 2 = section tabs.
-   * --sl-nav-height grows on ≥md so the fixed layout offsets both rows.
-   */
+  /* ── Header (Mintlify two-row) ───────────────────────────────────── */
   header.header {
     background-color: var(--docs-bg-nav) !important;
-    backdrop-filter: blur(14px) saturate(1.25);
-    -webkit-backdrop-filter: blur(14px) saturate(1.25);
+    backdrop-filter: blur(16px) saturate(1.3);
+    -webkit-backdrop-filter: blur(16px) saturate(1.3);
     border-bottom: 1px solid var(--docs-border-subtle);
     transition:
       border-color var(--docs-transition),
@@ -49,25 +44,24 @@
       box-shadow var(--docs-transition);
     display: flex;
     flex-direction: column;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 0;
     padding-block: 0;
+    height: auto !important;
+    min-height: var(--sl-nav-height);
   }
 
-  header.header > .header {
-    height: 3.5rem;
+  /* Brand row only — tabs live as a sibling under .docs-header */
+  header.header .docs-header > .header,
+  header.header > .docs-header > .header {
+    height: var(--docs-nav-row-height);
     flex-shrink: 0;
-  }
-
-  @media (min-width: 50rem) {
-    :root {
-      --sl-nav-height: 5.75rem;
-    }
+    align-items: center;
   }
 
   html[data-scrolled='true'] header.header {
     border-bottom-color: var(--docs-border);
-    box-shadow: 0 1px 0 color-mix(in srgb, var(--docs-border-subtle) 80%, transparent);
+    box-shadow: var(--docs-elev-1);
   }
 
   .site-title {
@@ -80,18 +74,15 @@
 
   /*
    * Logo sizing only — do NOT set display.
-   * Starlight ships light+dark <img> pair toggled via .light:sl-hidden /
-   * .dark:sl-hidden in @layer starlight. A components-layer `display: block`
-   * would override those hide rules and show two logos at once.
+   * Starlight light/dark pair uses .light:sl-hidden / .dark:sl-hidden.
    */
   .site-title img,
   .site-title svg {
     height: var(--docs-logo-height);
     width: auto;
-    max-height: calc(var(--docs-nav-height) - 0.75rem);
+    max-height: calc(var(--docs-nav-row-height) - 0.875rem);
   }
 
-  /* Reaffirm theme toggle above any later display utilities */
   [data-theme='light'] .site-title img.light\:sl-hidden {
     display: none;
   }
@@ -100,15 +91,15 @@
     display: none;
   }
 
-  /* Tighter header link spacing */
   header.header .sl-flex {
-    gap: 0.35rem;
+    gap: 0.4rem;
   }
 
-  /* Social icons stay quiet until hovered (Mintlify) */
   .social-icons a {
     color: var(--docs-fg-muted);
-    transition: color var(--docs-transition), opacity var(--docs-transition);
+    transition:
+      color var(--docs-transition),
+      opacity var(--docs-transition);
   }
 
   .social-icons a:hover {
@@ -116,42 +107,61 @@
     opacity: 1;
   }
 
-  /* Centered rounded-full search pill (Mintlify header anatomy) */
-  header.header > .header > .sl-flex:has(site-search) {
+  /* Centered search pill */
+  header.header .header > .sl-flex:has(site-search) {
     flex: 1;
     justify-content: center;
+    min-width: 0;
   }
 
   site-search {
     width: 100%;
-    max-width: 26rem;
+    max-width: var(--docs-search-max);
   }
 
   button[data-open-modal] {
     width: 100%;
+    height: 2.25rem;
     border-radius: var(--docs-radius-full);
     border: 1px solid var(--docs-border-subtle);
-    background-color: color-mix(in srgb, var(--docs-bg-surface) 72%, transparent);
+    background-color: color-mix(in srgb, var(--docs-bg-surface) 78%, transparent);
     color: var(--docs-fg-subtle);
-    font-size: var(--text-body-sm);
-    padding-inline: 0.9rem 0.5rem;
+    font-size: 0.8125rem;
+    padding-inline: 0.85rem 0.45rem;
+    box-shadow: none;
+    transition:
+      border-color var(--docs-transition),
+      background-color var(--docs-transition),
+      box-shadow var(--docs-transition),
+      color var(--docs-transition);
+  }
+
+  button[data-open-modal]:hover {
+    border-color: var(--docs-border);
+    background-color: var(--docs-bg-raised);
+    color: var(--docs-fg-muted);
+    box-shadow: var(--docs-elev-1);
   }
 
   button[data-open-modal] kbd {
-    background-color: var(--docs-bg-raised);
+    background-color: var(--docs-bg);
     border: 1px solid var(--docs-border-subtle);
     border-radius: var(--docs-radius-sm);
     color: var(--docs-fg-subtle);
     font-family: var(--docs-font-sans);
+    font-size: 0.6875rem;
+    padding: 0.1rem 0.35rem;
+    gap: 0.1rem;
   }
 
-  /* Theme + language pickers: quiet ghost pills, icon-forward */
   starlight-theme-select label,
   starlight-lang-select label {
     border-radius: var(--docs-radius-md);
     padding-inline: 0.3rem;
     color: var(--docs-fg-muted);
-    transition: color var(--docs-transition), background-color var(--docs-transition);
+    transition:
+      color var(--docs-transition),
+      background-color var(--docs-transition);
   }
 
   starlight-theme-select label:hover,
@@ -345,11 +355,7 @@
     margin-top: 1.8em;
   }
 
-  /* ── Code (Expressive Code) ──────────────────────────────────────── */
-  /*
-   * Code frames are ALWAYS dark (Mintlify signature), so chrome reads from
-   * dark primitives — not theme-switching semantic tokens.
-   */
+  /* ── Code (Expressive Code) — always-dark Mintlify chrome ────────── */
   .expressive-code {
     --ec-frm-edBg: var(--carina-surface);
     --ec-frm-trmBg: var(--carina-surface);
@@ -361,66 +367,91 @@
     --ec-frm-edTabBarBg: var(--carina-surface-raised);
     --ec-frm-tooltipSuccessBg: var(--carina-spectral-green);
     --ec-frm-tooltipSuccessFg: var(--carina-void);
+    --ec-codePadBlk: 0.9rem;
+    --ec-codePadInl: 1rem;
+    font-size: 0.8125rem;
+    margin-block: var(--spacing-5);
   }
 
-  /* Slim terminal title bar: drop the traffic-light dots, tighten height */
   .expressive-code .frame.is-terminal .header::before {
     display: none;
   }
 
-  .expressive-code .frame .header {
-    border-bottom: 1px solid var(--carina-border-subtle);
-  }
-
-  .expressive-code .frame.is-terminal:not(.has-title) .header {
-    display: none;
-  }
-
-  .expressive-code {
-    font-size: 0.8125rem;
-  }
-
   .expressive-code .frame {
-    border-radius: var(--docs-radius-xl);
+    border-radius: var(--docs-radius-lg);
     border: 1px solid var(--carina-border-subtle);
     box-shadow: none !important;
+    overflow: hidden;
     transition: border-color var(--docs-transition);
-  }
-
-  .expressive-code .frame pre {
-    border-radius: inherit;
-    border: 0;
-  }
-
-  /* Language badge / frame title in mono caption */
-  .expressive-code .frame .title {
-    font-family: var(--docs-font-mono);
-    font-size: var(--text-caption);
   }
 
   .expressive-code .frame:hover {
     border-color: var(--carina-border);
   }
 
+  /* Title bar: filename / language chrome */
+  .expressive-code .frame .header {
+    border-bottom: 1px solid var(--carina-border-subtle);
+    background: var(--carina-surface-raised);
+    min-height: 2.25rem;
+  }
+
+  .expressive-code .frame.is-terminal:not(.has-title) .header {
+    display: none;
+  }
+
+  .expressive-code .frame .title {
+    font-family: var(--docs-font-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--carina-dust);
+    letter-spacing: 0.01em;
+  }
+
+  .expressive-code .frame pre {
+    border-radius: 0;
+    border: 0;
+  }
+
+  /* Copy: always discoverable on frame hover, Mintlify-like */
+  .expressive-code .copy {
+    inset-block-start: 0.45rem;
+    inset-inline-end: 0.45rem;
+  }
+
   .expressive-code .copy button {
+    width: 2rem;
+    height: 2rem;
+    border-radius: var(--docs-radius-md);
+    border: 1px solid var(--carina-border-subtle);
+    background: color-mix(in srgb, var(--carina-surface-raised) 90%, transparent);
+    opacity: 0.55;
     transition:
       opacity var(--docs-transition),
       background-color var(--docs-transition),
-      border-color var(--docs-transition);
+      border-color var(--docs-transition),
+      transform var(--docs-transition);
+  }
+
+  .expressive-code .frame:hover .copy button,
+  .expressive-code .copy button:focus-visible {
+    opacity: 1;
   }
 
   .expressive-code .copy button:hover {
     background: var(--carina-surface-raised);
     border-color: var(--carina-border);
+    transform: scale(1.02);
   }
 
   .sl-markdown-content code:not(:where(.expressive-code *)) {
     background: var(--docs-bg-raised);
     border: 1px solid var(--docs-border-subtle);
     border-radius: var(--docs-radius-sm);
-    padding: 0.1em 0.35em;
-    font-size: 0.9em;
+    padding: 0.12em 0.38em;
+    font-size: 0.875em;
     color: var(--docs-fg);
+    font-weight: 500;
   }
 
   /* ── Asides ──────────────────────────────────────────────────────── */
@@ -447,15 +478,11 @@
     margin-top: var(--spacing-2);
   }
 
-  /* ── Search ──────────────────────────────────────────────────────── */
-  dialog[open] {
-    animation: docs-dialog-in var(--docs-transition-medium) both;
-  }
-
+  /* ── Search modal (Mintlify-grade) ───────────────────────────────── */
   @keyframes docs-dialog-in {
     from {
       opacity: 0;
-      transform: translateY(-6px) scale(0.98);
+      transform: translateY(-8px) scale(0.98);
     }
     to {
       opacity: 1;
@@ -463,50 +490,111 @@
     }
   }
 
+  site-search dialog[open] {
+    animation: docs-dialog-in var(--docs-transition-medium) both;
+  }
+
+  site-search dialog::backdrop {
+    background: color-mix(in srgb, var(--docs-bg) 62%, transparent);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
+  site-search .dialog-frame {
+    border: 1px solid var(--docs-border-subtle) !important;
+    border-radius: var(--docs-radius-xl) !important;
+    background: var(--docs-bg-surface) !important;
+    box-shadow: var(--docs-elev-dialog) !important;
+    overflow: hidden;
+  }
+
   .pagefind-ui,
   [class*='pagefind'] {
     --pagefind-ui-primary: var(--docs-accent);
     --pagefind-ui-text: var(--docs-fg);
     --pagefind-ui-background: var(--docs-bg-surface);
-    --pagefind-ui-border: var(--docs-border);
+    --pagefind-ui-border: var(--docs-border-subtle);
     --pagefind-ui-border-width: 1px;
     --pagefind-ui-border-radius: var(--docs-radius-lg);
     --pagefind-ui-font: var(--docs-font-sans);
+    --pagefind-ui-scale: 0.95;
   }
 
-  site-search dialog,
-  .pagefind-ui__search-input,
-  .pagefind-ui__result {
+  #starlight__search .pagefind-ui__search-input {
+    font-size: 0.95rem !important;
+    font-weight: 500;
+    border-radius: var(--docs-radius-lg) !important;
+    background: var(--docs-bg) !important;
+    border: 1px solid var(--docs-border-subtle) !important;
+    color: var(--docs-fg) !important;
     transition:
-      background-color var(--docs-transition),
       border-color var(--docs-transition),
-      color var(--docs-transition);
+      box-shadow var(--docs-transition);
   }
 
-  .pagefind-ui__result-link:hover,
-  .pagefind-ui__result-link:focus-visible {
-    color: var(--docs-accent);
+  #starlight__search .pagefind-ui__search-input:focus {
+    border-color: var(--docs-accent) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--docs-accent) 22%, transparent);
+    outline: none;
   }
 
-  .pagefind-ui mark {
-    background: color-mix(in srgb, var(--docs-accent) 28%, transparent);
-    color: var(--docs-fg);
+  #starlight__search .pagefind-ui__result-title:not(:where(.pagefind-ui__result-nested *)),
+  #starlight__search .pagefind-ui__result-nested {
+    background-color: var(--docs-bg) !important;
+    border-radius: var(--docs-radius-md);
+    transition: background-color var(--docs-transition);
+  }
+
+  #starlight__search .pagefind-ui__result-title:not(:where(.pagefind-ui__result-nested *)):hover,
+  #starlight__search .pagefind-ui__result-title:not(:where(.pagefind-ui__result-nested *)):focus-within,
+  #starlight__search .pagefind-ui__result-nested:hover,
+  #starlight__search .pagefind-ui__result-nested:focus-within {
+    outline: 1px solid var(--docs-accent) !important;
+    background-color: var(--docs-bg-selected) !important;
+  }
+
+  #starlight__search .pagefind-ui__result-link {
+    color: var(--docs-fg) !important;
+    font-weight: 600;
+  }
+
+  #starlight__search .pagefind-ui__result-excerpt {
+    color: var(--docs-fg-muted);
+    font-size: 0.8125rem;
+  }
+
+  #starlight__search mark {
+    color: var(--docs-accent) !important;
+    background-color: color-mix(in srgb, var(--docs-accent) 16%, transparent) !important;
     border-radius: 2px;
-    padding: 0 2px;
+    font-weight: 600;
+    padding: 0 1px;
   }
 
-  button[data-open-modal],
-  site-search > button {
-    transition:
-      border-color var(--docs-transition),
-      background-color var(--docs-transition),
-      color var(--docs-transition);
+  #starlight__search .pagefind-ui__message {
+    color: var(--docs-fg-muted);
+    font-size: 0.875rem;
   }
 
-  button[data-open-modal]:hover,
-  site-search > button:hover {
-    border-color: var(--docs-border);
-    background-color: var(--docs-bg-raised);
+  /* ── Light elevation polish ──────────────────────────────────────── */
+  [data-theme='light'] .starlight-aside,
+  [data-theme='carina-light'] .starlight-aside {
+    box-shadow: var(--docs-elev-1);
+  }
+
+  [data-theme='light'] .card,
+  [data-theme='light'] .sl-link-card,
+  [data-theme='carina-light'] .card,
+  [data-theme='carina-light'] .sl-link-card {
+    box-shadow: var(--docs-elev-1);
+  }
+
+  [data-theme='light'] .sidebar-content a[aria-current='page'],
+  [data-theme='light'] .sidebar-content a[aria-current='true'],
+  [data-theme='carina-light'] .sidebar-content a[aria-current='page'],
+  [data-theme='carina-light'] .sidebar-content a[aria-current='true'] {
+    background-color: color-mix(in srgb, var(--docs-bg-raised) 90%, var(--docs-accent) 6%) !important;
+    box-shadow: inset 0 0 0 1px var(--docs-border-subtle);
   }
 
   /* ── Pagination / cards ──────────────────────────────────────────── */

@@ -75,15 +75,21 @@ export default defineConfig({
       // frame chrome is pinned to dark primitives in ux.css.
       expressiveCode: {
         themes: ['github-dark-default'],
-        // Apply the dark syntax theme unconditionally (not just under
-        // [data-theme='dark']) so code stays readable in light mode too.
+        // Always-dark code (Mintlify signature) in both site themes.
         themeCssSelector: () => ':root',
         useDarkModeMediaQuery: false,
         styleOverrides: {
           borderRadius: 'var(--radius-lg)',
           borderWidth: '1px',
+          codeFontFamily: 'var(--docs-font-mono)',
+          uiFontFamily: 'var(--docs-font-sans)',
           frames: {
             shadowColor: 'transparent',
+            editorBackground: 'var(--carina-surface)',
+            terminalBackground: 'var(--carina-surface)',
+            editorTabBarBackground: 'var(--carina-surface-raised)',
+            editorActiveTabBackground: 'var(--carina-surface)',
+            terminalTitlebarBackground: 'var(--carina-surface-raised)',
           },
         },
       },

@@ -49,7 +49,7 @@ Some methods use **dynamic scopes** (e.g. `workspace.patch.propose` escalates to
 
 ## Gateway contract
 
-```bash
+```bash title="terminal"
 carina gateway hello      # versioned contract snapshot (not an auth grant)
 carina gateway methods    # live method catalog
 ```
@@ -96,7 +96,7 @@ The `/v1` facade is **agent-first**, not provider-first. `model` selects a Carin
 
 ## Example
 
-```json
+```json title="session.create"
 // request
 {"jsonrpc":"2.0","id":1,"method":"session.create",
  "params":{"workspace_root":"/repo","profile":"safe-edit"}}
