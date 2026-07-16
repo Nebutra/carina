@@ -24,7 +24,40 @@ const resolvedTitle = title ?? defaults[variant];
 ---
 
 <aside class={`callout callout--${variant}`} role="note">
-  <p class="callout__title">{resolvedTitle}</p>
+  <p class="callout__title">
+    <svg
+      class="callout__icon"
+      viewBox="0 0 16 16"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      aria-hidden="true"
+    >
+      {
+        variant === 'success' ? (
+          <>
+            <circle cx="8" cy="8" r="6.25" />
+            <path d="M5.5 8.2 7.2 10l3.3-3.6" stroke-linecap="round" stroke-linejoin="round" />
+          </>
+        ) : variant === 'warning' || variant === 'danger' ? (
+          <>
+            <path d="M8 2.2 14.4 13H1.6L8 2.2Z" stroke-linejoin="round" />
+            <path d="M8 6.4v3" stroke-linecap="round" />
+            <circle cx="8" cy="11.2" r="0.55" fill="currentColor" stroke="none" />
+          </>
+        ) : (
+          <>
+            <circle cx="8" cy="8" r="6.25" />
+            <path d="M8 7.4v3.4" stroke-linecap="round" />
+            <circle cx="8" cy="5.1" r="0.55" fill="currentColor" stroke="none" />
+          </>
+        )
+      }
+    </svg>
+    {resolvedTitle}
+  </p>
   <div class="callout__body">
     <slot />
   </div>
@@ -35,10 +68,9 @@ const resolvedTitle = title ?? defaults[variant];
     --callout-accent: var(--docs-info);
     margin: var(--spacing-6) 0;
     padding: var(--spacing-4) var(--spacing-5);
-    border-radius: var(--docs-panel-radius);
-    border: 1px solid color-mix(in srgb, var(--callout-accent) 35%, transparent);
-    background: color-mix(in srgb, var(--callout-accent) 10%, var(--docs-bg-surface));
-    border-inline-start: 3px solid var(--callout-accent);
+    border-radius: var(--docs-radius-xl);
+    border: 1px solid color-mix(in srgb, var(--callout-accent) 32%, transparent);
+    background: color-mix(in srgb, var(--callout-accent) 7%, var(--docs-bg-surface));
   }
 
   .callout--tip {
@@ -58,11 +90,18 @@ const resolvedTitle = title ?? defaults[variant];
   }
 
   .callout__title {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
     margin: 0 0 var(--spacing-2);
     font-size: var(--text-body-sm);
     font-weight: var(--font-weight-semibold);
     color: var(--callout-accent);
     letter-spacing: 0.02em;
+  }
+
+  .callout__icon {
+    flex-shrink: 0;
   }
 
   .callout__body {

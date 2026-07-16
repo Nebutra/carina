@@ -28,7 +28,9 @@ export default defineConfig({
         PageTitle: './src/components/PageTitle.astro',
       },
       logo: {
-        src: './src/assets/carina-horizontal-brand.svg',
+        // Wordmark ink is baked into the SVG root color; ship one per theme.
+        light: './src/assets/carina-horizontal-brand.svg',
+        dark: './src/assets/carina-horizontal-brand-dark.svg',
         alt: 'Carina',
         replacesTitle: true,
       },
@@ -67,9 +69,14 @@ export default defineConfig({
       // Built-in Pagefind search (keyboard: /, Esc)
       pagefind: true,
       // Expressive Code: copy button, language label, line numbers via CSS overrides
+      // Code blocks stay dark in BOTH themes (Mintlify signature look);
+      // frame chrome is pinned to dark primitives in ux.css.
       expressiveCode: {
-        themes: ['github-dark-default', 'github-light'],
-        themeCssSelector: (theme) => `[data-theme='${theme.type}']`,
+        themes: ['github-dark-default'],
+        // Apply the dark syntax theme unconditionally (not just under
+        // [data-theme='dark']) so code stays readable in light mode too.
+        themeCssSelector: () => ':root',
+        useDarkModeMediaQuery: false,
         styleOverrides: {
           borderRadius: 'var(--radius-lg)',
           borderWidth: '1px',

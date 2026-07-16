@@ -79,13 +79,25 @@
     opacity: 1;
   }
 
-  /* Search trigger as a soft pill */
+  /* Centered rounded-full search pill (Mintlify header anatomy) */
+  header.header > .header > .sl-flex:has(site-search) {
+    flex: 1;
+    justify-content: center;
+  }
+
+  site-search {
+    width: 100%;
+    max-width: 26rem;
+  }
+
   button[data-open-modal] {
-    border-radius: var(--docs-radius-lg);
+    width: 100%;
+    border-radius: var(--docs-radius-full);
     border: 1px solid var(--docs-border-subtle);
     background-color: color-mix(in srgb, var(--docs-bg-surface) 72%, transparent);
     color: var(--docs-fg-subtle);
     font-size: var(--text-body-sm);
+    padding-inline: 0.9rem 0.5rem;
   }
 
   button[data-open-modal] kbd {
@@ -96,16 +108,28 @@
     font-family: var(--docs-font-sans);
   }
 
-  /* Theme + language pickers: compact, borderless until hover */
-  starlight-theme-select select,
-  starlight-lang-select select {
-    font-size: var(--text-body-sm);
+  /* Theme + language pickers: quiet ghost pills, icon-forward */
+  starlight-theme-select label,
+  starlight-lang-select label {
+    border-radius: var(--docs-radius-md);
+    padding-inline: 0.3rem;
     color: var(--docs-fg-muted);
+    transition: color var(--docs-transition), background-color var(--docs-transition);
   }
 
   starlight-theme-select label:hover,
   starlight-lang-select label:hover {
     color: var(--docs-fg);
+    background-color: color-mix(in srgb, var(--docs-bg-raised) 80%, transparent);
+  }
+
+  starlight-theme-select select,
+  starlight-lang-select select {
+    font-size: var(--text-caption);
+    color: inherit;
+    width: auto;
+    min-width: 6.5em;
+    text-overflow: unset;
   }
 
   /* ── Sidebar density ─────────────────────────────────────────────── */
@@ -274,13 +298,34 @@
   }
 
   /* ── Code (Expressive Code) ──────────────────────────────────────── */
+  /*
+   * Code frames are ALWAYS dark (Mintlify signature), so chrome reads from
+   * dark primitives — not theme-switching semantic tokens.
+   */
   .expressive-code {
-    --ec-frm-edBg: var(--docs-code-bg);
-    --ec-frm-trmBg: var(--docs-code-bg);
-    --ec-brdCol: var(--docs-code-border);
-    --ec-frm-edBdgBg: var(--docs-bg-surface);
-    --ec-frm-tooltipSuccessBg: var(--docs-success);
-    --ec-frm-tooltipSuccessFg: var(--docs-bg);
+    --ec-frm-edBg: var(--carina-surface);
+    --ec-frm-trmBg: var(--carina-surface);
+    --ec-brdCol: var(--carina-border-subtle);
+    --ec-frm-edBdgBg: var(--carina-surface-raised);
+    --ec-frm-edBdgFg: var(--carina-dust);
+    --ec-frm-trmTtbBg: var(--carina-surface-raised);
+    --ec-frm-trmTtbFg: var(--carina-dust);
+    --ec-frm-edTabBarBg: var(--carina-surface-raised);
+    --ec-frm-tooltipSuccessBg: var(--carina-spectral-green);
+    --ec-frm-tooltipSuccessFg: var(--carina-void);
+  }
+
+  /* Slim terminal title bar: drop the traffic-light dots, tighten height */
+  .expressive-code .frame.is-terminal .header::before {
+    display: none;
+  }
+
+  .expressive-code .frame .header {
+    border-bottom: 1px solid var(--carina-border-subtle);
+  }
+
+  .expressive-code .frame.is-terminal:not(.has-title) .header {
+    display: none;
   }
 
   .expressive-code {
@@ -289,13 +334,14 @@
 
   .expressive-code .frame {
     border-radius: var(--docs-radius-xl);
-    border: 1px solid var(--docs-code-border);
+    border: 1px solid var(--carina-border-subtle);
     box-shadow: none !important;
     transition: border-color var(--docs-transition);
   }
 
   .expressive-code .frame pre {
     border-radius: inherit;
+    border: 0;
   }
 
   /* Language badge / frame title in mono caption */
@@ -305,7 +351,7 @@
   }
 
   .expressive-code .frame:hover {
-    border-color: var(--docs-border);
+    border-color: var(--carina-border);
   }
 
   .expressive-code .copy button {
@@ -316,8 +362,8 @@
   }
 
   .expressive-code .copy button:hover {
-    background: var(--docs-bg-raised);
-    border-color: var(--docs-border);
+    background: var(--carina-surface-raised);
+    border-color: var(--carina-border);
   }
 
   .sl-markdown-content code:not(:where(.expressive-code *)) {
@@ -330,9 +376,27 @@
   }
 
   /* ── Asides ──────────────────────────────────────────────────────── */
+  /* Compact tinted card: thin border all round, no heavy edge bar */
   .starlight-aside {
-    border-radius: var(--docs-panel-radius);
-    border-width: 1px;
+    border-radius: var(--docs-radius-xl);
+    border: 1px solid var(--sl-color-asides-border, var(--docs-border-subtle));
+    border-inline-start-width: 1px;
+    padding: var(--spacing-4) var(--spacing-5);
+    font-size: var(--text-body-sm);
+  }
+
+  .starlight-aside__title {
+    font-size: var(--text-body-sm);
+    gap: 0.45rem;
+  }
+
+  .starlight-aside__title svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .starlight-aside__content {
+    margin-top: var(--spacing-2);
   }
 
   /* ── Search ──────────────────────────────────────────────────────── */
@@ -398,19 +462,52 @@
   }
 
   /* ── Pagination / cards ──────────────────────────────────────────── */
-  .pagination-links a {
-    border-radius: var(--docs-panel-radius);
-    border: 1px solid var(--docs-border-subtle);
-    background: var(--docs-bg-surface);
-    transition:
-      border-color var(--docs-transition),
-      background-color var(--docs-transition),
-      transform var(--docs-transition);
+  /* Minimal Mintlify footer nav: quiet labels, no card boxes */
+  .pagination-links {
+    border-top: 1px solid var(--docs-border-subtle);
+    padding-top: var(--spacing-6);
   }
 
-  .pagination-links a:hover {
-    border-color: var(--docs-accent);
-    background: var(--docs-bg-raised);
+  .pagination-links a {
+    border: 0;
+    border-radius: var(--docs-radius-md);
+    background: transparent;
+    box-shadow: none;
+    padding: var(--spacing-2) var(--spacing-3);
+    transition: color var(--docs-transition);
+  }
+
+  .pagination-links a b {
+    font-size: var(--text-body);
+    font-weight: var(--font-weight-medium);
+    color: var(--docs-fg);
+    transition: color var(--docs-transition);
+  }
+
+  .pagination-links a span {
+    font-size: var(--text-caption);
+    color: var(--docs-fg-subtle);
+  }
+
+  .pagination-links a:hover b {
+    color: var(--docs-accent);
+  }
+
+  .pagination-links a svg {
+    color: var(--docs-fg-subtle);
+    transition: color var(--docs-transition), transform var(--docs-transition);
+  }
+
+  .pagination-links a:hover svg {
+    color: var(--docs-accent);
+  }
+
+  .pagination-links a[rel='next']:hover svg {
+    transform: translateX(2px);
+  }
+
+  .pagination-links a[rel='prev']:hover svg {
+    transform: translateX(-2px);
   }
 
   .card,
