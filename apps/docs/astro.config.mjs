@@ -72,29 +72,35 @@ export default defineConfig({
         './src/styles/starlight-theme.css',
         './src/styles/typography.css',
         './src/styles/ux.css',
+        // Modular SaaS polish (loads last; overrides for Mintlify-grade UX)
+        './src/styles/polish/_tokens.css',
+        './src/styles/polish/code.css',
+        './src/styles/polish/nav.css',
+        './src/styles/polish/content.css',
+        './src/styles/polish/search.css',
+        './src/styles/polish/landing.css',
+        './src/styles/polish/motion.css',
       ],
       // Built-in Pagefind search (keyboard: /, Esc)
       pagefind: true,
-      // Expressive Code — theme-following code cards (Claude Docs reference:
-      // light page → light code card, dark page → dark). Chrome reads from
-      // theme-aware --docs-* tokens so it flips with the site theme.
+      // Expressive Code — always-dark mineral code cards (Mintlify signature).
+      // Chrome reads polish tokens so blocks stay mineral on light pages too.
       expressiveCode: {
-        themes: ['github-dark-default', 'github-light'],
-        themeCssSelector: (theme) => `[data-theme='${theme.type}']`,
+        themes: ['github-dark-default'],
         styleOverrides: {
-          borderRadius: 'var(--radius-xl)',
+          borderRadius: 'var(--radius-lg)',
           borderWidth: '1px',
-          borderColor: 'var(--docs-code-border)',
+          borderColor: 'var(--polish-code-border, var(--docs-code-border))',
           codeFontFamily: 'var(--docs-font-mono)',
           uiFontFamily: 'var(--docs-font-sans)',
           frames: {
             shadowColor: 'transparent',
-            editorBackground: 'var(--docs-bg-surface)',
-            terminalBackground: 'var(--docs-bg-surface)',
-            editorTabBarBackground: 'var(--docs-bg-raised)',
-            editorActiveTabBackground: 'var(--docs-bg-surface)',
-            terminalTitlebarBackground: 'var(--docs-bg-raised)',
-            terminalTitlebarBorderBottomColor: 'var(--docs-code-border)',
+            editorBackground: 'var(--polish-code-bg, var(--carina-surface))',
+            terminalBackground: 'var(--polish-code-bg, var(--carina-surface))',
+            editorTabBarBackground: 'var(--polish-code-chrome, var(--carina-surface-raised))',
+            editorActiveTabBackground: 'var(--polish-code-bg, var(--carina-surface))',
+            terminalTitlebarBackground: 'var(--polish-code-chrome, var(--carina-surface-raised))',
+            terminalTitlebarBorderBottomColor: 'var(--polish-code-border, var(--docs-code-border))',
           },
         },
       },

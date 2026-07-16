@@ -113,11 +113,10 @@
   --docs-sidebar-link-px: 0.65rem;
   --docs-sidebar-group-gap: 1px;
 
-  /* Elevation (light uses soft shadow; dark stays border-first) */
+  /* Elevation via hairlines only (no drop shadows — design system) */
   --docs-elev-1: 0 0 0 1px var(--docs-border-subtle);
   --docs-elev-2: 0 0 0 1px var(--docs-border);
-  --docs-elev-dialog: 0 0 0 1px var(--docs-border),
-    0 16px 48px color-mix(in srgb, var(--docs-bg) 55%, transparent);
+  --docs-elev-dialog: 0 0 0 1px var(--docs-border);
 
   /* ── Motion ────────────────────────────────────────────────────── */
   --docs-duration-fast: var(--duration-fast);
@@ -150,13 +149,7 @@
 [data-theme='carina-light'] {
   --docs-on-accent: #fffdf8;
   --docs-bg-nav: color-mix(in srgb, var(--color-background-page) 82%, transparent);
-  --docs-elev-1:
-    0 1px 2px rgb(24 32 35 / 0.04),
-    0 0 0 1px var(--docs-border-subtle);
-  --docs-elev-2:
-    0 4px 16px rgb(24 32 35 / 0.06),
-    0 0 0 1px var(--docs-border-subtle);
-  --docs-elev-dialog:
-    0 24px 64px rgb(24 32 35 / 0.14),
-    0 0 0 1px var(--docs-border-subtle);
+  --docs-elev-1: 0 0 0 1px var(--docs-border-subtle);
+  --docs-elev-2: 0 0 0 1px var(--docs-border);
+  --docs-elev-dialog: 0 0 0 1px var(--docs-border);
 }

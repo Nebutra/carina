@@ -62,11 +62,10 @@
     --sl-color-hairline-shade: var(--docs-bg-surface);
     --sl-color-backdrop-overlay: var(--docs-bg-overlay);
 
-    /* Flat hierarchy — borders over elevation */
+    /* Flat hierarchy — hairlines only (no drop shadows) */
     --sl-shadow-sm: 0 0 0 1px var(--docs-border-subtle);
     --sl-shadow-md: 0 0 0 1px var(--docs-border);
-    --sl-shadow-lg: 0 0 0 1px var(--docs-border),
-      0 12px 32px color-mix(in srgb, var(--docs-bg) 55%, transparent);
+    --sl-shadow-lg: 0 0 0 1px var(--docs-border);
 
     /*
      * Typography — set after starlight-tailwind so concrete stacks win.

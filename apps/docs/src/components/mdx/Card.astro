@@ -39,13 +39,15 @@ const Tag = href ? 'a' : 'div';
     transition:
       border-color var(--docs-transition),
       background-color var(--docs-transition),
-      box-shadow var(--docs-transition);
+      transform var(--docs-transition);
+    box-shadow: none;
   }
 
   a.docs-card:hover {
-    border-color: var(--docs-card-hover-border);
+    border-color: color-mix(in srgb, var(--docs-border) 70%, var(--docs-accent) 30%);
     background: var(--docs-bg-raised);
-    box-shadow: var(--docs-elev-1);
+    transform: translateY(-1px);
+    box-shadow: none;
   }
 
   a.docs-card:focus-visible {

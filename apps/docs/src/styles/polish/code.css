@@ -181,4 +181,62 @@
   .snippet-tabs__panel {
     color: var(--polish-code-fg);
   }
+
+  /* Landing terminal mock — same mineral surface */
+  .term {
+    box-shadow: var(--polish-inset-glow) !important;
+    border-color: var(--polish-code-border) !important;
+    background: var(--polish-code-bg) !important;
+  }
+
+  .term__chrome {
+    background: var(--polish-code-chrome) !important;
+    border-bottom-color: var(--polish-code-border) !important;
+  }
+
+  /*
+   * Soft syntax remap when EC exposes token classes (fallback-safe).
+   * Shiki inline colors still win when present; chrome stays mineral either way.
+   */
+  .expressive-code .token.keyword,
+  .expressive-code .token.builtin {
+    color: var(--polish-syn-keyword);
+  }
+
+  .expressive-code .token.string,
+  .expressive-code .token.template-string {
+    color: var(--polish-syn-string);
+  }
+
+  .expressive-code .token.number,
+  .expressive-code .token.boolean {
+    color: var(--polish-syn-number);
+  }
+
+  .expressive-code .token.function {
+    color: var(--polish-syn-func);
+  }
+
+  .expressive-code .token.comment {
+    color: var(--polish-syn-comment);
+    font-style: italic;
+  }
+
+  .expressive-code .token.type,
+  .expressive-code .token.class-name {
+    color: var(--polish-syn-type);
+  }
+
+  .expressive-code .token.operator,
+  .expressive-code .token.punctuation {
+    color: var(--polish-syn-operator);
+  }
+
+  /* Copy success tooltip — quiet brand feedback */
+  .expressive-code .copy .feedback {
+    border-radius: var(--radius-md);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
 }

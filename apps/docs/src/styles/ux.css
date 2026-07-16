@@ -311,10 +311,7 @@
     margin-top: var(--spacing-6);
   }
 
-  /* No chevrons — groups stay open, headings read as labels */
-  .sidebar-content summary svg.caret {
-    display: none;
-  }
+  /* Chevrons restored in polish/nav.css with rotate animation */
 
   /* ── Table of contents ───────────────────────────────────────────── */
   .right-sidebar {
@@ -764,15 +761,16 @@
     display: none !important;
   }
 
-  /* Primary CTAs inside splash markdown must keep on-accent ink */
+  /* Splash CTAs are outline-style — keep accent / starlight ink, kill underline */
   html:not([data-has-sidebar]) .sl-markdown-content a.hero__btn--primary,
   html:not([data-has-sidebar]) .sl-markdown-content a.not-found__btn--primary {
-    color: var(--docs-on-accent) !important;
-    -webkit-text-fill-color: var(--docs-on-accent);
+    color: var(--docs-accent) !important;
+    -webkit-text-fill-color: var(--docs-accent);
     text-decoration: none;
   }
 
-  html:not([data-has-sidebar]) .sl-markdown-content a.hero__btn--ghost {
+  html:not([data-has-sidebar]) .sl-markdown-content a.hero__btn--ghost,
+  html:not([data-has-sidebar]) .sl-markdown-content a.not-found__btn {
     color: var(--docs-fg);
     -webkit-text-fill-color: var(--docs-fg);
     text-decoration: none;

@@ -183,7 +183,8 @@ const {
       background-color var(--docs-transition),
       border-color var(--docs-transition),
       color var(--docs-transition),
-      box-shadow var(--docs-transition);
+      box-shadow var(--docs-transition),
+      transform var(--docs-transition);
   }
 
   .hero__btn:focus-visible {
@@ -191,19 +192,22 @@ const {
     outline-offset: 2px;
   }
 
+  /* Outline CTAs only — design system: no solid fills */
   .hero__btn--primary {
-    background: var(--docs-accent);
-    color: var(--docs-on-accent);
-    border: 1px solid transparent;
-    /* Beat .sl-markdown-content a { color: accent } so label never washes out */
-    -webkit-text-fill-color: var(--docs-on-accent);
+    background: transparent;
+    color: var(--docs-accent);
+    border: 1px solid color-mix(in srgb, var(--docs-accent) 65%, transparent);
+    -webkit-text-fill-color: var(--docs-accent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--docs-accent) 25%, transparent);
   }
 
   .hero__btn--primary:hover {
-    background: var(--docs-accent-hover);
-    color: var(--docs-on-accent);
-    -webkit-text-fill-color: var(--docs-on-accent);
-    box-shadow: 0 0 24px color-mix(in srgb, var(--docs-accent) 22%, transparent);
+    background: color-mix(in srgb, var(--docs-accent) 8%, transparent);
+    border-color: var(--docs-accent);
+    color: var(--docs-accent-hover);
+    -webkit-text-fill-color: var(--docs-accent-hover);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--docs-accent) 45%, transparent);
+    transform: translateY(-1px);
   }
 
   .hero__btn--ghost {
@@ -214,9 +218,11 @@ const {
   }
 
   .hero__btn--ghost:hover {
-    border-color: var(--docs-accent);
-    color: var(--docs-accent);
-    -webkit-text-fill-color: var(--docs-accent);
+    border-color: color-mix(in srgb, var(--docs-fg) 35%, var(--docs-border));
+    background: color-mix(in srgb, var(--docs-fg) 3%, transparent);
+    color: var(--docs-fg);
+    -webkit-text-fill-color: var(--docs-fg);
+    transform: translateY(-1px);
   }
 
   .hero__glow {

@@ -73,5 +73,43 @@
 
   #starlight__search .pagefind-ui__message {
     color: var(--docs-fg-muted);
+    font-size: 0.875rem;
+    padding-block: var(--spacing-6);
+    text-align: center;
+  }
+
+  #starlight__search .pagefind-ui__results {
+    padding-block: var(--spacing-2);
+  }
+
+  #starlight__search .pagefind-ui__result {
+    border-block-end: 1px solid var(--docs-border-subtle);
+  }
+
+  #starlight__search .pagefind-ui__result:last-child {
+    border-block-end: 0;
+  }
+
+  #starlight__search .pagefind-ui__result-excerpt {
+    color: var(--docs-fg-muted);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+
+  #starlight__search .pagefind-ui__button {
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--docs-fg-muted);
+    transition:
+      border-color var(--polish-transition),
+      color var(--polish-transition),
+      background-color var(--polish-transition);
+  }
+
+  #starlight__search .pagefind-ui__button:hover {
+    border-color: var(--docs-border);
+    color: var(--docs-fg);
+    background: color-mix(in srgb, var(--docs-fg) 3%, transparent);
   }
 }

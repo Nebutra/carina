@@ -93,16 +93,18 @@
   }
 
   .not-found__btn--primary {
-    background: var(--docs-accent);
-    border-color: transparent;
-    color: var(--docs-on-accent);
-    -webkit-text-fill-color: var(--docs-on-accent);
+    background: transparent;
+    border-color: color-mix(in srgb, var(--docs-accent) 65%, transparent);
+    color: var(--docs-accent);
+    -webkit-text-fill-color: var(--docs-accent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--docs-accent) 25%, transparent);
   }
 
   .not-found__btn--primary:hover {
-    background: var(--docs-accent-hover);
-    color: var(--docs-on-accent);
-    -webkit-text-fill-color: var(--docs-on-accent);
+    background: color-mix(in srgb, var(--docs-accent) 8%, transparent);
+    border-color: var(--docs-accent);
+    color: var(--docs-accent-hover);
+    -webkit-text-fill-color: var(--docs-accent-hover);
   }
 
   .not-found__btn:focus-visible {

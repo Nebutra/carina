@@ -68,9 +68,38 @@
   .pagination-links a,
   .card,
   .sl-link-card,
+  .docs-card,
   .docs-feedback,
-  .version-selector__select {
+  .version-selector__select,
+  .mdx-card,
+  .feature-card,
+  .qs-card {
     box-shadow: none !important;
+  }
+
+  .pagination-links a {
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--radius-lg);
+    transition:
+      border-color var(--polish-transition),
+      background-color var(--polish-transition),
+      transform var(--polish-transition);
+  }
+
+  .pagination-links a:hover {
+    border-color: var(--docs-border);
+    background: color-mix(in srgb, var(--docs-fg) 2.5%, transparent);
+    transform: translateY(-1px);
+  }
+
+  /* Mobile menu drawer — soft fade (Starlight toggles [aria-expanded]) */
+  @media (max-width: 49.999rem) {
+    nav.sidebar[aria-hidden='false'] .sidebar-pane,
+    nav.sidebar:not([aria-hidden='true']) .sidebar-pane {
+      transition:
+        transform var(--polish-transition),
+        opacity var(--polish-transition);
+    }
   }
 
   .version-selector__select {

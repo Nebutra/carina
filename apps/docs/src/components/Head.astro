@@ -1,13 +1,16 @@
 ---
 import Default from '@astrojs/starlight/components/Head.astro';
+import ReadingProgress from './ReadingProgress.astro';
 ---
 
 <Default {...Astro.props}><slot /></Default>
+<ReadingProgress />
 <script is:inline>
   (() => {
     const root = document.documentElement;
     const onScroll = () => {
-      root.dataset.scrolled = window.scrollY > 4 ? 'true' : 'false';
+      // Glass navbar engages after 80px of scroll (SaaS polish brief)
+      root.dataset.scrolled = window.scrollY > 80 ? 'true' : 'false';
     };
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });

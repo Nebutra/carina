@@ -92,11 +92,11 @@
     text-decoration-color: color-mix(in srgb, var(--docs-accent) 55%, transparent);
   }
 
-  /* Callouts / asides */
+  /* Callouts / asides — hairline card + subtle left accent (Mintlify note tiers) */
   .starlight-aside {
     border-radius: var(--radius-lg);
     border: 1px solid var(--docs-border-subtle);
-    border-inline-start: 1px solid var(--docs-border-subtle);
+    border-inline-start-width: 2px;
     padding: var(--spacing-4) var(--spacing-5);
     background: color-mix(in srgb, var(--docs-bg-surface) 88%, transparent);
     box-shadow: var(--polish-inset-glow);
@@ -105,23 +105,27 @@
   }
 
   .starlight-aside--note {
-    border-color: color-mix(in srgb, var(--docs-info) 35%, var(--docs-border-subtle));
+    border-color: color-mix(in srgb, var(--docs-info) 28%, var(--docs-border-subtle));
+    border-inline-start-color: color-mix(in srgb, var(--docs-info) 75%, transparent);
     background: color-mix(in srgb, var(--docs-info) 6%, var(--docs-bg-surface));
   }
 
   .starlight-aside--tip {
-    border-color: color-mix(in srgb, var(--docs-accent) 35%, var(--docs-border-subtle));
+    border-color: color-mix(in srgb, var(--docs-accent) 28%, var(--docs-border-subtle));
+    border-inline-start-color: color-mix(in srgb, var(--docs-accent) 75%, transparent);
     background: color-mix(in srgb, var(--docs-accent) 6%, var(--docs-bg-surface));
   }
 
   .starlight-aside--caution,
   .starlight-aside--warning {
-    border-color: color-mix(in srgb, var(--docs-warning) 40%, var(--docs-border-subtle));
+    border-color: color-mix(in srgb, var(--docs-warning) 32%, var(--docs-border-subtle));
+    border-inline-start-color: color-mix(in srgb, var(--docs-warning) 80%, transparent);
     background: color-mix(in srgb, var(--docs-warning) 7%, var(--docs-bg-surface));
   }
 
   .starlight-aside--danger {
-    border-color: color-mix(in srgb, var(--docs-danger) 40%, var(--docs-border-subtle));
+    border-color: color-mix(in srgb, var(--docs-danger) 32%, var(--docs-border-subtle));
+    border-inline-start-color: color-mix(in srgb, var(--docs-danger) 80%, transparent);
     background: color-mix(in srgb, var(--docs-danger) 7%, var(--docs-bg-surface));
   }
 
@@ -129,6 +133,10 @@
     font-size: 0.8125rem;
     font-weight: 600;
     letter-spacing: 0.01em;
+  }
+
+  .starlight-aside__icon {
+    opacity: 0.9;
   }
 
   /* Tables — hairlines only, quiet hover */

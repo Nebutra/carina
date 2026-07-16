@@ -192,9 +192,29 @@
     opacity: 0.8;
   }
 
+  /* Soft expand: avoid hard cut on group open (content-visibility friendly) */
+  .sidebar-content details > ul {
+    transition: opacity var(--polish-transition);
+  }
+
+  .sidebar-content details:not([open]) > ul {
+    opacity: 0;
+  }
+
+  .sidebar-content details[open] > ul {
+    opacity: 1;
+  }
+
   .sidebar-content details + details,
   .sidebar-content > ul > li + li {
     margin-top: var(--spacing-4);
+  }
+
+  /* Breathing room: slightly wider rail on large screens */
+  @media (min-width: 72rem) {
+    :root {
+      --sl-sidebar-width: 16.5rem;
+    }
   }
 
   /* Quiet scrollbars in chrome */
