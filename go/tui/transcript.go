@@ -576,7 +576,19 @@ func presentTaskEvent(p eventPresentation, ev, payload map[string]any) eventPres
 		p.Kind, p.Title = presentationContext, strings.ReplaceAll(status, "_", " ")
 		p.Status = lifecycleStatus(status)
 		p.Summary = joinValues(payload, "engine", "tool", "savings_percent", "error")
-	case status == "permission_requested" || status == "approval_resolved" || status == "risk_review":
+	case status == "risk_review":
+		// Autonomous always-approve path: make guardian-style review visible
+		// (outcome/risk/rationale), not only a bare capability string.
+		p.Kind, p.Title = presentationGovernance, "risk review"
+		p.Status = lifecycleStatus(status)
+		p.Summary = joinValues(payload, "outcome", "risk", "capability", "mode")
+		if r := str(payload["rationale"]); r != "" {
+			p.Body = []string{r}
+			p.BodyProse = true
+			p.Collapsible = true
+			p.Collapsed = false
+		}
+	case status == "permission_requested" || status == "approval_resolved":
 		p.Kind, p.Title = presentationGovernance, strings.ReplaceAll(status, "_", " ")
 		p.Status = lifecycleStatus(status)
 		p.Summary = joinValues(payload, "capability", "resource", "decision_id")

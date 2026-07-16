@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	maxUserQuestionOptions = 6
-	maxUserQuestionPrompt  = 500
+	maxUserQuestionOptions  = 6
+	maxUserQuestionPrompt   = 500
+	maxUserQuestionFreeText = 2000
 )
 
 type userQuestionOption struct {
@@ -44,8 +45,12 @@ func normalizeUserQuestion(prompt string, options []userQuestionOption) (string,
 	if len([]rune(prompt)) > maxUserQuestionPrompt {
 		return "", nil, fmt.Errorf("ask_user prompt exceeds %d characters", maxUserQuestionPrompt)
 	}
+	// Free-text mode: omit options (or pass empty). Structured mode needs 2–6.
+	if len(options) == 0 {
+		return prompt, nil, nil
+	}
 	if len(options) < 2 || len(options) > maxUserQuestionOptions {
-		return "", nil, fmt.Errorf("ask_user requires 2-%d options", maxUserQuestionOptions)
+		return "", nil, fmt.Errorf("ask_user requires 0 options (free text) or 2-%d structured options", maxUserQuestionOptions)
 	}
 	seen := make(map[string]bool, len(options))
 	normalized := make([]userQuestionOption, 0, len(options))
@@ -156,7 +161,10 @@ func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.Task
 	}
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "operator", payload, "")
 	if timedOut {
-		return toolTimedOut("User did not answer the structured question before it expired. Continue with the safest reversible option or ask again if the choice is required.")
+		return toolTimedOut("User did not answer the question before it expired. Continue with the safest reversible option or ask again if the choice is required.")
+	}
+	if len(optionMap) == 0 {
+		return toolCompleted(fmt.Sprintf("User answered (free text): %s", answer.Value))
 	}
 	option := optionMap[answer.Value]
 	return toolCompleted(fmt.Sprintf("User selected %q (value: %s).", option.Label, option.Value))
@@ -175,14 +183,21 @@ func (d *Daemon) handleUserAnswer(params json.RawMessage) (any, error) {
 	if p.QuestionID == "" || p.Value == "" {
 		return nil, fmt.Errorf("question_id and value are required")
 	}
+	if len([]rune(p.Value)) > maxUserQuestionFreeText {
+		return nil, fmt.Errorf("answer exceeds %d characters", maxUserQuestionFreeText)
+	}
 	d.questionMu.Lock()
 	pending := d.pendingQuestions[p.QuestionID]
 	d.questionMu.Unlock()
 	if pending == nil {
 		return nil, fmt.Errorf("no pending user question %s", p.QuestionID)
 	}
-	if _, ok := pending.options[p.Value]; !ok {
-		return nil, fmt.Errorf("invalid answer %q for question %s", p.Value, p.QuestionID)
+	// Structured questions require a listed option value; free-text questions
+	// (empty options map) accept any non-empty operator reply.
+	if len(pending.options) > 0 {
+		if _, ok := pending.options[p.Value]; !ok {
+			return nil, fmt.Errorf("invalid answer %q for question %s", p.Value, p.QuestionID)
+		}
 	}
 	pending.mu.Lock()
 	defer pending.mu.Unlock()

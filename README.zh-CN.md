@@ -100,6 +100,67 @@ brew upgrade carina
 `brew update carina` 不是有效的 Homebrew 命令；`brew update` 更新包索引，
 `brew upgrade carina` 升级已安装的 Carina。安装后不会自动启动 daemon。
 
+## 内置更新
+
+任何安装方式都可以检查或安装最新公开版本：
+
+```bash
+carina update --check
+carina update
+```
+
+Homebrew 安装会交回 `brew` 管理，npm/pnpm 安装会交回对应包管理器。独立安装和
+源码树中的 `bin/carina` 会下载完整平台包，验证公开 SHA256、包内 manifest 与
+内部 checksums，拒绝不安全的归档路径，并以支持失败回滚的事务整体替换同目录
+运行时。独立安装可用 `--version x.y.z` 指定版本；仅在明确需要重装或降级时使用
+`--force`。更新器不会自动终止正在执行任务的 daemon，请在任务结束后重启。
+
+## TUI 交互与快捷键
+
+直接运行 `carina-tui`，或在交互终端中运行裸 `carina`。任务提交等待 daemon
+确认期间，控制键仍可用；其间的普通输入/粘贴会进入独立的下一稿草稿，不会改写
+已冻结的提交。
+
+默认交互循环：
+
+- 空闲时 `Enter` 提交，任务进行中则 steer；`Tab` 排队后续轮次，`Alt+Up` 取回
+  最新排队草稿编辑。
+- `Shift+Enter` / `Alt+Enter` / `Ctrl+J` 换行。`Ctrl+R` 按当前 workspace 搜索
+  提示历史。
+- `Esc` 中断活动任务；空闲且输入框为空时连按两次 `Esc` 打开 checkpoint
+  选择器（先预览再 `y`+`Enter` 确认恢复）。
+- `Alt+R` 纯文本 transcript，`F1` 帮助；鼠标滚轮滚动当前聚焦的 transcript /
+  approval / question / help 等表面。
+- 空输入框按 `!` 进入 **粘性 shell 模式**（提示符 `! `，Enter 走受治理的
+  `command.exec`）；空草稿 `Esc` 回到聊天。普通模式下 `!cmd` 仍是一次性 shell。
+- `/settings`（或 `Ctrl+,`）打开控制壳。`/plan` 在 `.carina/plans/` 脚手架计划
+  文件；`/approve-plan` 退出计划模式。
+- **产品 HITL 模式**（页脚；配置 `approval_mode` / 环境变量
+  `CARINA_APPROVAL_MODE` / 标志 `-approval-mode` / 命令 `/approval-mode`）：
+  - `ask` — `requires_approval` 时暂停，操作者可 once / session / project
+  - `always-approve` — 自动放行 `requires_approval`（**开屏警告**，
+    `/always-approve`）；deny 规则、计划模式、OS 沙箱仍生效；自主路径会做
+    risk review 并在 transcript 中可见
+  - `dont-ask` — 无精确 session/project grant 则直接拒绝（不弹窗，适合 CI）；
+    也可用 `/dont-ask`
+  - 组织可用 `"disable_always_approve": true` 锁定禁止 YOLO（`/etc/carina/managed.json`
+    的 `locked_keys`）
+  - **与 session/kernel 审批轴不同：** 创建会话时的
+    `untrusted` \| `on_request` \| `never` 控制内核如何升级/自动放行；产品模式
+    是内核仍返回 `requires_approval` 后 daemon 怎么做。**不要**把产品
+    `approval_mode` 设为 `never`（会被拒绝，以免与 session `never` 混淆）
+- `/btw <问题>` 在当前会话仅回答；`/btw --fork` / `/side` 会 `session.fork`
+  并切换到子会话（尚无双栏并排 UI）
+- 上下文压力约在 80%/90% 提示；仅当存在可 `session.checkpoint.compact` 的
+  暂停 checkpoint 时才会 auto-compact
+- Agent 可用 `ask_user`：**带 2–6 选项** 的结构化选择题，或**省略 options**
+  的自由文本问法
+
+界面语言：英文、简体中文（`zh-CN`/`zh-Hans`，运行时键 `zh`）、日、韩、西、法。
+**繁体中文（`zh-Hant`/`zh-TW`/`zh-HK`）尚未交付独立文案**——系统检测未支持
+语言时静默回落英文；显式指定不支持的 locale 会 fail-fast，不会静默换成另一种
+语言。
+
 ## 从源码快速开始
 
 要求：

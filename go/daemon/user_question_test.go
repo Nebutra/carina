@@ -7,6 +7,53 @@ import (
 	"time"
 )
 
+func TestAskUserFreeTextBlocksUntilAnswer(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(workspace, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "name")
+
+	questions := make(chan map[string]any, 1)
+	d.events.Tap(func(_ string, ev map[string]any) {
+		if ev["type"] == "user.question" {
+			questions <- ev
+		}
+	})
+	result := make(chan string, 1)
+	go func() {
+		result <- d.askUser(sess, task, "What should we call this?", nil)
+	}()
+
+	var question map[string]any
+	select {
+	case question = <-questions:
+	case <-time.After(2 * time.Second):
+		t.Fatal("user.question was not published")
+	}
+	questionID, _ := question["question_id"].(string)
+	if questionID == "" {
+		t.Fatal("missing question_id")
+	}
+	// Free-text mode: options may be absent or empty.
+	if opts, ok := question["options"].([]userQuestionOption); ok && len(opts) != 0 {
+		t.Fatalf("want free-text (no options), got %+v", opts)
+	}
+	if _, err := d.handleUserAnswer(mustJSON(t, map[string]any{
+		"question_id": questionID, "value": "Nova Gateway",
+	})); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case observation := <-result:
+		if !strings.Contains(observation, "Nova Gateway") || !strings.Contains(strings.ToLower(observation), "free text") {
+			t.Fatalf("observation = %q", observation)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ask_user free-text did not resume")
+	}
+}
+
 func TestAskUserBlocksUntilStructuredAnswerAndAuditsLifecycle(t *testing.T) {
 	d, workspace := newLoopDaemon(t)
 	defer d.Close()

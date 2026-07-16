@@ -36,7 +36,8 @@ const toolsHelp = `Available tools:
 - {"tool":"run","command":["prog","arg"]}      run a workspace-scoped, policy-gated command (OS sandboxing depends on daemon configuration)
 - {"tool":"patch","path":"rel/path","content":"FULL new file content"}   propose+apply an edit (transactional, rollbackable)
 - {"tool":"memory","target":"memory|user","action":"add|replace|remove|batch","content":"fact","old_text":"unique substring","operations":[...]}   update governed long-term memory
-- {"tool":"ask_user","prompt":"Which approach should I use?","options":[{"label":"Minimal fix","value":"minimal","description":"Smallest safe change"},{"label":"Refactor","value":"refactor"}]}   pause for a structured operator choice
+- {"tool":"ask_user","prompt":"Which approach should I use?","options":[{"label":"Minimal fix","value":"minimal","description":"Smallest safe change"},{"label":"Refactor","value":"refactor"}]}   pause for a structured operator choice (2-6 options)
+- {"tool":"ask_user","prompt":"What should the feature be named?"}   free-text operator reply (omit options)
 - {"tool":"code.search","query":"free text or identifier"}      ranked code search (BM25+exact)
 - {"tool":"code.symbols","name":"SymbolName"}                   definitions + references
 - {"tool":"code.map"}                                           compact ranked repo map

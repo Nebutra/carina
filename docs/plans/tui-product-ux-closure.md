@@ -76,6 +76,14 @@ Perception, workflow entry, extensions hub, semantic honesty, writable control, 
 - Dual-axis naming documented in README, enterprise, `/explain`  
 - Working-tree hygiene: feature commits must not mix brand/CLI WIP  
 
+### Wave I — WIP + product/i18n closure — **done**
+
+- Free-text `ask_user` (omit options); structured still 2–6 options  
+- Risk review outcome/risk/rationale visible in TUI transcript  
+- README.zh-CN TUI/HITL/dual-axis + sticky shell + free-text  
+- Local agent dirs (`.agents`/`.claude`/…) gitignored  
+- Uncommitted clusters landed: TUI question keys/grapheme, `carina update`, brand  
+
 ## Still intentionally open
 
 | Item | Why deferred |
@@ -86,7 +94,10 @@ Perception, workflow entry, extensions hub, semantic honesty, writable control, 
 | `acceptEdits` product mode | Optional Wave; capability whitelist |
 | Prefix grants + dangerous list | Fatigue vs width trade-off |
 | Subagent permission inheritance table | Swarm product contract |
+| Full Traditional Chinese catalogs (`zh-Hant`/`zh-TW`/`zh-HK`) | Not authored; system → en, explicit → fail-fast (honest) |
 | ACP / remote marketplace / silent YOLO | Ecosystem / brand |
+| IME human matrix (macOS Pinyin / fcitx5) | External terminal matrix |
+| `apps/docs` Astro site | Scaffold untracked; separate productization |
 
 ## Acceptance (repository)
 

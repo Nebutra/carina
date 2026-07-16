@@ -188,6 +188,10 @@ The default interaction loop is:
   forks a session and switches to it (no dual-pane).
 - Context pressure notices appear around 80%/90%; auto-compact runs only when
   a paused checkpoint makes `session.checkpoint.compact` available.
+- Agent `ask_user`: **structured** (2–6 options) or **free-text** (omit
+  `options`); free-text answers use the TUI free-text field.
+- Autonomous **risk review** (always-approve path) is projected into the
+  transcript with outcome / risk / rationale.
 
 The TUI normally uses the alternate screen. To keep the rendered session in
 the terminal's normal buffer, use `carina-tui --no-alt-screen`, or set
