@@ -15,13 +15,13 @@ Close the gap between Carina’s **governed runtime** and a **product-grade agen
 | Settings / extensions as modal | Grok `/settings`; CC LocalJSX `/config` | **Yes** | Inventory dump was the top complaint |
 | Status line: model · mode · permissions · context% | Grok footer; Codex `/status` | **Yes** | Continuous “where am I?” |
 | Shift+Tab mode cycle | Grok | **Partial** | Only **build↔plan**; never silent YOLO on cycle |
-| Plan file + approve UI | Grok `plan.md` + `a` approve | **Partial** | `.carina/plans/<session>.md` + `/approve-plan`; no line-comment review UI |
+| Plan file + approve UI | Grok `plan.md` + `a` approve | **Partial** | `.carina/plans/` + plan review overlay (`a`/`s`/`q`); no line-comment ranges |
 | Skill as invocable slash | Grok + CC | **Yes** | Discoverability = execution |
 | `/btw` side question | Codex Side/Btw; CC btw | **Partial** | Default answer-only; `/btw --fork` and `/side` call `session.fork` then switch session (no dual-pane) |
 | `/commit` PromptCommand + git context | CC commit.ts | **Yes** | `workspace.diff` injected; commit-only rules |
 | Extensions enable/disable | Grok extensions modal | **Partial** | `/extension enable\|disable` (admin-scope RPC) |
 | Welcome / inspect readiness | Grok `/home`; CC doctor | **Yes** | `/inspect` `/welcome` |
-| Permission modes (ask / dontAsk / bypass) | Grok/CC | **Yes (product HITL)** | `ask` \| `always-approve` \| `dont-ask` + org lock |
+| Permission modes (ask / dontAsk / bypass / acceptEdits) | Grok/CC | **Yes (product HITL)** | `ask` \| `always-approve` \| `dont-ask` \| `accept-edits` + org lock |
 | Full marketplace / ACP / voice / silent YOLO | Grok/CC/Codex | **Defer** | Ecosystem / brand conflict |
 
 ## Trade-offs
@@ -36,7 +36,7 @@ Close the gap between Carina’s **governed runtime** and a **product-grade agen
 
 3. **Two approval axes (do not conflate names)**  
    - **Session/kernel:** `untrusted` \| `on_request` \| `never` on `session.create` / `InitSessionFull` — how the profile escalates or auto-allows at the kernel.  
-   - **Product HITL:** `ask` \| `always-approve` \| `dont-ask` on daemon config / `/approval-mode` — what the daemon does when the kernel still returns `requires_approval`.  
+   - **Product HITL:** `ask` \| `always-approve` \| `dont-ask` \| `accept-edits` on daemon config / `/approval-mode` — what the daemon does when the kernel still returns `requires_approval`.  
    Session `never` is **not** a product-mode alias (rejected with an explicit error).
 
 4. **Settings mutation depth**  
@@ -69,6 +69,12 @@ Perception, workflow entry, extensions hub, semantic honesty, writable control, 
 - `dont-ask`: deny without exact grant; no `permission.request`  
 - `disable_always_approve` manage-lockable  
 - Config/env/CLI: `approval_mode`, `CARINA_APPROVAL_MODE`, `-approval-mode`  
+
+### Wave L — accept-edits + plan review overlay — **done**
+- Product mode `accept-edits`: auto-allow `FileWrite`/`PatchApply` requires_approval; shell/network/secrets still prompt  
+- `/accept-edits`, `/approval-mode accept-edits`, footer token  
+- Plan review overlay via `/view-plan`: `a` approve, `s` request changes, `q` quit plan, esc close, j/k scroll  
+
 
 ### Wave H — quality hygiene — **done**
 - Closure plan + roadmap TUI section re-synced to E–G  
@@ -104,18 +110,17 @@ Perception, workflow entry, extensions hub, semantic honesty, writable control, 
 |------|----------------|
 | Mid-run auto-compact without paused checkpoint | Needs new daemon compact policy |
 | Multi-pane dual-session TUI | Layout product; fork switches session today |
-| Plan review overlay (a/s/c comments) | UX only; gate already hard |
-| `acceptEdits` product mode | Optional Wave; capability whitelist |
+| Plan line-range comments (Grok `c`) | Overlay has a/s/q only |
 | Prefix grants + dangerous list | Fatigue vs width trade-off |
 | Subagent permission inheritance table | Swarm product contract |
 | Hand-authored Traditional Chinese (non-derived) native review | Shipped as OpenCC-derived `zh-Hant`; native TW/HK editorial pass optional |
 | ACP / remote marketplace / silent YOLO | Ecosystem / brand |
 | IME human matrix (macOS Pinyin / fcitx5) | External terminal matrix |
-| `apps/docs` Astro site | Scaffold untracked; separate productization |
 
 ## Acceptance (repository)
 
 - [x] `go test ./go/tui/ ./go/daemon/ ./go/config/` green for HITL surfaces  
-- [x] Footer shows `ask` \| `always-approve` \| `dont-ask`  
+- [x] Footer shows `ask` \| `always-approve` \| `dont-ask` \| `accept-edits`  
 - [x] Session axis ≠ product axis (normalize rejects `never`/`on_request`/`untrusted`)  
-- [x] This document matches shipped Wave E–G behavior  
+- [x] Plan review overlay + accept-edits mode shipped (Wave L)  
+- [x] This document matches shipped Wave E–L behavior  

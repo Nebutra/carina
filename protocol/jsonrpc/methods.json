@@ -19,7 +19,7 @@
       { "method": "daemon.doctor", "scope": "read", "remote": true, "params": {}, "result": "DoctorReport" },
       { "method": "daemon.remote.disable", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "on": "boolean" }, "result": "{ remote_disabled: boolean }" },
       { "method": "daemon.reload", "scope": "admin", "remote": false, "control_plane_write": true, "params": {}, "result": "{ reloaded: boolean }" },
-      { "method": "daemon.set_interactive_approval", "scope": "write", "remote": false, "control_plane_write": true, "params": { "on": "boolean?", "mode": "ask|always-approve|dont-ask?", "session_id": "string?" }, "result": "{ interactive_approval: boolean, approval_mode: ask|always-approve|dont-ask, previous_mode: string, disable_always_approve: boolean, warning: string }", "notes": "Product HITL axis only. Session/kernel untrusted|on_request|never is session.create — rejected if passed as mode." }
+      { "method": "daemon.set_interactive_approval", "scope": "write", "remote": false, "control_plane_write": true, "params": { "on": "boolean?", "mode": "ask|always-approve|dont-ask|accept-edits?", "session_id": "string?" }, "result": "{ interactive_approval: boolean, approval_mode: ask|always-approve|dont-ask|accept-edits, previous_mode: string, disable_always_approve: boolean, warning: string }", "notes": "Product HITL axis only. Session/kernel untrusted|on_request|never is session.create — rejected if passed as mode. accept-edits auto-allows FileWrite/PatchApply only." }
     ],
     "usage": [
       { "method": "usage.cost", "scope": "read", "remote": true, "params": { "session_id": "string?", "task_id": "string?" }, "result": "UsageCostReport" }

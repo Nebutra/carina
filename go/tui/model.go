@@ -248,6 +248,7 @@ type Model struct {
 	approvalOrder         map[string]uint64
 	approvalNextSeq       uint64
 	approvalOutcomeSeq    uint64
+	planReview            *planReviewState
 	question              *questionState
 	questionQueue         []map[string]any
 	questionSeen          map[string]bool

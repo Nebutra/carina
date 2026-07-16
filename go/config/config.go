@@ -282,11 +282,12 @@ func (c Config) Validate() error {
 		switch mode {
 		case "ask", "interactive",
 			"always-approve", "always_approve", "alwaysapprove", "yolo", "bypass", "bypasspermissions",
-			"dont-ask", "dont_ask", "dontask", "deny-by-default", "deny_by_default":
+			"dont-ask", "dont_ask", "dontask", "deny-by-default", "deny_by_default",
+			"accept-edits", "accept_edits", "acceptedits":
 		case "never", "untrusted", "on_request", "on-request":
-			return fmt.Errorf("config: approval_mode %q is the session/kernel axis (untrusted|on_request|never); product HITL uses ask|always-approve|dont-ask", mode)
+			return fmt.Errorf("config: approval_mode %q is the session/kernel axis (untrusted|on_request|never); product HITL uses ask|always-approve|dont-ask|accept-edits", mode)
 		default:
-			return fmt.Errorf("config: approval_mode must be one of ask, always-approve, dont-ask")
+			return fmt.Errorf("config: approval_mode must be one of ask, always-approve, dont-ask, accept-edits")
 		}
 	}
 	// Org lock must not be defeated by an explicit always-approve default.

@@ -143,12 +143,16 @@ Homebrew 安装会交回 `brew` 管理，npm/pnpm 安装会交回对应包管理
     risk review 并在 transcript 中可见
   - `dont-ask` — 无精确 session/project grant 则直接拒绝（不弹窗，适合 CI）；
     也可用 `/dont-ask`
+  - `accept-edits` — 自动放行 `FileWrite`/`PatchApply` 的 `requires_approval`；
+    Shell/网络/secret 仍需确认（`/accept-edits`）
   - 组织可用 `"disable_always_approve": true` 锁定禁止 YOLO（`/etc/carina/managed.json`
     的 `locked_keys`）
   - **与 session/kernel 审批轴不同：** 创建会话时的
     `untrusted` \| `on_request` \| `never` 控制内核如何升级/自动放行；产品模式
     是内核仍返回 `requires_approval` 后 daemon 怎么做。**不要**把产品
     `approval_mode` 设为 `never`（会被拒绝，以免与 session `never` 混淆）
+- `/plan` 在 `.carina/plans/` 脚手架；**`/view-plan`** 打开计划审阅浮层
+  （`a` 批准、`s` 请求修改、`q` 退出 plan、`esc` 关闭）。`/approve-plan` 仍可用。
 - `/btw <问题>` 在当前会话仅回答；`/btw --fork` / `/side` 会 `session.fork`
   并切换到子会话（尚无双栏并排 UI）
 - 上下文压力约在 80%/90% 提示；仅当存在可 `session.checkpoint.compact` 的

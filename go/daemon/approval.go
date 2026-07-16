@@ -77,9 +77,68 @@ func approvalModeWarning(mode string) string {
 		return "always-approve auto-allows requires_approval tool calls; deny rules, plan mode, and sandbox still apply"
 	case approvalModeDontAsk:
 		return "dont-ask denies requires_approval unless an exact session/project grant already exists; no operator prompt"
+	case approvalModeAcceptEdits:
+		return "accept-edits auto-allows FileWrite/PatchApply requires_approval; shell, network, and secrets still prompt; deny rules, plan mode, and sandbox still apply"
 	default:
 		return ""
 	}
+}
+
+// autoApproveRequiresApproval runs risk review then kernel approve-as-agent.
+// Used by always-approve and by accept-edits for edit capabilities only.
+func (d *Daemon) autoApproveRequiresApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
+	if !d.reviewAutonomousApproval(sess, task, dec, label) {
+		d.closePendingApproval(sess, task, dec, "denied", "autonomous risk review denied approval")
+		return dec, false
+	}
+	approved, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "agent", "")
+	if err != nil || approved.Decision != "allowed" {
+		return dec, false
+	}
+	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+		return dec, false
+	}
+	return approved, true
+}
+
+// interactiveApproveRequiresApproval pauses for the operator (ask path body).
+func (d *Daemon) interactiveApproveRequiresApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
+	resolved, granted, scope, terminal := d.awaitInteractiveApproval(sess, task, dec, label)
+	if !granted {
+		if resolved == nil {
+			status := "denied"
+			reason := "operator denied approval"
+			switch terminal {
+			case "timed_out":
+				status, reason = "expired", "approval request timed out"
+			case "cancelled":
+				reason = "task was cancelled while awaiting approval"
+			}
+			d.closePendingApproval(sess, task, dec, status, reason)
+		}
+		return dec, false
+	}
+	if resolved != nil {
+		if resolved.Decision == "allowed" {
+			if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+				return dec, false
+			}
+		}
+		return resolved, resolved.Decision == "allowed"
+	}
+	approved, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "operator", "")
+	if err != nil || approved.Decision != "allowed" {
+		return dec, false
+	}
+	if err := d.rememberApprovalGrant(sess, approved, scope, "operator", ""); err != nil {
+		d.record(sess.SessionID, "ToolApproved", task.TaskID, "go", map[string]any{
+			"status": "approval_grant_failed", "requested_scope": scope, "error": err.Error(),
+		}, dec.DecisionID)
+	}
+	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+		return dec, false
+	}
+	return approved, true
 }
 
 // resolveApproval turns a requires_approval decision into a final one. In
@@ -108,66 +167,16 @@ func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Tas
 			"refusal": "dont_ask", "reason": "requires_approval denied by approval_mode=dont-ask",
 		}, dec.DecisionID)
 		return dec, false
+	case approvalModeAcceptEdits:
+		// Grok/CC acceptEdits: auto-allow file edits; still prompt for shell/etc.
+		if isEditCapability(dec.Capability) {
+			return d.autoApproveRequiresApproval(sess, task, dec, label)
+		}
+		return d.interactiveApproveRequiresApproval(sess, task, dec, label)
 	case approvalModeAsk:
-		resolved, granted, scope, terminal := d.awaitInteractiveApproval(sess, task, dec, label)
-		if !granted {
-			if resolved == nil {
-				status := "denied"
-				reason := "operator denied approval"
-				switch terminal {
-				case "timed_out":
-					status, reason = "expired", "approval request timed out"
-				case "cancelled":
-					reason = "task was cancelled while awaiting approval"
-				}
-				d.closePendingApproval(sess, task, dec, status, reason)
-			}
-			return dec, false
-		}
-		if resolved != nil {
-			// The RPC handler that unblocked the wait (handleApprove /
-			// handleDeny) already resolved this decision in the kernel —
-			// re-approving it here would hit "no pending decision" (the
-			// kernel's pending map is one-shot). Trust that resolution
-			// instead of re-approving.
-			if resolved.Decision == "allowed" {
-				if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
-					return dec, false
-				}
-			}
-			return resolved, resolved.Decision == "allowed"
-		}
-		// Resolved via task.approval.resolve, which only signals the wait
-		// and never touches the kernel: this call is the first and only
-		// approval.
-		approved, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "operator", "")
-		if err != nil || approved.Decision != "allowed" {
-			return dec, false
-		}
-		if err := d.rememberApprovalGrant(sess, approved, scope, "operator", ""); err != nil {
-			// The current one-time approval remains valid, but a failed durable
-			// grant must never be treated as a broader scope.
-			d.record(sess.SessionID, "ToolApproved", task.TaskID, "go", map[string]any{
-				"status": "approval_grant_failed", "requested_scope": scope, "error": err.Error(),
-			}, dec.DecisionID)
-		}
-		if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
-			return dec, false
-		}
-		return approved, true
+		return d.interactiveApproveRequiresApproval(sess, task, dec, label)
 	default: // always-approve
-		if !d.reviewAutonomousApproval(sess, task, dec, label) {
-			d.closePendingApproval(sess, task, dec, "denied", "autonomous risk review denied approval")
-			return dec, false
-		}
-		approved, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "agent", "")
-		if err != nil || approved.Decision != "allowed" {
-			return dec, false
-		}
-		if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
-			return dec, false
-		}
-		return approved, true
+		return d.autoApproveRequiresApproval(sess, task, dec, label)
 	}
 }
 

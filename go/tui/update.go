@@ -313,6 +313,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case alwaysApproveMsg:
 		m.handleAlwaysApprove(msg)
 		return m, m.refreshRuntimeStatus()
+	case planReviewDoneMsg:
+		m.handlePlanReviewDone(msg)
+		return m, m.refreshRuntimeStatus()
 	case runtimeStatusTickMsg:
 		if msg.generation != 0 && msg.generation != m.sessionGeneration {
 			return m, nil
@@ -584,6 +587,18 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	}
 	if m.approval != nil {
 		if cmd, handled := m.approvalKey(key); handled {
+			return cmd, true
+		}
+		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) {
+			return tea.ClearScreen, true
+		}
+		if m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
+			return m.ctrlC(), true
+		}
+		return nil, true
+	}
+	if m.planReview != nil {
+		if cmd, handled := m.planReviewKey(key); handled {
 			return cmd, true
 		}
 		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) {
@@ -1010,7 +1025,7 @@ func (m *Model) ctrlC() tea.Cmd {
 }
 
 func (m *Model) ctrlD() (tea.Cmd, bool) {
-	if m.approval != nil || m.question != nil || m.helpOpen || m.checkpointPicker != nil || m.modelPicker != nil || m.sessionPicker != nil || m.keymapEditor != nil {
+	if m.approval != nil || m.question != nil || m.planReview != nil || m.helpOpen || m.checkpointPicker != nil || m.modelPicker != nil || m.sessionPicker != nil || m.keymapEditor != nil {
 		return nil, true
 	}
 	if draft := m.currentDraft(); draft.Text != "" || len(draft.Prefix) > 0 || len(draft.Paste) > 0 {
@@ -1722,6 +1737,8 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			return m.setApprovalMode("always-approve")
 		case "dont-ask", "dont_ask", "dontask":
 			return m.setApprovalMode("dont-ask")
+		case "accept-edits", "accept_edits", "acceptedits":
+			return m.setApprovalMode("accept-edits")
 		default:
 			m.push(m.text(MsgUpdateUsageApprovalMode, nil))
 			return nil
@@ -1745,6 +1762,27 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			return m.setApprovalMode("dont-ask")
 		default:
 			m.push(m.text(MsgUpdateUsageDontAsk, nil))
+			return nil
+		}
+	case "accept-edits", "accept_edits", "acceptedits":
+		if len(parts) == 1 {
+			if m.approvalModeLabel() == "accept-edits" {
+				return m.setApprovalMode("ask")
+			}
+			return m.setApprovalMode("accept-edits")
+		}
+		switch parts[1] {
+		case "on", "true", "1", "enable":
+			return m.setApprovalMode("accept-edits")
+		case "off", "false", "0", "disable":
+			return m.setApprovalMode("ask")
+		case "toggle":
+			if m.approvalModeLabel() == "accept-edits" {
+				return m.setApprovalMode("ask")
+			}
+			return m.setApprovalMode("accept-edits")
+		default:
+			m.push(m.text(MsgUpdateUsageAcceptEdits, nil))
 			return nil
 		}
 	case "inspect", "welcome":

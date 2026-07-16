@@ -25,17 +25,51 @@ func TestPlanScaffoldAndApprove(t *testing.T) {
 		t.Fatalf("plan scaffold missing: %v", err)
 	}
 	m.viewPlanSurface()
-	got := transcriptText(m)
-	if !strings.Contains(got, path) || !strings.Contains(got, "Plan") {
-		t.Fatalf("view-plan missing path/content:\n%s", got)
+	if m.planReview == nil {
+		t.Fatal("view-plan should open plan review overlay")
 	}
-	cmd := m.approvePlan()
+	if m.planReview.Path != path {
+		t.Fatalf("planReview.Path=%q want %q", m.planReview.Path, path)
+	}
+	// Approve via overlay key (a).
+	cmd, handled := m.planReviewKey("a")
+	if !handled || cmd == nil {
+		t.Fatalf("plan review approve key: handled=%v cmd=%v", handled, cmd != nil)
+	}
 	m.Update(cmd())
 	if m.mode != "build" {
 		t.Fatalf("mode=%q after approve", m.mode)
 	}
+	if m.planReview != nil {
+		t.Fatal("plan review overlay should close after approve")
+	}
 	if len(fc.calls) == 0 || fc.calls[len(fc.calls)-1].method != "session.approve_plan" {
 		t.Fatalf("calls=%#v", fc.calls)
+	}
+}
+
+func TestPlanReviewRequestChangesSeedsComposer(t *testing.T) {
+	dir := t.TempDir()
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en", WorkspaceRoot: dir})
+	m.sessionID, m.mode = "sess_plan", "plan"
+	_ = m.ensurePlanFileScaffold()
+	_ = os.WriteFile(m.planFilePath(), []byte("# Goal\nShip Wave L\n"), 0o600)
+	m.openPlanReview()
+	if m.planReview == nil {
+		t.Fatal("expected overlay")
+	}
+	cmd, handled := m.planReviewKey("s")
+	if !handled || cmd != nil {
+		t.Fatalf("request-changes: handled=%v cmd=%v", handled, cmd != nil)
+	}
+	if m.planReview != nil {
+		t.Fatal("overlay should close")
+	}
+	if !strings.Contains(m.input.Value(), "revise") && !strings.Contains(m.input.Value(), "修订") && !strings.Contains(strings.ToLower(m.input.Value()), "revise") {
+		// English seed: "Please revise the plan: "
+		if !strings.Contains(strings.ToLower(m.input.Value()), "plan") {
+			t.Fatalf("composer not seeded: %q", m.input.Value())
+		}
 	}
 }
 

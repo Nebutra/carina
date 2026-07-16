@@ -99,35 +99,14 @@ func (m *Model) approvePlan() tea.Cmd {
 	}
 }
 
-// viewPlanSurface shows mode + plan file (Grok /view-plan) and how to approve.
+// viewPlanSurface opens the plan review overlay (Grok-style a/s/q).
+// Falls back to a short transcript notice when another overlay already owns input.
 func (m *Model) viewPlanSurface() {
-	lines := []string{m.th.Style(theme.RoleTitle).Render(m.text(MsgViewPlanTitle, nil))}
-	lines = append(lines, m.text(MsgViewPlanMode, MessageArgs{"mode": m.modeLabel()}))
-	if m.modeLabel() == "plan" {
-		lines = append(lines, m.text(MsgViewPlanActive, nil))
-	} else {
-		lines = append(lines, m.text(MsgViewPlanInactive, nil))
+	if m.approval != nil || m.question != nil || m.helpOpen || m.settings != nil {
+		m.push(m.text(MsgPlanReviewBusyBlocked, nil))
+		return
 	}
-	path := m.planFilePath()
-	lines = append(lines, m.text(MsgViewPlanPath, MessageArgs{"path": path}))
-	if body, err := m.readPlanFile(); err == nil {
-		trimmed := strings.TrimSpace(body)
-		if trimmed == "" {
-			lines = append(lines, m.text(MsgViewPlanEmpty, nil))
-		} else {
-			lines = append(lines, "", m.text(MsgViewPlanPreview, nil))
-			// Cap preview so transcript stays quiet (Codex/Grok fold density).
-			preview := strings.Split(trimmed, "\n")
-			if len(preview) > 40 {
-				preview = append(preview[:40], "…")
-			}
-			lines = append(lines, preview...)
-		}
-	} else {
-		lines = append(lines, m.text(MsgViewPlanMissing, nil))
-	}
-	lines = append(lines, "", m.text(MsgViewPlanHint, nil))
-	m.push(strings.Join(lines, "\n"))
+	m.openPlanReview()
 }
 
 func (m *Model) enterPlanMode(followUp string) tea.Cmd {
@@ -434,7 +413,7 @@ func (m *Model) handleTasksSchedule(msg tasksScheduleMsg) {
 	m.push(strings.Join(lines, "\n"))
 }
 
-// setApprovalMode sets product HITL mode: ask | always-approve | dont-ask.
+// setApprovalMode sets product HITL mode: ask | always-approve | dont-ask | accept-edits.
 func (m *Model) setApprovalMode(mode string) tea.Cmd {
 	call, sessionID := m.call, m.sessionID
 	mode = strings.TrimSpace(mode)
@@ -501,6 +480,13 @@ func (m *Model) handleApprovalMode(msg approvalModeMsg) {
 		} else {
 			m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgDontAskWarning, nil)))
 		}
+	case "accept-edits":
+		m.push(m.th.Style(theme.RoleWarning).Render(m.text(MsgAcceptEditsEnabled, nil)))
+		if w := str(msg.data["warning"]); w != "" {
+			m.push(m.th.Style(theme.RoleMuted).Render(w))
+		} else {
+			m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgAcceptEditsWarning, nil)))
+		}
 	default:
 		m.push(m.text(MsgApprovalModeAsk, nil))
 	}
@@ -515,6 +501,9 @@ func (m *Model) applyApprovalModeToRuntime(mode string) {
 	case "dont-ask":
 		m.runtime.InteractiveApprove = "dont-ask"
 		m.runtime.ApprovalMode = "dont-ask"
+	case "accept-edits":
+		m.runtime.InteractiveApprove = "accept-edits"
+		m.runtime.ApprovalMode = "accept-edits"
 	default:
 		m.runtime.InteractiveApprove = "on"
 		m.runtime.ApprovalMode = "ask"
@@ -538,6 +527,8 @@ func (m *Model) approvalModeLabel() string {
 		return "always-approve"
 	case "dont-ask":
 		return "dont-ask"
+	case "accept-edits":
+		return "accept-edits"
 	case "on":
 		return "ask"
 	default:

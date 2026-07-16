@@ -11,7 +11,7 @@ import (
 // Orthogonal axes — do not conflate:
 //
 //	Product (this file / daemon approval_mode / /approval-mode):
-//	  ask | always-approve | dont-ask
+//	  ask | always-approve | dont-ask | accept-edits
 //	Session/kernel (session.approval_mode / InitSessionFull):
 //	  untrusted | on_request | never
 //
@@ -23,11 +23,12 @@ const (
 	approvalModeAsk           = "ask"
 	approvalModeAlwaysApprove = "always-approve"
 	approvalModeDontAsk       = "dont-ask"
+	approvalModeAcceptEdits   = "accept-edits"
 )
 
 // normalizeApprovalMode accepts product names and a small set of product
-// aliases (yolo, bypass, dontAsk). Empty becomes ask so interactive surfaces
-// default to pausing for an operator rather than silent auto-approve.
+// aliases (yolo, bypass, dontAsk, acceptEdits). Empty becomes ask so interactive
+// surfaces default to pausing for an operator rather than silent auto-approve.
 //
 // Session-axis tokens (untrusted|on_request|never) are rejected with an
 // explicit error so they cannot silently map to a different product mode.
@@ -40,10 +41,24 @@ func normalizeApprovalMode(mode string) (string, error) {
 		return approvalModeAlwaysApprove, nil
 	case approvalModeDontAsk, "dont_ask", "dontask", "deny-by-default", "deny_by_default":
 		return approvalModeDontAsk, nil
+	case approvalModeAcceptEdits, "accept_edits", "acceptedits", "acceptEdits":
+		// acceptEdits is case-normalized by ToLower; keep explicit common spellings.
+		return approvalModeAcceptEdits, nil
 	case "never", "untrusted", "on_request", "on-request":
-		return "", fmt.Errorf("%q is a session/kernel approval axis (untrusted|on_request|never), not product HITL mode; use ask|always-approve|dont-ask — session never auto-allows in the kernel; product always-approve auto-allows in the daemon after requires_approval", raw)
+		return "", fmt.Errorf("%q is a session/kernel approval axis (untrusted|on_request|never), not product HITL mode; use ask|always-approve|dont-ask|accept-edits", raw)
 	default:
-		return "", fmt.Errorf("product approval_mode must be one of ask, always-approve, dont-ask")
+		return "", fmt.Errorf("product approval_mode must be one of ask, always-approve, dont-ask, accept-edits")
+	}
+}
+
+// isEditCapability reports whether a requires_approval decision is a workspace
+// file edit (Grok/CC acceptEdits scope). Shell/network/secrets still prompt.
+func isEditCapability(capability string) bool {
+	switch strings.ToLower(strings.TrimSpace(capability)) {
+	case "filewrite", "patchapply":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -56,6 +71,8 @@ func approvalModeFromInteractive(interactive bool) string {
 }
 
 func interactiveFromApprovalMode(mode string) bool {
+	// Only pure "ask" mirrors the legacy interactive_approval=true flag.
+	// accept-edits still prompts for non-edit tools but is not fully interactive.
 	return mode == approvalModeAsk
 }
 
@@ -84,7 +101,7 @@ func (d *Daemon) setApprovalMode(mode string) error {
 	return nil
 }
 
-// SetApprovalMode is the test/entrypoint surface for the three-way product mode.
+// SetApprovalMode is the test/entrypoint surface for the product HITL mode.
 func (d *Daemon) SetApprovalMode(mode string) error {
 	return d.setApprovalMode(mode)
 }

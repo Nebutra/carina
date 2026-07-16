@@ -140,6 +140,9 @@ func TestNormalizeApprovalModeAliases(t *testing.T) {
 		"yolo":           approvalModeAlwaysApprove,
 		"bypass":         approvalModeAlwaysApprove,
 		"always-approve": approvalModeAlwaysApprove,
+		"acceptEdits":    approvalModeAcceptEdits,
+		"accept-edits":   approvalModeAcceptEdits,
+		"accept_edits":   approvalModeAcceptEdits,
 	}
 	for in, want := range cases {
 		got, err := normalizeApprovalMode(in)
@@ -159,5 +162,84 @@ func TestNormalizeApprovalModeAliases(t *testing.T) {
 		if !strings.Contains(err.Error(), "session/kernel") {
 			t.Fatalf("%q error should name session/kernel axis, got %v", sessionAxis, err)
 		}
+	}
+}
+
+func TestAcceptEditsAutoAllowsFileEditsButPromptsShell(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	if err := d.SetApprovalMode(approvalModeAcceptEdits); err != nil {
+		t.Fatal(err)
+	}
+	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
+	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
+
+	// PatchApply / FileWrite should auto-approve without permission.request.
+	reqs := permissionRequests(d)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "edit")
+	// Prefer FileWrite if profile allows; otherwise PatchApply path is heavier.
+	dec, err := d.kern.Request(sess.SessionID, "FileWrite", "notes.txt", task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Decision == "allowed" {
+		// Profile may auto-allow write; force requires_approval by using CommandExec for shell half.
+	} else if dec.Decision == "requires_approval" {
+		got, ok := d.resolveApproval(sess, task, dec, "write notes")
+		if !ok || got == nil || got.Decision != "allowed" {
+			t.Fatalf("accept-edits should auto-allow FileWrite requires_approval, ok=%v got=%+v", ok, got)
+		}
+		select {
+		case id := <-reqs:
+			t.Fatalf("FileWrite should not publish permission.request, got %s", id)
+		default:
+		}
+	} else if dec.Decision == "denied" {
+		t.Skip("profile denies FileWrite; cannot exercise accept-edits auto path")
+	}
+
+	// CommandExec should still prompt (permission.request).
+	task2 := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run")
+	dec2, err := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task2.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec2.Decision != "requires_approval" {
+		t.Fatalf("expected CommandExec requires_approval, got %s (%s)", dec2.Decision, dec2.Reason)
+	}
+	done := make(chan bool, 1)
+	go func() {
+		_, ok := d.resolveApproval(sess, task2, dec2, "npm install")
+		done <- ok
+	}()
+	select {
+	case id := <-reqs:
+		if id != dec2.DecisionID {
+			t.Fatalf("permission.request id = %s, want %s", id, dec2.DecisionID)
+		}
+		if _, err := d.handleApprovalResolve(mustJSON(t, map[string]any{
+			"decision_id": dec2.DecisionID, "approve": false,
+		})); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CommandExec under accept-edits must publish permission.request")
+	}
+	select {
+	case ok := <-done:
+		if ok {
+			t.Fatal("expected deny")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("resolve did not finish")
+	}
+}
+
+func TestIsEditCapability(t *testing.T) {
+	if !isEditCapability("FileWrite") || !isEditCapability("PatchApply") || !isEditCapability("patchapply") {
+		t.Fatal("edit capabilities")
+	}
+	if isEditCapability("CommandExec") || isEditCapability("NetworkAccess") || isEditCapability("MemoryWrite") {
+		t.Fatal("non-edit capabilities must not match")
 	}
 }

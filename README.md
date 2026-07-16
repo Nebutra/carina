@@ -177,6 +177,8 @@ The default interaction loop is:
     warning** (`/always-approve`); deny rules, plan mode, and OS sandbox still apply
   - `dont-ask` — deny `requires_approval` unless an exact session/project grant
     already exists (no prompt; CI-friendly). Also `/dont-ask`
+  - `accept-edits` — auto-allow `FileWrite`/`PatchApply` `requires_approval`;
+    shell/network/secrets still prompt (`/accept-edits`)
   - Orgs can lock out YOLO with `"disable_always_approve": true` (manage-lock
     in `/etc/carina/managed.json`)
   - **Not the same axis as session/kernel approval:** session create still takes
@@ -184,14 +186,17 @@ The default interaction loop is:
     auto-allows). Product mode is what the daemon does when the kernel still
     returns `requires_approval`. Do not set product `approval_mode` to `never`
     — that token is rejected so it cannot be confused with session `never`.
+- `/plan` scaffolds `.carina/plans/`; **`/view-plan`** opens a plan review
+  overlay (`a` approve, `s` request changes, `q` quit plan, `esc` close).
+  `/approve-plan` still works from the command line / settings.
 - `/btw <q>` is answer-only on the current session; `/btw --fork` / `/side`
   forks a session and switches to it (no dual-pane).
 - Context pressure notices appear around 80%/90%; auto-compact runs only when
   a paused checkpoint makes `session.checkpoint.compact` available.
 - Agent `ask_user`: **structured** (2–6 options) or **free-text** (omit
   `options`); free-text answers use the TUI free-text field.
-- Autonomous **risk review** (always-approve path) is projected into the
-  transcript with outcome / risk / rationale.
+- Autonomous **risk review** (always-approve / accept-edits edit path) is
+  projected into the transcript with outcome / risk / rationale.
 
 The TUI normally uses the alternate screen. To keep the rendered session in
 the terminal's normal buffer, use `carina-tui --no-alt-screen`, or set

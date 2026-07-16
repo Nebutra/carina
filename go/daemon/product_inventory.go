@@ -97,7 +97,7 @@ func (d *Daemon) handleConfigInventory(params json.RawMessage) (any, error) {
 	}
 	choices := map[string]any{
 		"interaction_mode": []string{"build", "plan"},
-		"approval_mode":    []string{approvalModeAsk, approvalModeAlwaysApprove, approvalModeDontAsk},
+		"approval_mode":    []string{approvalModeAsk, approvalModeAlwaysApprove, approvalModeDontAsk, approvalModeAcceptEdits},
 		"reasoning_effort": []string{"default", "low", "medium", "high", "max", "auto"},
 		"sandbox":          []string{"on", "off (daemon policy may forbid)"},
 	}

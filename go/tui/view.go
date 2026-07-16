@@ -425,6 +425,10 @@ func (m *Model) View() tea.View {
 		modal := fitViewBlock(m.overlayView(), l.width, l.height, true)
 		content = lipgloss.Place(l.width, l.height,
 			lipgloss.Center, lipgloss.Center, modal)
+	} else if m.planReview != nil {
+		modal := fitViewBlock(m.planReviewOverlayView(), l.width, l.height, true)
+		content = lipgloss.Place(l.width, l.height,
+			lipgloss.Center, lipgloss.Center, modal)
 	} else if m.checkpointPicker != nil {
 		modal := fitViewBlock(m.checkpointPickerView(), l.width, l.height, true)
 		content = lipgloss.Place(l.width, l.height,
@@ -465,7 +469,7 @@ func (m *Model) View() tea.View {
 	// A nil declared cursor makes Bubble Tea hide the terminal cursor. This is
 	// intentional while an overlay owns input, and whenever a zero-sized host
 	// has not supplied a usable cell grid yet (R21).
-	if !m.helpOpen && m.settings == nil && m.question == nil && m.approval == nil && m.transcriptPager == nil &&
+	if !m.helpOpen && m.settings == nil && m.question == nil && m.approval == nil && m.planReview == nil && m.transcriptPager == nil &&
 		m.checkpointPicker == nil && m.modelPicker == nil && m.sessionPicker == nil && m.keymapEditor == nil &&
 		m.editor == nil && m.width > 0 && m.height > 0 {
 		if m.historySearch != nil {

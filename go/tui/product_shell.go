@@ -322,6 +322,8 @@ func (m *Model) statusFooterView(width int) string {
 		approval.text = "always-approve"
 	} else if am == "dont-ask" {
 		approval.text = "dont-ask"
+	} else if am == "accept-edits" {
+		approval.text = "accept-edits"
 	} else if am == "ask" {
 		approval.role = theme.RoleMuted
 		approval.text = "ask"

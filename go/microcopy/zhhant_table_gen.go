@@ -5,7 +5,7 @@ package microcopy
 // s2tExact maps authored Simplified Chinese strings to Traditional Chinese.
 // Generated with zhconv (OpenCC-compatible). Source of truth remains zh.
 var s2tExact = map[string]string{
-	"产品 HITL：ask | always-approve | dont-ask（/approval-mode、/dont-ask）。组织可设 disable_always_approve。会话/内核轴 untrusted|on_request|never 在 session 创建时设置，不是产品 approval_mode。": "產品 HITL：ask | always-approve | dont-ask（/approval-mode、/dont-ask）。組織可設 disable_always_approve。會話/內核軸 untrusted|on_request|never 在 session 創建時設置，不是產品 approval_mode。",
+	"产品 HITL：ask | always-approve | dont-ask | accept-edits（/approval-mode）。组织可设 disable_always_approve。会话/内核轴 untrusted|on_request|never 在 session 创建时设置，不是产品 approval_mode。": "產品 HITL：ask | always-approve | dont-ask | accept-edits（/approval-mode）。組織可設 disable_always_approve。會話/內核軸 untrusted|on_request|never 在 session 創建時設置，不是產品 approval_mode。",
 	"执行 {action} 前已创建检查点。先预览：`carina checkpoint preview {session_id} {checkpoint_id}`。审阅后恢复：`carina checkpoint restore {session_id} {checkpoint_id} --yes`。": "執行 {action} 前已創建檢查點。先預覽：`carina checkpoint preview {session_id} {checkpoint_id}`。審閱後恢復：`carina checkpoint restore {session_id} {checkpoint_id} --yes`。",
 	"用法：/memory status|list|search <查询>|read [目标]|verify [目标] [版本]|rollback <目标> <版本> <预期版本> <幂等键> --yes|handoff <会话> <目标> <预期版本|-> <幂等键> --yes": "用法：/memory status|list|search <查詢>|read [目標]|verify [目標] [版本]|rollback <目標> <版本> <預期版本> <冪等鍵> --yes|handoff <會話> <目標> <預期版本|-> <冪等鍵> --yes",
 	"用 /permissions new <safe-edit|full-workspace> [--yes] 更改配置。用 /plan 或 Shift+Tab 切换计划模式。沙箱是 daemon 级策略（不是静默的每轮 YOLO）。": "用 /permissions new <safe-edit|full-workspace> [--yes] 更改配置。用 /plan 或 Shift+Tab 切換計劃模式。沙箱是 daemon 級策略（不是靜默的每輪 YOLO）。",
@@ -14,6 +14,7 @@ var s2tExact = map[string]string{
 	"用法：/goal [--auto] [--tokens N] [--max-continuations N] <目标> | clear|pause|resume|complete|continue": "用法：/goal [--auto] [--tokens N] [--max-continuations N] <目標> | clear|pause|resume|complete|continue",
 	"  /goal [--auto] [--tokens N] [--max-continuations N] <目标> | clear|pause|resume|complete|continue": "  /goal [--auto] [--tokens N] [--max-continuations N] <目標> | clear|pause|resume|complete|continue",
 	"审批模式：ask 在 requires_approval 时暂停；always-approve 自动放行（有警告）。用 /always-approve 切换。拒绝规则与计划模式仍会阻断。": "審批模式：ask 在 requires_approval 時暫停；always-approve 自動放行（有警告）。用 /always-approve 切換。拒絕規則與計劃模式仍會阻斷。",
+	"警告：FileWrite/PatchApply 的 requires_approval 将自动执行。Shell、网络与 secret 仍需确认。拒绝规则、计划模式与沙箱仍有效。": "警告：FileWrite/PatchApply 的 requires_approval 將自動執行。Shell、網絡與 secret 仍需確認。拒絕規則、計劃模式與沙箱仍有效。",
 	"警告：requires_approval 工具将自动执行。拒绝规则、计划模式与 OS 沙箱仍然有效。使用 /always-approve off 恢复确认。": "警告：requires_approval 工具將自動執行。拒絕規則、計劃模式與 OS 沙箱仍然有效。使用 /always-approve off 恢復確認。",
 	"目标 [{status}] {objective} · {budget} · {seconds}秒 · {mode} 续接 {used}/{max}": "目標 [{status}] {objective} · {budget} · {seconds}秒 · {mode} 續接 {used}/{max}",
 	"沙箱在 daemon 策略启用时隔离 Agent 的 Shell 命令。它不同于计划模式（计划模式在 /approve-plan 前阻止编辑）。": "沙箱在 daemon 策略啓用時隔離 Agent 的 Shell 命令。它不同於計劃模式（計劃模式在 /approve-plan 前阻止編輯）。",
@@ -49,6 +50,7 @@ var s2tExact = map[string]string{
 	"打开：carina artifact read <session_id> <artifact_id>": "打開：carina artifact read <session_id> <artifact_id>",
 	"  /config|/settings      设置面板（/config raw 查看完整清单）": "  /config|/settings      設置面板（/config raw 查看完整清單）",
 	"{glyph} 没有已知的近期恢复任务；重启 TUI 后请使用 /resume <task_id>": "{glyph} 沒有已知的近期恢復任務；重啓 TUI 後請使用 /resume <task_id>",
+	"a 批准  ·  s 请求修改  ·  q 退出计划  ·  esc 关闭  ·  j/k 滚动": "a 批准  ·  s 請求修改  ·  q 退出計劃  ·  esc 關閉  ·  j/k 滾動",
 	"已批准：{action}。范围：{scope}。决定 {decision_id} 已记入审计链。": "已批准：{action}。範圍：{scope}。決定 {decision_id} 已記入審計鏈。",
 	"已拒绝：{action}。决定 {decision_id} 已记入审计链。所请求的操作未被执行。": "已拒絕：{action}。決定 {decision_id} 已記入審計鏈。所請求的操作未被執行。",
 	"超时（{duration}）：{action}。部分结果已保留。修复：carina doctor": "超時（{duration}）：{action}。部分結果已保留。修復：carina doctor",
@@ -80,6 +82,7 @@ var s2tExact = map[string]string{
 	"提示：/settings 打开控制面板；/config raw 输出完整清单。": "提示：/settings 打開控制面板；/config raw 輸出完整清單。",
 	"用法：/btw [--fork|-f] <问题>  或  /side <问题>": "用法：/btw [--fork|-f] <問題>  或  /side <問題>",
 	"[enter] 提交  [backspace] 编辑  [esc] 保持等待": "[enter] 提交  [backspace] 編輯  [esc] 保持等待",
+	"accept-edits 已开启 — 文件编辑自动执行；Shell 仍需确认": "accept-edits 已開啓 — 文件編輯自動執行；Shell 仍需確認",
 	"审计链校验通过。记录数：{count}。链头：{head}。无缺口，无改写。": "審計鏈校驗通過。記錄數：{count}。鏈頭：{head}。無缺口，無改寫。",
 	"尚无计划文件。/plan 会在 .carina/plans/ 下创建脚手架。": "尚無計劃文件。/plan 會在 .carina/plans/ 下創建腳手架。",
 	"  /hooks                 Hook 清单与健康状态": "  /hooks                 Hook 清單與健康狀態",
@@ -141,6 +144,7 @@ var s2tExact = map[string]string{
 	"Enter 选择 · E 切换推理强度 · Esc 关闭": "Enter 選擇 · E 切換推理強度 · Esc 關閉",
 	"always-approve 已关闭 — 恢复为 ask": "always-approve 已關閉 — 恢復爲 ask",
 	"{glyph} 排队的 Shell 命令为空；草稿已恢复": "{glyph} 排隊的 Shell 命令爲空；草稿已恢復",
+	"{glyph} 计划已批准 — 计划模式关闭，可开始实施": "{glyph} 計劃已批准 — 計劃模式關閉，可開始實施",
 	"{glyph} 问题 {id} 回答失败：{error}": "{glyph} 問題 {id} 回答失敗：{error}",
 	"{operation} 仍在进行；完成前无法关闭此对话框": "{operation} 仍在進行；完成前無法關閉此對話框",
 	"任务 · {active} 活动 · {done} 完成": "任務 · {active} 活動 · {done} 完成",
@@ -161,6 +165,7 @@ var s2tExact = map[string]string{
 	"{glyph} 后续队列顺序发生变化；草稿已恢复": "{glyph} 後續隊列順序發生變化；草稿已恢復",
 	"模型上下文已回退；审计记录仍显示在此 TUI 中": "模型上下文已回退；審計記錄仍顯示在此 TUI 中",
 	"模型：{model} · 强度：{effort}": "模型：{model} · 強度：{effort}",
+	"请先关闭其他浮层，再运行 /view-plan。": "請先關閉其他浮層，再運行 /view-plan。",
 	"- 已取回排队的斜杠命令；请在输入区审阅并运行": "- 已取回排隊的斜槓命令；請在輸入區審閱並運行",
 	"暂无可选答案。正在等待 Agent 更新问题。": "暫無可選答案。正在等待 Agent 更新問題。",
 	"{glyph} 审批请求失败：{error}": "{glyph} 審批請求失敗：{error}",
@@ -181,6 +186,7 @@ var s2tExact = map[string]string{
 	"- 已恢复未确认提交；正在与守护进程核对": "- 已恢復未確認提交；正在與守護進程核對",
 	"carina 在场。代理干活，账本记账。": "carina 在場。代理幹活，賬本記賬。",
 	"{glyph} 复制失败：{error}": "{glyph} 複製失敗：{error}",
+	"{glyph} 已退出计划模式（未批准）": "{glyph} 已退出計劃模式（未批准）",
 	"{glyph} 提交恢复：{error}": "{glyph} 提交恢復：{error}",
 	"任务在检查点恢复后已暂停；准备好后再继续": "任務在檢查點恢復後已暫停；準備好後再繼續",
 	"剩余：{remaining} token": "剩餘：{remaining} token",
@@ -235,6 +241,7 @@ var s2tExact = map[string]string{
 	"{error}；按新按键重试": "{error}；按新按鍵重試",
 	"会话切换失败：{error}": "會話切換失敗：{error}",
 	"会话操作失败：{error}": "會話操作失敗：{error}",
+	"已填入修订草稿，编辑后发送。": "已填入修訂草稿，編輯後發送。",
 	"无事可回滚。平淡是设计目标。": "無事可回滾。平淡是設計目標。",
 	"无法加载模型：{error}": "無法加載模型：{error}",
 	"权限配置：{profile}": "權限配置：{profile}",
@@ -361,6 +368,7 @@ var s2tExact = map[string]string{
 	"继续暂停任务": "繼續暫停任務",
 	"编辑按键绑定": "編輯按鍵綁定",
 	"规范会话记录": "規範會話記錄",
+	"请修订计划：": "請修訂計劃：",
 	"运行就绪检查": "運行就緒檢查",
 	"（粘贴内容）": "（粘貼內容）",
 	"（记录为空）": "（記錄爲空）",
@@ -383,6 +391,7 @@ var s2tExact = map[string]string{
 	"运行时配置": "運行時配置",
 	"会话状态": "會話狀態",
 	"列出扩展": "列出擴展",
+	"处理中…": "處理中…",
 	"定时循环": "定時循環",
 	"就绪检查": "就緒檢查",
 	"恢复会话": "恢復會話",
@@ -390,6 +399,7 @@ var s2tExact = map[string]string{
 	"按键绑定": "按鍵綁定",
 	"有效权限": "有效權限",
 	"查看权限": "查看權限",
+	"计划审阅": "計劃審閱",
 	"计划模式": "計劃模式",
 	"运行诊断": "運行診斷",
 	"选择模型": "選擇模型",
@@ -482,6 +492,7 @@ var s2tChar = map[rune]rune{
 	23545: 23565, // 对 -> 對
 	23548: 23566, // 导 -> 導
 	23558: 23559, // 将 -> 將
+	23618: 23652, // 层 -> 層
 	24102: 24118, // 带 -> 帶
 	24110: 24171, // 帮 -> 幫
 	24130: 20906, // 幂 -> 冪
@@ -544,6 +555,7 @@ var s2tChar = map[rune]rune{
 	32455: 32340, // 织 -> 織
 	32465: 32129, // 绑 -> 綁
 	32467: 32080, // 结 -> 結
+	32476: 32097, // 络 -> 絡
 	32477: 32085, // 绝 -> 絕
 	32479: 32113, // 统 -> 統
 	32487: 32380, // 继 -> 繼
@@ -553,6 +565,7 @@ var s2tChar = map[rune]rune{
 	32531: 32233, // 缓 -> 緩
 	32534: 32232, // 编 -> 編
 	32553: 32302, // 缩 -> 縮
+	32593: 32178, // 网 -> 網
 	33050: 33139, // 脚 -> 腳
 	33073: 33067, // 脱 -> 脫
 	33539: 31684, // 范 -> 範
@@ -563,6 +576,7 @@ var s2tChar = map[rune]rune{
 	35272: 35261, // 览 -> 覽
 	35302: 35320, // 触 -> 觸
 	35745: 35336, // 计 -> 計
+	35746: 35330, // 订 -> 訂
 	35748: 35469, // 认 -> 認
 	35760: 35352, // 记 -> 記
 	35768: 35377, // 许 -> 許
