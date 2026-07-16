@@ -72,9 +72,15 @@
     try {
       // @ts-expect-error pagefind global when UI loaded
       if (!window.pagefind) {
-        // dynamic import of pagefind when available on static host
+        /*
+         * Pagefind only exists in the BUILD output (dist/pagefind/) — never in
+         * dev. A literal specifier crashes Vite dev even with @vite-ignore
+         * (esbuild strips the comment during the Astro TS transform), so route
+         * it through a variable that import-analysis cannot resolve.
+         */
+        const pagefindPath = '/pagefind/pagefind.js';
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const pf = await import(/* @vite-ignore */ '/pagefind/pagefind.js').catch(() => null);
+        const pf = await import(/* @vite-ignore */ pagefindPath).catch(() => null);
         if (pf) {
           // @ts-expect-error assign
           window.pagefind = await (pf as any).default?.() ?? pf;
