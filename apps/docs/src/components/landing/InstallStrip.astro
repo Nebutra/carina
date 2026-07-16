@@ -115,6 +115,16 @@ const {
     line-height: 1.4;
     color: var(--polish-code-fg);
     white-space: nowrap;
+    /*
+     * This <code> sits inside .sl-markdown-content, so the global inline-code
+     * chip rule paints a light chip bg under our light-on-dark text in light
+     * mode (unreadable). Opt out of the chip treatment entirely.
+     */
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    box-shadow: none;
   }
 
   .install-strip__cmd::-webkit-scrollbar {
