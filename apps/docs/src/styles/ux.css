@@ -756,12 +756,24 @@
   }
 
   /* ── Tables ──────────────────────────────────────────────────────── */
-  /* Mintlify style: horizontal dividers only — no vertical grid lines */
+  /* Scrollable on narrow viewports; horizontal dividers only */
   .sl-markdown-content table {
-    border-collapse: collapse;
+    display: block;
     width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-collapse: collapse;
     font-size: var(--text-body-sm);
+    scrollbar-width: thin;
+  }
+
+  .sl-markdown-content thead,
+  .sl-markdown-content tbody,
+  .sl-markdown-content tr {
     display: table;
+    width: 100%;
+    table-layout: auto;
   }
 
   .sl-markdown-content th,
@@ -778,6 +790,7 @@
     color: var(--docs-fg);
     font-weight: var(--font-weight-semibold);
     font-size: 0.8125rem;
+    white-space: nowrap;
   }
 
   .sl-markdown-content tr:last-child td {
@@ -788,9 +801,13 @@
     background: color-mix(in srgb, var(--docs-bg-raised) 45%, transparent);
   }
 
-  /* Zebra striping off; keep tables airy and quiet */
   .sl-markdown-content tr:nth-child(2n) {
     background: transparent;
+  }
+
+  .sl-markdown-content td {
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .docs-empty-state {
@@ -799,6 +816,22 @@
     border-radius: var(--docs-panel-radius);
     padding: var(--spacing-8);
     text-align: center;
+  }
+
+  /* Content utility rows (replaces inline styles) */
+  .docs-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-3);
+    margin: 0 0 var(--spacing-5);
+  }
+
+  .docs-tag-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 1rem 0 1.5rem;
   }
 }
 

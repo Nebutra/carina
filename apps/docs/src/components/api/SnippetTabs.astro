@@ -15,7 +15,6 @@ const paramsObj =
     ? (params as Record<string, string>)
     : {};
 
-/** Build a sample params object from type hints (string descriptions). */
 function sampleParams(src: Record<string, string>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, hint] of Object.entries(src)) {
@@ -35,7 +34,6 @@ function sampleParams(src: Record<string, string>): Record<string, unknown> {
     } else if (key.includes('prompt') || key.includes('task')) {
       out[key] = 'Summarize module boundaries';
     } else {
-      // skip optional-looking keys marked with ?
       if (String(hint).includes('?') && !key.includes('session')) continue;
       out[key] = `<${key}>`;
     }
@@ -54,9 +52,11 @@ const jsonText = JSON.stringify(jsonRpc, null, 2);
 const paramsTs = JSON.stringify(sample, null, 2);
 const tsText = `// scope: ${scope}
 const result = await client.request(${JSON.stringify(method)}, ${paramsTs});`;
-const bashText = `printf '%s\\n' '${JSON.stringify(jsonRpc)}' | carina rpc
-# or via CLI when wrapped:
-# carina call ${method}`;
+const bashText = `# JSON-RPC over the local socket
+carina call ${method}
+
+# equivalent payload:
+# ${JSON.stringify(jsonRpc)}`;
 ---
 
 <div class="snippet-tabs" data-snippet-tabs>
@@ -109,20 +109,21 @@ const bashText = `printf '%s\\n' '${JSON.stringify(jsonRpc)}' | carina rpc
 
 <style>
   .snippet-tabs {
-    margin: var(--spacing-3) 0 0;
+    margin: 0;
     border: 1px solid var(--carina-border-subtle, var(--docs-border-subtle));
     border-radius: var(--docs-radius-lg);
     overflow: hidden;
-    background: var(--carina-surface, var(--docs-bg-raised));
+    background: var(--carina-surface, #141b1d);
+    max-width: 100%;
   }
 
   .snippet-tabs__list {
     display: flex;
     align-items: stretch;
     gap: 0;
-    height: 2.25rem; /* fixed bar — no per-tab height jump */
-    border-bottom: 1px solid var(--carina-border-subtle, var(--docs-border-subtle));
-    background: var(--carina-surface-raised, var(--docs-bg-surface));
+    height: 2.25rem;
+    border-bottom: 1px solid var(--carina-border-subtle, #252f31);
+    background: var(--carina-surface-raised, #1c2527);
     padding: 0 0.4rem;
     box-sizing: border-box;
   }
@@ -132,7 +133,7 @@ const bashText = `printf '%s\\n' '${JSON.stringify(jsonRpc)}' | carina rpc
     appearance: none;
     border: 0;
     background: transparent;
-    color: var(--carina-dust, var(--docs-fg-muted));
+    color: var(--carina-dust, #b0b7b3);
     font-family: var(--docs-font-sans);
     font-size: 0.75rem;
     font-weight: 500;
@@ -144,8 +145,6 @@ const bashText = `printf '%s\\n' '${JSON.stringify(jsonRpc)}' | carina rpc
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    /* underline via ::after so active state never changes box height */
-    border-bottom: none;
   }
 
   .snippet-tabs__tab::after {
@@ -160,12 +159,12 @@ const bashText = `printf '%s\\n' '${JSON.stringify(jsonRpc)}' | carina rpc
   }
 
   .snippet-tabs__tab.is-active {
-    color: var(--carina-starlight, var(--docs-fg));
+    color: var(--carina-starlight, #f3f0e8);
     font-weight: 600;
   }
 
   .snippet-tabs__tab.is-active::after {
-    background: var(--docs-accent);
+    background: var(--docs-accent, #8edbd2);
   }
 
   .snippet-tabs__tab:focus-visible {
@@ -173,32 +172,39 @@ const bashText = `printf '%s\\n' '${JSON.stringify(jsonRpc)}' | carina rpc
     outline-offset: -2px;
   }
 
+  .snippet-tabs__panels {
+    min-width: 0;
+  }
+
   .snippet-tabs__panel {
     margin: 0;
     padding: 0.85rem 1rem;
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     font-family: var(--docs-font-mono);
     font-size: 0.75rem;
     line-height: 1.55;
-    color: var(--carina-starlight, var(--docs-fg));
+    color: var(--carina-starlight, #f3f0e8);
+    max-width: 100%;
+    scrollbar-width: thin;
+    scrollbar-color: #344144 transparent;
   }
 
   .snippet-tabs__panel[hidden] {
     display: none;
   }
 
-  /*
-   * Neutralize global inline-code chip styles (background/border/padding).
-   * Multi-line <code> is display:inline — chips paint per line and look broken.
-   */
   .snippet-tabs__panel code {
     display: block;
     font-family: inherit;
     font-size: inherit;
-    font-weight: inherit;
+    font-weight: 400;
     line-height: inherit;
     color: inherit;
-    white-space: pre;
+    /* Prefer wrap for narrow columns; keep long tokens breakable */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
     background: transparent !important;
     border: none !important;
     border-radius: 0 !important;
@@ -206,4 +212,3 @@ const bashText = `printf '%s\\n' '${JSON.stringify(jsonRpc)}' | carina rpc
     box-shadow: none !important;
   }
 </style>
-

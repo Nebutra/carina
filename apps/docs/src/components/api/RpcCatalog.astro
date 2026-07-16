@@ -1,15 +1,12 @@
 ---
 /**
  * Protocol-driven method catalog from src/data/rpc-catalog.json
- * (synced via pnpm sync-protocol from protocol/jsonrpc/methods.json).
  */
 import catalog from '../../data/rpc-catalog.json';
 import SnippetTabs from './SnippetTabs.astro';
 
 interface Props {
-  /** Limit to these group ids (default: all) */
   groups?: string[];
-  /** Show multi-lang snippets under each method */
   showSnippets?: boolean;
 }
 
@@ -18,177 +15,298 @@ const groupList = only
   ? catalog.groups.filter((g) => only.includes(g.id))
   : catalog.groups;
 
-const scopeColor: Record<string, string> = {
-  read: 'var(--docs-info)',
-  write: 'var(--docs-accent)',
-  admin: 'var(--docs-warning)',
-  worker: 'var(--docs-cap-tool)',
-  stream: 'var(--docs-cap-memory)',
+const scopeClass: Record<string, string> = {
+  read: 'is-read',
+  write: 'is-write',
+  admin: 'is-admin',
+  worker: 'is-worker',
+  stream: 'is-stream',
 };
 ---
 
-<div class="rpc-catalog">
-  <p class="rpc-catalog__meta">
-    Protocol <code>{catalog.protocol_version}</code>
-    · {catalog.method_count} methods
-    · source <code>{catalog.source}</code>
-    · generated {new Date(catalog.generated_at).toISOString().slice(0, 10)}
-  </p>
+<div class="rpc-catalog" data-rpc-catalog>
+  <div class="rpc-catalog__toolbar">
+    <p class="rpc-catalog__meta">
+      Protocol <span class="rpc-mono">{catalog.protocol_version}</span>
+      · <span class="rpc-mono">{catalog.method_count}</span> methods
+      · <span class="rpc-mono">{catalog.source}</span>
+    </p>
+    <label class="rpc-catalog__filter">
+      <span class="sr-only">Filter methods</span>
+      <input
+        type="search"
+        class="rpc-catalog__search"
+        placeholder="Filter methods…"
+        data-rpc-filter
+        autocomplete="off"
+      />
+    </label>
+  </div>
 
-  <nav class="rpc-catalog__toc" aria-label="API groups">
-    {
-      groupList.map((g) => (
-        <a href={`#group-${g.id}`}>
-          {g.label}
-          <span>{g.methods.length}</span>
-        </a>
-      ))
-    }
-  </nav>
+  <div class="rpc-catalog__jump">
+    <label for="rpc-group-jump">Jump to group</label>
+    <select id="rpc-group-jump" data-rpc-jump>
+      <option value="">All groups</option>
+      {
+        groupList.map((g) => (
+          <option value={`group-${g.id}`}>
+            {g.label} ({g.methods.length})
+          </option>
+        ))
+      }
+    </select>
+  </div>
 
   {
     groupList.map((group) => (
-      <section class="rpc-group" id={`group-${group.id}`}>
-        <h2 class="rpc-group__title">{group.label}</h2>
+      <section class="rpc-group" id={`group-${group.id}`} data-rpc-group={group.id}>
+        <h2 class="rpc-group__title">
+          {group.label}
+          <span class="rpc-group__count">{group.methods.length}</span>
+        </h2>
         <div class="rpc-group__list">
-          {group.methods.map((m) => (
-            <details class="rpc-method">
-              <summary>
-                <code class="rpc-method__name">{m.method}</code>
-                <span
-                  class="rpc-method__scope"
-                  style={`--scope-color: ${scopeColor[m.scope] ?? 'var(--docs-fg-muted)'}`}
-                >
-                  {m.scope}
-                </span>
-                {m.remote && <span class="rpc-method__flag">remote</span>}
-                {m.control_plane_write && (
-                  <span class="rpc-method__flag rpc-method__flag--warn">control-plane</span>
-                )}
-              </summary>
-              <div class="rpc-method__body">
-                <div class="rpc-method__cols">
-                  <div>
-                    <h4>Params</h4>
-                    {typeof m.params === 'object' && m.params && Object.keys(m.params).length > 0 ? (
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Field</th>
-                            <th>Type</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {Object.entries(m.params as Record<string, string>).map(([k, v]) => (
-                            <tr>
-                              <td>
-                                <code>{k}</code>
-                              </td>
-                              <td>
-                                <code>{String(v)}</code>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    ) : (
-                      <p class="rpc-method__empty">
-                        <code>{typeof m.params === 'string' ? m.params : '{}'}</code>
-                      </p>
+          {group.methods.map((m) => {
+            const paramEntries =
+              typeof m.params === 'object' && m.params && !Array.isArray(m.params)
+                ? Object.entries(m.params as Record<string, string>)
+                : [];
+            const resultText =
+              typeof m.result === 'string' ? m.result : JSON.stringify(m.result);
+            const hay = `${m.method} ${m.scope} ${resultText} ${paramEntries.map(([k]) => k).join(' ')}`.toLowerCase();
+            return (
+              <details class="rpc-method" data-rpc-method data-rpc-hay={hay}>
+                <summary>
+                  <span class="rpc-method__main">
+                    <span class="rpc-method__name">{m.method}</span>
+                    <span class:list={['rpc-method__scope', scopeClass[m.scope] ?? '']}>
+                      {m.scope}
+                    </span>
+                  </span>
+                  <span class="rpc-method__flags">
+                    {m.remote && <span class="rpc-method__flag">remote</span>}
+                    {m.control_plane_write && (
+                      <span class="rpc-method__flag is-warn">control-plane</span>
                     )}
-                    <h4>Result</h4>
-                    <p class="rpc-method__result">
-                      <code>{typeof m.result === 'string' ? m.result : JSON.stringify(m.result)}</code>
-                    </p>
-                  </div>
-                  {showSnippets && typeof m.params === 'object' && (
-                    <div>
-                      <h4>Sample request</h4>
-                      <SnippetTabs
-                        method={m.method}
-                        params={m.params as Record<string, string>}
-                        scope={m.scope}
-                      />
+                  </span>
+                </summary>
+                <div class="rpc-method__body">
+                  <div class="rpc-method__cols">
+                    <div class="rpc-method__spec">
+                      <h4>Params</h4>
+                      {paramEntries.length > 0 ? (
+                        <div class="rpc-table-wrap">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Field</th>
+                                <th>Type</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {paramEntries.map(([k, v]) => (
+                                <tr>
+                                  <td class="rpc-mono">{k}</td>
+                                  <td class="rpc-mono rpc-type">{String(v)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p class="rpc-method__empty rpc-mono">
+                          {typeof m.params === 'string' ? m.params : '{}'}
+                        </p>
+                      )}
+                      <h4>Result</h4>
+                      <pre class="rpc-method__result rpc-mono">{resultText}</pre>
                     </div>
-                  )}
+                    {showSnippets && (
+                      <div class="rpc-method__sample">
+                        <h4>Sample request</h4>
+                        <SnippetTabs
+                          method={m.method}
+                          params={
+                            typeof m.params === 'object' && m.params
+                              ? (m.params as Record<string, string>)
+                              : {}
+                          }
+                          scope={m.scope}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </details>
-          ))}
+              </details>
+            );
+          })}
         </div>
       </section>
     ))
   }
+
+  <p class="rpc-catalog__empty" data-rpc-empty hidden>No methods match your filter.</p>
 </div>
+
+<script>
+  function initCatalog(root: Element) {
+    if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
+    root.dataset.ready = '1';
+
+    const filter = root.querySelector<HTMLInputElement>('[data-rpc-filter]');
+    const jump = root.querySelector<HTMLSelectElement>('[data-rpc-jump]');
+    const empty = root.querySelector<HTMLElement>('[data-rpc-empty]');
+    const methods = [...root.querySelectorAll<HTMLElement>('[data-rpc-method]')];
+    const groups = [...root.querySelectorAll<HTMLElement>('[data-rpc-group]')];
+
+    const applyFilter = () => {
+      const q = (filter?.value || '').trim().toLowerCase();
+      let visible = 0;
+      methods.forEach((el) => {
+        const hay = el.dataset.rpcHay || '';
+        const show = !q || hay.includes(q);
+        el.hidden = !show;
+        if (show) visible += 1;
+      });
+      groups.forEach((g) => {
+        const any = [...g.querySelectorAll<HTMLElement>('[data-rpc-method]')].some((m) => !m.hidden);
+        g.hidden = !any;
+      });
+      if (empty) empty.hidden = visible > 0;
+    };
+
+    filter?.addEventListener('input', applyFilter);
+    jump?.addEventListener('change', () => {
+      const id = jump.value;
+      if (!id) return;
+      const target = document.getElementById(id);
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      jump.value = '';
+    });
+  }
+
+  function boot() {
+    document.querySelectorAll('[data-rpc-catalog]').forEach(initCatalog);
+  }
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>
 
 <style>
   .rpc-catalog {
-    margin: var(--spacing-6) 0;
+    margin: var(--spacing-4) 0 var(--spacing-8);
+  }
+
+  .rpc-mono {
+    font-family: var(--docs-font-mono);
+    font-size: 0.8125em;
+  }
+
+  .rpc-catalog__toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-3);
+    margin-bottom: var(--spacing-4);
   }
 
   .rpc-catalog__meta {
+    margin: 0;
     font-size: 0.8125rem;
     color: var(--docs-fg-muted);
-    margin: 0 0 var(--spacing-5);
+    line-height: 1.5;
   }
 
-  .rpc-catalog__meta code {
-    font-size: 0.8em;
+  .rpc-catalog__filter {
+    flex: 1 1 14rem;
+    max-width: 22rem;
   }
 
-  .rpc-catalog__toc {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    margin-bottom: var(--spacing-8);
-  }
-
-  .rpc-catalog__toc a {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.25rem 0.55rem;
-    border-radius: var(--docs-radius-full);
+  .rpc-catalog__search {
+    width: 100%;
+    height: 2.25rem;
     border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-md);
     background: var(--docs-bg-surface);
-    color: var(--docs-fg-muted);
-    text-decoration: none;
-    font-size: 0.75rem;
-    font-weight: 500;
-    transition:
-      border-color var(--docs-transition),
-      color var(--docs-transition);
-  }
-
-  .rpc-catalog__toc a span {
-    font-family: var(--docs-font-mono);
-    font-size: 0.65rem;
-    color: var(--docs-fg-subtle);
-  }
-
-  .rpc-catalog__toc a:hover {
     color: var(--docs-fg);
-    border-color: var(--docs-border);
+    font-family: var(--docs-font-sans);
+    font-size: 0.875rem;
+    padding: 0 0.75rem;
+    transition: border-color var(--docs-transition), box-shadow var(--docs-transition);
+  }
+
+  .rpc-catalog__search:focus {
+    outline: none;
+    border-color: var(--docs-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--docs-accent) 18%, transparent);
+  }
+
+  .rpc-catalog__jump {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: var(--spacing-6);
+    font-size: 0.8125rem;
+    color: var(--docs-fg-muted);
+  }
+
+  .rpc-catalog__jump select {
+    height: 2rem;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-md);
+    background: var(--docs-bg-surface);
+    color: var(--docs-fg);
+    font-size: 0.8125rem;
+    padding: 0 0.5rem;
+    max-width: min(100%, 18rem);
+  }
+
+  .rpc-catalog__empty {
+    text-align: center;
+    color: var(--docs-fg-muted);
+    padding: var(--spacing-8);
+    border: 1px dashed var(--docs-border-subtle);
+    border-radius: var(--docs-radius-lg);
   }
 
   .rpc-group {
-    margin-bottom: var(--spacing-10);
+    margin-bottom: var(--spacing-8);
     scroll-margin-top: var(--docs-anchor-offset);
   }
 
+  .rpc-group[hidden] {
+    display: none;
+  }
+
   .rpc-group__title {
-    font-size: 1.15rem;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 1.05rem;
     font-weight: 600;
     margin: 0 0 var(--spacing-3);
     letter-spacing: -0.015em;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--docs-border-subtle);
+  }
+
+  .rpc-group__count {
+    font-family: var(--docs-font-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--docs-fg-subtle);
   }
 
   .rpc-method {
     border: 1px solid var(--docs-border-subtle);
-    border-radius: var(--docs-radius-lg);
+    border-radius: var(--docs-radius-md);
     background: var(--docs-bg-surface);
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.35rem;
     overflow: hidden;
+  }
+
+  .rpc-method[hidden] {
+    display: none;
   }
 
   .rpc-method summary {
@@ -197,8 +315,10 @@ const scopeColor: Record<string, string> = {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.45rem 0.65rem;
-    padding: 0.65rem 0.85rem;
+    justify-content: space-between;
+    gap: 0.35rem 0.75rem;
+    padding: 0.55rem 0.75rem;
+    min-height: 2.5rem;
     transition: background-color var(--docs-transition);
   }
 
@@ -207,44 +327,83 @@ const scopeColor: Record<string, string> = {
   }
 
   .rpc-method summary:hover {
-    background: color-mix(in srgb, var(--docs-bg-raised) 70%, transparent);
+    background: color-mix(in srgb, var(--docs-bg-raised) 65%, transparent);
+  }
+
+  .rpc-method__main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem 0.55rem;
+    min-width: 0;
   }
 
   .rpc-method__name {
-    font-size: 0.85rem;
+    font-family: var(--docs-font-mono);
+    font-size: 0.8125rem;
     font-weight: 600;
     color: var(--docs-fg);
+    word-break: break-all;
   }
 
   .rpc-method__scope {
     font-family: var(--docs-font-mono);
-    font-size: 0.65rem;
+    font-size: 0.625rem;
     font-weight: 600;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: var(--scope-color);
-    border: 1px solid color-mix(in srgb, var(--scope-color) 40%, transparent);
-    background: color-mix(in srgb, var(--scope-color) 12%, transparent);
-    border-radius: var(--docs-radius-sm);
-    padding: 0.1rem 0.35rem;
+    border-radius: 999px;
+    padding: 0.12rem 0.4rem;
+    line-height: 1.2;
+    flex-shrink: 0;
+  }
+
+  .rpc-method__scope.is-read {
+    color: var(--docs-info);
+    background: color-mix(in srgb, var(--docs-info) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--docs-info) 28%, transparent);
+  }
+  .rpc-method__scope.is-write {
+    color: var(--docs-accent);
+    background: color-mix(in srgb, var(--docs-accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--docs-accent) 28%, transparent);
+  }
+  .rpc-method__scope.is-admin {
+    color: var(--docs-warning);
+    background: color-mix(in srgb, var(--docs-warning) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--docs-warning) 28%, transparent);
+  }
+  .rpc-method__scope.is-worker,
+  .rpc-method__scope.is-stream {
+    color: var(--docs-fg-muted);
+    background: var(--docs-bg-raised);
+    border: 1px solid var(--docs-border-subtle);
+  }
+
+  .rpc-method__flags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    flex-shrink: 0;
   }
 
   .rpc-method__flag {
-    font-size: 0.65rem;
+    font-size: 0.625rem;
     font-family: var(--docs-font-mono);
     color: var(--docs-fg-subtle);
     border: 1px solid var(--docs-border-subtle);
-    border-radius: var(--docs-radius-sm);
-    padding: 0.08rem 0.3rem;
+    border-radius: 999px;
+    padding: 0.1rem 0.35rem;
+    line-height: 1.2;
   }
 
-  .rpc-method__flag--warn {
+  .rpc-method__flag.is-warn {
     color: var(--docs-warning);
-    border-color: color-mix(in srgb, var(--docs-warning) 40%, transparent);
+    border-color: color-mix(in srgb, var(--docs-warning) 35%, transparent);
   }
 
   .rpc-method__body {
-    padding: 0 0.85rem 0.9rem;
+    padding: 0 0.75rem 0.85rem;
     border-top: 1px solid var(--docs-border-subtle);
   }
 
@@ -255,49 +414,108 @@ const scopeColor: Record<string, string> = {
     padding-top: var(--spacing-3);
   }
 
-  @media (min-width: 900px) {
+  @media (min-width: 960px) {
     .rpc-method__cols {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+      align-items: start;
     }
   }
 
   .rpc-method__body h4 {
     margin: 0 0 0.4rem;
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
     color: var(--docs-fg-subtle);
   }
 
-  .rpc-method__body table {
+  .rpc-table-wrap {
+    overflow-x: auto;
+    margin-bottom: var(--spacing-3);
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-md);
+  }
+
+  .rpc-table-wrap table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.8rem;
-    margin-bottom: var(--spacing-3);
+    font-size: 0.8125rem;
+    margin: 0;
   }
 
-  .rpc-method__body th,
-  .rpc-method__body td {
-    border: 1px solid var(--docs-border-subtle);
-    padding: 0.35rem 0.5rem;
+  .rpc-table-wrap th,
+  .rpc-table-wrap td {
+    border-bottom: 1px solid var(--docs-border-subtle);
+    border-inline-end: 1px solid var(--docs-border-subtle);
+    padding: 0.4rem 0.55rem;
     text-align: left;
+    vertical-align: top;
   }
 
-  .rpc-method__body th {
+  .rpc-table-wrap th:last-child,
+  .rpc-table-wrap td:last-child {
+    border-inline-end: 0;
+  }
+
+  .rpc-table-wrap tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .rpc-table-wrap th {
     background: var(--docs-bg-raised);
     font-weight: 500;
+    color: var(--docs-fg-muted);
+    white-space: nowrap;
   }
 
-  .rpc-method__result,
+  /* Plain mono — no chips */
+  .rpc-table-wrap td.rpc-mono,
+  .rpc-type {
+    font-family: var(--docs-font-mono);
+    font-size: 0.78rem;
+    color: var(--docs-fg);
+    background: transparent;
+    border-radius: 0;
+    padding: 0.4rem 0.55rem;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
   .rpc-method__empty {
     margin: 0 0 var(--spacing-3);
-    font-size: 0.8rem;
+    color: var(--docs-fg-muted);
+    font-size: 0.8125rem;
   }
 
-  .rpc-method__result code,
-  .rpc-method__empty code {
-    font-size: 0.8em;
+  .rpc-method__result {
+    margin: 0;
+    padding: 0.55rem 0.65rem;
+    background: var(--docs-bg);
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-md);
+    font-family: var(--docs-font-mono);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: var(--docs-fg-muted);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
     word-break: break-word;
+  }
+
+  .rpc-method__sample {
+    min-width: 0;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

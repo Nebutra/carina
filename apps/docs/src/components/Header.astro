@@ -1,10 +1,13 @@
 ---
 /**
- * Header — Starlight brand row + Mintlify-style section tabs + version channel.
- * Tabs = top-level sidebar groups (href = first leaf link).
- * Hidden below md; mobile drawer already exposes groups.
+ * Full header: brand + search + version + theme/lang, section tabs, version banner.
  */
-import Default from '@astrojs/starlight/components/Header.astro';
+import config from 'virtual:starlight/user-config';
+import LanguageSelect from 'virtual:starlight/components/LanguageSelect';
+import Search from 'virtual:starlight/components/Search';
+import SiteTitle from 'virtual:starlight/components/SiteTitle';
+import SocialIcons from 'virtual:starlight/components/SocialIcons';
+import ThemeSelect from 'virtual:starlight/components/ThemeSelect';
 import VersionSelector from './ui/VersionSelector.astro';
 import VersionBanner from './VersionBanner.astro';
 
@@ -14,6 +17,10 @@ type SidebarEntry =
 
 const { sidebar } = Astro.locals.starlightRoute;
 const hasSidebar = Astro.locals.starlightRoute.hasSidebar;
+
+const shouldRenderSearch =
+  config.pagefind ||
+  config.components.Search !== '@astrojs/starlight/components/Search.astro';
 
 function firstLink(entries: SidebarEntry[]): string | undefined {
   for (const e of entries) {
@@ -42,8 +49,28 @@ const tabs = hasSidebar
   : [];
 ---
 
-<div class="docs-header">
-  <Default><slot /></Default>
+<div class="docs-header" data-docs-header>
+  <div class="header">
+    <div class="title-wrapper sl-flex">
+      <SiteTitle />
+    </div>
+    <div class="sl-flex print:hidden header-search">
+      {shouldRenderSearch && <Search />}
+    </div>
+    <div class="sl-flex print:hidden right-group">
+      <div class="header-version">
+        <VersionSelector compact />
+      </div>
+      <div class="sl-hidden md:sl-flex social-icons">
+        <SocialIcons />
+      </div>
+      <div class="sl-hidden md:sl-flex header-selects">
+        <ThemeSelect />
+        <LanguageSelect />
+      </div>
+    </div>
+  </div>
+
   {
     tabs.length > 0 && (
       <nav class="header-tabs sl-hidden md:sl-block" aria-label="Sections">
@@ -57,15 +84,42 @@ const tabs = hasSidebar
               </li>
             ))}
           </ul>
-          <div class="header-tabs__version">
-            <VersionSelector compact />
-          </div>
         </div>
       </nav>
     )
   }
+
   <VersionBanner />
 </div>
+
+<script>
+  /** Keep sticky offset in sync when the preview version banner shows/hides. */
+  function syncHeaderOffset() {
+    const header = document.querySelector<HTMLElement>('header.header');
+    if (!header) return;
+    const h = header.getBoundingClientRect().height;
+    document.documentElement.style.setProperty('--sl-nav-height', `${h}px`);
+    document.documentElement.style.setProperty('--docs-nav-height', `${h}px`);
+    document.documentElement.style.setProperty(
+      '--docs-anchor-offset',
+      `calc(${h}px + 1rem)`,
+    );
+  }
+
+  function boot() {
+    syncHeaderOffset();
+    const banner = document.querySelector('[data-version-banner]');
+    if (banner && !banner.hasAttribute('data-offset-bound')) {
+      banner.setAttribute('data-offset-bound', '1');
+      const obs = new MutationObserver(syncHeaderOffset);
+      obs.observe(banner, { attributes: true, attributeFilter: ['hidden'] });
+    }
+    window.addEventListener('resize', syncHeaderOffset, { passive: true });
+  }
+
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>
 
 <style>
   .docs-header {
@@ -74,16 +128,76 @@ const tabs = hasSidebar
     width: 100%;
   }
 
+  .docs-header > .header {
+    display: flex;
+    gap: var(--sl-nav-gap, 1rem);
+    justify-content: space-between;
+    align-items: center;
+    height: var(--docs-nav-row-height, 3.5rem);
+    padding-inline: 0;
+  }
+
+  .title-wrapper {
+    overflow: clip;
+    padding: 0.25rem;
+    margin: -0.25rem;
+    min-width: 0;
+  }
+
+  .header-search {
+    flex: 1;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .right-group {
+    gap: 0.5rem;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .header-version {
+    display: flex;
+    align-items: center;
+  }
+
+  .header-selects {
+    gap: 0.25rem;
+    align-items: center;
+  }
+
+  .social-icons {
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .social-icons::after {
+    content: '';
+    height: 1.25rem;
+    border-inline-end: 1px solid var(--docs-border-subtle);
+    margin-inline-start: 0.15rem;
+  }
+
+  @media (min-width: 50rem) {
+    .docs-header > .header {
+      display: grid;
+      grid-template-columns:
+        minmax(
+          calc(var(--__sidebar-width, 0rem) + max(0rem, var(--__main-column-fr, 0rem) - var(--sl-nav-gap, 1rem))),
+          auto
+        )
+        1fr
+        auto;
+      align-content: center;
+    }
+  }
+
   .header-tabs {
     border-top: 1px solid var(--docs-border-subtle);
     background: color-mix(in srgb, var(--docs-bg) 40%, transparent);
   }
 
   .header-tabs__inner {
-    display: flex;
-    align-items: stretch;
-    justify-content: space-between;
-    gap: 1rem;
     overflow-x: auto;
     scrollbar-width: none;
     padding-inline: var(--sl-nav-pad-x, 1rem);
@@ -101,13 +215,6 @@ const tabs = hasSidebar
     padding: 0;
     list-style: none;
     min-height: var(--docs-tabs-height);
-    min-width: 0;
-  }
-
-  .header-tabs__version {
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
   }
 
   .header-tabs a {
@@ -122,10 +229,7 @@ const tabs = hasSidebar
     color: var(--docs-fg-muted);
     text-decoration: none;
     white-space: nowrap;
-    border-radius: var(--docs-radius-sm) var(--docs-radius-sm) 0 0;
-    transition:
-      color var(--docs-transition),
-      background-color var(--docs-transition);
+    transition: color var(--docs-transition);
   }
 
   .header-tabs a::after {
@@ -136,12 +240,10 @@ const tabs = hasSidebar
     height: 2px;
     border-radius: 1px 1px 0 0;
     background: transparent;
-    transition: background-color var(--docs-transition);
   }
 
   .header-tabs a:hover {
     color: var(--docs-fg);
-    background: color-mix(in srgb, var(--docs-bg-raised) 50%, transparent);
   }
 
   .header-tabs a[aria-current='page'] {
@@ -151,10 +253,5 @@ const tabs = hasSidebar
 
   .header-tabs a[aria-current='page']::after {
     background: var(--docs-accent);
-  }
-
-  .header-tabs a:focus-visible {
-    outline: 2px solid var(--docs-focus);
-    outline-offset: -2px;
   }
 </style>

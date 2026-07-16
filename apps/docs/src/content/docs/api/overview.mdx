@@ -6,16 +6,10 @@ sidebar:
 ---
 
 import Callout from '../../../components/ui/Callout.astro';
-import VersionSelector from '../../../components/ui/VersionSelector.astro';
 import Tabs from '../../../components/mdx/Tabs.astro';
 import Tab from '../../../components/mdx/Tab.astro';
 import Cards from '../../../components/mdx/Cards.astro';
 import Card from '../../../components/mdx/Card.astro';
-
-
-<div style="margin: 0 0 1.25rem">
-  <VersionSelector />
-</div>
 
 Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. Bare TCP is restricted to explicit loopback for diagnostics. Network-facing clients use the authenticated WebSocket or HTTP Gateway. All optional listeners are **disabled by default**.
 

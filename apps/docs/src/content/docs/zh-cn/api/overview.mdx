@@ -3,13 +3,8 @@ title: Runtime API 概览
 description: JSON-RPC、可选 Gateway、作用域与 SDK 表面。
 ---
 
-import VersionSelector from '../../../../components/ui/VersionSelector.astro';
 import Callout from '../../../../components/ui/Callout.astro';
 
-
-<div style="margin: 0 0 1.25rem">
-  <VersionSelector current="0.6.x" />
-</div>
 
 传输（MVP）：**JSON-RPC 2.0** 经 unix socket（`~/.carina/daemon.sock`）或 stdio。可选 WebSocket / HTTP Gateway 默认关闭。
 

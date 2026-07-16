@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-16T07:43:11.196Z",
+  "generated_at": "2026-07-16T07:55:43.380Z",
   "protocol_version": "1.6.0",
   "source": "protocol/jsonrpc/methods.json",
   "method_count": 157,
@@ -147,10 +147,10 @@
           "control_plane_write": true,
           "params": {
             "on": "boolean?",
-            "mode": "ask|always-approve|dont-ask?",
+            "mode": "ask|always-approve|dont-ask|accept-edits?",
             "session_id": "string?"
           },
-          "result": "{ interactive_approval: boolean, approval_mode: ask|always-approve|dont-ask, previous_mode: string, disable_always_approve: boolean, warning: string }"
+          "result": "{ interactive_approval: boolean, approval_mode: ask|always-approve|dont-ask|accept-edits, previous_mode: string, disable_always_approve: boolean, warning: string }"
         }
       ]
     },
