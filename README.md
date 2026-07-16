@@ -126,6 +126,24 @@ brew upgrade carina
 package metadata and `brew upgrade carina` upgrades the installed formula.
 Carina does not auto-start the daemon after installation.
 
+## Built-in Updates
+
+Check or install the newest public release from any installation:
+
+```bash
+carina update --check
+carina update
+```
+
+Homebrew installations delegate to `brew`; npm/pnpm installations delegate to
+their owning package manager. Standalone and source-tree `bin/carina`
+installations download the complete platform bundle, verify the published
+SHA256 plus the archive manifest and internal checksums, reject unsafe archive
+entries, and replace sibling runtime binaries as one rollback-capable
+transaction. Use `--version x.y.z` for an exact standalone release and
+`--force` only for an intentional reinstall or downgrade. A running daemon is
+never killed automatically; restart it after active tasks finish.
+
 ## TUI Interaction And Keybindings
 
 Run `carina-tui` directly, or run bare `carina` in an interactive terminal. The
@@ -152,16 +170,22 @@ The default interaction loop is:
   to chat. One-shot `!cmd` in normal mode still works.
 - `/settings` (or `Ctrl+,`) opens the control shell. `/plan` scaffolds a plan
   file under `.carina/plans/`; `/approve-plan` exits plan mode.
-- **Approval modes** (footer shows the active mode):
+- **Product HITL modes** (footer; daemon config `approval_mode` /
+  `CARINA_APPROVAL_MODE` / `-approval-mode` / `/approval-mode`):
   - `ask` — pause on `requires_approval` for operator once/session/project
   - `always-approve` — auto-allow `requires_approval` **with an on-screen
     warning** (`/always-approve`); deny rules, plan mode, and OS sandbox still apply
   - `dont-ask` — deny `requires_approval` unless an exact session/project grant
-    already exists (no prompt; CI-friendly). Set with `/approval-mode dont-ask`
-    or `/dont-ask`, config `approval_mode`, env `CARINA_APPROVAL_MODE`, or
-    `carina-daemon -approval-mode dont-ask`
-  - Orgs can lock out YOLO with `"disable_always_approve": true` (and manage-lock
-    it in `/etc/carina/managed.json`)
+    already exists (no prompt; CI-friendly). Also `/dont-ask`
+  - Orgs can lock out YOLO with `"disable_always_approve": true` (manage-lock
+    in `/etc/carina/managed.json`)
+  - **Not the same axis as session/kernel approval:** session create still takes
+    `untrusted` \| `on_request` \| `never` (how the kernel escalates or
+    auto-allows). Product mode is what the daemon does when the kernel still
+    returns `requires_approval`. Do not set product `approval_mode` to `never`
+    — that token is rejected so it cannot be confused with session `never`.
+- `/btw <q>` is answer-only on the current session; `/btw --fork` / `/side`
+  forks a session and switches to it (no dual-pane).
 - Context pressure notices appear around 80%/90%; auto-compact runs only when
   a paused checkpoint makes `session.checkpoint.compact` available.
 

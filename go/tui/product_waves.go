@@ -275,7 +275,7 @@ func (m *Model) explainRuntimeSurface() {
 		m.text(MsgExplainMode, MessageArgs{"mode": m.modeLabel()}),
 		m.text(MsgExplainProfile, MessageArgs{"profile": stringOr(m.runtime.Profile, "unknown")}),
 		m.text(MsgExplainSandbox, MessageArgs{"sandbox": stringOr(m.runtime.Sandbox, "unknown")}),
-		m.text(MsgExplainApproval, MessageArgs{"approval": m.approvalModeLabel() + " (interactive=" + stringOr(m.runtime.InteractiveApprove, "?") + ")"}),
+		m.text(MsgExplainApproval, MessageArgs{"approval": "product HITL=" + m.approvalModeLabel()}),
 		"",
 		m.text(MsgExplainSandboxWhy, nil),
 		m.text(MsgExplainHowToChange, nil),

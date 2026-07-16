@@ -104,8 +104,18 @@ To forbid YOLO always-approve (and keep operators on `ask` or `dont-ask`):
 }
 ```
 
-`dont-ask` is the CI-friendly product mode: `requires_approval` is denied
+**Two approval axes (names must not be mixed):**
+
+| Axis | Config / API | Values | Meaning |
+|------|----------------|--------|---------|
+| Product HITL | managed/global `approval_mode`, `CARINA_APPROVAL_MODE`, `-approval-mode`, `/approval-mode` | `ask` \| `always-approve` \| `dont-ask` | Daemon behavior when the kernel returns `requires_approval` |
+| Session / kernel | `session.create` `approval_mode`, kernel `InitSessionFull` | `untrusted` \| `on_request` \| `never` | Whether the profile escalates more actions or auto-allows at the kernel |
+
+`dont-ask` is the CI-friendly **product** mode: `requires_approval` is denied
 unless an exact session/project grant already exists (no interactive prompt).
+Session `never` is **not** accepted as product `approval_mode` (fail closed with
+an explicit error) so operators cannot confuse “never ask at kernel” with
+“always-approve in the daemon”.
 
 ## 6. Centralized audit — `carina export`
 

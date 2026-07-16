@@ -134,11 +134,11 @@ func TestSetApprovalModeRPCThreeWay(t *testing.T) {
 
 func TestNormalizeApprovalModeAliases(t *testing.T) {
 	cases := map[string]string{
-		"ask":           approvalModeAsk,
-		"dontAsk":       approvalModeDontAsk,
-		"dont_ask":      approvalModeDontAsk,
-		"yolo":          approvalModeAlwaysApprove,
-		"bypass":        approvalModeAlwaysApprove,
+		"ask":            approvalModeAsk,
+		"dontAsk":        approvalModeDontAsk,
+		"dont_ask":       approvalModeDontAsk,
+		"yolo":           approvalModeAlwaysApprove,
+		"bypass":         approvalModeAlwaysApprove,
 		"always-approve": approvalModeAlwaysApprove,
 	}
 	for in, want := range cases {
@@ -149,5 +149,15 @@ func TestNormalizeApprovalModeAliases(t *testing.T) {
 	}
 	if _, err := normalizeApprovalMode("nope"); err == nil {
 		t.Fatal("expected error for unknown mode")
+	}
+	// Session/kernel axis must not silently map onto product HITL modes.
+	for _, sessionAxis := range []string{"never", "untrusted", "on_request", "on-request"} {
+		_, err := normalizeApprovalMode(sessionAxis)
+		if err == nil {
+			t.Fatalf("%q must be rejected as product mode", sessionAxis)
+		}
+		if !strings.Contains(err.Error(), "session/kernel") {
+			t.Fatalf("%q error should name session/kernel axis, got %v", sessionAxis, err)
+		}
 	}
 }

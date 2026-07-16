@@ -38,7 +38,8 @@ and local policy, audit, approval, and rollback remain authoritative.
 ### TUI interaction closure
 
 The July TUI UX audit is closed in the repository at the following evidence
-boundary:
+boundary. Product shell waves E–H (context pressure, sticky shell, HITL modes,
+quality hygiene) are included below; see `docs/plans/tui-product-ux-closure.md`.
 
 | Gap | Repository-owned implementation | Evidence boundary |
 | --- | --- | --- |
@@ -51,6 +52,11 @@ boundary:
 | Terminal buffer choice | Alternate screen remains the default; `carina-tui --no-alt-screen` and `tui_alternate_screen=never` render in the normal terminal buffer | View/config/launcher tests cover the selected mode. A strict commit-once static/dynamic renderer is not claimed; the normal-buffer mode is the accepted native-scrollback escape hatch |
 | Six-locale UX and microcopy | Complete en, zh-CN/zh-Hans, ja, ko, es, and fr catalogs cover interface, Ambient, Governed, Degrade, and bootstrap copy; locale precedence, explicit-value validation, safe placeholder rendering, CLDR count selection, facts/terms metadata, and catalog parity are repository contracts | CI tests traverse all locales, placeholders, register lint, count categories, fallback behavior, startup help/errors, and catalog versions. Traditional Chinese is explicitly not claimed and falls back to English only for system detection |
 | Render regression signal | A production-model `View()` benchmark exercises a workspace-sized transcript and active composer | The benchmark is repeatable repository evidence, not a published latency/SLO claim until release hardware measurements are recorded |
+| Sticky shell mode | Empty-composer `!` enters sticky shell (`! ` prompt, governed `command.exec`); `Esc` on empty draft returns to chat; one-shot `!cmd` remains | TUI shell-mode unit tests and README interaction notes |
+| Context pressure and compact | Notices near 80%/90%; auto-compact at ≥85% only when a paused checkpoint exposes `session.checkpoint.compact` | Model tests for pressure thresholds and compact availability gating |
+| Side Q&A and session fork | `/btw` answer-only on the current session; `/btw --fork` and `/side` call `session.fork` then attach (no dual-pane) | Product-wave tests for fork busy refusal and honest copy |
+| Product HITL modes | Daemon modes `ask` \| `always-approve` \| `dont-ask`; `/always-approve` warns; org `disable_always_approve`; footer shows mode | Daemon resolve-approval tests, RPC mode tests, config validation; session/kernel axis `untrusted\|on_request\|never` remains separate |
+| Approval naming hygiene | Product config/RPC rejects session-axis tokens (`never`, `on_request`, `untrusted`) so they cannot silently alias always-approve/ask | `normalizeApprovalMode` and `config.Validate` tests |
 
 True IME composition placement on macOS Pinyin and fcitx5/Wayland, terminal
 selection behavior under mouse reporting, and representative provider streams

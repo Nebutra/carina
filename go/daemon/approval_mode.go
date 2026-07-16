@@ -5,31 +5,45 @@ import (
 	"strings"
 )
 
-// Product approval modes control what happens when the kernel returns
-// requires_approval (after exact stored grants). Orthogonal to session
-// ApprovalMode untrusted|on_request|never, which is a kernel policy axis.
+// Product HITL modes control what happens when the kernel returns
+// requires_approval (after exact stored grants).
+//
+// Orthogonal axes — do not conflate:
+//
+//	Product (this file / daemon approval_mode / /approval-mode):
+//	  ask | always-approve | dont-ask
+//	Session/kernel (session.approval_mode / InitSessionFull):
+//	  untrusted | on_request | never
+//
+// Session "never" means the kernel auto-allows requires_approval before the
+// daemon HITL path. Product "always-approve" means the daemon auto-allows after
+// the kernel still returned requires_approval (plus risk_review). They are not
+// interchangeable names.
 const (
 	approvalModeAsk           = "ask"
 	approvalModeAlwaysApprove = "always-approve"
 	approvalModeDontAsk       = "dont-ask"
 )
 
-// normalizeApprovalMode accepts product names and common aliases (Grok/CC
-// dontAsk, yolo). Empty becomes ask so interactive surfaces default to
-// pausing for an operator rather than silent auto-approve.
+// normalizeApprovalMode accepts product names and a small set of product
+// aliases (yolo, bypass, dontAsk). Empty becomes ask so interactive surfaces
+// default to pausing for an operator rather than silent auto-approve.
+//
+// Session-axis tokens (untrusted|on_request|never) are rejected with an
+// explicit error so they cannot silently map to a different product mode.
 func normalizeApprovalMode(mode string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "", approvalModeAsk, "interactive", "on_request", "on-request":
+	raw := strings.TrimSpace(mode)
+	switch strings.ToLower(raw) {
+	case "", approvalModeAsk, "interactive":
 		return approvalModeAsk, nil
-	case approvalModeAlwaysApprove, "always_approve", "alwaysapprove", "yolo", "bypass", "bypasspermissions", "never":
-		// "never" here is product always-approve (auto-run requires_approval),
-		// not the session kernel axis name alone — callers that mean kernel
-		// never must not route through this helper.
+	case approvalModeAlwaysApprove, "always_approve", "alwaysapprove", "yolo", "bypass", "bypasspermissions":
 		return approvalModeAlwaysApprove, nil
 	case approvalModeDontAsk, "dont_ask", "dontask", "deny-by-default", "deny_by_default":
 		return approvalModeDontAsk, nil
+	case "never", "untrusted", "on_request", "on-request":
+		return "", fmt.Errorf("%q is a session/kernel approval axis (untrusted|on_request|never), not product HITL mode; use ask|always-approve|dont-ask — session never auto-allows in the kernel; product always-approve auto-allows in the daemon after requires_approval", raw)
 	default:
-		return "", fmt.Errorf("approval_mode must be one of ask, always-approve, dont-ask")
+		return "", fmt.Errorf("product approval_mode must be one of ask, always-approve, dont-ask")
 	}
 }
 

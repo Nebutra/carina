@@ -276,11 +276,15 @@ func (c Config) Validate() error {
 	if mode := strings.ToLower(strings.TrimSpace(c.RiskReviewMode)); mode != "" && mode != "off" && mode != "advisory" && mode != "enforce" {
 		return fmt.Errorf("config: risk_review_mode must be one of off, advisory, enforce")
 	}
+	// Product HITL axis only (ask|always-approve|dont-ask). Session/kernel
+	// axis values (untrusted|on_request|never) belong on session.create, not here.
 	if mode := strings.ToLower(strings.TrimSpace(c.ApprovalMode)); mode != "" {
 		switch mode {
-		case "ask", "interactive", "on_request", "on-request",
-			"always-approve", "always_approve", "alwaysapprove", "yolo", "bypass", "bypasspermissions", "never",
+		case "ask", "interactive",
+			"always-approve", "always_approve", "alwaysapprove", "yolo", "bypass", "bypasspermissions",
 			"dont-ask", "dont_ask", "dontask", "deny-by-default", "deny_by_default":
+		case "never", "untrusted", "on_request", "on-request":
+			return fmt.Errorf("config: approval_mode %q is the session/kernel axis (untrusted|on_request|never); product HITL uses ask|always-approve|dont-ask", mode)
 		default:
 			return fmt.Errorf("config: approval_mode must be one of ask, always-approve, dont-ask")
 		}
@@ -291,7 +295,7 @@ func (c Config) Validate() error {
 	if c.DisableAlwaysApprove {
 		mode := strings.ToLower(strings.TrimSpace(c.ApprovalMode))
 		switch mode {
-		case "always-approve", "always_approve", "alwaysapprove", "yolo", "bypass", "bypasspermissions", "never":
+		case "always-approve", "always_approve", "alwaysapprove", "yolo", "bypass", "bypasspermissions":
 			return fmt.Errorf("config: approval_mode=always-approve conflicts with disable_always_approve")
 		}
 	}
