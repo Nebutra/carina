@@ -16,7 +16,7 @@ import { carinaDark } from './src/themes/carina-code.mjs';
  * built-in ThemeProvider/ThemeSelect handle persistence + FOUC guard.
  */
 export default defineConfig({
-  site: 'https://docs.carina.dev',
+  site: 'https://carina.nebutra.com',
   trailingSlash: 'always',
   integrations: [
     starlight({

@@ -82,7 +82,7 @@ for (const file of files) {
 
 entries.sort((a, b) => a.url.localeCompare(b.url));
 
-const site = 'https://docs.carina.dev';
+const site = 'https://carina.nebutra.com';
 const en = entries.filter((e) => e.locale === 'en');
 const zh = entries.filter((e) => e.locale === 'zh-CN');
 

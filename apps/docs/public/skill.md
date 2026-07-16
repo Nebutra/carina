@@ -13,11 +13,11 @@ description: Use Carina documentation to answer questions about the local-first 
 - Workflows, tools, MCP, workers
 
 ## Sources
-- Human docs: https://docs.carina.dev
-- LLM index: https://docs.carina.dev/llms.txt
-- Full index: https://docs.carina.dev/llms-full.txt
-- Method catalog (stable): https://docs.carina.dev/data/rpc-catalog-0.6.x.json
-- Method catalog (next): https://docs.carina.dev/data/rpc-catalog-next.json
+- Human docs: https://carina.nebutra.com
+- LLM index: https://carina.nebutra.com/llms.txt
+- Full index: https://carina.nebutra.com/llms-full.txt
+- Method catalog (stable): https://carina.nebutra.com/data/rpc-catalog-0.6.x.json
+- Method catalog (next): https://carina.nebutra.com/data/rpc-catalog-next.json
 
 ## Preferred workflow
 1. Read llms.txt for the page map.
@@ -28,5 +28,5 @@ description: Use Carina documentation to answer questions about the local-first 
 ## Install
 ```bash
 # Cursor / skill runners (example)
-npx skills add https://docs.carina.dev
+npx skills add https://carina.nebutra.com
 ```

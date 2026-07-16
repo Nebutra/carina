@@ -74,7 +74,7 @@ export const GET: APIRoute = async ({ props, site }) => {
   }
 
   const path = id === 'index' ? '/' : `/${id}/`;
-  const url = new URL(path, site ?? 'https://docs.carina.dev').href;
+  const url = new URL(path, site ?? 'https://carina.nebutra.com').href;
 
   const md = [
     '---',

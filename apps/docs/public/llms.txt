@@ -2,63 +2,63 @@
 
 > Local-first AI agent runtime with policy, hash-chained audit, and transactional rollback.
 
-Site: https://docs.carina.dev
+Site: https://carina.nebutra.com
 
 ## English
 
-- [Carina](https://docs.carina.dev/): Local-first AI agent runtime with policy, hash-chained audit, and transactional rollback.
-- [Agents overview](https://docs.carina.dev/agents/overview/): ReAct coding agent loop — model decides, kernel authorizes, Zig executes.
-- [Sub-agents](https://docs.carina.dev/agents/sub-agents/): Delegate work with SubagentSpawn and capability attenuation.
-- [JSON-RPC reference](https://docs.carina.dev/api/json-rpc/): Curated method reference for the local JSON-RPC control plane.
-- [Method catalog](https://docs.carina.dev/api/methods/): Protocol-driven JSON-RPC method catalog synced from protocol/jsonrpc/methods.json.
-- [Runtime API overview](https://docs.carina.dev/api/overview/): JSON-RPC over unix socket/stdio, optional Gateway, scopes, and SDK surfaces.
-- [Sessions](https://docs.carina.dev/api/sessions/): Create, control, stream, and export Carina sessions.
-- [API versions](https://docs.carina.dev/api/versions/): How Carina docs version channels map to protocol catalogs and release lines.
-- [Audit & rollback](https://docs.carina.dev/concepts/audit/): Append-only event log, hash-chain verification, and transactional patch recovery.
-- [Policy & capabilities](https://docs.carina.dev/concepts/policy/): Capability types, permission profiles, command risk levels, and default security posture.
-- [Runtime model](https://docs.carina.dev/concepts/runtime/): Layered architecture — client surfaces, Go control plane, Rust capability kernel, Zig tools.
-- [FAQ](https://docs.carina.dev/deployment/faq/): Product boundaries, security, offline use, and docs site tokens.
-- [Local install](https://docs.carina.dev/deployment/local/): Run the daemon, CLI, and native tools on a developer machine.
-- [Workers](https://docs.carina.dev/deployment/workers/): Lease-based remote workers, production profile, drain, and containers.
-- [Installation](https://docs.carina.dev/getting-started/installation/): Install the Carina CLI and daemon on macOS, Linux, or via package managers.
-- [Introduction](https://docs.carina.dev/getting-started/introduction/): What Carina is, who it is for, and how the runtime is structured.
-- [Quickstart](https://docs.carina.dev/getting-started/quickstart/): Start the daemon, run an agent task, inspect audit, and roll back a patch.
-- [Memory overview](https://docs.carina.dev/memory/overview/): Governed local memory, MemoryWrite capability, and optional HMS projection.
-- [Traces & audit](https://docs.carina.dev/observability/traces/): Event log, item stream, cost attribution, and hash-chain verification.
-- [MCP integrations](https://docs.carina.dev/tools/mcp/): Governed MCP client/server without leaking unconstrained authority.
-- [Tools overview](https://docs.carina.dev/tools/overview/): Built-in agent tools, Zig toolchain, and capability mediation.
-- [Workflows overview](https://docs.carina.dev/workflows/overview/): Declarative multi-step agent DAGs with attenuated subagents.
-- [Tutorial: review pipeline](https://docs.carina.dev/workflows/tutorial-review/): Run the in-repo review workflow with parallel reviewers and a synthesis step.
+- [Carina](https://carina.nebutra.com/): Local-first AI agent runtime with policy, hash-chained audit, and transactional rollback.
+- [Agents overview](https://carina.nebutra.com/agents/overview/): ReAct coding agent loop — model decides, kernel authorizes, Zig executes.
+- [Sub-agents](https://carina.nebutra.com/agents/sub-agents/): Delegate work with SubagentSpawn and capability attenuation.
+- [JSON-RPC reference](https://carina.nebutra.com/api/json-rpc/): Curated method reference for the local JSON-RPC control plane.
+- [Method catalog](https://carina.nebutra.com/api/methods/): Protocol-driven JSON-RPC method catalog synced from protocol/jsonrpc/methods.json.
+- [Runtime API overview](https://carina.nebutra.com/api/overview/): JSON-RPC over unix socket/stdio, optional Gateway, scopes, and SDK surfaces.
+- [Sessions](https://carina.nebutra.com/api/sessions/): Create, control, stream, and export Carina sessions.
+- [API versions](https://carina.nebutra.com/api/versions/): How Carina docs version channels map to protocol catalogs and release lines.
+- [Audit & rollback](https://carina.nebutra.com/concepts/audit/): Append-only event log, hash-chain verification, and transactional patch recovery.
+- [Policy & capabilities](https://carina.nebutra.com/concepts/policy/): Capability types, permission profiles, command risk levels, and default security posture.
+- [Runtime model](https://carina.nebutra.com/concepts/runtime/): Layered architecture — client surfaces, Go control plane, Rust capability kernel, Zig tools.
+- [FAQ](https://carina.nebutra.com/deployment/faq/): Product boundaries, security, offline use, and docs site tokens.
+- [Local install](https://carina.nebutra.com/deployment/local/): Run the daemon, CLI, and native tools on a developer machine.
+- [Workers](https://carina.nebutra.com/deployment/workers/): Lease-based remote workers, production profile, drain, and containers.
+- [Installation](https://carina.nebutra.com/getting-started/installation/): Install the Carina CLI and daemon on macOS, Linux, or via package managers.
+- [Introduction](https://carina.nebutra.com/getting-started/introduction/): What Carina is, who it is for, and how the runtime is structured.
+- [Quickstart](https://carina.nebutra.com/getting-started/quickstart/): Start the daemon, run an agent task, inspect audit, and roll back a patch.
+- [Memory overview](https://carina.nebutra.com/memory/overview/): Governed local memory, MemoryWrite capability, and optional HMS projection.
+- [Traces & audit](https://carina.nebutra.com/observability/traces/): Event log, item stream, cost attribution, and hash-chain verification.
+- [MCP integrations](https://carina.nebutra.com/tools/mcp/): Governed MCP client/server without leaking unconstrained authority.
+- [Tools overview](https://carina.nebutra.com/tools/overview/): Built-in agent tools, Zig toolchain, and capability mediation.
+- [Workflows overview](https://carina.nebutra.com/workflows/overview/): Declarative multi-step agent DAGs with attenuated subagents.
+- [Tutorial: review pipeline](https://carina.nebutra.com/workflows/tutorial-review/): Run the in-repo review workflow with parallel reviewers and a synthesis step.
 
 ## 简体中文
 
-- [Carina](https://docs.carina.dev/zh-cn/): 本地优先的 AI Agent 运行时：策略门控、哈希链审计、可事务回滚。
-- [Agents 概览](https://docs.carina.dev/zh-cn/agents/overview/): ReAct 编程 Agent — 模型决策、内核授权、Zig 执行。
-- [子 Agent](https://docs.carina.dev/zh-cn/agents/sub-agents/): 以衰减后的能力委派工作。
-- [JSON-RPC 参考](https://docs.carina.dev/zh-cn/api/json-rpc/): 本地 JSON-RPC 控制平面方法参考。
-- [方法目录](https://docs.carina.dev/zh-cn/api/methods/): 由 protocol/jsonrpc/methods.json 同步的 JSON-RPC 方法目录。
-- [Runtime API 概览](https://docs.carina.dev/zh-cn/api/overview/): JSON-RPC、可选 Gateway、作用域与 SDK 表面。
-- [会话](https://docs.carina.dev/zh-cn/api/sessions/): 创建、附着、引导与关闭会话。
-- [API 版本通道](https://docs.carina.dev/zh-cn/api/versions/): 文档 0.6.x / next 通道与协议目录的对应关系。
-- [审计与回滚](https://docs.carina.dev/zh-cn/concepts/audit/): 哈希链审计与事务补丁恢复。
-- [策略与能力](https://docs.carina.dev/zh-cn/concepts/policy/): 能力类型、权限配置、命令风险等级与默认安全姿态。
-- [运行时模型](https://docs.carina.dev/zh-cn/concepts/runtime/): 分层架构 — 客户端、Go 控制面、Rust 能力内核、Zig 工具链。
-- [常见问题](https://docs.carina.dev/zh-cn/deployment/faq/): 关于部署、安全与产品边界的常见问题。
-- [本地安装](https://docs.carina.dev/zh-cn/deployment/local/): 以本地 daemon 方式运行 Carina。
-- [Workers](https://docs.carina.dev/zh-cn/deployment/workers/): 基于租约的远程 worker、生产配置与排水升级。
-- [安装](https://docs.carina.dev/zh-cn/getting-started/installation/): 在 macOS、Linux 上安装 Carina CLI 与 daemon。
-- [简介](https://docs.carina.dev/zh-cn/getting-started/introduction/): Carina 是什么、面向谁、运行时如何组织。
-- [快速上手](https://docs.carina.dev/zh-cn/getting-started/quickstart/): 启动 daemon、运行任务、检查审计、回滚补丁。
-- [Memory 概览](https://docs.carina.dev/zh-cn/memory/overview/): 会话上下文、检索钩子与持久记录。
-- [追踪与审计](https://docs.carina.dev/zh-cn/observability/traces/): 检视轮次、成本与哈希链审计历史。
-- [MCP 集成](https://docs.carina.dev/zh-cn/tools/mcp/): 接入 MCP 服务且不泄露无约束权限。
-- [Tools 概览](https://docs.carina.dev/zh-cn/tools/overview/): 由能力内核中介的内置与外部工具。
-- [Workflows 概览](https://docs.carina.dev/zh-cn/workflows/overview/): 声明式多步 Agent DAG，能力衰减的子 Agent。
-- [教程：审查流水线](https://docs.carina.dev/zh-cn/workflows/tutorial-review/): 构建带人工检查点的只读审查工作流。
+- [Carina](https://carina.nebutra.com/zh-cn/): 本地优先的 AI Agent 运行时：策略门控、哈希链审计、可事务回滚。
+- [Agents 概览](https://carina.nebutra.com/zh-cn/agents/overview/): ReAct 编程 Agent — 模型决策、内核授权、Zig 执行。
+- [子 Agent](https://carina.nebutra.com/zh-cn/agents/sub-agents/): 以衰减后的能力委派工作。
+- [JSON-RPC 参考](https://carina.nebutra.com/zh-cn/api/json-rpc/): 本地 JSON-RPC 控制平面方法参考。
+- [方法目录](https://carina.nebutra.com/zh-cn/api/methods/): 由 protocol/jsonrpc/methods.json 同步的 JSON-RPC 方法目录。
+- [Runtime API 概览](https://carina.nebutra.com/zh-cn/api/overview/): JSON-RPC、可选 Gateway、作用域与 SDK 表面。
+- [会话](https://carina.nebutra.com/zh-cn/api/sessions/): 创建、附着、引导与关闭会话。
+- [API 版本通道](https://carina.nebutra.com/zh-cn/api/versions/): 文档 0.6.x / next 通道与协议目录的对应关系。
+- [审计与回滚](https://carina.nebutra.com/zh-cn/concepts/audit/): 哈希链审计与事务补丁恢复。
+- [策略与能力](https://carina.nebutra.com/zh-cn/concepts/policy/): 能力类型、权限配置、命令风险等级与默认安全姿态。
+- [运行时模型](https://carina.nebutra.com/zh-cn/concepts/runtime/): 分层架构 — 客户端、Go 控制面、Rust 能力内核、Zig 工具链。
+- [常见问题](https://carina.nebutra.com/zh-cn/deployment/faq/): 关于部署、安全与产品边界的常见问题。
+- [本地安装](https://carina.nebutra.com/zh-cn/deployment/local/): 以本地 daemon 方式运行 Carina。
+- [Workers](https://carina.nebutra.com/zh-cn/deployment/workers/): 基于租约的远程 worker、生产配置与排水升级。
+- [安装](https://carina.nebutra.com/zh-cn/getting-started/installation/): 在 macOS、Linux 上安装 Carina CLI 与 daemon。
+- [简介](https://carina.nebutra.com/zh-cn/getting-started/introduction/): Carina 是什么、面向谁、运行时如何组织。
+- [快速上手](https://carina.nebutra.com/zh-cn/getting-started/quickstart/): 启动 daemon、运行任务、检查审计、回滚补丁。
+- [Memory 概览](https://carina.nebutra.com/zh-cn/memory/overview/): 会话上下文、检索钩子与持久记录。
+- [追踪与审计](https://carina.nebutra.com/zh-cn/observability/traces/): 检视轮次、成本与哈希链审计历史。
+- [MCP 集成](https://carina.nebutra.com/zh-cn/tools/mcp/): 接入 MCP 服务且不泄露无约束权限。
+- [Tools 概览](https://carina.nebutra.com/zh-cn/tools/overview/): 由能力内核中介的内置与外部工具。
+- [Workflows 概览](https://carina.nebutra.com/zh-cn/workflows/overview/): 声明式多步 Agent DAG，能力衰减的子 Agent。
+- [教程：审查流水线](https://carina.nebutra.com/zh-cn/workflows/tutorial-review/): 构建带人工检查点的只读审查工作流。
 
 ## Machine-readable
 
-- Full index: https://docs.carina.dev/llms-full.txt
-- Skill: https://docs.carina.dev/skill.md
-- Markdown export: append `index.md` to any docs path (e.g. https://docs.carina.dev/getting-started/quickstart/index.md)
-- JSON-RPC catalogs: https://docs.carina.dev/data/rpc-catalog-0.6.x.json · https://docs.carina.dev/data/rpc-catalog-next.json
+- Full index: https://carina.nebutra.com/llms-full.txt
+- Skill: https://carina.nebutra.com/skill.md
+- Markdown export: append `index.md` to any docs path (e.g. https://carina.nebutra.com/getting-started/quickstart/index.md)
+- JSON-RPC catalogs: https://carina.nebutra.com/data/rpc-catalog-0.6.x.json · https://carina.nebutra.com/data/rpc-catalog-next.json
