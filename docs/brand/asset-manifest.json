@@ -1,0 +1,924 @@
+{
+  "schemaVersion": 1,
+  "brand": "Carina",
+  "sourceImportedAt": "2026-07-16",
+  "assets": [
+    {
+      "path": "docs/brand/assets/logo/carina-symbol.svg",
+      "role": "canonical",
+      "mediaType": "image/svg+xml",
+      "bytes": 2753,
+      "sha256": "59349cd1723e5875eb5aded724d848a494208d6dd7a97a2eacdf2884187e4061"
+    },
+    {
+      "path": "docs/brand/assets/logo/carina-wordmark.svg",
+      "role": "canonical",
+      "mediaType": "image/svg+xml",
+      "bytes": 4124,
+      "sha256": "205430c649ec9b8ed75d03d9181a7b54db71914ea5e457b1b58c6f855747fc90"
+    },
+    {
+      "path": "docs/brand/assets/logo/carina-horizontal-brand.svg",
+      "role": "derivative",
+      "mediaType": "image/svg+xml",
+      "bytes": 6929,
+      "sha256": "549a6492c45679cd0b83ea7eba3810298f96689ffbf574fb42fdd667597c58d6"
+    },
+    {
+      "path": "docs/brand/assets/logo/carina-horizontal-monochrome.svg",
+      "role": "derivative",
+      "mediaType": "image/svg+xml",
+      "bytes": 6939,
+      "sha256": "4cc3f18c1634ed09267cb045a4c37f5b9a8ee3cb2ee5dcb41dabd2ed2c5e5b17"
+    },
+    {
+      "path": "docs/brand/assets/logo/carina-stacked-brand.svg",
+      "role": "derivative",
+      "mediaType": "image/svg+xml",
+      "bytes": 6926,
+      "sha256": "ec3317ac50c7ae13ce385a7cd06abd0a6164d9372c220fda75e3005a939a6f47"
+    },
+    {
+      "path": "docs/brand/assets/logo/carina-symbol-high-contrast.svg",
+      "role": "derivative",
+      "mediaType": "image/svg+xml",
+      "bytes": 2843,
+      "sha256": "6219cf17d9a4da32e70f391fb5aabcd7873d4a475d9af303ee4354ccc54b8f06"
+    },
+    {
+      "path": "docs/brand/assets/logo/carina-sprite.svg",
+      "role": "derivative",
+      "mediaType": "image/svg+xml",
+      "bytes": 20445,
+      "sha256": "9f3ec603550ae3c7928b11db553bc08219f5b4495e7f6c78c40ff1725a4e3b53"
+    },
+    {
+      "path": "docs/brand/assets/logo/raster/carina-symbol.png",
+      "role": "derivative",
+      "mediaType": "image/png",
+      "bytes": 1185163,
+      "sha256": "b9016934ffde2c3b6ba9ae67b3f7697f5dc92d39deb8cfd3c750dafbbbecf0e3"
+    },
+    {
+      "path": "docs/brand/assets/logo/raster/carina-wordmark.png",
+      "role": "derivative",
+      "mediaType": "image/png",
+      "bytes": 733194,
+      "sha256": "4be5f2ad3fb8a1fa38a20cfb4ca250cdcc2ebdf873801f54fb994c93c0e8c4b0"
+    },
+    {
+      "path": "docs/brand/assets/fonts/CarinaDisplayAlpha-Regular.ttf",
+      "role": "font",
+      "mediaType": "font/ttf",
+      "bytes": 11120,
+      "sha256": "7eb77ea92633c8fdb5d57bee9f961089854579f70ce94da2e1604f1f217585d0"
+    },
+    {
+      "path": "docs/brand/assets/fonts/CarinaDisplayAlpha-Regular.woff2",
+      "role": "font",
+      "mediaType": "font/woff2",
+      "bytes": 6552,
+      "sha256": "d5fafba7935619afb07209d294a1dd55476024a8e58da3a2e0d6409079209e40"
+    },
+    {
+      "path": "docs/brand/assets/fonts/carina-display-alpha.css",
+      "role": "font",
+      "mediaType": "text/css",
+      "bytes": 251,
+      "sha256": "e75690461cebd71f9460a3d682ec6c44823146222c099ef05518f624f555d7b8"
+    },
+    {
+      "path": "docs/brand/assets/fonts/fonts.css",
+      "role": "font",
+      "mediaType": "text/css",
+      "bytes": 629,
+      "sha256": "67f2c6e39545c094f90e75abc8ba553281150af2ea597925bb5ad09db55cc31e"
+    },
+    {
+      "path": "docs/brand/assets/fonts/geist-sans-latin-variable.woff2",
+      "role": "font",
+      "mediaType": "font/woff2",
+      "bytes": 29400,
+      "sha256": "19f9c92546aa300c312235e3125af1b81394d8db9a4bc4a425cd5b641d2d54e1"
+    },
+    {
+      "path": "docs/brand/assets/fonts/geist-mono-latin-variable.woff2",
+      "role": "font",
+      "mediaType": "font/woff2",
+      "bytes": 29896,
+      "sha256": "af61b969e7f999969f6af576e584ee85dca301a008a76be1251d172d56b9904c"
+    },
+    {
+      "path": "docs/brand/assets/fonts/LICENSE-Geist-Sans.txt",
+      "role": "font",
+      "mediaType": "text/plain",
+      "bytes": 4486,
+      "sha256": "71609cbb5c78b5870d712eab73a31d76622635c6ed034ab5cee3b9ecbda8685f"
+    },
+    {
+      "path": "docs/brand/assets/fonts/LICENSE-Geist-Mono.txt",
+      "role": "font",
+      "mediaType": "text/plain",
+      "bytes": 4498,
+      "sha256": "cc815ed4fc045f0e991abb10395b7932bd028c6a067deb13316d6002105074e6"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/A.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 931,
+      "sha256": "d32720948fe464cd474aa243b82b7b2016d93ac39b9276a44ef444caae27dc6d"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/B.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1480,
+      "sha256": "f04badd9ef86f049bbfeb6029456814228abe195a3696f1c2176b196517d9ea7"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/C.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1406,
+      "sha256": "c88f6af64eb373b972d7da8cf6fa525f33bdcaa361715a92e9f7406b7f519a66"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/D.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1250,
+      "sha256": "2b087f451f01c197b23de5355d25ceaac86371ccf90b438966c7310a187fac73"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/E.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1019,
+      "sha256": "1ee2e1dd23b1ffa38cf39a3b7d37ac3dc6c215a051eda7a89511e4fa29f19493"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/F.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 961,
+      "sha256": "c978e8a28a17f99ccfe325a7e46f0efd999036098f1a457f0888df50a15ba2ef"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/G.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1651,
+      "sha256": "af5f9b321bb0327390807689b3367f1bfd15cc323ac694a6e186af740a238bf2"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/H.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1217,
+      "sha256": "ce3369d0ce725d0ab3aa296031c340aa29c5419a3be9c164ac2c94845d25142d"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/I.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 605,
+      "sha256": "370b4c346708643f5e4ca788c5cf39bf95f71e0d266e4caf2082b5f3d6c5896e"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/J.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 865,
+      "sha256": "6e142612e941ca46de8da382d8841ed9102dfa562e328f032df1f1a34bf2f78d"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/K.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1135,
+      "sha256": "2b29afd147c7bffe85ae64f1cfa8f6c042691fd99bc7fc0859a6e090707480db"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/L.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 653,
+      "sha256": "1f031b0f126c9c00289b6cd5670732eab96d03eadc0d752c0377de5e4ef9e661"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/M.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 999,
+      "sha256": "b0b456e6d2802446e3e54c9247a2fdac10bc133f44b2dba22ececf9fc9ff5900"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/N.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 844,
+      "sha256": "8e6218199b8531b0995e4c8ca32749d96ba42ef42eb198fe0c4bbfe9ca423921"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/O.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1793,
+      "sha256": "319c2d5b35110d4cd7bf8292795d1efc439e38ba6a3d8d9ead5048b9a7d301e2"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/P.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1090,
+      "sha256": "6ab491d0fd7701076e7a2ef33bff96b6c76f7e064fc224b191ea4061c9e6bec9"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/Q.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1696,
+      "sha256": "53bc42ba35d85c49644bd0efafb31643bcd0f1cfbdad0318fddc262fb78eee35"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/R.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1021,
+      "sha256": "2dfd57f679549074dccb4ecdc83ed9044767697e48d14d4c262fd72e55b129a2"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/S.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1631,
+      "sha256": "f8dbad473f210e51a016778900539862d5c311e0760545423de9d4d92ae555bb"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/T.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 967,
+      "sha256": "11b0630e162eeb3f403696e4aeadb977a6c4250201991b96659d3a255f746c30"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/U.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1190,
+      "sha256": "0641453e7066302e767c986d10c1ef0e68f2505d6432f91b80bfc7a3ebfc914c"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/V.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 757,
+      "sha256": "8d2880e63f8e239d80aa598cc21b09c821dc968fdc24c771b7721c42f1e69ab7"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/W.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1222,
+      "sha256": "ac69e3e62649eb207a15545518060699369e9926ebcadbe6beda80ef5b90ea44"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/X.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1084,
+      "sha256": "025268995dbaa073c106821ec3cd53a00d6225658e3874a3f05202515f6a2b13"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/Y.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 866,
+      "sha256": "0e8ffaa701b12f780256e5b559ab414399e2f4cebead290536240b4b9e3991c1"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/uppercase/Z.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 847,
+      "sha256": "070f930cbd2d3ece0ecd96e5118588088c46039784ee418abac37d1981843e73"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/a.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1586,
+      "sha256": "3b6bc518f6d9d4fda7b38091af69b6b02377a426a533105de97ec7ae2892a37b"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/b.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1426,
+      "sha256": "e4a8a0b867185c6abc157552ea5fdde25659c9350997cd46a0e1c9600f14dee7"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/c.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1147,
+      "sha256": "d36fd26c11ed94904497a44716e97180cd73a3410953fd188e51797b2d6b1591"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/d.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1673,
+      "sha256": "f8840e694e774182b8c47d3c0f63ffd87bf178951d27c7ea4089deaff62546f2"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/e.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1312,
+      "sha256": "7c43df6ca3630555680a2355f01661dcfe5b995e81c3ef0f4b1bc38c429a89ea"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/f.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 992,
+      "sha256": "534db20a44c7027edfd24a223666c52cee78439b0c59d2a8085bcf0d28a5634c"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/g.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 2507,
+      "sha256": "6c3e50d7d7a8e6f013a036e4c00852c23b924a3a427178dd444cff9109c42a5f"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/h.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1391,
+      "sha256": "b83e3b7155e198222c74171fc0f8f9ba017db54e3735e5eff03a48b6a7324052"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/i.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 941,
+      "sha256": "e31529e93628aa9dcb6db407fa41efb8ec81b363cb1a6c8f1fb8297cf5a64550"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/j.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1119,
+      "sha256": "e2c739798492b1760374566e79917f650c3b1d902afca14466fcc7326851999e"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/k.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1125,
+      "sha256": "91a5c9d6eb628c32498f4e2aa2ce576794a4855cb41f936aac7b99c1a0c08096"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/l.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 639,
+      "sha256": "b9d2f222fc680429eb25a259df530732210f1bb2c071bd77c6f52eb5f5c421f2"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/m.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1702,
+      "sha256": "fb2b78fe9a592ff0de4b4faa251330c89b70933b939df429847be06b9b006f83"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/n.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1303,
+      "sha256": "dfbf6c421e8a0d1a671e30c248d227e572ba9f2acc3e208070128bddb445b857"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/o.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1331,
+      "sha256": "6c0d9b73d660cf2b2de9cbb2642e677d5eba09e13a315bc7e52d4f61fd48e130"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/p.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1576,
+      "sha256": "4018ae25b5c175b5aae580d68161647ec36ea3b04f1b6f8862d7a2d904b54e1a"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/q.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1532,
+      "sha256": "75d455964ef2232e5dee70261f9121ca47083d55b49d30db8693ef84f848b60d"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/r.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 988,
+      "sha256": "0ab4d05c9b9ae50e3ba9ff7c90c766180dfa558e3e02ce93b7c399ac623b8fa6"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/s.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1375,
+      "sha256": "c36bdbc0c7fcf697ae9d7e65e9867db6e148d30d65af67695d43450401720143"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/t.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1061,
+      "sha256": "65556ea385b6db343fd17e86e4420bc35b7ac8502417e84da35cb524eaec84b3"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/u.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1274,
+      "sha256": "e8e7f016a690f9e693b7aae2abb4bce7d4bdae1fb6b2cf3cd363e8aa424e7954"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/v.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 661,
+      "sha256": "af8b1d26f1616b74e639b4d7482e274b2ac7eb15e9d1cd6af58176b78470ad6e"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/w.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1333,
+      "sha256": "68ddf766e6daf6510ffef1bd889e1ca6ab06ec28d4dede85b877d845c5415cc3"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/x.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 1085,
+      "sha256": "22b22e92d2f0e4d2e2161ba337fb1039addd044ad3f98005d09363e5f17606e6"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/y.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 948,
+      "sha256": "86ea931a1287a5f8465f3663983fa9b94ef234cc30ee11a5d0c6411f7f3445ad"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-svg/lowercase/z.svg",
+      "role": "font-source",
+      "mediaType": "image/svg+xml",
+      "bytes": 684,
+      "sha256": "f8a8969232978ab425f20ee44edece11308879b9dc52703fddf20dbd3d303161"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/A.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 4093,
+      "sha256": "176ec4918522f69e229e8797616a717c27757bfbf731ae7d5720a8315ab1abe0"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/B.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3471,
+      "sha256": "df54486c81885fb18e3bb3fe498037c58e497aaddb91b82ccce17fc90d447f54"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/C.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3715,
+      "sha256": "9028620538c3f79b05d2925b2166f42b379f332267ff2e15b1c5a269eec458d5"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/D.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3412,
+      "sha256": "d74b97a68961de80ef7dd97aa204ec3bce671ffed3001d8c7410551efd9fdd5e"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/E.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 2211,
+      "sha256": "385497123d191c5901276926f3540eed9defc150ea095a246d3e0ac557da58b2"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/F.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 1890,
+      "sha256": "204b5ec22601e4c27503f568dc1183ff63f3cd2f7d64cc14139f68f8483e2727"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/G.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 4221,
+      "sha256": "bb7330902f79c03162268cfd12c7dc7ee8df72e5892bd81ac42d2549c601a1eb"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/H.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 1957,
+      "sha256": "20ed01a031a3a0ad9406a743fdc215e2f2e2494ab4e43214df44ae672645a37f"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/I.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 1378,
+      "sha256": "9e3ed1077652203ddbb19d1088ef3ff593bf03eb70e74fecbaebd879f6ba9ef2"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/J.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 2088,
+      "sha256": "21fd5458a4dce509dc34dec7c3b7bf4c22e2c828d17d2f7d7d4c9bd01420865a"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/K.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3632,
+      "sha256": "9e7a37e3eb56b150539f1da92b6b46ff1fa31cd3ef8a2e5747cfad3964fa43ad"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/L.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 1567,
+      "sha256": "f0c0d27a0a64ef3f295deb3ec4bf4c5e4bd698acc60a54159659b7cf27d59b31"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/M.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 4956,
+      "sha256": "ad936c386b839ded0942fa4f5b5a07b7f873fdb51bf2c26fa5d2bf4e0cf41f5e"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/N.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 2968,
+      "sha256": "01d06ca2217b3cfe01d5319c77a7bb5d0024df5468187deaa60b8639304f9620"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/O.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 5069,
+      "sha256": "c74614d7cea21d3859275936160f9f4005aab544606105a558114d99d79fbd02"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/P.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 2488,
+      "sha256": "330220c3fde81660c092f5f11234faecb9fe5f105fe00959e36b3f48255e1ab1"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/Q.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 5183,
+      "sha256": "8b20fc3b9a642abd23ed8523815a3823d1645a1bfc924a2cb29c1b601f39c0b1"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/R.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3302,
+      "sha256": "4da3b62314afe48b1bb49e49427f6dc0b7b0ad663c40c07255e2571b89542f33"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/S.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 4609,
+      "sha256": "e769dcab53c996b0c8dd3ed3e08db9c188322f0de7cce20ee7e0c394b86afb03"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/T.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 1770,
+      "sha256": "f6a033595eed4d90f86f4fb607fa7ff2c5ea241127277c3cc4a94749a496de7f"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/U.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 2851,
+      "sha256": "b2373efa86c086c658a65fbce93b4972236ffa0131da7762d4c8dabecdf22376"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/V.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 4609,
+      "sha256": "782ef55d33250ad688ddbdb6fab49466312e9543b0a6f9c81c98e5af33660862"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/W.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 5495,
+      "sha256": "abbef8b4cde65fb0af8cc75dfbb13378b91ed1b5b1c9ac8f5b089968cd5a2cfe"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/X.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 4676,
+      "sha256": "77719509cbfcfe4f36a3b4b7c2fd2554b512c138e4b644fb74a22fb681f9983d"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/Y.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3328,
+      "sha256": "ef8802d41d4dffea792a5ee5bc897ebb1e1e7567498092e175918de8d0671387"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/uppercase/Z.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3537,
+      "sha256": "44c50d90a7c9b7592169a3ae437d76eebf4642b23f3ffc9e3007d7839cffbaa7"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/a.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3931,
+      "sha256": "4e72f3af1e95119d514ea5d28f58a5e351fd1dd289608fd9c0be2e9108dd11aa"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/b.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3131,
+      "sha256": "fc5b3f7435a1253d37b833c20569a0d998935016ceef1cbd7a8b6648c988ab02"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/c.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3446,
+      "sha256": "1e578665aedda758884547747bbcdd61245fbdcb813d76c57e5d186af74a9bde"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/d.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3630,
+      "sha256": "e42d24dcc8140c33960a647c9b3458c06eebbf1503271ff054a374b27a7cb538"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/e.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3785,
+      "sha256": "95ae2798b64eee8cf12a02ade5b83f89b1b47d12fcb315fddf01d90b1c4b4fcc"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/f.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 2042,
+      "sha256": "1705d6e63650174840d59e89d1738a6ba3f617002105c845715764b006a3dc95"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/g.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 5478,
+      "sha256": "660aa289acb00c2beb53fab55b3365e9b95b7f69b2fe38130c85a5767126e0e9"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/h.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 2671,
+      "sha256": "3edeea6e713c2a826dbcf1965003af115aa041fd62a2a12032aa937f340cd6bc"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/i.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 1734,
+      "sha256": "423f4e77a247ac28bfcd48feb5d98aa655af19beb2ef50d0b960f7f15e8ee2d9"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/j.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 2103,
+      "sha256": "8e1e7cf92880e3dae138e3cc286535229e5697c33ba6d30fefe2e6639870a0f6"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/k.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3142,
+      "sha256": "306ef53deacaff645e2f3cf24e49f350395485fc14b42cbac3a6ba1e0d8f8d35"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/l.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 1227,
+      "sha256": "22fad311dbcb49684594f08c6320c995a29d3425cb1c4209e0211e2d19fb0b62"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/m.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3057,
+      "sha256": "fbe889ed8bc0daa06216ca183346e581b1999c1da6932d51e28d989d26d8cdeb"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/n.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 2578,
+      "sha256": "c07af7241eefad8955621fb3225d6dcf987ed413b805f1535d4c0a167f273769"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/o.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3868,
+      "sha256": "da6071eb215f060878d14e25e4dca82f978741185f1abe251fbcec8af318e052"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/p.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3623,
+      "sha256": "00dfbf7de9fdfc71b073e9eaa0c31e8f0930ef1e6361d5b3b6b29fb90c890ff3"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/q.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3659,
+      "sha256": "4b92e399d0964070259f6fec54a1870d4569c752200efe23d845476b429b78cc"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/r.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 2031,
+      "sha256": "38216fb269c4b394a5ffa4b96eb387c4dd30cae3cfb0ee39e6981281864cdbbb"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/s.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 4009,
+      "sha256": "877f1cd5022de51bd35e7b933638e0abd8eb42d6b1f55bf15d878aae04b789db"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/t.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 1887,
+      "sha256": "dd9b5d0a6b7f9743e279357850af86a012155c4eb214228011fb7880ea6a1606"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/u.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 2541,
+      "sha256": "f94b5adb188185fa262b5b71561071a705359309fa63d800a6791b3536861db3"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/v.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3470,
+      "sha256": "b08a86dc96c060e2bfb8eaf580218869ec9d9156743ed30630264bbabf196e07"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/w.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 4749,
+      "sha256": "9892262707b638726b555cdfe1b050a0c501ccaada32cc543a03dec63d0822bb"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/x.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3788,
+      "sha256": "1182cf431eb57a2a28e2a48d2014a3114d5cd77c8f2c89a9fef83d292554051b"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/y.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 3804,
+      "sha256": "1cbe40cca818899b5e7300ee708463ffd78eeba2fa5be3f78a3968c14f8901a8"
+    },
+    {
+      "path": "docs/brand/assets/fonts/glyphs-png/lowercase/z.png",
+      "role": "font-raster-derivative",
+      "mediaType": "image/png",
+      "bytes": 2900,
+      "sha256": "a5caaaeefa70d2121f1641879787e265b1aae418662d4d36f18bece779c35ff5"
+    },
+    {
+      "path": "docs/brand/assets/specimens/font-carina.png",
+      "role": "evidence",
+      "mediaType": "image/png",
+      "bytes": 7323,
+      "sha256": "f90326f0d27224bc738a4e45021d5435a99018cc5079d47a34dfaba79b0f4850"
+    },
+    {
+      "path": "docs/brand/assets/specimens/font-uppercase.png",
+      "role": "evidence",
+      "mediaType": "image/png",
+      "bytes": 17356,
+      "sha256": "b93820c7bdb896cbc4fe302cfae359d5d174070f55df546df6f3c1118ca5e477"
+    },
+    {
+      "path": "docs/brand/assets/specimens/font-lowercase.png",
+      "role": "evidence",
+      "mediaType": "image/png",
+      "bytes": 14981,
+      "sha256": "d1d587a7110eaeb7a4562f2a25939b6be6bd673b1a38358f089887e1748811e7"
+    },
+    {
+      "path": "docs/brand/design-system/DESIGN.md",
+      "role": "token-source",
+      "mediaType": "text/markdown",
+      "bytes": 9948,
+      "sha256": "0c93d8a3aa86f6f08cd7a49796ae4088399fecb0db59d79d1d3f70302d0ce106"
+    },
+    {
+      "path": "docs/brand/design-system/design-tokens.json",
+      "role": "token-source",
+      "mediaType": "application/json",
+      "bytes": 6526,
+      "sha256": "8300b7eb0b42327e2d4843afedaf7568b71cbd3e817456de3c1c4ed45e878928"
+    },
+    {
+      "path": "docs/brand/design-system/variables.css",
+      "role": "token-source",
+      "mediaType": "text/css",
+      "bytes": 4118,
+      "sha256": "cee4c5f0e0cadc7c6663647110e73599edbf1fe51b13305a55b86f6b4ad97201"
+    },
+    {
+      "path": "docs/brand/design-system/tailwind-v4.css",
+      "role": "token-source",
+      "mediaType": "text/css",
+      "bytes": 2448,
+      "sha256": "71a73639b382a11a2815c55bb62a19ce9f71988ffaed54659eeb72511a8d021b"
+    },
+    {
+      "path": "docs/brand/design-system/carina.ts",
+      "role": "token-source",
+      "mediaType": "text/typescript",
+      "bytes": 2210,
+      "sha256": "d69b7c21ec9410ae24b652e97eafa3b8a97e93c6b76b611b20028868581e8138"
+    },
+    {
+      "path": "docs/brand/assets/hero/carina-readme-hero.webp",
+      "role": "consumer-derivative",
+      "mediaType": "image/webp",
+      "bytes": 73738,
+      "sha256": "b063a2fc02dee33632336a3538266d6fc25026b869bc64854fce2cc7b0ffae84"
+    },
+    {
+      "path": "integrations/vscode/media/carina.svg",
+      "role": "consumer-derivative",
+      "mediaType": "image/svg+xml",
+      "bytes": 2753,
+      "sha256": "59349cd1723e5875eb5aded724d848a494208d6dd7a97a2eacdf2884187e4061"
+    }
+  ]
+}

@@ -1,0 +1,139 @@
+:root,
+[data-theme="carina-dark"] {
+  color-scheme: dark;
+
+  /* Primitives */
+  --carina-void: #0d1214;
+  --carina-surface: #141b1d;
+  --carina-surface-raised: #1c2527;
+  --carina-border-subtle: #252f31;
+  --carina-border: #344144;
+  --carina-starlight: #f3f0e8;
+  --carina-dust: #b0b7b3;
+  --carina-disabled: #7e8885;
+  --carina-brand-rose: #8e4053;
+  --carina-ion-cyan: #8edbd2;
+  --carina-ion-cyan-bright: #afe9e3;
+  --carina-dust-violet: #c6a6ea;
+  --carina-oxygen-blue: #78bff2;
+  --carina-copper-amber: #e8a85f;
+  --carina-spectral-green: #68d2a3;
+  --carina-event-red: #ff7c78;
+
+  /* Semantic colors */
+  --color-background-page: var(--carina-void);
+  --color-background-surface: var(--carina-surface);
+  --color-background-raised: var(--carina-surface-raised);
+  --color-background-selected: #19302f;
+  --color-text-primary: var(--carina-starlight);
+  --color-text-secondary: var(--carina-dust);
+  --color-text-disabled: var(--carina-disabled);
+  --color-border-subtle: var(--carina-border-subtle);
+  --color-border: var(--carina-border);
+  --color-brand-mark: var(--carina-brand-rose);
+  --color-accent: var(--carina-ion-cyan);
+  --color-accent-hover: var(--carina-ion-cyan-bright);
+  --color-focus: var(--carina-ion-cyan);
+  --color-success: var(--carina-spectral-green);
+  --color-warning: var(--carina-copper-amber);
+  --color-danger: var(--carina-event-red);
+
+  /* Capability taxonomy */
+  --color-capability-core: var(--carina-ion-cyan);
+  --color-capability-agent: var(--carina-dust-violet);
+  --color-capability-tool: var(--carina-copper-amber);
+  --color-capability-memory: var(--carina-oxygen-blue);
+  --color-capability-observability: var(--carina-spectral-green);
+
+  /* Typography */
+  --font-family-brand: "Carina Display Alpha", Georgia, serif;
+  --font-family-display: "Geist Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-family-sans: "Geist Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-family-mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --text-micro: 11px;
+  --leading-micro: 1.45;
+  --text-caption: 12px;
+  --leading-caption: 1.5;
+  --text-body-sm: 14px;
+  --leading-body-sm: 1.5;
+  --text-body: 16px;
+  --leading-body: 1.5;
+  --text-title-sm: 20px;
+  --leading-title-sm: 1.22;
+  --text-title: 28px;
+  --leading-title: 1.14;
+  --text-heading: 40px;
+  --leading-heading: 1.06;
+  --text-display: 72px;
+  --leading-display: 1;
+  --text-display-xl: 120px;
+  --leading-display-xl: 0.94;
+
+  /* Spacing */
+  --spacing-unit: 4px;
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-5: 20px;
+  --spacing-6: 24px;
+  --spacing-8: 32px;
+  --spacing-10: 40px;
+  --spacing-12: 48px;
+  --spacing-16: 64px;
+  --spacing-20: 80px;
+  --spacing-24: 96px;
+  --spacing-30: 120px;
+
+  /* Geometry */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 9999px;
+  --size-control-compact: 32px;
+  --size-control-default: 40px;
+  --size-control-large: 48px;
+  --layout-nav-height: 56px;
+  --layout-page-max: 1440px;
+  --layout-reading-max: 720px;
+
+  /* Motion */
+  --duration-fast: 120ms;
+  --duration-medium: 220ms;
+  --duration-slow: 480ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --focus-ring: 0 0 0 2px var(--color-background-page), 0 0 0 4px var(--color-focus);
+}
+
+[data-theme="carina-light"] {
+  color-scheme: light;
+  --color-background-page: #f5f3ed;
+  --color-background-surface: #fffdf8;
+  --color-background-raised: #eceae3;
+  --color-background-selected: #dcefed;
+  --color-text-primary: #182023;
+  --color-text-secondary: #5d6868;
+  --color-text-disabled: #7b8583;
+  --color-border-subtle: #dfe2dd;
+  --color-border: #cfd3ce;
+  --color-brand-mark: #8e4053;
+  --color-accent: #176f70;
+  --color-accent-hover: #0d5c5d;
+  --color-focus: #176f70;
+  --color-success: #087c58;
+  --color-warning: #8c5a15;
+  --color-danger: #c42e45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-medium: 0ms;
+    --duration-slow: 0ms;
+  }
+}

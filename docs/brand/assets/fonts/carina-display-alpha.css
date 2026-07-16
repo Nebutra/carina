@@ -1,0 +1,8 @@
+@font-face {
+  font-family: "Carina Display Alpha";
+  src: url("./CarinaDisplayAlpha-Regular.woff2") format("woff2"),
+       url("./CarinaDisplayAlpha-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}

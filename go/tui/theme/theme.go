@@ -1,10 +1,7 @@
-// Package theme carries the Carina brand palette (docs/brand/brand-brief.md
-// §2) as code: each token is the brief's truecolor hex plus its documented
-// ANSI-256 fallback, and semantic roles (error, warning, success, info,
-// muted) are the only way views obtain color — no view hardcodes ANSI. The
-// profile decides what a style emits: TrueColor renders the exact hex,
-// ANSI256 renders the fallback index, Mono (NO_COLOR, dumb terminals, pipes)
-// renders nothing at all.
+// Package theme carries the terminal subset of the Carina design tokens as
+// code. Semantic roles are the only way views obtain color; no view hardcodes
+// a palette value. TrueColor renders the DTCG hex, ANSI256 renders the
+// documented fallback, and Mono renders no styling.
 package theme
 
 import (
@@ -21,18 +18,21 @@ type Token struct {
 	ANSI256 string
 }
 
-// The brand-brief §2 token table, transcribed verbatim.
+// The terminal token table from docs/brand/design-system/design-tokens.json
+// and docs/brand/brand-brief.md §2.
 var (
-	Void          = Token{"Void", "#1a191d", "234"}
-	EmberShadow   = Token{"Ember Shadow", "#261316", "235"}
-	CarinaCrimson = Token{"Carina Crimson", "#55212d", "52"}
-	IonizedRose   = Token{"Ionized Rose", "#733445", "95"}
-	DustMauve     = Token{"Dust Mauve", "#60344f", "96"}
-	NebulaOrchid  = Token{"Nebula Orchid", "#a3688f", "132"}
-	CoreGlow      = Token{"Core Glow", "#c18ba3", "139"}
-	Starlight     = Token{"Starlight", "#fff8fe", "231"}
-	StarGold      = Token{"Star Gold", "#b98b6a", "137"}
-	BlueGiant     = Token{"Blue Giant", "#e3e3ff", "189"}
+	Void          = Token{"Void", "#0d1214", "233"}
+	Surface       = Token{"Surface", "#141b1d", "234"}
+	Border        = Token{"Border", "#344144", "237"}
+	Starlight     = Token{"Starlight", "#f3f0e8", "255"}
+	Dust          = Token{"Dust", "#b0b7b3", "249"}
+	BrandRose     = Token{"Brand Rose", "#8e4053", "95"}
+	IonCyan       = Token{"Ion Cyan", "#8edbd2", "116"}
+	DustViolet    = Token{"Dust Violet", "#c6a6ea", "182"}
+	OxygenBlue    = Token{"Oxygen Blue", "#78bff2", "111"}
+	CopperAmber   = Token{"Copper Amber", "#e8a85f", "179"}
+	SpectralGreen = Token{"Spectral Green", "#68d2a3", "79"}
+	EventRed      = Token{"Event Red", "#ff7c78", "210"}
 )
 
 // Profile is the terminal color capability the theme renders for.
@@ -75,21 +75,24 @@ const (
 	RoleDiffHunk
 )
 
-// roleToken maps semantic roles to palette tokens per brand-brief §2:
-// error → Carina Crimson family, bright member (ANSI 132), warning → Star
-// Gold, success → Core Glow, info/link → Blue Giant, muted → Dust Mauve.
+// roleToken keeps product semantics separate from Brand Rose, which is reserved
+// for identity surfaces rather than terminal state.
 func roleToken(r Role) Token {
 	switch r {
 	case RoleError, RoleDiffDel:
-		return NebulaOrchid
+		return EventRed
 	case RoleWarning:
-		return StarGold
+		return CopperAmber
 	case RoleSuccess, RoleDiffAdd:
-		return CoreGlow
-	case RoleInfo, RoleTitle, RoleDiffHunk:
-		return BlueGiant
-	case RoleMuted, RoleBorder:
-		return DustMauve
+		return SpectralGreen
+	case RoleInfo, RoleDiffHunk:
+		return OxygenBlue
+	case RoleTitle:
+		return IonCyan
+	case RoleMuted:
+		return Dust
+	case RoleBorder:
+		return Border
 	default:
 		return Starlight
 	}

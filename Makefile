@@ -1,4 +1,4 @@
-.PHONY: all go rust zig sdk-ts test rust-test go-test swarm-integration-test bench-gate-test audit-bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
+.PHONY: all go rust zig sdk-ts test rust-test go-test brand-check swarm-integration-test bench-gate-test audit-bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
 
 all: go rust zig
 
@@ -10,6 +10,9 @@ go:
 	go vet ./...
 
 test: rust-test go-test
+
+brand-check:
+	python3 scripts/brand_assets.py
 
 bench-gate-test:
 	bash scripts/test-bench-gate.sh

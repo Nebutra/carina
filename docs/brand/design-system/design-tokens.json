@@ -1,0 +1,101 @@
+{
+  "$description": "Carina Spectral Mineral design tokens. DTCG-compatible source tokens derived in OKLCH and validated with WCAG contrast.",
+  "color": {
+    "primitive": {
+      "void": { "$value": "#0d1214", "$type": "color" },
+      "surface": { "$value": "#141b1d", "$type": "color" },
+      "surface-raised": { "$value": "#1c2527", "$type": "color" },
+      "border-subtle": { "$value": "#252f31", "$type": "color" },
+      "border": { "$value": "#344144", "$type": "color" },
+      "starlight": { "$value": "#f3f0e8", "$type": "color" },
+      "dust": { "$value": "#b0b7b3", "$type": "color" },
+      "disabled": { "$value": "#7e8885", "$type": "color" },
+      "brand-rose": { "$value": "#8e4053", "$type": "color" },
+      "ion-cyan": { "$value": "#8edbd2", "$type": "color" },
+      "ion-cyan-bright": { "$value": "#afe9e3", "$type": "color" },
+      "dust-violet": { "$value": "#c6a6ea", "$type": "color" },
+      "oxygen-blue": { "$value": "#78bff2", "$type": "color" },
+      "copper-amber": { "$value": "#e8a85f", "$type": "color" },
+      "spectral-green": { "$value": "#68d2a3", "$type": "color" },
+      "event-red": { "$value": "#ff7c78", "$type": "color" }
+    },
+    "semantic": {
+      "background-page": { "$value": "{color.primitive.void}", "$type": "color" },
+      "background-surface": { "$value": "{color.primitive.surface}", "$type": "color" },
+      "background-raised": { "$value": "{color.primitive.surface-raised}", "$type": "color" },
+      "text-primary": { "$value": "{color.primitive.starlight}", "$type": "color" },
+      "text-secondary": { "$value": "{color.primitive.dust}", "$type": "color" },
+      "border": { "$value": "{color.primitive.border}", "$type": "color" },
+      "brand-mark": { "$value": "{color.primitive.brand-rose}", "$type": "color" },
+      "accent": { "$value": "{color.primitive.ion-cyan}", "$type": "color" },
+      "focus": { "$value": "{color.primitive.ion-cyan}", "$type": "color" },
+      "success": { "$value": "{color.primitive.spectral-green}", "$type": "color" },
+      "warning": { "$value": "{color.primitive.copper-amber}", "$type": "color" },
+      "danger": { "$value": "{color.primitive.event-red}", "$type": "color" }
+    },
+    "capability": {
+      "core": { "$value": "{color.primitive.ion-cyan}", "$type": "color" },
+      "agent": { "$value": "{color.primitive.dust-violet}", "$type": "color" },
+      "tool": { "$value": "{color.primitive.copper-amber}", "$type": "color" },
+      "memory": { "$value": "{color.primitive.oxygen-blue}", "$type": "color" },
+      "observability": { "$value": "{color.primitive.spectral-green}", "$type": "color" }
+    }
+  },
+  "font": {
+    "family": {
+      "brand": { "$value": ["Carina Display Alpha", "Georgia", "serif"], "$type": "fontFamily" },
+      "display": { "$value": ["Geist Sans", "system-ui", "sans-serif"], "$type": "fontFamily" },
+      "sans": { "$value": ["Geist Sans", "system-ui", "sans-serif"], "$type": "fontFamily" },
+      "mono": { "$value": ["Geist Mono", "SFMono-Regular", "Consolas", "monospace"], "$type": "fontFamily" }
+    },
+    "weight": {
+      "regular": { "$value": 400, "$type": "fontWeight" },
+      "medium": { "$value": 500, "$type": "fontWeight" },
+      "semibold": { "$value": 600, "$type": "fontWeight" }
+    }
+  },
+  "typography": {
+    "brand": { "$value": { "fontFamily": "{font.family.brand}", "fontSize": "72px", "fontWeight": "{font.weight.regular}", "lineHeight": 1 }, "$type": "typography" },
+    "brand-xl": { "$value": { "fontFamily": "{font.family.brand}", "fontSize": "120px", "fontWeight": "{font.weight.regular}", "lineHeight": 0.94 }, "$type": "typography" },
+    "micro": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "11px", "fontWeight": "{font.weight.medium}", "lineHeight": 1.45 }, "$type": "typography" },
+    "caption": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "12px", "fontWeight": "{font.weight.regular}", "lineHeight": 1.5 }, "$type": "typography" },
+    "body-sm": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "14px", "fontWeight": "{font.weight.regular}", "lineHeight": 1.5 }, "$type": "typography" },
+    "body": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "16px", "fontWeight": "{font.weight.regular}", "lineHeight": 1.5 }, "$type": "typography" },
+    "title-sm": { "$value": { "fontFamily": "{font.family.display}", "fontSize": "20px", "fontWeight": "{font.weight.semibold}", "lineHeight": 1.22 }, "$type": "typography" },
+    "title": { "$value": { "fontFamily": "{font.family.display}", "fontSize": "28px", "fontWeight": "{font.weight.semibold}", "lineHeight": 1.14 }, "$type": "typography" },
+    "heading": { "$value": { "fontFamily": "{font.family.display}", "fontSize": "40px", "fontWeight": "{font.weight.semibold}", "lineHeight": 1.06 }, "$type": "typography" },
+    "display": { "$value": { "fontFamily": "{font.family.display}", "fontSize": "72px", "fontWeight": "{font.weight.medium}", "lineHeight": 1 }, "$type": "typography" },
+    "display-xl": { "$value": { "fontFamily": "{font.family.display}", "fontSize": "120px", "fontWeight": "{font.weight.medium}", "lineHeight": 0.94 }, "$type": "typography" }
+  },
+  "spacing": {
+    "1": { "$value": "4px", "$type": "dimension" },
+    "2": { "$value": "8px", "$type": "dimension" },
+    "3": { "$value": "12px", "$type": "dimension" },
+    "4": { "$value": "16px", "$type": "dimension" },
+    "5": { "$value": "20px", "$type": "dimension" },
+    "6": { "$value": "24px", "$type": "dimension" },
+    "8": { "$value": "32px", "$type": "dimension" },
+    "10": { "$value": "40px", "$type": "dimension" },
+    "12": { "$value": "48px", "$type": "dimension" },
+    "16": { "$value": "64px", "$type": "dimension" },
+    "20": { "$value": "80px", "$type": "dimension" },
+    "24": { "$value": "96px", "$type": "dimension" },
+    "30": { "$value": "120px", "$type": "dimension" }
+  },
+  "radius": {
+    "xs": { "$value": "2px", "$type": "dimension" },
+    "sm": { "$value": "4px", "$type": "dimension" },
+    "md": { "$value": "6px", "$type": "dimension" },
+    "lg": { "$value": "8px", "$type": "dimension" },
+    "xl": { "$value": "12px", "$type": "dimension" },
+    "full": { "$value": "9999px", "$type": "dimension" }
+  },
+  "duration": {
+    "fast": { "$value": "120ms", "$type": "duration" },
+    "medium": { "$value": "220ms", "$type": "duration" },
+    "slow": { "$value": "480ms", "$type": "duration" }
+  },
+  "cubicBezier": {
+    "standard": { "$value": [0.2, 0, 0, 1], "$type": "cubicBezier" }
+  }
+}

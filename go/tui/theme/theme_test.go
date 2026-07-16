@@ -5,8 +5,7 @@ import (
 	"testing"
 )
 
-// The token table must transcribe docs/brand/brand-brief.md §2 verbatim:
-// truecolor hex + ANSI-256 fallback per token. A drifted hex is a brand bug.
+// The token table must transcribe the DTCG/terminal contract verbatim.
 func TestTokenTableMatchesBrandBrief(t *testing.T) {
 	want := []struct {
 		token Token
@@ -14,16 +13,18 @@ func TestTokenTableMatchesBrandBrief(t *testing.T) {
 		hex   string
 		ansi  string
 	}{
-		{Void, "Void", "#1a191d", "234"},
-		{EmberShadow, "Ember Shadow", "#261316", "235"},
-		{CarinaCrimson, "Carina Crimson", "#55212d", "52"},
-		{IonizedRose, "Ionized Rose", "#733445", "95"},
-		{DustMauve, "Dust Mauve", "#60344f", "96"},
-		{NebulaOrchid, "Nebula Orchid", "#a3688f", "132"},
-		{CoreGlow, "Core Glow", "#c18ba3", "139"},
-		{Starlight, "Starlight", "#fff8fe", "231"},
-		{StarGold, "Star Gold", "#b98b6a", "137"},
-		{BlueGiant, "Blue Giant", "#e3e3ff", "189"},
+		{Void, "Void", "#0d1214", "233"},
+		{Surface, "Surface", "#141b1d", "234"},
+		{Border, "Border", "#344144", "237"},
+		{Starlight, "Starlight", "#f3f0e8", "255"},
+		{Dust, "Dust", "#b0b7b3", "249"},
+		{BrandRose, "Brand Rose", "#8e4053", "95"},
+		{IonCyan, "Ion Cyan", "#8edbd2", "116"},
+		{DustViolet, "Dust Violet", "#c6a6ea", "182"},
+		{OxygenBlue, "Oxygen Blue", "#78bff2", "111"},
+		{CopperAmber, "Copper Amber", "#e8a85f", "179"},
+		{SpectralGreen, "Spectral Green", "#68d2a3", "79"},
+		{EventRed, "Event Red", "#ff7c78", "210"},
 	}
 	for _, w := range want {
 		if w.token.Name != w.name {
@@ -38,22 +39,20 @@ func TestTokenTableMatchesBrandBrief(t *testing.T) {
 	}
 }
 
-// Semantic roles follow brand-brief §2: error→Crimson family bright/132,
-// warning→Star Gold/137, success→Core Glow/139, info→Blue Giant/189,
-// muted→Dust Mauve/96.
+// Semantic roles follow the design system; Brand Rose is never a state color.
 func TestSemanticRoleMapping(t *testing.T) {
 	want := map[Role]Token{
-		RoleError:    NebulaOrchid, // Carina Crimson family, bright member (ANSI 132)
-		RoleWarning:  StarGold,
-		RoleSuccess:  CoreGlow,
-		RoleInfo:     BlueGiant,
-		RoleMuted:    DustMauve,
+		RoleError:    EventRed,
+		RoleWarning:  CopperAmber,
+		RoleSuccess:  SpectralGreen,
+		RoleInfo:     OxygenBlue,
+		RoleMuted:    Dust,
 		RoleText:     Starlight,
-		RoleTitle:    BlueGiant,
-		RoleBorder:   DustMauve,
-		RoleDiffAdd:  CoreGlow,
-		RoleDiffDel:  NebulaOrchid,
-		RoleDiffHunk: BlueGiant,
+		RoleTitle:    IonCyan,
+		RoleBorder:   Border,
+		RoleDiffAdd:  SpectralGreen,
+		RoleDiffDel:  EventRed,
+		RoleDiffHunk: OxygenBlue,
 	}
 	for role, tok := range want {
 		if got := roleToken(role); got != tok {
@@ -93,11 +92,11 @@ func TestStyleByProfile(t *testing.T) {
 	if out := New(Mono).Style(RoleWarning).Render("x"); out != "x" {
 		t.Errorf("Mono style must be plain, got %q", out)
 	}
-	if out := New(ANSI256).Style(RoleWarning).Render("x"); !strings.Contains(out, "38;5;137") {
-		t.Errorf("ANSI256 warning must use fallback 137, got %q", out)
+	if out := New(ANSI256).Style(RoleWarning).Render("x"); !strings.Contains(out, "38;5;179") {
+		t.Errorf("ANSI256 warning must use fallback 179, got %q", out)
 	}
-	// Star Gold #b98b6a = rgb(185,139,106)
-	if out := New(TrueColor).Style(RoleWarning).Render("x"); !strings.Contains(out, "38;2;185;139;106") {
+	// Copper Amber #e8a85f = rgb(232,168,95)
+	if out := New(TrueColor).Style(RoleWarning).Render("x"); !strings.Contains(out, "38;2;232;168;95") {
 		t.Errorf("TrueColor warning must use brief hex, got %q", out)
 	}
 }

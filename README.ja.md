@@ -1,16 +1,16 @@
 <div align="center">
 
-<img src="docs/assets/carina-hero.png" alt="Nebutra Carina" width="100%" />
+<img src="docs/brand/assets/hero/carina-readme-hero.webp" alt="暗い鉱物質の表面に置かれた Nebutra Carina シンボル" width="100%" />
 
 # Nebutra Carina
 
 **ポリシー、監査、ロールバックの境界内で、実リポジトリ上のコーディングエージェントを動かす。**
 
-[![status](https://img.shields.io/badge/status-alpha-0033FE)](#current-status)
-[![build](https://img.shields.io/badge/build-source%20first-0B7285)](#quickstart-from-source)
-[![runtime](https://img.shields.io/badge/runtime-local--first-0BF1C3)](#why-carina)
-[![audit](https://img.shields.io/badge/audit-hash--chained-6D28D9)](#review-and-audit)
-[![license](https://img.shields.io/badge/license-MIT-informational)](LICENSE)
+[![status](https://img.shields.io/badge/status-alpha-8E4053)](#current-status)
+[![build](https://img.shields.io/badge/build-source%20first-176F70)](#quickstart-from-source)
+[![runtime](https://img.shields.io/badge/runtime-local--first-087C58)](#why-carina)
+[![audit](https://img.shields.io/badge/audit-hash--chained-8C5A15)](#review-and-audit)
+[![license](https://img.shields.io/badge/license-MIT-182023)](LICENSE)
 
 [English](README.md) · [简体中文](README.zh-CN.md) · **日本語**
 

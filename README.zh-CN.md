@@ -1,16 +1,16 @@
 <div align="center">
 
-<img src="docs/assets/carina-hero.png" alt="Nebutra Carina" width="100%" />
+<img src="docs/brand/assets/hero/carina-readme-hero.webp" alt="深色矿物质感表面上的 Nebutra Carina 标志" width="100%" />
 
 # Nebutra Carina
 
 **在策略、审计和回滚边界内运行真实仓库上的编程智能体。**
 
-[![status](https://img.shields.io/badge/status-alpha-0033FE)](#当前状态)
-[![build](https://img.shields.io/badge/build-source%20first-0B7285)](#从源码快速开始)
-[![runtime](https://img.shields.io/badge/runtime-local--first-0BF1C3)](#为什么用-carina)
-[![audit](https://img.shields.io/badge/audit-hash--chained-6D28D9)](#审查与审计)
-[![license](https://img.shields.io/badge/license-MIT-informational)](LICENSE)
+[![status](https://img.shields.io/badge/status-alpha-8E4053)](#当前状态)
+[![build](https://img.shields.io/badge/build-source%20first-176F70)](#从源码快速开始)
+[![runtime](https://img.shields.io/badge/runtime-local--first-087C58)](#为什么用-carina)
+[![audit](https://img.shields.io/badge/audit-hash--chained-8C5A15)](#审查与审计)
+[![license](https://img.shields.io/badge/license-MIT-182023)](LICENSE)
 
 [English](README.md) · **简体中文** · [日本語](README.ja.md)
 

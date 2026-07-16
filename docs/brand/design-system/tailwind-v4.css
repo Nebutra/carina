@@ -1,0 +1,89 @@
+@theme {
+  /* Color primitives */
+  --color-carina-void: #0d1214;
+  --color-carina-surface: #141b1d;
+  --color-carina-raised: #1c2527;
+  --color-carina-border: #344144;
+  --color-carina-starlight: #f3f0e8;
+  --color-carina-muted: #b0b7b3;
+  --color-carina-brand-rose: #8e4053;
+  --color-carina-ion-cyan: #8edbd2;
+  --color-carina-ion-cyan-bright: #afe9e3;
+  --color-carina-dust-violet: #c6a6ea;
+  --color-carina-oxygen-blue: #78bff2;
+  --color-carina-copper-amber: #e8a85f;
+  --color-carina-spectral-green: #68d2a3;
+  --color-carina-event-red: #ff7c78;
+
+  /* Semantic colors: dark-first product theme */
+  --color-background: #0d1214;
+  --color-surface: #141b1d;
+  --color-surface-raised: #1c2527;
+  --color-border: #344144;
+  --color-text-primary: #f3f0e8;
+  --color-text-secondary: #b0b7b3;
+  --color-brand-mark: #8e4053;
+  --color-accent: #8edbd2;
+  --color-focus: #8edbd2;
+  --color-success: #68d2a3;
+  --color-warning: #e8a85f;
+  --color-danger: #ff7c78;
+
+  /* Fonts */
+  --font-brand: "Carina Display Alpha", Georgia, serif;
+  --font-display: "Geist Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Geist Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;
+
+  /* Type scale */
+  --text-micro: 11px;
+  --text-micro--line-height: 1.45;
+  --text-caption: 12px;
+  --text-caption--line-height: 1.5;
+  --text-body-sm: 14px;
+  --text-body-sm--line-height: 1.5;
+  --text-body: 16px;
+  --text-body--line-height: 1.5;
+  --text-title-sm: 20px;
+  --text-title-sm--line-height: 1.22;
+  --text-title: 28px;
+  --text-title--line-height: 1.14;
+  --text-heading: 40px;
+  --text-heading--line-height: 1.06;
+  --text-display: 72px;
+  --text-display--line-height: 1;
+  --text-display-xl: 120px;
+  --text-display-xl--line-height: 0.94;
+
+  /* Spacing */
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-5: 20px;
+  --spacing-6: 24px;
+  --spacing-8: 32px;
+  --spacing-10: 40px;
+  --spacing-12: 48px;
+  --spacing-16: 64px;
+  --spacing-20: 80px;
+  --spacing-24: 96px;
+  --spacing-30: 120px;
+
+  /* Radius */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 9999px;
+
+  /* Motion */
+  --ease-carina: cubic-bezier(0.2, 0, 0, 1);
+  --animate-carina-pulse: carina-pulse 1.8s var(--ease-carina) infinite;
+}
+
+@keyframes carina-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}

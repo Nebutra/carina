@@ -1,8 +1,8 @@
 # Nebutra Carina — Brand Brief
 
-**Status:** Definitive brief. Research/definition only — no assets generated yet.
-**Downstream pipeline:** [generate-brand-kit](https://github.com/Nebutra/generate-brand-kit) (also installed locally as the `generate-brand-kit` skill).
-**Reference image (canonical):** `/Users/tseka_luk/.claude/jobs/666fe08c/tmp/refs/carina-nebula-user-ref.png` — a hydrogen-alpha-dominant rendering of the Carina Nebula (NGC 3372): rose/crimson emission, dark dust lanes, sparse white stars with rare gold and blue-white glints, on a near-black (not pure black) void.
+**Status:** Approved identity integrated into the repository. Canonical assets and machine-readable tokens live under `docs/brand/`.
+**Production pipeline:** `generate-brand-vi`; repository consumption is governed by `docs/brand/AGENTS.md` and `asset-manifest.json`.
+**Historical visual reference:** a hydrogen-alpha-dominant rendering of the Carina Nebula informed the early temperament and palette research. It is not a repository dependency or an identity master.
 **Canonical naming:** Product lockup is **Nebutra Carina**; short form **Carina**; descriptor **the Carina agent runtime** (lowercase descriptor, never a second proper name). "Agent OS" is internal-PRD ambition language and does not appear in brand surfaces. Absorbed upstreams (Hermes, Headroom, OpenClaw) are external projects, not Nebutra siblings; no constellation codename system exists yet, and none should be implied.
 
 ---
@@ -35,54 +35,50 @@ There is one honest resonance between the image and the product, and it is a pos
 
 ## 2. Palette
 
-### Decision: replace the legacy palette entirely
+### Decision: separate identity color from product signals
 
-The current identity (electric blue `#0033FE`, teal `#0B7285`, mint `#0BF1C3`, violet `#6D28D9`) exists only in README badge URLs and the hero PNG, and it is nearly the chromatic complement of the chosen reference image. **Verdict: replace, not reconcile.** No legacy hex survives. The badge slots are re-tokened (mapping below), `docs/assets/carina-hero.png` is retired when the kit ships, and the shields "informational" default on the license badge is replaced with a palette token so no badge is off-palette.
-
-The one thing the old palette got right — a cool accent for contrast — survives as **Blue Giant**, which is sampled from the reference image itself (blue-white O-type star glints), not inherited from the old blue.
+The accepted symbol uses `brand-rose`; product interaction uses `ion-cyan`. Treating one accent as both mark identity and UI state created drift, so the current system keeps those roles separate. The original electric-blue/teal/mint/violet README palette is retired.
 
 ### Token table (dark-first, terminal-native)
 
 | Token | Hex | Role | ANSI-256 fallback |
 |---|---|---|---|
-| **Void** | `#1a191d` | Base background. Near-black charcoal with a faint cool cast. Never pure `#000000`. | 234 (`#1c1c1c`) |
-| **Ember Shadow** | `#261316` | Raised surface / panel background. The darkest rose-cast neutral in the image. | 235 (`#262626`) |
-| **Carina Crimson** | `#55212d` | Dark accent surface, borders, selection background. | 52 (`#5f0000`) |
-| **Ionized Rose** | `#733445` | **Primary brand color** — the dominant rose of the image. Rose/crimson, *not* orange, *not* purple. | 95 (`#875f5f`) |
-| **Dust Mauve** | `#60344f` | Secondary / muted structural color. | 96 (`#875f87`) |
-| **Nebula Orchid** | `#a3688f` | Mid accent — hover states, secondary emphasis. | 132 (`#af5f87`) |
-| **Core Glow** | `#c18ba3` | Light accent — primary accent *text* on dark. | 139 (`#af87af`) |
-| **Starlight** | `#fff8fe` | Text on dark / highlights — white with a barely-pink cast. Never pure `#ffffff`. | 231 (`#ffffff`) |
-| **Star Gold** | `#b98b6a` | Warm attention accent — audit highlights, warnings. Rare in the image; keep it rare in the product. | 137 (`#af875f`) |
-| **Blue Giant** | `#e3e3ff` | Cool highlight — links, references, cross-file jumps. | 189 (`#d7d7ff`) |
+| **Void** | `#0d1214` | Base background | 233 (`#121212`) |
+| **Surface** | `#141b1d` | Primary panel surface | 234 (`#1c1c1c`) |
+| **Border** | `#344144` | Boundaries and dividers | 237 (`#3a3a3a`) |
+| **Starlight** | `#f3f0e8` | Primary text on dark | 255 (`#eeeeee`) |
+| **Dust** | `#b0b7b3` | Secondary and muted text | 249 (`#b2b2b2`) |
+| **Brand Rose** | `#8e4053` | Canonical symbol and brand mark only | 95 (`#875f5f`) |
+| **Ion Cyan** | `#8edbd2` | Primary interaction and focus | 116 (`#87d7d7`) |
+| **Oxygen Blue** | `#78bff2` | Information, links, retrieval | 111 (`#87afff`) |
+| **Dust Violet** | `#c6a6ea` | Agents and delegated execution | 182 (`#d7afd7`) |
+| **Copper Amber** | `#e8a85f` | Warnings and tool activity | 179 (`#d7af5f`) |
+| **Spectral Green** | `#68d2a3` | Healthy and completed states | 79 (`#5fd7af`) |
+| **Event Red** | `#ff7c78` | Error, destructive, and failed states | 210 (`#ff8787`) |
 
-Terminal guidance: backgrounds (Void, Ember Shadow) may collapse to the gray ramp on 256-color terminals without harm; accents keep hue via the fallbacks above. Truecolor terminals use exact hex. Semantic ANSI mapping for the TUI: error → Carina Crimson family (bright: 132), warning → Star Gold (137), success → Core Glow (139), info/link → Blue Giant (189), muted → Dust Mauve (96).
+Truecolor terminals use the exact design tokens. ANSI-256 uses the fallbacks above. `NO_COLOR`, dumb terminals, and non-TTY output remain unstyled.
 
 ### 60 / 30 / 10
 
-- **60% — surfaces:** Void and Ember Shadow. The product is mostly dark, quiet space.
-- **30% — structure:** Ionized Rose and Dust Mauve as fills, borders, brand shapes, chart mass; Carina Crimson for depth.
-- **10% — light:** Starlight text, Core Glow accents, with Star Gold and Blue Giant as deliberate, sparse glints — exactly as sparse as the stars in the reference image.
+- **60% — surfaces:** Void, Surface, and raised neutral steps.
+- **30% — structure:** borders, text hierarchy, and quiet neutral mass.
+- **10% — signal:** one dominant semantic color at a time. Brand Rose is reserved for identity, not general UI emphasis.
 
 ### WCAG 2.2 pairings (computed, relative-luminance method)
 
 | Foreground on background | Ratio | Grade |
 |---|---|---|
-| Starlight on Void | **16.75:1** | AAA — body text default |
-| Starlight on Ember Shadow | **16.94:1** | AAA — panel text |
-| Starlight on Carina Crimson | **12.25:1** | AAA — text on selection/accent surface |
-| Starlight on Ionized Rose | **8.72:1** | AAA — text on primary-brand fill (buttons, badges) |
-| Starlight on Dust Mauve | **9.57:1** | AAA — text on muted fill |
-| Blue Giant on Void | **13.91:1** | AAA — links |
-| Core Glow on Void | **6.24:1** | AA normal text — accent text, success |
-| Star Gold on Void | **5.80:1** | AA normal text — warnings, audit highlights |
-| Nebula Orchid on Void | **4.11:1** | **Large text / UI components only** (≥3:1); fails AA normal text — hover tint, not body copy |
-| Ionized Rose on Void | **1.92:1** | **Decorative / large graphics only.** Never text. The primary brand color is a *shape* color, not a *type* color on dark. |
-| Void on Starlight *(light surface)* | **16.75:1** | AAA — the light-mode/print story: Void text on Starlight paper |
-| Carina Crimson on Starlight *(light surface)* | **12.25:1** | AAA — accent text on light |
-| Ionized Rose on Starlight *(light surface)* | **8.72:1** | AAA — brand text on light |
+| Starlight on Void | **16.56:1** | AAA — body text default |
+| Dust on Void | **9.22:1** | AAA — secondary text |
+| Ion Cyan on Void | **11.86:1** | AAA — interaction and focus |
+| Oxygen Blue on Void | **9.46:1** | AAA — information and links |
+| Spectral Green on Void | **10.18:1** | AAA — success |
+| Copper Amber on Void | **9.16:1** | AAA — warning |
+| Event Red on Void | **7.55:1** | AAA — error |
+| Brand Rose on Void | **2.70:1** | Decorative mark only; never normal text |
+| Brand Rose on Starlight | **6.13:1** | AA normal text on light surfaces |
 
-Every prompt and token file downstream carries these exact hexes and states which pairs are large-graphics-only.
+`design-system/design-tokens.json` is authoritative for machine consumers.
 
 ---
 
@@ -90,12 +86,13 @@ Every prompt and token file downstream carries these exact hexes and states whic
 
 ### Typography
 
-Two registers, matching how the product already speaks:
+Three registers, matching how the product already speaks:
 
-- **Display / headings (composed images, docs site, social cards):** a neo-grotesque with quiet confidence — **Inter Display** (open, safe) or **Instrument Sans** (slightly more character). Tight but not fashion-tight tracking; sentence case everywhere; no all-caps hero lines. Avoid Space Grotesk and other "startup space" faces — too genre.
-- **Mono / the register of truth:** **JetBrains Mono** (open default) or **Berkeley Mono** (if licensed). Anything the product *attests* — audit lines, hashes, policy names, file paths, version strings — renders in mono, even inside marketing images. Mono is where trust lives in a terminal-native brand.
+- **Brand display:** **Carina Display Alpha**, derived from the accepted CARINA wordmark. Use for the product name and large identity-led headings only.
+- **UI and body:** **Geist Sans** or the system sans stack. Controls, navigation, tables, metrics, and long-form documentation never use the brand display font.
+- **Mono / the register of truth:** **Geist Mono** or the system mono stack. Anything the product attests — audit lines, hashes, policy names, file paths, version strings — renders in mono.
 - **Repo surfaces** (READMEs, docs) stay GitHub-default type; typography rules apply only to exported/composed images and any future docs site.
-- **DESIGN.md decision:** not needed now — Carina is terminal-native with no web UI. Tokens ship as exact hex inside `visual-identity.md` (the skill's native carrier); a DTCG JSON export is added only when a docs site or GUI surface exists.
+- **Design-system source:** `design-system/DESIGN.md` and `design-system/design-tokens.json` are checked in now because VS Code and future clients already create non-terminal consumption surfaces.
 
 ### Mark direction — governed action with a return path
 
@@ -131,12 +128,9 @@ icons, funnels, filters, portals, shields, locks, chains, initials, or diagrams.
 - *Rationale:* a formal study in figure and ground for docs illustrations; the interest is the tension between the point and the boundary, nothing more.
 - *Banned readings:* peanut, infinity symbol, atom/electron orbitals, eye, hourglass, padlock. *Risk:* enclosure forms drift toward cliché at small sizes; treat as a secondary illustration motif only.
 
-**Decision for the DAG:** no core mark is locked. The next gate is six isolated
-black-and-white vector operation studies, two per product-derived family. A human
-collision review selects a symbol before color or wordmark work begins. Carved Edge
-remains the scene/background grammar (hero, social); Held Light remains a secondary
-illustration motif. The product wordmark is "Carina"; the full lockup is "Nebutra
-Carina" with "Nebutra" in a lighter supporting weight.
+**Final decision:** the symbol and CARINA wordmark are approved and frozen at
+`assets/logo/carina-symbol.svg` and `assets/logo/carina-wordmark.svg`. Earlier
+candidate language remains design history, not permission to redraw the mark.
 
 ---
 
@@ -224,56 +218,21 @@ hard and test-enforced.
 
 ---
 
-## 5. Asset pipeline plan (generate-brand-kit invocation)
+## 5. Asset production record
 
-### Inputs we will feed the skill
+Production followed a gated reference-image DAG: approved symbol and wordmark first,
+dependent identity applications second, then font control glyphs and the remaining
+alphabet. Only approved outputs were promoted into this repository.
 
-1. **Brand philosophy:** the one-sentence brand idea from §1, plus fragments as constraints: name "Nebutra Carina", material metaphor "hydrogen-alpha emission behind dark dust; light through a defined aperture", mood "quiet, exact, warm-dark — matte, smoky, still", disliked old identity "glassy neon blue/teal/violet loop on black".
-2. **`visual-identity.md`** — authored from this brief: name + zh/ja variants, tagline, tone (§4), design philosophy (§1), the three evidence-backed operation families in §3 with no mark locked before review, palette with the exact hex pairs and stated ratios (§2), typography (§3), imagery rules (§1 literalness rules), latent motion ("slow emission drift, sculpting winds"), and negative constraints written as visual risks (§6 verbatim).
-3. **`brand-kit-inventory.md`** — Carina's real slots: README hero (shared across en/zh-CN/ja), social/OG card, favicon set (staged for the future docs site), docs illustrations (aperture / carved-edge / held-light motifs), CLI banner spec (ANSI, hand-made from the mark — not image-generated), TUI theme token table (§2 ANSI mapping), badge recolor map. No desktop/Tauri app icons — no such surface exists.
-4. **`brand-generation-dag.yaml`** — with the user's nebula reference image injected as a **reference-lock on the foundation board task** (stage 1), so all downstream material vocabulary is sampled from the chosen Hα rendering, not from the model's generic nebula prior.
-5. **Repo scan** (`scripts/scan_brand_assets.py` equivalent): current inventory is one PNG (`docs/assets/carina-hero.png`) + 15 badge URLs across three READMEs + plain-text CLI/TUI. The kit takes the shape of this repo.
+Current stable consumers:
 
-### DAG (7 stages, ratios, gates)
+- **READMEs:** `assets/hero/carina-readme-hero.webp` and the approved badge palette.
+- **VS Code:** `integrations/vscode/media/carina.svg`, derived byte-for-byte from the monochrome symbol master.
+- **TUI:** semantic terminal tokens in `go/tui/theme`, checked against the DTCG source.
+- **Future web/UI clients:** `design-system/variables.css`, `tailwind-v4.css`, `carina.ts`, and the WOFF2 display font.
 
-| Stage | Asset | Ratio | Refs | Gate |
-|---|---|---|---|---|
-| 1 | Foundation material board (palette/material/mood, no logo) | 16:9 | nebula ref image (reference-lock) | **human approval** |
-| 2 | Six isolated operation studies (two per evidence-backed family; no wordmark) | 1:1 each | none | **human collision review** |
-| 3 | Selected core-mark construction (black and white vector) | 1:1 | approved study from @2 | review |
-| 4 | Production-clean mark (hard-edge fills, legible at 16–32 px) | 1:1 | @3 | **human approval** |
-| 5 | Icon variants (classic / soft / technical / monochrome glyph — mark fixed, material varies) | 1:1 | @4 | review |
-| 6 | Proof sheets (16–48 px legibility, light/dark, family contact sheet) | 16:9 | @4, @5 | **human approval** |
-| 7 | Scenes: README hero (21:9, right third low-noise for text), social/OG (16:9 → export 1200×630), docs backgrounds (Carved Edge grammar) | as listed | @4 | review |
-
-Standing negative constraints (§6) are appended to every prompt. Downstream tasks reference only **approved** upstream outputs.
-
-### Output layout & consumption (files at stable paths)
-
-```
-docs/brand/
-  brand-brief.md              # this document
-  visual-identity.md          # kit input, authored from this brief
-  brand-kit-inventory.md      # asset manifest + migration checklist
-  brand-generation-dag.yaml   # regeneration recipe
-  kit/
-    generated/                # raw explorations — quarantine; rejects deleted, never linger
-    approved/                 # promoted masters only: material-board.png, core-mark.png,
-                              #   production-clean-mark.png, app-icon.png, color-palette.png
-    processed/                # production exports: logo.svg (hand-vectorized, real vectors),
-                              #   hero.png, social-preview.png, favicon set (staged), icon sizes
-```
-
-**Who consumes what:**
-
-- **READMEs (en/zh-CN/ja):** `kit/processed/hero.png` replaces `docs/assets/carina-hero.png` (which is deleted); badge hexes rewritten — status-alpha → `733445`, build → `55212d`, runtime → `60344f`, audit → `b98b6a` (Star Gold: audit is the attention color), license → `1a191d` (no more shields default).
-- **Social/OG:** `kit/processed/social-preview.png` (1200×630) set as the GitHub repo social image.
-- **CLI (`apps/carina-cli`):** ANSI banner and semantic colors hand-derived from the mark and §2 fallback table; the microcopy engine consumes §4's register rules and calibration lines.
-- **TUI (`apps/carina-tui`):** theme constants from the §2 token/ANSI table — the palette finally exists in code, not just badge URLs.
-- **Docs site (future):** favicon set per Evil Martians canon (favicon.ico 32×32, icon.svg with dark-mode media query, apple-touch-icon 180×180 opaque, icon-192/512, maskable 512 with 409 px safe circle) staged in `processed/`, wired when the site exists.
-- **Hygiene:** rejected generations never remain under `approved/` or `processed/`; legacy hero and old hexes are purged from every consumable path in the same change that lands the kit.
-
-**Verification battery before commit:** dimensions/alpha, 32–48 px legibility, light/dark contrast, WCAG pairs from §2, no generated text in rasters, no stale old-brand filenames or references.
+Generation rounds, rejected candidates, logo-skin experiments, and mockups remain
+outside the code repository. `asset-manifest.json` records the approved inventory.
 
 ---
 
@@ -288,7 +247,7 @@ Standing negative constraints — appended verbatim to every generation prompt a
 5. **No AI iconography.** No glowing brains, circuit neurons, sparkle emoji, robot mascots.
 6. **No synthwave/cyberpunk.** No neon grids, cyan-magenta duotones, vector-neon. The nebula is organic, smoky, matte.
 7. **No NASA counterfeits.** Never trace or composite actual Hubble/Webb frames; evoke the physics (emission, dust, aperture), don't counterfeit agency imagery. No photoreal nebula as a logo.
-8. **No pure black, no pure white.** Backgrounds are Void `#1a191d`; text is Starlight `#fff8fe`. The warmth is what separates Carina from default dark mode.
+8. **No pure black, no pure white.** Product backgrounds use Void `#0d1214`; primary dark-mode text uses Starlight `#f3f0e8`.
 9. **No security clichés in the mark.** No padlocks, shields, vaults, chains-as-links; the aperture is an *opening for light*, not a lock.
 10. **No hype register.** No exclamation marks, no emoji, no superlatives in any brand surface — the docs voice governs marketing too.
 11. **No generated text in rasters.** All composed type is set in real fonts at export time; image models never render words.
