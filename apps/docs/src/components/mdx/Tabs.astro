@@ -3,6 +3,7 @@
  * Client-side tab group (Code Group / content tabs).
  * Children: <Tab label="...">...</Tab>
  * WAI-ARIA: arrow keys, Home/End, roving tabindex.
+ * Panel switch: GSAP autoAlpha crossfade (docs-motion).
  */
 import { uniqueId } from './id';
 
@@ -17,6 +18,8 @@ const groupId = uniqueId('tabs');
 </div>
 
 <script>
+  import { crossfadePanel } from '../../scripts/docs-motion';
+
   function initTabs(root: Element) {
     if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
     root.dataset.ready = '1';
@@ -27,19 +30,51 @@ const groupId = uniqueId('tabs');
 
     list.innerHTML = '';
     const buttons: HTMLButtonElement[] = [];
+    let active = 0;
+    let busy = false;
 
-    const select = (i: number, focus = false) => {
-      panels.forEach((p, j) => {
-        p.hidden = j !== i;
-        p.setAttribute('tabindex', j === i ? '0' : '-1');
-      });
+    const setChrome = (i: number, focus = false) => {
       buttons.forEach((b, j) => {
         const on = j === i;
         b.classList.toggle('is-active', on);
         b.setAttribute('aria-selected', on ? 'true' : 'false');
         b.tabIndex = on ? 0 : -1;
       });
+      panels.forEach((p, j) => {
+        p.setAttribute('tabindex', j === i ? '0' : '-1');
+      });
       if (focus) buttons[i]?.focus();
+    };
+
+    const select = (i: number, focus = false) => {
+      if (i === active || busy || i < 0 || i >= panels.length) {
+        if (focus) buttons[i]?.focus();
+        return;
+      }
+      const from = panels[active];
+      const to = panels[i];
+      busy = true;
+      setChrome(i, focus);
+      active = i;
+
+      crossfadePanel({
+        from,
+        to,
+        onSwitch: () => {
+          /* chrome already updated; ensure inactive stay hidden after tween */
+        },
+      });
+
+      // Allow next click after in-tween settles (out 0.12 + in 0.2)
+      window.setTimeout(() => {
+        busy = false;
+        panels.forEach((p, j) => {
+          if (j !== active) {
+            p.hidden = true;
+            p.classList.remove('is-active');
+          }
+        });
+      }, 360);
     };
 
     panels.forEach((panel, i) => {
@@ -48,6 +83,8 @@ const groupId = uniqueId('tabs');
       panel.setAttribute('role', 'tabpanel');
       panel.setAttribute('aria-labelledby', `${id}-tab`);
       panel.hidden = i !== 0;
+      panel.classList.toggle('is-active', i === 0);
+      panel.setAttribute('tabindex', i === 0 ? '0' : '-1');
 
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -146,6 +183,8 @@ const groupId = uniqueId('tabs');
        stray light band between the tab strip and a code-group's dark card. */
     margin-block-start: 0;
     padding: var(--spacing-4) var(--spacing-5);
+    /* Stable paint box while GSAP swaps panels */
+    position: relative;
   }
 
   /* When a tab only holds a code fence, drop inner padding (Code Group look) */

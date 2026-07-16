@@ -1,0 +1,40 @@
+---
+/**
+ * Client-side motion root:
+ *  - Astro ClientRouter → soft SPA navigations (page switch)
+ *  - GSAP page-enter on each load / after-swap
+ */
+import { ClientRouter } from 'astro:transitions';
+---
+
+<ClientRouter />
+
+<script>
+  import {
+    killPageMotion,
+    preparePageEnter,
+    runPageEnter,
+  } from '../scripts/docs-motion';
+
+  const root = () => document.documentElement;
+
+  // FOUC CSS guard (also set early via is:inline in Head).
+  root().classList.add('js-motion');
+
+  document.addEventListener('astro:before-preparation', () => {
+    killPageMotion();
+    root().removeAttribute('data-vt-ready');
+  });
+
+  document.addEventListener('astro:after-swap', () => {
+    root().classList.add('js-motion');
+    root().removeAttribute('data-vt-ready');
+    preparePageEnter();
+  });
+
+  // Fires on first load and after every ClientRouter navigation.
+  document.addEventListener('astro:page-load', () => {
+    runPageEnter();
+    root().setAttribute('data-vt-ready', '');
+  });
+</script>

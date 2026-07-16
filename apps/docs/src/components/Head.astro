@@ -2,11 +2,17 @@
 import Default from '@astrojs/starlight/components/Head.astro';
 import ReadingProgress from './ReadingProgress.astro';
 import DocsAssistant from './DocsAssistant.astro';
+import Motion from './Motion.astro';
 ---
 
 <Default {...Astro.props}><slot /></Default>
 <link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
 <link rel="alternate" type="text/markdown" title="skill.md" href="/skill.md" />
+{/* Early FOUC class before Motion module; safe if JS disabled (class never set). */}
+<script is:inline>
+  document.documentElement.classList.add('js-motion');
+</script>
+<Motion />
 <ReadingProgress />
 <DocsAssistant />
 <script is:inline>

@@ -106,26 +106,46 @@ const panels = [
 </div>
 
 <script>
+  import { crossfadePanel } from '../../scripts/docs-motion';
+
   function init(root: Element) {
     if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
     root.dataset.ready = '1';
     const tabs = root.querySelectorAll<HTMLButtonElement>('.snippet-tabs__tab');
-    const panels = root.querySelectorAll<HTMLElement>('.snippet-tabs__panel');
+    const panels = [...root.querySelectorAll<HTMLElement>('.snippet-tabs__panel')];
     const copyBtn = root.querySelector<HTMLButtonElement>('[data-snippet-copy]');
+    let activeId = panels.find((p) => p.classList.contains('is-active'))?.dataset.panel ?? panels[0]?.dataset.panel;
+    let busy = false;
 
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         const id = tab.dataset.panel;
+        if (!id || id === activeId || busy) return;
+
+        const from = panels.find((p) => p.dataset.panel === activeId) ?? null;
+        const to = panels.find((p) => p.dataset.panel === id);
+        if (!to) return;
+
+        busy = true;
+        activeId = id;
+
         tabs.forEach((t) => {
           const on = t === tab;
           t.classList.toggle('is-active', on);
           t.setAttribute('aria-selected', on ? 'true' : 'false');
         });
-        panels.forEach((p) => {
-          const on = p.dataset.panel === id;
-          p.hidden = !on;
-          p.classList.toggle('is-active', on);
-        });
+
+        crossfadePanel({ from, to });
+
+        window.setTimeout(() => {
+          busy = false;
+          panels.forEach((p) => {
+            if (p.dataset.panel !== activeId) {
+              p.hidden = true;
+              p.classList.remove('is-active');
+            }
+          });
+        }, 360);
       });
     });
 
