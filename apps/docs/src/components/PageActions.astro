@@ -1,17 +1,17 @@
 ---
 /**
- * Page actions — Perplexity/Mintlify pattern:
- * single "Copy page" control with a dropdown of export / view / edit actions.
- * Not a separate Edit button in the chrome.
+ * Mintlify-style page export control.
+ *
+ * Primary: "Copy page" (Markdown for LLMs).
+ * Chevron opens: copy again · view as Markdown.
+ * No separate "Edit" chrome — that is a different, open-source-only pattern.
  */
 const entry = Astro.locals.starlightRoute.entry;
+const title = entry.data.title ?? 'Carina';
 const id = String(entry.id || '')
   .replace(/^\//, '')
   .replace(/\.mdx?$/, '');
-const filePath = `apps/docs/src/content/docs/${id}.mdx`;
-const editHref = `https://github.com/nebutra/carina/edit/main/${filePath}`;
-const title = entry.data.title ?? 'Carina';
-const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-') || 'page'}`;
 ---
 
 <div class="page-actions" data-page-actions data-page-title={title}>
@@ -37,7 +37,7 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
       aria-expanded="false"
       aria-haspopup="menu"
       aria-controls={menuId}
-      aria-label="More page actions"
+      aria-label="More copy options"
     >
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
         <path d="M4 6.5 8 10.5 12 6.5" stroke-linecap="round" stroke-linejoin="round"></path>
@@ -71,25 +71,6 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
         <span class="page-actions__item-desc">View this page as plain text</span>
       </span>
     </button>
-
-    <a
-      class="page-actions__item"
-      role="menuitem"
-      href={editHref}
-      target="_blank"
-      rel="noopener noreferrer"
-      data-action="edit"
-    >
-      <span class="page-actions__item-icon" aria-hidden="true">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M10.5 2.5 13.5 5.5 6 13H3v-3L10.5 2.5Z" stroke-linejoin="round"></path>
-        </svg>
-      </span>
-      <span class="page-actions__item-text">
-        <span class="page-actions__item-title">Edit on GitHub</span>
-        <span class="page-actions__item-desc">Improve this page on GitHub</span>
-      </span>
-    </a>
   </div>
 </div>
 
@@ -112,7 +93,7 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
     );
   }
 
-  /** Lightweight DOM → Markdown for LLM paste (not a full HTML converter). */
+  /** Lightweight DOM → Markdown for LLM paste. */
   function pageToMarkdown(pageTitle) {
     const root = articleRoot();
     if (!root) return `# ${pageTitle}\n\nSource: ${location.href}\n`;
@@ -125,14 +106,17 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
     const walk = (node) => {
       if (node.nodeType === Node.TEXT_NODE) return;
       if (!(node instanceof HTMLElement)) return;
-      if (node.matches('.page-actions, .docs-breadcrumb, .page-title-meta, script, style, .sl-anchor-link')) {
+      if (
+        node.matches(
+          '.page-actions, .docs-breadcrumb, .page-title-meta, script, style, .sl-anchor-link',
+        )
+      ) {
         return;
       }
 
       const tag = node.tagName.toLowerCase();
       if (/^h[1-6]$/.test(tag)) {
-        const level = Number(tag[1]);
-        push(`${'#'.repeat(level)} ${node.innerText.trim()}`);
+        push(`${'#'.repeat(Number(tag[1]))} ${node.innerText.trim()}`);
         return;
       }
       if (tag === 'p') {
@@ -145,8 +129,7 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
       }
       if (tag === 'pre') {
         const lang = node.getAttribute('data-language') || '';
-        const code = node.innerText.replace(/\n$/, '');
-        push('```' + lang + '\n' + code + '\n```');
+        push('```' + lang + '\n' + node.innerText.replace(/\n$/, '') + '\n```');
         return;
       }
       if (tag === 'blockquote') {
@@ -160,7 +143,6 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
         return;
       }
       if (tag === 'table') {
-        // keep simple text dump for tables
         push(node.innerText.trim());
         return;
       }
@@ -168,17 +150,16 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
         push('---');
         return;
       }
-
-      // Containers: walk children (skip if we already handled leaf-ish)
-      if (['ul', 'ol', 'div', 'section', 'article', 'aside', 'details', 'figure'].includes(tag) || node === root) {
+      if (
+        ['ul', 'ol', 'div', 'section', 'article', 'aside', 'details', 'figure'].includes(tag) ||
+        node === root
+      ) {
         [...node.children].forEach(walk);
       }
     };
 
     [...root.children].forEach(walk);
-
-    const body = blocks.join('\n\n');
-    return [`# ${pageTitle}`, '', body, '', `Source: ${location.href}`].join('\n');
+    return [`# ${pageTitle}`, '', blocks.join('\n\n'), '', `Source: ${location.href}`].join('\n');
   }
 
   function flashCopied(labelEl, host) {
@@ -194,8 +175,7 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
 
   async function copyMarkdown(root) {
     const title = root.dataset.pageTitle || document.title;
-    const md = pageToMarkdown(title);
-    await navigator.clipboard.writeText(md);
+    await navigator.clipboard.writeText(pageToMarkdown(title));
     flashCopied(root.querySelector('[data-copy-label]'), root.querySelector('.page-actions__combo'));
   }
 
@@ -218,7 +198,6 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
       toggle.setAttribute('aria-expanded', 'false');
       combo?.classList.remove('is-open');
     };
-
     const openMenu = () => {
       if (!menu || !toggle) return;
       menu.hidden = false;
@@ -252,19 +231,14 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
 
     root.querySelector('[data-action="view-md"]')?.addEventListener('click', () => {
       const title = root.dataset.pageTitle || document.title;
-      const md = pageToMarkdown(title);
-      if (dialogBody) dialogBody.textContent = md;
+      if (dialogBody) dialogBody.textContent = pageToMarkdown(title);
       closeMenu();
       if (dialog instanceof HTMLDialogElement) dialog.showModal();
     });
 
-    // Edit is a normal link — just close menu on navigate intent
-    root.querySelector('[data-action="edit"]')?.addEventListener('click', () => closeMenu());
-
     dialogCopy?.addEventListener('click', async () => {
-      const text = dialogBody?.textContent || '';
       try {
-        await navigator.clipboard.writeText(text);
+        await navigator.clipboard.writeText(dialogBody?.textContent || '');
         const prev = dialogCopy.textContent;
         dialogCopy.textContent = 'Copied';
         window.setTimeout(() => {
@@ -278,7 +252,6 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
     dialogClose?.addEventListener('click', () => {
       if (dialog instanceof HTMLDialogElement) dialog.close();
     });
-
     dialog?.addEventListener('click', (e) => {
       if (e.target === dialog && dialog instanceof HTMLDialogElement) dialog.close();
     });
@@ -286,7 +259,6 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
     document.addEventListener('click', (e) => {
       if (!root.contains(e.target)) closeMenu();
     });
-
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') closeMenu();
     });
@@ -392,7 +364,6 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
     border: 1px solid var(--docs-border-subtle);
     border-radius: 12px;
     background: var(--docs-bg-surface);
-    box-shadow: none;
     z-index: 20;
   }
 
@@ -410,7 +381,6 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
     color: var(--docs-fg);
     font-family: var(--docs-font-sans);
     text-align: start;
-    text-decoration: none;
     cursor: pointer;
     transition: background-color var(--docs-transition);
   }
@@ -419,10 +389,6 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   .page-actions__item:focus-visible {
     background: color-mix(in srgb, var(--docs-fg) 4%, transparent);
     outline: none;
-  }
-
-  a.page-actions__item {
-    -webkit-text-fill-color: currentColor;
   }
 
   .page-actions__item-icon {
@@ -452,7 +418,6 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
     line-height: 1.3;
   }
 
-  /* View-as-Markdown dialog */
   .page-md-dialog {
     width: min(40rem, calc(100vw - 2rem));
     max-height: min(70vh, 36rem);
