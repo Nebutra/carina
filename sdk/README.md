@@ -2,7 +2,7 @@
 
 Typed JSON-RPC 2.0 clients for the `carina-daemon` socket. The TypeScript and
 Python packages use independent semver (`0.2.0`); the Go package follows the
-repository tag. All three currently target Carina Runtime `0.6.3` and use the authoritative registry in
+repository tag. All three currently target Carina Runtime `0.6.4` and use the authoritative registry in
 `protocol/jsonrpc/methods.json`; events conform to `protocol/schemas/`.
 
 | SDK | Package | Status |

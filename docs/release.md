@@ -100,7 +100,7 @@ make release-package
 To build the product version declared by `go/product` explicitly:
 
 ```bash
-VERSION=0.6.3 make release-package
+VERSION=0.6.4 make release-package
 ```
 
 The package command writes to `dist/`:
@@ -130,14 +130,14 @@ mismatches are warnings in the package manifest, not hidden state.
 Use existing artifacts without rebuilding:
 
 ```bash
-SKIP_BUILD=1 VERSION=0.6.3 ./scripts/package-release.sh
+SKIP_BUILD=1 VERSION=0.6.4 ./scripts/package-release.sh
 ```
 
 If Zig is unavailable but `zig/zig-out/bin/carina-*` artifacts already exist,
 reuse them explicitly:
 
 ```bash
-SKIP_ZIG=1 VERSION=0.6.3 make release-package
+SKIP_ZIG=1 VERSION=0.6.4 make release-package
 ```
 
 `SKIP_BUILD=1` and `SKIP_ZIG=1` are recorded as warnings in `MANIFEST.json` and

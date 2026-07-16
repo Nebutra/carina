@@ -61,7 +61,7 @@ test('typed parity wrappers and event subscription use canonical RPC methods', a
     }
   }, async (socketPath) => {
     const client = new CarinaClient(socketPath, 500)
-    assert.equal(compatibleRuntimeVersion, '0.6.3')
+    assert.equal(compatibleRuntimeVersion, '0.6.4')
     assert.equal((await client.attachSession('s1', 3)).cursor, 7)
     assert.equal((await client.forkSession('s1')).session_id, 'child')
     assert.equal((await client.reviewSession('s1')).projection_version, '1.0.0')

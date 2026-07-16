@@ -120,7 +120,7 @@ class ClientTest(unittest.TestCase):
 
         with daemon_server(handler) as path:
             client = CarinaClient(path, timeout=0.5)
-            self.assertEqual(compatible_runtime_version, "0.6.3")
+            self.assertEqual(compatible_runtime_version, "0.6.4")
             self.assertEqual(client.attach_session("s1", 3)["cursor"], 7)
             self.assertEqual(client.fork_session("s1")["session_id"], "child")
             self.assertEqual(client.review_session("s1")["projection_version"], "1.0.0")
@@ -249,7 +249,7 @@ class ClientTest(unittest.TestCase):
         submitted: list[dict[str, Any]] = []
         def handler(request: dict[str, Any], conn: socket.socket) -> None:
             result: Any = {}
-            if request["method"] == "runtime.initialize": result = {"runtime_version":"0.6.3","protocol_version":"1.2.0","projection_version":"1.0.0","capabilities":{"tool_call_lifecycle":True,"event_schema_version":"0.3.0"}}
+            if request["method"] == "runtime.initialize": result = {"runtime_version":"0.6.4","protocol_version":"1.2.0","projection_version":"1.0.0","capabilities":{"tool_call_lifecycle":True,"event_schema_version":"0.3.0"}}
             elif request["method"] == "session.create": result = {"session_id":"s","workspace_id":"w","workspace_root":"/tmp","status":"active"}
             elif request["method"] == "task.submit": submitted.append(request["params"]); result = {"task_id":"t","status":"queued"}
             elif request["method"] == "task.result": result = {"task_id":"t","status":"completed","summary":"{\"status\":\"ok\"}"}

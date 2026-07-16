@@ -75,26 +75,26 @@ export default defineConfig({
       ],
       // Built-in Pagefind search (keyboard: /, Esc)
       pagefind: true,
-      // Expressive Code: copy button, language label, line numbers via CSS overrides
-      // Code blocks stay dark in BOTH themes (Mintlify signature look);
-      // frame chrome is pinned to dark primitives in ux.css.
+      // Expressive Code — theme-following code cards (Claude Docs reference:
+      // light page → light code card, dark page → dark). Chrome reads from
+      // theme-aware --docs-* tokens so it flips with the site theme.
       expressiveCode: {
-        themes: ['github-dark-default'],
-        // Always-dark code (Mintlify signature) in both site themes.
-        themeCssSelector: () => ':root',
-        useDarkModeMediaQuery: false,
+        themes: ['github-dark-default', 'github-light'],
+        themeCssSelector: (theme) => `[data-theme='${theme.type}']`,
         styleOverrides: {
-          borderRadius: 'var(--radius-lg)',
+          borderRadius: 'var(--radius-xl)',
           borderWidth: '1px',
+          borderColor: 'var(--docs-code-border)',
           codeFontFamily: 'var(--docs-font-mono)',
           uiFontFamily: 'var(--docs-font-sans)',
           frames: {
             shadowColor: 'transparent',
-            editorBackground: 'var(--carina-surface)',
-            terminalBackground: 'var(--carina-surface)',
-            editorTabBarBackground: 'var(--carina-surface-raised)',
-            editorActiveTabBackground: 'var(--carina-surface)',
-            terminalTitlebarBackground: 'var(--carina-surface-raised)',
+            editorBackground: 'var(--docs-bg-surface)',
+            terminalBackground: 'var(--docs-bg-surface)',
+            editorTabBarBackground: 'var(--docs-bg-raised)',
+            editorActiveTabBackground: 'var(--docs-bg-surface)',
+            terminalTitlebarBackground: 'var(--docs-bg-raised)',
+            terminalTitlebarBorderBottomColor: 'var(--docs-code-border)',
           },
         },
       },

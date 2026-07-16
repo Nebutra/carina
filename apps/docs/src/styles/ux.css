@@ -411,18 +411,10 @@
     margin-top: 1.8em;
   }
 
-  /* ── Code (Expressive Code) — always-dark Mintlify chrome ────────── */
+  /* ── Code (Expressive Code) — theme-following cards (ref: Claude Docs) ── */
   .expressive-code {
-    --ec-frm-edBg: var(--carina-surface);
-    --ec-frm-trmBg: var(--carina-surface);
-    --ec-brdCol: var(--carina-border-subtle);
-    --ec-frm-edBdgBg: var(--carina-surface-raised);
-    --ec-frm-edBdgFg: var(--carina-dust);
-    --ec-frm-trmTtbBg: var(--carina-surface-raised);
-    --ec-frm-trmTtbFg: var(--carina-dust);
-    --ec-frm-edTabBarBg: var(--carina-surface-raised);
-    --ec-frm-tooltipSuccessBg: var(--carina-spectral-green);
-    --ec-frm-tooltipSuccessFg: var(--carina-void);
+    --ec-frm-tooltipSuccessBg: var(--docs-success);
+    --ec-frm-tooltipSuccessFg: var(--docs-bg);
     --ec-codePadBlk: 0.9rem;
     --ec-codePadInl: 1rem;
     font-size: 0.8125rem;
@@ -434,22 +426,24 @@
   }
 
   .expressive-code .frame {
-    border-radius: var(--docs-radius-lg);
-    border: 1px solid var(--carina-border-subtle);
+    border-radius: var(--docs-radius-xl);
+    border: 1px solid var(--docs-code-border);
     box-shadow: none !important;
     overflow: hidden;
     transition: border-color var(--docs-transition);
   }
 
   .expressive-code .frame:hover {
-    border-color: var(--carina-border);
+    border-color: var(--docs-border);
   }
 
-  /* Title bar: filename / language chrome */
+  /* Slim title bar: label reads start-aligned, never centered */
   .expressive-code .frame .header {
-    border-bottom: 1px solid var(--carina-border-subtle);
-    background: var(--carina-surface-raised);
-    min-height: 2.25rem;
+    border-bottom: 1px solid var(--docs-code-border);
+    background: var(--docs-bg-raised);
+    min-height: 2rem;
+    text-align: start;
+    padding-inline: 1rem;
   }
 
   .expressive-code .frame.is-terminal:not(.has-title) .header {
@@ -460,8 +454,11 @@
     font-family: var(--docs-font-mono);
     font-size: 0.75rem;
     font-weight: 500;
-    color: var(--carina-dust);
+    color: var(--docs-fg-muted);
     letter-spacing: 0.01em;
+    background: transparent;
+    border: 0;
+    padding-inline: 0;
   }
 
   .expressive-code .frame pre {
@@ -479,8 +476,8 @@
     width: 2rem;
     height: 2rem;
     border-radius: var(--docs-radius-md);
-    border: 1px solid var(--carina-border-subtle);
-    background: color-mix(in srgb, var(--carina-surface-raised) 90%, transparent);
+    border: 0;
+    background: transparent;
     opacity: 0.55;
     transition:
       opacity var(--docs-transition),
@@ -495,8 +492,7 @@
   }
 
   .expressive-code .copy button:hover {
-    background: var(--carina-surface-raised);
-    border-color: var(--carina-border);
+    background: var(--docs-bg-raised);
     transform: scale(1.02);
   }
 
