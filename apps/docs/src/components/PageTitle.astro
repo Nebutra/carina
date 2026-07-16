@@ -34,9 +34,15 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
 
   .page-title-meta :global(.docs-breadcrumb) {
     margin-bottom: 0;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
+  /* Align with Perplexity: action sits top-right of the title block */
   .page-title-meta :global(.page-actions) {
     margin-bottom: 0;
+    margin-inline-start: auto;
+    flex: 0 0 auto;
   }
 </style>
+
