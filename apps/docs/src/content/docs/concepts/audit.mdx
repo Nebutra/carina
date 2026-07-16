@@ -20,7 +20,7 @@ Carina treats observability as a product feature. Every execution writes to an a
 
 ## CLI
 
-```bash
+```bash title="audit.sh"
 carina audit SESSION          # replay model decisions + kernel-gated effects
 carina audit verify SESSION   # confirm the hash chain was not tampered with
 carina audit tail --last 5
@@ -36,7 +36,7 @@ File mutations go through a patch pipeline with provenance:
 3. On approve: apply → verify → commit with rollback pointer
 4. No half-applied state
 
-```bash
+```bash title="patch.sh"
 carina patch list SESSION
 carina patch show ID
 carina patch rollback ID

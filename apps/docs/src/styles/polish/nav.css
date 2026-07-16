@@ -3,12 +3,13 @@
  */
 
 @layer components {
-  /* ── Navbar ──────────────────────────────────────────────────────── */
+  /* ── Navbar (sole owner of header surface chrome) ───────────────── */
   header.header {
     background-color: transparent !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
     border-bottom: 1px solid transparent;
+    box-shadow: none !important;
     transition:
       background-color var(--polish-transition),
       border-color var(--polish-transition),

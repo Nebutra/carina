@@ -46,8 +46,33 @@
     line-height: 1.25;
     margin-top: 2.75em;
     margin-bottom: 0.7em;
-    padding-bottom: 0.35em;
-    border-bottom: 1px solid var(--docs-border-subtle);
+    padding-bottom: 0;
+    /* Mintlify: hierarchy via type, not a hairline under every H2 */
+    border-bottom: 0;
+  }
+
+  /* Code Group (Tabs wrapping fences): denser chrome, no double card padding */
+  .docs-tabs__panels:has(.expressive-code) {
+    padding: 0;
+    background: transparent;
+  }
+
+  .docs-tabs:has(.expressive-code) {
+    background: transparent;
+    border-color: var(--docs-border-subtle);
+  }
+
+  .docs-tabs:has(.expressive-code) .docs-tabs__list {
+    background: var(--docs-bg-surface);
+  }
+
+  .docs-tabs__panels .expressive-code {
+    margin-block: 0;
+  }
+
+  .docs-tabs__panels .expressive-code .frame {
+    border-radius: 0 0 10px 10px !important;
+    border-top: 0 !important;
   }
 
   .sl-markdown-content h3 {

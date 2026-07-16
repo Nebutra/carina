@@ -6,7 +6,8 @@ sidebar:
 ---
 
 import Callout from '../../../components/ui/Callout.astro';
-
+import Tabs from '../../../components/mdx/Tabs.astro';
+import Tab from '../../../components/mdx/Tab.astro';
 
 Carina ships as a local toolchain: a CLI, a long-running daemon, optional workers, and client surfaces (TUI, IDE, web operator).
 
@@ -15,37 +16,38 @@ Carina ships as a local toolchain: a CLI, a long-running daemon, optional worker
 - macOS 13+ or modern Linux (x86_64 / arm64)
 - Network access only if you pull models or packages (runtime itself is local-first)
 
-## Install options
+## Install
 
-### Shell installer (recommended)
+Pick one channel. Prefer the shell installer when you want the full toolchain.
 
-```bash
-curl -fsSL https://get.carina.dev | sh
-```
-
-### Homebrew
-
-```bash
-brew install nebutra/tap/carina
-```
-
-### npm (CLI shim)
-
-```bash
-npm install -g @nebutra/carina
-```
-
-### From source
-
-```bash
-git clone https://github.com/nebutra/carina.git
-cd carina
-make install
-```
+<Tabs>
+  <Tab label="Shell">
+    ```bash title="install.sh" frame="none"
+    curl -fsSL https://get.carina.dev | sh
+    ```
+  </Tab>
+  <Tab label="Homebrew">
+    ```bash title="Brewfile" frame="none"
+    brew install nebutra/tap/carina
+    ```
+  </Tab>
+  <Tab label="npm">
+    ```bash title="package.json" frame="none"
+    npm install -g @nebutra/carina
+    ```
+  </Tab>
+  <Tab label="From source">
+    ```bash title="install-from-source.sh"
+    git clone https://github.com/nebutra/carina.git
+    cd carina
+    make install
+    ```
+  </Tab>
+</Tabs>
 
 ## Verify
 
-```bash
+```bash title="verify.sh"
 carina version
 carina doctor
 ```

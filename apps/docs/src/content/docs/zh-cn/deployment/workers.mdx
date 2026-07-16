@@ -13,7 +13,7 @@ description: 基于租约的远程 worker、生产配置与排水升级。
 3. token 文件 `0600`，经 systemd credentials 注入，永不进环境变量  
 4. `packaging/systemd/carina-worker.service`
 
-```bash
+```bash frame="none"
 carina worker list
 systemctl stop carina-worker   # 排水后升级
 ```

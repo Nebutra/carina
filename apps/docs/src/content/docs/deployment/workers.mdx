@@ -51,7 +51,7 @@ Reassignment increments generation even for the same `worker_id`, so delayed bra
 
 ## Drain and upgrade
 
-```bash
+```bash title="rollout-worker.sh"
 systemctl stop carina-worker   # SIGTERM: stop polls, drain up to --drain-timeout
 # upgrade package only after offline in carina worker list
 systemctl start carina-worker

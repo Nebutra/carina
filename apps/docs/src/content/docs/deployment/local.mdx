@@ -12,7 +12,7 @@ Carina is designed to run primarily on the developer machine or an internal runn
 
 ## Install
 
-```bash
+```bash title="install-local.sh"
 # shell installer (when published)
 curl -fsSL https://get.carina.dev | sh
 
@@ -24,7 +24,7 @@ make install
 
 ## Start the runtime
 
-```bash
+```bash title="start-daemon.sh"
 # daemon discovers kernel service + native tools next to its binary
 carina-daemon &
 # or
@@ -58,7 +58,7 @@ Optional listeners are **off by default**. Enable WebSocket/HTTP Gateway only wi
 
 ## Updates
 
-```bash
+```bash frame="none"
 carina version
 carina doctor
 ```

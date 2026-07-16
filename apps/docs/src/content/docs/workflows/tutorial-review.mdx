@@ -20,7 +20,7 @@ import Callout from '../../../components/ui/Callout.astro';
 
 Copy or symlink the example:
 
-```bash
+```bash frame="none"
 mkdir -p .carina/workflows
 cp examples/workflows/review.json .carina/workflows/review.json
 ```
@@ -29,7 +29,7 @@ Or author your own using the shape in [Workflows overview](/workflows/overview/)
 
 ## 2. Run it
 
-```bash
+```bash title="run-workflow.sh"
 carina workflow run review
 # optional focus string
 carina workflow run review "focus on auth and session handling"
@@ -39,7 +39,7 @@ This creates a `safe-edit` session in `cwd` by default and waits for completion.
 
 ## 3. Watch status
 
-```bash
+```bash frame="none"
 carina workflow status RUN_ID
 carina workflow list
 ```
@@ -48,7 +48,7 @@ Live progress reports `completed/failed/skipped/total` counters.
 
 ## 4. Inspect audit
 
-```bash
+```bash title="audit.sh"
 # use the session id from the run
 carina audit SESSION_ID
 carina audit verify SESSION_ID
@@ -62,7 +62,7 @@ For larger graphs or uneven step times, switch to streaming mode (see `examples/
 
 ## 6. Control
 
-```bash
+```bash title="control.sh"
 carina workflow pause RUN_ID
 carina workflow resume RUN_ID
 carina workflow stop RUN_ID

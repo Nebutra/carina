@@ -1,24 +1,63 @@
 ---
 title: 安装
-description: 在 macOS、Linux 或通过包管理器安装 Carina。
+description: 在 macOS、Linux 上安装 Carina CLI 与 daemon。
+sidebar:
+  order: 2
 ---
-## 推荐：Shell 安装器
 
-```bash
-curl -fsSL https://get.carina.dev | sh
-```
+import Callout from '../../../../components/ui/Callout.astro';
+import Tabs from '../../../../components/mdx/Tabs.astro';
+import Tab from '../../../../components/mdx/Tab.astro';
 
-## Homebrew
+Carina 以本地工具链形式发布：CLI、常驻 daemon、可选 worker，以及 TUI / IDE / Web 等客户端表面。
 
-```bash
-brew install nebutra/tap/carina
-```
+## 环境要求
+
+- macOS 13+ 或现代 Linux（x86_64 / arm64）
+- 仅在拉取模型或包时需要网络（运行时本身 local-first）
+
+## 安装
+
+任选一种渠道。需要完整工具链时优先使用 Shell 安装脚本。
+
+<Tabs>
+  <Tab label="Shell">
+    ```bash title="install.sh" frame="none"
+    curl -fsSL https://get.carina.dev | sh
+    ```
+  </Tab>
+  <Tab label="Homebrew">
+    ```bash title="Brewfile" frame="none"
+    brew install nebutra/tap/carina
+    ```
+  </Tab>
+  <Tab label="npm">
+    ```bash title="package.json" frame="none"
+    npm install -g @nebutra/carina
+    ```
+  </Tab>
+  <Tab label="源码">
+    ```bash title="install-from-source.sh"
+    git clone https://github.com/nebutra/carina.git
+    cd carina
+    make install
+    ```
+  </Tab>
+</Tabs>
 
 ## 验证
 
-```bash
+```bash title="verify.sh"
 carina version
 carina doctor
 ```
 
-下一步：[快速上手](/zh-cn/getting-started/quickstart/)。
+`carina doctor` 会检查 daemon 可达性、配置路径与常见误配置。
+
+<Callout variant="note">
+  包名与安装 URL 可能随开源发布渠道变化。升级后请优先运行 `carina doctor`。
+</Callout>
+
+## 下一步
+
+继续 [快速上手](/zh-cn/getting-started/quickstart/)，在真实仓库上启动会话。

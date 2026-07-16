@@ -1,28 +1,82 @@
 ---
 title: 快速上手
 description: 启动 daemon、运行任务、检查审计、回滚补丁。
+sidebar:
+  order: 3
 ---
 
 import Callout from '../../../../components/ui/Callout.astro';
+import Steps from '../../../../components/mdx/Steps.astro';
+import Step from '../../../../components/mdx/Step.astro';
 
+从干净安装到在本地仓库上跑通一次受治理的会话。
 
-```bash
-carina-daemon &
-carina doctor
-cd /path/to/your/repo
-carina run "Summarize the top-level architecture of this repo"
-carina audit SESSION
-carina audit verify SESSION
-carina patch list SESSION
-carina patch rollback PATCH_ID
-```
+<Steps>
+  <Step title="启动 daemon">
+    ```bash title="start-daemon.sh"
+    carina-daemon &
+    # 或
+    carina daemon start
+    carina doctor
+    ```
 
-可选工作流：
+    daemon 负责会话、策略评估与审计存储，并发现同目录下的 kernel 服务与原生工具。
+  </Step>
 
-```bash
+  <Step title="进入工作区">
+    ```bash frame="none"
+    cd /path/to/your/repo
+    ```
+  </Step>
+
+  <Step title="运行编码任务">
+    ```bash title="run-task.sh"
+    carina run "Summarize the top-level architecture of this repo"
+    # 或修复具体问题
+    carina run "fix the failing test in parser.go"
+    ```
+
+    交互式 TUI：
+
+    ```bash frame="none"
+    carina
+    ```
+  </Step>
+
+  <Step title="检查审计链">
+    ```bash title="audit.sh"
+    carina audit SESSION
+    carina audit verify SESSION
+    carina audit tail --last 5
+    ```
+  </Step>
+
+  <Step title="补丁与回滚">
+    ```bash title="patch.sh"
+    carina patch list SESSION
+    carina patch rollback PATCH_ID
+    ```
+  </Step>
+</Steps>
+
+## 可选下一步
+
+```bash title="install-workflow.sh"
 mkdir -p .carina/workflows
 cp examples/workflows/review.json .carina/workflows/
 carina workflow run review
+```
+
+```json title="session.create.json"
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "session.create",
+  "params": {
+    "workspace_root": "/repo",
+    "profile": "safe-edit"
+  }
+}
 ```
 
 <Callout variant="success">

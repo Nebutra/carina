@@ -115,6 +115,11 @@ const groupId = uniqueId('tabs');
     padding: var(--spacing-4) var(--spacing-5);
   }
 
+  /* When a tab only holds a code fence, drop inner padding (Code Group look) */
+  .docs-tabs__panels:has(.expressive-code) {
+    padding: 0;
+  }
+
   .docs-tabs__panels :global(.docs-tab[hidden]) {
     display: none;
   }

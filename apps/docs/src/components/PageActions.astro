@@ -1,0 +1,130 @@
+---
+/**
+ * Mintlify-style page actions: Copy page · Edit on GitHub.
+ * Doc pages only (splash renders nothing via parent).
+ */
+const entry = Astro.locals.starlightRoute.entry;
+const id = String(entry.id || '')
+  .replace(/^\//, '')
+  .replace(/\.mdx?$/, '');
+const filePath = `apps/docs/src/content/docs/${id}.mdx`;
+const editHref = `https://github.com/nebutra/carina/edit/main/${filePath}`;
+const title = entry.data.title ?? 'Carina';
+---
+
+<div class="page-actions" data-page-actions>
+  <button type="button" class="page-actions__btn" data-copy-page aria-label="Copy page as text">
+    <span class="page-actions__icon" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+        <path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" />
+      </svg>
+    </span>
+    <span class="page-actions__label" data-copy-label>Copy page</span>
+  </button>
+  <a class="page-actions__btn" href={editHref} target="_blank" rel="noopener noreferrer">
+    <span class="page-actions__icon" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M10.5 2.5 13.5 5.5 6 13H3v-3L10.5 2.5Z" stroke-linejoin="round" />
+      </svg>
+    </span>
+    <span class="page-actions__label">Edit</span>
+  </a>
+</div>
+
+<script define:vars={{ pageTitle: title }}>
+  function initPageActions(root) {
+    if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
+    root.dataset.ready = '1';
+    const btn = root.querySelector('[data-copy-page]');
+    const label = root.querySelector('[data-copy-label]');
+    if (!btn) return;
+
+    btn.addEventListener('click', async () => {
+      const article =
+        document.querySelector('.sl-markdown-content') ||
+        document.querySelector('main .content-panel .sl-container');
+      const body = (article?.innerText || '').trim();
+      const url = location.href;
+      const text = [`# ${pageTitle}`, '', body, '', `Source: ${url}`].filter(Boolean).join('\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        if (label) {
+          const prev = label.textContent;
+          label.textContent = 'Copied';
+          btn.classList.add('is-copied');
+          window.setTimeout(() => {
+            label.textContent = prev;
+            btn.classList.remove('is-copied');
+          }, 1400);
+        }
+      } catch {
+        /* clipboard blocked */
+      }
+    });
+  }
+
+  function boot() {
+    document.querySelectorAll('[data-page-actions]').forEach(initPageActions);
+  }
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>
+
+<style>
+  .page-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0 0 var(--spacing-3);
+  }
+
+  .page-actions__btn {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 1.75rem;
+    padding: 0 0.55rem;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-md);
+    background: transparent;
+    color: var(--docs-fg-muted);
+    font-family: var(--docs-font-sans);
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1;
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+      color var(--docs-transition),
+      border-color var(--docs-transition),
+      background-color var(--docs-transition);
+  }
+
+  .page-actions__btn:hover {
+    color: var(--docs-fg);
+    border-color: var(--docs-border);
+    background: color-mix(in srgb, var(--docs-fg) 3%, transparent);
+  }
+
+  .page-actions__btn:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  .page-actions__btn.is-copied {
+    color: var(--docs-success);
+    border-color: color-mix(in srgb, var(--docs-success) 40%, var(--docs-border-subtle));
+  }
+
+  .page-actions__icon {
+    display: inline-flex;
+    opacity: 0.85;
+  }
+
+  a.page-actions__btn {
+    -webkit-text-fill-color: currentColor;
+  }
+</style>

@@ -4,7 +4,7 @@ description: 构建带人工检查点的只读审查工作流。
 ---
 **目标：** 运行只读收集与评审，在任何写入前暂停等待人工批准。
 
-```bash
+```bash frame="none"
 carina workflow run ./review.json --cwd .
 carina workflow status --follow
 ```

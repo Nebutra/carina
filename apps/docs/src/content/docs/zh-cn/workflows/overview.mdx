@@ -6,7 +6,7 @@ description: 声明式多步 Agent DAG，能力衰减的子 Agent。
 
 源文档：`docs/workflows.md`。
 
-```json
+```json title="review.json"
 {
   "name": "review",
   "steps": [
@@ -16,7 +16,7 @@ description: 声明式多步 Agent DAG，能力衰减的子 Agent。
 }
 ```
 
-```bash
+```bash title="workflow.sh"
 carina workflow run review
 carina workflow status RUN_ID
 carina workflow pause|resume|stop RUN_ID
