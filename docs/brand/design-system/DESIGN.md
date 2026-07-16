@@ -93,29 +93,38 @@ Only one emission signal should dominate a component. Multi-color nebula gradien
 
 ### Families
 
-- Brand name and identity lines: `Carina Display Alpha`, regular; fallback `Georgia`, serif. The Alpha is derived from the accepted CARINA wordmark and is not a general heading or body font.
-- Product headings: `Geist Sans`, weight 500-600; fallback system sans. This role supports punctuation, numerals, localization, and operational UI.
-- UI, body, labels, and navigation: `Geist Sans`, weight 400-600; fallback system sans.
-- Code and runtime data: `Geist Mono`, weight 400-600; fallback `SFMono-Regular`.
-- All three Latin variable WOFF2 assets and their licenses ship in `assets/fonts/`.
+| Role | Family | Weight | Where |
+| --- | --- | --- | --- |
+| Brand | `Carina Display Alpha` → Georgia, serif | 400 | Product name / identity lockups only |
+| Editorial (serif) | `Newsreader` / `Newsreader Variable` → Georgia, serif | 500–600 | Docs & marketing **primary titles** (page H1, hero) |
+| Product display / UI headings | `Geist Sans` → system sans | 500–600 | In-product headings, dense UI titles (punctuation, numerals, CJK-safe) |
+| UI / body | `Geist Sans` → system sans | 400–600 | Body, labels, navigation, tables, docs H2+ |
+| Mono | `Geist Mono` → SFMono-Regular | 400–600 | Code and runtime data |
+
+Notes:
+
+- The Alpha is derived from the accepted CARINA wordmark. It is **not** a general heading or body font (A–Z / a–z / space only).
+- **Newsreader is the editorial title face**, not a wordmark substitute. Never set `CARINA` in Newsreader to fake the lockup — use the wordmark SVG.
+- Geist Sans/Mono variable WOFF2 assets and licenses ship in `assets/fonts/`. Newsreader is loaded by the docs site (self-hosted via fontsource) or an equivalent licensed source; it is not part of the Alpha glyph pipeline.
 
 ### Scale
 
-| Role | Size | Leading | Weight |
-| --- | ---: | ---: | ---: |
-| brand | 72px | 1.0 | 400 |
-| brand-xl | 120px | 0.94 | 400 |
-| micro | 11px | 1.45 | 500 |
-| caption | 12px | 1.5 | 400 |
-| body-sm | 14px | 1.5 | 400 |
-| body | 16px | 1.5 | 400 |
-| title-sm | 20px | 1.22 | 600 |
-| title | 28px | 1.14 | 600 |
-| heading | 40px | 1.06 | 600 |
-| display | 72px | 1.0 | 500 |
-| display-xl | 120px | 0.94 | 500 |
+| Role | Size | Leading | Weight | Family role |
+| --- | ---: | ---: | ---: | --- |
+| brand | 72px | 1.0 | 400 | brand |
+| brand-xl | 120px | 0.94 | 400 | brand |
+| page-title | 28–40px | 1.1–1.14 | 500–550 | serif (Newsreader) |
+| micro | 11px | 1.45 | 500 | sans |
+| caption | 12px | 1.5 | 400 | sans |
+| body-sm | 14px | 1.5 | 400 | sans |
+| body | 16px | 1.5 | 400 | sans |
+| title-sm | 20px | 1.22 | 600 | display (Geist) |
+| title | 28px | 1.14 | 600 | display (Geist) |
+| heading | 40px | 1.06 | 600 | display (Geist) |
+| display | 72px | 1.0 | 500 | display (Geist) |
+| display-xl | 120px | 0.94 | 500 | display (Geist) |
 
-Use normal letter spacing for Carina Display Alpha. Reserve it for the Carina name and short pure-Latin identity lines because the Alpha does not contain numerals, punctuation, or localized scripts. Product headings, controls, navigation, tables, metrics, and long body copy remain Geist Sans. Uppercase telemetry labels use Geist Sans at 11-12px with `0.08em` tracking.
+Use normal letter spacing for Carina Display Alpha on short pure-Latin identity lines. Documentation page titles use Newsreader with slightly tightened tracking (`≈ -0.02em`) and optical sizing on. Controls, navigation, tables, metrics, section headings (H2+), and long body copy remain Geist Sans. Uppercase telemetry labels use Geist Sans at 11–12px with `0.08em` tracking.
 
 ## 6. Shape And Layout
 

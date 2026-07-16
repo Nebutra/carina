@@ -33,8 +33,9 @@
   --color-warning: #e8a85f;
   --color-danger: #ff7c78;
 
-  /* Fonts */
+  /* Fonts — brand / editorial serif / UI sans / mono (see DESIGN.md) */
   --font-brand: "Carina Display Alpha", Georgia, serif;
+  --font-serif: "Newsreader Variable", "Newsreader", Georgia, "Times New Roman", serif;
   --font-display: "Geist Sans", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "Geist Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;

@@ -1,15 +1,14 @@
 /**
- * Self-hosted Carina brand fonts + docs display override.
- * Authority: docs/brand/assets/fonts/fonts.css (+ AGENTS.md typography rules)
+ * Self-hosted Carina brand fonts.
+ * Authority: docs/brand/AGENTS.md + design-system/DESIGN.md
  *
  * Roles:
- *   - Geist Sans  → UI, body, nav, H2+ headings
- *   - Geist Mono  → code, audit, paths, CLI
- *   - Carina Display Alpha → product name / large pure-Latin identity only
- *   - Newsreader Variable → docs H1 / hero display (intentional product override;
- *     brand AGENTS.md disallows this for wordmark — docs titles are exempt by product decision)
+ *   - Carina Display Alpha → brand identity lockups only
+ *   - Newsreader Variable  → editorial primary titles (page H1, hero) — never wordmark
+ *   - Geist Sans           → UI, body, nav, H2+
+ *   - Geist Mono           → code, audit, paths, CLI
  *
- * Newsreader faces load via @fontsource-variable/newsreader (wired in astro.config).
+ * Newsreader loads via @fontsource-variable/newsreader (astro.config customCss).
  */
 
 /* ── Carina Display Alpha (identity only) ─────────────────────────── */

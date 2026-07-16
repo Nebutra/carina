@@ -47,8 +47,15 @@
   --color-capability-memory: var(--carina-oxygen-blue);
   --color-capability-observability: var(--carina-spectral-green);
 
-  /* Typography */
+  /* Typography
+   * brand  → Carina Display Alpha (identity lockups only)
+   * serif  → Newsreader (docs/marketing primary titles — page H1, hero)
+   * display/sans → Geist Sans (UI, body, H2+, product headings)
+   * mono   → Geist Mono (code / attested data)
+   * Never set the CARINA wordmark in Newsreader or any substitute font.
+   */
   --font-family-brand: "Carina Display Alpha", Georgia, serif;
+  --font-family-serif: "Newsreader Variable", "Newsreader", Georgia, "Times New Roman", serif;
   --font-family-display: "Geist Sans", ui-sans-serif, system-ui, sans-serif;
   --font-family-sans: "Geist Sans", ui-sans-serif, system-ui, sans-serif;
   --font-family-mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;

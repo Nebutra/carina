@@ -44,6 +44,7 @@
   "font": {
     "family": {
       "brand": { "$value": ["Carina Display Alpha", "Georgia", "serif"], "$type": "fontFamily" },
+      "serif": { "$value": ["Newsreader", "Newsreader Variable", "Georgia", "Times New Roman", "serif"], "$type": "fontFamily" },
       "display": { "$value": ["Geist Sans", "system-ui", "sans-serif"], "$type": "fontFamily" },
       "sans": { "$value": ["Geist Sans", "system-ui", "sans-serif"], "$type": "fontFamily" },
       "mono": { "$value": ["Geist Mono", "SFMono-Regular", "Consolas", "monospace"], "$type": "fontFamily" }
@@ -57,6 +58,7 @@
   "typography": {
     "brand": { "$value": { "fontFamily": "{font.family.brand}", "fontSize": "72px", "fontWeight": "{font.weight.regular}", "lineHeight": 1 }, "$type": "typography" },
     "brand-xl": { "$value": { "fontFamily": "{font.family.brand}", "fontSize": "120px", "fontWeight": "{font.weight.regular}", "lineHeight": 0.94 }, "$type": "typography" },
+    "page-title": { "$value": { "fontFamily": "{font.family.serif}", "fontSize": "32px", "fontWeight": "{font.weight.medium}", "lineHeight": 1.12 }, "$type": "typography" },
     "micro": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "11px", "fontWeight": "{font.weight.medium}", "lineHeight": 1.45 }, "$type": "typography" },
     "caption": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "12px", "fontWeight": "{font.weight.regular}", "lineHeight": 1.5 }, "$type": "typography" },
     "body-sm": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "14px", "fontWeight": "{font.weight.regular}", "lineHeight": 1.5 }, "$type": "typography" },

@@ -86,13 +86,14 @@ Truecolor terminals use the exact design tokens. ANSI-256 uses the fallbacks abo
 
 ### Typography
 
-Three registers, matching how the product already speaks:
+Four registers, matching how the product already speaks:
 
-- **Brand display:** **Carina Display Alpha**, derived from the accepted CARINA wordmark. Use for the product name and large identity-led headings only.
-- **UI and body:** **Geist Sans** or the system sans stack. Controls, navigation, tables, metrics, and long-form documentation never use the brand display font.
+- **Brand display:** **Carina Display Alpha**, derived from the accepted CARINA wordmark. Use for the product name and composed identity lockups only — not general headings or body.
+- **Editorial titles:** **Newsreader** (variable preferred). Use for documentation and marketing **primary titles** (page H1, hero title). Never use Newsreader to typeset or replace the CARINA wordmark; never use it for body, nav, or controls.
+- **UI and body:** **Geist Sans** or the system sans stack. Controls, navigation, tables, metrics, section headings (H2+), and long-form documentation body.
 - **Mono / the register of truth:** **Geist Mono** or the system mono stack. Anything the product attests — audit lines, hashes, policy names, file paths, version strings — renders in mono.
-- **Repo surfaces** (READMEs, docs) stay GitHub-default type; typography rules apply only to exported/composed images and any future docs site.
-- **Design-system source:** `design-system/DESIGN.md` and `design-system/design-tokens.json` are checked in now because VS Code and future clients already create non-terminal consumption surfaces.
+- **Repo READMEs** may stay GitHub-default type; the **docs site** (`apps/docs`) follows this four-register system end-to-end.
+- **Design-system source:** `design-system/DESIGN.md` and `design-system/design-tokens.json` are checked in for VS Code, the docs site, and future clients.
 
 ### Mark direction — governed action with a return path
 

@@ -22,11 +22,22 @@ When files disagree, do not blend them. Fix the lower-authority consumer to matc
 
 ## Typography
 
-- `Carina Display Alpha` is for brand names, display headlines, and composed identity moments only.
-- The Alpha contains A-Z, a-z, and space. It does not yet contain numerals, punctuation, diacritics, production kerning, or manual hinting.
-- Use Geist Sans or the system sans stack for UI, documentation body copy, controls, navigation, and tables.
-- Use Geist Mono or the system mono stack for code, audit records, hashes, paths, policy names, timestamps, and CLI/TUI content.
-- Never introduce Newsreader or another font as a replacement source for the CARINA wordmark.
+Four registers — keep them distinct:
+
+| Role | Family | Use |
+| --- | --- | --- |
+| **Brand** | `Carina Display Alpha` | Product name and composed identity lockups only |
+| **Editorial** | `Newsreader` (variable preferred) | Documentation / marketing **primary titles** (page H1, hero title) |
+| **UI** | `Geist Sans` | Body, navigation, controls, tables, H2+, product UI headings |
+| **Mono** | `Geist Mono` | Code, audit, hashes, paths, policy names, timestamps, CLI/TUI |
+
+Rules:
+
+- `Carina Display Alpha` is not a general heading or body font. Character set: A–Z, a–z, space only (no numerals, punctuation, diacritics, or production kerning/hinting yet).
+- **Newsreader is approved for editorial primary titles.** It is *not* a wordmark font. Never typeset `CARINA` in Newsreader (or any substitute) to recreate the wordmark — always use the supplied wordmark SVG / lockup.
+- Do not apply Newsreader to body copy, navigation, controls, sidebars, tables, code, or dense product UI.
+- Use Geist Sans (or the system sans stack) for UI, documentation body, section headings (H2+), and operational surfaces.
+- Use Geist Mono (or the system mono stack) for anything the product attests.
 - SVG glyphs are canonical. The 512px PNG glyph cards are optimized raster derivatives and must not be traced back into the font.
 
 ## Color Roles

@@ -7,7 +7,7 @@ and the original 32 MB glyph PNG cards. Lightweight 512px, 16-level grayscale de
 ## Contents
 
 - `assets/logo/`: accepted symbol, wordmark, lockups, sprite, and raster fallbacks.
-- `assets/fonts/`: Carina Display Alpha, licensed Geist Sans/Mono WOFF2 files, CSS registrations, 52 SVG glyph sources, and 52 optimized PNG derivatives.
+- `assets/fonts/`: Carina Display Alpha, licensed Geist Sans/Mono WOFF2 files, CSS registrations, 52 SVG glyph sources, and 52 optimized PNG derivatives. Editorial titles use Newsreader (loaded by the docs site; see `AGENTS.md` typography).
 - `assets/hero/`: optimized README media derived from an approved foundation composition.
 - `assets/specimens/`: evidence rendered from the compiled font; not identity masters.
 - `design-system/`: extended DTCG tokens plus CSS, Tailwind v4, and Astryx adapters.

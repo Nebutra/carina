@@ -875,36 +875,36 @@
       "path": "docs/brand/design-system/DESIGN.md",
       "role": "token-source",
       "mediaType": "text/markdown",
-      "bytes": 9948,
-      "sha256": "0c93d8a3aa86f6f08cd7a49796ae4088399fecb0db59d79d1d3f70302d0ce106"
+      "bytes": 10744,
+      "sha256": "f10f598b44a066bee89094e8775b628c48d24b7ab3e9d2f3cdbb953663e75174"
     },
     {
       "path": "docs/brand/design-system/design-tokens.json",
       "role": "token-source",
       "mediaType": "application/json",
-      "bytes": 6526,
-      "sha256": "8300b7eb0b42327e2d4843afedaf7568b71cbd3e817456de3c1c4ed45e878928"
+      "bytes": 6830,
+      "sha256": "6bd66fb7bcf35dd43106b67d9b950cc8252cb55b9aafcd9a29bceec152c7aa60"
     },
     {
       "path": "docs/brand/design-system/variables.css",
       "role": "token-source",
       "mediaType": "text/css",
-      "bytes": 4504,
-      "sha256": "1a28f3003c537817a8f0ed81541244b9cbe0bd3239aad52d1528f7b573c53bab"
+      "bytes": 4930,
+      "sha256": "44ef06e109452798ef88d75a051d8845fd0a963f38087f56e860d9f727928ab3"
     },
     {
       "path": "docs/brand/design-system/tailwind-v4.css",
       "role": "token-source",
       "mediaType": "text/css",
-      "bytes": 2448,
-      "sha256": "71a73639b382a11a2815c55bb62a19ce9f71988ffaed54659eeb72511a8d021b"
+      "bytes": 2597,
+      "sha256": "1eeebecde8b475ab729c412e9ac5cf870efcb24ecc601f36b7b2fa1824ef8223"
     },
     {
       "path": "docs/brand/design-system/carina.ts",
       "role": "token-source",
       "mediaType": "text/typescript",
-      "bytes": 2210,
-      "sha256": "d69b7c21ec9410ae24b652e97eafa3b8a97e93c6b76b611b20028868581e8138"
+      "bytes": 2567,
+      "sha256": "f5442619b20ce35ef01beb1dc9fa997090b1eb5aecd4dea7c0abbafc37500b3d"
     },
     {
       "path": "docs/brand/assets/hero/carina-readme-hero.webp",

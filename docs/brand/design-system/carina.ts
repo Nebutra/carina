@@ -34,6 +34,12 @@ export const carinaTheme = defineTheme({
   },
   tokens: {
     '--font-family-brand': '"Carina Display Alpha", Georgia, serif',
+    '--font-family-serif':
+      '"Newsreader Variable", "Newsreader", Georgia, "Times New Roman", serif',
+    '--font-family-display': '"Geist Sans", ui-sans-serif, system-ui, sans-serif',
+    '--font-family-sans': '"Geist Sans", ui-sans-serif, system-ui, sans-serif',
+    '--font-family-mono':
+      '"Geist Mono", "SFMono-Regular", Consolas, monospace',
     '--color-brand-mark': ['#8e4053', '#8e4053'],
     '--color-accent': ['#176f70', '#8edbd2'],
     '--color-accent-muted': ['#dcefed', '#19302f'],

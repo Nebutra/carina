@@ -144,7 +144,9 @@ def validate_structure() -> None:
     primitives = tokens["color"]["primitive"]
     semantic = tokens["color"]["semantic"]
     brand_font = tokens["font"]["family"]["brand"]["$value"]
+    serif_font = tokens["font"]["family"]["serif"]["$value"]
     display_font = tokens["font"]["family"]["display"]["$value"]
+    page_title = tokens["typography"]["page-title"]["$value"]
     expected = {
         "void": "#0d1214",
         "brand-rose": "#8e4053",
@@ -158,6 +160,11 @@ def validate_structure() -> None:
         raise ValueError("semantic brand-mark must reference brand-rose")
     if not brand_font or brand_font[0] != "Carina Display Alpha":
         raise ValueError("brand font must begin with Carina Display Alpha")
+    # Editorial serif: Newsreader for docs/marketing primary titles (not wordmark)
+    if not serif_font or serif_font[0] not in {"Newsreader", "Newsreader Variable"}:
+        raise ValueError("editorial serif font must begin with Newsreader")
+    if page_title.get("fontFamily") != "{font.family.serif}":
+        raise ValueError("typography.page-title must use font.family.serif")
     if not display_font or display_font[0] != "Geist Sans":
         raise ValueError("product display font must begin with Geist Sans")
 
@@ -168,12 +175,6 @@ def validate_structure() -> None:
             for needle in forbidden:
                 if needle in text:
                     raise ValueError(f"forbidden stale reference {needle!r} in {path.relative_to(ROOT)}")
-
-    for path in (BRAND / "design-system").rglob("*"):
-        if path.is_file() and path.suffix.lower() in {".md", ".json", ".css", ".ts"}:
-            text = path.read_text(encoding="utf-8").lower()
-            if "newsreader" in text:
-                raise ValueError(f"unrelated display font remains in {path.relative_to(ROOT)}")
 
     canonical = ROOT / CANONICAL_LOGOS[0]
     vscode_icon = ROOT / "integrations/vscode/media/carina.svg"

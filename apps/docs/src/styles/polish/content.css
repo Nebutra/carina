@@ -21,7 +21,7 @@
     letter-spacing: -0.02em;
   }
 
-  /* H1 — Newsreader display (product override) */
+  /* H1 — brand editorial role (Newsreader / --font-family-serif) */
   h1#_top,
   .sl-markdown-content h1,
   .content-panel h1#_top {

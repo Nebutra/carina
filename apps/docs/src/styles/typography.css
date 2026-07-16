@@ -1,17 +1,17 @@
 /**
- * Typography application layer.
+ * Typography application layer — brand four-register system
+ * (docs/brand/AGENTS.md, design-system/DESIGN.md).
  *
  * | Role        | Family               | Weight | Where                              |
  * |-------------|----------------------|--------|------------------------------------|
- * | brand       | Carina Display Alpha | 400    | Large pure-Latin identity only     |
- * | display/H1  | Newsreader Variable  | 500–600| Doc page titles, hero H1           |
- * | heading/UI  | Geist Sans           | 400–600| H2+, nav, UI chrome                |
+ * | brand       | Carina Display Alpha | 400    | Identity lockups only              |
+ * | editorial   | Newsreader Variable  | 500–550| Doc page titles, hero H1           |
+ * | UI / H2+    | Geist Sans           | 400–600| Section headings, nav, chrome      |
  * | body        | Geist Sans           | 400    | Prose, lists, tables               |
  * | mono        | Geist Mono           | 400–500| Code, hashes, paths, CLI           |
  *
- * Never apply Display Alpha to: body, nav, controls, code, CJK, or text
- * with punctuation / numerals.
- * Newsreader is a product override for primary titles (not for the wordmark).
+ * Never apply Display Alpha to body/nav/controls/code.
+ * Never typeset the CARINA wordmark in Newsreader — use the SVG lockup.
  */
 
 :root,
@@ -22,7 +22,8 @@
    * Brand authority still owns the family *names*; we only append fallbacks.
    */
   --docs-font-brand: 'Carina Display Alpha', Georgia, 'Times New Roman', serif;
-  --docs-font-display:
+  --docs-font-display: var(
+    --font-family-serif,
     'Newsreader Variable',
     'Newsreader',
     Georgia,
@@ -30,7 +31,8 @@
     'Songti SC',
     'Source Han Serif SC',
     'Noto Serif SC',
-    serif;
+    serif
+  );
   --docs-font-sans:
     'Geist Sans',
     ui-sans-serif,
