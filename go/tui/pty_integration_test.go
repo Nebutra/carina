@@ -167,7 +167,7 @@ func TestTUIUnderPTY(t *testing.T) {
 
 	// Launch the TUI in the pane, recording its exit code for the
 	// governance-exit-code assertion.
-	cmdline := fmt.Sprintf("CARINA_LOCALE=en LC_ALL=C %q tui -socket %q -workspace %q -locale en; echo EXIT_CODE=$?", cliBin, sock, ws)
+	cmdline := fmt.Sprintf("CARINA_LOCALE=en LC_ALL=C %q -socket %q -workspace %q -locale en; echo EXIT_CODE=$?", cliBin, sock, ws)
 	if _, err := tm("send-keys", "-t", "main", cmdline, "Enter"); err != nil {
 		t.Fatalf("send-keys: %v", err)
 	}

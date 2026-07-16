@@ -50,7 +50,7 @@ Client Surfaces ──JSON-RPC──▶ Go Control Plane (agent loop) ──Capa
 - `go/tui` / `go/workflowui` / `go/agentview` — terminal client engine, workflow run views, live agent views.
 - `apps/carina-daemon` — daemon entrypoint.
 - `apps/carina-cli` — user-facing CLI (`carina run`, `carina audit`, `carina patch …`).
-- `apps/carina-cli` interactive shell (`carina` / `carina tui`) — live session/agent views plus in-terminal approval and question round-trips over the same JSON-RPC protocol (`go/tui` + `go/tuiapp`).
+- `apps/carina-cli` interactive shell (bare `carina`, optional shell flags) — live session/agent views plus in-terminal approval and question round-trips over the same JSON-RPC protocol (`go/tui` + `go/tuiapp`).
 - `apps/carina-worker` — worker entrypoint.
 
 ### Rust Capability Kernel (`crates/`)

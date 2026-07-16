@@ -1,12 +1,11 @@
 // Package tuiapp is the single interactive launch path for Carina.
 //
-// Operator entries (no separate carina-tui binary):
+// Operator entry (single binary, single shell):
 //
-//	carina            # bare, on a TTY → this package
-//	carina tui [...]  # explicit flags, same path
+//	carina                 # bare, on a TTY
+//	carina [shell flags]   # same shell with -session / -workspace / …
 //
-// Both auto-start carina-daemon when the socket is down and share one
-// Bubble Tea model (go/tui).
+// Auto-starts carina-daemon when the socket is down; UI is go/tui.
 package tuiapp
 
 import (
@@ -41,8 +40,8 @@ type Options struct {
 	// AfterDaemon runs once the daemon is reachable and before the TUI
 	// attaches (e.g. first-launch doctor). Failures must not abort launch.
 	AfterDaemon func(call RPC)
-	// RequireTTY refuses non-interactive stdio (`carina tui` sets true).
-	// Bare `carina` decides TTY before calling Run.
+	// RequireTTY refuses non-interactive stdio (flag-form `carina -…` sets true).
+	// Bare no-arg `carina` decides TTY before calling Run.
 	RequireTTY bool
 }
 

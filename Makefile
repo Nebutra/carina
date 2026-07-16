@@ -15,7 +15,7 @@ install: all
 	install -m 755 bin/carina bin/carina-daemon bin/carina-worker $(BINDIR)
 	install -m 755 target/release/carina-kernel-service $(BINDIR)
 	for name in $(ZIG_TOOLS); do install -m 755 zig/zig-out/bin/$$name $(BINDIR) || exit 1; done
-	# Retired binary — interactive shell is bare `carina` / `carina tui` only.
+	# Retired binary — interactive shell is bare `carina` only.
 	rm -f $(BINDIR)/carina-tui
 	@echo "Installed to $(BINDIR). Ensure it is on PATH."
 

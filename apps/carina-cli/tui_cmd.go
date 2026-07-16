@@ -11,10 +11,12 @@ import (
 	"github.com/Nebutra/carina/go/tuiapp"
 )
 
-// cmdTUI is `carina tui` — explicit flags for the same shell as bare `carina`.
-func cmdTUI(args []string) tui.Outcome {
+// cmdInteractive launches the only interactive shell entry: bare `carina`
+// with optional flags (`carina -session …`). There is no separate `tui`
+// subcommand.
+func cmdInteractive(args []string) tui.Outcome {
 	bootstrapLocale := microcopy.DetectBootstrapLocale()
-	fs := flag.NewFlagSet("carina tui", flag.ContinueOnError)
+	fs := flag.NewFlagSet("carina", flag.ContinueOnError)
 	var parseOutput strings.Builder
 	fs.SetOutput(&parseOutput)
 	socket := fs.String("socket", "", microcopy.Bootstrap(microcopy.BootstrapFlagSocket, nil, bootstrapLocale))
@@ -30,7 +32,9 @@ func cmdTUI(args []string) tui.Outcome {
 	})
 	noAltScreen := fs.Bool("no-alt-screen", false, microcopy.Bootstrap(microcopy.BootstrapFlagNoAltScreen, nil, bootstrapLocale))
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "Usage: carina tui [options]   (or bare: carina)")
+		fmt.Fprintln(fs.Output(), "Usage: carina [options]")
+		fmt.Fprintln(fs.Output(), "  (no args = interactive shell on a TTY; flags configure that shell)")
+		fmt.Fprintln(fs.Output(), "  carina help     full CLI command list")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {

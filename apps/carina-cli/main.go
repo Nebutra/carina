@@ -38,13 +38,12 @@ const cliVersion = product.Version
 const usage = `carina — command-line client for the Carina Agent Runtime
 
 Usage:
-  carina                           interactive TUI (TTY; auto-starts daemon)
-  carina tui [options]             same TUI with explicit flags
-  carina <command> [arguments]
+  carina [options]                 interactive TUI (TTY; auto-starts daemon)
+  carina <command> [arguments]     governed CLI
 
-Interactive shell (single entry — there is no carina-tui binary):
-  carina                           open the TUI in this workspace
-  carina tui [-session id] [-workspace path] [-locale loc] [-socket path] [-no-alt-screen]
+Interactive shell (only entry):
+  carina
+  carina [-session id] [-workspace path] [-locale loc] [-socket path] [-no-alt-screen]
 
 Start and run:
   carina init                                      create ~/.carina and print daemon hint
@@ -203,6 +202,20 @@ func main() {
 		fmt.Println(microcopy.Bootstrap(microcopy.BootstrapBareUsage, nil, microcopy.DetectBootstrapLocale()))
 		os.Exit(tui.OutcomeUsage.ExitCode())
 	}
+	// Flag-shaped args belong to the interactive shell, not subcommands.
+	// Keep global -h/--help/-v/--version as CLI (not TUI) so scripts stay stable.
+	arg1 := os.Args[1]
+	switch arg1 {
+	case "version", "--version", "-v":
+		fmt.Println("carina " + cliVersion)
+		return
+	case "help", "-h", "--help":
+		fmt.Print(usage)
+		return
+	}
+	if strings.HasPrefix(arg1, "-") {
+		os.Exit(cmdInteractive(os.Args[1:]).ExitCode())
+	}
 	err := run(os.Args[1], os.Args[2:])
 	outcome := classifyExitCode(err)
 	if err != nil {
@@ -227,10 +240,6 @@ func run(cmd string, args []string) error {
 		return cmdUpdate(args)
 	case "daemon":
 		return cmdDaemon(args)
-	case "tui", "ui", "shell":
-		// Same interactive entry as bare `carina`.
-		os.Exit(cmdTUI(args).ExitCode())
-		return nil
 	case "auth":
 		return cmdAuth(args)
 	case "providers":

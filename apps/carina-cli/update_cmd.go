@@ -86,7 +86,7 @@ var (
 )
 
 var obsoleteUpdateBinaries = []string{
-	"carina-tui", // removed: use `carina` / `carina tui`
+	"carina-tui", // removed: use bare `carina` (optional flags on the same binary)
 }
 
 var requiredUpdateBinaries = []string{

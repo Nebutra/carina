@@ -146,7 +146,8 @@ never killed automatically; restart it after active tasks finish.
 
 ## TUI Interaction And Keybindings
 
-Run bare `carina` in an interactive terminal (or `carina tui` with flags). The
+Run bare `carina` in an interactive terminal (optional flags:
+`-session`, `-workspace`, `-locale`, `-socket`, `-no-alt-screen`). The
 composer keeps control keys responsive while a task submission is waiting for
 its daemon acknowledgement. Ordinary typing or paste during that interval
 starts an independent next draft; it cannot mutate the frozen, journaled
@@ -200,7 +201,7 @@ The default interaction loop is:
   projected into the transcript with outcome / risk / rationale.
 
 The TUI normally uses the alternate screen. To keep the rendered session in
-the terminal's normal buffer, use `carina tui --no-alt-screen`, or set
+the terminal's normal buffer, use `carina --no-alt-screen`, or set
 `"tui_alternate_screen": "never"`.
 The accepted values are `auto`, `always`, and `never`.
 
@@ -210,7 +211,7 @@ The TUI ships authored copy for English, Simplified Chinese
 Spanish, and French. Traditional catalogs are derived from Simplified with
 OpenCC-compatible conversion (regenerate via `scripts/gen_zh_hant.py`); the
 Simplified `zh` strings remain the source of truth. Select locale with
-`carina tui --locale`, `CARINA_LOCALE`, `tui_locale` in the normal config
+`carina --locale`, `CARINA_LOCALE`, `tui_locale` in the normal config
 cascade, or `CARINA_TUI_LOCALE`; the precedence is flag, `CARINA_LOCALE`,
 config, then `LC_ALL`/`LC_MESSAGES`/`LANG`. System detection for an
 unsupported locale quietly falls back to English, while an unsupported
