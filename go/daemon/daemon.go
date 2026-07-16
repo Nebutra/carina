@@ -62,7 +62,9 @@ type Options struct {
 	EnableEgressProxy          bool               // route command network through a deny-by-default egress proxy
 	EgressAllow                []string           // hosts allowed when the egress proxy is enabled
 	SandboxCommands            bool               // run commands under an OS syscall sandbox (macOS sandbox-exec)
-	InteractiveApproval        bool               // requires_approval pauses for an operator decision instead of auto-approving
+	InteractiveApproval        bool               // legacy: true=ask, false=always-approve (overridden by ApprovalMode when set)
+	ApprovalMode               string             // ask|always-approve|dont-ask (product HITL mode; empty uses InteractiveApproval)
+	DisableAlwaysApprove       bool               // org lock: refuse always-approve mode
 	EnableDebugRPC             bool               // expose local-only debug.* diagnostic RPCs and collect their in-memory trace
 	EgressCredentials          []EgressCredential // per-host credentials injected at the egress boundary
 	VerifierModel              string             // model for the independent done-verifier ("" => verifier off)
@@ -255,8 +257,10 @@ type Daemon struct {
 	loopWG   sync.WaitGroup
 	taskWG   sync.WaitGroup
 
-	interactiveApproval atomic.Bool                     // when true, requires_approval pauses for an operator decision (hot-reloadable)
-	debugRPCEnabled     atomic.Bool                     // exposes debug.* and collects debug trace (hot-reloadable, default off)
+	interactiveApproval   atomic.Bool   // true iff approval mode is ask (legacy mirror, hot-reloadable)
+	approvalMode          atomic.Value  // string: ask|always-approve|dont-ask
+	disableAlwaysApprove  atomic.Bool   // org lock: refuse always-approve (hot-reloadable)
+	debugRPCEnabled       atomic.Bool   // exposes debug.* and collects debug trace (hot-reloadable, default off)
 	approvalTimeout     time.Duration                   // how long to wait for an interactive approval (0 => 5m)
 	pendingApprovals    map[string]chan approvalSignal  // decision_id -> resolver channel
 	pendingQuestions    map[string]*pendingUserQuestion // question_id -> blocked ask_user tool
@@ -593,7 +597,15 @@ func New(opts Options) (*Daemon, error) {
 	d.pendingApprovals = map[string]chan approvalSignal{}
 	d.pendingQuestions = map[string]*pendingUserQuestion{}
 	d.approvalGrants = newApprovalGrantStore(opts.StateDir)
-	d.interactiveApproval.Store(opts.InteractiveApproval)
+	d.disableAlwaysApprove.Store(opts.DisableAlwaysApprove)
+	mode := strings.TrimSpace(opts.ApprovalMode)
+	if mode == "" {
+		mode = approvalModeFromInteractive(opts.InteractiveApproval)
+	}
+	if err := d.setApprovalMode(mode); err != nil {
+		// Org lock may block always-approve from config; fall back to ask.
+		_ = d.setApprovalMode(approvalModeAsk)
+	}
 	d.debugRPCEnabled.Store(opts.EnableDebugRPC)
 	d.subagentParentTask = map[string]string{}
 	d.escalationCounts = map[string]int{}

@@ -22,8 +22,8 @@ func TestApplyConfigHotReload(t *testing.T) {
 	if d.maxTaskTokens.Load() != 999 {
 		t.Errorf("max tokens not applied: %d", d.maxTaskTokens.Load())
 	}
-	if !d.interactiveApproval.Load() {
-		t.Error("interactive approval not applied")
+	if !d.interactiveApproval.Load() || d.approvalModeString() != approvalModeAsk {
+		t.Errorf("interactive approval not applied: interactive=%v mode=%s", d.interactiveApproval.Load(), d.approvalModeString())
 	}
 	if !d.debugRPCEnabled.Load() {
 		t.Error("debug rpc not applied")

@@ -83,12 +83,28 @@ func (d *Daemon) handleConfigInventory(params json.RawMessage) (any, error) {
 	d.planMu.Lock()
 	planMode := d.planMode[sess.SessionID]
 	d.planMu.Unlock()
-	effective := map[string]any{"safe_mode": d.safeMode, "sandbox_commands": d.sandbox.Load(), "interactive_approval": d.interactiveApproval.Load(), "permission_profile": sess.PermissionProfile, "plan_mode": planMode, "model": sess.NextModel, "reasoning_effort": sess.NextReasoningEffort}
-	choices := map[string]any{"interaction_mode": []string{"build", "plan"}, "reasoning_effort": []string{"default", "low", "medium", "high", "max", "auto"}, "sandbox": []string{"on", "off (daemon policy may forbid)"}}
+	mode := d.approvalModeString()
+	effective := map[string]any{
+		"safe_mode":              d.safeMode,
+		"sandbox_commands":       d.sandbox.Load(),
+		"interactive_approval":   d.interactiveApproval.Load(),
+		"approval_mode":          mode,
+		"disable_always_approve": d.disableAlwaysApprove.Load(),
+		"permission_profile":     sess.PermissionProfile,
+		"plan_mode":              planMode,
+		"model":                  sess.NextModel,
+		"reasoning_effort":       sess.NextReasoningEffort,
+	}
+	choices := map[string]any{
+		"interaction_mode": []string{"build", "plan"},
+		"approval_mode":    []string{approvalModeAsk, approvalModeAlwaysApprove, approvalModeDontAsk},
+		"reasoning_effort": []string{"default", "low", "medium", "high", "max", "auto"},
+		"sandbox":          []string{"on", "off (daemon policy may forbid)"},
+	}
 	return map[string]any{
 		"effective": effective,
 		"sources":   map[string]any{"session": "session store", "runtime": "daemon config/env/CLI (effective value shown)"},
 		"choices":   choices,
-		"mutation":  "use dedicated governed commands (/mode, /model, /always-approve, /permissions new …); this inventory endpoint never mutates configuration",
+		"mutation":  "use dedicated governed commands (/mode, /model, /always-approve, /approval-mode, /dont-ask, /permissions new …); this inventory endpoint never mutates configuration",
 	}, nil
 }

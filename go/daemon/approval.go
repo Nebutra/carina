@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Nebutra/carina/go/kernel"
@@ -14,19 +15,17 @@ import (
 // defaulting to denied (so a run can't hang forever awaiting an absent operator).
 const defaultApprovalTimeout = 5 * time.Minute
 
-// SetInteractiveApproval toggles human-in-the-loop approval (used by tests and
-// the entrypoint). When on, a requires_approval decision pauses for an operator
-// verdict instead of being auto-approved.
-//
-// Product naming: interactive_approval=true is "ask"; false is "always-approve"
-// (Grok-style auto-approve of requires_approval). Deny rules and plan mode still apply.
-func (d *Daemon) SetInteractiveApproval(on bool) { d.interactiveApproval.Store(on) }
-
 // handleSetInteractiveApproval is the governed RPC for operator toggles.
-// Params: { "on": bool } — true = ask (pause), false = always-approve (auto).
+// Params (either form):
+//   - { "on": bool } — true = ask, false = always-approve (legacy)
+//   - { "mode": "ask"|"always-approve"|"dont-ask" } — preferred three-way product mode
+//
+// mode wins when both are set. always-approve is rejected when
+// disable_always_approve is set (org/managed policy).
 func (d *Daemon) handleSetInteractiveApproval(params json.RawMessage) (any, error) {
 	var p struct {
 		On        *bool  `json:"on"`
+		Mode      string `json:"mode"`
 		SessionID string `json:"session_id"`
 	}
 	if len(params) > 0 && string(params) != "null" {
@@ -34,34 +33,53 @@ func (d *Daemon) handleSetInteractiveApproval(params json.RawMessage) (any, erro
 			return nil, fmt.Errorf("invalid params: %w", err)
 		}
 	}
-	if p.On == nil {
-		return nil, fmt.Errorf("on boolean is required")
+	prevMode := d.approvalModeString()
+	var next string
+	switch {
+	case strings.TrimSpace(p.Mode) != "":
+		var err error
+		next, err = normalizeApprovalMode(p.Mode)
+		if err != nil {
+			return nil, err
+		}
+	case p.On != nil:
+		next = approvalModeFromInteractive(*p.On)
+	default:
+		return nil, fmt.Errorf("mode string or on boolean is required")
 	}
-	prev := d.interactiveApproval.Load()
-	d.interactiveApproval.Store(*p.On)
-	mode := "ask"
-	if !*p.On {
-		mode = "always-approve"
+	if err := d.setApprovalMode(next); err != nil {
+		return nil, err
 	}
-	prevMode := "ask"
-	if !prev {
-		prevMode = "always-approve"
-	}
+	mode := d.approvalModeString()
+	interactive := interactiveFromApprovalMode(mode)
 	// Audit even without session — attach session_id when the TUI provides one.
 	payload := map[string]any{
-		"interactive_approval": *p.On,
-		"approval_mode":        mode,
-		"previous_mode":        prevMode,
-		"warning":              "always-approve auto-allows requires_approval tool calls; deny rules, plan mode, and sandbox still apply",
+		"interactive_approval":   interactive,
+		"approval_mode":          mode,
+		"previous_mode":          prevMode,
+		"disable_always_approve": d.disableAlwaysApprove.Load(),
+		"warning":                approvalModeWarning(mode),
 	}
 	sid := p.SessionID
 	d.record(sid, "InteractiveApprovalChanged", "", "operator", payload, "")
 	return map[string]any{
-		"interactive_approval": *p.On,
-		"approval_mode":        mode,
-		"previous_mode":        prevMode,
-		"warning":              payload["warning"],
+		"interactive_approval":   interactive,
+		"approval_mode":          mode,
+		"previous_mode":          prevMode,
+		"disable_always_approve": d.disableAlwaysApprove.Load(),
+		"warning":                payload["warning"],
 	}, nil
+}
+
+func approvalModeWarning(mode string) string {
+	switch mode {
+	case approvalModeAlwaysApprove:
+		return "always-approve auto-allows requires_approval tool calls; deny rules, plan mode, and sandbox still apply"
+	case approvalModeDontAsk:
+		return "dont-ask denies requires_approval unless an exact session/project grant already exists; no operator prompt"
+	default:
+		return ""
+	}
 }
 
 // resolveApproval turns a requires_approval decision into a final one. In
@@ -79,7 +97,18 @@ func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Tas
 		}
 		return approved, true
 	}
-	if d.interactiveApproval.Load() {
+	switch d.approvalModeString() {
+	case approvalModeDontAsk:
+		// Grok/CC dontAsk: no prompt, no auto-approve — deny unless a grant
+		// already matched above. Deny rules / plan mode / sandbox still apply
+		// on every other path; this only handles requires_approval fallthrough.
+		d.closePendingApproval(sess, task, dec, "denied", "dont-ask mode denies requires_approval without an exact grant")
+		d.record(sess.SessionID, "PolicyViolation", task.TaskID, "go", map[string]any{
+			"capability": dec.Capability, "decision_id": dec.DecisionID,
+			"refusal": "dont_ask", "reason": "requires_approval denied by approval_mode=dont-ask",
+		}, dec.DecisionID)
+		return dec, false
+	case approvalModeAsk:
 		resolved, granted, scope, terminal := d.awaitInteractiveApproval(sess, task, dec, label)
 		if !granted {
 			if resolved == nil {
@@ -126,19 +155,20 @@ func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Tas
 			return dec, false
 		}
 		return approved, true
+	default: // always-approve
+		if !d.reviewAutonomousApproval(sess, task, dec, label) {
+			d.closePendingApproval(sess, task, dec, "denied", "autonomous risk review denied approval")
+			return dec, false
+		}
+		approved, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "agent", "")
+		if err != nil || approved.Decision != "allowed" {
+			return dec, false
+		}
+		if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+			return dec, false
+		}
+		return approved, true
 	}
-	if !d.reviewAutonomousApproval(sess, task, dec, label) {
-		d.closePendingApproval(sess, task, dec, "denied", "autonomous risk review denied approval")
-		return dec, false
-	}
-	approved, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "agent", "")
-	if err != nil || approved.Decision != "allowed" {
-		return dec, false
-	}
-	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
-		return dec, false
-	}
-	return approved, true
 }
 
 // closePendingApproval fail-closes an unresolved kernel decision and mirrors

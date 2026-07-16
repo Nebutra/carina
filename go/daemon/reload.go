@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Nebutra/carina/go/config"
 	"github.com/Nebutra/carina/go/contextengine"
@@ -51,7 +52,17 @@ func (d *Daemon) ApplyConfig(cfg config.Config) error {
 		_ = oldContextEng.Close()
 	}
 	d.maxTaskTokens.Store(int64(cfg.MaxTaskTokens))
-	d.interactiveApproval.Store(cfg.InteractiveApproval)
+	d.disableAlwaysApprove.Store(cfg.DisableAlwaysApprove)
+	mode := strings.TrimSpace(cfg.ApprovalMode)
+	if mode == "" {
+		mode = approvalModeFromInteractive(cfg.InteractiveApproval)
+	}
+	if err := d.setApprovalMode(mode); err != nil {
+		// Keep last-good mode if always-approve is newly locked; still apply the lock.
+		if d.approvalModeString() == approvalModeAlwaysApprove {
+			_ = d.setApprovalMode(approvalModeAsk)
+		}
+	}
 	d.debugRPCEnabled.Store(cfg.EnableDebugRPC)
 	d.requireTrust.Store(cfg.RequireWorkspaceTrust)
 	d.sandbox.Store(cfg.SandboxCommands)

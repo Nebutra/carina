@@ -114,3 +114,15 @@ Settings tabs; doctor/skills/hooks/mcp routes.
 - skills/hooks/extensions help + inventory mutation copy aligned with real capabilities
 - README TUI interaction notes for sticky `!`, plan/approve, always-approve, context pressure
 - `go/tui/.carina/` gitignored
+
+### Wave G — HITL mode taxonomy + org lock — **done**
+
+- Product modes: `ask` | `always-approve` | `dont-ask` (Grok-style dontAsk for CI)
+- `daemon.set_interactive_approval` accepts `{mode}` (preferred) or legacy `{on}`
+- `dont-ask`: deny `requires_approval` without exact grant; no `permission.request`
+- Config/env/CLI: `approval_mode`, `disable_always_approve`, `CARINA_APPROVAL_MODE`,
+  `CARINA_DISABLE_ALWAYS_APPROVE`, `-approval-mode`, `-disable-always-approve`
+- Org lock: `disable_always_approve` refuses always-approve (manage-lockable);
+  falls back to ask if already always-approve when lock applies
+- TUI: `/approval-mode`, `/dont-ask`, footer `dont-ask`, inventory + explain copy
+- Exact grants still work under dont-ask (narrow allow without prompts)

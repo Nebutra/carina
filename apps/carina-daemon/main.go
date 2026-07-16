@@ -60,7 +60,9 @@ func main() {
 	sandbox := flag.Bool("sandbox", cfg.SandboxCommands, "run commands under an OS syscall sandbox")
 	egress := flag.Bool("egress", cfg.EnableEgressProxy, "route command network through a deny-by-default egress proxy")
 	egressAllow := flag.String("egress-allow", strings.Join(cfg.EgressAllow, ","), "comma-separated hosts allowed when -egress is on")
-	interactiveApproval := flag.Bool("interactive-approval", cfg.InteractiveApproval, "pause for an operator decision on requires_approval instead of auto-approving")
+	interactiveApproval := flag.Bool("interactive-approval", cfg.InteractiveApproval, "legacy: true=ask, false=always-approve (prefer -approval-mode)")
+	approvalMode := flag.String("approval-mode", cfg.ApprovalMode, "product HITL mode: ask|always-approve|dont-ask (empty uses -interactive-approval)")
+	disableAlwaysApprove := flag.Bool("disable-always-approve", cfg.DisableAlwaysApprove, "org lock: refuse always-approve mode")
 	enableDebugRPC := flag.Bool("debug-rpc", cfg.EnableDebugRPC, "enable local-only debug.* RPC inspection endpoints and in-memory trace collection")
 	bestOfNEnabled := flag.Bool("best-of-n", cfg.BestOfNEnabled, "opt-in: expose the best_of_n tool (experimental; N parallel candidate generations cost roughly Nx a single patch)")
 	riskReviewMode := flag.String("risk-review-mode", cfg.RiskReviewMode, "autonomous approval risk review mode: off|advisory|enforce")
@@ -124,6 +126,8 @@ func main() {
 		EnableEgressProxy:          *egress,
 		EgressAllow:                splitList(*egressAllow),
 		InteractiveApproval:        *interactiveApproval,
+		ApprovalMode:               *approvalMode,
+		DisableAlwaysApprove:       *disableAlwaysApprove,
 		EnableDebugRPC:             *enableDebugRPC,
 		BestOfNEnabled:             *bestOfNEnabled,
 		RiskReviewMode:             *riskReviewMode,
@@ -168,6 +172,12 @@ func main() {
 		}
 		if repin("interactive-approval") {
 			nc.InteractiveApproval = *interactiveApproval
+		}
+		if repin("approval-mode") {
+			nc.ApprovalMode = *approvalMode
+		}
+		if repin("disable-always-approve") {
+			nc.DisableAlwaysApprove = *disableAlwaysApprove
 		}
 		if repin("debug-rpc") {
 			nc.EnableDebugRPC = *enableDebugRPC
@@ -290,6 +300,8 @@ var flagConfigKeys = map[string]string{
 	"egress":                         "enable_egress_proxy",
 	"egress-allow":                   "egress_allow",
 	"interactive-approval":           "interactive_approval",
+	"approval-mode":                  "approval_mode",
+	"disable-always-approve":         "disable_always_approve",
 	"debug-rpc":                      "enable_debug_rpc",
 	"risk-review-mode":               "risk_review_mode",
 	"risk-review-model":              "risk_review_model",

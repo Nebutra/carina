@@ -57,6 +57,8 @@ type Config struct {
 	EgressAllow                []string            `json:"egress_allow"`
 	SandboxCommands            bool                `json:"sandbox_commands"`
 	InteractiveApproval        bool                `json:"interactive_approval"`
+	ApprovalMode               string              `json:"approval_mode"`
+	DisableAlwaysApprove       bool                `json:"disable_always_approve"`
 	EnableDebugRPC             bool                `json:"enable_debug_rpc"`
 	BestOfNEnabled             bool                `json:"best_of_n_enabled"`
 	SummarizerModel            string              `json:"summarizer_model"`
@@ -208,6 +210,8 @@ func mergeEnv(cfg *Config) {
 	envBool("CARINA_ENABLE_EGRESS_PROXY", &cfg.EnableEgressProxy)
 	envBool("CARINA_SANDBOX_COMMANDS", &cfg.SandboxCommands)
 	envBool("CARINA_INTERACTIVE_APPROVAL", &cfg.InteractiveApproval)
+	envStr("CARINA_APPROVAL_MODE", &cfg.ApprovalMode)
+	envBool("CARINA_DISABLE_ALWAYS_APPROVE", &cfg.DisableAlwaysApprove)
 	envBool("CARINA_ENABLE_DEBUG_RPC", &cfg.EnableDebugRPC)
 	envBool("CARINA_BEST_OF_N_ENABLED", &cfg.BestOfNEnabled)
 	envInt("CARINA_MAX_CONCURRENT_TASKS", &cfg.MaxConcurrentTasks)
@@ -271,6 +275,25 @@ func (c Config) Validate() error {
 	}
 	if mode := strings.ToLower(strings.TrimSpace(c.RiskReviewMode)); mode != "" && mode != "off" && mode != "advisory" && mode != "enforce" {
 		return fmt.Errorf("config: risk_review_mode must be one of off, advisory, enforce")
+	}
+	if mode := strings.ToLower(strings.TrimSpace(c.ApprovalMode)); mode != "" {
+		switch mode {
+		case "ask", "interactive", "on_request", "on-request",
+			"always-approve", "always_approve", "alwaysapprove", "yolo", "bypass", "bypasspermissions", "never",
+			"dont-ask", "dont_ask", "dontask", "deny-by-default", "deny_by_default":
+		default:
+			return fmt.Errorf("config: approval_mode must be one of ask, always-approve, dont-ask")
+		}
+	}
+	// Org lock must not be defeated by an explicit always-approve default.
+	// Zero-value InteractiveApproval=false with empty approval_mode is coerced
+	// to ask at daemon start when the lock is set (not a Validate error).
+	if c.DisableAlwaysApprove {
+		mode := strings.ToLower(strings.TrimSpace(c.ApprovalMode))
+		switch mode {
+		case "always-approve", "always_approve", "alwaysapprove", "yolo", "bypass", "bypasspermissions", "never":
+			return fmt.Errorf("config: approval_mode=always-approve conflicts with disable_always_approve")
+		}
 	}
 	if mode := strings.ToLower(strings.TrimSpace(c.TUIAlternateScreen)); mode != "" && mode != "auto" && mode != "always" && mode != "never" {
 		return fmt.Errorf("config: tui_alternate_screen must be one of auto, always, never")

@@ -205,24 +205,44 @@ func TestAlwaysApproveToggleCallsDaemon(t *testing.T) {
 			"interactive_approval": false, "approval_mode": "always-approve",
 			"previous_mode": "ask", "warning": "tools will auto-run",
 		},
-		"session.get":       map[string]any{"session_id": "sess"},
-		"config.inventory":  map[string]any{"effective": map[string]any{"interactive_approval": false}},
-		"context.summary":   map[string]any{"model_context_tokens": map[string]any{"available": false}},
+		"session.get":      map[string]any{"session_id": "sess"},
+		"config.inventory": map[string]any{"effective": map[string]any{"approval_mode": "always-approve", "interactive_approval": false}},
+		"context.summary":  map[string]any{"model_context_tokens": map[string]any{"available": false}},
 	}}
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	m.sessionID, m.call = "sess", fc
 	m.runtime.InteractiveApprove = "on"
+	m.runtime.ApprovalMode = "ask"
 	cmd := m.setAlwaysApprove(true)
 	m.Update(cmd())
 	if len(fc.calls) == 0 || fc.calls[0].method != "daemon.set_interactive_approval" {
 		t.Fatalf("calls=%#v", fc.calls)
 	}
-	if fc.calls[0].params["on"] != false {
-		t.Fatalf("always-approve should set interactive on=false, got %#v", fc.calls[0].params)
+	if fc.calls[0].params["mode"] != "always-approve" {
+		t.Fatalf("always-approve should set mode=always-approve, got %#v", fc.calls[0].params)
 	}
 	got := transcriptText(m)
 	if !strings.Contains(strings.ToLower(got), "warning") && !strings.Contains(got, "always-approve") {
 		t.Fatalf("expected warning in transcript:\n%s", got)
+	}
+}
+
+func TestDontAskCommandSetsMode(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{
+		"daemon.set_interactive_approval": map[string]any{
+			"interactive_approval": false, "approval_mode": "dont-ask",
+			"previous_mode": "ask", "warning": "no operator prompt",
+		},
+	}}
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
+	m.sessionID, m.call = "sess", fc
+	cmd := m.slashCommand("/dont-ask on")
+	m.Update(cmd())
+	if len(fc.calls) == 0 || fc.calls[0].params["mode"] != "dont-ask" {
+		t.Fatalf("calls=%#v", fc.calls)
+	}
+	if m.approvalModeLabel() != "dont-ask" {
+		t.Fatalf("runtime mode=%s", m.approvalModeLabel())
 	}
 }
 

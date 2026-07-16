@@ -20,7 +20,8 @@ import (
 type runtimeStatus struct {
 	Profile            string
 	Sandbox            string // on|off|unknown
-	InteractiveApprove string // on|off|unknown
+	InteractiveApprove string // on|off|dont-ask|unknown (legacy mirror of ApprovalMode)
+	ApprovalMode       string // ask|always-approve|dont-ask
 	ContextUsed        int
 	ContextLimit       int
 	ContextPercent     int
@@ -236,7 +237,7 @@ func (m *Model) settingsOverviewLines(width int) []string {
 		m.text(MsgSettingsRowModel, MessageArgs{"model": model, "effort": effort}),
 		m.text(MsgSettingsRowProfile, MessageArgs{"profile": stringOr(m.runtime.Profile, "unknown")}),
 		m.text(MsgSettingsRowSandbox, MessageArgs{"sandbox": stringOr(m.runtime.Sandbox, "unknown")}),
-		m.text(MsgSettingsRowApproval, MessageArgs{"approval": stringOr(m.runtime.InteractiveApprove, "unknown")}),
+		m.text(MsgSettingsRowApproval, MessageArgs{"approval": stringOr(m.approvalModeLabel(), "unknown")}),
 		m.text(MsgSettingsRowContext, MessageArgs{"context": m.contextStatusLabel()}),
 		m.text(MsgSettingsRowCompact, MessageArgs{"state": map[bool]string{true: "on", false: "off"}[m.compactMode]}),
 	}
@@ -319,6 +320,8 @@ func (m *Model) statusFooterView(width int) string {
 	approval := statusFooterItem{role: theme.RoleWarning}
 	if am := m.approvalModeLabel(); am == "always-approve" {
 		approval.text = "always-approve"
+	} else if am == "dont-ask" {
+		approval.text = "dont-ask"
 	} else if am == "ask" {
 		approval.role = theme.RoleMuted
 		approval.text = "ask"
@@ -493,8 +496,10 @@ func (m *Model) refreshRuntimeStatus() tea.Cmd {
 				if b, ok := effective["sandbox_commands"].(bool); ok {
 					out.sandbox = map[bool]string{true: "on", false: "off"}[b]
 				}
-				if b, ok := effective["interactive_approval"].(bool); ok {
-					out.approval = map[bool]string{true: "on", false: "off"}[b]
+				if mode := str(effective["approval_mode"]); mode != "" {
+					out.approval = mode
+				} else if b, ok := effective["interactive_approval"].(bool); ok {
+					out.approval = map[bool]string{true: "ask", false: "always-approve"}[b]
 				}
 				if b, ok := effective["plan_mode"].(bool); ok {
 					if b {
@@ -584,7 +589,7 @@ func (m *Model) handleRuntimeStatus(msg runtimeStatusMsg) tea.Cmd {
 		m.runtime.Sandbox = msg.sandbox
 	}
 	if msg.approval != "" {
-		m.runtime.InteractiveApprove = msg.approval
+		m.applyApprovalModeToRuntime(msg.approval)
 	}
 	if msg.mode != "" {
 		m.mode = msg.mode
@@ -758,7 +763,7 @@ func contextBar(percent, width int) string {
 func (m *Model) humanizeConfig(data map[string]any) []string {
 	lines := []string{m.text(MsgConfigSummaryHeader, nil)}
 	if effective, ok := data["effective"].(map[string]any); ok {
-		keys := []string{"permission_profile", "plan_mode", "model", "reasoning_effort", "sandbox_commands", "interactive_approval", "safe_mode"}
+		keys := []string{"permission_profile", "plan_mode", "model", "reasoning_effort", "sandbox_commands", "approval_mode", "interactive_approval", "disable_always_approve", "safe_mode"}
 		for _, key := range keys {
 			if v, ok := effective[key]; ok {
 				lines = append(lines, fmt.Sprintf("%s: %v", key, v))
@@ -770,8 +775,10 @@ func (m *Model) humanizeConfig(data map[string]any) []string {
 		if b, ok := effective["sandbox_commands"].(bool); ok {
 			m.runtime.Sandbox = map[bool]string{true: "on", false: "off"}[b]
 		}
-		if b, ok := effective["interactive_approval"].(bool); ok {
-			m.runtime.InteractiveApprove = map[bool]string{true: "on", false: "off"}[b]
+		if mode := str(effective["approval_mode"]); mode != "" {
+			m.applyApprovalModeToRuntime(mode)
+		} else if b, ok := effective["interactive_approval"].(bool); ok {
+			m.applyApprovalModeToRuntime(map[bool]string{true: "ask", false: "always-approve"}[b])
 		}
 	}
 	if mutation := str(data["mutation"]); mutation != "" {

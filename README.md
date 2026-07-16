@@ -151,9 +151,17 @@ The default interaction loop is:
   Enter runs a governed `command.exec`). `Esc` on an empty shell draft returns
   to chat. One-shot `!cmd` in normal mode still works.
 - `/settings` (or `Ctrl+,`) opens the control shell. `/plan` scaffolds a plan
-  file under `.carina/plans/`; `/approve-plan` exits plan mode. `/always-approve`
-  toggles auto-approval of `requires_approval` tools **with an on-screen
-  warning** (deny rules, plan mode, and OS sandbox still apply).
+  file under `.carina/plans/`; `/approve-plan` exits plan mode.
+- **Approval modes** (footer shows the active mode):
+  - `ask` — pause on `requires_approval` for operator once/session/project
+  - `always-approve` — auto-allow `requires_approval` **with an on-screen
+    warning** (`/always-approve`); deny rules, plan mode, and OS sandbox still apply
+  - `dont-ask` — deny `requires_approval` unless an exact session/project grant
+    already exists (no prompt; CI-friendly). Set with `/approval-mode dont-ask`
+    or `/dont-ask`, config `approval_mode`, env `CARINA_APPROVAL_MODE`, or
+    `carina-daemon -approval-mode dont-ask`
+  - Orgs can lock out YOLO with `"disable_always_approve": true` (and manage-lock
+    it in `/etc/carina/managed.json`)
 - Context pressure notices appear around 80%/90%; auto-compact runs only when
   a paused checkpoint makes `session.checkpoint.compact` available.
 

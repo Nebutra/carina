@@ -280,6 +280,7 @@ func (m *Model) explainRuntimeSurface() {
 		m.text(MsgExplainSandboxWhy, nil),
 		m.text(MsgExplainHowToChange, nil),
 		m.text(MsgExplainAlwaysApprove, nil),
+		m.text(MsgExplainApprovalModes, nil),
 	)
 	m.push(strings.Join(lines, "\n"))
 }
@@ -344,7 +345,7 @@ func (m *Model) humanizeInspect(data map[string]any) []string {
 	}
 	if cfg, ok := data["config"].(map[string]any); ok {
 		lines = append(lines, "runtime:")
-		for _, key := range []string{"permission_profile", "plan_mode", "sandbox_commands", "interactive_approval", "model", "reasoning_effort"} {
+		for _, key := range []string{"permission_profile", "plan_mode", "sandbox_commands", "approval_mode", "interactive_approval", "disable_always_approve", "model", "reasoning_effort"} {
 			if v, ok := cfg[key]; ok {
 				lines = append(lines, fmt.Sprintf("  %s: %v", key, v))
 			}
@@ -433,33 +434,46 @@ func (m *Model) handleTasksSchedule(msg tasksScheduleMsg) {
 	m.push(strings.Join(lines, "\n"))
 }
 
-// setAlwaysApprove maps product "always-approve" to daemon interactive_approval
-// inverted: always-approve ON => interactive_approval false (auto-allow requires_approval).
-// Deny rules, plan mode, and OS sandbox still apply. Enabling always surfaces a warning.
-func (m *Model) setAlwaysApprove(on bool) tea.Cmd {
+// setApprovalMode sets product HITL mode: ask | always-approve | dont-ask.
+func (m *Model) setApprovalMode(mode string) tea.Cmd {
 	call, sessionID := m.call, m.sessionID
-	// interactive_approval true = ask; false = always-approve
-	interactiveOn := !on
+	mode = strings.TrimSpace(mode)
 	return func() tea.Msg {
 		if call == nil {
-			return operationalSurfaceMsg{sessionID: sessionID, kind: "always-approve", err: errorsNew("daemon not connected")}
+			return operationalSurfaceMsg{sessionID: sessionID, kind: "approval-mode", err: errorsNew("daemon not connected")}
 		}
 		var out map[string]any
 		err := call.Call("daemon.set_interactive_approval", map[string]any{
-			"on": interactiveOn, "session_id": sessionID,
+			"mode": mode, "session_id": sessionID,
 		}, &out)
-		return alwaysApproveMsg{sessionID: sessionID, wantAlways: on, data: out, err: err}
+		return approvalModeMsg{sessionID: sessionID, wantMode: mode, data: out, err: err}
 	}
 }
 
-type alwaysApproveMsg struct {
-	sessionID  string
-	wantAlways bool
-	data       map[string]any
-	err        error
+// setAlwaysApprove maps product always-approve on/off onto the three-way mode.
+// ON => always-approve; OFF => ask. Deny rules, plan mode, and OS sandbox still apply.
+func (m *Model) setAlwaysApprove(on bool) tea.Cmd {
+	if on {
+		return m.setApprovalMode("always-approve")
+	}
+	return m.setApprovalMode("ask")
 }
 
-func (m *Model) handleAlwaysApprove(msg alwaysApproveMsg) {
+type approvalModeMsg struct {
+	sessionID string
+	wantMode  string
+	data      map[string]any
+	err       error
+}
+
+// alwaysApproveMsg is kept as an alias shape for older call sites / tests.
+type alwaysApproveMsg = approvalModeMsg
+
+func (m *Model) handleAlwaysApprove(msg approvalModeMsg) {
+	m.handleApprovalMode(msg)
+}
+
+func (m *Model) handleApprovalMode(msg approvalModeMsg) {
 	if msg.sessionID != "" && msg.sessionID != m.sessionID {
 		return
 	}
@@ -469,37 +483,61 @@ func (m *Model) handleAlwaysApprove(msg alwaysApproveMsg) {
 	}
 	mode := str(msg.data["approval_mode"])
 	if mode == "" {
-		if msg.wantAlways {
-			mode = "always-approve"
-		} else {
-			mode = "ask"
-		}
+		mode = msg.wantMode
 	}
-	// Keep runtime snapshot in sync.
-	if mode == "always-approve" {
-		m.runtime.InteractiveApprove = "off"
+	m.applyApprovalModeToRuntime(mode)
+	switch mode {
+	case "always-approve":
 		m.push(m.th.Style(theme.RoleWarning).Render(m.text(MsgAlwaysApproveEnabled, nil)))
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgAlwaysApproveWarning, nil)))
-	} else {
-		m.runtime.InteractiveApprove = "on"
-		m.push(m.text(MsgAlwaysApproveDisabled, nil))
+		if w := str(msg.data["warning"]); w != "" {
+			m.push(m.th.Style(theme.RoleMuted).Render(w))
+		} else {
+			m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgAlwaysApproveWarning, nil)))
+		}
+	case "dont-ask":
+		m.push(m.th.Style(theme.RoleWarning).Render(m.text(MsgDontAskEnabled, nil)))
+		if w := str(msg.data["warning"]); w != "" {
+			m.push(m.th.Style(theme.RoleMuted).Render(w))
+		} else {
+			m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgDontAskWarning, nil)))
+		}
+	default:
+		m.push(m.text(MsgApprovalModeAsk, nil))
 	}
 	m.layout()
 }
 
+func (m *Model) applyApprovalModeToRuntime(mode string) {
+	switch mode {
+	case "always-approve":
+		m.runtime.InteractiveApprove = "off"
+		m.runtime.ApprovalMode = "always-approve"
+	case "dont-ask":
+		m.runtime.InteractiveApprove = "dont-ask"
+		m.runtime.ApprovalMode = "dont-ask"
+	default:
+		m.runtime.InteractiveApprove = "on"
+		m.runtime.ApprovalMode = "ask"
+	}
+}
+
 func (m *Model) toggleAlwaysApprove() tea.Cmd {
-	// InteractiveApprove "on" = ask mode → enable always-approve.
-	// "off" = always-approve → return to ask.
-	if m.runtime.InteractiveApprove == "off" {
+	// always-approve → ask; anything else → always-approve.
+	if m.approvalModeLabel() == "always-approve" {
 		return m.setAlwaysApprove(false)
 	}
 	return m.setAlwaysApprove(true)
 }
 
 func (m *Model) approvalModeLabel() string {
+	if m.runtime.ApprovalMode != "" {
+		return m.runtime.ApprovalMode
+	}
 	switch m.runtime.InteractiveApprove {
 	case "off":
 		return "always-approve"
+	case "dont-ask":
+		return "dont-ask"
 	case "on":
 		return "ask"
 	default:

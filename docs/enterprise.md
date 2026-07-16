@@ -92,6 +92,21 @@ source. The file is watched, so managed edits trigger a reload.
 { "values": { "offline": true }, "locked_keys": ["offline"] }
 ```
 
+To forbid YOLO always-approve (and keep operators on `ask` or `dont-ask`):
+
+```json
+{
+  "values": {
+    "disable_always_approve": true,
+    "approval_mode": "ask"
+  },
+  "locked_keys": ["disable_always_approve", "approval_mode"]
+}
+```
+
+`dont-ask` is the CI-friendly product mode: `requires_approval` is denied
+unless an exact session/project grant already exists (no interactive prompt).
+
 ## 6. Centralized audit — `carina export`
 
 ```bash

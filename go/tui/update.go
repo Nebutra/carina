@@ -1710,6 +1710,43 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			m.push(m.text(MsgUpdateUsageAlwaysApprove, nil))
 			return nil
 		}
+	case "approval-mode", "approval_mode":
+		if len(parts) == 1 {
+			m.push(m.text(MsgApprovalModeCurrent, MessageArgs{"mode": m.approvalModeLabel()}))
+			return nil
+		}
+		switch strings.ToLower(parts[1]) {
+		case "ask", "interactive":
+			return m.setApprovalMode("ask")
+		case "always-approve", "always_approve", "alwaysapprove", "yolo", "bypass":
+			return m.setApprovalMode("always-approve")
+		case "dont-ask", "dont_ask", "dontask":
+			return m.setApprovalMode("dont-ask")
+		default:
+			m.push(m.text(MsgUpdateUsageApprovalMode, nil))
+			return nil
+		}
+	case "dont-ask", "dont_ask", "dontask":
+		if len(parts) == 1 {
+			if m.approvalModeLabel() == "dont-ask" {
+				return m.setApprovalMode("ask")
+			}
+			return m.setApprovalMode("dont-ask")
+		}
+		switch parts[1] {
+		case "on", "true", "1", "enable":
+			return m.setApprovalMode("dont-ask")
+		case "off", "false", "0", "disable":
+			return m.setApprovalMode("ask")
+		case "toggle":
+			if m.approvalModeLabel() == "dont-ask" {
+				return m.setApprovalMode("ask")
+			}
+			return m.setApprovalMode("dont-ask")
+		default:
+			m.push(m.text(MsgUpdateUsageDontAsk, nil))
+			return nil
+		}
 	case "inspect", "welcome":
 		return m.inspectSurface()
 	case "tasks", "ps":
