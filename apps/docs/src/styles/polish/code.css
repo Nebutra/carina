@@ -134,29 +134,26 @@
   .expressive-code .copy button {
     width: 1.85rem !important;
     height: 1.85rem !important;
-    border-radius: 0 !important;
-    /* Keep EC background transparent so the chrome doesn't double-paint */
+    border: 0 !important;
+    border-radius: 6px !important;
     background: transparent !important;
     opacity: 0.72 !important;
     box-shadow: none !important;
     transition:
       opacity 150ms ease,
-      background-color 150ms ease,
-      border-color 150ms ease !important;
+      background-color 150ms ease !important;
   }
 
-  /* Idle fill under icon — slight chrome so the hit target is visible */
+  /* No fill plate — icon only */
   .expressive-code .copy button div {
-    border-radius: 0 !important;
-    background: color-mix(in srgb, var(--polish-code-chrome) 70%, transparent) !important;
-    opacity: 1 !important;
+    background: transparent !important;
+    opacity: 0 !important;
   }
 
+  /* Kill EC's ::before border ring (the outer frame line) */
   .expressive-code .copy button::before {
-    /* EC border ring — keep subtle, square to match button */
-    border-radius: 0 !important;
-    border-color: color-mix(in srgb, var(--polish-code-muted) 35%, transparent) !important;
-    opacity: 1 !important;
+    border: 0 !important;
+    opacity: 0 !important;
   }
 
   /* Glyph = ::after with mask-image: var(--ec-frm-copyIcon) */
@@ -174,27 +171,28 @@
 
   .expressive-code .copy button:hover,
   .expressive-code .copy button:focus-visible {
-    background: var(--polish-code-chrome) !important;
+    background: transparent !important;
   }
 
   .expressive-code .copy button:hover div,
   .expressive-code .copy button:focus-visible div {
-    opacity: 1 !important;
-    background: var(--polish-code-chrome) !important;
+    opacity: 0 !important;
+    background: transparent !important;
   }
 
   .expressive-code .copy button:focus-visible {
-    outline: none !important;
+    outline: 2px solid color-mix(in srgb, var(--carina-ion-cyan) 55%, transparent) !important;
+    outline-offset: 2px !important;
   }
 
   .expressive-code .copy button:focus-visible::before {
-    border-color: color-mix(in srgb, var(--carina-ion-cyan) 55%, var(--carina-border)) !important;
-    opacity: 1 !important;
+    border: 0 !important;
+    opacity: 0 !important;
   }
 
   .expressive-code .copy .feedback {
-    border: 1px solid var(--polish-code-success-border) !important;
-    border-radius: 0 !important;
+    border: 0 !important;
+    border-radius: 6px !important;
     background: var(--polish-code-success-bg) !important;
     color: var(--polish-code-success-fg) !important;
     font-size: 11px !important;
