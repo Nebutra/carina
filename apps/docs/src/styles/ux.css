@@ -68,6 +68,46 @@
     gap: 0.35rem;
   }
 
+  /* Social icons stay quiet until hovered (Mintlify) */
+  .social-icons a {
+    color: var(--docs-fg-muted);
+    transition: color var(--docs-transition), opacity var(--docs-transition);
+  }
+
+  .social-icons a:hover {
+    color: var(--docs-fg);
+    opacity: 1;
+  }
+
+  /* Search trigger as a soft pill */
+  button[data-open-modal] {
+    border-radius: var(--docs-radius-lg);
+    border: 1px solid var(--docs-border-subtle);
+    background-color: color-mix(in srgb, var(--docs-bg-surface) 72%, transparent);
+    color: var(--docs-fg-subtle);
+    font-size: var(--text-body-sm);
+  }
+
+  button[data-open-modal] kbd {
+    background-color: var(--docs-bg-raised);
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-sm);
+    color: var(--docs-fg-subtle);
+    font-family: var(--docs-font-sans);
+  }
+
+  /* Theme + language pickers: compact, borderless until hover */
+  starlight-theme-select select,
+  starlight-lang-select select {
+    font-size: var(--text-body-sm);
+    color: var(--docs-fg-muted);
+  }
+
+  starlight-theme-select label:hover,
+  starlight-lang-select label:hover {
+    color: var(--docs-fg);
+  }
+
   /* ── Sidebar density ─────────────────────────────────────────────── */
   nav.sidebar {
     border-inline-end: 1px solid var(--docs-border-subtle);
@@ -84,20 +124,21 @@
 
   .sidebar-content a,
   .sidebar-content summary {
-    border-radius: var(--docs-radius-sm);
+    border-radius: var(--docs-radius-md);
     padding: var(--docs-sidebar-link-py) var(--docs-sidebar-link-px);
-    line-height: 1.35;
+    line-height: 1.4;
+    color: var(--docs-fg-muted);
     transition:
       color var(--docs-transition),
       background-color var(--docs-transition),
       border-color var(--docs-transition);
   }
 
+  /* Mintlify-style active state: full rounded pill, no edge bar */
   .sidebar-content a[aria-current='page'],
   .sidebar-content a[aria-current='true'] {
     color: var(--docs-accent) !important;
     background-color: var(--docs-bg-selected) !important;
-    border-inline-start: 2px solid var(--docs-accent);
     font-weight: var(--font-weight-medium);
   }
 
@@ -109,37 +150,83 @@
   .sidebar-content .group-label span,
   .sidebar-content details > summary {
     color: var(--docs-fg-subtle);
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     font-size: 11px;
-    font-weight: var(--font-weight-medium);
-    padding-block: 0.55rem 0.25rem;
+    font-weight: var(--font-weight-semibold);
+    padding-block: 0.5rem 0.3rem;
+  }
+
+  .sidebar-content details > summary:hover {
+    color: var(--docs-fg-muted);
+    background: transparent;
   }
 
   .sidebar-content ul {
     gap: var(--docs-sidebar-group-gap);
   }
 
-  .sidebar-content details + details {
-    margin-top: 0.35rem;
+  /* Clear whitespace rhythm between groups */
+  .sidebar-content details + details,
+  .sidebar-content > ul > li + li {
+    margin-top: var(--spacing-4);
+  }
+
+  /* Hide the caret chevron noise on top-level groups; keep affordance on hover */
+  .sidebar-content summary svg.caret {
+    opacity: 0.55;
+    transition: opacity var(--docs-transition), transform var(--docs-transition-medium);
+  }
+
+  .sidebar-content summary:hover svg.caret {
+    opacity: 1;
   }
 
   /* ── Table of contents ───────────────────────────────────────────── */
+  /* "On this page" heading as a quiet small-caps label (Mintlify) */
+  .right-sidebar-panel h2 {
+    font-size: 11px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--docs-fg-subtle);
+    margin-bottom: var(--spacing-2);
+  }
+
   starlight-toc a {
     transition:
       color var(--docs-transition),
       border-color var(--docs-transition);
-    font-size: var(--text-caption);
-    line-height: 1.4;
-    padding-block: 0.2rem;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    padding-block: 0.22rem;
+    color: var(--docs-fg-muted);
+  }
+
+  starlight-toc a:hover {
+    color: var(--docs-fg);
   }
 
   starlight-toc a[aria-current='true'] {
     color: var(--docs-accent);
     border-inline-start-color: var(--docs-accent);
+    font-weight: var(--font-weight-medium);
   }
 
   /* ── Content ─────────────────────────────────────────────────────── */
+  /*
+   * Mintlify-style page canvas: no hairline between the title panel and
+   * the body — the title block + subtitle carries the hierarchy.
+   */
+  [data-has-sidebar] .content-panel + .content-panel {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  [data-has-sidebar] main > .content-panel:first-of-type {
+    padding-block: var(--spacing-10) var(--spacing-4);
+  }
+
   .sl-markdown-content a:not(.sl-link-button) {
     color: var(--docs-accent);
     text-underline-offset: 0.18em;
@@ -161,6 +248,29 @@
   .sl-markdown-content p,
   .sl-markdown-content li {
     line-height: 1.7;
+    font-size: 0.9375rem;
+  }
+
+  .sl-markdown-content hr {
+    border: 0;
+    border-top: 1px solid var(--docs-border-subtle);
+    margin-block: var(--spacing-10);
+  }
+
+  .sl-markdown-content blockquote {
+    border-inline-start: 2px solid var(--docs-border);
+    padding-inline-start: var(--spacing-4);
+    color: var(--docs-fg-muted);
+    font-style: normal;
+  }
+
+  /* Heading anchor rhythm — Mintlify keeps generous air above sections */
+  .sl-markdown-content h2 {
+    margin-top: 2.6em;
+  }
+
+  .sl-markdown-content h3 {
+    margin-top: 1.8em;
   }
 
   /* ── Code (Expressive Code) ──────────────────────────────────────── */
@@ -173,11 +283,25 @@
     --ec-frm-tooltipSuccessFg: var(--docs-bg);
   }
 
+  .expressive-code {
+    font-size: 0.8125rem;
+  }
+
   .expressive-code .frame {
-    border-radius: var(--docs-panel-radius);
+    border-radius: var(--docs-radius-xl);
     border: 1px solid var(--docs-code-border);
     box-shadow: none !important;
     transition: border-color var(--docs-transition);
+  }
+
+  .expressive-code .frame pre {
+    border-radius: inherit;
+  }
+
+  /* Language badge / frame title in mono caption */
+  .expressive-code .frame .title {
+    font-family: var(--docs-font-mono);
+    font-size: var(--text-caption);
   }
 
   .expressive-code .frame:hover {
@@ -378,26 +502,41 @@
   }
 
   /* ── Tables ──────────────────────────────────────────────────────── */
+  /* Mintlify style: horizontal dividers only — no vertical grid lines */
   .sl-markdown-content table {
     border-collapse: collapse;
     width: 100%;
     font-size: var(--text-body-sm);
+    display: table;
   }
 
   .sl-markdown-content th,
   .sl-markdown-content td {
-    border: 1px solid var(--docs-border-subtle);
-    padding: 0.55rem 0.75rem;
+    border: 0;
+    border-bottom: 1px solid var(--docs-border-subtle);
+    padding: 0.65rem 1rem 0.65rem 0;
+    text-align: start;
+    vertical-align: top;
   }
 
   .sl-markdown-content th {
-    background: var(--docs-bg-surface);
+    background: transparent;
     color: var(--docs-fg);
-    font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-semibold);
+    font-size: 0.8125rem;
+  }
+
+  .sl-markdown-content tr:last-child td {
+    border-bottom-color: var(--docs-border-subtle);
   }
 
   .sl-markdown-content tr:hover td {
-    background: color-mix(in srgb, var(--docs-bg-raised) 60%, transparent);
+    background: color-mix(in srgb, var(--docs-bg-raised) 45%, transparent);
+  }
+
+  /* Zebra striping off; keep tables airy and quiet */
+  .sl-markdown-content tr:nth-child(2n) {
+    background: transparent;
   }
 
   .docs-empty-state {
