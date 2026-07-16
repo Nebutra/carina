@@ -124,9 +124,41 @@
     transform: translateY(-1px);
   }
 
+  /* ── Layout balance (sidebar ↔ content ↔ TOC) ────────────────────── */
+  /*
+   * Match rail widths so the reading column doesn't optically lean left.
+   * Starlight TOC rail is ~16rem; keep left rail in the same band.
+   */
+  :root {
+    --docs-sidebar-width: 15.5rem;
+    --sl-sidebar-width: 15.5rem;
+  }
+
+  @media (min-width: 50rem) {
+    [data-has-sidebar] .main-pane {
+      --sl-content-margin-inline: auto;
+    }
+
+    [data-has-sidebar] .content-panel .sl-container {
+      /* Symmetric horizontal air inside the main column */
+      padding-inline: clamp(1rem, 2.5vw, 1.75rem);
+    }
+  }
+
+  @media (min-width: 72rem) {
+    :root {
+      --docs-reading-max: 46rem; /* ~736px — code blocks breathe without hug-left */
+      --sl-content-width: var(--docs-reading-max);
+    }
+
+    .right-sidebar {
+      width: 15.5rem;
+    }
+  }
+
   /* ── Sidebar ─────────────────────────────────────────────────────── */
   .sidebar-content {
-    padding-block: var(--spacing-4);
+    padding-block: 2.5rem var(--spacing-5);
     padding-inline: 0.15rem;
     font-size: 0.875rem;
   }

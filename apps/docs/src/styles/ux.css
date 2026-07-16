@@ -235,14 +235,16 @@
   /* ── Layout symmetry ─────────────────────────────────────────────── */
   /*
    * Starlight defaults to `--sl-content-margin-inline: auto 0` (content hugs
-   * the TOC rail), which reads as 84px left / 24px right gutters at 1440.
-   * Center the reading column so both gutters match.
+   * the TOC rail). Center the reading column so left/right gutters match
+   * as soon as the two-column docs shell is active.
    */
-  @media (min-width: 72rem) {
-    [data-has-sidebar][data-has-toc] .main-pane {
+  @media (min-width: 50rem) {
+    [data-has-sidebar] .main-pane {
       --sl-content-margin-inline: auto;
     }
+  }
 
+  @media (min-width: 72rem) {
     .right-sidebar-panel {
       padding-block-start: 2.5rem;
     }
@@ -434,28 +436,9 @@
     border-color: var(--docs-border);
   }
 
-  /* Slim title bar: label reads start-aligned, never centered */
-  .expressive-code .frame .header {
-    border-bottom: 1px solid var(--docs-code-border);
-    background: var(--docs-bg-raised);
-    min-height: 2rem;
-    text-align: start;
-    padding-inline: 1rem;
-  }
-
+  /* Title bar layout owned by polish/code.css (left label + copy). */
   .expressive-code .frame.is-terminal:not(.has-title) .header {
     display: none;
-  }
-
-  .expressive-code .frame .title {
-    font-family: var(--docs-font-mono);
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--docs-fg-muted);
-    letter-spacing: 0.01em;
-    background: transparent;
-    border: 0;
-    padding-inline: 0;
   }
 
   .expressive-code .frame pre {

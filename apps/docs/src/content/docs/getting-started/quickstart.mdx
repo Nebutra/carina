@@ -15,7 +15,7 @@ From a clean install to a governed session on a local repo.
 
 <Steps>
   <Step title="Start the daemon">
-    ```bash title="terminal"
+    ```bash title="bash"
     carina-daemon &
     # or
     carina daemon start
@@ -26,13 +26,13 @@ From a clean install to a governed session on a local repo.
   </Step>
 
   <Step title="Open a workspace">
-    ```bash title="terminal"
+    ```bash title="bash"
     cd /path/to/your/repo
     ```
   </Step>
 
   <Step title="Run a coding task">
-    ```bash title="terminal"
+    ```bash title="bash"
     carina run "Summarize the top-level architecture of this repo"
     # or fix something concrete
     carina run "fix the failing test in parser.go"
@@ -40,7 +40,7 @@ From a clean install to a governed session on a local repo.
 
     Interactive TUI:
 
-    ```bash title="terminal"
+    ```bash title="bash"
     carina
     ```
 
@@ -48,7 +48,7 @@ From a clean install to a governed session on a local repo.
   </Step>
 
   <Step title="Inspect the audit trail">
-    ```bash title="terminal"
+    ```bash title="bash"
     carina audit SESSION
     carina audit verify SESSION
     carina audit tail --last 5
@@ -58,7 +58,7 @@ From a clean install to a governed session on a local repo.
   </Step>
 
   <Step title="Patches and rollback">
-    ```bash title="terminal"
+    ```bash title="bash"
     carina patch list SESSION
     carina patch rollback PATCH_ID
     ```
@@ -67,7 +67,7 @@ From a clean install to a governed session on a local repo.
 
 ## Optional next steps
 
-```bash title="terminal"
+```bash title="bash"
 mkdir -p .carina/workflows
 cp examples/workflows/review.json .carina/workflows/
 carina workflow run review

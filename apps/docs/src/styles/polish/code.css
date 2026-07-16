@@ -1,6 +1,6 @@
 /**
- * Code blocks — Mintlify-grade chrome (priority 1).
- * Always-dark mineral surface; tokens only.
+ * Code blocks — Mintlify-grade chrome.
+ * Always-dark mineral surface; left-aligned title bar; no traffic lights.
  */
 
 @layer components {
@@ -13,56 +13,103 @@
     --ec-frm-trmTtbBg: var(--polish-code-chrome);
     --ec-frm-trmTtbFg: var(--polish-code-muted);
     --ec-frm-edTabBarBg: var(--polish-code-chrome);
-    --ec-frm-tooltipSuccessBg: var(--color-success);
+    --ec-frm-edActTabBg: var(--polish-code-bg);
+    --ec-frm-edActTabFg: var(--polish-code-fg);
+    --ec-frm-edActTabIndTopCol: transparent;
+    --ec-frm-edActTabIndBtmCol: transparent;
+    --ec-frm-tooltipSuccessBg: var(--carina-spectral-green);
     --ec-frm-tooltipSuccessFg: var(--carina-void);
-    --ec-codePadBlk: 0.95rem;
-    --ec-codePadInl: 1.05rem;
+    --ec-codePadBlk: 0.9rem;
+    --ec-codePadInl: 1rem;
+    --ec-codeFontFamily: var(--docs-font-mono);
+    --ec-uiFontFamily: var(--docs-font-mono);
     font-size: 0.8125rem;
+    line-height: 1.65;
     margin-block: var(--spacing-5);
     position: relative;
   }
 
   .expressive-code .frame {
+    position: relative;
     border-radius: var(--radius-lg);
     border: 1px solid var(--polish-code-border);
-    box-shadow: none !important;
-    overflow: hidden;
     background: var(--polish-code-bg);
-    /* subtle inner top highlight */
     box-shadow: var(--polish-inset-glow) !important;
+    overflow: hidden;
     transition: border-color var(--polish-transition);
   }
 
   .expressive-code .frame:hover {
-    border-color: var(--carina-border);
+    border-color: color-mix(in srgb, var(--carina-border) 80%, var(--carina-ion-cyan) 20%);
   }
 
-  .expressive-code .frame.is-terminal .header::before {
-    display: none;
+  /* Kill macOS traffic lights + EC terminal bottom pseudo-border */
+  .expressive-code .frame.is-terminal .header::before,
+  .expressive-code .frame.is-terminal .header::after {
+    display: none !important;
+    content: none !important;
   }
 
+  /*
+   * Unified title bar (terminal + editor):
+   * left label · right copy — never centered "terminal" in empty chrome.
+   */
   .expressive-code .frame .header {
-    min-height: 2.35rem;
-    border-bottom: 1px solid var(--polish-code-border);
-    background: var(--polish-code-chrome);
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 0.5rem;
+    min-height: 2.25rem;
+    margin: 0 !important;
+    padding: 0 2.75rem 0 0.9rem !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--polish-code-border) !important;
+    border-radius: 0 !important;
+    background: var(--polish-code-chrome) !important;
+    text-align: start !important;
   }
 
   .expressive-code .frame.is-terminal:not(.has-title) .header {
-    display: none;
+    display: none !important;
   }
 
+  /* Flatten editor "tab" chrome into the same left label */
   .expressive-code .frame .title {
+    position: static !important;
+    display: inline-flex;
+    align-items: center;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    background-clip: border-box !important;
     font-family: var(--docs-font-mono);
-    font-size: 0.72rem;
+    font-size: 0.6875rem;
     font-weight: 500;
-    letter-spacing: 0.02em;
-    color: var(--polish-code-muted);
+    letter-spacing: 0.04em;
+    line-height: 1;
+    color: var(--polish-code-muted) !important;
+    text-transform: none;
+    overflow: visible;
+  }
+
+  .expressive-code .frame .title::after,
+  .expressive-code .frame .title::before {
+    display: none !important;
+    content: none !important;
   }
 
   .expressive-code .frame pre {
-    border: 0;
-    border-radius: 0;
-    background: transparent;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    margin: 0 !important;
+  }
+
+  .expressive-code .frame pre > code {
+    font-family: var(--docs-font-mono);
+    font-variant-ligatures: none;
   }
 
   /* Line numbers — quiet */
@@ -72,30 +119,35 @@
 
   .expressive-code .ec-line .ln {
     color: var(--polish-code-line);
-    opacity: 0.7;
+    opacity: 0.65;
     padding-inline-end: 1rem;
     user-select: none;
   }
 
-  /* Copy button */
+  /* Copy sits in the title bar row */
   .expressive-code .copy {
-    inset-block-start: 0.4rem;
-    inset-inline-end: 0.4rem;
+    inset-block-start: 0.3rem !important;
+    inset-inline-end: 0.35rem !important;
+    z-index: 2;
   }
 
   .expressive-code .copy button {
-    width: 2rem;
-    height: 2rem;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--polish-code-border);
-    background: color-mix(in srgb, var(--polish-code-chrome) 88%, transparent);
-    opacity: 0.35;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    background: transparent;
+    opacity: 0.4;
     box-shadow: none !important;
     transition:
       opacity var(--polish-transition),
       border-color var(--polish-transition),
-      background-color var(--polish-transition),
-      transform var(--polish-transition);
+      background-color var(--polish-transition);
+  }
+
+  /* Icon mask needs light ink on mineral chrome */
+  .expressive-code .copy button::before {
+    background-color: var(--polish-code-muted);
   }
 
   .expressive-code .frame:hover .copy button,
@@ -104,37 +156,38 @@
   }
 
   .expressive-code .copy button:hover {
-    border-color: color-mix(in srgb, var(--docs-accent) 45%, var(--polish-code-border));
-    background: var(--polish-code-chrome);
-    transform: translateY(-1px);
+    border-color: var(--polish-code-border);
+    background: color-mix(in srgb, var(--polish-code-bg) 70%, transparent);
   }
 
   .expressive-code .copy button:focus-visible {
     outline: none;
-    box-shadow: var(--polish-focus-ring) !important;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--carina-ion-cyan) 55%, transparent) !important;
   }
 
-  /* Horizontal scroll fade hint on the right edge */
-  .expressive-code .frame.has-collapsed-lines pre,
-  .expressive-code .frame pre {
-    position: relative;
+  .expressive-code .copy .feedback {
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--polish-code-border);
+    background: var(--polish-code-chrome);
+    color: var(--carina-spectral-green);
+    font-size: 0.65rem;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    box-shadow: none !important;
   }
 
-  .expressive-code .frame {
-    --fade-w: 2rem;
-  }
-
+  /* Horizontal scroll fade — only when frame is focused/hovered */
   .expressive-code .frame::after {
     content: '';
     pointer-events: none;
     position: absolute;
-    inset-block: 2.35rem 0;
+    inset-block: 2.25rem 0;
     inset-inline-end: 0;
-    width: var(--fade-w);
+    width: 1.75rem;
     background: linear-gradient(
       90deg,
       transparent,
-      color-mix(in srgb, var(--polish-code-bg) 92%, transparent)
+      color-mix(in srgb, var(--polish-code-bg) 94%, transparent)
     );
     opacity: 0;
     transition: opacity var(--polish-transition);
@@ -142,7 +195,18 @@
   }
 
   .expressive-code .frame:hover::after {
-    opacity: 0.9;
+    opacity: 1;
+  }
+
+  /* Frames without title bar: fade from top */
+  .expressive-code .frame:not(.has-title)::after {
+    inset-block-start: 0;
+  }
+
+  /* Light page: dark code needs a slightly stronger outer edge */
+  [data-theme='light'] .expressive-code .frame,
+  [data-theme='carina-light'] .expressive-code .frame {
+    border-color: color-mix(in srgb, var(--carina-void) 22%, var(--docs-border));
   }
 
   /* Inline code — chip only outside pre */
@@ -165,7 +229,7 @@
     box-shadow: none !important;
   }
 
-  /* Snippet tabs align with EC chrome */
+  /* Snippet tabs + landing terminal mock share mineral chrome */
   .snippet-tabs {
     border: 1px solid var(--polish-code-border);
     border-radius: var(--radius-lg);
@@ -182,7 +246,6 @@
     color: var(--polish-code-fg);
   }
 
-  /* Landing terminal mock — same mineral surface */
   .term {
     box-shadow: var(--polish-inset-glow) !important;
     border-color: var(--polish-code-border) !important;
@@ -192,51 +255,5 @@
   .term__chrome {
     background: var(--polish-code-chrome) !important;
     border-bottom-color: var(--polish-code-border) !important;
-  }
-
-  /*
-   * Soft syntax remap when EC exposes token classes (fallback-safe).
-   * Shiki inline colors still win when present; chrome stays mineral either way.
-   */
-  .expressive-code .token.keyword,
-  .expressive-code .token.builtin {
-    color: var(--polish-syn-keyword);
-  }
-
-  .expressive-code .token.string,
-  .expressive-code .token.template-string {
-    color: var(--polish-syn-string);
-  }
-
-  .expressive-code .token.number,
-  .expressive-code .token.boolean {
-    color: var(--polish-syn-number);
-  }
-
-  .expressive-code .token.function {
-    color: var(--polish-syn-func);
-  }
-
-  .expressive-code .token.comment {
-    color: var(--polish-syn-comment);
-    font-style: italic;
-  }
-
-  .expressive-code .token.type,
-  .expressive-code .token.class-name {
-    color: var(--polish-syn-type);
-  }
-
-  .expressive-code .token.operator,
-  .expressive-code .token.punctuation {
-    color: var(--polish-syn-operator);
-  }
-
-  /* Copy success tooltip — quiet brand feedback */
-  .expressive-code .copy .feedback {
-    border-radius: var(--radius-md);
-    font-size: 0.7rem;
-    font-weight: 500;
-    letter-spacing: 0.02em;
   }
 }

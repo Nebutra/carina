@@ -39,6 +39,12 @@ const { title } = Astro.props;
 
   .docs-step__body :global(pre),
   .docs-step__body :global(.expressive-code) {
-    margin-block: var(--spacing-3);
+    margin-block: var(--spacing-3) var(--spacing-4);
+    max-width: 100%;
+  }
+
+  /* Code chrome fills the step column without hanging past markers */
+  .docs-step__body :global(.expressive-code .frame) {
+    width: 100%;
   }
 </style>
