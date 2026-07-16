@@ -1,8 +1,9 @@
 ---
 /**
- * Landing Hero — Mintlify-grade hierarchy + staggered entrance.
- * Brand display font only for the product name; headings stay Geist.
- * All colors via --docs-* public token contract.
+ * Landing Hero.
+ * Brand mark: wordmark/logo SVG for small chrome (not Display Alpha at caption size).
+ * Title / subtitle: Geist Sans (product heading + body roles).
+ * Display Alpha only used optionally for a large pure-Latin identity lockup.
  */
 interface Props {
   brand?: string;
@@ -10,6 +11,8 @@ interface Props {
   subtitle: string;
   primaryCta: { label: string; href: string };
   secondaryCta?: { label: string; href: string };
+  /** Show large Display-Alpha "Carina" above the title (pure Latin only). */
+  showIdentityLockup?: boolean;
 }
 
 const {
@@ -18,16 +21,34 @@ const {
   subtitle,
   primaryCta,
   secondaryCta,
+  showIdentityLockup = false,
 } = Astro.props;
 ---
 
 <section class="hero">
   <div class="hero__inner">
     <p class="hero__eyebrow docs-animate-in docs-animate-in--1">
-      <span class="hero__brand font-brand">{brand}</span>
+      <img
+        class="hero__mark"
+        src="/carina-symbol.svg"
+        alt=""
+        width="16"
+        height="16"
+        decoding="async"
+      />
+      <span class="hero__brand-label">{brand}</span>
       <span class="hero__divider" aria-hidden="true">·</span>
-      <span>AI Agent Runtime</span>
+      <span class="hero__product">AI Agent Runtime</span>
     </p>
+
+    {
+      showIdentityLockup && (
+        <p class="hero__identity font-brand font-brand--display docs-animate-in docs-animate-in--1" aria-hidden="true">
+          Carina
+        </p>
+      )
+    }
+
     <h1 class="hero__title docs-animate-in docs-animate-in--2">{title}</h1>
     <p class="hero__subtitle docs-animate-in docs-animate-in--3">{subtitle}</p>
     <div class="hero__actions docs-animate-in docs-animate-in--4">
@@ -71,41 +92,69 @@ const {
   .hero__eyebrow {
     display: inline-flex;
     align-items: center;
-    gap: var(--spacing-2);
+    gap: 0.45rem;
     margin: 0 0 var(--spacing-6);
-    padding: 0.28rem 0.7rem;
+    padding: 0.28rem 0.75rem 0.28rem 0.45rem;
     border: 1px solid var(--docs-border);
     border-radius: var(--docs-radius-full);
     background: color-mix(in srgb, var(--docs-bg-surface) 90%, transparent);
     color: var(--docs-fg-muted);
+    font-family: var(--docs-font-sans);
     font-size: var(--text-caption);
-    letter-spacing: 0.04em;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
   }
 
-  .hero__brand {
+  .hero__mark {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    display: block;
+  }
+
+  .hero__brand-label {
     color: var(--docs-fg);
-    font-size: 0.95em;
+    font-weight: 600;
+    font-family: var(--docs-font-sans);
   }
 
   .hero__divider {
     color: var(--docs-fg-subtle);
+    font-weight: 400;
+  }
+
+  .hero__product {
+    font-weight: 400;
+  }
+
+  /* Optional large identity — Display Alpha, pure Latin only */
+  .hero__identity {
+    margin: 0 0 var(--spacing-4);
+    color: var(--docs-fg);
+    opacity: 0.92;
   }
 
   .hero__title {
     margin: 0 0 var(--spacing-5);
-    font-size: clamp(2.05rem, 5.2vw, 3.4rem);
-    font-weight: var(--font-weight-semibold);
-    line-height: 1.06;
+    font-family: var(--docs-font-sans);
+    font-size: clamp(2.05rem, 5.2vw, 3.25rem);
+    font-weight: 600;
+    line-height: 1.08;
     letter-spacing: -0.025em;
     color: var(--docs-fg);
+    text-wrap: balance;
   }
 
   .hero__subtitle {
     margin: 0 auto var(--spacing-8);
     max-width: 36rem;
+    font-family: var(--docs-font-sans);
     font-size: clamp(0.98rem, 1.4vw, 1.08rem);
+    font-weight: 400;
     line-height: 1.7;
     color: var(--docs-fg-muted);
+    text-wrap: pretty;
   }
 
   .hero__actions {
@@ -123,14 +172,14 @@ const {
     min-height: var(--docs-control-h);
     padding: 0 var(--spacing-5);
     border-radius: var(--docs-radius-md);
+    font-family: var(--docs-font-sans);
     font-size: var(--text-body-sm);
-    font-weight: var(--font-weight-medium);
+    font-weight: 500;
     text-decoration: none;
     transition:
       background-color var(--docs-transition),
       border-color var(--docs-transition),
       color var(--docs-transition),
-      transform var(--docs-transition),
       box-shadow var(--docs-transition);
   }
 
@@ -143,7 +192,6 @@ const {
     background: var(--docs-accent);
     color: var(--docs-fg-invert);
     border: 1px solid transparent;
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--docs-accent) 0%, transparent);
   }
 
   .hero__btn--primary:hover {

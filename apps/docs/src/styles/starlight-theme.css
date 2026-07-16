@@ -65,7 +65,11 @@
     --sl-shadow-lg: 0 0 0 1px var(--docs-border),
       0 12px 32px color-mix(in srgb, var(--docs-bg) 55%, transparent);
 
-    /* Typography */
+    /*
+     * Typography — set after starlight-tailwind so concrete stacks win.
+     * starlight-tailwind maps --sl-font ← --font-sans from @theme; we reaffirm
+     * docs stacks here for non-Tailwind paths and mono/code.
+     */
     --sl-font: var(--docs-font-sans);
     --sl-font-mono: var(--docs-font-mono);
     --sl-font-system: var(--docs-font-sans);

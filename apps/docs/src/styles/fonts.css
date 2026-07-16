@@ -1,29 +1,52 @@
 /**
  * Self-hosted Carina brand fonts.
- * Source: docs/brand/assets/fonts/ (synced via pnpm sync-brand)
- * All faces use font-display: swap for FCP / Lighthouse.
+ * Authority: docs/brand/assets/fonts/fonts.css (+ AGENTS.md typography rules)
+ *
+ * Roles:
+ *   - Geist Sans  → UI, body, nav, product headings (supports punctuation / CJK fallback)
+ *   - Geist Mono  → code, audit, paths, CLI
+ *   - Carina Display Alpha → product name / large pure-Latin identity only
+ *     Character set: A–Z, a–z, space. No numerals, punctuation, or CJK.
  */
 
+/* ── Carina Display Alpha (identity only) ─────────────────────────── */
 @font-face {
   font-family: 'Carina Display Alpha';
-  src: url('/fonts/CarinaDisplayAlpha-Regular.woff2') format('woff2');
+  src:
+    url('/fonts/CarinaDisplayAlpha-Regular.woff2') format('woff2'),
+    url('/fonts/CarinaDisplayAlpha-Regular.woff2') format('woff2-variations');
   font-style: normal;
   font-weight: 400;
   font-display: swap;
+  /* Latin letters only — keep synthesis off so missing glyphs don't fake-bold */
+  font-synthesis: none;
 }
 
+/* ── Geist Sans (variable) ────────────────────────────────────────── */
 @font-face {
   font-family: 'Geist Sans';
-  src: url('/fonts/geist-sans-latin-variable.woff2') format('woff2-variations');
+  src:
+    url('/fonts/geist-sans-latin-variable.woff2') format('woff2-variations'),
+    url('/fonts/geist-sans-latin-variable.woff2') format('woff2');
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
+  /* Latin core; CJK falls through the stack */
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+/* ── Geist Mono (variable) ────────────────────────────────────────── */
 @font-face {
   font-family: 'Geist Mono';
-  src: url('/fonts/geist-mono-latin-variable.woff2') format('woff2-variations');
+  src:
+    url('/fonts/geist-mono-latin-variable.woff2') format('woff2-variations'),
+    url('/fonts/geist-mono-latin-variable.woff2') format('woff2');
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
 }

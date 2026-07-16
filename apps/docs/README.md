@@ -72,6 +72,18 @@ pnpm sync-brand && pnpm build
 - Components must **not** read Starlight `--sl-*` (chrome mapping only).
 - Dark mode is **forced** via `ThemeProvider` / `ThemeSelect` overrides.
 
+### Typography roles (do not improvise)
+
+| Role | Family | Allowed use |
+| --- | --- | --- |
+| Brand identity | `Carina Display Alpha` | Large pure-Latin product name only (A–Z/a–z/space). Prefer logo SVG for small chrome. |
+| UI / headings / body | `Geist Sans` | All product UI, doc headings, nav, tables. Weight 400–600. |
+| Code / audit | `Geist Mono` | Code blocks, hashes, paths, CLI. |
+
+- `@theme --font-sans` / `--font-mono` use **concrete** stacks (required by starlight-tailwind).
+- CJK falls through to PingFang SC / Microsoft YaHei / Noto Sans SC.
+- See `src/styles/typography.css` and `docs/brand/design-system/DESIGN.md` §5.
+
 See the header comment in `src/styles/docs-tokens.css` for the full naming map.
 
 ### Information architecture

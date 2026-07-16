@@ -63,10 +63,19 @@
   --docs-cap-memory: var(--color-capability-memory);
   --docs-cap-observability: var(--color-capability-observability);
 
-  /* ── Typography ────────────────────────────────────────────────── */
-  --docs-font-brand: var(--font-family-brand);
-  --docs-font-sans: var(--font-family-sans);
-  --docs-font-mono: var(--font-family-mono);
+  /*
+   * Typography stacks (concrete — do not re-nest through broken bridges).
+   * Names match brand authority; fallbacks add CJK + system coverage.
+   * typography.css may reaffirm these for cascade priority.
+   */
+  --docs-font-brand: 'Carina Display Alpha', Georgia, 'Times New Roman', serif;
+  --docs-font-sans:
+    'Geist Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC',
+    'Noto Sans CJK SC', sans-serif;
+  --docs-font-mono:
+    'Geist Mono', ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
 
   /* ── Geometry ──────────────────────────────────────────────────── */
   --docs-radius-xs: var(--radius-xs);

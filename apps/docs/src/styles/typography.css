@@ -1,0 +1,210 @@
+/**
+ * Typography application layer — enforces brand DESIGN.md type roles.
+ *
+ * | Role        | Family              | Weight | Where                         |
+ * |-------------|---------------------|--------|-------------------------------|
+ * | brand       | Carina Display Alpha| 400    | Large pure-Latin identity only|
+ * | heading/UI  | Geist Sans          | 400–600| All product UI & doc headings |
+ * | body        | Geist Sans          | 400    | Prose, lists, tables          |
+ * | mono        | Geist Mono          | 400–500| Code, hashes, paths, CLI      |
+ *
+ * Never apply Display Alpha to: body, nav, controls, code, CJK, or text
+ * with punctuation / numerals.
+ */
+
+:root,
+[data-theme='dark'],
+[data-theme='carina-dark'] {
+  /*
+   * Docs font stacks (extend brand names with CJK + system fallbacks).
+   * Brand authority still owns the family *names*; we only append fallbacks.
+   */
+  --docs-font-brand: 'Carina Display Alpha', Georgia, 'Times New Roman', serif;
+  --docs-font-sans:
+    'Geist Sans',
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    'Noto Sans SC',
+    'Noto Sans CJK SC',
+    sans-serif;
+  --docs-font-mono:
+    'Geist Mono',
+    ui-monospace,
+    'SFMono-Regular',
+    'SF Mono',
+    Menlo,
+    Consolas,
+    'Liberation Mono',
+    monospace;
+
+  /* Type roles (sizes from brand scale) */
+  --docs-text-body: var(--text-body, 16px);
+  --docs-text-body-sm: var(--text-body-sm, 14px);
+  --docs-text-caption: var(--text-caption, 12px);
+  --docs-text-title-sm: var(--text-title-sm, 20px);
+  --docs-text-title: var(--text-title, 28px);
+  --docs-text-heading: var(--text-heading, 40px);
+}
+
+@layer base {
+  html {
+    font-family: var(--docs-font-sans);
+    font-optical-sizing: auto;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: var(--docs-font-sans);
+    font-weight: 400;
+    font-size: var(--docs-text-body);
+    line-height: 1.65;
+    letter-spacing: 0;
+  }
+
+  /* Product headings — Geist only, never Display Alpha */
+  :where(h1, h2, h3, h4, h5, h6) {
+    font-family: var(--docs-font-sans);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--docs-font-mono);
+    font-feature-settings: 'calt' 1, 'ss01' 0;
+    font-variant-ligatures: none;
+  }
+
+  /**
+   * Brand display — identity only.
+   * Use only for short pure Latin (A–Z / a–z / space), ideally ≥ 1.5rem.
+   * Prefer the wordmark SVG for chrome / chips / small marks.
+   */
+  .font-brand {
+    font-family: var(--docs-font-brand);
+    font-weight: 400;
+    font-style: normal;
+    letter-spacing: 0;
+    font-synthesis: none;
+    /* Avoid faux bold/italic when glyphs are missing */
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Large identity lockup (landing hero optional) */
+  .font-brand--display {
+    font-size: clamp(2.5rem, 8vw, 4.5rem);
+    line-height: 1;
+    font-weight: 400;
+  }
+
+  /* Telemetry / micro labels — Geist, not Display */
+  .text-label {
+    font-family: var(--docs-font-sans);
+    font-size: var(--docs-text-caption);
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+}
+
+/* After starlight-tailwind utilities: reaffirm docs stacks on --sl-* */
+@layer utilities {
+  :root,
+  [data-theme='dark'],
+  [data-theme='carina-dark'] {
+    --sl-font: var(--docs-font-sans);
+    --sl-font-mono: var(--docs-font-mono);
+    --sl-font-system: var(--docs-font-sans);
+    --sl-font-system-mono: var(--docs-font-mono);
+  }
+}
+
+@layer components {
+  /* Starlight doc chrome — force Geist stacks (override any residual system) */
+  .sidebar-content,
+  .right-sidebar,
+  header.header,
+  .pagination-links,
+  .sl-markdown-content,
+  starlight-toc,
+  site-search,
+  .pagefind-ui {
+    font-family: var(--docs-font-sans);
+  }
+
+  .sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
+  h1#_top {
+    font-family: var(--docs-font-sans) !important;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .sl-markdown-content h1,
+  h1#_top {
+    font-size: clamp(1.75rem, 3vw, 2.15rem);
+    line-height: 1.15;
+  }
+
+  .sl-markdown-content h2 {
+    font-size: clamp(1.25rem, 2vw, 1.45rem);
+    line-height: 1.25;
+    margin-top: 2em;
+  }
+
+  .sl-markdown-content h3 {
+    font-size: 1.1rem;
+    line-height: 1.3;
+  }
+
+  .sl-markdown-content p,
+  .sl-markdown-content li {
+    font-family: var(--docs-font-sans);
+    font-weight: 400;
+    line-height: 1.7;
+  }
+
+  .sl-markdown-content :not(pre) > code,
+  .expressive-code,
+  .expressive-code code,
+  .code-block,
+  .code-block__pre {
+    font-family: var(--docs-font-mono) !important;
+  }
+
+  /* Sidebar density + type */
+  .sidebar-content a,
+  .sidebar-content summary {
+    font-family: var(--docs-font-sans);
+    font-weight: 400;
+    font-size: 0.875rem;
+  }
+
+  .sidebar-content a[aria-current='page'],
+  .sidebar-content a[aria-current='true'] {
+    font-weight: 500;
+  }
+
+  .sidebar-content .group-label span,
+  .sidebar-content details > summary {
+    font-family: var(--docs-font-sans);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+  }
+
+  /* Site title uses logo image — ensure no Display font leaks onto alt text */
+  .site-title {
+    font-family: var(--docs-font-sans);
+    font-weight: 600;
+  }
+}

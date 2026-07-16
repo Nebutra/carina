@@ -51,12 +51,13 @@ export default defineConfig({
         },
       },
       customCss: [
-        // Order: fonts → brand authority → docs public API → Starlight map → Tailwind → UX
+        // Order: faces → brand tokens → docs API → Starlight map → Tailwind → type roles → UX
         './src/styles/fonts.css',
         './src/styles/brand/variables.css',
         './src/styles/docs-tokens.css',
         './src/styles/starlight-theme.css',
         './src/styles/global.css',
+        './src/styles/typography.css',
         './src/styles/ux.css',
       ],
       // Built-in Pagefind search (keyboard: /, Esc)

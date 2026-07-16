@@ -2,8 +2,10 @@
  * Tailwind v4 + Starlight cascade layer setup.
  * See: https://starlight.astro.build/guides/css-and-tailwind/
  *
- * Layer order:
- *   base → starlight → theme → components → utilities
+ * Font stacks are concrete lists here so Tailwind --font-sans and
+ * starlight-tailwind (--sl-font: var(--font-sans)) resolve reliably.
+ * Do not nest var(--font-family-*) inside @theme --font-* — it breaks
+ * the Starlight ↔ Tailwind bridge in some builds.
  */
 
 @layer base, starlight, theme, components, utilities;
@@ -12,21 +14,15 @@
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
 
-/**
- * Tailwind @theme bridge
- * Maps Carina semantic tokens into Tailwind utility classes.
- * Components should prefer token utilities (bg-background, text-accent, …)
- * over arbitrary hex values.
- */
 @theme {
   /* Surfaces */
-  --color-background: var(--docs-bg, var(--color-background-page));
+  --color-background: var(--color-background-page);
   --color-surface: var(--color-background-surface);
   --color-surface-raised: var(--color-background-raised);
   --color-selected: var(--color-background-selected);
 
   /* Text */
-  --color-foreground: var(--docs-fg, var(--color-text-primary));
+  --color-foreground: var(--color-text-primary);
   --color-muted: var(--color-text-secondary);
   --color-disabled: var(--color-text-disabled);
 
@@ -50,10 +46,18 @@
   --color-capability-memory: var(--color-capability-memory);
   --color-capability-observability: var(--color-capability-observability);
 
-  /* Fonts */
-  --font-brand: var(--font-family-brand);
-  --font-sans: var(--font-family-sans);
-  --font-mono: var(--font-family-mono);
+  /*
+   * Fonts — concrete stacks (required by @astrojs/starlight-tailwind).
+   * Keep family names identical to brand tokens; append OS/CJK fallbacks.
+   */
+  --font-brand: 'Carina Display Alpha', Georgia, 'Times New Roman', serif;
+  --font-sans:
+    'Geist Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC',
+    'Noto Sans CJK SC', sans-serif;
+  --font-mono:
+    'Geist Mono', ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
 
   /* Radii */
   --radius-xs: var(--radius-xs);
@@ -69,12 +73,9 @@
   --duration-medium: var(--duration-medium);
 }
 
-/**
- * Minimal base resets that must apply outside Starlight page shells
- * (custom landing layout, 404, etc.).
- */
 @layer base {
   html {
+    color-scheme: dark;
     scroll-behavior: smooth;
     scroll-padding-top: var(--docs-anchor-offset, 4.5rem);
   }
@@ -85,14 +86,6 @@
     }
   }
 
-  body {
-    font-family: var(--font-family-sans);
-    background-color: var(--docs-bg, var(--color-background-page));
-    color: var(--docs-fg, var(--color-text-primary));
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-
   ::selection {
     background: var(--docs-selection-bg);
     color: var(--docs-selection-fg);
@@ -101,12 +94,5 @@
   :focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
-  }
-
-  /* Brand display font only for short pure-Latin identity lines */
-  .font-brand {
-    font-family: var(--font-family-brand);
-    font-weight: var(--font-weight-regular);
-    letter-spacing: 0;
   }
 }
