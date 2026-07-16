@@ -71,6 +71,11 @@ import QuickStart from '../../../components/landing/QuickStart.astro';
 <CodePreview
   heading="数秒内启动受治理的会话"
   description="连接本地 daemon、打开会话，每次工具调用都会进入策略门控与哈希链审计。"
+  bullets={[
+    '本地优先 —— 权威始终在你的机器上',
+    '策略门控工具 —— 副作用发生前先审批',
+    '事务化补丁 —— 坏的 Agent 修改可回滚',
+  ]}
   code={`# 安装
 curl -fsSL https://get.carina.dev | sh
 
@@ -88,6 +93,7 @@ carina audit tail --last 1`}
 
 <QuickStart
   heading="快速开始"
+  ctaLabel="查看指南"
   cards={[
     {
       step: '01',

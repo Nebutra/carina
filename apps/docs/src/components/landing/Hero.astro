@@ -144,6 +144,9 @@ const {
     letter-spacing: -0.025em;
     color: var(--docs-fg);
     text-wrap: balance;
+    /* CJK: break at spaces/punctuation, never inside a word like 执行 */
+    word-break: keep-all;
+    line-break: strict;
   }
 
   .hero__subtitle {

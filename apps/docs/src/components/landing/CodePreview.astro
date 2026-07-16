@@ -4,6 +4,7 @@ import CodeBlock from '../ui/CodeBlock.astro';
 interface Props {
   heading?: string;
   description?: string;
+  bullets?: string[];
   code: string;
   lang?: string;
   title?: string;
@@ -12,6 +13,11 @@ interface Props {
 const {
   heading = 'Start a governed session in seconds',
   description = 'Attach to the local daemon, open a session, and every tool call lands on a policy gate with a hash-chained audit trail.',
+  bullets = [
+    'Local-first — your machine stays the authority',
+    'Policy-gated tools — approvals before side effects',
+    'Transactional patches — roll back bad agent edits',
+  ],
   code,
   lang = 'bash',
   title = 'terminal',
@@ -24,9 +30,7 @@ const {
       <h2 class="code-preview__heading">{heading}</h2>
       <p class="code-preview__desc">{description}</p>
       <ul class="code-preview__list">
-        <li>Local-first — your machine stays the authority</li>
-        <li>Policy-gated tools — approvals before side effects</li>
-        <li>Transactional patches — roll back bad agent edits</li>
+        {bullets.map((item) => <li>{item}</li>)}
       </ul>
     </div>
     <div class="code-preview__panel">

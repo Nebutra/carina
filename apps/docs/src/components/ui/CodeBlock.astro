@@ -86,17 +86,21 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
 </script>
 
 <style>
+  /*
+   * Code cards are ALWAYS dark (matches Expressive Code / Mintlify), so all
+   * chrome reads from dark primitives, not theme-switching semantic tokens.
+   */
   .code-block {
     margin: var(--spacing-6) 0;
-    border: 1px solid var(--docs-code-border);
-    border-radius: var(--docs-panel-radius);
-    background: var(--docs-code-bg);
+    border: 1px solid var(--carina-border-subtle);
+    border-radius: var(--docs-radius-xl);
+    background: var(--carina-surface);
     overflow: hidden;
     transition: border-color var(--docs-transition);
   }
 
   .code-block:hover {
-    border-color: var(--docs-border);
+    border-color: var(--carina-border);
   }
 
   .code-block__chrome {
@@ -105,8 +109,8 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
     justify-content: space-between;
     gap: var(--spacing-3);
     padding: var(--spacing-2) var(--spacing-3);
-    border-bottom: 1px solid var(--docs-border-subtle);
-    background: var(--docs-bg-surface);
+    border-bottom: 1px solid var(--carina-border-subtle);
+    background: var(--carina-surface-raised);
   }
 
   .code-block__meta {
@@ -117,7 +121,7 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
   }
 
   .code-block__title {
-    color: var(--docs-fg);
+    color: var(--carina-starlight);
     font-size: var(--text-caption);
     font-weight: var(--font-weight-medium);
     overflow: hidden;
@@ -128,16 +132,16 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
   .code-block__lang {
     font-family: var(--docs-font-mono);
     font-size: var(--text-micro);
-    color: var(--docs-fg-subtle);
+    color: var(--carina-disabled);
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
 
   .code-block__copy {
     appearance: none;
-    border: 1px solid var(--docs-border-subtle);
+    border: 1px solid var(--carina-border);
     background: transparent;
-    color: var(--docs-fg-muted);
+    color: var(--carina-dust);
     border-radius: var(--docs-radius-sm);
     padding: 0.2rem 0.55rem;
     font-size: var(--text-caption);
@@ -150,9 +154,9 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
   }
 
   .code-block__copy:hover {
-    color: var(--docs-fg);
-    border-color: var(--docs-border);
-    background: var(--docs-bg-raised);
+    color: var(--carina-starlight);
+    border-color: var(--carina-border);
+    background: var(--carina-surface);
   }
 
   .code-block__copy:focus-visible {
@@ -172,7 +176,7 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
     font-family: var(--docs-font-mono);
     font-size: var(--text-body-sm);
     line-height: 1.6;
-    color: var(--docs-fg);
+    color: var(--carina-starlight);
     tab-size: 2;
   }
 
@@ -184,7 +188,7 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
 
   .code-block__gutter {
     text-align: right;
-    color: var(--docs-fg-subtle);
+    color: var(--carina-disabled);
     user-select: none;
   }
 

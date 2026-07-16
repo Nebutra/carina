@@ -11,14 +11,31 @@
  * subtitle, so every page opens with the title/summary pair instead of a
  * bare heading.
  */
-const { entry } = Astro.locals.starlightRoute;
+const { entry, sidebar } = Astro.locals.starlightRoute;
 const isSplash = entry.data.template === 'splash';
 const description = entry.data.description;
+
+// Eyebrow: label of the sidebar group containing the current page
+type SidebarEntry =
+  | { type: 'link'; href: string; label: string; isCurrent: boolean }
+  | { type: 'group'; label: string; entries: SidebarEntry[] };
+
+function containsCurrent(entries: SidebarEntry[]): boolean {
+  return entries.some((e) =>
+    e.type === 'link' ? e.isCurrent : containsCurrent(e.entries),
+  );
+}
+
+const currentGroup = (sidebar as SidebarEntry[]).find(
+  (e) => e.type === 'group' && containsCurrent(e.entries),
+);
+const eyebrow = currentGroup?.label;
 ---
 
 {
   isSplash ? null : (
     <div class="page-title">
+      {eyebrow && <p class="page-title__eyebrow">{eyebrow}</p>}
       <h1 id="_top">{entry.data.title}</h1>
       {description && <p class="page-title__subtitle">{description}</p>}
     </div>
@@ -26,6 +43,15 @@ const description = entry.data.description;
 }
 
 <style>
+  .page-title__eyebrow {
+    margin: 0 0 var(--spacing-2);
+    font-size: var(--text-caption);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--docs-accent);
+  }
+
   .page-title h1 {
     margin: 0;
     font-size: clamp(1.75rem, 3vw, 2.1rem);

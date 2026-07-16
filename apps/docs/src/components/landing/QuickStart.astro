@@ -8,11 +8,13 @@ interface Card {
 
 interface Props {
   heading?: string;
+  ctaLabel?: string;
   cards: Card[];
 }
 
 const {
   heading = 'Quick start',
+  ctaLabel = 'Open guide',
   cards,
 } = Astro.props;
 ---
@@ -28,7 +30,7 @@ const {
             <h3 class="qs-card__title">{card.title}</h3>
             <p class="qs-card__desc">{card.description}</p>
             <span class="qs-card__cta">
-              Open guide
+              {ctaLabel}
               <span aria-hidden="true">→</span>
             </span>
           </a>

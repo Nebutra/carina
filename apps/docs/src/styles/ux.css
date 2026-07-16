@@ -33,6 +33,11 @@
   }
 
   /* ── Header ──────────────────────────────────────────────────────── */
+  /*
+   * Two-row header (Claude Code Docs / Mintlify anatomy):
+   * row 1 = brand + search + controls, row 2 = section tabs.
+   * --sl-nav-height grows on ≥md so the fixed layout offsets both rows.
+   */
   header.header {
     background-color: var(--docs-bg-nav) !important;
     backdrop-filter: blur(14px) saturate(1.25);
@@ -42,6 +47,22 @@
       border-color var(--docs-transition),
       background-color var(--docs-transition),
       box-shadow var(--docs-transition);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0;
+    padding-block: 0;
+  }
+
+  header.header > .header {
+    height: 3.5rem;
+    flex-shrink: 0;
+  }
+
+  @media (min-width: 50rem) {
+    :root {
+      --sl-nav-height: 5.75rem;
+    }
   }
 
   html[data-scrolled='true'] header.header {
@@ -148,25 +169,36 @@
     text-overflow: unset;
   }
 
-  /* ── Sidebar density ─────────────────────────────────────────────── */
-  nav.sidebar {
-    border-inline-end: 1px solid var(--docs-border-subtle);
+  /* ── Sidebar (Claude Code Docs anatomy) ──────────────────────────── */
+  /* Open canvas: no divider, no indent rails, no chevrons */
+  nav.sidebar,
+  nav.sidebar .sidebar-pane {
+    border-inline-end: 0;
+    background: transparent;
   }
 
   .sidebar-content {
-    padding-block: var(--spacing-3);
+    padding-block: var(--spacing-5);
     font-size: var(--text-body-sm);
   }
 
   .sidebar-content li {
     margin-block: 0;
+    border-inline-start: 0;
+    padding-inline-start: 0;
+  }
+
+  .sidebar-content ul ul {
+    border-inline-start: 0;
+    margin-inline-start: 0;
+    padding-inline-start: 0;
   }
 
   .sidebar-content a,
   .sidebar-content summary {
     border-radius: var(--docs-radius-md);
-    padding: var(--docs-sidebar-link-py) var(--docs-sidebar-link-px);
-    line-height: 1.4;
+    padding: 0.34rem 0.65rem;
+    line-height: 1.45;
     color: var(--docs-fg-muted);
     transition:
       color var(--docs-transition),
@@ -174,63 +206,63 @@
       border-color var(--docs-transition);
   }
 
-  /* Mintlify-style active state: full rounded pill, no edge bar */
+  /* Active page: neutral gray pill with primary ink (reference look) */
   .sidebar-content a[aria-current='page'],
   .sidebar-content a[aria-current='true'] {
-    color: var(--docs-accent) !important;
-    background-color: var(--docs-bg-selected) !important;
+    color: var(--docs-fg) !important;
+    background-color: var(--docs-bg-raised) !important;
     font-weight: var(--font-weight-medium);
   }
 
   .sidebar-content a:hover:not([aria-current='page']):not([aria-current='true']) {
     color: var(--docs-fg);
-    background-color: color-mix(in srgb, var(--docs-bg-raised) 80%, transparent);
+    background-color: color-mix(in srgb, var(--docs-bg-raised) 55%, transparent);
   }
 
+  /* Group headings: bold sentence-case labels, not small caps */
   .sidebar-content .group-label span,
   .sidebar-content details > summary {
-    color: var(--docs-fg-subtle);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    font-size: 11px;
+    color: var(--docs-fg);
+    letter-spacing: 0;
+    text-transform: none;
+    font-size: var(--text-body-sm);
     font-weight: var(--font-weight-semibold);
-    padding-block: 0.5rem 0.3rem;
+    padding-block: 0.4rem;
   }
 
   .sidebar-content details > summary:hover {
-    color: var(--docs-fg-muted);
+    color: var(--docs-fg);
     background: transparent;
   }
 
   .sidebar-content ul {
-    gap: var(--docs-sidebar-group-gap);
+    gap: 1px;
   }
 
   /* Clear whitespace rhythm between groups */
   .sidebar-content details + details,
   .sidebar-content > ul > li + li {
-    margin-top: var(--spacing-4);
+    margin-top: var(--spacing-6);
   }
 
-  /* Hide the caret chevron noise on top-level groups; keep affordance on hover */
+  /* No chevrons — groups stay open, headings read as labels */
   .sidebar-content summary svg.caret {
-    opacity: 0.55;
-    transition: opacity var(--docs-transition), transform var(--docs-transition-medium);
-  }
-
-  .sidebar-content summary:hover svg.caret {
-    opacity: 1;
+    display: none;
   }
 
   /* ── Table of contents ───────────────────────────────────────────── */
-  /* "On this page" heading as a quiet small-caps label (Mintlify) */
+  .right-sidebar {
+    border-inline-start: 0;
+  }
+
+  /* "On this page" as a plain sentence-case heading (reference look) */
   .right-sidebar-panel h2 {
-    font-size: 11px;
+    font-size: var(--text-body-sm);
     font-weight: var(--font-weight-semibold);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--docs-fg-subtle);
-    margin-bottom: var(--spacing-2);
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--docs-fg);
+    margin-bottom: var(--spacing-3);
   }
 
   starlight-toc a {

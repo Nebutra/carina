@@ -94,16 +94,30 @@
   --docs-panel-radius: var(--radius-lg);
   --docs-control-h: var(--size-control-default);
   --docs-control-h-sm: var(--size-control-compact);
-  /* Docs chrome slightly taller than product 56px so a large lockup fits */
-  --docs-nav-height: 64px;
-  /* Aggressive lockup size — dominant brand mark in header */
-  --docs-logo-height: 2.75rem;
+  /*
+   * Header anatomy (Mintlify-style two-row):
+   *   row 1 brand  = --docs-nav-row-height
+   *   row 2 tabs   = --docs-tabs-height  (≥md only)
+   *   --docs-nav-height = combined sticky offset (overridden in CSS at md+)
+   */
+  --docs-nav-row-height: 3.5rem; /* 56px */
+  --docs-tabs-height: 2.375rem; /* 38px */
+  --docs-nav-height: var(--docs-nav-row-height);
+  /* Lockup legible without dominating the thin brand row */
+  --docs-logo-height: 2.25rem; /* 36px */
+  --docs-search-max: 28rem;
   --docs-page-max: var(--layout-page-max);
   --docs-reading-max: var(--layout-reading-max);
-  --docs-sidebar-width: 15.5rem;
-  --docs-sidebar-link-py: 0.28rem;
-  --docs-sidebar-link-px: 0.55rem;
-  --docs-sidebar-group-gap: 0.15rem;
+  --docs-sidebar-width: 15.75rem;
+  --docs-sidebar-link-py: 0.34rem;
+  --docs-sidebar-link-px: 0.65rem;
+  --docs-sidebar-group-gap: 1px;
+
+  /* Elevation (light uses soft shadow; dark stays border-first) */
+  --docs-elev-1: 0 0 0 1px var(--docs-border-subtle);
+  --docs-elev-2: 0 0 0 1px var(--docs-border);
+  --docs-elev-dialog: 0 0 0 1px var(--docs-border),
+    0 16px 48px color-mix(in srgb, var(--docs-bg) 55%, transparent);
 
   /* ── Motion ────────────────────────────────────────────────────── */
   --docs-duration-fast: var(--duration-fast);
@@ -124,7 +138,7 @@
   --docs-scroll-track: transparent;
   --docs-selection-bg: color-mix(in srgb, var(--color-accent) 32%, transparent);
   --docs-selection-fg: var(--color-text-primary);
-  --docs-anchor-offset: calc(var(--layout-nav-height) + var(--spacing-4));
+  --docs-anchor-offset: calc(var(--docs-nav-height) + var(--spacing-4));
 
   /* Hero / landing motion (opt-out via prefers-reduced-motion in ux.css) */
   --docs-hero-stagger: 70ms;
@@ -135,4 +149,14 @@
 [data-theme='light'],
 [data-theme='carina-light'] {
   --docs-on-accent: #fffdf8;
+  --docs-bg-nav: color-mix(in srgb, var(--color-background-page) 82%, transparent);
+  --docs-elev-1:
+    0 1px 2px rgb(24 32 35 / 0.04),
+    0 0 0 1px var(--docs-border-subtle);
+  --docs-elev-2:
+    0 4px 16px rgb(24 32 35 / 0.06),
+    0 0 0 1px var(--docs-border-subtle);
+  --docs-elev-dialog:
+    0 24px 64px rgb(24 32 35 / 0.14),
+    0 0 0 1px var(--docs-border-subtle);
 }

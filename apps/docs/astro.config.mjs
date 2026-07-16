@@ -24,6 +24,8 @@ export default defineConfig({
         'Local-first AI agent runtime with policy, hash-chained audit, and transactional rollback.',
       components: {
         Head: './src/components/Head.astro',
+        // Default header row + Mintlify-style section tabs strip
+        Header: './src/components/Header.astro',
         // Splash/landing: hide default title (Hero owns hierarchy)
         PageTitle: './src/components/PageTitle.astro',
       },
