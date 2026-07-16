@@ -400,6 +400,16 @@ func TestTUILocaleRejectsUnsupportedExplicitValues(t *testing.T) {
 	scrubCarinaEnv(t)
 	home := t.TempDir()
 	writeConfig(t, home, `{"tui_locale":"zh-TW"}`)
+	cfg, err := Load(home, t.TempDir())
+	if err != nil {
+		t.Fatalf("zh-TW tui_locale should be accepted as zh-Hant, got %v", err)
+	}
+	// Config stores the raw value; CanonicalLocale is applied by launchers.
+	if cfg.TUILocale != "zh-TW" {
+		t.Fatalf("tui_locale = %q, want zh-TW raw config value", cfg.TUILocale)
+	}
+	// Unsupported language still fails.
+	writeConfig(t, home, `{"tui_locale":"de-DE"}`)
 	if _, err := Load(home, t.TempDir()); !errors.Is(err, ErrInvalidTUILocale) {
 		t.Fatal("unsupported config tui_locale must fail")
 	}

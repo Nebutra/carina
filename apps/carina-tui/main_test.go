@@ -63,8 +63,8 @@ func TestResolveTUILocaleRejectsExplicitUnsupportedValues(t *testing.T) {
 	for _, key := range []string{"CARINA_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
 		t.Setenv(key, "")
 	}
-	if _, err := resolveTUILocale("zh-TW", ""); err == nil {
-		t.Fatal("unsupported --locale must fail")
+	if got, err := resolveTUILocale("zh-TW", ""); err != nil || got != "zh-Hant" {
+		t.Fatalf("zh-TW locale = %q, %v; want zh-Hant", got, err)
 	}
 	t.Setenv("CARINA_LOCALE", "de-DE")
 	if _, err := resolveTUILocale("", ""); err == nil {
@@ -136,11 +136,12 @@ func TestLocalePrescanDoesNotBypassFormalParseErrors(t *testing.T) {
 		t.Fatalf("missing locale value did not reach flag.Parse: %q", missing.String())
 	}
 
-	var invalid strings.Builder
-	if got := run([]string{"--locale", "zh-Hant", "--help"}, &invalid); got != 2 {
-		t.Fatalf("invalid locale before help exit = %d, want usage", got)
+	var hantHelp strings.Builder
+	if got := run([]string{"--locale", "zh-Hant", "--help"}, &hantHelp); got != 2 {
+		t.Fatalf("zh-Hant help exit = %d, want usage", got)
 	}
-	if !strings.Contains(invalid.String(), "Locale selection is invalid") || strings.Contains(invalid.String(), "Usage:") {
-		t.Fatalf("invalid locale was treated as help instead of a parse error: %q", invalid.String())
+	// Traditional help should not be English Usage.
+	if strings.Contains(hantHelp.String(), "Carina daemon Unix socket") {
+		t.Fatalf("zh-Hant help leaked English: %q", hantHelp.String())
 	}
 }

@@ -156,10 +156,11 @@ Homebrew 安装会交回 `brew` 管理，npm/pnpm 安装会交回对应包管理
 - Agent 可用 `ask_user`：**带 2–6 选项** 的结构化选择题，或**省略 options**
   的自由文本问法
 
-界面语言：英文、简体中文（`zh-CN`/`zh-Hans`，运行时键 `zh`）、日、韩、西、法。
-**繁体中文（`zh-Hant`/`zh-TW`/`zh-HK`）尚未交付独立文案**——系统检测未支持
-语言时静默回落英文；显式指定不支持的 locale 会 fail-fast，不会静默换成另一种
-语言。
+界面语言：英文、简体中文（`zh-CN`/`zh-Hans`，运行时键 `zh`）、**繁体中文**
+（`zh-Hant`/`zh-TW`/`zh-HK`/`zh-MO`，运行时键 `zh-Hant`）、日、韩、西、法。
+繁体文案由简体目录经 OpenCC 兼容转换派生（`scripts/gen_zh_hant.py` 可再生）；
+简体 `zh` 仍是源文案真相。系统检测未支持语言时静默回落英文；显式指定不支持的
+locale 会 fail-fast。
 
 ## 从源码快速开始
 

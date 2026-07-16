@@ -199,12 +199,15 @@ the terminal's normal buffer, use `carina-tui --no-alt-screen`, or set
 The accepted values are `auto`, `always`, and `never`.
 
 The TUI ships authored copy for English, Simplified Chinese
-(`zh-CN`/`zh-Hans`, runtime key `zh`), Japanese, Korean, Spanish, and French.
-Select it with `carina-tui --locale`, `CARINA_LOCALE`, `tui_locale` in the
-normal config cascade, or `CARINA_TUI_LOCALE`; the precedence is flag,
-`CARINA_LOCALE`, config, then `LC_ALL`/`LC_MESSAGES`/`LANG`. Traditional
-Chinese (`zh-Hant`, `zh-TW`, `zh-HK`) is not yet shipped. System detection for
-an unsupported locale quietly falls back to English, while an unsupported
+(`zh-CN`/`zh-Hans`, runtime key `zh`), Traditional Chinese (`zh-Hant` /
+`zh-TW` / `zh-HK` / `zh-MO`, runtime key `zh-Hant`), Japanese, Korean,
+Spanish, and French. Traditional catalogs are derived from Simplified with
+OpenCC-compatible conversion (regenerate via `scripts/gen_zh_hant.py`); the
+Simplified `zh` strings remain the source of truth. Select locale with
+`carina-tui --locale`, `CARINA_LOCALE`, `tui_locale` in the normal config
+cascade, or `CARINA_TUI_LOCALE`; the precedence is flag, `CARINA_LOCALE`,
+config, then `LC_ALL`/`LC_MESSAGES`/`LANG`. System detection for an
+unsupported locale quietly falls back to English, while an unsupported
 explicit flag, environment value, or config value fails fast instead of
 silently choosing a different language.
 

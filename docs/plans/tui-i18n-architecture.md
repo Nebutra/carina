@@ -2,9 +2,12 @@
 
 Status: implementation contract, 2026-07-14
 
-Carina's first product locales are `en`, `zh`, `ja`, `ko`, `es`, and `fr`.
-The runtime key `zh` specifically represents Simplified Chinese (`zh-Hans` /
-`zh-CN`), not a region-neutral catalog.
+Carina's product locales are `en`, `zh`, `zh-Hant`, `ja`, `ko`, `es`, and `fr`.
+The runtime key `zh` represents Simplified Chinese (`zh-Hans` / `zh-CN`).
+The runtime key `zh-Hant` represents Traditional Chinese (`zh-Hant` / `zh-TW` /
+`zh-HK` / `zh-MO`), **derived** from the Simplified catalogs via
+OpenCC-compatible conversion (`scripts/gen_zh_hant.py`). Simplified remains
+the authored source of truth.
 Locale support is not a translation pass over rendered terminal strings. It is
 a typed copy boundary between language-neutral runtime state and the TUI.
 
@@ -32,22 +35,22 @@ The client resolves locale once at startup using this order:
 5. `en`.
 
 BCP 47-style language tags and POSIX locale forms normalize to the supported
-base language. Regional tags such as `es-MX`, `fr-CA`, `ja-JP`, and
+runtime keys. Regional tags such as `es-MX`, `fr-CA`, `ja-JP`, and
 `ko-KR` use their supported base catalog. Bare `zh`, `zh-CN`, `zh-SG`, and
 tags carrying `zh-Hans` use the `zh` catalog. Traditional Chinese tags
-(`zh-Hant`, `zh-TW`, `zh-HK`, and `zh-MO`) are not yet shipped and honestly
-fall back to English instead of displaying Simplified Chinese. Unsupported
-system locales fall back to English; unsupported explicit `--locale`,
-`CARINA_LOCALE`, or `tui_locale` values fail fast. Missing entries must never
-render an empty string or a message id.
+(`zh-Hant`, `zh-TW`, `zh-HK`, and `zh-MO`) use the `zh-Hant` catalog.
+Unsupported system locales fall back to English; unsupported explicit
+`--locale`, `CARINA_LOCALE`, or `tui_locale` values fail fast. Missing entries
+must never render an empty string or a message id.
 
 ## Catalog Contract
 
 - Call sites use stable message ids and named placeholders. They do not build
   sentences by concatenating translated fragments.
-- Every id has complete coverage in all six supported locales. CI rejects
-  missing locales, missing placeholders, undeclared placeholders, terminal
-  controls, and register-specific brand violations.
+- Every id has complete coverage in all supported locales (including
+  derived `zh-Hant`). CI rejects missing locales, missing placeholders,
+  undeclared placeholders, terminal controls, and register-specific brand
+  violations.
 - Count-sensitive messages use locale-aware variants. The implementation
   follows CLDR categories rather than assuming every language has an English
   singular/plural split.

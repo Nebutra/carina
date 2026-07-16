@@ -106,8 +106,58 @@ func loadRegistry() *poolRegistry {
 	r.version = r.ambient.Version
 	r.governed = governed
 	r.degrade = degrade
+	r.deriveTraditionalChinese()
 	r.validateLocaleParity()
 	return r
+}
+
+// deriveTraditionalChinese fills zh-Hant from authored zh (Simplified) using
+// the generated OpenCC-compatible conversion tables. Call before locale parity
+// validation so Traditional is a first-class product locale.
+func (r *poolRegistry) deriveTraditionalChinese() {
+	if zhContexts, ok := r.ambient.Locales["zh"]; ok {
+		hant := make(map[string][]string, len(zhContexts))
+		for context, lines := range zhContexts {
+			hant[context] = convertStringSlice(lines)
+		}
+		r.ambient.Locales["zh-Hant"] = hant
+		for _, lines := range hant {
+			for _, line := range lines {
+				r.ambientIndex[line] = true
+			}
+		}
+	}
+	for i := range r.ambient.Overrides {
+		if lines, ok := r.ambient.Overrides[i].Locales["zh"]; ok {
+			converted := convertStringSlice(lines)
+			r.ambient.Overrides[i].Locales["zh-Hant"] = converted
+			for _, line := range converted {
+				r.ambientIndex[line] = true
+			}
+		}
+	}
+	for _, tmpl := range r.governed {
+		if s := tmpl.Text["zh"]; s != "" {
+			t := ToTraditional(s)
+			tmpl.Text["zh-Hant"] = t
+			tmpl.res = append(tmpl.res, templateShape(t, tmpl.Placeholders))
+		}
+	}
+	for _, tmpl := range r.degrade {
+		if s := tmpl.Text["zh"]; s != "" {
+			t := ToTraditional(s)
+			tmpl.Text["zh-Hant"] = t
+			tmpl.res = append(tmpl.res, templateShape(t, tmpl.Placeholders))
+		}
+	}
+}
+
+func convertStringSlice(in []string) []string {
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = ToTraditional(s)
+	}
+	return out
 }
 
 func validatePoolVersions(ambient, governed, degrade int) error {

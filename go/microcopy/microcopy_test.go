@@ -40,8 +40,8 @@ func TestLoadingDeterministic(t *testing.T) {
 
 func TestSupportedLocalesReturnsSnapshot(t *testing.T) {
 	first := SupportedLocales()
-	if len(first) != 6 {
-		t.Fatalf("supported locale count = %d, want 6", len(first))
+	if len(first) != 7 {
+		t.Fatalf("supported locale count = %d, want 7 (includes zh-Hant)", len(first))
 	}
 	first[0] = "mutated"
 	if got := SupportedLocales()[0]; got != "en" {
@@ -113,9 +113,9 @@ func TestLoadingLocaleNormalization(t *testing.T) {
 		{"zh-CN", "zh"},
 		{"zh-Hans", "zh"},
 		{"zh_Hans_CN.UTF-8", "zh"},
-		{"zh_TW.UTF-8", "en"},
-		{"ZH_HK", "en"},
-		{"zh-Hant", "en"},
+		{"zh_TW.UTF-8", "zh-Hant"},
+		{"ZH_HK", "zh-Hant"},
+		{"zh-Hant", "zh-Hant"},
 		{"en", "en"},
 		{"en_US.UTF-8", "en"},
 		{"ja_JP", "ja"},

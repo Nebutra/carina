@@ -664,9 +664,7 @@ func TestZhDegradeBanner(t *testing.T) {
 	}
 }
 
-// Simplified Chinese variants use the zh catalog. Traditional Chinese is not
-// yet authored and must fall back to complete English copy rather than mixing
-// a Simplified Chinese banner with an English reconnect suffix.
+// Simplified Chinese variants use the zh catalog; Traditional uses zh-Hant.
 func TestZhVariantDegradeBanner(t *testing.T) {
 	for _, loc := range []string{"zh-CN", "zh-Hans", "zh_CN.UTF-8"} {
 		t.Run(loc, func(t *testing.T) {
@@ -683,13 +681,19 @@ func TestZhVariantDegradeBanner(t *testing.T) {
 		})
 	}
 	for _, loc := range []string{"zh_TW.UTF-8", "ZH_HK", "zh-Hant"} {
-		t.Run(loc+"_fallback", func(t *testing.T) {
+		t.Run(loc+"_hant", func(t *testing.T) {
 			clock := &testClock{now: time.Unix(0, 0)}
 			m := New(Options{Theme: theme.New(theme.Mono), Locale: loc, Socket: "/tmp/s.sock", Now: func() time.Time { return clock.now }})
 			m.Update(ReconnectingMsg{Attempt: 2})
 			b := m.banner()
-			if !strings.Contains(b, "Daemon unreachable") || !strings.Contains(b, "reconnecting") || strings.Contains(b, "无法连接守护进程") {
-				t.Errorf("banner for unsupported locale %q = %q, want coherent English fallback", loc, b)
+			if !strings.Contains(b, "無法連接守護進程") {
+				t.Errorf("banner for locale %q = %q, want zh-Hant degrade text", loc, b)
+			}
+			if !strings.Contains(b, "正在重連") {
+				t.Errorf("banner for locale %q = %q, want zh-Hant reconnect suffix", loc, b)
+			}
+			if strings.Contains(b, "Daemon unreachable") {
+				t.Errorf("banner for Traditional locale %q fell back to English: %q", loc, b)
 			}
 		})
 	}

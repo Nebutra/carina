@@ -15,26 +15,28 @@ import (
 type Locale string
 
 const (
-	LocaleEnglish  Locale = "en"
-	LocaleChinese  Locale = "zh"
-	LocaleJapanese Locale = "ja"
-	LocaleKorean   Locale = "ko"
-	LocaleSpanish  Locale = "es"
-	LocaleFrench   Locale = "fr"
+	LocaleEnglish       Locale = "en"
+	LocaleChinese       Locale = "zh"      // Simplified (zh-Hans / zh-CN)
+	LocaleChineseHant   Locale = "zh-Hant" // Traditional (zh-Hant / zh-TW / zh-HK)
+	LocaleJapanese      Locale = "ja"
+	LocaleKorean        Locale = "ko"
+	LocaleSpanish       Locale = "es"
+	LocaleFrench        Locale = "fr"
 )
 
 var supportedLocales = []Locale{
-	LocaleEnglish, LocaleChinese, LocaleJapanese,
+	LocaleEnglish, LocaleChinese, LocaleChineseHant, LocaleJapanese,
 	LocaleKorean, LocaleSpanish, LocaleFrench,
 }
 
 var unavailableMessage = map[Locale]string{
-	LocaleEnglish:  "Carina message unavailable",
-	LocaleChinese:  "Carina 消息暂不可用",
-	LocaleJapanese: "Carina のメッセージを表示できません",
-	LocaleKorean:   "Carina 메시지를 표시할 수 없습니다",
-	LocaleSpanish:  "Mensaje de Carina no disponible",
-	LocaleFrench:   "Message Carina indisponible",
+	LocaleEnglish:     "Carina message unavailable",
+	LocaleChinese:     "Carina 消息暂不可用",
+	LocaleChineseHant: "Carina 訊息暫不可用",
+	LocaleJapanese:    "Carina のメッセージを表示できません",
+	LocaleKorean:      "Carina 메시지를 표시할 수 없습니다",
+	LocaleSpanish:     "Mensaje de Carina no disponible",
+	LocaleFrench:      "Message Carina indisponible",
 }
 
 // MessageID is intentionally closed over the constants in i18n_catalog.go.
@@ -80,6 +82,11 @@ func buildCatalog() map[Locale]map[MessageID]messageTemplate {
 			LocaleSpanish:  {One: row.ESOne, Other: row.ES},
 			LocaleFrench:   {One: row.FROne, Other: row.FR},
 		}
+		// Traditional Chinese is derived from Simplified (source of truth).
+		values[LocaleChineseHant] = messageTemplate{
+			One:   microcopy.ToTraditional(row.ZHOne),
+			Other: microcopy.ToTraditional(row.ZH),
+		}
 		for locale, value := range values {
 			out[locale][row.ID] = value
 		}
@@ -92,7 +99,7 @@ func buildCatalog() map[Locale]map[MessageID]messageTemplate {
 func normalizeUILocale(raw string) Locale {
 	normalized := microcopy.NormalizeLocale(raw)
 	switch Locale(normalized) {
-	case LocaleChinese, LocaleJapanese, LocaleKorean, LocaleSpanish, LocaleFrench:
+	case LocaleChinese, LocaleChineseHant, LocaleJapanese, LocaleKorean, LocaleSpanish, LocaleFrench:
 		return Locale(normalized)
 	default:
 		return LocaleEnglish

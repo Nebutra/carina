@@ -88,8 +88,8 @@ func TestResolveBareTUILocaleRejectsExplicitUnsupportedValues(t *testing.T) {
 	for _, key := range []string{"CARINA_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
 		t.Setenv(key, "")
 	}
-	if _, err := resolveBareTUILocale("zh-Hant"); err == nil {
-		t.Fatal("unsupported tui_locale must fail")
+	if got, err := resolveBareTUILocale("zh-Hant"); err != nil || got != "zh-Hant" {
+		t.Fatalf("zh-Hant locale = %q, %v; want zh-Hant", got, err)
 	}
 	t.Setenv("CARINA_LOCALE", "de-DE")
 	if _, err := resolveBareTUILocale(""); err == nil {

@@ -82,21 +82,23 @@ var plainLoading = map[string]string{
 }
 
 var governedFallback = map[string]string{
-	"en": "This action needs review. No action was taken.",
-	"zh": "此操作需要审查。尚未执行任何操作。",
-	"ja": "この操作には確認が必要です。操作は実行されていません。",
-	"ko": "이 작업은 검토가 필요합니다. 아무 작업도 실행되지 않았습니다.",
-	"es": "Esta acción requiere revisión. No se ejecutó ninguna acción.",
-	"fr": "Cette action doit être examinée. Aucune action n’a été exécutée.",
+	"en":      "This action needs review. No action was taken.",
+	"zh":      "此操作需要审查。尚未执行任何操作。",
+	"zh-Hant": "此操作需要審查。尚未執行任何操作。",
+	"ja":      "この操作には確認が必要です。操作は実行されていません。",
+	"ko":      "이 작업은 검토가 필요합니다. 아무 작업도 실행되지 않았습니다.",
+	"es":      "Esta acción requiere revisión. No se ejecutó ninguna acción.",
+	"fr":      "Cette action doit être examinée. Aucune action n’a été exécutée.",
 }
 
 var degradeFallback = map[string]string{
-	"en": "The operation did not complete. Fix: carina doctor",
-	"zh": "操作未完成。修复：carina doctor",
-	"ja": "操作は完了しませんでした。修正方法: carina doctor",
-	"ko": "작업이 완료되지 않았습니다. 수정 방법: carina doctor",
-	"es": "La operación no se completó. Solución: carina doctor",
-	"fr": "L’opération n’a pas abouti. Correctif : carina doctor",
+	"en":      "The operation did not complete. Fix: carina doctor",
+	"zh":      "操作未完成。修复：carina doctor",
+	"zh-Hant": "操作未完成。修復：carina doctor",
+	"ja":      "操作は完了しませんでした。修正方法: carina doctor",
+	"ko":      "작업이 완료되지 않았습니다. 수정 방법: carina doctor",
+	"es":      "La operación no se completó. Solución: carina doctor",
+	"fr":      "L’opération n’a pas abouti. Correctif : carina doctor",
 }
 
 type options struct {

@@ -36,23 +36,25 @@ type pluralForms struct {
 
 var governedCountForms = map[Code]map[string]pluralForms{
 	GovernedDestructiveConfirm: {
-		"en": {one: "{count} file", other: "{count} files"},
-		"zh": {other: "{count} 个文件"},
-		"ja": {other: "{count} ファイル"},
-		"ko": {other: "파일 {count}개"},
-		"es": {one: "{count} archivo", other: "{count} archivos"},
-		"fr": {one: "{count} fichier", other: "{count} fichiers"},
+		"en":      {one: "{count} file", other: "{count} files"},
+		"zh":      {other: "{count} 个文件"},
+		"zh-Hant": {other: "{count} 個文件"},
+		"ja":      {other: "{count} ファイル"},
+		"ko":      {other: "파일 {count}개"},
+		"es":      {one: "{count} archivo", other: "{count} archivos"},
+		"fr":      {one: "{count} fichier", other: "{count} fichiers"},
 	},
 }
 
 var degradeCountForms = map[DegradeStatus]map[string]pluralForms{
 	DegradeTimedOut: {
-		"en": {one: "{count} second", other: "{count} seconds"},
-		"zh": {other: "{count} 秒"},
-		"ja": {other: "{count} 秒"},
-		"ko": {other: "{count}초"},
-		"es": {one: "{count} segundo", other: "{count} segundos"},
-		"fr": {one: "{count} seconde", other: "{count} secondes"},
+		"en":      {one: "{count} second", other: "{count} seconds"},
+		"zh":      {other: "{count} 秒"},
+		"zh-Hant": {other: "{count} 秒"},
+		"ja":      {other: "{count} 秒"},
+		"ko":      {other: "{count}초"},
+		"es":      {one: "{count} segundo", other: "{count} segundos"},
+		"fr":      {one: "{count} seconde", other: "{count} secondes"},
 	},
 }
 

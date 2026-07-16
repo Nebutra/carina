@@ -91,6 +91,7 @@ func TestGovernedAndDegradeCountNeverRenderOneWithOtherNoun(t *testing.T) {
 func TestExplicitLocaleValidationAndHonestChineseFallback(t *testing.T) {
 	valid := map[string]string{
 		"zh": "zh", "zh-CN": "zh", "zh_Hans_CN.UTF-8": "zh",
+		"zh-Hant": "zh-Hant", "zh-TW": "zh-Hant", "zh_HK.UTF-8": "zh-Hant", "zh-MO": "zh-Hant",
 		"en-US": "en", "ja-JP": "ja", "ko-KR": "ko", "es-419": "es", "fr-FR": "fr",
 	}
 	for raw, want := range valid {
@@ -99,7 +100,7 @@ func TestExplicitLocaleValidationAndHonestChineseFallback(t *testing.T) {
 			t.Errorf("CanonicalLocale(%q) = %q, %v; want %q", raw, got, err, want)
 		}
 	}
-	for _, raw := range []string{"", "de-DE", "zh-TW", "zh-HK", "zh-Hant", "en-", "ja-!"} {
+	for _, raw := range []string{"", "de-DE", "en-", "ja-!"} {
 		if _, err := CanonicalLocale(raw); err == nil {
 			t.Errorf("CanonicalLocale(%q) unexpectedly succeeded", raw)
 		}

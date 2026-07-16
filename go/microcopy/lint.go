@@ -156,7 +156,7 @@ func lintFullSentence(locale, tmpl string) []string {
 	}
 	last := runes[len(runes)-1]
 	switch locale {
-	case "zh", "ja":
+	case "zh", "zh-Hant", "ja":
 		if last != '。' && last != '？' {
 			return []string{"not a full sentence: must end with 。 or ？"}
 		}
@@ -184,8 +184,16 @@ func lintFullSentence(locale, tmpl string) []string {
 
 func lintMetaphor(locale, s string) []string {
 	var v []string
-	if locale == "zh" {
-		for _, term := range metaphorZH {
+	if locale == "zh" || locale == "zh-Hant" {
+		terms := metaphorZH
+		if locale == "zh-Hant" {
+			converted := make([]string, len(metaphorZH))
+			for i, term := range metaphorZH {
+				converted[i] = ToTraditional(term)
+			}
+			terms = converted
+		}
+		for _, term := range terms {
 			if strings.Contains(s, term) {
 				v = append(v, fmt.Sprintf("metaphor term %q", term))
 			}
@@ -216,8 +224,16 @@ func lintExclamation(s string) []string {
 
 func lintAstronomy(locale, s string) []string {
 	var v []string
-	if locale == "zh" {
-		for _, term := range astronomyZH {
+	if locale == "zh" || locale == "zh-Hant" {
+		terms := astronomyZH
+		if locale == "zh-Hant" {
+			converted := make([]string, len(astronomyZH))
+			for i, term := range astronomyZH {
+				converted[i] = ToTraditional(term)
+			}
+			terms = converted
+		}
+		for _, term := range terms {
 			if strings.Contains(s, term) {
 				v = append(v, fmt.Sprintf("astronomy/cosmos term %q", term))
 			}
