@@ -134,7 +134,7 @@
   .expressive-code .copy button {
     width: 1.85rem !important;
     height: 1.85rem !important;
-    border-radius: 6px !important;
+    border-radius: 0 !important;
     /* Keep EC background transparent so the chrome doesn't double-paint */
     background: transparent !important;
     opacity: 0.72 !important;
@@ -147,12 +147,14 @@
 
   /* Idle fill under icon — slight chrome so the hit target is visible */
   .expressive-code .copy button div {
+    border-radius: 0 !important;
     background: color-mix(in srgb, var(--polish-code-chrome) 70%, transparent) !important;
     opacity: 1 !important;
   }
 
   .expressive-code .copy button::before {
-    /* EC border ring — keep subtle */
+    /* EC border ring — keep subtle, square to match button */
+    border-radius: 0 !important;
     border-color: color-mix(in srgb, var(--polish-code-muted) 35%, transparent) !important;
     opacity: 1 !important;
   }
@@ -192,7 +194,7 @@
 
   .expressive-code .copy .feedback {
     border: 1px solid var(--polish-code-success-border) !important;
-    border-radius: 6px !important;
+    border-radius: 0 !important;
     background: var(--polish-code-success-bg) !important;
     color: var(--polish-code-success-fg) !important;
     font-size: 11px !important;
