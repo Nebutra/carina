@@ -109,18 +109,24 @@ Requirements:
 - Zig 0.15.x
 - macOS or Linux
 
-Build:
+Build and install:
 
 ```bash
 git clone https://github.com/Nebutra/carina
 cd carina
-make all
+make install
 ```
+
+`make install` はすべてをビルドし、`carina*` バイナリを `~/.local/bin` に
+インストールします（`PREFIX=/usr/local` で変更可能）。そのディレクトリが
+`PATH` 上にあることを確認してください。インストールせずにビルドだけする
+場合は `make all` の後に `./bin/carina` を直接使います。Homebrew で
+インストールした場合はすでに `PATH` 上にあります。
 
 Start daemon:
 
 ```bash
-./bin/carina-daemon &
+carina-daemon &
 ```
 
 モデル credential を daemon process に渡します。BYOK API key が優先です。設定されていれば Nebutra OAuth fallback も利用できます。
@@ -134,7 +140,7 @@ export OPENAI_API_KEY=sk-...
 現在の repository で task を実行：
 
 ```bash
-./bin/carina run "fix the failing tests and show the patch"
+carina run "fix the failing tests and show the patch"
 ```
 
 Submit 後、CLI は continuation hint を表示します：
@@ -147,18 +153,18 @@ To continue this session, run:
 結果を確認：
 
 ```bash
-./bin/carina sessions
-./bin/carina resume <session_id> "continue the previous task"
-./bin/carina items <session_id>
-./bin/carina audit verify <session_id>
-./bin/carina patch list <session_id>
-./bin/carina patch show <session_id> <patch_id>
+carina sessions
+carina resume <session_id> "continue the previous task"
+carina items <session_id>
+carina audit verify <session_id>
+carina patch list <session_id>
+carina patch show <session_id> <patch_id>
 ```
 
 Applied patch を rollback：
 
 ```bash
-./bin/carina patch rollback <session_id> <patch_id>
+carina patch rollback <session_id> <patch_id>
 ```
 
 ## Common Workflows
@@ -185,9 +191,9 @@ global `headroom` found on `PATH` is reported but not used as the built-in
 engine.
 
 ```bash
-./bin/carina context status
-./bin/carina context doctor
-./bin/carina context stats
+carina context status
+carina context doctor
+carina context stats
 ```
 
 The managed Headroom MCP server is private to Carina's context adapter and is
@@ -198,17 +204,17 @@ not listed as a public agent MCP tool.
 Credential を保存し、provider catalog を確認：
 
 ```bash
-./bin/carina auth login anthropic - < ~/.secrets/anthropic-key
-./bin/carina auth login openai - < ~/.secrets/openai-key
-./bin/carina auth list
-./bin/carina providers list --refresh
+carina auth login anthropic - < ~/.secrets/anthropic-key
+carina auth login openai - < ~/.secrets/openai-key
+carina auth list
+carina providers list --refresh
 ```
 
 必要に応じて model を指定：
 
 ```bash
-CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
-./bin/carina run --model openrouter/anthropic/claude-sonnet-4-5 "inspect this migration"
+CARINA_REASONER_MODEL=openai/gpt-5 carina-daemon &
+carina run --model openrouter/anthropic/claude-sonnet-4-5 "inspect this migration"
 ```
 
 ### Agent Modes And Slash Commands
@@ -216,10 +222,10 @@ CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
 Reusable agent と command を確認：
 
 ```bash
-./bin/carina agents list
-./bin/carina commands list
-./bin/carina run --agent plan "inspect the release risk"
-./bin/carina run "/review main"
+carina agents list
+carina commands list
+carina run --agent plan "inspect the release risk"
+carina run "/review main"
 ```
 
 Built-in agent には `build`、`plan`、`general`、`explore` があります。User/project override は `~/.carina/agents`、`<repo>/.carina/agents`、`~/.carina/commands`、`<repo>/.carina/commands` に置きます。

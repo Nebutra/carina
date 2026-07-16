@@ -3,6 +3,8 @@ package daemon
 import (
 	"strings"
 	"testing"
+
+	"github.com/Nebutra/carina/go/provider"
 )
 
 func TestContextSummarySeparatesExactCheckpointFactsFromModelContextUsage(t *testing.T) {
@@ -53,6 +55,50 @@ func TestContextSummarySeparatesExactCheckpointFactsFromModelContextUsage(t *tes
 	compact := out["compact"].(map[string]any)
 	if !compact["available"].(bool) || compact["method"] != "session.checkpoint.compact" {
 		t.Fatalf("compact safety boundary missing: %#v", compact)
+	}
+}
+
+func TestContextSummaryReportsLatestProviderMeasuredContext(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	d.providerCatalog = provider.Catalog{"openai": {ID: "openai", Models: map[string]provider.Model{"gpt-5": {ID: "gpt-5", Limit: provider.ModelLimit{Context: 1000}}}}}
+	sess, err := d.store.CreateSession(workspace, "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect context")
+	if err := d.usage.record(sess.SessionID, task.TaskID, ModelUsage{Provider: "openai", Model: "gpt-5", InputTokens: 700, CacheReadTokens: 150, OutputTokens: 20}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := d.handleContextSummary(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	context := result.(map[string]any)["model_context_tokens"].(map[string]any)
+	if context["available"] != true || context["tokens"] != 850 || context["limit_tokens"] != 1000 || context["remaining_tokens"] != 150 || context["used_percent"] != 85 || context["threshold"] != "warning" {
+		t.Fatalf("unexpected measured context: %#v", context)
+	}
+}
+
+func TestContextSummaryLabelsEstimatedUsageUnavailable(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	sess, err := d.store.CreateSession(workspace, "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect context")
+	if err := d.usage.record(sess.SessionID, task.TaskID, ModelUsage{Provider: "fallback", Model: "local", InputTokens: 42, Estimated: true}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := d.handleContextSummary(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	context := result.(map[string]any)["model_context_tokens"].(map[string]any)
+	if context["available"] != false || context["estimated"] != true || context["tokens"] != 42 {
+		t.Fatalf("estimated context was presented dishonestly: %#v", context)
 	}
 }
 

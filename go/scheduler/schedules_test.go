@@ -30,6 +30,23 @@ func TestScheduleStorePersistsAndClaimsEvery(t *testing.T) {
 	}
 }
 
+func TestScheduleEnvelopePersistsAndDefaultsToForbidOverlap(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	store := OpenScheduleStore(dir)
+	row, err := store.CreateWithEnvelope(Schedule{SessionID: "sess_1", Prompt: "run", Kind: "every", Expression: "1m", Model: "openai/gpt-5", ReasoningEffort: "high", Agent: "build", Mode: "background", PermissionProfile: "safe-edit", ApprovalMode: "on_request"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.ConcurrencyPolicy != "forbid" {
+		t.Fatalf("policy=%q", row.ConcurrencyPolicy)
+	}
+	reloaded := OpenScheduleStore(dir).List()[0]
+	if reloaded.Model != "openai/gpt-5" || reloaded.ReasoningEffort != "high" || reloaded.PermissionProfile != "safe-edit" || reloaded.ConcurrencyPolicy != "forbid" {
+		t.Fatalf("envelope not persisted: %+v", reloaded)
+	}
+}
+
 func TestScheduleStoreAtRunsOnce(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 10, 8, 0, 0, 0, time.UTC)

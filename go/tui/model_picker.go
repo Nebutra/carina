@@ -62,6 +62,8 @@ type modelListMsg struct {
 }
 
 type modelPreferenceMsg struct {
+	sessionID      string
+	generation     uint64
 	loaded         bool
 	previous       string
 	model          string
@@ -70,29 +72,30 @@ type modelPreferenceMsg struct {
 	err            error
 }
 
-func loadSessionModel(call Caller, sessionID string) tea.Cmd {
+func loadSessionModel(call Caller, sessionID string, generation uint64) tea.Cmd {
 	return func() tea.Msg {
 		var out struct {
 			NextModel           string `json:"next_model"`
 			NextReasoningEffort string `json:"next_reasoning_effort"`
 		}
 		err := call.Call("session.model.get", map[string]any{"session_id": sessionID}, &out)
-		return modelPreferenceMsg{loaded: true, model: out.NextModel, effort: out.NextReasoningEffort, err: err}
+		return modelPreferenceMsg{sessionID: sessionID, generation: generation, loaded: true, model: out.NextModel, effort: out.NextReasoningEffort, err: err}
 	}
 }
 
 func (m *Model) persistSessionModel(previous, previousEffort, model, effort string) tea.Cmd {
 	call, sessionID := m.call, m.sessionID
+	generation := m.sessionGeneration
 	return func() tea.Msg {
 		if call == nil {
-			return modelPreferenceMsg{previous: previous, model: model, err: fmt.Errorf("daemon not connected")}
+			return modelPreferenceMsg{sessionID: sessionID, generation: generation, previous: previous, model: model, err: fmt.Errorf("daemon not connected")}
 		}
 		var out struct {
 			NextModel           string `json:"next_model"`
 			NextReasoningEffort string `json:"next_reasoning_effort"`
 		}
 		err := call.Call("session.model.set", map[string]any{"session_id": sessionID, "model": model, "reasoning_effort": effort}, &out)
-		return modelPreferenceMsg{previous: previous, previousEffort: previousEffort, model: model, effort: effort, err: err}
+		return modelPreferenceMsg{sessionID: sessionID, generation: generation, previous: previous, previousEffort: previousEffort, model: model, effort: effort, err: err}
 	}
 }
 
@@ -187,12 +190,12 @@ func (m *Model) modelPickerKey(key string) (tea.Cmd, bool) {
 	switch key {
 	case "esc":
 		m.modelPicker = nil
-		m.modelPinned = false
 		m.layout()
 		return m.resumeQueuedAfterTransient(), true
 	case "r":
 		if !state.loading && len(state.items) == 0 {
-			state.generation++
+			m.modelPickerGen++
+			state.generation = m.modelPickerGen
 			state.loading = true
 			state.status = m.text(MsgModelPickerLoading, nil)
 			call, generation := m.call, state.generation

@@ -17,6 +17,7 @@
       }
     },
     "permission_profile": { "type": "string" },
+    "plan_mode": { "type": "boolean" },
     "created_at": { "type": "string", "format": "date-time" },
     "event_log_path": { "type": "string" },
     "patch_transactions": { "type": "array", "items": { "type": "string" } }

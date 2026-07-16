@@ -106,6 +106,7 @@ func (d *Daemon) closePendingApproval(sess *sessionstore.Session, task *schedule
 	d.mu.Lock()
 	delete(d.pendingCmds, dec.DecisionID)
 	delete(d.pendingMemWrites, dec.DecisionID)
+	delete(d.pendingMemControls, dec.DecisionID)
 	if patchID, ok := d.patchGateByDecision[dec.DecisionID]; ok {
 		if gate := d.patchGates[patchID]; gate != nil && gate.sessionID == sess.SessionID && gate.status == "requires_approval" {
 			gate.status = gateStatus

@@ -88,8 +88,14 @@ func TestLoopUsesScheduleRPCAndFiltersCurrentSession(t *testing.T) {
 	m, _ := newTestModel(fc)
 	m.Update(m.slashCommand("/loop 5m check health")())
 	call := fc.last()
-	if call.method != "schedule.create" || call.params["kind"] != "every" || call.params["expression"] != "5m" || call.params["prompt"] != "check health" {
+	if call.method != "schedule.create" || call.params["kind"] != "every" || call.params["expression"] != "5m" || call.params["prompt"] != "check health" || call.params["concurrency_policy"] != "forbid" {
 		t.Fatalf("loop create = %#v", call)
+	}
+	m.model, m.reasoningEffort = "openai/gpt-5", "high"
+	m.Update(m.slashCommand("/loop 1m --concurrency queue inspect changes")())
+	call = fc.last()
+	if call.params["concurrency_policy"] != "queue" || call.params["model"] != "openai/gpt-5" || call.params["reasoning_effort"] != "high" || call.params["prompt"] != "inspect changes" {
+		t.Fatalf("loop frozen envelope = %#v", call)
 	}
 	m.Update(m.slashCommand("/loop list")())
 	text := m.tr.plainText()

@@ -201,6 +201,7 @@ type Model struct {
 	locale        string
 	socket        string
 	workspaceRoot string
+	stateDir      string
 	submissions   submissionJournal
 	now           func() time.Time
 
@@ -223,68 +224,75 @@ type Model struct {
 	keymapEditor     *keymapEditorState
 	helpOpen         bool
 	helpScroll       int
+	settings         *settingsShellState
+	compactMode      bool
+	runtime          runtimeStatus
 
 	sessionID string
 	call      Caller
 	conn      ConnState
 	attempt   int
 
-	approval           *approvalState
-	approvalQueue      []map[string]any // permission.request envelopes queued while an overlay is open
-	approvalSeen       map[string]bool
-	approvalResolved   map[string]bool
-	approvalPending    map[string]approvalResolutionSnapshot
-	approvalOrder      map[string]uint64
-	approvalNextSeq    uint64
-	approvalOutcomeSeq uint64
-	question           *questionState
-	questionQueue      []map[string]any
-	questionSeen       map[string]bool
-	questionResolved   map[string]bool
-	tasks              taskGraph
-	inFlightTaskID     string
-	pendingPaste       []string
-	pendingPrefix      []string
-	pasteBurst         pasteBurstState
-	followUps          inputQueue
-	submitting         *submissionState
-	submissionGen      int
-	earlyTerminals     map[string]earlyTaskTerminal
-	retrySubmission    *submissionRetry
-	submissionLeaseErr error
-	queueRecallPending bool
-	editor             *externalEditorSession
-	editorGen          int
-	queueRestoreReason string
-	transcriptPager    *transcriptPagerState
-	checkpointPicker   *checkpointPickerState
-	modelPicker        *modelPickerState
-	sessionPicker      *sessionPickerState
-	modelPickerGen     int
-	canonicalGen       int
-	pausedRestore      *checkpointRestoreResult
-	getenv             func(string) string
-	clipboardWrite     func(string) error
-	history            []promptDraft
-	historyPos         int
-	historyScratch     promptDraft
-	historyLoadGen     int
-	historySearch      *historySearchState
-	composerUndo       composerUndoState
-	lastCtrlC          time.Time
-	ctrlCHint          string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
-	rewindPrimed       bool
-	noAlternateScreen  bool
-	mode               string
-	model              string
-	reasoningEffort    string
-	modelPinned        bool
-	switchSession      func(string) error
-	sessionGeneration  uint64
-	sessionOpGen       uint64
-	pendingSessionID   string
-	goal               *goalView
-	outcome            Outcome
+	approval              *approvalState
+	approvalQueue         []map[string]any // permission.request envelopes queued while an overlay is open
+	approvalSeen          map[string]bool
+	approvalResolved      map[string]bool
+	approvalPending       map[string]approvalResolutionSnapshot
+	approvalOrder         map[string]uint64
+	approvalNextSeq       uint64
+	approvalOutcomeSeq    uint64
+	question              *questionState
+	questionQueue         []map[string]any
+	questionSeen          map[string]bool
+	questionResolved      map[string]bool
+	tasks                 taskGraph
+	inFlightTaskID        string
+	pendingPaste          []string
+	pendingPrefix         []string
+	pasteBurst            pasteBurstState
+	followUps             inputQueue
+	submitting            *submissionState
+	submissionGen         int
+	earlyTerminals        map[string]earlyTaskTerminal
+	retrySubmission       *submissionRetry
+	submissionLeaseErr    error
+	queueRecallPending    bool
+	editor                *externalEditorSession
+	editorGen             int
+	queueRestoreReason    string
+	transcriptPager       *transcriptPagerState
+	checkpointPicker      *checkpointPickerState
+	modelPicker           *modelPickerState
+	sessionPicker         *sessionPickerState
+	modelPickerGen        int
+	canonicalGen          int
+	pausedRestore         *checkpointRestoreResult
+	getenv                func(string) string
+	clipboardWrite        func(string) error
+	history               []promptDraft
+	historyPos            int
+	historyScratch        promptDraft
+	historyLoadGen        int
+	historySearch         *historySearchState
+	composerUndo          composerUndoState
+	lastCtrlC             time.Time
+	ctrlCHint             string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
+	rewindPrimed          bool
+	noAlternateScreen     bool
+	mode                  string
+	model                 string
+	reasoningEffort       string
+	modelPinned           bool
+	switchSession         func(string) error
+	sessionGeneration     uint64
+	sessionOpGen          uint64
+	pendingSessionID      string
+	pendingWorkspaceRoot  string
+	sessionActionPending  string
+	previousSessionID     string
+	previousWorkspaceRoot string
+	goal                  *goalView
+	outcome               Outcome
 
 	// Mention/slash suggestion panel (@-file, @-agent, /-command). See
 	// suggest.go for the debounce/fetch flow and mention.go for trigger
@@ -315,9 +323,10 @@ type canonicalSurfaceMsg struct {
 }
 
 type modeChangedMsg struct {
-	sessionID string
-	mode      string
-	err       error
+	sessionID      string
+	mode           string
+	err            error
+	followUpPrompt string // optional: submit after mode switch (e.g. /plan <desc>)
 }
 
 type loopResultMsg struct {
@@ -390,6 +399,7 @@ func NewChecked(o Options) (*Model, error) {
 		locale:            o.Locale,
 		socket:            o.Socket,
 		workspaceRoot:     o.WorkspaceRoot,
+		stateDir:          o.StateDir,
 		submissions:       newSubmissionJournal(o.StateDir, o.WorkspaceRoot),
 		now:               o.Now,
 		getenv:            os.Getenv,

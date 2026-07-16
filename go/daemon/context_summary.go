@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Nebutra/carina/go/provider"
 	"github.com/Nebutra/carina/go/scheduler"
 )
 
@@ -46,6 +47,32 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 		return out, nil
 	}
 	out["task"] = map[string]any{"task_id": latest.TaskID, "status": latest.Status, "tokens_used": latest.TokensUsed, "token_usage_observed": latest.TokenUsageObserved, "token_budget": latest.TokenBudget}
+	if usage, ok := d.usage.latestTaskContext(latest.TaskID); ok {
+		used := usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
+		context := map[string]any{
+			"available": !usage.Estimated, "tokens": used, "measurement": "latest completed provider request",
+			"provider": usage.Provider, "model": usage.Model, "estimated": usage.Estimated,
+			"breakdown": map[string]any{"input_tokens": usage.InputTokens, "cache_read_tokens": usage.CacheReadTokens, "cache_write_tokens": usage.CacheWriteTokens},
+		}
+		if usage.Estimated {
+			context["reason"] = "the active reasoner did not return provider token usage; tokens are explicitly estimated"
+		}
+		if limit, ok := modelContextLimit(d.providerCatalog, usage.Provider, usage.Model); ok {
+			remaining := max(0, limit-used)
+			percent := 0
+			if limit > 0 {
+				percent = minInt(100, used*100/limit)
+			}
+			level := "normal"
+			if percent >= 90 {
+				level = "critical"
+			} else if percent >= 80 {
+				level = "warning"
+			}
+			context["limit_tokens"], context["remaining_tokens"], context["used_percent"], context["threshold"] = limit, remaining, percent, level
+		}
+		out["model_context_tokens"] = context
+	}
 	cp := d.runs.loadCheckpoint(latest.TaskID)
 	if cp == nil || cp.Transcript == nil {
 		out["checkpoint"] = map[string]any{"available": false, "reason": "latest task has no persisted checkpoint"}
@@ -62,4 +89,21 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 		out["compact"] = map[string]any{"available": true, "method": "session.checkpoint.compact", "checkpoint_id": checkpointID(latest, cp), "safety": "WAL-backed immutable child checkpoint; source preserved"}
 	}
 	return out, nil
+}
+
+func modelContextLimit(catalog provider.Catalog, providerID, modelID string) (int, bool) {
+	info, ok := catalog[normalizeProviderID(providerID)]
+	if !ok {
+		return 0, false
+	}
+	modelID = strings.TrimPrefix(strings.TrimSpace(modelID), normalizeProviderID(providerID)+"/")
+	if model, ok := info.Models[modelID]; ok && model.Limit.Context > 0 {
+		return model.Limit.Context, true
+	}
+	for key, model := range info.Models {
+		if (model.ID == modelID || key == modelID) && model.Limit.Context > 0 {
+			return model.Limit.Context, true
+		}
+	}
+	return 0, false
 }

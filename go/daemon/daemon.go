@@ -118,6 +118,17 @@ type pendingMemoryWrite struct {
 	summary   memoryWriteSummary
 }
 
+type pendingMemoryControl struct {
+	kind             string
+	sessionID        string
+	targetSessionID  string
+	target           string
+	expectedRevision string
+	idempotencyKey   string
+	source           string
+	entries          []string
+}
+
 type pendingMemoryProjection struct {
 	sessionID  string
 	documentID string
@@ -154,11 +165,15 @@ type Daemon struct {
 	mu                    sync.Mutex
 	pendingCmds           map[string]pendingCommand          // decision_id -> command awaiting approval
 	pendingMemWrites      map[string]pendingMemoryWrite      // decision_id -> memory write awaiting approval
+	pendingMemControls    map[string]pendingMemoryControl    // decision_id -> rollback/handoff awaiting approval
 	pendingMemProjections map[string]pendingMemoryProjection // decision_id -> HMS projection awaiting externalization approval
 	patchGates            map[string]*patchGate              // patch_id -> PatchApply decision state
 	patchGateByDecision   map[string]string                  // decision_id -> patch_id
 	submissionMu          sync.Mutex
 	taskSubmissions       map[string]string // session_id + client_submission_id -> task_id
+	hookOutcomeMu         sync.Mutex
+	hookOutcomes          map[string]hookOutcome
+	hookStops             sync.Map // task_id -> true after Stop hooks run
 
 	runs   *runStore     // durable background-run registry (survives restart)
 	runSem chan struct{} // concurrency cap for background runs
@@ -256,13 +271,14 @@ type Daemon struct {
 
 	reload func() error // config reload closure (SIGHUP/RPC); nil until SetReloader
 
-	authChain                *auth.Chain        // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
-	authStore                *auth.Store        // local BYOK credential store (doctor's per-provider probe)
-	providerCatalog          provider.Catalog   // runtime provider catalog (doctor's per-provider probe)
-	usage                    *usageStore        // durable per-task/session model usage and cost accounting
-	goals                    *goalStore         // one durable operator-controlled goal per session
-	history                  *history.History   // shared cross-process prompt history
-	memory                   *memoryStore       // governed local long-term memory
+	authChain                *auth.Chain      // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
+	authStore                *auth.Store      // local BYOK credential store (doctor's per-provider probe)
+	providerCatalog          provider.Catalog // runtime provider catalog (doctor's per-provider probe)
+	usage                    *usageStore      // durable per-task/session model usage and cost accounting
+	goals                    *goalStore       // one durable operator-controlled goal per session
+	history                  *history.History // shared cross-process prompt history
+	memory                   *memoryStore     // governed local long-term memory
+	memoryVersions           *memoryControllerStore
 	memoryHMS                *hmsRecallProvider // optional derived recall provider; local store stays authoritative
 	memoryHMSAPIKeyEnv       string
 	memoryProjection         *memoryProjectionStore // durable desired-state outbox (optional)
@@ -366,11 +382,14 @@ func New(opts Options) (*Daemon, error) {
 		started:               time.Now().UTC(),
 		pendingCmds:           make(map[string]pendingCommand),
 		pendingMemWrites:      make(map[string]pendingMemoryWrite),
+		pendingMemControls:    make(map[string]pendingMemoryControl),
 		pendingMemProjections: make(map[string]pendingMemoryProjection),
 		patchGates:            make(map[string]*patchGate),
 		patchGateByDecision:   make(map[string]string),
 		taskSubmissions:       make(map[string]string),
+		hookOutcomes:          make(map[string]hookOutcome),
 		memory:                newMemoryStore(opts.StateDir),
+		memoryVersions:        newMemoryControllerStore(opts.StateDir),
 		schedules:             scheduler.OpenScheduleStore(opts.StateDir),
 		contextEng:            contextEng,
 		gatewayTokens:         gatewayTokens,
@@ -563,6 +582,11 @@ func New(opts Options) (*Daemon, error) {
 	d.activeToolCalls = map[string]*activeToolCall{}
 	d.activeToolCallsByTask = map[string]map[string]struct{}{}
 	d.planMode = map[string]bool{}
+	for _, sess := range d.store.List() {
+		if sess.PlanMode {
+			d.planMode[sess.SessionID] = true
+		}
+	}
 	d.stopCh = make(chan struct{})
 	d.loopWG.Add(1)
 	go d.runArtifactGC()
@@ -669,7 +693,9 @@ func New(opts Options) (*Daemon, error) {
 		}
 	}
 	d.recover()
+	d.reconcileMemoryVersions()
 	d.resumeRuns()
+	d.recoverAutoGoals()
 	d.startBackgroundLoop(d.runScheduleLoop)
 	return d, nil
 }
@@ -954,6 +980,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("session.create", rpc.ScopeWrite, false, d.handleSessionCreate)
 	d.registerRPC("session.get", rpc.ScopeRead, true, d.handleSessionGet)
 	d.registerRPC("session.list", rpc.ScopeRead, true, d.handleSessionList)
+	d.registerRPC("session.rename", rpc.ScopeWrite, false, d.handleSessionRename)
 	d.registerRPC("session.pause", rpc.ScopeWrite, false, d.handleSessionPause)
 	d.registerRPC("session.resume", rpc.ScopeWrite, false, d.handleSessionResume)
 	d.registerRPC("session.close", rpc.ScopeWrite, false, d.handleSessionClose)
@@ -983,6 +1010,10 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("memory.search", rpc.ScopeRead, false, d.handleMemorySearch)
 	d.registerRPC("memory.status", rpc.ScopeRead, false, d.handleMemoryStatus)
 	d.registerRPC("memory.write", rpc.ScopeWrite, false, d.handleMemoryWrite, true)
+	d.registerRPC("memory.read", rpc.ScopeRead, false, d.handleMemoryRead)
+	d.registerRPC("memory.handoff", rpc.ScopeWrite, false, d.handleMemoryHandoff, true)
+	d.registerRPC("memory.rollback", rpc.ScopeWrite, false, d.handleMemoryRollback, true)
+	d.registerRPC("memory.verify", rpc.ScopeRead, false, d.handleMemoryVerify)
 	d.registerRPC("memory.projection.authorize", rpc.ScopeAdmin, false, d.handleMemoryProjectionAuthorize, true)
 	d.registerRPC("memory.projection.reseed", rpc.ScopeAdmin, false, d.handleMemoryProjectionReseed, true)
 	d.registerRPC("memory.projection.retry", rpc.ScopeAdmin, false, d.handleMemoryProjectionRetry, true)
@@ -1049,6 +1080,10 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("audit.export", rpc.ScopeRead, true, d.handleAuditExport)
 	d.registerRPC("audit.verify", rpc.ScopeRead, true, d.handleAuditVerify)
 	d.registerRPC("profile.describe", rpc.ScopeRead, true, d.handleProfileDescribe)
+	d.registerRPC("profile.inventory", rpc.ScopeRead, false, d.handleProfileInventory)
+	d.registerRPC("config.inventory", rpc.ScopeRead, false, d.handleConfigInventory)
+	d.registerRPC("skill.inventory", rpc.ScopeRead, false, d.handleSkillInventory)
+	d.registerRPC("hook.inventory", rpc.ScopeRead, false, d.handleHookInventory)
 	d.registerRPC("secret.grant", rpc.ScopeAdmin, false, d.handleSecretGrant, true)
 	d.registerRPC("secret.request", rpc.ScopeAdmin, false, d.handleSecretRequest, true)
 	d.registerRPC("plugin.inspect", rpc.ScopeRead, false, d.handlePluginInspect)
@@ -1630,6 +1665,7 @@ func (d *Daemon) handleSessionCreate(params json.RawMessage) (any, error) {
 	if err := d.kern.InitSessionFull(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile, sess.ApprovalMode, d.org); err != nil {
 		return nil, fmt.Errorf("kernel session init: %w", err)
 	}
+	d.runLifecycleHooks(sess.WorkspaceRoot, "SessionStart", map[string]any{"session_id": sess.SessionID, "workspace_root": sess.WorkspaceRoot})
 	return sess, nil
 }
 
@@ -1718,6 +1754,7 @@ func (d *Daemon) handleSessionClose(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	d.record(id, "SessionClosed", "", "go", map[string]any{"reason": "client request"}, "")
+	d.runLifecycleHooks(sess.WorkspaceRoot, "SessionEnd", map[string]any{"session_id": id, "reason": "client request"})
 	return sess, nil
 }
 
@@ -1860,6 +1897,9 @@ func (d *Daemon) handlePlanMode(params json.RawMessage) (any, error) {
 	if p.SessionID == "" {
 		return nil, fmt.Errorf("session_id is required")
 	}
+	if _, err := d.store.SetPlanMode(p.SessionID, p.On); err != nil {
+		return nil, err
+	}
 	d.setPlanMode(p.SessionID, p.On)
 	d.noticePlanModeSwitch(p.SessionID, p.On)
 	return map[string]any{"session_id": p.SessionID, "plan_mode": p.On}, nil
@@ -1939,6 +1979,9 @@ func (d *Daemon) handleAddDir(params json.RawMessage) (any, error) {
 func (d *Daemon) handleApprovePlan(params json.RawMessage) (any, error) {
 	id, err := sessionID(params)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := d.store.SetPlanMode(id, false); err != nil {
 		return nil, err
 	}
 	d.setPlanMode(id, false)
@@ -2056,12 +2099,15 @@ func (d *Daemon) handleMemoryStatus(params json.RawMessage) (any, error) {
 
 func (d *Daemon) handleMemoryWrite(params json.RawMessage) (any, error) {
 	var p struct {
-		SessionID string            `json:"session_id"`
-		Action    string            `json:"action"`
-		Target    string            `json:"target"`
-		Content   string            `json:"content"`
-		OldText   string            `json:"old_text"`
-		Ops       []memoryOperation `json:"operations"`
+		SessionID        string            `json:"session_id"`
+		Action           string            `json:"action"`
+		Target           string            `json:"target"`
+		Content          string            `json:"content"`
+		OldText          string            `json:"old_text"`
+		Ops              []memoryOperation `json:"operations"`
+		Version          int               `json:"version"`
+		ExpectedRevision string            `json:"expected_revision"`
+		IdempotencyKey   string            `json:"idempotency_key"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -2071,11 +2117,13 @@ func (d *Daemon) handleMemoryWrite(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("unknown session %s", p.SessionID)
 	}
 	req := memoryWriteRequest{
-		Action:     p.Action,
-		Target:     p.Target,
-		Content:    p.Content,
-		OldText:    p.OldText,
-		Operations: p.Ops,
+		Action:           p.Action,
+		Target:           p.Target,
+		Content:          p.Content,
+		OldText:          p.OldText,
+		Operations:       p.Ops,
+		ExpectedRevision: p.ExpectedRevision,
+		IdempotencyKey:   p.IdempotencyKey,
 	}
 	scope := memoryScopeFromSession(sess)
 	summary, err := summarizeMemoryWrite(scope, req)
@@ -2185,6 +2233,19 @@ func (d *Daemon) applyMemoryWrite(sess *sessionstore.Session, taskID string, req
 	// same target can publish a stale desired generation.
 	d.memoryProjectionWriteMu.Lock()
 	defer d.memoryProjectionWriteMu.Unlock()
+	requestPayload := map[string]any{"target": summary.Target, "action": summary.Action, "operation_count": summary.OperationCount, "content_sha256": summary.ContentSHA256, "scope_id": summary.ScopeID, "status": "prepared"}
+	if err := d.recordChecked(sess.SessionID, "MemoryWriteRequested", taskID, "go", requestPayload, decision.DecisionID); err != nil {
+		return memoryWriteResult{}, fmt.Errorf("memory write audit WAL: %w", err)
+	}
+	before, err := d.memory.list(scope, summary.Target)
+	if err != nil {
+		return memoryWriteResult{}, err
+	}
+	documentID := memoryDocumentID(scope, before.Target)
+	actualRevision := memoryRevisionID(documentID, before.Entries)
+	if req.ExpectedRevision != "" && req.ExpectedRevision != actualRevision {
+		return memoryWriteResult{}, fmt.Errorf("memory revision conflict: expected %s, actual %s", req.ExpectedRevision, actualRevision)
+	}
 	dirty, err := d.prepareMemoryProjection(sess, scope, summary.Target)
 	if err != nil {
 		return memoryWriteResult{}, fmt.Errorf("memory projection write-ahead: %w", err)
@@ -2199,11 +2260,15 @@ func (d *Daemon) applyMemoryWrite(sess *sessionstore.Session, taskID string, req
 	result.DecisionID = decision.DecisionID
 	result.ContentSHA256 = summary.ContentSHA256
 	result.OperationCount = summary.OperationCount
-	if result.Success {
-		result.Projection = d.finishMemoryProjection(sess, dirty)
-	} else if dirty != nil {
+	if !result.Success && dirty != nil {
 		_ = d.memoryProjection.DiscardDirty(dirty.DocumentID, dirty.Generation)
 	}
+	afterState, err := d.memory.list(scope, summary.Target)
+	if err != nil {
+		_ = d.memory.restore(scope, summary.Target, before.Entries)
+		return memoryWriteResult{}, err
+	}
+	predictedRevision := memoryRevisionID(documentID, afterState.Entries)
 	payload := map[string]any{
 		"status":          "memory_write",
 		"target":          summary.Target,
@@ -2213,6 +2278,8 @@ func (d *Daemon) applyMemoryWrite(sess *sessionstore.Session, taskID string, req
 		"entry_count":     result.EntryCount,
 		"operation_count": summary.OperationCount,
 		"content_sha256":  summary.ContentSHA256,
+		"revision":        predictedRevision,
+		"parent_revision": actualRevision,
 		"scope": map[string]any{
 			"profile":                result.Scope.Profile,
 			"workspace_hash":         result.Scope.WorkspaceHash,
@@ -2223,7 +2290,39 @@ func (d *Daemon) applyMemoryWrite(sess *sessionstore.Session, taskID string, req
 	if !result.Success {
 		payload["error"] = result.Error
 	}
-	d.record(sess.SessionID, "TaskCreated", taskID, "go", payload, decision.DecisionID)
+	var prepared memoryRevision
+	if result.Success {
+		prepared, err = d.memoryVersions.prepare(sess.SessionID, scope, summary.Target, afterState.Entries, before.Entries, "memory.write", req.IdempotencyKey)
+		if err != nil {
+			_ = d.memory.restore(scope, summary.Target, before.Entries)
+			if dirty != nil {
+				_ = d.memoryProjection.DiscardDirty(dirty.DocumentID, dirty.Generation)
+			}
+			return memoryWriteResult{}, fmt.Errorf("memory revision prepare: %w", err)
+		}
+	}
+	if err := d.recordChecked(sess.SessionID, "MemoryWritten", taskID, "go", payload, decision.DecisionID); err != nil {
+		if result.Success {
+			_ = d.memory.restore(scope, summary.Target, before.Entries)
+		}
+		if dirty != nil {
+			_ = d.memoryProjection.DiscardDirty(dirty.DocumentID, dirty.Generation)
+		}
+		if prepared.Revision != "" {
+			_ = d.memoryVersions.abort(prepared.DocumentID, prepared.Revision)
+		}
+		return memoryWriteResult{}, fmt.Errorf("memory write commit audit: %w", err)
+	}
+	if result.Success {
+		revision, versionErr := d.memoryVersions.publish(prepared.DocumentID, prepared.Revision)
+		if versionErr != nil {
+			result.Version, result.Revision, result.ParentRevision = memoryControllerVersion, prepared.Revision, prepared.Parent
+			result.Message += "; revision publication pending recovery"
+		} else {
+			result.Version, result.Revision, result.ParentRevision = memoryControllerVersion, revision.Revision, revision.Parent
+		}
+		result.Projection = d.finishMemoryProjection(sess, dirty)
+	}
 	return result, nil
 }
 
@@ -2242,6 +2341,8 @@ func (d *Daemon) isPlanMode(sessionID string) bool {
 	defer d.planMu.Unlock()
 	return d.planMode[sessionID]
 }
+
+func (d *Daemon) planModeEnabled(sessionID string) bool { return d.isPlanMode(sessionID) }
 
 // noticePlanModeSwitch queues an urgent mailbox notice for a session's active
 // task when plan/act mode is toggled mid-run, so a task already executing
@@ -2276,6 +2377,7 @@ type taskSubmitParams struct {
 	Agent              string                   `json:"agent"`
 	Mode               string                   `json:"mode"`
 	ReasoningEffort    string                   `json:"reasoning_effort"`
+	TokenBudget        int                      `json:"token_budget"`
 	SuccessCriteria    []scheduler.SuccessCheck `json:"success_criteria"`
 	OutputSchema       json.RawMessage          `json:"output_schema"`
 }
@@ -2294,6 +2396,9 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	}
 	if strings.TrimSpace(p.Prompt) == "" {
 		return nil, fmt.Errorf("prompt is required")
+	}
+	if p.TokenBudget < 0 {
+		return nil, fmt.Errorf("token_budget must be >= 0")
 	}
 	p.Model = strings.TrimSpace(p.Model)
 	if err := d.validateTaskModel(p.Model); err != nil {
@@ -2379,7 +2484,9 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	if clientSubmissionID != "" {
 		d.sched.SetClientSubmission(task.TaskID, clientSubmissionID, submissionFingerprint)
 	}
-	if budget := d.maxTaskTokens.Load(); budget > 0 {
+	if p.TokenBudget > 0 {
+		d.sched.SetTokenBudget(task.TaskID, p.TokenBudget)
+	} else if budget := d.maxTaskTokens.Load(); budget > 0 {
 		d.sched.SetTokenBudget(task.TaskID, int(budget))
 	}
 	d.sched.SetMode(task.TaskID, p.Mode)
@@ -2704,6 +2811,16 @@ func (d *Daemon) handleTaskResult(params json.RawMessage) (any, error) {
 func (d *Daemon) persistRun(taskID string) {
 	if t, ok := d.sched.Get(taskID); ok {
 		d.runs.save(t)
+		if terminalHookTaskStatus(t.Status) {
+			go d.reconcileGoalTask(t)
+		}
+		if terminalHookTaskStatus(t.Status) {
+			if _, loaded := d.hookStops.LoadOrStore(taskID, true); !loaded {
+				if sess, exists := d.store.Get(t.SessionID); exists {
+					d.runLifecycleHooks(sess.WorkspaceRoot, "Stop", map[string]any{"session_id": t.SessionID, "task_id": taskID, "status": t.Status})
+				}
+			}
+		}
 	}
 }
 
@@ -2937,6 +3054,7 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 		d.mu.Lock()
 		pendingProjection, projectionOK := d.pendingMemProjections[p.DecisionID]
 		delete(d.pendingMemProjections, p.DecisionID)
+		delete(d.pendingMemControls, p.DecisionID)
 		d.mu.Unlock()
 		if projectionOK && d.memoryProjection != nil {
 			if intent, exists := d.memoryProjection.Get(pendingProjection.documentID, pendingProjection.generation); exists {
@@ -3010,6 +3128,17 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 		}
 		return response(result), nil
 	}
+	d.mu.Lock()
+	controlPending, controlOK := d.pendingMemControls[p.DecisionID]
+	delete(d.pendingMemControls, p.DecisionID)
+	d.mu.Unlock()
+	if controlOK {
+		result, err := d.resumePendingMemoryControl(controlPending, decision)
+		if err != nil {
+			return nil, err
+		}
+		return response(result), nil
+	}
 	// If the approval resolves a patch gate, unlock the apply for that patch.
 	d.mu.Lock()
 	if patchID, ok := d.patchGateByDecision[p.DecisionID]; ok {
@@ -3049,6 +3178,7 @@ func (d *Daemon) handleDeny(params json.RawMessage) (any, error) {
 	d.mu.Lock()
 	delete(d.pendingCmds, p.DecisionID)
 	delete(d.pendingMemWrites, p.DecisionID)
+	delete(d.pendingMemControls, p.DecisionID)
 	pendingProjection, projectionOK := d.pendingMemProjections[p.DecisionID]
 	delete(d.pendingMemProjections, p.DecisionID)
 	// A denied patch gate refuses every later apply of that patch.

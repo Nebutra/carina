@@ -217,18 +217,23 @@ Requirements:
 - Zig 0.15.x
 - macOS or Linux
 
-Build everything:
+Build and install:
 
 ```bash
 git clone https://github.com/Nebutra/carina
 cd carina
-make all
+make install
 ```
+
+`make install` builds everything and installs the `carina*` binaries into
+`~/.local/bin` (override with `PREFIX=/usr/local`); make sure that directory
+is on `PATH`. To build without installing, run `make all` and use
+`./bin/carina` directly. Homebrew installs already put `carina` on `PATH`.
 
 Start the daemon:
 
 ```bash
-./bin/carina-daemon &
+carina-daemon &
 ```
 
 Provide a model credential to the daemon process. BYOK API keys have priority;
@@ -243,7 +248,7 @@ export OPENAI_API_KEY=sk-...
 Run a task in the current repository:
 
 ```bash
-./bin/carina run "fix the failing tests and show the patch"
+carina run "fix the failing tests and show the patch"
 ```
 
 The CLI prints a continuation hint after submission:
@@ -256,18 +261,18 @@ To continue this session, run:
 Inspect what happened:
 
 ```bash
-./bin/carina sessions
-./bin/carina resume <session_id> "follow up on the previous task"
-./bin/carina items <session_id>
-./bin/carina audit verify <session_id>
-./bin/carina patch list <session_id>
-./bin/carina patch show <session_id> <patch_id>
+carina sessions
+carina resume <session_id> "follow up on the previous task"
+carina items <session_id>
+carina audit verify <session_id>
+carina patch list <session_id>
+carina patch show <session_id> <patch_id>
 ```
 
 Roll back an applied patch:
 
 ```bash
-./bin/carina patch rollback <session_id> <patch_id>
+carina patch rollback <session_id> <patch_id>
 ```
 
 ## Common Workflows
@@ -319,9 +324,9 @@ as the built-in engine.
 Inspect the integration:
 
 ```bash
-./bin/carina context status
-./bin/carina context doctor
-./bin/carina context stats
+carina context status
+carina context doctor
+carina context stats
 ```
 
 The managed Headroom MCP server is private to Carina's context adapter. It does
@@ -332,17 +337,17 @@ not appear in the agent's public MCP tool list.
 Store local credentials and inspect the provider catalog:
 
 ```bash
-./bin/carina auth login anthropic - < ~/.secrets/anthropic-key
-./bin/carina auth login openai - < ~/.secrets/openai-key
-./bin/carina auth list
-./bin/carina providers list --refresh
+carina auth login anthropic - < ~/.secrets/anthropic-key
+carina auth login openai - < ~/.secrets/openai-key
+carina auth list
+carina providers list --refresh
 ```
 
 Pick a runtime model explicitly when needed:
 
 ```bash
-CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
-./bin/carina run --model openrouter/anthropic/claude-sonnet-4-5 "inspect this migration"
+CARINA_REASONER_MODEL=openai/gpt-5 carina-daemon &
+carina run --model openrouter/anthropic/claude-sonnet-4-5 "inspect this migration"
 ```
 
 ### Agent Modes And Slash Commands
@@ -350,10 +355,10 @@ CARINA_REASONER_MODEL=openai/gpt-5 ./bin/carina-daemon &
 Discover reusable agents and commands at runtime:
 
 ```bash
-./bin/carina agents list
-./bin/carina commands list
-./bin/carina run --agent plan "inspect the release risk"
-./bin/carina run "/review main"
+carina agents list
+carina commands list
+carina run --agent plan "inspect the release risk"
+carina run "/review main"
 ```
 
 Built-ins include `build`, `plan`, `general`, and `explore`. User and project

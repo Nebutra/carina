@@ -28,6 +28,7 @@ type questionState struct {
 	Scroll     int
 	Resolving  bool
 	Error      string
+	FreeText   string
 }
 
 type questionDoneMsg struct {
@@ -106,7 +107,7 @@ func buildQuestionState(ev map[string]any) *questionState {
 			q.Options = append(q.Options, option)
 		}
 	}
-	if q.QuestionID == "" || q.Prompt == "" || len(q.Options) == 0 {
+	if q.QuestionID == "" || q.Prompt == "" {
 		return nil
 	}
 	return q
@@ -137,6 +138,30 @@ func (m *Model) answerQuestion(index int) tea.Cmd {
 			label:      option.Label,
 			value:      option.Value,
 		}
+	}
+}
+
+func (m *Model) answerQuestionText() tea.Cmd {
+	q, call := m.question, m.call
+	if q == nil || q.Resolving || len(q.Options) != 0 {
+		return nil
+	}
+	value := strings.TrimSpace(q.FreeText)
+	if value == "" {
+		q.Error = m.text(MsgQuestionFreeTextRequired, nil)
+		return nil
+	}
+	q.Resolving = true
+	q.Error = ""
+	questionID, taskID := q.QuestionID, q.TaskID
+	return func() tea.Msg {
+		if call == nil {
+			return questionDoneMsg{questionID: questionID, taskID: taskID, err: errors.New("daemon not connected")}
+		}
+		if err := call.Call("task.user.answer", map[string]any{"question_id": questionID, "value": value}, nil); err != nil {
+			return questionDoneMsg{questionID: questionID, taskID: taskID, err: err}
+		}
+		return questionDoneMsg{questionID: questionID, taskID: taskID, label: value, value: value}
 	}
 }
 
@@ -199,7 +224,24 @@ func (m *Model) questionKey(key string) (tea.Cmd, bool) {
 			m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
 			return nil, false
 		}
-		q.Error = m.text(MsgQuestionNoOptions, nil)
+		switch key {
+		case "enter":
+			return m.answerQuestionText(), true
+		case "esc":
+			q.Error = m.text(MsgQuestionCannotDismiss, nil)
+			return nil, true
+		case "backspace", "ctrl+h":
+			runes := []rune(q.FreeText)
+			if len(runes) > 0 {
+				q.FreeText = string(runes[:len(runes)-1])
+			}
+			q.Error = ""
+			return nil, true
+		}
+		if len([]rune(key)) == 1 || key == " " {
+			q.FreeText += key
+			q.Error = ""
+		}
 		return nil, true
 	}
 	switch {
@@ -249,6 +291,11 @@ func (m *Model) questionOverlayView() string {
 	body := m.questionBodyLines()
 	m.clampQuestionScroll()
 	start := q.Scroll
+	if len(q.Options) == 0 {
+		// Keep the editable answer anchored in very short terminals. The prompt
+		// remains reachable by resizing; submitting must never become invisible.
+		start = maxInt(len(body)-m.questionViewportHeight(), 0)
+	}
 	end := minInt(start+m.questionViewportHeight(), len(body))
 
 	lines := []string{fitRenderedLine(m.th.Style(theme.RoleWarning).Render(m.text(MsgQuestionTitle, nil)), contentWidth), ""}
@@ -260,6 +307,9 @@ func (m *Model) questionOverlayView() string {
 		"next":     m.keys.label(KeyContextQuestion, ActionQuestionNext),
 		"answer":   m.keys.label(KeyContextQuestion, ActionQuestionAnswer),
 	})
+	if len(q.Options) == 0 {
+		footer = m.text(MsgQuestionFreeTextFooter, nil)
+	}
 	if contentWidth < 44 {
 		footer = m.text(MsgQuestionFooterMedium, MessageArgs{
 			"previous": primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionPrevious)),
@@ -317,6 +367,15 @@ func (m *Model) questionBodyLines() []string {
 		lines = append(lines, m.text(MsgOverlayDisconnected, nil))
 	}
 	lines = append(lines, "")
+	if len(q.Options) == 0 {
+		lines = append(lines, wrappedOverlayLines(m.text(MsgQuestionFreeTextHint, nil), width)...)
+		answer := q.FreeText
+		if answer == "" {
+			answer = " "
+		}
+		lines = append(lines, wrappedOverlayLines("> "+answer+"|", width)...)
+		return lines
+	}
 	for i, option := range q.Options {
 		marker := "  "
 		if i == q.Selected {

@@ -33,39 +33,45 @@ const (
 	MsgStatusGoal             MessageID = "status.goal"
 	MsgStatusRunningModel     MessageID = "status.running_model"
 
-	MsgHelpTitle              MessageID = "help.title"
-	MsgHelpCommands           MessageID = "help.commands"
-	MsgHelpKeybindings        MessageID = "help.keybindings"
-	MsgHelpCloseScroll        MessageID = "help.close_scroll"
-	MsgHelpCommandHelp        MessageID = "help.command.help"
-	MsgHelpCommandEditor      MessageID = "help.command.editor"
-	MsgHelpCommandCopy        MessageID = "help.command.copy"
-	MsgHelpCommandTranscript  MessageID = "help.command.transcript"
-	MsgHelpCommandKeymap      MessageID = "help.command.keymap"
-	MsgHelpCommandAgents      MessageID = "help.command.agents"
-	MsgHelpCommandCheckpoints MessageID = "help.command.checkpoints"
-	MsgHelpCommandResume      MessageID = "help.command.resume"
-	MsgHelpCommandNew         MessageID = "help.command.new"
-	MsgHelpCommandFork        MessageID = "help.command.fork"
-	MsgHelpCommandTaskResume  MessageID = "help.command.task_resume"
-	MsgHelpCommandSearch      MessageID = "help.command.search"
-	MsgHelpCommandRecap       MessageID = "help.command.recap"
-	MsgHelpCommandStatus      MessageID = "help.command.status"
-	MsgHelpCommandPermissions MessageID = "help.command.permissions"
-	MsgHelpCommandContext     MessageID = "help.command.context"
-	MsgHelpCommandCompact     MessageID = "help.command.compact"
-	MsgHelpCommandConfig      MessageID = "help.command.config"
-	MsgHelpCommandUsage       MessageID = "help.command.usage"
-	MsgHelpCommandReview      MessageID = "help.command.review"
-	MsgHelpCommandMemory      MessageID = "help.command.memory"
-	MsgHelpCommandDiff        MessageID = "help.command.diff"
-	MsgHelpCommandMCP         MessageID = "help.command.mcp"
-	MsgHelpCommandLoop        MessageID = "help.command.loop"
-	MsgHelpCommandGoal        MessageID = "help.command.goal"
-	MsgHelpCommandMode        MessageID = "help.command.mode"
-	MsgHelpCommandModel       MessageID = "help.command.model"
-	MsgHelpCommandShell       MessageID = "help.command.shell"
-	MsgHelpCommandMention     MessageID = "help.command.mention"
+	MsgHelpTitle                MessageID = "help.title"
+	MsgHelpCommands             MessageID = "help.commands"
+	MsgHelpKeybindings          MessageID = "help.keybindings"
+	MsgHelpCloseScroll          MessageID = "help.close_scroll"
+	MsgHelpCommandHelp          MessageID = "help.command.help"
+	MsgHelpCommandEditor        MessageID = "help.command.editor"
+	MsgHelpCommandCopy          MessageID = "help.command.copy"
+	MsgHelpCommandTranscript    MessageID = "help.command.transcript"
+	MsgHelpCommandKeymap        MessageID = "help.command.keymap"
+	MsgHelpCommandAgents        MessageID = "help.command.agents"
+	MsgHelpCommandCheckpoints   MessageID = "help.command.checkpoints"
+	MsgHelpCommandResume        MessageID = "help.command.resume"
+	MsgHelpCommandNew           MessageID = "help.command.new"
+	MsgHelpCommandFork          MessageID = "help.command.fork"
+	MsgHelpCommandTaskResume    MessageID = "help.command.task_resume"
+	MsgHelpCommandSearch        MessageID = "help.command.search"
+	MsgHelpCommandRecap         MessageID = "help.command.recap"
+	MsgHelpCommandStatus        MessageID = "help.command.status"
+	MsgHelpCommandPermissions   MessageID = "help.command.permissions"
+	MsgHelpCommandContext       MessageID = "help.command.context"
+	MsgHelpCommandCompact       MessageID = "help.command.compact"
+	MsgHelpCommandConfig        MessageID = "help.command.config"
+	MsgHelpCommandUsage         MessageID = "help.command.usage"
+	MsgHelpCommandReview        MessageID = "help.command.review"
+	MsgHelpCommandSessionReview MessageID = "help.command.session_review"
+	MsgHelpCommandMemory        MessageID = "help.command.memory"
+	MsgHelpCommandDoctor        MessageID = "help.command.doctor"
+	MsgHelpCommandSkills        MessageID = "help.command.skills"
+	MsgHelpCommandHooks         MessageID = "help.command.hooks"
+	MsgHelpCommandExtensions    MessageID = "help.command.extensions"
+	MsgHelpCommandDiff          MessageID = "help.command.diff"
+	MsgHelpCommandMCP           MessageID = "help.command.mcp"
+	MsgHelpCommandLoop          MessageID = "help.command.loop"
+	MsgHelpCommandGoal          MessageID = "help.command.goal"
+	MsgHelpCommandMode          MessageID = "help.command.mode"
+	MsgHelpCommandModel         MessageID = "help.command.model"
+	MsgHelpCommandEffort        MessageID = "help.command.effort"
+	MsgHelpCommandShell         MessageID = "help.command.shell"
+	MsgHelpCommandMention       MessageID = "help.command.mention"
 
 	MsgApprovalRPCFailed    MessageID = "approval.rpc_failed"
 	MsgApprovalRetry        MessageID = "approval.retry"
@@ -78,17 +84,20 @@ const (
 	MsgApprovalScroll       MessageID = "approval.scroll"
 	MsgApprovalPolicyDetail MessageID = "approval.policy_detail"
 
-	MsgQuestionTitle         MessageID = "question.title"
-	MsgQuestionAnswerFailed  MessageID = "question.answer_failed"
-	MsgQuestionAnswerLogFail MessageID = "question.answer_log_failed"
-	MsgQuestionAnswered      MessageID = "question.answered"
-	MsgQuestionNoOptions     MessageID = "question.no_options"
-	MsgQuestionCannotDismiss MessageID = "question.cannot_dismiss"
-	MsgQuestionFooterWide    MessageID = "question.footer.wide"
-	MsgQuestionFooterMedium  MessageID = "question.footer.medium"
-	MsgQuestionFooterNarrow  MessageID = "question.footer.narrow"
-	MsgQuestionSending       MessageID = "question.sending"
-	MsgQuestionScroll        MessageID = "question.scroll"
+	MsgQuestionTitle            MessageID = "question.title"
+	MsgQuestionAnswerFailed     MessageID = "question.answer_failed"
+	MsgQuestionAnswerLogFail    MessageID = "question.answer_log_failed"
+	MsgQuestionAnswered         MessageID = "question.answered"
+	MsgQuestionNoOptions        MessageID = "question.no_options"
+	MsgQuestionCannotDismiss    MessageID = "question.cannot_dismiss"
+	MsgQuestionFooterWide       MessageID = "question.footer.wide"
+	MsgQuestionFooterMedium     MessageID = "question.footer.medium"
+	MsgQuestionFooterNarrow     MessageID = "question.footer.narrow"
+	MsgQuestionSending          MessageID = "question.sending"
+	MsgQuestionScroll           MessageID = "question.scroll"
+	MsgQuestionFreeTextHint     MessageID = "question.free_text_hint"
+	MsgQuestionFreeTextFooter   MessageID = "question.free_text_footer"
+	MsgQuestionFreeTextRequired MessageID = "question.free_text_required"
 
 	MsgHistoryTypeToSearch   MessageID = "history.type_to_search"
 	MsgHistoryMatch          MessageID = "history.match"
@@ -166,19 +175,25 @@ var baseCatalogRows = []catalogRow{
 	catalog(MsgHelpCommandSearch, "  /search <text>         search canonical session items", "  /search <text>         搜索规范会话记录", "  /search <text>         正規セッション履歴を検索", "  /search <text>         표준 세션 기록 검색", "  /search <text>         buscar elementos canónicos", "  /search <text>         rechercher les éléments canoniques"),
 	catalog(MsgHelpCommandRecap, "  /recap                 latest canonical session items", "  /recap                 最近的规范会话记录", "  /recap                 最新の正規セッション項目", "  /recap                 최신 표준 세션 항목", "  /recap                 últimos elementos canónicos", "  /recap                 derniers éléments canoniques"),
 	catalog(MsgHelpCommandStatus, "  /status                current daemon-backed session status", "  /status                当前会话状态（来自 daemon）", "  /status                daemon の現在のセッション状態", "  /status                daemon 기반 현재 세션 상태", "  /status                estado actual desde el daemon", "  /status                état courant fourni par le daemon"),
-	catalog(MsgHelpCommandPermissions, "  /permissions           effective permission profile", "  /permissions           当前生效的权限配置", "  /permissions           有効な権限プロファイル", "  /permissions           적용 중인 권한 프로필", "  /permissions           perfil de permisos efectivo", "  /permissions           profil d’autorisations effectif"),
+	catalog(MsgHelpCommandPermissions, "  /permissions [new <profile> [--yes]] inspect or create governed session", "  /permissions [new <配置> [--yes]] 查看权限或创建受治理会话", "  /permissions [new <profile> [--yes]] 権限確認・管理セッション作成", "  /permissions [new <profile> [--yes]] 권한 확인 또는 통제 세션 생성", "  /permissions [new <perfil> [--yes]] revisar o crear sesión gobernada", "  /permissions [new <profil> [--yes]] consulter ou créer une session gouvernée"),
 	catalog(MsgHelpCommandContext, "  /context               exact persisted context summary", "  /context               精确的持久化上下文摘要", "  /context               永続コンテキストの正確な概要", "  /context               정확한 영구 컨텍스트 요약", "  /context               resumen exacto del contexto persistido", "  /context               résumé exact du contexte persistant"),
 	catalog(MsgHelpCommandCompact, "  /compact               atomically compact the current paused checkpoint", "  /compact               原子压缩当前暂停任务的检查点", "  /compact               現在の一時停止チェックポイントをアトミックに圧縮", "  /compact               현재 일시 중지 체크포인트 원자적 압축", "  /compact               compactar atómicamente el checkpoint pausado", "  /compact               compacter atomiquement le checkpoint en pause"),
-	catalog(MsgHelpCommandConfig, "  /config                effective runtime status (read-only)", "  /config                运行时有效状态（只读）", "  /config                有効なランタイム状態（読み取り専用）", "  /config                유효 런타임 상태(읽기 전용)", "  /config                estado efectivo (solo lectura)", "  /config                état effectif (lecture seule)"),
+	catalog(MsgHelpCommandConfig, "  /config|/settings      settings shell (use /config raw for inventory)", "  /config|/settings      设置面板（/config raw 查看完整清单）", "  /config|/settings      設定シェル（一覧は /config raw）", "  /config|/settings      설정 셸(/config raw로 목록)", "  /config|/settings      panel de ajustes (/config raw para inventario)", "  /config|/settings      panneau de réglages (/config raw pour l’inventaire)"),
 	catalog(MsgHelpCommandUsage, "  /usage                 session token usage and cost", "  /usage                 会话 Token 用量与成本", "  /usage                 セッションのトークン使用量とコスト", "  /usage                 세션 토큰 사용량 및 비용", "  /usage                 uso de tokens y coste de la sesión", "  /usage                 jetons et coût de la session"),
-	catalog(MsgHelpCommandReview, "  /review                read-only session review; does not start code review", "  /review                只读会话审查；不会发起代码审查", "  /review                読み取り専用セッションレビュー", "  /review                읽기 전용 세션 검토", "  /review                revisión de sesión de solo lectura", "  /review                revue de session en lecture seule"),
-	catalog(MsgHelpCommandMemory, "  /memory                persistent memory status", "  /memory                持久记忆状态", "  /memory                永続メモリの状態", "  /memory                영구 메모리 상태", "  /memory                estado de memoria persistente", "  /memory                état de la mémoire persistante"),
+	catalog(MsgHelpCommandReview, "  /review [target]       run a code review task", "  /review [目标]         发起代码审查任务", "  /review [対象]         コードレビューを実行", "  /review [대상]         코드 검토 작업 실행", "  /review [objetivo]     ejecutar revisión de código", "  /review [cible]        lancer une revue de code"),
+	catalog(MsgHelpCommandSessionReview, "  /session-review       read-only governance projection", "  /session-review       只读治理投影", "  /session-review       ガバナンス表示（読み取り専用）", "  /session-review       거버넌스 보기(읽기 전용)", "  /session-review       proyección de gobierno", "  /session-review       projection de gouvernance"),
+	catalog(MsgHelpCommandMemory, "  /memory <status|list|search|read|verify|handoff|rollback>", "  /memory <status|list|search|read|verify|handoff|rollback> 持久记忆控制", "  /memory <status|list|search|read|verify|handoff|rollback> 永続メモリ制御", "  /memory <status|list|search|read|verify|handoff|rollback> 영구 메모리 제어", "  /memory <status|list|search|read|verify|handoff|rollback> control de memoria", "  /memory <status|list|search|read|verify|handoff|rollback> contrôle mémoire"),
+	catalog(MsgHelpCommandDoctor, "  /doctor                runtime diagnostics", "  /doctor                运行时诊断", "  /doctor                ランタイム診断", "  /doctor                런타임 진단", "  /doctor                diagnósticos del runtime", "  /doctor                diagnostic du runtime"),
+	catalog(MsgHelpCommandSkills, "  /skills                read-only skill inventory", "  /skills                只读技能清单", "  /skills                スキル一覧（読み取り専用）", "  /skills                기술 목록(읽기 전용)", "  /skills                inventario de skills", "  /skills                inventaire des skills"),
+	catalog(MsgHelpCommandHooks, "  /hooks                 read-only hook inventory", "  /hooks                 只读 Hook 清单", "  /hooks                 フック一覧（読み取り専用）", "  /hooks                 훅 목록(읽기 전용)", "  /hooks                 inventario de hooks", "  /hooks                 inventaire des hooks"),
+	catalog(MsgHelpCommandExtensions, "  /extensions            read-only extension inventory", "  /extensions            只读扩展清单", "  /extensions            拡張一覧（読み取り専用）", "  /extensions            확장 목록(읽기 전용)", "  /extensions            inventario de extensiones", "  /extensions            inventaire des extensions"),
 	catalog(MsgHelpCommandDiff, "  /diff                  read-only tracked and untracked workspace diff", "  /diff                  只读查看已跟踪和未跟踪的工作区差异", "  /diff                  追跡済み・未追跡の差分を読み取り専用で表示", "  /diff                  추적/미추적 작업 공간 diff 읽기 전용 보기", "  /diff                  diff de cambios rastreados y no rastreados", "  /diff                  diff en lecture seule, suivi et non suivi"),
 	catalog(MsgHelpCommandMCP, "  /mcp [verbose]         secret-free MCP server/tool health inventory", "  /mcp [verbose]         不含密钥的 MCP 服务/工具健康清单", "  /mcp [verbose]         秘密情報を含まない MCP サーバー・ツール状態", "  /mcp [verbose]         비밀 없는 MCP 서버/도구 상태", "  /mcp [verbose]         inventario MCP sin secretos", "  /mcp [verbose]         inventaire MCP sans secrets"),
-	catalog(MsgHelpCommandLoop, "  /loop [list|<duration> <prompt>|pause|resume|delete <id>]", "  /loop [list|<时长> <指令>|pause|resume|delete <id>]", "  /loop [list|<期間> <指示>|pause|resume|delete <id>]", "  /loop [list|<기간> <지시>|pause|resume|delete <id>]", "  /loop [list|<duración> <instrucción>|pause|resume|delete <id>]", "  /loop [list|<durée> <instruction>|pause|resume|delete <id>]"),
-	catalog(MsgHelpCommandGoal, "  /goal [--tokens N] <objective> | clear|pause|resume|complete|continue", "  /goal [--tokens N] <目标> | clear|pause|resume|complete|continue", "  /goal [--tokens N] <目標> | clear|pause|resume|complete|continue", "  /goal [--tokens N] <목표> | clear|pause|resume|complete|continue", "  /goal [--tokens N] <objetivo> | clear|pause|resume|complete|continue", "  /goal [--tokens N] <objectif> | clear|pause|resume|complete|continue"),
-	catalog(MsgHelpCommandMode, "  /mode <build|plan>     change interaction mode", "  /mode <build|plan>     切换交互模式", "  /mode <build|plan>     対話モードを変更", "  /mode <build|plan>     상호작용 모드 변경", "  /mode <build|plan>     cambiar el modo de interacción", "  /mode <build|plan>     changer le mode d’interaction"),
+	catalog(MsgHelpCommandLoop, "  /loop [list|<duration> [--concurrency policy] <prompt>|pause|resume|delete <id>]", "  /loop [list|<时长> [--concurrency 策略] <指令>|pause|resume|delete <id>]", "  /loop [list|<期間> [--concurrency policy] <指示>|pause|resume|delete <id>]", "  /loop [list|<기간> [--concurrency policy] <지시>|pause|resume|delete <id>]", "  /loop [list|<duración> [--concurrency política] <instrucción>|pause|resume|delete <id>]", "  /loop [list|<durée> [--concurrency politique] <instruction>|pause|resume|delete <id>]"),
+	catalog(MsgHelpCommandGoal, "  /goal [--auto] [--tokens N] [--max-continuations N] <objective> | clear|pause|resume|complete|continue", "  /goal [--auto] [--tokens N] [--max-continuations N] <目标> | clear|pause|resume|complete|continue", "  /goal [--auto] [--tokens N] [--max-continuations N] <目標> | clear|pause|resume|complete|continue", "  /goal [--auto] [--tokens N] [--max-continuations N] <목표> | clear|pause|resume|complete|continue", "  /goal [--auto] [--tokens N] [--max-continuations N] <objetivo> | clear|pause|resume|complete|continue", "  /goal [--auto] [--tokens N] [--max-continuations N] <objectif> | clear|pause|resume|complete|continue"),
+	catalog(MsgHelpCommandMode, "  /mode <build|plan|cycle> change interaction mode (Shift+Tab)", "  /mode <build|plan|cycle> 切换交互模式（Shift+Tab）", "  /mode <build|plan|cycle> 対話モード変更（Shift+Tab）", "  /mode <build|plan|cycle> 상호작용 모드 변경(Shift+Tab)", "  /mode <build|plan|cycle> cambiar modo (Shift+Tab)", "  /mode <build|plan|cycle> changer de mode (Shift+Tab)"),
 	catalog(MsgHelpCommandModel, "  /model [provider/model] show or switch the task model", "  /model [厂商/模型]      查看或切换任务模型", "  /model [provider/model] タスクモデルを表示・切替", "  /model [provider/model] 작업 모델 보기/전환", "  /model [proveedor/modelo] ver o cambiar el modelo", "  /model [fournisseur/modèle] afficher ou changer le modèle"),
+	catalog(MsgHelpCommandEffort, "  /effort [level]        show or change reasoning effort", "  /effort [级别]         查看或切换推理强度", "  /effort [レベル]       推論強度を表示・変更", "  /effort [수준]         추론 강도 보기/변경", "  /effort [nivel]        ver o cambiar esfuerzo", "  /effort [niveau]       afficher ou changer l’effort"),
 	catalog(MsgHelpCommandShell, "  !<command>             governed argv command; quotes supported", "  !<command>             受治理的 argv 命令；支持引号", "  !<command>             管理対象の argv コマンド。引用符対応", "  !<command>             통제되는 argv 명령, 따옴표 지원", "  !<command>             comando argv gobernado; admite comillas", "  !<command>             commande argv gouvernée ; guillemets pris en charge"),
 	catalog(MsgHelpCommandMention, "  @<path|agent>          reference a path or agent", "  @<path|agent>          引用路径或 Agent", "  @<path|agent>          パスまたは Agent を参照", "  @<path|agent>          경로 또는 Agent 참조", "  @<path|agent>          referenciar una ruta o un Agent", "  @<path|agent>          référencer un chemin ou un Agent"),
 
@@ -204,6 +219,9 @@ var baseCatalogRows = []catalogRow{
 	catalog(MsgQuestionFooterNarrow, "[{answer}] answer", "[{answer}] 回答", "[{answer}] 回答", "[{answer}] 응답", "[{answer}] responder", "[{answer}] répondre"),
 	catalog(MsgQuestionSending, "Sending answer...", "正在发送回答...", "回答を送信中...", "응답 전송 중...", "Enviando la respuesta...", "Envoi de la réponse..."),
 	catalog(MsgQuestionScroll, "  [{page_up}/{page_down}] scroll {start}-{end}/{total}", "  [{page_up}/{page_down}] 滚动 {start}-{end}/{total}", "  [{page_up}/{page_down}] スクロール {start}-{end}/{total}", "  [{page_up}/{page_down}] 스크롤 {start}-{end}/{total}", "  [{page_up}/{page_down}] desplazar {start}-{end}/{total}", "  [{page_up}/{page_down}] défiler {start}-{end}/{total}"),
+	catalog(MsgQuestionFreeTextHint, "No choices were provided. Type your answer:", "未提供选项，请输入回答：", "選択肢がありません。回答を入力してください:", "선택지가 없습니다. 답변을 입력하세요:", "No se proporcionaron opciones. Escribe tu respuesta:", "Aucun choix n’est proposé. Saisissez votre réponse :"),
+	catalog(MsgQuestionFreeTextFooter, "[enter] submit  [backspace] edit  [esc] keep pending", "[enter] 提交  [backspace] 编辑  [esc] 保持等待", "[enter] 送信  [backspace] 編集  [esc] 保留", "[enter] 제출  [backspace] 편집  [esc] 대기 유지", "[enter] enviar  [backspace] editar  [esc] mantener pendiente", "[enter] envoyer  [backspace] modifier  [esc] laisser en attente"),
+	catalog(MsgQuestionFreeTextRequired, "Type an answer before submitting.", "请输入回答后再提交。", "回答を入力してから送信してください。", "답변을 입력한 후 제출하세요.", "Escribe una respuesta antes de enviarla.", "Saisissez une réponse avant l’envoi."),
 
 	catalog(MsgHistoryTypeToSearch, "type to search", "输入以搜索", "入力して検索", "입력하여 검색", "escribe para buscar", "saisissez pour rechercher"),
 	catalog(MsgHistoryMatch, "match", "匹配", "一致", "일치", "coincidencia", "résultat"),

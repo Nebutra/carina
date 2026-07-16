@@ -1,6 +1,6 @@
 {
   "$comment": "Authoritative Carina JSON-RPC 2.0 registry. Each entry mirrors a daemon MethodDescriptor; params/result document the wire contract. Transport is newline-delimited JSON over the local socket or authenticated Gateway transports.",
-  "version": "1.4.0",
+  "version": "1.6.0",
   "apis": {
     "runtime": [
       { "method": "runtime.initialize", "scope": "read", "remote": true, "params": { "protocol_version": "semver?", "schema_version": "semver? compatible major", "projection_version": "semver? exact reducer match", "client_name": "string?", "client_version": "semver?" }, "result": "RuntimeInitializeResult" },
@@ -40,6 +40,7 @@
       { "method": "session.create", "scope": "write", "remote": false, "params": { "workspace_root": "string", "profile": "string?", "approval_mode": "string?" }, "result": "Session" },
       { "method": "session.get", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "Session" },
       { "method": "session.list", "scope": "read", "remote": true, "params": {}, "result": "Session[]" },
+      { "method": "session.rename", "scope": "write", "remote": false, "params": { "session_id": "string", "name": "string 1..80" }, "result": "Session" },
       { "method": "session.pause", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "Session" },
       { "method": "session.resume", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "Session" },
       { "method": "session.close", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "Session" },
@@ -64,7 +65,7 @@
       { "method": "session.checkpoint.compact", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "task_id": "string? (paused task; defaults to latest paused task)" }, "result": "CheckpointCompactResult" }
     ],
     "task": [
-      { "method": "task.submit", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string", "client_submission_id": "string?", "agent": "string?", "model": "string?", "reasoning_effort": "string?", "mode": "background?", "success_criteria": "SuccessCheck[]?", "output_schema": "JSON Schema Draft 2020-12 object?" }, "result": "Task" },
+      { "method": "task.submit", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string", "client_submission_id": "string?", "agent": "string?", "model": "string?", "reasoning_effort": "string?", "token_budget": "integer >= 0?", "mode": "background?", "success_criteria": "SuccessCheck[]?", "output_schema": "JSON Schema Draft 2020-12 object?" }, "result": "Task" },
       { "method": "task.resume", "scope": "write", "remote": false, "control_plane_write": true, "params": { "task_id": "string" }, "result": "Task" },
       { "method": "task.status", "scope": "read", "remote": true, "params": { "task_id": "string" }, "result": "Task" },
       { "method": "task.list", "scope": "read", "remote": true, "params": { "session_id": "string?" }, "result": "Task[]" },
@@ -83,25 +84,29 @@
       { "method": "history.recent", "scope": "read", "remote": false, "params": { "limit": "number?", "scope": "session|workspace|global?", "session_id": "string? (required for session/workspace scope)" }, "result": "{ entries: string[], count: number, scope: session|workspace|global }" }
     ],
     "memory": [
+      { "method": "memory.read", "scope": "read", "remote": false, "params": { "session_id": "string", "target": "memory|user?" }, "result": "MemoryRevisionRead" },
       { "method": "memory.list", "scope": "read", "remote": false, "params": { "session_id": "string", "target": "memory|user?" }, "result": "MemoryState" },
       { "method": "memory.context", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ scope: MemoryScope, context: string }" },
       { "method": "memory.search", "scope": "read", "remote": false, "params": { "session_id": "string", "query": "string", "target": "memory|user?", "limit": "number?", "mode": "lexical|semantic|auto?", "model": "provider/model?" }, "result": "MemorySearchResult" },
       { "method": "memory.status", "scope": "read", "remote": false, "params": { "session_id": "string?" }, "result": "MemoryStatus" },
-      { "method": "memory.write", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "target": "memory|user?", "action": "add|replace|remove|batch", "content": "string?", "old_text": "string?", "operations": "MemoryOperation[]?" }, "result": "object" },
+      { "method": "memory.write", "scope": "write", "remote": false, "control_plane_write": true, "params": { "version": "1?", "session_id": "string", "target": "memory|user?", "action": "add|replace|remove|batch", "content": "string?", "old_text": "string?", "operations": "MemoryOperation[]?", "expected_revision": "string?", "idempotency_key": "string?" }, "result": "MemoryRevisionWrite" },
+      { "method": "memory.handoff", "scope": "write", "remote": false, "control_plane_write": true, "params": { "source_session_id": "string", "target_session_id": "string", "target": "memory|user", "expected_revision": "string?", "idempotency_key": "string" }, "result": "MemoryRevisionWrite|PermissionDecision" },
+      { "method": "memory.rollback", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "target": "memory|user", "revision": "string", "expected_revision": "string", "idempotency_key": "string" }, "result": "MemoryRevisionWrite" },
+      { "method": "memory.verify", "scope": "read", "remote": false, "params": { "session_id": "string", "target": "memory|user", "revision": "string?" }, "result": "MemoryVerificationProof" },
       { "method": "memory.projection.authorize", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "session_id": "string" }, "result": "{ projections: MemoryProjectionWriteResult[] }" },
       { "method": "memory.projection.reseed", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "document_id": "string", "remote_quiesced": "boolean" }, "result": "{ document_id: string, status: blocked, requires_authorization: true, remote_state_known: false }" },
       { "method": "memory.projection.retry", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "document_id": "string" }, "result": "{ document_id: string, status: blocked, attempts: number, previous_error_code: string, requires_authorization: true }" }
     ],
     "schedule": [
-      { "method": "schedule.create", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "prompt": "string", "kind": "at|every|cron", "expression": "string" }, "result": "Schedule" },
-      { "method": "schedule.list", "scope": "read", "remote": false, "params": {}, "result": "{ schedules: Schedule[] }" },
-      { "method": "schedule.pause", "scope": "write", "remote": false, "control_plane_write": true, "params": { "schedule_id": "string" }, "result": "Schedule" },
-      { "method": "schedule.resume", "scope": "write", "remote": false, "control_plane_write": true, "params": { "schedule_id": "string" }, "result": "Schedule" },
-      { "method": "schedule.delete", "scope": "write", "remote": false, "control_plane_write": true, "params": { "schedule_id": "string" }, "result": "{ deleted: boolean, schedule_id: string }" }
+      { "method": "schedule.create", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "prompt": "string", "kind": "at|every|cron", "expression": "string", "model": "string?", "reasoning_effort": "string?", "agent": "string?", "mode": "background?", "concurrency_policy": "forbid|queue|replace|allow?" }, "result": "Schedule" },
+      { "method": "schedule.list", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ schedules: Schedule[] }" },
+      { "method": "schedule.pause", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "schedule_id": "string" }, "result": "Schedule" },
+      { "method": "schedule.resume", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "schedule_id": "string" }, "result": "Schedule" },
+      { "method": "schedule.delete", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "schedule_id": "string" }, "result": "{ deleted: boolean, schedule_id: string }" }
     ],
     "goal": [
       { "method": "goal.get", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ goal: SessionGoal? }" },
-      { "method": "goal.set", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "objective": "string", "status": "active|paused|blocked|budget_limited|usage_limited|complete?", "token_budget": "integer >= 0?", "max_continuations": "integer 1..32?" }, "result": "SessionGoal" },
+      { "method": "goal.set", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "objective": "string", "status": "active|paused|blocked|budget_limited|usage_limited|complete?", "token_budget": "integer >= 0?", "max_continuations": "integer 1..32?", "success_criteria": "SuccessCheck[]?", "auto_continue": "boolean? default false" }, "result": "SessionGoal" },
       { "method": "goal.clear", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string" }, "result": "{ cleared: boolean, session_id: string }" },
       { "method": "goal.pause", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string" }, "result": "SessionGoal" },
       { "method": "goal.resume", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string" }, "result": "SessionGoal" },
@@ -179,7 +184,13 @@
       { "method": "audit.verify", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "AuditVerification" }
     ],
     "profile": [
-      { "method": "profile.describe", "scope": "read", "remote": true, "params": { "profile": "string?", "session_id": "string?" }, "result": "PermissionProfile" }
+      { "method": "profile.describe", "scope": "read", "remote": true, "params": { "profile": "string?", "session_id": "string?" }, "result": "PermissionProfile" },
+      { "method": "profile.inventory", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ effective: PermissionProfile, profile: string, source: string, choices: object[], mutation: string }" }
+    ],
+    "product_control": [
+      { "method": "config.inventory", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ effective: object, sources: object, choices: object, mutation: string }" },
+      { "method": "skill.inventory", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ skills: object[], count: integer, mutation: string }" },
+      { "method": "hook.inventory", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ hooks: object[], count: integer, safe_mode: boolean, supported_events: string[], commands_redacted: true }" }
     ],
     "secret": [
       { "method": "secret.grant", "scope": "admin", "remote": false, "control_plane_write": true, "params": "object", "result": "object" },

@@ -44,11 +44,13 @@ type memoryOperation struct {
 }
 
 type memoryWriteRequest struct {
-	Action     string            `json:"action"`
-	Target     string            `json:"target"`
-	Content    string            `json:"content,omitempty"`
-	OldText    string            `json:"old_text,omitempty"`
-	Operations []memoryOperation `json:"operations,omitempty"`
+	Action           string            `json:"action"`
+	Target           string            `json:"target"`
+	Content          string            `json:"content,omitempty"`
+	OldText          string            `json:"old_text,omitempty"`
+	Operations       []memoryOperation `json:"operations,omitempty"`
+	ExpectedRevision string            `json:"expected_revision,omitempty"`
+	IdempotencyKey   string            `json:"idempotency_key,omitempty"`
 }
 
 type memoryState struct {
@@ -75,6 +77,9 @@ type memoryWriteResult struct {
 	CurrentEntries []string                     `json:"current_entries,omitempty"`
 	Matches        []string                     `json:"matches,omitempty"`
 	Projection     *memoryProjectionWriteResult `json:"projection,omitempty"`
+	Version        int                          `json:"version,omitempty"`
+	Revision       string                       `json:"revision,omitempty"`
+	ParentRevision string                       `json:"parent_revision,omitempty"`
 }
 
 type memoryProjectionWriteResult struct {
@@ -216,6 +221,16 @@ func (s *memoryStore) apply(scope memoryScope, req memoryWriteRequest) (memoryWr
 		Usage:      s.usage(target, out),
 		EntryCount: len(out),
 	}, nil
+}
+
+func (s *memoryStore) restore(scope memoryScope, target string, entries []string) error {
+	target, err := normalizeMemoryTarget(target)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.writeEntriesLocked(scope, target, append([]string(nil), entries...))
 }
 
 func (s *memoryStore) snapshot(scope memoryScope) string {

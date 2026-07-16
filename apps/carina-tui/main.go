@@ -97,6 +97,13 @@ func run(args []string, stderr io.Writer) int {
 			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapRecoveryFailed, microcopy.Args{"reason": err.Error()}, loc))
 			return tui.OutcomeRuntimeError.ExitCode()
 		}
+		if sessionID == "" {
+			sessionID, err = tui.LastActiveSession(cfg.StateDir, projectRoot)
+			if err != nil {
+				fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapRecoveryFailed, microcopy.Args{"reason": err.Error()}, loc))
+				return tui.OutcomeRuntimeError.ExitCode()
+			}
+		}
 	}
 
 	connectionController := tui.NewConnectionController()

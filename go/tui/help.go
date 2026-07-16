@@ -29,40 +29,13 @@ func (m *Model) closeHelp() {
 }
 
 func (m *Model) helpBodyLines() []string {
-	lines := []string{
-		m.text(MsgHelpCommands, nil),
-		m.text(MsgHelpCommandHelp, nil),
-		m.text(MsgHelpCommandEditor, nil),
-		m.text(MsgHelpCommandCopy, nil),
-		m.text(MsgHelpCommandTranscript, nil),
-		m.text(MsgHelpCommandKeymap, nil),
-		m.text(MsgHelpCommandAgents, nil),
-		m.text(MsgHelpCommandCheckpoints, nil),
-		m.text(MsgHelpCommandNew, nil),
-		m.text(MsgHelpCommandResume, nil),
-		m.text(MsgHelpCommandFork, nil),
-		m.text(MsgHelpCommandTaskResume, nil),
-		m.text(MsgHelpCommandSearch, nil),
-		m.text(MsgHelpCommandRecap, nil),
-		m.text(MsgHelpCommandStatus, nil),
-		m.text(MsgHelpCommandPermissions, nil),
-		m.text(MsgHelpCommandContext, nil),
-		m.text(MsgHelpCommandCompact, nil),
-		m.text(MsgHelpCommandConfig, nil),
-		m.text(MsgHelpCommandUsage, nil),
-		m.text(MsgHelpCommandReview, nil),
-		m.text(MsgHelpCommandMemory, nil),
-		m.text(MsgHelpCommandDiff, nil),
-		m.text(MsgHelpCommandMCP, nil),
-		m.text(MsgHelpCommandLoop, nil),
-		m.text(MsgHelpCommandGoal, nil),
-		m.text(MsgHelpCommandMode, nil),
-		m.text(MsgHelpCommandModel, nil),
-		m.text(MsgHelpCommandShell, nil),
-		m.text(MsgHelpCommandMention, nil),
-		"",
-		m.text(MsgHelpKeybindings, nil),
+	lines := []string{m.text(MsgHelpCommands, nil)}
+	for _, descriptor := range builtinCommandRegistry {
+		if descriptor.HelpID != "" {
+			lines = append(lines, m.text(descriptor.HelpID, nil))
+		}
 	}
+	lines = append(lines, m.text(MsgHelpCommandShell, nil), m.text(MsgHelpCommandMention, nil), "", m.text(MsgHelpKeybindings, nil))
 	return append(lines, m.keys.helpLines(m)...)
 }
 

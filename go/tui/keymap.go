@@ -63,6 +63,8 @@ const (
 	ActionGlobalRedraw     KeyAction = "global.redraw"
 	ActionGlobalExit       KeyAction = "global.exit"
 	ActionGlobalTranscript KeyAction = "global.transcript"
+	ActionGlobalModeCycle  KeyAction = "global.mode-cycle"
+	ActionGlobalSettings   KeyAction = "global.settings"
 
 	ActionChatInterrupt KeyAction = "chat.interrupt"
 	ActionChatRewind    KeyAction = "chat.rewind"
@@ -217,6 +219,9 @@ func defaultKeyBindings() []keyBinding {
 		{KeyContextGlobal, ActionGlobalRedraw, []string{"ctrl+l"}, "redraw terminal"},
 		{KeyContextGlobal, ActionGlobalExit, []string{"ctrl+d"}, "exit when input is empty"},
 		{KeyContextGlobal, ActionGlobalTranscript, []string{"alt+r"}, "open plain transcript"},
+		// Grok cycles modes with Shift+Tab; Carina only cycles governed build↔plan.
+		{KeyContextGlobal, ActionGlobalModeCycle, []string{"shift+tab", "ctrl+shift+m"}, "cycle build/plan mode"},
+		{KeyContextGlobal, ActionGlobalSettings, []string{"ctrl+,"}, "open settings shell"},
 
 		// Both chat actions intentionally share Esc. The dispatcher gates them on
 		// mutually exclusive states: an active turn interrupts, an idle chat rewinds.

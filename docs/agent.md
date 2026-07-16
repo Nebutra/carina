@@ -72,8 +72,10 @@ adapters; leave it unset to keep the claude-cli backend. Optional tiering:
 ## Run it
 
 ```bash
-# start the runtime (reasoner auto-wired if `claude` is on PATH)
-carina-daemon -tools ./zig/zig-out/bin -kernel ./bin/carina-kernel-service &
+# start the runtime (after `make install`; reasoner auto-wired if `claude` is
+# on PATH). The daemon discovers the kernel service and native tools next to
+# its own binary; use -tools/-kernel only to point at other build outputs.
+carina-daemon &
 
 cd your-repo
 carina run "fix the failing test in parser.go"     # agent works autonomously

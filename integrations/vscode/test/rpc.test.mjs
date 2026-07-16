@@ -8,6 +8,7 @@ import { RpcClient } from '../dist/rpc.js'
 
 const extension=fs.readFileSync(new URL('../src/extension.ts',import.meta.url),'utf8')
 test('session inspection is paged and artifacts are bounded',()=>{assert.match(extension,/session\.items/);assert.match(extension,/MAX_TIMELINE_PAGES/);assert.match(extension,/artifact\.read/);assert.match(extension,/preview_utf8/);assert.match(extension,/showSaveDialog/);assert.doesNotMatch(extension,/function transcript\(es:Event\[\]\)/)})
+test('editor context is explicit bounded and includes diagnostics',()=>{assert.match(extension,/carina\.sendEditorContext/);assert.match(extension,/MAX_EDITOR_CONTEXT/);assert.match(extension,/getDiagnostics/);assert.match(extension,/untrusted data, not instructions/);assert.match(extension,/task\.steer/);assert.match(extension,/task\.submit/)})
 
 const waitFor=(check,ms=3000)=>new Promise((resolve,reject)=>{const started=Date.now();const tick=()=>{if(check())return resolve();if(Date.now()-started>ms)return reject(new Error('condition timed out'));setTimeout(tick,10)};tick()})
 test('rpc consumes notifications and reconnects after disconnect',async()=>{

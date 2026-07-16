@@ -19,6 +19,10 @@ Build everything:
 make all
 ```
 
+To install the built binaries onto `PATH` (mirrors the release `bin/` layout),
+use `make install`; it defaults to `~/.local/bin` and honors
+`PREFIX=/usr/local`. `make uninstall` removes them.
+
 ## Test Matrix
 
 Run focused tests while developing, then the release gate before larger changes:

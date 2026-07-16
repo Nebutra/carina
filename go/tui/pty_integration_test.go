@@ -25,6 +25,19 @@ import (
 	"github.com/Nebutra/carina/go/rpc"
 )
 
+// cellWidth pins ambiguous-width handling for screen measurement. The
+// renderer's width math (ansi.StringWidth) treats East Asian ambiguous glyphs
+// — the rounded border set ╭│╮ among them — as one cell; go-runewidth's
+// package-level functions widen them to two under an East Asian locale
+// (LANG=zh_CN.*), which would make every border assertion off by two on a
+// Chinese-locale host. The test must count cells the way the renderer does,
+// not the way the host locale suggests.
+var cellWidth = func() *runewidth.Condition {
+	c := runewidth.NewCondition()
+	c.EastAsianWidth = false
+	return c
+}()
+
 func TestTUIUnderPTY(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode: skipping PTY harness test")
@@ -348,7 +361,7 @@ func TestTUIUnderPTY(t *testing.T) {
 func screenHasBorderWidth(screen string, width int) bool {
 	for _, line := range strings.Split(screen, "\n") {
 		trimmed := strings.TrimRight(line, " ")
-		if strings.HasPrefix(trimmed, "╭") && runewidth.StringWidth(trimmed) == width {
+		if strings.HasPrefix(trimmed, "╭") && cellWidth.StringWidth(trimmed) == width {
 			return true
 		}
 	}
@@ -414,7 +427,7 @@ func assertBorderAlignment(t *testing.T, screen string) {
 	if len(rows) < 3 {
 		t.Fatalf("no bordered rows captured:\n%s", screen)
 	}
-	want := runewidth.StringWidth(rows[0])
+	want := cellWidth.StringWidth(rows[0])
 	for i, row := range rows {
 		w, ok := capturedBorderWidth(row, want)
 		if !ok {
@@ -445,7 +458,7 @@ func capturedBorderWidth(row string, frameWidth int) (int, bool) {
 	width := 0
 	for i, r := range runes {
 		if r != '\t' {
-			width += runewidth.RuneWidth(r)
+			width += cellWidth.RuneWidth(r)
 			continue
 		}
 		next := width + 8 - width%8

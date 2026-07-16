@@ -93,10 +93,16 @@ func TestSubmissionJournalReconcilesAcrossModelRestart(t *testing.T) {
 			drain(m2, child)
 		}
 	}
-	if len(secondCaller.calls) != 2 {
-		t.Fatalf("restart RPC calls = %#v", secondCaller.calls)
+	var retryCall *fakeCall
+	for i := range secondCaller.calls {
+		if secondCaller.calls[i].method == "task.submit" {
+			retryCall = &secondCaller.calls[i]
+			break
+		}
 	}
-	retryCall := secondCaller.calls[1]
+	if retryCall == nil {
+		t.Fatalf("restart RPC calls missing task.submit: %#v", secondCaller.calls)
+	}
 	if retryCall.method != "task.submit" || retryCall.params["client_submission_id"] != firstID ||
 		retryCall.params["prompt"] != "recover after restart" || retryCall.params["model"] != "openai/gpt-5" || retryCall.params["mode"] != "background" {
 		t.Fatalf("restart retry = %#v, want id %q", retryCall, firstID)

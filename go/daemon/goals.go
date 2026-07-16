@@ -18,18 +18,22 @@ const goalStoreVersion = 1
 const defaultGoalContinuationLimit = 8
 
 type sessionGoal struct {
-	SessionID         string    `json:"session_id"`
-	Objective         string    `json:"objective"`
-	Status            string    `json:"status"`
-	TokenBudget       int       `json:"token_budget,omitempty"`
-	TokensUsed        int       `json:"tokens_used"`
-	TimeUsedSeconds   int64     `json:"time_used_seconds"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	ContinuationsUsed int       `json:"continuations_used"`
-	MaxContinuations  int       `json:"max_continuations"`
-	UsageBaseline     int       `json:"-"`
-	ActiveSince       time.Time `json:"-"`
+	SessionID           string                   `json:"session_id"`
+	Objective           string                   `json:"objective"`
+	Status              string                   `json:"status"`
+	TokenBudget         int                      `json:"token_budget,omitempty"`
+	TokensUsed          int                      `json:"tokens_used"`
+	TimeUsedSeconds     int64                    `json:"time_used_seconds"`
+	CreatedAt           time.Time                `json:"created_at"`
+	UpdatedAt           time.Time                `json:"updated_at"`
+	ContinuationsUsed   int                      `json:"continuations_used"`
+	MaxContinuations    int                      `json:"max_continuations"`
+	SuccessCriteria     []scheduler.SuccessCheck `json:"success_criteria,omitempty"`
+	AutoContinue        bool                     `json:"auto_continue,omitempty"`
+	ConsecutiveFailures int                      `json:"consecutive_failures,omitempty"`
+	LastTaskID          string                   `json:"last_task_id,omitempty"`
+	UsageBaseline       int                      `json:"-"`
+	ActiveSince         time.Time                `json:"-"`
 }
 
 type goalRecord struct {
@@ -83,13 +87,44 @@ func (s *goalStore) persistLocked() error {
 		return err
 	}
 	tmp := s.path + ".tmp"
-	if err = os.WriteFile(tmp, raw, 0600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err = f.Write(raw); err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err = os.Rename(tmp, s.path); err != nil {
 		_ = os.Remove(tmp)
+		return err
 	}
+	dir, err := os.Open(filepath.Dir(s.path))
+	if err != nil {
+		return err
+	}
+	err = dir.Sync()
+	_ = dir.Close()
 	return err
+}
+
+func (d *Daemon) auditGoalChange(sessionID, action, from, to string, payload map[string]any) error {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["action"], payload["from_status"], payload["to_status"] = action, from, to
+	payload["status"] = "prepared"
+	return d.recordChecked(sessionID, "GoalChangeRequested", "", "go", payload, "")
+}
+
+func (d *Daemon) recordGoalChanged(sessionID, action string, goal *sessionGoal) error {
+	return d.recordChecked(sessionID, "GoalChanged", "", "go", map[string]any{"action": action, "status": goal.Status, "tokens_used": goal.TokensUsed, "token_budget": goal.TokenBudget, "continuations_used": goal.ContinuationsUsed, "max_continuations": goal.MaxContinuations}, "")
 }
 
 func validGoalStatus(v string) bool {
@@ -151,11 +186,13 @@ func (d *Daemon) handleGoalGet(params json.RawMessage) (any, error) {
 }
 func (d *Daemon) handleGoalSet(params json.RawMessage) (any, error) {
 	var p struct {
-		SessionID        string `json:"session_id"`
-		Objective        string `json:"objective"`
-		Status           string `json:"status"`
-		TokenBudget      int    `json:"token_budget"`
-		MaxContinuations int    `json:"max_continuations"`
+		SessionID        string                   `json:"session_id"`
+		Objective        string                   `json:"objective"`
+		Status           string                   `json:"status"`
+		TokenBudget      int                      `json:"token_budget"`
+		MaxContinuations int                      `json:"max_continuations"`
+		SuccessCriteria  []scheduler.SuccessCheck `json:"success_criteria"`
+		AutoContinue     bool                     `json:"auto_continue"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -183,9 +220,12 @@ func (d *Daemon) handleGoalSet(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("max_continuations must be 1..32")
 	}
 	now := time.Now().UTC()
-	g := &sessionGoal{SessionID: p.SessionID, Objective: p.Objective, Status: p.Status, TokenBudget: p.TokenBudget, CreatedAt: now, UpdatedAt: now, MaxContinuations: p.MaxContinuations, UsageBaseline: d.sessionTokens(p.SessionID)}
+	g := &sessionGoal{SessionID: p.SessionID, Objective: p.Objective, Status: p.Status, TokenBudget: p.TokenBudget, CreatedAt: now, UpdatedAt: now, MaxContinuations: p.MaxContinuations, UsageBaseline: d.sessionTokens(p.SessionID), SuccessCriteria: append([]scheduler.SuccessCheck(nil), p.SuccessCriteria...), AutoContinue: p.AutoContinue}
 	if g.Status == "active" {
 		g.ActiveSince = now
+	}
+	if err := d.auditGoalChange(p.SessionID, "set", "", g.Status, map[string]any{"objective_sha256": hashMemoryQuery(g.Objective), "token_budget": g.TokenBudget, "max_continuations": g.MaxContinuations}); err != nil {
+		return nil, fmt.Errorf("goal audit WAL: %w", err)
 	}
 	d.goals.mu.Lock()
 	previous := d.goals.goals[p.SessionID]
@@ -201,6 +241,20 @@ func (d *Daemon) handleGoalSet(params json.RawMessage) (any, error) {
 	d.goals.mu.Unlock()
 	if err != nil {
 		return nil, err
+	}
+	if err := d.recordGoalChanged(p.SessionID, "set", g); err != nil {
+		d.goals.mu.Lock()
+		if previous == nil {
+			delete(d.goals.goals, p.SessionID)
+		} else {
+			d.goals.goals[p.SessionID] = previous
+		}
+		rollbackErr := d.goals.persistLocked()
+		d.goals.mu.Unlock()
+		if rollbackErr != nil {
+			return nil, fmt.Errorf("goal commit audit failed: %v (rollback failed: %v)", err, rollbackErr)
+		}
+		return nil, fmt.Errorf("goal commit audit: %w", err)
 	}
 	return publicGoal(g, now), nil
 }
@@ -219,6 +273,9 @@ func (d *Daemon) transitionGoal(params json.RawMessage, status string) (any, err
 	}
 	now := time.Now().UTC()
 	before := *r.Goal
+	if err := d.auditGoalChange(p.SessionID, status, before.Status, status, nil); err != nil {
+		return nil, fmt.Errorf("goal audit WAL: %w", err)
+	}
 	snapshotGoal(r.Goal, now)
 	r.Goal.Status = status
 	if status == "active" {
@@ -228,6 +285,13 @@ func (d *Daemon) transitionGoal(params json.RawMessage, status string) (any, err
 	if err := d.goals.persistLocked(); err != nil {
 		*r.Goal = before
 		return nil, err
+	}
+	if err := d.recordGoalChanged(p.SessionID, status, r.Goal); err != nil {
+		*r.Goal = before
+		if rollbackErr := d.goals.persistLocked(); rollbackErr != nil {
+			return nil, fmt.Errorf("goal commit audit failed: %v (rollback failed: %v)", err, rollbackErr)
+		}
+		return nil, fmt.Errorf("goal commit audit: %w", err)
 	}
 	return publicGoal(r.Goal, now), nil
 }
@@ -249,12 +313,32 @@ func (d *Daemon) handleGoalClear(params json.RawMessage) (any, error) {
 	}
 	d.goals.mu.Lock()
 	previous, ok := d.goals.goals[p.SessionID]
+	from := ""
+	if previous != nil {
+		from = previous.Goal.Status
+	}
+	if err := d.auditGoalChange(p.SessionID, "clear", from, "cleared", nil); err != nil {
+		d.goals.mu.Unlock()
+		return nil, fmt.Errorf("goal audit WAL: %w", err)
+	}
 	delete(d.goals.goals, p.SessionID)
 	err := d.goals.persistLocked()
 	if err != nil && previous != nil {
 		d.goals.goals[p.SessionID] = previous
 	}
 	d.goals.mu.Unlock()
+	if err == nil && previous != nil {
+		if auditErr := d.recordGoalChanged(p.SessionID, "clear", &sessionGoal{Status: "cleared"}); auditErr != nil {
+			d.goals.mu.Lock()
+			d.goals.goals[p.SessionID] = previous
+			rollbackErr := d.goals.persistLocked()
+			d.goals.mu.Unlock()
+			if rollbackErr != nil {
+				return nil, fmt.Errorf("goal commit audit failed: %v (rollback failed: %v)", auditErr, rollbackErr)
+			}
+			return nil, fmt.Errorf("goal commit audit: %w", auditErr)
+		}
+	}
 	return map[string]any{"cleared": ok, "session_id": p.SessionID}, err
 }
 
@@ -314,12 +398,26 @@ func (d *Daemon) handleGoalContinue(params json.RawMessage) (any, error) {
 	}
 	g.ContinuationsUsed++
 	g.UpdatedAt = time.Now().UTC()
+	if err := d.auditGoalChange(p.SessionID, "continue", g.Status, g.Status, map[string]any{"continuation": g.ContinuationsUsed, "remaining_token_budget": remainingBudget}); err != nil {
+		g.ContinuationsUsed--
+		d.goals.mu.Unlock()
+		return nil, fmt.Errorf("goal audit WAL: %w", err)
+	}
 	if err := d.goals.persistLocked(); err != nil {
 		g.ContinuationsUsed--
 		d.goals.mu.Unlock()
 		return nil, err
 	}
-	result, err := d.handleTaskSubmit(mustRaw(map[string]any{"session_id": p.SessionID, "prompt": "Continue working toward this persistent goal. Do not claim completion unless the objective and any explicit success criteria are actually satisfied:\n\n" + objective, "mode": "background"}))
+	if err := d.recordGoalChanged(p.SessionID, "continue", g); err != nil {
+		g.ContinuationsUsed--
+		rollbackErr := d.goals.persistLocked()
+		d.goals.mu.Unlock()
+		if rollbackErr != nil {
+			return nil, fmt.Errorf("goal commit audit failed: %v (rollback failed: %v)", err, rollbackErr)
+		}
+		return nil, fmt.Errorf("goal commit audit: %w", err)
+	}
+	result, err := d.handleTaskSubmit(mustRaw(map[string]any{"session_id": p.SessionID, "prompt": "Continue working toward this persistent goal. Do not claim completion unless the objective and any explicit success criteria are actually satisfied:\n\n" + objective, "mode": "background", "token_budget": remainingBudget, "success_criteria": g.SuccessCriteria}))
 	if err != nil {
 		g.ContinuationsUsed--
 		if persistErr := d.goals.persistLocked(); persistErr != nil {
@@ -329,8 +427,72 @@ func (d *Daemon) handleGoalContinue(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	d.goals.mu.Unlock()
-	if task, ok := result.(*scheduler.Task); ok && remainingBudget > 0 {
-		d.sched.SetTokenBudget(task.TaskID, remainingBudget)
+	if task, ok := result.(*scheduler.Task); ok {
+		d.goals.mu.Lock()
+		if current := d.goals.goals[p.SessionID]; current != nil {
+			current.Goal.LastTaskID = task.TaskID
+			_ = d.goals.persistLocked()
+		}
+		d.goals.mu.Unlock()
+		if current, exists := d.sched.Get(task.TaskID); exists && (current.Status == "completed" || current.Status == "failed" || current.Status == "degraded" || current.Status == "cancelled") {
+			go d.reconcileGoalTask(current)
+		}
 	}
 	return result, nil
+}
+
+func (d *Daemon) reconcileGoalTask(task *scheduler.Task) {
+	if task == nil {
+		return
+	}
+	d.goals.mu.Lock()
+	r := d.goals.goals[task.SessionID]
+	if r == nil || !r.Goal.AutoContinue || r.Goal.Status != "active" || r.Goal.LastTaskID != task.TaskID {
+		d.goals.mu.Unlock()
+		return
+	}
+	g := r.Goal
+	if task.Status == "completed" {
+		before := *g
+		snapshotGoal(g, time.Now().UTC())
+		g.Status = "complete"
+		g.ConsecutiveFailures = 0
+		g.UpdatedAt = time.Now().UTC()
+		if d.auditGoalChange(task.SessionID, "auto_complete", before.Status, g.Status, map[string]any{"task_id": task.TaskID}) != nil {
+			*g = before
+			d.goals.mu.Unlock()
+			return
+		}
+		if d.goals.persistLocked() != nil || d.recordGoalChanged(task.SessionID, "auto_complete", g) != nil {
+			*g = before
+			_ = d.goals.persistLocked()
+		}
+		d.goals.mu.Unlock()
+		return
+	}
+	g.ConsecutiveFailures++
+	if g.ConsecutiveFailures >= 3 {
+		before := *g
+		g.Status = "blocked"
+		g.UpdatedAt = time.Now().UTC()
+		if d.auditGoalChange(task.SessionID, "auto_blocked", before.Status, g.Status, map[string]any{"task_id": task.TaskID, "failures": g.ConsecutiveFailures}) == nil {
+			_ = d.goals.persistLocked()
+			_ = d.recordGoalChanged(task.SessionID, "auto_blocked", g)
+		} else {
+			*g = before
+		}
+		d.goals.mu.Unlock()
+		return
+	}
+	_ = d.goals.persistLocked()
+	d.goals.mu.Unlock()
+	_, _ = d.handleGoalContinue(mustRaw(map[string]any{"session_id": task.SessionID}))
+}
+
+func (d *Daemon) recoverAutoGoals() {
+	for _, task := range d.sched.List() {
+		if task.Status == "completed" || task.Status == "failed" || task.Status == "degraded" || task.Status == "cancelled" {
+			go d.reconcileGoalTask(task)
+		}
+	}
 }

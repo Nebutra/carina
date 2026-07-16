@@ -53,6 +53,16 @@ func TestSemanticRoleMapping(t *testing.T) {
 		RoleDiffAdd:  SpectralGreen,
 		RoleDiffDel:  EventRed,
 		RoleDiffHunk: OxygenBlue,
+		// Markdown roles resolve to the same terminal palette; Brand Rose
+		// stays reserved for identity surfaces here too.
+		RoleHeading:     IonCyan,
+		RoleCodeInline:  CopperAmber,
+		RoleCodeBlock:   Dust,
+		RoleLink:        OxygenBlue,
+		RoleListMarker:  IonCyan,
+		RoleBlockquote:  Dust,
+		RoleTableBorder: Border,
+		RoleMathApprox:  DustViolet,
 	}
 	for role, tok := range want {
 		if got := roleToken(role); got != tok {
@@ -98,6 +108,22 @@ func TestStyleByProfile(t *testing.T) {
 	// Copper Amber #e8a85f = rgb(232,168,95)
 	if out := New(TrueColor).Style(RoleWarning).Render("x"); !strings.Contains(out, "38;2;232;168;95") {
 		t.Errorf("TrueColor warning must use brief hex, got %q", out)
+	}
+}
+
+// Links are underlined in color profiles so they read as links even where the
+// terminal ignores OSC 8; markdown roles stay entirely plain under Mono.
+func TestMarkdownRoleAttributes(t *testing.T) {
+	if out := New(ANSI256).Style(RoleLink).Render("x"); !strings.Contains(out, "4m") && !strings.Contains(out, ";4;") && !strings.Contains(out, "[4;") {
+		t.Errorf("ANSI256 link should be underlined, got %q", out)
+	}
+	if out := New(ANSI256).Style(RoleHeading).Render("x"); !strings.Contains(out, "\x1b[1;") && !strings.Contains(out, "\x1b[1m") {
+		t.Errorf("ANSI256 heading should be bold, got %q", out)
+	}
+	for _, role := range []Role{RoleHeading, RoleCodeInline, RoleCodeBlock, RoleLink, RoleListMarker, RoleBlockquote, RoleTableBorder, RoleMathApprox} {
+		if out := New(Mono).Style(role).Render("x"); out != "x" {
+			t.Errorf("Mono markdown role %v must be plain, got %q", role, out)
+		}
 	}
 }
 

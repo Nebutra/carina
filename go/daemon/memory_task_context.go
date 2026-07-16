@@ -35,6 +35,28 @@ func (d *Daemon) buildTaskMemoryEvidence(ctx context.Context, sess *sessionstore
 		return ""
 	}
 	provider.markAuthorized()
+	externalizeResource := "provider=hms host=" + resource + " query_sha256=" + hashMemoryQuery(task.UserPrompt) + " targets=user,memory"
+	externalize, err := d.kern.Request(sess.SessionID, "MemoryExternalize", externalizeResource, task.TaskID)
+	if err == nil && externalize.Decision == "requires_approval" {
+		if approved, ok := d.approveFromStoredGrant(sess, externalize); ok {
+			externalize = approved
+		}
+	}
+	if err != nil || externalize.Decision != "allowed" {
+		reason := "externalization_policy_denied"
+		if err != nil {
+			reason = "externalization_policy_error"
+		} else if externalize.Decision == "requires_approval" {
+			_, _ = d.kern.Deny(sess.SessionID, externalize.DecisionID, "system", "HMS recall has no stored MemoryExternalize grant")
+		}
+		provider.markPolicyDenied(reason)
+		d.recordMemoryRecall(sess, task, "degraded", reason, 0)
+		return ""
+	}
+	if err := d.recordChecked(sess.SessionID, "MemoryRecallRequested", task.TaskID, "go", map[string]any{"provider": "hms", "endpoint_host": resource, "query_sha256": hashMemoryQuery(task.UserPrompt), "status": "authorized"}, externalize.DecisionID); err != nil {
+		provider.markPolicyDenied("audit_unavailable")
+		return ""
+	}
 	packet, err := provider.Recall(ctx, memoryScopeFromSession(sess), task.UserPrompt)
 	if err != nil {
 		d.recordMemoryRecall(sess, task, "degraded", provider.Health().LastReason, 0)

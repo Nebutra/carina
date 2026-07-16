@@ -73,6 +73,17 @@ const (
 	RoleDiffAdd
 	RoleDiffDel
 	RoleDiffHunk
+	// Markdown roles: the transcript's rich-text renderer names document
+	// structure, and the theme resolves it to the same palette the rest of
+	// the terminal surface uses. Under Mono all of them degrade to plain text.
+	RoleHeading
+	RoleCodeInline
+	RoleCodeBlock
+	RoleLink
+	RoleListMarker
+	RoleBlockquote
+	RoleTableBorder
+	RoleMathApprox
 )
 
 // roleToken keeps product semantics separate from Brand Rose, which is reserved
@@ -85,21 +96,29 @@ func roleToken(r Role) Token {
 		return CopperAmber
 	case RoleSuccess, RoleDiffAdd:
 		return SpectralGreen
-	case RoleInfo, RoleDiffHunk:
+	case RoleInfo, RoleDiffHunk, RoleLink:
 		return OxygenBlue
-	case RoleTitle:
+	case RoleTitle, RoleHeading, RoleListMarker:
 		return IonCyan
-	case RoleMuted:
+	case RoleMuted, RoleCodeBlock, RoleBlockquote:
 		return Dust
-	case RoleBorder:
+	case RoleBorder, RoleTableBorder:
 		return Border
+	case RoleCodeInline:
+		return CopperAmber
+	case RoleMathApprox:
+		return DustViolet
 	default:
 		return Starlight
 	}
 }
 
 func roleBold(r Role) bool {
-	return r == RoleTitle || r == RoleDiffHunk
+	return r == RoleTitle || r == RoleDiffHunk || r == RoleHeading
+}
+
+func roleUnderline(r Role) bool {
+	return r == RoleLink
 }
 
 // Theme renders roles for one detected profile.
@@ -136,6 +155,9 @@ func (t Theme) Style(r Role) lipgloss.Style {
 	}
 	if roleBold(r) {
 		s = s.Bold(true)
+	}
+	if roleUnderline(r) {
+		s = s.Underline(true)
 	}
 	return s
 }

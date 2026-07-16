@@ -48,23 +48,23 @@ func TestCanonicalSearchAndRecapUseSessionItems(t *testing.T) {
 
 func TestOperationalSlashSurfacesUseExistingDaemonRPCs(t *testing.T) {
 	fc := &fakeCaller{handler: map[string]any{
-		"history.recent":   map[string]any{"entries": []string{}},
-		"session.get":      map[string]any{"session_id": "sess_test", "status": "active"},
-		"profile.describe": map[string]any{"name": "safe-edit"},
-		"context.summary":  map[string]any{"checkpoint": map[string]any{"available": true, "transcript_bytes": 42}, "model_context_tokens": map[string]any{"available": false}},
-		"daemon.status":    map[string]any{"version": "test", "safe_mode": false},
-		"usage.cost":       map[string]any{"total_cost_usd": 0.12, "total_tokens": 42},
-		"session.review":   map[string]any{"session_id": "sess_test", "findings": []any{}},
-		"memory.status":    map[string]any{"available": true, "entries": 3},
+		"history.recent":    map[string]any{"entries": []string{}},
+		"session.get":       map[string]any{"session_id": "sess_test", "status": "active"},
+		"profile.inventory": map[string]any{"profile": "safe-edit", "source": "session creation policy", "effective": map[string]any{"name": "safe-edit"}, "choices": []any{map[string]any{"name": "safe-edit"}}},
+		"context.summary":   map[string]any{"checkpoint": map[string]any{"available": true, "transcript_bytes": 42}, "model_context_tokens": map[string]any{"available": false}},
+		"config.inventory":  map[string]any{"effective": map[string]any{"safe_mode": false}, "sources": map[string]any{"runtime": "daemon config"}},
+		"usage.cost":        map[string]any{"total_cost_usd": 0.12, "total_tokens": 42},
+		"session.review":    map[string]any{"session_id": "sess_test", "findings": []any{}},
+		"memory.status":     map[string]any{"available": true, "entries": 3},
 	}}
 	m, _ := newTestModel(fc)
 	for _, tc := range []struct{ command, method string }{
 		{"/status", "session.get"},
-		{"/permissions", "profile.describe"},
+		{"/permissions", "profile.inventory"},
 		{"/context", "context.summary"},
-		{"/config", "daemon.status"},
+		{"/config raw", "config.inventory"},
 		{"/usage", "usage.cost"},
-		{"/review", "session.review"},
+		{"/session-review", "session.review"},
 		{"/memory", "memory.status"},
 	} {
 		cmd := m.slashCommand(tc.command)
@@ -75,8 +75,8 @@ func TestOperationalSlashSurfacesUseExistingDaemonRPCs(t *testing.T) {
 		if got := fc.last().method; got != tc.method {
 			t.Fatalf("%s called %s, want %s", tc.command, got, tc.method)
 		}
-		if tc.command == "/context" && fc.last().params["session_id"] != "sess_test" {
-			t.Fatalf("/context params = %#v, want current session", fc.last().params)
+		if (tc.command == "/context" || tc.command == "/permissions" || tc.command == "/config") && fc.last().params["session_id"] != "sess_test" {
+			t.Fatalf("%s params = %#v, want current session", tc.command, fc.last().params)
 		}
 		if got := m.tr.plainText(); strings.Contains(got, `{"`) {
 			t.Fatalf("%s rendered a raw JSON dump:\n%s", tc.command, got)

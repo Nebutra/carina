@@ -11,6 +11,7 @@ import (
 type goalView struct {
 	Objective         string `json:"objective"`
 	Status            string `json:"status"`
+	AutoContinue      bool   `json:"auto_continue"`
 	TokenBudget       int    `json:"token_budget"`
 	TokensUsed        int    `json:"tokens_used"`
 	TimeUsedSeconds   int64  `json:"time_used_seconds"`
@@ -49,7 +50,14 @@ func (m *Model) goalCall(action, method string, params map[string]any) tea.Cmd {
 		if method == "goal.continue" {
 			var out map[string]any
 			err := call.Call(method, params, &out)
-			return goalRPCMsg{sessionID: sid, action: action, goal: m.goal, err: err}
+			if err != nil {
+				return goalRPCMsg{sessionID: sid, action: action, err: err}
+			}
+			var refreshed struct {
+				Goal *goalView `json:"goal"`
+			}
+			err = call.Call("goal.get", map[string]any{"session_id": sid}, &refreshed)
+			return goalRPCMsg{sessionID: sid, action: action, goal: refreshed.Goal, err: err}
 		}
 		var out goalView
 		err := call.Call(method, params, &out)
@@ -73,16 +81,34 @@ func (m *Model) goalCommand(args []string) tea.Cmd {
 		return m.goalCall("continue", "goal.continue", map[string]any{})
 	default:
 		params := map[string]any{}
-		if len(args) >= 3 && args[0] == "--tokens" {
-			budget, err := strconv.Atoi(args[1])
-			if err != nil || budget < 0 {
-				m.push(m.text(MsgUpdateGoalUsage, nil))
-				return nil
+		var objectiveParts []string
+		for len(args) > 0 {
+			switch args[0] {
+			case "--auto":
+				params["auto_continue"] = true
+				args = args[1:]
+			case "--tokens", "--max-continuations":
+				if len(args) < 2 {
+					m.push(m.text(MsgUpdateGoalUsage, nil))
+					return nil
+				}
+				value, err := strconv.Atoi(args[1])
+				if err != nil || value < 0 || (args[0] == "--max-continuations" && (value < 1 || value > 32)) {
+					m.push(m.text(MsgUpdateGoalUsage, nil))
+					return nil
+				}
+				if args[0] == "--tokens" {
+					params["token_budget"] = value
+				} else {
+					params["max_continuations"] = value
+				}
+				args = args[2:]
+			default:
+				objectiveParts = append(objectiveParts, args[0])
+				args = args[1:]
 			}
-			params["token_budget"] = budget
-			args = args[2:]
 		}
-		objective := strings.TrimSpace(strings.Join(args, " "))
+		objective := strings.TrimSpace(strings.Join(objectiveParts, " "))
 		if objective == "" {
 			m.push(m.text(MsgUpdateGoalUsage, nil))
 			return nil
@@ -113,6 +139,10 @@ func (m *Model) handleGoalRPC(msg goalRPCMsg) {
 	if m.goal.TokenBudget > 0 {
 		budget = m.text(MsgUpdateGoalBudgetTokens, MessageArgs{"used": m.goal.TokensUsed, "max": m.goal.TokenBudget})
 	}
-	m.push(m.text(MsgUpdateGoalState, MessageArgs{"status": m.goal.Status, "objective": m.goal.Objective, "budget": budget, "seconds": m.goal.TimeUsedSeconds, "used": m.goal.ContinuationsUsed, "max": m.goal.MaxContinuations}))
+	continuationMode := "manual"
+	if m.goal.AutoContinue {
+		continuationMode = "auto"
+	}
+	m.push(m.text(MsgUpdateGoalState, MessageArgs{"status": m.goal.Status, "objective": m.goal.Objective, "budget": budget, "seconds": m.goal.TimeUsedSeconds, "mode": continuationMode, "used": m.goal.ContinuationsUsed, "max": m.goal.MaxContinuations}))
 	m.layout()
 }

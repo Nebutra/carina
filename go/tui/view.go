@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -143,12 +142,16 @@ func (m *Model) calculateLayout() rootLayout {
 	remaining -= l.queueLines
 	l.pasteLines = minInt(len(m.pastePanelLines()), remaining)
 	remaining -= l.pasteLines
-	l.taskLines = minInt(len(m.taskTreeLines()), remaining)
-	remaining -= l.taskLines
+	// Compact mode (Grok /compact-mode) keeps typing chrome and drops task-tree
+	// and decorative spacer so the transcript stays dominant.
+	if !m.compactMode {
+		l.taskLines = minInt(len(m.taskTreeLines()), remaining)
+		remaining -= l.taskLines
+	}
 	if m.banner() != "" && remaining > 0 {
 		l.showBanner = true
 		remaining--
-	} else if remaining > 0 {
+	} else if remaining > 0 && !m.compactMode {
 		// Preserve the normal view's quiet top breathing room, but make it the
 		// first thing dropped in a constrained terminal.
 		l.showTopSpacer = true
@@ -195,13 +198,14 @@ func (m *Model) suggestPanelLines() []string {
 		title = m.text(MsgSuggestCommands, nil)
 	}
 	lines := make([]string, 0, len(m.suggest.Matches)+1)
-	lines = append(lines, m.th.Style(theme.RoleMuted).Render(m.text(MsgSuggestHeader, MessageArgs{
+	header := m.th.Style(theme.RoleMuted).Render(m.text(MsgSuggestHeader, MessageArgs{
 		"title":    title,
 		"previous": m.keys.label(KeyContextSuggestion, ActionSuggestionPrevious),
 		"next":     m.keys.label(KeyContextSuggestion, ActionSuggestionNext),
 		"accept":   m.keys.label(KeyContextSuggestion, ActionSuggestionAccept),
 		"dismiss":  m.keys.label(KeyContextSuggestion, ActionSuggestionDismiss),
-	})))
+	}))
+	lines = append(lines, fitRenderedLine(header, maxInt(m.width, 1)))
 	prefixChar := "@"
 	if m.suggest.Kind == mentionCommand {
 		prefixChar = "/"
@@ -213,7 +217,11 @@ func (m *Model) suggestPanelLines() []string {
 			marker = "> "
 			style = m.th.Style(theme.RoleTitle)
 		}
-		lines = append(lines, style.Render(marker+prefixChar+match))
+		line := marker + prefixChar + match
+		if i < len(m.suggest.Details) && m.suggest.Details[i] != "" {
+			line += "  " + m.suggest.Details[i]
+		}
+		lines = append(lines, fitRenderedLine(style.Render(line), maxInt(m.width, 1)))
 	}
 	return lines
 }
@@ -412,55 +420,7 @@ func (m *Model) View() tea.View {
 	}
 	b.WriteString("\n")
 
-	status := m.text(MsgStatusNotAttached, nil)
-	if m.sessionID != "" {
-		status = m.text(MsgStatusSession, MessageArgs{"id": m.sessionID})
-	}
-	activity := m.text(MsgStatusReady, nil)
-	if m.editor != nil {
-		activity = m.text(MsgStatusEditingDraft, nil)
-	} else if m.submitting != nil {
-		activity = m.text(MsgStatusSending, MessageArgs{"kind": string(m.submitting.kind)})
-	} else if m.inFlightTaskID != "" {
-		activity = m.text(MsgStatusRunning, MessageArgs{"task": m.inFlightTaskID})
-		if node := m.tasks.nodes[m.inFlightTaskID]; node != nil {
-			requested, effective := node.RequestedModel, node.EffectiveModel
-			if requested == "" {
-				requested = "default"
-			}
-			if effective == "" {
-				effective = "pending"
-			}
-			activity += " · " + m.text(MsgStatusRunningModel, MessageArgs{"requested": requested, "effective": effective})
-		}
-	}
-	if m.unseenLines > 0 {
-		activity += " · " + m.countText(MsgStatusNew, m.unseenLines, nil)
-	}
-	if m.followUps.len() > 0 {
-		activity += " · " + m.countText(MsgStatusQueued, m.followUps.len(), nil)
-	}
-	if m.unreadAttention > 0 {
-		activity += " · " + m.countText(MsgStatusAttention, m.unreadAttention, nil)
-	}
-	if m.chord.hint != "" {
-		activity += " · " + m.text(MsgStatusChord, MessageArgs{"hint": m.chord.hint})
-	}
-	if m.goal != nil {
-		goal := m.text(MsgStatusGoal, MessageArgs{"status": m.goal.Status})
-		if m.goal.TokenBudget > 0 {
-			goal += fmt.Sprintf(" %d/%d", m.goal.TokensUsed, m.goal.TokenBudget)
-		}
-		activity += " · " + goal
-	}
-	model := m.model
-	if model == "" {
-		model = "default"
-	}
-	statusLine := m.th.Style(theme.RoleMuted).Render(m.text(MsgStatusFooter, MessageArgs{
-		"session": status, "mode": m.mode, "model": model, "activity": activity,
-		"help": primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalHelp)),
-	}))
+	statusLine := m.th.Style(theme.RoleMuted).Render(m.statusFooterLine())
 	if l.showStatus {
 		b.WriteString(fitRenderedLine(statusLine, l.width))
 	}
@@ -494,6 +454,9 @@ func (m *Model) View() tea.View {
 		modal := fitViewBlock(m.keymapEditorView(), l.width, l.height, true)
 		content = lipgloss.Place(l.width, l.height,
 			lipgloss.Center, lipgloss.Center, modal)
+	} else if m.settings != nil {
+		modal := fitViewBlock(m.settingsOverlayView(), l.width, l.height, true)
+		content = lipgloss.Place(l.width, l.height, lipgloss.Center, lipgloss.Center, modal)
 	} else if m.helpOpen {
 		modal := fitViewBlock(m.helpOverlayView(), l.width, l.height, true)
 		content = lipgloss.Place(l.width, l.height,
@@ -516,7 +479,7 @@ func (m *Model) View() tea.View {
 	// A nil declared cursor makes Bubble Tea hide the terminal cursor. This is
 	// intentional while an overlay owns input, and whenever a zero-sized host
 	// has not supplied a usable cell grid yet (R21).
-	if !m.helpOpen && m.question == nil && m.approval == nil && m.transcriptPager == nil &&
+	if !m.helpOpen && m.settings == nil && m.question == nil && m.approval == nil && m.transcriptPager == nil &&
 		m.checkpointPicker == nil && m.modelPicker == nil && m.sessionPicker == nil && m.keymapEditor == nil &&
 		m.editor == nil && m.width > 0 && m.height > 0 {
 		if m.historySearch != nil {

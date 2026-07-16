@@ -2,7 +2,9 @@ package tui
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -11,11 +13,44 @@ import (
 )
 
 type sessionListItem struct {
-	SessionID     string `json:"session_id"`
-	WorkspaceRoot string `json:"workspace_root"`
-	Status        string `json:"status"`
-	ParentID      string `json:"parent_id"`
-	CreatedAt     string `json:"created_at"`
+	SessionID        string `json:"session_id"`
+	Name             string `json:"name"`
+	WorkspaceRoot    string `json:"workspace_root"`
+	Status           string `json:"status"`
+	ParentID         string `json:"parent_id"`
+	ForkedFromTaskID string `json:"forked_from_task_id"`
+	CreatedAt        string `json:"created_at"`
+}
+
+func (m *Model) sessionStatusLabel(status string) string {
+	switch strings.ToLower(status) {
+	case "active":
+		return m.text(MsgSessionStatusActive, nil)
+	case "paused":
+		return m.text(MsgSessionStatusPaused, nil)
+	case "closed":
+		return m.text(MsgSessionStatusClosed, nil)
+	default:
+		return status
+	}
+}
+
+func (m *Model) sessionAge(value string) string {
+	created, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return ""
+	}
+	d := time.Since(created)
+	if d < time.Minute {
+		return m.text(MsgSessionAgeNow, nil)
+	}
+	if d < time.Hour {
+		return m.text(MsgSessionAgeMinutes, MessageArgs{"count": int(d.Minutes())})
+	}
+	if d < 24*time.Hour {
+		return m.text(MsgSessionAgeHours, MessageArgs{"count": int(d.Hours())})
+	}
+	return m.text(MsgSessionAgeDays, MessageArgs{"count": int(d.Hours() / 24)})
 }
 
 type sessionPickerState struct {
@@ -127,12 +162,40 @@ func (m *Model) sessionPickerKey(key string) (tea.Cmd, bool) {
 	}
 	switch key {
 	case "esc":
+		if m.sessionActionPending != "" || m.pendingSessionID != "" {
+			s.status = m.text(MsgSessionActionResolving, nil)
+			return nil, true
+		}
 		m.sessionPicker = nil
 		m.layout()
 		return m.resumeQueuedAfterTransient(), true
 	case "r":
+		if m.pendingSessionID != "" {
+			if m.switchSession != nil {
+				_ = m.switchSession(m.pendingSessionID)
+			}
+			s.loading = true
+			s.status = m.text(MsgSessionSwitching, MessageArgs{"session": m.pendingSessionID})
+			return nil, true
+		}
 		if !s.loading && (s.loadError || len(s.items) == 0) {
 			return m.openSessionPicker(), true
+		}
+	case "b":
+		if m.pendingSessionID != "" && m.previousSessionID != "" {
+			target := m.previousSessionID
+			if err := m.submissions.transfer(target); err != nil {
+				s.status = m.text(MsgSessionSwitchLeaseBlocked, MessageArgs{"error": err.Error()})
+				return nil, true
+			}
+			m.pendingSessionID = target
+			m.pendingWorkspaceRoot = m.previousWorkspaceRoot
+			if m.switchSession != nil {
+				_ = m.switchSession(target)
+			}
+			s.loading = true
+			s.status = m.text(MsgSessionSwitching, MessageArgs{"session": target})
+			return nil, true
 		}
 	case "up", "k":
 		s.selected--
@@ -167,9 +230,23 @@ func (m *Model) sessionPickerView() string {
 			if i == s.selected {
 				prefix = "> "
 			}
-			label := it.SessionID + "  " + it.Status
+			name := it.Name
+			if name == "" {
+				name = it.SessionID
+			}
+			workspace := filepath.Base(filepath.Clean(it.WorkspaceRoot))
+			label := name + "  " + m.sessionStatusLabel(it.Status)
+			if workspace != "." && workspace != string(filepath.Separator) && workspace != "" {
+				label += "  " + workspace
+			}
+			if age := m.sessionAge(it.CreatedAt); age != "" {
+				label += "  " + age
+			}
 			if width >= 40 && it.ParentID != "" {
 				label += "  " + m.text(MsgSessionPickerForkOf, MessageArgs{"parent": it.ParentID})
+				if it.ForkedFromTaskID != "" {
+					label += " " + m.text(MsgSessionPickerForkTask, MessageArgs{"task": it.ForkedFromTaskID})
+				}
 			}
 			line := fitRenderedLine(prefix+label, width)
 			if i == s.selected {
@@ -187,11 +264,16 @@ func (m *Model) sessionPickerView() string {
 }
 
 func (m *Model) beginSessionAction(action, method string, params map[string]any) tea.Cmd {
+	if m.sessionActionPending != "" || m.pendingSessionID != "" {
+		m.push(m.text(MsgSessionActionResolving, nil))
+		return nil
+	}
 	if blocker, blocked := m.sessionSwitchBlocker(); blocked {
 		m.push(m.text(MsgSessionSwitchBlocked, MessageArgs{"reason": m.text(blocker, nil)}))
 		return nil
 	}
 	m.sessionOpGen++
+	m.sessionActionPending = action
 	gen := m.sessionOpGen
 	call := m.call
 	return func() tea.Msg {
@@ -204,7 +286,10 @@ func (m *Model) beginSessionAction(action, method string, params map[string]any)
 	}
 }
 func (m *Model) newSession() tea.Cmd {
-	return m.beginSessionAction("new", "session.create", map[string]any{"workspace_root": m.workspaceRoot, "profile": "safe-edit"})
+	return m.newSessionWithProfile("safe-edit")
+}
+func (m *Model) newSessionWithProfile(profile string) tea.Cmd {
+	return m.beginSessionAction("new", "session.create", map[string]any{"workspace_root": m.workspaceRoot, "profile": profile})
 }
 func (m *Model) forkSession(taskID string) tea.Cmd {
 	p := map[string]any{"session_id": m.sessionID}
@@ -220,6 +305,7 @@ func (m *Model) handleSessionAction(msg sessionActionMsg) {
 	if msg.generation != m.sessionOpGen {
 		return
 	}
+	m.sessionActionPending = ""
 	if msg.err != nil {
 		m.push(m.text(MsgSessionActionFailed, MessageArgs{"error": msg.err.Error()}))
 		return
@@ -233,6 +319,7 @@ func (m *Model) handleSessionAction(msg sessionActionMsg) {
 		return
 	}
 	oldSession := m.sessionID
+	m.previousSessionID, m.previousWorkspaceRoot = oldSession, m.workspaceRoot
 	if err := m.submissions.transfer(msg.session.SessionID); err != nil {
 		m.push(m.text(MsgSessionSwitchLeaseBlocked, MessageArgs{"error": err.Error()}))
 		return
@@ -243,7 +330,12 @@ func (m *Model) handleSessionAction(msg sessionActionMsg) {
 		return
 	}
 	m.pendingSessionID = msg.session.SessionID
-	m.sessionPicker = nil
+	m.pendingWorkspaceRoot = msg.session.WorkspaceRoot
+	if m.sessionPicker == nil {
+		m.sessionPicker = &sessionPickerState{generation: m.sessionOpGen}
+	}
+	m.sessionPicker.loading = true
+	m.sessionPicker.status = m.text(MsgSessionSwitching, MessageArgs{"session": msg.session.SessionID})
 	m.push(m.text(MsgSessionSwitching, MessageArgs{"session": msg.session.SessionID}))
 	m.layout()
 }

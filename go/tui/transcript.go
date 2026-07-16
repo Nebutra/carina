@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Nebutra/carina/go/microcopy"
+	"github.com/Nebutra/carina/go/tui/markdown"
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
@@ -40,19 +41,30 @@ const (
 // transient event. It intentionally contains no generic JSON rendering path:
 // unknown payloads get a compact system label instead of becoming the UI.
 type eventPresentation struct {
-	Key         string
-	Kind        presentationKind
-	KindLabel   string
-	Status      presentationStatus
-	Timestamp   string
-	Title       string
-	Summary     string
-	Body        []string
-	Depth       int
-	Collapsible bool
-	Collapsed   bool
-	OpenLabel   string
-	FoldLabel   string
+	Key       string
+	Kind      presentationKind
+	KindLabel string
+	Status    presentationStatus
+	Timestamp string
+	Title     string
+	Summary   string
+	Body      []string
+	// BodyProse marks free-form body text — task summaries, prompts, model
+	// action summaries — which soft-wraps to the transcript width via
+	// wrapText. Structured bodies (diff hunks, command output chunks,
+	// tool-call status rows) stay on the fitLine clipping path so their
+	// line-oriented alignment survives.
+	BodyProse bool
+	// BodyMarkdown carries the sanitized markdown source of final assistant
+	// prose (the "done" action's response/plan text). It is rendered through
+	// go/tui/markdown at render() time, so resize and profile changes re-render
+	// from source; Body keeps the structured action rows.
+	BodyMarkdown string
+	Depth        int
+	Collapsible  bool
+	Collapsed    bool
+	OpenLabel    string
+	FoldLabel    string
 }
 
 // entry caches its rendered form. Typed entries retain their presentation so
@@ -71,6 +83,18 @@ type transcript struct {
 func (t *transcript) push(rendered string) {
 	t.entries = append(t.entries, entry{rendered: rendered})
 	t.lines = append(t.lines, strings.Split(rendered, "\n")...)
+}
+
+// plainExport returns a clipboard/file-friendly transcript without ANSI styling.
+func (t *transcript) plainExport() string {
+	if len(t.lines) == 0 {
+		return ""
+	}
+	out := make([]string, 0, len(t.lines))
+	for _, line := range t.lines {
+		out = append(out, ansi.Strip(line))
+	}
+	return strings.Join(out, "\n") + "\n"
 }
 
 func (t *transcript) pushPresentation(p eventPresentation, th theme.Theme, width int) {
@@ -195,7 +219,11 @@ func (p eventPresentation) render(th theme.Theme, width int) string {
 	if p.Summary != "" {
 		header += " " + p.Summary
 	}
-	if p.Collapsible && len(p.Body) > 0 {
+	bodyCount := len(p.Body)
+	if p.BodyMarkdown != "" {
+		bodyCount += strings.Count(p.BodyMarkdown, "\n") + 1
+	}
+	if p.Collapsible && bodyCount > 0 {
 		open := p.OpenLabel
 		if open == "" {
 			open = "open"
@@ -206,16 +234,26 @@ func (p eventPresentation) render(th theme.Theme, width int) string {
 			if label == "" {
 				label = "+{count}"
 			}
-			fold = "[" + strings.ReplaceAll(label, "{count}", fmt.Sprintf("%d", len(p.Body))) + "]"
+			fold = "[" + strings.ReplaceAll(label, "{count}", fmt.Sprintf("%d", bodyCount)) + "]"
 		}
 		header += " " + muted.Render(fold)
 	}
 	lines := []string{fitLine(indent+title.Render(header), width)}
 	if !p.Collapsed {
+		bodyIndent := indent + "  "
 		for _, raw := range p.Body {
 			for _, line := range strings.Split(sanitize(raw), "\n") {
-				lines = append(lines, fitLine(indent+"  "+line, width))
+				if p.BodyProse {
+					lines = append(lines, wrapText(line, width, bodyIndent, bodyIndent)...)
+				} else {
+					lines = append(lines, fitLine(bodyIndent+line, width))
+				}
 			}
+		}
+		if p.BodyMarkdown != "" {
+			// Markdown output is renderer-emitted styling over already-sanitized
+			// source; it must not pass through sanitize again.
+			lines = append(lines, markdown.Render(p.BodyMarkdown, th, width, bodyIndent, wrapText)...)
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -276,6 +314,7 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 		p.Summary = strings.TrimSpace(str(ev["task_id"]) + " " + status)
 		if summary := str(ev["summary"]); summary != "" {
 			p.Body = []string{summary}
+			p.BodyProse = true
 			p.Collapsible = true
 			p.Collapsed = false
 		}
@@ -437,6 +476,7 @@ func presentTaskEvent(p eventPresentation, ev, payload map[string]any) eventPres
 		p.Status = lifecycleStatus(status)
 		p.Summary = strings.ReplaceAll(status, "_", " ")
 		p.Body = selectedBody(payload, "message", "summary", "reason", "error", "diagnostics")
+		p.BodyProse = true
 		p.Collapsible = len(p.Body) > 0
 		p.Collapsed = len(p.Body) > 0
 	default:
@@ -444,6 +484,7 @@ func presentTaskEvent(p eventPresentation, ev, payload map[string]any) eventPres
 		p.Summary = str(ev["task_id"])
 		if prompt := str(payload["user_prompt"]); prompt != "" {
 			p.Body = []string{prompt}
+			p.BodyProse = true
 			p.Collapsible, p.Collapsed = true, true
 		}
 	}
@@ -458,6 +499,7 @@ func presentModelEvent(p eventPresentation, payload map[string]any) eventPresent
 		p.Summary = str(payload["spawn_agent"]) + " completed"
 		if s := str(payload["result_summary"]); s != "" {
 			p.Body, p.Collapsible, p.Collapsed = []string{s}, true, true
+			p.BodyProse = true
 		}
 		return p
 	}
@@ -472,6 +514,11 @@ func presentModelEvent(p eventPresentation, payload map[string]any) eventPresent
 	tool, summary, body := safeModelAction(text)
 	if tool == "done" {
 		p.Summary = "completed"
+		// The "done" summary is the final assistant response/plan text — the
+		// one free-form surface the transcript shows. It renders through the
+		// markdown pipeline; every other action keeps the plain summary row.
+		p.BodyMarkdown = sanitize(summary)
+		summary = ""
 	} else if tool != "" {
 		p.Status = statusRunning
 		p.Summary = "selected " + tool
@@ -482,7 +529,8 @@ func presentModelEvent(p eventPresentation, payload map[string]any) eventPresent
 		p.Body = append(p.Body, summary)
 	}
 	p.Body = append(p.Body, body...)
-	p.Collapsible = len(p.Body) > 0
+	p.BodyProse = true
+	p.Collapsible = len(p.Body) > 0 || p.BodyMarkdown != ""
 	p.Collapsed = tool != "done" && len(p.Body) > 0
 	return p
 }
@@ -535,6 +583,7 @@ func presentToolEvent(p eventPresentation, typ string, payload map[string]any) e
 		p.Kind, p.Depth, p.Title = presentationSubagent, 1, "subagent"
 		p.Summary = agent + " started"
 		p.Body = selectedBody(payload, "task", "child_session", "child_profile")
+		p.BodyProse = true
 		p.Collapsible, p.Collapsed = len(p.Body) > 0, true
 	} else if workflow := str(payload["workflow"]); workflow != "" {
 		p.Kind, p.Depth, p.Title = presentationWorkflow, 2, "step"

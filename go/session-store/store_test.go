@@ -29,6 +29,33 @@ func TestCreateGetListPersist(t *testing.T) {
 	}
 }
 
+func TestRenamePersistsWithoutChangingSessionIdentity(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := store.CreateSession("/repo", "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed, err := store.Rename(sess.SessionID, "Release review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.SessionID != sess.SessionID || renamed.Name != "Release review" {
+		t.Fatalf("renamed=%#v", renamed)
+	}
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := reopened.Get(sess.SessionID)
+	if !ok || got.Name != "Release review" {
+		t.Fatalf("persisted rename=%#v ok=%v", got, ok)
+	}
+}
+
 func TestPersistenceAndRecovery(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := Open(dir)

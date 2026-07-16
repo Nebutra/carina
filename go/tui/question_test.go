@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -47,6 +49,76 @@ func TestUserQuestionNumberAnswersStructuredRPC(t *testing.T) {
 	}
 	if m.question != nil {
 		t.Fatal("question overlay remained open after successful answer")
+	}
+}
+
+func TestQuestionWithoutOptionsAcceptsFreeText(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{"task.user.answer": nil}}
+	m, _ := newTestModel(fc)
+	m.Update(EventMsg{Raw: map[string]any{
+		"type": "user.question", "session_id": "sess_test", "task_id": "tsk_1",
+		"question_id": "q_wait", "prompt": "Waiting for choices", "options": []any{},
+	}})
+	if m.question == nil || m.question.QuestionID != "q_wait" {
+		t.Fatalf("zero-option question was discarded: %#v", m.question)
+	}
+	if !strings.Contains(ansi.Strip(m.questionOverlayView()), "Type your answer") {
+		t.Fatalf("zero-option state is not explained: %q", m.questionOverlayView())
+	}
+	if cmd, handled := m.questionKey("enter"); !handled || cmd != nil {
+		t.Fatal("empty free-text answer must be rejected")
+	}
+	for _, key := range []string{"s", "h", "i", "p", " ", "i", "t"} {
+		m.questionKey(key)
+	}
+	cmd, handled := m.questionKey("enter")
+	if !handled || cmd == nil {
+		t.Fatal("free-text answer did not submit")
+	}
+	drain(m, cmd)
+	if got := fc.last().params["value"]; got != "ship it" {
+		t.Fatalf("free-text value = %#v", got)
+	}
+}
+
+func TestFreeTextQuestionFailureAndReconnectPreserveDraft(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{"task.user.answer": errTestRPC}}
+	m, _ := newTestModel(fc)
+	m.Update(EventMsg{Raw: map[string]any{"type": "user.question", "question_id": "q_free_retry", "task_id": "tsk_1", "prompt": "Explain", "options": []any{}}})
+	for _, key := range []string{"保", "留"} {
+		m.questionKey(key)
+	}
+	cmd, handled := m.questionKey("enter")
+	drain(m, mustQuestionCmd(t, cmd, handled))
+	if m.question == nil || m.question.FreeText != "保留" || m.question.Resolving {
+		t.Fatalf("failed answer lost draft: %#v", m.question)
+	}
+	m.Update(ConnLostMsg{SessionID: m.sessionID, Generation: m.sessionGeneration, Err: errTestRPC})
+	m.Update(ConnRestoredMsg{SessionID: m.sessionID, Generation: m.sessionGeneration})
+	fc.handler["task.user.answer"] = nil
+	cmd, handled = m.questionKey("enter")
+	drain(m, mustQuestionCmd(t, cmd, handled))
+	if m.question != nil || fc.last().params["value"] != "保留" {
+		t.Fatalf("retry after reconnect failed: question=%#v call=%#v", m.question, fc.last())
+	}
+}
+
+func mustQuestionCmd(t *testing.T, cmd tea.Cmd, handled bool) tea.Cmd {
+	t.Helper()
+	if !handled || cmd == nil {
+		t.Fatal("expected question command")
+	}
+	return cmd
+}
+
+func TestFreeTextQuestionNarrowViewportKeepsInputAndSubmitVisible(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	m.width, m.height = 18, 8
+	m.Update(EventMsg{Raw: map[string]any{"type": "user.question", "question_id": "q_narrow", "task_id": "tsk_1", "prompt": "A very long prompt that wraps", "options": []any{}}})
+	m.questionKey("x")
+	view := ansi.Strip(m.questionOverlayView())
+	if !strings.Contains(view, "> x|") || !strings.Contains(view, "enter") {
+		t.Fatalf("narrow free-text question lost input/action: %q", view)
 	}
 }
 
@@ -245,7 +317,7 @@ func TestQuestionZeroOptionsIsDefensiveAndDoesNotPanic(t *testing.T) {
 	if !handled || cmd != nil {
 		t.Fatal("empty question must consume overlay input without a command")
 	}
-	if !strings.Contains(ansi.Strip(m.questionOverlayView()), "No answer options") {
+	if !strings.Contains(ansi.Strip(m.questionOverlayView()), "Type your answer") {
 		t.Fatal("empty question does not explain its recoverable state")
 	}
 }

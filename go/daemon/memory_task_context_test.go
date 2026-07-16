@@ -52,6 +52,13 @@ func TestTaskMemoryEvidenceGovernanceAndModes(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
+	if err := d.approvalGrants.add(approvalGrant{
+		Scope: approvalScopeSession, SessionID: sess.SessionID, WorkspaceRoot: ws,
+		Capability: "MemoryExternalize", Resource: "provider=hms host=127.0.0.1 query_sha256=" + hashMemoryQuery(task.UserPrompt) + " targets=user,memory", SourceDecisionID: "dec_externalize",
+		Approver: "test", CreatedAt: time.Now().UTC(),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	evidence := d.buildTaskMemoryEvidence(context.Background(), sess, task)
 	if !strings.Contains(evidence, "Run focused tests") || calls.Load() != 2 {

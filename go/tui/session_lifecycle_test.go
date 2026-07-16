@@ -53,6 +53,56 @@ func TestNewSessionCreatesThenSwitches(t *testing.T) {
 	}
 }
 
+func TestClearCreatesFreshSessionWithoutDeletingHistory(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{"session.create": map[string]any{"session_id": "sess_clear", "status": "active", "workspace_root": "/repo"}}}
+	m, _ := newTestModel(fc)
+	m.workspaceRoot = "/repo"
+	m.switchSession = func(string) error { return nil }
+	drain(m, m.slashCommand("/clear"))
+	if len(fc.calls) != 1 || fc.calls[0].method != "session.create" {
+		t.Fatalf("clear calls=%#v", fc.calls)
+	}
+	if m.pendingSessionID != "sess_clear" {
+		t.Fatalf("clear pending session=%q", m.pendingSessionID)
+	}
+}
+
+func TestRenameCurrentSessionAndIgnoreStaleCompletion(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{"session.rename": map[string]any{"session_id": "sess_test", "name": "Release review"}}}
+	m, _ := newTestModel(fc)
+	cmd := m.slashCommand("/rename Release review")
+	if cmd == nil {
+		t.Fatal("rename command missing")
+	}
+	msg := cmd()
+	m.Update(msg)
+	if last := fc.last(); last.method != "session.rename" || last.params["session_id"] != "sess_test" || last.params["name"] != "Release review" {
+		t.Fatalf("rename call=%#v", last)
+	}
+	before := transcriptText(m)
+	m.sessionID = "sess_other"
+	m.Update(msg)
+	if transcriptText(m) != before {
+		t.Fatal("stale rename completion affected new session")
+	}
+}
+
+func TestSessionPickerShowsNameWorkspaceAgeLocalizedStatusAndLineage(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	m.locale = string(LocaleChinese)
+	m.width = 100
+	m.sessionPicker = &sessionPickerState{items: []sessionListItem{{
+		SessionID: "sess_child", Name: "发布检查", WorkspaceRoot: "/work/carina", Status: "paused",
+		ParentID: "sess_parent", ForkedFromTaskID: "task_boundary", CreatedAt: time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339Nano),
+	}}}
+	view := m.sessionPickerView()
+	for _, want := range []string{"发布检查", "carina", "已暂停", "2 小时前", "分叉自 sess_parent 于 task_boundary"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("picker missing %q: %s", want, view)
+		}
+	}
+}
+
 func TestComposerSessionCommandsDoNotBlockOnTheirOwnDraft(t *testing.T) {
 	tests := []struct {
 		command string
@@ -144,6 +194,31 @@ func TestSubmissionLeaseTransferKeepsOldLeaseOnFailure(t *testing.T) {
 	}
 }
 
+func TestSubmissionLeaseTransferBackRestoresOldOwnership(t *testing.T) {
+	dir := t.TempDir()
+	owner := newSubmissionJournal(dir, "/workspace")
+	defer owner.close()
+	if err := owner.acquire("sess_old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.transfer("sess_new"); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.transfer("sess_old"); err != nil {
+		t.Fatal(err)
+	}
+	contender := newSubmissionJournal(dir, "/workspace")
+	defer contender.close()
+	if err := contender.acquire("sess_new"); err != nil {
+		t.Fatalf("rollback did not release target lease: %v", err)
+	}
+	blocked := newSubmissionJournal(dir, "/workspace")
+	defer blocked.close()
+	if err := blocked.acquire("sess_old"); err == nil {
+		t.Fatal("rollback did not restore old-session lease ownership")
+	}
+}
+
 func TestForkUsesCurrentSessionLineageRPC(t *testing.T) {
 	fc := &fakeCaller{handler: map[string]any{"session.fork": map[string]any{"session_id": "sess_child", "parent_id": "sess_test", "status": "active"}}}
 	m, _ := newTestModel(fc)
@@ -211,5 +286,28 @@ func TestPendingSessionSwitchFreezesSubmissionAndPreservesDraft(t *testing.T) {
 		if call.method == "task.submit" {
 			t.Fatal("task submitted to old session")
 		}
+	}
+}
+
+func TestSessionActionIsSingleFlightAndReadyAdoptsTargetWorkspace(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	m.workspaceRoot = "/workspace/old"
+	m.treeCacheRoot = m.workspaceRoot
+	m.treeCache = []treeEntry{{}}
+	first := m.beginSessionAction("resume", "session.resume", map[string]any{"session_id": "sess_new"})
+	if first == nil || m.sessionActionPending != "resume" {
+		t.Fatal("first session action did not synchronously enter pending state")
+	}
+	if second := m.beginSessionAction("resume", "session.resume", map[string]any{"session_id": "sess_other"}); second != nil {
+		t.Fatal("concurrent session action was not suppressed")
+	}
+	m.switchSession = func(string) error { return nil }
+	m.handleSessionAction(sessionActionMsg{generation: m.sessionOpGen, action: "resume", session: sessionListItem{SessionID: "sess_new", WorkspaceRoot: "/workspace/new"}})
+	if m.pendingSessionID != "sess_new" || m.pendingWorkspaceRoot != "/workspace/new" {
+		t.Fatalf("pending target=%q workspace=%q", m.pendingSessionID, m.pendingWorkspaceRoot)
+	}
+	m.Update(SessionReadyMsg{SessionID: "sess_new", Generation: m.sessionGeneration + 1})
+	if m.workspaceRoot != "/workspace/new" || m.treeCacheRoot != "" || m.treeCache != nil {
+		t.Fatalf("ready did not adopt target workspace or clear tree cache: root=%q cacheRoot=%q cache=%#v", m.workspaceRoot, m.treeCacheRoot, m.treeCache)
 	}
 }

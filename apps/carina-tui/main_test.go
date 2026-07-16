@@ -16,6 +16,12 @@ func TestRunUsageExitCode(t *testing.T) {
 // Under `go test` stdout is not a TTY: the TUI must refuse with the usage
 // code and a pointer at the pipe-friendly surface, never start half-blind.
 func TestRunRequiresTTY(t *testing.T) {
+	// Pin English so the assertion is independent of the host LANG.
+	for _, key := range []string{"CARINA_LOCALE", "LC_ALL", "LC_MESSAGES", "LANG"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("LANG", "en_US.UTF-8")
+
 	var errOut strings.Builder
 	got := run(nil, &errOut)
 	if got != 2 {
@@ -23,6 +29,9 @@ func TestRunRequiresTTY(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "interactive terminal") {
 		t.Fatalf("stderr missing TTY guidance: %q", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "carina watch --json") {
+		t.Fatalf("stderr missing pipe-friendly surface pointer: %q", errOut.String())
 	}
 }
 

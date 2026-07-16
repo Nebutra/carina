@@ -31,10 +31,6 @@ func (c *ConnectionController) Switch(sessionID string) error {
 		return fmt.Errorf("session id is required")
 	}
 	c.mu.Lock()
-	if c.target == sessionID {
-		c.mu.Unlock()
-		return nil
-	}
 	c.target = sessionID
 	c.generation++
 	stream := c.stream

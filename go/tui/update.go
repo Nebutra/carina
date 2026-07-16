@@ -62,6 +62,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case SessionReadyMsg:
+		wasSwitching := m.pendingSessionID != ""
 		if m.pendingSessionID != "" && msg.SessionID != m.pendingSessionID {
 			return m, nil
 		}
@@ -78,11 +79,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resetSessionProjection()
 		}
 		m.sessionID = msg.SessionID
+		if m.pendingWorkspaceRoot != "" {
+			m.workspaceRoot = m.pendingWorkspaceRoot
+			m.treeCache, m.treeCacheRoot = nil, ""
+			m.treeCacheAt = time.Time{}
+		}
 		m.pendingSessionID = ""
+		m.pendingWorkspaceRoot = ""
+		m.previousSessionID, m.previousWorkspaceRoot = "", ""
+		if wasSwitching {
+			m.sessionPicker = nil
+		}
 		if msg.Generation != 0 {
 			m.sessionGeneration = msg.Generation
 		}
 		m.call = msg.Call
+		_ = persistLastActiveSession(m.stateDir, m.workspaceRoot, msg.SessionID)
 		m.conn = ConnConnected
 		m.attempt = 0
 		if reconnected && m.submissionLeaseErr == nil {
@@ -105,12 +117,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		reconcile := m.restoreSubmissionJournal()
 		history := m.loadRecentHistory(msg.Call)
+		status := m.refreshRuntimeStatus()
 		if reconcile != nil {
-			return m, tea.Batch(history, reconcile)
+			return m, tea.Batch(history, reconcile, status)
 		}
-		return m, history
+		return m, tea.Batch(history, status)
 
 	case modelPreferenceMsg:
+		if (msg.sessionID != "" && msg.sessionID != m.sessionID) || (msg.generation != 0 && msg.generation != m.sessionGeneration) {
+			return m, nil
+		}
 		m.handleModelPreference(msg)
 		return m, nil
 	case sessionListMsg:
@@ -119,6 +135,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case sessionActionMsg:
 		m.handleSessionAction(msg)
+		return m, nil
+	case sessionRenameMsg:
+		m.handleSessionRename(msg)
 		return m, nil
 
 	case TaskActiveMsg:
@@ -141,6 +160,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ConnLostMsg:
 		if m.pendingSessionID != "" {
+			if msg.SessionID == m.pendingSessionID {
+				if m.sessionPicker == nil {
+					m.sessionPicker = &sessionPickerState{generation: m.sessionOpGen}
+				}
+				m.sessionPicker.loading = false
+				m.sessionPicker.loadError = true
+				m.sessionPicker.status = m.text(MsgSessionSwitchRecover, MessageArgs{"error": msg.Err.Error()})
+				m.layout()
+			}
 			return m, nil
 		}
 		if msg.Generation != 0 && (msg.SessionID != m.sessionID || msg.Generation != m.sessionGeneration) {
@@ -277,6 +305,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.handleOperationalSurface(msg)
 		return m, m.maybeSubmitNextQueued()
+	case runtimeStatusMsg:
+		m.handleRuntimeStatus(msg)
+		return m, nil
+	case dynamicSlashResolvedMsg:
+		return m, m.handleDynamicSlash(msg)
 
 	case workspaceDiffMsg:
 		m.handleWorkspaceDiff(msg)
@@ -307,9 +340,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = msg.mode
 		m.push(m.text(MsgUpdateMode, MessageArgs{"mode": msg.mode}))
 		m.layout()
+		if strings.TrimSpace(msg.followUpPrompt) != "" {
+			return m, m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: msg.followUpPrompt}, false, false)
+		}
 		return m, m.maybeSubmitNextQueued()
 
 	case loopResultMsg:
+		if msg.sessionID != "" && msg.sessionID != m.sessionID {
+			return m, nil
+		}
 		m.handleLoopResult(msg)
 		return m, m.maybeSubmitNextQueued()
 
@@ -535,6 +574,19 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		}
 		return nil, true
 	}
+	if m.settings != nil {
+		if cmd, handled := m.settingsKey(key); handled {
+			return cmd, true
+		}
+		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) {
+			return tea.ClearScreen, true
+		}
+		if m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
+			m.closeSettings()
+			return m.resumeQueuedAfterTransient(), true
+		}
+		return nil, true
+	}
 	// Reverse search owns every key while visible. In particular Ctrl+C must
 	// restore the exact draft instead of arming the global exit cascade.
 	if m.historySearch != nil {
@@ -706,6 +758,15 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		m.breakComposerUndoGroup()
 		m.showHelp()
 		return nil, true
+	case m.keys.matches(KeyContextGlobal, ActionGlobalModeCycle, key):
+		// Grok uses Shift+Tab for permission/plan mode cycling. Carina cycles
+		// only the governed build↔plan interaction mode (no silent YOLO).
+		m.breakComposerUndoGroup()
+		return m.cycleInteractionMode(), true
+	case m.keys.matches(KeyContextGlobal, ActionGlobalSettings, key):
+		m.breakComposerUndoGroup()
+		m.openSettings(settingsTabOverview)
+		return nil, true
 	case m.keys.matches(KeyContextGlobal, ActionGlobalTranscript, key):
 		m.breakComposerUndoGroup()
 		m.openTranscriptPager()
@@ -746,6 +807,16 @@ func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
 	if m.helpOpen {
 		m.helpScroll += delta
 		m.clampHelpScroll()
+		return nil
+	}
+	if m.settings != nil {
+		actions := m.settingsActions()
+		if delta < 0 && m.settings.cursor > 0 {
+			m.settings.cursor--
+		}
+		if delta > 0 && m.settings.cursor+1 < len(actions) {
+			m.settings.cursor++
+		}
 		return nil
 	}
 	if m.transcriptPager != nil {
@@ -1385,10 +1456,12 @@ func (m *Model) resetSessionProjection() {
 	m.inFlightTaskID = ""
 	m.pausedRestore = nil
 	m.approval, m.question = nil, nil
+	m.approvalQueue = nil
 	m.approvalSeen = make(map[string]bool)
 	m.approvalResolved = make(map[string]bool)
 	m.approvalPending = make(map[string]approvalResolutionSnapshot)
 	m.approvalOrder = make(map[string]uint64)
+	m.approvalNextSeq, m.approvalOutcomeSeq = 0, 0
 	m.questionSeen = make(map[string]bool)
 	m.questionResolved = make(map[string]bool)
 	m.questionQueue = nil
@@ -1444,7 +1517,17 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 	case "status":
 		return m.queryOperationalSurface("status", "session.get", map[string]any{"session_id": m.sessionID})
 	case "permissions":
-		return m.queryOperationalSurface("permissions", "profile.describe", map[string]any{"session_id": m.sessionID})
+		if len(parts) == 3 && parts[1] == "new" && parts[2] == "safe-edit" {
+			return m.newSessionWithProfile("safe-edit")
+		}
+		if len(parts) == 4 && parts[1] == "new" && parts[2] == "full-workspace" && parts[3] == "--yes" {
+			return m.newSessionWithProfile("full-workspace")
+		}
+		if len(parts) != 1 {
+			m.push(m.text(MsgUpdateUnknownCommand, MessageArgs{"command": "permissions; use /permissions or /permissions new <safe-edit|full-workspace> [--yes]"}))
+			return nil
+		}
+		return m.queryOperationalSurface("permissions", "profile.inventory", map[string]any{"session_id": m.sessionID})
 	case "context":
 		return m.queryOperationalSurface("context", "context.summary", map[string]any{"session_id": m.sessionID})
 	case "compact":
@@ -1457,14 +1540,138 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			params["task_id"] = m.pausedRestore.TaskID
 		}
 		return m.queryOperationalSurface("compact", "session.checkpoint.compact", params)
-	case "config":
-		return m.queryOperationalSurface("config", "daemon.status", map[string]any{})
-	case "usage":
+	case "config", "settings":
+		if len(parts) >= 2 {
+			switch parts[1] {
+			case "model", "effort", "mode", "permissions":
+				return m.slashCommand("/" + strings.Join(parts[1:], " "))
+			case "keymap":
+				if len(parts) == 2 {
+					m.openKeymapEditor()
+					return nil
+				}
+			case "raw":
+				return m.queryOperationalSurface("config", "config.inventory", map[string]any{"session_id": m.sessionID})
+			}
+			m.push(m.text(MsgUpdateUnknownCommand, MessageArgs{"command": "config; use /config [model|effort|mode|permissions|keymap|raw]"}))
+			return nil
+		}
+		// Grok/CC open a settings shell instead of dumping inventory into chat.
+		m.openSettings(settingsTabOverview)
+		return m.refreshRuntimeStatus()
+	case "doctor":
+		return m.queryOperationalSurface("doctor", "daemon.doctor", map[string]any{})
+	case "usage", "cost":
 		return m.queryOperationalSurface("usage", "usage.cost", map[string]any{"session_id": m.sessionID})
-	case "review":
-		return m.queryOperationalSurface("review (read-only)", "session.review", map[string]any{"session_id": m.sessionID})
+	case "review", "commit":
+		return m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: text}, false, false)
+	case "btw":
+		if len(parts) < 2 {
+			m.push(m.text(MsgUpdateUsageBtw, nil))
+			return nil
+		}
+		side := "Side question (do not change the main task plan; answer briefly):\n\n" + strings.Join(parts[1:], " ")
+		return m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: side}, false, false)
+	case "plan":
+		if len(parts) == 1 {
+			return m.changeMode("plan")
+		}
+		// Enter plan mode then submit the description as the planning prompt.
+		desc := strings.Join(parts[1:], " ")
+		call, sessionID := m.call, m.sessionID
+		return func() tea.Msg {
+			if call != nil {
+				_ = call.Call("session.plan_mode", map[string]any{"session_id": sessionID, "on": true}, nil)
+			}
+			return modeChangedMsg{sessionID: sessionID, mode: "plan", err: nil, followUpPrompt: desc}
+		}
+	case "build":
+		return m.changeMode("build")
+	case "view-plan", "show-plan", "plan-view":
+		m.viewPlanSurface()
+		return nil
+	case "tasks", "ps":
+		m.showTasksSurface()
+		return nil
+	case "sessions":
+		return m.openSessionPicker()
+	case "export":
+		path := ""
+		if len(parts) >= 2 {
+			path = strings.Join(parts[1:], " ")
+		}
+		return m.exportTranscript(path)
+	case "remember":
+		return m.rememberNote(strings.Join(parts[1:], " "))
+	case "init":
+		return m.initProjectRules()
+	case "compact-mode":
+		m.compactMode = !m.compactMode
+		m.push(m.text(MsgUpdateCompactMode, MessageArgs{"state": map[bool]string{true: "on", false: "off"}[m.compactMode]}))
+		m.layout()
+		return nil
+	case "session-review":
+		return m.queryOperationalSurface("review", "session.review", map[string]any{"session_id": m.sessionID})
 	case "memory":
-		return m.queryOperationalSurface("memory status", "memory.status", map[string]any{"session_id": m.sessionID})
+		if len(parts) == 1 || parts[1] == "status" {
+			return m.queryOperationalSurface("memory", "memory.status", map[string]any{"session_id": m.sessionID})
+		}
+		if parts[1] == "list" && len(parts) == 2 {
+			return m.queryOperationalSurface("memory", "memory.list", map[string]any{"session_id": m.sessionID, "target": "memory"})
+		}
+		if parts[1] == "search" && len(parts) >= 3 {
+			return m.queryOperationalSurface("memory", "memory.search", map[string]any{"session_id": m.sessionID, "target": "memory", "query": strings.Join(parts[2:], " "), "mode": "auto"})
+		}
+		if parts[1] == "read" && len(parts) <= 3 {
+			target := "memory"
+			if len(parts) == 3 {
+				target = parts[2]
+			}
+			if !validMemoryTarget(target) {
+				m.push(m.text(MsgUpdateUsageMemory, nil))
+				return nil
+			}
+			return m.queryOperationalSurface("memory", "memory.read", map[string]any{"session_id": m.sessionID, "target": target})
+		}
+		if parts[1] == "verify" && len(parts) >= 2 && len(parts) <= 4 {
+			target := "memory"
+			if len(parts) >= 3 {
+				target = parts[2]
+			}
+			if !validMemoryTarget(target) {
+				m.push(m.text(MsgUpdateUsageMemory, nil))
+				return nil
+			}
+			params := map[string]any{"session_id": m.sessionID, "target": target}
+			if len(parts) == 4 {
+				params["revision"] = parts[3]
+			}
+			return m.queryOperationalSurface("memory", "memory.verify", params)
+		}
+		if parts[1] == "rollback" && len(parts) == 7 && parts[6] == "--yes" && validMemoryTarget(parts[2]) {
+			return m.queryOperationalSurface("memory", "memory.rollback", map[string]any{
+				"session_id": m.sessionID, "target": parts[2], "revision": parts[3],
+				"expected_revision": parts[4], "idempotency_key": parts[5],
+			})
+		}
+		if parts[1] == "handoff" && len(parts) == 7 && parts[6] == "--yes" && validMemoryTarget(parts[3]) {
+			expected := parts[4]
+			if expected == "-" {
+				expected = ""
+			}
+			return m.queryOperationalSurface("memory", "memory.handoff", map[string]any{
+				"source_session_id": m.sessionID, "target_session_id": parts[2], "target": parts[3],
+				"expected_revision": expected, "idempotency_key": parts[5],
+			})
+		}
+		m.push(m.text(MsgUpdateUsageMemory, nil))
+		return nil
+	case "skills":
+		return m.queryOperationalSurface("skills", "skill.inventory", map[string]any{"session_id": m.sessionID})
+	case "hooks":
+		return m.queryOperationalSurface("hooks", "hook.inventory", map[string]any{"session_id": m.sessionID})
+	case "extensions":
+		return m.queryOperationalSurface("extensions", "extension.list", map[string]any{"workspace_root": m.workspaceRoot})
 	case "diff":
 		if len(parts) != 1 {
 			m.push(m.text(MsgUpdateUsageDiff, nil))
@@ -1478,6 +1685,9 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		}
 		return m.queryOperationalSurface("mcp", "mcp.inventory", map[string]any{"verbose": len(parts) == 2})
 	case "mode":
+		if len(parts) == 2 && parts[1] == "cycle" {
+			return m.cycleInteractionMode()
+		}
 		if len(parts) != 2 || (parts[1] != "build" && parts[1] != "plan") {
 			m.push(m.text(MsgUpdateUsageMode, nil))
 			return nil
@@ -1495,31 +1705,47 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			m.push(m.text(MsgUpdateUsageModel, nil))
 			return nil
 		}
+		previous, previousEffort := m.model, m.reasoningEffort
 		if parts[1] == "default" {
-			previous := m.model
-			previousEffort := m.reasoningEffort
 			m.model = ""
-			m.reasoningEffort = ""
-			m.modelPinned = false
-			m.push(m.text(MsgUpdateModelChanged, MessageArgs{"model": parts[1]}))
-			m.layout()
-			return m.persistSessionModel(previous, previousEffort, m.model, m.reasoningEffort)
 		} else {
-			previous := m.model
-			previousEffort := m.reasoningEffort
 			m.model = parts[1]
-			m.reasoningEffort = ""
-			m.modelPinned = false
-			m.push(m.text(MsgUpdateModelChanged, MessageArgs{"model": parts[1]}))
-			m.layout()
-			return m.persistSessionModel(previous, previousEffort, m.model, m.reasoningEffort)
 		}
+		m.reasoningEffort = ""
+		m.modelPinned = false
+		m.push(m.text(MsgUpdateModelChanged, MessageArgs{"model": parts[1]}))
+		m.layout()
+		return m.persistSessionModel(previous, previousEffort, m.model, m.reasoningEffort)
+	case "effort":
+		if len(parts) == 1 {
+			return m.openModelPicker()
+		}
+		if d, ok := builtinCommand("effort"); !ok || !d.Validate(parts[1:]) {
+			m.push(m.text(MsgUpdateUsageEffort, nil))
+			return nil
+		}
+		previous := m.reasoningEffort
+		effort := parts[1]
+		if effort == "default" {
+			effort = ""
+		}
+		m.reasoningEffort = effort
+		m.push(m.text(MsgUpdateEffortChanged, MessageArgs{"effort": parts[1]}))
+		return m.persistSessionModel(m.model, previous, m.model, m.reasoningEffort)
 	case "agents":
 		return m.querySurface("agent.list", map[string]any{"session_id": m.sessionID}, m.text(MsgUpdateAgents, nil))
 	case "checkpoints":
 		return m.openCheckpointPicker()
 	case "new":
 		return m.newSession()
+	case "clear":
+		return m.newSession()
+	case "rename":
+		if len(parts) < 2 {
+			m.push(m.text(MsgSessionRenameUsage, nil))
+			return nil
+		}
+		return m.renameSession(strings.Join(parts[1:], " "))
 	case "fork":
 		if len(parts) > 2 {
 			m.push("usage: /fork [task_id]")
@@ -1568,33 +1794,12 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		}
 		return m.openCanonicalTranscriptPager()
 	default:
-		m.push(m.text(MsgUpdateUnknownCommand, MessageArgs{"command": name}))
-		return nil
+		return m.resolveDynamicSlash(text)
 	}
+	return nil
 }
 
-func validSlashCommand(text string) bool {
-	parts := strings.Fields(text)
-	if len(parts) == 0 {
-		return false
-	}
-	switch strings.TrimPrefix(parts[0], "/") {
-	case "help", "keys", "recap", "agents", "checkpoints", "keymap", "copy", "transcript", "status", "permissions", "context", "compact", "config", "usage", "review", "memory", "loop", "goal", "diff", "new", "fork", "task-resume":
-		return true
-	case "mcp":
-		return len(parts) <= 2 && (len(parts) == 1 || parts[1] == "verbose")
-	case "model":
-		return len(parts) <= 2
-	case "resume":
-		return len(parts) <= 2
-	case "search":
-		return len(parts) >= 2
-	case "mode":
-		return len(parts) == 2 && (parts[1] == "build" || parts[1] == "plan")
-	default:
-		return false
-	}
-}
+func validMemoryTarget(target string) bool { return target == "memory" || target == "user" }
 
 func (m *Model) queryCanonicalSurface(kind canonicalSurfaceKind, query string) tea.Cmd {
 	call, sessionID := m.call, m.sessionID
@@ -1766,14 +1971,40 @@ func (m *Model) loopCommand(args []string) tea.Cmd {
 	method := "schedule.list"
 	switch {
 	case len(args) == 0 || (len(args) == 1 && args[0] == "list"):
+		params["session_id"] = m.sessionID
 	case len(args) == 2 && (args[0] == "pause" || args[0] == "resume" || args[0] == "delete"):
 		action, method = args[0], "schedule."+args[0]
 		params["schedule_id"] = args[1]
+		params["session_id"] = m.sessionID
 	case len(args) >= 2:
 		action, method = "create", "schedule.create"
+		promptParts := make([]string, 0, len(args)-1)
+		concurrency := "forbid"
+		for i := 1; i < len(args); i++ {
+			if args[i] == "--concurrency" {
+				if i+1 >= len(args) || !validScheduleConcurrency(args[i+1]) {
+					m.push(m.text(MsgUpdateUsageLoop, nil))
+					return nil
+				}
+				concurrency = args[i+1]
+				i++
+				continue
+			}
+			promptParts = append(promptParts, args[i])
+		}
+		if strings.TrimSpace(strings.Join(promptParts, " ")) == "" {
+			m.push(m.text(MsgUpdateUsageLoop, nil))
+			return nil
+		}
 		params = map[string]any{
 			"session_id": m.sessionID, "kind": "every", "expression": args[0],
-			"prompt": strings.Join(args[1:], " "),
+			"prompt": strings.Join(promptParts, " "), "concurrency_policy": concurrency,
+		}
+		if m.model != "" {
+			params["model"] = m.model
+		}
+		if m.reasoningEffort != "" {
+			params["reasoning_effort"] = m.reasoningEffort
 		}
 	default:
 		m.push(m.text(MsgUpdateUsageLoop, nil))
@@ -1787,6 +2018,15 @@ func (m *Model) loopCommand(args []string) tea.Cmd {
 		var out map[string]any
 		err := call.Call(method, params, &out)
 		return loopResultMsg{action: action, sessionID: sessionID, data: out, err: err}
+	}
+}
+
+func validScheduleConcurrency(value string) bool {
+	switch value {
+	case "forbid", "queue", "replace", "allow":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1832,9 +2072,11 @@ func (m *Model) handleOperationalSurface(msg operationalSurfaceMsg) {
 	titleID := map[string]MessageID{
 		"status": MsgOperationalStatusTitle, "permissions": MsgOperationalPermissionsTitle,
 		"context": MsgOperationalContextTitle, "config": MsgOperationalConfigTitle, "mcp": MsgOperationalMCPTitle, "compact": MsgOperationalCompactTitle,
+		"doctor": MsgOperationalDoctorTitle, "skills": MsgOperationalSkillsTitle, "hooks": MsgOperationalHooksTitle, "extensions": MsgOperationalExtensionsTitle,
+		"usage": MsgOperationalUsageTitle, "review": MsgOperationalReviewTitle, "memory": MsgOperationalMemoryTitle,
 	}[msg.kind]
 	title := m.text(titleID, nil)
-	lines := compactMapLines(msg.data, "")
+	lines := m.humanizeOperationalSurface(msg.kind, msg.data)
 	if len(lines) == 0 {
 		lines = []string{m.text(MsgOperationalEmpty, nil)}
 	}

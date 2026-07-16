@@ -1,6 +1,6 @@
 {
   "$comment": "Canonical event type enumeration (PRD §8.2). The event log is append-only; every event carries timestamp + session_id; side-effect events carry permission_decision_id.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "types": [
     { "name": "TaskCreated", "side_effect": false, "payload": ["task_id", "user_prompt"] },
     { "name": "ModelRequested", "side_effect": false, "payload": ["provider", "model", "input_tokens"] },
@@ -10,10 +10,15 @@
     { "name": "RoutingRetryScheduled", "side_effect": false, "payload": ["evidence_id", "attempt", "max_attempts", "error"] },
     { "name": "ContextCompacted", "side_effect": false, "payload": ["receipt"] },
     { "name": "MemoryRecalled", "side_effect": false, "payload": ["provider", "mode", "status", "reason", "evidence_count", "adapter_version"] },
+    { "name": "MemoryRecallRequested", "side_effect": false, "payload": ["provider", "endpoint_host", "query_sha256", "status"] },
+    { "name": "MemoryWriteRequested", "side_effect": false, "payload": ["target", "action", "content_sha256", "status"] },
+    { "name": "MemoryWritten", "side_effect": true, "payload": ["target", "revision", "parent_revision", "status"] },
     { "name": "MemoryProjectionChanged", "side_effect": false, "payload": ["provider", "status", "reason", "target", "document_id", "revision", "generation"] },
     { "name": "MemoryProjected", "side_effect": true, "payload": ["provider", "status", "reason", "target", "document_id", "revision", "generation"] },
     { "name": "ScheduleChanged", "side_effect": false, "payload": ["action", "schedule_id"] },
     { "name": "ScheduleTriggered", "side_effect": false, "payload": ["schedule_id", "status"] },
+    { "name": "GoalChangeRequested", "side_effect": false, "payload": ["action", "from_status", "to_status", "status"] },
+    { "name": "GoalChanged", "side_effect": false, "payload": ["action", "status", "tokens_used", "token_budget", "continuations_used", "max_continuations"] },
     { "name": "ToolRequested", "side_effect": false, "payload": ["tool", "arguments"] },
     { "name": "ToolApproved", "side_effect": false, "payload": ["tool", "decision_id"] },
     { "name": "ToolDenied", "side_effect": false, "payload": ["tool", "decision_id", "reason"] },

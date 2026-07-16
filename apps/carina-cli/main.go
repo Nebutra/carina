@@ -44,10 +44,12 @@ Start and run:
   carina init                                      create ~/.carina and print daemon hint
   carina status                                    show daemon health and counters
   carina doctor [--json] [--fix [--yes]]           diagnostics; repairs require explicit --yes
-  carina run [--agent name] [--model provider/model] "<prompt>" [--background]
+  carina run [--agent name] [--model provider/model] [--effort level] "<prompt>" [--background]
                                                    create a safe-edit session in cwd, submit a task, and
                                                    wait for it to finish (exits with its governance
                                                    outcome); --background returns as soon as it is queued
+  carina run --input-format stream-json --output-format stream-json [--session id]
+                                                   bidirectional NDJSON agent protocol for SDK and CI
   carina ask [--agent name] [--model provider/model] "<prompt>" [--background]
                                                    alias for run
   carina agents list                               list available agent modes
@@ -78,6 +80,13 @@ Memory:
   carina memory context <session_id>                 render the recalled-memory prompt block
   carina memory search [--semantic|--auto] <session_id> <query>
                                                    search curated local memory entries
+  carina memory read <session_id> <memory|user>      read entries with revision proof
+  carina memory verify <session_id> <memory|user> [revision]
+                                                   verify the current memory revision
+  carina memory handoff <source_session> <target_session> <memory|user> <expected|-> <idempotency> --yes
+                                                   transfer governed memory between sessions
+  carina memory rollback <session_id> <memory|user> <revision> <expected> <idempotency> --yes
+                                                   restore a prior governed revision
   carina memory write <session_id> <memory|user> add <content|->
                                                    request a memory add
   carina memory write <session_id> <memory|user> replace <old_text> <content|->
@@ -98,9 +107,12 @@ Context engine:
   carina context retrieve <hash>                     retrieve original context from Headroom CCR
 
 Schedules:
-  carina schedule list                               list persistent schedules
-  carina schedule create <session_id> <at|every|cron> <expression> <prompt>
-  carina schedule pause|resume|delete <schedule_id>  manage a persistent schedule
+  carina schedule list <session_id>                  list session-owned schedules
+  carina schedule create <session_id> <at|every|cron> <expression> [options] <prompt>
+                                                   options: --model, --effort, --agent,
+                                                   --concurrency forbid|queue|replace|allow
+  carina schedule pause|resume|delete <session_id> <schedule_id>
+                                                   manage a session-owned schedule
 
 Audit and rollback:
   carina audit <session_id>                        replay the raw session event stream
@@ -284,6 +296,9 @@ func run(cmd string, args []string) error {
 		return cmdWorkflow(c, args)
 
 	case "run", "ask":
+		if wantsStreamJSON(args) {
+			return cmdRunStream(c, args)
+		}
 		// The task always runs in the daemon and survives CLI exit (PRD
 		// §5.2/§10.2) either way; --background additionally opts the CLI
 		// process itself out of waiting for the outcome (P1.5(b)): by
@@ -294,7 +309,7 @@ func run(cmd string, args []string) error {
 		// succeeded and a genuinely failed/policy-denied run exited 0.
 		background := hasFlag(args, "--background")
 		args = dropFlag(args, "--background")
-		prompt, model, agent, err := parseRunArgs(args)
+		prompt, model, agent, effort, err := parseRunArgsWithEffort(args)
 		if err != nil {
 			return fmt.Errorf(`usage: carina %s [--agent name] [--model provider/model] "<prompt>" [--background]`, cmd)
 		}
@@ -315,6 +330,9 @@ func run(cmd string, args []string) error {
 		}
 		if agent != "" {
 			params["agent"] = agent
+		}
+		if effort != "" {
+			params["reasoning_effort"] = effort
 		}
 		var task map[string]any
 		if err := c.Call("task.submit", params, &task); err != nil {
@@ -438,29 +456,40 @@ func cmdSteer(c *rpcClient, args []string) error {
 }
 
 func parseRunArgs(args []string) (prompt, model, agent string, err error) {
+	prompt, model, agent, _, err = parseRunArgsWithEffort(args)
+	return
+}
+
+func parseRunArgsWithEffort(args []string) (prompt, model, agent, effort string, err error) {
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--model", "-m":
 			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
-				return "", "", "", fmt.Errorf("model required")
+				return "", "", "", "", fmt.Errorf("model required")
 			}
 			model = strings.TrimSpace(args[i+1])
 			i++
 		case "--agent", "-a":
 			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
-				return "", "", "", fmt.Errorf("agent required")
+				return "", "", "", "", fmt.Errorf("agent required")
 			}
 			agent = strings.TrimSpace(args[i+1])
+			i++
+		case "--effort":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", "", fmt.Errorf("effort required")
+			}
+			effort = strings.TrimSpace(args[i+1])
 			i++
 		default:
 			rest = append(rest, args[i])
 		}
 	}
 	if len(rest) < 1 || strings.TrimSpace(rest[0]) == "" {
-		return "", "", "", fmt.Errorf("prompt required")
+		return "", "", "", "", fmt.Errorf("prompt required")
 	}
-	return rest[0], model, agent, nil
+	return rest[0], model, agent, effort, nil
 }
 
 type resumeOptions struct {
@@ -468,6 +497,7 @@ type resumeOptions struct {
 	prompt    string
 	model     string
 	agent     string
+	effort    string
 	watch     bool
 	json      bool
 	noInput   bool
@@ -532,6 +562,9 @@ func cmdResume(c *rpcClient, args []string) error {
 	if opts.agent != "" {
 		params["agent"] = opts.agent
 	}
+	if opts.effort != "" {
+		params["reasoning_effort"] = opts.effort
+	}
 	var task json.RawMessage
 	if err := c.Call("task.submit", params, &task); err != nil {
 		return err
@@ -567,6 +600,12 @@ func parseResumeArgs(args []string) (resumeOptions, error) {
 				return opts, fmt.Errorf("agent required")
 			}
 			opts.agent = strings.TrimSpace(args[i+1])
+			i++
+		case "--effort":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return opts, fmt.Errorf("effort required")
+			}
+			opts.effort = strings.TrimSpace(args[i+1])
 			i++
 		case "--watch", "-w":
 			opts.watch = true
@@ -967,6 +1006,34 @@ func memoryRPC(args []string, readInput func() (string, error)) (string, map[str
 			return "", nil, fmt.Errorf("usage: carina memory context <session_id>")
 		}
 		return "memory.context", map[string]any{"session_id": args[1]}, nil
+	case "read":
+		if len(args) != 3 {
+			return "", nil, fmt.Errorf("usage: carina memory read <session_id> <memory|user>")
+		}
+		return "memory.read", map[string]any{"session_id": args[1], "target": args[2]}, nil
+	case "verify":
+		if len(args) < 3 || len(args) > 4 {
+			return "", nil, fmt.Errorf("usage: carina memory verify <session_id> <memory|user> [revision]")
+		}
+		params := map[string]any{"session_id": args[1], "target": args[2]}
+		if len(args) == 4 {
+			params["revision"] = args[3]
+		}
+		return "memory.verify", params, nil
+	case "rollback":
+		if len(args) != 7 || args[6] != "--yes" {
+			return "", nil, fmt.Errorf("usage: carina memory rollback <session_id> <memory|user> <revision> <expected_revision> <idempotency_key> --yes")
+		}
+		return "memory.rollback", map[string]any{"session_id": args[1], "target": args[2], "revision": args[3], "expected_revision": args[4], "idempotency_key": args[5]}, nil
+	case "handoff":
+		if len(args) != 7 || args[6] != "--yes" {
+			return "", nil, fmt.Errorf("usage: carina memory handoff <source_session> <target_session> <memory|user> <expected_revision|-> <idempotency_key> --yes")
+		}
+		expected := args[4]
+		if expected == "-" {
+			expected = ""
+		}
+		return "memory.handoff", map[string]any{"source_session_id": args[1], "target_session_id": args[2], "target": args[3], "expected_revision": expected, "idempotency_key": args[5]}, nil
 	case "projection-authorize":
 		if len(args) != 2 {
 			return "", nil, fmt.Errorf("usage: carina memory projection-authorize <session_id>")
@@ -1055,22 +1122,47 @@ func cmdSchedule(c *rpcClient, args []string) error {
 	}
 	switch args[0] {
 	case "list", "ls":
-		if len(args) != 1 {
-			return fmt.Errorf("usage: carina schedule list")
+		if len(args) != 2 {
+			return fmt.Errorf("usage: carina schedule list <session_id>")
 		}
-		return call(c, "schedule.list", map[string]any{})
+		return call(c, "schedule.list", map[string]any{"session_id": args[1]})
 	case "create":
 		if len(args) < 5 {
-			return fmt.Errorf("usage: carina schedule create <session_id> <at|every|cron> <expression> <prompt>")
+			return fmt.Errorf("usage: carina schedule create <session_id> <at|every|cron> <expression> [--model id] [--effort level] [--agent name] [--concurrency policy] <prompt>")
 		}
-		return call(c, "schedule.create", map[string]any{
-			"session_id": args[1], "kind": args[2], "expression": args[3], "prompt": strings.Join(args[4:], " "),
-		})
+		params := map[string]any{"session_id": args[1], "kind": args[2], "expression": args[3]}
+		prompt := make([]string, 0, len(args)-4)
+		for i := 4; i < len(args); i++ {
+			switch args[i] {
+			case "--model", "--effort", "--agent", "--concurrency":
+				if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+					return fmt.Errorf("%s requires a value", args[i])
+				}
+				key := strings.TrimPrefix(args[i], "--")
+				if key == "effort" {
+					key = "reasoning_effort"
+				} else if key == "concurrency" {
+					key = "concurrency_policy"
+				}
+				params[key] = args[i+1]
+				i++
+			default:
+				if strings.HasPrefix(args[i], "--") {
+					return fmt.Errorf("unknown schedule create flag %q", args[i])
+				}
+				prompt = append(prompt, args[i])
+			}
+		}
+		if strings.TrimSpace(strings.Join(prompt, " ")) == "" {
+			return fmt.Errorf("schedule prompt is required")
+		}
+		params["prompt"] = strings.Join(prompt, " ")
+		return call(c, "schedule.create", params)
 	case "pause", "resume", "delete":
-		if len(args) != 2 {
-			return fmt.Errorf("usage: carina schedule %s <schedule_id>", args[0])
+		if len(args) != 3 {
+			return fmt.Errorf("usage: carina schedule %s <session_id> <schedule_id>", args[0])
 		}
-		return call(c, "schedule."+args[0], map[string]any{"schedule_id": args[1]})
+		return call(c, "schedule."+args[0], map[string]any{"session_id": args[1], "schedule_id": args[2]})
 	default:
 		return fmt.Errorf("usage: carina schedule <list|create|pause|resume|delete> ...")
 	}

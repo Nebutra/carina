@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Nebutra/carina/go/provider"
 	"github.com/Nebutra/carina/go/statefmt"
@@ -42,7 +43,13 @@ type usageAggregate struct {
 	SessionID string `json:"session_id"`
 	TaskID    string `json:"task_id"`
 	ModelUsage
-	Requests int `json:"requests"`
+	Requests             int    `json:"requests"`
+	LastInputTokens      int    `json:"last_input_tokens,omitempty"`
+	LastCacheReadTokens  int    `json:"last_cache_read_tokens,omitempty"`
+	LastCacheWriteTokens int    `json:"last_cache_write_tokens,omitempty"`
+	LastOutputTokens     int    `json:"last_output_tokens,omitempty"`
+	LastUsageEstimated   bool   `json:"last_usage_estimated,omitempty"`
+	LastRecordedAt       string `json:"last_recorded_at,omitempty"`
 }
 
 type usageStore struct {
@@ -111,7 +118,41 @@ func (s *usageStore) record(sessionID, taskID string, usage ModelUsage) error {
 	record.CacheReadTokens += usage.CacheReadTokens
 	record.CacheWriteTokens += usage.CacheWriteTokens
 	record.Estimated = record.Estimated || usage.Estimated
+	record.LastInputTokens = usage.InputTokens
+	record.LastCacheReadTokens = usage.CacheReadTokens
+	record.LastCacheWriteTokens = usage.CacheWriteTokens
+	record.LastOutputTokens = usage.OutputTokens
+	record.LastUsageEstimated = usage.Estimated
+	record.LastRecordedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	return s.persistLocked()
+}
+
+func (s *usageStore) latestTaskContext(taskID string) (ModelUsage, bool) {
+	if s == nil || strings.TrimSpace(taskID) == "" {
+		return ModelUsage{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var selected *usageAggregate
+	for _, record := range s.records {
+		if record.TaskID != taskID {
+			continue
+		}
+		// A task normally has one provider/model. If routing changes, preserve
+		// the actual last request rather than guessing from aggregate totals.
+		if selected == nil || record.LastRecordedAt > selected.LastRecordedAt {
+			selected = record
+		}
+	}
+	if selected == nil || selected.Requests == 0 || selected.LastRecordedAt == "" {
+		return ModelUsage{}, false
+	}
+	return ModelUsage{
+		Provider: selected.Provider, Model: selected.Model,
+		InputTokens: selected.LastInputTokens, OutputTokens: selected.LastOutputTokens,
+		CacheReadTokens: selected.LastCacheReadTokens, CacheWriteTokens: selected.LastCacheWriteTokens,
+		Estimated: selected.LastUsageEstimated, EffectiveReasoningEffort: selected.EffectiveReasoningEffort,
+	}, true
 }
 
 func usageKey(sessionID, taskID, providerID, model string) string {

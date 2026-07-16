@@ -15,17 +15,25 @@ import (
 )
 
 type Schedule struct {
-	ScheduleID string    `json:"schedule_id"`
-	SessionID  string    `json:"session_id"`
-	Prompt     string    `json:"prompt"`
-	Kind       string    `json:"kind"` // at | every | cron
-	Expression string    `json:"expression"`
-	Enabled    bool      `json:"enabled"`
-	NextRunAt  time.Time `json:"next_run_at"`
-	LastRunAt  time.Time `json:"last_run_at,omitempty"`
-	LastTaskID string    `json:"last_task_id,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ScheduleID        string    `json:"schedule_id"`
+	SessionID         string    `json:"session_id"`
+	Prompt            string    `json:"prompt"`
+	Kind              string    `json:"kind"` // at | every | cron
+	Expression        string    `json:"expression"`
+	Enabled           bool      `json:"enabled"`
+	NextRunAt         time.Time `json:"next_run_at"`
+	LastRunAt         time.Time `json:"last_run_at,omitempty"`
+	LastTaskID        string    `json:"last_task_id,omitempty"`
+	Model             string    `json:"model,omitempty"`
+	ReasoningEffort   string    `json:"reasoning_effort,omitempty"`
+	Agent             string    `json:"agent,omitempty"`
+	Mode              string    `json:"mode,omitempty"`
+	PermissionProfile string    `json:"permission_profile,omitempty"`
+	ApprovalMode      string    `json:"approval_mode,omitempty"`
+	ConcurrencyPolicy string    `json:"concurrency_policy,omitempty"`
+	Pending           bool      `json:"pending,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type ScheduleStore struct {
@@ -47,6 +55,11 @@ func OpenScheduleStore(stateDir string) *ScheduleStore {
 }
 
 func (s *ScheduleStore) Create(sessionID, prompt, kind, expression string, now time.Time) (*Schedule, error) {
+	return s.CreateWithEnvelope(Schedule{SessionID: sessionID, Prompt: prompt, Kind: kind, Expression: expression}, now)
+}
+
+func (s *ScheduleStore) CreateWithEnvelope(input Schedule, now time.Time) (*Schedule, error) {
+	sessionID, prompt, kind, expression := input.SessionID, input.Prompt, input.Kind, input.Expression
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	expression = strings.TrimSpace(expression)
 	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(prompt) == "" {
@@ -56,7 +69,14 @@ func (s *ScheduleStore) Create(sessionID, prompt, kind, expression string, now t
 	if err != nil {
 		return nil, err
 	}
-	row := &Schedule{ScheduleID: sessionstore.NewID("sched"), SessionID: sessionID, Prompt: prompt, Kind: kind, Expression: expression, Enabled: true, NextRunAt: next, CreatedAt: now.UTC(), UpdatedAt: now.UTC()}
+	policy := strings.ToLower(strings.TrimSpace(input.ConcurrencyPolicy))
+	if policy == "" {
+		policy = "forbid"
+	}
+	if policy != "forbid" && policy != "queue" && policy != "replace" && policy != "allow" {
+		return nil, fmt.Errorf("concurrency_policy must be forbid, queue, replace, or allow")
+	}
+	row := &Schedule{ScheduleID: sessionstore.NewID("sched"), SessionID: sessionID, Prompt: prompt, Kind: kind, Expression: expression, Enabled: true, NextRunAt: next, CreatedAt: now.UTC(), UpdatedAt: now.UTC(), Model: input.Model, ReasoningEffort: input.ReasoningEffort, Agent: input.Agent, Mode: input.Mode, PermissionProfile: input.PermissionProfile, ApprovalMode: input.ApprovalMode, ConcurrencyPolicy: policy}
 	s.mu.Lock()
 	s.rows[row.ScheduleID] = row
 	err = s.persistLocked()
@@ -155,8 +175,24 @@ func (s *ScheduleStore) MarkTask(id, taskID string) {
 	if row := s.rows[id]; row != nil {
 		prev := cloneSchedule(row)
 		row.LastTaskID = taskID
+		row.Pending = false
 		row.UpdatedAt = time.Now().UTC()
 		if err := s.persistLocked(); err != nil {
+			s.rows[id] = prev
+		}
+	}
+}
+
+func (s *ScheduleStore) QueueClaim(id string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if row := s.rows[id]; row != nil {
+		prev := cloneSchedule(row)
+		row.Enabled = true
+		row.Pending = true
+		row.NextRunAt = now.Add(time.Second).UTC()
+		row.UpdatedAt = now.UTC()
+		if s.persistLocked() != nil {
 			s.rows[id] = prev
 		}
 	}
@@ -231,6 +267,11 @@ func decodeScheduleRows(raw []byte) ([]*Schedule, bool) {
 	var rows []*Schedule
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		return nil, false
+	}
+	for _, row := range rows {
+		if row != nil && row.ConcurrencyPolicy == "" {
+			row.ConcurrencyPolicy = "forbid"
+		}
 	}
 	return rows, true
 }

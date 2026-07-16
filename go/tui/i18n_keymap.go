@@ -53,6 +53,8 @@ func buildKeyActionCopy() map[KeyAction]localizedText {
 	add([]KeyAction{ActionGlobalRedraw}, localizedText{"redraw terminal", "重绘终端", "端末を再描画", "터미널 다시 그리기", "redibujar el terminal", "redessiner le terminal"})
 	add([]KeyAction{ActionGlobalExit}, localizedText{"exit when input is empty", "输入为空时退出", "入力が空なら終了", "입력이 비었을 때 종료", "salir si la entrada está vacía", "quitter si la saisie est vide"})
 	add([]KeyAction{ActionGlobalTranscript}, localizedText{"open plain transcript", "打开纯文本记录", "プレーン履歴を開く", "일반 텍스트 기록 열기", "abrir historial en texto", "ouvrir l’historique en texte"})
+	add([]KeyAction{ActionGlobalModeCycle}, localizedText{"cycle build/plan mode", "循环切换 build/plan 模式", "build/plan モードを切替", "build/plan 모드 전환", "alternar modo build/plan", "basculer mode build/plan"})
+	add([]KeyAction{ActionGlobalSettings}, localizedText{"open settings shell", "打开设置面板", "設定シェルを開く", "설정 셸 열기", "abrir ajustes", "ouvrir les réglages"})
 	add([]KeyAction{ActionChatInterrupt}, localizedText{"interrupt active turn", "中断当前轮次", "実行中のターンを中断", "활성 턴 중단", "interrumpir el turno activo", "interrompre le tour actif"})
 	add([]KeyAction{ActionChatRewind}, localizedText{"rewind idle chat", "回退空闲对话", "待機中の会話を巻き戻す", "유휴 대화 되돌리기", "retroceder el chat inactivo", "revenir dans la discussion inactive"})
 	add([]KeyAction{ActionComposerSubmit}, localizedText{"submit or steer", "提交或引导", "送信または指示追加", "제출 또는 방향 전환", "enviar u orientar", "envoyer ou orienter"})

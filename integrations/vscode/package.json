@@ -9,7 +9,7 @@
   "engines": { "vscode": "^1.95.0" },
   "main": "./dist/extension.js",
   "files": ["dist/**", "media/**", "README.md", "LICENSE"],
-  "activationEvents": ["onView:carina.agents", "onCommand:carina.refresh"],
+  "activationEvents": ["onView:carina.agents", "onCommand:carina.refresh", "onCommand:carina.sendEditorContext"],
   "contributes": {
     "viewsContainers": { "activitybar": [{ "id": "carina", "title": "Carina", "icon": "media/carina.svg" }] },
     "views": { "carina": [{ "id": "carina.agents", "name": "Agent View" }] },
@@ -21,6 +21,7 @@
       { "command": "carina.approve", "title": "Carina: Resolve Approval" },
       { "command": "carina.answer", "title": "Carina: Answer Question" },
       { "command": "carina.previewPatch", "title": "Carina: Preview Patch" },
+      { "command": "carina.sendEditorContext", "title": "Carina: Send Selection and Diagnostics" },
       { "command": "carina.openArtifact", "title": "Carina: Open Artifact" }
     ],
     "menus": {
@@ -30,7 +31,8 @@
         { "command": "carina.steer", "when": "viewItem == carinaAgent.working", "group": "carina@1" },
         { "command": "carina.approve", "when": "viewItem == carinaAgent.needs_input", "group": "carina@2" },
         { "command": "carina.answer", "when": "viewItem == carinaAgent.needs_input", "group": "carina@3" },
-        { "command": "carina.previewPatch", "when": "view == carina.agents && viewItem =~ /carinaAgent/", "group": "carina@4" }
+        { "command": "carina.previewPatch", "when": "view == carina.agents && viewItem =~ /carinaAgent/", "group": "carina@4" },
+        { "command": "carina.sendEditorContext", "when": "view == carina.agents && viewItem =~ /carinaAgent/", "group": "carina@5" }
       ]
     },
     "configuration": {

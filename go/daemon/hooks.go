@@ -16,9 +16,23 @@ import (
 // the feedback the agent sees); PostToolUse hooks observe the result. Hooks are
 // loaded from ~/.carina/hooks.json and <workspace>/.carina/hooks.json.
 type HookSpec struct {
-	Event   string   `json:"event"`   // PreToolUse | PostToolUse
-	Matcher string   `json:"matcher"` // tool name, or "" / "*" for all tools
-	Command []string `json:"command"` // argv; receives the action JSON on stdin
+	Event     string   `json:"event"`   // PreToolUse | PostToolUse | SessionStart | SessionEnd | Stop
+	Matcher   string   `json:"matcher"` // tool name, or "" / "*" for all tools
+	Command   []string `json:"command"` // argv; receives the action JSON on stdin
+	TimeoutMS int      `json:"timeout_ms,omitempty"`
+	Source    string   `json:"-"`
+}
+
+type hookOutcome struct {
+	Event      string `json:"event"`
+	Matcher    string `json:"matcher,omitempty"`
+	Source     string `json:"source"`
+	OK         bool   `json:"ok"`
+	ExitCode   int    `json:"exit_code"`
+	TimedOut   bool   `json:"timed_out,omitempty"`
+	Error      string `json:"error,omitempty"`
+	LastRunAt  string `json:"last_run_at"`
+	DurationMS int64  `json:"duration_ms"`
 }
 
 func (h HookSpec) matches(event, tool string) bool {
@@ -28,10 +42,10 @@ func (h HookSpec) matches(event, tool string) bool {
 func loadHooks(ws string) []HookSpec {
 	var out []HookSpec
 	if home, err := os.UserHomeDir(); err == nil {
-		out = append(out, readHooks(filepath.Join(home, ".carina", "hooks.json"))...)
+		out = append(out, hooksWithSource(readHooks(filepath.Join(home, ".carina", "hooks.json")), "user")...)
 	}
 	if ws != "" {
-		out = append(out, readHooks(filepath.Join(ws, ".carina", "hooks.json"))...)
+		out = append(out, hooksWithSource(readHooks(filepath.Join(ws, ".carina", "hooks.json")), "project")...)
 	}
 	return out
 }
@@ -45,8 +59,37 @@ func readHooks(path string) []HookSpec {
 	if decodeStrictJSON(raw, &hs) != nil {
 		return nil
 	}
+	for _, h := range hs {
+		if !validHookEvent(h.Event) || len(h.Command) == 0 || strings.TrimSpace(h.Command[0]) == "" || h.TimeoutMS < 0 || h.TimeoutMS > 60000 {
+			return nil
+		}
+	}
 	return hs
 }
+
+func hooksWithSource(hooks []HookSpec, source string) []HookSpec {
+	for i := range hooks {
+		hooks[i].Source = source
+	}
+	return hooks
+}
+
+func validHookEvent(event string) bool {
+	switch event {
+	case "PreToolUse", "PostToolUse", "SessionStart", "SessionEnd", "Stop":
+		return true
+	}
+	return false
+}
+
+func (h HookSpec) timeout() time.Duration {
+	if h.TimeoutMS == 0 {
+		return 10 * time.Second
+	}
+	return time.Duration(h.TimeoutMS) * time.Millisecond
+}
+
+func hookKey(h HookSpec) string { return h.Source + "\x00" + h.Event + "\x00" + h.Matcher }
 
 // hookPayload serializes a tool action (and optionally its result) as the JSON
 // fed to a hook command on stdin.
@@ -74,7 +117,8 @@ func (d *Daemon) runPreToolHooks(ws, tool string, payload []byte) (bool, string)
 		if !h.matches("PreToolUse", tool) || len(h.Command) == 0 {
 			continue
 		}
-		code, stderr := runHookCommand(h.Command, payload)
+		code, stderr, timedOut, elapsed := runHookCommand(h.Command, payload, h.timeout())
+		d.recordHookOutcome(h, code, stderr, timedOut, elapsed)
 		if code == 2 {
 			reason := strings.TrimSpace(stderr)
 			if reason == "" {
@@ -95,22 +139,64 @@ func (d *Daemon) runPostToolHooks(ws, tool string, payload []byte) {
 		if !h.matches("PostToolUse", tool) || len(h.Command) == 0 {
 			continue
 		}
-		_, _ = runHookCommand(h.Command, payload)
+		code, stderr, timedOut, elapsed := runHookCommand(h.Command, payload, h.timeout())
+		d.recordHookOutcome(h, code, stderr, timedOut, elapsed)
 	}
 }
 
-func runHookCommand(argv []string, stdin []byte) (int, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (d *Daemon) runLifecycleHooks(ws, event string, payload map[string]any) {
+	if d.safeMode {
+		return
+	}
+	raw, _ := json.Marshal(payload)
+	for _, h := range loadHooks(ws) {
+		if !h.matches(event, "") {
+			continue
+		}
+		code, stderr, timedOut, elapsed := runHookCommand(h.Command, raw, h.timeout())
+		d.recordHookOutcome(h, code, stderr, timedOut, elapsed)
+	}
+}
+
+func (d *Daemon) recordHookOutcome(h HookSpec, code int, stderr string, timedOut bool, elapsed time.Duration) {
+	outcome := hookOutcome{Event: h.Event, Matcher: h.Matcher, Source: h.Source, OK: code == 0, ExitCode: code, TimedOut: timedOut, LastRunAt: time.Now().UTC().Format(time.RFC3339Nano), DurationMS: elapsed.Milliseconds()}
+	if code != 0 {
+		outcome.Error = strings.TrimSpace(stderr)
+	}
+	d.hookOutcomeMu.Lock()
+	d.hookOutcomes[hookKey(h)] = outcome
+	d.hookOutcomeMu.Unlock()
+}
+
+func (d *Daemon) hookOutcome(h HookSpec) (hookOutcome, bool) {
+	d.hookOutcomeMu.Lock()
+	defer d.hookOutcomeMu.Unlock()
+	o, ok := d.hookOutcomes[hookKey(h)]
+	return o, ok
+}
+
+func terminalHookTaskStatus(status string) bool {
+	switch status {
+	case "completed", "failed", "cancelled", "degraded", "denied":
+		return true
+	}
+	return false
+}
+
+func runHookCommand(argv []string, stdin []byte, timeout time.Duration) (int, string, bool, time.Duration) {
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		timedOut := ctx.Err() == context.DeadlineExceeded
 		if ee, ok := err.(*exec.ExitError); ok {
-			return ee.ExitCode(), stderr.String()
+			return ee.ExitCode(), stderr.String(), timedOut, time.Since(started)
 		}
-		return -1, err.Error()
+		return -1, err.Error(), timedOut, time.Since(started)
 	}
-	return 0, stderr.String()
+	return 0, stderr.String(), false, time.Since(started)
 }

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ const SessionVersion = 1
 type Session struct {
 	Version             int       `json:"version,omitempty"`
 	SessionID           string    `json:"session_id"`
+	Name                string    `json:"name,omitempty"`
 	WorkspaceID         string    `json:"workspace_id"`
 	WorkspaceRoot       string    `json:"workspace_root"`
 	Status              string    `json:"status"` // active | paused | closed
@@ -35,11 +37,35 @@ type Session struct {
 	ApprovalMode        string    `json:"approval_mode,omitempty"` // untrusted|on_request|never
 	NextModel           string    `json:"next_model,omitempty"`    // default model override for subsequent tasks
 	NextReasoningEffort string    `json:"next_reasoning_effort,omitempty"`
+	PlanMode            bool      `json:"plan_mode,omitempty"`
 	ParentID            string    `json:"parent_id,omitempty"` // set for subagent sessions
 	ForkedFromTaskID    string    `json:"forked_from_task_id,omitempty"`
 	ForkedThroughTurn   int       `json:"forked_through_turn,omitempty"`
 	Depth               int       `json:"depth"` // 0 = main; bounded to prevent runaway nesting
 	CreatedAt           time.Time `json:"created_at"`
+}
+
+func (s *Store) Rename(sessionID, name string) (*Session, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("sessionstore: name is required")
+	}
+	if len([]rune(name)) > 80 {
+		return nil, fmt.Errorf("sessionstore: name exceeds 80 characters")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[sessionID]
+	if !ok {
+		return nil, fmt.Errorf("sessionstore: unknown session %s", sessionID)
+	}
+	updated := *sess
+	updated.Name = name
+	if err := s.persist(&updated); err != nil {
+		return nil, err
+	}
+	s.sessions[sessionID] = &updated
+	return &updated, nil
 }
 
 func (s *Store) SetNextModel(sessionID, model string) (*Session, error) {
@@ -56,6 +82,22 @@ func (s *Store) SetNextModelPreference(sessionID, model, effort string) (*Sessio
 	updated := *sess
 	updated.NextModel = model
 	updated.NextReasoningEffort = effort
+	if err := s.persist(&updated); err != nil {
+		return nil, err
+	}
+	s.sessions[sessionID] = &updated
+	return &updated, nil
+}
+
+func (s *Store) SetPlanMode(sessionID string, on bool) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[sessionID]
+	if !ok {
+		return nil, fmt.Errorf("sessionstore: unknown session %s", sessionID)
+	}
+	updated := *sess
+	updated.PlanMode = on
 	if err := s.persist(&updated); err != nil {
 		return nil, err
 	}

@@ -34,10 +34,17 @@ func TestSessionReadyLoadsPersistentHistoryAsynchronouslyAndMergesLate(t *testin
 	m.historyPos = len(m.history)
 
 	drain(m, cmd)
-	if len(fc.calls) != 1 || fc.last().method != "history.recent" {
+	var historyCall *fakeCall
+	for i := range fc.calls {
+		if fc.calls[i].method == "history.recent" {
+			historyCall = &fc.calls[i]
+			break
+		}
+	}
+	if historyCall == nil {
 		t.Fatalf("history RPC calls = %#v", fc.calls)
 	}
-	if got := fc.last().params["limit"]; got != float64(recentHistoryLimit) {
+	if got := historyCall.params["limit"]; got != float64(recentHistoryLimit) {
 		t.Fatalf("history limit = %#v, want %d", got, recentHistoryLimit)
 	}
 	if got, want := historyTexts(m.history), []string{"older", "newer", "during load", "duplicate"}; !stringSlicesEqual(got, want) {

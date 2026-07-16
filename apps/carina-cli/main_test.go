@@ -52,6 +52,16 @@ func TestParseRunArgsRequiresPrompt(t *testing.T) {
 	}
 }
 
+func TestParseRunArgsWithEffort(t *testing.T) {
+	prompt, model, agent, effort, err := parseRunArgsWithEffort([]string{"--model", "openai/gpt-5", "--agent", "build", "--effort", "high", "ship it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prompt != "ship it" || model != "openai/gpt-5" || agent != "build" || effort != "high" {
+		t.Fatalf("unexpected parse: prompt=%q model=%q agent=%q effort=%q", prompt, model, agent, effort)
+	}
+}
+
 func TestUsageIsProductizedAndCarinaOnly(t *testing.T) {
 	for _, want := range []string{"Start and run:", "Inspect sessions:", "Audit and rollback:", "Providers and BYOK:", "Native tools, no daemon:"} {
 		if !strings.Contains(usage, want) {
@@ -104,6 +114,31 @@ func TestUsageIncludesContextCommands(t *testing.T) {
 	} {
 		if !strings.Contains(usage, want) {
 			t.Fatalf("usage missing %q:\n%s", want, usage)
+		}
+	}
+}
+
+func TestScheduleCreateExposesFrozenExecutionEnvelope(t *testing.T) {
+	s := rpc.NewServer()
+	var got map[string]any
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "schedule.create", Scope: rpc.ScopeWrite, Remote: true}, func(params json.RawMessage) (any, error) {
+		if err := json.Unmarshal(params, &got); err != nil {
+			return nil, err
+		}
+		return map[string]any{"schedule_id": "sched_1"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := dialTestServer(t, s)
+	defer c.Close()
+	if _, err := captureStdout(t, func() error {
+		return cmdSchedule(c, []string{"create", "sess_1", "every", "5m", "--model", "openai/gpt-5", "--effort", "high", "--agent", "review", "--concurrency", "queue", "inspect", "changes"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]any{"session_id": "sess_1", "model": "openai/gpt-5", "reasoning_effort": "high", "agent": "review", "concurrency_policy": "queue", "prompt": "inspect changes"} {
+		if got[key] != want {
+			t.Fatalf("schedule.create %s=%v, want %v; params=%#v", key, got[key], want, got)
 		}
 	}
 }
@@ -198,11 +233,11 @@ func TestCmdSteerQueuesMessage(t *testing.T) {
 }
 
 func TestParseResumeArgs(t *testing.T) {
-	opts, err := parseResumeArgs([]string{"--model", "openai/gpt-5", "-a", "build", "--watch", "sess_1", "continue", "work"})
+	opts, err := parseResumeArgs([]string{"--model", "openai/gpt-5", "-a", "build", "--effort", "medium", "--watch", "sess_1", "continue", "work"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.sessionID != "sess_1" || opts.prompt != "continue work" || opts.model != "openai/gpt-5" || opts.agent != "build" || !opts.watch {
+	if opts.sessionID != "sess_1" || opts.prompt != "continue work" || opts.model != "openai/gpt-5" || opts.agent != "build" || opts.effort != "medium" || !opts.watch {
 		t.Fatalf("unexpected resume opts: %+v", opts)
 	}
 	if _, err := parseResumeArgs(nil); err == nil {
@@ -244,12 +279,12 @@ func TestCmdResumeSubmitsTaskToExistingSession(t *testing.T) {
 	defer c.Close()
 
 	out, err := captureStdout(t, func() error {
-		return cmdResume(c, []string{"sess_1", "--agent", "build", "continue please"})
+		return cmdResume(c, []string{"sess_1", "--agent", "build", "--effort", "high", "continue please"})
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if submitted["session_id"] != "sess_1" || submitted["prompt"] != "continue please" || submitted["agent"] != "build" {
+	if submitted["session_id"] != "sess_1" || submitted["prompt"] != "continue please" || submitted["agent"] != "build" || submitted["reasoning_effort"] != "high" {
 		t.Fatalf("unexpected task.submit params: %+v", submitted)
 	}
 	for _, want := range []string{"resuming session: sess_1", `"task_id": "task_1"`, "To continue this session"} {
@@ -428,6 +463,21 @@ func TestMemoryRPCBuildsStatusAndWrite(t *testing.T) {
 	}
 	if method != "memory.status" || params["session_id"] != "sess_1" {
 		t.Fatalf("unexpected status rpc: %s %+v", method, params)
+	}
+	method, params, err = memoryRPC([]string{"verify", "sess_1", "memory", "mr_current"}, func() (string, error) { return "", nil })
+	if err != nil || method != "memory.verify" || params["revision"] != "mr_current" {
+		t.Fatalf("unexpected verify rpc: %s %+v %v", method, params, err)
+	}
+	method, params, err = memoryRPC([]string{"rollback", "sess_1", "memory", "mr_old", "mr_current", "rollback-1", "--yes"}, func() (string, error) { return "", nil })
+	if err != nil || method != "memory.rollback" || params["idempotency_key"] != "rollback-1" {
+		t.Fatalf("unexpected rollback rpc: %s %+v %v", method, params, err)
+	}
+	method, params, err = memoryRPC([]string{"handoff", "sess_1", "sess_2", "memory", "-", "handoff-1", "--yes"}, func() (string, error) { return "", nil })
+	if err != nil || method != "memory.handoff" || params["target_session_id"] != "sess_2" || params["expected_revision"] != "" {
+		t.Fatalf("unexpected handoff rpc: %s %+v %v", method, params, err)
+	}
+	if _, _, err = memoryRPC([]string{"rollback", "sess_1", "memory", "mr_old", "mr_current", "rollback-2"}, func() (string, error) { return "", nil }); err == nil {
+		t.Fatal("rollback accepted without --yes")
 	}
 	method, params, err = memoryRPC([]string{"projection-authorize", "sess_1"}, func() (string, error) { return "", nil })
 	if err != nil || method != "memory.projection.authorize" || params["session_id"] != "sess_1" {

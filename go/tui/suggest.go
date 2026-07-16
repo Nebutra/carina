@@ -38,7 +38,6 @@ const treeCacheTTL = 5 * time.Second
 // slashCommand()/showHelp() that do not come from command.list (which lists
 // project/user-defined commands only). Suggestion completion merges this
 // list with the RPC results so the two surfaces cannot silently diverge.
-var builtinCommandNames = []string{"help", "keys", "search", "recap", "status", "permissions", "context", "compact", "config", "usage", "review", "memory", "diff", "mcp", "loop", "goal", "mode", "model", "agents", "checkpoints", "new", "resume", "fork", "task-resume", "keymap", "editor", "copy", "transcript"}
 
 // treeEntry is the subset of toolchain.FileEntry the suggestion panel needs.
 // Kept local (rather than importing go/toolchain) to avoid a new import
@@ -57,9 +56,10 @@ type suggestState struct {
 	Kind     mentionKind
 	Query    string
 	Matches  []string // display form as it should be spliced into the input, without the trigger char
-	Selected int      // keyboard-highlighted match; always clamped to Matches
-	Start    int      // rune offset of the trigger character within the current line
-	Row      int      // textarea row the trigger belongs to
+	Details  []string
+	Selected int // keyboard-highlighted match; always clamped to Matches
+	Start    int // rune offset of the trigger character within the current line
+	Row      int // textarea row the trigger belongs to
 }
 
 // suggestDebounceMsg fires suggestDebounce after a trigger's query last
@@ -80,6 +80,7 @@ type suggestResultMsg struct {
 	trigger mentionTrigger
 	row     int
 	matches []string
+	details []string
 	err     error
 
 	// refreshedTree/freshEntries/freshRoot carry a workspace.tree re-fetch
@@ -134,26 +135,46 @@ func (m *Model) fetchSuggestions(tr mentionTrigger, row int, gen int) tea.Cmd {
 	switch tr.Kind {
 	case mentionCommand:
 		return func() tea.Msg {
-			matches := filterPrefix(builtinCommandNames, tr.Query, suggestMaxResults)
+			type commandMeta struct {
+				Name, Usage, Description, Source string
+				Enabled                          bool
+			}
+			metas := map[string]commandMeta{}
+			for _, d := range builtinCommandRegistry {
+				metas[d.Name] = commandMeta{Name: d.Name, Usage: d.Usage, Description: d.Description, Source: d.Source, Enabled: true}
+			}
 			if call != nil {
 				var out struct {
 					Commands []struct {
-						Name string `json:"name"`
+						Name        string `json:"name"`
+						Description string `json:"description"`
+						Source      string `json:"source"`
 					} `json:"commands"`
 				}
 				if err := call.Call("command.list", map[string]any{"session_id": sid}, &out); err == nil {
-					names := make([]string, 0, len(out.Commands))
 					for _, c := range out.Commands {
-						names = append(names, c.Name)
+						if _, builtin := metas[c.Name]; !builtin {
+							metas[c.Name] = commandMeta{Name: c.Name, Usage: "/" + c.Name + " [args]", Description: c.Description, Source: c.Source, Enabled: true}
+						}
 					}
-					matches = mergeUnique(matches, filterPrefix(names, tr.Query, suggestMaxResults))
+				}
+			}
+			var matches []string
+			for name := range metas {
+				if strings.HasPrefix(strings.ToLower(name), strings.ToLower(tr.Query)) {
+					matches = append(matches, name)
 				}
 			}
 			sort.Strings(matches)
 			if len(matches) > suggestMaxResults {
 				matches = matches[:suggestMaxResults]
 			}
-			return suggestResultMsg{gen: gen, trigger: tr, row: row, matches: matches}
+			details := make([]string, len(matches))
+			for i, name := range matches {
+				d := metas[name]
+				details[i] = d.Usage + " · " + d.Description + " · " + d.Source + " · enabled"
+			}
+			return suggestResultMsg{gen: gen, trigger: tr, row: row, matches: matches, details: details}
 		}
 	case mentionFile:
 		root, cached, cacheAt := m.workspaceRoot, m.treeCache, m.treeCacheAt
@@ -227,6 +248,7 @@ func (m *Model) handleSuggestResult(msg suggestResultMsg) {
 		Kind:     msg.trigger.Kind,
 		Query:    msg.trigger.Query,
 		Matches:  msg.matches,
+		Details:  msg.details,
 		Selected: 0,
 		Start:    msg.trigger.Start,
 		Row:      msg.row,

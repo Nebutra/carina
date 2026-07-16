@@ -94,9 +94,6 @@ func (m *Model) loadHistoryScope(call Caller, scope historyScope, generation int
 }
 
 func (m *Model) handleHistoryLoaded(msg historyLoadedMsg) {
-	if msg.modelLoaded {
-		m.handleModelPreference(modelPreferenceMsg{loaded: true, model: msg.nextModel, effort: msg.nextReasoningEffort, err: msg.modelErr})
-	}
 	if msg.search {
 		search := m.historySearch
 		if search == nil || msg.generation != search.loadGeneration || msg.scope != search.scope {
@@ -125,9 +122,13 @@ func (m *Model) handleHistoryLoaded(msg historyLoadedMsg) {
 		m.reconcileHistorySearchEntries()
 		return
 	}
+	if msg.generation != m.historyLoadGen { return }
+	if msg.modelLoaded {
+		m.handleModelPreference(modelPreferenceMsg{sessionID: m.sessionID, generation: m.sessionGeneration, loaded: true, model: msg.nextModel, effort: msg.nextReasoningEffort, err: msg.modelErr})
+	}
 	// An unsupported daemon and a lost connection are expected downgrade paths.
 	// History improves recall, but must never interrupt the active composer.
-	if msg.err != nil || msg.generation != m.historyLoadGen {
+	if msg.err != nil {
 		return
 	}
 

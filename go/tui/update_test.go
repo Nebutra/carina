@@ -76,16 +76,39 @@ func newTestModel(fc *fakeCaller) (*Model, *testClock) {
 // message back into Update, returning the final message it saw.
 func drain(m *Model, cmd tea.Cmd) tea.Msg {
 	var last tea.Msg
-	for cmd != nil {
-		msg := cmd()
+	var queue []tea.Cmd
+	if cmd != nil {
+		queue = append(queue, cmd)
+	}
+	for len(queue) > 0 {
+		next := queue[0]
+		queue = queue[1:]
+		if next == nil {
+			continue
+		}
+		msg := next()
 		if msg == nil {
-			return last
+			continue
+		}
+		// tea.Batch returns a BatchMsg of child Cmds; unpack so SessionReady
+		// history+status refresh both run (Bubble Tea does this in the runtime).
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, child := range batch {
+				if child != nil {
+					queue = append(queue, child)
+				}
+			}
+			continue
 		}
 		last = msg
 		if _, ok := msg.(tea.QuitMsg); ok {
 			return last
 		}
-		_, cmd = m.Update(msg)
+		var follow tea.Cmd
+		_, follow = m.Update(msg)
+		if follow != nil {
+			queue = append(queue, follow)
+		}
 	}
 	return last
 }

@@ -61,6 +61,16 @@ const (
 	MsgOperationalConfigTitle      MessageID = "operational.config_title"
 	MsgOperationalMCPTitle         MessageID = "operational.mcp_title"
 	MsgOperationalCompactTitle     MessageID = "operational.compact_title"
+	MsgOperationalDoctorTitle      MessageID = "operational.doctor_title"
+	MsgOperationalSkillsTitle      MessageID = "operational.skills_title"
+	MsgOperationalHooksTitle       MessageID = "operational.hooks_title"
+	MsgOperationalExtensionsTitle  MessageID = "operational.extensions_title"
+	MsgOperationalUsageTitle       MessageID = "operational.usage_title"
+	MsgOperationalReviewTitle      MessageID = "operational.review_title"
+	MsgOperationalMemoryTitle      MessageID = "operational.memory_title"
+	MsgUpdateUsageEffort           MessageID = "update.usage_effort"
+	MsgUpdateEffortChanged         MessageID = "update.effort_changed"
+	MsgUpdateUsageMemory           MessageID = "update.usage_memory"
 	MsgUpdateUsageCompact          MessageID = "update.usage_compact"
 	MsgUpdateUsageDiff             MessageID = "update.usage_diff"
 	MsgUpdateUsageMCP              MessageID = "update.usage_mcp"
@@ -86,6 +96,17 @@ const (
 	MsgSessionPickerEmpty          MessageID = "session_picker.empty"
 	MsgSessionPickerHelp           MessageID = "session_picker.help"
 	MsgSessionPickerForkOf         MessageID = "session_picker.fork_of"
+	MsgSessionPickerForkTask       MessageID = "session_picker.fork_task"
+	MsgSessionStatusActive         MessageID = "session.status.active"
+	MsgSessionStatusPaused         MessageID = "session.status.paused"
+	MsgSessionStatusClosed         MessageID = "session.status.closed"
+	MsgSessionAgeNow               MessageID = "session.age.now"
+	MsgSessionAgeMinutes           MessageID = "session.age.minutes"
+	MsgSessionAgeHours             MessageID = "session.age.hours"
+	MsgSessionAgeDays              MessageID = "session.age.days"
+	MsgSessionRenameUsage          MessageID = "session.rename.usage"
+	MsgSessionRenameFailed         MessageID = "session.rename.failed"
+	MsgSessionRenamed              MessageID = "session.rename.done"
 	MsgSessionSwitchBlocked        MessageID = "session_switch.blocked"
 	MsgSessionSwitchDraft          MessageID = "session_switch.blocker.draft"
 	MsgSessionSwitchTask           MessageID = "session_switch.blocker.task"
@@ -101,6 +122,8 @@ const (
 	MsgSessionSwitchLeaseBlocked   MessageID = "session_switch.lease_blocked"
 	MsgSessionSwitchFailed         MessageID = "session_switch.failed"
 	MsgSessionSwitching            MessageID = "session_switch.switching"
+	MsgSessionActionResolving      MessageID = "session_switch.resolving"
+	MsgSessionSwitchRecover        MessageID = "session_switch.recover"
 	MsgUpdateAgents                MessageID = "update.agents"
 	MsgUpdateUsageResume           MessageID = "update.usage_resume"
 	MsgUpdateUnknownCommand        MessageID = "update.unknown_command"
@@ -126,6 +149,67 @@ const (
 	MsgTaskStatusWaiting           MessageID = "tasks.status.waiting"
 	MsgTaskStatusQueued            MessageID = "tasks.status.queued"
 	MsgTaskStatusPaused            MessageID = "tasks.status.paused"
+
+	// Product UX shell (Grok/CC/Codex parity closeout)
+	MsgSettingsTitle               MessageID = "settings.title"
+	MsgSettingsFooter              MessageID = "settings.footer"
+	MsgSettingsTabOverview         MessageID = "settings.tab.overview"
+	MsgSettingsTabMode             MessageID = "settings.tab.mode"
+	MsgSettingsTabModel            MessageID = "settings.tab.model"
+	MsgSettingsTabExtensions       MessageID = "settings.tab.extensions"
+	MsgSettingsRowSession          MessageID = "settings.row.session"
+	MsgSettingsRowMode             MessageID = "settings.row.mode"
+	MsgSettingsRowModel            MessageID = "settings.row.model"
+	MsgSettingsRowProfile          MessageID = "settings.row.profile"
+	MsgSettingsRowSandbox          MessageID = "settings.row.sandbox"
+	MsgSettingsRowApproval         MessageID = "settings.row.approval"
+	MsgSettingsRowContext          MessageID = "settings.row.context"
+	MsgSettingsRowCompact          MessageID = "settings.row.compact"
+	MsgSettingsActionRefresh       MessageID = "settings.action.refresh"
+	MsgSettingsActionContext       MessageID = "settings.action.context"
+	MsgSettingsActionUsage         MessageID = "settings.action.usage"
+	MsgSettingsActionCompactMode   MessageID = "settings.action.compact_mode"
+	MsgSettingsActionModelPicker   MessageID = "settings.action.model_picker"
+	MsgSettingsActionPlan          MessageID = "settings.action.plan"
+	MsgSettingsActionBuild         MessageID = "settings.action.build"
+	MsgSettingsActionPermissions   MessageID = "settings.action.permissions"
+	MsgSettingsActionSafeEdit      MessageID = "settings.action.safe_edit"
+	MsgSettingsActionFullWorkspace MessageID = "settings.action.full_workspace"
+	MsgSettingsActionEffort        MessageID = "settings.action.effort"
+	MsgSettingsActionKeymap        MessageID = "settings.action.keymap"
+	MsgSettingsActionSkills        MessageID = "settings.action.skills"
+	MsgSettingsActionHooks         MessageID = "settings.action.hooks"
+	MsgSettingsActionMCP           MessageID = "settings.action.mcp"
+	MsgSettingsActionExtensions    MessageID = "settings.action.extensions"
+	MsgSettingsActionDoctor        MessageID = "settings.action.doctor"
+	MsgContextSummaryHeader        MessageID = "context.summary_header"
+	MsgContextSource               MessageID = "context.source"
+	MsgContextRemaining            MessageID = "context.remaining"
+	MsgContextUnavailable          MessageID = "context.unavailable"
+	MsgContextCompactReady         MessageID = "context.compact_ready"
+	MsgContextCompactBlocked       MessageID = "context.compact_blocked"
+	MsgOperationalDetails          MessageID = "operational.details"
+	MsgConfigSummaryHeader         MessageID = "config.summary_header"
+	MsgConfigHintSettings          MessageID = "config.hint_settings"
+	MsgPermissionsSummaryHeader    MessageID = "permissions.summary_header"
+	MsgPermissionsProfile          MessageID = "permissions.profile"
+	MsgPermissionsSource           MessageID = "permissions.source"
+	MsgPermissionsChoices          MessageID = "permissions.choices"
+	MsgSessionStatusHeader         MessageID = "session.status_header"
+	MsgTasksTitle                  MessageID = "tasks.title"
+	MsgTasksEmpty                  MessageID = "tasks.empty"
+	MsgUpdateExportDone            MessageID = "update.export_done"
+	MsgUpdateUsageRemember         MessageID = "update.usage_remember"
+	MsgUpdateInitExists            MessageID = "update.init_exists"
+	MsgUpdateInitCreated           MessageID = "update.init_created"
+	MsgUpdateCompactMode           MessageID = "update.compact_mode"
+	MsgUpdateUsageBtw              MessageID = "update.usage_btw"
+	MsgViewPlanTitle               MessageID = "view_plan.title"
+	MsgViewPlanMode                MessageID = "view_plan.mode"
+	MsgViewPlanActive              MessageID = "view_plan.active"
+	MsgViewPlanInactive            MessageID = "view_plan.inactive"
+	MsgViewPlanHint                MessageID = "view_plan.hint"
+
 	MsgFollowupRestored            MessageID = "followup.restored"
 	MsgFollowupShellEmpty          MessageID = "followup.shell_empty"
 	MsgFollowupDisconnected        MessageID = "followup.disconnected"
@@ -172,19 +256,19 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgUpdateUsageSearch, "usage: /search <text>", "用法：/search <text>", "使用法: /search <text>", "사용법: /search <text>", "uso: /search <text>", "utilisation : /search <text>"),
 	{ID: MsgUpdateSearchMatches, EN: "- transcript search: {count} matches", ZH: "- 记录搜索：{count} 个匹配", JA: "- 履歴検索: {count} 件", KO: "- 기록 검색: {count}개 일치", ES: "- búsqueda en historial: {count} coincidencias", FR: "- recherche dans l’historique : {count} résultats", ENOne: "- transcript search: {count} match", ZHOne: "- 记录搜索：{count} 个匹配", JAOne: "- 履歴検索: {count} 件", KOOne: "- 기록 검색: {count}개 일치", ESOne: "- búsqueda en historial: {count} coincidencia", FROne: "- recherche dans l’historique : {count} résultat"},
 	catalog(MsgUpdateRecap, "recap", "回顾", "要約", "요약", "resumen", "récapitulatif"),
-	catalog(MsgUpdateUsageMode, "usage: /mode <build|plan>", "用法：/mode <build|plan>", "使用法: /mode <build|plan>", "사용법: /mode <build|plan>", "uso: /mode <build|plan>", "utilisation : /mode <build|plan>"),
+	catalog(MsgUpdateUsageMode, "usage: /mode <build|plan|cycle>", "用法：/mode <build|plan|cycle>", "使用法: /mode <build|plan|cycle>", "사용법: /mode <build|plan|cycle>", "uso: /mode <build|plan|cycle>", "utilisation : /mode <build|plan|cycle>"),
 	catalog(MsgUpdateMode, "mode {mode}", "模式 {mode}", "モード {mode}", "모드 {mode}", "modo {mode}", "mode {mode}"),
 	catalog(MsgUpdateUsageModel, "usage: /model <provider/model|default>", "用法：/model <厂商/模型|default>", "使用法: /model <provider/model|default>", "사용법: /model <provider/model|default>", "uso: /model <proveedor/modelo|default>", "utilisation : /model <fournisseur/modèle|default>"),
-	catalog(MsgUpdateUsageLoop, "usage: /loop [list | <duration> <prompt> | pause|resume|delete <schedule_id>]", "用法：/loop [list | <时长> <指令> | pause|resume|delete <计划ID>]", "使用法: /loop [list | <期間> <指示> | pause|resume|delete <ID>]", "사용법: /loop [list | <기간> <지시> | pause|resume|delete <ID>]", "uso: /loop [list | <duración> <instrucción> | pause|resume|delete <id>]", "utilisation : /loop [list | <durée> <instruction> | pause|resume|delete <id>]"),
+	catalog(MsgUpdateUsageLoop, "usage: /loop [list | <duration> [--concurrency forbid|queue|replace|allow] <prompt> | pause|resume|delete <schedule_id>]", "用法：/loop [list | <时长> [--concurrency forbid|queue|replace|allow] <指令> | pause|resume|delete <计划ID>]", "使用法: /loop [list | <期間> [--concurrency forbid|queue|replace|allow] <指示> | pause|resume|delete <ID>]", "사용법: /loop [list | <기간> [--concurrency forbid|queue|replace|allow] <지시> | pause|resume|delete <ID>]", "uso: /loop [list | <duración> [--concurrency forbid|queue|replace|allow] <instrucción> | pause|resume|delete <id>]", "utilisation : /loop [list | <durée> [--concurrency forbid|queue|replace|allow] <instruction> | pause|resume|delete <id>]"),
 	catalog(MsgUpdateLoopHeader, "loops for this session", "当前会话的循环任务", "このセッションのループ", "이 세션의 반복 작업", "bucles de esta sesión", "boucles de cette session"),
 	catalog(MsgUpdateLoopItem, "- {id} · {state} · every {interval} · next {next} · {prompt}", "- {id} · {state} · 每 {interval} · 下次 {next} · {prompt}", "- {id} · {state} · {interval} ごと · 次回 {next} · {prompt}", "- {id} · {state} · {interval}마다 · 다음 {next} · {prompt}", "- {id} · {state} · cada {interval} · próxima {next} · {prompt}", "- {id} · {state} · toutes les {interval} · prochaine {next} · {prompt}"),
 	catalog(MsgUpdateLoopEmpty, "  none", "  无", "  なし", "  없음", "  ninguno", "  aucune"),
 	catalog(MsgUpdateLoopChanged, "loop {action}: {id}", "循环任务 {action}：{id}", "ループ {action}: {id}", "반복 작업 {action}: {id}", "bucle {action}: {id}", "boucle {action} : {id}"),
-	catalog(MsgUpdateGoalUsage, "usage: /goal [--tokens N] <objective> | clear|pause|resume|complete|continue", "用法：/goal [--tokens N] <目标> | clear|pause|resume|complete|continue", "使用法: /goal [--tokens N] <目標> | clear|pause|resume|complete|continue", "사용법: /goal [--tokens N] <목표> | clear|pause|resume|complete|continue", "uso: /goal [--tokens N] <objetivo> | clear|pause|resume|complete|continue", "utilisation : /goal [--tokens N] <objectif> | clear|pause|resume|complete|continue"),
+	catalog(MsgUpdateGoalUsage, "usage: /goal [--auto] [--tokens N] [--max-continuations N] <objective> | clear|pause|resume|complete|continue", "用法：/goal [--auto] [--tokens N] [--max-continuations N] <目标> | clear|pause|resume|complete|continue", "使用法: /goal [--auto] [--tokens N] [--max-continuations N] <目標> | clear|pause|resume|complete|continue", "사용법: /goal [--auto] [--tokens N] [--max-continuations N] <목표> | clear|pause|resume|complete|continue", "uso: /goal [--auto] [--tokens N] [--max-continuations N] <objetivo> | clear|pause|resume|complete|continue", "utilisation : /goal [--auto] [--tokens N] [--max-continuations N] <objectif> | clear|pause|resume|complete|continue"),
 	catalog(MsgUpdateGoalFailed, "goal {action} failed: {error}", "目标 {action} 失败：{error}", "目標の {action} に失敗: {error}", "목표 {action} 실패: {error}", "falló la acción {action} del objetivo: {error}", "échec de l’action {action} sur l’objectif : {error}"),
 	catalog(MsgUpdateGoalCleared, "goal cleared", "目标已清除", "目標を消去しました", "목표를 지웠습니다", "objetivo eliminado", "objectif effacé"),
 	catalog(MsgUpdateGoalNone, "no persistent goal", "没有持久目标", "永続目標はありません", "영구 목표가 없습니다", "no hay objetivo persistente", "aucun objectif persistant"),
-	catalog(MsgUpdateGoalState, "goal [{status}] {objective} · {budget} · {seconds}s · continuation {used}/{max}", "目标 [{status}] {objective} · {budget} · {seconds}秒 · 续接 {used}/{max}", "目標 [{status}] {objective} · {budget} · {seconds}秒 · 継続 {used}/{max}", "목표 [{status}] {objective} · {budget} · {seconds}초 · 계속 {used}/{max}", "objetivo [{status}] {objective} · {budget} · {seconds}s · continuación {used}/{max}", "objectif [{status}] {objective} · {budget} · {seconds}s · reprise {used}/{max}"),
+	catalog(MsgUpdateGoalState, "goal [{status}] {objective} · {budget} · {seconds}s · {mode} continuation {used}/{max}", "目标 [{status}] {objective} · {budget} · {seconds}秒 · {mode} 续接 {used}/{max}", "目標 [{status}] {objective} · {budget} · {seconds}秒 · {mode} 継続 {used}/{max}", "목표 [{status}] {objective} · {budget} · {seconds}초 · {mode} 계속 {used}/{max}", "objetivo [{status}] {objective} · {budget} · {seconds}s · continuación {mode} {used}/{max}", "objectif [{status}] {objective} · {budget} · {seconds}s · reprise {mode} {used}/{max}"),
 	catalog(MsgUpdateGoalBudgetUnlimited, "unlimited", "不限", "無制限", "무제한", "sin límite", "illimité"),
 	catalog(MsgUpdateGoalBudgetTokens, "{used}/{max} tokens", "{used}/{max} Token", "{used}/{max} トークン", "{used}/{max} 토큰", "{used}/{max} tokens", "{used}/{max} jetons"),
 	catalog(MsgCanonicalTranscriptTitle, "canonical transcript", "规范会话记录", "正規セッション履歴", "표준 세션 기록", "historial canónico", "historique canonique"),
@@ -201,6 +285,16 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgOperationalConfigTitle, "effective runtime (read-only)", "有效运行时状态（只读）", "有効なランタイム（読み取り専用）", "유효 런타임(읽기 전용)", "runtime efectivo (solo lectura)", "runtime effectif (lecture seule)"),
 	catalog(MsgOperationalMCPTitle, "MCP inventory (read-only)", "MCP 清单（只读）", "MCP インベントリ（読み取り専用）", "MCP 인벤토리(읽기 전용)", "inventario MCP (solo lectura)", "inventaire MCP (lecture seule)"),
 	catalog(MsgOperationalCompactTitle, "checkpoint compact", "检查点压缩", "チェックポイント圧縮", "체크포인트 압축", "compactación del checkpoint", "compaction du checkpoint"),
+	catalog(MsgOperationalDoctorTitle, "runtime diagnostics", "运行时诊断", "ランタイム診断", "런타임 진단", "diagnósticos del runtime", "diagnostic du runtime"),
+	catalog(MsgOperationalSkillsTitle, "skills (read-only)", "技能（只读）", "スキル（読み取り専用）", "기술(읽기 전용)", "skills (solo lectura)", "skills (lecture seule)"),
+	catalog(MsgOperationalHooksTitle, "hooks (read-only)", "Hooks（只读）", "フック（読み取り専用）", "훅(읽기 전용)", "hooks (solo lectura)", "hooks (lecture seule)"),
+	catalog(MsgOperationalExtensionsTitle, "extensions (read-only)", "扩展（只读）", "拡張（読み取り専用）", "확장(읽기 전용)", "extensiones (solo lectura)", "extensions (lecture seule)"),
+	catalog(MsgOperationalUsageTitle, "session usage and cost", "会话用量与成本", "セッション使用量とコスト", "세션 사용량 및 비용", "uso y coste de la sesión", "usage et coût de la session"),
+	catalog(MsgOperationalReviewTitle, "session review (read-only)", "会话审查（只读）", "セッションレビュー（読み取り専用）", "세션 검토(읽기 전용)", "revisión de sesión (solo lectura)", "revue de session (lecture seule)"),
+	catalog(MsgOperationalMemoryTitle, "persistent memory status", "持久记忆状态", "永続メモリの状態", "영구 메모리 상태", "estado de memoria persistente", "état de la mémoire persistante"),
+	catalog(MsgUpdateUsageEffort, "usage: /effort [default|low|medium|high|max|auto]", "用法：/effort [default|low|medium|high|max|auto]", "使用法: /effort [default|low|medium|high|max|auto]", "사용법: /effort [default|low|medium|high|max|auto]", "uso: /effort [default|low|medium|high|max|auto]", "utilisation : /effort [default|low|medium|high|max|auto]"),
+	catalog(MsgUpdateEffortChanged, "reasoning effort {effort}", "推理强度 {effort}", "推論強度 {effort}", "추론 강도 {effort}", "esfuerzo de razonamiento {effort}", "effort de raisonnement {effort}"),
+	catalog(MsgUpdateUsageMemory, "usage: /memory status|list|search <query>|read [target]|verify [target] [revision]|rollback <target> <revision> <expected> <idempotency> --yes|handoff <session> <target> <expected|-> <idempotency> --yes", "用法：/memory status|list|search <查询>|read [目标]|verify [目标] [版本]|rollback <目标> <版本> <预期版本> <幂等键> --yes|handoff <会话> <目标> <预期版本|-> <幂等键> --yes", "使用法: /memory status|list|search <検索>|read [target]|verify [target] [revision]|rollback <target> <revision> <expected> <idempotency> --yes|handoff <session> <target> <expected|-> <idempotency> --yes", "사용법: /memory status|list|search <검색>|read [target]|verify [target] [revision]|rollback <target> <revision> <expected> <idempotency> --yes|handoff <session> <target> <expected|-> <idempotency> --yes", "uso: /memory status|list|search <consulta>|read [objetivo]|verify [objetivo] [revisión]|rollback <objetivo> <revisión> <esperada> <idempotencia> --yes|handoff <sesión> <objetivo> <esperada|-> <idempotencia> --yes", "utilisation : /memory status|list|search <requête>|read [cible]|verify [cible] [révision]|rollback <cible> <révision> <attendue> <idempotence> --yes|handoff <session> <cible> <attendue|-> <idempotence> --yes"),
 	catalog(MsgUpdateUsageCompact, "usage: /compact", "用法：/compact", "使用法: /compact", "사용법: /compact", "uso: /compact", "utilisation : /compact"),
 	catalog(MsgUpdateUsageDiff, "usage: /diff", "用法：/diff", "使用法: /diff", "사용법: /diff", "uso: /diff", "utilisation : /diff"),
 	catalog(MsgUpdateUsageMCP, "usage: /mcp [verbose]", "用法：/mcp [verbose]", "使用法: /mcp [verbose]", "사용법: /mcp [verbose]", "uso: /mcp [verbose]", "utilisation : /mcp [verbose]"),
@@ -226,6 +320,17 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgSessionPickerEmpty, "No other resumable sessions.", "没有其他可恢复的会话。", "再開可能な他のセッションはありません。", "재개할 다른 세션이 없습니다.", "No hay otras sesiones reanudables.", "Aucune autre session ne peut être reprise."),
 	catalog(MsgSessionPickerHelp, "Enter resumes · Esc closes", "Enter 恢复 · Esc 关闭", "Enter で再開 · Esc で閉じる", "Enter 재개 · Esc 닫기", "Enter reanuda · Esc cierra", "Entrée reprend · Échap ferme"),
 	catalog(MsgSessionPickerForkOf, "fork of {parent}", "分叉自 {parent}", "{parent} のフォーク", "{parent}에서 포크", "bifurcación de {parent}", "branche de {parent}"),
+	catalog(MsgSessionPickerForkTask, "at {task}", "于 {task}", "{task} 時点", "{task}에서", "en {task}", "à {task}"),
+	catalog(MsgSessionStatusActive, "active", "活跃", "アクティブ", "활성", "activa", "active"),
+	catalog(MsgSessionStatusPaused, "paused", "已暂停", "一時停止", "일시 중지", "pausada", "en pause"),
+	catalog(MsgSessionStatusClosed, "closed", "已关闭", "終了", "종료", "cerrada", "fermée"),
+	catalog(MsgSessionAgeNow, "just now", "刚刚", "たった今", "방금", "ahora", "à l’instant"),
+	catalog(MsgSessionAgeMinutes, "{count}m ago", "{count} 分钟前", "{count}分前", "{count}분 전", "hace {count} min", "il y a {count} min"),
+	catalog(MsgSessionAgeHours, "{count}h ago", "{count} 小时前", "{count}時間前", "{count}시간 전", "hace {count} h", "il y a {count} h"),
+	catalog(MsgSessionAgeDays, "{count}d ago", "{count} 天前", "{count}日前", "{count}일 전", "hace {count} d", "il y a {count} j"),
+	catalog(MsgSessionRenameUsage, "usage: /rename <name>", "用法：/rename <名称>", "使用法: /rename <名前>", "사용법: /rename <이름>", "uso: /rename <nombre>", "utilisation : /rename <nom>"),
+	catalog(MsgSessionRenameFailed, "Unable to rename session: {error}", "无法重命名会话：{error}", "セッション名を変更できません: {error}", "세션 이름 변경 실패: {error}", "No se pudo renombrar la sesión: {error}", "Impossible de renommer la session : {error}"),
+	catalog(MsgSessionRenamed, "Session renamed to {name}.", "会话已重命名为 {name}。", "セッション名を {name} に変更しました。", "세션 이름을 {name}(으)로 변경했습니다.", "Sesión renombrada a {name}.", "Session renommée en {name}."),
 	catalog(MsgSessionSwitchBlocked, "Cannot switch sessions: {reason}.", "无法切换会话：{reason}。", "セッションを切り替えられません: {reason}。", "세션을 전환할 수 없음: {reason}.", "No se puede cambiar de sesión: {reason}.", "Impossible de changer de session : {reason}."),
 	catalog(MsgSessionSwitchDraft, "the current draft must be submitted or cleared", "必须先提交或清空当前草稿", "現在の下書きを送信または消去してください", "현재 초안을 제출하거나 지워야 합니다", "debe enviar o borrar el borrador actual", "le brouillon actuel doit être envoyé ou effacé"),
 	catalog(MsgSessionSwitchTask, "an active task is still running", "仍有活动任务在运行", "実行中のタスクがあります", "활성 작업이 아직 실행 중입니다", "aún hay una tarea activa", "une tâche active est encore en cours"),
@@ -241,6 +346,8 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgSessionSwitchLeaseBlocked, "Session switch blocked: {error}", "会话切换被阻止：{error}", "セッション切替が拒否されました: {error}", "세션 전환 차단됨: {error}", "Cambio de sesión bloqueado: {error}", "Changement de session bloqué : {error}"),
 	catalog(MsgSessionSwitchFailed, "Session switch failed: {error}", "会话切换失败：{error}", "セッション切替に失敗しました: {error}", "세션 전환 실패: {error}", "Falló el cambio de sesión: {error}", "Échec du changement de session : {error}"),
 	catalog(MsgSessionSwitching, "Switching to session {session}...", "正在切换到会话 {session}……", "セッション {session} に切り替え中…", "세션 {session}(으)로 전환 중...", "Cambiando a la sesión {session}...", "Passage à la session {session}…"),
+	catalog(MsgSessionActionResolving, "Session action in progress; wait for its result.", "会话操作正在进行；请等待结果。", "セッション操作の完了を待ってください。", "세션 작업이 진행 중입니다. 결과를 기다리세요.", "Acción de sesión en curso; espera el resultado.", "Action de session en cours ; attendez le résultat."),
+	catalog(MsgSessionSwitchRecover, "Connection failed: {error} · r retries · b returns", "连接失败：{error} · r 重试 · b 返回", "接続失敗: {error} · r 再試行 · b 戻る", "연결 실패: {error} · r 재시도 · b 돌아가기", "Falló la conexión: {error} · r reintenta · b vuelve", "Échec de connexion : {error} · r réessaie · b revient"),
 	catalog(MsgUpdateAgents, "agents", "Agent", "Agent", "Agent", "Agents", "Agents"),
 	catalog(MsgUpdateUsageResume, "usage: /resume [task_id]", "用法：/resume [task_id]", "使用法: /resume [task_id]", "사용법: /resume [task_id]", "uso: /resume [task_id]", "utilisation : /resume [task_id]"),
 	catalog(MsgUpdateUnknownCommand, "unknown command /{command}; use /help", "未知命令 /{command}；请使用 /help", "不明なコマンド /{command}。/help を参照", "알 수 없는 명령 /{command}. /help를 사용하세요", "comando desconocido /{command}; usa /help", "commande inconnue /{command} ; utilisez /help"),
@@ -278,4 +385,63 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgSubmissionReconciling, "- reconciling an unacknowledged submission in the background; current draft preserved", "- 正在后台核对未确认提交；当前草稿已保留", "- 未確認の送信をバックグラウンドで照合中。現在の下書きを保持", "- 확인되지 않은 제출을 백그라운드에서 확인 중, 현재 초안 유지", "- conciliando un envío en segundo plano; borrador actual conservado", "- vérification d’un envoi en arrière-plan ; brouillon actuel conservé"),
 	catalog(MsgTranscriptArtifact, "artifact: {ids}", "产物：{ids}", "成果物: {ids}", "아티팩트: {ids}", "artefacto: {ids}", "artefact : {ids}"),
 	catalog(MsgTranscriptOpenArtifact, "open: carina artifact read <session_id> <artifact_id>", "打开：carina artifact read <session_id> <artifact_id>", "開く: carina artifact read <session_id> <artifact_id>", "열기: carina artifact read <session_id> <artifact_id>", "abrir: carina artifact read <session_id> <artifact_id>", "ouvrir : carina artifact read <session_id> <artifact_id>"),
+
+	catalog(MsgSettingsTitle, "Settings", "设置", "設定", "설정", "Ajustes", "Réglages"),
+	catalog(MsgSettingsFooter, "[{close}] close · ←/→ tabs · ↑/↓ select · Enter run", "[{close}] 关闭 · ←/→ 标签 · ↑/↓ 选择 · Enter 执行", "[{close}] 閉じる · ←/→ タブ · ↑/↓ 選択 · Enter 実行", "[{close}] 닫기 · ←/→ 탭 · ↑/↓ 선택 · Enter 실행", "[{close}] cerrar · ←/→ pestañas · ↑/↓ elegir · Enter ejecutar", "[{close}] fermer · ←/→ onglets · ↑/↓ choisir · Entrée exécuter"),
+	catalog(MsgSettingsTabOverview, "Overview", "概览", "概要", "개요", "Resumen", "Aperçu"),
+	catalog(MsgSettingsTabMode, "Mode", "模式", "モード", "모드", "Modo", "Mode"),
+	catalog(MsgSettingsTabModel, "Model", "模型", "モデル", "모델", "Modelo", "Modèle"),
+	catalog(MsgSettingsTabExtensions, "Extensions", "扩展", "拡張", "확장", "Extensiones", "Extensions"),
+	catalog(MsgSettingsRowSession, "session: {session}", "会话：{session}", "セッション: {session}", "세션: {session}", "sesión: {session}", "session : {session}"),
+	catalog(MsgSettingsRowMode, "mode: {mode}", "模式：{mode}", "モード: {mode}", "모드: {mode}", "modo: {mode}", "mode : {mode}"),
+	catalog(MsgSettingsRowModel, "model: {model} · effort: {effort}", "模型：{model} · 强度：{effort}", "モデル: {model} · 強度: {effort}", "모델: {model} · 강도: {effort}", "modelo: {model} · esfuerzo: {effort}", "modèle : {model} · effort : {effort}"),
+	catalog(MsgSettingsRowProfile, "profile: {profile}", "权限配置：{profile}", "プロファイル: {profile}", "프로필: {profile}", "perfil: {profile}", "profil : {profile}"),
+	catalog(MsgSettingsRowSandbox, "sandbox: {sandbox}", "沙箱：{sandbox}", "サンドボックス: {sandbox}", "샌드박스: {sandbox}", "sandbox: {sandbox}", "sandbox : {sandbox}"),
+	catalog(MsgSettingsRowApproval, "interactive approval: {approval}", "交互审批：{approval}", "対話承認: {approval}", "대화형 승인: {approval}", "aprobación interactiva: {approval}", "approbation interactive : {approval}"),
+	catalog(MsgSettingsRowContext, "context: {context}", "上下文：{context}", "コンテキスト: {context}", "컨텍스트: {context}", "contexto: {context}", "contexte : {context}"),
+	catalog(MsgSettingsRowCompact, "compact UI: {state}", "紧凑界面：{state}", "コンパクト UI: {state}", "컴팩트 UI: {state}", "UI compacta: {state}", "UI compacte : {state}"),
+	catalog(MsgSettingsActionRefresh, "Refresh runtime status", "刷新运行时状态", "ランタイム状態を更新", "런타임 상태 새로고침", "Actualizar estado", "Actualiser l’état"),
+	catalog(MsgSettingsActionContext, "Show context usage", "显示上下文用量", "コンテキスト使用量を表示", "컨텍스트 사용량 표시", "Mostrar contexto", "Afficher le contexte"),
+	catalog(MsgSettingsActionUsage, "Show usage and cost", "显示用量与成本", "使用量とコストを表示", "사용량 및 비용 표시", "Mostrar uso y coste", "Afficher l’usage et le coût"),
+	catalog(MsgSettingsActionCompactMode, "Toggle compact UI", "切换紧凑界面", "コンパクト UI を切替", "컴팩트 UI 전환", "Alternar UI compacta", "Basculer l’UI compacte"),
+	catalog(MsgSettingsActionModelPicker, "Open model picker", "打开模型选择器", "モデル選択を開く", "모델 선택기 열기", "Abrir selector de modelo", "Ouvrir le sélecteur de modèle"),
+	catalog(MsgSettingsActionPlan, "Switch to plan mode", "切换到计划模式", "プランモードへ", "계획 모드로 전환", "Cambiar a modo plan", "Passer en mode plan"),
+	catalog(MsgSettingsActionBuild, "Switch to build mode", "切换到构建模式", "ビルドモードへ", "빌드 모드로 전환", "Cambiar a modo build", "Passer en mode build"),
+	catalog(MsgSettingsActionPermissions, "Inspect permissions", "查看权限", "権限を確認", "권한 확인", "Inspeccionar permisos", "Inspecter les autorisations"),
+	catalog(MsgSettingsActionSafeEdit, "New safe-edit session", "新建 safe-edit 会话", "safe-edit セッションを新規作成", "safe-edit 세션 새로 만들기", "Nueva sesión safe-edit", "Nouvelle session safe-edit"),
+	catalog(MsgSettingsActionFullWorkspace, "New full-workspace session", "新建 full-workspace 会话", "full-workspace セッションを新規作成", "full-workspace 세션 새로 만들기", "Nueva sesión full-workspace", "Nouvelle session full-workspace"),
+	catalog(MsgSettingsActionEffort, "Change reasoning effort", "更改推理强度", "推論強度を変更", "추론 강도 변경", "Cambiar esfuerzo", "Changer l’effort"),
+	catalog(MsgSettingsActionKeymap, "Edit keybindings", "编辑按键绑定", "キーバインドを編集", "키 바인딩 편집", "Editar atajos", "Modifier les raccourcis"),
+	catalog(MsgSettingsActionSkills, "List skills", "列出技能", "スキル一覧", "기술 목록", "Listar skills", "Lister les skills"),
+	catalog(MsgSettingsActionHooks, "List hooks", "列出 Hooks", "フック一覧", "훅 목록", "Listar hooks", "Lister les hooks"),
+	catalog(MsgSettingsActionMCP, "List MCP servers", "列出 MCP 服务", "MCP サーバー一覧", "MCP 서버 목록", "Listar MCP", "Lister les MCP"),
+	catalog(MsgSettingsActionExtensions, "List extensions", "列出扩展", "拡張一覧", "확장 목록", "Listar extensiones", "Lister les extensions"),
+	catalog(MsgSettingsActionDoctor, "Run doctor", "运行诊断", "doctor を実行", "doctor 실행", "Ejecutar doctor", "Lancer doctor"),
+	catalog(MsgContextSummaryHeader, "Context window", "上下文窗口", "コンテキスト窓", "컨텍스트 창", "Ventana de contexto", "Fenêtre de contexte"),
+	catalog(MsgContextSource, "source: {source}", "来源：{source}", "ソース: {source}", "출처: {source}", "origen: {source}", "source : {source}"),
+	catalog(MsgContextRemaining, "remaining: {remaining} tokens", "剩余：{remaining} token", "残り: {remaining} トークン", "남은 토큰: {remaining}", "restantes: {remaining} tokens", "restants : {remaining} jetons"),
+	catalog(MsgContextUnavailable, "context tokens unavailable: {reason}", "上下文 token 不可用：{reason}", "コンテキストトークン利用不可: {reason}", "컨텍스트 토큰 사용 불가: {reason}", "tokens de contexto no disponibles: {reason}", "jetons de contexte indisponibles : {reason}"),
+	catalog(MsgContextCompactReady, "compact available for checkpoint {checkpoint}", "检查点 {checkpoint} 可压缩", "チェックポイント {checkpoint} を圧縮可能", "체크포인트 {checkpoint} 압축 가능", "compactación disponible para {checkpoint}", "compaction disponible pour {checkpoint}"),
+	catalog(MsgContextCompactBlocked, "compact unavailable: {reason}", "无法压缩：{reason}", "圧縮不可: {reason}", "압축 불가: {reason}", "compactación no disponible: {reason}", "compaction indisponible : {reason}"),
+	catalog(MsgOperationalDetails, "details:", "详情：", "詳細:", "세부정보:", "detalles:", "détails :"),
+	catalog(MsgConfigSummaryHeader, "Runtime configuration", "运行时配置", "ランタイム設定", "런타임 구성", "Configuración del runtime", "Configuration runtime"),
+	catalog(MsgConfigHintSettings, "Tip: /settings opens the control shell; /config raw dumps inventory.", "提示：/settings 打开控制面板；/config raw 输出完整清单。", "ヒント: /settings で制御シェル、/config raw で一覧出力。", "팁: /settings는 제어 셸, /config raw는 전체 목록.", "Consejo: /settings abre el panel; /config raw vuelca el inventario.", "Astuce : /settings ouvre le panneau ; /config raw affiche l’inventaire."),
+	catalog(MsgPermissionsSummaryHeader, "Permissions", "权限", "権限", "권한", "Permisos", "Autorisations"),
+	catalog(MsgPermissionsProfile, "profile: {profile}", "配置：{profile}", "プロファイル: {profile}", "프로필: {profile}", "perfil: {profile}", "profil : {profile}"),
+	catalog(MsgPermissionsSource, "source: {source}", "来源：{source}", "ソース: {source}", "출처: {source}", "origen: {source}", "source : {source}"),
+	catalog(MsgPermissionsChoices, "governed session choices:", "受治理会话选项：", "管理セッションの選択肢:", "통제 세션 선택지:", "opciones de sesión gobernada:", "choix de session gouvernée :"),
+	catalog(MsgSessionStatusHeader, "Session", "会话", "セッション", "세션", "Sesión", "Session"),
+	catalog(MsgTasksTitle, "Tasks & queue", "任务与队列", "タスクと待機列", "작업 및 대기열", "Tareas y cola", "Tâches et file"),
+	catalog(MsgTasksEmpty, "No active tasks.", "没有活动任务。", "実行中のタスクはありません。", "활성 작업이 없습니다.", "No hay tareas activas.", "Aucune tâche active."),
+	catalog(MsgUpdateExportDone, "exported transcript to {path}", "已导出记录到 {path}", "履歴を {path} に書き出しました", "기록을 {path}에 내보냄", "historial exportado a {path}", "historique exporté vers {path}"),
+	catalog(MsgUpdateUsageRemember, "usage: /remember <note>", "用法：/remember <笔记>", "使用法: /remember <メモ>", "사용법: /remember <메모>", "uso: /remember <nota>", "utilisation : /remember <note>"),
+	catalog(MsgUpdateInitExists, "AGENTS.md already exists at {path}", "AGENTS.md 已存在：{path}", "AGENTS.md は既にあります: {path}", "AGENTS.md가 이미 있음: {path}", "AGENTS.md ya existe en {path}", "AGENTS.md existe déjà : {path}"),
+	catalog(MsgUpdateInitCreated, "created {path}", "已创建 {path}", "{path} を作成しました", "{path} 생성됨", "creado {path}", "créé {path}"),
+	catalog(MsgUpdateCompactMode, "compact UI {state}", "紧凑界面 {state}", "コンパクト UI {state}", "컴팩트 UI {state}", "UI compacta {state}", "UI compacte {state}"),
+	catalog(MsgUpdateUsageBtw, "usage: /btw <side question>", "用法：/btw <侧问>", "使用法: /btw <脇質問>", "사용법: /btw <곁질문>", "uso: /btw <pregunta lateral>", "utilisation : /btw <question latérale>"),
+	catalog(MsgViewPlanTitle, "Plan mode", "计划模式", "プランモード", "계획 모드", "Modo plan", "Mode plan"),
+	catalog(MsgViewPlanMode, "current mode: {mode}", "当前模式：{mode}", "現在のモード: {mode}", "현재 모드: {mode}", "modo actual: {mode}", "mode actuel : {mode}"),
+	catalog(MsgViewPlanActive, "Plan mode is ON. Edits, shell, and memory writes stay blocked until you approve the plan.", "计划模式已开启。在批准计划前，编辑、Shell 与记忆写入保持阻断。", "プランモード ON。承認まで編集・Shell・メモリ書き込みは遮断。", "계획 모드 ON. 승인 전 편집/Shell/메모리 쓰기 차단.", "Modo plan ON. Ediciones, shell y memoria bloqueados hasta aprobar.", "Mode plan ON. Éditions, shell et mémoire bloqués jusqu’à approbation."),
+	catalog(MsgViewPlanInactive, "Plan mode is OFF (build). Use /plan to enter planning first.", "计划模式关闭（build）。使用 /plan 先做规划。", "プランモード OFF（build）。先に /plan で計画。", "계획 모드 OFF(build). /plan으로 먼저 계획.", "Modo plan OFF (build). Use /plan para planificar primero.", "Mode plan OFF (build). Utilisez /plan pour planifier d’abord."),
+	catalog(MsgViewPlanHint, "Hint: approve via daemon session.approve_plan when the agent presents a plan.", "提示：Agent 给出计划后，通过 session.approve_plan 批准。", "ヒント: 計画提示後に session.approve_plan で承認。", "팁: 계획이 나오면 session.approve_plan으로 승인.", "Consejo: apruebe con session.approve_plan cuando haya plan.", "Astuce : approuvez via session.approve_plan quand le plan est prêt."),
 }

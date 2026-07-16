@@ -171,7 +171,10 @@ tar -xzf carina_<version>_<goos>_<goarch>.tar.gz
 - Zig tools from `zig/zig-out/bin`
 - Rust `carina-kernel-service` under `target/release`
 
-These are local build outputs, not public release artifacts.
+These are local build outputs, not public release artifacts. `make install`
+copies the Go binaries, the release `carina-kernel-service`, and the Zig tools
+flat into `$(PREFIX)/bin` (default `~/.local/bin`), mirroring the release
+package layout minus the pinned Headroom bundle.
 
 ## Versioning
 
