@@ -118,13 +118,17 @@ const bashText = `printf '%s\\n' '${JSON.stringify(jsonRpc)}' | carina rpc
 
   .snippet-tabs__list {
     display: flex;
+    align-items: stretch;
     gap: 0;
+    height: 2.25rem; /* fixed bar — no per-tab height jump */
     border-bottom: 1px solid var(--carina-border-subtle, var(--docs-border-subtle));
     background: var(--carina-surface-raised, var(--docs-bg-surface));
-    padding: 0 0.35rem;
+    padding: 0 0.4rem;
+    box-sizing: border-box;
   }
 
   .snippet-tabs__tab {
+    position: relative;
     appearance: none;
     border: 0;
     background: transparent;
@@ -132,15 +136,36 @@ const bashText = `printf '%s\\n' '${JSON.stringify(jsonRpc)}' | carina rpc
     font-family: var(--docs-font-sans);
     font-size: 0.75rem;
     font-weight: 500;
-    padding: 0.55rem 0.75rem;
+    line-height: 1;
+    height: 100%;
+    padding: 0 0.8rem;
+    margin: 0;
     cursor: pointer;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* underline via ::after so active state never changes box height */
+    border-bottom: none;
+  }
+
+  .snippet-tabs__tab::after {
+    content: '';
+    position: absolute;
+    left: 0.55rem;
+    right: 0.55rem;
+    bottom: 0;
+    height: 2px;
+    border-radius: 1px 1px 0 0;
+    background: transparent;
   }
 
   .snippet-tabs__tab.is-active {
     color: var(--carina-starlight, var(--docs-fg));
-    border-bottom-color: var(--docs-accent);
+    font-weight: 600;
+  }
+
+  .snippet-tabs__tab.is-active::after {
+    background: var(--docs-accent);
   }
 
   .snippet-tabs__tab:focus-visible {
