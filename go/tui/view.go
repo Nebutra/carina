@@ -362,9 +362,16 @@ func (m *Model) View() tea.View {
 	// without exceeding the cell grid.
 	frame := m.borderStyle(lipgloss.RoundedBorder()).Width(l.width)
 	if l.showTranscript {
-		transcript := m.vp.View()
-		if l.width >= 3 {
-			transcript = lipgloss.NewStyle().Width(l.width).Padding(0, 1).Render(transcript)
+		var transcript string
+		if m.sidePaneActive() {
+			// Dual-pane Side UI: frozen main | live side (no side padding so
+			// the split columns can use the full content width).
+			transcript = m.dualPaneTranscriptView(l.width, maxInt(l.viewportHeight, 1))
+		} else {
+			transcript = m.vp.View()
+			if l.width >= 3 {
+				transcript = lipgloss.NewStyle().Width(l.width).Padding(0, 1).Render(transcript)
+			}
 		}
 		b.WriteString(transcript)
 		b.WriteString("\n")

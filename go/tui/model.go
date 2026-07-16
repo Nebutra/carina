@@ -232,6 +232,9 @@ type Model struct {
 	// pendingSideQuestion is submitted once after a successful session.fork
 	// switch (Codex/CC side conversation pattern).
 	pendingSideQuestion string
+	// sidePane freezes the primary transcript for dual-pane Side UI after
+	// /btw --fork or /side switches to the child session.
+	sidePane *sidePaneState
 	// contextNudgeLevel tracks the last pressure notice level to avoid spam.
 	contextNudgeLevel int // 0 none, 1 warning(80), 2 critical(90), 3 auto-compacted
 

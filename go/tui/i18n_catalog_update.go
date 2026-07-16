@@ -261,6 +261,14 @@ const (
 	MsgPlanReviewRequestChanges  MessageID = "plan_review.request_changes"
 	MsgPlanReviewApproved        MessageID = "plan_review.approved"
 	MsgPlanReviewQuit            MessageID = "plan_review.quit"
+	MsgPlanReviewCommentPrompt   MessageID = "plan_review.comment_prompt"
+	MsgPlanReviewCommentCount    MessageID = "plan_review.comment_count"
+	MsgPlanReviewCommentsHeader  MessageID = "plan_review.comments_header"
+	MsgSidePaneTitle             MessageID = "side_pane.title"
+	MsgSidePaneMain              MessageID = "side_pane.main"
+	MsgSidePaneSide              MessageID = "side_pane.side"
+	MsgSidePaneClosed            MessageID = "side_pane.closed"
+	MsgUpdateUsageSideClose      MessageID = "update.usage_side_close"
 	MsgAgentsSummaryHeader       MessageID = "agents.summary_header"
 	MsgAgentsHint                MessageID = "agents.hint"
 	MsgExplainAlwaysApprove      MessageID = "explain.always_approve"
@@ -524,9 +532,9 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgTasksLoopsHeader, "scheduled loops", "定时循环", "スケジュール済みループ", "예약된 루프", "bucles programados", "boucles planifiées"),
 	catalog(MsgUpdateUsageExtension, "usage: /extension <enable|disable> <name>", "用法：/extension <enable|disable> <名称>", "使用法: /extension <enable|disable> <name>", "사용법: /extension <enable|disable> <name>", "uso: /extension <enable|disable> <nombre>", "utilisation : /extension <enable|disable> <nom>"),
 
-	catalog(MsgContextPressureWarning, "context pressure {percent}% — consider /compact when a paused checkpoint is available", "上下文压力 {percent}% — 有暂停检查点时可用 /compact", "コンテキスト負荷 {percent}% — 一時停止チェックポイントがあれば /compact", "컨텍스트 부하 {percent}% — 일시 중지 체크포인트가 있으면 /compact", "presión de contexto {percent}% — use /compact si hay checkpoint pausado", "pression contexte {percent}% — utilisez /compact si un checkpoint est en pause"),
+	catalog(MsgContextPressureWarning, "context pressure {percent}% — consider /compact when an idle checkpoint is available", "上下文压力 {percent}% — 有空闲检查点时可用 /compact", "コンテキスト負荷 {percent}% — アイドルなチェックポイントがあれば /compact", "컨텍스트 부하 {percent}% — 유휴 체크포인트가 있으면 /compact", "presión de contexto {percent}% — use /compact si hay checkpoint inactivo", "pression contexte {percent}% — utilisez /compact si un checkpoint est inactif"),
 	catalog(MsgContextPressureCritical, "context critical {percent}% — compact unavailable: {reason}", "上下文危急 {percent}% — 无法压缩：{reason}", "コンテキスト危険 {percent}% — 圧縮不可: {reason}", "컨텍스트 위험 {percent}% — 압축 불가: {reason}", "contexto crítico {percent}% — compactación no disponible: {reason}", "contexte critique {percent}% — compaction indisponible : {reason}"),
-	catalog(MsgContextAutoCompact, "context {percent}% — auto-compacting paused checkpoint {checkpoint}", "上下文 {percent}% — 正在自动压缩暂停检查点 {checkpoint}", "コンテキスト {percent}% — 一時停止チェックポイント {checkpoint} を自動圧縮", "컨텍스트 {percent}% — 일시 중지 체크포인트 {checkpoint} 자동 압축", "contexto {percent}% — compactando automáticamente {checkpoint}", "contexte {percent}% — compaction auto de {checkpoint}"),
+	catalog(MsgContextAutoCompact, "context {percent}% — auto-compacting checkpoint {checkpoint}", "上下文 {percent}% — 正在自动压缩检查点 {checkpoint}", "コンテキスト {percent}% — チェックポイント {checkpoint} を自動圧縮", "컨텍스트 {percent}% — 체크포인트 {checkpoint} 자동 압축", "contexto {percent}% — compactando automáticamente {checkpoint}", "contexte {percent}% — compaction auto de {checkpoint}"),
 	catalog(MsgUpdateBtwForkStart, "forking session for side Q&A…", "正在分叉会话以进行侧问…", "脇質問のためセッションをフォーク中…", "곁질문을 위해 세션 포크 중…", "bifurcando sesión para pregunta lateral…", "bifurcation de session pour question latérale…"),
 	catalog(MsgUpdateBtwForkReady, "side Q&A on forked session", "已在分叉会话上开始侧问", "フォーク先で脇質問を開始", "포크된 세션에서 곁질문 시작", "pregunta lateral en sesión bifurcada", "question latérale sur session bifurquée"),
 	catalog(MsgUpdateBtwForkBusy, "cannot /btw --fork while a task is running; wait or use /btw without --fork", "任务运行中无法 /btw --fork；请等待或使用不带 --fork 的 /btw", "タスク実行中は /btw --fork 不可。完了を待つか --fork なしで。", "작업 실행 중에는 /btw --fork 불가. 대기하거나 --fork 없이 사용.", "no se puede /btw --fork con una tarea en curso", "impossible d’utiliser /btw --fork pendant une tâche"),
@@ -545,13 +553,21 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgAcceptEditsWarning, "WARNING: FileWrite/PatchApply with requires_approval auto-run. Shell, network, secrets still prompt. Deny rules, plan mode, and sandbox still apply.", "警告：FileWrite/PatchApply 的 requires_approval 将自动执行。Shell、网络与 secret 仍需确认。拒绝规则、计划模式与沙箱仍有效。", "警告: FileWrite/PatchApply の requires_approval は自動。Shell・ネットワーク・secret は確認。deny・プラン・サンドボックスは有効。", "경고: FileWrite/PatchApply requires_approval 자동. 셸/네트워크/시크릿은 확인. deny/계획/샌드박스 유지.", "AVISO: FileWrite/PatchApply se auto-ejecutan. Shell/red/secretos piden. Deny/plan/sandbox siguen.", "AVERTISSEMENT : FileWrite/PatchApply auto. Shell/réseau/secrets demandent. Deny/plan/sandbox restent."),
 	catalog(MsgUpdateUsageAcceptEdits, "usage: /accept-edits [on|off|toggle]", "用法：/accept-edits [on|off|toggle]", "使用法: /accept-edits [on|off|toggle]", "사용법: /accept-edits [on|off|toggle]", "uso: /accept-edits [on|off|toggle]", "utilisation : /accept-edits [on|off|toggle]"),
 	catalog(MsgPlanReviewTitle, "Plan review", "计划审阅", "プラン審査", "계획 검토", "Revisión del plan", "Revue du plan"),
-	catalog(MsgPlanReviewFooter, "a approve  ·  s request changes  ·  q quit plan  ·  esc close  ·  j/k scroll", "a 批准  ·  s 请求修改  ·  q 退出计划  ·  esc 关闭  ·  j/k 滚动", "a 承認  ·  s 修正依頼  ·  q プラン終了  ·  esc 閉じる  ·  j/k スクロール", "a 승인  ·  s 수정 요청  ·  q 계획 종료  ·  esc 닫기  ·  j/k 스크롤", "a aprobar  ·  s pedir cambios  ·  q salir del plan  ·  esc cerrar  ·  j/k", "a approuver  ·  s demander des changements  ·  q quitter le plan  ·  esc fermer  ·  j/k"),
+	catalog(MsgPlanReviewFooter, "a approve  ·  s request changes  ·  c comment  ·  m mark range  ·  q quit  ·  esc close  ·  j/k", "a 批准  ·  s 请求修改  ·  c 批注  ·  m 标记范围  ·  q 退出  ·  esc 关闭  ·  j/k", "a 承認  ·  s 修正  ·  c コメント  ·  m 範囲  ·  q 終了  ·  esc  ·  j/k", "a 승인  ·  s 수정  ·  c 주석  ·  m 범위  ·  q 종료  ·  esc  ·  j/k", "a aprobar  ·  s cambios  ·  c comentar  ·  m rango  ·  q  ·  esc  ·  j/k", "a approuver  ·  s changements  ·  c commentaire  ·  m plage  ·  q  ·  esc  ·  j/k"),
 	catalog(MsgPlanReviewBusy, "Working…", "处理中…", "処理中…", "처리 중…", "Trabajando…", "Traitement…"),
 	catalog(MsgPlanReviewBusyBlocked, "Close the other overlay first, then run /view-plan.", "请先关闭其他浮层，再运行 /view-plan。", "先に他のオーバーレイを閉じてから /view-plan。", "다른 오버레이를 닫은 뒤 /view-plan.", "Cierre el otro overlay y use /view-plan.", "Fermez l’autre overlay puis /view-plan."),
 	catalog(MsgPlanReviewReviseSeed, "Please revise the plan: ", "请修订计划：", "プランを改訂してください: ", "계획을 수정해 주세요: ", "Revise el plan: ", "Veuillez réviser le plan : "),
 	catalog(MsgPlanReviewRequestChanges, "Composer seeded for plan revisions. Send when ready.", "已填入修订草稿，编辑后发送。", "修正用の下書きを入力欄に入れました。", "수정 초안을 입력창에 넣었습니다.", "Borrador de revisión listo en el compositor.", "Brouillon de révision prêt dans le compositeur."),
 	catalog(MsgPlanReviewApproved, "{glyph} Plan approved — plan mode off; implementation may proceed", "{glyph} 计划已批准 — 计划模式关闭，可开始实施", "{glyph} プラン承認 — プランモード終了、実装可能", "{glyph} 계획 승인 — 계획 모드 종료, 구현 가능", "{glyph} Plan aprobado — modo plan off", "{glyph} Plan approuvé — mode plan désactivé"),
 	catalog(MsgPlanReviewQuit, "{glyph} Left plan mode without approving", "{glyph} 已退出计划模式（未批准）", "{glyph} プランモードを承認せず終了", "{glyph} 승인 없이 계획 모드 종료", "{glyph} Salió del modo plan sin aprobar", "{glyph} Sortie du mode plan sans approbation"),
+	catalog(MsgPlanReviewCommentPrompt, "Comment (enter save · esc cancel): {draft}", "批注（enter 保存 · esc 取消）：{draft}", "コメント (enter 保存 · esc 取消): {draft}", "주석 (enter 저장 · esc 취소): {draft}", "Comentario (enter guardar · esc cancelar): {draft}", "Commentaire (enter enregistrer · esc annuler) : {draft}"),
+	catalog(MsgPlanReviewCommentCount, "{count} line comment(s) staged for request-changes", "已暂存 {count} 条行批注（请求修改时写入草稿）", "{count} 件の行コメントを保留中", "행 주석 {count}개 대기 중", "{count} comentario(s) de línea listos", "{count} commentaire(s) de ligne en attente"),
+	catalog(MsgPlanReviewCommentsHeader, "Line comments:", "行批注：", "行コメント:", "행 주석:", "Comentarios de línea:", "Commentaires de ligne :"),
+	catalog(MsgSidePaneTitle, "Side session (dual-pane)", "旁路会话（双栏）", "サイドセッション（2ペイン）", "사이드 세션 (듀얼 페인)", "Sesión lateral (doble panel)", "Session latérale (double volet)"),
+	catalog(MsgSidePaneMain, "main", "主会话", "メイン", "메인", "principal", "principal"),
+	catalog(MsgSidePaneSide, "side", "旁路", "サイド", "사이드", "lateral", "latéral"),
+	catalog(MsgSidePaneClosed, "{glyph} Closed side pane; back on main session {session}", "{glyph} 已关闭旁路栏，回到主会话 {session}", "{glyph} サイドペインを閉じ、メイン {session} に戻る", "{glyph} 사이드 페인 닫음 · 메인 {session}", "{glyph} Panel lateral cerrado; sesión principal {session}", "{glyph} Volet latéral fermé ; session principale {session}"),
+	catalog(MsgUpdateUsageSideClose, "usage: /side-close", "用法：/side-close", "使用法: /side-close", "사용법: /side-close", "uso: /side-close", "utilisation : /side-close"),
 	catalog(MsgSettingsActionAlwaysApprove, "Toggle always-approve (with warning)", "切换 always-approve（带警告）", "always-approve を切替（警告あり）", "always-approve 전환(경고)", "Alternar always-approve (con aviso)", "Basculer always-approve (avec avertissement)"),
 	catalog(MsgAgentsSummaryHeader, "Available agents", "可用 Agent", "利用可能な Agent", "사용 가능한 Agent", "Agents disponibles", "Agents disponibles"),
 	catalog(MsgAgentsHint, "Tip: pass agent via task/model settings; use /settings for control shell.", "提示：任务可通过 agent 设置指定；/settings 打开控制面板。", "ヒント: タスクの agent 設定、/settings で制御シェル。", "팁: 작업 agent 설정 또는 /settings.", "Consejo: configure agent en la tarea; /settings abre el panel.", "Astuce : agent via les réglages de tâche ; /settings pour le panneau."),

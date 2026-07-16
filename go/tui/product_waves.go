@@ -145,6 +145,7 @@ func (m *Model) btwSideQuestion(question string, fork bool) tea.Cmd {
 			return nil
 		}
 		m.pendingSideQuestion = question
+		m.armSidePane(question)
 		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateBtwForkStart, nil)))
 		return m.forkSession("")
 	}

@@ -89,7 +89,8 @@
     --sl-nav-height: var(--docs-nav-row-height);
     --sl-content-width: var(--docs-reading-max);
     --sl-sidebar-width: var(--docs-sidebar-width);
-    --sl-sidebar-pad-x: 0.75rem;
+    /* One left rhythm: logo, tabs, sidebar text, and TOC text all at 1.5rem */
+    --sl-sidebar-pad-x: 1.5rem;
   }
 
   /*

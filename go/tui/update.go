@@ -1693,6 +1693,8 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			return nil
 		}
 		return m.btwSideQuestion(strings.Join(args, " "), fork)
+	case "side-close", "close-side", "main":
+		return m.closeSidePane()
 	case "plan":
 		if len(parts) == 1 {
 			_ = m.ensurePlanFileScaffold()

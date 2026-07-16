@@ -56,7 +56,8 @@ var builtinCommandRegistry = []commandDescriptor{
 		}
 		return true
 	}},
-	{Name: "side", Usage: "/side <question>", Description: "side Q&A on a forked session (alias of /btw --fork)", Source: "builtin", Validate: func(a []string) bool { return len(a) > 0 }},
+	{Name: "side", Usage: "/side <question>", Description: "side Q&A on a forked session (alias of /btw --fork); dual-pane when wide", Source: "builtin", Validate: func(a []string) bool { return len(a) > 0 }},
+	{Name: "side-close", Usage: "/side-close", Description: "close dual-pane side session and return to main", Source: "builtin", Validate: noArgs},
 	{Name: "plan", Usage: "/plan [description]", Description: "enter plan mode + scaffold plan file", Source: "builtin", Validate: anyArgs},
 	{Name: "build", Usage: "/build", Description: "leave plan mode (build)", Source: "builtin", Validate: noArgs},
 	{Name: "approve-plan", Usage: "/approve-plan", Description: "approve plan and exit plan mode", Source: "builtin", Validate: noArgs},

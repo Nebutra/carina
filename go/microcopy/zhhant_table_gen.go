@@ -24,6 +24,7 @@ var s2tExact = map[string]string{
 	"  /memory <status|list|search|read|verify|handoff|rollback> 持久记忆控制": "  /memory <status|list|search|read|verify|handoff|rollback> 持久記憶控制",
 	"待定 {chord} · 按下一步，或 {save} 保存 · {literal} 按字面录制下一键 · {cancel} 取消": "待定 {chord} · 按下一步，或 {save} 保存 · {literal} 按字面錄製下一鍵 · {cancel} 取消",
 	"- 已恢复检查点 {checkpoint}（第 {turn} 轮）：模型上下文已回退；审计记录保留；任务 {task} 已暂停": "- 已恢復檢查點 {checkpoint}（第 {turn} 輪）：模型上下文已回退；審計記錄保留；任務 {task} 已暫停",
+	"a 批准  ·  s 请求修改  ·  c 批注  ·  m 标记范围  ·  q 退出  ·  esc 关闭  ·  j/k": "a 批准  ·  s 請求修改  ·  c 批註  ·  m 標記範圍  ·  q 退出  ·  esc 關閉  ·  j/k",
 	"  /extensions            扩展清单；/extension enable|disable <name>": "  /extensions            擴展清單；/extension enable|disable <name>",
 	"  [{up}/{down}/{page_up}/{page_down}] 滚动 {start}-{end}/{total}": "  [{up}/{down}/{page_up}/{page_down}] 滾動 {start}-{end}/{total}",
 	"事务 {tx_id} 部分完成。已应用步数：{applied}/{total}。其余步骤未完成。请检查审计记录了解详情。": "事務 {tx_id} 部分完成。已應用步數：{applied}/{total}。其餘步驟未完成。請檢查審計記錄了解詳情。",
@@ -50,7 +51,6 @@ var s2tExact = map[string]string{
 	"下一步：/settings 打开控制面板，/model 选择模型，/explain 查看沙箱与权限。": "下一步：/settings 打開控制面板，/model 選擇模型，/explain 查看沙箱與權限。",
 	"打开：carina artifact read <session_id> <artifact_id>": "打開：carina artifact read <session_id> <artifact_id>",
 	"  /config|/settings      设置面板（/config raw 查看完整清单）": "  /config|/settings      設置面板（/config raw 查看完整清單）",
-	"a 批准  ·  s 请求修改  ·  q 退出计划  ·  esc 关闭  ·  j/k 滚动": "a 批准  ·  s 請求修改  ·  q 退出計劃  ·  esc 關閉  ·  j/k 滾動",
 	"已批准：{action}。范围：{scope}。决定 {decision_id} 已记入审计链。": "已批准：{action}。範圍：{scope}。決定 {decision_id} 已記入審計鏈。",
 	"已拒绝：{action}。决定 {decision_id} 已记入审计链。所请求的操作未被执行。": "已拒絕：{action}。決定 {decision_id} 已記入審計鏈。所請求的操作未被執行。",
 	"超时（{duration}）：{action}。部分结果已保留。修复：carina doctor": "超時（{duration}）：{action}。部分結果已保留。修復：carina doctor",
@@ -73,12 +73,12 @@ var s2tExact = map[string]string{
 	"[{retry}] 重试恢复  [{back}] 返回  [{close}] 关闭": "[{retry}] 重試恢復  [{back}] 返回  [{close}] 關閉",
 	"dont-ask 已开启 — 无精确授权则拒绝 requires_approval": "dont-ask 已開啓 — 無精確授權則拒絕 requires_approval",
 	"{glyph} 有一项未确认的提交；请恢复其完整提示，或使用 {new} 新建任务": "{glyph} 有一項未確認的提交；請恢復其完整提示，或使用 {new} 新建任務",
-	"上下文 {percent}% — 正在自动压缩暂停检查点 {checkpoint}": "上下文 {percent}% — 正在自動壓縮暫停檢查點 {checkpoint}",
 	"此操作将把 {subject} 发送至外部端点（{endpoint}）。是否继续？": "此操作將把 {subject} 發送至外部端點（{endpoint}）。是否繼續？",
 	"  /copy                 复制最近渲染的 Agent 回复": "  /copy                 複製最近渲染的 Agent 回復",
 	"{glyph} 任务提交未获确认：{error}；草稿已保留，幂等键 {key}": "{glyph} 任務提交未獲確認：{error}；草稿已保留，冪等鍵 {key}",
 	"  /compact               原子压缩当前暂停任务的检查点": "  /compact               原子壓縮當前暫停任務的檢查點",
 	"  /usage                 会话 Token 用量与成本": "  /usage                 會話 Token 用量與成本",
+	"上下文 {percent}% — 正在自动压缩检查点 {checkpoint}": "上下文 {percent}% — 正在自動壓縮檢查點 {checkpoint}",
 	"提示：/settings 打开控制面板；/config raw 输出完整清单。": "提示：/settings 打開控制面板；/config raw 輸出完整清單。",
 	"用法：/btw [--fork|-f] <问题>  或  /side <问题>": "用法：/btw [--fork|-f] <問題>  或  /side <問題>",
 	"[enter] 提交  [backspace] 编辑  [esc] 保持等待": "[enter] 提交  [backspace] 編輯  [esc] 保持等待",
@@ -90,7 +90,7 @@ var s2tExact = map[string]string{
 	"[{previous}/{next}] 选择  [{answer}] 回答": "[{previous}/{next}] 選擇  [{answer}] 回答",
 	"{checkpoint} · 第 {turn} 轮 · 任务 {task}": "{checkpoint} · 第 {turn} 輪 · 任務 {task}",
 	"{glyph} 任务 {active} 活动期间无法继续任务 {task}": "{glyph} 任務 {active} 活動期間無法繼續任務 {task}",
-	"上下文压力 {percent}% — 有暂停检查点时可用 /compact": "上下文壓力 {percent}% — 有暫停檢查點時可用 /compact",
+	"上下文压力 {percent}% — 有空闲检查点时可用 /compact": "上下文壓力 {percent}% — 有空閒檢查點時可用 /compact",
 	"提示：任务可通过 agent 设置指定；/settings 打开控制面板。": "提示：任務可通過 agent 設置指定；/settings 打開控制面板。",
 	"无法连接守护进程（{socket}）。修复：carina-daemon &": "無法連接守護進程（{socket}）。修復：carina-daemon &",
 	"  /context               精确的持久化上下文摘要": "  /context               精確的持久化上下文摘要",
@@ -129,6 +129,7 @@ var s2tExact = map[string]string{
 	"  /session-review       只读治理投影": "  /session-review       只讀治理投影",
 	"[{close}] 关闭  [{up}/{down}] 滚动": "[{close}] 關閉  [{up}/{down}] 滾動",
 	"{glyph} 取消任务 {task} 失败：{error}": "{glyph} 取消任務 {task} 失敗：{error}",
+	"{glyph} 已关闭旁路栏，回到主会话 {session}": "{glyph} 已關閉旁路欄，回到主會話 {session}",
 	"{glyph} 无内容可复制：没有已渲染的 Agent 回复": "{glyph} 無內容可複製：沒有已渲染的 Agent 回復",
 	"冲突：{path} 在读取后被修改。未覆盖任何内容。请重试。": "衝突：{path} 在讀取後被修改。未覆蓋任何內容。請重試。",
 	"恢复失败：{error}；按 {retry} 重试同一检查点": "恢復失敗：{error}；按 {retry} 重試同一檢查點",
@@ -138,6 +139,7 @@ var s2tExact = map[string]string{
 	"{prefix}第 {turn} 轮  {summary}": "{prefix}第 {turn} 輪  {summary}",
 	"历史 {scope} · {status}：{query}": "歷史 {scope} · {status}：{query}",
 	"已被代理 {agent_id} 停止。中断已记录于审计链。": "已被代理 {agent_id} 停止。中斷已記錄於審計鏈。",
+	"批注（enter 保存 · esc 取消）：{draft}": "批註（enter 保存 · esc 取消）：{draft}",
 	"正在恢复检查点... 守护进程确认结果前此对话框将保持打开": "正在恢復檢查點... 守護進程確認結果前此對話框將保持打開",
 	"第 {start}-{end} 项，共 {count} 项": "第 {start}-{end} 項，共 {count} 項",
 	"运行中 {requested} → {effective}": "運行中 {requested} → {effective}",
@@ -150,6 +152,7 @@ var s2tExact = map[string]string{
 	"任务 · {active} 活动 · {done} 完成": "任務 · {active} 活動 · {done} 完成",
 	"回答失败：{error}。按 [{retry}] 重试。": "回答失敗：{error}。按 [{retry}] 重試。",
 	"计划模式关闭（build）。使用 /plan 先做规划。": "計劃模式關閉（build）。使用 /plan 先做規劃。",
+	"已暂存 {count} 条行批注（请求修改时写入草稿）": "已暫存 {count} 條行批註（請求修改時寫入草稿）",
 	"已粘贴的草稿项与恢复轮次（{undo} 移除最新一项）": "已粘貼的草稿項與恢復輪次（{undo} 移除最新一項）",
 	"{glyph} 自动提交后续指令失败：守护进程未连接": "{glyph} 自動提交後續指令失敗：守護進程未連接",
 	"此任务 ID 由用户明确提供；守护进程将验证能否继续": "此任務 ID 由用戶明確提供；守護進程將驗證能否繼續",
@@ -337,6 +340,7 @@ var s2tExact = map[string]string{
 	"会话审查（只读）": "會話審查（只讀）",
 	"受治理会话选项：": "受治理會話選項：",
 	"守护进程默认模型": "守護進程默認模型",
+	"旁路会话（双栏）": "旁路會話（雙欄）",
 	"正在加载会话……": "正在加載會話……",
 	"记忆同步需要处理": "記憶同步需要處理",
 	"会话 {id}": "會話 {id}",
@@ -399,6 +403,7 @@ var s2tExact = map[string]string{
 	"按键绑定": "按鍵綁定",
 	"有效权限": "有效權限",
 	"查看权限": "查看權限",
+	"行批注：": "行批註：",
 	"计划审阅": "計劃審閱",
 	"计划模式": "計劃模式",
 	"运行诊断": "運行診斷",
@@ -406,6 +411,7 @@ var s2tExact = map[string]string{
 	"需要审批": "需要審批",
 	"需要输入": "需要輸入",
 	"  无": "  無",
+	"主会话": "主會話",
 	"加载中": "加載中",
 	"工作区": "工作區",
 	"已关闭": "已關閉",
@@ -474,6 +480,7 @@ var s2tChar = map[rune]rune{
 	21378: 24288, // 厂 -> 廠
 	21382: 27511, // 历 -> 歷
 	21387: 22739, // 压 -> 壓
+	21452: 38617, // 双 -> 雙
 	21457: 30332, // 发 -> 發
 	21464: 35722, // 变 -> 變
 	21488: 33274, // 台 -> 臺
@@ -531,6 +538,7 @@ var s2tChar = map[rune]rune{
 	26469: 20358, // 来 -> 來
 	26500: 27083, // 构 -> 構
 	26631: 27161, // 标 -> 標
+	26639: 27396, // 栏 -> 欄
 	26679: 27171, // 样 -> 樣
 	26816: 27298, // 检 -> 檢
 	27809: 27794, // 没 -> 沒

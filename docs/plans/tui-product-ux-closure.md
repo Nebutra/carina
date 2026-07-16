@@ -1,6 +1,6 @@
 # TUI Product UX Closure — Trade-offs and Plan
 
-Date: 2026-07-16 (updated Wave M hygiene + prefix grants)  
+Date: 2026-07-16 (updated Wave N — remaining product open items)  
 Branch: `main`  
 Sources: Grok Build (`xai-org/grok-build` user guide), Claude Code notes, OpenAI Codex (`codex-rs/tui/src/slash_command.rs`).
 
@@ -15,9 +15,9 @@ Close the gap between Carina’s **governed runtime** and a **product-grade agen
 | Settings / extensions as modal | Grok `/settings`; CC LocalJSX `/config` | **Yes** | Inventory dump was the top complaint |
 | Status line: model · mode · permissions · context% | Grok footer; Codex `/status` | **Yes** | Continuous “where am I?” |
 | Shift+Tab mode cycle | Grok | **Partial** | Only **build↔plan**; never silent YOLO on cycle |
-| Plan file + approve UI | Grok `plan.md` + `a` approve | **Partial** | `.carina/plans/` + plan review overlay (`a`/`s`/`q`); no line-comment ranges |
+| Plan file + approve UI | Grok `plan.md` + `a` approve | **Yes** | `.carina/plans/` + plan review overlay (`a`/`s`/`q`/`c`/`m`); line-range comments seed request-changes |
 | Skill as invocable slash | Grok + CC | **Yes** | Discoverability = execution |
-| `/btw` side question | Codex Side/Btw; CC btw | **Partial** | Default answer-only; `/btw --fork` and `/side` call `session.fork` then switch session (no dual-pane) |
+| `/btw` side question | Codex Side/Btw; CC btw | **Yes** | Default answer-only; `/btw --fork` and `/side` fork + dual-pane (main snapshot \| side live); `/side-close` returns |
 | `/commit` PromptCommand + git context | CC commit.ts | **Yes** | `workspace.diff` injected; commit-only rules |
 | Extensions enable/disable | Grok extensions modal | **Partial** | `/extension enable\|disable` (admin-scope RPC) |
 | Welcome / inspect readiness | Grok `/home`; CC doctor | **Yes** | `/inspect` `/welcome` |
@@ -28,7 +28,7 @@ Close the gap between Carina’s **governed runtime** and a **product-grade agen
 
 1. **Side question vs side session**  
    Default `/btw` is an **answer-only** turn on the current session (honest copy).  
-   `/btw --fork` / `/side` forks via `session.fork` and **switches** the TUI to the child session — not a dual-pane Side UI.
+   `/btw --fork` / `/side` forks via `session.fork`, switches to the child, and shows a **dual-pane** when the terminal is wide enough: frozen main transcript snapshot on the left, live side session on the right. `/side-close` returns to the main session.
 
 2. **Always-approve**  
    Grok’s bypassPermissions short-circuits prompts.  
@@ -53,13 +53,17 @@ Close the gap between Carina’s **governed runtime** and a **product-grade agen
 7. **Approval grant width**  
    Exact resource match is the default. Session/project `FileRead`/`FileWrite` also install a **safe directory prefix** companion (not workspace-root, not dangerous paths). CommandExec stays exact-only for stored grants; a dangerous list refuses auto-reuse for high-blast-radius resources.
 
+8. **Checkpoint compact**  
+   Live agent loops already compact in-memory transcripts mid-run.  
+   `session.checkpoint.compact` rewrites a **persisted** checkpoint at an **idle** task boundary (`paused` \| `completed` \| `failed` \| `degraded` \| `cancelled` \| `needs_input`), never while the session has an active run. Auto-compact at ≥85% uses this availability signal.
+
 ## Wave map (status)
 
 ### Waves 1–3, A–D — **done**
 Perception, workflow entry, extensions hub, semantic honesty, writable control, lifecycle, docs residual.
 
 ### Wave E — Context pressure + side fork — **done**
-- Context pressure 80%/90%; auto-compact ≥85% only with paused checkpoint  
+- Context pressure 80%/90%; auto-compact ≥85% when compact.available  
 - `/btw --fork` and `/side` → `session.fork` then submit after attach  
 - Busy-task fork refused with honest copy  
 
@@ -78,58 +82,44 @@ Perception, workflow entry, extensions hub, semantic honesty, writable control, 
 - `/accept-edits`, `/approval-mode accept-edits`, footer token  
 - Plan review overlay via `/view-plan`: `a` approve, `s` request changes, `q` quit plan, esc close, j/k scroll  
 
-
 ### Wave H — quality hygiene — **done**
-- Closure plan + roadmap TUI section re-synced to E–G  
+- Closure plan + roadmap TUI section re-synced  
 - Session-axis tokens rejected as product `approval_mode`  
 - Dual-axis naming documented in README, enterprise, `/explain`  
-- Working-tree hygiene: feature commits must not mix brand/CLI WIP  
 
 ### Wave I — WIP + product/i18n closure — **done**
-
-- Free-text `ask_user` (omit options); structured still 2–6 options  
-- Risk review outcome/risk/rationale visible in TUI transcript  
-- README.zh-CN TUI/HITL/dual-axis + sticky shell + free-text  
-- Local agent dirs (`.agents`/`.claude`/…) gitignored  
-- Uncommitted clusters landed: TUI question keys/grapheme, `carina update`, brand  
+- Free-text `ask_user`; risk review visibility; README.zh-CN; agent dirs gitignored  
 
 ### Wave J — Traditional Chinese (`zh-Hant`) — **done**
-
-- Runtime key `zh-Hant` for `zh-Hant` / `zh-TW` / `zh-HK` / `zh-MO`  
-- Catalogs derived from Simplified via OpenCC-compatible tables (`scripts/gen_zh_hant.py`)  
-- TUI + microcopy pools + plural + locale resolution + docs  
+- Runtime key `zh-Hant`; OpenCC-derived catalogs; CI check  
 
 ### Wave K — quality guardrails — **done**
-
-- `scripts/gen_zh_hant.py --check` + `make zh-hant-check` (stale Traditional table fails)  
-- `make docs-build` (Astro/Starlight production smoke)  
-- `make quality-check` aggregates brand + zh-hant + docs  
-- CI job `quality-guardrails` runs zh-hant-check, brand-check, docs build  
+- `make quality-check` + CI `quality-guardrails`  
 
 ### Wave M — hygiene + prefix grants + subagent contract — **done**
+- Docs/protocol DRIFT; path prefix grants + dangerous list; subagent inheritance  
 
-- Docs/protocol DRIFT closed: `rpc-catalog` re-synced from `methods.json`; enterprise, roadmap, policy.mdx, closure plan aligned to four product modes + Wave L  
-- `/resume` vs `/task-resume` i18n copy aligned (compat alias kept)  
-- Session/project `FileRead`/`FileWrite` install safe directory **prefix** companion grants; dangerous path/command list refuses grant auto-reuse  
-- Subagent permission inheritance table (enterprise) + `TestSubagentPermissionInheritance`  
+### Wave N — remaining product open items — **done**
+- Idle-boundary checkpoint compact (not only paused; still refuses mid-execution)  
+- Plan line-range comments (`c` comment, `m` mark range → request-changes seed)  
+- Dual-pane Side UI for `/side` and `/btw --fork` + `/side-close`  
 
 
-## Still intentionally open
+## Intentionally out of repository closeout (skipped)
 
-| Item | Why deferred |
-|------|----------------|
-| Mid-run auto-compact without paused checkpoint | Needs new daemon compact policy |
-| Multi-pane dual-session TUI | Layout product; fork switches session today |
-| Plan line-range comments (Grok `c`) | Overlay has a/s/q only |
-| Hand-authored Traditional Chinese (non-derived) native review | Shipped as OpenCC-derived `zh-Hant`; native TW/HK editorial pass optional |
-| ACP / remote marketplace / silent YOLO | Ecosystem / brand |
-| IME human matrix (macOS Pinyin / fcitx5) | External terminal matrix |
+| Item | Why skipped |
+|------|-------------|
+| Hand-authored Traditional Chinese native review | Requires fluent human editorial pass (release evidence, not blocking) |
+| IME human matrix (macOS Pinyin / fcitx5) | External terminal/hardware matrix |
+| ACP / remote marketplace / silent YOLO | Ecosystem / brand non-goals |
+| Apple signing, npm, Homebrew Core, VS Code Marketplace, … | External activation (roadmap) |
 
 ## Acceptance (repository)
 
-- [x] `go test ./go/tui/ ./go/daemon/ ./go/config/` green for HITL surfaces  
+- [x] `go test ./go/tui/ ./go/daemon/ ./go/config/` green for HITL / compact / plan / side surfaces  
 - [x] Footer shows `ask` \| `always-approve` \| `dont-ask` \| `accept-edits`  
-- [x] Session axis ≠ product axis (normalize rejects `never`/`on_request`/`untrusted`)  
-- [x] Plan review overlay + accept-edits mode shipped (Wave L)  
-- [x] Prefix grants + dangerous list + subagent inheritance contract (Wave M)  
-- [x] Docs/catalog/i18n match shipped Wave E–M behavior  
+- [x] Session axis ≠ product axis  
+- [x] Plan review overlay + line comments + accept-edits  
+- [x] Prefix grants + dangerous list + subagent inheritance  
+- [x] Idle-boundary compact + dual-pane side session  
+- [x] This document matches shipped Wave E–N behavior  

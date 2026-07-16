@@ -39,7 +39,7 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 		},
 		"compact": map[string]any{
 			"available": false,
-			"reason":    "compact requires a persisted checkpoint at a paused task boundary",
+			"reason":    "compact requires an idle task with a persisted checkpoint (not mid-execution)",
 		},
 	}
 	if latest == nil {
@@ -85,8 +85,27 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 		"memory_snapshot_bytes": len(cp.MemorySnapshot),
 		"measurement":           "exact persisted checkpoint bytes; not token or live in-flight context usage",
 	}
-	if latest.Status == "paused" && !latest.ReconciliationRequired {
-		out["compact"] = map[string]any{"available": true, "method": "session.checkpoint.compact", "checkpoint_id": checkpointID(latest, cp), "safety": "WAL-backed immutable child checkpoint; source preserved"}
+	// Compact is available at any idle turn boundary with a checkpoint — not
+	// only paused. Live mid-execution stays refused (activeSessionTask / fence).
+	if latest.ReconciliationRequired {
+		out["compact"] = map[string]any{"available": false, "reason": "checkpoint reconciliation required before compact"}
+	} else if active := d.activeSessionTask(p.SessionID); active != nil {
+		out["compact"] = map[string]any{
+			"available": false,
+			"reason":    fmt.Sprintf("session task %s is %s; compact waits for an idle turn boundary", active.id, active.status),
+		}
+	} else if compactStatusOK(latest.Status) {
+		out["compact"] = map[string]any{
+			"available": true, "method": "session.checkpoint.compact",
+			"checkpoint_id": checkpointID(latest, cp),
+			"safety":        "WAL-backed immutable child checkpoint; source preserved; idle-task boundary (not mid-execution)",
+			"task_status":   latest.Status,
+		}
+	} else {
+		out["compact"] = map[string]any{
+			"available": false,
+			"reason":    fmt.Sprintf("task status %s is not idle enough for compact", latest.Status),
+		}
 	}
 	return out, nil
 }

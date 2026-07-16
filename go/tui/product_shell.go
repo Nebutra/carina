@@ -566,8 +566,8 @@ type runtimeStatusMsg struct {
 	err               error
 }
 
-// Context pressure thresholds (Grok-style ~85% auto-compact, but only when
-// session.checkpoint.compact is available — never mid-run without a paused checkpoint).
+// Context pressure thresholds (Grok-style ~85% auto-compact when
+// session.checkpoint.compact is available — idle task + checkpoint, not mid-execution).
 const (
 	contextPressureWarning  = 80
 	contextPressureCompact  = 85
@@ -618,7 +618,7 @@ func (m *Model) handleRuntimeStatus(msg runtimeStatusMsg) tea.Cmd {
 }
 
 // applyContextPressurePolicy nudges the operator and, when safe, auto-compacts.
-// Safe = daemon reported compact.available (paused checkpoint boundary only).
+// Safe = daemon reported compact.available (idle task + persisted checkpoint).
 func (m *Model) applyContextPressurePolicy() tea.Cmd {
 	if !m.runtime.ContextAvailable || m.runtime.ContextLimit <= 0 {
 		return nil
@@ -639,7 +639,7 @@ func (m *Model) applyContextPressurePolicy() tea.Cmd {
 		m.contextNudgeLevel = 2
 		reason := m.runtime.CompactReason
 		if reason == "" {
-			reason = "compact requires a paused task checkpoint"
+			reason = "compact requires an idle task with a persisted checkpoint"
 		}
 		m.push(m.th.Style(theme.RoleWarning).Render(m.text(MsgContextPressureCritical, MessageArgs{
 			"percent": pct, "reason": reason,

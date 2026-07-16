@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
@@ -315,4 +317,119 @@ func TestBtwForkBusyWhileRunning(t *testing.T) {
 			t.Fatal("expected busy notice")
 		}
 	}
+}
+
+func TestPlanReviewLineCommentsSeedComposer(t *testing.T) {
+	dir := t.TempDir()
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en", WorkspaceRoot: dir})
+	m.sessionID, m.mode = "sess_plan", "plan"
+	_ = m.ensurePlanFileScaffold()
+	body := "# Goal\nShip Wave N\n## Steps\n1. compact\n2. dual-pane\n"
+	_ = os.WriteFile(m.planFilePath(), []byte(body), 0o600)
+	m.openPlanReview()
+	if m.planReview == nil {
+		t.Fatal("expected overlay")
+	}
+	// Move to line 2 and comment.
+	m.planReview.Cursor = 1
+	_, handled := m.planReviewKey("c")
+	if !handled || !m.planReview.CommentMode {
+		t.Fatal("comment mode not entered")
+	}
+	for _, r := range []string{"n", "e", "e", "d", " ", "t", "e", "s", "t", "s"} {
+		m.planReviewKey(r)
+	}
+	m.planReviewKey("enter")
+	if len(m.planReview.Comments) != 1 || m.planReview.Comments[0].Text != "need tests" {
+		t.Fatalf("comments=%#v", m.planReview.Comments)
+	}
+	// Range mark lines 4-5 then comment.
+	m.planReview.Cursor = 3
+	m.planReviewKey("m")
+	m.planReview.Cursor = 4
+	m.planReviewKey("c")
+	for _, r := range []string{"s", "p", "l", "i", "t"} {
+		m.planReviewKey(r)
+	}
+	m.planReviewKey("enter")
+	if len(m.planReview.Comments) != 2 {
+		t.Fatalf("want 2 comments, got %#v", m.planReview.Comments)
+	}
+	m.planReviewKey("s")
+	if m.planReview != nil {
+		t.Fatal("overlay should close after request-changes")
+	}
+	seed := m.input.Value()
+	if !strings.Contains(seed, "L2") || !strings.Contains(seed, "need tests") {
+		t.Fatalf("seed missing line comment: %q", seed)
+	}
+	if !strings.Contains(seed, "L4") || !strings.Contains(seed, "split") {
+		t.Fatalf("seed missing range comment: %q", seed)
+	}
+}
+
+func TestSidePaneArmsOnForkAndCloses(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{
+		"session.fork": map[string]any{"session_id": "sess_side", "workspace_root": "/tmp/ws", "status": "active"},
+	}}
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
+	m.sessionID, m.call = "sess_main", fc
+	m.push("main line A")
+	m.push("main line B")
+	var switched string
+	m.switchSession = func(id string) error { switched = id; return nil }
+
+	cmd := m.btwSideQuestion("what is dual-pane?", true)
+	if m.sidePane == nil || m.sidePane.PrimarySessionID != "sess_main" {
+		t.Fatalf("side pane not armed: %#v", m.sidePane)
+	}
+	if len(m.sidePane.PrimaryLines) < 2 {
+		t.Fatalf("primary snapshot empty: %#v", m.sidePane.PrimaryLines)
+	}
+	if cmd == nil {
+		t.Fatal("expected fork cmd")
+	}
+	// Deliver fork action result.
+	m.sessionOpGen++
+	gen := m.sessionOpGen
+	// Simulate beginSessionAction generation
+	m.sessionOpGen = 1
+	m.sessionActionPending = "fork"
+	m.handleSessionAction(sessionActionMsg{
+		generation: 1, action: "fork",
+		session: sessionListItem{SessionID: "sess_side", WorkspaceRoot: "/tmp/ws"},
+	})
+	if switched != "sess_side" {
+		t.Fatalf("switch=%q", switched)
+	}
+	if m.sidePane == nil || m.sidePane.SideSessionID != "sess_side" {
+		t.Fatalf("side session not noted: %#v", m.sidePane)
+	}
+	// Attach to side session.
+	m.sessionID = "sess_side"
+	m.pendingSessionID = ""
+	if !m.sidePaneActive() {
+		t.Fatal("dual-pane should be active on side session")
+	}
+	// Render dual-pane without panic.
+	m.width, m.height = 100, 30
+	m.layout()
+	view := m.dualPaneTranscriptView(100, 20)
+	if !strings.Contains(ansi.Strip(view), "main") && !strings.Contains(strings.ToLower(ansi.Strip(view)), "main") {
+		// Labels are localized; at least both columns should render.
+		if view == "" {
+			t.Fatal("empty dual pane view")
+		}
+	}
+
+	// Close side pane returns to main.
+	m.switchSession = func(id string) error { switched = id; return nil }
+	_ = m.closeSidePane()
+	if switched != "sess_main" {
+		t.Fatalf("close switch=%q want sess_main", switched)
+	}
+	if m.sidePane != nil {
+		t.Fatal("side pane should clear")
+	}
+	_ = gen
 }

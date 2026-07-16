@@ -212,6 +212,9 @@ const tabs = hasSidebar
     align-items: stretch;
     gap: 0.15rem;
     margin: 0;
+    /* Cancel the first link's own padding so tab text sits on the same
+       text rhythm as the sidebar rows (nav pad + 0.65rem) */
+    margin-inline-start: -0.65rem;
     padding: 0;
     list-style: none;
     min-height: var(--docs-tabs-height);
@@ -222,7 +225,7 @@ const tabs = hasSidebar
     display: inline-flex;
     align-items: center;
     height: var(--docs-tabs-height);
-    padding: 0 0.85rem;
+    padding: 0 0.65rem;
     font-size: 0.8125rem;
     font-weight: 500;
     line-height: 1;

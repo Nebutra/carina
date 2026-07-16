@@ -227,8 +227,25 @@
   }
 
   .sidebar-content {
-    padding-block: var(--spacing-5);
+    /* Top aligns with the content breadcrumb and the TOC heading */
+    padding-block: 2.5rem var(--spacing-5);
     font-size: var(--text-body-sm);
+  }
+
+  /* ── Layout symmetry ─────────────────────────────────────────────── */
+  /*
+   * Starlight defaults to `--sl-content-margin-inline: auto 0` (content hugs
+   * the TOC rail), which reads as 84px left / 24px right gutters at 1440.
+   * Center the reading column so both gutters match.
+   */
+  @media (min-width: 72rem) {
+    [data-has-sidebar][data-has-toc] .main-pane {
+      --sl-content-margin-inline: auto;
+    }
+
+    .right-sidebar-panel {
+      padding-block-start: 2.5rem;
+    }
   }
 
   .sidebar-content li {

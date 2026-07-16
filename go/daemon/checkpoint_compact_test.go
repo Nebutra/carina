@@ -80,7 +80,7 @@ func TestCompactCommitIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestCheckpointCompactRequiresPausedTaskAndPreservesSource(t *testing.T) {
+func TestCheckpointCompactRequiresIdleTaskAndPreservesSource(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
 	sess, _ := d.store.CreateSession(ws, "full-workspace")
@@ -93,8 +93,12 @@ func TestCheckpointCompactRequiresPausedTaskAndPreservesSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	params := mustJSON(t, map[string]any{"session_id": sess.SessionID, "task_id": task.TaskID})
-	if _, err := d.handleCheckpointCompact(params); err == nil || !strings.Contains(err.Error(), "pause it first") {
-		t.Fatalf("running compact err=%v", err)
+	// Queued/running is not idle — refuse mid-execution.
+	if _, err := d.handleCheckpointCompact(params); err == nil || !strings.Contains(err.Error(), "idle") {
+		// Submit leaves queued/running; message may say "idle" or active task.
+		if err == nil || (!strings.Contains(err.Error(), "idle") && !strings.Contains(err.Error(), "queued") && !strings.Contains(err.Error(), "running") && !strings.Contains(err.Error(), "pause")) {
+			t.Fatalf("non-idle compact err=%v", err)
+		}
 	}
 	if _, err := d.sched.RestoreCheckpoint(task.TaskID, nil); err != nil {
 		t.Fatal(err)
@@ -105,7 +109,7 @@ func TestCheckpointCompactRequiresPausedTaskAndPreservesSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := result.(map[string]any)
-	if row["compacted"] != true || row["status"] != "paused" {
+	if row["compacted"] != true {
 		t.Fatalf("result=%#v", row)
 	}
 	if d.runs.loadCheckpointID(task.TaskID, runCheckpointID(task.TaskID, source)) == nil {
@@ -114,5 +118,38 @@ func TestCheckpointCompactRequiresPausedTaskAndPreservesSource(t *testing.T) {
 	latest := d.runs.loadCheckpoint(task.TaskID)
 	if latest == nil || latest.ParentCheckpointID != runCheckpointID(task.TaskID, source) || len(latest.Transcript.CompactionReceipts) == 0 {
 		t.Fatalf("latest=%#v", latest)
+	}
+}
+
+func TestCheckpointCompactAllowsCompletedTask(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "full-workspace")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "full-workspace", nil); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "done work")
+	source := &runCheckpoint{Turn: 4, Transcript: compactFixtureTranscript()}
+	if err := d.runs.saveCheckpointChecked(task.TaskID, source); err != nil {
+		t.Fatal(err)
+	}
+	d.sched.SetStatus(task.TaskID, "completed")
+	d.SetSummarizer(&scriptedReasoner{steps: []string{"completed work summarized"}})
+	result, err := d.handleCheckpointCompact(mustJSON(t, map[string]any{"session_id": sess.SessionID, "task_id": task.TaskID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := result.(map[string]any)
+	if row["compacted"] != true || row["status"] != "completed" {
+		t.Fatalf("completed compact result=%#v", row)
+	}
+	// context.summary should advertise compact for completed+checkpoint.
+	summary, err := d.handleContextSummary(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact := summary.(map[string]any)["compact"].(map[string]any)
+	if compact["available"] != true {
+		t.Fatalf("context.summary compact after completed: %#v", compact)
 	}
 }

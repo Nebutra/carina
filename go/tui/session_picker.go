@@ -308,6 +308,9 @@ func (m *Model) handleSessionAction(msg sessionActionMsg) {
 	m.sessionActionPending = ""
 	if msg.err != nil {
 		m.pendingSideQuestion = ""
+		if msg.action == "fork" {
+			m.sidePane = nil
+		}
 		m.push(m.text(MsgSessionActionFailed, MessageArgs{"error": msg.err.Error()}))
 		return
 	}
@@ -332,6 +335,9 @@ func (m *Model) handleSessionAction(msg sessionActionMsg) {
 	}
 	m.pendingSessionID = msg.session.SessionID
 	m.pendingWorkspaceRoot = msg.session.WorkspaceRoot
+	if msg.action == "fork" && m.sidePane != nil {
+		m.noteSideSession(msg.session.SessionID)
+	}
 	if m.sessionPicker == nil {
 		m.sessionPicker = &sessionPickerState{generation: m.sessionOpGen}
 	}

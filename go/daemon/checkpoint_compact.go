@@ -25,6 +25,19 @@ func cloneTranscriptForCompact(src *Transcript) (*Transcript, error) {
 	return &out, nil
 }
 
+// compactStatusOK reports whether a task status is idle enough for
+// session.checkpoint.compact. Live agent loops already compact their in-memory
+// transcript; this RPC rewrites a *persisted* checkpoint and must not race an
+// active run (running/queued/waiting_* stay refused via activeSessionTask too).
+func compactStatusOK(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "paused", "completed", "failed", "degraded", "cancelled", "needs_input":
+		return true
+	default:
+		return false
+	}
+}
+
 func (d *Daemon) compactTaskForSession(sessionID, taskID string) (*scheduler.Task, error) {
 	if strings.TrimSpace(taskID) != "" {
 		task, ok := d.sched.Get(taskID)
@@ -35,13 +48,13 @@ func (d *Daemon) compactTaskForSession(sessionID, taskID string) (*scheduler.Tas
 	}
 	var candidates []*scheduler.Task
 	for _, task := range d.sched.List() {
-		if task.SessionID == sessionID && task.Status == "paused" {
+		if task.SessionID == sessionID && compactStatusOK(task.Status) && d.runs.loadCheckpoint(task.TaskID) != nil {
 			candidates = append(candidates, task)
 		}
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].UpdatedAt.After(candidates[j].UpdatedAt) })
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("compact requires a paused task checkpoint")
+		return nil, fmt.Errorf("compact requires an idle task with a persisted checkpoint (paused/completed/failed/…)")
 	}
 	return candidates[0], nil
 }
@@ -63,8 +76,8 @@ func (d *Daemon) handleCheckpointCompact(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if task.Status != "paused" {
-		return nil, fmt.Errorf("compact refused while task is %s; pause it first", task.Status)
+	if !compactStatusOK(task.Status) {
+		return nil, fmt.Errorf("compact refused while task is %s; wait for an idle turn boundary (paused/completed) or pause first", task.Status)
 	}
 	if task.ReconciliationRequired {
 		return nil, fmt.Errorf("compact refused: checkpoint reconciliation required")
@@ -164,5 +177,10 @@ func (d *Daemon) ensureCompactAudit(task *scheduler.Task, j *compactJournal, pha
 }
 
 func compactResult(task *scheduler.Task, j *compactJournal, idempotent, cleanup bool) map[string]any {
-	return map[string]any{"compacted": true, "task_id": task.TaskID, "checkpoint_id": j.Target.CheckpointID, "source_checkpoint_id": j.SourceCheckpointID, "turn": j.Target.Turn, "status": "paused", "idempotent": idempotent, "journal_cleanup_pending": cleanup, "receipt": j.Target.Transcript.CompactionReceipts[len(j.Target.Transcript.CompactionReceipts)-1]}
+	return map[string]any{
+		"compacted": true, "task_id": task.TaskID, "checkpoint_id": j.Target.CheckpointID,
+		"source_checkpoint_id": j.SourceCheckpointID, "turn": j.Target.Turn,
+		"status": task.Status, "idempotent": idempotent, "journal_cleanup_pending": cleanup,
+		"receipt": j.Target.Transcript.CompactionReceipts[len(j.Target.Transcript.CompactionReceipts)-1],
+	}
 }
