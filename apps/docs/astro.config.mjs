@@ -2,6 +2,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import tailwindcss from '@tailwindcss/vite';
+import { carinaDark, carinaLight } from './src/themes/carina-code.mjs';
 
 /**
  * Carina docs site — Astro + Starlight
@@ -66,6 +67,8 @@ export default defineConfig({
         // starlight-theme.css must load AFTER global.css (Tailwind) so its
         // unlayered --sl-* map outranks starlight-tailwind's default palette.
         './src/styles/fonts.css',
+        // Newsreader Variable — docs H1 / hero display (self-hosted via fontsource)
+        '@fontsource-variable/newsreader/wght.css',
         './src/styles/brand/variables.css',
         './src/styles/docs-tokens.css',
         './src/styles/global.css',

@@ -11,19 +11,27 @@
 
   .sl-markdown-content :is(h1, h2, h3, h4, h5, h6) {
     color: var(--docs-fg);
-    font-weight: 600;
-    letter-spacing: -0.02em;
     scroll-margin-top: var(--docs-anchor-offset);
     text-wrap: balance;
   }
 
+  .sl-markdown-content :is(h2, h3, h4, h5, h6) {
+    font-family: var(--docs-font-sans);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  /* H1 — Newsreader display (product override) */
   h1#_top,
-  .sl-markdown-content h1 {
-    font-size: clamp(1.85rem, 3.2vw, 2.35rem) !important;
-    font-weight: 600 !important;
-    letter-spacing: -0.025em !important;
-    line-height: 1.15 !important;
-    margin-bottom: 0.65rem !important;
+  .sl-markdown-content h1,
+  .content-panel h1#_top {
+    font-family: var(--docs-font-display) !important;
+    font-size: clamp(1.95rem, 3.4vw, 2.5rem) !important;
+    font-weight: 550 !important;
+    letter-spacing: -0.022em !important;
+    line-height: 1.1 !important;
+    margin-bottom: 0.7rem !important;
+    font-optical-sizing: auto;
   }
 
   .content-panel .sl-container > p:first-of-type,

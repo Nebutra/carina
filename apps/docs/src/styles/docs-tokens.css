@@ -75,6 +75,14 @@
    * typography.css may reaffirm these for cascade priority.
    */
   --docs-font-brand: 'Carina Display Alpha', Georgia, 'Times New Roman', serif;
+  /*
+   * Display serif for primary page titles (H1 / hero).
+   * Product decision: Newsreader for docs H1 — intentional break from brand
+   * “no Newsreader” rule (that rule targets wordmark substitution, not doc titles).
+   */
+  --docs-font-display:
+    'Newsreader Variable', 'Newsreader', Georgia, 'Times New Roman',
+    'Songti SC', 'Source Han Serif SC', 'Noto Serif SC', serif;
   --docs-font-sans:
     'Geist Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
     'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC',

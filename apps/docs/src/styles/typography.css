@@ -1,15 +1,17 @@
 /**
- * Typography application layer — enforces brand DESIGN.md type roles.
+ * Typography application layer.
  *
- * | Role        | Family              | Weight | Where                         |
- * |-------------|---------------------|--------|-------------------------------|
- * | brand       | Carina Display Alpha| 400    | Large pure-Latin identity only|
- * | heading/UI  | Geist Sans          | 400–600| All product UI & doc headings |
- * | body        | Geist Sans          | 400    | Prose, lists, tables          |
- * | mono        | Geist Mono          | 400–500| Code, hashes, paths, CLI      |
+ * | Role        | Family               | Weight | Where                              |
+ * |-------------|----------------------|--------|------------------------------------|
+ * | brand       | Carina Display Alpha | 400    | Large pure-Latin identity only     |
+ * | display/H1  | Newsreader Variable  | 500–600| Doc page titles, hero H1           |
+ * | heading/UI  | Geist Sans           | 400–600| H2+, nav, UI chrome                |
+ * | body        | Geist Sans           | 400    | Prose, lists, tables               |
+ * | mono        | Geist Mono           | 400–500| Code, hashes, paths, CLI           |
  *
  * Never apply Display Alpha to: body, nav, controls, code, CJK, or text
  * with punctuation / numerals.
+ * Newsreader is a product override for primary titles (not for the wordmark).
  */
 
 :root,
@@ -20,6 +22,15 @@
    * Brand authority still owns the family *names*; we only append fallbacks.
    */
   --docs-font-brand: 'Carina Display Alpha', Georgia, 'Times New Roman', serif;
+  --docs-font-display:
+    'Newsreader Variable',
+    'Newsreader',
+    Georgia,
+    'Times New Roman',
+    'Songti SC',
+    'Source Han Serif SC',
+    'Noto Serif SC',
+    serif;
   --docs-font-sans:
     'Geist Sans',
     ui-sans-serif,
@@ -68,12 +79,20 @@
     letter-spacing: 0;
   }
 
-  /* Product headings — Geist only, never Display Alpha */
-  :where(h1, h2, h3, h4, h5, h6) {
+  /* H2+ product headings — Geist; H1 uses Newsreader (see components layer) */
+  :where(h2, h3, h4, h5, h6) {
     font-family: var(--docs-font-sans);
     font-weight: 600;
     letter-spacing: -0.02em;
     text-wrap: balance;
+  }
+
+  :where(h1) {
+    font-family: var(--docs-font-display);
+    font-weight: 550;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    font-optical-sizing: auto;
   }
 
   code,
@@ -142,17 +161,22 @@
     font-family: var(--docs-font-sans);
   }
 
-  .sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
-  h1#_top {
+  .sl-markdown-content :is(h2, h3, h4, h5, h6) {
     font-family: var(--docs-font-sans) !important;
     font-weight: 600;
     letter-spacing: -0.02em;
   }
 
+  /* Primary titles — Newsreader display serif */
   .sl-markdown-content h1,
-  h1#_top {
-    font-size: clamp(1.75rem, 3vw, 2.15rem);
-    line-height: 1.15;
+  h1#_top,
+  .content-panel h1#_top {
+    font-family: var(--docs-font-display) !important;
+    font-weight: 550 !important;
+    letter-spacing: -0.022em;
+    font-optical-sizing: auto;
+    font-size: clamp(1.85rem, 3.2vw, 2.4rem);
+    line-height: 1.12;
   }
 
   .sl-markdown-content h2 {

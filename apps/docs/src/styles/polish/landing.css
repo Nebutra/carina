@@ -33,6 +33,8 @@
   }
 
   .hero__title {
+    font-family: var(--docs-font-display) !important;
+    font-weight: 550;
     background: linear-gradient(
       180deg,
       var(--docs-fg) 0%,
