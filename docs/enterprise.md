@@ -92,7 +92,8 @@ source. The file is watched, so managed edits trigger a reload.
 { "values": { "offline": true }, "locked_keys": ["offline"] }
 ```
 
-To forbid YOLO always-approve (and keep operators on `ask` or `dont-ask`):
+To forbid YOLO always-approve (and keep operators on `ask`, `dont-ask`, or
+`accept-edits`):
 
 ```json
 {
@@ -108,14 +109,42 @@ To forbid YOLO always-approve (and keep operators on `ask` or `dont-ask`):
 
 | Axis | Config / API | Values | Meaning |
 |------|----------------|--------|---------|
-| Product HITL | managed/global `approval_mode`, `CARINA_APPROVAL_MODE`, `-approval-mode`, `/approval-mode` | `ask` \| `always-approve` \| `dont-ask` | Daemon behavior when the kernel returns `requires_approval` |
+| Product HITL | managed/global `approval_mode`, `CARINA_APPROVAL_MODE`, `-approval-mode`, `/approval-mode` | `ask` \| `always-approve` \| `dont-ask` \| `accept-edits` | Daemon behavior when the kernel returns `requires_approval` |
 | Session / kernel | `session.create` `approval_mode`, kernel `InitSessionFull` | `untrusted` \| `on_request` \| `never` | Whether the profile escalates more actions or auto-allows at the kernel |
 
 `dont-ask` is the CI-friendly **product** mode: `requires_approval` is denied
-unless an exact session/project grant already exists (no interactive prompt).
-Session `never` is **not** accepted as product `approval_mode` (fail closed with
-an explicit error) so operators cannot confuse “never ask at kernel” with
-“always-approve in the daemon”.
+unless a matching session/project grant already exists (exact resource, or a
+safe `FileRead`/`FileWrite` directory prefix — never workspace-root-wide and
+never for dangerous paths/commands). Session `never` is **not** accepted as
+product `approval_mode` (fail closed with an explicit error) so operators
+cannot confuse “never ask at kernel” with “always-approve in the daemon”.
+
+`accept-edits` auto-allows only `FileWrite`/`PatchApply` `requires_approval`
+decisions; shell, network, and secrets still prompt (or deny under `dont-ask`).
+
+### Subagent permission inheritance
+
+When a parent session spawns a child agent:
+
+| Axis | Inheritance |
+|------|-------------|
+| Permission profile | `child = attenuate(parent, agent_spec.profile)` — child never exceeds parent |
+| Session / kernel `approval_mode` | Copied from parent (`untrusted` \| `on_request` \| `never`) |
+| Product HITL `approval_mode` | Daemon-global (not per-session); children share the same product mode |
+| Tool / spawn allow-lists | Optional `AgentSpec` restrictions apply only to the child |
+| Stored approval grants | Session-scoped grants stay on the parent session; project-scoped grants can apply in the same workspace |
+
+### Approval grants (session / project)
+
+| Match | When installed | Behavior |
+|-------|----------------|----------|
+| `exact` | Every session/project approve | Same capability + full resource |
+| `prefix` | Auto companion for session/project `FileRead`/`FileWrite` on a non-root directory | Same capability + path under that directory |
+
+**Dangerous list (grant reuse refused):** secret/remote capabilities; sensitive
+path segments (`.env`, `.ssh`, credentials, …); high-blast command patterns
+(`rm -rf`, `sudo`, pipe-to-shell, …). Operators may still approve those
+interactively once; stored grants never auto-satisfy them.
 
 ## 6. Centralized audit — `carina export`
 

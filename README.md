@@ -175,8 +175,9 @@ The default interaction loop is:
   - `ask` — pause on `requires_approval` for operator once/session/project
   - `always-approve` — auto-allow `requires_approval` **with an on-screen
     warning** (`/always-approve`); deny rules, plan mode, and OS sandbox still apply
-  - `dont-ask` — deny `requires_approval` unless an exact session/project grant
-    already exists (no prompt; CI-friendly). Also `/dont-ask`
+  - `dont-ask` — deny `requires_approval` unless a matching session/project
+    grant already exists (exact resource, or a safe `FileRead`/`FileWrite`
+    directory prefix; no prompt; CI-friendly). Also `/dont-ask`
   - `accept-edits` — auto-allow `FileWrite`/`PatchApply` `requires_approval`;
     shell/network/secrets still prompt (`/accept-edits`)
   - Orgs can lock out YOLO with `"disable_always_approve": true` (manage-lock

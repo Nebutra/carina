@@ -76,12 +76,20 @@ Deleting many files · modifying lockfiles · installing dependencies · executi
 
 ## Approval modes (operator)
 
+Product HITL modes (daemon `approval_mode` / `/approval-mode`) control what
+happens when the kernel still returns `requires_approval`. They are **not** the
+session/kernel axis (`untrusted` \| `on_request` \| `never` on
+`session.create`).
+
 | Mode | Behavior |
 | --- | --- |
-| `ask` | Prompt a human for risky actions |
-| `auto` | Allow within profile bounds |
-| `deny` | Hard-block listed actions |
-| `dont-ask` | Suppress prompts (org-lockable) |
+| `ask` | Prompt a human for `requires_approval` |
+| `always-approve` | Auto-allow `requires_approval` after risk review (**WARNING** on enable; org-lockable via `disable_always_approve`) |
+| `dont-ask` | Deny `requires_approval` unless a matching session/project grant exists (no prompt; CI-friendly) |
+| `accept-edits` | Auto-allow `FileWrite` / `PatchApply` only; shell, network, and secrets still prompt |
+
+Profile denials and plan/sandbox gates still apply on every mode. Session-axis
+tokens must not be passed as product `approval_mode` (fail closed).
 
 <Callout variant="warning" title="Always-approve is elevated trust">
   Prefer narrow profiles and short-lived sessions for high-risk work. Broad auto-approval should be intentional and audited.

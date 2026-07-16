@@ -141,7 +141,8 @@ Homebrew 安装会交回 `brew` 管理，npm/pnpm 安装会交回对应包管理
   - `always-approve` — 自动放行 `requires_approval`（**开屏警告**，
     `/always-approve`）；deny 规则、计划模式、OS 沙箱仍生效；自主路径会做
     risk review 并在 transcript 中可见
-  - `dont-ask` — 无精确 session/project grant 则直接拒绝（不弹窗，适合 CI）；
+  - `dont-ask` — 无匹配的 session/project grant（精确资源，或安全的
+    `FileRead`/`FileWrite` 目录前缀）则直接拒绝（不弹窗，适合 CI）；
     也可用 `/dont-ask`
   - `accept-edits` — 自动放行 `FileWrite`/`PatchApply` 的 `requires_approval`；
     Shell/网络/secret 仍需确认（`/accept-edits`）

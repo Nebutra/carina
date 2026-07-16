@@ -38,8 +38,9 @@ and local policy, audit, approval, and rollback remain authoritative.
 ### TUI interaction closure
 
 The July TUI UX audit is closed in the repository at the following evidence
-boundary. Product shell waves E–H (context pressure, sticky shell, HITL modes,
-quality hygiene) are included below; see `docs/plans/tui-product-ux-closure.md`.
+boundary. Product shell waves E–M (context pressure, sticky shell, HITL modes,
+accept-edits, plan review, prefix grants, quality hygiene) are included below;
+see `docs/plans/tui-product-ux-closure.md`.
 
 | Gap | Repository-owned implementation | Evidence boundary |
 | --- | --- | --- |
@@ -56,8 +57,10 @@ quality hygiene) are included below; see `docs/plans/tui-product-ux-closure.md`.
 | Sticky shell mode | Empty-composer `!` enters sticky shell (`! ` prompt, governed `command.exec`); `Esc` on empty draft returns to chat; one-shot `!cmd` remains | TUI shell-mode unit tests and README interaction notes |
 | Context pressure and compact | Notices near 80%/90%; auto-compact at ≥85% only when a paused checkpoint exposes `session.checkpoint.compact` | Model tests for pressure thresholds and compact availability gating |
 | Side Q&A and session fork | `/btw` answer-only on the current session; `/btw --fork` and `/side` call `session.fork` then attach (no dual-pane) | Product-wave tests for fork busy refusal and honest copy |
-| Product HITL modes | Daemon modes `ask` \| `always-approve` \| `dont-ask`; `/always-approve` warns; org `disable_always_approve`; footer shows mode | Daemon resolve-approval tests, RPC mode tests, config validation; session/kernel axis `untrusted\|on_request\|never` remains separate |
+| Product HITL modes | Daemon modes `ask` \| `always-approve` \| `dont-ask` \| `accept-edits`; `/always-approve` warns; org `disable_always_approve`; footer shows mode; plan review overlay via `/view-plan` | Daemon resolve-approval tests, RPC mode tests, config validation, accept-edits + plan-review TUI tests; session/kernel axis `untrusted\|on_request\|never` remains separate |
 | Approval naming hygiene | Product config/RPC rejects session-axis tokens (`never`, `on_request`, `untrusted`) so they cannot silently alias always-approve/ask | `normalizeApprovalMode` and `config.Validate` tests |
+| Approval grant prefix + dangerous list | Session/project file grants install a safe directory prefix companion; dangerous paths/commands never auto-reuse stored grants | Grant-store unit tests + scoped approval round-trip |
+| Subagent permission inheritance | Child profile = attenuate(parent, spec); session axis copied; product HITL daemon-global | `TestSubagentPermissionInheritance` + enterprise table |
 
 True IME composition placement on macOS Pinyin and fcitx5/Wayland, terminal
 selection behavior under mouse reporting, and representative provider streams

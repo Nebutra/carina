@@ -1,6 +1,6 @@
 # TUI Product UX Closure — Trade-offs and Plan
 
-Date: 2026-07-16 (updated Wave H hygiene)  
+Date: 2026-07-16 (updated Wave M hygiene + prefix grants)  
 Branch: `main`  
 Sources: Grok Build (`xai-org/grok-build` user guide), Claude Code notes, OpenAI Codex (`codex-rs/tui/src/slash_command.rs`).
 
@@ -50,6 +50,9 @@ Close the gap between Carina’s **governed runtime** and a **product-grade agen
 6. **Status refresh tick**  
    45s `tea.Tick` when attached; disabled under `testing.Testing()`.
 
+7. **Approval grant width**  
+   Exact resource match is the default. Session/project `FileRead`/`FileWrite` also install a **safe directory prefix** companion (not workspace-root, not dangerous paths). CommandExec stays exact-only for stored grants; a dangerous list refuses auto-reuse for high-blast-radius resources.
+
 ## Wave map (status)
 
 ### Waves 1–3, A–D — **done**
@@ -66,7 +69,7 @@ Perception, workflow entry, extensions hub, semantic honesty, writable control, 
 
 ### Wave G — HITL taxonomy + org lock — **done**
 - Product modes: `ask` \| `always-approve` \| `dont-ask`  
-- `dont-ask`: deny without exact grant; no `permission.request`  
+- `dont-ask`: deny without matching grant; no `permission.request`  
 - `disable_always_approve` manage-lockable  
 - Config/env/CLI: `approval_mode`, `CARINA_APPROVAL_MODE`, `-approval-mode`  
 
@@ -103,6 +106,13 @@ Perception, workflow entry, extensions hub, semantic honesty, writable control, 
 - `make quality-check` aggregates brand + zh-hant + docs  
 - CI job `quality-guardrails` runs zh-hant-check, brand-check, docs build  
 
+### Wave M — hygiene + prefix grants + subagent contract — **done**
+
+- Docs/protocol DRIFT closed: `rpc-catalog` re-synced from `methods.json`; enterprise, roadmap, policy.mdx, closure plan aligned to four product modes + Wave L  
+- `/resume` vs `/task-resume` i18n copy aligned (compat alias kept)  
+- Session/project `FileRead`/`FileWrite` install safe directory **prefix** companion grants; dangerous path/command list refuses grant auto-reuse  
+- Subagent permission inheritance table (enterprise) + `TestSubagentPermissionInheritance`  
+
 
 ## Still intentionally open
 
@@ -111,8 +121,6 @@ Perception, workflow entry, extensions hub, semantic honesty, writable control, 
 | Mid-run auto-compact without paused checkpoint | Needs new daemon compact policy |
 | Multi-pane dual-session TUI | Layout product; fork switches session today |
 | Plan line-range comments (Grok `c`) | Overlay has a/s/q only |
-| Prefix grants + dangerous list | Fatigue vs width trade-off |
-| Subagent permission inheritance table | Swarm product contract |
 | Hand-authored Traditional Chinese (non-derived) native review | Shipped as OpenCC-derived `zh-Hant`; native TW/HK editorial pass optional |
 | ACP / remote marketplace / silent YOLO | Ecosystem / brand |
 | IME human matrix (macOS Pinyin / fcitx5) | External terminal matrix |
@@ -123,4 +131,5 @@ Perception, workflow entry, extensions hub, semantic honesty, writable control, 
 - [x] Footer shows `ask` \| `always-approve` \| `dont-ask` \| `accept-edits`  
 - [x] Session axis ≠ product axis (normalize rejects `never`/`on_request`/`untrusted`)  
 - [x] Plan review overlay + accept-edits mode shipped (Wave L)  
-- [x] This document matches shipped Wave E–L behavior  
+- [x] Prefix grants + dangerous list + subagent inheritance contract (Wave M)  
+- [x] Docs/catalog/i18n match shipped Wave E–M behavior  

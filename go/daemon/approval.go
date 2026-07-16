@@ -18,7 +18,7 @@ const defaultApprovalTimeout = 5 * time.Minute
 // handleSetInteractiveApproval is the governed RPC for operator toggles.
 // Params (either form):
 //   - { "on": bool } — true = ask, false = always-approve (legacy)
-//   - { "mode": "ask"|"always-approve"|"dont-ask" } — preferred three-way product mode
+//   - { "mode": "ask"|"always-approve"|"dont-ask"|"accept-edits" } — preferred product mode
 //
 // mode wins when both are set. always-approve is rejected when
 // disable_always_approve is set (org/managed policy).
@@ -76,7 +76,7 @@ func approvalModeWarning(mode string) string {
 	case approvalModeAlwaysApprove:
 		return "always-approve auto-allows requires_approval tool calls; deny rules, plan mode, and sandbox still apply"
 	case approvalModeDontAsk:
-		return "dont-ask denies requires_approval unless an exact session/project grant already exists; no operator prompt"
+		return "dont-ask denies requires_approval unless a matching session/project grant already exists (exact, or safe path prefix); no operator prompt"
 	case approvalModeAcceptEdits:
 		return "accept-edits auto-allows FileWrite/PatchApply requires_approval; shell, network, and secrets still prompt; deny rules, plan mode, and sandbox still apply"
 	default:
@@ -161,7 +161,7 @@ func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Tas
 		// Grok/CC dontAsk: no prompt, no auto-approve — deny unless a grant
 		// already matched above. Deny rules / plan mode / sandbox still apply
 		// on every other path; this only handles requires_approval fallthrough.
-		d.closePendingApproval(sess, task, dec, "denied", "dont-ask mode denies requires_approval without an exact grant")
+		d.closePendingApproval(sess, task, dec, "denied", "dont-ask mode denies requires_approval without a matching grant")
 		d.record(sess.SessionID, "PolicyViolation", task.TaskID, "go", map[string]any{
 			"capability": dec.Capability, "decision_id": dec.DecisionID,
 			"refusal": "dont_ask", "reason": "requires_approval denied by approval_mode=dont-ask",

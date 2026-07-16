@@ -280,3 +280,159 @@ func TestPermissionRequestIsDurableForReconnect(t *testing.T) {
 		t.Fatal("approval wait did not resolve")
 	}
 }
+
+func TestApprovalGrantPathPrefixAndDangerousList(t *testing.T) {
+	stateDir := t.TempDir()
+	workspace := t.TempDir()
+	srcDir := filepath.Join(workspace, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := newApprovalGrantStore(stateDir)
+	sess := &sessionstore.Session{SessionID: "sess_a", WorkspaceRoot: workspace}
+
+	// Install a path-prefix grant for FileWrite under src/.
+	prefixGrant := approvalGrant{
+		Scope: approvalScopeSession, Match: approvalMatchPrefix,
+		SessionID: sess.SessionID, WorkspaceRoot: workspace,
+		Capability: "FileWrite", Resource: srcDir,
+		SourceDecisionID: "dec_prefix", Approver: "alice", CreatedAt: time.Now().UTC(),
+	}
+	if err := store.add(prefixGrant, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	sibling := filepath.Join(srcDir, "a.go")
+	if _, ok := store.match(sess, "FileWrite", sibling); !ok {
+		t.Fatal("prefix grant should match a file under the directory")
+	}
+	otherDir := filepath.Join(workspace, "other", "b.go")
+	if _, ok := store.match(sess, "FileWrite", otherDir); ok {
+		t.Fatal("prefix grant leaked outside its directory")
+	}
+	// Exact resource under a different capability must not match.
+	if _, ok := store.match(sess, "FileRead", sibling); ok {
+		t.Fatal("prefix grant matched wrong capability")
+	}
+
+	// Dangerous path never auto-satisfies even under a broad prefix.
+	broad := approvalGrant{
+		Scope: approvalScopeSession, Match: approvalMatchPrefix,
+		SessionID: sess.SessionID, WorkspaceRoot: workspace,
+		Capability: "FileWrite", Resource: filepath.Join(workspace, "cfg"),
+		SourceDecisionID: "dec_broad", Approver: "alice", CreatedAt: time.Now().UTC(),
+	}
+	// cfg/ is fine as a prefix target when it is not the workspace root.
+	cfgDir := filepath.Join(workspace, "cfg")
+	_ = os.MkdirAll(cfgDir, 0o755)
+	broad.Resource = cfgDir
+	if err := store.add(broad, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	envPath := filepath.Join(cfgDir, ".env")
+	if _, ok := store.match(sess, "FileWrite", envPath); ok {
+		t.Fatal("dangerous .env path must not auto-satisfy from a prefix grant")
+	}
+
+	// Workspace-root prefix grants are refused.
+	rootGrant := approvalGrant{
+		Scope: approvalScopeProject, Match: approvalMatchPrefix,
+		WorkspaceRoot: workspace, Capability: "FileWrite", Resource: workspace,
+		SourceDecisionID: "dec_root", Approver: "alice", CreatedAt: time.Now().UTC(),
+	}
+	if err := store.add(rootGrant, func() error { return nil }); err == nil {
+		t.Fatal("workspace-root prefix grant must be refused")
+	}
+
+	// CommandExec prefix grants are refused.
+	cmdPrefix := approvalGrant{
+		Scope: approvalScopeSession, Match: approvalMatchPrefix,
+		SessionID: sess.SessionID, WorkspaceRoot: workspace,
+		Capability: "CommandExec", Resource: "npm",
+		SourceDecisionID: "dec_cmd", Approver: "alice", CreatedAt: time.Now().UTC(),
+	}
+	if err := store.add(cmdPrefix, func() error { return nil }); err == nil {
+		t.Fatal("CommandExec prefix grant must be refused")
+	}
+
+	// Dangerous command exact grants never match for reuse.
+	rmGrant := approvalGrant{
+		Scope: approvalScopeSession, Match: approvalMatchExact,
+		SessionID: sess.SessionID, WorkspaceRoot: workspace,
+		Capability: "CommandExec", Resource: "rm -rf /tmp/x",
+		SourceDecisionID: "dec_rm", Approver: "alice", CreatedAt: time.Now().UTC(),
+	}
+	if err := store.add(rmGrant, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.match(sess, "CommandExec", "rm -rf /tmp/x"); ok {
+		t.Fatal("dangerous CommandExec must not auto-satisfy from a stored grant")
+	}
+}
+
+func TestRememberApprovalGrantInstallsPathPrefixCompanion(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	srcDir := filepath.Join(workspace, "pkg")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fileA := filepath.Join(srcDir, "a.go")
+	fileB := filepath.Join(srcDir, "b.go")
+
+	// full-workspace can return requires_approval for FileWrite; safe-edit
+	// routes writes through PatchApply and denies bare FileWrite.
+	sess, err := d.store.CreateSessionMode(workspace, "full-workspace", "on_request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.kern.InitSessionFull(sess.SessionID, workspace, "full-workspace", "on_request", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	dec, err := d.kern.Request(sess.SessionID, "FileWrite", fileA, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	switch dec.Decision {
+	case "allowed":
+		t.Skip("FileWrite auto-allowed under this profile; cannot exercise grant path")
+	case "requires_approval":
+		// ok
+	default:
+		t.Fatalf("initial FileWrite decision = %+v", dec)
+	}
+	if _, err := d.handleApprove(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "decision_id": dec.DecisionID, "approver": "operator", "scope": "session",
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	// Exact re-run.
+	repeat, _ := d.kern.Request(sess.SessionID, "FileWrite", fileA, "")
+	if approved, ok := d.approveFromStoredGrant(sess, repeat); !ok || approved.Decision != "allowed" {
+		t.Fatalf("exact FileWrite grant missing: approved=%+v ok=%v decision=%+v", approved, ok, repeat)
+	}
+	// Sibling under same directory via prefix companion.
+	sibling, _ := d.kern.Request(sess.SessionID, "FileWrite", fileB, "")
+	if approved, ok := d.approveFromStoredGrant(sess, sibling); !ok || approved.Decision != "allowed" {
+		t.Fatalf("path-prefix companion grant missing for sibling: approved=%+v ok=%v decision=%+v", approved, ok, sibling)
+	}
+}
+
+func TestDangerousCommandHelpers(t *testing.T) {
+	if !isDangerousCommandResource("rm -rf /tmp") {
+		t.Fatal("rm -rf should be dangerous")
+	}
+	if !isDangerousCommandResource("sudo apt install x") {
+		t.Fatal("sudo should be dangerous")
+	}
+	if isDangerousCommandResource("npm install left-pad") {
+		t.Fatal("npm install should not be classified dangerous by default")
+	}
+	if !isDangerousApprovalResource("FileWrite", filepath.Join("/ws", ".ssh", "id_rsa")) {
+		t.Fatal(".ssh/id_rsa FileWrite should be dangerous")
+	}
+	if isDangerousApprovalResource("FileWrite", filepath.Join("/ws", "src", "main.go")) {
+		t.Fatal("ordinary source file should not be dangerous")
+	}
+}

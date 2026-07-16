@@ -199,7 +199,7 @@ func TestResumeCommandWithoutMemoryPointsToExplicitTaskID(t *testing.T) {
 	if cmd := m.slashCommand("/resume"); cmd != nil {
 		t.Fatal("missing resume target unexpectedly started an RPC")
 	}
-	if got := transcriptText(m); !strings.Contains(got, "use /resume <task_id> after restarting") {
+	if got := transcriptText(m); !strings.Contains(got, "use /task-resume <task_id> after restarting") {
 		t.Fatalf("missing resume target did not explain restart recovery:\n%s", got)
 	}
 }

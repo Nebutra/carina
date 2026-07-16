@@ -4,8 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
 func TestAttenuateChildNeverExceedsParent(t *testing.T) {
@@ -325,5 +328,97 @@ func TestSubagentLoopHonorsParentCancellation(t *testing.T) {
 	current, _ := d.sched.Get(task.TaskID)
 	if current.Status != "cancelled" {
 		t.Fatalf("task status = %s", current.Status)
+	}
+}
+
+// TestSubagentPermissionInheritance documents the swarm contract:
+//
+//	profile:        child = attenuate(parent, spec)  — never exceeds parent
+//	session axis:   child inherits parent.ApprovalMode (untrusted|on_request|never)
+//	product HITL:   daemon-global (ask|always-approve|dont-ask|accept-edits); not per-session
+//	tools/spawn:    optional allow-lists from AgentSpec restrict the child only
+func TestSubagentPermissionInheritance(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+
+	agentsDir := filepath.Join(ws, ".carina", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "scout.md"),
+		[]byte("---\nname: scout\ndescription: recon\nprofile: full-workspace\nmax_turns: 2\n---\nYou are a scout.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Parent is tighter than the agent spec's requested full-workspace.
+	// Use on_request so SubagentSpawn can escalate to approval rather than
+	// hard-deny under a deny-heavy profile; product HITL stays dont-ask for
+	// non-spawn tool calls (spawn still resolves via resolveApprovalOrEscalate).
+	parent, err := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.kern.InitSessionFull(parent.SessionID, ws, "safe-edit", "on_request", nil); err != nil {
+		t.Fatal(err)
+	}
+	if parent.ApprovalMode != "on_request" {
+		t.Fatalf("parent ApprovalMode = %q, want on_request", parent.ApprovalMode)
+	}
+
+	// Product HITL is daemon-global and independent of session axis.
+	if err := d.SetApprovalMode("accept-edits"); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.approvalModeString(); got != approvalModeAcceptEdits {
+		t.Fatalf("product mode = %q, want accept-edits", got)
+	}
+
+	// Attenuation: child cannot exceed parent profile even when the agent
+	// manifest asks for full-workspace.
+	if got := attenuate(parent.PermissionProfile, "full-workspace"); got != "safe-edit" {
+		t.Fatalf("attenuate = %q, want safe-edit", got)
+	}
+
+	// Existing spawn path: parent full-workspace + scout read-only proves
+	// isolation. Here parent is safe-edit and scout asks full-workspace → clamp.
+	// Auto-approve spawn if needed so we reach CreateSubSession.
+	d.SetApprovalMode("always-approve")
+	d.SetReasoner(&scriptedReasoner{steps: []string{
+		`{"tool":"done","summary":"noop"}`,
+	}})
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "spawn scout")
+	summary := d.spawnSubagent(parent, parentTask, "scout", "quick look")
+	if strings.HasPrefix(summary, "DENIED") || strings.HasPrefix(summary, "requires approval") || strings.HasPrefix(summary, "unknown agent") {
+		t.Fatalf("spawn failed before child session: %q", summary)
+	}
+
+	// Find the child session created under the parent.
+	var child *sessionstore.Session
+	for _, s := range d.store.List() {
+		if s.ParentID == parent.SessionID {
+			child = s
+			break
+		}
+	}
+	if child == nil {
+		for _, s := range d.store.List() {
+			if s.SessionID != parent.SessionID && s.WorkspaceRoot == parent.WorkspaceRoot && s.Depth > parent.Depth {
+				child = s
+				break
+			}
+		}
+	}
+	if child == nil {
+		t.Fatalf("expected a child session after spawn; summary=%q sessions=%d", summary, len(d.store.List()))
+	}
+	if child.PermissionProfile != "safe-edit" {
+		t.Fatalf("child profile = %q, want safe-edit (attenuated from full-workspace request)", child.PermissionProfile)
+	}
+	if child.ApprovalMode != parent.ApprovalMode {
+		t.Fatalf("child ApprovalMode = %q, want parent session axis %q", child.ApprovalMode, parent.ApprovalMode)
+	}
+	// Product HITL remains daemon-global after spawn (always-approve here).
+	if got := d.approvalModeString(); got != approvalModeAlwaysApprove {
+		t.Fatalf("product mode drifted after spawn: %q", got)
 	}
 }
