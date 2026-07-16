@@ -4,8 +4,8 @@
  * Do not invent local tokens here — edit the brand design system, then sync.
  */
 :root,
-[data-theme='carina-dark'],
-[data-theme='dark'] {
+[data-theme="carina-dark"],
+[data-theme="dark"] {
   color-scheme: dark;
 
   /* Primitives */
@@ -43,6 +43,7 @@
   --color-success: var(--carina-spectral-green);
   --color-warning: var(--carina-copper-amber);
   --color-danger: var(--carina-event-red);
+  --color-info: var(--carina-oxygen-blue);
 
   /* Capability taxonomy */
   --color-capability-core: var(--carina-ion-cyan);
@@ -116,7 +117,8 @@
   --focus-ring: 0 0 0 2px var(--color-background-page), 0 0 0 4px var(--color-focus);
 }
 
-[data-theme="carina-light"] {
+[data-theme="carina-light"],
+[data-theme="light"] {
   color-scheme: light;
   --color-background-page: #f5f3ed;
   --color-background-surface: #fffdf8;
@@ -134,6 +136,14 @@
   --color-success: #087c58;
   --color-warning: #8c5a15;
   --color-danger: #c42e45;
+  --color-info: #1d6fae;
+
+  /* Capability taxonomy — light-tuned (dark pastels fail contrast on paper) */
+  --color-capability-core: #176f70;
+  --color-capability-agent: #6d43b8;
+  --color-capability-tool: #8c5a15;
+  --color-capability-memory: #1d6fae;
+  --color-capability-observability: #087c58;
 }
 
 @media (prefers-reduced-motion: reduce) {

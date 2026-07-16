@@ -75,7 +75,6 @@
  */
 @layer base {
   html {
-    color-scheme: dark;
     scroll-behavior: smooth;
     scroll-padding-top: var(--docs-anchor-offset, 4.5rem);
   }

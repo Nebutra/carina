@@ -11,7 +11,8 @@ import tailwindcss from '@tailwindcss/vite';
  *  2. starlight-theme.css maps Starlight --sl-* vars onto Carina tokens
  *  3. global.css wires Tailwind v4 + cascade layers
  *
- * Dark-only: forceTheme keeps a single mineral dark surface (no light toggle).
+ * Dual theme: brand semantics switch on data-theme (light/dark); Starlight's
+ * built-in ThemeProvider/ThemeSelect handle persistence + FOUC guard.
  */
 export default defineConfig({
   site: 'https://docs.carina.dev',
@@ -21,10 +22,7 @@ export default defineConfig({
       title: 'Carina',
       description:
         'Local-first AI agent runtime with policy, hash-chained audit, and transactional rollback.',
-      // Dark-only: override ThemeProvider + ThemeSelect (see components below).
       components: {
-        ThemeProvider: './src/components/ThemeProvider.astro',
-        ThemeSelect: './src/components/ThemeSelect.astro',
         Head: './src/components/Head.astro',
       },
       logo: {
@@ -65,7 +63,8 @@ export default defineConfig({
       pagefind: true,
       // Expressive Code: copy button, language label, line numbers via CSS overrides
       expressiveCode: {
-        themes: ['github-dark-default'],
+        themes: ['github-dark-default', 'github-light'],
+        themeCssSelector: (theme) => `[data-theme='${theme.type}']`,
         styleOverrides: {
           borderRadius: 'var(--radius-lg)',
           borderWidth: '1px',

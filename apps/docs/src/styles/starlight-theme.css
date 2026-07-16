@@ -8,11 +8,7 @@
  */
 
 @layer starlight.theme {
-  :root,
-  [data-theme='dark'],
-  [data-theme='carina-dark'] {
-    color-scheme: dark;
-
+  :root {
     /* Gray scale → mineral surfaces */
     --sl-color-white: var(--docs-fg);
     --sl-color-gray-1: var(--docs-fg);
@@ -89,12 +85,23 @@
     --sl-sidebar-pad-x: 0.75rem;
   }
 
-  /* Dark-only: neutralize light theme if host forces it */
+  /*
+   * Light theme — semantics already switch in brand/variables.css via
+   * [data-theme='light']; only structural differences live here:
+   * color-scheme + soft elevation shadows (dark uses border-only hierarchy).
+   */
   :root[data-theme='light'],
   [data-theme='light'] {
-    color-scheme: dark;
-    --sl-color-bg: var(--docs-bg);
-    --sl-color-text: var(--docs-fg-muted);
-    --sl-color-accent: var(--docs-accent);
+    color-scheme: light;
+
+    --sl-shadow-sm:
+      0 1px 2px rgb(24 32 35 / 0.05),
+      0 0 0 1px var(--docs-border-subtle);
+    --sl-shadow-md:
+      0 2px 8px rgb(24 32 35 / 0.07),
+      0 0 0 1px var(--docs-border-subtle);
+    --sl-shadow-lg:
+      0 12px 32px rgb(24 32 35 / 0.12),
+      0 0 0 1px var(--docs-border);
   }
 }

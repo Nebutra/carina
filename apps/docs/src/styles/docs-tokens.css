@@ -21,9 +21,11 @@
  *   fonts → brand/variables → docs-tokens → starlight-theme → global → ux
  */
 
-:root,
-[data-theme='dark'],
-[data-theme='carina-dark'] {
+/*
+ * Pure aliases onto the semantic layer — theme-agnostic by construction.
+ * Light/dark switching happens in brand/variables.css via [data-theme].
+ */
+:root {
   /* ── Surfaces ──────────────────────────────────────────────────── */
   --docs-bg: var(--color-background-page);
   --docs-bg-surface: var(--color-background-surface);
@@ -52,7 +54,7 @@
   --docs-success: var(--color-success);
   --docs-warning: var(--color-warning);
   --docs-danger: var(--color-danger);
-  --docs-info: var(--carina-oxygen-blue);
+  --docs-info: var(--color-info);
 
   /* Capability taxonomy (docs badges) */
   --docs-cap-core: var(--color-capability-core);
