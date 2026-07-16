@@ -139,9 +139,12 @@
 
   starlight-theme-select label,
   starlight-lang-select label {
+    border: 0 !important;
     border-radius: var(--docs-radius-md);
+    box-shadow: none !important;
     padding-inline: 0.3rem;
     color: var(--docs-fg-muted);
+    background: transparent !important;
     transition:
       color var(--docs-transition),
       background-color var(--docs-transition);
@@ -150,16 +153,20 @@
   starlight-theme-select label:hover,
   starlight-lang-select label:hover {
     color: var(--docs-fg);
-    background-color: color-mix(in srgb, var(--docs-bg-raised) 80%, transparent);
+    border: 0 !important;
+    background-color: color-mix(in srgb, var(--docs-fg) 4%, transparent) !important;
   }
 
   starlight-theme-select select,
   starlight-lang-select select {
+    border: 0 !important;
+    box-shadow: none !important;
     font-size: var(--text-caption);
     color: inherit;
     width: auto;
     min-width: 6.5em;
     text-overflow: unset;
+    background: transparent !important;
   }
 
   /* ── Sidebar ─────────────────────────────────────────────────────── */
