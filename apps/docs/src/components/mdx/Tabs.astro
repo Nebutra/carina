@@ -1,0 +1,129 @@
+---
+/**
+ * Client-side tab group. Children: <Tab label="...">...</Tab>
+ * Labels are read from data-label on rendered tab panels.
+ */
+import { uniqueId } from './id';
+
+const groupId = uniqueId('tabs');
+---
+
+<div class="docs-tabs" data-tabs={groupId}>
+  <div class="docs-tabs__list" role="tablist"></div>
+  <div class="docs-tabs__panels">
+    <slot />
+  </div>
+</div>
+
+<script>
+  function initTabs(root: Element) {
+    if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
+    root.dataset.ready = '1';
+
+    const list = root.querySelector('.docs-tabs__list');
+    const panels = [...root.querySelectorAll<HTMLElement>('.docs-tab')];
+    if (!list || panels.length === 0) return;
+
+    list.innerHTML = '';
+    panels.forEach((panel, i) => {
+      const id = panel.id || `${root.dataset.tabs}-panel-${i}`;
+      panel.id = id;
+      panel.setAttribute('role', 'tabpanel');
+      panel.hidden = i !== 0;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'docs-tabs__tab';
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
+      btn.setAttribute('aria-controls', id);
+      btn.id = `${id}-tab`;
+      btn.textContent = panel.dataset.label || `Tab ${i + 1}`;
+      if (i === 0) btn.classList.add('is-active');
+      btn.addEventListener('click', () => {
+        panels.forEach((p, j) => {
+          p.hidden = j !== i;
+        });
+        list.querySelectorAll<HTMLButtonElement>('.docs-tabs__tab').forEach((b, j) => {
+          const on = j === i;
+          b.classList.toggle('is-active', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+      });
+      list.appendChild(btn);
+    });
+  }
+
+  function boot() {
+    document.querySelectorAll('[data-tabs]').forEach(initTabs);
+  }
+
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>
+
+<style>
+  .docs-tabs {
+    margin: var(--spacing-6) 0;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-lg);
+    background: var(--docs-bg-surface);
+    overflow: hidden;
+  }
+
+  .docs-tabs__list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    border-bottom: 1px solid var(--docs-border-subtle);
+    background: color-mix(in srgb, var(--docs-bg) 50%, var(--docs-bg-surface));
+    padding: 0 0.35rem;
+  }
+
+  .docs-tabs__list :global(.docs-tabs__tab) {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--docs-fg-muted);
+    font-family: var(--docs-font-sans);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    padding: 0.7rem 0.85rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition:
+      color var(--docs-transition),
+      border-color var(--docs-transition);
+  }
+
+  .docs-tabs__list :global(.docs-tabs__tab:hover) {
+    color: var(--docs-fg);
+  }
+
+  .docs-tabs__list :global(.docs-tabs__tab.is-active) {
+    color: var(--docs-fg);
+    border-bottom-color: var(--docs-accent);
+  }
+
+  .docs-tabs__list :global(.docs-tabs__tab:focus-visible) {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: -2px;
+  }
+
+  .docs-tabs__panels {
+    padding: var(--spacing-4) var(--spacing-5);
+  }
+
+  .docs-tabs__panels :global(.docs-tab[hidden]) {
+    display: none;
+  }
+
+  .docs-tabs__panels :global(.docs-tab > :first-child) {
+    margin-top: 0;
+  }
+
+  .docs-tabs__panels :global(.docs-tab > :last-child) {
+    margin-bottom: 0;
+  }
+</style>

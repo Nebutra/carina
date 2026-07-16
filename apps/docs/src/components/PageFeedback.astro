@@ -1,0 +1,124 @@
+---
+/**
+ * "Was this page helpful?" — local-only feedback (no backend).
+ * Stores a one-shot vote in sessionStorage per path.
+ */
+const path = Astro.url.pathname;
+const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
+---
+
+{
+  !isSplash && (
+    <div class="docs-feedback" data-feedback-path={path}>
+      <p class="docs-feedback__q">Was this page helpful?</p>
+      <div class="docs-feedback__actions">
+        <button type="button" data-feedback="yes" class="docs-feedback__btn">
+          Yes
+        </button>
+        <button type="button" data-feedback="no" class="docs-feedback__btn">
+          No
+        </button>
+      </div>
+      <p class="docs-feedback__thanks" hidden>
+        Thanks for the feedback.
+      </p>
+    </div>
+  )
+}
+
+<script>
+  function initFeedback(root: Element) {
+    if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
+    root.dataset.ready = '1';
+    const path = root.dataset.feedbackPath || location.pathname;
+    const key = `docs-feedback:${path}`;
+    const thanks = root.querySelector<HTMLElement>('.docs-feedback__thanks');
+    const actions = root.querySelector<HTMLElement>('.docs-feedback__actions');
+    const q = root.querySelector<HTMLElement>('.docs-feedback__q');
+
+    const showThanks = () => {
+      if (thanks) thanks.hidden = false;
+      if (actions) actions.hidden = true;
+      if (q) q.hidden = true;
+    };
+
+    if (sessionStorage.getItem(key)) {
+      showThanks();
+      return;
+    }
+
+    root.querySelectorAll<HTMLButtonElement>('[data-feedback]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        sessionStorage.setItem(key, btn.dataset.feedback || 'yes');
+        showThanks();
+      });
+    });
+  }
+
+  function boot() {
+    document.querySelectorAll('[data-feedback-path]').forEach(initFeedback);
+  }
+
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>
+
+<style>
+  .docs-feedback {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-3);
+    margin-top: var(--spacing-10);
+    padding: var(--spacing-4) var(--spacing-5);
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-lg);
+    background: var(--docs-bg-surface);
+  }
+
+  .docs-feedback__q {
+    margin: 0;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--docs-fg);
+  }
+
+  .docs-feedback__actions {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  .docs-feedback__btn {
+    appearance: none;
+    border: 1px solid var(--docs-border-subtle);
+    background: var(--docs-bg);
+    color: var(--docs-fg-muted);
+    font-family: var(--docs-font-sans);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    padding: 0.35rem 0.85rem;
+    border-radius: var(--docs-radius-full);
+    cursor: pointer;
+    transition:
+      color var(--docs-transition),
+      border-color var(--docs-transition),
+      background-color var(--docs-transition);
+  }
+
+  .docs-feedback__btn:hover {
+    color: var(--docs-fg);
+    border-color: var(--docs-border);
+    background: var(--docs-bg-raised);
+  }
+
+  .docs-feedback__btn:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  .docs-feedback__thanks {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--docs-fg-muted);
+  }
+</style>

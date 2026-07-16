@@ -1,0 +1,63 @@
+---
+/**
+ * Numbered step list (Mintlify Steps).
+ * Children should be <Step title="...">...</Step>
+ */
+---
+
+<ol class="docs-steps">
+  <slot />
+</ol>
+
+<style>
+  .docs-steps {
+    list-style: none;
+    margin: var(--spacing-6) 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    counter-reset: docs-step;
+  }
+
+  .docs-steps :global(.docs-step) {
+    position: relative;
+    padding: 0 0 var(--spacing-6) 2.25rem;
+    counter-increment: docs-step;
+  }
+
+  .docs-steps :global(.docs-step:last-child) {
+    padding-bottom: 0;
+  }
+
+  /* Vertical rail */
+  .docs-steps :global(.docs-step:not(:last-child)::before) {
+    content: '';
+    position: absolute;
+    left: 0.7rem;
+    top: 1.6rem;
+    bottom: 0;
+    width: 1px;
+    background: var(--docs-border-subtle);
+  }
+
+  .docs-steps :global(.docs-step::after) {
+    content: counter(docs-step);
+    position: absolute;
+    left: 0;
+    top: 0.1rem;
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: var(--docs-radius-full);
+    background: var(--docs-bg-selected);
+    border: 1px solid color-mix(in srgb, var(--docs-accent) 40%, var(--docs-border));
+    color: var(--docs-accent);
+    font-size: 0.7rem;
+    font-weight: 600;
+    font-family: var(--docs-font-mono);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+</style>

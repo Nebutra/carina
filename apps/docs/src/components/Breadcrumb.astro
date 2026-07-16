@@ -1,0 +1,101 @@
+---
+/**
+ * Path breadcrumb under page title (Mintlify-style).
+ * Built from the current docs entry id + locale prefix.
+ */
+const { entry, locale } = Astro.locals.starlightRoute;
+const id = entry.id; // e.g. "concepts/runtime" or "zh-cn/concepts/runtime"
+const isSplash = entry.data.template === 'splash';
+
+const parts = id.split('/').filter(Boolean);
+// Drop locale prefix segment when present
+const localeKeys = ['zh-cn'];
+const pathParts =
+  parts[0] && localeKeys.includes(parts[0]) ? parts.slice(1) : parts;
+
+const homeHref = locale === 'root' || !locale ? '/' : `/${locale}/`;
+const crumbs: { label: string; href?: string }[] = [
+  { label: 'Docs', href: homeHref },
+];
+
+let acc = locale === 'root' || !locale ? '' : `/${locale}`;
+for (let i = 0; i < pathParts.length; i++) {
+  const seg = pathParts[i]!;
+  acc += `/${seg}`;
+  const isLast = i === pathParts.length - 1;
+  const label = seg
+    .replace(/-/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+  crumbs.push({
+    label: isLast ? entry.data.title : label,
+    href: isLast ? undefined : `${acc}/`,
+  });
+}
+---
+
+{
+  !isSplash && pathParts.length > 0 && (
+    <nav class="docs-breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        {crumbs.map((c, i) => (
+          <li>
+            {i > 0 && (
+              <span class="docs-breadcrumb__sep" aria-hidden="true">
+                /
+              </span>
+            )}
+            {c.href ? <a href={c.href}>{c.label}</a> : <span aria-current="page">{c.label}</span>}
+          </li>
+        ))}
+      </ol>
+    </nav>
+  )
+}
+
+<style>
+  .docs-breadcrumb {
+    margin: 0 0 var(--spacing-3);
+  }
+
+  .docs-breadcrumb ol {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.15rem 0;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 0.8125rem;
+    color: var(--docs-fg-subtle);
+  }
+
+  .docs-breadcrumb li {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .docs-breadcrumb a {
+    color: var(--docs-fg-muted);
+    text-decoration: none;
+    transition: color var(--docs-transition);
+  }
+
+  .docs-breadcrumb a:hover {
+    color: var(--docs-accent);
+  }
+
+  .docs-breadcrumb span[aria-current='page'] {
+    color: var(--docs-fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 28ch;
+  }
+
+  .docs-breadcrumb__sep {
+    margin-inline: 0.4rem;
+    color: var(--docs-fg-subtle);
+    user-select: none;
+  }
+</style>

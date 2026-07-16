@@ -1,0 +1,44 @@
+---
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<li class="docs-step">
+  <h3 class="docs-step__title">{title}</h3>
+  <div class="docs-step__body">
+    <slot />
+  </div>
+</li>
+
+<style>
+  .docs-step__title {
+    margin: 0 0 var(--spacing-2);
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--docs-fg);
+    letter-spacing: -0.01em;
+    line-height: 1.35;
+  }
+
+  .docs-step__body {
+    color: var(--docs-fg-muted);
+    font-size: 0.9375rem;
+    line-height: 1.65;
+  }
+
+  .docs-step__body :global(> :first-child) {
+    margin-top: 0;
+  }
+
+  .docs-step__body :global(> :last-child) {
+    margin-bottom: 0;
+  }
+
+  .docs-step__body :global(pre),
+  .docs-step__body :global(.expressive-code) {
+    margin-block: var(--spacing-3);
+  }
+</style>

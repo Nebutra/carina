@@ -1,0 +1,95 @@
+---
+interface Props {
+  title: string;
+  href?: string;
+  icon?: string;
+}
+
+const { title, href, icon } = Astro.props;
+const Tag = href ? 'a' : 'div';
+---
+
+<Tag class="docs-card" href={href}>
+  {
+    icon && (
+      <span class="docs-card__icon" aria-hidden="true">
+        {icon}
+      </span>
+    )
+  }
+  <span class="docs-card__title">{title}</span>
+  <div class="docs-card__body">
+    <slot />
+  </div>
+  {href && <span class="docs-card__arrow" aria-hidden="true">→</span>}
+</Tag>
+
+<style>
+  .docs-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: var(--spacing-4) var(--spacing-5);
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-lg);
+    background: var(--docs-card-bg);
+    text-decoration: none;
+    color: inherit;
+    transition:
+      border-color var(--docs-transition),
+      background-color var(--docs-transition),
+      box-shadow var(--docs-transition);
+  }
+
+  a.docs-card:hover {
+    border-color: var(--docs-card-hover-border);
+    background: var(--docs-bg-raised);
+    box-shadow: var(--docs-elev-1);
+  }
+
+  a.docs-card:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  .docs-card__icon {
+    font-size: 1.1rem;
+    line-height: 1;
+    margin-bottom: 0.15rem;
+  }
+
+  .docs-card__title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--docs-fg);
+    letter-spacing: -0.01em;
+  }
+
+  .docs-card__body {
+    font-size: 0.8125rem;
+    line-height: 1.55;
+    color: var(--docs-fg-muted);
+    flex: 1;
+  }
+
+  .docs-card__body :global(p) {
+    margin: 0;
+  }
+
+  .docs-card__arrow {
+    position: absolute;
+    top: var(--spacing-4);
+    inset-inline-end: var(--spacing-4);
+    color: var(--docs-fg-subtle);
+    font-size: 0.9rem;
+    transition:
+      color var(--docs-transition),
+      transform var(--docs-transition);
+  }
+
+  a.docs-card:hover .docs-card__arrow {
+    color: var(--docs-accent);
+    transform: translateX(2px);
+  }
+</style>

@@ -1,0 +1,118 @@
+---
+/**
+ * Static terminal mock for landing — visual product signal without runtime deps.
+ */
+interface Props {
+  title?: string;
+  lines?: { tone?: 'muted' | 'accent' | 'ok' | 'default'; text: string }[];
+}
+
+const {
+  title = 'carina — session',
+  lines = [
+    { tone: 'muted', text: '$ carina daemon start' },
+    { tone: 'ok', text: '✓ daemon listening on ~/.carina/daemon.sock' },
+    { tone: 'muted', text: '$ carina run "fix the failing test"' },
+    { tone: 'default', text: 'session  sess_01J…  profile  safe-edit' },
+    { tone: 'accent', text: '→ FileRead  src/parser.go          allowed' },
+    { tone: 'accent', text: '→ PatchApply parser.go:142          approval?' },
+    { tone: 'ok', text: '✓ patch applied  ·  audit chained  ·  rollback ready' },
+  ],
+} = Astro.props;
+---
+
+<figure class="term">
+  <div class="term__chrome">
+    <span class="term__dots" aria-hidden="true">
+      <i></i><i></i><i></i>
+    </span>
+    <span class="term__title">{title}</span>
+  </div>
+  <pre class="term__body" tabindex="0"><code>{
+    lines.map((line) => (
+      <span class:list={['term__line', line.tone && `term__line--${line.tone}`]}>
+        {line.text}
+        {'\n'}
+      </span>
+    ))
+  }</code></pre>
+</figure>
+
+<style>
+  .term {
+    margin: 0;
+    border: 1px solid var(--carina-border-subtle, var(--docs-border-subtle));
+    border-radius: var(--docs-radius-xl);
+    background: var(--carina-surface, var(--docs-bg-raised));
+    overflow: hidden;
+    box-shadow: var(--docs-elev-2);
+    text-align: left;
+  }
+
+  .term__chrome {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.85rem;
+    border-bottom: 1px solid var(--carina-border-subtle, var(--docs-border-subtle));
+    background: var(--carina-surface-raised, var(--docs-bg-surface));
+  }
+
+  .term__dots {
+    display: inline-flex;
+    gap: 0.35rem;
+  }
+
+  .term__dots i {
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 999px;
+    background: var(--carina-border, #344144);
+    display: block;
+  }
+
+  .term__dots i:nth-child(1) {
+    background: color-mix(in srgb, var(--docs-danger) 75%, #444);
+  }
+  .term__dots i:nth-child(2) {
+    background: color-mix(in srgb, var(--docs-warning) 75%, #444);
+  }
+  .term__dots i:nth-child(3) {
+    background: color-mix(in srgb, var(--docs-success) 75%, #444);
+  }
+
+  .term__title {
+    font-family: var(--docs-font-mono);
+    font-size: 0.7rem;
+    color: var(--carina-dust, var(--docs-fg-muted));
+    letter-spacing: 0.02em;
+  }
+
+  .term__body {
+    margin: 0;
+    padding: 1rem 1.1rem 1.15rem;
+    font-family: var(--docs-font-mono);
+    font-size: 0.78rem;
+    line-height: 1.65;
+    color: var(--carina-starlight, var(--docs-fg));
+    overflow-x: auto;
+    tab-size: 2;
+  }
+
+  .term__line {
+    display: block;
+    white-space: pre;
+  }
+
+  .term__line--muted {
+    color: var(--carina-dust, var(--docs-fg-muted));
+  }
+
+  .term__line--accent {
+    color: var(--carina-ion-cyan, var(--docs-accent));
+  }
+
+  .term__line--ok {
+    color: var(--carina-spectral-green, var(--docs-success));
+  }
+</style>

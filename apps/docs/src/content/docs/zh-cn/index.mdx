@@ -76,19 +76,7 @@ import QuickStart from '../../../components/landing/QuickStart.astro';
     '策略门控工具 —— 副作用发生前先审批',
     '事务化补丁 —— 坏的 Agent 修改可回滚',
   ]}
-  code={`# 安装
-curl -fsSL https://get.carina.dev | sh
-
-# 启动本地 daemon
-carina daemon start
-
-# 在当前仓库打开会话
-carina session start --cwd .
-
-# 查看最近一轮审计
-carina audit tail --last 1`}
-  lang="bash"
-  title="quickstart.sh"
+  title="carina — session"
 />
 
 <QuickStart

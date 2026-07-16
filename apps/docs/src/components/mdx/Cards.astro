@@ -1,0 +1,38 @@
+---
+/**
+ * Responsive card grid. Children: <Card title="..." href="...">...</Card>
+ */
+interface Props {
+  cols?: 2 | 3;
+}
+
+const { cols = 2 } = Astro.props;
+---
+
+<div class="docs-cards" data-cols={cols}>
+  <slot />
+</div>
+
+<style>
+  .docs-cards {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-3);
+    margin: var(--spacing-6) 0;
+  }
+
+  @media (min-width: 640px) {
+    .docs-cards[data-cols='2'] {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .docs-cards[data-cols='3'] {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (min-width: 960px) {
+    .docs-cards[data-cols='3'] {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+</style>

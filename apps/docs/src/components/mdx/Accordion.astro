@@ -1,0 +1,85 @@
+---
+/**
+ * Accordion group. Children: <AccordionItem title="...">...</AccordionItem>
+ */
+---
+
+<div class="docs-accordion">
+  <slot />
+</div>
+
+<style>
+  .docs-accordion {
+    margin: var(--spacing-6) 0;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-lg);
+    overflow: hidden;
+    background: var(--docs-bg-surface);
+  }
+
+  .docs-accordion :global(details) {
+    border-bottom: 1px solid var(--docs-border-subtle);
+  }
+
+  .docs-accordion :global(details:last-child) {
+    border-bottom: 0;
+  }
+
+  .docs-accordion :global(summary) {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-3);
+    padding: 0.85rem 1rem;
+    font-size: 0.9375rem;
+    font-weight: 550;
+    color: var(--docs-fg);
+    transition: background-color var(--docs-transition);
+  }
+
+  .docs-accordion :global(summary::-webkit-details-marker) {
+    display: none;
+  }
+
+  .docs-accordion :global(summary:hover) {
+    background: color-mix(in srgb, var(--docs-bg-raised) 70%, transparent);
+  }
+
+  .docs-accordion :global(summary:focus-visible) {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: -2px;
+  }
+
+  .docs-accordion :global(summary::after) {
+    content: '';
+    width: 0.45rem;
+    height: 0.45rem;
+    border-inline-end: 1.5px solid var(--docs-fg-muted);
+    border-bottom: 1.5px solid var(--docs-fg-muted);
+    transform: rotate(45deg);
+    transition: transform var(--docs-transition);
+    flex-shrink: 0;
+  }
+
+  .docs-accordion :global(details[open] summary::after) {
+    transform: rotate(225deg);
+    margin-top: 0.2rem;
+  }
+
+  .docs-accordion :global(.docs-accordion__body) {
+    padding: 0 1rem 1rem;
+    color: var(--docs-fg-muted);
+    font-size: 0.9375rem;
+    line-height: 1.65;
+  }
+
+  .docs-accordion :global(.docs-accordion__body > :first-child) {
+    margin-top: 0;
+  }
+
+  .docs-accordion :global(.docs-accordion__body > :last-child) {
+    margin-bottom: 0;
+  }
+</style>

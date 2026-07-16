@@ -1,0 +1,15 @@
+---
+interface Props {
+  title: string;
+  open?: boolean;
+}
+
+const { title, open = false } = Astro.props;
+---
+
+<details open={open || undefined}>
+  <summary>{title}</summary>
+  <div class="docs-accordion__body">
+    <slot />
+  </div>
+</details>

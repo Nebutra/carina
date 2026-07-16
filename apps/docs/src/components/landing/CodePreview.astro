@@ -1,11 +1,12 @@
 ---
-import CodeBlock from '../ui/CodeBlock.astro';
+import TerminalFrame from './TerminalFrame.astro';
 
 interface Props {
   heading?: string;
   description?: string;
   bullets?: string[];
-  code: string;
+  /** When set, renders a plain code block path; otherwise TerminalFrame mock. */
+  code?: string;
   lang?: string;
   title?: string;
 }
@@ -18,9 +19,7 @@ const {
     'Policy-gated tools — approvals before side effects',
     'Transactional patches — roll back bad agent edits',
   ],
-  code,
-  lang = 'bash',
-  title = 'terminal',
+  title = 'carina — session',
 } = Astro.props;
 ---
 
@@ -34,7 +33,7 @@ const {
       </ul>
     </div>
     <div class="code-preview__panel">
-      <CodeBlock code={code} lang={lang} title={title} showLineNumbers={false} />
+      <TerminalFrame title={title} />
     </div>
   </div>
 </section>
@@ -112,7 +111,7 @@ const {
     background: var(--docs-accent);
   }
 
-  .code-preview__panel :global(.code-block) {
+  .code-preview__panel :global(.term) {
     margin: 0;
   }
 </style>

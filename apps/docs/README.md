@@ -152,7 +152,20 @@ Starlight’s built-in **Pagefind** search is enabled. It indexes at build time 
 | `CodeBlock` | `src/components/ui/CodeBlock.astro` | Copy + lang label + optional line numbers |
 | `VersionSelector` | `src/components/ui/VersionSelector.astro` | Placeholder version picker |
 | `ApiReference` | `src/components/layouts/ApiReference.astro` | 3-column API template |
-| Landing set | `src/components/landing/*` | Mintlify-style homepage |
+| `Steps` / `Step` | `src/components/mdx/` | Numbered procedure lists |
+| `Tabs` / `Tab` | `src/components/mdx/` | Client tab panels |
+| `Accordion` / `AccordionItem` | `src/components/mdx/` | FAQ-style disclosure |
+| `Cards` / `Card` | `src/components/mdx/` | Link/content card grids |
+| `Breadcrumb` | `src/components/Breadcrumb.astro` | Path crumbs under page title |
+| `PageFeedback` | `src/components/PageFeedback.astro` | “Was this helpful?” (sessionStorage) |
+| Landing set | `src/components/landing/*` | Hero, features, terminal mock, quickstart |
+
+Import MDX components at the top of a page, for example:
+
+```mdx
+import Steps from '../../../components/mdx/Steps.astro';
+import Step from '../../../components/mdx/Step.astro';
+```
 
 ## Performance checklist
 

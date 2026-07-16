@@ -7,6 +7,10 @@ sidebar:
 
 import Callout from '../../../components/ui/Callout.astro';
 import VersionSelector from '../../../components/ui/VersionSelector.astro';
+import Tabs from '../../../components/mdx/Tabs.astro';
+import Tab from '../../../components/mdx/Tab.astro';
+import Cards from '../../../components/mdx/Cards.astro';
+import Card from '../../../components/mdx/Card.astro';
 
 
 <div style="margin: 0 0 1.25rem">
@@ -96,21 +100,31 @@ The `/v1` facade is **agent-first**, not provider-first. `model` selects a Carin
 
 ## Example
 
-```json title="session.create"
-// request
-{"jsonrpc":"2.0","id":1,"method":"session.create",
- "params":{"workspace_root":"/repo","profile":"safe-edit"}}
+<Tabs>
+  <Tab label="JSON-RPC">
+    ```json title="session.create"
+    {"jsonrpc":"2.0","id":1,"method":"session.create",
+     "params":{"workspace_root":"/repo","profile":"safe-edit"}}
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```ts title="client.ts"
+    import { CarinaClient } from '@nebutra/carina-sdk';
 
-// response
-{"jsonrpc":"2.0","id":1,
- "result":{"session_id":"sess_01J...","workspace_id":"ws_01J...","profile":"safe-edit"}}
-
-// event notification
-{"jsonrpc":"2.0","method":"event",
- "params":{"event_id":"evt_...","session_id":"sess_...","type":"CommandStarted",
-           "timestamp":"2026-07-03T12:00:00Z","payload":{"command":"npm test"},
-           "permission_decision_id":"perm_..."}}
-```
+    const client = await CarinaClient.connect();
+    const session = await client.sessions.create({
+      workspace_root: process.cwd(),
+      profile: 'safe-edit',
+    });
+    ```
+  </Tab>
+  <Tab label="curl / CLI">
+    ```bash title="terminal"
+    carina session start --cwd . --profile safe-edit
+    carina gateway hello
+    ```
+  </Tab>
+</Tabs>
 
 <Callout variant="note">
   Full method catalogs and schemas live in `protocol/`. This site summarizes the stable product surface.
@@ -118,5 +132,11 @@ The `/v1` facade is **agent-first**, not provider-first. `model` selects a Carin
 
 ## Next
 
-- [Sessions](/api/sessions/)
-- [JSON-RPC reference](/api/json-rpc/)
+<Cards cols={2}>
+  <Card title="Sessions" href="/api/sessions/">
+    Create, stream, fork, goals, and checkpoints.
+  </Card>
+  <Card title="JSON-RPC reference" href="/api/json-rpc/">
+    Method-oriented reference for the local control plane.
+  </Card>
+</Cards>

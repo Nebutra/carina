@@ -1,70 +1,19 @@
 ---
 /**
- * PageTitle — Mintlify-style title block.
- *
- * Splash/landing pages render nothing: Starlight always mounts PageTitle in
- * its own ContentPanel above the markdown body, which produced a large orphan
- * "Carina" H1 above Hero. Frontmatter `title` still feeds <title>, sidebar,
- * and SEO via Head; Hero supplies the visible H1 for the landing outline.
- *
- * Doc pages render the frontmatter title plus its `description` as a muted
- * subtitle, so every page opens with the title/summary pair instead of a
- * bare heading.
+ * Doc pages: breadcrumb + default title.
+ * Splash/landing: render nothing (Hero owns hierarchy).
  */
-const { entry, sidebar } = Astro.locals.starlightRoute;
-const isSplash = entry.data.template === 'splash';
-const description = entry.data.description;
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+import Breadcrumb from './Breadcrumb.astro';
 
-// Eyebrow: label of the sidebar group containing the current page
-type SidebarEntry =
-  | { type: 'link'; href: string; label: string; isCurrent: boolean }
-  | { type: 'group'; label: string; entries: SidebarEntry[] };
-
-function containsCurrent(entries: SidebarEntry[]): boolean {
-  return entries.some((e) =>
-    e.type === 'link' ? e.isCurrent : containsCurrent(e.entries),
-  );
-}
-
-const currentGroup = (sidebar as SidebarEntry[]).find(
-  (e) => e.type === 'group' && containsCurrent(e.entries),
-);
-const eyebrow = currentGroup?.label;
+const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
 ---
 
 {
   isSplash ? null : (
-    <div class="page-title">
-      {eyebrow && <p class="page-title__eyebrow">{eyebrow}</p>}
-      <h1 id="_top">{entry.data.title}</h1>
-      {description && <p class="page-title__subtitle">{description}</p>}
-    </div>
+    <>
+      <Breadcrumb />
+      <Default />
+    </>
   )
 }
-
-<style>
-  .page-title__eyebrow {
-    margin: 0 0 var(--spacing-2);
-    font-size: var(--text-caption);
-    font-weight: var(--font-weight-semibold);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--docs-accent);
-  }
-
-  .page-title h1 {
-    margin: 0;
-    font-size: clamp(1.75rem, 3vw, 2.1rem);
-    font-weight: var(--font-weight-semibold);
-    letter-spacing: -0.025em;
-    line-height: 1.15;
-    color: var(--docs-fg);
-  }
-
-  .page-title__subtitle {
-    margin: var(--spacing-3) 0 0;
-    font-size: 1.02rem;
-    line-height: 1.6;
-    color: var(--docs-fg-muted);
-  }
-</style>

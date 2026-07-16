@@ -27,8 +27,13 @@ export default defineConfig({
         // Default header row + Mintlify-style section tabs strip
         Header: './src/components/Header.astro',
         // Splash/landing: hide default title (Hero owns hierarchy)
+        // Doc pages: breadcrumb above title
         PageTitle: './src/components/PageTitle.astro',
+        // Feedback strip above meta + pagination
+        Footer: './src/components/Footer.astro',
       },
+      // Show "Last updated" from git history when available
+      lastUpdated: true,
       logo: {
         // Wordmark ink is baked into the SVG root color; ship one per theme.
         light: './src/assets/carina-horizontal-brand.svg',

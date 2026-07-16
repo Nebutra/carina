@@ -72,21 +72,7 @@ import QuickStart from '../../components/landing/QuickStart.astro';
   ]}
 />
 
-<CodePreview
-  code={`# Install
-curl -fsSL https://get.carina.dev | sh
-
-# Start the local daemon
-carina daemon start
-
-# Open an interactive session on this repo
-carina session start --cwd .
-
-# Inspect the audit trail for the last turn
-carina audit tail --last 1`}
-  lang="bash"
-  title="quickstart.sh"
-/>
+<CodePreview title="carina — governed session" />
 
 <QuickStart
   cards={[
