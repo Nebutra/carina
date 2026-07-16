@@ -14,7 +14,13 @@
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
 
-@theme {
+/*
+ * `inline` is load-bearing: without it Tailwind re-emits these names onto
+ * `:root, :host` after brand/variables.css, and self-references like
+ * `--color-accent: var(--color-accent)` become cycles that invalidate the
+ * brand token everywhere. `inline` resolves values into utilities only.
+ */
+@theme inline {
   /* Surfaces */
   --color-background: var(--color-background-page);
   --color-surface: var(--color-background-surface);

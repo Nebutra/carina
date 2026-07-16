@@ -5,10 +5,13 @@
  * Never hardcode hex here. Swap design system by syncing brand/variables.css.
  *
  * See docs-tokens.css for the public component API.
+ *
+ * Deliberately UNLAYERED and loaded after global.css (Tailwind): unlayered
+ * declarations beat starlight-tailwind's default palette (indigo accent)
+ * regardless of layer order.
  */
 
-@layer starlight.theme {
-  :root {
+:root {
     /* Gray scale → mineral surfaces */
     --sl-color-white: var(--docs-fg);
     --sl-color-gray-1: var(--docs-fg);
@@ -108,4 +111,3 @@
       0 12px 32px rgb(24 32 35 / 0.12),
       0 0 0 1px var(--docs-border);
   }
-}
