@@ -1,0 +1,43 @@
+---
+title: Traces & audit
+description: Event log, item stream, cost attribution, and hash-chain verification.
+sidebar:
+  order: 1
+---
+
+import CategoryTag from '../../../components/ui/CategoryTag.astro';
+
+# Traces & audit
+
+<CategoryTag category="observability" label="Observability" />
+
+## What you can inspect
+
+| Signal | Command / API |
+| --- | --- |
+| Replay session | `carina audit SESSION` / `session.replay` |
+| Chain integrity | `carina audit verify SESSION` |
+| Normalized items | `session.items` |
+| Governance view | `session.review` |
+| Live stream | `session.events.stream` |
+| Cost | `carina cost` / telemetry APIs |
+| Turn net diff | patch list + item stream |
+| Export | `audit.export` (`jsonl` \| `sqlite`) |
+
+## Why hash chains matter
+
+Logs that can be silently rewritten are not evidence. Carina's chain makes post-hoc tampering visible so security reviews and incident response have a trustworthy timeline.
+
+## Event model
+
+- 36 event types; `protocol/events/events.json` is authoritative
+- Side-effect events reference `permission_decision_id`
+- Media: only content-hash `MediaRef`s in logs — never raw bytes
+
+## Streaming clients
+
+Clients subscribe to typed events (status, tool start/end, approvals, cost deltas) rather than scraping terminal output. SDKs and the TUI consume the same streams.
+
+## Channel reconciliation
+
+After a crash, ambiguous channel deliveries (`effect_started` / `effect_applied`) appear in `channel.event.pending`. Operators must explicitly `channel.event.reconcile` as `executed` or `not_executed` — Carina never chooses automatically.

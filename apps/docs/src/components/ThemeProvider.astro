@@ -1,0 +1,19 @@
+---
+/**
+ * Dark-only ThemeProvider.
+ * Forces data-theme="dark" and suppresses light-mode FOUC.
+ * Replaces Starlight's default system-preference ThemeProvider.
+ */
+---
+
+<script is:inline>
+	window.StarlightThemeProvider = (() => {
+		document.documentElement.dataset.theme = 'dark';
+		document.documentElement.style.colorScheme = 'dark';
+		return {
+			updatePickers() {
+				/* no-op: theme switching disabled */
+			},
+		};
+	})();
+</script>

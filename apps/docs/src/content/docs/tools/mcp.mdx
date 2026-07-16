@@ -1,0 +1,47 @@
+---
+title: MCP integrations
+description: Governed MCP client/server without leaking unconstrained authority.
+sidebar:
+  order: 2
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# MCP integrations
+
+Carina includes a **governed MCP manager** (`go/mcp`) and server surface (`go/mcpserver`). External tools still pass capability policy.
+
+## Client mode
+
+Register MCP servers in config; their tools appear inside the session subject to the active profile. Agent actions:
+
+```json
+`{"tool":"mcp", ...}`
+`{"tool":"mcp_find", ...}`
+```
+
+## Inventory (operator)
+
+`mcp.inventory` returns public MCP server names, tool names, prompt counts, and connection health.
+
+- `/mcp verbose` can show public tool descriptions
+- Process commands, arguments, environment variables, input schemas, and private managed servers are **never** returned
+
+## Headroom boundary
+
+Headroom is integrated as a managed, private MCP transport behind the **context-engine boundary** when a bundled or explicitly configured Headroom binary is available. It is:
+
+- Not listed in the agent's public MCP tool list
+- Not callable through the agent `mcp` action surface
+
+## Server mode
+
+Expose a curated tool set to external MCP hosts. Prefer least privilege — do not re-export the full local kernel.
+
+<Callout variant="warning">
+  An MCP server is an attack surface. Bind carefully, authenticate where available, and keep profiles narrow.
+</Callout>
+
+## Plugin model (WASM)
+
+WASM plugins (`carina-plugin-runtime`) start with zero permissions and declare capabilities in manifests. Related: `plugin.inspect`, `plugin.run` (optional `signature_base64`).

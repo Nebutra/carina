@@ -1,0 +1,82 @@
+---
+title: Memory overview
+description: Governed local memory, MemoryWrite capability, and optional HMS projection.
+sidebar:
+  order: 1
+---
+
+import CategoryTag from '../../../components/ui/CategoryTag.astro';
+import Callout from '../../../components/ui/Callout.astro';
+
+# Memory overview
+
+<CategoryTag category="memory" label="Memory" />
+
+Carina's local long-term memory belongs to the **control plane**, not the prompt builder. Memory mutation is a capability-mediated side effect (`MemoryWrite`).
+
+Source: `docs/architecture.md` (Governed memory), `docs/rpc-api.md` (Memory API).
+
+## Targets
+
+| Target | Purpose |
+| --- | --- |
+| `memory` | Project / agent notes |
+| `user` | Profile facts (scoped by Nebutra identity when available) |
+
+The daemon stores bounded entries under its state directory. Each agent run receives a **frozen memory snapshot** in the prompt — writes during that run persist for future work without changing the current run's stable prefix.
+
+## Write path
+
+1. Daemon builds a resource string from target, scope, action, operation count, and **content hash**
+2. Requests `MemoryWrite` from the Rust kernel
+3. Built-in policy defaults to `requires_approval`
+4. On allow: apply add/replace/remove/batch atomically after local content scanning and size checks
+5. Audit records decision + hash metadata — **not raw memory text**
+
+```bash
+# conceptual RPC
+memory.list / memory.context / memory.status / memory.write
+```
+
+If approval is required, `task.action.approve` applies the pending write; `task.action.deny` discards it.
+
+## Identity scoping (`target=user`)
+
+Resolution order:
+
+1. `CARINA_NEBUTRA_IDENTITY_JSON`
+2. Claims in `CARINA_NEBUTRA_TOKEN`
+3. `CARINA_NEBUTRA_USER_ID`
+4. Local fallback profile
+
+Token claims choose a local memory scope only — they do **not** grant Gateway, kernel, or filesystem authority.
+
+## External recall (HMS)
+
+Optional HMS provider modes: `off`, `hms-shadow`, `hms-hybrid`.
+
+- Shadow evidence does not enter prompts
+- Hybrid evidence is frozen into the task checkpoint as a fenced, low-trust tool observation
+- HMS never changes local write/delete authority
+
+### Projection
+
+HMS projection is a separate, **disabled-by-default** setting. After local commit, a durable outbox reconciles replace updates and delete tombstones. Projection independently requires `NetworkAccess` and `MemoryExternalize` — `MemoryWrite` approval is **not** sufficient.
+
+- `memory.projection.authorize` / `retry` / `reseed`
+- Projection failure never rolls back canonical local memory
+
+See `docs/integrations/hms-memory.md`.
+
+## Layers at a glance
+
+| Layer | Lifetime | Notes |
+| --- | --- | --- |
+| Turn context | Single turn | Model-visible working set |
+| Session history | Session | Conversation + tool outcomes |
+| Governed memory | Durable local | Capability-gated |
+| Audit store | Durable | Hash-chained, not model-writable |
+
+<Callout variant="tip">
+  Cost and token accounting remain visible via `carina cost`. Retrieval must never bypass file-read policy.
+</Callout>

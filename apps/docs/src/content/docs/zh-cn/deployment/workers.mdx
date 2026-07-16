@@ -1,0 +1,24 @@
+---
+title: Workers
+description: 基于租约的远程 worker、生产配置与排水升级。
+---
+
+# Workers
+
+`carina-worker` 是**租约客户端**。daemon 仍是调度与策略权威；算子提供的 executor 负责工作区与沙箱。
+
+源文档：`docs/deployment/remote-workers.md`。
+
+## 生产要点
+
+1. 安装发布包 + 经审核的 executor  
+2. `/etc/carina/worker.env` 配置 Gateway、executor、池标签  
+3. token 文件 `0600`，经 systemd credentials 注入，永不进环境变量  
+4. `packaging/systemd/carina-worker.service`
+
+```bash
+carina worker list
+systemctl stop carina-worker   # 排水后升级
+```
+
+远程优先 `wss://` Gateway；直接 TCP 仅限 loopback。

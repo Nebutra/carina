@@ -1,0 +1,48 @@
+---
+title: FAQ
+description: Product boundaries, security, offline use, and docs site tokens.
+sidebar:
+  order: 3
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# FAQ
+
+## Is Carina a hosted cloud agent?
+
+No. Carina is **local-first**. Nebutra Cloud identity/sync may wrap it, but policy and tool execution stay under local authority.
+
+## Does Carina replace Git?
+
+No. Patch rollback recovers agent edits inside the runtime. Git remains the collaboration and history system of record.
+
+## Is Carina a full editor product?
+
+No. It can sit behind an IDE, but it focuses on **runtime governance** — sessions, policy, audit, rollback, workers, embedding.
+
+## Can I run fully offline?
+
+Yes for the runtime itself. Model providers and package installs may still need network depending on your setup. Use `--offline` to avoid auto reasoner wiring.
+
+## How are secrets handled?
+
+Agents never read the environment directly. Secrets use a handle-based broker; logs never contain secret plaintext; command output is redacted against known values.
+
+## How do I report a security issue?
+
+See `SECURITY.md` in the repository. Do not open public issues for undisclosed vulnerabilities.
+
+## Where is the design system for this site?
+
+Brand authority: `docs/brand/design-system/`.  
+Docs package sync: `pnpm sync-brand` from `apps/docs`.  
+Public component API: `--docs-*` tokens in `src/styles/docs-tokens.css`.
+
+## Where is the full RPC surface?
+
+`protocol/jsonrpc/methods.json` is authoritative. Narrative: `docs/rpc-api.md` and [JSON-RPC reference](/api/json-rpc/).
+
+<Callout variant="note">
+  Product truth moves quickly in alpha — when in doubt, trust `carina doctor` and the version you have installed.
+</Callout>

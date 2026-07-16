@@ -1,0 +1,123 @@
+---
+title: Runtime API overview
+description: JSON-RPC over unix socket/stdio, optional Gateway, scopes, and SDK surfaces.
+sidebar:
+  order: 1
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+import VersionSelector from '../../../components/ui/VersionSelector.astro';
+
+# Runtime API overview
+
+<div style="margin: 0 0 1.25rem">
+  <VersionSelector current="0.6.x" />
+</div>
+
+Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. Bare TCP is restricted to explicit loopback for diagnostics. Network-facing clients use the authenticated WebSocket or HTTP Gateway. All optional listeners are **disabled by default**.
+
+Machine-readable registry: `protocol/jsonrpc/methods.json` (authoritative).  
+Curated narrative: `docs/rpc-api.md`.
+
+## Surfaces
+
+| Surface | Use when |
+| --- | --- |
+| JSON-RPC (local) | Primary embed path for IDE, TUI, custom clients |
+| WebSocket Gateway | Optional; requires signed scoped token, first frame `gateway.hello` |
+| HTTP Gateway | Agent-first `/v1` + read-only `/tools/invoke` when explicitly enabled |
+| MCP server/client | Tool interoperability under policy |
+| SDKs (TS / Python / Go) | Typed attach, events, fork, cost, steering |
+
+## Design principles
+
+1. **Local authority** — remote sync never silently overrides policy on the machine
+2. **Descriptor catalog** — remote exposure and scope come from method descriptors; unclassified handlers refused in strict mode
+3. **Typed events** — stream structured items, not opaque text-only logs
+4. **Capability-scoped** — every attach carries an explicit profile; kernel remains final side-effect authority
+
+## Scopes
+
+| Scope | Meaning |
+| --- | --- |
+| `read` | status, list, replay, catalog, audit, results |
+| `write` | mutating session/task/workspace actions in the local operator boundary |
+| `admin` | control-plane, secret, config, policy, plugin, or approval actions |
+| `worker` | remote worker lease protocol |
+| `stream` | long-lived event subscriptions |
+
+Some methods use **dynamic scopes** (e.g. `workspace.patch.propose` escalates to `admin` for empty/absolute/`..` paths). The resolver is classification only — the kernel remains final authority.
+
+## Gateway contract
+
+```bash
+carina gateway hello      # versioned contract snapshot (not an auth grant)
+carina gateway methods    # live method catalog
+```
+
+`gateway.hello` is a transport-neutral contract snapshot. Actual authority is enforced by transport origin, method descriptors, and the capability kernel.
+
+### Optional WebSocket Gateway
+
+- Enable: `carina-daemon -gateway-ws 127.0.0.1:8777 -gateway-token-signing-key-file ~/.carina/gateway-token.key`
+- Path: `/gateway`
+- First text frame: JSON-RPC `gateway.hello` with signed scoped token bound to `transport: "ws"`
+- Browser `Origin` rejected unless allowlisted
+- Startup fails closed without token signing key
+
+### Optional HTTP Gateway
+
+- Enable: `carina-daemon -gateway-http 127.0.0.1:8787` + signing key
+- Every request: `Authorization: Bearer <gw1 token>` with `transport: "http"`, matching route grant, and scope
+
+| Route | Purpose | Scope | Route grant |
+| --- | --- | --- | --- |
+| `GET /v1/models` | list agent targets (`carina`, `carina/default`, `carina/&lt;agent_id&gt;`) | `read` | `/v1/models` or `/v1/*` |
+| `POST /v1/chat/completions` | OpenAI-style chat → Carina agent tasks | `write` | `/v1/chat/completions` or `/v1/*` |
+| `POST /v1/responses` | OpenAI-style responses + bounded continuity | `write` | `/v1/responses` or `/v1/*` |
+| `POST /tools/invoke` | read-only allowlist via daemon/kernel | `read` | `/tools/invoke` |
+| `/plugins/*` | reserved fail-closed plugin surface | `read` | `/plugins/*` |
+
+The `/v1` facade is **agent-first**, not provider-first. `model` selects a Carina agent target, not a backend provider model.
+
+`/tools/invoke` only allows read-only methods (status, listing, workspace tree/search/file reads). Process execution, shell, writes, patches, session injection, and secret reads are denied.
+
+## Method groups (summary)
+
+| Group | Examples |
+| --- | --- |
+| Runtime / Gateway | `runtime.initialize`, `gateway.hello`, `daemon.status`, `daemon.doctor` |
+| Session | `session.create`, `session.attach`/`get`/`list`/`close`, `session.replay`, `session.items` |
+| Task | `task.submit`, `task.cancel`, `task.action.approve` / `deny` |
+| Workspace | `workspace.tree`, `workspace.search`, `workspace.file.get`, `workspace.patch.*` |
+| Memory | `memory.list`, `memory.write`, `memory.projection.*` |
+| Worker | `worker.register`, `work.poll` / `renew` / `report` |
+| Workflow | `workflow.run`, `workflow.list`, `workflow.pause` / `stop` |
+| Audit | `audit.report`, `audit.export` |
+
+## Example
+
+```json
+// request
+{"jsonrpc":"2.0","id":1,"method":"session.create",
+ "params":{"workspace_root":"/repo","profile":"safe-edit"}}
+
+// response
+{"jsonrpc":"2.0","id":1,
+ "result":{"session_id":"sess_01J...","workspace_id":"ws_01J...","profile":"safe-edit"}}
+
+// event notification
+{"jsonrpc":"2.0","method":"event",
+ "params":{"event_id":"evt_...","session_id":"sess_...","type":"CommandStarted",
+           "timestamp":"2026-07-03T12:00:00Z","payload":{"command":"npm test"},
+           "permission_decision_id":"perm_..."}}
+```
+
+<Callout variant="note">
+  Full method catalogs and schemas live in `protocol/`. This site summarizes the stable product surface.
+</Callout>
+
+## Next
+
+- [Sessions](/api/sessions/)
+- [JSON-RPC reference](/api/json-rpc/)

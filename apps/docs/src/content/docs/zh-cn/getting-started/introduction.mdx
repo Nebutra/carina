@@ -1,0 +1,39 @@
+---
+title: 简介
+description: Carina 是什么、面向谁、运行时如何组织。
+---
+
+import Callout from '../../../../components/ui/Callout.astro';
+import CategoryTag from '../../../../components/ui/CategoryTag.astro';
+
+# 简介
+
+Carina 是**本地优先的 AI Agent 运行时**：在编程 Agent 从对话转向真实仓库操作时，提供策略门控、哈希链审计与事务回滚。
+
+<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin:1rem 0 1.5rem">
+  <CategoryTag category="core" label="Runtime" />
+  <CategoryTag category="agent" label="Agents" />
+  <CategoryTag category="observability" label="Audit" />
+</div>
+
+## 一句话
+
+> Carina 是让编程 Agent 在本机全力执行的本地运行时——每次动作都经过策略，写入哈希链审计，并可回滚。
+
+## 价值表
+
+| 需求 | Carina |
+| --- | --- |
+| 在仓库上行动 | 会话、任务、模型适配 |
+| 控制副作用 | 能力内核、配置、审批 |
+| 解释发生了什么 | 哈希链审计、item stream |
+| 从坏编辑恢复 | 事务补丁回滚 |
+| 嵌入其他产品 | JSON-RPC、Gateway、MCP、SDK |
+
+```
+Client ──JSON-RPC──▶ Go Control Plane ──▶ Rust Kernel ──▶ Zig Tools
+```
+
+<Callout variant="tip">
+  下一步：[安装](/zh-cn/getting-started/installation/) → [快速上手](/zh-cn/getting-started/quickstart/)。
+</Callout>

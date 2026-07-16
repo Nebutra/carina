@@ -1,0 +1,35 @@
+---
+title: 运行时模型
+description: 分层架构 — 客户端、Go 控制面、Rust 能力内核、Zig 工具链。
+---
+
+# 运行时模型
+
+Carina 是**分层 Agent 运行时**。每一层只有一件事、一种语言、以及与下层的一份契约。
+
+源文档：`docs/architecture.md`。
+
+## 分层
+
+| 层 | 语言 | 职责 |
+| --- | --- | --- |
+| Agent Surface | Go | Agent 循环、提示词、reasoner |
+| Client Surfaces | TS / Python / Go | CLI、TUI、IDE、Web、SDK |
+| Control Plane | Go | daemon、RPC、会话、调度、worker |
+| Capability Kernel | Rust | 权限、策略、审计、事务补丁、WASM |
+| Native Toolchain | Zig | scan / grep / diff / patch / run / pty |
+
+```
+Client ──JSON-RPC──▶ Go Control Plane ──Capability API──▶ Rust Kernel ──▶ Zig Tools
+```
+
+## 核心原则（摘要）
+
+1. Agent 从不直接碰系统资源 — 一切皆能力请求  
+2. 每个副作用经过能力内核并记录 `PermissionDecision`  
+3. 每次执行写入可回放的 Event Log  
+4. 每个补丁都是事务，可回滚  
+5. 本地优先；CLI 只是 JSON-RPC 客户端  
+6. 云身份/同步是产品边界 — 仓库动作的权威仍在本地  
+
+详见英文 [Runtime model](/concepts/runtime/) 完整组件表与性能目标。

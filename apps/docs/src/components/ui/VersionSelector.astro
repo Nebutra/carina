@@ -1,0 +1,92 @@
+---
+/**
+ * VersionSelector — placeholder for multi-version docs.
+ * Non-interactive until a versions pipeline is wired (e.g. versioned builds).
+ */
+interface Props {
+  versions?: string[];
+  current?: string;
+  disabled?: boolean;
+}
+
+const {
+  versions = ['0.6.x', '0.5.x'],
+  current = '0.6.x',
+  disabled = true,
+} = Astro.props;
+---
+
+<div class="version-selector" data-disabled={disabled ? 'true' : 'false'}>
+  <label class="version-selector__label" for="docs-version">
+    Version
+  </label>
+  <select
+    id="docs-version"
+    class="version-selector__select"
+    disabled={disabled}
+    aria-label="Documentation version"
+    title={disabled ? 'Version switching coming soon' : 'Select documentation version'}
+  >
+    {
+      versions.map((v) => (
+        <option value={v} selected={v === current}>
+          {v}
+        </option>
+      ))
+    }
+  </select>
+</div>
+
+<style>
+  .version-selector {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-2);
+  }
+
+  .version-selector__label {
+    font-size: var(--text-caption);
+    color: var(--docs-fg-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .version-selector__select {
+    appearance: none;
+    background: var(--docs-bg-surface);
+    color: var(--docs-fg);
+    border: 1px solid var(--docs-border);
+    border-radius: var(--docs-radius-md);
+    padding: 0.3rem 1.75rem 0.3rem 0.65rem;
+    font-size: var(--text-caption);
+    font-family: var(--docs-font-mono);
+    line-height: 1.4;
+    cursor: pointer;
+    background-image: linear-gradient(45deg, transparent 50%, var(--docs-fg-muted) 50%),
+      linear-gradient(135deg, var(--docs-fg-muted) 50%, transparent 50%);
+    background-position:
+      calc(100% - 14px) 55%,
+      calc(100% - 10px) 55%;
+    background-size:
+      4px 4px,
+      4px 4px;
+    background-repeat: no-repeat;
+    transition:
+      border-color var(--docs-transition),
+      background-color var(--docs-transition);
+  }
+
+  .version-selector__select:hover:not(:disabled) {
+    border-color: var(--docs-accent);
+  }
+
+  .version-selector__select:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  .version-selector[data-disabled='true'] .version-selector__select {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
+</style>

@@ -1,0 +1,32 @@
+---
+title: Agents 概览
+description: ReAct 编程 Agent — 模型决策、内核授权、Zig 执行。
+---
+
+# Agents 概览
+
+模型**只负责决策**；每个副作用由 Rust 能力内核授权、Zig 工具链执行，全程可回放、可回滚。
+
+源文档：`docs/agent.md`。
+
+```
+模型决策 → Go agent loop → Rust kernel → Zig tools → observation
+```
+
+## 工具动作（摘要）
+
+`list` / `read` / `search` / `run` / `patch` / `memory` / `ask_user` / `code.*` / `mcp` / `spawn` / `workflow` / `best_of_n` / `done`
+
+破坏性命令在执行前拒绝；密钥文件拒绝读取；每次编辑都是可回滚补丁事务。
+
+## Reasoner
+
+- **model-router** — BYOK  
+- **claude-cli** — 本地 `claude` 无头、隔离 cwd  
+- **scripted** — 测试回放  
+
+```bash
+carina run "fix the failing test in parser.go"
+carina audit SESSION
+carina patch rollback ID
+```

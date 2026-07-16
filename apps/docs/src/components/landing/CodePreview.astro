@@ -1,0 +1,114 @@
+---
+import CodeBlock from '../ui/CodeBlock.astro';
+
+interface Props {
+  heading?: string;
+  description?: string;
+  code: string;
+  lang?: string;
+  title?: string;
+}
+
+const {
+  heading = 'Start a governed session in seconds',
+  description = 'Attach to the local daemon, open a session, and every tool call lands on a policy gate with a hash-chained audit trail.',
+  code,
+  lang = 'bash',
+  title = 'terminal',
+} = Astro.props;
+---
+
+<section class="code-preview">
+  <div class="code-preview__inner">
+    <div class="code-preview__copy">
+      <h2 class="code-preview__heading">{heading}</h2>
+      <p class="code-preview__desc">{description}</p>
+      <ul class="code-preview__list">
+        <li>Local-first — your machine stays the authority</li>
+        <li>Policy-gated tools — approvals before side effects</li>
+        <li>Transactional patches — roll back bad agent edits</li>
+      </ul>
+    </div>
+    <div class="code-preview__panel">
+      <CodeBlock code={code} lang={lang} title={title} showLineNumbers={false} />
+    </div>
+  </div>
+</section>
+
+<style>
+  .code-preview {
+    border-block: 1px solid var(--docs-border-subtle);
+    background: color-mix(in srgb, var(--docs-bg-surface) 55%, transparent);
+    padding: var(--spacing-16) var(--spacing-6);
+  }
+
+  @media (min-width: 768px) {
+    .code-preview {
+      padding: var(--spacing-20) var(--spacing-10);
+    }
+  }
+
+  .code-preview__inner {
+    max-width: var(--layout-page-max);
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-8);
+    align-items: center;
+  }
+
+  @media (min-width: 960px) {
+    .code-preview__inner {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+      gap: var(--spacing-12);
+    }
+  }
+
+  .code-preview__heading {
+    margin: 0 0 var(--spacing-3);
+    font-size: clamp(1.4rem, 2.5vw, 1.85rem);
+    font-weight: var(--font-weight-semibold);
+    color: var(--docs-fg);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+
+  .code-preview__desc {
+    margin: 0 0 var(--spacing-5);
+    color: var(--docs-fg-muted);
+    font-size: var(--text-body);
+    line-height: 1.65;
+  }
+
+  .code-preview__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-3);
+  }
+
+  .code-preview__list li {
+    position: relative;
+    padding-inline-start: var(--spacing-5);
+    color: var(--docs-fg-muted);
+    font-size: var(--text-body-sm);
+    line-height: 1.5;
+  }
+
+  .code-preview__list li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.45em;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--docs-radius-full);
+    background: var(--docs-accent);
+  }
+
+  .code-preview__panel :global(.code-block) {
+    margin: 0;
+  }
+</style>

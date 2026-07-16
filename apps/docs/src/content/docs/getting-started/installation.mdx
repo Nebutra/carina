@@ -1,0 +1,62 @@
+---
+title: Installation
+description: Install the Carina CLI and daemon on macOS, Linux, or via package managers.
+sidebar:
+  order: 2
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# Installation
+
+Carina ships as a local toolchain: a CLI, a long-running daemon, optional workers, and client surfaces (TUI, IDE, web operator).
+
+## Prerequisites
+
+- macOS 13+ or modern Linux (x86_64 / arm64)
+- Network access only if you pull models or packages (runtime itself is local-first)
+
+## Install options
+
+### Shell installer (recommended)
+
+```bash
+curl -fsSL https://get.carina.dev | sh
+```
+
+### Homebrew
+
+```bash
+brew install nebutra/tap/carina
+```
+
+### npm (CLI shim)
+
+```bash
+npm install -g @nebutra/carina
+```
+
+### From source
+
+```bash
+git clone https://github.com/nebutra/carina.git
+cd carina
+make install
+```
+
+## Verify
+
+```bash
+carina version
+carina doctor
+```
+
+`carina doctor` checks daemon reachability, config paths, and common misconfigurations.
+
+<Callout variant="note">
+  Package names and install URLs may track the open-source release channel. Prefer `carina doctor` after any upgrade.
+</Callout>
+
+## Next step
+
+Continue to the [Quickstart](/getting-started/quickstart/) to start a session on a real repository.

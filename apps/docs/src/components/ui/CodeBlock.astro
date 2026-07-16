@@ -1,0 +1,194 @@
+---
+/**
+ * CodeBlock — enhanced fenced block for custom layouts.
+ * Starlight/Expressive Code handles MDX fences; use this in Astro landing/API pages
+ * when you need explicit language labels + copy + optional line numbers.
+ */
+interface Props {
+  code: string;
+  lang?: string;
+  title?: string;
+  showLineNumbers?: boolean;
+  copyLabel?: string;
+  copiedLabel?: string;
+}
+
+const {
+  code,
+  lang = 'bash',
+  title,
+  showLineNumbers = false,
+  copyLabel = 'Copy',
+  copiedLabel = 'Copied',
+} = Astro.props;
+
+const lines = code.replace(/\n$/, '').split('\n');
+const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
+---
+
+<figure class="code-block" data-lang={lang}>
+  <div class="code-block__chrome">
+    <div class="code-block__meta">
+      {title && <span class="code-block__title">{title}</span>}
+      <span class="code-block__lang">{lang}</span>
+    </div>
+    <button
+      type="button"
+      class="code-block__copy"
+      data-copy-target={uid}
+      data-copy-label={copyLabel}
+      data-copied-label={copiedLabel}
+      aria-label={copyLabel}
+    >
+      <span class="code-block__copy-label">{copyLabel}</span>
+    </button>
+  </div>
+  <pre class="code-block__pre" id={uid} tabindex="0"><code class={`language-${lang}`}>{
+    showLineNumbers
+      ? lines.map((line, i) => (
+          <span class="code-block__line">
+            <span class="code-block__gutter" aria-hidden="true">{i + 1}</span>
+            <span class="code-block__content">{line || ' '}</span>
+          </span>
+        ))
+      : code
+  }</code></pre>
+</figure>
+
+<script>
+  function initCopyButtons() {
+    document.querySelectorAll<HTMLButtonElement>('.code-block__copy').forEach((btn) => {
+      if (btn.dataset.bound === '1') return;
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.copyTarget;
+        const target = id ? document.getElementById(id) : null;
+        if (!target) return;
+        const text = target.innerText;
+        try {
+          await navigator.clipboard.writeText(text);
+          const label = btn.querySelector('.code-block__copy-label');
+          if (label) label.textContent = btn.dataset.copiedLabel ?? 'Copied';
+          btn.classList.add('is-copied');
+          window.setTimeout(() => {
+            if (label) label.textContent = btn.dataset.copyLabel ?? 'Copy';
+            btn.classList.remove('is-copied');
+          }, 1600);
+        } catch {
+          /* clipboard may be blocked; silent fail */
+        }
+      });
+    });
+  }
+
+  initCopyButtons();
+  document.addEventListener('astro:page-load', initCopyButtons);
+</script>
+
+<style>
+  .code-block {
+    margin: var(--spacing-6) 0;
+    border: 1px solid var(--docs-code-border);
+    border-radius: var(--docs-panel-radius);
+    background: var(--docs-code-bg);
+    overflow: hidden;
+    transition: border-color var(--docs-transition);
+  }
+
+  .code-block:hover {
+    border-color: var(--docs-border);
+  }
+
+  .code-block__chrome {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-3);
+    padding: var(--spacing-2) var(--spacing-3);
+    border-bottom: 1px solid var(--docs-border-subtle);
+    background: var(--docs-bg-surface);
+  }
+
+  .code-block__meta {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-3);
+    min-width: 0;
+  }
+
+  .code-block__title {
+    color: var(--docs-fg);
+    font-size: var(--text-caption);
+    font-weight: var(--font-weight-medium);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .code-block__lang {
+    font-family: var(--docs-font-mono);
+    font-size: var(--text-micro);
+    color: var(--docs-fg-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .code-block__copy {
+    appearance: none;
+    border: 1px solid var(--docs-border-subtle);
+    background: transparent;
+    color: var(--docs-fg-muted);
+    border-radius: var(--docs-radius-sm);
+    padding: 0.2rem 0.55rem;
+    font-size: var(--text-caption);
+    font-family: var(--docs-font-sans);
+    cursor: pointer;
+    transition:
+      color var(--docs-transition),
+      border-color var(--docs-transition),
+      background-color var(--docs-transition);
+  }
+
+  .code-block__copy:hover {
+    color: var(--docs-fg);
+    border-color: var(--docs-border);
+    background: var(--docs-bg-raised);
+  }
+
+  .code-block__copy:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  .code-block__copy.is-copied {
+    color: var(--docs-success);
+    border-color: color-mix(in srgb, var(--docs-success) 40%, transparent);
+  }
+
+  .code-block__pre {
+    margin: 0;
+    padding: var(--spacing-4);
+    overflow-x: auto;
+    font-family: var(--docs-font-mono);
+    font-size: var(--text-body-sm);
+    line-height: 1.6;
+    color: var(--docs-fg);
+    tab-size: 2;
+  }
+
+  .code-block__line {
+    display: grid;
+    grid-template-columns: 2.5rem 1fr;
+    gap: var(--spacing-3);
+  }
+
+  .code-block__gutter {
+    text-align: right;
+    color: var(--docs-fg-subtle);
+    user-select: none;
+  }
+
+  .code-block__content {
+    white-space: pre;
+  }
+</style>

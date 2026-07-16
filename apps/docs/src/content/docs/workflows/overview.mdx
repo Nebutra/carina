@@ -1,0 +1,95 @@
+---
+title: Workflows overview
+description: Declarative multi-step agent DAGs with attenuated subagents.
+sidebar:
+  order: 1
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# Workflows overview
+
+A workflow is a declarative multi-step agent pipeline: a **dependency DAG** of steps, each delegated to an isolated, capability-attenuated subagent, with every step audited and (in streaming mode) resumable.
+
+Source: `docs/workflows.md`. Schema: `protocol/schemas/workflow-graph.schema.json`.
+
+## Writing a workflow
+
+Workflows live as JSON under `.carina/workflows/` — project (`<workspace>/.carina/workflows/`, takes precedence) or home (`~/.carina/workflows/`). The `"name"` field is the identifier.
+
+```json
+{
+  "name": "review",
+  "description": "Scan changed files, review in parallel, then synthesize a report.",
+  "steps": [
+    {"id": "scan",   "agent": "scout",    "task": "List the files changed in the working tree."},
+    {"id": "bugs",   "agent": "reviewer", "task": "Review for bugs:\n${scan}", "needs": ["scan"]},
+    {"id": "perf",   "agent": "reviewer", "task": "Review for perf:\n${scan}", "needs": ["scan"]},
+    {"id": "report", "agent": "writer",   "task": "Synthesize:\n${bugs}\n${perf}", "needs": ["bugs", "perf"]}
+  ]
+}
+```
+
+- `${step_id}` interpolates a completed dependency's whole output
+- `needs` is the only required ordering constraint
+- Steps with no shared dependency run in parallel
+
+Example in-repo: `examples/workflows/review.json`.
+
+## Running
+
+```bash
+carina workflow run review
+carina workflow run review "focus on auth"
+carina workflow run review --session sess_123
+carina workflow run review --background
+carina workflow list
+carina workflow status RUN_ID
+carina workflow pause|resume|stop|restart RUN_ID
+```
+
+Without `--background`, the CLI polls until terminal state and exits non-zero for anything other than `completed`.
+
+| Command | Behavior |
+| --- | --- |
+| `stop` | Cancel run context; durable run → `stopped` |
+| `pause` | Stop admitting newly-ready nodes; running work may finish |
+| `resume` | Release nodes that became ready while paused |
+| `restart` | New run ID and attempt from a terminal run |
+
+Also available over RPC (`workflow.run`, `workflow.list`, …) and via the agent tool:
+
+```json
+{"tool":"workflow","workflow":"review","task":"..."}
+```
+
+## Execution modes
+
+### BSP (default)
+
+Runs steps in dependency **levels**: collect every ready step, wait for **all** to finish, then next level. Simple, but one slow step stalls siblings; a single failure aborts the whole run. Step ceiling: 64.
+
+### Streaming
+
+```json
+"execution_mode": "streaming"
+```
+
+Dispatches a step the instant its own dependencies resolve. Higher step ceiling (1000). Failures isolate to dependents by default; `"fail_fast": true` on a step restores abort-everything. Use for uneven durations or large graphs.
+
+Example: `examples/workflows/swarm-review.json`.
+
+### Conditional edges
+
+```json
+{"id": "bugs", "agent": "reviewer", "needs": ["scan"],
+ "when": {">": [{"var": "scan.count"}, 0]},
+ "input": {"files": "${scan.files}"},
+ "task": "Review the given files for correctness bugs."}
+```
+
+`input` resolves against a dependency's **JSON-parsed** output.
+
+<Callout variant="tip">
+  Keep write capabilities off until after a human checkpoint when the pipeline can mutate code. See the [review tutorial](/workflows/tutorial-review/).
+</Callout>

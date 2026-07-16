@@ -1,0 +1,47 @@
+---
+title: Runtime API 概览
+description: JSON-RPC、可选 Gateway、作用域与 SDK 表面。
+---
+
+import VersionSelector from '../../../../components/ui/VersionSelector.astro';
+import Callout from '../../../../components/ui/Callout.astro';
+
+# Runtime API 概览
+
+<div style="margin: 0 0 1.25rem">
+  <VersionSelector current="0.6.x" />
+</div>
+
+传输（MVP）：**JSON-RPC 2.0** 经 unix socket（`~/.carina/daemon.sock`）或 stdio。可选 WebSocket / HTTP Gateway 默认关闭。
+
+权威注册表：`protocol/jsonrpc/methods.json`。叙述：`docs/rpc-api.md`。
+
+## 作用域
+
+| Scope | 含义 |
+| --- | --- |
+| `read` | 状态、列表、回放、审计 |
+| `write` | 本地操作边界内的变更 |
+| `admin` | 控制面、密钥、策略、审批 |
+| `worker` | 远程 worker 租约协议 |
+| `stream` | 长连接事件订阅 |
+
+## HTTP Gateway 路由（摘要）
+
+| 路由 | 作用 |
+| --- | --- |
+| `GET /v1/models` | Agent 目标列表（非 provider 模型） |
+| `POST /v1/chat/completions` | OpenAI 风格聊天 → Agent 任务 |
+| `POST /v1/responses` | Responses API 风格 |
+| `POST /tools/invoke` | 只读允许列表 |
+
+`/v1` 是 **agent-first**：`model` 选择 Carina agent 目标。
+
+```bash
+carina gateway hello
+carina gateway methods
+```
+
+<Callout variant="note">
+  完整方法见英文 [Runtime API](/api/overview/) 与 [JSON-RPC](/api/json-rpc/)。
+</Callout>

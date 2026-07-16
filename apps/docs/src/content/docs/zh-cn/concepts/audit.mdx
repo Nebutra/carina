@@ -1,0 +1,15 @@
+---
+title: 审计与回滚
+description: 哈希链审计与事务补丁恢复。
+---
+
+# 审计与回滚
+
+```bash
+carina audit verify
+carina audit tail --json
+carina patch list
+carina patch rollback PATCH_ID
+```
+
+审计与补丁历史**不是** Git 的替代品；它们解释会话内的 Agent 行为。

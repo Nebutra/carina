@@ -1,0 +1,83 @@
+---
+title: Quickstart
+description: Start the daemon, run an agent task, inspect audit, and roll back a patch.
+sidebar:
+  order: 3
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# Quickstart
+
+From a clean install to a governed session on a local repo.
+
+## 1. Start the daemon
+
+```bash
+carina-daemon &
+# or
+carina daemon start
+carina doctor
+```
+
+The daemon owns sessions, policy evaluation, and the audit store. It discovers the kernel service and native tools next to its binary.
+
+## 2. Open a workspace
+
+```bash
+cd /path/to/your/repo
+```
+
+## 3. Run a coding task
+
+```bash
+carina run "Summarize the top-level architecture of this repo"
+# or fix something concrete
+carina run "fix the failing test in parser.go"
+```
+
+Interactive TUI:
+
+```bash
+carina
+```
+
+Tool calls that mutate state hit the capability kernel. Depending on profile, high-risk actions may prompt for approval.
+
+## 4. Inspect the audit trail
+
+```bash
+carina audit SESSION
+carina audit verify SESSION
+carina audit tail --last 5
+```
+
+Each entry participates in a hash chain so later rewrite of history is detectable.
+
+## 5. Patches and rollback
+
+```bash
+carina patch list SESSION
+carina patch rollback PATCH_ID
+```
+
+## 6. Optional: workflow
+
+```bash
+mkdir -p .carina/workflows
+cp examples/workflows/review.json .carina/workflows/
+carina workflow run review
+```
+
+## 7. Optional: embed
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"session.create",
+ "params":{"workspace_root":"/repo","profile":"safe-edit"}}
+```
+
+See [Runtime API](/api/overview/).
+
+<Callout variant="success" title="You are running Carina">
+  Next: [Runtime model](/concepts/runtime/), [Policy](/concepts/policy/), or [JSON-RPC reference](/api/json-rpc/).
+</Callout>

@@ -1,0 +1,111 @@
+---
+title: Carina
+description: 本地优先的 AI Agent 运行时：策略门控、哈希链审计、可事务回滚。
+template: splash
+head:
+  - tag: title
+    content: Carina 文档 — AI Agent Runtime
+---
+
+import Hero from '../../../components/landing/Hero.astro';
+import FeatureGrid from '../../../components/landing/FeatureGrid.astro';
+import CodePreview from '../../../components/landing/CodePreview.astro';
+import QuickStart from '../../../components/landing/QuickStart.astro';
+
+<Hero
+  title="让编程 Agent 全力执行 —— 同时保持可控。"
+  subtitle="Carina 是本地运行时：每次 Agent 动作都经过策略门控，写入哈希链审计，并可事务回滚。"
+  primaryCta={{ label: '快速开始', href: '/zh-cn/getting-started/quickstart/' }}
+  secondaryCta={{ label: '查看 Runtime API', href: '/zh-cn/api/overview/' }}
+/>
+
+<FeatureGrid
+  heading="为可控的 Agent 执行而设计"
+  subheading="动作级策略 · 哈希链审计 · 事务回滚 · 本地权威。"
+  features={[
+    {
+      title: '策略内核',
+      description: '能力配置与审批模式在写文件、执行命令、访问网络之前完成门控。',
+      category: 'core',
+      categoryLabel: 'Runtime',
+      href: '/zh-cn/concepts/policy/',
+    },
+    {
+      title: 'Agent 与子 Agent',
+      description: '通过能力衰减委派任务，保证外层会话始终保持权威。',
+      category: 'agent',
+      categoryLabel: 'Agents',
+      href: '/zh-cn/agents/overview/',
+    },
+    {
+      title: 'Tools 与 MCP',
+      description: '统一工具调用形态，接入 MCP 服务而不泄露无约束权限。',
+      category: 'tool',
+      categoryLabel: 'Tools',
+      href: '/zh-cn/tools/overview/',
+    },
+    {
+      title: 'Memory',
+      description: '会话上下文、检索钩子与持久记录均可检视，拒绝黑盒记忆。',
+      category: 'memory',
+      categoryLabel: 'Memory',
+      href: '/zh-cn/memory/overview/',
+    },
+    {
+      title: 'Workflow DAG',
+      description: '用显式边、重试与人工检查点编排多步 Agent 流水线。',
+      category: 'core',
+      categoryLabel: 'Workflows',
+      href: '/zh-cn/workflows/overview/',
+    },
+    {
+      title: '可观测性',
+      description: '哈希链审计、轮次 diff 与成本追踪，让每次运行事后可解释。',
+      category: 'observability',
+      categoryLabel: 'Observability',
+      href: '/zh-cn/observability/traces/',
+    },
+  ]}
+/>
+
+<CodePreview
+  heading="数秒内启动受治理的会话"
+  description="连接本地 daemon、打开会话，每次工具调用都会进入策略门控与哈希链审计。"
+  code={`# 安装
+curl -fsSL https://get.carina.dev | sh
+
+# 启动本地 daemon
+carina daemon start
+
+# 在当前仓库打开会话
+carina session start --cwd .
+
+# 查看最近一轮审计
+carina audit tail --last 1`}
+  lang="bash"
+  title="quickstart.sh"
+/>
+
+<QuickStart
+  heading="快速开始"
+  cards={[
+    {
+      step: '01',
+      title: '安装 Carina',
+      description: '支持 macOS、Linux、Homebrew 或 npm，将 CLI 与 daemon 装到本机。',
+      href: '/zh-cn/getting-started/installation/',
+    },
+    {
+      step: '02',
+      title: '运行第一次会话',
+      description: '附着到仓库、启用能力配置，观察策略门控如何生效。',
+      href: '/zh-cn/getting-started/quickstart/',
+    },
+    {
+      step: '03',
+      title: '嵌入运行时',
+      description: 'JSON-RPC、HTTP Gateway、MCP，以及 Go / Python / TypeScript SDK。',
+      href: '/zh-cn/api/overview/',
+    },
+  ]}
+/>

@@ -1,0 +1,112 @@
+---
+title: Carina
+description: Local-first AI agent runtime with policy, hash-chained audit, and transactional rollback.
+template: splash
+head:
+  - tag: title
+    content: Carina Docs — AI Agent Runtime
+---
+
+import Hero from '../../components/landing/Hero.astro';
+import FeatureGrid from '../../components/landing/FeatureGrid.astro';
+import CodePreview from '../../components/landing/CodePreview.astro';
+import QuickStart from '../../components/landing/QuickStart.astro';
+
+<Hero
+  title="Give coding agents full power — without losing control."
+  subtitle="Carina is the local runtime where every agent action passes policy, lands on a hash-chained audit record, and can be rolled back."
+  primaryCta={{ label: 'Get started', href: '/getting-started/quickstart/' }}
+  secondaryCta={{ label: 'View Runtime API', href: '/api/overview/' }}
+/>
+
+<FeatureGrid
+  features={[
+    {
+      title: 'Policy kernel',
+      description:
+        'Capability profiles and approval modes gate every file write, shell command, and network call before it runs.',
+      category: 'core',
+      categoryLabel: 'Runtime',
+      href: '/concepts/policy/',
+    },
+    {
+      title: 'Agents & sub-agents',
+      description:
+        'Orchestrate delegated workers with attenuated capabilities so outer sessions stay authoritative.',
+      category: 'agent',
+      categoryLabel: 'Agents',
+      href: '/agents/overview/',
+    },
+    {
+      title: 'Tools & MCP',
+      description:
+        'Normalize tool calls across providers and wire MCP servers without leaking unconstrained authority.',
+      category: 'tool',
+      categoryLabel: 'Tools',
+      href: '/tools/overview/',
+    },
+    {
+      title: 'Memory surfaces',
+      description:
+        'Session context, retrieval hooks, and durable records stay inspectable — never a black box.',
+      category: 'memory',
+      categoryLabel: 'Memory',
+      href: '/memory/overview/',
+    },
+    {
+      title: 'Workflow DAGs',
+      description:
+        'Compose multi-step agent pipelines with explicit edges, retries, and human checkpoints.',
+      category: 'core',
+      categoryLabel: 'Workflows',
+      href: '/workflows/overview/',
+    },
+    {
+      title: 'Observability',
+      description:
+        'Hash-chained audit logs, turn diffs, and cost traces make every run explainable after the fact.',
+      category: 'observability',
+      categoryLabel: 'Observability',
+      href: '/observability/traces/',
+    },
+  ]}
+/>
+
+<CodePreview
+  code={`# Install
+curl -fsSL https://get.carina.dev | sh
+
+# Start the local daemon
+carina daemon start
+
+# Open an interactive session on this repo
+carina session start --cwd .
+
+# Inspect the audit trail for the last turn
+carina audit tail --last 1`}
+  lang="bash"
+  title="quickstart.sh"
+/>
+
+<QuickStart
+  cards={[
+    {
+      step: '01',
+      title: 'Install Carina',
+      description: 'macOS, Linux, Homebrew, or npm — get the CLI and daemon on your machine.',
+      href: '/getting-started/installation/',
+    },
+    {
+      step: '02',
+      title: 'Run your first session',
+      description: 'Attach to a repo, enable a capability profile, and watch policy gates fire.',
+      href: '/getting-started/quickstart/',
+    },
+    {
+      step: '03',
+      title: 'Embed the runtime',
+      description: 'JSON-RPC, HTTP Gateway, MCP, and typed SDKs for Go, Python, and TypeScript.',
+      href: '/api/overview/',
+    },
+  ]}
+/>

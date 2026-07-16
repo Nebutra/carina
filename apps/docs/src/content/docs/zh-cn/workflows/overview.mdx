@@ -1,0 +1,30 @@
+---
+title: Workflows 概览
+description: 声明式多步 Agent DAG，能力衰减的子 Agent。
+---
+
+# Workflows 概览
+
+工作流是依赖 DAG：每一步交给隔离且能力衰减的子 Agent，全程审计。
+
+源文档：`docs/workflows.md`。
+
+```json
+{
+  "name": "review",
+  "steps": [
+    {"id": "scan", "agent": "scout", "task": "List changed files."},
+    {"id": "bugs", "agent": "reviewer", "task": "Review:\n${scan}", "needs": ["scan"]}
+  ]
+}
+```
+
+```bash
+carina workflow run review
+carina workflow status RUN_ID
+carina workflow pause|resume|stop RUN_ID
+```
+
+默认 BSP（按层同步）；`"execution_mode": "streaming"` 支持更大规模与失败隔离。
+
+示例：`examples/workflows/review.json`、`swarm-review.json`。

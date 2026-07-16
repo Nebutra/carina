@@ -1,0 +1,210 @@
+---
+title: JSON-RPC reference
+description: Curated method reference for the local JSON-RPC control plane.
+sidebar:
+  order: 3
+---
+
+import ApiReference from '../../../components/layouts/ApiReference.astro';
+import CodeBlock from '../../../components/ui/CodeBlock.astro';
+import Callout from '../../../components/ui/Callout.astro';
+
+# JSON-RPC reference
+
+Local clients speak JSON-RPC 2.0 against the daemon socket (`~/.carina/daemon.sock`) or stdio.
+
+Authoritative registry: `protocol/jsonrpc/methods.json`.  
+Schemas: `protocol/schemas/`.  
+Narrative source: `docs/rpc-api.md`.
+
+## session.create
+
+Create a session bound to a workspace and permission profile.
+
+<ApiReference title="session.create">
+  <ul slot="nav">
+    <li>
+      <a href="#sessioncreate">session.create</a>
+    </li>
+    <li>
+      <a href="#tasksubmit">task.submit</a>
+    </li>
+    <li>
+      <a href="#workspace">workspace.*</a>
+    </li>
+    <li>
+      <a href="#memory">memory.*</a>
+    </li>
+  </ul>
+
+  <div>
+    <p>
+      <strong>Params</strong>
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <code>workspace_root</code>
+          </td>
+          <td>string</td>
+          <td>Absolute workspace path</td>
+        </tr>
+        <tr>
+          <td>
+            <code>profile</code>
+          </td>
+          <td>string</td>
+          <td>
+            Capability profile id (e.g. <code>safe-edit</code>)
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>Result</strong>
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <code>session_id</code>
+          </td>
+          <td>string</td>
+          <td>Opaque session identifier</td>
+        </tr>
+        <tr>
+          <td>
+            <code>workspace_id</code>
+          </td>
+          <td>string</td>
+          <td>Bound workspace id</td>
+        </tr>
+        <tr>
+          <td>
+            <code>profile</code>
+          </td>
+          <td>string</td>
+          <td>Effective profile</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <CodeBlock
+    slot="code"
+    lang="json"
+    title="request"
+    code={`{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "session.create",
+  "params": {
+    "workspace_root": "/repo",
+    "profile": "safe-edit"
+  }
+}`}
+  />
+</ApiReference>
+
+## Gateway / daemon
+
+| Method | Purpose |
+| --- | --- |
+| `runtime.initialize` | Client identity + projection version negotiation |
+| `runtime.capabilities` | Advertised runtime capabilities |
+| `gateway.hello` | Contract snapshot (role, scopes, features, method catalog) |
+| `gateway.methods` | Live method catalog with scope / remote / stream flags |
+| `gateway.token.issue` | Local-only scoped token issuer (signing key required) |
+| `daemon.status` / `metrics` / `doctor` | Process health |
+| `daemon.remote.disable` | Remote kill-switch |
+| `daemon.reload` | Reload configuration |
+
+## Session & task
+
+| Method | Purpose |
+| --- | --- |
+| `session.create` / `get` / `list` / `close` | Lifecycle |
+| `session.pause` / `resume` | Suspend / continue |
+| `session.replay` / `items` / `review` | History and projections |
+| `session.events.stream` | Live event notifications |
+| `task.submit` / `cancel` / `status` | Task control |
+| `task.action.approve` / `deny` | Resolve approvals |
+
+## Workspace
+
+| Method | Purpose |
+| --- | --- |
+| `workspace.tree` | File tree via `carina-scan` |
+| `workspace.search` | Structured search via `carina-grep` |
+| `workspace.file.get` | Read file (`FileRead`) |
+| `workspace.diff` | Tracked/untracked changes (capped; binary omitted) |
+| `workspace.patch.propose` / `apply` / `rollback` | Transactional patches |
+| `worktree.create` / `list` / `enter` / … | Isolated worktree lifecycle |
+
+## Memory
+
+| Method | Purpose |
+| --- | --- |
+| `memory.list` | List entries for `target=memory` or `target=user` |
+| `memory.context` | Fenced recalled-memory block for the session |
+| `memory.status` | Local authority, external recall health, identity scope |
+| `memory.write` | add/replace/remove/batch via `MemoryWrite` capability |
+| `memory.projection.authorize` / `retry` / `reseed` | Optional HMS projection control |
+
+`memory.write` is local-only and control-plane-write. Built-in policy defaults `MemoryWrite` to `requires_approval`. Audit records target/scope/action, operation count, and content hash — **not** raw memory text.
+
+## Worker
+
+`worker.register` · `worker.heartbeat` · `worker.list` · `worker.revoke` · `work.poll` / `renew` / `report` · `backpressure.report` / `status`
+
+`worker.register` returns worker_id + worker_credential pair **once**. The daemon stores only the credential hash. Every successful `work.poll` returns a `lease_generation` fencing token that must be echoed on renew/report.
+
+## Context engine (local-only)
+
+| Method | Scope | Purpose |
+| --- | --- | --- |
+| `context.status` | `read` | Engine + Headroom + managed MCP state |
+| `context.doctor` | `read` | Health probe used by `daemon.doctor` |
+| `context.stats` | `read` | Compression counters |
+| `context.compress` | `write` | Diagnostic compression (not agent transcript path) |
+| `context.retrieve` | `read` | Diagnostic CCR retrieval by hash/ref |
+
+Headroom is a managed private MCP behind the context-engine boundary when bundled or explicitly configured — not listed in the agent's public MCP tool list.
+
+## Operator inspection highlights
+
+- **`workspace.diff`** — Git with locks/fsmonitor/external diff/textconv disabled; 256 KiB per textual diff; 1 MiB response cap
+- **`mcp.inventory`** — public MCP server names, tool names, prompt counts, connection health (no process args/env/schemas)
+
+## Example exchange
+
+```json
+// response
+{"jsonrpc":"2.0","id":1,
+ "result":{"session_id":"sess_01J...","workspace_id":"ws_01J...","profile":"safe-edit"}}
+
+// event notification
+{"jsonrpc":"2.0","method":"event",
+ "params":{"event_id":"evt_...","session_id":"sess_...","type":"CommandStarted",
+           "timestamp":"2026-07-03T12:00:00Z","payload":{"command":"npm test"},
+           "permission_decision_id":"perm_..."}}
+```
+
+<Callout variant="tip">
+  Groups not fully expanded here include `agent.*`, `session.checkpoint.*`, `workflow.*`, `schedule.*`, `channel.*`, `extension.*`, `usage.*` / `telemetry.*`, and `work.*`. See the protocol registry.
+</Callout>

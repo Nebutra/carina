@@ -1,0 +1,70 @@
+---
+title: Workers
+description: Lease-based remote workers, production profile, drain, and containers.
+sidebar:
+  order: 2
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# Workers
+
+`carina-worker` is a **lease client**. The daemon remains the scheduler and policy authority; the operator-supplied **executor** owns workspace and sandbox creation.
+
+Source: `docs/deployment/remote-workers.md`, `docs/worker-executor.md`.
+
+## Transport
+
+- Prefer authenticated `wss://` Gateway for remote hosts
+- Direct `--server` TCP is restricted to **loopback** (local daemon or operator-authenticated tunnel)
+
+## Production profile
+
+1. Install the release package and a separately reviewed executor
+2. Copy `packaging/systemd/worker.env.example` → `/etc/carina/worker.env`  
+   Set Gateway URL, executor path, pool labels, concurrency, timeouts
+3. Store scoped worker token at `/etc/carina/worker.token` (root, `0600`)  
+   Unit exposes it via systemd credentials — never process environment or shell history
+4. Install `packaging/systemd/carina-worker.service`, `daemon-reload`, enable, start
+
+### Executor contract
+
+The executor reads one `carina.worker.task.v1` JSON object from stdin and emits one `carina.worker.result.v1` on stdout. Report measured token usage when available; missing usage is unmetered (never counted as zero).
+
+## Lease protocol (RPC)
+
+| Method | Notes |
+| --- | --- |
+| `worker.register` | Returns worker_id + worker_credential pair once; optional `pools` tags |
+| `worker.heartbeat` | Keep online; stay under lease TTL |
+| `work.poll` | Returns `lease_generation` fencing token |
+| `work.renew` / `work.report` | Must echo generation |
+| `backpressure.report` | Worker pressure |
+
+Reassignment increments generation even for the same `worker_id`, so delayed branches cannot publish terminal results under stale ownership.
+
+## Readiness
+
+- `carina worker list` shows expected name, kind, pools, `online`
+- Heartbeat comfortably below lease TTL
+- Canary workflow pinned to the pool before admitting normal work
+- Alert on reconnect storms, lease expiry, executor timeouts, missing canaries
+
+## Drain and upgrade
+
+```bash
+systemctl stop carina-worker   # SIGTERM: stop polls, drain up to --drain-timeout
+# upgrade package only after offline in carina worker list
+systemctl start carina-worker
+# repeat canary
+```
+
+Roll pools one worker at a time. On Unix, executor descendants share a process group; on Windows, kill-on-close Job Object.
+
+## Container profile
+
+`packaging/docker/worker.Dockerfile` builds a non-root image. Supply executor via derived image or read-only volume; mount token as a secret file. Do not bake credentials into layers. Daemon image runs as UID/GID `65532` and embeds the pinned kernel service.
+
+<Callout variant="warning">
+  Registry publication, hosted Gateway DNS/TLS, and production credentials are external provisioning work — not baked into the open-source runtime.
+</Callout>

@@ -1,0 +1,208 @@
+---
+/**
+ * Landing Hero — Mintlify-grade hierarchy + staggered entrance.
+ * Brand display font only for the product name; headings stay Geist.
+ * All colors via --docs-* public token contract.
+ */
+interface Props {
+  brand?: string;
+  title: string;
+  subtitle: string;
+  primaryCta: { label: string; href: string };
+  secondaryCta?: { label: string; href: string };
+}
+
+const {
+  brand = 'Carina',
+  title,
+  subtitle,
+  primaryCta,
+  secondaryCta,
+} = Astro.props;
+---
+
+<section class="hero">
+  <div class="hero__inner">
+    <p class="hero__eyebrow docs-animate-in docs-animate-in--1">
+      <span class="hero__brand font-brand">{brand}</span>
+      <span class="hero__divider" aria-hidden="true">·</span>
+      <span>AI Agent Runtime</span>
+    </p>
+    <h1 class="hero__title docs-animate-in docs-animate-in--2">{title}</h1>
+    <p class="hero__subtitle docs-animate-in docs-animate-in--3">{subtitle}</p>
+    <div class="hero__actions docs-animate-in docs-animate-in--4">
+      <a class="hero__btn hero__btn--primary" href={primaryCta.href}>{primaryCta.label}</a>
+      {
+        secondaryCta && (
+          <a class="hero__btn hero__btn--ghost" href={secondaryCta.href}>
+            {secondaryCta.label}
+            <span aria-hidden="true">→</span>
+          </a>
+        )
+      }
+    </div>
+  </div>
+  <div class="hero__glow" aria-hidden="true"></div>
+  <div class="hero__grid" aria-hidden="true"></div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding: var(--spacing-20) var(--spacing-6) var(--spacing-16);
+    border-bottom: 1px solid var(--docs-border-subtle);
+  }
+
+  @media (min-width: 768px) {
+    .hero {
+      padding: clamp(5rem, 10vw, 7.5rem) var(--spacing-10) var(--spacing-20);
+    }
+  }
+
+  .hero__inner {
+    position: relative;
+    z-index: 1;
+    max-width: 48rem;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    margin: 0 0 var(--spacing-6);
+    padding: 0.28rem 0.7rem;
+    border: 1px solid var(--docs-border);
+    border-radius: var(--docs-radius-full);
+    background: color-mix(in srgb, var(--docs-bg-surface) 90%, transparent);
+    color: var(--docs-fg-muted);
+    font-size: var(--text-caption);
+    letter-spacing: 0.04em;
+  }
+
+  .hero__brand {
+    color: var(--docs-fg);
+    font-size: 0.95em;
+  }
+
+  .hero__divider {
+    color: var(--docs-fg-subtle);
+  }
+
+  .hero__title {
+    margin: 0 0 var(--spacing-5);
+    font-size: clamp(2.05rem, 5.2vw, 3.4rem);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.06;
+    letter-spacing: -0.025em;
+    color: var(--docs-fg);
+  }
+
+  .hero__subtitle {
+    margin: 0 auto var(--spacing-8);
+    max-width: 36rem;
+    font-size: clamp(0.98rem, 1.4vw, 1.08rem);
+    line-height: 1.7;
+    color: var(--docs-fg-muted);
+  }
+
+  .hero__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-3);
+    justify-content: center;
+    align-items: center;
+  }
+
+  .hero__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    min-height: var(--docs-control-h);
+    padding: 0 var(--spacing-5);
+    border-radius: var(--docs-radius-md);
+    font-size: var(--text-body-sm);
+    font-weight: var(--font-weight-medium);
+    text-decoration: none;
+    transition:
+      background-color var(--docs-transition),
+      border-color var(--docs-transition),
+      color var(--docs-transition),
+      transform var(--docs-transition),
+      box-shadow var(--docs-transition);
+  }
+
+  .hero__btn:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  .hero__btn--primary {
+    background: var(--docs-accent);
+    color: var(--docs-fg-invert);
+    border: 1px solid transparent;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--docs-accent) 0%, transparent);
+  }
+
+  .hero__btn--primary:hover {
+    background: var(--docs-accent-hover);
+    box-shadow: 0 0 24px color-mix(in srgb, var(--docs-accent) 22%, transparent);
+  }
+
+  .hero__btn--ghost {
+    background: transparent;
+    color: var(--docs-fg);
+    border: 1px solid var(--docs-border);
+  }
+
+  .hero__btn--ghost:hover {
+    border-color: var(--docs-accent);
+    color: var(--docs-accent);
+  }
+
+  .hero__glow {
+    pointer-events: none;
+    position: absolute;
+    inset: -25% 5% auto;
+    height: 70%;
+    background: radial-gradient(
+      ellipse at 50% 0%,
+      color-mix(in srgb, var(--docs-accent) 16%, transparent),
+      transparent 68%
+    );
+    z-index: 0;
+    animation: docs-glow-pulse 6s var(--docs-ease) infinite alternate;
+  }
+
+  .hero__grid {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    opacity: 0.35;
+    background-image:
+      linear-gradient(color-mix(in srgb, var(--docs-border-subtle) 55%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in srgb, var(--docs-border-subtle) 55%, transparent) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse at 50% 30%, black 10%, transparent 70%);
+  }
+
+  @keyframes docs-glow-pulse {
+    from {
+      opacity: 0.75;
+      transform: scale(1);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1.04);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero__glow {
+      animation: none;
+    }
+  }
+</style>

@@ -1,0 +1,74 @@
+---
+title: Introduction
+description: What Carina is, who it is for, and how the runtime is structured.
+sidebar:
+  order: 1
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+import CategoryTag from '../../../components/ui/CategoryTag.astro';
+
+# Introduction
+
+Carina is a **local-first AI agent runtime**. It sits at the point where a coding agent leaves conversation and starts acting on a real repository — reading files, running commands, applying patches — under explicit policy control.
+
+<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin:1rem 0 1.5rem">
+  <CategoryTag category="core" label="Runtime" />
+  <CategoryTag category="agent" label="Agents" />
+  <CategoryTag category="observability" label="Audit" />
+</div>
+
+## One-sentence pitch
+
+> Carina is the local runtime that lets coding agents work at full power on your machine, because every action passes policy, lands on a hash-chained audit record, and can be rolled back.
+
+## Who it is for
+
+- Individual engineers who want agents on local repos with audit and rollback
+- Platform teams building an internal agent runner
+- Security-conscious teams evaluating how agents touch files, shells, and secrets
+- Tool builders embedding a runtime behind an IDE, TUI, CI workflow, or web UI
+
+It is **not** primarily a finished editor assistant or a hosted managed agent service.
+
+## User value
+
+| Need | Carina answer |
+| --- | --- |
+| Let an agent act on a repo | Daemon sessions, task runner, model adapters |
+| Control side effects | Capability kernel, profiles, approval modes |
+| Explain what happened | Hash-chained audit log, normalized item stream |
+| Recover from bad edits | Transactional patch apply and rollback |
+| Use real models | BYOK credential chain and provider catalog |
+| Embed in another product | JSON-RPC, scoped HTTP Gateway, MCP, SDKs |
+| Split work safely | Sub-agent attenuation, workers, workflow DAGs |
+| Coordinate endpoints later | Nebutra Cloud boundary; Carina remains local authority |
+
+## Architecture at a glance
+
+```
+Client Surfaces ──JSON-RPC──▶ Go Control Plane (agent loop)
+       ──Capability API──▶ Rust Kernel ──Native Calls──▶ Zig Tools
+```
+
+Five layers: Agent Surface · Client Surfaces · Control Plane · Capability Kernel · Native Toolchain. Details in [Runtime model](/concepts/runtime/).
+
+## Non-goals
+
+- Full editor product
+- Hosted cloud agent app
+- Complete VM/container isolation platform
+- Replacement for Git history or code review
+
+## Positioning vs adjacent tools
+
+| Alternative | Optimized for | Carina position |
+| --- | --- | --- |
+| Editor assistants | Interactive IDE editing | Runtime governance behind the editor |
+| CLI coding agents | Conversational terminal coding | Durable sessions, audit, rollback, workers, embed |
+| Cloud agent tasks | Managed remote UX | Local-first; cloud wraps, does not own authority |
+| Custom internal stacks | Team-specific orchestration | Reusable policy / audit / patch primitives |
+
+<Callout variant="tip" title="Start here">
+  Jump to [Installation](/getting-started/installation/) then the [Quickstart](/getting-started/quickstart/).
+</Callout>

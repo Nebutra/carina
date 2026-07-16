@@ -1,0 +1,49 @@
+---
+title: Sub-agents
+description: Delegate work with SubagentSpawn and capability attenuation.
+sidebar:
+  order: 2
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# Sub-agents
+
+Sub-agents run delegated tasks under a **strict subset** of the parent session's capabilities. Spawn is mediated by the `SubagentSpawn` capability.
+
+## Spawn resource shape
+
+```
+agent:NAME:profile:PROFILE
+```
+
+Built-in policy requires approval by default. The child's capabilities are attenuated **before** the spawn completes — children cannot mint new authority upward.
+
+## Agent tool
+
+```json
+{"tool":"spawn","agent":"scout","task":"Map module boundaries"}
+```
+
+- Declarative manifest per agent
+- Per-agent tool allow-list
+- `"tasks":[…]` runs multiple tasks in parallel
+
+## Patterns
+
+| Pattern | Description |
+| --- | --- |
+| Research fork | Read-heavy child gathers context |
+| Patch worker | Write-scoped child applies a bounded edit set |
+| Review swarm | Parallel reviewers with no write access |
+| Workflow steps | Each workflow step is an isolated, attenuated subagent |
+
+## Why attenuate
+
+1. Unconstrained children amplify blast radius
+2. Audit records nest under the parent turn
+3. Parent remains the recovery and approval authority
+
+<Callout variant="note">
+  Workflow DAGs are the preferred multi-step orchestration surface — see [Workflows](/workflows/overview/).
+</Callout>

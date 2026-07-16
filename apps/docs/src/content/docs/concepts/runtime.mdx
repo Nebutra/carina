@@ -1,0 +1,98 @@
+---
+title: Runtime model
+description: Layered architecture — client surfaces, Go control plane, Rust capability kernel, Zig tools.
+sidebar:
+  order: 1
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# Runtime model
+
+Carina is a **layered agent runtime**. Each layer has one job, one language, and one contract with the layer below it.
+
+Source of truth in-repo: `docs/architecture.md`.
+
+## Layers
+
+| Layer | Language | Role | One-liner |
+| --- | --- | --- | --- |
+| Agent Surface | Go (in-daemon) | LLM interaction: agent loop, prompts, reasoner backends | makes it useful |
+| Client Surfaces | TypeScript / Python / Go | CLI, TUI, IDE, web, SDKs — renderers over JSON-RPC | makes it usable |
+| Control Plane | Go | daemon, RPC, sessions, scheduler, workers, model routing | makes it run |
+| Capability Kernel | Rust | permissions, policy, audit, transactional patches, WASM plugins | makes it safe |
+| Native Toolchain | Zig | scan, grep, diff, patch, process runner, pty | makes it sharp |
+
+```
+Client Surfaces ──JSON-RPC──▶ Go Control Plane (agent loop)
+       ──Capability API──▶ Rust Kernel ──Native Calls──▶ Zig Tools
+```
+
+## Core principles
+
+1. **Agents never touch system resources directly.** Every file read, command execution, network access, secret read, or persistent memory write is a capability request.
+2. **Every side effect goes through the Capability Kernel.** The kernel evaluates the request against the session's permission profile and records a `PermissionDecision`.
+3. **Every execution writes to the Event Log.** Append-only, timestamped, session-scoped. Sessions are replayable from the log alone.
+4. **Every patch is a transaction.** Proposed → Validated → Approved → Applied → Verified → Committed, with a rollback pointer at every stage.
+5. **Every tool declares its permissions.** Undeclared capability use is a `PolicyViolation` event.
+6. **Local-first.** A single binary on a laptop is the base case; workers and remote execution are extensions.
+7. **The CLI is a client.** `carina` talks JSON-RPC to the daemon. IDEs, CI, and SDKs use the same protocol.
+8. **Cloud identity and sync are product boundaries.** Multi-endpoint identity belongs to Nebutra Cloud; the local runtime remains the authority for repository actions.
+
+## Component map
+
+### Go control plane (`go/`, `apps/`)
+
+- `go/daemon` — lifecycle, unix-socket RPC, recovery, agent loop, governed local memory
+- `go/rpc` — JSON-RPC 2.0; registry mirrors `protocol/jsonrpc`
+- `go/session-store` — session state + append-only JSONL event log
+- `go/scheduler` — task queue with priorities and concurrency
+- `go/worker` — local / remote / CI / sandbox workers
+- `go/model-router` — provider fallback, rate limits, token usage, streaming
+- `go/kernel` — bridge to the Rust capability kernel service
+- `go/mcp` / `go/mcpserver` — governed MCP manager and server
+- `apps/carina-daemon`, `apps/carina-cli`, `apps/carina-tui`, `apps/carina-worker`
+
+### Rust capability kernel (`crates/`)
+
+- `carina-kernel` — capability types and façade for every side effect
+- `carina-policy` — profiles (`read-only`, `safe-edit`, `full-workspace`, `ci-runner`, …)
+- `carina-patch` — transactional patch lifecycle, conflict detection, rollback
+- `carina-audit` — event model (36 types; `protocol/events/events.json` is authoritative)
+- `carina-plugin-runtime` — WASM host with manifest-declared permissions
+
+### Zig native toolchain
+
+`carina-scan`, `carina-grep`, `carina-diff`, `carina-patch-native`, `carina-run`, `carina-pty` — machine-readable JSON, never bypass kernel policy.
+
+## MVP loop
+
+```
+user prompt → Go daemon creates session → Agent Surface calls model
+→ model requests FileRead → Rust kernel checks policy → Zig scans/reads
+→ model proposes patch → Rust kernel opens PatchTransaction → user approves
+→ Zig carina-patch applies → Go daemon runs tests → kernel checks CommandExec
+→ Zig carina-run executes → Event Log records everything → user inspects / rolls back
+```
+
+## Communication & storage (MVP)
+
+| Concern | Choice |
+| --- | --- |
+| IPC | JSON-RPC 2.0 over stdio / unix socket |
+| Storage | JSON state + JSONL event log + file snapshots; SQLite for `carina-index` |
+| Plugins | WASM with manifest-declared permissions |
+
+## Performance targets
+
+| Operation | Target |
+| --- | --- |
+| CLI cold start | &lt; 100ms |
+| CLI warm start | &lt; 30ms |
+| Workspace scan (10k files) | &lt; 1s |
+| Grep (medium repo) | &lt; 300ms |
+| Patch apply (single file) | &lt; 50ms |
+
+<Callout variant="tip" title="Next">
+  Read [Policy & capabilities](/concepts/policy/) for how the kernel gates side effects, then [Audit & rollback](/concepts/audit/).
+</Callout>

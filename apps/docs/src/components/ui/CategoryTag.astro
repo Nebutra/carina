@@ -1,0 +1,66 @@
+---
+/**
+ * CategoryTag — capability taxonomy badge.
+ * Colors only via --docs-cap-* public tokens.
+ */
+export type Category =
+  | 'core'
+  | 'agent'
+  | 'tool'
+  | 'memory'
+  | 'observability'
+  | 'success'
+  | 'warning'
+  | 'danger';
+
+interface Props {
+  category?: Category;
+  label: string;
+}
+
+const { category = 'core', label } = Astro.props;
+
+const tokenMap: Record<Category, string> = {
+  core: 'var(--docs-cap-core)',
+  agent: 'var(--docs-cap-agent)',
+  tool: 'var(--docs-cap-tool)',
+  memory: 'var(--docs-cap-memory)',
+  observability: 'var(--docs-cap-observability)',
+  success: 'var(--docs-success)',
+  warning: 'var(--docs-warning)',
+  danger: 'var(--docs-danger)',
+};
+
+const color = tokenMap[category];
+---
+
+<span class="category-tag" style={`--tag-color: ${color}`}>
+  <span class="category-tag__dot" aria-hidden="true"></span>
+  {label}
+</span>
+
+<style>
+  .category-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    padding: 0.12rem 0.48rem;
+    border-radius: var(--docs-tag-radius);
+    border: 1px solid color-mix(in srgb, var(--tag-color) 35%, transparent);
+    background: color-mix(in srgb, var(--tag-color) 12%, transparent);
+    color: var(--tag-color);
+    font-size: var(--text-caption);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: 0.02em;
+    line-height: var(--leading-caption);
+    white-space: nowrap;
+  }
+
+  .category-tag__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: var(--docs-radius-full);
+    background: var(--tag-color);
+    flex-shrink: 0;
+  }
+</style>

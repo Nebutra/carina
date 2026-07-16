@@ -1,0 +1,129 @@
+---
+/**
+ * ApiReference — three-column layout for API docs.
+ * Left: in-page method nav (slot="nav")
+ * Center: prose description (default slot)
+ * Right: sticky code samples (slot="code")
+ *
+ * Use inside MDX:
+ *   <ApiReference>
+ *     <Fragment slot="nav">...</Fragment>
+ *     ...
+ *     <Fragment slot="code">...</Fragment>
+ *   </ApiReference>
+ */
+interface Props {
+  title?: string;
+}
+
+const { title } = Astro.props;
+---
+
+<section class="api-ref" aria-label={title ?? 'API reference'}>
+  {title && <h2 class="api-ref__heading">{title}</h2>}
+  <div class="api-ref__grid">
+    <nav class="api-ref__nav" aria-label="Methods">
+      <slot name="nav" />
+    </nav>
+    <div class="api-ref__main">
+      <slot />
+    </div>
+    <aside class="api-ref__code" aria-label="Code samples">
+      <div class="api-ref__code-sticky">
+        <slot name="code" />
+      </div>
+    </aside>
+  </div>
+</section>
+
+<style>
+  .api-ref {
+    margin: var(--spacing-8) 0;
+  }
+
+  .api-ref__heading {
+    font-size: var(--text-title-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--docs-fg);
+    margin: 0 0 var(--spacing-5);
+    line-height: var(--leading-title-sm);
+  }
+
+  .api-ref__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-6);
+  }
+
+  @media (min-width: 768px) {
+    .api-ref__grid {
+      grid-template-columns: 11rem minmax(0, 1fr);
+    }
+  }
+
+  @media (min-width: 1200px) {
+    .api-ref__grid {
+      grid-template-columns: 12rem minmax(0, 1fr) minmax(16rem, 22rem);
+      gap: var(--spacing-8);
+    }
+  }
+
+  .api-ref__nav {
+    font-size: var(--text-body-sm);
+    color: var(--docs-fg-muted);
+  }
+
+  .api-ref__nav :global(ul) {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .api-ref__nav :global(a) {
+    display: block;
+    padding: 0.35rem 0.5rem;
+    border-radius: var(--docs-radius-sm);
+    color: var(--docs-fg-muted);
+    text-decoration: none;
+    font-family: var(--docs-font-mono);
+    font-size: var(--text-caption);
+    transition:
+      color var(--docs-transition),
+      background-color var(--docs-transition);
+  }
+
+  .api-ref__nav :global(a:hover),
+  .api-ref__nav :global(a:focus-visible) {
+    color: var(--docs-accent);
+    background: var(--docs-bg-selected);
+  }
+
+  .api-ref__main {
+    min-width: 0;
+    color: var(--docs-fg-muted);
+  }
+
+  .api-ref__main :global(h3) {
+    color: var(--docs-fg);
+    font-size: var(--text-title-sm);
+    margin-top: var(--spacing-6);
+  }
+
+  .api-ref__code {
+    min-width: 0;
+  }
+
+  .api-ref__code-sticky {
+    position: sticky;
+    top: var(--docs-anchor-offset);
+  }
+
+  @media (max-width: 1199px) {
+    .api-ref__code {
+      order: 3;
+    }
+  }
+</style>

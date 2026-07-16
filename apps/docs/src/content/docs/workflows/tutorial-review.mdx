@@ -1,0 +1,74 @@
+---
+title: "Tutorial: review pipeline"
+description: Run the in-repo review workflow with parallel reviewers and a synthesis step.
+sidebar:
+  order: 2
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# Tutorial: review pipeline
+
+**Goal:** scan changed files, run parallel review agents, synthesize a report — using the real `review` workflow shape.
+
+## Prerequisites
+
+- Carina installed (`carina doctor` green)
+- Daemon running
+- A git repository with a non-trivial working-tree diff
+
+## 1. Install the workflow
+
+Copy or symlink the example:
+
+```bash
+mkdir -p .carina/workflows
+cp examples/workflows/review.json .carina/workflows/review.json
+```
+
+Or author your own using the shape in [Workflows overview](/workflows/overview/).
+
+## 2. Run it
+
+```bash
+carina workflow run review
+# optional focus string
+carina workflow run review "focus on auth and session handling"
+```
+
+This creates a `safe-edit` session in `cwd` by default and waits for completion.
+
+## 3. Watch status
+
+```bash
+carina workflow status RUN_ID
+carina workflow list
+```
+
+Live progress reports `completed/failed/skipped/total` counters.
+
+## 4. Inspect audit
+
+```bash
+# use the session id from the run
+carina audit SESSION_ID
+carina audit verify SESSION_ID
+```
+
+Each step is an attenuated subagent; side effects still pass the kernel.
+
+## 5. Streaming variant (optional)
+
+For larger graphs or uneven step times, switch to streaming mode (see `examples/workflows/swarm-review.json`) and set `"execution_mode": "streaming"`.
+
+## 6. Control
+
+```bash
+carina workflow pause RUN_ID
+carina workflow resume RUN_ID
+carina workflow stop RUN_ID
+```
+
+<Callout variant="tip">
+  For write-gated pipelines, insert a human approval step or run reviewers under `read-only` profiles so synthesis cannot mutate the tree without an explicit follow-up.
+</Callout>

@@ -1,0 +1,63 @@
+---
+title: Audit & rollback
+description: Append-only event log, hash-chain verification, and transactional patch recovery.
+sidebar:
+  order: 3
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# Audit & rollback
+
+Carina treats observability as a product feature. Every execution writes to an append-only, session-scoped **Event Log**. Side-effect events reference their `PermissionDecision` id.
+
+## Audit guarantees
+
+- Event log is append-only; every event has a timestamp and session id
+- Raw image/media bytes never enter transcript, checkpoints, or audit — only content-hash `MediaRef`s
+- Any file's modification history is queryable: which agent, which task, which patch, when
+- Every allow/deny is explainable: decision records the policy and reason
+- Success metrics targets: 100% interception of out-of-workspace access, zero secret plaintext in logs, every side effect has an audit event
+
+## CLI
+
+```bash
+carina audit SESSION          # replay model decisions + kernel-gated effects
+carina audit verify SESSION   # confirm the hash chain was not tampered with
+carina audit tail --last 5
+carina audit export --format jsonl|sqlite
+```
+
+## Transactional patches
+
+File mutations go through a patch pipeline with provenance:
+
+1. Agent proposes a diff (`workspace.patch.propose` / agent `patch` tool)
+2. Kernel evaluates `PatchApply` → may require approval
+3. On approve: apply → verify → commit with rollback pointer
+4. No half-applied state
+
+```bash
+carina patch list SESSION
+carina patch show ID
+carina patch rollback ID
+```
+
+`workspace.patch.apply` refuses until `task.action.approve` resolves a pending decision. Deny or timeout forces re-proposal.
+
+## Streams for clients
+
+| Stream | Purpose |
+| --- | --- |
+| `session.replay` | Raw audit stream |
+| `session.items` | Normalized `thread.*` / `turn.*` / `item.*` for UI/SDK |
+| `session.review` | Governance projection: changes, commands, tools, policy, artifacts |
+| `session.events.stream` | Live notifications with `since` cursor |
+
+## What this is not
+
+Audit and patch history are **not** a replacement for Git. They explain agent action within a session; Git remains the long-term collaboration source of truth.
+
+<Callout variant="note">
+  Event type enumeration lives in `protocol/events/events.json` (36 types). Payload shapes are in `protocol/schemas/`.
+</Callout>

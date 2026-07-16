@@ -1,0 +1,148 @@
+---
+import CategoryTag from '../ui/CategoryTag.astro';
+import type { Category } from '../ui/CategoryTag.astro';
+
+interface Feature {
+  title: string;
+  description: string;
+  category: Category;
+  categoryLabel: string;
+  href?: string;
+}
+
+interface Props {
+  heading?: string;
+  subheading?: string;
+  features: Feature[];
+}
+
+const {
+  heading = 'Built for governed agent execution',
+  subheading = 'Policy per action. Hash-chained audit. Transactional rollback. Local authority.',
+  features,
+} = Astro.props;
+---
+
+<section class="features">
+  <div class="features__header">
+    <h2 class="features__heading">{heading}</h2>
+    <p class="features__sub">{subheading}</p>
+  </div>
+  <div class="features__grid">
+    {
+      features.map((f, i) => (
+        <article
+          class:list={['feature-card', 'docs-animate-in', `docs-animate-in--${Math.min(i + 1, 4)}`]}
+          style={`animation-delay: calc(var(--docs-hero-stagger) * ${i + 1})`}
+        >
+          <div class="feature-card__top">
+            <CategoryTag category={f.category} label={f.categoryLabel} />
+          </div>
+          <h3 class="feature-card__title">
+            {f.href ? <a href={f.href}>{f.title}</a> : f.title}
+          </h3>
+          <p class="feature-card__desc">{f.description}</p>
+        </article>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .features {
+    max-width: var(--docs-page-max);
+    margin: 0 auto;
+    padding: var(--spacing-16) var(--spacing-6);
+  }
+
+  @media (min-width: 768px) {
+    .features {
+      padding: var(--spacing-20) var(--spacing-10);
+    }
+  }
+
+  .features__header {
+    max-width: 38rem;
+    margin: 0 auto var(--spacing-10);
+    text-align: center;
+  }
+
+  .features__heading {
+    margin: 0 0 var(--spacing-3);
+    font-size: clamp(1.45rem, 2.8vw, 1.9rem);
+    font-weight: var(--font-weight-semibold);
+    color: var(--docs-fg);
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+  }
+
+  .features__sub {
+    margin: 0;
+    color: var(--docs-fg-muted);
+    font-size: var(--text-body);
+    line-height: 1.65;
+  }
+
+  .features__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-3);
+  }
+
+  @media (min-width: 640px) {
+    .features__grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .features__grid {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  .feature-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-3);
+    padding: var(--spacing-5);
+    background: var(--docs-card-bg);
+    border: 1px solid var(--docs-card-border);
+    border-radius: var(--docs-panel-radius);
+    transition:
+      border-color var(--docs-transition),
+      background-color var(--docs-transition),
+      transform var(--docs-transition);
+  }
+
+  .feature-card:hover {
+    border-color: var(--docs-card-hover-border);
+    background: var(--docs-bg-raised);
+    transform: translateY(-1px);
+  }
+
+  .feature-card__title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: var(--font-weight-semibold);
+    color: var(--docs-fg);
+    line-height: 1.3;
+  }
+
+  .feature-card__title a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .feature-card__title a:hover {
+    color: var(--docs-accent);
+  }
+
+  .feature-card__desc {
+    margin: 0;
+    color: var(--docs-fg-muted);
+    font-size: var(--text-body-sm);
+    line-height: 1.6;
+    flex: 1;
+  }
+</style>

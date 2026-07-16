@@ -1,0 +1,31 @@
+---
+title: 快速上手
+description: 启动 daemon、运行任务、检查审计、回滚补丁。
+---
+
+import Callout from '../../../../components/ui/Callout.astro';
+
+# 快速上手
+
+```bash
+carina-daemon &
+carina doctor
+cd /path/to/your/repo
+carina run "Summarize the top-level architecture of this repo"
+carina audit SESSION
+carina audit verify SESSION
+carina patch list SESSION
+carina patch rollback PATCH_ID
+```
+
+可选工作流：
+
+```bash
+mkdir -p .carina/workflows
+cp examples/workflows/review.json .carina/workflows/
+carina workflow run review
+```
+
+<Callout variant="success">
+  继续：[运行时模型](/zh-cn/concepts/runtime/) 或 [Runtime API](/zh-cn/api/overview/)。
+</Callout>

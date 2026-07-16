@@ -1,0 +1,85 @@
+---
+title: Sessions
+description: Create, control, stream, and export Carina sessions.
+sidebar:
+  order: 2
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# Sessions
+
+A session binds conversation state, a **permission profile**, and a **workspace root**. Workspaces are bound at `session.create` via `workspace_root` — there is no separate registration method.
+
+## Lifecycle
+
+```
+create → (pause / resume) → close
+         ↘ submit tasks / stream events
+         ↘ fork / checkpoint / goal
+```
+
+## Core methods
+
+| Method | Purpose |
+| --- | --- |
+| `session.create` | Create session with workspace + profile |
+| `session.get` / `session.list` | Metadata and listing |
+| `session.pause` / `session.resume` | Suspend / continue |
+| `session.close` | Terminate |
+| `session.replay` | Replay raw audit event stream |
+| `session.items` | Normalized item stream for UI/SDK |
+| `session.review` | Governance projection over items |
+| `session.events.stream` | Live notifications (`since` cursor, `event_mode`) |
+
+JSONL / SQLite export is provided by `audit.export` (`format: jsonl|sqlite`), not a `session.*` method.
+
+## Task operations
+
+| Method | Purpose |
+| --- | --- |
+| `task.submit` | Submit a prompt/task into a session |
+| `task.cancel` | Cancel a running task |
+| `task.status` | Query task state |
+| `task.action.approve` / `task.action.deny` | Resolve pending approval (optional `role`) |
+
+Task events are consumed through `session.events.stream` — there is no separate task event stream.
+
+## Goals
+
+At most one goal per session:
+
+`goal.set` / `get` / `clear` / `pause` / `resume` / `complete` / `continue`
+
+- `goal.continue` is an **explicit, operator-triggered** task submission
+- No unattended continuation loop
+- Fails closed while a task is in-flight, after continuation limit, or when token budget is exhausted
+- Interrupting an active TUI task pauses the goal
+
+TUI: `/goal [--tokens N] OBJECTIVE` plus `clear|pause|resume|complete|continue`.
+
+## Checkpoints
+
+`session.checkpoint.compact` compacts only a **paused** task's persisted latest checkpoint. It never aliases `context.compress`. Compaction is WAL-backed, idempotent on retry, and leaves the source checkpoint available.
+
+TUI: `/compact`.
+
+## SDK sketch
+
+```ts
+import { CarinaClient } from '@nebutra/carina-sdk';
+
+const client = await CarinaClient.connect();
+const session = await client.sessions.create({
+  workspace_root: process.cwd(),
+  profile: 'safe-edit',
+});
+
+for await (const event of session.events()) {
+  console.log(event.type, event.payload);
+}
+```
+
+<Callout variant="tip">
+  Prefer `safe-edit` for interactive coding. Use `read-only` for review-only agents and sub-agents.
+</Callout>

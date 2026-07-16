@@ -1,0 +1,89 @@
+---
+title: Policy & capabilities
+description: Capability types, permission profiles, command risk levels, and default security posture.
+sidebar:
+  order: 2
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# Policy & capabilities
+
+Every meaningful side effect in Carina is one of **fourteen capability types**. The Rust kernel returns a `PermissionDecision` (`allow` / `deny` / `require-approval`) and every decision is an audit event.
+
+Source of truth: `docs/security-model.md`, `protocol/capabilities/`.
+
+## Default posture
+
+1. Least privilege by default
+2. No access outside the workspace
+3. Secrets unreadable by default
+4. Network restricted by default
+5. Destructive commands denied by default
+6. All patches are transactional
+7. Plugins start with zero permissions
+
+## Capability types
+
+```
+FileRead  FileWrite  CommandExec  NetworkAccess  SecretRead
+GitOperation  PatchApply  ProcessSpawn  PluginLoad  RemoteExecute
+MemoryWrite  CodeIndex  ContextCompress  SubagentSpawn
+```
+
+A request carries: principal (agent / plugin / user), resource (path, command, host), session id, and task id. `SubagentSpawn` uses a typed resource `agent:NAME:profile:PROFILE` and requires approval by default; the child's capabilities are attenuated to a subset of the parent's.
+
+## Permission profiles
+
+| Profile | Summary |
+| --- | --- |
+| `read-only` | FileRead within workspace only; everything else denied |
+| `safe-edit` | FileRead; FileWrite only via PatchApply; CommandExec allowlist; network needs approval; secrets denied |
+| `full-workspace` | Read/write in workspace; commands up to level 3 with approval |
+| `ci-runner` | test/build allowed; no arbitrary shell; secrets only when scoped |
+| `sandboxed` | everything mediated through sandbox broker |
+| `trusted-local` | relaxed local development; still audited |
+| `enterprise-restricted` | org policy bundle; central approval for levels ≥ 2 |
+
+Profiles are session-scoped and recorded in session metadata. Custom profiles are supported.
+
+## Command risk levels
+
+| Level | Class | Default policy |
+| --- | --- | --- |
+| 0 | read-only commands | auto allow |
+| 1 | test / build / lint | auto allow under `safe-edit` |
+| 2 | package install | require approval |
+| 3 | file mutation commands | require approval |
+| 4 | network / deploy / credentials | deny, or explicit profile |
+| 5 | destructive (`rm -rf`, `curl \| sh`, …) | deny by default |
+
+## Always require human confirmation
+
+Deleting many files · modifying lockfiles · installing dependencies · executing remote scripts · reading secrets · accessing files outside the workspace · pushing code · deploy commands · network access · modifying CI/CD configuration.
+
+## Workspace boundary
+
+- Agents cannot access paths outside `workspace.allowed_paths`
+- Symbolic links are **resolved before policy checks** — a symlink cannot escape the boundary
+- Ignored files never enter model context; oversized files are skipped by default
+
+## Secret handling
+
+1. Agents never read the environment directly
+2. Secrets are exposed through a broker as **opaque handles**
+3. Event logs never contain secret plaintext
+4. Command output is auto-redacted against known secret values
+
+## Approval modes (operator)
+
+| Mode | Behavior |
+| --- | --- |
+| `ask` | Prompt a human for risky actions |
+| `auto` | Allow within profile bounds |
+| `deny` | Hard-block listed actions |
+| `dont-ask` | Suppress prompts (org-lockable) |
+
+<Callout variant="warning" title="Always-approve is elevated trust">
+  Prefer narrow profiles and short-lived sessions for high-risk work. Broad auto-approval should be intentional and audited.
+</Callout>

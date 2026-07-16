@@ -1,0 +1,112 @@
+/**
+ * Docs public token contract (stable API for components)
+ * ======================================================
+ *
+ * Components, landing pages, and UX chrome MUST only read variables from this
+ * file (the `--docs-*` namespace) or the brand semantic layer already defined
+ * in `brand/variables.css` (`--color-*`, `--font-family-*`, `--radius-*`,
+ * `--spacing-*`, `--duration-*`, `--ease-standard`, `--focus-ring`).
+ *
+ * One-click design-system swap:
+ *   1. Update authority: docs/brand/design-system/variables.css
+ *   2. Run:            pnpm sync-brand
+ *   3. Rebuild:        pnpm build
+ *
+ * Do NOT:
+ *   - hardcode hex / rgb in components
+ *   - invent new primitive hex tokens in this package
+ *   - read Starlight `--sl-*` from product components (chrome only)
+ *
+ * Layer stack (load order in astro.config customCss):
+ *   fonts → brand/variables → docs-tokens → starlight-theme → global → ux
+ */
+
+:root,
+[data-theme='dark'],
+[data-theme='carina-dark'] {
+  /* ── Surfaces ──────────────────────────────────────────────────── */
+  --docs-bg: var(--color-background-page);
+  --docs-bg-surface: var(--color-background-surface);
+  --docs-bg-raised: var(--color-background-raised);
+  --docs-bg-selected: var(--color-background-selected);
+  --docs-bg-nav: color-mix(in srgb, var(--color-background-page) 88%, transparent);
+  --docs-bg-overlay: color-mix(in srgb, var(--color-background-page) 72%, transparent);
+
+  /* ── Text ──────────────────────────────────────────────────────── */
+  --docs-fg: var(--color-text-primary);
+  --docs-fg-muted: var(--color-text-secondary);
+  --docs-fg-subtle: var(--color-text-disabled);
+  --docs-fg-invert: var(--color-background-page);
+
+  /* ── Borders ───────────────────────────────────────────────────── */
+  --docs-border: var(--color-border);
+  --docs-border-subtle: var(--color-border-subtle);
+  --docs-border-strong: var(--color-border);
+  --docs-border-accent: var(--color-accent);
+
+  /* ── Interaction ───────────────────────────────────────────────── */
+  --docs-accent: var(--color-accent);
+  --docs-accent-hover: var(--color-accent-hover);
+  --docs-focus: var(--color-focus);
+  --docs-brand-mark: var(--color-brand-mark);
+  --docs-success: var(--color-success);
+  --docs-warning: var(--color-warning);
+  --docs-danger: var(--color-danger);
+  --docs-info: var(--carina-oxygen-blue);
+
+  /* Capability taxonomy (docs badges) */
+  --docs-cap-core: var(--color-capability-core);
+  --docs-cap-agent: var(--color-capability-agent);
+  --docs-cap-tool: var(--color-capability-tool);
+  --docs-cap-memory: var(--color-capability-memory);
+  --docs-cap-observability: var(--color-capability-observability);
+
+  /* ── Typography ────────────────────────────────────────────────── */
+  --docs-font-brand: var(--font-family-brand);
+  --docs-font-sans: var(--font-family-sans);
+  --docs-font-mono: var(--font-family-mono);
+
+  /* ── Geometry ──────────────────────────────────────────────────── */
+  --docs-radius-xs: var(--radius-xs);
+  --docs-radius-sm: var(--radius-sm);
+  --docs-radius-md: var(--radius-md);
+  --docs-radius-lg: var(--radius-lg);
+  --docs-radius-xl: var(--radius-xl);
+  --docs-radius-full: var(--radius-full);
+  --docs-tag-radius: var(--radius-sm);
+  --docs-panel-radius: var(--radius-lg);
+  --docs-control-h: var(--size-control-default);
+  --docs-control-h-sm: var(--size-control-compact);
+  --docs-nav-height: var(--layout-nav-height);
+  --docs-page-max: var(--layout-page-max);
+  --docs-reading-max: var(--layout-reading-max);
+  --docs-sidebar-width: 15.5rem;
+  --docs-sidebar-link-py: 0.28rem;
+  --docs-sidebar-link-px: 0.55rem;
+  --docs-sidebar-group-gap: 0.15rem;
+
+  /* ── Motion ────────────────────────────────────────────────────── */
+  --docs-duration-fast: var(--duration-fast);
+  --docs-duration-medium: var(--duration-medium);
+  --docs-duration-slow: var(--duration-slow);
+  --docs-ease: var(--ease-standard);
+  --docs-transition: var(--docs-duration-fast) var(--docs-ease);
+  --docs-transition-medium: var(--docs-duration-medium) var(--docs-ease);
+  --docs-focus-ring: var(--focus-ring);
+
+  /* ── Code / chrome helpers ─────────────────────────────────────── */
+  --docs-code-bg: var(--color-background-raised);
+  --docs-code-border: var(--color-border-subtle);
+  --docs-card-bg: var(--color-background-surface);
+  --docs-card-border: var(--color-border);
+  --docs-card-hover-border: var(--color-accent);
+  --docs-scroll-thumb: var(--color-border);
+  --docs-scroll-track: transparent;
+  --docs-selection-bg: color-mix(in srgb, var(--color-accent) 32%, transparent);
+  --docs-selection-fg: var(--color-text-primary);
+  --docs-anchor-offset: calc(var(--layout-nav-height) + var(--spacing-4));
+
+  /* Hero / landing motion (opt-out via prefers-reduced-motion in ux.css) */
+  --docs-hero-stagger: 70ms;
+  --docs-hero-rise: 14px;
+}

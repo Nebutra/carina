@@ -1,0 +1,93 @@
+---
+/**
+ * Callout — Note / Tip / Warning / Danger blocks.
+ * Complements Starlight asides; useful in custom layouts (landing, API ref).
+ */
+export type CalloutVariant = 'note' | 'tip' | 'warning' | 'danger' | 'success';
+
+interface Props {
+  variant?: CalloutVariant;
+  title?: string;
+}
+
+const { variant = 'note', title } = Astro.props;
+
+const defaults: Record<CalloutVariant, string> = {
+  note: 'Note',
+  tip: 'Tip',
+  warning: 'Warning',
+  danger: 'Caution',
+  success: 'Success',
+};
+
+const resolvedTitle = title ?? defaults[variant];
+---
+
+<aside class={`callout callout--${variant}`} role="note">
+  <p class="callout__title">{resolvedTitle}</p>
+  <div class="callout__body">
+    <slot />
+  </div>
+</aside>
+
+<style>
+  .callout {
+    --callout-accent: var(--docs-info);
+    margin: var(--spacing-6) 0;
+    padding: var(--spacing-4) var(--spacing-5);
+    border-radius: var(--docs-panel-radius);
+    border: 1px solid color-mix(in srgb, var(--callout-accent) 35%, transparent);
+    background: color-mix(in srgb, var(--callout-accent) 10%, var(--docs-bg-surface));
+    border-inline-start: 3px solid var(--callout-accent);
+  }
+
+  .callout--tip {
+    --callout-accent: var(--docs-accent);
+  }
+  .callout--warning {
+    --callout-accent: var(--docs-warning);
+  }
+  .callout--danger {
+    --callout-accent: var(--docs-danger);
+  }
+  .callout--success {
+    --callout-accent: var(--docs-success);
+  }
+  .callout--note {
+    --callout-accent: var(--docs-info);
+  }
+
+  .callout__title {
+    margin: 0 0 var(--spacing-2);
+    font-size: var(--text-body-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--callout-accent);
+    letter-spacing: 0.02em;
+  }
+
+  .callout__body {
+    color: var(--docs-fg-muted);
+    font-size: var(--text-body-sm);
+    line-height: var(--leading-body-sm);
+  }
+
+  .callout__body :global(p) {
+    margin: 0;
+  }
+
+  .callout__body :global(p + p) {
+    margin-top: var(--spacing-2);
+  }
+
+  .callout__body :global(a) {
+    color: var(--docs-accent);
+  }
+
+  .callout__body :global(code) {
+    font-family: var(--docs-font-mono);
+    font-size: 0.9em;
+    background: var(--docs-bg-raised);
+    border-radius: var(--docs-radius-xs);
+    padding: 0.05em 0.3em;
+  }
+</style>

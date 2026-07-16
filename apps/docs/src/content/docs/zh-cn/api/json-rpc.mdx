@@ -1,0 +1,28 @@
+---
+title: JSON-RPC 参考
+description: 本地 JSON-RPC 控制平面方法参考。
+---
+
+import Callout from '../../../../components/ui/Callout.astro';
+
+# JSON-RPC 参考
+
+本地客户端通过 JSON-RPC 2.0 连接 daemon。
+
+权威 schema 位于仓库 `protocol/jsonrpc/`。
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "session.create",
+  "params": {
+    "cwd": "/Users/you/project",
+    "profile": "coding"
+  }
+}
+```
+
+<Callout variant="tip">
+  完整方法目录以仓库协议定义为准。
+</Callout>

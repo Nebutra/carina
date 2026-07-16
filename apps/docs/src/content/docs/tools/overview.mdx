@@ -1,0 +1,46 @@
+---
+title: Tools overview
+description: Built-in agent tools, Zig toolchain, and capability mediation.
+sidebar:
+  order: 1
+---
+
+import CategoryTag from '../../../components/ui/CategoryTag.astro';
+
+# Tools overview
+
+<CategoryTag category="tool" label="Tools" />
+
+Tools are the only path from model intent to system effect. Carina normalizes tool calls so policy, audit, and UI treat them uniformly.
+
+## Built-in agent tools
+
+See the full action table in [Agents overview](/agents/overview/). Families:
+
+- Filesystem: list, read, search, patch
+- Shell: `run` (risk-classified `CommandExec`)
+- Memory: governed long-term entries
+- Code intelligence: search / symbols / map / def / refs / impact
+- MCP: external servers via governed manager
+- Orchestration: spawn, workflow, best_of_n
+- Human: ask_user
+
+## Zig native toolchain
+
+| Binary | Role |
+| --- | --- |
+| `carina-scan` | Workspace file tree |
+| `carina-grep` | Structured search |
+| `carina-diff` | Structured diff |
+| `carina-patch-native` | Apply / verify / rollback / dry-run |
+| `carina-run` | Command execution with timeout / env allowlist |
+| `carina-pty` | Interactive terminal sessions |
+
+These emit machine-readable JSON and **never** bypass kernel policy.
+
+## Safety rules
+
+1. Every tool has a capability requirement
+2. Arguments are validated before execution
+3. Outcomes (success, denial, error) are audit events
+4. Plugins and tools carry manifests; undeclared capability use → `PolicyViolation`

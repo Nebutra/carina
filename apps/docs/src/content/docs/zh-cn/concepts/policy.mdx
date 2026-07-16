@@ -1,0 +1,34 @@
+---
+title: 策略与能力
+description: 能力类型、权限配置、命令风险等级与默认安全姿态。
+---
+
+import Callout from '../../../../components/ui/Callout.astro';
+
+# 策略与能力
+
+每个有意义的副作用都属于十四种能力类型之一。内核返回 `PermissionDecision`（allow / deny / require-approval）。
+
+源文档：`docs/security-model.md`。
+
+## 默认姿态
+
+最小权限 · 不出工作区 · 默认不可读密钥 · 默认限制网络 · 默认拒绝破坏性命令 · 补丁事务化 · 插件零权限起步。
+
+## 内置配置
+
+| Profile | 摘要 |
+| --- | --- |
+| `read-only` | 仅工作区内 FileRead |
+| `safe-edit` | 通过 PatchApply 写入；命令白名单；网络需审批 |
+| `full-workspace` | 工作区读写；高风险命令需审批 |
+| `ci-runner` | 测试/构建；无任意 shell |
+| `enterprise-restricted` | 组织策略包；高等级需中央审批 |
+
+## 命令风险等级 0–5
+
+0 只读自动放行 → 5 破坏性默认拒绝。符号链接在策略检查前解析，无法逃逸边界。
+
+<Callout variant="warning">
+  宽泛自动批准等于更高信任。高风险工作请用窄配置与短会话。
+</Callout>

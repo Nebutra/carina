@@ -1,0 +1,29 @@
+/**
+ * Self-hosted Carina brand fonts.
+ * Source: docs/brand/assets/fonts/ (synced via pnpm sync-brand)
+ * All faces use font-display: swap for FCP / Lighthouse.
+ */
+
+@font-face {
+  font-family: 'Carina Display Alpha';
+  src: url('/fonts/CarinaDisplayAlpha-Regular.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Sans';
+  src: url('/fonts/geist-sans-latin-variable.woff2') format('woff2-variations');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/geist-mono-latin-variable.woff2') format('woff2-variations');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}

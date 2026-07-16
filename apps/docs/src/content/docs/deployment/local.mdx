@@ -1,0 +1,69 @@
+---
+title: Local install
+description: Run the daemon, CLI, and native tools on a developer machine.
+sidebar:
+  order: 1
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+
+# Local install
+
+Carina is designed to run primarily on the developer machine or an internal runner you control. Local-first is the base case.
+
+## Install
+
+```bash
+# shell installer (when published)
+curl -fsSL https://get.carina.dev | sh
+
+# from source
+git clone https://github.com/nebutra/carina.git
+cd carina
+make install
+```
+
+## Start the runtime
+
+```bash
+# daemon discovers kernel service + native tools next to its binary
+carina-daemon &
+# or
+carina daemon start
+
+carina version
+carina doctor
+```
+
+Use `-tools` / `-kernel` only to point at alternate build outputs.
+
+## Typical data layout
+
+| Path | Contents |
+| --- | --- |
+| Config | Profiles, MCP servers, provider credentials (BYOK) |
+| State | Sessions, audit segments, patches, memory |
+| Socket | `~/.carina/daemon.sock` (default) |
+| Logs | Daemon diagnostics |
+
+Exact paths are printed by `carina doctor` and release notes.
+
+## Reasoner
+
+- Auto-wires `claude-cli` when `claude` is on PATH and not `--offline`
+- Set `CARINA_REASONER_MODEL` for model-router / BYOK
+
+## Gateway (optional)
+
+Optional listeners are **off by default**. Enable WebSocket/HTTP Gateway only with a signing key and explicit bind — see [Runtime API](/api/overview/).
+
+## Updates
+
+```bash
+carina version
+carina doctor
+```
+
+<Callout variant="note">
+  Package names and install URLs track the open-source release channel. Prefer `carina doctor` after any upgrade.
+</Callout>

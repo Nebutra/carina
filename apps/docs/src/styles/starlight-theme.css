@@ -1,0 +1,100 @@
+/**
+ * Starlight chrome ↔ docs public tokens
+ * --------------------------------------
+ * Only maps `--sl-*` to the stable `--docs-*` / brand semantic contract.
+ * Never hardcode hex here. Swap design system by syncing brand/variables.css.
+ *
+ * See docs-tokens.css for the public component API.
+ */
+
+@layer starlight.theme {
+  :root,
+  [data-theme='dark'],
+  [data-theme='carina-dark'] {
+    color-scheme: dark;
+
+    /* Gray scale → mineral surfaces */
+    --sl-color-white: var(--docs-fg);
+    --sl-color-gray-1: var(--docs-fg);
+    --sl-color-gray-2: var(--docs-fg-muted);
+    --sl-color-gray-3: var(--docs-fg-subtle);
+    --sl-color-gray-4: var(--docs-border);
+    --sl-color-gray-5: var(--docs-border-subtle);
+    --sl-color-gray-6: var(--docs-bg-surface);
+    --sl-color-black: var(--docs-bg);
+
+    /* Accent → ion cyan */
+    --sl-color-accent-low: var(--docs-bg-selected);
+    --sl-color-accent: var(--docs-accent);
+    --sl-color-accent-high: var(--docs-accent-hover);
+
+    /* Semantic asides */
+    --sl-color-orange-low: color-mix(in srgb, var(--docs-warning) 18%, var(--docs-bg));
+    --sl-color-orange: var(--docs-warning);
+    --sl-color-orange-high: var(--docs-warning);
+
+    --sl-color-green-low: color-mix(in srgb, var(--docs-success) 18%, var(--docs-bg));
+    --sl-color-green: var(--docs-success);
+    --sl-color-green-high: var(--docs-success);
+
+    --sl-color-blue-low: color-mix(in srgb, var(--docs-info) 18%, var(--docs-bg));
+    --sl-color-blue: var(--docs-info);
+    --sl-color-blue-high: var(--docs-info);
+
+    --sl-color-purple-low: color-mix(in srgb, var(--docs-cap-agent) 18%, var(--docs-bg));
+    --sl-color-purple: var(--docs-cap-agent);
+    --sl-color-purple-high: var(--docs-cap-agent);
+
+    --sl-color-red-low: color-mix(in srgb, var(--docs-danger) 18%, var(--docs-bg));
+    --sl-color-red: var(--docs-danger);
+    --sl-color-red-high: var(--docs-danger);
+
+    /* Text & surfaces */
+    --sl-color-text: var(--docs-fg-muted);
+    --sl-color-text-accent: var(--docs-accent);
+    --sl-color-text-invert: var(--docs-fg-invert);
+    --sl-color-bg: var(--docs-bg);
+    --sl-color-bg-nav: var(--docs-bg-nav);
+    --sl-color-bg-sidebar: var(--docs-bg);
+    --sl-color-bg-inline-code: var(--docs-bg-raised);
+    --sl-color-bg-accent: var(--docs-accent);
+    --sl-color-hairline-light: var(--docs-border-subtle);
+    --sl-color-hairline: var(--docs-border);
+    --sl-color-hairline-shade: var(--docs-bg-surface);
+    --sl-color-backdrop-overlay: var(--docs-bg-overlay);
+
+    /* Flat hierarchy — borders over elevation */
+    --sl-shadow-sm: 0 0 0 1px var(--docs-border-subtle);
+    --sl-shadow-md: 0 0 0 1px var(--docs-border);
+    --sl-shadow-lg: 0 0 0 1px var(--docs-border),
+      0 12px 32px color-mix(in srgb, var(--docs-bg) 55%, transparent);
+
+    /* Typography */
+    --sl-font: var(--docs-font-sans);
+    --sl-font-mono: var(--docs-font-mono);
+    --sl-font-system: var(--docs-font-sans);
+    --sl-font-system-mono: var(--docs-font-mono);
+
+    --sl-text-body: var(--text-body);
+    --sl-text-body-sm: var(--text-body-sm);
+    --sl-text-code: var(--text-body-sm);
+    --sl-text-code-sm: var(--text-caption);
+    --sl-line-height: var(--leading-body);
+    --sl-line-height-headings: var(--leading-title-sm);
+
+    /* Layout — denser sidebar (Mintlify-like) */
+    --sl-nav-height: var(--docs-nav-height);
+    --sl-content-width: var(--docs-reading-max);
+    --sl-sidebar-width: var(--docs-sidebar-width);
+    --sl-sidebar-pad-x: 0.75rem;
+  }
+
+  /* Dark-only: neutralize light theme if host forces it */
+  :root[data-theme='light'],
+  [data-theme='light'] {
+    color-scheme: dark;
+    --sl-color-bg: var(--docs-bg);
+    --sl-color-text: var(--docs-fg-muted);
+    --sl-color-accent: var(--docs-accent);
+  }
+}

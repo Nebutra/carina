@@ -1,0 +1,113 @@
+/**
+ * Tailwind v4 + Starlight cascade layer setup.
+ * See: https://starlight.astro.build/guides/css-and-tailwind/
+ *
+ * Layer order:
+ *   base → starlight → theme → components → utilities
+ */
+
+@layer base, starlight, theme, components, utilities;
+
+@import '@astrojs/starlight-tailwind';
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+/**
+ * Tailwind @theme bridge
+ * Maps Carina semantic tokens into Tailwind utility classes.
+ * Components should prefer token utilities (bg-background, text-accent, …)
+ * over arbitrary hex values.
+ */
+@theme {
+  /* Surfaces */
+  --color-background: var(--docs-bg, var(--color-background-page));
+  --color-surface: var(--color-background-surface);
+  --color-surface-raised: var(--color-background-raised);
+  --color-selected: var(--color-background-selected);
+
+  /* Text */
+  --color-foreground: var(--docs-fg, var(--color-text-primary));
+  --color-muted: var(--color-text-secondary);
+  --color-disabled: var(--color-text-disabled);
+
+  /* Borders */
+  --color-border: var(--color-border);
+  --color-border-subtle: var(--color-border-subtle);
+
+  /* Brand / interaction */
+  --color-brand-mark: var(--color-brand-mark);
+  --color-accent: var(--color-accent);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-focus: var(--color-focus);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-danger: var(--color-danger);
+
+  /* Capability taxonomy */
+  --color-capability-core: var(--color-capability-core);
+  --color-capability-agent: var(--color-capability-agent);
+  --color-capability-tool: var(--color-capability-tool);
+  --color-capability-memory: var(--color-capability-memory);
+  --color-capability-observability: var(--color-capability-observability);
+
+  /* Fonts */
+  --font-brand: var(--font-family-brand);
+  --font-sans: var(--font-family-sans);
+  --font-mono: var(--font-family-mono);
+
+  /* Radii */
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-full: var(--radius-full);
+
+  /* Motion */
+  --ease-carina: var(--ease-standard);
+  --duration-fast: var(--duration-fast);
+  --duration-medium: var(--duration-medium);
+}
+
+/**
+ * Minimal base resets that must apply outside Starlight page shells
+ * (custom landing layout, 404, etc.).
+ */
+@layer base {
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+    scroll-padding-top: var(--docs-anchor-offset, 4.5rem);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
+  body {
+    font-family: var(--font-family-sans);
+    background-color: var(--docs-bg, var(--color-background-page));
+    color: var(--docs-fg, var(--color-text-primary));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background: var(--docs-selection-bg);
+    color: var(--docs-selection-fg);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+
+  /* Brand display font only for short pure-Latin identity lines */
+  .font-brand {
+    font-family: var(--font-family-brand);
+    font-weight: var(--font-weight-regular);
+    letter-spacing: 0;
+  }
+}

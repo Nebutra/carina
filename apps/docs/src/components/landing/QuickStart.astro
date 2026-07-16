@@ -1,0 +1,135 @@
+---
+interface Card {
+  title: string;
+  description: string;
+  href: string;
+  step: string;
+}
+
+interface Props {
+  heading?: string;
+  cards: Card[];
+}
+
+const {
+  heading = 'Quick start',
+  cards,
+} = Astro.props;
+---
+
+<section class="quickstart">
+  <div class="quickstart__inner">
+    <h2 class="quickstart__heading">{heading}</h2>
+    <div class="quickstart__grid">
+      {
+        cards.map((card) => (
+          <a class="qs-card" href={card.href}>
+            <span class="qs-card__step">{card.step}</span>
+            <h3 class="qs-card__title">{card.title}</h3>
+            <p class="qs-card__desc">{card.description}</p>
+            <span class="qs-card__cta">
+              Open guide
+              <span aria-hidden="true">→</span>
+            </span>
+          </a>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .quickstart {
+    padding: var(--spacing-16) var(--spacing-6) var(--spacing-24);
+  }
+
+  @media (min-width: 768px) {
+    .quickstart {
+      padding: var(--spacing-20) var(--spacing-10) var(--spacing-30);
+    }
+  }
+
+  .quickstart__inner {
+    max-width: var(--layout-page-max);
+    margin: 0 auto;
+  }
+
+  .quickstart__heading {
+    margin: 0 0 var(--spacing-8);
+    text-align: center;
+    font-size: clamp(1.4rem, 2.5vw, 1.85rem);
+    font-weight: var(--font-weight-semibold);
+    color: var(--docs-fg);
+    letter-spacing: -0.02em;
+  }
+
+  .quickstart__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-4);
+  }
+
+  @media (min-width: 768px) {
+    .quickstart__grid {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  .qs-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-3);
+    padding: var(--spacing-6);
+    background: var(--docs-card-bg);
+    border: 1px solid var(--docs-card-border);
+    border-radius: var(--docs-panel-radius);
+    text-decoration: none;
+    transition:
+      border-color var(--docs-transition),
+      background-color var(--docs-transition),
+      transform var(--docs-transition);
+  }
+
+  .qs-card:hover {
+    border-color: var(--docs-card-hover-border);
+    background: var(--docs-bg-raised);
+  }
+
+  .qs-card:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  .qs-card__step {
+    font-family: var(--docs-font-mono);
+    font-size: var(--text-micro);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--docs-accent);
+  }
+
+  .qs-card__title {
+    margin: 0;
+    font-size: var(--text-title-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--docs-fg);
+  }
+
+  .qs-card__desc {
+    margin: 0;
+    flex: 1;
+    color: var(--docs-fg-muted);
+    font-size: var(--text-body-sm);
+    line-height: 1.55;
+  }
+
+  .qs-card__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    margin-top: var(--spacing-2);
+    font-size: var(--text-body-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--docs-accent);
+  }
+</style>

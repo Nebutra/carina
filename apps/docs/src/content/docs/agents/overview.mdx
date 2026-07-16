@@ -1,0 +1,92 @@
+---
+title: Agents overview
+description: ReAct coding agent loop — model decides, kernel authorizes, Zig executes.
+sidebar:
+  order: 1
+---
+
+import CategoryTag from '../../../components/ui/CategoryTag.astro';
+import Callout from '../../../components/ui/Callout.astro';
+
+# Agents overview
+
+<CategoryTag category="agent" label="Agents" />
+
+Carina drives a real ReAct coding agent. The model **only decides**; every side effect is authorized by the Rust capability kernel and executed by the Zig toolchain. The whole run is a tamper-evident audit trail you can replay and roll back.
+
+Source: `docs/agent.md`.
+
+```
+Claude (decides)  →  Go agent loop  →  Rust kernel (authorizes)  →  Zig tools (execute)
+     ▲                                                                      │
+     └───────────────────────── observation ◀──────────────────────────────┘
+```
+
+## The loop
+
+Each turn the reasoner emits one JSON action — or a batch of **read-only** actions (`{"actions":[…]}`, parallel; writes stay one per turn) — and Carina runs it and feeds back an observation:
+
+| Action | Goes through | Runs on |
+| --- | --- | --- |
+| `{"tool":"list"}` | FileRead | Zig `carina-scan` |
+| `{"tool":"read","path":"…"}` | FileRead | kernel-gated read |
+| `{"tool":"search","pattern":"…"}` | FileRead | Zig `carina-grep` |
+| `{"tool":"run","command":["…"]}` | CommandExec (risk-classified) | Zig `carina-run` |
+| `{"tool":"patch",…}` | PatchApply | Rust transaction → Zig `carina-patch-native` |
+| `{"tool":"memory",…}` | MemoryWrite | governed long-term memory |
+| `{"tool":"ask_user",…}` | — | structured operator choice |
+| `{"tool":"code.search/symbols/…"}` | FileRead | code-intelligence index (+LSP) |
+| `{"tool":"mcp"}` / `mcp_find` | governed MCP manager | external MCP servers |
+| `{"tool":"spawn",…}` | SubagentSpawn | isolated subagent |
+| `{"tool":"workflow",…}` | PluginLoad | named dependency DAG |
+| `{"tool":"best_of_n",…}` | opt-in | N candidate patches, judge, apply winner |
+| `{"tool":"done","summary":"…"}` | — | ends the task |
+
+Destructive commands (`rm -rf`, `curl … | sh`) are **denied** before they run. Risky ones (installs) surface for approval. Secret files (`.env`, `.ssh`) are refused. Every file edit is a rollbackable patch transaction.
+
+### Hardening
+
+- **LoopGuard** — breaks canonical-signature action repetition
+- **MistakeTracker** — breaks consecutive failure streaks
+- **Compaction** — folds old turns into a summary (`CompactionReceipt` audited); user-authored turns keep a verbatim tier
+- **Steering** — two-tier (urgent/normal) mailbox drained at turn boundaries
+
+## Reasoner backends
+
+`go/daemon/reasoner.go` defines a pure "think" step:
+
+| Backend | Role |
+| --- | --- |
+| **model-router** | BYOK provider adapters; prompt segments for caching; media parts when catalog allows |
+| **claude-cli** | Local `claude` binary headless, empty cwd isolation — works with CC Switch / gateway setups that only admit Claude Code clients |
+| **scripted** | Fixed decisions for deterministic tests |
+
+Wiring:
+
+- Auto `claude-cli` when binary present and not `--offline`
+- `CARINA_REASONER_MODEL` (e.g. `openai/gpt-5`) switches to model-router
+- Optional: `CARINA_SUMMARIZER_MODEL`, `CARINA_VERIFIER_MODEL`
+
+## Run it
+
+```bash
+carina-daemon &
+cd your-repo
+carina run "fix the failing test in parser.go"
+carina audit SESSION
+carina audit verify SESSION
+carina patch list SESSION
+carina patch rollback ID
+```
+
+## Surfaces that consume agent state
+
+| Surface | Role |
+| --- | --- |
+| TUI | Primary operator experience |
+| VS Code extension | In-editor attach + approvals |
+| Web operator | Dashboard over `agent.view` roster |
+
+<Callout variant="tip">
+  See [Sub-agents](/agents/sub-agents/) for attenuated delegation and [Policy](/concepts/policy/) for capability profiles.
+</Callout>
