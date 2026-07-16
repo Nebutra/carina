@@ -180,6 +180,32 @@ def validate_structure() -> None:
     if canonical.read_bytes() != vscode_icon.read_bytes():
         raise ValueError("VS Code icon must be byte-identical to the canonical symbol")
 
+    sprite = ET.parse(BRAND / "assets" / "logo" / "carina-sprite.svg").getroot()
+    if "display:none" in sprite.attrib.get("style", "").replace(" ", ""):
+        raise ValueError("logo sprite root must not hide external fragment references")
+    if sprite.attrib.get("viewBox") != "0 0 547 240":
+        raise ValueError("logo sprite must have a directly renderable preview viewBox")
+    svg_namespace = "{http://www.w3.org/2000/svg}"
+    symbol_ids = {
+        element.attrib.get("id")
+        for element in sprite.findall(f"{svg_namespace}symbol")
+    }
+    expected_symbol_ids = {
+        "carina-symbol",
+        "carina-wordmark",
+        "carina-horizontal-brand",
+        "carina-horizontal-monochrome",
+    }
+    if symbol_ids != expected_symbol_ids:
+        raise ValueError("logo sprite symbol inventory drifted")
+    preview_uses = [
+        element
+        for element in sprite.findall(f"{svg_namespace}use")
+        if element.attrib.get("href") == "#carina-horizontal-brand"
+    ]
+    if len(preview_uses) != 1:
+        raise ValueError("logo sprite must render one default brand-lockup preview")
+
     expected_hero = "docs/brand/assets/hero/carina-readme-hero.webp"
     old_badges = ["0033FE", "0B7285", "0BF1C3", "6D28D9"]
     for readme_name in ["README.md", "README.zh-CN.md", "README.ja.md"]:
