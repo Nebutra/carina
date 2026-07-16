@@ -25,12 +25,12 @@ const (
 
 var bootstrapCatalog = map[BootstrapCode]map[string]string{
 	BootstrapTUIUsage: {
-		"en": "Usage: carina-tui [options].",
-		"zh": "用法：carina-tui [选项]。",
-		"ja": "使い方: carina-tui [オプション]。",
-		"ko": "사용법: carina-tui [옵션].",
-		"es": "Uso: carina-tui [opciones].",
-		"fr": "Utilisation : carina-tui [options].",
+		"en": "Usage: carina tui [options]  (also: carina | carina-tui).",
+		"zh": "用法：carina tui [选项]（同 carina | carina-tui）。",
+		"ja": "使い方: carina tui [オプション]（carina | carina-tui と同じ）。",
+		"ko": "사용법: carina tui [옵션] (carina | carina-tui와 동일).",
+		"es": "Uso: carina tui [opciones] (igual que carina | carina-tui).",
+		"fr": "Utilisation : carina tui [options] (idem carina | carina-tui).",
 	},
 	BootstrapBareUsage: {
 		"en": "Usage: carina <command> [arguments]. Run `carina help` for the command list.",

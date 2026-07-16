@@ -38,7 +38,14 @@ const cliVersion = product.Version
 const usage = `carina — command-line client for the Carina Agent Runtime
 
 Usage:
+  carina                           interactive TUI (TTY; auto-starts daemon)
+  carina tui [options]             same TUI, explicit (alias of carina-tui)
   carina <command> [arguments]
+
+Interactive shell (preferred entry — one path with carina-tui):
+  carina                           open the TUI in this workspace
+  carina tui [-session id] [-workspace path] [-locale loc] [-socket path] [-no-alt-screen]
+  carina-tui [...]                 thin alias binary (same go/tuiapp launch)
 
 Start and run:
   carina init                                      create ~/.carina and print daemon hint
@@ -221,6 +228,10 @@ func run(cmd string, args []string) error {
 		return cmdUpdate(args)
 	case "daemon":
 		return cmdDaemon(args)
+	case "tui", "ui", "shell":
+		// Unified interactive entry (same as bare `carina` and carina-tui).
+		os.Exit(cmdTUI(args).ExitCode())
+		return nil
 	case "auth":
 		return cmdAuth(args)
 	case "providers":

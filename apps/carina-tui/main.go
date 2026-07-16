@@ -1,27 +1,24 @@
-// carina-tui is the interactive terminal client for the Carina runtime: a
-// live session transcript, kernel-backed approval prompts, and Ctrl-C as an
-// audited cascading cancel. This binary is deliberately thin — the model,
-// update logic, views, theme, and diff renderer live in go/tui so the CLI
-// renderer can share them (one engine, two renderers).
+// carina-tui is a thin alias of the unified interactive shell.
+//
+// Preferred entries (same code path):
+//
+//	carina            # bare, on a TTY
+//	carina tui [...]  # explicit
+//	carina-tui [...]  # this binary
+//
+// The model lives in go/tui; launch lives in go/tuiapp.
 package main
 
 import (
-	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
-	"github.com/Nebutra/carina/go/config"
-	"github.com/Nebutra/carina/go/localdaemon"
 	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/tui"
-	"github.com/Nebutra/carina/go/tui/theme"
+	"github.com/Nebutra/carina/go/tuiapp"
 )
 
 func main() {
@@ -33,7 +30,7 @@ func run(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("carina-tui", flag.ContinueOnError)
 	var parseOutput strings.Builder
 	fs.SetOutput(&parseOutput)
-	socket := fs.String("socket", defaultSocket(), microcopy.Bootstrap(microcopy.BootstrapFlagSocket, nil, bootstrapLocale))
+	socket := fs.String("socket", "", microcopy.Bootstrap(microcopy.BootstrapFlagSocket, nil, bootstrapLocale))
 	session := fs.String("session", "", microcopy.Bootstrap(microcopy.BootstrapFlagSession, nil, bootstrapLocale))
 	workspace := fs.String("workspace", "", microcopy.Bootstrap(microcopy.BootstrapFlagWorkspace, nil, bootstrapLocale))
 	locale := &localeFlagValue{}
@@ -42,6 +39,7 @@ func run(args []string, stderr io.Writer) int {
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), microcopy.Bootstrap(microcopy.BootstrapTUIUsage, nil, bootstrapLocale))
 		fs.PrintDefaults()
+		fmt.Fprintln(fs.Output(), "\nPreferred: carina   or   carina tui [options]")
 	}
 	if err := fs.Parse(args); err != nil {
 		if locale.invalid {
@@ -51,103 +49,15 @@ func run(args []string, stderr io.Writer) int {
 		_, _ = io.WriteString(stderr, parseOutput.String())
 		return tui.OutcomeUsage.ExitCode()
 	}
-	if value := os.Getenv("CARINA_LOCALE"); locale.raw == "" && value != "" {
-		if _, err := microcopy.CanonicalLocale(value); err != nil {
-			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapLocaleInvalid, nil, bootstrapLocale))
-			return tui.OutcomeUsage.ExitCode()
-		}
-	}
-	if !isTTY(os.Stdout) || !isTTY(os.Stdin) {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapInteractiveRequired, nil, bootstrapLocale))
-		return tui.OutcomeUsage.ExitCode()
-	}
-
-	th := theme.New(theme.Detect(os.Getenv, true))
-	projectRoot := *workspace
-	if projectRoot == "" {
-		projectRoot, _ = os.Getwd()
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapResolveHomeFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
-		return tui.OutcomeRuntimeError.ExitCode()
-	}
-	cfg, err := config.Load(home, projectRoot)
-	if err != nil {
-		if errors.Is(err, config.ErrInvalidTUILocale) {
-			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapLocaleInvalid, nil, bootstrapLocale))
-			return tui.OutcomeUsage.ExitCode()
-		}
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
-		return tui.OutcomeRuntimeError.ExitCode()
-	}
-	loc, err := resolveTUILocale(locale.raw, cfg.TUILocale)
-	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapLocaleInvalid, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
-		return tui.OutcomeUsage.ExitCode()
-	}
-	keybindings, err := tui.ParseKeyBindingOverrides(cfg.TUIKeybindings)
-	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": err.Error()}, loc))
-		return tui.OutcomeUsage.ExitCode()
-	}
-	sessionID := *session
-	if sessionID == "" {
-		sessionID, err = tui.LatestPendingSubmissionSession(cfg.StateDir, projectRoot)
-		if err != nil {
-			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapRecoveryFailed, microcopy.Args{"reason": err.Error()}, loc))
-			return tui.OutcomeRuntimeError.ExitCode()
-		}
-		if sessionID == "" {
-			sessionID, err = tui.LastActiveSession(cfg.StateDir, projectRoot)
-			if err != nil {
-				fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapRecoveryFailed, microcopy.Args{"reason": err.Error()}, loc))
-				return tui.OutcomeRuntimeError.ExitCode()
-			}
-		}
-	}
-
-	// Auto-start carina-daemon when the socket is down — same contract as
-	// bare `carina`. Operators should not have to run carina-daemon by hand
-	// just to open the TUI.
-	if err := localdaemon.EnsureSocket(*socket); err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, loc))
-		return tui.OutcomeDaemonUnreachable.ExitCode()
-	}
-
-	connectionController := tui.NewConnectionController()
-	model, err := tui.NewChecked(tui.Options{
-		Theme:             th,
-		Locale:            loc,
-		Socket:            *socket,
-		SessionID:         sessionID,
-		WorkspaceRoot:     projectRoot,
-		StateDir:          cfg.StateDir,
-		Keybindings:       keybindings,
-		NoAlternateScreen: *noAltScreen || strings.EqualFold(cfg.TUIAlternateScreen, "never"),
-		KeymapUpdater:     keymapUpdater(home, projectRoot),
-		SwitchSession:     connectionController.Switch,
-	})
-	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, loc))
-		return tui.OutcomeUsage.ExitCode()
-	}
-	defer model.Close()
-	prog := tea.NewProgram(model)
-	watchCtx, stopWatching := context.WithCancel(context.Background())
-	defer stopWatching()
-	go tui.WatchKeybindings(watchCtx, home, projectRoot, prog)
-	tui.ConnectControlled(prog, *socket, sessionID, projectRoot, connectionController)
-
-	final, err := prog.Run()
-	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapRuntimeFailed, microcopy.Args{"reason": err.Error()}, loc))
-		return tui.OutcomeRuntimeError.ExitCode()
-	}
-	if m, ok := final.(*tui.Model); ok {
-		return m.Outcome().ExitCode()
-	}
-	return tui.OutcomeOK.ExitCode()
+	return tuiapp.Run(tuiapp.Options{
+		Socket:        *socket,
+		SessionID:     *session,
+		WorkspaceRoot: *workspace,
+		Locale:        locale.raw,
+		NoAltScreen:   *noAltScreen,
+		Stderr:        stderr,
+		RequireTTY:    true,
+	}).ExitCode()
 }
 
 type localeFlagValue struct {
@@ -166,10 +76,11 @@ func (v *localeFlagValue) Set(raw string) error {
 	return nil
 }
 
-// bootstrapLocaleForArgs mirrors the small startup FlagSet closely enough to
-// let a valid --locale select help copy before flag.Parse handles --help. It
-// never accepts a locale itself: malformed values still reach localeFlagValue
-// and fail through the formal parser.
+// resolveTUILocale kept for main_test locale precedence.
+func resolveTUILocale(flagLocale, configLocale string) (string, error) {
+	return microcopy.ResolveLocale(flagLocale, configLocale)
+}
+
 func bootstrapLocaleForArgs(args []string) string {
 	locale := microcopy.DetectBootstrapLocale()
 	for i := 0; i < len(args); i++ {
@@ -202,51 +113,9 @@ func bootstrapLocaleForArgs(args []string) string {
 				i++
 			}
 		case "no-alt-screen":
-			// Boolean flags consume only their own token unless they use =value.
 		default:
 			return locale
 		}
 	}
 	return locale
-}
-
-func resolveTUILocale(flagLocale, configLocale string) (string, error) {
-	return microcopy.ResolveLocale(flagLocale, configLocale)
-}
-
-func keymapUpdater(home, projectRoot string) tui.KeymapUpdateFunc {
-	path := filepath.Join(projectRoot, ".carina", "config.json")
-	return func(action string, keys []string, remove bool) ([]tui.KeyBindingOverride, error) {
-		_, locks, err := config.LoadWithManaged(home, projectRoot, config.DefaultManagedPath())
-		if err != nil {
-			return nil, err
-		}
-		if locks.Locked("tui_keybindings") {
-			return nil, fmt.Errorf("tui_keybindings is locked by %s", locks.Source)
-		}
-		if err := config.UpdateTUIKeybinding(path, action, keys, remove); err != nil {
-			return nil, err
-		}
-		cfg, err := config.Load(home, projectRoot)
-		if err != nil {
-			return nil, err
-		}
-		return tui.ParseKeyBindingOverrides(cfg.TUIKeybindings)
-	}
-}
-
-func defaultSocket() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".carina", "daemon.sock")
-	}
-	return filepath.Join(home, ".carina", "daemon.sock")
-}
-
-func isTTY(f *os.File) bool {
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
 }
