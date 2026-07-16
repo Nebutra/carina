@@ -18,6 +18,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Nebutra/carina/go/config"
+	"github.com/Nebutra/carina/go/localdaemon"
 	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/tui"
 	"github.com/Nebutra/carina/go/tui/theme"
@@ -104,6 +105,14 @@ func run(args []string, stderr io.Writer) int {
 				return tui.OutcomeRuntimeError.ExitCode()
 			}
 		}
+	}
+
+	// Auto-start carina-daemon when the socket is down — same contract as
+	// bare `carina`. Operators should not have to run carina-daemon by hand
+	// just to open the TUI.
+	if err := localdaemon.EnsureSocket(*socket); err != nil {
+		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, loc))
+		return tui.OutcomeDaemonUnreachable.ExitCode()
 	}
 
 	connectionController := tui.NewConnectionController()

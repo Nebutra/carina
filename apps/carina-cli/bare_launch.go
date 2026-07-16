@@ -2,28 +2,38 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Nebutra/carina/go/config"
+	"github.com/Nebutra/carina/go/localdaemon"
 	"github.com/Nebutra/carina/go/microcopy"
-	"github.com/Nebutra/carina/go/rpc"
 	"github.com/Nebutra/carina/go/tui"
 	"github.com/Nebutra/carina/go/tui/theme"
 
 	tea "charm.land/bubbletea/v2"
 )
 
+// Capture the package defaults at init so temporary rebinds of
+// localdaemon.Dial/Spawn (for tests) cannot recurse through these hooks.
+var (
+	defaultLocalDial  = localdaemon.Dial
+	defaultLocalSpawn = localdaemon.Spawn
+)
+
 // spawnDaemonHook lets tests observe/replace the actual daemon spawn without
 // starting a real process (mirrors dialHook's seam in client.go).
-var spawnDaemonHook = spawnDaemon
+var spawnDaemonHook = func() error {
+	socket, err := defaultSocketPath()
+	if err != nil {
+		return err
+	}
+	return defaultLocalSpawn(socket)
+}
 
 // dialSocketHook lets tests observe/replace ensureDaemonReachable's dial
 // calls without touching a real unix socket (mirrors dialHook's seam in
@@ -31,7 +41,7 @@ var spawnDaemonHook = spawnDaemon
 // same shape as rpc.Dial and ensureDaemonReachable itself — since
 // ensureDaemonReachable is handed its socket path by its caller rather than
 // resolving it internally.
-var dialSocketHook = rpc.Dial
+var dialSocketHook = defaultLocalDial
 
 // daemonReachableDeadline bounds how long ensureDaemonReachable retries the
 // dial after auto-starting the daemon before giving up. A package-level var
@@ -190,101 +200,31 @@ type Caller interface {
 // and retrying with backoff if the first dial reports the daemon
 // unreachable (P1.5(a)'s "auto-start on unreachable"). Any other dial
 // failure (e.g. a malformed socket path) is returned immediately.
+//
+// Core spawn/ownership lives in go/localdaemon (shared with carina-tui).
+// Hooks above remain so existing CLI unit tests can inject dial/spawn failures.
 func ensureDaemonReachable(socket string) (*rpcClient, error) {
-	c, err := dialSocketHook(socket)
-	if err == nil {
-		return c, nil
+	// Temporarily bind package hooks so tests that replace dialSocketHook /
+	// spawnDaemonHook still observe CLI-level control.
+	origDial, origSpawn, origDeadline := localdaemon.Dial, localdaemon.Spawn, localdaemon.ReachableDeadline
+	localdaemon.Dial = dialSocketHook
+	localdaemon.Spawn = func(sock string) error {
+		// spawnDaemonHook is socket-free (historical CLI API); resolve here.
+		_ = sock
+		return spawnDaemonHook()
 	}
-	if !errors.Is(err, rpc.ErrDaemonUnreachable) {
-		return nil, err
-	}
-
-	if spawnErr := spawnDaemonHook(); spawnErr != nil {
-		return nil, fmt.Errorf("daemon unreachable and auto-start failed: %w", spawnErr)
-	}
-
-	deadline := time.Now().Add(daemonReachableDeadline)
-	var lastErr error = err
-	for attempt := 0; time.Now().Before(deadline); attempt++ {
-		time.Sleep(daemonStartupBackoff(attempt))
-		c, err := dialSocketHook(socket)
-		if err == nil {
-			return c, nil
-		}
-		lastErr = err
-	}
-	return nil, fmt.Errorf("daemon did not become reachable after auto-start: %w", lastErr)
+	localdaemon.ReachableDeadline = daemonReachableDeadline
+	defer func() {
+		localdaemon.Dial, localdaemon.Spawn, localdaemon.ReachableDeadline = origDial, origSpawn, origDeadline
+	}()
+	return localdaemon.EnsureReachable(socket)
 }
 
-// daemonStartupBackoff returns the delay before the (attempt+1)-th reachability
-// probe after auto-starting the daemon: short and linear, since a freshly
-// spawned daemon binds its socket in well under a second in practice.
+// daemonStartupBackoff mirrors go/localdaemon retry cadence (kept for CLI unit tests).
 func daemonStartupBackoff(attempt int) time.Duration {
 	d := 100 * time.Millisecond * time.Duration(attempt+1)
 	if d > time.Second {
 		d = time.Second
 	}
 	return d
-}
-
-// spawnDaemon starts carina-daemon detached from this process (the
-// documented `carina-daemon &` idiom): stdio is redirected to the private
-// runtime log and an ownership record is written so `carina daemon stop`
-// never has to guess which process it owns.
-func spawnDaemon() error {
-	bin := "carina-daemon"
-	if dir := toolsDir(); dir != "" {
-		if _, err := os.Stat(filepath.Join(dir, "carina-daemon")); err == nil {
-			bin = filepath.Join(dir, "carina-daemon")
-		}
-	}
-	socket, err := defaultSocketPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
-		return err
-	}
-	logFile, err := os.OpenFile(daemonLogPath(socket), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	devnull, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
-	if err != nil {
-		_ = logFile.Close()
-		return err
-	}
-	cmd := exec.Command(bin)
-	cmd.Stdin = devnull
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	if err := cmd.Start(); err != nil {
-		_ = devnull.Close()
-		_ = logFile.Close()
-		return fmt.Errorf("start %s: %w", bin, err)
-	}
-	_ = devnull.Close()
-	_ = logFile.Close()
-
-	executable, _ := filepath.Abs(bin)
-	record := daemonOwnershipRecord{
-		Owner:      daemonOwnershipMarker,
-		PID:        cmd.Process.Pid,
-		Socket:     socket,
-		Executable: executable,
-		StartedAt:  time.Now().UTC(),
-	}
-	raw, err := json.Marshal(record)
-	if err == nil {
-		err = writePrivateFileAtomic(daemonOwnershipPath(socket), raw)
-	}
-	if err != nil {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		_ = cmd.Process.Release()
-		return fmt.Errorf("record daemon ownership: %w", err)
-	}
-	// Release the child so it survives this process without becoming a
-	// zombie once it exits; carina-daemon is a long-running control-plane
-	// process, not something bare `carina` supervises.
-	return cmd.Process.Release()
 }
