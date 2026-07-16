@@ -84,6 +84,13 @@ Perception, workflow entry, extensions hub, semantic honesty, writable control, 
 - Local agent dirs (`.agents`/`.claude`/…) gitignored  
 - Uncommitted clusters landed: TUI question keys/grapheme, `carina update`, brand  
 
+### Wave J — Traditional Chinese (`zh-Hant`) — **done**
+
+- Runtime key `zh-Hant` for `zh-Hant` / `zh-TW` / `zh-HK` / `zh-MO`  
+- Catalogs derived from Simplified via OpenCC-compatible tables (`scripts/gen_zh_hant.py`)  
+- TUI + microcopy pools + plural + locale resolution + docs  
+
+
 ## Still intentionally open
 
 | Item | Why deferred |
