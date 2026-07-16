@@ -187,16 +187,24 @@ const tabs = hasSidebar
   }
 
   @media (min-width: 50rem) {
+    /*
+     * Symmetric 1fr | search | 1fr grid so the search pill centers on the
+     * VIEWPORT. The previous sidebar-derived first column made the middle
+     * cell center in leftover space — visibly left of center because the
+     * right control group is much wider than the logo.
+     */
     .docs-header > .header {
       display: grid;
-      grid-template-columns:
-        minmax(
-          calc(var(--__sidebar-width, 0rem) + max(0rem, var(--__main-column-fr, 0rem) - var(--sl-nav-gap, 1rem))),
-          auto
-        )
-        1fr
-        auto;
+      grid-template-columns: 1fr minmax(0, calc(var(--docs-search-max, 28rem) + 2rem)) 1fr;
       align-content: center;
+    }
+
+    .title-wrapper {
+      justify-self: start;
+    }
+
+    .right-group {
+      justify-self: end;
     }
   }
 

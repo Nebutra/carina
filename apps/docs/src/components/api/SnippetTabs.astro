@@ -254,6 +254,9 @@ const panels = [
 
   .snippet-tabs__panels {
     min-width: 0;
+    /* Starlight's markdown sibling rule injects margin-top: 1rem between the
+       tab strip and the panels — shows as a stray band inside the card. */
+    margin-block-start: 0;
   }
 
   .snippet-tabs__panel {

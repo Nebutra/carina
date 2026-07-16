@@ -152,8 +152,24 @@
       --sl-content-width: var(--docs-reading-max);
     }
 
+    /*
+     * Starlight sizes the TOC rail at sidebar-width + leftover/4, which
+     * biases the reading column ~54px left of viewport center and leaves
+     * dead space right of the TOC. Pin BOTH rails to the same width so the
+     * content column centers on the viewport (Mintlify geometry).
+     */
+    .right-sidebar-container {
+      width: var(--sl-sidebar-width);
+    }
+
     .right-sidebar {
-      width: 15.5rem;
+      width: 100%;
+    }
+
+    /* Starlight caps main-pane with its own min() formula tied to the wide
+       TOC rail; with equal rails it must simply fill the remaining space. */
+    [data-has-sidebar][data-has-toc] .main-pane {
+      width: calc(100% - var(--sl-sidebar-width));
     }
   }
 
