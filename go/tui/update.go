@@ -1796,7 +1796,6 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 	default:
 		return m.resolveDynamicSlash(text)
 	}
-	return nil
 }
 
 func validMemoryTarget(target string) bool { return target == "memory" || target == "user" }
