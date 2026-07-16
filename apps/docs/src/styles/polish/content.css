@@ -289,4 +289,9 @@
     opacity: 1;
     color: var(--docs-accent);
   }
+
+  /* Version-gated blocks (API versions page, future channel notes) */
+  [data-version-only][hidden] {
+    display: none !important;
+  }
 }

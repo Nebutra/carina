@@ -1,0 +1,328 @@
+---
+/**
+ * Client-side JSON-RPC try-it builder (static-site safe).
+ * Builds request payloads + curl / carina CLI; optional POST to a user endpoint.
+ */
+interface Props {
+  method: string;
+  params?: Record<string, string> | object;
+  scope?: string;
+}
+
+const { method, params = {}, scope = 'read' } = Astro.props;
+
+const sample: Record<string, unknown> = {};
+if (params && typeof params === 'object' && !Array.isArray(params)) {
+  for (const [key, hint] of Object.entries(params as Record<string, string>)) {
+    const h = String(hint).toLowerCase();
+    if (key.includes('workspace') || key.includes('path') || key.includes('root')) {
+      sample[key] = '/repo';
+    } else if (key.includes('session')) {
+      sample[key] = 'sess_01J…';
+    } else if (key.includes('profile')) {
+      sample[key] = 'safe-edit';
+    } else if (h.includes('boolean')) {
+      sample[key] = true;
+    } else if (h.includes('number') || h.includes('integer')) {
+      sample[key] = 1;
+    } else if (h.includes('array')) {
+      sample[key] = [];
+    } else if (key.includes('prompt') || key.includes('task')) {
+      sample[key] = 'Summarize module boundaries';
+    } else if (String(hint).includes('?') && !key.includes('session')) {
+      continue;
+    } else {
+      sample[key] = `<${key}>`;
+    }
+  }
+}
+
+const body = {
+  jsonrpc: '2.0',
+  id: 1,
+  method,
+  params: sample,
+};
+const bodyJson = JSON.stringify(body, null, 2);
+---
+
+<div
+  class="tryit"
+  data-tryit
+  data-method={method}
+  data-scope={scope}
+  data-default-body={bodyJson}
+>
+  <div class="tryit__head">
+    <h4 class="tryit__title">Try it</h4>
+    <span class="tryit__hint">Builds a request for your local daemon / gateway — nothing is sent until you click Send.</span>
+  </div>
+
+  <label class="tryit__field">
+    <span>Endpoint</span>
+    <input
+      type="url"
+      class="tryit__input"
+      data-tryit-endpoint
+      placeholder="http://127.0.0.1:8777/rpc"
+      autocomplete="off"
+    />
+  </label>
+
+  <label class="tryit__field">
+    <span>Request body</span>
+    <textarea class="tryit__textarea rpc-mono" data-tryit-body rows="8" spellcheck="false">{bodyJson}</textarea>
+  </label>
+
+  <div class="tryit__actions">
+    <button type="button" class="tryit__btn tryit__btn--ghost" data-tryit-copy-json>Copy JSON</button>
+    <button type="button" class="tryit__btn tryit__btn--ghost" data-tryit-copy-curl>Copy curl</button>
+    <button type="button" class="tryit__btn tryit__btn--ghost" data-tryit-copy-cli>Copy CLI</button>
+    <button type="button" class="tryit__btn tryit__btn--primary" data-tryit-send>Send</button>
+  </div>
+
+  <pre class="tryit__out rpc-mono" data-tryit-out hidden></pre>
+</div>
+
+<script>
+  const EP_KEY = 'carina-docs-tryit-endpoint';
+  const DEFAULT_EP = 'http://127.0.0.1:8777/rpc';
+
+  function init(root: Element) {
+    if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
+    root.dataset.ready = '1';
+
+    const method = root.dataset.method || '';
+    const endpointEl = root.querySelector<HTMLInputElement>('[data-tryit-endpoint]');
+    const bodyEl = root.querySelector<HTMLTextAreaElement>('[data-tryit-body]');
+    const outEl = root.querySelector<HTMLElement>('[data-tryit-out]');
+    if (!endpointEl || !bodyEl || !outEl) return;
+
+    endpointEl.value = localStorage.getItem(EP_KEY) || DEFAULT_EP;
+
+    const flash = (btn: HTMLButtonElement, ok = true) => {
+      const prev = btn.textContent;
+      btn.textContent = ok ? 'Copied' : 'Failed';
+      btn.classList.add(ok ? 'is-ok' : 'is-err');
+      window.setTimeout(() => {
+        btn.textContent = prev;
+        btn.classList.remove('is-ok', 'is-err');
+      }, 1200);
+    };
+
+    const getBody = () => bodyEl.value.trim();
+    const getEndpoint = () => {
+      const v = endpointEl.value.trim() || DEFAULT_EP;
+      localStorage.setItem(EP_KEY, v);
+      return v;
+    };
+
+    root.querySelector<HTMLButtonElement>('[data-tryit-copy-json]')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget as HTMLButtonElement;
+      try {
+        await navigator.clipboard.writeText(getBody());
+        flash(btn);
+      } catch {
+        flash(btn, false);
+      }
+    });
+
+    root.querySelector<HTMLButtonElement>('[data-tryit-copy-curl]')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget as HTMLButtonElement;
+      const ep = getEndpoint();
+      const body = getBody().replace(/'/g, `'\\''`);
+      const curl = `curl -sS -X POST '${ep}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${body}'`;
+      try {
+        await navigator.clipboard.writeText(curl);
+        flash(btn);
+      } catch {
+        flash(btn, false);
+      }
+    });
+
+    root.querySelector<HTMLButtonElement>('[data-tryit-copy-cli]')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget as HTMLButtonElement;
+      const cli = `carina call ${method}`;
+      try {
+        await navigator.clipboard.writeText(cli);
+        flash(btn);
+      } catch {
+        flash(btn, false);
+      }
+    });
+
+    root.querySelector<HTMLButtonElement>('[data-tryit-send]')?.addEventListener('click', async () => {
+      outEl.hidden = false;
+      outEl.textContent = 'Sending…';
+      const ep = getEndpoint();
+      let payload: unknown;
+      try {
+        payload = JSON.parse(getBody());
+      } catch (err) {
+        outEl.textContent = `Invalid JSON: ${err instanceof Error ? err.message : String(err)}`;
+        return;
+      }
+      try {
+        const res = await fetch(ep, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const text = await res.text();
+        let pretty = text;
+        try {
+          pretty = JSON.stringify(JSON.parse(text), null, 2);
+        } catch {
+          /* raw */
+        }
+        outEl.textContent = `HTTP ${res.status} ${res.statusText}\n\n${pretty}`;
+      } catch (err) {
+        outEl.textContent = [
+          'Request failed (this is normal if the daemon/gateway is not running).',
+          '',
+          err instanceof Error ? err.message : String(err),
+          '',
+          'Start the gateway, e.g.:',
+          '  carina-daemon -gateway-ws 127.0.0.1:8777 …',
+          'Or copy the JSON / curl / CLI and run it yourself.',
+        ].join('\n');
+      }
+    });
+  }
+
+  function boot() {
+    document.querySelectorAll('[data-tryit]').forEach(init);
+  }
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>
+
+<style>
+  .tryit {
+    margin-top: var(--spacing-3);
+    padding: var(--spacing-3);
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-md);
+    background: color-mix(in srgb, var(--docs-bg) 55%, var(--docs-bg-surface));
+  }
+
+  .tryit__head {
+    margin-bottom: var(--spacing-3);
+  }
+
+  .tryit__title {
+    margin: 0 0 0.25rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--docs-fg-subtle);
+  }
+
+  .tryit__hint {
+    font-size: 0.72rem;
+    color: var(--docs-fg-subtle);
+    line-height: 1.4;
+  }
+
+  .tryit__field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-bottom: var(--spacing-3);
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--docs-fg-muted);
+  }
+
+  .tryit__input,
+  .tryit__textarea {
+    width: 100%;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-md);
+    background: var(--docs-bg);
+    color: var(--docs-fg);
+    font-family: var(--docs-font-mono);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    padding: 0.45rem 0.55rem;
+  }
+
+  .tryit__textarea {
+    resize: vertical;
+    min-height: 8rem;
+    tab-size: 2;
+  }
+
+  .tryit__input:focus,
+  .tryit__textarea:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--docs-accent) 55%, var(--docs-border));
+  }
+
+  .tryit__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .tryit__btn {
+    appearance: none;
+    min-height: 1.85rem;
+    padding: 0 0.6rem;
+    border-radius: 6px;
+    font-family: var(--docs-font-sans);
+    font-size: 0.72rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--docs-border-subtle);
+    background: transparent;
+    color: var(--docs-fg-muted);
+    transition:
+      color 150ms ease,
+      border-color 150ms ease,
+      background-color 150ms ease;
+  }
+
+  .tryit__btn:hover {
+    color: var(--docs-fg);
+    border-color: var(--docs-border);
+  }
+
+  .tryit__btn--primary {
+    border-color: color-mix(in srgb, var(--docs-accent) 55%, transparent);
+    color: var(--docs-accent);
+  }
+
+  .tryit__btn--primary:hover {
+    background: color-mix(in srgb, var(--docs-accent) 8%, transparent);
+    border-color: var(--docs-accent);
+  }
+
+  .tryit__btn.is-ok {
+    color: var(--docs-success);
+  }
+
+  .tryit__btn.is-err {
+    color: var(--docs-danger);
+  }
+
+  .tryit__out {
+    margin: var(--spacing-3) 0 0;
+    padding: 0.55rem 0.65rem;
+    max-height: 16rem;
+    overflow: auto;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-md);
+    background: var(--docs-bg);
+    font-size: 0.72rem;
+    line-height: 1.5;
+    color: var(--docs-fg-muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .rpc-mono {
+    font-family: var(--docs-font-mono);
+  }
+</style>

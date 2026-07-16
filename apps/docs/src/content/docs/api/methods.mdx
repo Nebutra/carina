@@ -10,10 +10,10 @@ import RpcCatalog from '../../../components/api/RpcCatalog.astro';
 
 Machine-generated from the authoritative daemon registry. Prefer this page when you need the full method list; narrative guides live under [Overview](/api/overview/) and [JSON-RPC reference](/api/json-rpc/).
 
-Use the version control in the header for the **0.6.x** / **next** channel. Filter and jump tools sit above the registry.
+Use the header **Version** control for **0.6.x** / **next** ([channel model](/api/versions/)). Sticky filter, scope chips, and group jump sit above the registry. Expand a method for samples + **Try it** (JSON / curl / CLI / optional Send to local gateway).
 
 <Callout variant="tip" title="Stay in sync">
-  From the monorepo root of `apps/docs`, run `pnpm sync-protocol` after protocol changes. CI/docs builds should commit the refreshed `src/data/rpc-catalog.json` when the registry moves.
+  From `apps/docs`, run `pnpm sync-protocol` after protocol changes. Commit refreshed `src/data/rpc-catalog*.json` and `public/data/*` when the registry moves.
 </Callout>
 
 ## Full registry
@@ -31,3 +31,5 @@ Use the version control in the header for the **0.6.x** / **next** channel. Filt
 | `stream` | Long-lived event subscriptions |
 
 `remote: true` means the method may be exposed through the Gateway descriptor catalog when remote surfaces are enabled. `control-plane` flags high-risk control-plane writes.
+
+See also: [API versions](/api/versions/) for how `0.6.x` / `next` catalogs are produced.

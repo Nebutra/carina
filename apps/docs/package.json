@@ -13,7 +13,8 @@
     "sync-brand": "node ./scripts/sync-brand.mjs",
     "sync-protocol": "node ./scripts/sync-protocol.mjs",
     "sync": "pnpm sync-brand && pnpm sync-protocol",
-    "typecheck": "astro check && tsc --noEmit"
+    "typecheck": "astro check && tsc --noEmit",
+    "lighthouse": "pnpm build && pnpm dlx @lhci/cli@0.14.0 autorun --config=./lighthouserc.cjs"
   },
   "engines": {
     "node": ">=22"

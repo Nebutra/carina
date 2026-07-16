@@ -1,14 +1,14 @@
 ---
-import TerminalFrame from './TerminalFrame.astro';
-
+/**
+ * Landing product preview — brand-accurate TUI capture + optional terminal fallback.
+ */
 interface Props {
   heading?: string;
   description?: string;
   bullets?: string[];
-  /** When set, renders a plain code block path; otherwise TerminalFrame mock. */
-  code?: string;
-  lang?: string;
   title?: string;
+  imageSrc?: string;
+  imageAlt?: string;
 }
 
 const {
@@ -19,7 +19,8 @@ const {
     'Policy-gated tools — approvals before side effects',
     'Transactional patches — roll back bad agent edits',
   ],
-  title = 'carina — session',
+  imageSrc = '/images/tui-session.svg',
+  imageAlt = 'Carina TUI showing a governed session with tool calls and an approval prompt',
 } = Astro.props;
 ---
 
@@ -32,9 +33,20 @@ const {
         {bullets.map((item) => <li>{item}</li>)}
       </ul>
     </div>
-    <div class="code-preview__panel">
-      <TerminalFrame title={title} />
-    </div>
+    <figure class="code-preview__panel">
+      <img
+        class="code-preview__shot"
+        src={imageSrc}
+        alt={imageAlt}
+        width="960"
+        height="560"
+        loading="lazy"
+        decoding="async"
+      />
+      <figcaption class="code-preview__cap">
+        Product UI — interactive shell (approval gate + hash-chained audit)
+      </figcaption>
+    </figure>
   </div>
 </section>
 
@@ -111,7 +123,24 @@ const {
     background: var(--docs-accent);
   }
 
-  .code-preview__panel :global(.term) {
+  .code-preview__panel {
     margin: 0;
+    min-width: 0;
+  }
+
+  .code-preview__shot {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 12px;
+    border: 1px solid var(--docs-border-subtle);
+    background: var(--polish-code-bg, #0f1416);
+  }
+
+  .code-preview__cap {
+    margin-top: 0.55rem;
+    font-size: 0.72rem;
+    color: var(--docs-fg-subtle);
+    text-align: center;
   }
 </style>

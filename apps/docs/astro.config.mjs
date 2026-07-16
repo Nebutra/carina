@@ -222,6 +222,11 @@ export default defineConfig({
               translations: { 'zh-CN': 'JSON-RPC 参考' },
               link: '/api/json-rpc/',
             },
+            {
+              label: 'API versions',
+              translations: { 'zh-CN': 'API 版本通道' },
+              link: '/api/versions/',
+            },
           ],
         },
         {

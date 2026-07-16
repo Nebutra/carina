@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-labelledby="title desc">
+  <title id="title">Carina TUI — governed session</title>
+  <desc id="desc">Brand-accurate product UI capture of the Carina interactive shell: session header, message stream, tool call, and approval prompt.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0d1214"/>
+      <stop offset="100%" stop-color="#101618"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#8edbd2" stop-opacity="0.12"/>
+      <stop offset="55%" stop-color="#8edbd2" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="card">
+      <rect x="0" y="0" width="960" height="560" rx="12"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#card)">
+    <rect width="960" height="560" fill="url(#bg)"/>
+    <rect width="960" height="560" fill="url(#glow)"/>
+    <!-- outer hairline -->
+    <rect x="0.5" y="0.5" width="959" height="559" rx="12" fill="none" stroke="#252e31"/>
+
+    <!-- titlebar -->
+    <rect x="0" y="0" width="960" height="44" fill="#151b1e"/>
+    <line x1="0" y1="44" x2="960" y2="44" stroke="#252e31"/>
+    <text x="20" y="28" fill="#8edbd2" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" font-weight="600">❯_</text>
+    <text x="42" y="28" fill="#9aa3a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">carina — session</text>
+    <text x="900" y="28" fill="#6b7572" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" text-anchor="end">safe-edit</text>
+
+    <!-- sidebar -->
+    <rect x="0" y="44" width="200" height="516" fill="#12181a"/>
+    <line x1="200" y1="44" x2="200" y2="560" stroke="#252e31"/>
+    <text x="20" y="72" fill="#6b7572" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="600" letter-spacing="0.08em">SESSION</text>
+    <text x="20" y="96" fill="#e8ebe8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">sess_01J8…</text>
+    <text x="20" y="128" fill="#6b7572" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="600" letter-spacing="0.08em">PROFILE</text>
+    <text x="20" y="152" fill="#8edbd2" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">safe-edit</text>
+    <text x="20" y="184" fill="#6b7572" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="600" letter-spacing="0.08em">AUDIT</text>
+    <text x="20" y="208" fill="#9aa3a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">chained · ok</text>
+    <rect x="16" y="236" width="168" height="1" fill="#252e31"/>
+    <text x="20" y="264" fill="#6b7572" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="600" letter-spacing="0.08em">TOOLS</text>
+    <text x="20" y="288" fill="#9aa3a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">FileRead</text>
+    <text x="20" y="308" fill="#e0b06a" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">PatchApply</text>
+    <text x="20" y="328" fill="#9aa3a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">Shell</text>
+
+    <!-- main stream -->
+    <text x="224" y="76" fill="#6b7572" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">$ carina run "fix the failing test in parser.go"</text>
+
+    <rect x="220" y="96" width="700" height="72" rx="8" fill="#151b1e" stroke="#252e31"/>
+    <text x="236" y="122" fill="#c6a6ea" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="600">agent</text>
+    <text x="236" y="144" fill="#e8ebe8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">I'll inspect the failing test and propose a minimal patch.</text>
+    <text x="236" y="164" fill="#9aa3a0" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">Reading src/parser_test.go · policy: read allowed</text>
+
+    <rect x="220" y="184" width="700" height="88" rx="8" fill="#151b1e" stroke="#252e31"/>
+    <text x="236" y="210" fill="#8edbd2" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="600">→ FileRead</text>
+    <text x="340" y="210" fill="#9aa3a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">src/parser.go</text>
+    <text x="860" y="210" fill="#68d2a3" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" text-anchor="end">allowed</text>
+    <text x="236" y="234" fill="#e0b06a" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="600">→ PatchApply</text>
+    <text x="360" y="234" fill="#9aa3a0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">parser.go:142</text>
+    <text x="860" y="234" fill="#e0b06a" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" text-anchor="end">approval?</text>
+    <text x="236" y="258" fill="#6b7572" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">diff −2 +5 · capability write · audit pending</text>
+
+    <!-- approval card -->
+    <rect x="220" y="292" width="700" height="120" rx="8" fill="#141c1a" stroke="#3d5a48"/>
+    <text x="236" y="320" fill="#68d2a3" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="600">Approval required</text>
+    <text x="236" y="344" fill="#e8ebe8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Apply patch to parser.go? Hash will chain into the session audit log.</text>
+    <rect x="236" y="364" width="72" height="28" rx="6" fill="none" stroke="#8edbd2"/>
+    <text x="272" y="383" fill="#8edbd2" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="500" text-anchor="middle">Allow</text>
+    <rect x="320" y="364" width="72" height="28" rx="6" fill="none" stroke="#344144"/>
+    <text x="356" y="383" fill="#9aa3a0" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="500" text-anchor="middle">Deny</text>
+
+    <!-- status -->
+    <text x="224" y="448" fill="#68d2a3" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">✓ patch applied  ·  audit chained  ·  rollback ready</text>
+    <text x="224" y="476" fill="#6b7572" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">hash  a3f9…c21e  ·  turn  4  ·  latency  1.2s</text>
+
+    <!-- composer -->
+    <rect x="220" y="500" width="700" height="40" rx="8" fill="#151b1e" stroke="#252e31"/>
+    <text x="236" y="525" fill="#6b7572" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">Message session…</text>
+    <text x="880" y="525" fill="#8edbd2" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" text-anchor="end">↵</text>
+  </g>
+</svg>

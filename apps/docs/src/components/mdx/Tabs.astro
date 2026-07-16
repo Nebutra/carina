@@ -115,6 +115,12 @@ const groupId = uniqueId('tabs');
     padding: 0.7rem 0.85rem;
     cursor: pointer;
     border-bottom: 2px solid transparent;
+    /*
+     * Starlight's markdown sibling rule (`* + *`-style) injects
+     * margin-top: 1rem on every button after the first; the first tab then
+     * flex-stretches 1rem taller than its siblings. Neutralize here.
+     */
+    margin-block-start: 0;
     margin-bottom: -1px;
     transition:
       color var(--docs-transition),
@@ -136,6 +142,9 @@ const groupId = uniqueId('tabs');
   }
 
   .docs-tabs__panels {
+    /* Same Starlight sibling rule adds margin-top: 1rem here — it reads as a
+       stray light band between the tab strip and a code-group's dark card. */
+    margin-block-start: 0;
     padding: var(--spacing-4) var(--spacing-5);
   }
 

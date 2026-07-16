@@ -49,6 +49,14 @@ const defaultId = versions.default;
       const isNext = id === 'next';
       banner.hidden = !isNext;
     });
+    // Version-gated content blocks
+    document.querySelectorAll<HTMLElement>('[data-version-only]').forEach((el) => {
+      const only = el.dataset.versionOnly || '';
+      el.hidden = only !== '' && only !== id;
+    });
+    window.dispatchEvent(
+      new CustomEvent('carina:docs-version', { detail: { version: id } }),
+    );
   }
 
   function boot() {

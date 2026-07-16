@@ -1,0 +1,33 @@
+---
+title: API 版本通道
+description: 文档 0.6.x / next 通道与协议目录的对应关系。
+sidebar:
+  order: 4
+---
+
+import Callout from '../../../../components/ui/Callout.astro';
+
+文档提供 **两个通道**。叙事类页面共享；**方法目录**与版本横幅随通道切换。
+
+## 通道
+
+| 通道 | 标记 | 目录文件 | 用途 |
+| --- | --- | --- | --- |
+| `0.6.x` | stable | `/data/rpc-catalog-0.6.x.json` | 0.6 发布线文档面 |
+| `next` | preview | `/data/rpc-catalog-next.json` | 跟踪仓库内最新 `methods.json` |
+
+顶栏 **Version** 选择会写入 `localStorage`，并在 `<html>` 上设置 `data-docs-version`。
+
+## 刷新目录
+
+在 `apps/docs` 下：
+
+```bash title="sync-protocol.sh" frame="none"
+pnpm sync-protocol
+```
+
+协议变更后请提交更新的 `src/data/rpc-catalog*.json` 与 `public/data/*`。
+
+## Try it
+
+在 [方法目录](/zh-cn/api/methods/) 展开任意方法可使用 **Try it**：编辑 JSON-RPC、复制 curl/CLI，或向本地 gateway 发送请求。
