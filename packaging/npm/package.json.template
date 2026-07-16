@@ -5,8 +5,7 @@
   "license": "MIT",
   "bin": {
     "carina": "bin/carina.js",
-    "carina-daemon": "bin/carina-daemon.js",
-    "carina-tui": "bin/carina-tui.js"
+    "carina-daemon": "bin/carina-daemon.js"
   },
   "files": [
     "bin",

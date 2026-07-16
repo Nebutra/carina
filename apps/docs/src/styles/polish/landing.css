@@ -1,0 +1,151 @@
+/**
+ * Landing page polish — outline CTAs, nebula wash, card hover, fade-up.
+ */
+
+@layer components {
+  /* Hero nebula wash */
+  .hero {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .hero__glow {
+    opacity: 0.55;
+    background: radial-gradient(
+      ellipse 70% 55% at 50% 0%,
+      color-mix(in srgb, var(--docs-accent) 18%, transparent),
+      color-mix(in srgb, var(--carina-dust-violet) 8%, transparent) 42%,
+      transparent 70%
+    ) !important;
+  }
+
+  .hero__title {
+    background: linear-gradient(
+      180deg,
+      var(--docs-fg) 0%,
+      color-mix(in srgb, var(--docs-fg) 82%, var(--docs-accent) 18%) 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    /* Fallback if clip unsupported */
+  }
+
+  @supports not (background-clip: text) {
+    .hero__title {
+      color: var(--docs-fg);
+      background: none;
+    }
+  }
+
+  /* Outline CTAs only — no solid fills (design system) */
+  .hero__btn {
+    min-height: 2.5rem;
+    border-radius: var(--radius-md);
+    font-weight: 500;
+    box-shadow: none !important;
+    transition:
+      color var(--polish-transition),
+      border-color var(--polish-transition),
+      background-color var(--polish-transition),
+      transform var(--polish-transition);
+  }
+
+  .hero__btn--primary {
+    background: transparent !important;
+    color: var(--docs-accent) !important;
+    -webkit-text-fill-color: var(--docs-accent) !important;
+    border: 1px solid color-mix(in srgb, var(--docs-accent) 65%, transparent) !important;
+    box-shadow: var(--polish-inset-glow-strong) !important;
+  }
+
+  .hero__btn--primary:hover {
+    background: color-mix(in srgb, var(--docs-accent) 8%, transparent) !important;
+    border-color: var(--docs-accent) !important;
+    color: var(--docs-accent-hover) !important;
+    -webkit-text-fill-color: var(--docs-accent-hover) !important;
+    transform: translateY(-1px);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--docs-accent) 50%, transparent) !important;
+  }
+
+  .hero__btn--ghost {
+    background: transparent !important;
+    color: var(--docs-fg) !important;
+    -webkit-text-fill-color: var(--docs-fg) !important;
+    border: 1px solid var(--docs-border) !important;
+  }
+
+  .hero__btn--ghost:hover {
+    border-color: color-mix(in srgb, var(--docs-fg) 35%, var(--docs-border)) !important;
+    background: color-mix(in srgb, var(--docs-fg) 3%, transparent) !important;
+    transform: translateY(-1px);
+  }
+
+  .hero__eyebrow {
+    border: 1px solid var(--docs-border-subtle);
+    background: color-mix(in srgb, var(--docs-bg-surface) 60%, transparent);
+    box-shadow: none;
+  }
+
+  /* Feature cards */
+  .feature-card,
+  .qs-card {
+    border: 1px solid var(--docs-border-subtle);
+    background: color-mix(in srgb, var(--docs-bg-surface) 70%, transparent);
+    box-shadow: none !important;
+    transition:
+      border-color var(--polish-transition),
+      background-color var(--polish-transition),
+      transform var(--polish-transition);
+  }
+
+  .feature-card:hover,
+  .qs-card:hover {
+    border-color: color-mix(in srgb, var(--docs-border) 80%, var(--docs-accent) 20%);
+    background: var(--docs-bg-surface);
+    transform: translateY(-2px);
+    box-shadow: none !important;
+  }
+
+  /* Scroll fade-up for below-fold sections */
+  .features,
+  .code-preview,
+  .quickstart {
+    animation: polish-fade-up 0.55s var(--polish-ease) both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 35%;
+  }
+
+  @keyframes polish-fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @supports not (animation-timeline: view()) {
+    .features,
+    .code-preview,
+    .quickstart {
+      animation: none;
+      opacity: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .features,
+    .code-preview,
+    .quickstart,
+    .hero__btn,
+    .feature-card,
+    .qs-card {
+      animation: none !important;
+      transition: none !important;
+      transform: none !important;
+    }
+  }
+}

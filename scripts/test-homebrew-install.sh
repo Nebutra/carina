@@ -71,7 +71,7 @@ for executable in \
   carina \
   carina-daemon \
   carina-worker \
-  carina-tui \
+  \
   carina-kernel-service \
   carina-scan \
   carina-grep \

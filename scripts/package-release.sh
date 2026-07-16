@@ -149,7 +149,6 @@ mkdir -p "$stage/bin" "$stage/docs"
 copy_file bin/carina "$stage/bin/carina"
 copy_file bin/carina-daemon "$stage/bin/carina-daemon"
 copy_file bin/carina-worker "$stage/bin/carina-worker"
-copy_file bin/carina-tui "$stage/bin/carina-tui"
 copy_file target/release/carina-kernel-service "$stage/bin/carina-kernel-service"
 
 if [[ "${SKIP_HEADROOM:-0}" == "1" ]]; then

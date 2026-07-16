@@ -1,0 +1,184 @@
+/**
+ * Code blocks — Mintlify-grade chrome (priority 1).
+ * Always-dark mineral surface; tokens only.
+ */
+
+@layer components {
+  .expressive-code {
+    --ec-frm-edBg: var(--polish-code-bg);
+    --ec-frm-trmBg: var(--polish-code-bg);
+    --ec-brdCol: var(--polish-code-border);
+    --ec-frm-edBdgBg: var(--polish-code-chrome);
+    --ec-frm-edBdgFg: var(--polish-code-muted);
+    --ec-frm-trmTtbBg: var(--polish-code-chrome);
+    --ec-frm-trmTtbFg: var(--polish-code-muted);
+    --ec-frm-edTabBarBg: var(--polish-code-chrome);
+    --ec-frm-tooltipSuccessBg: var(--color-success);
+    --ec-frm-tooltipSuccessFg: var(--carina-void);
+    --ec-codePadBlk: 0.95rem;
+    --ec-codePadInl: 1.05rem;
+    font-size: 0.8125rem;
+    margin-block: var(--spacing-5);
+    position: relative;
+  }
+
+  .expressive-code .frame {
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--polish-code-border);
+    box-shadow: none !important;
+    overflow: hidden;
+    background: var(--polish-code-bg);
+    /* subtle inner top highlight */
+    box-shadow: var(--polish-inset-glow) !important;
+    transition: border-color var(--polish-transition);
+  }
+
+  .expressive-code .frame:hover {
+    border-color: var(--carina-border);
+  }
+
+  .expressive-code .frame.is-terminal .header::before {
+    display: none;
+  }
+
+  .expressive-code .frame .header {
+    min-height: 2.35rem;
+    border-bottom: 1px solid var(--polish-code-border);
+    background: var(--polish-code-chrome);
+  }
+
+  .expressive-code .frame.is-terminal:not(.has-title) .header {
+    display: none;
+  }
+
+  .expressive-code .frame .title {
+    font-family: var(--docs-font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--polish-code-muted);
+  }
+
+  .expressive-code .frame pre {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  /* Line numbers — quiet */
+  .expressive-code .ec-line .code {
+    border-inline-start: none;
+  }
+
+  .expressive-code .ec-line .ln {
+    color: var(--polish-code-line);
+    opacity: 0.7;
+    padding-inline-end: 1rem;
+    user-select: none;
+  }
+
+  /* Copy button */
+  .expressive-code .copy {
+    inset-block-start: 0.4rem;
+    inset-inline-end: 0.4rem;
+  }
+
+  .expressive-code .copy button {
+    width: 2rem;
+    height: 2rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--polish-code-border);
+    background: color-mix(in srgb, var(--polish-code-chrome) 88%, transparent);
+    opacity: 0.35;
+    box-shadow: none !important;
+    transition:
+      opacity var(--polish-transition),
+      border-color var(--polish-transition),
+      background-color var(--polish-transition),
+      transform var(--polish-transition);
+  }
+
+  .expressive-code .frame:hover .copy button,
+  .expressive-code .copy button:focus-visible {
+    opacity: 1;
+  }
+
+  .expressive-code .copy button:hover {
+    border-color: color-mix(in srgb, var(--docs-accent) 45%, var(--polish-code-border));
+    background: var(--polish-code-chrome);
+    transform: translateY(-1px);
+  }
+
+  .expressive-code .copy button:focus-visible {
+    outline: none;
+    box-shadow: var(--polish-focus-ring) !important;
+  }
+
+  /* Horizontal scroll fade hint on the right edge */
+  .expressive-code .frame.has-collapsed-lines pre,
+  .expressive-code .frame pre {
+    position: relative;
+  }
+
+  .expressive-code .frame {
+    --fade-w: 2rem;
+  }
+
+  .expressive-code .frame::after {
+    content: '';
+    pointer-events: none;
+    position: absolute;
+    inset-block: 2.35rem 0;
+    inset-inline-end: 0;
+    width: var(--fade-w);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--polish-code-bg) 92%, transparent)
+    );
+    opacity: 0;
+    transition: opacity var(--polish-transition);
+    z-index: 1;
+  }
+
+  .expressive-code .frame:hover::after {
+    opacity: 0.9;
+  }
+
+  /* Inline code — chip only outside pre */
+  .sl-markdown-content :not(pre) > code:not(:where(.expressive-code *)) {
+    background: color-mix(in srgb, var(--docs-bg-raised) 90%, var(--docs-accent) 4%);
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 0.12em 0.4em;
+    font-size: 0.875em;
+    font-weight: 500;
+    color: var(--docs-fg);
+    box-shadow: none;
+  }
+
+  .sl-markdown-content pre code,
+  .snippet-tabs__panel code {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+
+  /* Snippet tabs align with EC chrome */
+  .snippet-tabs {
+    border: 1px solid var(--polish-code-border);
+    border-radius: var(--radius-lg);
+    background: var(--polish-code-bg);
+    box-shadow: var(--polish-inset-glow);
+  }
+
+  .snippet-tabs__list {
+    background: var(--polish-code-chrome);
+    border-bottom-color: var(--polish-code-border);
+  }
+
+  .snippet-tabs__panel {
+    color: var(--polish-code-fg);
+  }
+}

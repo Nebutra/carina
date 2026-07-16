@@ -17,7 +17,7 @@ stages=()
 while IFS= read -r path; do stages+=("$path"); done < <("${mapfile_cmd[@]}")
 [[ ${#stages[@]} -eq 1 ]] || { echo "packaged-conformance: archive must contain exactly one top-level directory" >&2; exit 1; }
 stage="${stages[0]}"
-for binary in carina carina-daemon carina-worker carina-tui carina-kernel-service carina-scan carina-grep carina-diff carina-run carina-pty carina-patch-native headroom; do
+for binary in carina carina-daemon carina-worker carina-kernel-service carina-scan carina-grep carina-diff carina-run carina-pty carina-patch-native headroom; do
   [[ -x "$stage/bin/$binary" ]] || { echo "packaged-conformance: missing executable $binary" >&2; exit 1; }
 done
 [[ -f "$stage/MANIFEST.json" && -f "$stage/checksums.txt" ]] || { echo "packaged-conformance: release metadata missing" >&2; exit 1; }

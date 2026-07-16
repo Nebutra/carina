@@ -45,7 +45,7 @@ func (e *doctorOutcomeError) Error() string {
 }
 
 // classifyExitCode maps a one-shot command's terminal error into the SAME
-// governance exit-code enum go/tui already ships and apps/carina-tui
+// governance exit-code enum go/tui already ships and the interactive shell
 // already reuses (tui.Outcome) — P1.5(b) must not invent a second enum.
 // nil err classifies as OutcomeOK.
 //

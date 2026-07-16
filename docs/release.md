@@ -166,7 +166,7 @@ tar -xzf carina_<version>_<goos>_<goarch>.tar.gz
 - `carina`
 - `carina-daemon`
 - `carina-worker`
-- `carina-tui`
+
 - `headroom` in release packages only, pinned by `integrations/headroom.lock`
 - Zig tools from `zig/zig-out/bin`
 - Rust `carina-kernel-service` under `target/release`

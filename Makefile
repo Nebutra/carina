@@ -12,9 +12,11 @@ all: go rust zig
 install: all
 	cargo build --release -p carina-kernel --bin carina-kernel-service
 	install -d $(BINDIR)
-	install -m 755 bin/carina bin/carina-daemon bin/carina-worker bin/carina-tui $(BINDIR)
+	install -m 755 bin/carina bin/carina-daemon bin/carina-worker $(BINDIR)
 	install -m 755 target/release/carina-kernel-service $(BINDIR)
 	for name in $(ZIG_TOOLS); do install -m 755 zig/zig-out/bin/$$name $(BINDIR) || exit 1; done
+	# Retired binary — interactive shell is bare `carina` / `carina tui` only.
+	rm -f $(BINDIR)/carina-tui
 	@echo "Installed to $(BINDIR). Ensure it is on PATH."
 
 uninstall:
@@ -24,7 +26,6 @@ go:
 	go build -o bin/carina ./apps/carina-cli
 	go build -o bin/carina-daemon ./apps/carina-daemon
 	go build -o bin/carina-worker ./apps/carina-worker
-	go build -o bin/carina-tui ./apps/carina-tui
 	go vet ./...
 
 test: rust-test go-test

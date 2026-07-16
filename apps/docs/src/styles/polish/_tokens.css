@@ -1,0 +1,57 @@
+/**
+ * Polish layer tokens — extends docs public API without forking brand authority.
+ * Brand source: docs/brand/design-system/variables.css
+ *
+ * Capability six-color map (docs naming → brand primitives):
+ *   Core      → ion-cyan        (primary interaction)
+ *   Agent     → dust-violet
+ *   Tool/Stellar → copper-amber
+ *   Memory/Cryo → oxygen-blue
+ *   Brand/Ion mark → brand-rose
+ *   Observability/Emerald → spectral-green
+ *
+ * Typography stays Geist (AGENTS.md) — not Inter/JetBrains.
+ * Depth: surface steps + hairline borders + optional inset glow (no drop shadows).
+ */
+
+:root {
+  --polish-duration: 160ms;
+  --polish-ease: cubic-bezier(0.2, 0, 0, 1);
+  --polish-transition: var(--polish-duration) var(--polish-ease);
+
+  /* Inset glows (not drop shadows) */
+  --polish-inset-glow: inset 0 1px 0 color-mix(in srgb, var(--docs-fg) 6%, transparent);
+  --polish-inset-glow-strong: inset 0 0 0 1px color-mix(in srgb, var(--docs-accent) 35%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--docs-accent) 12%, transparent);
+  --polish-focus-ring: 0 0 0 2px var(--docs-bg), 0 0 0 4px color-mix(in srgb, var(--docs-accent) 55%, transparent);
+
+  /* Code always-dark mineral surface */
+  --polish-code-bg: var(--carina-surface);
+  --polish-code-chrome: var(--carina-surface-raised);
+  --polish-code-border: var(--carina-border-subtle);
+  --polish-code-fg: var(--carina-starlight);
+  --polish-code-muted: var(--carina-dust);
+  --polish-code-line: color-mix(in srgb, var(--carina-disabled) 55%, transparent);
+
+  /* Syntax accents mapped to capability taxonomy */
+  --polish-syn-keyword: var(--carina-dust-violet);
+  --polish-syn-string: var(--carina-spectral-green);
+  --polish-syn-number: var(--carina-copper-amber);
+  --polish-syn-func: var(--carina-ion-cyan);
+  --polish-syn-comment: var(--carina-disabled);
+  --polish-syn-type: var(--carina-oxygen-blue);
+  --polish-syn-operator: var(--carina-dust);
+
+  /* Scroll fade for code */
+  --polish-code-fade: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--polish-code-bg) 100%
+  );
+}
+
+[data-theme='light'],
+[data-theme='carina-light'] {
+  --polish-inset-glow: inset 0 1px 0 color-mix(in srgb, var(--docs-fg) 4%, transparent);
+  /* Code stays dark in light mode (Mintlify signature) */
+}

@@ -1,5 +1,5 @@
 // Package ttyutil provides the single shared isatty check both
-// apps/carina-tui and apps/carina-cli use to decide whether to launch the
+// apps/carina-cli use to decide whether to launch the
 // interactive TUI or fall back to a scriptable/piped path (P1.5(a)).
 package ttyutil
 

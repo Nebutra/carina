@@ -85,11 +85,14 @@ var (
 	}
 )
 
+var obsoleteUpdateBinaries = []string{
+	"carina-tui", // removed: use `carina` / `carina tui`
+}
+
 var requiredUpdateBinaries = []string{
 	"carina",
 	"carina-daemon",
 	"carina-worker",
-	"carina-tui",
 	"carina-kernel-service",
 	"carina-scan",
 	"carina-grep",
@@ -290,6 +293,7 @@ func updateStandalone(opts updateOptions, executable string) error {
 	if err := installUpdateBundle(installDir, binaries); err != nil {
 		return err
 	}
+	removeObsoleteUpdateBinaries(installDir)
 	fmt.Printf("carina update: updated %s -> %s\n", cliVersion, targetVersion)
 	fmt.Println("carina update: restart the daemon after active tasks finish: carina daemon stop; carina")
 	return nil
@@ -689,6 +693,17 @@ func parseUpdateChecksums(raw []byte) (map[string]string, error) {
 		result[name] = strings.ToLower(fields[0])
 	}
 	return result, nil
+}
+
+// removeObsoleteUpdateBinaries deletes retired product binaries (e.g. the
+// former carina-tui alias) so upgrades do not leave a second shell entry.
+func removeObsoleteUpdateBinaries(installDir string) {
+	for _, name := range obsoleteUpdateBinaries {
+		path := filepath.Join(installDir, name)
+		if err := updateRemove(path); err == nil {
+			fmt.Printf("carina update: removed obsolete binary %s\n", name)
+		}
+	}
 }
 
 func installUpdateBundle(installDir string, binaries map[string]string) error {

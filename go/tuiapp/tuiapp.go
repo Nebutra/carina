@@ -1,12 +1,11 @@
 // Package tuiapp is the single interactive launch path for Carina.
 //
-// Preferred operator entries:
+// Operator entries (no separate carina-tui binary):
 //
 //	carina            # bare, on a TTY → this package
-//	carina tui [...]  # explicit, same path
-//	carina-tui [...]  # thin alias binary, same path
+//	carina tui [...]  # explicit flags, same path
 //
-// All three auto-start carina-daemon when the socket is down and share one
+// Both auto-start carina-daemon when the socket is down and share one
 // Bubble Tea model (go/tui).
 package tuiapp
 
@@ -42,7 +41,7 @@ type Options struct {
 	// AfterDaemon runs once the daemon is reachable and before the TUI
 	// attaches (e.g. first-launch doctor). Failures must not abort launch.
 	AfterDaemon func(call RPC)
-	// RequireTTY refuses non-interactive stdio (carina-tui default true).
+	// RequireTTY refuses non-interactive stdio (`carina tui` sets true).
 	// Bare `carina` decides TTY before calling Run.
 	RequireTTY bool
 }
@@ -61,9 +60,9 @@ func Run(opts Options) tui.Outcome {
 	}
 	bootstrapLocale := microcopy.DetectBootstrapLocale()
 
-	// Validate explicit env locale before the TTY gate so `carina-tui
-	// CARINA_LOCALE=de` fails closed with a locale error even under go test
-	// (non-TTY), matching the historical binary contract.
+	// Validate explicit env locale before the TTY gate so
+	// CARINA_LOCALE=de fails closed with a locale error even under go test
+	// (non-TTY).
 	if value := os.Getenv("CARINA_LOCALE"); opts.Locale == "" && value != "" {
 		if _, err := microcopy.CanonicalLocale(value); err != nil {
 			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapLocaleInvalid, nil, bootstrapLocale))

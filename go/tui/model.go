@@ -1,4 +1,4 @@
-// Package tui is the production engine behind apps/carina-tui: an Elm-model
+// Package tui is the production interactive engine behind `carina` / `carina tui`: an Elm-model
 // (Bubble Tea v2) client of the carina daemon. The binary in apps/ is a thin
 // shell; the model, update logic, views, theme, and diff renderer live here
 // so the CLI renderer can reuse them (the plan's one-engine/two-renderers

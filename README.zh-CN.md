@@ -117,7 +117,7 @@ Homebrew 安装会交回 `brew` 管理，npm/pnpm 安装会交回对应包管理
 
 ## TUI 交互与快捷键
 
-直接运行 `carina-tui`，或在交互终端中运行裸 `carina`。任务提交等待 daemon
+在交互终端运行裸 `carina`（或 `carina tui`）。任务提交等待 daemon
 确认期间，控制键仍可用；其间的普通输入/粘贴会进入独立的下一稿草稿，不会改写
 已冻结的提交。
 

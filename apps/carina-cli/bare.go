@@ -11,9 +11,8 @@ const (
 	// scripts/pipes that invoke bare `carina` by accident (today's only
 	// behavior for len(os.Args) < 2).
 	bareActionUsage bareAction = iota
-	// bareActionLaunchTUI launches the interactive TUI in-process (no
-	// exec/fork — apps/carina-cli imports go/tui directly, exactly as
-	// apps/carina-tui/main.go does today).
+	// bareActionLaunchTUI launches the interactive TUI in-process
+	// (go/tuiapp; no second binary).
 	bareActionLaunchTUI
 )
 

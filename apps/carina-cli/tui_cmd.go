@@ -11,7 +11,7 @@ import (
 	"github.com/Nebutra/carina/go/tuiapp"
 )
 
-// cmdTUI is `carina tui` — explicit alias of bare `carina` / carina-tui.
+// cmdTUI is `carina tui` — explicit flags for the same shell as bare `carina`.
 func cmdTUI(args []string) tui.Outcome {
 	bootstrapLocale := microcopy.DetectBootstrapLocale()
 	fs := flag.NewFlagSet("carina tui", flag.ContinueOnError)
@@ -30,7 +30,7 @@ func cmdTUI(args []string) tui.Outcome {
 	})
 	noAltScreen := fs.Bool("no-alt-screen", false, microcopy.Bootstrap(microcopy.BootstrapFlagNoAltScreen, nil, bootstrapLocale))
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "Usage: carina tui [options]   (same as: carina | carina-tui)")
+		fmt.Fprintln(fs.Output(), "Usage: carina tui [options]   (or bare: carina)")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {

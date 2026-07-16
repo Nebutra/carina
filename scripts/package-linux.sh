@@ -26,7 +26,7 @@ mkdir -p "$ROOT/dist"
 rm -rf "$ROOT/dist/stage"
 cp -R "$stage" "$ROOT/dist/stage"
 
-for binary in carina carina-daemon carina-worker carina-tui carina-kernel-service carina-diff carina-grep carina-patch-native carina-pty carina-run carina-scan headroom; do
+for binary in carina carina-daemon carina-worker carina-kernel-service carina-diff carina-grep carina-patch-native carina-pty carina-run carina-scan headroom; do
   [[ -x "$ROOT/dist/stage/bin/$binary" ]] || { echo "package-linux: missing executable $binary" >&2; exit 1; }
 done
 

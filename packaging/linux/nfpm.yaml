@@ -15,8 +15,6 @@ contents:
     dst: /usr/bin/carina-daemon
   - src: ./dist/stage/bin/carina-worker
     dst: /usr/bin/carina-worker
-  - src: ./dist/stage/bin/carina-tui
-    dst: /usr/bin/carina-tui
   - src: ./dist/stage/bin/carina-kernel-service
     dst: /usr/bin/carina-kernel-service
   - src: ./dist/stage/bin/carina-diff

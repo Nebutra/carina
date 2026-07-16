@@ -1,5 +1,5 @@
 // Package localdaemon auto-starts a user-owned carina-daemon for local
-// interactive clients (bare `carina`, carina-tui). The daemon remains a
+// interactive clients (bare `carina` / `carina tui`). The daemon remains a
 // long-lived control plane; clients only spawn it when the socket is down.
 package localdaemon
 

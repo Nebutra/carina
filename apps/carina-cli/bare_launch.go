@@ -34,13 +34,13 @@ var dialSocketHook = defaultLocalDial
 // dial after auto-starting the daemon before giving up.
 var daemonReachableDeadline = 10 * time.Second
 
-// runBareTUI is bare `carina` / `carina tui` entry: one path with carina-tui
-// via go/tuiapp (auto-start daemon, resume session, Bubble Tea shell).
+// runBareTUI is bare `carina` / `carina tui` entry via go/tuiapp
+// (auto-start daemon, resume session, Bubble Tea shell).
 func runBareTUI() tui.Outcome {
 	return runTUI(tuiapp.Options{})
 }
 
-// runTUI launches the unified interactive shell. AfterDaemon wires CLI-only
+// runTUI launches the interactive shell. AfterDaemon wires CLI-only
 // first-launch doctor; flag fields come from `carina tui`.
 func runTUI(opts tuiapp.Options) tui.Outcome {
 	if opts.AfterDaemon == nil {

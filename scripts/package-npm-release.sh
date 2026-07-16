@@ -15,7 +15,7 @@ for tuple in darwin:arm64:arm64 darwin:amd64:x64 linux:arm64:arm64 linux:amd64:x
   package="@nebutra+carina-${platform}-${npm_arch}"; dir="$out/$package"; mkdir -p "$dir/bin"
   stage="$(basename "$archive" .tar.gz)"
   for binary in \
-    carina carina-daemon carina-worker carina-tui carina-kernel-service \
+    carina carina-daemon carina-worker carina-kernel-service \
     carina-scan carina-grep carina-diff carina-patch-native carina-run carina-pty headroom; do
     tar -xOf "$archive" "$stage/bin/$binary" > "$dir/bin/$binary"
     chmod 755 "$dir/bin/$binary"

@@ -1,0 +1,77 @@
+/**
+ * Search modal polish.
+ */
+
+@layer components {
+  site-search dialog::backdrop {
+    background: color-mix(in srgb, var(--docs-bg) 68%, transparent);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  site-search dialog[open] {
+    animation: polish-dialog-in var(--polish-transition) both;
+  }
+
+  @keyframes polish-dialog-in {
+    from {
+      opacity: 0;
+      transform: translateY(-8px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  site-search .dialog-frame {
+    border: 1px solid var(--docs-border-subtle) !important;
+    border-radius: var(--radius-xl) !important;
+    background: var(--docs-bg-surface) !important;
+    box-shadow: var(--polish-inset-glow) !important;
+    overflow: hidden;
+  }
+
+  #starlight__search .pagefind-ui__search-input {
+    border: 1px solid var(--docs-border-subtle) !important;
+    border-radius: var(--radius-lg) !important;
+    background: var(--docs-bg) !important;
+    color: var(--docs-fg) !important;
+    font-weight: 500;
+    transition:
+      border-color var(--polish-transition),
+      box-shadow var(--polish-transition) !important;
+  }
+
+  #starlight__search .pagefind-ui__search-input:focus {
+    border-color: color-mix(in srgb, var(--docs-accent) 55%, var(--docs-border)) !important;
+    box-shadow: var(--polish-inset-glow-strong) !important;
+    outline: none !important;
+  }
+
+  #starlight__search .pagefind-ui__result-title:not(:where(.pagefind-ui__result-nested *)),
+  #starlight__search .pagefind-ui__result-nested {
+    background: var(--docs-bg) !important;
+    border-radius: var(--radius-md);
+    transition: background-color var(--polish-transition);
+  }
+
+  #starlight__search .pagefind-ui__result-title:not(:where(.pagefind-ui__result-nested *)):hover,
+  #starlight__search .pagefind-ui__result-title:not(:where(.pagefind-ui__result-nested *)):focus-within,
+  #starlight__search .pagefind-ui__result-nested:hover,
+  #starlight__search .pagefind-ui__result-nested:focus-within {
+    outline: 1px solid color-mix(in srgb, var(--docs-accent) 45%, var(--docs-border)) !important;
+    background: color-mix(in srgb, var(--docs-accent) 6%, var(--docs-bg)) !important;
+  }
+
+  #starlight__search mark {
+    color: var(--docs-accent) !important;
+    background: color-mix(in srgb, var(--docs-accent) 14%, transparent) !important;
+    border-radius: 2px;
+    font-weight: 600;
+  }
+
+  #starlight__search .pagefind-ui__message {
+    color: var(--docs-fg-muted);
+  }
+}

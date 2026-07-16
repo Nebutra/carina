@@ -3,7 +3,7 @@
   "version": "0.6.4",
   "description": "Native launcher for the Carina Agent Runtime",
   "license": "MIT",
-  "bin": { "carina": "bin/carina.js", "carina-daemon": "bin/carina.js", "carina-worker": "bin/carina.js", "carina-tui": "bin/carina.js" },
+  "bin": { "carina": "bin/carina.js", "carina-daemon": "bin/carina.js", "carina-worker": "bin/carina.js" },
   "files": ["bin/carina.js", "README.md"],
   "os": ["darwin", "linux"],
   "cpu": ["arm64", "x64"],

@@ -1,0 +1,114 @@
+/**
+ * Global motion + micro-details.
+ */
+
+@layer components {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
+  /* Selection */
+  ::selection {
+    background: color-mix(in srgb, var(--docs-accent) 28%, transparent);
+    color: var(--docs-fg);
+  }
+
+  /* Focus ring */
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--docs-accent) 70%, transparent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Global scrollbar quiet */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--docs-border) 55%, transparent) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--docs-border) 70%, transparent);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--docs-fg-subtle);
+    background-clip: content-box;
+    border: 2px solid transparent;
+  }
+
+  /* Reading progress (top hairline) */
+  .docs-progress {
+    position: fixed;
+    inset-inline: 0;
+    top: 0;
+    height: 1px;
+    z-index: calc(var(--sl-z-index-navbar, 10) + 1);
+    transform-origin: left center;
+    transform: scaleX(0);
+    background: color-mix(in srgb, var(--docs-accent) 75%, transparent);
+    pointer-events: none;
+    opacity: 0.85;
+  }
+
+  /* Kill drop shadows from older elev tokens in polish mode */
+  .pagination-links a,
+  .card,
+  .sl-link-card,
+  .docs-feedback,
+  .version-selector__select {
+    box-shadow: none !important;
+  }
+
+  .version-selector__select {
+    border: 1px solid var(--docs-border-subtle);
+    background-color: transparent;
+    transition:
+      border-color var(--polish-transition),
+      color var(--polish-transition),
+      transform var(--polish-transition);
+  }
+
+  .version-selector__select:hover {
+    border-color: var(--docs-border);
+    transform: translateY(-1px);
+  }
+
+  /* Print */
+  @media print {
+    header.header,
+    nav.sidebar,
+    .right-sidebar,
+    .docs-progress,
+    .docs-feedback,
+    .header-tabs,
+    .version-banner {
+      display: none !important;
+    }
+
+    .main-frame {
+      padding: 0 !important;
+    }
+
+    .sl-markdown-content {
+      color: #000;
+    }
+
+    .expressive-code .frame {
+      break-inside: avoid;
+    }
+  }
+}

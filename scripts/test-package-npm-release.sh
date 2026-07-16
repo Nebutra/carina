@@ -35,7 +35,7 @@ for tuple in darwin:arm64 linux:arm64 darwin:amd64 linux:amd64; do
   stage="carina_${version}_${platform}_${arch}"
   mkdir -p "$work/$stage/bin"
   for binary in \
-    carina carina-daemon carina-worker carina-tui carina-kernel-service \
+    carina carina-daemon carina-worker carina-kernel-service \
     carina-scan carina-grep carina-diff carina-patch-native carina-run carina-pty headroom; do
     printf '#!/bin/sh\nexit 0\n' > "$work/$stage/bin/$binary"
     chmod +x "$work/$stage/bin/$binary"
@@ -75,7 +75,7 @@ launcher_tarball="$dist/npm/@nebutra+carina/nebutra-carina-${version}.tgz"
 [[ -f "$platform_tarball" && -f "$launcher_tarball" ]]
 npm install --global --prefix "$work/global" --ignore-scripts --offline \
   "$platform_tarball" "$launcher_tarball" >/dev/null
-for command in carina carina-daemon carina-worker carina-tui; do
+for command in carina carina-daemon carina-worker; do
   "$work/global/bin/$command" --version >/dev/null
 done
 

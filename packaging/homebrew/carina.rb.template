@@ -42,7 +42,7 @@ class Carina < Formula
 
   test do
     assert_match "carina #{version}", shell_output("#{bin}/carina --version")
-    %w[carina-daemon carina-worker carina-tui carina-kernel-service headroom].each do |executable|
+    %w[carina-daemon carina-worker carina-kernel-service headroom].each do |executable|
       assert_predicate bin/executable, :executable?
     end
   end

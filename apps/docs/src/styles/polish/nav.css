@@ -1,0 +1,254 @@
+/**
+ * Navbar + Sidebar + TOC polish.
+ */
+
+@layer components {
+  /* ── Navbar ──────────────────────────────────────────────────────── */
+  header.header {
+    background-color: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border-bottom: 1px solid transparent;
+    transition:
+      background-color var(--polish-transition),
+      border-color var(--polish-transition),
+      backdrop-filter var(--polish-transition);
+  }
+
+  html[data-scrolled='true'] header.header {
+    background-color: color-mix(in srgb, var(--docs-bg) 78%, transparent) !important;
+    backdrop-filter: blur(14px) saturate(1.25) !important;
+    -webkit-backdrop-filter: blur(14px) saturate(1.25) !important;
+    border-bottom-color: var(--docs-border-subtle);
+    box-shadow: none !important;
+  }
+
+  @media (max-width: 49.999rem) {
+    /* Mobile: solid header so drawer never bleeds */
+    header.header {
+      background-color: var(--docs-bg) !important;
+      border-bottom-color: var(--docs-border-subtle);
+    }
+  }
+
+  .site-title {
+    transition: opacity var(--polish-transition), transform var(--polish-transition);
+  }
+
+  .site-title:hover {
+    opacity: 0.9;
+  }
+
+  .site-title img,
+  .site-title svg {
+    height: var(--docs-logo-height);
+    width: auto;
+    max-height: calc(var(--docs-nav-row-height) - 0.875rem);
+  }
+
+  /* Nav links / selects — ghost, hover lift 1px (no underline) */
+  .header-tabs a,
+  .social-icons a,
+  starlight-theme-select label,
+  starlight-lang-select label {
+    transition:
+      color var(--polish-transition),
+      background-color var(--polish-transition),
+      transform var(--polish-transition),
+      border-color var(--polish-transition);
+  }
+
+  .header-tabs a:hover {
+    color: var(--docs-fg);
+    transform: translateY(-1px);
+    background: transparent;
+  }
+
+  .header-tabs a[aria-current='page'] {
+    color: var(--docs-fg);
+    font-weight: 500;
+  }
+
+  .header-tabs a[aria-current='page']::after {
+    background: var(--docs-accent);
+  }
+
+  /* Search pill */
+  button[data-open-modal] {
+    border-radius: var(--radius-full);
+    border: 1px solid var(--docs-border-subtle);
+    background: color-mix(in srgb, var(--docs-bg-surface) 55%, transparent);
+    color: var(--docs-fg-subtle);
+    box-shadow: none !important;
+    transition:
+      border-color var(--polish-transition),
+      background-color var(--polish-transition),
+      color var(--polish-transition),
+      box-shadow var(--polish-transition);
+  }
+
+  button[data-open-modal]:hover {
+    border-color: var(--docs-border);
+    color: var(--docs-fg-muted);
+    background: var(--docs-bg-surface);
+    box-shadow: none !important;
+  }
+
+  button[data-open-modal]:focus-visible,
+  button[data-open-modal]:focus {
+    border-color: color-mix(in srgb, var(--docs-accent) 55%, var(--docs-border));
+    box-shadow: var(--polish-inset-glow-strong) !important;
+    outline: none;
+  }
+
+  button[data-open-modal] kbd {
+    opacity: 0.75;
+    border: 1px solid var(--docs-border-subtle);
+    background: transparent;
+    color: var(--docs-fg-subtle);
+    font-weight: 500;
+  }
+
+  starlight-theme-select label,
+  starlight-lang-select label {
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    color: var(--docs-fg-muted);
+  }
+
+  starlight-theme-select label:hover,
+  starlight-lang-select label:hover {
+    color: var(--docs-fg);
+    border-color: var(--docs-border-subtle);
+    background: transparent;
+    transform: translateY(-1px);
+  }
+
+  /* ── Sidebar ─────────────────────────────────────────────────────── */
+  .sidebar-content {
+    padding-block: var(--spacing-4);
+    padding-inline: 0.15rem;
+    font-size: 0.875rem;
+  }
+
+  .sidebar-content a,
+  .sidebar-content summary {
+    position: relative;
+    border-radius: var(--radius-md);
+    padding: 0.38rem 0.7rem;
+    color: var(--docs-fg-muted);
+    transition:
+      color var(--polish-transition),
+      background-color var(--polish-transition),
+      border-color var(--polish-transition);
+  }
+
+  .sidebar-content a:hover:not([aria-current='page']):not([aria-current='true']) {
+    color: var(--docs-fg);
+    background: color-mix(in srgb, var(--docs-fg) 3.5%, transparent);
+  }
+
+  .sidebar-content a[aria-current='page'],
+  .sidebar-content a[aria-current='true'] {
+    color: var(--docs-fg) !important;
+    font-weight: 500;
+    background: color-mix(in srgb, var(--docs-accent) 5%, transparent) !important;
+    border-inline-start: 2px solid var(--docs-accent);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    box-shadow: none !important;
+  }
+
+  /* Group labels — small caps hierarchy */
+  .sidebar-content .group-label span,
+  .sidebar-content details > summary {
+    color: var(--docs-fg-subtle);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding-block: 0.55rem 0.3rem;
+  }
+
+  .sidebar-content details > summary {
+    transition: color var(--polish-transition);
+  }
+
+  .sidebar-content details > summary:hover {
+    color: var(--docs-fg-muted);
+    background: transparent;
+  }
+
+  /* Restore caret with rotation animation */
+  .sidebar-content summary svg.caret {
+    display: inline-block !important;
+    width: 0.85rem;
+    height: 0.85rem;
+    opacity: 0.55;
+    transition: transform var(--polish-transition), opacity var(--polish-transition);
+  }
+
+  .sidebar-content details[open] > summary svg.caret {
+    transform: rotate(90deg);
+    opacity: 0.8;
+  }
+
+  .sidebar-content details + details,
+  .sidebar-content > ul > li + li {
+    margin-top: var(--spacing-4);
+  }
+
+  /* Quiet scrollbars in chrome */
+  .sidebar-pane,
+  .right-sidebar,
+  .sidebar-content {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--docs-border) 50%, transparent) transparent;
+  }
+
+  /* ── TOC ─────────────────────────────────────────────────────────── */
+  .right-sidebar-panel h2#starlight__on-this-page,
+  .right-sidebar-panel h2 {
+    font-size: 0.6875rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.07em !important;
+    text-transform: uppercase !important;
+    color: var(--docs-fg-subtle) !important;
+    margin-bottom: var(--spacing-3) !important;
+  }
+
+  starlight-toc a {
+    position: relative;
+    display: block;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    padding-block: 0.28rem;
+    padding-inline-start: calc(var(--depth, 0) * 0.65rem);
+    color: var(--docs-fg-muted);
+    border-inline-start: 0 !important;
+    transition:
+      color var(--polish-transition),
+      transform var(--polish-transition),
+      opacity var(--polish-transition);
+  }
+
+  starlight-toc a:hover {
+    color: var(--docs-fg);
+    transform: translateX(2px);
+  }
+
+  starlight-toc a[aria-current='true'] {
+    color: var(--docs-accent);
+    font-weight: 500;
+    transform: none;
+  }
+
+  /* Nested depth via opacity instead of vertical rules */
+  starlight-toc li ul a {
+    opacity: 0.78;
+    font-size: 0.78rem;
+  }
+
+  starlight-toc li ul a[aria-current='true'] {
+    opacity: 1;
+  }
+}
