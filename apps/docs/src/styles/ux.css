@@ -59,8 +59,10 @@
 
   .site-title img,
   .site-title svg {
-    height: 1.25rem;
+    height: var(--docs-logo-height);
     width: auto;
+    max-height: calc(var(--docs-nav-height) - 1.25rem);
+    display: block;
   }
 
   /* Tighter header link spacing */

@@ -95,6 +95,8 @@
   --docs-control-h: var(--size-control-default);
   --docs-control-h-sm: var(--size-control-compact);
   --docs-nav-height: var(--layout-nav-height);
+  /* Horizontal lockup in 56px nav — 20px was too small for wordmark legibility */
+  --docs-logo-height: 1.75rem;
   --docs-page-max: var(--layout-page-max);
   --docs-reading-max: var(--layout-reading-max);
   --docs-sidebar-width: 15.5rem;
