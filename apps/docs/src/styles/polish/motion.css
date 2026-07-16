@@ -139,17 +139,16 @@
   }
 
   .version-selector__select {
-    border: 1px solid var(--docs-border-subtle);
+    border: 0;
     background-color: transparent;
     transition:
-      border-color var(--polish-transition),
       color var(--polish-transition),
-      transform var(--polish-transition);
+      background-color var(--polish-transition);
   }
 
   .version-selector__select:hover {
-    border-color: var(--docs-border);
-    transform: translateY(-1px);
+    border: 0;
+    transform: none;
   }
 
   /* Print */
