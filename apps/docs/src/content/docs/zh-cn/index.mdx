@@ -25,30 +25,31 @@ import QuickStart from '../../../components/landing/QuickStart.astro';
 <FeatureGrid
   heading="为可控的 Agent 执行而设计"
   subheading="动作级策略 · 哈希链审计 · 事务回滚 · 本地权威。"
+  moreLabel="了解更多"
   features={[
     {
       title: '策略内核',
-      description: '能力配置与审批模式在写文件、执行命令、访问网络之前完成门控。',
+      description: '能力配置与审批模式在写文件、执行命令、访问网络前完成门控。',
       category: 'core',
       categoryLabel: 'Runtime',
       href: '/zh-cn/concepts/policy/',
     },
     {
       title: 'Agent 与子 Agent',
-      description: '通过能力衰减委派任务，保证外层会话始终保持权威。',
+      description: '以能力衰减委派任务，保证外层会话始终保持权威与边界。',
       category: 'agent',
       categoryLabel: 'Agents',
       href: '/zh-cn/agents/overview/',
     },
     {
       title: 'Tools 与 MCP',
-      description: '统一工具调用形态，接入 MCP 服务而不泄露无约束权限。',
+      description: '统一工具调用形态，接入 MCP 服务且不泄露无约束权限。',
       category: 'tool',
       categoryLabel: 'Tools',
       href: '/zh-cn/tools/overview/',
     },
     {
-      title: 'Memory',
+      title: 'Memory 表面',
       description: '会话上下文、检索钩子与持久记录均可检视，拒绝黑盒记忆。',
       category: 'memory',
       categoryLabel: 'Memory',

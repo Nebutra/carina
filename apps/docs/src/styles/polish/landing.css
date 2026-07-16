@@ -101,7 +101,7 @@
     box-shadow: none;
   }
 
-  /* Feature cards */
+  /* Feature / quickstart cards — flush grid, no lift (avoids uneven “floating” cards) */
   .feature-card,
   .qs-card {
     border: 1px solid var(--docs-border-subtle);
@@ -109,15 +109,14 @@
     box-shadow: none !important;
     transition:
       border-color var(--polish-transition),
-      background-color var(--polish-transition),
-      transform var(--polish-transition);
+      background-color var(--polish-transition);
   }
 
   .feature-card:hover,
   .qs-card:hover {
-    border-color: color-mix(in srgb, var(--docs-border) 80%, var(--docs-accent) 20%);
-    background: var(--docs-bg-surface);
-    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--docs-accent) 35%, var(--docs-border));
+    background: color-mix(in srgb, var(--docs-fg) 2%, var(--docs-bg-surface));
+    transform: none;
     box-shadow: none !important;
   }
 

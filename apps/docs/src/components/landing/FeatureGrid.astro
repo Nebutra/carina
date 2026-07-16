@@ -14,12 +14,15 @@ interface Props {
   heading?: string;
   subheading?: string;
   features: Feature[];
+  /** Footer link label on cards with href (default: Learn more) */
+  moreLabel?: string;
 }
 
 const {
   heading = 'Built for governed agent execution',
   subheading = 'Policy per action. Hash-chained audit. Transactional rollback. Local authority.',
   features,
+  moreLabel = 'Learn more',
 } = Astro.props;
 ---
 
@@ -30,20 +33,33 @@ const {
   </div>
   <div class="features__grid">
     {
-      features.map((f, i) => (
-        <article
-          class:list={['feature-card', 'docs-animate-in', `docs-animate-in--${Math.min(i + 1, 4)}`]}
-          style={`animation-delay: calc(var(--docs-hero-stagger) * ${i + 1})`}
-        >
-          <div class="feature-card__top">
-            <CategoryTag category={f.category} label={f.categoryLabel} />
-          </div>
-          <h3 class="feature-card__title">
-            {f.href ? <a href={f.href}>{f.title}</a> : f.title}
-          </h3>
-          <p class="feature-card__desc">{f.description}</p>
-        </article>
-      ))
+      features.map((f, i) => {
+        const CardTag = f.href ? 'a' : 'article';
+        return (
+          <CardTag
+            class:list={[
+              'feature-card',
+              'docs-animate-in',
+              `docs-animate-in--${Math.min(i + 1, 4)}`,
+              f.href && 'feature-card--link',
+            ]}
+            style={`animation-delay: calc(var(--docs-hero-stagger) * ${i + 1})`}
+            {...(f.href ? { href: f.href } : {})}
+          >
+            <div class="feature-card__top">
+              <CategoryTag category={f.category} label={f.categoryLabel} />
+            </div>
+            <h3 class="feature-card__title">{f.title}</h3>
+            <p class="feature-card__desc">{f.description}</p>
+            {f.href && (
+              <span class="feature-card__more">
+                {moreLabel}
+                <span aria-hidden="true">→</span>
+              </span>
+            )}
+          </CardTag>
+        );
+      })
     }
   </div>
 </section>
@@ -87,6 +103,7 @@ const {
     display: grid;
     grid-template-columns: 1fr;
     gap: var(--spacing-3);
+    align-items: stretch;
   }
 
   @media (min-width: 640px) {
@@ -101,48 +118,98 @@ const {
     }
   }
 
+  /*
+   * Fixed card skeleton: tag row → 2-line title → 3-line desc → footer.
+   * Equal min-heights keep the 2×3 grid flush across copy variance.
+   */
   .feature-card {
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-3);
-    padding: var(--spacing-5);
-    background: var(--docs-card-bg);
-    border: 1px solid var(--docs-card-border);
-    border-radius: var(--docs-panel-radius);
+    gap: 0;
+    height: 100%;
+    min-height: 13.5rem;
+    padding: 1.15rem 1.2rem 1.05rem;
+    background: var(--docs-card-bg, var(--docs-bg-surface));
+    border: 1px solid var(--docs-card-border, var(--docs-border-subtle));
+    border-radius: var(--docs-panel-radius, var(--radius-lg));
+    text-decoration: none;
+    color: inherit;
+    box-sizing: border-box;
     transition:
       border-color var(--docs-transition),
-      background-color var(--docs-transition),
-      transform var(--docs-transition);
+      background-color var(--docs-transition);
   }
 
-  .feature-card:hover {
-    border-color: var(--docs-card-hover-border);
-    background: var(--docs-bg-raised);
-    transform: translateY(-1px);
+  .feature-card--link {
+    cursor: pointer;
+  }
+
+  .feature-card:hover,
+  .feature-card:focus-visible {
+    border-color: color-mix(in srgb, var(--docs-accent) 35%, var(--docs-border));
+    background: color-mix(in srgb, var(--docs-fg) 2%, var(--docs-bg-surface));
+    outline: none;
+  }
+
+  .feature-card:focus-visible {
+    box-shadow: var(--polish-focus-ring, 0 0 0 2px var(--docs-bg), 0 0 0 4px var(--docs-accent));
+  }
+
+  .feature-card__top {
+    display: flex;
+    align-items: center;
+    min-height: 1.5rem;
+    margin-bottom: 0.75rem;
   }
 
   .feature-card__title {
-    margin: 0;
+    margin: 0 0 0.45rem;
+    min-height: calc(1.3em * 2);
     font-size: 1.05rem;
     font-weight: var(--font-weight-semibold);
     color: var(--docs-fg);
     line-height: 1.3;
-  }
-
-  .feature-card__title a {
-    color: inherit;
-    text-decoration: none;
-  }
-
-  .feature-card__title a:hover {
-    color: var(--docs-accent);
+    letter-spacing: -0.01em;
   }
 
   .feature-card__desc {
     margin: 0;
+    flex: 1 1 auto;
+    min-height: calc(1.55em * 3);
     color: var(--docs-fg-muted);
-    font-size: var(--text-body-sm);
-    line-height: 1.6;
-    flex: 1;
+    font-size: var(--text-body-sm, 0.875rem);
+    line-height: 1.55;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow: hidden;
+  }
+
+  .feature-card__more {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-top: 0.85rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--docs-border-subtle);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--docs-fg-muted);
+    transition: color var(--docs-transition);
+  }
+
+  .feature-card__more span {
+    transition: transform var(--docs-transition);
+  }
+
+  .feature-card:hover .feature-card__more,
+  .feature-card:focus-visible .feature-card__more {
+    color: var(--docs-accent);
+  }
+
+  .feature-card:hover .feature-card__more span,
+  .feature-card:focus-visible .feature-card__more span {
+    transform: translateX(2px);
   }
 </style>
