@@ -666,7 +666,7 @@
   }
 
   /*
-   * Splash / landing full-bleed
+   * Splash / landing / 404 full-bleed
    * Starlight does NOT set data-template on <html>; splash pages simply
    * omit the sidebar → html:not([data-has-sidebar]).
    */
@@ -686,14 +686,23 @@
 
   html:not([data-has-sidebar]) .sl-container {
     max-width: none;
+    margin-inline: auto;
   }
 
   html:not([data-has-sidebar]) .sl-markdown-content {
     max-width: none;
   }
 
+  /* 404 / splash: hide doc chrome (pagination, feedback, last-updated) */
+  html:not([data-has-sidebar]) .pagination-links,
+  html:not([data-has-sidebar]) .docs-feedback,
+  html:not([data-has-sidebar]) footer .meta {
+    display: none !important;
+  }
+
   /* Primary CTAs inside splash markdown must keep on-accent ink */
-  html:not([data-has-sidebar]) .sl-markdown-content a.hero__btn--primary {
+  html:not([data-has-sidebar]) .sl-markdown-content a.hero__btn--primary,
+  html:not([data-has-sidebar]) .sl-markdown-content a.not-found__btn--primary {
     color: var(--docs-on-accent) !important;
     -webkit-text-fill-color: var(--docs-on-accent);
     text-decoration: none;

@@ -1,0 +1,143 @@
+---
+/**
+ * Centered Mintlify-style 404 panel (used by splash 404.mdx).
+ */
+---
+
+<section class="not-found">
+  <p class="not-found__code">404</p>
+  <h1 class="not-found__title">Page not found</h1>
+  <p class="not-found__lead">
+    This page does not exist — or it moved. Check the URL, or jump to a known entry point.
+  </p>
+
+  <div class="not-found__actions">
+    <a class="not-found__btn not-found__btn--primary" href="/">Home</a>
+    <a class="not-found__btn" href="/getting-started/quickstart/">Quickstart</a>
+    <a class="not-found__btn" href="/api/overview/">Runtime API</a>
+    <a class="not-found__btn" href="/api/methods/">Method catalog</a>
+  </div>
+
+  <p class="not-found__hint">
+    Press <kbd>/</kbd> or <kbd>⌘</kbd><kbd>K</kbd> to search
+  </p>
+
+  <p class="not-found__locale">
+    中文文档：<a href="/zh-cn/">简体中文首页</a>
+  </p>
+</section>
+
+<style>
+  .not-found {
+    max-width: 32rem;
+    margin: clamp(3rem, 12vh, 6rem) auto;
+    padding: 0 var(--spacing-6) var(--spacing-16);
+    text-align: center;
+  }
+
+  .not-found__code {
+    margin: 0 0 var(--spacing-3);
+    font-family: var(--docs-font-mono);
+    font-size: clamp(3rem, 8vw, 4.5rem);
+    font-weight: 600;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    color: var(--docs-fg-subtle);
+  }
+
+  .not-found__title {
+    margin: 0 0 var(--spacing-3);
+    font-size: clamp(1.35rem, 3vw, 1.75rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--docs-fg);
+  }
+
+  .not-found__lead {
+    margin: 0 auto var(--spacing-6);
+    max-width: 28rem;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: var(--docs-fg-muted);
+  }
+
+  .not-found__actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-bottom: var(--spacing-5);
+  }
+
+  .not-found__btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.25rem;
+    padding: 0 0.9rem;
+    border-radius: var(--docs-radius-full);
+    border: 1px solid var(--docs-border-subtle);
+    background: var(--docs-bg-surface);
+    color: var(--docs-fg);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition:
+      border-color var(--docs-transition),
+      background-color var(--docs-transition),
+      color var(--docs-transition);
+  }
+
+  .not-found__btn:hover {
+    border-color: var(--docs-border);
+    background: var(--docs-bg-raised);
+  }
+
+  .not-found__btn--primary {
+    background: var(--docs-accent);
+    border-color: transparent;
+    color: var(--docs-on-accent);
+    -webkit-text-fill-color: var(--docs-on-accent);
+  }
+
+  .not-found__btn--primary:hover {
+    background: var(--docs-accent-hover);
+    color: var(--docs-on-accent);
+    -webkit-text-fill-color: var(--docs-on-accent);
+  }
+
+  .not-found__btn:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  .not-found__hint {
+    margin: 0 0 var(--spacing-4);
+    font-size: 0.8125rem;
+    color: var(--docs-fg-subtle);
+  }
+
+  .not-found__hint kbd {
+    font-family: var(--docs-font-sans);
+    font-size: 0.7rem;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-sm);
+    background: var(--docs-bg-raised);
+    padding: 0.05rem 0.35rem;
+    color: var(--docs-fg-muted);
+  }
+
+  .not-found__locale {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--docs-fg-muted);
+  }
+
+  .not-found__locale a {
+    color: var(--docs-accent);
+    text-decoration: none;
+  }
+
+  .not-found__locale a:hover {
+    text-decoration: underline;
+  }
+</style>
