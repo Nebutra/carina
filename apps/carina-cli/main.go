@@ -44,6 +44,8 @@ Start and run:
   carina init                                      create ~/.carina and print daemon hint
   carina status                                    show daemon health and counters
   carina doctor [--json] [--fix [--yes]]           diagnostics; repairs require explicit --yes
+  carina update [--check] [--version x.y.z] [--force]
+                                                   securely update the complete local runtime bundle
   carina run [--agent name] [--model provider/model] [--effort level] "<prompt>" [--background]
                                                    create a safe-edit session in cwd, submit a task, and
                                                    wait for it to finish (exits with its governance
@@ -215,6 +217,8 @@ func run(cmd string, args []string) error {
 		return nil
 	case "completion":
 		return cmdCompletion(args)
+	case "update":
+		return cmdUpdate(args)
 	case "daemon":
 		return cmdDaemon(args)
 	case "auth":

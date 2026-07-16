@@ -57,14 +57,14 @@ func dialDaemon() (*rpcClient, error) { return dialHook() }
 
 // ungatedCommands is the explicit allowlist of carina subcommands that must
 // never touch the daemon socket, config, or kernel (P1.8 startup
-// discipline): help/version/completion and the <100ms native passthrough.
+// discipline): help/version/completion/update and the <100ms native passthrough.
 // This is deliberately an explicit allowlist rather than a set of ad hoc
 // early returns in run(), so it is impossible to add a new governed
 // subcommand without deciding whether it belongs here.
 var ungatedCommands = map[string]bool{
 	"version": true, "--version": true, "-v": true,
 	"help": true, "-h": true, "--help": true,
-	"completion": true, "daemon": true,
+	"completion": true, "update": true, "daemon": true,
 	"scan": true, "grep": true, "diff": true, "pty": true,
 	"run-native": true, "patch-native": true,
 	"auth": true, "providers": true,
@@ -74,7 +74,7 @@ var ungatedCommands = map[string]bool{
 // governed subcommand's startup I/O joins here, and it is the ONLY place
 // that may call dialHook. Commands in ungatedCommands return immediately
 // without ever touching the socket, config, or kernel — help/version/
-// completion and the <100ms native passthrough stay fast and offline.
+// completion/update and the <100ms native passthrough stay daemon-free.
 //
 // For governed commands, startup I/O fires as goroutines at the gate and is
 // joined here rather than sequentially blocking one after another —

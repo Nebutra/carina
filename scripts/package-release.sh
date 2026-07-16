@@ -303,7 +303,7 @@ rm -f "$tmp_files"
 
 "$stage/bin/carina" --version >/dev/null
 
-tar -czf "$archive" -C "$dist_dir" "$package"
+COPYFILE_DISABLE=1 tar -czf "$archive" -C "$dist_dir" "$package"
 archive_sha="$(sha256_file "$archive")"
 printf '%s  %s\n' "$archive_sha" "$(basename "$archive")" > "$archive.sha256"
 printf '%s  %s\n' "$archive_sha" "$(basename "$archive")" > "$dist_dir/SHA256SUMS"

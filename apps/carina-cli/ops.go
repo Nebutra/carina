@@ -379,7 +379,7 @@ var completionRootCommands = []string{
 	"fork", "gateway", "grep", "help", "init", "items", "memory", "metrics", "patch",
 	"patch-native", "plugin", "profile", "providers", "pty", "replay", "report", "resume",
 	"run", "run-native", "scan", "schedule", "search", "secret", "sessions", "status", "steer",
-	"verify", "version", "watch", "worker", "workers", "workflow", "workflows",
+	"update", "verify", "version", "watch", "worker", "workers", "workflow", "workflows",
 }
 
 func cmdCompletion(args []string) error {

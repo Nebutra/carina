@@ -176,6 +176,24 @@ copies the Go binaries, the release `carina-kernel-service`, and the Zig tools
 flat into `$(PREFIX)/bin` (default `~/.local/bin`), mirroring the release
 package layout minus the pinned Headroom bundle.
 
+## Self-update contract
+
+`carina update` is daemon-free and follows installation ownership. Homebrew,
+npm, and pnpm installations delegate mutations to their package manager.
+Standalone installations use the published GitHub Release platform archive
+and its adjacent `.sha256`; before touching the install directory, the updater
+also verifies `MANIFEST.json`, `checksums.txt`, product version, target OS/arch,
+the complete runtime binary set, and the absence of developer-only `SKIP_*`
+warnings. Tar path traversal, links, devices, duplicate entries, unexpected
+origins, oversized payloads, and non-regular destinations fail closed.
+
+Sibling runtime files are staged in the destination directory, fsynced, and
+activated with per-file rename plus transaction-wide rollback; `carina` itself
+is replaced last. The updater does not stop a daemon or interrupt an active
+task. Operators restart the daemon after task completion. `--check` performs no
+asset download, and a development build newer than the latest public release
+is never downgraded unless an exact older version and `--force` are supplied.
+
 ## Versioning
 
 Every Go runtime binary shares the single product version declared in

@@ -70,7 +70,7 @@ func TestUngatedCommandsMatchesDocumentedSkipList(t *testing.T) {
 	want := []string{
 		"version", "--version", "-v",
 		"help", "-h", "--help",
-		"completion", "daemon",
+		"completion", "update", "daemon",
 		"scan", "grep", "diff", "pty",
 		"run-native", "patch-native",
 		"auth", "providers",

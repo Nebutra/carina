@@ -227,7 +227,7 @@ func TestDaemonLogsAndCompletionScripts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("completionScript(%s): %v", shell, err)
 		}
-		for _, want := range []string{"carina", "daemon", "worker", "cost", "fork"} {
+		for _, want := range []string{"carina", "daemon", "worker", "cost", "fork", "update"} {
 			if !strings.Contains(script, want) {
 				t.Fatalf("%s completion missing %q:\n%s", shell, want, script)
 			}
