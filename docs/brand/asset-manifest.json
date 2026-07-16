@@ -889,8 +889,8 @@
       "path": "docs/brand/design-system/variables.css",
       "role": "token-source",
       "mediaType": "text/css",
-      "bytes": 4118,
-      "sha256": "cee4c5f0e0cadc7c6663647110e73599edbf1fe51b13305a55b86f6b4ad97201"
+      "bytes": 4504,
+      "sha256": "1a28f3003c537817a8f0ed81541244b9cbe0bd3239aad52d1528f7b573c53bab"
     },
     {
       "path": "docs/brand/design-system/tailwind-v4.css",
