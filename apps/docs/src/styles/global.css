@@ -15,43 +15,14 @@
 @import 'tailwindcss/utilities.css' layer(utilities);
 
 /*
- * `inline` is load-bearing: without it Tailwind re-emits these names onto
- * `:root, :host` after brand/variables.css, and self-references like
- * `--color-accent: var(--color-accent)` become cycles that invalidate the
- * brand token everywhere. `inline` resolves values into utilities only.
+ * IMPORTANT: never alias a token to its own name here (e.g.
+ * `--color-accent: var(--color-accent)`). Tailwind re-emits @theme variables
+ * onto an unlayered `:root, :host` block that loads AFTER brand/variables.css,
+ * so a same-name alias becomes a self-reference cycle that invalidates the
+ * brand token site-wide. Components read `--docs-*` / `--color-*` directly;
+ * no Tailwind color/radius utilities are used, so only fonts live here.
  */
 @theme inline {
-  /* Surfaces */
-  --color-background: var(--color-background-page);
-  --color-surface: var(--color-background-surface);
-  --color-surface-raised: var(--color-background-raised);
-  --color-selected: var(--color-background-selected);
-
-  /* Text */
-  --color-foreground: var(--color-text-primary);
-  --color-muted: var(--color-text-secondary);
-  --color-disabled: var(--color-text-disabled);
-
-  /* Borders */
-  --color-border: var(--color-border);
-  --color-border-subtle: var(--color-border-subtle);
-
-  /* Brand / interaction */
-  --color-brand-mark: var(--color-brand-mark);
-  --color-accent: var(--color-accent);
-  --color-accent-hover: var(--color-accent-hover);
-  --color-focus: var(--color-focus);
-  --color-success: var(--color-success);
-  --color-warning: var(--color-warning);
-  --color-danger: var(--color-danger);
-
-  /* Capability taxonomy */
-  --color-capability-core: var(--color-capability-core);
-  --color-capability-agent: var(--color-capability-agent);
-  --color-capability-tool: var(--color-capability-tool);
-  --color-capability-memory: var(--color-capability-memory);
-  --color-capability-observability: var(--color-capability-observability);
-
   /*
    * Fonts — concrete stacks (required by @astrojs/starlight-tailwind).
    * Keep family names identical to brand tokens; append OS/CJK fallbacks.
@@ -64,19 +35,6 @@
   --font-mono:
     'Geist Mono', ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas,
     'Liberation Mono', monospace;
-
-  /* Radii */
-  --radius-xs: var(--radius-xs);
-  --radius-sm: var(--radius-sm);
-  --radius-md: var(--radius-md);
-  --radius-lg: var(--radius-lg);
-  --radius-xl: var(--radius-xl);
-  --radius-full: var(--radius-full);
-
-  /* Motion */
-  --ease-carina: var(--ease-standard);
-  --duration-fast: var(--duration-fast);
-  --duration-medium: var(--duration-medium);
 }
 
 @layer base {
