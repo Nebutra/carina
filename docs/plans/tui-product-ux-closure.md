@@ -90,6 +90,13 @@ Perception, workflow entry, extensions hub, semantic honesty, writable control, 
 - Catalogs derived from Simplified via OpenCC-compatible tables (`scripts/gen_zh_hant.py`)  
 - TUI + microcopy pools + plural + locale resolution + docs  
 
+### Wave K — quality guardrails — **done**
+
+- `scripts/gen_zh_hant.py --check` + `make zh-hant-check` (stale Traditional table fails)  
+- `make docs-build` (Astro/Starlight production smoke)  
+- `make quality-check` aggregates brand + zh-hant + docs  
+- CI job `quality-guardrails` runs zh-hant-check, brand-check, docs build  
+
 
 ## Still intentionally open
 

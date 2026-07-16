@@ -1,4 +1,4 @@
-.PHONY: all install uninstall go rust zig sdk-ts test rust-test go-test brand-check swarm-integration-test bench-gate-test audit-bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
+.PHONY: all install uninstall go rust zig sdk-ts test rust-test go-test brand-check zh-hant-check docs-build quality-check swarm-integration-test bench-gate-test audit-bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
 
 PREFIX ?= $(HOME)/.local
 BINDIR = $(PREFIX)/bin
@@ -31,6 +31,18 @@ test: rust-test go-test
 
 brand-check:
 	python3 scripts/brand_assets.py
+
+# Fail if Simplified Chinese catalogs changed without regenerating Traditional.
+# Requires: pip install zhconv
+zh-hant-check:
+	python3 scripts/gen_zh_hant.py --check
+
+# Docs site production build smoke (Astro + Starlight).
+docs-build:
+	cd apps/docs && pnpm install --frozen-lockfile && pnpm run build
+
+# Lightweight quality gates for i18n derivation + docs site (also run in CI).
+quality-check: brand-check zh-hant-check docs-build
 
 bench-gate-test:
 	bash scripts/test-bench-gate.sh
