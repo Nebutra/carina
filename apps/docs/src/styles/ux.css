@@ -67,7 +67,8 @@
   .site-title svg {
     height: var(--docs-logo-height);
     width: auto;
-    max-height: calc(var(--docs-nav-height) - 1.25rem);
+    /* Leave ~10px total vertical breathing room in 56px nav */
+    max-height: calc(var(--docs-nav-height) - 0.625rem);
   }
 
   /* Reaffirm theme toggle above any later display utilities */
