@@ -414,6 +414,9 @@ func (m *Model) statusActivityText() string {
 		}
 		activity += " · " + goal
 	}
+	if shell := m.shellModeStatusSuffix(); shell != "" {
+		activity += " · " + shell
+	}
 	return activity
 }
 

@@ -2,6 +2,8 @@ package tui
 
 const (
 	MsgPlaceholderInstruction MessageID = "composer.placeholder.instruction"
+	MsgPlaceholderShell       MessageID = "composer.placeholder.shell"
+	MsgStatusShellMode        MessageID = "status.shell_mode"
 	MsgKeybindingsError       MessageID = "composer.keybindings.error"
 	MsgSuggestFiles           MessageID = "suggest.files"
 	MsgSuggestCommands        MessageID = "suggest.commands"
@@ -147,6 +149,8 @@ var baseCatalogRows = []catalogRow{
 	catalog(MsgOverlayDisconnected, "Connection unavailable; decisions can be retried after reconnect.", "连接不可用；重连后可重试操作。", "接続できません。再接続後に再試行できます。", "연결할 수 없습니다. 재연결 후 다시 시도할 수 있습니다.", "Conexión no disponible; reintenta tras reconectar.", "Connexion indisponible ; réessayez après reconnexion."),
 	catalog(MsgStatusNotAttached, "not attached", "未连接会话", "未接続", "연결되지 않음", "sin sesión", "sans session"),
 	catalog(MsgStatusSession, "session {id}", "会话 {id}", "セッション {id}", "세션 {id}", "sesión {id}", "session {id}"),
+	catalog(MsgPlaceholderShell, "shell command — Esc exits", "Shell 命令 — Esc 退出", "シェルコマンド — Esc で終了", "셸 명령 — Esc로 종료", "comando shell — Esc sale", "commande shell — Échap quitte"),
+	catalog(MsgStatusShellMode, "shell", "shell", "shell", "shell", "shell", "shell"),
 	catalog(MsgStatusReady, "ready", "就绪", "準備完了", "준비됨", "listo", "prêt"),
 	catalog(MsgStatusEditingDraft, "editing draft", "正在编辑草稿", "下書きを編集中", "초안 편집 중", "editando borrador", "modification du brouillon"),
 	catalog(MsgStatusSending, "sending {kind}", "正在发送 {kind}", "{kind} を送信中", "{kind} 전송 중", "enviando {kind}", "envoi de {kind}"),
@@ -198,7 +202,7 @@ var baseCatalogRows = []catalogRow{
 	catalog(MsgHelpCommandMode, "  /mode <build|plan|cycle> change interaction mode (Shift+Tab)", "  /mode <build|plan|cycle> 切换交互模式（Shift+Tab）", "  /mode <build|plan|cycle> 対話モード変更（Shift+Tab）", "  /mode <build|plan|cycle> 상호작용 모드 변경(Shift+Tab)", "  /mode <build|plan|cycle> cambiar modo (Shift+Tab)", "  /mode <build|plan|cycle> changer de mode (Shift+Tab)"),
 	catalog(MsgHelpCommandModel, "  /model [provider/model] show or switch the task model", "  /model [厂商/模型]      查看或切换任务模型", "  /model [provider/model] タスクモデルを表示・切替", "  /model [provider/model] 작업 모델 보기/전환", "  /model [proveedor/modelo] ver o cambiar el modelo", "  /model [fournisseur/modèle] afficher ou changer le modèle"),
 	catalog(MsgHelpCommandEffort, "  /effort [level]        show or change reasoning effort", "  /effort [级别]         查看或切换推理强度", "  /effort [レベル]       推論強度を表示・変更", "  /effort [수준]         추론 강도 보기/변경", "  /effort [nivel]        ver o cambiar esfuerzo", "  /effort [niveau]       afficher ou changer l’effort"),
-	catalog(MsgHelpCommandShell, "  !<command>             governed argv command; quotes supported", "  !<command>             受治理的 argv 命令；支持引号", "  !<command>             管理対象の argv コマンド。引用符対応", "  !<command>             통제되는 argv 명령, 따옴표 지원", "  !<command>             comando argv gobernado; admite comillas", "  !<command>             commande argv gouvernée ; guillemets pris en charge"),
+	catalog(MsgHelpCommandShell, "  ! / !<command>         sticky shell mode (Esc exits) or one-shot command", "  ! / !<command>         粘性 Shell 模式（Esc 退出）或一次性命令", "  ! / !<command>         スティッキーシェル（Esc で終了）または一回限り", "  ! / !<command>         고정 셸 모드(Esc 종료) 또는 일회성 명령", "  ! / !<command>         modo shell sticky (Esc sale) o comando único", "  ! / !<command>         mode shell sticky (Échap quitte) ou commande unique"),
 	catalog(MsgHelpCommandMention, "  @<path|agent>          reference a path or agent", "  @<path|agent>          引用路径或 Agent", "  @<path|agent>          パスまたは Agent を参照", "  @<path|agent>          경로 또는 Agent 참조", "  @<path|agent>          referenciar una ruta o un Agent", "  @<path|agent>          référencer un chemin ou un Agent"),
 
 	catalog(MsgApprovalRPCFailed, "{glyph} approval request failed: {error}", "{glyph} 审批请求失败：{error}", "{glyph} 承認リクエスト失敗: {error}", "{glyph} 승인 요청 실패: {error}", "{glyph} falló la solicitud de aprobación: {error}", "{glyph} échec de la demande d’approbation : {error}"),

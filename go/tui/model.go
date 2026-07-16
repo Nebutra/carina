@@ -227,6 +227,7 @@ type Model struct {
 	helpScroll       int
 	settings         *settingsShellState
 	compactMode      bool
+	composerMode     composerMode // normal chat vs sticky shell (!)
 	runtime          runtimeStatus
 	// pendingSideQuestion is submitted once after a successful session.fork
 	// switch (Codex/CC side conversation pattern).

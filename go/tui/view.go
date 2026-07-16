@@ -61,11 +61,8 @@ func (m *Model) configureInput() {
 	// At two rows an active history search uses the non-input row for its
 	// query/status instead of the generic status bar.
 	showStatus := h >= 2 && (m.historySearch == nil || h >= 3)
-	if w < 4 {
-		m.input.Prompt = ""
-	} else {
-		m.input.Prompt = "> "
-	}
+	m.applyComposerChrome()
+	// applyComposerChrome sets Prompt/Placeholder; width/height follow.
 	inputWidth := w
 	if framed {
 		inputWidth = maxInt(w-2, 1)

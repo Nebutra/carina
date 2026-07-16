@@ -25,6 +25,12 @@ func (m *Model) enqueueFollowUp() bool {
 	draft.Model = m.model
 	draft.ReasoningEffort = m.reasoningEffort
 	draft.Mode = "background"
+	if m.inShellMode() {
+		// Persist sticky-shell intent as a leading ! for dequeue routing.
+		if command, ok := shellCommandFromDraft(draft.Text, true); ok {
+			draft.Text = historyTextForShell(command)
+		}
+	}
 	m.followUps.enqueue(draft)
 	m.clearComposerDraft()
 	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgFollowupQueued, MessageArgs{"count": m.followUps.len()})))

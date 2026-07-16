@@ -476,6 +476,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.input, cmd = m.input.Update(msg)
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		m.snapVerticalGraphemeEditorKey(key.String())
+		// Fallback: some terminals only deliver "!" via Text after input.Update.
+		if key.Text == "!" || key.String() == "!" {
+			m.absorbLoneBangIfNeeded()
+		}
 	}
 	m.layout()
 	if trackComposer {
@@ -708,6 +712,16 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 			}
 			return nil, false
 		}
+	}
+	// Sticky shell mode (Grok `!`): Esc on empty leaves mode before rewind.
+	if m.tryExitShellModeFromKey(key) {
+		m.breakComposerUndoGroup()
+		return nil, true
+	}
+	// Empty normal prompt + `!` enters shell mode without inserting the character.
+	if m.tryEnterShellModeFromKey(key, "") {
+		m.breakComposerUndoGroup()
+		return nil, true
 	}
 	if m.keys.matches(KeyContextChat, ActionChatRewind, key) && m.inFlightTaskID == "" &&
 		m.retrySubmission == nil && historyDraftKey(m.currentDraft()) == "" {
@@ -1047,6 +1061,22 @@ func (m *Model) submitWithIntent(forceNew bool) tea.Cmd {
 		}
 		return cmd
 	}
+	// Sticky shell mode: every submit is a governed shell command (Grok bash mode).
+	// Slash commands are intentionally disabled while sticky shell is active so
+	// `!/tmp` is not confused with product slash routing.
+	if m.inShellMode() && len(draft.Prefix) == 0 {
+		command, ok := shellCommandFromDraft(text, true)
+		if !ok {
+			m.push(m.text(MsgUpdateUsageShell, nil))
+			return nil
+		}
+		hist := normalizeDraftForShellHistory(draft, command)
+		cmd := m.submitShell(hist, command)
+		if cmd != nil {
+			m.queueRecallPending = false
+		}
+		return cmd
+	}
 	if len(draft.Prefix) == 0 && strings.HasPrefix(text, "/") {
 		valid := validSlashCommand(text)
 		if valid {
@@ -1065,8 +1095,21 @@ func (m *Model) submitWithIntent(forceNew bool) tea.Cmd {
 		}
 		return cmd
 	}
+	// One-shot shell: `!cmd` in normal mode still works without sticky mode.
 	if len(draft.Prefix) == 0 && strings.HasPrefix(text, "!") {
-		cmd := m.submitShell(draft, strings.TrimSpace(strings.TrimPrefix(text, "!")))
+		command, ok := shellCommandFromDraft(text, false)
+		if !ok {
+			// Lone `!` enters sticky mode instead of erroring.
+			if strings.TrimSpace(text) == "!" {
+				m.enterShellMode()
+				m.input.Reset()
+				return nil
+			}
+			m.push(m.text(MsgUpdateUsageShell, nil))
+			return nil
+		}
+		hist := normalizeDraftForShellHistory(draft, command)
+		cmd := m.submitShell(hist, command)
 		if cmd != nil {
 			m.queueRecallPending = false
 		}
@@ -1490,10 +1533,12 @@ func (m *Model) moveHistory(direction int) bool {
 }
 
 func (m *Model) restoreDraft(draft promptDraft) {
+	draft = m.restoreDraftMode(draft)
 	m.input.SetValue(draft.Text)
 	m.pendingPrefix = append([]string(nil), draft.Prefix...)
 	m.pendingPaste = append([]string(nil), draft.Paste...)
 	m.closeSuggest()
+	m.applyComposerChrome()
 	m.layout()
 }
 

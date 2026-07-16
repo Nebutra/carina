@@ -292,10 +292,11 @@ func TestDisconnectedSubmitAndInvalidCommandsPreserveDraft(t *testing.T) {
 	if cmd != nil || m.input.Value() != "/search" {
 		t.Fatal("invalid local slash command must remain editable")
 	}
+	// Lone `!` enters sticky shell mode (Grok) instead of leaving a dead draft.
 	m.input.SetValue("!")
 	cmd, _ = m.handleKey("enter")
-	if cmd != nil || m.input.Value() != "!" {
-		t.Fatal("invalid shell command must remain editable")
+	if cmd != nil || !m.inShellMode() || m.input.Value() != "" {
+		t.Fatalf("lone ! should enter sticky shell mode: cmd=%v mode=%v value=%q", cmd != nil, m.inShellMode(), m.input.Value())
 	}
 }
 
