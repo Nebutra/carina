@@ -1,30 +1,22 @@
 ---
 /**
- * ApiReference — three-column layout for API docs.
- * Left: in-page method nav (slot="nav")
- * Center: prose description (default slot)
- * Right: sticky code samples (slot="code")
+ * ApiReference — Mintlify-style two-column method block.
  *
- * Use inside MDX:
+ *   Left  (default slot): params / results / prose
+ *   Right (slot="code"):  sticky request/response samples
+ *
+ * Method jump links belong in the page TOC / sidebar — not a third column.
+ * Page H2 is the method title; do not pass a duplicate title here.
+ *
  *   <ApiReference>
- *     <Fragment slot="nav">...</Fragment>
- *     ...
- *     <Fragment slot="code">...</Fragment>
+ *     <ParamField ...>...</ParamField>
+ *     <CodeBlock slot="code" ... />
  *   </ApiReference>
  */
-interface Props {
-  title?: string;
-}
-
-const { title } = Astro.props;
 ---
 
-<section class="api-ref" aria-label={title ?? 'API reference'}>
-  {title && <h2 class="api-ref__heading">{title}</h2>}
+<section class="api-ref">
   <div class="api-ref__grid">
-    <nav class="api-ref__nav" aria-label="Methods">
-      <slot name="nav" />
-    </nav>
     <div class="api-ref__main">
       <slot />
     </div>
@@ -38,119 +30,147 @@ const { title } = Astro.props;
 
 <style>
   .api-ref {
-    margin: var(--spacing-8) 0;
-  }
-
-  .api-ref__heading {
-    font-size: var(--text-title-sm);
-    font-weight: var(--font-weight-semibold);
-    color: var(--docs-fg);
-    margin: 0 0 var(--spacing-5);
-    line-height: var(--leading-title-sm);
-  }
-
-  .api-ref__grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: var(--spacing-6);
-  }
-
-  /* nav + params; code stacks below until there's real room for three tracks */
-  @media (min-width: 768px) {
-    .api-ref__grid {
-      grid-template-columns: 10.5rem minmax(0, 1fr);
-    }
+    margin: 1.25rem 0 2rem;
   }
 
   /*
-   * Three columns only when the content pane is wide enough that the params
-   * column won't collapse under sidebar + TOC + code (was crushing tables).
+   * Two tracks only:
+   *  - main grows; code has a stable rail
+   *  - stacks under ~900px so description never gets crushed
    */
-  @media (min-width: 1400px) {
+  .api-ref__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+    align-items: start;
+  }
+
+  @media (min-width: 900px) {
     .api-ref__grid {
-      grid-template-columns: 10.5rem minmax(18rem, 1fr) minmax(15rem, 20rem);
-      gap: var(--spacing-8);
+      grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
+      gap: 1.5rem 1.75rem;
     }
   }
 
-  .api-ref__nav {
-    font-size: var(--text-body-sm);
-    color: var(--docs-fg-muted);
-    min-width: 0;
-  }
-
-  .api-ref__nav :global(ul) {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-  }
-
-  .api-ref__nav :global(a) {
-    display: block;
-    padding: 0.35rem 0.5rem;
-    border-radius: var(--docs-radius-sm);
-    color: var(--docs-fg-muted);
-    text-decoration: none;
-    font-family: var(--docs-font-mono);
-    font-size: var(--text-caption);
-    transition:
-      color var(--docs-transition),
-      background-color var(--docs-transition);
-  }
-
-  .api-ref__nav :global(a:hover),
-  .api-ref__nav :global(a:focus-visible) {
-    color: var(--docs-accent);
-    background: var(--docs-bg-selected);
-  }
-
   .api-ref__main {
-    /* Allow shrink for overflow-x on tables, but never below readable width */
     min-width: 0;
     color: var(--docs-fg-muted);
   }
 
-  .api-ref__main :global(h3) {
-    color: var(--docs-fg);
-    font-size: var(--text-title-sm);
-    margin-top: var(--spacing-6);
+  /* Section labels (Params / Result) */
+  .api-ref__main :global(.api-ref__section-label),
+  .api-ref__main :global(> p:first-child),
+  .api-ref__main :global(p > strong:only-child) {
+    display: block;
   }
 
-  /* Params tables: scroll instead of crushing field names into vertical glyphs */
+  .api-ref__main :global(.api-ref__section-label),
+  .api-ref__main :global(> p strong) {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--docs-fg-subtle);
+  }
+
+  .api-ref__main :global(> p) {
+    margin: 0 0 0.65rem;
+  }
+
+  .api-ref__main :global(> p + p) {
+    margin-top: 1.35rem;
+  }
+
+  /* Param / response field denser stack inside the rail */
+  .api-ref__main :global(.param-field) {
+    margin: 0;
+    padding: 0.7rem 0;
+    border: 0;
+    border-bottom: 1px solid var(--docs-border-subtle);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .api-ref__main :global(.param-field:last-child) {
+    border-bottom: 0;
+  }
+
+  .api-ref__main :global(.response-field) {
+    margin: 0;
+    padding: 0.65rem 0 0.65rem 0.85rem;
+    border-inline-start: 2px solid color-mix(in srgb, var(--docs-accent) 35%, var(--docs-border-subtle));
+  }
+
+  .api-ref__main :global(.param-field__body),
+  .api-ref__main :global(.response-field__body) {
+    font-size: 0.875rem;
+    line-height: 1.55;
+    color: var(--docs-fg-muted);
+  }
+
+  /* Fallback tables (if MDX still uses them) */
   .api-ref__main :global(table) {
-    display: block;
+    display: table;
     width: 100%;
     max-width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+    border-collapse: collapse;
+    table-layout: auto;
+    overflow: visible;
+    font-size: 0.875rem;
   }
 
   .api-ref__main :global(thead),
   .api-ref__main :global(tbody),
   .api-ref__main :global(tr) {
-    display: table;
-    width: max-content;
-    min-width: 100%;
-    table-layout: auto;
+    display: table-row-group;
+    width: auto;
+    min-width: 0;
+  }
+
+  .api-ref__main :global(tr) {
+    display: table-row;
   }
 
   .api-ref__main :global(th),
   .api-ref__main :global(td) {
+    display: table-cell;
+    padding: 0.55rem 0.85rem 0.55rem 0;
+    border-bottom: 1px solid var(--docs-border-subtle);
+    vertical-align: top;
     white-space: normal;
     overflow-wrap: break-word;
     word-break: normal;
   }
 
+  .api-ref__main :global(th) {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--docs-fg-subtle);
+    white-space: nowrap;
+  }
+
   .api-ref__main :global(td:first-child),
-  .api-ref__main :global(td:nth-child(2)),
-  .api-ref__main :global(th),
   .api-ref__main :global(td code) {
     white-space: nowrap;
-    overflow-wrap: normal;
-    word-break: normal;
+    font-family: var(--docs-font-mono);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--docs-fg);
+  }
+
+  .api-ref__main :global(td:nth-child(2)) {
+    white-space: nowrap;
+    font-family: var(--docs-font-mono);
+    font-size: 0.75rem;
+    color: var(--docs-accent);
+    padding-inline-end: 1rem;
+  }
+
+  .api-ref__main :global(td:last-child) {
+    width: 100%;
+    color: var(--docs-fg-muted);
   }
 
   .api-ref__code {
@@ -158,14 +178,26 @@ const { title } = Astro.props;
   }
 
   .api-ref__code-sticky {
-    position: sticky;
-    top: var(--docs-anchor-offset);
+    position: relative;
   }
 
-  /* Code sample under params until the true three-column breakpoint */
-  @media (max-width: 1399px) {
+  @media (min-width: 900px) {
+    .api-ref__code-sticky {
+      position: sticky;
+      top: var(--docs-anchor-offset, 5rem);
+    }
+  }
+
+  /* Code card fills the rail */
+  .api-ref__code :global(.code-block),
+  .api-ref__code :global(figure) {
+    margin: 0;
+    max-width: 100%;
+  }
+
+  @media (max-width: 899px) {
     .api-ref__code {
-      order: 3;
+      order: 2;
     }
   }
 </style>
