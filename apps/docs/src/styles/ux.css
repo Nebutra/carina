@@ -698,7 +698,11 @@
   }
 
   /* ── Tables ──────────────────────────────────────────────────────── */
-  /* Scrollable on narrow viewports; horizontal dividers only */
+  /*
+   * Scrollable shell; rows size to content (max-content) so Field/Type
+   * mono identifiers are never crushed into vertical single-glyph wraps.
+   * Avoid overflow-wrap: anywhere — it breaks snake_case API fields.
+   */
   .sl-markdown-content table {
     display: block;
     width: 100%;
@@ -714,7 +718,8 @@
   .sl-markdown-content tbody,
   .sl-markdown-content tr {
     display: table;
-    width: 100%;
+    width: max-content;
+    min-width: 100%;
     table-layout: auto;
   }
 
@@ -748,8 +753,17 @@
   }
 
   .sl-markdown-content td {
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+
+  /* Identifiers / types stay on one line; description may wrap */
+  .sl-markdown-content td:first-child,
+  .sl-markdown-content td:nth-child(2),
+  .sl-markdown-content td code {
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: normal;
   }
 
   .docs-empty-state {

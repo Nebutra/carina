@@ -55,15 +55,20 @@ const { title } = Astro.props;
     gap: var(--spacing-6);
   }
 
+  /* nav + params; code stacks below until there's real room for three tracks */
   @media (min-width: 768px) {
     .api-ref__grid {
-      grid-template-columns: 11rem minmax(0, 1fr);
+      grid-template-columns: 10.5rem minmax(0, 1fr);
     }
   }
 
-  @media (min-width: 1200px) {
+  /*
+   * Three columns only when the content pane is wide enough that the params
+   * column won't collapse under sidebar + TOC + code (was crushing tables).
+   */
+  @media (min-width: 1400px) {
     .api-ref__grid {
-      grid-template-columns: 12rem minmax(0, 1fr) minmax(16rem, 22rem);
+      grid-template-columns: 10.5rem minmax(18rem, 1fr) minmax(15rem, 20rem);
       gap: var(--spacing-8);
     }
   }
@@ -71,6 +76,7 @@ const { title } = Astro.props;
   .api-ref__nav {
     font-size: var(--text-body-sm);
     color: var(--docs-fg-muted);
+    min-width: 0;
   }
 
   .api-ref__nav :global(ul) {
@@ -102,6 +108,7 @@ const { title } = Astro.props;
   }
 
   .api-ref__main {
+    /* Allow shrink for overflow-x on tables, but never below readable width */
     min-width: 0;
     color: var(--docs-fg-muted);
   }
@@ -110,6 +117,40 @@ const { title } = Astro.props;
     color: var(--docs-fg);
     font-size: var(--text-title-sm);
     margin-top: var(--spacing-6);
+  }
+
+  /* Params tables: scroll instead of crushing field names into vertical glyphs */
+  .api-ref__main :global(table) {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .api-ref__main :global(thead),
+  .api-ref__main :global(tbody),
+  .api-ref__main :global(tr) {
+    display: table;
+    width: max-content;
+    min-width: 100%;
+    table-layout: auto;
+  }
+
+  .api-ref__main :global(th),
+  .api-ref__main :global(td) {
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+
+  .api-ref__main :global(td:first-child),
+  .api-ref__main :global(td:nth-child(2)),
+  .api-ref__main :global(th),
+  .api-ref__main :global(td code) {
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: normal;
   }
 
   .api-ref__code {
@@ -121,7 +162,8 @@ const { title } = Astro.props;
     top: var(--docs-anchor-offset);
   }
 
-  @media (max-width: 1199px) {
+  /* Code sample under params until the true three-column breakpoint */
+  @media (max-width: 1399px) {
     .api-ref__code {
       order: 3;
     }

@@ -190,7 +190,7 @@
     opacity: 0.9;
   }
 
-  /* Tables — hairlines, quiet hover, edge fade on horizontal overflow */
+  /* Tables — hairlines, quiet hover, edge fade; rows grow to content + scroll */
   .sl-markdown-content table {
     display: block;
     width: 100%;
@@ -209,8 +209,9 @@
   .sl-markdown-content tbody,
   .sl-markdown-content tr {
     display: table;
-    width: 100%;
+    width: max-content;
     min-width: 100%;
+    table-layout: auto;
   }
 
   .sl-markdown-content th,
@@ -219,6 +220,8 @@
     border-bottom: 1px solid var(--docs-border-subtle);
     padding: 0.7rem 1rem 0.7rem 0;
     vertical-align: top;
+    overflow-wrap: break-word;
+    word-break: normal;
   }
 
   .sl-markdown-content th {
@@ -228,6 +231,15 @@
     color: var(--docs-fg);
     background: transparent;
     white-space: nowrap;
+  }
+
+  /* Keep Field / Type / code identifiers intact (no vertical glyph wrap) */
+  .sl-markdown-content td:first-child,
+  .sl-markdown-content td:nth-child(2),
+  .sl-markdown-content td code {
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: normal;
   }
 
   .sl-markdown-content tr:hover td {

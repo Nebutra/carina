@@ -625,7 +625,7 @@ const scopeClass: Record<string, string> = {
     white-space: nowrap;
   }
 
-  /* Plain mono — no chips */
+  /* Plain mono — no chips; keep identifiers on one line */
   .rpc-table-wrap td.rpc-mono,
   .rpc-type {
     font-family: var(--docs-font-mono);
@@ -634,8 +634,9 @@ const scopeClass: Record<string, string> = {
     background: transparent;
     border-radius: 0;
     padding: 0.4rem 0.55rem;
-    word-break: break-word;
-    overflow-wrap: anywhere;
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
   }
 
   .rpc-method__empty {
