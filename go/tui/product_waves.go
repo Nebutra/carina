@@ -148,17 +148,39 @@ func (m *Model) enterPlanMode(followUp string) tea.Cmd {
 	}
 }
 
-// btwSideQuestion is an answer-only turn. Trade-off vs Codex/CC true side-fork:
-// Carina stays single-session (no multi-session TUI yet). We enforce honesty in
-// the prompt: no file edits, no shell, no plan changes — Q&A only.
-func (m *Model) btwSideQuestion(question string) tea.Cmd {
+// btwSideQuestion runs a side Q&A turn.
+//
+// Default (no flag): answer-only prompt on the current session (honest, no fork).
+// With fork=true (/btw --fork or /side): session.fork then submit on the new
+// session after switch — Codex/CC side-conversation pattern when a completed
+// checkpoint exists. Fork requires an idle completed task (daemon contract).
+func (m *Model) btwSideQuestion(question string, fork bool) tea.Cmd {
 	question = strings.TrimSpace(question)
 	if question == "" {
 		m.push(m.text(MsgUpdateUsageBtw, nil))
 		return nil
 	}
-	prompt := strings.Join([]string{
-		"SIDE QUESTION (answer-only turn; not a side-session fork).",
+	if fork {
+		if m.inFlightTaskID != "" || m.submitting != nil {
+			m.push(m.text(MsgUpdateBtwForkBusy, nil))
+			return nil
+		}
+		m.pendingSideQuestion = question
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateBtwForkStart, nil)))
+		return m.forkSession("")
+	}
+	prompt := sideQuestionPrompt(question, false)
+	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateBtwStarted, nil)))
+	return m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: prompt}, false, false)
+}
+
+func sideQuestionPrompt(question string, forked bool) string {
+	header := "SIDE QUESTION (answer-only turn; not a side-session fork)."
+	if forked {
+		header = "SIDE QUESTION on a forked session lineage (Codex/CC side-conversation pattern)."
+	}
+	return strings.Join([]string{
+		header,
 		"Constraints:",
 		"- Answer the operator's question briefly and directly.",
 		"- Do not modify files, run shell commands, change git state, or alter the main plan.",
@@ -168,8 +190,16 @@ func (m *Model) btwSideQuestion(question string) tea.Cmd {
 		"Question:",
 		question,
 	}, "\n")
-	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateBtwStarted, nil)))
-	return m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: prompt}, false, false)
+}
+
+func (m *Model) flushPendingSideQuestion() tea.Cmd {
+	q := strings.TrimSpace(m.pendingSideQuestion)
+	if q == "" {
+		return nil
+	}
+	m.pendingSideQuestion = ""
+	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateBtwForkReady, nil)))
+	return m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: sideQuestionPrompt(q, true)}, false, false)
 }
 
 // commitWorkflow builds a CC-style PromptCommand: inject workspace.diff, then

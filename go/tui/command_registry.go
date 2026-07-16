@@ -47,7 +47,16 @@ var builtinCommandRegistry = []commandDescriptor{
 	{Name: "cost", Usage: "/cost", Description: "alias of /usage", Source: "builtin", Validate: noArgs},
 	{Name: "review", Usage: "/review [target]", Description: "run a code review task", Source: "builtin", HelpID: MsgHelpCommandReview, Validate: anyArgs},
 	{Name: "commit", Usage: "/commit [notes]", Description: "git commit workflow with workspace.diff injection", Source: "builtin", Validate: anyArgs},
-	{Name: "btw", Usage: "/btw <question>", Description: "answer-only side Q&A (not a session fork)", Source: "builtin", Validate: func(a []string) bool { return len(a) > 0 }},
+	{Name: "btw", Usage: "/btw [--fork|-f] <question>", Description: "side Q&A; --fork uses session.fork when idle", Source: "builtin", Validate: func(a []string) bool {
+		if len(a) == 0 {
+			return false
+		}
+		if a[0] == "--fork" || a[0] == "-f" {
+			return len(a) > 1
+		}
+		return true
+	}},
+	{Name: "side", Usage: "/side <question>", Description: "side Q&A on a forked session (alias of /btw --fork)", Source: "builtin", Validate: func(a []string) bool { return len(a) > 0 }},
 	{Name: "plan", Usage: "/plan [description]", Description: "enter plan mode + scaffold plan file", Source: "builtin", Validate: anyArgs},
 	{Name: "build", Usage: "/build", Description: "leave plan mode (build)", Source: "builtin", Validate: noArgs},
 	{Name: "approve-plan", Usage: "/approve-plan", Description: "approve plan and exit plan mode", Source: "builtin", Validate: noArgs},

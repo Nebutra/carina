@@ -232,6 +232,13 @@ const (
 	MsgTasksLoopsHeader            MessageID = "tasks.loops_header"
 	MsgUpdateUsageExtension        MessageID = "update.usage_extension"
 
+	MsgContextPressureWarning  MessageID = "context.pressure_warning"
+	MsgContextPressureCritical MessageID = "context.pressure_critical"
+	MsgContextAutoCompact      MessageID = "context.auto_compact"
+	MsgUpdateBtwForkStart      MessageID = "update.btw_fork_start"
+	MsgUpdateBtwForkReady      MessageID = "update.btw_fork_ready"
+	MsgUpdateBtwForkBusy       MessageID = "update.btw_fork_busy"
+
 	MsgFollowupRestored            MessageID = "followup.restored"
 	MsgFollowupShellEmpty          MessageID = "followup.shell_empty"
 	MsgFollowupDisconnected        MessageID = "followup.disconnected"
@@ -460,7 +467,7 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgUpdateInitExists, "AGENTS.md already exists at {path}", "AGENTS.md 已存在：{path}", "AGENTS.md は既にあります: {path}", "AGENTS.md가 이미 있음: {path}", "AGENTS.md ya existe en {path}", "AGENTS.md existe déjà : {path}"),
 	catalog(MsgUpdateInitCreated, "created {path}", "已创建 {path}", "{path} を作成しました", "{path} 생성됨", "creado {path}", "créé {path}"),
 	catalog(MsgUpdateCompactMode, "compact UI {state}", "紧凑界面 {state}", "コンパクト UI {state}", "컴팩트 UI {state}", "UI compacta {state}", "UI compacte {state}"),
-	catalog(MsgUpdateUsageBtw, "usage: /btw <side question>", "用法：/btw <侧问>", "使用法: /btw <脇質問>", "사용법: /btw <곁질문>", "uso: /btw <pregunta lateral>", "utilisation : /btw <question latérale>"),
+	catalog(MsgUpdateUsageBtw, "usage: /btw [--fork|-f] <question>  or  /side <question>", "用法：/btw [--fork|-f] <问题>  或  /side <问题>", "使用法: /btw [--fork|-f] <質問>  または  /side <質問>", "사용법: /btw [--fork|-f] <질문>  또는  /side <질문>", "uso: /btw [--fork|-f] <pregunta>  o  /side <pregunta>", "utilisation : /btw [--fork|-f] <question>  ou  /side <question>"),
 	catalog(MsgViewPlanTitle, "Plan mode", "计划模式", "プランモード", "계획 모드", "Modo plan", "Mode plan"),
 	catalog(MsgViewPlanMode, "current mode: {mode}", "当前模式：{mode}", "現在のモード: {mode}", "현재 모드: {mode}", "modo actual: {mode}", "mode actuel : {mode}"),
 	catalog(MsgViewPlanActive, "Plan mode is ON. Edits, shell, and memory writes stay blocked until you approve the plan.", "计划模式已开启。在批准计划前，编辑、Shell 与记忆写入保持阻断。", "プランモード ON。承認まで編集・Shell・メモリ書き込みは遮断。", "계획 모드 ON. 승인 전 편집/Shell/메모리 쓰기 차단.", "Modo plan ON. Ediciones, shell y memoria bloqueados hasta aprobar.", "Mode plan ON. Éditions, shell et mémoire bloqués jusqu’à approbation."),
@@ -488,4 +495,11 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgTasksLoopHint, "Loops: /loop list  ·  cancel task: Esc while running", "循环任务：/loop list  ·  取消任务：运行中按 Esc", "ループ: /loop list  ·  取消: 実行中 Esc", "루프: /loop list  ·  취소: 실행 중 Esc", "Bucles: /loop list  ·  cancelar: Esc en ejecución", "Boucles : /loop list  ·  annuler : Échap pendant l’exécution"),
 	catalog(MsgTasksLoopsHeader, "scheduled loops", "定时循环", "スケジュール済みループ", "예약된 루프", "bucles programados", "boucles planifiées"),
 	catalog(MsgUpdateUsageExtension, "usage: /extension <enable|disable> <name>", "用法：/extension <enable|disable> <名称>", "使用法: /extension <enable|disable> <name>", "사용법: /extension <enable|disable> <name>", "uso: /extension <enable|disable> <nombre>", "utilisation : /extension <enable|disable> <nom>"),
+
+	catalog(MsgContextPressureWarning, "context pressure {percent}% — consider /compact when a paused checkpoint is available", "上下文压力 {percent}% — 有暂停检查点时可用 /compact", "コンテキスト負荷 {percent}% — 一時停止チェックポイントがあれば /compact", "컨텍스트 부하 {percent}% — 일시 중지 체크포인트가 있으면 /compact", "presión de contexto {percent}% — use /compact si hay checkpoint pausado", "pression contexte {percent}% — utilisez /compact si un checkpoint est en pause"),
+	catalog(MsgContextPressureCritical, "context critical {percent}% — compact unavailable: {reason}", "上下文危急 {percent}% — 无法压缩：{reason}", "コンテキスト危険 {percent}% — 圧縮不可: {reason}", "컨텍스트 위험 {percent}% — 압축 불가: {reason}", "contexto crítico {percent}% — compactación no disponible: {reason}", "contexte critique {percent}% — compaction indisponible : {reason}"),
+	catalog(MsgContextAutoCompact, "context {percent}% — auto-compacting paused checkpoint {checkpoint}", "上下文 {percent}% — 正在自动压缩暂停检查点 {checkpoint}", "コンテキスト {percent}% — 一時停止チェックポイント {checkpoint} を自動圧縮", "컨텍스트 {percent}% — 일시 중지 체크포인트 {checkpoint} 자동 압축", "contexto {percent}% — compactando automáticamente {checkpoint}", "contexte {percent}% — compaction auto de {checkpoint}"),
+	catalog(MsgUpdateBtwForkStart, "forking session for side Q&A…", "正在分叉会话以进行侧问…", "脇質問のためセッションをフォーク中…", "곁질문을 위해 세션 포크 중…", "bifurcando sesión para pregunta lateral…", "bifurcation de session pour question latérale…"),
+	catalog(MsgUpdateBtwForkReady, "side Q&A on forked session", "已在分叉会话上开始侧问", "フォーク先で脇質問を開始", "포크된 세션에서 곁질문 시작", "pregunta lateral en sesión bifurcada", "question latérale sur session bifurquée"),
+	catalog(MsgUpdateBtwForkBusy, "cannot /btw --fork while a task is running; wait or use /btw without --fork", "任务运行中无法 /btw --fork；请等待或使用不带 --fork 的 /btw", "タスク実行中は /btw --fork 不可。完了を待つか --fork なしで。", "작업 실행 중에는 /btw --fork 불가. 대기하거나 --fork 없이 사용.", "no se puede /btw --fork con una tarea en curso", "impossible d’utiliser /btw --fork pendant une tâche"),
 }

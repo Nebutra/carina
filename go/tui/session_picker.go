@@ -307,6 +307,7 @@ func (m *Model) handleSessionAction(msg sessionActionMsg) {
 	}
 	m.sessionActionPending = ""
 	if msg.err != nil {
+		m.pendingSideQuestion = ""
 		m.push(m.text(MsgSessionActionFailed, MessageArgs{"error": msg.err.Error()}))
 		return
 	}

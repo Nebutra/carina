@@ -228,6 +228,11 @@ type Model struct {
 	settings         *settingsShellState
 	compactMode      bool
 	runtime          runtimeStatus
+	// pendingSideQuestion is submitted once after a successful session.fork
+	// switch (Codex/CC side conversation pattern).
+	pendingSideQuestion string
+	// contextNudgeLevel tracks the last pressure notice level to avoid spam.
+	contextNudgeLevel int // 0 none, 1 warning(80), 2 critical(90), 3 auto-compacted
 
 	sessionID string
 	call      Caller

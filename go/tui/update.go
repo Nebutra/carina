@@ -119,10 +119,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		history := m.loadRecentHistory(msg.Call)
 		status := m.refreshRuntimeStatus()
 		tick := m.scheduleRuntimeStatusTick()
+		side := m.flushPendingSideQuestion()
+		cmds := []tea.Cmd{history, status, tick, side}
 		if reconcile != nil {
-			return m, tea.Batch(history, reconcile, status, tick)
+			cmds = append([]tea.Cmd{reconcile}, cmds...)
 		}
-		return m, tea.Batch(history, status, tick)
+		return m, tea.Batch(cmds...)
 
 	case modelPreferenceMsg:
 		if (msg.sessionID != "" && msg.sessionID != m.sessionID) || (msg.generation != 0 && msg.generation != m.sessionGeneration) {
@@ -307,8 +309,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleOperationalSurface(msg)
 		return m, m.maybeSubmitNextQueued()
 	case runtimeStatusMsg:
-		m.handleRuntimeStatus(msg)
-		return m, nil
+		return m, m.handleRuntimeStatus(msg)
 	case runtimeStatusTickMsg:
 		if msg.generation != 0 && msg.generation != m.sessionGeneration {
 			return m, nil
@@ -1617,12 +1618,18 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			extra = strings.Join(parts[1:], " ")
 		}
 		return m.commitWorkflow(extra)
-	case "btw":
-		if len(parts) < 2 {
+	case "btw", "side":
+		args := parts[1:]
+		fork := name == "side"
+		if len(args) > 0 && (args[0] == "--fork" || args[0] == "-f") {
+			fork = true
+			args = args[1:]
+		}
+		if len(args) == 0 {
 			m.push(m.text(MsgUpdateUsageBtw, nil))
 			return nil
 		}
-		return m.btwSideQuestion(strings.Join(parts[1:], " "))
+		return m.btwSideQuestion(strings.Join(args, " "), fork)
 	case "plan":
 		if len(parts) == 1 {
 			_ = m.ensurePlanFileScaffold()

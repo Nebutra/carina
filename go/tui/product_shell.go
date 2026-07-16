@@ -26,6 +26,10 @@ type runtimeStatus struct {
 	ContextPercent     int
 	ContextSource      string
 	ContextAvailable   bool
+	CompactAvailable   bool
+	CompactReason      string
+	CompactCheckpoint  string
+	CompactTaskID      string
 	LastRefresh        time.Time
 }
 
@@ -370,7 +374,14 @@ func (m *Model) statusFooterView(width int) string {
 
 func (m *Model) contextFooterToken() string {
 	if m.runtime.ContextAvailable && m.runtime.ContextLimit > 0 {
-		return fmt.Sprintf("%d%%", m.runtime.ContextPercent)
+		tok := fmt.Sprintf("%d%%", m.runtime.ContextPercent)
+		if m.runtime.CompactAvailable {
+			tok += " compact"
+		}
+		return tok
+	}
+	if m.runtime.CompactAvailable {
+		return "compact"
 	}
 	return "-"
 }
@@ -496,6 +507,16 @@ func (m *Model) refreshRuntimeStatus() tea.Cmd {
 				out.contextLimit = intFromAny(modelCtx["limit_tokens"])
 				out.contextPercent = intFromAny(modelCtx["used_percent"])
 			}
+			if compact, ok := ctx["compact"].(map[string]any); ok {
+				if avail, ok := compact["available"].(bool); ok {
+					out.compactAvailable = avail
+				}
+				out.compactReason = str(compact["reason"])
+				out.compactCheckpoint = str(compact["checkpoint_id"])
+			}
+			if task, ok := ctx["task"].(map[string]any); ok {
+				out.compactTaskID = str(task["task_id"])
+			}
 		}
 		return out
 	}
@@ -506,31 +527,43 @@ func (m *Model) refreshRuntimeStatus() tea.Cmd {
 func errorsNew(msg string) error { return fmt.Errorf("%s", msg) }
 
 type runtimeStatusMsg struct {
-	sessionID        string
-	generation       uint64
-	profile          string
-	sandbox          string
-	approval         string
-	mode             string
-	model            string
-	effort           string
-	contextUsed      int
-	contextLimit     int
-	contextPercent   int
-	contextSource    string
-	contextAvailable bool
-	err              error
+	sessionID         string
+	generation        uint64
+	profile           string
+	sandbox           string
+	approval          string
+	mode              string
+	model             string
+	effort            string
+	contextUsed       int
+	contextLimit      int
+	contextPercent    int
+	contextSource     string
+	contextAvailable  bool
+	compactAvailable  bool
+	compactReason     string
+	compactCheckpoint string
+	compactTaskID     string
+	err               error
 }
 
-func (m *Model) handleRuntimeStatus(msg runtimeStatusMsg) {
+// Context pressure thresholds (Grok-style ~85% auto-compact, but only when
+// session.checkpoint.compact is available — never mid-run without a paused checkpoint).
+const (
+	contextPressureWarning  = 80
+	contextPressureCompact  = 85
+	contextPressureCritical = 90
+)
+
+func (m *Model) handleRuntimeStatus(msg runtimeStatusMsg) tea.Cmd {
 	if msg.sessionID != "" && msg.sessionID != m.sessionID {
-		return
+		return nil
 	}
 	if msg.generation != 0 && msg.generation != m.sessionGeneration {
-		return
+		return nil
 	}
 	if msg.err != nil {
-		return
+		return nil
 	}
 	if msg.profile != "" {
 		m.runtime.Profile = msg.profile
@@ -555,8 +588,50 @@ func (m *Model) handleRuntimeStatus(msg runtimeStatusMsg) {
 	m.runtime.ContextPercent = msg.contextPercent
 	m.runtime.ContextSource = msg.contextSource
 	m.runtime.ContextAvailable = msg.contextAvailable
+	m.runtime.CompactAvailable = msg.compactAvailable
+	m.runtime.CompactReason = msg.compactReason
+	m.runtime.CompactCheckpoint = msg.compactCheckpoint
+	m.runtime.CompactTaskID = msg.compactTaskID
 	m.runtime.LastRefresh = m.now()
+	cmd := m.applyContextPressurePolicy()
 	m.layout()
+	return cmd
+}
+
+// applyContextPressurePolicy nudges the operator and, when safe, auto-compacts.
+// Safe = daemon reported compact.available (paused checkpoint boundary only).
+func (m *Model) applyContextPressurePolicy() tea.Cmd {
+	if !m.runtime.ContextAvailable || m.runtime.ContextLimit <= 0 {
+		return nil
+	}
+	pct := m.runtime.ContextPercent
+	switch {
+	case pct >= contextPressureCompact && m.runtime.CompactAvailable && m.contextNudgeLevel < 3:
+		m.contextNudgeLevel = 3
+		m.push(m.th.Style(theme.RoleWarning).Render(m.text(MsgContextAutoCompact, MessageArgs{
+			"percent": pct, "checkpoint": m.runtime.CompactCheckpoint,
+		})))
+		params := map[string]any{"session_id": m.sessionID}
+		if m.runtime.CompactTaskID != "" {
+			params["task_id"] = m.runtime.CompactTaskID
+		}
+		return m.queryOperationalSurface("compact", "session.checkpoint.compact", params)
+	case pct >= contextPressureCritical && m.contextNudgeLevel < 2:
+		m.contextNudgeLevel = 2
+		reason := m.runtime.CompactReason
+		if reason == "" {
+			reason = "compact requires a paused task checkpoint"
+		}
+		m.push(m.th.Style(theme.RoleWarning).Render(m.text(MsgContextPressureCritical, MessageArgs{
+			"percent": pct, "reason": reason,
+		})))
+	case pct >= contextPressureWarning && m.contextNudgeLevel < 1:
+		m.contextNudgeLevel = 1
+		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgContextPressureWarning, MessageArgs{"percent": pct})))
+	case pct < contextPressureWarning:
+		m.contextNudgeLevel = 0
+	}
+	return nil
 }
 
 func intFromAny(v any) int {
@@ -636,8 +711,12 @@ func (m *Model) humanizeContext(data map[string]any) []string {
 	}
 	if compact, ok := data["compact"].(map[string]any); ok {
 		if avail, _ := compact["available"].(bool); avail {
+			m.runtime.CompactAvailable = true
+			m.runtime.CompactCheckpoint = str(compact["checkpoint_id"])
 			lines = append(lines, m.text(MsgContextCompactReady, MessageArgs{"checkpoint": str(compact["checkpoint_id"])}))
 		} else if reason := str(compact["reason"]); reason != "" {
+			m.runtime.CompactAvailable = false
+			m.runtime.CompactReason = reason
 			lines = append(lines, m.text(MsgContextCompactBlocked, MessageArgs{"reason": reason}))
 		}
 	}

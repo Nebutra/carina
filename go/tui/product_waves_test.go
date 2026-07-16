@@ -69,7 +69,7 @@ func TestBtwIsAnswerOnlyPrompt(t *testing.T) {
 	}}
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	m.sessionID, m.call = "sess", fc
-	cmd := m.btwSideQuestion("what is the entrypoint?")
+	cmd := m.btwSideQuestion("what is the entrypoint?", false)
 	if cmd == nil {
 		t.Fatal("nil cmd")
 	}
@@ -144,5 +144,72 @@ func TestPlanFilePathIsUnderWorkspace(t *testing.T) {
 	}
 	if strings.Contains(path, "..") {
 		t.Fatalf("unsafe path %q", path)
+	}
+}
+
+func TestContextPressureAutoCompactsWhenAvailable(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{
+		"session.checkpoint.compact": map[string]any{"ok": true},
+	}}
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
+	m.sessionID, m.call = "sess", fc
+	cmd := m.handleRuntimeStatus(runtimeStatusMsg{
+		sessionID: "sess", contextAvailable: true, contextLimit: 100, contextPercent: 88,
+		compactAvailable: true, compactCheckpoint: "cp_1", compactTaskID: "task_1",
+	})
+	if cmd == nil {
+		t.Fatal("expected auto-compact command")
+	}
+	m.Update(cmd())
+	if len(fc.calls) != 1 || fc.calls[0].method != "session.checkpoint.compact" {
+		t.Fatalf("calls=%#v", fc.calls)
+	}
+	if m.contextNudgeLevel != 3 {
+		t.Fatalf("nudge level=%d", m.contextNudgeLevel)
+	}
+	// Second refresh at same pressure must not re-fire.
+	if cmd := m.handleRuntimeStatus(runtimeStatusMsg{
+		sessionID: "sess", contextAvailable: true, contextLimit: 100, contextPercent: 88,
+		compactAvailable: true, compactCheckpoint: "cp_1", compactTaskID: "task_1",
+	}); cmd != nil {
+		t.Fatal("duplicate auto-compact")
+	}
+}
+
+func TestBtwForkQueuesPendingQuestion(t *testing.T) {
+	switched := ""
+	fc := &fakeCaller{handler: map[string]any{
+		"session.fork": map[string]any{"session_id": "sess_side", "workspace_root": "/tmp/ws"},
+	}}
+	m := New(Options{
+		Theme: theme.New(theme.Mono), Locale: "en",
+		SwitchSession: func(id string) error { switched = id; return nil },
+	})
+	m.sessionID, m.call = "sess", fc
+	cmd := m.btwSideQuestion("explain main", true)
+	if cmd == nil || m.pendingSideQuestion != "explain main" {
+		t.Fatalf("pending=%q cmd=%v", m.pendingSideQuestion, cmd != nil)
+	}
+	// Simulate successful action result path partially via flush after manual set.
+	m.pendingSideQuestion = "explain main"
+	side := m.flushPendingSideQuestion()
+	if m.pendingSideQuestion != "" || side == nil {
+		t.Fatal("flush did not produce submit")
+	}
+	_ = switched
+}
+
+func TestBtwForkBusyWhileRunning(t *testing.T) {
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
+	m.inFlightTaskID = "task_1"
+	if cmd := m.btwSideQuestion("q", true); cmd != nil {
+		t.Fatal("fork must refuse while task running")
+	}
+	got := transcriptText(m)
+	if !strings.Contains(got, "fork") && !strings.Contains(strings.ToLower(got), "running") {
+		// message is localized; ensure something was pushed
+		if got == "" {
+			t.Fatal("expected busy notice")
+		}
 	}
 }

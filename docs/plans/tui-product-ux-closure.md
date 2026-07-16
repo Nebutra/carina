@@ -87,12 +87,20 @@ Settings tabs; doctor/skills/hooks/mcp routes.
 - [x] `/inspect` aggregates doctor + inventories  
 - [x] Status tick does not hang unit tests  
 
+### Wave E — Context pressure + side fork — **done**
+
+- Context pressure notices at 80% / 90%
+- Auto-compact at ≥85% **only when** `session.checkpoint.compact` is available (paused checkpoint)
+- Footer shows `ctx N% compact` when ready
+- `/btw --fork` and `/side` → `session.fork` then submit on the forked session after attach
+- Busy-task fork refused with honest copy
+
 ## Still intentionally open
 
 | Item | Why deferred |
 |------|----------------|
-| True side-session fork for `/btw` | Needs multi-session TUI |
+| Mid-run auto-compact without paused checkpoint | Would need new daemon compact policy; unsafe to invent |
+| Multi-pane dual-session TUI (view main + side together) | Needs layout product; fork switches session |
 | In-panel model list without leaving settings | Model picker already one keystroke |
-| Auto-compact at 85% context | Requires safe mid-task compact policy |
 | ACP / remote / marketplace | Ecosystem after shell stability |
 | Always-approve mode | Governance brand |
