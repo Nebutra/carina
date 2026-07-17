@@ -357,6 +357,11 @@ export default defineConfig({
               link: '/reference/glossary/',
             },
             {
+              label: 'CLI reference',
+              translations: { 'zh-CN': 'CLI 参考' },
+              link: '/reference/cli/',
+            },
+            {
               label: 'Math notation',
               translations: { 'zh-CN': '数学公式' },
               link: '/reference/math/',

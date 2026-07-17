@@ -1,6 +1,6 @@
 ---
 title: Audit & rollback
-description: Append-only event log, hash-chain verification, and transactional patch recovery.
+description: Append-only event log, hash-chain verification, transactional patches — explain and undo agent work.
 sidebar:
   order: 3
 ---
@@ -9,66 +9,120 @@ import Callout from '../../../components/ui/Callout.astro';
 import Mermaid from '../../../components/mdx/Mermaid.astro';
 import Tooltip from '../../../components/mdx/Tooltip.astro';
 import Badge from '../../../components/mdx/Badge.astro';
+import Steps from '../../../components/mdx/Steps.astro';
+import Step from '../../../components/mdx/Step.astro';
+import Expandable from '../../../components/mdx/Expandable.astro';
 
-Carina treats observability as a product feature. Every execution writes to an append-only, session-scoped **Event Log**. Side-effect events reference their `PermissionDecision` id. <Badge variant="info">hash-chained</Badge>
+> **If it happened, you can explain it. If a patch was applied, you can roll it back.** <Badge variant="info">hash-chained</Badge>
+
+## What you'll get
+
+- How the event log and hash chain work  
+- Exact CLI for audit, verify, report, export  
+- Patch list / show / apply / rollback  
 
 ## Event flow
 
-<Mermaid caption="Every gated side effect lands on the hash chain.">
+<Mermaid caption="Gated side effects always land on the chain.">
 flowchart LR
   A[Agent action] --> K[Policy kernel]
   K -->|allow / deny / approve| D[PermissionDecision]
-  D --> E[Event Log]
+  D --> E[Event log]
   E --> H[Hash chain]
   H --> V[carina audit verify]
 </Mermaid>
 
 ## Audit guarantees
 
-- Event log is append-only; every event has a timestamp and session id
-- Raw image/media bytes never enter transcript, checkpoints, or audit — only content-hash <Tooltip tip="Content-addressed media reference — never raw bytes in the log.">MediaRef</Tooltip>s
-- Any file's modification history is queryable: which agent, which task, which patch, when
-- Every allow/deny is explainable: decision records the policy and reason
-- Success metrics targets: 100% interception of out-of-workspace access, zero secret plaintext in logs, every side effect has an audit event
+- Append-only log; every event has timestamp + session id  
+- Side-effect events reference their **permission decision** id  
+- No raw media bytes in transcript/audit — only content-hash <Tooltip tip="Content-addressed media reference; bytes stay in the object store.">MediaRef</Tooltip>s  
+- File history is queryable: which agent, task, patch, when  
+- Allow/deny is explainable: policy + reason on the decision  
+- Targets: intercept out-of-workspace access, zero secret plaintext in logs, every side effect audited  
 
-## CLI
+## CLI — inspect
 
-```bash title="audit.sh" showLineNumbers
-carina audit SESSION          # replay model decisions + kernel-gated effects
-carina audit verify SESSION   # confirm the hash chain was not tampered with
-carina audit tail --last 5
-carina audit export --format jsonl|sqlite
+```bash title="audit-cli.sh"
+carina sessions
+carina audit SESSION              # raw event stream
+carina audit verify SESSION       # hash-chain integrity
+carina audit last                 # most recent session summary
+carina report SESSION             # violations, files, commands
+carina export SESSION             # full audit bundle
+carina items SESSION              # normalized UI/SDK item stream
+carina session review SESSION     # governance-oriented projection
 ```
 
-## Transactional patches
+## CLI — patches
 
-File mutations go through a patch pipeline with provenance:
+File mutations should go through the patch pipeline when policy requires it:
 
-1. Agent proposes a diff (`workspace.patch.propose` / agent `patch` tool)
-2. Kernel evaluates `PatchApply` → may require approval
-3. On approve: apply → verify → commit with rollback pointer
-4. No half-applied state
+1. Propose (`workspace.patch.propose` / agent patch tool / `carina patch propose`)  
+2. Kernel evaluates **PatchApply** (may require approval)  
+3. Apply → verify → commit with **rollback pointer**  
+4. No half-applied state  
 
-```bash title="patch.sh"
-carina patch show ID
-carina patch rollback ID
+```bash title="patch-cli.sh"
+carina patch list SESSION
+carina patch show SESSION PATCH_ID
+carina patch propose SESSION PATH   # content on stdin
+carina patch apply SESSION PATCH_ID
+carina patch rollback SESSION PATCH_ID
 ```
 
-`workspace.patch.apply` refuses until `task.action.approve` resolves a pending decision. Deny or timeout forces re-proposal.
+## Recipe: after a bad edit
 
-## Streams for clients
+<Steps>
+  <Step title="Find the session">
+    ```bash frame="none"
+    carina sessions
+    carina audit last
+    ```
+  </Step>
+  <Step title="List patches">
+    ```bash frame="none"
+    carina patch list SESSION
+    ```
+  </Step>
+  <Step title="Roll back">
+    ```bash frame="none"
+    carina patch rollback SESSION PATCH_ID
+    ```
+  </Step>
+  <Step title="Confirm chain still valid">
+    ```bash frame="none"
+    carina audit verify SESSION
+    ```
+  </Step>
+</Steps>
 
-| Stream | Purpose |
+## Not a Git replacement
+
+Audit and patches **explain agent work inside a session**. They do not replace Git history, PR review, or branch policy. Use both: Git for collaboration history, Carina for **governance of agent effects**.
+
+## If it fails
+
+| Symptom | Try |
 | --- | --- |
-| `session.replay` | Raw audit stream |
-| `session.items` | Normalized `thread.*` / `turn.*` / `item.*` for UI/SDK |
-| `session.review` | Governance projection: changes, commands, tools, policy, artifacts |
-| `session.events.stream` | Live notifications with `since` cursor |
+| `verify` fails | Treat as integrity incident; do not ignore — export bundle and investigate |
+| Empty patch list | Agent may not have written files, or used a path that did not create a txn |
+| Cannot find SESSION | `carina sessions` / `carina audit last` |
 
-## What this is not
+<Expandable title="Related streams">
+  - **Raw audit** — `carina audit` for forensics  
+  - **Items** — `carina items` for product UIs  
+  - **Watch** — `carina watch SESSION` live events  
+</Expandable>
 
-Audit and patch history are **not** a replacement for Git. They explain agent action within a session; Git remains the long-term collaboration source of truth.
+## Source of truth
 
-<Callout variant="note">
-  Event type enumeration lives in `protocol/events/events.json` (36 types). Payload shapes are in `protocol/schemas/`.
-</Callout>
+- `docs/security-model.md` (audit guarantees)  
+- Event / media rules in protocol + control plane  
+- CLI: `carina --help` · [CLI reference](/reference/cli/)  
+- Related: [Policy](/concepts/policy/) · [Observability traces](/observability/traces/)
+
+## Next
+
+- [Common workflows](/getting-started/common-workflows/) — inspect / rollback recipes  
+- [Method catalog](/api/methods/) — `session.*` / audit-related RPC  

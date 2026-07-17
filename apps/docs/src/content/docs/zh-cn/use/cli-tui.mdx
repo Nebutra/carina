@@ -1,6 +1,6 @@
 ---
 title: CLI 与 TUI
-description: 用终端操作 Carina — daemon、run、audit、patch 与交互壳。
+description: 用终端操作 Carina — 与本机 carina --help 对齐。
 sidebar:
   order: 1
 ---
@@ -9,54 +9,52 @@ import Callout from '../../../../components/ui/Callout.astro';
 import Steps from '../../../../components/mdx/Steps.astro';
 import Step from '../../../../components/mdx/Step.astro';
 
-CLI / TUI 是本机操作 Carina 最快的方式。与 JSON-RPC 同一运行时 — 不同表面。
+CLI / TUI 是本机最快表面，与 JSON-RPC 同一引擎。
 
-## 常用命令
-
-| 命令 | 用途 |
-| --- | --- |
-| `carina daemon start` | 启动本地 daemon |
-| `carina doctor` | 健康检查（套接字、内核、工具） |
-| `carina` / `carina run "…"` | 交互 TUI 或一次性任务 |
-| `carina audit SESSION` | 回放决策与副作用 |
-| `carina audit verify SESSION` | 哈希链完整性 |
-| `carina patch list \| rollback` | 列出 / 回滚事务补丁 |
-| `carina call METHOD` | 脚本化 JSON-RPC |
-| `carina workflow run NAME` | 跑工作流 DAG |
-
-## 典型一天
+## 黄金路径
 
 <Steps>
-  <Step title="拉起 daemon">
+  <Step title="Doctor">
     ```bash frame="none"
-    carina daemon start && carina doctor
+    carina doctor
     ```
   </Step>
-  <Step title="在仓库里干活">
+  <Step title="跑任务或打开 TUI">
     ```bash frame="none"
     cd /path/to/repo
     carina run "your task"
-    # 或: carina
+    # 或交互：
+    carina
     ```
+    `carina run` 在 cwd 创建 **safe-edit** 会话并等待任务结束（除非 `--background`）。
   </Step>
-  <Step title="检查 / 恢复">
+  <Step title="检查">
     ```bash frame="none"
+    carina sessions
     carina audit SESSION
+    carina audit verify SESSION
     carina patch list SESSION
     ```
   </Step>
 </Steps>
 
-## 审批
+## 命令分组
 
-在更严配置下，TUI 会在高风险副作用前询问。这是能力内核在工作 — 见 [策略](/zh-cn/concepts/policy/)。
+| 区域 | 命令 |
+| --- | --- |
+| 生命周期 | `init`, `status`, `doctor`, `update`, `daemon *` |
+| 干活 | `run`, `ask`, `resume`, `fork`, `steer`, `answer` |
+| 检查 | `sessions`, `items`, `watch`, `cost`, `session review` |
+| 治理 | `approve`, `deny`, `profile`, `audit*`, `patch*`, `report`, `export` |
+| 编排 | `workflow *`, `worker *`, `schedule *` |
 
-## 深入
+完整表：[CLI 参考](/zh-cn/reference/cli/)。
 
-- 配方：[常用工作流](/zh-cn/getting-started/common-workflows/)
-- Agent 循环：[Agents 概览](/zh-cn/agents/overview/)
-- 嵌入同一 API：[Runtime API](/zh-cn/api/overview/)
+## 权威来源
+
+- 本机：`carina --help`  
+- 配方：[常用工作流](/zh-cn/getting-started/common-workflows/)  
 
 <Callout variant="tip">
-  出现「没反应」时先跑 `carina doctor` — 多数本机问题是 PATH、套接字或 daemon 未启动。
+  「没反应」时先 `carina doctor`。
 </Callout>

@@ -1,0 +1,83 @@
+---
+title: CLI 参考
+description: carina 命令面 — daemon、run、sessions、audit、patch、workflow、workers 等。
+sidebar:
+  order: 3
+---
+
+import Callout from '../../../../components/ui/Callout.astro';
+
+> 以本机 **`carina --help`** 为准。有疑义时以二进制输出为权威。
+
+```bash frame="none"
+carina --help
+```
+
+## 调用
+
+| 形式 | 行为 |
+| --- | --- |
+| `carina` | 交互 TUI；需要时**自动启动** daemon |
+| `carina <command> …` | 受治理子命令 |
+
+## 启动与运行
+
+| 命令 | 说明 |
+| --- | --- |
+| `carina init` | 创建 `~/.carina` |
+| `carina status` / `doctor` | 健康与诊断 |
+| `carina update` | 安全更新本机运行时包 |
+| `carina run "<prompt>"` | 在 cwd 建 **safe-edit** 会话并提交任务 |
+| `carina ask …` | `run` 别名 |
+| `carina agents list` | Agent 模式列表 |
+
+## 会话与检查
+
+| 命令 | 说明 |
+| --- | --- |
+| `carina sessions` / `resume` / `fork` | 列表 / 继续 / 分支 |
+| `carina cost` / `watch` / `items` | 成本 / 实时事件 / item 流 |
+| `carina steer` / `answer` | 转向任务 / 回答结构化问题 |
+| `carina session review` | 治理投影 |
+| `carina checkpoint *` | 检查点预览/恢复（restore 需 `--yes`） |
+
+## 审计与补丁
+
+| 命令 | 说明 |
+| --- | --- |
+| `carina audit` / `audit verify` / `audit last` | 事件流 / 哈希链 / 最近会话 |
+| `carina report` / `export` | 摘要 / 导出包 |
+| `carina patch list\|show\|propose\|apply\|rollback` | 补丁事务 |
+
+## 审批与密钥
+
+| 命令 | 说明 |
+| --- | --- |
+| `carina approve` / `deny` | 处理待决决策 |
+| `carina profile` | 当前配置 |
+| `carina secret grant\|request` | 密钥句柄 |
+| `carina auth login\|list\|logout` | BYOK |
+
+## Workers 与工作流
+
+| 命令 | 说明 |
+| --- | --- |
+| `carina worker register\|heartbeat\|revoke` | Worker 生命周期 |
+| `carina workflow run\|list\|status\|…` | 工作流 DAG |
+
+## Daemon
+
+| 命令 | 说明 |
+| --- | --- |
+| `carina daemon start\|status\|stop\|logs` | 本地 daemon |
+| `carina completion <bash\|zsh\|fish>` | 补全 |
+
+## 权威来源
+
+- 本机：`carina --help`  
+- 打包：`docs/release.md`  
+- 概念：[策略](/zh-cn/concepts/policy/) · [审计](/zh-cn/concepts/audit/)  
+
+<Callout variant="note">
+  子命令标志随版本演进。文档与发版线对齐；若不一致，**以二进制为准**。
+</Callout>

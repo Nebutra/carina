@@ -1,6 +1,6 @@
 ---
 title: 快速上手
-description: 启动 daemon、运行任务、检查审计、回滚补丁。
+description: doctor → run → audit verify → patch rollback — 几分钟内第一次受治理会话。
 sidebar:
   order: 3
 ---
@@ -14,89 +14,91 @@ import Tooltip from '../../../../components/mdx/Tooltip.astro';
 import Badge from '../../../../components/mdx/Badge.astro';
 import Expandable from '../../../../components/mdx/Expandable.astro';
 
-从干净安装到在本地仓库上跑通一次受治理的会话。 <Badge variant="accent">约 5 分钟</Badge>
+> **目标：** 在本地仓库上跑完一个任务，并留下可校验的审计轨迹。 <Badge variant="accent">约 5 分钟</Badge>
+
+## 你将得到
+
+- daemon 健康（`carina doctor`）  
+- `carina run` 创建的 `safe-edit` 会话  
+- 审计回放 + 哈希链校验  
+- 若改了文件，如何列出 / 回滚补丁  
+
+## 最快路径
 
 <Steps>
-  <Step title="启动 daemon">
-    ```bash title="start-daemon.sh" showLineNumbers
-    carina-daemon &
-    # 或
-    carina daemon start
-    carina doctor # [!code highlight]
-    ```
+  <Step title="安装并 doctor">
+    未安装请先看 [安装](/zh-cn/getting-started/installation/)。
 
-    daemon 负责会话、<Tooltip tip="由 Rust 能力内核按最小权限配置评估。">策略评估</Tooltip>与审计存储，并发现同目录下的 kernel 服务与原生工具。
-  </Step>
-
-  <Step title="进入工作区">
     ```bash frame="none"
-    cd /path/to/your/repo
+    carina doctor
+    ```
+
+    需要显式 daemon：
+
+    ```bash frame="none"
+    carina daemon start
+    carina status
     ```
   </Step>
 
-  <Step title="运行编码任务">
-    ```bash title="run-task.sh" showLineNumbers
+  <Step title="在仓库里跑任务">
+    ```bash title="run.sh"
+    cd /path/to/your/repo
     carina run "Summarize the top-level architecture of this repo"
-    # 或修复具体问题
-    carina run "fix the failing test in parser.go" # [!code highlight]
     ```
 
-    交互式 TUI：
+    当前 CLI 行为：在 `cwd` 创建 **`safe-edit`** 会话、提交任务并等待结束（`--background` 可仅排队后返回）。
+
+    交互壳：
 
     ```bash frame="none"
     carina
     ```
 
-    会改变系统状态的工具调用都会经过能力内核；高风险操作可能要求审批。
+    改变系统状态的工具调用会经过 <Tooltip tip="副作用前求值的十四种能力类型。">能力内核</Tooltip>；高风险可能要求审批。
   </Step>
 
-  <Step title="检查审计轨迹">
-    ```bash title="audit.sh" showLineNumbers
+  <Step title="查看审计">
+    ```bash title="audit.sh"
+    carina sessions
     carina audit SESSION
     carina audit verify SESSION
-    carina audit tail --last 5
+    carina report SESSION
     ```
-
-    每条记录参与哈希链，事后改写可被检测。
   </Step>
 
-  <Step title="补丁与回滚">
-    ```bash title="patch.sh" showLineNumbers
+  <Step title="补丁（若改了文件）">
+    ```bash title="patch.sh"
     carina patch list SESSION
-    carina patch rollback PATCH_ID # [!code highlight]
-    ```
-
-    安全编辑的 diff 示意：
-
-    ```go title="parser.go" showLineNumbers
-    // before
-    return err // [!code --]
-    // after
-    return fmt.Errorf("parse: %w", err) // [!code ++]
+    carina patch show SESSION PATCH_ID
+    carina patch rollback SESSION PATCH_ID
     ```
   </Step>
 </Steps>
 
-<Expandable title="doctor 失败怎么办？">
-  运行 `carina doctor -v`，确认 `~/.carina/` 下存在 daemon 套接字。安装与 PATH 见 [安装](/zh-cn/getting-started/installation/)。
-</Expandable>
+## 若失败
 
-## 可选下一步
+| 问题 | 处理 |
+| --- | --- |
+| `daemon unreachable` | `carina daemon start` · 检查 `~/.carina/daemon.sock` |
+| 卡在审批 | `carina approve SESSION DECISION_ID` · 见 [策略](/zh-cn/concepts/policy/) |
+| 模型/鉴权错误 | `carina auth list` · `carina auth login <provider>` |
 
-```bash title="install-workflow.sh"
-mkdir -p .carina/workflows
-cp examples/workflows/review.json .carina/workflows/
-carina workflow run review
-```
+## 权威来源
+
+- CLI：`carina --help` · [CLI 参考](/zh-cn/reference/cli/)  
+- 安全默认：`docs/security-model.md`  
+
+## 下一步
 
 <Cards>
-  <Card title="策略与能力" href="/zh-cn/concepts/policy/">
-    能力类型、配置与审批模式。
+  <Card title="常用工作流" href="/zh-cn/getting-started/common-workflows/" icon="📋">
+    修测试、审查、回滚、嵌入。
   </Card>
-  <Card title="会话 API" href="/zh-cn/api/sessions/">
-    `session.create` 参数与结果字段。
+  <Card title="策略" href="/zh-cn/concepts/policy/" icon="🛡">
+    审批为何出现、配置含义。
   </Card>
-  <Card title="方法目录" href="/zh-cn/api/methods/">
-    可搜索的 JSON-RPC 目录与 Playground。
+  <Card title="CLI 与 TUI" href="/zh-cn/use/cli-tui/" icon="⌘">
+    黄金路径之外的日常命令。
   </Card>
 </Cards>

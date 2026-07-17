@@ -1,6 +1,6 @@
 ---
 title: Policy & capabilities
-description: Capability types, permission profiles, command risk levels, and default security posture.
+description: Capability types, permission profiles, command risk levels — policy before every side effect.
 sidebar:
   order: 2
 ---
@@ -11,36 +11,56 @@ import Tree from '../../../components/mdx/Tree.astro';
 import Columns from '../../../components/mdx/Columns.astro';
 import Card from '../../../components/mdx/Card.astro';
 import Badge from '../../../components/mdx/Badge.astro';
+import Steps from '../../../components/mdx/Steps.astro';
+import Step from '../../../components/mdx/Step.astro';
 
-Every meaningful side effect in Carina is one of **fourteen capability types**. The Rust kernel returns a `PermissionDecision` (`allow` / `deny` / `require-approval`) and every decision is an audit event.
+> **Every meaningful side effect is gated.** The model decides; the Rust kernel authorizes.
 
-Source of truth: `docs/security-model.md`, `protocol/capabilities/`.
+## What you'll get
+
+- The fourteen capability types  
+- Built-in profiles (`safe-edit`, `read-only`, …)  
+- Command risk levels 0–5  
+- How approvals show up in the CLI/TUI  
+
+## Why this matters
+
+Carina’s edge is not “another coding chat.” It is **policy before effect**:
+
+1. Agent proposes an action  
+2. Kernel returns `allow` / `deny` / `require-approval`  
+3. Decision is audited; side effects reference that decision  
+
+Without this page, the rest of the product looks like a generic runner.
 
 ## Default posture
 
-1. Least privilege by default
-2. No access outside the workspace
-3. Secrets unreadable by default
-4. Network restricted by default
-5. Destructive commands denied by default
-6. All patches are transactional
-7. Plugins start with zero permissions
+1. Least privilege by default  
+2. No access outside the workspace  
+3. Secrets unreadable by default  
+4. Network restricted by default  
+5. Destructive commands denied by default  
+6. All patches are transactional  
+7. Plugins start with zero permissions  
 
-## Where policy lives on disk
+## Where policy lives
 
 <Tree
   items={[
     {
-      name: '.carina/',
+      name: 'protocol/capabilities/',
       children: [
-        { name: 'policy/' },
-        { name: 'profiles/safe-edit.json' },
-        { name: 'profiles/read-only.json' },
-        { name: 'audit/' },
-        { name: 'sessions/' },
+        { name: 'capabilities.json' },
+        { name: 'profiles/ (TOML examples)' },
       ],
     },
-    { name: 'workspace root (bound at session.create)' },
+    {
+      name: '.carina/ (runtime)',
+      children: [
+        { name: 'sessions/ (profile recorded per session)' },
+        { name: 'audit/' },
+      ],
+    },
   ]}
 />
 
@@ -52,76 +72,110 @@ GitOperation  PatchApply  ProcessSpawn  PluginLoad  RemoteExecute
 MemoryWrite  CodeIndex  ContextCompress  SubagentSpawn
 ```
 
-A request carries: principal (agent / plugin / user), resource (path, command, host), session id, and task id. <Tooltip tip="Child agents receive a strict subset of the parent profile — never more.">SubagentSpawn</Tooltip> uses a typed resource `agent:NAME:profile:PROFILE` and requires approval by default.
+A request carries: principal (agent / plugin / user), resource (path, command, host), session id, task id.  
+The kernel returns a `PermissionDecision` with the producing policy. Every decision is an audit event.
 
-<Columns cols={2}>
-  <Card title="safe-edit" icon="🛡">
-    Default profile: FileWrite only via <Badge variant="info">PatchApply</Badge>; network needs approval.
-  </Card>
-  <Card title="read-only" icon="👁">
-    FileRead in workspace only — everything else denied.
-  </Card>
-</Columns>
+<Tooltip tip="Child agents receive a strict subset of the parent profile — never more.">SubagentSpawn</Tooltip> uses resource form `agent:NAME:profile:PROFILE` and **requires approval by default**.
 
 ## Permission profiles
 
 | Profile | Summary |
 | --- | --- |
-| `read-only` | FileRead within workspace only; everything else denied |
-| `safe-edit` | FileRead; FileWrite only via PatchApply; CommandExec allowlist; network needs approval; secrets denied |
-| `full-workspace` | Read/write in workspace; commands up to level 3 with approval |
+| `read-only` | FileRead in workspace only; everything else denied |
+| `safe-edit` | FileRead; FileWrite **only via PatchApply**; CommandExec allowlist; network needs approval; secrets denied |
+| `full-workspace` | R/W in workspace; commands up to level 3 with approval |
 | `ci-runner` | test/build allowed; no arbitrary shell; secrets only when scoped |
-| `sandboxed` | everything mediated through sandbox broker |
-| `trusted-local` | relaxed local development; still audited |
-| `enterprise-restricted` | org policy bundle; central approval for levels ≥ 2 |
+| `sandboxed` | everything via sandbox broker |
+| `trusted-local` | relaxed local dev; **still audited** |
+| `enterprise-restricted` | org bundle; central approval for levels ≥ 2 |
 
-Profiles are session-scoped and recorded in session metadata. Custom profiles are supported.
+Profiles are **session-scoped** and stored in session metadata. Custom profiles are supported.
+
+`carina run` creates a **`safe-edit`** session in the current directory unless you attach another way.
+
+```bash frame="none"
+carina profile SESSION
+```
 
 ## Command risk levels
 
-| Level | Class | Default policy |
+| Level | Class | Default under `safe-edit` |
 | --- | --- | --- |
-| 0 | read-only commands | auto allow |
-| 1 | test / build / lint | auto allow under `safe-edit` |
+| 0 | read-only | auto allow |
+| 1 | test / build / lint | auto allow |
 | 2 | package install | require approval |
 | 3 | file mutation commands | require approval |
-| 4 | network / deploy / credentials | deny, or explicit profile |
+| 4 | network / deploy / credentials | deny or explicit profile |
 | 5 | destructive (`rm -rf`, `curl \| sh`, …) | deny by default |
 
 ## Always require human confirmation
 
-Deleting many files · modifying lockfiles · installing dependencies · executing remote scripts · reading secrets · accessing files outside the workspace · pushing code · deploy commands · network access · modifying CI/CD configuration.
+Deleting many files · lockfile churn · dependency install · remote scripts · reading secrets · paths outside workspace · push/deploy · network · CI config changes.
+
+## Approvals in the product
+
+<Steps>
+  <Step title="Pending decision">
+    TUI prompts, or use CLI:
+    ```bash frame="none"
+    carina approve SESSION DECISION_ID [role]
+    carina deny SESSION DECISION_ID [reason]
+    ```
+  </Step>
+  <Step title="Inspect afterward">
+    ```bash frame="none"
+    carina audit SESSION
+    carina report SESSION
+    ```
+  </Step>
+</Steps>
 
 ## Workspace boundary
 
-- Agents cannot access paths outside `workspace.allowed_paths`
-- Symbolic links are **resolved before policy checks** — a symlink cannot escape the boundary
-- Ignored files never enter model context; oversized files are skipped by default
+- Agents cannot access paths outside allowed workspace paths  
+- **Symlinks are resolved before policy** — they cannot escape the boundary  
+- Oversized / ignored files stay out of model context by default  
 
-## Secret handling
+## Secrets
 
-1. Agents never read the environment directly
-2. Secrets are exposed through a broker as **opaque handles**
-3. Event logs never contain secret plaintext
-4. Command output is auto-redacted against known secret values
+1. Agents never read the environment directly  
+2. Secrets go through a broker as opaque handles  
+3. Logs never contain secret plaintext  
+4. Command output is redacted against known secret values  
 
-## Approval modes (operator)
+```bash frame="none"
+carina secret grant SESSION NAME VALUE
+carina secret request SESSION NAME
+```
 
-Product HITL modes (daemon `approval_mode` / `/approval-mode`) control what
-happens when the kernel still returns `requires_approval`. They are **not** the
-session/kernel axis (`untrusted` \| `on_request` \| `never` on
-`session.create`).
+## Fast mental model
 
-| Mode | Behavior |
+<Columns cols={2}>
+  <Card title="safe-edit" icon="🛡">
+    Default for `carina run`. Writes via <Badge variant="info">PatchApply</Badge>; network needs approval.
+  </Card>
+  <Card title="read-only" icon="👁">
+    Explore without side effects — FileRead only.
+  </Card>
+</Columns>
+
+## If it fails
+
+| Symptom | Meaning |
 | --- | --- |
-| `ask` | Prompt a human for `requires_approval` |
-| `always-approve` | Auto-allow `requires_approval` after risk review (**WARNING** on enable; org-lockable via `disable_always_approve`) |
-| `dont-ask` | Deny `requires_approval` unless a matching session/project grant exists (no prompt; CI-friendly) |
-| `accept-edits` | Auto-allow `FileWrite` / `PatchApply` only; shell, network, and secrets still prompt |
+| Constant approvals | Risk ≥ 2 or network — tighten the task or use a broader profile **consciously** |
+| Deny on path | Outside workspace or symlink escape attempt |
+| Plugin does nothing | Plugins start at zero permissions — inspect with `carina plugin inspect` |
 
-Profile denials and plan/sandbox gates still apply on every mode. Session-axis
-tokens must not be passed as product `approval_mode` (fail closed).
+## Source of truth
 
-<Callout variant="warning" title="Always-approve is elevated trust">
-  Prefer narrow profiles and short-lived sessions for high-risk work. Broad auto-approval should be intentional and audited.
-</Callout>
+- `docs/security-model.md`  
+- `protocol/capabilities/capabilities.json`  
+- Kernel / profiles: `crates/carina-policy`  
+- Related: [Audit & rollback](/concepts/audit/) · [Glossary](/reference/glossary/)
+
+## Next
+
+- [Quickstart](/getting-started/quickstart/) — feel policy on a real run  
+- [Sub-agents](/agents/sub-agents/) — attenuation in practice  
+- [CLI reference](/reference/cli/) — `approve` / `deny` / `profile`  

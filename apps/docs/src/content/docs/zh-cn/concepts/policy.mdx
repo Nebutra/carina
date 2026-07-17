@@ -1,6 +1,6 @@
 ---
 title: 策略与能力
-description: 能力类型、权限配置、命令风险等级与默认安全姿态。
+description: 能力类型、权限配置、命令风险等级 — 每次副作用前先策略。
 sidebar:
   order: 2
 ---
@@ -11,10 +11,17 @@ import Tree from '../../../../components/mdx/Tree.astro';
 import Columns from '../../../../components/mdx/Columns.astro';
 import Card from '../../../../components/mdx/Card.astro';
 import Badge from '../../../../components/mdx/Badge.astro';
+import Steps from '../../../../components/mdx/Steps.astro';
+import Step from '../../../../components/mdx/Step.astro';
 
-每个有意义的副作用都属于 **十四种能力类型** 之一。Rust 内核返回 `PermissionDecision`（`allow` / `deny` / `require-approval`），每次决策都是审计事件。
+> **每次有意义的副作用都受门控。** 模型决策；Rust 内核授权。
 
-源文档：`docs/security-model.md`，`protocol/capabilities/`。
+## 你将得到
+
+- 十四种能力类型  
+- 内置配置（`safe-edit`、`read-only` …）  
+- 命令风险等级 0–5  
+- 审批在 CLI/TUI 中如何出现  
 
 ## 默认姿态
 
@@ -26,21 +33,21 @@ import Badge from '../../../../components/mdx/Badge.astro';
 6. 补丁事务化  
 7. 插件零权限起步  
 
-## 策略在磁盘上的位置
+## 策略落点
 
 <Tree
   items={[
     {
-      name: '.carina/',
+      name: 'protocol/capabilities/',
       children: [
-        { name: 'policy/' },
-        { name: 'profiles/safe-edit.json' },
-        { name: 'profiles/read-only.json' },
-        { name: 'audit/' },
-        { name: 'sessions/' },
+        { name: 'capabilities.json' },
+        { name: 'profiles/' },
       ],
     },
-    { name: '工作区根（session.create 时绑定）' },
+    {
+      name: '.carina/',
+      children: [{ name: 'sessions/' }, { name: 'audit/' }],
+    },
   ]}
 />
 
@@ -52,42 +59,52 @@ GitOperation  PatchApply  ProcessSpawn  PluginLoad  RemoteExecute
 MemoryWrite  CodeIndex  ContextCompress  SubagentSpawn
 ```
 
-请求携带：主体（agent / plugin / user）、资源（路径、命令、主机）、会话 id 与任务 id。<Tooltip tip="子 Agent 只能获得父配置的真子集，绝不会更大。">SubagentSpawn</Tooltip> 使用类型化资源 `agent:NAME:profile:PROFILE`，默认需审批。
+内核返回 `PermissionDecision`（allow / deny / require-approval）。  
+<Tooltip tip="子 Agent 只能获得父配置的真子集。">SubagentSpawn</Tooltip> 资源形如 `agent:NAME:profile:PROFILE`，**默认需审批**。
 
-<Columns cols={2}>
-  <Card title="safe-edit" icon="🛡">
-    默认配置：仅通过 <Badge variant="info">PatchApply</Badge> 写入；网络需审批。
-  </Card>
-  <Card title="read-only" icon="👁">
-    仅工作区内 FileRead — 其余一律拒绝。
-  </Card>
-</Columns>
-
-## 内置配置
+## 权限配置
 
 | Profile | 摘要 |
 | --- | --- |
-| `read-only` | 仅工作区内 FileRead |
-| `safe-edit` | 通过 PatchApply 写入；命令白名单；网络需审批 |
-| `full-workspace` | 工作区读写；高风险命令需审批 |
+| `read-only` | 仅工作区 FileRead |
+| `safe-edit` | FileWrite **仅经 PatchApply**；命令白名单；网络需审批 |
+| `full-workspace` | 工作区读写；高等级命令需审批 |
 | `ci-runner` | 测试/构建；无任意 shell |
-| `enterprise-restricted` | 组织策略包；高等级需中央审批 |
+| `trusted-local` | 本机放宽；**仍审计** |
+| `enterprise-restricted` | 组织策略包 |
 
-配置绑定会话，并写入会话元数据。支持自定义配置。
+`carina run` 在 cwd 创建 **`safe-edit`** 会话。
 
-## 命令风险等级 0–5
+```bash frame="none"
+carina profile SESSION
+```
 
-| 等级 | 类别 | 默认策略 |
+## 风险等级 0–5
+
+| 等级 | 类别 | `safe-edit` 默认 |
 | --- | --- | --- |
-| 0 | 只读命令 | 自动放行 |
-| 1 | 测试 / 构建 / lint | `safe-edit` 下自动放行 |
-| 2 | 包安装 | 需审批 |
-| 3 | 文件修改类命令 | 需审批 |
-| 4 | 网络 / 部署 / 凭据 | 默认拒绝，或显式配置 |
-| 5 | 破坏性（`rm -rf`、`curl \| sh` …） | 默认拒绝 |
+| 0 | 只读 | 自动放行 |
+| 1 | 测试/构建/lint | 自动放行 |
+| 2 | 装包 | 需审批 |
+| 3 | 改文件类命令 | 需审批 |
+| 4 | 网络/部署/凭据 | 拒绝或显式配置 |
+| 5 | 破坏性 | 默认拒绝 |
 
-符号链接在策略检查前解析，无法逃逸边界。
+## 审批
 
-<Callout variant="warning">
-  宽泛自动批准等于更高信任。高风险工作请用窄配置与短会话。
-</Callout>
+```bash frame="none"
+carina approve SESSION DECISION_ID [role]
+carina deny SESSION DECISION_ID [reason]
+carina audit SESSION
+```
+
+## 权威来源
+
+- `docs/security-model.md`  
+- `protocol/capabilities/capabilities.json`  
+- 相关：[审计与回滚](/zh-cn/concepts/audit/) · [术语表](/zh-cn/reference/glossary/)
+
+## 下一步
+
+- [快速上手](/zh-cn/getting-started/quickstart/)  
+- [CLI 参考](/zh-cn/reference/cli/)  

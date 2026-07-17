@@ -1,6 +1,6 @@
 ---
 title: 审计与回滚
-description: 追加写事件日志、哈希链校验与事务补丁恢复。
+description: 追加写事件日志、哈希链校验、事务补丁 — 解释并撤销 Agent 工作。
 sidebar:
   order: 3
 ---
@@ -9,50 +9,86 @@ import Callout from '../../../../components/ui/Callout.astro';
 import Mermaid from '../../../../components/mdx/Mermaid.astro';
 import Tooltip from '../../../../components/mdx/Tooltip.astro';
 import Badge from '../../../../components/mdx/Badge.astro';
+import Steps from '../../../../components/mdx/Steps.astro';
+import Step from '../../../../components/mdx/Step.astro';
 
-Carina 把可观测性当作产品能力。每次执行写入会话级、追加写的 **Event Log**。副作用事件引用其 `PermissionDecision` id。 <Badge variant="info">哈希链</Badge>
+> **发生过的事可以解释；应用过的补丁可以回滚。** <Badge variant="info">哈希链</Badge>
+
+## 你将得到
+
+- 事件日志与哈希链如何工作  
+- audit / verify / report / export 的准确 CLI  
+- patch list / show / apply / rollback  
 
 ## 事件流
 
-<Mermaid caption="每次门控副作用都会落在哈希链上。">
+<Mermaid caption="门控副作用都会落在链上。">
 flowchart LR
   A[Agent 动作] --> K[策略内核]
   K -->|allow / deny / approve| D[PermissionDecision]
-  D --> E[Event Log]
+  D --> E[事件日志]
   E --> H[哈希链]
   H --> V[carina audit verify]
 </Mermaid>
 
-## 审计保证
+## CLI — 检查
 
-- 事件日志追加写；每条含时间戳与会话 id  
-- 原始图片/媒体字节永不进入 transcript / checkpoint / 审计 — 仅内容哈希 <Tooltip tip="内容寻址的媒体引用，日志中从不存原始字节。">MediaRef</Tooltip>  
-- 可查询任意文件的修改史：哪个 agent、任务、补丁、何时  
-- 每次 allow/deny 可解释：决策记录策略与原因  
-
-## CLI
-
-```bash title="audit.sh" showLineNumbers
+```bash title="audit-cli.sh"
+carina sessions
 carina audit SESSION
 carina audit verify SESSION
-carina audit tail --last 5
-carina audit export --format jsonl|sqlite
+carina audit last
+carina report SESSION
+carina export SESSION
+carina items SESSION
 ```
 
-## 事务补丁
+## CLI — 补丁
 
-1. Agent 提出 diff  
-2. 内核评估 `PatchApply` → 可能需审批  
-3. 批准后：apply → verify → 带回滚指针提交  
-4. 无半应用状态  
-
-```bash title="patch.sh"
+```bash title="patch-cli.sh"
 carina patch list SESSION
-carina patch rollback PATCH_ID
+carina patch show SESSION PATCH_ID
+carina patch propose SESSION PATH
+carina patch apply SESSION PATCH_ID
+carina patch rollback SESSION PATCH_ID
 ```
 
-审计与补丁历史**不是** Git 的替代品；它们解释会话内的 Agent 行为。
+## 配方：错误编辑之后
 
-<Callout variant="tip">
-  在方法目录打开 `session.create`，用 **Playground → Mock** 可预览响应形状，无需本机 daemon。
-</Callout>
+<Steps>
+  <Step title="找到会话">
+    ```bash frame="none"
+    carina sessions
+    carina audit last
+    ```
+  </Step>
+  <Step title="列出补丁">
+    ```bash frame="none"
+    carina patch list SESSION
+    ```
+  </Step>
+  <Step title="回滚">
+    ```bash frame="none"
+    carina patch rollback SESSION PATCH_ID
+    ```
+  </Step>
+  <Step title="再验链">
+    ```bash frame="none"
+    carina audit verify SESSION
+    ```
+  </Step>
+</Steps>
+
+## 不是 Git 替代品
+
+审计与补丁解释**会话内** Agent 行为；不替代 Git 历史与 PR 审查。
+
+## 权威来源
+
+- `docs/security-model.md`  
+- CLI：`carina --help` · [CLI 参考](/zh-cn/reference/cli/)  
+- 相关：[策略](/zh-cn/concepts/policy/)  
+
+## 下一步
+
+- [常用工作流](/zh-cn/getting-started/common-workflows/)  

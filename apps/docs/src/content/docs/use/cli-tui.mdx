@@ -1,6 +1,6 @@
 ---
 title: CLI & TUI
-description: Drive Carina from the terminal — daemon, run, audit, patch, and the interactive shell.
+description: Drive Carina from the terminal — matches live carina --help.
 sidebar:
   order: 1
 ---
@@ -9,54 +9,63 @@ import Callout from '../../../components/ui/Callout.astro';
 import Steps from '../../../components/mdx/Steps.astro';
 import Step from '../../../components/mdx/Step.astro';
 
-The CLI and TUI are the fastest way to operate Carina on a local machine. Same runtime as JSON-RPC — different surface.
+The CLI and TUI are the fastest local surface. Same engine as JSON-RPC.
 
-## Essentials
-
-| Command | Purpose |
-| --- | --- |
-| `carina daemon start` | Start the local daemon |
-| `carina doctor` | Health check (socket, kernel, tools) |
-| `carina` / `carina run "…"` | Interactive TUI or one-shot task |
-| `carina audit SESSION` | Replay decisions and effects |
-| `carina audit verify SESSION` | Hash-chain integrity |
-| `carina patch list \| rollback` | List / undo transactional patches |
-| `carina call METHOD` | JSON-RPC helper for scripting |
-| `carina workflow run NAME` | Run a workflow DAG |
-
-## Typical day
+## Golden path
 
 <Steps>
-  <Step title="Daemon up">
+  <Step title="Doctor">
     ```bash frame="none"
-    carina daemon start && carina doctor
+    carina doctor
     ```
   </Step>
-  <Step title="Work in a repo">
+  <Step title="Run or open TUI">
     ```bash frame="none"
     cd /path/to/repo
     carina run "your task"
-    # or: carina
+    # or interactive:
+    carina
     ```
+    `carina run` creates a **safe-edit** session in `cwd` and waits for the task (unless `--background`).
   </Step>
-  <Step title="Inspect / recover">
+  <Step title="Inspect">
     ```bash frame="none"
+    carina sessions
     carina audit SESSION
+    carina audit verify SESSION
     carina patch list SESSION
     ```
   </Step>
 </Steps>
 
+## Command groups
+
+| Area | Commands |
+| --- | --- |
+| Lifecycle | `init`, `status`, `doctor`, `update`, `daemon *` |
+| Work | `run`, `ask`, `resume`, `fork`, `steer`, `answer` |
+| Inspect | `sessions`, `items`, `watch`, `cost`, `session review` |
+| Governance | `approve`, `deny`, `profile`, `audit*`, `patch*`, `report`, `export` |
+| Orchestration | `workflow *`, `worker *`, `schedule *` |
+| Memory / context | `memory *`, `context *` |
+| Providers | `auth *`, `providers list` |
+
+Full tables: [CLI reference](/reference/cli/).
+
 ## Approvals
 
-Under stricter profiles, the TUI prompts before high-risk effects. That is the capability kernel doing its job — see [Policy](/concepts/policy/).
+```bash frame="none"
+carina approve SESSION DECISION_ID
+carina deny SESSION DECISION_ID "reason"
+```
 
-## Go deeper
+See [Policy](/concepts/policy/).
 
-- Recipes: [Common workflows](/getting-started/common-workflows/)
-- Agent loop: [Agents overview](/agents/overview/)
-- Embed the same APIs: [Runtime API](/api/overview/)
+## Source of truth
+
+- Live binary: `carina --help`  
+- Recipes: [Common workflows](/getting-started/common-workflows/)  
 
 <Callout variant="tip">
-  Prefer `carina doctor` before debugging “nothing happens” — most local issues are PATH, socket, or daemon not running.
+  Prefer `carina doctor` before debugging “nothing happens” — most issues are PATH, socket, or daemon down.
 </Callout>

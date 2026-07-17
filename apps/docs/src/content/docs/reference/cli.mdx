@@ -1,0 +1,162 @@
+---
+title: CLI reference
+description: carina command surface — daemon, run, sessions, audit, patch, workflow, workers, and more.
+sidebar:
+  order: 3
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+import Badge from '../../../components/mdx/Badge.astro';
+
+> Generated from the **live** `carina --help` surface. When in doubt, re-run help on your install — it is the authority.
+
+```bash frame="none"
+carina --help
+```
+
+## Invocation
+
+| Form | Behavior |
+| --- | --- |
+| `carina` | Interactive TUI (TTY); **auto-starts** daemon when needed |
+| `carina [options]` | TUI with flags: `-session`, `-workspace`, `-locale`, `-socket`, `-no-alt-screen` |
+| `carina <command> …` | Governed CLI subcommands |
+
+## Start and run
+
+| Command | Description |
+| --- | --- |
+| `carina init` | Create `~/.carina`, print daemon hint |
+| `carina status` | Daemon health and counters |
+| `carina doctor [--json] [--fix [--yes]]` | Diagnostics; repairs need explicit `--yes` |
+| `carina update [--check] [--version x.y.z] [--force]` | Secure update of local runtime bundle |
+| `carina run [flags] "<prompt>"` | Create **safe-edit** session in cwd, submit task, wait (or `--background`) |
+| `carina run --input-format stream-json --output-format stream-json` | NDJSON protocol for SDK/CI |
+| `carina ask …` | Alias for `run` |
+| `carina agents list` | Available agent modes |
+| `carina commands list` | Slash commands |
+
+**`carina run` flags:** `--agent`, `--model provider/model`, `--effort`, `--background`.
+
+## Sessions and inspection
+
+| Command | Description |
+| --- | --- |
+| `carina sessions` | List sessions |
+| `carina resume <session_id> [prompt\|-]` | Continue or inspect |
+| `carina fork <session_id>` | Branch without mutating parent |
+| `carina cost [session_id] [--json]` | Model usage / cost |
+| `carina watch <session_id> [--json]` | Live events |
+| `carina steer <task_id> <message>` | Redirect at next turn boundary |
+| `carina answer <question_id> <value>` | Answer structured question |
+| `carina items <session_id>` | Normalized item stream |
+| `carina session review <session_id>` | Governance projection |
+| `carina search <session_id> <text>` | Workspace search via daemon |
+| `carina artifact stat\|read …` | Artifact metadata / bytes |
+
+## Checkpoints
+
+| Command | Description |
+| --- | --- |
+| `carina checkpoint list <session_id>` | List checkpoints |
+| `carina checkpoint preview <session_id> <id>` | Preview rewind |
+| `carina checkpoint restore <session_id> <id> --yes` | Restore code + conversation (**destructive**) |
+| `carina checkpoint summarize <session_id> <id>` | Summarize without restore |
+
+## Memory
+
+| Command | Description |
+| --- | --- |
+| `carina memory status\|list\|context\|search\|read\|verify …` | Inspect governed memory |
+| `carina memory write … add\|replace\|remove` | Request memory mutations |
+| `carina memory handoff\|rollback … --yes` | Transfer / restore revisions |
+| `carina memory projection-*` | HMS projection control (governed) |
+
+## Context engine
+
+| Command | Description |
+| --- | --- |
+| `carina context status\|doctor\|stats` | Engine / Headroom health |
+| `carina context compress\|retrieve` | Compress / CCR retrieve |
+
+## Schedules
+
+| Command | Description |
+| --- | --- |
+| `carina schedule list\|create\|pause\|resume\|delete …` | Session-owned schedules (`at` / `every` / `cron`) |
+
+## Audit and patches
+
+| Command | Description |
+| --- | --- |
+| `carina audit <session_id>` | Raw event stream |
+| `carina audit verify <session_id>` | Hash-chain verify |
+| `carina audit last` | Most recent session summary |
+| `carina report <session_id>` | Violations / files / commands |
+| `carina export <session_id>` | Full audit bundle |
+| `carina patch list\|show\|propose\|apply\|rollback …` | Patch transactions |
+
+## Approvals, secrets, plugins
+
+| Command | Description |
+| --- | --- |
+| `carina approve\|deny …` | Resolve pending decisions |
+| `carina profile <session_id>` | Active permission profile |
+| `carina secret grant\|request …` | Secret handles |
+| `carina plugin inspect\|run …` | WASM plugins through policy |
+
+## Providers (BYOK)
+
+| Command | Description |
+| --- | --- |
+| `carina auth login\|list\|logout` | Local credentials |
+| `carina providers list [--refresh] [--offline]` | Provider catalog |
+
+## Gateway and RPC
+
+| Command | Description |
+| --- | --- |
+| `carina gateway hello\|methods\|ws-probe …` | Gateway discovery / probe |
+| `carina backpressure status` | Worker pressure |
+| `carina debug snapshot\|trace …` | Local diagnostics |
+| `carina channel pending\|reconcile …` | Channel crash reconciliation |
+
+## Workers
+
+| Command | Description |
+| --- | --- |
+| `carina workers` / `worker list` | List workers |
+| `carina worker register\|heartbeat\|revoke …` | Lifecycle; `--pool` affinity tags |
+
+## Workflows
+
+| Command | Description |
+| --- | --- |
+| `carina workflow run <name> …` | Run `.carina/workflows/<name>.json` |
+| `carina workflow list\|status …` | Runs |
+| `carina workflow pause\|resume\|stop\|restart …` | Control |
+
+## Native tools (no daemon)
+
+| Command | Description |
+| --- | --- |
+| `carina scan\|grep\|diff …` | Tree / search / diff |
+| `carina run-native` / `pty` | Native wrappers |
+| `carina patch-native …` | Atomic patch primitive (JSON stdin) |
+
+## Daemon lifecycle
+
+| Command | Description |
+| --- | --- |
+| `carina daemon start\|status\|stop\|logs` | CLI-owned local daemon |
+| `carina completion <bash\|zsh\|fish>` | Shell completion |
+
+## Source of truth
+
+- Binary: `carina --help` on your machine  
+- Packaging: `docs/release.md`  
+- Conceptual maps: [Policy](/concepts/policy/) · [Audit](/concepts/audit/) · [FEATURE_MAP](https://github.com/nebutra/carina/blob/main/apps/docs/FEATURE_MAP.md)
+
+<Callout variant="note">
+  Subcommand flags evolve with releases. Prefer re-running help over copying flags from screenshots. Docs are updated to match release lines; if they diverge, the binary wins.
+</Callout>

@@ -13,8 +13,11 @@ import Card from '../../../components/mdx/Card.astro';
 
 Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. Bare TCP is restricted to explicit loopback for diagnostics. Network-facing clients use the authenticated WebSocket or HTTP Gateway. All optional listeners are **disabled by default**.
 
-Machine-readable registry: `protocol/jsonrpc/methods.json` (authoritative).  
-Curated narrative: `docs/rpc-api.md`.
+## Source of truth
+
+- Machine-readable registry: `protocol/jsonrpc/methods.json` (and dual catalogs under `apps/docs/public/data/`)
+- Narrative: `docs/rpc-api.md`
+- Live exploration: [Method catalog](/api/methods/) (Playground Mock/Live)
 
 ## Surfaces
 

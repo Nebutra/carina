@@ -50,6 +50,9 @@ Update this file when you ship a feature or rename a page.
 | Nebutra Cloud boundary | introduction + enterprise notes | `docs/nebutra-cloud-boundary.md` | sync off by default |
 | Math / KaTeX | `/reference/math/` | KaTeX pipeline | authoring only |
 | Glossary | `/reference/glossary/` | this map + product.md | — |
+| CLI reference | `/reference/cli/` | live `carina --help` | all subcommands |
+| Common workflows | `/getting-started/common-workflows/` | recipes | day-to-day |
+| CLI & TUI guide | `/use/cli-tui/` | CLI help | operator path |
 
 ## Common workflows (recipes)
 

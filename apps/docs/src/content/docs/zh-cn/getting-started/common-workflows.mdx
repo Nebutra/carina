@@ -1,6 +1,6 @@
 ---
 title: 常用工作流
-description: 日常 Carina 任务短配方 — 首次会话、修测试、审计、回滚、嵌入。
+description: 与真实 CLI 对齐的短配方 — 首次会话、修测试、审计、回滚、嵌入。
 sidebar:
   order: 4
 ---
@@ -10,11 +10,9 @@ import Steps from '../../../../components/mdx/Steps.astro';
 import Step from '../../../../components/mdx/Step.astro';
 import Badge from '../../../../components/mdx/Badge.astro';
 
-按任务组织的短配方。概念见 [策略](/zh-cn/concepts/policy/) 与 [审计](/zh-cn/concepts/audit/)。线性导览见 [快速上手](/zh-cn/getting-started/quickstart/)。
+按任务组织的配方。概念：[策略](/zh-cn/concepts/policy/)、[审计](/zh-cn/concepts/audit/)。线性导览：[快速上手](/zh-cn/getting-started/quickstart/)。
 
 ## 第一次受治理会话
-
-**目标：** daemon 起来、跑完一个任务、证明写过审计。
 
 <Steps>
   <Step title="启动并检查">
@@ -31,47 +29,34 @@ import Badge from '../../../../components/mdx/Badge.astro';
   </Step>
   <Step title="核对轨迹">
     ```bash frame="none"
+    carina sessions
     carina audit SESSION
     carina audit verify SESSION
     ```
-    将 `SESSION` 换成 TUI 或 CLI 输出中的 id。
   </Step>
 </Steps>
 
-**涉及：** daemon、agent 循环、审计链。
-
 ## 修失败测试
-
-**目标：** 在 `safe-edit` 下改代码，尽量走补丁而非裸写。
 
 ```bash frame="none"
 carina run "fix the failing test in parser.go and run the test"
 ```
 
-若内核要求审批，对高风险命令是预期行为。先读审批原因，而不是关策略。
-
-**涉及：** CommandExec 风险等级、PatchApply、[策略](/zh-cn/concepts/policy/)。
-
 ## 回滚错误补丁
-
-**目标：** 撤销 Agent 编辑，而不手搓 Git 历史。
 
 ```bash frame="none"
 carina patch list SESSION
-carina patch rollback PATCH_ID
+carina patch rollback SESSION PATCH_ID
+carina audit verify SESSION
 ```
-
-**涉及：** 事务补丁、[审计与回滚](/zh-cn/concepts/audit/)。
 
 ## 查看 Agent 做了什么
 
 ```bash frame="none"
 carina audit SESSION
-carina audit tail --last 20
-carina audit verify SESSION
+carina report SESSION
+carina items SESSION
 ```
-
-**涉及：** 哈希链、权限决策。
 
 ## 跑审查工作流
 
@@ -81,27 +66,24 @@ cp examples/workflows/review.json .carina/workflows/
 carina workflow run review
 ```
 
-**涉及：** [工作流](/zh-cn/workflows/overview/)、子 Agent 衰减。
+## 嵌入 / 脚本
 
-## 嵌入：调用 session.create
+打开 [方法目录](/zh-cn/api/methods/) → 展开方法 → **Playground → Mock**，无需 daemon 也能看响应形状。
 
-用 [会话 API](/zh-cn/api/sessions/) 示例，或打开 [方法目录](/zh-cn/api/methods/) → **Playground → Mock**，无需 daemon 也能看响应形状。
+活 JSON-RPC 见 [会话 API](/zh-cn/api/sessions/) 示例或 SDK。
 
 ```bash frame="none"
-carina call session.create
+carina gateway methods   # daemon/gateway 已启动时列出方法
 ```
-
-**涉及：** JSON-RPC、[嵌入路径](/zh-cn/api/overview/)。
 
 ## 下一步
 
-| 需要… | 去 |
+| 需要 | 页面 |
 | --- | --- |
-| 安装方式 | [安装](/zh-cn/getting-started/installation/) |
-| 为何会有审批 | [策略](/zh-cn/concepts/policy/) |
-| 全部方法 | [方法目录](/zh-cn/api/methods/) |
-| 术语 | [术语表](/zh-cn/reference/glossary/) |
+| 安装 | [安装](/zh-cn/getting-started/installation/) |
+| 完整 CLI | [CLI 参考](/zh-cn/reference/cli/) |
+| 审批原因 | [策略](/zh-cn/concepts/policy/) |
 
 <Callout variant="tip">
-  新人只保留一条黄金路径：<Badge variant="accent">doctor → run → audit verify → patch rollback</Badge>。其余都是加深。
+  黄金路径：<Badge variant="accent">doctor → run → audit verify → patch rollback</Badge>
 </Callout>

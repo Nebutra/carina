@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Start the daemon, run an agent task, inspect audit, and roll back a patch.
+description: doctor → run → audit verify → patch rollback — first governed session in minutes.
 sidebar:
   order: 3
 ---
@@ -14,111 +14,131 @@ import Tooltip from '../../../components/mdx/Tooltip.astro';
 import Badge from '../../../components/mdx/Badge.astro';
 import Expandable from '../../../components/mdx/Expandable.astro';
 
-From a clean install to a governed session on a local repo. <Badge variant="accent">5 min</Badge>
+> **Goal:** one task on a local repo, with a verifiable audit trail. <Badge variant="accent">~5 min</Badge>
 
-{/*
-  Code meta (Mintlify / EC text-markers):
-  - title="…" for multi-line scripts · frame="none" for one-liners
-  - // [!code highlight] / {n} line marks where useful
-*/}
+## What you'll get
+
+- Daemon healthy (`carina doctor`)
+- A `safe-edit` session from `carina run`
+- Audit replay + hash-chain verify
+- How to list / roll back patches if the agent edited files
+
+## Fastest path
 
 <Steps>
-  <Step title="Start the daemon">
-    ```bash title="start-daemon.sh" showLineNumbers
-    carina-daemon &
-    # or
-    carina daemon start
-    carina doctor # [!code highlight]
-    ```
+  <Step title="Install & doctor">
+    If you have not installed yet: [Install](/getting-started/installation/).
 
-    The daemon owns sessions, <Tooltip tip="Least-privilege profiles evaluated by the Rust capability kernel.">policy evaluation</Tooltip>, and the audit store. It discovers the kernel service and native tools next to its binary.
-  </Step>
-
-  <Step title="Open a workspace">
     ```bash frame="none"
-    cd /path/to/your/repo
+    carina doctor
     ```
+
+    Need a daemon explicitly?
+
+    ```bash frame="none"
+    carina daemon start
+    carina status
+    ```
+
+    Interactive `carina` also auto-starts the daemon.
   </Step>
 
-  <Step title="Run a coding task">
-    ```bash title="run-task.sh" showLineNumbers
+  <Step title="Run a task in a repo">
+    ```bash title="run.sh"
+    cd /path/to/your/repo
     carina run "Summarize the top-level architecture of this repo"
-    # or fix something concrete
-    carina run "fix the failing test in parser.go" # [!code highlight]
     ```
 
-    Interactive TUI:
+    What this does (current CLI):
+
+    - creates a **`safe-edit`** session in `cwd`
+    - submits the prompt as a task
+    - waits for completion (or use `--background` to return when queued)
+
+    Interactive shell:
 
     ```bash frame="none"
     carina
     ```
 
-    Tool calls that mutate state hit the capability kernel. Depending on profile, high-risk actions may prompt for approval.
+    Tool calls that mutate state hit the <Tooltip tip="Fourteen capability types evaluated before side effects.">capability kernel</Tooltip>. Higher risk may prompt for approval — that is expected.
   </Step>
 
   <Step title="Inspect the audit trail">
-    ```bash title="audit.sh" showLineNumbers
+    Use the session id printed by the CLI/TUI:
+
+    ```bash title="audit.sh"
+    carina sessions
     carina audit SESSION
     carina audit verify SESSION
-    carina audit tail --last 5
+    carina report SESSION
     ```
 
-    Each entry participates in a hash chain so later rewrite of history is detectable.
+    - `audit` — raw event stream (decisions + effects)  
+    - `audit verify` — tamper-evident <Tooltip tip="Each event links to the previous hash; verify detects rewrite.">hash chain</Tooltip>  
+    - `report` — violations, files, commands summary  
   </Step>
 
-  <Step title="Patches and rollback">
-    ```bash title="patch.sh" showLineNumbers
+  <Step title="Patches (if files changed)">
+    ```bash title="patch.sh"
     carina patch list SESSION
-    carina patch rollback PATCH_ID # [!code highlight]
+    carina patch show SESSION PATCH_ID
+    carina patch rollback SESSION PATCH_ID
     ```
 
-    Diff view of a safe edit:
-
-    ```go title="parser.go" showLineNumbers
-    // before
-    return err // [!code --]
-    // after
-    return fmt.Errorf("parse: %w", err) // [!code ++]
-    ```
+    Under `safe-edit`, writes prefer **PatchApply** (transactional) over raw FileWrite.
   </Step>
 </Steps>
 
-<Expandable title="What if doctor fails?">
-  Run `carina doctor -v` and confirm the daemon socket exists under `~/.carina/`. See [Installation](/getting-started/installation/) for PATH and binary layout.
+## Expected outcomes
+
+| Check | Good sign |
+| --- | --- |
+| `carina doctor` | No hard failures |
+| `carina run "…"` | Task completes or waits on approval |
+| `carina audit verify SESSION` | Chain OK |
+| `carina patch list SESSION` | Empty if no file txns; else list with ids |
+
+## If it fails
+
+| Problem | Fix |
+| --- | --- |
+| `daemon unreachable` | `carina daemon start` · check `~/.carina/daemon.sock` |
+| Task stuck on approval | `carina approve SESSION DECISION_ID` or deny · see [Policy](/concepts/policy/) |
+| Model / auth errors | `carina auth list` · `carina auth login <provider>` |
+| Doctor noise | `carina doctor --json` for machine-readable detail |
+
+<Expandable title="Optional: headless / SDK stream">
+  ```bash frame="none"
+  carina run --input-format stream-json --output-format stream-json
+  ```
+  Bidirectional NDJSON protocol for CI and SDKs. See [API overview](/api/overview/).
 </Expandable>
 
-## Optional next steps
+## How this ties to Carina
 
-```bash title="install-workflow.sh"
-mkdir -p .carina/workflows
-cp examples/workflows/review.json .carina/workflows/
-carina workflow run review
-```
+This path exercises the three differentiators:
 
-```json title="session.create.json"
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "session.create",
-  "params": {
-    "workspace_root": "/repo",
-    "profile": "safe-edit"
-  }
-}
-```
+1. **Policy** — `safe-edit` on `carina run`  
+2. **Audit** — `audit` + `verify`  
+3. **Rollback** — `patch rollback`  
 
-<Cards cols={3}>
-  <Card title="Runtime model" href="/concepts/runtime/">
-    Layers, principles, and the MVP agent loop.
+## Source of truth
+
+- CLI surface: `carina --help` (also [CLI reference](/reference/cli/))  
+- Security defaults: `docs/security-model.md` · [Policy](/concepts/policy/)  
+- Audit model: `docs/` event/audit notes · [Audit](/concepts/audit/)  
+
+## Next
+
+<Cards>
+  <Card title="Common workflows" href="/getting-started/common-workflows/" icon="📋">
+    Fix tests, review, embed RPC — short recipes.
   </Card>
-  <Card title="Policy & capabilities" href="/concepts/policy/">
-    Profiles, risk levels, and default security posture.
+  <Card title="Policy" href="/concepts/policy/" icon="🛡">
+    Why approvals fire and what profiles mean.
   </Card>
-  <Card title="Runtime API" href="/api/overview/">
-    JSON-RPC, Gateway, scopes, and embed surfaces.
+  <Card title="CLI & TUI" href="/use/cli-tui/" icon="⌘">
+    Day-to-day commands beyond the golden path.
   </Card>
 </Cards>
-
-<Callout variant="success" title="You are running Carina">
-  Next: [Runtime model](/concepts/runtime/), [Policy](/concepts/policy/), or [JSON-RPC reference](/api/json-rpc/).
-</Callout>

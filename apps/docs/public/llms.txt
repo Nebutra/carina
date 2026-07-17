@@ -14,24 +14,25 @@ Site: https://carina.nebutra.com
 - [Runtime API overview](https://carina.nebutra.com/api/overview/): JSON-RPC over unix socket/stdio, optional Gateway, scopes, and SDK surfaces.
 - [Sessions](https://carina.nebutra.com/api/sessions/): Create, control, stream, and export Carina sessions.
 - [API versions](https://carina.nebutra.com/api/versions/): How Carina docs version channels map to protocol catalogs and release lines.
-- [Audit & rollback](https://carina.nebutra.com/concepts/audit/): Append-only event log, hash-chain verification, and transactional patch recovery.
-- [Policy & capabilities](https://carina.nebutra.com/concepts/policy/): Capability types, permission profiles, command risk levels, and default security posture.
+- [Audit & rollback](https://carina.nebutra.com/concepts/audit/): Append-only event log, hash-chain verification, transactional patches — explain and undo agent work.
+- [Policy & capabilities](https://carina.nebutra.com/concepts/policy/): Capability types, permission profiles, command risk levels — policy before every side effect.
 - [Runtime model](https://carina.nebutra.com/concepts/runtime/): Layered architecture — client surfaces, Go control plane, Rust capability kernel, Zig tools.
 - [FAQ](https://carina.nebutra.com/deployment/faq/): Product boundaries, security, offline use, and docs site tokens.
 - [Local install](https://carina.nebutra.com/deployment/local/): Run the daemon, CLI, and native tools on a developer machine.
 - [Workers](https://carina.nebutra.com/deployment/workers/): Lease-based remote workers, production profile, drain, and containers.
-- [Common workflows](https://carina.nebutra.com/getting-started/common-workflows/): Short recipes for everyday Carina tasks — first session, fix tests, audit, rollback, embed.
-- [Installation](https://carina.nebutra.com/getting-started/installation/): Install the Carina CLI and daemon on macOS, Linux, or via package managers.
+- [Common workflows](https://carina.nebutra.com/getting-started/common-workflows/): Short recipes aligned with the live CLI — first session, fix tests, audit, rollback, embed.
+- [Install](https://carina.nebutra.com/getting-started/installation/): Install the Carina CLI and daemon — shell installer, Homebrew, npm, or source.
 - [Overview](https://carina.nebutra.com/getting-started/introduction/): Carina is the local-first runtime for coding agents — policy, hash-chained audit, and transactional rollback.
 - [Math notation](https://carina.nebutra.com/getting-started/math/): Moved to Reference — KaTeX LaTeX support.
-- [Quickstart](https://carina.nebutra.com/getting-started/quickstart/): Start the daemon, run an agent task, inspect audit, and roll back a patch.
+- [Quickstart](https://carina.nebutra.com/getting-started/quickstart/): doctor → run → audit verify → patch rollback — first governed session in minutes.
 - [Memory overview](https://carina.nebutra.com/memory/overview/): Governed local memory, MemoryWrite capability, and optional HMS projection.
 - [Traces & audit](https://carina.nebutra.com/observability/traces/): Event log, item stream, cost attribution, and hash-chain verification.
+- [CLI reference](https://carina.nebutra.com/reference/cli/): carina command surface — daemon, run, sessions, audit, patch, workflow, workers, and more.
 - [Glossary](https://carina.nebutra.com/reference/glossary/): Carina terms — session, profile, capability, patch, worker, and more.
 - [Math notation](https://carina.nebutra.com/reference/math/): KaTeX-powered LaTeX in Carina docs — inline, display, matrices, and complex AMS layouts.
 - [MCP integrations](https://carina.nebutra.com/tools/mcp/): Governed MCP client/server without leaking unconstrained authority.
 - [Tools overview](https://carina.nebutra.com/tools/overview/): Built-in agent tools, Zig toolchain, and capability mediation.
-- [CLI & TUI](https://carina.nebutra.com/use/cli-tui/): Drive Carina from the terminal — daemon, run, audit, patch, and the interactive shell.
+- [CLI & TUI](https://carina.nebutra.com/use/cli-tui/): Drive Carina from the terminal — matches live carina --help.
 - [Workflows overview](https://carina.nebutra.com/workflows/overview/): Declarative multi-step agent DAGs with attenuated subagents.
 - [Tutorial: review pipeline](https://carina.nebutra.com/workflows/tutorial-review/): Run the in-repo review workflow with parallel reviewers and a synthesis step.
 
@@ -45,24 +46,25 @@ Site: https://carina.nebutra.com
 - [Runtime API 概览](https://carina.nebutra.com/zh-cn/api/overview/): JSON-RPC、可选 Gateway、作用域与 SDK 表面。
 - [会话](https://carina.nebutra.com/zh-cn/api/sessions/): 创建、控制、流式读取与导出 Carina 会话。
 - [API 版本通道](https://carina.nebutra.com/zh-cn/api/versions/): 文档 0.6.x / next 通道与协议目录的对应关系。
-- [审计与回滚](https://carina.nebutra.com/zh-cn/concepts/audit/): 追加写事件日志、哈希链校验与事务补丁恢复。
-- [策略与能力](https://carina.nebutra.com/zh-cn/concepts/policy/): 能力类型、权限配置、命令风险等级与默认安全姿态。
+- [审计与回滚](https://carina.nebutra.com/zh-cn/concepts/audit/): 追加写事件日志、哈希链校验、事务补丁 — 解释并撤销 Agent 工作。
+- [策略与能力](https://carina.nebutra.com/zh-cn/concepts/policy/): 能力类型、权限配置、命令风险等级 — 每次副作用前先策略。
 - [运行时模型](https://carina.nebutra.com/zh-cn/concepts/runtime/): 分层架构 — 客户端、Go 控制面、Rust 能力内核、Zig 工具链。
 - [常见问题](https://carina.nebutra.com/zh-cn/deployment/faq/): 关于部署、安全与产品边界的常见问题。
 - [本地安装](https://carina.nebutra.com/zh-cn/deployment/local/): 以本地 daemon 方式运行 Carina。
 - [Workers](https://carina.nebutra.com/zh-cn/deployment/workers/): 基于租约的远程 worker、生产配置与排水升级。
-- [常用工作流](https://carina.nebutra.com/zh-cn/getting-started/common-workflows/): 日常 Carina 任务短配方 — 首次会话、修测试、审计、回滚、嵌入。
-- [安装](https://carina.nebutra.com/zh-cn/getting-started/installation/): 在 macOS、Linux 上安装 Carina CLI 与 daemon。
+- [常用工作流](https://carina.nebutra.com/zh-cn/getting-started/common-workflows/): 与真实 CLI 对齐的短配方 — 首次会话、修测试、审计、回滚、嵌入。
+- [安装](https://carina.nebutra.com/zh-cn/getting-started/installation/): 安装 Carina CLI 与 daemon — shell、Homebrew、npm 或源码。
 - [概览](https://carina.nebutra.com/zh-cn/getting-started/introduction/): Carina 是本地优先的 Agent 运行时 — 策略门控、哈希链审计、事务回滚。
 - [数学公式](https://carina.nebutra.com/zh-cn/getting-started/math/): 已移至参考 — KaTeX LaTeX 支持。
-- [快速上手](https://carina.nebutra.com/zh-cn/getting-started/quickstart/): 启动 daemon、运行任务、检查审计、回滚补丁。
+- [快速上手](https://carina.nebutra.com/zh-cn/getting-started/quickstart/): doctor → run → audit verify → patch rollback — 几分钟内第一次受治理会话。
 - [Memory 概览](https://carina.nebutra.com/zh-cn/memory/overview/): 会话上下文、检索钩子与持久记录。
 - [追踪与审计](https://carina.nebutra.com/zh-cn/observability/traces/): 检视轮次、成本与哈希链审计历史。
+- [CLI 参考](https://carina.nebutra.com/zh-cn/reference/cli/): carina 命令面 — daemon、run、sessions、audit、patch、workflow、workers 等。
 - [术语表](https://carina.nebutra.com/zh-cn/reference/glossary/): Carina 术语 — session、profile、capability、patch、worker 等。
 - [数学公式](https://carina.nebutra.com/zh-cn/reference/math/): Carina 文档的 KaTeX LaTeX 支持 — 行内、块级、矩阵与复杂 AMS 排版。
 - [MCP 集成](https://carina.nebutra.com/zh-cn/tools/mcp/): 接入 MCP 服务且不泄露无约束权限。
 - [Tools 概览](https://carina.nebutra.com/zh-cn/tools/overview/): 由能力内核中介的内置与外部工具。
-- [CLI 与 TUI](https://carina.nebutra.com/zh-cn/use/cli-tui/): 用终端操作 Carina — daemon、run、audit、patch 与交互壳。
+- [CLI 与 TUI](https://carina.nebutra.com/zh-cn/use/cli-tui/): 用终端操作 Carina — 与本机 carina --help 对齐。
 - [Workflows 概览](https://carina.nebutra.com/zh-cn/workflows/overview/): 声明式多步 Agent DAG，能力衰减的子 Agent。
 - [教程：审查流水线](https://carina.nebutra.com/zh-cn/workflows/tutorial-review/): 构建带人工检查点的只读审查工作流。
 

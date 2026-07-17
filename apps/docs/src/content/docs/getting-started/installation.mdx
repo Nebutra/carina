@@ -1,6 +1,6 @@
 ---
-title: Installation
-description: Install the Carina CLI and daemon on macOS, Linux, or via package managers.
+title: Install
+description: Install the Carina CLI and daemon — shell installer, Homebrew, npm, or source.
 sidebar:
   order: 2
 ---
@@ -8,17 +8,26 @@ sidebar:
 import Callout from '../../../components/ui/Callout.astro';
 import Tabs from '../../../components/mdx/Tabs.astro';
 import Tab from '../../../components/mdx/Tab.astro';
+import Steps from '../../../components/mdx/Steps.astro';
+import Step from '../../../components/mdx/Step.astro';
+import Expandable from '../../../components/mdx/Expandable.astro';
 
-Carina ships as a local toolchain: a CLI, a long-running daemon, optional workers, and client surfaces (TUI, IDE, web operator).
+> After this page you can run `carina doctor` and start a session.
+
+## What you'll get
+
+- `carina` CLI on your `PATH`
+- Ability to start the local daemon (`carina daemon start` or auto-start via `carina`)
+- Optional workers and client surfaces (TUI is built into the CLI)
 
 ## Prerequisites
 
-- macOS 13+ or modern Linux (x86_64 / arm64)
-- Network access only if you pull models or packages (runtime itself is local-first)
+- **macOS 13+** or modern **Linux** (x86_64 / arm64)
+- Network only if you install packages or call cloud models (the runtime itself is local-first)
 
 ## Install
 
-Pick one channel. Prefer the shell installer when you want the full toolchain.
+Prefer the **shell installer** for a full local toolchain.
 
 <Tabs>
   <Tab label="Shell">
@@ -27,12 +36,13 @@ Pick one channel. Prefer the shell installer when you want the full toolchain.
     ```
   </Tab>
   <Tab label="Homebrew">
-    ```bash title="Brewfile" frame="none"
+    ```bash title="brew" frame="none"
     brew install nebutra/tap/carina
     ```
+    Homebrew installs do not auto-update — run `brew upgrade` when you need a newer build, or use `carina update` when the install is owned by the standalone channel.
   </Tab>
   <Tab label="npm">
-    ```bash title="package.json" frame="none"
+    ```bash title="npm" frame="none"
     npm install -g @nebutra/carina
     ```
   </Tab>
@@ -42,22 +52,74 @@ Pick one channel. Prefer the shell installer when you want the full toolchain.
     cd carina
     make install
     ```
+    Source builds are for contributors; see `docs/release.md` for packaging truth.
   </Tab>
 </Tabs>
 
 ## Verify
 
-```bash title="verify.sh"
-carina version
-carina doctor
+<Steps>
+  <Step title="Version">
+    ```bash frame="none"
+    carina version
+    ```
+  </Step>
+  <Step title="Init config dir (optional)">
+    ```bash frame="none"
+    carina init
+    ```
+    Creates `~/.carina` and prints a daemon hint.
+  </Step>
+  <Step title="Doctor">
+    ```bash frame="none"
+    carina doctor
+    ```
+    Checks daemon reachability, config paths, and common misconfigurations. Explicit repairs: `carina doctor --fix --yes`.
+  </Step>
+</Steps>
+
+## Daemon
+
+The long-running process owns sessions, policy evaluation, and the audit store.
+
+| Command | Meaning |
+| --- | --- |
+| `carina daemon start` | Start the CLI-owned local daemon |
+| `carina daemon status` | Status without auto-start |
+| `carina daemon stop` | Stop only a daemon owned by this CLI |
+| `carina daemon logs` | Recent logs |
+| `carina status` | Health and counters |
+
+Interactive `carina` (TUI) **auto-starts** the daemon when needed. You can still start it explicitly before headless `carina run`.
+
+Default socket: `~/.carina/daemon.sock` (override with `-socket`).
+
+## Updates
+
+```bash frame="none"
+carina update --check
+carina update
 ```
 
-`carina doctor` checks daemon reachability, config paths, and common misconfigurations.
+`carina update` is daemon-free and follows **installation ownership** (Homebrew/npm/pnpm delegate to the package manager; standalone installs use the published archive + checksum). It does not stop a running task — restart the daemon after tasks finish.
 
-<Callout variant="note">
-  Package names and install URLs may track the open-source release channel. Prefer `carina doctor` after any upgrade.
-</Callout>
+## If it fails
 
-## Next step
+| Symptom | What to try |
+| --- | --- |
+| `command not found: carina` | Open a new shell; confirm installer PATH hints |
+| `daemon unreachable` | `carina daemon start` then `carina doctor` |
+| Doctor reports tool gaps | Re-run installer / `make install` so Zig toolchain sits next to the binary |
+| Stale build | `carina update` or package-manager upgrade |
 
-Continue to the [Quickstart](/getting-started/quickstart/) to start a session on a real repository.
+More: [FAQ](/deployment/faq/).
+
+## Source of truth
+
+- Installer & packaging: `docs/release.md`
+- Security posture after install: [Policy](/concepts/policy/)
+- Feature map: `apps/docs/FEATURE_MAP.md`
+
+## Next
+
+→ [Quickstart](/getting-started/quickstart/) — first governed session on a real repo.
