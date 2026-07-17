@@ -167,11 +167,25 @@
     background-color: transparent !important;
   }
 
-  /* Single focus ring on the native control only — never on label + select */
+  /*
+   * One focus ring only. Global :focus-visible in motion.css would otherwise
+   * stack with label:focus-within / host focus and look like “two frames”.
+   */
+  starlight-theme-select:focus,
+  starlight-lang-select:focus,
+  starlight-theme-select:focus-visible,
+  starlight-lang-select:focus-visible,
+  starlight-theme-select label:focus,
+  starlight-lang-select label:focus,
+  starlight-theme-select label:focus-visible,
+  starlight-lang-select label:focus-visible,
+  starlight-theme-select label:focus-within,
+  starlight-lang-select label:focus-within,
   starlight-theme-select select:focus,
   starlight-lang-select select:focus,
   .version-selector__select:focus {
     outline: none !important;
+    box-shadow: none !important;
   }
 
   starlight-theme-select select:focus-visible,
