@@ -1,0 +1,71 @@
+---
+/**
+ * Inline term tooltip (Mintlify Tooltip).
+ */
+interface Props {
+  tip: string;
+}
+
+const { tip } = Astro.props;
+---
+
+<span class="docs-tip" tabindex="0">
+  <span class="docs-tip__term"><slot /></span>
+  <span class="docs-tip__bubble" role="tooltip">{tip}</span>
+</span>
+
+<style>
+  .docs-tip {
+    position: relative;
+    display: inline;
+    cursor: help;
+    border-bottom: 1px dotted color-mix(in srgb, var(--docs-accent) 55%, var(--docs-border));
+    color: inherit;
+  }
+
+  .docs-tip__term {
+    font-weight: 500;
+  }
+
+  .docs-tip__bubble {
+    position: absolute;
+    z-index: 20;
+    left: 50%;
+    bottom: calc(100% + 0.4rem);
+    transform: translateX(-50%) translateY(2px);
+    width: max-content;
+    max-width: min(18rem, 70vw);
+    padding: 0.4rem 0.55rem;
+    border-radius: 6px;
+    border: 1px solid var(--docs-border-subtle);
+    background: var(--docs-bg-raised);
+    color: var(--docs-fg-muted);
+    font-size: 0.75rem;
+    font-weight: 400;
+    line-height: 1.45;
+    box-shadow: none;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      opacity 120ms ease,
+      transform 120ms ease;
+  }
+
+  .docs-tip:hover .docs-tip__bubble,
+  .docs-tip:focus-visible .docs-tip__bubble {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  .docs-tip:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .docs-tip__bubble {
+      transition: none;
+    }
+  }
+</style>

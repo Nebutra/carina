@@ -9,6 +9,11 @@ import Callout from '../../../components/ui/Callout.astro';
 import ParamField from '../../../components/mdx/ParamField.astro';
 import ResponseField from '../../../components/mdx/ResponseField.astro';
 import Update from '../../../components/mdx/Update.astro';
+import ApiReference from '../../../components/layouts/ApiReference.astro';
+import CodeBlock from '../../../components/ui/CodeBlock.astro';
+import Badge from '../../../components/mdx/Badge.astro';
+import Tabs from '../../../components/mdx/Tabs.astro';
+import Tab from '../../../components/mdx/Tab.astro';
 
 A session binds conversation state, a **permission profile**, and a **workspace root**. Workspaces are bound at `session.create` via `workspace_root` — there is no separate registration method.
 
@@ -24,19 +29,74 @@ create → (pause / resume) → close
          ↘ fork / checkpoint / goal
 ```
 
-## `session.create` parameters
+## `session.create`
 
-<ParamField path="workspace_root" type="string" required body>
-  Absolute path to the workspace directory. Bound for the life of the session.
-</ParamField>
+<span class="docs-method-meta">
+  <Badge variant="accent">write</Badge>
+  <Badge>local socket</Badge>
+</span>
 
-<ParamField path="profile" type="string" body default="safe-edit">
-  Permission profile name (e.g. `safe-edit`, `read-only`). Evaluated by the capability kernel.
-</ParamField>
+Create a session bound to a workspace and permission profile.
 
-<ResponseField name="session_id" type="string" required>
-  Opaque session identifier used by subsequent `session.*` and `task.*` calls.
-</ResponseField>
+<ApiReference>
+  <p>
+    <strong>Params</strong>
+  </p>
+  <ParamField path="workspace_root" type="string" required body>
+    Absolute path to the workspace directory. Bound for the life of the session.
+  </ParamField>
+  <ParamField path="profile" type="string" body default="safe-edit">
+    Permission profile name (e.g. `safe-edit`, `read-only`). Evaluated by the capability kernel.
+  </ParamField>
+
+  <p>
+    <strong>Result</strong>
+  </p>
+  <ResponseField name="session_id" type="string" required>
+    Opaque session identifier used by subsequent `session.*` and `task.*` calls.
+  </ResponseField>
+  <ResponseField name="workspace_id" type="string" required>
+    Bound workspace id for the session.
+  </ResponseField>
+  <ResponseField name="profile" type="string" required>
+    Effective capability profile.
+  </ResponseField>
+
+  <div slot="code">
+    <Tabs>
+      <Tab label="Request">
+        <CodeBlock
+          lang="json"
+          title="request"
+          code={`{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "session.create",
+  "params": {
+    "workspace_root": "/repo",
+    "profile": "safe-edit"
+  }
+}`}
+        />
+      </Tab>
+      <Tab label="Response">
+        <CodeBlock
+          lang="json"
+          title="result"
+          code={`{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "session_id": "sess_01J…",
+    "workspace_id": "ws_01J…",
+    "profile": "safe-edit"
+  }
+}`}
+        />
+      </Tab>
+    </Tabs>
+  </div>
+</ApiReference>
 
 ## Core methods
 

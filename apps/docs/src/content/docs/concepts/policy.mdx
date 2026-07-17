@@ -6,7 +6,11 @@ sidebar:
 ---
 
 import Callout from '../../../components/ui/Callout.astro';
-
+import Tooltip from '../../../components/mdx/Tooltip.astro';
+import Tree from '../../../components/mdx/Tree.astro';
+import Columns from '../../../components/mdx/Columns.astro';
+import Card from '../../../components/mdx/Card.astro';
+import Badge from '../../../components/mdx/Badge.astro';
 
 Every meaningful side effect in Carina is one of **fourteen capability types**. The Rust kernel returns a `PermissionDecision` (`allow` / `deny` / `require-approval`) and every decision is an audit event.
 
@@ -22,6 +26,24 @@ Source of truth: `docs/security-model.md`, `protocol/capabilities/`.
 6. All patches are transactional
 7. Plugins start with zero permissions
 
+## Where policy lives on disk
+
+<Tree
+  items={[
+    {
+      name: '.carina/',
+      children: [
+        { name: 'policy/' },
+        { name: 'profiles/safe-edit.json' },
+        { name: 'profiles/read-only.json' },
+        { name: 'audit/' },
+        { name: 'sessions/' },
+      ],
+    },
+    { name: 'workspace root (bound at session.create)' },
+  ]}
+/>
+
 ## Capability types
 
 ```
@@ -30,7 +52,16 @@ GitOperation  PatchApply  ProcessSpawn  PluginLoad  RemoteExecute
 MemoryWrite  CodeIndex  ContextCompress  SubagentSpawn
 ```
 
-A request carries: principal (agent / plugin / user), resource (path, command, host), session id, and task id. `SubagentSpawn` uses a typed resource `agent:NAME:profile:PROFILE` and requires approval by default; the child's capabilities are attenuated to a subset of the parent's.
+A request carries: principal (agent / plugin / user), resource (path, command, host), session id, and task id. <Tooltip tip="Child agents receive a strict subset of the parent profile — never more.">SubagentSpawn</Tooltip> uses a typed resource `agent:NAME:profile:PROFILE` and requires approval by default.
+
+<Columns cols={2}>
+  <Card title="safe-edit" icon="🛡">
+    Default profile: FileWrite only via <Badge variant="info">PatchApply</Badge>; network needs approval.
+  </Card>
+  <Card title="read-only" icon="👁">
+    FileRead in workspace only — everything else denied.
+  </Card>
+</Columns>
 
 ## Permission profiles
 

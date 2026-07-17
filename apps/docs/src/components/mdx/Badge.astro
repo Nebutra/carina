@@ -1,0 +1,63 @@
+---
+/**
+ * Inline status badge (Mintlify Badge).
+ */
+interface Props {
+  variant?: 'default' | 'success' | 'warning' | 'danger' | 'info' | 'accent';
+}
+
+const { variant = 'default' } = Astro.props;
+---
+
+<span class:list={['docs-badge', `docs-badge--${variant}`]}>
+  <slot />
+</span>
+
+<style>
+  .docs-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid var(--docs-border-subtle);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    line-height: 1.4;
+    color: var(--docs-fg-muted);
+    background: color-mix(in srgb, var(--docs-bg-surface) 80%, transparent);
+    vertical-align: middle;
+  }
+
+  .docs-badge--accent {
+    color: var(--docs-accent);
+    border-color: color-mix(in srgb, var(--docs-accent) 35%, transparent);
+    background: color-mix(in srgb, var(--docs-accent) 10%, transparent);
+  }
+
+  .docs-badge--success {
+    color: var(--docs-success);
+    border-color: color-mix(in srgb, var(--docs-success) 35%, transparent);
+    background: color-mix(in srgb, var(--docs-success) 10%, transparent);
+  }
+
+  .docs-badge--warning {
+    color: var(--docs-warning);
+    border-color: color-mix(in srgb, var(--docs-warning) 35%, transparent);
+    background: color-mix(in srgb, var(--docs-warning) 10%, transparent);
+  }
+
+  .docs-badge--danger {
+    color: var(--docs-danger);
+    border-color: color-mix(in srgb, var(--docs-danger) 35%, transparent);
+    background: color-mix(in srgb, var(--docs-danger) 10%, transparent);
+  }
+
+  .docs-badge--info {
+    color: var(--docs-info);
+    border-color: color-mix(in srgb, var(--docs-info) 35%, transparent);
+    background: color-mix(in srgb, var(--docs-info) 10%, transparent);
+  }
+</style>

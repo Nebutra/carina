@@ -1,0 +1,103 @@
+---
+/**
+ * Hierarchical file/folder tree (Mintlify Tree).
+ */
+interface TreeNode {
+  name: string;
+  children?: TreeNode[];
+}
+
+interface Props {
+  items?: TreeNode[];
+}
+
+const { items } = Astro.props;
+
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function renderNodes(nodes: TreeNode[], depth = 0): string {
+  return nodes
+    .map((n) => {
+      const isDir = Boolean(n.children && n.children.length);
+      const icon = isDir ? '📁' : '📄';
+      const pad = depth * 0.85;
+      const kids =
+        n.children && n.children.length
+          ? `<ul class="docs-tree__list">${renderNodes(n.children, depth + 1)}</ul>`
+          : '';
+      return `<li style="padding-inline-start:${pad}rem"><span class="docs-tree__icon" aria-hidden="true">${icon}</span><span class="docs-tree__name">${escapeHtml(n.name)}</span>${kids}</li>`;
+    })
+    .join('');
+}
+
+const treeHtml = items && items.length > 0 ? renderNodes(items) : '';
+---
+
+{
+  treeHtml ? (
+    <div class="docs-tree" role="tree">
+      <ul class="docs-tree__list" set:html={treeHtml} />
+    </div>
+  ) : (
+    <div class="docs-tree">
+      <pre class="docs-tree__pre"><slot /></pre>
+    </div>
+  )
+}
+
+<style>
+  .docs-tree {
+    margin: 1.25rem 0;
+    padding: 0.85rem 1rem;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--docs-bg-surface) 80%, transparent);
+    font-family: var(--docs-font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.65;
+    color: var(--docs-fg);
+    overflow-x: auto;
+  }
+
+  .docs-tree__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .docs-tree__list :global(ul) {
+    list-style: none;
+    margin: 0.1rem 0 0;
+    padding: 0;
+  }
+
+  .docs-tree__list :global(li) {
+    margin: 0.05rem 0;
+  }
+
+  .docs-tree__icon {
+    margin-inline-end: 0.4rem;
+    opacity: 0.75;
+    font-size: 0.75rem;
+  }
+
+  .docs-tree__name {
+    color: var(--docs-fg);
+  }
+
+  .docs-tree__pre {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    color: var(--docs-fg-muted);
+    white-space: pre;
+  }
+</style>

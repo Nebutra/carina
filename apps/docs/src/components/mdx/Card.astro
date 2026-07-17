@@ -38,15 +38,13 @@ const Tag = href ? 'a' : 'div';
     color: inherit;
     transition:
       border-color var(--docs-transition),
-      background-color var(--docs-transition),
-      transform var(--docs-transition);
+      background-color var(--docs-transition);
     box-shadow: none;
   }
 
   a.docs-card:hover {
     border-color: color-mix(in srgb, var(--docs-border) 70%, var(--docs-accent) 30%);
     background: var(--docs-bg-raised);
-    transform: translateY(-1px);
     box-shadow: none;
   }
 

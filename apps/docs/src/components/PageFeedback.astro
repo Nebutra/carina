@@ -1,11 +1,15 @@
 ---
 /**
- * "Was this page helpful?"
- * Local-first: vote stored in sessionStorage; also emits a browser event so
- * hosts can wire analytics without a hard dependency.
+ * "Was this page helpful?" + negative-path reason chips (Mintlify-style).
  */
 const path = Astro.url.pathname;
 const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
+const reasons = [
+  { id: 'unclear', label: 'Unclear' },
+  { id: 'outdated', label: 'Outdated' },
+  { id: 'missing', label: 'Missing info' },
+  { id: 'broken', label: 'Broken example' },
+];
 ---
 
 {
@@ -19,6 +23,19 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
         <button type="button" data-feedback="no" class="docs-feedback__btn">
           No
         </button>
+      </div>
+      <div class="docs-feedback__reasons" data-feedback-reasons hidden>
+        <p class="docs-feedback__reasons-q">What went wrong?</p>
+        <div class="docs-feedback__chips">
+          {reasons.map((r) => (
+            <button type="button" class="docs-feedback__chip" data-feedback-reason={r.id}>
+              {r.label}
+            </button>
+          ))}
+          <button type="button" class="docs-feedback__chip" data-feedback-reason="skip">
+            Skip
+          </button>
+        </div>
       </div>
       <p class="docs-feedback__thanks" hidden>
         Thanks — saved on this device.
@@ -36,14 +53,36 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
     const key = `docs-feedback:${path}`;
     const thanks = root.querySelector<HTMLElement>('.docs-feedback__thanks');
     const actions = root.querySelector<HTMLElement>('.docs-feedback__actions');
+    const reasons = root.querySelector<HTMLElement>('[data-feedback-reasons]');
     const q = root.querySelector<HTMLElement>('.docs-feedback__q');
     const hint = root.querySelector<HTMLElement>('.docs-feedback__hint');
 
     const showThanks = () => {
       if (thanks) thanks.hidden = false;
       if (actions) actions.hidden = true;
+      if (reasons) reasons.hidden = true;
       if (q) q.hidden = true;
       if (hint) hint.hidden = true;
+    };
+
+    const emit = (value: string, reason?: string) => {
+      sessionStorage.setItem(key, reason ? `${value}:${reason}` : value);
+      window.dispatchEvent(
+        new CustomEvent('carina:docs-feedback', {
+          detail: { path, value, reason, ts: Date.now() },
+        }),
+      );
+      const w = window as Window & {
+        plausible?: (n: string, o?: { props?: Record<string, string> }) => void;
+        gtag?: (...args: unknown[]) => void;
+      };
+      try {
+        w.plausible?.('docs_feedback', { props: { path, value, reason: reason || '' } });
+        w.gtag?.('event', 'docs_feedback', { page_path: path, value, reason });
+      } catch {
+        /* analytics optional */
+      }
+      showThanks();
     };
 
     if (sessionStorage.getItem(key)) {
@@ -54,24 +93,19 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
     root.querySelectorAll<HTMLButtonElement>('[data-feedback]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const value = btn.dataset.feedback || 'yes';
-        sessionStorage.setItem(key, value);
-        // Open hook for Plausible / gtag / custom collectors
-        window.dispatchEvent(
-          new CustomEvent('carina:docs-feedback', {
-            detail: { path, value, ts: Date.now() },
-          }),
-        );
-        const w = window as Window & {
-          plausible?: (n: string, o?: { props?: Record<string, string> }) => void;
-          gtag?: (...args: unknown[]) => void;
-        };
-        try {
-          w.plausible?.('docs_feedback', { props: { path, value } });
-          w.gtag?.('event', 'docs_feedback', { page_path: path, value });
-        } catch {
-          /* analytics optional */
+        if (value === 'no' && reasons) {
+          actions && (actions.hidden = true);
+          reasons.hidden = false;
+          return;
         }
-        showThanks();
+        emit(value);
+      });
+    });
+
+    root.querySelectorAll<HTMLButtonElement>('[data-feedback-reason]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const reason = btn.dataset.feedbackReason || 'skip';
+        emit('no', reason === 'skip' ? undefined : reason);
       });
     });
   }
@@ -135,6 +169,48 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
   .docs-feedback__btn:focus-visible {
     outline: 2px solid var(--docs-focus);
     outline-offset: 2px;
+  }
+
+  .docs-feedback__reasons {
+    flex-basis: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .docs-feedback__reasons-q {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--docs-fg-muted);
+  }
+
+  .docs-feedback__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .docs-feedback__chip {
+    appearance: none;
+    border: 1px solid var(--docs-border-subtle);
+    background: transparent;
+    color: var(--docs-fg-muted);
+    font-family: var(--docs-font-sans);
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 0.3rem 0.65rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition:
+      color 140ms ease,
+      border-color 140ms ease,
+      background-color 140ms ease;
+  }
+
+  .docs-feedback__chip:hover {
+    color: var(--docs-fg);
+    border-color: color-mix(in srgb, var(--docs-accent) 40%, var(--docs-border));
+    background: color-mix(in srgb, var(--docs-accent) 6%, transparent);
   }
 
   .docs-feedback__thanks {

@@ -1,0 +1,45 @@
+---
+/**
+ * Bordered media/content frame with optional caption (Mintlify Frames).
+ */
+interface Props {
+  caption?: string;
+}
+
+const { caption } = Astro.props;
+---
+
+<figure class="docs-frame">
+  <div class="docs-frame__media">
+    <slot />
+  </div>
+  {caption && <figcaption class="docs-frame__cap">{caption}</figcaption>}
+</figure>
+
+<style>
+  .docs-frame {
+    margin: 1.5rem 0;
+  }
+
+  .docs-frame__media {
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--docs-bg-surface);
+  }
+
+  .docs-frame__media :global(img),
+  .docs-frame__media :global(svg) {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .docs-frame__cap {
+    margin-top: 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--docs-fg-subtle);
+    text-align: center;
+    line-height: 1.45;
+  }
+</style>

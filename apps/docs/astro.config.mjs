@@ -32,6 +32,8 @@ export default defineConfig({
         PageTitle: './src/components/PageTitle.astro',
         // Feedback strip above meta + pagination
         Footer: './src/components/Footer.astro',
+        // Prev/Next with denser Mintlify-style cards
+        Pagination: './src/components/Pagination.astro',
       },
       // Show "Last updated" from git history when available
       lastUpdated: true,

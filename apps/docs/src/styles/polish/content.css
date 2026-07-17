@@ -264,6 +264,36 @@
     font-size: 0.78rem;
   }
 
+  /* Method meta row (API pages) */
+  .docs-method-meta {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0 0 0.75rem;
+  }
+
+  /* Cards: no lift — border only (Mintlify quiet hover) */
+  .docs-card,
+  a.docs-card {
+    transform: none !important;
+  }
+
+  a.docs-card:hover {
+    transform: none !important;
+  }
+
+  /* Sidebar group labels denser Mintlify cadence */
+  .sidebar-content .group-label,
+  .sidebar-content summary .large,
+  .sidebar-content li > details > summary {
+    font-size: 0.7rem;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--docs-fg-subtle);
+  }
+
   /* Feedback — outline ghost */
   .docs-feedback {
     border: 1px solid var(--docs-border-subtle);

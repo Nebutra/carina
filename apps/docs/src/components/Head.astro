@@ -3,6 +3,7 @@ import Default from '@astrojs/starlight/components/Head.astro';
 import ReadingProgress from './ReadingProgress.astro';
 import DocsAssistant from './DocsAssistant.astro';
 import Motion from './Motion.astro';
+import DocsChrome from './DocsChrome.astro';
 ---
 
 <Default {...Astro.props}><slot /></Default>
@@ -13,6 +14,7 @@ import Motion from './Motion.astro';
   document.documentElement.classList.add('js-motion');
 </script>
 <Motion />
+<DocsChrome />
 <ReadingProgress />
 <DocsAssistant />
 <script is:inline>

@@ -1,0 +1,36 @@
+---
+/**
+ * Responsive multi-column layout (Mintlify Columns).
+ */
+interface Props {
+  cols?: 2 | 3;
+}
+
+const { cols = 2 } = Astro.props;
+---
+
+<div class="docs-columns" data-cols={cols}>
+  <slot />
+</div>
+
+<style>
+  .docs-columns {
+    display: grid;
+    gap: 1rem;
+    margin: 1.25rem 0;
+    grid-template-columns: 1fr;
+  }
+
+  @media (min-width: 720px) {
+    .docs-columns[data-cols='2'] {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .docs-columns[data-cols='3'] {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  .docs-columns > :global(*) {
+    min-width: 0;
+  }
+</style>

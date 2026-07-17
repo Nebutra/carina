@@ -1,0 +1,84 @@
+---
+/**
+ * Show/hide progressive disclosure (Mintlify Expandable).
+ */
+interface Props {
+  title: string;
+  defaultOpen?: boolean;
+}
+
+const { title, defaultOpen = false } = Astro.props;
+---
+
+<details class="docs-expandable" open={defaultOpen || undefined}>
+  <summary class="docs-expandable__sum">
+    <span class="docs-expandable__title">{title}</span>
+    <span class="docs-expandable__chev" aria-hidden="true">▾</span>
+  </summary>
+  <div class="docs-expandable__body">
+    <slot />
+  </div>
+</details>
+
+<style>
+  .docs-expandable {
+    margin: 1rem 0;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--docs-bg-surface) 70%, transparent);
+    overflow: hidden;
+  }
+
+  .docs-expandable__sum {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 550;
+    color: var(--docs-fg);
+    user-select: none;
+  }
+
+  .docs-expandable__sum::-webkit-details-marker {
+    display: none;
+  }
+
+  .docs-expandable__sum:hover {
+    background: color-mix(in srgb, var(--docs-fg) 2.5%, transparent);
+  }
+
+  .docs-expandable__chev {
+    color: var(--docs-fg-subtle);
+    transition: transform 160ms ease;
+  }
+
+  .docs-expandable[open] .docs-expandable__chev {
+    transform: rotate(180deg);
+  }
+
+  .docs-expandable__body {
+    padding: 0 1rem 1rem;
+    font-size: 0.875rem;
+    color: var(--docs-fg-muted);
+    border-top: 1px solid var(--docs-border-subtle);
+    padding-top: 0.85rem;
+  }
+
+  .docs-expandable__body :global(> :first-child) {
+    margin-top: 0;
+  }
+
+  .docs-expandable__body :global(> :last-child) {
+    margin-bottom: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .docs-expandable__chev {
+      transition: none;
+    }
+  }
+</style>

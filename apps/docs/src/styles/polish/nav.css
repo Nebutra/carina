@@ -278,6 +278,23 @@
     box-shadow: none !important;
   }
 
+  /* TOC scroll-spy active state */
+  .right-sidebar a.is-active-toc,
+  .right-sidebar a[aria-current='true'] {
+    color: var(--docs-accent) !important;
+    font-weight: 500;
+  }
+
+  .right-sidebar a {
+    transition: color var(--polish-transition);
+  }
+
+  /* Heading anchor copy affordance */
+  .sl-markdown-content .sl-anchor-link.is-copied {
+    color: var(--docs-accent) !important;
+    opacity: 1 !important;
+  }
+
   /* Group labels — small caps hierarchy */
   .sidebar-content .group-label span,
   .sidebar-content details > summary {

@@ -1,0 +1,164 @@
+---
+/**
+ * Client chrome for Mintlify/Fumadocs-grade polish:
+ *  - TOC scroll-spy (aria-current on right-sidebar links)
+ *  - Heading anchor copy-to-clipboard
+ *  - Expandable long code frames
+ *  - Search empty-state CTAs
+ */
+---
+
+<script>
+  /* ── TOC scroll-spy ─────────────────────────────────────────────── */
+  function initTocSpy() {
+    const toc = document.querySelector('.right-sidebar-panel nav, starlight-toc nav, .right-sidebar nav');
+    if (!toc) return;
+
+    const links = [...toc.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')];
+    if (links.length === 0) return;
+
+    const map = new Map<string, HTMLAnchorElement>();
+    links.forEach((a) => {
+      const id = decodeURIComponent(a.hash.replace(/^#/, ''));
+      if (id) map.set(id, a);
+    });
+
+    const headings = [...map.keys()]
+      .map((id) => document.getElementById(id))
+      .filter((el): el is HTMLElement => Boolean(el));
+
+    if (headings.length === 0) return;
+
+    let activeId = '';
+    const setActive = (id: string) => {
+      if (id === activeId) return;
+      activeId = id;
+      links.forEach((a) => {
+        const on = a.hash === `#${id}` || a.hash === `#${encodeURIComponent(id)}`;
+        if (on) a.setAttribute('aria-current', 'true');
+        else a.removeAttribute('aria-current');
+        a.classList.toggle('is-active-toc', on);
+      });
+    };
+
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]?.target?.id) setActive(visible[0].target.id);
+      },
+      {
+        rootMargin: '-20% 0px -65% 0px',
+        threshold: [0, 1],
+      },
+    );
+    headings.forEach((h) => obs.observe(h));
+
+    // Initial: pick first heading above mid-viewport
+    const pick = () => {
+      const y = window.scrollY + window.innerHeight * 0.28;
+      let current = headings[0]?.id || '';
+      for (const h of headings) {
+        if (h.offsetTop <= y) current = h.id;
+      }
+      if (current) setActive(current);
+    };
+    pick();
+    window.addEventListener('scroll', pick, { passive: true });
+  }
+
+  /* ── Heading anchor copy ────────────────────────────────────────── */
+  function initAnchorCopy() {
+    document.querySelectorAll<HTMLAnchorElement>('.sl-anchor-link, .sl-markdown-content a.sl-anchor-link').forEach((a) => {
+      if (a.dataset.copyBound === '1') return;
+      a.dataset.copyBound = '1';
+      a.addEventListener('click', async (e) => {
+        // Keep default hash navigation; also copy absolute URL
+        try {
+          const href = a.href || `${location.origin}${location.pathname}${a.hash || location.hash}`;
+          await navigator.clipboard.writeText(href);
+          a.classList.add('is-copied');
+          window.setTimeout(() => a.classList.remove('is-copied'), 1200);
+        } catch {
+          /* ignore */
+        }
+      });
+      a.setAttribute('title', a.getAttribute('title') || 'Copy link to section');
+    });
+  }
+
+  /* ── Expandable long code ───────────────────────────────────────── */
+  const COLLAPSE_LINES = 16;
+
+  function initExpandableCode() {
+    document.querySelectorAll<HTMLElement>('.expressive-code .frame').forEach((frame) => {
+      if (frame.dataset.expandReady === '1') return;
+      const pre = frame.querySelector('pre');
+      if (!pre) return;
+      const lines = pre.querySelectorAll('.ec-line').length;
+      if (lines < COLLAPSE_LINES && !frame.closest('[data-expandable="true"]')) return;
+
+      // Only auto-collapse very tall blocks unless marked expandable
+      if (lines < COLLAPSE_LINES) return;
+
+      frame.dataset.expandReady = '1';
+      frame.classList.add('is-collapsible', 'is-collapsed');
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ec-expand-btn';
+      btn.textContent = `Show more (${lines} lines)`;
+      btn.addEventListener('click', () => {
+        const collapsed = frame.classList.toggle('is-collapsed');
+        btn.textContent = collapsed ? `Show more (${lines} lines)` : 'Show less';
+      });
+      frame.appendChild(btn);
+    });
+  }
+
+  /* ── Search empty CTA ───────────────────────────────────────────── */
+  function initSearchEmpty() {
+    const root = document.querySelector('#starlight__search');
+    if (!root || root.getAttribute('data-empty-bound') === '1') return;
+    root.setAttribute('data-empty-bound', '1');
+
+    const inject = () => {
+      const msg = root.querySelector('.pagefind-ui__message');
+      if (!msg || msg.querySelector('[data-search-cta]')) return;
+      const text = (msg.textContent || '').toLowerCase();
+      if (!text.includes('no') && !text.includes('没有') && !text.includes('zero')) return;
+
+      const cta = document.createElement('div');
+      cta.dataset.searchCta = '1';
+      cta.className = 'docs-search-cta';
+      cta.innerHTML = `
+        <p>Try a different query, or jump to:</p>
+        <div class="docs-search-cta__links">
+          <a href="/getting-started/quickstart/">Quickstart</a>
+          <a href="/api/methods/">Method catalog</a>
+          <a href="/concepts/policy/">Policy</a>
+          <button type="button" data-search-ask-ai>Ask AI</button>
+        </div>`;
+      msg.appendChild(cta);
+      cta.querySelector('[data-search-ask-ai]')?.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('carina:docs-ask-ai', { detail: { question: '' } }));
+        // close search if possible
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      });
+    };
+
+    const mo = new MutationObserver(() => inject());
+    mo.observe(root, { childList: true, subtree: true });
+  }
+
+  function boot() {
+    initTocSpy();
+    initAnchorCopy();
+    initExpandableCode();
+    initSearchEmpty();
+  }
+
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>

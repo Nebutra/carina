@@ -113,11 +113,78 @@
     border-inline-start: none;
   }
 
-  /* Highlighted lines (text markers) — quiet wash */
-  .expressive-code .ec-line.mark,
-  .expressive-code .ec-line.ins,
+  /* Highlighted lines (text markers) — Mintlify-style left accent + wash */
+  .expressive-code .ec-line.mark {
+    background: color-mix(in srgb, var(--carina-ion-cyan) 9%, transparent);
+  }
+
+  .expressive-code .ec-line.mark .code {
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--carina-ion-cyan) 70%, transparent);
+  }
+
+  .expressive-code .ec-line.ins {
+    background: color-mix(in srgb, var(--carina-spectral-green) 10%, transparent);
+  }
+
+  .expressive-code .ec-line.ins .code {
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--carina-spectral-green) 65%, transparent);
+  }
+
   .expressive-code .ec-line.del {
-    background: color-mix(in srgb, var(--carina-ion-cyan) 8%, transparent);
+    background: color-mix(in srgb, var(--carina-event-red) 9%, transparent);
+  }
+
+  .expressive-code .ec-line.del .code {
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--carina-event-red) 55%, transparent);
+    opacity: 0.85;
+  }
+
+  /* Expandable long frames (DocsChrome injects .ec-expand-btn) */
+  .expressive-code .frame.is-collapsible {
+    position: relative;
+  }
+
+  .expressive-code .frame.is-collapsed pre {
+    max-height: 18rem;
+    overflow: hidden !important;
+    mask-image: linear-gradient(180deg, #000 55%, transparent 100%);
+    -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent 100%);
+  }
+
+  .expressive-code .frame.is-collapsible .ec-expand-btn {
+    appearance: none;
+    position: absolute;
+    left: 50%;
+    bottom: 0.65rem;
+    transform: translateX(-50%);
+    z-index: 4;
+    border: 1px solid var(--polish-code-border, var(--carina-code-border));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--polish-code-chrome) 92%, transparent);
+    color: var(--polish-code-muted, var(--carina-code-muted));
+    font-family: var(--docs-font-sans);
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 0.35rem 0.85rem;
+    cursor: pointer;
+    transition:
+      color 140ms ease,
+      border-color 140ms ease,
+      background-color 140ms ease;
+  }
+
+  .expressive-code .frame.is-collapsible .ec-expand-btn:hover {
+    color: var(--polish-code-fg, var(--carina-code-fg));
+    border-color: color-mix(in srgb, var(--carina-ion-cyan) 40%, var(--carina-code-border));
+  }
+
+  .expressive-code .frame.is-collapsible:not(.is-collapsed) .ec-expand-btn {
+    position: relative;
+    left: auto;
+    bottom: auto;
+    transform: none;
+    display: flex;
+    margin: 0.55rem auto 0.65rem;
   }
 
   /*

@@ -10,26 +10,28 @@ import Steps from '../../../components/mdx/Steps.astro';
 import Step from '../../../components/mdx/Step.astro';
 import Cards from '../../../components/mdx/Cards.astro';
 import Card from '../../../components/mdx/Card.astro';
+import Tooltip from '../../../components/mdx/Tooltip.astro';
+import Badge from '../../../components/mdx/Badge.astro';
+import Expandable from '../../../components/mdx/Expandable.astro';
 
-From a clean install to a governed session on a local repo.
+From a clean install to a governed session on a local repo. <Badge variant="accent">5 min</Badge>
 
 {/*
-  Code meta follows Mintlify practice:
-  - real filenames in title="…" for multi-line scripts
-  - frame="none" for short one-liner commands (less chrome noise)
-  - language tag always present for highlighting
+  Code meta (Mintlify / EC text-markers):
+  - title="…" for multi-line scripts · frame="none" for one-liners
+  - // [!code highlight] / {n} line marks where useful
 */}
 
 <Steps>
   <Step title="Start the daemon">
-    ```bash title="start-daemon.sh"
+    ```bash title="start-daemon.sh" showLineNumbers
     carina-daemon &
     # or
     carina daemon start
-    carina doctor
+    carina doctor # [!code highlight]
     ```
 
-    The daemon owns sessions, policy evaluation, and the audit store. It discovers the kernel service and native tools next to its binary.
+    The daemon owns sessions, <Tooltip tip="Least-privilege profiles evaluated by the Rust capability kernel.">policy evaluation</Tooltip>, and the audit store. It discovers the kernel service and native tools next to its binary.
   </Step>
 
   <Step title="Open a workspace">
@@ -39,10 +41,10 @@ From a clean install to a governed session on a local repo.
   </Step>
 
   <Step title="Run a coding task">
-    ```bash title="run-task.sh"
+    ```bash title="run-task.sh" showLineNumbers
     carina run "Summarize the top-level architecture of this repo"
     # or fix something concrete
-    carina run "fix the failing test in parser.go"
+    carina run "fix the failing test in parser.go" # [!code highlight]
     ```
 
     Interactive TUI:
@@ -55,7 +57,7 @@ From a clean install to a governed session on a local repo.
   </Step>
 
   <Step title="Inspect the audit trail">
-    ```bash title="audit.sh"
+    ```bash title="audit.sh" showLineNumbers
     carina audit SESSION
     carina audit verify SESSION
     carina audit tail --last 5
@@ -65,12 +67,25 @@ From a clean install to a governed session on a local repo.
   </Step>
 
   <Step title="Patches and rollback">
-    ```bash title="patch.sh"
+    ```bash title="patch.sh" showLineNumbers
     carina patch list SESSION
-    carina patch rollback PATCH_ID
+    carina patch rollback PATCH_ID # [!code highlight]
+    ```
+
+    Diff view of a safe edit:
+
+    ```go title="parser.go" showLineNumbers
+    // before
+    return err // [!code --]
+    // after
+    return fmt.Errorf("parse: %w", err) // [!code ++]
     ```
   </Step>
 </Steps>
+
+<Expandable title="What if doctor fails?">
+  Run `carina doctor -v` and confirm the daemon socket exists under `~/.carina/`. See [Installation](/getting-started/installation/) for PATH and binary layout.
+</Expandable>
 
 ## Optional next steps
 

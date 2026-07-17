@@ -78,6 +78,51 @@
     text-align: center;
   }
 
+  /* Empty-state CTAs (injected by DocsChrome) */
+  .docs-search-cta {
+    margin-top: 1rem;
+    text-align: center;
+  }
+
+  .docs-search-cta p {
+    margin: 0 0 0.65rem;
+    font-size: 0.8125rem;
+    color: var(--docs-fg-subtle);
+  }
+
+  .docs-search-cta__links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.4rem;
+  }
+
+  .docs-search-cta__links a,
+  .docs-search-cta__links button {
+    appearance: none;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--docs-fg-muted);
+    font-family: var(--docs-font-sans);
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 0.3rem 0.7rem;
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+      color 140ms ease,
+      border-color 140ms ease,
+      background-color 140ms ease;
+  }
+
+  .docs-search-cta__links a:hover,
+  .docs-search-cta__links button:hover {
+    color: var(--docs-fg);
+    border-color: color-mix(in srgb, var(--docs-accent) 40%, var(--docs-border));
+    background: color-mix(in srgb, var(--docs-accent) 6%, transparent);
+  }
+
   /* Empty / idle state — quieter, less “stock pagefind” */
   #starlight__search .pagefind-ui__message:empty {
     display: none;
