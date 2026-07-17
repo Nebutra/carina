@@ -178,6 +178,11 @@ function enhanceSearch(): void {
   };
 
   const observer = new MutationObserver(() => {
+    // ClientRouter swaps the body; drop the observer once this frame is gone.
+    if (!frame.isConnected) {
+      observer.disconnect();
+      return;
+    }
     decorateCrumbs();
     syncQuery();
   });

@@ -32,5 +32,9 @@ const { cols = 2 } = Astro.props;
 
   .docs-columns > :global(*) {
     min-width: 0;
+    /* Starlight's markdown sibling rule adds margin-top:1rem to every child
+       after the first — in a stretched grid row that reads as unequal card
+       heights. Neutralize inside the grid. */
+    margin-block: 0;
   }
 </style>

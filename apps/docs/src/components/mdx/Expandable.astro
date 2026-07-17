@@ -27,6 +27,9 @@ const { title, defaultOpen = false } = Astro.props;
     border-radius: 10px;
     background: color-mix(in srgb, var(--docs-bg-surface) 70%, transparent);
     overflow: hidden;
+    /* Neutralize Starlight markdown.css details chrome (start rule + indent) */
+    border-inline-start: 1px solid var(--docs-border-subtle);
+    padding-inline-start: 0;
   }
 
   .docs-expandable__sum {
@@ -41,6 +44,18 @@ const { title, defaultOpen = false } = Astro.props;
     font-weight: 550;
     color: var(--docs-fg);
     user-select: none;
+    /* Starlight's marker compensation offset */
+    margin-inline-start: 0;
+  }
+
+  /* Starlight draws its own chevron mask on ::before — we ship our own ▾ */
+  .docs-expandable__sum::before {
+    content: none;
+    display: none;
+  }
+
+  .docs-expandable[open] > .docs-expandable__sum {
+    margin-bottom: 0;
   }
 
   .docs-expandable__sum::-webkit-details-marker {

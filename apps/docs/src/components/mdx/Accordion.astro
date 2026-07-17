@@ -73,6 +73,10 @@
 
   .docs-accordion :global(details) {
     border-bottom: 1px solid var(--docs-border-subtle);
+    /* Neutralize Starlight's generic markdown <details> chrome (2px start
+       rule + 1rem inline padding) — the accordion card owns its frame. */
+    border-inline-start: 0;
+    padding-inline-start: 0;
     /* Hash deep-link scroll lands below the sticky navbar */
     scroll-margin-top: var(--docs-anchor-offset);
   }
@@ -88,6 +92,8 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--spacing-3);
+    /* Undo Starlight's marker-compensation offset so titles start-align */
+    margin-inline-start: 0;
     padding: 0.85rem 1rem;
     font-size: 0.9375rem;
     font-weight: 550;
@@ -97,6 +103,19 @@
 
   .docs-accordion :global(summary::-webkit-details-marker) {
     display: none;
+  }
+
+  /* Starlight markdown.css draws its own chevron on summary::before —
+     suppress it; this accordion renders a single ::after chevron. */
+  .docs-accordion :global(summary::before) {
+    content: none;
+    display: none;
+  }
+
+  /* Starlight adds margin-bottom: 1rem to open summaries; the body panel
+     owns its own padding, so drop it. */
+  .docs-accordion :global(details[open] > summary) {
+    margin-bottom: 0;
   }
 
   .docs-accordion :global(summary:hover) {

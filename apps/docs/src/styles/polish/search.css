@@ -29,7 +29,19 @@
     border-radius: var(--radius-xl) !important;
     background: var(--docs-bg-surface) !important;
     box-shadow: var(--polish-inset-glow) !important;
-    overflow: hidden;
+    /* !important: beat Starlight's unlayered scoped `overflow: auto` — the
+       frame must clip; scrolling belongs to .search-container so the injected
+       footer (.docs-search-foot) stays pinned below the results. */
+    overflow: hidden !important;
+  }
+
+  /* Results region = the scrollable flex-grow child of the frame's column. */
+  site-search .search-container {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
   }
 
   #starlight__search .pagefind-ui__search-input {
@@ -204,12 +216,10 @@
   }
 
   /* ── Dialog footer: Ask-AI row + keyboard hint bar ──────────────── */
-  /* Sticks to the bottom of the scrolling dialog frame; negative margins
-     bleed through the frame padding (1rem, 1.5rem at ≥50rem). */
+  /* Static last flex child of .dialog-frame (results scroll above it in
+     .search-container); negative margins bleed through the frame padding
+     (1rem, 1.5rem at ≥50rem) so the border-top spans the full frame width. */
   .docs-search-foot {
-    position: sticky;
-    bottom: 0;
-    z-index: 2;
     flex: none;
     margin-block-start: auto;
     margin-inline: -1rem;

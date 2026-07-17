@@ -350,12 +350,24 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-') || 'page'
       if (e.target === dialog && dialog instanceof HTMLDialogElement) dialog.close();
     });
 
-    document.addEventListener('click', (e) => {
+    // Self-cleaning document listeners: the ClientRouter swaps the body on
+    // soft navigation, so drop handlers once this root is detached.
+    const onDocClick = (e) => {
+      if (!root.isConnected) {
+        document.removeEventListener('click', onDocClick);
+        return;
+      }
       if (!root.contains(e.target)) closeMenu();
-    });
-    document.addEventListener('keydown', (e) => {
+    };
+    const onDocKeydown = (e) => {
+      if (!root.isConnected) {
+        document.removeEventListener('keydown', onDocKeydown);
+        return;
+      }
       if (e.key === 'Escape') closeMenu();
-    });
+    };
+    document.addEventListener('click', onDocClick);
+    document.addEventListener('keydown', onDocKeydown);
   }
 
   function boot() {

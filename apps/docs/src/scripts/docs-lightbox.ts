@@ -61,6 +61,18 @@ export function initLightbox(): void {
     if (img.closest('a[href]')) return; // linked images keep their link behavior
     img.dataset.lightbox = '1';
     img.classList.add('docs-lightbox-target');
+    // Keyboard operability + a real focus target for close-restore.
+    img.tabIndex = 0;
+    img.setAttribute('role', 'button');
+    if (!img.getAttribute('aria-label')) {
+      img.setAttribute('aria-label', img.alt ? `View image: ${img.alt}` : 'View image');
+    }
     img.addEventListener('click', () => openLightbox(img));
+    img.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openLightbox(img);
+      }
+    });
   });
 }

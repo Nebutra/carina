@@ -72,6 +72,12 @@
 
     // Initial: pick first heading above mid-viewport
     const pick = () => {
+      // Self-cleanup: ClientRouter swapped this TOC out — stop listening.
+      if (!toc.isConnected) {
+        window.removeEventListener('scroll', pick);
+        obs.disconnect();
+        return;
+      }
       const y = window.scrollY + window.innerHeight * 0.28;
       let current = headings[0]?.id || '';
       for (const h of headings) {
@@ -98,6 +104,12 @@
     list.appendChild(indicator);
 
     const move = () => {
+      // Self-cleanup: list was swapped out by the ClientRouter.
+      if (!list.isConnected) {
+        window.removeEventListener('resize', move);
+        mo.disconnect();
+        return;
+      }
       // Starlight's spy may not mark anything until first scroll; the
       // first entry ("Overview"/#_top) is the correct target at page top.
       const active =
@@ -269,6 +281,9 @@
     if (!root || root.getAttribute('data-empty-bound') === '1') return;
     root.setAttribute('data-empty-bound', '1');
 
+    const zh = (document.documentElement.lang || '').toLowerCase().startsWith('zh');
+    const base = zh ? '/zh-cn' : '';
+
     const inject = () => {
       const msg = root.querySelector('.pagefind-ui__message');
       if (!msg || msg.querySelector('[data-search-cta]')) return;
@@ -279,19 +294,20 @@
       cta.dataset.searchCta = '1';
       cta.className = 'docs-search-cta';
       cta.innerHTML = `
-        <p>Try a different query, or jump to:</p>
+        <p>${zh ? '换个关键词，或直接前往：' : 'Try a different query, or jump to:'}</p>
         <div class="docs-search-cta__links">
-          <a href="/getting-started/introduction/">Overview</a>
-          <a href="/getting-started/quickstart/">Quickstart</a>
-          <a href="/getting-started/common-workflows/">Workflows</a>
-          <a href="/concepts/policy/">Policy</a>
-          <button type="button" data-search-ask-ai>Ask AI</button>
+          <a href="${base}/getting-started/introduction/">${zh ? '概览' : 'Overview'}</a>
+          <a href="${base}/getting-started/quickstart/">${zh ? '快速开始' : 'Quickstart'}</a>
+          <a href="${base}/getting-started/common-workflows/">${zh ? '常见工作流' : 'Workflows'}</a>
+          <a href="${base}/concepts/policy/">${zh ? '策略' : 'Policy'}</a>
+          <button type="button" data-search-ask-ai>${zh ? '问 AI' : 'Ask AI'}</button>
         </div>`;
       msg.appendChild(cta);
       cta.querySelector('[data-search-ask-ai]')?.addEventListener('click', () => {
         window.dispatchEvent(new CustomEvent('carina:docs-ask-ai', { detail: { question: '' } }));
-        // close search if possible
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+        // Close the search modal (synthetic Escape cannot cancel a native
+        // modal <dialog>; close it directly).
+        document.querySelector<HTMLDialogElement>('site-search dialog[open]')?.close();
       });
     };
 
