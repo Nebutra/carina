@@ -1,22 +1,42 @@
 ---
 /**
- * Client-rendered Mermaid diagram (Fumadocs/Mintlify diagram surface).
- * Pass diagram source in the default slot as plain text.
+ * Client-rendered Mermaid diagram.
+ *
+ * Prefer the `code` prop (JS template string) so MDX/smartypants cannot rewrite
+ * `-->` arrows into em-dashes. Slot content is supported with dash repair.
  */
 interface Props {
   caption?: string;
+  /** Diagram source. Prefer over the default slot. */
+  code?: string;
 }
 
-const { caption } = Astro.props;
-const raw = await Astro.slots.render('default');
-// Strip HTML wrappers MDX may inject around fenced content
-const code = raw
-  .replace(/<[^>]+>/g, '')
-  .replace(/&lt;/g, '<')
-  .replace(/&gt;/g, '>')
-  .replace(/&amp;/g, '&')
-  .replace(/&quot;/g, '"')
-  .trim();
+const { caption, code: codeProp } = Astro.props;
+const raw = codeProp ?? (await Astro.slots.render('default'));
+
+/**
+ * Strip MDX wrappers / entities and repair typographers that break Mermaid.
+ * Smartypants turns `-->` into `—>` (em dash + >), which Mermaid rejects.
+ */
+function normalizeMermaidSource(input: string): string {
+  return (
+    input
+      .replace(/<[^>]+>/g, '')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\u00a0/g, ' ')
+      // Any unicode dash(es) immediately before `>` → Mermaid edge arrow
+      .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212\uFE58\uFE63\uFF0D]-*>/g, '-->')
+      // Bare single-hyphen edges that lost a dash: `A -> B` (not `A --> B`)
+      .replace(/([^\-\s])\s*->(?!>)/g, '$1 -->')
+      .trim()
+  );
+}
+
+const code = normalizeMermaidSource(String(raw));
 ---
 
 <figure class="docs-mermaid" data-mermaid>
@@ -49,20 +69,40 @@ const code = raw
     return mermaidReady;
   }
 
+  /** Mermaid may inject error SVGs on document body when parse/render fails. */
+  function scrubStrayMermaidErrors(id: string) {
+    for (const sel of [`#${CSS.escape(id)}`, `#d${CSS.escape(id)}`]) {
+      document.querySelectorAll(sel).forEach((el) => {
+        if (!el.closest('[data-mermaid]')) el.remove();
+      });
+    }
+    // Error bomb SVGs Mermaid sometimes leaves on <body>
+    document.querySelectorAll('body > svg').forEach((el) => {
+      const text = el.textContent ?? '';
+      if (text.includes('Syntax error') || text.includes('mermaid version')) {
+        el.remove();
+      }
+    });
+  }
+
   async function renderOne(root: HTMLElement) {
     if (root.dataset.rendered === '1') return;
     const src = root.querySelector<HTMLElement>('[data-mermaid-src]')?.textContent?.trim();
     const canvas = root.querySelector<HTMLElement>('[data-mermaid-canvas]');
     if (!src || !canvas) return;
+
+    const id = `mmd-${Math.random().toString(36).slice(2, 10)}`;
     try {
       const mod = await getMermaid();
-      const id = `mmd-${Math.random().toString(36).slice(2, 10)}`;
+      await mod.default.parse(src);
       const { svg } = await mod.default.render(id, src);
       canvas.innerHTML = svg;
       root.dataset.rendered = '1';
     } catch (err) {
+      scrubStrayMermaidErrors(id);
       canvas.innerHTML = `<p class="docs-mermaid__err">Diagram failed to render.</p>`;
-      console.warn('[docs-mermaid]', err);
+      console.warn('[docs-mermaid]', err, src);
+      root.dataset.rendered = '1';
     }
   }
 
@@ -75,7 +115,6 @@ const code = raw
 
   boot();
   document.addEventListener('astro:page-load', boot);
-  // Theme toggle may change data-theme
   const mo = new MutationObserver(() => {
     document.querySelectorAll<HTMLElement>('[data-mermaid]').forEach((el) => {
       el.dataset.rendered = '';

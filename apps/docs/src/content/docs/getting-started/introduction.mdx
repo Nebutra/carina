@@ -69,15 +69,16 @@ Full tour: [Quickstart](/getting-started/quickstart/) · Recipes: [Common workfl
 
 ## How it fits together
 
-<Mermaid caption="Clients talk JSON-RPC; the kernel gates effects; Zig tools execute.">
-flowchart TB
-  C[TUI · CLI · SDK · IDE] -->|JSON-RPC| G[Go control plane]
+<Mermaid
+  caption="Clients talk JSON-RPC; the kernel gates effects; Zig tools execute."
+  code={`flowchart TB
+  C["TUI / CLI / SDK / IDE"] -->|JSON-RPC| G[Go control plane]
   G --> K[Policy kernel]
   G --> A[Hash-chained audit]
   G --> P[Patch / rollback]
   K --> W[Workspace tools]
-  G --> M[Models · BYOK]
-</Mermaid>
+  G --> M[Models / BYOK]`}
+/>
 
 <Columns cols={3}>
   <Card title="How it works" href="/concepts/runtime/" icon="⚙">

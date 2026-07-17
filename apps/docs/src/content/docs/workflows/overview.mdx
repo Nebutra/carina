@@ -16,13 +16,14 @@ Source: `docs/workflows.md`. Schema: `protocol/schemas/workflow-graph.schema.jso
 
 ## Topology
 
-<Mermaid caption="Parallel review arms join into a synthesis step.">
-flowchart TD
-  scan[scan · scout] --> bugs[bugs · reviewer]
-  scan --> perf[perf · reviewer]
-  bugs --> report[report · writer]
-  perf --> report
-</Mermaid>
+<Mermaid
+  caption="Parallel review arms join into a synthesis step."
+  code={`flowchart TD
+  scan["scan / scout"] --> bugs["bugs / reviewer"]
+  scan --> perf["perf / reviewer"]
+  bugs --> report["report / writer"]
+  perf --> report`}
+/>
 
 ## Writing a workflow
 

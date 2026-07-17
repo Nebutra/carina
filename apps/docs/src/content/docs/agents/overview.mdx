@@ -17,13 +17,14 @@ Carina drives a real ReAct coding agent. The model **only decides**; every side 
 
 Source: `docs/agent.md`.
 
-<Mermaid caption="Decide → authorize → execute → observe.">
-flowchart LR
+<Mermaid
+  caption="Decide → authorize → execute → observe."
+  code={`flowchart LR
   M[Model decides] --> L[Go agent loop]
   L --> K[Rust kernel]
   K --> Z[Zig tools]
-  Z -->|observation| L
-</Mermaid>
+  Z -->|observation| L`}
+/>
 
 ## Typed client sketch
 

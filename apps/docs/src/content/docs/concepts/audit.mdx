@@ -23,14 +23,15 @@ import Expandable from '../../../components/mdx/Expandable.astro';
 
 ## Event flow
 
-<Mermaid caption="Gated side effects always land on the chain.">
-flowchart LR
+<Mermaid
+  caption="Gated side effects always land on the chain."
+  code={`flowchart LR
   A[Agent action] --> K[Policy kernel]
   K -->|allow / deny / approve| D[PermissionDecision]
   D --> E[Event log]
   E --> H[Hash chain]
-  H --> V[carina audit verify]
-</Mermaid>
+  H --> V[carina audit verify]`}
+/>
 
 ## Audit guarantees
 

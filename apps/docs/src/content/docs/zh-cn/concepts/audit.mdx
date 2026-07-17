@@ -22,14 +22,15 @@ import Step from '../../../../components/mdx/Step.astro';
 
 ## 事件流
 
-<Mermaid caption="门控副作用都会落在链上。">
-flowchart LR
+<Mermaid
+  caption="门控副作用都会落在链上。"
+  code={`flowchart LR
   A[Agent 动作] --> K[策略内核]
   K -->|allow / deny / approve| D[PermissionDecision]
   D --> E[事件日志]
   E --> H[哈希链]
-  H --> V[carina audit verify]
-</Mermaid>
+  H --> V[carina audit verify]`}
+/>
 
 ## CLI — 检查
 
