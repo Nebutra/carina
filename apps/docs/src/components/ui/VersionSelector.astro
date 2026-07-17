@@ -95,18 +95,19 @@ const defaultId = versions.default;
   }
 
   .version-selector__select {
+    -webkit-appearance: none;
     appearance: none;
-    background-color: var(--docs-bg-surface);
     color: var(--docs-fg);
-    border: 0;
+    border: 0 !important;
     border-radius: var(--docs-radius-md);
     padding: 0.3rem 1.7rem 0.3rem 0.6rem;
     font-size: 0.75rem;
     font-family: var(--docs-font-mono);
     line-height: 1.4;
     cursor: pointer;
-    box-shadow: none;
-    background-color: transparent;
+    box-shadow: none !important;
+    outline: none;
+    background-color: transparent !important;
     background-image: linear-gradient(45deg, transparent 50%, var(--docs-fg-muted) 50%),
       linear-gradient(135deg, var(--docs-fg-muted) 50%, transparent 50%);
     background-position:
@@ -122,7 +123,11 @@ const defaultId = versions.default;
   }
 
   .version-selector__select:hover {
-    background-color: color-mix(in srgb, var(--docs-fg) 4%, transparent);
+    background-color: color-mix(in srgb, var(--docs-fg) 4%, transparent) !important;
+  }
+
+  .version-selector__select:focus {
+    outline: none;
   }
 
   .version-selector__select:focus-visible {

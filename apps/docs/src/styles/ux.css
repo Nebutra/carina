@@ -137,11 +137,20 @@
     gap: 0.1rem;
   }
 
+  starlight-theme-select,
+  starlight-lang-select {
+    border: 0 !important;
+    box-shadow: none !important;
+    outline: none !important;
+    background: transparent !important;
+  }
+
   starlight-theme-select label,
   starlight-lang-select label {
     border: 0 !important;
     border-radius: var(--docs-radius-md);
     box-shadow: none !important;
+    outline: none !important;
     padding-inline: 0.3rem;
     color: var(--docs-fg-muted);
     background: transparent !important;
@@ -151,22 +160,35 @@
   }
 
   starlight-theme-select label:hover,
-  starlight-lang-select label:hover {
+  starlight-lang-select label:hover,
+  starlight-theme-select label:focus-within,
+  starlight-lang-select label:focus-within {
     color: var(--docs-fg);
     border: 0 !important;
+    box-shadow: none !important;
+    outline: none !important;
     background-color: color-mix(in srgb, var(--docs-fg) 4%, transparent) !important;
   }
 
   starlight-theme-select select,
   starlight-lang-select select {
+    -webkit-appearance: none !important;
+    appearance: none !important;
     border: 0 !important;
     box-shadow: none !important;
+    outline: none !important;
     font-size: var(--text-caption);
     color: inherit;
     width: auto;
     min-width: 6.5em;
     text-overflow: unset;
     background: transparent !important;
+  }
+
+  starlight-theme-select select:focus-visible,
+  starlight-lang-select select:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--docs-accent) 55%, transparent) !important;
+    outline-offset: 2px !important;
   }
 
   /* ── Sidebar ─────────────────────────────────────────────────────── */

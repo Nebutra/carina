@@ -138,17 +138,20 @@
     }
   }
 
-  .version-selector__select {
-    border: 0;
-    background-color: transparent;
-    transition:
-      color var(--polish-transition),
-      background-color var(--polish-transition);
+  .version-selector__select,
+  starlight-theme-select,
+  starlight-lang-select,
+  starlight-theme-select label,
+  starlight-lang-select label,
+  starlight-theme-select select,
+  starlight-lang-select select {
+    border: 0 !important;
+    box-shadow: none !important;
   }
 
   .version-selector__select:hover {
-    border: 0;
-    transform: none;
+    border: 0 !important;
+    transform: none !important;
   }
 
   /* Print */
