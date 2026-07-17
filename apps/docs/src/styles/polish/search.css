@@ -9,6 +9,21 @@
     -webkit-backdrop-filter: blur(8px);
   }
 
+  /*
+   * Single-box modal: Starlight's Search.astro gives the native <dialog> its
+   * own border + radius + padding (unlayered scoped styles), and we style
+   * .dialog-frame inside it — two nested rounded strokes read as ugly double
+   * corners. Strip ALL chrome from the dialog; the frame is the only box.
+   */
+  site-search dialog {
+    border: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+  }
+
   site-search dialog[open] {
     animation: polish-dialog-in var(--polish-transition) both;
   }
