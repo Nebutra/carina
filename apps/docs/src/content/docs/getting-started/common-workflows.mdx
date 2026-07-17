@@ -1,0 +1,113 @@
+---
+title: Common workflows
+description: Short recipes for everyday Carina tasks — first session, fix tests, audit, rollback, embed.
+sidebar:
+  order: 4
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+import Steps from '../../../components/mdx/Steps.astro';
+import Step from '../../../components/mdx/Step.astro';
+import Badge from '../../../components/mdx/Badge.astro';
+
+Task-shaped recipes. For concepts see [Policy](/concepts/policy/) and [Audit](/concepts/audit/). For a linear tour see [Quickstart](/getting-started/quickstart/).
+
+## First governed session
+
+**Goal:** daemon up, one task, proof it was audited.
+
+<Steps>
+  <Step title="Start and check">
+    ```bash frame="none"
+    carina daemon start
+    carina doctor
+    ```
+  </Step>
+  <Step title="Run in a repo">
+    ```bash frame="none"
+    cd /path/to/your/repo
+    carina run "Summarize the top-level layout of this repository"
+    ```
+  </Step>
+  <Step title="Verify the trail">
+    ```bash frame="none"
+    carina audit SESSION
+    carina audit verify SESSION
+    ```
+    Replace `SESSION` with the id from the TUI or CLI output.
+  </Step>
+</Steps>
+
+**Uses:** daemon, agent loop, audit chain.
+
+## Fix a failing test
+
+**Goal:** let the agent change code under `safe-edit`, with patches not raw writes when possible.
+
+```bash frame="none"
+carina run "fix the failing test in parser.go and run the test"
+```
+
+If the kernel asks for approval, that is expected for higher risk commands. Prefer reading the approval reason rather than disabling policy.
+
+**Uses:** CommandExec risk levels, PatchApply, [Policy](/concepts/policy/).
+
+## Roll back a bad patch
+
+**Goal:** undo an agent edit without rewriting Git history by hand.
+
+```bash frame="none"
+carina patch list SESSION
+carina patch rollback PATCH_ID
+```
+
+**Uses:** transactional patches, [Audit & rollback](/concepts/audit/).
+
+## Inspect what the agent did
+
+**Goal:** explain allow/deny and file effects after the fact.
+
+```bash frame="none"
+carina audit SESSION
+carina audit tail --last 20
+carina audit verify SESSION
+```
+
+**Uses:** hash chain, permission decisions.
+
+## Run the review workflow
+
+**Goal:** multi-step DAG with attenuated sub-agents.
+
+```bash frame="none"
+mkdir -p .carina/workflows
+cp examples/workflows/review.json .carina/workflows/
+carina workflow run review
+```
+
+**Uses:** [Workflows](/workflows/overview/), sub-agent attenuation.
+
+## Embed: call session.create
+
+**Goal:** same runtime from your code (no TUI).
+
+Use the [Sessions API](/api/sessions/) sample, or open [Method catalog](/api/methods/) → **Playground → Mock** to see a response shape without a daemon.
+
+```bash frame="none"
+carina call session.create
+```
+
+**Uses:** JSON-RPC, [Embed path](/api/overview/).
+
+## Next
+
+| If you need… | Go to |
+| --- | --- |
+| Install options | [Installation](/getting-started/installation/) |
+| Why approvals exist | [Policy](/concepts/policy/) |
+| Full method list | [Method catalog](/api/methods/) |
+| Terms | [Glossary](/reference/glossary/) |
+
+<Callout variant="tip">
+  Keep one golden path for newcomers: <Badge variant="accent">doctor → run → audit verify → patch rollback</Badge>. Everything else is optional depth.
+</Callout>

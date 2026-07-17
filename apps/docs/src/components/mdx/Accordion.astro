@@ -1,12 +1,66 @@
 ---
 /**
  * Accordion group. Children: <AccordionItem title="...">...</AccordionItem>
+ *
+ * Hash deep-links: opening an item writes its slug to the URL hash via
+ * history.replaceState (no back-button pollution); on load, a matching hash
+ * opens the item and scrolls it into view.
  */
 ---
 
 <div class="docs-accordion">
   <slot />
 </div>
+
+<script>
+  function reducedMotion(): boolean {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  function initAccordion(root: Element) {
+    if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
+    root.dataset.ready = '1';
+
+    root.querySelectorAll<HTMLDetailsElement>('details[id]').forEach((item) => {
+      item.addEventListener('toggle', () => {
+        if (item.open) {
+          history.replaceState(null, '', `#${item.id}`);
+        } else if (decodeURIComponent(location.hash.slice(1)) === item.id) {
+          history.replaceState(null, '', location.pathname + location.search);
+        }
+      });
+    });
+  }
+
+  function openFromHash() {
+    const hash = decodeURIComponent(location.hash.slice(1));
+    if (!hash) return;
+    const target = document.getElementById(hash);
+    if (
+      target instanceof HTMLDetailsElement &&
+      target.closest('.docs-accordion') &&
+      !target.open
+    ) {
+      target.open = true;
+      requestAnimationFrame(() => {
+        target.scrollIntoView({
+          behavior: reducedMotion() ? 'auto' : 'smooth',
+          block: 'start',
+        });
+      });
+    }
+  }
+
+  function boot() {
+    document.querySelectorAll('.docs-accordion').forEach(initAccordion);
+    openFromHash();
+  }
+
+  boot();
+  document.addEventListener('astro:page-load', boot);
+  // Same-document hash navigation (in-page links to an item) opens it too.
+  window.addEventListener('hashchange', openFromHash);
+</script>
 
 <style>
   .docs-accordion {
@@ -19,6 +73,8 @@
 
   .docs-accordion :global(details) {
     border-bottom: 1px solid var(--docs-border-subtle);
+    /* Hash deep-link scroll lands below the sticky navbar */
+    scroll-margin-top: var(--docs-anchor-offset);
   }
 
   .docs-accordion :global(details:last-child) {

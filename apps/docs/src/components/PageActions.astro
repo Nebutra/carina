@@ -93,6 +93,45 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-') || 'page'
       </span>
     </a>
 
+    <a
+      class="page-actions__item"
+      role="menuitem"
+      data-action="open-chatgpt"
+      href="https://chatgpt.com/"
+      target="_blank"
+      rel="noopener"
+    >
+      <span class="page-actions__item-icon" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5 5.5 5.5 0 0 1 13.5 8Z" stroke-linejoin="round"></path>
+          <path d="M5.5 7h5M5.5 9.5h3" stroke-linecap="round"></path>
+        </svg>
+      </span>
+      <span class="page-actions__item-text">
+        <span class="page-actions__item-title">Open in ChatGPT</span>
+        <span class="page-actions__item-desc">Ask ChatGPT about this page</span>
+      </span>
+    </a>
+
+    <a
+      class="page-actions__item"
+      role="menuitem"
+      data-action="open-claude"
+      href="https://claude.ai/new"
+      target="_blank"
+      rel="noopener"
+    >
+      <span class="page-actions__item-icon" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M8 2.5v11M3.24 5.25l9.52 5.5M3.24 10.75l9.52-5.5" stroke-linecap="round"></path>
+        </svg>
+      </span>
+      <span class="page-actions__item-text">
+        <span class="page-actions__item-title">Open in Claude</span>
+        <span class="page-actions__item-desc">Ask Claude about this page</span>
+      </span>
+    </a>
+
     <button type="button" class="page-actions__item" role="menuitem" data-action="ask-ai">
       <span class="page-actions__item-icon" aria-hidden="true">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -267,6 +306,19 @@ const menuId = `page-actions-menu-${id.replace(/[^a-zA-Z0-9_-]/g, '-') || 'page'
       if (dialogBody) dialogBody.textContent = pageToMarkdown(title);
       closeMenu();
       if (dialog instanceof HTMLDialogElement) dialog.showModal();
+    });
+
+    // Open-in-AI deep links — absolute .md export URL (same target as open-md).
+    const mdUrl = new URL('index.md', location.href).href;
+    const aiPayload = encodeURIComponent(`Read ${mdUrl} and answer questions about it`);
+    root
+      .querySelector('[data-action="open-chatgpt"]')
+      ?.setAttribute('href', `https://chatgpt.com/?hints=search&q=${aiPayload}`);
+    root
+      .querySelector('[data-action="open-claude"]')
+      ?.setAttribute('href', `https://claude.ai/new?q=${aiPayload}`);
+    root.querySelectorAll('[data-action="open-chatgpt"], [data-action="open-claude"]').forEach((el) => {
+      el.addEventListener('click', () => closeMenu());
     });
 
     root.querySelector('[data-action="ask-ai"]')?.addEventListener('click', () => {

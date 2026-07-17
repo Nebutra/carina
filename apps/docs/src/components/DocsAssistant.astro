@@ -48,6 +48,10 @@
 </button>
 
 <script>
+  // Search-modal enhancement (Ask-AI row, kbd hints, result breadcrumbs).
+  // Lives with the assistant because the Ask-AI row feeds `carina:ask-ai`.
+  import '../scripts/docs-search-enhance';
+
   type PFResult = {
     url?: string;
     meta?: { title?: string };
@@ -147,14 +151,23 @@
       if (e.key === 'Escape' && !root.hidden) setOpen(false);
     });
 
-    window.addEventListener('carina:docs-ask-ai', ((e: CustomEvent) => {
+    const onAskAi = ((e: CustomEvent) => {
+      // Soft navigation can leave stale listeners on window; only the live
+      // instance responds.
+      if (!document.contains(root)) return;
       setOpen(true);
-      const q = e.detail?.question as string | undefined;
+      const q = typeof e.detail?.question === 'string' ? e.detail.question.trim() : '';
       if (q && input) {
         input.value = q;
         form?.requestSubmit();
+      } else {
+        input?.focus();
       }
-    }) as EventListener);
+    }) as EventListener;
+    // PUBLIC CONTRACT: search modal / code frames dispatch `carina:ask-ai`
+    // with `{ question }` in detail. Keep the legacy internal name too.
+    window.addEventListener('carina:ask-ai', onAskAi);
+    window.addEventListener('carina:docs-ask-ai', onAskAi);
 
     copyPromptBtn?.addEventListener('click', async () => {
       const prompt = [

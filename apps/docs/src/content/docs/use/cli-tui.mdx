@@ -1,0 +1,62 @@
+---
+title: CLI & TUI
+description: Drive Carina from the terminal — daemon, run, audit, patch, and the interactive shell.
+sidebar:
+  order: 1
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+import Steps from '../../../components/mdx/Steps.astro';
+import Step from '../../../components/mdx/Step.astro';
+
+The CLI and TUI are the fastest way to operate Carina on a local machine. Same runtime as JSON-RPC — different surface.
+
+## Essentials
+
+| Command | Purpose |
+| --- | --- |
+| `carina daemon start` | Start the local daemon |
+| `carina doctor` | Health check (socket, kernel, tools) |
+| `carina` / `carina run "…"` | Interactive TUI or one-shot task |
+| `carina audit SESSION` | Replay decisions and effects |
+| `carina audit verify SESSION` | Hash-chain integrity |
+| `carina patch list \| rollback` | List / undo transactional patches |
+| `carina call METHOD` | JSON-RPC helper for scripting |
+| `carina workflow run NAME` | Run a workflow DAG |
+
+## Typical day
+
+<Steps>
+  <Step title="Daemon up">
+    ```bash frame="none"
+    carina daemon start && carina doctor
+    ```
+  </Step>
+  <Step title="Work in a repo">
+    ```bash frame="none"
+    cd /path/to/repo
+    carina run "your task"
+    # or: carina
+    ```
+  </Step>
+  <Step title="Inspect / recover">
+    ```bash frame="none"
+    carina audit SESSION
+    carina patch list SESSION
+    ```
+  </Step>
+</Steps>
+
+## Approvals
+
+Under stricter profiles, the TUI prompts before high-risk effects. That is the capability kernel doing its job — see [Policy](/concepts/policy/).
+
+## Go deeper
+
+- Recipes: [Common workflows](/getting-started/common-workflows/)
+- Agent loop: [Agents overview](/agents/overview/)
+- Embed the same APIs: [Runtime API](/api/overview/)
+
+<Callout variant="tip">
+  Prefer `carina doctor` before debugging “nothing happens” — most local issues are PATH, socket, or daemon not running.
+</Callout>

@@ -1,0 +1,68 @@
+---
+title: 术语表
+description: Carina 术语 — session、profile、capability、patch、worker 等。
+sidebar:
+  order: 1
+---
+
+文档中常用词的短定义。产品定位见 [简介](/zh-cn/getting-started/introduction/)。
+
+## Session（会话）
+
+绑定 **工作区根** 与 **权限配置** 的持久工作单元。通过 `session.create` 创建，承载任务、事件与审计历史。
+
+## Workspace（工作区）
+
+会话允许触达的仓库/目录树。在创建会话时绑定；策略按此解析路径。
+
+## Profile（配置）
+
+命名的权限包（如 `safe-edit`、`read-only`），由能力内核对每次副作用求值。
+
+## Capability（能力）
+
+十四种门控动作类型之一（FileRead、CommandExec、PatchApply、MemoryWrite、SubagentSpawn …）。有意义的副作用都映射到能力检查。
+
+## Permission decision（权限决策）
+
+内核结果：`allow` / `deny` / `require-approval`。写入审计，并被副作用事件引用。
+
+## Agent loop（Agent 循环）
+
+ReAct 式：模型提出动作 → 内核授权 → 工具执行 → 观察回传。模型只决策，不绕过内核。
+
+## Sub-agent（子 Agent）
+
+能力 **衰减** 后的隔离子运行（绝不超过父会话）。经 SubagentSpawn / `spawn` 拉起。
+
+## Worker
+
+在凭证与租约围栏下拉取工作的执行进程。见 [Workers](/zh-cn/deployment/workers/)。
+
+## Patch（补丁）
+
+带出处与回滚指针的事务化文件变更。`safe-edit` 下优先写路径（PatchApply）。
+
+## Audit / 事件日志
+
+会话级追加写日志，支持哈希链校验（`carina audit verify`）。
+
+## Item stream
+
+供 UI/SDK 使用的归一化会话投影（有别于原始审计回放）。
+
+## Daemon
+
+本地进程（`carina-daemon`），持有会话、策略评估与审计存储。
+
+## Gateway
+
+可选 HTTP 面，显式开启后暴露受限 JSON-RPC / agent API；本地 TUI 非必须。
+
+## MCP
+
+由 Carina 中介的 Model Context Protocol，外部工具仍走策略与审计。
+
+## Nebutra Cloud 边界
+
+可选身份/同步层。**执行与策略的权威仍在本机。**

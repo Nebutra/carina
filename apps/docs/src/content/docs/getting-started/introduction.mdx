@@ -1,19 +1,20 @@
 ---
-title: Introduction
-description: What Carina is, who it is for, and how the runtime is structured.
+title: Overview
+description: Carina is the local-first runtime for coding agents — policy, hash-chained audit, and transactional rollback.
 sidebar:
   order: 1
 ---
 
 import Callout from '../../../components/ui/Callout.astro';
 import CategoryTag from '../../../components/ui/CategoryTag.astro';
-import Prompt from '../../../components/mdx/Prompt.astro';
 import Mermaid from '../../../components/mdx/Mermaid.astro';
 import Columns from '../../../components/mdx/Columns.astro';
 import Card from '../../../components/mdx/Card.astro';
 import Badge from '../../../components/mdx/Badge.astro';
+import Steps from '../../../components/mdx/Steps.astro';
+import Step from '../../../components/mdx/Step.astro';
 
-Carina is a **local-first AI agent runtime**. It sits at the point where a coding agent leaves conversation and starts acting on a real repository — reading files, running commands, applying patches — under explicit policy control.
+Carina is a **local-first AI agent runtime**. It sits where a coding agent leaves chat and starts acting on a real repository — under policy, with an audit trail you can verify, and patches you can roll back.
 
 <div class="docs-tag-row">
   <CategoryTag category="core" label="Runtime" />
@@ -21,81 +22,112 @@ Carina is a **local-first AI agent runtime**. It sits at the point where a codin
   <CategoryTag category="observability" label="Audit" />
 </div>
 
-## One-sentence pitch
+## Why Carina
 
-> Carina is the local runtime that lets coding agents work at full power on your machine, because every action passes policy, lands on a hash-chained audit record, and can be rolled back.
+Three promises — everything else hangs off these:
+
+| Promise | Meaning |
+| --- | --- |
+| **Policy before effect** | Fourteen capabilities, profiles, approvals — the model never bypasses the kernel |
+| **Hash-chained audit** | Append-only events; `carina audit verify` detects tampering |
+| **Transactional rollback** | File mutations via patches with provenance, not silent overwrites |
+
+> Full power for the agent. Full control for you. Authority stays on your machine.
+
+## Get started in three steps
+
+<Steps>
+  <Step title="Install">
+    ```bash frame="none"
+    curl -fsSL https://carina.nebutra.com/install.sh | sh
+    ```
+    More options: [Installation](/getting-started/installation/).
+  </Step>
+  <Step title="Run a task">
+    ```bash frame="none"
+    carina daemon start && carina doctor
+    cd /path/to/your/repo && carina run "Summarize this repo"
+    ```
+  </Step>
+  <Step title="Prove it was governed">
+    ```bash frame="none"
+    carina audit SESSION && carina audit verify SESSION
+    ```
+  </Step>
+</Steps>
+
+Full tour: [Quickstart](/getting-started/quickstart/) · Recipes: [Common workflows](/getting-started/common-workflows/).
 
 ## Who it is for
 
-- Individual engineers who want agents on local repos with audit and rollback
-- Platform teams building an internal agent runner
-- Security-conscious teams evaluating how agents touch files, shells, and secrets
-- Tool builders embedding a runtime behind an IDE, TUI, CI workflow, or web UI
+- Engineers who want agents on **local repos** with audit and rollback  
+- Platform teams building an **internal agent runner**  
+- Security-minded teams watching files, shells, and secrets  
+- Builders embedding a runtime behind IDE, TUI, CI, or web UI  
 
-It is **not** primarily a finished editor assistant or a hosted managed agent service.
+**Not** primarily: a finished editor chatbot, or a hosted cloud agent product.
 
-## User value
+## How it fits together
 
-| Need | Carina answer |
-| --- | --- |
-| Let an agent act on a repo | Daemon sessions, task runner, model adapters |
-| Control side effects | Capability kernel, profiles, approval modes |
-| Explain what happened | Hash-chained audit log, normalized item stream |
-| Recover from bad edits | Transactional patch apply and rollback |
-| Use real models | BYOK credential chain and provider catalog |
-| Embed in another product | JSON-RPC, scoped HTTP Gateway, MCP, SDKs |
-| Split work safely | Sub-agent attenuation, workers, workflow DAGs |
-| Coordinate endpoints later | Nebutra Cloud boundary; Carina remains local authority |
-
-## Architecture at a glance
-
-<Mermaid caption="Local authority stays on your machine — policy, audit, and rollback included.">
+<Mermaid caption="Clients talk JSON-RPC; the kernel gates effects; Zig tools execute.">
 flowchart TB
-  C[Clients · TUI · SDK · IDE] -->|JSON-RPC| G[Go control plane]
+  C[TUI · CLI · SDK · IDE] -->|JSON-RPC| G[Go control plane]
   G --> K[Policy kernel]
   G --> A[Hash-chained audit]
   G --> P[Patch / rollback]
   K --> W[Workspace tools]
-  G --> M[Model adapters]
+  G --> M[Models · BYOK]
 </Mermaid>
 
-<Columns cols={2}>
-  <Card title="Governed actions" href="/concepts/policy/" icon="🛡">
-    Fourteen capability types, profiles, and approval modes. <Badge variant="accent">kernel</Badge>
+<Columns cols={3}>
+  <Card title="How it works" href="/concepts/runtime/" icon="⚙">
+    Runtime layers, sessions, policy, audit.
   </Card>
-  <Card title="Explainable runs" href="/concepts/audit/" icon="⛓">
-    Append-only event log with hash-chain verification and patch rollback.
+  <Card title="Use daily" href="/agents/overview/" icon="▶">
+    Agents, tools, workflows, workers.
+  </Card>
+  <Card title="Embed" href="/api/overview/" icon="⧉">
+    JSON-RPC, method catalog, playground.
   </Card>
 </Columns>
 
-```
-Client Surfaces ──JSON-RPC──▶ Go Control Plane (agent loop)
-       ──Capability API──▶ Rust Kernel ──Native Calls──▶ Zig Tools
-```
+## Surfaces
 
-Five layers: Agent Surface · Client Surfaces · Control Plane · Capability Kernel · Native Toolchain. Details in [Runtime model](/concepts/runtime/).
+| Surface | Role |
+| --- | --- |
+| **CLI / TUI** | Local interactive coding and ops |
+| **JSON-RPC + Gateway** | Embed in your product |
+| **SDKs** | TS / Python / Go typed clients |
+| **Workers** | Distributed execution with leases |
+| **MCP** | External tools, still policy-gated |
+
+Same engine: session + profile + audit wherever you attach.
+
+## What makes Carina different
+
+| Category | Optimized for | Carina |
+| --- | --- | --- |
+| Editor assistants | In-IDE chat | Runtime **governance** behind any client |
+| CLI coding agents | Conversational terminal UX | Durable sessions, audit, rollback, workers, embed |
+| Cloud agent tasks | Hosted remote UX | **Local-first**; cloud is optional boundary |
+| Homegrown stacks | One-off orchestration | Reusable policy / audit / patch primitives |
 
 ## Non-goals
 
-- Full editor product
-- Hosted cloud agent app
-- Complete VM/container isolation platform
-- Replacement for Git history or code review
+- Full editor product  
+- Hosted managed agent SaaS as the core  
+- Replacing Git history or code review  
+- Pretending alpha packaging is finished enterprise distribution  
 
-## Positioning vs adjacent tools
+## Next
 
-| Alternative | Optimized for | Carina position |
-| --- | --- | --- |
-| Editor assistants | Interactive IDE editing | Runtime governance behind the editor |
-| CLI coding agents | Conversational terminal coding | Durable sessions, audit, rollback, workers, embed |
-| Cloud agent tasks | Managed remote UX | Local-first; cloud wraps, does not own authority |
-| Custom internal stacks | Team-specific orchestration | Reusable policy / audit / patch primitives |
+| Goal | Page |
+| --- | --- |
+| Install on my machine | [Installation](/getting-started/installation/) |
+| First end-to-end run | [Quickstart](/getting-started/quickstart/) |
+| Day-to-day recipes | [Common workflows](/getting-started/common-workflows/) |
+| Terms | [Glossary](/reference/glossary/) |
 
-<Callout variant="tip" title="Start here">
-  Jump to [Installation](/getting-started/installation/) then the [Quickstart](/getting-started/quickstart/).
+<Callout variant="tip">
+  New here? Stay on <Badge variant="accent">Get started</Badge> until you have completed doctor → run → audit verify once. Then branch into policy, workflows, or embed as needed.
 </Callout>
-
-<Prompt title="Install docs skill" description="Give coding agents Carina docs context (Mintlify-style skill surface).">
-npx skills add https://carina.nebutra.com
-# or fetch: curl -fsSL https://carina.nebutra.com/skill.md
-</Prompt>

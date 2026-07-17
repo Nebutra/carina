@@ -273,8 +273,7 @@
     color: var(--docs-fg) !important;
     font-weight: 500;
     background: color-mix(in srgb, var(--docs-accent) 5%, transparent) !important;
-    border-inline-start: 2px solid var(--docs-accent);
-    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    border-radius: var(--radius-md);
     box-shadow: none !important;
   }
 
@@ -306,6 +305,85 @@
     padding-block: 0.55rem 0.3rem;
   }
 
+  /*
+   * Group icons — index-based mapping (group ORDER is identical across
+   * en / zh-cn locales). Line glyphs are inline SVG masks colored by
+   * background-color: currentColor, so they follow the label color token
+   * (--docs-fg-subtle) and flip to accent for the group holding the
+   * active page. Taste: 0.9 opacity so they sit behind the small-caps
+   * labels instead of competing with them.
+   */
+  .sidebar-content .top-level > li > details > summary .group-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  .sidebar-content .top-level > li:nth-child(-n + 9) > details > summary .group-label::before {
+    content: '';
+    flex: none;
+    width: 0.875rem;
+    height: 0.875rem;
+    background-color: currentColor;
+    opacity: 0.9;
+    -webkit-mask: var(--group-icon) center / contain no-repeat;
+    mask: var(--group-icon) center / contain no-repeat;
+    transition:
+      background-color var(--polish-transition),
+      opacity var(--polish-transition);
+  }
+
+  .sidebar-content .top-level > li:has(a[aria-current='page']) > details > summary .group-label::before,
+  .sidebar-content .top-level > li:has(a[aria-current='true']) > details > summary .group-label::before {
+    background-color: var(--docs-accent);
+    opacity: 1;
+  }
+
+  /* 1 Getting Started — launch (paper plane) */
+  .sidebar-content .top-level > li:nth-child(1) {
+    --group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 2 7.4 13.6l-1.6-5L1 7.1 14 2Z'/%3E%3Cpath d='M14 2 5.8 8.6'/%3E%3C/svg%3E");
+  }
+
+  /* 2 Core Concepts — cube */
+  .sidebar-content .top-level > li:nth-child(2) {
+    --group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 1.6 13.8 4.9v6.2L8 14.4 2.2 11.1V4.9L8 1.6Z'/%3E%3Cpath d='M2.4 5 8 8.2 13.6 5M8 8.2v6'/%3E%3C/svg%3E");
+  }
+
+  /* 3 Runtime API — plug */
+  .sidebar-content .top-level > li:nth-child(3) {
+    --group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5.6 1.6v3M10.4 1.6v3M4 4.6h8v1.8a4 4 0 0 1-8 0V4.6ZM8 10.4v4'/%3E%3C/svg%3E");
+  }
+
+  /* 4 Agents — bot */
+  .sidebar-content .top-level > li:nth-child(4) {
+    --group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.8' y='5' width='10.4' height='7.6' rx='2'/%3E%3Cpath d='M8 5V2.6M6 8.3v1.5M10 8.3v1.5'/%3E%3C/svg%3E");
+  }
+
+  /* 5 Tools — wrench */
+  .sidebar-content .top-level > li:nth-child(5) {
+    --group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13.8 4.6a3.8 3.8 0 0 1-5 3.6l-4.6 4.6a1.7 1.7 0 0 1-2.4-2.4l4.6-4.6a3.8 3.8 0 0 1 4.5-4.9L8.6 3.2l.4 2.4 2.4.4 2.3-2.3c.1.3.1.6.1.9Z'/%3E%3C/svg%3E");
+  }
+
+  /* 6 Memory — chip */
+  .sidebar-content .top-level > li:nth-child(6) {
+    --group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4.6' y='4.6' width='6.8' height='6.8' rx='1.2'/%3E%3Cpath d='M6.4 4.6V2.2M9.6 4.6V2.2M6.4 13.8v-2.4M9.6 13.8v-2.4M4.6 6.4H2.2M4.6 9.6H2.2M13.8 6.4h-2.4M13.8 9.6h-2.4'/%3E%3C/svg%3E");
+  }
+
+  /* 7 Workflows — branch */
+  .sidebar-content .top-level > li:nth-child(7) {
+    --group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='3.6' cy='3.4' r='1.5'/%3E%3Ccircle cx='3.6' cy='12.6' r='1.5'/%3E%3Ccircle cx='12.4' cy='12.6' r='1.5'/%3E%3Cpath d='M3.6 4.9v6.2M5.1 12.6h5.8M5.1 3.4h3.8a3.5 3.5 0 0 1 3.5 3.5v4.2'/%3E%3C/svg%3E");
+  }
+
+  /* 8 Observability — eye */
+  .sidebar-content .top-level > li:nth-child(8) {
+    --group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1.6 8S4 3.8 8 3.8 14.4 8 14.4 8 12 12.2 8 12.2 1.6 8 1.6 8Z'/%3E%3Ccircle cx='8' cy='8' r='1.9'/%3E%3C/svg%3E");
+  }
+
+  /* 9 Deployment — server */
+  .sidebar-content .top-level > li:nth-child(9) {
+    --group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='2.4' width='12' height='4.6' rx='1.2'/%3E%3Crect x='2' y='9' width='12' height='4.6' rx='1.2'/%3E%3Cpath d='M4.6 4.7h.01M4.6 11.3h.01'/%3E%3C/svg%3E");
+  }
+
   .sidebar-content details > summary {
     transition: color var(--polish-transition);
   }
@@ -332,6 +410,48 @@
   /* Soft expand: avoid hard cut on group open (content-visibility friendly) */
   .sidebar-content details > ul {
     transition: opacity var(--polish-transition);
+  }
+
+  /*
+   * Group open/close height animation (Chromium 129+; elsewhere the
+   * @supports gate keeps the toggle instant — progressive enhancement).
+   */
+  @supports (interpolate-size: allow-keywords) {
+    .sidebar-content details {
+      interpolate-size: allow-keywords;
+    }
+
+    .sidebar-content details::details-content {
+      height: 0;
+      overflow: clip;
+      transition:
+        height var(--polish-transition),
+        content-visibility var(--polish-transition);
+      transition-behavior: allow-discrete;
+    }
+
+    .sidebar-content details[open]::details-content {
+      height: auto;
+    }
+  }
+
+  /* Nested tree line (Mintlify-style): hairline rail + accent segment */
+  .sidebar-content details > ul {
+    position: relative;
+    margin-inline-start: 0.55rem;
+    padding-inline-start: 0.45rem;
+    border-inline-start: 1px solid var(--docs-border-subtle);
+  }
+
+  .sidebar-content details > ul a[aria-current='page']::before,
+  .sidebar-content details > ul a[aria-current='true']::before {
+    content: '';
+    position: absolute;
+    inset-inline-start: calc(-0.45rem - 1.5px);
+    inset-block: 0.3rem;
+    width: 2px;
+    border-radius: var(--radius-full);
+    background: var(--docs-accent);
   }
 
   .sidebar-content details:not([open]) > ul {
@@ -362,15 +482,133 @@
     scrollbar-color: color-mix(in srgb, var(--docs-border) 50%, transparent) transparent;
   }
 
+  /* ── Desktop sidebar collapse (html[data-sidebar-collapsed]) ─────── */
+  .docs-sidebar-toggle {
+    display: none;
+  }
+
+  @media (min-width: 50rem) {
+    .docs-sidebar-toggle {
+      position: fixed;
+      display: grid;
+      place-items: center;
+      top: calc(var(--sl-nav-height) + 0.55rem);
+      inset-inline-start: calc(var(--sl-sidebar-width) - 2.3rem);
+      z-index: var(--sl-z-index-menu);
+      width: 1.75rem;
+      height: 1.75rem;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      background: transparent;
+      color: var(--docs-fg-subtle);
+      cursor: pointer;
+      transition:
+        color var(--polish-transition),
+        background-color var(--polish-transition),
+        border-color var(--polish-transition),
+        inset-inline-start var(--polish-transition);
+    }
+
+    .docs-sidebar-toggle::before {
+      content: '';
+      width: 0.9rem;
+      height: 0.9rem;
+      background-color: currentColor;
+      -webkit-mask: var(--toggle-icon) center / contain no-repeat;
+      mask: var(--toggle-icon) center / contain no-repeat;
+      --toggle-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='1.8' y='2.6' width='12.4' height='10.8' rx='1.6'/%3E%3Cpath d='M6.2 2.6v10.8'/%3E%3C/svg%3E");
+    }
+
+    .docs-sidebar-toggle:hover {
+      color: var(--docs-fg);
+      background: color-mix(in srgb, var(--docs-fg) 5%, transparent);
+    }
+
+    /* Collapsed: pull the left rail out, let the main pane take the space */
+    html[data-sidebar-collapsed] .docs-sidebar-toggle {
+      inset-inline-start: 0.55rem;
+      border-color: var(--docs-border-subtle);
+      background: var(--docs-bg);
+      color: var(--docs-fg-muted);
+    }
+
+    html[data-sidebar-collapsed] .docs-sidebar-toggle:hover {
+      color: var(--docs-fg);
+      background: var(--docs-bg-surface);
+    }
+
+    .main-frame {
+      transition: padding-inline-start var(--polish-transition);
+    }
+
+    nav.sidebar .sidebar-pane {
+      transition:
+        transform var(--polish-transition),
+        opacity var(--polish-transition),
+        visibility var(--polish-transition);
+    }
+
+    html[data-sidebar-collapsed] nav.sidebar .sidebar-pane {
+      transform: translateX(-100%);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+  }
+
   /* ── TOC ─────────────────────────────────────────────────────────── */
   .right-sidebar-panel h2#starlight__on-this-page,
   .right-sidebar-panel h2 {
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.4rem !important;
     font-size: 0.6875rem !important;
     font-weight: 600 !important;
     letter-spacing: 0.07em !important;
     text-transform: uppercase !important;
     color: var(--docs-fg-subtle) !important;
     margin-bottom: var(--spacing-3) !important;
+  }
+
+  /* ≡ list glyph before "On this page" / "本页目录" */
+  .right-sidebar-panel h2#starlight__on-this-page::before {
+    content: '';
+    flex: none;
+    width: 0.8rem;
+    height: 0.8rem;
+    background-color: currentColor;
+    opacity: 0.85;
+    -webkit-mask: var(--toc-icon) center / contain no-repeat;
+    mask: var(--toc-icon) center / contain no-repeat;
+    --toc-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5.4 3.2h9M5.4 8h9M5.4 12.8h9M1.6 3.2h.01M1.6 8h.01M1.6 12.8h.01'/%3E%3C/svg%3E");
+  }
+
+  /*
+   * Fumadocs-clerk indicator: hairline track on the list's inline-start,
+   * with a 2px accent segment moved/sized to the active link by
+   * DocsChrome. No-JS fallback stays accent-text via aria-current.
+   */
+  starlight-toc nav > ul {
+    position: relative;
+    border-inline-start: 1px solid var(--docs-border-subtle);
+    padding-inline-start: 0.8rem;
+  }
+
+  .docs-toc-indicator {
+    position: absolute;
+    top: 0;
+    inset-inline-start: -1.5px;
+    width: 2px;
+    height: 0;
+    border-radius: var(--radius-full);
+    background: var(--docs-accent);
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      transform 180ms var(--polish-ease),
+      height 180ms var(--polish-ease),
+      opacity var(--polish-transition);
   }
 
   starlight-toc a {
@@ -407,5 +645,82 @@
 
   starlight-toc li ul a[aria-current='true'] {
     opacity: 1;
+  }
+
+  /* ── Right-rail bottom slot (injected by DocsChrome) ─────────────── */
+  .docs-toc-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-top: var(--spacing-5);
+    padding-top: var(--spacing-4);
+    border-top: 1px solid var(--docs-border-subtle);
+  }
+
+  .docs-toc-footer__link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: fit-content;
+    padding: 0.15rem 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--docs-fg-subtle);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color var(--polish-transition);
+  }
+
+  .docs-toc-footer__link:hover {
+    color: var(--docs-fg);
+  }
+
+  .docs-toc-footer__link::before {
+    content: '';
+    flex: none;
+    width: 0.7rem;
+    height: 0.7rem;
+    background-color: currentColor;
+    opacity: 0.8;
+    -webkit-mask: var(--footer-icon) center / contain no-repeat;
+    mask: var(--footer-icon) center / contain no-repeat;
+  }
+
+  .docs-toc-footer__top::before {
+    --footer-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 13.4V2.6M3.4 7.2 8 2.6l4.6 4.6'/%3E%3C/svg%3E");
+  }
+
+  .docs-toc-footer__gh::before {
+    --footer-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.4 11.6 11.6 4.4M5.6 4.4h6v6'/%3E%3C/svg%3E");
+  }
+
+  /* ── Reduced motion: pseudo-element transitions the global kill
+        switch in ux.css does not reach (::details-content), plus the
+        moving TOC segment. ─────────────────────────────────────────── */
+  @media (prefers-reduced-motion: reduce) {
+    .sidebar-content details::details-content,
+    .docs-toc-indicator,
+    nav.sidebar .sidebar-pane,
+    .main-frame,
+    .docs-sidebar-toggle {
+      transition: none !important;
+    }
+  }
+}
+
+/*
+ * Unlayered on purpose: Starlight's Page.astro sets
+ * `--sl-content-inline-start: var(--sl-sidebar-width)` on
+ * html[data-has-sidebar] in an UNLAYERED scoped style, which beats any
+ * @layer components rule. The main frame reads this var for its
+ * inline-start padding; zero it so the content column re-centers in the
+ * space reclaimed by the collapsed rail.
+ */
+@media (min-width: 50rem) {
+  html[data-sidebar-collapsed][data-has-sidebar] {
+    --sl-content-inline-start: 0px;
   }
 }

@@ -2,11 +2,26 @@
 /**
  * Client chrome for Mintlify/Fumadocs-grade polish:
  *  - TOC scroll-spy (aria-current on right-sidebar links)
+ *  - TOC clerk-style moving indicator (right-rail accent segment)
+ *  - Right-rail bottom slot (back to top / GitHub)
+ *  - Sidebar: active-item auto-scroll + desktop collapse toggle
  *  - Heading anchor copy-to-clipboard
  *  - Expandable long code frames
  *  - Search empty-state CTAs
  */
 ---
+
+<!-- FOUC guard: restore sidebar-collapsed state before first paint.
+     Rendered from Head.astro, so this inline script runs in <head>. -->
+<script is:inline>
+  try {
+    if (localStorage.getItem('carina-sidebar-collapsed') === '1') {
+      document.documentElement.setAttribute('data-sidebar-collapsed', '');
+    }
+  } catch {
+    /* ignore */
+  }
+</script>
 
 <script>
   /* ── TOC scroll-spy ─────────────────────────────────────────────── */
@@ -66,6 +81,137 @@
     };
     pick();
     window.addEventListener('scroll', pick, { passive: true });
+  }
+
+  /* ── TOC clerk indicator (desktop starlight-toc only) ───────────── */
+  /* Starlight's own TOC script owns aria-current on these links; we only
+     observe it and move the accent segment. Fallback without JS/observer:
+     accent text via [aria-current] styling in nav.css. */
+  function initTocIndicator() {
+    const list = document.querySelector<HTMLElement>('starlight-toc nav > ul');
+    if (!list) return;
+    if (list.querySelector(':scope > .docs-toc-indicator')) return;
+
+    const indicator = document.createElement('span');
+    indicator.className = 'docs-toc-indicator';
+    indicator.setAttribute('aria-hidden', 'true');
+    list.appendChild(indicator);
+
+    const move = () => {
+      // Starlight's spy may not mark anything until first scroll; the
+      // first entry ("Overview"/#_top) is the correct target at page top.
+      const active =
+        list.querySelector<HTMLAnchorElement>('a[aria-current="true"], a.is-active-toc') ||
+        list.querySelector<HTMLAnchorElement>('a[href^="#"]');
+      if (!active) {
+        indicator.style.opacity = '0';
+        return;
+      }
+      indicator.style.opacity = '1';
+      indicator.style.transform = `translateY(${active.offsetTop}px)`;
+      indicator.style.height = `${active.offsetHeight}px`;
+    };
+
+    const mo = new MutationObserver(move);
+    mo.observe(list, { subtree: true, attributeFilter: ['aria-current', 'class'] });
+    window.addEventListener('resize', move, { passive: true });
+    document.fonts?.ready?.then(move).catch(() => {});
+    move();
+  }
+
+  /* ── Right-rail bottom slot ─────────────────────────────────────── */
+  function initTocFooter() {
+    const container = document.querySelector('.right-sidebar-panel .sl-container');
+    if (!container || container.querySelector('.docs-toc-footer')) return;
+
+    const zh = (document.documentElement.lang || '').toLowerCase().startsWith('zh');
+
+    const footer = document.createElement('div');
+    footer.className = 'docs-toc-footer';
+
+    const top = document.createElement('button');
+    top.type = 'button';
+    top.className = 'docs-toc-footer__link docs-toc-footer__top';
+    top.textContent = zh ? '返回顶部' : 'Back to top';
+    top.addEventListener('click', () => {
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+    });
+
+    const gh = document.createElement('a');
+    gh.className = 'docs-toc-footer__link docs-toc-footer__gh';
+    gh.href = 'https://github.com/nebutra/carina';
+    gh.target = '_blank';
+    gh.rel = 'noopener';
+    gh.textContent = 'GitHub';
+
+    footer.append(top, gh);
+    container.appendChild(footer);
+  }
+
+  /* ── Sidebar: bring the active item into view on load ───────────── */
+  function initSidebarActiveScroll() {
+    const pane = document.getElementById('starlight__sidebar');
+    const active = pane?.querySelector<HTMLAnchorElement>(
+      'a[aria-current="page"], a[aria-current="true"]',
+    );
+    if (!pane || !active) return;
+
+    // Scroll only the pane (never the window), no smooth on load.
+    const p = pane.getBoundingClientRect();
+    const r = active.getBoundingClientRect();
+    if (r.top < p.top + 8 || r.bottom > p.bottom - 8) {
+      pane.scrollTop += r.top - p.top - (p.height - r.height) / 2;
+    }
+  }
+
+  /* ── Desktop sidebar collapse toggle ────────────────────────────── */
+  function initSidebarCollapse() {
+    // Re-apply persisted state (view-transition swaps reset <html> attrs;
+    // the head inline script only runs on full loads).
+    try {
+      if (localStorage.getItem('carina-sidebar-collapsed') === '1') {
+        document.documentElement.setAttribute('data-sidebar-collapsed', '');
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const nav = document.querySelector('nav.sidebar');
+    if (!nav || nav.querySelector('.docs-sidebar-toggle')) return;
+
+    const zh = (document.documentElement.lang || '').toLowerCase().startsWith('zh');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'docs-sidebar-toggle';
+    btn.setAttribute('aria-controls', 'starlight__sidebar');
+
+    const sync = () => {
+      const collapsed = document.documentElement.hasAttribute('data-sidebar-collapsed');
+      btn.setAttribute('aria-expanded', String(!collapsed));
+      const label = collapsed
+        ? zh
+          ? '展开侧边栏'
+          : 'Expand sidebar'
+        : zh
+          ? '折叠侧边栏'
+          : 'Collapse sidebar';
+      btn.setAttribute('aria-label', label);
+      btn.title = label;
+    };
+
+    btn.addEventListener('click', () => {
+      const collapsed = document.documentElement.toggleAttribute('data-sidebar-collapsed');
+      try {
+        localStorage.setItem('carina-sidebar-collapsed', collapsed ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      sync();
+    });
+
+    sync();
+    nav.appendChild(btn);
   }
 
   /* ── Heading anchor copy ────────────────────────────────────────── */
@@ -135,8 +281,9 @@
       cta.innerHTML = `
         <p>Try a different query, or jump to:</p>
         <div class="docs-search-cta__links">
+          <a href="/getting-started/introduction/">Overview</a>
           <a href="/getting-started/quickstart/">Quickstart</a>
-          <a href="/api/methods/">Method catalog</a>
+          <a href="/getting-started/common-workflows/">Workflows</a>
           <a href="/concepts/policy/">Policy</a>
           <button type="button" data-search-ask-ai>Ask AI</button>
         </div>`;
@@ -154,6 +301,10 @@
 
   function boot() {
     initTocSpy();
+    initTocIndicator();
+    initTocFooter();
+    initSidebarActiveScroll();
+    initSidebarCollapse();
     initAnchorCopy();
     initExpandableCode();
     initSearchEmpty();

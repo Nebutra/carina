@@ -1,119 +1,16 @@
 ---
 title: Math notation
-description: KaTeX-powered LaTeX in Carina docs — inline, display, matrices, and complex AMS layouts.
+description: Moved to Reference — KaTeX LaTeX support.
 sidebar:
-  order: 4
+  order: 99
 ---
 
-import Math from '../../../components/mdx/Math.astro';
 import Callout from '../../../components/ui/Callout.astro';
-import Expandable from '../../../components/mdx/Expandable.astro';
 
-Carina docs render LaTeX with **[KaTeX](https://katex.org/)** at build time.
+Math authoring docs live under **Reference** so the Get started path stays focused on install and first runs.
 
-- **Inline:** wrap with single dollars — `$E = mc^2$` → $E = mc^2$
-- **Display:** double dollars on their own lines
-- **Escape hatch:** `<Math formula="..." />` for programmatic / very dense expressions
+→ **[Math notation (KaTeX)](/reference/math/)**
 
 <Callout variant="tip">
-  Prefer Markdown `$…$` / `$$…$$` for day-to-day formulas. Use `<Math>` when you need a component prop, conditional rendering, or to isolate a brittle expression.
+  Beginners: start with [Overview](/getting-started/introduction/) → [Quickstart](/getting-started/quickstart/) → [Common workflows](/getting-started/common-workflows/).
 </Callout>
-
-## Inline
-
-The Gaussian integral is $\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}$.
-
-A policy score might be $\mathrm{risk}(c) \in \{0,1,2,3,4,5\}$ for command class $c$.
-
-## Display
-
-$$
-\nabla \cdot \mathbf{E} = \frac{\rho}{\varepsilon_0},\quad
-\nabla \cdot \mathbf{B} = 0,\quad
-\nabla \times \mathbf{E} = -\frac{\partial\mathbf{B}}{\partial t},\quad
-\nabla \times \mathbf{B} = \mu_0\mathbf{J} + \mu_0\varepsilon_0\frac{\partial\mathbf{E}}{\partial t}
-$$
-
-## Aligned steps
-
-$$
-\begin{aligned}
-H(X)
-  &= -\sum_{x} p(x)\log p(x) \\
-  &= \mathbb{E}_{x\sim p}\bigl[-\log p(x)\bigr]
-\end{aligned}
-$$
-
-## Matrix
-
-$$
-\begin{pmatrix}
-a_{11} & a_{12} & \cdots & a_{1n} \\
-a_{21} & a_{22} & \cdots & a_{2n} \\
-\vdots & \vdots & \ddots & \vdots \\
-a_{m1} & a_{m2} & \cdots & a_{mn}
-\end{pmatrix}
-\begin{pmatrix}
-x_1 \\ x_2 \\ \vdots \\ x_n
-\end{pmatrix}
-=
-\begin{pmatrix}
-b_1 \\ b_2 \\ \vdots \\ b_m
-\end{pmatrix}
-$$
-
-## Cases & piecewise
-
-$$
-\mathrm{decision}(a) =
-\begin{cases}
-\texttt{allow}  & \text{if } \mathrm{risk}(a) \le 1 \\
-\texttt{approve}& \text{if } 2 \le \mathrm{risk}(a) \le 3 \\
-\texttt{deny}   & \text{if } \mathrm{risk}(a) \ge 4
-\end{cases}
-$$
-
-## Complex (programmatic `<Math>`)
-
-Useful when the formula is built in JS or you want display isolation:
-
-<Math
-  formula={`
-\\begin{aligned}
-\\mathcal{L}(\\theta)
-  &= \\mathbb{E}_{(x,y)\\sim\\mathcal{D}}
-     \\bigl[\\ell(f_\\theta(x), y)\\bigr]
-     + \\lambda\\,\\|\\theta\\|_2^2 \\\\
-\\nabla_\\theta \\mathcal{L}
-  &= \\mathbb{E}\\bigl[
-       \\nabla_\\theta \\ell(f_\\theta(x), y)
-     \\bigr]
-     + 2\\lambda\\,\\theta
-\\end{aligned}
-`}
-/>
-
-## Limits of KaTeX
-
-<Expandable title="When KaTeX is not enough">
-  KaTeX covers the vast majority of AMS math used in engineering docs. It does **not** run a full TeX engine (no arbitrary packages, limited TikZ). If you hit an unsupported construct:
-
-  1. Simplify the expression, or  
-  2. Use a diagram (Mermaid) / figure for structure, or  
-  3. Pre-render to SVG offline and embed with `<Frame>`.
-
-  We intentionally did **not** ship full MathJax by default — it is heavier and rarely needed here.
-</Expandable>
-
-## Authoring cheatsheet
-
-| Need | Syntax |
-| --- | --- |
-| Inline | `$a_i$` |
-| Display | `$$ … $$` on its own lines |
-| Align | `\begin{aligned} … \end{aligned}` inside `$$` |
-| Matrix | `\begin{pmatrix} … \end{pmatrix}` |
-| Cases | `\begin{cases} … \end{cases}` |
-| Component | `<Math formula={String.raw`…`} />` |
-
-Dollar signs inside **code fences** are not math — they stay literal.

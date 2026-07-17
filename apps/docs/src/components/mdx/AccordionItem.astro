@@ -2,12 +2,27 @@
 interface Props {
   title: string;
   open?: boolean;
+  /** Optional explicit anchor id; defaults to a slug of the title. */
+  id?: string;
 }
 
-const { title, open = false } = Astro.props;
+const { title, open = false, id } = Astro.props;
+
+/** Stable slug from the title (keeps CJK; strips punctuation). */
+function slugify(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^\p{L}\p{N}-]/gu, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+const slug = id ?? (slugify(title) || undefined);
 ---
 
-<details open={open || undefined}>
+<details id={slug} open={open || undefined}>
   <summary>{title}</summary>
   <div class="docs-accordion__body">
     <slot />

@@ -272,6 +272,134 @@
     inset-block-start: 0.45rem !important;
   }
 
+  /*
+   * ✦ Ask-AI — injected by src/scripts/code-ask-ai.js as a sibling before .copy.
+   * Mirrors the copy button exactly (size / idle opacity / hover), sits to its left.
+   */
+  .expressive-code .frame .ec-ask-ai {
+    appearance: none;
+    position: absolute;
+    inset-block-start: 0.45rem;
+    inset-inline-end: 2.55rem; /* copy inset 0.5rem + 1.85rem button + 0.2rem gap */
+    z-index: 3;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.85rem;
+    height: 1.85rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--polish-code-fg, var(--carina-code-fg));
+    opacity: 0.72;
+    cursor: pointer;
+    transition:
+      opacity var(--polish-transition),
+      color var(--polish-transition);
+  }
+
+  .expressive-code .frame .ec-ask-ai svg {
+    opacity: 0.9;
+  }
+
+  .expressive-code .frame:hover .ec-ask-ai,
+  .expressive-code .frame .ec-ask-ai:hover,
+  .expressive-code .frame .ec-ask-ai:focus-visible {
+    opacity: 1;
+  }
+
+  .expressive-code .frame .ec-ask-ai:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--carina-ion-cyan) 55%, transparent);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .expressive-code .frame .ec-ask-ai {
+      transition: none;
+    }
+  }
+
+  /*
+   * Language glyph badges — abstract 16-grid line glyphs (not vendor logos),
+   * keyed off EC's pre[data-language], drawn on .title::before via alpha mask
+   * so color comes from the token (--polish-code-muted).
+   *
+   * The badge is width-gated: --ec-lang-glyph-size is only set for known
+   * languages, so unmatched languages render a zero-width no-op. This rule is
+   * same-specificity-but-later than the "kill EC pseudo decorations" rule
+   * above, so its !important declarations win the cascade tie.
+   */
+  .expressive-code .frame .title::before {
+    content: '' !important;
+    display: inline-block !important;
+    opacity: 1 !important;
+    width: var(--ec-lang-glyph-size, 0px);
+    height: var(--ec-lang-glyph-size, 0px);
+    margin-inline-end: calc(var(--ec-lang-glyph-size, 0px) / 2);
+    vertical-align: -2.5px;
+    background-color: var(--polish-code-muted, var(--carina-code-muted));
+    -webkit-mask: var(--ec-lang-glyph, none) center / contain no-repeat;
+    mask: var(--ec-lang-glyph, none) center / contain no-repeat;
+  }
+
+  /* Shell — prompt chevron + underscore */
+  .expressive-code .frame:has(> pre[data-language='bash']),
+  .expressive-code .frame:has(> pre[data-language='sh']),
+  .expressive-code .frame:has(> pre[data-language='shell']),
+  .expressive-code .frame:has(> pre[data-language='shellscript']),
+  .expressive-code .frame:has(> pre[data-language='shellsession']),
+  .expressive-code .frame:has(> pre[data-language='zsh']) {
+    --ec-lang-glyph-size: 13px;
+    --ec-lang-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 5l3.5 3L3 11'/%3E%3Cpath d='M9 12h4'/%3E%3C/svg%3E");
+  }
+
+  /* JSON — curly braces */
+  .expressive-code .frame:has(> pre[data-language='json']),
+  .expressive-code .frame:has(> pre[data-language='jsonc']),
+  .expressive-code .frame:has(> pre[data-language='json5']) {
+    --ec-lang-glyph-size: 13px;
+    --ec-lang-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 2.8c-1.1 0-1.6.6-1.6 1.7v1.6c0 .9-.5 1.5-1.4 1.9.9.4 1.4 1 1.4 1.9v1.6c0 1.1.5 1.7 1.6 1.7'/%3E%3Cpath d='M10 2.8c1.1 0 1.6.6 1.6 1.7v1.6c0 .9.5 1.5 1.4 1.9-.9.4-1.4 1-1.4 1.9v1.6c0 1.1-.5 1.7-1.6 1.7'/%3E%3C/svg%3E");
+  }
+
+  /* TS / JS — lambda */
+  .expressive-code .frame:has(> pre[data-language='ts']),
+  .expressive-code .frame:has(> pre[data-language='typescript']),
+  .expressive-code .frame:has(> pre[data-language='tsx']),
+  .expressive-code .frame:has(> pre[data-language='js']),
+  .expressive-code .frame:has(> pre[data-language='javascript']),
+  .expressive-code .frame:has(> pre[data-language='jsx']),
+  .expressive-code .frame:has(> pre[data-language='mjs']) {
+    --ec-lang-glyph-size: 13px;
+    --ec-lang-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.6 3.4c1.5.1 2.1 1 2.8 2.9l2.3 6.3'/%3E%3Cpath d='M8 8.6l-3 4'/%3E%3C/svg%3E");
+  }
+
+  /* Go — forward arrow */
+  .expressive-code .frame:has(> pre[data-language='go']) {
+    --ec-lang-glyph-size: 13px;
+    --ec-lang-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.8 8h9.4'/%3E%3Cpath d='M8.8 4.6L12.2 8l-3.4 3.4'/%3E%3C/svg%3E");
+  }
+
+  /* Zig — zigzag stroke */
+  .expressive-code .frame:has(> pre[data-language='zig']) {
+    --ec-lang-glyph-size: 13px;
+    --ec-lang-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 4.2h7L4.5 11.8h7'/%3E%3C/svg%3E");
+  }
+
+  /* YAML — dashed list rows */
+  .expressive-code .frame:has(> pre[data-language='yaml']),
+  .expressive-code .frame:has(> pre[data-language='yml']) {
+    --ec-lang-glyph-size: 13px;
+    --ec-lang-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 5.2h1.8'/%3E%3Cpath d='M7.2 5.2H13'/%3E%3Cpath d='M3 10.8h1.8'/%3E%3Cpath d='M7.2 10.8H13'/%3E%3C/svg%3E");
+  }
+
+  /* TOML — square brackets */
+  .expressive-code .frame:has(> pre[data-language='toml']) {
+    --ec-lang-glyph-size: 13px;
+    --ec-lang-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6.2 3H4v10h2.2'/%3E%3Cpath d='M9.8 3H12v10H9.8'/%3E%3C/svg%3E");
+  }
+
   /* Light page: slightly stronger outer edge so dark cards don't float muddy */
   [data-theme='light'] .expressive-code .frame,
   [data-theme='carina-light'] .expressive-code .frame {

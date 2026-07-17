@@ -34,12 +34,12 @@
     font-optical-sizing: auto;
   }
 
-  .content-panel .sl-container > p:first-of-type,
-  .content-panel [data-page-description] {
-    font-size: 1.05rem;
-    line-height: 1.55;
-    color: var(--docs-fg-muted);
-  }
+  /*
+   * Structured lead: PageTitle.astro renders frontmatter `description` as
+   * `.page-lead[data-page-description]` (styled in that component). The old
+   * first-paragraph-as-lead heuristic is intentionally gone so pages do not
+   * get a double lead.
+   */
 
   .sl-markdown-content h2 {
     font-size: clamp(1.2rem, 2vw, 1.4rem);
@@ -123,6 +123,29 @@
   .sl-markdown-content a:not(.sl-link-button):not(.docs-card):not(.not-found__btn):hover {
     color: var(--docs-accent);
     text-decoration-color: color-mix(in srgb, var(--docs-accent) 55%, transparent);
+  }
+
+  /* External links: small ↗ glyph after the text (Mintlify convention).
+     Excludes same-site absolute URLs, buttons, cards, and image links. */
+  .sl-markdown-content
+    a[href^='http']:not([href^='https://carina.nebutra.com']):not(.sl-link-button):not(
+      .docs-card
+    ):not(:has(img))::after {
+    content: '';
+    display: inline-block;
+    width: 0.7em;
+    height: 0.7em;
+    margin-inline-start: 0.15em;
+    vertical-align: -0.02em;
+    background-color: currentColor;
+    opacity: 0.55;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 17 17 7M9 7h8v8'/%3E%3C/svg%3E")
+      no-repeat center / contain;
+    transition: opacity var(--polish-transition);
+  }
+
+  .sl-markdown-content a[href^='http']:hover::after {
+    opacity: 0.8;
   }
 
   /*
@@ -335,5 +358,88 @@
   /* Version-gated blocks (API versions page, future channel notes) */
   [data-version-only][hidden] {
     display: none !important;
+  }
+
+  /* ── Image lightbox (docs-lightbox.ts) ─────────────────────────────── */
+  .docs-lightbox-target {
+    cursor: zoom-in;
+  }
+
+  dialog.docs-lightbox {
+    padding: 0;
+    border: 0;
+    margin: auto;
+    background: transparent;
+    max-width: 90vw;
+    max-height: 85vh;
+    overflow: visible;
+  }
+
+  dialog.docs-lightbox::backdrop {
+    background: var(--docs-bg-overlay, rgb(8 10 12 / 0.75));
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  dialog.docs-lightbox .docs-lightbox__img {
+    display: block;
+    max-width: 90vw;
+    max-height: 85vh;
+    width: auto;
+    height: auto;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: var(--docs-radius-lg);
+    background: var(--docs-bg-surface);
+    cursor: zoom-out;
+  }
+
+  dialog.docs-lightbox[open] .docs-lightbox__img {
+    animation: docs-lightbox-in 180ms var(--polish-ease, ease-out) both;
+  }
+
+  dialog.docs-lightbox .docs-lightbox__close {
+    position: absolute;
+    top: 0.5rem;
+    inset-inline-end: 0.5rem;
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 999px;
+    background: var(--docs-bg-surface);
+    color: var(--docs-fg-muted);
+    cursor: pointer;
+    transition:
+      color var(--polish-transition),
+      border-color var(--polish-transition);
+  }
+
+  dialog.docs-lightbox .docs-lightbox__close:hover {
+    color: var(--docs-fg);
+    border-color: var(--docs-border);
+  }
+
+  dialog.docs-lightbox .docs-lightbox__close:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  @keyframes docs-lightbox-in {
+    from {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    dialog.docs-lightbox[open] .docs-lightbox__img {
+      animation: none;
+    }
   }
 }

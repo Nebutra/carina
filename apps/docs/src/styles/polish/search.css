@@ -174,4 +174,149 @@
     color: var(--docs-fg);
     background: color-mix(in srgb, var(--docs-fg) 3%, transparent);
   }
+
+  /* ── Result type icons (Mintlify: page glyph vs # anchor glyph) ──── */
+  /* Top-level page glyph is Starlight's own mask; re-tint to tokens. */
+  #starlight__search .pagefind-ui__result-inner > .pagefind-ui__result-title::before {
+    background: var(--docs-fg-subtle) !important;
+  }
+
+  /* Nested sub-results: swap Starlight's tree diagram for a # glyph. */
+  #starlight__search .pagefind-ui__result-nested::before {
+    background: var(--docs-fg-subtle) !important;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M10 3 8 21M16 3l-2 18M3.5 9h17M3 15h17'/%3E%3C/svg%3E")
+      center top 0.85rem / 0.8rem no-repeat !important;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M10 3 8 21M16 3l-2 18M3.5 9h17M3 15h17'/%3E%3C/svg%3E")
+      center top 0.85rem / 0.8rem no-repeat !important;
+  }
+
+  /* ── Nested-result breadcrumb prefix (injected by docs-search-enhance) ── */
+  .docs-search-crumb {
+    color: var(--docs-fg-subtle);
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .docs-search-crumb::after {
+    content: '›';
+    margin-inline: 0.35rem;
+    color: var(--docs-fg-subtle);
+  }
+
+  /* ── Dialog footer: Ask-AI row + keyboard hint bar ──────────────── */
+  /* Sticks to the bottom of the scrolling dialog frame; negative margins
+     bleed through the frame padding (1rem, 1.5rem at ≥50rem). */
+  .docs-search-foot {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    flex: none;
+    margin-block-start: auto;
+    margin-inline: -1rem;
+    margin-block-end: -1rem;
+    background: var(--docs-bg-surface);
+    border-top: 1px solid var(--docs-border-subtle);
+  }
+
+  @media (min-width: 50rem) {
+    .docs-search-foot {
+      margin-inline: -1.5rem;
+      margin-block-end: -1.5rem;
+    }
+  }
+
+  .docs-search-ask {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 0.55rem;
+    appearance: none;
+    border: 0;
+    border-bottom: 1px solid var(--docs-border-subtle);
+    border-radius: 0;
+    background: transparent;
+    color: var(--docs-fg-muted);
+    font-family: var(--docs-font-sans);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    padding: 0.6rem 1rem;
+    text-align: start;
+    cursor: pointer;
+    transition:
+      color var(--polish-transition),
+      background-color var(--polish-transition);
+  }
+
+  .docs-search-ask[hidden] {
+    display: none;
+  }
+
+  .docs-search-ask:hover,
+  .docs-search-ask:focus-visible {
+    color: var(--docs-accent);
+    background: color-mix(in srgb, var(--docs-accent) 6%, transparent);
+  }
+
+  .docs-search-ask:focus-visible {
+    outline: 1px solid color-mix(in srgb, var(--docs-accent) 55%, var(--docs-border));
+    outline-offset: -1px;
+  }
+
+  .docs-search-ask__icon {
+    color: var(--docs-accent);
+    font-size: 0.75rem;
+    flex: none;
+  }
+
+  .docs-search-ask__q {
+    color: var(--docs-fg);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .docs-search-ask:hover .docs-search-ask__q,
+  .docs-search-ask:focus-visible .docs-search-ask__q {
+    color: var(--docs-accent);
+  }
+
+  .docs-search-hints {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 0.5rem 1rem;
+    font-family: var(--docs-font-sans);
+    font-size: 0.6875rem;
+    color: var(--docs-fg-subtle);
+    user-select: none;
+  }
+
+  .docs-search-hints__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .docs-search-hints kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.15rem;
+    height: 1.15rem;
+    padding: 0 0.25rem;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 4px;
+    background: var(--docs-bg);
+    color: var(--docs-fg-muted);
+    font-family: var(--docs-font-sans);
+    font-size: 0.625rem;
+    line-height: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .docs-search-ask {
+      transition: none;
+    }
+  }
 }

@@ -4,13 +4,24 @@
  * Children: <Tab label="...">...</Tab>
  * WAI-ARIA: arrow keys, Home/End, roving tabindex.
  * Panel switch: GSAP autoAlpha crossfade (docs-motion).
+ *
+ * Sync + persistence (Mintlify/Anthropic behavior): groups sharing a
+ * `syncKey` (default: joined tab labels, so identical language groups sync
+ * automatically) switch together and persist to localStorage
+ * (`carina-tabs:<key>`), restored during init before first paint.
  */
 import { uniqueId } from './id';
 
+interface Props {
+  /** Groups with the same key sync selection + persist it. */
+  syncKey?: string;
+}
+
+const { syncKey } = Astro.props;
 const groupId = uniqueId('tabs');
 ---
 
-<div class="docs-tabs" data-tabs={groupId}>
+<div class="docs-tabs" data-tabs={groupId} data-sync-key={syncKey}>
   <div class="docs-tabs__list" role="tablist"></div>
   <div class="docs-tabs__panels">
     <slot />
@@ -20,6 +31,27 @@ const groupId = uniqueId('tabs');
 <script>
   import { crossfadePanel } from '../../scripts/docs-motion';
 
+  const STORE_PREFIX = 'carina-tabs:';
+  const SYNC_EVENT = 'carina:tabs-sync';
+
+  type SyncDetail = { key: string; label: string; source: HTMLElement };
+
+  function readSaved(key: string): string | null {
+    try {
+      return localStorage.getItem(STORE_PREFIX + key);
+    } catch {
+      return null;
+    }
+  }
+
+  function persist(key: string, label: string): void {
+    try {
+      localStorage.setItem(STORE_PREFIX + key, label);
+    } catch {
+      /* private mode / quota — sync still works in-page */
+    }
+  }
+
   function initTabs(root: Element) {
     if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
     root.dataset.ready = '1';
@@ -28,9 +60,20 @@ const groupId = uniqueId('tabs');
     const panels = [...root.querySelectorAll<HTMLElement>('.docs-tab')];
     if (!list || panels.length === 0) return;
 
+    const labels = panels.map((p, i) => p.dataset.label || `Tab ${i + 1}`);
+    const syncKey = root.dataset.syncKey || labels.join('|');
+
+    // Restore persisted selection before building chrome → no flicker.
+    let initial = 0;
+    const saved = readSaved(syncKey);
+    if (saved !== null) {
+      const idx = labels.indexOf(saved);
+      if (idx >= 0) initial = idx;
+    }
+
     list.innerHTML = '';
     const buttons: HTMLButtonElement[] = [];
-    let active = 0;
+    let active = initial;
     let busy = false;
 
     const setChrome = (i: number, focus = false) => {
@@ -44,6 +87,21 @@ const groupId = uniqueId('tabs');
         p.setAttribute('tabindex', j === i ? '0' : '-1');
       });
       if (focus) buttons[i]?.focus();
+    };
+
+    /** Instant switch (persisted restore + cross-group sync — no tween). */
+    const applyInstant = (i: number) => {
+      if (i === active || i < 0 || i >= panels.length) return;
+      setChrome(i);
+      active = i;
+      panels.forEach((p, j) => {
+        const on = j === i;
+        p.hidden = !on;
+        p.classList.toggle('is-active', on);
+        p.style.removeProperty('opacity');
+        p.style.removeProperty('visibility');
+        p.style.removeProperty('transform');
+      });
     };
 
     const select = (i: number, focus = false) => {
@@ -65,6 +123,14 @@ const groupId = uniqueId('tabs');
         },
       });
 
+      // Persist + broadcast to same-key groups on the page.
+      persist(syncKey, labels[i]);
+      document.dispatchEvent(
+        new CustomEvent<SyncDetail>(SYNC_EVENT, {
+          detail: { key: syncKey, label: labels[i], source: root },
+        }),
+      );
+
       // Allow next click after in-tween settles (out 0.12 + in 0.2)
       window.setTimeout(() => {
         busy = false;
@@ -77,25 +143,37 @@ const groupId = uniqueId('tabs');
       }, 360);
     };
 
+    const onSync = (e: Event) => {
+      if (!root.isConnected) {
+        document.removeEventListener(SYNC_EVENT, onSync);
+        return;
+      }
+      const detail = (e as CustomEvent<SyncDetail>).detail;
+      if (!detail || detail.key !== syncKey || detail.source === root) return;
+      const idx = labels.indexOf(detail.label);
+      if (idx >= 0) applyInstant(idx);
+    };
+    document.addEventListener(SYNC_EVENT, onSync);
+
     panels.forEach((panel, i) => {
       const id = panel.id || `${root.dataset.tabs}-panel-${i}`;
       panel.id = id;
       panel.setAttribute('role', 'tabpanel');
       panel.setAttribute('aria-labelledby', `${id}-tab`);
-      panel.hidden = i !== 0;
-      panel.classList.toggle('is-active', i === 0);
-      panel.setAttribute('tabindex', i === 0 ? '0' : '-1');
+      panel.hidden = i !== initial;
+      panel.classList.toggle('is-active', i === initial);
+      panel.setAttribute('tabindex', i === initial ? '0' : '-1');
 
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'docs-tabs__tab';
       btn.setAttribute('role', 'tab');
-      btn.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
+      btn.setAttribute('aria-selected', i === initial ? 'true' : 'false');
       btn.setAttribute('aria-controls', id);
       btn.id = `${id}-tab`;
-      btn.tabIndex = i === 0 ? 0 : -1;
-      btn.textContent = panel.dataset.label || `Tab ${i + 1}`;
-      if (i === 0) btn.classList.add('is-active');
+      btn.tabIndex = i === initial ? 0 : -1;
+      btn.textContent = labels[i];
+      if (i === initial) btn.classList.add('is-active');
 
       btn.addEventListener('click', () => select(i));
       btn.addEventListener('keydown', (e) => {

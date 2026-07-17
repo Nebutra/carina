@@ -22,6 +22,11 @@ import { carinaDark } from './src/themes/carina-code.mjs';
 export default defineConfig({
   site: 'https://carina.nebutra.com',
   trailingSlash: 'always',
+  // Hover prefetch pairs with the ClientRouter (Motion.astro) for instant nav.
+  prefetch: {
+    prefetchAll: true,
+    defaultStrategy: 'hover',
+  },
   markdown: {
     // Still supported in Astro 7 (processor API preferred long-term).
     remarkPlugins: [remarkMath],
@@ -181,18 +186,23 @@ export default defineConfig({
           },
         },
       },
+      /*
+       * IA inspired by Claude Code docs (journey → use → embed → operate → reference),
+       * adapted for a local agent runtime (policy / audit / rollback first-class).
+       * See apps/docs/FEATURE_MAP.md and AUTHORING.md.
+       */
       sidebar: [
         {
-          label: 'Getting Started',
+          label: 'Get started',
           translations: { 'zh-CN': '快速开始' },
           items: [
             {
-              label: 'Introduction',
-              translations: { 'zh-CN': '简介' },
+              label: 'Overview',
+              translations: { 'zh-CN': '概览' },
               link: '/getting-started/introduction/',
             },
             {
-              label: 'Installation',
+              label: 'Install',
               translations: { 'zh-CN': '安装' },
               link: '/getting-started/installation/',
             },
@@ -202,20 +212,25 @@ export default defineConfig({
               link: '/getting-started/quickstart/',
             },
             {
-              label: 'Math notation',
-              translations: { 'zh-CN': '数学公式' },
-              link: '/getting-started/math/',
+              label: 'Common workflows',
+              translations: { 'zh-CN': '常用工作流' },
+              link: '/getting-started/common-workflows/',
             },
           ],
         },
         {
-          label: 'Core Concepts',
-          translations: { 'zh-CN': '核心概念' },
+          label: 'How Carina works',
+          translations: { 'zh-CN': '原理' },
           items: [
             {
               label: 'Runtime model',
               translations: { 'zh-CN': '运行时模型' },
               link: '/concepts/runtime/',
+            },
+            {
+              label: 'Sessions',
+              translations: { 'zh-CN': '会话' },
+              link: '/api/sessions/',
             },
             {
               label: 'Policy & capabilities',
@@ -230,17 +245,63 @@ export default defineConfig({
           ],
         },
         {
-          label: 'Runtime API',
-          translations: { 'zh-CN': 'Runtime API' },
+          label: 'Use Carina',
+          translations: { 'zh-CN': '使用' },
           items: [
             {
-              label: 'Overview',
-              translations: { 'zh-CN': '概览' },
+              label: 'CLI & TUI',
+              translations: { 'zh-CN': 'CLI 与 TUI' },
+              link: '/use/cli-tui/',
+            },
+            {
+              label: 'Agents',
+              translations: { 'zh-CN': 'Agents' },
+              link: '/agents/overview/',
+            },
+            {
+              label: 'Sub-agents',
+              translations: { 'zh-CN': '子 Agent' },
+              link: '/agents/sub-agents/',
+            },
+            {
+              label: 'Tools',
+              translations: { 'zh-CN': '工具' },
+              link: '/tools/overview/',
+            },
+            {
+              label: 'MCP',
+              translations: { 'zh-CN': 'MCP' },
+              link: '/tools/mcp/',
+            },
+            {
+              label: 'Memory',
+              translations: { 'zh-CN': 'Memory' },
+              link: '/memory/overview/',
+            },
+            {
+              label: 'Workflows',
+              translations: { 'zh-CN': '工作流' },
+              link: '/workflows/overview/',
+            },
+            {
+              label: 'Tutorial: review pipeline',
+              translations: { 'zh-CN': '教程：审查流水线' },
+              link: '/workflows/tutorial-review/',
+            },
+          ],
+        },
+        {
+          label: 'Embed Carina',
+          translations: { 'zh-CN': '嵌入' },
+          items: [
+            {
+              label: 'API overview',
+              translations: { 'zh-CN': 'API 概览' },
               link: '/api/overview/',
             },
             {
-              label: 'Sessions',
-              translations: { 'zh-CN': '会话' },
+              label: 'Sessions API',
+              translations: { 'zh-CN': '会话 API' },
               link: '/api/sessions/',
             },
             {
@@ -255,84 +316,14 @@ export default defineConfig({
             },
             {
               label: 'API versions',
-              translations: { 'zh-CN': 'API 版本通道' },
+              translations: { 'zh-CN': 'API 版本' },
               link: '/api/versions/',
             },
           ],
         },
         {
-          label: 'Agents',
-          translations: { 'zh-CN': 'Agents' },
-          items: [
-            {
-              label: 'Overview',
-              translations: { 'zh-CN': '概览' },
-              link: '/agents/overview/',
-            },
-            {
-              label: 'Sub-agents',
-              translations: { 'zh-CN': '子 Agent' },
-              link: '/agents/sub-agents/',
-            },
-          ],
-        },
-        {
-          label: 'Tools',
-          translations: { 'zh-CN': 'Tools' },
-          items: [
-            {
-              label: 'Overview',
-              translations: { 'zh-CN': '概览' },
-              link: '/tools/overview/',
-            },
-            {
-              label: 'MCP integrations',
-              translations: { 'zh-CN': 'MCP 集成' },
-              link: '/tools/mcp/',
-            },
-          ],
-        },
-        {
-          label: 'Memory',
-          translations: { 'zh-CN': 'Memory' },
-          items: [
-            {
-              label: 'Overview',
-              translations: { 'zh-CN': '概览' },
-              link: '/memory/overview/',
-            },
-          ],
-        },
-        {
-          label: 'Workflows',
-          translations: { 'zh-CN': 'Workflows' },
-          items: [
-            {
-              label: 'Overview',
-              translations: { 'zh-CN': '概览' },
-              link: '/workflows/overview/',
-            },
-            {
-              label: 'Tutorial: review pipeline',
-              translations: { 'zh-CN': '教程：审查流水线' },
-              link: '/workflows/tutorial-review/',
-            },
-          ],
-        },
-        {
-          label: 'Observability',
-          translations: { 'zh-CN': '可观测性' },
-          items: [
-            {
-              label: 'Traces & audit',
-              translations: { 'zh-CN': '追踪与审计' },
-              link: '/observability/traces/',
-            },
-          ],
-        },
-        {
-          label: 'Deployment',
-          translations: { 'zh-CN': '部署' },
+          label: 'Deploy & operate',
+          translations: { 'zh-CN': '部署与运维' },
           items: [
             {
               label: 'Local install',
@@ -345,9 +336,30 @@ export default defineConfig({
               link: '/deployment/workers/',
             },
             {
+              label: 'Traces & events',
+              translations: { 'zh-CN': '追踪与事件' },
+              link: '/observability/traces/',
+            },
+            {
               label: 'FAQ',
               translations: { 'zh-CN': '常见问题' },
               link: '/deployment/faq/',
+            },
+          ],
+        },
+        {
+          label: 'Reference',
+          translations: { 'zh-CN': '参考' },
+          items: [
+            {
+              label: 'Glossary',
+              translations: { 'zh-CN': '术语表' },
+              link: '/reference/glossary/',
+            },
+            {
+              label: 'Math notation',
+              translations: { 'zh-CN': '数学公式' },
+              link: '/reference/math/',
             },
           ],
         },

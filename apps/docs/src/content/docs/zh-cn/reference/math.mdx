@@ -1,0 +1,91 @@
+---
+title: 数学公式
+description: Carina 文档的 KaTeX LaTeX 支持 — 行内、块级、矩阵与复杂 AMS 排版。
+sidebar:
+  order: 4
+---
+
+import Math from '../../../../components/mdx/Math.astro';
+import Callout from '../../../../components/ui/Callout.astro';
+import Expandable from '../../../../components/mdx/Expandable.astro';
+
+文档站使用 **[KaTeX](https://katex.org/)** 在构建期渲染 LaTeX。
+
+- **行内：** 单美元 `$E = mc^2$` → $E = mc^2$
+- **块级：** 独占一行的双美元 `$$ … $$`
+- **兜底：** `<Math formula="..." />` 用于程序化或极密表达式
+
+<Callout variant="tip">
+  日常公式优先 Markdown `$…$` / `$$…$$`。需要组件参数、条件渲染或隔离易碎表达式时再用 `<Math>`。
+</Callout>
+
+## 行内
+
+高斯积分 $\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}$。
+
+策略风险等级可记为 $\mathrm{risk}(c) \in \{0,1,2,3,4,5\}$。
+
+## 块级
+
+$$
+\nabla \cdot \mathbf{E} = \frac{\rho}{\varepsilon_0},\quad
+\nabla \cdot \mathbf{B} = 0
+$$
+
+## 对齐
+
+$$
+\begin{aligned}
+H(X)
+  &= -\sum_{x} p(x)\log p(x) \\
+  &= \mathbb{E}_{x\sim p}\bigl[-\log p(x)\bigr]
+\end{aligned}
+$$
+
+## 矩阵
+
+$$
+\begin{pmatrix}
+a_{11} & a_{12} \\
+a_{21} & a_{22}
+\end{pmatrix}
+\begin{pmatrix}
+x_1 \\ x_2
+\end{pmatrix}
+=
+\begin{pmatrix}
+b_1 \\ b_2
+\end{pmatrix}
+$$
+
+## 分段
+
+$$
+\mathrm{decision}(a) =
+\begin{cases}
+\texttt{allow}  & \text{if } \mathrm{risk}(a) \le 1 \\
+\texttt{approve}& \text{if } 2 \le \mathrm{risk}(a) \le 3 \\
+\texttt{deny}   & \text{if } \mathrm{risk}(a) \ge 4
+\end{cases}
+$$
+
+## 复杂公式（`<Math>`）
+
+<Math
+  formula={`
+\\begin{aligned}
+\\mathcal{L}(\\theta)
+  &= \\mathbb{E}_{(x,y)\\sim\\mathcal{D}}
+     \\bigl[\\ell(f_\\theta(x), y)\\bigr]
+     + \\lambda\\,\\|\\theta\\|_2^2
+\\end{aligned}
+`}
+/>
+
+## KaTeX 边界
+
+<Expandable title="何时 KaTeX 不够用">
+  KaTeX 覆盖工程文档里绝大多数 AMS 数学，但**不是**完整 TeX（无任意宏包、有限 TikZ）。若遇到不支持的结构：简化表达式、改用 Mermaid/图，或离线预渲染 SVG 后用 `<Frame>` 嵌入。
+
+  默认不上全站 MathJax — 更重，且本站极少需要。
+</Expandable>

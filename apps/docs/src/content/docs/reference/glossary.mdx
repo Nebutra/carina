@@ -1,0 +1,68 @@
+---
+title: Glossary
+description: Carina terms — session, profile, capability, patch, worker, and more.
+sidebar:
+  order: 1
+---
+
+Short definitions for terms used across the docs. For product positioning see [Overview](/getting-started/introduction/).
+
+## Session
+
+A durable unit of work bound to a **workspace root** and a **permission profile**. Created with `session.create`. Holds tasks, events, and audit history.
+
+## Workspace
+
+The repository (or directory) tree the session is allowed to touch. Bound at session creation; policy resolves paths against it.
+
+## Profile
+
+A named permission bundle (e.g. `safe-edit`, `read-only`) evaluated by the capability kernel for every side effect.
+
+## Capability
+
+One of the fourteen gated action types (FileRead, CommandExec, PatchApply, MemoryWrite, SubagentSpawn, …). Every meaningful effect maps to a capability check.
+
+## Permission decision
+
+Kernel result: `allow`, `deny`, or `require-approval`. Recorded on the audit trail and referenced by side-effect events.
+
+## Agent loop
+
+ReAct-style cycle: model proposes an action → kernel authorizes → tools execute → observation returns. The model decides; it does not bypass the kernel.
+
+## Sub-agent
+
+An isolated child run with **attenuated** capabilities (never more than the parent). Spawned via SubagentSpawn / `spawn` tooling.
+
+## Worker
+
+A remote or local executor process that polls work under credentials and lease fencing. See [Workers](/deployment/workers/).
+
+## Patch
+
+A transactional file mutation with provenance and a rollback pointer. Preferred write path under `safe-edit` (via PatchApply).
+
+## Audit / event log
+
+Append-only, session-scoped log of decisions and effects. Supports hash-chain verification (`carina audit verify`).
+
+## Item stream
+
+Normalized projection of session activity for UIs and SDKs (distinct from raw audit replay).
+
+## Daemon
+
+Local process (`carina-daemon`) that owns sessions, policy evaluation, and the audit store.
+
+## Gateway
+
+Optional HTTP surface that exposes scoped JSON-RPC / agent APIs when explicitly enabled — not required for local TUI use.
+
+## MCP
+
+Model Context Protocol servers/tools mediated by Carina so external tools still hit policy and audit.
+
+## Nebutra Cloud boundary
+
+Optional identity/sync layer around Carina. **Local machine remains authority** for execution and policy.

@@ -1,13 +1,17 @@
 ---
 /**
- * Doc pages: breadcrumb + page actions + default title.
+ * Doc pages: breadcrumb + page actions + default title + structured lead
+ * (frontmatter `description` rendered under the H1, Mintlify-style).
  * Splash/landing: render nothing (Hero owns hierarchy).
+ * Also mounts the content-image lightbox (renders on every doc page).
  */
 import Default from '@astrojs/starlight/components/PageTitle.astro';
 import Breadcrumb from './Breadcrumb.astro';
 import PageActions from './PageActions.astro';
 
-const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
+const { entry } = Astro.locals.starlightRoute;
+const isSplash = entry.data.template === 'splash';
+const description = entry.data.description;
 ---
 
 {
@@ -18,9 +22,21 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
         <PageActions />
       </div>
       <Default />
+      {description && (
+        <p class="page-lead" data-page-description>
+          {description}
+        </p>
+      )}
     </>
   )
 }
+
+<script>
+  import { initLightbox } from '../scripts/docs-lightbox';
+
+  initLightbox();
+  document.addEventListener('astro:page-load', initLightbox);
+</script>
 
 <style>
   .page-title-meta {
@@ -44,5 +60,14 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
     margin-inline-start: auto;
     flex: 0 0 auto;
   }
-</style>
 
+  /* Structured lead — frontmatter description under the H1 */
+  .page-lead {
+    margin: 0.6rem 0 0;
+    font-size: 1.075rem;
+    line-height: 1.6;
+    color: var(--docs-fg-muted);
+    max-width: 65ch;
+    text-wrap: pretty;
+  }
+</style>
