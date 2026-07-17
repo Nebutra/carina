@@ -40,3 +40,15 @@ Clients subscribe to typed events (status, tool start/end, approvals, cost delta
 ## Channel reconciliation
 
 After a crash, ambiguous channel deliveries (`effect_started` / `effect_applied`) appear in `channel.event.pending`. Operators must explicitly `channel.event.reconcile` as `executed` or `not_executed` — Carina never chooses automatically.
+
+## Source of truth
+
+- Events: `protocol/events/events.json` (36 types)
+- Audit guarantees: `docs/security-model.md` · [Audit & rollback](/concepts/audit/)
+- CLI: `carina audit` · `carina audit verify` · `carina items` · `carina cost` · `carina export`
+- Related: [Sessions API](/api/sessions/) · [JSON-RPC](/api/json-rpc/)
+
+## Next
+
+- [Common workflows](/getting-started/common-workflows/) — inspect / verify recipes
+- [Method catalog](/api/methods/) — `session.*` / audit export methods

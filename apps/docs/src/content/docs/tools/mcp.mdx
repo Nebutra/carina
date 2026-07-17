@@ -44,3 +44,15 @@ Expose a curated tool set to external MCP hosts. Prefer least privilege — do n
 ## Plugin model (WASM)
 
 WASM plugins (`carina-plugin-runtime`) start with zero permissions and declare capabilities in manifests. Related: `plugin.inspect`, `plugin.run` (optional `signature_base64`).
+
+## Source of truth
+
+- Manager: `go/mcp` · server surface: `go/mcpserver`
+- Operator inventory: `mcp.inventory` (public names/health only)
+- Plugins: `carina-plugin-runtime` · `docs/plugin-model.md`
+- Related: [Tools overview](/tools/overview/) · [Policy](/concepts/policy/) · [JSON-RPC](/api/json-rpc/)
+
+## Next
+
+- [Method catalog](/api/methods/) — filter MCP / plugin methods
+- [Local deploy](/deployment/local/) — config layout for MCP servers

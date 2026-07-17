@@ -117,3 +117,13 @@ Useful when the formula is built in JS or you want display isolation:
 | Component | `<Math formula={String.raw`…`} />` |
 
 Dollar signs inside **code fences** are not math — they stay literal.
+
+## Source of truth
+
+- Rendering: KaTeX pipeline in `apps/docs` (Starlight + rehype)
+- Authoring: `apps/docs/AUTHORING.md` · component `<Math>`
+- Not a product feature of the runtime — docs-only
+
+## Next
+
+- [Authoring components](/reference/math/) stay here; product path starts at [Overview](/getting-started/introduction/)

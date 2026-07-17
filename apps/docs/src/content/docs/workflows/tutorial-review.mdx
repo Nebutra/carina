@@ -71,3 +71,14 @@ carina workflow stop RUN_ID
 <Callout variant="tip">
   For write-gated pipelines, insert a human approval step or run reviewers under `read-only` profiles so synthesis cannot mutate the tree without an explicit follow-up.
 </Callout>
+
+## Source of truth
+
+- Example: `examples/workflows/review.json` · streaming: `examples/workflows/swarm-review.json`
+- Concepts: [Workflows overview](/workflows/overview/) · `docs/workflows.md`
+- CLI: `carina workflow …` · audit: `carina audit` / `carina audit verify`
+
+## Next
+
+- [Sub-agents](/agents/sub-agents/) — attenuation model for each step
+- [Audit](/concepts/audit/) — verify after the run

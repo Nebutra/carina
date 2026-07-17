@@ -19,3 +19,15 @@ systemctl stop carina-worker   # 排水后升级
 ```
 
 远程优先 `wss://` Gateway；直接 TCP 仅限 loopback。
+
+## 权威来源
+
+- 执行器契约：`docs/worker-executor.md`
+- CLI：`carina worker list|register|heartbeat|revoke` · `carina workers`
+- RPC：`worker.*` / `work.*` · 镜像：`packaging/docker/worker.Dockerfile`
+- 相关：[工作流](/zh-cn/workflows/overview/) · [JSON-RPC](/zh-cn/api/json-rpc/)
+
+## 下一步
+
+- [本地部署](/zh-cn/deployment/local/) — 单机基线
+- [方法目录](/zh-cn/api/methods/) — worker 租约方法

@@ -61,3 +61,13 @@ On [Method catalog](/api/methods/), expand any method for:
 
 - sample JSON / TypeScript / CLI tabs
 - **Try it** — edit the JSON-RPC body, copy curl/CLI, or `Send` to a local gateway endpoint (default `http://127.0.0.1:8777/rpc`)
+
+## Source of truth
+
+- Catalog generation: `apps/docs` → `pnpm sync-protocol`
+- Pins: `src/data/rpc-catalog-*.json` and `public/data/`
+- Related: [Method catalog](/api/methods/) · [JSON-RPC](/api/json-rpc/) · [API overview](/api/overview/)
+
+## Next
+
+- Switch **Version** in the header (`0.6.x` / `next`) then open [Method catalog](/api/methods/)

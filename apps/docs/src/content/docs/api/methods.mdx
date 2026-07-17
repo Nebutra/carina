@@ -33,3 +33,14 @@ Use the header **Version** control for **0.6.x** / **next** ([channel model](/ap
 `remote: true` means the method may be exposed through the Gateway descriptor catalog when remote surfaces are enabled. `control-plane` flags high-risk control-plane writes.
 
 See also: [API versions](/api/versions/) for how `0.6.x` / `next` catalogs are produced.
+
+## Source of truth
+
+- Generated from `protocol/jsonrpc/methods.json` via `pnpm sync-protocol`
+- Channel pins: `src/data/rpc-catalog-0.6.x.json` / `rpc-catalog-next.json` (+ `public/data/`)
+- Narrative: [API overview](/api/overview/) · [JSON-RPC](/api/json-rpc/) · [Versions](/api/versions/)
+
+## Next
+
+- [Sessions](/api/sessions/) — session lifecycle deep dive
+- [Playground](/api/methods/) — expand any method → Try it

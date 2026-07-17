@@ -25,10 +25,10 @@ make install
 ## Start the runtime
 
 ```bash title="start-daemon.sh"
-# daemon discovers kernel service + native tools next to its binary
-carina-daemon &
-# or
+# Prefer CLI-owned daemon lifecycle (discovers kernel + native tools next to the binary)
 carina daemon start
+carina daemon status
+# Advanced: carina-daemon &  (legacy / packaging layouts)
 
 carina version
 carina doctor
@@ -66,3 +66,15 @@ carina doctor
 <Callout variant="note">
   Package names and install URLs track the open-source release channel. Prefer `carina doctor` after any upgrade.
 </Callout>
+
+## Source of truth
+
+- Daemon lifecycle: `carina daemon start|status|stop|logs` · `carina doctor`
+- Packaging: `docs/release.md`
+- Related: [Installation](/getting-started/installation/) · [CLI reference](/reference/cli/) · [API overview](/api/overview/)
+
+## Next
+
+- [Quickstart](/getting-started/quickstart/) — first governed session
+- [Workers](/deployment/workers/) — when one machine is not enough
+- [FAQ](/deployment/faq/) — product boundaries

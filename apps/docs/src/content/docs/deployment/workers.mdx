@@ -67,3 +67,15 @@ Roll pools one worker at a time. On Unix, executor descendants share a process g
 <Callout variant="warning">
   Registry publication, hosted Gateway DNS/TLS, and production credentials are external provisioning work — not baked into the open-source runtime.
 </Callout>
+
+## Source of truth
+
+- Executor contract: `docs/worker-executor.md`
+- CLI: `carina worker list|register|heartbeat|revoke` · `carina workers`
+- RPC: `worker.*` / `work.*` · packaging: `packaging/docker/worker.Dockerfile`
+- Related: [Workflows](/workflows/overview/) · [JSON-RPC](/api/json-rpc/)
+
+## Next
+
+- [Local deploy](/deployment/local/) — single-machine baseline
+- [Method catalog](/api/methods/) — worker lease methods

@@ -25,5 +25,17 @@ description: ReAct 编程 Agent — 模型决策、内核授权、Zig 执行。
 ```bash title="agent-loop.sh"
 carina run "fix the failing test in parser.go"
 carina audit SESSION
-carina patch rollback ID
+carina patch rollback SESSION PATCH_ID
 ```
+
+## 权威来源
+
+- Agent 循环：`docs/agent.md` · reasoner：`go/daemon/reasoner.go`
+- CLI：`carina run` / `carina ask` · [CLI 参考](/zh-cn/reference/cli/)
+- 相关：[策略](/zh-cn/concepts/policy/) · [工具](/zh-cn/tools/overview/) · [子 Agent](/zh-cn/agents/sub-agents/)
+
+## 下一步
+
+- [子 Agent](/zh-cn/agents/sub-agents/) — 能力衰减委托
+- [常用工作流](/zh-cn/getting-started/common-workflows/) — 首条受治理会话
+- [审计](/zh-cn/concepts/audit/) — 跑完后核验

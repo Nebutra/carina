@@ -73,3 +73,14 @@ These emit machine-readable JSON and **never** bypass kernel policy.
 2. Arguments are validated before execution
 3. Outcomes (success, denial, error) are audit events
 4. Plugins and tools carry manifests; undeclared capability use → `PolicyViolation`
+
+## Source of truth
+
+- Agent tool table + Zig native bins (`carina-scan`, `carina-grep`, `carina-patch-native`, …)
+- Capability requirements: [Policy](/concepts/policy/) · `protocol/capabilities/`
+- Related: [MCP](/tools/mcp/) · [Agents](/agents/overview/) · [CLI reference](/reference/cli/)
+
+## Next
+
+- [MCP](/tools/mcp/) — external tools still policy-gated
+- [Audit](/concepts/audit/) — every tool outcome is an event

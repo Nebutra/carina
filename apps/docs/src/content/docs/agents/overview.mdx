@@ -110,7 +110,7 @@ carina run "fix the failing test in parser.go"
 carina audit SESSION
 carina audit verify SESSION
 carina patch list SESSION
-carina patch rollback ID
+carina patch rollback SESSION PATCH_ID
 ```
 
 ## Surfaces that consume agent state
@@ -124,3 +124,15 @@ carina patch rollback ID
 <Callout variant="tip">
   See [Sub-agents](/agents/sub-agents/) for attenuated delegation and [Policy](/concepts/policy/) for capability profiles.
 </Callout>
+
+## Source of truth
+
+- Agent loop: `docs/agent.md` · reasoner wiring in `go/daemon/reasoner.go`
+- CLI: `carina run` / `carina ask` · [CLI reference](/reference/cli/)
+- Related: [Policy](/concepts/policy/) · [Tools](/tools/overview/) · [Sub-agents](/agents/sub-agents/)
+
+## Next
+
+- [Sub-agents](/agents/sub-agents/) — attenuated delegation
+- [Common workflows](/getting-started/common-workflows/) — first governed session recipes
+- [Audit](/concepts/audit/) — inspect and verify after a run

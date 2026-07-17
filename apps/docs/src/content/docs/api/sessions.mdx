@@ -162,3 +162,15 @@ for await (const event of session.events()) {
 <Callout variant="tip">
   Prefer `safe-edit` for interactive coding. Use `read-only` for review-only agents and sub-agents.
 </Callout>
+
+## Source of truth
+
+- Lifecycle notes: `docs/tui-session-lifecycle.md`
+- RPC families: `session.*` · `goal.*` · `session.checkpoint.*`
+- CLI: `carina sessions` · `carina resume` · `carina items` · `carina session review`
+- Related: [JSON-RPC](/api/json-rpc/) · [Method catalog](/api/methods/) · [Audit](/concepts/audit/)
+
+## Next
+
+- [Quickstart](/getting-started/quickstart/) — create a session from the CLI
+- [Traces](/observability/traces/) — items, events, cost
