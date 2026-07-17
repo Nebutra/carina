@@ -38,9 +38,9 @@ Site: https://carina.nebutra.com
 - [JSON-RPC 参考](https://carina.nebutra.com/zh-cn/api/json-rpc/): 本地 JSON-RPC 控制平面方法参考。
 - [方法目录](https://carina.nebutra.com/zh-cn/api/methods/): 由 protocol/jsonrpc/methods.json 同步的 JSON-RPC 方法目录。
 - [Runtime API 概览](https://carina.nebutra.com/zh-cn/api/overview/): JSON-RPC、可选 Gateway、作用域与 SDK 表面。
-- [会话](https://carina.nebutra.com/zh-cn/api/sessions/): 创建、附着、引导与关闭会话。
+- [会话](https://carina.nebutra.com/zh-cn/api/sessions/): 创建、控制、流式读取与导出 Carina 会话。
 - [API 版本通道](https://carina.nebutra.com/zh-cn/api/versions/): 文档 0.6.x / next 通道与协议目录的对应关系。
-- [审计与回滚](https://carina.nebutra.com/zh-cn/concepts/audit/): 哈希链审计与事务补丁恢复。
+- [审计与回滚](https://carina.nebutra.com/zh-cn/concepts/audit/): 追加写事件日志、哈希链校验与事务补丁恢复。
 - [策略与能力](https://carina.nebutra.com/zh-cn/concepts/policy/): 能力类型、权限配置、命令风险等级与默认安全姿态。
 - [运行时模型](https://carina.nebutra.com/zh-cn/concepts/runtime/): 分层架构 — 客户端、Go 控制面、Rust 能力内核、Zig 工具链。
 - [常见问题](https://carina.nebutra.com/zh-cn/deployment/faq/): 关于部署、安全与产品边界的常见问题。

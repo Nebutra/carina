@@ -8,19 +8,24 @@ sidebar:
 import Callout from '../../../../components/ui/Callout.astro';
 import Steps from '../../../../components/mdx/Steps.astro';
 import Step from '../../../../components/mdx/Step.astro';
+import Cards from '../../../../components/mdx/Cards.astro';
+import Card from '../../../../components/mdx/Card.astro';
+import Tooltip from '../../../../components/mdx/Tooltip.astro';
+import Badge from '../../../../components/mdx/Badge.astro';
+import Expandable from '../../../../components/mdx/Expandable.astro';
 
-从干净安装到在本地仓库上跑通一次受治理的会话。
+从干净安装到在本地仓库上跑通一次受治理的会话。 <Badge variant="accent">约 5 分钟</Badge>
 
 <Steps>
   <Step title="启动 daemon">
-    ```bash title="start-daemon.sh"
+    ```bash title="start-daemon.sh" showLineNumbers
     carina-daemon &
     # 或
     carina daemon start
-    carina doctor
+    carina doctor # [!code highlight]
     ```
 
-    daemon 负责会话、策略评估与审计存储，并发现同目录下的 kernel 服务与原生工具。
+    daemon 负责会话、<Tooltip tip="由 Rust 能力内核按最小权限配置评估。">策略评估</Tooltip>与审计存储，并发现同目录下的 kernel 服务与原生工具。
   </Step>
 
   <Step title="进入工作区">
@@ -30,10 +35,10 @@ import Step from '../../../../components/mdx/Step.astro';
   </Step>
 
   <Step title="运行编码任务">
-    ```bash title="run-task.sh"
+    ```bash title="run-task.sh" showLineNumbers
     carina run "Summarize the top-level architecture of this repo"
     # 或修复具体问题
-    carina run "fix the failing test in parser.go"
+    carina run "fix the failing test in parser.go" # [!code highlight]
     ```
 
     交互式 TUI：
@@ -41,23 +46,40 @@ import Step from '../../../../components/mdx/Step.astro';
     ```bash frame="none"
     carina
     ```
+
+    会改变系统状态的工具调用都会经过能力内核；高风险操作可能要求审批。
   </Step>
 
-  <Step title="检查审计链">
-    ```bash title="audit.sh"
+  <Step title="检查审计轨迹">
+    ```bash title="audit.sh" showLineNumbers
     carina audit SESSION
     carina audit verify SESSION
     carina audit tail --last 5
     ```
+
+    每条记录参与哈希链，事后改写可被检测。
   </Step>
 
   <Step title="补丁与回滚">
-    ```bash title="patch.sh"
+    ```bash title="patch.sh" showLineNumbers
     carina patch list SESSION
-    carina patch rollback PATCH_ID
+    carina patch rollback PATCH_ID # [!code highlight]
+    ```
+
+    安全编辑的 diff 示意：
+
+    ```go title="parser.go" showLineNumbers
+    // before
+    return err // [!code --]
+    // after
+    return fmt.Errorf("parse: %w", err) // [!code ++]
     ```
   </Step>
 </Steps>
+
+<Expandable title="doctor 失败怎么办？">
+  运行 `carina doctor -v`，确认 `~/.carina/` 下存在 daemon 套接字。安装与 PATH 见 [安装](/zh-cn/getting-started/installation/)。
+</Expandable>
 
 ## 可选下一步
 
@@ -67,18 +89,14 @@ cp examples/workflows/review.json .carina/workflows/
 carina workflow run review
 ```
 
-```json title="session.create.json"
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "session.create",
-  "params": {
-    "workspace_root": "/repo",
-    "profile": "safe-edit"
-  }
-}
-```
-
-<Callout variant="success">
-  继续：[运行时模型](/zh-cn/concepts/runtime/) 或 [Runtime API](/zh-cn/api/overview/)。
-</Callout>
+<Cards>
+  <Card title="策略与能力" href="/zh-cn/concepts/policy/">
+    能力类型、配置与审批模式。
+  </Card>
+  <Card title="会话 API" href="/zh-cn/api/sessions/">
+    `session.create` 参数与结果字段。
+  </Card>
+  <Card title="方法目录" href="/zh-cn/api/methods/">
+    可搜索的 JSON-RPC 目录与 Playground。
+  </Card>
+</Cards>

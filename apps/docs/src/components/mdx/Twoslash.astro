@@ -1,0 +1,133 @@
+---
+/**
+ * Build-time Twoslash TypeScript block (Mintlify twoslash parity).
+ * Hover tokens for types — rendered via @shikijs/twoslash + shiki.
+ */
+import { codeToHtml } from 'shiki';
+import { transformerTwoslash } from '@shikijs/twoslash';
+import { carinaDark } from '../../themes/carina-code.mjs';
+
+interface Props {
+  code: string;
+  title?: string;
+  lang?: 'ts' | 'tsx' | 'js' | 'jsx';
+}
+
+const { code, title = 'example.ts', lang = 'ts' } = Astro.props;
+
+let html = '';
+let error: string | null = null;
+try {
+  html = await codeToHtml(code, {
+    lang,
+    theme: carinaDark as never,
+    transformers: [
+      transformerTwoslash({
+        twoslashOptions: {
+          handbookOptions: {
+            noErrors: true,
+          },
+        },
+      }),
+    ],
+  });
+} catch (e) {
+  error = e instanceof Error ? e.message : String(e);
+  // Fallback: plain highlighted code without twoslash
+  try {
+    html = await codeToHtml(code, { lang, theme: carinaDark as never });
+  } catch {
+    html = `<pre><code>${code.replace(/</g, '&lt;')}</code></pre>`;
+  }
+}
+---
+
+<figure class="docs-twoslash" data-twoslash>
+  <div class="docs-twoslash__chrome">
+    <span class="docs-twoslash__title">{title}</span>
+    <span class="docs-twoslash__badge">twoslash</span>
+  </div>
+  {
+    error ? (
+      <p class="docs-twoslash__warn">
+        Twoslash fell back to plain highlight: {error}
+      </p>
+    ) : null
+  }
+  <div class="docs-twoslash__body" set:html={html} />
+</figure>
+
+<style is:global>
+  .docs-twoslash {
+    margin: 1.25rem 0;
+    border: 1px solid var(--polish-code-border, var(--carina-code-border));
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--polish-code-bg, var(--carina-code-void));
+  }
+
+  .docs-twoslash__chrome {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.75rem;
+    border-bottom: 1px solid var(--polish-code-border, var(--carina-code-border));
+    background: var(--polish-code-chrome, var(--carina-code-chrome));
+  }
+
+  .docs-twoslash__title {
+    font-family: var(--docs-font-mono);
+    font-size: 0.75rem;
+    color: var(--polish-code-muted, var(--carina-code-muted));
+  }
+
+  .docs-twoslash__badge {
+    margin-inline-start: auto;
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--docs-accent);
+    border: 1px solid color-mix(in srgb, var(--docs-accent) 35%, transparent);
+    border-radius: 999px;
+    padding: 0.08rem 0.4rem;
+  }
+
+  .docs-twoslash__warn {
+    margin: 0;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--docs-warning);
+    background: color-mix(in srgb, var(--docs-warning) 10%, transparent);
+  }
+
+  .docs-twoslash__body pre {
+    margin: 0 !important;
+    padding: 0.9rem 1rem !important;
+    background: transparent !important;
+    overflow-x: auto;
+    font-size: 0.8125rem !important;
+    line-height: 1.65 !important;
+  }
+
+  .docs-twoslash__body code {
+    font-family: var(--docs-font-mono) !important;
+  }
+
+  /* Shiki twoslash popovers */
+  .docs-twoslash .twoslash-hover {
+    position: relative;
+    border-bottom: 1px dotted color-mix(in srgb, var(--carina-ion-cyan) 50%, transparent);
+    cursor: help;
+  }
+
+  .docs-twoslash .twoslash-popup-container {
+    z-index: 40;
+  }
+
+  .docs-twoslash .twoslash-popup-code,
+  .docs-twoslash .twoslash-popup-docs {
+    font-size: 0.75rem;
+    line-height: 1.45;
+  }
+</style>

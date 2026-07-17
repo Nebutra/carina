@@ -6,17 +6,42 @@ sidebar:
 ---
 
 import Callout from '../../../components/ui/Callout.astro';
-
+import Mermaid from '../../../components/mdx/Mermaid.astro';
+import Tree from '../../../components/mdx/Tree.astro';
+import Expandable from '../../../components/mdx/Expandable.astro';
 
 A workflow is a declarative multi-step agent pipeline: a **dependency DAG** of steps, each delegated to an isolated, capability-attenuated subagent, with every step audited and (in streaming mode) resumable.
 
 Source: `docs/workflows.md`. Schema: `protocol/schemas/workflow-graph.schema.json`.
 
+## Topology
+
+<Mermaid caption="Parallel review arms join into a synthesis step.">
+flowchart TD
+  scan[scan · scout] --> bugs[bugs · reviewer]
+  scan --> perf[perf · reviewer]
+  bugs --> report[report · writer]
+  perf --> report
+</Mermaid>
+
 ## Writing a workflow
 
-Workflows live as JSON under `.carina/workflows/` — project (`<workspace>/.carina/workflows/`, takes precedence) or home (`~/.carina/workflows/`). The `"name"` field is the identifier.
+Workflows live as JSON under `.carina/workflows/`:
 
-```json title="review.json"
+<Tree
+  items={[
+    {
+      name: '<workspace>/.carina/workflows/',
+      children: [{ name: 'review.json' }],
+    },
+    {
+      name: '~/.carina/workflows/',
+      children: [{ name: 'home overrides…' }],
+    },
+  ]}
+/>
+
+```json title="review.json" showLineNumbers
 {
   "name": "review",
   "description": "Scan changed files, review in parallel, then synthesize a report.",
@@ -34,6 +59,10 @@ Workflows live as JSON under `.carina/workflows/` — project (`<workspace>/.car
 - Steps with no shared dependency run in parallel
 
 Example in-repo: `examples/workflows/review.json`.
+
+<Expandable title="Why attenuated subagents?">
+  Each step runs under a child profile that cannot exceed the outer session's capabilities — so a parallel reviewer cannot gain network or secret access the parent never had.
+</Expandable>
 
 ## Running
 

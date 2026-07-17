@@ -1,0 +1,120 @@
+---
+/**
+ * Client-rendered Mermaid diagram (Fumadocs/Mintlify diagram surface).
+ * Pass diagram source in the default slot as plain text.
+ */
+interface Props {
+  caption?: string;
+}
+
+const { caption } = Astro.props;
+const raw = await Astro.slots.render('default');
+// Strip HTML wrappers MDX may inject around fenced content
+const code = raw
+  .replace(/<[^>]+>/g, '')
+  .replace(/&lt;/g, '<')
+  .replace(/&gt;/g, '>')
+  .replace(/&amp;/g, '&')
+  .replace(/&quot;/g, '"')
+  .trim();
+---
+
+<figure class="docs-mermaid" data-mermaid>
+  <pre class="docs-mermaid__src" data-mermaid-src hidden>{code}</pre>
+  <div class="docs-mermaid__canvas" data-mermaid-canvas aria-label="Diagram"></div>
+  {caption && <figcaption class="docs-mermaid__cap">{caption}</figcaption>}
+</figure>
+
+<script>
+  let mermaidReady: Promise<typeof import('mermaid')> | null = null;
+
+  async function getMermaid() {
+    if (!mermaidReady) {
+      mermaidReady = import('mermaid').then(async (m) => {
+        const mermaid = m.default;
+        const dark =
+          document.documentElement.dataset.theme === 'dark' ||
+          document.documentElement.dataset.theme === 'carina-dark' ||
+          (!document.documentElement.dataset.theme &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme: dark ? 'dark' : 'neutral',
+          fontFamily: 'var(--docs-font-sans, ui-sans-serif, system-ui, sans-serif)',
+        });
+        return m;
+      });
+    }
+    return mermaidReady;
+  }
+
+  async function renderOne(root: HTMLElement) {
+    if (root.dataset.rendered === '1') return;
+    const src = root.querySelector<HTMLElement>('[data-mermaid-src]')?.textContent?.trim();
+    const canvas = root.querySelector<HTMLElement>('[data-mermaid-canvas]');
+    if (!src || !canvas) return;
+    try {
+      const mod = await getMermaid();
+      const id = `mmd-${Math.random().toString(36).slice(2, 10)}`;
+      const { svg } = await mod.default.render(id, src);
+      canvas.innerHTML = svg;
+      root.dataset.rendered = '1';
+    } catch (err) {
+      canvas.innerHTML = `<p class="docs-mermaid__err">Diagram failed to render.</p>`;
+      console.warn('[docs-mermaid]', err);
+    }
+  }
+
+  function boot() {
+    document.querySelectorAll<HTMLElement>('[data-mermaid]').forEach((el) => {
+      el.dataset.rendered = '';
+      void renderOne(el);
+    });
+  }
+
+  boot();
+  document.addEventListener('astro:page-load', boot);
+  // Theme toggle may change data-theme
+  const mo = new MutationObserver(() => {
+    document.querySelectorAll<HTMLElement>('[data-mermaid]').forEach((el) => {
+      el.dataset.rendered = '';
+    });
+    boot();
+  });
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+</script>
+
+<style>
+  .docs-mermaid {
+    margin: 1.5rem 0;
+  }
+
+  .docs-mermaid__canvas {
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--docs-bg-surface) 85%, transparent);
+    padding: 1rem;
+    overflow-x: auto;
+  }
+
+  .docs-mermaid__canvas :global(svg) {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
+  }
+
+  .docs-mermaid__cap {
+    margin-top: 0.5rem;
+    text-align: center;
+    font-size: 0.8125rem;
+    color: var(--docs-fg-subtle);
+  }
+
+  .docs-mermaid__err {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--docs-danger);
+  }
+</style>

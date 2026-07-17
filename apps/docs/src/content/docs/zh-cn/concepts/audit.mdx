@@ -1,12 +1,58 @@
 ---
 title: 审计与回滚
-description: 哈希链审计与事务补丁恢复。
+description: 追加写事件日志、哈希链校验与事务补丁恢复。
+sidebar:
+  order: 3
 ---
-```bash title="audit.sh"
-carina audit verify
-carina audit tail --json
-carina patch list
+
+import Callout from '../../../../components/ui/Callout.astro';
+import Mermaid from '../../../../components/mdx/Mermaid.astro';
+import Tooltip from '../../../../components/mdx/Tooltip.astro';
+import Badge from '../../../../components/mdx/Badge.astro';
+
+Carina 把可观测性当作产品能力。每次执行写入会话级、追加写的 **Event Log**。副作用事件引用其 `PermissionDecision` id。 <Badge variant="info">哈希链</Badge>
+
+## 事件流
+
+<Mermaid caption="每次门控副作用都会落在哈希链上。">
+flowchart LR
+  A[Agent 动作] --> K[策略内核]
+  K -->|allow / deny / approve| D[PermissionDecision]
+  D --> E[Event Log]
+  E --> H[哈希链]
+  H --> V[carina audit verify]
+</Mermaid>
+
+## 审计保证
+
+- 事件日志追加写；每条含时间戳与会话 id  
+- 原始图片/媒体字节永不进入 transcript / checkpoint / 审计 — 仅内容哈希 <Tooltip tip="内容寻址的媒体引用，日志中从不存原始字节。">MediaRef</Tooltip>  
+- 可查询任意文件的修改史：哪个 agent、任务、补丁、何时  
+- 每次 allow/deny 可解释：决策记录策略与原因  
+
+## CLI
+
+```bash title="audit.sh" showLineNumbers
+carina audit SESSION
+carina audit verify SESSION
+carina audit tail --last 5
+carina audit export --format jsonl|sqlite
+```
+
+## 事务补丁
+
+1. Agent 提出 diff  
+2. 内核评估 `PatchApply` → 可能需审批  
+3. 批准后：apply → verify → 带回滚指针提交  
+4. 无半应用状态  
+
+```bash title="patch.sh"
+carina patch list SESSION
 carina patch rollback PATCH_ID
 ```
 
 审计与补丁历史**不是** Git 的替代品；它们解释会话内的 Agent 行为。
+
+<Callout variant="tip">
+  在方法目录打开 `session.create`，用 **Playground → Mock** 可预览响应形状，无需本机 daemon。
+</Callout>

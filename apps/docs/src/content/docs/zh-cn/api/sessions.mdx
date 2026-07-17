@@ -1,10 +1,129 @@
 ---
 title: 会话
-description: 创建、附着、引导与关闭会话。
+description: 创建、控制、流式读取与导出 Carina 会话。
+sidebar:
+  order: 2
 ---
-会话绑定对话状态、能力配置与工作区根目录。
+
+import Callout from '../../../../components/ui/Callout.astro';
+import ParamField from '../../../../components/mdx/ParamField.astro';
+import ResponseField from '../../../../components/mdx/ResponseField.astro';
+import Update from '../../../../components/mdx/Update.astro';
+import ApiReference from '../../../../components/layouts/ApiReference.astro';
+import CodeBlock from '../../../../components/ui/CodeBlock.astro';
+import Badge from '../../../../components/mdx/Badge.astro';
+import Tabs from '../../../../components/mdx/Tabs.astro';
+import Tab from '../../../../components/mdx/Tab.astro';
+
+会话绑定对话状态、**能力配置**与**工作区根目录**。工作区在 `session.create` 时通过 `workspace_root` 绑定 — 没有单独的注册方法。
+
+<Update label="文档" date="2026-07-17">
+  方法目录含 **Playground**（Mock / Live）与 Markdown 导出（`index.md`），便于 LLM 工作流。
+</Update>
+
+## 生命周期
 
 ```
-create → attach → (turns / tool calls) → close
-                 ↘ fork → child session
+create → (pause / resume) → close
+         ↘ submit tasks / stream events
+         ↘ fork / checkpoint / goal
 ```
+
+## `session.create`
+
+<span class="docs-method-meta">
+  <Badge variant="accent">write</Badge>
+  <Badge>local socket</Badge>
+</span>
+
+创建绑定工作区与权限配置的会话。
+
+<ApiReference>
+  <p>
+    <strong>参数</strong>
+  </p>
+  <ParamField path="workspace_root" type="string" required body>
+    工作区目录的绝对路径。会话存活期间保持绑定。
+  </ParamField>
+  <ParamField path="profile" type="string" body default="safe-edit">
+    权限配置名（如 `safe-edit`、`read-only`）。由能力内核评估。
+  </ParamField>
+
+  <p>
+    <strong>结果</strong>
+  </p>
+  <ResponseField name="session_id" type="string" required>
+    不透明会话 id，供后续 `session.*` / `task.*` 调用使用。
+  </ResponseField>
+  <ResponseField name="workspace_id" type="string" required>
+    绑定的工作区 id。
+  </ResponseField>
+  <ResponseField name="profile" type="string" required>
+    生效的能力配置。
+  </ResponseField>
+
+  <div slot="code">
+    <Tabs>
+      <Tab label="请求">
+        <CodeBlock
+          lang="json"
+          title="request"
+          code={`{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "session.create",
+  "params": {
+    "workspace_root": "/repo",
+    "profile": "safe-edit"
+  }
+}`}
+        />
+      </Tab>
+      <Tab label="响应">
+        <CodeBlock
+          lang="json"
+          title="result"
+          code={`{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "session_id": "sess_01J…",
+    "workspace_id": "ws_01J…",
+    "profile": "safe-edit"
+  }
+}`}
+        />
+      </Tab>
+    </Tabs>
+  </div>
+</ApiReference>
+
+## 核心方法
+
+| 方法 | 用途 |
+| --- | --- |
+| `session.create` | 创建会话（工作区 + 配置） |
+| `session.get` / `session.list` | 元数据与列表 |
+| `session.pause` / `session.resume` | 挂起 / 继续 |
+| `session.close` | 终止 |
+| `session.replay` | 回放原始审计事件流 |
+| `session.items` | UI/SDK 用归一化 item 流 |
+| `session.review` | 治理投影 |
+| `session.events.stream` | 实时通知 |
+
+JSONL / SQLite 导出由 `audit.export` 提供，不是 `session.*`。
+
+## 任务操作
+
+| 方法 | 用途 |
+| --- | --- |
+| `task.submit` | 提交 prompt/任务 |
+| `task.cancel` | 取消运行中任务 |
+| `task.status` | 查询状态 |
+| `task.action.approve` / `task.action.deny` | 解决待审批 |
+
+任务事件通过 `session.events.stream` 消费。
+
+<Callout variant="tip">
+  在 [方法目录](/zh-cn/api/methods/) 打开任意方法，可用 **Playground → Mock** 无需本机 daemon 即可预览响应形状。
+</Callout>

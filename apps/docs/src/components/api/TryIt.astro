@@ -1,7 +1,8 @@
 ---
 /**
- * Client-side JSON-RPC try-it builder (static-site safe).
- * Builds request payloads + curl / carina CLI; optional POST to a user endpoint.
+ * JSON-RPC playground (Mintlify-style Try it).
+ * - Mock mode: deterministic local responses (no network)
+ * - Live mode: POST to user endpoint (daemon / gateway)
  */
 interface Props {
   method: string;
@@ -54,11 +55,25 @@ const bodyJson = JSON.stringify(body, null, 2);
   data-default-body={bodyJson}
 >
   <div class="tryit__head">
-    <h4 class="tryit__title">Try it</h4>
-    <span class="tryit__hint">Builds a request for your local daemon / gateway — nothing is sent until you click Send.</span>
+    <div class="tryit__title-row">
+      <h4 class="tryit__title">Playground</h4>
+      <span class="tryit__scope" data-tryit-scope>{scope}</span>
+    </div>
+    <p class="tryit__hint">
+      Mock returns a realistic JSON-RPC envelope without a daemon. Switch to Live to POST to your gateway.
+    </p>
   </div>
 
-  <label class="tryit__field">
+  <div class="tryit__mode" role="group" aria-label="Playground mode">
+    <button type="button" class="tryit__mode-btn is-active" data-tryit-mode="mock" aria-pressed="true">
+      Mock
+    </button>
+    <button type="button" class="tryit__mode-btn" data-tryit-mode="live" aria-pressed="false">
+      Live
+    </button>
+  </div>
+
+  <label class="tryit__field" data-tryit-endpoint-wrap>
     <span>Endpoint</span>
     <input
       type="url"
@@ -81,11 +96,17 @@ const bodyJson = JSON.stringify(body, null, 2);
     <button type="button" class="tryit__btn tryit__btn--primary" data-tryit-send>Send</button>
   </div>
 
-  <pre class="tryit__out rpc-mono" data-tryit-out hidden></pre>
+  <div class="tryit__result" data-tryit-result hidden>
+    <div class="tryit__meta" data-tryit-meta></div>
+    <pre class="tryit__out rpc-mono" data-tryit-out></pre>
+  </div>
 </div>
 
 <script>
+  import { mockRpcResponse } from '../../scripts/rpc-mock';
+
   const EP_KEY = 'carina-docs-tryit-endpoint';
+  const MODE_KEY = 'carina-docs-tryit-mode';
   const DEFAULT_EP = 'http://127.0.0.1:8777/rpc';
 
   function init(root: Element) {
@@ -94,11 +115,31 @@ const bodyJson = JSON.stringify(body, null, 2);
 
     const method = root.dataset.method || '';
     const endpointEl = root.querySelector<HTMLInputElement>('[data-tryit-endpoint]');
+    const endpointWrap = root.querySelector<HTMLElement>('[data-tryit-endpoint-wrap]');
     const bodyEl = root.querySelector<HTMLTextAreaElement>('[data-tryit-body]');
     const outEl = root.querySelector<HTMLElement>('[data-tryit-out]');
-    if (!endpointEl || !bodyEl || !outEl) return;
+    const resultEl = root.querySelector<HTMLElement>('[data-tryit-result]');
+    const metaEl = root.querySelector<HTMLElement>('[data-tryit-meta]');
+    const modeBtns = [...root.querySelectorAll<HTMLButtonElement>('[data-tryit-mode]')];
+    if (!endpointEl || !bodyEl || !outEl || !resultEl || !metaEl) return;
 
+    let mode = (localStorage.getItem(MODE_KEY) as 'mock' | 'live') || 'mock';
     endpointEl.value = localStorage.getItem(EP_KEY) || DEFAULT_EP;
+
+    const setMode = (next: 'mock' | 'live') => {
+      mode = next;
+      localStorage.setItem(MODE_KEY, mode);
+      modeBtns.forEach((b) => {
+        const on = b.dataset.tryitMode === mode;
+        b.classList.toggle('is-active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      if (endpointWrap) endpointWrap.hidden = mode === 'mock';
+    };
+    setMode(mode);
+    modeBtns.forEach((b) =>
+      b.addEventListener('click', () => setMode((b.dataset.tryitMode as 'mock' | 'live') || 'mock')),
+    );
 
     const flash = (btn: HTMLButtonElement, ok = true) => {
       const prev = btn.textContent;
@@ -115,6 +156,19 @@ const bodyJson = JSON.stringify(body, null, 2);
       const v = endpointEl.value.trim() || DEFAULT_EP;
       localStorage.setItem(EP_KEY, v);
       return v;
+    };
+
+    const showResult = (opts: {
+      ok: boolean;
+      statusLabel: string;
+      ms: number;
+      body: string;
+    }) => {
+      resultEl.hidden = false;
+      resultEl.classList.toggle('is-ok', opts.ok);
+      resultEl.classList.toggle('is-err', !opts.ok);
+      metaEl.innerHTML = `<span>${opts.statusLabel}</span><span>${opts.ms} ms</span><span>${mode === 'mock' ? 'mock' : 'live'}</span>`;
+      outEl.textContent = opts.body;
     };
 
     root.querySelector<HTMLButtonElement>('[data-tryit-copy-json]')?.addEventListener('click', async (e) => {
@@ -152,16 +206,37 @@ const bodyJson = JSON.stringify(body, null, 2);
     });
 
     root.querySelector<HTMLButtonElement>('[data-tryit-send]')?.addEventListener('click', async () => {
-      outEl.hidden = false;
-      outEl.textContent = 'Sending…';
-      const ep = getEndpoint();
-      let payload: unknown;
+      let payload: { jsonrpc?: string; id?: unknown; method?: string; params?: Record<string, unknown> };
       try {
         payload = JSON.parse(getBody());
       } catch (err) {
-        outEl.textContent = `Invalid JSON: ${err instanceof Error ? err.message : String(err)}`;
+        showResult({
+          ok: false,
+          statusLabel: 'Invalid JSON',
+          ms: 0,
+          body: err instanceof Error ? err.message : String(err),
+        });
         return;
       }
+
+      if (mode === 'mock') {
+        const t0 = performance.now();
+        const mocked = mockRpcResponse(payload);
+        // artificial delay matches mock latency for UX
+        await new Promise((r) => setTimeout(r, mocked.latencyMs));
+        const ms = Math.round(performance.now() - t0);
+        const hasErr = Boolean((mocked.body as { error?: unknown }).error);
+        showResult({
+          ok: !hasErr,
+          statusLabel: hasErr ? 'JSON-RPC error' : '200 OK',
+          ms,
+          body: JSON.stringify(mocked.body, null, 2),
+        });
+        return;
+      }
+
+      const ep = getEndpoint();
+      const t0 = performance.now();
       try {
         const res = await fetch(ep, {
           method: 'POST',
@@ -175,17 +250,26 @@ const bodyJson = JSON.stringify(body, null, 2);
         } catch {
           /* raw */
         }
-        outEl.textContent = `HTTP ${res.status} ${res.statusText}\n\n${pretty}`;
+        const ms = Math.round(performance.now() - t0);
+        showResult({
+          ok: res.ok,
+          statusLabel: `HTTP ${res.status} ${res.statusText}`,
+          ms,
+          body: pretty,
+        });
       } catch (err) {
-        outEl.textContent = [
-          'Request failed (this is normal if the daemon/gateway is not running).',
-          '',
-          err instanceof Error ? err.message : String(err),
-          '',
-          'Start the gateway, e.g.:',
-          '  carina-daemon -gateway-ws 127.0.0.1:8777 …',
-          'Or copy the JSON / curl / CLI and run it yourself.',
-        ].join('\n');
+        const ms = Math.round(performance.now() - t0);
+        showResult({
+          ok: false,
+          statusLabel: 'Network error',
+          ms,
+          body: [
+            err instanceof Error ? err.message : String(err),
+            '',
+            'Daemon/gateway not reachable. Use Mock mode, or start:',
+            '  carina-daemon -gateway-ws 127.0.0.1:8777',
+          ].join('\n'),
+        });
       }
     });
   }
@@ -202,16 +286,19 @@ const bodyJson = JSON.stringify(body, null, 2);
     margin-top: var(--spacing-3);
     padding: var(--spacing-3);
     border: 1px solid var(--docs-border-subtle);
-    border-radius: var(--docs-radius-md);
+    border-radius: 10px;
     background: color-mix(in srgb, var(--docs-bg) 55%, var(--docs-bg-surface));
   }
 
-  .tryit__head {
-    margin-bottom: var(--spacing-3);
+  .tryit__title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
   }
 
   .tryit__title {
-    margin: 0 0 0.25rem;
+    margin: 0;
     font-size: 0.6875rem;
     font-weight: 600;
     letter-spacing: 0.06em;
@@ -219,10 +306,49 @@ const bodyJson = JSON.stringify(body, null, 2);
     color: var(--docs-fg-subtle);
   }
 
+  .tryit__scope {
+    font-family: var(--docs-font-mono);
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 0.1rem 0.35rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--docs-accent) 35%, transparent);
+    color: var(--docs-accent);
+  }
+
   .tryit__hint {
+    margin: 0 0 0.75rem;
     font-size: 0.72rem;
     color: var(--docs-fg-subtle);
-    line-height: 1.4;
+    line-height: 1.45;
+  }
+
+  .tryit__mode {
+    display: inline-flex;
+    gap: 0;
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .tryit__mode-btn {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--docs-fg-muted);
+    font-family: var(--docs-font-sans);
+    font-size: 0.72rem;
+    font-weight: 550;
+    padding: 0.35rem 0.75rem;
+    cursor: pointer;
+  }
+
+  .tryit__mode-btn.is-active {
+    background: color-mix(in srgb, var(--docs-accent) 12%, transparent);
+    color: var(--docs-accent);
   }
 
   .tryit__field {
@@ -239,7 +365,7 @@ const bodyJson = JSON.stringify(body, null, 2);
   .tryit__textarea {
     width: 100%;
     border: 1px solid var(--docs-border-subtle);
-    border-radius: var(--docs-radius-md);
+    border-radius: 8px;
     background: var(--docs-bg);
     color: var(--docs-fg);
     font-family: var(--docs-font-mono);
@@ -307,22 +433,51 @@ const bodyJson = JSON.stringify(body, null, 2);
     color: var(--docs-danger);
   }
 
+  .tryit__result {
+    margin-top: 0.75rem;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .tryit__result.is-ok {
+    border-color: color-mix(in srgb, var(--docs-success) 40%, var(--docs-border-subtle));
+  }
+
+  .tryit__result.is-err {
+    border-color: color-mix(in srgb, var(--docs-danger) 40%, var(--docs-border-subtle));
+  }
+
+  .tryit__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.85rem;
+    padding: 0.4rem 0.65rem;
+    font-family: var(--docs-font-mono);
+    font-size: 0.6875rem;
+    color: var(--docs-fg-muted);
+    background: color-mix(in srgb, var(--docs-bg-raised) 70%, transparent);
+    border-bottom: 1px solid var(--docs-border-subtle);
+  }
+
+  .tryit__result.is-ok .tryit__meta {
+    color: var(--docs-success);
+  }
+
+  .tryit__result.is-err .tryit__meta {
+    color: var(--docs-danger);
+  }
+
   .tryit__out {
-    margin: var(--spacing-3) 0 0;
+    margin: 0;
     padding: 0.55rem 0.65rem;
     max-height: 16rem;
     overflow: auto;
-    border: 1px solid var(--docs-border-subtle);
-    border-radius: var(--docs-radius-md);
-    background: var(--docs-bg);
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     line-height: 1.5;
     color: var(--docs-fg-muted);
+    background: var(--docs-bg);
     white-space: pre-wrap;
     word-break: break-word;
-  }
-
-  .rpc-mono {
-    font-family: var(--docs-font-mono);
   }
 </style>

@@ -6,21 +6,34 @@ sidebar:
 ---
 
 import Callout from '../../../components/ui/Callout.astro';
+import Mermaid from '../../../components/mdx/Mermaid.astro';
+import Tooltip from '../../../components/mdx/Tooltip.astro';
+import Badge from '../../../components/mdx/Badge.astro';
 
+Carina treats observability as a product feature. Every execution writes to an append-only, session-scoped **Event Log**. Side-effect events reference their `PermissionDecision` id. <Badge variant="info">hash-chained</Badge>
 
-Carina treats observability as a product feature. Every execution writes to an append-only, session-scoped **Event Log**. Side-effect events reference their `PermissionDecision` id.
+## Event flow
+
+<Mermaid caption="Every gated side effect lands on the hash chain.">
+flowchart LR
+  A[Agent action] --> K[Policy kernel]
+  K -->|allow / deny / approve| D[PermissionDecision]
+  D --> E[Event Log]
+  E --> H[Hash chain]
+  H --> V[carina audit verify]
+</Mermaid>
 
 ## Audit guarantees
 
 - Event log is append-only; every event has a timestamp and session id
-- Raw image/media bytes never enter transcript, checkpoints, or audit — only content-hash `MediaRef`s
+- Raw image/media bytes never enter transcript, checkpoints, or audit — only content-hash <Tooltip tip="Content-addressed media reference — never raw bytes in the log.">MediaRef</Tooltip>s
 - Any file's modification history is queryable: which agent, which task, which patch, when
 - Every allow/deny is explainable: decision records the policy and reason
 - Success metrics targets: 100% interception of out-of-workspace access, zero secret plaintext in logs, every side effect has an audit event
 
 ## CLI
 
-```bash title="audit.sh"
+```bash title="audit.sh" showLineNumbers
 carina audit SESSION          # replay model decisions + kernel-gated effects
 carina audit verify SESSION   # confirm the hash chain was not tampered with
 carina audit tail --last 5
@@ -37,7 +50,6 @@ File mutations go through a patch pipeline with provenance:
 4. No half-applied state
 
 ```bash title="patch.sh"
-carina patch list SESSION
 carina patch show ID
 carina patch rollback ID
 ```

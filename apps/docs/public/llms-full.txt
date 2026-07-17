@@ -205,7 +205,7 @@ JSON-RPC、可选 Gateway、作用域与 SDK 表面。
 
 ## 会话
 
-创建、附着、引导与关闭会话。
+创建、控制、流式读取与导出 Carina 会话。
 
 - URL: https://carina.nebutra.com/zh-cn/api/sessions/
 - Markdown: https://carina.nebutra.com/zh-cn/api/sessions/index.md
@@ -219,7 +219,7 @@ JSON-RPC、可选 Gateway、作用域与 SDK 表面。
 
 ## 审计与回滚
 
-哈希链审计与事务补丁恢复。
+追加写事件日志、哈希链校验与事务补丁恢复。
 
 - URL: https://carina.nebutra.com/zh-cn/concepts/audit/
 - Markdown: https://carina.nebutra.com/zh-cn/concepts/audit/index.md

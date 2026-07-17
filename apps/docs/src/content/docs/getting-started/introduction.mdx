@@ -8,7 +8,10 @@ sidebar:
 import Callout from '../../../components/ui/Callout.astro';
 import CategoryTag from '../../../components/ui/CategoryTag.astro';
 import Prompt from '../../../components/mdx/Prompt.astro';
-
+import Mermaid from '../../../components/mdx/Mermaid.astro';
+import Columns from '../../../components/mdx/Columns.astro';
+import Card from '../../../components/mdx/Card.astro';
+import Badge from '../../../components/mdx/Badge.astro';
 
 Carina is a **local-first AI agent runtime**. It sits at the point where a coding agent leaves conversation and starts acting on a real repository — reading files, running commands, applying patches — under explicit policy control.
 
@@ -45,6 +48,25 @@ It is **not** primarily a finished editor assistant or a hosted managed agent se
 | Coordinate endpoints later | Nebutra Cloud boundary; Carina remains local authority |
 
 ## Architecture at a glance
+
+<Mermaid caption="Local authority stays on your machine — policy, audit, and rollback included.">
+flowchart TB
+  C[Clients · TUI · SDK · IDE] -->|JSON-RPC| G[Go control plane]
+  G --> K[Policy kernel]
+  G --> A[Hash-chained audit]
+  G --> P[Patch / rollback]
+  K --> W[Workspace tools]
+  G --> M[Model adapters]
+</Mermaid>
+
+<Columns cols={2}>
+  <Card title="Governed actions" href="/concepts/policy/" icon="🛡">
+    Fourteen capability types, profiles, and approval modes. <Badge variant="accent">kernel</Badge>
+  </Card>
+  <Card title="Explainable runs" href="/concepts/audit/" icon="⛓">
+    Append-only event log with hash-chain verification and patch rollback.
+  </Card>
+</Columns>
 
 ```
 Client Surfaces ──JSON-RPC──▶ Go Control Plane (agent loop)

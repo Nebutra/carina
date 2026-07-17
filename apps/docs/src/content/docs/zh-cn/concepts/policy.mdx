@@ -1,18 +1,67 @@
 ---
 title: 策略与能力
 description: 能力类型、权限配置、命令风险等级与默认安全姿态。
+sidebar:
+  order: 2
 ---
 
 import Callout from '../../../../components/ui/Callout.astro';
+import Tooltip from '../../../../components/mdx/Tooltip.astro';
+import Tree from '../../../../components/mdx/Tree.astro';
+import Columns from '../../../../components/mdx/Columns.astro';
+import Card from '../../../../components/mdx/Card.astro';
+import Badge from '../../../../components/mdx/Badge.astro';
 
+每个有意义的副作用都属于 **十四种能力类型** 之一。Rust 内核返回 `PermissionDecision`（`allow` / `deny` / `require-approval`），每次决策都是审计事件。
 
-每个有意义的副作用都属于十四种能力类型之一。内核返回 `PermissionDecision`（allow / deny / require-approval）。
-
-源文档：`docs/security-model.md`。
+源文档：`docs/security-model.md`，`protocol/capabilities/`。
 
 ## 默认姿态
 
-最小权限 · 不出工作区 · 默认不可读密钥 · 默认限制网络 · 默认拒绝破坏性命令 · 补丁事务化 · 插件零权限起步。
+1. 默认最小权限  
+2. 默认不出工作区  
+3. 默认不可读密钥  
+4. 默认限制网络  
+5. 默认拒绝破坏性命令  
+6. 补丁事务化  
+7. 插件零权限起步  
+
+## 策略在磁盘上的位置
+
+<Tree
+  items={[
+    {
+      name: '.carina/',
+      children: [
+        { name: 'policy/' },
+        { name: 'profiles/safe-edit.json' },
+        { name: 'profiles/read-only.json' },
+        { name: 'audit/' },
+        { name: 'sessions/' },
+      ],
+    },
+    { name: '工作区根（session.create 时绑定）' },
+  ]}
+/>
+
+## 能力类型
+
+```
+FileRead  FileWrite  CommandExec  NetworkAccess  SecretRead
+GitOperation  PatchApply  ProcessSpawn  PluginLoad  RemoteExecute
+MemoryWrite  CodeIndex  ContextCompress  SubagentSpawn
+```
+
+请求携带：主体（agent / plugin / user）、资源（路径、命令、主机）、会话 id 与任务 id。<Tooltip tip="子 Agent 只能获得父配置的真子集，绝不会更大。">SubagentSpawn</Tooltip> 使用类型化资源 `agent:NAME:profile:PROFILE`，默认需审批。
+
+<Columns cols={2}>
+  <Card title="safe-edit" icon="🛡">
+    默认配置：仅通过 <Badge variant="info">PatchApply</Badge> 写入；网络需审批。
+  </Card>
+  <Card title="read-only" icon="👁">
+    仅工作区内 FileRead — 其余一律拒绝。
+  </Card>
+</Columns>
 
 ## 内置配置
 
@@ -24,9 +73,20 @@ import Callout from '../../../../components/ui/Callout.astro';
 | `ci-runner` | 测试/构建；无任意 shell |
 | `enterprise-restricted` | 组织策略包；高等级需中央审批 |
 
+配置绑定会话，并写入会话元数据。支持自定义配置。
+
 ## 命令风险等级 0–5
 
-0 只读自动放行 → 5 破坏性默认拒绝。符号链接在策略检查前解析，无法逃逸边界。
+| 等级 | 类别 | 默认策略 |
+| --- | --- | --- |
+| 0 | 只读命令 | 自动放行 |
+| 1 | 测试 / 构建 / lint | `safe-edit` 下自动放行 |
+| 2 | 包安装 | 需审批 |
+| 3 | 文件修改类命令 | 需审批 |
+| 4 | 网络 / 部署 / 凭据 | 默认拒绝，或显式配置 |
+| 5 | 破坏性（`rm -rf`、`curl \| sh` …） | 默认拒绝 |
+
+符号链接在策略检查前解析，无法逃逸边界。
 
 <Callout variant="warning">
   宽泛自动批准等于更高信任。高风险工作请用窄配置与短会话。

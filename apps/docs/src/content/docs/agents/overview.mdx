@@ -7,19 +7,54 @@ sidebar:
 
 import CategoryTag from '../../../components/ui/CategoryTag.astro';
 import Callout from '../../../components/ui/Callout.astro';
-
+import Mermaid from '../../../components/mdx/Mermaid.astro';
+import Twoslash from '../../../components/mdx/Twoslash.astro';
+import Badge from '../../../components/mdx/Badge.astro';
 
 <CategoryTag category="agent" label="Agents" />
 
-Carina drives a real ReAct coding agent. The model **only decides**; every side effect is authorized by the Rust capability kernel and executed by the Zig toolchain. The whole run is a tamper-evident audit trail you can replay and roll back.
+Carina drives a real ReAct coding agent. The model **only decides**; every side effect is authorized by the Rust capability kernel and executed by the Zig toolchain. The whole run is a tamper-evident audit trail you can replay and roll back. <Badge variant="accent">ReAct</Badge>
 
 Source: `docs/agent.md`.
 
-```
-Claude (decides)  →  Go agent loop  →  Rust kernel (authorizes)  →  Zig tools (execute)
-     ▲                                                                      │
-     └───────────────────────── observation ◀──────────────────────────────┘
-```
+<Mermaid caption="Decide → authorize → execute → observe.">
+flowchart LR
+  M[Model decides] --> L[Go agent loop]
+  L --> K[Rust kernel]
+  K --> Z[Zig tools]
+  Z -->|observation| L
+</Mermaid>
+
+## Typed client sketch
+
+Hover identifiers for types (Twoslash):
+
+<Twoslash
+  title="session.ts"
+  code={`type Profile = "safe-edit" | "read-only" | "full-workspace";
+
+interface CreateSessionParams {
+  workspace_root: string;
+  profile?: Profile;
+}
+
+interface CreateSessionResult {
+  session_id: string;
+  workspace_id: string;
+  profile: Profile;
+}
+
+async function createSession(
+  client: { request: (m: string, p: CreateSessionParams) => Promise<CreateSessionResult> },
+  root: string,
+): Promise<CreateSessionResult> {
+  return client.request("session.create", {
+    workspace_root: root,
+    profile: "safe-edit",
+  });
+}
+`}
+/>
 
 ## The loop
 

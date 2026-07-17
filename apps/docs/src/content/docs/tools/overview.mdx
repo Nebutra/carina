@@ -6,11 +6,41 @@ sidebar:
 ---
 
 import CategoryTag from '../../../components/ui/CategoryTag.astro';
-
+import Tree from '../../../components/mdx/Tree.astro';
+import Tooltip from '../../../components/mdx/Tooltip.astro';
+import Columns from '../../../components/mdx/Columns.astro';
+import Card from '../../../components/mdx/Card.astro';
 
 <CategoryTag category="tool" label="Tools" />
 
-Tools are the only path from model intent to system effect. Carina normalizes tool calls so policy, audit, and UI treat them uniformly.
+Tools are the only path from model intent to system effect. Carina normalizes tool calls so <Tooltip tip="Every tool call is a capability check + audit event before Zig executes.">policy, audit, and UI</Tooltip> treat them uniformly.
+
+## Toolchain layout
+
+<Tree
+  items={[
+    {
+      name: 'bin/',
+      children: [
+        { name: 'carina-scan' },
+        { name: 'carina-grep' },
+        { name: 'carina-diff' },
+        { name: 'carina-patch-native' },
+        { name: 'carina-run' },
+        { name: 'carina-pty' },
+      ],
+    },
+  ]}
+/>
+
+<Columns cols={2}>
+  <Card title="Filesystem" icon="📂">
+    list · read · search · patch — always workspace-scoped.
+  </Card>
+  <Card title="Shell" icon="⌘">
+    `run` via risk-classified CommandExec + allowlists.
+  </Card>
+</Columns>
 
 ## Built-in agent tools
 
