@@ -1,55 +1,94 @@
 ---
 /**
- * Mintlify-style page AI assistant (client-side).
- * - Default: Pagefind retrieval + cited snippets + "copy prompt for external LLM"
- * - Optional: set window.__CARINA_DOCS_AI_ENDPOINT__ to a chat completions proxy
+ * Documentation assistant.
+ * Default: local Pagefind retrieval with cited results.
+ * Optional: set window.__CARINA_DOCS_AI_ENDPOINT__ to a trusted answer proxy.
  */
+const isZh = Astro.locals.starlightRoute.locale === 'zh-cn';
+const t = isZh
+  ? {
+      title: '文档助手',
+      subtitle: '默认在本地检索本站文档；配置回答服务后可生成答案。',
+      close: '关闭文档助手',
+      introBefore: '可询问有关',
+      introPage: '当前页面',
+      introAfter: '或 Carina 文档的问题，例如：“如何回滚补丁？”',
+      placeholder: '搜索文档或提问…',
+      submit: '搜索',
+      working: '检索中…',
+      copyPrompt: '复制页面上下文',
+      copiedPrompt: '已复制上下文',
+      open: '打开文档助手',
+      fab: '文档助手',
+    }
+  : {
+      title: 'Docs assistant',
+      subtitle: 'Searches these docs locally; a configured answer service can generate responses.',
+      close: 'Close docs assistant',
+      introBefore: 'Ask about',
+      introPage: 'this page',
+      introAfter: 'or the wider Carina docs. Try: “How do I roll back a patch?”',
+      placeholder: 'Search docs or ask a question…',
+      submit: 'Search',
+      working: 'Searching…',
+      copyPrompt: 'Copy page context',
+      copiedPrompt: 'Copied context',
+      open: 'Open docs assistant',
+      fab: 'Docs assistant',
+    };
 ---
 
-<div class="docs-ai" data-docs-ai hidden>
-  <div class="docs-ai__panel" role="dialog" aria-label="Ask about this page" aria-modal="true">
+<dialog class="docs-ai" data-docs-ai aria-labelledby="docs-ai-title" aria-describedby="docs-ai-subtitle">
+  <div class="docs-ai__panel">
     <header class="docs-ai__head">
       <div>
-        <p class="docs-ai__title">Ask AI</p>
-        <p class="docs-ai__sub">Answers use this site’s docs (Pagefind). Citations open source pages.</p>
+        <p class="docs-ai__title" id="docs-ai-title">{t.title}</p>
+        <p class="docs-ai__sub" id="docs-ai-subtitle">{t.subtitle}</p>
       </div>
-      <button type="button" class="docs-ai__iconbtn" data-docs-ai-close aria-label="Close">×</button>
+      <button type="button" class="docs-ai__iconbtn" data-docs-ai-close aria-label={t.close}>×</button>
     </header>
 
-    <div class="docs-ai__msgs" data-docs-ai-msgs>
+    <div class="docs-ai__msgs" data-docs-ai-msgs role="log" aria-live="polite" aria-relevant="additions text">
       <div class="docs-ai__bubble docs-ai__bubble--sys">
-        Ask a question about <strong data-docs-ai-page-title>this page</strong> or the wider Carina docs.
-        Try: “How do I roll back a patch?”
+        {t.introBefore} <strong data-docs-ai-page-title>{t.introPage}</strong> {t.introAfter}
       </div>
     </div>
 
     <form class="docs-ai__form" data-docs-ai-form>
+      <label class="sr-only" for="docs-ai-question">{t.placeholder}</label>
       <input
+        id="docs-ai-question"
         type="search"
         class="docs-ai__input"
         data-docs-ai-input
-        placeholder="Ask a question…"
+        placeholder={t.placeholder}
         autocomplete="off"
         enterkeyhint="send"
       />
-      <button type="submit" class="docs-ai__send">Ask</button>
+      <button type="submit" class="docs-ai__send" data-docs-ai-send data-idle-label={t.submit} data-busy-label={t.working}>
+        {t.submit}
+      </button>
     </form>
     <p class="docs-ai__foot">
-      <button type="button" class="docs-ai__linkbtn" data-docs-ai-copy-prompt>Copy page context for ChatGPT / Claude</button>
-      ·
+      <button
+        type="button"
+        class="docs-ai__linkbtn"
+        data-docs-ai-copy-prompt
+        data-copy-label={t.copyPrompt}
+        data-copied-label={t.copiedPrompt}
+      >{t.copyPrompt}</button>
+      <span aria-hidden="true"> · </span>
       <a class="docs-ai__link" href="/llms.txt">llms.txt</a>
     </p>
   </div>
-</div>
+</dialog>
 
-<button type="button" class="docs-ai-fab" data-docs-ai-open aria-label="Ask AI about docs" title="Ask AI (⌘I)">
+<button type="button" class="docs-ai-fab" data-docs-ai-open aria-label={t.open} title={`${t.open} (⌘I)`}>
   <span aria-hidden="true">✦</span>
-  <span class="docs-ai-fab__label">Ask AI</span>
+  <span class="docs-ai-fab__label">{t.fab}</span>
 </button>
 
 <script>
-  // Search-modal enhancement (Ask-AI row, kbd hints, result breadcrumbs).
-  // Lives with the assistant because the Ask-AI row feeds `carina:ask-ai`.
   import '../scripts/docs-search-enhance';
 
   type PFResult = {
@@ -58,50 +97,101 @@
     excerpt?: string;
   };
 
+  type AssistantWindow = Window & {
+    pagefind?: { search?: (query: string) => Promise<{ results?: Array<{ data: () => Promise<any> }> }> };
+    __CARINA_DOCS_AI_ENDPOINT__?: string;
+    __carinaDocsAssistantCleanup__?: () => void;
+    __carinaDocsAssistantBootBound__?: boolean;
+  };
+
+  const assistantWindow = window as AssistantWindow;
+
+  function isZhPage() {
+    return (document.documentElement.lang || '').toLowerCase().startsWith('zh');
+  }
+
+  function labels() {
+    return isZhPage()
+      ? {
+          copied: '已复制上下文',
+          copy: '复制页面上下文',
+          searching: '正在检索文档…',
+          noAnswer: '回答服务没有返回内容。',
+          remoteFailed: '回答服务暂时不可用，已切换到本地文档检索。',
+          noMatches: (q: string) => `没有找到与“${q}”高度相关的内容。请换一组关键词，或复制页面上下文后交给你的模型。`,
+          result: (i: number) => `结果 ${i}`,
+          basedOn: (q: string) => `以下是“${q}”的文档检索结果：`,
+          localOnly: '当前为本地文档检索，不会生成模型答案。',
+          prompt: (title: string) => [
+            '你正在协助阅读 Carina（本地优先的 AI Agent 运行时）文档。',
+            `当前页面：${title} (${location.href})`,
+            '',
+            '页面内容：',
+            pagePlain(),
+            '',
+            '请仅依据以上内容准确回答，并优先引用 Carina 文档链接。',
+          ].join('\n'),
+        }
+      : {
+          copied: 'Copied context',
+          copy: 'Copy page context',
+          searching: 'Searching docs…',
+          noAnswer: 'The answer service returned no content.',
+          remoteFailed: 'The answer service is unavailable. Falling back to local docs search.',
+          noMatches: (q: string) => `No strong matches for “${q}”. Try different keywords, or copy the page context into your model.`,
+          result: (i: number) => `Result ${i}`,
+          basedOn: (q: string) => `Docs search results for “${q}”:`,
+          localOnly: 'This is local docs retrieval; it does not generate a model answer.',
+          prompt: (title: string) => [
+            'You are helping with Carina (local-first AI agent runtime) documentation.',
+            `Current page: ${title} (${location.href})`,
+            '',
+            'Page content:',
+            pagePlain(),
+            '',
+            'Answer accurately using this context. Prefer citing Carina docs URLs.',
+          ].join('\n'),
+        };
+  }
+
   function pageTitle() {
-    return (
-      document.querySelector('h1')?.textContent?.trim() ||
-      document.title.replace(/\s*[·|].*$/, '').trim()
-    );
+    return document.querySelector('h1')?.textContent?.trim() || document.title.replace(/\s*[·|].*$/, '').trim();
   }
 
   function pagePlain() {
-    const el =
-      document.querySelector('.sl-markdown-content') ||
-      document.querySelector('main .content-panel');
+    const el = document.querySelector('.sl-markdown-content') || document.querySelector('main .content-panel');
     return (el?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 6000);
+  }
+
+  function plainExcerpt(value: string) {
+    const parsed = new DOMParser().parseFromString(value, 'text/html');
+    return (parsed.body.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function safeHref(value?: string) {
+    if (!value) return null;
+    try {
+      const url = new URL(value, location.origin);
+      return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+    } catch {
+      return null;
+    }
   }
 
   async function pagefindSearch(q: string): Promise<PFResult[]> {
     try {
-      // @ts-expect-error pagefind global when UI loaded
-      if (!window.pagefind) {
-        /*
-         * Pagefind only exists in the BUILD output (dist/pagefind/) — never in
-         * dev. A literal specifier crashes Vite dev even with @vite-ignore
-         * (esbuild strips the comment during the Astro TS transform), so route
-         * it through a variable that import-analysis cannot resolve.
-         */
+      if (!assistantWindow.pagefind) {
         const pagefindPath = '/pagefind/pagefind.js';
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const pf = await import(/* @vite-ignore */ pagefindPath).catch(() => null);
-        if (pf) {
-          // @ts-expect-error assign
-          window.pagefind = await (pf as any).default?.() ?? pf;
-        }
+        if (pf) assistantWindow.pagefind = await (pf as any).default?.() ?? pf;
       }
-      // @ts-expect-error pagefind
-      const pagefind = window.pagefind;
+      const pagefind = assistantWindow.pagefind;
       if (!pagefind?.search) return [];
       const res = await pagefind.search(q);
       const results: PFResult[] = [];
       for (const r of (res?.results || []).slice(0, 5)) {
         const data = await r.data();
-        results.push({
-          url: data.url,
-          meta: { title: data.meta?.title },
-          excerpt: data.excerpt,
-        });
+        results.push({ url: data.url, meta: { title: data.meta?.title }, excerpt: data.excerpt });
       }
       return results;
     } catch {
@@ -110,172 +200,223 @@
   }
 
   function initAssistant() {
-    const root = document.querySelector<HTMLElement>('[data-docs-ai]');
+    const dialog = document.querySelector<HTMLDialogElement>('[data-docs-ai]');
     const openBtn = document.querySelector<HTMLButtonElement>('[data-docs-ai-open]');
-    if (!root || !openBtn || root.dataset.ready === '1') return;
-    root.dataset.ready = '1';
+    if (!dialog || !openBtn || dialog.dataset.ready === '1') return;
+    dialog.dataset.ready = '1';
+    assistantWindow.__carinaDocsAssistantCleanup__?.();
 
-    const msgs = root.querySelector<HTMLElement>('[data-docs-ai-msgs]');
-    const form = root.querySelector<HTMLFormElement>('[data-docs-ai-form]');
-    const input = root.querySelector<HTMLInputElement>('[data-docs-ai-input]');
-    const titleEl = root.querySelector<HTMLElement>('[data-docs-ai-page-title]');
-    const closeBtn = root.querySelector('[data-docs-ai-close]');
-    const copyPromptBtn = root.querySelector('[data-docs-ai-copy-prompt]');
+    const msgs = dialog.querySelector<HTMLElement>('[data-docs-ai-msgs]');
+    const form = dialog.querySelector<HTMLFormElement>('[data-docs-ai-form]');
+    const input = dialog.querySelector<HTMLInputElement>('[data-docs-ai-input]');
+    const send = dialog.querySelector<HTMLButtonElement>('[data-docs-ai-send]');
+    const titleEl = dialog.querySelector<HTMLElement>('[data-docs-ai-page-title]');
+    const closeBtn = dialog.querySelector<HTMLButtonElement>('[data-docs-ai-close]');
+    const copyPromptBtn = dialog.querySelector<HTMLButtonElement>('[data-docs-ai-copy-prompt]');
+    let lastFocus: HTMLElement | null = null;
+    let busy = false;
+    let requestController: AbortController | null = null;
 
-    const setOpen = (on: boolean) => {
-      root.hidden = !on;
-      openBtn.hidden = on;
-      if (on) {
-        if (titleEl) titleEl.textContent = pageTitle();
-        input?.focus();
+    const setBusy = (value: boolean) => {
+      busy = value;
+      dialog.setAttribute('aria-busy', String(value));
+      if (input) input.disabled = value;
+      if (send) {
+        send.disabled = value;
+        send.textContent = value ? send.dataset.busyLabel || '…' : send.dataset.idleLabel || 'Search';
       }
     };
 
-    const addBubble = (html: string, kind: 'user' | 'sys' | 'ai') => {
-      if (!msgs) return;
+    const open = (source?: HTMLElement | null) => {
+      lastFocus = source || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+      if (titleEl) titleEl.textContent = pageTitle();
+      if (!dialog.open) dialog.showModal();
+      openBtn.hidden = true;
+      requestAnimationFrame(() => input?.focus());
+    };
+
+    const close = () => {
+      requestController?.abort();
+      if (dialog.open) dialog.close();
+    };
+
+    const addTextBubble = (text: string, kind: 'user' | 'sys' | 'ai') => {
+      if (!msgs) return null;
       const div = document.createElement('div');
       div.className = `docs-ai__bubble docs-ai__bubble--${kind}`;
-      div.innerHTML = html;
+      div.textContent = text;
       msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+      return div;
+    };
+
+    const addResultsBubble = (question: string, hits: PFResult[]) => {
+      if (!msgs) return;
+      const t = labels();
+      const bubble = document.createElement('div');
+      bubble.className = 'docs-ai__bubble docs-ai__bubble--ai';
+      const intro = document.createElement('p');
+      intro.textContent = t.basedOn(question);
+      const list = document.createElement('ul');
+      list.className = 'docs-ai__cites';
+      hits.forEach((hit, index) => {
+        const item = document.createElement('li');
+        const href = safeHref(hit.url);
+        const title = hit.meta?.title || hit.url || t.result(index + 1);
+        const titleNode = href ? document.createElement('a') : document.createElement('span');
+        titleNode.textContent = title;
+        if (titleNode instanceof HTMLAnchorElement) titleNode.href = href!;
+        const excerpt = document.createElement('div');
+        excerpt.className = 'docs-ai__ex';
+        excerpt.textContent = plainExcerpt(hit.excerpt || '');
+        item.append(titleNode, excerpt);
+        list.append(item);
+      });
+      const note = document.createElement('p');
+      note.className = 'docs-ai__note';
+      note.textContent = t.localOnly;
+      bubble.append(intro, list, note);
+      msgs.appendChild(bubble);
       msgs.scrollTop = msgs.scrollHeight;
     };
 
-    openBtn.addEventListener('click', () => setOpen(true));
-    closeBtn?.addEventListener('click', () => setOpen(false));
-
-    document.addEventListener('keydown', (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') {
-        e.preventDefault();
-        setOpen(root.hidden);
+    const submitQuestion = async (question: string) => {
+      const q = question.trim();
+      if (!q || busy) return;
+      const t = labels();
+      addTextBubble(q, 'user');
+      if (input) input.value = '';
+      const pending = addTextBubble(t.searching, 'sys');
+      setBusy(true);
+      try {
+        const hits = await pagefindSearch(q);
+        pending?.remove();
+        const endpoint = assistantWindow.__CARINA_DOCS_AI_ENDPOINT__;
+        if (endpoint) {
+          requestController = new AbortController();
+          const timeout = window.setTimeout(() => requestController?.abort(), 15000);
+          try {
+            const res = await fetch(endpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                question: q,
+                page: { title: pageTitle(), url: location.href, text: pagePlain() },
+                hits,
+              }),
+              signal: requestController.signal,
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            addTextBubble(String(data.answer || data.message || t.noAnswer), 'ai');
+            window.dispatchEvent(new CustomEvent('carina:docs-ai-ask', { detail: { q, hits: hits.length, mode: 'answer' } }));
+            return;
+          } catch (error) {
+            if (!(error instanceof DOMException && error.name === 'AbortError' && !dialog.open)) {
+              addTextBubble(t.remoteFailed, 'sys');
+            }
+          } finally {
+            window.clearTimeout(timeout);
+            requestController = null;
+          }
+        }
+        if (!dialog.open) return;
+        if (!hits.length) {
+          addTextBubble(t.noMatches(q), 'ai');
+          window.dispatchEvent(new CustomEvent('carina:docs-search-zero', { detail: { q, source: 'assistant' } }));
+          return;
+        }
+        addResultsBubble(q, hits);
+        window.dispatchEvent(new CustomEvent('carina:docs-ai-ask', { detail: { q, hits: hits.length, mode: 'retrieval' } }));
+      } finally {
+        pending?.remove();
+        setBusy(false);
       }
-      if (e.key === 'Escape' && !root.hidden) setOpen(false);
-    });
+    };
 
-    const onAskAi = ((e: CustomEvent) => {
-      // Soft navigation can leave stale listeners on window; only the live
-      // instance responds.
-      if (!document.contains(root)) return;
-      setOpen(true);
-      const q = typeof e.detail?.question === 'string' ? e.detail.question.trim() : '';
-      if (q && input) {
-        input.value = q;
-        form?.requestSubmit();
-      } else {
-        input?.focus();
+    const onOpen = () => open(openBtn);
+    const onCloseButton = () => close();
+    const onDialogClose = () => {
+      requestController?.abort();
+      openBtn.hidden = false;
+      if (lastFocus?.isConnected) lastFocus.focus();
+    };
+    const onDialogClick = (event: MouseEvent) => {
+      if (event.target !== dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      const inside = event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+      if (!inside) close();
+    };
+    const onKeydown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'i') {
+        event.preventDefault();
+        dialog.open ? close() : open();
+      }
+    };
+    const onAskAi = ((event: CustomEvent) => {
+      if (!dialog.isConnected) return;
+      open();
+      const question = typeof event.detail?.question === 'string' ? event.detail.question.trim() : '';
+      if (question) {
+        if (input) input.value = question;
+        void submitQuestion(question);
       }
     }) as EventListener;
-    // PUBLIC CONTRACT: search modal / code frames dispatch `carina:ask-ai`
-    // with `{ question }` in detail. Keep the legacy internal name too.
+    const onSubmit = (event: SubmitEvent) => {
+      event.preventDefault();
+      void submitQuestion(input?.value || '');
+    };
+    const onCopyPrompt = async () => {
+      if (!copyPromptBtn) return;
+      try {
+        await navigator.clipboard.writeText(labels().prompt(pageTitle()));
+        copyPromptBtn.textContent = copyPromptBtn.dataset.copiedLabel || labels().copied;
+        window.setTimeout(() => {
+          if (copyPromptBtn.isConnected) copyPromptBtn.textContent = copyPromptBtn.dataset.copyLabel || labels().copy;
+        }, 1400);
+      } catch {
+        /* Clipboard permission is browser-controlled. */
+      }
+    };
+
+    openBtn.addEventListener('click', onOpen);
+    closeBtn?.addEventListener('click', onCloseButton);
+    dialog.addEventListener('close', onDialogClose);
+    dialog.addEventListener('click', onDialogClick);
+    form?.addEventListener('submit', onSubmit);
+    copyPromptBtn?.addEventListener('click', onCopyPrompt);
+    document.addEventListener('keydown', onKeydown);
     window.addEventListener('carina:ask-ai', onAskAi);
     window.addEventListener('carina:docs-ask-ai', onAskAi);
 
-    copyPromptBtn?.addEventListener('click', async () => {
-      const prompt = [
-        'You are helping with Carina (local-first AI agent runtime) documentation.',
-        `Current page: ${pageTitle()} (${location.href})`,
-        '',
-        'Page content:',
-        pagePlain(),
-        '',
-        'Answer accurately using this context. Prefer citing Carina docs URLs.',
-      ].join('\n');
-      try {
-        await navigator.clipboard.writeText(prompt);
-        copyPromptBtn.textContent = 'Copied context';
-        window.setTimeout(() => {
-          copyPromptBtn.textContent = 'Copy page context for ChatGPT / Claude';
-        }, 1400);
-      } catch {
-        /* ignore */
-      }
-    });
-
-    form?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const q = (input?.value || '').trim();
-      if (!q) return;
-      addBubble(q.replace(/</g, '&lt;'), 'user');
-      if (input) input.value = '';
-      addBubble('Searching docs…', 'sys');
-
-      const hits = await pagefindSearch(q);
-      // remove last "searching"
-      msgs?.querySelector('.docs-ai__bubble--sys:last-child')?.remove();
-
-      // optional remote endpoint
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const endpoint = (window as any).__CARINA_DOCS_AI_ENDPOINT__ as string | undefined;
-      if (endpoint) {
-        try {
-          const res = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              question: q,
-              page: { title: pageTitle(), url: location.href, text: pagePlain() },
-              hits,
-            }),
-          });
-          const data = await res.json();
-          addBubble(String(data.answer || data.message || 'No answer'), 'ai');
-          return;
-        } catch {
-          addBubble('Remote AI endpoint failed — falling back to local retrieval.', 'sys');
-        }
-      }
-
-      if (!hits.length) {
-        addBubble(
-          `No strong matches for “${q.replace(/</g, '&lt;')}”. Try different keywords, or copy page context into your LLM.`,
-          'ai',
-        );
-        // analytics: zero-result
-        window.dispatchEvent(
-          new CustomEvent('carina:docs-search-zero', { detail: { q, source: 'assistant' } }),
-        );
-        return;
-      }
-
-      const pageContext = pagePlain().slice(0, 1200);
-      const cites = hits
-        .map((h, i) => {
-          const title = h.meta?.title || h.url || `Result ${i + 1}`;
-          const url = h.url || '#';
-          const ex = (h.excerpt || '').replace(/</g, '&lt;');
-          return `<li><a href="${url}">${title}</a><div class="docs-ai__ex">${ex}</div></li>`;
-        })
-        .join('');
-
-      addBubble(
-        `<p>Based on docs search for <strong>${q.replace(/</g, '&lt;')}</strong>:</p>
-         <ul class="docs-ai__cites">${cites}</ul>
-         <p class="docs-ai__note">Local retrieval only (no model). Wire <code>window.__CARINA_DOCS_AI_ENDPOINT__</code> for full answers. Current page context (${pageContext.length} chars) is available via “Copy page context”.</p>`,
-        'ai',
-      );
-
-      window.dispatchEvent(
-        new CustomEvent('carina:docs-ai-ask', { detail: { q, hits: hits.length } }),
-      );
-    });
+    assistantWindow.__carinaDocsAssistantCleanup__ = () => {
+      requestController?.abort();
+      document.removeEventListener('keydown', onKeydown);
+      window.removeEventListener('carina:ask-ai', onAskAi);
+      window.removeEventListener('carina:docs-ask-ai', onAskAi);
+    };
   }
 
   initAssistant();
-  document.addEventListener('astro:page-load', initAssistant);
+  if (!assistantWindow.__carinaDocsAssistantBootBound__) {
+    assistantWindow.__carinaDocsAssistantBootBound__ = true;
+    document.addEventListener('astro:page-load', initAssistant);
+  }
 </script>
 
 <style>
   .docs-ai-fab {
     position: fixed;
-    inset-inline-end: 1rem;
-    bottom: 1rem;
+    inset-inline-end: max(1rem, env(safe-area-inset-right));
+    bottom: max(1rem, env(safe-area-inset-bottom));
     z-index: 40;
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    min-height: 2.5rem;
+    min-height: 2.75rem;
     padding: 0 0.9rem;
-    border-radius: 999px;
     border: 1px solid var(--docs-border-subtle);
+    border-radius: 999px;
     background: var(--docs-bg-surface);
     color: var(--docs-fg);
     font-family: var(--docs-font-sans);
@@ -283,49 +424,123 @@
     font-weight: 600;
     cursor: pointer;
     box-shadow: none;
-    transition:
-      border-color 150ms ease,
-      background-color 150ms ease;
   }
 
-  .docs-ai-fab:hover {
+  .docs-ai-fab {
+    transition:
+      opacity 180ms var(--polish-ease, ease-out),
+      transform 180ms var(--polish-ease, ease-out),
+      border-color 150ms ease,
+      background-color 150ms ease,
+      display 180ms allow-discrete;
+  }
+
+  .docs-ai-fab:hover,
+  .docs-ai-fab:focus-visible {
     border-color: color-mix(in srgb, var(--docs-accent) 45%, var(--docs-border));
     background: color-mix(in srgb, var(--docs-accent) 8%, var(--docs-bg-surface));
   }
 
-  .docs-ai-fab__label {
+  .docs-ai-fab[hidden] {
     display: none;
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
   }
 
-  @media (min-width: 640px) {
-    .docs-ai-fab__label {
-      display: inline;
+  @starting-style {
+    .docs-ai-fab:not([hidden]) {
+      opacity: 0;
+      transform: translateY(6px) scale(0.96);
     }
   }
 
-  .docs-ai {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    display: flex;
-    align-items: flex-end;
-    justify-content: flex-end;
-    padding: 1rem;
-    background: color-mix(in srgb, var(--docs-bg) 35%, transparent);
-    backdrop-filter: blur(4px);
+  @media (prefers-reduced-motion: reduce) {
+    .docs-ai-fab {
+      transition: none;
+    }
   }
 
-  .docs-ai[hidden] {
-    display: none !important;
+  .docs-ai-fab:focus-visible,
+  .docs-ai__iconbtn:focus-visible,
+  .docs-ai__send:focus-visible,
+  .docs-ai__linkbtn:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  .docs-ai-fab__label { display: none; }
+  @media (min-width: 640px) { .docs-ai-fab__label { display: inline; } }
+
+  .docs-ai {
+    width: min(28rem, calc(100vw - 2rem));
+    max-width: none;
+    max-height: min(76dvh, 42rem);
+    margin: auto max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--docs-fg);
+    overflow: visible;
+    /*
+     * Smooth open/close: grow from the FAB corner (bottom-right origin).
+     * `allow-discrete` lets display/overlay flip at transition END so the
+     * exit animation is visible too; @starting-style drives the entry.
+     * Unsupported browsers simply toggle instantly.
+     */
+    transform-origin: 100% 100%;
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    transition:
+      opacity 200ms var(--polish-ease, ease-out),
+      transform 220ms var(--polish-ease, ease-out),
+      display 220ms allow-discrete,
+      overlay 220ms allow-discrete;
+  }
+
+  .docs-ai:not([open]) {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+
+  @starting-style {
+    .docs-ai[open] {
+      opacity: 0;
+      transform: translateY(10px) scale(0.97);
+    }
+  }
+
+  .docs-ai::backdrop {
+    background: color-mix(in srgb, var(--docs-bg) 55%, transparent);
+    backdrop-filter: blur(4px);
+    transition:
+      opacity 200ms var(--polish-ease, ease-out),
+      display 220ms allow-discrete,
+      overlay 220ms allow-discrete;
+  }
+
+  .docs-ai:not([open])::backdrop {
+    opacity: 0;
+  }
+
+  @starting-style {
+    .docs-ai[open]::backdrop {
+      opacity: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .docs-ai,
+    .docs-ai::backdrop {
+      transition: none;
+    }
   }
 
   .docs-ai__panel {
-    width: min(26rem, 100%);
-    max-height: min(70vh, 36rem);
+    max-height: min(76dvh, 42rem);
     display: flex;
     flex-direction: column;
     border: 1px solid var(--docs-border-subtle);
-    border-radius: 14px;
+    border-radius: 8px;
     background: var(--docs-bg-surface);
     overflow: hidden;
   }
@@ -334,131 +549,84 @@
     display: flex;
     justify-content: space-between;
     gap: 0.75rem;
-    padding: 0.75rem 0.85rem;
+    padding: 0.8rem 0.9rem;
     border-bottom: 1px solid var(--docs-border-subtle);
   }
 
-  .docs-ai__title {
-    margin: 0;
-    font-size: 0.875rem;
-    font-weight: 600;
-  }
-
-  .docs-ai__sub {
-    margin: 0.2rem 0 0;
-    font-size: 0.72rem;
-    color: var(--docs-fg-subtle);
-    line-height: 1.35;
-  }
-
+  .docs-ai__title { margin: 0; font-size: 0.9375rem; font-weight: 600; }
+  .docs-ai__sub { margin: 0.2rem 0 0; font-size: 0.75rem; color: var(--docs-fg-subtle); line-height: 1.4; }
   .docs-ai__iconbtn {
     appearance: none;
+    width: 2.25rem;
+    height: 2.25rem;
     border: 0;
+    border-radius: 6px;
     background: transparent;
     color: var(--docs-fg-muted);
     font-size: 1.25rem;
     line-height: 1;
     cursor: pointer;
   }
+  .docs-ai__iconbtn:hover { background: color-mix(in srgb, var(--docs-fg) 5%, transparent); }
 
   .docs-ai__msgs {
     flex: 1;
+    min-height: 8rem;
     overflow: auto;
-    padding: 0.75rem;
+    padding: 0.8rem;
     display: flex;
     flex-direction: column;
-    gap: 0.55rem;
+    gap: 0.6rem;
   }
-
-  .docs-ai__bubble {
-    padding: 0.55rem 0.7rem;
-    border-radius: 10px;
-    font-size: 0.8125rem;
-    line-height: 1.45;
-  }
-
-  .docs-ai__bubble--user {
-    align-self: flex-end;
-    background: color-mix(in srgb, var(--docs-accent) 14%, transparent);
-    color: var(--docs-fg);
-    max-width: 90%;
-  }
-
+  .docs-ai__bubble { padding: 0.6rem 0.75rem; border-radius: 8px; font-size: 0.8125rem; line-height: 1.5; }
+  .docs-ai__bubble--user { align-self: flex-end; max-width: 90%; background: color-mix(in srgb, var(--docs-accent) 14%, transparent); color: var(--docs-fg); }
   .docs-ai__bubble--sys,
-  .docs-ai__bubble--ai {
-    align-self: stretch;
-    background: var(--docs-bg);
-    border: 1px solid var(--docs-border-subtle);
-    color: var(--docs-fg-muted);
-  }
+  .docs-ai__bubble--ai { align-self: stretch; background: var(--docs-bg); border: 1px solid var(--docs-border-subtle); color: var(--docs-fg-muted); }
+  .docs-ai__bubble :global(p) { margin: 0; }
+  .docs-ai__cites { margin: 0.5rem 0; padding-inline-start: 1.1rem; }
+  .docs-ai__cites :global(a) { color: var(--docs-accent); }
+  .docs-ai__ex { margin-top: 0.15rem; font-size: 0.75rem; color: var(--docs-fg-subtle); }
+  .docs-ai__note { font-size: 0.75rem; color: var(--docs-fg-subtle); }
 
-  .docs-ai__cites {
-    margin: 0.4rem 0;
-    padding-inline-start: 1.1rem;
-  }
-
-  .docs-ai__cites a {
-    color: var(--docs-accent);
-  }
-
-  .docs-ai__ex {
-    font-size: 0.72rem;
-    color: var(--docs-fg-subtle);
-    margin-top: 0.15rem;
-  }
-
-  .docs-ai__note {
-    font-size: 0.72rem;
-    color: var(--docs-fg-subtle);
-  }
-
-  .docs-ai__form {
-    display: flex;
-    gap: 0.35rem;
-    padding: 0.65rem 0.75rem;
-    border-top: 1px solid var(--docs-border-subtle);
-  }
-
+  .docs-ai__form { display: flex; gap: 0.4rem; padding: 0.7rem 0.8rem; border-top: 1px solid var(--docs-border-subtle); }
   .docs-ai__input {
     flex: 1;
     min-width: 0;
-    height: 2.15rem;
+    height: 2.5rem;
     border: 1px solid var(--docs-border-subtle);
-    border-radius: 8px;
+    border-radius: 6px;
     background: var(--docs-bg);
     color: var(--docs-fg);
-    padding: 0 0.65rem;
-    font-size: 0.8125rem;
+    padding: 0 0.7rem;
+    font: 0.8125rem var(--docs-font-sans);
   }
-
   .docs-ai__send {
     appearance: none;
+    min-width: 4.5rem;
+    min-height: 2.5rem;
+    padding: 0 0.8rem;
     border: 1px solid color-mix(in srgb, var(--docs-accent) 50%, transparent);
-    border-radius: 8px;
+    border-radius: 6px;
     background: transparent;
     color: var(--docs-accent);
-    font-weight: 600;
-    font-size: 0.8125rem;
-    padding: 0 0.75rem;
+    font: 600 0.8125rem var(--docs-font-sans);
     cursor: pointer;
   }
-
-  .docs-ai__foot {
-    margin: 0;
-    padding: 0 0.75rem 0.65rem;
-    font-size: 0.7rem;
-    color: var(--docs-fg-subtle);
-  }
-
+  .docs-ai__send:disabled { cursor: wait; opacity: 0.6; }
+  .docs-ai__foot { margin: 0; padding: 0 0.8rem 0.7rem; font-size: 0.75rem; color: var(--docs-fg-subtle); }
   .docs-ai__link,
-  .docs-ai__linkbtn {
-    color: var(--docs-fg-muted);
-    background: none;
-    border: 0;
-    padding: 0;
-    font: inherit;
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 0.15em;
+  .docs-ai__linkbtn { color: var(--docs-fg-muted); background: none; border: 0; padding: 0.25rem 0; font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 0.15em; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+  @media (max-width: 39.99rem) {
+    .docs-ai {
+      width: calc(100vw - max(1rem, env(safe-area-inset-left)) - max(1rem, env(safe-area-inset-right)));
+      max-height: calc(100dvh - max(1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom)));
+      margin: auto;
+    }
+    .docs-ai__panel { max-height: inherit; }
+    .docs-ai__input,
+    .docs-ai__send,
+    .docs-ai-fab { min-height: 2.75rem; }
   }
 </style>
