@@ -724,3 +724,101 @@
     --sl-content-inline-start: 0px;
   }
 }
+
+@layer components {
+  /* ── Custom select pickers (Chromium 135+ customizable <select>) ──
+     Native OS dropdown popups cannot be themed; `appearance: base-select`
+     renders the picker in-page as DOM we fully style — keyboard and a11y
+     semantics stay native. Firefox/Safari fall back to the OS picker.
+     Must come AFTER the `appearance: none !important` reset above (same
+     layer + importance → later source order wins). */
+  @supports (appearance: base-select) {
+    starlight-theme-select select,
+    starlight-lang-select select,
+    .version-selector__select,
+    [data-rpc-jump],
+    .sl-markdown-content select {
+      -webkit-appearance: base-select !important;
+      appearance: base-select !important;
+    }
+
+    starlight-theme-select select::picker(select),
+    starlight-lang-select select::picker(select),
+    .version-selector__select::picker(select),
+    [data-rpc-jump]::picker(select),
+    .sl-markdown-content select::picker(select) {
+      -webkit-appearance: base-select;
+      appearance: base-select;
+      margin-top: 0.3rem;
+      padding: 0.25rem;
+      min-width: anchor-size(width);
+      border: 1px solid var(--docs-border);
+      border-radius: var(--radius-lg);
+      background: var(--docs-bg-surface);
+      box-shadow: var(--polish-inset-glow);
+      color: var(--docs-fg-muted);
+    }
+
+    starlight-theme-select select option,
+    starlight-lang-select select option,
+    .version-selector__select option,
+    [data-rpc-jump] option,
+    .sl-markdown-content select option {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.65rem;
+      border-radius: var(--radius-md);
+      font-family: var(--docs-font-sans);
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: var(--docs-fg-muted);
+      background: transparent;
+      cursor: pointer;
+      transition:
+        background-color var(--polish-transition),
+        color var(--polish-transition);
+    }
+
+    starlight-theme-select select option:hover,
+    starlight-lang-select select option:hover,
+    .version-selector__select option:hover,
+    [data-rpc-jump] option:hover,
+    .sl-markdown-content select option:hover,
+    starlight-theme-select select option:focus,
+    starlight-lang-select select option:focus,
+    .version-selector__select option:focus,
+    [data-rpc-jump] option:focus,
+    .sl-markdown-content select option:focus {
+      background: color-mix(in srgb, var(--docs-accent) 8%, transparent);
+      color: var(--docs-fg);
+    }
+
+    starlight-theme-select select option:checked,
+    starlight-lang-select select option:checked,
+    .version-selector__select option:checked,
+    [data-rpc-jump] option:checked,
+    .sl-markdown-content select option:checked {
+      color: var(--docs-fg);
+      font-weight: 600;
+    }
+
+    starlight-theme-select select option::checkmark,
+    starlight-lang-select select option::checkmark,
+    .version-selector__select option::checkmark,
+    [data-rpc-jump] option::checkmark,
+    .sl-markdown-content select option::checkmark {
+      color: var(--docs-accent);
+    }
+
+    /* base-select adds its own trigger arrow — the chrome already renders
+       a caret (Starlight svg / component chevron), so hide the duplicate. */
+    starlight-theme-select select::picker-icon,
+    starlight-lang-select select::picker-icon,
+    .version-selector__select::picker-icon,
+    [data-rpc-jump]::picker-icon,
+    .sl-markdown-content select::picker-icon {
+      display: none;
+    }
+  }
+}
