@@ -1,0 +1,43 @@
+---
+/**
+ * Programmatic KaTeX for complex formulas (escape hatch beyond $…$).
+ * Prefer Markdown math for ordinary equations.
+ */
+import katex from 'katex';
+
+interface Props {
+  /** LaTeX source (without surrounding $) */
+  formula: string;
+  /** Display (block) vs inline */
+  display?: boolean;
+}
+
+const { formula, display = true } = Astro.props;
+
+let html = '';
+let err: string | null = null;
+try {
+  html = katex.renderToString(formula, {
+    displayMode: display,
+    throwOnError: true,
+    strict: 'ignore',
+    trust: true,
+    output: 'htmlAndMathml',
+  });
+} catch (e) {
+  err = e instanceof Error ? e.message : String(e);
+}
+---
+
+{
+  err ? (
+    <span class="docs-math docs-math--error" role="alert">
+      Math error: {err}
+    </span>
+  ) : (
+    <span
+      class:list={['docs-math', display ? 'docs-math--block' : 'docs-math--inline']}
+      set:html={html}
+    />
+  )
+}

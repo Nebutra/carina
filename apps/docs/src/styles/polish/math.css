@@ -1,0 +1,66 @@
+/**
+ * KaTeX theming — follow docs fg/muted; work on light + dark surfaces.
+ */
+
+@layer components {
+  .sl-markdown-content .katex {
+    font-size: 1.05em;
+    color: var(--docs-fg);
+  }
+
+  .sl-markdown-content .katex-display {
+    margin: 1.25rem 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.35rem 0;
+  }
+
+  .sl-markdown-content .katex-display > .katex {
+    font-size: 1.12em;
+  }
+
+  /* Avoid Starlight prose styling fighting math spans */
+  .sl-markdown-content .katex .mord,
+  .sl-markdown-content .katex .mbin,
+  .sl-markdown-content .katex .mrel,
+  .sl-markdown-content .katex .mopen,
+  .sl-markdown-content .katex .mclose,
+  .sl-markdown-content .katex .mpunct,
+  .sl-markdown-content .katex .minner {
+    color: inherit;
+  }
+
+  /* Soft surface for display equations */
+  .sl-markdown-content .katex-display {
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--docs-bg-surface) 70%, transparent);
+    border: 1px solid var(--docs-border-subtle);
+    padding: 0.85rem 1rem;
+  }
+
+  /* Optional <Math> component wrappers */
+  .docs-math {
+    color: var(--docs-fg);
+  }
+
+  .docs-math--block {
+    display: block;
+    margin: 1.25rem 0;
+    overflow-x: auto;
+    border-radius: 8px;
+    border: 1px solid var(--docs-border-subtle);
+    background: color-mix(in srgb, var(--docs-bg-surface) 70%, transparent);
+    padding: 0.85rem 1rem;
+    text-align: center;
+  }
+
+  .docs-math--inline {
+    display: inline;
+  }
+
+  .docs-math--error {
+    color: var(--docs-danger);
+    font-family: var(--docs-font-mono);
+    font-size: 0.8125rem;
+  }
+}

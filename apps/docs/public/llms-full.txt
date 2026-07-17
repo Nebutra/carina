@@ -112,6 +112,13 @@ What Carina is, who it is for, and how the runtime is structured.
 - URL: https://carina.nebutra.com/getting-started/introduction/
 - Markdown: https://carina.nebutra.com/getting-started/introduction/index.md
 
+## Math notation
+
+KaTeX-powered LaTeX in Carina docs — inline, display, matrices, and complex AMS layouts.
+
+- URL: https://carina.nebutra.com/getting-started/math/
+- Markdown: https://carina.nebutra.com/getting-started/math/index.md
+
 ## Quickstart
 
 Start the daemon, run an agent task, inspect audit, and roll back a patch.
@@ -272,6 +279,13 @@ Carina 是什么、面向谁、运行时如何组织。
 
 - URL: https://carina.nebutra.com/zh-cn/getting-started/introduction/
 - Markdown: https://carina.nebutra.com/zh-cn/getting-started/introduction/index.md
+
+## 数学公式
+
+Carina 文档的 KaTeX LaTeX 支持 — 行内、块级、矩阵与复杂 AMS 排版。
+
+- URL: https://carina.nebutra.com/zh-cn/getting-started/math/
+- Markdown: https://carina.nebutra.com/zh-cn/getting-started/math/index.md
 
 ## 快速上手
 

@@ -2,6 +2,8 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import tailwindcss from '@tailwindcss/vite';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import { carinaDark } from './src/themes/carina-code.mjs';
 
 /**
@@ -14,10 +16,29 @@ import { carinaDark } from './src/themes/carina-code.mjs';
  *
  * Dual theme: brand semantics switch on data-theme (light/dark); Starlight's
  * built-in ThemeProvider/ThemeSelect handle persistence + FOUC guard.
+ *
+ * Math: remark-math + rehype-katex (inline $…$ / display $$…$$).
  */
 export default defineConfig({
   site: 'https://carina.nebutra.com',
   trailingSlash: 'always',
+  markdown: {
+    // Still supported in Astro 7 (processor API preferred long-term).
+    remarkPlugins: [remarkMath],
+    rehypePlugins: [
+      [
+        rehypeKatex,
+        {
+          // Prefer render over hard-fail for authoring DX
+          throwOnError: false,
+          strict: 'ignore',
+          // Allow more AMS / HTML-ish constructs used in complex formulas
+          trust: true,
+          output: 'htmlAndMathml',
+        },
+      ],
+    ],
+  },
   integrations: [
     starlight({
       title: 'Carina',
@@ -85,6 +106,9 @@ export default defineConfig({
         './src/styles/polish/search.css',
         './src/styles/polish/landing.css',
         './src/styles/polish/motion.css',
+        // KaTeX (math) — after polish so docs-math.css can override colors
+        'katex/dist/katex.min.css',
+        './src/styles/polish/math.css',
       ],
       // Built-in Pagefind search (keyboard: /, Esc)
       pagefind: true,
@@ -176,6 +200,11 @@ export default defineConfig({
               label: 'Quickstart',
               translations: { 'zh-CN': '快速上手' },
               link: '/getting-started/quickstart/',
+            },
+            {
+              label: 'Math notation',
+              translations: { 'zh-CN': '数学公式' },
+              link: '/getting-started/math/',
             },
           ],
         },

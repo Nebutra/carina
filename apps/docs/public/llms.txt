@@ -22,6 +22,7 @@ Site: https://carina.nebutra.com
 - [Workers](https://carina.nebutra.com/deployment/workers/): Lease-based remote workers, production profile, drain, and containers.
 - [Installation](https://carina.nebutra.com/getting-started/installation/): Install the Carina CLI and daemon on macOS, Linux, or via package managers.
 - [Introduction](https://carina.nebutra.com/getting-started/introduction/): What Carina is, who it is for, and how the runtime is structured.
+- [Math notation](https://carina.nebutra.com/getting-started/math/): KaTeX-powered LaTeX in Carina docs — inline, display, matrices, and complex AMS layouts.
 - [Quickstart](https://carina.nebutra.com/getting-started/quickstart/): Start the daemon, run an agent task, inspect audit, and roll back a patch.
 - [Memory overview](https://carina.nebutra.com/memory/overview/): Governed local memory, MemoryWrite capability, and optional HMS projection.
 - [Traces & audit](https://carina.nebutra.com/observability/traces/): Event log, item stream, cost attribution, and hash-chain verification.
@@ -48,6 +49,7 @@ Site: https://carina.nebutra.com
 - [Workers](https://carina.nebutra.com/zh-cn/deployment/workers/): 基于租约的远程 worker、生产配置与排水升级。
 - [安装](https://carina.nebutra.com/zh-cn/getting-started/installation/): 在 macOS、Linux 上安装 Carina CLI 与 daemon。
 - [简介](https://carina.nebutra.com/zh-cn/getting-started/introduction/): Carina 是什么、面向谁、运行时如何组织。
+- [数学公式](https://carina.nebutra.com/zh-cn/getting-started/math/): Carina 文档的 KaTeX LaTeX 支持 — 行内、块级、矩阵与复杂 AMS 排版。
 - [快速上手](https://carina.nebutra.com/zh-cn/getting-started/quickstart/): 启动 daemon、运行任务、检查审计、回滚补丁。
 - [Memory 概览](https://carina.nebutra.com/zh-cn/memory/overview/): 会话上下文、检索钩子与持久记录。
 - [追踪与审计](https://carina.nebutra.com/zh-cn/observability/traces/): 检视轮次、成本与哈希链审计历史。
