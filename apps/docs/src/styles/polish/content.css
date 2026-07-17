@@ -213,28 +213,35 @@
     opacity: 0.9;
   }
 
-  /* Tables — hairlines, quiet hover, edge fade; rows grow to content + scroll */
-  .sl-markdown-content table {
-    display: block;
-    width: 100%;
-    max-width: 100%;
+  /*
+   * Tables — NATIVE table layout inside a scroll wrapper (Mintlify/fumadocs
+   * pattern; wrapper injected by src/plugins/rehype-table-scroll.mjs).
+   * Never re-display thead/tbody/tr: per-row "display: table" makes every
+   * row compute its own column widths — columns stop aligning across rows.
+   */
+  .docs-table-scroll {
     overflow-x: auto;
-    border-collapse: collapse;
-    font-size: 0.9rem;
-    box-shadow: none;
+    -webkit-overflow-scrolling: touch;
+    margin-block: var(--spacing-5);
+    max-width: 100%;
     scrollbar-width: thin;
+    /* Edge fade hints only while scrollable (background-attachment: local) */
     background:
       linear-gradient(90deg, var(--docs-bg) 30%, transparent) left center / 1.25rem 100% no-repeat local,
       linear-gradient(270deg, var(--docs-bg) 30%, transparent) right center / 1.25rem 100% no-repeat local;
   }
 
-  .sl-markdown-content thead,
-  .sl-markdown-content tbody,
-  .sl-markdown-content tr {
+  .sl-markdown-content .docs-table-scroll table {
     display: table;
-    width: max-content;
-    min-width: 100%;
-    table-layout: auto;
+    width: 100%;
+    margin-block: 0;
+  }
+
+  .sl-markdown-content table {
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    box-shadow: none;
+    background: transparent;
   }
 
   .sl-markdown-content th,
@@ -242,6 +249,7 @@
     border: 0;
     border-bottom: 1px solid var(--docs-border-subtle);
     padding: 0.7rem 1rem 0.7rem 0;
+    text-align: start;
     vertical-align: top;
     overflow-wrap: break-word;
     word-break: normal;
@@ -256,9 +264,8 @@
     white-space: nowrap;
   }
 
-  /* Keep Field / Type / code identifiers intact (no vertical glyph wrap) */
+  /* Keep identifier-ish cells intact; prose columns wrap naturally */
   .sl-markdown-content td:first-child,
-  .sl-markdown-content td:nth-child(2),
   .sl-markdown-content td code {
     white-space: nowrap;
     overflow-wrap: normal;

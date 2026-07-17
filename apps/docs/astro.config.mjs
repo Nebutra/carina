@@ -4,7 +4,9 @@ import starlight from '@astrojs/starlight';
 import tailwindcss from '@tailwindcss/vite';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import rehypeTableScroll from './src/plugins/rehype-table-scroll.mjs';
 import { carinaDark } from './src/themes/carina-code.mjs';
+import { sectionRedirects } from './src/config/section-entries.mjs';
 
 /**
  * Carina docs site — Astro + Starlight
@@ -22,6 +24,7 @@ import { carinaDark } from './src/themes/carina-code.mjs';
 export default defineConfig({
   site: 'https://carina.nebutra.com',
   trailingSlash: 'always',
+  redirects: sectionRedirects,
   // Hover prefetch pairs with the ClientRouter (Motion.astro) for instant nav.
   prefetch: {
     prefetchAll: true,
@@ -42,6 +45,8 @@ export default defineConfig({
           output: 'htmlAndMathml',
         },
       ],
+      // Native-layout tables inside a scroll wrapper (Mintlify/fumadocs pattern)
+      rehypeTableScroll,
     ],
   },
   integrations: [

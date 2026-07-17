@@ -728,28 +728,16 @@
 
   /* ── Tables ──────────────────────────────────────────────────────── */
   /*
-   * Scrollable shell; rows size to content (max-content) so Field/Type
-   * mono identifiers are never crushed into vertical single-glyph wraps.
-   * Avoid overflow-wrap: anywhere — it breaks snake_case API fields.
+   * NATIVE table layout; horizontal overflow is owned by the
+   * .docs-table-scroll wrapper (rehype-table-scroll plugin). Never set
+   * display: table on thead/tbody/tr — each row becomes an independent
+   * table and columns stop aligning across rows (see spec: docs-site).
    */
   .sl-markdown-content table {
-    display: block;
     width: 100%;
     max-width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
     border-collapse: collapse;
     font-size: var(--text-body-sm);
-    scrollbar-width: thin;
-  }
-
-  .sl-markdown-content thead,
-  .sl-markdown-content tbody,
-  .sl-markdown-content tr {
-    display: table;
-    width: max-content;
-    min-width: 100%;
-    table-layout: auto;
   }
 
   .sl-markdown-content th,
