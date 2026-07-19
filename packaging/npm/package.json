@@ -1,6 +1,6 @@
 {
   "name": "@nebutra/carina",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "description": "Native launcher for the Carina Agent Runtime",
   "license": "MIT",
   "bin": { "carina": "bin/carina.js", "carina-daemon": "bin/carina.js", "carina-worker": "bin/carina.js" },
@@ -8,8 +8,8 @@
   "os": ["darwin", "linux"],
   "cpu": ["arm64", "x64"],
   "optionalDependencies": {
-    "@nebutra/carina-darwin-arm64": "0.6.4", "@nebutra/carina-darwin-x64": "0.6.4",
-    "@nebutra/carina-linux-arm64": "0.6.4", "@nebutra/carina-linux-x64": "0.6.4"
+    "@nebutra/carina-darwin-arm64": "0.6.5", "@nebutra/carina-darwin-x64": "0.6.5",
+    "@nebutra/carina-linux-arm64": "0.6.5", "@nebutra/carina-linux-x64": "0.6.5"
   },
   "scripts": { "test": "node test.mjs" }
 }

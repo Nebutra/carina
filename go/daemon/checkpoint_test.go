@@ -686,7 +686,8 @@ func TestRunStoreLoadsLegacyUnstampedTaskAndQuarantinesFuture(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(runs.dir, "legacy.json"), []byte(`{"task_id": "legacy", "status": "completed"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(runs.dir, "future.json"), []byte(`{"version": 2, "task_id": "future", "status": "completed"}`), 0o600); err != nil {
+	futureVersion := runStoreVersion + 1
+	if err := os.WriteFile(filepath.Join(runs.dir, "future.json"), []byte(fmt.Sprintf(`{"version": %d, "task_id": "future", "status": "completed"}`, futureVersion)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runs.save(&scheduler.Task{TaskID: "stamped", Status: "completed"})
@@ -699,7 +700,7 @@ func TestRunStoreLoadsLegacyUnstampedTaskAndQuarantinesFuture(t *testing.T) {
 	if len(got) != 2 || !loaded["legacy"] || !loaded["stamped"] {
 		t.Fatalf("load = %+v, want legacy+stamped only", loaded)
 	}
-	moved, err := filepath.Glob(filepath.Join(runs.dir, "future.json.v2.*.quarantine"))
+	moved, err := filepath.Glob(filepath.Join(runs.dir, fmt.Sprintf("future.json.v%d.*.quarantine", futureVersion)))
 	if err != nil || len(moved) != 1 {
 		t.Fatalf("future task row must be quarantined, got %v err=%v", moved, err)
 	}
@@ -707,7 +708,7 @@ func TestRunStoreLoadsLegacyUnstampedTaskAndQuarantinesFuture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"version": 1`) {
-		t.Fatalf("saved task row must be stamped v1: %s", raw)
+	if !strings.Contains(string(raw), fmt.Sprintf(`"version": %d`, runStoreVersion)) {
+		t.Fatalf("saved task row must be stamped v%d: %s", runStoreVersion, raw)
 	}
 }

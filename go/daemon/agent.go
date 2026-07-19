@@ -652,10 +652,16 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 }
 
 func (d *Daemon) persistTurnCheckpoint(sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, turn int, memorySnapshot string) bool {
-	err := d.runs.saveCheckpointChecked(task.TaskID, &runCheckpoint{
-		Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess),
-	})
+	anchor, err := d.captureWorkspaceAnchor(sess)
+	if err != nil {
+		d.degrade(sess, task, tr, "workspace anchor persistence failed before the next action; run stopped to prevent stale replay: "+err.Error())
+		return false
+	}
+	cp := &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess), WorkspaceAnchor: anchor}
+	err = d.runs.saveCheckpointChecked(task.TaskID, cp)
 	if err == nil {
+		_, _ = d.sched.SetWorkspaceAnchor(task.TaskID, *anchor)
+		d.persistRun(task.TaskID)
 		return true
 	}
 	d.degrade(sess, task, tr, "checkpoint persistence failed before the next action; run stopped to prevent stale replay: "+err.Error())
@@ -702,11 +708,17 @@ func (d *Daemon) finish(sess *sessionstore.Session, task *scheduler.Task, summar
 	if current, ok := d.sched.Get(task.TaskID); ok && current.Status == "cancelled" {
 		return
 	}
-	d.sched.SetStatus(task.TaskID, "completed")
-	d.sched.SetResult(task.TaskID, summary, d.appliedPatchIDs(sess))
+	if _, err := d.sched.SetTerminalResultFenced(task.TaskID, task.Continuity.Execution.LeaseGeneration, "completed", summary, d.appliedPatchIDs(sess)); err != nil {
+		return
+	}
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 		map[string]any{"status": "completed", "summary": summary}, "")
 	d.persistRun(task.TaskID)
+	if task.Continuity.RecoveryGeneration > 0 {
+		d.record(sess.SessionID, "TaskRecoveryCompleted", task.TaskID, "go", map[string]any{
+			"recovery_generation": task.Continuity.RecoveryGeneration, "status": "completed",
+		}, "")
+	}
 	// Retain the final model-view checkpoint for operator rewind/recap. Recovery
 	// only resumes non-terminal task states, so retention cannot rerun the task.
 	d.emitCompletion(sess.SessionID, task)
@@ -733,13 +745,19 @@ func (d *Daemon) degrade(sess *sessionstore.Session, task *scheduler.Task, tr *T
 		return
 	}
 	applied := d.appliedPatchIDs(sess)
-	d.sched.SetStatus(task.TaskID, "degraded")
-	d.sched.SetResult(task.TaskID, reason, applied)
+	if _, err := d.sched.SetTerminalResultFenced(task.TaskID, task.Continuity.Execution.LeaseGeneration, "degraded", reason, applied); err != nil {
+		return
+	}
 	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
 		"status": "degraded", "reason": reason,
 		"turns": len(tr.Turns), "applied_patches": applied,
 	}, "")
 	d.persistRun(task.TaskID)
+	if task.Continuity.RecoveryGeneration > 0 {
+		d.record(sess.SessionID, "TaskRecoveryCompleted", task.TaskID, "go", map[string]any{
+			"recovery_generation": task.Continuity.RecoveryGeneration, "status": "degraded",
+		}, "")
+	}
 	// Retain the last checkpoint for governed rewind after degraded completion.
 	d.emitCompletion(sess.SessionID, task)
 }

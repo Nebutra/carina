@@ -25,6 +25,7 @@ import (
 	"github.com/Nebutra/carina/go/auth"
 	"github.com/Nebutra/carina/go/channels"
 	"github.com/Nebutra/carina/go/contextengine"
+	"github.com/Nebutra/carina/go/continuity"
 	"github.com/Nebutra/carina/go/egress"
 	"github.com/Nebutra/carina/go/extensions"
 	"github.com/Nebutra/carina/go/history"
@@ -257,17 +258,17 @@ type Daemon struct {
 	loopWG   sync.WaitGroup
 	taskWG   sync.WaitGroup
 
-	interactiveApproval   atomic.Bool   // true iff approval mode is ask (legacy mirror, hot-reloadable)
-	approvalMode          atomic.Value  // string: ask|always-approve|dont-ask
-	disableAlwaysApprove  atomic.Bool   // org lock: refuse always-approve (hot-reloadable)
-	debugRPCEnabled       atomic.Bool   // exposes debug.* and collects debug trace (hot-reloadable, default off)
-	approvalTimeout     time.Duration                   // how long to wait for an interactive approval (0 => 5m)
-	pendingApprovals    map[string]chan approvalSignal  // decision_id -> resolver channel
-	pendingQuestions    map[string]*pendingUserQuestion // question_id -> blocked ask_user tool
-	approvalGrants      *approvalGrantStore             // exact session/project grants, persisted under stateDir
-	approvalMu          sync.Mutex
-	questionMu          sync.Mutex
-	patchGateRetention  time.Duration // how long a resolved patch gate survives before being swept (0 => 1h)
+	interactiveApproval  atomic.Bool                     // true iff approval mode is ask (legacy mirror, hot-reloadable)
+	approvalMode         atomic.Value                    // string: ask|always-approve|dont-ask
+	disableAlwaysApprove atomic.Bool                     // org lock: refuse always-approve (hot-reloadable)
+	debugRPCEnabled      atomic.Bool                     // exposes debug.* and collects debug trace (hot-reloadable, default off)
+	approvalTimeout      time.Duration                   // how long to wait for an interactive approval (0 => 5m)
+	pendingApprovals     map[string]chan approvalSignal  // decision_id -> resolver channel
+	pendingQuestions     map[string]*pendingUserQuestion // question_id -> blocked ask_user tool
+	approvalGrants       *approvalGrantStore             // exact session/project grants, persisted under stateDir
+	approvalMu           sync.Mutex
+	questionMu           sync.Mutex
+	patchGateRetention   time.Duration // how long a resolved patch gate survives before being swept (0 => 1h)
 
 	subagentParentTask map[string]string // childSessionID -> parentTaskID (leader-bridge linkage)
 	escalationCounts   map[string]int    // childTaskID -> escalations used (bridge cap)
@@ -305,6 +306,7 @@ type Daemon struct {
 	compactionBreaker        *compactionCircuitBreaker
 	retryGovernance          *retryGovernance
 	artifacts                *artifact.Store
+	runtimeLease             *runtimeLease
 }
 
 const artifactGCInterval = 30 * time.Minute
@@ -313,6 +315,16 @@ func New(opts Options) (*Daemon, error) {
 	if opts.StateDir == "" {
 		opts.StateDir = ".carina-state"
 	}
+	runtimeLease, err := acquireRuntimeLease(opts.StateDir)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: %w", err)
+	}
+	leaseTransferred := false
+	defer func() {
+		if !leaseTransferred {
+			_ = runtimeLease.close(false)
+		}
+	}()
 	contextEng, err := contextengine.New(contextengine.Config{
 		ContextEngine:       opts.ContextEngine,
 		HeadroomBin:         opts.HeadroomBin,
@@ -399,6 +411,7 @@ func New(opts Options) (*Daemon, error) {
 		gatewayTokens:         gatewayTokens,
 		gatewayTokenMaxTTL:    gatewayTokenMaxTTL,
 		gatewayResponses:      map[string]string{},
+		runtimeLease:          runtimeLease,
 	}
 	if mode := strings.ToLower(strings.TrimSpace(opts.MemoryProvider)); mode != "" && mode != memoryProviderOff {
 		if opts.Offline {
@@ -709,6 +722,7 @@ func New(opts Options) (*Daemon, error) {
 	d.resumeRuns()
 	d.recoverAutoGoals()
 	d.startBackgroundLoop(d.runScheduleLoop)
+	leaseTransferred = true
 	return d, nil
 }
 
@@ -838,7 +852,12 @@ func (d *Daemon) Close() error {
 	for _, srv := range d.gatewayHTTPServers {
 		_ = srv.Close()
 	}
-	return d.kern.Close()
+	kernelErr := d.kern.Close()
+	leaseErr := d.runtimeLease.close(true)
+	if kernelErr != nil {
+		return kernelErr
+	}
+	return leaseErr
 }
 
 func (d *Daemon) runArtifactGC() {
@@ -1697,7 +1716,33 @@ func (d *Daemon) handleSessionGet(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) handleSessionList(_ json.RawMessage) (any, error) {
-	return d.store.List(), nil
+	tasks := d.sched.List()
+	latest := map[string]*scheduler.Task{}
+	for _, task := range tasks {
+		current := latest[task.SessionID]
+		if current == nil || task.UpdatedAt.After(current.UpdatedAt) {
+			latest[task.SessionID] = task
+		}
+	}
+	type sessionContinuityEntry struct {
+		*sessionstore.Session
+		LatestTaskID string            `json:"latest_task_id,omitempty"`
+		TaskStatus   string            `json:"task_status,omitempty"`
+		Summary      string            `json:"summary,omitempty"`
+		Continuity   *continuity.State `json:"continuity,omitempty"`
+		UpdatedAt    time.Time         `json:"updated_at,omitempty"`
+	}
+	out := make([]sessionContinuityEntry, 0, len(d.store.List()))
+	for _, sess := range d.store.List() {
+		entry := sessionContinuityEntry{Session: sess}
+		if task := latest[sess.SessionID]; task != nil {
+			state := task.Continuity
+			entry.LatestTaskID, entry.TaskStatus, entry.Summary = task.TaskID, task.Status, task.Summary
+			entry.Continuity, entry.UpdatedAt = &state, task.UpdatedAt
+		}
+		out = append(out, entry)
+	}
+	return out, nil
 }
 
 func (d *Daemon) handleSessionPause(params json.RawMessage) (any, error) {
@@ -2903,8 +2948,7 @@ func (d *Daemon) guardRun(ctx context.Context, sess *sessionstore.Session, task 
 	defer func() { <-d.runSem }()
 	defer func() {
 		if r := recover(); r != nil {
-			d.sched.SetStatus(task.TaskID, "failed")
-			d.sched.SetResult(task.TaskID, fmt.Sprintf("panic: %v", r), nil)
+			_, _ = d.sched.SetTerminalResultFenced(task.TaskID, task.Continuity.Execution.LeaseGeneration, "failed", fmt.Sprintf("panic: %v", r), nil)
 			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
 				map[string]any{"status": "failed", "reason": "panic recovered"}, "")
 			d.persistRun(task.TaskID)
@@ -2915,6 +2959,18 @@ func (d *Daemon) guardRun(ctx context.Context, sess *sessionstore.Session, task 
 }
 
 func (d *Daemon) runTaskGuarded(sess *sessionstore.Session, task *scheduler.Task) {
+	if task.Continuity.Execution.LeaseGeneration == 0 {
+		current, ok := d.sched.Get(task.TaskID)
+		if !ok {
+			return
+		}
+		claimed, err := d.sched.AcquireExecution(task.TaskID, current.Revision, "local", d.runtimeLease.state.InstanceID, d.runtimeLease.state.Epoch, time.Time{})
+		if err != nil {
+			return
+		}
+		task = claimed
+		d.persistRun(task.TaskID)
+	}
 	fence := d.sessionExecutionFence(sess.SessionID)
 	fence.RLock()
 	defer fence.RUnlock()
@@ -2956,44 +3012,17 @@ func (d *Daemon) resumeTaskGuarded(sess *sessionstore.Session, task *scheduler.T
 	}
 }
 
-// markInterrupted records that a mid-flight run could not be resumed after a
-// restart (its session vanished, or it had no checkpoint to resume from).
-func (d *Daemon) markInterrupted(task *scheduler.Task, reason string) {
-	d.sched.SetStatus(task.TaskID, "degraded")
-	d.sched.SetResult(task.TaskID, "interrupted by daemon restart: "+reason, nil)
-	d.persistRun(task.TaskID)
-}
-
-// resumeRuns relaunches background runs that were mid-flight when the daemon
-// stopped. A run with a transcript checkpoint continues from its next turn; one
-// without a checkpoint is marked interrupted rather than blindly re-run (which
-// could duplicate side effects). It requires a reasoner — otherwise a no-op, so
-// the run stays "running" until a reasoner-backed daemon picks it up.
+// resumeRuns reconciles abandoned execution. It resumes only when every
+// independently persisted proof passes; all legacy or ambiguous rows remain
+// quiescent and explain why operator review is required.
 func (d *Daemon) resumeRuns() {
-	if d.reasoner == nil {
-		return
-	}
-	resumed := 0
 	for _, task := range d.sched.List() {
-		if task.Status != "running" {
-			continue
+		switch task.Status {
+		case "running":
+			d.reconcileInterruptedTask(task)
+		case "interrupted":
+			d.startPlannedRecovery(task)
 		}
-		sess, ok := d.store.Get(task.SessionID)
-		if !ok {
-			d.markInterrupted(task, "session gone")
-			continue
-		}
-		cp := d.runs.loadCheckpoint(task.TaskID)
-		if cp == nil {
-			d.markInterrupted(task, "no checkpoint")
-			continue
-		}
-		sessCopy, taskCopy, cpCopy := sess, task, cp
-		d.startTask(func() { d.resumeTaskGuarded(sessCopy, taskCopy, cpCopy) })
-		resumed++
-	}
-	if resumed > 0 {
-		fmt.Printf("carina-daemon: resumed %d background run(s)\n", resumed)
 	}
 }
 

@@ -78,6 +78,8 @@ func normalizeTaskStatus(status string) string {
 		return "queued"
 	case status == "paused" || status == "checkpoint_restored":
 		return "paused"
+	case status == "interrupted":
+		return "interrupted"
 	default:
 		return "running"
 	}
@@ -279,6 +281,8 @@ func (m *Model) taskStatusText(status string) string {
 		return m.text(MsgTaskStatusQueued, nil)
 	case "paused":
 		return m.text(MsgTaskStatusPaused, nil)
+	case "interrupted":
+		return m.text(MsgTaskStatusInterrupted, nil)
 	default:
 		return m.text(MsgTaskStatusRunning, nil)
 	}
@@ -290,7 +294,7 @@ func taskStatusGlyph(th theme.Theme, status string) string {
 		return glyphOK(th)
 	case "failed", "cancelled", "degraded":
 		return glyphFailed(th)
-	case "waiting":
+	case "waiting", "interrupted":
 		return glyphNeedsAuth(th)
 	case "paused":
 		return glyphNeutral(th)

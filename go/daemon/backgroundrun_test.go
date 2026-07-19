@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Nebutra/carina/go/continuity"
 )
 
 // panicReasoner blows up on every call — used to prove a panic in the agent
@@ -117,7 +119,11 @@ func TestBackgroundRunResumesAfterRestart(t *testing.T) {
 	d1.sched.SetStatus(task.TaskID, "running")
 	tr := newTranscript(task.UserPrompt)
 	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.txt", Obs: Observation{Content: "hi"}})
-	d1.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: 1, Transcript: tr})
+	anchor, err := d1.captureWorkspaceAnchor(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d1.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: 1, Transcript: tr, WorkspaceAnchor: anchor})
 	d1.persistRun(task.TaskID)
 	d1.Close()
 
@@ -125,8 +131,8 @@ func TestBackgroundRunResumesAfterRestart(t *testing.T) {
 	// nil reasoner) and leaves the run "running". Inject a reasoner, then resume.
 	d2 := newDaemonAt(t, stateDir)
 	defer d2.Close()
-	if tk, ok := d2.sched.Get(task.TaskID); !ok || tk.Status != "running" {
-		t.Fatalf("interrupted run should be preserved as running for resume, got %+v", tk)
+	if tk, ok := d2.sched.Get(task.TaskID); !ok || tk.Status != "interrupted" || tk.Continuity.Recovery.Disposition != continuity.RecoveryResumeCheckpoint {
+		t.Fatalf("interrupted run should be safely planned for resume, got %+v", tk)
 	}
 	d2.SetReasoner(&scriptedReasoner{steps: []string{`{"tool":"done","summary":"resumed and finished"}`}})
 	d2.resumeRuns()

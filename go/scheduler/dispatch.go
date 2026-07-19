@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Nebutra/carina/go/continuity"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
@@ -25,6 +26,8 @@ func (s *Scheduler) SubmitForDispatchWithCapabilities(sessionID, workspaceID, pr
 		SessionID:                  sessionID,
 		WorkspaceID:                workspaceID,
 		Status:                     "queued",
+		Revision:                   1,
+		Continuity:                 continuity.ForTaskStatus("queued", len(criteria) > 0),
 		UserPrompt:                 prompt,
 		SuccessCriteria:            criteria,
 		Mode:                       "dispatch",
@@ -74,8 +77,15 @@ func (s *Scheduler) LeaseMatching(workerID string, ttl time.Duration, supports f
 		updated.LeaseOwner = workerID
 		updated.LeaseExpiry = now.Add(ttl)
 		updated.Attempts = t.Attempts + 1
-		updated.LeaseGeneration = updated.Attempts
-		updated.UpdatedAt = now
+		generation := updated.Continuity.Execution.LeaseGeneration + 1
+		if generation < 1 {
+			generation = 1
+		}
+		updated.LeaseGeneration = int(generation) // compatibility mirror
+		updated.Continuity.Execution = continuity.ExecutionLease{
+			OwnerKind: "remote", OwnerID: workerID, LeaseGeneration: generation, ExpiresAt: updated.LeaseExpiry,
+		}
+		touchTask(&updated)
 		s.tasks[id] = &updated
 		return &updated, true
 	}
@@ -100,12 +110,13 @@ func (s *Scheduler) RenewLease(taskID, workerID string, generation int, ttl time
 	if t.LeaseOwner != workerID {
 		return fmt.Errorf("scheduler: task %s is leased by another worker", taskID)
 	}
-	if generation != t.LeaseGeneration {
+	if int64(generation) != t.Continuity.Execution.LeaseGeneration {
 		return fmt.Errorf("scheduler: task %s lease generation is stale", taskID)
 	}
 	updated := *t
 	updated.LeaseExpiry = time.Now().UTC().Add(ttl)
-	updated.UpdatedAt = time.Now().UTC()
+	updated.Continuity.Execution.ExpiresAt = updated.LeaseExpiry
+	touchTask(&updated)
 	s.tasks[taskID] = &updated
 	return nil
 }
@@ -144,7 +155,7 @@ func (s *Scheduler) ReportWithUsage(taskID, workerID string, generation int, sta
 	if t.LeaseOwner != workerID {
 		return fmt.Errorf("scheduler: task %s is leased by another worker", taskID)
 	}
-	if generation != t.LeaseGeneration {
+	if int64(generation) != t.Continuity.Execution.LeaseGeneration {
 		return fmt.Errorf("scheduler: task %s lease generation is stale", taskID)
 	}
 	updated := *t
@@ -155,7 +166,10 @@ func (s *Scheduler) ReportWithUsage(taskID, workerID string, generation int, sta
 	updated.TokenUsageObserved = usageObserved
 	updated.LeaseOwner = ""
 	updated.LeaseExpiry = time.Time{}
-	updated.UpdatedAt = time.Now().UTC()
+	updated.Continuity.Execution.OwnerKind = ""
+	updated.Continuity.Execution.OwnerID = ""
+	updated.Continuity.Execution.ExpiresAt = time.Time{}
+	touchTask(&updated)
 	s.tasks[taskID] = &updated
 	return nil
 }
@@ -177,7 +191,10 @@ func (s *Scheduler) ReapExpiredLeases(now time.Time) []string {
 			updated.Status = "queued"
 			updated.LeaseOwner = ""
 			updated.LeaseExpiry = time.Time{}
-			updated.UpdatedAt = now
+			updated.Continuity.Execution.OwnerKind = ""
+			updated.Continuity.Execution.OwnerID = ""
+			updated.Continuity.Execution.ExpiresAt = time.Time{}
+			touchTask(&updated)
 			s.tasks[id] = &updated
 			s.dispatchQueue = append(s.dispatchQueue, id)
 			requeued = append(requeued, id)

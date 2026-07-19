@@ -1,10 +1,10 @@
-/** Carina JSON-RPC SDK for Runtime 0.6.4. */
+/** Carina JSON-RPC SDK for Runtime 0.6.5. */
 import { createConnection, type Socket } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 
-export const compatibleRuntimeVersion = '0.6.4'
+export const compatibleRuntimeVersion = '0.6.5'
 
 export interface Session {
   session_id: string
@@ -13,6 +13,11 @@ export interface Session {
   status: 'active' | 'paused' | 'closed'
   permission_profile: string
   created_at: string
+  updated_at?: string
+  latest_task_id?: string
+  task_status?: string
+  summary?: string
+  continuity?: ContinuityState
 }
 
 export interface Task {
@@ -21,6 +26,8 @@ export interface Task {
   session_id: string
   workspace_id: string
   status: string
+  revision?: number
+  continuity?: ContinuityState
   user_prompt: string
   model?: string
   agent?: string
@@ -42,6 +49,23 @@ export interface Task {
   lease_generation?: number
   attempts?: number
   required_worker_capabilities?: string[]
+}
+
+export type RecoveryDisposition = 'none'|'continue'|'retry'|'resume_checkpoint'|'review_required'|'blocked'
+export interface RecoveryDecision { disposition: RecoveryDisposition; reason?: string; checkpoint_id?: string; recovery_generation?: number; proofs?: Record<string, boolean> }
+export interface InterruptionRecord { kind: string; actor: string; observed_at: string; checkpoint_id?: string; certainty: 'observed'|'inferred'; retryable: boolean; user_action?: string; billing_uncertain?: boolean }
+export interface ExecutionLease { owner_kind?: string; owner_id?: string; runtime_epoch?: number; lease_generation?: number; expires_at?: string }
+export interface WorkspaceAnchorReference { id: string; workspace_realpath: string; created_at: string }
+export interface ContinuityState {
+  activity: 'running'|'waiting_input'|'waiting_approval'|'idle'
+  outcome: 'none'|'completed'|'partial'|'failed'|'cancelled'|'interrupted'
+  progress: 'empty'|'started'|'in_progress'|'verifying'|'partially_complete'|'complete'
+  recovery: RecoveryDecision
+  interruption?: InterruptionRecord
+  execution?: ExecutionLease
+  workspace_anchor?: WorkspaceAnchorReference
+  recovery_generation?: number
+  auto_recovery_attempts?: number
 }
 
 export interface CarinaEvent {

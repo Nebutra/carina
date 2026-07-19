@@ -1,0 +1,17 @@
+//go:build darwin || linux
+
+package daemon
+
+import (
+	"os"
+
+	"golang.org/x/sys/unix"
+)
+
+func acquireStateLock(file *os.File) error {
+	return unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+}
+
+func releaseStateLock(file *os.File) error {
+	return unix.Flock(int(file.Fd()), unix.LOCK_UN)
+}

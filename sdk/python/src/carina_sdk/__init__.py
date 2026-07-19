@@ -1,4 +1,4 @@
-"""Blocking Carina JSON-RPC SDK compatible with Runtime 0.6.4."""
+"""Blocking Carina JSON-RPC SDK compatible with Runtime 0.6.5."""
 
 from __future__ import annotations
 
@@ -13,13 +13,14 @@ from pathlib import Path
 from typing import Any, Iterator, TypedDict
 
 __version__ = "0.2.0"
-compatible_runtime_version = "0.6.4"
+compatible_runtime_version = "0.6.5"
 _stream_queue_limit = 64
 __all__ = [
     "CarinaClient",
     "CarinaRpcError",
     "CarinaStreamOverflow",
     "CarinaTask",
+    "ContinuityState",
     "Checkpoint",
     "CheckpointPreview",
     "CheckpointRestoreResult",
@@ -47,6 +48,8 @@ class _CarinaTaskRequired(TypedDict):
 
 class CarinaTask(_CarinaTaskRequired, total=False):
     client_submission_id: str
+    revision: int
+    continuity: ContinuityState
     model: str
     agent: str
     success_criteria: list[SuccessCheck]
@@ -64,6 +67,51 @@ class CarinaTask(_CarinaTaskRequired, total=False):
     lease_generation: int
     attempts: int
     required_worker_capabilities: list[str]
+
+
+class RecoveryDecision(TypedDict, total=False):
+    disposition: str
+    reason: str
+    checkpoint_id: str
+    recovery_generation: int
+    proofs: dict[str, bool]
+
+
+class InterruptionRecord(TypedDict, total=False):
+    kind: str
+    actor: str
+    observed_at: str
+    checkpoint_id: str
+    certainty: str
+    retryable: bool
+    user_action: str
+    billing_uncertain: bool
+
+
+class ExecutionLease(TypedDict, total=False):
+    owner_kind: str
+    owner_id: str
+    runtime_epoch: int
+    lease_generation: int
+    expires_at: str
+
+
+class WorkspaceAnchorReference(TypedDict):
+    id: str
+    workspace_realpath: str
+    created_at: str
+
+
+class ContinuityState(TypedDict, total=False):
+    activity: str
+    outcome: str
+    progress: str
+    recovery: RecoveryDecision
+    interruption: InterruptionRecord
+    execution: ExecutionLease
+    workspace_anchor: WorkspaceAnchorReference
+    recovery_generation: int
+    auto_recovery_attempts: int
 
 
 class _CheckpointRequired(TypedDict):

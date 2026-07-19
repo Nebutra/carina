@@ -53,6 +53,11 @@
         "ToolCallDenied",
         "ToolCallCancelled",
         "RuntimeStageChanged",
+        "TaskInterrupted",
+        "TaskRecoveryPlanned",
+        "TaskRecoveryStarted",
+        "TaskRecoveryBlocked",
+        "TaskRecoveryCompleted",
         "FileRead",
         "FileWriteProposed",
         "PatchProposed",
@@ -116,7 +121,7 @@
     },
     {
       "if": { "properties": { "type": { "const": "ToolCallRequested" } }, "required": ["type"] },
-      "then": { "required": ["payload"], "properties": { "payload": { "required": ["call_id", "tool", "kind", "status", "arguments"], "properties": { "status": { "const": "pending" }, "arguments": { "type": "object" } } } } }
+      "then": { "required": ["payload"], "properties": { "payload": { "required": ["call_id", "tool", "kind", "status", "arguments", "effect"], "properties": { "status": { "const": "pending" }, "arguments": { "type": "object" }, "effect": { "type": "object", "required": ["class", "replay_safe", "authority"], "properties": { "class": { "enum": ["pure", "workspace_transactional", "idempotent_external", "non_idempotent", "unknown"] }, "replay_safe": { "type": "boolean" }, "authority": { "const": "carina-runtime-v1" } } } } } } }
     },
     {
       "if": { "properties": { "type": { "const": "ToolCallStarted" } }, "required": ["type"] },

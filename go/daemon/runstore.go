@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nebutra/carina/go/continuity"
 	"github.com/Nebutra/carina/go/scheduler"
 	"github.com/Nebutra/carina/go/statefmt"
 )
@@ -18,7 +19,7 @@ import (
 // Task rows remain v1. Checkpoints evolved independently to v2 when durable
 // ids, lineage, timestamps, and sequences were added. A v2 reader accepts v1
 // checkpoints, while a v1 binary quarantines v2 rather than misreading them.
-const runStoreVersion = 1
+const runStoreVersion = 2
 const checkpointStoreVersion = 2
 
 // runStore persists background-run records — one JSON file per task under
@@ -246,15 +247,16 @@ func (r *runStore) reconcileRestoreJournals() ([]string, error) {
 // (compacted) transcript. The audit log remains the full source of truth; this
 // is only what the agent loop needs to continue from where it left off.
 type runCheckpoint struct {
-	Version            int         `json:"version,omitempty"`
-	CheckpointID       string      `json:"checkpoint_id,omitempty"`
-	ParentCheckpointID string      `json:"parent_checkpoint_id,omitempty"`
-	CreatedAt          string      `json:"created_at,omitempty"`
-	Sequence           int64       `json:"sequence,omitempty"`
-	Turn               int         `json:"turn"`
-	Transcript         *Transcript `json:"transcript"`
-	MemorySnapshot     string      `json:"memory_snapshot,omitempty"`
-	AppliedPatches     []string    `json:"applied_patches,omitempty"`
+	Version            int                         `json:"version,omitempty"`
+	CheckpointID       string                      `json:"checkpoint_id,omitempty"`
+	ParentCheckpointID string                      `json:"parent_checkpoint_id,omitempty"`
+	CreatedAt          string                      `json:"created_at,omitempty"`
+	Sequence           int64                       `json:"sequence,omitempty"`
+	Turn               int                         `json:"turn"`
+	Transcript         *Transcript                 `json:"transcript"`
+	MemorySnapshot     string                      `json:"memory_snapshot,omitempty"`
+	AppliedPatches     []string                    `json:"applied_patches,omitempty"`
+	WorkspaceAnchor    *continuity.WorkspaceAnchor `json:"workspace_anchor,omitempty"`
 }
 
 func (r *runStore) saveCheckpoint(taskID string, cp *runCheckpoint) {

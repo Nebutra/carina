@@ -1,6 +1,6 @@
 {
   "$comment": "Canonical event type enumeration (PRD §8.2). The event log is append-only; every event carries timestamp + session_id; side-effect events carry permission_decision_id.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "types": [
     { "name": "TaskCreated", "side_effect": false, "payload": ["task_id", "user_prompt"] },
     { "name": "ModelRequested", "side_effect": false, "payload": ["provider", "model", "input_tokens"] },
@@ -22,7 +22,7 @@
     { "name": "ToolRequested", "side_effect": false, "payload": ["tool", "arguments"] },
     { "name": "ToolApproved", "side_effect": false, "payload": ["tool", "decision_id"] },
     { "name": "ToolDenied", "side_effect": false, "payload": ["tool", "decision_id", "reason"] },
-    { "name": "ToolCallRequested", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "arguments"] },
+    { "name": "ToolCallRequested", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "arguments", "effect"] },
     { "name": "ToolCallApprovalRequired", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "decision_id"] },
     { "name": "ToolCallStarted", "side_effect": false, "payload": ["call_id", "tool", "kind", "status"] },
     { "name": "ToolCallCompleted", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "output", "artifact_ids"] },
@@ -30,6 +30,11 @@
     { "name": "ToolCallDenied", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "error"] },
     { "name": "ToolCallCancelled", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "error"] },
     { "name": "RuntimeStageChanged", "side_effect": false, "payload": ["stage_id", "stage", "status", "sequence", "call_id"] },
+    { "name": "TaskInterrupted", "side_effect": false, "payload": ["kind", "certainty", "retryable", "runtime_epoch", "checkpoint_id"] },
+    { "name": "TaskRecoveryPlanned", "side_effect": false, "payload": ["disposition", "recovery_generation", "proofs", "reason"] },
+    { "name": "TaskRecoveryStarted", "side_effect": false, "payload": ["recovery_generation", "execution_generation", "checkpoint_id"] },
+    { "name": "TaskRecoveryBlocked", "side_effect": false, "payload": ["recovery_generation", "proofs", "reason"] },
+    { "name": "TaskRecoveryCompleted", "side_effect": false, "payload": ["recovery_generation", "status"] },
     { "name": "FileRead", "side_effect": true, "payload": ["path", "bytes"] },
     { "name": "FileWriteProposed", "side_effect": false, "payload": ["path", "patch_id"] },
     { "name": "PatchProposed", "side_effect": false, "payload": ["patch_id", "affected_files", "reason"] },

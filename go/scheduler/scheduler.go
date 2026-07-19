@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nebutra/carina/go/continuity"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
@@ -23,32 +24,34 @@ type SuccessCheck struct {
 
 // Task mirrors protocol/schemas/task.schema.json.
 type Task struct {
-	TaskID                      string          `json:"task_id"`
-	ClientSubmissionID          string          `json:"client_submission_id,omitempty"`
-	ClientSubmissionFingerprint string          `json:"-"` // durable internal identity; never exposed through Task JSON
-	SessionID                   string          `json:"session_id"`
-	WorkspaceID                 string          `json:"workspace_id"`
-	Status                      string          `json:"status"` // queued | running | paused | waiting_approval | completed | degraded | failed | cancelled
-	UserPrompt                  string          `json:"user_prompt"`
-	Model                       string          `json:"model,omitempty"` // provider/model override; empty => daemon default
-	RequestedModel              string          `json:"requested_model,omitempty"`
-	EffectiveModel              string          `json:"effective_model,omitempty"`
-	RequestedReasoningEffort    string          `json:"requested_reasoning_effort,omitempty"`
-	EffectiveReasoningEffort    string          `json:"effective_reasoning_effort,omitempty"`
-	Agent                       string          `json:"agent,omitempty"` // agent mode/persona override; empty => build/default
-	SuccessCriteria             []SuccessCheck  `json:"success_criteria,omitempty"`
-	CreatedAt                   time.Time       `json:"created_at"`
-	UpdatedAt                   time.Time       `json:"updated_at"`
-	RiskLevel                   int             `json:"risk_level"`
-	Mode                        string          `json:"mode,omitempty"`            // foreground | background
-	Summary                     string          `json:"summary,omitempty"`         // final result / degrade reason
-	AppliedPatches              []string        `json:"applied_patches,omitempty"` // rollbackable patch ids
-	ReconciliationRequired      bool            `json:"reconciliation_required,omitempty"`
-	BlockedReason               string          `json:"blocked_reason,omitempty"`
-	TokensUsed                  int             `json:"tokens_used,omitempty"` // metered token spend (budget governance)
-	TokenUsageObserved          bool            `json:"token_usage_observed,omitempty"`
-	TokenBudget                 int             `json:"token_budget,omitempty"`
-	OutputSchema                json.RawMessage `json:"output_schema,omitempty"` // complete JSON Schema for final output
+	TaskID                      string           `json:"task_id"`
+	ClientSubmissionID          string           `json:"client_submission_id,omitempty"`
+	ClientSubmissionFingerprint string           `json:"-"` // durable internal identity; never exposed through Task JSON
+	SessionID                   string           `json:"session_id"`
+	WorkspaceID                 string           `json:"workspace_id"`
+	Status                      string           `json:"status"` // queued | running | paused | waiting_approval | interrupted | completed | degraded | failed | cancelled
+	Revision                    int64            `json:"revision,omitempty"`
+	Continuity                  continuity.State `json:"continuity"`
+	UserPrompt                  string           `json:"user_prompt"`
+	Model                       string           `json:"model,omitempty"` // provider/model override; empty => daemon default
+	RequestedModel              string           `json:"requested_model,omitempty"`
+	EffectiveModel              string           `json:"effective_model,omitempty"`
+	RequestedReasoningEffort    string           `json:"requested_reasoning_effort,omitempty"`
+	EffectiveReasoningEffort    string           `json:"effective_reasoning_effort,omitempty"`
+	Agent                       string           `json:"agent,omitempty"` // agent mode/persona override; empty => build/default
+	SuccessCriteria             []SuccessCheck   `json:"success_criteria,omitempty"`
+	CreatedAt                   time.Time        `json:"created_at"`
+	UpdatedAt                   time.Time        `json:"updated_at"`
+	RiskLevel                   int              `json:"risk_level"`
+	Mode                        string           `json:"mode,omitempty"`            // foreground | background
+	Summary                     string           `json:"summary,omitempty"`         // final result / degrade reason
+	AppliedPatches              []string         `json:"applied_patches,omitempty"` // rollbackable patch ids
+	ReconciliationRequired      bool             `json:"reconciliation_required,omitempty"`
+	BlockedReason               string           `json:"blocked_reason,omitempty"`
+	TokensUsed                  int              `json:"tokens_used,omitempty"` // metered token spend (budget governance)
+	TokenUsageObserved          bool             `json:"token_usage_observed,omitempty"`
+	TokenBudget                 int              `json:"token_budget,omitempty"`
+	OutputSchema                json.RawMessage  `json:"output_schema,omitempty"` // complete JSON Schema for final output
 	// Work-dispatch lease (remote execution via the bridge). Empty for tasks the
 	// local daemon runs in-process.
 	LeaseOwner                 string    `json:"lease_owner,omitempty"`      // worker holding the dispatch lease
@@ -94,6 +97,8 @@ func (s *Scheduler) SubmitWithGoalModelAgent(sessionID, workspaceID, prompt, mod
 		SessionID:       sessionID,
 		WorkspaceID:     workspaceID,
 		Status:          "queued",
+		Revision:        1,
+		Continuity:      continuity.EmptyState(),
 		UserPrompt:      prompt,
 		Model:           model,
 		Agent:           agent,
@@ -101,6 +106,7 @@ func (s *Scheduler) SubmitWithGoalModelAgent(sessionID, workspaceID, prompt, mod
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
+	task.Continuity.Progress = continuity.ProgressStarted
 	s.mu.Lock()
 	s.tasks[task.TaskID] = task
 	s.queue = append(s.queue, task.TaskID)
@@ -119,9 +125,11 @@ func (s *Scheduler) SetClientSubmission(taskID, clientSubmissionID, fingerprint 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if task := s.tasks[taskID]; task != nil {
-		task.ClientSubmissionID = clientSubmissionID
-		task.ClientSubmissionFingerprint = fingerprint
-		task.UpdatedAt = time.Now().UTC()
+		updated := *task
+		updated.ClientSubmissionID = clientSubmissionID
+		updated.ClientSubmissionFingerprint = fingerprint
+		touchTask(&updated)
+		s.tasks[taskID] = &updated
 	}
 }
 
@@ -132,7 +140,7 @@ func (s *Scheduler) SetModelState(taskID, requested, effective string) {
 		updated := *task
 		updated.RequestedModel = requested
 		updated.EffectiveModel = effective
-		updated.UpdatedAt = time.Now().UTC()
+		touchTask(&updated)
 		s.tasks[taskID] = &updated
 	}
 }
@@ -144,7 +152,7 @@ func (s *Scheduler) SetReasoningEffortState(taskID, requested, effective string)
 		updated := *task
 		updated.RequestedReasoningEffort = requested
 		updated.EffectiveReasoningEffort = effective
-		updated.UpdatedAt = time.Now().UTC()
+		touchTask(&updated)
 		s.tasks[taskID] = &updated
 	}
 }
@@ -155,13 +163,30 @@ func (s *Scheduler) SetEffectiveModel(taskID, effective string) {
 	if task := s.tasks[taskID]; task != nil && effective != "" {
 		updated := *task
 		updated.EffectiveModel = effective
-		updated.UpdatedAt = time.Now().UTC()
+		touchTask(&updated)
 		s.tasks[taskID] = &updated
 	}
 }
 
 func (s *Scheduler) Cancel(taskID string) (*Task, error) {
-	return s.transition(taskID, "cancelled")
+	cancelled, err := s.transition(taskID, "cancelled")
+	if err == nil && cancelled != nil {
+		s.mu.Lock()
+		if current := s.tasks[taskID]; current != nil {
+			updated := *current
+			updated.Continuity.Interruption = &continuity.InterruptionRecord{
+				Kind: continuity.InterruptionOperatorCancelled, Actor: "user", ObservedAt: time.Now().UTC(),
+				TaskID: taskID, Certainty: continuity.CertaintyObserved, Retryable: false,
+				UserAction: "explicitly continue from a retained checkpoint or start a new task",
+			}
+			updated.Continuity.Recovery = continuity.RecoveryDecision{Disposition: continuity.RecoveryNone, Reason: "operator cancellation is never automatically recovered"}
+			touchTask(&updated)
+			s.tasks[taskID] = &updated
+			cancelled = &updated
+		}
+		s.mu.Unlock()
+	}
+	return cancelled, err
 }
 
 // Next pops the oldest queued task and marks it running.
@@ -175,7 +200,7 @@ func (s *Scheduler) Next() *Task {
 		if t, ok := s.tasks[id]; ok && t.Status == "queued" {
 			updated := *t
 			updated.Status = "running"
-			updated.UpdatedAt = time.Now().UTC()
+			touchTask(&updated)
 			s.tasks[id] = &updated
 			return &updated
 		}
@@ -218,7 +243,7 @@ func (s *Scheduler) transition(taskID, status string) (*Task, error) {
 	}
 	updated := *t
 	updated.Status = status
-	updated.UpdatedAt = time.Now().UTC()
+	touchTask(&updated)
 	s.tasks[taskID] = &updated
 	return &updated, nil
 }
@@ -235,7 +260,7 @@ func (s *Scheduler) SetResult(taskID, summary string, patches []string) {
 	updated := *t
 	updated.Summary = summary
 	updated.AppliedPatches = patches
-	updated.UpdatedAt = time.Now().UTC()
+	touchTask(&updated)
 	s.tasks[taskID] = &updated
 }
 
@@ -245,7 +270,7 @@ func (s *Scheduler) SetAppliedPatches(taskID string, patches []string) {
 	if t, ok := s.tasks[taskID]; ok {
 		updated := *t
 		updated.AppliedPatches = append([]string(nil), patches...)
-		updated.UpdatedAt = time.Now().UTC()
+		touchTask(&updated)
 		s.tasks[taskID] = &updated
 	}
 }
@@ -269,7 +294,7 @@ func (s *Scheduler) RestoreCheckpoint(taskID string, patches []string) (*Task, e
 	updated.AppliedPatches = append([]string(nil), patches...)
 	updated.ReconciliationRequired = false
 	updated.BlockedReason = ""
-	updated.UpdatedAt = time.Now().UTC()
+	touchTask(&updated)
 	s.tasks[taskID] = &updated
 	return &updated, nil
 }
@@ -293,7 +318,7 @@ func (s *Scheduler) MarkReconciliationRequired(taskID, reason string, patches ..
 	if len(patches) > 0 {
 		updated.AppliedPatches = append([]string(nil), patches[0]...)
 	}
-	updated.UpdatedAt = time.Now().UTC()
+	touchTask(&updated)
 	s.tasks[taskID] = &updated
 	return &updated, nil
 }
@@ -315,7 +340,7 @@ func (s *Scheduler) Resume(taskID string) (*Task, error) {
 	}
 	updated := *t
 	updated.Status = "running"
-	updated.UpdatedAt = time.Now().UTC()
+	touchTask(&updated)
 	s.tasks[taskID] = &updated
 	return &updated, nil
 }
@@ -328,6 +353,7 @@ func (s *Scheduler) SetOutputSchema(taskID string, schema json.RawMessage) {
 	if t, ok := s.tasks[taskID]; ok {
 		updated := *t
 		updated.OutputSchema = append(json.RawMessage(nil), schema...)
+		touchTask(&updated)
 		s.tasks[taskID] = &updated
 	}
 }
@@ -339,6 +365,7 @@ func (s *Scheduler) AddTokens(taskID string, n int) {
 	if t, ok := s.tasks[taskID]; ok {
 		updated := *t
 		updated.TokensUsed += n
+		touchTask(&updated)
 		s.tasks[taskID] = &updated
 	}
 }
@@ -348,7 +375,7 @@ func (s *Scheduler) SetTokenBudget(taskID string, budget int) {
 	if t, ok := s.tasks[taskID]; ok {
 		updated := *t
 		updated.TokenBudget = budget
-		updated.UpdatedAt = time.Now().UTC()
+		touchTask(&updated)
 		s.tasks[taskID] = &updated
 	}
 }
@@ -360,6 +387,7 @@ func (s *Scheduler) SetMode(taskID, mode string) {
 	if t, ok := s.tasks[taskID]; ok {
 		updated := *t
 		updated.Mode = mode
+		touchTask(&updated)
 		s.tasks[taskID] = &updated
 	}
 }
@@ -402,6 +430,30 @@ func (s *Scheduler) Load(t *Task) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.tasks[t.TaskID]; !exists {
-		s.tasks[t.TaskID] = t
+		loaded := *t
+		normalizeTask(&loaded)
+		s.tasks[t.TaskID] = &loaded
 	}
+}
+
+func normalizeTask(task *Task) {
+	if task.Revision < 1 {
+		task.Revision = 1
+	}
+	if task.Continuity.Activity == "" {
+		task.Continuity = continuity.ForTaskStatus(task.Status, len(task.SuccessCriteria) > 0)
+	}
+	if task.Continuity.Execution.LeaseGeneration == 0 && task.LeaseGeneration > 0 {
+		task.Continuity.Execution.LeaseGeneration = int64(task.LeaseGeneration)
+		task.Continuity.Execution.OwnerKind = "remote"
+		task.Continuity.Execution.OwnerID = task.LeaseOwner
+		task.Continuity.Execution.ExpiresAt = task.LeaseExpiry
+	}
+}
+
+func touchTask(task *Task) {
+	normalizeTask(task)
+	task.Revision++
+	task.UpdatedAt = time.Now().UTC()
+	task.Continuity = continuity.MergeTaskStatus(task.Continuity, task.Status, len(task.SuccessCriteria) > 0)
 }

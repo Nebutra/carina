@@ -9,7 +9,33 @@
     "client_submission_id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
     "session_id": { "type": "string", "pattern": "^sess_" },
     "workspace_id": { "type": "string", "pattern": "^ws_" },
-    "status": { "enum": ["queued", "running", "paused", "waiting_approval", "completed", "degraded", "failed", "cancelled"] },
+    "status": { "enum": ["queued", "running", "paused", "waiting_approval", "interrupted", "completed", "degraded", "failed", "cancelled"] },
+    "revision": { "type": "integer", "minimum": 1 },
+    "continuity": {
+      "type": "object",
+      "required": ["activity", "outcome", "progress", "recovery"],
+      "properties": {
+        "activity": { "enum": ["running", "waiting_input", "waiting_approval", "idle"] },
+        "outcome": { "enum": ["none", "completed", "partial", "failed", "cancelled", "interrupted"] },
+        "progress": { "enum": ["empty", "started", "in_progress", "verifying", "partially_complete", "complete"] },
+        "recovery": {
+          "type": "object",
+          "required": ["disposition"],
+          "properties": {
+            "disposition": { "enum": ["none", "continue", "retry", "resume_checkpoint", "review_required", "blocked"] },
+            "reason": { "type": "string" },
+            "checkpoint_id": { "type": "string" },
+            "recovery_generation": { "type": "integer", "minimum": 0 },
+            "proofs": { "type": "object", "additionalProperties": { "type": "boolean" } }
+          }
+        },
+        "interruption": { "type": "object" },
+        "execution": { "type": "object" },
+        "workspace_anchor": { "type": "object" },
+        "recovery_generation": { "type": "integer", "minimum": 0 },
+        "auto_recovery_attempts": { "type": "integer", "minimum": 0 }
+      }
+    },
     "user_prompt": { "type": "string" },
     "model": { "type": "string" },
     "requested_model": { "type": "string" },

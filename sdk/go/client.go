@@ -1,4 +1,4 @@
-// Package sdk provides typed JSON-RPC wrappers for Carina Runtime 0.6.4.
+// Package sdk provides typed JSON-RPC wrappers for Carina Runtime 0.6.5.
 package sdk
 
 import (
@@ -18,7 +18,7 @@ import (
 	"github.com/Nebutra/carina/go/rpc"
 )
 
-const CompatibleRuntimeVersion = "0.6.4"
+const CompatibleRuntimeVersion = "0.6.5"
 const streamQueueLimit = 64
 
 var ErrStreamOverflow = errors.New("sdk: event stream overflow")
@@ -28,12 +28,17 @@ type Client struct {
 }
 
 type Session struct {
-	SessionID         string `json:"session_id"`
-	WorkspaceID       string `json:"workspace_id"`
-	WorkspaceRoot     string `json:"workspace_root"`
-	Status            string `json:"status"`
-	PermissionProfile string `json:"permission_profile"`
-	CreatedAt         string `json:"created_at"`
+	SessionID         string           `json:"session_id"`
+	WorkspaceID       string           `json:"workspace_id"`
+	WorkspaceRoot     string           `json:"workspace_root"`
+	Status            string           `json:"status"`
+	PermissionProfile string           `json:"permission_profile"`
+	CreatedAt         string           `json:"created_at"`
+	UpdatedAt         string           `json:"updated_at,omitempty"`
+	LatestTaskID      string           `json:"latest_task_id,omitempty"`
+	TaskStatus        string           `json:"task_status,omitempty"`
+	Summary           string           `json:"summary,omitempty"`
+	Continuity        *ContinuityState `json:"continuity,omitempty"`
 }
 
 type Task struct {
@@ -42,6 +47,8 @@ type Task struct {
 	SessionID                  string          `json:"session_id"`
 	WorkspaceID                string          `json:"workspace_id"`
 	Status                     string          `json:"status"`
+	Revision                   int64           `json:"revision,omitempty"`
+	Continuity                 ContinuityState `json:"continuity"`
 	UserPrompt                 string          `json:"user_prompt"`
 	Model                      string          `json:"model,omitempty"`
 	Agent                      string          `json:"agent,omitempty"`
@@ -63,6 +70,51 @@ type Task struct {
 	LeaseGeneration            int             `json:"lease_generation,omitempty"`
 	Attempts                   int             `json:"attempts,omitempty"`
 	RequiredWorkerCapabilities []string        `json:"required_worker_capabilities,omitempty"`
+}
+
+type ContinuityState struct {
+	Activity             string                    `json:"activity"`
+	Outcome              string                    `json:"outcome"`
+	Progress             string                    `json:"progress"`
+	Recovery             RecoveryDecision          `json:"recovery"`
+	Interruption         *InterruptionRecord       `json:"interruption,omitempty"`
+	Execution            ExecutionLease            `json:"execution,omitempty"`
+	WorkspaceAnchor      *WorkspaceAnchorReference `json:"workspace_anchor,omitempty"`
+	RecoveryGeneration   int64                     `json:"recovery_generation,omitempty"`
+	AutoRecoveryAttempts int                       `json:"auto_recovery_attempts,omitempty"`
+}
+
+type RecoveryDecision struct {
+	Disposition        string          `json:"disposition"`
+	Reason             string          `json:"reason,omitempty"`
+	CheckpointID       string          `json:"checkpoint_id,omitempty"`
+	RecoveryGeneration int64           `json:"recovery_generation,omitempty"`
+	Proofs             map[string]bool `json:"proofs,omitempty"`
+}
+
+type InterruptionRecord struct {
+	Kind             string `json:"kind"`
+	Actor            string `json:"actor"`
+	ObservedAt       string `json:"observed_at"`
+	CheckpointID     string `json:"checkpoint_id,omitempty"`
+	Certainty        string `json:"certainty"`
+	Retryable        bool   `json:"retryable"`
+	UserAction       string `json:"user_action,omitempty"`
+	BillingUncertain bool   `json:"billing_uncertain,omitempty"`
+}
+
+type ExecutionLease struct {
+	OwnerKind       string `json:"owner_kind,omitempty"`
+	OwnerID         string `json:"owner_id,omitempty"`
+	RuntimeEpoch    int64  `json:"runtime_epoch,omitempty"`
+	LeaseGeneration int64  `json:"lease_generation,omitempty"`
+	ExpiresAt       string `json:"expires_at,omitempty"`
+}
+
+type WorkspaceAnchorReference struct {
+	ID                string `json:"id"`
+	WorkspaceRealpath string `json:"workspace_realpath"`
+	CreatedAt         string `json:"created_at"`
 }
 
 type Event struct {

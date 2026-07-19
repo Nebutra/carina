@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +21,18 @@ type sessionListItem struct {
 	ParentID         string `json:"parent_id"`
 	ForkedFromTaskID string `json:"forked_from_task_id"`
 	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+	LatestTaskID     string `json:"latest_task_id"`
+	TaskStatus       string `json:"task_status"`
+	Summary          string `json:"summary"`
+	Continuity       struct {
+		Outcome  string `json:"outcome"`
+		Progress string `json:"progress"`
+		Recovery struct {
+			Disposition string `json:"disposition"`
+			Reason      string `json:"reason"`
+		} `json:"recovery"`
+	} `json:"continuity"`
 }
 
 func (m *Model) sessionStatusLabel(status string) string {
@@ -131,12 +144,32 @@ func (m *Model) handleSessionList(msg sessionListMsg) {
 			s.items = append(s.items, item)
 		}
 	}
+	sort.SliceStable(s.items, func(i, j int) bool {
+		left, right := sessionAttentionRank(s.items[i]), sessionAttentionRank(s.items[j])
+		if left != right {
+			return left < right
+		}
+		return s.items[i].UpdatedAt > s.items[j].UpdatedAt
+	})
 	if len(s.items) == 0 {
 		s.status = m.text(MsgSessionPickerEmpty, nil)
 	} else {
 		s.status = m.text(MsgSessionPickerHelp, nil)
 	}
 	s.clamp(m.sessionPickerPageHeight())
+}
+
+func sessionAttentionRank(item sessionListItem) int {
+	switch item.Continuity.Recovery.Disposition {
+	case "blocked", "review_required":
+		return 0
+	case "resume_checkpoint", "retry", "continue":
+		return 1
+	}
+	if item.TaskStatus == "running" || item.TaskStatus == "waiting_approval" {
+		return 2
+	}
+	return 3
 }
 
 func (m *Model) sessionPickerPageHeight() int { return maxInt(m.height-9, 1) }
@@ -241,6 +274,9 @@ func (m *Model) sessionPickerView() string {
 			}
 			if age := m.sessionAge(it.CreatedAt); age != "" {
 				label += "  " + age
+			}
+			if it.TaskStatus != "" {
+				label += "  " + m.taskStatusText(normalizeTaskStatus(it.TaskStatus))
 			}
 			if width >= 40 && it.ParentID != "" {
 				label += "  " + m.text(MsgSessionPickerForkOf, MessageArgs{"parent": it.ParentID})

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Nebutra/carina/go/artifact"
+	"github.com/Nebutra/carina/go/continuity"
 	"github.com/Nebutra/carina/go/runtimecontract"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
@@ -251,14 +252,16 @@ func (d *Daemon) markActiveToolApprovalRequired(taskID, decisionID string) error
 
 func (d *Daemon) beginToolCall(sess *sessionstore.Session, task *scheduler.Task, act *action) (toolCallLifecycle, error) {
 	call := toolCallLifecycle{id: newToolCallID(), tool: act.Tool, kind: toolKind(act.Tool), created: time.Now().UTC(), sequence: &atomic.Int64{}}
-	args, _ := json.Marshal(redactedToolArguments(act))
+	redacted := redactedToolArguments(act)
+	effect := continuity.ClassifyTool(act.Tool, effectArguments(act))
+	args, _ := json.Marshal(redacted)
 	env := runtimecontract.ToolCallEnvelope{CallID: call.id, SessionID: sess.SessionID, TaskID: task.TaskID, Tool: call.tool, Status: runtimecontract.ToolCallPending, Arguments: args, CreatedAt: call.created, UpdatedAt: call.created}
 	if err := env.Validate(); err != nil {
 		return call, err
 	}
 	if err := d.recordStrict(sess.SessionID, "ToolCallRequested", task.TaskID, "go", map[string]any{
 		"call_id": call.id, "tool": call.tool, "kind": call.kind, "status": string(env.Status),
-		"arguments": redactedToolArguments(act),
+		"arguments": redacted, "effect": effect,
 	}, ""); err != nil {
 		return call, err
 	}
@@ -266,6 +269,17 @@ func (d *Daemon) beginToolCall(sess *sessionstore.Session, task *scheduler.Task,
 		return call, err
 	}
 	return call, nil
+}
+
+func effectArguments(act *action) map[string]any {
+	args := map[string]any{}
+	if act == nil {
+		return args
+	}
+	if value, ok := act.Args["idempotency_key"]; ok {
+		args["idempotency_key"] = value
+	}
+	return args
 }
 
 func (d *Daemon) startToolCall(sess *sessionstore.Session, task *scheduler.Task, call toolCallLifecycle) error {
@@ -301,7 +315,7 @@ func (d *Daemon) finishToolCall(sess *sessionstore.Session, task *scheduler.Task
 	env := runtimecontract.ToolCallEnvelope{CallID: call.id, SessionID: sess.SessionID, TaskID: task.TaskID, Tool: call.tool, Status: contractStatus, CreatedAt: call.created, UpdatedAt: time.Now().UTC()}
 	if outcome.display != "" && d.artifacts != nil {
 		meta, err := d.artifacts.Put([]byte(outcome.display), artifact.PutOptions{
-			Scope: artifact.Scope{SessionID: sess.SessionID, TaskID: task.TaskID, CallID: call.id},
+			Scope:     artifact.Scope{SessionID: sess.SessionID, TaskID: task.TaskID, CallID: call.id},
 			MediaType: "text/plain; charset=utf-8", Retention: artifact.RetentionNormal,
 			// Bound the stored preview so a large command/tool output still
 			// gets a head+tail-aware Metadata.Preview (see makePreview):

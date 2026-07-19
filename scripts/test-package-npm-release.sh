@@ -61,7 +61,7 @@ for package in \
     exit 1
   fi
   if [[ "$package" != "@nebutra+carina" ]]; then
-    [[ "$(tar -tzf "$tarball" | grep -Ec '^package/bin/(carina|headroom)')" == "12" ]] || {
+    [[ "$(tar -tzf "$tarball" | grep -Ec '^package/bin/(carina|headroom)')" == "11" ]] || {
       echo "test-package-npm-release: $package does not contain the complete native toolchain" >&2
       exit 1
     }
