@@ -21,6 +21,12 @@ func TestViewDeclaresPhysicalCursorAtCJKCaretCell(t *testing.T) {
 	if m.input.VirtualCursor() {
 		t.Fatal("textarea virtual cursor is enabled; terminal IME has no physical caret anchor")
 	}
+	if m.input.Styles().Cursor.Blink {
+		t.Fatal("textarea virtual blink ticker is enabled; it causes periodic full-frame redraws")
+	}
+	if cmd := m.Init(); cmd != nil {
+		t.Fatal("TUI initialization scheduled a virtual cursor redraw command")
+	}
 	local := m.input.Cursor()
 	if local == nil {
 		t.Fatal("focused textarea did not declare a cursor")
@@ -34,6 +40,9 @@ func TestViewDeclaresPhysicalCursorAtCJKCaretCell(t *testing.T) {
 	v := m.View()
 	if v.Cursor == nil {
 		t.Fatal("root view did not publish textarea cursor")
+	}
+	if !v.Cursor.Blink {
+		t.Fatal("physical terminal cursor must retain native blinking")
 	}
 	if got, want := v.Cursor.Position.X, local.Position.X+m.root.inputX; got != want {
 		t.Fatalf("root cursor X = %d, want local+frame offset %d", got, want)

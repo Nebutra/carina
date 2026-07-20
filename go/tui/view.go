@@ -484,6 +484,7 @@ func (m *Model) View() tea.View {
 			if cursor == nil {
 				cursor = tea.NewCursor(0, 0)
 			}
+			cursor.Blink = true
 			cursor.Position.X = m.historySearchCursorX(l.width)
 			cursor.Position.Y = 0
 			if l.historyLines > 0 {
@@ -491,6 +492,9 @@ func (m *Model) View() tea.View {
 			}
 			v.Cursor = cursor
 		} else if cursor := m.input.Cursor(); cursor != nil {
+			// Let the terminal renderer blink the physical cursor without
+			// enabling textarea's virtual-cursor redraw timer.
+			cursor.Blink = true
 			cursor.Position.X = clampInt(cursor.Position.X+l.inputX, 0, l.width-1)
 			cursor.Position.Y = clampInt(cursor.Position.Y+l.inputY, 0, l.height-1)
 			v.Cursor = cursor

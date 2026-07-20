@@ -477,7 +477,9 @@ func inputStyles(th theme.Theme) textarea.Styles {
 		Cursor: textarea.CursorStyle{
 			Color: th.Color(theme.RoleText),
 			Shape: tea.CursorBar,
-			Blink: true,
+			// View publishes a real terminal cursor. A virtual blink tick would
+			// force full transcript renders even though the virtual cursor is off.
+			Blink: false,
 		},
 	}
 	return s
