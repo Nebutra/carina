@@ -27,19 +27,47 @@ const {
   header,
 } = Astro.props;
 
-const location = pathParam ? 'path' : query ? 'query' : header ? 'header' : body ? 'body' : '';
+const isZh = Astro.locals.starlightRoute.locale === 'zh-cn';
+const labels = isZh
+  ? {
+      required: '必填',
+      deprecated: '已弃用',
+      default: '默认',
+      path: '路径',
+      query: '查询',
+      header: '请求头',
+      body: '请求体',
+    }
+  : {
+      required: 'required',
+      deprecated: 'deprecated',
+      default: 'default',
+      path: 'path',
+      query: 'query',
+      header: 'header',
+      body: 'body',
+    };
+const location = pathParam
+  ? labels.path
+  : query
+    ? labels.query
+    : header
+      ? labels.header
+      : body
+        ? labels.body
+        : '';
 ---
 
 <div class:list={['param-field', deprecated && 'is-deprecated']}>
   <div class="param-field__head">
     <code class="param-field__path">{path}</code>
     <span class="param-field__type">{type}</span>
-    {required && <span class="param-field__badge is-req">required</span>}
-    {deprecated && <span class="param-field__badge is-dep">deprecated</span>}
+    {required && <span class="param-field__badge is-req">{labels.required}</span>}
+    {deprecated && <span class="param-field__badge is-dep">{labels.deprecated}</span>}
     {location && <span class="param-field__badge">{location}</span>}
     {defaultValue !== undefined && (
       <span class="param-field__default">
-        default <code>{defaultValue}</code>
+        {labels.default} <code>{defaultValue}</code>
       </span>
     )}
   </div>
@@ -85,7 +113,7 @@ const location = pathParam ? 'path' : query ? 'query' : header ? 'header' : body
   .param-field__badge {
     font-size: 0.625rem;
     font-weight: 600;
-    letter-spacing: 0.03em;
+    letter-spacing: 0;
     text-transform: uppercase;
     padding: 0.1rem 0.35rem;
     border-radius: 999px;

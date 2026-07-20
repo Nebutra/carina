@@ -12,13 +12,22 @@ interface Props {
 
 const { variant = 'note', title } = Astro.props;
 
-const defaults: Record<CalloutVariant, string> = {
-  note: 'Note',
-  tip: 'Tip',
-  warning: 'Warning',
-  danger: 'Caution',
-  success: 'Success',
-};
+const isZh = Astro.locals.starlightRoute.locale === 'zh-cn';
+const defaults: Record<CalloutVariant, string> = isZh
+  ? {
+      note: '说明',
+      tip: '提示',
+      warning: '警告',
+      danger: '注意',
+      success: '成功',
+    }
+  : {
+      note: 'Note',
+      tip: 'Tip',
+      warning: 'Warning',
+      danger: 'Caution',
+      success: 'Success',
+    };
 
 const resolvedTitle = title ?? defaults[variant];
 ---
@@ -97,7 +106,7 @@ const resolvedTitle = title ?? defaults[variant];
     font-size: var(--text-body-sm);
     font-weight: var(--font-weight-semibold);
     color: var(--callout-accent);
-    letter-spacing: 0.02em;
+    letter-spacing: 0;
   }
 
   .callout__icon {

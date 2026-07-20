@@ -2,28 +2,56 @@
 /**
  * Centered Mintlify-style 404 panel (used by splash 404.mdx).
  */
+const isZh = Astro.locals.starlightRoute.locale === 'zh-cn';
+const localePrefix = isZh ? '/zh-cn' : '';
+const docsHref = (path: string) => `${localePrefix}${path}`;
+const copy = isZh
+  ? {
+      title: '页面未找到',
+      lead: '这个页面不存在，或者已经移动。请检查地址，也可以从下面的入口继续。',
+      home: '首页',
+      quickstart: '快速上手',
+      runtimeApi: 'Runtime API',
+      methodCatalog: '方法目录',
+      searchPrefix: '按',
+      searchSuffix: '搜索',
+      alternatePrefix: 'English docs:',
+      alternateLabel: 'English home',
+      alternateHref: '/',
+    }
+  : {
+      title: 'Page not found',
+      lead: 'This page does not exist or has moved. Check the URL, or continue from a known entry point.',
+      home: 'Home',
+      quickstart: 'Quickstart',
+      runtimeApi: 'Runtime API',
+      methodCatalog: 'Method catalog',
+      searchPrefix: 'Press',
+      searchSuffix: 'to search',
+      alternatePrefix: '中文文档：',
+      alternateLabel: '简体中文首页',
+      alternateHref: '/zh-cn/',
+    };
 ---
 
 <section class="not-found">
   <p class="not-found__code">404</p>
-  <h1 class="not-found__title">Page not found</h1>
-  <p class="not-found__lead">
-    This page does not exist — or it moved. Check the URL, or jump to a known entry point.
-  </p>
+  <h1 class="not-found__title">{copy.title}</h1>
+  <p class="not-found__lead">{copy.lead}</p>
 
   <div class="not-found__actions">
-    <a class="not-found__btn not-found__btn--primary" href="/">Home</a>
-    <a class="not-found__btn" href="/getting-started/quickstart/">Quickstart</a>
-    <a class="not-found__btn" href="/api/overview/">Runtime API</a>
-    <a class="not-found__btn" href="/api/methods/">Method catalog</a>
+    <a class="not-found__btn not-found__btn--primary" href={docsHref('/')}>{copy.home}</a>
+    <a class="not-found__btn" href={docsHref('/getting-started/quickstart/')}>{copy.quickstart}</a>
+    <a class="not-found__btn" href={docsHref('/api/overview/')}>{copy.runtimeApi}</a>
+    <a class="not-found__btn" href={docsHref('/api/methods/')}>{copy.methodCatalog}</a>
   </div>
 
   <p class="not-found__hint">
-    Press <kbd>/</kbd> or <kbd>⌘</kbd><kbd>K</kbd> to search
+    {copy.searchPrefix} <kbd>/</kbd> {copy.searchSuffix}
   </p>
 
   <p class="not-found__locale">
-    中文文档：<a href="/zh-cn/">简体中文首页</a>
+    {copy.alternatePrefix} <a href={copy.alternateHref}>{copy.alternateLabel}</a>
   </p>
 </section>
 
@@ -40,7 +68,7 @@
     font-family: var(--docs-font-mono);
     font-size: clamp(3rem, 8vw, 4.5rem);
     font-weight: 600;
-    letter-spacing: -0.04em;
+    letter-spacing: 0;
     line-height: 1;
     color: var(--docs-fg-subtle);
   }
@@ -50,7 +78,7 @@
     font-family: var(--docs-font-display);
     font-size: clamp(1.45rem, 3.2vw, 1.9rem);
     font-weight: 550;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     color: var(--docs-fg);
     font-optical-sizing: auto;
   }

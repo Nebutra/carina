@@ -1,6 +1,7 @@
 ---
 title: 方法目录
 description: 由 protocol/jsonrpc/methods.json 同步的 JSON-RPC 方法目录。
+tableOfContents: false
 ---
 
 import Callout from '../../../../components/ui/Callout.astro';
@@ -8,7 +9,7 @@ import RpcCatalog from '../../../../components/api/RpcCatalog.astro';
 
 从 daemon 权威注册表生成。完整方法列表看本页；叙述性说明见 [概览](/zh-cn/api/overview/) 与 [JSON-RPC 参考](/zh-cn/api/json-rpc/)。
 
-版本通道请用顶栏 **0.6.x / next** 切换；下方提供过滤与分组跳转。
+版本通道请用顶栏 **0.6.x / next** 切换；下方提供过滤、作用域筛选和分组跳转。Live 请求使用经过认证的 WebSocket Gateway（首帧为 `gateway.hello`）；未标记为 `remote` 的方法仅提供 Mock 与本地 CLI。
 
 <Callout variant="tip" title="保持同步">
   在 `apps/docs` 下协议变更后执行 `pnpm sync-protocol`，并提交更新后的 `src/data/rpc-catalog.json`。
@@ -16,7 +17,7 @@ import RpcCatalog from '../../../../components/api/RpcCatalog.astro';
 
 ## 完整注册表
 
-<RpcCatalog />
+<RpcCatalog version="0.6.x" />
 
 ## 权威来源
 

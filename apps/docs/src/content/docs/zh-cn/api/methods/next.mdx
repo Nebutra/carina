@@ -1,0 +1,26 @@
+---
+title: 方法目录（next）
+description: 从仓库当前协议注册表同步的预览版 JSON-RPC 方法目录。
+tableOfContents: false
+sidebar:
+  hidden: true
+---
+
+import Callout from '../../../../../components/ui/Callout.astro';
+import RpcCatalog from '../../../../../components/api/RpcCatalog.astro';
+
+当前为 **next** 通道，跟踪仓库内最新注册表，稳定发布前仍可能变化。可通过顶栏版本控件返回 **0.6.x**。
+
+<Callout variant="caution" title="预览契约">
+  发布前请以稳定目录验证集成。Live 请求使用经过认证的 WebSocket Gateway，且仅对标记为 `remote` 的方法开放。
+</Callout>
+
+## 完整注册表
+
+<RpcCatalog version="next" />
+
+## 权威来源
+
+- 由 `protocol/jsonrpc/methods.json` 经 `pnpm sync-protocol` 生成
+- 通道钉扎：`src/data/rpc-catalog-next.json`（及 `public/data/rpc-catalog-next.json`）
+- 通道策略见 [API 版本](/zh-cn/api/versions/)

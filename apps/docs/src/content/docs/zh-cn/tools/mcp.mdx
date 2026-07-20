@@ -6,11 +6,38 @@ description: 接入 MCP 服务且不泄露无约束权限。
 import Callout from '../../../../components/ui/Callout.astro';
 
 
-Carina 可作为 MCP 客户端消费外部工具，也可对外暴露受控 MCP 服务端。
+Carina 内置受治理的 MCP 管理器（`go/mcp`）和服务端表面（`go/mcpserver`）。外部工具进入会话后仍受当前 profile 与能力内核约束。
+
+## 客户端模式
+
+在配置中注册 MCP server，其工具才会出现在会话中。Agent 使用 `mcp` 调用已知工具，或用 `mcp_find` 查找工具；发现能力不等于获得能力，所有副作用仍需策略放行。
+
+```json title="mcp.json"
+{"tool":"mcp_find","query":"repository search"}
+```
+
+## 运维清单
+
+`mcp.inventory` 只返回公共 MCP server 名、tool 名、prompt 数量与连接健康。`/mcp verbose` 可以显示公共工具描述，但不会暴露进程命令、参数、环境变量、输入 schema 或私有托管 server。
+
+## Headroom 边界
+
+当 bundled 或显式配置的 Headroom binary 可用时，它作为私有 managed MCP 放在 **context-engine boundary** 后：
+
+- 不出现在 Agent 的公共 MCP 工具列表中。
+- 不能经 Agent 的 `mcp` action surface 调用。
+
+## 服务端模式
+
+对外只暴露经过筛选的工具集，并保持最小权限；不要把完整本地 kernel 重新导出。
 
 <Callout variant="warning">
   MCP 服务端是攻击面。请谨慎绑定，并保持窄能力配置。
 </Callout>
+
+## WASM 插件
+
+`carina-plugin-runtime` 中的 WASM 插件从零权限启动，只能使用 manifest 声明的能力。可通过 `plugin.inspect` 检查声明，并用 `plugin.run` 执行；签名由可选 `signature_base64` 携带。
 
 ## 权威来源
 

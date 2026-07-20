@@ -8,7 +8,7 @@
  * Run after content changes: pnpm generate-ai-surface
  * Also invoked from prebuild when present.
  */
-import { readdirSync, readFileSync, writeFileSync, statSync, mkdirSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, statSync, mkdirSync } from 'node:fs';
 import { join, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 

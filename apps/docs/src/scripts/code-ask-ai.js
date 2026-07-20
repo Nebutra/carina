@@ -32,15 +32,18 @@ function addAskButton(frame) {
   if (!copy) return;
 
   const btn = document.createElement('button');
+  const zh = (document.documentElement.lang || '').toLowerCase().startsWith('zh');
+  const label = zh ? '询问文档助手此代码' : 'Ask the docs assistant about this code';
   btn.type = 'button';
   btn.className = 'ec-ask-ai';
-  btn.setAttribute('aria-label', 'Ask AI about this code');
-  btn.title = 'Ask AI about this code';
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
   btn.innerHTML = SPARKLE_SVG;
 
   btn.addEventListener('click', () => {
     const lang = frame.querySelector('pre')?.getAttribute('data-language') ?? '';
-    const question = `Explain this code:\n\n\`\`\`${lang}\n${extractCode(frame)}\n\`\`\``;
+    const prompt = zh ? '解释这段代码：' : 'Explain this code:';
+    const question = `${prompt}\n\n\`\`\`${lang}\n${extractCode(frame)}\n\`\`\``;
     window.dispatchEvent(new CustomEvent('carina:ask-ai', { detail: { question } }));
   });
 
@@ -53,4 +56,7 @@ function boot() {
 }
 
 boot();
-document.addEventListener('astro:page-load', boot);
+if (!window.__carinaCodeAskBootBound__) {
+  window.__carinaCodeAskBootBound__ = true;
+  document.addEventListener('astro:page-load', boot);
+}

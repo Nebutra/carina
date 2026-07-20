@@ -13,6 +13,9 @@ interface Props {
 const { compact = false } = Astro.props;
 const list = versions.versions;
 const defaultId = versions.default;
+const isZh = Astro.url.pathname.startsWith('/zh-cn/');
+const label = isZh ? '版本' : 'Version';
+const ariaLabel = isZh ? '文档版本' : 'Documentation version';
 ---
 
 <div
@@ -20,17 +23,17 @@ const defaultId = versions.default;
   data-version-root
   data-default-version={defaultId}
 >
-  {!compact && <label class="version-selector__label" for="docs-version">Version</label>}
+  {!compact && <label class="version-selector__label" for="docs-version">{label}</label>}
   <select
     id="docs-version"
     class="version-selector__select"
-    aria-label="Documentation version"
+    aria-label={ariaLabel}
   >
     {
       list.map((v) => (
         <option value={v.id} data-badge={v.badge} data-description={v.description}>
           {v.label}
-          {v.badge === 'preview' ? ' (preview)' : ''}
+          {v.badge === 'preview' ? (isZh ? '（预览）' : ' (preview)') : ''}
         </option>
       ))
     }
@@ -39,6 +42,20 @@ const defaultId = versions.default;
 
 <script>
   const STORAGE_KEY = 'carina-docs-version';
+
+  function catalogVersionFromPath() {
+    const path = window.location.pathname.replace(/\/+$/, '/');
+    if (/\/(?:zh-cn\/)?api\/methods\/next\/$/.test(path)) return 'next';
+    if (/\/(?:zh-cn\/)?api\/methods\/$/.test(path)) return '0.6.x';
+    return '';
+  }
+
+  function catalogPath(id: string) {
+    const path = window.location.pathname.replace(/\/+$/, '/');
+    const match = path.match(/^(.*\/(?:zh-cn\/)?api\/methods\/)(?:next\/)?$/);
+    if (!match) return '';
+    return id === 'next' ? `${match[1]}next/` : match[1] || '';
+  }
 
   function applyVersion(id: string) {
     document.documentElement.dataset.docsVersion = id;
@@ -60,10 +77,16 @@ const defaultId = versions.default;
   }
 
   function boot() {
-    const stored = localStorage.getItem(STORAGE_KEY);
     const root = document.querySelector<HTMLElement>('[data-version-root]');
     const fallback = root?.dataset.defaultVersion || '0.6.x';
-    const initial = stored || fallback;
+    const allowed = new Set(
+      [...document.querySelectorAll<HTMLOptionElement>('[data-version-root] option')].map((option) => option.value),
+    );
+    const fromUrl = new URL(window.location.href).searchParams.get('version');
+    const stored = localStorage.getItem(STORAGE_KEY);
+    const fromPath = catalogVersionFromPath();
+    const initial = fromPath || (fromUrl && allowed.has(fromUrl) && fromUrl) || (stored && allowed.has(stored) && stored) || fallback;
+    if (fromPath) localStorage.setItem(STORAGE_KEY, fromPath);
     applyVersion(initial);
 
     document.querySelectorAll<HTMLSelectElement>('[data-version-root] select').forEach((sel) => {
@@ -71,6 +94,20 @@ const defaultId = versions.default;
       sel.dataset.bound = '1';
       sel.addEventListener('change', () => {
         localStorage.setItem(STORAGE_KEY, sel.value);
+        const targetPath = catalogPath(sel.value);
+        if (targetPath && targetPath !== window.location.pathname) {
+          const url = new URL(window.location.href);
+          url.pathname = targetPath;
+          url.searchParams.delete('version');
+          const targetKey = sel.value === 'next' ? 'next' : '0-6-x';
+          url.hash = url.hash.replace(/^#rpc-(?:0-6-x|next)-/, `#rpc-${targetKey}-`);
+          window.location.assign(`${url.pathname}${url.search}${url.hash}`);
+          return;
+        }
+        const url = new URL(window.location.href);
+        if (sel.value === fallback) url.searchParams.delete('version');
+        else url.searchParams.set('version', sel.value);
+        history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
         applyVersion(sel.value);
       });
     });
@@ -91,7 +128,7 @@ const defaultId = versions.default;
     font-size: var(--text-caption);
     color: var(--docs-fg-subtle);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0;
   }
 
   .version-selector__select {
@@ -104,6 +141,7 @@ const defaultId = versions.default;
     font-size: 0.75rem;
     font-family: var(--docs-font-mono);
     line-height: 1.4;
+    min-height: 2.25rem;
     cursor: pointer;
     box-shadow: none !important;
     outline: none;
@@ -136,7 +174,7 @@ const defaultId = versions.default;
   }
 
   .version-selector--compact .version-selector__select {
-    padding-block: 0.25rem;
-    font-size: 0.7rem;
+    padding-block: 0.3rem;
+    font-size: 0.75rem;
   }
 </style>

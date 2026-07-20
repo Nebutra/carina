@@ -1,29 +1,107 @@
 ---
 title: JSON-RPC 参考
-description: 本地 JSON-RPC 控制平面方法参考。
+description: 本地 JSON-RPC 控制平面的核心方法、参数和安全边界。
 ---
 
 import Callout from '../../../../components/ui/Callout.astro';
 
+本地客户端通过 daemon socket（`~/.carina/daemon.sock`）或 stdio 使用 JSON-RPC 2.0。注册表 `protocol/jsonrpc/methods.json` 和 `protocol/schemas/` 是方法与 schema 的权威来源。
 
-本地客户端通过 JSON-RPC 2.0 连接 daemon。
+## session.create
 
-权威 schema 位于仓库 `protocol/jsonrpc/`。
+创建绑定到工作区和权限 profile 的会话。
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `workspace_root` | string | 是 | 会话绑定的绝对工作区路径 |
+| `profile` | string | 否 | 能力配置，默认 `safe-edit` |
+
+结果包含不透明的 `session_id`、绑定后的 `workspace_id` 与实际 `profile`。
 
 ```json title="request.json"
 {
   "jsonrpc": "2.0",
   "id": 1,
   "method": "session.create",
-  "params": {
-    "cwd": "/Users/you/project",
-    "profile": "coding"
-  }
+  "params": {"workspace_root": "/repo", "profile": "safe-edit"}
 }
 ```
 
+## Gateway 与 daemon
+
+| 方法 | 作用 |
+| --- | --- |
+| `runtime.initialize` | 协商客户端身份与 projection 版本 |
+| `runtime.capabilities` | 返回运行时能力 |
+| `gateway.hello` / `gateway.methods` | 返回契约快照和实时方法目录 |
+| `gateway.token.issue` | 本地签发带作用域 token；要求签名密钥 |
+| `daemon.status` / `metrics` / `doctor` | 运行状态和健康检查 |
+| `daemon.remote.disable` | 远程入口总开关 |
+| `daemon.reload` | 重新加载配置 |
+
+## 会话与任务
+
+| 方法 | 作用 |
+| --- | --- |
+| `session.create` / `get` / `list` / `close` | 会话生命周期 |
+| `session.pause` / `resume` | 暂停与继续 |
+| `session.replay` / `items` / `review` | 历史、UI 投影与治理视图 |
+| `session.events.stream` | 类型化实时事件 |
+| `task.submit` / `cancel` / `status` | 任务控制 |
+| `task.action.approve` / `deny` | 处理待审批动作 |
+
+## 工作区
+
+| 方法 | 作用 |
+| --- | --- |
+| `workspace.tree` | 通过 `carina-scan` 获取文件树 |
+| `workspace.search` | 通过 `carina-grep` 结构化搜索 |
+| `workspace.file.get` | 按 `FileRead` 能力读取文件 |
+| `workspace.diff` | 有上限的 tracked / untracked diff；忽略二进制 |
+| `workspace.patch.propose` / `apply` / `rollback` | 事务补丁生命周期 |
+| `worktree.*` | 隔离 worktree 的创建、查询与进入 |
+
+## Memory
+
+| 方法 | 作用 |
+| --- | --- |
+| `memory.list` | 列出 `memory` 或 `user` 目标的条目 |
+| `memory.context` | 返回当前会话的围栏式召回片段 |
+| `memory.status` | 本地权威、外部召回健康与身份 scope |
+| `memory.write` | 经 `MemoryWrite` 能力增删改或批处理 |
+| `memory.projection.*` | 可选 HMS projection 的授权、重试与重播 |
+
+`memory.write` 仅限本地控制面，默认需要审批。审计只记录目标、scope、动作、操作数和内容哈希，不记录原始记忆文本。
+
+## Worker 租约
+
+`worker.register` 只返回一次 `worker_id` 与 credential，daemon 只保存 credential 哈希。`work.poll` 返回 `lease_generation` fencing token，后续 `work.renew` 和 `work.report` 必须原样回传，防止旧租约发布结果。
+
+## Context engine
+
+| 方法 | Scope | 作用 |
+| --- | --- | --- |
+| `context.status` | `read` | engine、Headroom 和托管 MCP 状态 |
+| `context.doctor` | `read` | daemon doctor 使用的健康探针 |
+| `context.stats` | `read` | 压缩计数 |
+| `context.compress` | `write` | 诊断压缩，不走 Agent transcript |
+| `context.retrieve` | `read` | 按 hash / ref 诊断 CCR 召回 |
+
+Headroom 位于 context-engine 私有边界后，不出现在 Agent 的公共 MCP 工具列表中，也不能从 Agent 的 `mcp` 动作面直接调用。
+
+## 运维检查边界
+
+- `workspace.diff` 禁用 Git locks、fsmonitor、external diff 和 textconv；单份文本 diff 上限 256 KiB，响应上限 1 MiB。
+- `mcp.inventory` 只返回公共 server / tool 名称、prompt 数量和连接健康，不泄露进程参数、环境变量或 schema。
+
+```json title="event.json"
+{"jsonrpc":"2.0","method":"event",
+ "params":{"event_id":"evt_...","session_id":"sess_...",
+ "type":"CommandStarted","permission_decision_id":"perm_..."}}
+```
+
 <Callout variant="tip">
-  完整方法目录以仓库协议定义为准。
+  `agent.*`、`session.checkpoint.*`、`workflow.*`、`schedule.*`、`channel.*`、`extension.*` 与 telemetry 等完整分组请在方法目录中过滤查看。
 </Callout>
 
 ## 权威来源
@@ -34,5 +112,5 @@ import Callout from '../../../../components/ui/Callout.astro';
 
 ## 下一步
 
-- [方法目录](/zh-cn/api/methods/) — 完整列表 + Try it
+- [方法目录](/zh-cn/api/methods/) — 完整列表与 Try it
 - [会话](/zh-cn/api/sessions/) — 会话生命周期方法

@@ -32,6 +32,14 @@ import Step from '../../../../components/mdx/Step.astro';
   H --> V[carina audit verify]`}
 />
 
+## 审计保证
+
+- 日志只追加；每个事件都有时间戳与 session id。
+- 产生副作用的事件引用对应的 `permission_decision_id`，可以解释 allow / deny / approval 的策略和理由。
+- transcript 与审计日志不保存原始媒体字节，只保存内容寻址的 `MediaRef`。
+- 文件历史可以追溯到 Agent、任务、补丁和发生时间。
+- 目标是拦截工作区外访问、确保日志不出现密钥明文，并记录每个副作用。
+
 ## CLI — 检查
 
 ```bash title="audit-cli.sh"
@@ -45,6 +53,8 @@ carina items SESSION
 ```
 
 ## CLI — 补丁
+
+文件修改在策略要求时按以下事务流转：提出补丁 → 内核裁决 `PatchApply` → 应用与验证 → 带回滚指针提交。中途失败不会留下半应用状态。
 
 ```bash title="patch-cli.sh"
 carina patch list SESSION
@@ -84,12 +94,21 @@ carina patch rollback SESSION PATCH_ID
 
 审计与补丁解释**会话内** Agent 行为；不替代 Git 历史与 PR 审查。
 
+## 失败处理
+
+| 现象 | 处理 |
+| --- | --- |
+| `audit verify` 失败 | 按完整性事件处理，导出审计包并调查，不要忽略 |
+| 补丁列表为空 | 检查 Agent 是否写文件，以及写入是否走 patch transaction |
+| 找不到 SESSION | 运行 `carina sessions` 或 `carina audit last` |
+
 ## 权威来源
 
 - `docs/security-model.md`  
 - CLI：`carina --help` · [CLI 参考](/zh-cn/reference/cli/)  
-- 相关：[策略](/zh-cn/concepts/policy/)  
+- 相关：[策略](/zh-cn/concepts/policy/) · [追踪与审计](/zh-cn/observability/traces/)
 
 ## 下一步
 
 - [常用工作流](/zh-cn/getting-started/common-workflows/)  
+- [方法目录](/zh-cn/api/methods/) — `session.*` 与审计 RPC

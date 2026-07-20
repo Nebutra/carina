@@ -1,0 +1,26 @@
+---
+title: Method catalog (next)
+description: Preview JSON-RPC catalog synced from the current in-repo protocol registry.
+tableOfContents: false
+sidebar:
+  hidden: true
+---
+
+import Callout from '../../../../components/ui/Callout.astro';
+import RpcCatalog from '../../../../components/api/RpcCatalog.astro';
+
+This is the **next** channel: it tracks the current in-repo registry and may change before a stable release. Use the header version control to return to **0.6.x**.
+
+<Callout variant="caution" title="Preview contract">
+  Validate integrations against the stable catalog before release. Live requests use the authenticated WebSocket Gateway and are available only for methods marked `remote`.
+</Callout>
+
+## Full registry
+
+<RpcCatalog version="next" />
+
+## Source of truth
+
+- Generated from `protocol/jsonrpc/methods.json` via `pnpm sync-protocol`
+- Channel pin: `src/data/rpc-catalog-next.json` (and `public/data/rpc-catalog-next.json`)
+- See [API versions](/api/versions/) for channel policy

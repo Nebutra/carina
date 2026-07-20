@@ -2,31 +2,76 @@
 title: Agents 概览
 description: ReAct 编程 Agent — 模型决策、内核授权、Zig 执行。
 ---
-模型**只负责决策**；每个副作用由 Rust 能力内核授权、Zig 工具链执行，全程可回放、可回滚。
 
-源文档：`docs/agent.md`。
+import CategoryTag from '../../../../components/ui/CategoryTag.astro';
+import Callout from '../../../../components/ui/Callout.astro';
+import Mermaid from '../../../../components/mdx/Mermaid.astro';
 
-```
-模型决策 → Go agent loop → Rust kernel → Zig tools → observation
-```
+<CategoryTag category="agent" label="Agents" />
 
-## 工具动作（摘要）
+Carina 驱动真实的 ReAct 编程 Agent。模型**只负责决定下一步**；每个副作用由 Rust 能力内核授权，再交给 Zig 原生工具执行。整个过程写入可校验的事件链，便于复盘和回滚。
 
-`list` / `read` / `search` / `run` / `patch` / `memory` / `ask_user` / `code.*` / `mcp` / `spawn` / `workflow` / `best_of_n` / `done`
+<Mermaid
+  caption="决策、授权、执行、观察构成一个受治理循环。"
+  code={`flowchart LR
+  M[模型决策] --> L[Go Agent 循环]
+  L --> K[Rust 能力内核]
+  K --> Z[Zig 工具]
+  Z -->|观察结果| L`}
+/>
 
-破坏性命令在执行前拒绝；密钥文件拒绝读取；每次编辑都是可回滚补丁事务。
+## Agent 循环
 
-## Reasoner
+每轮 reasoner 产生一个 JSON 动作。只读动作可以批量并行，写入动作仍按单步执行，以便审批、审计和失败恢复保持确定性。
 
-- **model-router** — BYOK  
-- **claude-cli** — 本地 `claude` 无头、隔离 cwd  
-- **scripted** — 测试回放  
+| 动作 | 所需能力 / 路径 | 结果 |
+| --- | --- | --- |
+| `list` / `read` / `search` | `FileRead` | 工作区内文件树、内容或搜索结果 |
+| `run` | `CommandExec` + 风险分级 | 受超时和环境变量白名单约束的命令结果 |
+| `patch` | `PatchApply` | 可验证、可回滚的补丁事务 |
+| `memory` | `MemoryWrite` | 经审批的持久记忆变更 |
+| `mcp` / `mcp_find` | MCP manager + 对应能力 | 受治理的外部工具调用 |
+| `spawn` | `SubagentSpawn` | 能力衰减的隔离子 Agent |
+| `workflow` | `PluginLoad` | 命名依赖 DAG |
+| `ask_user` | Operator input | 结构化人工选择 |
+| `done` | 无副作用 | 结束任务并返回摘要 |
+
+破坏性命令会在执行前拒绝；密钥文件默认不可读；每次文件编辑都经过补丁事务而非静默覆盖。
+
+## Reasoner 后端
+
+| 后端 | 用途 |
+| --- | --- |
+| **model-router** | BYOK provider、模型路由、流式输出与 token 统计 |
+| **claude-cli** | 调用本机 `claude` 的无头模式，并使用隔离 cwd |
+| **scripted** | 测试中的固定决策与确定性回放 |
+
+设置 `CARINA_REASONER_MODEL` 可显式选择 model-router 模型；`CARINA_SUMMARIZER_MODEL` 与 `CARINA_VERIFIER_MODEL` 可分别指定压缩和校验模型。
+
+## 可靠性护栏
+
+- **LoopGuard**：按规范化动作签名阻断重复循环。
+- **MistakeTracker**：连续失败达到阈值后停止继续试错。
+- **Compaction**：旧轮次压缩为带收据的摘要，用户原文保留 verbatim 层。
+- **Steering**：urgent / normal 两级消息箱只在轮次边界注入。
+- **Checkpoint**：长任务可恢复，但恢复后仍重新经过当前策略判断。
+
+## 运行与核验
 
 ```bash title="agent-loop.sh"
+cd /path/to/repo
 carina run "fix the failing test in parser.go"
 carina audit SESSION
+carina audit verify SESSION
+carina patch list SESSION
 carina patch rollback SESSION PATCH_ID
 ```
+
+CLI、TUI、VS Code 与 Web Operator 消费同一套会话与事件状态；它们不是四套不同的 Agent 引擎。
+
+<Callout variant="tip">
+  多步并行任务优先使用工作流；单次委派再使用子 Agent。两者都会衰减权限，不能把父会话没有的能力授予子任务。
+</Callout>
 
 ## 权威来源
 
@@ -36,6 +81,6 @@ carina patch rollback SESSION PATCH_ID
 
 ## 下一步
 
-- [子 Agent](/zh-cn/agents/sub-agents/) — 能力衰减委托
+- [子 Agent](/zh-cn/agents/sub-agents/) — 能力衰减委派
 - [常用工作流](/zh-cn/getting-started/common-workflows/) — 首条受治理会话
 - [审计](/zh-cn/concepts/audit/) — 跑完后核验

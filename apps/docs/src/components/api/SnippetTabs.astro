@@ -1,8 +1,5 @@
 ---
-/**
- * Multi-language request snippets for a JSON-RPC method.
- * Uses Astro <Code /> (Shiki) + Carina mineral theme for real highlighting.
- */
+/** Multi-language request snippets with synchronized, accessible tabs. */
 import { Code } from 'astro:components';
 import { carinaDark } from '../../themes/carina-code.mjs';
 
@@ -10,9 +7,15 @@ interface Props {
   method: string;
   params?: Record<string, unknown> | string | object;
   scope?: string;
+  instanceId?: string;
 }
 
-const { method, params = {}, scope = 'read' } = Astro.props;
+const { method, params = {}, scope = 'read', instanceId = method } = Astro.props;
+const isZh = Astro.url.pathname.startsWith('/zh-cn/');
+const labels = isZh
+  ? { samples: '代码示例', copy: '复制', copied: '已复制', failed: '复制失败' }
+  : { samples: 'Code samples', copy: 'Copy', copied: 'Copied', failed: 'Copy failed' };
+const safeId = `snippet-${instanceId}`.replace(/[^a-zA-Z0-9_-]+/g, '-');
 
 const paramsObj =
   params && typeof params === 'object' && !Array.isArray(params)
@@ -23,21 +26,14 @@ function sampleParams(src: Record<string, string>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, hint] of Object.entries(src)) {
     const h = String(hint).toLowerCase();
-    if (key === 'workspace_root' || key.includes('path') || key.includes('root')) {
-      out[key] = '/repo';
-    } else if (key.includes('session')) {
-      out[key] = 'sess_01J…';
-    } else if (key.includes('profile')) {
-      out[key] = 'safe-edit';
-    } else if (h.includes('boolean')) {
-      out[key] = true;
-    } else if (h.includes('number') || h.includes('integer')) {
-      out[key] = 1;
-    } else if (h.includes('array') || h.includes('[]')) {
-      out[key] = [];
-    } else if (key.includes('prompt') || key.includes('task')) {
-      out[key] = 'Summarize module boundaries';
-    } else {
+    if (key === 'workspace_root' || key.includes('path') || key.includes('root')) out[key] = '/repo';
+    else if (key.includes('session')) out[key] = 'sess_01J...';
+    else if (key.includes('profile')) out[key] = 'safe-edit';
+    else if (h.includes('boolean')) out[key] = true;
+    else if (h.includes('number') || h.includes('integer')) out[key] = 1;
+    else if (h.includes('array') || h.includes('[]')) out[key] = [];
+    else if (key.includes('prompt') || key.includes('task')) out[key] = 'Summarize module boundaries';
+    else {
       if (String(hint).includes('?') && !key.includes('session')) continue;
       out[key] = `<${key}>`;
     }
@@ -46,22 +42,11 @@ function sampleParams(src: Record<string, string>): Record<string, unknown> {
 }
 
 const sample = sampleParams(paramsObj);
-const jsonRpc = {
-  jsonrpc: '2.0',
-  id: 1,
-  method,
-  params: sample,
-};
+const jsonRpc = { jsonrpc: '2.0', id: 1, method, params: sample };
 const jsonText = JSON.stringify(jsonRpc, null, 2);
 const paramsTs = JSON.stringify(sample, null, 2);
-const tsText = `// scope: ${scope}
-const result = await client.request(${JSON.stringify(method)}, ${paramsTs});`;
-const bashText = `# JSON-RPC over the local socket
-carina call ${method}
-
-# equivalent payload:
-# ${JSON.stringify(jsonRpc)}`;
-
+const tsText = `// scope: ${scope}\nconst result = await client.request(${JSON.stringify(method)}, ${paramsTs});`;
+const bashText = `# JSON-RPC over the local socket\ncarina call ${method}\n\n# equivalent payload:\n# ${JSON.stringify(jsonRpc)}`;
 const panels = [
   { id: 'json', label: 'JSON-RPC', lang: 'json' as const, code: jsonText },
   { id: 'ts', label: 'TypeScript', lang: 'ts' as const, code: tsText },
@@ -69,36 +54,47 @@ const panels = [
 ];
 ---
 
-<div class="snippet-tabs" data-snippet-tabs>
-  <div class="snippet-tabs__list" role="tablist" aria-label="Code samples">
+<div
+  class="snippet-tabs not-content"
+  data-snippet-tabs
+  data-label-copied={labels.copied}
+  data-label-failed={labels.failed}
+>
+  <div class="snippet-tabs__list" role="tablist" aria-label={labels.samples}>
     {
-      panels.map((p, i) => (
+      panels.map((panel, index) => (
         <button
+          id={`${safeId}-tab-${panel.id}`}
           type="button"
-          class:list={['snippet-tabs__tab', i === 0 && 'is-active']}
+          class:list={['snippet-tabs__tab', index === 0 && 'is-active']}
           role="tab"
-          aria-selected={i === 0 ? 'true' : 'false'}
-          data-panel={p.id}
+          aria-selected={index === 0 ? 'true' : 'false'}
+          aria-controls={`${safeId}-panel-${panel.id}`}
+          tabindex={index === 0 ? 0 : -1}
+          data-panel={panel.id}
         >
-          {p.label}
+          {panel.label}
         </button>
       ))
     }
-    <button type="button" class="snippet-tabs__copy" data-snippet-copy aria-label="Copy snippet">
-      Copy
+    <button type="button" class="snippet-tabs__copy" data-snippet-copy aria-label={labels.copy}>
+      {labels.copy}
     </button>
   </div>
   <div class="snippet-tabs__panels">
     {
-      panels.map((p, i) => (
+      panels.map((panel, index) => (
         <div
-          class:list={['snippet-tabs__panel', i === 0 && 'is-active']}
-          data-panel={p.id}
-          data-code={p.code}
+          id={`${safeId}-panel-${panel.id}`}
+          class:list={['snippet-tabs__panel', index === 0 && 'is-active']}
+          data-panel={panel.id}
+          data-code={panel.code}
           role="tabpanel"
-          hidden={i !== 0}
+          aria-labelledby={`${safeId}-tab-${panel.id}`}
+          tabindex="0"
+          hidden={index !== 0}
         >
-          <Code code={p.code} lang={p.lang} theme={carinaDark} />
+          <Code code={panel.code} lang={panel.lang} theme={carinaDark} />
         </div>
       ))
     }
@@ -108,66 +104,110 @@ const panels = [
 <script>
   import { crossfadePanel } from '../../scripts/docs-motion';
 
+  const STORAGE_KEY = 'carina-docs-snippet-language';
+
+  function ensureSyncBus() {
+    const state = window as Window & { __carinaSnippetBus?: boolean };
+    if (state.__carinaSnippetBus) return;
+    state.__carinaSnippetBus = true;
+    window.addEventListener('carina:snippet-language', (event) => {
+      const detail = (event as CustomEvent<{ id?: string }>).detail;
+      document.querySelectorAll<HTMLElement>('[data-snippet-tabs]').forEach((item) => {
+        item.dispatchEvent(new CustomEvent('carina:snippet-select', { detail }));
+      });
+    });
+  }
+
   function init(root: Element) {
     if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
     root.dataset.ready = '1';
-    const tabs = root.querySelectorAll<HTMLButtonElement>('.snippet-tabs__tab');
+    const tabs = [...root.querySelectorAll<HTMLButtonElement>('.snippet-tabs__tab')];
     const panels = [...root.querySelectorAll<HTMLElement>('.snippet-tabs__panel')];
     const copyBtn = root.querySelector<HTMLButtonElement>('[data-snippet-copy]');
-    let activeId = panels.find((p) => p.classList.contains('is-active'))?.dataset.panel ?? panels[0]?.dataset.panel;
+    let activeId = panels[0]?.dataset.panel || 'json';
     let busy = false;
 
-    tabs.forEach((tab) => {
-      tab.addEventListener('click', () => {
-        const id = tab.dataset.panel;
-        if (!id || id === activeId || busy) return;
-
-        const from = panels.find((p) => p.dataset.panel === activeId) ?? null;
-        const to = panels.find((p) => p.dataset.panel === id);
-        if (!to) return;
-
+    const select = (id: string, options: { animate?: boolean; focus?: boolean; broadcast?: boolean } = {}) => {
+      const nextTab = tabs.find((tab) => tab.dataset.panel === id);
+      const to = panels.find((panel) => panel.dataset.panel === id);
+      if (!nextTab || !to) return;
+      const from = panels.find((panel) => panel.dataset.panel === activeId) || null;
+      activeId = id;
+      tabs.forEach((tab) => {
+        const selected = tab === nextTab;
+        tab.classList.toggle('is-active', selected);
+        tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+        tab.tabIndex = selected ? 0 : -1;
+      });
+      if (options.focus) nextTab.focus();
+      if (options.animate && from !== to && !busy) {
         busy = true;
-        activeId = id;
-
-        tabs.forEach((t) => {
-          const on = t === tab;
-          t.classList.toggle('is-active', on);
-          t.setAttribute('aria-selected', on ? 'true' : 'false');
-        });
-
         crossfadePanel({ from, to });
-
         window.setTimeout(() => {
           busy = false;
-          panels.forEach((p) => {
-            if (p.dataset.panel !== activeId) {
-              p.hidden = true;
-              p.classList.remove('is-active');
+          panels.forEach((panel) => {
+            if (panel !== to) {
+              panel.hidden = true;
+              panel.classList.remove('is-active');
             }
           });
         }, 360);
+      } else {
+        panels.forEach((panel) => {
+          const selected = panel === to;
+          panel.hidden = !selected;
+          panel.classList.toggle('is-active', selected);
+        });
+      }
+      if (options.broadcast) {
+        localStorage.setItem(STORAGE_KEY, id);
+        window.dispatchEvent(new CustomEvent('carina:snippet-language', { detail: { id } }));
+      }
+    };
+
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) select(stored);
+
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => select(tab.dataset.panel || 'json', { animate: true, broadcast: true }));
+      tab.addEventListener('keydown', (event) => {
+        let next = index;
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % tabs.length;
+        else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (index - 1 + tabs.length) % tabs.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        select(tabs[next]?.dataset.panel || 'json', { animate: true, focus: true, broadcast: true });
       });
+    });
+
+    root.addEventListener('carina:snippet-select', (event) => {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (id && id !== activeId) select(id);
     });
 
     copyBtn?.addEventListener('click', async () => {
       const active = root.querySelector<HTMLElement>('.snippet-tabs__panel.is-active');
-      const text = active?.dataset.code ?? active?.innerText ?? '';
-      if (!text) return;
+      const value = active?.dataset.code || active?.innerText || '';
+      if (!value) return;
+      const previous = copyBtn.textContent;
       try {
-        await navigator.clipboard.writeText(text);
-        const prev = copyBtn.textContent;
-        copyBtn.textContent = 'Copied';
+        await navigator.clipboard.writeText(value);
+        copyBtn.textContent = root.dataset.labelCopied || 'Copied';
         copyBtn.classList.add('is-copied');
-        window.setTimeout(() => {
-          copyBtn.textContent = prev;
-          copyBtn.classList.remove('is-copied');
-        }, 1400);
       } catch {
-        /* ignore */
+        copyBtn.textContent = root.dataset.labelFailed || 'Copy failed';
       }
+      window.setTimeout(() => {
+        copyBtn.textContent = previous;
+        copyBtn.classList.remove('is-copied');
+      }, 1400);
     });
   }
+
   function boot() {
+    ensureSyncBus();
     document.querySelectorAll('[data-snippet-tabs]').forEach(init);
   }
   boot();
@@ -175,147 +215,21 @@ const panels = [
 </script>
 
 <style>
-  .snippet-tabs {
-    margin: 0;
-    border: 1px solid var(--polish-code-border, var(--carina-border-subtle));
-    border-radius: 8px;
-    overflow: hidden;
-    background: var(--polish-code-bg, var(--carina-surface));
-    max-width: 100%;
-    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--carina-starlight) 5%, transparent);
-  }
-
-  .snippet-tabs__list {
-    display: flex;
-    align-items: stretch;
-    gap: 0;
-    height: 2.375rem;
-    border-bottom: 1px solid var(--polish-code-border, var(--carina-border-subtle));
-    background: var(--polish-code-chrome, var(--carina-surface-raised));
-    padding: 0 0.35rem 0 0.45rem;
-    box-sizing: border-box;
-  }
-
-  .snippet-tabs__tab {
-    position: relative;
-    appearance: none;
-    border: 0;
-    background: transparent;
-    color: var(--polish-code-muted, var(--carina-dust));
-    font-family: var(--docs-font-sans);
-    font-size: 0.75rem;
-    font-weight: 500;
-    line-height: 1;
-    height: 100%;
-    padding: 0 0.75rem;
-    margin: 0;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transition: color 160ms ease;
-  }
-
-  .snippet-tabs__tab::after {
-    content: '';
-    position: absolute;
-    left: 0.5rem;
-    right: 0.5rem;
-    bottom: 0;
-    height: 1.5px;
-    border-radius: 1px 1px 0 0;
-    background: transparent;
-  }
-
-  .snippet-tabs__tab.is-active {
-    color: var(--polish-code-fg, var(--carina-starlight));
-    font-weight: 600;
-  }
-
-  .snippet-tabs__tab.is-active::after {
-    background: var(--carina-ion-cyan, var(--docs-accent));
-  }
-
-  .snippet-tabs__tab:focus-visible {
-    outline: 2px solid var(--docs-focus);
-    outline-offset: -2px;
-  }
-
-  .snippet-tabs__copy {
-    appearance: none;
-    margin-inline-start: auto;
-    align-self: center;
-    height: 1.65rem;
-    padding: 0 0.55rem;
-    border: 1px solid var(--polish-code-border, var(--carina-border-subtle));
-    border-radius: 6px;
-    background: transparent;
-    color: var(--polish-code-muted, var(--carina-dust));
-    font-family: var(--docs-font-sans);
-    font-size: 0.6875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition:
-      color 160ms ease,
-      border-color 160ms ease,
-      background-color 160ms ease;
-  }
-
-  .snippet-tabs__copy:hover {
-    color: var(--polish-code-fg, var(--carina-starlight));
-    border-color: var(--carina-border);
-    background: color-mix(in srgb, var(--polish-code-bg) 70%, transparent);
-  }
-
-  .snippet-tabs__copy.is-copied {
-    color: var(--carina-spectral-green);
-    border-color: color-mix(in srgb, var(--carina-spectral-green) 40%, transparent);
-  }
-
-  .snippet-tabs__panels {
-    min-width: 0;
-    /* Starlight's markdown sibling rule injects margin-top: 1rem between the
-       tab strip and the panels — shows as a stray band inside the card. */
-    margin-block-start: 0;
-  }
-
-  .snippet-tabs__panel {
-    margin: 0;
-    padding: 0;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    max-width: 100%;
-    scrollbar-width: thin;
-    scrollbar-color: var(--carina-border) transparent;
-  }
-
-  .snippet-tabs__panel[hidden] {
-    display: none;
-  }
-
-  /* Astro <Code /> shell — strip default padding/borders into our mineral card */
-  .snippet-tabs__panel :global(pre) {
-    margin: 0 !important;
-    padding: 0.9rem 1.05rem !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    background: transparent !important;
-    overflow-x: auto;
-    font-size: 0.78rem !important;
-    line-height: 1.6 !important;
-    tab-size: 2;
-  }
-
-  .snippet-tabs__panel :global(pre code) {
-    display: block;
-    font-family: var(--docs-font-mono) !important;
-    font-size: inherit !important;
-    font-weight: 400 !important;
-    line-height: inherit !important;
-    background: transparent !important;
-    border: none !important;
-    padding: 0 !important;
-    box-shadow: none !important;
-    white-space: pre;
-  }
+  .snippet-tabs { margin: 0; border: 1px solid var(--polish-code-border, var(--carina-border-subtle)); border-radius: 8px; overflow: hidden; background: var(--polish-code-bg, var(--carina-surface)); max-width: 100%; box-shadow: inset 0 1px 0 color-mix(in srgb, var(--carina-starlight) 5%, transparent); }
+  .snippet-tabs__list { display: flex; align-items: stretch; gap: 0; min-height: 2.5rem; border-bottom: 1px solid var(--polish-code-border, var(--carina-border-subtle)); background: var(--polish-code-chrome, var(--carina-surface-raised)); padding: 0 0.35rem 0 0.45rem; box-sizing: border-box; }
+  .snippet-tabs__tab { position: relative; appearance: none; border: 0; background: transparent; color: var(--polish-code-muted, var(--carina-dust)); font-family: var(--docs-font-sans); font-size: 0.75rem; font-weight: 500; line-height: 1; min-height: 2.5rem; padding: 0 0.75rem; margin: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: color 160ms ease; }
+  .snippet-tabs__tab::after { content: ''; position: absolute; left: 0.5rem; right: 0.5rem; bottom: 0; height: 2px; background: transparent; }
+  .snippet-tabs__tab.is-active { color: var(--polish-code-fg, var(--carina-starlight)); font-weight: 600; }
+  .snippet-tabs__tab.is-active::after { background: var(--carina-ion-cyan, var(--docs-accent)); }
+  .snippet-tabs__tab:focus-visible, .snippet-tabs__copy:focus-visible { outline: 2px solid var(--docs-focus); outline-offset: -2px; }
+  .snippet-tabs__copy { appearance: none; margin-inline-start: auto; align-self: center; min-height: 2rem; padding: 0 0.65rem; border: 1px solid var(--polish-code-border, var(--carina-border-subtle)); border-radius: 6px; background: transparent; color: var(--polish-code-muted, var(--carina-dust)); font-family: var(--docs-font-sans); font-size: 0.75rem; font-weight: 500; cursor: pointer; }
+  .snippet-tabs__copy:hover { color: var(--polish-code-fg, var(--carina-starlight)); border-color: var(--carina-border); }
+  .snippet-tabs__copy.is-copied { color: var(--carina-spectral-green); }
+  .snippet-tabs__panels { min-width: 0; margin-block-start: 0; }
+  .snippet-tabs__panel { margin: 0; padding: 0; overflow-x: auto; max-width: 100%; scrollbar-width: thin; scrollbar-color: var(--carina-border) transparent; }
+  .snippet-tabs__panel[hidden] { display: none; }
+  .snippet-tabs__panel:focus-visible { outline: 2px solid var(--docs-focus); outline-offset: -2px; }
+  .snippet-tabs__panel :global(pre) { margin: 0 !important; padding: 0.9rem 1.05rem !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; overflow-x: auto; font-size: 0.78rem !important; line-height: 1.6 !important; tab-size: 2; }
+  .snippet-tabs__panel :global(pre code) { display: block; font-family: var(--docs-font-mono) !important; font-size: inherit !important; font-weight: 400 !important; line-height: inherit !important; background: transparent !important; border: none !important; padding: 0 !important; box-shadow: none !important; white-space: pre; }
+  @media (max-width: 36rem) { .snippet-tabs__tab { padding-inline: 0.55rem; } .snippet-tabs__copy { min-width: 2.75rem; overflow: hidden; } }
 </style>

@@ -1,9 +1,9 @@
 ---
 /**
- * Protocol-driven method catalog from src/data/rpc-catalog.json
- * Dense layout + scope chips + per-method try-it builder.
+ * Version-pinned protocol method catalog with URL-addressable state.
  */
-import catalog from '../../data/rpc-catalog.json';
+import stableCatalog from '../../data/rpc-catalog-0.6.x.json';
+import nextCatalog from '../../data/rpc-catalog-next.json';
 import SnippetTabs from './SnippetTabs.astro';
 import TryIt from './TryIt.astro';
 
@@ -11,9 +11,25 @@ interface Props {
   groups?: string[];
   showSnippets?: boolean;
   showTryIt?: boolean;
+  version?: '0.6.x' | 'next';
+  initial?: boolean;
 }
 
-const { groups: only, showSnippets = true, showTryIt = true } = Astro.props;
+const { groups: only, showSnippets = true, showTryIt = true, version = '0.6.x', initial = true } = Astro.props;
+const catalog = version === 'next' ? nextCatalog : stableCatalog;
+const isZh = Astro.url.pathname.startsWith('/zh-cn/');
+const labels = isZh
+  ? {
+      filter: '过滤方法', filterPlaceholder: '按方法、参数或结果过滤...', scopes: '按作用域过滤', clear: '清除作用域',
+      jump: '跳转到分组', allGroups: '全部分组', showing: '显示', methods: '个方法', params: '参数', field: '字段', type: '类型',
+      result: '返回值', sample: '请求示例', empty: '没有符合当前条件的方法。', remote: '远程', control: '控制面', methodLink: '方法链接',
+    }
+  : {
+      filter: 'Filter methods', filterPlaceholder: 'Filter by method, parameter, or result...', scopes: 'Filter by scope', clear: 'Clear scopes',
+      jump: 'Jump to group', allGroups: 'All groups', showing: 'Showing', methods: 'methods', params: 'Params', field: 'Field', type: 'Type',
+      result: 'Result', sample: 'Sample request', empty: 'No methods match your filter.', remote: 'remote', control: 'control-plane', methodLink: 'Link to method',
+    };
+const versionKey = version.replace(/[^a-zA-Z0-9]+/g, '-');
 const groupList = only
   ? catalog.groups.filter((g) => only.includes(g.id))
   : catalog.groups;
@@ -36,35 +52,65 @@ const scopeClass: Record<string, string> = {
   worker: 'is-worker',
   stream: 'is-stream',
 };
+const groups = groupList.map((group) => ({
+  ...group,
+  methods: group.methods.map((method) => {
+    const paramEntries =
+      typeof method.params === 'object' && method.params && !Array.isArray(method.params)
+        ? Object.entries(method.params as Record<string, string>)
+        : [];
+    const resultText =
+      typeof method.result === 'string' ? method.result : JSON.stringify(method.result);
+    const paramsObj =
+      typeof method.params === 'object' && method.params
+        ? (method.params as Record<string, string>)
+        : {};
+    return {
+      ...method,
+      anchor: `rpc-${versionKey}-${method.method.replace(/[^a-zA-Z0-9]+/g, '-')}`,
+      paramEntries,
+      resultText,
+      paramsObj,
+      hay: `${method.method} ${method.scope} ${resultText} ${paramEntries
+        .map(([key]) => key)
+        .join(' ')}`.toLowerCase(),
+    };
+  }),
+}));
 ---
 
 <div
-  class="rpc-catalog"
+  class="rpc-catalog not-content"
   data-rpc-catalog
+  data-version-only={version}
+  data-catalog-version={version}
+  data-label-showing={labels.showing}
+  data-label-methods={labels.methods}
   data-protocol-version={catalog.protocol_version}
   data-method-count={catalog.method_count}
+  hidden={!initial}
 >
   <div class="rpc-catalog__chrome">
     <div class="rpc-catalog__toolbar">
       <p class="rpc-catalog__meta">
         Protocol <span class="rpc-mono" data-rpc-proto>{catalog.protocol_version}</span>
-        · <span class="rpc-mono" data-rpc-count>{catalog.method_count}</span> methods
+        · <span class="rpc-mono" data-rpc-count>{catalog.method_count}</span> {labels.methods}
         · <span class="rpc-mono">{catalog.source}</span>
-        · channel <span class="rpc-mono" data-rpc-channel>0.6.x</span>
+        · channel <span class="rpc-mono">{version}</span>
       </p>
       <label class="rpc-catalog__filter">
-        <span class="sr-only">Filter methods</span>
+        <span class="sr-only">{labels.filter}</span>
         <input
           type="search"
           class="rpc-catalog__search"
-          placeholder="Filter methods…"
+          placeholder={labels.filterPlaceholder}
           data-rpc-filter
           autocomplete="off"
         />
       </label>
     </div>
 
-    <div class="rpc-catalog__scopes" role="group" aria-label="Filter by scope">
+    <div class="rpc-catalog__scopes" role="group" aria-label={labels.scopes}>
       {
         scopes.map((s) => (
           <button
@@ -79,84 +125,75 @@ const scopeClass: Record<string, string> = {
         ))
       }
       <button type="button" class="rpc-scope-chip rpc-scope-chip--clear" data-rpc-scope-clear hidden>
-        Clear scopes
+        {labels.clear}
       </button>
     </div>
 
     <div class="rpc-catalog__jump">
-      <label for="rpc-group-jump">Jump to group</label>
-      <select id="rpc-group-jump" data-rpc-jump>
-        <option value="">All groups</option>
+      <label for={`rpc-group-jump-${versionKey}`}>{labels.jump}</label>
+      <select id={`rpc-group-jump-${versionKey}`} data-rpc-jump>
+        <option value="">{labels.allGroups}</option>
         {
-          groupList.map((g) => (
-            <option value={`group-${g.id}`}>
+          groups.map((g) => (
+            <option value={`rpc-${versionKey}-group-${g.id}`}>
               {g.label} ({g.methods.length})
             </option>
           ))
         }
       </select>
       <span class="rpc-catalog__visible" data-rpc-visible>
-        Showing {catalog.method_count}
+        {labels.showing} {catalog.method_count} {labels.methods}
       </span>
     </div>
   </div>
 
   {
-    groupList.map((group) => (
-      <section class="rpc-group" id={`group-${group.id}`} data-rpc-group={group.id}>
+    groups.map((group) => (
+      <section class="rpc-group" id={`rpc-${versionKey}-group-${group.id}`} data-rpc-group={group.id}>
         <h2 class="rpc-group__title">
           {group.label}
-          <span class="rpc-group__count">{group.methods.length}</span>
+          <span class="rpc-group__count" data-rpc-group-count data-total={group.methods.length}>{group.methods.length}</span>
         </h2>
         <div class="rpc-group__list">
-          {group.methods.map((m) => {
-            const paramEntries =
-              typeof m.params === 'object' && m.params && !Array.isArray(m.params)
-                ? Object.entries(m.params as Record<string, string>)
-                : [];
-            const resultText =
-              typeof m.result === 'string' ? m.result : JSON.stringify(m.result);
-            const hay = `${m.method} ${m.scope} ${resultText} ${paramEntries.map(([k]) => k).join(' ')}`.toLowerCase();
-            const paramsObj =
-              typeof m.params === 'object' && m.params
-                ? (m.params as Record<string, string>)
-                : {};
-            return (
+          {group.methods.map((m) => (
               <details
                 class="rpc-method"
+                id={m.anchor}
                 data-rpc-method
-                data-rpc-hay={hay}
+                data-rpc-name={m.method}
+                data-rpc-hay={m.hay}
                 data-rpc-scope={m.scope}
               >
                 <summary>
                   <span class="rpc-method__main">
+                    <a class="rpc-method__anchor" href={`#${m.anchor}`} data-rpc-method-anchor aria-label={`${labels.methodLink}: ${m.method}`}>#</a>
                     <span class="rpc-method__name">{m.method}</span>
                     <span class:list={['rpc-method__scope', scopeClass[m.scope] ?? '']}>
                       {m.scope}
                     </span>
                   </span>
                   <span class="rpc-method__flags">
-                    {m.remote && <span class="rpc-method__flag">remote</span>}
+                    {m.remote && <span class="rpc-method__flag">{labels.remote}</span>}
                     {m.control_plane_write && (
-                      <span class="rpc-method__flag is-warn">control-plane</span>
+                      <span class="rpc-method__flag is-warn">{labels.control}</span>
                     )}
                   </span>
                 </summary>
                 <div class="rpc-method__body">
                   <div class="rpc-method__cols">
                     <div class="rpc-method__spec">
-                      <h4>Params</h4>
-                      {paramEntries.length > 0 ? (
+                      <h4>{labels.params}</h4>
+                      {m.paramEntries.length > 0 ? (
                         <div class="rpc-table-wrap">
                           <table>
                             <thead>
                               <tr>
-                                <th>Field</th>
-                                <th>Type</th>
+                                <th>{labels.field}</th>
+                                <th>{labels.type}</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {paramEntries.map(([k, v]) => (
+                              {m.paramEntries.map(([k, v]) => (
                                 <tr>
                                   <td class="rpc-mono">{k}</td>
                                   <td class="rpc-mono rpc-type">{String(v)}</td>
@@ -170,27 +207,26 @@ const scopeClass: Record<string, string> = {
                           {typeof m.params === 'string' ? m.params : '{}'}
                         </p>
                       )}
-                      <h4>Result</h4>
-                      <pre class="rpc-method__result rpc-mono">{resultText}</pre>
+                      <h4>{labels.result}</h4>
+                      <pre class="rpc-method__result rpc-mono">{m.resultText}</pre>
                     </div>
                     {showSnippets && (
                       <div class="rpc-method__sample">
-                        <h4>Sample request</h4>
-                        <SnippetTabs method={m.method} params={paramsObj} scope={m.scope} />
-                        {showTryIt && <TryIt method={m.method} params={paramsObj} scope={m.scope} />}
+                        <h4>{labels.sample}</h4>
+                        <SnippetTabs method={m.method} params={m.paramsObj} scope={m.scope} instanceId={`${versionKey}-${m.method}`} />
+                        {showTryIt && <TryIt method={m.method} params={m.paramsObj} scope={m.scope} remote={m.remote} />}
                       </div>
                     )}
                   </div>
                 </div>
               </details>
-            );
-          })}
+          ))}
         </div>
       </section>
     ))
   }
 
-  <p class="rpc-catalog__empty" data-rpc-empty hidden>No methods match your filter.</p>
+  <p class="rpc-catalog__empty" data-rpc-empty hidden>{labels.empty}</p>
 </div>
 
 <script>
@@ -198,18 +234,28 @@ const scopeClass: Record<string, string> = {
     if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
     root.dataset.ready = '1';
 
+    const catalogVersion = root.dataset.catalogVersion || '0.6.x';
     const filter = root.querySelector<HTMLInputElement>('[data-rpc-filter]');
     const jump = root.querySelector<HTMLSelectElement>('[data-rpc-jump]');
     const empty = root.querySelector<HTMLElement>('[data-rpc-empty]');
     const visibleEl = root.querySelector<HTMLElement>('[data-rpc-visible]');
     const clearScopes = root.querySelector<HTMLButtonElement>('[data-rpc-scope-clear]');
-    const channelEl = root.querySelector<HTMLElement>('[data-rpc-channel]');
-    const methods = [...root.querySelectorAll<HTMLElement>('[data-rpc-method]')];
+    const methods = [...root.querySelectorAll<HTMLDetailsElement>('[data-rpc-method]')];
     const groups = [...root.querySelectorAll<HTMLElement>('[data-rpc-group]')];
     const scopeBtns = [...root.querySelectorAll<HTMLButtonElement>('[data-rpc-scope]')];
     const activeScopes = new Set<string>();
+    let urlTimer = 0;
 
-    const applyFilter = () => {
+    const updateUrlState = () => {
+      const url = new URL(window.location.href);
+      const query = filter?.value.trim() || '';
+      if (query) url.searchParams.set('q', query); else url.searchParams.delete('q');
+      if (activeScopes.size) url.searchParams.set('scope', [...activeScopes].sort().join(','));
+      else url.searchParams.delete('scope');
+      history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+    };
+
+    const applyFilter = (syncUrl = true) => {
       const q = (filter?.value || '').trim().toLowerCase();
       let visible = 0;
       methods.forEach((el) => {
@@ -222,15 +268,57 @@ const scopeClass: Record<string, string> = {
         if (show) visible += 1;
       });
       groups.forEach((g) => {
-        const any = [...g.querySelectorAll<HTMLElement>('[data-rpc-method]')].some((m) => !m.hidden);
-        g.hidden = !any;
+        const groupMethods = [...g.querySelectorAll<HTMLElement>('[data-rpc-method]')];
+        const count = groupMethods.filter((method) => !method.hidden).length;
+        g.hidden = count === 0;
+        const countEl = g.querySelector<HTMLElement>('[data-rpc-group-count]');
+        if (countEl) countEl.textContent = String(count);
       });
       if (empty) empty.hidden = visible > 0;
-      if (visibleEl) visibleEl.textContent = `Showing ${visible}`;
+      if (visibleEl) visibleEl.textContent = `${root.dataset.labelShowing || 'Showing'} ${visible} ${root.dataset.labelMethods || 'methods'}`;
       if (clearScopes) clearScopes.hidden = activeScopes.size === 0;
+      if (syncUrl) {
+        window.clearTimeout(urlTimer);
+        urlTimer = window.setTimeout(updateUrlState, 120);
+      }
     };
 
-    filter?.addEventListener('input', applyFilter);
+    const openMethod = (name: string, scroll = false) => {
+      const method = methods.find((item) => item.dataset.rpcName === name);
+      if (!method) return;
+      method.hidden = false;
+      method.open = true;
+      method.closest<HTMLElement>('[data-rpc-group]')?.removeAttribute('hidden');
+      if (scroll && !root.hidden) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('method', name);
+        url.searchParams.set('version', catalogVersion);
+        url.hash = method.id;
+        history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+        method.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+      }
+    };
+
+    const restoreUrlState = () => {
+      const url = new URL(window.location.href);
+      if (filter) filter.value = url.searchParams.get('q') || '';
+      activeScopes.clear();
+      for (const value of (url.searchParams.get('scope') || '').split(',').filter(Boolean)) activeScopes.add(value);
+      scopeBtns.forEach((button) => {
+        const active = activeScopes.has(button.dataset.rpcScope || '');
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        button.classList.toggle('is-on', active);
+      });
+      applyFilter(false);
+      const methodName = url.searchParams.get('method');
+      if (methodName) openMethod(methodName);
+      if (window.location.hash.startsWith(`#rpc-${catalogVersion.replace(/[^a-zA-Z0-9]+/g, '-')}-`)) {
+        const target = document.getElementById(window.location.hash.slice(1));
+        if (target instanceof HTMLDetailsElement) target.open = true;
+      }
+    };
+
+    filter?.addEventListener('input', () => applyFilter());
     scopeBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
         const s = btn.dataset.rpcScope || '';
@@ -243,7 +331,7 @@ const scopeClass: Record<string, string> = {
           btn.setAttribute('aria-pressed', 'true');
           btn.classList.add('is-on');
         }
-        applyFilter();
+        applyFilter(true);
       });
     });
     clearScopes?.addEventListener('click', () => {
@@ -252,23 +340,70 @@ const scopeClass: Record<string, string> = {
         b.setAttribute('aria-pressed', 'false');
         b.classList.remove('is-on');
       });
-      applyFilter();
+      applyFilter(true);
     });
     jump?.addEventListener('change', () => {
       const id = jump.value;
       if (!id) return;
-      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const target = document.getElementById(id);
+      if (target) {
+        history.replaceState(history.state, '', `${location.pathname}${location.search}#${id}`);
+        target.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+      }
       jump.value = '';
     });
 
-    const syncChannelLabel = () => {
-      const ch = document.documentElement.dataset.docsVersion || '0.6.x';
-      if (channelEl) channelEl.textContent = ch;
-    };
-    syncChannelLabel();
-    window.addEventListener('carina:docs-version', syncChannelLabel as EventListener);
+    methods.forEach((method) => {
+      const anchor = method.querySelector<HTMLAnchorElement>('[data-rpc-method-anchor]');
+      anchor?.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const url = new URL(window.location.href);
+        const name = method.dataset.rpcName || '';
+        url.searchParams.set('method', name);
+        url.searchParams.set('version', catalogVersion);
+        url.hash = method.id;
+        history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+        method.open = true;
+        method.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+      });
+      method.addEventListener('toggle', () => {
+        if (!method.open || root.hidden) return;
+        const url = new URL(window.location.href);
+        url.searchParams.set('method', method.dataset.rpcName || '');
+        url.searchParams.set('version', catalogVersion);
+        url.hash = method.id;
+        history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+      });
+    });
 
-    applyFilter();
+    const syncVersion = (event: Event) => {
+      if (!root.isConnected) {
+        window.removeEventListener('carina:docs-version', syncVersion);
+        window.removeEventListener('popstate', syncPopState);
+        return;
+      }
+      const selected = (event as CustomEvent<{ version?: string }>).detail?.version;
+      if (selected !== catalogVersion) return;
+      const methodName = new URL(window.location.href).searchParams.get('method');
+      if (methodName) openMethod(methodName, true);
+    };
+    const syncPopState = () => {
+      if (!root.isConnected) {
+        window.removeEventListener('carina:docs-version', syncVersion);
+        window.removeEventListener('popstate', syncPopState);
+        return;
+      }
+      restoreUrlState();
+    };
+    window.addEventListener('carina:docs-version', syncVersion);
+    window.addEventListener('popstate', syncPopState);
+    document.addEventListener('astro:before-swap', () => {
+      window.removeEventListener('carina:docs-version', syncVersion);
+      window.removeEventListener('popstate', syncPopState);
+    }, { once: true });
+
+    restoreUrlState();
   }
 
   function boot() {
@@ -283,6 +418,14 @@ const scopeClass: Record<string, string> = {
     margin: var(--spacing-4) 0 var(--spacing-8);
   }
 
+  .rpc-catalog[hidden] {
+    display: none;
+  }
+
+  :global(.main-pane:has([data-rpc-catalog]) .sl-container) {
+    max-width: 76rem;
+  }
+
   .rpc-mono {
     font-family: var(--docs-font-mono);
     font-size: 0.8125em;
@@ -292,6 +435,9 @@ const scopeClass: Record<string, string> = {
     position: sticky;
     top: var(--docs-nav-height, 5.5rem);
     z-index: 4;
+    display: grid;
+    grid-template-columns: minmax(12rem, 1fr) auto;
+    gap: 0.625rem 0.75rem;
     margin: 0 0 var(--spacing-5);
     padding: var(--spacing-3) 0 var(--spacing-3);
     background: color-mix(in srgb, var(--docs-bg) 92%, transparent);
@@ -301,19 +447,16 @@ const scopeClass: Record<string, string> = {
   }
 
   .rpc-catalog__toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--spacing-3);
-    margin-bottom: var(--spacing-3);
+    display: contents;
   }
 
   .rpc-catalog__scopes {
     display: flex;
     flex-wrap: wrap;
+    grid-column: 1 / -1;
+    align-items: center;
     gap: 0.35rem;
-    margin-bottom: var(--spacing-3);
+    margin: 0;
   }
 
   .rpc-scope-chip {
@@ -321,16 +464,16 @@ const scopeClass: Record<string, string> = {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    min-height: 1.6rem;
-    padding: 0 0.5rem;
+    min-height: 2.25rem;
+    padding: 0 0.65rem;
     border-radius: 999px;
     border: 1px solid var(--docs-border-subtle);
     background: transparent;
     color: var(--docs-fg-muted);
     font-family: var(--docs-font-mono);
-    font-size: 0.65rem;
+    font-size: 0.75rem;
     font-weight: 600;
-    letter-spacing: 0.03em;
+    letter-spacing: 0;
     text-transform: uppercase;
     cursor: pointer;
     transition:
@@ -358,6 +501,10 @@ const scopeClass: Record<string, string> = {
     font-weight: 500;
   }
 
+  .rpc-scope-chip[hidden] {
+    display: none;
+  }
+
   .rpc-catalog__visible {
     margin-inline-start: auto;
     font-size: 0.75rem;
@@ -366,6 +513,7 @@ const scopeClass: Record<string, string> = {
   }
 
   .rpc-catalog__meta {
+    grid-column: 1 / -1;
     margin: 0;
     font-size: 0.8125rem;
     color: var(--docs-fg-muted);
@@ -373,8 +521,8 @@ const scopeClass: Record<string, string> = {
   }
 
   .rpc-catalog__filter {
-    flex: 1 1 14rem;
-    max-width: 22rem;
+    grid-column: 1;
+    min-width: 0;
   }
 
   .rpc-catalog__search {
@@ -399,6 +547,8 @@ const scopeClass: Record<string, string> = {
   .rpc-catalog__jump {
     display: flex;
     flex-wrap: wrap;
+    grid-column: 2;
+    grid-row: 2;
     align-items: center;
     gap: 0.5rem;
     margin-bottom: 0;
@@ -406,8 +556,29 @@ const scopeClass: Record<string, string> = {
     color: var(--docs-fg-muted);
   }
 
+  @media (max-width: 52rem) {
+    .rpc-catalog__chrome {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .rpc-catalog__meta,
+    .rpc-catalog__filter,
+    .rpc-catalog__jump,
+    .rpc-catalog__scopes {
+      grid-column: 1;
+    }
+
+    .rpc-catalog__jump {
+      grid-row: auto;
+    }
+
+    .rpc-catalog__scopes {
+      padding-inline-end: 3.25rem;
+    }
+  }
+
   .rpc-catalog__jump select {
-    height: 2rem;
+    min-height: 2.25rem;
     border: 1px solid var(--docs-border-subtle);
     border-radius: var(--docs-radius-md);
     background: var(--docs-bg-surface);
@@ -441,7 +612,7 @@ const scopeClass: Record<string, string> = {
     font-size: 1.05rem;
     font-weight: 600;
     margin: 0 0 var(--spacing-3);
-    letter-spacing: -0.015em;
+    letter-spacing: 0;
     padding-bottom: 0.4rem;
     border-bottom: 1px solid var(--docs-border-subtle);
   }
@@ -494,6 +665,24 @@ const scopeClass: Record<string, string> = {
     min-width: 0;
   }
 
+  .rpc-method__anchor {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    flex: 0 0 auto;
+    color: var(--docs-fg-subtle);
+    text-decoration: none;
+    border-radius: 4px;
+  }
+
+  .rpc-method__anchor:hover,
+  .rpc-method__anchor:focus-visible {
+    color: var(--docs-accent);
+    background: color-mix(in srgb, var(--docs-accent) 10%, transparent);
+  }
+
   .rpc-method__name {
     font-family: var(--docs-font-mono);
     font-size: 0.8125rem;
@@ -504,9 +693,9 @@ const scopeClass: Record<string, string> = {
 
   .rpc-method__scope {
     font-family: var(--docs-font-mono);
-    font-size: 0.625rem;
+    font-size: 0.75rem;
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
     text-transform: uppercase;
     border-radius: 999px;
     padding: 0.12rem 0.4rem;
@@ -544,7 +733,7 @@ const scopeClass: Record<string, string> = {
   }
 
   .rpc-method__flag {
-    font-size: 0.625rem;
+    font-size: 0.6875rem;
     font-family: var(--docs-font-mono);
     color: var(--docs-fg-subtle);
     border: 1px solid var(--docs-border-subtle);
@@ -559,6 +748,7 @@ const scopeClass: Record<string, string> = {
   }
 
   .rpc-method__body {
+    container-type: inline-size;
     padding: 0 0.75rem 0.85rem;
     border-top: 1px solid var(--docs-border-subtle);
   }
@@ -570,19 +760,19 @@ const scopeClass: Record<string, string> = {
     padding-top: var(--spacing-3);
   }
 
-  @media (min-width: 960px) {
+  @container (min-width: 54rem) {
     .rpc-method__cols {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+      grid-template-columns: minmax(24rem, 0.95fr) minmax(26rem, 1.05fr);
       align-items: start;
     }
   }
 
   .rpc-method__body h4 {
     margin: 0 0 0.4rem;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0;
     color: var(--docs-fg-subtle);
   }
 
@@ -595,7 +785,9 @@ const scopeClass: Record<string, string> = {
 
   .rpc-table-wrap table {
     width: 100%;
+    min-width: 24rem;
     border-collapse: collapse;
+    table-layout: auto;
     font-size: 0.8125rem;
     margin: 0;
   }
@@ -612,6 +804,11 @@ const scopeClass: Record<string, string> = {
   .rpc-table-wrap th:last-child,
   .rpc-table-wrap td:last-child {
     border-inline-end: 0;
+  }
+
+  .rpc-table-wrap th:first-child,
+  .rpc-table-wrap td:first-child {
+    width: 62%;
   }
 
   .rpc-table-wrap tr:last-child td {
@@ -674,5 +871,17 @@ const scopeClass: Record<string, string> = {
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+  }
+
+  @media (max-width: 36rem) {
+    .rpc-scope-chip,
+    .rpc-catalog__search,
+    .rpc-catalog__jump select {
+      min-height: 2.75rem;
+    }
+
+    .rpc-catalog__chrome {
+      top: var(--docs-nav-height, 4rem);
+    }
   }
 </style>

@@ -12,6 +12,7 @@ interface Props {
 }
 
 const { caption, code: codeProp } = Astro.props;
+const zh = Astro.locals.starlightRoute.locale === 'zh-cn';
 const raw = codeProp ?? (await Astro.slots.render('default'));
 
 /**
@@ -41,7 +42,12 @@ const code = normalizeMermaidSource(String(raw));
 
 <figure class="docs-mermaid" data-mermaid>
   <pre class="docs-mermaid__src" data-mermaid-src hidden>{code}</pre>
-  <div class="docs-mermaid__canvas" data-mermaid-canvas aria-label="Diagram"></div>
+  <div
+    class="docs-mermaid__canvas"
+    data-mermaid-canvas
+    data-error-label={zh ? '图表渲染失败。' : 'Diagram failed to render.'}
+    aria-label={zh ? '图表' : 'Diagram'}
+  ></div>
   {caption && <figcaption class="docs-mermaid__cap">{caption}</figcaption>}
 </figure>
 
@@ -100,7 +106,10 @@ const code = normalizeMermaidSource(String(raw));
       root.dataset.rendered = '1';
     } catch (err) {
       scrubStrayMermaidErrors(id);
-      canvas.innerHTML = `<p class="docs-mermaid__err">Diagram failed to render.</p>`;
+      const error = document.createElement('p');
+      error.className = 'docs-mermaid__err';
+      error.textContent = canvas.dataset.errorLabel || 'Diagram failed to render.';
+      canvas.replaceChildren(error);
       console.warn('[docs-mermaid]', err, src);
       root.dataset.rendered = '1';
     }

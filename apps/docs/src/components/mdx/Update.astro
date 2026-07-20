@@ -7,7 +7,7 @@ interface Props {
   date?: string;
 }
 
-const { label = 'Update', date } = Astro.props;
+const { label = Astro.locals.starlightRoute.locale === 'zh-cn' ? '更新' : 'Update', date } = Astro.props;
 ---
 
 <aside class="docs-update" role="note">
@@ -42,7 +42,7 @@ const { label = 'Update', date } = Astro.props;
   .docs-update__label {
     font-size: 0.7rem;
     font-weight: 700;
-    letter-spacing: 0.06em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: var(--docs-accent);
   }

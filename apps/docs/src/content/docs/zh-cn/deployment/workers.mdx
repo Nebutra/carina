@@ -6,6 +6,11 @@ description: 基于租约的远程 worker、生产配置与排水升级。
 
 源文档：`docs/deployment/remote-workers.md`。
 
+## 传输
+
+- 远程主机优先使用经过认证的 `wss://` Gateway。
+- 直接 `--server` TCP 仅允许 loopback，可用于本地 daemon 或由算子认证的 tunnel。
+
 ## 生产要点
 
 1. 安装发布包 + 经审核的 executor  
@@ -13,12 +18,42 @@ description: 基于租约的远程 worker、生产配置与排水升级。
 3. token 文件 `0600`，经 systemd credentials 注入，永不进环境变量  
 4. `packaging/systemd/carina-worker.service`
 
+## Executor 契约
+
+executor 从 stdin 读取一个 `carina.worker.task.v1` JSON 对象，并在 stdout 输出一个 `carina.worker.result.v1`。可测量时必须上报真实 token 用量；缺失用量视为未计量，不能记成零。
+
+## 租约协议
+
+| 方法 | 约束 |
+| --- | --- |
+| `worker.register` | 只返回一次 worker id 与 credential，可带 pool 标签 |
+| `worker.heartbeat` | 心跳间隔必须明显小于 lease TTL |
+| `work.poll` | 返回 `lease_generation` fencing token |
+| `work.renew` / `work.report` | 必须回传当前 generation |
+| `backpressure.report` | 上报 worker 压力 |
+
+任务重分配会递增 generation，即使仍由同一个 worker id 接手，旧分支也不能用过期租约发布终态。
+
+## 就绪检查
+
+- `carina worker list` 显示预期 name、kind、pool 且状态为 `online`。
+- 正常工作前先把 canary workflow 固定到目标 pool。
+- 对重连风暴、租约过期、executor timeout 和 canary 缺失告警。
+
 ```bash frame="none"
 carina worker list
 systemctl stop carina-worker   # 排水后升级
 ```
 
-远程优先 `wss://` Gateway；直接 TCP 仅限 loopback。
+SIGTERM 会停止新 poll，并最多等待 `--drain-timeout`。一个 pool 每次只滚动一个 worker，重新上线后再跑 canary。
+
+## 容器配置
+
+`packaging/docker/worker.Dockerfile` 构建非 root 镜像。executor 应来自派生镜像或只读 volume，token 以 secret 文件挂载，不能烘焙进镜像层。
+
+## 外部依赖边界
+
+镜像 registry 发布、托管 Gateway 的 DNS/TLS 和生产凭据属于外部 provisioning，不会内置在开源 runtime 中。
 
 ## 权威来源
 

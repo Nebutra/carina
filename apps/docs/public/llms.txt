@@ -11,6 +11,7 @@ Site: https://carina.nebutra.com
 - [Sub-agents](https://carina.nebutra.com/agents/sub-agents/): Delegate work with SubagentSpawn and capability attenuation.
 - [JSON-RPC reference](https://carina.nebutra.com/api/json-rpc/): Curated method reference for the local JSON-RPC control plane.
 - [Method catalog](https://carina.nebutra.com/api/methods/): Protocol-driven JSON-RPC method catalog synced from protocol/jsonrpc/methods.json.
+- [Method catalog (next)](https://carina.nebutra.com/api/methods/next/): Preview JSON-RPC catalog synced from the current in-repo protocol registry.
 - [Runtime API overview](https://carina.nebutra.com/api/overview/): JSON-RPC over unix socket/stdio, optional Gateway, scopes, and SDK surfaces.
 - [Sessions](https://carina.nebutra.com/api/sessions/): Create, control, stream, and export Carina sessions.
 - [API versions](https://carina.nebutra.com/api/versions/): How Carina docs version channels map to protocol catalogs and release lines.
@@ -40,33 +41,34 @@ Site: https://carina.nebutra.com
 
 - [Carina](https://carina.nebutra.com/zh-cn/): 本地优先的 AI Agent 运行时：策略门控、哈希链审计、可事务回滚。
 - [Agents 概览](https://carina.nebutra.com/zh-cn/agents/overview/): ReAct 编程 Agent — 模型决策、内核授权、Zig 执行。
-- [子 Agent](https://carina.nebutra.com/zh-cn/agents/sub-agents/): 以衰减后的能力委派工作。
-- [JSON-RPC 参考](https://carina.nebutra.com/zh-cn/api/json-rpc/): 本地 JSON-RPC 控制平面方法参考。
+- [子 Agent](https://carina.nebutra.com/zh-cn/agents/sub-agents/): 使用 SubagentSpawn 和能力衰减安全地委派工作。
+- [JSON-RPC 参考](https://carina.nebutra.com/zh-cn/api/json-rpc/): 本地 JSON-RPC 控制平面的核心方法、参数和安全边界。
 - [方法目录](https://carina.nebutra.com/zh-cn/api/methods/): 由 protocol/jsonrpc/methods.json 同步的 JSON-RPC 方法目录。
-- [Runtime API 概览](https://carina.nebutra.com/zh-cn/api/overview/): JSON-RPC、可选 Gateway、作用域与 SDK 表面。
+- [方法目录（next）](https://carina.nebutra.com/zh-cn/api/methods/next/): 从仓库当前协议注册表同步的预览版 JSON-RPC 方法目录。
+- [Runtime API 概览](https://carina.nebutra.com/zh-cn/api/overview/): JSON-RPC、本地与可选 Gateway 传输、作用域和 SDK 接入面。
 - [会话](https://carina.nebutra.com/zh-cn/api/sessions/): 创建、控制、流式读取与导出 Carina 会话。
 - [API 版本通道](https://carina.nebutra.com/zh-cn/api/versions/): 文档 0.6.x / next 通道与协议目录的对应关系。
 - [审计与回滚](https://carina.nebutra.com/zh-cn/concepts/audit/): 追加写事件日志、哈希链校验、事务补丁 — 解释并撤销 Agent 工作。
 - [策略与能力](https://carina.nebutra.com/zh-cn/concepts/policy/): 能力类型、权限配置、命令风险等级 — 每次副作用前先策略。
-- [运行时模型](https://carina.nebutra.com/zh-cn/concepts/runtime/): 分层架构 — 客户端、Go 控制面、Rust 能力内核、Zig 工具链。
+- [运行时模型](https://carina.nebutra.com/zh-cn/concepts/runtime/): 客户端、Go 控制面、Rust 能力内核与 Zig 工具链组成的分层架构。
 - [常见问题](https://carina.nebutra.com/zh-cn/deployment/faq/): 关于部署、安全与产品边界的常见问题。
-- [本地安装](https://carina.nebutra.com/zh-cn/deployment/local/): 以本地 daemon 方式运行 Carina。
+- [本地安装](https://carina.nebutra.com/zh-cn/deployment/local/): 在开发机上安装并运行 daemon、CLI 和原生工具。
 - [Workers](https://carina.nebutra.com/zh-cn/deployment/workers/): 基于租约的远程 worker、生产配置与排水升级。
 - [常用工作流](https://carina.nebutra.com/zh-cn/getting-started/common-workflows/): 与真实 CLI 对齐的短配方 — 首次会话、修测试、审计、回滚、嵌入。
 - [安装](https://carina.nebutra.com/zh-cn/getting-started/installation/): 安装 Carina CLI 与 daemon — shell、Homebrew、npm 或源码。
 - [概览](https://carina.nebutra.com/zh-cn/getting-started/introduction/): Carina 是本地优先的 Agent 运行时 — 策略门控、哈希链审计、事务回滚。
 - [数学公式](https://carina.nebutra.com/zh-cn/getting-started/math/): 已移至参考 — KaTeX LaTeX 支持。
 - [快速上手](https://carina.nebutra.com/zh-cn/getting-started/quickstart/): doctor → run → audit verify → patch rollback — 几分钟内第一次受治理会话。
-- [Memory 概览](https://carina.nebutra.com/zh-cn/memory/overview/): 会话上下文、检索钩子与持久记录。
+- [Memory 概览](https://carina.nebutra.com/zh-cn/memory/overview/): 受治理的本地长期记忆、MemoryWrite 能力和可选 HMS 投影。
 - [追踪与审计](https://carina.nebutra.com/zh-cn/observability/traces/): 检视轮次、成本与哈希链审计历史。
 - [CLI 参考](https://carina.nebutra.com/zh-cn/reference/cli/): carina 命令面 — daemon、run、sessions、audit、patch、workflow、workers 等。
 - [术语表](https://carina.nebutra.com/zh-cn/reference/glossary/): Carina 术语 — session、profile、capability、patch、worker 等。
 - [数学公式](https://carina.nebutra.com/zh-cn/reference/math/): Carina 文档的 KaTeX LaTeX 支持 — 行内、块级、矩阵与复杂 AMS 排版。
 - [MCP 集成](https://carina.nebutra.com/zh-cn/tools/mcp/): 接入 MCP 服务且不泄露无约束权限。
-- [Tools 概览](https://carina.nebutra.com/zh-cn/tools/overview/): 由能力内核中介的内置与外部工具。
+- [Tools 概览](https://carina.nebutra.com/zh-cn/tools/overview/): 由能力内核中介的内置工具、Zig 工具链与外部工具。
 - [CLI 与 TUI](https://carina.nebutra.com/zh-cn/use/cli-tui/): 用终端操作 Carina — 与本机 carina --help 对齐。
-- [Workflows 概览](https://carina.nebutra.com/zh-cn/workflows/overview/): 声明式多步 Agent DAG，能力衰减的子 Agent。
-- [教程：审查流水线](https://carina.nebutra.com/zh-cn/workflows/tutorial-review/): 构建带人工检查点的只读审查工作流。
+- [Workflows 概览](https://carina.nebutra.com/zh-cn/workflows/overview/): 声明式多步 Agent DAG，使用能力衰减的隔离步骤。
+- [教程：审查流水线](https://carina.nebutra.com/zh-cn/workflows/tutorial-review/): 运行并行 reviewer 和汇总步骤，并在任何写入前保留人工控制。
 
 ## Machine-readable
 

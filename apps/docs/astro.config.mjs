@@ -200,6 +200,7 @@ export default defineConfig({
         {
           label: 'Get started',
           translations: { 'zh-CN': '快速开始' },
+          collapsed: true,
           items: [
             {
               label: 'Overview',
@@ -226,16 +227,12 @@ export default defineConfig({
         {
           label: 'How Carina works',
           translations: { 'zh-CN': '原理' },
+          collapsed: true,
           items: [
             {
               label: 'Runtime model',
               translations: { 'zh-CN': '运行时模型' },
               link: '/concepts/runtime/',
-            },
-            {
-              label: 'Sessions',
-              translations: { 'zh-CN': '会话' },
-              link: '/api/sessions/',
             },
             {
               label: 'Policy & capabilities',
@@ -252,6 +249,7 @@ export default defineConfig({
         {
           label: 'Use Carina',
           translations: { 'zh-CN': '使用' },
+          collapsed: true,
           items: [
             {
               label: 'CLI & TUI',
@@ -298,6 +296,7 @@ export default defineConfig({
         {
           label: 'Embed Carina',
           translations: { 'zh-CN': '嵌入' },
+          collapsed: true,
           items: [
             {
               label: 'API overview',
@@ -329,6 +328,7 @@ export default defineConfig({
         {
           label: 'Deploy & operate',
           translations: { 'zh-CN': '部署与运维' },
+          collapsed: true,
           items: [
             {
               label: 'Local install',
@@ -355,6 +355,7 @@ export default defineConfig({
         {
           label: 'Reference',
           translations: { 'zh-CN': '参考' },
+          collapsed: true,
           items: [
             {
               label: 'Glossary',

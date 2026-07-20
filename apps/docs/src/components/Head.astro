@@ -33,23 +33,30 @@ const ogImage = new URL('/og-default.png', Astro.site ?? Astro.url).href;
 <script is:inline>
   (() => {
     const root = document.documentElement;
+    const runtimeKey = '__carinaDocsHeadRuntime__';
+    const previous = window[runtimeKey];
+    if (previous) {
+      previous.onScroll();
+      return;
+    }
     const onScroll = () => {
-      // Glass navbar engages after 80px of scroll (SaaS polish brief)
       root.dataset.scrolled = window.scrollY > 80 ? 'true' : 'false';
     };
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
 
-    // Analytics hooks (Plausible / gtag / custom)
     const track = (name, props) => {
       try {
-        window.dispatchEvent(new CustomEvent(name, { detail: props }));
         if (window.plausible) window.plausible(name.replace('carina:', ''), { props });
         if (window.gtag) window.gtag('event', name.replace(/[:.]/g, '_'), props || {});
       } catch (_) {}
     };
-    window.addEventListener('carina:docs-feedback', (e) => track('carina:docs-feedback', e.detail));
-    window.addEventListener('carina:docs-search-zero', (e) => track('carina:docs-search-zero', e.detail));
-    window.addEventListener('carina:docs-ai-ask', (e) => track('carina:docs-ai-ask', e.detail));
+    const onFeedback = (e) => track('carina:docs-feedback', e.detail);
+    const onSearchZero = (e) => track('carina:docs-search-zero', e.detail);
+    const onAssistantAsk = (e) => track('carina:docs-ai-ask', e.detail);
+    window.addEventListener('carina:docs-feedback', onFeedback);
+    window.addEventListener('carina:docs-search-zero', onSearchZero);
+    window.addEventListener('carina:docs-ai-ask', onAssistantAsk);
+    window[runtimeKey] = { onScroll };
   })();
 </script>

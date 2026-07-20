@@ -7,9 +7,17 @@
 <div class="docs-progress" data-reading-progress aria-hidden="true"></div>
 
 <script>
+  type ProgressWindow = Window & {
+    __carinaProgressCleanup__?: () => void;
+    __carinaProgressBootBound__?: boolean;
+  };
+  const progressWindow = window as ProgressWindow;
+
   function boot() {
     const el = document.querySelector<HTMLElement>('[data-reading-progress]');
-    if (!el) return;
+    if (!el || el.dataset.ready === '1') return;
+    el.dataset.ready = '1';
+    progressWindow.__carinaProgressCleanup__?.();
 
     const onScroll = () => {
       const doc = document.documentElement;
@@ -21,8 +29,15 @@
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', onScroll, { passive: true });
+    progressWindow.__carinaProgressCleanup__ = () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+    };
   }
 
   boot();
-  document.addEventListener('astro:page-load', boot);
+  if (!progressWindow.__carinaProgressBootBound__) {
+    progressWindow.__carinaProgressBootBound__ = true;
+    document.addEventListener('astro:page-load', boot);
+  }
 </script>

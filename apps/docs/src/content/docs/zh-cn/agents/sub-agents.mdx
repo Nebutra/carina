@@ -1,8 +1,57 @@
 ---
 title: 子 Agent
-description: 以衰减后的能力委派工作。
+description: 使用 SubagentSpawn 和能力衰减安全地委派工作。
 ---
-子 Agent 在父会话能力的**严格子集**下运行，不能向上铸造新权限。
+
+import Callout from '../../../../components/ui/Callout.astro';
+
+子 Agent 在父会话能力的**严格子集**下运行。创建动作由 `SubagentSpawn` 门控，子任务不能向上铸造新权限，也不能绕开父会话的工作区、网络或密钥边界。
+
+## Spawn 资源形状
+
+```text
+agent:NAME:profile:PROFILE
+```
+
+内置策略默认要求审批。内核会先计算父权限与目标 profile 的交集，再完成 spawn；即使 manifest 声明了更高权限，超出父会话的部分也不会生效。
+
+## Agent 工具
+
+```json title="spawn.json"
+{"tool":"spawn","agent":"scout","task":"Map module boundaries"}
+```
+
+- 每个 Agent 使用声明式 manifest。
+- manifest 可以限制可调用工具集合。
+- `"tasks":[…]` 可并行运行多个同构任务。
+- 输出回到父任务，父任务仍是审批与恢复权威。
+
+## 常见模式
+
+| 模式 | 适用场景 | 推荐权限 |
+| --- | --- | --- |
+| 调研分叉 | 收集模块、文档或依赖信息 | `read-only` |
+| 补丁 worker | 修改一组明确文件 | 窄化的 `safe-edit` |
+| Review swarm | 多视角并行审查 | 无写权限 |
+| Workflow step | DAG 中独立、可重试的节点 | 每步独立 profile |
+
+## 为什么必须衰减
+
+1. 不受约束的子任务会成倍扩大影响范围。
+2. 子任务事件嵌套在父轮次下，审计能还原委派关系。
+3. 父会话保持最终恢复、审批与停止权限。
+4. 子任务失败不会自动把额外能力带回父任务。
+
+<Callout variant="note">
+  多步骤、有依赖或需要重试的编排优先使用 [工作流](/zh-cn/workflows/overview/)。直接 spawn 更适合单个边界明确的委派。
+</Callout>
+
+## 失败时怎么做
+
+- 审批未出现：检查父会话是否具备 `SubagentSpawn`。
+- 子任务无法读文件：确认子 profile 与工作区范围没有被衰减为空。
+- 并行任务互相覆盖：让 reviewer 保持只读，写入集中到单一 synthesis/patch 步骤。
+- 需要恢复：先查看父会话 audit，再决定重新 spawn 或改用 durable workflow。
 
 ## 权威来源
 

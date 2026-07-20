@@ -24,6 +24,15 @@
 </script>
 
 <script>
+  type DocsChromeWindow = typeof window & {
+    __carinaDocsChromeCleanup?: () => void;
+  };
+
+  const docsChromeWindow = window as DocsChromeWindow;
+  docsChromeWindow.__carinaDocsChromeCleanup?.();
+  const docsChromeController = new AbortController();
+  let searchObserver: MutationObserver | null = null;
+
   /* ── TOC scroll-spy ─────────────────────────────────────────────── */
   function initTocSpy() {
     const toc = document.querySelector('.right-sidebar-panel nav, starlight-toc nav, .right-sidebar nav');
@@ -228,10 +237,11 @@
 
   /* ── Heading anchor copy ────────────────────────────────────────── */
   function initAnchorCopy() {
+    const zh = (document.documentElement.lang || '').toLowerCase().startsWith('zh');
     document.querySelectorAll<HTMLAnchorElement>('.sl-anchor-link, .sl-markdown-content a.sl-anchor-link').forEach((a) => {
       if (a.dataset.copyBound === '1') return;
       a.dataset.copyBound = '1';
-      a.addEventListener('click', async (e) => {
+      a.addEventListener('click', async () => {
         // Keep default hash navigation; also copy absolute URL
         try {
           const href = a.href || `${location.origin}${location.pathname}${a.hash || location.hash}`;
@@ -242,7 +252,7 @@
           /* ignore */
         }
       });
-      a.setAttribute('title', a.getAttribute('title') || 'Copy link to section');
+      a.setAttribute('title', a.getAttribute('title') || (zh ? '复制此小节链接' : 'Copy link to section'));
     });
   }
 
@@ -250,6 +260,7 @@
   const COLLAPSE_LINES = 16;
 
   function initExpandableCode() {
+    const zh = (document.documentElement.lang || '').toLowerCase().startsWith('zh');
     document.querySelectorAll<HTMLElement>('.expressive-code .frame').forEach((frame) => {
       if (frame.dataset.expandReady === '1') return;
       const pre = frame.querySelector('pre');
@@ -266,10 +277,16 @@
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'ec-expand-btn';
-      btn.textContent = `Show more (${lines} lines)`;
+      btn.textContent = zh ? `展开（${lines} 行）` : `Show more (${lines} lines)`;
       btn.addEventListener('click', () => {
         const collapsed = frame.classList.toggle('is-collapsed');
-        btn.textContent = collapsed ? `Show more (${lines} lines)` : 'Show less';
+        btn.textContent = collapsed
+          ? zh
+            ? `展开（${lines} 行）`
+            : `Show more (${lines} lines)`
+          : zh
+            ? '收起'
+            : 'Show less';
       });
       frame.appendChild(btn);
     });
@@ -279,6 +296,7 @@
   function initSearchEmpty() {
     const root = document.querySelector('#starlight__search');
     if (!root || root.getAttribute('data-empty-bound') === '1') return;
+    searchObserver?.disconnect();
     root.setAttribute('data-empty-bound', '1');
 
     const zh = (document.documentElement.lang || '').toLowerCase().startsWith('zh');
@@ -300,19 +318,20 @@
           <a href="${base}/getting-started/quickstart/">${zh ? '快速开始' : 'Quickstart'}</a>
           <a href="${base}/getting-started/common-workflows/">${zh ? '常见工作流' : 'Workflows'}</a>
           <a href="${base}/concepts/policy/">${zh ? '策略' : 'Policy'}</a>
-          <button type="button" data-search-ask-ai>${zh ? '问 AI' : 'Ask AI'}</button>
         </div>`;
       msg.appendChild(cta);
-      cta.querySelector('[data-search-ask-ai]')?.addEventListener('click', () => {
-        window.dispatchEvent(new CustomEvent('carina:docs-ask-ai', { detail: { question: '' } }));
-        // Close the search modal (synthetic Escape cannot cancel a native
-        // modal <dialog>; close it directly).
-        document.querySelector<HTMLDialogElement>('site-search dialog[open]')?.close();
-      });
     };
 
-    const mo = new MutationObserver(() => inject());
-    mo.observe(root, { childList: true, subtree: true });
+    searchObserver = new MutationObserver(() => {
+      if (!root.isConnected) {
+        searchObserver?.disconnect();
+        searchObserver = null;
+        return;
+      }
+      inject();
+    });
+    searchObserver.observe(root, { childList: true, subtree: true });
+    inject();
   }
 
   function boot() {
@@ -327,5 +346,10 @@
   }
 
   boot();
-  document.addEventListener('astro:page-load', boot);
+  document.addEventListener('astro:page-load', boot, { signal: docsChromeController.signal });
+  docsChromeWindow.__carinaDocsChromeCleanup = () => {
+    docsChromeController.abort();
+    searchObserver?.disconnect();
+    searchObserver = null;
+  };
 </script>

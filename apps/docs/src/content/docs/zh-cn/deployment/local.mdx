@@ -1,13 +1,65 @@
 ---
 title: 本地安装
-description: 以本地 daemon 方式运行 Carina。
+description: 在开发机上安装并运行 daemon、CLI 和原生工具。
 ---
+
+import Callout from '../../../../components/ui/Callout.astro';
+
+Carina 默认运行在开发机或你控制的内部 runner 上；local-first 是基线形态。
+
+## 安装
+
+```bash title="install-local.sh"
+# 发布安装器
+curl -fsSL https://carina.nebutra.com/install.sh | sh
+
+# 从源码安装
+git clone https://github.com/nebutra/carina.git
+cd carina
+make install
+```
+
+## 启动运行时
+
 ```bash title="start-daemon.sh"
 carina daemon start
 carina daemon status
-carina daemon stop
+carina version
 carina doctor
 ```
+
+优先让 CLI 管理 daemon 生命周期，它会发现与 binary 相邻的 kernel 和 native tools。只有指向替代构建产物时才需要 `-tools` / `-kernel`；直接后台启动 `carina-daemon` 主要用于旧版或特殊打包布局。
+
+## 数据布局
+
+| 类型 | 内容 |
+| --- | --- |
+| Config | profile、MCP server、BYOK provider credentials |
+| State | session、审计段、补丁和 memory |
+| Socket | 默认 `~/.carina/daemon.sock` |
+| Logs | daemon 诊断日志 |
+
+实际路径以 `carina doctor` 和当前 release notes 的输出为准。
+
+## Reasoner
+
+- PATH 中存在 `claude` 且未使用 `--offline` 时，运行时自动连接 `claude-cli`。
+- model-router / BYOK 可通过 `CARINA_REASONER_MODEL` 指定模型。
+
+## 可选 Gateway
+
+网络 listener 默认关闭。只有准备好签名密钥和显式 bind 时才开启 WebSocket / HTTP Gateway，完整约束见 [Runtime API](/zh-cn/api/overview/)。
+
+## 更新后检查
+
+```bash frame="none"
+carina version
+carina doctor
+```
+
+<Callout variant="note">
+  包名和安装 URL 跟随开源 release channel。每次升级后运行 `carina doctor`，确认 daemon、kernel、toolchain 与配置一致。
+</Callout>
 
 ## 权威来源
 

@@ -13,8 +13,9 @@
     "sync-brand": "node ./scripts/sync-brand.mjs",
     "sync-protocol": "node ./scripts/sync-protocol.mjs",
     "generate-ai-surface": "node ./scripts/generate-ai-surface.mjs",
+    "check-content": "node ./scripts/check-content.mjs",
     "sync": "pnpm sync-brand && pnpm sync-protocol && pnpm generate-ai-surface",
-    "prebuild": "pnpm generate-ai-surface",
+    "prebuild": "pnpm check-content && pnpm generate-ai-surface",
     "typecheck": "astro check && tsc --noEmit",
     "lighthouse": "pnpm build && pnpm dlx @lhci/cli@0.14.0 autorun --config=./lighthouserc.cjs"
   },
@@ -40,7 +41,12 @@
     "twoslash": "0.3.1"
   },
   "devDependencies": {
+    "@astrojs/check": "^0.9.9",
     "@types/node": "^26.1.1",
-    "typescript": "^5.9.3"
+    "remark-mdx": "^3.1.1",
+    "remark-parse": "^11.0.0",
+    "typescript": "^5.9.3",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.1.0"
   }
 }

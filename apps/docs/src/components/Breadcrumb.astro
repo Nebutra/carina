@@ -3,7 +3,10 @@
  * Path breadcrumb under page title (Mintlify-style).
  * Built from the current docs entry id + locale prefix.
  */
+import { sectionEntries } from '../config/section-entries.mjs';
+
 const { entry, locale } = Astro.locals.starlightRoute;
+const zh = locale === 'zh-cn';
 const id = entry.id; // e.g. "concepts/runtime" or "zh-cn/concepts/runtime"
 const isSplash = entry.data.template === 'splash';
 
@@ -15,27 +18,47 @@ const pathParts =
 
 const homeHref = locale === 'root' || !locale ? '/' : `/${locale}/`;
 const crumbs: { label: string; href?: string }[] = [
-  { label: 'Docs', href: homeHref },
+  { label: zh ? '文档' : 'Docs', href: homeHref },
 ];
+const zhSections: Record<string, string> = {
+  agents: '智能体',
+  api: 'API',
+  concepts: '核心概念',
+  deployment: '部署与运维',
+  'getting-started': '入门',
+  memory: '记忆',
+  observability: '可观测性',
+  reference: '参考',
+  tools: '工具',
+  use: '使用 Carina',
+  workflows: '工作流',
+};
 
-let acc = locale === 'root' || !locale ? '' : `/${locale}`;
 for (let i = 0; i < pathParts.length; i++) {
   const seg = pathParts[i]!;
-  acc += `/${seg}`;
   const isLast = i === pathParts.length - 1;
-  const label = seg
-    .replace(/-/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  const label =
+    (zh ? zhSections[seg] : undefined) ??
+    seg.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const localePrefix = locale === 'root' || !locale ? '' : `/${locale}`;
+  const sectionTarget =
+    i === 0 && seg in sectionEntries
+      ? sectionEntries[seg as keyof typeof sectionEntries]
+      : undefined;
   crumbs.push({
     label: isLast ? entry.data.title : label,
-    href: isLast ? undefined : `${acc}/`,
+    href: isLast
+      ? undefined
+      : sectionTarget
+        ? `${localePrefix}/${sectionTarget}/`
+        : undefined,
   });
 }
 ---
 
 {
   !isSplash && pathParts.length > 0 && (
-    <nav class="docs-breadcrumb" aria-label="Breadcrumb">
+    <nav class="docs-breadcrumb" aria-label={zh ? '面包屑导航' : 'Breadcrumb'}>
       <ol>
         {crumbs.map((c, i) => (
           <li>

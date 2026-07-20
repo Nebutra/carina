@@ -3,11 +3,11 @@
  * Full header: brand + search + version + theme/lang, section tabs, version banner.
  */
 import config from 'virtual:starlight/user-config';
-import LanguageSelect from 'virtual:starlight/components/LanguageSelect';
-import Search from 'virtual:starlight/components/Search';
-import SiteTitle from 'virtual:starlight/components/SiteTitle';
-import SocialIcons from 'virtual:starlight/components/SocialIcons';
-import ThemeSelect from 'virtual:starlight/components/ThemeSelect';
+import LanguageSelect from '@astrojs/starlight/components/LanguageSelect.astro';
+import Search from '@astrojs/starlight/components/Search.astro';
+import SiteTitle from '@astrojs/starlight/components/SiteTitle.astro';
+import SocialIcons from '@astrojs/starlight/components/SocialIcons.astro';
+import ThemeSelect from '@astrojs/starlight/components/ThemeSelect.astro';
 import VersionSelector from './ui/VersionSelector.astro';
 import VersionBanner from './VersionBanner.astro';
 
@@ -47,6 +47,7 @@ const tabs = hasSidebar
       }))
       .filter((tab): tab is { label: string; href: string; active: boolean } => Boolean(tab.href))
   : [];
+const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档分区' : 'Documentation sections';
 ---
 
 <div class="docs-header" data-docs-header>
@@ -73,7 +74,7 @@ const tabs = hasSidebar
 
   {
     tabs.length > 0 && (
-      <nav class="header-tabs" aria-label="Sections">
+      <nav class="header-tabs" aria-label={sectionsLabel}>
         <div class="header-tabs__inner">
           <ul>
             {tabs.map((tab) => (
@@ -93,6 +94,12 @@ const tabs = hasSidebar
 </div>
 
 <script>
+  type HeaderWindow = Window & {
+    __carinaHeaderCleanup__?: () => void;
+    __carinaHeaderBootBound__?: boolean;
+  };
+  const headerWindow = window as HeaderWindow;
+
   /** Sticky offset + keep active section chip in view on mobile. */
   function syncHeaderOffset() {
     const header = document.querySelector<HTMLElement>('header.header');
@@ -110,23 +117,40 @@ const tabs = hasSidebar
     const active = document.querySelector<HTMLElement>(
       '.header-tabs a[aria-current="page"]',
     );
-    active?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+    const scroller = active?.closest<HTMLElement>('.header-tabs__inner');
+    if (!active || !scroller) return;
+    const item = active.getBoundingClientRect();
+    const rail = scroller.getBoundingClientRect();
+    if (item.left >= rail.left && item.right <= rail.right) return;
+    active.scrollIntoView({
+      inline: 'nearest',
+      block: 'nearest',
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
   }
 
   function boot() {
+    const root = document.querySelector<HTMLElement>('[data-docs-header]');
+    if (!root || root.dataset.runtimeReady === '1') return;
+    root.dataset.runtimeReady = '1';
+    headerWindow.__carinaHeaderCleanup__?.();
     syncHeaderOffset();
     scrollActiveTabIntoView();
     const banner = document.querySelector('[data-version-banner]');
-    if (banner && !banner.hasAttribute('data-offset-bound')) {
-      banner.setAttribute('data-offset-bound', '1');
-      const obs = new MutationObserver(syncHeaderOffset);
-      obs.observe(banner, { attributes: true, attributeFilter: ['hidden'] });
-    }
+    const observer = banner ? new MutationObserver(syncHeaderOffset) : null;
+    observer?.observe(banner!, { attributes: true, attributeFilter: ['hidden'] });
     window.addEventListener('resize', syncHeaderOffset, { passive: true });
+    headerWindow.__carinaHeaderCleanup__ = () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', syncHeaderOffset);
+    };
   }
 
   boot();
-  document.addEventListener('astro:page-load', boot);
+  if (!headerWindow.__carinaHeaderBootBound__) {
+    headerWindow.__carinaHeaderBootBound__ = true;
+    document.addEventListener('astro:page-load', boot);
+  }
 </script>
 
 <style>

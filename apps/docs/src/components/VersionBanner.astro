@@ -2,15 +2,23 @@
 /**
  * Shown when docs version channel is "next" (preview / protocol-tracking).
  */
+const isZh = Astro.locals.starlightRoute.locale === 'zh-cn';
+const copy = isZh
+  ? {
+      message: '你正在查看预览通道，方法目录会跟踪仓库内的协议注册表。',
+      switchLabel: '切换到 0.6.x',
+    }
+  : {
+      message: 'You are viewing the preview channel; the method catalog tracks the in-repo protocol registry.',
+      switchLabel: 'Switch to 0.6.x',
+    };
 ---
 
 <div class="version-banner" data-version-banner hidden role="status">
   <span class="version-banner__badge">next</span>
-  <span class="version-banner__text">
-    You are viewing the preview channel — method catalog tracks the in-repo protocol registry.
-  </span>
+  <span class="version-banner__text">{copy.message}</span>
   <button type="button" class="version-banner__switch" data-version-switch-stable>
-    Switch to 0.6.x
+    {copy.switchLabel}
   </button>
 </div>
 
@@ -20,14 +28,26 @@
       if (btn.dataset.bound === '1') return;
       btn.dataset.bound = '1';
       btn.addEventListener('click', () => {
+        const selector = document.querySelector<HTMLSelectElement>('[data-version-root] select');
+        if (selector) {
+          selector.value = '0.6.x';
+          selector.dispatchEvent(new Event('change', { bubbles: true }));
+          return;
+        }
+
+        // The selector is part of the normal header, but keep a resilient
+        // fallback for embedded layouts that render the banner independently.
         localStorage.setItem('carina-docs-version', '0.6.x');
         document.documentElement.dataset.docsVersion = '0.6.x';
-        document.querySelectorAll<HTMLSelectElement>('[data-version-root] select').forEach((sel) => {
-          sel.value = '0.6.x';
+        document.querySelectorAll<HTMLElement>('[data-version-only]').forEach((el) => {
+          el.hidden = el.dataset.versionOnly !== '0.6.x';
         });
-        document.querySelectorAll<HTMLElement>('[data-version-banner]').forEach((b) => {
-          b.hidden = true;
+        document.querySelectorAll<HTMLElement>('[data-version-banner]').forEach((banner) => {
+          banner.hidden = true;
         });
+        window.dispatchEvent(
+          new CustomEvent('carina:docs-version', { detail: { version: '0.6.x' } }),
+        );
       });
     });
   }
@@ -56,7 +76,7 @@
     font-family: var(--docs-font-mono);
     font-size: 0.65rem;
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: var(--docs-warning);
     border: 1px solid color-mix(in srgb, var(--docs-warning) 45%, transparent);

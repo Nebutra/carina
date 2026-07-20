@@ -1,13 +1,78 @@
 ---
 title: 教程：审查流水线
-description: 构建带人工检查点的只读审查工作流。
+description: 运行并行 reviewer 和汇总步骤，并在任何写入前保留人工控制。
 ---
-**目标：** 运行只读收集与评审，在任何写入前暂停等待人工批准。
+
+import Callout from '../../../../components/ui/Callout.astro';
+
+**目标：** 扫描变更文件、并行运行 reviewer、汇总报告，并通过审计证明每一步使用了衰减后的权限。
+
+## 前置条件
+
+- `carina doctor` 全部通过。
+- daemon 正在运行。
+- 当前目录是有非空 working-tree diff 的 Git 仓库。
+- 示例文件 `examples/workflows/review.json` 可用。
+
+## 1. 安装工作流
 
 ```bash frame="none"
-carina workflow run ./review.json --cwd .
-carina workflow status --follow
+mkdir -p .carina/workflows
+cp examples/workflows/review.json .carina/workflows/review.json
 ```
+
+也可以按 [Workflows 概览](/zh-cn/workflows/overview/) 的 schema 自己编写。
+
+## 2. 运行
+
+```bash title="run-workflow.sh"
+carina workflow run review
+carina workflow run review "focus on auth and session handling"
+```
+
+默认在当前目录创建 `safe-edit` 会话并等待完成。只读 reviewer 不会因为处于并行分支而获得额外权限。
+
+## 3. 查看状态
+
+```bash frame="none"
+carina workflow list
+carina workflow status RUN_ID
+```
+
+状态包含 `completed`、`failed`、`skipped` 与 `total` 计数；先看失败步骤，再判断应重启整个 run 还是只修复输入。
+
+## 4. 检查审计
+
+```bash title="audit.sh"
+carina audit SESSION_ID
+carina audit verify SESSION_ID
+```
+
+使用 run 输出中的 session ID。每个 workflow step 都是独立的衰减子 Agent，副作用仍经过能力内核。
+
+## 5. Streaming 变体
+
+步骤耗时差异较大时，参考 `examples/workflows/swarm-review.json` 设置：
+
+```json
+{"execution_mode":"streaming"}
+```
+
+Streaming 会在单个节点依赖满足后立即调度，不必等待整层完成。
+
+## 6. 暂停、恢复与停止
+
+```bash title="control.sh"
+carina workflow pause RUN_ID
+carina workflow resume RUN_ID
+carina workflow stop RUN_ID
+```
+
+`pause` 不会强杀已经执行的步骤；`stop` 进入终态。对终态执行 `restart` 会创建新的 run ID 与 attempt。
+
+<Callout variant="tip">
+  如果流水线最终要修改文件，让收集和 review 步骤保持 `read-only`，再在单一 patch 步骤前放置人工审批点。
+</Callout>
 
 ## 权威来源
 

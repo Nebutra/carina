@@ -1,34 +1,85 @@
 ---
 title: Workflows 概览
-description: 声明式多步 Agent DAG，能力衰减的子 Agent。
+description: 声明式多步 Agent DAG，使用能力衰减的隔离步骤。
 ---
-工作流是依赖 DAG：每一步交给隔离且能力衰减的子 Agent，全程审计。
 
-源文档：`docs/workflows.md`。
+import Callout from '../../../../components/ui/Callout.astro';
+import Mermaid from '../../../../components/mdx/Mermaid.astro';
 
-```json title="review.json"
+工作流是声明式多步 Agent 流水线：每个节点交给隔离且能力衰减的子 Agent，依赖关系形成 DAG，步骤状态和副作用全部进入审计。
+
+<Mermaid
+  caption="两个并行审查分支汇入报告步骤。"
+  code={`flowchart TD
+  scan[scan / scout] --> bugs[bugs / reviewer]
+  scan --> perf[perf / reviewer]
+  bugs --> report[report / writer]
+  perf --> report`}
+/>
+
+## 编写工作流
+
+工作区工作流放在 `.carina/workflows/`，用户级覆盖放在 `~/.carina/workflows/`。
+
+```json title="review.json" showLineNumbers
 {
   "name": "review",
+  "description": "并行审查后汇总报告",
   "steps": [
-    {"id": "scan", "agent": "scout", "task": "List changed files."},
-    {"id": "bugs", "agent": "reviewer", "task": "Review:\n${scan}", "needs": ["scan"]}
+    {"id":"scan","agent":"scout","task":"List changed files."},
+    {"id":"bugs","agent":"reviewer","task":"Review:\n${scan}","needs":["scan"]},
+    {"id":"report","agent":"writer","task":"Synthesize:\n${bugs}","needs":["bugs"]}
   ]
 }
 ```
 
+- `${step_id}` 插入已完成依赖的完整输出。
+- `needs` 是步骤顺序的权威约束。
+- 没有相互依赖的 ready 步骤可以并行。
+- 示例：`examples/workflows/review.json`。
+
+## 运行与控制
+
 ```bash title="workflow.sh"
 carina workflow run review
+carina workflow run review "focus on auth"
+carina workflow run review --background
+carina workflow list
 carina workflow status RUN_ID
-carina workflow pause|resume|stop RUN_ID
+carina workflow pause RUN_ID
+carina workflow resume RUN_ID
+carina workflow stop RUN_ID
+carina workflow restart RUN_ID
 ```
 
-默认 BSP（按层同步）；`"execution_mode": "streaming"` 支持更大规模与失败隔离。
+前台运行会等待终态；除 `completed` 外的终态都会返回非零退出码。`pause` 只停止接纳新 ready 节点，已经运行的步骤可以完成。
 
-示例：`examples/workflows/review.json`、`swarm-review.json`。
+## 执行模式
+
+### BSP（默认）
+
+按依赖层批量运行：同层全部完成后进入下一层。规则直观，但一个慢步骤会阻塞同层推进，单步失败终止整个 run。上限 64 步。
+
+### Streaming
+
+```json
+{"execution_mode":"streaming"}
+```
+
+依赖一满足就立即调度，适合耗时差异大的图。默认只阻断失败节点的下游；在步骤设置 `"fail_fast": true` 可恢复全局终止。上限 1000 步。
+
+## 权限与恢复
+
+每个步骤的 profile 都是外层会话能力的子集。需要写入时，建议先让并行 reviewer 保持只读，再把变更集中到一个人工检查点之后的 patch 步骤。durable run 可以查询、暂停和重启，但恢复不会绕过当前策略。
+
+<Callout variant="tip">
+  能用依赖图表达的多步任务优先用 workflow；一次性单委派使用 spawn。这样状态、失败隔离和恢复语义更清楚。
+</Callout>
 
 ## 权威来源
 
-- 叙述：`docs/workflows.md` · 示例：`examples/workflows/`
+- 叙述：`docs/workflows.md` · schema：`protocol/schemas/workflow-graph.schema.json`
+- 示例：`examples/workflows/`
 - CLI：`carina workflow run|list|status|pause|resume|stop|restart`
 - 相关：[子 Agent](/zh-cn/agents/sub-agents/) · [策略](/zh-cn/concepts/policy/) · [Workers](/zh-cn/deployment/workers/)
 

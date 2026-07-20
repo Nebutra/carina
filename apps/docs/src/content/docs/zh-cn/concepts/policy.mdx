@@ -92,11 +92,36 @@ carina profile SESSION
 
 ## 审批
 
+删除大量文件、lockfile 大范围变化、依赖安装、远程脚本、读取密钥、工作区外路径、push / deploy、网络访问和 CI 配置修改始终需要人工确认。
+
 ```bash frame="none"
 carina approve SESSION DECISION_ID [role]
 carina deny SESSION DECISION_ID [reason]
 carina audit SESSION
 ```
+
+## 工作区边界
+
+- Agent 不能访问 profile 未允许的工作区外路径。
+- 策略判断前先解析 symlink，符号链接不能用来逃逸边界。
+- 超大文件和 ignore 文件默认不进入模型上下文。
+
+## 密钥
+
+Agent 不直接读取环境变量。密钥由 broker 以不透明 handle 提供，日志不写入明文，命令输出还会按已知密钥值脱敏。
+
+```bash frame="none"
+carina secret grant SESSION NAME VALUE
+carina secret request SESSION NAME
+```
+
+## 失败诊断
+
+| 现象 | 含义 |
+| --- | --- |
+| 频繁要求审批 | 动作风险等级至少为 2 或涉及网络；收窄任务，或有意识地选择更宽 profile |
+| 路径被拒绝 | 路径在工作区外，或发生 symlink 逃逸 |
+| 插件没有动作 | 插件从零权限启动；使用 `carina plugin inspect` 检查声明 |
 
 ## 权威来源
 
@@ -107,4 +132,5 @@ carina audit SESSION
 ## 下一步
 
 - [快速上手](/zh-cn/getting-started/quickstart/)  
+- [子 Agent](/zh-cn/agents/sub-agents/) — 权限衰减实践
 - [CLI 参考](/zh-cn/reference/cli/)  

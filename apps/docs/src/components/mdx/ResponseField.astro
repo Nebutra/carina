@@ -9,13 +9,14 @@ interface Props {
 }
 
 const { name, type = 'string', required = false } = Astro.props;
+const requiredLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '必填' : 'required';
 ---
 
 <div class="response-field">
   <div class="response-field__head">
     <code class="response-field__name">{name}</code>
     <span class="response-field__type">{type}</span>
-    {required && <span class="response-field__req">required</span>}
+    {required && <span class="response-field__req">{requiredLabel}</span>}
   </div>
   <div class="response-field__body">
     <slot />

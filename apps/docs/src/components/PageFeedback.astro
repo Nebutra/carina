@@ -4,43 +4,69 @@
  */
 const path = Astro.url.pathname;
 const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
-const reasons = [
-  { id: 'unclear', label: 'Unclear' },
-  { id: 'outdated', label: 'Outdated' },
-  { id: 'missing', label: 'Missing info' },
-  { id: 'broken', label: 'Broken example' },
-];
+const isZh = Astro.locals.starlightRoute.locale === 'zh-cn';
+const t = isZh
+  ? {
+      question: '这个页面有帮助吗？',
+      yes: '有',
+      no: '没有',
+      reason: '哪里有问题？',
+      skip: '跳过',
+      thanks: '感谢反馈。',
+      hint: '本次会话中每个页面仅记录一次投票。',
+      reasons: [
+        { id: 'unclear', label: '表述不清' },
+        { id: 'outdated', label: '内容过时' },
+        { id: 'missing', label: '信息缺失' },
+        { id: 'broken', label: '示例有误' },
+      ],
+    }
+  : {
+      question: 'Was this page helpful?',
+      yes: 'Yes',
+      no: 'No',
+      reason: 'What went wrong?',
+      skip: 'Skip',
+      thanks: 'Thanks for the feedback.',
+      hint: 'One vote per page is recorded during this session.',
+      reasons: [
+        { id: 'unclear', label: 'Unclear' },
+        { id: 'outdated', label: 'Outdated' },
+        { id: 'missing', label: 'Missing info' },
+        { id: 'broken', label: 'Broken example' },
+      ],
+    };
 ---
 
 {
   !isSplash && (
     <div class="docs-feedback" data-feedback-path={path}>
-      <p class="docs-feedback__q">Was this page helpful?</p>
+      <p class="docs-feedback__q">{t.question}</p>
       <div class="docs-feedback__actions">
         <button type="button" data-feedback="yes" class="docs-feedback__btn">
-          Yes
+          {t.yes}
         </button>
         <button type="button" data-feedback="no" class="docs-feedback__btn">
-          No
+          {t.no}
         </button>
       </div>
       <div class="docs-feedback__reasons" data-feedback-reasons hidden>
-        <p class="docs-feedback__reasons-q">What went wrong?</p>
+        <p class="docs-feedback__reasons-q">{t.reason}</p>
         <div class="docs-feedback__chips">
-          {reasons.map((r) => (
+          {t.reasons.map((r) => (
             <button type="button" class="docs-feedback__chip" data-feedback-reason={r.id}>
               {r.label}
             </button>
           ))}
           <button type="button" class="docs-feedback__chip" data-feedback-reason="skip">
-            Skip
+            {t.skip}
           </button>
         </div>
       </div>
-      <p class="docs-feedback__thanks" hidden>
-        Thanks — saved on this device.
+      <p class="docs-feedback__thanks" role="status" aria-live="polite" hidden>
+        {t.thanks}
       </p>
-      <p class="docs-feedback__hint">Votes stay in your browser until the tab session ends.</p>
+      <p class="docs-feedback__hint">{t.hint}</p>
     </div>
   )
 }
@@ -66,26 +92,26 @@ const reasons = [
     };
 
     const emit = (value: string, reason?: string) => {
-      sessionStorage.setItem(key, reason ? `${value}:${reason}` : value);
+      try {
+        sessionStorage.setItem(key, reason ? `${value}:${reason}` : value);
+      } catch {
+        /* Storage can be disabled; the vote event is still useful. */
+      }
       window.dispatchEvent(
         new CustomEvent('carina:docs-feedback', {
           detail: { path, value, reason, ts: Date.now() },
         }),
       );
-      const w = window as Window & {
-        plausible?: (n: string, o?: { props?: Record<string, string> }) => void;
-        gtag?: (...args: unknown[]) => void;
-      };
-      try {
-        w.plausible?.('docs_feedback', { props: { path, value, reason: reason || '' } });
-        w.gtag?.('event', 'docs_feedback', { page_path: path, value, reason });
-      } catch {
-        /* analytics optional */
-      }
       showThanks();
     };
 
-    if (sessionStorage.getItem(key)) {
+    let previousVote: string | null = null;
+    try {
+      previousVote = sessionStorage.getItem(key);
+    } catch {
+      /* Storage can be disabled. */
+    }
+    if (previousVote) {
       showThanks();
       return;
     }
@@ -151,6 +177,7 @@ const reasons = [
     font-family: var(--docs-font-sans);
     font-size: 0.8125rem;
     font-weight: 500;
+    min-height: 2rem;
     padding: 0.35rem 0.85rem;
     border-radius: var(--docs-radius-full);
     cursor: pointer;
@@ -198,6 +225,7 @@ const reasons = [
     font-family: var(--docs-font-sans);
     font-size: 0.75rem;
     font-weight: 500;
+    min-height: 2rem;
     padding: 0.3rem 0.65rem;
     border-radius: 999px;
     cursor: pointer;
@@ -224,5 +252,12 @@ const reasons = [
     flex-basis: 100%;
     font-size: 0.72rem;
     color: var(--docs-fg-subtle);
+  }
+
+  @media (max-width: 39.99rem) {
+    .docs-feedback__btn,
+    .docs-feedback__chip {
+      min-height: 2.75rem;
+    }
   }
 </style>

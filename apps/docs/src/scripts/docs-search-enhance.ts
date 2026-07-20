@@ -6,9 +6,6 @@
  * here degrades safely in dev (the Ask-AI row stays hidden without input).
  *
  * Injects, inside the dialog frame:
- *  - an "Ask AI" row pinned under the results (visible when query non-empty);
- *    clicking closes the dialog and dispatches the PUBLIC CONTRACT event
- *    `carina:ask-ai` with `{ question }` (consumed by DocsAssistant).
  *  - a decorative keyboard hint bar (↑↓ Select · ↵ Open · esc Close).
  *
  * Also wires arrow-key result navigation (so the hints are true) and decorates
@@ -17,7 +14,6 @@
  */
 
 type Labels = {
-  ask: string;
   select: string;
   open: string;
   close: string;
@@ -26,8 +22,8 @@ type Labels = {
 function labels(): Labels {
   const zh = (document.documentElement.lang || '').toLowerCase().startsWith('zh');
   return zh
-    ? { ask: '问 AI', select: '选择', open: '打开', close: '关闭' }
-    : { ask: 'Ask AI', select: 'Select', open: 'Open', close: 'Close' };
+    ? { select: '选择', open: '打开', close: '关闭' }
+    : { select: 'Select', open: 'Open', close: 'Close' };
 }
 
 function enhanceSearch(): void {
@@ -40,26 +36,10 @@ function enhanceSearch(): void {
 
   const t = labels();
 
-  /* ── Footer: Ask-AI row + keyboard hint bar ─────────────────────── */
+  /* ── Footer: keyboard hint bar ──────────────────────────────────── */
 
   const foot = document.createElement('div');
   foot.className = 'docs-search-foot';
-
-  const ask = document.createElement('button');
-  ask.type = 'button';
-  ask.className = 'docs-search-ask';
-  ask.hidden = true;
-  const askIcon = document.createElement('span');
-  askIcon.className = 'docs-search-ask__icon';
-  askIcon.setAttribute('aria-hidden', 'true');
-  askIcon.textContent = '✦';
-  const askText = document.createElement('span');
-  askText.className = 'docs-search-ask__text';
-  askText.append(`${t.ask}: `);
-  const askQuery = document.createElement('q');
-  askQuery.className = 'docs-search-ask__q';
-  askText.append(askQuery);
-  ask.append(askIcon, askText);
 
   const hints = document.createElement('div');
   hints.className = 'docs-search-hints';
@@ -77,7 +57,7 @@ function enhanceSearch(): void {
   };
   hints.append(hint(['↑', '↓'], t.select), hint(['↵'], t.open), hint(['esc'], t.close));
 
-  foot.append(ask, hints);
+  foot.append(hints);
   frame.append(foot);
 
   /* ── Query tracking (input is created later by PagefindUI) ──────── */
@@ -85,40 +65,18 @@ function enhanceSearch(): void {
   const getInput = () =>
     frame.querySelector<HTMLInputElement>('.pagefind-ui__search-input');
 
-  let query = '';
   const syncQuery = () => {
-    const q = getInput()?.value.trim() ?? '';
-    if (q === query) return;
-    query = q;
-    askQuery.textContent = q;
-    ask.hidden = q.length === 0;
-    ask.setAttribute('aria-label', `${t.ask}: ${q}`);
+    getInput()?.setAttribute('aria-keyshortcuts', 'ArrowDown ArrowUp Enter');
   };
   frame.addEventListener('input', syncQuery);
   // Pagefind's clear button updates the input without an `input` event.
   frame.addEventListener('click', () => requestAnimationFrame(syncQuery));
   dialog.addEventListener('close', () => requestAnimationFrame(syncQuery));
 
-  /* ── Ask-AI dispatch (public contract: `carina:ask-ai`) ─────────── */
-
-  ask.addEventListener('click', () => {
-    const question = query;
-    try {
-      dialog.close();
-    } catch {
-      /* ignore */
-    }
-    window.dispatchEvent(new CustomEvent('carina:ask-ai', { detail: { question } }));
-  });
-
   /* ── Keyboard navigation (makes the hint bar honest) ────────────── */
 
   const focusables = (): HTMLElement[] => {
-    const items = Array.from(
-      frame.querySelectorAll<HTMLElement>('.pagefind-ui__result-link'),
-    );
-    if (!ask.hidden) items.push(ask);
-    return items;
+    return Array.from(frame.querySelectorAll<HTMLElement>('.pagefind-ui__result-link'));
   };
 
   dialog.addEventListener('keydown', (e) => {

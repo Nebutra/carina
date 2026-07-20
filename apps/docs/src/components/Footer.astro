@@ -5,7 +5,32 @@
 import Default from '@astrojs/starlight/components/Footer.astro';
 import PageFeedback from './PageFeedback.astro';
 
-const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
+const { entry, locale } = Astro.locals.starlightRoute;
+const isSplash = entry.data.template === 'splash';
+const isZh = locale === 'zh-cn';
+const localePrefix = isZh ? '/zh-cn' : '';
+const docsHref = (path: string) => `${localePrefix}${path}`;
+const labels = isZh
+  ? {
+      agents: '面向 Agent 的文档',
+      currentMarkdown: '当前页面的 Markdown',
+      methodCatalog: '方法目录',
+      versionChannels: '版本通道',
+      catalogJson: '目录 JSON',
+      product: '产品',
+      quickstart: '快速上手',
+      faq: '常见问题',
+    }
+  : {
+      agents: 'Docs for agents',
+      currentMarkdown: 'This page as Markdown',
+      methodCatalog: 'Method catalog',
+      versionChannels: 'Version channels',
+      catalogJson: 'Catalog JSON',
+      product: 'Product',
+      quickstart: 'Quickstart',
+      faq: 'FAQ',
+    };
 ---
 
 <PageFeedback />
@@ -15,28 +40,28 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
     <div class="docs-footer-links">
       <div class="docs-footer-links__grid">
         <div>
-          <p class="docs-footer-links__h">Docs for agents</p>
+          <p class="docs-footer-links__h">{labels.agents}</p>
           <ul>
             <li><a href="/llms.txt">llms.txt</a></li>
             <li><a href="/llms-full.txt">llms-full.txt</a></li>
             <li><a href="/skill.md">skill.md</a></li>
-            <li><a href="index.md">This page as Markdown</a></li>
+            <li><a href="index.md">{labels.currentMarkdown}</a></li>
           </ul>
         </div>
         <div>
           <p class="docs-footer-links__h">API</p>
           <ul>
-            <li><a href="/api/methods/">Method catalog</a></li>
-            <li><a href="/api/versions/">Version channels</a></li>
-            <li><a href="/data/rpc-catalog-next.json">Catalog JSON</a></li>
+            <li><a href={docsHref('/api/methods/')}>{labels.methodCatalog}</a></li>
+            <li><a href={docsHref('/api/versions/')}>{labels.versionChannels}</a></li>
+            <li><a href="/data/rpc-catalog-next.json">{labels.catalogJson}</a></li>
           </ul>
         </div>
         <div>
-          <p class="docs-footer-links__h">Product</p>
+          <p class="docs-footer-links__h">{labels.product}</p>
           <ul>
-            <li><a href="/getting-started/quickstart/">Quickstart</a></li>
+            <li><a href={docsHref('/getting-started/quickstart/')}>{labels.quickstart}</a></li>
             <li><a href="https://github.com/nebutra/carina" rel="noopener">GitHub</a></li>
-            <li><a href="/deployment/faq/">FAQ</a></li>
+            <li><a href={docsHref('/deployment/faq/')}>{labels.faq}</a></li>
           </ul>
         </div>
       </div>
@@ -64,7 +89,7 @@ const isSplash = Astro.locals.starlightRoute.entry.data.template === 'splash';
     margin: 0 0 0.5rem;
     font-size: 0.7rem;
     font-weight: 700;
-    letter-spacing: 0.06em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: var(--docs-fg-subtle);
   }

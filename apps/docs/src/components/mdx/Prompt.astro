@@ -9,11 +9,14 @@ interface Props {
   actions?: Array<'copy' | 'cursor'>;
 }
 
+const zh = Astro.locals.starlightRoute.locale === 'zh-cn';
 const {
-  title = 'Install docs skill',
-  description = 'Give your coding agent Carina docs context.',
+  title = zh ? '安装文档技能' : 'Install docs skill',
+  description = zh ? '为你的编程智能体提供 Carina 文档上下文。' : 'Give your coding agent Carina docs context.',
   actions = ['copy', 'cursor'],
 } = Astro.props;
+const copyLabel = zh ? '复制' : 'Copy';
+const copiedLabel = zh ? '已复制' : 'Copied';
 ---
 
 <figure class="docs-prompt" data-docs-prompt>
@@ -26,8 +29,8 @@ const {
     <div class="docs-prompt__actions">
       {
         actions.includes('copy') && (
-          <button type="button" class="docs-prompt__btn" data-prompt-copy>
-            Copy
+          <button type="button" class="docs-prompt__btn" data-prompt-copy data-copied-label={copiedLabel}>
+            {copyLabel}
           </button>
         )
       }
@@ -53,7 +56,7 @@ const {
       try {
         await navigator.clipboard.writeText(text.trim());
         const prev = btn.textContent;
-        btn.textContent = 'Copied';
+        btn.textContent = btn.dataset.copiedLabel || 'Copied';
         window.setTimeout(() => {
           btn.textContent = prev;
         }, 1200);

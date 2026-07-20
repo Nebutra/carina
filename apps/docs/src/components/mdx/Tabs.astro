@@ -109,8 +109,9 @@ const groupId = uniqueId('tabs');
         if (focus) buttons[i]?.focus();
         return;
       }
-      const from = panels[active];
-      const to = panels[i];
+      const from = panels[active]!;
+      const to = panels[i]!;
+      const label = labels[i]!;
       busy = true;
       setChrome(i, focus);
       active = i;
@@ -124,10 +125,10 @@ const groupId = uniqueId('tabs');
       });
 
       // Persist + broadcast to same-key groups on the page.
-      persist(syncKey, labels[i]);
+      persist(syncKey, label);
       document.dispatchEvent(
         new CustomEvent<SyncDetail>(SYNC_EVENT, {
-          detail: { key: syncKey, label: labels[i], source: root },
+          detail: { key: syncKey, label, source: root },
         }),
       );
 
@@ -172,7 +173,7 @@ const groupId = uniqueId('tabs');
       btn.setAttribute('aria-controls', id);
       btn.id = `${id}-tab`;
       btn.tabIndex = i === initial ? 0 : -1;
-      btn.textContent = labels[i];
+      btn.textContent = labels[i]!;
       if (i === initial) btn.classList.add('is-active');
 
       btn.addEventListener('click', () => select(i));

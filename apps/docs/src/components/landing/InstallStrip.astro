@@ -13,9 +13,25 @@ const {
   href = '/getting-started/installation/',
   label = 'Install',
 } = Astro.props;
+const isZh = Astro.locals.starlightRoute.locale === 'zh-cn';
+const copy = isZh
+  ? {
+      regionLabel: '安装 Carina',
+      buttonLabel: '复制安装命令',
+      copy: '复制',
+      copied: '已复制',
+      allOptions: '查看全部安装方式',
+    }
+  : {
+      regionLabel: 'Install Carina',
+      buttonLabel: 'Copy install command',
+      copy: 'Copy',
+      copied: 'Copied',
+      allOptions: 'All install options',
+    };
 ---
 
-<section class="install-strip" aria-label="Install Carina">
+<section class="install-strip" aria-label={copy.regionLabel}>
   <div class="install-strip__inner">
     <p class="install-strip__label">{label}</p>
     <div class="install-strip__bar" data-install-strip>
@@ -24,12 +40,13 @@ const {
         type="button"
         class="install-strip__copy"
         data-install-copy
-        aria-label="Copy install command"
+        data-copy-success={copy.copied}
+        aria-label={copy.buttonLabel}
       >
-        <span data-install-copy-label>Copy</span>
+        <span data-install-copy-label>{copy.copy}</span>
       </button>
     </div>
-    <a class="install-strip__more" href={href}>All install options →</a>
+    <a class="install-strip__more" href={href}>{copy.allOptions} →</a>
   </div>
 </section>
 
@@ -46,7 +63,7 @@ const {
         await navigator.clipboard.writeText(cmd);
         if (label) {
           const prev = label.textContent;
-          label.textContent = 'Copied';
+          label.textContent = btn.dataset.copySuccess || 'Copied';
           btn.classList.add('is-copied');
           window.setTimeout(() => {
             label.textContent = prev;
@@ -87,7 +104,7 @@ const {
     margin: 0 0 var(--spacing-3);
     font-size: 0.75rem;
     font-weight: 600;
-    letter-spacing: 0.06em;
+    letter-spacing: 0;
     text-transform: uppercase;
     color: var(--docs-fg-subtle);
   }

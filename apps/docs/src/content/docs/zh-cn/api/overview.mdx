@@ -1,43 +1,82 @@
 ---
 title: Runtime API 概览
-description: JSON-RPC、可选 Gateway、作用域与 SDK 表面。
+description: JSON-RPC、本地与可选 Gateway 传输、作用域和 SDK 接入面。
 ---
 
 import Callout from '../../../../components/ui/Callout.astro';
 
+Carina 的主嵌入协议是 **JSON-RPC 2.0**：本机客户端通过 unix socket（`~/.carina/daemon.sock`）或 stdio 连接。面向网络的 WebSocket / HTTP Gateway 必须显式启用，并且默认关闭。
 
-传输（MVP）：**JSON-RPC 2.0** 经 unix socket（`~/.carina/daemon.sock`）或 stdio。可选 WebSocket / HTTP Gateway 默认关闭。
+## 最快路径
 
-权威注册表：`protocol/jsonrpc/methods.json`。叙述：`docs/rpc-api.md`。
+```bash frame="none"
+carina daemon start
+carina gateway hello
+carina gateway methods
+```
+
+`gateway.hello` 只描述版本、角色、功能和方法目录，不授予权限。真正的权限仍由传输来源、方法描述符与能力内核共同决定。
+
+## 接入面
+
+| 接入面 | 适用场景 |
+| --- | --- |
+| 本地 JSON-RPC | CLI、TUI、IDE 和自定义客户端的首选路径 |
+| WebSocket Gateway | 远程长连接；要求签名且带作用域的 token |
+| HTTP Gateway | OpenAI 风格 `/v1` 接口和受限工具调用 |
+| MCP 客户端 / 服务端 | 在 Carina 策略下互操作工具 |
+| TS / Python / Go SDK | 类型化会话、事件、成本和 steering |
+
+## 设计边界
+
+1. **本地权威**：远程同步不能静默覆盖本机策略。
+2. **描述符目录**：远程暴露范围和所需作用域来自方法注册表；严格模式拒绝未分类 handler。
+3. **结构化事件**：客户端消费类型化事件，而不是解析终端文本。
+4. **显式能力**：attach 必须选择 profile，最终副作用权限由能力内核裁决。
 
 ## 作用域
 
 | Scope | 含义 |
 | --- | --- |
-| `read` | 状态、列表、回放、审计 |
-| `write` | 本地操作边界内的变更 |
-| `admin` | 控制面、密钥、策略、审批 |
+| `read` | 状态、列表、回放、目录、审计与结果 |
+| `write` | 本地操作边界内的会话、任务、工作区变更 |
+| `admin` | 配置、密钥、策略、插件与审批等控制面动作 |
 | `worker` | 远程 worker 租约协议 |
 | `stream` | 长连接事件订阅 |
 
-## HTTP Gateway 路由（摘要）
+部分方法使用动态作用域。例如 `workspace.patch.propose` 遇到空路径、绝对路径或 `..` 时会升级到 `admin`。作用域分类不是授权本身，能力内核仍是最终权威。
 
-| 路由 | 作用 |
+## 可选 Gateway
+
+WebSocket 首帧必须是带签名 token 的 `gateway.hello`；浏览器 `Origin` 不在允许列表时会被拒绝。HTTP 请求必须带 `Authorization: Bearer <gw1 token>`，并匹配 transport、路由授权和 scope。
+
+| 路由 | 作用 | Scope |
+| --- | --- | --- |
+| `GET /v1/models` | 列出 Carina agent 目标 | `read` |
+| `POST /v1/chat/completions` | OpenAI 风格聊天转 Agent 任务 | `write` |
+| `POST /v1/responses` | Responses 风格请求和有限连续性 | `write` |
+| `POST /tools/invoke` | daemon / kernel 下的只读允许列表 | `read` |
+
+`/v1` 是 **agent-first**：`model` 选择 `carina`、`carina/default` 或 `carina/<agent_id>`，不是直接选择 provider 模型。`/tools/invoke` 不允许执行进程、写文件、应用补丁、注入会话或读取密钥。
+
+## 方法组
+
+| 分组 | 示例 |
 | --- | --- |
-| `GET /v1/models` | Agent 目标列表（非 provider 模型） |
-| `POST /v1/chat/completions` | OpenAI 风格聊天 → Agent 任务 |
-| `POST /v1/responses` | Responses API 风格 |
-| `POST /tools/invoke` | 只读允许列表 |
+| Runtime / Gateway | `runtime.initialize`、`gateway.hello`、`daemon.doctor` |
+| Session / Task | `session.create`、`session.replay`、`task.submit`、审批动作 |
+| Workspace | `workspace.tree`、`workspace.search`、`workspace.patch.*` |
+| Memory | `memory.list`、`memory.write`、`memory.projection.*` |
+| Worker / Workflow | `worker.register`、`work.poll`、`workflow.run` |
+| Audit | `audit.report`、`audit.export` |
 
-`/v1` 是 **agent-first**：`model` 选择 Carina agent 目标。
-
-```bash frame="none"
-carina gateway hello
-carina gateway methods
+```json title="session.create.json"
+{"jsonrpc":"2.0","id":1,"method":"session.create",
+ "params":{"workspace_root":"/repo","profile":"safe-edit"}}
 ```
 
 <Callout variant="note">
-  完整方法见英文 [Runtime API](/api/overview/) 与 [JSON-RPC](/api/json-rpc/)。
+  方法 schema 的唯一权威是 `protocol/jsonrpc/methods.json` 与 `protocol/schemas/`；本页解释稳定产品表面。
 </Callout>
 
 ## 权威来源
@@ -45,13 +84,6 @@ carina gateway methods
 - 机器可读注册表：`protocol/jsonrpc/methods.json`（及 `apps/docs/public/data/` 双目录）
 - 叙述：`docs/rpc-api.md`
 - 现场探索：[方法目录](/zh-cn/api/methods/)（Playground Mock/Live）
-
-## 表面
-
-| 表面 | 何时使用 |
-| --- | --- |
-| JSON-RPC（本地） | IDE / TUI / 自定义客户端的主嵌入路径 |
-| Gateway HTTP | 需要显式开启的远程 / OpenAI 风格适配 |
 
 ## 下一步
 

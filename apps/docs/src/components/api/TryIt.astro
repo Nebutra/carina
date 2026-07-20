@@ -1,50 +1,49 @@
 ---
-/**
- * JSON-RPC playground (Mintlify-style Try it).
- * - Mock mode: deterministic local responses (no network)
- * - Live mode: POST to user endpoint (daemon / gateway)
- */
+/** JSON-RPC playground: deterministic mock or authenticated WebSocket Gateway. */
 interface Props {
   method: string;
   params?: Record<string, string> | object;
   scope?: string;
+  remote?: boolean;
 }
 
-const { method, params = {}, scope = 'read' } = Astro.props;
+const { method, params = {}, scope = 'read', remote = false } = Astro.props;
+const isZh = Astro.url.pathname.startsWith('/zh-cn/');
+const labels = isZh
+  ? {
+      title: '请求演练', hint: 'Mock 无需 daemon。Live 会先完成 gateway.hello，再发送当前 JSON-RPC 请求。',
+      mode: '演练模式', mock: '模拟', live: '实时', endpoint: 'WebSocket Gateway', token: 'Gateway token',
+      tokenHint: '只保留在当前输入框，不写入浏览器存储。', body: '请求体', copyJson: '复制 JSON',
+      copyProbe: '复制探测命令', copyCli: '复制本地 CLI', send: '发送', sending: '发送中...', copied: '已复制',
+      failed: '复制失败', invalidJson: 'JSON 无效', rpcError: 'JSON-RPC 错误', success: '成功', remoteOnly: '此方法不开放远程调用；请使用 Mock 或本地 CLI。',
+      networkError: 'Gateway 错误', timeout: '请求超时', mockLabel: '模拟', liveLabel: '实时', tokenRequired: 'Live 模式需要签名 Gateway token。',
+      invalidEndpoint: 'WebSocket Gateway 地址无效。', invalidProtocol: 'Gateway 地址必须使用 ws:// 或 wss://。', connectionFailed: 'WebSocket 连接失败。', gatewayClosed: 'Gateway 已关闭连接',
+    }
+  : {
+      title: 'Playground', hint: 'Mock works without a daemon. Live completes gateway.hello before sending this JSON-RPC request.',
+      mode: 'Playground mode', mock: 'Mock', live: 'Live', endpoint: 'WebSocket Gateway', token: 'Gateway token',
+      tokenHint: 'Kept only in this field and never written to browser storage.', body: 'Request body', copyJson: 'Copy JSON',
+      copyProbe: 'Copy probe command', copyCli: 'Copy local CLI', send: 'Send', sending: 'Sending...', copied: 'Copied',
+      failed: 'Copy failed', invalidJson: 'Invalid JSON', rpcError: 'JSON-RPC error', success: 'Success', remoteOnly: 'This method is not remotely exposed; use Mock or the local CLI.',
+      networkError: 'Gateway error', timeout: 'Request timed out', mockLabel: 'mock', liveLabel: 'live', tokenRequired: 'Live mode requires a signed Gateway token.',
+      invalidEndpoint: 'Invalid WebSocket Gateway URL.', invalidProtocol: 'Gateway URL must use ws:// or wss://.', connectionFailed: 'WebSocket connection failed.', gatewayClosed: 'Gateway closed the connection',
+    };
 
 const sample: Record<string, unknown> = {};
 if (params && typeof params === 'object' && !Array.isArray(params)) {
   for (const [key, hint] of Object.entries(params as Record<string, string>)) {
     const h = String(hint).toLowerCase();
-    if (key.includes('workspace') || key.includes('path') || key.includes('root')) {
-      sample[key] = '/repo';
-    } else if (key.includes('session')) {
-      sample[key] = 'sess_01J…';
-    } else if (key.includes('profile')) {
-      sample[key] = 'safe-edit';
-    } else if (h.includes('boolean')) {
-      sample[key] = true;
-    } else if (h.includes('number') || h.includes('integer')) {
-      sample[key] = 1;
-    } else if (h.includes('array')) {
-      sample[key] = [];
-    } else if (key.includes('prompt') || key.includes('task')) {
-      sample[key] = 'Summarize module boundaries';
-    } else if (String(hint).includes('?') && !key.includes('session')) {
-      continue;
-    } else {
-      sample[key] = `<${key}>`;
-    }
+    if (key.includes('workspace') || key.includes('path') || key.includes('root')) sample[key] = '/repo';
+    else if (key.includes('session')) sample[key] = 'sess_01J...';
+    else if (key.includes('profile')) sample[key] = 'safe-edit';
+    else if (h.includes('boolean')) sample[key] = true;
+    else if (h.includes('number') || h.includes('integer')) sample[key] = 1;
+    else if (h.includes('array')) sample[key] = [];
+    else if (key.includes('prompt') || key.includes('task')) sample[key] = 'Summarize module boundaries';
+    else if (!String(hint).includes('?')) sample[key] = `<${key}>`;
   }
 }
-
-const body = {
-  jsonrpc: '2.0',
-  id: 1,
-  method,
-  params: sample,
-};
-const bodyJson = JSON.stringify(body, null, 2);
+const bodyJson = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: sample }, null, 2);
 ---
 
 <div
@@ -52,51 +51,47 @@ const bodyJson = JSON.stringify(body, null, 2);
   data-tryit
   data-method={method}
   data-scope={scope}
-  data-default-body={bodyJson}
+  data-remote={remote ? 'true' : 'false'}
+  data-labels={JSON.stringify(labels)}
 >
   <div class="tryit__head">
     <div class="tryit__title-row">
-      <h4 class="tryit__title">Playground</h4>
-      <span class="tryit__scope" data-tryit-scope>{scope}</span>
+      <h4 class="tryit__title">{labels.title}</h4>
+      <span class="tryit__scope">{scope}</span>
     </div>
-    <p class="tryit__hint">
-      Mock returns a realistic JSON-RPC envelope without a daemon. Switch to Live to POST to your gateway.
-    </p>
+    <p class="tryit__hint">{remote ? labels.hint : labels.remoteOnly}</p>
   </div>
 
-  <div class="tryit__mode" role="group" aria-label="Playground mode">
-    <button type="button" class="tryit__mode-btn is-active" data-tryit-mode="mock" aria-pressed="true">
-      Mock
-    </button>
-    <button type="button" class="tryit__mode-btn" data-tryit-mode="live" aria-pressed="false">
-      Live
-    </button>
+  <div class="tryit__mode" role="group" aria-label={labels.mode}>
+    <button type="button" class="tryit__mode-btn is-active" data-tryit-mode="mock" aria-pressed="true">{labels.mock}</button>
+    <button type="button" class="tryit__mode-btn" data-tryit-mode="live" aria-pressed="false" disabled={!remote} title={!remote ? labels.remoteOnly : undefined}>{labels.live}</button>
   </div>
 
-  <label class="tryit__field" data-tryit-endpoint-wrap>
-    <span>Endpoint</span>
-    <input
-      type="url"
-      class="tryit__input"
-      data-tryit-endpoint
-      placeholder="http://127.0.0.1:8777/rpc"
-      autocomplete="off"
-    />
-  </label>
+  <div class="tryit__live-fields" data-tryit-live-fields hidden>
+    <label class="tryit__field">
+      <span>{labels.endpoint}</span>
+      <input type="url" class="tryit__input" data-tryit-endpoint placeholder="ws://127.0.0.1:8777/gateway" autocomplete="url" />
+    </label>
+    <label class="tryit__field">
+      <span>{labels.token}</span>
+      <input type="password" class="tryit__input" data-tryit-token placeholder="gw1..." autocomplete="off" />
+      <small>{labels.tokenHint}</small>
+    </label>
+  </div>
 
   <label class="tryit__field">
-    <span>Request body</span>
+    <span>{labels.body}</span>
     <textarea class="tryit__textarea rpc-mono" data-tryit-body rows="8" spellcheck="false">{bodyJson}</textarea>
   </label>
 
   <div class="tryit__actions">
-    <button type="button" class="tryit__btn tryit__btn--ghost" data-tryit-copy-json>Copy JSON</button>
-    <button type="button" class="tryit__btn tryit__btn--ghost" data-tryit-copy-curl>Copy curl</button>
-    <button type="button" class="tryit__btn tryit__btn--ghost" data-tryit-copy-cli>Copy CLI</button>
-    <button type="button" class="tryit__btn tryit__btn--primary" data-tryit-send>Send</button>
+    <button type="button" class="tryit__btn tryit__btn--ghost" data-tryit-copy-json>{labels.copyJson}</button>
+    <button type="button" class="tryit__btn tryit__btn--ghost" data-tryit-copy-probe hidden>{labels.copyProbe}</button>
+    <button type="button" class="tryit__btn tryit__btn--ghost" data-tryit-copy-cli>{labels.copyCli}</button>
+    <button type="button" class="tryit__btn tryit__btn--primary" data-tryit-send>{labels.send}</button>
   </div>
 
-  <div class="tryit__result" data-tryit-result hidden>
+  <div class="tryit__result" data-tryit-result role="status" aria-live="polite" aria-atomic="true" hidden>
     <div class="tryit__meta" data-tryit-meta></div>
     <pre class="tryit__out rpc-mono" data-tryit-out></pre>
   </div>
@@ -104,380 +99,236 @@ const bodyJson = JSON.stringify(body, null, 2);
 
 <script>
   import { mockRpcResponse } from '../../scripts/rpc-mock';
+  import type { RpcRequest } from '../../scripts/rpc-mock';
 
-  const EP_KEY = 'carina-docs-tryit-endpoint';
+  const ENDPOINT_KEY = 'carina-docs-tryit-endpoint';
   const MODE_KEY = 'carina-docs-tryit-mode';
-  const DEFAULT_EP = 'http://127.0.0.1:8777/rpc';
+  const DEFAULT_ENDPOINT = 'ws://127.0.0.1:8777/gateway';
+  const TIMEOUT_MS = 10_000;
+  type Mode = 'mock' | 'live';
+  interface Labels {
+    copied: string; failed: string; tokenRequired: string; timeout: string; mockLabel: string; liveLabel: string;
+    invalidJson: string; rpcError: string; success: string; networkError: string; sending: string; send: string;
+    invalidEndpoint: string; invalidProtocol: string; connectionFailed: string; gatewayClosed: string;
+  }
+
+  function ensureSettingsBus() {
+    const state = window as Window & { __carinaTryItBus?: boolean };
+    if (state.__carinaTryItBus) return;
+    state.__carinaTryItBus = true;
+    const fanout = (detail: { mode?: Mode; endpoint?: string }) => {
+      document.querySelectorAll<HTMLElement>('[data-tryit]').forEach((item) => {
+        item.dispatchEvent(new CustomEvent('carina:tryit-sync', { detail }));
+      });
+    };
+    window.addEventListener('carina:tryit-settings', (event) => {
+      fanout((event as CustomEvent<{ mode?: Mode; endpoint?: string }>).detail || {});
+    });
+    window.addEventListener('storage', (event) => {
+      if (event.key === ENDPOINT_KEY && event.newValue) fanout({ endpoint: event.newValue });
+      if (event.key === MODE_KEY && (event.newValue === 'mock' || event.newValue === 'live')) fanout({ mode: event.newValue });
+    });
+  }
 
   function init(root: Element) {
     if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
     root.dataset.ready = '1';
-
+    const labels = JSON.parse(root.dataset.labels || '{}') as Labels;
     const method = root.dataset.method || '';
+    const scope = root.dataset.scope || 'read';
+    const remote = root.dataset.remote === 'true';
     const endpointEl = root.querySelector<HTMLInputElement>('[data-tryit-endpoint]');
-    const endpointWrap = root.querySelector<HTMLElement>('[data-tryit-endpoint-wrap]');
+    const tokenEl = root.querySelector<HTMLInputElement>('[data-tryit-token]');
+    const liveFields = root.querySelector<HTMLElement>('[data-tryit-live-fields]');
     const bodyEl = root.querySelector<HTMLTextAreaElement>('[data-tryit-body]');
     const outEl = root.querySelector<HTMLElement>('[data-tryit-out]');
     const resultEl = root.querySelector<HTMLElement>('[data-tryit-result]');
     const metaEl = root.querySelector<HTMLElement>('[data-tryit-meta]');
+    const sendBtn = root.querySelector<HTMLButtonElement>('[data-tryit-send]');
+    const probeBtn = root.querySelector<HTMLButtonElement>('[data-tryit-copy-probe]');
     const modeBtns = [...root.querySelectorAll<HTMLButtonElement>('[data-tryit-mode]')];
-    if (!endpointEl || !bodyEl || !outEl || !resultEl || !metaEl) return;
+    if (!endpointEl || !tokenEl || !bodyEl || !outEl || !resultEl || !metaEl || !sendBtn) return;
 
-    let mode = (localStorage.getItem(MODE_KEY) as 'mock' | 'live') || 'mock';
-    endpointEl.value = localStorage.getItem(EP_KEY) || DEFAULT_EP;
+    let mode: Mode = remote && localStorage.getItem(MODE_KEY) === 'live' ? 'live' : 'mock';
+    let pending = false;
+    endpointEl.value = localStorage.getItem(ENDPOINT_KEY) || DEFAULT_ENDPOINT;
 
-    const setMode = (next: 'mock' | 'live') => {
-      mode = next;
-      localStorage.setItem(MODE_KEY, mode);
-      modeBtns.forEach((b) => {
-        const on = b.dataset.tryitMode === mode;
-        b.classList.toggle('is-active', on);
-        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const broadcastSettings = () => window.dispatchEvent(new CustomEvent('carina:tryit-settings', {
+      detail: { mode, endpoint: endpointEl.value.trim() || DEFAULT_ENDPOINT },
+    }));
+
+    const setMode = (next: Mode, broadcast = false) => {
+      mode = next === 'live' && !remote ? 'mock' : next;
+      if (remote) localStorage.setItem(MODE_KEY, mode);
+      modeBtns.forEach((button) => {
+        const selected = button.dataset.tryitMode === mode;
+        button.classList.toggle('is-active', selected);
+        button.setAttribute('aria-pressed', selected ? 'true' : 'false');
       });
-      if (endpointWrap) endpointWrap.hidden = mode === 'mock';
+      if (liveFields) liveFields.hidden = mode === 'mock';
+      if (probeBtn) probeBtn.hidden = mode === 'mock';
+      if (broadcast) broadcastSettings();
     };
     setMode(mode);
-    modeBtns.forEach((b) =>
-      b.addEventListener('click', () => setMode((b.dataset.tryitMode as 'mock' | 'live') || 'mock')),
-    );
 
-    const flash = (btn: HTMLButtonElement, ok = true) => {
-      const prev = btn.textContent;
-      btn.textContent = ok ? 'Copied' : 'Failed';
-      btn.classList.add(ok ? 'is-ok' : 'is-err');
+    modeBtns.forEach((button) => button.addEventListener('click', () => {
+      setMode(button.dataset.tryitMode === 'live' ? 'live' : 'mock', true);
+    }));
+    endpointEl.addEventListener('change', () => {
+      endpointEl.value = endpointEl.value.trim() || DEFAULT_ENDPOINT;
+      localStorage.setItem(ENDPOINT_KEY, endpointEl.value);
+      broadcastSettings();
+    });
+    root.addEventListener('carina:tryit-sync', (event) => {
+      const detail = (event as CustomEvent<{ mode?: Mode; endpoint?: string }>).detail;
+      if (detail?.endpoint && endpointEl.value !== detail.endpoint) endpointEl.value = detail.endpoint;
+      if (detail?.mode && mode !== detail.mode) setMode(detail.mode);
+    });
+
+    const flash = (button: HTMLButtonElement, ok = true) => {
+      const previous = button.textContent;
+      button.textContent = ok ? labels.copied : labels.failed;
+      button.classList.add(ok ? 'is-ok' : 'is-err');
       window.setTimeout(() => {
-        btn.textContent = prev;
-        btn.classList.remove('is-ok', 'is-err');
+        button.textContent = previous;
+        button.classList.remove('is-ok', 'is-err');
       }, 1200);
     };
-
-    const getBody = () => bodyEl.value.trim();
-    const getEndpoint = () => {
-      const v = endpointEl.value.trim() || DEFAULT_EP;
-      localStorage.setItem(EP_KEY, v);
-      return v;
+    const copy = async (button: HTMLButtonElement, value: string) => {
+      try { await navigator.clipboard.writeText(value); flash(button); } catch { flash(button, false); }
     };
 
-    const showResult = (opts: {
-      ok: boolean;
-      statusLabel: string;
-      ms: number;
-      body: string;
-    }) => {
+    const showResult = (ok: boolean, status: string, started: number, body: unknown) => {
       resultEl.hidden = false;
-      resultEl.classList.toggle('is-ok', opts.ok);
-      resultEl.classList.toggle('is-err', !opts.ok);
-      metaEl.innerHTML = `<span>${opts.statusLabel}</span><span>${opts.ms} ms</span><span>${mode === 'mock' ? 'mock' : 'live'}</span>`;
-      outEl.textContent = opts.body;
+      resultEl.classList.toggle('is-ok', ok);
+      resultEl.classList.toggle('is-err', !ok);
+      metaEl.replaceChildren();
+      [status, `${Math.round(performance.now() - started)} ms`, mode === 'mock' ? labels.mockLabel : labels.liveLabel]
+        .forEach((value) => { const span = document.createElement('span'); span.textContent = value; metaEl.append(span); });
+      outEl.textContent = typeof body === 'string' ? body : JSON.stringify(body, null, 2);
     };
 
-    root.querySelector<HTMLButtonElement>('[data-tryit-copy-json]')?.addEventListener('click', async (e) => {
-      const btn = e.currentTarget as HTMLButtonElement;
-      try {
-        await navigator.clipboard.writeText(getBody());
-        flash(btn);
-      } catch {
-        flash(btn, false);
-      }
+    root.querySelector<HTMLButtonElement>('[data-tryit-copy-json]')?.addEventListener('click', (event) => {
+      void copy(event.currentTarget as HTMLButtonElement, bodyEl.value.trim());
+    });
+    probeBtn?.addEventListener('click', (event) => {
+      const role = scope === 'worker' ? 'worker' : 'operator';
+      void copy(event.currentTarget as HTMLButtonElement, `CARINA_GATEWAY_TOKEN=... carina gateway ws-probe '${endpointEl.value.trim() || DEFAULT_ENDPOINT}' ${role}`);
+    });
+    root.querySelector<HTMLButtonElement>('[data-tryit-copy-cli]')?.addEventListener('click', (event) => {
+      void copy(event.currentTarget as HTMLButtonElement, `carina call ${method}`);
     });
 
-    root.querySelector<HTMLButtonElement>('[data-tryit-copy-curl]')?.addEventListener('click', async (e) => {
-      const btn = e.currentTarget as HTMLButtonElement;
-      const ep = getEndpoint();
-      const body = getBody().replace(/'/g, `'\\''`);
-      const curl = `curl -sS -X POST '${ep}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${body}'`;
-      try {
-        await navigator.clipboard.writeText(curl);
-        flash(btn);
-      } catch {
-        flash(btn, false);
-      }
-    });
-
-    root.querySelector<HTMLButtonElement>('[data-tryit-copy-cli]')?.addEventListener('click', async (e) => {
-      const btn = e.currentTarget as HTMLButtonElement;
-      const cli = `carina call ${method}`;
-      try {
-        await navigator.clipboard.writeText(cli);
-        flash(btn);
-      } catch {
-        flash(btn, false);
-      }
-    });
-
-    root.querySelector<HTMLButtonElement>('[data-tryit-send]')?.addEventListener('click', async () => {
-      let payload: { jsonrpc?: string; id?: unknown; method?: string; params?: Record<string, unknown> };
-      try {
-        payload = JSON.parse(getBody());
-      } catch (err) {
-        showResult({
-          ok: false,
-          statusLabel: 'Invalid JSON',
-          ms: 0,
-          body: err instanceof Error ? err.message : String(err),
-        });
-        return;
-      }
-
-      if (mode === 'mock') {
-        const t0 = performance.now();
-        const mocked = mockRpcResponse(payload);
-        // artificial delay matches mock latency for UX
-        await new Promise((r) => setTimeout(r, mocked.latencyMs));
-        const ms = Math.round(performance.now() - t0);
-        const hasErr = Boolean((mocked.body as { error?: unknown }).error);
-        showResult({
-          ok: !hasErr,
-          statusLabel: hasErr ? 'JSON-RPC error' : '200 OK',
-          ms,
-          body: JSON.stringify(mocked.body, null, 2),
-        });
-        return;
-      }
-
-      const ep = getEndpoint();
-      const t0 = performance.now();
-      try {
-        const res = await fetch(ep, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const text = await res.text();
-        let pretty = text;
-        try {
-          pretty = JSON.stringify(JSON.parse(text), null, 2);
-        } catch {
-          /* raw */
+    const liveRequest = (payload: RpcRequest) => new Promise<unknown>((resolve, reject) => {
+      const endpoint = endpointEl.value.trim() || DEFAULT_ENDPOINT;
+      let parsed: URL;
+      try { parsed = new URL(endpoint); } catch { reject(new Error(labels.invalidEndpoint)); return; }
+      if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') { reject(new Error(labels.invalidProtocol)); return; }
+      const token = tokenEl.value.trim();
+      if (!token) { reject(new Error(labels.tokenRequired)); return; }
+      localStorage.setItem(ENDPOINT_KEY, endpoint);
+      const socket = new WebSocket(parsed.toString());
+      const helloId = `docs-hello-${Date.now()}`;
+      let phase: 'connecting' | 'hello' | 'request' | 'done' = 'connecting';
+      const timer = window.setTimeout(() => finish(() => reject(new Error(labels.timeout))), TIMEOUT_MS);
+      const finish = (fn: () => void) => {
+        if (phase === 'done') return;
+        phase = 'done';
+        window.clearTimeout(timer);
+        socket.close(1000);
+        fn();
+      };
+      socket.addEventListener('open', () => {
+        phase = 'hello';
+        socket.send(JSON.stringify({
+          jsonrpc: '2.0', id: helloId, method: 'gateway.hello',
+          params: { client_id: 'carina-docs', role: scope === 'worker' ? 'worker' : 'operator', scopes: [scope], token },
+        }));
+      });
+      socket.addEventListener('message', (event) => {
+        let response: { id?: unknown; result?: unknown; error?: unknown };
+        try { response = JSON.parse(String(event.data)); } catch { return; }
+        if (phase === 'hello' && response.id === helloId) {
+          if (response.error) { finish(() => reject(response.error)); return; }
+          phase = 'request';
+          socket.send(JSON.stringify(payload));
+          return;
         }
-        const ms = Math.round(performance.now() - t0);
-        showResult({
-          ok: res.ok,
-          statusLabel: `HTTP ${res.status} ${res.statusText}`,
-          ms,
-          body: pretty,
-        });
-      } catch (err) {
-        const ms = Math.round(performance.now() - t0);
-        showResult({
-          ok: false,
-          statusLabel: 'Network error',
-          ms,
-          body: [
-            err instanceof Error ? err.message : String(err),
-            '',
-            'Daemon/gateway not reachable. Use Mock mode, or start:',
-            '  carina-daemon -gateway-ws 127.0.0.1:8777',
-          ].join('\n'),
-        });
+        if (phase === 'request' && String(response.id) === String(payload.id)) {
+          finish(() => resolve(response));
+        }
+      });
+      socket.addEventListener('error', () => finish(() => reject(new Error(labels.connectionFailed))));
+      socket.addEventListener('close', (event) => {
+        if (phase !== 'done') finish(() => reject(new Error(`${labels.gatewayClosed} (${event.code}${event.reason ? `: ${event.reason}` : ''})`)));
+      });
+    });
+
+    sendBtn.addEventListener('click', async () => {
+      if (pending) return;
+      let payload: RpcRequest;
+      const started = performance.now();
+      try { payload = JSON.parse(bodyEl.value.trim()); }
+      catch (error) { showResult(false, labels.invalidJson, started, error instanceof Error ? error.message : String(error)); return; }
+      pending = true;
+      sendBtn.disabled = true;
+      sendBtn.textContent = labels.sending;
+      root.setAttribute('aria-busy', 'true');
+      try {
+        if (mode === 'mock') {
+          const mocked = mockRpcResponse(payload);
+          await new Promise((resolve) => window.setTimeout(resolve, mocked.latencyMs));
+          const hasError = Boolean((mocked.body as { error?: unknown }).error);
+          showResult(!hasError, hasError ? labels.rpcError : labels.success, started, mocked.body);
+        } else {
+          const response = await liveRequest(payload) as { error?: unknown };
+          showResult(!response.error, response.error ? labels.rpcError : labels.success, started, response);
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : JSON.stringify(error, null, 2);
+        showResult(false, detail === labels.timeout ? labels.timeout : labels.networkError, started, detail);
+      } finally {
+        pending = false;
+        sendBtn.disabled = false;
+        sendBtn.textContent = labels.send;
+        root.removeAttribute('aria-busy');
       }
     });
   }
 
-  function boot() {
-    document.querySelectorAll('[data-tryit]').forEach(init);
-  }
+  function boot() { ensureSettingsBus(); document.querySelectorAll('[data-tryit]').forEach(init); }
   boot();
   document.addEventListener('astro:page-load', boot);
 </script>
 
 <style>
-  .tryit {
-    margin-top: var(--spacing-3);
-    padding: var(--spacing-3);
-    border: 1px solid var(--docs-border-subtle);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--docs-bg) 55%, var(--docs-bg-surface));
-  }
-
-  .tryit__title-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .tryit__title {
-    margin: 0;
-    font-size: 0.6875rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--docs-fg-subtle);
-  }
-
-  .tryit__scope {
-    font-family: var(--docs-font-mono);
-    font-size: 0.625rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    padding: 0.1rem 0.35rem;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--docs-accent) 35%, transparent);
-    color: var(--docs-accent);
-  }
-
-  .tryit__hint {
-    margin: 0 0 0.75rem;
-    font-size: 0.72rem;
-    color: var(--docs-fg-subtle);
-    line-height: 1.45;
-  }
-
-  .tryit__mode {
-    display: inline-flex;
-    gap: 0;
-    margin-bottom: 0.75rem;
-    border: 1px solid var(--docs-border-subtle);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  .tryit__mode-btn {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    color: var(--docs-fg-muted);
-    font-family: var(--docs-font-sans);
-    font-size: 0.72rem;
-    font-weight: 550;
-    padding: 0.35rem 0.75rem;
-    cursor: pointer;
-  }
-
-  .tryit__mode-btn.is-active {
-    background: color-mix(in srgb, var(--docs-accent) 12%, transparent);
-    color: var(--docs-accent);
-  }
-
-  .tryit__field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    margin-bottom: var(--spacing-3);
-    font-size: 0.72rem;
-    font-weight: 500;
-    color: var(--docs-fg-muted);
-  }
-
-  .tryit__input,
-  .tryit__textarea {
-    width: 100%;
-    border: 1px solid var(--docs-border-subtle);
-    border-radius: 8px;
-    background: var(--docs-bg);
-    color: var(--docs-fg);
-    font-family: var(--docs-font-mono);
-    font-size: 0.75rem;
-    line-height: 1.5;
-    padding: 0.45rem 0.55rem;
-  }
-
-  .tryit__textarea {
-    resize: vertical;
-    min-height: 8rem;
-    tab-size: 2;
-  }
-
-  .tryit__input:focus,
-  .tryit__textarea:focus {
-    outline: none;
-    border-color: color-mix(in srgb, var(--docs-accent) 55%, var(--docs-border));
-  }
-
-  .tryit__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-  }
-
-  .tryit__btn {
-    appearance: none;
-    min-height: 1.85rem;
-    padding: 0 0.6rem;
-    border-radius: 6px;
-    font-family: var(--docs-font-sans);
-    font-size: 0.72rem;
-    font-weight: 500;
-    cursor: pointer;
-    border: 1px solid var(--docs-border-subtle);
-    background: transparent;
-    color: var(--docs-fg-muted);
-    transition:
-      color 150ms ease,
-      border-color 150ms ease,
-      background-color 150ms ease;
-  }
-
-  .tryit__btn:hover {
-    color: var(--docs-fg);
-    border-color: var(--docs-border);
-  }
-
-  .tryit__btn--primary {
-    border-color: color-mix(in srgb, var(--docs-accent) 55%, transparent);
-    color: var(--docs-accent);
-  }
-
-  .tryit__btn--primary:hover {
-    background: color-mix(in srgb, var(--docs-accent) 8%, transparent);
-    border-color: var(--docs-accent);
-  }
-
-  .tryit__btn.is-ok {
-    color: var(--docs-success);
-  }
-
-  .tryit__btn.is-err {
-    color: var(--docs-danger);
-  }
-
-  .tryit__result {
-    margin-top: 0.75rem;
-    border: 1px solid var(--docs-border-subtle);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  .tryit__result.is-ok {
-    border-color: color-mix(in srgb, var(--docs-success) 40%, var(--docs-border-subtle));
-  }
-
-  .tryit__result.is-err {
-    border-color: color-mix(in srgb, var(--docs-danger) 40%, var(--docs-border-subtle));
-  }
-
-  .tryit__meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 0.85rem;
-    padding: 0.4rem 0.65rem;
-    font-family: var(--docs-font-mono);
-    font-size: 0.6875rem;
-    color: var(--docs-fg-muted);
-    background: color-mix(in srgb, var(--docs-bg-raised) 70%, transparent);
-    border-bottom: 1px solid var(--docs-border-subtle);
-  }
-
-  .tryit__result.is-ok .tryit__meta {
-    color: var(--docs-success);
-  }
-
-  .tryit__result.is-err .tryit__meta {
-    color: var(--docs-danger);
-  }
-
-  .tryit__out {
-    margin: 0;
-    padding: 0.55rem 0.65rem;
-    max-height: 16rem;
-    overflow: auto;
-    font-size: 0.75rem;
-    line-height: 1.5;
-    color: var(--docs-fg-muted);
-    background: var(--docs-bg);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
+  .tryit { margin-top: var(--spacing-3); padding: var(--spacing-3); border: 1px solid var(--docs-border-subtle); border-radius: 8px; background: color-mix(in srgb, var(--docs-bg) 55%, var(--docs-bg-surface)); }
+  .tryit__title-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; }
+  .tryit__title { margin: 0; font-size: 0.75rem; font-weight: 600; letter-spacing: 0; text-transform: uppercase; color: var(--docs-fg-subtle); }
+  .tryit__scope { font-family: var(--docs-font-mono); font-size: 0.75rem; font-weight: 600; letter-spacing: 0; text-transform: uppercase; padding: 0.1rem 0.4rem; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--docs-accent) 35%, transparent); color: var(--docs-accent); }
+  .tryit__hint { margin: 0 0 0.75rem; font-size: 0.75rem; color: var(--docs-fg-subtle); line-height: 1.5; }
+  .tryit__mode { display: inline-flex; margin-bottom: 0.75rem; border: 1px solid var(--docs-border-subtle); border-radius: 7px; overflow: hidden; }
+  .tryit__mode-btn { appearance: none; min-height: 2.25rem; border: 0; background: transparent; color: var(--docs-fg-muted); font-family: var(--docs-font-sans); font-size: 0.75rem; font-weight: 550; padding: 0.4rem 0.85rem; cursor: pointer; }
+  .tryit__mode-btn.is-active { background: color-mix(in srgb, var(--docs-accent) 12%, transparent); color: var(--docs-accent); }
+  .tryit__mode-btn:disabled { cursor: not-allowed; opacity: 0.45; }
+  .tryit__live-fields[hidden], .tryit__btn[hidden] { display: none; }
+  .tryit__field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: var(--spacing-3); font-size: 0.75rem; font-weight: 500; color: var(--docs-fg-muted); }
+  .tryit__field small { font-size: 0.6875rem; font-weight: 400; color: var(--docs-fg-subtle); }
+  .tryit__input, .tryit__textarea { width: 100%; border: 1px solid var(--docs-border-subtle); border-radius: 7px; background: var(--docs-bg); color: var(--docs-fg); font-family: var(--docs-font-mono); font-size: 0.75rem; line-height: 1.5; padding: 0.55rem 0.65rem; }
+  .tryit__input { min-height: 2.5rem; }
+  .tryit__textarea { resize: vertical; min-height: 8rem; tab-size: 2; }
+  .tryit__input:focus, .tryit__textarea:focus, .tryit__mode-btn:focus-visible, .tryit__btn:focus-visible { outline: 2px solid var(--docs-focus); outline-offset: 1px; }
+  .tryit__actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .tryit__btn { appearance: none; min-height: 2.25rem; padding: 0 0.7rem; border-radius: 6px; font-family: var(--docs-font-sans); font-size: 0.75rem; font-weight: 500; cursor: pointer; border: 1px solid var(--docs-border-subtle); background: transparent; color: var(--docs-fg-muted); }
+  .tryit__btn:hover { color: var(--docs-fg); border-color: var(--docs-border); }
+  .tryit__btn--primary { margin-inline-start: auto; border-color: color-mix(in srgb, var(--docs-accent) 55%, transparent); color: var(--docs-accent); }
+  .tryit__btn:disabled { cursor: wait; opacity: 0.65; }
+  .tryit__btn.is-ok { color: var(--docs-success); } .tryit__btn.is-err { color: var(--docs-danger); }
+  .tryit__result { margin-top: 0.75rem; border: 1px solid var(--docs-border-subtle); border-radius: 7px; overflow: hidden; }
+  .tryit__result.is-ok { border-color: color-mix(in srgb, var(--docs-success) 40%, var(--docs-border-subtle)); }
+  .tryit__result.is-err { border-color: color-mix(in srgb, var(--docs-danger) 40%, var(--docs-border-subtle)); }
+  .tryit__meta { display: flex; flex-wrap: wrap; gap: 0.5rem 0.85rem; padding: 0.45rem 0.65rem; font-family: var(--docs-font-mono); font-size: 0.75rem; color: var(--docs-fg-muted); background: color-mix(in srgb, var(--docs-bg-raised) 70%, transparent); border-bottom: 1px solid var(--docs-border-subtle); }
+  .tryit__result.is-ok .tryit__meta { color: var(--docs-success); } .tryit__result.is-err .tryit__meta { color: var(--docs-danger); }
+  .tryit__out { margin: 0; padding: 0.65rem; max-height: 16rem; overflow: auto; font-size: 0.75rem; line-height: 1.5; color: var(--docs-fg-muted); background: var(--docs-bg); white-space: pre-wrap; word-break: break-word; }
+  @media (max-width: 36rem) { .tryit__mode-btn, .tryit__btn, .tryit__input { min-height: 2.75rem; } .tryit__btn--primary { width: 100%; margin-inline-start: 0; } }
 </style>

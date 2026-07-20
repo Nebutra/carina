@@ -1,17 +1,93 @@
 ---
 title: Memory 概览
-description: 会话上下文、检索钩子与持久记录。
+description: 受治理的本地长期记忆、MemoryWrite 能力和可选 HMS 投影。
 ---
-Carina 保持记忆**可检视**。检索不得绕过文件读取策略；成本与 token 可通过 `carina cost` 查看。
+
+import CategoryTag from '../../../../components/ui/CategoryTag.astro';
+import Callout from '../../../../components/ui/Callout.astro';
+
+<CategoryTag category="memory" label="Memory" />
+
+Carina 的长期记忆属于**控制面**，而不是 prompt builder。任何持久化修改都是经 `MemoryWrite` 能力门控的副作用。
+
+## 两种目标
+
+| Target | 用途 |
+| --- | --- |
+| `memory` | 项目或 Agent 笔记 |
+| `user` | 用户画像事实；有 Nebutra 身份时按身份隔离 |
+
+daemon 在状态目录中保存有界条目。每次 Agent run 只拿到一个**冻结的记忆快照**；本轮写入供未来任务使用，不会在运行中改变当前 prompt 的稳定前缀。
+
+## 写入路径
+
+1. daemon 从 target、scope、action、操作数和**内容哈希**构造资源字符串。
+2. 向 Rust kernel 请求 `MemoryWrite`。
+3. 内置策略默认返回 `requires_approval`。
+4. 放行后，先执行本地内容扫描和大小检查，再原子完成 add / replace / remove / batch。
+5. 审计记录权限决策与哈希元数据，**不记录原始记忆文本**。
+
+```text
+memory.list / memory.context / memory.status / memory.write
+```
+
+需要审批时，`task.action.approve` 应用挂起写入，`task.action.deny` 丢弃它。
+
+## 用户身份隔离
+
+`target=user` 按以下优先级确定本地 scope：
+
+1. `CARINA_NEBUTRA_IDENTITY_JSON`
+2. `CARINA_NEBUTRA_TOKEN` 中的 claims
+3. `CARINA_NEBUTRA_USER_ID`
+4. 本地 fallback profile
+
+token claim 只选择本地记忆 scope，不会授予 Gateway、kernel 或文件系统权限。
+
+## 外部召回 HMS
+
+可选 provider 模式为 `off`、`hms-shadow`、`hms-hybrid`。
+
+- Shadow 证据不进入 prompt，用于旁路评估。
+- Hybrid 证据以有围栏、低信任的 tool observation 冻结到 task checkpoint。
+- HMS 不改变本地写入和删除的权威。
+
+## Projection 外发
+
+HMS projection 是独立设置，**默认关闭**。本地提交完成后，durable outbox 才负责同步 replace 更新和 delete tombstone。外发还需独立获得 `NetworkAccess` 与 `MemoryExternalize`，仅批准 `MemoryWrite` 并不足够。
+
+可用控制方法：`memory.projection.authorize`、`memory.projection.retry`、`memory.projection.reseed`。Projection 失败不会回滚本地 canonical memory。
+
+## 各层生命周期
+
+| 层 | 生命周期 | 说明 |
+| --- | --- | --- |
+| Turn context | 单轮 | 模型可见的工作集 |
+| Session history | 会话 | 对话和工具结果 |
+| Governed memory | 本地持久 | 受能力门控 |
+| Audit store | 持久 | 哈希链保护，模型不可写 |
+
+<Callout variant="tip">
+  成本与 token 仍可由 `carina cost` 检视；召回不能绕过文件读取策略。
+</Callout>
+
+## 失败与诊断
+
+| 现象 | 检查 |
+| --- | --- |
+| 写入未落盘 | 查看待审批动作和 `MemoryWrite` 决策 |
+| HMS 无结果 | 用 `memory.status` 区分本地权威与外部 provider 健康 |
+| Projection 积压 | 检查外发授权、网络能力和 outbox；不要改写本地条目 |
+| 用户记忆串号 | 核对 identity resolution 顺序和实际 scope |
 
 ## 权威来源
 
-- 能力：`MemoryWrite` / 外发门禁 · `docs/integrations/hms-memory.md`
+- `docs/architecture.md` 的 Governed memory
+- `docs/integrations/hms-memory.md` 的 HMS / 外发门禁
 - CLI：`carina memory …` · [CLI 参考](/zh-cn/reference/cli/)
 - RPC：`memory.*` · [JSON-RPC 参考](/zh-cn/api/json-rpc/)
-- 相关：[策略](/zh-cn/concepts/policy/) · [审计](/zh-cn/concepts/audit/)
 
 ## 下一步
 
 - [会话 API](/zh-cn/api/sessions/) — 会话生命周期
-- [可观测性](/zh-cn/observability/traces/) — 哪些不是模型可写
+- [可观测性](/zh-cn/observability/traces/) — 哪些数据不是模型可写

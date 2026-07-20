@@ -1,12 +1,72 @@
 ---
 title: Tools 概览
-description: 由能力内核中介的内置与外部工具。
+description: 由能力内核中介的内置工具、Zig 工具链与外部工具。
 ---
-工具是模型意图到达系统效果的唯一路径。每次调用都有能力要求，参数在执行前校验，结果进入审计。
+
+import CategoryTag from '../../../../components/ui/CategoryTag.astro';
+import Tree from '../../../../components/mdx/Tree.astro';
+import Callout from '../../../../components/ui/Callout.astro';
+
+<CategoryTag category="tool" label="Tools" />
+
+工具是模型意图到系统效果的唯一路径。Carina 将工具调用规范化，因此策略、审计、TUI 与 SDK 对同一动作看到一致的生命周期。
+
+## 工具族
+
+| 工具族 | 典型动作 | 治理边界 |
+| --- | --- | --- |
+| 文件系统 | list / read / search / patch | 只能访问会话工作区 |
+| Shell | `run` | `CommandExec` 风险分级、超时、环境白名单 |
+| Memory | add / replace / remove | `MemoryWrite` 审批与内容扫描 |
+| 代码智能 | symbols / def / refs / impact | `FileRead` + 本地索引 |
+| MCP | `mcp` / `mcp_find` | 外部服务仍需能力授权 |
+| 编排 | spawn / workflow / best_of_n | 子能力衰减与独立审计 |
+| 人工输入 | `ask_user` | 结构化 operator decision |
+
+## Zig 原生工具链
+
+<Tree
+  items={[
+    {
+      name: 'bin/',
+      children: [
+        { name: 'carina-scan' },
+        { name: 'carina-grep' },
+        { name: 'carina-diff' },
+        { name: 'carina-patch-native' },
+        { name: 'carina-run' },
+        { name: 'carina-pty' },
+      ],
+    },
+  ]}
+/>
+
+| 二进制 | 职责 |
+| --- | --- |
+| `carina-scan` | 输出工作区文件树 |
+| `carina-grep` | 结构化文本搜索 |
+| `carina-diff` | 生成结构化差异 |
+| `carina-patch-native` | dry-run、应用、校验与回滚补丁 |
+| `carina-run` | 带超时和环境约束的命令执行 |
+| `carina-pty` | 交互终端会话 |
+
+这些工具输出机器可读 JSON，但**不会绕过能力内核**。原生工具负责快速、确定地执行；是否允许执行仍由策略决定。
+
+## 安全规则
+
+1. 每个工具声明所需能力。
+2. 参数在执行前校验，路径会归一化到工作区。
+3. 成功、拒绝和错误都会进入事件流。
+4. 插件若使用 manifest 未声明的能力，会产生 `PolicyViolation`。
+5. 写文件优先走 patch，而不是把任意 shell 当编辑器。
+
+<Callout variant="warning">
+  “工具已注册”不代表“当前会话可调用”。实际权限取决于 session profile、资源范围和审批结果。
+</Callout>
 
 ## 权威来源
 
-- Agent 工具表 + Zig 原生工具（`carina-scan`、`carina-grep`、`carina-patch-native` 等）
+- Agent 工具表与 Zig 原生工具：`carina-scan`、`carina-grep`、`carina-patch-native` 等
 - 能力要求：[策略](/zh-cn/concepts/policy/) · `protocol/capabilities/`
 - 相关：[MCP](/zh-cn/tools/mcp/) · [Agents](/zh-cn/agents/overview/) · [CLI 参考](/zh-cn/reference/cli/)
 

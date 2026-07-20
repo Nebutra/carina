@@ -13,6 +13,7 @@
  *     <CodeBlock slot="code" ... />
  *   </ApiReference>
  */
+const zh = Astro.locals.starlightRoute.locale === 'zh-cn';
 ---
 
 <section class="api-ref">
@@ -20,7 +21,7 @@
     <div class="api-ref__main">
       <slot />
     </div>
-    <aside class="api-ref__code" aria-label="Code samples">
+    <aside class="api-ref__code" aria-label={zh ? '代码示例' : 'Code samples'}>
       <div class="api-ref__code-sticky">
         <slot name="code" />
       </div>
@@ -31,6 +32,7 @@
 <style>
   .api-ref {
     margin: 1.25rem 0 2rem;
+    container-type: inline-size;
   }
 
   /*
@@ -45,7 +47,7 @@
     align-items: start;
   }
 
-  @media (min-width: 900px) {
+  @container (min-width: 54rem) {
     .api-ref__grid {
       grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
       gap: 1.5rem 1.75rem;
@@ -181,7 +183,7 @@
     position: relative;
   }
 
-  @media (min-width: 900px) {
+  @container (min-width: 54rem) {
     .api-ref__code-sticky {
       position: sticky;
       top: var(--docs-anchor-offset, 5rem);
@@ -195,7 +197,7 @@
     max-width: 100%;
   }
 
-  @media (max-width: 899px) {
+  @container (max-width: 53.999rem) {
     .api-ref__code {
       order: 2;
     }

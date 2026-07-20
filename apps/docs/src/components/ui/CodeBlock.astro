@@ -5,13 +5,15 @@
  * Carina Shiki theme via Astro <Code /> for one-off snippets.
  */
 import { Code } from 'astro:components';
+import type { ComponentProps } from 'astro/types';
 import { carinaDark } from '../../themes/carina-code.mjs';
+
+type CodeProps = ComponentProps<typeof Code>;
 
 interface Props {
   code: string;
-  lang?: string;
+  lang?: CodeProps['lang'];
   title?: string;
-  showLineNumbers?: boolean;
   copyLabel?: string;
   copiedLabel?: string;
 }
@@ -20,9 +22,8 @@ const {
   code,
   lang = 'bash',
   title,
-  showLineNumbers = false,
-  copyLabel = 'Copy',
-  copiedLabel = 'Copied',
+  copyLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '复制' : 'Copy',
+  copiedLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '已复制' : 'Copied',
 } = Astro.props;
 
 const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
@@ -68,9 +69,11 @@ const uid = `code-${Math.random().toString(36).slice(2, 9)}`;
           await navigator.clipboard.writeText(text);
           const label = btn.querySelector('.code-block__copy-label');
           if (label) label.textContent = btn.dataset.copiedLabel ?? 'Copied';
+          btn.setAttribute('aria-label', btn.dataset.copiedLabel ?? 'Copied');
           btn.classList.add('is-copied');
           window.setTimeout(() => {
             if (label) label.textContent = btn.dataset.copyLabel ?? 'Copy';
+            btn.setAttribute('aria-label', btn.dataset.copyLabel ?? 'Copy');
             btn.classList.remove('is-copied');
           }, 1600);
         } catch {

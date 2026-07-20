@@ -9,13 +9,23 @@
 
 let lastTrigger: HTMLElement | null = null;
 
+function isZh(): boolean {
+  return (document.documentElement.lang || '').toLowerCase().startsWith('zh');
+}
+
 function ensureDialog(): HTMLDialogElement {
   const existing = document.querySelector<HTMLDialogElement>('dialog.docs-lightbox');
-  if (existing) return existing;
+  if (existing) {
+    existing.setAttribute('aria-label', isZh() ? '图片查看器' : 'Image viewer');
+    existing
+      .querySelector<HTMLButtonElement>('.docs-lightbox__close')
+      ?.setAttribute('aria-label', isZh() ? '关闭图片查看器' : 'Close image viewer');
+    return existing;
+  }
 
   const dialog = document.createElement('dialog');
   dialog.className = 'docs-lightbox';
-  dialog.setAttribute('aria-label', 'Image viewer');
+  dialog.setAttribute('aria-label', isZh() ? '图片查看器' : 'Image viewer');
 
   const img = document.createElement('img');
   img.className = 'docs-lightbox__img';
@@ -24,13 +34,17 @@ function ensureDialog(): HTMLDialogElement {
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'docs-lightbox__close';
-  close.setAttribute('aria-label', 'Close image viewer');
+  close.setAttribute('aria-label', isZh() ? '关闭图片查看器' : 'Close image viewer');
   close.innerHTML =
     '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
   dialog.append(close, img);
-  // Click anywhere (backdrop, image, or button) dismisses; Esc via native dialog.
-  dialog.addEventListener('click', () => dialog.close());
+  // Backdrop and close button dismiss; Esc is handled by the native dialog.
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog || event.target === close || close.contains(event.target as Node)) {
+      dialog.close();
+    }
+  });
   dialog.addEventListener('close', () => {
     lastTrigger?.focus({ preventScroll: true });
     lastTrigger = null;
@@ -65,7 +79,16 @@ export function initLightbox(): void {
     img.tabIndex = 0;
     img.setAttribute('role', 'button');
     if (!img.getAttribute('aria-label')) {
-      img.setAttribute('aria-label', img.alt ? `View image: ${img.alt}` : 'View image');
+      img.setAttribute(
+        'aria-label',
+        img.alt
+          ? isZh()
+            ? `查看图片：${img.alt}`
+            : `View image: ${img.alt}`
+          : isZh()
+            ? '查看图片'
+            : 'View image',
+      );
     }
     img.addEventListener('click', () => openLightbox(img));
     img.addEventListener('keydown', (e) => {
