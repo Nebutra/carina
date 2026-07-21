@@ -143,7 +143,13 @@ func splitEnvironmentRows(body string) []string {
 	parts := strings.Split(strings.TrimSpace(body), `\\`)
 	rows := make([]string, 0, len(parts))
 	for _, part := range parts {
-		if row := strings.TrimSpace(part); row != "" {
+		row := strings.TrimSpace(part)
+		if strings.HasPrefix(row, "[") {
+			if end := strings.IndexByte(row, ']'); end > 0 {
+				row = strings.TrimSpace(row[end+1:])
+			}
+		}
+		if row != "" {
 			rows = append(rows, row)
 		}
 	}
@@ -217,14 +223,14 @@ func (p *parser) sequence(until byte) (string, bool) {
 			b.WriteString(s)
 		case '^':
 			p.pos++
-			s, ok := p.script(superscript)
+			s, ok := p.script(superscript, '^')
 			if !ok {
 				return "", false
 			}
 			b.WriteString(s)
 		case '_':
 			p.pos++
-			s, ok := p.script(subscript)
+			s, ok := p.script(subscript, '_')
 			if !ok {
 				return "", false
 			}
@@ -278,7 +284,7 @@ func (p *parser) argument() (string, bool) {
 // script transforms a ^ or _ argument by mapping every rune of its (already
 // transformed) text through the super/subscript table. One unmappable rune
 // fails the whole formula: a half-raised exponent would misread.
-func (p *parser) script(table map[rune]rune) (string, bool) {
+func (p *parser) script(table map[rune]rune, marker rune) (string, bool) {
 	arg, ok := p.argument()
 	if !ok {
 		return "", false
@@ -287,7 +293,11 @@ func (p *parser) script(table map[rune]rune) (string, bool) {
 	for _, r := range arg {
 		m, ok := table[r]
 		if !ok {
-			return "", false
+			// Unicode has no complete super/subscript alphabet (notably most
+			// Greek letters and ∞). Keep the formula rendered and unambiguous
+			// with explicit baseline notation instead of rejecting the entire
+			// math span back to raw TeX.
+			return string(marker) + "(" + arg + ")", true
 		}
 		b.WriteRune(m)
 	}
@@ -323,7 +333,7 @@ func (p *parser) command() (string, bool) {
 		p.pos++
 	}
 	switch name := p.src[start:p.pos]; name {
-	case "frac", "dfrac", "tfrac":
+	case "frac", "dfrac", "tfrac", "cfrac":
 		num, ok := p.group()
 		if !ok {
 			return "", false
@@ -333,6 +343,16 @@ func (p *parser) command() (string, bool) {
 			return "", false
 		}
 		return operand(num) + "⁄" + operand(den), true
+	case "binom", "dbinom", "tbinom":
+		top, ok := p.group()
+		if !ok {
+			return "", false
+		}
+		bottom, ok := p.group()
+		if !ok {
+			return "", false
+		}
+		return "C(" + top + "," + bottom + ")", true
 	case "sqrt":
 		degree := ""
 		if p.pos < len(p.src) && p.src[p.pos] == '[' {
@@ -360,6 +380,30 @@ func (p *parser) command() (string, bool) {
 	case "text", "textbf", "textit", "mathrm", "mathbf", "mathit", "mathsf", "mathcal", "mathbb", "operatorname":
 		// Face selection has no cell representation; the contents stand.
 		return p.group()
+	case "hat", "widehat":
+		arg, ok := p.argument()
+		if !ok {
+			return "", false
+		}
+		return arg + "̂", true
+	case "bar", "overline":
+		arg, ok := p.argument()
+		if !ok {
+			return "", false
+		}
+		return arg + "̄", true
+	case "vec":
+		arg, ok := p.argument()
+		if !ok {
+			return "", false
+		}
+		return arg + "⃗", true
+	case "underline":
+		arg, ok := p.argument()
+		if !ok {
+			return "", false
+		}
+		return arg + "̲", true
 	case "left", "right":
 		// Sizing hint; the delimiter itself follows. "." is the invisible one.
 		if p.pos < len(p.src) && p.src[p.pos] == '.' {

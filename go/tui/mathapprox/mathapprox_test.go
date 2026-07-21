@@ -92,8 +92,6 @@ func TestApproxRejectsOutsideSubset(t *testing.T) {
 		tex  string
 	}{
 		{"unknown macro", "\\weird{x}"},
-		{"unmappable superscript rune", "x^q"},
-		{"space inside a script", "\\lim_{x \\to 0}"},
 		{"unbalanced open", "{a"},
 		{"unbalanced close", "a}"},
 		{"frac without braces", "\\frac12"},
@@ -104,6 +102,28 @@ func TestApproxRejectsOutsideSubset(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got, ok := Approx(tc.tex); ok {
 				t.Errorf("Approx(%q) = %q, true; want rejection", tc.tex, got)
+			}
+		})
+	}
+}
+
+func TestApproxComplexFormulaDegradesPerConstruct(t *testing.T) {
+	cases := []struct {
+		name string
+		tex  string
+		want string
+	}{
+		{"unmapped script stays readable", `R^{\rho}{}_{\sigma\mu\nu}`, "R^(ρ)_(σμν)"},
+		{"zeta product", `\zeta(s) = \prod_p \frac{1}{1-p^{-s}}`, "ζ(s) = ∏ₚ 1⁄(1-p⁻ˢ)"},
+		{"gaussian with hat", `e^{-\alpha x^2 + \beta x}, \quad \hat{f}(\xi)`, "e^(-α x² + β x),    f̂(ξ)"},
+		{"binomial", `\binom{n}{k}^2 \leq \binom{2n}{n}`, "C(n,k)² ≤ C(2n,n)"},
+		{"continued fraction", `2 + \cfrac{1}{1 + \cfrac{1}{2 + \ddots}}`, "2 + 1⁄(1 + 1⁄(2 + ⋱))"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := Approx(tc.tex)
+			if !ok || got != tc.want {
+				t.Fatalf("Approx(%q) = %q, %v; want %q, true", tc.tex, got, ok, tc.want)
 			}
 		})
 	}
@@ -204,11 +224,12 @@ func TestLineIsDeterministic(t *testing.T) {
 	}
 }
 
-// The fallback contract is total: for any detected span the output is either
-// the exact approximation or the exact source — never a mixture, never loss.
+// Truly unknown constructs preserve their exact source. Known formulas may
+// mix Unicode glyphs with explicit ^(...)/_(...) baseline notation when the
+// Unicode super/subscript alphabet has no corresponding character.
 func TestFallbackPreservesSource(t *testing.T) {
 	for _, in := range []string{
-		`$\weird{x}$`, `\(x^q\)`, `$$\lim_{x \to 0} f$$`, `\[\unknown\]`,
+		`$\weird{x}$`, `\[\unknown\]`,
 	} {
 		segs := Line(in)
 		if len(segs) != 1 || !segs[0].Math || segs[0].Text != in {
