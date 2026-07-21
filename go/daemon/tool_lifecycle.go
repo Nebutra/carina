@@ -307,7 +307,7 @@ func (d *Daemon) finishToolCall(sess *sessionstore.Session, task *scheduler.Task
 	}
 	payload := map[string]any{
 		"call_id": call.id, "tool": call.tool, "kind": call.kind, "status": outcome.status,
-		"artifact_ids": []string{},
+		"artifact_ids": []string{}, "media_refs": []MediaRef{},
 	}
 	outputMetadata := safeOutputMetadata(outcome.display)
 	outputMetadata["artifact_status"] = "not_created"
@@ -337,6 +337,15 @@ func (d *Daemon) finishToolCall(sess *sessionstore.Session, task *scheduler.Task
 			outputMetadata["artifact_status"] = "unavailable"
 			outputMetadata["artifact_error"] = artifactErrorCode(err)
 		}
+	}
+	if len(outcome.mediaRefs) > 0 {
+		payload["media_refs"] = outcome.mediaRefs
+		ids := append([]string(nil), env.ArtifactIDs...)
+		for _, ref := range outcome.mediaRefs {
+			ids = append(ids, ref.ArtifactID)
+		}
+		env.ArtifactIDs = ids
+		payload["artifact_ids"] = ids
 	}
 	if outcome.status == "completed" {
 		payload["output"] = outputMetadata

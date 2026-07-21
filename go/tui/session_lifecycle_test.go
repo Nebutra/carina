@@ -103,6 +103,31 @@ func TestSessionPickerShowsNameWorkspaceAgeLocalizedStatusAndLineage(t *testing.
 	}
 }
 
+func TestSessionPickerConsumesRecoveryEvidence(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	m.width, m.height = 120, 30
+	item := sessionListItem{SessionID: "sess_interrupted", Status: "active", TaskStatus: "interrupted", TaskRevision: 9}
+	item.Continuity.Outcome = "interrupted"
+	item.Continuity.Progress = "in_progress"
+	item.Continuity.Recovery.Disposition = "review_required"
+	item.Continuity.Recovery.Reason = "workspace anchor changed"
+	item.Continuity.Recovery.CheckpointID = "task_1:3:7"
+	item.Continuity.Recovery.Proofs = map[string]bool{"checkpoint": true, "workspace_anchor": false, "effect_replay": true, "external_effects": true}
+	item.Continuity.RecoveryGeneration = 2
+	item.Continuity.Interruption = &struct {
+		Kind             string `json:"kind"`
+		Certainty        string `json:"certainty"`
+		BillingUncertain bool   `json:"billing_uncertain"`
+	}{Kind: "runtime_lost", Certainty: "inferred", BillingUncertain: true}
+	m.sessionPicker = &sessionPickerState{items: []sessionListItem{item}, status: m.text(MsgSessionPickerHelp, nil)}
+	view := m.sessionPickerView()
+	for _, want := range []string{"review_required", "runtime_lost", "billing uncertain", "+ checkpoint", "x workspace_anchor", "task_1:3:7", "task rev 9", "do not replay automatically"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("recovery evidence missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestComposerSessionCommandsDoNotBlockOnTheirOwnDraft(t *testing.T) {
 	tests := []struct {
 		command string

@@ -23,15 +23,25 @@ type sessionListItem struct {
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
 	LatestTaskID     string `json:"latest_task_id"`
+	TaskRevision     int64  `json:"task_revision"`
 	TaskStatus       string `json:"task_status"`
 	Summary          string `json:"summary"`
 	Continuity       struct {
+		Activity string `json:"activity"`
 		Outcome  string `json:"outcome"`
 		Progress string `json:"progress"`
 		Recovery struct {
-			Disposition string `json:"disposition"`
-			Reason      string `json:"reason"`
+			Disposition  string          `json:"disposition"`
+			Reason       string          `json:"reason"`
+			CheckpointID string          `json:"checkpoint_id"`
+			Proofs       map[string]bool `json:"proofs"`
 		} `json:"recovery"`
+		Interruption *struct {
+			Kind             string `json:"kind"`
+			Certainty        string `json:"certainty"`
+			BillingUncertain bool   `json:"billing_uncertain"`
+		} `json:"interruption"`
+		RecoveryGeneration int64 `json:"recovery_generation"`
 	} `json:"continuity"`
 }
 
@@ -172,7 +182,9 @@ func sessionAttentionRank(item sessionListItem) int {
 	return 3
 }
 
-func (m *Model) sessionPickerPageHeight() int { return maxInt(m.height-9, 1) }
+// Reserve room for the selected session's recovery evidence. The list remains
+// navigable in short terminals while the recommended action stays visible.
+func (m *Model) sessionPickerPageHeight() int { return maxInt(m.height-16, 1) }
 func (s *sessionPickerState) clamp(page int) {
 	if len(s.items) == 0 {
 		s.selected, s.scroll = 0, 0
@@ -290,6 +302,10 @@ func (m *Model) sessionPickerView() string {
 			}
 			lines = append(lines, line)
 		}
+		if len(s.items) > 0 {
+			lines = append(lines, "")
+			lines = append(lines, m.sessionContinuityDetail(s.items[s.selected], width)...)
+		}
 		lines = append(lines, "", fitRenderedLine(s.status, width))
 	}
 	style := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(0, 1)
@@ -297,6 +313,57 @@ func (m *Model) sessionPickerView() string {
 		style = style.BorderForeground(c)
 	}
 	return style.Render(strings.Join(lines, "\n"))
+}
+
+func (m *Model) sessionContinuityDetail(it sessionListItem, width int) []string {
+	c := it.Continuity
+	lines := []string{fitRenderedLine(m.text(MsgSessionPickerEvidence, MessageArgs{
+		"outcome": c.Outcome, "progress": c.Progress, "recovery": c.Recovery.Disposition,
+	}), width)}
+	if c.Interruption != nil {
+		billing := ""
+		if c.Interruption.BillingUncertain {
+			billing = m.text(MsgSessionPickerBillingUncertain, nil)
+		}
+		lines = append(lines, fitRenderedLine(m.text(MsgSessionPickerInterruption, MessageArgs{
+			"kind": c.Interruption.Kind, "certainty": c.Interruption.Certainty, "billing": billing,
+		}), width))
+	}
+	proofs := make([]string, 0, len(c.Recovery.Proofs))
+	for _, name := range []string{"checkpoint", "effect_replay", "workspace_anchor", "external_effects"} {
+		if passed, ok := c.Recovery.Proofs[name]; ok {
+			mark := "x"
+			if passed {
+				mark = "+"
+			}
+			proofs = append(proofs, mark+" "+name)
+		}
+	}
+	if len(proofs) > 0 {
+		lines = append(lines, fitRenderedLine(m.text(MsgSessionPickerProofs, MessageArgs{"proofs": strings.Join(proofs, " · ")}), width))
+	}
+	if c.Recovery.CheckpointID != "" {
+		lines = append(lines, fitRenderedLine(m.text(MsgSessionPickerCheckpoint, MessageArgs{"checkpoint": c.Recovery.CheckpointID, "generation": c.RecoveryGeneration, "revision": it.TaskRevision}), width))
+	}
+	if strings.TrimSpace(c.Recovery.Reason) != "" {
+		lines = append(lines, fitRenderedLine(m.text(MsgSessionPickerReason, MessageArgs{"reason": c.Recovery.Reason}), width))
+	}
+	return append(lines, fitRenderedLine(m.text(MsgSessionPickerRecommended, MessageArgs{"action": m.sessionRecoveryAction(it)}), width))
+}
+
+func (m *Model) sessionRecoveryAction(it sessionListItem) string {
+	switch it.Continuity.Recovery.Disposition {
+	case "blocked", "review_required":
+		return m.text(MsgSessionPickerActionReview, nil)
+	case "resume_checkpoint":
+		return m.text(MsgSessionPickerActionAuto, nil)
+	case "retry":
+		return m.text(MsgSessionPickerActionRetry, nil)
+	case "continue":
+		return m.text(MsgSessionPickerActionContinue, nil)
+	default:
+		return m.text(MsgSessionPickerActionInspect, nil)
+	}
 }
 
 func (m *Model) beginSessionAction(action, method string, params map[string]any) tea.Cmd {

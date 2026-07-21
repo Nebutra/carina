@@ -60,7 +60,7 @@ type Service struct {
 	client *rpc.Client
 }
 
-const EventSchemaVersion = "0.3.0"
+const EventSchemaVersion = "0.3.1"
 
 type handshake struct {
 	OK                 bool   `json:"ok"`

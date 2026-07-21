@@ -25,7 +25,7 @@
     { "name": "ToolCallRequested", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "arguments", "effect"] },
     { "name": "ToolCallApprovalRequired", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "decision_id"] },
     { "name": "ToolCallStarted", "side_effect": false, "payload": ["call_id", "tool", "kind", "status"] },
-    { "name": "ToolCallCompleted", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "output", "artifact_ids"] },
+    { "name": "ToolCallCompleted", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "output", "artifact_ids", "media_refs"] },
     { "name": "ToolCallFailed", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "error"] },
     { "name": "ToolCallDenied", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "error"] },
     { "name": "ToolCallCancelled", "side_effect": false, "payload": ["call_id", "tool", "kind", "status", "error"] },

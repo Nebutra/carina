@@ -86,10 +86,13 @@ func TestAuthoritativeToolLifecycleUpdatesByCallID(t *testing.T) {
 	}
 	tr.toggleLastCollapsible(th, 120)
 	got := strings.Join(tr.lines, "\n")
-	for _, want := range []string{"completed", "sha256:abc", "carina artifact read"} {
+	for _, want := range []string{"completed", "sha256:abc"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("timeline missing %q: %q", want, got)
 		}
+	}
+	if strings.Contains(got, "carina artifact read") {
+		t.Fatalf("primary TUI must consume artifacts instead of instructing a manual read: %q", got)
 	}
 }
 

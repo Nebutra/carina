@@ -290,6 +290,21 @@ const (
 	MsgTranscriptOpenArtifact   MessageID = "transcript.open_artifact"
 )
 
+const (
+	MsgSessionPickerEvidence         MessageID = "session_picker.evidence"
+	MsgSessionPickerInterruption     MessageID = "session_picker.interruption"
+	MsgSessionPickerBillingUncertain MessageID = "session_picker.billing_uncertain"
+	MsgSessionPickerProofs           MessageID = "session_picker.proofs"
+	MsgSessionPickerCheckpoint       MessageID = "session_picker.checkpoint"
+	MsgSessionPickerReason           MessageID = "session_picker.reason"
+	MsgSessionPickerRecommended      MessageID = "session_picker.recommended"
+	MsgSessionPickerActionReview     MessageID = "session_picker.action_review"
+	MsgSessionPickerActionAuto       MessageID = "session_picker.action_auto"
+	MsgSessionPickerActionRetry      MessageID = "session_picker.action_retry"
+	MsgSessionPickerActionContinue   MessageID = "session_picker.action_continue"
+	MsgSessionPickerActionInspect    MessageID = "session_picker.action_inspect"
+)
+
 var updateCatalogRows = []catalogRow{
 	catalog(MsgUpdateAttached, "- attached to {session}", "- 已连接到 {session}", "- {session} に接続", "- {session}에 연결됨", "- conectado a {session}", "- connecté à {session}"),
 	catalog(MsgUpdateReadOnly, "{glyph} task submission is read-only in this TUI: {error}", "{glyph} 此 TUI 中的任务提交为只读：{error}", "{glyph} この TUI ではタスク送信は読み取り専用です: {error}", "{glyph} 이 TUI에서 작업 제출은 읽기 전용입니다: {error}", "{glyph} el envío de tareas es de solo lectura: {error}", "{glyph} l’envoi de tâche est en lecture seule : {error}"),
@@ -387,6 +402,18 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgSessionPickerHelp, "Enter resumes · Esc closes", "Enter 恢复 · Esc 关闭", "Enter で再開 · Esc で閉じる", "Enter 재개 · Esc 닫기", "Enter reanuda · Esc cierra", "Entrée reprend · Échap ferme"),
 	catalog(MsgSessionPickerForkOf, "fork of {parent}", "分叉自 {parent}", "{parent} のフォーク", "{parent}에서 포크", "bifurcación de {parent}", "branche de {parent}"),
 	catalog(MsgSessionPickerForkTask, "at {task}", "于 {task}", "{task} 時点", "{task}에서", "en {task}", "à {task}"),
+	catalog(MsgSessionPickerEvidence, "outcome {outcome} · progress {progress} · recovery {recovery}", "结果 {outcome} · 进度 {progress} · 恢复 {recovery}", "結果 {outcome} · 進捗 {progress} · 復旧 {recovery}", "결과 {outcome} · 진행 {progress} · 복구 {recovery}", "resultado {outcome} · progreso {progress} · recuperación {recovery}", "résultat {outcome} · progression {progress} · reprise {recovery}"),
+	catalog(MsgSessionPickerInterruption, "interruption {kind} · evidence {certainty} {billing}", "中断 {kind} · 证据 {certainty} {billing}", "中断 {kind} · 根拠 {certainty} {billing}", "중단 {kind} · 근거 {certainty} {billing}", "interrupción {kind} · evidencia {certainty} {billing}", "interruption {kind} · preuve {certainty} {billing}"),
+	catalog(MsgSessionPickerBillingUncertain, "· billing uncertain", "· 计费不确定", "· 課金不確定", "· 과금 불확실", "· facturación incierta", "· facturation incertaine"),
+	catalog(MsgSessionPickerProofs, "proofs {proofs}", "证据 {proofs}", "証明 {proofs}", "증명 {proofs}", "pruebas {proofs}", "preuves {proofs}"),
+	catalog(MsgSessionPickerCheckpoint, "checkpoint {checkpoint} · recovery gen {generation} · task rev {revision}", "检查点 {checkpoint} · 恢复代 {generation} · 任务版本 {revision}", "チェックポイント {checkpoint} · 復旧世代 {generation} · タスク版 {revision}", "체크포인트 {checkpoint} · 복구 세대 {generation} · 작업 리비전 {revision}", "checkpoint {checkpoint} · generación {generation} · revisión {revision}", "checkpoint {checkpoint} · génération {generation} · révision {revision}"),
+	catalog(MsgSessionPickerReason, "reason {reason}", "原因 {reason}", "理由 {reason}", "이유 {reason}", "motivo {reason}", "raison {reason}"),
+	catalog(MsgSessionPickerRecommended, "recommended {action}", "建议 {action}", "推奨 {action}", "권장 {action}", "recomendado {action}", "recommandé {action}"),
+	catalog(MsgSessionPickerActionReview, "inspect evidence; do not replay automatically", "检查证据；不要自动重放", "証拠を確認し、自動再実行しない", "근거 확인; 자동 재실행 금지", "revisar evidencia; no repetir automáticamente", "examiner les preuves ; ne pas rejouer automatiquement"),
+	catalog(MsgSessionPickerActionAuto, "safe checkpoint recovery is already coordinated", "安全检查点恢复已自动协调", "安全なチェックポイント復旧を自動調整済み", "안전한 체크포인트 복구가 조정됨", "la recuperación segura ya está coordinada", "la reprise sûre est déjà coordonnée"),
+	catalog(MsgSessionPickerActionRetry, "retry after resolving the recorded blocker", "解决记录的阻塞后重试", "記録された阻害要因を解消して再試行", "기록된 차단 해소 후 재시도", "reintentar tras resolver el bloqueo", "réessayer après résolution du blocage"),
+	catalog(MsgSessionPickerActionContinue, "continue from the current safe state", "从当前安全状态继续", "現在の安全な状態から続行", "현재 안전 상태에서 계속", "continuar desde el estado seguro actual", "continuer depuis l’état sûr actuel"),
+	catalog(MsgSessionPickerActionInspect, "inspect the latest result before continuing", "继续前检查最新结果", "続行前に最新結果を確認", "계속하기 전 최신 결과 확인", "revisar el último resultado antes de continuar", "examiner le dernier résultat avant de continuer"),
 	catalog(MsgSessionStatusActive, "active", "活跃", "アクティブ", "활성", "activa", "active"),
 	catalog(MsgSessionStatusPaused, "paused", "已暂停", "一時停止", "일시 중지", "pausada", "en pause"),
 	catalog(MsgSessionStatusClosed, "closed", "已关闭", "終了", "종료", "cerrada", "fermée"),

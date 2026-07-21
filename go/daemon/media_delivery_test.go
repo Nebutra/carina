@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -38,6 +39,12 @@ func TestReadImageFileProducesMediaRefNotBinary(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ws, "diagram.png"), png, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	var completed map[string]any
+	d.events.Tap(func(_ string, event map[string]any) {
+		if event["type"] == "ToolCallCompleted" {
+			completed, _ = event["payload"].(map[string]any)
+		}
+	})
 	_, outcome := d.executeActionOutcome(sess, task, &action{Tool: "read", Path: "diagram.png"})
 	if outcome.status != "completed" {
 		t.Fatalf("read of an image must complete, got %q (%s)", outcome.status, outcome.display)
@@ -61,6 +68,14 @@ func TestReadImageFileProducesMediaRefNotBinary(t *testing.T) {
 	}
 	if string(raw) != string(png) {
 		t.Fatal("stored bytes differ from the file content")
+	}
+	refs, ok := completed["media_refs"].([]MediaRef)
+	if !ok || len(refs) != 1 || refs[0].ArtifactID != ref.ArtifactID {
+		t.Fatalf("authoritative event did not publish media refs: %#v", completed)
+	}
+	ids, ok := completed["artifact_ids"].([]string)
+	if !ok || !slices.Contains(ids, ref.ArtifactID) {
+		t.Fatalf("media artifact missing from artifact_ids: %#v", completed)
 	}
 }
 

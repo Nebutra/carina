@@ -284,6 +284,18 @@ func TestRenderDisplayMathFromAssistantMarkdown(t *testing.T) {
 	}
 }
 
+func TestRenderDisplayMathAsPixelPlaceholders(t *testing.T) {
+	t.Setenv("CARINA_MATH_GRAPHICS", "kitty")
+	got := Render("before\n\n$$\\frac{pixel_91}{\\sqrt{x}}$$\n\nafter", theme.New(theme.TrueColor), 80, "  ", passWrap)
+	joined := strings.Join(got, "\n")
+	if strings.Contains(joined, `\frac`) || strings.Contains(joined, "\x1b_G") {
+		t.Fatalf("cell content leaked TeX or protocol bytes: %q", joined)
+	}
+	if !strings.Contains(joined, "before") || !strings.Contains(joined, "after") || !strings.Contains(joined, "\U0010eeee") {
+		t.Fatalf("pixel placeholders did not preserve surrounding markdown: %q", joined)
+	}
+}
+
 // The renderer hands prose to the wrapper with the hanging indents that keep
 // list continuations aligned under their text, not under the marker.
 func TestListContinuationIndent(t *testing.T) {

@@ -133,7 +133,7 @@
     },
     {
       "if": { "properties": { "type": { "const": "ToolCallCompleted" } }, "required": ["type"] },
-      "then": { "properties": { "payload": { "required": ["output", "artifact_ids"], "properties": { "status": { "const": "completed" }, "output": { "type": "object", "required": ["sha256", "bytes", "redacted", "artifact_status"], "properties": { "artifact_status": { "enum": ["available", "unavailable", "not_created"] } } }, "artifact_ids": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } } } } }
+      "then": { "properties": { "payload": { "required": ["output", "artifact_ids"], "properties": { "status": { "const": "completed" }, "output": { "type": "object", "required": ["sha256", "bytes", "redacted", "artifact_status"], "properties": { "artifact_status": { "enum": ["available", "unavailable", "not_created"] } } }, "artifact_ids": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }, "media_refs": { "type": "array", "maxItems": 4, "items": { "type": "object", "required": ["artifact_id", "media_type", "bytes"], "properties": { "artifact_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "media_type": { "enum": ["image/png", "image/jpeg", "image/gif", "image/webp"] }, "bytes": { "type": "integer", "minimum": 1, "maximum": 4194304 }, "origin": { "type": "string" } }, "additionalProperties": false } } } } } }
     },
     {
       "if": { "properties": { "type": { "enum": ["ToolCallFailed", "ToolCallDenied", "ToolCallCancelled"] } }, "required": ["type"] },

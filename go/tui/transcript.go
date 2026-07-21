@@ -10,6 +10,7 @@ import (
 
 	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/tui/markdown"
+	"github.com/Nebutra/carina/go/tui/mathimage"
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
@@ -60,6 +61,10 @@ type eventPresentation struct {
 	// go/tui/markdown at render() time, so resize and profile changes re-render
 	// from source; Body keeps the structured action rows.
 	BodyMarkdown string
+	// ImageData is verified artifact content rendered through terminal-native
+	// graphics. It never passes through the text sanitizer or audit payload.
+	ImageKey  string
+	ImageData []byte
 	// Headerless marks a body-only continuation entry: committed stable chunks
 	// and the mutable tail of a streaming assistant message (stream.go) render
 	// under the header the stream's head entry already emitted, so they carry
@@ -325,6 +330,9 @@ func (p eventPresentation) render(th theme.Theme, width int) string {
 	if p.BodyMarkdown != "" {
 		bodyCount += strings.Count(p.BodyMarkdown, "\n") + 1
 	}
+	if len(p.ImageData) > 0 {
+		bodyCount++
+	}
 	if p.Collapsible && bodyCount > 0 {
 		open := p.OpenLabel
 		if open == "" {
@@ -363,6 +371,13 @@ func (p eventPresentation) render(th theme.Theme, width int) string {
 			// Markdown output is renderer-emitted styling over already-sanitized
 			// source; it must not pass through sanitize again.
 			lines = append(lines, markdown.Render(p.BodyMarkdown, th, width, bodyIndent, wrapText)...)
+		}
+		if len(p.ImageData) > 0 {
+			if rendered, ok := mathimage.RenderImage(p.ImageKey, p.ImageData, maxInt(1, width-len(bodyIndent)), bodyIndent); ok {
+				lines = append(lines, rendered...)
+			} else {
+				lines = append(lines, fitLine(bodyIndent+"image preview unavailable in this terminal", width))
+			}
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -571,7 +586,7 @@ func presentAuthoritativeToolCall(p eventPresentation, typ string, payload map[s
 	}
 	p.Body = selectedBody(payload, "call_id", "reason", "error", "duration_ms")
 	if ids := valueString(payload["artifact_ids"]); ids != "" {
-		p.Body = append(p.Body, "artifact: "+ids, "open: carina artifact read <session_id> <artifact_id>")
+		p.Body = append(p.Body, "artifact: "+ids)
 	}
 	p.Collapsible = len(p.Body) > 0
 	p.Collapsed = len(p.Body) > 0

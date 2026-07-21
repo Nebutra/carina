@@ -1727,6 +1727,7 @@ func (d *Daemon) handleSessionList(_ json.RawMessage) (any, error) {
 	type sessionContinuityEntry struct {
 		*sessionstore.Session
 		LatestTaskID string            `json:"latest_task_id,omitempty"`
+		TaskRevision int64             `json:"task_revision,omitempty"`
 		TaskStatus   string            `json:"task_status,omitempty"`
 		Summary      string            `json:"summary,omitempty"`
 		Continuity   *continuity.State `json:"continuity,omitempty"`
@@ -1737,7 +1738,7 @@ func (d *Daemon) handleSessionList(_ json.RawMessage) (any, error) {
 		entry := sessionContinuityEntry{Session: sess}
 		if task := latest[sess.SessionID]; task != nil {
 			state := task.Continuity
-			entry.LatestTaskID, entry.TaskStatus, entry.Summary = task.TaskID, task.Status, task.Summary
+			entry.LatestTaskID, entry.TaskRevision, entry.TaskStatus, entry.Summary = task.TaskID, task.Revision, task.Status, task.Summary
 			entry.Continuity, entry.UpdatedAt = &state, task.UpdatedAt
 		}
 		out = append(out, entry)

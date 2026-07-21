@@ -1,6 +1,6 @@
 # TUI Rich Text And Math Rendering
 
-Status: planned → in progress
+Status: implemented; Kitty pixel tier shipped, portable degradation retained
 Owner: TUI
 Prior art surveyed: Claude Code (marked lexer + custom formatToken → Ink nodes,
 cli-highlight/highlight.js with syntect NAPI fast path, OSC 11 theme detection,
@@ -29,9 +29,9 @@ The transcript is a plain-text, line-truncated event log:
   never reach the terminal as escape sequences.
 - All styling goes through semantic theme roles (`go/tui/theme`). No hardcoded
   colors. The Mono profile must degrade to readable plain text.
-- Deterministic rendering: same source + same width → same lines. Rendering
-  stays a pure function suitable for golden tests and the existing `View()`
-  render-regression benchmark.
+- Deterministic cell layout: same source + width + terminal capability produces
+  the same placeholder grid. Graphics transport is isolated as a queued,
+  content-addressed side effect and never enters inbound text.
 - CJK correctness: all width math uses the existing runewidth/uniseg path.
 - Chain-of-thought stays hidden. Rich rendering applies to user-facing
   assistant output (final responses, plan text), not to suppressed internals.
@@ -79,10 +79,11 @@ Replace truncation with span-aware soft wrap for prose content:
 - Tables: width-aware column sizing with a key/value transposition fallback
   when the width budget cannot fit columns (mirrors Codex table pipeline).
 
-### P3 — Math (Unicode approximation)
+### P3 — Math (pixel primary, Unicode fallback)
 
-Neither Claude Code nor Codex renders math; both share a tiered-degradation
-house style, and the terminal-native baseline tier is implemented here:
+The portable terminal baseline remains deterministic Unicode approximation.
+Ghostty and Kitty receive a pixel tier so formulas are typeset rather than
+shown as TeX source:
 
 - Detect `$...$`, `$$...$$`, `\(...\)`, `\[...\]` spans with a math holdback
   (a partial formula is never rendered).
@@ -92,8 +93,20 @@ house style, and the terminal-native baseline tier is implemented here:
   tested.
 - Fallback: any unrecognized construct renders verbatim styled as
   `RoleMathApprox`, visually delimiting the formula without corrupting it.
-- Image-protocol rendering (Kitty/iTerm2/sixel) is a non-goal, consistent with
-  the roadmap's terminal-capability boundary.
+- `go/tui/mathimage` parses and typesets display TeX with embedded Latin Modern
+  fonts, rasterizes transparent PNG, and uses Kitty Unicode placeholders so
+  formulas participate in the transcript grid, clipping, scrolling, and
+  resize.
+- Raw APC transport is emitted only through Bubble Tea commands. Unsupported
+  terminals, tmux, a parse error, or an exhausted image budget fail closed to
+  the Unicode tier.
+- Tool-produced PNG/JPEG/GIF/WebP artifacts use the same placement engine.
+  `ToolCallCompleted.media_refs` carries hashes and metadata only; the TUI
+  performs bounded paginated reads, verifies SHA-256, decodes, and re-encodes
+  PNG before transport.
+- iTerm2 and Sixel are future compatibility tiers, not correctness
+  dependencies. They must preserve the same verified-artifact and grid
+  placement contract if added.
 
 ## Acceptance
 

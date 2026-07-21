@@ -23,6 +23,7 @@ import (
 	"github.com/yuin/goldmark/text"
 
 	"github.com/Nebutra/carina/go/tui/mathapprox"
+	"github.com/Nebutra/carina/go/tui/mathimage"
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
@@ -45,12 +46,88 @@ func Render(source string, th theme.Theme, width int, indent string, wrap WrapFu
 		width = 1
 	}
 	source = unwrapMarkdownFences(source)
+	if pieces := displayMathPieces(source); len(pieces) > 1 {
+		var out []string
+		for _, piece := range pieces {
+			if piece.tex == "" {
+				out = append(out, renderText(piece.text, th, width, indent, wrap)...)
+				continue
+			}
+			lines, ok := mathimage.Render(piece.tex, width-ansi.StringWidth(indent), indent)
+			if !ok {
+				return renderText(source, th, width, indent, wrap)
+			}
+			out = append(out, lines...)
+		}
+		return trimEmptyEdges(out)
+	}
+	return renderText(source, th, width, indent, wrap)
+}
+
+func renderText(source string, th theme.Theme, width int, indent string, wrap WrapFunc) []string {
 	src := []byte(source)
 	doc := parser.Parser().Parse(text.NewReader(src))
 	r := renderer{src: src, th: th, width: width, wrap: wrap}
 	lines := r.children(doc, indent, indent, false)
 	if len(lines) == 0 {
 		return nil
+	}
+	return lines
+}
+
+type mathPiece struct {
+	text string
+	tex  string
+}
+
+// displayMathPieces extracts display delimiters outside fenced code. Text and
+// formulas remain ordered, while formulas become independent cell-grid blocks.
+func displayMathPieces(source string) []mathPiece {
+	var out []mathPiece
+	start, textStart := -1, 0
+	close := ""
+	inFence := false
+	lineStart := true
+	for i := 0; i < len(source); {
+		if lineStart && (strings.HasPrefix(source[i:], "```") || strings.HasPrefix(source[i:], "~~~")) {
+			inFence = !inFence
+		}
+		if !inFence && start < 0 {
+			switch {
+			case strings.HasPrefix(source[i:], "$$"):
+				out = append(out, mathPiece{text: source[textStart:i]})
+				start, close, i = i+2, "$$", i+2
+				continue
+			case strings.HasPrefix(source[i:], `\[`):
+				out = append(out, mathPiece{text: source[textStart:i]})
+				start, close, i = i+2, `\]`, i+2
+				continue
+			}
+		} else if !inFence && start >= 0 && strings.HasPrefix(source[i:], close) {
+			out = append(out, mathPiece{tex: strings.TrimSpace(source[start:i])})
+			i += len(close)
+			textStart, start, close = i, -1, ""
+			continue
+		}
+		lineStart = source[i] == '\n'
+		i++
+	}
+	if start >= 0 {
+		return nil
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	out = append(out, mathPiece{text: source[textStart:]})
+	return out
+}
+
+func trimEmptyEdges(lines []string) []string {
+	for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[0])) == "" {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[len(lines)-1])) == "" {
+		lines = lines[:len(lines)-1]
 	}
 	return lines
 }

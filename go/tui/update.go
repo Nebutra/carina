@@ -12,6 +12,7 @@ import (
 	"github.com/mattn/go-shellwords"
 
 	"github.com/Nebutra/carina/go/microcopy"
+	"github.com/Nebutra/carina/go/tui/mathimage"
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
@@ -20,8 +21,18 @@ import (
 // exits.
 const ctrlCWindow = 2 * time.Second
 
-// Update implements tea.Model.
+// Update implements tea.Model and flushes renderer-owned terminal protocol
+// side effects after the state transition that discovered them.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	raw := mathimage.Drain()
+	if raw == "" {
+		return model, cmd
+	}
+	return model, tea.Batch(cmd, tea.Raw(raw))
+}
+
+func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// The cascading-interrupt arming window (ctrlC, below) is a strict
 	// double-press gesture: it must disarm on intervening operator activity
 	// (typing, pasting) so a Ctrl-C that merely lands inside the stale 2s
@@ -212,7 +223,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Generation != 0 && (msg.SessionID != m.sessionID || msg.Generation != m.sessionGeneration) {
 			return m, nil
 		}
-		return m, m.handleEvent(msg.Raw)
+		return m, tea.Batch(m.handleEvent(msg.Raw), m.artifactPreviewCommands(msg.Raw))
+
+	case artifactPreviewMsg:
+		m.handleArtifactPreview(msg)
+		return m, nil
 
 	case submissionDoneMsg:
 		return m, m.handleSubmissionDone(msg)
