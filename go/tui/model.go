@@ -542,8 +542,6 @@ func showInPrimaryTranscript(ev map[string]any) bool {
 	case "ModelResponded":
 		tool, _, _ := safeModelAction(str(payload["text"]))
 		return tool == "done" || str(payload["spawn_agent"]) != "" || strings.HasPrefix(str(payload["status"]), "workflow_")
-	case "task.completed":
-		return str(ev["status"]) != "completed"
 	default:
 		return true
 	}

@@ -153,7 +153,10 @@ func (g *taskGraph) observeEvent(ev map[string]any) {
 	case "permission.request", "user.question":
 		g.ensure(taskID, "", "task", "", "waiting")
 	case "task.completed":
-		g.ensure(taskID, "", "task", str(ev["summary"]), str(ev["status"]))
+		// The rail is live execution context, not a result surface. Keep the
+		// original prompt label while the terminal summary is appended to the
+		// transcript by the task.completed presentation.
+		g.ensure(taskID, "", "task", "", str(ev["status"]))
 	}
 }
 
@@ -204,11 +207,7 @@ func (g *taskGraph) lines(m *Model, width, limit int) []string {
 		visible = append(visible, node)
 	}
 	if len(visible) == 0 {
-		for i := len(ordered) - 1; i >= 0 && len(visible) < 1; i-- {
-			if node := g.nodes[ordered[i]]; node != nil {
-				visible = append(visible, node)
-			}
-		}
+		return nil
 	}
 
 	header := m.text(MsgTasksHeader, MessageArgs{"active": g.activeCount(), "done": completed})

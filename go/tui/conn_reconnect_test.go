@@ -288,6 +288,30 @@ func TestConnectDeliversSessionReadyAndEvents(t *testing.T) {
 	}
 }
 
+func TestConnectFlushesDurableTerminalResultWithoutTransientEnvelope(t *testing.T) {
+	bin := buildFakeDaemon(t)
+	dir := shortSocketDir(t)
+	fd := startFakeDaemon(t, bin, dir)
+	defer fd.kill(t)
+
+	fs := &fakeSender{}
+	Connect(fs, fd.sock, "sess_1", t.TempDir())
+	fs.waitFor(t, 5*time.Second, func(m tea.Msg) bool {
+		_, ok := m.(SessionReadyMsg)
+		return ok
+	})
+
+	fd.publish(t, `{"type":"TaskCompleted","task_id":"durable-1","actor":"go","payload":{"status":"completed","summary":"durable result"}}`)
+	msg := fs.waitFor(t, 5*time.Second, func(m tea.Msg) bool {
+		ev, ok := m.(EventMsg)
+		return ok && ev.Raw["type"] == "task.completed" && ev.Raw["task_id"] == "durable-1"
+	})
+	ev := msg.(EventMsg).Raw
+	if ev["summary"] != "durable result" || ev["status"] != "completed" {
+		t.Fatalf("synthesized completion = %#v", ev)
+	}
+}
+
 // TestConnectLoadsInitialHistory proves resumed sessions render durable audit
 // history before relying on the live tail.
 func TestConnectLoadsInitialHistory(t *testing.T) {

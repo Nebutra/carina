@@ -612,6 +612,11 @@ func ConnectControlled(p Sender, socket, sessionID, workspaceRoot string, contro
 						permissions.observeAudit(replayed)
 						questions.observeAudit(replayed)
 					}
+					// A durable terminal event is authoritative even if the best-effort
+					// transient task.completed envelope is delayed or lost. Flush its
+					// synthesized result immediately after the durable batch so the TUI
+					// clears the live rail and appends the summary at the transcript tail.
+					completions.flush(p, sid, generation)
 				}
 			}
 			call.Close()

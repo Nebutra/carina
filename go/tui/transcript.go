@@ -418,14 +418,15 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 		p.Summary = truncate(str(ev["prompt"]), 160)
 	case "task.completed":
 		p.Kind, p.Title = presentationAgent, "task"
+		if taskID := str(ev["task_id"]); taskID != "" {
+			p.Key = "result:" + taskID
+		}
 		status := str(ev["status"])
 		p.Status = terminalPresentationStatus(status)
 		p.Summary = strings.TrimSpace(str(ev["task_id"]) + " " + status)
 		if summary := str(ev["summary"]); summary != "" {
 			p.Body = []string{summary}
 			p.BodyProse = true
-			p.Collapsible = true
-			p.Collapsed = false
 		}
 	case "MemoryProjectionChanged":
 		status := strings.ToLower(str(payload["status"]))
@@ -441,6 +442,11 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 		p.Summary = firstValue(payload, "status", "requested_model", "model", "reasoner")
 	case "ModelResponded":
 		p = presentModelEvent(p, payload)
+		if tool, _, _ := safeModelAction(str(payload["text"])); tool == "done" {
+			if taskID := str(ev["task_id"]); taskID != "" {
+				p.Key = "result:" + taskID
+			}
+		}
 	case "ToolRequested", "ToolApproved", "ToolDenied":
 		p = presentToolEvent(p, typ, payload)
 	case "CommandStarted", "CommandOutput", "CommandExited", "CommandExecuted":

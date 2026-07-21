@@ -75,6 +75,38 @@ func TestSingleTaskUsesOneLineRail(t *testing.T) {
 	}
 }
 
+func TestCompletedTaskLeavesRailAndResultStaysInTranscript(t *testing.T) {
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
+	defer m.Close()
+	m.tasks.observeEvent(map[string]any{"type": "TaskCreated", "task_id": "task_1", "payload": map[string]any{"user_prompt": "inspect workspace", "status": "running"}})
+	m.inFlightTaskID = "task_1"
+	m.Update(EventMsg{Raw: map[string]any{
+		"type": "task.completed", "task_id": "task_1", "status": "completed", "summary": "workspace inspection complete",
+	}})
+	if lines := m.tasks.lines(m, 80, 4); len(lines) != 0 {
+		t.Fatalf("completed task remained in top rail: %#v", lines)
+	}
+	if got := transcriptText(m); !strings.Contains(got, "workspace inspection complete") {
+		t.Fatalf("completion result missing from transcript tail:\n%s", got)
+	}
+}
+
+func TestModelAndTaskCompletionShareOneResultSurface(t *testing.T) {
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
+	defer m.Close()
+	m.Update(EventMsg{Raw: map[string]any{
+		"type": "ModelResponded", "task_id": "task_1",
+		"payload": map[string]any{"text": `{"tool":"done","summary":"one final answer"}`},
+	}})
+	m.Update(EventMsg{Raw: map[string]any{
+		"type": "task.completed", "task_id": "task_1", "status": "completed", "summary": "one final answer",
+	}})
+	got := transcriptText(m)
+	if count := strings.Count(got, "one final answer"); count != 1 {
+		t.Fatalf("completion result rendered %d times, want once:\n%s", count, got)
+	}
+}
+
 func TestPrimaryTranscriptSuppressesAuditWALButKeepsOutcomes(t *testing.T) {
 	for _, eventType := range []string{"MemoryRecallRequested", "MemoryWriteRequested", "GoalChangeRequested", "ScheduleChanged"} {
 		if showInPrimaryTranscript(map[string]any{"type": eventType}) {

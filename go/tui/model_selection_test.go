@@ -176,7 +176,6 @@ func TestPrimaryTranscriptHidesInternalLifecycleNoise(t *testing.T) {
 		{"type": "RoutingDecision", "payload": map[string]any{"requested_model": "default"}},
 		{"type": "RuntimeStageChanged", "payload": map[string]any{"stage": "model"}},
 		{"type": "ModelResponded", "payload": map[string]any{"text": `{"tool":"list"}`}},
-		{"type": "task.completed", "status": "completed", "summary": "duplicate"},
 	}
 	for _, ev := range internal {
 		if showInPrimaryTranscript(ev) {
@@ -185,6 +184,9 @@ func TestPrimaryTranscriptHidesInternalLifecycleNoise(t *testing.T) {
 	}
 	if !showInPrimaryTranscript(map[string]any{"type": "ModelResponded", "payload": map[string]any{"text": `{"tool":"done","summary":"finished"}`}}) {
 		t.Fatal("final agent response was hidden")
+	}
+	if !showInPrimaryTranscript(map[string]any{"type": "task.completed", "status": "completed", "summary": "finished"}) {
+		t.Fatal("authoritative task completion was hidden")
 	}
 	if !showInPrimaryTranscript(map[string]any{"type": "ToolCallCompleted", "payload": map[string]any{"tool": "read"}}) {
 		t.Fatal("authoritative tool completion was hidden")
