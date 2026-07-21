@@ -1,6 +1,7 @@
 package mathapprox
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 )
@@ -11,6 +12,11 @@ import (
 // codepoint, unbalanced braces — and the caller then renders the source
 // verbatim, so a formula is either re-spelled exactly or left untouched.
 func Approx(tex string) (string, bool) {
+	var ok bool
+	tex, ok = expandDisplayEnvironments(tex)
+	if !ok {
+		return "", false
+	}
 	p := &parser{src: tex}
 	out, ok := p.sequence(0)
 	if !ok {
@@ -21,6 +27,160 @@ func Approx(tex string) (string, bool) {
 		return "", false
 	}
 	return out, true
+}
+
+// expandDisplayEnvironments lowers the small set of structural math
+// environments Carina can represent faithfully in terminal cells. Newlines
+// survive the inline walker and become physical transcript rows. Unknown or
+// unclosed environments fail closed so their original TeX remains visible.
+func expandDisplayEnvironments(tex string) (string, bool) {
+	for {
+		start := strings.Index(tex, `\begin{`)
+		if start < 0 {
+			return tex, true
+		}
+		nameStart := start + len(`\begin{`)
+		nameEndRel := strings.IndexByte(tex[nameStart:], '}')
+		if nameEndRel < 0 {
+			return "", false
+		}
+		nameEnd := nameStart + nameEndRel
+		name := tex[nameStart:nameEnd]
+		close := `\end{` + name + `}`
+		bodyStart := nameEnd + 1
+		bodyEndRel := strings.Index(tex[bodyStart:], close)
+		if bodyEndRel < 0 {
+			return "", false
+		}
+		bodyEnd := bodyStart + bodyEndRel
+		replacement, ok := renderEnvironment(name, tex[bodyStart:bodyEnd])
+		if !ok {
+			return "", false
+		}
+		tex = tex[:start] + replacement + tex[bodyEnd+len(close):]
+	}
+}
+
+func renderEnvironment(name, body string) (string, bool) {
+	rows := splitEnvironmentRows(body)
+	if len(rows) == 0 {
+		return "", false
+	}
+	switch name {
+	case "pmatrix", "bmatrix", "matrix":
+		cells := make([][]string, 0, len(rows))
+		widths := []int{}
+		for _, row := range rows {
+			parts := strings.Split(row, "&")
+			converted := make([]string, 0, len(parts))
+			for i, part := range parts {
+				cell, ok := Approx(strings.TrimSpace(part))
+				if !ok {
+					return "", false
+				}
+				converted = append(converted, cell)
+				for len(widths) <= i {
+					widths = append(widths, 0)
+				}
+				widths[i] = maxInt(widths[i], utf8.RuneCountInString(cell))
+			}
+			cells = append(cells, converted)
+		}
+		lines := make([]string, 0, len(cells))
+		for i, row := range cells {
+			left, right := "│", "│"
+			if name == "pmatrix" {
+				left, right = matrixParens(i, len(cells))
+			} else if name == "bmatrix" {
+				left, right = matrixBrackets(i, len(cells))
+			}
+			for j := range row {
+				row[j] += strings.Repeat(" ", widths[j]-utf8.RuneCountInString(row[j]))
+			}
+			lines = append(lines, left+" "+strings.Join(row, "  ")+" "+right)
+		}
+		return strings.Join(lines, "\n"), true
+	case "aligned", "align", "align*":
+		lines := make([]string, 0, len(rows))
+		for _, row := range rows {
+			line, ok := Approx(strings.ReplaceAll(row, "&", ""))
+			if !ok {
+				return "", false
+			}
+			lines = append(lines, line)
+		}
+		return strings.Join(lines, "\n"), true
+	case "cases":
+		lines := make([]string, 0, len(rows))
+		for i, row := range rows {
+			parts := strings.SplitN(row, "&", 2)
+			value, ok := Approx(strings.TrimSpace(parts[0]))
+			if !ok {
+				return "", false
+			}
+			condition := ""
+			if len(parts) == 2 {
+				condition, ok = Approx(strings.TrimSpace(parts[1]))
+				if !ok {
+					return "", false
+				}
+			}
+			brace := "⎨"
+			if i == 0 {
+				brace = "⎧"
+			} else if i == len(rows)-1 {
+				brace = "⎩"
+			}
+			lines = append(lines, strings.TrimRight(fmt.Sprintf("%s %s  %s", brace, value, condition), " "))
+		}
+		return strings.Join(lines, "\n"), true
+	default:
+		return "", false
+	}
+}
+
+func splitEnvironmentRows(body string) []string {
+	parts := strings.Split(strings.TrimSpace(body), `\\`)
+	rows := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if row := strings.TrimSpace(part); row != "" {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func matrixParens(row, total int) (string, string) {
+	if total == 1 {
+		return "(", ")"
+	}
+	if row == 0 {
+		return "⎛", "⎞"
+	}
+	if row == total-1 {
+		return "⎝", "⎠"
+	}
+	return "⎜", "⎟"
+}
+
+func matrixBrackets(row, total int) (string, string) {
+	if total == 1 {
+		return "[", "]"
+	}
+	if row == 0 {
+		return "⎡", "⎤"
+	}
+	if row == total-1 {
+		return "⎣", "⎦"
+	}
+	return "⎢", "⎥"
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // parser is a recursive-descent walker over the formula bytes. All dispatch
@@ -307,7 +467,9 @@ var superscript = map[rune]rune{
 	'I': 'ᴵ', 'J': 'ᴶ', 'K': 'ᴷ', 'L': 'ᴸ', 'M': 'ᴹ', 'N': 'ᴺ',
 	'O': 'ᴼ', 'P': 'ᴾ', 'R': 'ᴿ', 'T': 'ᵀ', 'U': 'ᵁ', 'V': 'ⱽ', 'W': 'ᵂ',
 	'β': 'ᵝ', 'γ': 'ᵞ', 'δ': 'ᵟ', 'θ': 'ᶿ', 'φ': 'ᵠ', 'χ': 'ᵡ',
-	'∘': '°', '°': '°',
+	'∘': '°', '°': '°', '∞': '∞', 'π': 'π',
+	'⁰': '⁰', '¹': '¹', '²': '²', '³': '³', '⁴': '⁴',
+	'⁵': '⁵', '⁶': '⁶', '⁷': '⁷', '⁸': '⁸', '⁹': '⁹',
 }
 
 // subscript maps characters that have subscript codepoints.
@@ -319,4 +481,5 @@ var subscript = map[rune]rune{
 	'l': 'ₗ', 'm': 'ₘ', 'n': 'ₙ', 'o': 'ₒ', 'p': 'ₚ', 'r': 'ᵣ',
 	's': 'ₛ', 't': 'ₜ', 'u': 'ᵤ', 'v': 'ᵥ', 'x': 'ₓ',
 	'β': 'ᵦ', 'γ': 'ᵧ', 'ρ': 'ᵨ', 'φ': 'ᵩ', 'χ': 'ᵪ',
+	'∞': '∞',
 }

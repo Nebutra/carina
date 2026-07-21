@@ -270,6 +270,20 @@ func TestRenderMathApprox(t *testing.T) {
 	}
 }
 
+func TestRenderDisplayMathFromAssistantMarkdown(t *testing.T) {
+	src := "矩阵： $$ A = \\begin{pmatrix} 1 & 2 \\\\ 3 & 4 \\end{pmatrix} $$\n\n" +
+		"分段： $$ f(x) = \\begin{cases} x^2, & x \\geq 0 \\\\ -x, & x < 0 \\end{cases} $$"
+	got := strings.Join(Render(src, theme.New(theme.Mono), 80, "", passWrap), "\n")
+	for _, want := range []string{"矩阵： A = ⎛ 1  2 ⎞", "⎝ 3  4 ⎠", "分段： f(x) = ⎧ x²,  x ≥ 0", "⎩ -x,  x < 0"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("display math missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `\begin`) || strings.Contains(got, "$$") {
+		t.Errorf("rendered display math leaked TeX delimiters:\n%s", got)
+	}
+}
+
 // The renderer hands prose to the wrapper with the hanging indents that keep
 // list continuations aligned under their text, not under the marker.
 func TestListContinuationIndent(t *testing.T) {

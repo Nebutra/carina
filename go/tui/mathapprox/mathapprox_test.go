@@ -47,6 +47,43 @@ func TestApproxGolden(t *testing.T) {
 	}
 }
 
+func TestApproxDisplayEnvironmentGolden(t *testing.T) {
+	cases := []struct {
+		name string
+		tex  string
+		want string
+	}{
+		{
+			name: "pmatrix aligns columns",
+			tex:  `A = \begin{pmatrix} 1 & 20 \\ 300 & 4 \end{pmatrix}, \quad \det(A) = ad-bc`,
+			want: "A = ⎛ 1    20 ⎞\n⎝ 300  4  ⎠,    det(A) = ad-bc",
+		},
+		{
+			name: "cases renders physical rows",
+			tex:  `f(x) = \begin{cases} x^2, & x \geq 0 \\ -x, & x < 0 \end{cases}`,
+			want: "f(x) = ⎧ x²,  x ≥ 0\n⎩ -x,  x < 0",
+		},
+		{
+			name: "aligned preserves equations",
+			tex:  `\begin{aligned} x + y &= 10 \\ 2x - y &= 5 \end{aligned}`,
+			want: "x + y = 10\n2x - y = 5",
+		},
+		{
+			name: "integral bounds and nested exponent",
+			tex:  `\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}`,
+			want: "∫₋∞∞ e⁻ˣ² dx = √π",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := Approx(tc.tex)
+			if !ok || got != tc.want {
+				t.Fatalf("Approx(%q) = %q, %v; want %q, true", tc.tex, got, ok, tc.want)
+			}
+		})
+	}
+}
+
 // Anything outside the subset rejects the whole formula — a half-transformed
 // exponent or a guessed macro would misread, so ok=false means verbatim.
 func TestApproxRejectsOutsideSubset(t *testing.T) {
@@ -56,7 +93,6 @@ func TestApproxRejectsOutsideSubset(t *testing.T) {
 	}{
 		{"unknown macro", "\\weird{x}"},
 		{"unmappable superscript rune", "x^q"},
-		{"unmappable superscript symbol", "\\int_0^\\infty"},
 		{"space inside a script", "\\lim_{x \\to 0}"},
 		{"unbalanced open", "{a"},
 		{"unbalanced close", "a}"},
