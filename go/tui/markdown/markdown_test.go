@@ -274,7 +274,9 @@ func TestRenderDisplayMathFromAssistantMarkdown(t *testing.T) {
 	src := "矩阵： $$ A = \\begin{pmatrix} 1 & 2 \\\\ 3 & 4 \\end{pmatrix} $$\n\n" +
 		"分段： $$ f(x) = \\begin{cases} x^2, & x \\geq 0 \\\\ -x, & x < 0 \\end{cases} $$"
 	got := strings.Join(Render(src, theme.New(theme.Mono), 80, "", passWrap), "\n")
-	for _, want := range []string{"矩阵： A = ⎛ 1  2 ⎞", "⎝ 3  4 ⎠", "分段： f(x) = ⎧ x²,  x ≥ 0", "⎩ -x,  x < 0"} {
+	// Display math ($$…$$) is its own block: the label and each approximation
+	// row land on their own transcript lines (matrices/cases carry newlines).
+	for _, want := range []string{"矩阵：", "A = ⎛ 1  2 ⎞", "⎝ 3  4 ⎠", "分段：", "f(x) = ⎧ x²,  x ≥ 0", "⎩ -x,  x < 0"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("display math missing %q:\n%s", want, got)
 		}
@@ -284,15 +286,19 @@ func TestRenderDisplayMathFromAssistantMarkdown(t *testing.T) {
 	}
 }
 
-func TestRenderDisplayMathAsPixelPlaceholders(t *testing.T) {
+// Display math is rendered as the Unicode approximation even when Kitty
+// graphics are available: the go-tex image path inflates math-mode glyph
+// spacing ~3-4x, so the approximation is the more legible surface. The image
+// path (mathimage) remains wired for previews and for when go-tex is fixed.
+func TestRenderDisplayMathPrefersUnicode(t *testing.T) {
 	t.Setenv("CARINA_MATH_GRAPHICS", "kitty")
 	got := Render("before\n\n$$\\frac{pixel_91}{\\sqrt{x}}$$\n\nafter", theme.New(theme.TrueColor), 80, "  ", passWrap)
 	joined := strings.Join(got, "\n")
-	if strings.Contains(joined, `\frac`) || strings.Contains(joined, "\x1b_G") {
-		t.Fatalf("cell content leaked TeX or protocol bytes: %q", joined)
+	if strings.Contains(joined, `\frac`) || strings.Contains(joined, "\x1b_G") || strings.Contains(joined, "\U0010eeee") {
+		t.Fatalf("display math leaked TeX or fell back to pixel placeholders: %q", joined)
 	}
-	if !strings.Contains(joined, "before") || !strings.Contains(joined, "after") || !strings.Contains(joined, "\U0010eeee") {
-		t.Fatalf("pixel placeholders did not preserve surrounding markdown: %q", joined)
+	if !strings.Contains(joined, "before") || !strings.Contains(joined, "after") || !strings.Contains(joined, "(pixel₉1)⁄(√x)") {
+		t.Fatalf("display math did not render as Unicode approximation: %q", joined)
 	}
 }
 

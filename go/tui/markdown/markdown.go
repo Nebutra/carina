@@ -23,7 +23,6 @@ import (
 	"github.com/yuin/goldmark/text"
 
 	"github.com/Nebutra/carina/go/tui/mathapprox"
-	"github.com/Nebutra/carina/go/tui/mathimage"
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
@@ -53,7 +52,7 @@ func Render(source string, th theme.Theme, width int, indent string, wrap WrapFu
 				out = append(out, renderText(piece.text, th, width, indent, wrap)...)
 				continue
 			}
-			lines, ok := mathimage.Render(piece.tex, width-ansi.StringWidth(indent), indent)
+			lines, ok := displayMathApprox(piece.tex, th, indent)
 			if !ok {
 				return renderText(source, th, width, indent, wrap)
 			}
@@ -62,6 +61,26 @@ func Render(source string, th theme.Theme, width int, indent string, wrap WrapFu
 		return trimEmptyEdges(out)
 	}
 	return renderText(source, th, width, indent, wrap)
+}
+
+// displayMathApprox renders one display formula as its Unicode approximation,
+// one transcript row per approximation line (matrices and cases carry their
+// own newlines). Preferred over the go-tex image path: that layout engine
+// inflates math-mode glyph spacing ~3-4x, so its PNGs read sparse and faint
+// even on Kitty/Ghostty — the approximation is tight and legible. The image
+// path (mathimage.Render) stays in the tree for when go-tex spacing is fixed.
+func displayMathApprox(tex string, th theme.Theme, indent string) ([]string, bool) {
+	approx, ok := mathapprox.Approx(tex)
+	if !ok {
+		return nil, false
+	}
+	r := renderer{th: th}
+	rows := strings.Split(approx, "\n")
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, indent+r.styled(row, ictx{role: theme.RoleMathApprox, hasRole: true}))
+	}
+	return out, true
 }
 
 func renderText(source string, th theme.Theme, width int, indent string, wrap WrapFunc) []string {
