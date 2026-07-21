@@ -196,8 +196,8 @@ func TestPresentationProseBodyWraps(t *testing.T) {
 		"type": "task.completed", "timestamp": "2026-07-09T10:11:12Z",
 		"task_id": "t1", "status": "completed", "summary": summary,
 	}, th, "en")
-	if !p.BodyProse {
-		t.Fatalf("task summary should be a prose body: %#v", p)
+	if p.BodyMarkdown == "" || p.BodyProse {
+		t.Fatalf("completed task summary should be a markdown body: %#v", p)
 	}
 	out := p.render(th, 40)
 	lines := strings.Split(out, "\n")

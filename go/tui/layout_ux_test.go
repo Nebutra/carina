@@ -93,13 +93,20 @@ func TestCompletedTaskLeavesRailAndResultStaysInTranscript(t *testing.T) {
 
 func TestSuccessfulCompletionReadsAsAssistantReply(t *testing.T) {
 	p := presentEvent(map[string]any{
-		"type": "task.completed", "task_id": "task_internal", "status": "completed", "summary": "done",
+		"type": "task.completed", "task_id": "task_internal", "status": "completed", "summary": "**done** and `tested`",
 	}, theme.New(theme.Mono), "en")
-	if p.Title != "agent" || p.Summary != "completed" {
-		t.Fatalf("completion header = %q %q, want agent completed", p.Title, p.Summary)
+	if p.Title != "" || p.Summary != "completed" {
+		t.Fatalf("completion header = %q %q, want a single agent completed label", p.Title, p.Summary)
 	}
-	if strings.Contains(p.render(theme.New(theme.Mono), 80), "task_internal") {
+	if p.BodyMarkdown == "" || p.BodyProse {
+		t.Fatalf("successful completion did not preserve markdown semantics: %#v", p)
+	}
+	rendered := p.render(theme.New(theme.Mono), 80)
+	if strings.Contains(rendered, "task_internal") {
 		t.Fatal("successful assistant reply leaked internal task id")
+	}
+	if strings.Contains(rendered, "**") {
+		t.Fatalf("markdown emphasis markers leaked into rendered reply: %q", rendered)
 	}
 }
 

@@ -417,7 +417,7 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 		p.Kind, p.Status, p.Title = presentationGovernance, statusNeedsAuth, "question"
 		p.Summary = truncate(str(ev["prompt"]), 160)
 	case "task.completed":
-		p.Kind, p.Title = presentationAgent, "agent"
+		p.Kind, p.Title = presentationAgent, ""
 		if taskID := str(ev["task_id"]); taskID != "" {
 			p.Key = "result:" + taskID
 		}
@@ -425,8 +425,15 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 		p.Status = terminalPresentationStatus(status)
 		p.Summary = status
 		if summary := str(ev["summary"]); summary != "" {
-			p.Body = []string{summary}
-			p.BodyProse = true
+			if status == "completed" {
+				// The durable completion replaces ModelResponded under the same
+				// result key, so it must preserve the final assistant message's
+				// markdown semantics instead of degrading it to plain prose.
+				p.BodyMarkdown = sanitize(summary)
+			} else {
+				p.Body = []string{summary}
+				p.BodyProse = true
+			}
 		}
 	case "MemoryProjectionChanged":
 		status := strings.ToLower(str(payload["status"]))
