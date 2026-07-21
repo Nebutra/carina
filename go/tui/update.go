@@ -1410,7 +1410,6 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 			m.inFlightTaskID = msg.taskID
 			m.tasks.setTask(msg.taskID, "running")
 		}
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateTaskSubmitted, MessageArgs{"task": msg.taskID})))
 	case submissionSteer:
 		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateYouSteer, nil)) + shown)
 		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateSteeringQueued, MessageArgs{"task": msg.taskID})))

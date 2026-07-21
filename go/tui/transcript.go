@@ -417,13 +417,13 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 		p.Kind, p.Status, p.Title = presentationGovernance, statusNeedsAuth, "question"
 		p.Summary = truncate(str(ev["prompt"]), 160)
 	case "task.completed":
-		p.Kind, p.Title = presentationAgent, "task"
+		p.Kind, p.Title = presentationAgent, "agent"
 		if taskID := str(ev["task_id"]); taskID != "" {
 			p.Key = "result:" + taskID
 		}
 		status := str(ev["status"])
 		p.Status = terminalPresentationStatus(status)
-		p.Summary = strings.TrimSpace(str(ev["task_id"]) + " " + status)
+		p.Summary = status
 		if summary := str(ev["summary"]); summary != "" {
 			p.Body = []string{summary}
 			p.BodyProse = true

@@ -470,9 +470,9 @@ func (m *Model) View() tea.View {
 	// unmodified drag belong to the app; terminals conventionally retain native
 	// text selection through their modifier-assisted selection gesture.
 	v.MouseMode = tea.MouseModeCellMotion
-	v.OnMouse = func(msg tea.MouseMsg) tea.Cmd {
-		return func() tea.Msg { return msg }
-	}
+	// Mouse messages already flow through Program.eventLoop into Model.Update.
+	// Re-sending one from OnMouse creates a self-sustaining message/render loop
+	// after the first click or wheel event.
 	// A nil declared cursor makes Bubble Tea hide the terminal cursor. This is
 	// intentional while an overlay owns input, and whenever a zero-sized host
 	// has not supplied a usable cell grid yet (R21).

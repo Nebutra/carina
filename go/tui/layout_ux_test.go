@@ -91,6 +91,18 @@ func TestCompletedTaskLeavesRailAndResultStaysInTranscript(t *testing.T) {
 	}
 }
 
+func TestSuccessfulCompletionReadsAsAssistantReply(t *testing.T) {
+	p := presentEvent(map[string]any{
+		"type": "task.completed", "task_id": "task_internal", "status": "completed", "summary": "done",
+	}, theme.New(theme.Mono), "en")
+	if p.Title != "agent" || p.Summary != "completed" {
+		t.Fatalf("completion header = %q %q, want agent completed", p.Title, p.Summary)
+	}
+	if strings.Contains(p.render(theme.New(theme.Mono), 80), "task_internal") {
+		t.Fatal("successful assistant reply leaked internal task id")
+	}
+}
+
 func TestModelAndTaskCompletionShareOneResultSurface(t *testing.T) {
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	defer m.Close()

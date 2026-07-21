@@ -317,8 +317,8 @@ func TestViewCanPreserveNativeScrollbackAndEnablesWheelEvents(t *testing.T) {
 	if view.AltScreen {
 		t.Fatal("no-alt-screen model still requested the alternate buffer")
 	}
-	if view.MouseMode != tea.MouseModeCellMotion || view.OnMouse == nil {
-		t.Fatalf("mouse wheel path is not enabled: mode=%v callback=%v", view.MouseMode, view.OnMouse != nil)
+	if view.MouseMode != tea.MouseModeCellMotion || view.OnMouse != nil {
+		t.Fatalf("mouse wheel path is misconfigured: mode=%v replay_callback=%v", view.MouseMode, view.OnMouse != nil)
 	}
 }
 

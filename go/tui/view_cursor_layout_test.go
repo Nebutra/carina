@@ -92,16 +92,8 @@ func TestViewEnablesReachableWheelInput(t *testing.T) {
 	if v.MouseMode != tea.MouseModeCellMotion {
 		t.Fatalf("mouse mode = %v, want cell motion", v.MouseMode)
 	}
-	if v.OnMouse == nil {
-		t.Fatal("cell motion enabled without forwarding mouse messages")
-	}
-	wheel := tea.MouseWheelMsg{Button: tea.MouseWheelDown}
-	cmd := v.OnMouse(wheel)
-	if cmd == nil {
-		t.Fatal("mouse handler dropped wheel event")
-	}
-	if got, ok := cmd().(tea.MouseWheelMsg); !ok || got.Button != tea.MouseWheelDown {
-		t.Fatalf("forwarded mouse message = %#v, want wheel down", got)
+	if v.OnMouse != nil {
+		t.Fatal("mouse events must not be re-sent from OnMouse; that creates an infinite render loop")
 	}
 }
 

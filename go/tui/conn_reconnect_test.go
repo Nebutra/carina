@@ -127,6 +127,41 @@ func TestQuestionTrackerDropsCrashStaleRequest(t *testing.T) {
 	}
 }
 
+func TestCompletionTrackerIgnoresCompletedToolBeforeTaskCompletion(t *testing.T) {
+	tracker := newCompletionTracker()
+	tracker.observeAudit(map[string]any{
+		"type": "TaskCreated", "task_id": "task_1", "timestamp": "2026-07-21T01:04:00Z",
+		"payload": map[string]any{"status": "running"},
+	}, true)
+	tracker.observeAudit(map[string]any{
+		"type": "ToolCallCompleted", "task_id": "task_1", "timestamp": "2026-07-21T01:04:11Z",
+		"payload": map[string]any{"status": "completed", "tool": "read"},
+	}, true)
+
+	sender := &fakeSender{}
+	tracker.flush(sender, "sess_test", 1)
+	if got := len(sender.snapshot()); got != 0 {
+		t.Fatalf("tool completion synthesized %d task results, want 0", got)
+	}
+	if !tracker.active["task_1"] {
+		t.Fatal("tool completion incorrectly cleared active task")
+	}
+
+	tracker.observeAudit(map[string]any{
+		"type": "TaskCreated", "task_id": "task_1", "timestamp": "2026-07-21T01:04:52Z",
+		"payload": map[string]any{"status": "completed", "summary": "最终中文回答"},
+	}, true)
+	tracker.flush(sender, "sess_test", 1)
+	messages := sender.snapshot()
+	if len(messages) != 1 {
+		t.Fatalf("task completion results = %d, want 1", len(messages))
+	}
+	event, ok := messages[0].(EventMsg)
+	if !ok || event.Raw["summary"] != "最终中文回答" || event.Raw["timestamp"] != "2026-07-21T01:04:52Z" {
+		t.Fatalf("unexpected final task result: %#v", messages[0])
+	}
+}
+
 // shortSocketDir returns a short-path temp directory for a unix domain
 // socket: t.TempDir() embeds the full (possibly long) test name, which can
 // exceed the ~104-108 byte sockaddr_un limit (macOS in particular) and make

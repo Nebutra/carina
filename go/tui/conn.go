@@ -313,6 +313,18 @@ func (t *completionTracker) observeAudit(ev map[string]any, trackTerminal bool) 
 	if taskID == "" {
 		return
 	}
+	// Audit payloads share generic status words. In particular,
+	// ToolCallCompleted carries status=completed, but that only closes one tool
+	// call; treating it as a task terminal event publishes an empty result early
+	// and causes the real final answer to be discarded as a duplicate.
+	typ, _ := ev["type"].(string)
+	switch typ {
+	case "TaskCreated", "TaskCompleted", "TaskFailed", "TaskCancelled", "TaskCanceled", "TaskInterrupted":
+		// TaskCreated is the daemon's durable task-state journal; the explicit
+		// terminal variants remain accepted for compatible event producers.
+	default:
+		return
+	}
 	payload, _ := ev["payload"].(map[string]any)
 	status, _ := payload["status"].(string)
 	if terminalTaskStatus(status) {
