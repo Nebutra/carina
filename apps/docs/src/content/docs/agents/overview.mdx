@@ -93,14 +93,21 @@ Destructive commands (`rm -rf`, `curl … | sh`) are **denied** before they run.
 | Backend | Role |
 | --- | --- |
 | **model-router** | BYOK provider adapters; prompt segments for caching; media parts when catalog allows |
-| **claude-cli** | Local `claude` binary headless, empty cwd isolation — works with CC Switch / gateway setups that only admit Claude Code clients |
+| **claude-cli** | Explicit compatibility backend using the local `claude -p` headless mode with tools disabled and an empty cwd |
+| **codex-cli** | Explicit compatibility backend using `codex exec` with ephemeral JSONL output, tool features disabled, read-only isolation, and fail-closed event parsing |
 | **scripted** | Fixed decisions for deterministic tests |
 
 Wiring:
 
-- Auto `claude-cli` when binary present and not `--offline`
-- `CARINA_REASONER_MODEL` (e.g. `openai/gpt-5`) switches to model-router
+- Auto selects `model-router` only when an enabled provider is runnable; CLI binaries are never selected by presence
+- `CARINA_REASONER_BACKEND=claude-cli` or `codex-cli` opts into an external CLI explicitly
+- `CARINA_REASONER_MODEL` (e.g. `openai/gpt-5`) pins the selected backend's model
 - Optional: `CARINA_SUMMARIZER_MODEL`, `CARINA_VERIFIER_MODEL`
+
+Claude uses `-p` for non-interactive output. Codex uses `codex exec`; its `-p`
+flag selects a profile. Codex's read-only sandbox is not a hard no-read or
+no-execution boundary, so Carina also rejects tool and unknown item events and
+keeps the backend explicit-only.
 
 ## Run it
 

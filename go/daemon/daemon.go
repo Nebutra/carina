@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -684,14 +685,14 @@ func New(opts Options) (*Daemon, error) {
 		}
 	}
 	// Provider-first selection mirrors the model registry contract: only a
-	// configured/runnable provider becomes the implicit backend. Claude CLI is
-	// retained as an explicit compatibility adapter for gateways that require
-	// the Claude Code client, never as a binary-presence default.
+	// configured/runnable provider becomes the implicit backend. CLI reasoners
+	// are explicit compatibility adapters, never binary-presence defaults.
 	if !opts.Offline {
 		model := strings.TrimSpace(os.Getenv("CARINA_REASONER_MODEL"))
 		selectedBackend := selectReasonerBackend(false, configuredReasonerBackend, model, hasRunnableRuntimeProvider(providerCatalog, opts.DisabledProviders, authStore))
 		d.reasoner, err = newConfiguredReasoner(selectedBackend, d.router, model)
 		if err != nil {
+			closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 			_ = kern.Close()
 			return nil, fmt.Errorf("daemon: configure %s reasoner: %w", selectedBackend, err)
 		}
@@ -699,6 +700,7 @@ func New(opts Options) (*Daemon, error) {
 		if m := os.Getenv("CARINA_SUMMARIZER_MODEL"); m != "" && selectedBackend != reasonerBackendNone {
 			d.summarizer, err = newConfiguredReasoner(selectedBackend, d.router, m)
 			if err != nil {
+				closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 				_ = kern.Close()
 				return nil, fmt.Errorf("daemon: configure summarizer reasoner: %w", err)
 			}
@@ -711,6 +713,7 @@ func New(opts Options) (*Daemon, error) {
 		if vm != "" && selectedBackend != reasonerBackendNone {
 			d.verifier, err = newConfiguredReasoner(selectedBackend, d.router, vm)
 			if err != nil {
+				closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 				_ = kern.Close()
 				return nil, fmt.Errorf("daemon: configure verifier reasoner: %w", err)
 			}
@@ -725,6 +728,7 @@ func New(opts Options) (*Daemon, error) {
 		if rm != "" && selectedBackend != reasonerBackendNone {
 			d.riskReviewer, err = newConfiguredReasoner(selectedBackend, d.router, rm)
 			if err != nil {
+				closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 				_ = kern.Close()
 				return nil, fmt.Errorf("daemon: configure risk-review reasoner: %w", err)
 			}
@@ -865,12 +869,42 @@ func (d *Daemon) Close() error {
 	for _, srv := range d.gatewayHTTPServers {
 		_ = srv.Close()
 	}
+	closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 	kernelErr := d.kern.Close()
 	leaseErr := d.runtimeLease.close(true)
 	if kernelErr != nil {
 		return kernelErr
 	}
 	return leaseErr
+}
+
+type closeableReasoner interface {
+	Close()
+}
+
+func closeReasoners(reasoners ...Reasoner) {
+	closed := make([]Reasoner, 0, len(reasoners))
+	for _, reasoner := range reasoners {
+		closer, ok := reasoner.(closeableReasoner)
+		if !ok {
+			continue
+		}
+		duplicate := false
+		kind := reflect.TypeOf(reasoner)
+		if kind != nil && kind.Comparable() {
+			for _, prior := range closed {
+				if reflect.TypeOf(prior) == kind && prior == reasoner {
+					duplicate = true
+					break
+				}
+			}
+		}
+		if duplicate {
+			continue
+		}
+		closer.Close()
+		closed = append(closed, reasoner)
+	}
 }
 
 func (d *Daemon) runArtifactGC() {

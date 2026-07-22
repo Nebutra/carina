@@ -49,8 +49,10 @@ Exact paths are printed by `carina doctor` and release notes.
 
 ## Reasoner
 
-- Auto-wires `claude-cli` when `claude` is on PATH and not `--offline`
-- Set `CARINA_REASONER_MODEL` for model-router / BYOK
+- Auto-selects `model-router` only when an enabled runtime provider is available
+- Set `CARINA_REASONER_MODEL` to pin a model-router / BYOK model
+- Select external compatibility backends explicitly with
+  `CARINA_REASONER_BACKEND=claude-cli` or `CARINA_REASONER_BACKEND=codex-cli`
 
 ## Gateway (optional)
 

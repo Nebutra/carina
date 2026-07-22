@@ -43,8 +43,9 @@ carina doctor
 
 ## Reasoner
 
-- PATH 中存在 `claude` 且未使用 `--offline` 时，运行时自动连接 `claude-cli`。
-- model-router / BYOK 可通过 `CARINA_REASONER_MODEL` 指定模型。
+- 只有存在已启用且可运行的 provider 时，运行时才会自动选择 `model-router`。
+- model-router / BYOK 可通过 `CARINA_REASONER_MODEL` 固定模型。
+- 外部兼容后端必须显式设置 `CARINA_REASONER_BACKEND=claude-cli` 或 `CARINA_REASONER_BACKEND=codex-cli`。
 
 ## 可选 Gateway
 

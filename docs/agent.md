@@ -48,19 +48,29 @@ switches are injected as urgent notices.
 ## The reasoner (model backend)
 
 `go/daemon/reasoner.go` defines the `Reasoner` interface (a pure "think"
-step). Three implementations:
+step). Four implementations:
 
 - **model-router** — routes through `go/model-router` provider adapters (BYOK).
   Supports prompt segments (stable prefix / volatile suffix) for prompt caching
   and media parts for catalog-gated vision delivery.
 - **claude-cli** — uses the local `claude` binary in headless mode
   (`claude -p … --allowedTools "" `) as a pure inference engine, running in an
-  isolated empty cwd so it cannot touch the workspace. This works with **CC
-  Switch / gateway setups that only admit the Claude Code client** (e.g. the
-  Mox gateway), because the request comes from the real `claude` binary. The
-  agent's actual file/command/patch work happens in carina, not in Claude Code.
+  isolated empty cwd so it cannot touch the workspace. This supports gateway
+  setups that only admit the Claude Code client because the request comes from
+  the real `claude` binary.
+- **codex-cli** — uses the local OpenAI Codex binary through `codex exec` in
+  ephemeral JSONL mode. Carina ignores Codex config, `AGENTS.md` instructions,
+  and exec-policy rules, disables supported tool entry points, runs from an
+  empty cwd with a read-only sandbox, and rejects any tool or unknown item
+  event. Codex has no direct equivalent of Claude's hard `--allowedTools ""`
+  switch: read-only mode can still permit reads, and cancellation can race an
+  action that has started, so this backend remains explicit-only. In Codex,
+  `-p` selects a profile; it is not the non-interactive flag used by Claude.
 - **scripted** — replays fixed decisions; used by tests to drive the full loop
   deterministically with no model and no cost.
+
+The agent's actual file, command, patch, MCP, and web work remains in Carina's
+capability-governed runtime, not in either external CLI.
 
 The daemon is provider-first: it selects `model-router` only when an enabled
 provider has a BYOK credential, provider environment variable, or an explicitly
@@ -68,11 +78,12 @@ configured keyless local endpoint. Setting `CARINA_REASONER_MODEL` pins a model 
 unavailable provider runnable. Disable inherited providers with
 `disabled_providers` in `~/.carina/config.json` or the comma-separated
 `CARINA_DISABLED_PROVIDERS`; the gate applies to completion, embeddings,
-rerank, and automatic reasoner selection after daemon restart. Claude CLI is
-an explicit compatibility backend only; enable it with
-`CARINA_REASONER_BACKEND=claude-cli` for gateways that require the Claude Code
-client. Provider endpoint variables such as `OPENAI_BASE_URL` override catalog
-defaults, which supports OpenAI-compatible gateways without a vendor CLI. The
+rerank, and automatic reasoner selection after daemon restart. CLI reasoners
+are explicit compatibility backends only; select
+`CARINA_REASONER_BACKEND=claude-cli` or
+`CARINA_REASONER_BACKEND=codex-cli`. Provider endpoint variables such as
+`OPENAI_BASE_URL` override catalog defaults, which supports OpenAI-compatible
+gateways without a vendor CLI. The
 OpenAI adapter prefers the Responses API and falls back to Chat Completions
 only when the gateway reports that the Responses endpoint is unsupported.
 Optional tiering uses the selected backend:

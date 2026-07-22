@@ -1621,8 +1621,7 @@ func truncate(s string, n int) string {
 }
 
 // estimateTokens approximates the token count of a string (~4 chars/token).
-// claude-cli does not expose token counts cheaply on every call, so the budget
-// governor meters with this estimate.
+// It is the fallback for reasoners that do not report provider usage.
 func estimateTokens(s string) int { return len(s)/4 + 1 }
 
 func taskModel(task *scheduler.Task) string {

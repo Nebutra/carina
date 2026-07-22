@@ -435,11 +435,22 @@ automatic reasoner selection; changes take effect after restarting the daemon:
 The environment-layer equivalent is
 `CARINA_DISABLED_PROVIDERS=openai,anthropic`.
 
-Claude CLI remains available only as an explicit compatibility adapter:
+External CLI reasoners remain explicit compatibility adapters and are never
+selected by binary presence:
 
 ```bash
 CARINA_REASONER_BACKEND=claude-cli carina-daemon &
+# or
+CARINA_REASONER_BACKEND=codex-cli carina-daemon &
 ```
+
+Claude's non-interactive form is `claude -p`; Codex uses `codex exec`, where
+`-p` means `--profile`. The Codex adapter runs ephemerally from an empty working
+directory, ignores Codex config, `AGENTS.md` instructions, and exec-policy
+rules, disables supported tool entry points, and rejects tool events. Its
+read-only sandbox is not a hard no-read/no-execution boundary, so use
+`codex-cli` only when explicitly desired. Carina's file, command, patch, MCP,
+and web actions continue to run through its own capability-governed runtime.
 
 ### Agent Modes And Slash Commands
 

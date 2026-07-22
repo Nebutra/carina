@@ -91,8 +91,8 @@ type CompactionReceipt struct {
 	KeyFiles        []string  `json:"key_files,omitempty"`
 }
 
-// CompactionPolicy bounds the model view (char-budget based; claude-cli does
-// not expose token counts cheaply, so we approximate with characters).
+// CompactionPolicy bounds the model view. Provider-neutral preflight
+// tokenization is not available cheaply, so the trigger uses characters.
 type CompactionPolicy struct {
 	MaxChars       int // total transcript char budget before compaction
 	KeepRecent     int // keep this many most-recent turns verbatim

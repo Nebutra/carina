@@ -94,6 +94,7 @@ const (
 	reasonerBackendAuto      = "auto"
 	reasonerBackendRouter    = "model-router"
 	reasonerBackendClaudeCLI = "claude-cli"
+	reasonerBackendCodexCLI  = "codex-cli"
 	reasonerBackendNone      = ""
 )
 
@@ -105,8 +106,10 @@ func normalizeReasonerBackend(value string) (string, error) {
 		return reasonerBackendRouter, nil
 	case "claude", reasonerBackendClaudeCLI:
 		return reasonerBackendClaudeCLI, nil
+	case "codex", reasonerBackendCodexCLI:
+		return reasonerBackendCodexCLI, nil
 	default:
-		return "", fmt.Errorf("unsupported CARINA_REASONER_BACKEND %q (want auto, model-router, or claude-cli)", value)
+		return "", fmt.Errorf("unsupported CARINA_REASONER_BACKEND %q (want auto, model-router, claude-cli, or codex-cli)", value)
 	}
 }
 
@@ -115,7 +118,7 @@ func selectReasonerBackend(offline bool, configuredBackend, _ string, hasRunnabl
 		return reasonerBackendNone
 	}
 	switch configuredBackend {
-	case reasonerBackendRouter, reasonerBackendClaudeCLI:
+	case reasonerBackendRouter, reasonerBackendClaudeCLI, reasonerBackendCodexCLI:
 		return configuredBackend
 	case reasonerBackendAuto:
 		if hasRunnableProvider {
@@ -294,7 +297,7 @@ func thinkOnceResult(ctx context.Context, r Reasoner, model, prompt, stablePrefi
 	// Media-capable reasoners get the image parts alongside the segments.
 	// Everything below this block drops media silently — the transcript
 	// already carries a textual placeholder per MediaRef, so a text-only
-	// reasoner (claude-cli, scripted test reasoners) degrades gracefully.
+	// reasoner (CLI adapters, scripted test reasoners) degrades gracefully.
 	if len(media) > 0 {
 		if mr, ok := r.(mediaSegmentedReasoner); ok {
 			result, err := mr.ThinkModelSegmentsMedia(ctx, model, stablePrefix, volatileSuffix, media)
@@ -429,9 +432,9 @@ func (r *routerReasoner) complete(ctx context.Context, model string, req modelro
 // claudeCLIReasoner uses the local `claude` binary in headless mode as a pure
 // inference engine. Claude Code's OWN tools are disabled (--allowedTools "")
 // and it runs in an isolated, empty cwd, so it cannot touch the workspace —
-// it can only reason and emit a decision. This lets carina use the CC Switch /
-// Mox gateway (which only admits the Claude Code client) while keeping every
-// real side effect inside the carina capability kernel.
+// it can only reason and emit a decision. This supports gateways that only
+// admit the Claude Code client while keeping every real side effect inside the
+// carina capability kernel.
 type claudeCLIReasoner struct {
 	bin     string
 	model   string // optional --model override
@@ -558,6 +561,11 @@ func newConfiguredReasoner(backend string, router *modelrouter.Router, model str
 			return newClaudeCLIReasonerModel(strings.TrimSpace(model))
 		}
 		return newClaudeCLIReasoner()
+	case reasonerBackendCodexCLI:
+		if strings.TrimSpace(model) != "" {
+			return newCodexCLIReasonerModel(strings.TrimSpace(model))
+		}
+		return newCodexCLIReasoner()
 	default:
 		return nil, nil
 	}
@@ -587,7 +595,7 @@ func (r *claudeCLIReasoner) ThinkResult(ctx context.Context, prompt string) (Rea
 	}
 	cmd := exec.CommandContext(ctx, r.bin, args...)
 	cmd.Dir = r.workdir
-	// Inherit the environment (ANTHROPIC_BASE_URL / AUTH_TOKEN from CC Switch).
+	// Inherit the environment for Claude CLI authentication and gateway config.
 	cmd.Env = os.Environ()
 
 	out, runErr := cmd.Output()
