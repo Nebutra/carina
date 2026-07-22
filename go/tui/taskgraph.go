@@ -61,17 +61,16 @@ func (g *taskGraph) ensure(id, parentID, kind, label, status string) *taskNode {
 
 func normalizeTaskStatus(status string) string {
 	status = strings.TrimSpace(strings.ToLower(status))
+	if outcome := normalizeConversationOutcome(status); outcome != outcomeNone {
+		return outcome.taskStatus()
+	}
 	switch {
 	case status == "":
 		return "running"
-	case status == "completed" || strings.HasSuffix(status, "_completed"):
+	case strings.HasSuffix(status, "_completed"):
 		return "completed"
-	case status == "failed" || strings.Contains(status, "_failed"):
+	case strings.Contains(status, "_failed"):
 		return "failed"
-	case status == "cancelled":
-		return "cancelled"
-	case status == "degraded":
-		return "degraded"
 	case strings.Contains(status, "approval") || strings.Contains(status, "question") || strings.Contains(status, "review"):
 		return "waiting"
 	case status == "queued":
@@ -82,6 +81,22 @@ func normalizeTaskStatus(status string) string {
 		return "interrupted"
 	default:
 		return "running"
+	}
+}
+
+func (g *taskGraph) observeConversation(p conversationProjection) {
+	if taskID := p.Evidence.ActiveTaskID; taskID != "" {
+		status := "running"
+		switch p.Activity {
+		case activityWaitingApproval, activityWaitingQuestion:
+			status = "waiting"
+		case activityInterrupted:
+			status = "interrupted"
+		}
+		g.setTask(taskID, status)
+	}
+	if taskID := p.Evidence.TerminalID; taskID != "" && p.Outcome != outcomeNone {
+		g.setTask(taskID, p.Outcome.taskStatus())
 	}
 }
 
@@ -150,13 +165,6 @@ func (g *taskGraph) observeEvent(ev map[string]any) {
 				g.completeChildren(runID, node.Status)
 			}
 		}
-	case "permission.request", "user.question":
-		g.ensure(taskID, "", "task", "", "waiting")
-	case "task.completed":
-		// The rail is live execution context, not a result surface. Keep the
-		// original prompt label while the terminal summary is appended to the
-		// transcript by the task.completed presentation.
-		g.ensure(taskID, "", "task", "", str(ev["status"]))
 	}
 }
 

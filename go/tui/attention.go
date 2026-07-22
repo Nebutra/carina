@@ -18,13 +18,26 @@ const (
 // must never be interpolated into OSC payloads, where terminal controls would
 // otherwise become a command-injection boundary.
 func (m *Model) attentionEventText(ev map[string]any) (string, bool) {
+	if transition, ok := conversationTransitionForEvent(ev); ok && transition.Kind == transitionInterrupted {
+		return m.text(MsgAttentionTaskInterrupted, nil), true
+	}
+	if outcome, terminal := terminalConversationEvent(ev); terminal {
+		switch outcome {
+		case outcomeCompleted:
+			return m.text(MsgAttentionTaskFinished, nil), true
+		case outcomeDegraded:
+			return m.text(MsgAttentionTaskDegraded, nil), true
+		case outcomeFailed:
+			return m.text(MsgAttentionTaskFailed, nil), true
+		case outcomeCancelled:
+			return m.text(MsgAttentionTaskCancelled, nil), true
+		}
+	}
 	switch strings.ToLower(strings.TrimSpace(str(ev["type"]))) {
 	case "permission.request":
 		return m.text(MsgAttentionApproval, nil), true
 	case "user.question":
 		return m.text(MsgAttentionInput, nil), true
-	case "task.completed", "taskcomplete", "taskcompleted", "task.failed", "task.cancelled", "task.canceled":
-		return m.text(MsgAttentionTaskFinished, nil), true
 	case "memoryprojectionchanged":
 		status := strings.ToLower(strings.TrimSpace(attentionValue(ev, "status")))
 		if status == "failed" || status == "reconcile" {
@@ -47,7 +60,7 @@ func attentionEventKey(ev map[string]any) string {
 	case "user.question":
 		family = "question"
 		id = attentionValue(ev, "question_id")
-	case "task.completed", "taskcomplete", "taskcompleted", "task.failed", "task.cancelled", "task.canceled":
+	case "task.completed", "taskcomplete", "taskcompleted", "task.failed", "task.cancelled", "task.canceled", "taskfailed", "taskcancelled", "taskcanceled", "taskinterrupted":
 		family = "task-terminal"
 		id = attentionValue(ev, "task_id")
 	case "memoryprojectionchanged":

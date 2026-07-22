@@ -401,13 +401,40 @@ func (m *Model) contextFooterToken() string {
 }
 
 func (m *Model) statusActivityText() string {
+	state := m.conversationSnapshot()
 	activity := m.text(MsgStatusReady, nil)
 	if m.editor != nil {
 		activity = m.text(MsgStatusEditingDraft, nil)
-	} else if m.submitting != nil {
-		activity = m.text(MsgStatusSending, MessageArgs{"kind": string(m.submitting.kind)})
-	} else if m.inFlightTaskID != "" {
-		activity = m.text(MsgStatusRunning, MessageArgs{"task": shortID(m.inFlightTaskID)})
+	} else if state.Activity == activitySubmitting {
+		kind := submissionTask
+		if m.submitting != nil {
+			kind = m.submitting.kind
+		}
+		activity = m.text(MsgStatusSending, MessageArgs{"kind": string(kind)})
+	} else {
+		switch state.Activity {
+		case activityRunning:
+			activity = m.text(MsgStatusRunning, MessageArgs{"task": shortID(state.Evidence.ActiveTaskID)})
+		case activityWaitingApproval:
+			activity = m.text(MsgAttentionApproval, nil)
+		case activityWaitingQuestion:
+			activity = m.text(MsgAttentionInput, nil)
+		case activityInterrupted:
+			activity = m.text(MsgTaskStatusInterrupted, nil)
+		default:
+			if state.Outcome != outcomeNone {
+				activity = m.taskStatusText(state.Outcome.taskStatus())
+			} else {
+				switch state.Readiness {
+				case readinessChecking:
+					activity = m.text(MsgStatusChecking, nil)
+				case readinessBlocked:
+					activity = m.text(MsgStatusBlocked, nil)
+				case readinessUnavailable:
+					activity = m.text(MsgStatusNotAttached, nil)
+				}
+			}
+		}
 	}
 	if m.unseenLines > 0 {
 		activity += " · " + m.countText(MsgStatusNew, m.unseenLines, nil)
@@ -435,9 +462,19 @@ func (m *Model) statusActivityText() string {
 }
 
 func (m *Model) statusActivityItem() statusFooterItem {
+	state := m.conversationSnapshot()
 	role := theme.RoleSuccess
-	if m.inFlightTaskID != "" || m.submitting != nil || m.editor != nil {
+	switch {
+	case state.Outcome == outcomeDegraded || state.Outcome == outcomeFailed || state.Outcome == outcomeCancelled:
+		role = theme.RoleError
+	case state.Activity == activityWaitingApproval || state.Activity == activityWaitingQuestion || state.Activity == activityInterrupted:
+		role = theme.RoleWarning
+	case state.Activity == activityRunning || state.Activity == activitySubmitting || m.editor != nil:
 		role = theme.RoleInfo
+	case state.Readiness == readinessChecking:
+		role = theme.RoleInfo
+	case state.Readiness == readinessUnavailable || state.Readiness == readinessBlocked:
+		role = theme.RoleError
 	}
 	if m.unreadAttention > 0 || m.chord.hint != "" {
 		role = theme.RoleWarning

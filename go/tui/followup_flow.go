@@ -216,22 +216,8 @@ func safeQueuedSlash(text string) bool {
 }
 
 func taskTerminalResult(ev map[string]any) (terminal, successful bool) {
-	typ := strings.ToLower(str(ev["type"]))
-	payload, _ := ev["payload"].(map[string]any)
-	status := strings.ToLower(firstValue(ev, "status", "outcome"))
-	if status == "" {
-		status = strings.ToLower(firstValue(payload, "status", "outcome"))
-	}
-	failure := strings.Contains(status, "fail") || strings.Contains(status, "cancel") || strings.Contains(status, "degrad") ||
-		strings.Contains(status, "denied") || strings.Contains(status, "abort")
-	switch typ {
-	case "task.completed", "taskcomplete", "taskcompleted":
-		return true, !failure
-	case "task.failed", "task.cancelled", "task.canceled":
-		return true, false
-	default:
-		return false, false
-	}
+	outcome, terminal := terminalConversationEvent(ev)
+	return terminal, terminal && outcome == outcomeCompleted
 }
 
 func (m *Model) handleTaskTerminalEvent(ev map[string]any) tea.Cmd {

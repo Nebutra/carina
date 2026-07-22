@@ -437,10 +437,14 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 			p.Key = "result:" + taskID
 		}
 		status := str(ev["status"])
-		p.Status = terminalPresentationStatus(status)
-		p.Summary = status
+		outcome := normalizeConversationOutcome(status)
+		p.Status = terminalPresentationStatus(outcome.taskStatus())
+		p.Summary = outcome.taskStatus()
+		if p.Summary == "" {
+			p.Summary = strings.ToLower(strings.TrimSpace(status))
+		}
 		if summary := str(ev["summary"]); summary != "" {
-			if status == "completed" {
+			if outcome == outcomeCompleted {
 				// The durable completion replaces ModelResponded under the same
 				// result key, so it must preserve the final assistant message's
 				// markdown semantics instead of degrading it to plain prose.

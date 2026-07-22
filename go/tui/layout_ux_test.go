@@ -37,6 +37,7 @@ func TestStatusFooterDegradesByPriorityWithoutOverflow(t *testing.T) {
 	m.model = "openai/gpt-5"
 	m.reasoningEffort = "high"
 	m.runtime = runtimeStatus{Profile: "safe-edit", Sandbox: "on", ContextAvailable: true, ContextPercent: 42, ContextLimit: 1000}
+	m.conversation.Readiness = readinessReady
 
 	wide := ansi.Strip(m.statusFooterView(110))
 	for _, want := range []string{"build", "model:openai/gpt-5/high", "profile:safe-edit", "sandbox:on", "ctx:42%", "/model"} {

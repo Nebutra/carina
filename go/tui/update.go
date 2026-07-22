@@ -107,6 +107,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.call = msg.Call
 		_ = persistLastActiveSession(m.stateDir, m.workspaceRoot, msg.SessionID)
 		m.conn = ConnConnected
+		m.applyConversation(conversationTransition{Kind: transitionConnected, SessionID: msg.SessionID, EventType: "session.ready"})
 		m.attempt = 0
 		if reconnected && m.submissionLeaseErr == nil {
 			return m, nil
@@ -166,6 +167,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.inFlightTaskID = msg.TaskID
+			m.applyConversation(conversationTransition{Kind: transitionRunning, TaskID: msg.TaskID, EventType: "task.active", Status: "running"})
 			m.tasks.setTask(msg.TaskID, "running")
 			m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateActiveRestored, MessageArgs{"task": msg.TaskID})))
 			m.layout()
@@ -189,6 +191,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.conn = ConnLost
+		m.applyConversation(conversationTransition{Kind: transitionUnavailable, EventType: "connection.lost"})
 		m.push(fmt.Sprintf("%s %s", glyphFailed(m.th), microcopy.Degrade(
 			microcopy.DegradeDaemonUnreachable,
 			microcopy.Args{"socket": m.socket},
@@ -201,6 +204,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.conn = ConnReconnecting
+		m.applyConversation(conversationTransition{Kind: transitionUnavailable, EventType: "connection.reconnecting"})
 		m.attempt = msg.Attempt
 		return m, nil
 
@@ -212,6 +216,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.conn = ConnConnected
+		m.applyConversation(conversationTransition{Kind: transitionConnected, SessionID: msg.SessionID, EventType: "connection.restored"})
 		m.attempt = 0
 		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateReconnected, nil)))
 		return m, nil
@@ -241,6 +246,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cancelledActive {
 			m.inFlightTaskID = ""
 		}
+		m.applyConversation(conversationTransition{Kind: transitionTerminal, TaskID: msg.taskID, EventType: "task.cancel", Status: "cancelled", Outcome: outcomeCancelled})
 		m.tasks.setTask(msg.taskID, "cancelled")
 		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateCancelRecorded, MessageArgs{"task": msg.taskID})))
 		if cancelledActive {
@@ -261,10 +267,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case approvalDoneMsg:
 		m.handleApprovalDone(msg)
+		m.syncConversationLocalActivity("approval.rpc.done")
 		return m, m.maybeSubmitNextQueued()
 
 	case questionDoneMsg:
 		m.handleQuestionDone(msg)
+		m.syncConversationLocalActivity("question.rpc.done")
 		return m, m.maybeSubmitNextQueued()
 
 	case historyLoadedMsg:
@@ -560,6 +568,7 @@ func (m *Model) handleEvent(ev map[string]any) tea.Cmd {
 		m.handleStreamEvent(ev)
 		return nil
 	}
+	m.reduceConversationEvent(ev)
 	attentionCmd := m.noteAttention(ev)
 	m.pushEvent(ev)
 	m.tasks.observeEvent(ev)
@@ -574,6 +583,7 @@ func (m *Model) handleEvent(ev map[string]any) tea.Cmd {
 		m.breakComposerUndoGroup()
 		m.openQuestion(ev)
 	}
+	m.syncConversationGovernance()
 	m.layout()
 	overlayClosed := (hadApproval && m.approval == nil) || (hadQuestion && m.question == nil)
 	if cmd == nil && overlayClosed {
@@ -696,6 +706,7 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		m.breakComposerUndoGroup()
 		m.rewindPrimed = false
 		taskID := m.inFlightTaskID
+		m.applyConversation(conversationTransition{Kind: transitionInterrupted, TaskID: taskID, EventType: "operator.interrupt", Status: "interrupted"})
 		m.push(microcopy.Degrade(microcopy.DegradeInterruptedByUser, nil,
 			microcopy.WithLocale(m.locale), microcopy.WithPlain(m.plain())))
 		return m.cancelTask(taskID), true
@@ -1302,6 +1313,7 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 		envelope:     envelope,
 	}
 	m.submitting = state
+	m.applyConversation(conversationTransition{Kind: transitionSubmitting, TaskID: target, EventType: "submission.started", Status: string(kind)})
 	m.closeSuggest()
 	m.layout()
 	sid, generation, wire := m.sessionID, state.generation, state.envelope
@@ -1359,6 +1371,11 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 	}
 	m.submitting = nil
 	if msg.err != nil {
+		if state.kind == submissionSteer && m.inFlightTaskID != "" {
+			m.applyConversation(conversationTransition{Kind: transitionRunning, TaskID: m.inFlightTaskID, EventType: "submission.failed", Status: "running"})
+		} else {
+			m.applyConversation(conversationTransition{Kind: transitionIdle, EventType: "submission.failed"})
+		}
 		m.clearEarlyTerminals(state.generation)
 		if state.kind == submissionTask {
 			m.retrySubmission = &submissionRetry{
@@ -1405,6 +1422,7 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 		if m.inFlightTaskID == msg.taskID {
 			m.inFlightTaskID = ""
 		}
+		m.applyConversation(conversationTransition{Kind: transitionTerminal, TaskID: msg.taskID, EventType: "submission.terminal", Status: msg.status, Outcome: normalizeConversationOutcome(msg.status)})
 	}
 	if state.clientID != "" && m.retrySubmission != nil && m.retrySubmission.clientID == state.clientID {
 		m.retrySubmission = nil
@@ -1423,12 +1441,15 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateYou, nil)) + shown)
 		if !earlyTerminal {
 			m.inFlightTaskID = msg.taskID
+			m.applyConversation(conversationTransition{Kind: transitionRunning, TaskID: msg.taskID, EventType: "submission.accepted", Status: "running"})
 			m.tasks.setTask(msg.taskID, "running")
 		}
 	case submissionSteer:
+		m.applyConversation(conversationTransition{Kind: transitionRunning, TaskID: msg.taskID, EventType: "steer.accepted", Status: "running"})
 		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateYouSteer, nil)) + shown)
 		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateSteeringQueued, MessageArgs{"task": msg.taskID})))
 	case submissionShell:
+		m.applyConversation(conversationTransition{Kind: transitionIdle, EventType: "shell.completed"})
 		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateYouShell, nil)) + state.target)
 		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateShell, nil)) + "\n" + msg.result)
 	}
@@ -1578,6 +1599,7 @@ func (m *Model) resetSessionProjection() {
 	m.tr = transcript{}
 	m.tasks = taskGraph{}
 	m.inFlightTaskID = ""
+	m.applyConversation(conversationTransition{Kind: transitionReset})
 	m.pausedRestore = nil
 	m.approval, m.question = nil, nil
 	m.approvalQueue = nil

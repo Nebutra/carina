@@ -169,6 +169,7 @@ func (m *Model) handleCheckpointRestore(msg checkpointRestoreMsg) {
 	if m.inFlightTaskID == msg.taskID {
 		m.inFlightTaskID = ""
 	}
+	m.applyConversation(conversationTransition{Kind: transitionIdle, TaskID: msg.taskID, EventType: "checkpoint.restored", Status: "paused"})
 	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgCheckpointRestoredLog, MessageArgs{
 		"checkpoint": msg.checkpointID, "turn": msg.turn, "task": msg.taskID,
 	})))
@@ -197,6 +198,7 @@ func (m *Model) handleCheckpointResume(msg checkpointResumeMsg) {
 	m.tasks.setTask(msg.taskID, status)
 	if status != "paused" && !terminalTaskStatus(status) {
 		m.inFlightTaskID = msg.taskID
+		m.applyConversation(conversationTransition{Kind: transitionRunning, TaskID: msg.taskID, EventType: "checkpoint.resumed", Status: status})
 	}
 	if m.pausedRestore != nil && m.pausedRestore.TaskID == msg.taskID {
 		m.pausedRestore = nil

@@ -229,6 +229,7 @@ type Model struct {
 	compactMode      bool
 	composerMode     composerMode // normal chat vs sticky shell (!)
 	runtime          runtimeStatus
+	conversation     conversationProjection
 	// pendingSideQuestion is submitted once after a successful session.fork
 	// switch (Codex/CC side conversation pattern).
 	pendingSideQuestion string
@@ -421,6 +422,7 @@ func NewChecked(o Options) (*Model, error) {
 		keymapUpdater:     o.KeymapUpdater,
 		noAlternateScreen: o.NoAlternateScreen,
 		conn:              ConnConnecting,
+		conversation:      conversationProjection{Readiness: readinessChecking},
 		followTail:        true,
 		questionSeen:      make(map[string]bool),
 		questionResolved:  make(map[string]bool),

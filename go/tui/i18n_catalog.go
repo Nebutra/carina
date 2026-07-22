@@ -23,6 +23,8 @@ const (
 	MsgOverlayDisconnected    MessageID = "connection.overlay_disconnected"
 	MsgStatusNotAttached      MessageID = "status.not_attached"
 	MsgStatusSession          MessageID = "status.session"
+	MsgStatusChecking         MessageID = "status.checking"
+	MsgStatusBlocked          MessageID = "status.blocked"
 	MsgStatusReady            MessageID = "status.ready"
 	MsgStatusEditingDraft     MessageID = "status.editing_draft"
 	MsgStatusSending          MessageID = "status.sending"
@@ -116,10 +118,14 @@ const (
 	MsgHistoryScopeWorkspace MessageID = "history.scope.workspace"
 	MsgHistoryScopeGlobal    MessageID = "history.scope.global"
 
-	MsgAttentionApproval     MessageID = "attention.approval"
-	MsgAttentionInput        MessageID = "attention.input"
-	MsgAttentionTaskFinished MessageID = "attention.task_finished"
-	MsgAttentionMemorySync   MessageID = "attention.memory_sync"
+	MsgAttentionApproval        MessageID = "attention.approval"
+	MsgAttentionInput           MessageID = "attention.input"
+	MsgAttentionTaskFinished    MessageID = "attention.task_finished"
+	MsgAttentionTaskDegraded    MessageID = "attention.task_degraded"
+	MsgAttentionTaskFailed      MessageID = "attention.task_failed"
+	MsgAttentionTaskCancelled   MessageID = "attention.task_cancelled"
+	MsgAttentionTaskInterrupted MessageID = "attention.task_interrupted"
+	MsgAttentionMemorySync      MessageID = "attention.memory_sync"
 )
 
 var baseCatalogRows = []catalogRow{
@@ -149,6 +155,8 @@ var baseCatalogRows = []catalogRow{
 	catalog(MsgOverlayDisconnected, "Connection unavailable; decisions can be retried after reconnect.", "连接不可用；重连后可重试操作。", "接続できません。再接続後に再試行できます。", "연결할 수 없습니다. 재연결 후 다시 시도할 수 있습니다.", "Conexión no disponible; reintenta tras reconectar.", "Connexion indisponible ; réessayez après reconnexion."),
 	catalog(MsgStatusNotAttached, "not attached", "未连接会话", "未接続", "연결되지 않음", "sin sesión", "sans session"),
 	catalog(MsgStatusSession, "session {id}", "会话 {id}", "セッション {id}", "세션 {id}", "sesión {id}", "session {id}"),
+	catalog(MsgStatusChecking, "checking runtime", "正在检查运行环境", "実行環境を確認中", "런타임 확인 중", "comprobando el entorno", "vérification de l’environnement"),
+	catalog(MsgStatusBlocked, "setup required", "需要完成设置", "設定が必要です", "설정 필요", "configuración requerida", "configuration requise"),
 	catalog(MsgPlaceholderShell, "shell command — Esc exits", "Shell 命令 — Esc 退出", "シェルコマンド — Esc で終了", "셸 명령 — Esc로 종료", "comando shell — Esc sale", "commande shell — Échap quitte"),
 	catalog(MsgStatusShellMode, "shell", "shell", "shell", "shell", "shell", "shell"),
 	catalog(MsgStatusReady, "ready", "就绪", "準備完了", "준비됨", "listo", "prêt"),
@@ -247,5 +255,9 @@ var baseCatalogRows = []catalogRow{
 	catalog(MsgAttentionApproval, "Approval required", "需要审批", "承認が必要です", "승인이 필요합니다", "Se requiere aprobación", "Approbation requise"),
 	catalog(MsgAttentionInput, "Input required", "需要输入", "入力が必要です", "입력이 필요합니다", "Se requiere información", "Réponse requise"),
 	catalog(MsgAttentionTaskFinished, "Task finished", "任务已结束", "タスクが終了しました", "작업이 완료되었습니다", "La tarea ha finalizado", "Tâche terminée"),
+	catalog(MsgAttentionTaskDegraded, "Task degraded", "任务已降级", "タスクが縮退しました", "작업 성능이 저하되었습니다", "La tarea se degradó", "La tâche est dégradée"),
+	catalog(MsgAttentionTaskFailed, "Task failed", "任务失败", "タスクが失敗しました", "작업이 실패했습니다", "La tarea falló", "La tâche a échoué"),
+	catalog(MsgAttentionTaskCancelled, "Task cancelled", "任务已取消", "タスクがキャンセルされました", "작업이 취소되었습니다", "La tarea fue cancelada", "La tâche a été annulée"),
+	catalog(MsgAttentionTaskInterrupted, "Task interrupted", "任务已中断", "タスクが中断されました", "작업이 중단되었습니다", "La tarea se interrumpió", "La tâche a été interrompue"),
 	catalog(MsgAttentionMemorySync, "Memory sync needs action", "记忆同步需要处理", "メモリ同期の対応が必要です", "메모리 동기화 조치가 필요합니다", "La sincronización de memoria requiere atención", "La synchronisation mémoire nécessite une action"),
 }
