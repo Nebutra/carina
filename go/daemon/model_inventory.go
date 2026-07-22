@@ -43,7 +43,8 @@ func (d *Daemon) handleModelList(_ json.RawMessage) (any, error) {
 		chain := auth.ProviderChain(id, info.Env, d.authStore, nil)
 		authSource := chain.ResolvedSource()
 		endpoint, hasEndpoint := runtimeBaseURL(info)
-		available := registered[id] && ((hasEndpoint && isLocalEndpoint(endpoint)) || authSource != "")
+		_, explicitEndpoint := runtimeBaseURLOverride(info)
+		available := registered[id] && (authSource != "" || (hasEndpoint && isLocalEndpoint(endpoint) && explicitEndpoint))
 		row := modelInventoryProvider{
 			ID: id, Name: info.Name, Registered: registered[id], Available: available,
 			AuthSource: authSource, DynamicModels: len(info.Models) == 0,

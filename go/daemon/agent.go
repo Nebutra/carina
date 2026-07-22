@@ -150,8 +150,8 @@ func (a *action) signature() string {
 
 // runTask drives one agent task to completion (PRD §18). Every side effect is
 // mediated by the Rust capability kernel and executed by the Zig toolchain;
-// the reasoner only decides. If no reasoner is configured, it falls back to
-// the mock single-shot loop so the runtime still works offline.
+// the reasoner only decides. Without an available reasoner, execution fails
+// closed instead of publishing a mock completion as if model work occurred.
 func (d *Daemon) runTask(sess *sessionstore.Session, task *scheduler.Task) {
 	d.runTaskContext(context.Background(), sess, task)
 }
@@ -166,7 +166,7 @@ func (d *Daemon) runTaskContext(ctx context.Context, sess *sessionstore.Session,
 	}
 
 	if d.reasoner == nil {
-		d.runMockTask(sess, task)
+		d.degrade(sess, task, newTranscript(task.UserPrompt), noReasonerAvailable)
 		return
 	}
 
@@ -215,7 +215,7 @@ func (d *Daemon) resumeTaskContext(ctx context.Context, sess *sessionstore.Sessi
 		d.setPlanMode(sess.SessionID, true)
 	}
 	if d.reasoner == nil {
-		d.degrade(sess, task, cp.Transcript, "no reasoner available to resume run")
+		d.degrade(sess, task, cp.Transcript, noReasonerAvailable)
 		return
 	}
 	d.record(sess.SessionID, "ModelRequested", task.TaskID, "go",
@@ -1575,8 +1575,10 @@ func parseAction(raw string) (action, error) {
 	return a, nil
 }
 
-// runMockTask is the offline fallback: read the workspace, ask the mock
-// model, record the trace. Keeps the runtime functional without a reasoner.
+const noReasonerAvailable = "no available model provider; configure an enabled provider credential or an explicit local endpoint"
+
+// runMockTask directly exercises the mock provider for focused tests. Normal
+// task execution never uses it when provider availability checks fail.
 func (d *Daemon) runMockTask(sess *sessionstore.Session, task *scheduler.Task) {
 	d.runMockTaskContext(d.contextForTask(task.TaskID), sess, task)
 }

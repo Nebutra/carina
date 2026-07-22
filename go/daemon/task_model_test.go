@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"strings"
 	"sync"
 	"testing"
 
@@ -62,6 +63,22 @@ func TestTaskSubmitValidatesProviderModelAndPersistsModelState(t *testing.T) {
 	reloaded, ok := d.sched.Get(task.TaskID)
 	if !ok || reloaded.RequestedModel != "openai/gpt-5" || reloaded.EffectiveModel != expected.EffectiveModel || reloaded.Mode != "background" {
 		t.Fatalf("durable model state changed: %+v ok=%v", reloaded, ok)
+	}
+}
+
+func TestTaskSubmitRejectsDisabledProvider(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	d.disabledProviders = disabledProviderSet([]string{"OPENAI"})
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+
+	if _, err := d.handleTaskSubmit(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID,
+		"prompt":     "do not route this",
+		"model":      "openai/gpt-5",
+	})); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("disabled provider submission error = %v", err)
 	}
 }
 

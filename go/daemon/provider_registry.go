@@ -86,9 +86,23 @@ func loadRuntimeProviderCatalog(offline bool) provider.Catalog {
 	return cat
 }
 
-func registerProviders(router *modelrouter.Router, offline bool, store *auth.Store, cat provider.Catalog) {
+func disabledProviderSet(ids []string) map[string]bool {
+	disabled := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if normalized := normalizeProviderID(id); normalized != "" {
+			disabled[normalized] = true
+		}
+	}
+	return disabled
+}
+
+func registerProviders(router *modelrouter.Router, offline bool, disabledProviders []string, store *auth.Store, cat provider.Catalog) {
 	if !offline {
+		disabled := disabledProviderSet(disabledProviders)
 		for _, info := range orderedRuntimeProviders(cat) {
+			if disabled[normalizeProviderID(info.ID)] {
+				continue
+			}
 			if p := buildRuntimeProvider(info, store); p != nil {
 				router.RegisterProvider(p)
 			}
@@ -97,8 +111,12 @@ func registerProviders(router *modelrouter.Router, offline bool, store *auth.Sto
 	router.RegisterProvider(modelrouter.NewMockProvider())
 }
 
-func hasRunnableRuntimeProvider(cat provider.Catalog, store *auth.Store) bool {
+func hasRunnableRuntimeProvider(cat provider.Catalog, disabledProviders []string, store *auth.Store) bool {
+	disabled := disabledProviderSet(disabledProviders)
 	for _, info := range orderedRuntimeProviders(cat) {
+		if disabled[normalizeProviderID(info.ID)] {
+			continue
+		}
 		if detectRuntimeProtocol(info) == protocolUnsupported {
 			continue
 		}
@@ -107,7 +125,9 @@ func hasRunnableRuntimeProvider(cat provider.Catalog, store *auth.Store) bool {
 			continue
 		}
 		if isLocalEndpoint(baseURL) {
-			return true
+			if _, explicitlyConfigured := runtimeBaseURLOverride(info); explicitlyConfigured {
+				return true
+			}
 		}
 		chain := auth.ProviderChain(normalizeProviderID(info.ID), info.Env, store, nil)
 		if cred, ok := chain.Resolve(); ok && strings.TrimSpace(cred.Value) != "" {
@@ -315,11 +335,46 @@ func detectRuntimeProtocol(info provider.Info) runtimeProtocol {
 }
 
 func runtimeBaseURL(info provider.Info) (string, bool) {
+	if value, ok := runtimeBaseURLOverride(info); ok {
+		return value, true
+	}
 	if strings.TrimSpace(info.API) != "" {
 		return expandEnvStrict(info.API)
 	}
 	base, ok := defaultProviderBaseURL[normalizeProviderID(info.ID)]
 	return base, ok
+}
+
+func runtimeBaseURLOverride(info provider.Info) (string, bool) {
+	for _, key := range providerBaseURLEnvCandidates(info) {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return expandEnvStrict(value)
+		}
+	}
+	return "", false
+}
+
+func providerBaseURLEnvCandidates(info provider.Info) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(key string) {
+		key = strings.TrimSpace(key)
+		if key != "" && !seen[key] {
+			out = append(out, key)
+			seen[key] = true
+		}
+	}
+	add(strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(info.ID)) + "_BASE_URL")
+	for _, env := range info.Env {
+		env = strings.TrimSpace(env)
+		switch {
+		case strings.HasSuffix(env, "_API_KEY"):
+			add(strings.TrimSuffix(env, "_API_KEY") + "_BASE_URL")
+		case strings.HasSuffix(env, "_KEY"):
+			add(strings.TrimSuffix(env, "_KEY") + "_BASE_URL")
+		}
+	}
+	return out
 }
 
 func runtimeDefaultModel(info provider.Info) string {

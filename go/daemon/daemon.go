@@ -49,12 +49,13 @@ const Version = product.Version
 
 // Options configures external binaries and storage.
 type Options struct {
-	StateDir  string // session metadata, event logs, snapshots
-	KernelBin string // carina-kernel-service path ("" = auto-discover)
-	ToolsDir  string // zig tools directory ("" = auto-discover)
-	PolicyDir string // enterprise org-policy directory ("" = none)
-	Offline   bool   // disable network model providers (PRD §5: offline mode)
-	SafeMode  bool   // disable user/project extensions while retaining built-ins and policy
+	StateDir          string   // session metadata, event logs, snapshots
+	KernelBin         string   // carina-kernel-service path ("" = auto-discover)
+	ToolsDir          string   // zig tools directory ("" = auto-discover)
+	PolicyDir         string   // enterprise org-policy directory ("" = none)
+	Offline           bool     // disable network model providers (PRD §5: offline mode)
+	DisabledProviders []string // provider IDs excluded from completion, embeddings, rerank, and auto-selection
+	SafeMode          bool     // disable user/project extensions while retaining built-ins and policy
 
 	MaxConcurrentTasks int // cap on concurrent background runs (0 => default 8)
 
@@ -279,6 +280,7 @@ type Daemon struct {
 	authChain                *auth.Chain      // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
 	authStore                *auth.Store      // local BYOK credential store (doctor's per-provider probe)
 	providerCatalog          provider.Catalog // runtime provider catalog (doctor's per-provider probe)
+	disabledProviders        map[string]bool  // normalized provider IDs blocked before registration and task routing
 	usage                    *usageStore      // durable per-task/session model usage and cost accounting
 	goals                    *goalStore       // one durable operator-controlled goal per session
 	history                  *history.History // shared cross-process prompt history
@@ -314,6 +316,10 @@ const artifactGCInterval = 30 * time.Minute
 func New(opts Options) (*Daemon, error) {
 	if opts.StateDir == "" {
 		opts.StateDir = ".carina-state"
+	}
+	configuredReasonerBackend, err := normalizeReasonerBackend(os.Getenv("CARINA_REASONER_BACKEND"))
+	if err != nil {
+		return nil, fmt.Errorf("daemon: %w", err)
 	}
 	runtimeLease, err := acquireRuntimeLease(opts.StateDir)
 	if err != nil {
@@ -548,15 +554,16 @@ func New(opts Options) (*Daemon, error) {
 	providerCatalog := loadRuntimeProviderCatalog(opts.Offline)
 	d.authStore = authStore
 	d.providerCatalog = providerCatalog
+	d.disabledProviders = disabledProviderSet(opts.DisabledProviders)
 	d.usage = newUsageStore(opts.StateDir)
 	d.goals = newGoalStore(opts.StateDir)
-	registerProviders(d.router, opts.Offline, authStore, providerCatalog)
+	registerProviders(d.router, opts.Offline, opts.DisabledProviders, authStore, providerCatalog)
 	// Embeddings (V2 semantic layer): BYOK only, credential-gated at
 	// registration so no provider means the layer is silently off.
-	d.embedModelDefault = registerEmbeddingsProviders(d.router, opts.Offline, authStore)
+	d.embedModelDefault = registerEmbeddingsProviders(d.router, opts.Offline, opts.DisabledProviders, authStore)
 	// Rerank (V4 §C): same BYOK credential gate; no registered provider means
 	// the rerank stage stays off and code.search keeps the kernel order.
-	registerRerankProviders(d.router, opts.Offline, authStore)
+	registerRerankProviders(d.router, opts.Offline, opts.DisabledProviders, authStore)
 	// Durable run registry + concurrency cap for background runs. Reloading the
 	// registry lets `task.list`/`task.status` answer for runs from before a
 	// restart (the run record survives even though the live loop does not yet).
@@ -676,22 +683,24 @@ func New(opts Options) (*Daemon, error) {
 			d.egressCAPath = caPath
 		}
 	}
-	// Best-effort: wire a reasoner if available and not offline. An explicit
-	// CARINA_REASONER_MODEL (for example "openai/gpt-5") selects the
-	// model-router reasoner; otherwise Claude CLI remains the preferred local
-	// reasoner, with BYOK provider adapters as the fallback.
+	// Provider-first selection mirrors the model registry contract: only a
+	// configured/runnable provider becomes the implicit backend. Claude CLI is
+	// retained as an explicit compatibility adapter for gateways that require
+	// the Claude Code client, never as a binary-presence default.
 	if !opts.Offline {
-		if model := strings.TrimSpace(os.Getenv("CARINA_REASONER_MODEL")); model != "" {
-			d.reasoner = newRouterReasoner(d.router, model)
-		} else if r, err := newClaudeCLIReasoner(); err == nil {
-			d.reasoner = r
-		} else if hasRunnableRuntimeProvider(providerCatalog, authStore) {
-			d.reasoner = newRouterReasoner(d.router, "default")
+		model := strings.TrimSpace(os.Getenv("CARINA_REASONER_MODEL"))
+		selectedBackend := selectReasonerBackend(false, configuredReasonerBackend, model, hasRunnableRuntimeProvider(providerCatalog, opts.DisabledProviders, authStore))
+		d.reasoner, err = newConfiguredReasoner(selectedBackend, d.router, model)
+		if err != nil {
+			_ = kern.Close()
+			return nil, fmt.Errorf("daemon: configure %s reasoner: %w", selectedBackend, err)
 		}
 		// Model tiering: an optional cheaper model for compaction/summarization.
-		if m := os.Getenv("CARINA_SUMMARIZER_MODEL"); m != "" {
-			if r, err := newClaudeCLIReasonerModel(m); err == nil {
-				d.summarizer = r
+		if m := os.Getenv("CARINA_SUMMARIZER_MODEL"); m != "" && selectedBackend != reasonerBackendNone {
+			d.summarizer, err = newConfiguredReasoner(selectedBackend, d.router, m)
+			if err != nil {
+				_ = kern.Close()
+				return nil, fmt.Errorf("daemon: configure summarizer reasoner: %w", err)
 			}
 		}
 		// Independent done-verifier: a separate model that judges completion.
@@ -699,9 +708,11 @@ func New(opts Options) (*Daemon, error) {
 		if vm == "" {
 			vm = os.Getenv("CARINA_VERIFIER_MODEL")
 		}
-		if vm != "" {
-			if r, err := newClaudeCLIReasonerModel(vm); err == nil {
-				d.verifier = r
+		if vm != "" && selectedBackend != reasonerBackendNone {
+			d.verifier, err = newConfiguredReasoner(selectedBackend, d.router, vm)
+			if err != nil {
+				_ = kern.Close()
+				return nil, fmt.Errorf("daemon: configure verifier reasoner: %w", err)
 			}
 		}
 		// Nebutra Risk Review: optional model-backed reviewer for autonomous
@@ -711,9 +722,11 @@ func New(opts Options) (*Daemon, error) {
 		if rm == "" {
 			rm = os.Getenv("CARINA_RISK_REVIEW_MODEL")
 		}
-		if rm != "" {
-			if r, err := newClaudeCLIReasonerModel(rm); err == nil {
-				d.riskReviewer = r
+		if rm != "" && selectedBackend != reasonerBackendNone {
+			d.riskReviewer, err = newConfiguredReasoner(selectedBackend, d.router, rm)
+			if err != nil {
+				_ = kern.Close()
+				return nil, fmt.Errorf("daemon: configure risk-review reasoner: %w", err)
 			}
 		}
 	}
@@ -1271,7 +1284,7 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 		return map[string]any{"ok": true}
 	}
 
-	byokStatuses := byokProbe(byokProviderList(d.providerCatalog), func(providerID string) bool {
+	byokStatuses := byokProbe(byokProviderList(d.providerCatalog, d.disabledProviders), func(providerID string) bool {
 		if d.authStore == nil {
 			return false
 		}
@@ -2616,6 +2629,9 @@ func (d *Daemon) validateTaskModel(model string) error {
 		providerID = normalizeProviderID(providerID)
 		if providerID == "" || d.providerCatalog[providerID].ID == "" {
 			return fmt.Errorf("unknown model provider %q", providerID)
+		}
+		if d.disabledProviders[providerID] {
+			return fmt.Errorf("model provider %q is disabled", providerID)
 		}
 	}
 	return nil

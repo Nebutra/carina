@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -163,10 +165,11 @@ func applyNativeReasoningEffort(providerID, model, effort string, body map[strin
 }
 
 type providerStatusError struct {
-	provider  string
-	status    int
-	retry     time.Duration
-	requestID string
+	provider            string
+	status              int
+	retry               time.Duration
+	requestID           string
+	endpointUnsupported bool
 }
 
 func (e providerStatusError) Error() string {
@@ -211,7 +214,34 @@ func statusError(provider string, resp *http.Response) error {
 	if len(requestID) > 128 {
 		requestID = requestID[:128]
 	}
-	return providerStatusError{provider: provider, status: resp.StatusCode, retry: retryAfter(resp.Header, time.Now()), requestID: requestID}
+	return providerStatusError{
+		provider: provider, status: resp.StatusCode, retry: retryAfter(resp.Header, time.Now()),
+		requestID: requestID, endpointUnsupported: responseEndpointUnsupported(resp.StatusCode, resp.Body),
+	}
+}
+
+func responseEndpointUnsupported(status int, body io.Reader) bool {
+	if status == http.StatusMethodNotAllowed || status == http.StatusNotImplemented {
+		return true
+	}
+	if status != http.StatusNotFound || body == nil {
+		return false
+	}
+	raw, err := io.ReadAll(io.LimitReader(body, 64<<10))
+	if err != nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(string(raw)))
+	if message == "" || strings.Contains(message, "model_not_found") ||
+		(strings.Contains(message, "model") && (strings.Contains(message, "not found") || strings.Contains(message, "not supported"))) {
+		return false
+	}
+	for _, marker := range []string{"endpoint not found", "route not found", "no route", "page not found", "cannot post"} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func retryAfter(h http.Header, now time.Time) time.Duration {
@@ -239,10 +269,26 @@ type openAIProvider struct {
 func (o *openAIProvider) Name() string { return o.name() }
 
 func (o *openAIProvider) Complete(ctx context.Context, req modelrouter.Request) (*modelrouter.Response, error) {
-	if o.responses {
-		return o.completeResponses(ctx, req)
+	if !o.responses {
+		return o.completeChat(ctx, req)
 	}
-	return o.completeChat(ctx, req)
+	resp, err := o.completeResponses(ctx, req)
+	if err == nil || !responsesEndpointUnsupported(err) {
+		return resp, err
+	}
+	resp, chatErr := o.completeChat(ctx, req)
+	if chatErr != nil {
+		return nil, fmt.Errorf("openai-compatible chat fallback: %w", chatErr)
+	}
+	return resp, nil
+}
+
+func responsesEndpointUnsupported(err error) bool {
+	var statusErr providerStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	return statusErr.endpointUnsupported
 }
 
 func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Request) (*modelrouter.Response, error) {

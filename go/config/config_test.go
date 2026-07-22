@@ -35,6 +35,23 @@ func writeConfig(t *testing.T, dir, body string) {
 	}
 }
 
+func TestDisabledProvidersCascade(t *testing.T) {
+	scrubCarinaEnv(t)
+	home := t.TempDir()
+	project := t.TempDir()
+	writeConfig(t, home, `{"disabled_providers":["anthropic"]}`)
+	writeConfig(t, project, `{"disabled_providers":["openrouter"]}`)
+	t.Setenv("CARINA_DISABLED_PROVIDERS", " openai, xai ")
+
+	cfg, err := Load(home, project)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.DisabledProviders, []string{"openai", "xai"}) {
+		t.Fatalf("disabled_providers = %#v", cfg.DisabledProviders)
+	}
+}
+
 // TestCascadePrecedence: env > project > global > default, and absent keys fall
 // through to the prior layer.
 func TestCascadePrecedence(t *testing.T) {

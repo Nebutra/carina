@@ -16,7 +16,8 @@ import (
 
 // doctorDisabledEnv is the exact env var name for the kill-switch, following
 // the CARINA_<NOUN>_<VERB> naming convention already used by
-// CARINA_INDEX_SWEEP, CARINA_PROVIDER_REFRESH, CARINA_REASONER_MODEL.
+// CARINA_INDEX_SWEEP, CARINA_PROVIDER_REFRESH, CARINA_REASONER_BACKEND,
+// CARINA_REASONER_MODEL.
 const doctorDisabledEnv = "CARINA_DOCTOR_DISABLE"
 
 // doctorDisabled reports whether the CARINA_DOCTOR_DISABLE kill-switch is
@@ -88,7 +89,7 @@ func anyProviderResolved(statuses []providerKeyStatus) bool {
 
 // byokProviderList narrows a provider.Catalog to the {ID, Env} shape
 // byokProbe needs, sorted by ID for deterministic doctor output.
-func byokProviderList(cat provider.Catalog) []struct {
+func byokProviderList(cat provider.Catalog, disabledProviders map[string]bool) []struct {
 	ID  string
 	Env []string
 } {
@@ -97,10 +98,14 @@ func byokProviderList(cat provider.Catalog) []struct {
 		Env []string
 	}, 0, len(cat))
 	for _, info := range provider.Sorted(cat) {
+		id := normalizeProviderID(info.ID)
+		if id == "" || disabledProviders[id] || detectRuntimeProtocol(info) == protocolUnsupported {
+			continue
+		}
 		out = append(out, struct {
 			ID  string
 			Env []string
-		}{ID: info.ID, Env: info.Env})
+		}{ID: id, Env: info.Env})
 	}
 	return out
 }

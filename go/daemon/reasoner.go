@@ -90,6 +90,41 @@ type retryObserverKey struct{}
 
 type reasoningEffortContextKey struct{}
 
+const (
+	reasonerBackendAuto      = "auto"
+	reasonerBackendRouter    = "model-router"
+	reasonerBackendClaudeCLI = "claude-cli"
+	reasonerBackendNone      = ""
+)
+
+func normalizeReasonerBackend(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", reasonerBackendAuto:
+		return reasonerBackendAuto, nil
+	case "router", reasonerBackendRouter:
+		return reasonerBackendRouter, nil
+	case "claude", reasonerBackendClaudeCLI:
+		return reasonerBackendClaudeCLI, nil
+	default:
+		return "", fmt.Errorf("unsupported CARINA_REASONER_BACKEND %q (want auto, model-router, or claude-cli)", value)
+	}
+}
+
+func selectReasonerBackend(offline bool, configuredBackend, _ string, hasRunnableProvider bool) string {
+	if offline {
+		return reasonerBackendNone
+	}
+	switch configuredBackend {
+	case reasonerBackendRouter, reasonerBackendClaudeCLI:
+		return configuredBackend
+	case reasonerBackendAuto:
+		if hasRunnableProvider {
+			return reasonerBackendRouter
+		}
+	}
+	return reasonerBackendNone
+}
+
 func withReasoningEffort(ctx context.Context, effort string) context.Context {
 	return context.WithValue(ctx, reasoningEffortContextKey{}, normalizeReasoningEffort(effort))
 }
@@ -404,6 +439,88 @@ type claudeCLIReasoner struct {
 	timeout time.Duration
 }
 
+type claudeCLIResponse struct {
+	Result         string `json:"result"`
+	IsError        bool   `json:"is_error"`
+	Subtype        string `json:"subtype"`
+	Model          string `json:"model"`
+	APIErrorStatus *int   `json:"api_error_status"`
+	Usage          struct {
+		InputTokens         int `json:"input_tokens"`
+		OutputTokens        int `json:"output_tokens"`
+		CacheCreationTokens int `json:"cache_creation_input_tokens"`
+		CacheReadTokens     int `json:"cache_read_input_tokens"`
+	} `json:"usage"`
+}
+
+type claudeCLIError struct {
+	message string
+	subtype string
+	status  int
+}
+
+func (e claudeCLIError) Error() string {
+	if message := boundedMetadata(e.message, 500); message != "" {
+		return "claude reasoner: " + message
+	}
+	if subtype := boundedMetadata(e.subtype, 500); subtype != "" && subtype != "success" {
+		return "claude reasoner: " + subtype
+	}
+	return "claude reasoner failed"
+}
+
+func (e claudeCLIError) ProviderError() providerErrorInfo {
+	if e.status > 0 {
+		return providerStatusError{provider: "anthropic", status: e.status}.ProviderError()
+	}
+	message := strings.ToLower(e.message + " " + e.subtype)
+	switch {
+	case strings.Contains(message, "not logged in"),
+		strings.Contains(message, "please run /login"),
+		strings.Contains(message, "authentication"),
+		strings.Contains(message, "unauthorized"),
+		strings.Contains(message, "invalid api key"):
+		return providerErrorInfo{
+			Code:       "provider_authentication_failed",
+			Category:   "authentication",
+			Provider:   "anthropic",
+			UserAction: "run `claude auth login` or configure the Claude CLI credential",
+		}
+	case strings.Contains(message, "rate limit"):
+		return providerErrorInfo{
+			Code:       "provider_rate_limited",
+			Category:   "rate_limit",
+			Provider:   "anthropic",
+			Retryable:  true,
+			UserAction: "wait or choose another provider",
+		}
+	case strings.Contains(message, "quota"),
+		strings.Contains(message, "credit balance"),
+		strings.Contains(message, "billing"):
+		return providerErrorInfo{
+			Code:       "provider_quota_exhausted",
+			Category:   "rate_limit",
+			Provider:   "anthropic",
+			UserAction: "increase quota or choose another provider",
+		}
+	case strings.Contains(message, "overloaded"),
+		strings.Contains(message, "temporarily unavailable"):
+		return providerErrorInfo{
+			Code:      "provider_unavailable",
+			Category:  "unavailable",
+			Provider:  "anthropic",
+			Retryable: true,
+		}
+	default:
+		return providerErrorInfo{
+			Code:       "reasoner_internal_error",
+			Category:   "internal",
+			Provider:   "anthropic",
+			UserAction: "run `claude auth status` and inspect the Claude CLI configuration",
+		}
+	}
+}
+
 func newClaudeCLIReasoner() (*claudeCLIReasoner, error) {
 	bin, err := exec.LookPath("claude")
 	if err != nil {
@@ -430,6 +547,20 @@ func newClaudeCLIReasonerModel(model string) (*claudeCLIReasoner, error) {
 	}
 	r.model = model
 	return r, nil
+}
+
+func newConfiguredReasoner(backend string, router *modelrouter.Router, model string) (Reasoner, error) {
+	switch backend {
+	case reasonerBackendRouter:
+		return newRouterReasoner(router, nonempty(strings.TrimSpace(model), "default")), nil
+	case reasonerBackendClaudeCLI:
+		if strings.TrimSpace(model) != "" {
+			return newClaudeCLIReasonerModel(strings.TrimSpace(model))
+		}
+		return newClaudeCLIReasoner()
+	default:
+		return nil, nil
+	}
 }
 
 func (r *claudeCLIReasoner) Name() string { return "claude-cli" }
@@ -459,31 +590,50 @@ func (r *claudeCLIReasoner) ThinkResult(ctx context.Context, prompt string) (Rea
 	// Inherit the environment (ANTHROPIC_BASE_URL / AUTH_TOKEN from CC Switch).
 	cmd.Env = os.Environ()
 
-	out, err := cmd.Output()
-	if err != nil {
-		return ReasonerResult{}, fmt.Errorf("claude reasoner: %w", err)
+	out, runErr := cmd.Output()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ReasonerResult{}, ctxErr
 	}
-	var resp struct {
-		Result  string `json:"result"`
-		IsError bool   `json:"is_error"`
-		Subtype string `json:"subtype"`
-		Model   string `json:"model"`
-		Usage   struct {
-			InputTokens         int `json:"input_tokens"`
-			OutputTokens        int `json:"output_tokens"`
-			CacheCreationTokens int `json:"cache_creation_input_tokens"`
-			CacheReadTokens     int `json:"cache_read_input_tokens"`
-		} `json:"usage"`
+	var stderr []byte
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		stderr = exitErr.Stderr
 	}
+	return decodeClaudeCLIOutput(out, stderr, runErr, r.model)
+}
+
+func decodeClaudeCLIOutput(out, stderr []byte, runErr error, fallbackModel string) (ReasonerResult, error) {
+	var resp claudeCLIResponse
 	if err := json.Unmarshal(out, &resp); err != nil {
+		if runErr != nil {
+			message := boundedMetadata(string(stderr), 500)
+			if message == "" {
+				message = boundedMetadata(string(out), 500)
+			}
+			if message == "" {
+				message = runErr.Error()
+			}
+			return ReasonerResult{}, claudeCLIError{message: message}
+		}
 		return ReasonerResult{}, fmt.Errorf("claude reasoner: decode: %w (%s)", err, truncate(string(out), 200))
 	}
-	if resp.IsError {
-		return ReasonerResult{}, fmt.Errorf("claude reasoner error: %s", resp.Subtype)
+	if resp.IsError || runErr != nil {
+		message := resp.Result
+		if strings.TrimSpace(message) == "" {
+			message = string(stderr)
+		}
+		if strings.TrimSpace(message) == "" && runErr != nil {
+			message = runErr.Error()
+		}
+		status := 0
+		if resp.APIErrorStatus != nil {
+			status = *resp.APIErrorStatus
+		}
+		return ReasonerResult{}, claudeCLIError{message: message, subtype: resp.Subtype, status: status}
 	}
 	model := resp.Model
 	if model == "" {
-		model = r.model
+		model = fallbackModel
 	}
 	return ReasonerResult{Text: strings.TrimSpace(resp.Result), Usage: ModelUsage{
 		Provider: "anthropic", Model: model, InputTokens: resp.Usage.InputTokens,
@@ -491,7 +641,6 @@ func (r *claudeCLIReasoner) ThinkResult(ctx context.Context, prompt string) (Rea
 		CacheWriteTokens: resp.Usage.CacheCreationTokens,
 	}}, nil
 }
-
 func (r *claudeCLIReasoner) Close() {
 	_ = os.RemoveAll(r.workdir)
 }

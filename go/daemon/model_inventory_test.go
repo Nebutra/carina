@@ -3,10 +3,13 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Nebutra/carina/go/auth"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
+	"github.com/Nebutra/carina/go/provider"
 )
 
 type inventoryProvider string
@@ -46,5 +49,44 @@ func TestModelListReportsAvailabilityWithoutSecrets(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("openai missing from inventory: %+v", providers)
+	}
+}
+
+func TestModelListRequiresExplicitKeylessLocalEndpoint(t *testing.T) {
+	t.Setenv("LMSTUDIO_BASE_URL", "")
+	store, err := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &Daemon{
+		router:    modelrouter.New(),
+		authStore: store,
+		providerCatalog: provider.Catalog{
+			"lmstudio": {
+				ID: "lmstudio", API: "http://127.0.0.1:1234/v1", NPM: "@ai-sdk/openai-compatible",
+			},
+		},
+	}
+	d.router.RegisterProvider(inventoryProvider("lmstudio"))
+
+	availability := func() bool {
+		result, err := d.handleModelList(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range result.(map[string]any)["providers"].([]modelInventoryProvider) {
+			if row.ID == "lmstudio" {
+				return row.Available
+			}
+		}
+		t.Fatal("lmstudio missing from inventory")
+		return false
+	}
+	if availability() {
+		t.Fatal("catalog-default localhost endpoint must not be reported available")
+	}
+	t.Setenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1")
+	if !availability() {
+		t.Fatal("explicit keyless localhost endpoint should be reported available")
 	}
 }

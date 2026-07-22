@@ -118,6 +118,7 @@ func main() {
 		ToolsDir:                   *toolsDir,
 		PolicyDir:                  *policyDir,
 		Offline:                    *offline,
+		DisabledProviders:          cfg.DisabledProviders,
 		SafeMode:                   *safeMode,
 		MaxConcurrentTasks:         *maxConcurrent,
 		MaxTaskTokens:              *maxTokens,

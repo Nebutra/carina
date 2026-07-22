@@ -775,23 +775,28 @@ func TestRerankRegistrationRequiresCredential(t *testing.T) {
 	t.Setenv("VOYAGE_API_KEY", "")
 	t.Setenv("COHERE_API_KEY", "")
 	bare := modelrouter.New()
-	registerRerankProviders(bare, false, store)
+	registerRerankProviders(bare, false, nil, store)
 	if bare.HasRerankProvider() {
 		t.Fatal("without credentials no rerank provider may register")
 	}
 
 	t.Setenv("VOYAGE_API_KEY", "sk-rr-test")
 	keyed := modelrouter.New()
-	registerRerankProviders(keyed, false, store)
+	registerRerankProviders(keyed, false, nil, store)
 	if !keyed.HasRerankProviderNamed("voyage") {
 		t.Fatal("a resolvable VOYAGE_API_KEY must register the voyage rerank provider")
 	}
 	if keyed.HasRerankProviderNamed("cohere") {
 		t.Fatal("cohere must not register without its key")
 	}
+	disabled := modelrouter.New()
+	registerRerankProviders(disabled, false, []string{"Voyage"}, store)
+	if disabled.HasRerankProviderNamed("voyage") {
+		t.Fatal("disabled voyage rerank provider must not register")
+	}
 
 	offline := modelrouter.New()
-	registerRerankProviders(offline, true, store)
+	registerRerankProviders(offline, true, nil, store)
 	if offline.HasRerankProvider() {
 		t.Fatal("offline mode must not register rerank providers")
 	}

@@ -50,6 +50,7 @@ type Config struct {
 	ToolsDir                   string              `json:"tools_dir"`
 	PolicyDir                  string              `json:"policy_dir"`
 	Offline                    bool                `json:"offline"`
+	DisabledProviders          []string            `json:"disabled_providers"`
 	MaxConcurrentTasks         int                 `json:"max_concurrent_tasks"`
 	RequireWorkspaceTrust      bool                `json:"require_workspace_trust"`
 	MaxTaskTokens              int                 `json:"max_task_tokens"`
@@ -194,6 +195,7 @@ func mergeEnv(cfg *Config) {
 	envStr("CARINA_KERNEL_BIN", &cfg.KernelBin)
 	envStr("CARINA_TOOLS_DIR", &cfg.ToolsDir)
 	envStr("CARINA_POLICY_DIR", &cfg.PolicyDir)
+	envList("CARINA_DISABLED_PROVIDERS", &cfg.DisabledProviders)
 	envStr("CARINA_SUMMARIZER_MODEL", &cfg.SummarizerModel)
 	envStr("CARINA_RISK_REVIEW_MODE", &cfg.RiskReviewMode)
 	envStr("CARINA_RISK_REVIEW_MODEL", &cfg.RiskReviewModel)

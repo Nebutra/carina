@@ -74,7 +74,7 @@ func TestEmbeddingsRegistrationRequiresCredential(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("VOYAGE_API_KEY", "")
 	bare := modelrouter.New()
-	registerEmbeddingsProviders(bare, false, store)
+	registerEmbeddingsProviders(bare, false, nil, store)
 	if bare.HasEmbeddingsProvider() {
 		t.Fatal("without credentials no embeddings provider may register")
 	}
@@ -82,14 +82,19 @@ func TestEmbeddingsRegistrationRequiresCredential(t *testing.T) {
 	// A resolvable BYOK key registers its provider.
 	t.Setenv("OPENAI_API_KEY", "sk-embed-test")
 	keyed := modelrouter.New()
-	registerEmbeddingsProviders(keyed, false, store)
+	registerEmbeddingsProviders(keyed, false, nil, store)
 	if !keyed.HasEmbeddingsProvider() {
 		t.Fatal("a resolvable OPENAI_API_KEY must register the openai embeddings provider")
+	}
+	disabled := modelrouter.New()
+	registerEmbeddingsProviders(disabled, false, []string{"OPENAI"}, store)
+	if disabled.HasEmbeddingsProviderNamed("openai") {
+		t.Fatal("disabled openai embeddings provider must not register")
 	}
 
 	// Offline mode registers nothing even with a key.
 	offline := modelrouter.New()
-	registerEmbeddingsProviders(offline, true, store)
+	registerEmbeddingsProviders(offline, true, nil, store)
 	if offline.HasEmbeddingsProvider() {
 		t.Fatal("offline mode must not register embeddings providers")
 	}

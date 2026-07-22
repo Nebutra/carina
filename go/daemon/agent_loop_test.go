@@ -116,6 +116,36 @@ func TestAgentLoopExecutesThroughKernel(t *testing.T) {
 	}
 }
 
+func TestAgentLoopWithoutReasonerFailsClosed(t *testing.T) {
+	repoRoot := repoRootFromHere(t)
+	kernelBin := firstExistingPath(
+		os.Getenv("CARINA_KERNEL_BIN"),
+		filepath.Join(repoRoot, "target/release/carina-kernel-service"),
+		filepath.Join(repoRoot, "target/debug/carina-kernel-service"),
+	)
+	if kernelBin == "" {
+		t.Skip("carina-kernel-service not built")
+	}
+	d, err := New(Options{
+		StateDir: t.TempDir(), KernelBin: kernelBin,
+		ToolsDir: filepath.Join(repoRoot, "zig/zig-out/bin"), Offline: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ws := t.TempDir()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "do real model work")
+
+	d.runTask(sess, task)
+	got, _ := d.sched.Get(task.TaskID)
+	if got.Status != "degraded" || !contains(got.Summary, "no available model provider") {
+		t.Fatalf("task = %+v", got)
+	}
+}
+
 // TestAgentLoopBlocksDestructive proves the agent cannot run a destructive
 // command even if the model asks for it.
 func TestAgentLoopBlocksDestructive(t *testing.T) {

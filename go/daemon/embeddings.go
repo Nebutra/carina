@@ -68,12 +68,16 @@ var embeddingsBackends = []embeddingsBackend{
 // registers nothing. CARINA_EMBEDDINGS_MODEL ("provider/model") overrides
 // targeting. Returns the default index model id ("provider/model" of the
 // first registered backend, "" when none).
-func registerEmbeddingsProviders(router *modelrouter.Router, offline bool, store *auth.Store) string {
+func registerEmbeddingsProviders(router *modelrouter.Router, offline bool, disabledProviders []string, store *auth.Store) string {
 	if offline {
 		return ""
 	}
+	disabled := disabledProviderSet(disabledProviders)
 	defaultID := ""
 	for _, b := range embeddingsBackends {
+		if disabled[normalizeProviderID(b.id)] {
+			continue
+		}
 		chain := auth.ProviderChain(b.id, []string{b.envKey}, store, nil)
 		if cred, ok := chain.Resolve(); !ok || strings.TrimSpace(cred.Value) == "" {
 			continue

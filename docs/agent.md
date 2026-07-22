@@ -6,9 +6,9 @@ kernel and executed by the Zig toolchain, and the whole run is a
 tamper-evident audit trail you can replay and roll back.
 
 ```
-Claude (decides)  →  Go agent loop  →  Rust kernel (authorizes)  →  Zig tools (execute)
-     ▲                                                                      │
-     └───────────────────────── observation ◀──────────────────────────────┘
+Configured provider  →  Go agent loop  →  Rust kernel  →  Zig tools
+         ▲                                  (authorizes)    (execute)
+         └────────────── observation ◀─────────────────────────┘
 ```
 
 ## The loop
@@ -62,19 +62,31 @@ step). Three implementations:
 - **scripted** — replays fixed decisions; used by tests to drive the full loop
   deterministically with no model and no cost.
 
-The daemon wires `claude-cli` automatically when the binary is present and the
-daemon is not in `--offline` mode. Set `CARINA_REASONER_MODEL` (e.g.
-`openai/gpt-5`) to switch to the model-router reasoner using BYOK provider
-adapters; leave it unset to keep the claude-cli backend. Optional tiering:
+The daemon is provider-first: it selects `model-router` only when an enabled
+provider has a BYOK credential, provider environment variable, or an explicitly
+configured keyless local endpoint. Setting `CARINA_REASONER_MODEL` pins a model but does not make an
+unavailable provider runnable. Disable inherited providers with
+`disabled_providers` in `~/.carina/config.json` or the comma-separated
+`CARINA_DISABLED_PROVIDERS`; the gate applies to completion, embeddings,
+rerank, and automatic reasoner selection after daemon restart. Claude CLI is
+an explicit compatibility backend only; enable it with
+`CARINA_REASONER_BACKEND=claude-cli` for gateways that require the Claude Code
+client. Provider endpoint variables such as `OPENAI_BASE_URL` override catalog
+defaults, which supports OpenAI-compatible gateways without a vendor CLI. The
+OpenAI adapter prefers the Responses API and falls back to Chat Completions
+only when the gateway reports that the Responses endpoint is unsupported.
+Optional tiering uses the selected backend:
 `CARINA_SUMMARIZER_MODEL` (cheaper model for compaction/summarization) and
 `CARINA_VERIFIER_MODEL` (independent done-verifier).
 
 ## Run it
 
 ```bash
-# start the runtime (after `make install`; reasoner auto-wired if `claude` is
-# on PATH). The daemon discovers the kernel service and native tools next to
-# its own binary; use -tools/-kernel only to point at other build outputs.
+# start the runtime (after `make install`; model-router is auto-wired when a
+# provider credential or explicitly configured keyless local endpoint is
+# available). The daemon
+# discovers the kernel service and native tools next to its own binary; use
+# -tools/-kernel only to point at other build outputs.
 carina-daemon &
 
 cd your-repo
@@ -90,6 +102,6 @@ carina patch rollback <id>    # undo an edit
 - `TestAgentLoopExecutesThroughKernel` — scripted list→read→patch→run→done
   actually edits a file through the kernel; audit chain verifies.
 - `TestAgentLoopBlocksDestructive` — the agent cannot `rm -rf` even when asked.
-- Live: Claude over the Mox gateway autonomously fixed a Python function
-  (`list → read → patch → verify → done`), every effect kernel-authorized, the
-  18-event chain verified, and the edit rolled back cleanly.
+- Provider registration tests prove disabled providers cannot receive
+  completion, embedding, or rerank traffic even when matching credentials are
+  inherited from the environment.

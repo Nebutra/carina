@@ -133,8 +133,8 @@ func TestAnyProviderResolvedFailsWhenNoneResolve(t *testing.T) {
 // --- reasoner is warn-tier, not fail-tier -------------------------------
 
 // TestDoctorReasonerAbsentIsWarnNotFail pins the plan's explicit tier
-// distinction: no configured reasoner is a valid degraded-but-functional
-// mock-mode state (runMockTask), so handleDoctor must report it without
+// distinction: no configured reasoner is a valid fail-closed runtime state,
+// so handleDoctor must report it without
 // causing the overall probe to read as a hard failure. handleDoctor today
 // reports "reasoner": d.reasoner != nil as a bare bool with no tier
 // wrapper — this test locks in that a fresh daemon (no reasoner configured)

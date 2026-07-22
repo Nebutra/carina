@@ -405,6 +405,42 @@ CARINA_REASONER_MODEL=openai/gpt-5 carina-daemon &
 carina run --model openrouter/anthropic/claude-sonnet-4-5 "inspect this migration"
 ```
 
+The default backend is provider-first `model-router`; merely having `claude`
+on `PATH` does not select Claude CLI. A provider is auto-selected only when it
+is enabled and has a credential or an explicitly configured keyless local
+endpoint; setting a model name alone does not make an unavailable provider
+runnable. OpenAI-compatible
+gateways can override the catalog endpoint without changing the provider
+contract:
+
+```bash
+OPENAI_BASE_URL=https://gateway.example.com/v1 \
+OPENAI_API_KEY="$GATEWAY_TOKEN" \
+CARINA_REASONER_MODEL=openai/gpt-5 carina-daemon &
+```
+
+Carina prefers the OpenAI Responses API for the `openai` provider. If a
+compatible gateway explicitly reports that `/responses` is unsupported (a
+route/endpoint 404, 405, or 501), the adapter retries the request through
+`/chat/completions`. Model-not-found 404 responses do not switch protocols.
+
+Disable providers persistently when inherited environment variables should not
+register them. The same list applies to completion, embeddings, rerank, and
+automatic reasoner selection; changes take effect after restarting the daemon:
+
+```json
+{"disabled_providers":["openai"]}
+```
+
+The environment-layer equivalent is
+`CARINA_DISABLED_PROVIDERS=openai,anthropic`.
+
+Claude CLI remains available only as an explicit compatibility adapter:
+
+```bash
+CARINA_REASONER_BACKEND=claude-cli carina-daemon &
+```
+
 ### Agent Modes And Slash Commands
 
 Discover reusable agents and commands at runtime:

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -146,6 +147,104 @@ func TestOpenAIResponsesProvider(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponsesProviderFallsBackToChatWhenEndpointUnsupported(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/responses":
+			http.NotFound(w, r)
+		case "/v1/chat/completions":
+			w.Header().Set("content-type", "application/json")
+			w.Write([]byte(`{"choices":[{"message":{"content":"chat fallback ok"}}],"usage":{"prompt_tokens":4,"completion_tokens":2}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	store := testAuthStore(t)
+	if err := store.SetAPIKey("openai", "sk-openai", nil); err != nil {
+		t.Fatal(err)
+	}
+	p := &openAIProvider{providerBase: providerBase{
+		id: "openai", baseURL: srv.URL + "/v1", defaultModel: "gpt-5",
+		auth: auth.ProviderChain("openai", nil, store, nil), client: srv.Client(),
+	}, responses: true}
+
+	resp, err := p.Complete(context.Background(), modelrouter.Request{Model: "default", Prompt: "hello"})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if resp.Text != "chat fallback ok" || resp.Model != "gpt-5" {
+		t.Fatalf("bad response: %+v", resp)
+	}
+	if got, want := paths, []string{"/v1/responses", "/v1/chat/completions"}; !slices.Equal(got, want) {
+		t.Fatalf("request paths = %v, want %v", got, want)
+	}
+}
+
+func TestOpenAIResponsesProviderDoesNotFallbackOnAuthenticationFailure(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("unexpected fallback path %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	store := testAuthStore(t)
+	if err := store.SetAPIKey("openai", "bad-key", nil); err != nil {
+		t.Fatal(err)
+	}
+	p := &openAIProvider{providerBase: providerBase{
+		id: "openai", baseURL: srv.URL + "/v1", defaultModel: "gpt-5",
+		auth: auth.ProviderChain("openai", nil, store, nil), client: srv.Client(),
+	}, responses: true}
+
+	_, err := p.Complete(context.Background(), modelrouter.Request{Model: "default", Prompt: "hello"})
+	if err == nil {
+		t.Fatal("expected authentication failure")
+	}
+	var statusErr providerStatusError
+	if !errors.As(err, &statusErr) || statusErr.status != http.StatusUnauthorized {
+		t.Fatalf("error = %v, want provider status 401", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
+func TestOpenAIResponsesProviderDoesNotFallbackOnModelNotFound(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("unexpected fallback path %s", r.URL.Path)
+		}
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":{"message":"Model is not supported by this account","type":"model_not_found"}}`))
+	}))
+	defer srv.Close()
+	store := testAuthStore(t)
+	if err := store.SetAPIKey("openai", "sk-openai", nil); err != nil {
+		t.Fatal(err)
+	}
+	p := &openAIProvider{providerBase: providerBase{
+		id: "openai", baseURL: srv.URL + "/v1", defaultModel: "gpt-5",
+		auth: auth.ProviderChain("openai", nil, store, nil), client: srv.Client(),
+	}, responses: true}
+
+	_, err := p.Complete(context.Background(), modelrouter.Request{Model: "default", Prompt: "hello"})
+	if err == nil {
+		t.Fatal("expected model-not-found failure")
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
 func TestGeminiProvider(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1beta/models/gemini-pro:generateContent" {
@@ -203,7 +302,7 @@ func TestCatalogRegistrationTargetsOpenAICompatibleProvider(t *testing.T) {
 		},
 	}
 	router := modelrouter.New()
-	registerProviders(router, false, store, cat)
+	registerProviders(router, false, nil, store, cat)
 
 	resp, err := router.Complete(context.Background(), modelrouter.Request{Model: "requesty/xai/grok-4", Prompt: "hello"})
 	if err != nil {
@@ -211,6 +310,49 @@ func TestCatalogRegistrationTargetsOpenAICompatibleProvider(t *testing.T) {
 	}
 	if resp.Provider != "requesty" || resp.Model != "xai/grok-4" || resp.Text != "catalog ok" {
 		t.Fatalf("bad response: %+v", resp)
+	}
+}
+
+func TestDisabledProviderIsNotRegisteredOrRunnable(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-disabled")
+	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:65535/v1")
+	store := testAuthStore(t)
+	cat := provider.Catalog{
+		"openai": {
+			ID:     "openai",
+			API:    "https://api.openai.com/v1",
+			Env:    []string{"OPENAI_API_KEY"},
+			Models: map[string]provider.Model{"gpt-5": {ID: "gpt-5"}},
+		},
+	}
+	router := modelrouter.New()
+	registerProviders(router, false, []string{" OpenAI "}, store, cat)
+	for _, name := range router.ProviderNames() {
+		if name == "openai" {
+			t.Fatal("disabled openai provider was registered")
+		}
+	}
+	if hasRunnableRuntimeProvider(cat, []string{"OPENAI"}, store) {
+		t.Fatal("disabled openai provider was considered runnable")
+	}
+}
+
+func TestKeylessLocalProviderRequiresExplicitEndpoint(t *testing.T) {
+	t.Setenv("LMSTUDIO_BASE_URL", "")
+	store := testAuthStore(t)
+	cat := provider.Catalog{
+		"lmstudio": {
+			ID:  "lmstudio",
+			API: "http://127.0.0.1:1234/v1",
+			NPM: "@ai-sdk/openai-compatible",
+		},
+	}
+	if hasRunnableRuntimeProvider(cat, nil, store) {
+		t.Fatal("catalog-default localhost endpoint must not enable the automatic reasoner")
+	}
+	t.Setenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1")
+	if !hasRunnableRuntimeProvider(cat, nil, store) {
+		t.Fatal("explicit keyless localhost endpoint should enable the automatic reasoner")
 	}
 }
 
@@ -267,7 +409,7 @@ func TestCatalogRegistrationAppliesProviderQuirkAndModeOverride(t *testing.T) {
 		},
 	}
 	router := modelrouter.New()
-	registerProviders(router, false, store, cat)
+	registerProviders(router, false, nil, store, cat)
 
 	resp, err := router.Complete(context.Background(), modelrouter.Request{Model: "openrouter/openai/gpt-5-fast", Prompt: "hello"})
 	if err != nil {
@@ -313,6 +455,14 @@ func TestMissingCredentialIsActionableAndNotRetryable(t *testing.T) {
 	info := classifyProviderError(err)
 	if info.Category != "authentication" || info.Retryable || info.UserAction == "" {
 		t.Fatalf("classification=%+v", info)
+	}
+}
+
+func TestRuntimeBaseURLPrefersProviderEnvironmentOverride(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:8080/v1")
+	got, ok := runtimeBaseURL(provider.Info{ID: "openai", API: "https://api.openai.com/v1", Env: []string{"OPENAI_API_KEY"}})
+	if !ok || got != "http://127.0.0.1:8080/v1" {
+		t.Fatalf("runtimeBaseURL = %q, %v", got, ok)
 	}
 }
 

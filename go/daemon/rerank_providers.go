@@ -46,11 +46,15 @@ var rerankBackends = []rerankBackend{
 // registerRerankProviders registers the BYOK rerank backends (voyage +
 // cohere) — only when a credential resolves, never in offline mode (the
 // registerEmbeddingsProviders delta, verbatim).
-func registerRerankProviders(router *modelrouter.Router, offline bool, store *auth.Store) {
+func registerRerankProviders(router *modelrouter.Router, offline bool, disabledProviders []string, store *auth.Store) {
 	if offline {
 		return
 	}
+	disabled := disabledProviderSet(disabledProviders)
 	for _, b := range rerankBackends {
+		if disabled[normalizeProviderID(b.id)] {
+			continue
+		}
 		chain := auth.ProviderChain(b.id, []string{b.envKey}, store, nil)
 		if cred, ok := chain.Resolve(); !ok || strings.TrimSpace(cred.Value) == "" {
 			continue
