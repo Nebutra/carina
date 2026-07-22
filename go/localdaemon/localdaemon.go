@@ -135,6 +135,7 @@ func spawn(socket string) error {
 	cmd.Stdin = devnull
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
+	configureDetachedProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		_ = devnull.Close()
 		_ = logFile.Close()
