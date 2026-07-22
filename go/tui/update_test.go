@@ -68,6 +68,7 @@ func newTestModel(fc *fakeCaller) (*Model, *testClock) {
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	if fc != nil {
 		m.Update(SessionReadyMsg{SessionID: "sess_test", Call: fc})
+		m.conversation.Readiness = readinessReady
 	}
 	return m, clock
 }

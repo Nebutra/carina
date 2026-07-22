@@ -12,6 +12,11 @@ import (
 	"github.com/Nebutra/carina/go/provider"
 )
 
+type modelInventoryTestReasoner struct{ name string }
+
+func (r modelInventoryTestReasoner) Name() string                                { return r.name }
+func (modelInventoryTestReasoner) Think(context.Context, string) (string, error) { return "", nil }
+
 type inventoryProvider string
 
 func (p inventoryProvider) Name() string { return string(p) }
@@ -49,6 +54,52 @@ func TestModelListReportsAvailabilityWithoutSecrets(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("openai missing from inventory: %+v", providers)
+	}
+}
+
+func TestModelListReportsConcreteDefaultAndDaemonOwnedReasoner(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "inventory-key")
+	d, _ := newLoopDaemon(t)
+	defer d.Close()
+	d.router.RegisterProvider(inventoryProvider("openai"))
+	d.reasoner = modelInventoryTestReasoner{name: reasonerBackendRouter}
+	d.reasonerBackend = reasonerBackendRouter
+
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := result.(map[string]any)
+	defaultModel, _ := response["default_model"].(string)
+	if defaultModel == "" || defaultModel == "default" || !strings.HasPrefix(defaultModel, "openai/") {
+		t.Fatalf("default_model = %q, want concrete openai model", defaultModel)
+	}
+	reasoner := response["reasoner"].(modelInventoryReasoner)
+	if reasoner.Backend != reasonerBackendRouter || !reasoner.Available || reasoner.Explicit {
+		t.Fatalf("reasoner = %+v", reasoner)
+	}
+}
+
+func TestModelListReportsOnlyExplicitlyConstructedCLIReasoner(t *testing.T) {
+	d := &Daemon{router: modelrouter.New()}
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reasoner := result.(map[string]any)["reasoner"].(modelInventoryReasoner); reasoner.Available || reasoner.Backend != "" {
+		t.Fatalf("binary presence must not create reasoner inventory: %+v", reasoner)
+	}
+
+	d.reasoner = modelInventoryTestReasoner{name: reasonerBackendCodexCLI}
+	d.reasonerBackend = reasonerBackendCodexCLI
+	d.reasonerExplicit = true
+	result, err = d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasoner := result.(map[string]any)["reasoner"].(modelInventoryReasoner)
+	if reasoner.Backend != reasonerBackendCodexCLI || !reasoner.Available || !reasoner.Explicit {
+		t.Fatalf("explicit CLI reasoner = %+v", reasoner)
 	}
 }
 

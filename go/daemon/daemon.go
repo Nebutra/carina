@@ -154,18 +154,21 @@ type Daemon struct {
 	debugTrace   *debugTrace
 	started      time.Time
 
-	org            *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
-	policyDir      string            // opts.PolicyDir, kept for doctor's policyBundleStale freshness probe
-	stateDir       string
-	socketPath     string
-	cloudEndpoint  string
-	syncMode       string
-	reasoner       Reasoner     // agent "thinking" engine (nil => mock loop)
-	summarizer     Reasoner     // optional cheaper model for compaction/summarization
-	verifier       Reasoner     // optional independent "judge" for done-claims (nil => default-lenient)
-	riskReviewer   Reasoner     // optional independent approval reviewer (nil => deterministic heuristic)
-	judgeReasoner  Reasoner     // optional independent best-of-n judge (nil => falls back to d.reasoner, then a deterministic heuristic)
-	riskReviewMode atomic.Value // string: off|advisory|enforce, hot-reloadable
+	org              *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
+	policyDir        string            // opts.PolicyDir, kept for doctor's policyBundleStale freshness probe
+	stateDir         string
+	socketPath       string
+	cloudEndpoint    string
+	syncMode         string
+	reasoner         Reasoner     // agent "thinking" engine (nil => mock loop)
+	reasonerBackend  string       // selected runtime backend; never inferred from binary presence
+	reasonerModel    string       // configured default model, when the backend exposes one
+	reasonerExplicit bool         // true only when CARINA_REASONER_BACKEND explicitly selected this backend
+	summarizer       Reasoner     // optional cheaper model for compaction/summarization
+	verifier         Reasoner     // optional independent "judge" for done-claims (nil => default-lenient)
+	riskReviewer     Reasoner     // optional independent approval reviewer (nil => deterministic heuristic)
+	judgeReasoner    Reasoner     // optional independent best-of-n judge (nil => falls back to d.reasoner, then a deterministic heuristic)
+	riskReviewMode   atomic.Value // string: off|advisory|enforce, hot-reloadable
 
 	mu                    sync.Mutex
 	pendingCmds           map[string]pendingCommand          // decision_id -> command awaiting approval
@@ -690,6 +693,9 @@ func New(opts Options) (*Daemon, error) {
 	if !opts.Offline {
 		model := strings.TrimSpace(os.Getenv("CARINA_REASONER_MODEL"))
 		selectedBackend := selectReasonerBackend(false, configuredReasonerBackend, model, hasRunnableRuntimeProvider(providerCatalog, opts.DisabledProviders, authStore))
+		d.reasonerBackend = selectedBackend
+		d.reasonerModel = model
+		d.reasonerExplicit = configuredReasonerBackend != reasonerBackendAuto && selectedBackend != reasonerBackendNone
 		d.reasoner, err = newConfiguredReasoner(selectedBackend, d.router, model)
 		if err != nil {
 			closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
@@ -767,7 +773,15 @@ func readGatewayTokenSigningKey(path string) ([]byte, error) {
 }
 
 // SetReasoner overrides the agent reasoning engine (used by tests).
-func (d *Daemon) SetReasoner(r Reasoner) { d.reasoner = r }
+func (d *Daemon) SetReasoner(r Reasoner) {
+	d.reasoner = r
+	d.reasonerBackend = ""
+	d.reasonerModel = ""
+	d.reasonerExplicit = false
+	if r != nil {
+		d.reasonerBackend = r.Name()
+	}
+}
 
 // SetSummarizer overrides the (cheaper) summarization engine used for compaction.
 func (d *Daemon) SetSummarizer(r Reasoner) { d.summarizer = r }

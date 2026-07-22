@@ -16,6 +16,7 @@ const (
 	MsgUpdateCommandParseFailed    MessageID = "update.command_parse_failed"
 	MsgUpdateDisconnectedDraft     MessageID = "update.disconnected_draft"
 	MsgUpdateSubmissionUnavailable MessageID = "update.submission_unavailable"
+	MsgReadinessSubmissionBlocked  MessageID = "readiness.submission_blocked"
 	MsgUpdatePendingSubmission     MessageID = "update.pending_submission"
 	MsgUpdateRecoverySaveFailed    MessageID = "update.recovery_save_failed"
 	MsgUpdateUsageShell            MessageID = "update.usage_shell"
@@ -321,6 +322,7 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgUpdateCommandParseFailed, "{glyph} command parse failed: {error}; draft kept for retry", "{glyph} 命令解析失败：{error}；草稿已保留以便重试", "{glyph} コマンド解析失敗: {error}。下書きを保持", "{glyph} 명령 구문 분석 실패: {error}. 재시도용 초안 유지", "{glyph} no se pudo analizar el comando: {error}; se conserva el borrador", "{glyph} analyse de la commande impossible : {error} ; brouillon conservé"),
 	catalog(MsgUpdateDisconnectedDraft, "{glyph} not connected: draft kept for retry", "{glyph} 未连接：草稿已保留以便重试", "{glyph} 未接続: 下書きを保持", "{glyph} 연결되지 않음: 재시도용 초안 유지", "{glyph} sin conexión: borrador conservado", "{glyph} non connecté : brouillon conservé"),
 	catalog(MsgUpdateSubmissionUnavailable, "{glyph} task submission is unavailable: {error}", "{glyph} 无法提交任务：{error}", "{glyph} タスクを送信できません: {error}", "{glyph} 작업 제출 불가: {error}", "{glyph} el envío no está disponible: {error}", "{glyph} envoi de tâche indisponible : {error}"),
+	catalog(MsgReadinessSubmissionBlocked, "Runtime setup required: {reason} · /model · /doctor · retry after setup", "运行环境需要设置：{reason} · /model · /doctor · 设置后重试", "実行環境の設定が必要です: {reason} · /model · /doctor · 設定後に再試行", "런타임 설정 필요: {reason} · /model · /doctor · 설정 후 재시도", "Configuración del entorno requerida: {reason} · /model · /doctor · reintenta después", "Configuration de l’environnement requise : {reason} · /model · /doctor · réessayez ensuite"),
 	catalog(MsgUpdatePendingSubmission, "{glyph} an unacknowledged submission is pending; restore its exact prompt or use {new} to create a new task", "{glyph} 有一项未确认的提交；请恢复其完整提示，或使用 {new} 新建任务", "{glyph} 未確認の送信があります。同じプロンプトを復元するか {new} で新規タスクを作成", "{glyph} 확인되지 않은 제출이 대기 중입니다. 동일한 프롬프트를 복원하거나 {new}로 새 작업을 만드세요", "{glyph} hay un envío sin confirmar; restaura el texto exacto o usa {new} para crear otra tarea", "{glyph} un envoi non confirmé est en attente ; restaurez le texte exact ou utilisez {new}"),
 	catalog(MsgUpdateRecoverySaveFailed, "{glyph} submission was not sent because its recovery record could not be saved: {error}", "{glyph} 恢复记录无法保存，因此未发送提交：{error}", "{glyph} 復旧記録を保存できず送信しませんでした: {error}", "{glyph} 복구 기록을 저장할 수 없어 제출하지 않았습니다: {error}", "{glyph} no se envió porque no pudo guardarse la recuperación: {error}", "{glyph} envoi annulé car la reprise n’a pas pu être enregistrée : {error}"),
 	catalog(MsgUpdateUsageShell, "usage: !<command>", "用法：!<command>", "使用法: !<command>", "사용법: !<command>", "uso: !<command>", "utilisation : !<command>"),
@@ -394,7 +396,7 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgModelPickerDefault, "Daemon default", "守护进程默认模型", "デーモンの既定値", "데몬 기본값", "Predeterminado del daemon", "Valeur par défaut du daemon"),
 	catalog(MsgModelPickerHelp, "Enter selects · E changes reasoning effort · Esc closes", "Enter 选择 · E 切换推理强度 · Esc 关闭", "Enter で選択 · E で推論強度を変更 · Esc で閉じる", "Enter 선택 · E로 추론 강도 변경 · Esc 닫기", "Enter selecciona · E cambia el esfuerzo de razonamiento · Esc cierra", "Entrée sélectionne · E change l’effort de raisonnement · Échap ferme"),
 	catalog(MsgModelPickerPage, "{start}-{end} of {count}", "第 {start}-{end} 项，共 {count} 项", "{count} 件中 {start}-{end}", "{count}개 중 {start}-{end}", "{start}-{end} de {count}", "{start}-{end} sur {count}"),
-	catalog(MsgModelPickerEmpty, "No enumerated provider models; use /model <provider/model> for a dynamic model.", "没有可枚举的厂商模型；动态模型请使用 /model <厂商/模型>。", "列挙可能なモデルはありません。動的モデルには /model <provider/model> を使用してください。", "열거 가능한 모델이 없습니다. 동적 모델은 /model <provider/model>을 사용하세요.", "No hay modelos enumerados; use /model <proveedor/modelo> para un modelo dinámico.", "Aucun modèle énuméré ; utilisez /model <fournisseur/modèle> pour un modèle dynamique."),
+	catalog(MsgModelPickerEmpty, "No runnable provider models", "没有可运行的厂商模型", "実行可能なプロバイダーモデルがありません", "실행 가능한 공급자 모델 없음", "No hay modelos de proveedor ejecutables", "Aucun modèle fournisseur exécutable"),
 	catalog(MsgSessionPickerTitle, "Resume session", "恢复会话", "セッションを再開", "세션 재개", "Reanudar sesión", "Reprendre une session"),
 	catalog(MsgSessionPickerLoading, "Loading sessions...", "正在加载会话……", "セッションを読み込み中…", "세션 불러오는 중...", "Cargando sesiones...", "Chargement des sessions…"),
 	catalog(MsgSessionPickerFailed, "Unable to load sessions: {error} (r retries)", "无法加载会话：{error}（按 r 重试）", "セッションを読み込めません: {error}（r で再試行）", "세션을 불러올 수 없음: {error} (r로 재시도)", "No se pudieron cargar las sesiones: {error} (r reintenta)", "Impossible de charger les sessions : {error} (r réessaie)"),

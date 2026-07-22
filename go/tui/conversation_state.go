@@ -85,6 +85,7 @@ const (
 	transitionReset conversationTransitionKind = iota
 	transitionConnected
 	transitionUnavailable
+	transitionReadiness
 	transitionIdle
 	transitionSubmitting
 	transitionRunning
@@ -105,6 +106,7 @@ type conversationTransition struct {
 	DecisionID string
 	QuestionID string
 	Outcome    conversationOutcome
+	Readiness  conversationReadiness
 }
 
 func (p *conversationProjection) reduce(t conversationTransition) bool {
@@ -113,12 +115,14 @@ func (p *conversationProjection) reduce(t conversationTransition) bool {
 		*p = conversationProjection{Readiness: readinessChecking}
 		p.Evidence.SessionID = t.SessionID
 	case transitionConnected:
-		p.Readiness = readinessReady
+		p.Readiness = readinessChecking
 		if t.SessionID != "" {
 			p.Evidence.SessionID = t.SessionID
 		}
 	case transitionUnavailable:
 		p.Readiness = readinessUnavailable
+	case transitionReadiness:
+		p.Readiness = t.Readiness
 	case transitionIdle:
 		if p.Evidence.ActiveTaskID != "" && t.TaskID != "" && t.TaskID != p.Evidence.ActiveTaskID {
 			return false

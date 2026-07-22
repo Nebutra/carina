@@ -29,6 +29,13 @@ type modelInventoryProvider struct {
 	Models        []modelInventoryModel `json:"models"`
 }
 
+type modelInventoryReasoner struct {
+	Backend   string `json:"backend,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Available bool   `json:"available"`
+	Explicit  bool   `json:"explicit"`
+}
+
 func (d *Daemon) handleModelList(_ json.RawMessage) (any, error) {
 	registered := map[string]bool{}
 	for _, name := range d.router.ProviderNames() {
@@ -64,5 +71,44 @@ func (d *Daemon) handleModelList(_ json.RawMessage) (any, error) {
 		sort.Slice(row.Models, func(i, j int) bool { return row.Models[i].ID < row.Models[j].ID })
 		providers = append(providers, row)
 	}
-	return map[string]any{"default_model": "default", "providers": providers}, nil
+	return map[string]any{
+		"default_model": modelInventoryDefault(providers),
+		"reasoner":      d.modelInventoryReasoner(providers),
+		"providers":     providers,
+	}, nil
+}
+
+func modelInventoryDefault(providers []modelInventoryProvider) string {
+	for _, provider := range providers {
+		if !provider.Registered || !provider.Available {
+			continue
+		}
+		if model := strings.TrimSpace(provider.DefaultModel); model != "" {
+			if !strings.HasPrefix(model, provider.ID+"/") {
+				model = provider.ID + "/" + model
+			}
+			return model
+		}
+		for _, model := range provider.Models {
+			if model.Available && strings.TrimSpace(model.ID) != "" {
+				return model.ID
+			}
+		}
+	}
+	return ""
+}
+
+func (d *Daemon) modelInventoryReasoner(providers []modelInventoryProvider) modelInventoryReasoner {
+	backend := strings.TrimSpace(d.reasonerBackend)
+	if backend == "" && d.reasoner != nil {
+		backend = strings.TrimSpace(d.reasoner.Name())
+	}
+	available := d.reasoner != nil
+	if backend == reasonerBackendRouter {
+		available = available && modelInventoryDefault(providers) != ""
+	}
+	return modelInventoryReasoner{
+		Backend: backend, Model: strings.TrimSpace(d.reasonerModel),
+		Available: available, Explicit: d.reasonerExplicit,
+	}
 }

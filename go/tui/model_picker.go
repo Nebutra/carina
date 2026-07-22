@@ -32,8 +32,16 @@ type modelListProvider struct {
 	Models        []modelListModel `json:"models"`
 }
 
+type modelListReasoner struct {
+	Backend   string `json:"backend"`
+	Model     string `json:"model"`
+	Available bool   `json:"available"`
+	Explicit  bool   `json:"explicit"`
+}
+
 type modelListResponse struct {
 	DefaultModel string              `json:"default_model"`
+	Reasoner     *modelListReasoner  `json:"reasoner"`
 	Providers    []modelListProvider `json:"providers"`
 }
 
@@ -104,6 +112,7 @@ func (m *Model) handleModelPreference(msg modelPreferenceMsg) {
 		if msg.err == nil && !m.modelPinned {
 			m.model = strings.TrimSpace(msg.model)
 			m.reasoningEffort = strings.TrimSpace(msg.effort)
+			m.refreshReadinessFromInventory()
 			m.layout()
 		}
 		return
@@ -114,6 +123,7 @@ func (m *Model) handleModelPreference(msg modelPreferenceMsg) {
 			m.reasoningEffort = msg.previousEffort
 		}
 		m.push(m.text(MsgModelPickerFailed, MessageArgs{"error": msg.err.Error()}))
+		m.refreshReadinessFromInventory()
 		m.layout()
 	}
 }
@@ -145,31 +155,33 @@ func (m *Model) handleModelList(msg modelListMsg) {
 		state.status = m.text(MsgModelPickerFailed, MessageArgs{"error": msg.err.Error()})
 		return
 	}
-	defaultID := msg.response.DefaultModel
-	if defaultID == "" {
-		defaultID = "default"
+	m.applyModelInventory(msg.response)
+	seen := map[string]bool{}
+	add := func(item modelPickerItem) {
+		item.ID = strings.TrimSpace(item.ID)
+		if item.ID == "" || seen[item.ID] {
+			return
+		}
+		seen[item.ID] = true
+		state.items = append(state.items, item)
 	}
-	state.items = append(state.items, modelPickerItem{ID: defaultID, Name: m.text(MsgModelPickerDefault, nil)})
 	for _, provider := range msg.response.Providers {
 		if !provider.Registered || !provider.Available {
 			continue
 		}
 		for _, model := range provider.Models {
 			if model.Available {
-				state.items = append(state.items, modelPickerItem{ID: model.ID, Name: model.Name, Provider: provider.Name, ReasoningEfforts: model.ReasoningEfforts, DefaultReasoningEffort: model.DefaultReasoningEffort})
+				add(modelPickerItem{ID: model.ID, Name: model.Name, Provider: provider.Name, ReasoningEfforts: model.ReasoningEfforts, DefaultReasoningEffort: model.DefaultReasoningEffort})
 			}
 		}
-		if provider.DynamicModels && len(provider.Models) == 0 && strings.TrimSpace(provider.DefaultModel) != "" {
-			id := strings.TrimSpace(provider.DefaultModel)
-			if !strings.Contains(id, "/") {
-				id = provider.ID + "/" + id
-			}
-			state.items = append(state.items, modelPickerItem{ID: id, Name: provider.Name + " default", Provider: provider.Name})
+		if strings.TrimSpace(provider.DefaultModel) != "" {
+			id := qualifyInventoryModel(provider.ID, provider.DefaultModel)
+			add(modelPickerItem{ID: id, Name: provider.Name + " default", Provider: provider.Name})
 		}
 	}
 	current := m.model
-	if current == "" {
-		current = "default"
+	if current == "" || current == "default" {
+		current = effectiveInventoryDefault(msg.response)
 	}
 	for i := range state.items {
 		if state.items[i].ID == current {
@@ -253,12 +265,9 @@ func (m *Model) modelPickerKey(key string) (tea.Cmd, bool) {
 		if selectedEffort == "" && len(state.items[state.selected].ReasoningEfforts) > 0 {
 			selectedEffort = state.items[state.selected].DefaultReasoningEffort
 		}
-		if selected == "default" {
-			m.model = ""
-		} else {
-			m.model = selected
-		}
+		m.model = selected
 		m.reasoningEffort = selectedEffort
+		m.refreshReadinessFromInventory()
 		m.modelPicker = nil
 		m.push(m.text(MsgUpdateModelChanged, MessageArgs{"model": selected}))
 		m.layout()
@@ -323,7 +332,7 @@ func (m *Model) modelPickerView() string {
 		if len(state.items) > page {
 			lines = append(lines, "  "+m.text(MsgModelPickerPage, MessageArgs{"start": state.scroll + 1, "end": end, "count": len(state.items)}))
 		}
-		if len(state.items) == 1 {
+		if len(state.items) == 0 {
 			lines = append(lines, fitRenderedLine(m.text(MsgModelPickerEmpty, nil), width))
 		}
 		lines = append(lines, "", fitRenderedLine(state.status, width))

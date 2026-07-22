@@ -61,6 +61,7 @@ func TestSubmissionJournalReconcilesAcrossModelRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	m1.Update(SessionReadyMsg{SessionID: "sess_restart", Call: firstCaller})
+	m1.conversation.Readiness = readinessReady
 	m1.model = "openai/gpt-5"
 	m1.input.SetValue("recover after restart")
 	drain(m1, m1.submit())

@@ -110,7 +110,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyConversation(conversationTransition{Kind: transitionConnected, SessionID: msg.SessionID, EventType: "session.ready"})
 		m.attempt = 0
 		if reconnected && m.submissionLeaseErr == nil {
-			return m, nil
+			return m, m.refreshRuntimeStatus()
 		}
 		if reconnected {
 			// A secondary TUI may already be attached in read-only mode. A fresh
@@ -120,7 +120,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.submissionLeaseErr != nil {
 				m.push(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}))
 			}
-			return m, nil
+			return m, m.refreshRuntimeStatus()
 		}
 		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateAttached, MessageArgs{"session": msg.SessionID})))
 		m.submissionLeaseErr = m.submissions.acquire(msg.SessionID)
@@ -143,6 +143,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.handleModelPreference(msg)
+		if !msg.loaded && msg.err == nil {
+			return m, m.refreshRuntimeStatus()
+		}
 		return m, nil
 	case sessionListMsg:
 		m.handleSessionList(msg)
@@ -1123,6 +1126,11 @@ func (m *Model) submitWithIntent(forceNew bool) tea.Cmd {
 	}
 	if len(draft.Prefix) == 0 && strings.HasPrefix(text, "/") {
 		valid := validSlashCommand(text)
+		if valid && slashRequiresNewTask(text) && !m.retryingExistingSubmission(draftPrompt(draft), forceNew) && !m.newTaskReady() {
+			m.blockNewTaskForReadiness()
+			m.layout()
+			return nil
+		}
 		if valid {
 			// Consume the command snapshot before dispatch. Session-switch guards
 			// must distinguish the command being executed from a separate unsent
@@ -1276,6 +1284,12 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 		envelope.mode = "background"
 	}
 	if kind == submissionTask {
+		retryingExisting := m.retryingExistingSubmission(prompt, forceNew)
+		if !retryingExisting && !m.newTaskReady() {
+			m.blockNewTaskForReadiness()
+			m.layout()
+			return nil
+		}
 		if m.submissionLeaseErr != nil {
 			m.push(m.text(MsgUpdateSubmissionUnavailable, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}))
 			m.layout()
@@ -1354,6 +1368,10 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 			return submissionDoneMsg{generation: generation, taskID: out.TaskID, status: out.Status, err: err}
 		}
 	}
+}
+
+func (m *Model) retryingExistingSubmission(prompt string, forceNew bool) bool {
+	return m.retrySubmission != nil && !forceNew && m.retrySubmission.prompt == prompt
 }
 
 func (m *Model) submitShell(draft promptDraft, command string) tea.Cmd {

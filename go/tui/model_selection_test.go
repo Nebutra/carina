@@ -11,6 +11,14 @@ func TestModelCommandAppliesToNewTaskSubmission(t *testing.T) {
 	fc := &fakeCaller{handler: map[string]any{
 		"task.submit":       map[string]any{"task_id": "task_model", "status": "queued"},
 		"session.model.set": map[string]any{"next_model": "anthropic/claude-sonnet-4-5"},
+		"model.list": map[string]any{
+			"default_model": "anthropic/claude-sonnet-4-5",
+			"reasoner":      map[string]any{"backend": "model-router", "available": true},
+			"providers": []map[string]any{{
+				"id": "anthropic", "registered": true, "available": true,
+				"models": []map[string]any{{"id": "anthropic/claude-sonnet-4-5", "available": true}},
+			}},
+		},
 	}}
 	m, _ := newTestModel(fc)
 	m.sessionID = "sess_model"
@@ -32,7 +40,8 @@ func TestModelCommandAppliesToNewTaskSubmission(t *testing.T) {
 func TestModelCommandOpensAvailableModelPicker(t *testing.T) {
 	fc := &fakeCaller{handler: map[string]any{
 		"model.list": map[string]any{
-			"default_model": "default",
+			"default_model": "openai/gpt-5",
+			"reasoner":      map[string]any{"backend": "model-router", "available": true},
 			"providers": []map[string]any{{
 				"id": "openai", "name": "OpenAI", "registered": true, "available": true,
 				"auth_source": "env:OPENAI_API_KEY",
@@ -48,7 +57,7 @@ func TestModelCommandOpensAvailableModelPicker(t *testing.T) {
 		t.Fatalf("model picker did not open: %#v", m.modelPicker)
 	}
 	drain(m, cmd)
-	if m.modelPicker == nil || len(m.modelPicker.items) != 2 {
+	if m.modelPicker == nil || len(m.modelPicker.items) != 1 {
 		t.Fatalf("model picker inventory = %#v", m.modelPicker)
 	}
 	if _, handled := m.modelPickerKey("down"); !handled {
@@ -95,9 +104,9 @@ func TestModelPickerKeepsLongInventoryWithinViewport(t *testing.T) {
 func TestModelPickerUsesActiveLocale(t *testing.T) {
 	m, _ := newTestModel(&fakeCaller{})
 	m.locale = string(LocaleChinese)
-	m.modelPicker = &modelPickerState{items: []modelPickerItem{{ID: "default", Name: m.text(MsgModelPickerDefault, nil)}}}
+	m.modelPicker = &modelPickerState{items: []modelPickerItem{{ID: "openai/gpt-5", Name: "GPT-5"}}}
 	view := m.modelPickerView()
-	if !strings.Contains(view, "选择模型") || !strings.Contains(view, "守护进程默认模型") {
+	if !strings.Contains(view, "选择模型") || !strings.Contains(view, "openai/gpt-5") {
 		t.Fatalf("model picker ignored active locale: %q", view)
 	}
 }

@@ -108,6 +108,7 @@ func TestSubmissionAckPendingTypeAheadOwnsIndependentDraft(t *testing.T) {
 	m := New(Options{})
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.Update(SessionReadyMsg{SessionID: "sess_typeahead", Call: caller})
+	m.conversation.Readiness = readinessReady
 	m.input.SetValue("ship frozen")
 	m.pendingPaste = []string{"old\npaste"}
 

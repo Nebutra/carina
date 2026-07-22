@@ -41,6 +41,7 @@ func TestDynamicSlashResolvesThenUsesReliableTaskSubmit(t *testing.T) {
 	fc := &fakeCaller{handler: map[string]any{"command.list": map[string]any{"commands": []any{map[string]any{"name": "deploy", "description": "deploy safely", "source": "project"}}}, "task.submit": map[string]any{"task_id": "tsk_dynamic", "status": "queued"}}}
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	m.sessionID, m.call = "sess", fc
+	m.conversation.Readiness = readinessReady
 	m.input.SetValue("/deploy staging")
 	cmd := m.submit()
 	if cmd == nil {
@@ -86,6 +87,7 @@ func TestReviewUsesTaskSubmitAndSessionReviewRemainsReadOnly(t *testing.T) {
 	fc := &fakeCaller{handler: map[string]any{"task.submit": map[string]any{"task_id": "tsk_review", "status": "queued"}, "session.review": map[string]any{"status": "healthy"}}}
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	m.sessionID, m.call = "sess", fc
+	m.conversation.Readiness = readinessReady
 	if cmd := m.slashCommand("/review branch main"); cmd == nil {
 		t.Fatal("review did not submit")
 	} else {

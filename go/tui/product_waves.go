@@ -177,6 +177,9 @@ func (m *Model) flushPendingSideQuestion() tea.Cmd {
 	if q == "" {
 		return nil
 	}
+	if !m.newTaskReady() {
+		return nil
+	}
 	m.pendingSideQuestion = ""
 	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateBtwForkReady, nil)))
 	return m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: sideQuestionPrompt(q, true)}, false, false)

@@ -88,6 +88,7 @@ func TestSkillSlashResolvesViaInventory(t *testing.T) {
 	}}
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	m.sessionID, m.call = "sess", fc
+	m.conversation.Readiness = readinessReady
 	m.input.SetValue("/review-pr")
 	cmd := m.submit()
 	if cmd == nil {

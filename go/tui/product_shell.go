@@ -32,6 +32,12 @@ type runtimeStatus struct {
 	CompactCheckpoint  string
 	CompactTaskID      string
 	LastRefresh        time.Time
+	DefaultModel       string
+	ReasonerBackend    string
+	ReasonerModel      string
+	ReadinessReason    string
+	ModelInventory     modelListResponse
+	HasModelInventory  bool
 }
 
 type settingsTab int
@@ -94,6 +100,8 @@ func (m *Model) settingsActions() []settingsAction {
 	case m.settings != nil && m.settings.tab == settingsTabModel:
 		return []settingsAction{
 			{Label: m.text(MsgSettingsActionModelPicker, nil), Hint: "/model", Route: "/model"},
+			{Label: m.text(MsgSettingsActionRefresh, nil), Hint: "reload status", Run: func(m *Model) tea.Cmd { return m.refreshRuntimeStatus() }},
+			{Label: m.text(MsgSettingsActionDoctor, nil), Hint: "/doctor", Route: "/doctor"},
 			{Label: m.text(MsgSettingsActionEffort, nil), Hint: "/effort", Route: "/effort"},
 			{Label: m.text(MsgSettingsActionKeymap, nil), Hint: "/keymap", Route: "/keymap"},
 		}
@@ -223,9 +231,11 @@ func (m *Model) settingsOverlayView() string {
 }
 
 func (m *Model) settingsOverviewLines(width int) []string {
-	model := m.model
+	model, isModel := m.runtimeModelLabel()
 	if model == "" {
-		model = "default"
+		model = "n/a"
+	} else if !isModel {
+		model = "backend:" + model
 	}
 	effort := m.reasoningEffort
 	if effort == "" {
@@ -300,15 +310,19 @@ func (m *Model) statusFooterView(width int) string {
 	if width <= 0 {
 		return ""
 	}
-	model := m.model
-	if model == "" {
-		model = "default"
-	}
-	if m.reasoningEffort != "" && m.reasoningEffort != "default" {
+	model, isModel := m.runtimeModelLabel()
+	if isModel && model != "" && m.reasoningEffort != "" && m.reasoningEffort != "default" {
 		model += "/" + m.reasoningEffort
 	}
 	mode := statusFooterItem{text: m.modeLabel(), role: theme.RoleMuted}
-	modelItem := statusFooterItem{text: "model:" + model, role: theme.RoleInfo}
+	modelItem := statusFooterItem{role: theme.RoleInfo}
+	if model != "" {
+		if isModel {
+			modelItem.text = "model:" + model
+		} else {
+			modelItem.text = "backend:" + model
+		}
+	}
 	profile := statusFooterItem{role: theme.RoleWarning}
 	if value := strings.TrimSpace(m.runtime.Profile); value != "" {
 		profile.text = "profile:" + value
@@ -376,6 +390,9 @@ func (m *Model) statusFooterView(width int) string {
 	// never the configuration anchor. Truly tiny terminals fall back to the
 	// activity alone because two illegible fragments are worse than one signal.
 	modelWidth := ansi.StringWidth(modelItem.text)
+	if modelWidth == 0 {
+		return fitRenderedLine(m.th.Style(activity.role).Render(activity.text), width)
+	}
 	if width >= 32 && width-modelWidth-2 >= 6 {
 		left := m.renderStatusItems([]statusFooterItem{modelItem})
 		rightWidth := width - ansi.StringWidth(left) - 2
@@ -574,6 +591,13 @@ func (m *Model) refreshRuntimeStatus() tea.Cmd {
 				out.compactTaskID = str(task["task_id"])
 			}
 		}
+		var inventory modelListResponse
+		if err := call.Call("model.list", map[string]any{}, &inventory); err != nil {
+			out.inventoryErr = err
+		} else {
+			out.inventory = inventory
+			out.inventoryLoaded = true
+		}
 		return out
 	}
 }
@@ -600,6 +624,9 @@ type runtimeStatusMsg struct {
 	compactReason     string
 	compactCheckpoint string
 	compactTaskID     string
+	inventory         modelListResponse
+	inventoryLoaded   bool
+	inventoryErr      error
 	err               error
 }
 
@@ -619,6 +646,9 @@ func (m *Model) handleRuntimeStatus(msg runtimeStatusMsg) tea.Cmd {
 		return nil
 	}
 	if msg.err != nil {
+		m.runtime.ReadinessReason = msg.err.Error()
+		m.applyConversation(conversationTransition{Kind: transitionReadiness, Readiness: readinessUnavailable, EventType: "runtime.status", Status: msg.err.Error()})
+		m.layout()
 		return nil
 	}
 	if msg.profile != "" {
@@ -648,10 +678,23 @@ func (m *Model) handleRuntimeStatus(msg runtimeStatusMsg) tea.Cmd {
 	m.runtime.CompactReason = msg.compactReason
 	m.runtime.CompactCheckpoint = msg.compactCheckpoint
 	m.runtime.CompactTaskID = msg.compactTaskID
+	if msg.inventoryLoaded {
+		m.applyModelInventory(msg.inventory)
+	} else if msg.inventoryErr != nil {
+		m.runtime.ReadinessReason = msg.inventoryErr.Error()
+		m.applyConversation(conversationTransition{Kind: transitionReadiness, Readiness: readinessUnavailable, EventType: "model.inventory", Status: msg.inventoryErr.Error()})
+	}
 	m.runtime.LastRefresh = m.now()
 	cmd := m.applyContextPressurePolicy()
+	side := m.flushPendingSideQuestion()
 	m.layout()
-	return cmd
+	if cmd == nil {
+		return side
+	}
+	if side == nil {
+		return cmd
+	}
+	return tea.Batch(cmd, side)
 }
 
 // applyContextPressurePolicy nudges the operator and, when safe, auto-compacts.

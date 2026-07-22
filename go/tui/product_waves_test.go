@@ -105,6 +105,7 @@ func TestBtwIsAnswerOnlyPrompt(t *testing.T) {
 	}}
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	m.sessionID, m.call = "sess", fc
+	m.conversation.Readiness = readinessReady
 	cmd := m.btwSideQuestion("what is the entrypoint?", false)
 	if cmd == nil {
 		t.Fatal("nil cmd")
@@ -148,11 +149,11 @@ func TestExplainRuntimeMentionsSandbox(t *testing.T) {
 
 func TestInspectSurfaceAggregatesInventories(t *testing.T) {
 	fc := &fakeCaller{handler: map[string]any{
-		"daemon.doctor":     map[string]any{"status": "ok"},
-		"config.inventory":  map[string]any{"effective": map[string]any{"sandbox_commands": true}},
-		"skill.inventory":   map[string]any{"count": 2},
-		"hook.inventory":    map[string]any{"count": 1},
-		"mcp.inventory":     map[string]any{"count": 3},
+		"daemon.doctor":    map[string]any{"status": "ok"},
+		"config.inventory": map[string]any{"effective": map[string]any{"sandbox_commands": true}},
+		"skill.inventory":  map[string]any{"count": 2},
+		"hook.inventory":   map[string]any{"count": 1},
+		"mcp.inventory":    map[string]any{"count": 3},
 	}}
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	m.sessionID, m.call = "sess", fc
@@ -222,6 +223,7 @@ func TestBtwForkQueuesPendingQuestion(t *testing.T) {
 		SwitchSession: func(id string) error { switched = id; return nil },
 	})
 	m.sessionID, m.call = "sess", fc
+	m.conversation.Readiness = readinessReady
 	cmd := m.btwSideQuestion("explain main", true)
 	if cmd == nil || m.pendingSideQuestion != "explain main" {
 		t.Fatalf("pending=%q cmd=%v", m.pendingSideQuestion, cmd != nil)
