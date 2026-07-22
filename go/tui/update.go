@@ -1615,6 +1615,7 @@ func (m *Model) restoreDraft(draft promptDraft) {
 
 func (m *Model) resetSessionProjection() {
 	m.tr = transcript{}
+	m.activityGroups = nil
 	m.tasks = taskGraph{}
 	m.inFlightTaskID = ""
 	m.applyConversation(conversationTransition{Kind: transitionReset})

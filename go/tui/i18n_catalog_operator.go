@@ -76,6 +76,7 @@ const (
 	MsgTranscriptModel            MessageID = "transcript.model"
 	MsgTranscriptContextCompacted MessageID = "transcript.context_compacted"
 	MsgTranscriptTool             MessageID = "transcript.tool"
+	MsgTranscriptActivity         MessageID = "transcript.activity"
 	MsgTranscriptWorkflow         MessageID = "transcript.workflow"
 	MsgTranscriptSubagent         MessageID = "transcript.subagent"
 	MsgTranscriptAgent            MessageID = "transcript.agent"
@@ -169,6 +170,7 @@ var operatorCatalogRows = []catalogRow{
 	catalog(MsgTranscriptModel, "model", "模型", "モデル", "모델", "modelo", "modèle"),
 	catalog(MsgTranscriptContextCompacted, "context compacted", "上下文已压缩", "コンテキストを圧縮", "컨텍스트 압축됨", "contexto compactado", "contexte compacté"),
 	catalog(MsgTranscriptTool, "tool", "工具", "ツール", "도구", "herramienta", "outil"),
+	catalog(MsgTranscriptActivity, "activity", "活动", "アクティビティ", "활동", "actividad", "activité"),
 	catalog(MsgTranscriptWorkflow, "workflow", "工作流", "ワークフロー", "워크플로", "flujo", "workflow"),
 	catalog(MsgTranscriptSubagent, "subagent", "子 Agent", "サブ Agent", "하위 Agent", "sub-Agent", "sous-Agent"),
 	catalog(MsgTranscriptAgent, "agent", "Agent", "Agent", "Agent", "Agent", "Agent"),

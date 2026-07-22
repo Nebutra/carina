@@ -211,6 +211,7 @@ type Model struct {
 	input            textarea.Model
 	tr               transcript
 	streams          map[string]*messageStream
+	activityGroups   map[string]*activityGroup
 	followTail       bool
 	unseenLines      int
 	terminalBlurred  bool
@@ -508,22 +509,36 @@ func (m *Model) push(rendered string) {
 }
 
 func (m *Model) pushEvent(ev map[string]any) {
-	if !showInPrimaryTranscript(ev) {
+	classification := classifyTranscriptEvent(ev)
+	if classification.Class == transcriptAuditOnly || classification.Class == transcriptEphemeralActivity {
 		return
 	}
-	before := len(m.tr.lines)
-	m.tr.pushPresentation(presentEvent(ev, m.th, m.locale), m.th, m.transcriptWidth())
-	m.vp.SetContentLines(m.tr.lines)
-	added := len(m.tr.lines) - before
-	if added < 1 {
-		// An in-place lifecycle update is still unseen activity, but should not
-		// pretend that a whole replacement block was appended.
-		added = 1
+	if classification.Class == transcriptGroupedActivity && classification.CallID != "" && m.tr.indexOf("tool:"+classification.CallID) >= 0 {
+		// Approval, failure, denial, cancellation, and media promote a routine
+		// read to a permanent row. Keep later lifecycle events on that row so an
+		// old awaiting-approval state cannot survive beside a completed group.
+		classification.Class = transcriptPermanentOperational
 	}
+	added := 0
+	if classification.Class == transcriptGroupedActivity {
+		added = m.pushActivityEvent(ev, classification)
+	} else {
+		m.detachActivityCall(classification)
+		before := len(m.tr.lines)
+		m.tr.pushPresentation(presentEvent(ev, m.th, m.locale), m.th, m.transcriptWidth())
+		added = len(m.tr.lines) - before
+		if added < 1 {
+			// Permanent lifecycle updates remain observable even when they replace
+			// an existing stable key. Group updates intentionally do not inflate
+			// unseen counts because they still occupy one activity row.
+			added = 1
+		}
+	}
+	m.vp.SetContentLines(m.tr.lines)
 	if m.followTail {
 		m.vp.GotoBottom()
 		m.unseenLines = 0
-	} else {
+	} else if added > 0 {
 		m.unseenLines += added
 	}
 }
@@ -531,22 +546,8 @@ func (m *Model) pushEvent(ev map[string]any) {
 // The main surface is a conversation, not an audit tail. Detailed routing and
 // lifecycle telemetry remains available through audit/session replay.
 func showInPrimaryTranscript(ev map[string]any) bool {
-	eventType := str(ev["type"])
-	payload, _ := ev["payload"].(map[string]any)
-	switch eventType {
-	case "ModelRequested", "RoutingDecision", "RoutingOutcome", "RuntimeStageChanged",
-		"ToolRequested", "ToolApproved", "ToolDenied", "TaskCreated",
-		"MemoryRecallRequested", "MemoryWriteRequested", "GoalChangeRequested", "ScheduleChanged":
-		return false
-	case "MemoryProjectionChanged":
-		status := strings.ToLower(str(payload["status"]))
-		return status == "failed" || status == "reconcile"
-	case "ModelResponded":
-		tool, _, _ := safeModelAction(str(payload["text"]))
-		return tool == "done" || str(payload["spawn_agent"]) != "" || strings.HasPrefix(str(payload["status"]), "workflow_")
-	default:
-		return true
-	}
+	class := classifyTranscriptEvent(ev).Class
+	return class != transcriptAuditOnly && class != transcriptEphemeralActivity
 }
 
 // plain reports whether glyph/personality suppression applies (NO_COLOR,

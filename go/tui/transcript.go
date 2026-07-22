@@ -423,6 +423,9 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 		}
 	case "permission.request":
 		p.Kind, p.Status, p.Title = presentationGovernance, statusNeedsAuth, "approval "+str(ev["decision_id"])
+		if id := firstValue(ev, "decision_id", "permission_decision_id"); id != "" {
+			p.Key = "governance:" + id + ":request"
+		}
 		p.Summary = microcopy.Governed(microcopy.GovernedApprovalRequired, microcopy.Args{
 			"action":      str(ev["capability"]),
 			"path":        str(ev["resource"]),
@@ -430,6 +433,9 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 		}, microcopy.WithLocale(locale))
 	case "user.question":
 		p.Kind, p.Status, p.Title = presentationGovernance, statusNeedsAuth, "question"
+		if id := str(ev["question_id"]); id != "" {
+			p.Key = "governance:" + id + ":request"
+		}
 		p.Summary = truncate(str(ev["prompt"]), 160)
 	case "task.completed":
 		p.Kind, p.Title = presentationAgent, ""
@@ -474,7 +480,11 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 			}
 		}
 	case "ToolRequested", "ToolApproved", "ToolDenied":
-		p = presentToolEvent(p, typ, payload)
+		if status := str(payload["status"]); typ == "ToolRequested" && (status == "permission_requested" || status == "user_question_requested") {
+			p = presentGovernanceRequest(p, payload)
+		} else {
+			p = presentToolEvent(p, typ, payload)
+		}
 	case "CommandStarted", "CommandOutput", "CommandExited", "CommandExecuted":
 		p = presentCommandEvent(p, typ, payload)
 	case "FileRead", "FileWriteProposed", "PatchProposed", "PatchApplied", "PatchFailed", "RollbackStarted", "RollbackCompleted":
@@ -534,6 +544,8 @@ func localizePresentation(p *eventPresentation, l localizer) {
 		p.Title = l.Text(MsgTranscriptContextCompacted, nil)
 	case "tool":
 		p.Title = l.Text(MsgTranscriptTool, nil)
+	case "activity":
+		p.Title = l.Text(MsgTranscriptActivity, nil)
 	case "workflow":
 		p.Title = l.Text(MsgTranscriptWorkflow, nil)
 	case "subagent":
@@ -588,7 +600,10 @@ func presentAuthoritativeToolCall(p eventPresentation, typ string, payload map[s
 	case "ToolCallFailed", "ToolCallDenied", "ToolCallCancelled":
 		p.Status = statusFailure
 	}
-	p.Body = selectedBody(payload, "call_id", "reason", "error", "duration_ms")
+	p.Body = selectedBody(payload, "call_id", "reason", "duration_ms")
+	if detail := toolCallErrorSummary(payload["error"]); detail != "" {
+		p.Body = append(p.Body, "error: "+detail)
+	}
 	if ids := valueString(payload["artifact_ids"]); ids != "" {
 		p.Body = append(p.Body, "artifact: "+ids)
 	}
@@ -599,6 +614,11 @@ func presentAuthoritativeToolCall(p eventPresentation, typ string, payload map[s
 
 func presentTaskEvent(p eventPresentation, ev, payload map[string]any) eventPresentation {
 	status := str(payload["status"])
+	if terminalTranscriptTaskStatus(status) {
+		if taskID := eventTaskID(ev, payload); taskID != "" {
+			p.Key = "result:" + taskID
+		}
+	}
 	switch {
 	case str(payload["workflow"]) != "" || strings.HasPrefix(status, "workflow_"):
 		p.Kind, p.Depth, p.Title = presentationWorkflow, 1, "workflow"
@@ -620,10 +640,29 @@ func presentTaskEvent(p eventPresentation, ev, payload map[string]any) eventPres
 			p.Collapsible = true
 			p.Collapsed = false
 		}
-	case status == "permission_requested" || status == "approval_resolved":
+	case status == "permission_requested" || status == "user_question_requested" || status == "approval_resolved" || status == "user_question_resolved":
 		p.Kind, p.Title = presentationGovernance, strings.ReplaceAll(status, "_", " ")
 		p.Status = lifecycleStatus(status)
-		p.Summary = joinValues(payload, "capability", "resource", "decision_id")
+		if status == "permission_requested" || status == "user_question_requested" {
+			p.Status = statusNeedsAuth
+		}
+		if granted, ok := payload["granted"].(bool); ok && !granted {
+			p.Status = statusFailure
+		}
+		if cancelled, _ := payload["cancelled"].(bool); cancelled {
+			p.Status = statusFailure
+		}
+		p.Summary = joinValues(payload, "capability", "resource", "decision_id", "question_id", "granted", "value", "cancelled")
+		if cancelled, _ := payload["cancelled"].(bool); cancelled {
+			p.Summary = strings.TrimSpace(joinValues(payload, "capability", "resource", "decision_id", "question_id") + " cancelled")
+		}
+		if id := firstValue(payload, "decision_id", "question_id"); id != "" {
+			suffix := ":resolved"
+			if status == "permission_requested" || status == "user_question_requested" {
+				suffix = ":request"
+			}
+			p.Key = "governance:" + id + suffix
+		}
 	case status != "":
 		p.Kind, p.Title = presentationAgent, "task"
 		p.Status = lifecycleStatus(status)
@@ -745,6 +784,24 @@ func presentToolEvent(p eventPresentation, typ string, payload map[string]any) e
 	return p
 }
 
+func presentGovernanceRequest(p eventPresentation, payload map[string]any) eventPresentation {
+	status := str(payload["status"])
+	request, _ := payload["request"].(map[string]any)
+	id := firstValue(payload, "decision_id", "question_id")
+	if id == "" {
+		id = firstValue(request, "decision_id", "question_id")
+	}
+	p.Kind, p.Status, p.Title = presentationGovernance, statusNeedsAuth, strings.ReplaceAll(status, "_", " ")
+	if id != "" {
+		p.Key = "governance:" + id + ":request"
+	}
+	p.Summary = joinValues(request, "capability", "resource", "prompt", "decision_id", "question_id")
+	if p.Summary == "" {
+		p.Summary = joinValues(payload, "capability", "resource", "decision_id", "question_id")
+	}
+	return p
+}
+
 func presentCommandEvent(p eventPresentation, typ string, payload map[string]any) eventPresentation {
 	p.Kind, p.Title = presentationCommand, "command"
 	p.Status = statusRunning
@@ -793,7 +850,7 @@ func presentFileEvent(p eventPresentation, typ string, payload map[string]any) e
 
 func lifecycleStatus(status string) presentationStatus {
 	switch {
-	case strings.Contains(status, "failed"), strings.Contains(status, "denied"), strings.Contains(status, "degraded"), strings.Contains(status, "rejected"):
+	case strings.Contains(status, "failed"), strings.Contains(status, "denied"), strings.Contains(status, "degraded"), strings.Contains(status, "rejected"), strings.Contains(status, "cancelled"), strings.Contains(status, "canceled"), strings.Contains(status, "aborted"), strings.Contains(status, "interrupted"):
 		return statusFailure
 	case strings.Contains(status, "completed"), strings.Contains(status, "resolved"), strings.Contains(status, "applied"), strings.Contains(status, "retrieved"), strings.Contains(status, "compressed"):
 		return statusSuccess
@@ -802,6 +859,11 @@ func lifecycleStatus(status string) presentationStatus {
 	default:
 		return statusRunning
 	}
+}
+
+func toolCallErrorSummary(value any) string {
+	errorMap, _ := value.(map[string]any)
+	return joinValues(errorMap, "code", "category", "message")
 }
 
 func terminalPresentationStatus(status string) presentationStatus {
