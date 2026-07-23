@@ -12,11 +12,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Nebutra/carina/go/config"
 	"github.com/Nebutra/carina/go/daemon"
+	"github.com/Nebutra/carina/go/localdaemon"
+	"github.com/Nebutra/carina/go/localruntime"
 	"github.com/Nebutra/carina/go/rpc"
 )
 
@@ -26,20 +29,39 @@ func main() {
 		log.Fatalf("carina-daemon: %v", err)
 	}
 
+	runtimeSpecPath, err := findRuntimeSpecArg(os.Args[1:])
+	if err != nil {
+		log.Fatalf("carina-daemon: %v", err)
+	}
+	var runtimeSpec *localruntime.Spec
+	if runtimeSpecPath != "" {
+		spec, err := localruntime.LoadSpec(runtimeSpecPath)
+		if err != nil {
+			log.Fatalf("carina-daemon: load runtime spec: %v", err)
+		}
+		runtimeSpec = &spec
+	}
+
 	// Resolve the layered config (defaults → managed → global → project → env,
 	// with managed-locked keys re-applied last). Flags, parsed below, are the
 	// final highest-precedence layer via their defaults — except keys locked by
 	// the managed file, where an explicitly-set flag is a startup error.
 	cwd, _ := os.Getwd()
+	projectRoot := cwd
+	if runtimeSpec != nil {
+		projectRoot = runtimeSpec.Workspace.CanonicalRoot
+	}
 	managedPath := config.DefaultManagedPath()
-	cfg, locks, err := config.LoadWithManaged(home, cwd, managedPath)
+	resolved, _, err := loadDaemonConfig(home, projectRoot, managedPath, runtimeSpec, true)
 	if err != nil {
 		log.Fatalf("carina-daemon: %v", err)
 	}
+	cfg, locks := resolved.Config, resolved.Locks
 	if locks != nil && len(locks.Keys) > 0 {
 		log.Printf("carina-daemon: managed config %s locks keys: %s", locks.Source, strings.Join(locks.Keys, ", "))
 	}
 
+	runtimeSpecFlag := flag.String("runtime-spec", runtimeSpecPath, "authoritative workspace runtime spec")
 	stateDir := flag.String("state", cfg.StateDir, "session/event storage directory")
 	socket := flag.String("socket", cfg.Socket, "unix socket path")
 	tcp := flag.String("tcp", cfg.TCP, "optional loopback-only diagnostic TCP address, e.g. 127.0.0.1:7777")
@@ -84,6 +106,9 @@ func main() {
 	memoryHMSProjectionEnabled := flag.Bool("memory-hms-projection", cfg.MemoryHMSProjectionEnabled, "project approved local memory state into HMS")
 	memoryHMSProjectionPollMS := flag.Int("memory-hms-projection-poll-ms", cfg.MemoryHMSProjectionPollMS, "HMS projection worker poll interval in milliseconds")
 	flag.Parse()
+	if *runtimeSpecFlag != runtimeSpecPath {
+		log.Fatalf("carina-daemon: runtime spec changed during flag parsing")
+	}
 	if err := validateListenerSecurity(*tcp, *gatewayWS, *gatewayTokenSigningKeyFile); err != nil {
 		log.Fatalf("carina-daemon: %v", err)
 	}
@@ -98,6 +123,14 @@ func main() {
 	// silently ignored org policy or a silently ignored operator intent.
 	if err := validateLockedFlags(pinned, locks); err != nil {
 		log.Fatalf("carina-daemon: %v", err)
+	}
+	if runtimeSpec != nil {
+		if pinned["state"] && !sameConfiguredPath(*stateDir, runtimeSpec.Paths.StateDir) {
+			log.Fatalf("carina-daemon: -state %q disagrees with runtime spec %q", *stateDir, runtimeSpec.Paths.StateDir)
+		}
+		if pinned["socket"] && !sameConfiguredPath(*socket, runtimeSpec.Paths.SocketPath) {
+			log.Fatalf("carina-daemon: -socket %q disagrees with runtime spec %q", *socket, runtimeSpec.Paths.SocketPath)
+		}
 	}
 
 	// Bridge the resolved summarizer model into the env the daemon reads, unless
@@ -114,6 +147,7 @@ func main() {
 
 	d, err := daemon.New(daemon.Options{
 		StateDir:                   *stateDir,
+		RuntimeSpec:                runtimeSpec,
 		KernelBin:                  *kernelBin,
 		ToolsDir:                   *toolsDir,
 		PolicyDir:                  *policyDir,
@@ -160,11 +194,15 @@ func main() {
 	// re-pinning any operator-set CLI flags so they remain highest-precedence —
 	// unless the (freshly re-read) managed file locks the key, in which case the
 	// lock re-applied inside LoadWithManaged wins across SIGHUP/auto-reload.
+	var reloadMu sync.Mutex
 	reload := func() error {
-		nc, nlocks, err := config.LoadWithManaged(home, cwd, managedPath)
+		reloadMu.Lock()
+		defer reloadMu.Unlock()
+		nresolved, nextIdentity, err := loadDaemonConfig(home, projectRoot, managedPath, runtimeSpec, false)
 		if err != nil {
 			return err
 		}
+		nc, nlocks := nresolved.Config, nresolved.Locks
 		repin := func(flagName string) bool {
 			return pinned[flagName] && !nlocks.Locked(flagConfigKeys[flagName])
 		}
@@ -213,13 +251,28 @@ func main() {
 		if repin("headroom-token-budget") {
 			nc.HeadroomTokenBudget = *headroomTokenBudget
 		}
-		return d.ApplyConfig(nc)
+		if err := d.ApplyConfig(nc); err != nil {
+			return err
+		}
+		if runtimeSpec != nil {
+			updated := *runtimeSpec
+			updated.Config = nextIdentity
+			updated.UpdatedAt = time.Now().UTC()
+			if err := localruntime.WriteSpec(updated.Paths.SpecPath, updated); err != nil {
+				return fmt.Errorf("persist runtime config identity: %w", err)
+			}
+			if err := d.UpdateRuntimeConfigIdentity(nextIdentity); err != nil {
+				return fmt.Errorf("publish runtime config identity: %w", err)
+			}
+			*runtimeSpec = updated
+		}
+		return nil
 	}
 	d.SetReloader(reload)
 
 	// Auto-reload: watch the config files and reload on change (complements
 	// SIGHUP for environments that can't signal the daemon).
-	watcher := config.NewWatcher(config.WatchPaths(home, cwd, managedPath), 0, func() { // 0 => default 3s
+	watcher := config.NewWatcher(config.WatchPaths(home, projectRoot, managedPath), 0, func() { // 0 => default 3s
 		if err := reload(); err != nil {
 			log.Printf("carina-daemon: auto-reload failed (keeping last-good): %v", err)
 		} else {
@@ -230,6 +283,7 @@ func main() {
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(sigs)
 	go func() {
 		for sig := range sigs {
 			if sig == syscall.SIGHUP {
@@ -242,8 +296,7 @@ func main() {
 			}
 			fmt.Println("\ncarina-daemon: shutting down")
 			_ = d.Close()
-			_ = os.Remove(*socket)
-			os.Exit(0)
+			return
 		}
 	}()
 
@@ -273,9 +326,90 @@ func main() {
 	}
 
 	fmt.Printf("carina-daemon %s listening on %s\n", daemon.Version, *socket)
-	if err := d.Run(*socket); err != nil {
-		log.Fatalf("carina-daemon: %v", err)
+	runErr := d.Run(*socket)
+	closeErr := d.Close()
+	if runtimeSpec != nil {
+		if err := localdaemon.ReleaseRuntimeOwnership(*runtimeSpec, os.Getpid()); err != nil {
+			log.Printf("carina-daemon: release runtime ownership: %v", err)
+		}
 	}
+	if err := os.Remove(*socket); err != nil && !os.IsNotExist(err) {
+		log.Printf("carina-daemon: remove socket: %v", err)
+	}
+	if closeErr != nil {
+		log.Printf("carina-daemon: shutdown: %v", closeErr)
+	}
+	if runErr != nil {
+		log.Fatalf("carina-daemon: %v", runErr)
+	}
+}
+
+func findRuntimeSpecArg(args []string) (string, error) {
+	var path string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "-runtime-spec" || arg == "--runtime-spec":
+			if index+1 >= len(args) || strings.TrimSpace(args[index+1]) == "" {
+				return "", fmt.Errorf("%s requires a path", arg)
+			}
+			index++
+			path = args[index]
+		case strings.HasPrefix(arg, "-runtime-spec="):
+			path = strings.TrimPrefix(arg, "-runtime-spec=")
+		case strings.HasPrefix(arg, "--runtime-spec="):
+			path = strings.TrimPrefix(arg, "--runtime-spec=")
+		}
+	}
+	if strings.TrimSpace(path) == "" {
+		return "", nil
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve runtime spec path: %w", err)
+	}
+	return filepath.Clean(abs), nil
+}
+
+func loadDaemonConfig(home, projectRoot, managedPath string, spec *localruntime.Spec, requireFingerprint bool) (config.Resolved, localruntime.ConfigIdentity, error) {
+	resolved, err := config.LoadResolvedWithManaged(home, projectRoot, managedPath)
+	if err != nil {
+		return config.Resolved{}, localruntime.ConfigIdentity{}, err
+	}
+	if spec == nil {
+		return resolved, localruntime.ConfigIdentity{Fingerprint: resolved.Fingerprint}, nil
+	}
+	if resolved.Provenance.KeySources["socket"] == "default" {
+		resolved.Provenance.KeySources["socket"] = "workspace_default"
+	}
+	if resolved.Provenance.KeySources["state_dir"] == "default" {
+		resolved.Provenance.KeySources["state_dir"] = "workspace_default"
+	}
+	resolved.Config.Socket = spec.Paths.SocketPath
+	resolved.Config.StateDir = spec.Paths.StateDir
+	fingerprint, err := config.Fingerprint(resolved.Config)
+	if err != nil {
+		return config.Resolved{}, localruntime.ConfigIdentity{}, err
+	}
+	resolved.Fingerprint = fingerprint
+	sources := make(map[string]string, len(resolved.Provenance.KeySources))
+	for key, source := range resolved.Provenance.KeySources {
+		sources[key] = source
+	}
+	identity := localruntime.ConfigIdentity{Fingerprint: fingerprint, Sources: sources}
+	if requireFingerprint && spec.Config.Fingerprint != fingerprint {
+		return config.Resolved{}, localruntime.ConfigIdentity{}, fmt.Errorf("runtime config fingerprint mismatch: spec %s, resolved %s", spec.Config.Fingerprint, fingerprint)
+	}
+	return resolved, identity, nil
+}
+
+func sameConfiguredPath(left, right string) bool {
+	leftAbs, leftErr := filepath.Abs(left)
+	rightAbs, rightErr := filepath.Abs(right)
+	if leftErr != nil || rightErr != nil {
+		return filepath.Clean(left) == filepath.Clean(right)
+	}
+	return filepath.Clean(leftAbs) == filepath.Clean(rightAbs)
 }
 
 // flagConfigKeys maps each CLI flag to the config-file key it overrides

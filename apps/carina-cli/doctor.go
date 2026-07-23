@@ -363,7 +363,7 @@ func policyCheck(policy map[string]any) (chk doctorCheck, present bool) {
 		name:        "policy",
 		state:       "WARN",
 		detail:      reason,
-		remediation: "restart the daemon to apply the on-disk policy change: pkill carina-daemon && carina-daemon &",
+		remediation: "restart the current workspace runtime to apply the on-disk policy change: carina runtime stop; carina",
 	}, true
 }
 
@@ -491,7 +491,7 @@ func auditChainCheck(raw []byte, hasSessions bool, rpcErr bool) doctorCheck {
 			name:        "audit_chain",
 			state:       "FAIL",
 			detail:      "audit.verify RPC failed",
-			remediation: "check daemon logs; if the kernel is unreachable, run: carina-daemon &",
+			remediation: "check runtime logs; if the kernel is unreachable, run: carina runtime start",
 		}
 	}
 	var report auditVerifyReport
@@ -500,7 +500,7 @@ func auditChainCheck(raw []byte, hasSessions bool, rpcErr bool) doctorCheck {
 			name:        "audit_chain",
 			state:       "FAIL",
 			detail:      "audit.verify returned an unparsable report: " + err.Error(),
-			remediation: "check daemon logs; if the kernel is unreachable, run: carina-daemon &",
+			remediation: "check runtime logs; if the kernel is unreachable, run: carina runtime start",
 		}
 	}
 	if report.OK {

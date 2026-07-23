@@ -21,6 +21,7 @@ import (
 
 	"github.com/Nebutra/carina/go/config"
 	"github.com/Nebutra/carina/go/localdaemon"
+	"github.com/Nebutra/carina/go/localruntime"
 	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/rpc"
 	"github.com/Nebutra/carina/go/tui"
@@ -74,25 +75,54 @@ func Run(opts Options) tui.Outcome {
 		return tui.OutcomeUsage
 	}
 
-	socket := strings.TrimSpace(opts.Socket)
-	if socket == "" {
-		socket = defaultSocket()
-	}
-	projectRoot := strings.TrimSpace(opts.WorkspaceRoot)
-	if projectRoot == "" {
-		var err error
-		projectRoot, err = os.Getwd()
-		if err != nil {
-			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
-			return tui.OutcomeRuntimeError
-		}
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapResolveHomeFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
 		return tui.OutcomeRuntimeError
 	}
-	cfg, err := config.Load(home, projectRoot)
+	mode, err := localruntime.ResolveMode(home)
+	if err != nil {
+		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
+		return tui.OutcomeRuntimeError
+	}
+	projectRoot := strings.TrimSpace(opts.WorkspaceRoot)
+	var cfg config.Config
+	var socket string
+	var call RPC
+	var runtimeSpec *localruntime.Spec
+	if mode == localruntime.ModeWorkspace {
+		resolution, resolveErr := localruntime.Resolve(home, projectRoot, mode)
+		if resolveErr != nil {
+			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": resolveErr.Error()}, bootstrapLocale))
+			return tui.OutcomeRuntimeError
+		}
+		if explicitSocket := strings.TrimSpace(opts.Socket); explicitSocket != "" {
+			resolution, resolveErr = localruntime.ApplyOverrides(home, resolution, localruntime.Overrides{Socket: explicitSocket})
+			if resolveErr != nil {
+				fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": resolveErr.Error()}, bootstrapLocale))
+				return tui.OutcomeRuntimeError
+			}
+		}
+		cfg = resolution.Config
+		projectRoot = resolution.Workspace.CanonicalRoot
+		socket = resolution.Spec.Paths.SocketPath
+		runtimeSpec = &resolution.Spec
+	} else {
+		if projectRoot == "" {
+			projectRoot, err = os.Getwd()
+			if err != nil {
+				fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
+				return tui.OutcomeRuntimeError
+			}
+		}
+		cfg, err = config.Load(home, projectRoot)
+		if err == nil {
+			socket = strings.TrimSpace(opts.Socket)
+			if socket == "" {
+				socket = cfg.Socket
+			}
+		}
+	}
 	if err != nil {
 		if errors.Is(err, config.ErrInvalidTUILocale) {
 			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapLocaleInvalid, nil, bootstrapLocale))
@@ -111,12 +141,21 @@ func Run(opts Options) tui.Outcome {
 		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": err.Error()}, loc))
 		return tui.OutcomeUsage
 	}
-
-	call, err := localdaemon.EnsureReachable(socket)
-	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, loc))
-		return tui.OutcomeDaemonUnreachable
+	if runtimeSpec != nil {
+		client, _, connectErr := localdaemon.ConnectOrStart(*runtimeSpec)
+		if connectErr != nil {
+			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": connectErr.Error()}, loc))
+			return tui.OutcomeDaemonUnreachable
+		}
+		call = client
+	} else {
+		call, err = localdaemon.EnsureReachable(socket)
+		if err != nil {
+			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, loc))
+			return tui.OutcomeDaemonUnreachable
+		}
 	}
+
 	if opts.AfterDaemon != nil {
 		opts.AfterDaemon(call)
 	}
@@ -155,7 +194,11 @@ func Run(opts Options) tui.Outcome {
 	watchCtx, stopWatching := context.WithCancel(context.Background())
 	defer stopWatching()
 	go tui.WatchKeybindings(watchCtx, home, projectRoot, prog)
-	tui.ConnectControlled(prog, socket, sessionID, projectRoot, connectionController)
+	if runtimeSpec != nil {
+		tui.ConnectControlledRuntime(prog, socket, sessionID, projectRoot, connectionController, *runtimeSpec)
+	} else {
+		tui.ConnectControlled(prog, socket, sessionID, projectRoot, connectionController)
+	}
 
 	final, err := prog.Run()
 	if err != nil {

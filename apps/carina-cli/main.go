@@ -187,10 +187,13 @@ Native tools, no daemon:
   carina patch-native <apply|dry-run|rollback>      atomic patch primitive, JSON on stdin
 
 Daemon:
-  carina daemon start                              start the CLI-owned local daemon
-  carina daemon status                             show daemon status without auto-starting it
-  carina daemon stop                               stop only a daemon owned by this CLI
-  carina daemon logs                               show recent CLI-owned daemon logs
+  carina runtime start|status|stop|logs             manage the current workspace runtime
+  carina runtime mode workspace|legacy             choose the reversible local runtime mode
+  carina runtimes [--json]                          list known workspace runtimes without starting them
+  carina daemon start                              start the legacy global daemon
+  carina daemon status                             show legacy daemon status without auto-starting it
+  carina daemon stop                               stop only a legacy daemon owned by this CLI
+  carina daemon logs                               show legacy CLI-owned daemon logs
   carina completion <bash|zsh|fish>                generate shell completion
 `
 
@@ -240,6 +243,10 @@ func run(cmd string, args []string) error {
 		return cmdUpdate(args)
 	case "daemon":
 		return cmdDaemon(args)
+	case "runtime":
+		return cmdRuntime(args)
+	case "runtimes":
+		return cmdRuntimes(args)
 	case "auth":
 		return cmdAuth(args)
 	case "providers":

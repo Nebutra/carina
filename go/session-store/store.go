@@ -200,23 +200,41 @@ func (s *Store) CreateSession(workspaceRoot, profile string) (*Session, error) {
 
 // CreateSessionMode also sets the per-session approval mode (goal axis).
 func (s *Store) CreateSessionMode(workspaceRoot, profile, approvalMode string) (*Session, error) {
-	return s.createSession(workspaceRoot, profile, approvalMode, "", 0)
+	return s.createSession(NewID("ws"), workspaceRoot, profile, approvalMode, "", 0)
+}
+
+// CreateSessionModeForWorkspace creates a session anchored to a stable
+// workspace identity supplied by a workspace-scoped runtime.
+func (s *Store) CreateSessionModeForWorkspace(workspaceID, workspaceRoot, profile, approvalMode string) (*Session, error) {
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil, fmt.Errorf("sessionstore: workspace id is required")
+	}
+	return s.createSession(workspaceID, workspaceRoot, profile, approvalMode, "", 0)
 }
 
 // CreateSubSession creates an isolated subagent session linked to a parent,
 // at depth = parent.Depth + 1 (bounded by the caller to prevent runaway
 // nesting).
 func (s *Store) CreateSubSession(workspaceRoot, profile, approvalMode, parentID string, depth int) (*Session, error) {
-	return s.createSession(workspaceRoot, profile, approvalMode, parentID, depth)
+	return s.createSession(NewID("ws"), workspaceRoot, profile, approvalMode, parentID, depth)
 }
 
-func (s *Store) createSession(workspaceRoot, profile, approvalMode, parentID string, depth int) (*Session, error) {
+// CreateSubSessionForWorkspace creates a child session under the stable
+// workspace identity supplied by a workspace-scoped runtime.
+func (s *Store) CreateSubSessionForWorkspace(workspaceID, workspaceRoot, profile, approvalMode, parentID string, depth int) (*Session, error) {
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil, fmt.Errorf("sessionstore: workspace id is required")
+	}
+	return s.createSession(workspaceID, workspaceRoot, profile, approvalMode, parentID, depth)
+}
+
+func (s *Store) createSession(workspaceID, workspaceRoot, profile, approvalMode, parentID string, depth int) (*Session, error) {
 	if profile == "" {
 		profile = "safe-edit"
 	}
 	sess := &Session{
 		SessionID:         NewID("sess"),
-		WorkspaceID:       NewID("ws"),
+		WorkspaceID:       workspaceID,
 		WorkspaceRoot:     workspaceRoot,
 		Status:            "active",
 		PermissionProfile: profile,

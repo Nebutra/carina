@@ -134,7 +134,7 @@ func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessio
 		dec = approved
 	}
 
-	child, err := d.store.CreateSubSession(parent.WorkspaceRoot, childProfile, parent.ApprovalMode, parent.SessionID, parent.Depth+1)
+	child, err := d.createSubSession(parent.WorkspaceRoot, childProfile, parent.ApprovalMode, parent.SessionID, parent.Depth+1)
 	if err != nil {
 		return "spawn failed: " + err.Error(), ""
 	}

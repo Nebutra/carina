@@ -21,6 +21,9 @@ const (
 	CodeInvalidRequest = -32600
 	CodeMethodNotFound = -32601
 	CodeInternalError  = -32603
+	// CodeRuntimeIdentityMismatch is returned when a local endpoint does not
+	// prove the workspace/runtime identity expected by its client.
+	CodeRuntimeIdentityMismatch = -32020
 )
 
 // Origin identifies which transport a request arrived on. Local (unix socket)
@@ -64,6 +67,13 @@ type ScopeResolver func(params json.RawMessage) (Scope, error)
 
 // StreamHandler attaches a long-lived subscription to a connection.
 type StreamHandler func(params json.RawMessage, sub *Subscription) error
+
+// ConnectionObserver receives exactly one open and close callback for each
+// accepted transport connection. Implementations must return promptly.
+type ConnectionObserver interface {
+	ConnectionOpened(origin Origin)
+	ConnectionClosed(origin Origin)
+}
 
 // Subscription pushes server notifications to one connection.
 type Subscription struct {
@@ -213,6 +223,20 @@ type Server struct {
 	remoteDisabled bool            // kill-switch: refuse all Remote calls
 	strictMethods  bool            // refuse registered handlers without descriptors
 	lockFile       *os.File        // ListenUnix's cross-process advisory lock (P1.8), nil until acquired
+	observer       ConnectionObserver
+}
+
+// SetConnectionObserver installs the transport lifecycle observer.
+func (s *Server) SetConnectionObserver(observer ConnectionObserver) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observer = observer
+}
+
+func (s *Server) connectionObserver() ConnectionObserver {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.observer
 }
 
 func NewServer() *Server {
@@ -472,6 +496,11 @@ func (s *Server) serve(conn net.Conn, origin Origin) {
 
 func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
 	defer conn.Close()
+	observer := s.connectionObserver()
+	if observer != nil {
+		observer.ConnectionOpened(origin)
+		defer observer.ConnectionClosed(origin)
+	}
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	enc := json.NewEncoder(conn)

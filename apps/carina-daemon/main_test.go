@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Nebutra/carina/go/config"
+	"github.com/Nebutra/carina/go/localruntime"
 )
 
 // lockReportFor builds a real LockReport by loading a managed file that locks
@@ -107,5 +108,61 @@ func TestValidateListenerSecurity(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestFindRuntimeSpecArg(t *testing.T) {
+	path, err := findRuntimeSpecArg([]string{"-offline", "--runtime-spec=relative/spec.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(path) || filepath.Base(path) != "spec.json" {
+		t.Fatalf("path = %q", path)
+	}
+	if _, err := findRuntimeSpecArg([]string{"-runtime-spec"}); err == nil {
+		t.Fatal("missing runtime spec value accepted")
+	}
+}
+
+func TestLoadDaemonConfigUsesSpecWorkspaceAndTopology(t *testing.T) {
+	home := t.TempDir()
+	workspaceRoot := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, ".carina"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, ".carina", "config.json"), []byte(`{"max_task_tokens":123}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := localruntime.ResolveWorkspace(workspaceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := localruntime.DefaultPaths(home, workspace)
+	resolved, err := config.LoadResolvedWithManaged(home, workspaceRoot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved.Config.Socket = paths.SocketPath
+	resolved.Config.StateDir = paths.StateDir
+	fingerprint, err := config.Fingerprint(resolved.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := localruntime.EnsureSpec(home, workspace, localruntime.SpecOptions{
+		Mode:   localruntime.ModeWorkspace,
+		Config: localruntime.ConfigIdentity{Fingerprint: fingerprint},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, identity, err := loadDaemonConfig(home, workspaceRoot, "", &spec, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Config.MaxTaskTokens != 123 || loaded.Config.Socket != spec.Paths.SocketPath || loaded.Config.StateDir != spec.Paths.StateDir {
+		t.Fatalf("config = %+v", loaded.Config)
+	}
+	if identity.Fingerprint != spec.Config.Fingerprint {
+		t.Fatalf("fingerprint = %s, want %s", identity.Fingerprint, spec.Config.Fingerprint)
 	}
 }

@@ -121,63 +121,92 @@ func Load(home, projectDir string) (Config, error) {
 // managed file is present; otherwise it names the locked keys and their source
 // for provenance in errors and logs.
 func LoadWithManaged(home, projectDir, managedPath string) (Config, *LockReport, error) {
+	resolved, err := LoadResolvedWithManaged(home, projectDir, managedPath)
+	return resolved.Config, resolved.Locks, err
+}
+
+func loadResolved(home, projectDir, managedPath string) (Config, *LockReport, Provenance, error) {
 	cfg := Defaults(home)
+	provenance := newProvenance()
 	var managed *Managed
 	if managedPath != "" {
 		m, err := loadManaged(managedPath)
 		if err != nil {
-			return cfg, nil, err
+			return cfg, nil, provenance, err
 		}
 		managed = m
 	}
 	if managed != nil {
 		if err := managed.apply(&cfg, managedPath); err != nil {
-			return cfg, nil, err
+			return cfg, nil, provenance, err
 		}
+		values, err := managed.valueMap()
+		if err != nil {
+			return cfg, nil, provenance, err
+		}
+		provenance.addLayer("managed", managedPath, rawMessageKeys(values))
 	}
-	if err := mergeFile(&cfg, filepath.Join(home, ".carina", "config.json")); err != nil {
-		return cfg, nil, err
+	globalPath := filepath.Join(home, ".carina", "config.json")
+	globalKeys, err := mergeFileKeys(&cfg, globalPath)
+	if err != nil {
+		return cfg, nil, provenance, err
 	}
+	provenance.addLayer("global", globalPath, globalKeys)
 	if projectDir != "" {
 		projectPath := filepath.Join(projectDir, ".carina", "config.json")
 		if err := rejectProjectMemoryProviderConfig(projectPath); err != nil {
-			return cfg, nil, err
+			return cfg, nil, provenance, err
 		}
-		if err := mergeFile(&cfg, projectPath); err != nil {
-			return cfg, nil, err
+		projectKeys, err := mergeFileKeys(&cfg, projectPath)
+		if err != nil {
+			return cfg, nil, provenance, err
 		}
+		provenance.addLayer("project", projectPath, projectKeys)
 	}
 	mergeEnv(&cfg)
+	provenance.addEnvironment()
 	var report *LockReport
 	if managed != nil {
 		if err := managed.applyLocked(&cfg, managedPath); err != nil {
-			return cfg, nil, err
+			return cfg, nil, provenance, err
 		}
 		report = managed.report(managedPath)
+		for _, key := range report.Keys {
+			provenance.KeySources[key] = "managed_locked"
+		}
 	}
-	return cfg, report, cfg.Validate()
+	return cfg, report, provenance, cfg.Validate()
 }
 
 // mergeFile overlays a JSON file onto cfg. Unmarshaling into the existing struct
 // only touches keys present in the file, so absent keys keep the prior layer's
 // value.
 func mergeFile(cfg *Config, path string) error {
+	_, err := mergeFileKeys(cfg, path)
+	return err
+}
+
+func mergeFileKeys(cfg *Config, path string) ([]string, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("config: read %s: %w", path, err)
+		return nil, fmt.Errorf("config: read %s: %w", path, err)
 	}
 	if err := rejectDuplicateJSONKeys(data); err != nil {
-		return fmt.Errorf("config: parse %s: %w", path, err)
+		return nil, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		return nil, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 	dec := json.NewDecoder(strings.NewReader(string(data)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(cfg); err != nil {
-		return fmt.Errorf("config: parse %s: %w", path, err)
+		return nil, fmt.Errorf("config: parse %s: %w", path, err)
 	}
-	return nil
+	return rawMessageKeys(object), nil
 }
 
 // mergeEnv overlays CARINA_* environment variables (the highest cascade layer,

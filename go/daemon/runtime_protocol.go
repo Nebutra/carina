@@ -9,7 +9,7 @@ import (
 	"github.com/Nebutra/carina/go/protocolschema"
 )
 
-const runtimeProtocolVersion = "1.2.0"
+const runtimeProtocolVersion = "1.3.0"
 
 func protocolMajor(v string) (int, error) {
 	part := strings.SplitN(strings.TrimPrefix(v, "v"), ".", 2)[0]
@@ -30,11 +30,14 @@ func (d *Daemon) runtimeCapabilities() map[string]any {
 }
 func (d *Daemon) handleRuntimeInitialize(params json.RawMessage) (any, error) {
 	var p struct {
-		ProtocolVersion   string `json:"protocol_version"`
-		ClientName        string `json:"client_name"`
-		ClientVersion     string `json:"client_version"`
-		SchemaVersion     string `json:"schema_version"`
-		ProjectionVersion string `json:"projection_version"`
+		ProtocolVersion     string `json:"protocol_version"`
+		ClientName          string `json:"client_name"`
+		ClientVersion       string `json:"client_version"`
+		SchemaVersion       string `json:"schema_version"`
+		ProjectionVersion   string `json:"projection_version"`
+		ExpectedWorkspaceID string `json:"expected_workspace_id"`
+		ExpectedRuntimeID   string `json:"expected_runtime_id"`
+		ExpectedEpoch       string `json:"expected_epoch"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -61,7 +64,10 @@ func (d *Daemon) handleRuntimeInitialize(params json.RawMessage) (any, error) {
 	if clientMajor != serverMajor {
 		return nil, fmt.Errorf("incompatible protocol major: client %s, server %s", p.ProtocolVersion, runtimeProtocolVersion)
 	}
-	return map[string]any{"runtime_version": Version, "protocol_version": runtimeProtocolVersion, "schema_version": "1.2.0", "projection_version": sessionProjectionVersion, "minimum_protocol_version": "1.0.0", "client_name": p.ClientName, "client_version": p.ClientVersion, "capabilities": d.runtimeCapabilities(), "legacy_calls_allowed": true, "legacy_deprecation": "clients should initialize before other calls; enforcement is planned for protocol 2.0"}, nil
+	if err := d.validateExpectedRuntimeIdentity(p.ExpectedWorkspaceID, p.ExpectedRuntimeID, p.ExpectedEpoch); err != nil {
+		return nil, err
+	}
+	return map[string]any{"runtime_version": Version, "protocol_version": runtimeProtocolVersion, "schema_version": "1.2.0", "projection_version": sessionProjectionVersion, "minimum_protocol_version": "1.0.0", "client_name": p.ClientName, "client_version": p.ClientVersion, "capabilities": d.runtimeCapabilities(), "runtime": d.runtimeDescription(), "legacy_calls_allowed": true, "legacy_deprecation": "clients should initialize before other calls; enforcement is planned for protocol 2.0"}, nil
 }
 func (d *Daemon) handleRuntimeCapabilities(json.RawMessage) (any, error) {
 	return map[string]any{"runtime_version": Version, "protocol_version": runtimeProtocolVersion, "capabilities": d.runtimeCapabilities()}, nil

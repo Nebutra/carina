@@ -10,6 +10,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Nebutra/carina/go/localdaemon"
+	"github.com/Nebutra/carina/go/localruntime"
 	"github.com/Nebutra/carina/go/rpc"
 )
 
@@ -472,6 +474,16 @@ func Connect(p Sender, socket, sessionID, workspaceRoot string) {
 }
 
 func ConnectControlled(p Sender, socket, sessionID, workspaceRoot string, controller *ConnectionController) {
+	connectControlled(p, socket, sessionID, workspaceRoot, controller, nil)
+}
+
+// ConnectControlledRuntime validates every call and stream connection against
+// the stable workspace/runtime identity, including reconnects after restart.
+func ConnectControlledRuntime(p Sender, socket, sessionID, workspaceRoot string, controller *ConnectionController, spec localruntime.Spec) {
+	connectControlled(p, socket, sessionID, workspaceRoot, controller, &spec)
+}
+
+func connectControlled(p Sender, socket, sessionID, workspaceRoot string, controller *ConnectionController, runtimeSpec *localruntime.Spec) {
 	go func() {
 		if controller == nil {
 			controller = NewConnectionController()
@@ -482,6 +494,20 @@ func ConnectControlled(p Sender, socket, sessionID, workspaceRoot string, contro
 		completions := newCompletionTracker()
 		permissions := newPermissionTracker()
 		questions := newQuestionTracker()
+		currentSpec := runtimeSpec
+		dial := func() (*rpc.Client, error) {
+			if currentSpec == nil {
+				return rpc.Dial(socket)
+			}
+			if latest, err := localruntime.LoadSpec(currentSpec.Paths.SpecPath); err == nil {
+				if latest.Workspace.ID != currentSpec.Workspace.ID || latest.RuntimeID != currentSpec.RuntimeID {
+					return nil, fmt.Errorf("runtime identity changed on disk")
+				}
+				currentSpec = &latest
+			}
+			client, _, err := localdaemon.Connect(*currentSpec)
+			return client, err
+		}
 		for attempt := 0; ; attempt++ {
 			desired, desiredGeneration := controller.state(sessionID)
 			if desired != sid || desiredGeneration != generation {
@@ -496,7 +522,7 @@ func ConnectControlled(p Sender, socket, sessionID, workspaceRoot string, contro
 				time.Sleep(backoff(attempt))
 			}
 
-			call, err := rpc.Dial(socket)
+			call, err := dial()
 			if err != nil {
 				if attempt == 0 {
 					p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: err})
@@ -534,7 +560,7 @@ func ConnectControlled(p Sender, socket, sessionID, workspaceRoot string, contro
 			}
 			cursor = initial.Cursor
 
-			stream, err := rpc.Dial(socket)
+			stream, err := dial()
 			if err != nil {
 				call.Close()
 				p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: err})

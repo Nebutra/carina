@@ -3,7 +3,8 @@
   "version": "1.6.0",
   "apis": {
     "runtime": [
-      { "method": "runtime.initialize", "scope": "read", "remote": true, "params": { "protocol_version": "semver?", "schema_version": "semver? compatible major", "projection_version": "semver? exact reducer match", "client_name": "string?", "client_version": "semver?" }, "result": "RuntimeInitializeResult" },
+      { "method": "runtime.initialize", "scope": "read", "remote": true, "params": { "protocol_version": "semver?", "schema_version": "semver? compatible major", "projection_version": "semver? exact reducer match", "client_name": "string?", "client_version": "semver?", "expected_workspace_id": "string?", "expected_runtime_id": "string?", "expected_epoch": "string?" }, "result": "RuntimeInitializeResult" },
+      { "method": "runtime.describe", "scope": "read", "remote": false, "params": {}, "result": "RuntimeDescription" },
       { "method": "runtime.capabilities", "scope": "read", "remote": true, "params": {}, "result": "{ runtime_version: semver, protocol_version: semver, capabilities: object }" },
       { "method": "runtime.registry_schema", "scope": "read", "remote": true, "params": {}, "result": "JSON Schema Draft 2020-12" }
     ],

@@ -31,6 +31,7 @@ import (
 	"github.com/Nebutra/carina/go/extensions"
 	"github.com/Nebutra/carina/go/history"
 	"github.com/Nebutra/carina/go/kernel"
+	"github.com/Nebutra/carina/go/localruntime"
 	"github.com/Nebutra/carina/go/mcp"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/nebutra"
@@ -50,13 +51,14 @@ const Version = product.Version
 
 // Options configures external binaries and storage.
 type Options struct {
-	StateDir          string   // session metadata, event logs, snapshots
-	KernelBin         string   // carina-kernel-service path ("" = auto-discover)
-	ToolsDir          string   // zig tools directory ("" = auto-discover)
-	PolicyDir         string   // enterprise org-policy directory ("" = none)
-	Offline           bool     // disable network model providers (PRD §5: offline mode)
-	DisabledProviders []string // provider IDs excluded from completion, embeddings, rerank, and auto-selection
-	SafeMode          bool     // disable user/project extensions while retaining built-ins and policy
+	StateDir          string             // session metadata, event logs, snapshots
+	RuntimeSpec       *localruntime.Spec // authoritative workspace runtime identity; nil is legacy/manual mode
+	KernelBin         string             // carina-kernel-service path ("" = auto-discover)
+	ToolsDir          string             // zig tools directory ("" = auto-discover)
+	PolicyDir         string             // enterprise org-policy directory ("" = none)
+	Offline           bool               // disable network model providers (PRD §5: offline mode)
+	DisabledProviders []string           // provider IDs excluded from completion, embeddings, rerank, and auto-selection
+	SafeMode          bool               // disable user/project extensions while retaining built-ins and policy
 
 	MaxConcurrentTasks int // cap on concurrent background runs (0 => default 8)
 
@@ -258,10 +260,12 @@ type Daemon struct {
 	sandbox      atomic.Bool // run commands under an OS syscall sandbox (hot-reloadable)
 	safeMode     bool
 
-	stopCh   chan struct{} // closed on Close; stops background loops (lease reaper)
-	stopOnce sync.Once
-	loopWG   sync.WaitGroup
-	taskWG   sync.WaitGroup
+	stopCh    chan struct{} // closed on Close; stops background loops (lease reaper)
+	stopOnce  sync.Once
+	closeOnce sync.Once
+	closeErr  error
+	loopWG    sync.WaitGroup
+	taskWG    sync.WaitGroup
 
 	interactiveApproval  atomic.Bool                     // true iff approval mode is ask (legacy mirror, hot-reloadable)
 	approvalMode         atomic.Value                    // string: ask|always-approve|dont-ask
@@ -313,6 +317,16 @@ type Daemon struct {
 	retryGovernance          *retryGovernance
 	artifacts                *artifact.Store
 	runtimeLease             *runtimeLease
+	runtimeSpec              *localruntime.Spec
+	runtimeMu                sync.Mutex
+	runtimeLifecycle         string
+	runtimeIdleMu            sync.Mutex
+	runtimeConnections       int
+	runtimeIdleGrace         time.Duration
+	runtimeIdleTimer         *time.Timer
+	runtimeIdleDeadline      *time.Time
+	runtimeIdleStopping      bool
+	runtimeIdleStop          func()
 }
 
 const artifactGCInterval = 30 * time.Minute
@@ -320,6 +334,10 @@ const artifactGCInterval = 30 * time.Minute
 func New(opts Options) (*Daemon, error) {
 	if opts.StateDir == "" {
 		opts.StateDir = ".carina-state"
+	}
+	runtimeSpec, err := validateRuntimeSpec(opts.RuntimeSpec, opts.StateDir)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: %w", err)
 	}
 	configuredReasonerBackend, err := normalizeReasonerBackend(os.Getenv("CARINA_REASONER_BACKEND"))
 	if err != nil {
@@ -382,6 +400,9 @@ func New(opts Options) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateRuntimeSessions(runtimeSpec, store.List()); err != nil {
+		return nil, fmt.Errorf("daemon: %w", err)
+	}
 	tools := toolchain.New(opts.ToolsDir)
 	// The kernel delegates patch writes to carina-patch-native, so it needs the
 	// same tools directory (PRD §4.4).
@@ -422,6 +443,12 @@ func New(opts Options) (*Daemon, error) {
 		gatewayTokenMaxTTL:    gatewayTokenMaxTTL,
 		gatewayResponses:      map[string]string{},
 		runtimeLease:          runtimeLease,
+		runtimeSpec:           runtimeSpec,
+	}
+	d.server.SetConnectionObserver(d)
+	if err := d.publishRuntimeDescriptor(localruntime.LifecycleStarting, ""); err != nil {
+		_ = kern.Close()
+		return nil, fmt.Errorf("daemon: publish starting runtime descriptor: %w", err)
 	}
 	if mode := strings.ToLower(strings.TrimSpace(opts.MemoryProvider)); mode != "" && mode != memoryProviderOff {
 		if opts.Offline {
@@ -745,6 +772,7 @@ func New(opts Options) (*Daemon, error) {
 	d.resumeRuns()
 	d.recoverAutoGoals()
 	d.startBackgroundLoop(d.runScheduleLoop)
+	d.initializeRuntimeIdle()
 	leaseTransferred = true
 	return d, nil
 }
@@ -817,11 +845,14 @@ func (d *Daemon) recover() {
 
 // Run blocks serving JSON-RPC on the unix socket.
 func (d *Daemon) Run(socketPath string) error {
-	d.socketPath = socketPath
+	d.setRuntimeSocket(socketPath)
 	// A local execution worker and a sandbox worker are always available
 	// (PRD §5.4).
 	d.pool.Register("local", worker.Local)
 	d.pool.Register("sandbox", worker.Sandbox)
+	if err := d.publishRuntimeDescriptor(localruntime.LifecycleRunning, socketPath); err != nil {
+		return fmt.Errorf("daemon: publish running runtime descriptor: %w", err)
+	}
 	return d.server.ListenUnix(socketPath)
 }
 
@@ -850,6 +881,16 @@ func (d *Daemon) RunGatewayHTTP(addr string, allowedOrigins []string) error {
 }
 
 func (d *Daemon) Close() error {
+	d.closeOnce.Do(func() {
+		d.closeErr = d.close()
+	})
+	return d.closeErr
+}
+
+func (d *Daemon) close() error {
+	d.stopRuntimeIdleTimer()
+	_, socketPath := d.runtimePublishState()
+	descriptorStoppingErr := d.publishRuntimeDescriptor(localruntime.LifecycleStopping, socketPath)
 	d.stopOnce.Do(func() {
 		if d.stopCh != nil {
 			close(d.stopCh)
@@ -886,10 +927,17 @@ func (d *Daemon) Close() error {
 	closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 	kernelErr := d.kern.Close()
 	leaseErr := d.runtimeLease.close(true)
+	descriptorStoppedErr := d.publishRuntimeDescriptor(localruntime.LifecycleStopped, socketPath)
 	if kernelErr != nil {
 		return kernelErr
 	}
-	return leaseErr
+	if leaseErr != nil {
+		return leaseErr
+	}
+	if descriptorStoppingErr != nil {
+		return descriptorStoppingErr
+	}
+	return descriptorStoppedErr
 }
 
 type closeableReasoner interface {
@@ -1031,6 +1079,7 @@ func (d *Daemon) connectContextEngineMCP(eng contextengine.Engine) (bool, error)
 
 func (d *Daemon) registerMethods() {
 	d.registerRPC("runtime.initialize", rpc.ScopeRead, true, d.handleRuntimeInitialize)
+	d.registerRPC("runtime.describe", rpc.ScopeRead, false, d.handleRuntimeDescribe)
 	d.registerRPC("runtime.capabilities", rpc.ScopeRead, true, d.handleRuntimeCapabilities)
 	d.registerRPC("runtime.registry_schema", rpc.ScopeRead, true, d.handleRuntimeSchema)
 	d.registerRPC("daemon.status", rpc.ScopeRead, true, d.handleStatus)
@@ -1753,7 +1802,11 @@ func (d *Daemon) handleSessionCreate(params json.RawMessage) (any, error) {
 	if _, err := os.Stat(p.WorkspaceRoot); err != nil {
 		return nil, fmt.Errorf("workspace_root: %w", err)
 	}
-	sess, err := d.store.CreateSessionMode(p.WorkspaceRoot, p.Profile, p.ApprovalMode)
+	workspaceRoot, err := d.validateSessionWorkspace(p.WorkspaceRoot)
+	if err != nil {
+		return nil, err
+	}
+	sess, err := d.createSession(workspaceRoot, p.Profile, p.ApprovalMode)
 	if err != nil {
 		return nil, err
 	}
@@ -1988,7 +2041,7 @@ func (d *Daemon) handleSessionFork(params json.RawMessage) (any, error) {
 	if cp == nil {
 		return nil, fmt.Errorf("fork boundary not found for task %s", sourceTask.TaskID)
 	}
-	child, err := d.store.CreateSubSession(src.WorkspaceRoot, src.PermissionProfile, src.ApprovalMode, src.SessionID, src.Depth+1)
+	child, err := d.createSubSession(src.WorkspaceRoot, src.PermissionProfile, src.ApprovalMode, src.SessionID, src.Depth+1)
 	if err != nil {
 		return nil, err
 	}

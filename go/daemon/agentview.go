@@ -176,7 +176,15 @@ func (d *Daemon) handleAgentDispatch(params json.RawMessage) (any, error) {
 		}
 		workspace = rec.Path
 	}
-	sess, err := d.store.CreateSessionMode(workspace, p.Profile, p.ApprovalMode)
+	validatedWorkspace, err := d.validateSessionWorkspace(workspace)
+	if err != nil {
+		if worktreeID != "" {
+			_ = d.worktrees.Cleanup(worktreeID, worktreeID, true)
+		}
+		return nil, err
+	}
+	workspace = validatedWorkspace
+	sess, err := d.createSession(workspace, p.Profile, p.ApprovalMode)
 	if err != nil {
 		if worktreeID != "" {
 			_ = d.worktrees.Cleanup(worktreeID, worktreeID, true)

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Nebutra/carina/go/localdaemon"
+	"github.com/Nebutra/carina/go/localruntime"
 	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/tui"
 	"github.com/Nebutra/carina/go/tuiapp"
@@ -12,8 +13,10 @@ import (
 // Capture the package defaults at init so temporary rebinds of
 // localdaemon.Dial/Spawn (for tests) cannot recurse through these hooks.
 var (
-	defaultLocalDial  = localdaemon.Dial
-	defaultLocalSpawn = localdaemon.Spawn
+	defaultLocalDial        = localdaemon.Dial
+	defaultLocalSpawn       = localdaemon.Spawn
+	defaultRuntimeSpawn     = localdaemon.SpawnRuntime
+	defaultRuntimeHandshake = localdaemon.RuntimeHandshake
 )
 
 // spawnDaemonHook lets tests observe/replace the actual daemon spawn without
@@ -29,6 +32,9 @@ var spawnDaemonHook = func() error {
 // dialSocketHook lets tests observe/replace ensureDaemonReachable's dial
 // calls without touching a real unix socket.
 var dialSocketHook = defaultLocalDial
+
+var spawnRuntimeHook = func(spec localruntime.Spec) error { return defaultRuntimeSpawn(spec) }
+var runtimeHandshakeHook = defaultRuntimeHandshake
 
 // daemonReachableDeadline bounds how long ensureDaemonReachable retries the
 // dial after auto-starting the daemon before giving up.
@@ -50,15 +56,17 @@ func runTUI(opts tuiapp.Options) tui.Outcome {
 	// Bind CLI dial/spawn test hooks into localdaemon for the duration of
 	// launch (same as ensureDaemonReachable), so unit tests that stub
 	// dialSocketHook/spawnDaemonHook still control reachability.
-	origDial, origSpawn, origDeadline := localdaemon.Dial, localdaemon.Spawn, localdaemon.ReachableDeadline
+	origDial, origSpawn, origRuntimeSpawn, origHandshake, origDeadline := localdaemon.Dial, localdaemon.Spawn, localdaemon.SpawnRuntime, localdaemon.RuntimeHandshake, localdaemon.ReachableDeadline
 	localdaemon.Dial = dialSocketHook
 	localdaemon.Spawn = func(sock string) error {
 		_ = sock
 		return spawnDaemonHook()
 	}
+	localdaemon.SpawnRuntime = spawnRuntimeHook
+	localdaemon.RuntimeHandshake = runtimeHandshakeHook
 	localdaemon.ReachableDeadline = daemonReachableDeadline
 	defer func() {
-		localdaemon.Dial, localdaemon.Spawn, localdaemon.ReachableDeadline = origDial, origSpawn, origDeadline
+		localdaemon.Dial, localdaemon.Spawn, localdaemon.SpawnRuntime, localdaemon.RuntimeHandshake, localdaemon.ReachableDeadline = origDial, origSpawn, origRuntimeSpawn, origHandshake, origDeadline
 	}()
 	return tuiapp.Run(opts)
 }

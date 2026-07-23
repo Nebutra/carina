@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Nebutra/carina/go/localdaemon"
+	"github.com/Nebutra/carina/go/localruntime"
 	"github.com/Nebutra/carina/go/rpc"
 )
 
@@ -18,11 +20,33 @@ type rpcClient = rpc.Client
 // real socket. Production code always goes through initGate, the single
 // seam allowed to call dialHook (P1.8 startup discipline).
 var dialHook = func() (*rpcClient, error) {
-	socket, err := defaultSocketPath()
-	if err != nil {
-		return nil, err
+	var c *rpc.Client
+	var err error
+	home, homeErr := os.UserHomeDir()
+	mode := localruntime.ModeWorkspace
+	if homeErr == nil {
+		mode, homeErr = localruntime.ResolveMode(home)
 	}
-	c, err := rpc.Dial(socket)
+	if homeErr != nil {
+		return nil, homeErr
+	}
+	if mode == localruntime.ModeLegacy {
+		var socket string
+		socket, err = defaultSocketPath()
+		if err == nil {
+			c, err = rpc.Dial(socket)
+		}
+	} else {
+		var cwd string
+		cwd, err = os.Getwd()
+		if err == nil {
+			var resolution localruntime.Resolution
+			resolution, err = localruntime.Resolve(home, cwd, localruntime.ModeWorkspace)
+			if err == nil {
+				c, _, err = localdaemon.ConnectOrStart(resolution.Spec)
+			}
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +88,7 @@ func dialDaemon() (*rpcClient, error) { return dialHook() }
 var ungatedCommands = map[string]bool{
 	"version": true, "--version": true, "-v": true,
 	"help": true, "-h": true, "--help": true,
-	"completion": true, "update": true, "daemon": true,
+	"completion": true, "update": true, "daemon": true, "runtime": true, "runtimes": true,
 	"scan": true, "grep": true, "diff": true, "pty": true,
 	"run-native": true, "patch-native": true,
 	"auth": true, "providers": true,
