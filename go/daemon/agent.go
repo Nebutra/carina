@@ -195,6 +195,7 @@ func (d *Daemon) runTaskContext(ctx context.Context, sess *sessionstore.Session,
 			tr.addTurn(Turn{Tool: "memory_recall", ActionBrief: "hms-evidence", Obs: Observation{Content: evidence, Pinned: true}})
 		}
 	}
+	attachTaskInputMedia(tr, task)
 	d.runLoopContext(ctx, sess, task, tr, 1, memorySnapshot)
 }
 

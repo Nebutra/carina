@@ -9,6 +9,7 @@ import (
 	"github.com/Nebutra/carina/go/artifact"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/provider"
+	"github.com/Nebutra/carina/go/scheduler"
 )
 
 // MediaRef is a content-addressed reference to a non-text observation payload
@@ -117,6 +118,56 @@ const (
 	maxRequestMediaParts = 4
 	maxRequestMediaBytes = 4 << 20
 )
+
+func (d *Daemon) validateTaskInputMedia(sessionID string, refs []MediaRef) ([]scheduler.InputMediaRef, error) {
+	if len(refs) > maxRequestMediaParts {
+		return nil, fmt.Errorf("input_media_refs must contain at most %d images", maxRequestMediaParts)
+	}
+	out := make([]scheduler.InputMediaRef, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+	var total int64
+	for _, ref := range refs {
+		if len(ref.ArtifactID) != 64 || !strings.HasPrefix(ref.MediaType, "image/") || ref.Bytes < 1 {
+			return nil, fmt.Errorf("invalid input media reference")
+		}
+		if _, duplicate := seen[ref.ArtifactID]; duplicate {
+			return nil, fmt.Errorf("duplicate input media reference %s", ref.ArtifactID)
+		}
+		seen[ref.ArtifactID] = struct{}{}
+		raw, meta, err := d.artifacts.Read(artifact.Scope{SessionID: sessionID}, ref.ArtifactID)
+		if err != nil {
+			return nil, fmt.Errorf("input media %s is unavailable in this session: %w", ref.ArtifactID, err)
+		}
+		mediaType, ok := sniffImageMediaType(raw)
+		if !ok || mediaType != ref.MediaType || meta.Bytes != ref.Bytes {
+			return nil, fmt.Errorf("input media metadata does not match stored content")
+		}
+		total += meta.Bytes
+		if total > maxRequestMediaBytes {
+			return nil, fmt.Errorf("input media exceeds %d byte request budget", maxRequestMediaBytes)
+		}
+		out = append(out, scheduler.InputMediaRef{
+			ArtifactID: ref.ArtifactID, MediaType: ref.MediaType, Bytes: ref.Bytes, Origin: ref.Origin,
+		})
+	}
+	return out, nil
+}
+
+func attachTaskInputMedia(transcript *Transcript, task *scheduler.Task) {
+	if transcript == nil || task == nil || len(task.InputMediaRefs) == 0 {
+		return
+	}
+	refs := make([]MediaRef, 0, len(task.InputMediaRefs))
+	for _, ref := range task.InputMediaRefs {
+		refs = append(refs, MediaRef{
+			ArtifactID: ref.ArtifactID, MediaType: ref.MediaType, Bytes: ref.Bytes, Origin: ref.Origin,
+		})
+	}
+	transcript.addTurn(Turn{
+		Tool: "user", ActionBrief: "input-media",
+		Obs: Observation{Content: fmt.Sprintf("User attached %d image(s).", len(refs)), MediaRefs: refs, Pinned: true},
+	})
+}
 
 // catalogModelImageCapable resolves whether the task's model string refers to
 // a catalog entry that declares image input. The model string is the routing

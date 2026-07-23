@@ -20,6 +20,7 @@ __all__ = [
     "CarinaRpcError",
     "CarinaStreamOverflow",
     "CarinaTask",
+    "MediaRef",
     "ContinuityState",
     "Checkpoint",
     "CheckpointPreview",
@@ -33,6 +34,13 @@ __all__ = [
     "compatible_runtime_version",
     "default_socket_path",
 ]
+
+
+class MediaRef(TypedDict, total=False):
+    artifact_id: str
+    media_type: str
+    bytes: int
+    origin: str
 
 
 class _CarinaTaskRequired(TypedDict):
@@ -50,6 +58,7 @@ class CarinaTask(_CarinaTaskRequired, total=False):
     client_submission_id: str
     revision: int
     continuity: ContinuityState
+    input_media_refs: list[MediaRef]
     model: str
     agent: str
     success_criteria: list[SuccessCheck]
@@ -344,10 +353,14 @@ class CarinaClient:
     def list_sessions(self) -> list[dict[str, Any]]:
         return self.call("session.list")
 
-    def submit_task(self, session_id: str, prompt: str, client_submission_id: str | None = None) -> CarinaTask:
+    def submit_task(self, session_id: str, prompt: str, client_submission_id: str | None = None, input_media_refs: list[MediaRef] | None = None) -> CarinaTask:
+        if input_media_refs is not None and len(input_media_refs) > 4:
+            raise ValueError("input media refs must contain at most 4 images")
         params: dict[str, Any] = {"session_id": session_id, "prompt": prompt}
         if client_submission_id is not None:
             params["client_submission_id"] = client_submission_id
+        if input_media_refs:
+            params["input_media_refs"] = input_media_refs
         return self.call("task.submit", params)
 
     def submit_goal(self, session_id: str, prompt: str, success_criteria: list[SuccessCheck], client_submission_id: str | None = None) -> CarinaTask:
@@ -437,6 +450,38 @@ class CarinaClient:
 
     def stat_artifact(self, session_id: str, artifact_id: str, task_id: str = "", call_id: str = "") -> ArtifactMetadata:
         return self.call("artifact.stat", self._artifact_params(session_id, artifact_id, task_id, call_id))
+
+    def upload_artifact(self, session_id: str, upload_id: str, media_type: str, origin: str, content: bytes) -> MediaRef:
+        if not session_id or not upload_id:
+            raise ValueError("session_id and upload_id are required")
+        if not 0 < len(content) <= 4 * 1024 * 1024:
+            raise ValueError("artifact upload must be 1..4194304 bytes")
+        if media_type not in {"image/png", "image/jpeg", "image/gif", "image/webp"}:
+            raise ValueError(f"unsupported artifact media type {media_type!r}")
+        digest = hashlib.sha256(content).hexdigest()
+        chunk_size = 512 * 1024
+        for chunk_index, offset in enumerate(range(0, len(content), chunk_size)):
+            chunk = content[offset:offset + chunk_size]
+            final = offset + len(chunk) == len(content)
+            result = self.call("artifact.upload", {
+                "session_id": session_id,
+                "upload_id": upload_id,
+                "chunk_index": chunk_index,
+                "content_base64": base64.b64encode(chunk).decode("ascii"),
+                "final": final,
+                "sha256": digest,
+                "total_bytes": len(content),
+                "media_type": media_type,
+                "origin": origin,
+            })
+            if not final:
+                if result.get("upload_id") != upload_id or result.get("next_chunk_index") != chunk_index + 1:
+                    raise RuntimeError("artifact upload receipt did not advance")
+                continue
+            if result.get("artifact_id") != digest or result.get("media_type") != media_type or result.get("bytes") != len(content):
+                raise RuntimeError("artifact upload result does not match content")
+            return result
+        raise RuntimeError("artifact upload produced no chunks")
 
     def read_artifact_page(self, session_id: str, artifact_id: str, offset: int = 0, limit: int = 65536, task_id: str = "", call_id: str = "") -> dict[str, Any]:
         if offset < 0 or not 0 < limit <= 1048576:
@@ -647,10 +692,13 @@ class CarinaThread:
     def fork(self, last_task_id: str | None = None, through_turn: int | None = None) -> CarinaThread:
         return self.client.fork_thread(self.session["session_id"], last_task_id, through_turn)
 
-    def run(self, prompt: str, *, output_schema: dict[str, Any] | None = None, client_submission_id: str | None = None, cancel: threading.Event | None = None, poll_interval: float = .05) -> dict[str, Any]:
+    def run(self, prompt: str, *, output_schema: dict[str, Any] | None = None, client_submission_id: str | None = None, input_media_refs: list[MediaRef] | None = None, cancel: threading.Event | None = None, poll_interval: float = .05) -> dict[str, Any]:
+        if input_media_refs is not None and len(input_media_refs) > 4:
+            raise ValueError("input media refs must contain at most 4 images")
         params: dict[str, Any] = {"session_id": self.session["session_id"], "prompt": prompt}
         if output_schema is not None: params["output_schema"] = output_schema
         if client_submission_id is not None: params["client_submission_id"] = client_submission_id
+        if input_media_refs: params["input_media_refs"] = input_media_refs
         task = self.client.call("task.submit", params); task_id = task["task_id"]
         while True:
             if cancel is not None and cancel.is_set():
@@ -668,6 +716,9 @@ class CarinaThread:
     def run_streamed(self, prompt: str, **options: Any) -> Iterator[dict[str, Any]]:
         output_schema = options.get("output_schema")
         client_submission_id = options.get("client_submission_id")
+        input_media_refs = options.get("input_media_refs")
+        if input_media_refs is not None and len(input_media_refs) > 4:
+            raise ValueError("input media refs must contain at most 4 images")
         cancel = options.get("cancel")
         poll_interval = options.get("poll_interval", .05)
         session_id = self.session["session_id"]
@@ -681,6 +732,8 @@ class CarinaThread:
                 params["output_schema"] = output_schema
             if client_submission_id is not None:
                 params["client_submission_id"] = client_submission_id
+            if input_media_refs:
+                params["input_media_refs"] = input_media_refs
             task = self.client.call("task.submit", params)
             task_id = task["task_id"]
             while True:

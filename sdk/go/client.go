@@ -20,6 +20,8 @@ import (
 
 const CompatibleRuntimeVersion = "0.6.5"
 const streamQueueLimit = 64
+const artifactUploadChunkSize = 512 << 10
+const artifactUploadMaxBytes = 4 << 20
 
 var ErrStreamOverflow = errors.New("sdk: event stream overflow")
 
@@ -50,6 +52,7 @@ type Task struct {
 	Revision                   int64           `json:"revision,omitempty"`
 	Continuity                 ContinuityState `json:"continuity"`
 	UserPrompt                 string          `json:"user_prompt"`
+	InputMediaRefs             []MediaRef      `json:"input_media_refs,omitempty"`
 	Model                      string          `json:"model,omitempty"`
 	Agent                      string          `json:"agent,omitempty"`
 	SuccessCriteria            []SuccessCheck  `json:"success_criteria,omitempty"`
@@ -70,6 +73,13 @@ type Task struct {
 	LeaseGeneration            int             `json:"lease_generation,omitempty"`
 	Attempts                   int             `json:"attempts,omitempty"`
 	RequiredWorkerCapabilities []string        `json:"required_worker_capabilities,omitempty"`
+}
+
+type MediaRef struct {
+	ArtifactID string `json:"artifact_id"`
+	MediaType  string `json:"media_type"`
+	Bytes      int64  `json:"bytes"`
+	Origin     string `json:"origin,omitempty"`
 }
 
 type ContinuityState struct {
@@ -309,6 +319,7 @@ type RunOptions struct {
 	OutputSchema       json.RawMessage
 	PollInterval       time.Duration
 	ClientSubmissionID string
+	InputMediaRefs     []MediaRef
 }
 type TurnResult struct {
 	Task             Task   `json:"task"`
@@ -423,6 +434,15 @@ type ArtifactReadPage struct {
 	ContentBase64 string           `json:"content_base64"`
 }
 
+type artifactUploadResult struct {
+	UploadID       string `json:"upload_id"`
+	NextChunkIndex int    `json:"next_chunk_index"`
+	ArtifactID     string `json:"artifact_id"`
+	MediaType      string `json:"media_type"`
+	Bytes          int64  `json:"bytes"`
+	Origin         string `json:"origin,omitempty"`
+}
+
 func DefaultSocketPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -483,15 +503,33 @@ func (c *Client) SubmitTask(sessionID, prompt string) (Task, error) {
 }
 
 func (c *Client) SubmitTaskIdempotent(sessionID, prompt, clientSubmissionID string) (Task, error) {
+	return c.SubmitTaskWithMediaIdempotent(sessionID, prompt, clientSubmissionID, nil)
+}
+
+func (c *Client) SubmitTaskWithMedia(sessionID, prompt string, refs []MediaRef) (Task, error) {
+	return c.SubmitTaskWithMediaIdempotent(sessionID, prompt, "", refs)
+}
+
+func (c *Client) SubmitTaskWithMediaIdempotent(sessionID, prompt, clientSubmissionID string, refs []MediaRef) (Task, error) {
+	if len(refs) > 4 {
+		return Task{}, errors.New("sdk: input media refs must contain at most 4 images")
+	}
 	var out Task
-	err := c.Call("task.submit", taskSubmitParams(sessionID, prompt, clientSubmissionID), &out)
+	err := c.Call("task.submit", taskSubmitParamsWithMedia(sessionID, prompt, clientSubmissionID, refs), &out)
 	return out, err
 }
 
 func taskSubmitParams(sessionID, prompt, clientSubmissionID string) map[string]any {
+	return taskSubmitParamsWithMedia(sessionID, prompt, clientSubmissionID, nil)
+}
+
+func taskSubmitParamsWithMedia(sessionID, prompt, clientSubmissionID string, refs []MediaRef) map[string]any {
 	params := map[string]any{"session_id": sessionID, "prompt": prompt}
 	if clientSubmissionID != "" {
 		params["client_submission_id"] = clientSubmissionID
+	}
+	if len(refs) > 0 {
+		params["input_media_refs"] = append([]MediaRef(nil), refs...)
 	}
 	return params
 }
@@ -534,7 +572,10 @@ func (t *Thread) Fork(lastTaskID string, throughTurn int) (*Thread, error) {
 	return t.client.ForkThread(t.Session.SessionID, lastTaskID, throughTurn)
 }
 func (t *Thread) Run(ctx context.Context, prompt string, opts RunOptions) (TurnResult, error) {
-	params := taskSubmitParams(t.Session.SessionID, prompt, opts.ClientSubmissionID)
+	if len(opts.InputMediaRefs) > 4 {
+		return TurnResult{}, errors.New("sdk: input media refs must contain at most 4 images")
+	}
+	params := taskSubmitParamsWithMedia(t.Session.SessionID, prompt, opts.ClientSubmissionID, opts.InputMediaRefs)
 	if len(opts.OutputSchema) > 0 {
 		params["output_schema"] = json.RawMessage(opts.OutputSchema)
 	}
@@ -587,6 +628,10 @@ func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts RunOptions
 				}
 			}
 		}
+		if len(opts.InputMediaRefs) > 4 {
+			emitTerminal(StreamEvent{Type: "turn.failed", Err: errors.New("sdk: input media refs must contain at most 4 images")})
+			return
+		}
 		inbox := make(chan Event, streamQueueLimit)
 		overloaded := make(chan struct{})
 		var overloadOnce sync.Once
@@ -636,7 +681,7 @@ func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts RunOptions
 			}
 		}()
 
-		params := taskSubmitParams(t.Session.SessionID, prompt, opts.ClientSubmissionID)
+		params := taskSubmitParamsWithMedia(t.Session.SessionID, prompt, opts.ClientSubmissionID, opts.InputMediaRefs)
 		if len(opts.OutputSchema) > 0 {
 			params["output_schema"] = json.RawMessage(opts.OutputSchema)
 		}
@@ -960,6 +1005,52 @@ func (c *Client) StatArtifact(scope ArtifactScope, id string) (ArtifactMetadata,
 	err := c.Call("artifact.stat", artifactParams(scope, id), &out)
 	return out, err
 }
+
+func (c *Client) UploadArtifact(sessionID, uploadID, mediaType, origin string, content []byte) (MediaRef, error) {
+	if sessionID == "" || uploadID == "" {
+		return MediaRef{}, errors.New("sdk: sessionID and uploadID are required")
+	}
+	if len(content) < 1 || len(content) > artifactUploadMaxBytes {
+		return MediaRef{}, fmt.Errorf("sdk: artifact upload must be 1..%d bytes", artifactUploadMaxBytes)
+	}
+	switch mediaType {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	default:
+		return MediaRef{}, fmt.Errorf("sdk: unsupported artifact media type %q", mediaType)
+	}
+	digest := sha256.Sum256(content)
+	digestHex := hex.EncodeToString(digest[:])
+	chunkIndex := 0
+	for offset := 0; offset < len(content); offset += artifactUploadChunkSize {
+		end := offset + artifactUploadChunkSize
+		if end > len(content) {
+			end = len(content)
+		}
+		final := end == len(content)
+		var out artifactUploadResult
+		err := c.Call("artifact.upload", map[string]any{
+			"session_id": sessionID, "upload_id": uploadID, "chunk_index": chunkIndex,
+			"content_base64": base64.StdEncoding.EncodeToString(content[offset:end]), "final": final,
+			"sha256": digestHex, "total_bytes": len(content), "media_type": mediaType, "origin": origin,
+		}, &out)
+		if err != nil {
+			return MediaRef{}, err
+		}
+		if !final {
+			if out.UploadID != uploadID || out.NextChunkIndex != chunkIndex+1 {
+				return MediaRef{}, errors.New("sdk: artifact upload receipt did not advance")
+			}
+			chunkIndex++
+			continue
+		}
+		if out.ArtifactID != digestHex || out.MediaType != mediaType || out.Bytes != int64(len(content)) {
+			return MediaRef{}, errors.New("sdk: artifact upload result does not match content")
+		}
+		return MediaRef{ArtifactID: out.ArtifactID, MediaType: out.MediaType, Bytes: out.Bytes, Origin: out.Origin}, nil
+	}
+	return MediaRef{}, errors.New("sdk: artifact upload produced no chunks")
+}
+
 func (c *Client) ReadArtifactPage(scope ArtifactScope, id string, offset, limit int64) (ArtifactReadPage, error) {
 	p := artifactParams(scope, id)
 	p["offset"] = offset

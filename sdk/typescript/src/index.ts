@@ -6,6 +6,13 @@ import { createHash } from 'node:crypto'
 
 export const compatibleRuntimeVersion = '0.6.5'
 
+export interface MediaRef {
+  artifact_id: string
+  media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+  bytes: number
+  origin?: string
+}
+
 export interface Session {
   session_id: string
   workspace_id: string
@@ -29,6 +36,7 @@ export interface Task {
   revision?: number
   continuity?: ContinuityState
   user_prompt: string
+  input_media_refs?: MediaRef[]
   model?: string
   agent?: string
   success_criteria?: SuccessCheck[]
@@ -142,7 +150,7 @@ export interface ChannelEvent { id: string; sender_id: string; session_id: strin
 export interface Extension { manifest: { name: string; version: string; estimated_prompt_tokens?: number }; source: string; enabled: boolean; trusted: boolean }
 export interface RuntimeInfo { runtime_version: string; protocol_version: string; projection_version?: string; minimum_protocol_version?: string; capabilities: Record<string, unknown> }
 export type JsonSchema = Record<string, unknown>
-export interface RunOptions { outputSchema?: JsonSchema; signal?: AbortSignal; pollIntervalMs?: number; clientSubmissionId?: string }
+export interface RunOptions { outputSchema?: JsonSchema; signal?: AbortSignal; pollIntervalMs?: number; clientSubmissionId?: string; inputMediaRefs?: MediaRef[] }
 export interface TurnResult { task: Task; finalResponse: string; structuredOutput?: unknown }
 export interface AgentViewEntry { session_id: string; task_id?: string; state: string; title?: string; summary?: string; workspace_root?: string; updated_at?: string }
 export interface AgentView { needs_input: AgentViewEntry[]; working: AgentViewEntry[]; completed: AgentViewEntry[] }
@@ -280,8 +288,9 @@ export class CarinaClient {
   }
   getSession(sessionId: string): Promise<Session> { return this.call('session.get', { session_id: sessionId }) }
   listSessions(): Promise<Session[]> { return this.call('session.list') }
-  submitTask(sessionId: string, prompt: string, clientSubmissionId?: string): Promise<Task> {
-    return this.call('task.submit', { session_id: sessionId, prompt, ...(clientSubmissionId ? { client_submission_id: clientSubmissionId } : {}) })
+  submitTask(sessionId: string, prompt: string, clientSubmissionId?: string, inputMediaRefs: MediaRef[] = []): Promise<Task> {
+    if (inputMediaRefs.length > 4) return Promise.reject(new RangeError('input media refs must contain at most 4 images'))
+    return this.call('task.submit', { session_id: sessionId, prompt, ...(clientSubmissionId ? { client_submission_id: clientSubmissionId } : {}), ...(inputMediaRefs.length ? { input_media_refs: inputMediaRefs } : {}) })
   }
   submitGoal(sessionId: string, prompt: string, successCriteria: SuccessCheck[], clientSubmissionId?: string): Promise<Task> {
     return this.call('task.submit', { session_id: sessionId, prompt, success_criteria: successCriteria, ...(clientSubmissionId ? { client_submission_id: clientSubmissionId } : {}) })
@@ -321,6 +330,21 @@ export class CarinaClient {
   resolveApproval(decisionId: string, allow: boolean, approver = '', scope: 'once'|'session'|'project' = 'once'): Promise<void> { return this.call('task.approval.resolve', { decision_id: decisionId, approve: allow, approver, scope }) }
   doctor(): Promise<Record<string, unknown>> { return this.call('daemon.doctor') }
   statArtifact(scope:ArtifactScope,artifactId:string):Promise<ArtifactMetadata>{return this.call('artifact.stat',{...scope,artifact_id:artifactId})}
+  async uploadArtifact(sessionId:string,uploadId:string,mediaType:MediaRef['media_type'],origin:string,content:Uint8Array):Promise<MediaRef>{
+    if(!sessionId||!uploadId)throw new TypeError('sessionId and uploadId are required')
+    const bytes=Buffer.from(content)
+    if(bytes.length<1||bytes.length>4*1024*1024)throw new RangeError('artifact upload must be 1..4194304 bytes')
+    const sha256=createHash('sha256').update(bytes).digest('hex')
+    const chunkSize=512*1024
+    for(let offset=0,chunkIndex=0;offset<bytes.length;offset+=chunkSize,chunkIndex++){
+      const end=Math.min(offset+chunkSize,bytes.length),final=end===bytes.length
+      const result=await this.call<MediaRef|{upload_id:string;next_chunk_index:number}>('artifact.upload',{session_id:sessionId,upload_id:uploadId,chunk_index:chunkIndex,content_base64:bytes.subarray(offset,end).toString('base64'),final,sha256,total_bytes:bytes.length,media_type:mediaType,origin})
+      if(!final){if(!('upload_id'in result)||result.upload_id!==uploadId||result.next_chunk_index!==chunkIndex+1)throw new Error('artifact upload receipt did not advance');continue}
+      if(!('artifact_id'in result)||result.artifact_id!==sha256||result.media_type!==mediaType||result.bytes!==bytes.length)throw new Error('artifact upload result does not match content')
+      return result
+    }
+    throw new Error('artifact upload produced no chunks')
+  }
   readArtifactPage(scope:ArtifactScope,artifactId:string,offset=0,limit=65536):Promise<ArtifactReadPage>{if(offset<0||limit<1||limit>1048576)return Promise.reject(new RangeError('offset must be non-negative and limit must be 1..1048576'));return this.call('artifact.read',{...scope,artifact_id:artifactId,offset,limit})}
   async downloadArtifact(scope:ArtifactScope,artifactId:string,maxBytes:number):Promise<{content:Buffer;metadata:ArtifactMetadata}>{if(maxBytes<=0)throw new RangeError('maxBytes must be positive');const chunks:Buffer[]=[];let size=0,offset=0,metadata:ArtifactMetadata|undefined;for(;;){const page=await this.readArtifactPage(scope,artifactId,offset,1048576);metadata=page.metadata;const chunk=Buffer.from(page.content_base64,'base64');size+=chunk.length;if(size>maxBytes)throw new RangeError(`artifact exceeds download limit ${maxBytes}`);chunks.push(chunk);if(page.eof)break;if(page.next_offset<=offset)throw new Error('artifact pagination did not advance');offset=page.next_offset}const content=Buffer.concat(chunks);if(createHash('sha256').update(content).digest('hex')!==artifactId)throw new Error('artifact digest mismatch');return{content,metadata:metadata!}}
   listAgents(workspaceRoot = ''): Promise<Record<string, unknown>> { return this.call('agent.list', { workspace_root: workspaceRoot }) }
@@ -435,7 +459,8 @@ export class CarinaThread {
   async fork(boundary: { lastTaskId?: string; throughTurn?: number } = {}): Promise<CarinaThread> { return this.client.forkThread(this.session.session_id,boundary) }
   async run(input: string, options: RunOptions = {}): Promise<TurnResult> {
     if (options.signal?.aborted) throw options.signal.reason ?? new Error('aborted')
-    const task=await this.client.call<Task>('task.submit',{session_id:this.session.session_id,prompt:input,...(options.clientSubmissionId?{client_submission_id:options.clientSubmissionId}:{}),...(options.outputSchema?{output_schema:options.outputSchema}:{})})
+    if ((options.inputMediaRefs?.length ?? 0) > 4) throw new RangeError('input media refs must contain at most 4 images')
+    const task=await this.client.call<Task>('task.submit',{session_id:this.session.session_id,prompt:input,...(options.clientSubmissionId?{client_submission_id:options.clientSubmissionId}:{}),...(options.outputSchema?{output_schema:options.outputSchema}:{}),...(options.inputMediaRefs?.length?{input_media_refs:options.inputMediaRefs}:{})})
     const cancel=()=>{void this.client.call('task.cancel',{task_id:task.task_id}).catch(()=>{})};options.signal?.addEventListener('abort',cancel,{once:true})
     try { for (;;) { if(options.signal?.aborted)throw options.signal.reason??new Error('aborted');const current=await this.client.call<Task>('task.result',{task_id:task.task_id});if(['completed','degraded','failed','cancelled','needs_input'].includes(current.status)){let structuredOutput:unknown;try{structuredOutput=options.outputSchema?JSON.parse((current as Task & {summary?:string}).summary??''):undefined}catch{};return{task:current,finalResponse:(current as Task & {summary?:string}).summary??'',structuredOutput}};await new Promise(r=>setTimeout(r,options.pollIntervalMs??50))} } finally { options.signal?.removeEventListener('abort',cancel) }
   }

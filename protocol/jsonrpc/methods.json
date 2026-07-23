@@ -67,7 +67,7 @@
       { "method": "session.checkpoint.compact", "scope": "write", "remote": false, "control_plane_write": true, "params": { "session_id": "string", "task_id": "string? (paused task; defaults to latest paused task)" }, "result": "CheckpointCompactResult" }
     ],
     "task": [
-      { "method": "task.submit", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string", "client_submission_id": "string?", "agent": "string?", "model": "string?", "reasoning_effort": "string?", "token_budget": "integer >= 0?", "mode": "background?", "success_criteria": "SuccessCheck[]?", "output_schema": "JSON Schema Draft 2020-12 object?" }, "result": "Task" },
+      { "method": "task.submit", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string", "client_submission_id": "string?", "agent": "string?", "model": "string?", "reasoning_effort": "string?", "token_budget": "integer >= 0?", "mode": "background?", "success_criteria": "SuccessCheck[]?", "output_schema": "JSON Schema Draft 2020-12 object?", "input_media_refs": "MediaRef[]? max 4" }, "result": "Task" },
       { "method": "task.resume", "scope": "write", "remote": false, "control_plane_write": true, "params": { "task_id": "string" }, "result": "Task" },
       { "method": "task.status", "scope": "read", "remote": true, "params": { "task_id": "string" }, "result": "Task" },
       { "method": "task.list", "scope": "read", "remote": true, "params": { "session_id": "string?" }, "result": "Task[]" },
@@ -145,7 +145,8 @@
     ],
     "artifact": [
       { "method": "artifact.stat", "scope": "read", "remote": false, "params": { "session_id": "string", "task_id": "string?", "call_id": "string?", "artifact_id": "sha256" }, "result": "ArtifactMetadata" },
-      { "method": "artifact.read", "scope": "read", "remote": false, "params": { "session_id": "string", "task_id": "string?", "call_id": "string?", "artifact_id": "sha256", "offset": "integer? >= 0", "limit": "integer? 0..1048576" }, "result": "{ metadata: ArtifactMetadata, offset: integer, next_offset: integer, eof: boolean, content_base64: string }" }
+      { "method": "artifact.read", "scope": "read", "remote": false, "params": { "session_id": "string", "task_id": "string?", "call_id": "string?", "artifact_id": "sha256", "offset": "integer? >= 0", "limit": "integer? 0..1048576" }, "result": "{ metadata: ArtifactMetadata, offset: integer, next_offset: integer, eof: boolean, content_base64: string }" },
+      { "method": "artifact.upload", "scope": "write", "remote": false, "params": { "session_id": "string", "upload_id": "string", "chunk_index": "integer >= 0", "content_base64": "base64 <= 524288 decoded bytes", "final": "boolean", "sha256": "sha256", "total_bytes": "integer 1..4194304", "media_type": "image/png|image/jpeg|image/gif|image/webp", "origin": "string" }, "result": "MediaRef on final chunk; upload receipt otherwise" }
     ],
     "context": [
       { "method": "context.status", "scope": "read", "remote": false, "params": {}, "result": "ContextEngineStatus" },

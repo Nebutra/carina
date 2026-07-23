@@ -255,8 +255,9 @@ class ClientTest(unittest.TestCase):
             elif request["method"] == "task.result": result = {"task_id":"t","status":"completed","summary":"{\"status\":\"ok\"}"}
             conn.sendall(json.dumps({"jsonrpc":"2.0","id":request["id"],"result":result}).encode()+b"\n")
         with daemon_server(handler) as path:
-            client=CarinaClient(path,timeout=.5);thread=client.start_thread("/tmp");schema={"type":"object","properties":{"status":{"type":"string"}},"required":["status"]};result=thread.run("status",output_schema=schema,poll_interval=.001);self.assertEqual(result["structured_output"],{"status":"ok"});client.close()
+            client=CarinaClient(path,timeout=.5);thread=client.start_thread("/tmp");schema={"type":"object","properties":{"status":{"type":"string"}},"required":["status"]};ref={"artifact_id":"a"*64,"media_type":"image/png","bytes":3};result=thread.run("status",output_schema=schema,input_media_refs=[ref],poll_interval=.001);self.assertEqual(result["structured_output"],{"status":"ok"});client.close()
         self.assertEqual(submitted[0]["output_schema"],schema)
+        self.assertEqual(submitted[0]["input_media_refs"],[ref])
 
     def test_initialize_rejects_incompatible_protocol_and_missing_capability(self) -> None:
         for result in (

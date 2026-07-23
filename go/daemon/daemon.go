@@ -316,6 +316,8 @@ type Daemon struct {
 	compactionBreaker        *compactionCircuitBreaker
 	retryGovernance          *retryGovernance
 	artifacts                *artifact.Store
+	artifactUploadMu         sync.Mutex
+	artifactUploads          map[string]*artifactUploadState
 	runtimeLease             *runtimeLease
 	runtimeSpec              *localruntime.Spec
 	runtimeMu                sync.Mutex
@@ -1192,6 +1194,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("telemetry.status", rpc.ScopeRead, true, d.handleTelemetryStatus)
 	d.registerRPC("artifact.stat", rpc.ScopeRead, false, d.handleArtifactStat)
 	d.registerRPC("artifact.read", rpc.ScopeRead, false, d.handleArtifactRead)
+	d.registerRPC("artifact.upload", rpc.ScopeWrite, false, d.handleArtifactUpload)
 
 	d.registerRPC("task.submit", rpc.ScopeWrite, false, d.handleTaskSubmit)
 	d.registerRPC("task.resume", rpc.ScopeWrite, false, d.handleTaskResume, true)
@@ -2555,6 +2558,7 @@ type taskSubmitParams struct {
 	TokenBudget        int                      `json:"token_budget"`
 	SuccessCriteria    []scheduler.SuccessCheck `json:"success_criteria"`
 	OutputSchema       json.RawMessage          `json:"output_schema"`
+	InputMediaRefs     []MediaRef               `json:"input_media_refs"`
 }
 
 func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
@@ -2574,6 +2578,10 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	}
 	if p.TokenBudget < 0 {
 		return nil, fmt.Errorf("token_budget must be >= 0")
+	}
+	inputMediaRefs, err := d.validateTaskInputMedia(p.SessionID, p.InputMediaRefs)
+	if err != nil {
+		return nil, err
 	}
 	p.Model = strings.TrimSpace(p.Model)
 	if err := d.validateTaskModel(p.Model); err != nil {
@@ -2654,6 +2662,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, prompt, model, agent, p.SuccessCriteria)
+	d.sched.SetInputMediaRefs(task.TaskID, inputMediaRefs)
 	d.sched.SetModelState(task.TaskID, requestedModel, taskModel(task))
 	d.sched.SetReasoningEffortState(task.TaskID, requestedEffort, effectiveEffort)
 	if clientSubmissionID != "" {
@@ -2674,6 +2683,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	if frozen, ok := d.sched.Get(task.TaskID); ok {
 		copy := *frozen
 		copy.SuccessCriteria = append([]scheduler.SuccessCheck(nil), frozen.SuccessCriteria...)
+		copy.InputMediaRefs = append([]scheduler.InputMediaRef(nil), frozen.InputMediaRefs...)
 		copy.OutputSchema = append(json.RawMessage(nil), frozen.OutputSchema...)
 		task = &copy
 	}
@@ -2690,6 +2700,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		"model": task.Model, "requested_model": task.RequestedModel, "effective_model": task.EffectiveModel,
 		"requested_reasoning_effort": task.RequestedReasoningEffort, "effective_reasoning_effort": task.EffectiveReasoningEffort,
 		"agent": task.Agent, "mode": task.Mode,
+		"input_media_refs": task.InputMediaRefs,
 	}
 	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "TaskCreated", task.TaskID, "go", writeAheadPayload, "")
 	if err != nil {

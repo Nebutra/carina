@@ -16,6 +16,7 @@ import (
 	"github.com/Nebutra/carina/go/auth"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/provider"
+	"github.com/Nebutra/carina/go/scheduler"
 )
 
 // tinyPNG is a minimal valid-magic PNG payload (magic bytes + filler); the
@@ -23,6 +24,47 @@ import (
 // contract under test.
 func tinyPNG() []byte {
 	return append([]byte("\x89PNG\r\n\x1a\n"), []byte("fake-png-body")...)
+}
+
+func TestTaskInputMediaIsDurableAndPartOfSubmissionIdentity(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	session, _ := d.store.CreateSession(workspace, "safe-edit")
+	ref, err := ingestImageMedia(d.artifacts, artifact.Scope{SessionID: session.SessionID}, "composer image 1", tinyPNG())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID := "submit-media"
+	base := taskSubmitParams{SessionID: session.SessionID, ClientSubmissionID: &clientID, Prompt: "inspect", Mode: "background"}
+	withMedia := base
+	withMedia.InputMediaRefs = []MediaRef{ref}
+	if taskSubmissionFingerprint(base) == taskSubmissionFingerprint(withMedia) {
+		t.Fatal("input media refs were omitted from idempotency identity")
+	}
+
+	task := d.sched.Submit(session.SessionID, session.WorkspaceID, "inspect")
+	d.sched.SetInputMediaRefs(task.TaskID, []scheduler.InputMediaRef{{
+		ArtifactID: ref.ArtifactID, MediaType: ref.MediaType, Bytes: ref.Bytes, Origin: ref.Origin,
+	}})
+	task, _ = d.sched.Get(task.TaskID)
+	transcript := newTranscript(task.UserPrompt)
+	attachTaskInputMedia(transcript, task)
+	if len(transcript.Turns) != 1 || len(transcript.Turns[0].Obs.MediaRefs) != 1 || transcript.Turns[0].Obs.MediaRefs[0].ArtifactID != ref.ArtifactID {
+		t.Fatalf("task input media was not projected into the model transcript: %+v", transcript.Turns)
+	}
+	if err := d.runs.saveChecked(task); err != nil {
+		t.Fatal(err)
+	}
+	loaded := d.runs.load()
+	found := false
+	for _, candidate := range loaded {
+		if candidate.TaskID == task.TaskID {
+			found = len(candidate.InputMediaRefs) == 1 && candidate.InputMediaRefs[0].ArtifactID == ref.ArtifactID
+		}
+	}
+	if !found {
+		t.Fatal("run store did not preserve input media refs")
+	}
 }
 
 // TestReadImageFileProducesMediaRefNotBinary: the producer half. Reading an

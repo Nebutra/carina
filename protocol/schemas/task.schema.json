@@ -37,6 +37,21 @@
       }
     },
     "user_prompt": { "type": "string" },
+	"input_media_refs": {
+	  "type": "array",
+	  "maxItems": 4,
+	  "items": {
+		"type": "object",
+		"required": ["artifact_id", "media_type", "bytes"],
+		"properties": {
+		  "artifact_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+		  "media_type": { "enum": ["image/png", "image/jpeg", "image/gif", "image/webp"] },
+		  "bytes": { "type": "integer", "minimum": 1, "maximum": 4194304 },
+		  "origin": { "type": "string" }
+		},
+		"additionalProperties": false
+	  }
+	},
     "model": { "type": "string" },
     "requested_model": { "type": "string" },
     "effective_model": { "type": "string" },

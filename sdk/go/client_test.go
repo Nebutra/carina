@@ -598,6 +598,9 @@ func TestHighLevelThreadRunNegotiatesAndUsesSchema(t *testing.T) {
 				if _, ok := req.Params["output_schema"].(map[string]any); !ok {
 					t.Errorf("schema not forwarded: %T", req.Params["output_schema"])
 				}
+				if refs, ok := req.Params["input_media_refs"].([]any); !ok || len(refs) != 1 {
+					t.Errorf("media refs not forwarded: %#v", req.Params["input_media_refs"])
+				}
 				result = map[string]any{"task_id": "t", "session_id": "s", "status": "queued"}
 			case "task.result":
 				result = map[string]any{"task_id": "t", "session_id": "s", "status": "completed", "summary": "{\"status\":\"ok\"}"}
@@ -611,7 +614,7 @@ func TestHighLevelThreadRunNegotiatesAndUsesSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := thread.Run(context.Background(), "status", RunOptions{OutputSchema: json.RawMessage(`{"type":"object"}`), PollInterval: time.Millisecond})
+	result, err := thread.Run(context.Background(), "status", RunOptions{OutputSchema: json.RawMessage(`{"type":"object"}`), PollInterval: time.Millisecond, InputMediaRefs: []MediaRef{{ArtifactID: strings.Repeat("a", 64), MediaType: "image/png", Bytes: 3}}})
 	if err != nil || result.FinalResponse == "" {
 		t.Fatalf("%+v %v", result, err)
 	}

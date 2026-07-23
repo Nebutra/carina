@@ -22,6 +22,13 @@ type SuccessCheck struct {
 	Pattern string `json:"pattern,omitempty"`
 }
 
+type InputMediaRef struct {
+	ArtifactID string `json:"artifact_id"`
+	MediaType  string `json:"media_type"`
+	Bytes      int64  `json:"bytes"`
+	Origin     string `json:"origin,omitempty"`
+}
+
 // Task mirrors protocol/schemas/task.schema.json.
 type Task struct {
 	TaskID                      string           `json:"task_id"`
@@ -33,6 +40,7 @@ type Task struct {
 	Revision                    int64            `json:"revision,omitempty"`
 	Continuity                  continuity.State `json:"continuity"`
 	UserPrompt                  string           `json:"user_prompt"`
+	InputMediaRefs              []InputMediaRef  `json:"input_media_refs,omitempty"`
 	Model                       string           `json:"model,omitempty"` // provider/model override; empty => daemon default
 	RequestedModel              string           `json:"requested_model,omitempty"`
 	EffectiveModel              string           `json:"effective_model,omitempty"`
@@ -128,6 +136,17 @@ func (s *Scheduler) SetClientSubmission(taskID, clientSubmissionID, fingerprint 
 		updated := *task
 		updated.ClientSubmissionID = clientSubmissionID
 		updated.ClientSubmissionFingerprint = fingerprint
+		touchTask(&updated)
+		s.tasks[taskID] = &updated
+	}
+}
+
+func (s *Scheduler) SetInputMediaRefs(taskID string, refs []InputMediaRef) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if task := s.tasks[taskID]; task != nil {
+		updated := *task
+		updated.InputMediaRefs = append([]InputMediaRef(nil), refs...)
 		touchTask(&updated)
 		s.tasks[taskID] = &updated
 	}
