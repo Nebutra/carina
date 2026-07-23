@@ -315,6 +315,13 @@ func (m *Model) statusFooterView(width int) string {
 		model += "/" + m.reasoningEffort
 	}
 	mode := statusFooterItem{text: m.modeLabel(), role: theme.RoleMuted}
+	workspace := statusFooterItem{role: theme.RoleInfo}
+	if root := strings.TrimSpace(m.workspaceRoot); root != "" {
+		name := filepath.Base(filepath.Clean(root))
+		if name != "." && name != string(filepath.Separator) {
+			workspace.text = name
+		}
+	}
 	modelItem := statusFooterItem{role: theme.RoleInfo}
 	if model != "" {
 		if isModel {
@@ -357,13 +364,13 @@ func (m *Model) statusFooterView(width int) string {
 	variants := []struct {
 		left, right []statusFooterItem
 	}{
-		{[]statusFooterItem{mode, modelItem, profile, sandbox, approval}, []statusFooterItem{activity, context, modelHint, settingsHint, helpHint}},
-		{[]statusFooterItem{mode, modelItem, profile, sandbox, approval}, []statusFooterItem{activity, context, modelHint, helpHint}},
-		{[]statusFooterItem{mode, modelItem, profile, approval}, []statusFooterItem{activity, context, modelHint, helpHint}},
-		{[]statusFooterItem{mode, modelItem, approval}, []statusFooterItem{activity, modelHint, helpHint}},
-		{[]statusFooterItem{mode, modelItem}, []statusFooterItem{activity, modelHint, helpHint}},
-		{[]statusFooterItem{modelItem}, []statusFooterItem{activity, modelHint}},
-		{[]statusFooterItem{modelItem}, []statusFooterItem{activity}},
+		{[]statusFooterItem{workspace, mode, modelItem, profile, sandbox, approval}, []statusFooterItem{activity, context, modelHint, settingsHint, helpHint}},
+		{[]statusFooterItem{workspace, mode, modelItem, profile, sandbox, approval}, []statusFooterItem{activity, context, modelHint, helpHint}},
+		{[]statusFooterItem{workspace, mode, modelItem, profile, approval}, []statusFooterItem{activity, context, modelHint, helpHint}},
+		{[]statusFooterItem{workspace, mode, modelItem, approval}, []statusFooterItem{activity, modelHint, helpHint}},
+		{[]statusFooterItem{workspace, modelItem}, []statusFooterItem{activity, modelHint, helpHint}},
+		{[]statusFooterItem{workspace, modelItem}, []statusFooterItem{activity, modelHint}},
+		{[]statusFooterItem{workspace}, []statusFooterItem{activity}},
 		{nil, []statusFooterItem{activity}},
 	}
 	for _, variant := range variants {
@@ -389,12 +396,16 @@ func (m *Model) statusFooterView(width int) string {
 	// accumulated goal/queue/attention badges. Truncate the transient side,
 	// never the configuration anchor. Truly tiny terminals fall back to the
 	// activity alone because two illegible fragments are worse than one signal.
-	modelWidth := ansi.StringWidth(modelItem.text)
-	if modelWidth == 0 {
+	anchor := workspace
+	if anchor.text == "" {
+		anchor = modelItem
+	}
+	anchorWidth := ansi.StringWidth(anchor.text)
+	if anchorWidth == 0 {
 		return fitRenderedLine(m.th.Style(activity.role).Render(activity.text), width)
 	}
-	if width >= 32 && width-modelWidth-2 >= 6 {
-		left := m.renderStatusItems([]statusFooterItem{modelItem})
+	if width >= 32 && width-anchorWidth-2 >= 6 {
+		left := m.renderStatusItems([]statusFooterItem{anchor})
 		rightWidth := width - ansi.StringWidth(left) - 2
 		right := fitRenderedLine(m.th.Style(activity.role).Render(activity.text), rightWidth)
 		spaces := width - ansi.StringWidth(left) - ansi.StringWidth(right)

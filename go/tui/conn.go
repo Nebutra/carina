@@ -20,12 +20,42 @@ import (
 // then reconnects at cursor zero with fresh reconciliation trackers.
 type ConnectionController struct {
 	mu         sync.Mutex
-	target     string
+	target     ConnectionTarget
 	generation uint64
 	stream     *rpc.Client
+	prepared   map[uint64]*preparedConnection
+	nextToken  uint64
 }
 
-func NewConnectionController() *ConnectionController { return &ConnectionController{} }
+// ConnectionTarget is the complete identity needed to attach one TUI session.
+// RuntimeSpec is nil only for the deprecated legacy/external socket path.
+type ConnectionTarget struct {
+	Socket        string
+	SessionID     string
+	WorkspaceRoot string
+	StateDir      string
+	RuntimeSpec   *localruntime.Spec
+	AutoStart     bool
+}
+
+type preparedConnection struct {
+	token            uint64
+	sourceGeneration uint64
+	target           ConnectionTarget
+	call             *rpc.Client
+	stream           *rpc.Client
+	initial          attachBatch
+	gap              attachBatch
+}
+
+func NewConnectionController(initial ...ConnectionTarget) *ConnectionController {
+	c := &ConnectionController{prepared: make(map[uint64]*preparedConnection)}
+	if len(initial) > 0 {
+		c.target = cloneConnectionTarget(initial[0])
+		c.generation = 1
+	}
+	return c
+}
 
 func (c *ConnectionController) Switch(sessionID string) error {
 	sessionID = strings.TrimSpace(sessionID)
@@ -33,7 +63,9 @@ func (c *ConnectionController) Switch(sessionID string) error {
 		return fmt.Errorf("session id is required")
 	}
 	c.mu.Lock()
-	c.target = sessionID
+	target := cloneConnectionTarget(c.target)
+	target.SessionID = sessionID
+	c.target = target
 	c.generation++
 	stream := c.stream
 	c.mu.Unlock()
@@ -43,16 +75,92 @@ func (c *ConnectionController) Switch(sessionID string) error {
 	return nil
 }
 
-func (c *ConnectionController) state(initial string) (string, uint64) {
+// PrepareTarget establishes and validates the destination call and stream
+// connections without disturbing the currently published target.
+func (c *ConnectionController) PrepareTarget(target ConnectionTarget) (uint64, error) {
+	if err := validateConnectionTarget(target); err != nil {
+		return 0, err
+	}
+	c.mu.Lock()
+	sourceGeneration := c.generation
+	c.nextToken++
+	token := c.nextToken
+	c.mu.Unlock()
+
+	prepared, err := prepareConnection(target)
+	if err != nil {
+		return 0, err
+	}
+	prepared.token = token
+	prepared.sourceGeneration = sourceGeneration
+
+	c.mu.Lock()
+	if c.generation != sourceGeneration {
+		c.mu.Unlock()
+		prepared.close()
+		return 0, fmt.Errorf("connection target changed during preparation")
+	}
+	c.prepared[token] = prepared
+	c.mu.Unlock()
+	return token, nil
+}
+
+// CommitPrepared publishes a fully attached destination in one infallible
+// state transition, then interrupts the source stream so the connection loop
+// can adopt the prepared clients.
+func (c *ConnectionController) CommitPrepared(token uint64) error {
+	c.mu.Lock()
+	prepared := c.prepared[token]
+	if prepared == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("prepared connection %d is unavailable", token)
+	}
+	if prepared.sourceGeneration != c.generation {
+		delete(c.prepared, token)
+		c.mu.Unlock()
+		prepared.close()
+		return fmt.Errorf("connection target changed before commit")
+	}
+	delete(c.prepared, token)
+	c.target = cloneConnectionTarget(prepared.target)
+	c.generation++
+	prepared.sourceGeneration = c.generation
+	c.prepared[token] = prepared
+	stream := c.stream
+	c.mu.Unlock()
+	if stream != nil {
+		_ = stream.Close()
+	}
+	return nil
+}
+
+func (c *ConnectionController) AbortPrepared(token uint64) {
+	c.mu.Lock()
+	prepared := c.prepared[token]
+	delete(c.prepared, token)
+	c.mu.Unlock()
+	if prepared != nil {
+		prepared.close()
+	}
+}
+
+func (c *ConnectionController) targetState(initial ConnectionTarget) (ConnectionTarget, uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.target == "" {
-		c.target = initial
+	if c.target.SessionID == "" && c.target.Socket == "" {
+		c.target = cloneConnectionTarget(initial)
 		if c.generation == 0 {
 			c.generation = 1
 		}
 	}
-	return c.target, c.generation
+	return cloneConnectionTarget(c.target), c.generation
+}
+
+// state keeps the session-only controller contract used by same-runtime
+// callers and older focused tests.
+func (c *ConnectionController) state(initial string) (string, uint64) {
+	target, generation := c.targetState(ConnectionTarget{SessionID: initial})
+	return target.SessionID, generation
 }
 
 func (c *ConnectionController) bind(stream *rpc.Client) {
@@ -63,10 +171,22 @@ func (c *ConnectionController) bind(stream *rpc.Client) {
 
 func (c *ConnectionController) adoptCreated(sessionID string) {
 	c.mu.Lock()
-	if c.target == "" {
-		c.target = sessionID
+	if c.target.SessionID == "" {
+		c.target.SessionID = sessionID
 	}
 	c.mu.Unlock()
+}
+
+func (c *ConnectionController) takePrepared(generation uint64) *preparedConnection {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for token, prepared := range c.prepared {
+		if prepared.sourceGeneration == generation {
+			delete(c.prepared, token)
+			return prepared
+		}
+	}
+	return nil
 }
 
 func (c *ConnectionController) unbind(stream *rpc.Client) {
@@ -75,6 +195,53 @@ func (c *ConnectionController) unbind(stream *rpc.Client) {
 		c.stream = nil
 	}
 	c.mu.Unlock()
+}
+
+func cloneConnectionTarget(target ConnectionTarget) ConnectionTarget {
+	out := target
+	if target.RuntimeSpec != nil {
+		spec := *target.RuntimeSpec
+		out.RuntimeSpec = &spec
+	}
+	return out
+}
+
+func validateConnectionTarget(target ConnectionTarget) error {
+	if strings.TrimSpace(target.SessionID) == "" {
+		return fmt.Errorf("session id is required")
+	}
+	if target.RuntimeSpec != nil {
+		return target.RuntimeSpec.Validate()
+	}
+	if strings.TrimSpace(target.Socket) == "" {
+		return fmt.Errorf("socket is required")
+	}
+	return nil
+}
+
+func sameConnectionTarget(left, right ConnectionTarget) bool {
+	leftRuntime, rightRuntime := "", ""
+	if left.RuntimeSpec != nil {
+		leftRuntime = left.RuntimeSpec.RuntimeID
+	}
+	if right.RuntimeSpec != nil {
+		rightRuntime = right.RuntimeSpec.RuntimeID
+	}
+	return left.Socket == right.Socket && left.SessionID == right.SessionID &&
+		left.WorkspaceRoot == right.WorkspaceRoot && left.StateDir == right.StateDir &&
+		leftRuntime == rightRuntime && left.AutoStart == right.AutoStart
+}
+
+func (p *preparedConnection) close() {
+	if p == nil {
+		return
+	}
+	if p.call != nil {
+		_ = p.call.Close()
+	}
+	if p.stream != nil {
+		_ = p.stream.Close()
+	}
 }
 
 // Sender delivers messages into the running program from goroutines.
@@ -474,44 +641,117 @@ func Connect(p Sender, socket, sessionID, workspaceRoot string) {
 }
 
 func ConnectControlled(p Sender, socket, sessionID, workspaceRoot string, controller *ConnectionController) {
-	connectControlled(p, socket, sessionID, workspaceRoot, controller, nil)
+	connectControlled(p, ConnectionTarget{Socket: socket, SessionID: sessionID, WorkspaceRoot: workspaceRoot}, controller)
 }
 
 // ConnectControlledRuntime validates every call and stream connection against
 // the stable workspace/runtime identity, including reconnects after restart.
 func ConnectControlledRuntime(p Sender, socket, sessionID, workspaceRoot string, controller *ConnectionController, spec localruntime.Spec) {
-	connectControlled(p, socket, sessionID, workspaceRoot, controller, &spec)
+	connectControlled(p, ConnectionTarget{
+		Socket: socket, SessionID: sessionID, WorkspaceRoot: workspaceRoot,
+		StateDir: spec.Paths.StateDir, RuntimeSpec: &spec,
+	}, controller)
 }
 
-func connectControlled(p Sender, socket, sessionID, workspaceRoot string, controller *ConnectionController, runtimeSpec *localruntime.Spec) {
+func dialConnectionTarget(target ConnectionTarget) (*rpc.Client, error) {
+	if target.RuntimeSpec == nil {
+		if target.AutoStart {
+			return localdaemon.EnsureReachable(target.Socket)
+		}
+		return rpc.Dial(target.Socket)
+	}
+	spec := *target.RuntimeSpec
+	if latest, err := localruntime.LoadSpec(spec.Paths.SpecPath); err == nil {
+		if latest.Workspace.ID != spec.Workspace.ID || latest.RuntimeID != spec.RuntimeID {
+			return nil, fmt.Errorf("runtime identity changed on disk")
+		}
+		spec = latest
+	}
+	var client *rpc.Client
+	var err error
+	if target.AutoStart {
+		client, _, err = localdaemon.ConnectOrStart(spec)
+	} else {
+		client, _, err = localdaemon.Connect(spec)
+	}
+	return client, err
+}
+
+func latestWorkspaceSession(call *rpc.Client, workspaceRoot string) string {
+	if call == nil {
+		return ""
+	}
+	var sessions []struct {
+		SessionID     string `json:"session_id"`
+		WorkspaceRoot string `json:"workspace_root"`
+		UpdatedAt     string `json:"updated_at"`
+		CreatedAt     string `json:"created_at"`
+		Status        string `json:"status"`
+	}
+	if err := call.Call("session.list", map[string]any{}, &sessions); err != nil {
+		return ""
+	}
+	var latest, latestAt string
+	for _, session := range sessions {
+		if session.Status == "closed" || cleanWorkspaceRoot(session.WorkspaceRoot) != cleanWorkspaceRoot(workspaceRoot) {
+			continue
+		}
+		at := session.UpdatedAt
+		if at == "" {
+			at = session.CreatedAt
+		}
+		if latest == "" || at > latestAt {
+			latest, latestAt = session.SessionID, at
+		}
+	}
+	return latest
+}
+
+func prepareConnection(target ConnectionTarget) (*preparedConnection, error) {
+	call, err := dialConnectionTarget(target)
+	if err != nil {
+		return nil, err
+	}
+	initial, err := pullSessionEvents(call, target.SessionID, 0)
+	if err != nil {
+		_ = call.Close()
+		return nil, fmt.Errorf("session attach: %w", err)
+	}
+	stream, err := dialConnectionTarget(target)
+	if err != nil {
+		_ = call.Close()
+		return nil, err
+	}
+	if err := stream.Call("session.events.stream", map[string]any{"session_id": target.SessionID}, nil); err != nil {
+		_ = call.Close()
+		_ = stream.Close()
+		return nil, err
+	}
+	gap, err := pullSessionEvents(call, target.SessionID, initial.Cursor)
+	if err != nil {
+		_ = call.Close()
+		_ = stream.Close()
+		return nil, fmt.Errorf("session attach after subscribe: %w", err)
+	}
+	return &preparedConnection{target: cloneConnectionTarget(target), call: call, stream: stream, initial: initial, gap: gap}, nil
+}
+
+func connectControlled(p Sender, initialTarget ConnectionTarget, controller *ConnectionController) {
 	go func() {
 		if controller == nil {
-			controller = NewConnectionController()
+			controller = NewConnectionController(initialTarget)
 		}
-		sid, generation := controller.state(sessionID)
+		target, generation := controller.targetState(initialTarget)
+		sid := target.SessionID
 		cursor := 0
 		connectedOnce := false
 		completions := newCompletionTracker()
 		permissions := newPermissionTracker()
 		questions := newQuestionTracker()
-		currentSpec := runtimeSpec
-		dial := func() (*rpc.Client, error) {
-			if currentSpec == nil {
-				return rpc.Dial(socket)
-			}
-			if latest, err := localruntime.LoadSpec(currentSpec.Paths.SpecPath); err == nil {
-				if latest.Workspace.ID != currentSpec.Workspace.ID || latest.RuntimeID != currentSpec.RuntimeID {
-					return nil, fmt.Errorf("runtime identity changed on disk")
-				}
-				currentSpec = &latest
-			}
-			client, _, err := localdaemon.Connect(*currentSpec)
-			return client, err
-		}
 		for attempt := 0; ; attempt++ {
-			desired, desiredGeneration := controller.state(sessionID)
-			if desired != sid || desiredGeneration != generation {
-				sid, generation, cursor, connectedOnce = desired, desiredGeneration, 0, false
+			desired, desiredGeneration := controller.targetState(initialTarget)
+			if !sameConnectionTarget(desired, target) || desiredGeneration != generation {
+				target, sid, generation, cursor, connectedOnce = desired, desired.SessionID, desiredGeneration, 0, false
 				completions = newCompletionTracker()
 				permissions = newPermissionTracker()
 				questions = newQuestionTracker()
@@ -522,15 +762,31 @@ func connectControlled(p Sender, socket, sessionID, workspaceRoot string, contro
 				time.Sleep(backoff(attempt))
 			}
 
-			call, err := dial()
-			if err != nil {
-				if attempt == 0 {
-					p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: err})
+			prepared := controller.takePrepared(generation)
+			var call, stream *rpc.Client
+			var initial, gap attachBatch
+			var err error
+			if prepared != nil {
+				call, stream, initial, gap = prepared.call, prepared.stream, prepared.initial, prepared.gap
+				cursor = gap.Cursor
+			} else {
+				call, err = dialConnectionTarget(target)
+				if err != nil {
+					if attempt == 0 {
+						p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: err})
+					}
+					continue
 				}
-				continue
 			}
 			if sid == "" {
-				ws := workspaceRoot
+				sid = latestWorkspaceSession(call, target.WorkspaceRoot)
+				if sid != "" {
+					target.SessionID = sid
+					controller.adoptCreated(sid)
+				}
+			}
+			if sid == "" {
+				ws := target.WorkspaceRoot
 				if ws == "" {
 					ws, _ = os.Getwd()
 				}
@@ -546,52 +802,48 @@ func connectControlled(p Sender, socket, sessionID, workspaceRoot string, contro
 					continue
 				}
 				sid = out.SessionID
+				target.SessionID = sid
 				controller.adoptCreated(sid)
 			}
 
-			// Pull before subscribing so a resumed session renders its history.
-			// Keep the batch buffered until the full call+stream link is ready, so
-			// SessionReadyMsg remains the first message of a healthy connection.
-			initial, err := pullSessionEvents(call, sid, cursor)
-			if err != nil {
-				call.Close()
-				p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: fmt.Errorf("session attach: %w", err)})
-				continue
-			}
-			cursor = initial.Cursor
-
-			stream, err := dial()
-			if err != nil {
-				call.Close()
-				p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: err})
-				continue
+			if prepared == nil {
+				// Pull before subscribing so a resumed session renders its history.
+				initial, err = pullSessionEvents(call, sid, cursor)
+				if err != nil {
+					call.Close()
+					p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: fmt.Errorf("session attach: %w", err)})
+					continue
+				}
+				cursor = initial.Cursor
+				stream, err = dialConnectionTarget(target)
+				if err != nil {
+					call.Close()
+					p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: err})
+					continue
+				}
+				if err := stream.Call("session.events.stream", map[string]any{"session_id": sid}, nil); err != nil {
+					call.Close()
+					stream.Close()
+					p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: err})
+					continue
+				}
+				gap, err = pullSessionEvents(call, sid, cursor)
+				if err != nil {
+					call.Close()
+					stream.Close()
+					p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: fmt.Errorf("session attach after subscribe: %w", err)})
+					continue
+				}
+				cursor = gap.Cursor
 			}
 			controller.bind(stream)
-			if err := stream.Call("session.events.stream", map[string]any{"session_id": sid}, nil); err != nil {
-				call.Close()
-				stream.Close()
-				controller.unbind(stream)
-				p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: err})
-				continue
-			}
-
-			// An event may be appended after the initial attach and before the
-			// subscription is installed. A second attach after subscribe closes
-			// that gap. Events appended after this checkpoint wake the stream and
-			// are pulled through the same cursor path below.
-			gap, err := pullSessionEvents(call, sid, cursor)
-			if err != nil {
-				call.Close()
-				stream.Close()
-				p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: fmt.Errorf("session attach after subscribe: %w", err)})
-				continue
-			}
-			cursor = gap.Cursor
 
 			if attempt > 0 {
 				p.Send(ConnRestoredMsg{SessionID: sid, Generation: generation})
 			}
-			p.Send(SessionReadyMsg{SessionID: sid, Generation: generation, Call: call})
+			readyTarget := cloneConnectionTarget(target)
+			readyTarget.SessionID = sid
+			p.Send(SessionReadyMsg{SessionID: sid, Generation: generation, Call: call, Target: readyTarget})
 			for _, ev := range initial.Events {
 				p.Send(EventMsg{SessionID: sid, Generation: generation, Raw: ev})
 				completions.observeAudit(ev, connectedOnce)
@@ -619,8 +871,8 @@ func connectControlled(p Sender, socket, sessionID, workspaceRoot string, contro
 			for {
 				method, params, err := stream.ReadNotification()
 				if err != nil {
-					desired, desiredGeneration := controller.state(sessionID)
-					if desired != sid || desiredGeneration != generation {
+					desired, desiredGeneration := controller.targetState(initialTarget)
+					if !sameConnectionTarget(desired, target) || desiredGeneration != generation {
 						attempt = -1
 					} else {
 						p.Send(ConnLostMsg{SessionID: sid, Generation: generation, Err: fmt.Errorf("event stream closed: %w", err)})

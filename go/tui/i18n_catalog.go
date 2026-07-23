@@ -20,6 +20,7 @@ const (
 	MsgQueueItem              MessageID = "queue.item"
 	MsgReconnectAttempt       MessageID = "connection.reconnect_attempt"
 	MsgConnecting             MessageID = "connection.connecting"
+	MsgConnectionUnavailable  MessageID = "connection.unavailable"
 	MsgOverlayDisconnected    MessageID = "connection.overlay_disconnected"
 	MsgStatusNotAttached      MessageID = "status.not_attached"
 	MsgStatusSession          MessageID = "status.session"
@@ -151,7 +152,8 @@ var baseCatalogRows = []catalogRow{
 	{ID: MsgQueuePasteItems, EN: " +{count} paste items", ZH: " +{count} 个粘贴项", JA: " +{count} 件の貼り付け", KO: " +붙여넣기 {count}개", ES: " +{count} elementos pegados", FR: " +{count} éléments collés", ENOne: " +{count} paste item", ZHOne: " +{count} 个粘贴项", JAOne: " +{count} 件の貼り付け", KOOne: " +붙여넣기 {count}개", ESOne: " +{count} elemento pegado", FROne: " +{count} élément collé"},
 	catalog(MsgQueueItem, "  {index}. {summary}", "  {index}. {summary}", "  {index}. {summary}", "  {index}. {summary}", "  {index}. {summary}", "  {index}. {summary}"),
 	catalog(MsgReconnectAttempt, " (reconnecting, attempt {attempt})", "（正在重连，第 {attempt} 次）", "（再接続中、{attempt} 回目）", " (재연결 중, {attempt}번째 시도)", " (reconectando, intento {attempt})", " (reconnexion, tentative {attempt})"),
-	catalog(MsgConnecting, "Connecting to {socket}...", "正在连接 {socket}……", "{socket} に接続中…", "{socket}에 연결 중...", "Conectando a {socket}...", "Connexion à {socket}…"),
+	catalog(MsgConnecting, "Opening {workspace}...", "正在打开 {workspace}……", "{workspace} を開いています…", "{workspace} 여는 중...", "Abriendo {workspace}...", "Ouverture de {workspace}…"),
+	catalog(MsgConnectionUnavailable, "{workspace} is temporarily unavailable", "{workspace} 暂时不可用", "{workspace} は一時的に利用できません", "{workspace}을(를) 일시적으로 사용할 수 없음", "{workspace} no está disponible temporalmente", "{workspace} est temporairement indisponible"),
 	catalog(MsgOverlayDisconnected, "Connection unavailable; decisions can be retried after reconnect.", "连接不可用；重连后可重试操作。", "接続できません。再接続後に再試行できます。", "연결할 수 없습니다. 재연결 후 다시 시도할 수 있습니다.", "Conexión no disponible; reintenta tras reconectar.", "Connexion indisponible ; réessayez après reconnexion."),
 	catalog(MsgStatusNotAttached, "not attached", "未连接会话", "未接続", "연결되지 않음", "sin sesión", "sans session"),
 	catalog(MsgStatusSession, "session {id}", "会话 {id}", "セッション {id}", "세션 {id}", "sesión {id}", "session {id}"),

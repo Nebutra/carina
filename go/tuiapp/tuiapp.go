@@ -9,7 +9,7 @@
 package tuiapp
 
 import (
-	"context"
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -82,13 +82,23 @@ func Run(opts Options) tui.Outcome {
 	}
 	mode, err := localruntime.ResolveMode(home)
 	if err != nil {
+		if errors.Is(err, localruntime.ErrModeDecisionRequired) && isTTY(os.Stdout) && isTTY(os.Stdin) {
+			mode, err = chooseRuntimeMode(os.Stdin, stderr, bootstrapLocale)
+			if errors.Is(err, errRuntimeModeChoiceCancelled) {
+				return tui.OutcomeOK
+			}
+			if err == nil {
+				err = localruntime.WriteMode(home, mode)
+			}
+		}
+	}
+	if err != nil {
 		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
 		return tui.OutcomeRuntimeError
 	}
 	projectRoot := strings.TrimSpace(opts.WorkspaceRoot)
 	var cfg config.Config
 	var socket string
-	var call RPC
 	var runtimeSpec *localruntime.Spec
 	if mode == localruntime.ModeWorkspace {
 		resolution, resolveErr := localruntime.Resolve(home, projectRoot, mode)
@@ -141,38 +151,23 @@ func Run(opts Options) tui.Outcome {
 		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": err.Error()}, loc))
 		return tui.OutcomeUsage
 	}
-	if runtimeSpec != nil {
-		client, _, connectErr := localdaemon.ConnectOrStart(*runtimeSpec)
-		if connectErr != nil {
-			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": connectErr.Error()}, loc))
-			return tui.OutcomeDaemonUnreachable
-		}
-		call = client
-	} else {
-		call, err = localdaemon.EnsureReachable(socket)
-		if err != nil {
-			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, loc))
-			return tui.OutcomeDaemonUnreachable
-		}
-	}
-
-	if opts.AfterDaemon != nil {
-		opts.AfterDaemon(call)
-	}
-
 	sessionID := strings.TrimSpace(opts.SessionID)
 	if sessionID == "" {
-		sessionID, err = resolveSession(call, cfg.StateDir, projectRoot)
+		sessionID, err = resolveSession(nil, cfg.StateDir, projectRoot)
 		if err != nil {
 			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapRecoveryFailed, microcopy.Args{"reason": err.Error()}, loc))
-			_ = call.Close()
 			return tui.OutcomeRuntimeError
 		}
 	}
-	_ = call.Close()
 
 	th := theme.New(theme.Detect(os.Getenv, true))
-	connectionController := tui.NewConnectionController()
+	initialTarget := tui.ConnectionTarget{
+		Socket: socket, SessionID: sessionID, WorkspaceRoot: projectRoot, StateDir: cfg.StateDir,
+		RuntimeSpec: runtimeSpec, AutoStart: true,
+	}
+	connectionController := tui.NewConnectionController(initialTarget)
+	coordinator := newRuntimeCoordinator(home, projectRoot, connectionController)
+	defer coordinator.close()
 	model, err := tui.NewChecked(tui.Options{
 		Theme:             th,
 		Locale:            loc,
@@ -182,8 +177,19 @@ func Run(opts Options) tui.Outcome {
 		StateDir:          cfg.StateDir,
 		Keybindings:       keybindings,
 		NoAlternateScreen: opts.NoAltScreen || strings.EqualFold(cfg.TUIAlternateScreen, "never"),
-		KeymapUpdater:     keymapUpdater(home, projectRoot),
+		KeymapUpdater:     coordinator.keymapUpdater(),
 		SwitchSession:     connectionController.Switch,
+		PrepareTarget:     coordinator.prepare,
+		CommitTarget:      coordinator.commit,
+		AbortTarget:       coordinator.abort,
+		ListWorkspaces:    coordinator.listWorkspaces,
+		LoadWorkspace:     workspaceLoader(home),
+		ResumeWorkspace:   workspaceResumer,
+		OnFirstConnection: func(call tui.Caller) {
+			if opts.AfterDaemon != nil {
+				opts.AfterDaemon(borrowedRPC{Caller: call})
+			}
+		},
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, loc))
@@ -191,9 +197,7 @@ func Run(opts Options) tui.Outcome {
 	}
 	defer model.Close()
 	prog := tea.NewProgram(model)
-	watchCtx, stopWatching := context.WithCancel(context.Background())
-	defer stopWatching()
-	go tui.WatchKeybindings(watchCtx, home, projectRoot, prog)
+	coordinator.startWatcher(prog)
 	if runtimeSpec != nil {
 		tui.ConnectControlledRuntime(prog, socket, sessionID, projectRoot, connectionController, *runtimeSpec)
 	} else {
@@ -209,6 +213,112 @@ func Run(opts Options) tui.Outcome {
 		return m.Outcome()
 	}
 	return tui.OutcomeOK
+}
+
+type borrowedRPC struct{ tui.Caller }
+
+func (borrowedRPC) Close() error { return nil }
+
+var errRuntimeModeChoiceCancelled = errors.New("runtime mode choice cancelled")
+
+type runtimeModeChoiceCopy struct {
+	title, workspace, legacy, cancel, prompt, invalid string
+}
+
+func chooseRuntimeMode(in io.Reader, out io.Writer, locale string) (localruntime.Mode, error) {
+	copy := runtimeModeChoiceText(locale)
+	fmt.Fprintf(out, "%s\n  [w] %s\n  [l] %s\n  [c] %s\n%s", copy.title, copy.workspace, copy.legacy, copy.cancel, copy.prompt)
+	scanner := bufio.NewScanner(in)
+	for scanner.Scan() {
+		switch strings.ToLower(strings.TrimSpace(scanner.Text())) {
+		case "w", "workspace", "1":
+			return localruntime.ModeWorkspace, nil
+		case "l", "legacy", "2":
+			return localruntime.ModeLegacy, nil
+		case "c", "cancel", "q", "3", "":
+			return "", errRuntimeModeChoiceCancelled
+		default:
+			fmt.Fprintf(out, "%s\n%s", copy.invalid, copy.prompt)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", errRuntimeModeChoiceCancelled
+}
+
+func runtimeModeChoiceText(locale string) runtimeModeChoiceCopy {
+	base := strings.ToLower(strings.TrimSpace(locale))
+	if i := strings.IndexAny(base, "-_@."); i >= 0 {
+		base = base[:i]
+	}
+	switch base {
+	case "zh":
+		return runtimeModeChoiceCopy{
+			title:     "检测到旧版全局运行时数据。请选择 Carina 的项目运行方式：",
+			workspace: "使用独立 workspace runtime（旧数据保持不变）",
+			legacy:    "继续使用旧版全局 runtime", cancel: "取消并退出",
+			prompt: "选择 [w/l/c]: ", invalid: "请输入 w、l 或 c。",
+		}
+	case "ja":
+		return runtimeModeChoiceCopy{title: "従来のグローバルランタイムデータが見つかりました。", workspace: "分離された workspace runtime を使用", legacy: "従来のグローバル runtime を継続", cancel: "キャンセル", prompt: "選択 [w/l/c]: ", invalid: "w、l、c のいずれかを入力してください。"}
+	case "ko":
+		return runtimeModeChoiceCopy{title: "기존 전역 런타임 데이터가 발견되었습니다.", workspace: "격리된 workspace runtime 사용", legacy: "기존 전역 runtime 계속 사용", cancel: "취소", prompt: "선택 [w/l/c]: ", invalid: "w, l 또는 c를 입력하세요."}
+	case "es":
+		return runtimeModeChoiceCopy{title: "Se encontraron datos del runtime global anterior.", workspace: "Usar un runtime aislado por workspace", legacy: "Continuar con el runtime global anterior", cancel: "Cancelar", prompt: "Elige [w/l/c]: ", invalid: "Escribe w, l o c."}
+	case "fr":
+		return runtimeModeChoiceCopy{title: "Des données de l'ancien runtime global ont été détectées.", workspace: "Utiliser un runtime isolé par workspace", legacy: "Continuer avec l'ancien runtime global", cancel: "Annuler", prompt: "Choix [w/l/c] : ", invalid: "Saisissez w, l ou c."}
+	default:
+		return runtimeModeChoiceCopy{title: "Legacy global runtime data was found. Choose how Carina should run projects:", workspace: "Use an isolated workspace runtime (legacy data stays unchanged)", legacy: "Continue using the legacy global runtime", cancel: "Cancel and exit", prompt: "Choose [w/l/c]: ", invalid: "Enter w, l, or c."}
+	}
+}
+
+func workspaceLoader(home string) func(string) (tui.WorkspaceDestination, error) {
+	return func(root string) (tui.WorkspaceDestination, error) {
+		resolution, err := localruntime.Resolve(home, root, localruntime.ModeWorkspace)
+		if err != nil {
+			return tui.WorkspaceDestination{}, err
+		}
+		client, _, err := localdaemon.ConnectOrStart(resolution.Spec)
+		if err != nil {
+			return tui.WorkspaceDestination{}, err
+		}
+		defer client.Close()
+		var sessions []tui.SessionListItem
+		if err := client.Call("session.list", map[string]any{}, &sessions); err != nil {
+			return tui.WorkspaceDestination{}, err
+		}
+		return tui.WorkspaceDestination{
+			Target: tui.ConnectionTarget{
+				Socket: resolution.Spec.Paths.SocketPath, WorkspaceRoot: resolution.Workspace.CanonicalRoot,
+				StateDir: resolution.Config.StateDir, RuntimeSpec: &resolution.Spec, AutoStart: true,
+			},
+			Sessions: sessions,
+		}, nil
+	}
+}
+
+func workspaceResumer(target tui.ConnectionTarget, sessionID string) (tui.ConnectionTarget, error) {
+	if target.RuntimeSpec == nil {
+		return tui.ConnectionTarget{}, fmt.Errorf("workspace runtime identity is required")
+	}
+	client, _, err := localdaemon.ConnectOrStart(*target.RuntimeSpec)
+	if err != nil {
+		return tui.ConnectionTarget{}, err
+	}
+	defer client.Close()
+	var resumed tui.SessionListItem
+	if err := client.Call("session.resume", map[string]any{"session_id": sessionID}, &resumed); err != nil {
+		return tui.ConnectionTarget{}, err
+	}
+	if resumed.SessionID == "" {
+		return tui.ConnectionTarget{}, fmt.Errorf("session resume returned no session id")
+	}
+	if resumed.WorkspaceRoot != "" && filepath.Clean(resumed.WorkspaceRoot) != filepath.Clean(target.WorkspaceRoot) {
+		return tui.ConnectionTarget{}, fmt.Errorf("session workspace mismatch")
+	}
+	target.SessionID = resumed.SessionID
+	return target, nil
 }
 
 func resolveSession(call RPC, stateDir, projectRoot string) (string, error) {
@@ -250,27 +360,6 @@ func resolveSession(call RPC, stateDir, projectRoot string) (string, error) {
 		}
 	}
 	return latest, nil
-}
-
-func keymapUpdater(home, projectRoot string) tui.KeymapUpdateFunc {
-	path := filepath.Join(projectRoot, ".carina", "config.json")
-	return func(action string, keys []string, remove bool) ([]tui.KeyBindingOverride, error) {
-		_, locks, err := config.LoadWithManaged(home, projectRoot, config.DefaultManagedPath())
-		if err != nil {
-			return nil, err
-		}
-		if locks.Locked("tui_keybindings") {
-			return nil, fmt.Errorf("tui_keybindings is locked by %s", locks.Source)
-		}
-		if err := config.UpdateTUIKeybinding(path, action, keys, remove); err != nil {
-			return nil, err
-		}
-		cfg, err := config.Load(home, projectRoot)
-		if err != nil {
-			return nil, err
-		}
-		return tui.ParseKeyBindingOverrides(cfg.TUIKeybindings)
-	}
 }
 
 func defaultSocket() string {

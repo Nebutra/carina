@@ -181,6 +181,122 @@ func TestResumePickerListsHistoricalSessionsAndResumesSelection(t *testing.T) {
 	}
 }
 
+func TestResumePickerDefaultsToCurrentWorkspace(t *testing.T) {
+	fc := &fakeCaller{handler: map[string]any{"session.list": []map[string]any{
+		{"session_id": "sess_current", "workspace_root": "/work/current", "status": "paused"},
+		{"session_id": "sess_other", "workspace_root": "/work/other", "status": "paused"},
+	}}}
+	m, _ := newTestModel(fc)
+	m.workspaceRoot = "/work/current"
+	drain(m, m.openSessionPicker())
+	if m.sessionPicker == nil || m.sessionPicker.scope != sessionScopeCurrent || len(m.sessionPicker.items) != 1 {
+		t.Fatalf("current picker=%#v", m.sessionPicker)
+	}
+	if got := m.sessionPicker.items[0].SessionID; got != "sess_current" {
+		t.Fatalf("current picker selected %q", got)
+	}
+}
+
+func TestResumePickerTabBrowsesWorkspacesThenDestinationSessions(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	m.workspaceRoot = "/work/current"
+	m.sessionPicker = &sessionPickerState{scope: sessionScopeCurrent, stage: sessionStageSessions}
+	m.listWorkspaces = func() ([]WorkspaceListItem, error) {
+		return []WorkspaceListItem{{Root: "/work/current", Current: true}, {Root: "/work/other", Name: "other"}}, nil
+	}
+	m.loadWorkspace = func(root string) (WorkspaceDestination, error) {
+		if root != "/work/other" {
+			t.Fatalf("loaded root=%q", root)
+		}
+		return WorkspaceDestination{
+			Target:   ConnectionTarget{Socket: "/other.sock", WorkspaceRoot: root, StateDir: "/other-state"},
+			Sessions: []SessionListItem{{SessionID: "sess_other", WorkspaceRoot: root, Status: "paused"}},
+		}, nil
+	}
+	cmd, handled := m.sessionPickerKey("tab")
+	if !handled || cmd == nil {
+		t.Fatal("Tab did not open workspace browser")
+	}
+	drain(m, cmd)
+	if m.sessionPicker.stage != sessionStageWorkspaces || len(m.sessionPicker.workspaces) != 2 {
+		t.Fatalf("workspace stage=%#v", m.sessionPicker)
+	}
+	m.sessionPicker.selected = 1
+	cmd, handled = m.sessionPickerKey("enter")
+	if !handled || cmd == nil {
+		t.Fatal("Enter did not load destination sessions")
+	}
+	drain(m, cmd)
+	if m.sessionPicker.stage != sessionStageSessions || len(m.sessionPicker.items) != 1 || m.sessionPicker.items[0].SessionID != "sess_other" {
+		t.Fatalf("destination sessions=%#v", m.sessionPicker)
+	}
+}
+
+func TestWorkspaceResumeLeaseFailureLeavesSourceUntouched(t *testing.T) {
+	destinationDir := t.TempDir()
+	occupied := newSubmissionJournal(destinationDir, "/work/other")
+	if err := occupied.acquire("sess_other"); err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.close()
+	m, _ := newTestModel(&fakeCaller{})
+	m.sessionID, m.workspaceRoot, m.stateDir = "sess_source", "/work/source", t.TempDir()
+	m.sessionPicker = &sessionPickerState{
+		scope: sessionScopeAll, stage: sessionStageSessions,
+		destination: ConnectionTarget{Socket: "/other.sock", WorkspaceRoot: "/work/other", StateDir: destinationDir},
+		items:       []sessionListItem{{SessionID: "sess_other", WorkspaceRoot: "/work/other", Status: "paused"}},
+	}
+	m.resumeWorkspace = func(target ConnectionTarget, sessionID string) (ConnectionTarget, error) {
+		target.SessionID = sessionID
+		return target, nil
+	}
+	prepared := false
+	m.prepareTarget = func(ConnectionTarget) (uint64, error) { prepared = true; return 1, nil }
+	m.commitTarget = func(uint64) error { return nil }
+	cmd := m.resumeWorkspaceSession(m.sessionPicker.items[0])
+	if cmd == nil {
+		t.Fatal("workspace resume command missing")
+	}
+	drain(m, cmd)
+	if prepared || m.pendingSessionID != "" || m.sessionID != "sess_source" || m.workspaceRoot != "/work/source" {
+		t.Fatalf("source changed after lease failure: prepared=%v pending=%q session=%q root=%q", prepared, m.pendingSessionID, m.sessionID, m.workspaceRoot)
+	}
+}
+
+func TestWorkspaceReadyAtomicallySwapsTargetAndJournalEvenWhenSessionIDsMatch(t *testing.T) {
+	sourceDir, destinationDir := t.TempDir(), t.TempDir()
+	m, _ := newTestModel(&fakeCaller{})
+	m.sessionID, m.workspaceRoot, m.stateDir = "sess_same", "/work/source", sourceDir
+	m.submissions = newSubmissionJournal(sourceDir, m.workspaceRoot)
+	if err := m.submissions.acquire(m.sessionID); err != nil {
+		t.Fatal(err)
+	}
+	destination := newSubmissionJournal(destinationDir, "/work/destination")
+	if err := destination.acquire("sess_same"); err != nil {
+		t.Fatal(err)
+	}
+	target := ConnectionTarget{Socket: "/destination.sock", SessionID: "sess_same", WorkspaceRoot: "/work/destination", StateDir: destinationDir}
+	m.pendingTarget = &target
+	m.pendingSubmissions = &destination
+	m.pendingSessionID = target.SessionID
+	m.pendingWorkspaceRoot = target.WorkspaceRoot
+	m.Update(SessionReadyMsg{SessionID: "sess_same", Generation: 2, Target: target})
+	if m.workspaceRoot != target.WorkspaceRoot || m.stateDir != destinationDir || m.socket != target.Socket || m.submissions.leaseSession != "sess_same" {
+		t.Fatalf("target was not swapped: root=%q state=%q socket=%q lease=%q", m.workspaceRoot, m.stateDir, m.socket, m.submissions.leaseSession)
+	}
+	sourceContender := newSubmissionJournal(sourceDir, "/work/source")
+	defer sourceContender.close()
+	if err := sourceContender.acquire("sess_same"); err != nil {
+		t.Fatalf("source lease was not released: %v", err)
+	}
+	destinationContender := newSubmissionJournal(destinationDir, "/work/destination")
+	defer destinationContender.close()
+	if err := destinationContender.acquire("sess_same"); err == nil {
+		t.Fatal("destination lease was not retained")
+	}
+	m.Close()
+}
+
 func TestSessionSwitchRejectsDraftAndStaleEvents(t *testing.T) {
 	m, _ := newTestModel(&fakeCaller{})
 	m.input.SetValue("unsent")

@@ -51,6 +51,7 @@ type (
 		SessionID  string
 		Generation uint64
 		Call       Caller
+		Target     ConnectionTarget
 	}
 	// TaskActiveMsg restores the task the prompt should steer after attach.
 	TaskActiveMsg struct {
@@ -179,15 +180,22 @@ type clipboardDoneMsg struct {
 
 // Options configures a Model.
 type Options struct {
-	Theme         theme.Theme
-	Locale        string // BCP-47/POSIX UI locale; normalized by NewChecked
-	Socket        string
-	SessionID     string // reuse an existing session; empty creates one
-	WorkspaceRoot string
-	Model         string             // default model for new tasks; empty means agent/runtime default
-	SwitchSession func(string) error // connection-controller hook for session lifecycle commands
-	StateDir      string             // durable local TUI state; empty disables submission recovery
-	Now           func() time.Time
+	Theme             theme.Theme
+	Locale            string // BCP-47/POSIX UI locale; normalized by NewChecked
+	Socket            string
+	SessionID         string // reuse an existing session; empty creates one
+	WorkspaceRoot     string
+	Model             string             // default model for new tasks; empty means agent/runtime default
+	SwitchSession     func(string) error // connection-controller hook for session lifecycle commands
+	PrepareTarget     func(ConnectionTarget) (uint64, error)
+	CommitTarget      func(uint64) error
+	AbortTarget       func(uint64)
+	ListWorkspaces    func() ([]WorkspaceListItem, error)
+	LoadWorkspace     func(string) (WorkspaceDestination, error)
+	ResumeWorkspace   func(ConnectionTarget, string) (ConnectionTarget, error)
+	OnFirstConnection func(Caller)
+	StateDir          string // durable local TUI state; empty disables submission recovery
+	Now               func() time.Time
 	// Keybindings replaces selected action bindings after defaults are loaded.
 	// Embedders accepting user-controlled overrides should call NewChecked.
 	Keybindings       []KeyBindingOverride
@@ -297,6 +305,14 @@ type Model struct {
 	reasoningEffort       string
 	modelPinned           bool
 	switchSession         func(string) error
+	prepareTarget         func(ConnectionTarget) (uint64, error)
+	commitTarget          func(uint64) error
+	abortTarget           func(uint64)
+	listWorkspaces        func() ([]WorkspaceListItem, error)
+	loadWorkspace         func(string) (WorkspaceDestination, error)
+	resumeWorkspace       func(ConnectionTarget, string) (ConnectionTarget, error)
+	onFirstConnection     func(Caller)
+	firstConnectionSeen   bool
 	sessionGeneration     uint64
 	sessionOpGen          uint64
 	pendingSessionID      string
@@ -304,6 +320,9 @@ type Model struct {
 	sessionActionPending  string
 	previousSessionID     string
 	previousWorkspaceRoot string
+	pendingTarget         *ConnectionTarget
+	pendingSubmissions    *submissionJournal
+	pendingPreparedToken  uint64
 	goal                  *goalView
 	outcome               Outcome
 
@@ -437,6 +456,13 @@ func NewChecked(o Options) (*Model, error) {
 		model:             strings.TrimSpace(o.Model),
 		modelPinned:       strings.TrimSpace(o.Model) != "",
 		switchSession:     o.SwitchSession,
+		prepareTarget:     o.PrepareTarget,
+		commitTarget:      o.CommitTarget,
+		abortTarget:       o.AbortTarget,
+		listWorkspaces:    o.ListWorkspaces,
+		loadWorkspace:     o.LoadWorkspace,
+		resumeWorkspace:   o.ResumeWorkspace,
+		onFirstConnection: o.OnFirstConnection,
 	}
 	m.layout()
 	return m, nil
@@ -446,6 +472,12 @@ func NewChecked(o Options) (*Model, error) {
 // submission lease. Frontends should defer it after constructing a model.
 func (m *Model) Close() {
 	m.submissions.close()
+	if m.pendingSubmissions != nil {
+		m.pendingSubmissions.close()
+	}
+	if m.pendingPreparedToken != 0 && m.abortTarget != nil {
+		m.abortTarget(m.pendingPreparedToken)
+	}
 }
 
 // inputStyles keeps the third-party textarea inside Carina's terminal

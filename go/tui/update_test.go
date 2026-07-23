@@ -629,22 +629,26 @@ func TestReadingHistoryIsNotInterruptedByNewEvents(t *testing.T) {
 
 func TestDegradeBannerLifecycle(t *testing.T) {
 	m, _ := newTestModel(nil) // no session yet
-	if b := m.banner(); !strings.Contains(b, "Connecting") || !strings.Contains(b, "/tmp/test-daemon.sock") {
+	m.workspaceRoot = "/work/carina"
+	if b := m.banner(); !strings.Contains(b, "Opening carina") || strings.Contains(b, "/tmp/test-daemon.sock") {
 		t.Errorf("initial connection banner = %q", b)
 	}
 	m.Update(ConnLostMsg{Err: errors.New("dial unix: no such file")})
 	b := m.banner()
-	for _, want := range []string{"Daemon unreachable", "/tmp/test-daemon.sock", "carina-daemon"} {
+	for _, want := range []string{"carina", "temporarily unavailable"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("banner missing %q: %q", want, b)
 		}
+	}
+	if strings.Contains(b, "/tmp/test-daemon.sock") || strings.Contains(b, "carina-daemon") {
+		t.Errorf("product banner exposed runtime plumbing: %q", b)
 	}
 	m.Update(ReconnectingMsg{Attempt: 3})
 	if b := m.banner(); !strings.Contains(b, "3") {
 		t.Errorf("banner missing attempt count: %q", b)
 	}
 	// The banner is composited into the rendered frame — never a silent freeze.
-	if v := m.View(); !strings.Contains(v.Content, "Daemon unreachable") {
+	if v := m.View(); !strings.Contains(v.Content, "temporarily unavailable") {
 		t.Error("degrade banner not visible in rendered view")
 	}
 	m.Update(ConnRestoredMsg{SessionID: "sess_test"})
@@ -660,7 +664,7 @@ func TestZhDegradeBanner(t *testing.T) {
 	clock := &testClock{now: time.Unix(0, 0)}
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "zh", Socket: "/tmp/s.sock", Now: func() time.Time { return clock.now }})
 	m.Update(ConnLostMsg{Err: errors.New("x")})
-	if b := m.banner(); !strings.Contains(b, "无法连接守护进程") {
+	if b := m.banner(); !strings.Contains(b, "暂时不可用") {
 		t.Errorf("zh banner = %q", b)
 	}
 }
@@ -673,7 +677,7 @@ func TestZhVariantDegradeBanner(t *testing.T) {
 			m := New(Options{Theme: theme.New(theme.Mono), Locale: loc, Socket: "/tmp/s.sock", Now: func() time.Time { return clock.now }})
 			m.Update(ReconnectingMsg{Attempt: 2})
 			b := m.banner()
-			if !strings.Contains(b, "无法连接守护进程") {
+			if !strings.Contains(b, "暂时不可用") {
 				t.Errorf("banner for locale %q = %q, want zh degrade text", loc, b)
 			}
 			if !strings.Contains(b, "正在重连") {
@@ -687,7 +691,7 @@ func TestZhVariantDegradeBanner(t *testing.T) {
 			m := New(Options{Theme: theme.New(theme.Mono), Locale: loc, Socket: "/tmp/s.sock", Now: func() time.Time { return clock.now }})
 			m.Update(ReconnectingMsg{Attempt: 2})
 			b := m.banner()
-			if !strings.Contains(b, "無法連接守護進程") {
+			if !strings.Contains(b, "暫時不可用") {
 				t.Errorf("banner for locale %q = %q, want zh-Hant degrade text", loc, b)
 			}
 			if !strings.Contains(b, "正在重連") {

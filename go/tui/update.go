@@ -80,21 +80,44 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Generation != 0 && msg.Generation < m.sessionGeneration {
 			return m, nil
 		}
-		reconnected := m.sessionID == msg.SessionID && m.conn == ConnConnected
-		if m.sessionID != "" && m.sessionID != msg.SessionID {
-			if err := m.submissions.transfer(msg.SessionID); err != nil {
-				m.submissionLeaseErr = err
-				m.push(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
-				return m, nil
+		crossRuntime := m.pendingTarget != nil && m.pendingSubmissions != nil
+		reconnected := !crossRuntime && m.sessionID == msg.SessionID && m.conn == ConnConnected
+		if m.sessionID != "" && (m.sessionID != msg.SessionID || crossRuntime) {
+			if !crossRuntime {
+				if err := m.submissions.transfer(msg.SessionID); err != nil {
+					m.submissionLeaseErr = err
+					m.push(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
+					return m, nil
+				}
 			}
 			m.resetSessionProjection()
 		}
 		m.sessionID = msg.SessionID
-		if m.pendingWorkspaceRoot != "" {
+		if crossRuntime {
+			m.submissions.close()
+			m.submissions = *m.pendingSubmissions
+			m.pendingSubmissions = nil
+			m.socket = m.pendingTarget.Socket
+			m.workspaceRoot = m.pendingTarget.WorkspaceRoot
+			m.stateDir = m.pendingTarget.StateDir
+			m.pendingTarget = nil
+			m.pendingPreparedToken = 0
+		} else if m.pendingWorkspaceRoot != "" {
 			m.workspaceRoot = m.pendingWorkspaceRoot
 			m.treeCache, m.treeCacheRoot = nil, ""
 			m.treeCacheAt = time.Time{}
 		}
+		if msg.Target.Socket != "" {
+			m.socket = msg.Target.Socket
+		}
+		if msg.Target.WorkspaceRoot != "" {
+			m.workspaceRoot = msg.Target.WorkspaceRoot
+		}
+		if msg.Target.StateDir != "" {
+			m.stateDir = msg.Target.StateDir
+		}
+		m.treeCache, m.treeCacheRoot = nil, ""
+		m.treeCacheAt = time.Time{}
 		m.pendingSessionID = ""
 		m.pendingWorkspaceRoot = ""
 		m.previousSessionID, m.previousWorkspaceRoot = "", ""
@@ -105,6 +128,17 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionGeneration = msg.Generation
 		}
 		m.call = msg.Call
+		var firstConnection tea.Cmd
+		if !m.firstConnectionSeen {
+			m.firstConnectionSeen = true
+			if callback := m.onFirstConnection; callback != nil {
+				call := msg.Call
+				firstConnection = func() tea.Msg {
+					callback(call)
+					return nil
+				}
+			}
+		}
 		_ = persistLastActiveSession(m.stateDir, m.workspaceRoot, msg.SessionID)
 		m.conn = ConnConnected
 		m.applyConversation(conversationTransition{Kind: transitionConnected, SessionID: msg.SessionID, EventType: "session.ready"})
@@ -123,7 +157,11 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.refreshRuntimeStatus()
 		}
 		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateAttached, MessageArgs{"session": msg.SessionID})))
-		m.submissionLeaseErr = m.submissions.acquire(msg.SessionID)
+		if crossRuntime {
+			m.submissionLeaseErr = nil
+		} else {
+			m.submissionLeaseErr = m.submissions.acquire(msg.SessionID)
+		}
 		if m.submissionLeaseErr != nil {
 			m.push(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}))
 		}
@@ -132,7 +170,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		status := m.refreshRuntimeStatus()
 		tick := m.scheduleRuntimeStatusTick()
 		side := m.flushPendingSideQuestion()
-		cmds := []tea.Cmd{history, status, tick, side}
+		cmds := []tea.Cmd{firstConnection, history, status, tick, side}
 		if reconcile != nil {
 			cmds = append([]tea.Cmd{reconcile}, cmds...)
 		}
@@ -149,6 +187,18 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case sessionListMsg:
 		m.handleSessionList(msg)
+		m.layout()
+		return m, nil
+	case workspaceListMsg:
+		m.handleWorkspaceList(msg)
+		m.layout()
+		return m, nil
+	case workspaceSessionsMsg:
+		m.handleWorkspaceSessions(msg)
+		m.layout()
+		return m, nil
+	case workspaceResumeMsg:
+		m.handleWorkspaceResume(msg)
 		m.layout()
 		return m, nil
 	case sessionActionMsg:

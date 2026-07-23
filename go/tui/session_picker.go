@@ -45,6 +45,37 @@ type sessionListItem struct {
 	} `json:"continuity"`
 }
 
+// SessionListItem is the workspace-navigation session shape returned by the
+// application coordinator after it validates a destination runtime.
+type SessionListItem = sessionListItem
+
+type WorkspaceListItem struct {
+	Root      string
+	Name      string
+	RuntimeID string
+	Current   bool
+	Error     string
+}
+
+type WorkspaceDestination struct {
+	Target   ConnectionTarget
+	Sessions []SessionListItem
+}
+
+type sessionPickerScope int
+
+const (
+	sessionScopeCurrent sessionPickerScope = iota
+	sessionScopeAll
+)
+
+type sessionPickerStage int
+
+const (
+	sessionStageSessions sessionPickerStage = iota
+	sessionStageWorkspaces
+)
+
 func (m *Model) sessionStatusLabel(status string) string {
 	switch strings.ToLower(status) {
 	case "active":
@@ -82,6 +113,10 @@ type sessionPickerState struct {
 	loadError        bool
 	selected, scroll int
 	items            []sessionListItem
+	scope            sessionPickerScope
+	stage            sessionPickerStage
+	workspaces       []WorkspaceListItem
+	destination      ConnectionTarget
 	status           string
 }
 type sessionListMsg struct {
@@ -93,6 +128,23 @@ type sessionActionMsg struct {
 	generation uint64
 	action     string
 	session    sessionListItem
+	err        error
+}
+type workspaceListMsg struct {
+	generation uint64
+	items      []WorkspaceListItem
+	err        error
+}
+type workspaceSessionsMsg struct {
+	generation  uint64
+	destination WorkspaceDestination
+	err         error
+}
+type workspaceResumeMsg struct {
+	generation uint64
+	target     ConnectionTarget
+	journal    submissionJournal
+	token      uint64
 	err        error
 }
 
@@ -122,7 +174,7 @@ func (m *Model) sessionSwitchBlocker() (MessageID, bool) {
 func (m *Model) openSessionPicker() tea.Cmd {
 	m.closeSuggest()
 	m.sessionOpGen++
-	s := &sessionPickerState{generation: m.sessionOpGen, loading: true, status: m.text(MsgSessionPickerLoading, nil)}
+	s := &sessionPickerState{generation: m.sessionOpGen, loading: true, scope: sessionScopeCurrent, stage: sessionStageSessions, status: m.text(MsgSessionPickerLoading, nil)}
 	m.sessionPicker = s
 	m.layout()
 	call, gen := m.call, s.generation
@@ -150,7 +202,8 @@ func (m *Model) handleSessionList(msg sessionListMsg) {
 	s.loadError = false
 	s.items = nil
 	for _, item := range msg.items {
-		if item.SessionID != m.sessionID && item.Status != "closed" {
+		if item.SessionID != m.sessionID && item.Status != "closed" &&
+			cleanWorkspaceRoot(item.WorkspaceRoot) == cleanWorkspaceRoot(m.workspaceRoot) {
 			s.items = append(s.items, item)
 		}
 	}
@@ -169,6 +222,107 @@ func (m *Model) handleSessionList(msg sessionListMsg) {
 	s.clamp(m.sessionPickerPageHeight())
 }
 
+func (m *Model) openWorkspacePicker() tea.Cmd {
+	s := m.sessionPicker
+	if s == nil {
+		return nil
+	}
+	m.sessionOpGen++
+	s.generation = m.sessionOpGen
+	s.scope, s.stage = sessionScopeAll, sessionStageWorkspaces
+	s.loading, s.loadError = true, false
+	s.selected, s.scroll = 0, 0
+	s.status = m.text(MsgSessionWorkspaceLoading, nil)
+	list, gen := m.listWorkspaces, s.generation
+	return func() tea.Msg {
+		if list == nil {
+			return workspaceListMsg{generation: gen, err: errors.New("workspace navigation is unavailable")}
+		}
+		items, err := list()
+		return workspaceListMsg{generation: gen, items: items, err: err}
+	}
+}
+
+func (m *Model) handleWorkspaceList(msg workspaceListMsg) {
+	s := m.sessionPicker
+	if s == nil || s.generation != msg.generation || s.stage != sessionStageWorkspaces {
+		return
+	}
+	s.loading = false
+	if msg.err != nil {
+		s.loadError = true
+		s.status = m.text(MsgSessionWorkspaceFailed, MessageArgs{"error": msg.err.Error()})
+		return
+	}
+	s.workspaces = msg.items
+	s.status = m.text(MsgSessionWorkspaceHelp, nil)
+	if len(s.workspaces) == 0 {
+		s.status = m.text(MsgSessionWorkspaceEmpty, nil)
+	}
+	s.clamp(m.sessionPickerPageHeight())
+}
+
+func (m *Model) loadWorkspaceSessions(item WorkspaceListItem) tea.Cmd {
+	s := m.sessionPicker
+	if s == nil {
+		return nil
+	}
+	if item.Error != "" {
+		s.status = item.Error
+		return nil
+	}
+	m.sessionOpGen++
+	s.generation = m.sessionOpGen
+	s.loading, s.loadError = true, false
+	s.status = m.text(MsgSessionWorkspaceConnecting, MessageArgs{"workspace": workspaceDisplayName(item)})
+	load, root, gen := m.loadWorkspace, item.Root, s.generation
+	return func() tea.Msg {
+		if load == nil {
+			return workspaceSessionsMsg{generation: gen, err: errors.New("workspace navigation is unavailable")}
+		}
+		destination, err := load(root)
+		return workspaceSessionsMsg{generation: gen, destination: destination, err: err}
+	}
+}
+
+func (m *Model) handleWorkspaceSessions(msg workspaceSessionsMsg) {
+	s := m.sessionPicker
+	if s == nil || s.generation != msg.generation {
+		return
+	}
+	s.loading = false
+	if msg.err != nil {
+		s.loadError = true
+		s.status = m.text(MsgSessionWorkspaceFailed, MessageArgs{"error": msg.err.Error()})
+		return
+	}
+	s.stage = sessionStageSessions
+	s.destination = cloneConnectionTarget(msg.destination.Target)
+	s.items = nil
+	for _, item := range msg.destination.Sessions {
+		if item.Status != "closed" {
+			s.items = append(s.items, item)
+		}
+	}
+	s.selected, s.scroll = 0, 0
+	s.status = m.text(MsgSessionPickerHelpAll, nil)
+	if len(s.items) == 0 {
+		s.status = m.text(MsgSessionPickerEmpty, nil)
+	}
+	s.clamp(m.sessionPickerPageHeight())
+}
+
+func workspaceDisplayName(item WorkspaceListItem) string {
+	if strings.TrimSpace(item.Name) != "" {
+		return item.Name
+	}
+	name := filepath.Base(filepath.Clean(item.Root))
+	if name == "." || name == string(filepath.Separator) {
+		return item.Root
+	}
+	return name
+}
+
 func sessionAttentionRank(item sessionListItem) int {
 	switch item.Continuity.Recovery.Disposition {
 	case "blocked", "review_required":
@@ -185,19 +339,26 @@ func sessionAttentionRank(item sessionListItem) int {
 // Reserve room for the selected session's recovery evidence. The list remains
 // navigable in short terminals while the recommended action stays visible.
 func (m *Model) sessionPickerPageHeight() int { return maxInt(m.height-16, 1) }
+func (s *sessionPickerState) itemCount() int {
+	if s.stage == sessionStageWorkspaces {
+		return len(s.workspaces)
+	}
+	return len(s.items)
+}
 func (s *sessionPickerState) clamp(page int) {
-	if len(s.items) == 0 {
+	count := s.itemCount()
+	if count == 0 {
 		s.selected, s.scroll = 0, 0
 		return
 	}
-	s.selected = clampInt(s.selected, 0, len(s.items)-1)
+	s.selected = clampInt(s.selected, 0, count-1)
 	if s.selected < s.scroll {
 		s.scroll = s.selected
 	}
 	if s.selected >= s.scroll+page {
 		s.scroll = s.selected - page + 1
 	}
-	s.scroll = clampInt(s.scroll, 0, maxInt(len(s.items)-page, 0))
+	s.scroll = clampInt(s.scroll, 0, maxInt(count-page, 0))
 }
 
 func (m *Model) sessionPickerKey(key string) (tea.Cmd, bool) {
@@ -211,9 +372,24 @@ func (m *Model) sessionPickerKey(key string) (tea.Cmd, bool) {
 			s.status = m.text(MsgSessionActionResolving, nil)
 			return nil, true
 		}
+		if s.scope == sessionScopeAll && s.stage == sessionStageSessions {
+			s.stage = sessionStageWorkspaces
+			s.items = nil
+			s.selected, s.scroll = 0, 0
+			s.status = m.text(MsgSessionWorkspaceHelp, nil)
+			return nil, true
+		}
 		m.sessionPicker = nil
 		m.layout()
 		return m.resumeQueuedAfterTransient(), true
+	case "tab":
+		if s.loading || m.pendingSessionID != "" {
+			return nil, true
+		}
+		if s.scope == sessionScopeCurrent {
+			return m.openWorkspacePicker(), true
+		}
+		return m.openSessionPicker(), true
 	case "r":
 		if m.pendingSessionID != "" {
 			if m.switchSession != nil {
@@ -247,8 +423,14 @@ func (m *Model) sessionPickerKey(key string) (tea.Cmd, bool) {
 	case "down", "j":
 		s.selected++
 	case "enter":
-		if s.loading || len(s.items) == 0 {
+		if s.loading || s.itemCount() == 0 {
 			return nil, true
+		}
+		if s.stage == sessionStageWorkspaces {
+			return m.loadWorkspaceSessions(s.workspaces[s.selected]), true
+		}
+		if s.scope == sessionScopeAll {
+			return m.resumeWorkspaceSession(s.items[s.selected]), true
 		}
 		return m.resumeSession(s.items[s.selected].SessionID), true
 	}
@@ -262,13 +444,40 @@ func (m *Model) sessionPickerView() string {
 		return ""
 	}
 	width := maxInt(m.width-4, 1)
-	lines := []string{m.th.Style(theme.RoleTitle).Render(m.text(MsgSessionPickerTitle, nil)), ""}
+	title := m.text(MsgSessionPickerTitle, nil)
+	if s.scope == sessionScopeAll {
+		title = m.text(MsgSessionWorkspaceTitle, nil)
+	}
+	lines := []string{m.th.Style(theme.RoleTitle).Render(title), ""}
 	if s.loading {
 		lines = append(lines, s.status)
 	} else {
 		page := m.sessionPickerPageHeight()
 		s.clamp(page)
-		end := minInt(s.scroll+page, len(s.items))
+		end := minInt(s.scroll+page, s.itemCount())
+		if s.stage == sessionStageWorkspaces {
+			for i := s.scroll; i < end; i++ {
+				item := s.workspaces[i]
+				prefix := "  "
+				if i == s.selected {
+					prefix = "> "
+				}
+				label := workspaceDisplayName(item) + "  " + item.Root
+				if item.Current {
+					label += "  " + m.text(MsgSessionWorkspaceCurrent, nil)
+				}
+				if item.Error != "" {
+					label += "  " + m.text(MsgSessionWorkspaceInvalid, nil)
+				}
+				line := fitRenderedLine(prefix+label, width)
+				if i == s.selected {
+					line = m.th.Style(theme.RoleTitle).Render(line)
+				}
+				lines = append(lines, line)
+			}
+			lines = append(lines, "", fitRenderedLine(s.status, width))
+			return renderSessionPickerBox(m, lines)
+		}
 		for i := s.scroll; i < end; i++ {
 			it := s.items[i]
 			prefix := "  "
@@ -308,6 +517,10 @@ func (m *Model) sessionPickerView() string {
 		}
 		lines = append(lines, "", fitRenderedLine(s.status, width))
 	}
+	return renderSessionPickerBox(m, lines)
+}
+
+func renderSessionPickerBox(m *Model, lines []string) string {
 	style := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(0, 1)
 	if c := m.th.Color(theme.RoleTitle); c != nil {
 		style = style.BorderForeground(c)
@@ -404,6 +617,93 @@ func (m *Model) forkSession(taskID string) tea.Cmd {
 func (m *Model) resumeSession(id string) tea.Cmd {
 	return m.beginSessionAction("resume", "session.resume", map[string]any{"session_id": id})
 }
+
+func (m *Model) resumeWorkspaceSession(item sessionListItem) tea.Cmd {
+	if m.sessionActionPending != "" || m.pendingSessionID != "" {
+		return nil
+	}
+	if blocker, blocked := m.sessionSwitchBlocker(); blocked {
+		if m.sessionPicker != nil {
+			m.sessionPicker.status = m.text(MsgSessionSwitchBlocked, MessageArgs{"reason": m.text(blocker, nil)})
+		}
+		return nil
+	}
+	if m.sessionPicker == nil || m.resumeWorkspace == nil || m.prepareTarget == nil || m.commitTarget == nil {
+		return nil
+	}
+	m.sessionOpGen++
+	gen := m.sessionOpGen
+	m.sessionPicker.generation = gen
+	m.sessionPicker.loading = true
+	m.sessionPicker.status = m.text(MsgSessionSwitching, MessageArgs{"session": item.SessionID})
+	base := cloneConnectionTarget(m.sessionPicker.destination)
+	resume, prepare := m.resumeWorkspace, m.prepareTarget
+	return func() tea.Msg {
+		target, err := resume(base, item.SessionID)
+		if err != nil {
+			return workspaceResumeMsg{generation: gen, err: err}
+		}
+		journal := newSubmissionJournal(target.StateDir, target.WorkspaceRoot)
+		if err := journal.acquire(target.SessionID); err != nil {
+			return workspaceResumeMsg{generation: gen, err: err}
+		}
+		token, err := prepare(target)
+		if err != nil {
+			journal.close()
+			return workspaceResumeMsg{generation: gen, err: err}
+		}
+		return workspaceResumeMsg{generation: gen, target: target, journal: journal, token: token}
+	}
+}
+
+func (m *Model) handleWorkspaceResume(msg workspaceResumeMsg) {
+	if msg.generation != m.sessionOpGen {
+		if msg.token != 0 && m.abortTarget != nil {
+			m.abortTarget(msg.token)
+		}
+		msg.journal.close()
+		return
+	}
+	s := m.sessionPicker
+	if msg.err != nil {
+		if s != nil {
+			s.loading = false
+			s.loadError = true
+			s.status = m.text(MsgSessionSwitchRecover, MessageArgs{"error": msg.err.Error()})
+		}
+		return
+	}
+	if blocker, blocked := m.sessionSwitchBlocker(); blocked {
+		if m.abortTarget != nil {
+			m.abortTarget(msg.token)
+		}
+		msg.journal.close()
+		if s != nil {
+			s.loading = false
+			s.status = m.text(MsgSessionSwitchBlocked, MessageArgs{"reason": m.text(blocker, nil)})
+		}
+		return
+	}
+	if err := m.commitTarget(msg.token); err != nil {
+		if m.abortTarget != nil {
+			m.abortTarget(msg.token)
+		}
+		msg.journal.close()
+		if s != nil {
+			s.loading = false
+			s.status = m.text(MsgSessionSwitchRecover, MessageArgs{"error": err.Error()})
+		}
+		return
+	}
+	target := cloneConnectionTarget(msg.target)
+	m.pendingTarget = &target
+	m.pendingSubmissions = &msg.journal
+	m.pendingPreparedToken = msg.token
+	m.previousSessionID, m.previousWorkspaceRoot = m.sessionID, m.workspaceRoot
+	m.pendingSessionID = target.SessionID
+	m.pendingWorkspaceRoot = target.WorkspaceRoot
+}
+
 func (m *Model) handleSessionAction(msg sessionActionMsg) {
 	if msg.generation != m.sessionOpGen {
 		return

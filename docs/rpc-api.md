@@ -42,7 +42,14 @@ surface is `/goal [--tokens N] <objective>` plus
 `/goal clear|pause|resume|complete|continue`; `/goal` alone
 prints the current state.
 
-Transport (MVP): **JSON-RPC 2.0 over unix socket** (`~/.carina/daemon.sock`) or stdio. Bare TCP is restricted to explicit loopback addresses for diagnostics; network-facing clients use the authenticated WebSocket or HTTP Gateway. All optional listeners are disabled by default. gRPC is a later optimization. Machine-readable registry: [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json).
+Transport (MVP): **JSON-RPC 2.0 over unix socket** or stdio. Workspace mode
+uses a bounded socket name under `~/.carina/run/v1/`; the exact path is carried
+by the authoritative runtime spec and returned by `runtime.describe`.
+`~/.carina/daemon.sock` remains the explicit legacy-mode endpoint. Bare TCP is
+restricted to explicit loopback addresses for diagnostics; network-facing
+clients use the authenticated WebSocket or HTTP Gateway. All optional listeners
+are disabled by default. gRPC is a later optimization. Machine-readable
+registry: [`protocol/jsonrpc/methods.json`](../protocol/jsonrpc/methods.json).
 
 Notifications (server → client) stream events; every payload conforms to [`protocol/schemas/`](../protocol/schemas/).
 
@@ -58,7 +65,8 @@ complete, authoritative registry. Groups not summarized here include `agent.*`,
 
 | Method | Purpose |
 |--------|---------|
-| `runtime.initialize` | runtime negotiation entrypoint: client identity, requested projection version, negotiated contract |
+| `runtime.initialize` | runtime negotiation plus optional expected workspace/runtime/epoch identity checks |
+| `runtime.describe` | local-only runtime identity, topology, lifecycle, connections, obligations, and idle deadline |
 | `runtime.capabilities` | advertised runtime capabilities |
 | `runtime.registry_schema` | machine-readable method registry schema |
 | `gateway.hello` | versioned Gateway handshake snapshot: requested role, negotiated scopes, feature list, method catalog, policy notes |

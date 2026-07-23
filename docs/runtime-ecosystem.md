@@ -4,6 +4,36 @@ Carina keeps orchestration and extension state outside the model context. The
 daemon exposes typed JSON-RPC contracts; CLI, IDE, web, and mobile clients are
 renderers and operators of the same state machine.
 
+## Workspace runtime ownership
+
+The default local topology is one detached, on-demand execution runtime per
+canonical workspace. `go/localruntime` resolves the workspace, configuration
+provenance, stable workspace/runtime IDs, and every runtime path into one
+versioned spec. `go/localdaemon` then performs atomic connect-or-start under a
+per-runtime advisory lock and accepts the endpoint only after
+`runtime.describe` plus `runtime.initialize` prove the complete identity.
+
+Runtime descriptors persist after shutdown and form a passive, read-only
+registry. Owner records and sockets are ephemeral: graceful shutdown writes
+`lifecycle=stopped` with `stopped_at`, then removes only the owner record and
+socket that identify the exiting process. Stop refuses an unreachable or
+mismatched endpoint, a reused PID running another executable, and active
+background obligations unless `--force` is explicit.
+
+Useful operator commands:
+
+```bash
+carina runtime start|status|stop|logs [--workspace PATH]
+carina runtime mode workspace|legacy
+carina runtimes [--json]
+```
+
+Fresh installs use workspace mode. When legacy global state is detected and no
+decision exists, an interactive launch offers workspace mode, legacy mode, or
+cancel; non-interactive commands still require an explicit environment or
+persisted decision. The choice is reversible. Workspace and legacy state remain
+separate and may coexist; neither mode imports or mutates the other.
+
 ## Workflow control plane
 
 `workflow.run/list/detail/pause/resume/stop/restart/save` operate on durable run

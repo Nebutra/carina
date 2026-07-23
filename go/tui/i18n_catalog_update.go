@@ -96,6 +96,15 @@ const (
 	MsgSessionPickerFailed         MessageID = "session_picker.failed"
 	MsgSessionPickerEmpty          MessageID = "session_picker.empty"
 	MsgSessionPickerHelp           MessageID = "session_picker.help"
+	MsgSessionPickerHelpAll        MessageID = "session_picker.help_all"
+	MsgSessionWorkspaceTitle       MessageID = "session_workspace.title"
+	MsgSessionWorkspaceLoading     MessageID = "session_workspace.loading"
+	MsgSessionWorkspaceFailed      MessageID = "session_workspace.failed"
+	MsgSessionWorkspaceEmpty       MessageID = "session_workspace.empty"
+	MsgSessionWorkspaceHelp        MessageID = "session_workspace.help"
+	MsgSessionWorkspaceConnecting  MessageID = "session_workspace.connecting"
+	MsgSessionWorkspaceCurrent     MessageID = "session_workspace.current"
+	MsgSessionWorkspaceInvalid     MessageID = "session_workspace.invalid"
 	MsgSessionPickerForkOf         MessageID = "session_picker.fork_of"
 	MsgSessionPickerForkTask       MessageID = "session_picker.fork_task"
 	MsgSessionStatusActive         MessageID = "session.status.active"
@@ -402,6 +411,15 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgSessionPickerFailed, "Unable to load sessions: {error} (r retries)", "无法加载会话：{error}（按 r 重试）", "セッションを読み込めません: {error}（r で再試行）", "세션을 불러올 수 없음: {error} (r로 재시도)", "No se pudieron cargar las sesiones: {error} (r reintenta)", "Impossible de charger les sessions : {error} (r réessaie)"),
 	catalog(MsgSessionPickerEmpty, "No other resumable sessions.", "没有其他可恢复的会话。", "再開可能な他のセッションはありません。", "재개할 다른 세션이 없습니다.", "No hay otras sesiones reanudables.", "Aucune autre session ne peut être reprise."),
 	catalog(MsgSessionPickerHelp, "Enter resumes · Esc closes", "Enter 恢复 · Esc 关闭", "Enter で再開 · Esc で閉じる", "Enter 재개 · Esc 닫기", "Enter reanuda · Esc cierra", "Entrée reprend · Échap ferme"),
+	catalog(MsgSessionPickerHelpAll, "Enter resumes · Esc returns to projects · Tab shows current project", "Enter 恢复 · Esc 返回项目 · Tab 显示当前项目", "Enter で再開 · Esc でプロジェクトへ戻る · Tab で現在のプロジェクト", "Enter 재개 · Esc 프로젝트로 돌아가기 · Tab 현재 프로젝트", "Enter reanuda · Esc vuelve a proyectos · Tab muestra el proyecto actual", "Entrée reprend · Échap revient aux projets · Tab affiche le projet actuel"),
+	catalog(MsgSessionWorkspaceTitle, "Resume from another project", "从其他项目恢复", "別のプロジェクトから再開", "다른 프로젝트에서 재개", "Reanudar desde otro proyecto", "Reprendre depuis un autre projet"),
+	catalog(MsgSessionWorkspaceLoading, "Loading known projects...", "正在加载已知项目……", "既知のプロジェクトを読み込み中…", "알려진 프로젝트 불러오는 중...", "Cargando proyectos conocidos...", "Chargement des projets connus…"),
+	catalog(MsgSessionWorkspaceFailed, "Unable to open project: {error}", "无法打开项目：{error}", "プロジェクトを開けません: {error}", "프로젝트를 열 수 없음: {error}", "No se pudo abrir el proyecto: {error}", "Impossible d’ouvrir le projet : {error}"),
+	catalog(MsgSessionWorkspaceEmpty, "No other known projects.", "没有其他已知项目。", "他の既知のプロジェクトはありません。", "다른 알려진 프로젝트가 없습니다.", "No hay otros proyectos conocidos.", "Aucun autre projet connu."),
+	catalog(MsgSessionWorkspaceHelp, "Enter opens project · Tab returns to current project · Esc closes", "Enter 打开项目 · Tab 返回当前项目 · Esc 关闭", "Enter でプロジェクトを開く · Tab で現在のプロジェクト · Esc で閉じる", "Enter 프로젝트 열기 · Tab 현재 프로젝트 · Esc 닫기", "Enter abre el proyecto · Tab vuelve al proyecto actual · Esc cierra", "Entrée ouvre le projet · Tab revient au projet actuel · Échap ferme"),
+	catalog(MsgSessionWorkspaceConnecting, "Opening {workspace}...", "正在打开 {workspace}……", "{workspace} を開いています…", "{workspace} 여는 중...", "Abriendo {workspace}...", "Ouverture de {workspace}…"),
+	catalog(MsgSessionWorkspaceCurrent, "current", "当前", "現在", "현재", "actual", "actuel"),
+	catalog(MsgSessionWorkspaceInvalid, "metadata unavailable", "元数据不可用", "メタデータを利用できません", "메타데이터 사용 불가", "metadatos no disponibles", "métadonnées indisponibles"),
 	catalog(MsgSessionPickerForkOf, "fork of {parent}", "分叉自 {parent}", "{parent} のフォーク", "{parent}에서 포크", "bifurcación de {parent}", "branche de {parent}"),
 	catalog(MsgSessionPickerForkTask, "at {task}", "于 {task}", "{task} 時点", "{task}에서", "en {task}", "à {task}"),
 	catalog(MsgSessionPickerEvidence, "outcome {outcome} · progress {progress} · recovery {recovery}", "结果 {outcome} · 进度 {progress} · 恢复 {recovery}", "結果 {outcome} · 進捗 {progress} · 復旧 {recovery}", "결과 {outcome} · 진행 {progress} · 복구 {recovery}", "resultado {outcome} · progreso {progress} · recuperación {recovery}", "résultat {outcome} · progression {progress} · reprise {recovery}"),

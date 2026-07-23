@@ -1,13 +1,13 @@
 package tui
 
 import (
+	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
@@ -310,13 +310,15 @@ func (m *Model) taskTreeLines() []string {
 // banner returns the degrade line shown while the daemon link is down —
 // connection loss is a visible state with a remedy, never a silent freeze.
 func (m *Model) banner() string {
+	workspace := filepath.Base(filepath.Clean(m.workspaceRoot))
+	if workspace == "." || workspace == string(filepath.Separator) || workspace == "" {
+		workspace = "Carina"
+	}
 	switch m.conn {
 	case ConnConnecting:
-		return m.text(MsgConnecting, MessageArgs{"socket": m.socket})
+		return m.text(MsgConnecting, MessageArgs{"workspace": workspace})
 	case ConnLost, ConnReconnecting:
-		line := microcopy.Degrade(microcopy.DegradeDaemonUnreachable,
-			microcopy.Args{"socket": m.socket},
-			microcopy.WithLocale(m.locale), microcopy.WithPlain(m.plain()))
+		line := m.text(MsgConnectionUnavailable, MessageArgs{"workspace": workspace})
 		if m.conn == ConnReconnecting {
 			line += m.text(MsgReconnectAttempt, MessageArgs{"attempt": m.attempt})
 		}

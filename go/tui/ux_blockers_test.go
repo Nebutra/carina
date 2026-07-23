@@ -61,7 +61,7 @@ func TestCanonicalPagerDropsResponseFromClosedGeneration(t *testing.T) {
 
 func TestConnectingAndDisconnectedOverlaysAreVisible(t *testing.T) {
 	m, _ := newTestModel(nil)
-	if got := m.banner(); !strings.Contains(got, "Connecting") {
+	if got := m.banner(); !strings.Contains(got, "Opening") {
 		t.Fatalf("connecting banner = %q", got)
 	}
 	m.conn = ConnLost

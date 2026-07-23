@@ -23,8 +23,8 @@ Client Surfaces ──JSON-RPC──▶ Go Control Plane (agent loop) ──Capa
 3. **Every execution writes to the Event Log.** Append-only, timestamped, session-scoped. Sessions are replayable from the log alone.
 4. **Every patch is a transaction.** Proposed → Validated → Approved → Applied → Verified → Committed, with a rollback pointer at every stage. No half-applied state, ever.
 5. **Every tool declares its permissions.** Plugins and tools carry manifests; undeclared capability use is a `PolicyViolation` event.
-6. **Local-first.** The daemon, workers, and remote execution are extensions — a single binary on a laptop is the base case.
-7. **The CLI is a client.** `carina` talks JSON-RPC to the daemon. IDEs, CI, and SDKs use the same protocol.
+6. **Local-first.** The default execution topology is one on-demand runtime per active workspace, with durable background work and obligation-aware idle shutdown.
+7. **The CLI is a client.** `carina` resolves the workspace before it chooses configuration, state, or transport, then talks JSON-RPC to that workspace runtime. IDEs, CI, and SDKs use the same protocol.
 8. **Cloud identity and sync are product boundaries.** Multi-endpoint identity,
    device registration, and sync belong to Nebutra Cloud (`nebutra.com`); the
    local runtime remains the authority for repository actions.
@@ -34,6 +34,8 @@ Client Surfaces ──JSON-RPC──▶ Go Control Plane (agent loop) ──Capa
 ### Go Control Plane (`go/`, `apps/`)
 
 - `go/daemon` — long-running runtime host: lifecycle, unix-socket RPC listener, recovery, agent loop + reasoner backends, governed local memory.
+- `go/localruntime` — canonical workspace identity, stable workspace/runtime IDs, coherent runtime specs, descriptors, mode decisions, and passive registry scanning.
+- `go/localdaemon` — atomic connect-or-start, detached process launch, identity handshake, owner verification, and graceful stop signalling.
 - `go/rpc` — JSON-RPC 2.0 server; method registry mirrors `protocol/jsonrpc`.
 - `go/session-store` — session state + append-only JSONL event log (storage: JSON state + JSONL; SQLite is used by the `carina-index` code-intelligence crate).
 - `go/scheduler` — task queue: submit / cancel / pause / resume, priorities, concurrency.
@@ -52,6 +54,25 @@ Client Surfaces ──JSON-RPC──▶ Go Control Plane (agent loop) ──Capa
 - `apps/carina-cli` — user-facing CLI (`carina run`, `carina audit`, `carina patch …`).
 - `apps/carina-cli` interactive shell (bare `carina`, optional shell flags) — live session/agent views plus in-terminal approval and question round-trips over the same JSON-RPC protocol (`go/tui` + `go/tuiapp`).
 - `apps/carina-worker` — worker entrypoint.
+
+### Workspace runtime topology
+
+Bare `carina` and governed CLI commands resolve the canonical workspace before
+loading project configuration or selecting state and socket paths. Workspace
+runtime metadata lives under `~/.carina/runtimes/v1/<workspace-id>/`; the
+macOS-safe socket name lives under `~/.carina/run/v1/`. The stable runtime ID
+survives process restarts while each process receives a new epoch.
+
+Clients do not trust reachability alone. They call `runtime.describe` and
+`runtime.initialize` and validate mode, workspace ID/root, runtime ID, epoch,
+socket, state root, and config fingerprint before session operations. A
+reachable endpoint with a mismatched identity fails closed.
+
+The directory tree is also a read-only runtime registry. No machine-global
+supervisor is required: `carina runtimes` scans persisted specs/descriptors and
+does not start a process. The old `~/.carina/daemon.sock` and
+`~/.carina/state` layout remains available only through explicit legacy mode;
+Carina never moves, merges, rewrites, or deletes that state automatically.
 
 ### Rust Capability Kernel (`crates/`)
 
