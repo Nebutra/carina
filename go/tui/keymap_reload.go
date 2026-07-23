@@ -20,8 +20,9 @@ const (
 // Bubble Tea update loop. Invalid saves are visible but leave the last-good
 // bindings active.
 type KeymapReloadMsg struct {
-	Overrides []KeyBindingOverride
-	Err       error
+	WorkspaceRoot string
+	Overrides     []KeyBindingOverride
+	Err           error
 }
 
 // WatchKeybindings watches every file-backed config layer used by the TUI.
@@ -62,7 +63,7 @@ func WatchKeybindings(ctx context.Context, home, projectDir string, sender Sende
 			if err == nil {
 				overrides, err = ParseKeyBindingOverrides(cfg.TUIKeybindings)
 			}
-			sender.Send(KeymapReloadMsg{Overrides: overrides, Err: err})
+			sender.Send(KeymapReloadMsg{WorkspaceRoot: projectDir, Overrides: overrides, Err: err})
 			applied = signature
 		}
 	}

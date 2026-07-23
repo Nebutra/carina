@@ -30,6 +30,26 @@ func BenchmarkProductionViewRender(b *testing.B) {
 	}
 }
 
+func BenchmarkTranscriptViewportRender(b *testing.B) {
+	for _, size := range []int{2000, 10000} {
+		b.Run(fmt.Sprintf("lines_%d", size), func(b *testing.B) {
+			m := New(Options{Theme: theme.New(theme.ANSI256), Locale: "en"})
+			defer m.Close()
+			m.Update(tea.WindowSizeMsg{Width: 120, Height: 36})
+			m.tr.lines = make([]string, size)
+			for i := range m.tr.lines {
+				m.tr.lines[i] = fmt.Sprintf("tool output %05d: rendered terminal content", i)
+			}
+			m.layout()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				benchmarkRenderedView = m.View().Content
+			}
+		})
+	}
+}
+
 // benchmarkGoFence builds a fenced Go block of n lines — the chroma-eligible
 // shape the plain-string benchmark above structurally cannot exercise.
 func benchmarkGoFence(n int) string {

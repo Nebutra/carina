@@ -39,13 +39,16 @@ type ConnectionTarget struct {
 }
 
 type preparedConnection struct {
-	token            uint64
-	sourceGeneration uint64
-	target           ConnectionTarget
-	call             *rpc.Client
-	stream           *rpc.Client
-	initial          attachBatch
-	gap              attachBatch
+	token               uint64
+	sourceGeneration    uint64
+	committedGeneration uint64
+	sourceTarget        ConnectionTarget
+	target              ConnectionTarget
+	call                *rpc.Client
+	stream              *rpc.Client
+	initial             attachBatch
+	gap                 attachBatch
+	adopted             bool
 }
 
 func NewConnectionController(initial ...ConnectionTarget) *ConnectionController {
@@ -83,6 +86,7 @@ func (c *ConnectionController) PrepareTarget(target ConnectionTarget) (uint64, e
 	}
 	c.mu.Lock()
 	sourceGeneration := c.generation
+	sourceTarget := cloneConnectionTarget(c.target)
 	c.nextToken++
 	token := c.nextToken
 	c.mu.Unlock()
@@ -93,9 +97,10 @@ func (c *ConnectionController) PrepareTarget(target ConnectionTarget) (uint64, e
 	}
 	prepared.token = token
 	prepared.sourceGeneration = sourceGeneration
+	prepared.sourceTarget = sourceTarget
 
 	c.mu.Lock()
-	if c.generation != sourceGeneration {
+	if c.generation != sourceGeneration || !sameConnectionTarget(c.target, sourceTarget) {
 		c.mu.Unlock()
 		prepared.close()
 		return 0, fmt.Errorf("connection target changed during preparation")
@@ -124,7 +129,7 @@ func (c *ConnectionController) CommitPrepared(token uint64) error {
 	delete(c.prepared, token)
 	c.target = cloneConnectionTarget(prepared.target)
 	c.generation++
-	prepared.sourceGeneration = c.generation
+	prepared.committedGeneration = c.generation
 	c.prepared[token] = prepared
 	stream := c.stream
 	c.mu.Unlock()
@@ -134,14 +139,39 @@ func (c *ConnectionController) CommitPrepared(token uint64) error {
 	return nil
 }
 
-func (c *ConnectionController) AbortPrepared(token uint64) {
+// AbortPrepared closes an uncommitted destination or rolls a committed-but-not-
+// acknowledged rebind back to its complete source target. The returned
+// generation is the controller generation callers must use to fence queued
+// destination messages.
+func (c *ConnectionController) AbortPrepared(token uint64) uint64 {
 	c.mu.Lock()
 	prepared := c.prepared[token]
 	delete(c.prepared, token)
+	var stream *rpc.Client
+	if prepared != nil && prepared.committedGeneration != 0 &&
+		prepared.committedGeneration == c.generation && sameConnectionTarget(c.target, prepared.target) {
+		c.target = cloneConnectionTarget(prepared.sourceTarget)
+		c.generation++
+		stream = c.stream
+	}
+	generation := c.generation
 	c.mu.Unlock()
+	if stream != nil {
+		_ = stream.Close()
+	}
 	if prepared != nil {
 		prepared.close()
 	}
+	return generation
+}
+
+// AcknowledgePrepared releases the rollback receipt after the destination has
+// emitted SessionReady. The adopted call/stream are owned by the connection
+// loop and must not be closed here.
+func (c *ConnectionController) AcknowledgePrepared(token uint64) {
+	c.mu.Lock()
+	delete(c.prepared, token)
+	c.mu.Unlock()
 }
 
 func (c *ConnectionController) targetState(initial ConnectionTarget) (ConnectionTarget, uint64) {
@@ -180,9 +210,9 @@ func (c *ConnectionController) adoptCreated(sessionID string) {
 func (c *ConnectionController) takePrepared(generation uint64) *preparedConnection {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for token, prepared := range c.prepared {
-		if prepared.sourceGeneration == generation {
-			delete(c.prepared, token)
+	for _, prepared := range c.prepared {
+		if prepared.committedGeneration == generation && !prepared.adopted {
+			prepared.adopted = true
 			return prepared
 		}
 	}

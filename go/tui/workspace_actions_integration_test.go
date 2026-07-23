@@ -178,8 +178,11 @@ func TestCopyUsesLastRenderedAgentProjectionAndSurfacesErrors(t *testing.T) {
 
 	m.clipboardWrite = func(string) error { return errors.New("clipboard unavailable") }
 	m.Update(m.copyLastAgentProjection()())
-	if !strings.Contains(transcriptText(m), "copy failed: clipboard unavailable") {
-		t.Fatalf("copy failure not visible:\n%s", transcriptText(m))
+	if !strings.Contains(m.statusActivityText(), "copy failed: clipboard unavailable") {
+		t.Fatalf("copy failure not visible: %s", m.statusActivityText())
+	}
+	if strings.Contains(transcriptText(m), "copy failed: clipboard unavailable") {
+		t.Fatalf("copy failure polluted transcript:\n%s", transcriptText(m))
 	}
 }
 
@@ -188,8 +191,11 @@ func TestCopyWithoutAgentProjectionIsActionable(t *testing.T) {
 	if cmd := m.copyLastAgentProjection(); cmd != nil {
 		t.Fatal("empty copy scheduled clipboard work")
 	}
-	if !strings.Contains(transcriptText(m), "nothing to copy") {
-		t.Fatalf("empty copy error not visible:\n%s", transcriptText(m))
+	if !strings.Contains(m.statusActivityText(), "nothing to copy") {
+		t.Fatalf("empty copy error not visible: %s", m.statusActivityText())
+	}
+	if strings.Contains(transcriptText(m), "nothing to copy") {
+		t.Fatalf("empty copy error polluted transcript:\n%s", transcriptText(m))
 	}
 }
 

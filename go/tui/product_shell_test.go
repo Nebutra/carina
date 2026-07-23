@@ -5,7 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/Nebutra/carina/go/tui/theme"
+	ui "github.com/Nebutra/carina/go/tui/ui"
 )
 
 func TestSettingsShellOpensFromConfigAndSettings(t *testing.T) {
@@ -67,11 +70,19 @@ func TestContextSurfaceIsHumanizedWithBar(t *testing.T) {
 	}}
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	m.sessionID, m.call = "sess", fc
+	m.push("conversation remains clean")
+	before := transcriptText(m)
 	cmd := m.slashCommand("/context")
 	m.Update(cmd())
-	got := transcriptText(m)
-	if !strings.Contains(got, "80%") || !strings.Contains(got, "[") || strings.Contains(got, `{"available"`) {
-		t.Fatalf("context surface not humanized:\n%s", got)
+	if got := transcriptText(m); got != before {
+		t.Fatalf("context surface polluted the transcript:\n%s", got)
+	}
+	if m.transcriptPager == nil || m.componentRuntime.Screens.Current().ID != ui.ScreenOperational {
+		t.Fatal("context did not open the operational screen")
+	}
+	view := ansi.Strip(m.View().Content)
+	if !strings.Contains(view, "80%") || !strings.Contains(view, "[") || strings.Contains(view, `{"available"`) {
+		t.Fatalf("context surface not humanized:\n%s", view)
 	}
 	if !m.runtime.ContextAvailable || m.runtime.ContextPercent != 80 {
 		t.Fatalf("runtime context snapshot not updated: %+v", m.runtime)

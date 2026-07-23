@@ -87,8 +87,11 @@ func TestSubmissionFailureKeepsExactDraftForRetry(t *testing.T) {
 	if len(m.pendingPaste) != 1 || m.pendingPaste[0] != "one\ntwo" {
 		t.Fatalf("failed submit changed paste: %#v", m.pendingPaste)
 	}
-	if m.submitting != nil || !strings.Contains(transcriptText(m), "draft kept for retry") {
+	if m.submitting != nil || !strings.Contains(m.statusActivityText(), "draft kept for retry") {
 		t.Fatal("failure must leave an actionable retry state")
+	}
+	if strings.Contains(transcriptText(m), "draft kept for retry") {
+		t.Fatal("submission recovery state must not enter permanent transcript")
 	}
 
 	fc.handler["task.submit"] = map[string]any{"task_id": "tsk_retry"}

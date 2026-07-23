@@ -17,18 +17,20 @@ const (
 )
 
 type mediaReference struct {
-	ArtifactID string
-	MediaType  string
-	Bytes      int64
-	Origin     string
+	ArtifactID string `json:"artifact_id"`
+	MediaType  string `json:"media_type"`
+	Bytes      int64  `json:"bytes"`
+	Origin     string `json:"origin,omitempty"`
 }
 
 type artifactPreviewMsg struct {
-	SessionID string
-	CallID    string
-	Ref       mediaReference
-	Data      []byte
-	Err       error
+	SessionID     string
+	WorkspaceRoot string
+	Generation    uint64
+	CallID        string
+	Ref           mediaReference
+	Data          []byte
+	Err           error
 }
 
 type artifactReadPage struct {
@@ -65,9 +67,12 @@ func mediaReferences(ev map[string]any) []mediaReference {
 	return refs
 }
 
-func fetchArtifactPreview(call Caller, sessionID, callID string, ref mediaReference) tea.Cmd {
+func fetchArtifactPreview(call Caller, sessionID, workspaceRoot string, generation uint64, callID string, ref mediaReference) tea.Cmd {
 	return func() tea.Msg {
-		msg := artifactPreviewMsg{SessionID: sessionID, CallID: callID, Ref: ref}
+		msg := artifactPreviewMsg{
+			SessionID: sessionID, WorkspaceRoot: workspaceRoot, Generation: generation,
+			CallID: callID, Ref: ref,
+		}
 		if call == nil {
 			msg.Err = errors.New("artifact connection unavailable")
 			return msg
@@ -119,18 +124,22 @@ func (m *Model) artifactPreviewCommands(ev map[string]any) tea.Cmd {
 	refs := mediaReferences(ev)
 	cmds := make([]tea.Cmd, 0, len(refs))
 	for _, ref := range refs {
-		cmds = append(cmds, fetchArtifactPreview(m.call, m.sessionID, callID, ref))
+		cmds = append(cmds, fetchArtifactPreview(m.call, m.sessionID, m.workspaceRoot, m.sessionGeneration, callID, ref))
 	}
 	return tea.Batch(cmds...)
 }
 
 func (m *Model) handleArtifactPreview(msg artifactPreviewMsg) {
-	if msg.SessionID != m.sessionID {
+	if msg.SessionID != m.sessionID ||
+		(msg.WorkspaceRoot != "" && cleanWorkspaceRoot(msg.WorkspaceRoot) != cleanWorkspaceRoot(m.workspaceRoot)) ||
+		(msg.Generation != 0 && msg.Generation != m.sessionGeneration) {
 		return
 	}
 	p := eventPresentation{
 		Key: "media:" + msg.Ref.ArtifactID, Kind: presentationFile, Status: statusSuccess,
-		Title: "image", Summary: strings.TrimSpace(msg.Ref.Origin), ImageKey: msg.Ref.ArtifactID, ImageData: msg.Data,
+		Title: "image", Summary: strings.TrimSpace(msg.Ref.Origin),
+		ImageOwner: m.graphicsOwner("transcript", msg.Ref.ArtifactID),
+		ImageKey:   msg.Ref.ArtifactID, ImageData: msg.Data,
 	}
 	if msg.Err != nil {
 		p.Status = statusFailure

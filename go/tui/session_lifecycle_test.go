@@ -297,14 +297,147 @@ func TestWorkspaceReadyAtomicallySwapsTargetAndJournalEvenWhenSessionIDsMatch(t 
 	m.Close()
 }
 
+func TestWorkspaceReadyRejectsSourceRuntimeWithCollidingSessionID(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	sourceCall := &fakeCaller{}
+	m.call = sourceCall
+	m.sessionID, m.workspaceRoot, m.stateDir = "sess_same", "/work/source", "/state/source"
+	m.sessionGeneration = 5
+	destination := ConnectionTarget{
+		Socket: "/destination.sock", SessionID: "sess_same",
+		WorkspaceRoot: "/work/destination", StateDir: "/state/destination",
+	}
+	m.pendingTarget = &destination
+	m.pendingSubmissions = &submissionJournal{}
+	m.pendingSessionID = destination.SessionID
+	m.pendingWorkspaceRoot = destination.WorkspaceRoot
+
+	source := ConnectionTarget{
+		Socket: "/source.sock", SessionID: "sess_same",
+		WorkspaceRoot: "/work/source", StateDir: "/state/source",
+	}
+	staleCall := &fakeCaller{}
+	m.Update(SessionReadyMsg{SessionID: "sess_same", Generation: 5, Call: staleCall, Target: source})
+
+	if m.call != sourceCall || m.workspaceRoot != "/work/source" || m.stateDir != "/state/source" {
+		t.Fatalf("stale source readiness partially rebound model: call=%p root=%q state=%q", m.call, m.workspaceRoot, m.stateDir)
+	}
+	if m.pendingTarget == nil || m.pendingSubmissions == nil || m.pendingSessionID != "sess_same" {
+		t.Fatalf("stale source readiness consumed destination transaction: target=%+v journal=%p session=%q", m.pendingTarget, m.pendingSubmissions, m.pendingSessionID)
+	}
+}
+
+func TestPendingWorkspaceSwitchFencesCollidingConnectionLifecycle(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	m.sessionID = "sess_same"
+	m.sessionGeneration = 5
+	m.conn = ConnReconnecting
+	m.pendingSessionID = "sess_same"
+	m.sessionPicker = &sessionPickerState{loading: true}
+
+	m.Update(ConnLostMsg{SessionID: "sess_same", Generation: 5, Err: errors.New("stale source loss")})
+	if m.sessionPicker.loadError || !m.sessionPicker.loading {
+		t.Fatalf("stale source loss polluted pending switch: picker=%+v", m.sessionPicker)
+	}
+	m.Update(ConnRestoredMsg{SessionID: "sess_same", Generation: 5})
+	if m.conn != ConnReconnecting {
+		t.Fatalf("stale source restore changed connection state: %v", m.conn)
+	}
+
+	m.Update(ConnLostMsg{SessionID: "sess_same", Generation: 6, Err: errors.New("destination loss")})
+	if !m.sessionPicker.loadError || m.sessionPicker.loading || !strings.Contains(m.sessionPicker.status, "destination loss") {
+		t.Fatalf("destination loss was not surfaced: picker=%+v", m.sessionPicker)
+	}
+}
+
+func TestWorkspaceResumeCancelRejectsLatePreparedResult(t *testing.T) {
+	destinationDir := t.TempDir()
+	m, _ := newTestModel(&fakeCaller{})
+	m.sessionID, m.workspaceRoot, m.stateDir = "sess_source", "/work/source", t.TempDir()
+	m.sessionGeneration = 2
+	m.sessionOpGen = 10
+	m.sessionPicker = &sessionPickerState{
+		generation: 10, loading: true, scope: sessionScopeAll, stage: sessionStageSessions,
+	}
+	aborted := uint64(0)
+	m.abortTarget = func(token uint64) uint64 {
+		aborted = token
+		return 12
+	}
+	journal := newSubmissionJournal(destinationDir, "/work/destination")
+	if err := journal.acquire("sess_target"); err != nil {
+		t.Fatal(err)
+	}
+	_, handled := m.sessionPickerKey("esc")
+	if !handled || m.sessionPicker == nil || m.sessionPicker.stage != sessionStageWorkspaces {
+		t.Fatalf("cancel did not return to workspace list: picker=%#v", m.sessionPicker)
+	}
+	m.handleWorkspaceResume(workspaceResumeMsg{
+		generation: 10,
+		target:     ConnectionTarget{Socket: "/destination.sock", SessionID: "sess_target", WorkspaceRoot: "/work/destination", StateDir: destinationDir},
+		journal:    journal,
+		token:      7,
+	})
+	if aborted != 7 || m.pendingTarget != nil || m.pendingSessionID != "" {
+		t.Fatalf("late result was not rejected: aborted=%d pending=%#v session=%q", aborted, m.pendingTarget, m.pendingSessionID)
+	}
+	if m.sessionGeneration != 12 {
+		t.Fatalf("rollback generation=%d want=12", m.sessionGeneration)
+	}
+	contender := newSubmissionJournal(destinationDir, "/work/destination")
+	defer contender.close()
+	if err := contender.acquire("sess_target"); err != nil {
+		t.Fatalf("late destination lease was not released: %v", err)
+	}
+}
+
+func TestWorkspacePendingBackRestoresSourceAndReleasesDestination(t *testing.T) {
+	sourceDir, destinationDir := t.TempDir(), t.TempDir()
+	m, _ := newTestModel(&fakeCaller{})
+	m.sessionID, m.workspaceRoot, m.stateDir = "sess_same", "/work/source", sourceDir
+	m.sessionGeneration = 2
+	m.sessionPicker = &sessionPickerState{loading: true}
+	destination := newSubmissionJournal(destinationDir, "/work/destination")
+	if err := destination.acquire("sess_same"); err != nil {
+		t.Fatal(err)
+	}
+	target := ConnectionTarget{Socket: "/destination.sock", SessionID: "sess_same", WorkspaceRoot: "/work/destination", StateDir: destinationDir}
+	m.pendingTarget = &target
+	m.pendingSubmissions = &destination
+	m.pendingPreparedToken = 9
+	m.pendingSessionID = "sess_same"
+	m.pendingWorkspaceRoot = "/work/destination"
+	m.abortTarget = func(token uint64) uint64 {
+		if token != 9 {
+			t.Fatalf("abort token=%d want=9", token)
+		}
+		return 5
+	}
+	_, handled := m.sessionPickerKey("b")
+	if !handled || m.pendingTarget != nil || m.pendingSubmissions != nil || m.pendingSessionID != "" {
+		t.Fatalf("pending target survived rollback: target=%#v journal=%#v session=%q", m.pendingTarget, m.pendingSubmissions, m.pendingSessionID)
+	}
+	if m.sessionID != "sess_same" || m.workspaceRoot != "/work/source" || m.stateDir != sourceDir || m.sessionGeneration != 5 {
+		t.Fatalf("source binding changed: session=%q root=%q state=%q generation=%d", m.sessionID, m.workspaceRoot, m.stateDir, m.sessionGeneration)
+	}
+	contender := newSubmissionJournal(destinationDir, "/work/destination")
+	defer contender.close()
+	if err := contender.acquire("sess_same"); err != nil {
+		t.Fatalf("destination lease was not released: %v", err)
+	}
+}
+
 func TestSessionSwitchRejectsDraftAndStaleEvents(t *testing.T) {
 	m, _ := newTestModel(&fakeCaller{})
 	m.input.SetValue("unsent")
 	if cmd := m.newSession(); cmd != nil {
 		t.Fatal("switch allowed unsent draft")
 	}
-	if !strings.Contains(m.tr.plainText(), "current draft") {
-		t.Fatalf("missing blocker: %s", m.tr.plainText())
+	if !strings.Contains(m.statusActivityText(), "current draft") {
+		t.Fatalf("missing blocker: %s", m.statusActivityText())
+	}
+	if strings.Contains(m.tr.plainText(), "current draft") {
+		t.Fatalf("session blocker polluted transcript: %s", m.tr.plainText())
 	}
 	m.input.SetValue("")
 	m.sessionID = "sess_new"

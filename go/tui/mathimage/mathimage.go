@@ -3,6 +3,8 @@ package mathimage
 
 import (
 	"bytes"
+	"container/list"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	_ "image/jpeg"
 	"image/png"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -22,13 +25,14 @@ import (
 )
 
 const (
-	placeholder  = '\U0010eeee'
-	cellWidthPx  = 9
-	cellHeightPx = 18
-	maxImages    = 96
-	maxTexBytes  = 16 << 10
-	maxImageSide = 16384
-	maxPixels    = 32 << 20
+	placeholder   = '\U0010eeee'
+	cellWidthPx   = 9
+	cellHeightPx  = 18
+	maxImages     = 96
+	maxImageBytes = 64 << 20
+	maxTexBytes   = 16 << 10
+	maxImageSide  = 16384
+	maxPixels     = 32 << 20
 )
 
 // These are the row/column marks assigned by the Kitty graphics protocol.
@@ -56,18 +60,36 @@ var diacritics = []rune{
 }
 
 type cached struct {
+	key         string
 	png         []byte
 	widthCells  int
 	heightCells int
 	id          uint32
 }
 
+type cacheEntry struct {
+	image  cached
+	owners map[string]struct{}
+	lru    *list.Element
+}
+
 var images = struct {
 	sync.Mutex
-	m       map[string]cached
-	loaded  map[uint32]bool
-	pending map[uint32]string
-}{m: make(map[string]cached), loaded: make(map[uint32]bool), pending: make(map[uint32]string)}
+	m        map[string]*cacheEntry
+	byID     map[uint32]string
+	ownerKey map[string]string
+	lru      *list.List
+	loaded   map[uint32]bool
+	pending  map[uint32]string
+	controls []string
+	cellW    int
+	cellH    int
+	bytes    int
+}{
+	m: make(map[string]*cacheEntry), byID: make(map[uint32]string), ownerKey: make(map[string]string),
+	lru: list.New(), loaded: make(map[uint32]bool), pending: make(map[uint32]string),
+	cellW: cellWidthPx, cellH: cellHeightPx,
+}
 
 // Supported reports whether Kitty Unicode placeholders are safe in this terminal.
 func Supported() bool {
@@ -91,10 +113,12 @@ func Supported() bool {
 
 // Render returns a Kitty virtual placement followed by ordinary placeholder rows.
 func Render(tex string, maxWidthCells int, indent string) ([]string, bool) {
-	if !Supported() || maxWidthCells < 1 || strings.TrimSpace(tex) == "" || len(tex) > maxTexBytes {
+	trimmed := strings.TrimSpace(tex)
+	if !Supported() || maxWidthCells < 1 || trimmed == "" || len(tex) > maxTexBytes {
 		return nil, false
 	}
-	c, err := raster(strings.TrimSpace(tex), maxWidthCells)
+	digest := sha256.Sum256([]byte(trimmed))
+	c, err := raster(trimmed, maxWidthCells, fmt.Sprintf("math:%x", digest[:]))
 	if err != nil || c.widthCells > len(diacritics) || c.heightCells > len(diacritics) {
 		return nil, false
 	}
@@ -122,10 +146,17 @@ func Render(tex string, maxWidthCells int, indent string) ([]string, bool) {
 // image. The caller-supplied key is normally the content hash; bytes are
 // decoded and re-encoded as PNG because Kitty's f=100 transport is explicit.
 func RenderImage(key string, encoded []byte, maxWidthCells int, indent string) ([]string, bool) {
+	return RenderImageOwned("legacy", key, encoded, maxWidthCells, indent)
+}
+
+// RenderImageOwned renders an image and binds its terminal/cache lifecycle to
+// owner. ReleaseOwner removes every image that is no longer used by another
+// screen or session owner.
+func RenderImageOwned(owner, key string, encoded []byte, maxWidthCells int, indent string) ([]string, bool) {
 	if !Supported() || maxWidthCells < 1 || key == "" || len(encoded) == 0 {
 		return nil, false
 	}
-	c, err := rasterImage(key, encoded, maxWidthCells)
+	c, err := rasterImage(owner, key, encoded, maxWidthCells)
 	if err != nil || c.widthCells > len(diacritics) || c.heightCells > len(diacritics) {
 		return nil, false
 	}
@@ -138,16 +169,104 @@ func RenderImage(key string, encoded []byte, maxWidthCells int, indent string) (
 func Drain() string {
 	images.Lock()
 	defer images.Unlock()
-	if len(images.pending) == 0 {
+	if len(images.pending) == 0 && len(images.controls) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	for id, sequence := range images.pending {
+	for _, sequence := range images.controls {
+		b.WriteString(sequence)
+	}
+	images.controls = images.controls[:0]
+	ids := make([]int, 0, len(images.pending))
+	for id := range images.pending {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+	for _, value := range ids {
+		id := uint32(value)
+		sequence := images.pending[id]
 		b.WriteString(sequence)
 		images.loaded[id] = true
 		delete(images.pending, id)
 	}
 	return b.String()
+}
+
+// ResetTransport forgets terminal upload state after a resize/capability
+// transition. Existing cache entries remain available and are retransmitted
+// the next time their placeholders are rendered.
+func ResetTransport() {
+	images.Lock()
+	defer images.Unlock()
+	for id := range images.loaded {
+		images.controls = append(images.controls, kittyDelete(id))
+	}
+	clear(images.loaded)
+	clear(images.pending)
+	for _, entry := range images.m {
+		if len(entry.owners) == 0 {
+			continue
+		}
+		c := entry.image
+		place := fmt.Sprintf("\x1b_Ga=p,U=1,q=2,i=%d,p=%d,c=%d,r=%d\x1b\\", c.id, c.id, c.widthCells, c.heightCells)
+		images.pending[c.id] = kittyTransmit(c.png, c.id) + place
+	}
+}
+
+// SetCellSize updates the terminal cell metrics used for image layout. A font
+// zoom changes placeholder geometry even when the terminal's row/column count
+// does not, so old backing images are deleted and rebuilt by the next render.
+func SetCellSize(widthPx, heightPx int) bool {
+	if widthPx < 1 || heightPx < 1 {
+		return false
+	}
+	images.Lock()
+	defer images.Unlock()
+	if images.cellW == widthPx && images.cellH == heightPx {
+		return false
+	}
+	for _, entry := range images.m {
+		if images.loaded[entry.image.id] {
+			images.controls = append(images.controls, kittyDelete(entry.image.id))
+		}
+	}
+	images.m = make(map[string]*cacheEntry)
+	images.byID = make(map[uint32]string)
+	images.ownerKey = make(map[string]string)
+	images.lru.Init()
+	clear(images.loaded)
+	clear(images.pending)
+	images.bytes = 0
+	images.cellW, images.cellH = widthPx, heightPx
+	return true
+}
+
+// ReleaseOwner removes the owner's claims and deletes entries that no longer
+// belong to a live screen/session.
+func ReleaseOwner(owner string) {
+	owner = normalizeOwner(owner)
+	images.Lock()
+	defer images.Unlock()
+	if key := unbindOwnerLocked(owner); key != "" {
+		entry := images.m[key]
+		if entry != nil && len(entry.owners) == 0 {
+			evictLocked(key)
+		}
+	}
+}
+
+// ReleaseAll clears every cached image and queues deletion for uploaded Kitty
+// resources. It is intended for terminal shutdown.
+func ReleaseAll() {
+	images.Lock()
+	defer images.Unlock()
+	keys := make([]string, 0, len(images.m))
+	for key := range images.m {
+		keys = append(keys, key)
+	}
+	for _, key := range keys {
+		evictLocked(key)
+	}
 }
 
 func queueGraphics(c cached) {
@@ -181,14 +300,12 @@ func placeholders(c cached, indent string) []string {
 	return lines
 }
 
-func rasterImage(key string, encoded []byte, maxWidthCells int) (cached, error) {
-	cacheKey := fmt.Sprintf("image:%d:%s", maxWidthCells, key)
-	images.Lock()
-	if c, ok := images.m[cacheKey]; ok {
-		images.Unlock()
+func rasterImage(owner, key string, encoded []byte, maxWidthCells int) (cached, error) {
+	cellW, cellH := cellSize()
+	cacheKey := fmt.Sprintf("image:%dx%d:%d:%s", cellW, cellH, maxWidthCells, key)
+	if c, ok := cachedImage(cacheKey, owner); ok {
 		return c, nil
 	}
-	images.Unlock()
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(encoded))
 	if err != nil {
 		return cached{}, err
@@ -205,36 +322,22 @@ func rasterImage(key string, encoded []byte, maxWidthCells int) (cached, error) 
 		return cached{}, err
 	}
 	bounds := decoded.Bounds()
-	w := max(1, (bounds.Dx()+cellWidthPx-1)/cellWidthPx)
-	h := max(1, (bounds.Dy()+cellHeightPx-1)/cellHeightPx)
+	w := max(1, (bounds.Dx()+cellW-1)/cellW)
+	h := max(1, (bounds.Dy()+cellH-1)/cellH)
 	if w > maxWidthCells {
 		h = max(1, (h*maxWidthCells+w-1)/w)
 		w = maxWidthCells
 	}
-	hash := fnv.New32a()
-	_, _ = hash.Write([]byte(cacheKey))
-	id := hash.Sum32() & 0xffffff
-	if id == 0 {
-		id = 1
-	}
-	c := cached{png: out.Bytes(), widthCells: w, heightCells: h, id: id}
-	images.Lock()
-	defer images.Unlock()
-	if len(images.m) >= maxImages {
-		return cached{}, errors.New("mathimage: live image budget exhausted")
-	}
-	images.m[cacheKey] = c
-	return c, nil
+	c := cached{key: cacheKey, png: out.Bytes(), widthCells: w, heightCells: h}
+	return storeCached(c, owner)
 }
 
-func raster(tex string, maxWidthCells int) (cached, error) {
-	key := fmt.Sprintf("%d:%s", maxWidthCells, tex)
-	images.Lock()
-	if c, ok := images.m[key]; ok {
-		images.Unlock()
+func raster(tex string, maxWidthCells int, owner string) (cached, error) {
+	cellW, cellH := cellSize()
+	key := fmt.Sprintf("%dx%d:%d:%s", cellW, cellH, maxWidthCells, tex)
+	if c, ok := cachedImage(key, owner); ok {
 		return c, nil
 	}
-	images.Unlock()
 	nodes, err := parser.Parse(tex)
 	if err != nil {
 		return cached{}, err
@@ -249,27 +352,152 @@ func raster(tex string, maxWidthCells int) (cached, error) {
 	if err != nil {
 		return cached{}, err
 	}
-	w := max(1, (cfg.Width+cellWidthPx-1)/cellWidthPx)
-	h := max(1, (cfg.Height+cellHeightPx-1)/cellHeightPx)
+	w := max(1, (cfg.Width+cellW-1)/cellW)
+	h := max(1, (cfg.Height+cellH-1)/cellH)
 	if w > maxWidthCells {
 		h = max(1, (h*maxWidthCells+w-1)/w)
 		w = maxWidthCells
 	}
+	c := cached{key: key, png: b, widthCells: w, heightCells: h}
+	return storeCached(c, owner)
+}
+
+func cachedImage(key, owner string) (cached, bool) {
+	images.Lock()
+	defer images.Unlock()
+	entry := images.m[key]
+	if entry == nil {
+		return cached{}, false
+	}
+	bindOwnerLocked(key, owner)
+	images.lru.MoveToFront(entry.lru)
+	return entry.image, true
+}
+
+func storeCached(c cached, owner string) (cached, error) {
+	images.Lock()
+	defer images.Unlock()
+	if entry := images.m[c.key]; entry != nil {
+		bindOwnerLocked(c.key, owner)
+		images.lru.MoveToFront(entry.lru)
+		return entry.image, nil
+	}
+	owner = normalizeOwner(owner)
+	if previous := images.ownerKey[owner]; previous != "" && previous != c.key {
+		if key := unbindOwnerLocked(owner); key != "" {
+			entry := images.m[key]
+			if entry != nil && len(entry.owners) == 0 {
+				evictLocked(key)
+			}
+		}
+	}
+	if len(c.png) > maxImageBytes {
+		return cached{}, errors.New("mathimage: image exceeds cache byte budget")
+	}
+	for len(images.m) >= maxImages || images.bytes+len(c.png) > maxImageBytes {
+		var victim *list.Element
+		for candidate := images.lru.Back(); candidate != nil; candidate = candidate.Prev() {
+			entry := images.m[candidate.Value.(string)]
+			if entry != nil && len(entry.owners) == 0 {
+				victim = candidate
+				break
+			}
+		}
+		if victim == nil {
+			return cached{}, errors.New("mathimage: active image budget exhausted")
+		}
+		evictLocked(victim.Value.(string))
+	}
+	c.id = imageIDLocked(c.key)
+	element := images.lru.PushFront(c.key)
+	images.m[c.key] = &cacheEntry{image: c, owners: make(map[string]struct{}), lru: element}
+	images.bytes += len(c.png)
+	images.byID[c.id] = c.key
+	bindOwnerLocked(c.key, owner)
+	return c, nil
+}
+
+func normalizeOwner(owner string) string {
+	if owner == "" {
+		return "legacy"
+	}
+	return owner
+}
+
+func bindOwnerLocked(key, owner string) {
+	owner = normalizeOwner(owner)
+	if previous := images.ownerKey[owner]; previous != "" && previous != key {
+		if old := images.m[previous]; old != nil {
+			delete(old.owners, owner)
+			if len(old.owners) == 0 {
+				evictLocked(previous)
+			}
+		}
+	}
+	entry := images.m[key]
+	if entry == nil {
+		return
+	}
+	entry.owners[owner] = struct{}{}
+	images.ownerKey[owner] = key
+}
+
+func unbindOwnerLocked(owner string) string {
+	key := images.ownerKey[owner]
+	if key == "" {
+		return ""
+	}
+	if entry := images.m[key]; entry != nil {
+		delete(entry.owners, owner)
+	}
+	delete(images.ownerKey, owner)
+	return key
+}
+
+func cellSize() (int, int) {
+	images.Lock()
+	defer images.Unlock()
+	return images.cellW, images.cellH
+}
+
+func imageIDLocked(key string) uint32 {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(key))
 	id := hash.Sum32() & 0xffffff
 	if id == 0 {
 		id = 1
 	}
-	c := cached{png: b, widthCells: w, heightCells: h, id: id}
-	images.Lock()
-	if len(images.m) >= maxImages {
-		images.Unlock()
-		return cached{}, errors.New("mathimage: live image budget exhausted")
+	for {
+		if existing, ok := images.byID[id]; !ok || existing == key {
+			return id
+		}
+		id = id%0xffffff + 1
 	}
-	images.m[key] = c
-	images.Unlock()
-	return c, nil
+}
+
+func evictLocked(key string) {
+	entry := images.m[key]
+	if entry == nil {
+		return
+	}
+	id := entry.image.id
+	for owner := range entry.owners {
+		if images.ownerKey[owner] == key {
+			delete(images.ownerKey, owner)
+		}
+	}
+	if images.loaded[id] {
+		images.controls = append(images.controls, kittyDelete(id))
+	}
+	delete(images.loaded, id)
+	delete(images.pending, id)
+	delete(images.byID, id)
+	images.lru.Remove(entry.lru)
+	images.bytes -= len(entry.image.png)
+	if images.bytes < 0 {
+		images.bytes = 0
+	}
+	delete(images.m, key)
 }
 
 func kittyTransmit(pngBytes []byte, id uint32) string {
@@ -289,4 +517,22 @@ func kittyTransmit(pngBytes []byte, id uint32) string {
 		}
 	}
 	return b.String()
+}
+
+func kittyDelete(id uint32) string {
+	return fmt.Sprintf("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", id)
+}
+
+func resetForTest() {
+	images.Lock()
+	defer images.Unlock()
+	images.m = make(map[string]*cacheEntry)
+	images.byID = make(map[uint32]string)
+	images.ownerKey = make(map[string]string)
+	images.lru.Init()
+	images.loaded = make(map[uint32]bool)
+	images.pending = make(map[uint32]string)
+	images.controls = nil
+	images.bytes = 0
+	images.cellW, images.cellH = cellWidthPx, cellHeightPx
 }

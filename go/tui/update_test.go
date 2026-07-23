@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Nebutra/carina/go/tui/theme"
 )
@@ -410,8 +411,11 @@ func TestCtrlCCascade(t *testing.T) {
 	if !strings.Contains(txt, "Stopped by you") {
 		t.Errorf("transcript missing interrupt line:\n%s", txt)
 	}
-	if !strings.Contains(txt, "ctrl+c") {
-		t.Errorf("transcript missing exit hint:\n%s", txt)
+	if !strings.Contains(m.statusActivityText(), "ctrl+c") {
+		t.Errorf("status missing exit hint: %s", m.statusActivityText())
+	}
+	if strings.Contains(txt, "press ctrl+c again") {
+		t.Errorf("exit hint polluted transcript:\n%s", txt)
 	}
 
 	// Second Ctrl-C within 2s exits.
@@ -489,7 +493,7 @@ func TestCtrlCDisarmedByInterveningActivity(t *testing.T) {
 			t.Fatal("ctrl+c disarmed by intervening activity must not quit")
 		}
 	}
-	if !strings.Contains(transcriptText(m), "press ctrl+c again within 2s to exit") {
+	if !strings.Contains(m.statusActivityText(), "press ctrl+c again within 2s to exit") {
 		t.Error("disarmed ctrl+c must re-show the exit hint, not silently exit")
 	}
 }
@@ -570,8 +574,11 @@ func TestSubmitWhileRunningSteersCurrentTask(t *testing.T) {
 	if m.inFlightTaskID != "tsk_steer" {
 		t.Fatalf("steering must keep the current task in flight, got %q", m.inFlightTaskID)
 	}
-	if !strings.Contains(transcriptText(m), "steering queued") {
-		t.Fatalf("steering acknowledgement missing:\n%s", transcriptText(m))
+	if !strings.Contains(m.statusActivityText(), "steering queued") {
+		t.Fatalf("steering acknowledgement missing: %s", m.statusActivityText())
+	}
+	if strings.Contains(transcriptText(m), "steering queued") {
+		t.Fatalf("steering acknowledgement polluted transcript:\n%s", transcriptText(m))
 	}
 }
 
@@ -655,8 +662,11 @@ func TestDegradeBannerLifecycle(t *testing.T) {
 	if m.banner() != "" {
 		t.Errorf("banner after restore = %q, want empty", m.banner())
 	}
-	if !strings.Contains(transcriptText(m), "reconnected") {
-		t.Error("reconnect must be observable in the transcript")
+	if strings.Contains(strings.ToLower(transcriptText(m)), "reconnected") {
+		t.Error("reconnect must not pollute the permanent transcript")
+	}
+	if !strings.Contains(strings.ToLower(ansi.Strip(m.statusFooterView(80))), "reconnected") {
+		t.Error("reconnect must remain visible as transient operational state")
 	}
 }
 
@@ -764,8 +774,11 @@ func TestSubmitFailureIsObservable(t *testing.T) {
 	m.input.SetValue("run")
 	cmd, _ := m.handleKey("enter")
 	drain(m, cmd)
-	if !strings.Contains(transcriptText(m), "scheduler rejected") {
-		t.Errorf("submit failure not visible:\n%s", transcriptText(m))
+	if !strings.Contains(m.statusActivityText(), "scheduler rejected") {
+		t.Errorf("submit failure not visible: %s", m.statusActivityText())
+	}
+	if strings.Contains(transcriptText(m), "scheduler rejected") {
+		t.Errorf("submit failure polluted transcript:\n%s", transcriptText(m))
 	}
 }
 

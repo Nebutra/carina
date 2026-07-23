@@ -55,5 +55,22 @@ func (q *inputQueue) drain() []promptDraft {
 func cloneDraft(draft promptDraft) promptDraft {
 	draft.Prefix = append([]string(nil), draft.Prefix...)
 	draft.Paste = append([]string(nil), draft.Paste...)
+	draft.Attachments = cloneAttachments(draft.Attachments)
 	return draft
+}
+
+func cloneAttachments(values []draftAttachment) []draftAttachment {
+	out := make([]draftAttachment, len(values))
+	for i := range values {
+		out[i] = values[i]
+		// Attachment bytes are content-addressed and immutable after validation.
+		// Draft/history/undo snapshots share the backing blob; copying up to 4 MiB
+		// into every one of 200 undo entries would retain gigabytes of memory.
+		out[i].Data = values[i].Data
+		if values[i].Ref != nil {
+			ref := *values[i].Ref
+			out[i].Ref = &ref
+		}
+	}
+	return out
 }

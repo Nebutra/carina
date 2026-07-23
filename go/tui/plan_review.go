@@ -28,7 +28,7 @@ type planReviewState struct {
 	Path         string
 	Body         []string
 	Scroll       int
-	Cursor       int // absolute line index in Body (0-based)
+	Cursor       int    // absolute line index in Body (0-based)
 	Mode         string // plan | build (informational)
 	Busy         bool
 	Error        string

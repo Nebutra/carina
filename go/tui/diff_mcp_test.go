@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
@@ -37,6 +39,8 @@ func TestMCPVerboseIsReadOnlyInventory(t *testing.T) {
 	}}
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	m.sessionID, m.call = "sess", fc
+	m.push("conversation stays clean")
+	before := transcriptText(m)
 	cmd := m.slashCommand("/mcp verbose")
 	if cmd == nil {
 		t.Fatal("mcp command missing")
@@ -45,7 +49,10 @@ func TestMCPVerboseIsReadOnlyInventory(t *testing.T) {
 	if len(fc.calls) != 1 || fc.calls[0].method != "mcp.inventory" || fc.calls[0].params["verbose"] != true {
 		t.Fatalf("calls=%#v", fc.calls)
 	}
-	if got := transcriptText(m); !strings.Contains(got, "docs") || !strings.Contains(got, "search") {
-		t.Fatalf("inventory=%q", got)
+	if got := transcriptText(m); got != before {
+		t.Fatalf("inventory polluted transcript=%q", got)
+	}
+	if got := ansi.Strip(m.View().Content); !strings.Contains(got, "docs") || !strings.Contains(got, "search") {
+		t.Fatalf("inventory screen=%q", got)
 	}
 }

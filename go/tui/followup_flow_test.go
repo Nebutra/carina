@@ -164,15 +164,18 @@ func TestAutoSubmitFailureRecallsFrontForIdempotentRetry(t *testing.T) {
 	if got := draftPrompt(m.currentDraft()); got != "first\np1" || m.followUps.len() != 2 || m.retrySubmission == nil {
 		t.Fatalf("unacknowledged queue recall = prompt %q queue %#v retry %#v", got, m.followUps.drafts, m.retrySubmission)
 	}
+	if !strings.Contains(m.statusActivityText(), "scheduler unavailable") {
+		t.Fatalf("automatic submission failure not visible: %s", m.statusActivityText())
+	}
+	if strings.Contains(transcriptText(m), "scheduler unavailable") {
+		t.Fatalf("automatic submission failure polluted transcript:\n%s", transcriptText(m))
+	}
 	firstID, _ := fc.calls[0].params["client_submission_id"].(string)
 	fc.handler["task.submit"] = map[string]any{"task_id": "tsk_retry", "status": "running"}
 	drain(m, m.submit())
 	secondID, _ := fc.calls[1].params["client_submission_id"].(string)
 	if firstID == "" || secondID != firstID || m.retrySubmission != nil {
 		t.Fatalf("retry ids = %q then %q, retry=%#v", firstID, secondID, m.retrySubmission)
-	}
-	if !strings.Contains(transcriptText(m), "scheduler unavailable") {
-		t.Fatalf("automatic submission failure not visible:\n%s", transcriptText(m))
 	}
 }
 
@@ -372,8 +375,11 @@ func TestGovernedCommandParseFailureKeepsDraft(t *testing.T) {
 	if cmd := m.submit(); cmd != nil {
 		t.Fatal("invalid quoted command scheduled RPC work")
 	}
-	if m.input.Value() != `!echo "unterminated` || !strings.Contains(transcriptText(m), "command parse failed") {
-		t.Fatalf("parse failure was not recoverable: input=%q transcript=%q", m.input.Value(), transcriptText(m))
+	if m.input.Value() != `!echo "unterminated` || !strings.Contains(m.statusActivityText(), "command parse failed") {
+		t.Fatalf("parse failure was not recoverable: input=%q status=%q", m.input.Value(), m.statusActivityText())
+	}
+	if strings.Contains(transcriptText(m), "command parse failed") {
+		t.Fatalf("parse failure polluted transcript: %q", transcriptText(m))
 	}
 }
 
@@ -420,8 +426,11 @@ func TestInteractiveQueuedSlashRestoresWithoutOpeningEditor(t *testing.T) {
 	if m.followUps.len() != 1 || m.input.Value() != "/editor" {
 		t.Fatalf("interactive queue restore = composer %q queue %#v", m.input.Value(), m.followUps.drafts)
 	}
-	if !strings.Contains(transcriptText(m), "review and run") {
-		t.Fatalf("interactive restore hint missing:\n%s", transcriptText(m))
+	if !strings.Contains(m.statusActivityText(), "review and run") {
+		t.Fatalf("interactive restore hint missing: %s", m.statusActivityText())
+	}
+	if strings.Contains(transcriptText(m), "review and run") {
+		t.Fatalf("interactive restore hint polluted transcript:\n%s", transcriptText(m))
 	}
 	cmd = m.submit()
 	if cmd == nil || m.editor == nil || m.followUps.len() != 1 || !m.queueRecallPending {

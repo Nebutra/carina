@@ -157,9 +157,14 @@ func TestInspectSurfaceAggregatesInventories(t *testing.T) {
 	}}
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	m.sessionID, m.call = "sess", fc
-	cmd := m.inspectSurface()
+	m.push("conversation stays clean")
+	before := transcriptText(m)
+	cmd := m.slashCommand("/inspect")
 	m.Update(cmd())
-	got := transcriptText(m)
+	if got := transcriptText(m); got != before {
+		t.Fatalf("inspect polluted transcript:\n%s", got)
+	}
+	got := ansi.Strip(m.View().Content)
 	if !strings.Contains(got, "skills_count") && !strings.Contains(got, "2") {
 		// humanize uses skills_count key
 		if !strings.Contains(got, "2") {
@@ -292,9 +297,14 @@ func TestAgentsSurfaceIsHumanized(t *testing.T) {
 	}}
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
 	m.sessionID, m.call = "sess", fc
+	m.push("conversation stays clean")
+	before := transcriptText(m)
 	cmd := m.slashCommand("/agents")
 	m.Update(cmd())
-	got := transcriptText(m)
+	if got := transcriptText(m); got != before {
+		t.Fatalf("agents polluted transcript:\n%s", got)
+	}
+	got := ansi.Strip(m.View().Content)
 	if strings.Contains(got, `"name"`) || strings.Contains(got, "{") {
 		// allow no raw JSON object dump
 		if strings.Contains(got, "{\n") {

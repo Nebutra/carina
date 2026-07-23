@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Nebutra/carina/go/tui/theme"
+	ui "github.com/Nebutra/carina/go/tui/ui"
 )
 
 type externalEditorSession struct {
@@ -20,13 +21,17 @@ type externalEditorSession struct {
 }
 
 type transcriptPagerState struct {
-	generation  int
-	scroll      int
-	text        string
-	title       string
-	loadingText string
-	loading     bool
-	err         string
+	generation        int
+	scroll            int
+	text              string
+	title             string
+	loadingText       string
+	loading           bool
+	err               string
+	operationalKind   string
+	operationalMethod string
+	operationalParams map[string]any
+	hoveredAction     string
 }
 
 // handleWorkspaceKey owns focused composer actions. Global actions stay in
@@ -56,7 +61,7 @@ func (m *Model) beginExternalEditorWithSnapshot(draft promptDraft, original comp
 	m.breakComposerUndoGroup()
 	state, process, err := prepareExternalEditor(draft, m.getenv)
 	if err != nil {
-		m.push(m.text(MsgWorkspaceExternalEditor, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
+		m.setOperationalNotice(m.text(MsgWorkspaceExternalEditor, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}), theme.RoleError)
 		return nil
 	}
 	m.editorGen++
@@ -85,11 +90,11 @@ func (m *Model) handleExternalEditorDone(msg externalEditorDoneMsg) tea.Cmd {
 	draft, err := finishExternalEditor(session.draft, msg.err)
 	if err != nil {
 		m.restoreComposerSnapshot(session.original)
-		m.push(m.text(MsgWorkspaceDraftRestored, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
+		m.setOperationalNotice(m.text(MsgWorkspaceDraftRestored, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}), theme.RoleError)
 	} else {
 		m.restoreDraft(draft)
 		m.recordComposerEdit(session.original, composerEditOther)
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgWorkspaceEditorApplied, nil)))
+		m.setOperationalNotice(m.text(MsgWorkspaceEditorApplied, nil), theme.RoleMuted)
 	}
 	m.layout()
 	if m.queueRestoreReason != "" {
@@ -105,7 +110,7 @@ func (m *Model) handleExternalEditorDone(msg externalEditorDoneMsg) tea.Cmd {
 func (m *Model) copyLastAgentProjection() tea.Cmd {
 	text := m.tr.lastAgentText()
 	if text == "" {
-		m.push(m.text(MsgWorkspaceNothingToCopy, MessageArgs{"glyph": glyphFailed(m.th)}))
+		m.setOperationalNotice(m.text(MsgWorkspaceNothingToCopy, MessageArgs{"glyph": glyphFailed(m.th)}), theme.RoleError)
 		return nil
 	}
 	write := m.clipboardWrite
@@ -116,10 +121,10 @@ func (m *Model) copyLastAgentProjection() tea.Cmd {
 
 func (m *Model) handleClipboardDone(msg clipboardDoneMsg) {
 	if msg.err != nil {
-		m.push(m.text(MsgWorkspaceCopyFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}))
+		m.setOperationalNotice(m.text(MsgWorkspaceCopyFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}), theme.RoleError)
 		return
 	}
-	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgWorkspaceCopied, nil)))
+	m.setOperationalNotice(m.text(MsgWorkspaceCopied, nil), theme.RoleMuted)
 }
 
 func systemClipboardWrite(text string) error {
@@ -177,9 +182,28 @@ func (m *Model) openCanonicalTranscriptPager() tea.Cmd {
 }
 
 func (m *Model) closeTranscriptPager() tea.Cmd {
+	if m.transcriptPager != nil && m.transcriptPager.operationalKind != "" {
+		m.componentRuntime.Screens.Transition(ui.ScreenConversation, "conversation", m.componentRuntime.Focus.Snapshot(), nil)
+	}
 	m.transcriptPager = nil
 	m.layout()
 	return m.resumeQueuedAfterTransient()
+}
+
+func (m *Model) openOperationalPager(kind, title string) {
+	m.breakComposerUndoGroup()
+	m.closeSuggest()
+	m.canonicalGen++
+	m.transcriptPager = &transcriptPagerState{
+		generation: m.canonicalGen, title: title, loading: true,
+		loadingText: m.text(MsgCanonicalLoading, nil), operationalKind: kind,
+	}
+	screen := ui.ScreenOperational
+	if kind == "doctor" || kind == "inspect" {
+		screen = ui.ScreenDoctor
+	}
+	m.componentRuntime.Screens.Transition(screen, "operational-pager", m.componentRuntime.Focus.Snapshot(), map[string]any{"kind": kind})
+	m.layout()
 }
 
 func (m *Model) transcriptPagerLines() []string {
@@ -234,6 +258,8 @@ func (m *Model) transcriptPagerKey(key string) (tea.Cmd, bool) {
 	lines := m.transcriptPagerLines()
 	page := m.transcriptPagerPageHeight()
 	switch {
+	case m.transcriptPager.operationalKind != "" && key == "r":
+		return m.refreshOperationalPager(), true
 	case m.keys.matches(KeyContextPager, ActionPagerClose, key),
 		m.keys.matches(KeyContextGlobal, ActionGlobalTranscript, key):
 		return m.closeTranscriptPager(), true
@@ -256,6 +282,35 @@ func (m *Model) transcriptPagerKey(key string) (tea.Cmd, bool) {
 	}
 	m.clampTranscriptPagerScroll(lines)
 	return nil, true
+}
+
+func (m *Model) refreshOperationalPager() tea.Cmd {
+	state := m.transcriptPager
+	if state == nil || state.operationalKind == "" {
+		return nil
+	}
+	m.canonicalGen++
+	state.generation = m.canonicalGen
+	state.loading = true
+	state.err = ""
+	state.text = ""
+	state.scroll = 0
+	m.layout()
+	if state.operationalMethod == "__inspect__" {
+		return m.inspectSurface()
+	}
+	if state.operationalMethod == "" {
+		return nil
+	}
+	return m.queryOperationalSurface(state.operationalKind, state.operationalMethod, cloneOperationalParams(state.operationalParams))
+}
+
+func cloneOperationalParams(values map[string]any) map[string]any {
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
 }
 
 func (m *Model) transcriptPagerView(width, height int) string {
@@ -285,6 +340,16 @@ func (m *Model) transcriptPagerView(width, height int) string {
 		"page_down": m.keys.label(KeyContextPager, ActionPagerPageDown),
 		"close":     m.keys.label(KeyContextPager, ActionPagerClose),
 	}), width)
+	if m.transcriptPager.operationalKind != "" {
+		refresh, close := m.operationalActionLabels()
+		if m.transcriptPager.hoveredAction == "refresh" {
+			refresh = m.th.Style(theme.RoleTitle).Render(refresh)
+		}
+		if m.transcriptPager.hoveredAction == "close" {
+			close = m.th.Style(theme.RoleTitle).Render(close)
+		}
+		footer = joinOperationalFooter(refresh, close, width)
+	}
 	out := []string{header}
 	out = append(out, visible...)
 	for len(out) < height-1 {

@@ -9,7 +9,7 @@ import (
 )
 
 func draftEmpty(draft promptDraft) bool {
-	return strings.TrimSpace(draft.Text) == "" && len(draft.Prefix) == 0 && len(draft.Paste) == 0
+	return strings.TrimSpace(draft.Text) == "" && len(draft.Prefix) == 0 && len(draft.Paste) == 0 && len(draft.Attachments) == 0
 }
 
 func (m *Model) enqueueFollowUp() bool {
@@ -33,7 +33,7 @@ func (m *Model) enqueueFollowUp() bool {
 	}
 	m.followUps.enqueue(draft)
 	m.clearComposerDraft()
-	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgFollowupQueued, MessageArgs{"count": m.followUps.len()})))
+	m.setOperationalNotice(m.text(MsgFollowupQueued, MessageArgs{"count": m.followUps.len()}), theme.RoleMuted)
 	m.layout()
 	return true
 }
@@ -53,7 +53,7 @@ func (m *Model) recallLastFollowUp() bool {
 	}
 	m.restoreDraft(draft)
 	m.resetComposerUndo()
-	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgFollowupRecalled, nil)))
+	m.setOperationalNotice(m.text(MsgFollowupRecalled, nil), theme.RoleMuted)
 	m.layout()
 	return true
 }
@@ -62,6 +62,8 @@ func (m *Model) clearComposerDraft() {
 	m.input.Reset()
 	m.pendingPrefix = nil
 	m.pendingPaste = nil
+	m.attachments = nil
+	m.clearAttachmentInteraction()
 	m.resetComposerUndo()
 	if m.suggest != nil {
 		m.closeSuggest()
@@ -71,14 +73,24 @@ func (m *Model) clearComposerDraft() {
 
 func mergeDraftsForRestore(drafts []promptDraft, current promptDraft) promptDraft {
 	prefix := make([]string, 0, len(drafts)+len(current.Prefix))
+	attachments := make([]draftAttachment, 0, len(current.Attachments))
 	for _, draft := range drafts {
 		prefix = append(prefix, draftPrompt(draft))
+		detached := cloneAttachments(draft.Attachments)
+		for i := range detached {
+			// Restored queued prompts become detached prefix blocks, so their media
+			// remains sendable but no longer claims adjacency to the live textarea.
+			detached[i].TextOffset = -1
+		}
+		attachments = append(attachments, detached...)
 	}
 	prefix = append(prefix, current.Prefix...)
+	attachments = append(attachments, cloneAttachments(current.Attachments)...)
 	return promptDraft{
-		Prefix: prefix,
-		Text:   current.Text,
-		Paste:  append([]string(nil), current.Paste...),
+		Prefix:      prefix,
+		Text:        current.Text,
+		Paste:       append([]string(nil), current.Paste...),
+		Attachments: attachments,
 	}
 }
 
@@ -94,7 +106,7 @@ func (m *Model) restoreQueuedDrafts(reason string) {
 	merged := mergeDraftsForRestore(drafts, m.currentDraft())
 	m.restoreDraft(merged)
 	m.resetComposerUndo()
-	m.push(m.th.Style(theme.RoleMuted).Render(m.countText(MsgFollowupRestored, len(drafts), nil)))
+	m.setOperationalNotice(m.countText(MsgFollowupRestored, len(drafts), nil), theme.RoleMuted)
 	m.layout()
 }
 
@@ -125,7 +137,7 @@ func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 			command := strings.TrimSpace(strings.TrimPrefix(text, "!"))
 			if command == "" {
 				m.restoreQueuedDrafts("invalid queued shell command")
-				m.push(m.text(MsgFollowupShellEmpty, MessageArgs{"glyph": glyphFailed(m.th)}))
+				m.setOperationalNotice(m.text(MsgFollowupShellEmpty, MessageArgs{"glyph": glyphFailed(m.th)}), theme.RoleError)
 				return nil
 			}
 			return m.beginSubmissionSource(submissionShell, command, draft, true)
@@ -151,7 +163,7 @@ func (m *Model) maybeSubmitNextQueued() tea.Cmd {
 		}
 		if m.call == nil {
 			m.restoreQueuedDrafts("automatic submission failure")
-			m.push(m.text(MsgFollowupDisconnected, MessageArgs{"glyph": glyphFailed(m.th)}))
+			m.setOperationalNotice(m.text(MsgFollowupDisconnected, MessageArgs{"glyph": glyphFailed(m.th)}), theme.RoleError)
 			return nil
 		}
 		return m.beginSubmissionSource(submissionTask, "", draft, true)
@@ -170,7 +182,7 @@ func (m *Model) recallQueuedCommandForReview() {
 	m.restoreDraft(draft)
 	m.resetComposerUndo()
 	m.queueRecallPending = true
-	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgFollowupSlashRecalled, nil)))
+	m.setOperationalNotice(m.text(MsgFollowupSlashRecalled, nil), theme.RoleMuted)
 	m.layout()
 }
 
@@ -185,7 +197,9 @@ func (m *Model) recallQueuedSubmissionForRetry() {
 	m.restoreDraft(draft)
 	m.resetComposerUndo()
 	m.queueRecallPending = true
-	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgFollowupRetryRecalled, nil)))
+	if m.operationalNotice.Role != theme.RoleError {
+		m.setOperationalNotice(m.text(MsgFollowupRetryRecalled, nil), theme.RoleMuted)
+	}
 	m.layout()
 }
 

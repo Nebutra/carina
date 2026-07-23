@@ -316,6 +316,11 @@ func terminalConversationEvent(ev map[string]any) (conversationOutcome, bool) {
 }
 
 func (m *Model) applyConversation(t conversationTransition) bool {
+	switch t.Kind {
+	case transitionReset, transitionSubmitting, transitionRunning, transitionWaitingApproval,
+		transitionWaitingQuestion, transitionInterrupted, transitionTerminal:
+		m.clearOperationalNotice()
+	}
 	if !m.conversation.reduce(t) {
 		return false
 	}

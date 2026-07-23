@@ -270,9 +270,10 @@ func (m *Model) explainRuntimeSurface() {
 
 func (m *Model) inspectSurface() tea.Cmd {
 	call, sessionID := m.call, m.sessionID
+	generation := m.operationalGeneration("inspect")
 	return func() tea.Msg {
 		if call == nil {
-			return operationalSurfaceMsg{sessionID: sessionID, kind: "doctor", err: errorsNew("daemon not connected")}
+			return operationalSurfaceMsg{sessionID: sessionID, kind: "inspect", generation: generation, err: errorsNew("daemon not connected")}
 		}
 		out := map[string]any{
 			"session_id": sessionID,
@@ -300,7 +301,7 @@ func (m *Model) inspectSurface() tea.Cmd {
 		if err := call.Call("mcp.inventory", map[string]any{}, &mcp); err == nil {
 			out["mcp_count"] = mcp["count"]
 		}
-		return operationalSurfaceMsg{sessionID: sessionID, kind: "inspect", data: out, err: nil}
+		return operationalSurfaceMsg{sessionID: sessionID, kind: "inspect", generation: generation, data: out, err: nil}
 	}
 }
 

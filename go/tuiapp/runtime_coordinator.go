@@ -16,14 +16,27 @@ type runtimeCoordinator struct {
 	mu         sync.Mutex
 	home       string
 	root       string
-	controller *tui.ConnectionController
-	prepared   map[uint64]tui.ConnectionTarget
+	controller rebindController
+	prepared   map[uint64]coordinatedRebind
 	sender     tui.Sender
 	stopWatch  context.CancelFunc
 }
 
-func newRuntimeCoordinator(home, root string, controller *tui.ConnectionController) *runtimeCoordinator {
-	return &runtimeCoordinator{home: home, root: root, controller: controller, prepared: make(map[uint64]tui.ConnectionTarget)}
+type rebindController interface {
+	PrepareTarget(tui.ConnectionTarget) (uint64, error)
+	CommitPrepared(uint64) error
+	AbortPrepared(uint64) uint64
+	AcknowledgePrepared(uint64)
+}
+
+type coordinatedRebind struct {
+	sourceRoot string
+	target     tui.ConnectionTarget
+	committed  bool
+}
+
+func newRuntimeCoordinator(home, root string, controller rebindController) *runtimeCoordinator {
+	return &runtimeCoordinator{home: home, root: root, controller: controller, prepared: make(map[uint64]coordinatedRebind)}
 }
 
 func (c *runtimeCoordinator) currentRoot() string {
@@ -38,7 +51,7 @@ func (c *runtimeCoordinator) prepare(target tui.ConnectionTarget) (uint64, error
 		return 0, err
 	}
 	c.mu.Lock()
-	c.prepared[token] = target
+	c.prepared[token] = coordinatedRebind{sourceRoot: c.root, target: target}
 	c.mu.Unlock()
 	return token, nil
 }
@@ -48,25 +61,53 @@ func (c *runtimeCoordinator) commit(token uint64) error {
 		return err
 	}
 	c.mu.Lock()
-	target := c.prepared[token]
-	delete(c.prepared, token)
+	rebind, ok := c.prepared[token]
+	if !ok {
+		c.mu.Unlock()
+		return fmt.Errorf("prepared runtime target %d is unavailable", token)
+	}
+	rebind.committed = true
+	c.prepared[token] = rebind
+	var superseded []uint64
+	for preparedToken, prepared := range c.prepared {
+		if preparedToken != token && prepared.committed {
+			delete(c.prepared, preparedToken)
+			superseded = append(superseded, preparedToken)
+		}
+	}
+	target := rebind.target
 	c.root = target.WorkspaceRoot
 	sender := c.sender
 	c.restartWatcherLocked()
 	c.mu.Unlock()
 	if sender != nil {
-		cfg, err := config.Load(c.home, target.WorkspaceRoot)
-		var overrides []tui.KeyBindingOverride
-		if err == nil {
-			overrides, err = tui.ParseKeyBindingOverrides(cfg.TUIKeybindings)
-		}
-		sender.Send(tui.KeymapReloadMsg{Overrides: overrides, Err: err})
+		c.sendKeymapReload(sender, target.WorkspaceRoot)
+	}
+	for _, preparedToken := range superseded {
+		c.controller.AbortPrepared(preparedToken)
 	}
 	return nil
 }
 
-func (c *runtimeCoordinator) abort(token uint64) {
-	c.controller.AbortPrepared(token)
+func (c *runtimeCoordinator) abort(token uint64) uint64 {
+	generation := c.controller.AbortPrepared(token)
+	c.mu.Lock()
+	rebind, ok := c.prepared[token]
+	delete(c.prepared, token)
+	if ok && rebind.committed {
+		c.root = rebind.sourceRoot
+		c.restartWatcherLocked()
+	}
+	sender, root := c.sender, c.root
+	c.mu.Unlock()
+	if ok && rebind.committed && sender != nil {
+		c.sendKeymapReload(sender, root)
+	}
+	return generation
+}
+
+func (c *runtimeCoordinator) acknowledge(token uint64) {
+	c.controller.AcknowledgePrepared(token)
 	c.mu.Lock()
 	delete(c.prepared, token)
 	c.mu.Unlock()
@@ -122,6 +163,15 @@ func (c *runtimeCoordinator) keymapUpdater() tui.KeymapUpdateFunc {
 		}
 		return tui.ParseKeyBindingOverrides(cfg.TUIKeybindings)
 	}
+}
+
+func (c *runtimeCoordinator) sendKeymapReload(sender tui.Sender, root string) {
+	cfg, err := config.Load(c.home, root)
+	var overrides []tui.KeyBindingOverride
+	if err == nil {
+		overrides, err = tui.ParseKeyBindingOverrides(cfg.TUIKeybindings)
+	}
+	sender.Send(tui.KeymapReloadMsg{WorkspaceRoot: root, Overrides: overrides, Err: err})
 }
 
 func (c *runtimeCoordinator) listWorkspaces() ([]tui.WorkspaceListItem, error) {

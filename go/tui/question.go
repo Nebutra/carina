@@ -25,6 +25,7 @@ type questionState struct {
 	Prompt     string
 	Options    []questionOption
 	Selected   int
+	Hovered    int
 	Scroll     int
 	Resolving  bool
 	Error      string
@@ -82,6 +83,7 @@ func buildQuestionState(ev map[string]any) *questionState {
 		QuestionID: str(ev["question_id"]),
 		TaskID:     str(ev["task_id"]),
 		Prompt:     sanitize(str(ev["prompt"])),
+		Hovered:    -1,
 	}
 	var options []map[string]any
 	switch rawOptions := ev["options"].(type) {
@@ -405,6 +407,8 @@ func (m *Model) questionBodyLines() []string {
 		marker := "  "
 		if i == q.Selected {
 			marker = "> "
+		} else if i == q.Hovered {
+			marker = "· "
 		}
 		number := "    "
 		if i < 9 {

@@ -97,6 +97,15 @@ const (
 	MsgSessionPickerEmpty          MessageID = "session_picker.empty"
 	MsgSessionPickerHelp           MessageID = "session_picker.help"
 	MsgSessionPickerHelpAll        MessageID = "session_picker.help_all"
+	MsgSessionNavigatorCurrent     MessageID = "session_navigator.current"
+	MsgSessionNavigatorAll         MessageID = "session_navigator.all"
+	MsgSessionNavigatorSearch      MessageID = "session_navigator.search"
+	MsgSessionNavigatorNoMatches   MessageID = "session_navigator.no_matches"
+	MsgAttachmentImage             MessageID = "attachment.image"
+	MsgAttachmentPreview           MessageID = "attachment.preview"
+	MsgAttachmentLoading           MessageID = "attachment.loading"
+	MsgAttachmentFailed            MessageID = "attachment.failed"
+	MsgAttachmentHelp              MessageID = "attachment.help"
 	MsgSessionWorkspaceTitle       MessageID = "session_workspace.title"
 	MsgSessionWorkspaceLoading     MessageID = "session_workspace.loading"
 	MsgSessionWorkspaceFailed      MessageID = "session_workspace.failed"
@@ -412,6 +421,15 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgSessionPickerEmpty, "No other resumable sessions.", "没有其他可恢复的会话。", "再開可能な他のセッションはありません。", "재개할 다른 세션이 없습니다.", "No hay otras sesiones reanudables.", "Aucune autre session ne peut être reprise."),
 	catalog(MsgSessionPickerHelp, "Enter resumes · Esc closes", "Enter 恢复 · Esc 关闭", "Enter で再開 · Esc で閉じる", "Enter 재개 · Esc 닫기", "Enter reanuda · Esc cierra", "Entrée reprend · Échap ferme"),
 	catalog(MsgSessionPickerHelpAll, "Enter resumes · Esc returns to projects · Tab shows current project", "Enter 恢复 · Esc 返回项目 · Tab 显示当前项目", "Enter で再開 · Esc でプロジェクトへ戻る · Tab で現在のプロジェクト", "Enter 재개 · Esc 프로젝트로 돌아가기 · Tab 현재 프로젝트", "Enter reanuda · Esc vuelve a proyectos · Tab muestra el proyecto actual", "Entrée reprend · Échap revient aux projets · Tab affiche le projet actuel"),
+	catalog(MsgSessionNavigatorCurrent, "Current project", "当前项目", "現在のプロジェクト", "현재 프로젝트", "Proyecto actual", "Projet actuel"),
+	catalog(MsgSessionNavigatorAll, "All projects", "所有项目", "すべてのプロジェクト", "모든 프로젝트", "Todos los proyectos", "Tous les projets"),
+	catalog(MsgSessionNavigatorSearch, "Search", "搜索", "検索", "검색", "Buscar", "Rechercher"),
+	catalog(MsgSessionNavigatorNoMatches, "No matching sessions or projects.", "没有匹配的会话或项目。", "一致するセッションまたはプロジェクトはありません。", "일치하는 세션 또는 프로젝트가 없습니다.", "No hay sesiones ni proyectos coincidentes.", "Aucune session ni aucun projet correspondant."),
+	catalog(MsgAttachmentImage, "Image", "图片", "画像", "이미지", "Imagen", "Image"),
+	catalog(MsgAttachmentPreview, "Preview", "预览", "プレビュー", "미리보기", "Vista previa", "Aperçu"),
+	catalog(MsgAttachmentLoading, "Loading image...", "正在载入图片……", "画像を読み込み中…", "이미지 불러오는 중...", "Cargando imagen...", "Chargement de l’image…"),
+	catalog(MsgAttachmentFailed, "Image unavailable: {error}", "图片不可用：{error}", "画像を利用できません: {error}", "이미지를 사용할 수 없음: {error}", "Imagen no disponible: {error}", "Image indisponible : {error}"),
+	catalog(MsgAttachmentHelp, "Shift+Tab focuses images · Delete removes", "Shift+Tab 聚焦图片 · Delete 删除", "Shift+Tab で画像にフォーカス · Delete で削除", "Shift+Tab 이미지 포커스 · Delete 삭제", "Shift+Tab enfoca imágenes · Delete elimina", "Maj+Tab cible les images · Suppr retire"),
 	catalog(MsgSessionWorkspaceTitle, "Resume from another project", "从其他项目恢复", "別のプロジェクトから再開", "다른 프로젝트에서 재개", "Reanudar desde otro proyecto", "Reprendre depuis un autre projet"),
 	catalog(MsgSessionWorkspaceLoading, "Loading known projects...", "正在加载已知项目……", "既知のプロジェクトを読み込み中…", "알려진 프로젝트 불러오는 중...", "Cargando proyectos conocidos...", "Chargement des projets connus…"),
 	catalog(MsgSessionWorkspaceFailed, "Unable to open project: {error}", "无法打开项目：{error}", "プロジェクトを開けません: {error}", "프로젝트를 열 수 없음: {error}", "No se pudo abrir el proyecto: {error}", "Impossible d’ouvrir le projet : {error}"),

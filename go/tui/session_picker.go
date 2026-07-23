@@ -112,6 +112,9 @@ type sessionPickerState struct {
 	loading          bool
 	loadError        bool
 	selected, scroll int
+	query            string
+	searching        bool
+	hoveredID        string
 	items            []sessionListItem
 	scope            sessionPickerScope
 	stage            sessionPickerStage
@@ -341,9 +344,40 @@ func sessionAttentionRank(item sessionListItem) int {
 func (m *Model) sessionPickerPageHeight() int { return maxInt(m.height-16, 1) }
 func (s *sessionPickerState) itemCount() int {
 	if s.stage == sessionStageWorkspaces {
-		return len(s.workspaces)
+		return len(s.workspaceIndices())
 	}
-	return len(s.items)
+	return len(s.sessionIndices())
+}
+
+func (s *sessionPickerState) workspaceIndices() []int {
+	query := strings.ToLower(strings.TrimSpace(s.query))
+	indices := make([]int, 0, len(s.workspaces))
+	for i, item := range s.workspaces {
+		haystack := strings.ToLower(strings.Join([]string{item.Name, item.Root, item.RuntimeID, item.Error}, " "))
+		if query == "" || strings.Contains(haystack, query) {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+func (s *sessionPickerState) sessionIndices() []int {
+	query := strings.ToLower(strings.TrimSpace(s.query))
+	indices := make([]int, 0, len(s.items))
+	for i, item := range s.items {
+		haystack := strings.ToLower(strings.Join([]string{
+			item.SessionID, item.Name, item.WorkspaceRoot, item.Status, item.TaskStatus,
+			item.ParentID, item.ForkedFromTaskID, item.Summary,
+		}, " "))
+		if query == "" || strings.Contains(haystack, query) {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+func (s *sessionPickerState) resetFilterSelection() {
+	s.selected, s.scroll, s.hoveredID = 0, 0, ""
 }
 func (s *sessionPickerState) clamp(page int) {
 	count := s.itemCount()
@@ -371,6 +405,21 @@ func (m *Model) sessionPickerKey(key string) (tea.Cmd, bool) {
 		if m.sessionActionPending != "" || m.pendingSessionID != "" {
 			s.status = m.text(MsgSessionActionResolving, nil)
 			return nil, true
+		}
+		if s.loading {
+			m.sessionOpGen++
+			s.generation = m.sessionOpGen
+			if s.scope == sessionScopeAll && s.stage == sessionStageSessions {
+				s.stage = sessionStageWorkspaces
+				s.items = nil
+				s.loading, s.loadError = false, false
+				s.selected, s.scroll = 0, 0
+				s.status = m.text(MsgSessionWorkspaceHelp, nil)
+				return nil, true
+			}
+			m.sessionPicker = nil
+			m.layout()
+			return m.resumeQueuedAfterTransient(), true
 		}
 		if s.scope == sessionScopeAll && s.stage == sessionStageSessions {
 			s.stage = sessionStageWorkspaces
@@ -403,6 +452,10 @@ func (m *Model) sessionPickerKey(key string) (tea.Cmd, bool) {
 			return m.openSessionPicker(), true
 		}
 	case "b":
+		if m.pendingPreparedToken != 0 && m.pendingTarget != nil {
+			m.rollbackPendingTarget()
+			return m.resumeQueuedAfterTransient(), true
+		}
 		if m.pendingSessionID != "" && m.previousSessionID != "" {
 			target := m.previousSessionID
 			if err := m.submissions.transfer(target); err != nil {
@@ -427,18 +480,27 @@ func (m *Model) sessionPickerKey(key string) (tea.Cmd, bool) {
 			return nil, true
 		}
 		if s.stage == sessionStageWorkspaces {
-			return m.loadWorkspaceSessions(s.workspaces[s.selected]), true
+			indices := s.workspaceIndices()
+			return m.loadWorkspaceSessions(s.workspaces[indices[s.selected]]), true
 		}
+		indices := s.sessionIndices()
 		if s.scope == sessionScopeAll {
-			return m.resumeWorkspaceSession(s.items[s.selected]), true
+			return m.resumeWorkspaceSession(s.items[indices[s.selected]]), true
 		}
-		return m.resumeSession(s.items[s.selected].SessionID), true
+		return m.resumeSession(s.items[indices[s.selected]].SessionID), true
 	}
 	s.clamp(m.sessionPickerPageHeight())
 	return nil, true
 }
 
 func (m *Model) sessionPickerView() string {
+	if m.sessionPicker == nil {
+		return ""
+	}
+	return m.ensureNavigatorFrame().Root.Content
+}
+
+func (m *Model) legacySessionPickerView() string {
 	s := m.sessionPicker
 	if s == nil {
 		return ""
@@ -456,8 +518,9 @@ func (m *Model) sessionPickerView() string {
 		s.clamp(page)
 		end := minInt(s.scroll+page, s.itemCount())
 		if s.stage == sessionStageWorkspaces {
+			indices := s.workspaceIndices()
 			for i := s.scroll; i < end; i++ {
-				item := s.workspaces[i]
+				item := s.workspaces[indices[i]]
 				prefix := "  "
 				if i == s.selected {
 					prefix = "> "
@@ -478,8 +541,9 @@ func (m *Model) sessionPickerView() string {
 			lines = append(lines, "", fitRenderedLine(s.status, width))
 			return renderSessionPickerBox(m, lines)
 		}
+		indices := s.sessionIndices()
 		for i := s.scroll; i < end; i++ {
-			it := s.items[i]
+			it := s.items[indices[i]]
 			prefix := "  "
 			if i == s.selected {
 				prefix = "> "
@@ -511,9 +575,9 @@ func (m *Model) sessionPickerView() string {
 			}
 			lines = append(lines, line)
 		}
-		if len(s.items) > 0 {
+		if len(indices) > 0 {
 			lines = append(lines, "")
-			lines = append(lines, m.sessionContinuityDetail(s.items[s.selected], width)...)
+			lines = append(lines, m.sessionContinuityDetail(s.items[indices[s.selected]], width)...)
 		}
 		lines = append(lines, "", fitRenderedLine(s.status, width))
 	}
@@ -581,11 +645,11 @@ func (m *Model) sessionRecoveryAction(it sessionListItem) string {
 
 func (m *Model) beginSessionAction(action, method string, params map[string]any) tea.Cmd {
 	if m.sessionActionPending != "" || m.pendingSessionID != "" {
-		m.push(m.text(MsgSessionActionResolving, nil))
+		m.setOperationalNotice(m.text(MsgSessionActionResolving, nil), theme.RoleInfo)
 		return nil
 	}
 	if blocker, blocked := m.sessionSwitchBlocker(); blocked {
-		m.push(m.text(MsgSessionSwitchBlocked, MessageArgs{"reason": m.text(blocker, nil)}))
+		m.setOperationalNotice(m.text(MsgSessionSwitchBlocked, MessageArgs{"reason": m.text(blocker, nil)}), theme.RoleWarning)
 		return nil
 	}
 	m.sessionOpGen++
@@ -659,7 +723,9 @@ func (m *Model) resumeWorkspaceSession(item sessionListItem) tea.Cmd {
 func (m *Model) handleWorkspaceResume(msg workspaceResumeMsg) {
 	if msg.generation != m.sessionOpGen {
 		if msg.token != 0 && m.abortTarget != nil {
-			m.abortTarget(msg.token)
+			if generation := m.abortTarget(msg.token); generation > m.sessionGeneration {
+				m.sessionGeneration = generation
+			}
 		}
 		msg.journal.close()
 		return
@@ -675,7 +741,7 @@ func (m *Model) handleWorkspaceResume(msg workspaceResumeMsg) {
 	}
 	if blocker, blocked := m.sessionSwitchBlocker(); blocked {
 		if m.abortTarget != nil {
-			m.abortTarget(msg.token)
+			_ = m.abortTarget(msg.token)
 		}
 		msg.journal.close()
 		if s != nil {
@@ -686,7 +752,7 @@ func (m *Model) handleWorkspaceResume(msg workspaceResumeMsg) {
 	}
 	if err := m.commitTarget(msg.token); err != nil {
 		if m.abortTarget != nil {
-			m.abortTarget(msg.token)
+			_ = m.abortTarget(msg.token)
 		}
 		msg.journal.close()
 		if s != nil {
@@ -704,6 +770,26 @@ func (m *Model) handleWorkspaceResume(msg workspaceResumeMsg) {
 	m.pendingWorkspaceRoot = target.WorkspaceRoot
 }
 
+func (m *Model) rollbackPendingTarget() {
+	if m.pendingPreparedToken != 0 && m.abortTarget != nil {
+		if generation := m.abortTarget(m.pendingPreparedToken); generation > m.sessionGeneration {
+			m.sessionGeneration = generation
+		}
+	}
+	if m.pendingSubmissions != nil {
+		m.pendingSubmissions.close()
+	}
+	m.pendingTarget = nil
+	m.pendingSubmissions = nil
+	m.pendingPreparedToken = 0
+	m.pendingSessionID = ""
+	m.pendingWorkspaceRoot = ""
+	m.previousSessionID = ""
+	m.previousWorkspaceRoot = ""
+	m.sessionPicker = nil
+	m.layout()
+}
+
 func (m *Model) handleSessionAction(msg sessionActionMsg) {
 	if msg.generation != m.sessionOpGen {
 		return
@@ -714,26 +800,26 @@ func (m *Model) handleSessionAction(msg sessionActionMsg) {
 		if msg.action == "fork" {
 			m.sidePane = nil
 		}
-		m.push(m.text(MsgSessionActionFailed, MessageArgs{"error": msg.err.Error()}))
+		m.setOperationalNotice(m.text(MsgSessionActionFailed, MessageArgs{"error": msg.err.Error()}), theme.RoleError)
 		return
 	}
 	if msg.session.SessionID == "" {
-		m.push(m.text(MsgSessionActionInvalid, nil))
+		m.setOperationalNotice(m.text(MsgSessionActionInvalid, nil), theme.RoleError)
 		return
 	}
 	if m.switchSession == nil {
-		m.push(m.text(MsgSessionSwitchUnavailable, nil))
+		m.setOperationalNotice(m.text(MsgSessionSwitchUnavailable, nil), theme.RoleError)
 		return
 	}
 	oldSession := m.sessionID
 	m.previousSessionID, m.previousWorkspaceRoot = oldSession, m.workspaceRoot
 	if err := m.submissions.transfer(msg.session.SessionID); err != nil {
-		m.push(m.text(MsgSessionSwitchLeaseBlocked, MessageArgs{"error": err.Error()}))
+		m.setOperationalNotice(m.text(MsgSessionSwitchLeaseBlocked, MessageArgs{"error": err.Error()}), theme.RoleError)
 		return
 	}
 	if err := m.switchSession(msg.session.SessionID); err != nil {
 		_ = m.submissions.transfer(oldSession)
-		m.push(m.text(MsgSessionSwitchFailed, MessageArgs{"error": err.Error()}))
+		m.setOperationalNotice(m.text(MsgSessionSwitchFailed, MessageArgs{"error": err.Error()}), theme.RoleError)
 		return
 	}
 	m.pendingSessionID = msg.session.SessionID
@@ -746,6 +832,6 @@ func (m *Model) handleSessionAction(msg sessionActionMsg) {
 	}
 	m.sessionPicker.loading = true
 	m.sessionPicker.status = m.text(MsgSessionSwitching, MessageArgs{"session": msg.session.SessionID})
-	m.push(m.text(MsgSessionSwitching, MessageArgs{"session": msg.session.SessionID}))
+	m.setOperationalNotice(m.text(MsgSessionSwitching, MessageArgs{"session": msg.session.SessionID}), theme.RoleInfo)
 	m.layout()
 }

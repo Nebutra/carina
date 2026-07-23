@@ -189,8 +189,7 @@ func mergePromptHistory(remote []string, local []promptDraft) []promptDraft {
 		}
 	}
 	for _, draft := range local {
-		draft.Prefix = append([]string(nil), draft.Prefix...)
-		draft.Paste = append([]string(nil), draft.Paste...)
+		draft = cloneDraft(draft)
 		if historyDraftKey(draft) != "" {
 			combined = append(combined, draft)
 		}
@@ -216,7 +215,11 @@ func mergePromptHistory(remote []string, local []promptDraft) []promptDraft {
 func historyDraftKey(draft promptDraft) string {
 	value := strings.ReplaceAll(draftPrompt(draft), "\r\n", "\n")
 	value = strings.ReplaceAll(value, "\n", " ")
-	return strings.TrimSpace(value)
+	parts := []string{strings.TrimSpace(value)}
+	for _, attachment := range draft.Attachments {
+		parts = append(parts, "image:"+attachment.Digest)
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
 }
 
 func findDraft(history []promptDraft, want promptDraft) int {

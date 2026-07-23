@@ -16,7 +16,9 @@ package tui
 
 import (
 	"os"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"charm.land/bubbles/v2/textarea"
@@ -24,8 +26,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/Nebutra/carina/go/tui/mathimage"
 	"github.com/Nebutra/carina/go/tui/theme"
+	ui "github.com/Nebutra/carina/go/tui/ui"
 )
+
+var modelGraphicsSequence atomic.Uint64
 
 // Caller is the request/response RPC surface the model needs. *rpc.Client
 // satisfies it; tests substitute a fake.
@@ -42,6 +48,12 @@ const (
 	ConnLost
 	ConnReconnecting
 )
+
+type operationalNotice struct {
+	Kind string
+	Text string
+	Role theme.Role
+}
 
 // Messages sent by the connection goroutine (conn.go) and internal commands.
 type (
@@ -85,13 +97,14 @@ type (
 )
 
 type promptDraft struct {
-	Prefix          []string `json:"prefix,omitempty"`
-	Text            string   `json:"text,omitempty"`
-	Paste           []string `json:"paste,omitempty"`
-	Model           string   `json:"model,omitempty"`
-	Agent           string   `json:"agent,omitempty"`
-	Mode            string   `json:"mode,omitempty"`
-	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
+	Prefix          []string          `json:"prefix,omitempty"`
+	Text            string            `json:"text,omitempty"`
+	Paste           []string          `json:"paste,omitempty"`
+	Attachments     []draftAttachment `json:"attachments,omitempty"`
+	Model           string            `json:"model,omitempty"`
+	Agent           string            `json:"agent,omitempty"`
+	Mode            string            `json:"mode,omitempty"`
+	ReasoningEffort string            `json:"reasoning_effort,omitempty"`
 }
 
 type submissionEnvelope struct {
@@ -100,6 +113,7 @@ type submissionEnvelope struct {
 	agent           string
 	mode            string
 	reasoningEffort string
+	inputMediaRefs  []mediaReference
 }
 
 type submissionKind string
@@ -189,7 +203,8 @@ type Options struct {
 	SwitchSession     func(string) error // connection-controller hook for session lifecycle commands
 	PrepareTarget     func(ConnectionTarget) (uint64, error)
 	CommitTarget      func(uint64) error
-	AbortTarget       func(uint64)
+	AbortTarget       func(uint64) uint64
+	AcknowledgeTarget func(uint64)
 	ListWorkspaces    func() ([]WorkspaceListItem, error)
 	LoadWorkspace     func(string) (WorkspaceDestination, error)
 	ResumeWorkspace   func(ConnectionTarget, string) (ConnectionTarget, error)
@@ -213,32 +228,39 @@ type Model struct {
 	submissions   submissionJournal
 	now           func() time.Time
 
-	width, height    int
-	root             rootLayout
-	vp               viewport.Model
-	input            textarea.Model
-	tr               transcript
-	streams          map[string]*messageStream
-	activityGroups   map[string]*activityGroup
-	followTail       bool
-	unseenLines      int
-	terminalBlurred  bool
-	unreadAttention  int
-	attentionAlerted bool
-	attentionSeen    map[string]struct{}
-	attentionOrder   []string
-	keys             runtimeKeymap
-	chord            chordState
-	keymapErr        error
-	keymapUpdater    KeymapUpdateFunc
-	keymapEditor     *keymapEditorState
-	helpOpen         bool
-	helpScroll       int
-	settings         *settingsShellState
-	compactMode      bool
-	composerMode     composerMode // normal chat vs sticky shell (!)
-	runtime          runtimeStatus
-	conversation     conversationProjection
+	width, height           int
+	root                    rootLayout
+	vp                      viewport.Model
+	input                   textarea.Model
+	componentRuntime        *ui.Runtime
+	componentFrame          ui.Frame
+	primaryOverlayComponent *primaryOverlayComponent
+	componentGraphicsOwners map[string]struct{}
+	graphicsNamespace       string
+	liveTools               *ui.LiveToolRegistry
+	tr                      transcript
+	streams                 map[string]*messageStream
+	activityGroups          map[string]*activityGroup
+	followTail              bool
+	unseenLines             int
+	terminalBlurred         bool
+	unreadAttention         int
+	attentionAlerted        bool
+	attentionSeen           map[string]struct{}
+	attentionOrder          []string
+	keys                    runtimeKeymap
+	chord                   chordState
+	keymapErr               error
+	keymapUpdater           KeymapUpdateFunc
+	keymapEditor            *keymapEditorState
+	helpOpen                bool
+	helpScroll              int
+	settings                *settingsShellState
+	compactMode             bool
+	composerMode            composerMode // normal chat vs sticky shell (!)
+	runtime                 runtimeStatus
+	conversation            conversationProjection
+	operationalNotice       operationalNotice
 	// pendingSideQuestion is submitted once after a successful session.fork
 	// switch (Codex/CC side conversation pattern).
 	pendingSideQuestion string
@@ -253,78 +275,92 @@ type Model struct {
 	conn      ConnState
 	attempt   int
 
-	approval              *approvalState
-	approvalQueue         []map[string]any // permission.request envelopes queued while an overlay is open
-	approvalSeen          map[string]bool
-	approvalResolved      map[string]bool
-	approvalPending       map[string]approvalResolutionSnapshot
-	approvalOrder         map[string]uint64
-	approvalNextSeq       uint64
-	approvalOutcomeSeq    uint64
-	planReview            *planReviewState
-	question              *questionState
-	questionQueue         []map[string]any
-	questionSeen          map[string]bool
-	questionResolved      map[string]bool
-	tasks                 taskGraph
-	inFlightTaskID        string
-	pendingPaste          []string
-	pendingPrefix         []string
-	pasteBurst            pasteBurstState
-	followUps             inputQueue
-	submitting            *submissionState
-	submissionGen         int
-	earlyTerminals        map[string]earlyTaskTerminal
-	retrySubmission       *submissionRetry
-	submissionLeaseErr    error
-	queueRecallPending    bool
-	editor                *externalEditorSession
-	editorGen             int
-	queueRestoreReason    string
-	transcriptPager       *transcriptPagerState
-	checkpointPicker      *checkpointPickerState
-	modelPicker           *modelPickerState
-	sessionPicker         *sessionPickerState
-	modelPickerGen        int
-	canonicalGen          int
-	pausedRestore         *checkpointRestoreResult
-	getenv                func(string) string
-	clipboardWrite        func(string) error
-	history               []promptDraft
-	historyPos            int
-	historyScratch        promptDraft
-	historyLoadGen        int
-	historySearch         *historySearchState
-	composerUndo          composerUndoState
-	lastCtrlC             time.Time
-	ctrlCHint             string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
-	rewindPrimed          bool
-	noAlternateScreen     bool
-	mode                  string
-	model                 string
-	reasoningEffort       string
-	modelPinned           bool
-	switchSession         func(string) error
-	prepareTarget         func(ConnectionTarget) (uint64, error)
-	commitTarget          func(uint64) error
-	abortTarget           func(uint64)
-	listWorkspaces        func() ([]WorkspaceListItem, error)
-	loadWorkspace         func(string) (WorkspaceDestination, error)
-	resumeWorkspace       func(ConnectionTarget, string) (ConnectionTarget, error)
-	onFirstConnection     func(Caller)
-	firstConnectionSeen   bool
-	sessionGeneration     uint64
-	sessionOpGen          uint64
-	pendingSessionID      string
-	pendingWorkspaceRoot  string
-	sessionActionPending  string
-	previousSessionID     string
-	previousWorkspaceRoot string
-	pendingTarget         *ConnectionTarget
-	pendingSubmissions    *submissionJournal
-	pendingPreparedToken  uint64
-	goal                  *goalView
-	outcome               Outcome
+	approval                 *approvalState
+	approvalQueue            []map[string]any // permission.request envelopes queued while an overlay is open
+	approvalSeen             map[string]bool
+	approvalResolved         map[string]bool
+	approvalPending          map[string]approvalResolutionSnapshot
+	approvalOrder            map[string]uint64
+	approvalNextSeq          uint64
+	approvalOutcomeSeq       uint64
+	planReview               *planReviewState
+	question                 *questionState
+	questionQueue            []map[string]any
+	questionSeen             map[string]bool
+	questionResolved         map[string]bool
+	tasks                    taskGraph
+	inFlightTaskID           string
+	pendingPaste             []string
+	pendingPrefix            []string
+	attachments              []draftAttachment
+	attachmentFocus          int
+	attachmentCaretAffinity  attachmentCaretAffinity
+	attachmentCaretPreviewID string
+	attachmentHoverID        string
+	attachmentPreviewID      string
+	attachmentPreviewLines   []string
+	attachmentPreviewPixel   bool
+	attachmentGraphicsOwner  string
+	attachmentGraphicsKey    string
+	attachmentLoadGen        uint64
+	attachmentUploadGen      uint64
+	attachmentUploadBusy     bool
+	pasteBurst               pasteBurstState
+	followUps                inputQueue
+	submitting               *submissionState
+	submissionGen            int
+	earlyTerminals           map[string]earlyTaskTerminal
+	retrySubmission          *submissionRetry
+	submissionLeaseErr       error
+	queueRecallPending       bool
+	editor                   *externalEditorSession
+	editorGen                int
+	queueRestoreReason       string
+	transcriptPager          *transcriptPagerState
+	checkpointPicker         *checkpointPickerState
+	modelPicker              *modelPickerState
+	sessionPicker            *sessionPickerState
+	modelPickerGen           int
+	canonicalGen             int
+	pausedRestore            *checkpointRestoreResult
+	getenv                   func(string) string
+	clipboardWrite           func(string) error
+	history                  []promptDraft
+	historyPos               int
+	historyScratch           promptDraft
+	historyLoadGen           int
+	historySearch            *historySearchState
+	composerUndo             composerUndoState
+	lastCtrlC                time.Time
+	ctrlCHint                string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
+	rewindPrimed             bool
+	noAlternateScreen        bool
+	mode                     string
+	model                    string
+	reasoningEffort          string
+	modelPinned              bool
+	switchSession            func(string) error
+	prepareTarget            func(ConnectionTarget) (uint64, error)
+	commitTarget             func(uint64) error
+	abortTarget              func(uint64) uint64
+	acknowledgeTarget        func(uint64)
+	listWorkspaces           func() ([]WorkspaceListItem, error)
+	loadWorkspace            func(string) (WorkspaceDestination, error)
+	resumeWorkspace          func(ConnectionTarget, string) (ConnectionTarget, error)
+	onFirstConnection        func(Caller)
+	firstConnectionSeen      bool
+	sessionGeneration        uint64
+	sessionOpGen             uint64
+	pendingSessionID         string
+	pendingWorkspaceRoot     string
+	sessionActionPending     string
+	previousSessionID        string
+	previousWorkspaceRoot    string
+	pendingTarget            *ConnectionTarget
+	pendingSubmissions       *submissionJournal
+	pendingPreparedToken     uint64
+	goal                     *goalView
+	outcome                  Outcome
 
 	// Mention/slash suggestion panel (@-file, @-agent, /-command). See
 	// suggest.go for the debounce/fetch flow and mention.go for trigger
@@ -369,10 +405,11 @@ type loopResultMsg struct {
 }
 
 type operationalSurfaceMsg struct {
-	sessionID string
-	kind      string
-	data      map[string]any
-	err       error
+	sessionID  string
+	kind       string
+	generation int
+	data       map[string]any
+	err        error
 }
 
 type workspaceDiffMsg struct {
@@ -438,12 +475,16 @@ func NewChecked(o Options) (*Model, error) {
 		clipboardWrite:    systemClipboardWrite,
 		vp:                viewport.New(),
 		input:             ti,
+		componentRuntime:  ui.NewRuntime(),
+		graphicsNamespace: "model-" + strconv.FormatUint(modelGraphicsSequence.Add(1), 10),
+		liveTools:         ui.NewLiveToolRegistry(),
 		keys:              keys,
 		keymapUpdater:     o.KeymapUpdater,
 		noAlternateScreen: o.NoAlternateScreen,
 		conn:              ConnConnecting,
 		conversation:      conversationProjection{Readiness: readinessChecking},
 		followTail:        true,
+		attachmentFocus:   -1,
 		questionSeen:      make(map[string]bool),
 		questionResolved:  make(map[string]bool),
 		approvalSeen:      make(map[string]bool),
@@ -459,6 +500,7 @@ func NewChecked(o Options) (*Model, error) {
 		prepareTarget:     o.PrepareTarget,
 		commitTarget:      o.CommitTarget,
 		abortTarget:       o.AbortTarget,
+		acknowledgeTarget: o.AcknowledgeTarget,
 		listWorkspaces:    o.ListWorkspaces,
 		loadWorkspace:     o.LoadWorkspace,
 		resumeWorkspace:   o.ResumeWorkspace,
@@ -471,13 +513,58 @@ func NewChecked(o Options) (*Model, error) {
 // Close releases process-scoped TUI resources such as the single-writer
 // submission lease. Frontends should defer it after constructing a model.
 func (m *Model) Close() {
+	_ = m.CloseTerminalGraphics()
 	m.submissions.close()
 	if m.pendingSubmissions != nil {
 		m.pendingSubmissions.close()
 	}
 	if m.pendingPreparedToken != 0 && m.abortTarget != nil {
-		m.abortTarget(m.pendingPreparedToken)
+		_ = m.abortTarget(m.pendingPreparedToken)
 	}
+}
+
+// CloseTerminalGraphics returns the Kitty cleanup sequence that frontends must
+// write after Bubble Tea has stopped and before process exit.
+func (m *Model) CloseTerminalGraphics() string {
+	m.releaseSessionGraphics()
+	return mathimage.Drain()
+}
+
+func (m *Model) graphicsOwner(kind, id string) string {
+	return strings.Join([]string{
+		m.graphicsNamespace, kind, strconv.FormatUint(m.sessionGeneration, 10), m.sessionID, id,
+	}, ":")
+}
+
+func (m *Model) releaseSessionGraphics() {
+	m.reconcileFrameGraphics(ui.Frame{})
+	if m.attachmentGraphicsOwner != "" {
+		mathimage.ReleaseOwner(m.attachmentGraphicsOwner)
+	}
+	m.attachmentGraphicsOwner, m.attachmentGraphicsKey = "", ""
+	m.attachmentPreviewLines = nil
+	m.attachmentPreviewPixel = false
+	m.clearAttachmentInteraction()
+	for i := range m.tr.entries {
+		if p := m.tr.entries[i].presentation; p != nil && p.ImageOwner != "" {
+			mathimage.ReleaseOwner(p.ImageOwner)
+		}
+	}
+}
+
+func (m *Model) reconcileFrameGraphics(frame ui.Frame) {
+	desired := make(map[string]struct{}, len(frame.Graphics))
+	for _, placement := range frame.Graphics {
+		if placement.Owner != "" && placement.Generation == frame.Generation && placement.TargetGeneration == m.sessionGeneration {
+			desired[string(placement.Owner)] = struct{}{}
+		}
+	}
+	for owner := range m.componentGraphicsOwners {
+		if _, ok := desired[owner]; !ok {
+			mathimage.ReleaseOwner(owner)
+		}
+	}
+	m.componentGraphicsOwners = desired
 }
 
 // inputStyles keeps the third-party textarea inside Carina's terminal
@@ -557,7 +644,7 @@ func (m *Model) pushEvent(ev map[string]any) {
 	} else {
 		m.detachActivityCall(classification)
 		before := len(m.tr.lines)
-		m.tr.pushPresentation(presentEvent(ev, m.th, m.locale), m.th, m.transcriptWidth())
+		m.tr.pushPresentation(m.presentTranscriptEvent(ev), m.th, m.transcriptWidth())
 		added = len(m.tr.lines) - before
 		if added < 1 {
 			// Permanent lifecycle updates remain observable even when they replace

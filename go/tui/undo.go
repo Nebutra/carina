@@ -21,9 +21,11 @@ const (
 )
 
 type composerSnapshot struct {
-	draft promptDraft
-	row   int
-	col   int
+	draft                   promptDraft
+	row                     int
+	col                     int
+	attachmentFocusID       string
+	attachmentCaretAffinity attachmentCaretAffinity
 }
 
 type composerUndoEntry struct {
@@ -40,20 +42,30 @@ type composerUndoState struct {
 }
 
 func (m *Model) composerSnapshot() composerSnapshot {
+	focusID := ""
+	if m.attachmentFocus >= 0 && m.attachmentFocus < len(m.attachments) {
+		focusID = m.attachments[m.attachmentFocus].ID
+	}
 	return composerSnapshot{
-		draft: m.currentDraft(),
-		row:   m.input.Line(),
-		col:   m.input.Column(),
+		draft:                   m.currentDraft(),
+		row:                     m.input.Line(),
+		col:                     m.input.Column(),
+		attachmentFocusID:       focusID,
+		attachmentCaretAffinity: m.attachmentCaretAffinity,
 	}
 }
 
 func (m *Model) recordComposerEdit(before composerSnapshot, kind composerEditKind) {
+	previewChanged := m.reconcileInlineAttachments(before)
 	after := m.composerSnapshot()
 	// Caret-only navigation is a grouping boundary, not an undoable edit.
 	// The caret still lives in snapshots so real edits restore its prior site.
 	if draftsEqual(before.draft, after.draft) {
 		if kind != composerEditTyping {
 			m.breakComposerUndoGroup()
+		}
+		if previewChanged {
+			m.layout()
 		}
 		return
 	}
@@ -66,6 +78,9 @@ func (m *Model) recordComposerEdit(before composerSnapshot, kind composerEditKin
 		if last.kind == composerEditTyping && !now.Before(last.at) && now.Sub(last.at) <= composerUndoGroupWindow {
 			last.after = after
 			last.at = now
+			if previewChanged {
+				m.layout()
+			}
 			return
 		}
 	}
@@ -80,6 +95,9 @@ func (m *Model) recordComposerEdit(before composerSnapshot, kind composerEditKin
 		state.undo = append([]composerUndoEntry(nil), state.undo[len(state.undo)-composerUndoLimit:]...)
 	}
 	state.groupOpen = kind == composerEditTyping
+	if previewChanged {
+		m.layout()
+	}
 }
 
 func (m *Model) breakComposerUndoGroup() {
@@ -136,6 +154,11 @@ func (m *Model) restoreComposerSnapshot(snapshot composerSnapshot) {
 	m.input.SetCursorColumn(snapshot.col)
 	m.pendingPrefix = append([]string(nil), snapshot.draft.Prefix...)
 	m.pendingPaste = append([]string(nil), snapshot.draft.Paste...)
+	m.attachments = cloneAttachments(snapshot.draft.Attachments)
+	m.attachmentFocus = attachmentIndex(m.attachments, snapshot.attachmentFocusID)
+	m.attachmentCaretAffinity = snapshot.attachmentCaretAffinity
+	m.attachmentHoverID = ""
+	m.syncAttachmentPreviewOwner()
 	m.historyPos = len(m.history)
 	m.historyScratch = promptDraft{}
 	m.pasteBurst.reset()

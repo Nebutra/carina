@@ -464,6 +464,16 @@ func (m *Model) statusActivityText() string {
 			}
 		}
 	}
+	if notice := strings.TrimSpace(m.operationalNotice.Text); notice != "" {
+		if state.Activity == activityIdle {
+			activity = notice
+		} else {
+			activity += " · " + notice
+		}
+	}
+	if hint := strings.TrimSpace(m.ctrlCHint); hint != "" && !strings.Contains(activity, hint) {
+		activity += " · " + hint
+	}
 	if m.unseenLines > 0 {
 		activity += " · " + m.countText(MsgStatusNew, m.unseenLines, nil)
 	}
@@ -506,6 +516,9 @@ func (m *Model) statusActivityItem() statusFooterItem {
 	}
 	if m.unreadAttention > 0 || m.chord.hint != "" {
 		role = theme.RoleWarning
+	}
+	if state.Activity == activityIdle && strings.TrimSpace(m.operationalNotice.Text) != "" {
+		role = m.operationalNotice.Role
 	}
 	return statusFooterItem{text: m.statusActivityText(), role: role}
 }
@@ -718,9 +731,9 @@ func (m *Model) applyContextPressurePolicy() tea.Cmd {
 	switch {
 	case pct >= contextPressureCompact && m.runtime.CompactAvailable && m.contextNudgeLevel < 3:
 		m.contextNudgeLevel = 3
-		m.push(m.th.Style(theme.RoleWarning).Render(m.text(MsgContextAutoCompact, MessageArgs{
+		m.setOperationalNoticeKind("context", m.text(MsgContextAutoCompact, MessageArgs{
 			"percent": pct, "checkpoint": m.runtime.CompactCheckpoint,
-		})))
+		}), theme.RoleWarning)
 		params := map[string]any{"session_id": m.sessionID}
 		if m.runtime.CompactTaskID != "" {
 			params["task_id"] = m.runtime.CompactTaskID
@@ -732,14 +745,15 @@ func (m *Model) applyContextPressurePolicy() tea.Cmd {
 		if reason == "" {
 			reason = "compact requires an idle task with a persisted checkpoint"
 		}
-		m.push(m.th.Style(theme.RoleWarning).Render(m.text(MsgContextPressureCritical, MessageArgs{
+		m.setOperationalNoticeKind("context", m.text(MsgContextPressureCritical, MessageArgs{
 			"percent": pct, "reason": reason,
-		})))
+		}), theme.RoleWarning)
 	case pct >= contextPressureWarning && m.contextNudgeLevel < 1:
 		m.contextNudgeLevel = 1
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgContextPressureWarning, MessageArgs{"percent": pct})))
+		m.setOperationalNoticeKind("context", m.text(MsgContextPressureWarning, MessageArgs{"percent": pct}), theme.RoleMuted)
 	case pct < contextPressureWarning:
 		m.contextNudgeLevel = 0
+		m.clearOperationalNoticeKind("context")
 	}
 	return nil
 }

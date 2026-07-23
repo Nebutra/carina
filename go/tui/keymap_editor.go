@@ -278,6 +278,9 @@ func (m *Model) handleKeymapUpdated(msg keymapUpdatedMsg) {
 }
 
 func (m *Model) handleKeymapReload(msg KeymapReloadMsg) {
+	if msg.WorkspaceRoot != "" && cleanWorkspaceRoot(msg.WorkspaceRoot) != cleanWorkspaceRoot(m.workspaceRoot) {
+		return
+	}
 	if msg.Err != nil {
 		m.push(m.text(MsgKeymapReloadRejected, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.Err.Error()}))
 		return

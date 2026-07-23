@@ -9,7 +9,6 @@
 package tuiapp
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +18,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/Nebutra/carina/go/config"
 	"github.com/Nebutra/carina/go/localdaemon"
 	"github.com/Nebutra/carina/go/localruntime"
 	"github.com/Nebutra/carina/go/microcopy"
@@ -36,7 +34,7 @@ type Options struct {
 	WorkspaceRoot string // empty → cwd
 	Locale        string // flag locale; empty → config / env / system
 	NoAltScreen   bool
-	// Stderr receives bootstrap / recovery messages (default os.Stderr).
+	// Stderr receives non-interactive gate and terminal failures (default os.Stderr).
 	Stderr io.Writer
 	// AfterDaemon runs once the daemon is reachable and before the TUI
 	// attaches (e.g. first-launch doctor). Failures must not abort launch.
@@ -59,11 +57,12 @@ func Run(opts Options) tui.Outcome {
 		stderr = os.Stderr
 	}
 	bootstrapLocale := microcopy.DetectBootstrapLocale()
+	interactive := isTTY(os.Stdout) && isTTY(os.Stdin)
 
-	// Validate explicit env locale before the TTY gate so
-	// CARINA_LOCALE=de fails closed with a locale error even under go test
-	// (non-TTY).
-	if value := os.Getenv("CARINA_LOCALE"); opts.Locale == "" && value != "" {
+	// Non-interactive callers cannot enter BootstrapScreen, so preserve the
+	// fail-closed locale result for pipes and tests. Interactive callers see the
+	// same validation failure inside the bootstrap identity stage.
+	if value := os.Getenv("CARINA_LOCALE"); !interactive && opts.Locale == "" && value != "" {
 		if _, err := microcopy.CanonicalLocale(value); err != nil {
 			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapLocaleInvalid, nil, bootstrapLocale))
 			return tui.OutcomeUsage
@@ -75,90 +74,22 @@ func Run(opts Options) tui.Outcome {
 		return tui.OutcomeUsage
 	}
 
-	home, err := os.UserHomeDir()
+	prepared, bootstrapOutcome, err := runBootstrap(opts, bootstrapLocale, os.Stdin, os.Stdout, interactive && !opts.NoAltScreen)
+	if errors.Is(err, errRuntimeModeChoiceCancelled) {
+		return bootstrapOutcome
+	}
 	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapResolveHomeFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
+		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
 		return tui.OutcomeRuntimeError
 	}
-	mode, err := localruntime.ResolveMode(home)
-	if err != nil {
-		if errors.Is(err, localruntime.ErrModeDecisionRequired) && isTTY(os.Stdout) && isTTY(os.Stdin) {
-			mode, err = chooseRuntimeMode(os.Stdin, stderr, bootstrapLocale)
-			if errors.Is(err, errRuntimeModeChoiceCancelled) {
-				return tui.OutcomeOK
-			}
-			if err == nil {
-				err = localruntime.WriteMode(home, mode)
-			}
-		}
-	}
-	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
-		return tui.OutcomeRuntimeError
-	}
-	projectRoot := strings.TrimSpace(opts.WorkspaceRoot)
-	var cfg config.Config
-	var socket string
-	var runtimeSpec *localruntime.Spec
-	if mode == localruntime.ModeWorkspace {
-		resolution, resolveErr := localruntime.Resolve(home, projectRoot, mode)
-		if resolveErr != nil {
-			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": resolveErr.Error()}, bootstrapLocale))
-			return tui.OutcomeRuntimeError
-		}
-		if explicitSocket := strings.TrimSpace(opts.Socket); explicitSocket != "" {
-			resolution, resolveErr = localruntime.ApplyOverrides(home, resolution, localruntime.Overrides{Socket: explicitSocket})
-			if resolveErr != nil {
-				fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": resolveErr.Error()}, bootstrapLocale))
-				return tui.OutcomeRuntimeError
-			}
-		}
-		cfg = resolution.Config
-		projectRoot = resolution.Workspace.CanonicalRoot
-		socket = resolution.Spec.Paths.SocketPath
-		runtimeSpec = &resolution.Spec
-	} else {
-		if projectRoot == "" {
-			projectRoot, err = os.Getwd()
-			if err != nil {
-				fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
-				return tui.OutcomeRuntimeError
-			}
-		}
-		cfg, err = config.Load(home, projectRoot)
-		if err == nil {
-			socket = strings.TrimSpace(opts.Socket)
-			if socket == "" {
-				socket = cfg.Socket
-			}
-		}
-	}
-	if err != nil {
-		if errors.Is(err, config.ErrInvalidTUILocale) {
-			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapLocaleInvalid, nil, bootstrapLocale))
-			return tui.OutcomeUsage
-		}
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
-		return tui.OutcomeRuntimeError
-	}
-	loc, err := microcopy.ResolveLocale(opts.Locale, cfg.TUILocale)
-	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapLocaleInvalid, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
-		return tui.OutcomeUsage
-	}
-	keybindings, err := tui.ParseKeyBindingOverrides(cfg.TUIKeybindings)
-	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapConfigFailed, microcopy.Args{"reason": err.Error()}, loc))
-		return tui.OutcomeUsage
-	}
-	sessionID := strings.TrimSpace(opts.SessionID)
-	if sessionID == "" {
-		sessionID, err = resolveSession(nil, cfg.StateDir, projectRoot)
-		if err != nil {
-			fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapRecoveryFailed, microcopy.Args{"reason": err.Error()}, loc))
-			return tui.OutcomeRuntimeError
-		}
-	}
+	home := prepared.home
+	projectRoot := prepared.projectRoot
+	cfg := prepared.config
+	socket := prepared.socket
+	runtimeSpec := prepared.runtimeSpec
+	loc := prepared.locale
+	keybindings := prepared.keybindings
+	sessionID := prepared.sessionID
 
 	th := theme.New(theme.Detect(os.Getenv, true))
 	initialTarget := tui.ConnectionTarget{
@@ -182,6 +113,7 @@ func Run(opts Options) tui.Outcome {
 		PrepareTarget:     coordinator.prepare,
 		CommitTarget:      coordinator.commit,
 		AbortTarget:       coordinator.abort,
+		AcknowledgeTarget: coordinator.acknowledge,
 		ListWorkspaces:    coordinator.listWorkspaces,
 		LoadWorkspace:     workspaceLoader(home),
 		ResumeWorkspace:   workspaceResumer,
@@ -205,6 +137,9 @@ func Run(opts Options) tui.Outcome {
 	}
 
 	final, err := prog.Run()
+	if raw := model.CloseTerminalGraphics(); raw != "" {
+		_, _ = fmt.Fprint(os.Stdout, raw)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapRuntimeFailed, microcopy.Args{"reason": err.Error()}, loc))
 		return tui.OutcomeRuntimeError
@@ -220,58 +155,6 @@ type borrowedRPC struct{ tui.Caller }
 func (borrowedRPC) Close() error { return nil }
 
 var errRuntimeModeChoiceCancelled = errors.New("runtime mode choice cancelled")
-
-type runtimeModeChoiceCopy struct {
-	title, workspace, legacy, cancel, prompt, invalid string
-}
-
-func chooseRuntimeMode(in io.Reader, out io.Writer, locale string) (localruntime.Mode, error) {
-	copy := runtimeModeChoiceText(locale)
-	fmt.Fprintf(out, "%s\n  [w] %s\n  [l] %s\n  [c] %s\n%s", copy.title, copy.workspace, copy.legacy, copy.cancel, copy.prompt)
-	scanner := bufio.NewScanner(in)
-	for scanner.Scan() {
-		switch strings.ToLower(strings.TrimSpace(scanner.Text())) {
-		case "w", "workspace", "1":
-			return localruntime.ModeWorkspace, nil
-		case "l", "legacy", "2":
-			return localruntime.ModeLegacy, nil
-		case "c", "cancel", "q", "3", "":
-			return "", errRuntimeModeChoiceCancelled
-		default:
-			fmt.Fprintf(out, "%s\n%s", copy.invalid, copy.prompt)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return "", err
-	}
-	return "", errRuntimeModeChoiceCancelled
-}
-
-func runtimeModeChoiceText(locale string) runtimeModeChoiceCopy {
-	base := strings.ToLower(strings.TrimSpace(locale))
-	if i := strings.IndexAny(base, "-_@."); i >= 0 {
-		base = base[:i]
-	}
-	switch base {
-	case "zh":
-		return runtimeModeChoiceCopy{
-			title:     "检测到旧版全局运行时数据。请选择 Carina 的项目运行方式：",
-			workspace: "使用独立 workspace runtime（旧数据保持不变）",
-			legacy:    "继续使用旧版全局 runtime", cancel: "取消并退出",
-			prompt: "选择 [w/l/c]: ", invalid: "请输入 w、l 或 c。",
-		}
-	case "ja":
-		return runtimeModeChoiceCopy{title: "従来のグローバルランタイムデータが見つかりました。", workspace: "分離された workspace runtime を使用", legacy: "従来のグローバル runtime を継続", cancel: "キャンセル", prompt: "選択 [w/l/c]: ", invalid: "w、l、c のいずれかを入力してください。"}
-	case "ko":
-		return runtimeModeChoiceCopy{title: "기존 전역 런타임 데이터가 발견되었습니다.", workspace: "격리된 workspace runtime 사용", legacy: "기존 전역 runtime 계속 사용", cancel: "취소", prompt: "선택 [w/l/c]: ", invalid: "w, l 또는 c를 입력하세요."}
-	case "es":
-		return runtimeModeChoiceCopy{title: "Se encontraron datos del runtime global anterior.", workspace: "Usar un runtime aislado por workspace", legacy: "Continuar con el runtime global anterior", cancel: "Cancelar", prompt: "Elige [w/l/c]: ", invalid: "Escribe w, l o c."}
-	case "fr":
-		return runtimeModeChoiceCopy{title: "Des données de l'ancien runtime global ont été détectées.", workspace: "Utiliser un runtime isolé par workspace", legacy: "Continuer avec l'ancien runtime global", cancel: "Annuler", prompt: "Choix [w/l/c] : ", invalid: "Saisissez w, l ou c."}
-	default:
-		return runtimeModeChoiceCopy{title: "Legacy global runtime data was found. Choose how Carina should run projects:", workspace: "Use an isolated workspace runtime (legacy data stays unchanged)", legacy: "Continue using the legacy global runtime", cancel: "Cancel and exit", prompt: "Choose [w/l/c]: ", invalid: "Enter w, l, or c."}
-	}
-}
 
 func workspaceLoader(home string) func(string) (tui.WorkspaceDestination, error) {
 	return func(root string) (tui.WorkspaceDestination, error) {

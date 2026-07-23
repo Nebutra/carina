@@ -19,17 +19,18 @@ import (
 // the decision_id it resolves. The body is a colored unified diff when the
 // gated action carries one, otherwise the canonicalized command/resource.
 type approvalState struct {
-	DecisionID   string
-	Action       string // capability, e.g. command.exec
-	Resource     string
-	Reason       string // the policy rule that fired
-	Label        string
-	Body         []string // pre-rendered diff lines, when present
-	Resolving    bool
-	PendingAllow bool
-	PendingScope string
-	Error        string
-	Scroll       int
+	DecisionID    string
+	Action        string // capability, e.g. command.exec
+	Resource      string
+	Reason        string // the policy rule that fired
+	Label         string
+	Body          []string // pre-rendered diff lines, when present
+	Resolving     bool
+	PendingAllow  bool
+	PendingScope  string
+	Error         string
+	Scroll        int
+	HoveredAction string
 }
 
 type approvalResolutionSnapshot struct {
@@ -464,6 +465,9 @@ func (m *Model) overlayView() string {
 		}
 	}
 	footer = m.th.Style(theme.RoleMuted).Render(footer)
+	if ap.HoveredAction != "" && !ap.Resolving {
+		footer = m.th.Style(theme.RoleTitle).Render(ansi.Strip(footer))
+	}
 
 	lines := []string{fitRenderedLine(m.th.Style(theme.RoleWarning).Render(title), contentWidth), ""}
 	for _, line := range visibleBody {

@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Nebutra/carina/go/tui/theme"
+	ui "github.com/Nebutra/carina/go/tui/ui"
 )
 
 // rootLayout is the single source of truth for both rendering and physical
@@ -34,7 +35,11 @@ type rootLayout struct {
 // layout recomputes component sizes. The prompt grows with its content but is
 // capped so the transcript always keeps the majority of the terminal.
 func (m *Model) layout() {
+	if m.componentRuntime != nil {
+		m.componentRuntime.Invalidation.SetTargetGeneration(m.sessionGeneration)
+	}
 	m.configureInput()
+	m.prepareAttachmentPreview()
 	l := m.calculateLayout()
 	m.root = l
 	// The transcript is an unframed document surface with one-cell side
@@ -47,6 +52,41 @@ func (m *Model) layout() {
 	if m.followTail {
 		m.vp.GotoBottom()
 	}
+	m.refreshComponentFrame()
+}
+
+func (m *Model) refreshComponentFrame() {
+	if m.question != nil || m.approval != nil {
+		m.ensureGovernanceFrame()
+		return
+	}
+	m.teardownGovernanceFrame()
+	if m.activePrimaryOverlayKind() != primaryOverlayNone {
+		m.ensurePrimaryOverlayFrame()
+		return
+	}
+	m.teardownPrimaryOverlayFrame()
+	if m.sessionPicker != nil {
+		m.ensureNavigatorFrame()
+		return
+	}
+	if m.transcriptPager != nil && m.transcriptPager.operationalKind != "" {
+		m.ensureOperationalFrame()
+		return
+	}
+	if m.attachmentPointerActive() {
+		m.ensureAttachmentFrame()
+		return
+	}
+	m.reconcileFrameGraphics(ui.Frame{})
+	m.componentFrame = ui.Frame{}
+}
+
+func (m *Model) attachmentPointerActive() bool {
+	return m.question == nil && m.approval == nil && m.planReview == nil &&
+		m.checkpointPicker == nil && m.modelPicker == nil && m.sessionPicker == nil &&
+		m.keymapEditor == nil && m.settings == nil && !m.helpOpen && m.transcriptPager == nil &&
+		m.editor == nil && len(m.attachments) > 0
 }
 
 func (m *Model) configureInput() {
@@ -240,7 +280,7 @@ func (m *Model) visibleSuggestPanelLines(limit int) []string {
 func (m *Model) pastePanelLines() []string {
 	total := len(m.pendingPrefix) + len(m.pendingPaste)
 	if total == 0 {
-		return nil
+		return m.attachmentPanelLines()
 	}
 	lines := []string{m.th.Style(theme.RoleMuted).Render(m.text(MsgPasteHeader, MessageArgs{
 		"undo": m.keys.label(KeyContextComposer, ActionComposerUndo),
@@ -269,7 +309,7 @@ func (m *Model) pastePanelLines() []string {
 		})
 		lines = append(lines, m.th.Style(theme.RoleInfo).Render(line))
 	}
-	return lines
+	return append(lines, m.attachmentPanelLines()...)
 }
 
 func (m *Model) queuePanelLines() []string {
@@ -343,6 +383,9 @@ func (m *Model) View() tea.View {
 	// for asynchronous state transitions that change a conditional row.
 	if next := m.calculateLayout(); next != m.root {
 		m.layout()
+	}
+	if m.question != nil || m.approval != nil {
+		m.ensureGovernanceFrame()
 	}
 	l := m.root
 	var b strings.Builder
@@ -427,41 +470,18 @@ func (m *Model) View() tea.View {
 		content = m.historySearchPanelLine(l.width)
 	}
 	if m.question != nil {
-		modal := fitViewBlock(m.questionOverlayView(), l.width, l.height, true)
-		content = lipgloss.Place(l.width, l.height,
-			lipgloss.Center, lipgloss.Center, modal)
+		content = renderComponentFrame(m.componentFrame, l.width, l.height)
 	} else if m.approval != nil {
-		modal := fitViewBlock(m.overlayView(), l.width, l.height, true)
-		content = lipgloss.Place(l.width, l.height,
-			lipgloss.Center, lipgloss.Center, modal)
-	} else if m.planReview != nil {
-		modal := fitViewBlock(m.planReviewOverlayView(), l.width, l.height, true)
-		content = lipgloss.Place(l.width, l.height,
-			lipgloss.Center, lipgloss.Center, modal)
-	} else if m.checkpointPicker != nil {
-		modal := fitViewBlock(m.checkpointPickerView(), l.width, l.height, true)
-		content = lipgloss.Place(l.width, l.height,
-			lipgloss.Center, lipgloss.Center, modal)
-	} else if m.modelPicker != nil {
-		modal := fitViewBlock(m.modelPickerView(), l.width, l.height, true)
-		content = lipgloss.Place(l.width, l.height,
-			lipgloss.Center, lipgloss.Center, modal)
+		content = renderComponentFrame(m.componentFrame, l.width, l.height)
+	} else if m.activePrimaryOverlayKind() != primaryOverlayNone {
+		content = renderComponentFrame(m.componentFrame, l.width, l.height)
 	} else if m.sessionPicker != nil {
-		modal := fitViewBlock(m.sessionPickerView(), l.width, l.height, true)
-		content = lipgloss.Place(l.width, l.height, lipgloss.Center, lipgloss.Center, modal)
-	} else if m.keymapEditor != nil {
-		modal := fitViewBlock(m.keymapEditorView(), l.width, l.height, true)
-		content = lipgloss.Place(l.width, l.height,
-			lipgloss.Center, lipgloss.Center, modal)
-	} else if m.settings != nil {
-		modal := fitViewBlock(m.settingsOverlayView(), l.width, l.height, true)
-		content = lipgloss.Place(l.width, l.height, lipgloss.Center, lipgloss.Center, modal)
-	} else if m.helpOpen {
-		modal := fitViewBlock(m.helpOverlayView(), l.width, l.height, true)
-		content = lipgloss.Place(l.width, l.height,
-			lipgloss.Center, lipgloss.Center, modal)
+		content = renderComponentFrame(m.componentFrame, l.width, l.height)
 	} else if m.transcriptPager != nil {
-		content = m.transcriptPagerView(l.width, l.height)
+		content = renderComponentFrame(m.componentFrame, l.width, l.height)
+	}
+	if m.attachmentPointerActive() {
+		content = renderComponentOverlay(content, m.componentFrame, l.width, l.height)
 	}
 
 	v := tea.NewView(content)
@@ -472,14 +492,17 @@ func (m *Model) View() tea.View {
 	// unmodified drag belong to the app; terminals conventionally retain native
 	// text selection through their modifier-assisted selection gesture.
 	v.MouseMode = tea.MouseModeCellMotion
+	if m.componentFrame.AllMotion {
+		v.MouseMode = tea.MouseModeAllMotion
+	}
 	// Mouse messages already flow through Program.eventLoop into Model.Update.
 	// Re-sending one from OnMouse creates a self-sustaining message/render loop
 	// after the first click or wheel event.
 	// A nil declared cursor makes Bubble Tea hide the terminal cursor. This is
 	// intentional while an overlay owns input, and whenever a zero-sized host
 	// has not supplied a usable cell grid yet (R21).
-	if !m.helpOpen && m.settings == nil && m.question == nil && m.approval == nil && m.planReview == nil && m.transcriptPager == nil &&
-		m.checkpointPicker == nil && m.modelPicker == nil && m.sessionPicker == nil && m.keymapEditor == nil &&
+	if m.activePrimaryOverlayKind() == primaryOverlayNone && m.question == nil && m.approval == nil && m.transcriptPager == nil &&
+		m.sessionPicker == nil &&
 		m.editor == nil && m.width > 0 && m.height > 0 {
 		if m.historySearch != nil {
 			cursor := m.input.Cursor()
@@ -501,6 +524,11 @@ func (m *Model) View() tea.View {
 			cursor.Position.Y = clampInt(cursor.Position.Y+l.inputY, 0, l.height-1)
 			v.Cursor = cursor
 		}
+	} else if m.sessionPicker != nil && m.componentFrame.Cursor != nil {
+		request := m.componentFrame.Cursor
+		cursor := tea.NewCursor(request.X, request.Y)
+		cursor.Blink = true
+		v.Cursor = cursor
 	}
 	return v
 }

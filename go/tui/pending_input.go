@@ -33,6 +33,8 @@ func (m *Model) beginSubmissionTypeAhead() {
 	if state.consumePaste {
 		m.pendingPrefix = nil
 		m.pendingPaste = nil
+		m.attachments = nil
+		m.clearAttachmentInteraction()
 	}
 	m.historyPos = len(m.history)
 	m.historyScratch = promptDraft{}
@@ -51,6 +53,7 @@ func submissionOwnedDraft(state *submissionState) promptDraft {
 	}
 	if state.consumePaste {
 		owned.Paste = append([]string(nil), state.draft.Paste...)
+		owned.Attachments = cloneAttachments(state.draft.Attachments)
 	}
 	return owned
 }
@@ -74,9 +77,10 @@ func (m *Model) restoreFailedSubmission(state *submissionState) {
 	}
 	prefix = append(prefix, current.Prefix...)
 	m.restoreDraft(promptDraft{
-		Prefix: prefix,
-		Text:   current.Text,
-		Paste:  append([]string(nil), current.Paste...),
+		Prefix:      prefix,
+		Text:        current.Text,
+		Paste:       append([]string(nil), current.Paste...),
+		Attachments: append(cloneAttachments(submissionOwnedDraft(state).Attachments), cloneAttachments(current.Attachments)...),
 	})
 	m.historyPos = len(m.history)
 	m.historyScratch = promptDraft{}

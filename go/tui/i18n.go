@@ -15,13 +15,13 @@ import (
 type Locale string
 
 const (
-	LocaleEnglish       Locale = "en"
-	LocaleChinese       Locale = "zh"      // Simplified (zh-Hans / zh-CN)
-	LocaleChineseHant   Locale = "zh-Hant" // Traditional (zh-Hant / zh-TW / zh-HK)
-	LocaleJapanese      Locale = "ja"
-	LocaleKorean        Locale = "ko"
-	LocaleSpanish       Locale = "es"
-	LocaleFrench        Locale = "fr"
+	LocaleEnglish     Locale = "en"
+	LocaleChinese     Locale = "zh"      // Simplified (zh-Hans / zh-CN)
+	LocaleChineseHant Locale = "zh-Hant" // Traditional (zh-Hant / zh-TW / zh-HK)
+	LocaleJapanese    Locale = "ja"
+	LocaleKorean      Locale = "ko"
+	LocaleSpanish     Locale = "es"
+	LocaleFrench      Locale = "fr"
 )
 
 var supportedLocales = []Locale{

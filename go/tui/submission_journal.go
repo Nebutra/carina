@@ -304,7 +304,7 @@ func (m *Model) restoreSubmissionJournal() tea.Cmd {
 	}
 	retry, ok, err := m.submissions.load(m.sessionID)
 	if err != nil {
-		m.push(m.text(MsgSubmissionRecoveryFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
+		m.setOperationalNotice(m.text(MsgSubmissionRecoveryFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}), theme.RoleError)
 		return nil
 	}
 	if !ok || m.submitting != nil {
@@ -315,9 +315,9 @@ func (m *Model) restoreSubmissionJournal() tea.Cmd {
 	if !background {
 		m.restoreDraft(retry.draft)
 		m.resetComposerUndo()
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgSubmissionRestored, nil)))
+		m.setOperationalNotice(m.text(MsgSubmissionRestored, nil), theme.RoleInfo)
 	} else {
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgSubmissionReconciling, nil)))
+		m.setOperationalNotice(m.text(MsgSubmissionReconciling, nil), theme.RoleInfo)
 	}
 	cmd := m.beginSubmissionSourceWithIntent(submissionTask, "", retry.draft, false, false)
 	if background && m.submitting != nil {

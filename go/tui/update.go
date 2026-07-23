@@ -9,11 +9,14 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-shellwords"
 
 	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/tui/mathimage"
 	"github.com/Nebutra/carina/go/tui/theme"
+	ui "github.com/Nebutra/carina/go/tui/ui"
 )
 
 // ctrlCWindow is the double-press window for the cascading interrupt (P1.4):
@@ -61,6 +64,25 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		mathimage.ResetTransport()
+		if m.componentRuntime != nil {
+			m.componentRuntime.InvalidateGeometry()
+		}
+		m.componentFrame = ui.Frame{}
+		m.layout()
+		return m, tea.Raw(ansi.WindowOp(ansi.RequestCellSizeWinOp))
+
+	case uv.CellSizeEvent:
+		if !mathimage.SetCellSize(msg.Width, msg.Height) {
+			return m, nil
+		}
+		// Cell metrics are part of image layout even when the terminal's cell
+		// grid width is unchanged, so force presentation and component reflow.
+		m.tr.renderedWidth = 0
+		if m.componentRuntime != nil {
+			m.componentRuntime.InvalidateGeometry()
+		}
+		m.componentFrame = ui.Frame{}
 		m.layout()
 		return m, nil
 
@@ -77,16 +99,23 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pendingSessionID != "" && msg.SessionID != m.pendingSessionID {
 			return m, nil
 		}
+		if m.pendingTarget != nil && m.pendingSubmissions != nil && !sameConnectionTarget(msg.Target, *m.pendingTarget) {
+			// Session IDs are scoped to a runtime and may collide across state
+			// directories. A late readiness signal from the source must not adopt
+			// the destination journal/root while retaining the source RPC client.
+			return m, nil
+		}
 		if msg.Generation != 0 && msg.Generation < m.sessionGeneration {
 			return m, nil
 		}
 		crossRuntime := m.pendingTarget != nil && m.pendingSubmissions != nil
+		preparedToken := m.pendingPreparedToken
 		reconnected := !crossRuntime && m.sessionID == msg.SessionID && m.conn == ConnConnected
 		if m.sessionID != "" && (m.sessionID != msg.SessionID || crossRuntime) {
 			if !crossRuntime {
 				if err := m.submissions.transfer(msg.SessionID); err != nil {
 					m.submissionLeaseErr = err
-					m.push(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
+					m.setOperationalNotice(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}), theme.RoleError)
 					return m, nil
 				}
 			}
@@ -127,6 +156,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Generation != 0 {
 			m.sessionGeneration = msg.Generation
 		}
+		if crossRuntime && preparedToken != 0 && m.acknowledgeTarget != nil {
+			m.acknowledgeTarget(preparedToken)
+		}
 		m.call = msg.Call
 		var firstConnection tea.Cmd
 		if !m.firstConnectionSeen {
@@ -152,18 +184,18 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// the former writer, without replaying attach/history initialization.
 			m.submissionLeaseErr = m.submissions.acquire(msg.SessionID)
 			if m.submissionLeaseErr != nil {
-				m.push(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}))
+				m.setOperationalNotice(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}), theme.RoleError)
 			}
 			return m, m.refreshRuntimeStatus()
 		}
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateAttached, MessageArgs{"session": msg.SessionID})))
+		m.setOperationalNotice(m.text(MsgUpdateAttached, MessageArgs{"session": msg.SessionID}), theme.RoleMuted)
 		if crossRuntime {
 			m.submissionLeaseErr = nil
 		} else {
 			m.submissionLeaseErr = m.submissions.acquire(msg.SessionID)
 		}
 		if m.submissionLeaseErr != nil {
-			m.push(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}))
+			m.setOperationalNotice(m.text(MsgUpdateReadOnly, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}), theme.RoleError)
 		}
 		reconcile := m.restoreSubmissionJournal()
 		history := m.loadRecentHistory(msg.Call)
@@ -222,14 +254,14 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inFlightTaskID = msg.TaskID
 			m.applyConversation(conversationTransition{Kind: transitionRunning, TaskID: msg.TaskID, EventType: "task.active", Status: "running"})
 			m.tasks.setTask(msg.TaskID, "running")
-			m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateActiveRestored, MessageArgs{"task": msg.TaskID})))
+			m.setOperationalNotice(m.text(MsgUpdateActiveRestored, MessageArgs{"task": msg.TaskID}), theme.RoleInfo)
 			m.layout()
 		}
 		return m, nil
 
 	case ConnLostMsg:
 		if m.pendingSessionID != "" {
-			if msg.SessionID == m.pendingSessionID {
+			if msg.SessionID == m.pendingSessionID && msg.Generation == m.sessionGeneration+1 {
 				if m.sessionPicker == nil {
 					m.sessionPicker = &sessionPickerState{generation: m.sessionOpGen}
 				}
@@ -245,11 +277,11 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.conn = ConnLost
 		m.applyConversation(conversationTransition{Kind: transitionUnavailable, EventType: "connection.lost"})
-		m.push(fmt.Sprintf("%s %s", glyphFailed(m.th), microcopy.Degrade(
+		m.setOperationalNotice(fmt.Sprintf("%s %s", glyphFailed(m.th), microcopy.Degrade(
 			microcopy.DegradeDaemonUnreachable,
 			microcopy.Args{"socket": m.socket},
 			microcopy.WithLocale(m.locale), microcopy.WithPlain(true),
-		)))
+		)), theme.RoleError)
 		return m, nil
 
 	case ReconnectingMsg:
@@ -262,7 +294,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ConnRestoredMsg:
-		if m.pendingSessionID != "" && msg.SessionID != m.pendingSessionID {
+		if m.pendingSessionID != "" {
 			return m, nil
 		}
 		if msg.Generation != 0 && (msg.SessionID != m.sessionID || msg.Generation != m.sessionGeneration) {
@@ -271,7 +303,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.conn = ConnConnected
 		m.applyConversation(conversationTransition{Kind: transitionConnected, SessionID: msg.SessionID, EventType: "connection.restored"})
 		m.attempt = 0
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateReconnected, nil)))
+		m.setOperationalNotice(m.text(MsgUpdateReconnected, nil), theme.RoleSuccess)
 		return m, nil
 
 	case EventMsg:
@@ -292,7 +324,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case cancelDoneMsg:
 		if msg.err != nil {
-			m.push(m.text(MsgUpdateCancelFailed, MessageArgs{"glyph": glyphFailed(m.th), "task": msg.taskID, "error": msg.err.Error()}))
+			m.setOperationalNotice(m.text(MsgUpdateCancelFailed, MessageArgs{"glyph": glyphFailed(m.th), "task": msg.taskID, "error": msg.err.Error()}), theme.RoleError)
 			return m, nil
 		}
 		cancelledActive := m.inFlightTaskID == msg.taskID
@@ -301,7 +333,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.applyConversation(conversationTransition{Kind: transitionTerminal, TaskID: msg.taskID, EventType: "task.cancel", Status: "cancelled", Outcome: outcomeCancelled})
 		m.tasks.setTask(msg.taskID, "cancelled")
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateCancelRecorded, MessageArgs{"task": msg.taskID})))
+		m.setOperationalNotice(m.text(MsgUpdateCancelRecorded, MessageArgs{"task": msg.taskID}), theme.RoleMuted)
 		if cancelledActive {
 			m.restoreQueuedDrafts("task cancellation")
 		}
@@ -321,11 +353,13 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case approvalDoneMsg:
 		m.handleApprovalDone(msg)
 		m.syncConversationLocalActivity("approval.rpc.done")
+		m.layout()
 		return m, m.maybeSubmitNextQueued()
 
 	case questionDoneMsg:
 		m.handleQuestionDone(msg)
 		m.syncConversationLocalActivity("question.rpc.done")
+		m.layout()
 		return m, m.maybeSubmitNextQueued()
 
 	case historyLoadedMsg:
@@ -422,6 +456,15 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleClipboardDone(msg)
 		return m, m.maybeSubmitNextQueued()
 
+	case attachmentLoadMsg:
+		return m, m.handleAttachmentLoad(msg)
+
+	case attachmentUploadMsg:
+		return m, m.handleAttachmentUpload(msg)
+
+	case attachmentGraphicsFlushMsg:
+		return m, nil
+
 	case suggestDebounceMsg:
 		return m, m.handleSuggestDebounce(msg)
 
@@ -490,7 +533,73 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 
+	case tea.MouseMotionMsg:
+		if cmd, handled := m.dispatchGovernanceMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchPrimaryOverlayMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchNavigatorMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchOperationalMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchAttachmentMouse(msg); handled {
+			return m, cmd
+		}
+		return m, nil
+
+	case tea.MouseClickMsg:
+		if cmd, handled := m.dispatchGovernanceMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchPrimaryOverlayMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchNavigatorMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchOperationalMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchAttachmentMouse(msg); handled {
+			return m, cmd
+		}
+		return m, nil
+
+	case tea.MouseReleaseMsg:
+		if cmd, handled := m.dispatchGovernanceMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchPrimaryOverlayMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchNavigatorMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchOperationalMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchAttachmentMouse(msg); handled {
+			return m, cmd
+		}
+		return m, nil
+
 	case tea.MouseWheelMsg:
+		if cmd, handled := m.dispatchGovernanceMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchPrimaryOverlayMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchNavigatorMouse(msg); handled {
+			return m, cmd
+		}
+		if cmd, handled := m.dispatchOperationalMouse(msg); handled {
+			return m, cmd
+		}
 		return m, m.handleMouseWheel(msg)
 
 	case tea.KeyPressMsg:
@@ -529,16 +638,16 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.historySearchKeyPress(msg)
 		}
 		composerSurfaceAvailable := m.approval == nil && m.question == nil &&
-			m.historySearch == nil && !m.helpOpen && m.transcriptPager == nil &&
-			m.checkpointPicker == nil && m.modelPicker == nil && m.sessionPicker == nil && m.keymapEditor == nil
+			m.historySearch == nil && m.activePrimaryOverlayKind() == primaryOverlayNone &&
+			m.transcriptPager == nil && m.sessionPicker == nil
 		if composerSurfaceAvailable && m.submitting != nil && !submissionHasIndependentComposer(m.submitting) &&
 			m.keyStartsSubmissionTypeAhead(msg) {
 			m.beginSubmissionTypeAhead()
 		}
 		submissionBlocksComposer := m.submitting != nil && !submissionHasIndependentComposer(m.submitting)
 		if m.approval != nil || m.question != nil || m.historySearch != nil ||
-			submissionBlocksComposer || m.helpOpen || m.transcriptPager != nil ||
-			m.checkpointPicker != nil || m.modelPicker != nil || m.sessionPicker != nil || m.keymapEditor != nil {
+			submissionBlocksComposer || m.activePrimaryOverlayKind() != primaryOverlayNone ||
+			m.transcriptPager != nil || m.sessionPicker != nil {
 			m.pasteBurst.reset()
 		} else {
 			composerBefore = m.composerSnapshot()
@@ -675,58 +784,11 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		}
 		return nil, true
 	}
-	if m.planReview != nil {
-		if cmd, handled := m.planReviewKey(key); handled {
-			return cmd, true
-		}
-		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) {
-			return tea.ClearScreen, true
-		}
-		if m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
-			return m.ctrlC(), true
-		}
-		return nil, true
-	}
-	if m.checkpointPicker != nil {
-		return m.checkpointPickerKey(key)
-	}
-	if m.modelPicker != nil {
-		return m.modelPickerKey(key)
+	if m.activePrimaryOverlayKind() != primaryOverlayNone {
+		return m.dispatchPrimaryOverlayKey(key)
 	}
 	if m.sessionPicker != nil {
-		return m.sessionPickerKey(key)
-	}
-	if m.keymapEditor != nil {
-		return m.keymapEditorKey(key)
-	}
-
-	// Help is a real overlay rather than transcript output. It owns navigation
-	// and close keys, while redraw remains globally available.
-	if m.helpOpen {
-		if cmd, handled := m.helpKey(key); handled {
-			return cmd, true
-		}
-		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) {
-			return tea.ClearScreen, true
-		}
-		if m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
-			m.closeHelp()
-			return m.resumeQueuedAfterTransient(), true
-		}
-		return nil, true
-	}
-	if m.settings != nil {
-		if cmd, handled := m.settingsKey(key); handled {
-			return cmd, true
-		}
-		if m.keys.matches(KeyContextGlobal, ActionGlobalRedraw, key) {
-			return tea.ClearScreen, true
-		}
-		if m.keys.matches(KeyContextGlobal, ActionGlobalInterrupt, key) {
-			m.closeSettings()
-			return m.resumeQueuedAfterTransient(), true
-		}
-		return nil, true
+		return m.dispatchNavigatorKey(key)
 	}
 	// Reverse search owns every key while visible. In particular Ctrl+C must
 	// restore the exact draft instead of arming the global exit cascade.
@@ -735,6 +797,9 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	}
 	if m.transcriptPager != nil {
 		return m.transcriptPagerKey(key)
+	}
+	if cmd, handled := m.attachmentKey(key); handled {
+		return cmd, true
 	}
 	// The mention/slash suggestion panel is a transient, non-modal aid: it
 	// never takes the keyboard away from the approval/question overlays
@@ -827,9 +892,9 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 			return m.openCheckpointPicker(), true
 		}
 		m.rewindPrimed = true
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateRewindAgain, MessageArgs{
+		m.setOperationalNotice(m.text(MsgUpdateRewindAgain, MessageArgs{
 			"rewind": primaryKeyLabel(m.keys.keys(KeyContextChat, ActionChatRewind)),
-		})))
+		}), theme.RoleMuted)
 		return nil, true
 	}
 	if cmd, handled := m.handleWorkspaceKey(key); handled {
@@ -943,6 +1008,9 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 }
 
 func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
+	if cmd, handled := m.dispatchPrimaryOverlayMouse(msg); handled {
+		return cmd
+	}
 	delta := 0
 	switch msg.Button {
 	case tea.MouseWheelUp:
@@ -962,40 +1030,9 @@ func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
 		m.clampApprovalScroll()
 		return nil
 	}
-	if m.helpOpen {
-		m.helpScroll += delta
-		m.clampHelpScroll()
-		return nil
-	}
-	if m.settings != nil {
-		actions := m.settingsActions()
-		if delta < 0 && m.settings.cursor > 0 {
-			m.settings.cursor--
-		}
-		if delta > 0 && m.settings.cursor+1 < len(actions) {
-			m.settings.cursor++
-		}
-		return nil
-	}
 	if m.transcriptPager != nil {
 		m.transcriptPager.scrollBy(delta)
 		m.clampTranscriptPagerScroll(m.transcriptPagerLines())
-		return nil
-	}
-	if m.checkpointPicker != nil {
-		state := m.checkpointPicker
-		if state.preview == nil && !state.loading && !state.restoring {
-			state.selected += delta
-			state.clamp(m.checkpointPickerPageHeight())
-		}
-		return nil
-	}
-	if m.keymapEditor != nil {
-		state := m.keymapEditor
-		if state.mode == keymapBrowse && !state.pending {
-			state.selected += delta
-			state.clamp(m.keymapEditorPageHeight())
-		}
 		return nil
 	}
 	var cmd tea.Cmd
@@ -1052,11 +1089,10 @@ func (m *Model) ctrlC() tea.Cmd {
 		return tea.Quit
 	}
 	if m.submitting != nil {
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateSubmissionAck, MessageArgs{"interrupt": interruptKey})))
+		m.setOperationalNotice(m.text(MsgUpdateSubmissionAck, MessageArgs{"interrupt": interruptKey}), theme.RoleMuted)
 		return nil
 	}
 	hintText := m.text(MsgUpdateExitHint, MessageArgs{"interrupt": interruptKey})
-	hint := m.th.Style(theme.RoleMuted).Render(hintText)
 	// Recorded plain (not just pushed to the transcript): while the
 	// approval overlay is open, View() replaces the whole frame with the
 	// overlay (view.go) and the transcript is not rendered at all, so the
@@ -1067,17 +1103,17 @@ func (m *Model) ctrlC() tea.Cmd {
 		tid := m.inFlightTaskID
 		m.push(microcopy.Degrade(microcopy.DegradeInterruptedByUser, nil,
 			microcopy.WithLocale(m.locale), microcopy.WithPlain(m.plain())))
-		m.push(hint)
+		m.setOperationalNotice(hintText, theme.RoleMuted)
 		return m.cancelTask(tid)
 	}
 	if m.retrySubmission != nil {
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateUnknownSubmission, MessageArgs{
+		m.setOperationalNotice(m.text(MsgUpdateUnknownSubmission, MessageArgs{
 			"new": m.keys.label(KeyContextComposer, ActionComposerSubmitNew), "interrupt": interruptKey,
-		})))
-		m.push(hint)
+		}), theme.RoleWarning)
+		m.setOperationalNotice(hintText, theme.RoleMuted)
 		return nil
 	}
-	if draft := m.currentDraft(); draft.Text != "" || len(draft.Prefix) > 0 || len(draft.Paste) > 0 {
+	if draft := m.currentDraft(); !draftEmpty(draft) {
 		recoverable := historyDraftKey(draft) != ""
 		if recoverable {
 			m.recordHistory(draft)
@@ -1087,6 +1123,8 @@ func (m *Model) ctrlC() tea.Cmd {
 		m.input.Reset()
 		m.pendingPrefix = nil
 		m.pendingPaste = nil
+		m.attachments = nil
+		m.clearAttachmentInteraction()
 		m.queueRecallPending = false
 		m.resetComposerUndo()
 		m.closeSuggest()
@@ -1095,11 +1133,10 @@ func (m *Model) ctrlC() tea.Cmd {
 		if recoverable {
 			message = m.text(MsgUpdateDraftClearedRecover, nil)
 		}
-		m.push(m.th.Style(theme.RoleMuted).Render(message))
-		m.push(hint)
+		m.setOperationalNotice(message+" · "+hintText, theme.RoleMuted)
 		return m.maybeSubmitNextQueued()
 	}
-	m.push(hint)
+	m.setOperationalNotice(hintText, theme.RoleMuted)
 	return nil
 }
 
@@ -1107,7 +1144,7 @@ func (m *Model) ctrlD() (tea.Cmd, bool) {
 	if m.approval != nil || m.question != nil || m.planReview != nil || m.helpOpen || m.checkpointPicker != nil || m.modelPicker != nil || m.sessionPicker != nil || m.keymapEditor != nil {
 		return nil, true
 	}
-	if draft := m.currentDraft(); draft.Text != "" || len(draft.Prefix) > 0 || len(draft.Paste) > 0 {
+	if draft := m.currentDraft(); !draftEmpty(draft) {
 		// Let bubbles retain its standard Ctrl-D delete-forward behavior.
 		return nil, false
 	}
@@ -1138,7 +1175,7 @@ func (m *Model) submit() tea.Cmd {
 func (m *Model) submitWithIntent(forceNew bool) tea.Cmd {
 	draft := m.currentDraft()
 	if m.pendingSessionID != "" {
-		m.push(m.text(MsgSessionSwitching, MessageArgs{"session": m.pendingSessionID}))
+		m.setOperationalNotice(m.text(MsgSessionSwitching, MessageArgs{"session": m.pendingSessionID}), theme.RoleInfo)
 		return nil
 	}
 	text := strings.TrimSpace(draft.Text)
@@ -1237,14 +1274,15 @@ func (m *Model) submitWithIntent(forceNew bool) tea.Cmd {
 
 func (m *Model) currentDraft() promptDraft {
 	return promptDraft{
-		Prefix: append([]string(nil), m.pendingPrefix...),
-		Text:   m.input.Value(),
-		Paste:  append([]string(nil), m.pendingPaste...),
+		Prefix:      append([]string(nil), m.pendingPrefix...),
+		Text:        m.input.Value(),
+		Paste:       append([]string(nil), m.pendingPaste...),
+		Attachments: cloneAttachments(m.attachments),
 	}
 }
 
 func draftsEqual(a, b promptDraft) bool {
-	if a.Text != b.Text || a.Model != b.Model || a.Agent != b.Agent || a.Mode != b.Mode || a.ReasoningEffort != b.ReasoningEffort || len(a.Prefix) != len(b.Prefix) || len(a.Paste) != len(b.Paste) {
+	if a.Text != b.Text || a.Model != b.Model || a.Agent != b.Agent || a.Mode != b.Mode || a.ReasoningEffort != b.ReasoningEffort || len(a.Prefix) != len(b.Prefix) || len(a.Paste) != len(b.Paste) || len(a.Attachments) != len(b.Attachments) {
 		return false
 	}
 	for i := range a.Prefix {
@@ -1254,6 +1292,18 @@ func draftsEqual(a, b promptDraft) bool {
 	}
 	for i := range a.Paste {
 		if a.Paste[i] != b.Paste[i] {
+			return false
+		}
+	}
+	for i := range a.Attachments {
+		if a.Attachments[i].ID != b.Attachments[i].ID || a.Attachments[i].Digest != b.Attachments[i].Digest ||
+			a.Attachments[i].TextOffset != b.Attachments[i].TextOffset {
+			return false
+		}
+		if (a.Attachments[i].Ref == nil) != (b.Attachments[i].Ref == nil) {
+			return false
+		}
+		if a.Attachments[i].Ref != nil && *a.Attachments[i].Ref != *b.Attachments[i].Ref {
 			return false
 		}
 	}
@@ -1277,6 +1327,9 @@ func draftLabel(draft promptDraft) string {
 	if len(draft.Prefix) > 0 {
 		return "[restored content]"
 	}
+	if len(draft.Attachments) > 0 {
+		return "[image attachment]"
+	}
 	return "[pasted content]"
 }
 
@@ -1290,7 +1343,7 @@ func (m *Model) beginSubmissionSource(kind submissionKind, target string, draft 
 
 func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target string, draft promptDraft, fromQueue, forceNew bool) tea.Cmd {
 	if m.pendingSessionID != "" {
-		m.push(m.text(MsgSessionSwitching, MessageArgs{"session": m.pendingSessionID}))
+		m.setOperationalNotice(m.text(MsgSessionSwitching, MessageArgs{"session": m.pendingSessionID}), theme.RoleInfo)
 		return nil
 	}
 	if m.submitting != nil {
@@ -1304,7 +1357,7 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 			if err == nil {
 				err = errors.New("command is empty")
 			}
-			m.push(m.text(MsgUpdateCommandParseFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
+			m.setOperationalNotice(m.text(MsgUpdateCommandParseFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}), theme.RoleError)
 			if fromQueue {
 				m.restoreQueuedDrafts("invalid queued command")
 			}
@@ -1315,15 +1368,24 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 	call := m.call
 	if call == nil {
 		m.breakComposerUndoGroup()
-		m.push(m.text(MsgUpdateDisconnectedDraft, MessageArgs{"glyph": glyphFailed(m.th)}))
+		m.setOperationalNotice(m.text(MsgUpdateDisconnectedDraft, MessageArgs{"glyph": glyphFailed(m.th)}), theme.RoleError)
 		return nil
+	}
+	if kind == submissionTask && draftNeedsAttachmentUpload(draft) {
+		return m.beginAttachmentUpload(kind, target, draft, fromQueue, forceNew)
 	}
 	m.breakComposerUndoGroup()
 	draft = cloneDraft(draft)
 	m.submissionGen++
 	clientID := ""
 	prompt := draftPrompt(draft)
-	envelope := submissionEnvelope{prompt: prompt, model: draft.Model, agent: draft.Agent, mode: draft.Mode, reasoningEffort: draft.ReasoningEffort}
+	if strings.TrimSpace(prompt) == "" && len(draft.Attachments) > 0 {
+		prompt = "Analyze the attached image or images."
+	}
+	envelope := submissionEnvelope{
+		prompt: prompt, model: draft.Model, agent: draft.Agent, mode: draft.Mode,
+		reasoningEffort: draft.ReasoningEffort, inputMediaRefs: draftMediaReferences(draft),
+	}
 	if envelope.model == "" {
 		envelope.model = m.model
 	}
@@ -1341,26 +1403,29 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 			return nil
 		}
 		if m.submissionLeaseErr != nil {
-			m.push(m.text(MsgUpdateSubmissionUnavailable, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}))
+			m.setOperationalNotice(m.text(MsgUpdateSubmissionUnavailable, MessageArgs{"glyph": glyphFailed(m.th), "error": m.submissionLeaseErr.Error()}), theme.RoleError)
 			m.layout()
 			return nil
 		}
 		if retry := m.retrySubmission; retry != nil && !forceNew {
 			if retry.prompt != prompt {
-				m.push(m.text(MsgUpdatePendingSubmission, MessageArgs{
+				m.setOperationalNotice(m.text(MsgUpdatePendingSubmission, MessageArgs{
 					"glyph": glyphFailed(m.th), "new": m.keys.label(KeyContextComposer, ActionComposerSubmitNew),
-				}))
+				}), theme.RoleWarning)
 				m.layout()
 				return nil
 			}
 			clientID = retry.clientID
-			envelope = submissionEnvelope{prompt: retry.prompt, model: retry.model, agent: retry.agent, mode: retry.mode, reasoningEffort: retry.reasoningEffort}
+			envelope = submissionEnvelope{
+				prompt: retry.prompt, model: retry.model, agent: retry.agent, mode: retry.mode,
+				reasoningEffort: retry.reasoningEffort, inputMediaRefs: draftMediaReferences(retry.draft),
+			}
 		} else {
 			clientID = newClientSubmissionID(m.submissionGen, m.now().UnixNano())
 		}
 		retry := submissionRetry{clientID: clientID, prompt: envelope.prompt, draft: cloneDraft(draft), model: envelope.model, agent: envelope.agent, mode: envelope.mode, reasoningEffort: envelope.reasoningEffort}
 		if err := m.submissions.save(m.sessionID, retry); err != nil {
-			m.push(m.text(MsgUpdateRecoverySaveFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
+			m.setOperationalNotice(m.text(MsgUpdateRecoverySaveFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}), theme.RoleError)
 			m.layout()
 			return nil
 		}
@@ -1407,6 +1472,9 @@ func (m *Model) beginSubmissionSourceWithIntent(kind submissionKind, target stri
 			if wire.mode != "" {
 				params["mode"] = wire.mode
 			}
+			if len(wire.inputMediaRefs) > 0 {
+				params["input_media_refs"] = wire.inputMediaRefs
+			}
 			var out struct {
 				TaskID string `json:"task_id"`
 				Status string `json:"status"`
@@ -1450,16 +1518,16 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 				clientID: state.clientID, prompt: state.envelope.prompt, draft: cloneDraft(state.draft),
 				model: state.envelope.model, agent: state.envelope.agent, mode: state.envelope.mode, reasoningEffort: state.envelope.reasoningEffort,
 			}
-			m.push(m.text(MsgUpdateTaskNotAcknowledged, MessageArgs{
+			m.setOperationalNotice(m.text(MsgUpdateTaskNotAcknowledged, MessageArgs{
 				"glyph": glyphFailed(m.th), "error": msg.err.Error(), "key": state.clientID,
-			}))
+			}), theme.RoleError)
 			if state.fromQueue {
 				m.recallQueuedSubmissionForRetry()
 			}
 		} else {
-			m.push(m.text(MsgUpdateSubmissionFailed, MessageArgs{
+			m.setOperationalNotice(m.text(MsgUpdateSubmissionFailed, MessageArgs{
 				"glyph": glyphFailed(m.th), "kind": state.kind, "error": msg.err.Error(),
-			}))
+			}), theme.RoleError)
 			if state.fromQueue {
 				m.restoreQueuedDrafts("automatic submission failure")
 			}
@@ -1478,7 +1546,7 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 				m.followUps.enqueue(state.draft)
 			}
 			m.restoreQueuedDrafts("queue ordering failure")
-			m.push(m.text(MsgUpdateQueueChanged, MessageArgs{"glyph": glyphFailed(m.th)}))
+			m.setOperationalNotice(m.text(MsgUpdateQueueChanged, MessageArgs{"glyph": glyphFailed(m.th)}), theme.RoleError)
 			return nil
 		}
 		_, _ = m.followUps.popFront()
@@ -1495,7 +1563,7 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 	if state.clientID != "" && m.retrySubmission != nil && m.retrySubmission.clientID == state.clientID {
 		m.retrySubmission = nil
 		if err := m.submissions.clear(m.sessionID, state.clientID); err != nil {
-			m.push(m.text(MsgUpdateRecoveryClearFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}))
+			m.setOperationalNotice(m.text(MsgUpdateRecoveryClearFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": err.Error()}), theme.RoleError)
 		}
 	}
 	if submissionHasIndependentComposer(state) {
@@ -1515,7 +1583,7 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 	case submissionSteer:
 		m.applyConversation(conversationTransition{Kind: transitionRunning, TaskID: msg.taskID, EventType: "steer.accepted", Status: "running"})
 		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateYouSteer, nil)) + shown)
-		m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgUpdateSteeringQueued, MessageArgs{"task": msg.taskID})))
+		m.setOperationalNotice(m.text(MsgUpdateSteeringQueued, MessageArgs{"task": msg.taskID}), theme.RoleInfo)
 	case submissionShell:
 		m.applyConversation(conversationTransition{Kind: transitionIdle, EventType: "shell.completed"})
 		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateYouShell, nil)) + state.target)
@@ -1592,11 +1660,14 @@ func (m *Model) commitDraft(draft promptDraft, consumePaste bool) {
 		if consumePaste {
 			m.pendingPrefix = nil
 			m.pendingPaste = nil
+			m.attachments = nil
+			m.clearAttachmentInteraction()
 		}
 	}
 	consumed := promptDraft{Prefix: append([]string(nil), draft.Prefix...), Text: draft.Text}
 	if consumePaste {
 		consumed.Paste = draft.Paste
+		consumed.Attachments = cloneAttachments(draft.Attachments)
 	}
 	m.recordHistory(consumed)
 	m.historyPos = len(m.history)
@@ -1608,6 +1679,7 @@ func (m *Model) commitDraft(draft promptDraft, consumePaste bool) {
 func (m *Model) recordHistory(draft promptDraft) {
 	draft.Prefix = append([]string(nil), draft.Prefix...)
 	draft.Paste = append([]string(nil), draft.Paste...)
+	draft.Attachments = cloneAttachments(draft.Attachments)
 	m.history = mergePromptHistory(nil, append(m.history, draft))
 }
 
@@ -1658,14 +1730,18 @@ func (m *Model) restoreDraft(draft promptDraft) {
 	m.input.SetValue(draft.Text)
 	m.pendingPrefix = append([]string(nil), draft.Prefix...)
 	m.pendingPaste = append([]string(nil), draft.Paste...)
+	m.attachments = cloneAttachments(draft.Attachments)
+	m.clearAttachmentInteraction()
 	m.closeSuggest()
 	m.applyComposerChrome()
 	m.layout()
 }
 
 func (m *Model) resetSessionProjection() {
+	m.releaseSessionGraphics()
 	m.tr = transcript{}
 	m.activityGroups = nil
+	m.liveTools = ui.NewLiveToolRegistry()
 	m.tasks = taskGraph{}
 	m.inFlightTaskID = ""
 	m.applyConversation(conversationTransition{Kind: transitionReset})
@@ -1701,6 +1777,18 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 	parts := strings.Fields(text)
 	name := strings.TrimPrefix(parts[0], "/")
 	switch name {
+	case "attach":
+		if len(parts) < 2 {
+			m.setOperationalNoticeKind("attachment", m.text(MsgAttachmentFailed, MessageArgs{"error": "path is required"}), theme.RoleError)
+			return nil
+		}
+		path := strings.Join(parts[1:], " ")
+		resolved, ok := pastedImagePath(path, m.workspaceRoot)
+		if !ok {
+			m.setOperationalNoticeKind("attachment", m.text(MsgAttachmentFailed, MessageArgs{"error": "path is not a supported image"}), theme.RoleError)
+			return nil
+		}
+		return m.attachImage(resolved)
 	case "help", "keys":
 		m.showHelp()
 		return nil
@@ -1730,7 +1818,7 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		}
 		return m.queryCanonicalSurface(canonicalRecap, "")
 	case "status":
-		return m.queryOperationalSurface("status", "session.get", map[string]any{"session_id": m.sessionID})
+		return m.openOperationalSurface("status", "session.get", map[string]any{"session_id": m.sessionID})
 	case "permissions":
 		if len(parts) == 3 && parts[1] == "new" && parts[2] == "safe-edit" {
 			return m.newSessionWithProfile("safe-edit")
@@ -1742,9 +1830,9 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			m.push(m.text(MsgUpdateUnknownCommand, MessageArgs{"command": "permissions; use /permissions or /permissions new <safe-edit|full-workspace> [--yes]"}))
 			return nil
 		}
-		return m.queryOperationalSurface("permissions", "profile.inventory", map[string]any{"session_id": m.sessionID})
+		return m.openOperationalSurface("permissions", "profile.inventory", map[string]any{"session_id": m.sessionID})
 	case "context":
-		return m.queryOperationalSurface("context", "context.summary", map[string]any{"session_id": m.sessionID})
+		return m.openOperationalSurface("context", "context.summary", map[string]any{"session_id": m.sessionID})
 	case "compact":
 		if len(parts) != 1 {
 			m.push(m.text(MsgUpdateUsageCompact, nil))
@@ -1754,7 +1842,7 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		if m.pausedRestore != nil && m.pausedRestore.TaskID != "" {
 			params["task_id"] = m.pausedRestore.TaskID
 		}
-		return m.queryOperationalSurface("compact", "session.checkpoint.compact", params)
+		return m.openOperationalSurface("compact", "session.checkpoint.compact", params)
 	case "config", "settings":
 		if len(parts) >= 2 {
 			switch parts[1] {
@@ -1766,7 +1854,7 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 					return nil
 				}
 			case "raw":
-				return m.queryOperationalSurface("config", "config.inventory", map[string]any{"session_id": m.sessionID})
+				return m.openOperationalSurface("config", "config.inventory", map[string]any{"session_id": m.sessionID})
 			}
 			m.push(m.text(MsgUpdateUnknownCommand, MessageArgs{"command": "config; use /config [model|effort|mode|permissions|keymap|raw]"}))
 			return nil
@@ -1775,9 +1863,9 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		m.openSettings(settingsTabOverview)
 		return m.refreshRuntimeStatus()
 	case "doctor":
-		return m.queryOperationalSurface("doctor", "daemon.doctor", map[string]any{})
+		return m.openOperationalSurface("doctor", "daemon.doctor", map[string]any{})
 	case "usage", "cost":
-		return m.queryOperationalSurface("usage", "usage.cost", map[string]any{"session_id": m.sessionID})
+		return m.openOperationalSurface("usage", "usage.cost", map[string]any{"session_id": m.sessionID})
 	case "review":
 		return m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: text}, false, false)
 	case "commit":
@@ -1893,6 +1981,8 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			return nil
 		}
 	case "inspect", "welcome":
+		m.openOperationalPager("inspect", m.text(MsgInspectHeader, nil))
+		m.transcriptPager.operationalMethod = "__inspect__"
 		return m.inspectSurface()
 	case "tasks", "ps":
 		return m.showTasksSurfaceAsync()
@@ -1923,16 +2013,16 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		m.layout()
 		return nil
 	case "session-review":
-		return m.queryOperationalSurface("review", "session.review", map[string]any{"session_id": m.sessionID})
+		return m.openOperationalSurface("review", "session.review", map[string]any{"session_id": m.sessionID})
 	case "memory":
 		if len(parts) == 1 || parts[1] == "status" {
-			return m.queryOperationalSurface("memory", "memory.status", map[string]any{"session_id": m.sessionID})
+			return m.openOperationalSurface("memory", "memory.status", map[string]any{"session_id": m.sessionID})
 		}
 		if parts[1] == "list" && len(parts) == 2 {
-			return m.queryOperationalSurface("memory", "memory.list", map[string]any{"session_id": m.sessionID, "target": "memory"})
+			return m.openOperationalSurface("memory", "memory.list", map[string]any{"session_id": m.sessionID, "target": "memory"})
 		}
 		if parts[1] == "search" && len(parts) >= 3 {
-			return m.queryOperationalSurface("memory", "memory.search", map[string]any{"session_id": m.sessionID, "target": "memory", "query": strings.Join(parts[2:], " "), "mode": "auto"})
+			return m.openOperationalSurface("memory", "memory.search", map[string]any{"session_id": m.sessionID, "target": "memory", "query": strings.Join(parts[2:], " "), "mode": "auto"})
 		}
 		if parts[1] == "read" && len(parts) <= 3 {
 			target := "memory"
@@ -1943,7 +2033,7 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 				m.push(m.text(MsgUpdateUsageMemory, nil))
 				return nil
 			}
-			return m.queryOperationalSurface("memory", "memory.read", map[string]any{"session_id": m.sessionID, "target": target})
+			return m.openOperationalSurface("memory", "memory.read", map[string]any{"session_id": m.sessionID, "target": target})
 		}
 		if parts[1] == "verify" && len(parts) >= 2 && len(parts) <= 4 {
 			target := "memory"
@@ -1958,10 +2048,10 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			if len(parts) == 4 {
 				params["revision"] = parts[3]
 			}
-			return m.queryOperationalSurface("memory", "memory.verify", params)
+			return m.openOperationalSurface("memory", "memory.verify", params)
 		}
 		if parts[1] == "rollback" && len(parts) == 7 && parts[6] == "--yes" && validMemoryTarget(parts[2]) {
-			return m.queryOperationalSurface("memory", "memory.rollback", map[string]any{
+			return m.openOperationalSurface("memory", "memory.rollback", map[string]any{
 				"session_id": m.sessionID, "target": parts[2], "revision": parts[3],
 				"expected_revision": parts[4], "idempotency_key": parts[5],
 			})
@@ -1971,7 +2061,7 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			if expected == "-" {
 				expected = ""
 			}
-			return m.queryOperationalSurface("memory", "memory.handoff", map[string]any{
+			return m.openOperationalSurface("memory", "memory.handoff", map[string]any{
 				"source_session_id": m.sessionID, "target_session_id": parts[2], "target": parts[3],
 				"expected_revision": expected, "idempotency_key": parts[5],
 			})
@@ -1979,11 +2069,11 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		m.push(m.text(MsgUpdateUsageMemory, nil))
 		return nil
 	case "skills":
-		return m.queryOperationalSurface("skills", "skill.inventory", map[string]any{"session_id": m.sessionID})
+		return m.openOperationalSurface("skills", "skill.inventory", map[string]any{"session_id": m.sessionID})
 	case "hooks":
-		return m.queryOperationalSurface("hooks", "hook.inventory", map[string]any{"session_id": m.sessionID})
+		return m.openOperationalSurface("hooks", "hook.inventory", map[string]any{"session_id": m.sessionID})
 	case "extensions":
-		return m.queryOperationalSurface("extensions", "extension.list", map[string]any{"workspace_root": m.workspaceRoot})
+		return m.openOperationalSurface("extensions", "extension.list", map[string]any{"workspace_root": m.workspaceRoot})
 	case "diff":
 		if len(parts) != 1 {
 			m.push(m.text(MsgUpdateUsageDiff, nil))
@@ -1995,7 +2085,7 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			m.push(m.text(MsgUpdateUsageMCP, nil))
 			return nil
 		}
-		return m.queryOperationalSurface("mcp", "mcp.inventory", map[string]any{"verbose": len(parts) == 2})
+		return m.openOperationalSurface("mcp", "mcp.inventory", map[string]any{"verbose": len(parts) == 2})
 	case "mode":
 		if len(parts) == 2 && parts[1] == "cycle" {
 			return m.cycleInteractionMode()
@@ -2045,7 +2135,7 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 		m.push(m.text(MsgUpdateEffortChanged, MessageArgs{"effort": parts[1]}))
 		return m.persistSessionModel(m.model, previous, m.model, m.reasoningEffort)
 	case "agents":
-		return m.queryOperationalSurface("agents", "agent.list", map[string]any{"session_id": m.sessionID})
+		return m.openOperationalSurface("agents", "agent.list", map[string]any{"session_id": m.sessionID})
 	case "checkpoints":
 		return m.openCheckpointPicker()
 	case "new":
@@ -2196,14 +2286,43 @@ func (m *Model) handleCanonicalSurface(msg canonicalSurfaceMsg) {
 func (m *Model) queryOperationalSurface(kind, method string, params map[string]any) tea.Cmd {
 	call := m.call
 	sessionID := m.sessionID
+	generation := m.operationalGeneration(kind)
 	return func() tea.Msg {
 		if call == nil {
-			return operationalSurfaceMsg{sessionID: sessionID, kind: kind, err: errors.New("daemon not connected")}
+			return operationalSurfaceMsg{sessionID: sessionID, kind: kind, generation: generation, err: errors.New("daemon not connected")}
 		}
 		var out map[string]any
 		err := call.Call(method, params, &out)
-		return operationalSurfaceMsg{sessionID: sessionID, kind: kind, data: out, err: err}
+		return operationalSurfaceMsg{sessionID: sessionID, kind: kind, generation: generation, data: out, err: err}
 	}
+}
+
+func (m *Model) openOperationalSurface(kind, method string, params map[string]any) tea.Cmd {
+	m.openOperationalPager(kind, m.operationalSurfaceTitle(kind))
+	m.transcriptPager.operationalMethod = method
+	m.transcriptPager.operationalParams = cloneOperationalParams(params)
+	return m.queryOperationalSurface(kind, method, params)
+}
+
+func (m *Model) operationalGeneration(kind string) int {
+	if m.transcriptPager != nil && m.transcriptPager.operationalKind == kind {
+		return m.transcriptPager.generation
+	}
+	return 0
+}
+
+func (m *Model) operationalSurfaceTitle(kind string) string {
+	titleID := map[string]MessageID{
+		"status": MsgOperationalStatusTitle, "permissions": MsgOperationalPermissionsTitle,
+		"context": MsgOperationalContextTitle, "config": MsgOperationalConfigTitle, "mcp": MsgOperationalMCPTitle, "compact": MsgOperationalCompactTitle,
+		"doctor": MsgOperationalDoctorTitle, "skills": MsgOperationalSkillsTitle, "hooks": MsgOperationalHooksTitle, "extensions": MsgOperationalExtensionsTitle,
+		"usage": MsgOperationalUsageTitle, "review": MsgOperationalReviewTitle, "memory": MsgOperationalMemoryTitle,
+		"inspect": MsgInspectHeader, "agents": MsgAgentsSummaryHeader,
+	}[kind]
+	if titleID == "" {
+		return kind
+	}
+	return m.text(titleID, nil)
 }
 
 func (m *Model) openWorkspaceDiff() tea.Cmd {
@@ -2379,26 +2498,33 @@ func (m *Model) handleLoopResult(msg loopResultMsg) {
 }
 
 func (m *Model) handleOperationalSurface(msg operationalSurfaceMsg) {
-	if msg.err != nil {
-		m.push(m.text(MsgUpdateRPCFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}))
+	if msg.generation != 0 {
+		if m.transcriptPager == nil || m.transcriptPager.operationalKind != msg.kind || m.transcriptPager.generation != msg.generation {
+			return
+		}
+		m.transcriptPager.loading = false
+		if msg.err != nil {
+			m.transcriptPager.err = msg.err.Error()
+			m.layout()
+			return
+		}
+		lines := m.humanizeOperationalSurface(msg.kind, msg.data)
+		if len(lines) == 0 {
+			lines = []string{m.text(MsgOperationalEmpty, nil)}
+		}
+		m.transcriptPager.text = strings.Join(lines, "\n")
+		m.layout()
 		return
 	}
-	titleID := map[string]MessageID{
-		"status": MsgOperationalStatusTitle, "permissions": MsgOperationalPermissionsTitle,
-		"context": MsgOperationalContextTitle, "config": MsgOperationalConfigTitle, "mcp": MsgOperationalMCPTitle, "compact": MsgOperationalCompactTitle,
-		"doctor": MsgOperationalDoctorTitle, "skills": MsgOperationalSkillsTitle, "hooks": MsgOperationalHooksTitle, "extensions": MsgOperationalExtensionsTitle,
-		"usage": MsgOperationalUsageTitle, "review": MsgOperationalReviewTitle, "memory": MsgOperationalMemoryTitle,
-		"inspect": MsgInspectHeader, "agents": MsgAgentsSummaryHeader,
-	}[msg.kind]
-	title := m.text(titleID, nil)
-	if titleID == "" {
-		title = msg.kind
+	if msg.err != nil {
+		m.setOperationalNoticeKind(msg.kind, m.text(MsgUpdateRPCFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}), theme.RoleError)
+		return
 	}
 	lines := m.humanizeOperationalSurface(msg.kind, msg.data)
 	if len(lines) == 0 {
 		lines = []string{m.text(MsgOperationalEmpty, nil)}
 	}
-	m.push(m.th.Style(theme.RoleTitle).Render(title) + "\n" + strings.Join(lines, "\n"))
+	m.setOperationalNoticeKind(msg.kind, strings.Join(lines, " · "), theme.RoleInfo)
 }
 
 func compactMapLines(values map[string]any, indent string) []string {
@@ -2455,6 +2581,9 @@ func (m *Model) querySurface(method string, params map[string]any, label string)
 // but are rendered beside it as visible, independently undoable draft items.
 func (m *Model) handlePaste(msg tea.PasteMsg) tea.Cmd {
 	content := strings.ReplaceAll(strings.ReplaceAll(msg.Content, "\r\n", "\n"), "\r", "\n")
+	if path, ok := pastedImagePath(content, m.workspaceRoot); ok {
+		return m.attachImage(path)
+	}
 	if n := strings.Count(content, "\n") + 1; n > 1 {
 		m.pendingPaste = append(m.pendingPaste, content)
 		m.layout()

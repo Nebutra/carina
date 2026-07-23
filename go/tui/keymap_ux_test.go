@@ -452,7 +452,7 @@ func TestOverriddenInterruptRetainsDoublePressState(t *testing.T) {
 	if _, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}); cmd != nil {
 		t.Fatal("first overridden interrupt should only arm exit")
 	}
-	if got := transcriptText(m); !strings.Contains(got, "press ctrl+x again") || strings.Contains(got, "press ctrl+c again") {
+	if got := m.statusActivityText(); !strings.Contains(got, "press ctrl+x again") || strings.Contains(got, "press ctrl+c again") {
 		t.Fatalf("interrupt hint drifted from override: %q", got)
 	}
 	clock.advance(time.Second)

@@ -47,6 +47,19 @@ func TestWatchKeybindingsPublishesStableValidAndInvalidSnapshots(t *testing.T) {
 	}
 }
 
+func TestKeymapReloadRejectsStaleWorkspace(t *testing.T) {
+	m, _ := newTestModel(&fakeCaller{})
+	m.workspaceRoot = "/work/current"
+	before := m.keys.BindingDescriptors()
+	m.handleKeymapReload(KeymapReloadMsg{
+		WorkspaceRoot: "/work/old",
+		Overrides:     []KeyBindingOverride{{Action: ActionGlobalHelp, Keys: []string{"f2"}}},
+	})
+	if !keymapDescriptorsEqual(before, m.keys.BindingDescriptors()) {
+		t.Fatal("stale workspace keymap replaced current bindings")
+	}
+}
+
 func awaitKeymapReload(t *testing.T, messages <-chan tea.Msg) KeymapReloadMsg {
 	t.Helper()
 	select {

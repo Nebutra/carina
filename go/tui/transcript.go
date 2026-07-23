@@ -12,6 +12,7 @@ import (
 	"github.com/Nebutra/carina/go/tui/markdown"
 	"github.com/Nebutra/carina/go/tui/mathimage"
 	"github.com/Nebutra/carina/go/tui/theme"
+	ui "github.com/Nebutra/carina/go/tui/ui"
 )
 
 type presentationKind string
@@ -63,8 +64,9 @@ type eventPresentation struct {
 	BodyMarkdown string
 	// ImageData is verified artifact content rendered through terminal-native
 	// graphics. It never passes through the text sanitizer or audit payload.
-	ImageKey  string
-	ImageData []byte
+	ImageOwner string
+	ImageKey   string
+	ImageData  []byte
 	// Headerless marks a body-only continuation entry: committed stable chunks
 	// and the mutable tail of a streaming assistant message (stream.go) render
 	// under the header the stream's head entry already emitted, so they carry
@@ -208,6 +210,9 @@ func (t *transcript) removePresentation(key string) bool {
 	}
 	for i := range t.entries {
 		if t.entries[i].key == key {
+			if p := t.entries[i].presentation; p != nil && p.ImageOwner != "" {
+				mathimage.ReleaseOwner(p.ImageOwner)
+			}
 			t.entries = append(t.entries[:i], t.entries[i+1:]...)
 			t.rebuildLines()
 			return true
@@ -373,12 +378,14 @@ func (p eventPresentation) render(th theme.Theme, width int) string {
 			lines = append(lines, markdown.Render(p.BodyMarkdown, th, width, bodyIndent, wrapText)...)
 		}
 		if len(p.ImageData) > 0 {
-			if rendered, ok := mathimage.RenderImage(p.ImageKey, p.ImageData, maxInt(1, width-len(bodyIndent)), bodyIndent); ok {
+			if rendered, ok := mathimage.RenderImageOwned(p.ImageOwner, p.ImageKey, p.ImageData, maxInt(1, width-len(bodyIndent)), bodyIndent); ok {
 				lines = append(lines, rendered...)
 			} else {
 				lines = append(lines, fitLine(bodyIndent+"image preview unavailable in this terminal", width))
 			}
 		}
+	} else if p.ImageOwner != "" {
+		mathimage.ReleaseOwner(p.ImageOwner)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -506,6 +513,78 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 	p.Summary = sanitize(p.Summary)
 	localizePresentation(&p, newLocalizer(locale))
 	return p
+}
+
+func (m *Model) presentTranscriptEvent(ev map[string]any) eventPresentation {
+	p := presentEvent(ev, m.th, m.locale)
+	typ := str(ev["type"])
+	status, ok := liveToolStatusForEvent(typ)
+	if !ok {
+		return p
+	}
+	payload, _ := ev["payload"].(map[string]any)
+	callID := str(payload["call_id"])
+	if callID == "" {
+		return p
+	}
+	if m.liveTools == nil {
+		m.liveTools = ui.NewLiveToolRegistry()
+	}
+	snapshot, _ := m.liveTools.Observe(ui.LiveToolUpdate{
+		CallID: callID, Tool: str(payload["tool"]), Status: status,
+		Summary: p.Summary, Details: p.Body, Timestamp: p.Timestamp,
+	})
+	if cell := m.liveTools.Component(callID); cell != nil {
+		m.componentRuntime.Mount(cell)
+		cell.Layout(ui.Rect{Width: maxInt(m.transcriptWidth(), 1), Height: maxInt(cell.Measure(ui.Constraints{MaxWidth: m.transcriptWidth(), MaxHeight: 8}).Height, 1)})
+		node := cell.Render(ui.RenderContext{Focused: m.componentRuntime.Focus.Current()})
+		p.Title = node.Content
+		p.Summary = ""
+	}
+	p.Key = "tool:" + snapshot.CallID
+	if p.Title == "" {
+		p.Summary = snapshot.Summary
+	}
+	p.Body = append([]string(nil), snapshot.Details...)
+	p.Timestamp = snapshot.Timestamp
+	p.Status = presentationStatusForLiveTool(snapshot.Status)
+	p.Collapsible = len(p.Body) > 0
+	p.Collapsed = len(p.Body) > 0
+	return p
+}
+
+func liveToolStatusForEvent(eventType string) (ui.LiveToolStatus, bool) {
+	switch eventType {
+	case "ToolCallRequested":
+		return ui.LiveToolRequested, true
+	case "ToolCallStarted":
+		return ui.LiveToolRunning, true
+	case "ToolCallApprovalRequired":
+		return ui.LiveToolApproval, true
+	case "ToolCallCompleted":
+		return ui.LiveToolCompleted, true
+	case "ToolCallFailed":
+		return ui.LiveToolFailed, true
+	case "ToolCallDenied":
+		return ui.LiveToolDenied, true
+	case "ToolCallCancelled":
+		return ui.LiveToolCancelled, true
+	default:
+		return "", false
+	}
+}
+
+func presentationStatusForLiveTool(status ui.LiveToolStatus) presentationStatus {
+	switch status {
+	case ui.LiveToolApproval:
+		return statusNeedsAuth
+	case ui.LiveToolCompleted:
+		return statusSuccess
+	case ui.LiveToolFailed, ui.LiveToolDenied, ui.LiveToolCancelled:
+		return statusFailure
+	default:
+		return statusRunning
+	}
 }
 
 func localizePresentation(p *eventPresentation, l localizer) {
