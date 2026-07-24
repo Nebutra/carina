@@ -63,6 +63,7 @@ const (
 	RoleMuted    SemanticRole = "muted"
 	RoleTitle    SemanticRole = "title"
 	RoleInfo     SemanticRole = "info"
+	RoleSuccess  SemanticRole = "success"
 	RoleWarning  SemanticRole = "warning"
 	RoleError    SemanticRole = "error"
 	RoleSelected SemanticRole = "selected"
@@ -107,19 +108,22 @@ type GraphicsPlacement struct {
 }
 
 type Node struct {
-	ID        ComponentID
-	Bounds    Rect
-	Z         int
-	Content   string
-	Role      SemanticRole
-	Focused   bool
-	Hovered   bool
-	Disabled  bool
-	Focusable bool
-	Hit       []HitRegion
-	Children  []Node
-	Cursor    *CursorRequest
-	Graphics  []GraphicsPlacement
+	ID      ComponentID
+	Bounds  Rect
+	Z       int
+	Content string
+	// ContentStyled marks ANSI-rich content whose internal semantic styling
+	// must survive adapter-level role and interaction decoration.
+	ContentStyled bool
+	Role          SemanticRole
+	Focused       bool
+	Hovered       bool
+	Disabled      bool
+	Focusable     bool
+	Hit           []HitRegion
+	Children      []Node
+	Cursor        *CursorRequest
+	Graphics      []GraphicsPlacement
 }
 
 func (n Node) CursorRequests() []CursorRequest {

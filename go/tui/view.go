@@ -376,7 +376,7 @@ func (m *Model) View() tea.View {
 	// current even when a mutation does not change row allocation.
 	m.refreshComponentFrame()
 	l := m.root
-	content := renderComponentFrame(m.componentFrame, l.width, l.height)
+	content := renderComponentFrame(m.componentFrame, l.width, l.height, m.th)
 	v := tea.NewView(content)
 	v.AltScreen = !m.noAlternateScreen
 	v.ReportFocus = true

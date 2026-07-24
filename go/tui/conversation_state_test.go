@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Nebutra/carina/go/tui/theme"
+	ui "github.com/Nebutra/carina/go/tui/ui"
 )
 
 func TestConversationProjectionTransitions(t *testing.T) {
@@ -50,6 +51,32 @@ func TestConversationReadinessNeverInventsReady(t *testing.T) {
 	m.conversation.Readiness = readinessReady
 	if got := m.statusActivityText(); got != "ready" {
 		t.Fatalf("ready activity = %q", got)
+	}
+}
+
+func TestConversationStatusProjectsIndependentSemanticSlots(t *testing.T) {
+	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})
+	defer m.Close()
+	m.width, m.height = 120, 24
+	m.conversation.Readiness = readinessReady
+	m.workspaceRoot = "/work/carina"
+	m.operationalNotice = operationalNotice{Text: "copy complete", Role: theme.RoleInfo}
+	m.unseenLines = 2
+	m.unreadAttention = 1
+	m.goal = &goalView{Status: "active", TokenBudget: 1000, TokensUsed: 250}
+
+	view := m.conversationStatusView(120)
+	ids := make(map[ui.ComponentID]bool)
+	for _, slot := range append(append([]conversationStatusSlotView(nil), view.Left...), view.Right...) {
+		ids[slot.ID] = true
+	}
+	for _, id := range []ui.ComponentID{
+		"conversation-status:workspace", "conversation-status:notice",
+		"conversation-status:unseen", "conversation-status:attention", "conversation-status:goal",
+	} {
+		if !ids[id] {
+			t.Fatalf("status slot %q missing from %#v", id, view)
+		}
 	}
 }
 

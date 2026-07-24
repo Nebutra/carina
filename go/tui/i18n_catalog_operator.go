@@ -68,6 +68,11 @@ const (
 	MsgKeymapBrowseFooter     MessageID = "keymap.browse_footer"
 
 	MsgTranscriptOpen             MessageID = "transcript.open"
+	MsgTranscriptFold             MessageID = "transcript.action.fold"
+	MsgTranscriptInspect          MessageID = "transcript.action.inspect"
+	MsgTranscriptCopy             MessageID = "transcript.action.copy"
+	MsgTranscriptCancel           MessageID = "transcript.action.cancel"
+	MsgTranscriptInspectTitle     MessageID = "transcript.inspect_title"
 	MsgTranscriptCollapsed        MessageID = "transcript.collapsed"
 	MsgTranscriptRuntime          MessageID = "transcript.runtime"
 	MsgTranscriptApproval         MessageID = "transcript.approval"
@@ -162,6 +167,11 @@ var operatorCatalogRows = []catalogRow{
 	catalog(MsgKeymapBrowseFooter, "[{edit}] edit  [{up}/{down}] move  [{close}] close", "[{edit}] 编辑  [{up}/{down}] 移动  [{close}] 关闭", "[{edit}] 編集  [{up}/{down}] 移動  [{close}] 閉じる", "[{edit}] 편집  [{up}/{down}] 이동  [{close}] 닫기", "[{edit}] editar  [{up}/{down}] mover  [{close}] cerrar", "[{edit}] modifier  [{up}/{down}] déplacer  [{close}] fermer"),
 
 	catalog(MsgTranscriptOpen, "open", "展开", "開く", "열기", "abrir", "ouvrir"),
+	catalog(MsgTranscriptFold, "fold", "收起", "折りたたむ", "접기", "plegar", "replier"),
+	catalog(MsgTranscriptInspect, "inspect", "查看", "詳細", "검사", "inspeccionar", "inspecter"),
+	catalog(MsgTranscriptCopy, "copy", "复制", "コピー", "복사", "copiar", "copier"),
+	catalog(MsgTranscriptCancel, "cancel", "取消", "取消", "취소", "cancelar", "annuler"),
+	catalog(MsgTranscriptInspectTitle, "transcript detail", "会话详情", "セッション詳細", "대화 상세", "detalle de conversación", "détail de conversation"),
 	catalog(MsgTranscriptCollapsed, "+{count}", "+{count}", "+{count}", "+{count}", "+{count}", "+{count}"),
 	catalog(MsgTranscriptRuntime, "runtime", "运行时", "ランタイム", "런타임", "runtime", "runtime"),
 	catalog(MsgTranscriptApproval, "approval {id}", "审批 {id}", "承認 {id}", "승인 {id}", "aprobación {id}", "approbation {id}"),

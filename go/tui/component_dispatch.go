@@ -180,6 +180,12 @@ func translateTeaPointer(msg tea.MouseMsg, generation uint64) (ui.Event, bool) {
 func (m *Model) applyUIResult(result ui.Result) tea.Cmd {
 	commands := make([]tea.Cmd, 0, len(result.Actions))
 	for _, action := range result.Actions {
+		if action.Name == "transcript-action" {
+			if data, ok := action.Data.(transcriptComponentAction); ok {
+				commands = append(commands, m.applyTranscriptComponentAction(data))
+			}
+			continue
+		}
 		if action.Name == "transcript-toggle" {
 			if key, ok := action.Data.(string); ok && m.tr.toggleCollapsible(key, m.th, m.transcriptWidth()) {
 				m.layout()
@@ -242,6 +248,26 @@ func (m *Model) applyUIResult(result ui.Result) tea.Cmd {
 		}
 	}
 	return tea.Batch(commands...)
+}
+
+func (m *Model) applyTranscriptComponentAction(action transcriptComponentAction) tea.Cmd {
+	switch action.Name {
+	case "toggle":
+		if m.tr.toggleCollapsible(action.Key, m.th, m.transcriptWidth()) {
+			m.layout()
+		}
+	case "inspect":
+		m.openTranscriptEntryPager(action.Key)
+	case "copy":
+		return m.copyTranscriptEntry(action.Key)
+	case "open":
+		m.openTranscriptArtifactPager(action.Key, action.ArtifactIDs)
+	case "cancel":
+		if action.TaskID != "" && action.TaskID == m.inFlightTaskID {
+			return m.cancelTask(action.TaskID)
+		}
+	}
+	return nil
 }
 
 func (m *Model) governanceDomainKey(input componentKeyInput) (tea.Cmd, bool) {

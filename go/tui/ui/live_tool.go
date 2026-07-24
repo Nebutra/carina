@@ -108,7 +108,7 @@ func (c *LiveToolCell) Render(RenderContext) Node {
 func liveToolRole(status LiveToolStatus) SemanticRole {
 	switch status {
 	case LiveToolCompleted:
-		return RoleInfo
+		return RoleSuccess
 	case LiveToolFailed, LiveToolDenied, LiveToolCancelled:
 		return RoleError
 	case LiveToolApproval:

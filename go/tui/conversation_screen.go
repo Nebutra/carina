@@ -12,19 +12,17 @@ import (
 )
 
 const (
-	conversationScreenID      ui.ComponentID = "conversation"
-	conversationBannerID      ui.ComponentID = "conversation-banner"
-	conversationActiveWorkID  ui.ComponentID = "conversation-active-work"
-	conversationTranscriptID  ui.ComponentID = "conversation-transcript"
-	conversationSuggestID     ui.ComponentID = "conversation-suggestions"
-	conversationQueueID       ui.ComponentID = "conversation-queue"
-	conversationPasteID       ui.ComponentID = "conversation-paste"
-	conversationHistoryID     ui.ComponentID = "conversation-history"
-	conversationComposerID    ui.ComponentID = "conversation-composer"
-	conversationStatusID      ui.ComponentID = "conversation-status"
-	conversationStatusLeftID  ui.ComponentID = "conversation-status-context"
-	conversationStatusRightID ui.ComponentID = "conversation-status-actions"
-	composerAttachmentsID     ui.ComponentID = "composer-attachments"
+	conversationScreenID     ui.ComponentID = "conversation"
+	conversationBannerID     ui.ComponentID = "conversation-banner"
+	conversationActiveWorkID ui.ComponentID = "conversation-active-work"
+	conversationTranscriptID ui.ComponentID = "conversation-transcript"
+	conversationSuggestID    ui.ComponentID = "conversation-suggestions"
+	conversationQueueID      ui.ComponentID = "conversation-queue"
+	conversationPasteID      ui.ComponentID = "conversation-paste"
+	conversationHistoryID    ui.ComponentID = "conversation-history"
+	conversationComposerID   ui.ComponentID = "conversation-composer"
+	conversationStatusID     ui.ComponentID = "conversation-status"
+	composerAttachmentsID    ui.ComponentID = "composer-attachments"
 )
 
 type conversationAttachmentView struct {
@@ -40,17 +38,15 @@ type attachmentHit struct {
 type conversationViewState struct {
 	Layout rootLayout
 
-	Banner      string
-	ActiveWork  []string
-	Transcript  string
-	Suggest     []string
-	Queue       []string
-	Paste       []string
-	History     string
-	Composer    string
-	StatusLeft  string
-	StatusRight string
-	TinySearch  bool
+	Banner     string
+	ActiveWork []string
+	Suggest    []string
+	Queue      []string
+	Paste      []string
+	History    string
+	Composer   string
+	Status     conversationStatusView
+	TinySearch bool
 
 	Attachments     []conversationAttachmentView
 	AttachmentLines []string
@@ -65,11 +61,37 @@ type conversationViewState struct {
 }
 
 type conversationTranscriptCellView struct {
-	ID          ui.ComponentID
+	ID        ui.ComponentID
+	Content   string
+	Role      ui.SemanticRole
+	StartLine int
+	LineCount int
+	Actions   []conversationTranscriptActionView
+}
+
+type conversationStatusSlotView struct {
+	ID   ui.ComponentID
+	Text string
+	Role ui.SemanticRole
+}
+
+type conversationStatusView struct {
+	Left  []conversationStatusSlotView
+	Right []conversationStatusSlotView
+}
+
+type conversationTranscriptActionView struct {
+	Name     string
+	Label    string
+	Shortcut string
+	Data     transcriptComponentAction
+}
+
+type transcriptComponentAction struct {
 	Key         string
-	StartLine   int
-	LineCount   int
-	Collapsible bool
+	Name        string
+	TaskID      string
+	ArtifactIDs []string
 }
 
 type conversationRegion struct {
@@ -87,30 +109,50 @@ type conversationComposerComponent struct {
 
 type conversationStatusComponent struct {
 	ui.Base
-	left  *conversationRegion
-	right *conversationRegion
+	slots    map[ui.ComponentID]*conversationStatusSlot
+	left     []*conversationStatusSlot
+	right    []*conversationStatusSlot
+	children []ui.Component
+}
+
+type conversationStatusSlot struct {
+	ui.Base
+	text   string
+	prefix string
+	role   ui.SemanticRole
 }
 
 func newConversationStatusComponent() *conversationStatusComponent {
 	return &conversationStatusComponent{
 		Base:  ui.Base{ComponentID: conversationStatusID},
-		left:  newConversationRegion(conversationStatusLeftID),
-		right: newConversationRegion(conversationStatusRightID),
+		slots: make(map[ui.ComponentID]*conversationStatusSlot),
 	}
 }
 
 func (c *conversationStatusComponent) Components() []ui.Component {
-	return []ui.Component{c.left, c.right}
+	return c.children
 }
 func (c *conversationStatusComponent) Measure(constraints ui.Constraints) ui.Size {
 	return constraints.Constrain(ui.Size{Width: constraints.MaxWidth, Height: 1})
 }
 func (c *conversationStatusComponent) Layout(bounds ui.Rect) {
 	c.Bounds = bounds
-	leftWidth := minInt(ansi.StringWidth(c.left.content), bounds.Width)
-	rightWidth := minInt(ansi.StringWidth(c.right.content), maxInt(bounds.Width-leftWidth, 0))
-	c.left.Layout(ui.Rect{X: bounds.X, Y: bounds.Y, Width: leftWidth, Height: minInt(bounds.Height, 1)})
-	c.right.Layout(ui.Rect{X: bounds.X + bounds.Width - rightWidth, Y: bounds.Y, Width: rightWidth, Height: minInt(bounds.Height, 1)})
+	x := bounds.X
+	for _, slot := range c.left {
+		width := minInt(ansi.StringWidth(slot.prefix+slot.text), maxInt(bounds.X+bounds.Width-x, 0))
+		slot.Layout(ui.Rect{X: x, Y: bounds.Y, Width: width, Height: minInt(bounds.Height, 1)})
+		x += width
+	}
+	rightWidth := 0
+	for _, slot := range c.right {
+		rightWidth += ansi.StringWidth(slot.prefix + slot.text)
+	}
+	x = bounds.X + maxInt(bounds.Width-rightWidth, 0)
+	for _, slot := range c.right {
+		width := minInt(ansi.StringWidth(slot.prefix+slot.text), maxInt(bounds.X+bounds.Width-x, 0))
+		slot.Layout(ui.Rect{X: x, Y: bounds.Y, Width: width, Height: minInt(bounds.Height, 1)})
+		x += width
+	}
 }
 func (c *conversationStatusComponent) Render(ctx ui.RenderContext) ui.Node {
 	node := ui.Node{ID: conversationStatusID, Bounds: c.Bounds}
@@ -122,6 +164,47 @@ func (c *conversationStatusComponent) Render(ctx ui.RenderContext) ui.Node {
 	return node
 }
 func (c *conversationStatusComponent) Handle(ui.Event) ui.Result { return ui.Result{} }
+
+func (c *conversationStatusComponent) Sync(view conversationStatusView) {
+	c.left = c.syncSide(c.left[:0], view.Left)
+	c.right = c.syncSide(c.right[:0], view.Right)
+	c.children = c.children[:0]
+	for _, slot := range c.left {
+		c.children = append(c.children, slot)
+	}
+	for _, slot := range c.right {
+		c.children = append(c.children, slot)
+	}
+}
+
+func (c *conversationStatusComponent) syncSide(dst []*conversationStatusSlot, views []conversationStatusSlotView) []*conversationStatusSlot {
+	for index, view := range views {
+		slot := c.slots[view.ID]
+		if slot == nil {
+			slot = &conversationStatusSlot{Base: ui.Base{ComponentID: view.ID}}
+			c.slots[view.ID] = slot
+		}
+		slot.text = view.Text
+		slot.role = view.Role
+		if index == 0 {
+			slot.prefix = ""
+		} else {
+			slot.prefix = " · "
+		}
+		dst = append(dst, slot)
+	}
+	return dst
+}
+
+func (s *conversationStatusSlot) Measure(constraints ui.Constraints) ui.Size {
+	return constraints.Constrain(ui.Size{Width: ansi.StringWidth(s.prefix + s.text), Height: 1})
+}
+
+func (s *conversationStatusSlot) Render(ui.RenderContext) ui.Node {
+	return ui.Node{ID: s.ComponentID, Bounds: s.Bounds, Content: s.prefix + s.text, Role: s.role}
+}
+
+func (s *conversationStatusSlot) Handle(ui.Event) ui.Result { return ui.Result{} }
 
 func newConversationComposerComponent() *conversationComposerComponent {
 	return &conversationComposerComponent{Base: ui.Base{ComponentID: conversationComposerID}}
@@ -164,10 +247,12 @@ func (c *conversationComposerComponent) Handle(event ui.Event) ui.Result {
 
 type conversationTranscriptCell struct {
 	ui.Base
-	key         string
+	lines       []string
+	role        ui.SemanticRole
 	startLine   int
 	lineCount   int
-	collapsible bool
+	visibleFrom int
+	actions     []conversationTranscriptActionView
 }
 
 func newConversationTranscriptCell(id ui.ComponentID) *conversationTranscriptCell {
@@ -178,37 +263,159 @@ func (c *conversationTranscriptCell) Measure(constraints ui.Constraints) ui.Size
 	return constraints.Constrain(ui.Size{Width: constraints.MaxWidth, Height: c.lineCount})
 }
 
-func (c *conversationTranscriptCell) Render(ui.RenderContext) ui.Node {
-	node := ui.Node{
-		ID: c.ComponentID, Bounds: c.Bounds, Focusable: c.collapsible,
-		Focused: c.Focused(),
+func (c *conversationTranscriptCell) sync(view conversationTranscriptCellView) {
+	c.lines = strings.Split(view.Content, "\n")
+	c.role = view.Role
+	c.startLine = view.StartLine
+	c.lineCount = view.LineCount
+	c.actions = append(c.actions[:0], view.Actions...)
+}
+
+func (c *conversationTranscriptCell) Render(ctx ui.RenderContext) ui.Node {
+	visibleEnd := minInt(c.visibleFrom+c.Bounds.Height, len(c.lines))
+	content := ""
+	if c.visibleFrom >= 0 && c.visibleFrom < visibleEnd {
+		content = strings.Join(c.lines[c.visibleFrom:visibleEnd], "\n")
 	}
-	if c.collapsible && !c.Bounds.Empty() {
-		node.Hit = []ui.HitRegion{{
-			ID: ui.HitID(string(c.ComponentID) + ":toggle"), Owner: c.ComponentID,
-			Bounds: c.Bounds, Kind: ui.HitActivate, Action: "transcript-toggle",
-			Data: c.key, Focusable: true,
-		}}
+	hovered := c.hovered(ctx.Hovered)
+	visibleActions := c.visibleActions()
+	actionBar := transcriptActionBar(visibleActions)
+	if (c.Focused() || hovered) && len(visibleActions) > 0 {
+		content = overlayTranscriptActions(content, actionBar, c.Bounds.Width)
+	}
+	node := ui.Node{
+		ID: c.ComponentID, Bounds: c.Bounds, Content: content, Role: c.role,
+		ContentStyled: true, Focusable: len(c.actions) > 0,
+		Focused: c.Focused(), Hovered: hovered,
+	}
+	if len(c.actions) > 0 && !c.Bounds.Empty() {
+		node.Hit = append(node.Hit, ui.HitRegion{
+			ID: c.hoverHitID(), Owner: c.ComponentID, Bounds: c.Bounds,
+			Kind: ui.HitHover, Action: "transcript-focus", Focusable: true,
+		})
+		x := c.Bounds.X + c.Bounds.Width - ansi.StringWidth(actionBar)
+		for _, action := range visibleActions {
+			label := transcriptActionToken(action)
+			width := ansi.StringWidth(label)
+			hitAction := "transcript-action"
+			if action.Data.Name == "toggle" {
+				hitAction = "transcript-toggle"
+			}
+			node.Hit = append(node.Hit, ui.HitRegion{
+				ID: c.actionHitID(action.Name), Owner: c.ComponentID,
+				Bounds: ui.Rect{X: x, Y: c.Bounds.Y, Width: width, Height: 1},
+				Kind:   ui.HitActivate, Action: hitAction, Data: action.Data,
+				Focusable: true,
+			})
+			x += width + 1
+		}
 	}
 	return node
 }
 
 func (c *conversationTranscriptCell) Handle(event ui.Event) ui.Result {
-	if !c.collapsible {
+	if len(c.actions) == 0 {
 		return ui.Result{}
 	}
-	if event.Kind == ui.EventKey && (event.Key == "enter" || event.Key == " ") {
-		return ui.Result{Handled: true, Actions: []ui.Action{{Source: c.ComponentID, Name: "transcript-toggle", Data: c.key}}}
+	if event.Kind == ui.EventKey {
+		for index, action := range c.actions {
+			if (index == 0 && (event.Key == "enter" || event.Key == " ")) || event.Key == action.Shortcut {
+				return c.actionResult(action.Data)
+			}
+		}
+		return ui.Result{}
 	}
-	if event.Kind == ui.EventPointer && event.Pointer.Kind == ui.PointerClick && event.Pointer.Hit != nil && event.Pointer.Hit.Action == "transcript-toggle" {
-		return ui.Result{Handled: true, Actions: []ui.Action{{Source: c.ComponentID, Name: "transcript-toggle", Data: c.key}}}
+	if event.Kind == ui.EventPointer {
+		if event.Pointer.Kind == ui.PointerLeave || event.Pointer.Kind == ui.PointerMove {
+			return ui.Result{Handled: true}
+		}
+		if event.Pointer.Kind == ui.PointerClick && event.Pointer.Hit != nil {
+			if event.Pointer.Hit.Action == "transcript-action" || event.Pointer.Hit.Action == "transcript-toggle" {
+				if action, ok := event.Pointer.Hit.Data.(transcriptComponentAction); ok {
+					return c.actionResult(action)
+				}
+			}
+			return ui.Result{Handled: true}
+		}
 	}
 	return ui.Result{}
 }
 
+func (c *conversationTranscriptCell) actionResult(action transcriptComponentAction) ui.Result {
+	return ui.Result{Handled: true, Actions: []ui.Action{{Source: c.ComponentID, Name: "transcript-action", Data: action}}}
+}
+
+func (c *conversationTranscriptCell) hoverHitID() ui.HitID {
+	return ui.HitID(string(c.ComponentID) + ":hover")
+}
+
+func (c *conversationTranscriptCell) actionHitID(name string) ui.HitID {
+	return ui.HitID(string(c.ComponentID) + ":action:" + name)
+}
+
+func (c *conversationTranscriptCell) hovered(hit ui.HitID) bool {
+	if hit == c.hoverHitID() {
+		return true
+	}
+	for _, action := range c.actions {
+		if hit == c.actionHitID(action.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func transcriptActionBar(actions []conversationTranscriptActionView) string {
+	parts := make([]string, 0, len(actions))
+	for _, action := range actions {
+		parts = append(parts, transcriptActionToken(action))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (c *conversationTranscriptCell) visibleActions() []conversationTranscriptActionView {
+	if c.Bounds.Width <= 0 {
+		return nil
+	}
+	visible := make([]conversationTranscriptActionView, 0, len(c.actions))
+	used := 0
+	for _, action := range c.actions {
+		width := ansi.StringWidth(transcriptActionToken(action))
+		if len(visible) > 0 {
+			width++
+		}
+		if used+width > c.Bounds.Width {
+			continue
+		}
+		visible = append(visible, action)
+		used += width
+	}
+	return visible
+}
+
+func transcriptActionToken(action conversationTranscriptActionView) string {
+	return "[" + action.Shortcut + " " + action.Label + "]"
+}
+
+func overlayTranscriptActions(content, actions string, width int) string {
+	if content == "" || actions == "" || width <= 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	actionWidth := ansi.StringWidth(actions)
+	if actionWidth >= width {
+		lines[0] = fitRenderedLine(actions, width)
+		return strings.Join(lines, "\n")
+	}
+	leftWidth := maxInt(width-actionWidth-1, 0)
+	left := fitRenderedLine(lines[0], leftWidth)
+	gap := width - ansi.StringWidth(left) - actionWidth
+	lines[0] = left + strings.Repeat(" ", maxInt(gap, 1)) + actions
+	return strings.Join(lines, "\n")
+}
+
 type conversationTranscriptTimeline struct {
 	ui.Base
-	content  string
 	top      int
 	cells    map[ui.ComponentID]*conversationTranscriptCell
 	children []ui.Component
@@ -227,8 +434,7 @@ func (t *conversationTranscriptTimeline) Measure(constraints ui.Constraints) ui.
 	return constraints.Constrain(ui.Size{Width: constraints.MaxWidth, Height: constraints.MaxHeight})
 }
 
-func (t *conversationTranscriptTimeline) Sync(content string, top int, views []conversationTranscriptCellView) {
-	t.content = content
+func (t *conversationTranscriptTimeline) Sync(top int, views []conversationTranscriptCellView) {
 	t.top = maxInt(top, 0)
 	t.children = t.children[:0]
 	for _, view := range views {
@@ -237,10 +443,7 @@ func (t *conversationTranscriptTimeline) Sync(content string, top int, views []c
 			cell = newConversationTranscriptCell(view.ID)
 			t.cells[view.ID] = cell
 		}
-		cell.key = view.Key
-		cell.startLine = view.StartLine
-		cell.lineCount = view.LineCount
-		cell.collapsible = view.Collapsible
+		cell.sync(view)
 		t.children = append(t.children, cell)
 	}
 }
@@ -253,6 +456,7 @@ func (t *conversationTranscriptTimeline) Layout(bounds ui.Rect) {
 		start := maxInt(cell.startLine, t.top)
 		end := minInt(cell.startLine+cell.lineCount, visibleEnd)
 		if start >= end || bounds.Empty() {
+			cell.visibleFrom = 0
 			cell.Layout(ui.Rect{})
 			continue
 		}
@@ -260,11 +464,12 @@ func (t *conversationTranscriptTimeline) Layout(bounds ui.Rect) {
 			X: bounds.X, Y: bounds.Y + start - t.top,
 			Width: bounds.Width, Height: end - start,
 		})
+		cell.visibleFrom = start - cell.startLine
 	}
 }
 
 func (t *conversationTranscriptTimeline) Render(ctx ui.RenderContext) ui.Node {
-	node := ui.Node{ID: conversationTranscriptID, Bounds: t.Bounds, Content: t.content}
+	node := ui.Node{ID: conversationTranscriptID, Bounds: t.Bounds}
 	if !t.Bounds.Empty() {
 		node.Hit = []ui.HitRegion{{
 			ID: "conversation-transcript:scroll", Owner: conversationTranscriptID,
@@ -450,15 +655,14 @@ func (s *conversationScreen) Sync(state conversationViewState) {
 	s.state = state
 	s.banner.content = state.Banner
 	s.activeWork.content = strings.Join(state.ActiveWork, "\n")
-	s.transcript.Sync(state.Transcript, state.TranscriptTop, state.TranscriptCells)
+	s.transcript.Sync(state.TranscriptTop, state.TranscriptCells)
 	s.suggestions.content = strings.Join(state.Suggest, "\n")
 	s.queue.content = strings.Join(state.Queue, "\n")
 	s.paste.content = strings.Join(state.Paste, "\n")
 	s.history.content = state.History
 	s.composer.content = state.Composer
 	s.composer.cursor = state.ComposerCursor
-	s.status.left.content = state.StatusLeft
-	s.status.right.content = state.StatusRight
+	s.status.Sync(state.Status)
 	s.attachments.items = append(s.attachments.items[:0], state.Attachments...)
 	s.attachments.lines = append(s.attachments.lines[:0], state.AttachmentLines...)
 	s.attachments.previewLines = append(s.attachments.previewLines[:0], state.PreviewLines...)
@@ -557,27 +761,32 @@ func (m *Model) conversationViewState() conversationViewState {
 	}
 	if l.showTranscript {
 		if m.sidePaneActive() {
-			state.Transcript = m.dualPaneTranscriptView(l.width, maxInt(l.viewportHeight, 1))
-		} else {
-			state.Transcript = m.vp.View()
-			if l.width >= 3 {
-				state.Transcript = lipgloss.NewStyle().Width(l.width).Padding(0, 1).Render(state.Transcript)
-			}
-		}
-		state.TranscriptTop = m.vp.YOffset()
-		line := 0
-		for index := range m.tr.entries {
-			entry := &m.tr.entries[index]
-			id := ui.ComponentID("transcript-cell:" + entry.key)
-			if entry.key == "" {
-				id = ui.ComponentID("transcript-cell:plain:" + strconv.Itoa(index))
-			}
-			collapsible := entry.presentation != nil && entry.presentation.Collapsible
+			content := m.dualPaneTranscriptView(l.width, maxInt(l.viewportHeight, 1))
 			state.TranscriptCells = append(state.TranscriptCells, conversationTranscriptCellView{
-				ID: id, Key: entry.key, StartLine: line,
-				LineCount: len(entry.lines), Collapsible: collapsible,
+				ID: "transcript-cell:dual-pane", Content: content, Role: ui.RoleText,
+				LineCount: len(strings.Split(content, "\n")),
 			})
-			line += len(entry.lines)
+		} else {
+			state.TranscriptTop = m.vp.YOffset()
+			line := 0
+			for index := range m.tr.entries {
+				entry := &m.tr.entries[index]
+				id := ui.ComponentID("transcript-cell:" + entry.key)
+				if entry.key == "" {
+					id = ui.ComponentID("transcript-cell:plain:" + strconv.Itoa(index))
+				}
+				content := entry.rendered
+				if l.width >= 3 {
+					content = lipgloss.NewStyle().Width(l.width).Padding(0, 1).Render(content)
+				}
+				state.TranscriptCells = append(state.TranscriptCells, conversationTranscriptCellView{
+					ID: id, Content: content,
+					Role: presentationSemanticRole(entry.presentation), StartLine: line,
+					LineCount: len(entry.lines),
+					Actions:   m.transcriptComponentActions(entry),
+				})
+				line += len(entry.lines)
+			}
 		}
 	}
 	state.Suggest = append([]string(nil), m.visibleSuggestPanelLines(l.suggestLines)...)
@@ -615,8 +824,7 @@ func (m *Model) conversationViewState() conversationViewState {
 		state.Composer = m.input.View()
 	}
 	if l.showStatus {
-		projection := m.statusFooterProjection(l.width)
-		state.StatusLeft, state.StatusRight = projection.Left, projection.Right
+		state.Status = m.conversationStatusView(l.width)
 	}
 	if m.historySearch != nil && l.historyLines == 0 {
 		state.TinySearch = true
@@ -624,6 +832,62 @@ func (m *Model) conversationViewState() conversationViewState {
 	}
 	state.ComposerCursor = m.conversationCursorRequest(l)
 	return state
+}
+
+func presentationSemanticRole(p *eventPresentation) ui.SemanticRole {
+	if p == nil {
+		return ui.RoleText
+	}
+	switch p.Status {
+	case statusRunning:
+		return ui.RoleInfo
+	case statusSuccess:
+		return ui.RoleSuccess
+	case statusFailure:
+		return ui.RoleError
+	case statusNeedsAuth:
+		return ui.RoleWarning
+	default:
+		if p.Kind == presentationAgent {
+			return ui.RoleText
+		}
+		return ui.RoleMuted
+	}
+}
+
+func (m *Model) transcriptComponentActions(entry *entry) []conversationTranscriptActionView {
+	if entry == nil || entry.presentation == nil || entry.key == "" {
+		return nil
+	}
+	p := entry.presentation
+	base := transcriptComponentAction{Key: entry.key, TaskID: p.TaskID, ArtifactIDs: append([]string(nil), p.ArtifactIDs...)}
+	var actions []conversationTranscriptActionView
+	if p.Collapsible {
+		name, label := "fold", m.text(MsgTranscriptFold, nil)
+		if p.Collapsed {
+			name, label = "expand", m.text(MsgTranscriptOpen, nil)
+		}
+		action := base
+		action.Name = "toggle"
+		actions = append(actions, conversationTranscriptActionView{Name: name, Label: label, Shortcut: "enter", Data: action})
+	}
+	inspect := base
+	inspect.Name = "inspect"
+	actions = append(actions, conversationTranscriptActionView{Name: "inspect", Label: m.text(MsgTranscriptInspect, nil), Shortcut: "i", Data: inspect})
+	copyAction := base
+	copyAction.Name = "copy"
+	actions = append(actions, conversationTranscriptActionView{Name: "copy", Label: m.text(MsgTranscriptCopy, nil), Shortcut: "c", Data: copyAction})
+	if len(p.ArtifactIDs) > 0 {
+		open := base
+		open.Name = "open"
+		actions = append(actions, conversationTranscriptActionView{Name: "open", Label: m.text(MsgTranscriptOpen, nil), Shortcut: "o", Data: open})
+	}
+	if p.Kind == presentationTool && p.Status == statusRunning && p.TaskID != "" && p.TaskID == m.inFlightTaskID {
+		cancel := base
+		cancel.Name = "cancel"
+		actions = append(actions, conversationTranscriptActionView{Name: "cancel", Label: m.text(MsgTranscriptCancel, nil), Shortcut: "x", Data: cancel})
+	}
+	return actions
 }
 
 func (m *Model) conversationCursorRequest(l rootLayout) *ui.CursorRequest {

@@ -25,3 +25,14 @@ func (t *transcript) lastAgentText() string {
 func (t *transcript) plainText() string {
 	return strings.TrimSpace(ansi.Strip(strings.Join(t.lines, "\n")))
 }
+
+func (t *transcript) entryPlainText(key string) string {
+	if key == "" {
+		return ""
+	}
+	index := t.indexOf(key)
+	if index < 0 {
+		return ""
+	}
+	return strings.TrimSpace(ansi.Strip(t.entries[index].rendered))
+}

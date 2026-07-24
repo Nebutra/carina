@@ -44,6 +44,8 @@ const (
 // unknown payloads get a compact system label instead of becoming the UI.
 type eventPresentation struct {
 	Key       string
+	TaskID    string
+	CallID    string
 	Kind      presentationKind
 	KindLabel string
 	Status    presentationStatus
@@ -64,9 +66,10 @@ type eventPresentation struct {
 	BodyMarkdown string
 	// ImageData is verified artifact content rendered through terminal-native
 	// graphics. It never passes through the text sanitizer or audit payload.
-	ImageOwner string
-	ImageKey   string
-	ImageData  []byte
+	ImageOwner  string
+	ImageKey    string
+	ImageData   []byte
+	ArtifactIDs []string
 	// Headerless marks a body-only continuation entry: committed stable chunks
 	// and the mutable tail of a streaming assistant message (stream.go) render
 	// under the header the stream's head entry already emitted, so they carry
@@ -105,6 +108,7 @@ func (e *entry) setRendered(rendered string) {
 type transcript struct {
 	entries []entry
 	lines   []string
+	nextKey uint64
 	// renderedTheme/renderedWidth are what every presentation was last
 	// rendered against. layout() calls resizePresentations on every keystroke
 	// and event; unless one of them actually changed, re-rendering the whole
@@ -145,6 +149,10 @@ func (t *transcript) pushPresentation(p eventPresentation, th theme.Theme, width
 func (t *transcript) upsertPresentationAfter(afterKey string, p eventPresentation, th theme.Theme, width int) {
 	t.noteRenderParams(th, width)
 	pCopy := p
+	if pCopy.Key == "" {
+		t.nextKey++
+		pCopy.Key = fmt.Sprintf("entry:%d", t.nextKey)
+	}
 	if i := t.indexOf(pCopy.Key); i >= 0 {
 		// Preserve the operator's fold choice while lifecycle updates replace
 		// the semantic state of the same authoritative call.
@@ -431,6 +439,7 @@ func presentEvent(ev map[string]any, th theme.Theme, locale string) eventPresent
 		Status:    statusNeutral,
 		Timestamp: presentationTimestamp(ev),
 		Title:     typ,
+		TaskID:    eventTaskID(ev, payload),
 	}
 
 	switch typ {
@@ -682,6 +691,7 @@ func localizePresentation(p *eventPresentation, l localizer) {
 func presentAuthoritativeToolCall(p eventPresentation, typ string, payload map[string]any) eventPresentation {
 	p.Kind, p.Title = presentationTool, "tool"
 	callID := str(payload["call_id"])
+	p.CallID = callID
 	if callID != "" {
 		p.Key = "tool:" + callID
 	}
@@ -701,10 +711,37 @@ func presentAuthoritativeToolCall(p eventPresentation, typ string, payload map[s
 	}
 	if ids := valueString(payload["artifact_ids"]); ids != "" {
 		p.Body = append(p.Body, "artifact: "+ids)
+		p.ArtifactIDs = stringValues(payload["artifact_ids"])
 	}
 	p.Collapsible = len(p.Body) > 0
 	p.Collapsed = len(p.Body) > 0
 	return p
+}
+
+func stringValues(value any) []string {
+	switch values := value.(type) {
+	case string:
+		if value := strings.TrimSpace(values); value != "" {
+			return []string{value}
+		}
+	case []string:
+		out := make([]string, 0, len(values))
+		for _, value := range values {
+			if value = strings.TrimSpace(value); value != "" {
+				out = append(out, value)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(values))
+		for _, item := range values {
+			if value := strings.TrimSpace(valueString(item)); value != "" {
+				out = append(out, value)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func presentTaskEvent(p eventPresentation, ev, payload map[string]any) eventPresentation {

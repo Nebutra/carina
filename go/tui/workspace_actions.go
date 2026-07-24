@@ -119,6 +119,18 @@ func (m *Model) copyLastAgentProjection() tea.Cmd {
 	}
 }
 
+func (m *Model) copyTranscriptEntry(key string) tea.Cmd {
+	text := m.tr.entryPlainText(key)
+	if text == "" {
+		m.setOperationalNotice(m.text(MsgWorkspaceNothingToCopy, MessageArgs{"glyph": glyphFailed(m.th)}), theme.RoleError)
+		return nil
+	}
+	write := m.clipboardWrite
+	return func() tea.Msg {
+		return clipboardDoneMsg{err: write(text)}
+	}
+}
+
 func (m *Model) handleClipboardDone(msg clipboardDoneMsg) {
 	if msg.err != nil {
 		m.setOperationalNotice(m.text(MsgWorkspaceCopyFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}), theme.RoleError)
@@ -169,6 +181,43 @@ func (m *Model) openTranscriptPager() {
 	m.breakComposerUndoGroup()
 	m.closeSuggest()
 	m.transcriptPager = &transcriptPagerState{}
+	m.layout()
+}
+
+func (m *Model) openTranscriptEntryPager(key string) {
+	text := m.tr.entryPlainText(key)
+	if text == "" {
+		return
+	}
+	m.breakComposerUndoGroup()
+	m.closeSuggest()
+	m.transcriptPager = &transcriptPagerState{title: m.text(MsgTranscriptInspectTitle, nil), text: text}
+	m.layout()
+}
+
+func (m *Model) openTranscriptArtifactPager(key string, artifactIDs []string) {
+	if len(artifactIDs) == 0 {
+		m.openTranscriptEntryPager(key)
+		return
+	}
+	lines := make([]string, 0, len(artifactIDs)*2)
+	for _, artifactID := range artifactIDs {
+		artifactID = strings.TrimSpace(artifactID)
+		if artifactID == "" {
+			continue
+		}
+		lines = append(lines, "artifact: "+artifactID)
+		if m.sessionID != "" {
+			lines = append(lines, "carina artifact read "+m.sessionID+" "+artifactID)
+		}
+	}
+	if len(lines) == 0 {
+		m.openTranscriptEntryPager(key)
+		return
+	}
+	m.breakComposerUndoGroup()
+	m.closeSuggest()
+	m.transcriptPager = &transcriptPagerState{title: m.text(MsgTranscriptArtifact, MessageArgs{"ids": strings.Join(artifactIDs, ", ")}), text: strings.Join(lines, "\n")}
 	m.layout()
 }
 

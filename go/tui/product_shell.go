@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Nebutra/carina/go/tui/theme"
+	ui "github.com/Nebutra/carina/go/tui/ui"
 )
 
 // runtimeStatus is the product chrome snapshot shown in the footer and settings shell.
@@ -282,8 +283,10 @@ func (m *Model) contextStatusLabel() string {
 }
 
 type statusFooterItem struct {
-	text string
-	role theme.Role
+	id       string
+	text     string
+	role     theme.Role
+	priority int
 }
 
 func statusJoin(items []statusFooterItem) string {
@@ -330,22 +333,74 @@ func (m *Model) statusFooterView(width int) string {
 }
 
 func (m *Model) statusFooterProjection(width int) statusFooterProjection {
+	selection := m.statusFooterSelection(width)
+	return statusFooterProjection{Left: m.renderStatusItems(selection.left), Right: m.renderStatusItems(selection.right)}
+}
+
+type statusFooterSelection struct {
+	left  []statusFooterItem
+	right []statusFooterItem
+}
+
+func (m *Model) conversationStatusView(width int) conversationStatusView {
+	selection := m.statusFooterSelection(width)
+	return conversationStatusView{Left: statusSlotViews(selection.left), Right: statusSlotViews(selection.right)}
+}
+
+func statusSlotViews(items []statusFooterItem) []conversationStatusSlotView {
+	out := make([]conversationStatusSlotView, 0, len(items))
+	for index, item := range items {
+		if strings.TrimSpace(item.text) == "" {
+			continue
+		}
+		id := item.id
+		if id == "" {
+			id = fmt.Sprintf("slot-%d", index)
+		}
+		out = append(out, conversationStatusSlotView{
+			ID: ui.ComponentID("conversation-status:" + id), Text: item.text,
+			Role: statusSemanticRole(item.role),
+		})
+	}
+	return out
+}
+
+func statusSemanticRole(role theme.Role) ui.SemanticRole {
+	switch role {
+	case theme.RoleMuted:
+		return ui.RoleMuted
+	case theme.RoleTitle:
+		return ui.RoleTitle
+	case theme.RoleInfo:
+		return ui.RoleInfo
+	case theme.RoleSuccess:
+		return ui.RoleSuccess
+	case theme.RoleWarning:
+		return ui.RoleWarning
+	case theme.RoleError:
+		return ui.RoleError
+	default:
+		return ui.RoleText
+	}
+}
+
+func (m *Model) statusFooterSelection(width int) statusFooterSelection {
 	if width <= 0 {
-		return statusFooterProjection{}
+		return statusFooterSelection{}
 	}
 	model, isModel := m.runtimeModelLabel()
 	if isModel && model != "" && m.reasoningEffort != "" && m.reasoningEffort != "default" {
 		model += "/" + m.reasoningEffort
 	}
-	mode := statusFooterItem{text: m.modeLabel(), role: theme.RoleMuted}
-	workspace := statusFooterItem{role: theme.RoleInfo}
+	mode := statusFooterItem{id: "mode", text: m.modeLabel(), role: theme.RoleMuted, priority: 30}
+	workspace := statusFooterItem{id: "workspace", role: theme.RoleInfo, priority: 90}
 	if root := strings.TrimSpace(m.workspaceRoot); root != "" {
 		name := filepath.Base(filepath.Clean(root))
 		if name != "." && name != string(filepath.Separator) {
 			workspace.text = name
 		}
 	}
-	modelItem := statusFooterItem{role: theme.RoleInfo}
+	modelItem := statusFooterItem{id: "model", role: theme.RoleInfo, priority: 80}
 	if model != "" {
 		if isModel {
 			modelItem.text = "model:" + model
@@ -353,15 +408,15 @@ func (m *Model) statusFooterProjection(width int) statusFooterProjection {
 			modelItem.text = "backend:" + model
 		}
 	}
-	profile := statusFooterItem{role: theme.RoleWarning}
+	profile := statusFooterItem{id: "profile", role: theme.RoleWarning, priority: 60}
 	if value := strings.TrimSpace(m.runtime.Profile); value != "" {
 		profile.text = "profile:" + value
 	}
-	sandbox := statusFooterItem{role: theme.RoleMuted}
+	sandbox := statusFooterItem{id: "sandbox", role: theme.RoleMuted, priority: 20}
 	if value := strings.TrimSpace(m.runtime.Sandbox); value != "" && value != "unknown" {
 		sandbox.text = "sandbox:" + value
 	}
-	approval := statusFooterItem{role: theme.RoleWarning}
+	approval := statusFooterItem{id: "approval", role: theme.RoleWarning, priority: 65}
 	if am := m.approvalModeLabel(); am == "always-approve" {
 		approval.text = "always-approve"
 	} else if am == "dont-ask" {
@@ -372,61 +427,80 @@ func (m *Model) statusFooterProjection(width int) statusFooterProjection {
 		approval.role = theme.RoleMuted
 		approval.text = "ask"
 	}
-	context := statusFooterItem{role: theme.RoleMuted}
+	context := statusFooterItem{id: "context", role: theme.RoleMuted, priority: 35}
 	if value := m.contextFooterToken(); value != "-" {
 		context.text = "ctx:" + value
 	}
-	activity := m.statusActivityItem()
-	modelHint := statusFooterItem{text: "/model", role: theme.RoleMuted}
-	settingsHint := statusFooterItem{text: m.text(MsgStatusSettingsHint, MessageArgs{"key": primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalSettings))}), role: theme.RoleMuted}
-	helpHint := statusFooterItem{text: m.text(MsgStatusHelpHint, MessageArgs{"key": primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalHelp))}), role: theme.RoleMuted}
+	activity := m.statusActivityItems()
+	modelHint := statusFooterItem{id: "model-hint", text: "/model", role: theme.RoleMuted, priority: 15}
+	settingsHint := statusFooterItem{id: "settings-hint", text: m.text(MsgStatusSettingsHint, MessageArgs{"key": primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalSettings))}), role: theme.RoleMuted, priority: 10}
+	helpHint := statusFooterItem{id: "help-hint", text: m.text(MsgStatusHelpHint, MessageArgs{"key": primaryKeyLabel(m.keys.keys(KeyContextGlobal, ActionGlobalHelp))}), role: theme.RoleMuted, priority: 10}
 
 	// Each row is a complete, intentional fallback. This avoids the common
 	// terminal failure mode where one long string is truncated at an arbitrary
 	// byte and leaves the important state off-screen.
-	variants := []struct {
-		left, right []statusFooterItem
-	}{
-		{[]statusFooterItem{workspace, mode, modelItem, profile, sandbox, approval}, []statusFooterItem{activity, context, modelHint, settingsHint, helpHint}},
-		{[]statusFooterItem{workspace, mode, modelItem, profile, sandbox, approval}, []statusFooterItem{activity, context, modelHint, helpHint}},
-		{[]statusFooterItem{workspace, mode, modelItem, profile, approval}, []statusFooterItem{activity, context, modelHint, helpHint}},
-		{[]statusFooterItem{workspace, mode, modelItem, approval}, []statusFooterItem{activity, modelHint, helpHint}},
-		{[]statusFooterItem{workspace, modelItem}, []statusFooterItem{activity, modelHint, helpHint}},
-		{[]statusFooterItem{workspace, modelItem}, []statusFooterItem{activity, modelHint}},
-		{[]statusFooterItem{workspace}, []statusFooterItem{activity}},
-		{nil, []statusFooterItem{activity}},
+	leftVariants := [][]statusFooterItem{
+		{workspace, mode, modelItem, profile, sandbox, approval},
+		{workspace, mode, modelItem, profile, approval},
+		{workspace, mode, modelItem, approval},
+		{workspace, modelItem},
+		{workspace},
+		nil,
 	}
-	for _, variant := range variants {
-		leftText, rightText := statusJoin(variant.left), statusJoin(variant.right)
+	rightCandidates := append(append([]statusFooterItem(nil), activity...), context, modelHint, settingsHint, helpHint)
+	for _, left := range leftVariants {
+		left = nonEmptyStatusItems(left)
+		leftText := statusJoin(left)
 		gap := 0
-		if leftText != "" && rightText != "" {
+		if leftText != "" {
 			gap = 2
 		}
-		if ansi.StringWidth(leftText)+gap+ansi.StringWidth(rightText) > width {
+		rightWidth := width - ansi.StringWidth(leftText) - gap
+		minimumRight := minInt(maxInt(width/3, 12), maxInt(statusItemsWidth(activity), 1))
+		if rightWidth < minimumRight && len(left) > 0 {
 			continue
 		}
-		left, right := m.renderStatusItems(variant.left), m.renderStatusItems(variant.right)
-		return statusFooterProjection{Left: left, Right: right}
+		right := fitStatusItems(rightCandidates, rightWidth)
+		if len(right) > 0 {
+			return statusFooterSelection{left: left, right: right}
+		}
 	}
-	// At operational widths keep the model addressable even when activity has
-	// accumulated goal/queue/attention badges. Truncate the transient side,
-	// never the configuration anchor. Truly tiny terminals fall back to the
-	// activity alone because two illegible fragments are worse than one signal.
-	anchor := workspace
-	if anchor.text == "" {
-		anchor = modelItem
+	return statusFooterSelection{right: fitStatusItems(activity, width)}
+}
+
+func nonEmptyStatusItems(items []statusFooterItem) []statusFooterItem {
+	out := make([]statusFooterItem, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.text) != "" {
+			out = append(out, item)
+		}
 	}
-	anchorWidth := ansi.StringWidth(anchor.text)
-	if anchorWidth == 0 {
-		return statusFooterProjection{Left: fitRenderedLine(m.th.Style(activity.role).Render(activity.text), width)}
+	return out
+}
+
+func statusItemsWidth(items []statusFooterItem) int {
+	return ansi.StringWidth(statusJoin(items))
+}
+
+func fitStatusItems(items []statusFooterItem, width int) []statusFooterItem {
+	if width <= 0 {
+		return nil
 	}
-	if width >= 32 && width-anchorWidth-2 >= 6 {
-		left := m.renderStatusItems([]statusFooterItem{anchor})
-		rightWidth := width - ansi.StringWidth(left) - 2
-		right := fitRenderedLine(m.th.Style(activity.role).Render(activity.text), rightWidth)
-		return statusFooterProjection{Left: left, Right: right}
+	selected := nonEmptyStatusItems(items)
+	for len(selected) > 1 && statusItemsWidth(selected) > width {
+		remove := 0
+		for index := 1; index < len(selected); index++ {
+			if selected[index].priority < selected[remove].priority ||
+				(selected[index].priority == selected[remove].priority && index > remove) {
+				remove = index
+			}
+		}
+		selected = append(selected[:remove], selected[remove+1:]...)
 	}
-	return statusFooterProjection{Left: fitRenderedLine(m.th.Style(activity.role).Render(activity.text), width)}
+	if len(selected) == 1 && statusItemsWidth(selected) > width {
+		selected[0].text = ansi.Truncate(selected[0].text, width, "")
+	}
+	return selected
 }
 
 func (m *Model) contextFooterToken() string {
@@ -444,7 +518,47 @@ func (m *Model) contextFooterToken() string {
 }
 
 func (m *Model) statusActivityText() string {
+	return statusJoin(m.statusActivityItems())
+}
+
+func (m *Model) statusActivityItems() []statusFooterItem {
 	state := m.conversationSnapshot()
+	items := []statusFooterItem{m.statusPrimaryActivityItem(state)}
+	if notice := strings.TrimSpace(m.operationalNotice.Text); notice != "" {
+		if state.Activity == activityIdle {
+			items = items[:0]
+		}
+		items = append(items, statusFooterItem{id: "notice", text: notice, role: m.operationalNotice.Role, priority: 110})
+	}
+	if hint := strings.TrimSpace(m.ctrlCHint); hint != "" && !strings.Contains(statusJoin(items), hint) {
+		items = append(items, statusFooterItem{id: "interrupt-hint", text: hint, role: theme.RoleWarning, priority: 120})
+	}
+	if m.unseenLines > 0 {
+		items = append(items, statusFooterItem{id: "unseen", text: m.countText(MsgStatusNew, m.unseenLines, nil), role: theme.RoleInfo, priority: 65})
+	}
+	if n := m.followUps.len(); n > 0 {
+		items = append(items, statusFooterItem{id: "queued", text: m.countText(MsgStatusQueued, n, nil), role: theme.RoleInfo, priority: 75})
+	}
+	if m.unreadAttention > 0 {
+		items = append(items, statusFooterItem{id: "attention", text: m.countText(MsgStatusAttention, m.unreadAttention, nil), role: theme.RoleWarning, priority: 105})
+	}
+	if m.chord.hint != "" {
+		items = append(items, statusFooterItem{id: "chord", text: m.text(MsgStatusChord, MessageArgs{"hint": m.chord.hint}), role: theme.RoleWarning, priority: 105})
+	}
+	if m.goal != nil {
+		goal := m.text(MsgStatusGoal, MessageArgs{"status": m.goal.Status})
+		if m.goal.TokenBudget > 0 {
+			goal += fmt.Sprintf(" %d/%d", m.goal.TokensUsed, m.goal.TokenBudget)
+		}
+		items = append(items, statusFooterItem{id: "goal", text: goal, role: theme.RoleMuted, priority: 50})
+	}
+	if shell := m.shellModeStatusSuffix(); shell != "" {
+		items = append(items, statusFooterItem{id: "shell", text: shell, role: theme.RoleMuted, priority: 40})
+	}
+	return nonEmptyStatusItems(items)
+}
+
+func (m *Model) statusPrimaryActivityText(state conversationProjection) string {
 	activity := m.text(MsgStatusReady, nil)
 	if m.editor != nil {
 		activity = m.text(MsgStatusEditingDraft, nil)
@@ -479,43 +593,10 @@ func (m *Model) statusActivityText() string {
 			}
 		}
 	}
-	if notice := strings.TrimSpace(m.operationalNotice.Text); notice != "" {
-		if state.Activity == activityIdle {
-			activity = notice
-		} else {
-			activity += " · " + notice
-		}
-	}
-	if hint := strings.TrimSpace(m.ctrlCHint); hint != "" && !strings.Contains(activity, hint) {
-		activity += " · " + hint
-	}
-	if m.unseenLines > 0 {
-		activity += " · " + m.countText(MsgStatusNew, m.unseenLines, nil)
-	}
-	if n := m.followUps.len(); n > 0 {
-		activity += " · " + m.countText(MsgStatusQueued, n, nil)
-	}
-	if m.unreadAttention > 0 {
-		activity += " · " + m.countText(MsgStatusAttention, m.unreadAttention, nil)
-	}
-	if m.chord.hint != "" {
-		activity += " · " + m.text(MsgStatusChord, MessageArgs{"hint": m.chord.hint})
-	}
-	if m.goal != nil {
-		goal := m.text(MsgStatusGoal, MessageArgs{"status": m.goal.Status})
-		if m.goal.TokenBudget > 0 {
-			goal += fmt.Sprintf(" %d/%d", m.goal.TokensUsed, m.goal.TokenBudget)
-		}
-		activity += " · " + goal
-	}
-	if shell := m.shellModeStatusSuffix(); shell != "" {
-		activity += " · " + shell
-	}
 	return activity
 }
 
-func (m *Model) statusActivityItem() statusFooterItem {
-	state := m.conversationSnapshot()
+func (m *Model) statusPrimaryActivityItem(state conversationProjection) statusFooterItem {
 	role := theme.RoleSuccess
 	switch {
 	case state.Outcome == outcomeDegraded || state.Outcome == outcomeFailed || state.Outcome == outcomeCancelled:
@@ -529,13 +610,7 @@ func (m *Model) statusActivityItem() statusFooterItem {
 	case state.Readiness == readinessUnavailable || state.Readiness == readinessBlocked:
 		role = theme.RoleError
 	}
-	if m.unreadAttention > 0 || m.chord.hint != "" {
-		role = theme.RoleWarning
-	}
-	if state.Activity == activityIdle && strings.TrimSpace(m.operationalNotice.Text) != "" {
-		role = m.operationalNotice.Role
-	}
-	return statusFooterItem{text: m.statusActivityText(), role: role}
+	return statusFooterItem{id: "activity", text: m.statusPrimaryActivityText(state), role: role, priority: 1000}
 }
 
 func shortID(id string) string {

@@ -389,6 +389,20 @@ func TestTUIUnderPTY(t *testing.T) {
 
 	// Transcript: the zh output must appear, streamed live.
 	scr = waitFor("zh transcript line", "你好", 20*time.Second)
+	transcriptX, transcriptY := screenTextCoordinate(t, scr, "你好")
+	typeLiteral(ansi.MouseSgr(ansi.EncodeMouseButton(ansi.MouseLeft, true, false, false, false), transcriptX, transcriptY, false))
+	hoveredTranscript := waitFor("transcript hover actions", "[i inspect]", 10*time.Second)
+	inspectX, inspectY := screenTextCoordinate(t, hoveredTranscript, "[i inspect]")
+	inspectX += 3 // click inside the label, away from tmux's cell boundary
+	typeLiteral(ansi.MouseSgr(button, inspectX, inspectY, false) + ansi.MouseSgr(button, inspectX, inspectY, true))
+	waitFor("transcript inspect overlay", "transcript detail", 10*time.Second)
+	if _, err := tm("send-keys", "-t", "main", "Escape"); err != nil {
+		t.Fatal(err)
+	}
+	scr = waitForScreen("transcript inspect close", 10*time.Second, func(screen string) bool {
+		return strings.Contains(screen, "你好") && strings.Contains(screen, "Type an instruction") &&
+			!strings.Contains(screen, "transcript detail")
+	})
 
 	// zh alignment: every border row must occupy the same display width —
 	// east-asian-width correctness (CJK = 2 columns), the spike's G3 check.
@@ -549,7 +563,7 @@ func screenTextCoordinate(t *testing.T, screen, marker string) (int, int) {
 	t.Helper()
 	for y, line := range strings.Split(screen, "\n") {
 		if x := strings.Index(line, marker); x >= 0 {
-			return x, y
+			return ansi.StringWidth(line[:x]), y
 		}
 	}
 	t.Fatalf("screen marker %q not found:\n%s", marker, screen)
