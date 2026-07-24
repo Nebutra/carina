@@ -23,6 +23,7 @@ uninstall:
 	rm -f $(addprefix $(BINDIR)/,carina carina-daemon carina-worker carina-tui carina-kernel-service $(ZIG_TOOLS))
 
 go:
+	rm -f bin/carina-tui
 	go build -o bin/carina ./apps/carina-cli
 	go build -o bin/carina-daemon ./apps/carina-daemon
 	go build -o bin/carina-worker ./apps/carina-worker
