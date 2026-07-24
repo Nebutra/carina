@@ -262,6 +262,21 @@ func (t *transcript) toggleLastCollapsible(th theme.Theme, width int) bool {
 	return false
 }
 
+func (t *transcript) toggleCollapsible(key string, th theme.Theme, width int) bool {
+	if key == "" {
+		return false
+	}
+	i := t.indexOf(key)
+	if i < 0 || t.entries[i].presentation == nil || !t.entries[i].presentation.Collapsible {
+		return false
+	}
+	p := t.entries[i].presentation
+	p.Collapsed = !p.Collapsed
+	t.entries[i].setRendered(p.render(th, width))
+	t.rebuildLines()
+	return true
+}
+
 func (t *transcript) rebuildLines() {
 	t.lines = t.lines[:0]
 	for i := range t.entries {
@@ -536,9 +551,10 @@ func (m *Model) presentTranscriptEvent(ev map[string]any) eventPresentation {
 	})
 	if cell := m.liveTools.Component(callID); cell != nil {
 		m.componentRuntime.Mount(cell)
-		cell.Layout(ui.Rect{Width: maxInt(m.transcriptWidth(), 1), Height: maxInt(cell.Measure(ui.Constraints{MaxWidth: m.transcriptWidth(), MaxHeight: 8}).Height, 1)})
-		node := cell.Render(ui.RenderContext{Focused: m.componentRuntime.Focus.Current()})
-		p.Title = node.Content
+		p.Title = strings.TrimSpace(strings.Join([]string{snapshot.Tool, string(snapshot.Status), snapshot.Summary}, " "))
+		if p.Title == "" {
+			p.Title = snapshot.CallID
+		}
 		p.Summary = ""
 	}
 	p.Key = "tool:" + snapshot.CallID

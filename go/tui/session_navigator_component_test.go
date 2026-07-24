@@ -57,7 +57,7 @@ func TestNavigatorHoverAndClickSelectThenActivate(t *testing.T) {
 
 	frame := m.ensureNavigatorFrame()
 	var x, y int
-	for _, hit := range frame.Root.Hit {
+	for _, hit := range primaryFrameHits(frame.Root) {
 		if strings.HasSuffix(string(hit.ID), "sess_beta") {
 			x, y = hit.Bounds.X, hit.Bounds.Y
 			break
@@ -66,16 +66,16 @@ func TestNavigatorHoverAndClickSelectThenActivate(t *testing.T) {
 	if x == 0 && y == 0 {
 		t.Fatal("second row did not publish hit geometry")
 	}
-	if _, handled := m.dispatchNavigatorMouse(tea.MouseMotionMsg{X: x, Y: y}); !handled {
+	if _, handled := m.dispatchComponentPointer(tea.MouseMotionMsg{X: x, Y: y}); !handled {
 		t.Fatal("hover was not routed")
 	}
 	if m.sessionPicker.hoveredID != "sess_beta" || m.sessionPicker.selected != 0 {
 		t.Fatalf("hover changed focus selection: hover=%q selected=%d", m.sessionPicker.hoveredID, m.sessionPicker.selected)
 	}
-	if cmd, handled := m.dispatchNavigatorMouse(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}); !handled || cmd != nil || m.sessionPicker.selected != 1 {
+	if cmd, handled := m.dispatchComponentPointer(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}); !handled || cmd != nil || m.sessionPicker.selected != 1 {
 		t.Fatalf("first click must select only: handled=%v cmd=%v selected=%d", handled, cmd != nil, m.sessionPicker.selected)
 	}
-	cmd, handled := m.dispatchNavigatorMouse(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	cmd, handled := m.dispatchComponentPointer(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 	if !handled || cmd == nil {
 		t.Fatal("second click did not activate selected row")
 	}
@@ -98,7 +98,7 @@ func TestNavigatorWheelOwnsPointerContextAndRequestsAllMotion(t *testing.T) {
 	}
 	frame := m.componentFrame
 	var x, y int
-	for _, hit := range frame.Root.Hit {
+	for _, hit := range primaryFrameHits(frame.Root) {
 		if strings.HasPrefix(string(hit.ID), "navigator-row:") {
 			x, y = hit.Bounds.X, hit.Bounds.Y
 			break

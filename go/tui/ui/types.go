@@ -156,6 +156,7 @@ type EventKind string
 
 const (
 	EventKey     EventKind = "key"
+	EventPaste   EventKind = "paste"
 	EventPointer EventKind = "pointer"
 	EventResize  EventKind = "resize"
 	EventFocus   EventKind = "focus"
@@ -183,11 +184,13 @@ type PointerEvent struct {
 }
 
 type Event struct {
-	Kind    EventKind
-	Key     string
-	Pointer PointerEvent
-	Width   int
-	Height  int
+	Kind            EventKind
+	Key             string
+	Text            string
+	Pointer         PointerEvent
+	Width           int
+	Height          int
+	FrameGeneration uint64
 }
 
 type Action struct {

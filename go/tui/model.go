@@ -234,6 +234,7 @@ type Model struct {
 	input                   textarea.Model
 	componentRuntime        *ui.Runtime
 	componentFrame          ui.Frame
+	conversationScreen      *conversationScreen
 	primaryOverlayComponent *primaryOverlayComponent
 	componentGraphicsOwners map[string]struct{}
 	graphicsNamespace       string

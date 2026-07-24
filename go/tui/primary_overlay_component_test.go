@@ -39,8 +39,8 @@ func TestPrimaryOverlaysAreRuntimeOwnedAndPublishHitGeometry(t *testing.T) {
 			if m.componentFrame.Root.ID != primaryOverlayID {
 				t.Fatalf("frame root = %q", m.componentFrame.Root.ID)
 			}
-			if len(m.componentFrame.Root.Hit) < 2 {
-				t.Fatalf("surface published no actionable geometry: %#v", m.componentFrame.Root.Hit)
+			if len(primaryFrameHits(m.componentFrame.Root)) < 2 {
+				t.Fatalf("surface published no actionable geometry: %#v", m.componentFrame.Root)
 			}
 			if !m.componentFrame.AllMotion {
 				t.Fatal("hover-capable overlay did not request all-motion mouse reporting")
@@ -60,7 +60,7 @@ func TestPrimaryOverlayMouseAndKeyboardUseExistingDomainActions(t *testing.T) {
 		if m.settings.tab != settingsTabOverview {
 			t.Fatal("hover moved keyboard selection")
 		}
-		if len(m.componentFrame.Root.Children) != 1 || m.componentFrame.Root.Children[0].Role != ui.RoleHovered {
+		if !frameHasRole(m.componentFrame.Root, ui.RoleHovered) {
 			t.Fatalf("hover produced no visible component state: %#v", m.componentFrame.Root.Children)
 		}
 		m.Update(tea.MouseClickMsg{X: tab.Bounds.X, Y: tab.Bounds.Y, Button: tea.MouseLeft})
@@ -120,6 +120,18 @@ func TestPrimaryOverlayMouseAndKeyboardUseExistingDomainActions(t *testing.T) {
 			t.Fatal("transcript pager remained open")
 		}
 	})
+}
+
+func frameHasRole(node ui.Node, role ui.SemanticRole) bool {
+	if node.Role == role {
+		return true
+	}
+	for _, child := range node.Children {
+		if frameHasRole(child, role) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPrimaryOverlayActionGeometrySurvivesNarrowRendering(t *testing.T) {
@@ -184,22 +196,30 @@ func TestNestedOverlaysRestoreComposerFocusAndCaret(t *testing.T) {
 
 func primaryHit(t *testing.T, frame ui.Frame, action string, data any) ui.HitRegion {
 	t.Helper()
-	for _, hit := range frame.Root.Hit {
+	for _, hit := range primaryFrameHits(frame.Root) {
 		if hit.Action == action && hit.Data == data {
 			return hit
 		}
 	}
-	t.Fatalf("missing hit action=%q data=%v in %#v", action, data, frame.Root.Hit)
+	t.Fatalf("missing hit action=%q data=%v in %#v", action, data, frame.Root)
 	return ui.HitRegion{}
 }
 
 func primaryHitByID(t *testing.T, frame ui.Frame, id ui.HitID) ui.HitRegion {
 	t.Helper()
-	for _, hit := range frame.Root.Hit {
+	for _, hit := range primaryFrameHits(frame.Root) {
 		if hit.ID == id {
 			return hit
 		}
 	}
-	t.Fatalf("missing hit id=%q in %#v", id, frame.Root.Hit)
+	t.Fatalf("missing hit id=%q in %#v", id, frame.Root)
 	return ui.HitRegion{}
+}
+
+func primaryFrameHits(node ui.Node) []ui.HitRegion {
+	hits := append([]ui.HitRegion(nil), node.Hit...)
+	for _, child := range node.Children {
+		hits = append(hits, primaryFrameHits(child)...)
+	}
+	return hits
 }

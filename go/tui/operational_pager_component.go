@@ -3,7 +3,6 @@ package tui
 import (
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	ui "github.com/Nebutra/carina/go/tui/ui"
@@ -13,12 +12,44 @@ const operationalPagerID ui.ComponentID = "operational-pager"
 
 type operationalPagerComponent struct {
 	ui.Base
-	model *Model
+	model        *Model
+	controls     map[ui.ComponentID]*operationalControl
+	controlOrder []ui.Component
 }
 
 func newOperationalPagerComponent(model *Model) *operationalPagerComponent {
-	return &operationalPagerComponent{Base: ui.Base{ComponentID: operationalPagerID}, model: model}
+	return &operationalPagerComponent{
+		Base: ui.Base{ComponentID: operationalPagerID}, model: model,
+		controls: make(map[ui.ComponentID]*operationalControl),
+	}
 }
+
+type operationalControl struct {
+	ui.Base
+	parent *operationalPagerComponent
+	hit    ui.HitRegion
+}
+
+func (c *operationalControl) Measure(constraints ui.Constraints) ui.Size {
+	return constraints.Constrain(ui.Size{Width: c.hit.Bounds.Width, Height: 1})
+}
+func (c *operationalControl) Layout(ui.Rect) {}
+func (c *operationalControl) Render(ui.RenderContext) ui.Node {
+	hit := c.hit
+	hit.Owner = c.ComponentID
+	return ui.Node{ID: c.ComponentID, Bounds: hit.Bounds, Focusable: true, Focused: c.Focused(), Hit: []ui.HitRegion{hit}}
+}
+func (c *operationalControl) Handle(event ui.Event) ui.Result {
+	if event.Kind == ui.EventKey && (event.Key == "enter" || event.Key == " ") {
+		return ui.Result{Handled: true, Actions: []ui.Action{{Source: operationalPagerID, Name: c.hit.Action}}}
+	}
+	if event.Kind == ui.EventPointer {
+		return c.parent.handleControlPointer(event.Pointer, c.hit)
+	}
+	return ui.Result{}
+}
+
+func (c *operationalPagerComponent) Components() []ui.Component { return c.controlOrder }
 
 func (c *operationalPagerComponent) Measure(constraints ui.Constraints) ui.Size {
 	return constraints.Constrain(ui.Size{Width: constraints.MaxWidth, Height: constraints.MaxHeight})
@@ -52,15 +83,65 @@ func (c *operationalPagerComponent) Render(ui.RenderContext) ui.Node {
 			Z:      2, Kind: ui.HitActivate, Action: "close", Focusable: true,
 		})
 	}
+	c.syncControls(hits[1:])
+	children := make([]ui.Node, 0, len(c.controlOrder))
+	for _, control := range c.controlOrder {
+		children = append(children, control.Render(ui.RenderContext{}))
+	}
 	return ui.Node{
 		ID: operationalPagerID, Bounds: c.Bounds, Content: content,
-		Focusable: true, Focused: c.Focused(), Hit: hits,
+		Focusable: true, Focused: c.Focused(), Hit: hits[:1], Children: children,
 	}
+}
+
+func (c *operationalPagerComponent) syncControls(hits []ui.HitRegion) {
+	c.controlOrder = c.controlOrder[:0]
+	for _, hit := range hits {
+		id := ui.ComponentID("operational-control:" + string(hit.ID))
+		control := c.controls[id]
+		if control == nil {
+			control = &operationalControl{Base: ui.Base{ComponentID: id}, parent: c}
+			c.controls[id] = control
+		}
+		control.hit = hit
+		c.controlOrder = append(c.controlOrder, control)
+	}
+}
+
+func (c *operationalPagerComponent) handleControlPointer(event ui.PointerEvent, hit ui.HitRegion) ui.Result {
+	state := c.model.transcriptPager
+	if state == nil {
+		return ui.Result{}
+	}
+	if event.Kind == ui.PointerLeave {
+		state.hoveredAction = ""
+		return ui.Result{Handled: true}
+	}
+	if event.Kind == ui.PointerMove {
+		state.hoveredAction = hit.Action
+		return ui.Result{Handled: true}
+	}
+	if event.Kind == ui.PointerClick {
+		return ui.Result{Handled: true, Actions: []ui.Action{{Source: operationalPagerID, Name: hit.Action}}}
+	}
+	return ui.Result{Handled: true}
 }
 
 func (c *operationalPagerComponent) Handle(event ui.Event) ui.Result {
 	state := c.model.transcriptPager
-	if state == nil || state.operationalKind == "" || event.Kind != ui.EventPointer {
+	if state == nil || state.operationalKind == "" {
+		return ui.Result{}
+	}
+	if event.Kind == ui.EventKey {
+		return ui.Result{Handled: true, Actions: []ui.Action{{
+			Source: operationalPagerID, Name: "operational-key",
+			Data: componentKeyInput{Key: event.Key, Text: event.Text},
+		}}}
+	}
+	if event.Kind == ui.EventPaste {
+		return ui.Result{Handled: true}
+	}
+	if event.Kind != ui.EventPointer {
 		return ui.Result{}
 	}
 	if event.Pointer.Kind == ui.PointerLeave {
@@ -103,50 +184,6 @@ func (m *Model) ensureOperationalFrame() ui.Frame {
 	m.componentFrame = frame
 	m.reconcileFrameGraphics(frame)
 	return frame
-}
-
-func (m *Model) dispatchOperationalMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
-	if m.transcriptPager == nil || m.transcriptPager.operationalKind == "" {
-		return nil, false
-	}
-	m.ensureOperationalFrame()
-	mouse := msg.Mouse()
-	event := ui.PointerEvent{X: mouse.X, Y: mouse.Y, Button: int(mouse.Button)}
-	switch typed := msg.(type) {
-	case tea.MouseMotionMsg:
-		event.Kind = ui.PointerMove
-	case tea.MouseClickMsg:
-		if typed.Button != tea.MouseLeft {
-			return nil, true
-		}
-		event.Kind = ui.PointerClick
-	case tea.MouseReleaseMsg:
-		event.Kind = ui.PointerRelease
-	case tea.MouseWheelMsg:
-		event.Kind = ui.PointerWheel
-		if typed.Button == tea.MouseWheelUp {
-			event.WheelDelta = -1
-		} else if typed.Button == tea.MouseWheelDown {
-			event.WheelDelta = 1
-		} else {
-			return nil, true
-		}
-	default:
-		return nil, false
-	}
-	result := m.componentRuntime.Dispatch(ui.Event{Kind: ui.EventPointer, Pointer: event})
-	for _, action := range result.Actions {
-		switch action.Name {
-		case "refresh":
-			return m.refreshOperationalPager(), true
-		case "close":
-			return m.closeTranscriptPager(), true
-		}
-	}
-	if result.Handled {
-		m.layout()
-	}
-	return nil, result.Handled
 }
 
 func joinOperationalFooter(refresh, close string, width int) string {

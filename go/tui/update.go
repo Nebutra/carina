@@ -54,12 +54,6 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rewindPrimed = false
 		m.clearChord()
 	}
-	var (
-		composerBefore composerSnapshot
-		composerKey    tea.KeyPressMsg
-		trackComposer  bool
-	)
-
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
@@ -70,6 +64,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.componentFrame = ui.Frame{}
 		m.layout()
+		m.dispatchComponentEvent(ui.Event{Kind: ui.EventResize, Width: msg.Width, Height: msg.Height})
 		return m, tea.Raw(ansi.WindowOp(ansi.RequestCellSizeWinOp))
 
 	case uv.CellSizeEvent:
@@ -88,10 +83,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.BlurMsg:
 		m.terminalBlurredNow()
+		m.dispatchComponentEvent(ui.Event{Kind: ui.EventBlur})
 		return m, nil
 
 	case tea.FocusMsg:
 		m.terminalFocusedNow()
+		m.dispatchComponentEvent(ui.Event{Kind: ui.EventFocus})
 		return m, nil
 
 	case SessionReadyMsg:
@@ -497,110 +494,16 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.maybeSubmitNextQueued()
 
 	case tea.PasteMsg:
-		m.pasteBurst.reset()
-		if m.question != nil {
-			if len(m.question.Options) == 0 && !m.question.Resolving {
-				m.appendQuestionText(msg.Content)
-			}
-			return m, nil
-		}
-		// Governance overlays exclusively own input while open, including while
-		// their RPC is resolving. Never let a terminal paste mutate the hidden
-		// composer behind the modal.
-		if m.approval != nil || m.editor != nil ||
-			m.helpOpen || m.transcriptPager != nil || m.checkpointPicker != nil || m.modelPicker != nil || m.sessionPicker != nil || m.keymapEditor != nil {
-			return m, nil
-		}
-		if m.historySearch != nil {
-			// Modal precedence is approval/question > history search > normal
-			// composer paste handling. A hidden search never lets pasted bytes
-			// leak into pendingPaste behind a governance overlay.
-			if m.approval == nil && m.question == nil {
-				m.appendHistorySearchQuery(msg.Content)
-			}
-			return m, nil
-		}
-		if m.submitting != nil && msg.Content != "" && !submissionHasIndependentComposer(m.submitting) {
-			m.beginSubmissionTypeAhead()
-		}
-		before := m.composerSnapshot()
-		pasteCount := len(m.pendingPaste)
-		cmd := m.handlePaste(msg)
-		if len(m.pendingPaste) > pasteCount {
-			m.composerExternalMutation()
-		} else {
-			m.recordComposerEdit(before, composerEditPaste)
-		}
+		cmd, _ := m.dispatchComponentPaste(msg.Content)
 		return m, cmd
 
-	case tea.MouseMotionMsg:
-		if cmd, handled := m.dispatchGovernanceMouse(msg); handled {
-			return m, cmd
+	case tea.MouseMotionMsg, tea.MouseClickMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg:
+		mouseMsg, ok := any(msg).(tea.MouseMsg)
+		if !ok {
+			return m, nil
 		}
-		if cmd, handled := m.dispatchPrimaryOverlayMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchNavigatorMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchOperationalMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchAttachmentMouse(msg); handled {
-			return m, cmd
-		}
-		return m, nil
-
-	case tea.MouseClickMsg:
-		if cmd, handled := m.dispatchGovernanceMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchPrimaryOverlayMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchNavigatorMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchOperationalMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchAttachmentMouse(msg); handled {
-			return m, cmd
-		}
-		return m, nil
-
-	case tea.MouseReleaseMsg:
-		if cmd, handled := m.dispatchGovernanceMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchPrimaryOverlayMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchNavigatorMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchOperationalMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchAttachmentMouse(msg); handled {
-			return m, cmd
-		}
-		return m, nil
-
-	case tea.MouseWheelMsg:
-		if cmd, handled := m.dispatchGovernanceMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchPrimaryOverlayMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchNavigatorMouse(msg); handled {
-			return m, cmd
-		}
-		if cmd, handled := m.dispatchOperationalMouse(msg); handled {
-			return m, cmd
-		}
-		return m, m.handleMouseWheel(msg)
+		cmd, _ := m.dispatchComponentPointer(mouseMsg)
+		return m, cmd
 
 	case tea.KeyPressMsg:
 		if m.editor != nil {
@@ -608,75 +511,17 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.maintainConfirmationStateForKey(msg.String())
 			return m, nil
 		}
-		resolved, chordCmd, chordConsumed := m.resolveChordKey(msg.String())
-		if chordConsumed {
-			m.pasteBurst.reset()
-			return m, chordCmd
-		}
-		m.maintainConfirmationStateForKey(resolved)
-		if resolved != msg.String() {
-			m.pasteBurst.reset()
-			if cmd, handled := m.handleKey(resolved); handled {
-				return m, cmd
-			}
-			before := m.composerSnapshot()
-			synthetic := tea.KeyPressMsg{Text: resolved}
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(synthetic)
-			m.snapVerticalGraphemeEditorKey(resolved)
-			m.layout()
-			m.recordComposerEdit(before, composerEditOther)
-			return m, tea.Batch(cmd, m.refreshSuggestTrigger())
-		}
-		if m.question != nil && len(m.question.Options) == 0 {
-			m.pasteBurst.reset()
-			cmd, _ := m.questionKeyText(msg.String(), msg.Key().Text)
-			return m, cmd
-		}
-		if m.historySearch != nil && m.approval == nil && m.question == nil {
-			m.pasteBurst.reset()
-			return m, m.historySearchKeyPress(msg)
-		}
-		composerSurfaceAvailable := m.approval == nil && m.question == nil &&
-			m.historySearch == nil && m.activePrimaryOverlayKind() == primaryOverlayNone &&
-			m.transcriptPager == nil && m.sessionPicker == nil
-		if composerSurfaceAvailable && m.submitting != nil && !submissionHasIndependentComposer(m.submitting) &&
-			m.keyStartsSubmissionTypeAhead(msg) {
-			m.beginSubmissionTypeAhead()
-		}
-		submissionBlocksComposer := m.submitting != nil && !submissionHasIndependentComposer(m.submitting)
-		if m.approval != nil || m.question != nil || m.historySearch != nil ||
-			submissionBlocksComposer || m.activePrimaryOverlayKind() != primaryOverlayNone ||
-			m.transcriptPager != nil || m.sessionPicker != nil {
-			m.pasteBurst.reset()
-		} else {
-			composerBefore = m.composerSnapshot()
-			composerKey = msg
-			trackComposer = true
-			if cmd, handled := m.handlePasteBurstKey(msg); handled {
-				m.recordComposerEdit(composerBefore, composerEditTyping)
-				return m, cmd
-			}
-		}
-		if cmd, handled := m.handleKey(msg.String()); handled {
+		if cmd, handled := m.dispatchComponentKey(msg); handled {
 			return m, cmd
 		}
 	}
 
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		m.snapVerticalGraphemeEditorKey(key.String())
-		// Fallback: some terminals only deliver "!" via Text after input.Update.
-		if key.Text == "!" || key.String() == "!" {
-			m.absorbLoneBangIfNeeded()
-		}
+	if _, ok := msg.(tea.KeyPressMsg); ok {
+		// Every key must have a retained owner. Do not reactivate direct root
+		// textarea mutation if an invalid component frame declines the event.
+		return m, nil
 	}
-	m.layout()
-	if trackComposer {
-		m.recordComposerEdit(composerBefore, composerKeyEditKind(composerKey))
-	}
-	return m, tea.Batch(cmd, m.refreshSuggestTrigger())
+	return m, m.applyComposerMessage(msg)
 }
 
 // maintainConfirmationStateForKey runs after chord resolution so confirmation
@@ -1005,43 +850,6 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		return m.ctrlD()
 	}
 	return nil, false
-}
-
-func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
-	if cmd, handled := m.dispatchPrimaryOverlayMouse(msg); handled {
-		return cmd
-	}
-	delta := 0
-	switch msg.Button {
-	case tea.MouseWheelUp:
-		delta = -3
-	case tea.MouseWheelDown:
-		delta = 3
-	default:
-		return nil
-	}
-	if m.question != nil {
-		m.question.Scroll += delta
-		m.clampQuestionScroll()
-		return nil
-	}
-	if m.approval != nil {
-		m.approval.Scroll += delta
-		m.clampApprovalScroll()
-		return nil
-	}
-	if m.transcriptPager != nil {
-		m.transcriptPager.scrollBy(delta)
-		m.clampTranscriptPagerScroll(m.transcriptPagerLines())
-		return nil
-	}
-	var cmd tea.Cmd
-	m.vp, cmd = m.vp.Update(msg)
-	m.followTail = m.vp.AtBottom()
-	if m.followTail {
-		m.unseenLines = 0
-	}
-	return cmd
 }
 
 // suggestKey handles keys while the mention/slash suggestion panel is open.

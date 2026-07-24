@@ -340,8 +340,12 @@ func TestAttachmentChipHoverUsesComponentGeometry(t *testing.T) {
 		}
 	}
 	var firstHit, secondHit ui.HitRegion
-	for _, hit := range frame.Root.Hit {
-		switch hit.Data.(attachmentHit).ID {
+	for _, hit := range collectNodeHits(frame.Root) {
+		attachment, ok := hit.Data.(attachmentHit)
+		if !ok {
+			continue
+		}
+		switch attachment.ID {
 		case first.ID:
 			firstHit = hit
 		case second.ID:
@@ -349,7 +353,7 @@ func TestAttachmentChipHoverUsesComponentGeometry(t *testing.T) {
 		}
 	}
 	if firstHit.ID == "" || secondHit.ID == "" {
-		t.Fatalf("attachment hit regions=%+v", frame.Root.Hit)
+		t.Fatalf("attachment hit regions=%+v", collectNodeHits(frame.Root))
 	}
 	m.Update(tea.MouseMotionMsg{X: firstHit.Bounds.X, Y: firstHit.Bounds.Y})
 	if m.attachmentPreviewID != first.ID || m.attachmentFocus != -1 {
@@ -363,4 +367,12 @@ func TestAttachmentChipHoverUsesComponentGeometry(t *testing.T) {
 	if m.attachmentPreviewID != second.ID {
 		t.Fatalf("pointer leave did not restore keyboard preview: %q", m.attachmentPreviewID)
 	}
+}
+
+func collectNodeHits(node ui.Node) []ui.HitRegion {
+	hits := append([]ui.HitRegion(nil), node.Hit...)
+	for _, child := range node.Children {
+		hits = append(hits, collectNodeHits(child)...)
+	}
+	return hits
 }

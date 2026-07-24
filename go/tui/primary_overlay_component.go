@@ -34,26 +34,112 @@ type primaryOverlayKeyAction struct {
 
 type primaryOverlayComponent struct {
 	ui.Base
-	model   *Model
-	kind    primaryOverlayKind
-	hovered ui.HitID
+	model        *Model
+	kind         primaryOverlayKind
+	hovered      ui.HitID
+	content      string
+	box          ui.Rect
+	controls     map[ui.ComponentID]*primaryOverlayControl
+	controlOrder []ui.Component
 }
 
 func newPrimaryOverlayComponent(model *Model) *primaryOverlayComponent {
-	return &primaryOverlayComponent{Base: ui.Base{ComponentID: primaryOverlayID}, model: model}
+	return &primaryOverlayComponent{
+		Base: ui.Base{ComponentID: primaryOverlayID}, model: model,
+		controls: make(map[ui.ComponentID]*primaryOverlayControl),
+	}
 }
+
+type primaryOverlayControl struct {
+	ui.Base
+	parent    *primaryOverlayComponent
+	hit       ui.HitRegion
+	rowBounds ui.Rect
+	rowText   string
+}
+
+func (c *primaryOverlayControl) Measure(constraints ui.Constraints) ui.Size {
+	return constraints.Constrain(ui.Size{Width: c.rowBounds.Width, Height: 1})
+}
+
+func (c *primaryOverlayControl) Layout(ui.Rect) {}
+
+func (c *primaryOverlayControl) Render(ui.RenderContext) ui.Node {
+	hovered := c.parent.hovered == c.hit.ID
+	content := ""
+	if hovered {
+		content = c.parent.model.th.Style(theme.RoleTitle).Render(fitRenderedLine(c.rowText, c.rowBounds.Width))
+	}
+	hit := c.hit
+	hit.Owner = c.ComponentID
+	return ui.Node{
+		ID: c.ComponentID, Bounds: c.rowBounds, Content: content,
+		Role:      map[bool]ui.SemanticRole{true: ui.RoleHovered, false: ui.RoleText}[hovered],
+		Focusable: true, Focused: c.Focused(), Hovered: hovered, Hit: []ui.HitRegion{hit},
+	}
+}
+
+func (c *primaryOverlayControl) Handle(event ui.Event) ui.Result {
+	if event.Kind == ui.EventKey && (event.Key == "enter" || event.Key == " ") {
+		return c.parent.activate(c.parent.kind, c.hit)
+	}
+	if event.Kind != ui.EventPointer {
+		return ui.Result{}
+	}
+	if event.Pointer.Kind == ui.PointerLeave {
+		c.parent.hovered = ""
+		return ui.Result{Handled: true}
+	}
+	if event.Pointer.Kind == ui.PointerMove {
+		c.parent.hovered = c.hit.ID
+		return ui.Result{Handled: true}
+	}
+	if event.Pointer.Kind == ui.PointerClick {
+		return c.parent.activate(c.parent.kind, c.hit)
+	}
+	return ui.Result{Handled: true}
+}
+
+func (c *primaryOverlayComponent) Components() []ui.Component { return c.controlOrder }
 
 func (c *primaryOverlayComponent) Measure(constraints ui.Constraints) ui.Size {
 	return constraints.Constrain(ui.Size{Width: constraints.MaxWidth, Height: constraints.MaxHeight})
 }
 
+func (c *primaryOverlayComponent) Layout(bounds ui.Rect) {
+	c.Bounds = bounds
+	c.syncSurface()
+}
+
 func (c *primaryOverlayComponent) Render(ui.RenderContext) ui.Node {
-	kind := c.model.activePrimaryOverlayKind()
+	c.syncSurface()
+	kind := c.kind
 	if kind == primaryOverlayNone || c.Bounds.Empty() {
 		return ui.Node{ID: primaryOverlayID}
 	}
-	c.kind = kind
-	content := c.content(kind)
+	content, box := c.content, c.box
+	hits := []ui.HitRegion{{
+		ID: "primary-overlay-surface", Owner: primaryOverlayID, Bounds: c.Bounds,
+		Kind: ui.HitHover, Action: "surface",
+	}}
+	children := make([]ui.Node, 0, len(c.controlOrder))
+	for _, control := range c.controlOrder {
+		children = append(children, control.Render(ui.RenderContext{}))
+	}
+	return ui.Node{
+		ID: primaryOverlayID, Bounds: box, Z: 20, Content: content,
+		Focusable: true, Focused: c.Focused(), Hovered: c.hovered != "", Hit: hits, Children: children,
+	}
+}
+
+func (c *primaryOverlayComponent) syncSurface() {
+	kind := c.model.activePrimaryOverlayKind()
+	if kind == primaryOverlayNone || c.Bounds.Empty() {
+		c.kind, c.content, c.box = kind, "", ui.Rect{}
+		c.controlOrder = c.controlOrder[:0]
+		return
+	}
+	content := c.contentFor(kind)
 	box := c.Bounds
 	if kind != primaryOverlayTranscript {
 		content = fitViewBlock(content, c.Bounds.Width, c.Bounds.Height, true)
@@ -65,46 +151,32 @@ func (c *primaryOverlayComponent) Render(ui.RenderContext) ui.Node {
 			Width: boxWidth, Height: boxHeight,
 		}
 	}
-	hits := []ui.HitRegion{{
-		ID: "primary-overlay-surface", Owner: primaryOverlayID, Bounds: c.Bounds,
-		Kind: ui.HitHover, Action: "surface",
-	}}
-	hits = append(hits, c.hits(kind, content, box)...)
-	var children []ui.Node
-	if hover := c.hoverNode(content, box, hits); hover != nil {
-		children = append(children, *hover)
-	}
-	return ui.Node{
-		ID: primaryOverlayID, Bounds: box, Z: 20, Content: content,
-		Focusable: true, Focused: c.Focused(), Hovered: c.hovered != "", Hit: hits, Children: children,
-	}
+	c.kind, c.content, c.box = kind, content, box
+	c.syncControls(c.typedHits(kind, box), content, box)
 }
 
-func (c *primaryOverlayComponent) hoverNode(content string, box ui.Rect, hits []ui.HitRegion) *ui.Node {
-	if c.hovered == "" {
-		return nil
-	}
+func (c *primaryOverlayComponent) syncControls(hits []ui.HitRegion, content string, box ui.Rect) {
+	c.controlOrder = c.controlOrder[:0]
+	lines := strings.Split(ansi.Strip(content), "\n")
 	for _, hit := range hits {
-		if hit.ID != c.hovered || hit.Action == "surface" {
-			continue
+		id := ui.ComponentID("primary-control:" + string(hit.ID))
+		control := c.controls[id]
+		if control == nil {
+			control = &primaryOverlayControl{Base: ui.Base{ComponentID: id}, parent: c}
+			c.controls[id] = control
 		}
-		lineIndex := hit.Bounds.Y - box.Y
-		lines := strings.Split(ansi.Strip(content), "\n")
-		if lineIndex < 0 || lineIndex >= len(lines) {
-			return nil
+		control.hit = hit
+		control.rowBounds = ui.Rect{X: box.X, Y: hit.Bounds.Y, Width: box.Width, Height: 1}
+		line := hit.Bounds.Y - box.Y
+		control.rowText = ""
+		if line >= 0 && line < len(lines) {
+			control.rowText = lines[line]
 		}
-		line := fitRenderedLine(lines[lineIndex], box.Width)
-		return &ui.Node{
-			ID:     ui.ComponentID(string(primaryOverlayID) + ":hover"),
-			Bounds: ui.Rect{X: box.X, Y: hit.Bounds.Y, Width: box.Width, Height: 1},
-			Z:      1, Content: c.model.th.Style(theme.RoleTitle).Render(line),
-			Role: ui.RoleHovered, Hovered: true,
-		}
+		c.controlOrder = append(c.controlOrder, control)
 	}
-	return nil
 }
 
-func (c *primaryOverlayComponent) content(kind primaryOverlayKind) string {
+func (c *primaryOverlayComponent) contentFor(kind primaryOverlayKind) string {
 	switch kind {
 	case primaryOverlayPlan:
 		return c.model.planReviewOverlayView()
@@ -132,6 +204,9 @@ func (c *primaryOverlayComponent) Handle(event ui.Event) ui.Result {
 	}
 	if event.Kind == ui.EventKey {
 		return c.keyResult(kind, event.Key)
+	}
+	if event.Kind == ui.EventPaste {
+		return ui.Result{Handled: true}
 	}
 	if event.Kind != ui.EventPointer {
 		return ui.Result{}
@@ -258,92 +333,78 @@ func (c *primaryOverlayComponent) activate(kind primaryOverlayKind, hit ui.HitRe
 	return ui.Result{Handled: true}
 }
 
-func (c *primaryOverlayComponent) hits(kind primaryOverlayKind, content string, box ui.Rect) []ui.HitRegion {
+func (c *primaryOverlayComponent) typedHits(kind primaryOverlayKind, box ui.Rect) []ui.HitRegion {
 	switch kind {
 	case primaryOverlayPlan:
-		return c.planHits(content, box)
+		return c.planHits(box)
 	case primaryOverlayCheckpoint:
-		return c.checkpointHits(content, box)
+		return c.checkpointHits(box)
 	case primaryOverlayModel:
-		return c.modelHits(content, box)
+		return c.modelHits(box)
 	case primaryOverlayKeymap:
-		return c.keymapHits(content, box)
+		return c.keymapHits(box)
 	case primaryOverlaySettings:
-		return c.settingsHits(content, box)
+		return c.settingsHits(box)
 	case primaryOverlayHelp:
-		footer := c.model.helpFooterText()
-		return segmentedLineHits(content, box, footer, []surfaceHitAction{{ID: "help-close", Key: c.model.firstBoundKey(KeyContextPager, ActionPagerClose, "esc")}})
+		return footerControlHits(innerFooterRow(box, 0), []surfaceHitAction{{ID: "help-close", Key: c.model.firstBoundKey(KeyContextPager, ActionPagerClose, "esc")}})
 	case primaryOverlayTranscript:
-		footer := c.model.transcriptPagerFooterText()
-		return segmentedLineHits(content, box, footer, []surfaceHitAction{{ID: "transcript-close", Key: c.model.firstBoundKey(KeyContextPager, ActionPagerClose, "esc")}})
+		return footerControlHits(ui.Rect{X: box.X, Y: box.Y + maxInt(box.Height-1, 0), Width: box.Width, Height: 1}, []surfaceHitAction{{ID: "transcript-close", Key: c.model.firstBoundKey(KeyContextPager, ActionPagerClose, "esc")}})
 	default:
 		return nil
 	}
 }
 
-func (c *primaryOverlayComponent) planHits(content string, box ui.Rect) []ui.HitRegion {
+func (c *primaryOverlayComponent) planHits(box ui.Rect) []ui.HitRegion {
 	state := c.model.planReview
 	if state == nil {
 		return nil
 	}
 	var hits []ui.HitRegion
 	end := minInt(state.Scroll+c.model.planReviewViewportHeight(), len(state.Body))
+	line := 3
 	for index := state.Scroll; index < end; index++ {
-		needle := fmt.Sprintf("%4d ", index+1)
-		hits = append(hits, lineHits(content, box, needle, "plan-row", index)...)
+		hits = append(hits, rowControlHit(framedContentRow(box, line), "plan-row", index, 1))
+		wrapped := ansi.Hardwrap(state.Body[index], maxInt(maxInt(c.model.width-4, 20)-6, 8), true)
+		line += maxInt(len(strings.Split(wrapped, "\n")), 1)
 	}
 	if state.Busy || state.CommentMode {
 		return hits
 	}
-	footer := c.model.text(MsgPlanReviewFooter, nil)
-	return append(hits, segmentedLineHits(content, box, footer, []surfaceHitAction{
+	extra := 0
+	if len(state.Comments) > 0 {
+		extra++
+	}
+	if state.Error != "" {
+		extra++
+	}
+	return append(hits, footerControlHits(innerFooterRow(box, extra), []surfaceHitAction{
 		{ID: "plan-approve", Key: "a"}, {ID: "plan-revise", Key: "s"},
 		{ID: "plan-comment", Key: "c"}, {ID: "plan-mark", Key: "m"},
 		{ID: "plan-quit", Key: "q"}, {ID: "plan-close", Key: "esc"},
 	})...)
 }
 
-func (c *primaryOverlayComponent) checkpointHits(content string, box ui.Rect) []ui.HitRegion {
+func (c *primaryOverlayComponent) checkpointHits(box ui.Rect) []ui.HitRegion {
 	state := c.model.checkpointPicker
 	if state == nil || state.loading || state.restoring || state.resuming {
 		return nil
 	}
+	footerRow := innerFooterRow(box, map[bool]int{true: 2, false: 0}[state.status != ""])
 	if state.restored != nil {
-		footer := c.model.text(MsgCheckpointResumeActions, MessageArgs{
-			"resume": primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointRestored, ActionCheckpointRestoredResume)),
-			"close":  primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointRestored, ActionCheckpointRestoredClose)),
-		})
-		if state.resumeError != "" {
-			footer = c.model.text(MsgCheckpointRetryResumeActions, MessageArgs{
-				"resume": primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointRestored, ActionCheckpointRestoredResume)),
-				"close":  primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointRestored, ActionCheckpointRestoredClose)),
-			})
-		}
-		return segmentedLineHits(content, box, footer, []surfaceHitAction{
+		return footerControlHits(footerRow, []surfaceHitAction{
 			{ID: "checkpoint-resume", Key: c.model.firstBoundKey(KeyContextCheckpointRestored, ActionCheckpointRestoredResume, "enter")},
 			{ID: "checkpoint-close", Key: c.model.firstBoundKey(KeyContextCheckpointRestored, ActionCheckpointRestoredClose, "esc")},
 		})
 	}
 	if state.preview != nil {
 		if state.restoreError != "" {
-			footer := c.model.text(MsgCheckpointRetryRestoreActions, MessageArgs{
-				"retry": primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointPreview, ActionCheckpointPreviewRetry)),
-				"back":  primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointPreview, ActionCheckpointPreviewBack)),
-				"close": primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointPreview, ActionCheckpointPreviewClose)),
-			})
-			return segmentedLineHits(content, box, footer, []surfaceHitAction{
+			return footerControlHits(footerRow, []surfaceHitAction{
 				{ID: "checkpoint-retry", Key: c.model.firstBoundKey(KeyContextCheckpointPreview, ActionCheckpointPreviewRetry, "enter")},
 				{ID: "checkpoint-back", Key: c.model.firstBoundKey(KeyContextCheckpointPreview, ActionCheckpointPreviewBack, "esc")},
 				{ID: "checkpoint-close", Key: c.model.firstBoundKey(KeyContextCheckpointPreview, ActionCheckpointPreviewClose, "esc")},
 			})
 		}
-		footer := c.model.text(MsgCheckpointRestoreActions, MessageArgs{
-			"arm":     primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointPreview, ActionCheckpointPreviewArm)),
-			"confirm": primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointPreview, ActionCheckpointPreviewConfirm)),
-			"back":    primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointPreview, ActionCheckpointPreviewBack)),
-			"close":   primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointPreview, ActionCheckpointPreviewClose)),
-		})
-		return segmentedLineHits(content, box, footer, []surfaceHitAction{
+		return footerControlHits(footerRow, []surfaceHitAction{
 			{ID: "checkpoint-arm", Key: c.model.firstBoundKey(KeyContextCheckpointPreview, ActionCheckpointPreviewArm, "r")},
 			{ID: "checkpoint-confirm", Key: c.model.firstBoundKey(KeyContextCheckpointPreview, ActionCheckpointPreviewConfirm, "enter")},
 			{ID: "checkpoint-back", Key: c.model.firstBoundKey(KeyContextCheckpointPreview, ActionCheckpointPreviewBack, "backspace")},
@@ -353,27 +414,15 @@ func (c *primaryOverlayComponent) checkpointHits(content string, box ui.Rect) []
 	var hits []ui.HitRegion
 	end := minInt(state.scroll+c.model.checkpointPickerPageHeight(), len(state.items))
 	for index := state.scroll; index < end; index++ {
-		item := state.items[index]
-		summary := strings.TrimSpace(item.Summary)
-		if summary == "" {
-			summary = c.model.text(MsgCheckpointDefaultSummary, nil)
-		}
-		needle := strings.TrimSpace(c.model.text(MsgCheckpointListItem, MessageArgs{"prefix": "", "turn": item.Turn, "summary": summary}))
-		hits = append(hits, lineHits(content, box, needle, "checkpoint-row", index)...)
+		hits = append(hits, rowControlHit(framedContentRow(box, 1+index-state.scroll), "checkpoint-row", index, 1))
 	}
-	footer := c.model.text(MsgCheckpointListActions, MessageArgs{
-		"preview": primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointList, ActionCheckpointListPreview)),
-		"up":      primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointList, ActionCheckpointListUp)),
-		"down":    primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointList, ActionCheckpointListDown)),
-		"close":   primaryKeyLabel(c.model.keys.keys(KeyContextCheckpointList, ActionCheckpointListClose)),
-	})
-	return append(hits, segmentedLineHits(content, box, footer, []surfaceHitAction{
+	return append(hits, footerControlHits(footerRow, []surfaceHitAction{
 		{ID: "checkpoint-preview", Key: c.model.firstBoundKey(KeyContextCheckpointList, ActionCheckpointListPreview, "enter")},
 		{ID: "checkpoint-close", Key: c.model.firstBoundKey(KeyContextCheckpointList, ActionCheckpointListClose, "esc")},
 	})...)
 }
 
-func (c *primaryOverlayComponent) modelHits(content string, box ui.Rect) []ui.HitRegion {
+func (c *primaryOverlayComponent) modelHits(box ui.Rect) []ui.HitRegion {
 	state := c.model.modelPicker
 	if state == nil || state.loading {
 		return nil
@@ -382,48 +431,41 @@ func (c *primaryOverlayComponent) modelHits(content string, box ui.Rect) []ui.Hi
 	end := minInt(state.scroll+c.model.modelPickerPageHeight(), len(state.items))
 	for index := state.scroll; index < end; index++ {
 		item := state.items[index]
-		rows := lineHits(content, box, item.ID, "model-row", index)
-		hits = append(hits, rows...)
+		row := framedContentRow(box, 2+index-state.scroll)
+		hits = append(hits, rowControlHit(row, "model-row", index, 1))
 		effort := item.ReasoningEffort
 		if effort == "" {
 			effort = item.DefaultReasoningEffort
 		}
 		if effort != "" {
-			hits = append(hits, textHits(content, box, "[effort: "+effort+"]", "model-effort", index)...)
+			label := "[effort: " + effort + "]"
+			x := row.X + minInt(ansi.StringWidth("  "+item.ID+" "), maxInt(row.Width-1, 0))
+			hits = append(hits, ui.HitRegion{
+				ID: ui.HitID("model-effort:" + item.ID), Bounds: ui.Rect{X: x, Y: row.Y, Width: minInt(ansi.StringWidth(label), maxInt(row.X+row.Width-x, 1)), Height: 1},
+				Z: 2, Kind: ui.HitActivate, Action: "model-effort", Data: index, Focusable: true,
+			})
 		}
 	}
-	footer := c.model.text(MsgModelPickerHelp, nil)
-	return append(hits, segmentedLineHits(content, box, footer, []surfaceHitAction{
+	return append(hits, footerControlHits(innerFooterRow(box, 0), []surfaceHitAction{
 		{ID: "model-effort", Key: "e"}, {ID: "model-close", Key: "esc"},
 	})...)
 }
 
-func (c *primaryOverlayComponent) keymapHits(content string, box ui.Rect) []ui.HitRegion {
+func (c *primaryOverlayComponent) keymapHits(box ui.Rect) []ui.HitRegion {
 	state := c.model.keymapEditor
 	if state == nil || state.pending {
 		return nil
 	}
 	switch state.mode {
 	case keymapChooseAction:
-		footer := c.model.text(MsgKeymapActionFooter, MessageArgs{
-			"replace": c.model.keys.label(KeyContextKeymapAction, ActionKeymapActionReplace),
-			"add":     c.model.keys.label(KeyContextKeymapAction, ActionKeymapActionAdd),
-			"restore": c.model.keys.label(KeyContextKeymapAction, ActionKeymapActionRestore),
-			"back":    c.model.keys.label(KeyContextKeymapAction, ActionKeymapActionBack),
-		})
-		return segmentedLineHits(content, box, footer, []surfaceHitAction{
+		return footerControlHits(innerFooterRow(box, map[bool]int{true: 2, false: 0}[state.status != ""]), []surfaceHitAction{
 			{ID: "keymap-replace", Key: c.model.firstBoundKey(KeyContextKeymapAction, ActionKeymapActionReplace, "r")},
 			{ID: "keymap-add", Key: c.model.firstBoundKey(KeyContextKeymapAction, ActionKeymapActionAdd, "a")},
 			{ID: "keymap-restore", Key: c.model.firstBoundKey(KeyContextKeymapAction, ActionKeymapActionRestore, "d")},
 			{ID: "keymap-back", Key: c.model.firstBoundKey(KeyContextKeymapAction, ActionKeymapActionBack, "esc")},
 		})
 	case keymapCapture:
-		footer := c.model.text(MsgKeymapCaptureFooter, MessageArgs{
-			"save":    c.model.keys.label(KeyContextKeymapCapture, ActionKeymapCaptureCommit),
-			"cancel":  c.model.keys.label(KeyContextKeymapCapture, ActionKeymapCaptureCancel),
-			"literal": keymapCaptureLiteralNext,
-		})
-		return segmentedLineHits(content, box, footer, []surfaceHitAction{
+		return footerControlHits(innerFooterRow(box, map[bool]int{true: 2, false: 0}[state.status != ""]), []surfaceHitAction{
 			{ID: "keymap-save", Key: c.model.firstBoundKey(KeyContextKeymapCapture, ActionKeymapCaptureCommit, "enter")},
 			{ID: "keymap-literal", Key: keymapCaptureLiteralNext},
 			{ID: "keymap-cancel", Key: c.model.firstBoundKey(KeyContextKeymapCapture, ActionKeymapCaptureCancel, "esc")},
@@ -432,38 +474,39 @@ func (c *primaryOverlayComponent) keymapHits(content string, box ui.Rect) []ui.H
 		var hits []ui.HitRegion
 		end := minInt(state.scroll+c.model.keymapEditorPageHeight(), len(state.bindings))
 		for index := state.scroll; index < end; index++ {
-			binding := state.bindings[index]
-			needle := fmt.Sprintf("%s  %s",
-				strings.TrimPrefix(string(binding.Action), string(binding.Context)+"."),
-				strings.Join(binding.Keys, ", "))
-			hits = append(hits, lineHits(content, box, needle, "keymap-row", index)...)
+			hits = append(hits, rowControlHit(framedContentRow(box, 1+index-state.scroll), "keymap-row", index, 1))
 		}
-		footer := c.model.text(MsgKeymapBrowseFooter, MessageArgs{
-			"edit":  c.model.keys.label(KeyContextKeymap, ActionKeymapEdit),
-			"up":    c.model.keys.label(KeyContextKeymap, ActionKeymapUp),
-			"down":  c.model.keys.label(KeyContextKeymap, ActionKeymapDown),
-			"close": c.model.keys.label(KeyContextKeymap, ActionKeymapClose),
-		})
-		return append(hits, segmentedLineHits(content, box, footer, []surfaceHitAction{
+		return append(hits, footerControlHits(innerFooterRow(box, map[bool]int{true: 2, false: 0}[state.status != ""]), []surfaceHitAction{
 			{ID: "keymap-edit", Key: c.model.firstBoundKey(KeyContextKeymap, ActionKeymapEdit, "enter")},
 			{ID: "keymap-close", Key: c.model.firstBoundKey(KeyContextKeymap, ActionKeymapClose, "esc")},
 		})...)
 	}
 }
 
-func (c *primaryOverlayComponent) settingsHits(content string, box ui.Rect) []ui.HitRegion {
+func (c *primaryOverlayComponent) settingsHits(box ui.Rect) []ui.HitRegion {
 	if c.model.settings == nil {
 		return nil
 	}
 	var hits []ui.HitRegion
+	tabRow := framedContentRow(box, 1)
+	x := tabRow.X
 	for index, label := range c.model.settingsTabs() {
-		hits = append(hits, textHits(content, box, label, "settings-tab", settingsTab(index))...)
+		width := ansi.StringWidth(label) + 2
+		if settingsTab(index) != c.model.settings.tab {
+			width = ansi.StringWidth(label)
+		}
+		width = minInt(width, maxInt(tabRow.X+tabRow.Width-x, 1))
+		hits = append(hits, ui.HitRegion{
+			ID: ui.HitID("settings-tab:" + string(rune('0'+index))), Bounds: ui.Rect{X: x, Y: tabRow.Y, Width: width, Height: 1},
+			Z: 2, Kind: ui.HitActivate, Action: "settings-tab", Data: settingsTab(index), Focusable: true,
+		})
+		x += width + 2
 	}
 	for index, action := range c.model.settingsActions() {
-		hits = append(hits, lineHits(content, box, action.Label, "settings-row", index)...)
+		_ = action
+		hits = append(hits, rowControlHit(framedContentRow(box, 12+index), "settings-row", index, 1))
 	}
-	footer := c.model.text(MsgSettingsFooter, MessageArgs{"close": c.model.keys.label(KeyContextPager, ActionPagerClose)})
-	return append(hits, segmentedLineHits(content, box, footer, []surfaceHitAction{{
+	return append(hits, footerControlHits(innerFooterRow(box, 0), []surfaceHitAction{{
 		ID: "settings-close", Key: c.model.firstBoundKey(KeyContextPager, ActionPagerClose, "esc"),
 	}})...)
 }
@@ -473,107 +516,50 @@ type surfaceHitAction struct {
 	Key string
 }
 
-func segmentedLineHits(content string, box ui.Rect, needle string, actions []surfaceHitAction) []ui.HitRegion {
+func footerControlHits(row ui.Rect, actions []surfaceHitAction) []ui.HitRegion {
 	if len(actions) == 0 {
 		return nil
 	}
-	line, ok := renderedLineContaining(content, needle)
-	if !ok {
+	if row.Empty() {
 		return nil
 	}
-	line.X += box.X
-	line.Y += box.Y
-	line.Width = minInt(line.Width, box.Width)
-	width := maxInt(line.Width, 1)
+	width := maxInt(row.Width, 1)
 	cell := maxInt(width/len(actions), 1)
 	hits := make([]ui.HitRegion, 0, len(actions))
 	for index, action := range actions {
-		x := line.X + index*cell
+		x := row.X + index*cell
 		w := cell
 		if index == len(actions)-1 {
-			w = maxInt(line.X+width-x, 1)
+			w = maxInt(row.X+width-x, 1)
 		}
 		hits = append(hits, ui.HitRegion{
-			ID: action.ID, Owner: primaryOverlayID, Bounds: ui.Rect{X: x, Y: line.Y, Width: w, Height: 1},
+			ID: action.ID, Bounds: ui.Rect{X: x, Y: row.Y, Width: w, Height: 1},
 			Z: 2, Kind: ui.HitActivate, Action: "key", Data: action.Key, Focusable: true,
 		})
 	}
 	return hits
 }
 
-func lineHits(content string, box ui.Rect, needle, action string, data any) []ui.HitRegion {
-	plainNeedle := strings.TrimSpace(ansi.Strip(needle))
-	if plainNeedle == "" {
-		return nil
+func rowControlHit(row ui.Rect, action string, data any, z int) ui.HitRegion {
+	return ui.HitRegion{
+		ID: ui.HitID(action + ":" + fmt.Sprint(data)), Bounds: row,
+		Z: z, Kind: ui.HitActivate, Action: action, Data: data, Focusable: true,
 	}
-	lines := strings.Split(ansi.Strip(content), "\n")
-	var hits []ui.HitRegion
-	for index, line := range lines {
-		if !strings.Contains(line, plainNeedle) {
-			continue
-		}
-		hits = append(hits, ui.HitRegion{
-			ID: ui.HitID(fmt.Sprintf("%s:%v", action, data)), Owner: primaryOverlayID,
-			Bounds: ui.Rect{X: box.X, Y: box.Y + index, Width: minInt(maxInt(ansi.StringWidth(line), 1), box.Width), Height: 1},
-			Z:      1, Kind: ui.HitActivate, Action: action, Data: data, Focusable: true,
-		})
-	}
-	return hits
 }
 
-func textHits(content string, box ui.Rect, needle, action string, data any) []ui.HitRegion {
-	needle = ansi.Strip(needle)
-	if needle == "" {
-		return nil
-	}
-	lines := strings.Split(ansi.Strip(content), "\n")
-	var hits []ui.HitRegion
-	for lineIndex, line := range lines {
-		start := 0
-		for start <= len(line) {
-			relative := strings.Index(line[start:], needle)
-			if relative < 0 {
-				break
-			}
-			byteIndex := start + relative
-			x := box.X + ansi.StringWidth(line[:byteIndex])
-			hits = append(hits, ui.HitRegion{
-				ID: ui.HitID(fmt.Sprintf("%s:%v:%d", action, data, lineIndex)), Owner: primaryOverlayID,
-				Bounds: ui.Rect{X: x, Y: box.Y + lineIndex, Width: ansi.StringWidth(needle), Height: 1},
-				Z:      2, Kind: ui.HitActivate, Action: action, Data: data, Focusable: true,
-			})
-			start = byteIndex + len(needle)
-		}
-	}
-	return hits
+func framedContentRow(box ui.Rect, line int) ui.Rect {
+	return ui.Rect{
+		X: box.X + minInt(2, maxInt(box.Width-1, 0)), Y: box.Y + 1 + line,
+		Width: maxInt(box.Width-4, 1), Height: 1,
+	}.Intersect(box)
 }
 
-func renderedLineContaining(content, needle string) (ui.Rect, bool) {
-	needle = strings.TrimSpace(ansi.Strip(needle))
-	if needle == "" {
-		return ui.Rect{}, false
-	}
-	lines := strings.Split(ansi.Strip(content), "\n")
-	for index, line := range lines {
-		if strings.Contains(strings.TrimSpace(line), needle) {
-			return ui.Rect{X: 0, Y: index, Width: maxInt(ansi.StringWidth(line), 1), Height: 1}, true
-		}
-	}
-	// Narrow modal fitting truncates action rows. Match their first rendered
-	// segment so the visible control retains click geometry at small widths.
-	prefix := needle
-	for _, separator := range []string{"  ", " · "} {
-		if index := strings.Index(prefix, separator); index > 0 {
-			prefix = prefix[:index]
-		}
-	}
-	prefix = strings.TrimSpace(prefix)
-	for index, line := range lines {
-		if prefix != "" && strings.Contains(strings.TrimSpace(line), prefix) {
-			return ui.Rect{X: 0, Y: index, Width: maxInt(ansi.StringWidth(line), 1), Height: 1}, true
-		}
-	}
-	return ui.Rect{}, false
+func innerFooterRow(box ui.Rect, linesAfter int) ui.Rect {
+	return ui.Rect{
+		X:     box.X + minInt(2, maxInt(box.Width-1, 0)),
+		Y:     box.Y + maxInt(box.Height-2-linesAfter, 0),
+		Width: maxInt(box.Width-4, 1), Height: 1,
+	}.Intersect(box)
 }
 
 func (m *Model) activePrimaryOverlayKind() primaryOverlayKind {
@@ -605,24 +591,6 @@ func (m *Model) firstBoundKey(context KeyContext, action KeyAction, fallback str
 		return fallback
 	}
 	return keys[0]
-}
-
-func (m *Model) helpFooterText() string {
-	return m.text(MsgHelpCloseScroll, MessageArgs{
-		"close": m.keys.label(KeyContextPager, ActionPagerClose),
-		"up":    m.keys.label(KeyContextPager, ActionPagerUp),
-		"down":  m.keys.label(KeyContextPager, ActionPagerDown),
-	})
-}
-
-func (m *Model) transcriptPagerFooterText() string {
-	return m.text(MsgWorkspaceTranscriptFooter, MessageArgs{
-		"up":        m.keys.label(KeyContextPager, ActionPagerUp),
-		"down":      m.keys.label(KeyContextPager, ActionPagerDown),
-		"page_up":   m.keys.label(KeyContextPager, ActionPagerPageUp),
-		"page_down": m.keys.label(KeyContextPager, ActionPagerPageDown),
-		"close":     m.keys.label(KeyContextPager, ActionPagerClose),
-	})
 }
 
 func (m *Model) ensurePrimaryOverlayFrame() ui.Frame {
@@ -661,43 +629,6 @@ func (m *Model) dispatchPrimaryOverlayKey(key string) (tea.Cmd, bool) {
 	m.ensurePrimaryOverlayFrame()
 	result := m.componentRuntime.Dispatch(ui.Event{Kind: ui.EventKey, Key: key})
 	return m.applyPrimaryOverlayResult(result), true
-}
-
-func (m *Model) dispatchPrimaryOverlayMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
-	if m.activePrimaryOverlayKind() == primaryOverlayNone {
-		return nil, false
-	}
-	m.ensurePrimaryOverlayFrame()
-	mouse := msg.Mouse()
-	event := ui.PointerEvent{X: mouse.X, Y: mouse.Y, Button: int(mouse.Button)}
-	switch typed := msg.(type) {
-	case tea.MouseMotionMsg:
-		event.Kind = ui.PointerMove
-	case tea.MouseClickMsg:
-		if typed.Button != tea.MouseLeft {
-			return nil, true
-		}
-		event.Kind = ui.PointerClick
-	case tea.MouseReleaseMsg:
-		event.Kind = ui.PointerRelease
-	case tea.MouseWheelMsg:
-		event.Kind = ui.PointerWheel
-		if typed.Button == tea.MouseWheelUp {
-			event.WheelDelta = -1
-		} else if typed.Button == tea.MouseWheelDown {
-			event.WheelDelta = 1
-		} else {
-			return nil, true
-		}
-	default:
-		return nil, false
-	}
-	result := m.componentRuntime.Dispatch(ui.Event{Kind: ui.EventPointer, Pointer: event})
-	cmd := m.applyPrimaryOverlayResult(result)
-	if result.Handled {
-		m.layout()
-	}
-	return cmd, true
 }
 
 func (m *Model) applyPrimaryOverlayResult(result ui.Result) tea.Cmd {

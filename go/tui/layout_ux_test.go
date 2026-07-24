@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -8,7 +9,43 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Nebutra/carina/go/tui/theme"
+	ui "github.com/Nebutra/carina/go/tui/ui"
 )
+
+func TestConversationRetainedFrameStaysBoundedAtProductSizes(t *testing.T) {
+	for _, size := range []struct{ width, height int }{{40, 10}, {80, 24}, {120, 40}} {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			m := New(Options{Theme: theme.New(theme.Mono), Locale: "zh"})
+			defer m.Close()
+			m.workspaceRoot = "/tmp/carina-product"
+			m.push("助手正在处理包含中文和 emoji 的长会话内容")
+			m.Update(tea.WindowSizeMsg{Width: size.width, Height: size.height})
+			view := m.View().Content
+			if m.componentFrame.Root.ID != conversationScreenID || m.componentFrame.Generation == 0 {
+				t.Fatalf("conversation frame = %#v", m.componentFrame)
+			}
+			assertNodeWithin(t, m.componentFrame.Root, ui.Rect{Width: size.width, Height: size.height})
+			for _, line := range strings.Split(view, "\n") {
+				if got := ansi.StringWidth(line); got > size.width {
+					t.Fatalf("rendered line width=%d > %d: %q", got, size.width, ansi.Strip(line))
+				}
+			}
+			if len(strings.Split(view, "\n")) > size.height {
+				t.Fatalf("rendered height exceeds %d", size.height)
+			}
+		})
+	}
+}
+
+func assertNodeWithin(t *testing.T, node ui.Node, viewport ui.Rect) {
+	t.Helper()
+	if !node.Bounds.Empty() && node.Bounds.Intersect(viewport) != node.Bounds {
+		t.Fatalf("node %q escaped viewport: bounds=%+v viewport=%+v", node.ID, node.Bounds, viewport)
+	}
+	for _, child := range node.Children {
+		assertNodeWithin(t, child, viewport)
+	}
+}
 
 func TestConversationSurfaceUsesOnePersistentFrame(t *testing.T) {
 	m := New(Options{Theme: theme.New(theme.Mono), Locale: "en"})

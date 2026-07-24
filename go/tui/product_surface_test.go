@@ -149,7 +149,7 @@ func TestOperationalScreenRefreshAndCloseUseComponentHitGeometry(t *testing.T) {
 	drain(m, m.slashCommand("/status"))
 	frame := m.componentFrame
 	var refresh, close ui.HitRegion
-	for _, hit := range frame.Root.Hit {
+	for _, hit := range primaryFrameHits(frame.Root) {
 		switch hit.Action {
 		case "refresh":
 			refresh = hit
@@ -259,14 +259,9 @@ func TestQuestionComponentHoverSelectAndSecondClickAnswers(t *testing.T) {
 	if m.componentRuntime.Overlays.Len() != 1 {
 		t.Fatal("question did not enter OverlayStack")
 	}
-	var second ui.HitRegion
-	for _, hit := range m.componentFrame.Root.Hit {
-		if hit.Action == "question-option" && hit.Data == 1 {
-			second = hit
-		}
-	}
+	second, _ := findSurfaceHit(m.componentFrame.Root, "question-option", 1)
 	if second.ID == "" {
-		t.Fatalf("question option missing hit geometry: %+v", m.componentFrame.Root.Hit)
+		t.Fatalf("question option missing hit geometry: %+v", m.componentFrame.Root)
 	}
 	m.Update(tea.MouseMotionMsg{X: second.Bounds.X, Y: second.Bounds.Y})
 	if m.question.Hovered != 1 || m.question.Selected != 0 {
@@ -294,14 +289,9 @@ func TestApprovalComponentClickUsesExistingDecisionPath(t *testing.T) {
 	m.sessionID, m.call = "sess", caller
 	m.approval = &approvalState{DecisionID: "d1", Action: "command.exec", Resource: "go test ./..."}
 	m.layout()
-	var once ui.HitRegion
-	for _, hit := range m.componentFrame.Root.Hit {
-		if hit.Action == "approval-once" {
-			once = hit
-		}
-	}
+	once, _ := findSurfaceHit(m.componentFrame.Root, "approval-once", nil)
 	if once.ID == "" {
-		t.Fatalf("approval action missing hit geometry: %+v", m.componentFrame.Root.Hit)
+		t.Fatalf("approval action missing hit geometry: %+v", m.componentFrame.Root)
 	}
 	m.Update(tea.MouseMotionMsg{X: once.Bounds.X, Y: once.Bounds.Y})
 	if m.approval.HoveredAction != "approval-once" {
@@ -311,4 +301,18 @@ func TestApprovalComponentClickUsesExistingDecisionPath(t *testing.T) {
 	if cmd == nil || !m.approval.Resolving || m.approval.PendingScope != "once" {
 		t.Fatal("approval click bypassed the governed decision path")
 	}
+}
+
+func findSurfaceHit(node ui.Node, action string, data any) (ui.HitRegion, bool) {
+	for _, hit := range node.Hit {
+		if hit.Action == action && (data == nil || hit.Data == data) {
+			return hit, true
+		}
+	}
+	for _, child := range node.Children {
+		if hit, ok := findSurfaceHit(child, action, data); ok {
+			return hit, true
+		}
+	}
+	return ui.HitRegion{}, false
 }

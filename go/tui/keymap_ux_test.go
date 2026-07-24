@@ -500,7 +500,8 @@ func TestHelpMouseWheelOwnsVisibleOverlay(t *testing.T) {
 	m.vp.PageUp()
 	m.showHelp()
 	transcriptOffset := m.vp.YOffset()
-	m.handleMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	box := m.componentFrame.Root.Bounds
+	m.dispatchComponentPointer(tea.MouseWheelMsg{X: box.X, Y: box.Y, Button: tea.MouseWheelDown})
 	if m.helpScroll == 0 || m.vp.YOffset() != transcriptOffset {
 		t.Fatalf("help wheel leaked to transcript: help=%d transcript=%d->%d", m.helpScroll, transcriptOffset, m.vp.YOffset())
 	}

@@ -136,18 +136,27 @@ type Runtime struct {
 	Invalidation InvalidationRegistry
 
 	components map[ComponentID]Component
+	parents    map[ComponentID]ComponentID
 	frame      uint64
 }
 
 func NewRuntime() *Runtime {
-	return &Runtime{components: make(map[ComponentID]Component)}
+	return &Runtime{
+		components: make(map[ComponentID]Component),
+		parents:    make(map[ComponentID]ComponentID),
+	}
 }
 
 func (r *Runtime) Mount(component Component) {
+	r.mount(component, "")
+}
+
+func (r *Runtime) mount(component Component, parent ComponentID) {
 	if component == nil || component.ID() == "" {
 		return
 	}
 	r.components[component.ID()] = component
+	r.parents[component.ID()] = parent
 	r.Invalidation.Mount(component.ID())
 	if component.ID() == r.Focus.Current() {
 		if focusable, ok := component.(Focusable); ok {
@@ -156,7 +165,7 @@ func (r *Runtime) Mount(component Component) {
 	}
 	if container, ok := component.(ComponentContainer); ok {
 		for _, child := range container.Components() {
-			r.Mount(child)
+			r.mount(child, component.ID())
 		}
 	}
 }
@@ -174,6 +183,7 @@ func (r *Runtime) Unmount(id ComponentID) {
 		disposable.Dispose()
 	}
 	delete(r.components, id)
+	delete(r.parents, id)
 	r.Invalidation.Invalidate(id)
 	r.Overlays.RemoveRoot(id)
 	r.Pointer.Invalidate()
@@ -220,11 +230,19 @@ func (r *Runtime) BeginFrame(root Component, viewport Rect) Frame {
 	}
 	r.Mount(root)
 	root.Layout(viewport)
+	// Layout may reconcile dynamic retained children (for example a filtered
+	// row list). Mount once more so the current child set participates in this
+	// frame's focus and event graph before rendering.
+	r.Mount(root)
 	r.frame++
 	node := root.Render(RenderContext{
 		FrameGeneration: r.frame, TargetGeneration: r.Invalidation.TargetGeneration(),
 		Focused: r.Focus.Current(), Hovered: r.Pointer.Hovered(), Viewport: viewport,
 	})
+	// Render may reconcile controls whose presence depends on the final content
+	// projection. Register that retained set before focus order and dispatch are
+	// published for the frame.
+	r.Mount(root)
 	order := node.FocusOrder()
 	if top, ok := r.Overlays.Top(); ok && top.Modal && top.Root != "" && !containsComponent(order, top.Root) {
 		order = append([]ComponentID{top.Root}, order...)
@@ -246,8 +264,12 @@ func (r *Runtime) BeginFrame(root Component, viewport Rect) Frame {
 func (r *Runtime) Dispatch(event Event) Result {
 	var target ComponentID
 	if event.Kind == EventPointer {
+		generation := event.FrameGeneration
+		if generation == 0 {
+			generation = r.frame
+		}
 		previousHoverOwner := r.Pointer.HoveredOwner()
-		routed, ok := r.Pointer.Route(r.frame, event.Pointer)
+		routed, ok := r.Pointer.Route(generation, event.Pointer)
 		if !ok {
 			if event.Pointer.Kind != PointerMove || previousHoverOwner == "" {
 				return Result{}
@@ -270,11 +292,18 @@ func (r *Runtime) Dispatch(event Event) Result {
 	} else {
 		target = r.Focus.Current()
 	}
-	component := r.components[target]
-	if component == nil {
-		return Result{}
+	for target != "" {
+		component := r.components[target]
+		if component == nil {
+			return Result{}
+		}
+		result := component.Handle(event)
+		if result.Handled || len(result.Actions) > 0 || len(result.Effects) > 0 {
+			return result
+		}
+		target = r.parents[target]
 	}
-	return component.Handle(event)
+	return Result{}
 }
 
 func collectGraphics(node Node) []GraphicsPlacement {

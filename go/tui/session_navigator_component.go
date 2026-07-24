@@ -21,16 +21,50 @@ type navigatorRowRef struct {
 
 type sessionNavigatorComponent struct {
 	ui.Base
-	model    *Model
-	viewport ui.Rect
+	model        *Model
+	viewport     ui.Rect
+	controls     map[ui.ComponentID]*navigatorControl
+	controlOrder []ui.Component
 }
 
 func newSessionNavigatorComponent(model *Model) *sessionNavigatorComponent {
 	return &sessionNavigatorComponent{
-		Base:  ui.Base{ComponentID: sessionNavigatorID},
-		model: model,
+		Base:     ui.Base{ComponentID: sessionNavigatorID},
+		model:    model,
+		controls: make(map[ui.ComponentID]*navigatorControl),
 	}
 }
+
+type navigatorControl struct {
+	ui.Base
+	parent *sessionNavigatorComponent
+	hit    ui.HitRegion
+}
+
+func (c *navigatorControl) Measure(constraints ui.Constraints) ui.Size {
+	return constraints.Constrain(ui.Size{Width: c.hit.Bounds.Width, Height: c.hit.Bounds.Height})
+}
+func (c *navigatorControl) Layout(ui.Rect) {}
+func (c *navigatorControl) Render(ui.RenderContext) ui.Node {
+	hit := c.hit
+	hit.Owner = c.ComponentID
+	return ui.Node{ID: c.ComponentID, Bounds: hit.Bounds, Focusable: true, Focused: c.Focused(), Hit: []ui.HitRegion{hit}}
+}
+func (c *navigatorControl) Handle(event ui.Event) ui.Result {
+	state := c.parent.model.sessionPicker
+	if state == nil {
+		return ui.Result{}
+	}
+	if event.Kind == ui.EventKey && (event.Key == "enter" || event.Key == " ") {
+		return c.parent.handlePointer(state, ui.PointerEvent{Kind: ui.PointerClick, Hit: &c.hit})
+	}
+	if event.Kind == ui.EventPointer {
+		return c.parent.handlePointer(state, event.Pointer)
+	}
+	return ui.Result{}
+}
+
+func (c *sessionNavigatorComponent) Components() []ui.Component { return c.controlOrder }
 
 func (c *sessionNavigatorComponent) Measure(constraints ui.Constraints) ui.Size {
 	return constraints.Constrain(ui.Size{Width: constraints.MaxWidth, Height: constraints.MaxHeight})
@@ -173,9 +207,29 @@ func (c *sessionNavigatorComponent) Render(ctx ui.RenderContext) ui.Node {
 		cursorX := innerX + lipgloss.Width(searchLabel+": "+state.query)
 		cursor = &ui.CursorRequest{Owner: sessionNavigatorID, X: minInt(cursorX, box.X+box.Width-2), Y: innerY + 2, Visible: true}
 	}
+	controlHits := append([]ui.HitRegion(nil), hits[1:]...)
+	c.syncControls(controlHits)
+	children := make([]ui.Node, 0, len(c.controlOrder))
+	for _, control := range c.controlOrder {
+		children = append(children, control.Render(ui.RenderContext{}))
+	}
 	return ui.Node{
 		ID: sessionNavigatorID, Bounds: box, Z: 10, Content: content,
-		Focusable: true, Focused: c.Focused(), Hit: hits, Cursor: cursor,
+		Focusable: true, Focused: c.Focused(), Hit: hits[:1], Cursor: cursor, Children: children,
+	}
+}
+
+func (c *sessionNavigatorComponent) syncControls(hits []ui.HitRegion) {
+	c.controlOrder = c.controlOrder[:0]
+	for _, hit := range hits {
+		id := ui.ComponentID("navigator-control:" + string(hit.ID))
+		control := c.controls[id]
+		if control == nil {
+			control = &navigatorControl{Base: ui.Base{ComponentID: id}, parent: c}
+			c.controls[id] = control
+		}
+		control.hit = hit
+		c.controlOrder = append(c.controlOrder, control)
 	}
 }
 
@@ -253,6 +307,13 @@ func (c *sessionNavigatorComponent) Handle(event ui.Event) ui.Result {
 	}
 	if event.Kind == ui.EventPointer {
 		return c.handlePointer(state, event.Pointer)
+	}
+	if event.Kind == ui.EventPaste {
+		if state.searching {
+			state.query += event.Text
+			state.resetFilterSelection()
+		}
+		return ui.Result{Handled: true}
 	}
 	if event.Kind != ui.EventKey {
 		return ui.Result{}
@@ -396,40 +457,6 @@ func (m *Model) dispatchNavigatorKey(key string) (tea.Cmd, bool) {
 	}
 	m.ensureNavigatorFrame()
 	result := m.componentRuntime.Dispatch(ui.Event{Kind: ui.EventKey, Key: key})
-	return m.applyNavigatorResult(result), result.Handled
-}
-
-func (m *Model) dispatchNavigatorMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
-	if m.sessionPicker == nil {
-		return nil, false
-	}
-	m.ensureNavigatorFrame()
-	mouse := msg.Mouse()
-	event := ui.PointerEvent{X: mouse.X, Y: mouse.Y, Button: int(mouse.Button)}
-	switch typed := msg.(type) {
-	case tea.MouseMotionMsg:
-		event.Kind = ui.PointerMove
-	case tea.MouseClickMsg:
-		if typed.Button != tea.MouseLeft {
-			return nil, true
-		}
-		event.Kind = ui.PointerClick
-	case tea.MouseReleaseMsg:
-		event.Kind = ui.PointerRelease
-	case tea.MouseWheelMsg:
-		event.Kind = ui.PointerWheel
-		switch typed.Button {
-		case tea.MouseWheelUp:
-			event.WheelDelta = -1
-		case tea.MouseWheelDown:
-			event.WheelDelta = 1
-		default:
-			return nil, true
-		}
-	default:
-		return nil, false
-	}
-	result := m.componentRuntime.Dispatch(ui.Event{Kind: ui.EventPointer, Pointer: event})
 	return m.applyNavigatorResult(result), result.Handled
 }
 

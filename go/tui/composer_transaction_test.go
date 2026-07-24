@@ -384,14 +384,18 @@ func TestPastePreviewSanitizesTerminalControls(t *testing.T) {
 func TestMouseWheelRoutesToActiveScrollContext(t *testing.T) {
 	m, _ := newTestModel(&fakeCaller{})
 	m.approval = &approvalState{Body: make([]string, 40)}
-	m.handleMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m.layout()
+	box := m.componentFrame.Root.Bounds
+	m.dispatchComponentPointer(tea.MouseWheelMsg{X: box.X, Y: box.Y, Button: tea.MouseWheelDown})
 	if m.approval.Scroll == 0 {
 		t.Fatal("mouse wheel must scroll the active approval body")
 	}
 
 	m.approval = nil
 	m.question = &questionState{Prompt: strings.Repeat("question ", 400), Options: []questionOption{{Label: "yes"}}}
-	m.handleMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m.layout()
+	box = m.componentFrame.Root.Bounds
+	m.dispatchComponentPointer(tea.MouseWheelMsg{X: box.X, Y: box.Y, Button: tea.MouseWheelDown})
 	if m.question.Scroll == 0 {
 		t.Fatal("mouse wheel must scroll the active question body")
 	}

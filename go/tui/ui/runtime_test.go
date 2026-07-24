@@ -43,6 +43,80 @@ func TestPointerRouterUsesTopmostPublishedGeometryAndRejectsStaleFrame(t *testin
 	}
 }
 
+type eventSurface struct {
+	Base
+	handle func(Event) Result
+	hit    []HitRegion
+}
+
+func (s *eventSurface) Handle(event Event) Result {
+	if s.handle == nil {
+		return Result{}
+	}
+	return s.handle(event)
+}
+
+func (s *eventSurface) Render(RenderContext) Node {
+	return Node{ID: s.ComponentID, Bounds: s.Bounds, Focusable: true, Hit: s.hit}
+}
+
+type eventContainer struct {
+	eventSurface
+	children []Component
+}
+
+func (c *eventContainer) Components() []Component { return c.children }
+
+func (c *eventContainer) Layout(bounds Rect) {
+	c.Bounds = bounds
+	for _, child := range c.children {
+		child.Layout(bounds)
+	}
+}
+
+func (c *eventContainer) Render(ctx RenderContext) Node {
+	node := c.eventSurface.Render(ctx)
+	for _, child := range c.children {
+		node.Children = append(node.Children, child.Render(ctx))
+	}
+	return node
+}
+
+func TestRuntimeBubblesUnhandledEventsToRetainedParent(t *testing.T) {
+	child := &eventSurface{Base: Base{ComponentID: "child"}}
+	root := &eventContainer{
+		eventSurface: eventSurface{Base: Base{ComponentID: "root"}, handle: func(event Event) Result {
+			return Result{Handled: true, Actions: []Action{{Source: "root", Name: string(event.Kind)}}}
+		}},
+		children: []Component{child},
+	}
+
+	runtime := NewRuntime()
+	runtime.BeginFrame(root, Rect{Width: 20, Height: 4})
+	runtime.SetFocus("child", FocusProgrammatic)
+	result := runtime.Dispatch(Event{Kind: EventPaste, Text: "hello"})
+	if !result.Handled || len(result.Actions) != 1 || result.Actions[0].Name != string(EventPaste) {
+		t.Fatalf("bubbled result=%#v", result)
+	}
+}
+
+func TestRuntimeDispatchRejectsPointerFromStalePublishedFrame(t *testing.T) {
+	child := &eventSurface{Base: Base{ComponentID: "child"}, handle: func(Event) Result {
+		return Result{Handled: true}
+	}, hit: []HitRegion{{ID: "child-hit", Owner: "child", Bounds: Rect{Width: 20, Height: 4}, Kind: HitActivate}}}
+	root := &eventContainer{eventSurface: eventSurface{Base: Base{ComponentID: "root"}}, children: []Component{child}}
+	runtime := NewRuntime()
+	first := runtime.BeginFrame(root, Rect{Width: 20, Height: 4})
+	runtime.BeginFrame(root, Rect{Width: 20, Height: 4})
+	result := runtime.Dispatch(Event{
+		Kind: EventPointer, FrameGeneration: first.Generation,
+		Pointer: PointerEvent{Kind: PointerClick, X: 1, Y: 1},
+	})
+	if result.Handled {
+		t.Fatalf("stale pointer result=%#v", result)
+	}
+}
+
 func TestCursorArbiterAcceptsFocusedOwnerOnly(t *testing.T) {
 	requests := []CursorRequest{{Owner: "background", X: 1, Y: 1, Visible: true}, {Owner: "dialog", X: 4, Y: 5, Visible: true}}
 	cursor := (CursorArbiter{}).Resolve(requests, "dialog")

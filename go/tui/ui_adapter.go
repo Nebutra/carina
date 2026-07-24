@@ -17,15 +17,6 @@ func renderComponentFrame(frame ui.Frame, width, height int) string {
 	return clipBlock(lipgloss.NewCompositor(layers...).Render(), width, height)
 }
 
-func renderComponentOverlay(base string, frame ui.Frame, width, height int) string {
-	if width <= 0 || height <= 0 {
-		return ""
-	}
-	layers := []*lipgloss.Layer{lipgloss.NewLayer(clipBlock(base, width, height)).ID("component-base")}
-	appendNodeLayers(&layers, frame.Root, width, height, 1)
-	return clipBlock(lipgloss.NewCompositor(layers...).Render(), width, height)
-}
-
 func appendNodeLayers(layers *[]*lipgloss.Layer, node ui.Node, width, height, inheritedZ int) {
 	if node.Content != "" {
 		bounds := node.Bounds.Intersect(ui.Rect{Width: width, Height: height})

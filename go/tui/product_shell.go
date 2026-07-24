@@ -306,9 +306,32 @@ func (m *Model) renderStatusItems(items []statusFooterItem) string {
 	return strings.Join(parts, m.th.Style(theme.RoleMuted).Render(" · "))
 }
 
-func (m *Model) statusFooterView(width int) string {
+type statusFooterProjection struct {
+	Left  string
+	Right string
+}
+
+func (p statusFooterProjection) render(width int) string {
 	if width <= 0 {
 		return ""
+	}
+	if p.Right == "" {
+		return fitRenderedLine(p.Left, width)
+	}
+	spaces := width - ansi.StringWidth(p.Left) - ansi.StringWidth(p.Right)
+	if p.Left == "" {
+		spaces = width - ansi.StringWidth(p.Right)
+	}
+	return fitRenderedLine(p.Left+strings.Repeat(" ", maxInt(spaces, 0))+p.Right, width)
+}
+
+func (m *Model) statusFooterView(width int) string {
+	return m.statusFooterProjection(width).render(width)
+}
+
+func (m *Model) statusFooterProjection(width int) statusFooterProjection {
+	if width <= 0 {
+		return statusFooterProjection{}
 	}
 	model, isModel := m.runtimeModelLabel()
 	if isModel && model != "" && m.reasoningEffort != "" && m.reasoningEffort != "default" {
@@ -383,14 +406,7 @@ func (m *Model) statusFooterView(width int) string {
 			continue
 		}
 		left, right := m.renderStatusItems(variant.left), m.renderStatusItems(variant.right)
-		spaces := width - ansi.StringWidth(left) - ansi.StringWidth(right)
-		if left == "" {
-			spaces = width - ansi.StringWidth(right)
-		}
-		if right == "" {
-			spaces = 0
-		}
-		return fitRenderedLine(left+strings.Repeat(" ", maxInt(spaces, 0))+right, width)
+		return statusFooterProjection{Left: left, Right: right}
 	}
 	// At operational widths keep the model addressable even when activity has
 	// accumulated goal/queue/attention badges. Truncate the transient side,
@@ -402,16 +418,15 @@ func (m *Model) statusFooterView(width int) string {
 	}
 	anchorWidth := ansi.StringWidth(anchor.text)
 	if anchorWidth == 0 {
-		return fitRenderedLine(m.th.Style(activity.role).Render(activity.text), width)
+		return statusFooterProjection{Left: fitRenderedLine(m.th.Style(activity.role).Render(activity.text), width)}
 	}
 	if width >= 32 && width-anchorWidth-2 >= 6 {
 		left := m.renderStatusItems([]statusFooterItem{anchor})
 		rightWidth := width - ansi.StringWidth(left) - 2
 		right := fitRenderedLine(m.th.Style(activity.role).Render(activity.text), rightWidth)
-		spaces := width - ansi.StringWidth(left) - ansi.StringWidth(right)
-		return fitRenderedLine(left+strings.Repeat(" ", maxInt(spaces, 2))+right, width)
+		return statusFooterProjection{Left: left, Right: right}
 	}
-	return fitRenderedLine(m.th.Style(activity.role).Render(activity.text), width)
+	return statusFooterProjection{Left: fitRenderedLine(m.th.Style(activity.role).Render(activity.text), width)}
 }
 
 func (m *Model) contextFooterToken() string {

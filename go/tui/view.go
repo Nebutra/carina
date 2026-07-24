@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Nebutra/carina/go/tui/theme"
-	ui "github.com/Nebutra/carina/go/tui/ui"
 )
 
 // rootLayout is the single source of truth for both rendering and physical
@@ -74,19 +73,7 @@ func (m *Model) refreshComponentFrame() {
 		m.ensureOperationalFrame()
 		return
 	}
-	if m.attachmentPointerActive() {
-		m.ensureAttachmentFrame()
-		return
-	}
-	m.reconcileFrameGraphics(ui.Frame{})
-	m.componentFrame = ui.Frame{}
-}
-
-func (m *Model) attachmentPointerActive() bool {
-	return m.question == nil && m.approval == nil && m.planReview == nil &&
-		m.checkpointPicker == nil && m.modelPicker == nil && m.sessionPicker == nil &&
-		m.keymapEditor == nil && m.settings == nil && !m.helpOpen && m.transcriptPager == nil &&
-		m.editor == nil && len(m.attachments) > 0
+	m.ensureConversationFrame()
 }
 
 func (m *Model) configureInput() {
@@ -384,106 +371,12 @@ func (m *Model) View() tea.View {
 	if next := m.calculateLayout(); next != m.root {
 		m.layout()
 	}
-	if m.question != nil || m.approval != nil {
-		m.ensureGovernanceFrame()
-	}
+	// View is also a defensive projection boundary for direct model mutations in
+	// embedders and tests. Refreshing the retained root here keeps component state
+	// current even when a mutation does not change row allocation.
+	m.refreshComponentFrame()
 	l := m.root
-	var b strings.Builder
-
-	if l.showBanner {
-		b.WriteString(fitRenderedLine(m.th.Style(theme.RoleWarning).Render(m.banner()), l.width))
-	}
-	if l.showBanner {
-		b.WriteString("\n")
-	}
-
-	if taskLines := m.taskTreeLines(); l.taskLines > 0 {
-		b.WriteString(strings.Join(taskLines[:l.taskLines], "\n"))
-		b.WriteString("\n")
-	}
-
-	// Lip Gloss v2 Width is the final styled block width, including borders.
-	// Passing the terminal width therefore produces a complete right edge
-	// without exceeding the cell grid.
-	frame := m.borderStyle(lipgloss.RoundedBorder()).Width(l.width)
-	if l.showTranscript {
-		var transcript string
-		if m.sidePaneActive() {
-			// Dual-pane Side UI: frozen main | live side (no side padding so
-			// the split columns can use the full content width).
-			transcript = m.dualPaneTranscriptView(l.width, maxInt(l.viewportHeight, 1))
-		} else {
-			transcript = m.vp.View()
-			if l.width >= 3 {
-				transcript = lipgloss.NewStyle().Width(l.width).Padding(0, 1).Render(transcript)
-			}
-		}
-		b.WriteString(transcript)
-		b.WriteString("\n")
-	}
-	if panelLines := m.visibleSuggestPanelLines(l.suggestLines); len(panelLines) > 0 {
-		for i, line := range panelLines {
-			if i > 0 {
-				b.WriteString("\n")
-			}
-			b.WriteString(fitRenderedLine(line, l.width))
-		}
-		b.WriteString("\n")
-	}
-	if queueLines := m.queuePanelLines(); l.queueLines > 0 {
-		for i, line := range queueLines[:l.queueLines] {
-			if i > 0 {
-				b.WriteString("\n")
-			}
-			b.WriteString(fitRenderedLine(line, l.width))
-		}
-		b.WriteString("\n")
-	}
-	if pasteLines := m.pastePanelLines(); l.pasteLines > 0 {
-		for i, line := range pasteLines[:l.pasteLines] {
-			if i > 0 {
-				b.WriteString("\n")
-			}
-			b.WriteString(fitRenderedLine(line, l.width))
-		}
-		b.WriteString("\n")
-	}
-	if l.historyLines > 0 {
-		b.WriteString(m.historySearchPanelLine(l.width))
-		b.WriteString("\n")
-	}
-	if l.framed {
-		b.WriteString(frame.Render(m.input.View()))
-	} else {
-		b.WriteString(m.input.View())
-	}
-	b.WriteString("\n")
-
-	if l.showStatus {
-		b.WriteString(m.statusFooterView(l.width))
-	}
-
-	content := fitViewBlock(strings.TrimSuffix(b.String(), "\n"), l.width, l.height, false)
-	if m.historySearch != nil && l.historyLines == 0 {
-		// In a one-row terminal the search prompt is more actionable than a
-		// stale textarea preview. The accepted draft returns on Enter.
-		content = m.historySearchPanelLine(l.width)
-	}
-	if m.question != nil {
-		content = renderComponentFrame(m.componentFrame, l.width, l.height)
-	} else if m.approval != nil {
-		content = renderComponentFrame(m.componentFrame, l.width, l.height)
-	} else if m.activePrimaryOverlayKind() != primaryOverlayNone {
-		content = renderComponentFrame(m.componentFrame, l.width, l.height)
-	} else if m.sessionPicker != nil {
-		content = renderComponentFrame(m.componentFrame, l.width, l.height)
-	} else if m.transcriptPager != nil {
-		content = renderComponentFrame(m.componentFrame, l.width, l.height)
-	}
-	if m.attachmentPointerActive() {
-		content = renderComponentOverlay(content, m.componentFrame, l.width, l.height)
-	}
-
+	content := renderComponentFrame(m.componentFrame, l.width, l.height)
 	v := tea.NewView(content)
 	v.AltScreen = !m.noAlternateScreen
 	v.ReportFocus = true
@@ -501,30 +394,7 @@ func (m *Model) View() tea.View {
 	// A nil declared cursor makes Bubble Tea hide the terminal cursor. This is
 	// intentional while an overlay owns input, and whenever a zero-sized host
 	// has not supplied a usable cell grid yet (R21).
-	if m.activePrimaryOverlayKind() == primaryOverlayNone && m.question == nil && m.approval == nil && m.transcriptPager == nil &&
-		m.sessionPicker == nil &&
-		m.editor == nil && m.width > 0 && m.height > 0 {
-		if m.historySearch != nil {
-			cursor := m.input.Cursor()
-			if cursor == nil {
-				cursor = tea.NewCursor(0, 0)
-			}
-			cursor.Blink = true
-			cursor.Position.X = m.historySearchCursorX(l.width)
-			cursor.Position.Y = 0
-			if l.historyLines > 0 {
-				cursor.Position.Y = l.historyY
-			}
-			v.Cursor = cursor
-		} else if cursor := m.input.Cursor(); cursor != nil {
-			// Let the terminal renderer blink the physical cursor without
-			// enabling textarea's virtual-cursor redraw timer.
-			cursor.Blink = true
-			cursor.Position.X = clampInt(cursor.Position.X+l.inputX, 0, l.width-1)
-			cursor.Position.Y = clampInt(cursor.Position.Y+l.inputY, 0, l.height-1)
-			v.Cursor = cursor
-		}
-	} else if m.sessionPicker != nil && m.componentFrame.Cursor != nil {
+	if m.componentFrame.Cursor != nil {
 		request := m.componentFrame.Cursor
 		cursor := tea.NewCursor(request.X, request.Y)
 		cursor.Blink = true

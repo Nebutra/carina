@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	ui "github.com/Nebutra/carina/go/tui/ui"
@@ -13,20 +12,99 @@ const governanceOverlayID ui.ComponentID = "governance-overlay"
 
 type governanceComponent struct {
 	ui.Base
-	model *Model
+	model        *Model
+	content      string
+	box          ui.Rect
+	controls     map[ui.ComponentID]*governanceControl
+	controlOrder []ui.Component
 }
 
 func newGovernanceComponent(model *Model) *governanceComponent {
-	return &governanceComponent{Base: ui.Base{ComponentID: governanceOverlayID}, model: model}
+	return &governanceComponent{
+		Base: ui.Base{ComponentID: governanceOverlayID}, model: model,
+		controls: make(map[ui.ComponentID]*governanceControl),
+	}
 }
+
+type governanceControl struct {
+	ui.Base
+	parent *governanceComponent
+	hit    ui.HitRegion
+}
+
+func (c *governanceControl) Measure(constraints ui.Constraints) ui.Size {
+	return constraints.Constrain(ui.Size{Width: c.hit.Bounds.Width, Height: c.hit.Bounds.Height})
+}
+
+func (c *governanceControl) Layout(ui.Rect) {}
+
+func (c *governanceControl) Render(ui.RenderContext) ui.Node {
+	hit := c.hit
+	hit.Owner = c.ComponentID
+	hovered := c.parent.isHovered(c.hit)
+	return ui.Node{
+		ID: c.ComponentID, Bounds: c.hit.Bounds, Role: map[bool]ui.SemanticRole{true: ui.RoleHovered, false: ui.RoleText}[hovered],
+		Focusable: true, Focused: c.Focused(), Hovered: hovered, Hit: []ui.HitRegion{hit},
+	}
+}
+
+func (c *governanceControl) Handle(event ui.Event) ui.Result {
+	if event.Kind == ui.EventKey && (event.Key == "enter" || event.Key == " ") {
+		return c.parent.activate(c.hit)
+	}
+	if event.Kind != ui.EventPointer {
+		return ui.Result{}
+	}
+	if event.Pointer.Kind == ui.PointerLeave {
+		c.parent.clearHover()
+		return ui.Result{Handled: true}
+	}
+	if event.Pointer.Kind == ui.PointerMove {
+		c.parent.setHover(c.hit)
+		return ui.Result{Handled: true}
+	}
+	if event.Pointer.Kind == ui.PointerClick {
+		return c.parent.activate(c.hit)
+	}
+	return ui.Result{Handled: true}
+}
+
+func (c *governanceComponent) Components() []ui.Component { return c.controlOrder }
 
 func (c *governanceComponent) Measure(constraints ui.Constraints) ui.Size {
 	return constraints.Constrain(ui.Size{Width: constraints.MaxWidth, Height: constraints.MaxHeight})
 }
 
+func (c *governanceComponent) Layout(bounds ui.Rect) {
+	c.Bounds = bounds
+	c.syncSurface()
+}
+
 func (c *governanceComponent) Render(ui.RenderContext) ui.Node {
+	c.syncSurface()
 	if c.Bounds.Empty() || (c.model.question == nil && c.model.approval == nil) {
 		return ui.Node{ID: governanceOverlayID}
+	}
+	content, box := c.content, c.box
+	hits := []ui.HitRegion{{
+		ID: "governance-surface", Owner: governanceOverlayID, Bounds: box,
+		Kind: ui.HitHover, Action: "surface",
+	}}
+	children := make([]ui.Node, 0, len(c.controlOrder))
+	for _, control := range c.controlOrder {
+		children = append(children, control.Render(ui.RenderContext{}))
+	}
+	return ui.Node{
+		ID: governanceOverlayID, Bounds: box, Z: 20, Content: content,
+		Focusable: true, Focused: c.Focused(), Hit: hits, Children: children,
+	}
+}
+
+func (c *governanceComponent) syncSurface() {
+	if c.Bounds.Empty() || (c.model.question == nil && c.model.approval == nil) {
+		c.content, c.box = "", ui.Rect{}
+		c.controlOrder = c.controlOrder[:0]
+		return
 	}
 	content := c.model.overlayView()
 	if c.model.question != nil {
@@ -40,18 +118,21 @@ func (c *governanceComponent) Render(ui.RenderContext) ui.Node {
 		Y:     c.Bounds.Y + maxInt((c.Bounds.Height-boxHeight)/2, 0),
 		Width: boxWidth, Height: boxHeight,
 	}
-	hits := []ui.HitRegion{{
-		ID: "governance-surface", Owner: governanceOverlayID, Bounds: box,
-		Kind: ui.HitHover, Action: "surface",
-	}}
+	c.content, c.box = content, box
+	hits := c.approvalHits(box)
 	if c.model.question != nil {
-		hits = append(hits, c.questionHits(box)...)
-	} else {
-		hits = append(hits, c.approvalHits(box)...)
+		hits = c.questionHits(box)
 	}
-	return ui.Node{
-		ID: governanceOverlayID, Bounds: box, Z: 20, Content: content,
-		Focusable: true, Focused: c.Focused(), Hit: hits,
+	c.controlOrder = c.controlOrder[:0]
+	for _, hit := range hits {
+		id := ui.ComponentID("governance-control:" + string(hit.ID))
+		control := c.controls[id]
+		if control == nil {
+			control = &governanceControl{Base: ui.Base{ComponentID: id}, parent: c}
+			c.controls[id] = control
+		}
+		control.hit = hit
+		c.controlOrder = append(c.controlOrder, control)
 	}
 }
 
@@ -128,6 +209,18 @@ func (c *governanceComponent) approvalHits(box ui.Rect) []ui.HitRegion {
 }
 
 func (c *governanceComponent) Handle(event ui.Event) ui.Result {
+	if event.Kind == ui.EventKey {
+		return ui.Result{Handled: true, Actions: []ui.Action{{
+			Source: governanceOverlayID, Name: "governance-key",
+			Data: componentKeyInput{Key: event.Key, Text: event.Text},
+		}}}
+	}
+	if event.Kind == ui.EventPaste {
+		if c.model.question != nil && len(c.model.question.Options) == 0 && !c.model.question.Resolving {
+			return ui.Result{Handled: true, Actions: []ui.Action{{Source: governanceOverlayID, Name: "question-paste", Data: event.Text}}}
+		}
+		return ui.Result{Handled: true}
+	}
 	if event.Kind != ui.EventPointer {
 		return ui.Result{}
 	}
@@ -150,21 +243,20 @@ func (c *governanceComponent) Handle(event ui.Event) ui.Result {
 	}
 	action := event.Pointer.Hit.Action
 	if event.Pointer.Kind == ui.PointerMove {
-		c.clearHover()
-		if c.model.question != nil && action == "question-option" {
-			if index, ok := event.Pointer.Hit.Data.(int); ok {
-				c.model.question.Hovered = index
-			}
-		} else if c.model.approval != nil && action != "surface" {
-			c.model.approval.HoveredAction = action
+		if action == "surface" {
+			c.clearHover()
 		}
 		return ui.Result{Handled: true}
 	}
 	if event.Pointer.Kind != ui.PointerClick {
 		return ui.Result{Handled: true}
 	}
-	if action == "question-option" {
-		index, ok := event.Pointer.Hit.Data.(int)
+	return c.activate(*event.Pointer.Hit)
+}
+
+func (c *governanceComponent) activate(hit ui.HitRegion) ui.Result {
+	if hit.Action == "question-option" {
+		index, ok := hit.Data.(int)
 		if !ok || c.model.question == nil {
 			return ui.Result{Handled: true}
 		}
@@ -175,7 +267,26 @@ func (c *governanceComponent) Handle(event ui.Event) ui.Result {
 			return ui.Result{Handled: true}
 		}
 	}
-	return ui.Result{Handled: true, Actions: []ui.Action{{Source: governanceOverlayID, Name: action, Data: event.Pointer.Hit.Data}}}
+	return ui.Result{Handled: true, Actions: []ui.Action{{Source: governanceOverlayID, Name: hit.Action, Data: hit.Data}}}
+}
+
+func (c *governanceComponent) setHover(hit ui.HitRegion) {
+	c.clearHover()
+	if c.model.question != nil && hit.Action == "question-option" {
+		if index, ok := hit.Data.(int); ok {
+			c.model.question.Hovered = index
+		}
+	} else if c.model.approval != nil && hit.Action != "surface" {
+		c.model.approval.HoveredAction = hit.Action
+	}
+}
+
+func (c *governanceComponent) isHovered(hit ui.HitRegion) bool {
+	if c.model.question != nil && hit.Action == "question-option" {
+		index, _ := hit.Data.(int)
+		return c.model.question.Hovered == index
+	}
+	return c.model.approval != nil && c.model.approval.HoveredAction == hit.Action
 }
 
 func (c *governanceComponent) clearHover() {
@@ -206,57 +317,4 @@ func (m *Model) teardownGovernanceFrame() {
 		m.componentRuntime.PopOverlay()
 		m.componentRuntime.Unmount(governanceOverlayID)
 	}
-}
-
-func (m *Model) dispatchGovernanceMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
-	if m.question == nil && m.approval == nil {
-		return nil, false
-	}
-	m.ensureGovernanceFrame()
-	mouse := msg.Mouse()
-	event := ui.PointerEvent{X: mouse.X, Y: mouse.Y, Button: int(mouse.Button)}
-	switch typed := msg.(type) {
-	case tea.MouseMotionMsg:
-		event.Kind = ui.PointerMove
-	case tea.MouseClickMsg:
-		if typed.Button != tea.MouseLeft {
-			return nil, true
-		}
-		event.Kind = ui.PointerClick
-	case tea.MouseReleaseMsg:
-		event.Kind = ui.PointerRelease
-	case tea.MouseWheelMsg:
-		event.Kind = ui.PointerWheel
-		if typed.Button == tea.MouseWheelUp {
-			event.WheelDelta = -1
-		} else if typed.Button == tea.MouseWheelDown {
-			event.WheelDelta = 1
-		} else {
-			return nil, true
-		}
-	default:
-		return nil, false
-	}
-	result := m.componentRuntime.Dispatch(ui.Event{Kind: ui.EventPointer, Pointer: event})
-	for _, action := range result.Actions {
-		switch action.Name {
-		case "approval-once":
-			return m.resolveApproval("once", true), true
-		case "approval-session":
-			return m.resolveApproval("session", true), true
-		case "approval-project":
-			return m.resolveApproval("project", true), true
-		case "approval-deny":
-			return m.resolveApproval("deny", false), true
-		case "question-option":
-			index, _ := action.Data.(int)
-			return m.answerQuestion(index), true
-		case "question-answer":
-			return m.answerQuestionText(), true
-		}
-	}
-	if result.Handled {
-		m.layout()
-	}
-	return nil, result.Handled
 }
