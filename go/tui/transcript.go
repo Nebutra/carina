@@ -18,6 +18,7 @@ import (
 type presentationKind string
 
 const (
+	presentationUser       presentationKind = "user"
 	presentationAgent      presentationKind = "agent"
 	presentationTool       presentationKind = "tool"
 	presentationCommand    presentationKind = "command"
@@ -26,7 +27,9 @@ const (
 	presentationGovernance presentationKind = "governance"
 	presentationSubagent   presentationKind = "subagent"
 	presentationWorkflow   presentationKind = "workflow"
+	presentationRecovery   presentationKind = "recovery"
 	presentationSystem     presentationKind = "system"
+	presentationReceipt    presentationKind = "receipt"
 )
 
 type presentationStatus int
@@ -70,6 +73,19 @@ type eventPresentation struct {
 	ImageKey    string
 	ImageData   []byte
 	ArtifactIDs []string
+	// UserDraft and adjacent task metadata preserve the source object needed by
+	// inline history editing. They are populated only for presentationUser.
+	UserDraft      promptDraft
+	PreviousTaskID string
+	Branchable     bool
+	Steer          bool
+	// Selected is presentation state, independent from runtime focus and hover.
+	// Phase 2 owns the reducer that chooses which user entry is selected.
+	Selected bool
+	// ReceiptRendered is the explicit compatibility boundary for legacy m.push
+	// callers. It keeps those rows typed and keyed without interpreting trusted,
+	// already-rendered internal text as an audit event.
+	ReceiptRendered string
 	// Headerless marks a body-only continuation entry: committed stable chunks
 	// and the mutable tail of a streaming assistant message (stream.go) render
 	// under the header the stream's head entry already emitted, so they carry
@@ -106,9 +122,10 @@ func (e *entry) setRendered(rendered string) {
 }
 
 type transcript struct {
-	entries []entry
-	lines   []string
-	nextKey uint64
+	entries     []entry
+	lines       []string
+	nextKey     uint64
+	nextReceipt uint64
 	// renderedTheme/renderedWidth are what every presentation was last
 	// rendered against. layout() calls resizePresentations on every keystroke
 	// and event; unless one of them actually changed, re-rendering the whole
@@ -119,10 +136,77 @@ type transcript struct {
 }
 
 func (t *transcript) push(rendered string) {
-	e := entry{}
+	t.nextReceipt++
+	p := compatibilityReceiptPresentation(fmt.Sprintf("receipt:%d", t.nextReceipt), rendered)
+	e := entry{key: p.Key, presentation: &p}
 	e.setRendered(rendered)
 	t.entries = append(t.entries, e)
 	t.lines = append(t.lines, e.lines...)
+}
+
+func (m *Model) pushUserPresentation(taskID string, draft promptDraft, steer bool, sequence int) {
+	p := newUserPresentation(taskID, draft, steer)
+	if steer {
+		p.Key = fmt.Sprintf("user-steer:%s:%d", strings.TrimSpace(taskID), sequence)
+	}
+	m.pushSemanticPresentation(p)
+}
+
+func (m *Model) pushSemanticPresentation(p eventPresentation) {
+	localizePresentation(&p, newLocalizer(m.locale))
+	before := len(m.tr.lines)
+	m.tr.pushPresentation(p, m.th, m.transcriptWidth())
+	added := len(m.tr.lines) - before
+	m.vp.SetContentLines(m.tr.lines)
+	if m.followTail {
+		m.vp.GotoBottom()
+		m.unseenLines = 0
+	} else if added > 0 {
+		m.unseenLines += added
+	}
+}
+
+type userBacktrackTarget struct {
+	EntryKey       string
+	TaskID         string
+	PreviousTaskID string
+	Draft          promptDraft
+	Branchable     bool
+	Steer          bool
+}
+
+// userBacktrackTargets exposes source-preserving user-message targets without
+// depending on Model or rendered line indexes. Transcript order supplies the
+// preceding durable task boundary when replay did not carry one explicitly.
+func (t *transcript) userBacktrackTargets() []userBacktrackTarget {
+	targets := make([]userBacktrackTarget, 0)
+	previousTaskID := ""
+	for i := range t.entries {
+		entry := &t.entries[i]
+		p := entry.presentation
+		if p == nil || p.Kind != presentationUser || entry.key == "" || p.TaskID == "" {
+			continue
+		}
+		previous := p.PreviousTaskID
+		if previous == "" {
+			previous = previousTaskID
+		}
+		targets = append(targets, userBacktrackTarget{
+			EntryKey: entry.key, TaskID: p.TaskID, PreviousTaskID: previous,
+			Draft: cloneDraft(p.UserDraft), Branchable: p.Branchable, Steer: p.Steer,
+		})
+		if !p.Steer {
+			previousTaskID = p.TaskID
+		}
+	}
+	return targets
+}
+
+func compatibilityReceiptPresentation(key, rendered string) eventPresentation {
+	return eventPresentation{
+		Key: key, Kind: presentationReceipt, Status: statusNeutral,
+		ReceiptRendered: rendered,
+	}
 }
 
 // plainExport returns a clipboard/file-friendly transcript without ANSI styling.
@@ -159,6 +243,15 @@ func (t *transcript) upsertPresentationAfter(afterKey string, p eventPresentatio
 		if old := t.entries[i].presentation; old != nil && old.Collapsible && pCopy.Collapsible {
 			pCopy.Collapsed = old.Collapsed
 		}
+		if old := t.entries[i].presentation; old != nil && old.Kind == presentationUser && pCopy.Kind == presentationUser {
+			pCopy.Selected = old.Selected
+			if pCopy.PreviousTaskID == "" {
+				pCopy.PreviousTaskID = old.PreviousTaskID
+			}
+			if old.UserDraft.Text == pCopy.UserDraft.Text && userDraftHasRicherEditorState(old.UserDraft, pCopy.UserDraft) {
+				pCopy.UserDraft = cloneDraft(old.UserDraft)
+			}
+		}
 		t.entries[i].presentation = &pCopy
 		t.entries[i].setRendered(pCopy.render(th, width))
 		t.rebuildLines()
@@ -171,6 +264,13 @@ func (t *transcript) upsertPresentationAfter(afterKey string, p eventPresentatio
 		at = i + 1
 	}
 	t.insertAt(at, e)
+}
+
+func userDraftHasRicherEditorState(current, incoming promptDraft) bool {
+	return len(current.Prefix) > len(incoming.Prefix) || len(current.Paste) > len(incoming.Paste) ||
+		len(current.Attachments) > len(incoming.Attachments) ||
+		(current.Model != "" && incoming.Model == "") || (current.Agent != "" && incoming.Agent == "") ||
+		(current.Mode != "" && incoming.Mode == "") || (current.ReasoningEffort != "" && incoming.ReasoningEffort == "")
 }
 
 // insertPresentationBefore places a new entry directly before the entry with
@@ -329,6 +429,9 @@ func glyphRunning(th theme.Theme) string {
 }
 
 func (p eventPresentation) render(th theme.Theme, width int) string {
+	if p.Kind == presentationReceipt {
+		return p.ReceiptRendered
+	}
 	if width < 1 {
 		width = 1
 	}
@@ -616,6 +719,12 @@ func localizePresentation(p *eventPresentation, l localizer) {
 	p.OpenLabel = l.Text(MsgTranscriptOpen, nil)
 	p.FoldLabel = l.Text(MsgTranscriptCollapsed, MessageArgs{"count": "{count}"})
 	switch p.Kind {
+	case presentationUser:
+		if p.Steer {
+			p.KindLabel = strings.TrimSpace(l.Text(MsgUpdateYouSteer, nil))
+		} else {
+			p.KindLabel = strings.TrimSpace(l.Text(MsgUpdateYou, nil))
+		}
 	case presentationAgent:
 		p.KindLabel = l.Text(MsgTranscriptAgent, nil)
 	case presentationTool:
@@ -632,6 +741,10 @@ func localizePresentation(p *eventPresentation, l localizer) {
 		p.KindLabel = l.Text(MsgTranscriptSubagent, nil)
 	case presentationWorkflow:
 		p.KindLabel = l.Text(MsgTranscriptWorkflow, nil)
+	case presentationRecovery:
+		p.KindLabel = l.Text(MsgTranscriptRecovery, nil)
+	case presentationReceipt:
+		p.KindLabel = ""
 	default:
 		p.KindLabel = l.Text(MsgTranscriptKindSystem, nil)
 	}
@@ -745,6 +858,9 @@ func stringValues(value any) []string {
 }
 
 func presentTaskEvent(p eventPresentation, ev, payload map[string]any) eventPresentation {
+	if draft := replayedUserDraft(eventTaskID(ev, payload), payload); strings.TrimSpace(draft.Text) != "" || len(draft.Attachments) > 0 {
+		return newUserPresentation(eventTaskID(ev, payload), draft, taskEventIsSteer(payload))
+	}
 	status := str(payload["status"])
 	if terminalTranscriptTaskStatus(status) {
 		if taskID := eventTaskID(ev, payload); taskID != "" {
@@ -813,6 +929,68 @@ func presentTaskEvent(p eventPresentation, ev, payload map[string]any) eventPres
 		}
 	}
 	return p
+}
+
+func newUserPresentation(taskID string, draft promptDraft, steer bool) eventPresentation {
+	taskID = strings.TrimSpace(taskID)
+	p := eventPresentation{
+		TaskID: taskID, Kind: presentationUser, Status: statusNeutral,
+		UserDraft: cloneDraft(draft), Branchable: taskID != "" && !steer, Steer: steer,
+	}
+	if taskID != "" {
+		p.Key = "user:" + taskID
+	}
+	if strings.TrimSpace(draft.Text) != "" {
+		p.Body = []string{draft.Text}
+		p.BodyProse = true
+	}
+	return p
+}
+
+func replayedUserDraft(taskID string, payload map[string]any) promptDraft {
+	draft := promptDraft{
+		Text:            firstValue(payload, "user_prompt", "prompt"),
+		Model:           firstValue(payload, "requested_model", "model", "effective_model"),
+		Agent:           str(payload["agent"]),
+		Mode:            str(payload["mode"]),
+		ReasoningEffort: firstValue(payload, "requested_reasoning_effort", "reasoning_effort", "effective_reasoning_effort"),
+	}
+	refs := decodeReplayMediaReferences(payload["input_media_refs"])
+	draft.Attachments = make([]draftAttachment, 0, len(refs))
+	for index := range refs {
+		ref := refs[index]
+		attachmentID := fmt.Sprintf("user:%s:media:%d", taskID, index)
+		if ref.ArtifactID != "" {
+			attachmentID += ":" + ref.ArtifactID
+		}
+		draft.Attachments = append(draft.Attachments, draftAttachment{
+			ID: attachmentID, TextOffset: len([]rune(draft.Text)), SourcePath: ref.Origin,
+			MediaType: ref.MediaType, ByteSize: ref.Bytes, Ref: &ref,
+		})
+	}
+	return draft
+}
+
+func decodeReplayMediaReferences(value any) []mediaReference {
+	if value == nil {
+		return nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var refs []mediaReference
+	if err := json.Unmarshal(raw, &refs); err != nil {
+		return nil
+	}
+	return refs
+}
+
+func taskEventIsSteer(payload map[string]any) bool {
+	if steer, ok := payload["steer"].(bool); ok {
+		return steer
+	}
+	return strings.EqualFold(str(payload["kind"]), "steer") || strings.EqualFold(str(payload["status"]), "steer")
 }
 
 func presentModelEvent(p eventPresentation, payload map[string]any) eventPresentation {

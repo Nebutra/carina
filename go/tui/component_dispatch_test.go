@@ -153,16 +153,16 @@ func TestTranscriptHoverAndKeyboardMouseActionsSharePayload(t *testing.T) {
 	}
 
 	cell := m.conversationScreen.transcript.cells["transcript-cell:tool:call_1"]
-	keyboard := cell.Handle(ui.Event{Kind: ui.EventKey, Key: "c"})
-	copyAction := transcriptComponentAction{}
+	keyboard := cell.Handle(ui.Event{Kind: ui.EventKey, Key: "i"})
+	inspectAction := transcriptComponentAction{}
 	for _, action := range cell.actions {
-		if action.Data.Name == "copy" {
-			copyAction = action.Data
+		if action.Data.Name == "inspect" {
+			inspectAction = action.Data
 			break
 		}
 	}
-	copyHit := ui.HitRegion{Action: "transcript-action", Data: copyAction}
-	pointer := cell.Handle(ui.Event{Kind: ui.EventPointer, Pointer: ui.PointerEvent{Kind: ui.PointerClick, Hit: &copyHit}})
+	inspectHit := ui.HitRegion{Action: "transcript-action", Data: inspectAction}
+	pointer := cell.Handle(ui.Event{Kind: ui.EventPointer, Pointer: ui.PointerEvent{Kind: ui.PointerClick, Hit: &inspectHit}})
 	if len(keyboard.Actions) != 1 || len(pointer.Actions) != 1 || !reflect.DeepEqual(keyboard.Actions[0].Data, pointer.Actions[0].Data) {
 		t.Fatalf("keyboard/mouse action mismatch: key=%#v pointer=%#v", keyboard, pointer)
 	}
@@ -175,7 +175,7 @@ func TestTranscriptInspectPointerDispatchOpensDetailOverlay(t *testing.T) {
 	m, _ := newTestModel(nil)
 	m.width, m.height = 90, 24
 	m.tr.pushPresentation(eventPresentation{
-		Key: "result:task_1", Kind: presentationAgent, Status: statusSuccess,
+		Key: "governance:task_1", Kind: presentationGovernance, Status: statusSuccess,
 		Title: "answer", Body: []string{"inspect this cell"},
 	}, m.th, m.transcriptWidth())
 	m.layout()

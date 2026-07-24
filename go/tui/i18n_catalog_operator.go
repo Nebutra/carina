@@ -71,6 +71,8 @@ const (
 	MsgTranscriptFold             MessageID = "transcript.action.fold"
 	MsgTranscriptInspect          MessageID = "transcript.action.inspect"
 	MsgTranscriptCopy             MessageID = "transcript.action.copy"
+	MsgTranscriptEdit             MessageID = "transcript.action.edit"
+	MsgTranscriptRecovery         MessageID = "transcript.kind.recovery"
 	MsgTranscriptCancel           MessageID = "transcript.action.cancel"
 	MsgTranscriptInspectTitle     MessageID = "transcript.inspect_title"
 	MsgTranscriptCollapsed        MessageID = "transcript.collapsed"
@@ -170,6 +172,8 @@ var operatorCatalogRows = []catalogRow{
 	catalog(MsgTranscriptFold, "fold", "收起", "折りたたむ", "접기", "plegar", "replier"),
 	catalog(MsgTranscriptInspect, "inspect", "查看", "詳細", "검사", "inspeccionar", "inspecter"),
 	catalog(MsgTranscriptCopy, "copy", "复制", "コピー", "복사", "copiar", "copier"),
+	catalog(MsgTranscriptEdit, "edit", "编辑", "編集", "편집", "editar", "modifier"),
+	catalog(MsgTranscriptRecovery, "recovery", "恢复", "復旧", "복구", "recuperación", "récupération"),
 	catalog(MsgTranscriptCancel, "cancel", "取消", "取消", "취소", "cancelar", "annuler"),
 	catalog(MsgTranscriptInspectTitle, "transcript detail", "会话详情", "セッション詳細", "대화 상세", "detalle de conversación", "détail de conversation"),
 	catalog(MsgTranscriptCollapsed, "+{count}", "+{count}", "+{count}", "+{count}", "+{count}", "+{count}"),

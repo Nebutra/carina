@@ -2,16 +2,25 @@
 
 Analysis date: 2026-07-22
 
+> Evidence status: historical research input. OMP source claims below are tied
+> to the stated OMP revision. The Carina comparison was not tied to a Carina
+> commit, and the referenced screenshot was not archived as a reproducible
+> artifact. Statements describing "current Carina", visual quality, or relative
+> product quality are withdrawn as current evidence. Recheck Carina against a
+> fixed commit before reusing those conclusions.
+
 ## Executive conclusion
 
-The latest Carina screenshot confirms a current interaction problem, not only
-a historical visual problem. The transcript still reads like an event ledger:
+The screenshot supplied on 2026-07-22 recorded a historical interaction
+concern. At that unpinned Carina baseline, the transcript appeared to read like
+an event ledger:
 successful tool-list and file-read operations, generic agent completion rows,
 and repeated low-value system text occupy the same visual level as the user's
 request and the final answer. At the same time, the sidebar notification can
 say `Task finished`, the task rail can say `degraded`, and the footer can say
-`ready`. The result is not merely unattractive. It makes the operator infer the
-actual state from conflicting projections.
+`ready`. The reported concern was that the operator had to infer actual state
+from conflicting projections. This is historical user feedback, not a current
+source finding or an objective visual-quality measurement.
 
 Oh My Pi (OMP) is useful because it treats setup, conversation, activity,
 governance, interruption, and session continuation as distinct interaction
@@ -40,21 +49,22 @@ itself as a fork of `badlogic/pi-mono` and documents its install paths in the
 root README (OMP: `README.md:21-61`, `README.md:96-99`).
 
 OMP evidence below is source-derived from that fixed revision, primarily under
-`packages/coding-agent`, `packages/agent`, and `packages/tui`. Carina evidence
-comes from the current worktree under `go/tui`, `go/tuiapp`, and `go/daemon`.
-The latest supplied screenshot is treated as current runtime evidence. Source
-is used to explain why the screenshot can occur.
+`packages/coding-agent`, `packages/agent`, and `packages/tui`. Carina references
+came from the then-current worktree under `go/tui`, `go/tuiapp`, and `go/daemon`,
+but no Carina commit or screenshot artifact was recorded. They must not be
+treated as current runtime evidence.
 
 Line references prefixed with `OMP:` are relative to the OMP repository. Line
 references prefixed with `Carina:` are relative to this repository.
 
-## What the current screenshot proves
+## Historical Screenshot Observations
 
-The screenshot shows five related failures.
+The unarchived screenshot motivated five hypotheses at the time. These are not
+proof of current behavior and the Carina paths below may now be stale.
 
 1. **Conversation hierarchy is weak.** Rows such as `agent completed`, tool
    list/read completion, and `file fileread` compete with the user request and
-   assistant response. Current Carina does filter routing and several runtime
+   assistant response. The recorded Carina snapshot filtered routing and several runtime
    events, but it intentionally keeps authoritative tool completions, model
    `done` blocks, and file reads visible (Carina: `go/tui/model.go:508-547`,
    `go/tui/transcript.go:404-416`, `go/tui/transcript.go:571-593`,
@@ -272,12 +282,12 @@ OMP deliberately removed animated pending borders from common execution blocks,
 showing that motion is treated as a liveness signal rather than a universal
 decoration (OMP: `packages/coding-agent/CHANGELOG.md:3350-3353`).
 
-## Current Carina comparison
+## Historical Carina comparison at an unpinned baseline
 
-### What Carina already has
+### What the audit snapshot appeared to contain
 
-Carina should not be described as lacking interaction mechanisms that already
-exist:
+At that unpinned snapshot, the following mechanisms appeared to exist. These
+bullets are historical observations and must be rechecked before reuse:
 
 - The primary transcript filters several routing/runtime/audit events and uses
   typed presentations for agent, tool, command, file, context, governance,
@@ -286,7 +296,7 @@ exist:
 - Default Enter is already “submit or steer”; a running task routes to
   `task.steer` (Carina: `go/tui/keymap.go:227-235`,
   `go/tui/update.go:1067-1166`, `go/tui/update.go:1307-1317`).
-- Follow-up queueing and lossless recall already exist (Carina:
+- Follow-up queueing and lossless recall appeared in the snapshot (Carina:
   `go/tui/followup_flow.go:15-58`). The gap is visibility and hierarchy, not
   missing steering semantics.
 - Approval and question overlays already preserve durable decision/question
@@ -297,19 +307,19 @@ exist:
   `go/tui/question.go:116-192`, `go/tui/conn.go:118-203`,
   `go/tui/conn.go:220-265`). The opportunity is stronger hierarchy, stable
   layout, multi-question semantics, and shared waiting-state presentation.
-- The in-app session picker carries richer durable continuity evidence than
-  OMP: activity/outcome/progress, recovery disposition, interruption certainty,
-  billing uncertainty, checkpoint IDs, and proof flags. It also prioritizes
-  sessions requiring attention (Carina: `go/tui/session_picker.go:16-45`,
+- The in-app session picker exposed activity/outcome/progress, recovery
+  disposition, interruption certainty, billing uncertainty, checkpoint IDs,
+  and proof flags. It also appeared to prioritize sessions requiring attention
+  (Carina: `go/tui/session_picker.go:16-45`,
   `go/tui/session_picker.go:139-187`, `go/tui/session_picker.go:318-351`).
-- Provider selection already enforces the correct trust boundary. Auto mode
+- Provider selection appeared to enforce the recorded trust boundary. Auto mode
   chooses the router only when a configured provider is runnable; Claude CLI
   and Codex CLI are selected only by explicit configuration (Carina:
   `go/daemon/reasoner.go:101-129`, `go/daemon/daemon.go:687-698`).
 
-### Carina journey trace
+### Historical Carina journey trace
 
-| Stage | Current state transition and owner | User-visible result | Assessment |
+| Stage | Recorded state transition and owner | Recorded user-visible result | Historical assessment |
 | --- | --- | --- | --- |
 | Bare launch | `tuiapp` ensures the daemon is reachable, then selects the latest pending-submission session, last active session, or newest workspace session before constructing the TUI | Continuity is convenient but implicit; no provider-readiness gate precedes the composer | Keep continuity, add an explicit readiness state (Carina: `go/tuiapp/tuiapp.go:115-168`, `171-209`) |
 | Compose/submit | Idle Enter creates a task; running Enter submits `task.steer`; Tab queues a later turn | Steering and follow-up semantics exist, but the composer does not visibly explain which state it is in | Improve mode/state feedback rather than reimplement queue semantics (Carina: `go/tui/keymap.go:227-236`, `go/tui/update.go:1067-1166`, `go/tui/followup_flow.go:15-58`) |
@@ -318,23 +328,23 @@ exist:
 | Approval | `permission.request` opens an ID-bound overlay; later requests queue; allow/deny resolves through the daemon and durable resolution advances the queue | Governance is robust, but waiting state is not normalized across footer, rail, transcript, and notification | Preserve authority and queueing; unify status and refine layout (Carina: `go/tui/approval.go:18-83`, `85-123`, `148-219`) |
 | Question | `user.question` opens an ID-bound option/free-text overlay; answers call `task.user.answer`; reconnect reconciliation suppresses stale prompts | Single questions and recovery work; OMP offers richer multi-question/preview/selection semantics | Adapt richer question presentation without changing daemon ownership (Carina: `go/tui/question.go:22-78`, `80-192`, `go/tui/conn.go:118-203`) |
 | Terminal outcome | Daemon emits `task.completed` with the real status; task rail, attention layer, follow-up flow, and footer each reduce it separately | `Task finished`, `degraded`, and `ready` can coexist | Replace independent reductions with one conversation outcome projection (Carina: `go/daemon/notify.go:10-41`, `go/tui/taskgraph.go:62-85`, `go/tui/attention.go:20-27`, `go/tui/followup_flow.go:218-266`) |
-| Session recovery | Session picker ranks recovery needs and displays proofs; checkpoint picker previews, restores, pauses, and explicitly resumes a task | Carina has stronger durable recovery evidence than OMP | Retain this contract and improve navigation only (Carina: `go/tui/session_picker.go:139-187`, `318-351`; `go/tui/checkpoint_picker.go:13-43`, `78-205`) |
+| Session recovery | Session picker ranks recovery needs and displays proofs; checkpoint picker previews, restores, pauses, and explicitly resumes a task | The snapshot exposed more recovery fields than the reviewed OMP paths; this was not a user-quality comparison | Recheck the contract, then retain its safety semantics if the current source still matches (Carina: `go/tui/session_picker.go:139-187`, `318-351`; `go/tui/checkpoint_picker.go:13-43`, `78-205`) |
 | Configuration | `/settings` opens a tabbed control shell; `/model` opens the model picker; approval modes are explicit product settings | Configuration exists after entry, but does not prevent false readiness | Surface the relevant subset during pre-composer readiness (Carina: `go/tui/product_shell.go:37-109`, `go/tui/model_picker.go:119-181`) |
 
-### Where Carina differs materially
+### Historical comparison hypotheses
 
-| Problem | OMP | Current Carina | Assessment |
+| Problem | OMP | Recorded Carina snapshot | Historical hypothesis |
 | --- | --- | --- | --- |
-| Readiness before composer | Setup scenes explain provider/model/glyph/theme before normal use; submission revalidates | Bare launch resolves a session and opens TUI; no shared readiness state prevents `ready` with no reasoner | OMP is better at discoverability; Carina needs a stricter readiness contract |
-| Conversation hierarchy | Message-oriented transcript; routine reads group; progress mutates in place | Typed event projection still permanently renders many successful tool/file/model events | Architectural gap, not only styling |
-| Outcome consistency | Components consume normalized semantic statuses | Transcript, task rail, footer, notification, and picker derive status independently | Highest-priority Carina gap |
+| Readiness before composer | Setup scenes explain provider/model/glyph/theme before normal use; submission revalidates | Bare launch resolved a session and opened TUI; no shared readiness state prevented `ready` with no reasoner | The source shapes suggested an OMP discoverability advantage, but this was not user-tested |
+| Conversation hierarchy | Message-oriented transcript; routine reads group; progress mutates in place | Typed event projection still permanently rendered many successful tool/file/model events | The snapshot suggested an architectural gap, not only styling |
+| Outcome consistency | Components consume normalized semantic statuses | Transcript, task rail, footer, notification, and picker derived status independently | The snapshot suggested this as a high-priority gap |
 | Steering | Enter steers, Ctrl+Enter follows up, queue state is explicit | Enter steers and Tab queues; behavior exists | Adapt only the visibility and queue feedback |
-| Approval/question UI | Dedicated stable overlays, rich selection markers, multi-question support | Durable ID-bound overlays and reconnect-safe queues already exist, but question richness and cross-surface waiting state are weaker | Adapt presentation only; keep Carina policy/RPC authority |
-| Session recovery | Searchable picker with lifecycle statuses and cross-project handling | Stronger recovery evidence and prioritization already exist | Keep Carina authority; borrow picker ergonomics only |
+| Approval/question UI | Dedicated stable overlays, rich selection markers, multi-question support | Durable ID-bound overlays and reconnect-safe queues appeared to exist, while question richness and cross-surface waiting state looked weaker | The historical proposal was to adapt presentation while retaining Carina policy/RPC authority |
+| Session recovery | Searchable picker with lifecycle statuses and cross-project handling | The snapshot exposed more recovery fields and prioritization | Preserve authority only after current-source verification; picker ergonomics remained a hypothesis |
 | Glyph compatibility | Central semantic registry, Unicode/Nerd/ASCII presets, live preview | Five local status helpers with Mono fallback; task rail reuses them | Adopt semantic registry, adapt literals to Carina |
 | Animation | Selective, component-scoped, renderer opt-in | Static status helpers and broader layout updates | Adapt only where liveness is otherwise ambiguous |
 
-Carina's current glyph vocabulary is compact but incomplete: success `✓`, auth
+At that snapshot, Carina's glyph vocabulary was compact but incomplete: success `✓`, auth
 `⚿`, failure `✗`, neutral `·`, running `›`; Mono fallback `+`, `!`, `x`, `-`,
 `>` (Carina: `go/tui/transcript.go:267-301`). The task rail reuses these
 helpers, which is good reuse, but the helpers do not constitute a complete
@@ -344,13 +354,14 @@ expanded, disabled, or compatibility presets (Carina:
 
 ## Provider and CLI onboarding assessment
 
-OMP offers a better *onboarding surface* because provider sign-in and model
-selection happen before ordinary composer use and because failure recovery is
-contained inside those scenes. It does not offer a better authority rule for
-Carina to copy. OMP permits setup scenes to be skipped and relies on submission
-validation afterward.
+The audit hypothesized that OMP's *onboarding surface* was more discoverable
+because provider sign-in and model selection happen before ordinary composer
+use and failure recovery is contained inside those scenes. That comparison was
+not user-tested and the Carina baseline was not pinned. OMP does not establish
+a better authority rule for Carina to copy; its setup scenes can be skipped and
+submission validation still remains necessary afterward.
 
-The correct Carina adaptation is:
+The historical Carina adaptation proposal was:
 
 1. Compute `readiness` from the same provider catalog/auth/runtime checks used
    by daemon reasoner selection.

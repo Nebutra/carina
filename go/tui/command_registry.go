@@ -64,7 +64,7 @@ var builtinCommandRegistry = []commandDescriptor{
 	{Name: "view-plan", Usage: "/view-plan", Description: "show plan file and approval guidance", Source: "builtin", Validate: noArgs},
 	{Name: "explain", Usage: "/explain", Description: "explain mode, profile, sandbox, approvals", Source: "builtin", Validate: noArgs},
 	{Name: "always-approve", Usage: "/always-approve [on|off|toggle]", Description: "toggle auto-approve of requires_approval (with warning; org may lock)", Source: "builtin", Validate: anyArgs},
-	{Name: "approval-mode", Usage: "/approval-mode [ask|always-approve|dont-ask|accept-edits]", Description: "set product HITL mode (Grok-style ask/dontAsk/bypass/acceptEdits)", Source: "builtin", Validate: anyArgs},
+	{Name: "approval-mode", Usage: "/approval-mode [ask|always-approve|dont-ask|accept-edits]", Description: "set interactive approval behavior", Source: "builtin", Validate: anyArgs},
 	{Name: "dont-ask", Usage: "/dont-ask [on|off|toggle]", Description: "deny requires_approval without grant or prompt (CI-friendly)", Source: "builtin", Validate: anyArgs},
 	{Name: "accept-edits", Usage: "/accept-edits [on|off|toggle]", Description: "auto-allow file edits; still prompt for shell/network", Source: "builtin", Validate: anyArgs},
 	{Name: "inspect", Usage: "/inspect", Description: "readiness: doctor + runtime inventory", Source: "builtin", Validate: noArgs},

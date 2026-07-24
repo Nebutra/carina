@@ -274,7 +274,7 @@ type Model struct {
 	conversation            conversationProjection
 	operationalNotice       operationalNotice
 	// pendingSideQuestion is submitted once after a successful session.fork
-	// switch (Codex/CC side conversation pattern).
+	// switch for the side-conversation workflow.
 	pendingSideQuestion string
 	// sidePane freezes the primary transcript for dual-pane Side UI after
 	// /btw --fork or /side switches to the child session.
@@ -345,7 +345,7 @@ type Model struct {
 	composerUndo             composerUndoState
 	lastCtrlC                time.Time
 	ctrlCHint                string // non-empty while the double-press exit hint is live; surfaced in the overlay too (view.go), since it covers the transcript
-	rewindPrimed             bool
+	backtrack                backtrackState
 	noAlternateScreen        bool
 	mode                     string
 	model                    string

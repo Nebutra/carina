@@ -163,7 +163,7 @@ func (m *Model) handleChordTimeout(msg chordTimeoutMsg) {
 		m.clearChord()
 		m.lastCtrlC = time.Time{}
 		m.ctrlCHint = ""
-		m.rewindPrimed = false
+		m.cancelBacktrack()
 	}
 }
 

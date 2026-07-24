@@ -744,7 +744,7 @@ type runtimeStatusMsg struct {
 	err               error
 }
 
-// Context pressure thresholds (Grok-style ~85% auto-compact when
+// Context pressure thresholds: auto-compact at approximately 85% when
 // session.checkpoint.compact is available — idle task + checkpoint, not mid-execution).
 const (
 	contextPressureWarning  = 80
@@ -1243,7 +1243,7 @@ func (m *Model) initProjectRules() tea.Cmd {
 }
 
 // resolveDynamicSlash also accepts user-invocable skills so discovery equals execution
-// (Grok/CC skill-as-slash pattern).
+// Skills are exposed through slash commands.
 func (m *Model) resolveDynamicSlashWithSkills(text string) tea.Cmd {
 	call, sid := m.call, m.sessionID
 	draft := m.currentDraft()

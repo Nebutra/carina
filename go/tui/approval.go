@@ -240,7 +240,6 @@ func (m *Model) handleApprovalDone(msg approvalDoneMsg) {
 	if msg.err != nil {
 		m.approval.Resolving = false
 		m.approval.Error = m.text(MsgApprovalRetry, MessageArgs{"error": msg.err.Error()})
-		m.push(m.text(MsgApprovalRPCFailed, MessageArgs{"glyph": glyphFailed(m.th), "error": msg.err.Error()}))
 		return
 	}
 	m.nextQueuedApproval()
@@ -269,27 +268,32 @@ func (m *Model) recordApprovalOutcome(msg approvalDoneMsg) {
 		m.approvalOutcomeSeq = sequence
 	}
 	opts := []microcopy.Option{microcopy.WithLocale(m.locale)}
+	p := eventPresentation{
+		Key: "governance:" + msg.decisionID + ":resolved", Kind: presentationGovernance,
+		TaskID: "", Title: "approval", Status: statusFailure,
+	}
 	switch msg.verdict {
 	case "allowed":
-		m.push(fmt.Sprintf("%s %s", glyphOK(m.th), microcopy.Governed(microcopy.GovernedApprovalGranted, microcopy.Args{
+		p.Status = statusSuccess
+		p.Summary = fmt.Sprintf("%s %s", glyphOK(m.th), microcopy.Governed(microcopy.GovernedApprovalGranted, microcopy.Args{
 			"action":      msg.action,
 			"scope":       msg.scope,
 			"decision_id": msg.decisionID,
-		}, opts...)))
+		}, opts...))
 		if updatesOutcome {
 			m.outcome = OutcomeOK
 		}
 		if msg.initiator == "grant-error" && msg.detail != "" {
-			m.push(fmt.Sprintf("%s %s", glyphNeutral(m.th), msg.detail))
+			p.Body = append(p.Body, fmt.Sprintf("%s %s", glyphNeutral(m.th), msg.detail))
 		}
 	default:
-		m.push(fmt.Sprintf("%s %s", glyphFailed(m.th), microcopy.Governed(microcopy.GovernedApprovalDenied, microcopy.Args{
+		p.Summary = fmt.Sprintf("%s %s", glyphFailed(m.th), microcopy.Governed(microcopy.GovernedApprovalDenied, microcopy.Args{
 			"action":      msg.action,
 			"decision_id": msg.decisionID,
-		}, opts...)))
+		}, opts...))
 		if msg.initiator == "policy" {
 			if msg.detail != "" {
-				m.push(m.text(MsgApprovalPolicyDetail, MessageArgs{"glyph": glyphNeutral(m.th), "detail": msg.detail}))
+				p.Body = append(p.Body, m.text(MsgApprovalPolicyDetail, MessageArgs{"glyph": glyphNeutral(m.th), "detail": msg.detail}))
 			}
 			if updatesOutcome {
 				m.outcome = OutcomePolicyDenied
@@ -300,6 +304,9 @@ func (m *Model) recordApprovalOutcome(msg approvalDoneMsg) {
 			}
 		}
 	}
+	p.Collapsible = len(p.Body) > 0
+	p.Collapsed = false
+	m.pushSemanticPresentation(p)
 }
 
 // approvalKey owns every key while an approval is visible. Keeping the

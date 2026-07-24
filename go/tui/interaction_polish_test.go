@@ -16,8 +16,8 @@ func TestEscInterruptsActiveTurnWithoutArmingExitOrRewind(t *testing.T) {
 	m.inFlightTaskID = "tsk_active"
 
 	cmd, handled := m.handleKey("esc")
-	if !handled || cmd == nil || m.rewindPrimed || !m.lastCtrlC.IsZero() {
-		t.Fatalf("active Esc state: handled=%v cmd=%v rewind=%v ctrlC=%v", handled, cmd != nil, m.rewindPrimed, m.lastCtrlC)
+	if !handled || cmd == nil || m.backtrack.Phase != backtrackInactive || !m.lastCtrlC.IsZero() {
+		t.Fatalf("active Esc state: handled=%v cmd=%v backtrack=%v ctrlC=%v", handled, cmd != nil, m.backtrack.Phase, m.lastCtrlC)
 	}
 	drain(m, cmd)
 	call := caller.last()
@@ -26,25 +26,23 @@ func TestEscInterruptsActiveTurnWithoutArmingExitOrRewind(t *testing.T) {
 	}
 }
 
-func TestDoubleEscOpensNewestCheckpointPicker(t *testing.T) {
+func TestDoubleEscSelectsNewestUserPromptInline(t *testing.T) {
 	caller := &fakeCaller{handler: map[string]any{
 		"history.recent": map[string]any{"entries": []string{}},
-		"session.checkpoint.list": []map[string]any{
-			{"checkpoint_id": "tsk:1", "task_id": "tsk", "turn": 1, "summary": "first"},
-			{"checkpoint_id": "tsk:2", "task_id": "tsk", "turn": 2, "summary": "latest"},
-		},
 	}}
 	m, _ := newTestModel(caller)
-	if cmd, handled := m.handleKey("esc"); !handled || cmd != nil || !m.rewindPrimed || m.checkpointPicker != nil {
+	seedBacktrackPrompts(m, "task_1", "first", "task_2", "latest")
+	if cmd, handled := m.handleKey("esc"); !handled || cmd == nil || m.backtrack.Phase != backtrackPrimed || m.checkpointPicker != nil {
 		t.Fatalf("first Esc did not prime: handled=%v cmd=%v state=%#v", handled, cmd != nil, m.checkpointPicker)
 	}
 	cmd, handled := m.handleKey("esc")
-	if !handled || cmd == nil || m.checkpointPicker == nil {
-		t.Fatalf("second Esc did not open picker: handled=%v cmd=%v", handled, cmd != nil)
+	if !handled || cmd != nil || m.checkpointPicker != nil || m.backtrack.Phase != backtrackSelecting || m.backtrack.SelectedKey != "user:task_2" {
+		t.Fatalf("second Esc did not select newest user prompt: handled=%v cmd=%v backtrack=%#v", handled, cmd != nil, m.backtrack)
 	}
-	drain(m, cmd)
-	if len(m.checkpointPicker.items) != 2 || m.checkpointPicker.selected != 1 {
-		t.Fatalf("picker did not select newest checkpoint: %#v", m.checkpointPicker)
+	for _, call := range caller.calls {
+		if strings.HasPrefix(call.method, "session.checkpoint.") {
+			t.Fatalf("double Esc invoked checkpoint RPC: %#v", call)
+		}
 	}
 }
 
@@ -277,8 +275,8 @@ func TestChordDispatchTimeoutCancelAndUnmatchedReplay(t *testing.T) {
 	}
 	m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	if len(m.chord.parts) != 0 || m.rewindPrimed {
-		t.Fatalf("Esc did not cancel pending chord cleanly: chord=%#v rewind=%v", m.chord, m.rewindPrimed)
+	if len(m.chord.parts) != 0 || m.backtrack.Phase != backtrackInactive {
+		t.Fatalf("Esc did not cancel pending chord cleanly: chord=%#v backtrack=%v", m.chord, m.backtrack.Phase)
 	}
 }
 

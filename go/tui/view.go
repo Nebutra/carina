@@ -164,7 +164,7 @@ func (m *Model) calculateLayout() rootLayout {
 	remaining -= l.queueLines
 	l.pasteLines = minInt(len(m.pastePanelLines()), remaining)
 	remaining -= l.pasteLines
-	// Compact mode (Grok /compact-mode) keeps typing chrome and drops task-tree
+	// Compact mode keeps typing chrome and drops task-tree
 	// and decorative spacer so the transcript stays dominant.
 	if !m.compactMode {
 		l.taskLines = minInt(len(m.taskTreeLines()), remaining)

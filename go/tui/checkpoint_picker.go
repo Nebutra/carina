@@ -79,7 +79,7 @@ func (m *Model) openCheckpointPicker() tea.Cmd {
 	m.closeSuggest()
 	state := &checkpointPickerState{generation: 1, loading: true, status: m.text(MsgCheckpointLoading, nil)}
 	m.checkpointPicker = state
-	m.rewindPrimed = false
+	m.cancelBacktrack()
 	m.layout()
 	call, sessionID, generation := m.call, m.sessionID, state.generation
 	return func() tea.Msg {
@@ -170,9 +170,14 @@ func (m *Model) handleCheckpointRestore(msg checkpointRestoreMsg) {
 		m.inFlightTaskID = ""
 	}
 	m.applyConversation(conversationTransition{Kind: transitionIdle, TaskID: msg.taskID, EventType: "checkpoint.restored", Status: "paused"})
-	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgCheckpointRestoredLog, MessageArgs{
+	restoredText := m.text(MsgCheckpointRestoredLog, MessageArgs{
 		"checkpoint": msg.checkpointID, "turn": msg.turn, "task": msg.taskID,
-	})))
+	})
+	m.pushSemanticPresentation(eventPresentation{
+		Key: "recovery:" + msg.checkpointID, Kind: presentationRecovery,
+		TaskID: msg.taskID, Title: "checkpoint", Status: statusNeedsAuth,
+		Summary: "paused", Body: []string{restoredText}, BodyProse: true,
+	})
 	m.layout()
 }
 
@@ -203,7 +208,12 @@ func (m *Model) handleCheckpointResume(msg checkpointResumeMsg) {
 	if m.pausedRestore != nil && m.pausedRestore.TaskID == msg.taskID {
 		m.pausedRestore = nil
 	}
-	m.push(m.th.Style(theme.RoleMuted).Render(m.text(MsgCheckpointResumedLog, MessageArgs{"task": msg.taskID})))
+	resumedText := m.text(MsgCheckpointResumedLog, MessageArgs{"task": msg.taskID})
+	m.pushSemanticPresentation(eventPresentation{
+		Key: "recovery:" + state.restored.CheckpointID, Kind: presentationRecovery,
+		TaskID: msg.taskID, Title: "checkpoint", Status: statusSuccess,
+		Summary: "resumed", Body: []string{resumedText}, BodyProse: true,
+	})
 	m.closeCheckpointPicker()
 }
 

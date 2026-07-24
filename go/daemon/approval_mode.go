@@ -52,7 +52,7 @@ func normalizeApprovalMode(mode string) (string, error) {
 }
 
 // isEditCapability reports whether a requires_approval decision is a workspace
-// file edit (Grok/CC acceptEdits scope). Shell/network/secrets still prompt.
+// file edit. Shell, network, and secret capabilities still prompt.
 func isEditCapability(capability string) bool {
 	switch strings.ToLower(strings.TrimSpace(capability)) {
 	case "filewrite", "patchapply":

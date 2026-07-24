@@ -179,15 +179,16 @@ func (m *Model) handleQuestionDone(msg questionDoneMsg) {
 			"error": msg.err.Error(),
 			"retry": primaryKeyLabel(m.keys.keys(KeyContextQuestion, ActionQuestionAnswer)),
 		})
-		m.push(m.text(MsgQuestionAnswerLogFail, MessageArgs{
-			"glyph": glyphFailed(m.th), "id": msg.questionID, "error": msg.err.Error(),
-		}))
 		return
 	}
 	m.questionResolved[msg.questionID] = true
-	m.push(m.text(MsgQuestionAnswered, MessageArgs{
-		"glyph": glyphOK(m.th), "id": msg.questionID, "label": msg.label,
-	}))
+	m.pushSemanticPresentation(eventPresentation{
+		Key: "governance:" + msg.questionID + ":resolved", Kind: presentationGovernance,
+		TaskID: msg.taskID, Title: "question", Status: statusSuccess,
+		Summary: m.text(MsgQuestionAnswered, MessageArgs{
+			"glyph": glyphOK(m.th), "id": msg.questionID, "label": msg.label,
+		}),
+	})
 	if msg.taskID != "" && msg.taskID == m.inFlightTaskID {
 		m.tasks.setTask(msg.taskID, "running")
 	}

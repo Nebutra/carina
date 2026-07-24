@@ -4,6 +4,11 @@ Date: 2026-07-16 (updated Wave N — remaining product open items)
 Branch: `main`  
 Sources: Grok Build (`xai-org/grok-build` user guide), Claude Code notes, OpenAI Codex (`codex-rs/tui/src/slash_command.rs`).
 
+> Evidence status: historical implementation plan. The cited sources were not
+> pinned to exact revisions in this document. The comparison table records
+> design provenance and choices made at the time; it is not current benchmark
+> proof, visual parity evidence, or a completion score.
+
 ## Goal
 
 Close the gap between Carina’s **governed runtime** and a **product-grade agent shell**, without weakening audit/profile boundaries.

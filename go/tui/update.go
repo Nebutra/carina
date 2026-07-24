@@ -51,7 +51,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.PasteMsg:
 		m.lastCtrlC = time.Time{}
 		m.ctrlCHint = ""
-		m.rewindPrimed = false
+		m.cancelBacktrack()
 		m.clearChord()
 	}
 	switch msg := msg.(type) {
@@ -109,6 +109,10 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout()
 		return m, nil
 
+	case backtrackPrimeExpiredMsg:
+		m.handleBacktrackPrimeExpired(msg)
+		return m, nil
+
 	case SessionReadyMsg:
 		wasSwitching := m.pendingSessionID != ""
 		if m.pendingSessionID != "" && msg.SessionID != m.pendingSessionID {
@@ -124,6 +128,11 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		crossRuntime := m.pendingTarget != nil && m.pendingSubmissions != nil
+		if m.backtrack.Phase != backtrackSwitching &&
+			(m.backtrack.SourceSessionID != "" && (m.backtrack.SourceSessionID != msg.SessionID ||
+				(msg.Generation != 0 && m.backtrack.SourceGeneration != msg.Generation))) {
+			m.cancelBacktrack()
+		}
 		preparedToken := m.pendingPreparedToken
 		reconnected := !crossRuntime && m.sessionID == msg.SessionID && m.conn == ConnConnected
 		if m.sessionID != "" && (m.sessionID != msg.SessionID || crossRuntime) {
@@ -217,6 +226,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		status := m.refreshRuntimeStatus()
 		tick := m.scheduleRuntimeStatusTick()
 		side := m.flushPendingSideQuestion()
+		m.restoreBacktrackDraftAfterReady(msg.SessionID)
 		cmds := []tea.Cmd{firstConnection, history, status, tick, side}
 		if reconcile != nil {
 			cmds = append([]tea.Cmd{reconcile}, cmds...)
@@ -551,8 +561,8 @@ func (m *Model) maintainConfirmationStateForKey(key string) {
 		m.lastCtrlC = time.Time{}
 		m.ctrlCHint = ""
 	}
-	if !m.keys.matches(KeyContextChat, ActionChatRewind, key) {
-		m.rewindPrimed = false
+	if m.backtrack.Phase == backtrackPrimed && !m.keys.matches(KeyContextChat, ActionChatRewind, key) {
+		m.cancelBacktrack()
 	}
 }
 
@@ -653,6 +663,9 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	if m.sessionPicker != nil {
 		return m.dispatchNavigatorKey(key)
 	}
+	if cmd, handled := m.handleBacktrackKey(key); handled {
+		return cmd, true
+	}
 	// Reverse search owns every key while visible. In particular Ctrl+C must
 	// restore the exact draft instead of arming the global exit cascade.
 	if m.historySearch != nil {
@@ -685,7 +698,7 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	}
 	if m.inFlightTaskID != "" && m.keys.matches(KeyContextChat, ActionChatInterrupt, key) {
 		m.breakComposerUndoGroup()
-		m.rewindPrimed = false
+		m.cancelBacktrack()
 		taskID := m.inFlightTaskID
 		m.applyConversation(conversationTransition{Kind: transitionInterrupted, TaskID: taskID, EventType: "operator.interrupt", Status: "interrupted"})
 		m.push(microcopy.Degrade(microcopy.DegradeInterruptedByUser, nil,
@@ -738,7 +751,7 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 			return nil, false
 		}
 	}
-	// Sticky shell mode (Grok `!`): Esc on empty leaves mode before rewind.
+	// In sticky shell mode, Esc on an empty draft leaves the mode before rewind.
 	if m.tryExitShellModeFromKey(key) {
 		m.breakComposerUndoGroup()
 		return nil, true
@@ -751,14 +764,11 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 	if m.keys.matches(KeyContextChat, ActionChatRewind, key) && m.inFlightTaskID == "" &&
 		m.retrySubmission == nil && historyDraftKey(m.currentDraft()) == "" {
 		m.breakComposerUndoGroup()
-		if m.rewindPrimed {
-			return m.openCheckpointPicker(), true
+		if m.backtrack.Phase == backtrackPrimed {
+			m.activateBacktrackSelection()
+			return nil, true
 		}
-		m.rewindPrimed = true
-		m.setOperationalNotice(m.text(MsgUpdateRewindAgain, MessageArgs{
-			"rewind": primaryKeyLabel(m.keys.keys(KeyContextChat, ActionChatRewind)),
-		}), theme.RoleMuted)
-		return nil, true
+		return m.primeBacktrack(), true
 	}
 	if cmd, handled := m.handleWorkspaceKey(key); handled {
 		return cmd, true
@@ -845,8 +855,8 @@ func (m *Model) handleKey(key string) (tea.Cmd, bool) {
 		m.showHelp()
 		return nil, true
 	case m.keys.matches(KeyContextGlobal, ActionGlobalModeCycle, key):
-		// Grok uses Shift+Tab for permission/plan mode cycling. Carina cycles
-		// only the governed build↔plan interaction mode (no silent YOLO).
+		// Shift+Tab cycles only the governed build/plan interaction mode and does
+		// not alter approval policy.
 		m.breakComposerUndoGroup()
 		return m.cycleInteractionMode(), true
 	case m.keys.matches(KeyContextGlobal, ActionGlobalSettings, key):
@@ -1021,7 +1031,7 @@ func (m *Model) submitWithIntent(forceNew bool) tea.Cmd {
 		}
 		return cmd
 	}
-	// Sticky shell mode: every submit is a governed shell command (Grok bash mode).
+	// In sticky shell mode, every submit is a governed shell command.
 	// Slash commands are intentionally disabled while sticky shell is active so
 	// `!/tmp` is not confused with product slash routing.
 	if m.inShellMode() && len(draft.Prefix) == 0 {
@@ -1397,10 +1407,9 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 	} else {
 		m.commitDraft(state.draft, state.consumePaste)
 	}
-	shown := draftLabel(state.draft)
 	switch state.kind {
 	case submissionTask:
-		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateYou, nil)) + shown)
+		m.pushUserPresentation(msg.taskID, state.draft, false, state.generation)
 		if !earlyTerminal {
 			m.inFlightTaskID = msg.taskID
 			m.applyConversation(conversationTransition{Kind: transitionRunning, TaskID: msg.taskID, EventType: "submission.accepted", Status: "running"})
@@ -1408,7 +1417,7 @@ func (m *Model) handleSubmissionDone(msg submissionDoneMsg) tea.Cmd {
 		}
 	case submissionSteer:
 		m.applyConversation(conversationTransition{Kind: transitionRunning, TaskID: msg.taskID, EventType: "steer.accepted", Status: "running"})
-		m.push(m.th.Style(theme.RoleTitle).Render(m.text(MsgUpdateYouSteer, nil)) + shown)
+		m.pushUserPresentation(msg.taskID, state.draft, true, state.generation)
 		m.setOperationalNotice(m.text(MsgUpdateSteeringQueued, MessageArgs{"task": msg.taskID}), theme.RoleInfo)
 	case submissionShell:
 		m.applyConversation(conversationTransition{Kind: transitionIdle, EventType: "shell.completed"})
@@ -1685,7 +1694,7 @@ func (m *Model) slashCommand(text string) tea.Cmd {
 			m.push(m.text(MsgUpdateUnknownCommand, MessageArgs{"command": "config; use /config [model|effort|mode|permissions|keymap|raw]"}))
 			return nil
 		}
-		// Grok/CC open a settings shell instead of dumping inventory into chat.
+		// Open the settings surface instead of dumping inventory into the transcript.
 		m.openSettings(settingsTabOverview)
 		return m.refreshRuntimeStatus()
 	case "doctor":

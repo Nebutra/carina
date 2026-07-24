@@ -1,12 +1,18 @@
 # Claude Code → Carina — Feature Gap & Absorption Analysis
 
+> Evidence status: historical backlog seed. This document does not pin a Claude
+> Code source revision or a Carina baseline commit. Comparative and absolute
+> language such as "most runtimes lack", "unkillable", "only sound fix", and
+> "single biggest" is withdrawn. Re-audit each item against fixed source before
+> using it as an implementation or product decision.
+
 ## Executive Summary
 
-Carina already implements the hard security core that most agent runtimes lack: a capability kernel with 7 permission profiles and risk classification, a tamper-evident hash-chained audit log, a transactional patch engine, a handle-only secret broker, signed WASM plugins, kernel-enforced sub-agent attenuation (child ⊆ parent), a declarative workflow DAG engine, durable background runs with per-turn checkpoint/resume, and a ReAct loop with compaction, loop-guard, retry, and graceful degrade. These do **not** need rebuilding.
+At the time of this analysis, Carina implemented a capability kernel with 7 permission profiles and risk classification, a tamper-evident hash-chained audit log, a transactional patch engine, a handle-only secret broker, signed WASM plugins, kernel-enforced sub-agent attenuation (child ⊆ parent), a declarative workflow DAG engine, durable background runs with per-turn checkpoint/resume, and a ReAct loop with compaction, loop-guard, retry, and graceful degrade. Current status must be checked from source before relying on this list.
 
 The gaps concentrate in five themes, in rough priority order:
 
-1. **Long-horizon survivability & economics** — multi-tier compaction, cost/token metering + budget gates, prompt-cache architecture, per-subagent budgets. These make Carina's flagship durable/background runs cheap and unkillable.
+1. **Long-horizon survivability & economics** — multi-tier compaction, cost/token metering + budget gates, prompt-cache architecture, per-subagent budgets. These were proposed to improve cost and failure tolerance for durable/background runs.
 2. **Execution soundness** — shell AST decomposition + per-subcommand gating, OS-level syscall sandbox, egress proxy, read-before-write stale-read guard, flag-level whitelists, path canonicalization. These close capability-gate bypasses on Carina's highest-risk surface (`run`).
 3. **The remote/distributed roadmap** — a poll-for-work dispatch bridge (the missing half of the worker registry), resilient transport, remote/interactive permission bridge, attach/tail with replay cursor, a direct-connect HTTP/WS session API.
 4. **Extensibility & interop** — MCP client + server mode, a skills/slash-command system, hooks, output styles, plugin bundles, hot-reload.
@@ -93,9 +99,9 @@ Many high-value items are **S/M effort** because they map cleanly onto primitive
 1. **Multi-tier compaction** — hardens durable/background/marathon runs against `prompt_too_long`, cuts always-heavy summarization cost, and adds a 3-strike circuit breaker so a failing summarizer never wedges the loop.
 2. **Cost & token metering + budget pause-and-approve** — spend becomes a first-class safety control against runaway/prompt-injected agents, and the token count feeds the compaction trigger.
 3. **Hooks lifecycle interception** — declarative, capability-gated seams around every tool (lint-on-write, secret-scan, model-driven verify), reusing the existing permission-rule predicate parser and exit-2 → Transcript injection.
-4. **Shell AST decomposition + per-subcommand gating** — the only sound fix for command allowlisting on `run`, Carina's highest-risk surface; prefix matching is bypassable via `&& | ;` and subshells.
+4. **Shell AST decomposition + per-subcommand gating** — a proposed structural fix for command allowlisting on `run`; prefix matching is bypassable via `&& | ;` and subshells.
 5. **Distributed work-dispatch bridge** — turns the existing worker registry into real remote executors with per-job attenuated secret-broker tokens, unblocking the whole remote/sandboxed roadmap.
-6. **Segmented prompt-cache architecture** — the single biggest cost/latency lever; built-in-first tool ordering + a static/dynamic boundary stop cache thrash on every provider/MCP change.
+6. **Segmented prompt-cache architecture** — a proposed cost/latency lever; built-in-first tool ordering plus a static/dynamic boundary may reduce cache churn on provider/MCP changes.
 7. **Schema-validated structured output** — Carina is a JSON-RPC daemon; pipeline and workflow consumers need guaranteed machine-parseable, self-correcting final output.
 8. **Read-before-write stale-read guard** — closes the one correctness hole in the otherwise-atomic patch engine: silent corruption when a concurrent agent/hook/formatter mutates a file edited from a stale base.
 
@@ -109,5 +115,5 @@ Many high-value items are **S/M effort** because they map cleanly onto primitive
 - **05 — 扩展系统:** Skills as governed prompt-workflows, inline vs fork context, hardened lazy asset extraction, hot-reload, plugin bundles + marketplace, duplicate-key detection, source allow/block-list, content-block prompts. Theme: a governed, hot-reloadable extension surface — fills the slash-command gap.
 - **06 — 服务与基础:** Hooks, post-edit diagnostics delta, cost metering, segmented prompt-cache, memory/CLAUDE.md, four-layer compaction + rebuild + breaker, resilient routing, managed-auth isolation, central side-effect registry, worktree canonical-root. Theme: the daemon's foundational services.
 - **07 — UI与交互:** Output styles, cost-threshold pause dialog, interactive permission protocol, Doctor health surface, progressive resume picker, remote kill-switch + lazy acquisition, delta-streaming attach with resync, cross-process history. Theme: interaction surfaces that double as governance controls.
-- **08 — 网络与远程:** Work-dispatch bridge, egress proxy + credential injection, anti-ptrace prctl, direct-connect server, remote permission bridge, observe/attach with replay, trust-gated auto-activation. Theme: the remote-execution substrate — the single biggest architectural cluster on the roadmap.
+- **08 — 网络与远程:** Work-dispatch bridge, egress proxy + credential injection, anti-ptrace prctl, direct-connect server, remote permission bridge, observe/attach with replay, trust-gated auto-activation. Theme: the remote-execution substrate, recorded here as a large architectural cluster on the historical roadmap.
 - **09 — 实战指南/01-搭建轻颗粒Agent客户端:** Tool-error-as-result, WAL ordering, double-buffered snapshot, streaming tool execution, per-tool timeout-as-feedback, model tiering, mid-tier structural compression, Promise-based permission decoupling. Theme: the load-bearing correctness invariants for a concurrent, crash-safe agent daemon — several are small, high-value hardening wins.

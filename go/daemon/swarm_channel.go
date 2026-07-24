@@ -18,19 +18,14 @@ type swarmChannelMessage struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-// maxMessagesPerChannel bounds how many messages one channel retains at
-// once. Modeled directly on a real, documented incident in Claude Code's own
-// Teammate messaging system (its TEAMMATE_MESSAGES_UI_CAP = 50): 292 agents
-// spawned within two minutes drove one session to 36.8GB of retained
-// message history ("whale session") from unbounded per-teammate retention.
+// maxMessagesPerChannel bounds how many messages one channel retains at once.
 // A swarm run can have hundreds of concurrently-publishing steps; without a
 // cap, a high-frequency publisher with a slow or absent subscriber grows
-// this channel's log for the run's entire lifetime. Set well above Claude
-// Code's UI-facing 50 (this is workflow data, not a terminal display), but
-// still a hard bound. Eviction drops the OLDEST messages first and is
-// audited (see publish()) — a late/slow subscriber silently catches up from
-// the retained window rather than the full history, the same tradeoff
-// Claude Code's own cap makes.
+// this channel's log for the run's entire lifetime. The workflow-data window
+// remains larger than a terminal-facing display but still has a hard bound.
+// Eviction drops the OLDEST messages first and is
+// audited (see publish()) — a late/slow subscriber catches up from the retained
+// window rather than the full history.
 // A var (not const) so tests can shrink it temporarily to exercise eviction
 // without hundreds of real publish calls; production code never mutates it.
 var maxMessagesPerChannel = 500
@@ -52,10 +47,8 @@ var maxMessagesPerChannel = 500
 // real identity and every publish is a governed, audited effect", not the
 // wire protocol.
 //
-// Deliberately NOT persisted to disk, unlike Claude Code's own filesystem
-// mailbox (which needs durability because a Teammate can sit idle across a
-// long-lived process and must survive a restart): Carina's streaming-
-// workflow resume semantics (wfRunStore) only ever replay COMPLETED steps'
+// Deliberately not persisted to disk: Carina's streaming-workflow resume
+// semantics (wfRunStore) only replay completed steps'
 // terminal output — a step still mid-execution when the daemon crashes is
 // not resumable at all and gets re-dispatched as a fresh subagent run with
 // fresh, empty channel state. A crash loses the publishing/subscribing

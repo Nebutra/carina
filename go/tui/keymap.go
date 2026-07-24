@@ -220,7 +220,7 @@ func defaultKeyBindings() []keyBinding {
 		{KeyContextGlobal, ActionGlobalRedraw, []string{"ctrl+l"}, "redraw terminal"},
 		{KeyContextGlobal, ActionGlobalExit, []string{"ctrl+d"}, "exit when input is empty"},
 		{KeyContextGlobal, ActionGlobalTranscript, []string{"alt+r"}, "open plain transcript"},
-		// Grok cycles modes with Shift+Tab; Carina only cycles governed build↔plan.
+		// Shift+Tab only cycles the governed build/plan modes.
 		{KeyContextGlobal, ActionGlobalModeCycle, []string{"shift+tab", "ctrl+shift+m"}, "cycle build/plan mode"},
 		{KeyContextGlobal, ActionGlobalSettings, []string{"ctrl+,"}, "open settings shell"},
 

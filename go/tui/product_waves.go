@@ -13,8 +13,8 @@ import (
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
-// product_waves.go closes remaining TUI product gaps against Grok Build,
-// Claude Code notes, and Codex slash semantics — with Carina governance trade-offs:
+// product_waves.go groups the remaining TUI product workflows and their Carina
+// governance trade-offs:
 //
 // Wave A: plan approve + plan file, honest btw/commit, sandbox explain
 // Wave B: settings actions that mutate (approve plan, effort shortcuts)
@@ -99,7 +99,7 @@ func (m *Model) approvePlan() tea.Cmd {
 	}
 }
 
-// viewPlanSurface opens the plan review overlay (Grok-style a/s/q).
+// viewPlanSurface opens the plan review overlay with approve, save, and cancel actions.
 // Falls back to a short transcript notice when another overlay already owns input.
 func (m *Model) viewPlanSurface() {
 	if m.approval != nil || m.question != nil || m.helpOpen || m.settings != nil {
@@ -118,7 +118,7 @@ func (m *Model) enterPlanMode(followUp string) tea.Cmd {
 			return modeChangedMsg{sessionID: sessionID, mode: "plan", err: errorsNew("daemon not connected"), followUpPrompt: followUp}
 		}
 		err := call.Call("session.plan_mode", map[string]any{"session_id": sessionID, "on": true}, nil)
-		// Enrich follow-up so the agent writes the plan file (Grok plan.md pattern).
+		// Enrich the follow-up so the agent writes the session plan file.
 		if strings.TrimSpace(followUp) != "" {
 			followUp = followUp + "\n\nWrite the working plan to this file (create/update markdown sections Goal/Approach/Steps/Risks/Done when):\n" + path +
 				"\nDo not edit other files until the operator runs /approve-plan."
@@ -131,7 +131,7 @@ func (m *Model) enterPlanMode(followUp string) tea.Cmd {
 //
 // Default (no flag): answer-only prompt on the current session (honest, no fork).
 // With fork=true (/btw --fork or /side): session.fork then submit on the new
-// session after switch — Codex/CC side-conversation pattern when a completed
+// session after switch when a completed
 // checkpoint exists. Fork requires an idle completed task (daemon contract).
 func (m *Model) btwSideQuestion(question string, fork bool) tea.Cmd {
 	question = strings.TrimSpace(question)
@@ -157,7 +157,7 @@ func (m *Model) btwSideQuestion(question string, fork bool) tea.Cmd {
 func sideQuestionPrompt(question string, forked bool) string {
 	header := "SIDE QUESTION (answer-only turn; not a side-session fork)."
 	if forked {
-		header = "SIDE QUESTION on a forked session lineage (Codex/CC side-conversation pattern)."
+		header = "SIDE QUESTION on a forked session lineage."
 	}
 	return strings.Join([]string{
 		header,
@@ -185,7 +185,7 @@ func (m *Model) flushPendingSideQuestion() tea.Cmd {
 	return m.beginSubmissionSourceWithIntent(submissionTask, "", promptDraft{Text: sideQuestionPrompt(q, true)}, false, false)
 }
 
-// commitWorkflow builds a CC-style PromptCommand: inject workspace.diff, then
+// commitWorkflow injects workspace.diff, then
 // constrain the agent to a governed commit path.
 func (m *Model) commitWorkflow(extra string) tea.Cmd {
 	call, sessionID := m.call, m.sessionID
@@ -339,7 +339,7 @@ func (m *Model) humanizeInspect(data map[string]any) []string {
 	return lines
 }
 
-// showTasksSurface lists active tasks, queue, and schedules (Grok /tasks).
+// showTasksSurface lists active tasks, queue, and schedules.
 func (m *Model) showTasksSurface() {
 	lines := []string{m.th.Style(theme.RoleTitle).Render(m.text(MsgTasksTitle, nil))}
 	if tree := m.taskTreeLines(); len(tree) > 0 {

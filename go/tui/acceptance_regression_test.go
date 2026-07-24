@@ -45,16 +45,17 @@ func TestChordBoundConfirmationActionsRemainReachable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		seedBacktrackPrompts(m, "task_1", "first prompt")
 
 		m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
 		m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
-		if !m.rewindPrimed {
-			t.Fatal("first rewind chord did not arm checkpoint selection")
+		if m.backtrack.Phase != backtrackPrimed {
+			t.Fatal("first rewind chord did not arm history editing")
 		}
 		m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
 		_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
-		if cmd == nil || m.checkpointPicker == nil {
-			t.Fatal("second rewind chord did not open checkpoint picker")
+		if cmd != nil || m.backtrack.Phase != backtrackSelecting || m.backtrack.SelectedKey != "user:task_1" || m.checkpointPicker != nil {
+			t.Fatal("second rewind chord did not select the user message inline")
 		}
 	})
 }
@@ -67,12 +68,12 @@ func TestChordTimeoutDisarmsConfirmationGestures(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.lastCtrlC = time.Unix(100, 0)
-	m.rewindPrimed = true
+	m.backtrack = backtrackState{Phase: backtrackPrimed, Generation: 1}
 	m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
 	generation := m.chord.generation
 	m.Update(chordTimeoutMsg{generation: generation})
-	if !m.lastCtrlC.IsZero() || m.rewindPrimed {
-		t.Fatalf("timed-out chord left confirmation armed: ctrlC=%v rewind=%v", m.lastCtrlC, m.rewindPrimed)
+	if !m.lastCtrlC.IsZero() || m.backtrack.Phase != backtrackInactive {
+		t.Fatalf("timed-out chord left confirmation armed: ctrlC=%v backtrack=%v", m.lastCtrlC, m.backtrack.Phase)
 	}
 }
 

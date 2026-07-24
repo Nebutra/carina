@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	maxSubagentDepth = 4 // bound nesting (Claude Code caps at 5)
+	maxSubagentDepth = 4 // bound nested delegation cost and complexity
 	subagentMaxTurns = 10
 )
 

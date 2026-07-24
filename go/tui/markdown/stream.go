@@ -3,7 +3,7 @@ package markdown
 import "strings"
 
 // Stream is the append-only source of one streaming markdown message and its
-// commit boundary (mirrors Codex streaming/controller.rs). The caller feeds
+// commit boundary. The caller feeds
 // sanitized deltas in; the Stream decides how much of the source has become
 // stable — safe to render once and append immutably — and how much must stay
 // in the mutable tail that is re-rendered and replaced in place on every

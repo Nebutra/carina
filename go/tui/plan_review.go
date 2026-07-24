@@ -12,7 +12,7 @@ import (
 	"github.com/Nebutra/carina/go/tui/theme"
 )
 
-// planLineComment is a Grok-style line/range note collected during plan review.
+// planLineComment is a line/range note collected during plan review.
 // Comments seed the composer on "request changes"; they do not mutate the plan
 // file until the operator sends the revision turn.
 type planLineComment struct {
@@ -21,7 +21,7 @@ type planLineComment struct {
 	Text      string
 }
 
-// planReviewState is a Grok-style plan approval surface: scroll the plan file,
+// planReviewState is the plan approval surface: scroll the plan file,
 // comment on lines (c / m), then approve (exit plan mode), request changes
 // (seed composer with comments), or quit plan.
 type planReviewState struct {
@@ -110,7 +110,7 @@ func (m *Model) planReviewKey(key string) (tea.Cmd, bool) {
 		if pr.Empty {
 			return nil, true
 		}
-		// Toggle range mark at cursor (Grok-style range start).
+		// Toggle the range mark at the cursor.
 		if pr.MarkStart == pr.Cursor {
 			pr.MarkStart = -1
 		} else {

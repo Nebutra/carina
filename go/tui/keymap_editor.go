@@ -45,7 +45,7 @@ type keymapUpdatedMsg struct {
 func (m *Model) openKeymapEditor() {
 	m.closeSuggest()
 	m.keymapEditor = &keymapEditorState{bindings: m.keys.BindingDescriptors()}
-	m.rewindPrimed = false
+	m.cancelBacktrack()
 	m.layout()
 }
 

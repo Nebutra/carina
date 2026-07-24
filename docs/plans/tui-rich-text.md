@@ -1,5 +1,9 @@
 # TUI Rich Text And Math Rendering
 
+> Evidence status: historical implementation plan. The problem statement
+> describes its original baseline, not current TUI state. Prior-art references
+> were not pinned to exact revisions and are not benchmark evidence.
+
 Status: implemented; Kitty pixel tier shipped, portable degradation retained
 Owner: TUI
 Prior art surveyed: Claude Code (marked lexer + custom formatToken → Ink nodes,
@@ -44,8 +48,8 @@ Replace truncation with span-aware soft wrap for prose content:
 
 - New `go/tui/wrap.go`: wrap styled lines to a target width with
   initial/subsequent indent support; grapheme- and CJK-width-aware.
-- URL-aware: URL-like tokens never break mid-token (mirrors Codex
-  `wrapping.rs`); pair with OSC 8 hyperlinks emitted by the renderer (never
+- URL-aware: URL-like tokens never break mid-token; pair with OSC 8 hyperlinks
+  emitted by the renderer (never
   from inbound text).
 - Structured rows (tables of the event log, diff hunks, status lines) keep
   clipping; only prose bodies wrap. Resize re-wraps from source via the
@@ -60,13 +64,13 @@ Replace truncation with span-aware soft wrap for prose content:
   Glamour is deliberately not used: its own theming would bypass the
   design-token role system and width-aware table layout needs local control.
 - Fence unwrapping: conservatively unwrap ```` ```markdown ```` fences that
-  contain a table header+delimiter pair (mirrors Codex `unwrap_markdown_fences`).
+  contain a table header+delimiter pair.
 - Surface final assistant prose through this renderer; action summaries remain
   the default row presentation.
 
 ### P2 — Streaming, highlighting, tables
 
-- Streaming model (mirrors Codex `streaming/controller.rs`): keep the
+- Streaming model: keep the
   append-only sanitized source per message; on each commit re-render the whole
   source, split into a stable region (appended transcript entries, immutable)
   and a mutable tail (a keyed `pushPresentation` entry replaced in place).
@@ -77,7 +81,7 @@ Replace truncation with span-aware soft wrap for prose content:
   guardrails (skip highlighting above 512 KB or 10k lines; fall back to plain
   `RoleCodeBlock`). Language from the first info-string token.
 - Tables: width-aware column sizing with a key/value transposition fallback
-  when the width budget cannot fit columns (mirrors Codex table pipeline).
+  when the width budget cannot fit columns.
 
 ### P3 — Math (pixel primary, Unicode fallback)
 

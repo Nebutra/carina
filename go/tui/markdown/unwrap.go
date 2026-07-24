@@ -3,8 +3,8 @@ package markdown
 import "strings"
 
 // unwrapMarkdownFences conservatively removes ```md / ```markdown fences whose
-// body contains a GFM table header+delimiter pair (mirrors Codex
-// unwrap_markdown_fences). Models often quote an entire markdown answer inside
+// body contains a GFM table header+delimiter pair. Models often quote an entire
+// markdown answer inside
 // such a fence, which would otherwise flatten tables into a code block. Any
 // fence that is unterminated, carries another info string, or holds no table
 // stays verbatim — unwrapping never guesses.

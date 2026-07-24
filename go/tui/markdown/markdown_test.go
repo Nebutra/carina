@@ -354,7 +354,7 @@ func TestTableColumnSizingClipsToBudget(t *testing.T) {
 }
 
 // When even minimum-width columns cannot fit, the table transposes to
-// key/value records (Codex-style fallback): one wrapped line per cell under
+// key/value records: one wrapped line per cell under
 // its header, records separated by a blank line.
 func TestTableTransposesWhenColumnsCannotFit(t *testing.T) {
 	th := theme.New(theme.Mono)

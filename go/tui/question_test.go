@@ -185,8 +185,8 @@ func TestQuestionRPCFailureKeepsOverlayOpen(t *testing.T) {
 	if m.question == nil || m.question.QuestionID != "q_retry" {
 		t.Fatal("failed answer must keep the question available for retry")
 	}
-	if !strings.Contains(transcriptText(m), errTestRPC.Error()) {
-		t.Fatal("failed answer is not visible in the transcript")
+	if !strings.Contains(m.question.Error, errTestRPC.Error()) {
+		t.Fatalf("failed answer is not visible in the question surface: %#v", m.question)
 	}
 	if m.question.Resolving || !strings.Contains(ansi.Strip(m.questionOverlayView()), "Press [enter] to retry") {
 		t.Fatal("failed answer must return to a visible, retryable state")

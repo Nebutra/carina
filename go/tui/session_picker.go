@@ -198,6 +198,7 @@ func (m *Model) handleSessionList(msg sessionListMsg) {
 	}
 	s.loading = false
 	if msg.err != nil {
+		m.cancelBacktrack()
 		s.loadError = true
 		s.status = m.text(MsgSessionPickerFailed, MessageArgs{"error": msg.err.Error()})
 		return
@@ -796,6 +797,7 @@ func (m *Model) handleSessionAction(msg sessionActionMsg) {
 	}
 	m.sessionActionPending = ""
 	if msg.err != nil {
+		m.restoreBacktrackDraftAfterFailure()
 		m.pendingSideQuestion = ""
 		if msg.action == "fork" {
 			m.sidePane = nil
@@ -804,25 +806,30 @@ func (m *Model) handleSessionAction(msg sessionActionMsg) {
 		return
 	}
 	if msg.session.SessionID == "" {
+		m.restoreBacktrackDraftAfterFailure()
 		m.setOperationalNotice(m.text(MsgSessionActionInvalid, nil), theme.RoleError)
 		return
 	}
 	if m.switchSession == nil {
+		m.restoreBacktrackDraftAfterFailure()
 		m.setOperationalNotice(m.text(MsgSessionSwitchUnavailable, nil), theme.RoleError)
 		return
 	}
 	oldSession := m.sessionID
 	m.previousSessionID, m.previousWorkspaceRoot = oldSession, m.workspaceRoot
 	if err := m.submissions.transfer(msg.session.SessionID); err != nil {
+		m.restoreBacktrackDraftAfterFailure()
 		m.setOperationalNotice(m.text(MsgSessionSwitchLeaseBlocked, MessageArgs{"error": err.Error()}), theme.RoleError)
 		return
 	}
 	if err := m.switchSession(msg.session.SessionID); err != nil {
 		_ = m.submissions.transfer(oldSession)
+		m.restoreBacktrackDraftAfterFailure()
 		m.setOperationalNotice(m.text(MsgSessionSwitchFailed, MessageArgs{"error": err.Error()}), theme.RoleError)
 		return
 	}
 	m.pendingSessionID = msg.session.SessionID
+	m.noteBacktrackDestination(msg.session.SessionID)
 	m.pendingWorkspaceRoot = msg.session.WorkspaceRoot
 	if msg.action == "fork" && m.sidePane != nil {
 		m.noteSideSession(msg.session.SessionID)

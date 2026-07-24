@@ -259,7 +259,7 @@ func (r *renderer) block(n ast.Node, first, rest string) []string {
 	}
 }
 
-// headingCtx implements the attribute-only heading tiers (Codex house style):
+// headingCtx implements the local attribute-only heading tiers:
 // H1 bold+underline, H2 bold, H3 bold+italic, H4+ italic. The "#" markers stay
 // in the output so Mono headings remain visually distinct as plain text.
 func headingCtx(level int) ictx {
@@ -519,7 +519,7 @@ func sanitizeDestination(dest string) string {
 // escape-aware cell-width path as the rest of the renderer, so CJK cells
 // align. When the natural widths exceed the width budget the widest columns
 // shrink (cells clip with an ellipsis) down to a floor; when even the floor
-// cannot fit, the table transposes to key/value records (Codex-style
+// cannot fit, the table transposes to key/value records as a lossless
 // fallback) so no data is lost to the right edge.
 func (r *renderer) table(t *extast.Table, first, rest string) []string {
 	v, h, x := "│", "─", "┼"

@@ -502,9 +502,10 @@ KiloCode source-review decisions are tracked separately in
 - This wave ran the final 7 open items in `absorption-plan.md`'s tracking
   checklist against 4 sources (`openai/codex` source, Claude Code official
   docs + changelog evolution, Codex CLI docs, and the local
-  `claude-code-notes` source-analysis collection). All 7 were re-confirmed
-  as real, externally-corroborated gaps with no architectural mismatch to
-  carina — but 0 reached commit this pass. 3 reached `design_only`
+  `claude-code-notes` source-analysis collection). The pass retained all 7 as
+  historical backlog candidates, but the source revisions were not pinned and
+  the result is not current proof of a gap or architectural fit. 0 reached
+  commit this pass. 3 reached `design_only`
   (versioned idempotent config/state migration, the coordinator restricted-
   orchestrator role, and deferred lazy tool-schema + ToolSearch, plus
   content-block image support bundled with the skill-prompts item) with a
@@ -621,9 +622,11 @@ branches PENDING MERGE, 1 already covered — nothing in this wave is on main ye
 
 ## ✅ Remaining
 
-- No known capability gaps remain in the Claude Code absorption track. The
-  previously deferred Egress HTTPS-MITM credential tier has passed its
-  standalone review and is now implemented behind explicit per-host opt-in.
+- The recorded Claude Code absorption checklist had no remaining unchecked
+  items at the time of this update. This is checklist completion, not an
+  exhaustive claim that no capability gaps exist. The previously deferred
+  Egress HTTPS-MITM credential tier passed its standalone review and was
+  implemented behind explicit per-host opt-in.
 - OpenCode items reviewed and intentionally not absorbed now: ACP session
   protocol support (overlaps Carina's JSON-RPC/CLI control plane) and broad
   workspace revert checkpoints (requires a separate snapshot policy).

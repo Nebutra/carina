@@ -2,7 +2,7 @@
 
 ## Goal
 
-Codex-style cloud/app-server coupling should not be absorbed into the Carina
+Cloud/app-server coupling should not be absorbed into the Carina
 local runtime. If Carina gains multi-endpoint identity or sync, that product
 surface belongs behind Nebutra Cloud (云毓智能, `nebutra.com`).
 
@@ -33,4 +33,3 @@ Use three layers:
 - `nebutra_sync_mode` accepts only `off` until a Nebutra connector exists.
 - non-local Nebutra endpoints must be HTTPS.
 - daemon status must show the boundary configuration without enabling sync.
-

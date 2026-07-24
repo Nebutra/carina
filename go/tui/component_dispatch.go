@@ -260,6 +260,8 @@ func (m *Model) applyTranscriptComponentAction(action transcriptComponentAction)
 		m.openTranscriptEntryPager(action.Key)
 	case "copy":
 		return m.copyTranscriptEntry(action.Key)
+	case "edit":
+		return m.beginBacktrackEntryEdit(action.Key)
 	case "open":
 		m.openTranscriptArtifactPager(action.Key, action.ArtifactIDs)
 	case "cancel":

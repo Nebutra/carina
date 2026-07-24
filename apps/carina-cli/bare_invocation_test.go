@@ -4,8 +4,7 @@ import "testing"
 
 // TestDecideBareInvocationLaunchesTUIOnRealTTY pins P1.5(a)'s decision: bare
 // `carina` (no args) launches the interactive TUI in-process when both
-// stdin and stdout are a real terminal — no "crn" subcommand, "carina"
-// alone behaves like "claude" launching Claude Code. This tests the
+// stdin and stdout are a real terminal, with no required subcommand. This tests the
 // decision logic directly (a pure function of two bools), not an actual
 // PTY — the interactive smoke test belongs in a separate PTY-integration
 // test, per the task's explicit instruction to test the decision

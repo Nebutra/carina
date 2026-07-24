@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// composerMode is the sticky input mode for the main prompt (Grok-style).
+// composerMode is the sticky input mode for the main prompt.
 // Normal is chat/task; shell is governed argv commands without an agent turn.
 type composerMode int
 
@@ -58,7 +58,7 @@ func (m *Model) applyComposerChrome() {
 	}
 }
 
-// tryEnterShellModeFromKey handles Grok semantics: `!` on an empty normal
+// tryEnterShellModeFromKey handles `!` on an empty normal
 // prompt enters sticky shell mode without inserting the character.
 func (m *Model) tryEnterShellModeFromKey(key string, text string) bool {
 	if m.inShellMode() || !m.composerSurfaceIdle() {
@@ -93,7 +93,7 @@ func (m *Model) tryExitShellModeFromKey(key string) bool {
 	// Prefer exit-mode over rewind when shell mode is sticky.
 	if m.keys.matches(KeyContextChat, ActionChatRewind, key) || key == "esc" {
 		m.exitShellMode()
-		m.rewindPrimed = false
+		m.cancelBacktrack()
 		return true
 	}
 	return false

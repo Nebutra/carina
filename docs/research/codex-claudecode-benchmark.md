@@ -1,5 +1,12 @@
 # Codex / Claude Code Benchmark — Final 7 Open Items
 
+> Evidence status: historical backlog research, not a current authoritative
+> benchmark. This document did not pin exact Codex and Claude-notes revisions,
+> and some documentation fetches fell back to web search. Absolute claims that
+> all seven items are real, complete, or architecturally validated are withdrawn
+> until each item is re-audited against fixed revisions and current Carina
+> source. The recorded designs remain hypotheses and historical decision input.
+
 Sources reviewed:
 
 1. `openai/codex` source, `codex-rs/` (compaction, state/SQLite migrations,
@@ -38,10 +45,9 @@ Outcome for this pass: **0 of 7 items reached commit.** 4 reached
 `design_only` (an architecture/interface decision is recorded, no code
 lands), and 3 reached `defer` (downgraded from `adopt` by adversarial
 review after a design claim didn't hold up against actual current code).
-No item was rejected
-outright — all seven are real, externally-corroborated gaps; none were
-found to be a poor architectural fit for carina. See Trade-offs at the end
-for why a 0-commit pass is still a productive outcome for this campaign.
+No item was rejected outright in that pass. That historical disposition does
+not establish that all seven remain current gaps or are architecturally sound
+for the present codebase. See Trade-offs for the reasoning recorded at the time.
 
 ---
 
@@ -121,7 +127,7 @@ and the docs warn "a retried batch can re-deliver entries that already
 landed... deduplicate by `entry.uuid`" — durability and idempotency
 substitute for versioning at the wire-contract level too.
 
-**Best-practice synthesis.** Both agree on a deeper principle despite
+**Historical synthesis hypothesis.** The reviewed materials suggested a deeper principle despite
 opposite surface mechanisms: never let a store's own internal version tag
 be the sole safety net, and never silently discard on mismatch. Codex needs
 a real migration ladder because it uses SQLite with actual DDL across 40+
@@ -260,7 +266,7 @@ operate on files" is the design note verbatim — and it enforces the
 tools via an `INTERNAL_WORKER_TOOLS` exclusion), i.e. bidirectional
 isolation.
 
-**Best-practice synthesis.** All three sources converge on the same shape
+**Historical synthesis hypothesis.** The reviewed sources expressed a similar intent
 at different layers. Codex: role-as-config-overlay; capability restriction
 (`sandbox_mode`) is an orthogonal, coarser lever inherited from the general
 per-turn sandbox system — no coordinator-specific mechanism. Claude Code's
@@ -273,7 +279,7 @@ implementation with bidirectional isolation. The disagreement is about
 mechanism *strength*, not intent. For carina — which already enforces
 capability ceilings via a Rust kernel rather than an LLM-interpreted tool
 allowlist — the internal Claude Code shape (genuinely capability-limited,
-not merely a suggested tools list) is the correct analog, because carina's
+not merely a suggested tools list) was proposed as the closest analog because carina's
 whole premise is that the model cannot be trusted to self-restrict via a
 hinted tool list. The sharpest cross-source lesson is the v2.1.186 bug:
 whatever carina builds must be enforced at the kernel/attenuation layer on
@@ -297,7 +303,7 @@ conflicting with it at merge time. The profile-catalog half
 `protocol/capabilities/*.json`) is safe to land as ordinary additive work
 once that branch merges; the full item — a coordinator profile whose spawn
 capability is meaningfully privileged relative to its (denied) direct-action
-capability — depends on sequencing behind it. All sources converge that
+capability — depends on sequencing behind it. The reviewed sources suggested that
 this is architecturally sound and low-risk (Claude Code ships it as a named
 worked example; Codex has no equivalent but nothing that conflicts; Claude
 Code's internal "coordinator mode" proves the stronger hard-capability-
@@ -364,8 +370,8 @@ is the context-window budget. Per the changelog, this shipped MCP-scoped
 first — literally named `MCPSearch` for its first two weeks (Jan 14–27
 2026) — before generalizing to all tool types.
 
-**Best-practice synthesis.** Both converge on the identical mechanism
-shape: tool definitions are withheld/deferred from per-turn context by
+**Historical synthesis hypothesis.** The reviewed snapshots had similar mechanism
+shapes: tool definitions are withheld/deferred from per-turn context by
 default once a threshold is crossed; a dedicated search tool (lexical/
 keyword matching over name+description+schema text, not embeddings)
 resolves a query to a small ranked set of full definitions; resolved tools
@@ -389,12 +395,12 @@ This is a legitimate lesser-privileged emulation, not a carina-specific
 compromise — even Claude Code's own `auto`/`false` fallback modes for
 non-`tool_reference`-capable proxies effectively do the same thing.
 
-**Carina's response (design_only).** This is a real, externally-validated
-gap: two independent frontier coding agents converged on the same
-MCP-tool-deferral-plus-lexical-search shape, both went MCP-first before
-generalizing, and `absorption-plan.md` already anticipated this item under
-Wave 7 with the correct prerequisite noted. Re-verification confirms the
-gap is real and in one respect worse than the seed implied (no health
+**Carina's response (design_only).** The historical pass treated this as a
+candidate gap because two reviewed coding agents used similar
+MCP-tool-deferral-plus-lexical-search shapes and both went MCP-first before
+generalizing. `absorption-plan.md` had also anticipated the item under Wave 7.
+Without pinned revisions, this remains a design hypothesis; the pass recorded
+that the candidate gap appeared worse in one respect (no health
 tracking exists at all, not just no ToolSearch) and in another better
 (authorization/kernel-gating on the call path is already fully correct —
 this is a pure prompt-construction/visibility problem that does not touch
@@ -498,26 +504,26 @@ functional but leaky (crashes, silent drops, duplication, path leakage) and
 every subsequent release tightened toward "never lose or crash on the
 content, never leak paths/bytes into logs, never duplicate on re-invoke."
 
-**Best-practice synthesis.** Convergent design across both: (1) images are
+**Historical synthesis hypothesis.** The reviewed material suggested: (1) images are
 one more variant of the existing content-block/message-content type, not a
 parallel subsystem. (2) Image capability is model-metadata-gated per turn,
 checked before any I/O, fails closed with a clear text error — never a
 silent drop, never an unconditional attempt. (3) Image bytes ride the
 existing sandboxed/permissioned file-read path — no separate "vision file
 access" bypass in either codebase. (4) Right before the prompt is sent,
-every image is re-validated independent of the ingestion-time check, and
+every image should be re-validated independent of the ingestion-time check, and
 any failure degrades to a text placeholder in place — Claude Code's
 changelog shows this exact invariant regressed and had to be re-fixed once,
 so it needs an explicit regression test, not just a code path. (5) Image
 bytes are explicitly excluded from logs/previews — audit-log hygiene for
 image content is a first-class design requirement. For skills: both
-converge on progressive disclosure — cheap metadata always resident,
+also suggested progressive disclosure — cheap metadata always resident,
 budgeted to a small percent of context window with graceful truncate-and-
 warn on overflow, full body loaded on demand, persisted for the rest of the
 session, de-duplicated on re-invocation.
 
-**Carina's response (design_only).** Two independent, competing frontier
-agent runtimes converge on the same architecture for image content, and
+**Carina's response (design_only).** Two reviewed agent runtimes used similar
+architectures for image content, and
 carina already has three of the five prerequisites sitting unused:
 `provider.Model.Modalities.Input` (capability metadata),
 `go/artifact.Store` with `MediaType` (content-addressed blob storage with
@@ -640,9 +646,10 @@ first-class reliability/quality treatment for the compaction call itself"
 — the trend is toward NOT relying on the summary alone, exactly the
 multi-tier direction `absorption-plan.md` points carina toward.
 
-**Best-practice synthesis.** Both converge on the same two-part shape,
-independently arrived at — strong evidence it is actual best practice
-rather than house style. Verbatim-user preservation is universally treated
+**Historical synthesis.** Both reviewed implementations converged on a
+two-part shape. That corroborates a transferable pattern, but does not prove a
+universal best practice or present-day architectural fit. In the reviewed
+sources, verbatim-user preservation was treated
 as a *structural* guarantee, not a prompt instruction that trusts the
 summarizing model to comply: Codex enforces it in code (hard token cap,
 oldest-truncated-first); Claude Code's older documented shape enforces it
@@ -665,7 +672,7 @@ summarizer historically, and the changelog shows it moving *toward*
 Codex's structural approach over time — convergence, not permanent
 divergence. Carina, which already renders a typed `Transcript`/`Turn`/
 `Observation` object rather than an opaque string, is the natural fit for
-the Codex-style structural approach.
+the recorded structural approach.
 
 **Carina's response (defer, downgraded from adopt).** The initial pass
 called this a clean adopt: additive-only, kernel-gated read-reuse for the
@@ -772,8 +779,8 @@ repo-sourced config was a bigger blast radius than intended for exactly
 the categories this carina item asks about. The explicit security posture
 elsewhere is blunt about the general trust asymmetry this reflects.
 
-**Best-practice synthesis.** Codex and Claude Code converge on the same
-core insight despite very different implementations: "higher tier wins in
+**Historical synthesis hypothesis.** The reviewed Codex and Claude Code material
+suggested a shared distinction despite different implementations: "higher tier wins in
 the merge" and "this key is forbidden to lower tiers regardless of merge
 order" are two different mechanisms, not one. Codex makes this explicit as
 two types (precedence-ordered enum for ordinary merge vs.
@@ -885,8 +892,8 @@ files, or other software are included in plugins and can't verify that
 they work as intended." Trust-on-install with no sandbox — categorically
 different from carina's WASM-execution-boundary model.
 
-**Best-practice synthesis.** Codex and Claude Code converge almost exactly
-on mechanism despite independent builds: (1) a marketplace manifest
+**Historical synthesis hypothesis.** The reviewed snapshots appeared similar
+on mechanism: (1) a marketplace manifest
 listing plugins with name+source, source being one of {relative-path,
 github-shorthand, generic-git-url, git-subdir/sparse, npm}; (2) install =
 clone/fetch + copy into a local cache, never execute-in-place from the git
@@ -905,9 +912,9 @@ capability-scoped sandbox at runtime, only gating what gets installed/
 enabled. Carina's `docs/plugin-model.md` commits to something stronger:
 plugins execute inside carina's own WASM/MCP/worker adapters, permissions
 are declared and kernel-enforced per-call, and undeclared capability use
-is a kernel-level `PolicyViolation`. Best practice for carina: adopt the
-manifest/source-type vocabulary and the tighten-only n-tier enable-merge
-pattern (both proven, low-risk, aligned with carina's existing primitives)
+is a kernel-level `PolicyViolation`. The historical proposal for Carina was to
+adopt the manifest/source-type vocabulary and the tighten-only n-tier
+enable-merge pattern, subject to a current source and threat-model review,
 but do **not** adopt either source's "clone arbitrary git URL and let its
 hooks/MCP-servers run as trusted subprocesses" as the execution model —
 that would bypass the kernel and violate carina's stated invariant.
@@ -949,11 +956,11 @@ pass since the item was scoped as one unit.
 
 ## Trade-offs
 
-This benchmark is a genuinely productive 0-commit pass, and that is worth
-stating plainly rather than treating as a null result. Every one of the 7
-items was independently corroborated by at least two of the four sources
-as a real, architecturally sound gap — none were found to be a poor fit
-for carina, and none were rejected outright. What the adversarial-review
+This benchmark recorded a 0-commit research pass rather than a null result.
+At the time, every item was corroborated by at least two reviewed sources and
+none was rejected outright. Because the source revisions were not pinned, that
+is a historical research disposition rather than current proof that each item
+is a real, architecturally sound Carina gap. What the adversarial-review
 step caught is a different failure mode than architectural mismatch: three
 items (`multi_tier_compaction`, `setting_source_allowlist`,
 `plugin_bundles_marketplace`) were initially scored `adopt` by a first

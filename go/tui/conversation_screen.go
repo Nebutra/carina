@@ -64,6 +64,7 @@ type conversationTranscriptCellView struct {
 	ID        ui.ComponentID
 	Content   string
 	Role      ui.SemanticRole
+	Selected  bool
 	StartLine int
 	LineCount int
 	Actions   []conversationTranscriptActionView
@@ -253,6 +254,7 @@ type conversationTranscriptCell struct {
 	lineCount   int
 	visibleFrom int
 	actions     []conversationTranscriptActionView
+	selected    bool
 }
 
 func newConversationTranscriptCell(id ui.ComponentID) *conversationTranscriptCell {
@@ -266,6 +268,7 @@ func (c *conversationTranscriptCell) Measure(constraints ui.Constraints) ui.Size
 func (c *conversationTranscriptCell) sync(view conversationTranscriptCellView) {
 	c.lines = strings.Split(view.Content, "\n")
 	c.role = view.Role
+	c.selected = view.Selected
 	c.startLine = view.StartLine
 	c.lineCount = view.LineCount
 	c.actions = append(c.actions[:0], view.Actions...)
@@ -280,11 +283,18 @@ func (c *conversationTranscriptCell) Render(ctx ui.RenderContext) ui.Node {
 	hovered := c.hovered(ctx.Hovered)
 	visibleActions := c.visibleActions()
 	actionBar := transcriptActionBar(visibleActions)
-	if (c.Focused() || hovered) && len(visibleActions) > 0 {
+	if (c.Focused() || hovered || c.selected) && len(visibleActions) > 0 {
 		content = overlayTranscriptActions(content, actionBar, c.Bounds.Width)
 	}
+	if c.selected {
+		content = markSelectedTranscript(content, c.Bounds.Width)
+	}
+	role := c.role
+	if c.selected {
+		role = ui.RoleSelected
+	}
 	node := ui.Node{
-		ID: c.ComponentID, Bounds: c.Bounds, Content: content, Role: c.role,
+		ID: c.ComponentID, Bounds: c.Bounds, Content: content, Role: role,
 		ContentStyled: true, Focusable: len(c.actions) > 0,
 		Focused: c.Focused(), Hovered: hovered,
 	}
@@ -311,6 +321,15 @@ func (c *conversationTranscriptCell) Render(ctx ui.RenderContext) ui.Node {
 		}
 	}
 	return node
+}
+
+func markSelectedTranscript(content string, width int) string {
+	if content == "" || width <= 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	lines[0] = fitRenderedLine("> "+lines[0], width)
+	return strings.Join(lines, "\n")
 }
 
 func (c *conversationTranscriptCell) Handle(event ui.Event) ui.Result {
@@ -784,6 +803,7 @@ func (m *Model) conversationViewState() conversationViewState {
 					Role: presentationSemanticRole(entry.presentation), StartLine: line,
 					LineCount: len(entry.lines),
 					Actions:   m.transcriptComponentActions(entry),
+					Selected:  entry.presentation != nil && entry.presentation.Selected,
 				})
 				line += len(entry.lines)
 			}
@@ -848,6 +868,9 @@ func presentationSemanticRole(p *eventPresentation) ui.SemanticRole {
 	case statusNeedsAuth:
 		return ui.RoleWarning
 	default:
+		if p.Kind == presentationUser {
+			return ui.RoleTitle
+		}
 		if p.Kind == presentationAgent {
 			return ui.RoleText
 		}
@@ -871,16 +894,31 @@ func (m *Model) transcriptComponentActions(entry *entry) []conversationTranscrip
 		action.Name = "toggle"
 		actions = append(actions, conversationTranscriptActionView{Name: name, Label: label, Shortcut: "enter", Data: action})
 	}
-	inspect := base
-	inspect.Name = "inspect"
-	actions = append(actions, conversationTranscriptActionView{Name: "inspect", Label: m.text(MsgTranscriptInspect, nil), Shortcut: "i", Data: inspect})
-	copyAction := base
-	copyAction.Name = "copy"
-	actions = append(actions, conversationTranscriptActionView{Name: "copy", Label: m.text(MsgTranscriptCopy, nil), Shortcut: "c", Data: copyAction})
-	if len(p.ArtifactIDs) > 0 {
-		open := base
-		open.Name = "open"
-		actions = append(actions, conversationTranscriptActionView{Name: "open", Label: m.text(MsgTranscriptOpen, nil), Shortcut: "o", Data: open})
+	add := func(name, label, shortcut string) {
+		action := base
+		action.Name = name
+		actions = append(actions, conversationTranscriptActionView{Name: name, Label: label, Shortcut: shortcut, Data: action})
+	}
+	switch p.Kind {
+	case presentationUser:
+		if p.Branchable && !p.Steer {
+			add("edit", m.text(MsgTranscriptEdit, nil), "enter")
+		}
+		add("copy", m.text(MsgTranscriptCopy, nil), "c")
+	case presentationAgent, presentationReceipt:
+		add("copy", m.text(MsgTranscriptCopy, nil), "c")
+	case presentationTool:
+		add("inspect", m.text(MsgTranscriptInspect, nil), "i")
+	case presentationGovernance:
+		add("inspect", m.text(MsgTranscriptInspect, nil), "i")
+	case presentationRecovery:
+		add("inspect", m.text(MsgTranscriptInspect, nil), "i")
+	default:
+		add("inspect", m.text(MsgTranscriptInspect, nil), "i")
+		add("copy", m.text(MsgTranscriptCopy, nil), "c")
+	}
+	if len(p.ArtifactIDs) > 0 && (p.Kind == presentationAgent || p.Kind == presentationTool) {
+		add("open", m.text(MsgTranscriptOpen, nil), "o")
 	}
 	if p.Kind == presentationTool && p.Status == statusRunning && p.TaskID != "" && p.TaskID == m.inFlightTaskID {
 		cancel := base

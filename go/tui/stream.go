@@ -8,7 +8,7 @@ import (
 )
 
 // messageStream tracks one streaming assistant message end to end (milestone
-// P2 of docs/plans/tui-rich-text.md, mirroring Codex streaming/controller.rs):
+// P2 of docs/plans/tui-rich-text.md):
 // the markdown.Stream owns the append-only sanitized source and its commit
 // boundary; this side owns the transcript entries. Each message is projected
 // as

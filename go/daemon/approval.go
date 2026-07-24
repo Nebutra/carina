@@ -158,7 +158,7 @@ func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Tas
 	}
 	switch d.approvalModeString() {
 	case approvalModeDontAsk:
-		// Grok/CC dontAsk: no prompt, no auto-approve — deny unless a grant
+		// In dont-ask mode there is no prompt or automatic approval; deny unless a grant
 		// already matched above. Deny rules / plan mode / sandbox still apply
 		// on every other path; this only handles requires_approval fallthrough.
 		d.closePendingApproval(sess, task, dec, "denied", "dont-ask mode denies requires_approval without a matching grant")
@@ -168,7 +168,7 @@ func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Tas
 		}, dec.DecisionID)
 		return dec, false
 	case approvalModeAcceptEdits:
-		// Grok/CC acceptEdits: auto-allow file edits; still prompt for shell/etc.
+		// In accept-edits mode, auto-allow file edits but still prompt for other capabilities.
 		if isEditCapability(dec.Capability) {
 			return d.autoApproveRequiresApproval(sess, task, dec, label)
 		}

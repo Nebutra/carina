@@ -147,6 +147,9 @@ const (
 	MsgUpdateUsageResume           MessageID = "update.usage_resume"
 	MsgUpdateUnknownCommand        MessageID = "update.unknown_command"
 	MsgUpdateRewindAgain           MessageID = "update.rewind_again"
+	MsgBacktrackNoPrompts          MessageID = "backtrack.no_prompts"
+	MsgBacktrackSwitching          MessageID = "backtrack.switching"
+	MsgBacktrackBusy               MessageID = "backtrack.busy"
 	MsgWorkspaceExternalEditor     MessageID = "workspace.external_editor"
 	MsgWorkspaceDraftRestored      MessageID = "workspace.draft_restored"
 	MsgWorkspaceEditorApplied      MessageID = "workspace.editor_applied"
@@ -170,7 +173,7 @@ const (
 	MsgTaskStatusPaused            MessageID = "tasks.status.paused"
 	MsgTaskStatusInterrupted       MessageID = "tasks.status.interrupted"
 
-	// Product UX shell (Grok/CC/Codex parity closeout)
+	// Product interaction shell.
 	MsgSettingsTitle               MessageID = "settings.title"
 	MsgSettingsFooter              MessageID = "settings.footer"
 	MsgSettingsTabOverview         MessageID = "settings.tab.overview"
@@ -483,6 +486,9 @@ var updateCatalogRows = []catalogRow{
 	catalog(MsgUpdateUsageResume, "usage: /task-resume [task_id]", "用法：/task-resume [task_id]", "使用法: /task-resume [task_id]", "사용법: /task-resume [task_id]", "uso: /task-resume [task_id]", "utilisation : /task-resume [task_id]"),
 	catalog(MsgUpdateUnknownCommand, "unknown command /{command}; use /help", "未知命令 /{command}；请使用 /help", "不明なコマンド /{command}。/help を参照", "알 수 없는 명령 /{command}. /help를 사용하세요", "comando desconocido /{command}; usa /help", "commande inconnue /{command} ; utilisez /help"),
 	catalog(MsgUpdateRewindAgain, "- press {rewind} again to choose a rewind point", "- 再按一次 {rewind} 选择回退点", "- {rewind} をもう一度押して巻き戻し点を選択", "- {rewind}를 다시 눌러 되돌리기 지점 선택", "- pulsa {rewind} otra vez para elegir un punto", "- rappuyez sur {rewind} pour choisir un point de retour"),
+	catalog(MsgBacktrackNoPrompts, "No editable user prompts in this session.", "此会话中没有可编辑的用户提示。", "このセッションには編集可能なユーザープロンプトがありません。", "이 세션에는 편집 가능한 사용자 프롬프트가 없습니다.", "No hay instrucciones de usuario editables en esta sesión.", "Aucune instruction utilisateur modifiable dans cette session."),
+	catalog(MsgBacktrackSwitching, "Creating an editable branch...", "正在创建可编辑分支...", "編集可能なブランチを作成中...", "편집 가능한 브랜치를 만드는 중...", "Creando una rama editable...", "Création d'une branche modifiable..."),
+	catalog(MsgBacktrackBusy, "Finish the current draft or session action before editing history.", "请先完成当前草稿或会话操作，再编辑历史记录。", "履歴を編集する前に、現在の下書きまたはセッション操作を完了してください。", "기록을 편집하기 전에 현재 초안 또는 세션 작업을 완료하세요.", "Termina el borrador o la acción de sesión actual antes de editar el historial.", "Terminez le brouillon ou l'action de session en cours avant de modifier l'historique."),
 	catalog(MsgWorkspaceExternalEditor, "{glyph} external editor: {error}", "{glyph} 外部编辑器：{error}", "{glyph} 外部エディタ: {error}", "{glyph} 외부 편집기: {error}", "{glyph} editor externo: {error}", "{glyph} éditeur externe : {error}"),
 	catalog(MsgWorkspaceDraftRestored, "{glyph} {error}; draft restored", "{glyph} {error}；草稿已恢复", "{glyph} {error}。下書きを復元", "{glyph} {error}. 초안 복원됨", "{glyph} {error}; borrador restaurado", "{glyph} {error} ; brouillon restauré"),
 	catalog(MsgWorkspaceEditorApplied, "- external editor draft applied", "- 已应用外部编辑器草稿", "- 外部エディタの下書きを適用", "- 외부 편집기 초안 적용됨", "- borrador del editor aplicado", "- brouillon de l’éditeur appliqué"),

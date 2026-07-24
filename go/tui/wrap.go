@@ -159,7 +159,7 @@ func splitSpaceRuns(s string) []string {
 	return append(out, s[start:])
 }
 
-// isURLToken reports whether a word is URL-like (mirrors Codex wrapping.rs).
+// isURLToken reports whether a word is URL-like for wrap decisions.
 // Leading bracket/quote punctuation is ignored so "(https://…)" still counts.
 func isURLToken(tok string) bool {
 	plain := strings.TrimLeft(ansi.Strip(tok), "(<[{'\"")

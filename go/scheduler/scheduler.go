@@ -13,8 +13,8 @@ import (
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
-// SuccessCheck is an objective completion criterion for a goal (Codex-style
-// verifiable "done", instead of pure model self-judgment).
+// SuccessCheck is an objective completion criterion checked before accepting
+// model-reported completion.
 type SuccessCheck struct {
 	Kind    string `json:"kind"` // command_zero_exit | file_exists | grep_absent
 	Command string `json:"command,omitempty"`

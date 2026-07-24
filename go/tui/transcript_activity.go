@@ -79,6 +79,10 @@ func classifyTranscriptEvent(ev map[string]any) transcriptEventClassification {
 		base.Class = transcriptPermanentConversation
 		return base
 	case "TaskCreated":
+		if strings.TrimSpace(str(payload["user_prompt"])) != "" || len(decodeReplayMediaReferences(payload["input_media_refs"])) > 0 {
+			base.Class = transcriptPermanentConversation
+			return base
+		}
 		status := strings.ToLower(str(payload["status"]))
 		switch {
 		case terminalTranscriptTaskStatus(status):

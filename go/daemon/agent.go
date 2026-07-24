@@ -485,9 +485,8 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		}
 
 		if act.Tool == "done" {
-			// Goal verification: if the task carries objective success
-			// criteria, check them before accepting "done" (Codex-style
-			// verifiable completion vs pure model self-judgment).
+			// Goal verification: if the task carries objective success criteria,
+			// check them before accepting model-reported completion.
 			if len(task.SuccessCriteria) > 0 {
 				if failed := d.checkSuccessCriteria(sess, task); len(failed) > 0 {
 					verifyAttempts++
