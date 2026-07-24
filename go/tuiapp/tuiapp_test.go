@@ -1,13 +1,8 @@
 package tuiapp
 
 import (
-	"bytes"
-	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	"github.com/Nebutra/carina/go/localruntime"
 )
 
 func TestResolveSessionPrefersPendingThenLastActive(t *testing.T) {
@@ -36,37 +31,6 @@ func TestResolveSessionEmptyWithoutMatch(t *testing.T) {
 	}
 	if id != "" {
 		t.Fatalf("got %q, want empty", id)
-	}
-}
-
-func TestChooseRuntimeMode(t *testing.T) {
-	for _, test := range []struct {
-		input string
-		want  localruntime.Mode
-	}{
-		{"w\n", localruntime.ModeWorkspace},
-		{"legacy\n", localruntime.ModeLegacy},
-		{"bad\n1\n", localruntime.ModeWorkspace},
-	} {
-		var out bytes.Buffer
-		got, err := chooseRuntimeMode(strings.NewReader(test.input), &out, "en")
-		if err != nil || got != test.want {
-			t.Fatalf("input %q got=%q err=%v", test.input, got, err)
-		}
-		if out.Len() == 0 {
-			t.Fatalf("input %q rendered no chooser", test.input)
-		}
-	}
-}
-
-func TestChooseRuntimeModeCancelDoesNotChoose(t *testing.T) {
-	var out bytes.Buffer
-	mode, err := chooseRuntimeMode(strings.NewReader("c\n"), &out, "zh-CN")
-	if mode != "" || !errors.Is(err, errRuntimeModeChoiceCancelled) {
-		t.Fatalf("mode=%q err=%v", mode, err)
-	}
-	if !strings.Contains(out.String(), "取消") {
-		t.Fatalf("chooser was not localized: %q", out.String())
 	}
 }
 

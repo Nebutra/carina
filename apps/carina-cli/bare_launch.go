@@ -45,13 +45,11 @@ func runBareTUI() tui.Outcome {
 	return runTUI(tuiapp.Options{})
 }
 
-// runTUI launches the interactive shell. AfterDaemon wires CLI-only
+// runTUI launches the interactive shell. ConnectedTask wires CLI-only
 // first-launch doctor; flag fields come from `carina -session …` etc.
 func runTUI(opts tuiapp.Options) tui.Outcome {
-	if opts.AfterDaemon == nil {
-		opts.AfterDaemon = func(call tuiapp.RPC) {
-			maybeAutoRunDoctor(call)
-		}
+	if opts.ConnectedTask == nil {
+		opts.ConnectedTask = maybeAutoRunDoctor
 	}
 	// Bind CLI dial/spawn test hooks into localdaemon for the duration of
 	// launch (same as ensureDaemonReachable), so unit tests that stub

@@ -67,6 +67,14 @@ func TestTUIUnderPTY(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ws, "readme.txt"), []byte("hello workspace\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	projectConfigDir := filepath.Join(ws, ".carina")
+	if err := os.MkdirAll(projectConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectConfigPath := filepath.Join(projectConfigDir, "config.json")
+	if err := os.WriteFile(projectConfigPath, []byte(`{"tui_keybindings":{"invalid":["f2"]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Build the production binaries fresh.
 	bins := t.TempDir()
@@ -164,15 +172,74 @@ func TestTUIUnderPTY(t *testing.T) {
 		t.Fatalf("timed out waiting for raw PTY output %s after byte %d", what, offset)
 		return nil
 	}
+	typeLiteral := func(text string) {
+		t.Helper()
+		if out, err := tm("send-keys", "-l", "-t", "main", text); err != nil {
+			t.Fatalf("type %q: %v: %s", text, err, out)
+		}
+	}
 
 	// Launch the TUI in the pane, recording its exit code for the
 	// governance-exit-code assertion.
-	cmdline := fmt.Sprintf("CARINA_RUNTIME_MODE=legacy CARINA_LOCALE=en LC_ALL=C %q -socket %q -workspace %q -locale en; echo EXIT_CODE=$?", cliBin, sock, ws)
+	launchOffset := len(readRaw())
+	launchStarted := time.Now()
+	cmdline := fmt.Sprintf("HOME=%q CARINA_RUNTIME_MODE=legacy CARINA_LOCALE=en CARINA_TUI_ALTERNATE_SCREEN=always LC_ALL=C %q -socket %q -workspace %q -locale en; echo EXIT_CODE=$?", state, cliBin, sock, ws)
 	if _, err := tm("send-keys", "-t", "main", cmdline, "Enter"); err != nil {
 		t.Fatalf("send-keys: %v", err)
 	}
-	attached := waitFor("session attach", "attached to", 30*time.Second)
-	assertSinglePersistentFrame(t, attached)
+	waitForRaw("first useful Bootstrap frame", launchOffset, time.Second, "Carina")
+	firstFrameElapsed := time.Since(launchStarted)
+	if firstFrameElapsed > time.Second {
+		t.Fatalf("first useful Bootstrap frame took %s, want <=1s", firstFrameElapsed)
+	}
+	failure := waitFor("recoverable Bootstrap failure", "Configuration could not be loaded", 10*time.Second)
+	if !strings.Contains(failure, "Retry") || !strings.Contains(failure, "Doctor / details") {
+		t.Fatalf("Bootstrap failure omitted recovery actions:\n%s", failure)
+	}
+	detailsX, detailsY := screenTextCoordinate(t, failure, "Doctor / details")
+	motion := ansi.MouseSgr(ansi.EncodeMouseButton(ansi.MouseLeft, true, false, false, false), detailsX, detailsY, false)
+	typeLiteral(motion)
+	waitFor("Bootstrap hover", ". Doctor / details", 10*time.Second)
+	button := ansi.EncodeMouseButton(ansi.MouseLeft, false, false, false, false)
+	typeLiteral(ansi.MouseSgr(button, detailsX, detailsY, false) + ansi.MouseSgr(button, detailsX, detailsY, true))
+	details := waitFor("Bootstrap failure details", "stage:", 10*time.Second)
+	if !strings.Contains(details, "reason:") {
+		t.Fatalf("Bootstrap details omitted bounded evidence:\n%s", details)
+	}
+	if err := os.WriteFile(projectConfigPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	retryX, retryY := screenTextCoordinate(t, details, "Retry")
+	retryStarted := time.Now()
+	typeLiteral(ansi.MouseSgr(button, retryX, retryY, false) + ansi.MouseSgr(button, retryX, retryY, true))
+	conversation := waitFor("editable Conversation", "Type an instruction", 30*time.Second)
+	retryComposerElapsed := time.Since(retryStarted)
+	if retryComposerElapsed > time.Second {
+		t.Fatalf("Retry to editable Conversation took %s, want <=1s on the local fixture", retryComposerElapsed)
+	}
+	t.Logf("terminal journey timing: first frame=%s recovered total=%s retry-to-composer=%s", firstFrameElapsed, time.Since(launchStarted), retryComposerElapsed)
+	assertSinglePersistentFrame(t, conversation)
+	waitFor("connected task inside Conversation", "First-launch checks", 10*time.Second)
+	journeyRaw := readRaw()[launchOffset:]
+	bootstrapAt := bytes.Index(journeyRaw, []byte("Carina"))
+	conversationAt := bytes.Index(journeyRaw, []byte("Type an instruction"))
+	if bootstrapAt < 0 || conversationAt < 0 || bootstrapAt >= conversationAt {
+		t.Fatalf("continuous journey order invalid: bootstrap=%d conversation=%d", bootstrapAt, conversationAt)
+	}
+	transitionRaw := journeyRaw[:conversationAt]
+	for _, reset := range []string{
+		ansi.ResetModeBracketedPaste,
+		ansi.ResetModeMouseButtonEvent,
+		ansi.ResetModeMouseExtSgr,
+		ansi.ResetModeAltScreenSaveCursor,
+	} {
+		if bytes.Contains(transitionRaw, []byte(reset)) {
+			t.Fatalf("terminal protocol reset during Bootstrap -> Conversation transition: %q", reset)
+		}
+	}
+	if bytes.Contains(transitionRaw, []byte("first launch on this machine")) {
+		t.Fatal("first-launch doctor wrote behind the active terminal UI")
+	}
 
 	// Bubble Tea must ask the real terminal for both bracketed-paste and SGR
 	// cell-motion mouse reports. OnMouse alone is insufficient: without these
@@ -182,6 +249,17 @@ func TestTUIUnderPTY(t *testing.T) {
 		ansi.SetModeMouseButtonEvent,
 		ansi.SetModeMouseExtSgr,
 	)
+	journeyRaw = readRaw()[launchOffset:]
+	for name, sequence := range map[string]string{
+		"bracketed paste":  ansi.SetModeBracketedPaste,
+		"mouse button":     ansi.SetModeMouseButtonEvent,
+		"mouse SGR":        ansi.SetModeMouseExtSgr,
+		"alternate screen": ansi.SetModeAltScreenSaveCursor,
+	} {
+		if count := bytes.Count(journeyRaw, []byte(sequence)); count != 1 {
+			t.Fatalf("%s enable phases=%d, want exactly one", name, count)
+		}
+	}
 
 	// SIGWINCH reaches the production model through the PTY and the rendered
 	// frame follows both a constrained and expanded pane width.
@@ -222,16 +300,6 @@ func TestTUIUnderPTY(t *testing.T) {
 	waitForScreen("paste undo", 10*time.Second, func(screen string) bool {
 		return !strings.Contains(screen, pasteMarker) && !strings.Contains(screen, "pasted draft items")
 	})
-
-	// Exercise both newline paths as terminal bytes. Ctrl-J is the portable
-	// fallback; CSI-u Shift+Enter is what modern terminals emit when they can
-	// disambiguate a modified Enter key.
-	typeLiteral := func(text string) {
-		t.Helper()
-		if out, err := tm("send-keys", "-l", "-t", "main", text); err != nil {
-			t.Fatalf("type %q: %v: %s", text, err, out)
-		}
-	}
 
 	// A real terminal sends an extended emoji as a multi-code-point text
 	// sequence. Horizontal motion and backspace must still treat it as one
@@ -340,6 +408,17 @@ func TestTUIUnderPTY(t *testing.T) {
 		ansi.ResetModeMouseButtonEvent,
 		ansi.ResetModeMouseExtSgr,
 	)
+	finalJourneyRaw := readRaw()[launchOffset:]
+	for name, sequence := range map[string]string{
+		"bracketed paste": ansi.ResetModeBracketedPaste,
+		"mouse cleanup": ansi.ResetModeMouseButtonEvent +
+			ansi.ResetModeMouseAnyEvent + ansi.ResetModeMouseExtSgr,
+		"alternate screen": ansi.ResetModeAltScreenSaveCursor,
+	} {
+		if count := bytes.Count(finalJourneyRaw, []byte(sequence)); count != 1 {
+			t.Fatalf("%s reset phases=%d, want exactly one", name, count)
+		}
+	}
 
 	// The TUI must never leave the terminal in raw mode: after exit, the
 	// pane's shell tty still has canonical mode and echo enabled.
@@ -377,6 +456,73 @@ func TestTUIUnderPTY(t *testing.T) {
 	}
 	assertToken("icanon")
 	assertToken("echo")
+
+	// A second journey in the same real PTY proves the normal-buffer policy:
+	// Bootstrap and Conversation must never briefly enter alternate screen even
+	// when config requests it and the CLI flag overrides it.
+	normalOffset := len(readRaw())
+	normalStarted := time.Now()
+	normalCmdline := fmt.Sprintf("HOME=%q CARINA_RUNTIME_MODE=legacy CARINA_LOCALE=en CARINA_TUI_ALTERNATE_SCREEN=always LC_ALL=C %q -no-alt-screen -socket %q -workspace %q -locale en; echo NORMAL_EXIT_CODE=$?", state, cliBin, sock, ws)
+	if _, err := tm("send-keys", "-t", "main", normalCmdline, "Enter"); err != nil {
+		t.Fatalf("normal-buffer launch: %v", err)
+	}
+	waitForRaw("normal-buffer Bootstrap", normalOffset, 2*time.Second, "Carina")
+	waitFor("normal-buffer Conversation", "Type an instruction", 30*time.Second)
+	normalComposerElapsed := time.Since(normalStarted)
+	if normalComposerElapsed > time.Second {
+		t.Fatalf("resume launch to editable Conversation took %s, want <=1s on the local fixture", normalComposerElapsed)
+	}
+	t.Logf("normal-buffer resume timing: editable composer=%s", normalComposerElapsed)
+	if _, err := tm("send-keys", "-t", "main", "C-c"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if _, err := tm("send-keys", "-t", "main", "C-c"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("normal-buffer clean exit", "NORMAL_EXIT_CODE=0", 30*time.Second)
+	normalRaw := readRaw()[normalOffset:]
+	if bytes.Contains(normalRaw, []byte(ansi.SetModeAltScreenSaveCursor)) ||
+		bytes.Contains(normalRaw, []byte(ansi.ResetModeAltScreenSaveCursor)) {
+		t.Fatal("-no-alt-screen journey entered or exited alternate screen")
+	}
+	for name, sequence := range map[string]string{
+		"bracketed paste": ansi.ResetModeBracketedPaste,
+		"mouse cleanup": ansi.ResetModeMouseButtonEvent +
+			ansi.ResetModeMouseAnyEvent + ansi.ResetModeMouseExtSgr,
+	} {
+		if count := bytes.Count(normalRaw, []byte(sequence)); count != 1 {
+			t.Fatalf("normal-buffer %s reset phases=%d, want exactly one", name, count)
+		}
+	}
+
+	// Use a new workspace to force a genuinely fresh session and measure the
+	// clean cold-start path independently from the recoverable-failure journey.
+	freshWS := filepath.Join(state, "fresh-ws")
+	if err := os.MkdirAll(freshWS, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	freshOffset := len(readRaw())
+	freshStarted := time.Now()
+	freshCmdline := fmt.Sprintf("HOME=%q CARINA_RUNTIME_MODE=legacy CARINA_LOCALE=en CARINA_TUI_ALTERNATE_SCREEN=always LC_ALL=C %q -socket %q -workspace %q -locale en; echo FRESH_EXIT_CODE=$?", state, cliBin, sock, freshWS)
+	if _, err := tm("send-keys", "-t", "main", freshCmdline, "Enter"); err != nil {
+		t.Fatalf("fresh-session launch: %v", err)
+	}
+	waitForRaw("fresh-session Bootstrap", freshOffset, time.Second, "Carina")
+	waitForRaw("fresh-session Conversation", freshOffset, time.Second, "Type an instruction")
+	freshComposerElapsed := time.Since(freshStarted)
+	if freshComposerElapsed > time.Second {
+		t.Fatalf("fresh launch to editable Conversation took %s, want <=1s on the local fixture", freshComposerElapsed)
+	}
+	t.Logf("fresh-session timing: editable composer=%s", freshComposerElapsed)
+	if _, err := tm("send-keys", "-t", "main", "C-c"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if _, err := tm("send-keys", "-t", "main", "C-c"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRaw("fresh-session clean exit", freshOffset, 30*time.Second, "FRESH_EXIT_CODE=0")
 }
 
 func screenHasBorderWidth(screen string, width int) bool {
@@ -397,6 +543,17 @@ func roundedTopBorderCount(screen string) int {
 		}
 	}
 	return count
+}
+
+func screenTextCoordinate(t *testing.T, screen, marker string) (int, int) {
+	t.Helper()
+	for y, line := range strings.Split(screen, "\n") {
+		if x := strings.Index(line, marker); x >= 0 {
+			return x, y
+		}
+	}
+	t.Fatalf("screen marker %q not found:\n%s", marker, screen)
+	return 0, 0
 }
 
 func assertSinglePersistentFrame(t *testing.T, screen string) {

@@ -3,10 +3,10 @@ package tuiapp
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -31,6 +31,8 @@ const (
 
 const bootstrapComponentID ui.ComponentID = "bootstrap-screen"
 
+const bootstrapFirstPaintDelay = 35 * time.Millisecond
+
 type bootstrapPrepared struct {
 	home        string
 	mode        localruntime.Mode
@@ -52,6 +54,7 @@ type bootstrapFailure struct {
 }
 
 type bootstrapStepMsg struct {
+	generation   uint64
 	stage        bootstrapStage
 	prepared     bootstrapPrepared
 	modeDecision bool
@@ -85,15 +88,24 @@ type bootstrapModel struct {
 	done            bool
 	cancelled       bool
 	outcome         tui.Outcome
+	operation       uint64
+	quitOnReady     bool
 	runtime         *ui.Runtime
 	component       *bootstrapComponent
 }
 
 func newBootstrapModel(opts Options, locale string, altScreen bool) *bootstrapModel {
+	return newBootstrapModelWithRuntime(opts, locale, altScreen, nil, true)
+}
+
+func newBootstrapModelWithRuntime(opts Options, locale string, altScreen bool, runtime *ui.Runtime, quitOnReady bool) *bootstrapModel {
+	if runtime == nil {
+		runtime = ui.NewRuntime()
+	}
 	m := &bootstrapModel{
 		opts: opts, bootstrapLocale: locale, copy: bootstrapText(locale),
 		stage: bootstrapWorkspace, width: 80, height: 24, allowAltScreen: altScreen,
-		runtime: ui.NewRuntime(),
+		operation: 1, quitOnReady: quitOnReady, runtime: runtime,
 	}
 	m.component = &bootstrapComponent{model: m, Base: ui.Base{ComponentID: bootstrapComponentID}}
 	m.runtime.Mount(m.component)
@@ -115,7 +127,13 @@ func (m *bootstrapModel) Init() tea.Cmd {
 	if m.modeOnly {
 		return nil
 	}
-	return m.stageCmd()
+	stage := m.stageCmd()
+	return func() tea.Msg {
+		timer := time.NewTimer(bootstrapFirstPaintDelay)
+		defer timer.Stop()
+		<-timer.C
+		return stage()
+	}
 }
 
 func (m *bootstrapModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -172,6 +190,13 @@ func (m *bootstrapModel) applyActions(result ui.Result) (tea.Model, tea.Cmd) {
 		m.pendingMode, m.modeDecision = localruntime.ModeLegacy, false
 		return m, m.stageCmd()
 	case "retry":
+		m.operation++
+		if m.failure != nil && m.failure.stage == bootstrapIdentity {
+			// Identity consumes locale and keybindings from the prepared config.
+			// Re-resolve runtime/config so an operator's external repair is visible
+			// instead of retrying the same stale snapshot forever.
+			m.stage = bootstrapRuntime
+		}
 		m.failure, m.detailsOpen = nil, false
 		return m, m.stageCmd()
 	case "details":
@@ -188,6 +213,9 @@ func (m *bootstrapModel) applyActions(result ui.Result) (tea.Model, tea.Cmd) {
 }
 
 func (m *bootstrapModel) applyStep(step bootstrapStepMsg) (tea.Model, tea.Cmd) {
+	if step.generation != 0 && step.generation != m.operation {
+		return m, nil
+	}
 	if step.failure != nil {
 		m.failure = step.failure
 		m.stage = step.failure.stage
@@ -208,13 +236,17 @@ func (m *bootstrapModel) applyStep(step bootstrapStepMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.stage == bootstrapReady {
 		m.done = true
-		return m, tea.Quit
+		if m.quitOnReady {
+			return m, tea.Quit
+		}
+		return m, nil
 	}
 	return m, m.stageCmd()
 }
 
 func (m *bootstrapModel) stageCmd() tea.Cmd {
 	stage := m.stage
+	generation := m.operation
 	prepared := m.prepared
 	pendingMode := m.pendingMode
 	opts := m.opts
@@ -223,41 +255,41 @@ func (m *bootstrapModel) stageCmd() tea.Cmd {
 		case bootstrapWorkspace:
 			home, err := os.UserHomeDir()
 			if err != nil {
-				return failedBootstrapStep(stage, microcopy.BootstrapResolveHomeFailed, tui.OutcomeRuntimeError, err)
+				return failedBootstrapStep(generation, stage, microcopy.BootstrapResolveHomeFailed, tui.OutcomeRuntimeError, err)
 			}
 			prepared.home = home
 			prepared.projectRoot = strings.TrimSpace(opts.WorkspaceRoot)
-			return bootstrapStepMsg{stage: bootstrapMode, prepared: prepared}
+			return bootstrapStepMsg{generation: generation, stage: bootstrapMode, prepared: prepared}
 		case bootstrapMode:
 			if pendingMode != "" {
 				if err := localruntime.WriteMode(prepared.home, pendingMode); err != nil {
-					return failedBootstrapStep(stage, microcopy.BootstrapConfigFailed, tui.OutcomeRuntimeError, err)
+					return failedBootstrapStep(generation, stage, microcopy.BootstrapConfigFailed, tui.OutcomeRuntimeError, err)
 				}
 				prepared.mode = pendingMode
-				return bootstrapStepMsg{stage: bootstrapRuntime, prepared: prepared}
+				return bootstrapStepMsg{generation: generation, stage: bootstrapRuntime, prepared: prepared}
 			}
 			mode, err := localruntime.ResolveMode(prepared.home)
 			if errors.Is(err, localruntime.ErrModeDecisionRequired) {
-				return bootstrapStepMsg{stage: bootstrapMode, prepared: prepared, modeDecision: true}
+				return bootstrapStepMsg{generation: generation, stage: bootstrapMode, prepared: prepared, modeDecision: true}
 			}
 			if err != nil {
-				return failedBootstrapStep(stage, microcopy.BootstrapConfigFailed, tui.OutcomeRuntimeError, err)
+				return failedBootstrapStep(generation, stage, microcopy.BootstrapConfigFailed, tui.OutcomeRuntimeError, err)
 			}
 			prepared.mode = mode
-			return bootstrapStepMsg{stage: bootstrapRuntime, prepared: prepared}
+			return bootstrapStepMsg{generation: generation, stage: bootstrapRuntime, prepared: prepared}
 		case bootstrapRuntime:
 			if prepared.mode == localruntime.ModeWorkspace {
 				resolution, err := localruntime.Resolve(prepared.home, prepared.projectRoot, prepared.mode)
 				if err != nil {
 					if errors.Is(err, config.ErrInvalidTUILocale) {
-						return failedBootstrapStep(stage, microcopy.BootstrapLocaleInvalid, tui.OutcomeUsage, err)
+						return failedBootstrapStep(generation, stage, microcopy.BootstrapLocaleInvalid, tui.OutcomeUsage, err)
 					}
-					return failedBootstrapStep(stage, microcopy.BootstrapConfigFailed, tui.OutcomeRuntimeError, err)
+					return failedBootstrapStep(generation, stage, microcopy.BootstrapConfigFailed, tui.OutcomeRuntimeError, err)
 				}
 				if explicitSocket := strings.TrimSpace(opts.Socket); explicitSocket != "" {
 					resolution, err = localruntime.ApplyOverrides(prepared.home, resolution, localruntime.Overrides{Socket: explicitSocket})
 					if err != nil {
-						return failedBootstrapStep(stage, microcopy.BootstrapConfigFailed, tui.OutcomeRuntimeError, err)
+						return failedBootstrapStep(generation, stage, microcopy.BootstrapConfigFailed, tui.OutcomeRuntimeError, err)
 					}
 				}
 				prepared.config = resolution.Config
@@ -269,7 +301,7 @@ func (m *bootstrapModel) stageCmd() tea.Cmd {
 				if prepared.projectRoot == "" {
 					root, err := os.Getwd()
 					if err != nil {
-						return failedBootstrapStep(stage, microcopy.BootstrapStartupFailed, tui.OutcomeRuntimeError, err)
+						return failedBootstrapStep(generation, stage, microcopy.BootstrapStartupFailed, tui.OutcomeRuntimeError, err)
 					}
 					prepared.projectRoot = root
 				}
@@ -279,7 +311,7 @@ func (m *bootstrapModel) stageCmd() tea.Cmd {
 					if errors.Is(err, config.ErrInvalidTUILocale) {
 						code, outcome = microcopy.BootstrapLocaleInvalid, tui.OutcomeUsage
 					}
-					return failedBootstrapStep(stage, code, outcome, err)
+					return failedBootstrapStep(generation, stage, code, outcome, err)
 				}
 				prepared.config = cfg
 				prepared.socket = strings.TrimSpace(opts.Socket)
@@ -288,36 +320,39 @@ func (m *bootstrapModel) stageCmd() tea.Cmd {
 				}
 				prepared.logPath = filepath.Join(filepath.Dir(prepared.socket), "daemon.log")
 			}
-			return bootstrapStepMsg{stage: bootstrapIdentity, prepared: prepared}
+			return bootstrapStepMsg{generation: generation, stage: bootstrapIdentity, prepared: prepared}
 		case bootstrapIdentity:
 			loc, err := microcopy.ResolveLocale(opts.Locale, prepared.config.TUILocale)
 			if err != nil {
-				return failedBootstrapStep(stage, microcopy.BootstrapLocaleInvalid, tui.OutcomeUsage, err)
+				return failedBootstrapStep(generation, stage, microcopy.BootstrapLocaleInvalid, tui.OutcomeUsage, err)
 			}
 			keybindings, err := tui.ParseKeyBindingOverrides(prepared.config.TUIKeybindings)
 			if err != nil {
-				return failedBootstrapStep(stage, microcopy.BootstrapConfigFailed, tui.OutcomeUsage, err)
+				return failedBootstrapStep(generation, stage, microcopy.BootstrapConfigFailed, tui.OutcomeUsage, err)
 			}
 			prepared.locale, prepared.keybindings = loc, keybindings
-			return bootstrapStepMsg{stage: bootstrapSession, prepared: prepared}
+			return bootstrapStepMsg{generation: generation, stage: bootstrapSession, prepared: prepared}
 		case bootstrapSession:
 			prepared.sessionID = strings.TrimSpace(opts.SessionID)
 			if prepared.sessionID == "" {
 				sessionID, err := resolveSession(nil, prepared.config.StateDir, prepared.projectRoot)
 				if err != nil {
-					return failedBootstrapStep(stage, microcopy.BootstrapRecoveryFailed, tui.OutcomeRuntimeError, err)
+					return failedBootstrapStep(generation, stage, microcopy.BootstrapRecoveryFailed, tui.OutcomeRuntimeError, err)
 				}
 				prepared.sessionID = sessionID
 			}
-			return bootstrapStepMsg{stage: bootstrapReady, prepared: prepared}
+			return bootstrapStepMsg{generation: generation, stage: bootstrapReady, prepared: prepared}
 		default:
-			return bootstrapStepMsg{stage: bootstrapReady, prepared: prepared}
+			return bootstrapStepMsg{generation: generation, stage: bootstrapReady, prepared: prepared}
 		}
 	}
 }
 
-func failedBootstrapStep(stage bootstrapStage, code microcopy.BootstrapCode, outcome tui.Outcome, err error) bootstrapStepMsg {
-	return bootstrapStepMsg{failure: &bootstrapFailure{stage: stage, code: code, err: err, outcome: outcome}}
+func failedBootstrapStep(generation uint64, stage bootstrapStage, code microcopy.BootstrapCode, outcome tui.Outcome, err error) bootstrapStepMsg {
+	return bootstrapStepMsg{
+		generation: generation,
+		failure:    &bootstrapFailure{stage: stage, code: code, err: err, outcome: outcome},
+	}
 }
 
 func (m *bootstrapModel) View() tea.View {
@@ -471,7 +506,10 @@ func (c *bootstrapComponent) Handle(event ui.Event) ui.Result {
 		}
 		for index, action := range actions {
 			if action.id == id {
-				m.hovered, m.selected = id, index
+				m.hovered = id
+				if event.Pointer.Kind == ui.PointerClick {
+					m.selected = index
+				}
 				break
 			}
 		}
@@ -545,36 +583,4 @@ func bootstrapText(locale string) bootstrapCopy {
 	default:
 		return bootstrapCopy{"Carina", "Preparing", "Resolve workspace", "Choose runtime mode", "Prepare project runtime", "Verify identity and configuration", "Restore session", "Ready", "Retry", "Doctor / details", "Hide details", "Exit", "Isolated workspace runtime (recommended)", "Legacy global runtime", "Legacy global runtime data was found. Choose how projects should run."}
 	}
-}
-
-func runBootstrap(opts Options, locale string, in io.Reader, out io.Writer, altScreen bool) (bootstrapPrepared, tui.Outcome, error) {
-	model := newBootstrapModel(opts, locale, altScreen)
-	final, err := tea.NewProgram(model, tea.WithInput(in), tea.WithOutput(out)).Run()
-	if err != nil {
-		return bootstrapPrepared{}, tui.OutcomeRuntimeError, err
-	}
-	result, ok := final.(*bootstrapModel)
-	if !ok {
-		return bootstrapPrepared{}, tui.OutcomeRuntimeError, fmt.Errorf("bootstrap returned an unexpected model")
-	}
-	if result.cancelled || !result.done {
-		return bootstrapPrepared{}, result.outcome, errRuntimeModeChoiceCancelled
-	}
-	return result.prepared, tui.OutcomeOK, nil
-}
-
-func chooseRuntimeMode(in io.Reader, out io.Writer, locale string) (localruntime.Mode, error) {
-	model := newRuntimeModeChoiceModel(locale)
-	if file, ok := out.(*os.File); !ok || !isTTY(file) {
-		_, _ = fmt.Fprint(out, model.View().Content)
-	}
-	final, err := tea.NewProgram(model, tea.WithInput(in), tea.WithOutput(out)).Run()
-	if err != nil {
-		return "", err
-	}
-	chosen, ok := final.(*bootstrapModel)
-	if !ok || chosen.cancelled || chosen.mode == "" {
-		return "", errRuntimeModeChoiceCancelled
-	}
-	return chosen.mode, nil
 }

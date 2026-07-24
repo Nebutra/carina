@@ -9,12 +9,10 @@
 package tuiapp
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -23,7 +21,6 @@ import (
 	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/rpc"
 	"github.com/Nebutra/carina/go/tui"
-	"github.com/Nebutra/carina/go/tui/theme"
 )
 
 // Options configures the interactive shell. Zero values pick sensible
@@ -36,15 +33,24 @@ type Options struct {
 	NoAltScreen   bool
 	// Stderr receives non-interactive gate and terminal failures (default os.Stderr).
 	Stderr io.Writer
-	// AfterDaemon runs once the daemon is reachable and before the TUI
-	// attaches (e.g. first-launch doctor). Failures must not abort launch.
-	AfterDaemon func(call RPC)
+	// ConnectedTask runs once after the first session connection. Its result is
+	// rendered inside Conversation and never written behind the terminal UI.
+	ConnectedTask ConnectedTask
 	// RequireTTY refuses non-interactive stdio (flag-form `carina -…` sets true).
 	// Bare no-arg `carina` decides TTY before calling Run.
 	RequireTTY bool
 }
 
-// RPC is the minimal dial surface AfterDaemon / session resolution need.
+// ConnectedTask performs optional first-connection work without taking over
+// terminal output ownership.
+type ConnectedTask func(call RPC) ConnectedTaskResult
+
+type ConnectedTaskResult struct {
+	Notice  string
+	Outcome tui.Outcome
+}
+
+// RPC is the minimal dial surface connected tasks and session resolution need.
 type RPC interface {
 	Call(method string, params any, result any) error
 	Close() error
@@ -74,77 +80,21 @@ func Run(opts Options) tui.Outcome {
 		return tui.OutcomeUsage
 	}
 
-	prepared, bootstrapOutcome, err := runBootstrap(opts, bootstrapLocale, os.Stdin, os.Stdout, interactive && !opts.NoAltScreen)
-	if errors.Is(err, errRuntimeModeChoiceCancelled) {
-		return bootstrapOutcome
-	}
-	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, bootstrapLocale))
-		return tui.OutcomeRuntimeError
-	}
-	home := prepared.home
-	projectRoot := prepared.projectRoot
-	cfg := prepared.config
-	socket := prepared.socket
-	runtimeSpec := prepared.runtimeSpec
-	loc := prepared.locale
-	keybindings := prepared.keybindings
-	sessionID := prepared.sessionID
-
-	th := theme.New(theme.Detect(os.Getenv, true))
-	initialTarget := tui.ConnectionTarget{
-		Socket: socket, SessionID: sessionID, WorkspaceRoot: projectRoot, StateDir: cfg.StateDir,
-		RuntimeSpec: runtimeSpec, AutoStart: true,
-	}
-	connectionController := tui.NewConnectionController(initialTarget)
-	coordinator := newRuntimeCoordinator(home, projectRoot, connectionController)
-	defer coordinator.close()
-	model, err := tui.NewChecked(tui.Options{
-		Theme:             th,
-		Locale:            loc,
-		Socket:            socket,
-		SessionID:         sessionID,
-		WorkspaceRoot:     projectRoot,
-		StateDir:          cfg.StateDir,
-		Keybindings:       keybindings,
-		NoAlternateScreen: opts.NoAltScreen || strings.EqualFold(cfg.TUIAlternateScreen, "never"),
-		KeymapUpdater:     coordinator.keymapUpdater(),
-		SwitchSession:     connectionController.Switch,
-		PrepareTarget:     coordinator.prepare,
-		CommitTarget:      coordinator.commit,
-		AbortTarget:       coordinator.abort,
-		AcknowledgeTarget: coordinator.acknowledge,
-		ListWorkspaces:    coordinator.listWorkspaces,
-		LoadWorkspace:     workspaceLoader(home),
-		ResumeWorkspace:   workspaceResumer,
-		OnFirstConnection: func(call tui.Caller) {
-			if opts.AfterDaemon != nil {
-				opts.AfterDaemon(borrowedRPC{Caller: call})
-			}
-		},
-	})
-	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapStartupFailed, microcopy.Args{"reason": err.Error()}, loc))
-		return tui.OutcomeUsage
-	}
+	sender := newProgramSender()
+	model := newApplicationModel(opts, bootstrapLocale, interactive && !opts.NoAltScreen, sender)
 	defer model.Close()
 	prog := tea.NewProgram(model)
-	coordinator.startWatcher(prog)
-	if runtimeSpec != nil {
-		tui.ConnectControlledRuntime(prog, socket, sessionID, projectRoot, connectionController, *runtimeSpec)
-	} else {
-		tui.ConnectControlled(prog, socket, sessionID, projectRoot, connectionController)
-	}
+	sender.Bind(prog)
 
 	final, err := prog.Run()
 	if raw := model.CloseTerminalGraphics(); raw != "" {
 		_, _ = fmt.Fprint(os.Stdout, raw)
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapRuntimeFailed, microcopy.Args{"reason": err.Error()}, loc))
+		fmt.Fprintln(stderr, microcopy.Bootstrap(microcopy.BootstrapRuntimeFailed, microcopy.Args{"reason": err.Error()}, model.locale()))
 		return tui.OutcomeRuntimeError
 	}
-	if m, ok := final.(*tui.Model); ok {
+	if m, ok := final.(*applicationModel); ok {
 		return m.Outcome()
 	}
 	return tui.OutcomeOK
@@ -153,8 +103,6 @@ func Run(opts Options) tui.Outcome {
 type borrowedRPC struct{ tui.Caller }
 
 func (borrowedRPC) Close() error { return nil }
-
-var errRuntimeModeChoiceCancelled = errors.New("runtime mode choice cancelled")
 
 func workspaceLoader(home string) func(string) (tui.WorkspaceDestination, error) {
 	return func(root string) (tui.WorkspaceDestination, error) {

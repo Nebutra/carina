@@ -91,6 +91,24 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dispatchComponentEvent(ui.Event{Kind: ui.EventFocus})
 		return m, nil
 
+	case OperationalNoticeMsg:
+		role := theme.RoleInfo
+		switch msg.Outcome {
+		case OutcomeOK:
+			role = theme.RoleSuccess
+		case OutcomeDegradedPartial:
+			role = theme.RoleWarning
+		case OutcomeRuntimeError, OutcomeDaemonUnreachable, OutcomePolicyDenied, OutcomeUserDenied:
+			role = theme.RoleError
+		}
+		kind := strings.TrimSpace(msg.Kind)
+		if kind == "" {
+			kind = "lifecycle"
+		}
+		m.setOperationalNoticeKind(kind, msg.Text, role)
+		m.layout()
+		return m, nil
+
 	case SessionReadyMsg:
 		wasSwitching := m.pendingSessionID != ""
 		if m.pendingSessionID != "" && msg.SessionID != m.pendingSessionID {

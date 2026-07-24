@@ -24,8 +24,8 @@ func TestBootstrapModeUsesRenderedHitGeometryWithKeyboardParity(t *testing.T) {
 	hover := m.runtime.Dispatch(ui.Event{Kind: ui.EventPointer, Pointer: ui.PointerEvent{
 		Kind: ui.PointerMove, X: legacy.Bounds.X, Y: legacy.Bounds.Y,
 	}})
-	if !hover.Handled || m.hovered != "legacy" || m.selected != 1 {
-		t.Fatalf("hover did not select rendered action: handled=%v hovered=%q selected=%d", hover.Handled, m.hovered, m.selected)
+	if !hover.Handled || m.hovered != "legacy" || m.selected != 0 {
+		t.Fatalf("hover changed keyboard selection: handled=%v hovered=%q selected=%d", hover.Handled, m.hovered, m.selected)
 	}
 	pointer := m.runtime.Dispatch(ui.Event{Kind: ui.EventPointer, Pointer: ui.PointerEvent{
 		Kind: ui.PointerClick, X: legacy.Bounds.X, Y: legacy.Bounds.Y,
@@ -76,6 +76,26 @@ func TestBootstrapFailureOwnsRetryDetailsAndExit(t *testing.T) {
 	exit := m.component.Handle(ui.Event{Kind: ui.EventKey, Key: "q"})
 	if got := bootstrapActionID(exit); got != "exit" {
 		t.Fatalf("exit key action=%q", got)
+	}
+}
+
+func TestBootstrapIdentityRetryReloadsRuntimeConfig(t *testing.T) {
+	m := newBootstrapModel(Options{}, "en", false)
+	m.stage = bootstrapIdentity
+	m.failure = &bootstrapFailure{
+		stage: bootstrapIdentity, code: microcopy.BootstrapConfigFailed,
+		err: errors.New("invalid keybinding"), outcome: tui.OutcomeUsage,
+	}
+	previousOperation := m.operation
+	_, cmd := m.applyActions(bootstrapActionResult("retry"))
+	if cmd == nil {
+		t.Fatal("identity retry did not schedule runtime config resolution")
+	}
+	if m.stage != bootstrapRuntime {
+		t.Fatalf("retry stage=%v, want runtime config reload", m.stage)
+	}
+	if m.operation != previousOperation+1 {
+		t.Fatalf("retry operation=%d, want %d", m.operation, previousOperation+1)
 	}
 }
 

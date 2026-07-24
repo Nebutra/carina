@@ -10,12 +10,13 @@ import (
 
 	"github.com/Nebutra/carina/go/doctorfix"
 	"github.com/Nebutra/carina/go/tui"
+	"github.com/Nebutra/carina/go/tuiapp"
 )
 
 // carina doctor (P1.6): wires the daemon's daemon.doctor probe list to a
 // three-state (pass/warn/fail) human render with copy-paste remediation
 // strings, honors the CARINA_DOCTOR_DISABLE kill-switch, and backs the
-// first-launch auto-run hook consumed by bare `carina` (runBareTUI).
+// first-launch connected task consumed by bare `carina` (runBareTUI).
 
 // doctorFirstRunMarker is the file whose absence in ~/.carina marks "this
 // machine has never run carina doctor" — the first-launch auto-run signal.
@@ -68,35 +69,39 @@ func markDoctorAutoRun(homeDir string) error {
 	return os.WriteFile(filepath.Join(homeDir, doctorFirstRunMarker), []byte("1\n"), 0o600)
 }
 
-// maybeAutoRunDoctor is bare `carina`'s first-launch onboarding hook (P1.6:
-// "run automatically on first launch to double as onboarding"): on a
-// machine with no .doctor-first-run marker, it runs the same probes as
-// `carina doctor`, prints the report to stderr (stdout is reserved for the
-// TUI's own alt-screen paint that follows), and writes the marker so it
-// never fires again. Honors CARINA_DOCTOR_DISABLE — a locked-down
-// deployment that disabled doctor does not want it force-run on first
-// launch either. Never blocks or fails the TUI launch: home-dir resolution
-// or marker-write failures are swallowed (best-effort onboarding, not a
-// startup precondition).
-func maybeAutoRunDoctor(call Caller) {
+// maybeAutoRunDoctor runs first-launch probes after Conversation has attached.
+// It returns a compact in-product notice; the full report remains owned by the
+// explicit `carina doctor` command and never corrupts the active terminal UI.
+func maybeAutoRunDoctor(call tuiapp.RPC) tuiapp.ConnectedTaskResult {
 	if doctorDisabled(os.Getenv) {
-		return
+		return tuiapp.ConnectedTaskResult{}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return
+		return tuiapp.ConnectedTaskResult{}
 	}
 	dir := filepath.Join(home, ".carina")
 	if !shouldAutoRunDoctor(dir) {
-		return
+		return tuiapp.ConnectedTaskResult{}
 	}
 	var report map[string]any
-	if err := call.Call("daemon.doctor", map[string]any{}, &report); err == nil {
-		fmt.Fprintln(os.Stderr, "carina: first launch on this machine — running carina doctor once:")
-		fmt.Fprint(os.Stderr, renderDoctorReport(report, false))
-		fmt.Fprintln(os.Stderr, "(run `carina doctor` any time to re-check; this auto-run will not repeat.)")
-	}
+	err = call.Call("daemon.doctor", map[string]any{}, &report)
 	_ = markDoctorAutoRun(dir)
+	if err != nil {
+		return tuiapp.ConnectedTaskResult{
+			Notice:  "First-launch checks could not complete; run `carina doctor`.",
+			Outcome: tui.OutcomeDegradedPartial,
+		}
+	}
+	outcome := doctorOutcome(report)
+	switch outcome {
+	case tui.OutcomeOK:
+		return tuiapp.ConnectedTaskResult{Notice: "First-launch checks passed.", Outcome: outcome}
+	case tui.OutcomeDegradedPartial:
+		return tuiapp.ConnectedTaskResult{Notice: "First-launch checks found warnings; run `carina doctor`.", Outcome: outcome}
+	default:
+		return tuiapp.ConnectedTaskResult{Notice: "First-launch checks need attention; run `carina doctor`.", Outcome: outcome}
+	}
 }
 
 // cmdDoctor dispatches daemon.doctor and renders pass/warn/fail with

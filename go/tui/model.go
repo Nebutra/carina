@@ -65,6 +65,13 @@ type (
 		Call       Caller
 		Target     ConnectionTarget
 	}
+	// OperationalNoticeMsg lets an embedding application publish transient
+	// startup or lifecycle state without appending it to the transcript.
+	OperationalNoticeMsg struct {
+		Kind    string
+		Text    string
+		Outcome Outcome
+	}
 	// TaskActiveMsg restores the task the prompt should steer after attach.
 	TaskActiveMsg struct {
 		SessionID  string
@@ -216,6 +223,10 @@ type Options struct {
 	Keybindings       []KeyBindingOverride
 	NoAlternateScreen bool
 	KeymapUpdater     KeymapUpdateFunc
+	// Runtime lets a retained application host share screen, focus, pointer,
+	// cursor, and overlay ownership across top-level screens. Nil preserves the
+	// standalone model's isolated runtime.
+	Runtime *ui.Runtime
 }
 
 // Model is the root Bubble Tea model.
@@ -464,6 +475,10 @@ func NewChecked(o Options) (*Model, error) {
 		"help":    primaryKeyLabel(keys.keys(KeyContextGlobal, ActionGlobalHelp)),
 	})
 	_ = ti.Focus()
+	componentRuntime := o.Runtime
+	if componentRuntime == nil {
+		componentRuntime = ui.NewRuntime()
+	}
 	m := &Model{
 		th:                o.Theme,
 		locale:            o.Locale,
@@ -476,7 +491,7 @@ func NewChecked(o Options) (*Model, error) {
 		clipboardWrite:    systemClipboardWrite,
 		vp:                viewport.New(),
 		input:             ti,
-		componentRuntime:  ui.NewRuntime(),
+		componentRuntime:  componentRuntime,
 		graphicsNamespace: "model-" + strconv.FormatUint(modelGraphicsSequence.Add(1), 10),
 		liveTools:         ui.NewLiveToolRegistry(),
 		keys:              keys,
