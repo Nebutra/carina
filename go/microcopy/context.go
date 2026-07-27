@@ -67,10 +67,9 @@ func resolveContext(seed string) string {
 // "es-419", "ja-JP-u-ca-japanese") to an authored runtime key. The zh key
 // specifically means Simplified Chinese; zh-Hant is Traditional. Encoding and
 // modifier suffixes are ignored; unsupported and empty values fall back to en.
-// Exported so callers that branch on locale themselves (go/tui's degrade
-// banner, for its reconnect-attempt suffix) apply the same normalization
-// Governed/Degrade/Loading already do internally, instead of comparing a
-// raw, unnormalized locale string like "zh-CN" against "zh" and missing it.
+// Exported so interactive and command-line callers apply the same
+// normalization Governed/Degrade/Loading already use internally, instead of
+// comparing a raw locale such as "zh-CN" against "zh" and missing it.
 func NormalizeLocale(raw string) string {
 	if locale, ok := canonicalLocale(raw); ok {
 		return locale

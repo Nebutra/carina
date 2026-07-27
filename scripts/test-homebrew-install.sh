@@ -69,6 +69,7 @@ fi
 
 for executable in \
   carina \
+  carina-ui \
   carina-daemon \
   carina-worker \
   \

@@ -16,6 +16,8 @@ type modelInventoryModel struct {
 	ReasoningOptions       []json.RawMessage `json:"reasoning_options,omitempty"`
 	ReasoningEfforts       []string          `json:"reasoning_efforts,omitempty"`
 	DefaultReasoningEffort string            `json:"default_reasoning_effort,omitempty"`
+	ImageInput             bool              `json:"image_input"`
+	ToolCall               bool              `json:"tool_call"`
 }
 
 type modelInventoryProvider struct {
@@ -66,7 +68,12 @@ func (d *Daemon) handleModelList(_ json.RawMessage) (any, error) {
 				continue
 			}
 			effort := catalogReasoningEffortSpec(id, modelID, model)
-			row.Models = append(row.Models, modelInventoryModel{ID: id + "/" + modelID, Name: model.Name, Available: available, Reasoning: model.Reasoning, ReasoningOptions: model.ReasoningOptions, ReasoningEfforts: effort.Options, DefaultReasoningEffort: effort.Default})
+			row.Models = append(row.Models, modelInventoryModel{
+				ID: id + "/" + modelID, Name: model.Name, Available: available,
+				Reasoning: model.Reasoning, ReasoningOptions: model.ReasoningOptions,
+				ReasoningEfforts: effort.Options, DefaultReasoningEffort: effort.Default,
+				ImageInput: modelSupportsImageInput(model), ToolCall: model.ToolCall,
+			})
 		}
 		sort.Slice(row.Models, func(i, j int) bool { return row.Models[i].ID < row.Models[j].ID })
 		providers = append(providers, row)

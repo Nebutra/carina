@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Nebutra/carina/go/tui"
+	"github.com/Nebutra/carina/go/outcome"
 )
 
 // TestPolicyCheckAbsentWhenNotConfigured pins the common open-source/local
@@ -82,8 +82,8 @@ func TestDoctorTierEscalatesToWarnOnStalePolicy(t *testing.T) {
 	if tier := doctorTier(report); tier != "WARN" {
 		t.Fatalf("doctorTier = %q, want WARN for an otherwise-healthy report with a stale policy bundle", tier)
 	}
-	if outcome := doctorOutcome(report); outcome != tui.OutcomeDegradedPartial {
-		t.Fatalf("doctorOutcome = %v, want OutcomeDegradedPartial", outcome)
+	if got := doctorOutcome(report); got != outcome.OutcomeDegradedPartial {
+		t.Fatalf("doctorOutcome = %v, want OutcomeDegradedPartial", got)
 	}
 	out := renderDoctorReport(report, false)
 	if !strings.Contains(out, "WARN") || !strings.Contains(out, "policy") {

@@ -2,7 +2,7 @@ package main
 
 // bareAction is the outcome of deciding what a bare `carina` invocation (no
 // subcommand) should do. This is a pure decision, deliberately separated
-// from actually launching Bubble Tea or dialing the daemon, so it is
+// from actually launching the packaged Rust UI or dialing the daemon, so it is
 // testable without a real PTY or socket (P1.5(a)).
 type bareAction int
 
@@ -11,8 +11,8 @@ const (
 	// scripts/pipes that invoke bare `carina` by accident (today's only
 	// behavior for len(os.Args) < 2).
 	bareActionUsage bareAction = iota
-	// bareActionLaunchTUI launches the interactive TUI in-process
-	// (go/tuiapp; no second binary).
+	// bareActionLaunchTUI launches the packaged internal Rust UI. The helper is
+	// an implementation detail; bare carina remains the public entry point.
 	bareActionLaunchTUI
 )
 

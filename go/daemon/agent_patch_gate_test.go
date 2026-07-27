@@ -97,10 +97,9 @@ func TestAgentPatchRequiresApprovalUnderInteractiveMode(t *testing.T) {
 // approval prompt for a PatchApply decision actually shows the reviewable
 // artifact: permission.request must carry a "diff" field with the real
 // unified diff the kernel is about to apply, not just the capability name
-// and patch_id. Without this, go/tui's diff renderer (ColorDiff) and
-// approval overlay (openApproval reading ev["diff"]) are unreachable with
-// real data — an operator approving a patch could not see what content
-// they're approving even in principle.
+// and patch_id. Without this, the interactive approval component cannot render
+// the real artifact and an operator could not see what content they are
+// approving.
 func TestAgentPatchPermissionRequestCarriesDiff(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()

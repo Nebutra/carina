@@ -9,6 +9,7 @@ cd "$ROOT"
 TOOLS="${CARINA_TOOLS_DIR:-$ROOT/zig/zig-out/bin}"
 KERNEL="${CARINA_KERNEL_BIN:-$ROOT/target/release/carina-kernel-service}"
 CARINA="$ROOT/bin/carina"
+CARINA_UI="$ROOT/bin/carina-ui"
 DAEMON="$ROOT/bin/carina-daemon"
 
 fail() { echo "GATE FAILED: $1" >&2; exit 1; }
@@ -31,6 +32,7 @@ ok "16.1 no TypeScript runtime"
 # 16.2 — No Node runtime. Core native commands run with node off PATH.
 # ---------------------------------------------------------------------------
 [ -x "$CARINA" ] || fail "16.2 carina binary missing (run: go build -o bin/carina ./apps/carina-cli)"
+[ -x "$CARINA_UI" ] || fail "16.2 carina-ui runtime missing (run: make rust-ui)"
 env -i PATH="/usr/bin:/bin" CARINA_TOOLS_DIR="$TOOLS" "$CARINA" version >/dev/null 2>&1 || fail "16.2 carina version needs node"
 env -i PATH="/usr/bin:/bin" CARINA_TOOLS_DIR="$TOOLS" "$CARINA" scan "$ROOT/protocol" >/dev/null 2>&1 || fail "16.2 carina scan needs node"
 env -i PATH="/usr/bin:/bin" CARINA_TOOLS_DIR="$TOOLS" "$CARINA" grep "schema" "$ROOT/protocol" >/dev/null 2>&1 || fail "16.2 carina grep needs node"

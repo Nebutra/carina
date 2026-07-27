@@ -6,7 +6,7 @@ Requires: pip install zhconv  (OpenCC-compatible conversion)
   python3 scripts/gen_zh_hant.py          # rewrite generated table
   python3 scripts/gen_zh_hant.py --check  # exit 1 if table is stale
 
-Source of truth remains the zh catalogs (JSON pools + TUI catalog ZH fields).
+Source of truth remains the structured zh sources in go/microcopy.
 Traditional Chinese (zh-Hant) is derived, not independently authored.
 """
 
@@ -58,64 +58,9 @@ def collect_zh_strings() -> set[str]:
 
         walk(data)
 
-    for path in (ROOT / "go/tui").glob("i18n_catalog*.go"):
-        text = path.read_text(encoding="utf-8")
-        i = 0
-        while True:
-            j = text.find("catalog(", i)
-            if j < 0:
-                break
-            k = j + len("catalog(")
-            while k < len(text) and text[k] in " \t\n":
-                k += 1
-            if text.startswith("Msg", k):
-                while k < len(text) and (text[k].isalnum() or text[k] == "_"):
-                    k += 1
-            elif k < len(text) and text[k] == '"':
-                k += 1
-                while k < len(text) and text[k] != '"':
-                    k += 2 if text[k] == "\\" else 1
-                k += 1
-            strings: list[str] = []
-            while len(strings) < 6 and k < len(text):
-                while k < len(text) and text[k] in " \t\n,":
-                    k += 1
-                if k >= len(text) or text[k] != '"':
-                    break
-                k += 1
-                buf: list[str] = []
-                while k < len(text):
-                    c = text[k]
-                    if c == "\\":
-                        buf.append(text[k : k + 2])
-                        k += 2
-                        continue
-                    if c == '"':
-                        k += 1
-                        break
-                    buf.append(c)
-                    k += 1
-                raw = "".join(buf)
-                s = (
-                    raw.replace("\\n", "\n")
-                    .replace("\\t", "\t")
-                    .replace('\\"', '"')
-                    .replace("\\\\", "\\")
-                )
-                strings.append(s)
-            if len(strings) >= 2 and strings[1].strip():
-                zh_strings.add(strings[1])
-            i = k
-
     plural = (ROOT / "go/microcopy/plural.go").read_text(encoding="utf-8")
     for m in re.finditer(r'"zh":\s*\{[^}]*other:\s*"((?:\\.|[^"\\])*)"', plural):
         zh_strings.add(m.group(1).replace('\\"', '"').replace("\\n", "\n"))
-
-    for path in (ROOT / "go/tui").glob("i18n.go"):
-        for m in re.finditer(
-            r'LocaleChinese:\s*"((?:\\.|[^"\\])*)"', path.read_text(encoding="utf-8")
-        ):
-            zh_strings.add(m.group(1))
 
     return zh_strings
 

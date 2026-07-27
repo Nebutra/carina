@@ -237,9 +237,8 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 	}
 	// A PatchApply decision's resource is the patch_id (registerPatchGate):
 	// the operator's approval prompt must show the actual reviewable diff,
-	// not just the capability name — otherwise the diff-rendering code in
-	// go/tui (ColorDiff, openApproval reading ev["diff"]) never sees real
-	// data and an operator approves content they cannot see.
+	// not just the capability name. Interactive clients render this field as
+	// the review artifact so an operator never approves unseen content.
 	if dec.Capability == "PatchApply" {
 		if patch, err := d.kern.PatchShow(sess.SessionID, dec.Resource); err == nil && patch != nil {
 			ev["diff"] = patch.Diff

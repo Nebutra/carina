@@ -130,8 +130,8 @@ headroom_bundle_path=""
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   printf '==> build Go apps\n'
   make go
-  printf '==> build Rust kernel service\n'
-  cargo build --release -p carina-kernel --bin carina-kernel-service
+  printf '==> build Rust runtime components\n'
+  cargo build --release -p carina-kernel --bin carina-kernel-service -p carina-tui --bin carina-ui
   if [[ "${SKIP_ZIG:-0}" == "1" ]]; then
     warnings+=("SKIP_ZIG=1: reused existing zig/zig-out/bin/carina-* artifacts without rebuilding Zig tools")
   else
@@ -150,6 +150,7 @@ copy_file bin/carina "$stage/bin/carina"
 copy_file bin/carina-daemon "$stage/bin/carina-daemon"
 copy_file bin/carina-worker "$stage/bin/carina-worker"
 copy_file target/release/carina-kernel-service "$stage/bin/carina-kernel-service"
+copy_file target/release/carina-ui "$stage/bin/carina-ui"
 
 if [[ "${SKIP_HEADROOM:-0}" == "1" ]]; then
   warnings+=("SKIP_HEADROOM=1: packaged without optional Headroom; context_engine=auto will use the noop fallback")
@@ -198,6 +199,7 @@ done
 
 copy_file README.md "$stage/README.md"
 copy_file LICENSE "$stage/LICENSE"
+copy_file THIRD_PARTY_NOTICES.md "$stage/THIRD_PARTY_NOTICES.md"
 copy_file SECURITY.md "$stage/SECURITY.md"
 copy_file docs/release.md "$stage/docs/release.md"
 copy_file docs/roadmap.md "$stage/docs/roadmap.md"

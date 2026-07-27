@@ -229,7 +229,7 @@ Current stable consumers:
 
 - **READMEs:** `assets/hero/carina-readme-hero.webp` and the approved badge palette.
 - **VS Code:** `integrations/vscode/media/carina.svg`, derived byte-for-byte from the monochrome symbol master.
-- **TUI:** semantic terminal tokens in `go/tui/theme`, checked against the DTCG source.
+- **TUI:** semantic terminal tokens in `crates/carina-tui/src/theme.rs`, checked against the DTCG source.
 - **Future web/UI clients:** `design-system/variables.css`, `tailwind-v4.css`, `carina.ts`, and the WOFF2 display font.
 
 Generation rounds, rejected candidates, logo-skin experiments, and mockups remain

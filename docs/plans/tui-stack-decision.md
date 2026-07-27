@@ -1,12 +1,12 @@
 # TUI Stack Decision
 
-**Status:** Accepted and implemented. The automatable spike and production
-interaction gates are represented in repository tests/benchmarks; true desktop
-IME and credentialed provider/terminal runs remain external release evidence.
+**Status:** Superseded on 2026-07-27 by the approved Grok-derived Ratatui
+migration. The historical matrix and spike evidence remain below to explain the
+old decision, but they no longer authorize a production Bubble Tea surface.
 **Date:** 2026-07-09.
 **Last reviewed:** 2026-07-15.
-**Scope:** Why the production `apps/carina-tui` uses Go and Bubble Tea v2, which
-interaction contracts were adopted, and where automated evidence ends.
+**Scope:** Historical Bubble Tea decision, its supersession, and the evidence
+boundary for the production Grok-derived Rust/Ratatui migration.
 **Inputs:** `docs/plans/agent-cli-productization.md` (§P1, §P3, §4 microcopy, §6 brand questions), `docs/brand/brand-brief.md` (§2 palette/ANSI token table), a mid-2026 landscape survey of Rust TUI frameworks, an Ink/Claude-Code internals analysis, and a Carina integration audit (RPC contract, Go vs Rust client paths, layer-model boundaries).
 
 **Provenance note:** landscape claims below (stars, release dates, issue numbers) come from a survey conducted against primary sources (repos, release pages, issue trackers) as of June–July 2026 and are reproduced here with their evidence markers. Claims are tagged **[verified]** (primary source seen in the survey) or **[claimed/unverified]** (inference or absence-of-evidence). Nothing in this document was answered from memory where the survey said evidence was missing — those gaps are listed as unknowns in §2.4 and become spike pass/fail criteria in §4.
@@ -15,7 +15,25 @@ interaction contracts were adopted, and where automated evidence ends.
 
 ## 0. Decision in one paragraph
 
-**The TUI is built in Go on Bubble Tea v2 + lipgloss + bubbles (Charm stack), as `apps/carina-tui` in the existing Go module.** Runner-up: **Rust ratatui**, adopted only if the Go spike fails its zh-input or transcript-latency gates (§3.3). The user's starting hypothesis — the React model, ideally in Rust — does not survive the matrix: the only genuinely React-model Rust framework that is alive (iocraft) has open CJK text-input bugs and bus factor 1, which disqualifies it against Carina's zh-first-class requirement; and the requirements decomposition (§1.3) shows that what "React" actually buys is a rendering-pipeline checklist that Bubble Tea v2's new cell-diffing renderer satisfies natively, without a VDOM. Meanwhile the integration audit is lopsided: a Go TUI reuses `go/rpc`, the typed domain structs, socket discovery, and the P1.5/P3.1 shared data layer for free (~zero plumbing LoC); a Rust TUI must build the repo's first Rust JSON-RPC *client*, hand-maintain wire types in a second language forever, and either forfeit or forcibly relocate the plan-mandated shared renderer engine.
+**Current decision amendment (2026-07-27):** remove `go/tui` and `go/tuiapp`
+after behavioral migration, and rebuild the production interactive surface in
+Rust/Ratatui from the component, pager, inline-rendering, textarea, mouse, and
+image-overlay architecture of
+`xai-org/grok-build@b41c75a578f98bddbd326ab02cd53618451d97ee`.
+Carina keeps its daemon/RPC/provider/policy/session authority and bare `carina`
+entry. Grok-specific auth, telemetry, agents, workspace, marketplace, and model
+backend code are excluded. Apache-2.0 attribution and modification notices are
+required for copied or adapted source. The remainder of this document is the
+historical decision record that this amendment supersedes.
+
+The following Bubble Tea recommendation is retained only as the superseded
+2026-07-09 decision record. It is not the current architecture and must not be
+used to add Go TUI code back into production.
+
+> The TUI was originally selected as Go/Bubble Tea v2 + Lip Gloss + Bubbles.
+> Rust/Ratatui was the runner-up, subject to the original spike gates. The
+> approved 2026-07-27 migration replaced that decision after source-backed
+> Grok/OMP/Codex journey analysis and implementation evidence.
 
 ---
 

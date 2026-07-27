@@ -79,6 +79,18 @@ func TestUsageIncludesGatewayWSProbe(t *testing.T) {
 	}
 }
 
+func TestAuthLoginRejectsSecretProcessArgument(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const secret = "sk-must-not-enter-argv"
+	err := cmdAuth([]string{"login", "openai", secret})
+	if err == nil || !strings.Contains(err.Error(), "not accepted in process arguments") {
+		t.Fatalf("auth login argv error = %v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatal("rejected process argument leaked into the error")
+	}
+}
+
 func TestUsageIncludesBackpressureAndDebugCommands(t *testing.T) {
 	for _, want := range []string{
 		"carina backpressure status",

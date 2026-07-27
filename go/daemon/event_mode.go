@@ -45,7 +45,15 @@ func projectEvent(mode eventMode, event any, replayCursor ...int) (any, bool) {
 		return value, true
 	}
 	switch value["type"] {
-	case "ToolRequested", "ToolApproved", "ToolDenied":
+	case "ToolRequested":
+		if request, ok := projectGovernanceRequest(value); ok {
+			if cursor > 0 {
+				request["raw_cursor"] = cursor
+			}
+			return request, true
+		}
+		return nil, false
+	case "ToolApproved", "ToolDenied":
 		return nil, false
 	default:
 		if cursor > 0 {
@@ -53,6 +61,41 @@ func projectEvent(mode eventMode, event any, replayCursor ...int) (any, bool) {
 		}
 		return value, true
 	}
+}
+
+func projectGovernanceRequest(event map[string]any) (map[string]any, bool) {
+	payload, ok := event["payload"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	status, _ := payload["status"].(string)
+	var eventType, idKey string
+	switch status {
+	case "permission_requested":
+		eventType, idKey = "permission.request", "decision_id"
+	case "user_question_requested":
+		eventType, idKey = "user.question", "question_id"
+	default:
+		return nil, false
+	}
+	request, ok := payload["request"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	projected := make(map[string]any, len(request)+6)
+	for key, value := range request {
+		projected[key] = value
+	}
+	projected["type"] = eventType
+	if projected[idKey] == nil || projected[idKey] == "" {
+		projected[idKey] = payload[idKey]
+	}
+	for _, key := range []string{"event_id", "session_id", "task_id", "actor", "timestamp"} {
+		if projected[key] == nil || projected[key] == "" {
+			projected[key] = event[key]
+		}
+	}
+	return projected, true
 }
 
 type projectingSubscriber struct {

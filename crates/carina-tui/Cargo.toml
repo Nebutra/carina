@@ -1,0 +1,24 @@
+[package]
+name = "carina-tui"
+version = "0.6.5"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+crossterm.workspace = true
+ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+xai-ratatui-inline = { path = "../xai-ratatui-inline" }
+xai-ratatui-textarea = { path = "../xai-ratatui-textarea" }
+
+[[bin]]
+name = "carina-ui"
+path = "src/bin/carina-ui.rs"

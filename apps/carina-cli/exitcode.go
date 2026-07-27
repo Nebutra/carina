@@ -4,8 +4,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/Nebutra/carina/go/outcome"
 	"github.com/Nebutra/carina/go/rpc"
-	"github.com/Nebutra/carina/go/tui"
 )
 
 // policyDeniedPrefix and userDeniedPrefix are the verbatim prefixes
@@ -29,24 +29,23 @@ const (
 
 // doctorOutcomeError carries carina doctor's own WARN/FAIL classification
 // through the normal error-return path so classifyExitCode can map it to
-// the shared tui.Outcome enum, instead of doctor inventing a second exit
+// the shared outcome.Outcome enum, instead of doctor inventing a second exit
 // path. Doctor still prints its full report before returning this — the
 // error's Error() is only ever surfaced as "carina: <msg>" if something
 // upstream forgets to special-case it, so its text stays short and useful.
 type doctorOutcomeError struct {
-	outcome tui.Outcome
+	outcome outcome.Outcome
 }
 
 func (e *doctorOutcomeError) Error() string {
-	if e.outcome == tui.OutcomeDegradedPartial {
+	if e.outcome == outcome.OutcomeDegradedPartial {
 		return "doctor: one or more checks degraded (see report above)"
 	}
 	return "doctor: one or more checks failed (see report above)"
 }
 
-// classifyExitCode maps a one-shot command's terminal error into the SAME
-// governance exit-code enum go/tui already ships and the interactive shell
-// already reuses (tui.Outcome) — P1.5(b) must not invent a second enum.
+// classifyExitCode maps a one-shot command's terminal error into the shared,
+// renderer-neutral outcome.Outcome contract used by the interactive shell.
 // nil err classifies as OutcomeOK.
 //
 // Dial failures (errors.Is(err, rpc.ErrDaemonUnreachable)) classify as
@@ -59,12 +58,12 @@ func (e *doctorOutcomeError) Error() string {
 // contract requires this distinction actually be reachable, not just
 // documented; anything else falls back to the generic runtime error,
 // matching today's uniform os.Exit(1) behavior for the residual case.
-func classifyExitCode(err error) tui.Outcome {
+func classifyExitCode(err error) outcome.Outcome {
 	if err == nil {
-		return tui.OutcomeOK
+		return outcome.OutcomeOK
 	}
 	if errors.Is(err, rpc.ErrDaemonUnreachable) {
-		return tui.OutcomeDaemonUnreachable
+		return outcome.OutcomeDaemonUnreachable
 	}
 	var doctorErr *doctorOutcomeError
 	if errors.As(err, &doctorErr) {
@@ -72,13 +71,13 @@ func classifyExitCode(err error) tui.Outcome {
 	}
 	msg := err.Error()
 	if strings.Contains(msg, policyDeniedPrefix) {
-		return tui.OutcomePolicyDenied
+		return outcome.OutcomePolicyDenied
 	}
 	if strings.Contains(msg, userDeniedPrefix) {
-		return tui.OutcomeUserDenied
+		return outcome.OutcomeUserDenied
 	}
 	if strings.HasPrefix(msg, usagePrefix) {
-		return tui.OutcomeUsage
+		return outcome.OutcomeUsage
 	}
 	// Checked after the policy/user-denied string matches above: a
 	// *taskDegradedError whose summary happens to embed the daemon's own
@@ -86,7 +85,7 @@ func classifyExitCode(err error) tui.Outcome {
 	// policy/user-denied outcome, not collapse into degraded-partial.
 	var degradedErr *taskDegradedError
 	if errors.As(err, &degradedErr) {
-		return tui.OutcomeDegradedPartial
+		return outcome.OutcomeDegradedPartial
 	}
-	return tui.OutcomeRuntimeError
+	return outcome.OutcomeRuntimeError
 }

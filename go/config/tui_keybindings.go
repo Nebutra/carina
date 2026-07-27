@@ -15,6 +15,28 @@ func UpdateTUIKeybinding(path, action string, keys []string, remove bool) error 
 	if strings.TrimSpace(action) == "" {
 		return fmt.Errorf("config: keybinding action is required")
 	}
+	return updateConfigRoot(path, func(root map[string]json.RawMessage) error {
+		bindings := make(map[string][]string)
+		if raw := root["tui_keybindings"]; len(raw) > 0 {
+			if err := json.Unmarshal(raw, &bindings); err != nil {
+				return fmt.Errorf("config: parse %s tui_keybindings: %w", path, err)
+			}
+		}
+		if remove {
+			delete(bindings, action)
+		} else {
+			bindings[action] = append([]string(nil), keys...)
+		}
+		raw, err := json.Marshal(bindings)
+		if err != nil {
+			return err
+		}
+		root["tui_keybindings"] = raw
+		return nil
+	})
+}
+
+func updateConfigRoot(path string, mutate func(map[string]json.RawMessage) error) error {
 	root := make(map[string]json.RawMessage)
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -29,22 +51,9 @@ func UpdateTUIKeybinding(path, action string, keys []string, remove bool) error 
 		}
 	}
 
-	bindings := make(map[string][]string)
-	if raw := root["tui_keybindings"]; len(raw) > 0 {
-		if err := json.Unmarshal(raw, &bindings); err != nil {
-			return fmt.Errorf("config: parse %s tui_keybindings: %w", path, err)
-		}
-	}
-	if remove {
-		delete(bindings, action)
-	} else {
-		bindings[action] = append([]string(nil), keys...)
-	}
-	raw, err := json.Marshal(bindings)
-	if err != nil {
+	if err := mutate(root); err != nil {
 		return err
 	}
-	root["tui_keybindings"] = raw
 	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return err

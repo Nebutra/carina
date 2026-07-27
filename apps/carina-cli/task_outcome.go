@@ -7,7 +7,7 @@ import (
 )
 
 // taskDegradedError carries a "degraded" task's summary so classifyExitCode
-// can map it to tui.OutcomeDegradedPartial (exit 6) — distinct from a hard
+// can map it to outcome.OutcomeDegradedPartial (exit 6) — distinct from a hard
 // "failed" task (exit 1): a degrade means partial, rollbackable progress
 // was made, not a bare failure. Checked in classifyExitCode AFTER the
 // policyDeniedPrefix/userDeniedPrefix string matches, so a degrade whose

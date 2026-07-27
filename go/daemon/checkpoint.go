@@ -115,6 +115,8 @@ func (d *Daemon) handleCheckpointRestore(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("checkpoint restore requires confirmed=true after preview")
 	}
 	switch task.Status {
+	case "cancelled":
+		return nil, fmt.Errorf("checkpoint restore refused: cancelled task %s is terminal", task.TaskID)
 	case "running", "queued", "waiting_input", "waiting_approval":
 		return nil, fmt.Errorf("checkpoint restore refused while task is %s; stop or pause it first", task.Status)
 	}

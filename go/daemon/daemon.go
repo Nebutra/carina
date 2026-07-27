@@ -2897,6 +2897,7 @@ func (d *Daemon) handleTaskSteer(params json.RawMessage) (any, error) {
 		TaskID   string `json:"task_id"`
 		Message  string `json:"message"`
 		Priority string `json:"priority"`
+		SteerID  string `json:"steer_id"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -2920,7 +2921,14 @@ func (d *Daemon) handleTaskSteer(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("task %s is %s and cannot be steered", p.TaskID, task.Status)
 	}
 	d.steerWithPriority(p.TaskID, p.Message, priority)
-	return map[string]any{"queued": true, "task_id": p.TaskID, "status": task.Status, "priority": string(priority)}, nil
+	p.SteerID = strings.TrimSpace(p.SteerID)
+	if p.SteerID == "" {
+		p.SteerID = sessionstore.NewID("steer")
+	}
+	d.record(task.SessionID, "TaskCreated", task.TaskID, "user", map[string]any{
+		"status": "steered", "message": p.Message, "steer_id": p.SteerID,
+	}, "")
+	return map[string]any{"queued": true, "task_id": p.TaskID, "status": task.Status, "priority": string(priority), "steer_id": p.SteerID}, nil
 }
 
 // steer queues a normal-priority steering message. Kept for existing call

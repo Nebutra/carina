@@ -35,7 +35,7 @@ for tuple in darwin:arm64 linux:arm64 darwin:amd64 linux:amd64; do
   stage="carina_${version}_${platform}_${arch}"
   mkdir -p "$work/$stage/bin"
   for binary in \
-    carina carina-daemon carina-worker carina-kernel-service \
+    carina carina-ui carina-daemon carina-worker carina-kernel-service \
     carina-scan carina-grep carina-diff carina-patch-native carina-run carina-pty headroom; do
     printf '#!/bin/sh\nexit 0\n' > "$work/$stage/bin/$binary"
     chmod +x "$work/$stage/bin/$binary"
@@ -61,7 +61,8 @@ for package in \
     exit 1
   fi
   if [[ "$package" != "@nebutra+carina" ]]; then
-    [[ "$(tar -tzf "$tarball" | grep -Ec '^package/bin/(carina|headroom)')" == "11" ]] || {
+    tar -tzf "$tarball" | grep -qx 'package/THIRD_PARTY_NOTICES.md'
+    [[ "$(tar -tzf "$tarball" | grep -Ec '^package/bin/(carina|headroom)')" == "12" ]] || {
       echo "test-package-npm-release: $package does not contain the complete native toolchain" >&2
       exit 1
     }
@@ -73,6 +74,10 @@ arch="$(node -p 'process.arch')"
 platform_tarball="$dist/npm/@nebutra+carina-${platform}-${arch}/nebutra-carina-${platform}-${arch}-${version}.tgz"
 launcher_tarball="$dist/npm/@nebutra+carina/nebutra-carina-${version}.tgz"
 [[ -f "$platform_tarball" && -f "$launcher_tarball" ]]
+if tar -xOf "$launcher_tarball" package/package.json | grep -q 'carina-ui'; then
+  echo "test-package-npm-release: internal carina-ui helper is publicly mapped" >&2
+  exit 1
+fi
 npm install --global --prefix "$work/global" --ignore-scripts --offline \
   "$platform_tarball" "$launcher_tarball" >/dev/null
 for command in carina carina-daemon carina-worker; do

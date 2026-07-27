@@ -102,8 +102,14 @@ jobs:
       - name: Cargo test (capability kernel)
         run: cargo test --workspace
 
-      - name: Build kernel service
-        run: cargo build --release -p carina-kernel --bin carina-kernel-service
+      - name: Build Rust runtime components
+        run: cargo build --release -p carina-kernel --bin carina-kernel-service -p carina-tui --bin carina-ui
+
+      - name: Install PTY test dependency
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Rust TUI clean-environment journey
+        run: make rust-ui-e2e
 
       - name: Go vet
         run: go vet ./...
@@ -170,6 +176,7 @@ jobs:
           go build -o bin/carina-daemon ./apps/carina-daemon
           go build -o bin/carina-worker ./apps/carina-worker
           cp target/release/carina-kernel-service bin/
+          cp target/release/carina-ui bin/
 
       - name: Acceptance gates (§16 — no-TS / no-Node / policy-bypass / native-tool)
         env:

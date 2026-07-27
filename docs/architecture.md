@@ -49,10 +49,16 @@ Client Surfaces ──JSON-RPC──▶ Go Control Plane (agent loop) ──Capa
 - `go/contextengine` — context assembly and compaction support.
 - `go/telemetry` — versioned newline-JSON telemetry and cost attribution.
 - `go/runtimecontract` — runtime protocol contracts.
-- `go/tui` / `go/workflowui` / `go/agentview` — terminal client engine, workflow run views, live agent views.
+- `crates/carina-tui` — Grok-derived Ratatui product shell, typed daemon client,
+  retained conversation components, setup journey, governance, and history UI.
+- `crates/xai-ratatui-inline` / `crates/xai-ratatui-textarea` — pinned
+  Apache-2.0 terminal primitives selectively forked from Grok Build.
+- `go/workflowui` / `go/agentview` — non-TUI workflow and live-agent projections.
 - `apps/carina-daemon` — daemon entrypoint.
 - `apps/carina-cli` — user-facing CLI (`carina run`, `carina audit`, `carina patch …`).
-- `apps/carina-cli` interactive shell (bare `carina`, optional shell flags) — live session/agent views plus in-terminal approval and question round-trips over the same JSON-RPC protocol (`go/tui` + `go/tuiapp`).
+- `apps/carina-cli` interactive shell (bare `carina`, optional shell flags) —
+  resolves the workspace runtime and execs the packaged internal `carina-ui`
+  helper; `carina-ui` is not a public command.
 - `apps/carina-worker` — worker entrypoint.
 
 ### Workspace runtime topology

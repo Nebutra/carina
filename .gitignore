@@ -37,9 +37,6 @@ build/
 .idea/
 .vscode/
 
-# Local plan scaffolds created during TUI tests
-go/tui/.carina/
-
 # Local agent / IDE scaffolding (not product source)
 .agents/
 .claude/

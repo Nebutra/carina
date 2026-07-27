@@ -7,7 +7,9 @@ members = [
     "crates/carina-audit",
     "crates/carina-plugin-runtime",
     "crates/carina-index",
-    "crates/spike-tui-ratatui",
+    "crates/carina-tui",
+    "crates/xai-ratatui-inline",
+    "crates/xai-ratatui-textarea",
 ]
 
 [workspace.package]
@@ -36,3 +38,11 @@ carina-patch = { path = "crates/carina-patch" }
 carina-audit = { path = "crates/carina-audit" }
 carina-plugin-runtime = { path = "crates/carina-plugin-runtime" }
 carina-index = { path = "crates/carina-index" }
+anstyle-parse = "0.2"
+crossterm = { version = "0.28", features = ["event-stream", "bracketed-paste"] }
+ratatui = { version = "0.29", features = ["crossterm", "unstable-widget-ref"] }
+ratatui-core = "0.1"
+textwrap = "0.16"
+tui-scrollbar = "0.2"
+unicode-segmentation = "1.12"
+unicode-width = "0.2"

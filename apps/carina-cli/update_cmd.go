@@ -91,6 +91,7 @@ var obsoleteUpdateBinaries = []string{
 
 var requiredUpdateBinaries = []string{
 	"carina",
+	"carina-ui",
 	"carina-daemon",
 	"carina-worker",
 	"carina-kernel-service",

@@ -2,12 +2,11 @@ package main
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Nebutra/carina/go/outcome"
 	"github.com/Nebutra/carina/go/rpc"
-	"github.com/Nebutra/carina/go/tui"
 )
 
 // --- renderDoctorReport (pure rendering, pass/warn/fail + remediation) ---
@@ -283,9 +282,9 @@ func TestCmdDoctorReturnsOutcomeErrorOnWarn(t *testing.T) {
 	if cmdErr == nil {
 		t.Fatal("cmdDoctor should return a non-nil error when the report has a WARN-tier check")
 	}
-	if got := classifyExitCode(cmdErr); got != tui.OutcomeDegradedPartial {
+	if got := classifyExitCode(cmdErr); got != outcome.OutcomeDegradedPartial {
 		t.Fatalf("classifyExitCode(cmdDoctor WARN result) = %v (exit %d), want OutcomeDegradedPartial (exit %d)",
-			got, got.ExitCode(), tui.OutcomeDegradedPartial.ExitCode())
+			got, got.ExitCode(), outcome.OutcomeDegradedPartial.ExitCode())
 	}
 }
 
@@ -356,99 +355,5 @@ func TestCmdDoctorHonorsKillSwitchWithoutDialing(t *testing.T) {
 	}
 	if dialed {
 		t.Fatal("initGate(doctor) dialed the daemon while CARINA_DOCTOR_DISABLE was set")
-	}
-}
-
-// --- first-launch auto-run detection ------------------------------------
-
-func TestShouldAutoRunDoctorTrueOnFreshHome(t *testing.T) {
-	dir := t.TempDir()
-	if !shouldAutoRunDoctor(dir) {
-		t.Fatal("a fresh ~/.carina with no marker file should trigger doctor auto-run")
-	}
-}
-
-func TestShouldAutoRunDoctorFalseAfterMarker(t *testing.T) {
-	dir := t.TempDir()
-	if err := markDoctorAutoRun(dir); err != nil {
-		t.Fatal(err)
-	}
-	if shouldAutoRunDoctor(dir) {
-		t.Fatal("doctor auto-run should not re-fire once the marker file exists")
-	}
-}
-
-// fakeCaller is a minimal Caller stub for maybeAutoRunDoctor's tests: it
-// records whether daemon.doctor was invoked and returns a canned response.
-type fakeCaller struct {
-	called   bool
-	response map[string]any
-	err      error
-}
-
-func (f *fakeCaller) Call(method string, params any, result any) error {
-	if method != "daemon.doctor" {
-		return nil
-	}
-	f.called = true
-	if f.err != nil {
-		return f.err
-	}
-	b, err := json.Marshal(f.response)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(b, result)
-}
-func (f *fakeCaller) Close() error { return nil }
-
-// TestMaybeAutoRunDoctorFiresOnceOnFreshHome pins the full first-launch
-// wiring: a fresh HOME with no .carina/.doctor-first-run marker makes
-// maybeAutoRunDoctor call daemon.doctor and write the marker so it never
-// fires again.
-func TestMaybeAutoRunDoctorFiresOnceOnFreshHome(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	fc := &fakeCaller{response: map[string]any{
-		"disabled": false, "kernel": map[string]any{"ok": true},
-		"state_dir_writable": map[string]any{"ok": true},
-		"tools":              map[string]any{"available": true},
-		"reasoner":           true, "context_engine": map[string]any{"ok": true},
-		"lsp":  map[string]any{"servers": []any{}},
-		"byok": map[string]any{"any_resolved": true, "providers": []any{}},
-	}}
-	maybeAutoRunDoctor(fc)
-	if !fc.called {
-		t.Fatal("maybeAutoRunDoctor should call daemon.doctor on a fresh HOME")
-	}
-	if shouldAutoRunDoctor(filepath.Join(home, ".carina")) {
-		t.Fatal("maybeAutoRunDoctor should write the first-run marker so it never fires again")
-	}
-
-	// Second call on the same HOME must not re-invoke daemon.doctor.
-	fc2 := &fakeCaller{response: fc.response}
-	maybeAutoRunDoctor(fc2)
-	if fc2.called {
-		t.Fatal("maybeAutoRunDoctor fired a second time on the same HOME")
-	}
-}
-
-// TestMaybeAutoRunDoctorHonorsKillSwitch pins that CARINA_DOCTOR_DISABLE
-// suppresses the first-launch auto-run too, not just the explicit `carina
-// doctor` command — and, critically, does NOT write the marker, so
-// re-enabling doctor later still gets its onboarding first-run.
-func TestMaybeAutoRunDoctorHonorsKillSwitch(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv(doctorDisabledEnv, "1")
-
-	fc := &fakeCaller{}
-	maybeAutoRunDoctor(fc)
-	if fc.called {
-		t.Fatal("maybeAutoRunDoctor should not call daemon.doctor when CARINA_DOCTOR_DISABLE is set")
-	}
-	if !shouldAutoRunDoctor(filepath.Join(home, ".carina")) {
-		t.Fatal("a disabled auto-run must not consume the first-run marker")
 	}
 }

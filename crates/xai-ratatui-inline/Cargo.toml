@@ -1,0 +1,19 @@
+[package]
+name = "xai-ratatui-inline"
+version = "0.1.0-carina.1"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anstyle-parse.workspace = true
+crossterm.workspace = true
+ratatui.workspace = true
+unicode-width.workspace = true
+
+[dev-dependencies]
+anyhow = "1"
+serde_json.workspace = true
+
+[features]
+scrolling-regions = ["ratatui/scrolling-regions"]

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nebutra/carina/go/tui"
+	"github.com/Nebutra/carina/go/outcome"
 )
 
 // TestTaskOutcomeErrorCompletedIsNil pins the happy path: a task that
@@ -29,7 +29,7 @@ func TestTaskOutcomeErrorFailedClassifiesAsRuntimeError(t *testing.T) {
 	if err == nil {
 		t.Fatal("taskOutcomeError(failed) = nil, want a non-nil error")
 	}
-	if got := classifyExitCode(err); got != tui.OutcomeRuntimeError {
+	if got := classifyExitCode(err); got != outcome.OutcomeRuntimeError {
 		t.Fatalf("classifyExitCode(taskOutcomeError(failed)) = %v, want OutcomeRuntimeError", got)
 	}
 }
@@ -44,7 +44,7 @@ func TestTaskOutcomeErrorDegradedClassifiesAsDegradedPartial(t *testing.T) {
 	if err == nil {
 		t.Fatal("taskOutcomeError(degraded) = nil, want a non-nil error")
 	}
-	if got := classifyExitCode(err); got != tui.OutcomeDegradedPartial {
+	if got := classifyExitCode(err); got != outcome.OutcomeDegradedPartial {
 		t.Fatalf("classifyExitCode(taskOutcomeError(degraded)) = %v, want OutcomeDegradedPartial", got)
 	}
 }
@@ -61,7 +61,7 @@ func TestTaskOutcomeErrorSummaryCarriesPolicyDeniedPrefix(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a non-nil error")
 	}
-	if got := classifyExitCode(err); got != tui.OutcomePolicyDenied {
+	if got := classifyExitCode(err); got != outcome.OutcomePolicyDenied {
 		t.Fatalf("classifyExitCode = %v, want OutcomePolicyDenied (summary text must be preserved verbatim)", got)
 	}
 }
@@ -181,7 +181,7 @@ func TestRunWaitForTaskPollsThroughRunningToFailed(t *testing.T) {
 	if err == nil {
 		t.Fatal("runWaitForTask = nil, want a non-nil error for a task that ends failed")
 	}
-	if got := classifyExitCode(err); got != tui.OutcomeRuntimeError {
+	if got := classifyExitCode(err); got != outcome.OutcomeRuntimeError {
 		t.Fatalf("classifyExitCode(runWaitForTask result) = %v, want OutcomeRuntimeError", got)
 	}
 	if poller.calls != 3 {

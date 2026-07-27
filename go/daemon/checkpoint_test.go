@@ -334,6 +334,44 @@ func TestCheckpointRestorePublishesLatestPersistsAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestCheckpointRestoreRefusesCancelledBeforePublishingOrJournaling(t *testing.T) {
+	d := newDaemonAt(t, t.TempDir())
+	defer d.Close()
+	workspace := t.TempDir()
+	sess, err := d.store.CreateSession(workspace, "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "cancelled restore")
+	cp1 := &runCheckpoint{Turn: 1, Transcript: newTranscript(task.UserPrompt)}
+	cp2 := &runCheckpoint{Turn: 2, Transcript: newTranscript(task.UserPrompt)}
+	if err := d.runs.saveCheckpointChecked(task.TaskID, cp1); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.runs.saveCheckpointChecked(task.TaskID, cp2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.sched.Cancel(task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = d.handleCheckpointRestore(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "checkpoint_id": checkpointID(task, cp1), "confirmed": true,
+	}))
+	if err == nil || !strings.Contains(err.Error(), "cancelled task") {
+		t.Fatalf("cancelled restore error = %v", err)
+	}
+	if latest := d.runs.loadCheckpoint(task.TaskID); latest == nil || checkpointID(task, latest) != checkpointID(task, cp2) {
+		t.Fatalf("cancelled restore changed latest checkpoint: %+v", latest)
+	}
+	if _, err := os.Stat(filepath.Join(d.runs.dir, task.TaskID+".restore.json")); !os.IsNotExist(err) {
+		t.Fatalf("cancelled restore created a journal: %v", err)
+	}
+}
+
 func TestCheckpointRestoreFailureSurvivesRestartAndSameTargetReconciles(t *testing.T) {
 	stateDir := t.TempDir()
 	workspace := t.TempDir()

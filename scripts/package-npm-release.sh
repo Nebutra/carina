@@ -13,9 +13,10 @@ for tuple in darwin:arm64:arm64 darwin:amd64:x64 linux:arm64:arm64 linux:amd64:x
   archive="$dist/carina_${version}_${platform}_${archive_arch}.tar.gz"
   [[ -f "$archive" ]] || { echo "package-npm-release: missing $archive" >&2; exit 1; }
   package="@nebutra+carina-${platform}-${npm_arch}"; dir="$out/$package"; mkdir -p "$dir/bin"
+  cp THIRD_PARTY_NOTICES.md "$dir/"
   stage="$(basename "$archive" .tar.gz)"
   for binary in \
-    carina carina-daemon carina-worker carina-kernel-service \
+    carina carina-ui carina-daemon carina-worker carina-kernel-service \
     carina-scan carina-grep carina-diff carina-patch-native carina-run carina-pty headroom; do
     tar -xOf "$archive" "$stage/bin/$binary" > "$dir/bin/$binary"
     chmod 755 "$dir/bin/$binary"

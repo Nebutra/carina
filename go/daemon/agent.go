@@ -344,8 +344,6 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		for _, msg := range d.drainMailbox(task.TaskID) {
 			tr.addTurn(Turn{Tool: "user", ActionBrief: "steer",
 				Obs: Observation{Content: "USER STEERING (incorporate this now): " + msg, Pinned: true}})
-			d.record(sess.SessionID, "TaskCreated", task.TaskID, "user",
-				map[string]any{"status": "steered", "message": truncate(msg, 200)}, "")
 		}
 
 		// Bound the model view (audit log keeps everything).

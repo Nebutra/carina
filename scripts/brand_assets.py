@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 import struct
 import sys
 import xml.etree.ElementTree as ET
@@ -217,12 +218,49 @@ def validate_structure() -> None:
             if color in text:
                 raise ValueError(f"legacy badge color {color} remains in {readme_name}")
 
-    theme = (ROOT / "go/tui/theme/theme.go").read_text(encoding="utf-8")
-    for value in expected.values():
-        if value not in theme:
-            raise ValueError(f"TUI theme does not consume token {value}")
-    if "#1a191d" in theme or "#733445" in theme:
-        raise ValueError("legacy TUI palette remains in go/tui/theme/theme.go")
+    theme_path = ROOT / "crates/carina-tui/src/theme.rs"
+    theme = theme_path.read_text(encoding="utf-8")
+    rust_colors: dict[str, str] = {}
+    color_pattern = re.compile(
+        r"^\s*(?P<role>[a-z_]+):\s*Color::Rgb\("
+        r"0x(?P<red>[0-9a-fA-F]{2}),\s*"
+        r"0x(?P<green>[0-9a-fA-F]{2}),\s*"
+        r"0x(?P<blue>[0-9a-fA-F]{2})\),\s*$",
+        re.MULTILINE,
+    )
+    for match in color_pattern.finditer(theme):
+        role = match.group("role")
+        if role in rust_colors:
+            raise ValueError(f"duplicate RGB assignment for TUI theme role {role}")
+        rust_colors[role] = "#{red}{green}{blue}".format(**match.groupdict()).lower()
+
+    semantic_roles = {
+        "background": "background-page",
+        "surface": "background-surface",
+        "raised": "background-raised",
+        "border": "border",
+        "text": "text-primary",
+        "muted": "text-secondary",
+        "brand": "brand-mark",
+        "accent": "accent",
+        "success": "success",
+        "warning": "warning",
+        "danger": "danger",
+    }
+    for rust_role, semantic_role in semantic_roles.items():
+        reference = semantic[semantic_role]["$value"]
+        match = re.fullmatch(r"\{color\.primitive\.([a-z0-9-]+)\}", reference)
+        if match is None:
+            raise ValueError(f"semantic color {semantic_role} must reference a primitive")
+        expected_value = primitives[match.group(1)]["$value"].lower()
+        if rust_colors.get(rust_role) != expected_value:
+            raise ValueError(
+                f"TUI theme role {rust_role} must consume {semantic_role} ({expected_value})"
+            )
+
+    parsed_colors = set(rust_colors.values())
+    if {"#1a191d", "#733445"} & parsed_colors:
+        raise ValueError("legacy TUI palette remains in crates/carina-tui/src/theme.rs")
 
     junk = [path for path in BRAND.rglob("*") if path.name in {".DS_Store", "__pycache__"}]
     if junk:

@@ -18,6 +18,44 @@ func TestCanonicalEventModeFiltersOnlyDuplicateLifecycle(t *testing.T) {
 	}
 }
 
+func TestCanonicalEventModeProjectsDurableGovernanceRequests(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    string
+		eventType string
+		idKey     string
+		id        string
+	}{
+		{name: "approval", status: "permission_requested", eventType: "permission.request", idKey: "decision_id", id: "perm_1"},
+		{name: "question", status: "user_question_requested", eventType: "user.question", idKey: "question_id", id: "q_1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projected, ok := projectEvent(eventModeCanonical, map[string]any{
+				"type":       "ToolRequested",
+				"event_id":   "evt_1",
+				"session_id": "sess_1",
+				"task_id":    "task_1",
+				"payload": map[string]any{
+					"status":  tt.status,
+					tt.idKey:  tt.id,
+					"request": map[string]any{"prompt": "Continue?"},
+				},
+			}, 7)
+			if !ok {
+				t.Fatal("durable governance request was filtered")
+			}
+			event := projected.(map[string]any)
+			if event["type"] != tt.eventType || event[tt.idKey] != tt.id {
+				t.Fatalf("projected request = %#v", event)
+			}
+			if event["event_id"] != "evt_1" || event["raw_cursor"] != 7 {
+				t.Fatalf("projected replay identity = %#v", event)
+			}
+		})
+	}
+}
+
 func TestSessionAttachCanonicalAdvancesRawCursor(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
@@ -41,6 +79,45 @@ func TestSessionAttachCanonicalAdvancesRawCursor(t *testing.T) {
 	event := out["events"].([]any)[0].(map[string]any)
 	if event["raw_cursor"] != 2 {
 		t.Fatalf("raw_cursor = %#v", event["raw_cursor"])
+	}
+}
+
+func TestSessionAttachCanonicalReplaysGovernanceLifecycle(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+	d.record(sess.SessionID, "ToolRequested", "task_1", "go", map[string]any{
+		"status": "permission_requested", "decision_id": "perm_1",
+		"request": map[string]any{
+			"type": "permission.request", "session_id": sess.SessionID,
+			"task_id": "task_1", "decision_id": "perm_1", "capability": "CommandExec",
+		},
+	}, "perm_1")
+	d.record(sess.SessionID, "TaskCreated", "task_1", "operator", map[string]any{
+		"status": "approval_resolved", "decision_id": "perm_1", "granted": true,
+	}, "perm_1")
+
+	raw, err := d.handleSessionAttach(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "event_mode": "canonical",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := raw.(map[string]any)["events"].([]any)
+	if len(events) != 2 {
+		t.Fatalf("governance replay = %#v", events)
+	}
+	request := events[0].(map[string]any)
+	if request["type"] != "permission.request" || request["decision_id"] != "perm_1" || request["raw_cursor"] != 1 {
+		t.Fatalf("request replay = %#v", request)
+	}
+	resolution := events[1].(map[string]any)
+	payload := resolution["payload"].(map[string]any)
+	if payload["status"] != "approval_resolved" || payload["decision_id"] != "perm_1" || resolution["raw_cursor"] != 2 {
+		t.Fatalf("resolution replay = %#v", resolution)
 	}
 }
 

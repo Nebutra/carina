@@ -141,3 +141,29 @@ func TestModelListRequiresExplicitKeylessLocalEndpoint(t *testing.T) {
 		t.Fatal("explicit keyless localhost endpoint should be reported available")
 	}
 }
+
+func TestModelListPublishesInputAndToolCapabilities(t *testing.T) {
+	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	if err := store.SetAPIKey("vision", "secret", nil); err != nil {
+		t.Fatal(err)
+	}
+	d := &Daemon{
+		router:    modelrouter.New(),
+		authStore: store,
+		providerCatalog: provider.Catalog{"vision": {
+			ID: "vision", API: "https://example.test/v1", Env: []string{"VISION_API_KEY"}, NPM: "@ai-sdk/openai-compatible",
+			Models: map[string]provider.Model{"see": {
+				ID: "see", ToolCall: true, Modalities: &provider.Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+			}},
+		}},
+	}
+	d.router.RegisterProvider(inventoryProvider("vision"))
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers := result.(map[string]any)["providers"].([]modelInventoryProvider)
+	if len(providers) != 1 || len(providers[0].Models) != 1 || !providers[0].Models[0].ImageInput || !providers[0].Models[0].ToolCall {
+		t.Fatalf("model capabilities = %+v", providers)
+	}
+}

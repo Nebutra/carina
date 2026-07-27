@@ -271,8 +271,8 @@ func TestUpdateCommandIsDocumentedAndDaemonFree(t *testing.T) {
 
 func TestLegacyPackagedArchiveFailsClosedWhenRuntimeIncomplete(t *testing.T) {
 	// The last retained public-style archive predates the complete runtime
-	// bundle contract (it has no Headroom). Even an explicit downgrade must not
-	// silently remove a component from an existing installation.
+	// bundle contract (it has neither the Rust UI nor Headroom). Even an explicit
+	// downgrade must not silently remove a component from an installation.
 	const packagedVersion = "0.6.0"
 	archiveName, err := updateArchiveName(packagedVersion, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
@@ -284,7 +284,7 @@ func TestLegacyPackagedArchiveFailsClosedWhenRuntimeIncomplete(t *testing.T) {
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := extractAndVerifyUpdateArchive(archive, t.TempDir(), packagedVersion, runtime.GOOS, runtime.GOARCH); err == nil || !strings.Contains(err.Error(), "missing headroom") {
+	if _, err := extractAndVerifyUpdateArchive(archive, t.TempDir(), packagedVersion, runtime.GOOS, runtime.GOARCH); err == nil || !strings.Contains(err.Error(), "missing carina-ui") {
 		t.Fatalf("legacy incomplete archive error = %v", err)
 	}
 }

@@ -11,6 +11,8 @@ homepage: https://github.com/Nebutra/carina
 contents:
   - src: ./dist/stage/bin/carina
     dst: /usr/bin/carina
+  - src: ./dist/stage/bin/carina-ui
+    dst: /usr/bin/carina-ui
   - src: ./dist/stage/bin/carina-daemon
     dst: /usr/bin/carina-daemon
   - src: ./dist/stage/bin/carina-worker
@@ -31,6 +33,8 @@ contents:
     dst: /usr/bin/carina-scan
   - src: ./dist/stage/bin/headroom
     dst: /usr/bin/headroom
+  - src: ./THIRD_PARTY_NOTICES.md
+    dst: /usr/share/doc/carina/THIRD_PARTY_NOTICES.md
   - src: ./packaging/systemd/carina-worker.service
     dst: /usr/share/doc/carina/examples/carina-worker.service
   - src: ./packaging/systemd/worker.env.example

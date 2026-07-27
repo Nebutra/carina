@@ -11,10 +11,9 @@ import (
 // TestTUIApprovalRPCUnblocksInteractiveWait reproduces the round-trip gap
 // between the daemon's interactive-approval wait (awaitInteractiveApproval,
 // which blocks on d.pendingApprovals fed by handleApprovalResolve /
-// task.approval.resolve) and the TUI's approval overlay, which resolves a
-// permission.request over task.action.approve / task.action.deny
-// (handleApprove / handleDeny) — the exact RPC methods go/tui/approval.go
-// calls. Before the fix, a TUI approve is recorded by the kernel as allowed
+// task.approval.resolve) and the interactive approval component, which resolves
+// a permission.request over task.action.approve / task.action.deny
+// (handleApprove / handleDeny). Before the fix, an approval was recorded by the kernel as allowed
 // while the gated action itself times out and is denied: audit says
 // allowed, runtime denied it. This test spawns the real Rust kernel
 // subprocess (via newLoopDaemon) and drives a real agent task through
@@ -32,8 +31,7 @@ func TestTUIApprovalRPCUnblocksInteractiveWait(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// --- APPROVE path: task.action.approve (handleApprove), exactly what
-	// go/tui/approval.go resolveApproval calls on "y".
+	// --- APPROVE path: task.action.approve (handleApprove).
 	//
 	// The gated command is a local `mv` (risk level 3 per classify_atom,
 	// same "mutation" bucket the tui-bubbletea/tui-ratatui spikes drove for
@@ -87,8 +85,7 @@ func TestTUIApprovalRPCUnblocksInteractiveWait(t *testing.T) {
 	}
 	assertDecisionAudited(t, d, sess.SessionID, decisionID, "allowed")
 
-	// --- DENY path: task.action.deny (handleDeny), exactly what
-	// go/tui/approval.go resolveApproval calls on "n".
+	// --- DENY path: task.action.deny (handleDeny).
 	if err := os.WriteFile(filepath.Join(ws, "world.txt"), []byte("world\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

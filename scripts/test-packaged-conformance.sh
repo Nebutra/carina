@@ -17,10 +17,11 @@ stages=()
 while IFS= read -r path; do stages+=("$path"); done < <("${mapfile_cmd[@]}")
 [[ ${#stages[@]} -eq 1 ]] || { echo "packaged-conformance: archive must contain exactly one top-level directory" >&2; exit 1; }
 stage="${stages[0]}"
-for binary in carina carina-daemon carina-worker carina-kernel-service carina-scan carina-grep carina-diff carina-run carina-pty carina-patch-native headroom; do
+for binary in carina carina-ui carina-daemon carina-worker carina-kernel-service carina-scan carina-grep carina-diff carina-run carina-pty carina-patch-native headroom; do
   [[ -x "$stage/bin/$binary" ]] || { echo "packaged-conformance: missing executable $binary" >&2; exit 1; }
 done
 [[ -f "$stage/MANIFEST.json" && -f "$stage/checksums.txt" ]] || { echo "packaged-conformance: release metadata missing" >&2; exit 1; }
+[[ -f "$stage/THIRD_PARTY_NOTICES.md" ]] || { echo "packaged-conformance: third-party notices missing" >&2; exit 1; }
 (cd "$stage" && while read -r digest path; do
   [[ -f "$path" ]] || { echo "packaged-conformance: manifest file missing: $path" >&2; exit 1; }
   if command -v sha256sum >/dev/null 2>&1; then actual="$(sha256sum "$path" | awk '{print $1}')"; else actual="$(shasum -a 256 "$path" | awk '{print $1}')"; fi

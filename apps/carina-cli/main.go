@@ -26,11 +26,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/Nebutra/carina/go/auth"
+	"github.com/Nebutra/carina/go/daemon"
 	"github.com/Nebutra/carina/go/microcopy"
+	"github.com/Nebutra/carina/go/outcome"
 	"github.com/Nebutra/carina/go/product"
 	"github.com/Nebutra/carina/go/provider"
 	"github.com/Nebutra/carina/go/ttyutil"
-	"github.com/Nebutra/carina/go/tui"
+	term "github.com/charmbracelet/x/term"
 )
 
 const cliVersion = product.Version
@@ -143,7 +145,7 @@ Approvals, secrets, and plugins:
   carina plugin run <session_id> <manifest> <wasm>  run a WASM plugin through policy
 
 Providers and BYOK:
-  carina auth login <provider> [api_key|-]          store a local BYOK credential
+  carina auth login <provider> [-]                  validate and store a local BYOK credential
   carina auth list                                  list local credential sources
   carina auth logout <provider>                     remove a local credential
   carina providers list [--refresh] [--offline]     list provider catalog entries
@@ -203,7 +205,7 @@ func main() {
 			os.Exit(runBareTUI().ExitCode())
 		}
 		fmt.Println(microcopy.Bootstrap(microcopy.BootstrapBareUsage, nil, microcopy.DetectBootstrapLocale()))
-		os.Exit(tui.OutcomeUsage.ExitCode())
+		os.Exit(outcome.OutcomeUsage.ExitCode())
 	}
 	// Flag-shaped args belong to the interactive shell, not subcommands.
 	// Keep global -h/--help/-v/--version as CLI (not TUI) so scripts stay stable.
@@ -774,18 +776,36 @@ func cmdAuth(args []string) error {
 	switch args[0] {
 	case "login":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: carina auth login <provider> [api_key|-]")
+			return fmt.Errorf("usage: carina auth login <provider> [-]")
 		}
-		key := ""
-		if len(args) > 2 && args[2] != "-" {
-			key = args[2]
-		} else {
+		if len(args) > 3 || (len(args) == 3 && args[2] != "-") {
+			return fmt.Errorf("usage: carina auth login <provider> [-]; API keys are not accepted in process arguments")
+		}
+		var key string
+		if len(args) == 3 || !ttyutil.IsTTY(os.Stdin) {
 			key, err = readAllStdin()
 			if err != nil {
 				return err
 			}
+		} else {
+			fmt.Fprintf(os.Stderr, "API key for %s: ", strings.ToLower(args[1]))
+			secret, readErr := term.ReadPassword(os.Stdin.Fd())
+			fmt.Fprintln(os.Stderr)
+			if readErr != nil {
+				return readErr
+			}
+			key = string(secret)
 		}
-		if err := store.SetAPIKey(args[1], key, nil); err != nil {
+		cachePath, err := provider.DefaultCachePath()
+		if err != nil {
+			return err
+		}
+		catalog, err := provider.Load(provider.Options{CachePath: cachePath})
+		if err != nil {
+			return err
+		}
+		setup := daemon.NewProviderSetupService(store, catalog, nil)
+		if _, err := setup.ValidateAndStoreAPIKey(context.Background(), args[1], key); err != nil {
 			return err
 		}
 		fmt.Printf("stored credential for %s in %s\n", strings.ToLower(args[1]), store.Path)

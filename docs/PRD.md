@@ -406,8 +406,8 @@ MVP 只支持:本地 workspace、单用户、单 daemon、safe-edit profile、�
 
 ```
 carina/
-  apps/        carina-cli/ carina-tui/ carina-daemon/
-  crates/      carina-kernel/ carina-policy/ carina-patch/ carina-audit/ carina-plugin-runtime/
+  apps/        carina-cli/ carina-daemon/
+  crates/      carina-tui/ xai-ratatui-inline/ xai-ratatui-textarea/ carina-kernel/ carina-policy/ carina-patch/ carina-audit/ carina-plugin-runtime/
   zig/         carina-scan/ carina-grep/ carina-diff/ carina-patch-native/ carina-run/ carina-pty/
   go/          daemon/ scheduler/ worker/ rpc/ model-router/ session-store/
   sdk/         typescript/ python/ go/

@@ -52,5 +52,7 @@ for binary in "$root"/bin/*; do
   cp "$binary" "$bin_dir/$(basename "$binary")"
   chmod 0755 "$bin_dir/$(basename "$binary")"
 done
+rm -f "$bin_dir/carina-tui"
 [ -x "$bin_dir/carina" ] || { echo "carina install: archive did not contain carina" >&2; exit 1; }
+[ -x "$bin_dir/carina-ui" ] || { echo "carina install: archive did not contain carina-ui" >&2; exit 1; }
 echo "carina install: installed $version to $bin_dir"

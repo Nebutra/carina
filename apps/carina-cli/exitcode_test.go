@@ -5,15 +5,14 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/Nebutra/carina/go/outcome"
 	"github.com/Nebutra/carina/go/rpc"
-	"github.com/Nebutra/carina/go/tui"
 )
 
-// TestClassifyExitCodeOK pins the trivial case: no error is OutcomeOK (exit
-// 0), reusing go/tui's already-shipped Outcome enum rather than a second
-// exit-code table for the CLI's one-shot path.
+// TestClassifyExitCodeOK pins the trivial case: no error is OutcomeOK (exit 0)
+// through the renderer-neutral exit-code table.
 func TestClassifyExitCodeOK(t *testing.T) {
-	if got := classifyExitCode(nil); got != tui.OutcomeOK {
+	if got := classifyExitCode(nil); got != outcome.OutcomeOK {
 		t.Fatalf("classifyExitCode(nil) = %v, want OutcomeOK", got)
 	}
 }
@@ -25,9 +24,9 @@ func TestClassifyExitCodeOK(t *testing.T) {
 func TestClassifyExitCodeDaemonUnreachable(t *testing.T) {
 	err := fmt.Errorf("dial failed: %w", rpc.ErrDaemonUnreachable)
 	got := classifyExitCode(err)
-	if got != tui.OutcomeDaemonUnreachable {
+	if got != outcome.OutcomeDaemonUnreachable {
 		t.Fatalf("classifyExitCode(dial error) = %v (exit %d), want OutcomeDaemonUnreachable (exit %d)",
-			got, got.ExitCode(), tui.OutcomeDaemonUnreachable.ExitCode())
+			got, got.ExitCode(), outcome.OutcomeDaemonUnreachable.ExitCode())
 	}
 }
 
@@ -38,9 +37,9 @@ func TestClassifyExitCodeDaemonUnreachable(t *testing.T) {
 func TestClassifyExitCodePolicyDenied(t *testing.T) {
 	err := errors.New("DENIED by policy: destructive command blocked by rule cmd.rm-rf")
 	got := classifyExitCode(err)
-	if got != tui.OutcomePolicyDenied {
+	if got != outcome.OutcomePolicyDenied {
 		t.Fatalf("classifyExitCode(policy denial) = %v (exit %d), want OutcomePolicyDenied (exit %d)",
-			got, got.ExitCode(), tui.OutcomePolicyDenied.ExitCode())
+			got, got.ExitCode(), outcome.OutcomePolicyDenied.ExitCode())
 	}
 }
 
@@ -51,9 +50,9 @@ func TestClassifyExitCodePolicyDenied(t *testing.T) {
 func TestClassifyExitCodeUserDenied(t *testing.T) {
 	err := errors.New("denied by user: reason=not now")
 	got := classifyExitCode(err)
-	if got != tui.OutcomeUserDenied {
+	if got != outcome.OutcomeUserDenied {
 		t.Fatalf("classifyExitCode(user denial) = %v (exit %d), want OutcomeUserDenied (exit %d)",
-			got, got.ExitCode(), tui.OutcomeUserDenied.ExitCode())
+			got, got.ExitCode(), outcome.OutcomeUserDenied.ExitCode())
 	}
 }
 
@@ -63,7 +62,7 @@ func TestClassifyExitCodeUserDenied(t *testing.T) {
 func TestClassifyExitCodeGenericRuntimeError(t *testing.T) {
 	err := errors.New("boom: unexpected condition")
 	got := classifyExitCode(err)
-	if got != tui.OutcomeRuntimeError {
+	if got != outcome.OutcomeRuntimeError {
 		t.Fatalf("classifyExitCode(generic error) = %v, want OutcomeRuntimeError", got)
 	}
 }
@@ -73,21 +72,21 @@ func TestClassifyExitCodeGenericRuntimeError(t *testing.T) {
 // exit 6, not collapse into the generic OutcomeRuntimeError(1) — a WARN
 // (e.g. no BYOK key yet) is not the same governance fact as a hard FAIL.
 func TestClassifyExitCodeDoctorDegraded(t *testing.T) {
-	err := &doctorOutcomeError{outcome: tui.OutcomeDegradedPartial}
+	err := &doctorOutcomeError{outcome: outcome.OutcomeDegradedPartial}
 	got := classifyExitCode(err)
-	if got != tui.OutcomeDegradedPartial {
+	if got != outcome.OutcomeDegradedPartial {
 		t.Fatalf("classifyExitCode(doctor WARN) = %v (exit %d), want OutcomeDegradedPartial (exit %d)",
-			got, got.ExitCode(), tui.OutcomeDegradedPartial.ExitCode())
+			got, got.ExitCode(), outcome.OutcomeDegradedPartial.ExitCode())
 	}
 }
 
 // TestClassifyExitCodeDoctorFailed pins carina doctor's FAIL-tier mapping.
 func TestClassifyExitCodeDoctorFailed(t *testing.T) {
-	err := &doctorOutcomeError{outcome: tui.OutcomeRuntimeError}
+	err := &doctorOutcomeError{outcome: outcome.OutcomeRuntimeError}
 	got := classifyExitCode(err)
-	if got != tui.OutcomeRuntimeError {
+	if got != outcome.OutcomeRuntimeError {
 		t.Fatalf("classifyExitCode(doctor FAIL) = %v (exit %d), want OutcomeRuntimeError (exit %d)",
-			got, got.ExitCode(), tui.OutcomeRuntimeError.ExitCode())
+			got, got.ExitCode(), outcome.OutcomeRuntimeError.ExitCode())
 	}
 }
 
@@ -100,9 +99,9 @@ func TestClassifyExitCodeDoctorFailed(t *testing.T) {
 func TestClassifyExitCodeUsageError(t *testing.T) {
 	err := errors.New("usage: carina watch <session_id> [--json]")
 	got := classifyExitCode(err)
-	if got != tui.OutcomeUsage {
+	if got != outcome.OutcomeUsage {
 		t.Fatalf("classifyExitCode(usage error) = %v (exit %d), want OutcomeUsage (exit %d)",
-			got, got.ExitCode(), tui.OutcomeUsage.ExitCode())
+			got, got.ExitCode(), outcome.OutcomeUsage.ExitCode())
 	}
 }
 
@@ -112,8 +111,8 @@ func TestClassifyExitCodeUsageError(t *testing.T) {
 func TestClassifyExitCodeUsageErrorFromBacktickFormat(t *testing.T) {
 	err := fmt.Errorf(`usage: carina %s [--agent name] [--model provider/model] "<prompt>" [--background]`, "run")
 	got := classifyExitCode(err)
-	if got != tui.OutcomeUsage {
+	if got != outcome.OutcomeUsage {
 		t.Fatalf("classifyExitCode(backtick usage error) = %v (exit %d), want OutcomeUsage (exit %d)",
-			got, got.ExitCode(), tui.OutcomeUsage.ExitCode())
+			got, got.ExitCode(), outcome.OutcomeUsage.ExitCode())
 	}
 }

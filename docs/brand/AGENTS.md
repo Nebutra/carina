@@ -52,7 +52,7 @@ Rules:
 
 - Three README files consume `assets/hero/carina-readme-hero.webp` and the approved badge palette.
 - `integrations/vscode/media/carina.svg` is a byte-identical monochrome derivative of `assets/logo/carina-symbol.svg`.
-- `go/tui/theme` transcribes the terminal subset of `design-system/design-tokens.json` plus documented ANSI-256 fallbacks.
+- `crates/carina-tui/src/theme.rs` transcribes the terminal subset of `design-system/design-tokens.json` plus documented ANSI-256 fallbacks.
 - Future web/UI clients should consume `design-system/variables.css`, `design-system/tailwind-v4.css`, or `design-system/carina.ts`; do not maintain a second token set.
 
 ## Change Procedure

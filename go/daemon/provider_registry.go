@@ -83,7 +83,18 @@ func loadRuntimeProviderCatalog(offline bool) provider.Catalog {
 	if err != nil || len(cat) == 0 {
 		return provider.Seed()
 	}
-	return cat
+	return mergeBuiltinRuntimeProviders(cat)
+}
+
+func mergeBuiltinRuntimeProviders(cat provider.Catalog) provider.Catalog {
+	merged := make(provider.Catalog, len(cat)+len(provider.Seed()))
+	for id, info := range provider.Seed() {
+		merged[id] = info
+	}
+	for id, info := range cat {
+		merged[id] = info
+	}
+	return merged
 }
 
 func disabledProviderSet(ids []string) map[string]bool {

@@ -7,14 +7,14 @@ import (
 	"strings"
 
 	"github.com/Nebutra/carina/go/microcopy"
-	"github.com/Nebutra/carina/go/tui"
-	"github.com/Nebutra/carina/go/tuiapp"
+	"github.com/Nebutra/carina/go/outcome"
+	"github.com/Nebutra/carina/go/ttyutil"
 )
 
 // cmdInteractive launches the only interactive shell entry: bare `carina`
 // with optional flags (`carina -session …`). There is no separate `tui`
 // subcommand.
-func cmdInteractive(args []string) tui.Outcome {
+func cmdInteractive(args []string) outcome.Outcome {
 	bootstrapLocale := microcopy.DetectBootstrapLocale()
 	fs := flag.NewFlagSet("carina", flag.ContinueOnError)
 	var parseOutput strings.Builder
@@ -39,14 +39,17 @@ func cmdInteractive(args []string) tui.Outcome {
 	}
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprint(os.Stderr, parseOutput.String())
-		return tui.OutcomeUsage
+		return outcome.OutcomeUsage
 	}
-	return runTUI(tuiapp.Options{
+	if !ttyutil.IsTTY(os.Stdin) || !ttyutil.IsTTY(os.Stdout) {
+		fmt.Fprintln(os.Stderr, microcopy.Bootstrap(microcopy.BootstrapInteractiveRequired, nil, bootstrapLocale))
+		return outcome.OutcomeUsage
+	}
+	return runTUI(interactiveOptions{
 		Socket:        *socket,
 		SessionID:     *session,
 		WorkspaceRoot: *workspace,
 		Locale:        locale,
 		NoAltScreen:   *noAltScreen,
-		RequireTTY:    true,
 	})
 }

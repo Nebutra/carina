@@ -4,26 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/Nebutra/carina/go/doctorfix"
-	"github.com/Nebutra/carina/go/tui"
-	"github.com/Nebutra/carina/go/tuiapp"
+	"github.com/Nebutra/carina/go/outcome"
 )
 
 // carina doctor (P1.6): wires the daemon's daemon.doctor probe list to a
 // three-state (pass/warn/fail) human render with copy-paste remediation
-// strings, honors the CARINA_DOCTOR_DISABLE kill-switch, and backs the
-// first-launch connected task consumed by bare `carina` (runBareTUI).
-
-// doctorFirstRunMarker is the file whose absence in ~/.carina marks "this
-// machine has never run carina doctor" — the first-launch auto-run signal.
-// A dedicated marker (rather than "does ~/.carina exist") because `carina
-// init` and any governed command can create ~/.carina before doctor ever
-// runs; auto-run must fire exactly once regardless of ordering.
-const doctorFirstRunMarker = ".doctor-first-run"
+// strings and honors the CARINA_DOCTOR_DISABLE kill-switch.
 
 // doctorDisabledEnv is the CLI-side kill-switch env var name, kept
 // byte-for-byte identical to go/daemon's doctorDisabledEnv constant
@@ -48,62 +38,6 @@ func doctorDisabled(getenv func(string) string) bool {
 	}
 }
 
-// shouldAutoRunDoctor reports whether carina doctor should auto-run because
-// this looks like a first launch on this machine: homeDir has no
-// .doctor-first-run marker yet. A stat error (including "not exist") counts
-// as "should run" — matching cmdInit's own MkdirAll-creates-if-missing
-// posture rather than blocking doctor on a directory that may not exist yet.
-func shouldAutoRunDoctor(homeDir string) bool {
-	_, err := os.Stat(filepath.Join(homeDir, doctorFirstRunMarker))
-	return err != nil
-}
-
-// markDoctorAutoRun writes the first-run marker so shouldAutoRunDoctor never
-// fires again on this machine. Best-effort: called after an auto-run
-// attempt regardless of the probes' pass/warn/fail outcome, since the point
-// is "doctor has run once as onboarding", not "doctor passed once".
-func markDoctorAutoRun(homeDir string) error {
-	if err := os.MkdirAll(homeDir, 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(homeDir, doctorFirstRunMarker), []byte("1\n"), 0o600)
-}
-
-// maybeAutoRunDoctor runs first-launch probes after Conversation has attached.
-// It returns a compact in-product notice; the full report remains owned by the
-// explicit `carina doctor` command and never corrupts the active terminal UI.
-func maybeAutoRunDoctor(call tuiapp.RPC) tuiapp.ConnectedTaskResult {
-	if doctorDisabled(os.Getenv) {
-		return tuiapp.ConnectedTaskResult{}
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return tuiapp.ConnectedTaskResult{}
-	}
-	dir := filepath.Join(home, ".carina")
-	if !shouldAutoRunDoctor(dir) {
-		return tuiapp.ConnectedTaskResult{}
-	}
-	var report map[string]any
-	err = call.Call("daemon.doctor", map[string]any{}, &report)
-	_ = markDoctorAutoRun(dir)
-	if err != nil {
-		return tuiapp.ConnectedTaskResult{
-			Notice:  "First-launch checks could not complete; run `carina doctor`.",
-			Outcome: tui.OutcomeDegradedPartial,
-		}
-	}
-	outcome := doctorOutcome(report)
-	switch outcome {
-	case tui.OutcomeOK:
-		return tuiapp.ConnectedTaskResult{Notice: "First-launch checks passed.", Outcome: outcome}
-	case tui.OutcomeDegradedPartial:
-		return tuiapp.ConnectedTaskResult{Notice: "First-launch checks found warnings; run `carina doctor`.", Outcome: outcome}
-	default:
-		return tuiapp.ConnectedTaskResult{Notice: "First-launch checks need attention; run `carina doctor`.", Outcome: outcome}
-	}
-}
-
 // cmdDoctor dispatches daemon.doctor and renders pass/warn/fail with
 // remediation (default) or passes the raw JSON through (--json), matching
 // the one-engine-two-renderers contract (P1.5) other commands already
@@ -113,7 +47,7 @@ func maybeAutoRunDoctor(call tuiapp.RPC) tuiapp.ConnectedTaskResult {
 //
 // The report is always printed before any error is returned: a non-OK
 // verdict returns a *doctorOutcomeError so classifyExitCode maps it to the
-// shared tui.Outcome exit code (6 degraded-partial for WARN, 1 runtime
+// shared outcome.Outcome exit code (6 degraded-partial for WARN, 1 runtime
 // error for FAIL) — doctor's exit code is truthful about its own findings
 // exactly like every other governed command's.
 func cmdDoctor(c *rpcClient, args []string) error {
@@ -184,12 +118,12 @@ func cmdDoctor(c *rpcClient, args []string) error {
 			fmt.Printf("doctor fix: applied %d repair(s); rerun `carina doctor` to verify\n", len(actions))
 		}
 	}
-	outcome := doctorOutcome(report)
+	resultOutcome := doctorOutcome(report)
 	if auditChk != nil && auditChk.state == "FAIL" {
-		outcome = tui.OutcomeRuntimeError
+		resultOutcome = outcome.OutcomeRuntimeError
 	}
-	if outcome != tui.OutcomeOK {
-		return &doctorOutcomeError{outcome: outcome}
+	if resultOutcome != outcome.OutcomeOK {
+		return &doctorOutcomeError{outcome: resultOutcome}
 	}
 	return nil
 }
@@ -320,7 +254,7 @@ func doctorChecks(report map[string]any) []doctorCheck {
 			// no reasoner still runs in mock mode.
 			chk.state = "WARN"
 			chk.detail = "no model reasoner configured — running in mock mode"
-			chk.remediation = "carina auth login <provider> <api_key>"
+			chk.remediation = "carina auth login <provider>"
 		}
 		out = append(out, chk)
 	}
@@ -433,7 +367,7 @@ func byokCheck(byok map[string]any) doctorCheck {
 		name:        "byok",
 		state:       "WARN",
 		detail:      detail,
-		remediation: "carina auth login <provider> <api_key>",
+		remediation: "carina auth login <provider>",
 	}
 }
 
@@ -554,9 +488,9 @@ func doctorTier(report map[string]any) string {
 // doctorExitCode maps a decoded daemon.doctor report to the P1.5 governance
 // exit-code enum's raw int: FAIL -> 1 (runtime error — the daemon itself is
 // unhealthy, distinct from a policy/approval outcome), WARN -> 6
-// (degraded-partial), PASS -> 0. Kept as int (rather than tui.Outcome
+// (degraded-partial), PASS -> 0. Kept as int (rather than outcome.Outcome
 // directly) because it is doctor's own internal render-time classification;
-// doctorOutcome adapts it to tui.Outcome for classifyExitCode.
+// doctorOutcome adapts it to outcome.Outcome for classifyExitCode.
 func doctorExitCode(report map[string]any) int {
 	switch doctorTier(report) {
 	case "FAIL":
@@ -568,17 +502,17 @@ func doctorExitCode(report map[string]any) int {
 	}
 }
 
-// doctorOutcome adapts doctorTier to the shared tui.Outcome enum
+// doctorOutcome adapts doctorTier to the shared outcome.Outcome enum
 // (OutcomeOK/OutcomeDegradedPartial/OutcomeRuntimeError) for
 // classifyExitCode — P1.5 requires every command reuse this one enum
 // rather than inventing a second.
-func doctorOutcome(report map[string]any) tui.Outcome {
+func doctorOutcome(report map[string]any) outcome.Outcome {
 	switch doctorTier(report) {
 	case "FAIL":
-		return tui.OutcomeRuntimeError
+		return outcome.OutcomeRuntimeError
 	case "WARN":
-		return tui.OutcomeDegradedPartial
+		return outcome.OutcomeDegradedPartial
 	default:
-		return tui.OutcomeOK
+		return outcome.OutcomeOK
 	}
 }

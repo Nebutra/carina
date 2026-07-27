@@ -1,33 +1,44 @@
-.PHONY: all install uninstall go rust zig sdk-ts test rust-test go-test brand-check zh-hant-check docs-build quality-check swarm-integration-test bench-gate-test audit-bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
+.PHONY: all install uninstall go rust-ui rust-ui-e2e rust zig sdk-ts test rust-test go-test brand-check zh-hant-check docs-build quality-check swarm-integration-test bench-gate-test audit-bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
 
 PREFIX ?= $(HOME)/.local
 BINDIR = $(PREFIX)/bin
 ZIG_TOOLS = carina-scan carina-grep carina-diff carina-run carina-pty carina-patch-native
 
-all: go rust zig
+all: go rust-ui rust zig
 
 # Mirrors the release-package bin/ layout (minus the pinned Headroom bundle):
 # the daemon discovers the kernel service and native tools next to its own
 # binary, so everything installs flat into one directory.
 install: all
-	cargo build --release -p carina-kernel --bin carina-kernel-service
+	cargo build --release -p carina-kernel --bin carina-kernel-service -p carina-tui --bin carina-ui
 	install -d $(BINDIR)
 	install -m 755 bin/carina bin/carina-daemon bin/carina-worker $(BINDIR)
-	install -m 755 target/release/carina-kernel-service $(BINDIR)
+	install -m 755 target/release/carina-kernel-service target/release/carina-ui $(BINDIR)
 	for name in $(ZIG_TOOLS); do install -m 755 zig/zig-out/bin/$$name $(BINDIR) || exit 1; done
 	# Retired binary — interactive shell is bare `carina` only.
 	rm -f $(BINDIR)/carina-tui
 	@echo "Installed to $(BINDIR). Ensure it is on PATH."
 
 uninstall:
-	rm -f $(addprefix $(BINDIR)/,carina carina-daemon carina-worker carina-tui carina-kernel-service $(ZIG_TOOLS))
+	rm -f $(addprefix $(BINDIR)/,carina carina-ui carina-daemon carina-worker carina-tui carina-kernel-service $(ZIG_TOOLS))
 
 go:
 	rm -f bin/carina-tui
+	install -d bin
 	go build -o bin/carina ./apps/carina-cli
 	go build -o bin/carina-daemon ./apps/carina-daemon
 	go build -o bin/carina-worker ./apps/carina-worker
 	go vet ./...
+
+rust-ui:
+	cargo build -p carina-tui --bin carina-ui
+	install -d bin
+	install -m 755 target/debug/carina-ui bin/carina-ui
+
+rust-ui-e2e: go rust-ui
+	cargo build --release -p carina-kernel --bin carina-kernel-service
+	./scripts/build-zig-tools.sh
+	bash scripts/test-rust-tui-journey.sh
 
 test: rust-test go-test
 

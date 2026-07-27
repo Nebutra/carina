@@ -59,6 +59,21 @@ func TestOpenAIChatProvider(t *testing.T) {
 	}
 }
 
+func TestRuntimeCatalogKeepsBuiltinLocalProvider(t *testing.T) {
+	remote := provider.Catalog{
+		"openai": {ID: "openai", Name: "Remote OpenAI", API: "https://example.test/v1"},
+	}
+	merged := mergeBuiltinRuntimeProviders(remote)
+
+	local, ok := merged["local"]
+	if !ok || local.NPM != "@ai-sdk/openai-compatible" {
+		t.Fatalf("builtin local provider missing after catalog merge: %+v", local)
+	}
+	if got := merged["openai"].Name; got != "Remote OpenAI" {
+		t.Fatalf("remote provider should override builtin metadata, got %q", got)
+	}
+}
+
 func TestOpenAIChatProviderAppliesModelOverride(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("X-Mode"); got != "fast" {
