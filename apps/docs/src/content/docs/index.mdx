@@ -17,7 +17,8 @@ import QuickStart from '../../components/landing/QuickStart.astro';
   title="Give coding agents full power — without losing control."
   subtitle="Carina is the local runtime where every agent action passes policy, lands on a hash-chained audit record, and can be rolled back."
   primaryCta={{ label: 'Get started', href: '/getting-started/quickstart/' }}
-  secondaryCta={{ label: 'View Runtime API', href: '/api/overview/' }}
+  secondaryCta={{ label: 'Runtime API', href: '/api/overview/' }}
+  trustChips={['Local-first', 'Policy-gated tools', 'Hash-chained audit', 'Rollback']}
 />
 
 <InstallStrip />
@@ -78,6 +79,7 @@ import QuickStart from '../../components/landing/QuickStart.astro';
 <CodePreview title="carina — governed session" />
 
 <QuickStart
+  subheading="Three steps from install to a governed session."
   cards={[
     {
       step: '01',

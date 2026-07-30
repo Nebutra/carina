@@ -1,6 +1,6 @@
 ---
 /**
- * Homepage one-click install bar (Mintlify / Vercel docs pattern).
+ * Homepage one-click install bar — sits tight under the hero as the next step.
  */
 interface Props {
   command?: string;
@@ -20,7 +20,8 @@ const copy = isZh
       buttonLabel: '复制安装命令',
       copy: '复制',
       copied: '已复制',
-      allOptions: '查看全部安装方式',
+      allOptions: '全部安装方式',
+      hint: '一条命令装到本机 · 也可选 Homebrew / npm',
     }
   : {
       regionLabel: 'Install Carina',
@@ -28,13 +29,18 @@ const copy = isZh
       copy: 'Copy',
       copied: 'Copied',
       allOptions: 'All install options',
+      hint: 'One command on your machine · Homebrew & npm also available',
     };
 ---
 
 <section class="install-strip" aria-label={copy.regionLabel}>
   <div class="install-strip__inner">
-    <p class="install-strip__label">{label}</p>
+    <div class="install-strip__meta">
+      <p class="install-strip__label">{label}</p>
+      <p class="install-strip__hint">{copy.hint}</p>
+    </div>
     <div class="install-strip__bar" data-install-strip>
+      <span class="install-strip__prompt" aria-hidden="true">$</span>
       <code class="install-strip__cmd" data-install-cmd>{command}</code>
       <button
         type="button"
@@ -55,18 +61,18 @@ const copy = isZh
     if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
     root.dataset.ready = '1';
     const btn = root.querySelector<HTMLButtonElement>('[data-install-copy]');
-    const label = root.querySelector<HTMLElement>('[data-install-copy-label]');
+    const labelEl = root.querySelector<HTMLElement>('[data-install-copy-label]');
     const cmd = root.querySelector<HTMLElement>('[data-install-cmd]')?.textContent?.trim();
     if (!btn || !cmd) return;
     btn.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(cmd);
-        if (label) {
-          const prev = label.textContent;
-          label.textContent = btn.dataset.copySuccess || 'Copied';
+        if (labelEl) {
+          const prev = labelEl.textContent;
+          labelEl.textContent = btn.dataset.copySuccess || 'Copied';
           btn.classList.add('is-copied');
           window.setTimeout(() => {
-            label.textContent = prev;
+            labelEl.textContent = prev;
             btn.classList.remove('is-copied');
           }, 1400);
         }
@@ -84,42 +90,63 @@ const copy = isZh
 
 <style>
   .install-strip {
-    padding: 0 var(--spacing-6) var(--spacing-10);
-    border-bottom: 1px solid var(--docs-border-subtle);
+    padding: 0 var(--spacing-6) var(--spacing-12);
+    margin-top: calc(-1 * var(--spacing-2));
   }
 
   @media (min-width: 768px) {
     .install-strip {
-      padding: 0 var(--spacing-10) var(--spacing-12);
+      padding: 0 var(--spacing-10) var(--spacing-14);
     }
   }
 
   .install-strip__inner {
-    max-width: 40rem;
+    max-width: 42rem;
     margin: 0 auto;
     text-align: center;
   }
 
+  .install-strip__meta {
+    margin-bottom: 0.75rem;
+  }
+
   .install-strip__label {
-    margin: 0 0 var(--spacing-3);
-    font-size: 0.75rem;
+    margin: 0 0 0.2rem;
+    font-size: 0.7rem;
     font-weight: 600;
-    letter-spacing: 0;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--docs-fg-subtle);
+  }
+
+  .install-strip__hint {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--docs-fg-muted);
+    line-height: 1.4;
   }
 
   .install-strip__bar {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    min-height: 2.75rem;
-    padding: 0.35rem 0.4rem 0.35rem 0.9rem;
-    border: 1px solid var(--polish-code-border);
-    border-radius: 10px;
-    background: var(--polish-code-bg);
-    box-shadow: var(--polish-inset-glow);
+    gap: 0.45rem;
+    min-height: 3rem;
+    padding: 0.4rem 0.4rem 0.4rem 0.85rem;
+    border: 1px solid var(--polish-code-border, var(--docs-border));
+    border-radius: 12px;
+    background: var(--polish-code-bg, var(--docs-bg-raised));
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, var(--docs-fg) 5%, transparent),
+      0 12px 32px -20px color-mix(in srgb, var(--docs-fg) 40%, transparent);
     text-align: start;
+  }
+
+  .install-strip__prompt {
+    flex-shrink: 0;
+    font-family: var(--docs-font-mono);
+    font-size: 0.85rem;
+    color: var(--docs-accent);
+    user-select: none;
   }
 
   .install-strip__cmd {
@@ -130,13 +157,8 @@ const copy = isZh
     font-family: var(--docs-font-mono);
     font-size: 0.8125rem;
     line-height: 1.4;
-    color: var(--polish-code-fg);
+    color: var(--polish-code-fg, var(--docs-fg));
     white-space: nowrap;
-    /*
-     * This <code> sits inside .sl-markdown-content, so the global inline-code
-     * chip rule paints a light chip bg under our light-on-dark text in light
-     * mode (unreadable). Opt out of the chip treatment entirely.
-     */
     background: transparent;
     border: 0;
     border-radius: 0;
@@ -151,15 +173,16 @@ const copy = isZh
   .install-strip__copy {
     appearance: none;
     flex-shrink: 0;
-    min-height: 2rem;
-    padding: 0 0.75rem;
-    border: 1px solid var(--carina-border);
-    border-radius: 6px;
-    background: var(--polish-code-chrome);
-    color: var(--polish-code-muted);
+    min-height: 2.25rem;
+    min-width: 4.25rem;
+    padding: 0 0.85rem;
+    border: 1px solid color-mix(in srgb, var(--docs-accent) 40%, var(--docs-border));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--docs-accent) 12%, transparent);
+    color: var(--docs-accent);
     font-family: var(--docs-font-sans);
     font-size: 0.75rem;
-    font-weight: 500;
+    font-weight: 600;
     cursor: pointer;
     transition:
       color 150ms ease,
@@ -168,14 +191,14 @@ const copy = isZh
   }
 
   .install-strip__copy:hover {
-    color: var(--polish-code-fg);
-    /* One step lighter than --carina-border for hover affordance */
-    border-color: color-mix(in srgb, var(--carina-border) 80%, var(--carina-dust));
+    background: color-mix(in srgb, var(--docs-accent) 18%, transparent);
+    border-color: var(--docs-accent);
   }
 
   .install-strip__copy.is-copied {
-    color: var(--polish-code-success-fg);
-    border-color: color-mix(in srgb, var(--carina-spectral-green) 45%, var(--carina-border));
+    color: var(--docs-success);
+    border-color: color-mix(in srgb, var(--docs-success) 45%, var(--docs-border));
+    background: color-mix(in srgb, var(--docs-success) 12%, transparent);
   }
 
   .install-strip__copy:focus-visible {
@@ -185,7 +208,7 @@ const copy = isZh
 
   .install-strip__more {
     display: inline-block;
-    margin-top: var(--spacing-3);
+    margin-top: 0.85rem;
     font-size: 0.8125rem;
     font-weight: 500;
     color: var(--docs-fg-muted);

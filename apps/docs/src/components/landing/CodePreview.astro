@@ -53,7 +53,13 @@ const {
 <style>
   .code-preview {
     border-block: 1px solid var(--docs-border-subtle);
-    background: color-mix(in srgb, var(--docs-bg-surface) 55%, transparent);
+    background:
+      radial-gradient(
+        ellipse 60% 50% at 80% 40%,
+        color-mix(in srgb, var(--docs-accent) 6%, transparent),
+        transparent 70%
+      ),
+      color-mix(in srgb, var(--docs-bg-surface) 55%, transparent);
     padding: var(--spacing-16) var(--spacing-6);
   }
 
@@ -106,21 +112,24 @@ const {
 
   .code-preview__list li {
     position: relative;
-    padding-inline-start: var(--spacing-5);
+    padding-inline-start: 1.65rem;
     color: var(--docs-fg-muted);
     font-size: var(--text-body-sm);
-    line-height: 1.5;
+    line-height: 1.55;
   }
 
   .code-preview__list li::before {
     content: '';
     position: absolute;
     left: 0;
-    top: 0.45em;
-    width: 8px;
-    height: 8px;
-    border-radius: var(--docs-radius-full);
-    background: var(--docs-accent);
+    top: 0.4em;
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at center, var(--docs-accent) 0 3px, transparent 3.5px),
+      color-mix(in srgb, var(--docs-accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--docs-accent) 35%, transparent);
   }
 
   .code-preview__panel {

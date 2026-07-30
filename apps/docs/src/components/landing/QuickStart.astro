@@ -1,4 +1,7 @@
 ---
+/**
+ * Quick start — numbered path with visual step connection on desktop.
+ */
 interface Card {
   title: string;
   description: string;
@@ -8,12 +11,14 @@ interface Card {
 
 interface Props {
   heading?: string;
+  subheading?: string;
   ctaLabel?: string;
   cards: Card[];
 }
 
 const {
   heading = 'Quick start',
+  subheading = 'Three steps from install to a governed session.',
   ctaLabel = 'Open guide',
   cards,
 } = Astro.props;
@@ -21,80 +26,136 @@ const {
 
 <section class="quickstart">
   <div class="quickstart__inner">
-    <h2 class="quickstart__heading">{heading}</h2>
-    <div class="quickstart__grid">
+    <header class="quickstart__header">
+      <h2 class="quickstart__heading">{heading}</h2>
+      {subheading && <p class="quickstart__sub">{subheading}</p>}
+    </header>
+    <ol class="quickstart__grid">
       {
-        cards.map((card) => (
-          <a class="qs-card" href={card.href}>
-            <span class="qs-card__step">{card.step}</span>
-            <h3 class="qs-card__title">{card.title}</h3>
-            <p class="qs-card__desc">{card.description}</p>
-            <span class="qs-card__cta">
-              {ctaLabel}
-              <span aria-hidden="true">→</span>
-            </span>
-          </a>
+        cards.map((card, i) => (
+          <li class="qs-item">
+            {i < cards.length - 1 && <span class="qs-item__rail" aria-hidden="true" />}
+            <a class="qs-card" href={card.href}>
+              <span class="qs-card__step">{card.step}</span>
+              <h3 class="qs-card__title">{card.title}</h3>
+              <p class="qs-card__desc">{card.description}</p>
+              <span class="qs-card__cta">
+                {ctaLabel}
+                <span class="qs-card__arrow" aria-hidden="true">→</span>
+              </span>
+            </a>
+          </li>
         ))
       }
-    </div>
+    </ol>
   </div>
 </section>
 
 <style>
   .quickstart {
     padding: var(--spacing-16) var(--spacing-6) var(--spacing-24);
+    border-top: 1px solid var(--docs-border-subtle);
+    background: color-mix(in srgb, var(--docs-bg-surface) 40%, transparent);
   }
 
   @media (min-width: 768px) {
     .quickstart {
-      padding: var(--spacing-20) var(--spacing-10) var(--spacing-30);
+      padding: var(--spacing-20) var(--spacing-10) var(--spacing-28);
     }
   }
 
   .quickstart__inner {
-    max-width: var(--layout-page-max);
+    max-width: var(--docs-page-max, var(--layout-page-max, 72rem));
     margin: 0 auto;
   }
 
-  .quickstart__heading {
-    margin: 0 0 var(--spacing-8);
+  .quickstart__header {
+    max-width: 36rem;
+    margin: 0 auto 2rem;
     text-align: center;
+  }
+
+  .quickstart__heading {
+    margin: 0 0 0.5rem;
     font-size: clamp(1.4rem, 2.5vw, 1.85rem);
     font-weight: var(--font-weight-semibold);
     color: var(--docs-fg);
     letter-spacing: -0.02em;
   }
 
+  .quickstart__sub {
+    margin: 0;
+    color: var(--docs-fg-muted);
+    font-size: 0.975rem;
+    line-height: 1.55;
+  }
+
   .quickstart__grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: grid;
     grid-template-columns: 1fr;
-    gap: var(--spacing-4);
+    gap: 1rem;
   }
 
   @media (min-width: 768px) {
     .quickstart__grid {
       grid-template-columns: repeat(3, 1fr);
+      gap: 1.25rem;
+    }
+  }
+
+  .qs-item {
+    position: relative;
+    margin: 0;
+    min-width: 0;
+  }
+
+  /* Connector rail between steps (desktop) */
+  @media (min-width: 768px) {
+    .qs-item__rail {
+      position: absolute;
+      top: 1.65rem;
+      left: calc(50% + 1.75rem);
+      width: calc(100% - 2rem);
+      height: 1px;
+      background: linear-gradient(
+        90deg,
+        color-mix(in srgb, var(--docs-accent) 45%, transparent),
+        color-mix(in srgb, var(--docs-border) 80%, transparent)
+      );
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .qs-item:last-child .qs-item__rail {
+      display: none;
     }
   }
 
   .qs-card {
+    position: relative;
+    z-index: 1;
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-3);
-    padding: var(--spacing-6);
-    background: var(--docs-card-bg);
-    border: 1px solid var(--docs-card-border);
-    border-radius: var(--docs-panel-radius);
+    height: 100%;
+    gap: 0.65rem;
+    padding: 1.35rem 1.35rem 1.25rem;
+    background: var(--docs-card-bg, var(--docs-bg-surface));
+    border: 1px solid var(--docs-card-border, var(--docs-border-subtle));
+    border-radius: 12px;
     text-decoration: none;
     transition:
-      border-color var(--docs-transition),
-      background-color var(--docs-transition),
-      transform var(--docs-transition);
+      border-color 160ms cubic-bezier(0.2, 0, 0, 1),
+      background-color 160ms cubic-bezier(0.2, 0, 0, 1),
+      transform 160ms cubic-bezier(0.2, 0, 0, 1);
   }
 
   .qs-card:hover {
-    border-color: var(--docs-card-hover-border);
-    background: var(--docs-bg-raised);
+    border-color: color-mix(in srgb, var(--docs-accent) 35%, var(--docs-border));
+    background: var(--docs-bg-raised, var(--docs-bg-surface));
+    transform: translateY(-2px);
   }
 
   .qs-card:focus-visible {
@@ -103,35 +164,64 @@ const {
   }
 
   .qs-card__step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--docs-accent) 40%, var(--docs-border));
+    background: color-mix(in srgb, var(--docs-accent) 10%, transparent);
     font-family: var(--docs-font-mono);
-    font-size: var(--text-micro);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
     color: var(--docs-accent);
   }
 
   .qs-card__title {
     margin: 0;
-    font-size: var(--text-title-sm);
+    font-size: 1.0625rem;
     font-weight: var(--font-weight-semibold);
     color: var(--docs-fg);
+    letter-spacing: -0.015em;
   }
 
   .qs-card__desc {
     margin: 0;
     flex: 1;
     color: var(--docs-fg-muted);
-    font-size: var(--text-body-sm);
+    font-size: 0.9rem;
     line-height: 1.55;
   }
 
   .qs-card__cta {
     display: inline-flex;
     align-items: center;
-    gap: var(--spacing-2);
-    margin-top: var(--spacing-2);
-    font-size: var(--text-body-sm);
-    font-weight: var(--font-weight-medium);
+    gap: 0.35rem;
+    margin-top: 0.35rem;
+    font-size: 0.875rem;
+    font-weight: 600;
     color: var(--docs-accent);
+  }
+
+  .qs-card__arrow {
+    display: inline-block;
+    transition: transform 160ms cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  .qs-card:hover .qs-card__arrow {
+    transform: translateX(3px);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .qs-card,
+    .qs-card__arrow {
+      transition: none;
+    }
+
+    .qs-card:hover {
+      transform: none;
+    }
   }
 </style>
