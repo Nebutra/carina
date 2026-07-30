@@ -1405,6 +1405,221 @@ mod tests {
 
         assert!(runtime.require_methods(&["execution.start"]).is_err());
     }
+
+    /// Daemon-shaped JSON fixtures for every product-decoded contract type
+    /// used by the Rust TUI journey (Wave 1 closure).
+    #[test]
+    fn daemon_owned_json_fixtures_decode_product_contracts() {
+        let cases: Vec<(&str, serde_json::Value)> = vec![
+            (
+                "RuntimeInitialize",
+                json!({
+                    "runtime_version": "0.6.5",
+                    "protocol_version": "1.3.0",
+                    "projection_version": "1.0.0",
+                    "capabilities": {
+                        "rpc_methods": [
+                            "execution.start",
+                            "execution.cancel",
+                            "session.list",
+                            "model.list",
+                            "events.subscribe"
+                        ]
+                    }
+                }),
+            ),
+            (
+                "ExecutionRun",
+                json!({
+                    "run_id": "run_fixture_1",
+                    "session_id": "sess_1",
+                    "status": "running",
+                    "agent": "build",
+                    "user_prompt": "ship it",
+                    "summary": ""
+                }),
+            ),
+            (
+                "Session",
+                json!({
+                    "session_id": "sess_1",
+                    "workspace_root": "/tmp/ws",
+                    "created_at": "2026-07-30T00:00:00Z",
+                    "title": "fixture",
+                    "status": "active"
+                }),
+            ),
+            (
+                "ModelInventory",
+                json!({
+                    "providers": [{
+                        "id": "xai",
+                        "name": "xAI",
+                        "registered": true,
+                        "available": true,
+                        "models": [{
+                            "id": "grok",
+                            "name": "Grok",
+                            "provider_id": "xai"
+                        }]
+                    }]
+                }),
+            ),
+            (
+                "WireEvent",
+                json!({
+                    "type": "assistant.delta",
+                    "run_id": "run_fixture_1",
+                    "payload": {"text": "hello"}
+                }),
+            ),
+            (
+                "MediaRef",
+                json!({
+                    "artifact_id": "a".repeat(64),
+                    "media_type": "image/png",
+                    "bytes": 42,
+                    "origin": "clipboard"
+                }),
+            ),
+            (
+                "Checkpoint",
+                json!({
+                    "checkpoint_id": "cp_1",
+                    "created_at": "2026-07-30T00:00:00Z",
+                    "sequence": "1",
+                    "run_id": "run_fixture_1",
+                    "session_id": "sess_1",
+                    "turn": 1,
+                    "summary": "before edit"
+                }),
+            ),
+            (
+                "AgentView",
+                json!({
+                    "needs_input": [],
+                    "working": [{"task_id": "task_bg_1", "category": "working"}],
+                    "completed": []
+                }),
+            ),
+            (
+                "WorkspaceDiff",
+                json!({
+                    "files": [{
+                        "path": "src/lib.rs",
+                        "status": "modified",
+                        "additions": 1,
+                        "deletions": 0
+                    }]
+                }),
+            ),
+            (
+                "SessionReview",
+                json!({
+                    "session_id": "sess_1",
+                    "changes": [],
+                    "rollback": {"available": false, "patch_ids": []}
+                }),
+            ),
+            (
+                "ContextSummary",
+                json!({
+                    "session_id": "sess_1",
+                    "model_context_tokens": {
+                        "used": 100,
+                        "limit": 128000
+                    },
+                    "task": {"mode": "foreground", "status": "running"}
+                }),
+            ),
+            (
+                "PlanModeState",
+                json!({"session_id": "sess_1", "plan_mode": false}),
+            ),
+            (
+                "PromptHistory",
+                json!({"entries": ["one", "two"], "count": 2, "scope": "workspace"}),
+            ),
+        ];
+
+        for (name, value) in cases {
+            match name {
+                "RuntimeInitialize" => {
+                    let decoded: RuntimeInitialize = serde_json::from_value(value).unwrap();
+                    decoded
+                        .require_methods(&["execution.start", "session.list"])
+                        .unwrap();
+                }
+                "ExecutionRun" => {
+                    let decoded: ExecutionRun = serde_json::from_value(value).unwrap();
+                    assert_eq!(decoded.run_id, "run_fixture_1");
+                    assert!(!decoded.run_id.starts_with("task_"));
+                }
+                "Session" => {
+                    let decoded: Session = serde_json::from_value(value).unwrap();
+                    assert_eq!(decoded.session_id, "sess_1");
+                }
+                "ModelInventory" => {
+                    let decoded: ModelInventory = serde_json::from_value(value).unwrap();
+                    assert!(!decoded.providers.is_empty());
+                }
+                "WireEvent" => {
+                    let decoded: WireEvent = serde_json::from_value(value).unwrap();
+                    assert_eq!(decoded.kind, "assistant.delta");
+                }
+                "MediaRef" => {
+                    let decoded: MediaRef = serde_json::from_value(value).unwrap();
+                    assert_eq!(decoded.bytes, 42);
+                }
+                "Checkpoint" => {
+                    let decoded: Checkpoint = serde_json::from_value(value).unwrap();
+                    assert_eq!(decoded.run_id, "run_fixture_1");
+                }
+                "AgentView" => {
+                    let decoded: AgentView = serde_json::from_value(value).unwrap();
+                    assert_eq!(decoded.working[0].task_id, "task_bg_1");
+                }
+                "WorkspaceDiff" => {
+                    let decoded: WorkspaceDiff = serde_json::from_value(value).unwrap();
+                    assert_eq!(decoded.files[0].path, "src/lib.rs");
+                }
+                "SessionReview" => {
+                    let _: SessionReview = serde_json::from_value(value).unwrap();
+                }
+                "ContextSummary" => {
+                    let decoded: ContextSummary = serde_json::from_value(value).unwrap();
+                    assert_eq!(decoded.session_id, "sess_1");
+                }
+                "PlanModeState" => {
+                    let decoded: PlanModeState = serde_json::from_value(value).unwrap();
+                    assert!(!decoded.plan_mode);
+                }
+                "PromptHistory" => {
+                    let decoded: PromptHistory = serde_json::from_value(value).unwrap();
+                    assert_eq!(decoded.entries.len(), 2);
+                }
+                other => panic!("unhandled fixture {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn daemon_owned_fixtures_reject_legacy_task_submit_shape() {
+        // Old task.submit style payloads must not decode as ExecutionRun.
+        assert!(serde_json::from_value::<ExecutionRun>(json!({
+            "task_id": "task_legacy",
+            "session_id": "sess_1",
+            "status": "running"
+        }))
+        .is_err());
+        // Wire events without a typed kind stay non-governance.
+        let bare: WireEvent = serde_json::from_value(json!({
+            "type": "task.created",
+            "payload": {}
+        }))
+        .unwrap();
+        assert_eq!(bare.execution_lifecycle(), None);
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
