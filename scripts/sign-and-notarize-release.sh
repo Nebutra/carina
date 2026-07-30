@@ -88,15 +88,21 @@ security import "$work/developer-id.p12" \
   -P "$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD" \
   -T /usr/bin/codesign \
   -T /usr/bin/security
-security set-key-partition-list \
-  -S apple-tool:,apple:,codesign: \
-  -s \
-  -k "$keychain_password" \
-  "$keychain"
-
 identity_listing="$(security find-identity -v -p codesigning "$keychain")"
 grep -Fq "\"$APPLE_DEVELOPER_ID_APPLICATION_IDENTITY\"" <<< "$identity_listing" || \
   fail "requested signing identity was not imported into the temporary keychain"
+
+# Some hosted macOS security builds return errSecItemNotFound while updating an
+# imported key's partition list even though the identity and private key are
+# present. The import ACL above already authorizes codesign. Treat the actual
+# timestamped codesign and strict verification below as the fail-closed proof.
+if ! security set-key-partition-list \
+  -S apple-tool:,apple:,codesign: \
+  -s \
+  -k "$keychain_password" \
+  "$keychain" >/dev/null 2>&1; then
+  printf '%s: key partition list unavailable; relying on imported codesign ACL\n' "$SCRIPT_NAME" >&2
+fi
 
 mkdir -p "$work/extracted"
 tar -xzf "$archive_path" -C "$work/extracted"
