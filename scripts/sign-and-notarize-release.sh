@@ -58,7 +58,7 @@ if [[ "${CHECK_ONLY:-0}" == "1" ]]; then
 fi
 
 [[ "$(uname -s)" == "Darwin" ]] || fail "signing and notarization require macOS"
-for tool in base64 codesign ditto file python3 security shasum spctl tar uuidgen xcrun; do
+for tool in base64 codesign ditto file python3 security shasum tar uuidgen xcrun; do
   command -v "$tool" >/dev/null 2>&1 || fail "missing required tool: $tool"
 done
 
@@ -240,8 +240,10 @@ assess_notarized_binary() {
   codesign --verify --strict --verbose=4 "$binary"
   codesign --display --verbose=4 "$binary"
   for attempt in {1..12}; do
-    if codesign --check-notarization --verbose=4 "$binary" && \
-      spctl --assess --type execute --verbose=4 "$binary"; then
+    # spctl's execute assessment is an app-bundle policy check and rejects
+    # valid notarized command-line tools with "does not seem to be an app".
+    # For archive-distributed CLIs, codesign's ticket lookup is authoritative.
+    if codesign --check-notarization --verbose=4 "$binary"; then
       return 0
     fi
     if (( attempt < 12 )); then

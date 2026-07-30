@@ -8,6 +8,12 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/carina-sign-test.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
 bash -n "$SCRIPT"
+# Bare command-line binaries are not app bundles. Gatekeeper's spctl execute
+# assessment rejects them even after Apple accepts the notarization request.
+if grep -Eq 'spctl[[:space:]]+--assess' "$SCRIPT"; then
+  printf 'test-sign-and-notarize-release: spctl execute assessment is invalid for CLI archives\n' >&2
+  exit 1
+fi
 : > "$work/carina_0.0.0_darwin_arm64.tar.gz"
 
 common_required=(
