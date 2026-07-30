@@ -1,6 +1,6 @@
 ---
 title: CLI & TUI
-description: Drive Carina from the terminal — matches live carina --help.
+description: Drive Carina from the terminal — CLI golden path and interactive TUI surface.
 sidebar:
   order: 1
 ---
@@ -9,7 +9,7 @@ import Callout from '../../../components/ui/Callout.astro';
 import Steps from '../../../components/mdx/Steps.astro';
 import Step from '../../../components/mdx/Step.astro';
 
-The CLI and TUI are the fastest local surface. Same engine as JSON-RPC.
+The CLI and TUI share the same daemon, policy kernel, and audit trail as JSON-RPC.
 
 ## Golden path
 
@@ -27,6 +27,7 @@ The CLI and TUI are the fastest local surface. Same engine as JSON-RPC.
     carina
     ```
     `carina run` creates a **safe-edit** session in `cwd` and waits for the task (unless `--background`).
+    Bare `carina` opens the interactive TUI and **auto-starts** the daemon when needed.
   </Step>
   <Step title="Inspect">
     ```bash frame="none"
@@ -38,7 +39,63 @@ The CLI and TUI are the fastest local surface. Same engine as JSON-RPC.
   </Step>
 </Steps>
 
-## Command groups
+## Interactive TUI
+
+Open with `carina` (TTY required). This is the primary operator surface.
+
+### Discoverability
+
+| Input | Behavior |
+| --- | --- |
+| `?` | Toggle the help surface (same content as `/help`) |
+| `/` | Open the slash-command palette (type to filter) |
+| `Esc` | Close overlays / dismiss |
+| `Ctrl-C` | Interrupt the active run (default; remappable) |
+| `Ctrl-O` | Expand truncated tool output (default; remappable) |
+
+Footer status often shows: `? help  |  / commands  |  Ctrl-O expand tools  |  Ctrl-C interrupt`.
+
+### Slash commands
+
+Registered in the TUI (`crates/carina-tui/src/command.rs`). `/exit` aliases `/quit`.
+
+| Command | Purpose |
+| --- | --- |
+| `/settings` | Open settings |
+| `/status` | Runtime and session status |
+| `/provider` | Choose or reconfigure a provider |
+| `/model` | Choose a model |
+| `/plan` | Toggle plan mode |
+| `/build` | Switch to build mode |
+| `/sessions` | Browse sessions |
+| `/resume` | Resume a session |
+| `/cancel` | Cancel the active run (only when a run is active) |
+| `/doctor` | Health checks and recovery UI |
+| `/help` | Full help surface |
+| `/quit` | Quit Carina |
+
+List from the CLI (daemon-backed registry):
+
+```bash frame="none"
+carina commands list
+```
+
+### Approvals in the TUI
+
+Risky side effects surface an **approval overlay**. You can also resolve from another terminal:
+
+```bash frame="none"
+carina approve SESSION DECISION_ID
+carina deny SESSION DECISION_ID "reason"
+```
+
+See [Policy](/concepts/policy/).
+
+### Keybindings
+
+Defaults live in the TUI; project/global config can override via `tui_keybindings` (see product config). Prefer the on-screen footer and `?` over memorizing keys.
+
+## CLI command groups
 
 | Area | Commands |
 | --- | --- |
@@ -52,19 +109,12 @@ The CLI and TUI are the fastest local surface. Same engine as JSON-RPC.
 
 Full tables: [CLI reference](/reference/cli/).
 
-## Approvals
-
-```bash frame="none"
-carina approve SESSION DECISION_ID
-carina deny SESSION DECISION_ID "reason"
-```
-
-See [Policy](/concepts/policy/).
-
 ## Source of truth
 
 - Live binary: `carina --help`  
+- TUI slash registry: `crates/carina-tui/src/command.rs` · help surface: `help.rs`  
 - Recipes: [Common workflows](/getting-started/common-workflows/)  
+- Capability ledger: `crates/carina-tui/CAPABILITIES.md`  
 
 <Callout variant="tip">
   Prefer `carina doctor` before debugging “nothing happens” — most issues are PATH, socket, or daemon down.

@@ -29,6 +29,9 @@ const {
   </div>
   {/* Whitespace inside <pre> is literal — keep each span on a single line. */}
   <pre class="term__body" tabindex="0"><code>{lines.map((line) => <span class:list={['term__line', line.tone && `term__line--${line.tone}`]}>{line.text}</span>)}</code></pre>
+  <figcaption class="term__cap">
+    Illustrative session — real TUI uses overlays, <kbd>?</kbd> help, and <code>/</code> commands
+  </figcaption>
 </figure>
 
 <style>
@@ -93,5 +96,25 @@ const {
 
   .term__line--ok {
     color: var(--carina-spectral-green, var(--docs-success));
+  }
+
+  .term__cap {
+    margin: 0;
+    padding: 0.4rem 0.85rem 0.55rem;
+    border-top: 1px solid var(--carina-border-subtle, var(--docs-border-subtle));
+    font-size: 0.7rem;
+    line-height: 1.4;
+    color: var(--docs-fg-subtle, var(--docs-fg-muted));
+    text-align: center;
+  }
+
+  .term__cap kbd,
+  .term__cap code {
+    font-family: var(--docs-font-mono);
+    font-size: 0.68rem;
+    padding: 0.05rem 0.3rem;
+    border-radius: 4px;
+    border: 1px solid var(--docs-border-subtle);
+    background: color-mix(in srgb, var(--docs-fg) 4%, transparent);
   }
 </style>

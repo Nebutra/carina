@@ -1,6 +1,6 @@
 ---
 title: CLI 与 TUI
-description: 用终端操作 Carina — 与本机 carina --help 对齐。
+description: 用终端操作 Carina — CLI 黄金路径与交互 TUI 表面。
 sidebar:
   order: 1
 ---
@@ -9,7 +9,7 @@ import Callout from '../../../../components/ui/Callout.astro';
 import Steps from '../../../../components/mdx/Steps.astro';
 import Step from '../../../../components/mdx/Step.astro';
 
-CLI / TUI 是本机最快表面，与 JSON-RPC 同一引擎。
+CLI / TUI 与 JSON-RPC 共用同一 daemon、策略内核与审计链。
 
 ## 黄金路径
 
@@ -27,6 +27,7 @@ CLI / TUI 是本机最快表面，与 JSON-RPC 同一引擎。
     carina
     ```
     `carina run` 在 cwd 创建 **safe-edit** 会话并等待任务结束（除非 `--background`）。
+    裸跑 `carina` 打开交互 TUI，并在需要时 **自动启动** daemon。
   </Step>
   <Step title="检查">
     ```bash frame="none"
@@ -38,7 +39,63 @@ CLI / TUI 是本机最快表面，与 JSON-RPC 同一引擎。
   </Step>
 </Steps>
 
-## 命令分组
+## 交互 TUI
+
+在 TTY 中运行 `carina`。这是主要的操作者表面。
+
+### 可发现性
+
+| 输入 | 行为 |
+| --- | --- |
+| `?` | 切换帮助面（与 `/help` 相同） |
+| `/` | 打开 slash 命令面板（可输入过滤） |
+| `Esc` | 关闭浮层 / 取消 |
+| `Ctrl-C` | 中断当前 run（默认；可重映射） |
+| `Ctrl-O` | 展开被截断的工具输出（默认；可重映射） |
+
+状态栏常见提示：`? help  |  / commands  |  Ctrl-O expand tools  |  Ctrl-C interrupt`。
+
+### Slash 命令
+
+注册于 TUI（`crates/carina-tui/src/command.rs`）。`/exit` 等价于 `/quit`。
+
+| 命令 | 作用 |
+| --- | --- |
+| `/settings` | 打开设置 |
+| `/status` | 运行时与会话状态 |
+| `/provider` | 选择或配置 provider |
+| `/model` | 选择模型 |
+| `/plan` | 切换 plan 模式 |
+| `/build` | 切换到 build 模式 |
+| `/sessions` | 浏览会话 |
+| `/resume` | 恢复会话 |
+| `/cancel` | 取消当前 run（仅有活动 run 时可用） |
+| `/doctor` | 健康检查与恢复 UI |
+| `/help` | 完整帮助面 |
+| `/quit` | 退出 Carina |
+
+从 CLI 列出（经 daemon 注册表）：
+
+```bash frame="none"
+carina commands list
+```
+
+### TUI 中的审批
+
+有风险的副作用会弹出 **审批浮层**。也可在另一终端用 CLI 处理：
+
+```bash frame="none"
+carina approve SESSION DECISION_ID
+carina deny SESSION DECISION_ID "reason"
+```
+
+见 [策略](/zh-cn/concepts/policy/)。
+
+### 键位
+
+默认键位在 TUI 内定义；项目/全局配置可通过 `tui_keybindings` 覆盖。优先看屏幕底部提示和 `?`，不要死记硬背。
+
+## CLI 命令分组
 
 | 区域 | 命令 |
 | --- | --- |
@@ -47,14 +104,18 @@ CLI / TUI 是本机最快表面，与 JSON-RPC 同一引擎。
 | 检查 | `sessions`, `items`, `watch`, `cost`, `session review` |
 | 治理 | `approve`, `deny`, `profile`, `audit*`, `patch*`, `report`, `export` |
 | 编排 | `workflow *`, `worker *`, `schedule *` |
+| 记忆 / 上下文 | `memory *`, `context *` |
+| Provider | `auth *`, `providers list` |
 
 完整表：[CLI 参考](/zh-cn/reference/cli/)。
 
 ## 权威来源
 
 - 本机：`carina --help`  
+- TUI slash 注册：`crates/carina-tui/src/command.rs` · 帮助面：`help.rs`  
 - 配方：[常用工作流](/zh-cn/getting-started/common-workflows/)  
+- 能力台账：`crates/carina-tui/CAPABILITIES.md`  
 
 <Callout variant="tip">
-  「没反应」时先 `carina doctor`。
+  「没反应」时先 `carina doctor` — 多数是 PATH、socket 或 daemon 未起。
 </Callout>

@@ -64,14 +64,13 @@ MemoryWrite  CodeIndex  ContextCompress  SubagentSpawn
 
 ## 权限配置
 
-| Profile | 摘要 |
-| --- | --- |
-| `read-only` | 仅工作区 FileRead |
-| `safe-edit` | FileWrite **仅经 PatchApply**；命令白名单；网络需审批 |
-| `full-workspace` | 工作区读写；高等级命令需审批 |
-| `ci-runner` | 测试/构建；无任意 shell |
-| `trusted-local` | 本机放宽；**仍审计** |
-| `enterprise-restricted` | 组织策略包 |
+| Profile | 摘要 | 样例配置 |
+| --- | --- | --- |
+| `read-only` | 仅工作区 FileRead | `protocol/capabilities/profiles/read-only.toml` |
+| `safe-edit` | FileWrite **仅经 PatchApply**；命令白名单；网络需审批 | `…/safe-edit.toml` |
+| `full-workspace` | 工作区读写；高等级命令需审批 | `…/full-workspace.toml` |
+| `ci-runner` | 测试/构建；无任意 shell | `…/ci-runner.toml` |
+| `sandboxed` · `trusted-local` · `enterprise-restricted` | 在 `capabilities.json` 中登记的组织/运行时名称 | 尚无随仓库样例 toml — 自定义配置前当作注册名 |
 
 `carina run` 在 cwd 创建 **`safe-edit`** 会话。
 

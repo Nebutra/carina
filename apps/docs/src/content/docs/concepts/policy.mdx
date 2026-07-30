@@ -79,15 +79,13 @@ The kernel returns a `PermissionDecision` with the producing policy. Every decis
 
 ## Permission profiles
 
-| Profile | Summary |
-| --- | --- |
-| `read-only` | FileRead in workspace only; everything else denied |
-| `safe-edit` | FileRead; FileWrite **only via PatchApply**; CommandExec allowlist; network needs approval; secrets denied |
-| `full-workspace` | R/W in workspace; commands up to level 3 with approval |
-| `ci-runner` | test/build allowed; no arbitrary shell; secrets only when scoped |
-| `sandboxed` | everything via sandbox broker |
-| `trusted-local` | relaxed local dev; **still audited** |
-| `enterprise-restricted` | org bundle; central approval for levels ≥ 2 |
+| Profile | Summary | Sample config |
+| --- | --- | --- |
+| `read-only` | FileRead in workspace only; everything else denied | `protocol/capabilities/profiles/read-only.toml` |
+| `safe-edit` | FileRead; FileWrite **only via PatchApply**; CommandExec allowlist; network needs approval; secrets denied | `…/safe-edit.toml` |
+| `full-workspace` | R/W in workspace; commands up to level 3 with approval | `…/full-workspace.toml` |
+| `ci-runner` | test/build allowed; no arbitrary shell; secrets only when scoped | `…/ci-runner.toml` |
+| `sandboxed` · `trusted-local` · `enterprise-restricted` | Named in `capabilities.json` for org/runtime bundles | No shipped sample toml yet — treat as registry names until you add custom profiles |
 
 Profiles are **session-scoped** and stored in session metadata. Custom profiles are supported.
 

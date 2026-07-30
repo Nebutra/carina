@@ -112,8 +112,9 @@ keeps the backend explicit-only.
 ## Run it
 
 ```bash title="agent-loop.sh"
-carina-daemon &
 cd your-repo
+# Interactive TUI auto-starts the daemon; for headless runs you can also:
+#   carina daemon start
 carina run "fix the failing test in parser.go"
 carina audit SESSION
 carina audit verify SESSION
@@ -125,9 +126,10 @@ carina patch rollback SESSION PATCH_ID
 
 | Surface | Role |
 | --- | --- |
-| TUI | Primary operator experience |
-| VS Code extension | In-editor attach + approvals |
-| Web operator | Dashboard over `agent.view` roster |
+| TUI (`carina`) | **Primary** operator experience — slash commands, approvals, plan/build modes |
+| CLI | Headless / CI: `carina run`, `approve`, `audit`, … |
+| VS Code extension | Optional in-repo client under `integrations/vscode` — install from release assets when you need in-editor attach |
+| Web operator | Experimental static shell under `integrations/web` — not a full dashboard product yet |
 
 <Callout variant="tip">
   See [Sub-agents](/agents/sub-agents/) for attenuated delegation and [Policy](/concepts/policy/) for capability profiles.

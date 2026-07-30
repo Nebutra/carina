@@ -63,6 +63,8 @@ Claude 的非交互参数是 `-p`；Codex 必须使用 `codex exec`，其中 `-p
 
 ```bash title="agent-loop.sh"
 cd /path/to/repo
+# 交互 TUI 会在需要时自动启动 daemon；无头跑也可先：
+#   carina daemon start
 carina run "fix the failing test in parser.go"
 carina audit SESSION
 carina audit verify SESSION
@@ -70,7 +72,16 @@ carina patch list SESSION
 carina patch rollback SESSION PATCH_ID
 ```
 
-CLI、TUI、VS Code 与 Web Operator 消费同一套会话与事件状态；它们不是四套不同的 Agent 引擎。
+## 消费 Agent 状态的表面
+
+| 表面 | 角色 |
+| --- | --- |
+| TUI（`carina`） | **主**操作者体验 — slash 命令、审批浮层、plan/build 模式 |
+| CLI | 无头 / CI：`carina run`、`approve`、`audit` 等 |
+| VS Code 扩展 | 可选客户端（`integrations/vscode`）— 需要编辑器内附着时从 release 资产安装 |
+| Web operator | 实验性静态壳（`integrations/web`）— 尚非完整 dashboard 产品 |
+
+它们共享同一套会话与事件状态，不是四套不同的 Agent 引擎。
 
 <Callout variant="tip">
   多步并行任务优先使用工作流；单次委派再使用子 Agent。两者都会衰减权限，不能把父会话没有的能力授予子任务。

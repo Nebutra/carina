@@ -52,7 +52,7 @@ Update this file when you ship a feature or rename a page.
 | Glossary | `/reference/glossary/` | this map + product.md | — |
 | CLI reference | `/reference/cli/` | live `carina --help` | all subcommands |
 | Common workflows | `/getting-started/common-workflows/` | recipes | day-to-day |
-| CLI & TUI guide | `/use/cli-tui/` | CLI help | operator path |
+| CLI & TUI guide | `/use/cli-tui/` | CLI help + TUI slash/keys (`command.rs`, `help.rs`) | operator path |
 
 ## Common workflows (recipes)
 

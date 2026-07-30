@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Carina documentation site — Astro + Starlight",
+  "description": "Carina documentation site \u2014 Astro + Starlight",
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
@@ -15,9 +15,10 @@
     "generate-ai-surface": "node ./scripts/generate-ai-surface.mjs",
     "check-content": "node ./scripts/check-content.mjs",
     "sync": "pnpm sync-brand && pnpm sync-protocol && pnpm generate-ai-surface",
-    "prebuild": "pnpm check-content && pnpm generate-ai-surface",
+    "prebuild": "node ./scripts/sync-install.mjs && pnpm check-content && pnpm generate-ai-surface",
     "typecheck": "astro check && tsc --noEmit",
-    "lighthouse": "pnpm build && pnpm dlx @lhci/cli@0.14.0 autorun --config=./lighthouserc.cjs"
+    "lighthouse": "pnpm build && pnpm dlx @lhci/cli@0.14.0 autorun --config=./lighthouserc.cjs",
+    "sync-install": "node ./scripts/sync-install.mjs"
   },
   "engines": {
     "node": ">=22"
