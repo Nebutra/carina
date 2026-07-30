@@ -516,7 +516,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-release
     permissions:
-      contents: read
+      # Draft releases are hidden from read-only GITHUB_TOKENs. This job must
+      # download the immutable bundle created by freeze-npm before publishing.
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7

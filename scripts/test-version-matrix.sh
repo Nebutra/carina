@@ -24,6 +24,14 @@ if grep -Eq 'uses: [^ ]+@(v[0-9]+|stable)([[:space:]]|$)' .github/workflows/ci.y
 fi
 grep -Fq 'syft-version: v1.46.0' .github/workflows/release.yml
 grep -Fq 'freeze-npm:' .github/workflows/release.yml
+python3 - <<'PY'
+from pathlib import Path
+
+workflow = Path('.github/workflows/release.yml').read_text(encoding='utf-8')
+publish_npm = workflow.split('\n  publish-npm:\n', 1)[1].split('\n  update-homebrew-tap:\n', 1)[0]
+if 'contents: write' not in publish_npm:
+    raise SystemExit('publish-npm must be able to read the draft release bundle')
+PY
 grep -Fq './scripts/package-npm-bundle.sh' .github/workflows/release.yml
 grep -Fq './scripts/verify-npm-release-bundle.sh' .github/workflows/release.yml
 grep -Fq 'group: carina-homebrew-tap-main' .github/workflows/release.yml
