@@ -217,7 +217,7 @@ func TestKernelSecretAndAudit(t *testing.T) {
 		t.Fatal("secret should be redacted")
 	}
 	// record an event, then verify the chain
-	if err := svc.RecordEvent("sess_s", "TaskCreated", "task_1", "go", map[string]any{"x": 1}, ""); err != nil {
+	if err := svc.RecordEvent("sess_s", "TaskSubmitted", "task_1", "go", map[string]any{"x": 1}, ""); err != nil {
 		t.Fatal(err)
 	}
 	report, err := svc.AuditVerify("sess_s")
