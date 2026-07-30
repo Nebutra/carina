@@ -3,6 +3,10 @@
   "version": "0.6.5",
   "description": "Native launcher for the Carina Agent Runtime",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nebutra/carina"
+  },
   "bin": { "carina": "bin/carina.js", "carina-daemon": "bin/carina.js", "carina-worker": "bin/carina.js" },
   "files": ["bin/carina.js", "README.md"],
   "os": ["darwin", "linux"],

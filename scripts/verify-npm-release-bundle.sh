@@ -46,8 +46,9 @@ for index in "${!expected[@]}"; do
   node -e '
     const data = JSON.parse(process.argv[1]);
     if (data.name !== process.argv[2] || data.version !== process.argv[3]) process.exit(1);
+    if (data.repository?.url !== "https://github.com/Nebutra/carina") process.exit(2);
   ' "$metadata" "${names[$index]}" "$VERSION" || {
-    echo "verify-npm-release-bundle: package identity mismatch in ${expected[$index]}" >&2
+    echo "verify-npm-release-bundle: package identity or repository mismatch in ${expected[$index]}" >&2
     exit 1
   }
 done

@@ -45,6 +45,16 @@ done
 
 counter="$work/syft-counter"
 (cd "$ROOT" && PATH="$work/bin:$PATH" SYFT_COUNTER_FILE="$counter" DIST_DIR="$dist" VERSION="$version" ./scripts/package-npm-release.sh)
+for tarball in "$dist"/npm/*/*.tgz; do
+  metadata="$(tar -xOf "$tarball" package/package.json)"
+  node -e '
+    const data = JSON.parse(process.argv[1]);
+    if (data.repository?.url !== "https://github.com/Nebutra/carina") process.exit(1);
+  ' "$metadata" || {
+    echo "test-package-npm-release: $(basename "$tarball") lacks canonical repository metadata" >&2
+    exit 1
+  }
+done
 [[ "$(find "$dist/npm" -name '*.tgz' | wc -l | tr -d ' ')" == "5" ]]
 first_digests="$work/first-digests"
 (cd "$dist/npm" && sha256_manifest */*.tgz | sort -k2) > "$first_digests"
