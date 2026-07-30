@@ -16,6 +16,12 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
+fn deterministic_theme(mode: carina_tui::glyphs::GlyphMode) -> Theme {
+    let mut theme = Theme::carina(false);
+    theme.glyphs = carina_tui::glyphs::Glyphs::new(mode);
+    theme
+}
+
 fn serialize_frame(buffer: &Buffer) -> String {
     let area = buffer.area;
     let mut out = format!("size={}x{}\n", area.width, area.height);
@@ -75,7 +81,7 @@ fn render_case(
     body: Vec<Line<'static>>,
     overlay: bool,
 ) -> String {
-    let theme = Theme::carina(false);
+    let theme = deterministic_theme(carina_tui::glyphs::GlyphMode::Unicode);
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
@@ -160,7 +166,24 @@ fn render_status(
     queued_follow_ups: usize,
     context: Option<&ModelContextTokens>,
 ) -> String {
+    render_status_with_mode(
+        execution_status,
+        activity,
+        queued_follow_ups,
+        context,
+        carina_tui::glyphs::GlyphMode::Unicode,
+    )
+}
+
+fn render_status_with_mode(
+    execution_status: &str,
+    activity: Option<&str>,
+    queued_follow_ups: usize,
+    context: Option<&ModelContextTokens>,
+    mode: carina_tui::glyphs::GlyphMode,
+) -> String {
     let mut terminal = Terminal::new(TestBackend::new(120, 1)).unwrap();
+    let theme = deterministic_theme(mode);
     terminal
         .draw(|frame| {
             ConversationStatus {
@@ -176,7 +199,7 @@ fn render_status(
                 context,
                 locale: Locale::En,
             }
-            .render(frame, frame.area(), Theme::carina(false));
+            .render(frame, frame.area(), theme);
         })
         .unwrap();
     serialize_frame(terminal.backend().buffer())
@@ -284,7 +307,7 @@ fn golden_empty_conversation() {
 
 #[test]
 fn golden_single_turn() {
-    let theme = Theme::carina(false);
+    let theme = deterministic_theme(carina_tui::glyphs::GlyphMode::Unicode);
     let glyphs = carina_tui::glyphs::Glyphs::new(carina_tui::glyphs::GlyphMode::Unicode);
     insta::assert_snapshot!(render_case(
         120,
@@ -343,11 +366,13 @@ fn golden_diff() {
         vec![
             Line::styled(
                 "- old value",
-                Style::default().fg(Theme::carina(false).danger)
+                Style::default()
+                    .fg(deterministic_theme(carina_tui::glyphs::GlyphMode::Unicode).danger)
             ),
             Line::styled(
                 "+ new value",
-                Style::default().fg(Theme::carina(false).success)
+                Style::default()
+                    .fg(deterministic_theme(carina_tui::glyphs::GlyphMode::Unicode).success)
             )
         ],
         false
@@ -356,7 +381,7 @@ fn golden_diff() {
 
 #[test]
 fn golden_code_block() {
-    let theme = Theme::carina(false);
+    let theme = deterministic_theme(carina_tui::glyphs::GlyphMode::Unicode);
     let lines = markdown::render(
         "```rust\npub fn ready() -> bool { true }\n```",
         72,
@@ -466,4 +491,26 @@ fn golden_live_status_states() {
             Some(&warning_context)
         )
     );
+}
+
+#[test]
+fn live_status_glyph_mode_is_fixture_owned() {
+    let unicode = render_status_with_mode(
+        "running",
+        Some("running tests"),
+        0,
+        None,
+        carina_tui::glyphs::GlyphMode::Unicode,
+    );
+    let ascii = render_status_with_mode(
+        "running",
+        Some("running tests"),
+        0,
+        None,
+        carina_tui::glyphs::GlyphMode::Ascii,
+    );
+    assert!(unicode.contains("⠋ running tests"));
+    assert!(unicode.contains("· Ctrl-C stop"));
+    assert!(ascii.contains("/ running tests"));
+    assert!(ascii.contains("| Ctrl-C stop"));
 }
