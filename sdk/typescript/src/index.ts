@@ -290,10 +290,10 @@ export class CarinaClient {
   listSessions(): Promise<Session[]> { return this.call('session.list') }
   submitTask(sessionId: string, prompt: string, clientSubmissionId?: string, inputMediaRefs: MediaRef[] = []): Promise<Task> {
     if (inputMediaRefs.length > 4) return Promise.reject(new RangeError('input media refs must contain at most 4 images'))
-    return this.call('task.submit', { session_id: sessionId, prompt, ...(clientSubmissionId ? { client_submission_id: clientSubmissionId } : {}), ...(inputMediaRefs.length ? { input_media_refs: inputMediaRefs } : {}) })
+    return this.call('execution.start', { session_id: sessionId, prompt, ...(clientSubmissionId ? { client_submission_id: clientSubmissionId } : {}), ...(inputMediaRefs.length ? { input_media_refs: inputMediaRefs } : {}) })
   }
   submitGoal(sessionId: string, prompt: string, successCriteria: SuccessCheck[], clientSubmissionId?: string): Promise<Task> {
-    return this.call('task.submit', { session_id: sessionId, prompt, success_criteria: successCriteria, ...(clientSubmissionId ? { client_submission_id: clientSubmissionId } : {}) })
+    return this.call('execution.start', { session_id: sessionId, prompt, success_criteria: successCriteria, ...(clientSubmissionId ? { client_submission_id: clientSubmissionId } : {}) })
   }
   replaySession(sessionId: string): Promise<CarinaEvent[]> { return this.call('session.replay', { session_id: sessionId }) }
   attachSession(sessionId: string, since = 0, eventMode: 'compat'|'canonical' = 'compat'): Promise<SessionAttachment> {
@@ -306,10 +306,10 @@ export class CarinaClient {
     return this.call('usage.cost', { ...(sessionId ? { session_id: sessionId } : {}), ...(taskId ? { task_id: taskId } : {}) })
   }
   steerTask(taskId: string, message: string): Promise<{ queued: boolean; task_id: string; status: string }> {
-    return this.call('task.steer', { task_id: taskId, message })
+    return this.call('execution.steer', { task_id: taskId, message })
   }
   answerQuestion(questionId: string, value: string): Promise<{ question_id: string; accepted: boolean; value: string }> {
-    return this.call('task.user.answer', { question_id: questionId, value })
+    return this.call('question.answer', { question_id: questionId, value })
   }
   listWorkflows(): Promise<WorkflowRun[]> { return this.call('workflow.list') }
   async initialize(clientName = '@carina/sdk', clientVersion = '0.2.0'): Promise<RuntimeInfo> {
@@ -327,7 +327,7 @@ export class CarinaClient {
   stopWorkflow(runId: string): Promise<WorkflowRun> { return this.call('workflow.stop', { run_id: runId }) }
   restartWorkflow(runId: string): Promise<WorkflowRun> { return this.call('workflow.restart', { run_id: runId }) }
   listWorkers(): Promise<Worker[]> { return this.call('worker.list') }
-  resolveApproval(decisionId: string, allow: boolean, approver = '', scope: 'once'|'session'|'project' = 'once'): Promise<void> { return this.call('task.approval.resolve', { decision_id: decisionId, approve: allow, approver, scope }) }
+  resolveApproval(decisionId: string, allow: boolean, approver = '', scope: 'once'|'session'|'project' = 'once'): Promise<void> { return this.call('governance.approval.resolve', { decision_id: decisionId, approve: allow, approver, scope }) }
   doctor(): Promise<Record<string, unknown>> { return this.call('daemon.doctor') }
   statArtifact(scope:ArtifactScope,artifactId:string):Promise<ArtifactMetadata>{return this.call('artifact.stat',{...scope,artifact_id:artifactId})}
   async uploadArtifact(sessionId:string,uploadId:string,mediaType:MediaRef['media_type'],origin:string,content:Uint8Array):Promise<MediaRef>{
@@ -353,7 +353,7 @@ export class CarinaClient {
   previewCheckpoint(sessionId: string, checkpointId: string): Promise<CheckpointPreview> { return this.call('session.checkpoint.preview', { session_id: sessionId, checkpoint_id: checkpointId }) }
   summarizeCheckpoint(sessionId: string, checkpointId: string): Promise<CheckpointSummary> { return this.call('session.checkpoint.summarize', { session_id: sessionId, checkpoint_id: checkpointId }) }
   restoreCheckpoint(sessionId: string, checkpointId: string, confirmed = false): Promise<CheckpointRestoreResult> { return this.call('session.checkpoint.restore', { session_id: sessionId, checkpoint_id: checkpointId, confirmed }) }
-  resumeTask(taskId: string): Promise<Task> { return this.call('task.resume', { task_id: taskId }) }
+  resumeTask(taskId: string): Promise<Task> { return this.call('execution.resume', { task_id: taskId }) }
   injectChannelEvent(event: ChannelEvent, signature: string): Promise<Record<string, unknown>> { return this.call('channel.event.inject', { event, signature }) }
   listExtensions(): Promise<{ plugins: Extension[]; safe_mode: boolean; total_prompt_tokens: number }> { return this.call('extension.list') }
   setExtensionEnabled(name: string, enabled: boolean): Promise<Extension> { return this.call(enabled ? 'extension.enable' : 'extension.disable', { name }) }
@@ -402,10 +402,10 @@ export class CarinaClient {
     return this.call('command.exec', { session_id: sessionId, argv, ...(taskId ? { task_id: taskId } : {}) })
   }
   approve(sessionId: string, decisionId: string): Promise<unknown> {
-    return this.call('task.action.approve', { session_id: sessionId, decision_id: decisionId })
+    return this.call('governance.action.approve', { session_id: sessionId, decision_id: decisionId })
   }
   deny(sessionId: string, decisionId: string, reason = 'denied'): Promise<unknown> {
-    return this.call('task.action.deny', { session_id: sessionId, decision_id: decisionId, reason })
+    return this.call('governance.action.deny', { session_id: sessionId, decision_id: decisionId, reason })
   }
   auditReport(sessionId: string): Promise<AuditReport> { return this.call('audit.report', { session_id: sessionId }) }
 
@@ -460,9 +460,9 @@ export class CarinaThread {
   async run(input: string, options: RunOptions = {}): Promise<TurnResult> {
     if (options.signal?.aborted) throw options.signal.reason ?? new Error('aborted')
     if ((options.inputMediaRefs?.length ?? 0) > 4) throw new RangeError('input media refs must contain at most 4 images')
-    const task=await this.client.call<Task>('task.submit',{session_id:this.session.session_id,prompt:input,...(options.clientSubmissionId?{client_submission_id:options.clientSubmissionId}:{}),...(options.outputSchema?{output_schema:options.outputSchema}:{}),...(options.inputMediaRefs?.length?{input_media_refs:options.inputMediaRefs}:{})})
-    const cancel=()=>{void this.client.call('task.cancel',{task_id:task.task_id}).catch(()=>{})};options.signal?.addEventListener('abort',cancel,{once:true})
-    try { for (;;) { if(options.signal?.aborted)throw options.signal.reason??new Error('aborted');const current=await this.client.call<Task>('task.result',{task_id:task.task_id});if(['completed','degraded','failed','cancelled','needs_input'].includes(current.status)){let structuredOutput:unknown;try{structuredOutput=options.outputSchema?JSON.parse((current as Task & {summary?:string}).summary??''):undefined}catch{};return{task:current,finalResponse:(current as Task & {summary?:string}).summary??'',structuredOutput}};await new Promise(r=>setTimeout(r,options.pollIntervalMs??50))} } finally { options.signal?.removeEventListener('abort',cancel) }
+    const task=await this.client.call<Task>('execution.start',{session_id:this.session.session_id,prompt:input,...(options.clientSubmissionId?{client_submission_id:options.clientSubmissionId}:{}),...(options.outputSchema?{output_schema:options.outputSchema}:{}),...(options.inputMediaRefs?.length?{input_media_refs:options.inputMediaRefs}:{})})
+    const cancel=()=>{void this.client.call('execution.cancel',{task_id:task.task_id}).catch(()=>{})};options.signal?.addEventListener('abort',cancel,{once:true})
+    try { for (;;) { if(options.signal?.aborted)throw options.signal.reason??new Error('aborted');const current=await this.client.call<Task>('execution.result',{task_id:task.task_id});if(['completed','degraded','failed','cancelled','needs_input'].includes(current.status)){let structuredOutput:unknown;try{structuredOutput=options.outputSchema?JSON.parse((current as Task & {summary?:string}).summary??''):undefined}catch{};return{task:current,finalResponse:(current as Task & {summary?:string}).summary??'',structuredOutput}};await new Promise(r=>setTimeout(r,options.pollIntervalMs??50))} } finally { options.signal?.removeEventListener('abort',cancel) }
   }
   async runStreamed(input: string, options: RunOptions = {}): Promise<{events: AsyncGenerator<CarinaEvent|{type:'turn.completed';result:TurnResult}>}> {
     const queue:CarinaEvent[]=[];let wake:(()=>void)|undefined;const stop=await this.client.streamSessionEvents(this.session.session_id,e=>{queue.push(e);wake?.();wake=undefined});const run=this.run(input,options);async function* events(){try{for(;;){while(queue.length)yield queue.shift()!;const done=await Promise.race([run.then(result=>({result})),new Promise<null>(resolve=>{wake=()=>resolve(null)})]);if(done){yield{type:'turn.completed' as const,result:done.result};return}}}finally{await stop()}};return{events:events()}

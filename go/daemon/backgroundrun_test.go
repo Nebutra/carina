@@ -51,7 +51,7 @@ func TestRunRegistrySurvivesRestart(t *testing.T) {
 	d1.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d1.sched.Submit(sess.SessionID, sess.WorkspaceID, "noop")
 	d1.runTaskGuarded(sess, task)
-	if tk, _ := d1.sched.Get(task.TaskID); tk.Status != "completed" {
+	if tk, _ := d1.sched.Get(task.RunID); tk.Status != "completed" {
 		t.Fatalf("run should complete, got %s", tk.Status)
 	}
 	d1.Close()
@@ -59,7 +59,7 @@ func TestRunRegistrySurvivesRestart(t *testing.T) {
 	// Restart on the same state dir: the run record must come back.
 	d2 := newDaemonAt(t, stateDir)
 	defer d2.Close()
-	tk, ok := d2.sched.Get(task.TaskID)
+	tk, ok := d2.sched.Get(task.RunID)
 	if !ok {
 		t.Fatal("run not recovered after restart (registry not durable)")
 	}
@@ -69,7 +69,7 @@ func TestRunRegistrySurvivesRestart(t *testing.T) {
 	// It must also show up in the registry listing.
 	found := false
 	for _, r := range d2.sched.List() {
-		if r.TaskID == task.TaskID {
+		if r.RunID == task.RunID {
 			found = true
 		}
 	}
@@ -89,7 +89,7 @@ func TestBackgroundRunPanicIsolation(t *testing.T) {
 	d.SetReasoner(panicReasoner{})
 	bad := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "boom")
 	d.runTaskGuarded(sess, bad) // must NOT crash the test process
-	if tk, _ := d.sched.Get(bad.TaskID); tk.Status != "failed" {
+	if tk, _ := d.sched.Get(bad.RunID); tk.Status != "failed" {
 		t.Fatalf("panicking run should be marked failed, got %s", tk.Status)
 	}
 
@@ -97,7 +97,7 @@ func TestBackgroundRunPanicIsolation(t *testing.T) {
 	d.SetReasoner(&scriptedReasoner{steps: []string{`{"tool":"done","summary":"ok"}`}})
 	good := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "ok")
 	d.runTaskGuarded(sess, good)
-	if tk, _ := d.sched.Get(good.TaskID); tk.Status != "completed" {
+	if tk, _ := d.sched.Get(good.RunID); tk.Status != "completed" {
 		t.Fatalf("daemon should still complete tasks after a panic, got %s", tk.Status)
 	}
 }
@@ -116,22 +116,22 @@ func TestBackgroundRunResumesAfterRestart(t *testing.T) {
 	sess, _ := d1.store.CreateSession(ws, "safe-edit")
 	d1.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d1.sched.Submit(sess.SessionID, sess.WorkspaceID, "resume me")
-	d1.sched.SetStatus(task.TaskID, "running")
+	d1.sched.SetStatus(task.RunID, "running")
 	tr := newTranscript(task.UserPrompt)
 	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.txt", Obs: Observation{Content: "hi"}})
 	anchor, err := d1.captureWorkspaceAnchor(sess)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d1.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: 1, Transcript: tr, WorkspaceAnchor: anchor})
-	d1.persistRun(task.TaskID)
+	d1.runs.saveCheckpoint(task.RunID, &runCheckpoint{Turn: 1, Transcript: tr, WorkspaceAnchor: anchor})
+	d1.persistRun(task.RunID)
 	d1.Close()
 
 	// d2: restart on the same state dir. New()'s resumeRuns() no-ops (offline =>
 	// nil reasoner) and leaves the run "running". Inject a reasoner, then resume.
 	d2 := newDaemonAt(t, stateDir)
 	defer d2.Close()
-	if tk, ok := d2.sched.Get(task.TaskID); !ok || tk.Status != "interrupted" || tk.Continuity.Recovery.Disposition != continuity.RecoveryResumeCheckpoint {
+	if tk, ok := d2.sched.Get(task.RunID); !ok || tk.Status != "interrupted" || tk.Continuity.Recovery.Disposition != continuity.RecoveryResumeCheckpoint {
 		t.Fatalf("interrupted run should be safely planned for resume, got %+v", tk)
 	}
 	d2.SetReasoner(&scriptedReasoner{steps: []string{`{"tool":"done","summary":"resumed and finished"}`}})
@@ -140,7 +140,7 @@ func TestBackgroundRunResumesAfterRestart(t *testing.T) {
 	// Resume is async; poll for terminal state.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if tk, _ := d2.sched.Get(task.TaskID); tk.Status == "completed" {
+		if tk, _ := d2.sched.Get(task.RunID); tk.Status == "completed" {
 			if tk.Summary != "resumed and finished" {
 				t.Fatalf("resumed run wrong summary: %q", tk.Summary)
 			}
@@ -148,6 +148,6 @@ func TestBackgroundRunResumesAfterRestart(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	tk, _ := d2.sched.Get(task.TaskID)
+	tk, _ := d2.sched.Get(task.RunID)
 	t.Fatalf("resumed run did not complete in time, status=%s", tk.Status)
 }

@@ -215,7 +215,7 @@ func TestWorkflowCancellationPropagatesToRunningSubagent(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
-	go d.withTaskParentContext(ctx, parentTask.TaskID, func(context.Context) {
+	go d.withTaskParentContext(ctx, parentTask.RunID, func(context.Context) {
 		_, err := d.runWorkflow(parent, parentTask, spec, "", "run-cancel")
 		result <- err
 	})

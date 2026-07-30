@@ -42,7 +42,9 @@ impl SignatureVerifier {
 
     /// Verifies a 64-byte signature over `wasm` against any trusted key.
     pub fn verify(&self, wasm: &[u8], signature: &[u8]) -> Result<(), SigningError> {
-        let sig_arr: [u8; 64] = signature.try_into().map_err(|_| SigningError::BadSignature)?;
+        let sig_arr: [u8; 64] = signature
+            .try_into()
+            .map_err(|_| SigningError::BadSignature)?;
         let sig = Signature::from_bytes(&sig_arr);
         for key in &self.keys {
             if key.verify(wasm, &sig).is_ok() {
@@ -80,7 +82,10 @@ mod tests {
         let sig = sk.sign(b"original");
         let mut v = SignatureVerifier::new();
         v.trust_key(sk.verifying_key().as_bytes()).unwrap();
-        assert!(matches!(v.verify(b"tampered", &sig.to_bytes()), Err(SigningError::Untrusted)));
+        assert!(matches!(
+            v.verify(b"tampered", &sig.to_bytes()),
+            Err(SigningError::Untrusted)
+        ));
     }
 
     #[test]

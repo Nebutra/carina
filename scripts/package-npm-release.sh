@@ -17,7 +17,7 @@ for tuple in darwin:arm64:arm64 darwin:amd64:x64 linux:arm64:arm64 linux:amd64:x
   stage="$(basename "$archive" .tar.gz)"
   for binary in \
     carina carina-ui carina-daemon carina-worker carina-kernel-service \
-    carina-scan carina-grep carina-diff carina-patch-native carina-run carina-pty headroom; do
+    carina-scan carina-grep carina-diff carina-patch-native carina-run carina-pty; do
     tar -xOf "$archive" "$stage/bin/$binary" > "$dir/bin/$binary"
     chmod 755 "$dir/bin/$binary"
   done

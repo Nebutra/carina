@@ -20,9 +20,6 @@ func (s *stubContextEngine) Compress(context.Context, contextengine.CompressRequ
 	s.calls++
 	return s.response, s.err
 }
-func (s *stubContextEngine) Retrieve(context.Context, string) (contextengine.RetrieveResponse, error) {
-	return contextengine.RetrieveResponse{}, errors.New("unavailable")
-}
 func (s *stubContextEngine) Stats(context.Context) (contextengine.Stats, error) {
 	return contextengine.Stats{}, nil
 }
@@ -37,10 +34,10 @@ func TestCompressObservationPreservesReversibleMetadataAndAudit(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect")
 	engine := &stubContextEngine{
-		status: contextengine.Status{EffectiveEngine: contextengine.ModeHeadroom},
+		status: contextengine.Status{EffectiveEngine: "test-compressor"},
 		response: contextengine.CompressResponse{
 			Content: "summary", OriginalRef: "ccr_abc", OriginalSHA256: strings.Repeat("a", 64),
-			OriginalBytes: 31, CompressedBytes: 7, Ratio: 0.25, Engine: contextengine.ModeHeadroom,
+			OriginalBytes: 31, CompressedBytes: 7, Ratio: 0.25, Engine: "test-compressor",
 			OriginalTokens: 10, CompressedTokens: 3, SavingsPercent: 70, Transforms: []string{"smart_crusher"},
 		},
 	}
@@ -48,18 +45,18 @@ func TestCompressObservationPreservesReversibleMetadataAndAudit(t *testing.T) {
 
 	const original = "sensitive original tool output"
 	tr := newTranscript(task.UserPrompt)
-	tr.policy.MaxChars = 1 // force over-budget so the trigger fires and Headroom is actually called
+	tr.policy.MaxChars = 1 // force over-budget so the trigger fires and external compressor is actually called
 	tr.addTurn(Turn{Tool: "read", ActionBrief: "read prior", Obs: Observation{Content: "prior turn content pushes size() over the 1-char triggerChars() budget"}})
 	obs, err := d.compressObservation(context.Background(), sess, task, tr, 2, "read", original, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if obs.Content != "summary" || obs.OriginalRef != "ccr_abc" || obs.OriginalSHA256 == "" || obs.CompressionEngine != contextengine.ModeHeadroom {
+	if obs.Content != "summary" || obs.OriginalRef != "ccr_abc" || obs.OriginalSHA256 == "" || obs.CompressionEngine != "test-compressor" {
 		t.Fatalf("compression metadata missing: %+v", obs)
 	}
 	tr.addTurn(Turn{Tool: "read", ActionBrief: "read x", Obs: obs})
-	d.runs.saveCheckpoint(task.TaskID, &runCheckpoint{Turn: 2, Transcript: tr})
-	reloaded := d.runs.loadCheckpoint(task.TaskID)
+	d.runs.saveCheckpoint(task.RunID, &runCheckpoint{Turn: 2, Transcript: tr})
+	reloaded := d.runs.loadCheckpoint(task.RunID)
 	if reloaded == nil || len(reloaded.Transcript.Turns) != 2 || reloaded.Transcript.Turns[1].Obs.OriginalRef != "ccr_abc" {
 		t.Fatalf("checkpoint lost reversible metadata: %+v", reloaded)
 	}
@@ -77,7 +74,7 @@ func TestCompressObservationPreservesReversibleMetadataAndAudit(t *testing.T) {
 }
 
 func TestCompressObservationSkipsPinnedContent(t *testing.T) {
-	engine := &stubContextEngine{status: contextengine.Status{EffectiveEngine: contextengine.ModeHeadroom}}
+	engine := &stubContextEngine{status: contextengine.Status{EffectiveEngine: "test-compressor"}}
 	d := &Daemon{contextEng: engine}
 	obs, err := d.compressObservation(context.Background(), nil, nil, nil, 1, "run", "failing test output", true)
 	if err != nil || obs.Content != "failing test output" || !obs.Pinned {
@@ -96,11 +93,11 @@ func TestCompressObservationFailureIsAuditedAndCircuitBreaks(t *testing.T) {
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect")
 	d.contextEng = &stubContextEngine{
 		err:    errors.New("sidecar failed"),
-		status: contextengine.Status{ConfiguredEngine: contextengine.ModeHeadroom, EffectiveEngine: contextengine.ModeHeadroom},
+		status: contextengine.Status{ConfiguredEngine: "test-compressor", EffectiveEngine: "test-compressor"},
 	}
 	const original = "raw original must stay out of new audit event"
 	tr := newTranscript(task.UserPrompt)
-	tr.policy.MaxChars = 1 // force over-budget so the trigger fires and Headroom is actually called
+	tr.policy.MaxChars = 1 // force over-budget so the trigger fires and external compressor is actually called
 	tr.addTurn(Turn{Tool: "read", ActionBrief: "read prior", Obs: Observation{Content: "prior turn content pushes size() over the 1-char triggerChars() budget"}})
 	for i := 1; i <= 4; i++ {
 		obs, err := d.compressObservation(context.Background(), sess, task, tr, i, "read", original, false)
@@ -120,7 +117,7 @@ func TestCompressObservationFailureIsAuditedAndCircuitBreaks(t *testing.T) {
 // TestAgentPromptSkipsCompressionUnderBudget covers the new end-to-end
 // behavior: newTranscript's default policy (MaxChars=24000) means a single
 // short observation early in a task never crosses tr.triggerChars(), so the
-// real agent loop must NOT pay the Headroom round trip for it — the raw
+// real agent loop must NOT pay the external compressor round trip for it — the raw
 // (here, an ordinary toolchain-error string) observation reaches the model
 // unchanged. The compress-when-over-budget path itself is covered directly,
 // without going through the full loop's turn/loop-guard budgets, by
@@ -130,10 +127,10 @@ func TestAgentPromptSkipsCompressionUnderBudget(t *testing.T) {
 	d, workspace := newLoopDaemon(t)
 	defer d.Close()
 	engine := &stubContextEngine{
-		status: contextengine.Status{EffectiveEngine: contextengine.ModeHeadroom},
+		status: contextengine.Status{EffectiveEngine: "test-compressor"},
 		response: contextengine.CompressResponse{
-			Content: "HEADROOM COMPRESSED FILE LIST", OriginalRef: "ccr_list", OriginalSHA256: strings.Repeat("b", 64),
-			OriginalBytes: 100, CompressedBytes: 29, Engine: contextengine.ModeHeadroom,
+			Content: "TEST COMPRESSED FILE LIST", OriginalRef: "ccr_list", OriginalSHA256: strings.Repeat("b", 64),
+			OriginalBytes: 100, CompressedBytes: 29, Engine: "test-compressor",
 		},
 	}
 	d.contextEng = engine
@@ -150,7 +147,7 @@ func TestAgentPromptSkipsCompressionUnderBudget(t *testing.T) {
 		t.Fatalf("reasoner prompts = %d, want at least 2", len(reasoner.prompts))
 	}
 	second := reasoner.prompts[1]
-	if strings.Contains(second, "HEADROOM COMPRESSED FILE LIST") {
+	if strings.Contains(second, "TEST COMPRESSED FILE LIST") {
 		t.Fatalf("second model prompt was compressed despite being under the transcript char budget:\n%s", second)
 	}
 	if engine.calls != 0 {
@@ -164,10 +161,10 @@ func TestSubagentPromptSkipsCompressionUnderBudget(t *testing.T) {
 	d, workspace := newLoopDaemon(t)
 	defer d.Close()
 	engine := &stubContextEngine{
-		status: contextengine.Status{EffectiveEngine: contextengine.ModeHeadroom},
+		status: contextengine.Status{EffectiveEngine: "test-compressor"},
 		response: contextengine.CompressResponse{
-			Content: "HEADROOM COMPRESSED SUBAGENT LIST", OriginalRef: "ccr_subagent", OriginalSHA256: strings.Repeat("c", 64),
-			OriginalBytes: 100, CompressedBytes: 34, Engine: contextengine.ModeHeadroom,
+			Content: "TEST COMPRESSED SUBAGENT LIST", OriginalRef: "ccr_subagent", OriginalSHA256: strings.Repeat("c", 64),
+			OriginalBytes: 100, CompressedBytes: 34, Engine: "test-compressor",
 		},
 	}
 	d.contextEng = engine
@@ -188,7 +185,7 @@ func TestSubagentPromptSkipsCompressionUnderBudget(t *testing.T) {
 		t.Fatalf("reasoner prompts = %d, want at least 2", len(reasoner.prompts))
 	}
 	second := reasoner.prompts[1]
-	if strings.Contains(second, "HEADROOM COMPRESSED SUBAGENT LIST") {
+	if strings.Contains(second, "TEST COMPRESSED SUBAGENT LIST") {
 		t.Fatalf("second subagent prompt was compressed despite being under the transcript char budget:\n%s", second)
 	}
 	if engine.calls != 0 {
@@ -198,7 +195,7 @@ func TestSubagentPromptSkipsCompressionUnderBudget(t *testing.T) {
 
 // TestCompressObservationSkipsUnderBudget confirms the trigger added in this
 // change: a transcript comfortably under its char budget never reaches the
-// Headroom adapter, so a large MaxChars with short content skips compression
+// external compressor adapter, so a large MaxChars with short content skips compression
 // entirely (the caller's addTurn hard-truncation remains the only backstop).
 func TestCompressObservationSkipsUnderBudget(t *testing.T) {
 	d, workspace := newLoopDaemon(t)
@@ -206,7 +203,7 @@ func TestCompressObservationSkipsUnderBudget(t *testing.T) {
 	sess, _ := d.store.CreateSession(workspace, "safe-edit")
 	d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect")
-	engine := &stubContextEngine{status: contextengine.Status{EffectiveEngine: contextengine.ModeHeadroom}}
+	engine := &stubContextEngine{status: contextengine.Status{EffectiveEngine: "test-compressor"}}
 	d.contextEng = engine
 
 	tr := newTranscript(task.UserPrompt) // default policy: MaxChars=24000
@@ -233,10 +230,10 @@ func TestCompressObservationCompressesOverBudget(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect")
 	engine := &stubContextEngine{
-		status: contextengine.Status{EffectiveEngine: contextengine.ModeHeadroom},
+		status: contextengine.Status{EffectiveEngine: "test-compressor"},
 		response: contextengine.CompressResponse{
 			Content: "summary", OriginalRef: "ccr_over", OriginalSHA256: strings.Repeat("d", 64),
-			Engine: contextengine.ModeHeadroom,
+			Engine: "test-compressor",
 		},
 	}
 	d.contextEng = engine
@@ -266,10 +263,10 @@ func TestCompressObservationNilTranscriptCompresses(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect")
 	engine := &stubContextEngine{
-		status: contextengine.Status{EffectiveEngine: contextengine.ModeHeadroom},
+		status: contextengine.Status{EffectiveEngine: "test-compressor"},
 		response: contextengine.CompressResponse{
 			Content: "summary", OriginalRef: "ccr_nil", OriginalSHA256: strings.Repeat("e", 64),
-			Engine: contextengine.ModeHeadroom,
+			Engine: "test-compressor",
 		},
 	}
 	d.contextEng = engine
@@ -299,10 +296,10 @@ func TestCompressObservationTriggerMatchesTranscriptCompact(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect")
 	engine := &stubContextEngine{
-		status: contextengine.Status{EffectiveEngine: contextengine.ModeHeadroom},
+		status: contextengine.Status{EffectiveEngine: "test-compressor"},
 		response: contextengine.CompressResponse{
 			Content: "summary", OriginalRef: "ccr_tripwire", OriginalSHA256: strings.Repeat("f", 64),
-			Engine: contextengine.ModeHeadroom,
+			Engine: "test-compressor",
 		},
 	}
 	d.contextEng = engine
@@ -313,7 +310,7 @@ func TestCompressObservationTriggerMatchesTranscriptCompact(t *testing.T) {
 	tr.addTurn(Turn{Tool: "read", ActionBrief: "read x", Obs: Observation{Content: strings.Repeat("a", 850)}})
 
 	// tr.size() is just under triggerChars() (900): compact() must be a
-	// no-op, and compressObservation must skip Headroom, at the identical
+	// no-op, and compressObservation must skip external compressor, at the identical
 	// threshold.
 	if tr.size() >= tr.triggerChars() {
 		t.Fatalf("test fixture assumption broken: size=%d trigger=%d", tr.size(), tr.triggerChars())
@@ -329,6 +326,6 @@ func TestCompressObservationTriggerMatchesTranscriptCompact(t *testing.T) {
 		t.Fatalf("compressObservation fired below the same triggerChars() compact() respected: %+v", obs)
 	}
 	if engine.calls != 0 {
-		t.Fatalf("compressObservation reached Headroom below triggerChars(): calls=%d", engine.calls)
+		t.Fatalf("compressObservation reached external compressor below triggerChars(): calls=%d", engine.calls)
 	}
 }

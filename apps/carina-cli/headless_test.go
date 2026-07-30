@@ -46,11 +46,11 @@ func TestHandleStreamInputUsesOneGovernedControlContract(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	register("task.submit", rpc.ScopeWrite)
-	register("task.steer", rpc.ScopeWrite)
-	register("task.approval.resolve", rpc.ScopeAdmin)
-	register("task.user.answer", rpc.ScopeWrite)
-	register("task.cancel", rpc.ScopeWrite)
+	register("execution.start", rpc.ScopeWrite)
+	register("execution.steer", rpc.ScopeWrite)
+	register("governance.approval.resolve", rpc.ScopeAdmin)
+	register("question.answer", rpc.ScopeWrite)
+	register("execution.cancel", rpc.ScopeWrite)
 	c := dialTestServer(t, s)
 	defer c.Close()
 
@@ -59,23 +59,23 @@ func TestHandleStreamInputUsesOneGovernedControlContract(t *testing.T) {
 	if err != nil || stop || result.(map[string]any)["ok"] != true {
 		t.Fatalf("prompt result=%#v stop=%v err=%v", result, stop, err)
 	}
-	if got := calls["task.submit"]; got["session_id"] != "sess_1" || got["model"] != defaults.model || got["reasoning_effort"] != defaults.effort || got["client_submission_id"] != "sub_1" {
-		t.Fatalf("task.submit params=%#v", got)
+	if got := calls["execution.start"]; got["session_id"] != "sess_1" || got["model"] != defaults.model || got["reasoning_effort"] != defaults.effort || got["client_submission_id"] != "sub_1" {
+		t.Fatalf("execution.start params=%#v", got)
 	} else if _, leaked := got["mode"]; leaked {
-		t.Fatalf("session plan/build mode leaked into task execution mode: %#v", got)
+		t.Fatalf("session plan/build mode leaked into foreground execution mode: %#v", got)
 	}
 
 	_, _, err = handleStreamInput(c, "sess_1", defaults, streamInputFrame{Type: "approval", DecisionID: "dec_1", Decision: "allow", Scope: "session"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := calls["task.approval.resolve"]; got["decision_id"] != "dec_1" || got["approve"] != true || got["scope"] != "session" || got["approver"] != "headless" {
+	if got := calls["governance.approval.resolve"]; got["decision_id"] != "dec_1" || got["approve"] != true || got["scope"] != "session" || got["approver"] != "headless" {
 		t.Fatalf("approval params=%#v", got)
 	}
 
 	_, _, err = handleStreamInput(c, "sess_1", defaults, streamInputFrame{Type: "answer", QuestionID: "q_1", Value: "free text"})
-	if err != nil || calls["task.user.answer"]["value"] != "free text" {
-		t.Fatalf("answer err=%v params=%#v", err, calls["task.user.answer"])
+	if err != nil || calls["question.answer"]["value"] != "free text" {
+		t.Fatalf("answer err=%v params=%#v", err, calls["question.answer"])
 	}
 
 	if _, _, err := handleStreamInput(c, "sess_1", defaults, streamInputFrame{Type: "approval", DecisionID: "dec_2", Decision: "allow", Scope: "global"}); err == nil {

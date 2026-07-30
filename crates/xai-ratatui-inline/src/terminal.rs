@@ -167,6 +167,8 @@ where
     current: usize,
     /// Whether the cursor is currently hidden
     hidden_cursor: bool,
+    /// Cursor state requested by the last completed frame.
+    rendered_cursor_position: Option<Position>,
     /// Viewport
     viewport: Viewport,
     /// Area of the viewport
@@ -259,6 +261,7 @@ where
             buffers: [Buffer::empty(viewport_area), Buffer::empty(viewport_area)],
             current: 0,
             hidden_cursor: false,
+            rendered_cursor_position: Some(cursor_pos),
             viewport: options.viewport,
             viewport_area,
             last_known_area: area,
@@ -526,6 +529,32 @@ where
         })
     }
 
+    /// Draw a frame and diff its hyperlink layer together with its cells.
+    pub fn draw_with_links<F>(&mut self, render_callback: F) -> io::Result<CompletedFrame<'_>>
+    where
+        F: FnOnce(&mut Frame) -> Vec<LinkSpan>,
+        B: Write,
+    {
+        self.autoresize()?;
+        let mut frame = self.get_frame();
+        let links = render_callback(&mut frame);
+        let cursor_position = OurFrame::from(frame).cursor_position;
+        self.set_frame_links(&links);
+        let has_changes = self.flush_with_links()?;
+        let cursor_changed = self.update_rendered_cursor(cursor_position, has_changes)?;
+        self.swap_buffers();
+        if has_changes || cursor_changed {
+            Backend::flush(&mut self.backend)?;
+        }
+        let completed_frame = CompletedFrame {
+            buffer: &self.buffers[1 - self.current],
+            area: self.last_known_area,
+            count: self.frame_count,
+        };
+        self.frame_count = self.frame_count.wrapping_add(1);
+        Ok(completed_frame)
+    }
+
     /// Tries to draw a single frame to the terminal.
     ///
     /// Returns [`Result::Ok`] containing a [`CompletedFrame`] if successful, otherwise
@@ -610,20 +639,15 @@ where
         let cursor_position = OurFrame::from(frame).cursor_position;
 
         // Draw to stdout
-        self.flush()?;
-
-        match cursor_position {
-            None => self.hide_cursor()?,
-            Some(position) => {
-                self.show_cursor()?;
-                self.set_cursor_position(position)?;
-            }
-        }
+        let has_changes = self.flush()?;
+        let cursor_changed = self.update_rendered_cursor(cursor_position, has_changes)?;
 
         self.swap_buffers();
 
         // Flush
-        self.backend.flush()?;
+        if has_changes || cursor_changed {
+            Backend::flush(&mut self.backend)?;
+        }
 
         let completed_frame = CompletedFrame {
             buffer: &self.buffers[1 - self.current],
@@ -635,6 +659,34 @@ where
         self.frame_count = self.frame_count.wrapping_add(1);
 
         Ok(completed_frame)
+    }
+
+    fn update_rendered_cursor(
+        &mut self,
+        cursor_position: Option<Position>,
+        frame_wrote_cells: bool,
+    ) -> io::Result<bool> {
+        let mut wrote_cursor = false;
+        match cursor_position {
+            None => {
+                if !self.hidden_cursor {
+                    self.hide_cursor()?;
+                    wrote_cursor = true;
+                }
+            }
+            Some(position) => {
+                if self.hidden_cursor {
+                    self.show_cursor()?;
+                    wrote_cursor = true;
+                }
+                if frame_wrote_cells || self.rendered_cursor_position != Some(position) {
+                    self.set_cursor_position(position)?;
+                    wrote_cursor = true;
+                }
+            }
+        }
+        self.rendered_cursor_position = cursor_position;
+        Ok(wrote_cursor)
     }
 
     /// Hides the cursor.
@@ -879,10 +931,10 @@ where
                     // origin up, so committed content is preserved instead of
                     // overwritten. Minimal mode (and any inline consumer) relies
                     // on this when growing the viewport for an overlay near the
-                    // bottom of the screen. The pager builds without the
-                    // `scrolling-regions` feature; that variant is a separate
-                    // (unused-by-the-pager) path left as a TODO.
-                    #[cfg(not(feature = "scrolling-regions"))]
+                    // bottom of the screen. This whole-screen history commit
+                    // remains necessary when scrolling-region insertion is
+                    // enabled; that feature changes insert_before, not the
+                    // viewport-grow invariant.
                     self.scroll_up(overflow)?;
                     self.viewport_area.y.saturating_sub(overflow)
                 } else {
@@ -1119,7 +1171,6 @@ where
     }
 
     /// Scroll the whole screen up by the given number of lines.
-    #[cfg(not(feature = "scrolling-regions"))]
     fn scroll_up(&mut self, lines_to_scroll: u16) -> io::Result<()> {
         if lines_to_scroll > 0 {
             self.set_cursor_position(Position::new(

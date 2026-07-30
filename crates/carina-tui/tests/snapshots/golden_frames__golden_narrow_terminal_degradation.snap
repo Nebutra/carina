@@ -1,0 +1,21 @@
+---
+source: crates/carina-tui/tests/golden_frames.rs
+expression: "render_case(40, 10, \"项目 / claude-sonnet\",\nvec![Line::from(\"你好，这是一条需要换行的中文消息。\"),\nLine::from(\"A deliberately long fallback line.\")], false)"
+---
+size=40x10
+ CARINA 项目 / claude-sonnet
+
+────────────────────────────────────────
+ 你好，这是一条需要换行的中文消息。
+ A deliberately long fallback line.
+
+
+────────────────────────────────────────
+❯ Ask Carina
+
+styles:
+(0, 0)..(8, 0) (Rgb(222, 133, 155), Reset, BOLD)
+(0, 2)..(40, 2) (Rgb(52, 65, 68), Reset, NONE)
+(0, 7)..(40, 7) (Rgb(52, 65, 68), Reset, NONE)
+(0, 8)..(2, 8) (Rgb(142, 219, 210), Reset, NONE)
+(2, 8)..(12, 8) (Rgb(150, 160, 156), Reset, NONE)

@@ -85,8 +85,11 @@ var (
 	}
 )
 
+const retiredContextHelper = "head" + "room"
+
 var obsoleteUpdateBinaries = []string{
 	"carina-tui", // removed: use bare `carina` (optional flags on the same binary)
+	retiredContextHelper,
 }
 
 var requiredUpdateBinaries = []string{
@@ -101,7 +104,6 @@ var requiredUpdateBinaries = []string{
 	"carina-run",
 	"carina-pty",
 	"carina-patch-native",
-	"headroom",
 }
 
 func cmdUpdate(args []string) error {
@@ -181,7 +183,7 @@ func updateWithHomebrew(opts updateOptions) error {
 	if err := updateRunCommand("brew", args...); err != nil {
 		return fmt.Errorf("brew %s: %w", args[0], err)
 	}
-	fmt.Println("carina update: restart the current workspace runtime after active tasks finish: carina runtime stop; carina")
+	fmt.Println("carina update: restart the current workspace runtime after active executions finish: carina runtime stop; carina")
 	return nil
 }
 
@@ -215,7 +217,7 @@ func updateWithNodeManager(manager string, opts updateOptions) error {
 	if err := updateRunCommand(manager, args...); err != nil {
 		return fmt.Errorf("%s update: %w", manager, err)
 	}
-	fmt.Println("carina update: restart the current workspace runtime after active tasks finish: carina runtime stop; carina")
+	fmt.Println("carina update: restart the current workspace runtime after active executions finish: carina runtime stop; carina")
 	return nil
 }
 
@@ -296,7 +298,7 @@ func updateStandalone(opts updateOptions, executable string) error {
 	}
 	removeObsoleteUpdateBinaries(installDir)
 	fmt.Printf("carina update: updated %s -> %s\n", cliVersion, targetVersion)
-	fmt.Println("carina update: restart the current workspace runtime after active tasks finish: carina runtime stop; carina")
+	fmt.Println("carina update: restart the current workspace runtime after active executions finish: carina runtime stop; carina")
 	return nil
 }
 
@@ -554,7 +556,7 @@ func extractAndVerifyUpdateArchive(archivePath, stage, version, goos, goarch str
 				continue
 			}
 			name := strings.TrimPrefix(rel, "bin/")
-			if name == "" || (!strings.HasPrefix(name, "carina") && name != "headroom") {
+			if name == "" || !strings.HasPrefix(name, "carina") {
 				return nil, fmt.Errorf("release archive contains unexpected executable %q", name)
 			}
 			if _, duplicate := binaries[name]; duplicate {

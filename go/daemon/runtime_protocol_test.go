@@ -20,6 +20,9 @@ func TestRuntimeInitializeNegotiatesMajorAndCapabilities(t *testing.T) {
 		t.Fatalf("projection version = %v", m["projection_version"])
 	}
 	caps := m["capabilities"].(map[string]any)
+	if methods, ok := caps["rpc_methods"].([]string); !ok || methods == nil {
+		t.Fatalf("runtime method inventory missing: %+v", caps)
+	}
 	if _, ok := caps["trusted_channels"].(bool); !ok {
 		t.Fatalf("%+v", caps)
 	}

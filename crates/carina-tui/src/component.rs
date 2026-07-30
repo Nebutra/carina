@@ -1,32 +1,76 @@
 use ratatui::layout::{Position, Rect};
+use xai_ratatui_textarea::ElementId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ComponentId(pub u64);
 
+impl ComponentId {
+    pub fn stable(namespace: &str, value: &str) -> Self {
+        const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        let hash = namespace
+            .bytes()
+            .chain([0])
+            .chain(value.bytes())
+            .fold(OFFSET, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(PRIME)
+            });
+        Self(hash | (1 << 63))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
+    SelectLocale(usize),
     SelectProvider(usize),
+    ConfirmProviderImport,
+    CancelProviderImport,
+    FocusProviderSearch,
     SelectModel(usize),
     SelectSession(usize),
-    ToggleBlock(usize),
+    CreateSession,
+    BeginRenameSession,
+    ConfirmRenameSession,
+    CancelRenameSession,
+    BeginArchiveSession,
+    ConfirmArchiveSession,
+    CancelArchiveSession,
+    UnarchiveSession,
+    FocusSessionSearch,
+    ToggleSessionScope,
+    ToggleBlock(String),
     SelectHistory(usize),
     FocusComposer,
+    PreviewMedia(ElementId),
+    RetryMedia(ElementId),
     OpenSessions,
     OpenModels,
-    OpenCheckpoints,
     OpenSettings,
+    OpenStatus,
+    OpenAgents,
+    OpenChanges,
+    RefreshAgents,
+    RefreshChanges,
+    SelectAgent(usize),
+    OpenSelectedAgentSession,
+    BeginStopAgent,
+    ConfirmStopAgent,
+    SelectChange(usize),
+    SelectSlashCommand(usize),
+    SelectPromptHistory(usize),
+    SelectFileCandidate(usize),
+    SelectFileViewerLine(usize),
+    ConfirmFileViewer,
     OpenLocale,
     OpenProvider,
     ApprovalAllow,
     ApprovalDeny,
     QuestionOption(usize),
-    SelectCheckpoint(usize),
-    PreviewCheckpoint,
-    BeginCheckpointRestore,
-    ConfirmCheckpointRestore,
-    ResumeRestoredTask,
-    ResumePausedTask,
-    CheckpointBack,
+    TogglePlanMode,
+    ApprovePlan,
+    RevisePlan,
+    CancelPlan,
+    ResumePausedExecutionRun,
     CloseOverlay,
 }
 
@@ -102,12 +146,20 @@ mod tests {
         map.register(HitRegion {
             component: ComponentId(2),
             area,
-            action: Action::ToggleBlock(3),
+            action: Action::ToggleBlock("tool:first".into()),
         });
         assert_eq!(
             map.action_at(Position::new(2, 1)),
-            Some(Action::ToggleBlock(3))
+            Some(Action::ToggleBlock("tool:first".into()))
         );
+    }
+
+    #[test]
+    fn semantic_component_ids_do_not_depend_on_vector_position() {
+        let original = ComponentId::stable("transcript", "tool:first");
+        assert_eq!(original, ComponentId::stable("transcript", "tool:first"));
+        assert_ne!(original, ComponentId::stable("transcript", "tool:second"));
+        assert_ne!(original, ComponentId::stable("overlay", "tool:first"));
     }
 
     #[test]

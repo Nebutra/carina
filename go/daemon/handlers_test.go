@@ -90,7 +90,7 @@ func TestDaemonHandlerSurface(t *testing.T) {
 		switch m.Method {
 		case "daemon.status":
 			seenStatus = m.Scope == "read" && m.Remote
-		case "task.submit":
+		case "execution.start":
 			seenSubmit = m.Scope == "write" && !m.Remote
 		case "session.resume":
 			seenSessionResume = m.Scope == "write" && !m.Remote
@@ -196,9 +196,9 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	assertScope("session.add_dir", map[string]any{"session_id": sid, "path": t.TempDir()}, "admin", true)
 	assertScope("workspace.trust", map[string]any{"root": ws, "trusted": false}, "write", true)
 	assertScope("workspace.trust", map[string]any{"root": ws, "trusted": true}, "admin", true)
-	assertScope("task.action.deny", map[string]any{"session_id": sid, "decision_id": "dec_test"}, "write", true)
-	assertScope("task.action.deny", map[string]any{"session_id": sid, "decision_id": "dec_test", "approver": "alice"}, "admin", true)
-	assertScope("task.action.approve", map[string]any{"session_id": sid, "decision_id": "dec_test"}, "admin", false)
+	assertScope("governance.action.deny", map[string]any{"session_id": sid, "decision_id": "dec_test"}, "write", true)
+	assertScope("governance.action.deny", map[string]any{"session_id": sid, "decision_id": "dec_test", "approver": "alice"}, "admin", true)
+	assertScope("governance.action.approve", map[string]any{"session_id": sid, "decision_id": "dec_test"}, "admin", false)
 	must("session.get", map[string]any{"session_id": sid})
 	must("session.list", map[string]any{})
 	must("session.pause", map[string]any{"session_id": sid})
@@ -217,7 +217,7 @@ func TestDaemonHandlerSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 	if memoryWrite.Decision.Decision == "requires_approval" {
-		must("task.action.approve", map[string]any{"session_id": sid, "decision_id": memoryWrite.Decision.DecisionID})
+		must("governance.action.approve", map[string]any{"session_id": sid, "decision_id": memoryWrite.Decision.DecisionID})
 	}
 	var memoryList struct {
 		Entries []string `json:"entries"`
@@ -282,19 +282,19 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	if patch.ApplyDecision.Decision != "requires_approval" {
 		t.Fatalf("propose should gate apply as requires_approval, got %+v", patch.ApplyDecision)
 	}
-	must("task.action.approve", map[string]any{"session_id": sid, "decision_id": patch.ApplyDecision.DecisionID})
+	must("governance.action.approve", map[string]any{"session_id": sid, "decision_id": patch.ApplyDecision.DecisionID})
 	must("workspace.patch.apply", map[string]any{"session_id": sid, "patch_id": patch.PatchID})
 	must("workspace.patch.rollback", map[string]any{"session_id": sid, "patch_id": patch.PatchID})
 
 	// task lifecycle
 	var task struct {
-		TaskID string `json:"task_id"`
+		RunID string `json:"run_id"`
 	}
-	if err := c.Call("task.submit", map[string]any{"session_id": sid, "prompt": "hi"}, &task); err != nil {
+	if err := c.Call("execution.start", map[string]any{"session_id": sid, "prompt": "hi"}, &task); err != nil {
 		t.Fatal(err)
 	}
-	must("task.status", map[string]any{"task_id": task.TaskID})
-	must("task.cancel", map[string]any{"task_id": task.TaskID})
+	must("execution.status", map[string]any{"run_id": task.RunID})
+	must("execution.cancel", map[string]any{"run_id": task.RunID})
 
 	// secrets + audit
 	must("secret.grant", map[string]any{"session_id": sid, "name": "K", "value": "v"})
@@ -318,7 +318,7 @@ func TestDaemonHandlerSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 	if exec.Decision.Decision == "requires_approval" {
-		must("task.action.approve", map[string]any{"session_id": sid, "decision_id": exec.Decision.DecisionID})
+		must("governance.action.approve", map[string]any{"session_id": sid, "decision_id": exec.Decision.DecisionID})
 	}
 	// deny path
 	if err := os.WriteFile(filepath.Join(ws, "deny-src.txt"), []byte("do not move\n"), 0o600); err != nil {
@@ -332,10 +332,12 @@ func TestDaemonHandlerSurface(t *testing.T) {
 	}
 	c.Call("command.exec", map[string]any{"session_id": sid, "argv": []string{"mv", "deny-src.txt", "deny-dst.txt"}}, &exec2)
 	if exec2.Decision.DecisionID != "" {
-		must("task.action.deny", map[string]any{"session_id": sid, "decision_id": exec2.Decision.DecisionID, "reason": "no"})
+		must("governance.action.deny", map[string]any{"session_id": sid, "decision_id": exec2.Decision.DecisionID, "reason": "no"})
 	}
 
 	must("session.close", map[string]any{"session_id": sid})
+	must("session.unarchive", map[string]any{"session_id": sid})
+	must("session.archive", map[string]any{"session_id": sid})
 
 	// Error paths: unknown session / missing params.
 	if err := c.Call("session.get", map[string]any{"session_id": "sess_missing"}, nil); err == nil {
@@ -431,7 +433,7 @@ require_approval = ["MemoryWrite"]
 			ContentSHA256 string `json:"content_sha256"`
 		} `json:"result"`
 	}
-	if err := c.Call("task.action.approve", map[string]any{
+	if err := c.Call("governance.action.approve", map[string]any{
 		"session_id":  sess.SessionID,
 		"decision_id": write.Decision.DecisionID,
 		"approver":    "operator",
@@ -471,7 +473,7 @@ require_approval = ["MemoryWrite"]
 	var denied struct {
 		Decision string `json:"decision"`
 	}
-	if err := c.Call("task.action.deny", map[string]any{
+	if err := c.Call("governance.action.deny", map[string]any{
 		"session_id":  sess.SessionID,
 		"decision_id": deniedWrite.Decision.DecisionID,
 		"reason":      "not useful",
@@ -641,7 +643,7 @@ func TestDaemonEventStream(t *testing.T) {
 			got <- m
 		}
 	}()
-	c.Call("task.submit", map[string]any{"session_id": sess.SessionID, "prompt": "go"}, &struct{}{})
+	c.Call("execution.start", map[string]any{"session_id": sess.SessionID, "prompt": "go"}, &struct{}{})
 	select {
 	case <-got:
 	case <-time.After(5 * time.Second):

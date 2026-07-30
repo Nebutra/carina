@@ -91,12 +91,7 @@ func main() {
 	riskReviewModel := flag.String("risk-review-model", cfg.RiskReviewModel, "optional model for Nebutra Risk Review (default: local heuristic)")
 	nebutraCloud := flag.String("nebutra-cloud", cfg.NebutraCloudEndpoint, "Nebutra Cloud endpoint for identity/sync boundary")
 	nebutraSyncMode := flag.String("nebutra-sync-mode", cfg.NebutraSyncMode, "Nebutra sync mode (currently only off)")
-	contextEngine := flag.String("context-engine", cfg.ContextEngine, "context engine: auto|off|headroom|noop")
-	headroomBin := flag.String("headroom-bin", cfg.HeadroomBin, "optional bundled/override Headroom binary path")
-	headroomStateDir := flag.String("headroom-state-dir", cfg.HeadroomStateDir, "Headroom local state directory")
-	headroomMode := flag.String("headroom-mode", cfg.HeadroomMode, "Headroom integration mode: managed_mcp|sidecar|proxy")
-	headroomProxyPort := flag.Int("headroom-proxy-port", cfg.HeadroomProxyPort, "Headroom localhost proxy port (0 = choose later)")
-	headroomTokenBudget := flag.Int("headroom-token-budget", cfg.HeadroomTokenBudget, "Headroom context token budget")
+	contextEngine := flag.String("context-engine", cfg.ContextEngine, "context engine: auto|off|noop")
 	memoryProvider := flag.String("memory-provider", cfg.MemoryProvider, "memory recall provider: off|hms-shadow|hms-hybrid")
 	memoryHMSEndpoint := flag.String("memory-hms-endpoint", cfg.MemoryHMSEndpoint, "HMS base URL (HTTPS or loopback HTTP)")
 	memoryHMSAPIKeyEnv := flag.String("memory-hms-api-key-env", cfg.MemoryHMSAPIKeyEnv, "daemon environment variable containing the HMS bearer token")
@@ -172,11 +167,6 @@ func main() {
 		GatewayTokenSigningKeyFile: *gatewayTokenSigningKeyFile,
 		GatewayTokenMaxTTLSeconds:  *gatewayTokenMaxTTL,
 		ContextEngine:              *contextEngine,
-		HeadroomBin:                *headroomBin,
-		HeadroomStateDir:           *headroomStateDir,
-		HeadroomMode:               *headroomMode,
-		HeadroomProxyPort:          *headroomProxyPort,
-		HeadroomTokenBudget:        *headroomTokenBudget,
 		MemoryProvider:             *memoryProvider,
 		MemoryHMSEndpoint:          *memoryHMSEndpoint,
 		MemoryHMSAPIKeyEnv:         *memoryHMSAPIKeyEnv,
@@ -235,21 +225,6 @@ func main() {
 		}
 		if repin("context-engine") {
 			nc.ContextEngine = *contextEngine
-		}
-		if repin("headroom-bin") {
-			nc.HeadroomBin = *headroomBin
-		}
-		if repin("headroom-state-dir") {
-			nc.HeadroomStateDir = *headroomStateDir
-		}
-		if repin("headroom-mode") {
-			nc.HeadroomMode = *headroomMode
-		}
-		if repin("headroom-proxy-port") {
-			nc.HeadroomProxyPort = *headroomProxyPort
-		}
-		if repin("headroom-token-budget") {
-			nc.HeadroomTokenBudget = *headroomTokenBudget
 		}
 		if err := d.ApplyConfig(nc); err != nil {
 			return err
@@ -443,11 +418,6 @@ var flagConfigKeys = map[string]string{
 	"nebutra-cloud":                  "nebutra_cloud_endpoint",
 	"nebutra-sync-mode":              "nebutra_sync_mode",
 	"context-engine":                 "context_engine",
-	"headroom-bin":                   "headroom_bin",
-	"headroom-state-dir":             "headroom_state_dir",
-	"headroom-mode":                  "headroom_mode",
-	"headroom-proxy-port":            "headroom_proxy_port",
-	"headroom-token-budget":          "headroom_token_budget",
 	"memory-provider":                "memory_provider",
 	"memory-hms-endpoint":            "memory_hms_endpoint",
 	"memory-hms-api-key-env":         "memory_hms_api_key_env",

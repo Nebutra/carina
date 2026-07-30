@@ -20,6 +20,14 @@ import (
 
 const providerHTTPTimeout = 120 * time.Second
 
+// Patch actions carry complete file contents in the current agent protocol.
+// A 2K cap truncates otherwise valid JSON for modest source files and turns one
+// edit into several full model requeries. Provider/model overrides may still
+// lower this where a route has a stricter contract.
+const agentMaxOutputTokens = 8192
+
+const maxProviderResponseBytes = 16 << 20
+
 // mediaDataURI encodes one request media part as a data: URI, the shape the
 // OpenAI-style chat (image_url) and responses (input_image) APIs accept.
 func mediaDataURI(m modelrouter.MediaPart) string {
@@ -28,6 +36,7 @@ func mediaDataURI(m modelrouter.MediaPart) string {
 
 type providerBase struct {
 	id           string
+	label        string
 	baseURL      string
 	defaultModel string
 	auth         *auth.Chain
@@ -52,6 +61,13 @@ func (e providerCredentialError) ProviderError() providerErrorInfo {
 }
 
 func (p *providerBase) name() string { return p.id }
+
+func (p *providerBase) errorName() string {
+	if label := strings.TrimSpace(p.label); label != "" {
+		return label
+	}
+	return p.id
+}
 
 func (p *providerBase) model(req modelrouter.Request) string {
 	apiModel, _, _ := p.resolveModel(req)
@@ -80,14 +96,14 @@ func (p *providerBase) credential() (auth.Credential, bool, error) {
 		if p.noAuth {
 			return auth.Credential{}, false, nil
 		}
-		return auth.Credential{}, false, providerCredentialError{provider: p.id}
+		return auth.Credential{}, false, providerCredentialError{provider: p.errorName()}
 	}
 	cred, ok := p.auth.Resolve()
 	if !ok || strings.TrimSpace(cred.Value) == "" {
 		if p.noAuth {
 			return auth.Credential{}, false, nil
 		}
-		return auth.Credential{}, false, providerCredentialError{provider: p.id}
+		return auth.Credential{}, false, providerCredentialError{provider: p.errorName()}
 	}
 	return cred, true, nil
 }
@@ -109,6 +125,32 @@ func (p *providerBase) endpoint(path string) string {
 		return base
 	}
 	return base + "/" + path
+}
+
+func anthropicEndpoint(baseURL, resource string) string {
+	resource = strings.Trim(resource, "/")
+	baseURL = strings.TrimSpace(baseURL)
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		base := strings.TrimRight(baseURL, "/")
+		if strings.HasSuffix(base, "/v1") {
+			return base + "/" + resource
+		}
+		if strings.HasSuffix(base, "/v1/"+resource) {
+			return base
+		}
+		return base + "/v1/" + resource
+	}
+	path := strings.TrimRight(parsed.Path, "/")
+	switch {
+	case strings.HasSuffix(path, "/v1/"+resource):
+	case strings.HasSuffix(path, "/v1"):
+		path += "/" + resource
+	default:
+		path += "/v1/" + resource
+	}
+	parsed.Path = path
+	return parsed.String()
 }
 
 func (p *providerBase) applyExtraHeaders(h http.Header) {
@@ -170,13 +212,18 @@ type providerStatusError struct {
 	retry               time.Duration
 	requestID           string
 	endpointUnsupported bool
+	clientRestricted    bool
 }
 
 func (e providerStatusError) Error() string {
-	if e.retry > 0 {
-		return fmt.Sprintf("%s: status %d; retry after %s", e.provider, e.status, e.retry)
+	detail := ""
+	if e.clientRestricted {
+		detail = "; endpoint rejects this client type"
 	}
-	return fmt.Sprintf("%s: status %d", e.provider, e.status)
+	if e.retry > 0 {
+		return fmt.Sprintf("%s: status %d%s; retry after %s", e.provider, e.status, detail, e.retry)
+	}
+	return fmt.Sprintf("%s: status %d%s", e.provider, e.status, detail)
 }
 
 func (e providerStatusError) RetryAfter() (time.Duration, bool) {
@@ -185,6 +232,10 @@ func (e providerStatusError) RetryAfter() (time.Duration, bool) {
 
 func (e providerStatusError) ProviderError() providerErrorInfo {
 	info := providerErrorInfo{Code: "provider_http_error", Category: "internal", Retryable: false, Provider: e.provider, HTTPStatus: e.status, CorrelationID: e.requestID}
+	if e.clientRestricted {
+		info.Code, info.Category, info.UserAction = "provider_client_restricted", "compatibility", "choose an endpoint that accepts Carina clients"
+		return info
+	}
 	switch {
 	case e.status == http.StatusPaymentRequired:
 		info.Code, info.Category, info.UserAction = "provider_quota_exhausted", "rate_limit", "increase quota or choose another provider"
@@ -214,21 +265,22 @@ func statusError(provider string, resp *http.Response) error {
 	if len(requestID) > 128 {
 		requestID = requestID[:128]
 	}
+	var raw []byte
+	if resp.Body != nil {
+		raw, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	}
 	return providerStatusError{
 		provider: provider, status: resp.StatusCode, retry: retryAfter(resp.Header, time.Now()),
-		requestID: requestID, endpointUnsupported: responseEndpointUnsupported(resp.StatusCode, resp.Body),
+		requestID: requestID, endpointUnsupported: responseEndpointUnsupported(resp.StatusCode, raw),
+		clientRestricted: responseClientRestricted(raw),
 	}
 }
 
-func responseEndpointUnsupported(status int, body io.Reader) bool {
+func responseEndpointUnsupported(status int, raw []byte) bool {
 	if status == http.StatusMethodNotAllowed || status == http.StatusNotImplemented {
 		return true
 	}
-	if status != http.StatusNotFound || body == nil {
-		return false
-	}
-	raw, err := io.ReadAll(io.LimitReader(body, 64<<10))
-	if err != nil {
+	if status != http.StatusNotFound {
 		return false
 	}
 	message := strings.ToLower(strings.TrimSpace(string(raw)))
@@ -242,6 +294,54 @@ func responseEndpointUnsupported(status int, body io.Reader) bool {
 		}
 	}
 	return false
+}
+
+func responseClientRestricted(raw []byte) bool {
+	message := strings.ToLower(strings.TrimSpace(string(raw)))
+	return strings.Contains(message, "only allows") && strings.Contains(message, "client")
+}
+
+type providerResponseError struct {
+	provider    string
+	status      int
+	contentType string
+	kind        string
+}
+
+func (e providerResponseError) Error() string {
+	contentType := e.contentType
+	if contentType == "" {
+		contentType = "unknown"
+	}
+	return fmt.Sprintf("%s: invalid provider response: status %d, content-type %s (%s)", e.provider, e.status, contentType, e.kind)
+}
+
+func (e providerResponseError) ProviderError() providerErrorInfo {
+	return providerErrorInfo{
+		Code: "provider_protocol_error", Category: "compatibility", Provider: e.provider,
+		UserAction: "check the provider protocol and API base URL", Retryable: false, HTTPStatus: e.status,
+	}
+}
+
+func decodeProviderJSON(provider string, resp *http.Response, out any) error {
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxProviderResponseBytes+1))
+	if err != nil {
+		return fmt.Errorf("%s: read response: %w", provider, err)
+	}
+	contentType := strings.TrimSpace(strings.SplitN(resp.Header.Get("content-type"), ";", 2)[0])
+	trimmed := bytes.TrimSpace(raw)
+	switch {
+	case len(raw) > maxProviderResponseBytes:
+		return providerResponseError{provider: provider, status: resp.StatusCode, contentType: contentType, kind: "response too large"}
+	case len(trimmed) > 0 && trimmed[0] == '<':
+		return providerResponseError{provider: provider, status: resp.StatusCode, contentType: contentType, kind: "HTML document, expected JSON"}
+	case !json.Valid(trimmed):
+		return providerResponseError{provider: provider, status: resp.StatusCode, contentType: contentType, kind: "malformed JSON"}
+	case json.Unmarshal(trimmed, out) != nil:
+		return providerResponseError{provider: provider, status: resp.StatusCode, contentType: contentType, kind: "unexpected JSON shape"}
+	default:
+		return nil
+	}
 }
 
 func retryAfter(h http.Header, now time.Time) time.Duration {
@@ -310,7 +410,7 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 	}
 	bodyMap := map[string]any{
 		"model":      model,
-		"max_tokens": 2048,
+		"max_tokens": agentMaxOutputTokens,
 		"messages":   []map[string]any{{"role": "user", "content": content}},
 	}
 	mergeRawBody(bodyMap, o.body)
@@ -332,11 +432,11 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 	applyHeaders(httpReq.Header, override.Headers)
 	resp, err := o.httpClient().Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%s: request: %w", o.id, err)
+		return nil, fmt.Errorf("%s: request: %w", o.errorName(), err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, statusError(o.id, resp)
+		return nil, statusError(o.errorName(), resp)
 	}
 	var out struct {
 		Choices []struct {
@@ -352,8 +452,8 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("%s: decode: %w", o.id, err)
+	if err := decodeProviderJSON(o.errorName(), resp, &out); err != nil {
+		return nil, err
 	}
 	text := ""
 	for _, c := range out.Choices {
@@ -394,7 +494,7 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 	bodyMap := map[string]any{
 		"model":             model,
 		"input":             input,
-		"max_output_tokens": 2048,
+		"max_output_tokens": agentMaxOutputTokens,
 	}
 	mergeRawBody(bodyMap, o.body)
 	mergeRawBody(bodyMap, override.Body)
@@ -415,11 +515,11 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 	applyHeaders(httpReq.Header, override.Headers)
 	resp, err := o.httpClient().Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%s: request: %w", o.id, err)
+		return nil, fmt.Errorf("%s: request: %w", o.errorName(), err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, statusError(o.id, resp)
+		return nil, statusError(o.errorName(), resp)
 	}
 	var out struct {
 		OutputText string `json:"output_text"`
@@ -436,8 +536,8 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 			} `json:"input_tokens_details"`
 		} `json:"usage"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("%s: decode: %w", o.id, err)
+	if err := decodeProviderJSON(o.errorName(), resp, &out); err != nil {
+		return nil, err
 	}
 	text := out.OutputText
 	if text == "" {
@@ -500,7 +600,7 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 		"contents": []map[string]any{{
 			"parts": parts,
 		}},
-		"generationConfig": map[string]any{"maxOutputTokens": 2048},
+		"generationConfig": map[string]any{"maxOutputTokens": agentMaxOutputTokens},
 	}
 	mergeRawBody(bodyMap, g.body)
 	mergeRawBody(bodyMap, override.Body)
@@ -527,11 +627,11 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 	applyHeaders(httpReq.Header, override.Headers)
 	resp, err := g.httpClient().Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%s: request: %w", g.id, err)
+		return nil, fmt.Errorf("%s: request: %w", g.errorName(), err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, statusError(g.id, resp)
+		return nil, statusError(g.errorName(), resp)
 	}
 	var out struct {
 		Candidates []struct {
@@ -546,8 +646,8 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 			CandidatesTokenCount int `json:"candidatesTokenCount"`
 		} `json:"usageMetadata"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("%s: decode: %w", g.id, err)
+	if err := decodeProviderJSON(g.errorName(), resp, &out); err != nil {
+		return nil, err
 	}
 	text := ""
 	for _, c := range out.Candidates {

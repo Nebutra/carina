@@ -68,7 +68,7 @@ func TestWorkDispatchBridge(t *testing.T) {
 	if directive, ok := throttledMap["backpressure"].(ThrottleDirective); !ok || directive.Level != "pause" || directive.MaxInflight != 0 {
 		t.Fatalf("missing pause directive: %+v", throttledMap["backpressure"])
 	}
-	if queued, _ := d.sched.Get(task.TaskID); queued.Status != "queued" {
+	if queued, _ := d.sched.GetTask(task.TaskID); queued.Status != "queued" {
 		t.Fatalf("throttled poll must not mutate queued task: %+v", queued)
 	}
 	pressureRes, err = d.handleBackpressureReport(mustJSON(t, map[string]any{
@@ -120,7 +120,7 @@ func TestWorkDispatchBridge(t *testing.T) {
 		"usage": map[string]any{"input_tokens": 11, "output_tokens": 7}})); err != nil {
 		t.Fatalf("work.report: %v", err)
 	}
-	got, _ := d.sched.Get(task.TaskID)
+	got, _ := d.sched.GetTask(task.TaskID)
 	if got.Status != "completed" || got.Summary != "shipped" || got.LeaseOwner != "" || got.TokensUsed != 18 || !got.TokenUsageObserved {
 		t.Fatalf("report did not finalize the task: %+v", got)
 	}
@@ -146,7 +146,7 @@ func TestWorkReportRejectsInvalidUsageBeforeFinalizingLease(t *testing.T) {
 	})); err == nil {
 		t.Fatal("negative remote usage must fail closed")
 	}
-	got, _ := d.sched.Get(task.TaskID)
+	got, _ := d.sched.GetTask(task.TaskID)
 	if got.Status != "running" || got.LeaseOwner != wk.WorkerID {
 		t.Fatalf("invalid report must not finalize the lease: %+v", got)
 	}
@@ -180,7 +180,7 @@ func TestWorkPollFailsClosedOnContainmentRequirement(t *testing.T) {
 	if result.(map[string]any)["empty"] != true {
 		t.Fatalf("uncontained worker must not receive guarded work: %+v", result)
 	}
-	if queued, _ := d.sched.Get(task.TaskID); queued.Status != "queued" {
+	if queued, _ := d.sched.GetTask(task.TaskID); queued.Status != "queued" {
 		t.Fatalf("guarded task must remain queued: %+v", queued)
 	}
 	result, err = d.handleWorkPoll(mustJSON(t, map[string]any{"worker_id": contained.WorkerID, "worker_credential": containedCredential}))

@@ -365,7 +365,9 @@ fn first_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
     }
     let mut cursor = node.walk();
     let children: Vec<Node> = node.children(&mut cursor).collect();
-    children.into_iter().find_map(|child| first_of_kind(child, kind))
+    children
+        .into_iter()
+        .find_map(|child| first_of_kind(child, kind))
 }
 
 /// Innermost symbol whose defining node contains `byte`.

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -66,6 +67,72 @@ func TestStopRuntimeRequiresForceForActiveObligations(t *testing.T) {
 	}
 }
 
+func TestConnectOrStartReplacesOwnedIdleIncompatibleRuntime(t *testing.T) {
+	spec, child, executable := stopRuntimeProcessFixture(t)
+	oldDescription := matchingDescription(spec)
+	oldDescription.PID = child.Process.Pid
+	writeStopRuntimeOwner(t, spec, oldDescription, executable)
+
+	var phase atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		done <- child.Wait()
+		phase.Store(1)
+	}()
+	origDial, origSpawn, origHandshake, origDescribe, origDeadline := Dial, SpawnRuntime, RuntimeHandshake, RuntimeDescribe, ReachableDeadline
+	t.Cleanup(func() {
+		Dial, SpawnRuntime, RuntimeHandshake, RuntimeDescribe, ReachableDeadline = origDial, origSpawn, origHandshake, origDescribe, origDeadline
+	})
+	ReachableDeadline = 2 * time.Second
+	Dial = func(string) (*rpc.Client, error) {
+		if phase.Load() == 1 {
+			return nil, rpc.ErrDaemonUnreachable
+		}
+		return &rpc.Client{}, nil
+	}
+	RuntimeDescribe = func(*rpc.Client, localruntime.Spec) (RuntimeDescription, error) {
+		return oldDescription, nil
+	}
+	RuntimeHandshake = func(*rpc.Client, localruntime.Spec) (RuntimeDescription, error) {
+		if phase.Load() < 2 {
+			return RuntimeDescription{}, &RuntimeCompatibilityError{
+				Description: oldDescription, MissingMethods: []string{"execution.start"},
+			}
+		}
+		current := oldDescription
+		current.PID = 5252
+		current.Epoch = "runtime_current"
+		return current, nil
+	}
+	spawns := 0
+	SpawnRuntime = func(got localruntime.Spec) error {
+		spawns++
+		current := oldDescription
+		current.PID = 5252
+		current.Epoch = "runtime_current"
+		writeStopRuntimeOwner(t, got, current, executable)
+		phase.Store(2)
+		return nil
+	}
+
+	client, description, err := ConnectOrStart(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = client.Close()
+	if spawns != 1 || description.Epoch != "runtime_current" {
+		t.Fatalf("replacement spawns=%d description=%+v", spawns, description)
+	}
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "signal") {
+			t.Fatalf("old runtime exit = %v, want SIGTERM", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("old incompatible runtime was not stopped")
+	}
+}
+
 func stopRuntimeProcessFixture(t *testing.T) (localruntime.Spec, *exec.Cmd, string) {
 	t.Helper()
 	executable, err := exec.LookPath("sleep")
@@ -103,10 +170,10 @@ func writeStopRuntimeOwner(t *testing.T, spec localruntime.Spec, description Run
 
 func stubRuntimeEndpoint(t *testing.T, description RuntimeDescription) {
 	t.Helper()
-	originalDial, originalHandshake := Dial, RuntimeHandshake
-	t.Cleanup(func() { Dial, RuntimeHandshake = originalDial, originalHandshake })
+	originalDial, originalDescribe := Dial, RuntimeDescribe
+	t.Cleanup(func() { Dial, RuntimeDescribe = originalDial, originalDescribe })
 	Dial = func(string) (*rpc.Client, error) { return &rpc.Client{}, nil }
-	RuntimeHandshake = func(*rpc.Client, localruntime.Spec) (RuntimeDescription, error) {
+	RuntimeDescribe = func(*rpc.Client, localruntime.Spec) (RuntimeDescription, error) {
 		return description, nil
 	}
 }

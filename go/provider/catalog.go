@@ -53,13 +53,32 @@ type cacheEnvelope struct {
 
 // Info is the provider subset Carina needs for enumeration and auth discovery.
 type Info struct {
-	ID     string           `json:"id"`
-	Name   string           `json:"name"`
-	Doc    string           `json:"doc,omitempty"`
-	API    string           `json:"api,omitempty"`
-	Env    []string         `json:"env,omitempty"`
-	NPM    string           `json:"npm,omitempty"`
-	Models map[string]Model `json:"models,omitempty"`
+	ID          string           `json:"id"`
+	Name        string           `json:"name"`
+	Doc         string           `json:"doc,omitempty"`
+	API         string           `json:"api,omitempty"`
+	Env         []string         `json:"env,omitempty"`
+	NPM         string           `json:"npm,omitempty"`
+	APIProtocol string           `json:"api_protocol,omitempty"`
+	Source      *Source          `json:"source,omitempty"`
+	Models      map[string]Model `json:"models,omitempty"`
+}
+
+// Source identifies a provider discovered from another local product. It is
+// deliberately safe to project to clients and never contains credentials or
+// the source product's raw record identifier.
+type Source struct {
+	Kind       string `json:"kind"`
+	Label      string `json:"label"`
+	App        string `json:"app,omitempty"`
+	Route      string `json:"route,omitempty"`
+	AuthMode   string `json:"auth_mode,omitempty"`
+	Action     string `json:"action,omitempty"`
+	Revision   string `json:"revision,omitempty"`
+	Rank       int    `json:"rank,omitempty"`
+	Current    bool   `json:"current,omitempty"`
+	Importable bool   `json:"importable,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // Model is a models.dev model entry. Only fields useful to Carina's public

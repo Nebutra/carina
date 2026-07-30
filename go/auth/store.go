@@ -96,6 +96,14 @@ func (s *Store) SetAPIKey(provider, key string, metadata map[string]string) erro
 	return s.Set(provider, StoredCredential{Type: APIKey, Key: key, Metadata: metadata})
 }
 
+func (s *Store) SetBearerToken(provider, token string, metadata map[string]string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return fmt.Errorf("auth store: bearer token required")
+	}
+	return s.Set(provider, StoredCredential{Type: Bearer, Access: token, Metadata: metadata})
+}
+
 func (s *Store) Remove(provider string) error {
 	all, err := s.All()
 	if err != nil {
@@ -173,11 +181,11 @@ func (s StoreKey) Resolve() (Credential, bool) {
 		return Credential{}, false
 	}
 	switch cred.Type {
-	case OAuth:
+	case Bearer, OAuth:
 		if strings.TrimSpace(cred.Access) == "" {
 			return Credential{}, false
 		}
-		return Credential{Kind: OAuth, Value: strings.TrimSpace(cred.Access), Source: s.Name()}, true
+		return Credential{Kind: cred.Type, Value: strings.TrimSpace(cred.Access), Source: s.Name()}, true
 	default:
 		if strings.TrimSpace(cred.Key) == "" {
 			return Credential{}, false

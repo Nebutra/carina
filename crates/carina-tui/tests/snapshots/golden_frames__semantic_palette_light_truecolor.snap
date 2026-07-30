@@ -1,0 +1,33 @@
+---
+source: crates/carina-tui/tests/golden_frames.rs
+expression: "render_palette(Theme::new(Polarity::Light, ColorLevel::TrueColor))"
+---
+size=64x8
+CARINA  primary  dim  muted  bright
+focus  selected  link
++ added  - removed
+fn semantic_theme() {}
+pending  success  error
+H1 H2 H3 H4 H5 H6
+
+
+styles:
+(0, 0)..(6, 0) (Rgb(128, 43, 67), Reset, NONE)
+(17, 0)..(20, 0) (Rgb(115, 123, 120), Reset, NONE)
+(22, 0)..(27, 0) (Rgb(83, 94, 90), Reset, NONE)
+(29, 0)..(35, 0) (Rgb(52, 64, 60), Reset, NONE)
+(0, 1)..(5, 1) (Rgb(0, 95, 135), Reset, BOLD)
+(7, 1)..(15, 1) (Reset, Rgb(215, 234, 232), BOLD)
+(17, 1)..(21, 1) (Rgb(0, 95, 135), Reset, UNDERLINED)
+(0, 2)..(7, 2) (Rgb(17, 99, 54), Rgb(218, 251, 225), NONE)
+(9, 2)..(18, 2) (Rgb(177, 35, 31), Rgb(255, 235, 233), NONE)
+(0, 3)..(22, 3) (Rgb(36, 45, 42), Rgb(242, 244, 242), NONE)
+(0, 4)..(7, 4) (Rgb(145, 83, 0), Reset, NONE)
+(9, 4)..(16, 4) (Rgb(26, 127, 73), Reset, NONE)
+(18, 4)..(23, 4) (Rgb(190, 45, 41), Reset, NONE)
+(0, 5)..(3, 5) (Rgb(0, 95, 135), Reset, BOLD | UNDERLINED)
+(3, 5)..(6, 5) (Rgb(0, 95, 135), Reset, BOLD)
+(6, 5)..(9, 5) (Reset, Reset, BOLD)
+(9, 5)..(12, 5) (Rgb(52, 64, 60), Reset, BOLD)
+(12, 5)..(15, 5) (Rgb(52, 64, 60), Reset, ITALIC)
+(15, 5)..(18, 5) (Rgb(83, 94, 90), Reset, ITALIC)

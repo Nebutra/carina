@@ -20,11 +20,11 @@ const maxWorkflowSteps = 64
 // pipeline of agent steps. It is a top-level effect only — a subagent cannot
 // launch a workflow (bounding nesting), and starting one is gated by the
 // capability kernel just like spawning a subagent.
-func (d *Daemon) executeWorkflow(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+func (d *Daemon) executeWorkflow(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) string {
 	return d.executeWorkflowOutcome(sess, task, act).display
 }
 
-func (d *Daemon) executeWorkflowOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
+func (d *Daemon) executeWorkflowOutcome(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) toolExecutionOutcome {
 	if sess.Depth > 0 {
 		return toolDenied("DENIED: workflows run at the top level only (not inside a subagent)", "depth_limit")
 	}
@@ -37,7 +37,7 @@ func (d *Daemon) executeWorkflowOutcome(sess *sessionstore.Session, task *schedu
 		return toolFailed(fmt.Sprintf("unknown workflow %q (available: %s)", act.Workflow, strings.Join(workflowNames(specs), ", ")), "invalid_input")
 	}
 	// Starting a workflow is a gated effect (same capability as spawning).
-	dec, err := d.kern.Request(sess.SessionID, "PluginLoad", "run_workflow", task.TaskID)
+	dec, err := d.kern.Request(sess.SessionID, "PluginLoad", "run_workflow", task.RunID)
 	if err != nil {
 		return toolFailed("workflow governance error: "+err.Error(), "governance_error")
 	}
@@ -51,7 +51,7 @@ func (d *Daemon) executeWorkflowOutcome(sess *sessionstore.Session, task *schedu
 		}
 		dec = approved
 	}
-	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+	if err := d.ensureActiveToolStarted(task.RunID); err != nil {
 		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
 	}
 
@@ -82,8 +82,8 @@ func (d *Daemon) executeWorkflowOutcome(sess *sessionstore.Session, task *schedu
 // its output is threaded into dependents via ${step_id} interpolation, and
 // every completed step is persisted so a crashed/paused run can resume without
 // re-doing finished work. The parent session's audit log records the whole run.
-func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler.Task, spec *WorkflowSpec, input, runID string) (map[string]string, error) {
-	ctx := d.contextForTask(parentTask.TaskID)
+func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, spec *WorkflowSpec, input, runID string) (map[string]string, error) {
+	ctx := d.contextForTask(parentTask.RunID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 		}
 	}
 
-	d.record(parent.SessionID, "TaskCreated", parentTask.TaskID, "go", map[string]any{
+	d.record(parent.SessionID, "ExecutionProgressed", parentTask.RunID, "go", map[string]any{
 		"status": "workflow_started", "workflow": spec.Name, "run_id": runID,
 		"steps": len(spec.Steps), "resumed": len(done),
 	}, "")
@@ -191,7 +191,7 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 				taskText := interpolate(st.Task, input, outputs)
 				mu.Unlock()
 
-				d.record(parent.SessionID, "ToolApproved", parentTask.TaskID, "go", map[string]any{
+				d.record(parent.SessionID, "ToolApproved", parentTask.RunID, "go", map[string]any{
 					"workflow": spec.Name, "run_id": runID, "step": st.ID, "agent": st.Agent,
 				}, "")
 
@@ -204,7 +204,7 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 					errs[i] = fmt.Errorf("step %q: %s", st.ID, summary)
 					_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
 						WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,
-						StepID: st.ID, TaskID: parentTask.TaskID,
+						StepID: st.ID, TaskID: parentTask.RunID,
 					}, carinatelemetry.Cost{}, time.Since(startedAt), "failed")
 					return
 				}
@@ -235,7 +235,7 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 				}
 				_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
 					WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,
-					StepID: st.ID, TaskID: parentTask.TaskID,
+					StepID: st.ID, TaskID: parentTask.RunID,
 				}, carinatelemetry.Cost{}, time.Since(startedAt), "completed")
 			}(i, st)
 		}
@@ -243,7 +243,7 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 
 		for _, e := range errs {
 			if e != nil {
-				d.record(parent.SessionID, "TaskCreated", parentTask.TaskID, "go", map[string]any{
+				d.record(parent.SessionID, "ExecutionProgressed", parentTask.RunID, "go", map[string]any{
 					"status": "workflow_failed", "workflow": spec.Name, "run_id": runID, "error": e.Error(),
 				}, "")
 				return outputs, e
@@ -252,7 +252,7 @@ func (d *Daemon) runWorkflow(parent *sessionstore.Session, parentTask *scheduler
 		remaining -= len(ready)
 	}
 
-	d.record(parent.SessionID, "ModelResponded", parentTask.TaskID, "go", map[string]any{
+	d.record(parent.SessionID, "ModelResponded", parentTask.RunID, "go", map[string]any{
 		"status": "workflow_completed", "workflow": spec.Name, "run_id": runID, "steps": len(outputs),
 	}, "")
 	return outputs, nil

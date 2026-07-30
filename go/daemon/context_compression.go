@@ -67,15 +67,15 @@ func (b *compactionCircuitBreaker) snapshot() map[string]any {
 }
 
 // gateContextCompress evaluates the ContextCompress capability before any
-// call into the managed Headroom MCP adapter. It never blocks a task waiting
+// configured compression transform. It never blocks a task waiting
 // for an operator: the default policy verdict is Allowed, and the rare
 // requires_approval case (an org policy bundle tightened it) is resolved the
 // same way every other in-loop capability is — auto-approved by the
 // heuristic/model risk reviewer in autonomous mode, or actually surfaced to
 // an operator in interactive mode, exactly like a PluginLoad or CommandExec
 // decision would be.
-func (d *Daemon) gateContextCompress(sess *sessionstore.Session, task *scheduler.Task, resource string) (bool, *kernel.Decision) {
-	dec, err := d.kern.Request(sess.SessionID, "ContextCompress", resource, task.TaskID)
+func (d *Daemon) gateContextCompress(sess *sessionstore.Session, task *scheduler.ExecutionRun, resource string) (bool, *kernel.Decision) {
+	dec, err := d.kern.Request(sess.SessionID, "ContextCompress", resource, task.RunID)
 	if err != nil {
 		return false, &kernel.Decision{Decision: "denied", Reason: "governance error: " + err.Error()}
 	}
@@ -94,12 +94,12 @@ func (d *Daemon) gateContextCompress(sess *sessionstore.Session, task *scheduler
 }
 
 // gateContextCompressRPC is gateContextCompress for the standalone
-// task.context.compress / task.context.retrieve RPC surface, which is not
+// context.compress RPC surface, which is not
 // bound to a live scheduler task the way an in-loop observation is. It looks
 // up (or, if the task isn't tracked yet, synthesizes) a minimal task struct —
 // the same "task not found in scheduler" tolerance bridge.go already uses for
 // escalation — so the same capability gate and approval path applies here
-// too, instead of these RPCs reaching the Headroom adapter ungated.
+// too, instead of this RPC reaching a future compression adapter ungated.
 func (d *Daemon) gateContextCompressRPC(sessionID, taskID, resource string) (bool, *kernel.Decision, error) {
 	sess, ok := d.store.Get(sessionID)
 	if !ok {
@@ -107,26 +107,26 @@ func (d *Daemon) gateContextCompressRPC(sessionID, taskID, resource string) (boo
 	}
 	task, ok := d.sched.Get(taskID)
 	if !ok {
-		task = &scheduler.Task{TaskID: taskID, SessionID: sessionID}
+		task = &scheduler.ExecutionRun{RunID: taskID, SessionID: sessionID}
 	}
 	allowed, dec := d.gateContextCompress(sess, task, resource)
 	return allowed, dec, nil
 }
 
 // compressObservation rewrites only the model-facing projection. The original
-// tool lifecycle remains in the audit chain, while the reversible Headroom ref
-// and Carina-computed preimage hash travel with the checkpointed observation.
+// tool lifecycle remains in the audit chain, while reversible metadata and the
+// Carina-computed preimage hash travel with the checkpointed observation.
 //
-// The Headroom round trip is only invoked when the transcript is actually
+// A compression transform is only invoked when the transcript is actually
 // near/over budget: the trigger is tr.size() >= tr.triggerChars(), the exact
 // same effective threshold Transcript.compact() uses (see transcript.go), so
 // both stay converged on one budget definition instead of drifting apart. A
 // transcript nowhere near its char budget gets addTurn's existing hard
-// ToolOutputMax truncation only, not a Headroom round trip for every single
+// ToolOutputMax truncation only, not a compression round trip for every single
 // observation. A nil tr (no size information available) fails open toward
 // compressing rather than silently skipping, so a caller that can't supply a
 // live transcript still gets reversible compression by default.
-func (d *Daemon) compressObservation(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task, tr *Transcript, turn int, tool, content string, pinned bool) (Observation, error) {
+func (d *Daemon) compressObservation(ctx context.Context, sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, turn int, tool, content string, pinned bool) (Observation, error) {
 	obs := Observation{Tool: tool, Content: content, Pinned: pinned}
 	if pinned || d.contextEng == nil || content == "" {
 		return obs, nil
@@ -134,20 +134,18 @@ func (d *Daemon) compressObservation(ctx context.Context, sess *sessionstore.Ses
 	if tr != nil && tr.size() < tr.triggerChars() {
 		return obs, nil
 	}
-	if d.compactionBreaker != nil && d.compactionBreaker.isOpen(task.TaskID) {
-		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{"status": "context_compaction_circuit_open", "turn": turn, "tool": tool}, "")
+	if d.compactionBreaker != nil && d.compactionBreaker.isOpen(task.RunID) {
+		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{"status": "context_compaction_circuit_open", "turn": turn, "tool": tool}, "")
 		return obs, nil
 	}
-	// Every call into the Headroom managed-MCP adapter is a real subprocess
-	// call carrying session content, so it goes through the same capability
-	// gate as any other mediated effect before dispatch (ContextCompress
-	// defaults to Allowed, but an org policy bundle can still tighten it —
-	// see the Capability::ContextCompress verdict in carina-policy). A
+	// Compression may eventually cross a process or service boundary, so the
+	// capability gate remains the authority before dispatch. ContextCompress
+	// defaults to Allowed, but an org policy bundle can still tighten it. A
 	// denied/unapproved decision degrades to no-compression rather than
 	// failing the turn: compression here is a best-effort optimization, not
 	// a required side effect.
-	if allowed, dec := d.gateContextCompress(sess, task, "headroom_compress"); !allowed {
-		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+	if allowed, dec := d.gateContextCompress(sess, task, "context_compress"); !allowed {
+		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
 			"status": "context_compression_denied", "turn": turn, "tool": tool,
 			"decision": dec.Decision, "reason": dec.Reason,
 		}, dec.DecisionID)
@@ -155,31 +153,23 @@ func (d *Daemon) compressObservation(ctx context.Context, sess *sessionstore.Ses
 	}
 	res, err := d.contextEng.Compress(ctx, contextengine.CompressRequest{
 		SessionID: sess.SessionID,
-		TaskID:    task.TaskID,
+		TaskID:    task.RunID,
 		Turn:      turn,
 		Kind:      "observation",
 		Tool:      tool,
 		Content:   content,
 	})
 	if err != nil {
-		failures, opened := d.compactionBreaker.failure(task.TaskID)
+		failures, opened := d.compactionBreaker.failure(task.RunID)
 		st := d.contextEng.Status()
-		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
 			"status": "context_engine_failed", "engine": st.EffectiveEngine, "turn": turn, "kind": "observation", "tool": tool,
 			"original_bytes": len(content), "original_sha256": sha256Hex(content), "error": err.Error(), "consecutive_failures": failures, "circuit_open": opened,
 		}, "")
 		return obs, nil
 	}
-	d.compactionBreaker.success(task.TaskID)
-	if res.Engine != contextengine.ModeHeadroom {
-		st := d.contextEng.Status()
-		if st.Degraded && st.LastError != "" {
-			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
-				"status": "context_engine_failed", "engine": contextengine.ModeHeadroom, "fallback_engine": res.Engine,
-				"turn": turn, "kind": "observation", "tool": tool,
-				"original_bytes": len(content), "original_sha256": res.OriginalSHA256, "error": st.LastError,
-			}, "")
-		}
+	d.compactionBreaker.success(task.RunID)
+	if res.Content == content {
 		return obs, nil
 	}
 	if res.Content == "" || res.OriginalSHA256 == "" || res.OriginalRef == "" {
@@ -195,7 +185,7 @@ func (d *Daemon) compressObservation(ctx context.Context, sess *sessionstore.Ses
 	obs.CompressedTokens = res.CompressedTokens
 	obs.SavingsPercent = res.SavingsPercent
 	obs.Transforms = append([]string(nil), res.Transforms...)
-	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
 		"status": "context_compressed", "engine": res.Engine, "turn": turn, "kind": "observation", "tool": tool,
 		"original_bytes": res.OriginalBytes, "compressed_bytes": res.CompressedBytes,
 		"original_tokens": res.OriginalTokens, "compressed_tokens": res.CompressedTokens,

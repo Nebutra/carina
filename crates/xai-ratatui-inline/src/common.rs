@@ -105,7 +105,7 @@ mod tests {
 
         // Use synchronized output wrapper
         let result = with_synchronized_output(&mut terminal, |terminal| {
-            _ = terminal.writer_mut().write(b"Test content")?;
+            _ = terminal.writer_mut().write(b"Test content\x1b[2;3H")?;
             terminal.writer_mut().flush()?;
             Ok(())
         });
@@ -126,8 +126,12 @@ mod tests {
             "Should have end synchronized update"
         );
 
-        // Content should be between the markers
-        assert!(text.contains("Test content"));
+        // Frame bytes, including its final cursor placement, must precede ESU.
+        let begin = text.find("\x1b[?2026h").unwrap();
+        let content = text.find("Test content").unwrap();
+        let cursor = text.find("\x1b[2;3H").unwrap();
+        let end = text.find("\x1b[?2026l").unwrap();
+        assert!(begin < content && content < cursor && cursor < end);
 
         // Should have flushed (once in emit_to_scrollback, once in with_synchronized_output)
         assert_eq!(terminal.writer.flush_count, 2);

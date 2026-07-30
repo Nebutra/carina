@@ -104,7 +104,7 @@ func TestEndToEndLoop(t *testing.T) {
 	if patch.ApplyDecision.Decision != "requires_approval" {
 		t.Fatalf("propose should gate apply under safe-edit, got %+v", patch.ApplyDecision)
 	}
-	if err := c.Call("task.action.approve", map[string]any{
+	if err := c.Call("governance.action.approve", map[string]any{
 		"session_id": sess.SessionID, "decision_id": patch.ApplyDecision.DecisionID,
 	}, nil); err != nil {
 		t.Fatalf("approve patch gate: %v", err)

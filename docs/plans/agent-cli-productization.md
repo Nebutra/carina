@@ -72,7 +72,7 @@ table is the working map.
 | CLI surface | ~40 subcommands in `apps/carina-cli/main.go` (~1250 lines): run/ask, sessions, resume, watch, audit verify/replay/last, patch lifecycle, approve/deny, memory, context, auth BYOK, gateway, exec |
 | Resume UX | The one designed experience: `cmdResume`/`printResumeSummary`, `--watch/--json/--no-input`, last-5 summary, "continue:" hints |
 | Event transport | `session.events.stream` JSON-RPC notifications (`go/daemon/bus.go`, `go/rpc/server.go`) consumed by `carina watch` |
-| Governance plumbing | Daemon-side complete: `requires_approval` pause, `decision_id`, `pendingCmds`, 5m timeout, `task.action.approve/deny` with role + dynamic scope (`go/daemon/daemon.go`, `go/daemon/approval.go`) |
+| Governance plumbing | Daemon-side complete: `requires_approval` pause, `decision_id`, `pendingCmds`, 5m timeout, `governance.action.approve/deny` with role + dynamic scope (`go/daemon/daemon.go`, `go/daemon/approval.go`) |
 | Audit CLI | `audit verify`, `audit last`, report, export |
 | Patch lifecycle | propose/show/apply/rollback wired to `workspace.patch.*` |
 | Native fast path | scan/grep/diff/pty passthrough to Zig binaries, no daemon dial |
@@ -106,7 +106,7 @@ NO_COLOR; i18n (all strings English while product docs are Chinese);
 notifications (bell/OSC 9); governance-distinct exit codes; explicit
 `--json/--plain` contract; TTY-awareness; first-run onboarding/doctor;
 multi-agent dashboard; shell completions; `carina config get/set`;
-Ctrl-C → `task.cancel` mapping (RPC exists, `docs/rpc-api.md` line 183; no
+Ctrl-C → `execution.cancel` mapping (RPC exists, `docs/rpc-api.md` line 183; no
 CLI mapping).
 
 ---
@@ -131,8 +131,8 @@ in §2 using plumbing that already exists.
 *`awaitInteractiveApproval`/`signalPendingApproval` single choke point, the*
 *`go/tui` approval overlay rendering the real reviewable artifact (colored*
 *unified diff for `PatchApply` via `ev["diff"]`), and a real*
-*`task.action.approve`/`task.action.deny` round trip that resolves the same*
-*wait whether it arrives via `task.approval.resolve` or the general RPC*
+*`governance.action.approve`/`governance.action.deny` round trip that resolves the same*
+*wait whether it arrives via `governance.approval.resolve` or the general RPC*
 *surface. Landed in f1ba5cf.*
 
 *Source: Leader Permission Bridge + shouldDefer reviewable payloads +
@@ -223,7 +223,7 @@ are recorded unconditionally. Adopt the four-glyph status vocabulary —
 #### P1.4 Cascading interrupt as an audited governance event — **Shipped**
 
 *As-built: the Ctrl-C cascade (two presses inside a bounded window exit the*
-*TUI; `task.cancel` mapping) is wired end-to-end and verified under a real*
+*TUI; `execution.cancel` mapping) is wired end-to-end and verified under a real*
 *PTY harness (`go/tui/pty_integration_test.go`, tmux-backed) — the terminal*
 *is confirmed never left in raw mode and the governance exit code is*
 *asserted on screen. Landed in f1ba5cf.*
@@ -232,7 +232,7 @@ are recorded unconditionally. Adopt the four-glyph status vocabulary —
 
 Daemon owns a `context.Context` cancellation tree (session → agents → tool
 processes) so one cancel reliably reaps the whole agent tree. Map Ctrl-C
-during foreground `carina run`/`watch` to the `task.cancel` RPC that already
+during foreground `carina run`/`watch` to the `execution.cancel` RPC that already
 exists but has no CLI mapping. Write one audit event per killed node plus
 synthetic `tool_use_interrupted` transcript records so both the model and the
 auditor see exactly what an interrupt stopped. Hero framing Claude Code
@@ -456,14 +456,13 @@ exists.
 
 *Source: graduated-compaction UX contract + /context accuracy — merged.*
 
-Carina has Headroom natively, so skip Claude Code's four-level pipeline and
-absorb the *contract*: every compaction emits a visible, audit-logged event
+Carina should absorb the *contract*: every compaction emits a visible,
+audit-logged event
 ("folded 14 tool results, ~38K tokens reclaimed") with the pre-compaction
 transcript retained on disk. In a governed runtime, context edits are state
 changes users can inspect, not housekeeping. `carina context` reports the
-daemon's *actually-assembled* prompt breakdown — because Headroom assembles
-prompts daemon-side, Carina reports ground truth where Claude Code must
-simulate.
+daemon's *actually-assembled* prompt breakdown so Carina reports ground truth
+where Claude Code must simulate.
 
 #### P2.6 Command metadata registry: trichotomy + two-axis filtering
 
@@ -684,7 +683,7 @@ codeintel, session, provider, file, git, terminal, kernel, generic`.
 
 Seed derivation is mechanical and documented: **seed = the RPC method or tool
 name as it appears on the wire** — `"code.search"`,
-`"workspace.patch.apply"`, `"task.action.approve"`, `"session.resume"` —
+`"workspace.patch.apply"`, `"governance.action.approve"`, `"session.resume"` —
 optionally salted with session id (`seed = method + "|" + sessionID`) when
 per-session variety is wanted while keeping within-session stability. Degrade
 seeds are the degrade reason code itself.

@@ -65,7 +65,7 @@ func TestAgentLoopExecutesThroughKernel(t *testing.T) {
 	}
 
 	// The task completed.
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "completed" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "completed" {
 		t.Fatalf("task status = %s, want completed", tk.Status)
 	}
 
@@ -140,7 +140,7 @@ func TestAgentLoopWithoutReasonerFailsClosed(t *testing.T) {
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "do real model work")
 
 	d.runTask(sess, task)
-	got, _ := d.sched.Get(task.TaskID)
+	got, _ := d.sched.Get(task.RunID)
 	if got.Status != "degraded" || !contains(got.Summary, "no available model provider") {
 		t.Fatalf("task = %+v", got)
 	}

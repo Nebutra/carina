@@ -18,7 +18,7 @@ func TestArtifactRPCRequiresExactScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	params, _ := json.Marshal(map[string]any{"session_id": scope.SessionID, "task_id": scope.TaskID, "call_id": scope.CallID, "artifact_id": meta.ID})
+	params, _ := json.Marshal(map[string]any{"session_id": scope.SessionID, "run_id": scope.TaskID, "call_id": scope.CallID, "artifact_id": meta.ID})
 	stat, err := d.handleArtifactStat(params)
 	if err != nil || stat.(artifact.Metadata).ID != meta.ID {
 		t.Fatalf("stat=%+v err=%v", stat, err)
@@ -31,7 +31,7 @@ func TestArtifactRPCRequiresExactScope(t *testing.T) {
 	if err != nil || string(raw) != "kept outside audit" {
 		t.Fatalf("read=%q err=%v", raw, err)
 	}
-	wrong, _ := json.Marshal(map[string]any{"session_id": "sess_other", "task_id": scope.TaskID, "call_id": scope.CallID, "artifact_id": meta.ID})
+	wrong, _ := json.Marshal(map[string]any{"session_id": "sess_other", "run_id": scope.TaskID, "call_id": scope.CallID, "artifact_id": meta.ID})
 	if _, err = d.handleArtifactRead(wrong); err == nil {
 		t.Fatal("cross-scope artifact read succeeded")
 	}

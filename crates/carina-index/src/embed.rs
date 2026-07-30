@@ -257,7 +257,10 @@ mod tests {
             })
             .collect();
         let report = idx.embed_store(model_id, &items).expect("embed_store");
-        assert!(report.stale.is_empty(), "fresh chunks must not be stale: {report:?}");
+        assert!(
+            report.stale.is_empty(),
+            "fresh chunks must not be stale: {report:?}"
+        );
         report.stored
     }
 
@@ -267,12 +270,18 @@ mod tests {
         let content_b = "pub fn zz_pending_b() {}\n";
         let idx = fixture_index(&[("a.rs", content_a), ("b.rs", content_b)]);
         let (pending, total) = idx.pending_chunks(MODEL_A, 100).expect("pending_chunks");
-        assert!(pending.len() >= 2, "both files' chunks must be pending: {pending:?}");
+        assert!(
+            pending.len() >= 2,
+            "both files' chunks must be pending: {pending:?}"
+        );
         assert_eq!(total, pending.len(), "under the limit total == returned");
         let ids: Vec<i64> = pending.iter().map(|p| p.chunk_id).collect();
         let mut sorted = ids.clone();
         sorted.sort_unstable();
-        assert_eq!(ids, sorted, "pending chunks must come in ascending chunk_id order");
+        assert_eq!(
+            ids, sorted,
+            "pending chunks must come in ascending chunk_id order"
+        );
         let a = pending
             .iter()
             .find(|p| p.path == "a.rs")
@@ -309,8 +318,13 @@ mod tests {
         let mut idx = fixture_index(&[("a.rs", "pub fn zz_embedded_fn() {}\n")]);
         let stored = embed_all(&mut idx, MODEL_A, &[1.0, 0.0]);
         assert!(stored >= 1, "at least the one chunk must store");
-        let (pending, total) = idx.pending_chunks(MODEL_A, 100).expect("pending after store");
-        assert!(pending.is_empty(), "embedded chunks must leave pending: {pending:?}");
+        let (pending, total) = idx
+            .pending_chunks(MODEL_A, 100)
+            .expect("pending after store");
+        assert!(
+            pending.is_empty(),
+            "embedded chunks must leave pending: {pending:?}"
+        );
         assert_eq!(total, 0);
     }
 
@@ -353,8 +367,14 @@ mod tests {
             },
         ];
         let report = idx.embed_store(MODEL_A, &items).expect("embed_store");
-        assert_eq!(report.stored, 1, "only the hash-matching known chunk stores: {report:?}");
-        assert!(report.stale.contains(&999_999), "unknown id is stale: {report:?}");
+        assert_eq!(
+            report.stored, 1,
+            "only the hash-matching known chunk stores: {report:?}"
+        );
+        assert!(
+            report.stale.contains(&999_999),
+            "unknown id is stale: {report:?}"
+        );
         // The mismatched-hash row for the good chunk id is stale too — but the
         // matching row already stored, so the id appears in stale exactly once
         // for the mismatched item.
@@ -447,7 +467,9 @@ mod tests {
 
         // Whole-batch validation happens before any row is touched: the
         // finite sibling of a rejected batch must not have stored either.
-        let (pending_after, _) = idx.pending_chunks(MODEL_A, 100).expect("pending after rejects");
+        let (pending_after, _) = idx
+            .pending_chunks(MODEL_A, 100)
+            .expect("pending after rejects");
         assert!(
             pending_after.iter().any(|p| p.chunk_id == chunk.chunk_id),
             "the chunk must still be pending after rejected batches: {pending_after:?}"
@@ -480,7 +502,10 @@ mod tests {
         assert!(stored >= 1);
         let stats = idx.embedding_stats(MODEL_A, 2).expect("stats");
         assert_eq!(stats.stored, stored, "every stored vector is live content");
-        assert_eq!(stats.live, stored, "matching dims: cosine can rank them all");
+        assert_eq!(
+            stats.live, stored,
+            "matching dims: cosine can rank them all"
+        );
 
         // A 3-dim query cannot rank 2-dim vectors: stored stays, live drops
         // to zero — the observable dims-mismatch signal.
@@ -526,17 +551,23 @@ mod tests {
         }])
         .expect("re-ingest changed content");
 
-        let (pending, total) = idx.pending_chunks(MODEL_A, 100).expect("pending after change");
+        let (pending, total) = idx
+            .pending_chunks(MODEL_A, 100)
+            .expect("pending after change");
         assert!(
             total >= 1,
             "replaced chunks must be pending again for the same model"
         );
         assert!(
-            pending.iter().any(|p| p.content.contains("zz_reingest_new")),
+            pending
+                .iter()
+                .any(|p| p.content.contains("zz_reingest_new")),
             "the new content is what needs embedding: {pending:?}"
         );
         assert!(
-            pending.iter().all(|p| !p.content.contains("zz_reingest_old")),
+            pending
+                .iter()
+                .all(|p| !p.content.contains("zz_reingest_old")),
             "old chunk text must be gone: {pending:?}"
         );
     }
@@ -563,7 +594,10 @@ mod tests {
                 }],
             )
             .expect("embed_store");
-        assert_eq!(report.stored, 0, "a raced vector must never store: {report:?}");
+        assert_eq!(
+            report.stored, 0,
+            "a raced vector must never store: {report:?}"
+        );
         assert_eq!(report.stale, vec![old.chunk_id]);
     }
 }

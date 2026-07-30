@@ -83,7 +83,7 @@ func actionFromMCP(name string, args map[string]any) *action {
 type carinaMCPHandler struct {
 	d    *Daemon
 	sess *sessionstore.Session
-	task *scheduler.Task
+	task *scheduler.ExecutionRun
 }
 
 func (h *carinaMCPHandler) Tools() []mcpserver.Tool { return carinaToolCatalog }

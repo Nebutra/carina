@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-07-16T07:55:43.380Z",
+  "generated_at": "2026-07-28T10:09:42.069Z",
   "protocol_version": "1.6.0",
   "source": "protocol/jsonrpc/methods.json",
-  "method_count": 157,
+  "method_count": 158,
   "groups": [
     {
       "id": "runtime",
@@ -18,9 +18,20 @@
             "schema_version": "semver? compatible major",
             "projection_version": "semver? exact reducer match",
             "client_name": "string?",
-            "client_version": "semver?"
+            "client_version": "semver?",
+            "expected_workspace_id": "string?",
+            "expected_runtime_id": "string?",
+            "expected_epoch": "string?"
           },
           "result": "RuntimeInitializeResult"
+        },
+        {
+          "method": "runtime.describe",
+          "scope": "read",
+          "remote": false,
+          "control_plane_write": false,
+          "params": {},
+          "result": "RuntimeDescription"
         },
         {
           "method": "runtime.capabilities",
@@ -315,7 +326,9 @@
           "scope": "read",
           "remote": true,
           "control_plane_write": false,
-          "params": {},
+          "params": {
+            "archived": "boolean?"
+          },
           "result": "Session[]"
         },
         {
@@ -328,6 +341,26 @@
             "name": "string 1..80"
           },
           "result": "Session"
+        },
+        {
+          "method": "session.archive",
+          "scope": "write",
+          "remote": false,
+          "control_plane_write": false,
+          "params": {
+            "session_id": "string"
+          },
+          "result": "Session(status=closed); rejects every non-terminal task"
+        },
+        {
+          "method": "session.unarchive",
+          "scope": "write",
+          "remote": false,
+          "control_plane_write": false,
+          "params": {
+            "session_id": "string"
+          },
+          "result": "Session(status=active)"
         },
         {
           "method": "session.pause",
@@ -411,9 +444,11 @@
           "params": {
             "session_id": "string",
             "last_task_id": "string?",
-            "through_turn": "integer? >= 1"
+            "through_turn": "integer? >= 1",
+            "before_first": "boolean?",
+            "client_fork_id": "ASCII token? 1-128"
           },
-          "result": "Session with fork lineage"
+          "result": "Source-preserving Session with fork lineage; client_fork_id retries are idempotent"
         },
         {
           "method": "session.plan_mode",
@@ -456,7 +491,7 @@
           "params": {
             "session_id": "string"
           },
-          "result": "object"
+          "result": "{ session_id: string, plan_mode: false, approved: true, task: Task? }; a completed plan queues exactly one build task"
         },
         {
           "method": "session.add_dir",
@@ -559,7 +594,7 @@
       "label": "Task",
       "methods": [
         {
-          "method": "task.submit",
+          "method": "execution.start",
           "scope": "write",
           "remote": false,
           "control_plane_write": false,
@@ -570,15 +605,17 @@
             "agent": "string?",
             "model": "string?",
             "reasoning_effort": "string?",
+            "locale": "en|zh|zh-Hant|ja|ko|es|fr?",
             "token_budget": "integer >= 0?",
             "mode": "background?",
             "success_criteria": "SuccessCheck[]?",
-            "output_schema": "JSON Schema Draft 2020-12 object?"
+            "output_schema": "JSON Schema Draft 2020-12 object?",
+            "input_media_refs": "MediaRef[]? max 4"
           },
           "result": "Task"
         },
         {
-          "method": "task.resume",
+          "method": "execution.resume",
           "scope": "write",
           "remote": false,
           "control_plane_write": true,
@@ -588,7 +625,7 @@
           "result": "Task"
         },
         {
-          "method": "task.status",
+          "method": "execution.status",
           "scope": "read",
           "remote": true,
           "control_plane_write": false,
@@ -598,7 +635,7 @@
           "result": "Task"
         },
         {
-          "method": "task.list",
+          "method": "execution.list",
           "scope": "read",
           "remote": true,
           "control_plane_write": false,
@@ -608,7 +645,7 @@
           "result": "Task[]"
         },
         {
-          "method": "task.result",
+          "method": "execution.result",
           "scope": "read",
           "remote": true,
           "control_plane_write": false,
@@ -618,7 +655,7 @@
           "result": "TaskResult"
         },
         {
-          "method": "task.cancel",
+          "method": "execution.cancel",
           "scope": "write",
           "remote": false,
           "control_plane_write": false,
@@ -628,7 +665,7 @@
           "result": "Task"
         },
         {
-          "method": "task.steer",
+          "method": "execution.steer",
           "scope": "write",
           "remote": false,
           "control_plane_write": false,
@@ -639,7 +676,7 @@
           "result": "{ queued: boolean, task_id: string, status: string }"
         },
         {
-          "method": "task.budget.extend",
+          "method": "execution.budget.extend",
           "scope": "admin",
           "remote": false,
           "control_plane_write": true,
@@ -651,7 +688,7 @@
           "result": "Task"
         },
         {
-          "method": "task.action.approve",
+          "method": "governance.action.approve",
           "scope": "admin",
           "remote": false,
           "control_plane_write": true,
@@ -665,7 +702,7 @@
           "result": "object"
         },
         {
-          "method": "task.action.deny",
+          "method": "governance.action.deny",
           "scope": "admin",
           "remote": false,
           "control_plane_write": true,
@@ -678,7 +715,7 @@
           "result": "PermissionDecision"
         },
         {
-          "method": "task.approval.resolve",
+          "method": "governance.approval.resolve",
           "scope": "admin",
           "remote": false,
           "control_plane_write": true,
@@ -691,7 +728,7 @@
           "result": "object"
         },
         {
-          "method": "task.user.answer",
+          "method": "question.answer",
           "scope": "write",
           "remote": false,
           "control_plane_write": false,
@@ -702,7 +739,7 @@
           "result": "{ question_id: string, accepted: boolean, value: string }"
         },
         {
-          "method": "task.user.pending",
+          "method": "question.pending",
           "scope": "read",
           "remote": false,
           "control_plane_write": false,
@@ -1301,6 +1338,24 @@
             "limit": "integer? 0..1048576"
           },
           "result": "{ metadata: ArtifactMetadata, offset: integer, next_offset: integer, eof: boolean, content_base64: string }"
+        },
+        {
+          "method": "artifact.upload",
+          "scope": "write",
+          "remote": false,
+          "control_plane_write": false,
+          "params": {
+            "session_id": "string",
+            "upload_id": "string",
+            "chunk_index": "integer >= 0",
+            "content_base64": "base64 <= 524288 decoded bytes",
+            "final": "boolean",
+            "sha256": "sha256",
+            "total_bytes": "integer 1..4194304",
+            "media_type": "image/png|image/jpeg|image/gif|image/webp",
+            "origin": "string"
+          },
+          "result": "MediaRef on final chunk; upload receipt otherwise"
         }
       ]
     },
@@ -1341,17 +1396,6 @@
             "session_id": "string"
           },
           "result": "ContextSummary"
-        },
-        {
-          "method": "context.retrieve",
-          "scope": "read",
-          "remote": false,
-          "control_plane_write": false,
-          "params": {
-            "hash": "string?",
-            "ref": "string?"
-          },
-          "result": "ContextRetrieveResponse"
         },
         {
           "method": "context.compress",
@@ -1482,9 +1526,9 @@
           "control_plane_write": false,
           "params": {
             "session_id": "string",
-            "path": "string"
+            "path": "clean workspace-relative string"
           },
-          "result": "{ content: string, hash: string }"
+          "result": "{ content: UTF-8 text <= 1 MiB, hash: sha256 string }"
         },
         {
           "method": "workspace.trust",
@@ -1891,5 +1935,5 @@
   ],
   "channel": "0.6.x",
   "badge": "stable",
-  "note": "Pinned docs channel for the 0.6 release line. Re-sync freezes current protocol until the next pin."
+  "note": "Docs channel for the 0.6 release line. Re-sync on release branches freezes the pin."
 }

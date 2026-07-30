@@ -1,0 +1,59 @@
+{
+  "version": "1",
+  "fetched_at": "2099-01-01T00:00:00Z",
+  "catalog": {
+    "anthropic": {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "api": "https://api.anthropic.com/v1",
+      "env": ["ANTHROPIC_API_KEY"],
+      "npm": "@ai-sdk/anthropic",
+      "models": {
+        "claude-sonnet-4-5-20250929": {
+          "id": "claude-sonnet-4-5-20250929",
+          "name": "Claude Sonnet 4.5",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": {"context": 200000, "output": 64000}
+        }
+      }
+    },
+    "openai": {
+      "id": "openai",
+      "name": "OpenAI",
+      "api": "https://api.openai.com/v1",
+      "env": ["OPENAI_API_KEY"],
+      "npm": "@ai-sdk/openai",
+      "models": {
+        "gpt-5": {
+          "id": "gpt-5",
+          "name": "GPT-5",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": {"context": 400000, "output": 128000}
+        }
+      }
+    },
+    "openrouter": {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "api": "https://openrouter.ai/api/v1",
+      "env": ["OPENROUTER_API_KEY"],
+      "npm": "@openrouter/ai-sdk-provider"
+    },
+    "google": {
+      "id": "google",
+      "name": "Google Gemini",
+      "api": "https://generativelanguage.googleapis.com/v1beta",
+      "env": ["GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"],
+      "npm": "@ai-sdk/google"
+    },
+    "local": {
+      "id": "local",
+      "name": "Local / OpenAI-compatible",
+      "api": "http://localhost:1234/v1",
+      "env": ["CARINA_LOCAL_API_KEY"],
+      "npm": "@ai-sdk/openai-compatible"
+    }
+  }
+}

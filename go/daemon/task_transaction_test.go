@@ -18,7 +18,7 @@ func TestCancelAndRemoveShareCheckpointTaskTransactionLock(t *testing.T) {
 	d.checkpointMu.Lock()
 	cancelDone := make(chan error, 1)
 	go func() {
-		_, err := d.handleTaskCancel(mustJSON(t, map[string]any{"task_id": cancelTask.TaskID}))
+		_, err := d.handleTaskCancel(mustJSON(t, map[string]any{"run_id": cancelTask.RunID}))
 		cancelDone <- err
 	}()
 	select {
@@ -38,15 +38,15 @@ func TestCancelAndRemoveShareCheckpointTaskTransactionLock(t *testing.T) {
 	}
 
 	removeTask := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "remove")
-	d.sched.SetStatus(removeTask.TaskID, "completed")
-	current, _ := d.sched.Get(removeTask.TaskID)
+	d.sched.SetStatus(removeTask.RunID, "completed")
+	current, _ := d.sched.Get(removeTask.RunID)
 	if err := d.runs.saveChecked(current); err != nil {
 		t.Fatal(err)
 	}
 	d.checkpointMu.Lock()
 	removeDone := make(chan error, 1)
 	go func() {
-		_, err := d.handleAgentRemove(mustJSON(t, map[string]any{"task_id": removeTask.TaskID}))
+		_, err := d.handleAgentRemove(mustJSON(t, map[string]any{"run_id": removeTask.RunID}))
 		removeDone <- err
 	}()
 	select {
@@ -65,7 +65,7 @@ func TestCancelAndRemoveShareCheckpointTaskTransactionLock(t *testing.T) {
 		t.Fatal("remove did not continue after transaction lock release")
 	}
 
-	resultAny, err := d.handleAgentRemove(mustJSON(t, map[string]any{"task_id": removeTask.TaskID}))
+	resultAny, err := d.handleAgentRemove(mustJSON(t, map[string]any{"run_id": removeTask.RunID}))
 	if err != nil {
 		t.Fatalf("idempotent remove retry: %v", err)
 	}
@@ -75,21 +75,21 @@ func TestCancelAndRemoveShareCheckpointTaskTransactionLock(t *testing.T) {
 	}
 
 	pendingTask := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "remove after tombstone crash")
-	d.sched.SetStatus(pendingTask.TaskID, "completed")
-	pendingCurrent, _ := d.sched.Get(pendingTask.TaskID)
+	d.sched.SetStatus(pendingTask.RunID, "completed")
+	pendingCurrent, _ := d.sched.Get(pendingTask.RunID)
 	if err := d.runs.saveChecked(pendingCurrent); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.runs.tombstone(pendingTask.TaskID); err != nil {
+	if err := d.runs.tombstone(pendingTask.RunID); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := d.sched.Get(pendingTask.TaskID); !ok {
+	if _, ok := d.sched.Get(pendingTask.RunID); !ok {
 		t.Fatal("crash-window setup must leave scheduler publication pending")
 	}
-	if _, err := d.handleAgentRemove(mustJSON(t, map[string]any{"task_id": pendingTask.TaskID})); err != nil {
+	if _, err := d.handleAgentRemove(mustJSON(t, map[string]any{"run_id": pendingTask.RunID})); err != nil {
 		t.Fatalf("remove retry after durable tombstone: %v", err)
 	}
-	if _, ok := d.sched.Get(pendingTask.TaskID); ok {
+	if _, ok := d.sched.Get(pendingTask.RunID); ok {
 		t.Fatal("remove retry did not publish scheduler removal")
 	}
 }

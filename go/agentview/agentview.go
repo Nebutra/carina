@@ -77,7 +77,7 @@ type Metadata struct {
 
 type Entry struct {
 	SessionID string    `json:"session_id"`
-	TaskID    string    `json:"task_id,omitempty"`
+	RunID     string    `json:"run_id,omitempty"`
 	ParentID  string    `json:"parent_id,omitempty"`
 	Workspace string    `json:"workspace"`
 	Status    string    `json:"status"`
@@ -97,11 +97,11 @@ type Roster struct {
 	Completed  []Entry `json:"completed"`
 }
 
-func Build(sessions []*sessionstore.Session, tasks []*scheduler.Task, pendingQuestions map[string]string, metadata map[string]Metadata) Roster {
-	bySession := make(map[string][]*scheduler.Task)
-	for _, task := range tasks {
-		if task != nil {
-			bySession[task.SessionID] = append(bySession[task.SessionID], task)
+func Build(sessions []*sessionstore.Session, runs []*scheduler.ExecutionRun, pendingQuestions map[string]string, metadata map[string]Metadata) Roster {
+	bySession := make(map[string][]*scheduler.ExecutionRun)
+	for _, run := range runs {
+		if run != nil {
+			bySession[run.SessionID] = append(bySession[run.SessionID], run)
 		}
 	}
 	var roster Roster
@@ -115,9 +115,9 @@ func Build(sessions []*sessionstore.Session, tasks []*scheduler.Task, pendingQue
 			appendEntry(&roster, e)
 			continue
 		}
-		for _, task := range list {
-			e := Entry{SessionID: session.SessionID, TaskID: task.TaskID, ParentID: session.ParentID, Workspace: session.WorkspaceRoot, Status: task.Status, Category: classify(task.Status), Prompt: task.UserPrompt, Summary: task.Summary, Agent: task.Agent, Model: task.Model, UpdatedAt: task.UpdatedAt, Metadata: metadata[session.SessionID]}
-			if need := pendingQuestions[task.TaskID]; need != "" {
+		for _, run := range list {
+			e := Entry{SessionID: session.SessionID, RunID: run.RunID, ParentID: session.ParentID, Workspace: session.WorkspaceRoot, Status: run.Status, Category: classify(run.Status), Prompt: run.UserPrompt, Summary: run.Summary, Agent: run.Agent, Model: run.Model, UpdatedAt: run.UpdatedAt, Metadata: metadata[session.SessionID]}
+			if need := pendingQuestions[run.RunID]; need != "" {
 				e.Category, e.Needs = NeedsInput, need
 			}
 			appendEntry(&roster, e)

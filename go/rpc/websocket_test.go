@@ -47,7 +47,7 @@ func TestWebSocketGatewayRoundTripAndRemotePolicy(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RegisterMethod(MethodDescriptor{Method: "task.submit", Scope: ScopeWrite, Remote: false}, func(_ json.RawMessage) (any, error) {
+	if err := s.RegisterMethod(MethodDescriptor{Method: "execution.start", Scope: ScopeWrite, Remote: false}, func(_ json.RawMessage) (any, error) {
 		return map[string]bool{"submitted": true}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestWebSocketGatewayRoundTripAndRemotePolicy(t *testing.T) {
 		t.Fatalf("daemon.status result: %+v", resp.Result)
 	}
 
-	resp = wsCall(t, addr, "", Request{JSONRPC: "2.0", ID: rawID(t, 2), Method: "task.submit", Params: mustJSON(t, map[string]any{})})
+	resp = wsCall(t, addr, "", Request{JSONRPC: "2.0", ID: rawID(t, 2), Method: "execution.start", Params: mustJSON(t, map[string]any{})})
 	if resp.Error == nil || !strings.Contains(resp.Error.Message, "method not available over remote transport") {
 		t.Fatalf("local-only method should be refused over websocket, got %+v", resp.Error)
 	}

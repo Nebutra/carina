@@ -8,6 +8,33 @@ import (
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
+// Task is a delegated unit of background work leased to carina-worker. It is
+// deliberately separate from ExecutionRun: worker delivery has lease and
+// at-least-once semantics that do not belong to an interactive conversation.
+type Task struct {
+	TaskID                     string           `json:"task_id"`
+	SessionID                  string           `json:"session_id"`
+	WorkspaceID                string           `json:"workspace_id"`
+	Status                     string           `json:"status"`
+	Revision                   int64            `json:"revision,omitempty"`
+	Continuity                 continuity.State `json:"continuity"`
+	UserPrompt                 string           `json:"user_prompt"`
+	Locale                     string           `json:"locale,omitempty"`
+	SuccessCriteria            []SuccessCheck   `json:"success_criteria,omitempty"`
+	CreatedAt                  time.Time        `json:"created_at"`
+	UpdatedAt                  time.Time        `json:"updated_at"`
+	Mode                       string           `json:"mode"`
+	Summary                    string           `json:"summary,omitempty"`
+	AppliedPatches             []string         `json:"applied_patches,omitempty"`
+	TokensUsed                 int              `json:"tokens_used,omitempty"`
+	TokenUsageObserved         bool             `json:"token_usage_observed,omitempty"`
+	LeaseOwner                 string           `json:"lease_owner,omitempty"`
+	LeaseExpiry                time.Time        `json:"lease_expiry,omitempty"`
+	LeaseGeneration            int              `json:"lease_generation,omitempty"`
+	Attempts                   int              `json:"attempts,omitempty"`
+	RequiredWorkerCapabilities []string         `json:"required_worker_capabilities,omitempty"`
+}
+
 // defaultLeaseTTL bounds how long a worker may hold a task without renewing
 // before the scheduler assumes it crashed and re-queues the work.
 const defaultLeaseTTL = 30 * time.Second
@@ -20,8 +47,20 @@ func (s *Scheduler) SubmitForDispatch(sessionID, workspaceID, prompt string, cri
 }
 
 func (s *Scheduler) SubmitForDispatchWithCapabilities(sessionID, workspaceID, prompt string, criteria []SuccessCheck, required []string) *Task {
+	task := s.PrepareDispatchTask(sessionID, workspaceID, prompt, criteria, required)
+	if err := s.EnqueueDispatchTask(task); err != nil {
+		panic(err)
+	}
+	return task
+}
+
+// PrepareDispatchTask builds a complete delegated-task envelope without
+// making it leaseable. Callers that own routing metadata or durable bindings
+// can install those prerequisites before EnqueueDispatchTask publishes the
+// task to workers.
+func (s *Scheduler) PrepareDispatchTask(sessionID, workspaceID, prompt string, criteria []SuccessCheck, required []string) *Task {
 	now := time.Now().UTC()
-	task := &Task{
+	return &Task{
 		TaskID:                     sessionstore.NewID("task"),
 		SessionID:                  sessionID,
 		WorkspaceID:                workspaceID,
@@ -35,11 +74,79 @@ func (s *Scheduler) SubmitForDispatchWithCapabilities(sessionID, workspaceID, pr
 		CreatedAt:                  now,
 		UpdatedAt:                  now,
 	}
+
+}
+
+// EnqueueDispatchTask is the admission boundary for remote workers. The task
+// must be fully initialized before this call; after it returns a worker may
+// lease and report it immediately.
+func (s *Scheduler) EnqueueDispatchTask(task *Task) error {
+	if task == nil || task.TaskID == "" || task.Status != "queued" {
+		return fmt.Errorf("scheduler: invalid prepared dispatch task")
+	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.tasks[task.TaskID]; exists {
+		return fmt.Errorf("scheduler: delegated task %s already exists", task.TaskID)
+	}
 	s.tasks[task.TaskID] = task
 	s.dispatchQueue = append(s.dispatchQueue, task.TaskID)
-	s.mu.Unlock()
-	return task
+	return nil
+}
+
+func (s *Scheduler) GetTask(taskID string) (*Task, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task, ok := s.tasks[taskID]
+	return task, ok
+}
+
+func (s *Scheduler) SetTaskLocale(taskID, locale string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if task := s.tasks[taskID]; task != nil {
+		updated := *task
+		updated.Locale = locale
+		touchTask(&updated)
+		s.tasks[taskID] = &updated
+	}
+}
+
+func (s *Scheduler) CancelTask(taskID string) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return nil, fmt.Errorf("scheduler: unknown delegated task %s", taskID)
+	}
+	if isTerminal(task.Status) {
+		copy := *task
+		return &copy, nil
+	}
+	updated := *task
+	updated.Status = "cancelled"
+	updated.LeaseOwner = ""
+	updated.LeaseExpiry = time.Time{}
+	updated.Continuity.Execution = continuity.ExecutionLease{}
+	touchTask(&updated)
+	s.tasks[taskID] = &updated
+	return &updated, nil
+}
+
+func (s *Scheduler) LoadTask(task *Task) {
+	if task == nil || task.TaskID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.tasks[task.TaskID]; exists {
+		return
+	}
+	loaded := *task
+	if loaded.Revision < 1 {
+		loaded.Revision = 1
+	}
+	s.tasks[loaded.TaskID] = &loaded
 }
 
 // Lease atomically claims the next queued dispatch task for a worker, marking it
@@ -216,4 +323,16 @@ func isTerminal(status string) bool {
 		return true
 	}
 	return false
+}
+
+func touchTask(task *Task) {
+	if task.Revision < 1 {
+		task.Revision = 1
+	}
+	if task.Continuity.Activity == "" {
+		task.Continuity = continuity.ForTaskStatus(task.Status, len(task.SuccessCriteria) > 0)
+	}
+	task.Revision++
+	task.UpdatedAt = time.Now().UTC()
+	task.Continuity = continuity.MergeTaskStatus(task.Continuity, task.Status, len(task.SuccessCriteria) > 0)
 }

@@ -20,7 +20,27 @@ pub const GENESIS_HASH: &str = "000000000000000000000000000000000000000000000000
 /// Canonical event types (PRD §8.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventType {
-    TaskCreated,
+    ExecutionQueued,
+    ExecutionStarted,
+    ExecutionProgressed,
+    ExecutionCompleted,
+    ExecutionCancelled,
+    ExecutionInterrupted,
+    ExecutionRecoveryPlanned,
+    ExecutionRecoveryStarted,
+    ExecutionRecoveryBlocked,
+    ExecutionRecoveryCompleted,
+    TaskSubmitted,
+    TaskLeased,
+    TaskRequeued,
+    TaskProgressed,
+    TaskCompleted,
+    TaskCancelled,
+    IndexSyncFailed,
+    SessionForked,
+    DirectoryGranted,
+    CommandExpanded,
+    ExternalEvent,
     ModelRequested,
     ModelResponded,
     RoutingDecision,
@@ -93,7 +113,7 @@ pub enum Actor {
 }
 
 impl Actor {
-    pub fn from_str(s: &str) -> Actor {
+    pub fn parse_lossy(s: &str) -> Actor {
         match s {
             "go" | "Go" => Actor::Go,
             "zig" | "Zig" => Actor::Zig,
@@ -396,6 +416,19 @@ fn new_event_id() -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn event_type_deserializer_matches_every_canonical_protocol_variant() {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../../protocol/schemas/event.schema.json"))
+                .unwrap();
+        let names = schema["properties"]["type"]["enum"].as_array().unwrap();
+        for name in names {
+            serde_json::from_value::<EventType>(name.clone())
+                .unwrap_or_else(|error| panic!("canonical event {name} is unsupported: {error}"));
+        }
+        assert!(serde_json::from_value::<EventType>(serde_json::json!("TaskCreated")).is_err());
+    }
+
     fn tmp(name: &str) -> PathBuf {
         use std::time::{SystemTime, UNIX_EPOCH};
         let n = SystemTime::now()
@@ -411,13 +444,13 @@ mod tests {
         let log = AuditLog::open(&dir, "sess_test").unwrap();
         let ev = Event::new(
             "sess_test",
-            EventType::TaskCreated,
+            EventType::ExecutionQueued,
             serde_json::json!({"task_id": "task_1"}),
         );
         log.append(&ev).unwrap();
         let events = log.read_all().unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, EventType::TaskCreated);
+        assert_eq!(events[0].event_type, EventType::ExecutionQueued);
         assert!(!events[0].event_hash.is_empty());
         assert_eq!(events[0].prev_hash, GENESIS_HASH);
         drop(log);
@@ -428,14 +461,14 @@ mod tests {
     fn append_cursor_is_monotonic_and_survives_reopen() {
         let dir = tmp("cursor");
         let log = AuditLog::open(&dir, "cursor").unwrap();
-        let one = Event::new("cursor", EventType::TaskCreated, serde_json::json!({}));
-        let two = Event::new("cursor", EventType::TaskCreated, serde_json::json!({}));
+        let one = Event::new("cursor", EventType::ExecutionQueued, serde_json::json!({}));
+        let two = Event::new("cursor", EventType::ExecutionQueued, serde_json::json!({}));
         assert_eq!(log.append_with_cursor(&one).unwrap(), 1);
         assert_eq!(log.append_with_cursor(&two).unwrap(), 2);
         drop(log);
 
         let reopened = AuditLog::open(&dir, "cursor").unwrap();
-        let three = Event::new("cursor", EventType::TaskCreated, serde_json::json!({}));
+        let three = Event::new("cursor", EventType::ExecutionQueued, serde_json::json!({}));
         assert_eq!(reopened.append_with_cursor(&three).unwrap(), 3);
         drop(reopened);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -522,7 +555,7 @@ mod tests {
             let log = AuditLog::open(&dir, "s").unwrap();
             log.append(&Event::new(
                 "s",
-                EventType::TaskCreated,
+                EventType::ExecutionQueued,
                 serde_json::json!({}),
             ))
             .unwrap();
@@ -547,7 +580,8 @@ mod tests {
         let dir = tmp("actor");
         let log = AuditLog::open(&dir, "s").unwrap();
         log.append(
-            &Event::new("s", EventType::TaskCreated, serde_json::json!({})).with_actor(Actor::Go),
+            &Event::new("s", EventType::ExecutionQueued, serde_json::json!({}))
+                .with_actor(Actor::Go),
         )
         .unwrap();
         let events = log.read_all().unwrap();
@@ -608,7 +642,7 @@ mod tests {
         let first_error = log
             .append(&Event::new(
                 "s",
-                EventType::TaskCreated,
+                EventType::ExecutionQueued,
                 serde_json::json!({}),
             ))
             .unwrap_err();
@@ -617,7 +651,7 @@ mod tests {
         let second_error = log
             .append(&Event::new(
                 "s",
-                EventType::TaskCreated,
+                EventType::ExecutionQueued,
                 serde_json::json!({}),
             ))
             .unwrap_err();

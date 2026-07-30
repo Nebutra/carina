@@ -41,7 +41,9 @@ impl Lang {
     /// the plain TypeScript grammar parses JSX into ERROR nodes and silently
     /// drops the symbols around it.
     pub(crate) fn grammar_for_path(self, path: &str) -> tree_sitter::Language {
-        let extension = std::path::Path::new(path).extension().and_then(|e| e.to_str());
+        let extension = std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str());
         if self == Lang::TypeScript && extension == Some("tsx") {
             return tree_sitter_typescript::LANGUAGE_TSX.into();
         }
@@ -100,7 +102,10 @@ mod tests {
         let tree = parser
             .parse("const A = () => <div />;\n", None)
             .expect("parse tsx");
-        assert!(!tree.root_node().has_error(), "JSX must parse without errors");
+        assert!(
+            !tree.root_node().has_error(),
+            "JSX must parse without errors"
+        );
         parser
             .set_language(&Lang::TypeScript.grammar_for_path("web/app.ts"))
             .expect("ts grammar");

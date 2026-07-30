@@ -70,16 +70,16 @@ func normalizeUserQuestion(prompt string, options []userQuestionOption) (string,
 	return prompt, normalized, nil
 }
 
-func (d *Daemon) askUser(sess *sessionstore.Session, task *scheduler.Task, prompt string, options []userQuestionOption) string {
+func (d *Daemon) askUser(sess *sessionstore.Session, task *scheduler.ExecutionRun, prompt string, options []userQuestionOption) string {
 	return d.askUserOutcome(sess, task, prompt, options).display
 }
 
-func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.Task, prompt string, options []userQuestionOption) toolExecutionOutcome {
+func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.ExecutionRun, prompt string, options []userQuestionOption) toolExecutionOutcome {
 	prompt, options, err := normalizeUserQuestion(prompt, options)
 	if err != nil {
 		return toolFailed("ask_user error: "+err.Error(), "invalid_input")
 	}
-	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+	if err := d.ensureActiveToolStarted(task.RunID); err != nil {
 		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
 	}
 	questionID := sessionstore.NewID("question")
@@ -89,7 +89,7 @@ func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.Task
 	}
 	pending := &pendingUserQuestion{
 		sessionID: sess.SessionID,
-		taskID:    task.TaskID,
+		taskID:    task.RunID,
 		options:   optionMap,
 		answer:    make(chan userQuestionAnswer, 1),
 	}
@@ -105,21 +105,21 @@ func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.Task
 		d.questionMu.Unlock()
 	}()
 
-	d.sched.SetStatus(task.TaskID, "waiting_input")
+	d.sched.SetStatus(task.RunID, "waiting_input")
 	ev := map[string]any{
 		"type":        "user.question",
 		"session_id":  sess.SessionID,
-		"task_id":     task.TaskID,
+		"task_id":     task.RunID,
 		"question_id": questionID,
 		"prompt":      prompt,
 		"options":     options,
 		"timestamp":   time.Now().UTC().Format(time.RFC3339),
 	}
-	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "ToolRequested", task.TaskID, "go", map[string]any{
+	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "ToolRequested", task.RunID, "go", map[string]any{
 		"status": "user_question_requested", "question_id": questionID, "request": ev,
 	}, "")
 	if err != nil {
-		d.sched.SetStatus(task.TaskID, "running")
+		d.sched.SetStatus(task.RunID, "running")
 		return toolFailed("ask_user error: persist request: "+err.Error(), "audit_persistence_error")
 	}
 	ev[internalRawAuditCursor] = cursor
@@ -129,7 +129,7 @@ func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.Task
 	if timeout <= 0 {
 		timeout = defaultApprovalTimeout
 	}
-	ctx := d.contextForTask(task.TaskID)
+	ctx := d.contextForTask(task.RunID)
 	var answer userQuestionAnswer
 	timedOut := false
 	cancelled := false
@@ -142,24 +142,24 @@ func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.Task
 	case <-d.stopCh:
 		cancelled = true
 	}
-	if ctx.Err() != nil || taskCancelled(d, task.TaskID) {
+	if ctx.Err() != nil || taskCancelled(d, task.RunID) {
 		cancelled = true
 	}
 	pending.mu.Lock()
 	pending.resolved = true
 	pending.mu.Unlock()
 	if cancelled {
-		d.record(sess.SessionID, "TaskCreated", task.TaskID, "operator", map[string]any{
+		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "operator", map[string]any{
 			"status": "user_question_resolved", "question_id": questionID, "cancelled": true,
 		}, "")
 		return toolExecutionOutcome{display: "User question cancelled.", status: "cancelled", errorCategory: "operator_cancelled"}
 	}
-	d.sched.SetStatus(task.TaskID, "running")
+	d.sched.SetStatus(task.RunID, "running")
 	payload := map[string]any{
 		"status": "user_question_resolved", "question_id": questionID,
 		"value": answer.Value, "timed_out": timedOut,
 	}
-	d.record(sess.SessionID, "TaskCreated", task.TaskID, "operator", payload, "")
+	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "operator", payload, "")
 	if timedOut {
 		return toolTimedOut("User did not answer the question before it expired. Continue with the safest reversible option or ask again if the choice is required.")
 	}

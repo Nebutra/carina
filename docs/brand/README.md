@@ -6,7 +6,7 @@ and the original 32 MB glyph PNG cards. Lightweight 512px, 16-level grayscale de
 
 ## Contents
 
-- `assets/logo/`: accepted symbol, wordmark, lockups, sprite, and raster fallbacks.
+- `assets/logo/`: accepted symbol, wordmark, lockups, sprite, raster fallbacks, and the transparent terminal microtype derivative.
 - `assets/fonts/`: Carina Display Alpha, licensed Geist Sans/Mono WOFF2 files, CSS registrations, 52 SVG glyph sources, and 52 optimized PNG derivatives. Editorial titles use Newsreader (loaded by the docs site; see `AGENTS.md` typography).
 - `assets/hero/`: optimized README media derived from an approved foundation composition.
 - `assets/specimens/`: evidence rendered from the compiled font; not identity masters.
@@ -33,6 +33,16 @@ make brand-check
 To record an approved asset change:
 
 ```bash
+python3 scripts/brand_assets.py --update
+make brand-check
+```
+
+The terminal microtype PNG and terminal-native Braille mark are generated from the canonical
+symbol path. The PNG also uses the approved Geist Mono asset. Regenerate both with Pillow
+available, then update the manifest:
+
+```bash
+python3 scripts/render-terminal-logo.py
 python3 scripts/brand_assets.py --update
 make brand-check
 ```

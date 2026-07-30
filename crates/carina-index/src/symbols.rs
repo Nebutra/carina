@@ -183,7 +183,10 @@ fn contains_identifier(line: &str, name: &str) -> bool {
     while let Some(found) = line[search_from..].find(name) {
         let start = search_from + found;
         let end = start + name.len();
-        let boundary_before = line[..start].chars().next_back().is_none_or(|c| !is_ident(c));
+        let boundary_before = line[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_ident(c));
         let boundary_after = line[end..].chars().next().is_none_or(|c| !is_ident(c));
         if boundary_before && boundary_after {
             return true;

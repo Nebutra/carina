@@ -62,6 +62,97 @@ func (p providerFunc) Complete(ctx context.Context, req Request) (*Response, err
 	return p.complete(ctx, req)
 }
 
+type streamingProviderFunc struct {
+	providerFunc
+	stream func(context.Context, Request, StreamCallback) (*Response, error)
+}
+
+func (p streamingProviderFunc) Stream(ctx context.Context, req Request, callback StreamCallback) (*Response, error) {
+	return p.stream(ctx, req, callback)
+}
+
+func TestStreamUsesOptionalCapabilityAndCompleteFallback(t *testing.T) {
+	r := New()
+	r.RegisterProvider(providerFunc{name: "plain", complete: func(_ context.Context, req Request) (*Response, error) {
+		return &Response{Provider: "plain", Model: req.Model, Text: "complete fallback", OutputTokens: 2}, nil
+	}})
+	var events []StreamEvent
+	resp, err := r.Stream(context.Background(), Request{Model: "m"}, func(event StreamEvent) {
+		events = append(events, event)
+	})
+	if err != nil || resp.Text != "complete fallback" {
+		t.Fatalf("stream fallback = %+v, err=%v", resp, err)
+	}
+	if len(events) != 1 || events[0].Delta != "complete fallback" || events[0].Reset {
+		t.Fatalf("fallback events = %+v", events)
+	}
+
+	r = New()
+	r.RegisterProvider(streamingProviderFunc{
+		providerFunc: providerFunc{name: "streaming", complete: func(context.Context, Request) (*Response, error) {
+			t.Fatal("Complete called for a streaming provider")
+			return nil, nil
+		}},
+		stream: func(_ context.Context, req Request, callback StreamCallback) (*Response, error) {
+			callback(StreamEvent{Delta: "one"})
+			callback(StreamEvent{Delta: "two"})
+			return &Response{Provider: "streaming", Model: req.Model, Text: "onetwo", OutputTokens: 3}, nil
+		},
+	})
+	events = nil
+	resp, err = r.Stream(context.Background(), Request{Model: "m"}, func(event StreamEvent) {
+		events = append(events, event)
+	})
+	if err != nil || resp.Text != "onetwo" || len(events) != 2 {
+		t.Fatalf("native stream = %+v, events=%+v, err=%v", resp, events, err)
+	}
+}
+
+func TestStreamResetsBeforeProviderFallback(t *testing.T) {
+	r := New()
+	r.RegisterProvider(streamingProviderFunc{
+		providerFunc: providerFunc{name: "first", complete: func(context.Context, Request) (*Response, error) { return nil, errors.New("unused") }},
+		stream: func(_ context.Context, _ Request, callback StreamCallback) (*Response, error) {
+			callback(StreamEvent{Delta: "discard"})
+			return nil, errors.New("stream failed")
+		},
+	})
+	r.RegisterProvider(providerFunc{name: "second", complete: func(_ context.Context, req Request) (*Response, error) {
+		return &Response{Provider: "second", Model: req.Model, Text: "winner"}, nil
+	}})
+	var events []StreamEvent
+	resp, err := r.Stream(context.Background(), Request{Model: "m"}, func(event StreamEvent) {
+		events = append(events, event)
+	})
+	if err != nil || resp.Provider != "second" {
+		t.Fatalf("fallback = %+v, err=%v", resp, err)
+	}
+	if len(events) != 3 || events[0].Delta != "discard" || !events[1].Reset || events[2].Delta != "winner" {
+		t.Fatalf("fallback events = %+v", events)
+	}
+}
+
+func TestStreamResetsAfterFinalProviderFailure(t *testing.T) {
+	r := New()
+	r.RegisterProvider(streamingProviderFunc{
+		providerFunc: providerFunc{name: "only", complete: func(context.Context, Request) (*Response, error) { return nil, errors.New("unused") }},
+		stream: func(_ context.Context, _ Request, callback StreamCallback) (*Response, error) {
+			callback(StreamEvent{Delta: "discard"})
+			return nil, errors.New("stream failed")
+		},
+	})
+	var events []StreamEvent
+	_, err := r.Stream(context.Background(), Request{Model: "m"}, func(event StreamEvent) {
+		events = append(events, event)
+	})
+	if err == nil {
+		t.Fatal("expected final provider failure")
+	}
+	if len(events) != 2 || events[0].Delta != "discard" || !events[1].Reset {
+		t.Fatalf("failure events = %+v", events)
+	}
+}
+
 func TestTargetedProviderModel(t *testing.T) {
 	r := New()
 	r.RegisterProvider(&fakeProvider{name: "anthropic", fail: true})

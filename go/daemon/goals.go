@@ -388,7 +388,7 @@ func (d *Daemon) handleGoalContinue(params json.RawMessage) (any, error) {
 	for _, t := range d.sched.List() {
 		if t.SessionID == p.SessionID && (t.Status == "queued" || t.Status == "running" || t.Status == "waiting_approval") {
 			d.goals.mu.Unlock()
-			return nil, fmt.Errorf("session already has an in-flight task %s", t.TaskID)
+			return nil, fmt.Errorf("session already has an in-flight execution %s", t.RunID)
 		}
 	}
 	objective := g.Objective
@@ -427,27 +427,27 @@ func (d *Daemon) handleGoalContinue(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	d.goals.mu.Unlock()
-	if task, ok := result.(*scheduler.Task); ok {
+	if task, ok := result.(*scheduler.ExecutionRun); ok {
 		d.goals.mu.Lock()
 		if current := d.goals.goals[p.SessionID]; current != nil {
-			current.Goal.LastTaskID = task.TaskID
+			current.Goal.LastTaskID = task.RunID
 			_ = d.goals.persistLocked()
 		}
 		d.goals.mu.Unlock()
-		if current, exists := d.sched.Get(task.TaskID); exists && (current.Status == "completed" || current.Status == "failed" || current.Status == "degraded" || current.Status == "cancelled") {
+		if current, exists := d.sched.Get(task.RunID); exists && (current.Status == "completed" || current.Status == "failed" || current.Status == "degraded" || current.Status == "cancelled") {
 			go d.reconcileGoalTask(current)
 		}
 	}
 	return result, nil
 }
 
-func (d *Daemon) reconcileGoalTask(task *scheduler.Task) {
+func (d *Daemon) reconcileGoalTask(task *scheduler.ExecutionRun) {
 	if task == nil {
 		return
 	}
 	d.goals.mu.Lock()
 	r := d.goals.goals[task.SessionID]
-	if r == nil || !r.Goal.AutoContinue || r.Goal.Status != "active" || r.Goal.LastTaskID != task.TaskID {
+	if r == nil || !r.Goal.AutoContinue || r.Goal.Status != "active" || r.Goal.LastTaskID != task.RunID {
 		d.goals.mu.Unlock()
 		return
 	}
@@ -458,7 +458,7 @@ func (d *Daemon) reconcileGoalTask(task *scheduler.Task) {
 		g.Status = "complete"
 		g.ConsecutiveFailures = 0
 		g.UpdatedAt = time.Now().UTC()
-		if d.auditGoalChange(task.SessionID, "auto_complete", before.Status, g.Status, map[string]any{"task_id": task.TaskID}) != nil {
+		if d.auditGoalChange(task.SessionID, "auto_complete", before.Status, g.Status, map[string]any{"task_id": task.RunID}) != nil {
 			*g = before
 			d.goals.mu.Unlock()
 			return
@@ -475,7 +475,7 @@ func (d *Daemon) reconcileGoalTask(task *scheduler.Task) {
 		before := *g
 		g.Status = "blocked"
 		g.UpdatedAt = time.Now().UTC()
-		if d.auditGoalChange(task.SessionID, "auto_blocked", before.Status, g.Status, map[string]any{"task_id": task.TaskID, "failures": g.ConsecutiveFailures}) == nil {
+		if d.auditGoalChange(task.SessionID, "auto_blocked", before.Status, g.Status, map[string]any{"task_id": task.RunID, "failures": g.ConsecutiveFailures}) == nil {
 			_ = d.goals.persistLocked()
 			_ = d.recordGoalChanged(task.SessionID, "auto_blocked", g)
 		} else {

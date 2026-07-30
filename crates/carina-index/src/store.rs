@@ -428,18 +428,27 @@ impl Store {
                     .query_row(params![edge.src_path, edge.src_line], |row| row.get(0))
                     .optional()?;
                 let Some(src_id) = src_id else {
-                    skip(edge, format!("no symbol at {}:{}", edge.src_path, edge.src_line));
+                    skip(
+                        edge,
+                        format!("no symbol at {}:{}", edge.src_path, edge.src_line),
+                    );
                     continue;
                 };
                 let dst_id: Option<i64> = resolve
                     .query_row(params![edge.dst_path, edge.dst_line], |row| row.get(0))
                     .optional()?;
                 let Some(dst_id) = dst_id else {
-                    skip(edge, format!("no symbol at {}:{}", edge.dst_path, edge.dst_line));
+                    skip(
+                        edge,
+                        format!("no symbol at {}:{}", edge.dst_path, edge.dst_line),
+                    );
                     continue;
                 };
                 if src_id == dst_id {
-                    skip(edge, "self edge: both endpoints resolve to the same symbol".into());
+                    skip(
+                        edge,
+                        "self edge: both endpoints resolve to the same symbol".into(),
+                    );
                     continue;
                 }
                 upsert.execute(params![src_id, dst_id])?;
@@ -664,11 +673,17 @@ mod tests {
             .expect("second replace");
         assert_eq!(count(&store, "SELECT COUNT(*) FROM files"), 1);
         assert_eq!(
-            count(&store, "SELECT COUNT(*) FROM symbols WHERE name = 'old_name'"),
+            count(
+                &store,
+                "SELECT COUNT(*) FROM symbols WHERE name = 'old_name'"
+            ),
             0
         );
         assert_eq!(
-            count(&store, "SELECT COUNT(*) FROM symbols WHERE name = 'new_name'"),
+            count(
+                &store,
+                "SELECT COUNT(*) FROM symbols WHERE name = 'new_name'"
+            ),
             1
         );
         assert_eq!(
@@ -717,7 +732,10 @@ mod tests {
             .expect("rows");
         assert_eq!(edges.len(), 2, "reference fans out to both definitions");
         for (confidence, source, edge_type) in &edges {
-            assert!((confidence - 0.5).abs() < 1e-9, "confidence 1/2, got {confidence}");
+            assert!(
+                (confidence - 0.5).abs() < 1e-9,
+                "confidence 1/2, got {confidence}"
+            );
             assert_eq!(source, "tree-sitter");
             assert_eq!(edge_type, "references");
         }
@@ -748,7 +766,10 @@ mod tests {
             .conn
             .query_row("SELECT MAX(confidence) FROM edges", [], |row| row.get(0))
             .expect("confidence");
-        assert!((max_conf - 0.5).abs() < 1e-9, "confidence 1/2, got {max_conf}");
+        assert!(
+            (max_conf - 0.5).abs() < 1e-9,
+            "confidence 1/2, got {max_conf}"
+        );
         // Deleting one definition file restores full confidence on the other.
         store.delete_file("src/b.rs").expect("delete b");
         assert_eq!(count(&store, "SELECT COUNT(*) FROM edges"), 1);
@@ -756,7 +777,10 @@ mod tests {
             .conn
             .query_row("SELECT confidence FROM edges", [], |row| row.get(0))
             .expect("confidence");
-        assert!((conf - 1.0).abs() < 1e-9, "confidence must return to 1, got {conf}");
+        assert!(
+            (conf - 1.0).abs() < 1e-9,
+            "confidence must return to 1, got {conf}"
+        );
     }
 
     // ---- V2: embeddings table (schema v3) --------------------------------
@@ -772,7 +796,13 @@ mod tests {
             .execute(
                 "INSERT INTO embeddings (chunk_id, model_id, dims, vector, content_hash)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![chunk_id, model_id, vector.len() as i64, f32_le_blob(vector), hash],
+                params![
+                    chunk_id,
+                    model_id,
+                    vector.len() as i64,
+                    f32_le_blob(vector),
+                    hash
+                ],
             )
             .expect("insert embedding row");
     }
@@ -802,7 +832,13 @@ mod tests {
             )
             .expect("replace_file");
         let chunk_id = only_chunk_id(&store);
-        insert_embedding(&store, chunk_id, "openai/text-embedding-3-small", &[0.25, -1.5, 3.0], "h1");
+        insert_embedding(
+            &store,
+            chunk_id,
+            "openai/text-embedding-3-small",
+            &[0.25, -1.5, 3.0],
+            "h1",
+        );
 
         let (dims, blob, hash): (i64, Vec<u8>, String) = store
             .conn
@@ -814,12 +850,22 @@ mod tests {
             )
             .expect("embedding row round-trips");
         assert_eq!(dims, 3);
-        assert_eq!(blob, f32_le_blob(&[0.25, -1.5, 3.0]), "vector is f32-LE, dims*4 bytes");
+        assert_eq!(
+            blob,
+            f32_le_blob(&[0.25, -1.5, 3.0]),
+            "vector is f32-LE, dims*4 bytes"
+        );
         assert_eq!(blob.len(), 12);
         assert_eq!(hash, "h1");
 
         // (chunk_id, model_id) is the primary key: same chunk, second model.
-        insert_embedding(&store, chunk_id, "voyage/voyage-code-3", &[1.0, 0.0, 0.0], "h1");
+        insert_embedding(
+            &store,
+            chunk_id,
+            "voyage/voyage-code-3",
+            &[1.0, 0.0, 0.0],
+            "h1",
+        );
         assert_eq!(count(&store, "SELECT COUNT(*) FROM embeddings"), 2);
     }
 
@@ -947,7 +993,13 @@ mod tests {
             )
             .expect("prepare edge rows");
         stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })
         .expect("query edge rows")
         .collect::<Result<_, _>>()
@@ -958,10 +1010,20 @@ mod tests {
     fn edges_store_resolves_endpoints_and_upserts_lsp_edge() {
         let mut store = Store::in_memory().expect("in-memory store");
         store
-            .replace_file(&file_row("a.rs", "ha"), &[psym("zz_e_alpha", 1, 3)], &[], &[])
+            .replace_file(
+                &file_row("a.rs", "ha"),
+                &[psym("zz_e_alpha", 1, 3)],
+                &[],
+                &[],
+            )
             .expect("replace a");
         store
-            .replace_file(&file_row("b.rs", "hb"), &[psym("zz_e_caller", 1, 5)], &[], &[])
+            .replace_file(
+                &file_row("b.rs", "hb"),
+                &[psym("zz_e_caller", 1, 5)],
+                &[],
+                &[],
+            )
             .expect("replace b");
 
         let report = store
@@ -976,7 +1038,10 @@ mod tests {
         assert_eq!(*src, symbol_id(&store, "b.rs", "zz_e_caller"));
         assert_eq!(*dst, symbol_id(&store, "a.rs", "zz_e_alpha"));
         assert_eq!(edge_type, "references");
-        assert!((confidence - 1.0).abs() < 1e-9, "lsp edges carry confidence 1.0, got {confidence}");
+        assert!(
+            (confidence - 1.0).abs() < 1e-9,
+            "lsp edges carry confidence 1.0, got {confidence}"
+        );
         assert_eq!(source, "lsp");
     }
 
@@ -1016,7 +1081,10 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("pair count");
-        assert_eq!(pair_rows, 1, "dedup: at most one row per (src, dst, edge_type)");
+        assert_eq!(
+            pair_rows, 1,
+            "dedup: at most one row per (src, dst, edge_type)"
+        );
         let (confidence, source): (f64, String) = store
             .conn
             .query_row(
@@ -1026,7 +1094,10 @@ mod tests {
             )
             .expect("upgraded row");
         assert!((confidence - 1.0).abs() < 1e-9, "got {confidence}");
-        assert_eq!(source, "lsp", "the tree-sitter row must be replaced, not duplicated");
+        assert_eq!(
+            source, "lsp",
+            "the tree-sitter row must be replaced, not duplicated"
+        );
         // The other fan-out target keeps its honest tree-sitter row.
         let other = symbol_id(&store, "c.rs", "zz_e_dup");
         let (other_conf, other_source): (f64, String) = store
@@ -1053,7 +1124,12 @@ mod tests {
             )
             .expect("replace a");
         store
-            .replace_file(&file_row("b.rs", "hb"), &[psym("zz_e_caller", 1, 5)], &[], &[])
+            .replace_file(
+                &file_row("b.rs", "hb"),
+                &[psym("zz_e_caller", 1, 5)],
+                &[],
+                &[],
+            )
             .expect("replace b");
 
         let report = store
@@ -1073,7 +1149,12 @@ mod tests {
     fn edges_store_skips_unresolvable_and_self_edges_as_success() {
         let mut store = Store::in_memory().expect("in-memory store");
         store
-            .replace_file(&file_row("a.rs", "ha"), &[psym("zz_e_only", 1, 3)], &[], &[])
+            .replace_file(
+                &file_row("a.rs", "ha"),
+                &[psym("zz_e_only", 1, 3)],
+                &[],
+                &[],
+            )
             .expect("replace a");
 
         let report = store
@@ -1096,7 +1177,12 @@ mod tests {
     fn tree_sitter_recompute_preserves_lsp_edge_without_duplicates() {
         let mut store = Store::in_memory().expect("in-memory store");
         store
-            .replace_file(&file_row("a.rs", "ha"), &[psym("zz_e_surv", 1, 2)], &[], &[])
+            .replace_file(
+                &file_row("a.rs", "ha"),
+                &[psym("zz_e_surv", 1, 2)],
+                &[],
+                &[],
+            )
             .expect("replace a");
         store
             .replace_file(
@@ -1136,9 +1222,16 @@ mod tests {
                 .collect::<Result<_, _>>()
                 .expect("rows")
         };
-        assert_eq!(rows.len(), 1, "the surviving LSP edge must never be duplicated: {rows:?}");
+        assert_eq!(
+            rows.len(),
+            1,
+            "the surviving LSP edge must never be duplicated: {rows:?}"
+        );
         assert!((rows[0].0 - 1.0).abs() < 1e-9, "got {rows:?}");
-        assert_eq!(rows[0].1, "lsp", "a same-name recompute must not downgrade the LSP edge");
+        assert_eq!(
+            rows[0].1, "lsp",
+            "a same-name recompute must not downgrade the LSP edge"
+        );
         // The new caller's tree-sitter edge lands alongside it.
         let caller_d = symbol_id(&store, "d.rs", "zz_e_caller_d");
         let d_rows: i64 = store
@@ -1157,16 +1250,32 @@ mod tests {
     fn lsp_edge_fixture() -> Store {
         let mut store = Store::in_memory().expect("in-memory store");
         store
-            .replace_file(&file_row("a.rs", "ha"), &[psym("zz_e_casc", 1, 2)], &[], &[])
+            .replace_file(
+                &file_row("a.rs", "ha"),
+                &[psym("zz_e_casc", 1, 2)],
+                &[],
+                &[],
+            )
             .expect("replace a");
         store
-            .replace_file(&file_row("b.rs", "hb"), &[psym("zz_e_casc_caller", 1, 3)], &[], &[])
+            .replace_file(
+                &file_row("b.rs", "hb"),
+                &[psym("zz_e_casc_caller", 1, 3)],
+                &[],
+                &[],
+            )
             .expect("replace b");
         let report = store
             .edges_store(&[espec("b.rs", 2, "a.rs", 1)])
             .expect("edges_store");
-        assert_eq!(report.stored, 1, "fixture must persist the LSP edge, got {report:?}");
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM edges WHERE source = 'lsp'"), 1);
+        assert_eq!(
+            report.stored, 1,
+            "fixture must persist the LSP edge, got {report:?}"
+        );
+        assert_eq!(
+            count(&store, "SELECT COUNT(*) FROM edges WHERE source = 'lsp'"),
+            1
+        );
         store
     }
 
@@ -1174,7 +1283,12 @@ mod tests {
     fn replacing_the_src_file_cascade_drops_the_lsp_edge() {
         let mut store = lsp_edge_fixture();
         store
-            .replace_file(&file_row("b.rs", "hb2"), &[psym("zz_e_casc_caller", 1, 4)], &[], &[])
+            .replace_file(
+                &file_row("b.rs", "hb2"),
+                &[psym("zz_e_casc_caller", 1, 4)],
+                &[],
+                &[],
+            )
             .expect("replace b");
         assert_eq!(
             count(&store, "SELECT COUNT(*) FROM edges WHERE source = 'lsp'"),
@@ -1187,7 +1301,12 @@ mod tests {
     fn replacing_the_dst_file_cascade_drops_the_lsp_edge() {
         let mut store = lsp_edge_fixture();
         store
-            .replace_file(&file_row("a.rs", "ha2"), &[psym("zz_e_casc", 1, 3)], &[], &[])
+            .replace_file(
+                &file_row("a.rs", "ha2"),
+                &[psym("zz_e_casc", 1, 3)],
+                &[],
+                &[],
+            )
             .expect("replace a");
         assert_eq!(
             count(&store, "SELECT COUNT(*) FROM edges WHERE source = 'lsp'"),

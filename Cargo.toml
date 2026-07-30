@@ -19,10 +19,13 @@ license = "MIT"
 repository = "https://github.com/Nebutra/carina"
 
 [workspace.dependencies]
+arboard = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 sha2 = "0.10"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+tempfile = "3"
 toml = "0.8"
 time = { version = "0.3", features = ["formatting", "serde", "serde-well-known"] }
 rusqlite = { version = "0.32", features = ["bundled"] }

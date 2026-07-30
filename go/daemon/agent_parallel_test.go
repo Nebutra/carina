@@ -33,6 +33,21 @@ func TestParseActionBatch(t *testing.T) {
 	}
 }
 
+func TestParseActionDeduplicatesRepeatedProviderOutput(t *testing.T) {
+	raw := `{"tool":"run","command":["echo","ok"]}{"tool":"run","command":["echo","ok"]}`
+	a, err := parseAction(raw)
+	if err != nil {
+		t.Fatalf("identical repeated actions should parse once: %v", err)
+	}
+	if a.Tool != "run" || strings.Join(a.Command, " ") != "echo ok" {
+		t.Fatalf("unexpected deduplicated action: %+v", a)
+	}
+
+	if _, err := parseAction(`{"tool":"read","path":"a"}{"tool":"read","path":"b"}`); err == nil {
+		t.Fatal("distinct actions must not be silently collapsed")
+	}
+}
+
 func TestReadOnlyToolClassification(t *testing.T) {
 	for _, tool := range []string{"list", "read", "search"} {
 		if !isReadOnlyTool(tool) {
@@ -50,6 +65,18 @@ func TestReadOnlyToolClassification(t *testing.T) {
 	}
 	if len(nonReadOnlyTools([]action{{Tool: "read"}, {Tool: "search"}})) != 0 {
 		t.Fatal("an all-read-only batch must have no offenders")
+	}
+}
+
+func TestSystemPromptRequiresEconomicalCompletion(t *testing.T) {
+	for _, instruction := range []string{
+		"batch all independent list/read/search actions",
+		"use \"done\" immediately",
+		"Do not spend another turn rereading unchanged files",
+	} {
+		if !strings.Contains(systemPrompt, instruction) {
+			t.Fatalf("system prompt is missing execution-economy instruction %q", instruction)
+		}
 	}
 }
 

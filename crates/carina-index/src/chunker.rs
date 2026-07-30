@@ -139,8 +139,14 @@ mod tests {
     fn chunks_carry_symbol_context() {
         let src = numbered_source(30);
         let chunks = chunk(&src, &[sym("a", 5, 15), sym("b", 20, 25)], 120);
-        assert_eq!(owner(&chunks, 10).expect("line 10 covered").symbol_index, Some(0));
-        assert_eq!(owner(&chunks, 22).expect("line 22 covered").symbol_index, Some(1));
+        assert_eq!(
+            owner(&chunks, 10).expect("line 10 covered").symbol_index,
+            Some(0)
+        );
+        assert_eq!(
+            owner(&chunks, 22).expect("line 22 covered").symbol_index,
+            Some(1)
+        );
     }
 
     #[test]
@@ -148,8 +154,8 @@ mod tests {
         let src = numbered_source(30);
         let chunks = chunk(&src, &[sym("a", 5, 15), sym("b", 20, 25)], 120);
         for line in [1u32, 4, 16, 19, 26, 30] {
-            let c = owner(&chunks, line)
-                .unwrap_or_else(|| panic!("gap line {line} must be covered"));
+            let c =
+                owner(&chunks, line).unwrap_or_else(|| panic!("gap line {line} must be covered"));
             assert_eq!(c.symbol_index, None, "gap line {line} must be file-level");
         }
     }
@@ -163,7 +169,12 @@ mod tests {
         for c in &chunks {
             assert_eq!(c.start_line, expected_start);
             let len = (c.end_line - c.start_line + 1) as usize;
-            assert!(len <= 120, "chunk {}-{} exceeds max_lines", c.start_line, c.end_line);
+            assert!(
+                len <= 120,
+                "chunk {}-{} exceeds max_lines",
+                c.start_line,
+                c.end_line
+            );
             assert_eq!(
                 c.symbol_index,
                 Some(0),

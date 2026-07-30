@@ -44,13 +44,13 @@ test('typed parity wrappers and event subscription use canonical RPC methods', a
     if (request.method === 'session.review') result = { session_id:'s1',projection_version:'1.0.0',source_cursor:'cp1.payload.signature',state:'completed',intent:'ship',success_criteria:[{kind:'command'}],changes:[],commands:[],tools:[],checks:[],diagnostics:[],policy_decisions:[],questions:[],conflicts:[],risk_and_policy:[],artifact_ids:[],rollback:{available:false,patch_ids:[]},stats:{} }
     if (request.method === 'session.items') result = { data:[{type:'turn.started',session_id:'s1',task_id:'t1'}],next_cursor:'cp1.payload.signature',projection_version:'1.0.0' }
     if (request.method === 'usage.cost') result = { providers: [], totals: {}, estimated: false }
-    if (request.method === 'task.steer') result = { queued: true, task_id: request.params.task_id, status: 'running' }
-    if (request.method === 'task.resume') result = { task_id: request.params.task_id, session_id: 's1', status: 'running' }
+    if (request.method === 'execution.steer') result = { queued: true, task_id: request.params.task_id, status: 'running' }
+    if (request.method === 'execution.resume') result = { task_id: request.params.task_id, session_id: 's1', status: 'running' }
     const checkpoint = { checkpoint_id:'t1:1:9',created_at:'2026-07-14T00:00:00Z',sequence:'00000000000000000009',task_id:'t1',session_id:'s1',turn:1,applied_patches:[] }
     if (request.method === 'session.checkpoint.preview') result = { checkpoint,conversation_turns:1,rollback_patches:[],will_resume:'paused' }
     if (request.method === 'session.checkpoint.summarize') result = { checkpoint_id:checkpoint.checkpoint_id,task_id:'t1',turn:1,recent:[] }
     if (request.method === 'session.checkpoint.restore') result = { restored:true,checkpoint_id:checkpoint.checkpoint_id,task_id:'t1',turn:1,rolled_back:[],status:'paused',idempotent:true,reconciliation_required:false,journal_cleanup_pending:false }
-    if (request.method === 'task.user.answer') result = { question_id: request.params.question_id, accepted: true, value: request.params.value }
+    if (request.method === 'question.answer') result = { question_id: request.params.question_id, accepted: true, value: request.params.value }
     if (request.method === 'session.events.stream') result = { subscription_id: 'sub_1', cursor: 0, replayed: 0 }
     if (request.method === 'session.events.unsubscribe') result = { unsubscribed: true }
     socket.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\n')
@@ -81,7 +81,7 @@ test('typed parity wrappers and event subscription use canonical RPC methods', a
     client.close()
   })
   assert.deepEqual(methods, [
-    'session.attach', 'session.fork', 'session.review', 'session.items', 'usage.cost', 'task.steer', 'task.resume', 'session.checkpoint.preview', 'session.checkpoint.summarize', 'session.checkpoint.restore', 'task.user.answer', 'session.events.stream', 'session.events.unsubscribe',
+    'session.attach', 'session.fork', 'session.review', 'session.items', 'usage.cost', 'execution.steer', 'execution.resume', 'session.checkpoint.preview', 'session.checkpoint.summarize', 'session.checkpoint.restore', 'question.answer', 'session.events.stream', 'session.events.unsubscribe',
   ])
 })
 
@@ -136,6 +136,6 @@ test('initialize rejects incompatible protocol and missing lifecycle capability'
 // 0.6.1 remains a deliberate patch-level compatibility fixture.
 test('high-level thread run negotiates and forwards full JSON Schema', async () => {
   const methods=[];let submitted
-  await withServer((request,socket)=>{methods.push(request.method);let result={};if(request.method==='runtime.initialize')result={runtime_version:'0.6.1',protocol_version:'1.2.0',projection_version:'1.0.0',capabilities:{tool_call_lifecycle:true,event_schema_version:'0.3.0'}};if(request.method==='session.create')result={session_id:'s',workspace_id:'w',workspace_root:'/tmp',status:'active',permission_profile:'safe-edit',created_at:'now'};if(request.method==='task.submit'){submitted=request.params;result={task_id:'t',session_id:'s',workspace_id:'w',status:'queued',user_prompt:'status'}};if(request.method==='task.result')result={task_id:'t',session_id:'s',workspace_id:'w',status:'completed',user_prompt:'status',summary:'{"status":"ok"}'};socket.write(JSON.stringify({jsonrpc:'2.0',id:request.id,result})+'\n')},async socketPath=>{const client=new CarinaClient(socketPath,500);const thread=await client.startThread({workingDirectory:'/tmp'});const schema={type:'object',properties:{status:{type:'string'}},required:['status'],additionalProperties:false};const ref={artifact_id:'a'.repeat(64),media_type:'image/png',bytes:3};const turn=await thread.run('status',{outputSchema:schema,inputMediaRefs:[ref],pollIntervalMs:1});assert.deepEqual(turn.structuredOutput,{status:'ok'});client.close()})
-  assert.deepEqual(submitted.output_schema,{type:'object',properties:{status:{type:'string'}},required:['status'],additionalProperties:false});assert.equal(submitted.input_media_refs.length,1);assert.deepEqual(methods,['runtime.initialize','session.create','task.submit','task.result'])
+  await withServer((request,socket)=>{methods.push(request.method);let result={};if(request.method==='runtime.initialize')result={runtime_version:'0.6.1',protocol_version:'1.2.0',projection_version:'1.0.0',capabilities:{tool_call_lifecycle:true,event_schema_version:'0.3.0'}};if(request.method==='session.create')result={session_id:'s',workspace_id:'w',workspace_root:'/tmp',status:'active',permission_profile:'safe-edit',created_at:'now'};if(request.method==='execution.start'){submitted=request.params;result={task_id:'t',session_id:'s',workspace_id:'w',status:'queued',user_prompt:'status'}};if(request.method==='execution.result')result={task_id:'t',session_id:'s',workspace_id:'w',status:'completed',user_prompt:'status',summary:'{"status":"ok"}'};socket.write(JSON.stringify({jsonrpc:'2.0',id:request.id,result})+'\n')},async socketPath=>{const client=new CarinaClient(socketPath,500);const thread=await client.startThread({workingDirectory:'/tmp'});const schema={type:'object',properties:{status:{type:'string'}},required:['status'],additionalProperties:false};const ref={artifact_id:'a'.repeat(64),media_type:'image/png',bytes:3};const turn=await thread.run('status',{outputSchema:schema,inputMediaRefs:[ref],pollIntervalMs:1});assert.deepEqual(turn.structuredOutput,{status:'ok'});client.close()})
+  assert.deepEqual(submitted.output_schema,{type:'object',properties:{status:{type:'string'}},required:['status'],additionalProperties:false});assert.equal(submitted.input_media_refs.length,1);assert.deepEqual(methods,['runtime.initialize','session.create','execution.start','execution.result'])
 })

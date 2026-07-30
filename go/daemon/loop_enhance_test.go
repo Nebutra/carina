@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +43,7 @@ func TestLoopRequeryOnMalformedAction(t *testing.T) {
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "noop")
 	d.runTask(sess, task)
 
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "completed" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "completed" {
 		t.Fatalf("requery should recover and complete, got %s", tk.Status)
 	}
 }
@@ -64,9 +65,36 @@ func TestLoopGracefulDegradeOnMaxTurns(t *testing.T) {
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "loop forever")
 	d.runTask(sess, task)
 
-	tk, _ := d.sched.Get(task.TaskID)
+	tk, _ := d.sched.Get(task.RunID)
 	if tk.Status != "degraded" {
 		t.Fatalf("runaway loop should degrade gracefully, got %s", tk.Status)
+	}
+}
+
+// TestLoopCanCompleteBeyondLegacyTurnLimit proves an ordinary long task is
+// not cut off by the former 14-turn ceiling. Distinct successful reads avoid
+// the repeat and failure breakers, so this isolates the emergency backstop.
+func TestLoopCanCompleteBeyondLegacyTurnLimit(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	steps := make([]string, 0, 17)
+	for i := 0; i < 16; i++ {
+		name := fmt.Sprintf("part-%02d.txt", i)
+		if err := os.WriteFile(filepath.Join(ws, name), []byte("ok\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		steps = append(steps, fmt.Sprintf(`{"tool":"read","path":%q}`, name))
+	}
+	steps = append(steps, `{"tool":"done","summary":"long task completed"}`)
+	d.SetReasoner(&scriptedReasoner{steps: steps})
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect every part")
+	d.runTask(sess, task)
+
+	tk, ok := d.sched.Get(task.RunID)
+	if !ok || tk.Status != "completed" {
+		t.Fatalf("long task should complete beyond the legacy turn limit, got %+v (ok=%v)", tk, ok)
 	}
 }
 
@@ -79,7 +107,7 @@ func TestLoopHardStopDegradesBeforeMaxTurns(t *testing.T) {
 	defer d.Close()
 	os.WriteFile(filepath.Join(ws, "a.txt"), []byte("hi\n"), 0o600)
 	// Same exact action every turn, well beyond MaxHardRepeat but under
-	// maxAgentTurns (14): if the hard stop didn't fire, this scripted
+	// maxAgentTurns: if the hard stop didn't fire, this scripted
 	// reasoner would exhaust its steps and the run would hang on requery
 	// instead of degrading.
 	steps := make([]string, 10)
@@ -92,7 +120,7 @@ func TestLoopHardStopDegradesBeforeMaxTurns(t *testing.T) {
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "loop forever")
 	d.runTask(sess, task)
 
-	tk, ok := d.sched.Get(task.TaskID)
+	tk, ok := d.sched.Get(task.RunID)
 	if !ok || tk.Status != "degraded" {
 		t.Fatalf("hard loop guard should degrade the task, got %+v (ok=%v)", tk, ok)
 	}
@@ -115,7 +143,7 @@ func TestLoopReasonerRetry(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "test retry")
 	d.runTask(sess, task)
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "completed" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "completed" {
 		t.Fatalf("retry should recover, got %s", tk.Status)
 	}
 }

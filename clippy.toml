@@ -1,0 +1,4 @@
+disallowed-methods = [
+  { path = "ratatui::style::Color::Rgb", reason = "Use crates/carina-tui/src/theme.rs semantic tokens; exceptions require a documented allow." },
+  { path = "ratatui::style::Color::Indexed", reason = "Use theme quantization; exceptions require a documented allow." },
+]

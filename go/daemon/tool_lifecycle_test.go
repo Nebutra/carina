@@ -186,7 +186,7 @@ func TestExecuteActionEmitsAuthoritativeToolLifecycle(t *testing.T) {
 	if !ok || len(ids) != 1 {
 		t.Fatalf("artifact reference missing: %#v", completed)
 	}
-	params, _ := json.Marshal(map[string]any{"session_id": sess.SessionID, "task_id": task.TaskID, "call_id": callID, "artifact_id": ids[0]})
+	params, _ := json.Marshal(map[string]any{"session_id": sess.SessionID, "run_id": task.RunID, "call_id": callID, "artifact_id": ids[0]})
 	read, err := d.handleArtifactRead(params)
 	if err != nil {
 		t.Fatal(err)
@@ -290,16 +290,16 @@ func TestCancelledBeforeRunContextRegistrationDoesNotStart(t *testing.T) {
 	sess, _ := d.store.CreateSession(ws, "cancel before start")
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "cancel me")
-	if _, err := d.sched.Cancel(task.TaskID); err != nil {
+	if _, err := d.sched.Cancel(task.RunID); err != nil {
 		t.Fatal(err)
 	}
-	d.withTaskContext(task.TaskID, func(ctx context.Context) {
+	d.withTaskContext(task.RunID, func(ctx context.Context) {
 		d.runTaskContext(ctx, sess, task)
 	})
 	if len(reasoner.prompts) != 0 {
 		t.Fatalf("cancelled task reached reasoner: %#v", reasoner.prompts)
 	}
-	current, _ := d.sched.Get(task.TaskID)
+	current, _ := d.sched.Get(task.RunID)
 	if current.Status != "cancelled" {
 		t.Fatalf("task status = %s, want cancelled", current.Status)
 	}
@@ -327,7 +327,7 @@ func TestProjectSessionItemsPrefersLifecycleOverLegacyCommand(t *testing.T) {
 			stages++
 		}
 	}
-	if toolEvents != 3 || commandEvents != 0 || stages != 1 {
+	if toolEvents != 5 || commandEvents != 0 || stages != 1 {
 		t.Fatalf("projection tool=%d command=%d stages=%d: %#v", toolEvents, commandEvents, stages, items)
 	}
 }
@@ -391,7 +391,7 @@ func TestArtifactReadIsBoundedAndPaged(t *testing.T) {
 		t.Fatalf("read = %q", got)
 	}
 	params, _ := json.Marshal(map[string]any{
-		"session_id": sess.SessionID, "task_id": task.TaskID, "call_id": callID,
+		"session_id": sess.SessionID, "run_id": task.RunID, "call_id": callID,
 		"artifact_id": artifactID, "offset": 3, "limit": 4,
 	})
 	got, err := d.handleArtifactRead(params)
@@ -458,7 +458,7 @@ func TestFinishToolCallStoresHeadTailPreviewForOversizedOutput(t *testing.T) {
 		t.Fatalf("artifact_truncated = %v, want true", truncatedFlag)
 	}
 
-	_, meta, err := d.artifacts.Read(artifact.Scope{SessionID: sess.SessionID, TaskID: task.TaskID, CallID: call.id}, artifactID)
+	_, meta, err := d.artifacts.Read(artifact.Scope{SessionID: sess.SessionID, TaskID: task.RunID, CallID: call.id}, artifactID)
 	if err != nil {
 		t.Fatal(err)
 	}

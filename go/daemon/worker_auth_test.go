@@ -167,7 +167,7 @@ func TestCancelledWorkerLeaseCannotRenewOrReportCompleted(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.sched.Cancel(task.TaskID); err != nil {
+	if _, err := d.sched.CancelTask(task.TaskID); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -192,7 +192,7 @@ func TestCancelledWorkerLeaseCannotRenewOrReportCompleted(t *testing.T) {
 			}
 		})
 	}
-	got, _ := d.sched.Get(task.TaskID)
+	got, _ := d.sched.GetTask(task.TaskID)
 	if got.Status != "cancelled" || got.Summary == "must not win" {
 		t.Fatalf("worker report overwrote cancellation: %+v", got)
 	}

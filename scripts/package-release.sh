@@ -53,28 +53,6 @@ copy_file() {
   cp "$src" "$dst"
 }
 
-lock_value() {
-  local file="$1"
-  local key="$2"
-  sed -nE "s/^${key} = \"([^\"]*)\"/\\1/p" "$file" | head -n 1
-}
-
-lock_artifact_value() {
-  local file="$1"
-  local target="$2"
-  local key="$3"
-  awk -v section="[artifacts.${target}]" -v wanted="$key" '
-    $0 == section { active = 1; next }
-    /^\[/ { active = 0 }
-    active && $1 == wanted {
-      sub(/^[^=]+= */, "")
-      gsub(/^"|"$/, "")
-      print
-      exit
-    }
-  ' "$file"
-}
-
 product_version="$(go run ./scripts/product-version.go)"
 cli_version="$product_version"
 daemon_version="$product_version"
@@ -118,15 +96,6 @@ package="carina_${version}_${goos}_${goarch}"
 dist_dir="$ROOT/dist"
 stage="$dist_dir/$package"
 archive="$dist_dir/$package.tar.gz"
-headroom_lock="$ROOT/integrations/headroom.lock"
-headroom_target="${goos}-${goarch}"
-headroom_status="not packaged"
-headroom_version=""
-headroom_source_url=""
-headroom_source_sha256=""
-headroom_bundle_sha256=""
-headroom_bundle_path=""
-
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   printf '==> build Go apps\n'
   make go
@@ -151,46 +120,6 @@ copy_file bin/carina-daemon "$stage/bin/carina-daemon"
 copy_file bin/carina-worker "$stage/bin/carina-worker"
 copy_file target/release/carina-kernel-service "$stage/bin/carina-kernel-service"
 copy_file target/release/carina-ui "$stage/bin/carina-ui"
-
-if [[ "${SKIP_HEADROOM:-0}" == "1" ]]; then
-  warnings+=("SKIP_HEADROOM=1: packaged without optional Headroom; context_engine=auto will use the noop fallback")
-  headroom_status="skipped"
-else
-  need_file "$headroom_lock"
-  headroom_version="$(lock_value "$headroom_lock" version)"
-  headroom_source_url="$(lock_artifact_value "$headroom_lock" "$headroom_target" source_url)"
-  headroom_source_sha256="$(lock_artifact_value "$headroom_lock" "$headroom_target" source_sha256)"
-  headroom_bundle_path="$(lock_artifact_value "$headroom_lock" "$headroom_target" bundle_path)"
-  if [[ -z "$headroom_bundle_path" || -z "$headroom_source_url" || -z "$headroom_source_sha256" ]]; then
-    printf 'package-release: no Headroom lock entry for target %s in %s\n' "$headroom_target" "$headroom_lock" >&2
-    exit 1
-  fi
-  if [[ -n "${HEADROOM_BIN:-}" ]]; then
-    headroom_src="$HEADROOM_BIN"
-    if [[ -z "${HEADROOM_BUNDLE_SHA256:-}" ]]; then
-      printf 'package-release: HEADROOM_BUNDLE_SHA256 is required with HEADROOM_BIN\n' >&2
-      exit 1
-    fi
-    headroom_bundle_sha256="$HEADROOM_BUNDLE_SHA256"
-  else
-    headroom_src="$ROOT/$headroom_bundle_path"
-    printf '==> build pinned Headroom bundle for %s\n' "$headroom_target"
-    HEADROOM_TARGET="$headroom_target" OUTPUT="$headroom_src" "$ROOT/scripts/build-headroom-bundle.sh"
-    headroom_bundle_sha256="$(sha256_file "$headroom_src")"
-  fi
-  need_file "$headroom_src"
-  actual_headroom_sha="$(sha256_file "$headroom_src")"
-  if [[ "$actual_headroom_sha" != "$headroom_bundle_sha256" ]]; then
-    printf 'package-release: Headroom sha256 mismatch for %s\n' "$headroom_src" >&2
-    printf '  want: %s\n' "$headroom_bundle_sha256" >&2
-    printf '   got: %s\n' "$actual_headroom_sha" >&2
-    exit 1
-  fi
-  cp "$headroom_src" "$stage/bin/headroom"
-  chmod 755 "$stage/bin/headroom"
-  "$stage/bin/headroom" --help >/dev/null
-  headroom_status="bundled"
-fi
 
 for name in carina-scan carina-grep carina-diff carina-run carina-pty carina-patch-native; do
   copy_file "zig/zig-out/bin/$name" "$stage/bin/$name"
@@ -224,15 +153,6 @@ done
   printf -- '- cargo: %s\n' "${cargo_version:-unknown}"
   printf -- '- typescript_sdk: %s\n' "${ts_sdk_version:-unknown}"
   printf -- '- python_sdk: %s\n' "${py_sdk_version:-unknown}"
-  printf -- '- headroom: %s\n' "${headroom_version:-none}"
-  printf '\nHeadroom:\n'
-  printf -- '- status: %s\n' "$headroom_status"
-  printf -- '- target: %s\n' "$headroom_target"
-  printf -- '- lock: %s\n' "${headroom_lock#$ROOT/}"
-  printf -- '- source_url: %s\n' "${headroom_source_url:-}"
-  printf -- '- source_sha256: %s\n' "${headroom_source_sha256:-}"
-  printf -- '- bundle_path: %s\n' "${headroom_bundle_path:-}"
-  printf -- '- bundle_sha256: %s\n' "${headroom_bundle_sha256:-}"
   printf '\nWarnings:\n'
   if (( ${#warnings[@]} == 0 )); then
     printf -- '- none\n'
@@ -266,16 +186,6 @@ manifest="$stage/MANIFEST.json"
   printf '    "cargo": "%s",\n' "$(json_escape "${cargo_version:-}")"
   printf '    "typescript_sdk": "%s",\n' "$(json_escape "${ts_sdk_version:-}")"
   printf '    "python_sdk": "%s"\n' "$(json_escape "${py_sdk_version:-}")"
-  printf '  },\n'
-  printf '  "headroom": {\n'
-  printf '    "status": "%s",\n' "$(json_escape "$headroom_status")"
-  printf '    "version": "%s",\n' "$(json_escape "${headroom_version:-}")"
-  printf '    "target": "%s",\n' "$(json_escape "$headroom_target")"
-  printf '    "lock": "integrations/headroom.lock",\n'
-  printf '    "source_url": "%s",\n' "$(json_escape "${headroom_source_url:-}")"
-  printf '    "source_sha256": "%s",\n' "$(json_escape "${headroom_source_sha256:-}")"
-  printf '    "bundle_path": "%s",\n' "$(json_escape "${headroom_bundle_path:-}")"
-  printf '    "bundle_sha256": "%s"\n' "$(json_escape "${headroom_bundle_sha256:-}")"
   printf '  },\n'
   printf '  "warnings": [\n'
   for i in "${!warnings[@]}"; do

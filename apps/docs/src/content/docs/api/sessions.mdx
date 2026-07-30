@@ -103,9 +103,10 @@ Create a session bound to a workspace and permission profile.
 | Method | Purpose |
 | --- | --- |
 | `session.create` | Create session with workspace + profile |
-| `session.get` / `session.list` | Metadata and listing |
+| `session.get` / `session.list` | Metadata and active/archived listing |
+| `session.archive` / `session.unarchive` | Reversible archive and restore; active work is rejected |
 | `session.pause` / `session.resume` | Suspend / continue |
-| `session.close` | Terminate |
+| `session.close` | Compatibility alias for archive |
 | `session.replay` | Replay raw audit event stream |
 | `session.items` | Normalized item stream for UI/SDK |
 | `session.review` | Governance projection over items |
@@ -117,10 +118,10 @@ JSONL / SQLite export is provided by `audit.export` (`format: jsonl|sqlite`), no
 
 | Method | Purpose |
 | --- | --- |
-| `task.submit` | Submit a prompt/task into a session |
-| `task.cancel` | Cancel a running task |
-| `task.status` | Query task state |
-| `task.action.approve` / `task.action.deny` | Resolve pending approval (optional `role`) |
+| `execution.start` | Submit a prompt/task into a session |
+| `execution.cancel` | Cancel a running task |
+| `execution.status` | Query task state |
+| `governance.action.approve` / `governance.action.deny` | Resolve pending approval (optional `role`) |
 
 Task events are consumed through `session.events.stream` — there is no separate task event stream.
 

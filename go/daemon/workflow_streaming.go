@@ -99,7 +99,7 @@ type streamingStepResult struct {
 type streamCoordinator struct {
 	d          *Daemon
 	parent     *sessionstore.Session
-	parentTask *scheduler.Task
+	parentTask *scheduler.ExecutionRun
 	spec       *WorkflowSpec
 	input      string
 	runID      string
@@ -176,8 +176,8 @@ type streamCoordinator struct {
 // marks only its transitive-only dependents as skipped, independent
 // branches keep going. A step opts into the old "abort the whole run"
 // behavior via WorkflowStep.FailFast.
-func (d *Daemon) runWorkflowStreaming(parent *sessionstore.Session, parentTask *scheduler.Task, spec *WorkflowSpec, input, runID string) (map[string]string, error) {
-	ctx := d.contextForTask(parentTask.TaskID)
+func (d *Daemon) runWorkflowStreaming(parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, spec *WorkflowSpec, input, runID string) (map[string]string, error) {
+	ctx := d.contextForTask(parentTask.RunID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func (d *Daemon) runWorkflowStreaming(parent *sessionstore.Session, parentTask *
 	}
 	sc.remainingToResolve = sc.totalSteps - sc.resolvedCount
 
-	d.record(parent.SessionID, "TaskCreated", parentTask.TaskID, "go", map[string]any{
+	d.record(parent.SessionID, "ExecutionProgressed", parentTask.RunID, "go", map[string]any{
 		"status": "workflow_started", "workflow": spec.Name, "run_id": runID,
 		"steps": sc.totalSteps, "execution_mode": "streaming", "resumed": sc.resolvedCount,
 	}, "")
@@ -322,13 +322,13 @@ func (sc *streamCoordinator) run() (map[string]string, error) {
 	}
 
 	if sc.fatal != nil {
-		sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", map[string]any{
+		sc.d.record(sc.parent.SessionID, "ExecutionProgressed", sc.parentTask.RunID, "go", map[string]any{
 			"status": "workflow_failed", "workflow": sc.spec.Name, "run_id": sc.runID, "error": sc.fatal.Error(),
 		}, "")
 		return sc.outputs, sc.fatal
 	}
 
-	sc.d.record(sc.parent.SessionID, "ModelResponded", sc.parentTask.TaskID, "go", map[string]any{
+	sc.d.record(sc.parent.SessionID, "ModelResponded", sc.parentTask.RunID, "go", map[string]any{
 		"status": "workflow_completed", "workflow": sc.spec.Name, "run_id": sc.runID, "steps": len(sc.outputs),
 	}, "")
 	return sc.outputs, nil
@@ -422,7 +422,7 @@ func (sc *streamCoordinator) markSkipped(id, reason string) {
 	sc.resolvedCount++
 	sc.remainingToResolve--
 	sc.skippedCount++
-	sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", map[string]any{
+	sc.d.record(sc.parent.SessionID, "ExecutionProgressed", sc.parentTask.RunID, "go", map[string]any{
 		"status": "workflow_step_skipped", "workflow": sc.spec.Name, "run_id": sc.runID, "step": id, "reason": reason,
 	}, "")
 	// markSkipped resolves a step WITHOUT ever calling runStreamingStep (a
@@ -529,7 +529,7 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 				sc.d.updateWorkflowUIStepBestEffort(sc.runID, workflowui.Step{
 					ID: res.id, Status: workflowui.Failed, Error: err.Error(), TokensUsed: int64(res.tokensUsed), TokenUsageStatus: observedUsageStatus(res.tokenUsageObserved),
 				})
-				sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", map[string]any{
+				sc.d.record(sc.parent.SessionID, "ExecutionProgressed", sc.parentTask.RunID, "go", map[string]any{
 					"status": "workflow_generator_invalid", "workflow": sc.spec.Name, "run_id": sc.runID,
 					"step": res.id, "error": err.Error(),
 				}, "")
@@ -559,7 +559,7 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 	case stepFailed:
 		sc.terminal[res.id] = stepFailed
 		sc.failedCount++
-		sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", map[string]any{
+		sc.d.record(sc.parent.SessionID, "ExecutionProgressed", sc.parentTask.RunID, "go", map[string]any{
 			"status": "workflow_step_failed", "workflow": sc.spec.Name, "run_id": sc.runID, "step": res.id,
 			"error": res.errMsg, "fail_fast": sc.byID[res.id].FailFast,
 		}, "")
@@ -592,7 +592,7 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 	rollup["status"] = "workflow_progress_rollup"
 	rollup["workflow"] = sc.spec.Name
 	rollup["run_id"] = sc.runID
-	sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", rollup, "")
+	sc.d.record(sc.parent.SessionID, "ExecutionProgressed", sc.parentTask.RunID, "go", rollup, "")
 }
 
 // runStreamingStep executes exactly one step (interpolation, structured
@@ -600,7 +600,7 @@ func (sc *streamCoordinator) handleResult(res streamingStepResult) {
 // runWorkflow's per-step body, and reports the outcome on the caller-owned
 // results channel instead of mutating shared state directly — this function
 // touches no graph bookkeeping at all.
-func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, spec *WorkflowSpec, runID string, st WorkflowStep, input string, outputsSoFar map[string]string, channels *swarmChannelBroker) streamingStepResult {
+func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, spec *WorkflowSpec, runID string, st WorkflowStep, input string, outputsSoFar map[string]string, channels *swarmChannelBroker) streamingStepResult {
 	if err := ctx.Err(); err != nil {
 		return streamingStepResult{id: st.ID, kind: stepSkipped, errMsg: "workflow cancelled", tokenUsageObserved: true}
 	}
@@ -653,12 +653,12 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 		}
 		_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
 			WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,
-			StepID: st.ID, TaskID: parentTask.TaskID,
+			StepID: st.ID, TaskID: parentTask.RunID,
 		}, carinatelemetry.Cost{}, time.Since(startedAt), outcome)
 		return res
 	}
 
-	d.record(parent.SessionID, "ToolApproved", parentTask.TaskID, "go", map[string]any{
+	d.record(parent.SessionID, "ToolApproved", parentTask.RunID, "go", map[string]any{
 		"workflow": spec.Name, "run_id": runID, "step": st.ID, "agent": st.Agent, "execution_mode": "streaming",
 	}, "")
 
@@ -684,7 +684,7 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 	if spawnFailed(summary) {
 		_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
 			WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,
-			StepID: st.ID, TaskID: parentTask.TaskID,
+			StepID: st.ID, TaskID: parentTask.RunID,
 		}, carinatelemetry.Cost{}, time.Since(startedAt), "failed")
 		// Found via a real end-to-end smoke test (carina workflow run against
 		// a live daemon, no LLM provider configured): a step whose SPAWN
@@ -710,7 +710,7 @@ func (d *Daemon) runStreamingStep(ctx context.Context, parent *sessionstore.Sess
 	}
 	_ = d.telemetry.Span("carina.workflow.step", runID, st.ID, carinatelemetry.Attribution{
 		WorkspaceID: parent.WorkspaceID, SessionID: parent.SessionID, WorkflowID: runID,
-		StepID: st.ID, TaskID: parentTask.TaskID,
+		StepID: st.ID, TaskID: parentTask.RunID,
 	}, carinatelemetry.Cost{}, time.Since(startedAt), "completed")
 	return streamingStepResult{id: st.ID, kind: stepDone, output: summary, tokensUsed: tokensUsed, tokenUsageObserved: true}
 }

@@ -26,13 +26,6 @@ Register MCP servers in config; their tools appear inside the session subject to
 - `/mcp verbose` can show public tool descriptions
 - Process commands, arguments, environment variables, input schemas, and private managed servers are **never** returned
 
-## Headroom boundary
-
-Headroom is integrated as a managed, private MCP transport behind the **context-engine boundary** when a bundled or explicitly configured Headroom binary is available. It is:
-
-- Not listed in the agent's public MCP tool list
-- Not callable through the agent `mcp` action surface
-
 ## Server mode
 
 Expose a curated tool set to external MCP hosts. Prefer least privilege — do not re-export the full local kernel.

@@ -10,8 +10,8 @@ import (
 func TestBuildClassifiesAndSorts(t *testing.T) {
 	now := time.Now().UTC()
 	sessions := []*sessionstore.Session{{SessionID: "s1", WorkspaceRoot: "/repo", Status: "active", CreatedAt: now}}
-	tasks := []*scheduler.Task{{TaskID: "old", SessionID: "s1", Status: "running", UpdatedAt: now.Add(-time.Minute)}, {TaskID: "ask", SessionID: "s1", Status: "waiting_input", UpdatedAt: now}}
-	r := Build(sessions, tasks, map[string]string{"ask": "Choose target"}, map[string]Metadata{"s1": {PullRequest: "https://example/pr/1"}})
+	runs := []*scheduler.ExecutionRun{{RunID: "old", SessionID: "s1", Status: "running", UpdatedAt: now.Add(-time.Minute)}, {RunID: "ask", SessionID: "s1", Status: "waiting_input", UpdatedAt: now}}
+	r := Build(sessions, runs, map[string]string{"ask": "Choose target"}, map[string]Metadata{"s1": {PullRequest: "https://example/pr/1"}})
 	if len(r.NeedsInput) != 1 || r.NeedsInput[0].Needs != "Choose target" {
 		t.Fatalf("needs input: %+v", r)
 	}

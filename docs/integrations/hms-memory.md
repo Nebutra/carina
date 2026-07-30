@@ -68,7 +68,7 @@ the opaque bank/document plus target, action, and content revision. Approval is
 therefore revision-bound; approving a retain does not approve a later update or
 delete. If either decision requires approval, the
 outbox remains blocked and no HMS request is sent. Resolve the emitted decision
-with `task.action.approve`, or reissue stale/missing decisions after restart:
+with `governance.action.approve`, or reissue stale/missing decisions after restart:
 
 ```bash
 carina memory projection-authorize <session_id>

@@ -60,6 +60,20 @@
       "sha256": "b9016934ffde2c3b6ba9ae67b3f7697f5dc92d39deb8cfd3c750dafbbbecf0e3"
     },
     {
+      "path": "docs/brand/assets/logo/raster/carina-symbol-terminal-microtype.png",
+      "role": "derivative",
+      "mediaType": "image/png",
+      "bytes": 48123,
+      "sha256": "a9e64a94c88dcf1dfecbb6b81602ee01d6a90a06a66bb8ebae38c90f992d36aa"
+    },
+    {
+      "path": "docs/brand/assets/logo/carina-symbol-terminal-braille.txt",
+      "role": "derivative",
+      "mediaType": "text/plain",
+      "bytes": 155,
+      "sha256": "5cdc58f086956a9964d360b523b5d0eab097e2d0a87a053c4b3cd111e19d5c0e"
+    },
+    {
       "path": "docs/brand/assets/logo/raster/carina-wordmark.png",
       "role": "derivative",
       "mediaType": "image/png",

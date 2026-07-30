@@ -1,8 +1,46 @@
 pub mod app;
+pub mod bench_harness;
+pub mod clipboard_image;
+pub mod command;
+pub mod composer_document;
 pub mod component;
+pub mod context_completion;
+pub mod conversation;
+pub mod diff_render;
+pub mod doctor;
+pub mod file_viewer;
+pub mod frame_quality;
+pub mod frame_scheduler;
+pub mod glyphs;
+pub mod help;
+pub mod history_search;
+pub mod hyperlink;
+pub mod i18n;
+pub mod keybinding;
+pub mod layout_contract;
+pub mod markdown;
+pub mod media;
+pub mod native_scrollback;
 pub mod overlay;
+pub mod prerequisite;
+pub mod product_header;
+pub mod product_projection;
+pub mod render_contract;
 pub mod rpc;
+pub mod session_browser;
+pub mod startup_diagnostic;
+pub mod sync_output;
+pub mod syntax;
+pub mod terminal_graphics;
+pub mod terminal_logo;
+pub mod terminal_probe;
+pub mod terminal_writer;
 pub mod theme;
+pub mod tool_projection;
 pub mod transcript;
 
-pub use app::{Options, Outcome, RuntimeModeChoice, choose_runtime_mode, run};
+pub use app::{AltScreenPolicy, Options, Outcome, RuntimeModeChoice, choose_runtime_mode, run};
+pub use native_scrollback::ScrollbackWrap;
+pub use startup_diagnostic::{
+    RuntimeDiagnosticOptions, RuntimeDiagnosticOutcome, run_runtime_diagnostic,
+};

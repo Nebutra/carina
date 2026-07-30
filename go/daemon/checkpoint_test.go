@@ -39,10 +39,10 @@ func TestCheckpointListIsGloballyOldestToNewestAcrossTasks(t *testing.T) {
 	newerFirst := &runCheckpoint{Turn: 1, Transcript: newTranscript(newer.UserPrompt)}
 	newerSecond := &runCheckpoint{Turn: 2, Transcript: newTranscript(newer.UserPrompt)}
 	olderLate := &runCheckpoint{Turn: 2, Transcript: newTranscript(older.UserPrompt)}
-	d.runs.saveCheckpoint(older.TaskID, olderFirst)
-	d.runs.saveCheckpoint(newer.TaskID, newerFirst)
-	d.runs.saveCheckpoint(newer.TaskID, newerSecond)
-	d.runs.saveCheckpoint(older.TaskID, olderLate)
+	d.runs.saveCheckpoint(older.RunID, olderFirst)
+	d.runs.saveCheckpoint(newer.RunID, newerFirst)
+	d.runs.saveCheckpoint(newer.RunID, newerSecond)
+	d.runs.saveCheckpoint(older.RunID, olderLate)
 
 	resultAny, err := d.handleCheckpointList(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
 	if err != nil {
@@ -73,7 +73,7 @@ func TestCheckpointListParsesLegacySecondAndNewNanosecondTimes(t *testing.T) {
 	legacyTask := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "legacy")
 	newTask := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "new")
 	base := time.Date(2026, 7, 14, 12, 0, 5, 0, time.UTC)
-	legacyDir := filepath.Join(d.runs.dir, legacyTask.TaskID+".ckpts")
+	legacyDir := filepath.Join(d.runs.dir, legacyTask.RunID+".ckpts")
 	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -84,8 +84,8 @@ func TestCheckpointListParsesLegacySecondAndNewNanosecondTimes(t *testing.T) {
 	if err := os.Chtimes(legacyPath, base, base); err != nil {
 		t.Fatal(err)
 	}
-	newCP := &runCheckpoint{CheckpointID: newTask.TaskID + ":1:7", CreatedAt: base.Add(time.Nanosecond).Format(time.RFC3339Nano), Sequence: 7, Turn: 1, Transcript: newTranscript("new")}
-	if err := d.runs.saveCheckpointChecked(newTask.TaskID, newCP); err != nil {
+	newCP := &runCheckpoint{CheckpointID: newTask.RunID + ":1:7", CreatedAt: base.Add(time.Nanosecond).Format(time.RFC3339Nano), Sequence: 7, Turn: 1, Transcript: newTranscript("new")}
+	if err := d.runs.saveCheckpointChecked(newTask.RunID, newCP); err != nil {
 		t.Fatal(err)
 	}
 	resultAny, err := d.handleCheckpointList(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
@@ -96,7 +96,7 @@ func TestCheckpointListParsesLegacySecondAndNewNanosecondTimes(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %+v", rows)
 	}
-	if got := rows[0].(map[string]any)["checkpoint_id"]; got != legacyTask.TaskID+":1" {
+	if got := rows[0].(map[string]any)["checkpoint_id"]; got != legacyTask.RunID+":1" {
 		t.Fatalf("legacy exact-second checkpoint sorted after nanosecond checkpoint: %+v", rows)
 	}
 }
@@ -245,9 +245,9 @@ func TestCheckpointOrphanHistoryCanRepublishLatestButCannotMutate(t *testing.T) 
 
 func TestRunStoreTombstonePreventsRestartResurrection(t *testing.T) {
 	runs := newRunStore(filepath.Join(t.TempDir(), "state"))
-	task := &scheduler.Task{TaskID: "task", Status: "completed"}
+	task := &scheduler.ExecutionRun{RunID: "run_test", Status: "completed"}
 	runs.save(task)
-	if err := runs.tombstone(task.TaskID); err != nil {
+	if err := runs.tombstone(task.RunID); err != nil {
 		t.Fatal(err)
 	}
 	if got := runs.load(); len(got) != 0 {
@@ -288,16 +288,16 @@ func TestCheckpointRestorePublishesLatestPersistsAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := d1.sched.Submit(sess.SessionID, sess.WorkspaceID, "restore me")
-	d1.sched.SetStatus(task.TaskID, "completed")
-	if current, ok := d1.sched.Get(task.TaskID); !ok || d1.runs.saveChecked(current) != nil {
+	d1.sched.SetStatus(task.RunID, "completed")
+	if current, ok := d1.sched.Get(task.RunID); !ok || d1.runs.saveChecked(current) != nil {
 		t.Fatalf("persist seed task: ok=%v task=%+v", ok, current)
 	}
 	cp1 := &runCheckpoint{Turn: 1, Transcript: newTranscript(task.UserPrompt)}
 	cp2 := &runCheckpoint{Turn: 2, Transcript: newTranscript(task.UserPrompt)}
-	if err := d1.runs.saveCheckpointChecked(task.TaskID, cp1); err != nil {
+	if err := d1.runs.saveCheckpointChecked(task.RunID, cp1); err != nil {
 		t.Fatal(err)
 	}
-	if err := d1.runs.saveCheckpointChecked(task.TaskID, cp2); err != nil {
+	if err := d1.runs.saveCheckpointChecked(task.RunID, cp2); err != nil {
 		t.Fatal(err)
 	}
 
@@ -310,10 +310,10 @@ func TestCheckpointRestorePublishesLatestPersistsAndIsIdempotent(t *testing.T) {
 	if result["status"] != "paused" || result["idempotent"] != false {
 		t.Fatalf("restore result = %+v", result)
 	}
-	if latest := d1.runs.loadCheckpoint(task.TaskID); latest == nil || latest.Turn != 1 {
+	if latest := d1.runs.loadCheckpoint(task.RunID); latest == nil || latest.Turn != 1 {
 		t.Fatalf("latest checkpoint = %+v, want turn 1", latest)
 	}
-	persisted := taskByID(d1.runs.load(), task.TaskID)
+	persisted := taskByID(d1.runs.load(), task.RunID)
 	if persisted == nil || persisted.Status != "paused" || persisted.ReconciliationRequired {
 		t.Fatalf("persisted restored task = %+v", persisted)
 	}
@@ -325,11 +325,11 @@ func TestCheckpointRestorePublishesLatestPersistsAndIsIdempotent(t *testing.T) {
 
 	d2 := newDaemonAt(t, stateDir)
 	defer d2.Close()
-	recovered, ok := d2.sched.Get(task.TaskID)
+	recovered, ok := d2.sched.Get(task.RunID)
 	if !ok || recovered.Status != "paused" || recovered.ReconciliationRequired {
 		t.Fatalf("recovered restored task = %+v, ok=%v", recovered, ok)
 	}
-	if latest := d2.runs.loadCheckpoint(task.TaskID); latest == nil || latest.Turn != 1 {
+	if latest := d2.runs.loadCheckpoint(task.RunID); latest == nil || latest.Turn != 1 {
 		t.Fatalf("recovered latest checkpoint = %+v", latest)
 	}
 }
@@ -348,13 +348,13 @@ func TestCheckpointRestoreRefusesCancelledBeforePublishingOrJournaling(t *testin
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "cancelled restore")
 	cp1 := &runCheckpoint{Turn: 1, Transcript: newTranscript(task.UserPrompt)}
 	cp2 := &runCheckpoint{Turn: 2, Transcript: newTranscript(task.UserPrompt)}
-	if err := d.runs.saveCheckpointChecked(task.TaskID, cp1); err != nil {
+	if err := d.runs.saveCheckpointChecked(task.RunID, cp1); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.runs.saveCheckpointChecked(task.TaskID, cp2); err != nil {
+	if err := d.runs.saveCheckpointChecked(task.RunID, cp2); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.sched.Cancel(task.TaskID); err != nil {
+	if _, err := d.sched.Cancel(task.RunID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -364,10 +364,10 @@ func TestCheckpointRestoreRefusesCancelledBeforePublishingOrJournaling(t *testin
 	if err == nil || !strings.Contains(err.Error(), "cancelled task") {
 		t.Fatalf("cancelled restore error = %v", err)
 	}
-	if latest := d.runs.loadCheckpoint(task.TaskID); latest == nil || checkpointID(task, latest) != checkpointID(task, cp2) {
+	if latest := d.runs.loadCheckpoint(task.RunID); latest == nil || checkpointID(task, latest) != checkpointID(task, cp2) {
 		t.Fatalf("cancelled restore changed latest checkpoint: %+v", latest)
 	}
-	if _, err := os.Stat(filepath.Join(d.runs.dir, task.TaskID+".restore.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(d.runs.dir, task.RunID+".restore.json")); !os.IsNotExist(err) {
 		t.Fatalf("cancelled restore created a journal: %v", err)
 	}
 }
@@ -384,17 +384,17 @@ func TestCheckpointRestoreFailureSurvivesRestartAndSameTargetReconciles(t *testi
 		t.Fatal(err)
 	}
 	task := d1.sched.Submit(sess.SessionID, sess.WorkspaceID, "restore me")
-	d1.sched.SetStatus(task.TaskID, "completed")
-	current, _ := d1.sched.Get(task.TaskID)
+	d1.sched.SetStatus(task.RunID, "completed")
+	current, _ := d1.sched.Get(task.RunID)
 	if err := d1.runs.saveChecked(current); err != nil {
 		t.Fatal(err)
 	}
 	cp1 := &runCheckpoint{Turn: 1, Transcript: newTranscript(task.UserPrompt)}
 	cp2 := &runCheckpoint{Turn: 2, Transcript: newTranscript(task.UserPrompt)}
-	d1.runs.saveCheckpoint(task.TaskID, cp1)
-	d1.runs.saveCheckpoint(task.TaskID, cp2)
+	d1.runs.saveCheckpoint(task.RunID, cp1)
+	d1.runs.saveCheckpoint(task.RunID, cp2)
 
-	latestPath := filepath.Join(d1.runs.dir, task.TaskID+".ckpt.json")
+	latestPath := filepath.Join(d1.runs.dir, task.RunID+".ckpt.json")
 	if err := os.Remove(latestPath); err != nil {
 		t.Fatal(err)
 	}
@@ -405,11 +405,11 @@ func TestCheckpointRestoreFailureSurvivesRestartAndSameTargetReconciles(t *testi
 	if _, err := d1.handleCheckpointRestore(params); err == nil || !strings.Contains(err.Error(), "checkpoint_restore_blocked") {
 		t.Fatalf("restore error = %v", err)
 	}
-	journal, err := d1.runs.loadRestoreJournal(task.TaskID)
+	journal, err := d1.runs.loadRestoreJournal(task.RunID)
 	if err != nil || journal == nil || journal.State != "blocked_reconciliation_required" {
 		t.Fatalf("blocked journal = %+v, err=%v", journal, err)
 	}
-	blocked, _ := d1.sched.Get(task.TaskID)
+	blocked, _ := d1.sched.Get(task.RunID)
 	if !blocked.ReconciliationRequired || blocked.Status != "paused" {
 		t.Fatalf("blocked task = %+v", blocked)
 	}
@@ -417,7 +417,7 @@ func TestCheckpointRestoreFailureSurvivesRestartAndSameTargetReconciles(t *testi
 
 	d2 := newDaemonAt(t, stateDir)
 	defer d2.Close()
-	recovered, ok := d2.sched.Get(task.TaskID)
+	recovered, ok := d2.sched.Get(task.RunID)
 	if !ok || !recovered.ReconciliationRequired || recovered.Status != "paused" {
 		t.Fatalf("recovered blocked task = %+v, ok=%v", recovered, ok)
 	}
@@ -432,10 +432,10 @@ func TestCheckpointRestoreFailureSurvivesRestartAndSameTargetReconciles(t *testi
 	if result["status"] != "paused" || result["reconciliation_required"] != false {
 		t.Fatalf("reconciliation result = %+v", result)
 	}
-	if journal, err := d2.runs.loadRestoreJournal(task.TaskID); err != nil || journal != nil {
+	if journal, err := d2.runs.loadRestoreJournal(task.RunID); err != nil || journal != nil {
 		t.Fatalf("journal after reconciliation = %+v, err=%v", journal, err)
 	}
-	reconciled, _ := d2.sched.Get(task.TaskID)
+	reconciled, _ := d2.sched.Get(task.RunID)
 	if reconciled.ReconciliationRequired || reconciled.Status != "paused" {
 		t.Fatalf("reconciled task = %+v", reconciled)
 	}
@@ -462,13 +462,13 @@ func TestCheckpointRestoreCompletionAuditIsExactlyOnceAcrossCrashWindows(t *test
 				t.Fatal(err)
 			}
 			task := d1.sched.Submit(sess.SessionID, sess.WorkspaceID, "restore audit")
-			d1.sched.SetStatus(task.TaskID, "completed")
-			current, _ := d1.sched.Get(task.TaskID)
+			d1.sched.SetStatus(task.RunID, "completed")
+			current, _ := d1.sched.Get(task.RunID)
 			if err := d1.runs.saveChecked(current); err != nil {
 				t.Fatal(err)
 			}
 			cp := &runCheckpoint{Turn: 1, Transcript: newTranscript(task.UserPrompt)}
-			if err := d1.runs.saveCheckpointChecked(task.TaskID, cp); err != nil {
+			if err := d1.runs.saveCheckpointChecked(task.RunID, cp); err != nil {
 				t.Fatal(err)
 			}
 			failed := false
@@ -483,12 +483,12 @@ func TestCheckpointRestoreCompletionAuditIsExactlyOnceAcrossCrashWindows(t *test
 			if _, err := d1.handleCheckpointRestore(params); err == nil || !strings.Contains(err.Error(), "checkpoint_restore_blocked") {
 				t.Fatalf("restore crash-window error = %v", err)
 			}
-			journal, err := d1.runs.loadRestoreJournal(task.TaskID)
+			journal, err := d1.runs.loadRestoreJournal(task.RunID)
 			if err != nil || journal == nil || journal.OperationID == "" {
 				t.Fatalf("restore journal = %+v, err=%v", journal, err)
 			}
 			operationID := journal.OperationID
-			count, err := d1.restoreAuditPhaseCount(sess.SessionID, task.TaskID, operationID, "completion")
+			count, err := d1.restoreAuditPhaseCount(sess.SessionID, task.RunID, operationID, "completion")
 			if err != nil || count != tc.completionBeforeRestart {
 				t.Fatalf("completion count before restart = %d, err=%v", count, err)
 			}
@@ -499,11 +499,11 @@ func TestCheckpointRestoreCompletionAuditIsExactlyOnceAcrossCrashWindows(t *test
 			if _, err := d2.handleCheckpointRestore(params); err != nil {
 				t.Fatalf("restore retry: %v", err)
 			}
-			count, err = d2.restoreAuditPhaseCount(sess.SessionID, task.TaskID, operationID, "completion")
+			count, err = d2.restoreAuditPhaseCount(sess.SessionID, task.RunID, operationID, "completion")
 			if err != nil || count != 1 {
 				t.Fatalf("completion count after retry = %d, err=%v", count, err)
 			}
-			if journal, err := d2.runs.loadRestoreJournal(task.TaskID); err != nil || journal != nil {
+			if journal, err := d2.runs.loadRestoreJournal(task.RunID); err != nil || journal != nil {
 				t.Fatalf("journal after committed retry = %+v, err=%v", journal, err)
 			}
 		})
@@ -522,17 +522,17 @@ func TestCheckpointRestoreRequiresSessionQuiescenceAndExecutionFence(t *testing.
 		t.Fatal(err)
 	}
 	target := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "target")
-	d.sched.SetStatus(target.TaskID, "completed")
+	d.sched.SetStatus(target.RunID, "completed")
 	cp := &runCheckpoint{Turn: 1, Transcript: newTranscript(target.UserPrompt)}
-	d.runs.saveCheckpoint(target.TaskID, cp)
+	d.runs.saveCheckpoint(target.RunID, cp)
 	params := mustJSON(t, map[string]any{"session_id": sess.SessionID, "checkpoint_id": checkpointID(target, cp), "confirmed": true})
 
 	other := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "other")
-	d.sched.SetStatus(other.TaskID, "running")
+	d.sched.SetStatus(other.RunID, "running")
 	if _, err := d.handleCheckpointRestore(params); err == nil || !strings.Contains(err.Error(), "must be quiescent") {
 		t.Fatalf("restore with running sibling error = %v", err)
 	}
-	d.sched.SetStatus(other.TaskID, "completed")
+	d.sched.SetStatus(other.RunID, "completed")
 
 	fence := d.sessionExecutionFence(sess.SessionID)
 	fence.RLock()
@@ -541,7 +541,7 @@ func TestCheckpointRestoreRequiresSessionQuiescenceAndExecutionFence(t *testing.
 		t.Fatalf("restore with in-flight mutation error = %v", err)
 	}
 	fence.RUnlock()
-	if latest := d.runs.loadCheckpoint(target.TaskID); latest == nil || latest.CheckpointID != cp.CheckpointID {
+	if latest := d.runs.loadCheckpoint(target.RunID); latest == nil || latest.CheckpointID != cp.CheckpointID {
 		t.Fatalf("refused restore changed latest: %+v", latest)
 	}
 }
@@ -576,23 +576,23 @@ func TestTaskResumePersistsRunningBeforeStartingFromLatest(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "resume me")
-	d.sched.SetStatus(task.TaskID, "paused")
-	paused, _ := d.sched.Get(task.TaskID)
+	d.sched.SetStatus(task.RunID, "paused")
+	paused, _ := d.sched.Get(task.RunID)
 	if err := d.runs.saveChecked(paused); err != nil {
 		t.Fatal(err)
 	}
 	tr := newTranscript(task.UserPrompt)
 	tr.addTurn(Turn{Tool: "read", ActionBrief: "read", Obs: Observation{Content: "done"}})
-	if err := d.runs.saveCheckpointChecked(task.TaskID, &runCheckpoint{Turn: 1, Transcript: tr}); err != nil {
+	if err := d.runs.saveCheckpointChecked(task.RunID, &runCheckpoint{Turn: 1, Transcript: tr}); err != nil {
 		t.Fatal(err)
 	}
 	reasoner := &blockingResumeReasoner{started: make(chan struct{}), release: make(chan struct{})}
 	d.SetReasoner(reasoner)
-	resultAny, err := d.handleTaskResume(mustJSON(t, map[string]any{"task_id": task.TaskID}))
+	resultAny, err := d.handleTaskResume(mustJSON(t, map[string]any{"run_id": task.RunID}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := resultAny.(*scheduler.Task); result.TaskID != task.TaskID || result.Status != "running" {
+	if result := resultAny.(*scheduler.ExecutionRun); result.RunID != task.RunID || result.Status != "running" {
 		t.Fatalf("resume result = %+v", result)
 	}
 	select {
@@ -600,16 +600,16 @@ func TestTaskResumePersistsRunningBeforeStartingFromLatest(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("resumed task did not start")
 	}
-	if persisted := taskByID(newRunStore(stateDir).load(), task.TaskID); persisted == nil || persisted.Status != "running" {
+	if persisted := taskByID(newRunStore(stateDir).load(), task.RunID); persisted == nil || persisted.Status != "running" {
 		t.Fatalf("task was not persisted running before reasoner start: %+v", persisted)
 	}
-	if _, err := d.handleTaskResume(mustJSON(t, map[string]any{"task_id": task.TaskID})); err == nil {
+	if _, err := d.handleTaskResume(mustJSON(t, map[string]any{"run_id": task.RunID})); err == nil {
 		t.Fatal("running task must reject a second resume")
 	}
 	close(reasoner.release)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if current, _ := d.sched.Get(task.TaskID); current.Status == "completed" {
+		if current, _ := d.sched.Get(task.RunID); current.Status == "completed" {
 			if current.Summary != "resumed" {
 				t.Fatalf("resume summary = %q", current.Summary)
 			}
@@ -617,7 +617,7 @@ func TestTaskResumePersistsRunningBeforeStartingFromLatest(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	current, _ := d.sched.Get(task.TaskID)
+	current, _ := d.sched.Get(task.RunID)
 	t.Fatalf("resumed task did not complete: %+v", current)
 }
 
@@ -633,22 +633,22 @@ func TestCheckpointPersistenceFailureStopsRunBeforeNextAction(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "checkpoint")
-	d.sched.SetStatus(task.TaskID, "running")
-	if err := os.WriteFile(filepath.Join(d.runs.dir, task.TaskID+".ckpts"), []byte("blocked"), 0o600); err != nil {
+	d.sched.SetStatus(task.RunID, "running")
+	if err := os.WriteFile(filepath.Join(d.runs.dir, task.RunID+".ckpts"), []byte("blocked"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if d.persistTurnCheckpoint(sess, task, newTranscript(task.UserPrompt), 1, "") {
 		t.Fatal("checkpoint failure must stop the run")
 	}
-	current, _ := d.sched.Get(task.TaskID)
+	current, _ := d.sched.Get(task.RunID)
 	if current.Status != "degraded" || !strings.Contains(current.Summary, "prevent stale replay") {
 		t.Fatalf("task after checkpoint failure = %+v", current)
 	}
 }
 
-func taskByID(tasks []*scheduler.Task, taskID string) *scheduler.Task {
+func taskByID(tasks []*scheduler.ExecutionRun, taskID string) *scheduler.ExecutionRun {
 	for _, task := range tasks {
-		if task.TaskID == taskID {
+		if task.RunID == taskID {
 			return task
 		}
 	}
@@ -719,7 +719,7 @@ func TestRunStoreFutureCheckpointQuarantinedAndResumeFallsBack(t *testing.T) {
 	}
 }
 
-func TestRunStoreLoadsLegacyUnstampedTaskAndQuarantinesFuture(t *testing.T) {
+func TestRunStoreRejectsLegacyTaskRowsAndQuarantinesFuture(t *testing.T) {
 	runs := newRunStore(filepath.Join(t.TempDir(), "state"))
 	if err := os.WriteFile(filepath.Join(runs.dir, "legacy.json"), []byte(`{"task_id": "legacy", "status": "completed"}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -728,21 +728,21 @@ func TestRunStoreLoadsLegacyUnstampedTaskAndQuarantinesFuture(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(runs.dir, "future.json"), []byte(fmt.Sprintf(`{"version": %d, "task_id": "future", "status": "completed"}`, futureVersion)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runs.save(&scheduler.Task{TaskID: "stamped", Status: "completed"})
+	runs.save(&scheduler.ExecutionRun{RunID: "run_stamped", Status: "completed"})
 
 	got := runs.load()
 	loaded := map[string]bool{}
 	for _, task := range got {
-		loaded[task.TaskID] = true
+		loaded[task.RunID] = true
 	}
-	if len(got) != 2 || !loaded["legacy"] || !loaded["stamped"] {
-		t.Fatalf("load = %+v, want legacy+stamped only", loaded)
+	if len(got) != 1 || !loaded["run_stamped"] {
+		t.Fatalf("load = %+v, want only the stamped execution run", loaded)
 	}
 	moved, err := filepath.Glob(filepath.Join(runs.dir, fmt.Sprintf("future.json.v%d.*.quarantine", futureVersion)))
 	if err != nil || len(moved) != 1 {
 		t.Fatalf("future task row must be quarantined, got %v err=%v", moved, err)
 	}
-	raw, err := os.ReadFile(filepath.Join(runs.dir, "stamped.json"))
+	raw, err := os.ReadFile(filepath.Join(runs.dir, "run_stamped.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

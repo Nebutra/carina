@@ -51,6 +51,24 @@ type Provider interface {
 	Complete(ctx context.Context, req Request) (*Response, error)
 }
 
+// StreamEvent carries private provider output. Reset invalidates every delta
+// previously emitted for the current attempt before a provider or protocol
+// fallback starts.
+type StreamEvent struct {
+	Delta string
+	Reset bool
+}
+
+type StreamCallback func(StreamEvent)
+
+// StreamingProvider is an optional provider capability. Providers that do not
+// implement it retain the Complete contract; Router.Stream explicitly adapts
+// their final response into one delta.
+type StreamingProvider interface {
+	Provider
+	Stream(ctx context.Context, req Request, callback StreamCallback) (*Response, error)
+}
+
 type Usage struct {
 	Requests         int `json:"requests"`
 	InputTokens      int `json:"input_tokens"`
@@ -91,6 +109,17 @@ func (r *Router) ProviderNames() []string {
 
 // Complete tries providers in registration order until one succeeds.
 func (r *Router) Complete(ctx context.Context, req Request) (*Response, error) {
+	return r.complete(ctx, req, nil)
+}
+
+// Stream tries providers in registration order while preserving the Complete
+// fallback for non-streaming providers. Every failed provider resets its
+// private delta generation, including the final provider in the chain.
+func (r *Router) Stream(ctx context.Context, req Request, callback StreamCallback) (*Response, error) {
+	return r.complete(ctx, req, callback)
+}
+
+func (r *Router) complete(ctx context.Context, req Request, callback StreamCallback) (*Response, error) {
 	r.mu.RLock()
 	providers := append([]Provider(nil), r.providers...)
 	r.mu.RUnlock()
@@ -105,9 +134,24 @@ func (r *Router) Complete(ctx context.Context, req Request) (*Response, error) {
 
 	var errs []error
 	for _, p := range providers {
-		resp, err := p.Complete(ctx, req)
+		var resp *Response
+		var err error
+		if streaming, ok := p.(StreamingProvider); ok && callback != nil {
+			resp, err = streaming.Stream(ctx, req, callback)
+		} else {
+			resp, err = p.Complete(ctx, req)
+			if err == nil && callback != nil && resp != nil && resp.Text != "" {
+				callback(StreamEvent{Delta: resp.Text})
+			}
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", p.Name(), err))
+			if callback != nil {
+				// A failed provider may already have emitted private deltas. Reset
+				// immediately, including after the final provider, so callers never
+				// retain output from a failed generation.
+				callback(StreamEvent{Reset: true})
+			}
 			continue
 		}
 		r.recordUsage(p.Name(), resp)

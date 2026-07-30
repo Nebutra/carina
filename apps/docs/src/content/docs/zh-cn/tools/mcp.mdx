@@ -20,13 +20,6 @@ Carina 内置受治理的 MCP 管理器（`go/mcp`）和服务端表面（`go/mc
 
 `mcp.inventory` 只返回公共 MCP server 名、tool 名、prompt 数量与连接健康。`/mcp verbose` 可以显示公共工具描述，但不会暴露进程命令、参数、环境变量、输入 schema 或私有托管 server。
 
-## Headroom 边界
-
-当 bundled 或显式配置的 Headroom binary 可用时，它作为私有 managed MCP 放在 **context-engine boundary** 后：
-
-- 不出现在 Agent 的公共 MCP 工具列表中。
-- 不能经 Agent 的 `mcp` action surface 调用。
-
 ## 服务端模式
 
 对外只暴露经过筛选的工具集，并保持最小权限；不要把完整本地 kernel 重新导出。

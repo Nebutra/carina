@@ -10,7 +10,10 @@ use carina_audit::{Actor, Event, EventType};
 use carina_index::{ChunkEmbedding, CodeIndex, FileChange as IndexChange, IngestFile};
 use carina_kernel::{ApprovalPolicy, Kernel, KernelError};
 use carina_patch::{content_hash, PatchTransaction};
-use carina_policy::{ApprovalMode, Capability, CapabilityRequest, Decision, PolicyBundle, Principal, Profile, Verdict};
+use carina_policy::{
+    ApprovalMode, Capability, CapabilityRequest, Decision, PolicyBundle, Principal, Profile,
+    Verdict,
+};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -75,7 +78,10 @@ struct Service {
 
 impl Service {
     fn new(state_dir: PathBuf) -> Self {
-        Self { state_dir, sessions: HashMap::new() }
+        Self {
+            state_dir,
+            sessions: HashMap::new(),
+        }
     }
 
     fn handle_line(&mut self, line: &str) -> String {
@@ -141,15 +147,22 @@ impl Service {
 
         // A session may use a builtin profile by name, or supply a custom
         // profile as inline TOML (PRD §8.3).
-        let (mut kernel, profile_name) = if let Some(toml) = p.get("profile_toml").and_then(Value::as_str) {
+        let (mut kernel, profile_name) = if let Some(toml) =
+            p.get("profile_toml").and_then(Value::as_str)
+        {
             let profile = Profile::from_toml(toml).map_err(err_str)?;
             let name = profile.name.clone();
             (
-                Kernel::with_profile(&session_id, &workspace_root, profile, &events_dir).map_err(err_str)?,
+                Kernel::with_profile(&session_id, &workspace_root, profile, &events_dir)
+                    .map_err(err_str)?,
                 name,
             )
         } else {
-            let name = p.get("profile").and_then(Value::as_str).unwrap_or("safe-edit").to_string();
+            let name = p
+                .get("profile")
+                .and_then(Value::as_str)
+                .unwrap_or("safe-edit")
+                .to_string();
             (
                 Kernel::new(&session_id, &workspace_root, &name, &events_dir).map_err(err_str)?,
                 name,
@@ -171,7 +184,7 @@ impl Service {
         }
         // Goal mechanism: the approval-mode axis (untrusted/on_request/never).
         if let Some(mode) = p.get("approval_mode").and_then(Value::as_str) {
-            kernel.set_approval_mode(ApprovalMode::from_str(mode));
+            kernel.set_approval_mode(ApprovalMode::parse_lossy(mode));
         }
         // Enterprise: role-based approval thresholds.
         if let Some(rules) = p.get("approval_policy").and_then(Value::as_array) {
@@ -181,7 +194,9 @@ impl Service {
                     rule.get("min_risk").and_then(Value::as_u64),
                     rule.get("role").and_then(Value::as_str),
                 ) {
-                    policy.required_role_at_risk.push((risk as u8, role.to_string()));
+                    policy
+                        .required_role_at_risk
+                        .push((risk as u8, role.to_string()));
                 }
             }
             kernel.set_approval_policy(policy);
@@ -241,7 +256,8 @@ impl Service {
     /// install-time review (PRD §8.7: permissions shown at install).
     fn plugin_inspect(&mut self, p: &Value) -> Result<Value, String> {
         let manifest_toml = str_param(p, "manifest_toml")?;
-        let manifest = carina_plugin_runtime::Manifest::from_toml(&manifest_toml).map_err(err_str)?;
+        let manifest =
+            carina_plugin_runtime::Manifest::from_toml(&manifest_toml).map_err(err_str)?;
         Ok(json!({
             "name": manifest.name,
             "version": manifest.version,
@@ -259,7 +275,8 @@ impl Service {
             Some(sig_b64) => Some(base64_decode(sig_b64).ok_or("invalid base64 signature")?),
             None => None,
         };
-        let manifest = carina_plugin_runtime::Manifest::from_toml(&manifest_toml).map_err(err_str)?;
+        let manifest =
+            carina_plugin_runtime::Manifest::from_toml(&manifest_toml).map_err(err_str)?;
         let ctx = self.ctx(p)?;
         let outcome = ctx
             .kernel
@@ -302,26 +319,41 @@ impl Service {
         };
         let decision = ctx.kernel.request(request).map_err(err_str)?;
         if decision.decision == Verdict::RequiresApproval {
-            ctx.pending.insert(decision.decision_id.clone(), decision.clone());
+            ctx.pending
+                .insert(decision.decision_id.clone(), decision.clone());
         }
         serde_json::to_value(&decision).map_err(err_str)
     }
 
     fn approve(&mut self, p: &Value) -> Result<Value, String> {
         let decision_id = str_param(p, "decision_id")?;
-        let approver = p.get("approver").and_then(Value::as_str).unwrap_or("user").to_string();
+        let approver = p
+            .get("approver")
+            .and_then(Value::as_str)
+            .unwrap_or("user")
+            .to_string();
         let role = p.get("role").and_then(Value::as_str).map(String::from);
-        let for_session = p.get("for_session").and_then(Value::as_bool).unwrap_or(false);
-        let justification = p.get("justification").and_then(Value::as_str).unwrap_or("approved for session");
+        let for_session = p
+            .get("for_session")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let justification = p
+            .get("justification")
+            .and_then(Value::as_str)
+            .unwrap_or("approved for session");
         let ctx = self.ctx(p)?;
         let pending = ctx
             .pending
             .remove(&decision_id)
             .ok_or_else(|| format!("no pending decision {decision_id}"))?;
         let approved = if for_session && role.is_none() {
-            ctx.kernel.approve_for_session_with_justification(&pending, &approver, justification).map_err(err_str)?
+            ctx.kernel
+                .approve_for_session_with_justification(&pending, &approver, justification)
+                .map_err(err_str)?
         } else {
-            ctx.kernel.approve_as(&pending, &approver, role.as_deref()).map_err(err_str)?
+            ctx.kernel
+                .approve_as(&pending, &approver, role.as_deref())
+                .map_err(err_str)?
         };
         // A role-rejected approval stays pending so it can be retried.
         if approved.decision != Verdict::Allowed {
@@ -333,14 +365,25 @@ impl Service {
 
     fn deny(&mut self, p: &Value) -> Result<Value, String> {
         let decision_id = str_param(p, "decision_id")?;
-        let approver = p.get("approver").and_then(Value::as_str).unwrap_or("user").to_string();
-        let reason = p.get("reason").and_then(Value::as_str).unwrap_or("denied").to_string();
+        let approver = p
+            .get("approver")
+            .and_then(Value::as_str)
+            .unwrap_or("user")
+            .to_string();
+        let reason = p
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("denied")
+            .to_string();
         let ctx = self.ctx(p)?;
         let pending = ctx
             .pending
             .remove(&decision_id)
             .ok_or_else(|| format!("no pending decision {decision_id}"))?;
-        let denied = ctx.kernel.deny(&pending, &approver, &reason).map_err(err_str)?;
+        let denied = ctx
+            .kernel
+            .deny(&pending, &approver, &reason)
+            .map_err(err_str)?;
         ctx.resolved.insert(decision_id, denied.clone());
         serde_json::to_value(&denied).map_err(err_str)
     }
@@ -356,7 +399,7 @@ impl Service {
         let actor = p
             .get("actor")
             .and_then(Value::as_str)
-            .map(Actor::from_str)
+            .map(Actor::parse_lossy)
             .unwrap_or(Actor::Go); // events recorded via RPC come from the Go control plane
         let mut event = Event::new(&session_id, event_type, payload).with_actor(actor);
         if let Some(task_id) = p.get("task_id").and_then(Value::as_str) {
@@ -365,7 +408,10 @@ impl Service {
         if let Some(decision_id) = p.get("permission_decision_id").and_then(Value::as_str) {
             event = event.with_decision(decision_id);
         }
-        let cursor = ctx.kernel.record_event_with_cursor(&event).map_err(err_str)?;
+        let cursor = ctx
+            .kernel
+            .record_event_with_cursor(&event)
+            .map_err(err_str)?;
         Ok(json!({"event_id": event.event_id, "cursor": cursor}))
     }
 
@@ -429,7 +475,11 @@ impl Service {
 
     fn patch_propose(&mut self, p: &Value) -> Result<Value, String> {
         let session_id = str_param(p, "session_id")?;
-        let reason = p.get("reason").and_then(Value::as_str).unwrap_or("").to_string();
+        let reason = p
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
         let task_id = p.get("task_id").and_then(Value::as_str).map(String::from);
         let files_param = p
             .get("files")
@@ -441,7 +491,10 @@ impl Service {
 
         let mut changes = Vec::new();
         for f in &files_param {
-            let rel = f.get("path").and_then(Value::as_str).ok_or("file.path required")?;
+            let rel = f
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or("file.path required")?;
             let new_content = f
                 .get("new_content")
                 .and_then(Value::as_str)
@@ -455,40 +508,57 @@ impl Service {
                 Ok(bytes) => (true, bytes),
                 Err(_) => (false, Vec::new()),
             };
-            changes.push(FileChange { path: rel.to_string(), existed, old_content, new_content });
+            changes.push(FileChange {
+                path: rel.to_string(),
+                existed,
+                old_content,
+                new_content,
+            });
         }
 
         let base = combined_hash(&changes, Pre::Old);
         let diff = render_diff(&changes);
         let paths: Vec<String> = changes.iter().map(|c| c.path.clone()).collect();
-        let agent_step_id = p.get("agent_step_id").and_then(Value::as_str).map(String::from);
+        let agent_step_id = p
+            .get("agent_step_id")
+            .and_then(Value::as_str)
+            .map(String::from);
         let model_id = p.get("model_id").and_then(Value::as_str).map(String::from);
-        let tx = PatchTransaction::propose(&session_id, paths.clone(), base.as_bytes(), &diff, &reason)
-            .map_err(err_str)?
-            .with_provenance(task_id.clone(), agent_step_id, model_id);
+        let tx =
+            PatchTransaction::propose(&session_id, paths.clone(), base.as_bytes(), &diff, &reason)
+                .map_err(err_str)?
+                .with_provenance(task_id.clone(), agent_step_id, model_id);
 
         let snapshot_dir = state_dir.join("snapshots").join(&tx.patch_id);
         std::fs::create_dir_all(&snapshot_dir).map_err(err_str)?;
         for (i, c) in changes.iter().enumerate() {
             if c.existed {
-                std::fs::write(snapshot_dir.join(format!("{i}.pre")), &c.old_content).map_err(err_str)?;
+                std::fs::write(snapshot_dir.join(format!("{i}.pre")), &c.old_content)
+                    .map_err(err_str)?;
             }
         }
 
         let mut event = Event::new(
             &session_id,
             EventType::PatchProposed,
-            json!({"patch_id": tx.patch_id, "affected_files": paths, "reason": reason}),
+            json!({"patch_id": tx.patch_id, "affected_files": paths, "reason": reason, "diff": diff}),
         );
         if let Some(t) = &task_id {
             event = event.with_task(t);
         }
-        ctx.kernel.record_event(&event).map_err(err_str)?;
+        let cursor = ctx
+            .kernel
+            .record_event_with_cursor(&event)
+            .map_err(err_str)?;
 
-        let result = serde_json::to_value(&tx).map_err(err_str)?;
+        let result = patch_result_with_events(&tx, &[(event, cursor)])?;
         ctx.patches.insert(
             tx.patch_id.clone(),
-            PatchRecord { tx, files: changes, snapshot_dir },
+            PatchRecord {
+                tx,
+                files: changes,
+                snapshot_dir,
+            },
         );
         Ok(result)
     }
@@ -496,11 +566,18 @@ impl Service {
     fn patch_apply(&mut self, p: &Value) -> Result<Value, String> {
         let session_id = str_param(p, "session_id")?;
         let patch_id = str_param(p, "patch_id")?;
-        let approver = p.get("approver").and_then(Value::as_str).unwrap_or("user").to_string();
+        let approver = p
+            .get("approver")
+            .and_then(Value::as_str)
+            .unwrap_or("user")
+            .to_string();
         let state_dir = self.state_dir.clone();
         let ctx = self.ctx(p)?;
 
-        let record = ctx.patches.remove(&patch_id).ok_or_else(|| format!("unknown patch {patch_id}"))?;
+        let record = ctx
+            .patches
+            .remove(&patch_id)
+            .ok_or_else(|| format!("unknown patch {patch_id}"))?;
 
         // Capability gate: PatchApply always goes through policy.
         let request = CapabilityRequest {
@@ -516,7 +593,9 @@ impl Service {
                 ctx.patches.insert(patch_id.clone(), record);
                 return Err(format!("patch apply denied: {}", decision.reason));
             }
-            Verdict::RequiresApproval => ctx.kernel.approve(&decision, &approver).map_err(err_str)?,
+            Verdict::RequiresApproval => {
+                ctx.kernel.approve(&decision, &approver).map_err(err_str)?
+            }
             Verdict::Allowed => decision,
         };
 
@@ -550,15 +629,22 @@ impl Service {
                 };
                 let failed = tx.fail().map_err(err_str)?;
                 ctx.kernel
-                    .record_event(&Event::new(
-                        &session_id,
-                        EventType::PatchFailed,
-                        json!({"patch_id": patch_id, "error": reason}),
-                    ).with_actor(Actor::Zig))
+                    .record_event(
+                        &Event::new(
+                            &session_id,
+                            EventType::PatchFailed,
+                            json!({"patch_id": patch_id, "error": reason}),
+                        )
+                        .with_actor(Actor::Zig),
+                    )
                     .map_err(err_str)?;
                 ctx.patches.insert(
                     patch_id.clone(),
-                    PatchRecord { tx: failed, files: record.files.clone(), snapshot_dir: record.snapshot_dir.clone() },
+                    PatchRecord {
+                        tx: failed,
+                        files: record.files.clone(),
+                        snapshot_dir: record.snapshot_dir.clone(),
+                    },
                 );
                 return Err(format!("patch apply failed: {reason}"));
             }
@@ -575,13 +661,23 @@ impl Service {
             json!({"patch_id": patch_id, "new_hash": tx.new_hash, "rollback_pointer": tx.rollback_pointer}),
         )
         .with_decision(&decision.decision_id);
-        ctx.kernel.record_event(&event).map_err(err_str)?;
+        let cursor = ctx
+            .kernel
+            .record_event_with_cursor(&event)
+            .map_err(err_str)?;
 
         // Keep the code index in step with the write (no-op without an index).
         invalidate_index_after_patch(&state_dir, ctx, &session_id, &record.files);
 
-        let result = serde_json::to_value(&tx).map_err(err_str)?;
-        ctx.patches.insert(patch_id, PatchRecord { tx, files: record.files, snapshot_dir: record.snapshot_dir });
+        let result = patch_result_with_events(&tx, &[(event, cursor)])?;
+        ctx.patches.insert(
+            patch_id,
+            PatchRecord {
+                tx,
+                files: record.files,
+                snapshot_dir: record.snapshot_dir,
+            },
+        );
         Ok(result)
     }
 
@@ -590,14 +686,19 @@ impl Service {
         let patch_id = str_param(p, "patch_id")?;
         let state_dir = self.state_dir.clone();
         let ctx = self.ctx(p)?;
-        let record = ctx.patches.remove(&patch_id).ok_or_else(|| format!("unknown patch {patch_id}"))?;
+        let record = ctx
+            .patches
+            .remove(&patch_id)
+            .ok_or_else(|| format!("unknown patch {patch_id}"))?;
 
-        ctx.kernel
-            .record_event(&Event::new(
-                &session_id,
-                EventType::RollbackStarted,
-                json!({"patch_id": patch_id, "rollback_pointer": record.tx.rollback_pointer}),
-            ))
+        let started = Event::new(
+            &session_id,
+            EventType::RollbackStarted,
+            json!({"patch_id": patch_id, "rollback_pointer": record.tx.rollback_pointer}),
+        );
+        let started_cursor = ctx
+            .kernel
+            .record_event_with_cursor(&started)
             .map_err(err_str)?;
 
         // Restore via the Zig tool (§4.4): copy snapshots back / delete
@@ -612,22 +713,43 @@ impl Service {
                 };
                 ctx.patches.insert(
                     patch_id.clone(),
-                    PatchRecord { tx: record.tx, files: record.files, snapshot_dir: record.snapshot_dir },
+                    PatchRecord {
+                        tx: record.tx,
+                        files: record.files,
+                        snapshot_dir: record.snapshot_dir,
+                    },
                 );
                 return Err(format!("rollback failed: {reason}"));
             }
         }
 
         let tx = record.tx.rollback().map_err(err_str)?;
-        ctx.kernel
-            .record_event(&Event::new(&session_id, EventType::RollbackCompleted, json!({"patch_id": patch_id})).with_actor(Actor::Zig))
+        let completed = Event::new(
+            &session_id,
+            EventType::RollbackCompleted,
+            json!({"patch_id": patch_id}),
+        )
+        .with_actor(Actor::Zig);
+        let completed_cursor = ctx
+            .kernel
+            .record_event_with_cursor(&completed)
             .map_err(err_str)?;
 
         // Keep the code index in step with the restore (no-op without an index).
         invalidate_index_after_patch(&state_dir, ctx, &session_id, &record.files);
 
-        let result = serde_json::to_value(&tx).map_err(err_str)?;
-        ctx.patches.insert(patch_id, PatchRecord { tx, files: record.files, snapshot_dir: record.snapshot_dir });
+        let result = patch_result_with_events(
+            &tx,
+            &[(started, started_cursor), (completed, completed_cursor)],
+        )?;
+        ctx.patches.insert(
+            patch_id,
+            PatchRecord {
+                tx,
+                files: record.files,
+                snapshot_dir: record.snapshot_dir,
+            },
+        );
         Ok(result)
     }
 
@@ -644,7 +766,10 @@ impl Service {
     fn patch_show(&mut self, p: &Value) -> Result<Value, String> {
         let patch_id = str_param(p, "patch_id")?;
         let ctx = self.ctx(p)?;
-        let record = ctx.patches.get(&patch_id).ok_or_else(|| format!("unknown patch {patch_id}"))?;
+        let record = ctx
+            .patches
+            .get(&patch_id)
+            .ok_or_else(|| format!("unknown patch {patch_id}"))?;
         serde_json::to_value(&record.tx).map_err(err_str)
     }
 
@@ -669,7 +794,11 @@ impl Service {
         let ctx = self.ctx(p)?;
         let started = std::time::Instant::now();
 
-        let decision = index_gate(ctx, &session_id, format!("index build files={}", paths.len()))?;
+        let decision = index_gate(
+            ctx,
+            &session_id,
+            format!("index build files={}", paths.len()),
+        )?;
         ensure_index(&state_dir, ctx)?;
         let mut totals = IngestTotals::default();
         let mut skipped: Vec<Value> = Vec::new();
@@ -739,15 +868,27 @@ impl Service {
                 .collect();
             let mut deletes: Vec<IndexChange> = Vec::new();
             for path in stale {
-                skipped.push(json!({"path": path, "reason": "dropped from index: not in build set"}));
+                skipped
+                    .push(json!({"path": path, "reason": "dropped from index: not in build set"}));
                 deletes.push(IndexChange::Delete { path });
                 drops += 1;
             }
             flush_update(ctx, &mut deletes, &mut totals, &mut skipped)?;
         }
 
-        let result = totals.to_json(drops, skipped, &index_db_path(&state_dir, &ctx.workspace_root));
-        record_index_status(ctx, &session_id, "index_build_completed", &result, started, &decision)?;
+        let result = totals.to_json(
+            drops,
+            skipped,
+            &index_db_path(&state_dir, &ctx.workspace_root),
+        );
+        record_index_status(
+            ctx,
+            &session_id,
+            "index_build_completed",
+            &result,
+            started,
+            &decision,
+        )?;
         Ok(result)
     }
 
@@ -771,7 +912,11 @@ impl Service {
         let decision = index_gate(
             ctx,
             &session_id,
-            format!("index update changed={} deleted={}", changed.len(), deleted.len()),
+            format!(
+                "index update changed={} deleted={}",
+                changed.len(),
+                deleted.len()
+            ),
         )?;
         ensure_index(&state_dir, ctx)?;
 
@@ -788,16 +933,22 @@ impl Service {
                     continue;
                 }
             };
-            let d = ctx.kernel.request_file_read(&abs.to_string_lossy(), None).map_err(err_str)?;
+            let d = ctx
+                .kernel
+                .request_file_read(&abs.to_string_lossy(), None)
+                .map_err(err_str)?;
             if d.decision != Verdict::Allowed {
                 // Now denied: drop the stale rows (mirror of the patch hook).
-                skipped.push(json!({"path": rel, "reason": format!("dropped from index: {}", d.reason)}));
+                skipped.push(
+                    json!({"path": rel, "reason": format!("dropped from index: {}", d.reason)}),
+                );
                 batch.push(IndexChange::Delete { path: rel });
                 drops += 1;
                 continue;
             }
             if let Some(reason) = exceeds_size_cap(&abs) {
-                skipped.push(json!({"path": rel, "reason": format!("dropped from index: {reason}")}));
+                skipped
+                    .push(json!({"path": rel, "reason": format!("dropped from index: {reason}")}));
                 batch.push(IndexChange::Delete { path: rel });
                 drops += 1;
                 continue;
@@ -841,8 +992,19 @@ impl Service {
         flush_update(ctx, &mut batch, &mut totals, &mut skipped)?;
 
         // Deleted files count into "indexed" as drops (RPC contract).
-        let result = totals.to_json(drops, skipped, &index_db_path(&state_dir, &ctx.workspace_root));
-        record_index_status(ctx, &session_id, "index_update_completed", &result, started, &decision)?;
+        let result = totals.to_json(
+            drops,
+            skipped,
+            &index_db_path(&state_dir, &ctx.workspace_root),
+        );
+        record_index_status(
+            ctx,
+            &session_id,
+            "index_update_completed",
+            &result,
+            started,
+            &decision,
+        )?;
         Ok(result)
     }
 
@@ -852,7 +1014,11 @@ impl Service {
         let state_dir = self.state_dir.clone();
         let ctx = self.ctx(p)?;
 
-        index_gate(ctx, &session_id, format!("index search {}", truncate_chars(&query, 200)))?;
+        index_gate(
+            ctx,
+            &session_id,
+            format!("index search {}", truncate_chars(&query, 200)),
+        )?;
         let mut opts = carina_index::SearchOptions::default();
         if let Some(limit) = p.get("limit").and_then(Value::as_u64) {
             opts.limit = limit as usize;
@@ -920,7 +1086,11 @@ impl Service {
         let state_dir = self.state_dir.clone();
         let ctx = self.ctx(p)?;
 
-        index_gate(ctx, &session_id, format!("index pending_chunks model={model_id} limit={limit}"))?;
+        index_gate(
+            ctx,
+            &session_id,
+            format!("index pending_chunks model={model_id} limit={limit}"),
+        )?;
         let index = existing_index(&state_dir, ctx)?;
         let (chunks, total_pending) = index.pending_chunks(&model_id, limit).map_err(index_err)?;
         Ok(json!({"chunks": chunks, "total_pending": total_pending}))
@@ -934,7 +1104,10 @@ impl Service {
     fn index_embed_store(&mut self, p: &Value) -> Result<Value, String> {
         let session_id = str_param(p, "session_id")?;
         let model_id = str_param(p, "model_id")?;
-        let dims = p.get("dims").and_then(Value::as_u64).ok_or("dims is required")? as usize;
+        let dims = p
+            .get("dims")
+            .and_then(Value::as_u64)
+            .ok_or("dims is required")? as usize;
         let embeddings_param = p
             .get("embeddings")
             .and_then(Value::as_array)
@@ -947,9 +1120,12 @@ impl Service {
         let decision = index_gate(
             ctx,
             &session_id,
-            format!("index embed_store model={model_id} chunks={}", embeddings_param.len()),
+            format!(
+                "index embed_store model={model_id} chunks={}",
+                embeddings_param.len()
+            ),
         )?;
-        if dims < 1 || dims > MAX_EMBED_DIMS {
+        if !(1..=MAX_EMBED_DIMS).contains(&dims) {
             return Err(format!("dims must be in 1..={MAX_EMBED_DIMS}, got {dims}"));
         }
         if embeddings_param.len() as u64 > MAX_EMBED_BATCH {
@@ -960,7 +1136,10 @@ impl Service {
         }
         let mut items: Vec<ChunkEmbedding> = Vec::with_capacity(embeddings_param.len());
         for e in &embeddings_param {
-            let chunk_id = e.get("chunk_id").and_then(Value::as_i64).ok_or("embedding.chunk_id required")?;
+            let chunk_id = e
+                .get("chunk_id")
+                .and_then(Value::as_i64)
+                .ok_or("embedding.chunk_id required")?;
             let content_hash = e
                 .get("content_hash")
                 .and_then(Value::as_str)
@@ -979,7 +1158,11 @@ impl Service {
                     dims * 4
                 ));
             }
-            items.push(ChunkEmbedding { chunk_id, content_hash, vector: f32_from_le_bytes(&bytes) });
+            items.push(ChunkEmbedding {
+                chunk_id,
+                content_hash,
+                vector: f32_from_le_bytes(&bytes),
+            });
         }
 
         let index = existing_index(&state_dir, ctx)?;
@@ -1045,11 +1228,27 @@ impl Service {
         let mut specs: Vec<carina_index::EdgeSpec> = Vec::with_capacity(edges_param.len());
         let mut skipped: Vec<Value> = Vec::new();
         for e in &edges_param {
-            let src_path = e.get("src_path").and_then(Value::as_str).ok_or("edge.src_path required")?;
-            let dst_path = e.get("dst_path").and_then(Value::as_str).ok_or("edge.dst_path required")?;
-            let src_line = e.get("src_line").and_then(Value::as_u64).ok_or("edge.src_line required")?;
-            let dst_line = e.get("dst_line").and_then(Value::as_u64).ok_or("edge.dst_line required")?;
-            if src_line < 1 || dst_line < 1 || src_line > u32::MAX as u64 || dst_line > u32::MAX as u64 {
+            let src_path = e
+                .get("src_path")
+                .and_then(Value::as_str)
+                .ok_or("edge.src_path required")?;
+            let dst_path = e
+                .get("dst_path")
+                .and_then(Value::as_str)
+                .ok_or("edge.dst_path required")?;
+            let src_line = e
+                .get("src_line")
+                .and_then(Value::as_u64)
+                .ok_or("edge.src_line required")?;
+            let dst_line = e
+                .get("dst_line")
+                .and_then(Value::as_u64)
+                .ok_or("edge.dst_line required")?;
+            if src_line < 1
+                || dst_line < 1
+                || src_line > u32::MAX as u64
+                || dst_line > u32::MAX as u64
+            {
                 return Err("edge line numbers must be 1-based (>= 1)".into());
             }
             // Both endpoints re-pass the FileRead gate exactly like build/
@@ -1060,7 +1259,10 @@ impl Service {
             for (i, raw) in [src_path, dst_path].iter().enumerate() {
                 match rel_and_abs(&ctx.workspace_root, raw) {
                     Ok((rel, abs)) => {
-                        let d = ctx.kernel.request_file_read(&abs.to_string_lossy(), None).map_err(err_str)?;
+                        let d = ctx
+                            .kernel
+                            .request_file_read(&abs.to_string_lossy(), None)
+                            .map_err(err_str)?;
                         if d.decision != Verdict::Allowed {
                             skipped.push(json!({
                                 "src_path": src_path,
@@ -1194,9 +1396,17 @@ impl Service {
             opts.token_budget = budget as usize;
         }
         if let Some(focus) = p.get("focus_paths").and_then(Value::as_array) {
-            opts.focus_paths = focus.iter().filter_map(Value::as_str).map(String::from).collect();
+            opts.focus_paths = focus
+                .iter()
+                .filter_map(Value::as_str)
+                .map(String::from)
+                .collect();
         }
-        let decision = index_gate(ctx, &session_id, format!("index map budget={}", opts.token_budget))?;
+        let decision = index_gate(
+            ctx,
+            &session_id,
+            format!("index map budget={}", opts.token_budget),
+        )?;
         let index = existing_index(&state_dir, ctx)?;
         let map = index.repo_map(&opts).map_err(index_err)?;
 
@@ -1263,7 +1473,11 @@ fn f32_from_le_bytes(bytes: &[u8]) -> Vec<f32> {
 /// requires_approval decision is parked in `pending` (one per capability —
 /// retries reuse it, so the set stays bounded) and its decision_id is carried
 /// in the error so the control plane can `kernel.approve` it and retry.
-fn index_gate(ctx: &mut SessionCtx, session_id: &str, resource: String) -> Result<Decision, String> {
+fn index_gate(
+    ctx: &mut SessionCtx,
+    session_id: &str,
+    resource: String,
+) -> Result<Decision, String> {
     let request = CapabilityRequest {
         capability: Capability::CodeIndex,
         requested_by: Principal::Agent,
@@ -1288,7 +1502,9 @@ fn index_gate(ctx: &mut SessionCtx, session_id: &str, resource: String) -> Resul
                     id
                 }
             };
-            Err(format!("code index requires approval (decision_id={decision_id}): {reason}"))
+            Err(format!(
+                "code index requires approval (decision_id={decision_id}): {reason}"
+            ))
         }
         Verdict::Denied => Err(format!("code index denied: {}", decision.reason)),
     }
@@ -1367,9 +1583,8 @@ fn flush_update(
 /// fits (or cannot be stat'ed — the read itself reports that error).
 fn exceeds_size_cap(abs: &Path) -> Option<String> {
     let len = std::fs::metadata(abs).map(|m| m.len()).unwrap_or(0);
-    (len > MAX_INDEX_FILE_BYTES).then(|| {
-        format!("file exceeds index size cap ({len} > {MAX_INDEX_FILE_BYTES} bytes)")
-    })
+    (len > MAX_INDEX_FILE_BYTES)
+        .then(|| format!("file exceeds index size cap ({len} > {MAX_INDEX_FILE_BYTES} bytes)"))
 }
 
 /// The per-workspace index database path:
@@ -1377,11 +1592,16 @@ fn exceeds_size_cap(abs: &Path) -> Option<String> {
 fn index_db_path(state_dir: &Path, workspace_root: &Path) -> PathBuf {
     let mut hasher = Sha256::new();
     hasher.update(workspace_root.to_string_lossy().as_bytes());
-    state_dir.join("index").join(format!("{:x}.sqlite", hasher.finalize()))
+    state_dir
+        .join("index")
+        .join(format!("{:x}.sqlite", hasher.finalize()))
 }
 
 /// Opens (creating if needed) the session's index database.
-fn ensure_index<'a>(state_dir: &Path, ctx: &'a mut SessionCtx) -> Result<&'a mut CodeIndex, String> {
+fn ensure_index<'a>(
+    state_dir: &Path,
+    ctx: &'a mut SessionCtx,
+) -> Result<&'a mut CodeIndex, String> {
     if ctx.index.is_none() {
         let db = index_db_path(state_dir, &ctx.workspace_root);
         if let Some(parent) = db.parent() {
@@ -1394,7 +1614,10 @@ fn ensure_index<'a>(state_dir: &Path, ctx: &'a mut SessionCtx) -> Result<&'a mut
 
 /// Opens the session's index database only if it already exists; query
 /// methods must not silently return empty results from a never-built index.
-fn existing_index<'a>(state_dir: &Path, ctx: &'a mut SessionCtx) -> Result<&'a mut CodeIndex, String> {
+fn existing_index<'a>(
+    state_dir: &Path,
+    ctx: &'a mut SessionCtx,
+) -> Result<&'a mut CodeIndex, String> {
     if ctx.index.is_none() && !index_db_path(state_dir, &ctx.workspace_root).exists() {
         return Err("index not built — call kernel.index.build first".into());
     }
@@ -1620,6 +1843,14 @@ fn patch_native_bin() -> Result<PathBuf, String> {
             return Ok(candidate);
         }
     }
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join("carina-patch-native");
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
     Err("carina-patch-native not found (set CARINA_TOOLS_DIR or CARINA_PATCH_NATIVE_BIN); refusing to write directly".into())
 }
 
@@ -1634,13 +1865,19 @@ fn run_patch_native(subcmd: &str, plan: &Value) -> Result<String, String> {
         .spawn()
         .map_err(|e| format!("spawn carina-patch-native: {e}"))?;
     {
-        let stdin = child.stdin.as_mut().ok_or("carina-patch-native: no stdin")?;
-        stdin.write_all(plan.to_string().as_bytes()).map_err(err_str)?;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or("carina-patch-native: no stdin")?;
+        stdin
+            .write_all(plan.to_string().as_bytes())
+            .map_err(err_str)?;
     }
     let out = child.wait_with_output().map_err(err_str)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let last = stdout.lines().last().unwrap_or("");
-    let v: Value = serde_json::from_str(last).map_err(|_| format!("carina-patch-native bad output: {stdout}"))?;
+    let v: Value = serde_json::from_str(last)
+        .map_err(|_| format!("carina-patch-native bad output: {stdout}"))?;
     v.get("status")
         .and_then(Value::as_str)
         .map(String::from)
@@ -1652,6 +1889,26 @@ fn str_param(p: &Value, key: &str) -> Result<String, String> {
         .and_then(Value::as_str)
         .map(String::from)
         .ok_or_else(|| format!("{key} is required"))
+}
+
+fn patch_result_with_events(
+    tx: &PatchTransaction,
+    events: &[(Event, usize)],
+) -> Result<Value, String> {
+    let mut result = serde_json::to_value(tx).map_err(err_str)?;
+    let object = result
+        .as_object_mut()
+        .ok_or_else(|| "patch transaction did not serialize as an object".to_string())?;
+    object.insert(
+        "_audit_events".into(),
+        Value::Array(
+            events
+                .iter()
+                .map(|(event, cursor)| json!({"event": event, "cursor": cursor}))
+                .collect(),
+        ),
+    );
+    Ok(result)
 }
 
 fn err_str<E: std::fmt::Display>(e: E) -> String {

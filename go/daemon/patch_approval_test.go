@@ -65,6 +65,133 @@ func lastPatchRefusal(t *testing.T, d *Daemon, sessionID, patchID string) map[st
 	return payload
 }
 
+func TestKernelPatchEventsPublishLiveOnceWithoutPrivateMetadata(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var published []map[string]any
+	d.events.Tap(func(sessionID string, event map[string]any) {
+		if sessionID == sess.SessionID {
+			published = append(published, event)
+		}
+	})
+
+	result, err := d.handlePatchPropose(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID,
+		"task_id":    "task_live_patch",
+		"reason":     "show the edit immediately",
+		"files": []map[string]any{{
+			"path": "live.txt", "new_content": "EDIT-DIFF-LIVE-UNIQUE\n",
+		}},
+	}))
+	if err != nil {
+		t.Fatalf("patch propose: %v", err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "_audit_events") {
+		t.Fatalf("public patch response leaked private audit transport metadata: %s", raw)
+	}
+	var proposed struct {
+		PatchID       string `json:"patch_id"`
+		ApplyDecision struct {
+			DecisionID string `json:"decision_id"`
+		} `json:"apply_decision"`
+	}
+	if err := json.Unmarshal(raw, &proposed); err != nil {
+		t.Fatal(err)
+	}
+
+	var live []map[string]any
+	for _, event := range published {
+		if event["type"] == "PatchProposed" {
+			live = append(live, event)
+		}
+	}
+	if len(live) != 1 {
+		t.Fatalf("expected one live PatchProposed event, got %d: %+v", len(live), published)
+	}
+	payload, _ := live[0]["payload"].(map[string]any)
+	if diff, _ := payload["diff"].(string); !strings.Contains(diff, "EDIT-DIFF-LIVE-UNIQUE") {
+		t.Fatalf("live patch event did not carry its reviewable diff: %+v", live[0])
+	}
+	if cursor, ok := live[0][internalRawAuditCursor].(int); !ok || cursor <= 0 {
+		t.Fatalf("live patch event did not retain its durable replay cursor: %+v", live[0])
+	}
+
+	auditRaw, err := d.kern.ReadEvents(sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var auditEvents []struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(auditRaw, &auditEvents); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, event := range auditEvents {
+		if event.Type == "PatchProposed" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("kernel event fan-out duplicated durable PatchProposed events: %d", count)
+	}
+
+	if _, err := d.handleApprove(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "decision_id": proposed.ApplyDecision.DecisionID,
+	})); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	applied, err := d.handlePatchApply(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "patch_id": proposed.PatchID,
+	}))
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	appliedRaw, _ := json.Marshal(applied)
+	if strings.Contains(string(appliedRaw), "_audit_events") {
+		t.Fatalf("public apply response leaked private audit transport metadata: %s", appliedRaw)
+	}
+	rolled, err := d.handlePatchRollback(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "patch_id": proposed.PatchID,
+	}))
+	if err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	rolledRaw, _ := json.Marshal(rolled)
+	if strings.Contains(string(rolledRaw), "_audit_events") {
+		t.Fatalf("public rollback response leaked private audit transport metadata: %s", rolledRaw)
+	}
+
+	var lifecycle []string
+	var lastCursor int
+	for _, event := range published {
+		typeName, _ := event["type"].(string)
+		switch typeName {
+		case "PatchProposed", "PatchApplied", "RollbackStarted", "RollbackCompleted":
+			cursor, ok := event[internalRawAuditCursor].(int)
+			if !ok || cursor <= lastCursor {
+				t.Fatalf("patch lifecycle cursors are not strictly increasing: %+v", published)
+			}
+			lastCursor = cursor
+			lifecycle = append(lifecycle, typeName)
+		}
+	}
+	wantLifecycle := []string{"PatchProposed", "PatchApplied", "RollbackStarted", "RollbackCompleted"}
+	if strings.Join(lifecycle, ",") != strings.Join(wantLifecycle, ",") {
+		t.Fatalf("unexpected live patch lifecycle: got %v want %v", lifecycle, wantLifecycle)
+	}
+}
+
 // TestPatchApplyWithoutApprovalRefused reproduces the governance bypass found
 // by the TUI spikes (docs/plans/tui-stack-decision.md, spike verdict):
 // workspace.patch.apply must not apply a patch whose PatchApply decision is
@@ -200,7 +327,7 @@ func TestPatchApplyExpiredDecisionRefused(t *testing.T) {
 // handleApprove: checkPatchGate only discovers an elapsed approval window
 // when workspace.patch.apply is actually called (it lazily flips the gate
 // to "expired" as a side effect of being checked). If instead
-// task.action.approve (handleApprove) is called first — after the window
+// governance.action.approve (handleApprove) is called first — after the window
 // has already elapsed, but before any apply attempt ever ran checkPatchGate
 // — handleApprove unconditionally flips a "requires_approval" gate straight
 // to "allowed" with no expiry check of its own, so a stale, late approval
@@ -227,7 +354,7 @@ func TestLateApproveWithoutPriorApplyStillExpires(t *testing.T) {
 	// "requires_approval" verbatim.
 	time.Sleep(60 * time.Millisecond)
 
-	// An operator's approval (or the TUI's task.action.approve) arrives late,
+	// An operator's approval (or the TUI's governance.action.approve) arrives late,
 	// after the window already elapsed.
 	if _, err := d.handleApprove(mustJSON(t, map[string]any{
 		"session_id": sess.SessionID, "decision_id": decisionID, "approver": "operator",

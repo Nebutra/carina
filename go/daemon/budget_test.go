@@ -23,10 +23,10 @@ func TestTokenBudgetGovernor(t *testing.T) {
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "loop")
-	d.sched.SetTokenBudget(task.TaskID, 50)
+	d.sched.SetTokenBudget(task.RunID, 50)
 	d.runTask(sess, task)
 
-	tk, _ := d.sched.Get(task.TaskID)
+	tk, _ := d.sched.Get(task.RunID)
 	if tk.Status != "needs_input" {
 		t.Fatalf("over-budget run should pause for input, got %s", tk.Status)
 	}
@@ -36,11 +36,11 @@ func TestTokenBudgetGovernor(t *testing.T) {
 	if tk.TokensUsed == 0 {
 		t.Fatal("token spend should be metered")
 	}
-	raw, _ := json.Marshal(map[string]any{"task_id": task.TaskID, "additional_tokens": 5000, "approver": "test"})
+	raw, _ := json.Marshal(map[string]any{"run_id": task.RunID, "additional_tokens": 5000, "approver": "test"})
 	if _, err := d.handleTaskBudgetExtend(raw); err != nil {
 		t.Fatal(err)
 	}
-	extended, _ := d.sched.Get(task.TaskID)
+	extended, _ := d.sched.Get(task.RunID)
 	if extended.TokenBudget != 5050 {
 		t.Fatalf("budget=%d", extended.TokenBudget)
 	}
@@ -52,13 +52,13 @@ func TestBudgetExtensionRefusesMissingCheckpointWithoutChangingState(t *testing.
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
-	d.sched.SetTokenBudget(task.TaskID, 10)
-	d.sched.SetStatus(task.TaskID, "needs_input")
-	raw, _ := json.Marshal(map[string]any{"task_id": task.TaskID, "additional_tokens": 100, "approver": "test"})
+	d.sched.SetTokenBudget(task.RunID, 10)
+	d.sched.SetStatus(task.RunID, "needs_input")
+	raw, _ := json.Marshal(map[string]any{"run_id": task.RunID, "additional_tokens": 100, "approver": "test"})
 	if _, err := d.handleTaskBudgetExtend(raw); err == nil || !strings.Contains(err.Error(), "no durable checkpoint") {
 		t.Fatalf("expected safe resume refusal, got %v", err)
 	}
-	got, _ := d.sched.Get(task.TaskID)
+	got, _ := d.sched.Get(task.RunID)
 	if got.Status != "needs_input" || got.TokenBudget != 10 {
 		t.Fatalf("failed extension mutated task: %+v", got)
 	}

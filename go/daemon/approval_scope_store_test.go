@@ -235,7 +235,7 @@ func TestPermissionRequestIsDurableForReconnect(t *testing.T) {
 	sess, _ := d.store.CreateSessionMode(workspace, "safe-edit", "on_request")
 	d.kern.InitSessionFull(sess.SessionID, workspace, "safe-edit", "on_request", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "install")
-	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install durable", task.TaskID)
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install durable", task.RunID)
 	done := make(chan struct{})
 	go func() {
 		d.resolveApproval(sess, task, dec, "npm install durable")

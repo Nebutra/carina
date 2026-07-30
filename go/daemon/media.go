@@ -153,7 +153,7 @@ func (d *Daemon) validateTaskInputMedia(sessionID string, refs []MediaRef) ([]sc
 	return out, nil
 }
 
-func attachTaskInputMedia(transcript *Transcript, task *scheduler.Task) {
+func attachTaskInputMedia(transcript *Transcript, task *scheduler.ExecutionRun) {
 	if transcript == nil || task == nil || len(task.InputMediaRefs) == 0 {
 		return
 	}

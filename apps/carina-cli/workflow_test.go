@@ -28,6 +28,18 @@ func TestParseWorkflowRunArgs(t *testing.T) {
 	}
 }
 
+func TestCmdWorkflowHelpIsLocalAndComplete(t *testing.T) {
+	out, err := captureStdout(t, func() error { return cmdWorkflow(nil, []string{"--help"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"workflow run", "workflow list", "workflow status", "pause|resume|stop|restart"} {
+		if !strings.Contains(out, command) {
+			t.Fatalf("workflow help missing %q:\n%s", command, out)
+		}
+	}
+}
+
 func TestCmdWorkflowRunCreatesSessionAndRunsWorkflow(t *testing.T) {
 	s := rpc.NewServer()
 	var sessionParams, runParams map[string]any
@@ -123,7 +135,7 @@ func TestCmdWorkflowRunNonCompletedTerminalStatusIsAnError(t *testing.T) {
 	defer c.Close()
 
 	if _, err := captureStdout(t, func() error { return cmdWorkflowRun(c, []string{"review"}) }); err == nil {
-		t.Fatal("expected a non-nil error for a run that ends Failed, mirroring runWaitForTask's contract")
+		t.Fatal("expected a non-nil error for a run that ends Failed, mirroring runWaitForExecution's contract")
 	}
 }
 

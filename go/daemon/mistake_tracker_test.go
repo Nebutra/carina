@@ -105,7 +105,7 @@ func TestMistakeTrackerDegradesOnConsecutiveToolFailures(t *testing.T) {
 	// Every step reads a distinct nonexistent file (distinct action
 	// signatures -> LoopGuard never trips), but every read fails with
 	// io_error -> MistakeTracker's consecutive-failure streak should trip
-	// well before maxAgentTurns (14) or LoopGuard's MaxHardRepeat (6).
+	// well before maxAgentTurns or LoopGuard's MaxHardRepeat (6).
 	steps := []string{
 		`{"tool":"read","path":"missing-1.txt"}`,
 		`{"tool":"read","path":"missing-2.txt"}`,
@@ -118,7 +118,7 @@ func TestMistakeTrackerDegradesOnConsecutiveToolFailures(t *testing.T) {
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "read files that don't exist")
 	d.runTask(sess, task)
 
-	tk, ok := d.sched.Get(task.TaskID)
+	tk, ok := d.sched.Get(task.RunID)
 	if !ok || tk.Status != "degraded" {
 		t.Fatalf("consecutive tool failures should degrade the task, got %+v (ok=%v)", tk, ok)
 	}
@@ -152,7 +152,7 @@ func TestMistakeTrackerDoesNotTripOnAlternatingSuccessFailure(t *testing.T) {
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "alternate reads")
 	d.runTask(sess, task)
 
-	tk, ok := d.sched.Get(task.TaskID)
+	tk, ok := d.sched.Get(task.RunID)
 	if !ok || tk.Status != "completed" {
 		t.Fatalf("alternating success/failure must not trip the consecutive-failure breaker, got %+v (ok=%v)", tk, ok)
 	}

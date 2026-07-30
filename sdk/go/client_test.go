@@ -56,7 +56,7 @@ func TestCommonControlPlaneWrappers(t *testing.T) {
 				result = []any{map[string]any{"session_id": "s1"}}
 			case "session.replay":
 				result = []any{map[string]any{
-					"session_id": "s1", "type": "TaskCreated", "timestamp": "now",
+					"session_id": "s1", "type": "ExecutionQueued", "timestamp": "now",
 					"permission_decision_id": "perm_1", "actor": "go", "prev_hash": "prev", "event_hash": "event",
 				}}
 			case "workspace.search":
@@ -110,7 +110,7 @@ func TestCommonControlPlaneWrappers(t *testing.T) {
 	}
 }
 
-func TestResumeTaskUsesCanonicalRPC(t *testing.T) {
+func TestResumeExecutionUsesCanonicalRPC(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	defer serverConn.Close()
 	client := NewClient(rpc.NewClient(clientConn, clientConn, clientConn))
@@ -132,21 +132,31 @@ func TestResumeTaskUsesCanonicalRPC(t *testing.T) {
 			done <- err
 			return
 		}
-		if request.Method != "task.resume" || request.Params["task_id"] != "t1" {
+		if request.Method != "execution.resume" || request.Params["run_id"] != "t1" {
 			done <- fmt.Errorf("request = %+v", request)
 			return
 		}
-		response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"task_id": "t1", "session_id": "s1", "status": "running"}})
+		response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"run_id": "t1", "session_id": "s1", "status": "running"}})
 		_, err = serverConn.Write(append(response, '\n'))
 		done <- err
 	}()
 
-	task, err := client.ResumeTask("t1")
-	if err != nil || task.TaskID != "t1" || task.Status != "running" {
-		t.Fatalf("resume task = %+v, err=%v", task, err)
+	run, err := client.ResumeExecution("t1")
+	if err != nil || run.RunID != "t1" || run.Status != "running" {
+		t.Fatalf("resume execution = %+v, err=%v", run, err)
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExecutionRunDoesNotAcceptLegacyTaskIDAsRunID(t *testing.T) {
+	var run ExecutionRun
+	if err := json.Unmarshal([]byte(`{"task_id":"task_1","session_id":"sess_1","status":"running"}`), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.RunID != "" {
+		t.Fatalf("legacy task_id populated run_id: %+v", run)
 	}
 }
 
@@ -173,15 +183,15 @@ func TestCheckpointTypedWrappersDecodeCanonicalFixtures(t *testing.T) {
 				done <- fmt.Errorf("request method = %s, want %s, decode=%v", request.Method, method, err)
 				return
 			}
-			checkpoint := map[string]any{"checkpoint_id": "t:1:9", "created_at": "2026-07-14T00:00:00Z", "sequence": "00000000000000000009", "task_id": "t", "session_id": "s", "turn": 1, "applied_patches": []string{}}
+			checkpoint := map[string]any{"checkpoint_id": "t:1:9", "created_at": "2026-07-14T00:00:00Z", "sequence": "00000000000000000009", "run_id": "t", "session_id": "s", "turn": 1, "applied_patches": []string{}}
 			var result any
 			switch method {
 			case "session.checkpoint.preview":
 				result = map[string]any{"checkpoint": checkpoint, "conversation_turns": 1, "rollback_patches": []string{}, "will_resume": "paused"}
 			case "session.checkpoint.summarize":
-				result = map[string]any{"checkpoint_id": "t:1:9", "task_id": "t", "turn": 1, "recent": []any{}}
+				result = map[string]any{"checkpoint_id": "t:1:9", "run_id": "t", "turn": 1, "recent": []any{}}
 			case "session.checkpoint.restore":
-				result = map[string]any{"restored": true, "checkpoint_id": "t:1:9", "task_id": "t", "turn": 1, "rolled_back": []string{}, "status": "paused", "idempotent": true, "reconciliation_required": false, "journal_cleanup_pending": false}
+				result = map[string]any{"restored": true, "checkpoint_id": "t:1:9", "run_id": "t", "turn": 1, "rolled_back": []string{}, "status": "paused", "idempotent": true, "reconciliation_required": false, "journal_cleanup_pending": false}
 			}
 			response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
 			if _, err := serverConn.Write(append(response, '\n')); err != nil {
@@ -239,7 +249,7 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 			case "session.review":
 				result = reviewFixture()
 			case "session.items":
-				result = map[string]any{"data": []any{map[string]any{"type": "turn.started", "session_id": "s1", "task_id": "t1"}}, "next_cursor": "cp1.payload.signature", "projection_version": "1.0.0"}
+				result = map[string]any{"data": []any{map[string]any{"type": "turn.started", "session_id": "s1", "run_id": "t1"}}, "next_cursor": "cp1.payload.signature", "projection_version": "1.0.0"}
 			case "usage.cost":
 				result = map[string]any{"providers": []any{}, "totals": map[string]any{}, "estimated": false}
 			}
@@ -273,7 +283,7 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 	if report, err := client.Cost("s1", ""); err != nil || report.Estimated {
 		t.Fatalf("cost = %+v, %v", report, err)
 	}
-	if err := client.SteerTask("t1", "continue"); err != nil {
+	if err := client.SteerExecution("t1", "continue"); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.AnswerQuestion("q1", "yes"); err != nil {
@@ -286,7 +296,7 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 	if err != nil || event.Type != "ModelResponded" {
 		t.Fatalf("event = %+v, %v", event, err)
 	}
-	want := []string{"session.attach", "session.fork", "session.review", "session.items", "usage.cost", "task.steer", "task.user.answer", "session.events.stream"}
+	want := []string{"session.attach", "session.fork", "session.review", "session.items", "usage.cost", "execution.steer", "question.answer", "session.events.stream"}
 	if got := <-methods; !reflect.DeepEqual(got, want) {
 		t.Fatalf("methods = %v, want %v", got, want)
 	}
@@ -357,12 +367,12 @@ func TestRunStreamedEmitsAuthoritativeEventsAndUnsubscribes(t *testing.T) {
 			switch req.Method {
 			case "session.events.stream":
 				result = map[string]any{"subscription_id": "sub-1"}
-			case "task.submit":
-				result = map[string]any{"task_id": "t", "session_id": "s", "status": "queued"}
-			case "task.result":
-				note, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "event", "params": map[string]any{"session_id": "s", "task_id": "t", "type": "ModelResponded", "timestamp": "now"}})
+			case "execution.start":
+				result = map[string]any{"run_id": "t", "session_id": "s", "status": "queued"}
+			case "execution.status":
+				note, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "event", "params": map[string]any{"session_id": "s", "run_id": "t", "type": "ModelResponded", "timestamp": "now"}})
 				_, _ = serverConn.Write(append(note, '\n'))
-				result = map[string]any{"task_id": "t", "session_id": "s", "status": "completed", "summary": "ok"}
+				result = map[string]any{"run_id": "t", "session_id": "s", "status": "completed", "summary": "ok"}
 			}
 			response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
 			_, _ = serverConn.Write(append(response, '\n'))
@@ -377,7 +387,7 @@ func TestRunStreamedEmitsAuthoritativeEventsAndUnsubscribes(t *testing.T) {
 	if len(got) != 2 || got[0].Type != "event" || got[0].Event.Type != "ModelResponded" || got[1].Type != "turn.completed" {
 		t.Fatalf("stream = %+v", got)
 	}
-	want := []string{"session.events.stream", "task.submit", "task.result", "session.events.unsubscribe"}
+	want := []string{"session.events.stream", "execution.start", "execution.status", "session.events.unsubscribe"}
 	if seen := <-methods; !reflect.DeepEqual(seen, want) {
 		t.Fatalf("methods = %v, want %v", seen, want)
 	}
@@ -406,8 +416,8 @@ func TestRunStreamedCancellationCancelsTaskAndUnsubscribes(t *testing.T) {
 			result := any(map[string]any{})
 			if req.Method == "session.events.stream" {
 				result = map[string]any{"subscription_id": "sub-cancel"}
-			} else if req.Method == "task.submit" {
-				result = map[string]any{"task_id": "t", "session_id": "s", "status": "queued"}
+			} else if req.Method == "execution.start" {
+				result = map[string]any{"run_id": "t", "session_id": "s", "status": "queued"}
 			}
 			response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
 			_, _ = serverConn.Write(append(response, '\n'))
@@ -424,7 +434,7 @@ func TestRunStreamedCancellationCancelsTaskAndUnsubscribes(t *testing.T) {
 	if !errors.Is(last.Err, context.Canceled) {
 		t.Fatalf("stream error = %v, want context.Canceled", last.Err)
 	}
-	want := []string{"session.events.stream", "task.submit", "task.cancel", "session.events.unsubscribe"}
+	want := []string{"session.events.stream", "execution.start", "execution.cancel", "session.events.unsubscribe"}
 	if seen := <-methods; !reflect.DeepEqual(seen, want) {
 		t.Fatalf("methods = %v, want %v", seen, want)
 	}
@@ -455,14 +465,14 @@ func TestConcurrentRunStreamedRoutesEventsBySession(t *testing.T) {
 			switch req.Method {
 			case "session.events.stream":
 				result = map[string]any{"subscription_id": "sub-" + session}
-			case "task.submit":
-				result = map[string]any{"task_id": "task-" + session, "session_id": session, "status": "queued"}
-			case "task.result":
-				task, _ := req.Params["task_id"].(string)
+			case "execution.start":
+				result = map[string]any{"run_id": "task-" + session, "session_id": session, "status": "queued"}
+			case "execution.status":
+				task, _ := req.Params["run_id"].(string)
 				session = strings.TrimPrefix(task, "task-")
-				note, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "event", "params": map[string]any{"session_id": session, "task_id": task, "type": "ModelResponded"}})
+				note, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "event", "params": map[string]any{"session_id": session, "run_id": task, "type": "ModelResponded"}})
 				_, _ = serverConn.Write(append(note, '\n'))
-				result = map[string]any{"task_id": task, "session_id": session, "status": "completed", "summary": session}
+				result = map[string]any{"run_id": task, "session_id": session, "status": "completed", "summary": session}
 			case "session.events.unsubscribe":
 				mu.Lock()
 				unsubscribed[req.Params["subscription_id"].(string)] = true
@@ -520,14 +530,14 @@ func TestRunStreamedAbandonedConsumerCancelsAndUnsubscribes(t *testing.T) {
 			switch req.Method {
 			case "session.events.stream":
 				result = map[string]any{"subscription_id": "sub-s"}
-			case "task.submit":
-				result = map[string]any{"task_id": "t", "session_id": "s", "status": "queued"}
-			case "task.result":
+			case "execution.start":
+				result = map[string]any{"run_id": "t", "session_id": "s", "status": "queued"}
+			case "execution.status":
 				for i := 0; i < 100; i++ {
-					note, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "event", "params": map[string]any{"session_id": "s", "task_id": "t", "type": "Output", "payload": map[string]any{"n": i}}})
+					note, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "event", "params": map[string]any{"session_id": "s", "run_id": "t", "type": "Output", "payload": map[string]any{"n": i}}})
 					_, _ = serverConn.Write(append(note, '\n'))
 				}
-				result = map[string]any{"task_id": "t", "session_id": "s", "status": "running"}
+				result = map[string]any{"run_id": "t", "session_id": "s", "status": "running"}
 			}
 			response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
 			_, _ = serverConn.Write(append(response, '\n'))
@@ -541,7 +551,7 @@ func TestRunStreamedAbandonedConsumerCancelsAndUnsubscribes(t *testing.T) {
 	stream := thread.RunStreamed(context.Background(), "go", RunOptions{PollInterval: time.Millisecond})
 	select {
 	case seen := <-done:
-		if !containsString(seen, "task.cancel") || !containsString(seen, "session.events.unsubscribe") {
+		if !containsString(seen, "execution.cancel") || !containsString(seen, "session.events.unsubscribe") {
 			t.Fatalf("missing cleanup: %v", seen)
 		}
 	case <-time.After(2 * time.Second):
@@ -594,16 +604,16 @@ func TestHighLevelThreadRunNegotiatesAndUsesSchema(t *testing.T) {
 				result = map[string]any{"runtime_version": "0.6.5", "protocol_version": "1.2.0", "projection_version": "1.0.0", "capabilities": map[string]any{"tool_call_lifecycle": true, "event_schema_version": "0.3.0"}}
 			case "session.create":
 				result = map[string]any{"session_id": "s", "workspace_id": "w", "workspace_root": "/tmp", "status": "active"}
-			case "task.submit":
+			case "execution.start":
 				if _, ok := req.Params["output_schema"].(map[string]any); !ok {
 					t.Errorf("schema not forwarded: %T", req.Params["output_schema"])
 				}
 				if refs, ok := req.Params["input_media_refs"].([]any); !ok || len(refs) != 1 {
 					t.Errorf("media refs not forwarded: %#v", req.Params["input_media_refs"])
 				}
-				result = map[string]any{"task_id": "t", "session_id": "s", "status": "queued"}
-			case "task.result":
-				result = map[string]any{"task_id": "t", "session_id": "s", "status": "completed", "summary": "{\"status\":\"ok\"}"}
+				result = map[string]any{"run_id": "t", "session_id": "s", "status": "queued"}
+			case "execution.status":
+				result = map[string]any{"run_id": "t", "session_id": "s", "status": "completed", "summary": "{\"status\":\"ok\"}"}
 			}
 			response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
 			_, _ = serverConn.Write(append(response, '\n'))
@@ -618,7 +628,7 @@ func TestHighLevelThreadRunNegotiatesAndUsesSchema(t *testing.T) {
 	if err != nil || result.FinalResponse == "" {
 		t.Fatalf("%+v %v", result, err)
 	}
-	want := []string{"runtime.initialize", "session.create", "task.submit", "task.result"}
+	want := []string{"runtime.initialize", "session.create", "execution.start", "execution.status"}
 	if got := <-methods; !reflect.DeepEqual(got, want) {
 		t.Fatalf("%v", got)
 	}

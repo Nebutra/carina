@@ -5,11 +5,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Nebutra/carina/go/auth"
+	"github.com/Nebutra/carina/go/provider"
 )
 
 type modelInventoryModel struct {
 	ID                     string            `json:"id"`
+	DisplayID              string            `json:"display_id,omitempty"`
 	Name                   string            `json:"name,omitempty"`
 	Available              bool              `json:"available"`
 	Reasoning              bool              `json:"reasoning"`
@@ -21,14 +22,24 @@ type modelInventoryModel struct {
 }
 
 type modelInventoryProvider struct {
-	ID            string                `json:"id"`
-	Name          string                `json:"name,omitempty"`
-	Registered    bool                  `json:"registered"`
-	Available     bool                  `json:"available"`
-	AuthSource    string                `json:"auth_source,omitempty"`
-	DynamicModels bool                  `json:"dynamic_models"`
-	DefaultModel  string                `json:"default_model,omitempty"`
-	Models        []modelInventoryModel `json:"models"`
+	ID               string `json:"id"`
+	Name             string `json:"name,omitempty"`
+	Registered       bool   `json:"registered"`
+	Available        bool   `json:"available"`
+	AuthSource       string `json:"auth_source,omitempty"`
+	SourceKind       string `json:"source_kind,omitempty"`
+	SourceLabel      string `json:"source_label,omitempty"`
+	SourceApp        string `json:"source_app,omitempty"`
+	SourceRoute      string `json:"source_route,omitempty"`
+	SourceAuthMode   string `json:"source_auth_mode,omitempty"`
+	SourceAction     string `json:"source_action,omitempty"`
+	SourceCurrent    bool   `json:"source_current,omitempty"`
+	SourceImportable bool   `json:"source_importable,omitempty"`
+	SourceReason     string `json:"source_reason,omitempty"`
+	sourceRank       int
+	DynamicModels    bool                  `json:"dynamic_models"`
+	DefaultModel     string                `json:"default_model,omitempty"`
+	Models           []modelInventoryModel `json:"models"`
 }
 
 type modelInventoryReasoner struct {
@@ -49,15 +60,27 @@ func (d *Daemon) handleModelList(_ json.RawMessage) (any, error) {
 		if id == "" || detectRuntimeProtocol(info) == protocolUnsupported {
 			continue
 		}
-		chain := auth.ProviderChain(id, info.Env, d.authStore, nil)
+		chain := runtimeProviderAuthChain(info, d.authStore)
 		authSource := chain.ResolvedSource()
 		endpoint, hasEndpoint := runtimeBaseURL(info)
 		_, explicitEndpoint := runtimeBaseURLOverride(info)
-		available := registered[id] && (authSource != "" || (hasEndpoint && isLocalEndpoint(endpoint) && explicitEndpoint))
+		available := registered[id] && (authSource != "" || (hasEndpoint && explicitEndpoint && runtimeProviderAllowsNoAuth(info, endpoint)))
 		row := modelInventoryProvider{
 			ID: id, Name: info.Name, Registered: registered[id], Available: available,
 			AuthSource: authSource, DynamicModels: len(info.Models) == 0,
 			DefaultModel: runtimeDefaultModel(info), Models: []modelInventoryModel{},
+		}
+		if info.Source != nil {
+			row.SourceKind = info.Source.Kind
+			row.SourceLabel = info.Source.Label
+			row.SourceApp = info.Source.App
+			row.SourceRoute = info.Source.Route
+			row.SourceAuthMode = info.Source.AuthMode
+			row.SourceAction = info.Source.Action
+			row.SourceCurrent = info.Source.Current
+			row.SourceImportable = info.Source.Importable
+			row.SourceReason = info.Source.Reason
+			row.sourceRank = info.Source.Rank
 		}
 		for key, model := range info.Models {
 			modelID := strings.TrimSpace(model.ID)
@@ -68,8 +91,12 @@ func (d *Daemon) handleModelList(_ json.RawMessage) (any, error) {
 				continue
 			}
 			effort := catalogReasoningEffortSpec(id, modelID, model)
+			displayID := id + "/" + modelID
+			if info.Source != nil {
+				displayID = info.Name + " / " + modelID
+			}
 			row.Models = append(row.Models, modelInventoryModel{
-				ID: id + "/" + modelID, Name: model.Name, Available: available,
+				ID: id + "/" + modelID, DisplayID: displayID, Name: model.Name, Available: available,
 				Reasoning: model.Reasoning, ReasoningOptions: model.ReasoningOptions,
 				ReasoningEfforts: effort.Options, DefaultReasoningEffort: effort.Default,
 				ImageInput: modelSupportsImageInput(model), ToolCall: model.ToolCall,
@@ -78,11 +105,48 @@ func (d *Daemon) handleModelList(_ json.RawMessage) (any, error) {
 		sort.Slice(row.Models, func(i, j int) bool { return row.Models[i].ID < row.Models[j].ID })
 		providers = append(providers, row)
 	}
+	sort.SliceStable(providers, func(i, j int) bool {
+		left, right := providerInventoryRank(providers[i]), providerInventoryRank(providers[j])
+		if left != right {
+			return left < right
+		}
+		if providers[i].SourceKind == provider.CCSwitchSourceKind && providers[j].SourceKind == provider.CCSwitchSourceKind {
+			if providers[i].sourceRank != providers[j].sourceRank {
+				return providers[i].sourceRank < providers[j].sourceRank
+			}
+			if providers[i].Name != providers[j].Name {
+				return providers[i].Name < providers[j].Name
+			}
+			return providers[i].ID < providers[j].ID
+		}
+		return false
+	})
 	return map[string]any{
 		"default_model": modelInventoryDefault(providers),
 		"reasoner":      d.modelInventoryReasoner(providers),
 		"providers":     providers,
 	}, nil
+}
+
+func providerInventoryRank(row modelInventoryProvider) int {
+	if row.Registered && row.Available {
+		return 0
+	}
+	if row.SourceKind == provider.CCSwitchSourceKind {
+		switch row.SourceRoute {
+		case provider.CCSwitchRouteManagedProxy:
+			if row.SourceImportable {
+				return 10
+			}
+			return 20
+		case provider.CCSwitchRouteSavedProfile:
+			if row.SourceImportable {
+				return 30
+			}
+			return 40
+		}
+	}
+	return 50
 }
 
 func modelInventoryDefault(providers []modelInventoryProvider) string {
@@ -110,7 +174,7 @@ func (d *Daemon) modelInventoryReasoner(providers []modelInventoryProvider) mode
 	if backend == "" && d.reasoner != nil {
 		backend = strings.TrimSpace(d.reasoner.Name())
 	}
-	available := d.reasoner != nil
+	available := d.reasonerReady()
 	if backend == reasonerBackendRouter {
 		available = available && modelInventoryDefault(providers) != ""
 	}

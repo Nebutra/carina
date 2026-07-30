@@ -15,7 +15,7 @@ import (
 // checkpoint as read-only context. Recorded as a side_query audit event only.
 func (d *Daemon) handleTaskBtw(params json.RawMessage) (any, error) {
 	var p struct {
-		TaskID   string `json:"task_id"`
+		RunID    string `json:"run_id"`
 		Question string `json:"question"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -24,20 +24,20 @@ func (d *Daemon) handleTaskBtw(params json.RawMessage) (any, error) {
 	if strings.TrimSpace(p.Question) == "" {
 		return nil, fmt.Errorf("btw needs a question")
 	}
-	task, ok := d.sched.Get(p.TaskID)
+	task, ok := d.sched.Get(p.RunID)
 	if !ok {
-		return nil, fmt.Errorf("unknown task %s", p.TaskID)
+		return nil, fmt.Errorf("unknown execution %s", p.RunID)
 	}
 	sess, ok := d.store.Get(task.SessionID)
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", task.SessionID)
 	}
-	if d.reasoner == nil {
+	if !d.reasonerReady() {
 		return nil, fmt.Errorf("no reasoner available for a side-query")
 	}
 
 	var transcript string
-	if cp := d.runs.loadCheckpoint(p.TaskID); cp != nil && cp.Transcript != nil {
+	if cp := d.runs.loadCheckpoint(p.RunID); cp != nil && cp.Transcript != nil {
 		transcript = cp.Transcript.render()
 	}
 	ans, err := thinkWithRetryModel(context.Background(), d.reasoner, taskModel(task), buildSideQueryPrompt(task, p.Question, transcript))
@@ -46,12 +46,12 @@ func (d *Daemon) handleTaskBtw(params json.RawMessage) (any, error) {
 	}
 	// Ephemeral: audited as a side_query, but never folded into the transcript,
 	// so the main run's state and plan are untouched.
-	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go",
 		map[string]any{"status": "side_query", "question": truncate(p.Question, 200)}, "")
 	return map[string]any{"answer": ans, "ephemeral": true}, nil
 }
 
-func buildSideQueryPrompt(task *scheduler.Task, question, transcript string) string {
+func buildSideQueryPrompt(task *scheduler.ExecutionRun, question, transcript string) string {
 	var b strings.Builder
 	b.WriteString("You are mid-task. Answer this SIDE QUESTION briefly and directly. ")
 	b.WriteString("Your answer is ephemeral — it will NOT be added to your task transcript and must not change your plan.\n\n")

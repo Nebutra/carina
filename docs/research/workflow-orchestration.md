@@ -40,7 +40,7 @@
 - **workflow 定义 = 纯数据**(新 `protocol/schemas/workflow.schema.json`):steps(kind: agent/tool/model/router/evaluator/subworkflow)+ edges(normal/conditional/join)+ state(channels+reducers)+ limits(max_supersteps/max_visits)。**条件用沙箱表达式(JSONLogic/CEL,不可执行代码)** —— 相对 LangGraph 任意 Python 节点的安全+审计优势。
 - **执行 = super-step/BSP 循环**:算 ready 集(in-edges 满足+条件真+visits<上限)→ 并发派 scheduler.Task → barrier → reducer 合并 State → 评估 out-edges → 记 EdgeTaken → Superstep++。
 - **五模式映射**:chaining=normal edges;routing=router step+conditional;parallelization=fan-out+join(sectioning)或 replicas+append(voting);orchestrator-workers=step 运行时发 Send;evaluator-optimizer=grade→patch 有界环。
-- **免费复用**:checkpoint/resume=replay event log;HITL=step.requires_approval 复用 waiting_approval+pendingCmds+task.action.approve;终止=max_supersteps+max_visits。
+- **免费复用**:checkpoint/resume=replay event log;HITL=step.requires_approval 复用 waiting_approval+pendingCmds+governance.action.approve;终止=max_supersteps+max_visits。
 - **★ 安全差异点**:每 step 声明 `risk_ceiling`,kernel 强制 —— workflow 能**编排**能力但不能**提权**;编排是确定性 Go,step 内副作用仍走 kernel→Zig,审计保留 Go→Rust→Zig actor。
 - 新事件:WorkflowCreated/StepStarted/StepCompleted/StepFailed/StepSkipped/StepAwaitingApproval/EdgeTaken/WorkflowCompleted/WorkflowFailed(进哈希链,actor=go)。
 - 新 RPC:workflow.define/submit/status/cancel + workflow.events.stream。CLI:carina workflow submit/status/replay。

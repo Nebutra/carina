@@ -30,22 +30,31 @@ type Decision struct {
 
 // Patch mirrors protocol/schemas/patch-transaction.schema.json.
 type Patch struct {
-	PatchID         string   `json:"patch_id"`
-	SessionID       string   `json:"session_id"`
-	TaskID          string   `json:"task_id,omitempty"`
-	AgentStepID     string   `json:"agent_step_id,omitempty"`
-	ModelID         string   `json:"model_id,omitempty"`
-	CreatedAt       string   `json:"created_at"`
-	Status          string   `json:"status"`
-	AffectedFiles   []string `json:"affected_files"`
-	BaseHash        string   `json:"base_hash"`
-	NewHash         string   `json:"new_hash,omitempty"`
-	Diff            string   `json:"diff"`
-	Reason          string   `json:"reason"`
-	RiskLevel       int      `json:"risk_level"`
-	ApprovalStatus  string   `json:"approval_status"`
-	TestStatus      string   `json:"test_status"`
-	RollbackPointer string   `json:"rollback_pointer,omitempty"`
+	PatchID         string           `json:"patch_id"`
+	SessionID       string           `json:"session_id"`
+	TaskID          string           `json:"task_id,omitempty"`
+	AgentStepID     string           `json:"agent_step_id,omitempty"`
+	ModelID         string           `json:"model_id,omitempty"`
+	CreatedAt       string           `json:"created_at"`
+	Status          string           `json:"status"`
+	AffectedFiles   []string         `json:"affected_files"`
+	BaseHash        string           `json:"base_hash"`
+	NewHash         string           `json:"new_hash,omitempty"`
+	Diff            string           `json:"diff"`
+	Reason          string           `json:"reason"`
+	RiskLevel       int              `json:"risk_level"`
+	ApprovalStatus  string           `json:"approval_status"`
+	TestStatus      string           `json:"test_status"`
+	RollbackPointer string           `json:"rollback_pointer,omitempty"`
+	AuditEvents     []PersistedEvent `json:"_audit_events,omitempty"`
+}
+
+// PersistedEvent carries a kernel-authored event and its durable raw cursor
+// across the private kernel/daemon boundary. Daemon callers must publish and
+// clear this metadata before returning a Patch through a public RPC.
+type PersistedEvent struct {
+	Event  map[string]any `json:"event"`
+	Cursor int            `json:"cursor"`
 }
 
 // FileChange is one file in a patch proposal (full-content MVP semantics).

@@ -25,6 +25,8 @@ LOGO_DERIVATIVES = [
     "docs/brand/assets/logo/carina-symbol-high-contrast.svg",
     "docs/brand/assets/logo/carina-sprite.svg",
     "docs/brand/assets/logo/raster/carina-symbol.png",
+    "docs/brand/assets/logo/raster/carina-symbol-terminal-microtype.png",
+    "docs/brand/assets/logo/carina-symbol-terminal-braille.txt",
     "docs/brand/assets/logo/raster/carina-wordmark.png",
 ]
 FONT_FILES = [
@@ -220,28 +222,20 @@ def validate_structure() -> None:
 
     theme_path = ROOT / "crates/carina-tui/src/theme.rs"
     theme = theme_path.read_text(encoding="utf-8")
+    dark_palette = theme.split("fn dark()", 1)[1].split("fn light()", 1)[0]
     rust_colors: dict[str, str] = {}
     color_pattern = re.compile(
-        r"^\s*(?P<role>[a-z_]+):\s*Color::Rgb\("
-        r"0x(?P<red>[0-9a-fA-F]{2}),\s*"
-        r"0x(?P<green>[0-9a-fA-F]{2}),\s*"
-        r"0x(?P<blue>[0-9a-fA-F]{2})\),\s*$",
-        re.MULTILINE,
+        r"(?P<role>[a-z_]+):\s*\[\s*(?P<red>\d+),\s*"
+        r"(?P<green>\d+),\s*(?P<blue>\d+)\s*\]"
     )
-    for match in color_pattern.finditer(theme):
-        role = match.group("role")
-        if role in rust_colors:
-            raise ValueError(f"duplicate RGB assignment for TUI theme role {role}")
-        rust_colors[role] = "#{red}{green}{blue}".format(**match.groupdict()).lower()
+    for match in color_pattern.finditer(dark_palette):
+        channels = [int(match.group(channel)) for channel in ("red", "green", "blue")]
+        rust_colors[match.group("role")] = "#{:02x}{:02x}{:02x}".format(*channels)
 
     semantic_roles = {
-        "background": "background-page",
         "surface": "background-surface",
         "raised": "background-raised",
         "border": "border",
-        "text": "text-primary",
-        "muted": "text-secondary",
-        "brand": "brand-mark",
         "accent": "accent",
         "success": "success",
         "warning": "warning",
@@ -257,6 +251,12 @@ def validate_structure() -> None:
             raise ValueError(
                 f"TUI theme role {rust_role} must consume {semantic_role} ({expected_value})"
             )
+
+    if "background: Color::Reset" not in theme or "text: Color::Reset" not in theme:
+        raise ValueError("TUI root and primary text must inherit terminal defaults")
+    render_source = (ROOT / "crates/carina-tui/src/app/render.rs").read_text(encoding="utf-8")
+    if "Block::default().style(Style::default().bg(self.theme.background))" in render_source:
+        raise ValueError("TUI renderer must not paint the root terminal background")
 
     parsed_colors = set(rust_colors.values())
     if {"#1a191d", "#733445"} & parsed_colors:

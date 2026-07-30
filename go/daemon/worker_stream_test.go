@@ -112,7 +112,7 @@ func TestRemoteWorkerAndEventStream(t *testing.T) {
 	}()
 
 	// Trigger events by submitting a task.
-	if err := sc.Call("task.submit", map[string]any{"session_id": sess.SessionID, "prompt": "hi"}, &struct{}{}); err != nil {
+	if err := sc.Call("execution.start", map[string]any{"session_id": sess.SessionID, "prompt": "hi"}, &struct{}{}); err != nil {
 		t.Fatal(err)
 	}
 

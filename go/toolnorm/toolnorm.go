@@ -15,6 +15,7 @@
 package toolnorm
 
 import (
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -257,7 +258,12 @@ func wrapperArgCount(wrapper string, rest []string) int {
 func Canonicalize(argv []string, workspaceRoot string) Canonical {
 	expanded := make([]string, len(argv))
 	wasRelative := make([]bool, len(argv))
+	shellScript := shellScriptArgument(argv)
 	for i, a := range argv {
+		if i == shellScript {
+			expanded[i] = a
+			continue
+		}
 		expanded[i], wasRelative[i] = expandPath(a, workspaceRoot, i)
 	}
 
@@ -298,6 +304,49 @@ func Canonicalize(argv []string, workspaceRoot string) Canonical {
 	}
 }
 
+// shellScriptArgument returns the argv index owned by a POSIX shell's -c
+// option. That token is a program, not a path. Treating a script containing
+// slashes as one workspace-relative filename corrupts commands such as
+// `bash -lc "cat > file <<EOF ..."` before policy and execution see them.
+func shellScriptArgument(argv []string) int {
+	command := commandStart(argv)
+	if len(argv)-command < 3 {
+		return -1
+	}
+	switch filepath.Base(argv[command]) {
+	case "sh", "bash", "dash", "ksh", "zsh":
+	default:
+		return -1
+	}
+	for i := command + 1; i+1 < len(argv); i++ {
+		option := argv[i]
+		if option == "-c" || (strings.HasPrefix(option, "-") && !strings.HasPrefix(option, "--") && strings.Contains(option[1:], "c")) {
+			return i + 1
+		}
+	}
+	return -1
+}
+
+// commandStart finds the command after the same env assignments and no-op
+// wrappers used by Canonicalize's policy classification. It runs on raw argv
+// so a wrapped shell program can be protected before any path expansion.
+func commandStart(argv []string) int {
+	start := 0
+	for start < len(argv) {
+		if _, _, ok := isEnvAssignment(argv[start]); ok {
+			start++
+			continue
+		}
+		wrapper := argv[start]
+		if !noOpWrappers[wrapper] {
+			break
+		}
+		skip := 1 + wrapperArgCount(wrapper, argv[start+1:])
+		start += min(skip, len(argv)-start)
+	}
+	return start
+}
+
 // expandPath resolves a single argv token to an absolute path when it looks
 // like a path expression (~-prefixed, ./ or ../ prefixed, or otherwise
 // relative-looking with a path separator). argv[0] (the command name
@@ -313,6 +362,12 @@ func expandPath(tok string, workspaceRoot string, index int) (string, bool) {
 		return tok, false
 	}
 	if filepath.IsAbs(tok) {
+		return tok, false
+	}
+	// URLs are opaque command arguments, never workspace-relative paths.
+	// Treat only absolute hierarchical URLs as such so ordinary tokens with a
+	// colon keep the existing path rules.
+	if parsed, err := url.Parse(tok); err == nil && parsed.IsAbs() && parsed.Host != "" {
 		return tok, false
 	}
 	switch {

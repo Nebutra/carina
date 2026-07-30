@@ -231,4 +231,19 @@ mod tests {
         let has_color = sequences.iter().any(|s| s.contains("Red Text"));
         assert!(has_color, "Colored text should be present");
     }
+
+    #[test]
+    fn vt100_snapshot_preserves_committed_rows_above_the_viewport() {
+        let mut terminal = MockTerminal::new(32, 8, 2);
+        emit_to_scrollback(&mut terminal, "first\r\nsecond\r\n").unwrap();
+
+        let mut parser = vt100::Parser::new(8, 32, 64);
+        parser.process(&terminal.writer.buffer);
+        assert_eq!(
+            parser.screen().contents(),
+            "\n\n\nfirst\nsecond",
+            "escape-sequence behavior changed:\n{:?}",
+            String::from_utf8_lossy(&terminal.writer.buffer)
+        );
+    }
 }

@@ -120,9 +120,18 @@ impl Profile {
             file_read_in_workspace: true,
             file_write: WriteMode::PatchOnly,
             command_allowlist: [
-                "npm test", "pnpm test", "yarn test", "bun test", "cargo test",
-                "cargo check", "go test ./...", "go vet ./...", "pytest",
-                "make test", "zig build test", "tsc --noEmit",
+                "npm test",
+                "pnpm test",
+                "yarn test",
+                "bun test",
+                "cargo test",
+                "cargo check",
+                "go test ./...",
+                "go vet ./...",
+                "pytest",
+                "make test",
+                "zig build test",
+                "tsc --noEmit",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -151,8 +160,15 @@ impl Profile {
             file_read_in_workspace: true,
             file_write: WriteMode::PatchOnly,
             command_allowlist: [
-                "npm ci", "npm test", "npm run build", "cargo build", "cargo test",
-                "go build ./...", "go test ./...", "make", "make test",
+                "npm ci",
+                "npm test",
+                "npm run build",
+                "cargo build",
+                "cargo test",
+                "go build ./...",
+                "go test ./...",
+                "make",
+                "make test",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -219,8 +235,13 @@ impl Profile {
 
     pub fn builtin_names() -> &'static [&'static str] {
         &[
-            "read-only", "safe-edit", "full-workspace", "ci-runner",
-            "sandboxed", "trusted-local", "enterprise-restricted",
+            "read-only",
+            "safe-edit",
+            "full-workspace",
+            "ci-runner",
+            "sandboxed",
+            "trusted-local",
+            "enterprise-restricted",
         ]
     }
 
@@ -245,9 +266,15 @@ impl Profile {
         };
         Ok(Self {
             name: raw.name,
-            file_read_in_workspace: matches!(rules.file_read.allow.as_deref(), Some("workspace") | None),
+            file_read_in_workspace: matches!(
+                rules.file_read.allow.as_deref(),
+                Some("workspace") | None
+            ),
             file_write,
-            command_allowlist: raw.command_allowlist.map(|a| a.patterns).unwrap_or_default(),
+            command_allowlist: raw
+                .command_allowlist
+                .map(|a| a.patterns)
+                .unwrap_or_default(),
             max_command_risk: rules.command_exec.max_risk_level.unwrap_or(0),
             network,
             secret_read: !matches!(rules.secret_read.allow.as_deref(), Some("none") | None),
@@ -259,7 +286,12 @@ impl Profile {
     pub fn describe(&self) -> ProfileDescription {
         ProfileDescription {
             name: self.name.clone(),
-            file_read: if self.file_read_in_workspace { "workspace" } else { "none" }.into(),
+            file_read: if self.file_read_in_workspace {
+                "workspace"
+            } else {
+                "none"
+            }
+            .into(),
             file_write: match self.file_write {
                 WriteMode::Denied => "none",
                 WriteMode::PatchOnly => "patch_only",
@@ -369,9 +401,17 @@ impl PolicyBundle {
     }
 
     /// Applies the bundle to a profile decision, only ever tightening it.
-    fn constrain(&self, req: &CapabilityRequest, decision: Verdict, reason: String) -> (Verdict, String) {
+    fn constrain(
+        &self,
+        req: &CapabilityRequest,
+        decision: Verdict,
+        reason: String,
+    ) -> (Verdict, String) {
         if self.deny_capabilities.contains(&req.capability) {
-            return (Verdict::Denied, format!("org policy '{}' denies {:?}", self.name, req.capability));
+            return (
+                Verdict::Denied,
+                format!("org policy '{}' denies {:?}", self.name, req.capability),
+            );
         }
         // CodeIndex is derived FileRead access (the per-workspace index DB
         // stores file content and outlives sessions), so a bundle constraint
@@ -382,13 +422,19 @@ impl PolicyBundle {
         {
             return (
                 Verdict::Denied,
-                format!("org policy '{}' denies FileRead (the code index is derived read access)", self.name),
+                format!(
+                    "org policy '{}' denies FileRead (the code index is derived read access)",
+                    self.name
+                ),
             );
         }
         if req.capability == Capability::NetworkAccess
             && self.deny_network_hosts.iter().any(|h| h == &req.resource)
         {
-            return (Verdict::Denied, format!("org policy '{}' blocks host {}", self.name, req.resource));
+            return (
+                Verdict::Denied,
+                format!("org policy '{}' blocks host {}", self.name, req.resource),
+            );
         }
         if req.capability == Capability::CommandExec {
             if let Some(cap) = self.max_command_risk {
@@ -409,7 +455,10 @@ impl PolicyBundle {
         {
             return (
                 Verdict::RequiresApproval,
-                format!("org policy '{}' requires approval for {:?}", self.name, req.capability),
+                format!(
+                    "org policy '{}' requires approval for {:?}",
+                    self.name, req.capability
+                ),
             );
         }
         (decision, reason)
@@ -461,14 +510,18 @@ impl PolicyEngine {
                 if is_sensitive_file(&req.resource) {
                     return (
                         Verdict::Denied,
-                        "sensitive file (credentials/secret material) — use the secret broker".into(),
+                        "sensitive file (credentials/secret material) — use the secret broker"
+                            .into(),
                     );
                 }
                 if let Err(e) = guard_special_path(&req.resource) {
                     return (Verdict::Denied, e);
                 }
                 if path_within_workspace(root, Path::new(&req.resource)) {
-                    (Verdict::Allowed, format!("{} allows FileRead within workspace", profile.name))
+                    (
+                        Verdict::Allowed,
+                        format!("{} allows FileRead within workspace", profile.name),
+                    )
                 } else {
                     (Verdict::Denied, "path escapes workspace boundary".into())
                 }
@@ -492,29 +545,48 @@ impl PolicyEngine {
             },
             Capability::PatchApply => match profile.file_write {
                 WriteMode::Denied => (Verdict::Denied, "profile denies all writes".into()),
-                _ => (Verdict::RequiresApproval, "patch apply requires approval".into()),
+                _ => (
+                    Verdict::RequiresApproval,
+                    "patch apply requires approval".into(),
+                ),
             },
             Capability::CommandExec => {
                 let risk = classify_command(&req.resource);
                 if risk >= 5 {
-                    return (Verdict::Denied, "destructive command (risk level 5) denied by default".into());
+                    return (
+                        Verdict::Denied,
+                        "destructive command (risk level 5) denied by default".into(),
+                    );
                 }
                 if profile.command_allowlist.iter().any(|c| c == &req.resource) {
-                    return (Verdict::Allowed, format!("{} allowlist match", profile.name));
+                    return (
+                        Verdict::Allowed,
+                        format!("{} allowlist match", profile.name),
+                    );
                 }
                 if risk <= profile.max_command_risk {
-                    (Verdict::Allowed, format!("risk level {risk} within profile ceiling"))
+                    (
+                        Verdict::Allowed,
+                        format!("risk level {risk} within profile ceiling"),
+                    )
                 } else if risk >= 4 {
-                    (Verdict::Denied, format!("risk level {risk} requires an explicit profile"))
+                    (
+                        Verdict::Denied,
+                        format!("risk level {risk} requires an explicit profile"),
+                    )
                 } else {
-                    (Verdict::RequiresApproval, format!("risk level {risk} exceeds profile ceiling"))
+                    (
+                        Verdict::RequiresApproval,
+                        format!("risk level {risk} exceeds profile ceiling"),
+                    )
                 }
             }
             Capability::NetworkAccess => match &profile.network {
                 NetworkMode::Denied => (Verdict::Denied, "profile denies network access".into()),
-                NetworkMode::RequiresApproval => {
-                    (Verdict::RequiresApproval, "network access requires approval".into())
-                }
+                NetworkMode::RequiresApproval => (
+                    Verdict::RequiresApproval,
+                    "network access requires approval".into(),
+                ),
                 NetworkMode::Allowlist(hosts) => {
                     if hosts.iter().any(|h| h == &req.resource) {
                         (Verdict::Allowed, "host on network allowlist".into())
@@ -525,22 +597,30 @@ impl PolicyEngine {
             },
             Capability::SecretRead => {
                 if profile.secret_read {
-                    (Verdict::RequiresApproval, "secret access always requires approval".into())
+                    (
+                        Verdict::RequiresApproval,
+                        "secret access always requires approval".into(),
+                    )
                 } else {
                     (Verdict::Denied, "profile denies SecretRead".into())
                 }
             }
-            Capability::GitOperation | Capability::ProcessSpawn => {
-                (Verdict::RequiresApproval, "mediated operation requires approval".into())
-            }
+            Capability::GitOperation | Capability::ProcessSpawn => (
+                Verdict::RequiresApproval,
+                "mediated operation requires approval".into(),
+            ),
             Capability::PluginLoad => {
                 // Plugins and MCP tool loads are mediated (approval), not denied
                 // outright — the plugin runtime and MCP client are implemented.
-                (Verdict::RequiresApproval, "plugin/MCP load requires approval".into())
+                (
+                    Verdict::RequiresApproval,
+                    "plugin/MCP load requires approval".into(),
+                )
             }
-            Capability::RemoteExecute => {
-                (Verdict::Denied, "remote execution is not enabled for this profile".into())
-            }
+            Capability::RemoteExecute => (
+                Verdict::Denied,
+                "remote execution is not enabled for this profile".into(),
+            ),
             Capability::MemoryWrite => (
                 Verdict::RequiresApproval,
                 "persistent memory write requires approval".into(),
@@ -556,14 +636,17 @@ impl PolicyEngine {
                 // (the per-workspace DB outlives sessions, so the *querying*
                 // session's read policy must hold too, not just the ingesting one's).
                 if profile.file_read_in_workspace {
-                    (Verdict::Allowed, format!("{} allows FileRead within workspace", profile.name))
+                    (
+                        Verdict::Allowed,
+                        format!("{} allows FileRead within workspace", profile.name),
+                    )
                 } else {
                     (Verdict::Denied, "profile denies FileRead".into())
                 }
             }
             Capability::ContextCompress => {
-                // The managed Headroom adapter is a session-scoped, reversible
-                // transform (compressed output always carries an OriginalRef/
+                // A context adapter must be a session-scoped, reversible transform
+                // (compressed output always carries an OriginalRef/
                 // OriginalSHA256 back to the untouched content — see
                 // context_compression.go). It is allowed by default so routine
                 // per-observation compression doesn't stall on approval, but the
@@ -663,10 +746,21 @@ pub fn is_sensitive_file(path: &str) -> bool {
 
     // Exact/base-name matches for secret files.
     let sensitive_names = [
-        ".env", ".npmrc", ".pypirc", ".netrc", ".git-credentials",
-        "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", "credentials",
+        ".env",
+        ".npmrc",
+        ".pypirc",
+        ".netrc",
+        ".git-credentials",
+        "id_rsa",
+        "id_ed25519",
+        "id_ecdsa",
+        "id_dsa",
+        "credentials",
     ];
-    if sensitive_names.iter().any(|n| base == *n || base.starts_with(".env.")) {
+    if sensitive_names
+        .iter()
+        .any(|n| base == *n || base.starts_with(".env."))
+    {
         return true;
     }
     // Path-segment matches for secret directories.
@@ -719,7 +813,7 @@ pub enum ApprovalMode {
 }
 
 impl ApprovalMode {
-    pub fn from_str(s: &str) -> ApprovalMode {
+    pub fn parse_lossy(s: &str) -> ApprovalMode {
         match s {
             "untrusted" => ApprovalMode::Untrusted,
             "never" => ApprovalMode::Never,
@@ -804,24 +898,45 @@ fn carried_command(atom: &str) -> Option<String> {
 fn classify_atom(command: &str) -> u8 {
     let cmd = command.trim();
     let destructive = ["rm -rf", "rm -fr", "mkfs", "dd if=", ":(){", "> /dev/"];
-    if destructive.iter().any(|p| cmd.contains(p)) || (cmd.contains("curl") && cmd.contains("| sh"))
+    if destructive.iter().any(|p| cmd.contains(p))
+        || (cmd.contains("curl") && cmd.contains("| sh"))
         || (cmd.contains("wget") && cmd.contains("| sh"))
     {
         return 5;
     }
-    let network = ["git push", "deploy", "kubectl apply", "terraform apply", "curl ", "wget ", "ssh "];
-    if network.iter().any(|p| cmd.starts_with(p) || cmd.contains(p)) {
+    let network = [
+        "git push",
+        "deploy",
+        "kubectl apply",
+        "terraform apply",
+        "curl ",
+        "wget ",
+        "ssh ",
+    ];
+    if network
+        .iter()
+        .any(|p| cmd.starts_with(p) || cmd.contains(p))
+    {
         return 4;
     }
-    let mutation = ["git checkout", "git reset", "mv ", "rm ", "chmod ", "chown "];
+    let mutation = [
+        "git checkout",
+        "git reset",
+        "mv ",
+        "rm ",
+        "chmod ",
+        "chown ",
+    ];
     if mutation.iter().any(|p| cmd.starts_with(p)) {
         return 3;
     }
     // Flag-level: a read-only-looking command turned mutating by a flag.
     if cmd.contains("find")
-        && ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"]
-            .iter()
-            .any(|f| cmd.contains(f))
+        && [
+            "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls",
+        ]
+        .iter()
+        .any(|f| cmd.contains(f))
     {
         return 3;
     }
@@ -838,17 +953,59 @@ fn classify_atom(command: &str) -> u8 {
     if cmd.starts_with("git ") {
         return if is_readonly_git(cmd) { 0 } else { 3 };
     }
-    let install = ["npm install", "npm i ", "pnpm add", "yarn add", "pip install", "cargo add", "brew install", "go get"];
+    let install = [
+        "npm install",
+        "npm i ",
+        "pnpm add",
+        "yarn add",
+        "pip install",
+        "cargo add",
+        "brew install",
+        "go get",
+    ];
     if install.iter().any(|p| cmd.starts_with(p)) {
         return 2;
     }
-    let build = ["npm test", "pnpm test", "cargo test", "cargo check", "cargo build", "go test", "go build", "go vet", "pytest", "make", "zig build", "tsc", "eslint", "prettier"];
+    let build = [
+        "npm test",
+        "pnpm test",
+        "cargo test",
+        "cargo check",
+        "cargo build",
+        "go test",
+        "go build",
+        "go vet",
+        "pytest",
+        "make",
+        "zig build",
+        "tsc",
+        "eslint",
+        "prettier",
+    ];
     if build.iter().any(|p| cmd.starts_with(p)) {
         return 1;
     }
     let readonly = [
-        "ls", "cat ", "git status", "git log", "git diff", "pwd", "which ", "head ", "tail ",
-        "grep ", "echo ", "echo", "printf ", "true", "false", "env", "date", "wc ", "find ", "stat ",
+        "ls",
+        "cat ",
+        "git status",
+        "git log",
+        "git diff",
+        "pwd",
+        "which ",
+        "head ",
+        "tail ",
+        "grep ",
+        "echo ",
+        "echo",
+        "printf ",
+        "true",
+        "false",
+        "env",
+        "date",
+        "wc ",
+        "find ",
+        "stat ",
     ];
     if readonly.iter().any(|p| cmd == *p || cmd.starts_with(p)) {
         return 0;
@@ -1021,7 +1178,11 @@ fn shell_segments(command: &str) -> Vec<String> {
                 continue;
             }
             if c == '|' {
-                let step = if i + 1 < chars.len() && chars[i + 1] == '|' { 2 } else { 1 };
+                let step = if i + 1 < chars.len() && chars[i + 1] == '|' {
+                    2
+                } else {
+                    1
+                };
                 segments.push(std::mem::take(&mut cur));
                 i += step;
                 continue;
@@ -1212,7 +1373,11 @@ mod tests {
     #[test]
     fn read_outside_workspace_is_denied() {
         let profile = Profile::safe_edit();
-        let d = PolicyEngine::evaluate(&profile, Path::new("/tmp/ws"), &req(Capability::FileRead, "/etc/passwd"));
+        let d = PolicyEngine::evaluate(
+            &profile,
+            Path::new("/tmp/ws"),
+            &req(Capability::FileRead, "/etc/passwd"),
+        );
         assert_eq!(d.decision, Verdict::Denied);
     }
 
@@ -1232,11 +1397,17 @@ mod tests {
         let profile = Profile::safe_edit();
         let root = Path::new("/tmp/ws");
         assert_eq!(
-            PolicyEngine::evaluate(&profile, root, &req(Capability::SecretRead, "OPENAI_API_KEY")).decision,
+            PolicyEngine::evaluate(
+                &profile,
+                root,
+                &req(Capability::SecretRead, "OPENAI_API_KEY")
+            )
+            .decision,
             Verdict::Denied
         );
         assert_eq!(
-            PolicyEngine::evaluate(&profile, root, &req(Capability::FileWrite, "/tmp/ws/a.ts")).decision,
+            PolicyEngine::evaluate(&profile, root, &req(Capability::FileWrite, "/tmp/ws/a.ts"))
+                .decision,
             Verdict::Denied
         );
     }
@@ -1246,11 +1417,13 @@ mod tests {
         let profile = Profile::safe_edit();
         let root = Path::new("/tmp/ws");
         assert_eq!(
-            PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "rm -rf /")).decision,
+            PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "rm -rf /"))
+                .decision,
             Verdict::Denied
         );
         assert_eq!(
-            PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "cargo test")).decision,
+            PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "cargo test"))
+                .decision,
             Verdict::Allowed
         );
     }
@@ -1287,8 +1460,12 @@ hosts = ["internal.example.com"]
         assert_eq!(p.max_command_risk, 2);
         assert!(p.secret_read);
         assert_eq!(p.file_write, WriteMode::PatchOnly);
-        assert!(matches!(p.network, NetworkMode::Allowlist(ref h) if h == &["internal.example.com"]));
-        assert!(p.command_allowlist.contains(&"make deploy-staging".to_string()));
+        assert!(
+            matches!(p.network, NetworkMode::Allowlist(ref h) if h == &["internal.example.com"])
+        );
+        assert!(p
+            .command_allowlist
+            .contains(&"make deploy-staging".to_string()));
     }
 
     #[test]
@@ -1296,7 +1473,8 @@ hosts = ["internal.example.com"]
         let p = Profile::enterprise_restricted();
         let root = Path::new("/tmp/ws");
         assert_eq!(
-            PolicyEngine::evaluate(&p, root, &req(Capability::NetworkAccess, "example.com")).decision,
+            PolicyEngine::evaluate(&p, root, &req(Capability::NetworkAccess, "example.com"))
+                .decision,
             Verdict::Denied
         );
         assert_eq!(
@@ -1355,7 +1533,12 @@ require_approval = ["PatchApply"]
         }
         // A normal source file is still allowed.
         assert_ne!(
-            PolicyEngine::evaluate(&profile, root, &req(Capability::FileRead, "/tmp/ws/src/main.rs")).decision,
+            PolicyEngine::evaluate(
+                &profile,
+                root,
+                &req(Capability::FileRead, "/tmp/ws/src/main.rs")
+            )
+            .decision,
             Verdict::Denied
         );
     }
@@ -1403,9 +1586,15 @@ require_approval = ["PatchApply"]
     #[test]
     fn is_sensitive_file_matrix() {
         for p in [
-            "/ws/.env", "/ws/.env.local", "/ws/sub/.aws/credentials",
-            "/ws/.ssh/id_ed25519", "/ws/.gnupg/x", "/ws/.kube/config",
-            "/ws/.npmrc", "/ws/.netrc", "/ws/id_rsa",
+            "/ws/.env",
+            "/ws/.env.local",
+            "/ws/sub/.aws/credentials",
+            "/ws/.ssh/id_ed25519",
+            "/ws/.gnupg/x",
+            "/ws/.kube/config",
+            "/ws/.npmrc",
+            "/ws/.netrc",
+            "/ws/id_rsa",
         ] {
             assert!(is_sensitive_file(p), "{p} should be sensitive");
         }
@@ -1432,9 +1621,17 @@ require_approval = ["PatchApply"]
         let inside = root.join("f.txt");
         for name in Profile::builtin_names() {
             let p = Profile::builtin(name).unwrap();
-            let d = PolicyEngine::evaluate(&p, &root, &req(Capability::FileRead, inside.to_str().unwrap()));
+            let d = PolicyEngine::evaluate(
+                &p,
+                &root,
+                &req(Capability::FileRead, inside.to_str().unwrap()),
+            );
             // read-only through enterprise all allow in-workspace non-sensitive reads.
-            assert_eq!(d.decision, Verdict::Allowed, "{name} should allow a normal read");
+            assert_eq!(
+                d.decision,
+                Verdict::Allowed,
+                "{name} should allow a normal read"
+            );
         }
     }
 
@@ -1465,11 +1662,22 @@ require_approval = ["PatchApply"]
         let profile = Profile::full_workspace();
         let root = Path::new("/tmp/ws");
         assert_eq!(
-            PolicyEngine::evaluate_with_bundle(&profile, Some(&bundle), root, &req(Capability::NetworkAccess, "bad.com")).decision,
+            PolicyEngine::evaluate_with_bundle(
+                &profile,
+                Some(&bundle),
+                root,
+                &req(Capability::NetworkAccess, "bad.com")
+            )
+            .decision,
             Verdict::Denied
         );
         // require_approval escalates an auto-allowed command to approval.
-        let d = PolicyEngine::evaluate_with_bundle(&profile, Some(&bundle), root, &req(Capability::CommandExec, "ls"));
+        let d = PolicyEngine::evaluate_with_bundle(
+            &profile,
+            Some(&bundle),
+            root,
+            &req(Capability::CommandExec, "ls"),
+        );
         assert_eq!(d.decision, Verdict::RequiresApproval);
     }
 
@@ -1485,7 +1693,8 @@ require_approval = ["PatchApply"]
         assert_eq!(never.decision, Verdict::Allowed);
 
         let deny_bundle =
-            PolicyBundle::from_toml("name = \"locked\"\ndeny_capabilities = [\"MemoryWrite\"]\n").unwrap();
+            PolicyBundle::from_toml("name = \"locked\"\ndeny_capabilities = [\"MemoryWrite\"]\n")
+                .unwrap();
         let denied = PolicyEngine::evaluate_with_bundle(
             &profile,
             Some(&deny_bundle),
@@ -1550,13 +1759,22 @@ require_approval = ["PatchApply"]
         // Allowed iff the profile allows in-workspace FileRead (all builtins do).
         for name in Profile::builtin_names() {
             let p = Profile::builtin(name).unwrap();
-            let d = PolicyEngine::evaluate(&p, root, &req(Capability::CodeIndex, "index search foo"));
-            assert_eq!(d.decision, Verdict::Allowed, "{name} should allow CodeIndex");
+            let d =
+                PolicyEngine::evaluate(&p, root, &req(Capability::CodeIndex, "index search foo"));
+            assert_eq!(
+                d.decision,
+                Verdict::Allowed,
+                "{name} should allow CodeIndex"
+            );
         }
         // A custom profile that denies FileRead also denies the index.
         let mut no_read = Profile::read_only();
         no_read.file_read_in_workspace = false;
-        let d = PolicyEngine::evaluate(&no_read, root, &req(Capability::CodeIndex, "index search foo"));
+        let d = PolicyEngine::evaluate(
+            &no_read,
+            root,
+            &req(Capability::CodeIndex, "index search foo"),
+        );
         assert_eq!(d.decision, Verdict::Denied);
     }
 
@@ -1569,18 +1787,26 @@ require_approval = ["PatchApply"]
         let root = Path::new("/tmp/ws");
         let profile = Profile::safe_edit();
 
-        let deny = PolicyBundle::from_toml("name = \"locked\"\ndeny_capabilities = [\"FileRead\"]\n").unwrap();
+        let deny =
+            PolicyBundle::from_toml("name = \"locked\"\ndeny_capabilities = [\"FileRead\"]\n")
+                .unwrap();
         let d = PolicyEngine::evaluate_with_bundle(
             &profile,
             Some(&deny),
             root,
             &req(Capability::CodeIndex, "index search secret"),
         );
-        assert_eq!(d.decision, Verdict::Denied, "FileRead deny must deny the index: {}", d.reason);
+        assert_eq!(
+            d.decision,
+            Verdict::Denied,
+            "FileRead deny must deny the index: {}",
+            d.reason
+        );
         assert!(d.reason.contains("locked"));
 
         let escalate =
-            PolicyBundle::from_toml("name = \"strict\"\nrequire_approval = [\"FileRead\"]\n").unwrap();
+            PolicyBundle::from_toml("name = \"strict\"\nrequire_approval = [\"FileRead\"]\n")
+                .unwrap();
         let d = PolicyEngine::evaluate_with_bundle(
             &profile,
             Some(&escalate),
@@ -1599,7 +1825,9 @@ require_approval = ["PatchApply"]
     fn code_index_bundle_deny_and_require_approval() {
         let root = Path::new("/tmp/ws");
         let profile = Profile::safe_edit();
-        let deny = PolicyBundle::from_toml("name = \"locked\"\ndeny_capabilities = [\"CodeIndex\"]\n").unwrap();
+        let deny =
+            PolicyBundle::from_toml("name = \"locked\"\ndeny_capabilities = [\"CodeIndex\"]\n")
+                .unwrap();
         let d = PolicyEngine::evaluate_with_bundle(
             &profile,
             Some(&deny),
@@ -1610,7 +1838,8 @@ require_approval = ["PatchApply"]
         assert!(d.reason.contains("locked"));
 
         let escalate =
-            PolicyBundle::from_toml("name = \"strict\"\nrequire_approval = [\"CodeIndex\"]\n").unwrap();
+            PolicyBundle::from_toml("name = \"strict\"\nrequire_approval = [\"CodeIndex\"]\n")
+                .unwrap();
         let d = PolicyEngine::evaluate_with_bundle(
             &profile,
             Some(&escalate),
@@ -1626,7 +1855,11 @@ require_approval = ["PatchApply"]
         let root = Path::new("/tmp/ws");
 
         // safe-edit: a package install is risk-2 => RequiresApproval by profile.
-        let base = PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "npm install x"));
+        let base = PolicyEngine::evaluate(
+            &profile,
+            root,
+            &req(Capability::CommandExec, "npm install x"),
+        );
         assert_eq!(base.decision, Verdict::RequiresApproval);
 
         // never: the same decision becomes Allowed (deny would still stand).
@@ -1634,12 +1867,17 @@ require_approval = ["PatchApply"]
         assert_eq!(never.decision, Verdict::Allowed);
 
         // never must NOT rescue an outright deny.
-        let denied = PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "rm -rf /"));
-        assert_eq!(apply_approval_mode(ApprovalMode::Never, denied).decision, Verdict::Denied);
+        let denied =
+            PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "rm -rf /"));
+        assert_eq!(
+            apply_approval_mode(ApprovalMode::Never, denied).decision,
+            Verdict::Denied
+        );
 
         // untrusted: an allowed non-read-only command is escalated to approval;
         // a read-only one stays allowed.
-        let cargo = PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "cargo test"));
+        let cargo =
+            PolicyEngine::evaluate(&profile, root, &req(Capability::CommandExec, "cargo test"));
         assert_eq!(cargo.decision, Verdict::Allowed); // allowlisted
         let untrusted = apply_approval_mode(ApprovalMode::Untrusted, cargo);
         assert_eq!(untrusted.decision, Verdict::RequiresApproval); // cargo test isn't read-only (risk 1)
@@ -1653,7 +1891,10 @@ require_approval = ["PatchApply"]
             reason: "ok".into(),
             policy_id: "p".into(),
         };
-        assert_eq!(apply_approval_mode(ApprovalMode::Untrusted, ls).decision, Verdict::Allowed);
+        assert_eq!(
+            apply_approval_mode(ApprovalMode::Untrusted, ls).decision,
+            Verdict::Allowed
+        );
     }
 
     #[test]

@@ -827,7 +827,7 @@ func (f *fakeReranker) Rerank(_ context.Context, _ string, cands []rerankCandida
 
 // v3RerankFixture builds a daemon with two deterministic search hits and
 // returns the kernel-order paths (reranker off).
-func v3RerankFixture(t *testing.T) (*Daemon, *sessionstore.Session, *scheduler.Task, []string) {
+func v3RerankFixture(t *testing.T) (*Daemon, *sessionstore.Session, *scheduler.ExecutionRun, []string) {
 	t.Helper()
 	d, ws := newLoopDaemon(t)
 	t.Cleanup(func() { d.Close() })

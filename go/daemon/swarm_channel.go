@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/Nebutra/carina/go/kernel"
 	"github.com/Nebutra/carina/go/scheduler"
@@ -29,6 +31,8 @@ type swarmChannelMessage struct {
 // A var (not const) so tests can shrink it temporarily to exercise eviction
 // without hundreds of real publish calls; production code never mutates it.
 var maxMessagesPerChannel = 500
+
+const swarmReceiveLongPoll = 250 * time.Millisecond
 
 // swarmChannelBroker is an in-process pub/sub bus scoped to exactly one
 // streaming workflow run (owned by that run's streamCoordinator), giving
@@ -63,6 +67,7 @@ type swarmChannelBroker struct {
 	messages map[string][]swarmChannelMessage // channel -> retained window, oldest-evicted-first once over maxMessagesPerChannel
 	cursor   map[string]map[string]int        // stepID -> channel -> highest seq already delivered (0 = none yet)
 	evicted  map[string]int                   // channel -> total messages evicted so far (for audit + rollup)
+	notify   chan struct{}                    // closed and replaced on every publish; broadcast to all waiters
 }
 
 func newSwarmChannelBroker() *swarmChannelBroker {
@@ -70,6 +75,7 @@ func newSwarmChannelBroker() *swarmChannelBroker {
 		messages: map[string][]swarmChannelMessage{},
 		cursor:   map[string]map[string]int{},
 		evicted:  map[string]int{},
+		notify:   make(chan struct{}),
 	}
 }
 
@@ -91,7 +97,39 @@ func (b *swarmChannelBroker) publish(channel, fromStep string, payload json.RawM
 		evictedNow = true
 	}
 	b.messages[channel] = log
+	close(b.notify)
+	b.notify = make(chan struct{})
 	return msg, b.evicted[channel], evictedNow
+}
+
+// waitForMessages long-polls without consuming a message or notification.
+// The cursor check and notification generation capture share the broker lock,
+// so a publish cannot land in the gap between them. Closing the generation
+// channel broadcasts to every subscriber rather than waking only one waiter.
+func (b *swarmChannelBroker) waitForMessages(ctx context.Context, stepID string, channels []string, timeout time.Duration) bool {
+	b.mu.Lock()
+	for _, channel := range channels {
+		last := b.cursor[stepID][channel]
+		for _, message := range b.messages[channel] {
+			if message.Seq > last {
+				b.mu.Unlock()
+				return true
+			}
+		}
+	}
+	notify := b.notify
+	b.mu.Unlock()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return false
+	case <-notify:
+		return true
+	}
 }
 
 // receive returns every message published on any of channels with a seq
@@ -208,9 +246,9 @@ func joinQuoted(ss []string) string {
 // messaging isn't stalled on approval in the common case, but the decision
 // is still policy-evaluated and audited like every other kernel-gated
 // effect, and an org PolicyBundle can tighten specific channels.
-func (d *Daemon) gateSwarmMessage(sess *sessionstore.Session, task *scheduler.Task, channel string) (bool, *kernel.Decision) {
+func (d *Daemon) gateSwarmMessage(sess *sessionstore.Session, task *scheduler.ExecutionRun, channel string) (bool, *kernel.Decision) {
 	resource := "channel:" + channel
-	dec, err := d.kern.Request(sess.SessionID, "SwarmMessage", resource, task.TaskID)
+	dec, err := d.kern.Request(sess.SessionID, "SwarmMessage", resource, task.RunID)
 	if err != nil {
 		return false, &kernel.Decision{Decision: "denied", Reason: "governance error: " + err.Error()}
 	}
@@ -232,7 +270,7 @@ func (d *Daemon) gateSwarmMessage(sess *sessionstore.Session, task *scheduler.Ta
 // session currently bound to a run (registered by spawnSubagentContextIDBound
 // for the duration of a streaming-workflow step's execution) — a session
 // spawned outside a streaming workflow run has no broker to publish into.
-func (d *Daemon) swarmPublishOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
+func (d *Daemon) swarmPublishOutcome(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) toolExecutionOutcome {
 	raw, ok := d.swarmChannels.Load(sess.SessionID)
 	if !ok {
 		return toolFailed("swarm_publish is only available to steps running inside a streaming workflow run", "swarm_not_bound")
@@ -250,7 +288,7 @@ func (d *Daemon) swarmPublishOutcome(sess *sessionstore.Session, task *scheduler
 		payload = json.RawMessage("null")
 	}
 	msg, evictedTotal, evictedNow := binding.broker.publish(act.Channel, binding.stepID, payload)
-	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
 		"status": "swarm_channel_published", "channel": act.Channel, "from_step": binding.stepID, "seq": msg.Seq,
 	}, dec.DecisionID)
 	if evictedNow {
@@ -258,7 +296,7 @@ func (d *Daemon) swarmPublishOutcome(sess *sessionstore.Session, task *scheduler
 		// channel stays over cap — logging every single publish once
 		// steady-state eviction kicks in would itself become the firehose
 		// problem this cap exists to prevent.
-		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
 			"status": "swarm_channel_evicted", "channel": act.Channel, "cap": maxMessagesPerChannel, "evicted_total": evictedTotal,
 		}, "")
 	}
@@ -284,16 +322,17 @@ type remoteChannelMessage struct {
 // still be recorded regardless of channel-message validity; each failure is
 // still audited, never silently dropped).
 func (d *Daemon) publishRemoteChannelMessagesBestEffort(sess *sessionstore.Session, task *scheduler.Task, binding *swarmChannelBinding, messages []remoteChannelMessage) {
+	governanceRun := &scheduler.ExecutionRun{RunID: task.TaskID, SessionID: task.SessionID, WorkspaceID: task.WorkspaceID}
 	for _, m := range messages {
 		if m.Channel == "" {
-			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+			d.record(sess.SessionID, "TaskProgressed", task.TaskID, "go", map[string]any{
 				"status": "swarm_channel_publish_refused", "reason": "empty channel", "from_step": binding.stepID,
 			}, "")
 			continue
 		}
-		allowed, dec := d.gateSwarmMessage(sess, task, m.Channel)
+		allowed, dec := d.gateSwarmMessage(sess, governanceRun, m.Channel)
 		if !allowed {
-			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+			d.record(sess.SessionID, "TaskProgressed", task.TaskID, "go", map[string]any{
 				"status": "swarm_channel_publish_refused", "channel": m.Channel, "from_step": binding.stepID, "reason": dec.Reason,
 			}, dec.DecisionID)
 			continue
@@ -303,11 +342,11 @@ func (d *Daemon) publishRemoteChannelMessagesBestEffort(sess *sessionstore.Sessi
 			payload = json.RawMessage("null")
 		}
 		msg, evictedTotal, evictedNow := binding.broker.publish(m.Channel, binding.stepID, payload)
-		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+		d.record(sess.SessionID, "TaskProgressed", task.TaskID, "go", map[string]any{
 			"status": "swarm_channel_published", "channel": m.Channel, "from_step": binding.stepID, "seq": msg.Seq, "via": "remote_report",
 		}, dec.DecisionID)
 		if evictedNow {
-			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+			d.record(sess.SessionID, "TaskProgressed", task.TaskID, "go", map[string]any{
 				"status": "swarm_channel_evicted", "channel": m.Channel, "cap": maxMessagesPerChannel, "evicted_total": evictedTotal,
 			}, "")
 		}
@@ -320,7 +359,7 @@ func (d *Daemon) publishRemoteChannelMessagesBestEffort(sess *sessionstore.Sessi
 // subscribed to" (WorkflowStep.ConsumesChannel); a non-empty one narrows to
 // that single channel, but ONLY if the step actually subscribed to it —
 // receive is not a general channel-browsing tool.
-func (d *Daemon) swarmReceiveOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
+func (d *Daemon) swarmReceiveOutcome(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) toolExecutionOutcome {
 	raw, ok := d.swarmChannels.Load(sess.SessionID)
 	if !ok {
 		return toolFailed("swarm_receive is only available to steps running inside a streaming workflow run", "swarm_not_bound")
@@ -344,6 +383,9 @@ func (d *Daemon) swarmReceiveOutcome(sess *sessionstore.Session, task *scheduler
 		return toolCompleted("this step has no consumes_channel subscriptions")
 	}
 	msgs := binding.broker.receive(binding.stepID, channels)
+	if len(msgs) == 0 && binding.broker.waitForMessages(context.Background(), binding.stepID, channels, swarmReceiveLongPoll) {
+		msgs = binding.broker.receive(binding.stepID, channels)
+	}
 	// A slow subscriber has no other way to learn some messages never made
 	// it into the retained window (see maxMessagesPerChannel) — surface it
 	// as a plain heads-up rather than leaving it silently invisible.

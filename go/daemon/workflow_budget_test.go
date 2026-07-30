@@ -11,13 +11,13 @@ func TestSessionTotalTokensSumsAcrossTasksForSession(t *testing.T) {
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
 
 	t1 := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "first")
-	d.sched.AddTokens(t1.TaskID, 100)
+	d.sched.AddTokens(t1.RunID, 100)
 	t2 := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "second")
-	d.sched.AddTokens(t2.TaskID, 40)
+	d.sched.AddTokens(t2.RunID, 40)
 
 	other, _ := d.store.CreateSession(ws, "safe-edit")
 	t3 := d.sched.Submit(other.SessionID, other.WorkspaceID, "unrelated")
-	d.sched.AddTokens(t3.TaskID, 999)
+	d.sched.AddTokens(t3.RunID, 999)
 
 	if got := d.sessionTotalTokens(sess.SessionID); got != 140 {
 		t.Fatalf("sessionTotalTokens = %d, want 140 (100+40, excluding the other session's 999)", got)

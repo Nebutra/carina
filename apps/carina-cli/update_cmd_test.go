@@ -75,6 +75,11 @@ func TestStandaloneUpdateDownloadsVerifiesAndReplacesWholeBundle(t *testing.T) {
 			t.Errorf("installed %s = %q, %v", name, raw, err)
 		}
 	}
+	for _, name := range obsoleteUpdateBinaries {
+		if _, err := os.Stat(filepath.Join(installDir, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("obsolete binary %s was not removed: %v", name, err)
+		}
+	}
 	if matches, _ := filepath.Glob(filepath.Join(installDir, ".*.carina-update-*")); len(matches) != 0 {
 		t.Fatalf("transaction debris remained: %v", matches)
 	}
@@ -271,7 +276,7 @@ func TestUpdateCommandIsDocumentedAndDaemonFree(t *testing.T) {
 
 func TestLegacyPackagedArchiveFailsClosedWhenRuntimeIncomplete(t *testing.T) {
 	// The last retained public-style archive predates the complete runtime
-	// bundle contract (it has neither the Rust UI nor Headroom). Even an explicit
+	// bundle contract (it does not contain the complete Rust runtime). Even an explicit
 	// downgrade must not silently remove a component from an installation.
 	const packagedVersion = "0.6.0"
 	archiveName, err := updateArchiveName(packagedVersion, runtime.GOOS, runtime.GOARCH)
@@ -309,6 +314,11 @@ func prepareOldUpdateInstall(t *testing.T) string {
 	dir := t.TempDir()
 	for _, name := range requiredUpdateBinaries {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("old-"+name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range obsoleteUpdateBinaries {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("obsolete-"+name), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

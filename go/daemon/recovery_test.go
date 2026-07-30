@@ -50,7 +50,7 @@ func TestDaemonRecoversSessions(t *testing.T) {
 			t.Fatal(err)
 		}
 		sessionID = sess.SessionID
-		if err := c.Call("task.submit", map[string]any{"session_id": sessionID, "prompt": "hello"}, &struct{}{}); err != nil {
+		if err := c.Call("execution.start", map[string]any{"session_id": sessionID, "prompt": "hello"}, &struct{}{}); err != nil {
 			t.Fatal(err)
 		}
 	}()
@@ -90,7 +90,7 @@ func TestDaemonRecoversSessions(t *testing.T) {
 	if len(events) == 0 {
 		t.Fatal("expected recovered event history")
 	}
-	if err := c2.Call("task.submit", map[string]any{"session_id": sessionID, "prompt": "continue"}, &struct{}{}); err != nil {
+	if err := c2.Call("execution.start", map[string]any{"session_id": sessionID, "prompt": "continue"}, &struct{}{}); err != nil {
 		t.Fatalf("recovered session should accept new tasks: %v", err)
 	}
 }

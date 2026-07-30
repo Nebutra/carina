@@ -42,7 +42,7 @@ Implement a first local memory core behind the daemon:
    `memory.context`. These are local write/read surfaces and are registered in
    the Gateway descriptor catalog. `memory.write` returns
    `{decision, result?}`; when policy returns `requires_approval`, the write is
-   queued and only applied by `task.action.approve`.
+   queued and only applied by `governance.action.approve`.
 5. Memory injection is fenced as recalled context and treated as background
    data, not new user input. This preserves transcript integrity and prevents
    self-amplifying memory pollution.

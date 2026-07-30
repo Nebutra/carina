@@ -83,8 +83,8 @@ Create a session bound to a workspace and permission profile.
 | `session.pause` / `resume` | Suspend / continue |
 | `session.replay` / `items` / `review` | History and projections |
 | `session.events.stream` | Live event notifications |
-| `task.submit` / `cancel` / `status` | Task control |
-| `task.action.approve` / `deny` | Resolve approvals |
+| `execution.start` / `cancel` / `status` | Task control |
+| `governance.action.approve` / `deny` | Resolve approvals |
 
 ## Workspace
 
@@ -92,7 +92,7 @@ Create a session bound to a workspace and permission profile.
 | --- | --- |
 | `workspace.tree` | File tree via `carina-scan` |
 | `workspace.search` | Structured search via `carina-grep` |
-| `workspace.file.get` | Read file (`FileRead`) |
+| `workspace.file.get` | Read a clean relative UTF-8 file up to 1 MiB (`FileRead`) |
 | `workspace.diff` | Tracked/untracked changes (capped; binary omitted) |
 | `workspace.patch.propose` / `apply` / `rollback` | Transactional patches |
 | `worktree.create` / `list` / `enter` / … | Isolated worktree lifecycle |
@@ -119,13 +119,12 @@ Create a session bound to a workspace and permission profile.
 
 | Method | Scope | Purpose |
 | --- | --- | --- |
-| `context.status` | `read` | Engine + Headroom + managed MCP state |
+| `context.status` | `read` | Configured and effective local engine state |
 | `context.doctor` | `read` | Health probe used by `daemon.doctor` |
 | `context.stats` | `read` | Compression counters |
 | `context.compress` | `write` | Diagnostic compression (not agent transcript path) |
-| `context.retrieve` | `read` | Diagnostic CCR retrieval by hash/ref |
 
-Headroom is a managed private MCP behind the context-engine boundary when bundled or explicitly configured — not listed in the agent's public MCP tool list.
+Carina does not bundle or start an external compression runtime. Auto mode resolves to the local no-op implementation.
 
 ## Operator inspection highlights
 

@@ -161,7 +161,7 @@ func TestRBACApprovalRequiresRole(t *testing.T) {
 			Decision string `json:"decision"`
 		} `json:"decision"`
 	}
-	if err := c.Call("task.action.approve", map[string]any{"session_id": sess.SessionID, "decision_id": exec.Decision.DecisionID, "approver": "alice"}, &noRole); err != nil {
+	if err := c.Call("governance.action.approve", map[string]any{"session_id": sess.SessionID, "decision_id": exec.Decision.DecisionID, "approver": "alice"}, &noRole); err != nil {
 		t.Fatal(err)
 	}
 	if noRole.Decision.Decision == "allowed" {
@@ -174,7 +174,7 @@ func TestRBACApprovalRequiresRole(t *testing.T) {
 			Decision string `json:"decision"`
 		} `json:"decision"`
 	}
-	if err := c.Call("task.action.approve", map[string]any{"session_id": sess.SessionID, "decision_id": exec.Decision.DecisionID, "approver": "bob", "role": "lead"}, &withRole); err != nil {
+	if err := c.Call("governance.action.approve", map[string]any{"session_id": sess.SessionID, "decision_id": exec.Decision.DecisionID, "approver": "bob", "role": "lead"}, &withRole); err != nil {
 		t.Fatal(err)
 	}
 	if withRole.Decision.Decision != "allowed" {

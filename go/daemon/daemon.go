@@ -33,6 +33,7 @@ import (
 	"github.com/Nebutra/carina/go/kernel"
 	"github.com/Nebutra/carina/go/localruntime"
 	"github.com/Nebutra/carina/go/mcp"
+	"github.com/Nebutra/carina/go/microcopy"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/nebutra"
 	"github.com/Nebutra/carina/go/product"
@@ -48,6 +49,8 @@ import (
 )
 
 const Version = product.Version
+
+const maxWorkspaceFilePreviewBytes = 1 << 20
 
 // Options configures external binaries and storage.
 type Options struct {
@@ -79,12 +82,7 @@ type Options struct {
 	NebutraSyncMode            string             // currently only "off"; future sync modes belong behind Nebutra
 	GatewayTokenSigningKeyFile string             // optional local file containing Gateway token signing material
 	GatewayTokenMaxTTLSeconds  int                // max scoped Gateway token TTL (0 => 15m)
-	ContextEngine              string             // auto|off|headroom|noop
-	HeadroomBin                string             // optional bundled/override headroom binary path
-	HeadroomStateDir           string             // default: <state>/headroom
-	HeadroomMode               string             // managed_mcp|sidecar|proxy
-	HeadroomProxyPort          int                // 0 => choose later
-	HeadroomTokenBudget        int                // budget for context blocks
+	ContextEngine              string             // auto|off|noop
 	MemoryProvider             string             // off|hms-shadow|hms-hybrid
 	MemoryHMSEndpoint          string             // deployment-owned HMS endpoint
 	MemoryHMSAPIKeyEnv         string             // env var containing HMS bearer token
@@ -181,6 +179,7 @@ type Daemon struct {
 	patchGateByDecision   map[string]string                  // decision_id -> patch_id
 	submissionMu          sync.Mutex
 	taskSubmissions       map[string]string // session_id + client_submission_id -> task_id
+	forkMu                sync.Mutex
 	hookOutcomeMu         sync.Mutex
 	hookOutcomes          map[string]hookOutcome
 	hookStops             sync.Map // task_id -> true after Stop hooks run
@@ -355,15 +354,7 @@ func New(opts Options) (*Daemon, error) {
 			_ = runtimeLease.close(false)
 		}
 	}()
-	contextEng, err := contextengine.New(contextengine.Config{
-		ContextEngine:       opts.ContextEngine,
-		HeadroomBin:         opts.HeadroomBin,
-		HeadroomStateDir:    opts.HeadroomStateDir,
-		HeadroomMode:        opts.HeadroomMode,
-		HeadroomProxyPort:   opts.HeadroomProxyPort,
-		HeadroomTokenBudget: opts.HeadroomTokenBudget,
-		CarinaStateDir:      opts.StateDir,
-	})
+	contextEng, err := contextengine.New(contextengine.Config{ContextEngine: opts.ContextEngine})
 	if err != nil {
 		return nil, fmt.Errorf("daemon: %w", err)
 	}
@@ -598,14 +589,17 @@ func New(opts Options) (*Daemon, error) {
 	// the rerank stage stays off and code.search keeps the kernel order.
 	registerRerankProviders(d.router, opts.Offline, opts.DisabledProviders, authStore)
 	// Durable run registry + concurrency cap for background runs. Reloading the
-	// registry lets `task.list`/`task.status` answer for runs from before a
+	// registry lets `execution.list`/`execution.status` answer for runs from before a
 	// restart (the run record survives even though the live loop does not yet).
 	d.runs = newRunStore(opts.StateDir)
 	for _, t := range d.runs.load() {
 		d.sched.Load(t)
 		if t.ClientSubmissionID != "" {
-			d.taskSubmissions[taskSubmissionKey(t.SessionID, t.ClientSubmissionID)] = t.TaskID
+			d.taskSubmissions[taskSubmissionKey(t.SessionID, t.ClientSubmissionID)] = t.RunID
 		}
+	}
+	for _, task := range d.runs.loadTasks() {
+		d.sched.LoadTask(task)
 	}
 	blockedRestores, err := d.runs.reconcileRestoreJournals()
 	if err != nil {
@@ -670,10 +664,6 @@ func New(opts Options) (*Daemon, error) {
 		d.startBackgroundLoop(d.runMemoryProjectionLoop)
 	}
 	d.mcp = mcp.NewManager()
-	if _, err := d.connectContextEngineMCP(d.contextEng); err != nil {
-		_ = d.kern.Close()
-		return nil, fmt.Errorf("daemon: managed Headroom MCP: %w", err)
-	}
 	if !opts.SafeMode {
 		if home, err := os.UserHomeDir(); err == nil {
 			d.mcp.LoadAndConnect(filepath.Join(home, ".carina", "mcp.json"))
@@ -716,12 +706,13 @@ func New(opts Options) (*Daemon, error) {
 			d.egressCAPath = caPath
 		}
 	}
-	// Provider-first selection mirrors the model registry contract: only a
-	// configured/runnable provider becomes the implicit backend. CLI reasoners
-	// are explicit compatibility adapters, never binary-presence defaults.
+	// Auto owns a stable router reasoner so an in-product credential import can
+	// become executable without restarting the workspace daemon. Readiness is
+	// still fail-closed and evaluated from live provider credentials before use.
+	// CLI reasoners remain explicit compatibility adapters.
 	if !opts.Offline {
 		model := strings.TrimSpace(os.Getenv("CARINA_REASONER_MODEL"))
-		selectedBackend := selectReasonerBackend(false, configuredReasonerBackend, model, hasRunnableRuntimeProvider(providerCatalog, opts.DisabledProviders, authStore))
+		selectedBackend := selectReasonerBackend(false, configuredReasonerBackend)
 		d.reasonerBackend = selectedBackend
 		d.reasonerModel = model
 		d.reasonerExplicit = configuredReasonerBackend != reasonerBackendAuto && selectedBackend != reasonerBackendNone
@@ -1049,36 +1040,6 @@ func (d *Daemon) Tools() *toolchain.Toolchain { return d.tools }
 // Router exposes the model router.
 func (d *Daemon) Router() *modelrouter.Router { return d.router }
 
-func (d *Daemon) connectContextEngineMCP(eng contextengine.Engine) (bool, error) {
-	if d.mcp == nil || eng == nil {
-		return false, nil
-	}
-	connector, ok := eng.(interface {
-		ManagedMCPServer() (string, contextengine.MCPServer, bool)
-		AttachManagedMCP(contextengine.ManagedMCPAdapter) error
-		MarkManagedMCPConnected(error)
-	})
-	if !ok {
-		return false, nil
-	}
-	name, spec, enabled := connector.ManagedMCPServer()
-	if !enabled {
-		return false, nil
-	}
-	err := d.mcp.ConnectPrivate(name, mcp.Server{Command: spec.Command, Args: spec.Args, Env: spec.Env})
-	if err == nil {
-		err = connector.AttachManagedMCP(d.mcp)
-	}
-	connector.MarkManagedMCPConnected(err)
-	if err != nil {
-		d.mcp.Disconnect(name)
-	}
-	if err != nil && eng.Status().ConfiguredEngine == contextengine.ModeHeadroom {
-		return true, err
-	}
-	return true, nil
-}
-
 func (d *Daemon) registerMethods() {
 	d.registerRPC("runtime.initialize", rpc.ScopeRead, true, d.handleRuntimeInitialize)
 	d.registerRPC("runtime.describe", rpc.ScopeRead, false, d.handleRuntimeDescribe)
@@ -1095,7 +1056,6 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("context.doctor", rpc.ScopeRead, false, d.handleContextDoctor)
 	d.registerRPC("context.stats", rpc.ScopeRead, false, d.handleContextStats)
 	d.registerRPC("context.summary", rpc.ScopeRead, false, d.handleContextSummary)
-	d.registerRPC("context.retrieve", rpc.ScopeRead, false, d.handleContextRetrieve)
 	d.registerRPC("context.compress", rpc.ScopeWrite, false, d.handleContextCompress)
 	d.registerRPC("gateway.hello", rpc.ScopeRead, true, d.handleGatewayHello)
 	d.registerRPC("gateway.methods", rpc.ScopeRead, true, d.handleGatewayMethods)
@@ -1124,6 +1084,8 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("session.get", rpc.ScopeRead, true, d.handleSessionGet)
 	d.registerRPC("session.list", rpc.ScopeRead, true, d.handleSessionList)
 	d.registerRPC("session.rename", rpc.ScopeWrite, false, d.handleSessionRename)
+	d.registerRPC("session.archive", rpc.ScopeWrite, false, d.handleSessionArchive)
+	d.registerRPC("session.unarchive", rpc.ScopeWrite, false, d.handleSessionUnarchive)
 	d.registerRPC("session.pause", rpc.ScopeWrite, false, d.handleSessionPause)
 	d.registerRPC("session.resume", rpc.ScopeWrite, false, d.handleSessionResume)
 	d.registerRPC("session.close", rpc.ScopeWrite, false, d.handleSessionClose)
@@ -1143,10 +1105,10 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("session.model.set", rpc.ScopeWrite, false, d.handleSessionModelSet, true)
 	d.registerRPC("session.approve_plan", rpc.ScopeWrite, false, d.handleApprovePlan)
 	d.registerRPCDynamic("session.add_dir", rpc.ScopeAdmin, false, d.handleAddDir, d.addDirScope, true)
-	d.registerRPC("task.approval.resolve", rpc.ScopeAdmin, false, d.handleApprovalResolve, true)
-	d.registerRPC("task.user.answer", rpc.ScopeWrite, false, d.handleUserAnswer)
-	d.registerRPC("task.user.pending", rpc.ScopeRead, false, d.handlePendingUserQuestions)
-	d.registerRPC("task.btw", rpc.ScopeWrite, false, d.handleTaskBtw)
+	d.registerRPC("governance.approval.resolve", rpc.ScopeAdmin, false, d.handleApprovalResolve, true)
+	d.registerRPC("question.answer", rpc.ScopeWrite, false, d.handleUserAnswer)
+	d.registerRPC("question.pending", rpc.ScopeRead, false, d.handlePendingUserQuestions)
+	d.registerRPC("execution.btw", rpc.ScopeWrite, false, d.handleTaskBtw)
 	d.registerRPC("history.recent", rpc.ScopeRead, false, d.handleHistoryRecent)
 	d.registerRPC("memory.list", rpc.ScopeRead, false, d.handleMemoryList)
 	d.registerRPC("memory.context", rpc.ScopeRead, false, d.handleMemoryContext)
@@ -1196,16 +1158,16 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("artifact.read", rpc.ScopeRead, false, d.handleArtifactRead)
 	d.registerRPC("artifact.upload", rpc.ScopeWrite, false, d.handleArtifactUpload)
 
-	d.registerRPC("task.submit", rpc.ScopeWrite, false, d.handleTaskSubmit)
-	d.registerRPC("task.resume", rpc.ScopeWrite, false, d.handleTaskResume, true)
-	d.registerRPC("task.status", rpc.ScopeRead, true, d.handleTaskStatus)
-	d.registerRPC("task.list", rpc.ScopeRead, true, d.handleTaskList)
-	d.registerRPC("task.result", rpc.ScopeRead, true, d.handleTaskResult)
-	d.registerRPC("task.cancel", rpc.ScopeWrite, false, d.handleTaskCancel)
-	d.registerRPC("task.steer", rpc.ScopeWrite, false, d.handleTaskSteer)
-	d.registerRPC("task.budget.extend", rpc.ScopeAdmin, false, d.handleTaskBudgetExtend, true)
-	d.registerRPC("task.action.approve", rpc.ScopeAdmin, false, d.handleApprove, true)
-	d.registerRPCDynamic("task.action.deny", rpc.ScopeAdmin, false, d.handleDeny, d.taskActionDenyScope, true)
+	d.registerRPC("execution.start", rpc.ScopeWrite, false, d.handleTaskSubmit)
+	d.registerRPC("execution.resume", rpc.ScopeWrite, false, d.handleTaskResume, true)
+	d.registerRPC("execution.status", rpc.ScopeRead, true, d.handleTaskStatus)
+	d.registerRPC("execution.list", rpc.ScopeRead, true, d.handleTaskList)
+	d.registerRPC("execution.result", rpc.ScopeRead, true, d.handleTaskResult)
+	d.registerRPC("execution.cancel", rpc.ScopeWrite, false, d.handleTaskCancel)
+	d.registerRPC("execution.steer", rpc.ScopeWrite, false, d.handleTaskSteer)
+	d.registerRPC("execution.budget.extend", rpc.ScopeAdmin, false, d.handleTaskBudgetExtend, true)
+	d.registerRPC("governance.action.approve", rpc.ScopeAdmin, false, d.handleApprove, true)
+	d.registerRPCDynamic("governance.action.deny", rpc.ScopeAdmin, false, d.handleDeny, d.taskActionDenyScope, true)
 
 	d.registerRPC("workspace.tree", rpc.ScopeRead, false, d.handleWorkspaceTree)
 	d.registerRPC("workspace.diff", rpc.ScopeRead, false, d.handleWorkspaceDiff)
@@ -1244,6 +1206,7 @@ func (d *Daemon) registerMethods() {
 	// Work-dispatch bridge: enqueue is control-plane (local); poll/renew/report
 	// are the remote worker's lease protocol.
 	d.registerRPC("work.submit", rpc.ScopeAdmin, false, d.handleWorkSubmit, true)
+	d.registerRPC("work.cancel", rpc.ScopeAdmin, false, d.handleWorkCancel, true)
 	d.registerRPC("work.poll", rpc.ScopeWorker, true, d.handleWorkPoll)
 	d.registerRPC("work.renew", rpc.ScopeWorker, true, d.handleWorkRenew)
 	d.registerRPC("work.report", rpc.ScopeWorker, true, d.handleWorkReport)
@@ -1408,7 +1371,7 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 			return os.Remove(f)
 		}),
 		"tools":    map[string]any{"available": d.tools.Available(), "dir": d.tools.Dir()},
-		"reasoner": d.reasoner != nil,
+		"reasoner": d.reasonerReady(),
 		// Resolved credential SOURCE only — never the value. "" = unauthenticated.
 		"auth":           map[string]any{"source": d.authChain.ResolvedSource()},
 		"context_engine": d.contextDoctor(),
@@ -1569,14 +1532,7 @@ func (d *Daemon) handleContextStats(_ json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"local": st}
-	if st.Headroom != nil {
-		out["headroom"] = st.Headroom
-	}
-	if st.HeadroomError != "" {
-		out["headroom_error"] = st.HeadroomError
-	}
-	return out, nil
+	return map[string]any{"local": st}, nil
 }
 
 func (d *Daemon) handleContextCompress(params json.RawMessage) (any, error) {
@@ -1608,7 +1564,7 @@ func (d *Daemon) handleContextCompress(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("context engine is not configured")
 	}
 	if p.SessionID != "" && d.kern != nil {
-		allowed, dec, err := d.gateContextCompressRPC(p.SessionID, p.TaskID, "headroom_compress")
+		allowed, dec, err := d.gateContextCompressRPC(p.SessionID, p.TaskID, "context_compress")
 		if err != nil {
 			return nil, err
 		}
@@ -1621,58 +1577,12 @@ func (d *Daemon) handleContextCompress(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	if p.SessionID != "" && d.kern != nil {
-		d.record(p.SessionID, "TaskCreated", p.TaskID, "go", map[string]any{
+		d.record(p.SessionID, "ContextCompacted", p.TaskID, "go", map[string]any{
 			"status": "context_compressed", "engine": res.Engine, "turn": p.Turn, "kind": p.Kind, "tool": p.Tool,
 			"original_bytes": res.OriginalBytes, "compressed_bytes": res.CompressedBytes,
 			"original_tokens": res.OriginalTokens, "compressed_tokens": res.CompressedTokens,
 			"savings_percent": res.SavingsPercent, "transforms": res.Transforms,
 			"original_sha256": res.OriginalSHA256, "original_ref": res.OriginalRef,
-		}, "")
-	}
-	return res, nil
-}
-
-func (d *Daemon) handleContextRetrieve(params json.RawMessage) (any, error) {
-	var p struct {
-		SessionID string `json:"session_id"`
-		TaskID    string `json:"task_id"`
-		Hash      string `json:"hash"`
-		Ref       string `json:"ref"`
-		Query     string `json:"query"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-	ref := strings.TrimSpace(p.Hash)
-	if ref == "" {
-		ref = strings.TrimSpace(p.Ref)
-	}
-	if ref == "" {
-		return nil, fmt.Errorf("hash or ref is required")
-	}
-	if strings.TrimSpace(p.Query) != "" {
-		return nil, fmt.Errorf("context retrieve query is unavailable: pinned Headroom managed MCP supports hash retrieval only")
-	}
-	if d.contextEng == nil {
-		return nil, fmt.Errorf("context engine is not configured")
-	}
-	if p.SessionID != "" && d.kern != nil {
-		allowed, dec, err := d.gateContextCompressRPC(p.SessionID, p.TaskID, "headroom_retrieve")
-		if err != nil {
-			return nil, err
-		}
-		if !allowed {
-			return nil, fmt.Errorf("context retrieve denied by policy: %s", dec.Reason)
-		}
-	}
-	res, err := d.contextEng.Retrieve(context.Background(), ref)
-	if err != nil {
-		return nil, err
-	}
-	if p.SessionID != "" && d.kern != nil {
-		d.record(p.SessionID, "TaskCreated", p.TaskID, "go", map[string]any{
-			"status": "context_retrieved", "engine": res.Engine, "ref": res.Ref, "source": res.Source,
-			"original_bytes": res.OriginalBytes, "sha256": res.SHA256,
 		}, "")
 	}
 	return res, nil
@@ -1832,9 +1742,17 @@ func (d *Daemon) handleSessionGet(params json.RawMessage) (any, error) {
 	return sess, nil
 }
 
-func (d *Daemon) handleSessionList(_ json.RawMessage) (any, error) {
+func (d *Daemon) handleSessionList(params json.RawMessage) (any, error) {
+	var p struct {
+		Archived *bool `json:"archived"`
+	}
+	if len(params) > 0 && string(params) != "null" {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+	}
 	tasks := d.sched.List()
-	latest := map[string]*scheduler.Task{}
+	latest := map[string]*scheduler.ExecutionRun{}
 	for _, task := range tasks {
 		current := latest[task.SessionID]
 		if current == nil || task.UpdatedAt.After(current.UpdatedAt) {
@@ -1843,19 +1761,24 @@ func (d *Daemon) handleSessionList(_ json.RawMessage) (any, error) {
 	}
 	type sessionContinuityEntry struct {
 		*sessionstore.Session
-		LatestTaskID string            `json:"latest_task_id,omitempty"`
-		TaskRevision int64             `json:"task_revision,omitempty"`
-		TaskStatus   string            `json:"task_status,omitempty"`
-		Summary      string            `json:"summary,omitempty"`
-		Continuity   *continuity.State `json:"continuity,omitempty"`
-		UpdatedAt    time.Time         `json:"updated_at,omitempty"`
+		LatestTaskID    string            `json:"latest_task_id,omitempty"`
+		LatestTaskAgent string            `json:"latest_task_agent,omitempty"`
+		TaskRevision    int64             `json:"task_revision,omitempty"`
+		TaskStatus      string            `json:"task_status,omitempty"`
+		Summary         string            `json:"summary,omitempty"`
+		Continuity      *continuity.State `json:"continuity,omitempty"`
+		UpdatedAt       time.Time         `json:"updated_at,omitempty"`
 	}
 	out := make([]sessionContinuityEntry, 0, len(d.store.List()))
 	for _, sess := range d.store.List() {
+		if p.Archived != nil && (sess.Status == "closed") != *p.Archived {
+			continue
+		}
 		entry := sessionContinuityEntry{Session: sess}
 		if task := latest[sess.SessionID]; task != nil {
 			state := task.Continuity
-			entry.LatestTaskID, entry.TaskRevision, entry.TaskStatus, entry.Summary = task.TaskID, task.Revision, task.Status, task.Summary
+			entry.LatestTaskID, entry.LatestTaskAgent = task.RunID, task.Agent
+			entry.TaskRevision, entry.TaskStatus, entry.Summary = task.Revision, task.Status, task.Summary
 			entry.Continuity, entry.UpdatedAt = &state, task.UpdatedAt
 		}
 		out = append(out, entry)
@@ -1923,17 +1846,7 @@ func (d *Daemon) ensureKernelSession(sess *sessionstore.Session) error {
 }
 
 func (d *Daemon) handleSessionClose(params json.RawMessage) (any, error) {
-	id, err := sessionID(params)
-	if err != nil {
-		return nil, err
-	}
-	sess, err := d.store.SetStatus(id, "closed")
-	if err != nil {
-		return nil, err
-	}
-	d.record(id, "SessionClosed", "", "go", map[string]any{"reason": "client request"}, "")
-	d.runLifecycleHooks(sess.WorkspaceRoot, "SessionEnd", map[string]any{"session_id": id, "reason": "client request"})
-	return sess, nil
+	return d.handleSessionArchive(params)
 }
 
 func (d *Daemon) handleSessionReplay(params json.RawMessage) (any, error) {
@@ -1998,15 +1911,19 @@ func (d *Daemon) handleSessionAttach(params json.RawMessage) (any, error) {
 	}, nil
 }
 
-// handleSessionFork branches a session: a new session sharing the workspace,
-// profile, and approval mode, linked to the source as its parent (lineage), so
-// you can explore an alternate line of work without disturbing the original.
+type sessionForkParams struct {
+	SessionID    string `json:"session_id"`
+	LastTaskID   string `json:"last_task_id"`
+	ThroughTurn  int    `json:"through_turn"`
+	BeforeFirst  bool   `json:"before_first"`
+	ClientForkID string `json:"client_fork_id"`
+}
+
+// handleSessionFork branches a session at a source-owned conversation
+// boundary. A client fork identity makes retries idempotent even when child
+// creation succeeds but the response or destination hydration is interrupted.
 func (d *Daemon) handleSessionFork(params json.RawMessage) (any, error) {
-	var p struct {
-		SessionID   string `json:"session_id"`
-		LastTaskID  string `json:"last_task_id"`
-		ThroughTurn int    `json:"through_turn"`
-	}
+	var p sessionForkParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
@@ -2018,48 +1935,88 @@ func (d *Daemon) handleSessionFork(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", id)
 	}
-	var sourceTask *scheduler.Task
+	if p.BeforeFirst && (p.LastTaskID != "" || p.ThroughTurn > 0) {
+		return nil, fmt.Errorf("before_first cannot be combined with last_task_id or through_turn")
+	}
+	if p.ClientForkID != "" && !validClientSubmissionID(p.ClientForkID) {
+		return nil, fmt.Errorf("client_fork_id must be a 1-128 byte ASCII token using letters, digits, '.', '_', ':', or '-'")
+	}
+	fingerprint := sessionForkFingerprint(p)
+
+	d.forkMu.Lock()
+	defer d.forkMu.Unlock()
+	if existing, err := d.store.FindForkRequest(src.SessionID, p.ClientForkID, fingerprint); err != nil {
+		return nil, err
+	} else if existing != nil {
+		if err := d.ensureKernelSession(existing); err != nil {
+			return nil, err
+		}
+		d.setPlanMode(existing.SessionID, existing.PlanMode)
+		return existing, nil
+	}
+
+	var sourceTask *scheduler.ExecutionRun
 	for _, task := range d.sched.List() {
 		if task.SessionID != id {
 			continue
 		}
 		switch task.Status {
 		case "running", "queued", "waiting_approval", "paused":
-			return nil, fmt.Errorf("cannot fork session %s while task %s is %s", id, task.TaskID, task.Status)
+			return nil, fmt.Errorf("cannot fork session %s while task %s is %s", id, task.RunID, task.Status)
 		}
-		if p.LastTaskID != "" && task.TaskID == p.LastTaskID {
+		if p.LastTaskID != "" && task.RunID == p.LastTaskID {
 			sourceTask = task
 		}
 		if p.LastTaskID == "" && (sourceTask == nil || task.UpdatedAt.After(sourceTask.UpdatedAt)) {
 			sourceTask = task
 		}
 	}
-	if sourceTask == nil {
+	if !p.BeforeFirst && sourceTask == nil {
 		return nil, fmt.Errorf("cannot fork session %s without a completed task checkpoint", id)
 	}
-	cp := d.runs.loadCheckpoint(sourceTask.TaskID)
-	if p.ThroughTurn > 0 {
-		cp = d.runs.loadCheckpointTurn(sourceTask.TaskID, p.ThroughTurn)
+	var sourceTaskID string
+	var sourceTurn int
+	if sourceTask != nil {
+		cp := d.runs.loadCheckpoint(sourceTask.RunID)
+		if p.ThroughTurn > 0 {
+			cp = d.runs.loadCheckpointTurn(sourceTask.RunID, p.ThroughTurn)
+		}
+		if cp == nil {
+			return nil, fmt.Errorf("fork boundary not found for task %s", sourceTask.RunID)
+		}
+		sourceTaskID = sourceTask.RunID
+		sourceTurn = cp.Turn
 	}
-	if cp == nil {
-		return nil, fmt.Errorf("fork boundary not found for task %s", sourceTask.TaskID)
-	}
-	child, err := d.createSubSession(src.WorkspaceRoot, src.PermissionProfile, src.ApprovalMode, src.SessionID, src.Depth+1)
+	child, created, err := d.store.CreateForkSession(src, sourceTaskID, sourceTurn, p.ClientForkID, fingerprint)
 	if err != nil {
 		return nil, err
 	}
 	if err := d.kern.InitSessionFull(child.SessionID, child.WorkspaceRoot, child.PermissionProfile, child.ApprovalMode, d.org); err != nil {
-		_, _ = d.store.SetStatus(child.SessionID, "closed")
-		_ = d.store.Delete(child.SessionID)
+		if created {
+			_, _ = d.store.SetStatus(child.SessionID, "closed")
+			_ = d.store.Delete(child.SessionID)
+		}
 		return nil, fmt.Errorf("fork init: %w", err)
 	}
-	child, err = d.store.SetForkLineage(child.SessionID, sourceTask.TaskID, cp.Turn)
-	if err != nil {
-		return nil, fmt.Errorf("fork lineage: %w", err)
+	d.setPlanMode(child.SessionID, child.PlanMode)
+	if created {
+		d.record(child.SessionID, "SessionForked", "", "go",
+			map[string]any{
+				"status":         "forked",
+				"parent":         src.SessionID,
+				"source_task_id": sourceTaskID,
+				"through_turn":   sourceTurn,
+				"before_first":   p.BeforeFirst,
+			}, "")
 	}
-	d.record(child.SessionID, "TaskCreated", "", "go",
-		map[string]any{"status": "forked", "parent": src.SessionID, "source_task_id": sourceTask.TaskID, "through_turn": cp.Turn}, "")
 	return child, nil
+}
+
+func sessionForkFingerprint(p sessionForkParams) string {
+	p.ClientForkID = ""
+	raw, _ := json.Marshal(p)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // handlePlanMode toggles plan mode for a session: while on, the agent may
@@ -2148,23 +2105,98 @@ func (d *Daemon) handleAddDir(params json.RawMessage) (any, error) {
 	if err := d.kern.AddDir(sess.SessionID, abs); err != nil {
 		return nil, err
 	}
-	d.record(sess.SessionID, "TaskCreated", "", "go",
+	d.record(sess.SessionID, "DirectoryGranted", "", "go",
 		map[string]any{"status": "dir_granted", "path": abs}, "")
 	return map[string]any{"session_id": sess.SessionID, "path": abs, "granted": true}, nil
 }
 
-// handleApprovePlan approves the plan and exits plan mode so execution proceeds.
+// handleApprovePlan approves the latest completed plan exactly once. Approval
+// changes execution state: it exits plan mode and submits a governed build task
+// carrying the approved summary, rather than emitting a display-only receipt.
 func (d *Daemon) handleApprovePlan(params json.RawMessage) (any, error) {
 	id, err := sessionID(params)
 	if err != nil {
 		return nil, err
 	}
+	sess, ok := d.store.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", id)
+	}
+	if !sess.PlanMode {
+		result := map[string]any{"session_id": id, "plan_mode": false, "approved": true}
+		if task := d.approvedPlanBuildTask(id); task != nil {
+			result["task"] = task
+		}
+		return result, nil
+	}
+	latest := d.latestSessionTask(id)
 	if _, err := d.store.SetPlanMode(id, false); err != nil {
 		return nil, err
 	}
 	d.setPlanMode(id, false)
 	d.noticePlanModeSwitch(id, false)
-	return map[string]any{"session_id": id, "plan_mode": false, "approved": true}, nil
+	result := map[string]any{"session_id": id, "plan_mode": false, "approved": true}
+	if latest == nil || latest.Status != "completed" || latest.Agent != "plan" || strings.TrimSpace(latest.Summary) == "" {
+		return result, nil
+	}
+	model := strings.TrimSpace(latest.RequestedModel)
+	if model == "" {
+		model = strings.TrimSpace(latest.Model)
+	}
+	effort := strings.TrimSpace(latest.RequestedReasoningEffort)
+	if effort == "" {
+		effort = strings.TrimSpace(latest.EffectiveReasoningEffort)
+	}
+	submissionID := "plan-approval:" + latest.RunID
+	buildParams, err := json.Marshal(map[string]any{
+		"session_id":           id,
+		"client_submission_id": submissionID,
+		"prompt":               "Implement this approved plan:\n\n" + strings.TrimSpace(latest.Summary),
+		"model":                model,
+		"agent":                "build",
+		"reasoning_effort":     effort,
+		"locale":               latest.Locale,
+	})
+	if err != nil {
+		return nil, err
+	}
+	build, err := d.handleTaskSubmit(buildParams)
+	if err != nil {
+		_, _ = d.store.SetPlanMode(id, true)
+		d.setPlanMode(id, true)
+		d.noticePlanModeSwitch(id, true)
+		return nil, fmt.Errorf("approve plan: submit implementation: %w", err)
+	}
+	result["task"] = build
+	return result, nil
+}
+
+func (d *Daemon) latestSessionTask(sessionID string) *scheduler.ExecutionRun {
+	var latest *scheduler.ExecutionRun
+	for _, task := range d.sched.List() {
+		if task.SessionID != sessionID {
+			continue
+		}
+		if latest == nil || task.UpdatedAt.After(latest.UpdatedAt) ||
+			(task.UpdatedAt.Equal(latest.UpdatedAt) && task.RunID > latest.RunID) {
+			latest = task
+		}
+	}
+	return latest
+}
+
+func (d *Daemon) approvedPlanBuildTask(sessionID string) *scheduler.ExecutionRun {
+	var latest *scheduler.ExecutionRun
+	for _, task := range d.sched.List() {
+		if task.SessionID != sessionID || task.Agent != "build" ||
+			!strings.HasPrefix(task.ClientSubmissionID, "plan-approval:") {
+			continue
+		}
+		if latest == nil || task.UpdatedAt.After(latest.UpdatedAt) {
+			latest = task
+		}
+	}
+	return latest
 }
 
 func (d *Daemon) handleMemoryList(params json.RawMessage) (any, error) {
@@ -2542,7 +2574,7 @@ func (d *Daemon) noticePlanModeSwitch(sessionID string, on bool) {
 	} else {
 		msg = "MODE SWITCH: plan mode is now OFF — the plan was approved (or plan mode was cleared); edits, commands, and memory writes are permitted again"
 	}
-	d.steerWithPriority(task.TaskID, msg, steerUrgent)
+	d.steerWithPriority(task.RunID, msg, steerUrgent)
 }
 
 // ---- tasks ----------------------------------------------------------------
@@ -2555,6 +2587,7 @@ type taskSubmitParams struct {
 	Agent              string                   `json:"agent"`
 	Mode               string                   `json:"mode"`
 	ReasoningEffort    string                   `json:"reasoning_effort"`
+	Locale             string                   `json:"locale"`
 	TokenBudget        int                      `json:"token_budget"`
 	SuccessCriteria    []scheduler.SuccessCheck `json:"success_criteria"`
 	OutputSchema       json.RawMessage          `json:"output_schema"`
@@ -2575,6 +2608,13 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	}
 	if strings.TrimSpace(p.Prompt) == "" {
 		return nil, fmt.Errorf("prompt is required")
+	}
+	if strings.TrimSpace(p.Locale) != "" {
+		locale, err := microcopy.CanonicalLocale(p.Locale)
+		if err != nil {
+			return nil, fmt.Errorf("locale: %w", err)
+		}
+		p.Locale = locale
 	}
 	if p.TokenBudget < 0 {
 		return nil, fmt.Errorf("token_budget must be >= 0")
@@ -2632,7 +2672,7 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		if model == "" {
 			model = expanded.Model
 		}
-		d.record(sess.SessionID, "TaskCreated", "", "go",
+		d.record(sess.SessionID, "CommandExpanded", "", "go",
 			map[string]any{"status": "command_expanded", "command": expanded.Name}, "")
 	}
 	if agent == "" {
@@ -2662,25 +2702,26 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, prompt, model, agent, p.SuccessCriteria)
-	d.sched.SetInputMediaRefs(task.TaskID, inputMediaRefs)
-	d.sched.SetModelState(task.TaskID, requestedModel, taskModel(task))
-	d.sched.SetReasoningEffortState(task.TaskID, requestedEffort, effectiveEffort)
+	d.sched.SetLocale(task.RunID, p.Locale)
+	d.sched.SetInputMediaRefs(task.RunID, inputMediaRefs)
+	d.sched.SetModelState(task.RunID, requestedModel, taskModel(task))
+	d.sched.SetReasoningEffortState(task.RunID, requestedEffort, effectiveEffort)
 	if clientSubmissionID != "" {
-		d.sched.SetClientSubmission(task.TaskID, clientSubmissionID, submissionFingerprint)
+		d.sched.SetClientSubmission(task.RunID, clientSubmissionID, submissionFingerprint)
 	}
 	if p.TokenBudget > 0 {
-		d.sched.SetTokenBudget(task.TaskID, p.TokenBudget)
+		d.sched.SetTokenBudget(task.RunID, p.TokenBudget)
 	} else if budget := d.maxTaskTokens.Load(); budget > 0 {
-		d.sched.SetTokenBudget(task.TaskID, int(budget))
+		d.sched.SetTokenBudget(task.RunID, int(budget))
 	}
-	d.sched.SetMode(task.TaskID, p.Mode)
+	d.sched.SetMode(task.RunID, p.Mode)
 	if len(p.OutputSchema) > 0 {
-		d.sched.SetOutputSchema(task.TaskID, p.OutputSchema)
+		d.sched.SetOutputSchema(task.RunID, p.OutputSchema)
 	}
 	// Scheduler setters publish immutable task copies. Capture the final
 	// submission envelope once and use that same row for WAL, persistence, and
 	// the asynchronous execution closure.
-	if frozen, ok := d.sched.Get(task.TaskID); ok {
+	if frozen, ok := d.sched.Get(task.RunID); ok {
 		copy := *frozen
 		copy.SuccessCriteria = append([]scheduler.SuccessCheck(nil), frozen.SuccessCriteria...)
 		copy.InputMediaRefs = append([]scheduler.InputMediaRef(nil), frozen.InputMediaRefs...)
@@ -2696,34 +2737,35 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	// signature intentionally swallows the error for its many best-effort
 	// callers) so this one write-ahead call can be checked.
 	writeAheadPayload := map[string]any{
-		"task_id": task.TaskID, "user_prompt": task.UserPrompt,
+		"run_id": task.RunID, "user_prompt": task.UserPrompt,
 		"model": task.Model, "requested_model": task.RequestedModel, "effective_model": task.EffectiveModel,
 		"requested_reasoning_effort": task.RequestedReasoningEffort, "effective_reasoning_effort": task.EffectiveReasoningEffort,
 		"agent": task.Agent, "mode": task.Mode,
+		"locale":           task.Locale,
 		"input_media_refs": task.InputMediaRefs,
 	}
-	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "TaskCreated", task.TaskID, "go", writeAheadPayload, "")
+	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "ExecutionQueued", task.RunID, "go", writeAheadPayload, "")
 	if err != nil {
-		_, _ = d.sched.Cancel(task.TaskID)
-		return nil, fmt.Errorf("task_submit_failed: write-ahead audit-chain append failed, task was not dispatched: %w", err)
+		_, _ = d.sched.Cancel(task.RunID)
+		return nil, fmt.Errorf("execution_start_failed: write-ahead audit-chain append failed; execution was not dispatched: %w", err)
 	}
 	d.events.Publish(sess.SessionID, map[string]any{
-		"session_id": sess.SessionID, "task_id": task.TaskID, "type": "TaskCreated", "actor": "go",
+		"session_id": sess.SessionID, "run_id": task.RunID, "type": "ExecutionQueued", "actor": "go",
 		"timestamp": time.Now().UTC().Format(time.RFC3339), "payload": writeAheadPayload, internalRawAuditCursor: cursor,
 	})
 	_ = d.history.AppendScoped(history.Entry{ // shared cross-process prompt history (best-effort)
 		Text: prompt, SessionID: sess.SessionID, WorkspaceRoot: sess.WorkspaceRoot,
 	})
 	if err := d.runs.saveChecked(task); err != nil {
-		_, _ = d.sched.Cancel(task.TaskID)
-		return nil, fmt.Errorf("task_submit_failed: durable submission record failed, task was not dispatched: %w", err)
+		_, _ = d.sched.Cancel(task.RunID)
+		return nil, fmt.Errorf("execution_start_failed: durable submission record failed; execution was not dispatched: %w", err)
 	}
 	if clientSubmissionID != "" {
-		d.taskSubmissions[taskSubmissionKey(p.SessionID, clientSubmissionID)] = task.TaskID
+		d.taskSubmissions[taskSubmissionKey(p.SessionID, clientSubmissionID)] = task.RunID
 	}
 
 	d.startTask(func() { d.runTaskGuarded(sess, task) })
-	if t, ok := d.sched.Get(task.TaskID); ok {
+	if t, ok := d.sched.Get(task.RunID); ok {
 		return t, nil
 	}
 	return task, nil
@@ -2784,14 +2826,14 @@ func validClientSubmissionID(value string) bool {
 
 func (d *Daemon) handleTaskStatus(params json.RawMessage) (any, error) {
 	var p struct {
-		TaskID string `json:"task_id"`
+		RunID string `json:"run_id"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	task, ok := d.sched.Get(p.TaskID)
+	task, ok := d.sched.Get(p.RunID)
 	if !ok {
-		return nil, fmt.Errorf("unknown task %s", p.TaskID)
+		return nil, fmt.Errorf("unknown execution %s", p.RunID)
 	}
 	return task, nil
 }
@@ -2800,21 +2842,21 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 	d.checkpointMu.Lock()
 	defer d.checkpointMu.Unlock()
 	var p struct {
-		TaskID string `json:"task_id"`
+		RunID string `json:"run_id"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	task, err := d.sched.Cancel(p.TaskID)
+	task, err := d.sched.Cancel(p.RunID)
 	if err != nil {
 		return nil, err
 	}
-	d.record(task.SessionID, "TaskCreated", task.TaskID, "operator", map[string]any{
-		"status": "cancelled", "reason": "operator_cancelled",
+	d.record(task.SessionID, "ExecutionCancelled", task.RunID, "operator", map[string]any{
+		"reason": "operator_cancelled",
 	}, "")
 	persistErr := d.runs.saveChecked(task)
 	d.taskContextMu.Lock()
-	cancel := d.taskCancels[p.TaskID]
+	cancel := d.taskCancels[p.RunID]
 	d.taskContextMu.Unlock()
 	if cancel != nil {
 		cancel(context.Canceled)
@@ -2822,7 +2864,7 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 		d.emitCompletion(task.SessionID, task)
 	}
 	if persistErr != nil {
-		return nil, fmt.Errorf("task_cancel_pending: task is cancelled in memory but durable persistence failed; retry task.cancel: %w", persistErr)
+		return nil, fmt.Errorf("task_cancel_pending: task is cancelled in memory but durable persistence failed; retry execution.cancel: %w", persistErr)
 	}
 	return task, nil
 }
@@ -2894,7 +2936,7 @@ func (m *taskMailbox) drain() []string {
 // the same task without discarding or reordering either tier internally.
 func (d *Daemon) handleTaskSteer(params json.RawMessage) (any, error) {
 	var p struct {
-		TaskID   string `json:"task_id"`
+		RunID    string `json:"run_id"`
 		Message  string `json:"message"`
 		Priority string `json:"priority"`
 		SteerID  string `json:"steer_id"`
@@ -2902,33 +2944,33 @@ func (d *Daemon) handleTaskSteer(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	p.TaskID = strings.TrimSpace(p.TaskID)
+	p.RunID = strings.TrimSpace(p.RunID)
 	p.Message = strings.TrimSpace(p.Message)
-	if p.TaskID == "" || p.Message == "" {
-		return nil, fmt.Errorf("task_id and message are required")
+	if p.RunID == "" || p.Message == "" {
+		return nil, fmt.Errorf("run_id and message are required")
 	}
 	priority, err := parseSteerPriority(p.Priority)
 	if err != nil {
 		return nil, err
 	}
-	task, ok := d.sched.Get(p.TaskID)
+	task, ok := d.sched.Get(p.RunID)
 	if !ok {
-		return nil, fmt.Errorf("unknown task %s", p.TaskID)
+		return nil, fmt.Errorf("unknown execution %s", p.RunID)
 	}
 	switch task.Status {
 	case "queued", "running", "waiting_approval":
 	default:
-		return nil, fmt.Errorf("task %s is %s and cannot be steered", p.TaskID, task.Status)
+		return nil, fmt.Errorf("execution %s is %s and cannot be steered", p.RunID, task.Status)
 	}
-	d.steerWithPriority(p.TaskID, p.Message, priority)
+	d.steerWithPriority(p.RunID, p.Message, priority)
 	p.SteerID = strings.TrimSpace(p.SteerID)
 	if p.SteerID == "" {
 		p.SteerID = sessionstore.NewID("steer")
 	}
-	d.record(task.SessionID, "TaskCreated", task.TaskID, "user", map[string]any{
+	d.record(task.SessionID, "ExecutionProgressed", task.RunID, "user", map[string]any{
 		"status": "steered", "message": p.Message, "steer_id": p.SteerID,
 	}, "")
-	return map[string]any{"queued": true, "task_id": p.TaskID, "status": task.Status, "priority": string(priority), "steer_id": p.SteerID}, nil
+	return map[string]any{"queued": true, "run_id": p.RunID, "status": task.Status, "priority": string(priority), "steer_id": p.SteerID}, nil
 }
 
 // steer queues a normal-priority steering message. Kept for existing call
@@ -2976,7 +3018,7 @@ func (d *Daemon) handleTaskList(params json.RawMessage) (any, error) {
 	}
 	_ = json.Unmarshal(params, &p) // all filters optional
 	all := d.sched.List()
-	out := make([]*scheduler.Task, 0, len(all))
+	out := make([]*scheduler.ExecutionRun, 0, len(all))
 	for _, t := range all {
 		if p.SessionID != "" && t.SessionID != p.SessionID {
 			continue
@@ -2992,14 +3034,14 @@ func (d *Daemon) handleTaskList(params json.RawMessage) (any, error) {
 // handleTaskResult returns one run record: status, summary, and applied patches.
 func (d *Daemon) handleTaskResult(params json.RawMessage) (any, error) {
 	var p struct {
-		TaskID string `json:"task_id"`
+		RunID string `json:"run_id"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	t, ok := d.sched.Get(p.TaskID)
+	t, ok := d.sched.Get(p.RunID)
 	if !ok {
-		return nil, fmt.Errorf("unknown task %s", p.TaskID)
+		return nil, fmt.Errorf("unknown execution %s", p.RunID)
 	}
 	return t, nil
 }
@@ -3018,6 +3060,12 @@ func (d *Daemon) persistRun(taskID string) {
 				}
 			}
 		}
+	}
+}
+
+func (d *Daemon) persistTask(taskID string) {
+	if task, ok := d.sched.GetTask(taskID); ok {
+		_ = d.runs.saveTask(task)
 	}
 }
 
@@ -3076,7 +3124,7 @@ func (d *Daemon) checkWriteProvenance(sessionID, relpath, abspath string) error 
 // guardRun runs a background agent function under a concurrency cap and a panic
 // guard: a panic marks that one run failed (recorded + persisted) instead of
 // crashing the daemon and taking every other run with it.
-func (d *Daemon) guardRun(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task, run func()) {
+func (d *Daemon) guardRun(ctx context.Context, sess *sessionstore.Session, task *scheduler.ExecutionRun, run func()) {
 	select {
 	case d.runSem <- struct{}{}:
 	case <-ctx.Done():
@@ -3085,36 +3133,36 @@ func (d *Daemon) guardRun(ctx context.Context, sess *sessionstore.Session, task 
 	defer func() { <-d.runSem }()
 	defer func() {
 		if r := recover(); r != nil {
-			_, _ = d.sched.SetTerminalResultFenced(task.TaskID, task.Continuity.Execution.LeaseGeneration, "failed", fmt.Sprintf("panic: %v", r), nil)
-			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+			_, _ = d.sched.SetTerminalResultFenced(task.RunID, task.Continuity.Execution.LeaseGeneration, "failed", fmt.Sprintf("panic: %v", r), nil)
+			d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go",
 				map[string]any{"status": "failed", "reason": "panic recovered"}, "")
-			d.persistRun(task.TaskID)
+			d.persistRun(task.RunID)
 		}
 	}()
 	run()
-	d.persistRun(task.TaskID)
+	d.persistRun(task.RunID)
 }
 
-func (d *Daemon) runTaskGuarded(sess *sessionstore.Session, task *scheduler.Task) {
+func (d *Daemon) runTaskGuarded(sess *sessionstore.Session, task *scheduler.ExecutionRun) {
 	if task.Continuity.Execution.LeaseGeneration == 0 {
-		current, ok := d.sched.Get(task.TaskID)
+		current, ok := d.sched.Get(task.RunID)
 		if !ok {
 			return
 		}
-		claimed, err := d.sched.AcquireExecution(task.TaskID, current.Revision, "local", d.runtimeLease.state.InstanceID, d.runtimeLease.state.Epoch, time.Time{})
+		claimed, err := d.sched.AcquireExecution(task.RunID, current.Revision, "local", d.runtimeLease.state.InstanceID, d.runtimeLease.state.Epoch, time.Time{})
 		if err != nil {
 			return
 		}
 		task = claimed
-		d.persistRun(task.TaskID)
+		d.persistRun(task.RunID)
 	}
 	fence := d.sessionExecutionFence(sess.SessionID)
 	fence.RLock()
 	defer fence.RUnlock()
-	d.withTaskContext(task.TaskID, func(ctx context.Context) {
+	d.withTaskContext(task.RunID, func(ctx context.Context) {
 		d.guardRun(ctx, sess, task, func() { d.runTaskContext(ctx, sess, task) })
 	})
-	if current, ok := d.sched.Get(task.TaskID); ok && current.Status == "cancelled" {
+	if current, ok := d.sched.Get(task.RunID); ok && current.Status == "cancelled" {
 		d.emitCompletion(sess.SessionID, current)
 	}
 }
@@ -3137,14 +3185,14 @@ func (d *Daemon) withTaskParentContext(parent context.Context, taskID string, ru
 	run(ctx)
 }
 
-func (d *Daemon) resumeTaskGuarded(sess *sessionstore.Session, task *scheduler.Task, cp *runCheckpoint) {
+func (d *Daemon) resumeTaskGuarded(sess *sessionstore.Session, task *scheduler.ExecutionRun, cp *runCheckpoint) {
 	fence := d.sessionExecutionFence(sess.SessionID)
 	fence.RLock()
 	defer fence.RUnlock()
-	d.withTaskContext(task.TaskID, func(ctx context.Context) {
+	d.withTaskContext(task.RunID, func(ctx context.Context) {
 		d.guardRun(ctx, sess, task, func() { d.resumeTaskContext(ctx, sess, task, cp) })
 	})
-	if current, ok := d.sched.Get(task.TaskID); ok && current.Status == "cancelled" {
+	if current, ok := d.sched.Get(task.RunID); ok && current.Status == "cancelled" {
 		d.emitCompletion(sess.SessionID, current)
 	}
 }
@@ -3225,8 +3273,8 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 	}
 	// Unblock a live awaitInteractiveApproval wait on this decision (an
 	// agent-originated requires_approval pause), if one is pending. This is
-	// the RPC surface the TUI's approval overlay calls (task.action.approve)
-	// — it must resolve the same wait task.approval.resolve does, or the
+	// the RPC surface the TUI's approval overlay calls (governance.action.approve)
+	// — it must resolve the same wait governance.approval.resolve does, or the
 	// operator's verdict is recorded as allowed while the gated action still
 	// times out to denied.
 	d.signalPendingApproval(p.DecisionID, decision, decision.Decision == "allowed", actualScope)
@@ -3429,9 +3477,9 @@ func (d *Daemon) handleFileGet(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", p.SessionID)
 	}
-	abs := p.Path
-	if !strings.HasPrefix(abs, "/") {
-		abs = sess.WorkspaceRoot + "/" + p.Path
+	abs, err := resolveWorkspacePreviewPath(sess.WorkspaceRoot, p.Path)
+	if err != nil {
+		return nil, err
 	}
 	decision, err := d.kern.Request(sess.SessionID, "FileRead", abs, "")
 	if err != nil {
@@ -3440,7 +3488,7 @@ func (d *Daemon) handleFileGet(params json.RawMessage) (any, error) {
 	if decision.Decision != "allowed" {
 		return nil, fmt.Errorf("denied: %s", decision.Reason)
 	}
-	content, err := os.ReadFile(abs)
+	content, err := readWorkspacePreview(abs)
 	if err != nil {
 		return nil, err
 	}
@@ -3448,6 +3496,49 @@ func (d *Daemon) handleFileGet(params json.RawMessage) (any, error) {
 	d.record(sess.SessionID, "FileRead", "", "go",
 		map[string]any{"path": abs, "bytes": len(content)}, decision.DecisionID)
 	return map[string]any{"content": string(content), "hash": hex.EncodeToString(sum[:])}, nil
+}
+
+func resolveWorkspacePreviewPath(root, relative string) (string, error) {
+	if strings.TrimSpace(relative) != relative || relative == "" || filepath.IsAbs(relative) || filepath.Clean(relative) != relative {
+		return "", fmt.Errorf("workspace file path must be clean and relative")
+	}
+	for _, component := range strings.Split(filepath.ToSlash(relative), "/") {
+		if component == "" || component == "." || component == ".." {
+			return "", fmt.Errorf("workspace file path must be clean and relative")
+		}
+	}
+	rootReal, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	targetReal, err := filepath.EvalSymlinks(filepath.Join(rootReal, relative))
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace file: %w", err)
+	}
+	rel, err := filepath.Rel(rootReal, targetReal)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("workspace file escapes the active workspace")
+	}
+	return targetReal, nil
+}
+
+func readWorkspacePreview(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	content, err := io.ReadAll(io.LimitReader(file, maxWorkspaceFilePreviewBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(content) > maxWorkspaceFilePreviewBytes {
+		return nil, fmt.Errorf("workspace file exceeds %d byte preview limit", maxWorkspaceFilePreviewBytes)
+	}
+	if bytes.IndexByte(content, 0) >= 0 {
+		return nil, fmt.Errorf("binary workspace files cannot be previewed")
+	}
+	return content, nil
 }
 
 func (d *Daemon) addDirScope(params json.RawMessage) (rpc.Scope, error) {
@@ -3607,6 +3698,7 @@ func (d *Daemon) handlePatchPropose(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	d.publishKernelPatchEvents(patch)
 	// Gate the future apply now: the PatchApply decision travels with the
 	// proposal so approval resolves a real decision_id, and apply can verify
 	// that the approval actually happened.
@@ -3707,7 +3799,12 @@ func (d *Daemon) handlePatchApply(params json.RawMessage) (any, error) {
 	if err := d.checkPatchGate(p.SessionID, p.PatchID); err != nil {
 		return nil, err
 	}
-	return d.kern.PatchApply(p.SessionID, p.PatchID, p.Approver)
+	patch, err := d.kern.PatchApply(p.SessionID, p.PatchID, p.Approver)
+	if err != nil {
+		return nil, err
+	}
+	d.publishKernelPatchEvents(patch)
+	return patch, nil
 }
 
 // checkPatchGate refuses a patch apply unless its PatchApply decision was
@@ -3741,7 +3838,7 @@ func (d *Daemon) checkPatchGate(sessionID, patchID string) error {
 		return fmt.Errorf("approval_expired: patch %s was not applied. decision %s expired before approval; propose the patch again to request a new decision.", patchID, decisionID)
 	default: // requires_approval
 		d.recordPatchRefusal(sessionID, patchID, decisionID, "approval_required")
-		return fmt.Errorf("approval_required: patch %s was not applied. decision %s is awaiting approval; resolve it with task.action.approve or task.action.deny.", patchID, decisionID)
+		return fmt.Errorf("approval_required: patch %s was not applied. decision %s is awaiting approval; resolve it with governance.action.approve or governance.action.deny.", patchID, decisionID)
 	}
 }
 
@@ -3828,6 +3925,7 @@ func (d *Daemon) handlePatchRollback(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	d.publishKernelPatchEvents(patch)
 	// Keep the code index in step with the restore (best-effort; an index
 	// error never fails the rollback).
 	d.invalidateIndex(p.SessionID, patch.AffectedFiles)
@@ -4128,6 +4226,29 @@ func (d *Daemon) recordChecked(sessionID, eventType, taskID, actor string, paylo
 		internalRawAuditCursor: cursor,
 	})
 	return nil
+}
+
+// publishKernelPatchEvents fans out events that the kernel already appended
+// while executing patch RPCs. It must never call recordChecked: doing so would
+// duplicate the durable audit event. Private transport metadata is cleared
+// before the Patch can cross a public daemon RPC boundary.
+func (d *Daemon) publishKernelPatchEvents(patch *kernel.Patch) {
+	if patch == nil {
+		return
+	}
+	events := patch.AuditEvents
+	patch.AuditEvents = nil
+	for _, persisted := range events {
+		if persisted.Cursor <= 0 || persisted.Event == nil {
+			continue
+		}
+		sessionID, _ := persisted.Event["session_id"].(string)
+		if sessionID == "" || sessionID != patch.SessionID {
+			continue
+		}
+		persisted.Event[internalRawAuditCursor] = persisted.Cursor
+		d.events.Publish(sessionID, persisted.Event)
+	}
 }
 
 // ---- workers ----------------------------------------------------------------

@@ -45,7 +45,7 @@ func (d *Daemon) incrEscalation(childTaskID string) bool {
 // actually holds. Bounded: whitelisted capabilities only, one hop (the parent's
 // requires_approval is resolved with plain resolveApproval, never re-entering the
 // bridge, so no grandparent chaining), and a per-task cap.
-func (d *Daemon) escalateToParent(child *sessionstore.Session, childTask *scheduler.Task, capability, resource, label string) (*kernel.Decision, bool) {
+func (d *Daemon) escalateToParent(child *sessionstore.Session, childTask *scheduler.ExecutionRun, capability, resource, label string) (*kernel.Decision, bool) {
 	if !escalatableCaps[capability] || child.ParentID == "" {
 		return nil, false
 	}
@@ -53,8 +53,8 @@ func (d *Daemon) escalateToParent(child *sessionstore.Session, childTask *schedu
 	if !ok || parent.Status != "active" {
 		return nil, false
 	}
-	if !d.incrEscalation(childTask.TaskID) {
-		d.record(child.SessionID, "TaskCreated", childTask.TaskID, "go",
+	if !d.incrEscalation(childTask.RunID) {
+		d.record(child.SessionID, "ExecutionProgressed", childTask.RunID, "go",
 			map[string]any{"status": "escalation_capped", "capability": capability}, "")
 		return nil, false
 	}
@@ -62,14 +62,14 @@ func (d *Daemon) escalateToParent(child *sessionstore.Session, childTask *schedu
 	parentTaskID := d.parentTaskFor(child.SessionID)
 	parentTask, _ := d.sched.Get(parentTaskID)
 	if parentTask == nil {
-		parentTask = &scheduler.Task{TaskID: parentTaskID, SessionID: parent.SessionID}
+		parentTask = &scheduler.ExecutionRun{RunID: parentTaskID, SessionID: parent.SessionID}
 	}
 
 	parentDec, err := d.kern.Request(parent.SessionID, capability, resource, parentTaskID)
 	if err != nil {
 		return nil, false
 	}
-	d.record(child.SessionID, "TaskCreated", childTask.TaskID, "go", map[string]any{
+	d.record(child.SessionID, "ExecutionProgressed", childTask.RunID, "go", map[string]any{
 		"status": "escalated_to_parent", "capability": capability,
 		"parent_session": parent.SessionID, "parent_decision": parentDec.Decision,
 	}, "")
@@ -100,7 +100,7 @@ func (d *Daemon) recordEscalationGrant(parent *sessionstore.Session, parentTaskI
 // escalates to its parent first (which may auto-approve or ask the operator); the
 // main agent (no parent) uses the normal resolveApproval path. If escalation is
 // refused or capped, the child falls back to resolving under its own session.
-func (d *Daemon) resolveApprovalOrEscalate(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, capability, resource, label string) (*kernel.Decision, bool) {
+func (d *Daemon) resolveApprovalOrEscalate(sess *sessionstore.Session, task *scheduler.ExecutionRun, dec *kernel.Decision, capability, resource, label string) (*kernel.Decision, bool) {
 	if sess.ParentID != "" {
 		if esc, ok := d.escalateToParent(sess, task, capability, resource, label); ok {
 			return esc, true

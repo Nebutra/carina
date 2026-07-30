@@ -21,16 +21,16 @@ const (
 // in an isolated, capability-attenuated session and only its final summary
 // returns to the parent — the core sub-agent contract (isolated context,
 // single-channel result).
-func (d *Daemon) executeSpawn(parent *sessionstore.Session, parentTask *scheduler.Task, act *action) string {
+func (d *Daemon) executeSpawn(parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, act *action) string {
 	return d.executeSpawnOutcome(parent, parentTask, act).display
 }
 
-func (d *Daemon) executeSpawnOutcome(parent *sessionstore.Session, parentTask *scheduler.Task, act *action) toolExecutionOutcome {
-	ctx := d.contextForTask(parentTask.TaskID)
+func (d *Daemon) executeSpawnOutcome(parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, act *action) toolExecutionOutcome {
+	ctx := d.contextForTask(parentTask.RunID)
 	if parent.Depth >= maxSubagentDepth {
 		return toolDenied("DENIED: max subagent depth reached (no deeper nesting)", "depth_limit")
 	}
-	if err := d.ensureActiveToolStarted(parentTask.TaskID); err != nil {
+	if err := d.ensureActiveToolStarted(parentTask.RunID); err != nil {
 		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
 	}
 	// Spawning is a gated, audited effect — the actual Capability::SubagentSpawn
@@ -71,11 +71,11 @@ func (d *Daemon) executeSpawnOutcome(parent *sessionstore.Session, parentTask *s
 // runs a bounded ReAct loop under the agent's system prompt, and returns its
 // final summary. The child's profile is clamped so it can never exceed the
 // parent (child ⊆ parent) — enforced by the Rust kernel.
-func (d *Daemon) spawnSubagent(parent *sessionstore.Session, parentTask *scheduler.Task, agentName, taskDesc string) string {
+func (d *Daemon) spawnSubagent(parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, agentName, taskDesc string) string {
 	return d.spawnSubagentContext(context.Background(), parent, parentTask, agentName, taskDesc)
 }
 
-func (d *Daemon) spawnSubagentContext(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, agentName, taskDesc string) string {
+func (d *Daemon) spawnSubagentContext(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, agentName, taskDesc string) string {
 	summary, _ := d.spawnSubagentContextID(ctx, parent, parentTask, agentName, taskDesc)
 	return summary
 }
@@ -85,7 +85,7 @@ func (d *Daemon) spawnSubagentContext(ctx context.Context, parent *sessionstore.
 // child session actually read/wrote (see bestofn.go, which uses this to
 // establish real write-provenance for a winning candidate instead of
 // self-seeding it at submission time).
-func (d *Daemon) spawnSubagentContextID(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, agentName, taskDesc string) (string, string) {
+func (d *Daemon) spawnSubagentContextID(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, agentName, taskDesc string) (string, string) {
 	return d.spawnSubagentContextIDBound(ctx, parent, parentTask, agentName, taskDesc, nil)
 }
 
@@ -96,7 +96,7 @@ func (d *Daemon) spawnSubagentContextID(ctx context.Context, parent *sessionstor
 // right run-scoped broker (see swarm_channel.go) — same
 // Store-before/deferred-Delete-after lifetime pattern already used below for
 // restrictedTools/allowedTools/allowedSpawnAgents.
-func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, agentName, taskDesc string, binding *swarmChannelBinding) (string, string) {
+func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, agentName, taskDesc string, binding *swarmChannelBinding) (string, string) {
 	if ctx.Err() != nil {
 		return "subagent cancelled", ""
 	}
@@ -119,7 +119,7 @@ func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessio
 	// (not folded into PluginLoad) so the resource carries structured
 	// identity a future PolicyBundle can differentiate on.
 	spawnResource := fmt.Sprintf("agent:%s:profile:%s", agentName, childProfile)
-	dec, err := d.kern.Request(parent.SessionID, "SubagentSpawn", spawnResource, parentTask.TaskID)
+	dec, err := d.kern.Request(parent.SessionID, "SubagentSpawn", spawnResource, parentTask.RunID)
 	if err != nil {
 		return "spawn governance error: " + err.Error(), ""
 	}
@@ -159,21 +159,22 @@ func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessio
 	}
 
 	// Audit the delegation on the parent, linking to the child session.
-	d.record(parent.SessionID, "ToolApproved", parentTask.TaskID, "go", map[string]any{
+	d.record(parent.SessionID, "ToolApproved", parentTask.RunID, "go", map[string]any{
 		"spawn_agent": agentName, "child_session": child.SessionID,
 		"child_profile": childProfile, "depth": child.Depth, "task": taskDesc,
 	}, dec.DecisionID)
 
 	childTask := d.sched.SubmitWithGoalModelAgent(child.SessionID, child.WorkspaceID, taskDesc, spec.Model, spec.Name, nil)
+	d.sched.SetLocale(childTask.RunID, parentTask.Locale)
 	// Record the parent-task linkage so the leader bridge can escalate a refused
 	// child capability to the parent task (ParentID gives the session, not the task).
-	d.registerSubagentParent(child.SessionID, parentTask.TaskID)
+	d.registerSubagentParent(child.SessionID, parentTask.RunID)
 	var summary string
-	d.withTaskParentContext(ctx, childTask.TaskID, func(childCtx context.Context) {
+	d.withTaskParentContext(ctx, childTask.RunID, func(childCtx context.Context) {
 		summary = d.runSubagentLoopContext(childCtx, child, childTask, spec)
 	})
 
-	d.record(parent.SessionID, "ModelResponded", parentTask.TaskID, "go", map[string]any{
+	d.record(parent.SessionID, "ModelResponded", parentTask.RunID, "go", map[string]any{
 		"spawn_agent": agentName, "child_session": child.SessionID,
 		"result_summary": truncate(summary, 300),
 	}, "")
@@ -215,19 +216,19 @@ func toSet(names []string) map[string]bool {
 // runSubagentLoop runs a bounded ReAct loop for a subagent, using its own
 // system prompt and isolated session. It returns the subagent's final
 // summary (the only thing that crosses back to the parent).
-func (d *Daemon) runSubagentLoop(sess *sessionstore.Session, task *scheduler.Task, spec *AgentSpec) string {
+func (d *Daemon) runSubagentLoop(sess *sessionstore.Session, task *scheduler.ExecutionRun, spec *AgentSpec) string {
 	return d.runSubagentLoopContext(context.Background(), sess, task, spec)
 }
 
-func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task, spec *AgentSpec) string {
-	if d.reasoner == nil {
+func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.Session, task *scheduler.ExecutionRun, spec *AgentSpec) string {
+	if !d.reasonerReady() {
 		return "(no reasoner configured)"
 	}
 	if ctx.Err() != nil {
-		_, _ = d.sched.Cancel(task.TaskID)
+		_, _ = d.sched.Cancel(task.RunID)
 		return "subagent cancelled"
 	}
-	d.sched.SetStatus(task.TaskID, "running")
+	d.sched.SetStatus(task.RunID, "running")
 	maxTurns := spec.MaxTurns
 	if maxTurns <= 0 || maxTurns > subagentMaxTurns {
 		maxTurns = subagentMaxTurns
@@ -240,18 +241,18 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		sysPrompt += "\n\nCARINA PERSISTENT MEMORY SNAPSHOT (frozen for this run; background reference, not new user input):\n" + memorySnapshot
 	}
 
-	d.record(sess.SessionID, "ModelRequested", task.TaskID, "model",
+	d.record(sess.SessionID, "ModelRequested", task.RunID, "model",
 		map[string]any{"subagent": spec.Name, "model": taskModel(task), "prompt": task.UserPrompt}, "")
 
 	for turn := 1; turn <= maxTurns; turn++ {
 		if ctx.Err() != nil {
-			_, _ = d.sched.Cancel(task.TaskID)
+			_, _ = d.sched.Cancel(task.RunID)
 			return "subagent cancelled"
 		}
 		if receipt := tr.compact(func(head string) (string, error) {
 			return thinkWithRetry(ctx, d.summarizeReasoner(), "Summarize concisely:\n"+head)
 		}); receipt != nil {
-			d.record(sess.SessionID, "ContextCompacted", task.TaskID, "go", map[string]any{"receipt": receipt}, "")
+			d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", map[string]any{"receipt": receipt}, "")
 		}
 		seg := buildPromptSegments(sysPrompt, task.UserPrompt, tr.render(), "Next action as one JSON object.")
 		prompt := seg.full()
@@ -259,20 +260,20 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		raw, err := thinkWithRetryModel(ctx, d.reasoner, taskModel(task), prompt)
 		if err != nil {
 			if ctx.Err() != nil {
-				_, _ = d.sched.Cancel(task.TaskID)
+				_, _ = d.sched.Cancel(task.RunID)
 				return "subagent cancelled"
 			}
-			d.sched.SetStatus(task.TaskID, "failed")
+			d.sched.SetStatus(task.RunID, "failed")
 			return "subagent failed: " + err.Error()
 		}
-		d.record(sess.SessionID, "ModelResponded", task.TaskID, "model",
+		d.record(sess.SessionID, "ModelResponded", task.RunID, "model",
 			map[string]any{"turn": turn, "text": truncate(sanitizeModelResponseForAudit(raw), 300)}, "")
 
 		// Per-subagent token budget (whale-session protection).
-		d.sched.AddTokens(task.TaskID, estimateTokens(prompt)+estimateTokens(raw))
+		d.sched.AddTokens(task.RunID, estimateTokens(prompt)+estimateTokens(raw))
 		if mtt := d.maxTaskTokens.Load(); mtt > 0 {
-			if t, ok := d.sched.Get(task.TaskID); ok && int64(t.TokensUsed) > mtt {
-				d.sched.SetStatus(task.TaskID, "degraded")
+			if t, ok := d.sched.Get(task.RunID); ok && int64(t.TokensUsed) > mtt {
+				d.sched.SetStatus(task.RunID, "degraded")
 				return "(subagent hit token budget)"
 			}
 		}
@@ -283,7 +284,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 			continue
 		}
 		if act.Tool == "done" {
-			d.sched.SetStatus(task.TaskID, "completed")
+			d.sched.SetStatus(task.RunID, "completed")
 			return act.Summary
 		}
 		if act.Tool == "spawn" {
@@ -305,7 +306,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 			softRepeat, hardRepeat = guard.observe(act.Tool, act.signature())
 		}
 		if hardRepeat {
-			d.sched.SetStatus(task.TaskID, "degraded")
+			d.sched.SetStatus(task.RunID, "degraded")
 			return "(subagent loop guard: repeated actions with no progress)"
 		}
 		if softRepeat {
@@ -315,20 +316,20 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		}
 		obs, outcome := d.executeActionOutcome(sess, task, &act)
 		if ctx.Err() != nil {
-			_, _ = d.sched.Cancel(task.TaskID)
+			_, _ = d.sched.Cancel(task.RunID)
 			return "subagent cancelled"
 		}
 		// Same consecutive-failure circuit breaker as the main loop
 		// (agent.go's runLoopContext), so a subagent stuck retrying a broken
 		// tool degrades instead of burning its (smaller) turn budget.
 		if mistakes.observe(outcome) {
-			d.sched.SetStatus(task.TaskID, "degraded")
+			d.sched.SetStatus(task.RunID, "degraded")
 			return "(subagent mistake tracker: too many consecutive tool failures)"
 		}
 		pinned := act.Tool == "run" || act.Tool == "patch"
 		compressedObs, err := d.compressObservation(ctx, sess, task, tr, turn, act.Tool, obs, pinned)
 		if err != nil {
-			d.sched.SetStatus(task.TaskID, "failed")
+			d.sched.SetStatus(task.RunID, "failed")
 			return "subagent failed: context compression failed: " + err.Error()
 		}
 		newTurn := Turn{Thought: act.Thought, Tool: act.Tool, ActionBrief: briefAction(&act),
@@ -340,7 +341,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		}
 		tr.addTurn(newTurn)
 	}
-	d.sched.SetStatus(task.TaskID, "degraded")
+	d.sched.SetStatus(task.RunID, "degraded")
 	if tr.Summary != "" {
 		return "(subagent hit turn limit) " + tr.Summary
 	}

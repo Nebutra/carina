@@ -27,7 +27,7 @@ type verdict struct {
 // default-lenient: with no verifier configured it passes, and any verifier
 // transport error or malformed verdict fails OPEN (accepts), so a broken or
 // absent verifier can never wedge a run or block legitimate completion.
-func (d *Daemon) verifyDone(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task, summary string) (bool, string) {
+func (d *Daemon) verifyDone(ctx context.Context, sess *sessionstore.Session, task *scheduler.ExecutionRun, summary string) (bool, string) {
 	if d.verifier == nil {
 		return true, ""
 	}
@@ -53,7 +53,7 @@ func (d *Daemon) verifyDone(ctx context.Context, sess *sessionstore.Session, tas
 // buildVerifierPrompt renders the judge's context from the task, its success
 // criteria, the claimed summary, and applied patch ids — deliberately NOT the
 // coordinator's transcript, to keep the check independent.
-func buildVerifierPrompt(task *scheduler.Task, summary string, patches []string) string {
+func buildVerifierPrompt(task *scheduler.ExecutionRun, summary string, patches []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "TASK:\n%s\n\n", task.UserPrompt)
 	if len(task.SuccessCriteria) > 0 {

@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -431,6 +432,54 @@ func TestProjectSessionItemsPreservesToolTimeout(t *testing.T) {
 	item := findItem(t, projectSessionItems("sess_1", events), "item.completed", "tool_call")
 	if item.Status != "timed_out" {
 		t.Fatalf("status=%q", item.Status)
+	}
+}
+
+func TestProjectSessionItemsMergesLifecycleOwnedCommandDetails(t *testing.T) {
+	events := []itemAuditEvent{
+		{EventID: "evt_1", SessionID: "sess_1", TaskID: "task_1", Type: "ToolCallRequested", Payload: map[string]any{
+			"call_id": "call_1", "tool": "run", "kind": "command", "status": "pending",
+			"arguments": map[string]any{"executable": "go", "argc": 3},
+		}},
+		{EventID: "evt_2", SessionID: "sess_1", TaskID: "task_1", Type: "CommandStarted", Payload: map[string]any{
+			"command_id": "cmd_1", "command": "go test ./...", "cwd": "/workspace",
+		}},
+		{EventID: "evt_3", SessionID: "sess_1", TaskID: "task_1", Type: "CommandOutput", Payload: map[string]any{
+			"command_id": "cmd_1", "stream": "stdout", "chunk": "ok\n",
+		}},
+		{EventID: "evt_4", SessionID: "sess_1", TaskID: "task_1", Type: "CommandExited", Payload: map[string]any{
+			"command_id": "cmd_1", "exit_code": 0, "duration_ms": 42,
+		}},
+		{EventID: "evt_5", SessionID: "sess_1", TaskID: "task_1", Type: "ToolCallCompleted", Payload: map[string]any{
+			"call_id": "call_1", "tool": "run", "kind": "command", "status": "completed",
+		}},
+	}
+
+	items := projectSessionItems("sess_1", events)
+	item := findItem(t, items, "item.completed", "tool_call")
+	if item.ID != "call_1" || item.Status != "completed" {
+		t.Fatalf("unexpected lifecycle command: %+v", item)
+	}
+	if item.Details["command"] != "go test ./..." || item.Details["stdout"] != "ok\n" || fmt.Sprint(item.Details["exit_code"]) != "0" {
+		t.Fatalf("command details were not retained: %+v", item.Details)
+	}
+	for _, event := range items {
+		if event.Item != nil && event.Item.Type == "command_execution" {
+			t.Fatalf("lifecycle-owned command duplicated as command_execution: %+v", event.Item)
+		}
+	}
+}
+
+func TestProjectSessionItemsHidesInternalModelActionJSON(t *testing.T) {
+	items := projectSessionItems("sess_1", []itemAuditEvent{
+		{EventID: "evt_1", SessionID: "sess_1", TaskID: "task_1", Type: "ModelResponded", Actor: "model", Payload: map[string]any{
+			"text": `{"tool":"read","path":"main.go"}`,
+		}},
+	})
+	for _, event := range items {
+		if event.Item != nil && event.Item.Type == "agent_message" {
+			t.Fatalf("internal action JSON leaked as assistant content: %+v", event.Item)
+		}
 	}
 }
 

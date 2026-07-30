@@ -80,10 +80,10 @@ func classifyExitCode(err error) outcome.Outcome {
 		return outcome.OutcomeUsage
 	}
 	// Checked after the policy/user-denied string matches above: a
-	// *taskDegradedError whose summary happens to embed the daemon's own
+	// *executionDegradedError whose summary happens to embed the daemon's own
 	// governance-denial text must still classify as the more specific
 	// policy/user-denied outcome, not collapse into degraded-partial.
-	var degradedErr *taskDegradedError
+	var degradedErr *executionDegradedError
 	if errors.As(err, &degradedErr) {
 		return outcome.OutcomeDegradedPartial
 	}

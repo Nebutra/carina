@@ -58,6 +58,24 @@ func TestStoreKeySource(t *testing.T) {
 	}
 }
 
+func TestStoreBearerTokenRoundTrip(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetBearerToken("relay", "bearer-secret", map[string]string{"source": "test"}); err != nil {
+		t.Fatal(err)
+	}
+	cred, ok := StoreKey{Store: store, Provider: "relay"}.Resolve()
+	if !ok || cred.Kind != Bearer || cred.Value != "bearer-secret" || cred.Source != "auth:relay" {
+		t.Fatalf("resolved bearer credential = %+v, ok=%v", cred, ok)
+	}
+	listed, err := store.ListSafe()
+	if err != nil || len(listed) != 1 || listed[0].Type != Bearer {
+		t.Fatalf("safe bearer listing = %+v, err=%v", listed, err)
+	}
+}
+
 func TestAuthContentEnv(t *testing.T) {
 	t.Setenv(AuthContentEnv, `{"openai":{"type":"api_key","key":"sk-env-json"}}`)
 	store, _ := NewStore(filepath.Join(t.TempDir(), "auth.json"))

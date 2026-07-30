@@ -1,0 +1,69 @@
+<blank:1>
+                                 ⠀⢀⣀⣀⡀⣠⣶⣶⣄⠀   Carina                                                                                                                                                       Provider
+                                 ⠀⣿⣿⣿⣿⣿⣿⣿⣿⠀   Provider   Anthropic
+                                 ⠀⠙⣿⣿⡏⠀⠈⢻⡇⠀   Model      Model not selected  ·  reasoning pending
+                                 ⠀⢰⣿⣿⣿⣦⣴⣿⡿⠀   Workspace  <workspace>
+                                 ⠀⠈⠻⠿⠟⠁⠀⠀⠀⠀
+                                ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+<blank:1>
+                                ▌ Connect a provider
+                                  Choose the model endpoint Carina may use for this workspace.
+<blank:1>
+                                ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                ╭ Providers  159 of 159 ──────────────────────────────────────────────────────────────────────────────────────────╮  ╭ Connection ─────────────────────────────────────────────────╮
+                                │ /  Search all 159 providers by name or ID                                                                       │  │                                                             │
+                                │ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────── │  │  ○ Credential required                                      │
+                                │ ▌ Anthropic                                                                             ○ Credential required ┃ │  │                                                             │
+                                │ │ anthropic  ·  0 models                                                                                      ┃ │  │  Anthropic                                                  │
+                                │   OpenAI                                                                                ○ Credential required ┃ │  │  anthropic                                                  │
+                                │   openai  ·  0 models                                                                                         ┃ │  │                                                             │
+                                │   OpenRouter                                                                            ○ Credential required ┃ │  │  PROVIDER DETAILS                                           │
+                                │   openrouter  ·  0 models                                                                                     ┃ │  │  Models          0                                          │
+                                │   Google                                                                                ○ Credential required ┃ │  │  Authentication  not configured                             │
+                                │   google  ·  0 models                                                                                         ┃ │  │                                                             │
+                                │   302.AI                                                                                ○ Credential required │ │  │  The credential is validated before storage and never       │
+                                │   302ai  ·  0 models                                                                                          │ │  │  appears in the transcript.                                 │
+                                │   Abacus                                                                                ○ Credential required │ │  │                                                             │
+                                │   abacus  ·  0 models                                                                                         │ │  │                                                             │
+                                │   abliteration.ai                                                                       ○ Credential required │ │  │                                                             │
+                                │   abliteration-ai  ·  0 models                                                                                │ │  │                                                             │
+                                │   ai&                                                                                   ○ Credential required │ │  │                                                             │
+                                │   aiand  ·  0 models                                                                                          │ │  │                                                             │
+                                │   AI-ROUTER                                                                             ○ Credential required │ │  │                                                             │
+                                │   ai-router  ·  0 models                                                                                      │ │  │                                                             │
+                                │   AKI.IO                                                                                ○ Credential required │ │  │                                                             │
+                                │   aki-io  ·  0 models                                                                                         │ │  │                                                             │
+                                │   Alibaba                                                                               ○ Credential required │ │  │                                                             │
+                                │   alibaba  ·  0 models                                                                                        │ │  │                                                             │
+                                │   Alibaba (China)                                                                       ○ Credential required │ │  │                                                             │
+                                │   alibaba-cn  ·  0 models                                                                                     │ │  │                                                             │
+                                │   Alibaba Coding Plan                                                                   ○ Credential required │ │  │                                                             │
+                                │   alibaba-coding-plan  ·  0 models                                                                            │ │  │                                                             │
+                                │   Alibaba Coding Plan (China)                                                           ○ Credential required │ │  │                                                             │
+                                │   alibaba-coding-plan-cn  ·  0 models                                                                         │ │  │                                                             │
+                                │   Alibaba Token Plan                                                                    ○ Credential required │ │  │                                                             │
+                                │   alibaba-token-plan  ·  0 models                                                                             │ │  │                                                             │
+                                │   Alibaba Token Plan (China)                                                            ○ Credential required │ │  │                                                             │
+                                │   alibaba-token-plan-cn  ·  0 models                                                                          │ │  │                                                             │
+                                │   Ambient                                                                               ○ Credential required │ │  │                                                             │
+                                │   ambient  ·  0 models                                                                                        │ │  │                                                             │
+                                │   AnyAPI                                                                                ○ Credential required │ │  │                                                             │
+                                │   anyapi  ·  0 models                                                                                         │ │  │                                                             │
+                                │   Atomic Chat                                                                           ○ Credential required │ │  │                                                             │
+                                │   atomic-chat  ·  0 models                                                                                    │ │  │                                                             │
+                                │   Auriko                                                                                ○ Credential required │ │  │                                                             │
+                                │   auriko  ·  0 models                                                                                         │ │  │                                                             │
+                                │   Bailing                                                                               ○ Credential required │ │  │                                                             │
+                                │   bailing  ·  0 models                                                                                        │ │  │                                                             │
+                                │   Baseten                                                                               ○ Credential required │ │  │                                                             │
+                                │   baseten  ·  0 models                                                                                        │ │  │                                                             │
+                                │   Berget.AI                                                                             ○ Credential required │ │  │                                                             │
+                                │   berget  ·  0 models                                                                                         │ │  │                                                             │
+                                │   Blue Claw                                                                             ○ Credential required │ │  │                                                             │
+                                │   blueclaw  ·  0 models                                                                                       │ │  │                                                             │
+                                │   Cerebras                                                                              ○ Credential required │ │  │                                                             │
+                                │   cerebras  ·  0 models                                                                                       │ │  │                                                             │
+                                │   Chutes                                                                                ○ Credential required │ │  │   Connect                                                   │
+                                │   chutes  ·  0 models                                                                                         │ │  │                                                             │
+                                ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ╰─────────────────────────────────────────────────────────────╯
+                                 Esc  Exit   Enter  Connect   /  Search   ↑↓  Navigate

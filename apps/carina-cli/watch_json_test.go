@@ -66,7 +66,7 @@ func TestControlFrameForEventBuildsControlRequestFromPermissionRequest(t *testin
 	event := map[string]any{
 		"type":        "permission.request",
 		"session_id":  "sess_1",
-		"task_id":     "task_1",
+		"run_id":      "task_1",
 		"decision_id": "perm_abc123",
 		"capability":  "PatchApply",
 		"resource":    "patch_1",
@@ -117,7 +117,7 @@ func TestControlFrameForEventBuildsStructuredUserQuestion(t *testing.T) {
 		map[string]any{"label": "Stop", "value": "no"},
 	}
 	event := map[string]any{
-		"type": "user.question", "session_id": "sess_1", "task_id": "task_1",
+		"type": "user.question", "session_id": "sess_1", "run_id": "task_1",
 		"question_id": "question_1", "prompt": "Continue?", "options": options,
 	}
 	frame, ok := controlFrameForEvent(event)

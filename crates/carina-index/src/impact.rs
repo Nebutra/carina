@@ -222,7 +222,10 @@ mod tests {
         let idx = fixture(&[
             ("t1.rs", "pub fn zz_dup_target() {}\n"),
             ("t2.rs", "pub fn zz_dup_target() {}\n"),
-            ("c.rs", "pub fn zz_direct_caller() {\n    zz_dup_target();\n}\n"),
+            (
+                "c.rs",
+                "pub fn zz_direct_caller() {\n    zz_dup_target();\n}\n",
+            ),
         ]);
         let report = idx
             .impact("zz_dup_target", &ImpactOptions::default())
@@ -233,7 +236,11 @@ mod tests {
         let dep = &report.dependents[0];
         assert_eq!(dep.symbol.name, "zz_direct_caller");
         assert_eq!(dep.depth, 1);
-        assert!((dep.confidence - 0.5).abs() < 1e-9, "got {}", dep.confidence);
+        assert!(
+            (dep.confidence - 0.5).abs() < 1e-9,
+            "got {}",
+            dep.confidence
+        );
         assert_eq!(dep.source, "tree-sitter");
         assert!(!report.truncated);
     }
@@ -247,8 +254,14 @@ mod tests {
         let idx = fixture(&[
             ("t1.rs", "pub fn zz_dup2_target() {}\n"),
             ("t2.rs", "pub fn zz_dup2_target() {}\n"),
-            ("m1.rs", "pub fn zz_mid_caller() {\n    zz_dup2_target();\n}\n"),
-            ("m2.rs", "pub fn zz_mid_caller() {\n    zz_dup2_target();\n}\n"),
+            (
+                "m1.rs",
+                "pub fn zz_mid_caller() {\n    zz_dup2_target();\n}\n",
+            ),
+            (
+                "m2.rs",
+                "pub fn zz_mid_caller() {\n    zz_dup2_target();\n}\n",
+            ),
             ("o.rs", "pub fn zz_far_outer() {\n    zz_mid_caller();\n}\n"),
         ]);
         let report = idx
@@ -262,7 +275,11 @@ mod tests {
         assert_eq!(mids.len(), 2, "got {:?}", report.dependents);
         for mid in mids {
             assert_eq!(mid.depth, 1);
-            assert!((mid.confidence - 0.5).abs() < 1e-9, "got {}", mid.confidence);
+            assert!(
+                (mid.confidence - 0.5).abs() < 1e-9,
+                "got {}",
+                mid.confidence
+            );
         }
         let outer = report
             .dependents
@@ -284,9 +301,14 @@ mod tests {
         let idx = fixture(&[
             ("h.rs", "pub fn zz_hub() {}\n"),
             ("v.rs", "pub fn zz_via() {\n    zz_hub();\n}\n"),
-            ("b.rs", "pub fn zz_both() {\n    zz_hub();\n    zz_via();\n}\n"),
+            (
+                "b.rs",
+                "pub fn zz_both() {\n    zz_hub();\n    zz_via();\n}\n",
+            ),
         ]);
-        let report = idx.impact("zz_hub", &ImpactOptions::default()).expect("impact");
+        let report = idx
+            .impact("zz_hub", &ImpactOptions::default())
+            .expect("impact");
         assert_eq!(report.dependents.len(), 2, "got {:?}", report.dependents);
         let both = report
             .dependents
@@ -294,7 +316,11 @@ mod tests {
             .find(|d| d.symbol.name == "zz_both")
             .expect("zz_both dependent");
         assert_eq!(both.depth, 1, "shortest depth wins the dedup");
-        assert!((both.confidence - 1.0).abs() < 1e-9, "got {}", both.confidence);
+        assert!(
+            (both.confidence - 1.0).abs() < 1e-9,
+            "got {}",
+            both.confidence
+        );
     }
 
     #[test]
@@ -306,12 +332,18 @@ mod tests {
         let report = idx.impact("zz_cycle_a", &opts(5, 50)).expect("impact");
         assert_eq!(report.seeds.len(), 1);
         assert!(
-            report.dependents.iter().any(|d| d.symbol.name == "zz_cycle_b"),
+            report
+                .dependents
+                .iter()
+                .any(|d| d.symbol.name == "zz_cycle_b"),
             "the cyclic caller is a dependent: {:?}",
             report.dependents
         );
         assert!(
-            report.dependents.iter().all(|d| d.symbol.name != "zz_cycle_a"),
+            report
+                .dependents
+                .iter()
+                .all(|d| d.symbol.name != "zz_cycle_a"),
             "seeds must never list themselves: {:?}",
             report.dependents
         );
@@ -320,7 +352,8 @@ mod tests {
     /// zz_chain_{i+1} calls zz_chain_i, i in 0..=6: dependents of zz_chain_0
     /// sit at depths 1..=6, one per depth.
     fn chain_fixture() -> CodeIndex {
-        let mut files: Vec<(String, String)> = vec![("f0.rs".into(), "pub fn zz_chain_0() {}\n".into())];
+        let mut files: Vec<(String, String)> =
+            vec![("f0.rs".into(), "pub fn zz_chain_0() {}\n".into())];
         for i in 1..=6 {
             files.push((
                 format!("f{i}.rs"),
@@ -350,7 +383,9 @@ mod tests {
         assert_eq!(deep.dependents.len(), 5, "got {:?}", deep.dependents);
         assert!(deep.dependents.iter().all(|d| d.depth <= 5));
         assert!(
-            deep.dependents.iter().all(|d| d.symbol.name != "zz_chain_6"),
+            deep.dependents
+                .iter()
+                .all(|d| d.symbol.name != "zz_chain_6"),
             "clamped depth must bound the walk: {:?}",
             deep.dependents
         );
@@ -437,7 +472,10 @@ mod tests {
             .impact("zz_cap_hub", &opts(3, 200))
             .expect("impact");
         assert!(
-            capped.dependents.iter().all(|d| d.symbol.name != "zz_cap_deep"),
+            capped
+                .dependents
+                .iter()
+                .all(|d| d.symbol.name != "zz_cap_deep"),
             "the row cap cuts the depth-2 dependent in this fixture"
         );
         assert!(
@@ -451,11 +489,17 @@ mod tests {
             .impact("zz_cap_hub", &opts(3, 200))
             .expect("impact");
         assert!(
-            complete.dependents.iter().any(|d| d.symbol.name == "zz_cap_deep"),
+            complete
+                .dependents
+                .iter()
+                .any(|d| d.symbol.name == "zz_cap_deep"),
             "under the cap the depth-2 dependent must be found: {:?}",
             complete.dependents.len()
         );
-        assert!(!complete.truncated, "an un-capped, un-limited walk is complete");
+        assert!(
+            !complete.truncated,
+            "an un-capped, un-limited walk is complete"
+        );
     }
 
     #[test]
@@ -468,11 +512,19 @@ mod tests {
             ("a.rs", "pub fn zz_ord_a() {\n    zz_ord_hub();\n}\n"),
             ("m.rs", "pub fn zz_ord_m() {\n    zz_ord_hub();\n}\n"),
         ]);
-        let first = idx.impact("zz_ord_hub", &ImpactOptions::default()).expect("impact");
-        let paths: Vec<&str> = first.dependents.iter().map(|d| d.symbol.path.as_str()).collect();
+        let first = idx
+            .impact("zz_ord_hub", &ImpactOptions::default())
+            .expect("impact");
+        let paths: Vec<&str> = first
+            .dependents
+            .iter()
+            .map(|d| d.symbol.path.as_str())
+            .collect();
         assert_eq!(paths, vec!["a.rs", "m.rs", "z.rs"], "path ASC tie-break");
 
-        let second = idx.impact("zz_ord_hub", &ImpactOptions::default()).expect("impact");
+        let second = idx
+            .impact("zz_ord_hub", &ImpactOptions::default())
+            .expect("impact");
         let first_keys: Vec<(String, i64, u32)> = first
             .dependents
             .iter()
@@ -483,7 +535,10 @@ mod tests {
             .iter()
             .map(|d| (d.symbol.path.clone(), d.symbol.id, d.depth))
             .collect();
-        assert_eq!(first_keys, second_keys, "identical calls must return identical orderings");
+        assert_eq!(
+            first_keys, second_keys,
+            "identical calls must return identical orderings"
+        );
     }
 
     #[test]
@@ -504,7 +559,9 @@ mod tests {
             ("h.rs", "pub fn zz_prov_hub() {}\n"),
             ("c.rs", caller_content),
         ]);
-        let report = idx.impact("zz_prov_hub", &ImpactOptions::default()).expect("impact");
+        let report = idx
+            .impact("zz_prov_hub", &ImpactOptions::default())
+            .expect("impact");
         assert_eq!(report.dependents.len(), 1, "got {:?}", report.dependents);
         let dep = &report.dependents[0];
         assert_eq!(dep.symbol.content_hash, sha256_hex(caller_content));
@@ -530,7 +587,10 @@ mod tests {
         let mut idx = fixture(&[
             ("t1.rs", "pub fn zz_lsp_target() {}\n"),
             ("t2.rs", "pub fn zz_lsp_target() {}\n"),
-            ("c.rs", "pub fn zz_lsp_caller() {\n    zz_lsp_target();\n}\n"),
+            (
+                "c.rs",
+                "pub fn zz_lsp_caller() {\n    zz_lsp_target();\n}\n",
+            ),
         ]);
         let report = idx
             .edges_store(&[edge("c.rs", 2, "t1.rs", 1)])
@@ -550,7 +610,10 @@ mod tests {
             "the deduped lsp edge carries 1.0, got {}",
             dep.confidence
         );
-        assert_eq!(dep.source, "lsp", "an all-lsp path must label the dependent lsp");
+        assert_eq!(
+            dep.source, "lsp",
+            "an all-lsp path must label the dependent lsp"
+        );
     }
 
     #[test]
@@ -641,7 +704,9 @@ mod tests {
             content: "// touched\npub fn zz_upd_caller() {\n    zz_upd_hub();\n}\n".into(),
         }])
         .expect("update");
-        let report = idx.impact("zz_upd_hub", &ImpactOptions::default()).expect("impact");
+        let report = idx
+            .impact("zz_upd_hub", &ImpactOptions::default())
+            .expect("impact");
         assert_eq!(
             report.dependents.len(),
             1,

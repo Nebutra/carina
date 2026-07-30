@@ -31,7 +31,7 @@ or snapshot boundary and should be reviewed separately.
    - project commands from `<workspace>/.carina/commands/*.md`;
    - `$ARGUMENTS` and `$1`, `$2`, ... placeholders are expanded.
 6. Add `command.list`, `carina commands list`, and slash-command expansion in
-   `task.submit`.
+   `execution.start`.
 
 ## Non-Goals
 

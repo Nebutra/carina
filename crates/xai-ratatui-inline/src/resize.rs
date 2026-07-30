@@ -354,4 +354,28 @@ mod tests {
             "Should have flushed writer"
         );
     }
+
+    #[test]
+    fn vt100_resize_reflow_replaces_old_wrapping_and_handles_cjk_width() {
+        let source = "abcdefghijabcdefghij\r\n你好世界你好世界\r\n";
+        let prewrap = |width: usize| {
+            split_into_line_segments(source, width)
+                .into_iter()
+                .map(|segment| format!("{}\r\n", segment.content))
+                .collect::<String>()
+        };
+        let mut terminal = MockTerminal::new(10, 8, 2);
+        resize_purge_rerender(&mut terminal, &prewrap(10)).unwrap();
+
+        terminal.writer.buffer.clear();
+        terminal.size.width = 20;
+        resize_purge_rerender(&mut terminal, &prewrap(20)).unwrap();
+
+        let mut parser = vt100::Parser::new(8, 20, 64);
+        parser.process(&terminal.writer.buffer);
+        let screen = parser.screen().contents();
+        assert!(screen.lines().any(|line| line == "abcdefghijabcdefghij"));
+        assert!(screen.lines().any(|line| line == "你好世界你好世界"));
+        assert!(!screen.lines().any(|line| line == "abcdefghij"));
+    }
 }

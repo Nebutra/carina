@@ -33,7 +33,7 @@ import (
 // content-hash keyed) plus the mtime staleness sweep (V4): on the already-
 // built branch a cheap (mtime, size, mode) diff against the last-sync
 // snapshot routes out-of-band edits through kernel.index.update.
-func (d *Daemon) ensureIndex(sess *sessionstore.Session, task *scheduler.Task) error {
+func (d *Daemon) ensureIndex(sess *sessionstore.Session, task *scheduler.ExecutionRun) error {
 	if _, built := d.indexBuilt.Load(sess.SessionID); built {
 		if sweepEnabled() {
 			d.sweepIndex(sess, task)
@@ -57,7 +57,7 @@ func (d *Daemon) ensureIndex(sess *sessionstore.Session, task *scheduler.Task) e
 	// embedding failure never fails the code.* tool that triggered the build,
 	// but it is observable (V3): log line, audit event, daemon.status entry.
 	if err := d.syncEmbeddings(sess.SessionID); err != nil {
-		d.noteEmbeddingSyncFailure(sess.SessionID, task.TaskID, err)
+		d.noteEmbeddingSyncFailure(sess.SessionID, task.RunID, err)
 	}
 	return nil
 }
@@ -137,10 +137,10 @@ func (d *Daemon) scanSupportedStamps(root string) (*sweepSnapshot, error) {
 // kernel call. Best-effort: a failure never fails the calling code.* tool,
 // but it surfaces (log + index_sweep_failed audit event) and clears
 // indexBuilt so the next call heals with a full build.
-func (d *Daemon) sweepIndex(sess *sessionstore.Session, task *scheduler.Task) {
+func (d *Daemon) sweepIndex(sess *sessionstore.Session, task *scheduler.ExecutionRun) {
 	cur, err := d.scanSupportedStamps(sess.WorkspaceRoot)
 	if err != nil {
-		d.noteSweepFailure(sess.SessionID, task.TaskID, "scan-error", err)
+		d.noteSweepFailure(sess.SessionID, task.RunID, "scan-error", err)
 		return
 	}
 	prev := &sweepSnapshot{stamps: map[string]fileStamp{}}
@@ -165,11 +165,11 @@ func (d *Daemon) sweepIndex(sess *sessionstore.Session, task *scheduler.Task) {
 		return
 	}
 	if _, err := d.kern.IndexUpdate(sess.SessionID, changed, deleted); err != nil {
-		d.noteSweepFailure(sess.SessionID, task.TaskID, "kernel-error", err)
+		d.noteSweepFailure(sess.SessionID, task.RunID, "kernel-error", err)
 		return
 	}
 	if err := d.syncEmbeddings(sess.SessionID); err != nil {
-		d.noteEmbeddingSyncFailure(sess.SessionID, task.TaskID, err)
+		d.noteEmbeddingSyncFailure(sess.SessionID, task.RunID, err)
 	}
 	d.indexSnapshot.Store(sess.SessionID, cur)
 }
@@ -180,7 +180,7 @@ func (d *Daemon) sweepIndex(sess *sessionstore.Session, task *scheduler.Task) {
 // a full build.
 func (d *Daemon) noteSweepFailure(sessionID, taskID, reason string, err error) {
 	fmt.Printf("carina-daemon: index sweep failed (session %s): %v\n", sessionID, err)
-	d.record(sessionID, "TaskCreated", taskID, "go",
+	d.record(sessionID, "ExecutionProgressed", taskID, "go",
 		map[string]any{"status": "index_sweep_failed", "reason": reason}, "")
 	d.indexBuilt.Delete(sessionID)
 	d.indexSnapshot.Delete(sessionID)
@@ -200,7 +200,7 @@ func (d *Daemon) invalidateIndex(sessionID string, changed []string) {
 	}
 	if _, err := d.kern.IndexUpdate(sessionID, changed, nil); err != nil {
 		fmt.Printf("carina-daemon: index invalidation failed (session %s): %v\n", sessionID, err)
-		d.record(sessionID, "TaskCreated", "", "go",
+		d.record(sessionID, "IndexSyncFailed", "", "go",
 			map[string]any{"status": "index_invalidation_failed", "reason": "kernel-error"}, "")
 		d.indexBuilt.Delete(sessionID)
 		d.indexSnapshot.Delete(sessionID)
@@ -242,7 +242,7 @@ type searchHit struct {
 // RRF-fused) under a first-line header stating the channels actually used
 // for this query (V3 observable degrade); a semantic-channel degrade also
 // lands in the audit chain as a reason, never content.
-func (d *Daemon) agentCodeSearch(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+func (d *Daemon) agentCodeSearch(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) string {
 	if strings.TrimSpace(act.Query) == "" {
 		return "error: code.search needs a query"
 	}
@@ -262,7 +262,7 @@ func (d *Daemon) agentCodeSearch(sess *sessionstore.Session, task *scheduler.Tas
 	header := "channels: keyword:on semantic:on"
 	if semReason != "" {
 		header = "channels: keyword:on semantic:off(" + semReason + ")"
-		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go",
 			map[string]any{"status": "code_search_degraded", "semantic": "off", "reason": semReason}, "")
 	}
 	hits := res.Hits
@@ -270,7 +270,7 @@ func (d *Daemon) agentCodeSearch(sess *sessionstore.Session, task *scheduler.Tas
 	if rrReason != "" {
 		// A configured-but-unavailable selection degrades observably (V4 §C):
 		// header segment + audit reason, and snippets go nowhere.
-		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go",
 			map[string]any{"status": "code_rerank_degraded", "reason": rrReason}, "")
 		header += " rerank:off(" + rrReason + ")"
 	} else if rr != nil && len(hits) > 0 {
@@ -300,7 +300,7 @@ func (d *Daemon) agentCodeSearch(sess *sessionstore.Session, task *scheduler.Tas
 // kernel order with rerank:off(rerank-error) and a code_rerank_degraded
 // audit event. The call runs under rerankTimeout (V4 §C) so a hanging
 // provider degrades instead of stalling the tool.
-func (d *Daemon) rerankHits(sess *sessionstore.Session, task *scheduler.Task, rr Reranker, query string, hits []searchHit, header string) ([]searchHit, string) {
+func (d *Daemon) rerankHits(sess *sessionstore.Session, task *scheduler.ExecutionRun, rr Reranker, query string, hits []searchHit, header string) ([]searchHit, string) {
 	cands := make([]rerankCandidate, len(hits))
 	for i, h := range hits {
 		cands[i] = rerankCandidate{Path: h.Path, StartLine: h.StartLine, EndLine: h.EndLine, Snippet: h.Snippet, Score: h.Score}
@@ -309,7 +309,7 @@ func (d *Daemon) rerankHits(sess *sessionstore.Session, task *scheduler.Task, rr
 	defer cancel()
 	perm, err := rr.Rerank(ctx, query, cands)
 	if err != nil || !validPermutation(perm, len(hits)) {
-		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go",
 			map[string]any{"status": "code_rerank_degraded", "reranker": rr.Name(), "reason": "rerank-error"}, "")
 		return hits, header + " rerank:off(rerank-error)"
 	}
@@ -321,7 +321,7 @@ func (d *Daemon) rerankHits(sess *sessionstore.Session, task *scheduler.Task, rr
 }
 
 // agentCodeSymbols renders definitions plus approximate references.
-func (d *Daemon) agentCodeSymbols(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+func (d *Daemon) agentCodeSymbols(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) string {
 	if strings.TrimSpace(act.Name) == "" {
 		return "error: code.symbols needs a name"
 	}
@@ -390,16 +390,16 @@ func (d *Daemon) lookupSymbols(sess *sessionstore.Session, name string) (*symbol
 // agentCodeDef renders a symbol's definition sites: LSP-precise when a
 // language server is available (confidence=lsp), else the kernel's
 // tree-sitter definitions with their honest confidence.
-func (d *Daemon) agentCodeDef(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+func (d *Daemon) agentCodeDef(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) string {
 	return d.agentSemanticLookup(sess, task, act, "code.def")
 }
 
 // agentCodeRefs renders a symbol's reference sites, LSP-first like code.def.
-func (d *Daemon) agentCodeRefs(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+func (d *Daemon) agentCodeRefs(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) string {
 	return d.agentSemanticLookup(sess, task, act, "code.refs")
 }
 
-func (d *Daemon) agentSemanticLookup(sess *sessionstore.Session, task *scheduler.Task, act *action, tool string) string {
+func (d *Daemon) agentSemanticLookup(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action, tool string) string {
 	if strings.TrimSpace(act.Name) == "" {
 		return "error: " + tool + " needs a name"
 	}
@@ -439,7 +439,7 @@ func (d *Daemon) agentSemanticLookup(sess *sessionstore.Session, task *scheduler
 	}
 	// Tree-sitter fallback: the V1 approximate results, honestly labeled with
 	// the degrade reason — which also lands in the audit chain (reason only).
-	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
 		"status": "code_lookup_degraded", "tool": tool, "precision": "tree-sitter", "reason": degradeReason}, "")
 	precision := fmt.Sprintf("precision:tree-sitter(%s)", degradeReason)
 	var b strings.Builder
@@ -561,7 +561,7 @@ func (d *Daemon) lspEnv() []string {
 // (audited) before any content reaches a language server process. Wire
 // columns are UTF-16 code units: the outbound query converts the byte
 // column, and returned locations convert back to rune columns for rendering.
-func (d *Daemon) lspLocations(sess *sessionstore.Session, task *scheduler.Task, name string, res *symbolsResult, wantDef bool) ([]lsp.Location, string) {
+func (d *Daemon) lspLocations(sess *sessionstore.Session, task *scheduler.ExecutionRun, name string, res *symbolsResult, wantDef bool) ([]lsp.Location, string) {
 	if len(res.Definitions) == 0 {
 		return nil, "lsp-unavailable"
 	}
@@ -578,7 +578,7 @@ func (d *Daemon) lspLocations(sess *sessionstore.Session, task *scheduler.Task, 
 		// in after indexing): never hand the server that path or content.
 		return nil, "read-denied"
 	}
-	dec, err := d.kern.Request(sess.SessionID, "FileRead", abs, task.TaskID)
+	dec, err := d.kern.Request(sess.SessionID, "FileRead", abs, task.RunID)
 	if err != nil || dec.Decision != "allowed" {
 		return nil, "read-denied" // the denial is in the audit chain; fall back
 	}
@@ -586,7 +586,7 @@ func (d *Daemon) lspLocations(sess *sessionstore.Session, task *scheduler.Task, 
 	if err != nil {
 		return nil, "lsp-unavailable"
 	}
-	d.record(sess.SessionID, "FileRead", task.TaskID, "go",
+	d.record(sess.SessionID, "FileRead", task.RunID, "go",
 		map[string]any{"path": abs, "bytes": len(content), "purpose": "lsp"}, dec.DecisionID)
 	line, char, ok := findNamePosition(string(content), def.StartLine, name)
 	if !ok {
@@ -633,7 +633,7 @@ const renderedLocationCap = 20
 // already in hand; any other workspace file gets one kernel-FileRead-gated
 // read, cached per call. On read denial/failure — or an out-of-range line —
 // the location keeps the raw UTF-16 column rather than being dropped.
-func (d *Daemon) convertLocationColumns(sess *sessionstore.Session, task *scheduler.Task, locs []lsp.Location, canonAnchor string, anchorLines []string) {
+func (d *Daemon) convertLocationColumns(sess *sessionstore.Session, task *scheduler.ExecutionRun, locs []lsp.Location, canonAnchor string, anchorLines []string) {
 	cache := map[string][]string{canonAnchor: anchorLines}
 	for i := range locs {
 		if i >= renderedLocationCap {
@@ -656,8 +656,8 @@ func (d *Daemon) convertLocationColumns(sess *sessionstore.Session, task *schedu
 // readLinesGated reads one workspace file through the kernel FileRead gate
 // for column conversion; nil on denial or read failure (the caller keeps the
 // raw column — never a reason to drop a location).
-func (d *Daemon) readLinesGated(sess *sessionstore.Session, task *scheduler.Task, path string) []string {
-	dec, err := d.kern.Request(sess.SessionID, "FileRead", path, task.TaskID)
+func (d *Daemon) readLinesGated(sess *sessionstore.Session, task *scheduler.ExecutionRun, path string) []string {
+	dec, err := d.kern.Request(sess.SessionID, "FileRead", path, task.RunID)
 	if err != nil || dec.Decision != "allowed" {
 		return nil
 	}
@@ -665,7 +665,7 @@ func (d *Daemon) readLinesGated(sess *sessionstore.Session, task *scheduler.Task
 	if err != nil {
 		return nil
 	}
-	d.record(sess.SessionID, "FileRead", task.TaskID, "go",
+	d.record(sess.SessionID, "FileRead", task.RunID, "go",
 		map[string]any{"path": path, "bytes": len(content), "purpose": "lsp-render"}, dec.DecisionID)
 	return strings.Split(string(content), "\n")
 }
@@ -773,7 +773,7 @@ func (d *Daemon) embedSyncHealthy(sessionID string) bool {
 func (d *Daemon) noteEmbeddingSyncFailure(sessionID, taskID string, err error) {
 	reason := syncFailureReason(err)
 	fmt.Printf("carina-daemon: embedding sync failed (session %s): %v\n", sessionID, err)
-	d.record(sessionID, "TaskCreated", taskID, "go",
+	d.record(sessionID, "ExecutionProgressed", taskID, "go",
 		map[string]any{"status": "embedding_sync_failed", "reason": reason}, "")
 	st := codeIntelStatus{ModelID: d.embeddingsModelID()}
 	if v, ok := d.codeIntelStatus.Load(sessionID); ok {
@@ -826,7 +826,7 @@ type impactResult struct {
 // grouped by confidence tier (high >= 0.5, medium >= 0.1, low below). The
 // kernel defaults bound the walk (depth<=3, limit 50); denials surface as
 // DENIED like every code.* tool.
-func (d *Daemon) agentCodeImpact(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+func (d *Daemon) agentCodeImpact(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) string {
 	if strings.TrimSpace(act.Name) == "" {
 		return "error: code.impact needs a name"
 	}
@@ -904,7 +904,7 @@ func (d *Daemon) agentCodeImpact(sess *sessionstore.Session, task *scheduler.Tas
 }
 
 // agentCodeMap renders the PageRank-ranked repo map within a token budget.
-func (d *Daemon) agentCodeMap(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+func (d *Daemon) agentCodeMap(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) string {
 	if err := d.ensureIndex(sess, task); err != nil {
 		return codeIntelError(err)
 	}

@@ -11,8 +11,8 @@ import (
 // TestTUIApprovalRPCUnblocksInteractiveWait reproduces the round-trip gap
 // between the daemon's interactive-approval wait (awaitInteractiveApproval,
 // which blocks on d.pendingApprovals fed by handleApprovalResolve /
-// task.approval.resolve) and the interactive approval component, which resolves
-// a permission.request over task.action.approve / task.action.deny
+// governance.approval.resolve) and the interactive approval component, which resolves
+// a permission.request over governance.action.approve / governance.action.deny
 // (handleApprove / handleDeny). Before the fix, an approval was recorded by the kernel as allowed
 // while the gated action itself times out and is denied: audit says
 // allowed, runtime denied it. This test spawns the real Rust kernel
@@ -31,7 +31,7 @@ func TestTUIApprovalRPCUnblocksInteractiveWait(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// --- APPROVE path: task.action.approve (handleApprove).
+	// --- APPROVE path: governance.action.approve (handleApprove).
 	//
 	// The gated command is a local `mv` (risk level 3 per classify_atom,
 	// same "mutation" bucket the tui-bubbletea/tui-ratatui spikes drove for
@@ -64,11 +64,11 @@ func TestTUIApprovalRPCUnblocksInteractiveWait(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("no permission.request emitted for the gated command")
 	}
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "waiting_approval" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "waiting_approval" {
 		t.Fatalf("task should pause at waiting_approval, got %s", tk.Status)
 	}
 
-	// The TUI approve path: task.action.approve -> handleApprove.
+	// The TUI approve path: governance.action.approve -> handleApprove.
 	if _, err := d.handleApprove(mustJSON(t, map[string]any{
 		"session_id": sess.SessionID, "decision_id": decisionID, "approver": "operator",
 	})); err != nil {
@@ -78,14 +78,14 @@ func TestTUIApprovalRPCUnblocksInteractiveWait(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(20 * time.Second):
-		t.Fatal("approving via task.action.approve did not unblock the daemon's interactive wait — audit vs runtime mismatch")
+		t.Fatal("approving via governance.action.approve did not unblock the daemon's interactive wait — audit vs runtime mismatch")
 	}
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "completed" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "completed" {
 		t.Fatalf("approved task must complete, got status %s", tk.Status)
 	}
 	assertDecisionAudited(t, d, sess.SessionID, decisionID, "allowed")
 
-	// --- DENY path: task.action.deny (handleDeny).
+	// --- DENY path: governance.action.deny (handleDeny).
 	if err := os.WriteFile(filepath.Join(ws, "world.txt"), []byte("world\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestTUIApprovalRPCUnblocksInteractiveWait(t *testing.T) {
 		t.Fatal("no permission.request emitted for the gated command (deny path)")
 	}
 
-	// The TUI deny path: task.action.deny -> handleDeny.
+	// The TUI deny path: governance.action.deny -> handleDeny.
 	if _, err := d.handleDeny(mustJSON(t, map[string]any{
 		"session_id": sess2.SessionID, "decision_id": decisionID2,
 		"approver": "operator", "reason": "denied by operator in carina-tui",
@@ -126,7 +126,7 @@ func TestTUIApprovalRPCUnblocksInteractiveWait(t *testing.T) {
 	select {
 	case <-done2:
 	case <-time.After(20 * time.Second):
-		t.Fatal("denying via task.action.deny did not unblock the daemon's interactive wait — the run hung to the timeout instead of resolving immediately")
+		t.Fatal("denying via governance.action.deny did not unblock the daemon's interactive wait — the run hung to the timeout instead of resolving immediately")
 	}
 	assertDecisionAudited(t, d, sess2.SessionID, decisionID2, "denied")
 }
@@ -150,7 +150,7 @@ func assertDecisionAudited(t *testing.T, d *Daemon, sessionID, decisionID, want 
 	grantedWant := want == "allowed"
 	var sawResolved bool
 	for _, ev := range events {
-		if ev.Type == "TaskCreated" && ev.Payload["status"] == "approval_resolved" && ev.Payload["decision_id"] == decisionID {
+		if ev.Type == "ExecutionProgressed" && ev.Payload["status"] == "approval_resolved" && ev.Payload["decision_id"] == decisionID {
 			sawResolved = true
 			if granted, _ := ev.Payload["granted"].(bool); granted != grantedWant {
 				t.Fatalf("approval_resolved granted=%v, want %v (decision %s)", granted, grantedWant, decisionID)

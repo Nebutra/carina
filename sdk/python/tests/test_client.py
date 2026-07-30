@@ -96,9 +96,9 @@ class ClientTest(unittest.TestCase):
                 result={"data":[{"type":"turn.started","session_id":"s1","task_id":"t1"}],"next_cursor":"cp1.payload.signature","projection_version":"1.0.0"}
             elif request["method"] == "usage.cost":
                 result = {"providers": [], "totals": {}, "estimated": False}
-            elif request["method"] == "task.steer":
+            elif request["method"] == "execution.steer":
                 result = {"queued": True, "task_id": "t1", "status": "running"}
-            elif request["method"] == "task.resume":
+            elif request["method"] == "execution.resume":
                 result = {"task_id": "t1", "session_id": "s1", "status": "running"}
             elif request["method"] == "session.checkpoint.preview":
                 result = {"checkpoint":{"checkpoint_id":"t1:1:9","created_at":"2026-07-14T00:00:00Z","sequence":"00000000000000000009","task_id":"t1","session_id":"s1","turn":1,"applied_patches":[]},"conversation_turns":1,"rollback_patches":[],"will_resume":"paused"}
@@ -106,7 +106,7 @@ class ClientTest(unittest.TestCase):
                 result = {"checkpoint_id":"t1:1:9","task_id":"t1","turn":1,"recent":[]}
             elif request["method"] == "session.checkpoint.restore":
                 result = {"restored":True,"checkpoint_id":"t1:1:9","task_id":"t1","turn":1,"rolled_back":[],"status":"paused","idempotent":True,"reconciliation_required":False,"journal_cleanup_pending":False}
-            elif request["method"] == "task.user.answer":
+            elif request["method"] == "question.answer":
                 result = {"question_id": "q1", "accepted": True, "value": "yes"}
             elif request["method"] == "session.events.stream":
                 result = {"subscription_id": "sub-1"}
@@ -139,9 +139,9 @@ class ClientTest(unittest.TestCase):
             client.close()
 
         self.assertEqual(methods, [
-            "session.attach", "session.fork", "session.review", "session.items", "usage.cost", "task.steer", "task.resume",
+            "session.attach", "session.fork", "session.review", "session.items", "usage.cost", "execution.steer", "execution.resume",
             "session.checkpoint.preview", "session.checkpoint.summarize", "session.checkpoint.restore",
-            "task.user.answer", "session.events.stream",
+            "question.answer", "session.events.stream",
         ])
 
     def test_event_subscription_preserves_raw_cursor_contract(self) -> None:
@@ -165,9 +165,9 @@ class ClientTest(unittest.TestCase):
             result: Any = {}
             if request["method"] == "session.events.stream":
                 result = {"subscription_id": "sub-1"}
-            elif request["method"] == "task.submit":
+            elif request["method"] == "execution.start":
                 result = {"task_id": "t", "session_id": "s", "status": "queued"}
-            elif request["method"] == "task.result":
+            elif request["method"] == "execution.result":
                 conn.sendall(json.dumps({
                     "jsonrpc": "2.0", "method": "event",
                     "params": {"session_id": "s", "task_id": "t", "type": "ModelResponded", "timestamp": "now"},
@@ -181,14 +181,14 @@ class ClientTest(unittest.TestCase):
             client.close()
         self.assertEqual([item["type"] for item in streamed], ["event", "turn.completed"])
         self.assertEqual(streamed[0]["event"]["type"], "ModelResponded")
-        self.assertEqual(methods, ["session.events.stream", "task.submit", "task.result", "session.events.unsubscribe"])
+        self.assertEqual(methods, ["session.events.stream", "execution.start", "execution.result", "session.events.unsubscribe"])
 
     def test_run_streamed_cancellation_cancels_task_and_unsubscribes(self) -> None:
         methods: list[str] = []
         def handler(request: dict[str, Any], conn: socket.socket) -> None:
             methods.append(request["method"])
             result: Any = {"subscription_id": "sub-cancel"} if request["method"] == "session.events.stream" else {}
-            if request["method"] == "task.submit":
+            if request["method"] == "execution.start":
                 result = {"task_id": "t", "session_id": "s", "status": "queued"}
             conn.sendall(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}).encode() + b"\n")
         with daemon_server(handler) as path:
@@ -197,15 +197,15 @@ class ClientTest(unittest.TestCase):
             with self.assertRaises(InterruptedError):
                 list(CarinaThread(client, {"session_id": "s"}).run_streamed("go", cancel=cancelled, poll_interval=.001))
             client.close()
-        self.assertEqual(methods, ["session.events.stream", "task.submit", "task.cancel", "session.events.unsubscribe"])
+        self.assertEqual(methods, ["session.events.stream", "execution.start", "execution.cancel", "session.events.unsubscribe"])
 
     def test_concurrent_run_streamed_routes_by_session_and_cleans_up(self) -> None:
         methods: list[tuple[str, str]] = []
         def handler(request: dict[str, Any], conn: socket.socket) -> None:
             params=request.get("params",{});session=params.get("session_id","");result:Any={}
             if request["method"]=="session.events.stream":result={"subscription_id":"sub-"+session}
-            elif request["method"]=="task.submit":result={"task_id":"task-"+session,"session_id":session,"status":"queued"}
-            elif request["method"]=="task.result":
+            elif request["method"]=="execution.start":result={"task_id":"task-"+session,"session_id":session,"status":"queued"}
+            elif request["method"]=="execution.result":
                 session=params["task_id"].removeprefix("task-");conn.sendall(json.dumps({"jsonrpc":"2.0","method":"event","params":{"session_id":session,"task_id":params["task_id"],"type":"ModelResponded"}}).encode()+b"\n");result={"task_id":params["task_id"],"session_id":session,"status":"completed","summary":session}
             elif request["method"]=="session.events.unsubscribe":session=params["subscription_id"].removeprefix("sub-")
             methods.append((request["method"],session));conn.sendall(json.dumps({"jsonrpc":"2.0","id":request["id"],"result":result}).encode()+b"\n")
@@ -251,8 +251,8 @@ class ClientTest(unittest.TestCase):
             result: Any = {}
             if request["method"] == "runtime.initialize": result = {"runtime_version":"0.6.5","protocol_version":"1.2.0","projection_version":"1.0.0","capabilities":{"tool_call_lifecycle":True,"event_schema_version":"0.3.0"}}
             elif request["method"] == "session.create": result = {"session_id":"s","workspace_id":"w","workspace_root":"/tmp","status":"active"}
-            elif request["method"] == "task.submit": submitted.append(request["params"]); result = {"task_id":"t","status":"queued"}
-            elif request["method"] == "task.result": result = {"task_id":"t","status":"completed","summary":"{\"status\":\"ok\"}"}
+            elif request["method"] == "execution.start": submitted.append(request["params"]); result = {"task_id":"t","status":"queued"}
+            elif request["method"] == "execution.result": result = {"task_id":"t","status":"completed","summary":"{\"status\":\"ok\"}"}
             conn.sendall(json.dumps({"jsonrpc":"2.0","id":request["id"],"result":result}).encode()+b"\n")
         with daemon_server(handler) as path:
             client=CarinaClient(path,timeout=.5);thread=client.start_thread("/tmp");schema={"type":"object","properties":{"status":{"type":"string"}},"required":["status"]};ref={"artifact_id":"a"*64,"media_type":"image/png","bytes":3};result=thread.run("status",output_schema=schema,input_media_refs=[ref],poll_interval=.001);self.assertEqual(result["structured_output"],{"status":"ok"});client.close()

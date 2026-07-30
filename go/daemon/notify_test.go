@@ -23,8 +23,8 @@ func (r *cancellationBlockingReasoner) Think(ctx context.Context, _ string) (str
 	return "", ctx.Err()
 }
 
-// TestCompletionEnvelopeEmitted: a task reaching a terminal state publishes a
-// single structured task.completed envelope with the final status and summary.
+// TestCompletionEnvelopeEmitted: a run reaching a terminal state publishes a
+// single structured execution.completed envelope with the final result.
 func TestCompletionEnvelopeEmitted(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
@@ -32,7 +32,7 @@ func TestCompletionEnvelopeEmitted(t *testing.T) {
 	var mu sync.Mutex
 	var completions []map[string]any
 	d.events.Tap(func(_ string, ev map[string]any) {
-		if ev["type"] == "task.completed" {
+		if ev["type"] == "execution.completed" {
 			mu.Lock()
 			completions = append(completions, ev)
 			mu.Unlock()
@@ -59,8 +59,8 @@ func TestCompletionEnvelopeEmitted(t *testing.T) {
 	if env["summary"] != "all set" {
 		t.Fatalf("envelope summary should carry the model summary, got %v", env["summary"])
 	}
-	if env["task_id"] != task.TaskID {
-		t.Fatalf("envelope task_id mismatch: %v", env["task_id"])
+	if env["run_id"] != task.RunID {
+		t.Fatalf("envelope run_id mismatch: %v", env["run_id"])
 	}
 	if _, ok := env["duration_ms"]; !ok {
 		t.Fatal("envelope should carry duration_ms")
@@ -80,7 +80,7 @@ func TestTaskCancelWaitsForLocalRunBeforeCompletion(t *testing.T) {
 
 	completions := make(chan map[string]any, 2)
 	d.events.Tap(func(_ string, ev map[string]any) {
-		if ev["type"] == "task.completed" {
+		if ev["type"] == "execution.completed" {
 			completions <- ev
 		}
 	})
@@ -94,7 +94,7 @@ func TestTaskCancelWaitsForLocalRunBeforeCompletion(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("reasoner did not start")
 	}
-	if _, err := d.handleTaskCancel(mustJSON(t, map[string]any{"task_id": task.TaskID})); err != nil {
+	if _, err := d.handleTaskCancel(mustJSON(t, map[string]any{"run_id": task.RunID})); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -121,7 +121,7 @@ func TestTaskCancelWaitsForLocalRunBeforeCompletion(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancelled completion not emitted")
 	}
-	if current, ok := d.sched.Get(task.TaskID); !ok || current.Status != "cancelled" {
+	if current, ok := d.sched.Get(task.RunID); !ok || current.Status != "cancelled" {
 		t.Fatalf("task status after cancellation = %#v", current)
 	}
 }
@@ -142,7 +142,7 @@ func TestTaskCancelDoesNotWaitForSaturatedRunSemaphore(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		d.taskContextMu.Lock()
-		_, registered := d.taskCancels[task.TaskID]
+		_, registered := d.taskCancels[task.RunID]
 		d.taskContextMu.Unlock()
 		if registered {
 			break
@@ -152,7 +152,7 @@ func TestTaskCancelDoesNotWaitForSaturatedRunSemaphore(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if _, err := d.handleTaskCancel(mustJSON(t, map[string]any{"task_id": task.TaskID})); err != nil {
+	if _, err := d.handleTaskCancel(mustJSON(t, map[string]any{"run_id": task.RunID})); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -161,7 +161,7 @@ func TestTaskCancelDoesNotWaitForSaturatedRunSemaphore(t *testing.T) {
 		t.Fatal("cancelled task remained blocked on run semaphore")
 	}
 	<-d.runSem
-	current, _ := d.sched.Get(task.TaskID)
+	current, _ := d.sched.Get(task.RunID)
 	if current.Status != "cancelled" {
 		t.Fatalf("task status = %s", current.Status)
 	}

@@ -20,7 +20,7 @@ func TestAsyncSteering(t *testing.T) {
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
 
 	// Queue a steering message before the loop runs.
-	d.steer(task.TaskID, "please also add tests")
+	d.steer(task.RunID, "please also add tests")
 
 	cap := &capturingReasoner{}
 	d.SetReasoner(cap)
@@ -30,7 +30,7 @@ func TestAsyncSteering(t *testing.T) {
 		t.Fatalf("steering message should reach the agent prompt, got:\n%s", cap.lastPrompt)
 	}
 	// Mailbox must be drained (not re-delivered).
-	if len(d.drainMailbox(task.TaskID)) != 0 {
+	if len(d.drainMailbox(task.RunID)) != 0 {
 		t.Fatal("mailbox should be empty after draining")
 	}
 }
@@ -119,11 +119,11 @@ func TestDaemonMailboxDrainPrioritizesUrgent(t *testing.T) {
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
 
-	d.steer(task.TaskID, "please also add tests")
-	d.steer(task.TaskID, "and update the docs")
-	d.steerWithPriority(task.TaskID, "STOP: abort the current approach", steerUrgent)
+	d.steer(task.RunID, "please also add tests")
+	d.steer(task.RunID, "and update the docs")
+	d.steerWithPriority(task.RunID, "STOP: abort the current approach", steerUrgent)
 
-	got := d.drainMailbox(task.TaskID)
+	got := d.drainMailbox(task.RunID)
 	want := []string{"STOP: abort the current approach", "please also add tests", "and update the docs"}
 	if len(got) != len(want) {
 		t.Fatalf("drainMailbox = %#v, want %#v", got, want)
@@ -133,12 +133,12 @@ func TestDaemonMailboxDrainPrioritizesUrgent(t *testing.T) {
 			t.Fatalf("drainMailbox[%d] = %q, want %q (full: %#v)", i, got[i], want[i], got)
 		}
 	}
-	if len(d.drainMailbox(task.TaskID)) != 0 {
+	if len(d.drainMailbox(task.RunID)) != 0 {
 		t.Fatal("mailbox should be empty after draining")
 	}
 }
 
-// TestTaskSteerAcceptsExplicitPriority: task.steer's priority param round
+// TestTaskSteerAcceptsExplicitPriority: execution.steer's priority param round
 // trips through handleTaskSteer into the mailbox and back out via the RPC
 // result, and rejects unknown priority values instead of guessing.
 func TestTaskSteerAcceptsExplicitPriority(t *testing.T) {
@@ -148,7 +148,7 @@ func TestTaskSteerAcceptsExplicitPriority(t *testing.T) {
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
 
 	res, err := d.handleTaskSteer(mustJSON(t, map[string]any{
-		"task_id":  task.TaskID,
+		"run_id":   task.RunID,
 		"message":  "drop everything",
 		"priority": "urgent",
 	}))
@@ -161,14 +161,14 @@ func TestTaskSteerAcceptsExplicitPriority(t *testing.T) {
 	}
 
 	if _, err := d.handleTaskSteer(mustJSON(t, map[string]any{
-		"task_id":  task.TaskID,
+		"run_id":   task.RunID,
 		"message":  "bogus",
 		"priority": "critical",
 	})); err == nil || !strings.Contains(err.Error(), "invalid priority") {
 		t.Fatalf("unknown priority should be rejected, got err=%v", err)
 	}
 
-	got := d.drainMailbox(task.TaskID)
+	got := d.drainMailbox(task.RunID)
 	if len(got) != 1 || got[0] != "drop everything" {
 		t.Fatalf("mailbox after rejected priority = %#v", got)
 	}
@@ -184,11 +184,11 @@ func TestChannelEventSteersUrgentAheadOfQueuedNormalMessage(t *testing.T) {
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "watch CI")
-	d.sched.SetStatus(task.TaskID, "running")
+	d.sched.SetStatus(task.RunID, "running")
 
 	// A normal-priority note is already queued before the channel event
 	// arrives.
-	d.steer(task.TaskID, "please also add tests")
+	d.steer(task.RunID, "please also add tests")
 
 	secret := []byte(strings.Repeat("c", 32))
 	if err := d.channels.Register(channels.Sender{ID: "ci", Secret: secret, Sessions: []string{sess.SessionID}, Kinds: []string{"build"}}); err != nil {
@@ -200,7 +200,7 @@ func TestChannelEventSteersUrgentAheadOfQueuedNormalMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	messages := d.drainMailbox(task.TaskID)
+	messages := d.drainMailbox(task.RunID)
 	if len(messages) != 2 {
 		t.Fatalf("expected both messages queued, got %#v", messages)
 	}
@@ -219,26 +219,26 @@ func TestTaskSteerRejectsUnknownAndTerminalTasks(t *testing.T) {
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
 
 	if _, err := d.handleTaskSteer(mustJSON(t, map[string]any{
-		"task_id": task.TaskID,
+		"run_id":  task.RunID,
 		"message": " also add tests ",
 	})); err != nil {
 		t.Fatalf("queued task should accept steering: %v", err)
 	}
-	if got := d.drainMailbox(task.TaskID); len(got) != 1 || got[0] != "also add tests" {
+	if got := d.drainMailbox(task.RunID); len(got) != 1 || got[0] != "also add tests" {
 		t.Fatalf("steering mailbox = %#v", got)
 	}
 
-	d.sched.SetStatus(task.TaskID, "completed")
+	d.sched.SetStatus(task.RunID, "completed")
 	if _, err := d.handleTaskSteer(mustJSON(t, map[string]any{
-		"task_id": task.TaskID,
+		"run_id":  task.RunID,
 		"message": "too late",
 	})); err == nil || !strings.Contains(err.Error(), "cannot be steered") {
 		t.Fatalf("terminal task steer error = %v", err)
 	}
 	if _, err := d.handleTaskSteer(mustJSON(t, map[string]any{
-		"task_id": "task_missing",
+		"run_id":  "run_missing",
 		"message": "hello",
-	})); err == nil || !strings.Contains(err.Error(), "unknown task") {
-		t.Fatalf("unknown task steer error = %v", err)
+	})); err == nil || !strings.Contains(err.Error(), "unknown execution") {
+		t.Fatalf("unknown execution steer error = %v", err)
 	}
 }

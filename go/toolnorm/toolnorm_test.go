@@ -37,6 +37,19 @@ func TestCanonicalizeLeavesAbsolutePathUnchanged(t *testing.T) {
 	}
 }
 
+func TestCanonicalizeKeepsURLArgumentsOpaque(t *testing.T) {
+	root := "/workspace/proj"
+	for _, rawURL := range []string{
+		"https://wttr.in/Beijing?format=j1",
+		"http://127.0.0.1:8080/v1/models",
+	} {
+		got := Canonicalize([]string{"curl", "-sS", rawURL}, root)
+		if got.Argv[2] != rawURL {
+			t.Fatalf("URL argument was rewritten as a path: got %q, want %q", got.Argv[2], rawURL)
+		}
+	}
+}
+
 func TestCanonicalizeExpandsBareFilenameThatExistsInWorkspace(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "hello.txt"), []byte("hi\n"), 0o600); err != nil {
@@ -60,6 +73,38 @@ func TestCanonicalizeLeavesOpaqueSubcommandTokenUnexpanded(t *testing.T) {
 	got := Canonicalize([]string{"npm", "test"}, root)
 	if len(got.Argv) != 2 || got.Argv[1] != "test" {
 		t.Fatalf("opaque subcommand token was rewritten: got Argv=%v", got.Argv)
+	}
+}
+
+func TestCanonicalizeKeepsShellProgramOpaque(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "cat"), []byte("not a binary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := "cat > Desktop/snake.cpp <<'EOF'\n#include <chrono>\nEOF"
+	got := Canonicalize([]string{"bash", "-lc", script}, root)
+	if len(got.Argv) != 3 || got.Argv[2] != script {
+		t.Fatalf("shell -c program was rewritten as a path: got Argv=%q", got.Argv)
+	}
+	if got.Command != "bash -lc "+script {
+		t.Fatalf("Command = %q, want the original shell program", got.Command)
+	}
+}
+
+func TestCanonicalizeKeepsWrappedShellProgramsOpaque(t *testing.T) {
+	root := t.TempDir()
+	script := "cat > Desktop/snake.cpp <<'EOF'\n#include <chrono>\nEOF"
+	for name, argv := range map[string][]string{
+		"env":     {"env", "MODE=test", "bash", "-lc", script},
+		"timeout": {"timeout", "30", "bash", "-lc", script},
+		"nested":  {"env", "MODE=test", "timeout", "30", "nice", "-n", "5", "bash", "-lc", script},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := Canonicalize(argv, root)
+			if got.Argv[len(got.Argv)-1] != script {
+				t.Fatalf("wrapped shell program was rewritten as a path: got Argv=%q", got.Argv)
+			}
+		})
 	}
 }
 

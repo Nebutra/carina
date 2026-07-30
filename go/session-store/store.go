@@ -41,6 +41,8 @@ type Session struct {
 	ParentID            string    `json:"parent_id,omitempty"` // set for subagent sessions
 	ForkedFromTaskID    string    `json:"forked_from_task_id,omitempty"`
 	ForkedThroughTurn   int       `json:"forked_through_turn,omitempty"`
+	ForkRequestID       string    `json:"fork_request_id,omitempty"`
+	ForkFingerprint     string    `json:"fork_fingerprint,omitempty"`
 	Depth               int       `json:"depth"` // 0 = main; bounded to prevent runaway nesting
 	CreatedAt           time.Time `json:"created_at"`
 }
@@ -226,6 +228,79 @@ func (s *Store) CreateSubSessionForWorkspace(workspaceID, workspaceRoot, profile
 		return nil, fmt.Errorf("sessionstore: workspace id is required")
 	}
 	return s.createSession(workspaceID, workspaceRoot, profile, approvalMode, parentID, depth)
+}
+
+// FindForkRequest resolves a durable client fork identity. Reusing an identity
+// for a different boundary is rejected instead of returning the wrong child.
+func (s *Store) FindForkRequest(parentID, requestID, fingerprint string) (*Session, error) {
+	if requestID == "" {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, sess := range s.sessions {
+		if sess.ParentID != parentID || sess.ForkRequestID != requestID {
+			continue
+		}
+		if sess.ForkFingerprint != fingerprint {
+			return nil, fmt.Errorf("sessionstore: fork request %q was already used for a different boundary", requestID)
+		}
+		copy := *sess
+		return &copy, nil
+	}
+	return nil, nil
+}
+
+// CreateForkSession atomically persists a source-preserving branch. The child
+// inherits session-owned execution preferences and either references a task
+// checkpoint or represents the point before the first source prompt.
+func (s *Store) CreateForkSession(source *Session, taskID string, turn int, requestID, fingerprint string) (*Session, bool, error) {
+	if source == nil || source.SessionID == "" {
+		return nil, false, fmt.Errorf("sessionstore: fork source is required")
+	}
+	if requestID != "" && fingerprint == "" {
+		return nil, false, fmt.Errorf("sessionstore: fork fingerprint is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if requestID != "" {
+		for _, existing := range s.sessions {
+			if existing.ParentID != source.SessionID || existing.ForkRequestID != requestID {
+				continue
+			}
+			if existing.ForkFingerprint != fingerprint {
+				return nil, false, fmt.Errorf("sessionstore: fork request %q was already used for a different boundary", requestID)
+			}
+			copy := *existing
+			return &copy, false, nil
+		}
+	}
+
+	child := &Session{
+		SessionID:           NewID("sess"),
+		WorkspaceID:         source.WorkspaceID,
+		WorkspaceRoot:       source.WorkspaceRoot,
+		Status:              "active",
+		PermissionProfile:   source.PermissionProfile,
+		ApprovalMode:        source.ApprovalMode,
+		NextModel:           source.NextModel,
+		NextReasoningEffort: source.NextReasoningEffort,
+		PlanMode:            source.PlanMode,
+		ParentID:            source.SessionID,
+		ForkedFromTaskID:    taskID,
+		ForkedThroughTurn:   turn,
+		ForkRequestID:       requestID,
+		ForkFingerprint:     fingerprint,
+		Depth:               source.Depth + 1,
+		CreatedAt:           time.Now().UTC(),
+	}
+	if err := s.persist(child); err != nil {
+		return nil, false, err
+	}
+	s.sessions[child.SessionID] = child
+	copy := *child
+	return &copy, true, nil
 }
 
 func (s *Store) createSession(workspaceID, workspaceRoot, profile, approvalMode, parentID string, depth int) (*Session, error) {

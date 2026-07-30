@@ -78,11 +78,10 @@ complete, authoritative registry. Groups not summarized here include `agent.*`,
 | `daemon.doctor` | independent health probes |
 | `daemon.remote.disable` | remote kill-switch: disable remote-exposed method dispatch |
 | `daemon.reload` | reload daemon configuration |
-| `context.status` | local-only native context engine and bundled Headroom status |
+| `context.status` | local-only native context engine status |
 | `context.doctor` | local-only context engine health probe |
-| `context.stats` | local-only local/Headroom compression counters |
+| `context.stats` | local-only compression counters |
 | `context.compress` | local-only diagnostic compression call |
-| `context.retrieve` | local-only diagnostic retrieval by Headroom CCR hash/ref |
 
 Carina's daemon now registers RPC methods through a descriptor catalog. The
 descriptor is the authority for remote exposure and future Gateway
@@ -97,26 +96,20 @@ the capability kernel.
 
 ## Native Context Engine
 
-Carina owns the context-engine boundary. Headroom is integrated as a managed,
-private MCP transport behind that boundary when a bundled or explicitly
-configured Headroom binary is available. The managed Headroom server is not
-listed in the agent's public MCP tool list and cannot be called through the
-agent `mcp` action surface.
+Carina owns the context-engine boundary and does not bundle or start an external
+compression runtime. Auto mode resolves to the local no-op implementation.
 
 The context RPCs are local-only:
 
 | Method | Scope | Purpose |
 |--------|-------|---------|
-| `context.status` | `read` | report configured/effective engine, Headroom source, state directory, and managed MCP state |
+| `context.status` | `read` | report configured/effective local engine state |
 | `context.doctor` | `read` | health probe used by `daemon.doctor` |
-| `context.stats` | `read` | local counters plus Headroom stats when connected |
+| `context.stats` | `read` | local compression counters |
 | `context.compress` | `write` | diagnostic compression call; not the agent transcript path |
-| `context.retrieve` | `read` | diagnostic CCR retrieval by hash/ref; not remote-exposed |
 
-Default `context_engine=auto` only enables bundled or explicitly configured
-Headroom. A `headroom` executable found only on `PATH` is reported in status but
-does not become the built-in engine, so release smoke tests cannot accidentally
-pass because of a developer's global install.
+Default `context_engine=auto` resolves deterministically to `noop`. Supported
+values are `auto`, `off`, and `noop`.
 
 Optional WebSocket Gateway:
 
@@ -220,10 +213,10 @@ Dynamic scopes:
   outside paths resolve to `admin`.
 - `workspace.trust` resolves to `write` only when revoking trust for a clean
   absolute root; granting trust remains `admin`.
-- `task.action.deny` resolves to `write` only for an ordinary deny against an
+- `governance.action.deny` resolves to `write` only for an ordinary deny against an
   existing session without an explicit approver; spoofed approver or ambiguous
   params resolve to `admin`.
-- `task.action.approve` remains statically `admin`.
+- `governance.action.approve` remains statically `admin`.
 
 ## Session API
 
@@ -231,9 +224,10 @@ Dynamic scopes:
 |--------|---------|
 | `session.create` | create a session bound to a workspace + permission profile |
 | `session.get` | fetch session metadata |
-| `session.list` | list sessions |
+| `session.list` | list all, active, or archived sessions |
+| `session.archive` / `session.unarchive` | reversibly archive or restore a terminal session |
 | `session.pause` / `session.resume` | suspend / continue |
-| `session.close` | terminate |
+| `session.close` | compatibility alias for `session.archive` |
 | `session.replay` | replay the event stream |
 | `session.items` | replay the normalized item stream derived from audit events |
 
@@ -244,10 +238,10 @@ not a `session.*` method.
 
 | Method | Purpose |
 |--------|---------|
-| `task.submit` | submit a prompt/task into a session |
-| `task.cancel` | cancel a running task |
-| `task.status` | query task state |
-| `task.action.approve` / `task.action.deny` | resolve pending approval requests |
+| `execution.start` | submit a prompt/task into a session |
+| `execution.cancel` | cancel a running task |
+| `execution.status` | query task state |
+| `governance.action.approve` / `governance.action.deny` | resolve pending approval requests |
 
 Task events are consumed through `session.events.stream` (with a `since`
 cursor and `event_mode`), documented below; there is no separate task event
@@ -278,7 +272,7 @@ defaults `MemoryWrite` to `requires_approval`. If a session policy or approval
 mode returns `allowed`, the mutation is applied immediately and the response is
 `{ "decision": PermissionDecision, "result": MemoryWriteResult }`; otherwise
 the write is queued and the response contains only the decision.
-`task.action.approve` applies the pending write, while `task.action.deny`
+`governance.action.approve` applies the pending write, while `governance.action.deny`
 discards it. Audit payloads record target/scope/action, operation count, and
 content hash, not raw memory text.
 
@@ -291,7 +285,7 @@ HMS projection is a separate, disabled-by-default setting. After the local
 commit, a durable desired-state outbox reconciles replace updates and delete
 tombstones. Projection independently requires `NetworkAccess` and
 `MemoryExternalize`; `MemoryWrite` approval is not sufficient. Pending
-projection authorization can be resolved through `task.action.approve` or
+projection authorization can be resolved through `governance.action.approve` or
 reissued after restart with `memory.projection.authorize`. Projection failure
 or denial never rolls back canonical local memory. See
 [`integrations/hms-memory.md`](integrations/hms-memory.md).
@@ -303,7 +297,7 @@ or denial never rolls back canonical local memory. See
 | `worktree.create` / `list` / `enter` / `lock` / `unlock` / `cleanup` | isolated worktree lifecycle |
 | `workspace.tree` | file tree (via `carina-scan`) |
 | `workspace.search` | structured search (via `carina-grep`) |
-| `workspace.file.get` | read a file (FileRead capability) |
+| `workspace.file.get` | read a clean relative UTF-8 file up to 1 MiB (FileRead capability) |
 | `workspace.patch.propose` / `apply` / `rollback` | transactional patch operations |
 
 There is no separate workspace registration method: a workspace is bound at
@@ -313,7 +307,7 @@ Patch applies are approval-gated: `workspace.patch.propose` requests the
 `PatchApply` capability and returns the decision as `apply_decision` alongside
 the patch. When the decision is `requires_approval`, `workspace.patch.apply`
 refuses (error + `PolicyViolation` audit event) until the decision is resolved
-with `task.action.approve`; a decision resolved by `task.action.deny`, or left
+with `governance.action.approve`; a decision resolved by `governance.action.deny`, or left
 unresolved past the approval window, refuses permanently and the patch must be
 re-proposed.
 
@@ -353,7 +347,7 @@ Each request returns a `PermissionDecision` (see schema). Side effects only proc
 - `profile.describe` — capability-graph view of the session profile.
 - `secret.grant` / `secret.request` — handle-based secrets; plaintext never crosses the boundary.
 - `plugin.inspect` — declared permissions; `plugin.run` — run a WASM plugin (optional `signature_base64`).
-- `task.action.approve` — accepts an optional `role` for role-based approval.
+- `governance.action.approve` — accepts an optional `role` for role-based approval.
 - `session.events.stream` — server-notification stream of session events.
 
 ## Worker API

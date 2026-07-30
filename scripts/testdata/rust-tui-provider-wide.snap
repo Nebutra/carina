@@ -1,0 +1,42 @@
+<blank:1>
+    ⠀⢀⣀⣀⡀⣠⣶⣶⣄⠀   Carina                                                                                                                             Provider
+    ⠀⣿⣿⣿⣿⣿⣿⣿⣿⠀   Provider   Anthropic
+    ⠀⠙⣿⣿⡏⠀⠈⢻⡇⠀   Model      Model not selected  ·  reasoning pending
+    ⠀⢰⣿⣿⣿⣦⣴⣿⡿⠀   Workspace  <workspace>
+    ⠀⠈⠻⠿⠟⠁⠀⠀⠀⠀
+   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+<blank:1>
+   ▌ Connect a provider
+     Choose the model endpoint Carina may use for this workspace.
+<blank:1>
+   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   ╭ Providers  159 of 159 ──────────────────────────────────────────────────────────────────────────╮  ╭ Connection ───────────────────────────────────────╮
+   │ /  Search all 159 providers by name or ID                                                       │  │                                                   │
+   │ ─────────────────────────────────────────────────────────────────────────────────────────────── │  │  ○ Credential required                            │
+   │ ▌ Anthropic                                                             ○ Credential required ┃ │  │                                                   │
+   │ │ anthropic  ·  0 models                                                                      │ │  │  Anthropic                                        │
+   │   OpenAI                                                                ○ Credential required │ │  │  anthropic                                        │
+   │   openai  ·  0 models                                                                         │ │  │                                                   │
+   │   OpenRouter                                                            ○ Credential required │ │  │  PROVIDER DETAILS                                 │
+   │   openrouter  ·  0 models                                                                     │ │  │  Models          0                                │
+   │   Google                                                                ○ Credential required │ │  │  Authentication  not configured                   │
+   │   google  ·  0 models                                                                         │ │  │                                                   │
+   │   302.AI                                                                ○ Credential required │ │  │  The credential is validated before storage and   │
+   │   302ai  ·  0 models                                                                          │ │  │  never appears in the transcript.                 │
+   │   Abacus                                                                ○ Credential required │ │  │                                                   │
+   │   abacus  ·  0 models                                                                         │ │  │                                                   │
+   │   abliteration.ai                                                       ○ Credential required │ │  │                                                   │
+   │   abliteration-ai  ·  0 models                                                                │ │  │                                                   │
+   │   ai&                                                                   ○ Credential required │ │  │                                                   │
+   │   aiand  ·  0 models                                                                          │ │  │                                                   │
+   │   AI-ROUTER                                                             ○ Credential required │ │  │                                                   │
+   │   ai-router  ·  0 models                                                                      │ │  │                                                   │
+   │   AKI.IO                                                                ○ Credential required │ │  │                                                   │
+   │   aki-io  ·  0 models                                                                         │ │  │                                                   │
+   │   Alibaba                                                               ○ Credential required │ │  │                                                   │
+   │   alibaba  ·  0 models                                                                        │ │  │                                                   │
+   │   Alibaba (China)                                                       ○ Credential required │ │  │                                                   │
+   │   alibaba-cn  ·  0 models                                                                     │ │  │   Connect                                         │
+   │                                                                                               │ │  │                                                   │
+   ╰─────────────────────────────────────────────────────────────────────────────────────────────────╯  ╰───────────────────────────────────────────────────╯
+    Esc  Exit   Enter  Connect   /  Search   ↑↓  Navigate

@@ -483,6 +483,7 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 	openByTask := map[string][]*commandProjection{}
 	toolCalls := map[string]*SessionItem{}
 	activeRunByTask := map[string]string{}
+	lifecycleRuns := map[string]*commandProjection{}
 	patches := map[string]*patchProjection{}
 	patchesByTask := map[string][]string{}
 	emittedDiff := map[string]bool{}
@@ -536,6 +537,7 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			toolCalls[callID] = item
 			if stringField(ev.Payload, "tool") == "run" {
 				activeRunByTask[ev.TaskID] = callID
+				lifecycleRuns[callID] = &commandProjection{item: item}
 			}
 			out = append(out, itemEvent("item.started", sessionID, ev, item))
 
@@ -564,6 +566,7 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			mergeMap(item.Details, ev.Payload)
 			out = append(out, itemEvent("item.completed", sessionID, ev, item))
 			delete(toolCalls, item.ID)
+			delete(lifecycleRuns, item.ID)
 			if activeRunByTask[ev.TaskID] == item.ID {
 				delete(activeRunByTask, ev.TaskID)
 			}
@@ -576,6 +579,11 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			})
 
 		case "ModelResponded":
+			if text := stringField(ev.Payload, "text"); text != "" {
+				if _, err := parseAction(text); err == nil {
+					break
+				}
+			}
 			item := &SessionItem{
 				ID:          fallbackItemID("msg", ev, i),
 				Type:        "agent_message",
@@ -594,7 +602,14 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			}
 
 		case "CommandStarted":
-			if activeRunByTask[ev.TaskID] != "" {
+			if callID := activeRunByTask[ev.TaskID]; callID != "" {
+				cmd := lifecycleRuns[callID]
+				if cmd == nil {
+					break
+				}
+				copySelected(cmd.item.Details, ev.Payload, "command", "command_id", "cwd", "risk_level", "package_mutation")
+				cmd.item.Status = "running"
+				out = append(out, itemEvent("item.updated", sessionID, ev, cmd.item))
 				break
 			}
 			item := newCommandItem(ev, fallbackItemID("cmd", ev, i))
@@ -604,7 +619,23 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			out = append(out, itemEvent("item.started", sessionID, ev, item))
 
 		case "CommandOutput":
-			if activeRunByTask[ev.TaskID] != "" {
+			if callID := activeRunByTask[ev.TaskID]; callID != "" {
+				cmd := lifecycleRuns[callID]
+				if cmd == nil {
+					break
+				}
+				stream, chunk := stringField(ev.Payload, "stream"), stringField(ev.Payload, "chunk")
+				if stream == "stderr" {
+					cmd.stderr = append(cmd.stderr, chunk)
+				} else {
+					stream = "stdout"
+					cmd.stdout = append(cmd.stdout, chunk)
+				}
+				cmd.item.Status = "running"
+				setCommandOutputDetails(cmd)
+				cmd.item.Details["last_stream"] = stream
+				cmd.item.Details["last_chunk"] = chunk
+				out = append(out, itemEvent("item.updated", sessionID, ev, cmd.item))
 				break
 			}
 			cmd := findOpenCommand(ev, openByID, openByTask)
@@ -627,7 +658,14 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			out = append(out, itemEvent("item.updated", sessionID, ev, cmd.item))
 
 		case "CommandExited":
-			if activeRunByTask[ev.TaskID] != "" {
+			if callID := activeRunByTask[ev.TaskID]; callID != "" {
+				cmd := lifecycleRuns[callID]
+				if cmd == nil {
+					break
+				}
+				copySelected(cmd.item.Details, ev.Payload, "exit_code", "duration_ms", "error")
+				setCommandOutputDetails(cmd)
+				out = append(out, itemEvent("item.updated", sessionID, ev, cmd.item))
 				break
 			}
 			cmd := findOpenCommand(ev, openByID, openByTask)

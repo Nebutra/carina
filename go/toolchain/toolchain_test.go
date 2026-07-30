@@ -47,6 +47,35 @@ func TestNewAndDir(t *testing.T) {
 	}
 }
 
+func TestNewResolvesPatchNativeDirectoryFromPath(t *testing.T) {
+	t.Setenv("CARINA_TOOLS_DIR", "")
+	dir := t.TempDir()
+	patchNative := filepath.Join(dir, "carina-patch-native")
+	if err := os.WriteFile(patchNative, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	tc := New("")
+	if tc.Dir() != dir {
+		t.Fatalf("Dir = %q, want installed tools directory %q", tc.Dir(), dir)
+	}
+}
+
+func TestNativeToolsBesideInstalledDaemon(t *testing.T) {
+	dir := t.TempDir()
+	daemon := filepath.Join(dir, "carina-daemon")
+	patchNative := filepath.Join(dir, "carina-patch-native")
+	for _, path := range []string{daemon, patchNative} {
+		if err := os.WriteFile(path, []byte("binary"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := nativeToolsBeside(daemon); got != dir {
+		t.Fatalf("nativeToolsBeside = %q, want %q", got, dir)
+	}
+}
+
 func TestScanGrepRun(t *testing.T) {
 	tc := New(toolsDir(t))
 	if !tc.Available() {

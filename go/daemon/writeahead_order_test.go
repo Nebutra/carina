@@ -36,17 +36,17 @@ func (g *gatedReasoner) Think(_ context.Context, _ string) (string, error) {
 	return `{"thought":"done","action":{"tool":"done","summary":"ok"}}`, nil
 }
 
-// TestWriteAheadTaskCreatedPrecedesReasonerDispatch pins the invariant that
+// TestWriteAheadExecutionQueuedPrecedesReasonerDispatch pins the invariant that
 // handleTaskSubmit's synchronous write-ahead sequence (kernel audit-chain
-// append of TaskCreated with the submitted prompt, then durable
+// append of ExecutionQueued with the submitted prompt, then durable
 // persistRun) has already completed before the reasoner goroutine's first
 // Think() call can possibly run. The gatedReasoner blocks inside Think until
 // released; while it is blocked (proven via the entered signal, not a
 // sleep), the test reads the kernel's own audit chain and asserts the
-// TaskCreated event carrying the user prompt is already present. This
+// ExecutionQueued event carrying the user prompt is already present. This
 // guards against a future latency-motivated refactor that moves `go
 // d.runTaskGuarded` earlier, ahead of the record()/persistRun() calls.
-func TestWriteAheadTaskCreatedPrecedesReasonerDispatch(t *testing.T) {
+func TestWriteAheadExecutionQueuedPrecedesReasonerDispatch(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
 
@@ -87,7 +87,7 @@ func TestWriteAheadTaskCreatedPrecedesReasonerDispatch(t *testing.T) {
 	defer close(reasoner.proceed)
 
 	// While the reasoner is blocked mid-Think, the audit chain must already
-	// contain TaskCreated with the submitted prompt: this is what "before
+	// contain ExecutionQueued with the submitted prompt: this is what "before
 	// dispatch" means precisely — record()+persistRun() returned before the
 	// goroutine's first model call could complete (and here, provably,
 	// before it even proceeds past its gate).
@@ -95,14 +95,14 @@ func TestWriteAheadTaskCreatedPrecedesReasonerDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadEvents: %v", err)
 	}
-	if !strings.Contains(string(raw), "TaskCreated") || !strings.Contains(string(raw), wantPrompt) {
-		t.Fatalf("audit chain missing write-ahead TaskCreated(prompt) while reasoner is still blocked in Think: %s", raw)
+	if !strings.Contains(string(raw), "ExecutionQueued") || !strings.Contains(string(raw), wantPrompt) {
+		t.Fatalf("audit chain missing write-ahead ExecutionQueued(prompt) while reasoner is still blocked in Think: %s", raw)
 	}
 }
 
 // TestTaskSubmitRefusesWhenWriteAheadRecordFails pins the other half of
 // P1.8's write-ahead requirement: a FAILED audit-chain append of the
-// write-ahead TaskCreated(prompt) event must refuse the submission, not
+// write-ahead ExecutionQueued(prompt) event must refuse the submission, not
 // silently dispatch an agent loop whose defining instruction the audit
 // trail cannot attest to. Kills the real kernel subprocess (not a fake —
 // d.kern is a concrete *kernel.Service wrapping a real child process, so

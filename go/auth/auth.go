@@ -17,8 +17,9 @@ import (
 type Kind string
 
 const (
-	APIKey Kind = "api_key" // BYOK -> x-api-key header
-	OAuth  Kind = "oauth"   // Nebutra ecosystem -> Authorization: Bearer
+	APIKey Kind = "api_key"      // BYOK -> x-api-key header
+	Bearer Kind = "bearer_token" // External token -> Authorization: Bearer
+	OAuth  Kind = "oauth"        // Nebutra ecosystem -> Authorization: Bearer
 )
 
 // Credential is a resolved auth secret. Value is sensitive; Source is a safe-to-
@@ -33,7 +34,7 @@ type Credential struct {
 // value.
 func (c Credential) Apply(h http.Header) {
 	switch c.Kind {
-	case OAuth:
+	case Bearer, OAuth:
 		h.Set("Authorization", "Bearer "+c.Value)
 	default: // APIKey
 		h.Set("x-api-key", c.Value)

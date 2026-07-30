@@ -15,10 +15,10 @@ func TestRecoveryEffectProofBlocksStartedUnknownTool(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "unsafe")
 	effect := continuity.NewEffectContract(continuity.EffectUnknown, "")
-	d.record(sess.SessionID, "ToolCallRequested", task.TaskID, "go", map[string]any{
+	d.record(sess.SessionID, "ToolCallRequested", task.RunID, "go", map[string]any{
 		"call_id": "call_unsafe", "tool": "run", "kind": "command", "status": "pending", "arguments": map[string]any{}, "effect": effect,
 	}, "")
-	d.record(sess.SessionID, "ToolCallStarted", task.TaskID, "go", map[string]any{
+	d.record(sess.SessionID, "ToolCallStarted", task.RunID, "go", map[string]any{
 		"call_id": "call_unsafe", "tool": "run", "kind": "command", "status": "running",
 	}, "")
 	effectSafe, externalSafe, _ := d.recoveryEffectProof(task)

@@ -1,0 +1,33 @@
+---
+source: crates/carina-tui/tests/golden_frames.rs
+expression: "render_palette(Theme::new(Polarity::Dark, level))"
+---
+size=64x8
+CARINA  primary  dim  muted  bright
+focus  selected  link
++ added  - removed
+fn semantic_theme() {}
+pending  success  error
+H1 H2 H3 H4 H5 H6
+
+
+styles:
+(0, 0)..(6, 0) (Indexed(175), Reset, NONE)
+(17, 0)..(20, 0) (Indexed(241), Reset, NONE)
+(22, 0)..(27, 0) (Indexed(247), Reset, NONE)
+(29, 0)..(35, 0) (Indexed(251), Reset, NONE)
+(0, 1)..(5, 1) (Indexed(116), Reset, BOLD)
+(7, 1)..(15, 1) (Reset, Indexed(237), BOLD)
+(17, 1)..(21, 1) (Indexed(74), Reset, UNDERLINED)
+(0, 2)..(7, 2) (Indexed(115), Indexed(22), NONE)
+(9, 2)..(18, 2) (Indexed(210), Indexed(52), NONE)
+(0, 3)..(22, 3) (Indexed(254), Indexed(234), NONE)
+(0, 4)..(7, 4) (Indexed(215), Reset, NONE)
+(9, 4)..(16, 4) (Indexed(79), Reset, NONE)
+(18, 4)..(23, 4) (Indexed(210), Reset, NONE)
+(0, 5)..(3, 5) (Indexed(116), Reset, BOLD | UNDERLINED)
+(3, 5)..(6, 5) (Indexed(116), Reset, BOLD)
+(6, 5)..(9, 5) (Reset, Reset, BOLD)
+(9, 5)..(12, 5) (Indexed(251), Reset, BOLD)
+(12, 5)..(15, 5) (Indexed(251), Reset, ITALIC)
+(15, 5)..(18, 5) (Indexed(247), Reset, ITALIC)

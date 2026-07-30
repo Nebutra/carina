@@ -103,9 +103,10 @@ create → (pause / resume) → close
 | 方法 | 用途 |
 | --- | --- |
 | `session.create` | 创建会话（工作区 + 配置） |
-| `session.get` / `session.list` | 元数据与列表 |
+| `session.get` / `session.list` | 元数据与活跃/已归档列表 |
+| `session.archive` / `session.unarchive` | 可恢复的归档与还原；存在活动任务时拒绝归档 |
 | `session.pause` / `session.resume` | 挂起 / 继续 |
-| `session.close` | 终止 |
+| `session.close` | 归档操作的兼容别名 |
 | `session.replay` | 回放原始审计事件流 |
 | `session.items` | UI/SDK 用归一化 item 流 |
 | `session.review` | 治理投影 |
@@ -117,10 +118,10 @@ JSONL / SQLite 导出由 `audit.export` 提供，不是 `session.*`。
 
 | 方法 | 用途 |
 | --- | --- |
-| `task.submit` | 提交 prompt/任务 |
-| `task.cancel` | 取消运行中任务 |
-| `task.status` | 查询状态 |
-| `task.action.approve` / `task.action.deny` | 解决待审批 |
+| `execution.start` | 提交 prompt/任务 |
+| `execution.cancel` | 取消运行中任务 |
+| `execution.status` | 查询状态 |
+| `governance.action.approve` / `governance.action.deny` | 解决待审批 |
 
 任务事件通过 `session.events.stream` 消费。
 

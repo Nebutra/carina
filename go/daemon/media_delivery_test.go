@@ -43,10 +43,10 @@ func TestTaskInputMediaIsDurableAndPartOfSubmissionIdentity(t *testing.T) {
 	}
 
 	task := d.sched.Submit(session.SessionID, session.WorkspaceID, "inspect")
-	d.sched.SetInputMediaRefs(task.TaskID, []scheduler.InputMediaRef{{
+	d.sched.SetInputMediaRefs(task.RunID, []scheduler.InputMediaRef{{
 		ArtifactID: ref.ArtifactID, MediaType: ref.MediaType, Bytes: ref.Bytes, Origin: ref.Origin,
 	}})
-	task, _ = d.sched.Get(task.TaskID)
+	task, _ = d.sched.Get(task.RunID)
 	transcript := newTranscript(task.UserPrompt)
 	attachTaskInputMedia(transcript, task)
 	if len(transcript.Turns) != 1 || len(transcript.Turns[0].Obs.MediaRefs) != 1 || transcript.Turns[0].Obs.MediaRefs[0].ArtifactID != ref.ArtifactID {
@@ -58,7 +58,7 @@ func TestTaskInputMediaIsDurableAndPartOfSubmissionIdentity(t *testing.T) {
 	loaded := d.runs.load()
 	found := false
 	for _, candidate := range loaded {
-		if candidate.TaskID == task.TaskID {
+		if candidate.RunID == task.RunID {
 			found = len(candidate.InputMediaRefs) == 1 && candidate.InputMediaRefs[0].ArtifactID == ref.ArtifactID
 		}
 	}

@@ -10,14 +10,14 @@ import (
 // AcquireExecution atomically fences all prior owners and publishes a new
 // execution generation. expectedRevision prevents recovery from acting on a
 // stale continuity snapshot.
-func (s *Scheduler) AcquireExecution(taskID string, expectedRevision int64, ownerKind, ownerID string, runtimeEpoch int64, expiresAt time.Time) (*Task, error) {
+func (s *Scheduler) AcquireExecution(taskID string, expectedRevision int64, ownerKind, ownerID string, runtimeEpoch int64, expiresAt time.Time) (*ExecutionRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	task, ok := s.tasks[taskID]
+	task, ok := s.runs[taskID]
 	if !ok {
 		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
-	normalizeTask(task)
+	normalizeRun(task)
 	if expectedRevision > 0 && task.Revision != expectedRevision {
 		return nil, fmt.Errorf("scheduler: task %s revision is stale", taskID)
 	}
@@ -54,18 +54,18 @@ func (s *Scheduler) AcquireExecution(taskID string, expectedRevision int64, owne
 		OwnerKind: ownerKind, OwnerID: ownerID, RuntimeEpoch: runtimeEpoch,
 		LeaseGeneration: generation, ExpiresAt: expiresAt,
 	}
-	touchTask(&updated)
-	s.tasks[taskID] = &updated
+	touchRun(&updated)
+	s.runs[taskID] = &updated
 	copy := updated
 	return &copy, nil
 }
 
 // SetStatusFenced publishes state only for the currently authoritative
 // execution generation. It is the commit primitive used by recovered work.
-func (s *Scheduler) SetStatusFenced(taskID string, generation int64, status string) (*Task, error) {
+func (s *Scheduler) SetStatusFenced(taskID string, generation int64, status string) (*ExecutionRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	task, ok := s.tasks[taskID]
+	task, ok := s.runs[taskID]
 	if !ok {
 		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
@@ -82,21 +82,21 @@ func (s *Scheduler) SetStatusFenced(taskID string, generation int64, status stri
 		updated.Continuity.Execution.OwnerID = ""
 		updated.Continuity.Execution.ExpiresAt = time.Time{}
 	}
-	touchTask(&updated)
-	s.tasks[taskID] = &updated
+	touchRun(&updated)
+	s.runs[taskID] = &updated
 	copy := updated
 	return &copy, nil
 }
 
 // SetTerminalResultFenced commits terminal status and its user-visible result
 // in one mutation so observers never see a terminal row with stale summary.
-func (s *Scheduler) SetTerminalResultFenced(taskID string, generation int64, status, summary string, patches []string) (*Task, error) {
+func (s *Scheduler) SetTerminalResultFenced(taskID string, generation int64, status, summary string, patches []string) (*ExecutionRun, error) {
 	if !isTerminal(status) {
 		return nil, fmt.Errorf("scheduler: %q is not terminal", status)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	task, ok := s.tasks[taskID]
+	task, ok := s.runs[taskID]
 	if !ok {
 		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
@@ -112,15 +112,15 @@ func (s *Scheduler) SetTerminalResultFenced(taskID string, generation int64, sta
 	updated.Continuity.Execution.OwnerKind = ""
 	updated.Continuity.Execution.OwnerID = ""
 	updated.Continuity.Execution.ExpiresAt = time.Time{}
-	touchTask(&updated)
-	s.tasks[taskID] = &updated
+	touchRun(&updated)
+	s.runs[taskID] = &updated
 	copy := updated
 	return &copy, nil
 }
 
 // Interrupt abandons an old generation and records structured evidence. A
 // cancelled task is never converted back into recoverable work.
-func (s *Scheduler) Interrupt(taskID string, record continuity.InterruptionRecord, decision continuity.RecoveryDecision) (*Task, error) {
+func (s *Scheduler) Interrupt(taskID string, record continuity.InterruptionRecord, decision continuity.RecoveryDecision) (*ExecutionRun, error) {
 	if err := record.Validate(); err != nil {
 		return nil, err
 	}
@@ -129,7 +129,7 @@ func (s *Scheduler) Interrupt(taskID string, record continuity.InterruptionRecor
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	task, ok := s.tasks[taskID]
+	task, ok := s.runs[taskID]
 	if !ok {
 		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
@@ -146,26 +146,26 @@ func (s *Scheduler) Interrupt(taskID string, record continuity.InterruptionRecor
 	updated.Continuity.Execution.OwnerKind = ""
 	updated.Continuity.Execution.OwnerID = ""
 	updated.Continuity.Execution.ExpiresAt = time.Time{}
-	touchTask(&updated)
-	s.tasks[taskID] = &updated
+	touchRun(&updated)
+	s.runs[taskID] = &updated
 	copy := updated
 	return &copy, nil
 }
 
-func (s *Scheduler) SetWorkspaceAnchor(taskID string, anchor continuity.WorkspaceAnchor) (*Task, error) {
+func (s *Scheduler) SetWorkspaceAnchor(taskID string, anchor continuity.WorkspaceAnchor) (*ExecutionRun, error) {
 	if err := anchor.Validate(); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	task, ok := s.tasks[taskID]
+	task, ok := s.runs[taskID]
 	if !ok {
 		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
 	updated := *task
 	updated.Continuity.WorkspaceAnchor = &anchor
-	touchTask(&updated)
-	s.tasks[taskID] = &updated
+	touchRun(&updated)
+	s.runs[taskID] = &updated
 	copy := updated
 	return &copy, nil
 }

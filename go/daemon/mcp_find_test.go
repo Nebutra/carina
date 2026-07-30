@@ -46,11 +46,11 @@ for line in sys.stdin:
         sys.stdout.flush()
 `
 
-func mcpFindFixture(t *testing.T) (*Daemon, *sessionstore.Session, *scheduler.Task) {
+func mcpFindFixture(t *testing.T) (*Daemon, *sessionstore.Session, *scheduler.ExecutionRun) {
 	t.Helper()
 	d := &Daemon{mcp: mcp.NewManager()}
 	t.Cleanup(d.mcp.Close)
-	return d, &sessionstore.Session{SessionID: "sess_find"}, &scheduler.Task{TaskID: "task_find"}
+	return d, &sessionstore.Session{SessionID: "sess_find"}, &scheduler.ExecutionRun{RunID: "run_find"}
 }
 
 func connectFindMock(t *testing.T, d *Daemon, name string, private bool) {

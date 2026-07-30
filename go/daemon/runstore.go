@@ -58,11 +58,11 @@ func newRunStore(stateDir string) *runStore {
 }
 
 // save atomically writes a task record (temp + rename).
-func (r *runStore) save(task *scheduler.Task) {
+func (r *runStore) save(task *scheduler.ExecutionRun) {
 	_ = r.saveChecked(task)
 }
 
-func (r *runStore) saveChecked(task *scheduler.Task) error {
+func (r *runStore) saveChecked(task *scheduler.ExecutionRun) error {
 	if task == nil {
 		return nil
 	}
@@ -71,17 +71,17 @@ func (r *runStore) saveChecked(task *scheduler.Task) error {
 	row := struct {
 		Version                     int    `json:"version"`
 		ClientSubmissionFingerprint string `json:"client_submission_fingerprint,omitempty"`
-		*scheduler.Task
+		*scheduler.ExecutionRun
 	}{
 		Version:                     runStoreVersion,
 		ClientSubmissionFingerprint: task.ClientSubmissionFingerprint,
-		Task:                        task,
+		ExecutionRun:                task,
 	}
 	raw, err := json.MarshalIndent(row, "", "  ")
 	if err != nil {
 		return err
 	}
-	p := filepath.Join(r.dir, task.TaskID+".json")
+	p := filepath.Join(r.dir, task.RunID+".json")
 	tmp := p + ".tmp"
 	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
 		return err
@@ -90,14 +90,14 @@ func (r *runStore) saveChecked(task *scheduler.Task) error {
 }
 
 // load reads all persisted task records (for run-registry recovery on startup).
-func (r *runStore) load() []*scheduler.Task {
+func (r *runStore) load() []*scheduler.ExecutionRun {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	entries, err := os.ReadDir(r.dir)
 	if err != nil {
 		return nil
 	}
-	var out []*scheduler.Task
+	var out []*scheduler.ExecutionRun
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue
@@ -114,11 +114,57 @@ func (r *runStore) load() []*scheduler.Task {
 		}
 		var row struct {
 			ClientSubmissionFingerprint string `json:"client_submission_fingerprint"`
-			scheduler.Task
+			scheduler.ExecutionRun
 		}
-		if json.Unmarshal(raw, &row) == nil && row.TaskID != "" {
-			row.Task.ClientSubmissionFingerprint = row.ClientSubmissionFingerprint
-			out = append(out, &row.Task)
+		if json.Unmarshal(raw, &row) == nil && row.RunID != "" {
+			row.ExecutionRun.ClientSubmissionFingerprint = row.ClientSubmissionFingerprint
+			out = append(out, &row.ExecutionRun)
+		}
+	}
+	return out
+}
+
+func (r *runStore) saveTask(task *scheduler.Task) error {
+	if task == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	row := struct {
+		Version int `json:"version"`
+		*scheduler.Task
+	}{Version: runStoreVersion, Task: task}
+	raw, err := json.MarshalIndent(row, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(r.dir, task.TaskID+".json")
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func (r *runStore) loadTasks() []*scheduler.Task {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entries, err := os.ReadDir(r.dir)
+	if err != nil {
+		return nil
+	}
+	var out []*scheduler.Task
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "task_") || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		raw, _, ok := statefmt.ReadVersioned(filepath.Join(r.dir, entry.Name()), runStoreVersion)
+		if !ok {
+			continue
+		}
+		var task scheduler.Task
+		if json.Unmarshal(raw, &task) == nil && task.TaskID != "" {
+			out = append(out, &task)
 		}
 	}
 	return out

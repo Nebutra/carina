@@ -30,7 +30,12 @@ impl Service {
             .expect("spawn carina-kernel-service");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        Service { child, stdin, stdout, id: 0 }
+        Service {
+            child,
+            stdin,
+            stdout,
+            id: 0,
+        }
     }
 
     fn call(&mut self, method: &str, params: Value) -> Value {
@@ -74,13 +79,20 @@ fn rand_suffix() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("{nanos:x}-{seq}")
 }
 
 fn setup_with(init_extra: Value) -> (tempWorkspace, Service) {
-    let base = std::env::temp_dir().join(format!("carina-index-it-{}-{}", std::process::id(), rand_suffix()));
+    let base = std::env::temp_dir().join(format!(
+        "carina-index-it-{}-{}",
+        std::process::id(),
+        rand_suffix()
+    ));
     let ws = base.join("ws");
     let state = base.join("state");
     std::fs::create_dir_all(&ws).unwrap();
@@ -124,7 +136,10 @@ fn build_then_search_finds_a_known_symbol() {
     let hits = found["hits"].as_array().expect("hits array");
     assert!(!hits.is_empty(), "expected a hit, got {found}");
     assert_eq!(hits[0]["path"], "lib.rs");
-    assert!(hits[0]["snippet"].as_str().unwrap().contains("zz_indexed_marker"));
+    assert!(hits[0]["snippet"]
+        .as_str()
+        .unwrap()
+        .contains("zz_indexed_marker"));
 
     // Symbol lookup sees the definition with tree-sitter confidence.
     let syms = svc.call(
@@ -181,7 +196,10 @@ fn denied_paths_are_skipped_and_never_enter_the_index() {
     let events = events.as_array().unwrap();
     assert!(
         events.iter().any(|e| e["type"] == "PolicyViolation"
-            && e["payload"]["resource"].as_str().unwrap_or_default().ends_with(".env")),
+            && e["payload"]["resource"]
+                .as_str()
+                .unwrap_or_default()
+                .ends_with(".env")),
         "expected a PolicyViolation for .env"
     );
 }
@@ -191,10 +209,22 @@ fn audit_chain_records_index_decisions_and_status_events() {
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("a.rs"), "pub fn zz_audited_fn() {}\n").unwrap();
 
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["a.rs"]}));
-    svc.call("kernel.index.search", json!({"session_id": "sess_ix", "query": "zz_audited_fn"}));
-    svc.call("kernel.index.symbols", json!({"session_id": "sess_ix", "name": "zz_audited_fn"}));
-    svc.call("kernel.index.map", json!({"session_id": "sess_ix", "token_budget": 256}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["a.rs"]}),
+    );
+    svc.call(
+        "kernel.index.search",
+        json!({"session_id": "sess_ix", "query": "zz_audited_fn"}),
+    );
+    svc.call(
+        "kernel.index.symbols",
+        json!({"session_id": "sess_ix", "name": "zz_audited_fn"}),
+    );
+    svc.call(
+        "kernel.index.map",
+        json!({"session_id": "sess_ix", "token_budget": 256}),
+    );
 
     let events = svc.call("kernel.audit.read", json!({"session_id": "sess_ix"}));
     let events = events.as_array().unwrap();
@@ -203,15 +233,30 @@ fn audit_chain_records_index_decisions_and_status_events() {
         .filter(|e| e["type"] == "ToolApproved")
         .filter_map(|e| e["payload"]["resource"].as_str().map(String::from))
         .collect();
-    assert!(resources.iter().any(|r| r == "index build files=1"), "got {resources:?}");
-    assert!(resources.iter().any(|r| r == "index search zz_audited_fn"), "got {resources:?}");
-    assert!(resources.iter().any(|r| r == "index symbols zz_audited_fn"), "got {resources:?}");
-    assert!(resources.iter().any(|r| r == "index map budget=256"), "got {resources:?}");
+    assert!(
+        resources.iter().any(|r| r == "index build files=1"),
+        "got {resources:?}"
+    );
+    assert!(
+        resources.iter().any(|r| r == "index search zz_audited_fn"),
+        "got {resources:?}"
+    );
+    assert!(
+        resources.iter().any(|r| r == "index symbols zz_audited_fn"),
+        "got {resources:?}"
+    );
+    assert!(
+        resources.iter().any(|r| r == "index map budget=256"),
+        "got {resources:?}"
+    );
 
     // Every index decision carries a permission_decision_id in the chain.
     assert!(events
         .iter()
-        .filter(|e| e["payload"]["resource"].as_str().unwrap_or_default().starts_with("index "))
+        .filter(|e| e["payload"]["resource"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("index "))
         .all(|e| e["permission_decision_id"].is_string()));
 
     // Build completion recorded a decision-linked status event (no new EventType).
@@ -233,14 +278,20 @@ fn audit_chain_records_index_decisions_and_status_events() {
 fn patch_apply_then_index_update_reflects_the_edit() {
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("m.rs"), "pub fn zz_before_edit() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["m.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["m.rs"]}),
+    );
 
     let proposed = svc.call(
         "kernel.patch.propose",
         json!({"session_id": "sess_ix", "reason": "t", "files": [{"path": "m.rs", "new_content": "pub fn zz_after_edit() {}\n"}]}),
     );
     let patch_id = proposed["patch_id"].as_str().unwrap().to_string();
-    let applied = svc.call("kernel.patch.apply", json!({"session_id": "sess_ix", "patch_id": patch_id}));
+    let applied = svc.call(
+        "kernel.patch.apply",
+        json!({"session_id": "sess_ix", "patch_id": patch_id}),
+    );
     assert_eq!(applied["status"], "applied");
 
     let updated = svc.call(
@@ -253,7 +304,10 @@ fn patch_apply_then_index_update_reflects_the_edit() {
         "kernel.index.search",
         json!({"session_id": "sess_ix", "query": "zz_before_edit"}),
     );
-    assert!(stale["hits"].as_array().unwrap().is_empty(), "stale content must be gone: {stale}");
+    assert!(
+        stale["hits"].as_array().unwrap().is_empty(),
+        "stale content must be gone: {stale}"
+    );
     let fresh = svc.call(
         "kernel.index.search",
         json!({"session_id": "sess_ix", "query": "zz_after_edit"}),
@@ -261,7 +315,10 @@ fn patch_apply_then_index_update_reflects_the_edit() {
     assert!(!fresh["hits"].as_array().unwrap().is_empty(), "got {fresh}");
 
     // Rollback + kernel-side invalidation hook: the pre-image is queryable again.
-    let rolled = svc.call("kernel.patch.rollback", json!({"session_id": "sess_ix", "patch_id": proposed["patch_id"].as_str().unwrap()}));
+    let rolled = svc.call(
+        "kernel.patch.rollback",
+        json!({"session_id": "sess_ix", "patch_id": proposed["patch_id"].as_str().unwrap()}),
+    );
     assert_eq!(rolled["status"], "rolled_back");
     let restored = svc.call(
         "kernel.index.search",
@@ -277,7 +334,10 @@ fn patch_apply_then_index_update_reflects_the_edit() {
 fn update_treats_missing_changed_paths_as_deletes() {
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("gone.rs"), "pub fn zz_soon_gone() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["gone.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["gone.rs"]}),
+    );
     std::fs::remove_file(tmp.ws.join("gone.rs")).unwrap();
 
     let updated = svc.call(
@@ -299,13 +359,31 @@ fn org_bundle_can_deny_the_code_index_capability() {
     }));
     std::fs::write(tmp.ws.join("x.rs"), "pub fn zz_locked_fn() {}\n").unwrap();
 
-    let built = svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["x.rs"]}));
+    let built = svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["x.rs"]}),
+    );
     let err = built.get("__error").expect("build must be denied");
-    assert!(err["message"].as_str().unwrap().contains("code index denied"), "got {err}");
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("code index denied"),
+        "got {err}"
+    );
 
-    let found = svc.call("kernel.index.search", json!({"session_id": "sess_ix", "query": "zz_locked_fn"}));
+    let found = svc.call(
+        "kernel.index.search",
+        json!({"session_id": "sess_ix", "query": "zz_locked_fn"}),
+    );
     let err = found.get("__error").expect("search must be denied");
-    assert!(err["message"].as_str().unwrap().contains("code index denied"), "got {err}");
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("code index denied"),
+        "got {err}"
+    );
 
     // Both denials are in the audit chain.
     let events = svc.call("kernel.audit.read", json!({"session_id": "sess_ix"}));
@@ -313,8 +391,7 @@ fn org_bundle_can_deny_the_code_index_capability() {
         .as_array()
         .unwrap()
         .iter()
-        .filter(|e| e["type"] == "PolicyViolation"
-            && e["payload"]["capability"] == "CodeIndex")
+        .filter(|e| e["type"] == "PolicyViolation" && e["payload"]["capability"] == "CodeIndex")
         .count();
     assert!(denials >= 2, "expected audited CodeIndex denials");
 }
@@ -326,7 +403,10 @@ fn bundle_file_read_deny_blocks_queries_over_a_previously_built_index() {
     // FileRead (but never mentions CodeIndex) has to deny index queries too.
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("x.rs"), "pub fn zz_prebuilt_fn() {}\n").unwrap();
-    let built = svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["x.rs"]}));
+    let built = svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["x.rs"]}),
+    );
     assert_eq!(built["indexed"].as_u64(), Some(1), "got {built}");
 
     svc.call(
@@ -342,9 +422,14 @@ fn bundle_file_read_deny_blocks_queries_over_a_previously_built_index() {
         "kernel.index.search",
         json!({"session_id": "sess_strict", "query": "zz_prebuilt_fn"}),
     );
-    let err = found.get("__error").expect("stricter session must be denied");
+    let err = found
+        .get("__error")
+        .expect("stricter session must be denied");
     assert!(
-        err["message"].as_str().unwrap().contains("code index denied"),
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("code index denied"),
         "got {err}"
     );
 }
@@ -355,7 +440,10 @@ fn update_drops_now_denied_paths_instead_of_keeping_stale_content() {
     // as a drop (like the kernel-internal patch hook), never as a keep.
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("cfg.rs"), "pub fn zz_stale_secret() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["cfg.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["cfg.rs"]}),
+    );
 
     // The path becomes FileRead-denied: it now resolves outside the workspace.
     std::fs::remove_file(tmp.ws.join("cfg.rs")).unwrap();
@@ -397,7 +485,10 @@ fn build_skips_oversized_files() {
     let skipped = built["skipped"].as_array().unwrap();
     assert!(
         skipped.iter().any(|s| s["path"] == "huge.rs"
-            && s["reason"].as_str().unwrap_or_default().contains("size cap")),
+            && s["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("size cap")),
         "oversized file must be skipped with a reason: {built}"
     );
     let found = svc.call(
@@ -418,16 +509,26 @@ fn code_index_approval_is_actionable_and_retryable() {
     std::fs::write(tmp.ws.join("y.rs"), "pub fn zz_approved_fn() {}\n").unwrap();
 
     let extract_decision_id = |v: &Value| -> String {
-        let msg = v["__error"]["message"].as_str().expect("error message").to_string();
+        let msg = v["__error"]["message"]
+            .as_str()
+            .expect("error message")
+            .to_string();
         assert!(msg.contains("requires approval"), "got {msg}");
-        let start = msg.find("decision_id=").expect("decision_id in message") + "decision_id=".len();
+        let start =
+            msg.find("decision_id=").expect("decision_id in message") + "decision_id=".len();
         msg[start..].split(')').next().unwrap().to_string()
     };
 
-    let first = svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["y.rs"]}));
+    let first = svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["y.rs"]}),
+    );
     let decision_id = extract_decision_id(&first);
     // A retry before approval reuses the parked decision instead of leaking a new one.
-    let second = svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["y.rs"]}));
+    let second = svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["y.rs"]}),
+    );
     assert_eq!(extract_decision_id(&second), decision_id);
 
     let approved = svc.call(
@@ -437,7 +538,10 @@ fn code_index_approval_is_actionable_and_retryable() {
     assert_eq!(approved["decision"], "allowed", "got {approved}");
 
     // The session overlay now satisfies every kernel.index.* call.
-    let built = svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["y.rs"]}));
+    let built = svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["y.rs"]}),
+    );
     assert_eq!(built["indexed"].as_u64(), Some(1), "got {built}");
     let found = svc.call(
         "kernel.index.search",
@@ -452,7 +556,10 @@ fn search_hits_carry_provenance() {
     // content_hash / indexed_at of the file version it was indexed from.
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("p.rs"), "pub fn zz_prov_marker() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["p.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["p.rs"]}),
+    );
     let found = svc.call(
         "kernel.index.search",
         json!({"session_id": "sess_ix", "query": "zz_prov_marker"}),
@@ -470,12 +577,24 @@ fn base64_encode(input: &[u8]) -> String {
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for chunk in input.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         out.push(TABLE[(n >> 18) as usize & 63] as char);
         out.push(TABLE[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -494,7 +613,10 @@ fn embed_all_pending(svc: &mut Service, session_id: &str, vector: &[f32]) -> Val
         "kernel.index.pending_chunks",
         json!({"session_id": session_id, "model_id": EMBED_MODEL, "limit": 256}),
     );
-    assert!(pending.get("__error").is_none(), "pending_chunks failed: {pending}");
+    assert!(
+        pending.get("__error").is_none(),
+        "pending_chunks failed: {pending}"
+    );
     let chunks = pending["chunks"].as_array().expect("chunks array").clone();
     assert!(!chunks.is_empty(), "expected pending chunks, got {pending}");
     let embeddings: Vec<Value> = chunks
@@ -522,7 +644,10 @@ fn embed_all_pending(svc: &mut Service, session_id: &str, vector: &[f32]) -> Val
 fn pending_chunks_then_embed_store_then_vector_search_round_trip() {
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("lib.rs"), "pub fn zz_vec_round_trip() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["lib.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["lib.rs"]}),
+    );
 
     // pending_chunks returns full chunk text + provenance for the caller to embed.
     let pending = svc.call(
@@ -536,7 +661,10 @@ fn pending_chunks_then_embed_store_then_vector_search_round_trip() {
     let first = &chunks[0];
     assert!(first["chunk_id"].is_number(), "got {first}");
     assert_eq!(first["path"], "lib.rs");
-    assert!(first["content"].as_str().unwrap().contains("zz_vec_round_trip"));
+    assert!(first["content"]
+        .as_str()
+        .unwrap()
+        .contains("zz_vec_round_trip"));
     assert_eq!(first["content_hash"].as_str().unwrap().len(), 64);
 
     let stored = embed_all_pending(&mut svc, "sess_ix", &[1.0, 0.0]);
@@ -561,7 +689,11 @@ fn pending_chunks_then_embed_store_then_vector_search_round_trip() {
     assert!(!hits.is_empty(), "got {found}");
     let hit = &hits[0];
     assert!(
-        hit["sources"].as_array().unwrap().iter().any(|s| s == "vector"),
+        hit["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s == "vector"),
         "vector channel must contribute a source: {hit}"
     );
     assert_eq!(hit["content_hash"].as_str().unwrap().len(), 64, "got {hit}");
@@ -588,7 +720,10 @@ fn vector_search_reports_channel_liveness_for_observable_degrade() {
     // or a dims change the daemon has no in-process memory of).
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("lib.rs"), "pub fn zz_vec_liveness() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["lib.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["lib.rs"]}),
+    );
 
     // Keyword-only search: no vector channel, no counters.
     let keyword = svc.call(
@@ -612,8 +747,16 @@ fn vector_search_reports_channel_liveness_for_observable_degrade() {
         }),
     );
     assert!(empty.get("__error").is_none(), "got {empty}");
-    assert_eq!(empty["vector_channel"]["stored"].as_u64(), Some(0), "got {empty}");
-    assert_eq!(empty["vector_channel"]["live"].as_u64(), Some(0), "got {empty}");
+    assert_eq!(
+        empty["vector_channel"]["stored"].as_u64(),
+        Some(0),
+        "got {empty}"
+    );
+    assert_eq!(
+        empty["vector_channel"]["live"].as_u64(),
+        Some(0),
+        "got {empty}"
+    );
 
     let stored = embed_all_pending(&mut svc, "sess_ix", &[1.0, 0.0]);
     assert!(stored["stored"].as_u64().unwrap() >= 1, "got {stored}");
@@ -629,7 +772,10 @@ fn vector_search_reports_channel_liveness_for_observable_degrade() {
         }),
     );
     assert!(live.get("__error").is_none(), "got {live}");
-    assert!(live["vector_channel"]["stored"].as_u64().unwrap() >= 1, "got {live}");
+    assert!(
+        live["vector_channel"]["stored"].as_u64().unwrap() >= 1,
+        "got {live}"
+    );
     assert_eq!(
         live["vector_channel"]["live"], live["vector_channel"]["stored"],
         "matching dims must rank every stored vector: {live}"
@@ -665,7 +811,10 @@ fn bundle_file_read_deny_blocks_pending_chunks_over_a_previously_built_index() {
     // FileRead (never mentioning CodeIndex) must be denied at query time.
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("x.rs"), "pub fn zz_pending_locked_fn() {}\n").unwrap();
-    let built = svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["x.rs"]}));
+    let built = svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["x.rs"]}),
+    );
     assert_eq!(built["indexed"].as_u64(), Some(1), "got {built}");
 
     svc.call(
@@ -681,9 +830,14 @@ fn bundle_file_read_deny_blocks_pending_chunks_over_a_previously_built_index() {
         "kernel.index.pending_chunks",
         json!({"session_id": "sess_strict", "model_id": EMBED_MODEL}),
     );
-    let err = pending.get("__error").expect("stricter session must be denied");
+    let err = pending
+        .get("__error")
+        .expect("stricter session must be denied");
     assert!(
-        err["message"].as_str().unwrap().contains("code index denied"),
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("code index denied"),
         "got {err}"
     );
 }
@@ -694,9 +848,15 @@ fn bundle_file_read_deny_blocks_vector_search_and_embed_store() {
     // them (embed_store names chunk ids of readable content) are both gated.
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("x.rs"), "pub fn zz_vector_locked_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["x.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["x.rs"]}),
+    );
     let stored = embed_all_pending(&mut svc, "sess_ix", &[1.0, 0.0]);
-    assert!(stored.get("__error").is_none(), "embed in permissive session: {stored}");
+    assert!(
+        stored.get("__error").is_none(),
+        "embed in permissive session: {stored}"
+    );
 
     svc.call(
         "kernel.session.init",
@@ -718,7 +878,10 @@ fn bundle_file_read_deny_blocks_vector_search_and_embed_store() {
     );
     let err = found.get("__error").expect("vector search must be denied");
     assert!(
-        err["message"].as_str().unwrap().contains("code index denied"),
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("code index denied"),
         "got {err}"
     );
     let store_denied = svc.call(
@@ -730,9 +893,14 @@ fn bundle_file_read_deny_blocks_vector_search_and_embed_store() {
             "embeddings": [{"chunk_id": 1, "content_hash": "00", "vector_base64": vector_base64(&[1.0, 0.0])}],
         }),
     );
-    let err = store_denied.get("__error").expect("embed_store must be denied");
+    let err = store_denied
+        .get("__error")
+        .expect("embed_store must be denied");
     assert!(
-        err["message"].as_str().unwrap().contains("code index denied"),
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("code index denied"),
         "got {err}"
     );
 }
@@ -741,7 +909,10 @@ fn bundle_file_read_deny_blocks_vector_search_and_embed_store() {
 fn vector_search_cannot_surface_pre_patch_content_and_embed_store_reports_stale() {
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("m.rs"), "pub fn zz_vec_before_edit() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["m.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["m.rs"]}),
+    );
 
     // Remember the pre-patch chunk so we can try to embed it after the edit.
     let pending = svc.call(
@@ -759,7 +930,10 @@ fn vector_search_cannot_surface_pre_patch_content_and_embed_store_reports_stale(
         json!({"session_id": "sess_ix", "reason": "t", "files": [{"path": "m.rs", "new_content": "pub fn zz_vec_after_edit() {}\n"}]}),
     );
     let patch_id = proposed["patch_id"].as_str().unwrap().to_string();
-    let applied = svc.call("kernel.patch.apply", json!({"session_id": "sess_ix", "patch_id": patch_id}));
+    let applied = svc.call(
+        "kernel.patch.apply",
+        json!({"session_id": "sess_ix", "patch_id": patch_id}),
+    );
     assert_eq!(applied["status"], "applied", "got {applied}");
 
     // The stale-vector governance test: pre-patch content is unreachable
@@ -795,7 +969,10 @@ fn vector_search_cannot_surface_pre_patch_content_and_embed_store_reports_stale(
     assert!(restored.get("__error").is_none(), "got {restored}");
     assert_eq!(restored["stored"].as_u64(), Some(0), "got {restored}");
     assert!(
-        restored["stale"].as_array().unwrap().contains(&old_chunk["chunk_id"]),
+        restored["stale"]
+            .as_array()
+            .unwrap()
+            .contains(&old_chunk["chunk_id"]),
         "replaced chunk must be reported stale: {restored}"
     );
 
@@ -818,7 +995,10 @@ fn vector_search_cannot_surface_pre_patch_content_and_embed_store_reports_stale(
 fn embed_store_validates_dims_and_base64() {
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("v.rs"), "pub fn zz_validate_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["v.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["v.rs"]}),
+    );
 
     // Vector payload shorter than dims * 4 bytes.
     let short = svc.call(
@@ -829,7 +1009,10 @@ fn embed_store_validates_dims_and_base64() {
         }),
     );
     let err = short.get("__error").expect("dims mismatch must error");
-    assert!(err["message"].as_str().unwrap().contains("dims"), "got {err}");
+    assert!(
+        err["message"].as_str().unwrap().contains("dims"),
+        "got {err}"
+    );
 
     // Invalid base64.
     let bad = svc.call(
@@ -840,7 +1023,10 @@ fn embed_store_validates_dims_and_base64() {
         }),
     );
     let err = bad.get("__error").expect("invalid base64 must error");
-    assert!(err["message"].as_str().unwrap().contains("base64"), "got {err}");
+    assert!(
+        err["message"].as_str().unwrap().contains("base64"),
+        "got {err}"
+    );
 
     // dims out of the accepted 1..=4096 range.
     for dims in [0, 5000] {
@@ -863,7 +1049,10 @@ fn embed_store_validates_dims_and_base64() {
 fn search_with_query_vector_requires_model_id() {
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("q.rs"), "pub fn zz_needs_model_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["q.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["q.rs"]}),
+    );
     let found = svc.call(
         "kernel.index.search",
         json!({
@@ -872,8 +1061,13 @@ fn search_with_query_vector_requires_model_id() {
             "query_vector_base64": vector_base64(&[1.0, 0.0]),
         }),
     );
-    let err = found.get("__error").expect("query_vector without model_id must error");
-    assert!(err["message"].as_str().unwrap().contains("model_id"), "got {err}");
+    let err = found
+        .get("__error")
+        .expect("query_vector without model_id must error");
+    assert!(
+        err["message"].as_str().unwrap().contains("model_id"),
+        "got {err}"
+    );
 }
 
 #[test]
@@ -902,7 +1096,10 @@ fn update_keeps_rows_and_reports_skipped_for_unreadable_changed_file() {
     let (tmp, mut svc) = setup();
     let path = tmp.ws.join("locked.rs");
     std::fs::write(&path, "pub fn zz_unreadable_kept_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["locked.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["locked.rs"]}),
+    );
 
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
     let updated = svc.call(
@@ -915,7 +1112,10 @@ fn update_keeps_rows_and_reports_skipped_for_unreadable_changed_file() {
     let skipped = updated["skipped"].as_array().unwrap();
     assert!(
         skipped.iter().any(|s| s["path"] == "locked.rs"
-            && s["reason"].as_str().unwrap_or_default().contains("read error")),
+            && s["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("read error")),
         "read failure must be a skipped entry, got {updated}"
     );
 
@@ -935,7 +1135,10 @@ fn update_keeps_rows_and_reports_skipped_for_non_utf8_changed_file() {
     let (tmp, mut svc) = setup();
     let path = tmp.ws.join("bin.rs");
     std::fs::write(&path, "pub fn zz_non_utf8_kept_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["bin.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["bin.rs"]}),
+    );
 
     std::fs::write(&path, [0xff, 0xfe, 0x00, 0x9f, 0x92, 0x96]).unwrap();
     let updated = svc.call(
@@ -946,7 +1149,10 @@ fn update_keeps_rows_and_reports_skipped_for_non_utf8_changed_file() {
     let skipped = updated["skipped"].as_array().unwrap();
     assert!(
         skipped.iter().any(|s| s["path"] == "bin.rs"
-            && s["reason"].as_str().unwrap_or_default().contains("read error")),
+            && s["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("read error")),
         "non-UTF-8 read failure must be a skipped entry, got {updated}"
     );
 
@@ -970,9 +1176,14 @@ fn index_params_reject_non_string_array_elements() {
         "kernel.index.build",
         json!({"session_id": "sess_ix", "paths": [1, "a.rs"]}),
     );
-    let err = built.get("__error").expect("mixed-type paths array must error");
+    let err = built
+        .get("__error")
+        .expect("mixed-type paths array must error");
     assert!(
-        err["message"].as_str().unwrap().contains("must be an array of strings"),
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("must be an array of strings"),
         "got {err}"
     );
 }
@@ -999,7 +1210,10 @@ fn build_drops_now_denied_paths_instead_of_keeping_stale_content() {
     // not stay queryable — nor exfiltrable via pending_chunks.
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("cfg.rs"), "pub fn zz_build_stale_secret() {}\n").unwrap();
-    let built = svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["cfg.rs"]}));
+    let built = svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["cfg.rs"]}),
+    );
     assert_eq!(built["indexed"].as_u64(), Some(1), "got {built}");
 
     // The path becomes FileRead-denied: it now resolves outside the workspace.
@@ -1007,7 +1221,10 @@ fn build_drops_now_denied_paths_instead_of_keeping_stale_content() {
     #[cfg(unix)]
     std::os::unix::fs::symlink("/etc/hosts", tmp.ws.join("cfg.rs")).unwrap();
 
-    let rebuilt = svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["cfg.rs"]}));
+    let rebuilt = svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["cfg.rs"]}),
+    );
     assert!(rebuilt.get("__error").is_none(), "got {rebuilt}");
 
     let found = svc.call(
@@ -1028,7 +1245,10 @@ fn build_drops_now_denied_paths_instead_of_keeping_stale_content() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|c| c["content"].as_str().unwrap_or_default().contains("zz_build_stale_secret")),
+            .any(|c| c["content"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("zz_build_stale_secret")),
         "stale chunk text must not be handed to the embedding pipeline: {pending}"
     );
     assert_eq!(pending["total_pending"].as_u64(), Some(0), "got {pending}");
@@ -1068,14 +1288,24 @@ fn impact_walks_transitive_dependents_with_provenance_and_audit() {
     assert_eq!(deps.len(), 2, "got {report}");
     assert_eq!(deps[0]["symbol"]["name"], "zz_imp_caller");
     assert_eq!(deps[0]["depth"].as_u64(), Some(1));
-    assert!((deps[0]["confidence"].as_f64().unwrap() - 1.0).abs() < 1e-9, "got {report}");
+    assert!(
+        (deps[0]["confidence"].as_f64().unwrap() - 1.0).abs() < 1e-9,
+        "got {report}"
+    );
     assert_eq!(deps[0]["source"], "tree-sitter");
     assert_eq!(deps[1]["symbol"]["name"], "zz_imp_outer");
     assert_eq!(deps[1]["depth"].as_u64(), Some(2));
     assert_eq!(report["truncated"], false);
     // Dependents reuse SymbolRecord and carry provenance.
-    assert_eq!(deps[0]["symbol"]["content_hash"].as_str().unwrap().len(), 64, "got {report}");
-    assert!(!deps[0]["symbol"]["indexed_at"].as_str().unwrap().is_empty(), "got {report}");
+    assert_eq!(
+        deps[0]["symbol"]["content_hash"].as_str().unwrap().len(),
+        64,
+        "got {report}"
+    );
+    assert!(
+        !deps[0]["symbol"]["indexed_at"].as_str().unwrap().is_empty(),
+        "got {report}"
+    );
 
     // The query went through the ordinary index gate: a decision-linked
     // ToolApproved with the documented (default-clamped) resource string.
@@ -1084,8 +1314,10 @@ fn impact_walks_transitive_dependents_with_provenance_and_audit() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|e| e["type"] == "ToolApproved"
-            && e["payload"]["resource"] == "index impact zz_imp_core depth=3 limit=50")
+        .find(|e| {
+            e["type"] == "ToolApproved"
+                && e["payload"]["resource"] == "index impact zz_imp_core depth=3 limit=50"
+        })
         .expect("audited impact gate decision with the documented resource string");
     assert!(gate["permission_decision_id"].is_string());
 }
@@ -1094,13 +1326,19 @@ fn impact_walks_transitive_dependents_with_provenance_and_audit() {
 fn impact_clamps_depth_and_limit_into_documented_bounds() {
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("a.rs"), "pub fn zz_clamp_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["a.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["a.rs"]}),
+    );
 
     let wild = svc.call(
         "kernel.index.impact",
         json!({"session_id": "sess_ix", "name": "zz_clamp_fn", "max_depth": 99, "limit": 100000}),
     );
-    assert!(wild.get("__error").is_none(), "out-of-range params clamp, never error: {wild}");
+    assert!(
+        wild.get("__error").is_none(),
+        "out-of-range params clamp, never error: {wild}"
+    );
     let tiny = svc.call(
         "kernel.index.impact",
         json!({"session_id": "sess_ix", "name": "zz_clamp_fn", "max_depth": 0, "limit": 0}),
@@ -1116,11 +1354,15 @@ fn impact_clamps_depth_and_limit_into_documented_bounds() {
         .filter_map(|e| e["payload"]["resource"].as_str().map(String::from))
         .collect();
     assert!(
-        resources.iter().any(|r| r == "index impact zz_clamp_fn depth=5 limit=200"),
+        resources
+            .iter()
+            .any(|r| r == "index impact zz_clamp_fn depth=5 limit=200"),
         "got {resources:?}"
     );
     assert!(
-        resources.iter().any(|r| r == "index impact zz_clamp_fn depth=1 limit=1"),
+        resources
+            .iter()
+            .any(|r| r == "index impact zz_clamp_fn depth=1 limit=1"),
         "got {resources:?}"
     );
 }
@@ -1129,11 +1371,17 @@ fn impact_clamps_depth_and_limit_into_documented_bounds() {
 fn impact_requires_a_name() {
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("a.rs"), "pub fn zz_named_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["a.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["a.rs"]}),
+    );
     let report = svc.call("kernel.index.impact", json!({"session_id": "sess_ix"}));
     let err = report.get("__error").expect("missing name must error");
     assert!(
-        err["message"].as_str().unwrap().contains("name is required"),
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("name is required"),
         "got {err}"
     );
 }
@@ -1184,9 +1432,14 @@ fn bundle_file_read_deny_blocks_impact_over_a_previously_built_index() {
         "kernel.index.impact",
         json!({"session_id": "sess_strict", "name": "zz_imp_locked"}),
     );
-    let err = report.get("__error").expect("stricter session must be denied");
+    let err = report
+        .get("__error")
+        .expect("stricter session must be denied");
     assert!(
-        err["message"].as_str().unwrap().contains("code index denied"),
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("code index denied"),
         "got {err}"
     );
 }
@@ -1198,7 +1451,10 @@ fn embed_store_rejects_non_finite_vector_components() {
     // rank as garbage in cosine_rank forever).
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("v.rs"), "pub fn zz_finite_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["v.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["v.rs"]}),
+    );
 
     let pending = svc.call(
         "kernel.index.pending_chunks",
@@ -1223,9 +1479,9 @@ fn embed_store_rejects_non_finite_vector_components() {
                 }],
             }),
         );
-        let err = stored
-            .get("__error")
-            .unwrap_or_else(|| panic!("non-finite component ({bad}) must be a param error, got {stored}"));
+        let err = stored.get("__error").unwrap_or_else(|| {
+            panic!("non-finite component ({bad}) must be a param error, got {stored}")
+        });
         assert!(
             err["message"].as_str().unwrap().contains("non-finite"),
             "got {err}"
@@ -1276,7 +1532,11 @@ fn edges_store_round_trip_upgrades_impact_to_lsp_source() {
     );
     assert!(stored.get("__error").is_none(), "got {stored}");
     assert_eq!(stored["stored"].as_u64(), Some(1), "got {stored}");
-    assert_eq!(stored["skipped"].as_array().unwrap().len(), 0, "got {stored}");
+    assert_eq!(
+        stored["skipped"].as_array().unwrap().len(),
+        0,
+        "got {stored}"
+    );
 
     // The persisted precise edge upgrades impact: 1.0 confidence, source lsp.
     let report = svc.call(
@@ -1286,7 +1546,10 @@ fn edges_store_round_trip_upgrades_impact_to_lsp_source() {
     let deps = report["dependents"].as_array().expect("dependents array");
     assert_eq!(deps.len(), 1, "got {report}");
     assert_eq!(deps[0]["source"], "lsp", "got {report}");
-    assert!((deps[0]["confidence"].as_f64().unwrap() - 1.0).abs() < 1e-9, "got {report}");
+    assert!(
+        (deps[0]["confidence"].as_f64().unwrap() - 1.0).abs() < 1e-9,
+        "got {report}"
+    );
 
     // Gated + audited like siblings: decision-linked gate with the documented
     // resource string, plus a decision-linked index_edges_stored status event.
@@ -1303,7 +1566,11 @@ fn edges_store_round_trip_upgrades_impact_to_lsp_source() {
         .expect("index_edges_stored status event");
     assert_eq!(status["type"], "ToolApproved");
     assert!(status["permission_decision_id"].is_string());
-    assert_eq!(status["payload"]["stored"].as_u64(), Some(1), "got {status}");
+    assert_eq!(
+        status["payload"]["stored"].as_u64(),
+        Some(1),
+        "got {status}"
+    );
     assert!(status["payload"]["duration_ms"].is_number(), "got {status}");
 }
 
@@ -1315,7 +1582,10 @@ fn edges_store_skips_denied_and_unresolved_endpoints() {
     std::fs::write(tmp.ws.join(".env"), "SECRET=1\n").unwrap();
     let outside = tmp.base.join("outside.rs");
     std::fs::write(&outside, "pub fn zz_v4skip_outside() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["ok.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["ok.rs"]}),
+    );
 
     let stored = svc.call(
         "kernel.index.edges_store",
@@ -1326,12 +1596,17 @@ fn edges_store_skips_denied_and_unresolved_endpoints() {
             edge_json("ok.rs", 1, "ok.rs", 1),          // self edge
         ]}),
     );
-    assert!(stored.get("__error").is_none(), "skips are success: {stored}");
+    assert!(
+        stored.get("__error").is_none(),
+        "skips are success: {stored}"
+    );
     assert_eq!(stored["stored"].as_u64(), Some(0), "got {stored}");
     let skipped = stored["skipped"].as_array().unwrap();
     assert_eq!(skipped.len(), 4, "got {stored}");
     assert!(
-        skipped.iter().all(|s| !s["reason"].as_str().unwrap_or_default().is_empty()),
+        skipped
+            .iter()
+            .all(|s| !s["reason"].as_str().unwrap_or_default().is_empty()),
         "every skip carries a reason: {stored}"
     );
     // Nothing may have landed in the edges graph.
@@ -1339,21 +1614,30 @@ fn edges_store_skips_denied_and_unresolved_endpoints() {
         "kernel.index.impact",
         json!({"session_id": "sess_ix", "name": "zz_v4skip_fn"}),
     );
-    assert_eq!(report["dependents"].as_array().unwrap().len(), 0, "got {report}");
+    assert_eq!(
+        report["dependents"].as_array().unwrap().len(),
+        0,
+        "got {report}"
+    );
 }
 
 #[test]
 fn edges_store_rejects_more_than_256_edges() {
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("a.rs"), "pub fn zz_v4cap_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["a.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["a.rs"]}),
+    );
 
     let edges: Vec<Value> = (0..257).map(|_| edge_json("a.rs", 1, "a.rs", 1)).collect();
     let stored = svc.call(
         "kernel.index.edges_store",
         json!({"session_id": "sess_ix", "edges": edges}),
     );
-    let err = stored.get("__error").expect("257 edges must be a param error");
+    let err = stored
+        .get("__error")
+        .expect("257 edges must be a param error");
     assert!(
         err["message"].as_str().unwrap().contains("at most 256"),
         "got {err}"
@@ -1364,26 +1648,38 @@ fn edges_store_rejects_more_than_256_edges() {
 fn edges_store_rejects_zero_line_numbers() {
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("a.rs"), "pub fn zz_v4line_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["a.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["a.rs"]}),
+    );
 
     let stored = svc.call(
         "kernel.index.edges_store",
         json!({"session_id": "sess_ix", "edges": [edge_json("a.rs", 0, "a.rs", 1)]}),
     );
     let err = stored.get("__error").expect("line 0 must be a param error");
-    assert!(err["message"].as_str().unwrap().contains("line"), "got {err}");
+    assert!(
+        err["message"].as_str().unwrap().contains("line"),
+        "got {err}"
+    );
 }
 
 #[test]
 fn edges_store_requires_an_edges_array() {
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("a.rs"), "pub fn zz_v4arr_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["a.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["a.rs"]}),
+    );
 
     let stored = svc.call("kernel.index.edges_store", json!({"session_id": "sess_ix"}));
     let err = stored.get("__error").expect("missing edges must error");
     assert!(
-        err["message"].as_str().unwrap().contains("edges array required"),
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("edges array required"),
         "got {err}"
     );
 }
@@ -1395,7 +1691,10 @@ fn bundle_file_read_deny_blocks_edges_store() {
     // mentioning CodeIndex) must be denied, like every index surface.
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("x.rs"), "pub fn zz_v4locked_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["x.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["x.rs"]}),
+    );
 
     svc.call(
         "kernel.session.init",
@@ -1410,9 +1709,14 @@ fn bundle_file_read_deny_blocks_edges_store() {
         "kernel.index.edges_store",
         json!({"session_id": "sess_strict", "edges": [edge_json("x.rs", 1, "x.rs", 1)]}),
     );
-    let err = stored.get("__error").expect("stricter session must be denied");
+    let err = stored
+        .get("__error")
+        .expect("stricter session must be denied");
     assert!(
-        err["message"].as_str().unwrap().contains("code index denied"),
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("code index denied"),
         "got {err}"
     );
 }
@@ -1424,7 +1728,10 @@ fn search_rejects_non_finite_query_vector_components() {
     // components as a param error before the search runs.
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("q.rs"), "pub fn zz_v4finite_fn() {}\n").unwrap();
-    svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["q.rs"]}));
+    svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["q.rs"]}),
+    );
 
     for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
         let found = svc.call(
@@ -1436,9 +1743,9 @@ fn search_rejects_non_finite_query_vector_components() {
                 "model_id": EMBED_MODEL,
             }),
         );
-        let err = found
-            .get("__error")
-            .unwrap_or_else(|| panic!("non-finite component ({bad}) must be a param error, got {found}"));
+        let err = found.get("__error").unwrap_or_else(|| {
+            panic!("non-finite component ({bad}) must be a param error, got {found}")
+        });
         assert!(
             err["message"].as_str().unwrap().contains("non-finite"),
             "got {err}"
@@ -1454,7 +1761,10 @@ fn patch_apply_records_invalidation_failure_observably() {
     // stale index is visible (the next sweep/build heals it).
     let (tmp, mut svc) = setup();
     std::fs::write(tmp.ws.join("m.rs"), "pub fn zz_v4inv_before() {}\n").unwrap();
-    let built = svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["m.rs"]}));
+    let built = svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["m.rs"]}),
+    );
     let db_path = std::path::PathBuf::from(built["db_path"].as_str().expect("db_path"));
     assert!(db_path.exists(), "got {built}");
 
@@ -1479,8 +1789,14 @@ fn patch_apply_records_invalidation_failure_observably() {
         json!({"session_id": "sess_two", "reason": "t", "files": [{"path": "m.rs", "new_content": "pub fn zz_v4inv_after() {}\n"}]}),
     );
     let patch_id = proposed["patch_id"].as_str().unwrap().to_string();
-    let applied = svc.call("kernel.patch.apply", json!({"session_id": "sess_two", "patch_id": patch_id}));
-    assert_eq!(applied["status"], "applied", "the patch itself must never fail: {applied}");
+    let applied = svc.call(
+        "kernel.patch.apply",
+        json!({"session_id": "sess_two", "patch_id": patch_id}),
+    );
+    assert_eq!(
+        applied["status"], "applied",
+        "the patch itself must never fail: {applied}"
+    );
 
     let events = svc.call("kernel.audit.read", json!({"session_id": "sess_two"}));
     let failure = events
@@ -1491,7 +1807,10 @@ fn patch_apply_records_invalidation_failure_observably() {
         .expect("a failed post-patch invalidation must record index_invalidation_failed")
         .clone();
     assert!(
-        !failure["payload"]["error"].as_str().unwrap_or_default().is_empty(),
+        !failure["payload"]["error"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty(),
         "the event carries the error text (never content): {failure}"
     );
     let _ = std::fs::remove_dir(&db_path);
@@ -1512,7 +1831,10 @@ fn build_prunes_paths_missing_from_the_scan() {
     assert_eq!(built["indexed"].as_u64(), Some(2), "got {built}");
 
     std::fs::remove_file(tmp.ws.join("a.rs")).unwrap();
-    let rebuilt = svc.call("kernel.index.build", json!({"session_id": "sess_ix", "paths": ["b.rs"]}));
+    let rebuilt = svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": ["b.rs"]}),
+    );
     assert!(rebuilt.get("__error").is_none(), "got {rebuilt}");
 
     let gone = svc.call(
@@ -1537,7 +1859,10 @@ fn build_prunes_paths_missing_from_the_scan() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|c| c["content"].as_str().unwrap_or_default().contains("zz_prune_deleted_fn")),
+            .any(|c| c["content"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("zz_prune_deleted_fn")),
         "pruned chunk text must not reach the embedding pipeline: {pending}"
     );
 }

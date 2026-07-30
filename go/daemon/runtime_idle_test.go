@@ -47,7 +47,7 @@ func TestRuntimeIdleWaitsForTaskObligationThenStops(t *testing.T) {
 		t.Fatal("runtime stopped with queued task")
 	case <-time.After(60 * time.Millisecond):
 	}
-	d.sched.SetStatus(task.TaskID, "completed")
+	d.sched.SetStatus(task.RunID, "completed")
 	select {
 	case <-stopped:
 	case <-time.After(150 * time.Millisecond):

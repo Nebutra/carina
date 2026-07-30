@@ -88,7 +88,7 @@ The `/v1` facade is **agent-first**, not provider-first. `model` selects a Carin
 | --- | --- |
 | Runtime / Gateway | `runtime.initialize`, `gateway.hello`, `daemon.status`, `daemon.doctor` |
 | Session | `session.create`, `session.attach`/`get`/`list`/`close`, `session.replay`, `session.items` |
-| Task | `task.submit`, `task.cancel`, `task.action.approve` / `deny` |
+| Task | `execution.start`, `execution.cancel`, `governance.action.approve` / `deny` |
 | Workspace | `workspace.tree`, `workspace.search`, `workspace.file.get`, `workspace.patch.*` |
 | Memory | `memory.list`, `memory.write`, `memory.projection.*` |
 | Worker | `worker.register`, `work.poll` / `renew` / `report` |

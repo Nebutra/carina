@@ -22,7 +22,7 @@ func TestTaskSubmitStoresModelOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := res.(*scheduler.Task)
+	task := res.(*scheduler.ExecutionRun)
 	if task.Model != "openai/gpt-5" {
 		t.Fatalf("model override not stored: %+v", task)
 	}
@@ -52,15 +52,15 @@ func TestTaskSubmitValidatesProviderModelAndPersistsModelState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := result.(*scheduler.Task)
+	task := result.(*scheduler.ExecutionRun)
 	_ = d.Close()
-	expected, ok := d.sched.Get(task.TaskID)
+	expected, ok := d.sched.Get(task.RunID)
 	if !ok || expected.EffectiveModel == "" {
 		t.Fatalf("effective model was not resolved before persistence: %+v", expected)
 	}
 	d = newDaemonAt(t, stateDir)
 	defer d.Close()
-	reloaded, ok := d.sched.Get(task.TaskID)
+	reloaded, ok := d.sched.Get(task.RunID)
 	if !ok || reloaded.RequestedModel != "openai/gpt-5" || reloaded.EffectiveModel != expected.EffectiveModel || reloaded.Mode != "background" {
 		t.Fatalf("durable model state changed: %+v ok=%v", reloaded, ok)
 	}
@@ -115,7 +115,7 @@ func TestTaskSubmitClientSubmissionIDIsConcurrentSafe(t *testing.T) {
 				errs <- err
 				return
 			}
-			ids <- result.(*scheduler.Task).TaskID
+			ids <- result.(*scheduler.ExecutionRun).RunID
 		}()
 	}
 	wg.Wait()
@@ -158,8 +158,8 @@ func TestTaskSubmitClientSubmissionIDIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, second := firstAny.(*scheduler.Task), secondAny.(*scheduler.Task)
-	if first.TaskID != second.TaskID || first.ClientSubmissionID != "tui_test_submission" {
+	first, second := firstAny.(*scheduler.ExecutionRun), secondAny.(*scheduler.ExecutionRun)
+	if first.RunID != second.RunID || first.ClientSubmissionID != "tui_test_submission" {
 		t.Fatalf("idempotent submit returned %+v then %+v", first, second)
 	}
 	if got := len(d.sched.List()); got != 1 {
@@ -176,9 +176,9 @@ func TestTaskSubmitClientSubmissionIDIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restartedAny.(*scheduler.Task).TaskID != first.TaskID || len(d.sched.List()) != 1 {
+	if restartedAny.(*scheduler.ExecutionRun).RunID != first.RunID || len(d.sched.List()) != 1 {
 		t.Fatalf("restart retry created a duplicate: first=%s retry=%+v list=%+v",
-			first.TaskID, restartedAny, d.sched.List())
+			first.RunID, restartedAny, d.sched.List())
 	}
 
 	params["prompt"] = "different work"

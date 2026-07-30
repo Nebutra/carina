@@ -1,0 +1,57 @@
+---
+source: crates/carina-tui/tests/golden_frames.rs
+expression: "render_case(80, 24, \"governance paused\",\nvec![Line::from(\"Waiting for approval\")], true)"
+---
+size=80x24
+ CARINA governance paused
+
+────────────────────────────────────────────────────────────────────────────────
+ Waiting for approval
+
+
+                    ┌ Approval ────────────────────────────┐
+                    │Allow shell command?                  │
+                    │                                      │
+                    │  [Allow once]  [Deny]                │
+                    │                                      │
+                    │                                      │
+                    │                                      │
+                    │                                      │
+                    │                                      │
+                    │                                      │
+                    │                                      │
+                    └──────────────────────────────────────┘
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+❯ Ask Carina
+
+styles:
+(0, 0)..(8, 0) (Rgb(222, 133, 155), Reset, BOLD)
+(0, 2)..(80, 2) (Rgb(52, 65, 68), Reset, NONE)
+(20, 6)..(60, 6) (Rgb(142, 219, 210), Reset, NONE)
+(20, 7)..(21, 7) (Rgb(142, 219, 210), Reset, NONE)
+(59, 7)..(60, 7) (Rgb(142, 219, 210), Reset, NONE)
+(20, 8)..(21, 8) (Rgb(142, 219, 210), Reset, NONE)
+(59, 8)..(60, 8) (Rgb(142, 219, 210), Reset, NONE)
+(20, 9)..(21, 9) (Rgb(142, 219, 210), Reset, NONE)
+(59, 9)..(60, 9) (Rgb(142, 219, 210), Reset, NONE)
+(20, 10)..(21, 10) (Rgb(142, 219, 210), Reset, NONE)
+(59, 10)..(60, 10) (Rgb(142, 219, 210), Reset, NONE)
+(20, 11)..(21, 11) (Rgb(142, 219, 210), Reset, NONE)
+(59, 11)..(60, 11) (Rgb(142, 219, 210), Reset, NONE)
+(20, 12)..(21, 12) (Rgb(142, 219, 210), Reset, NONE)
+(59, 12)..(60, 12) (Rgb(142, 219, 210), Reset, NONE)
+(20, 13)..(21, 13) (Rgb(142, 219, 210), Reset, NONE)
+(59, 13)..(60, 13) (Rgb(142, 219, 210), Reset, NONE)
+(20, 14)..(21, 14) (Rgb(142, 219, 210), Reset, NONE)
+(59, 14)..(60, 14) (Rgb(142, 219, 210), Reset, NONE)
+(20, 15)..(21, 15) (Rgb(142, 219, 210), Reset, NONE)
+(59, 15)..(60, 15) (Rgb(142, 219, 210), Reset, NONE)
+(20, 16)..(21, 16) (Rgb(142, 219, 210), Reset, NONE)
+(59, 16)..(60, 16) (Rgb(142, 219, 210), Reset, NONE)
+(20, 17)..(60, 17) (Rgb(142, 219, 210), Reset, NONE)
+(0, 21)..(80, 21) (Rgb(52, 65, 68), Reset, NONE)
+(0, 22)..(2, 22) (Rgb(142, 219, 210), Reset, NONE)
+(2, 22)..(12, 22) (Rgb(150, 160, 156), Reset, NONE)

@@ -9,6 +9,22 @@ func leaseAny(s *Scheduler, workerID string, ttl time.Duration) (*Task, bool) {
 	return s.LeaseMatching(workerID, ttl, func([]string) bool { return true })
 }
 
+func TestPreparedDispatchTaskIsNotLeaseableBeforeAdmission(t *testing.T) {
+	s := New()
+	task := s.PrepareDispatchTask("sess_1", "ws_1", "do work", nil, []string{"gpu"})
+	task.Locale = "zh"
+	if _, ok := leaseAny(s, "wrk_A", time.Second); ok {
+		t.Fatal("worker leased a task before admission prerequisites were installed")
+	}
+	if err := s.EnqueueDispatchTask(task); err != nil {
+		t.Fatal(err)
+	}
+	leased, ok := leaseAny(s, "wrk_A", time.Second)
+	if !ok || leased.TaskID != task.TaskID || leased.Locale != "zh" {
+		t.Fatalf("admitted task lost its prepared envelope: %+v", leased)
+	}
+}
+
 func TestDispatchLeaseLifecycle(t *testing.T) {
 	s := New()
 	task := s.SubmitForDispatch("sess_1", "ws_1", "do work", nil)
@@ -40,7 +56,7 @@ func TestDispatchLeaseLifecycle(t *testing.T) {
 	if err := s.Report(task.TaskID, "wrk_A", leased.LeaseGeneration, "completed", "done", []string{"patch_1"}); err != nil {
 		t.Fatalf("report failed: %v", err)
 	}
-	got, _ := s.Get(task.TaskID)
+	got, _ := s.GetTask(task.TaskID)
 	if got.Status != "completed" || got.Summary != "done" || got.LeaseOwner != "" {
 		t.Fatalf("report did not finalize task: %+v", got)
 	}
@@ -55,7 +71,7 @@ func TestLeaseMatchingPreservesUnsupportedTasks(t *testing.T) {
 	if !ok || leased.TaskID != plain.TaskID {
 		t.Fatalf("plain worker should skip guarded work and lease plain task: %+v", leased)
 	}
-	if queued, _ := s.Get(guarded.TaskID); queued.Status != "queued" {
+	if queued, _ := s.GetTask(guarded.TaskID); queued.Status != "queued" {
 		t.Fatalf("unsupported guarded task must remain queued: %+v", queued)
 	}
 	leased, ok = s.LeaseMatching("wrk_guarded", time.Second, func([]string) bool { return true })
@@ -134,7 +150,7 @@ func TestDispatchReportIsIdempotent(t *testing.T) {
 	if err := s.ReportWithUsage(task.TaskID, "wrk_A", leased.LeaseGeneration, "completed", "ok-again", nil, 99, true); err != nil {
 		t.Fatalf("duplicate report must be a no-op, got %v", err)
 	}
-	got, _ := s.Get(task.TaskID)
+	got, _ := s.GetTask(task.TaskID)
 	if got.Summary != "ok" || got.TokensUsed != 17 || !got.TokenUsageObserved {
 		t.Fatalf("duplicate report must not overwrite the result or usage, got %+v", got)
 	}
@@ -164,7 +180,7 @@ func TestDispatchIgnoresInProcessTasks(t *testing.T) {
 	s := New()
 	// A locally-run task (no lease) must never be reaped or leaseable.
 	local := s.Submit("sess_1", "ws_1", "local work")
-	s.SetStatus(local.TaskID, "running")
+	s.SetStatus(local.RunID, "running")
 	if got := s.ReapExpiredLeases(time.Now().Add(time.Hour)); len(got) != 0 {
 		t.Fatalf("in-process task must not be reaped, got %v", got)
 	}

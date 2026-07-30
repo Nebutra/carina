@@ -14,11 +14,11 @@ import (
 )
 
 func TestTaskSubmitParamsIncludeOptionalIdempotencyKey(t *testing.T) {
-	without := taskSubmitParams("sess_1", "work", "")
+	without := executionStartParams("sess_1", "work", "")
 	if _, ok := without["client_submission_id"]; ok {
 		t.Fatal("empty idempotency key must be omitted")
 	}
-	with := taskSubmitParams("sess_1", "work", "sdk_request_1")
+	with := executionStartParams("sess_1", "work", "sdk_request_1")
 	if with["client_submission_id"] != "sdk_request_1" {
 		t.Fatalf("idempotency key = %#v", with["client_submission_id"])
 	}
@@ -26,12 +26,12 @@ func TestTaskSubmitParamsIncludeOptionalIdempotencyKey(t *testing.T) {
 
 func TestTaskSubmitParamsIncludeMediaRefs(t *testing.T) {
 	ref := MediaRef{ArtifactID: "abc", MediaType: "image/png", Bytes: 3, Origin: "paste"}
-	params := taskSubmitParamsWithMedia("sess_1", "work", "sdk_request_1", []MediaRef{ref})
+	params := executionStartParamsWithMedia("sess_1", "work", "sdk_request_1", []MediaRef{ref})
 	refs, ok := params["input_media_refs"].([]MediaRef)
 	if !ok || len(refs) != 1 || refs[0] != ref {
 		t.Fatalf("input media refs = %#v", params["input_media_refs"])
 	}
-	without := taskSubmitParamsWithMedia("sess_1", "work", "", nil)
+	without := executionStartParamsWithMedia("sess_1", "work", "", nil)
 	if _, ok := without["input_media_refs"]; ok {
 		t.Fatal("empty input media refs must be omitted")
 	}

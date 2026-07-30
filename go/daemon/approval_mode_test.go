@@ -19,7 +19,7 @@ func TestDontAskDeniesRequiresApprovalWithoutGrant(t *testing.T) {
 	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
 
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run")
-	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.RunID)
 	if dec.Decision != "requires_approval" {
 		t.Fatalf("expected requires_approval, got %s", dec.Decision)
 	}
@@ -45,7 +45,7 @@ func TestDontAskHonorsExactSessionGrant(t *testing.T) {
 	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
 
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run")
-	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.RunID)
 	if dec.Decision != "requires_approval" {
 		t.Fatalf("expected requires_approval, got %s", dec.Decision)
 	}
@@ -63,7 +63,7 @@ func TestDontAskHonorsExactSessionGrant(t *testing.T) {
 	}
 	// Fresh decision for the same capability+resource.
 	task2 := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run again")
-	dec2, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task2.TaskID)
+	dec2, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task2.RunID)
 	if dec2.Decision != "requires_approval" {
 		t.Fatalf("expected requires_approval, got %s (%s)", dec2.Decision, dec2.Reason)
 	}
@@ -178,7 +178,7 @@ func TestAcceptEditsAutoAllowsFileEditsButPromptsShell(t *testing.T) {
 	reqs := permissionRequests(d)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "edit")
 	// Prefer FileWrite if profile allows; otherwise PatchApply path is heavier.
-	dec, err := d.kern.Request(sess.SessionID, "FileWrite", "notes.txt", task.TaskID)
+	dec, err := d.kern.Request(sess.SessionID, "FileWrite", "notes.txt", task.RunID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestAcceptEditsAutoAllowsFileEditsButPromptsShell(t *testing.T) {
 
 	// CommandExec should still prompt (permission.request).
 	task2 := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run")
-	dec2, err := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task2.TaskID)
+	dec2, err := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task2.RunID)
 	if err != nil {
 		t.Fatal(err)
 	}

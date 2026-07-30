@@ -361,13 +361,13 @@ class CarinaClient:
             params["client_submission_id"] = client_submission_id
         if input_media_refs:
             params["input_media_refs"] = input_media_refs
-        return self.call("task.submit", params)
+        return self.call("execution.start", params)
 
     def submit_goal(self, session_id: str, prompt: str, success_criteria: list[SuccessCheck], client_submission_id: str | None = None) -> CarinaTask:
         params: dict[str, Any] = {"session_id": session_id, "prompt": prompt, "success_criteria": success_criteria}
         if client_submission_id is not None:
             params["client_submission_id"] = client_submission_id
-        return self.call("task.submit", params)
+        return self.call("execution.start", params)
 
     def replay_session(self, session_id: str) -> list[CarinaEvent]:
         return self.call("session.replay", {"session_id": session_id})
@@ -396,10 +396,10 @@ class CarinaClient:
         return self.call("usage.cost", params)
 
     def steer_task(self, task_id: str, message: str) -> dict[str, Any]:
-        return self.call("task.steer", {"task_id": task_id, "message": message})
+        return self.call("execution.steer", {"task_id": task_id, "message": message})
 
     def answer_question(self, question_id: str, value: str) -> dict[str, Any]:
-        return self.call("task.user.answer", {"question_id": question_id, "value": value})
+        return self.call("question.answer", {"question_id": question_id, "value": value})
 
     def list_workflows(self) -> list[dict[str, Any]]:
         return self.call("workflow.list")
@@ -439,7 +439,7 @@ class CarinaClient:
         return self.call("worker.list")
 
     def resolve_approval(self, decision_id: str, allow: bool, approver: str = "", scope: str = "once") -> Any:
-        return self.call("task.approval.resolve", {"decision_id": decision_id, "approve": allow, "approver": approver, "scope": scope})
+        return self.call("governance.approval.resolve", {"decision_id": decision_id, "approve": allow, "approver": approver, "scope": scope})
 
     def doctor(self) -> dict[str, Any]:
         return self.call("daemon.doctor")
@@ -528,7 +528,7 @@ class CarinaClient:
         return self.call("session.checkpoint.restore", {"session_id": session_id, "checkpoint_id": checkpoint_id, "confirmed": confirmed})
 
     def resume_task(self, task_id: str) -> CarinaTask:
-        return self.call("task.resume", {"task_id": task_id})
+        return self.call("execution.resume", {"task_id": task_id})
 
     def inject_channel_event(self, event: dict[str, Any], signature: str) -> dict[str, Any]:
         return self.call("channel.event.inject", {"event": event, "signature": signature})
@@ -650,10 +650,10 @@ class CarinaClient:
         return self.call("command.exec", params)
 
     def approve(self, session_id: str, decision_id: str) -> dict[str, Any]:
-        return self.call("task.action.approve", {"session_id": session_id, "decision_id": decision_id})
+        return self.call("governance.action.approve", {"session_id": session_id, "decision_id": decision_id})
 
     def deny(self, session_id: str, decision_id: str, reason: str = "denied") -> dict[str, Any]:
-        return self.call("task.action.deny", {"session_id": session_id, "decision_id": decision_id, "reason": reason})
+        return self.call("governance.action.deny", {"session_id": session_id, "decision_id": decision_id, "reason": reason})
 
     def audit_report(self, session_id: str) -> dict[str, Any]:
         return self.call("audit.report", {"session_id": session_id})
@@ -699,12 +699,12 @@ class CarinaThread:
         if output_schema is not None: params["output_schema"] = output_schema
         if client_submission_id is not None: params["client_submission_id"] = client_submission_id
         if input_media_refs: params["input_media_refs"] = input_media_refs
-        task = self.client.call("task.submit", params); task_id = task["task_id"]
+        task = self.client.call("execution.start", params); task_id = task["task_id"]
         while True:
             if cancel is not None and cancel.is_set():
-                self.client.call("task.cancel", {"task_id": task_id})
+                self.client.call("execution.cancel", {"task_id": task_id})
                 raise InterruptedError("Carina run cancelled")
-            current = self.client.call("task.result", {"task_id": task_id})
+            current = self.client.call("execution.result", {"task_id": task_id})
             if current["status"] in {"completed", "degraded", "failed", "cancelled", "needs_input"}:
                 result: dict[str, Any] = {"task": current, "final_response": current.get("summary", "")}
                 if output_schema is not None:
@@ -734,15 +734,15 @@ class CarinaThread:
                 params["client_submission_id"] = client_submission_id
             if input_media_refs:
                 params["input_media_refs"] = input_media_refs
-            task = self.client.call("task.submit", params)
+            task = self.client.call("execution.start", params)
             task_id = task["task_id"]
             while True:
                 for event in self.client._drain_session_listener(listener_id):
                     yield {"type": "event", "event": event}
                 if cancel is not None and cancel.is_set():
-                    self.client.call("task.cancel", {"task_id": task_id})
+                    self.client.call("execution.cancel", {"task_id": task_id})
                     raise InterruptedError("Carina run cancelled")
-                current = self.client.call("task.result", {"task_id": task_id})
+                current = self.client.call("execution.result", {"task_id": task_id})
                 if current["status"] in {"completed", "degraded", "failed", "cancelled", "needs_input"}:
                     for event in self.client._drain_session_listener(listener_id):
                         yield {"type": "event", "event": event}

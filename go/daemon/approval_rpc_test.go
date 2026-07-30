@@ -41,7 +41,7 @@ func TestApprovalResolveCanonicalFieldOverRPC(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	defer client.Close()
-	if err := client.Call("task.approval.resolve", map[string]any{
+	if err := client.Call("governance.approval.resolve", map[string]any{
 		"decision_id": decisionID, "approve": true, "scope": "once",
 	}, nil); err != nil {
 		t.Fatal(err)

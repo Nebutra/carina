@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -35,6 +36,17 @@ func TestEnsureReachableAlreadyUp(t *testing.T) {
 	}
 	if spawns != 0 {
 		t.Fatalf("spawn calls = %d, want 0", spawns)
+	}
+}
+
+func TestRequireRuntimeMethodsRejectsLegacyRuntimeBeforeUILaunch(t *testing.T) {
+	if err := requireRuntimeMethods(nil, "execution.start"); err == nil {
+		t.Fatal("runtime without method inventory accepted")
+	} else if !strings.Contains(err.Error(), "runtime is incompatible") {
+		t.Fatalf("unexpected compatibility error: %v", err)
+	}
+	if err := requireRuntimeMethods([]string{"session.list", "execution.start"}, "execution.start"); err != nil {
+		t.Fatalf("compatible runtime rejected: %v", err)
 	}
 }
 
@@ -218,6 +230,29 @@ func TestConnectOrStartReachableMismatchFailsClosed(t *testing.T) {
 	}
 	if spawns != 0 {
 		t.Fatalf("mismatched reachable endpoint triggered %d spawn(s)", spawns)
+	}
+}
+
+func TestConnectOrStartDoesNotReplaceIncompatibleRuntimeWithObligations(t *testing.T) {
+	spec := runtimeSpecFixture(t)
+	description := matchingDescription(spec)
+	description.Obligations = []string{"execution:run_active"}
+	origDial, origSpawn, origHandshake := Dial, SpawnRuntime, RuntimeHandshake
+	t.Cleanup(func() { Dial, SpawnRuntime, RuntimeHandshake = origDial, origSpawn, origHandshake })
+	Dial = func(string) (*rpc.Client, error) { return &rpc.Client{}, nil }
+	spawns := 0
+	SpawnRuntime = func(localruntime.Spec) error { spawns++; return nil }
+	RuntimeHandshake = func(*rpc.Client, localruntime.Spec) (RuntimeDescription, error) {
+		return RuntimeDescription{}, &RuntimeCompatibilityError{
+			Description: description, MissingMethods: []string{"execution.start"},
+		}
+	}
+
+	if _, _, err := ConnectOrStart(spec); err == nil || !strings.Contains(err.Error(), "active obligations") {
+		t.Fatalf("ConnectOrStart error = %v, want retained obligation diagnosis", err)
+	}
+	if spawns != 0 {
+		t.Fatalf("active incompatible runtime triggered %d spawn(s)", spawns)
 	}
 }
 

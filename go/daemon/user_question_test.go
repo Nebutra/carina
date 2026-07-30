@@ -85,7 +85,7 @@ func TestAskUserBlocksUntilStructuredAnswerAndAuditsLifecycle(t *testing.T) {
 	if questionID == "" || question["prompt"] != "Which approach?" {
 		t.Fatalf("invalid question envelope: %+v", question)
 	}
-	if got, _ := d.sched.Get(task.TaskID); got.Status != "waiting_input" {
+	if got, _ := d.sched.Get(task.RunID); got.Status != "waiting_input" {
 		t.Fatalf("task status = %s, want waiting_input", got.Status)
 	}
 	if _, err := d.handleUserAnswer(mustJSON(t, map[string]any{
@@ -154,7 +154,7 @@ func TestAgentLoopUsesStructuredUserAnswer(t *testing.T) {
 	if len(reasoner.prompts) < 2 || !strings.Contains(reasoner.prompts[1], "value: safe") {
 		t.Fatalf("answer missing from next prompt: %+v", reasoner.prompts)
 	}
-	if got, _ := d.sched.Get(task.TaskID); got.Status != "completed" {
+	if got, _ := d.sched.Get(task.RunID); got.Status != "completed" {
 		t.Fatalf("task status = %s, want completed", got.Status)
 	}
 }
@@ -173,7 +173,7 @@ func TestAskUserCancellationDoesNotRestoreRunningStatus(t *testing.T) {
 		}
 	})
 	result := make(chan toolExecutionOutcome, 1)
-	go d.withTaskContext(task.TaskID, func(context.Context) {
+	go d.withTaskContext(task.RunID, func(context.Context) {
 		result <- d.askUserOutcome(sess, task, "Which approach?", []userQuestionOption{
 			{Label: "Minimal fix", Value: "minimal"},
 			{Label: "Refactor", Value: "refactor"},
@@ -186,7 +186,7 @@ func TestAskUserCancellationDoesNotRestoreRunningStatus(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("user.question was not published")
 	}
-	if _, err := d.handleTaskCancel(mustJSON(t, map[string]any{"task_id": task.TaskID})); err != nil {
+	if _, err := d.handleTaskCancel(mustJSON(t, map[string]any{"run_id": task.RunID})); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -197,7 +197,7 @@ func TestAskUserCancellationDoesNotRestoreRunningStatus(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("ask_user did not stop after cancellation")
 	}
-	current, _ := d.sched.Get(task.TaskID)
+	current, _ := d.sched.Get(task.RunID)
 	if current.Status != "cancelled" {
 		t.Fatalf("task status = %s, want cancelled", current.Status)
 	}

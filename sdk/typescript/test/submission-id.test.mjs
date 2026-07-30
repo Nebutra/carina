@@ -13,7 +13,7 @@ test('submitTask forwards an optional client submission id', async () => {
   }
   const task = await client.submitTask('sess_1', 'work', 'sdk_request_1')
   assert.deepEqual(captured, {
-    method: 'task.submit',
+    method: 'execution.start',
     params: { session_id: 'sess_1', prompt: 'work', client_submission_id: 'sdk_request_1' },
   })
   assert.equal(task.client_submission_id, 'sdk_request_1')
@@ -28,7 +28,7 @@ test('submitGoal forwards command success criteria as strings', async () => {
     return { task_id: 'task_1', status: 'queued' }
   }
   await client.submitGoal('sess_1', 'verify', [{ kind: 'command_zero_exit', command: 'go test ./...' }])
-  assert.equal(captured.method, 'task.submit')
+  assert.equal(captured.method, 'execution.start')
   assert.equal(captured.params.success_criteria[0].command, 'go test ./...')
   assert.equal(Array.isArray(captured.params.success_criteria[0].command), false)
   client.close()

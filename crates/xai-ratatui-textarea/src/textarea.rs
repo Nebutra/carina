@@ -9,6 +9,7 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::StatefulWidgetRef;
@@ -421,9 +422,7 @@ impl TextArea {
             clipboard_provider: Box::new(InternalClipboard::default()),
             clipboard: None,
             keep_selection_after_mouseup: true,
-            selection_style: Style::default()
-                .bg(Color::Rgb(49, 62, 115))
-                .fg(Color::Rgb(192, 202, 245)),
+            selection_style: Style::default().add_modifier(Modifier::REVERSED),
             mouse_down_pos: None,
             drag_anchor: None,
             drag_active: false,
@@ -433,10 +432,8 @@ impl TextArea {
             click_tracker: ClickTracker::default(),
             scroll_override: None,
             show_scrollbar: true,
-            scrollbar_track_style: Style::default().bg(Color::Rgb(32, 35, 53)),
-            scrollbar_thumb_style: Style::default()
-                .fg(Color::Rgb(42, 46, 65))
-                .bg(Color::Rgb(32, 35, 53)),
+            scrollbar_track_style: Style::default(),
+            scrollbar_thumb_style: Style::default().add_modifier(Modifier::REVERSED),
             scrollbar_padding: 0,
             scrollbar_dragging: false,
             hovered_element: None,
@@ -6691,7 +6688,7 @@ mod tests {
     }
 
     #[test]
-    fn selection_rendering_applies_default_selection_style() {
+    fn selection_rendering_keeps_the_library_default_terminal_neutral() {
         let mut t = ta_with("hello");
         t.set_selection(1, 4); // select "ell"
 
@@ -6699,23 +6696,14 @@ mod tests {
         let mut buf = ratatui::buffer::Buffer::empty(area);
         ratatui::widgets::WidgetRef::render_ref(&(&t), area, &mut buf);
 
-        let default_bg = Color::Rgb(49, 62, 115);
-        let default_fg = Color::Rgb(192, 202, 245);
-        // Cells 1, 2, 3 should have the default selection bg + fg
+        // The reusable widget does not assume a terminal polarity. Reverse
+        // video remains visible until a product injects its semantic style.
         for col in 1..4u16 {
             let cell = &buf[(col, 0)];
-            assert_eq!(
-                cell.bg, default_bg,
-                "cell at col {col} should have default selection bg"
-            );
-            assert_eq!(
-                cell.fg, default_fg,
-                "cell at col {col} should have default selection fg"
-            );
+            assert_eq!(cell.bg, Color::Reset);
+            assert_eq!(cell.fg, Color::Reset);
+            assert!(cell.modifier.contains(Modifier::REVERSED));
         }
-        // Cell 0 ('h') and cell 4 ('o') should NOT have selection bg
-        assert_ne!(buf[(0, 0)].bg, default_bg);
-        assert_ne!(buf[(4, 0)].bg, default_bg);
     }
 
     // ── Phase 1: Undo/Redo plumbing tests ──
@@ -9164,6 +9152,8 @@ mod tests {
         // Render a textarea with overflow and verify the scrollbar column
         // has non-default styled cells.
         let mut ta = TextArea::new();
+        ta.scrollbar_track_style = Style::default().bg(Color::DarkGray);
+        ta.scrollbar_thumb_style = Style::default().fg(Color::Gray);
         ta.insert_str("1\n2\n3\n4\n5\n6\n7\n8\n9\n10");
         let area = Rect::new(0, 0, 20, 5);
         let mut buf = Buffer::empty(area);
@@ -9175,10 +9165,11 @@ mod tests {
         let mut has_thumb = false;
         for row in 0..5u16 {
             let cell = &buf[(sb_col, row)];
-            // Track bg is Rgb(45,45,55); check bg is set.
-            assert!(cell.style().bg.is_some(), "scrollbar cell should have bg");
             if cell.symbol() != " " {
+                assert_eq!(cell.style().fg, Some(Color::Gray));
                 has_thumb = true;
+            } else {
+                assert_eq!(cell.style().bg, Some(Color::DarkGray));
             }
         }
         assert!(has_thumb, "should have at least one thumb cell");
@@ -9198,9 +9189,10 @@ mod tests {
         let last_col = 19u16;
         let cell = &buf[(last_col, 0u16)];
         // Should be default (empty space), not scrollbar styled.
-        assert!(
-            cell.style().bg.is_none() || !matches!(cell.style().bg, Some(Color::Rgb(32, 35, 53))),
-            "should not have scrollbar bg when content fits"
+        assert_ne!(
+            cell.style().bg,
+            Some(Color::DarkGray),
+            "content-fit row stays unstyled"
         );
     }
 

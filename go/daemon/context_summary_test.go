@@ -16,15 +16,15 @@ func TestContextSummarySeparatesExactCheckpointFactsFromModelContextUsage(t *tes
 		t.Fatal(err)
 	}
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect context")
-	d.sched.AddTokens(task.TaskID, 37)
+	d.sched.AddTokens(task.RunID, 37)
 	tr := newTranscript("inspect context")
 	tr.Summary = "persisted summary"
 	tr.addTurn(Turn{Thought: "inspect", Tool: "read", Obs: Observation{Content: "exact checkpoint content"}})
 	cp := &runCheckpoint{Turn: 3, Transcript: tr, MemorySnapshot: "memory"}
-	if err := d.runs.saveCheckpointChecked(task.TaskID, cp); err != nil {
+	if err := d.runs.saveCheckpointChecked(task.RunID, cp); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.sched.RestoreCheckpoint(task.TaskID, nil); err != nil {
+	if _, err := d.sched.RestoreCheckpoint(task.RunID, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -52,6 +52,9 @@ func TestContextSummarySeparatesExactCheckpointFactsFromModelContextUsage(t *tes
 	if taskSummary["tokens_used"] != 37 {
 		t.Fatalf("task token accounting = %#v, want 37", taskSummary["tokens_used"])
 	}
+	if taskSummary["mode"] != task.Mode {
+		t.Fatalf("task execution mode = %#v, want %q", taskSummary["mode"], task.Mode)
+	}
 	compact := out["compact"].(map[string]any)
 	if !compact["available"].(bool) || compact["method"] != "session.checkpoint.compact" {
 		t.Fatalf("compact safety boundary missing: %#v", compact)
@@ -67,7 +70,7 @@ func TestContextSummaryReportsLatestProviderMeasuredContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect context")
-	if err := d.usage.record(sess.SessionID, task.TaskID, ModelUsage{Provider: "openai", Model: "gpt-5", InputTokens: 700, CacheReadTokens: 150, OutputTokens: 20}); err != nil {
+	if err := d.usage.record(sess.SessionID, task.RunID, ModelUsage{Provider: "openai", Model: "gpt-5", InputTokens: 700, CacheReadTokens: 150, OutputTokens: 20}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -79,6 +82,10 @@ func TestContextSummaryReportsLatestProviderMeasuredContext(t *testing.T) {
 	if context["available"] != true || context["tokens"] != 850 || context["limit_tokens"] != 1000 || context["remaining_tokens"] != 150 || context["used_percent"] != 85 || context["threshold"] != "warning" {
 		t.Fatalf("unexpected measured context: %#v", context)
 	}
+	breakdown := context["breakdown"].(map[string]any)
+	if breakdown["input_tokens"] != 700 || breakdown["output_tokens"] != 20 || breakdown["cache_read_tokens"] != 150 {
+		t.Fatalf("measured provider usage breakdown lost precision: %#v", breakdown)
+	}
 }
 
 func TestContextSummaryLabelsEstimatedUsageUnavailable(t *testing.T) {
@@ -89,7 +96,7 @@ func TestContextSummaryLabelsEstimatedUsageUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect context")
-	if err := d.usage.record(sess.SessionID, task.TaskID, ModelUsage{Provider: "fallback", Model: "local", InputTokens: 42, Estimated: true}); err != nil {
+	if err := d.usage.record(sess.SessionID, task.RunID, ModelUsage{Provider: "fallback", Model: "local", InputTokens: 42, Estimated: true}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := d.handleContextSummary(mustJSON(t, map[string]any{"session_id": sess.SessionID}))

@@ -21,6 +21,7 @@ import (
 // provider fallback).
 type anthropicProvider struct {
 	id        string
+	label     string
 	baseURL   string
 	auth      *auth.Chain
 	model     string
@@ -34,6 +35,7 @@ type anthropicProvider struct {
 func NewAnthropicProvider(chain *auth.Chain) modelrouter.Provider {
 	return &anthropicProvider{
 		id:      "anthropic",
+		label:   "anthropic",
 		baseURL: "https://api.anthropic.com/v1",
 		auth:    chain,
 		model:   envOr("ANTHROPIC_MODEL", "claude-fable-5"),
@@ -41,12 +43,13 @@ func NewAnthropicProvider(chain *auth.Chain) modelrouter.Provider {
 	}
 }
 
-func newAnthropicCatalogProvider(id, baseURL, model string, chain *auth.Chain, headers map[string]string, body map[string]json.RawMessage, overrides map[string]requestOverride) modelrouter.Provider {
+func newAnthropicCatalogProvider(id, label, baseURL, model string, chain *auth.Chain, headers map[string]string, body map[string]json.RawMessage, overrides map[string]requestOverride) modelrouter.Provider {
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com/v1"
 	}
 	return &anthropicProvider{
 		id:        id,
+		label:     label,
 		baseURL:   strings.TrimRight(baseURL, "/"),
 		auth:      chain,
 		model:     model,
@@ -59,13 +62,20 @@ func newAnthropicCatalogProvider(id, baseURL, model string, chain *auth.Chain, h
 
 func (a *anthropicProvider) Name() string { return a.id }
 
+func (a *anthropicProvider) errorName() string {
+	if label := strings.TrimSpace(a.label); label != "" {
+		return label
+	}
+	return a.id
+}
+
 func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Request) (*modelrouter.Response, error) {
 	cred, ok := a.auth.Resolve()
 	if !ok {
-		return nil, fmt.Errorf("%s: credential not set", a.id)
+		return nil, fmt.Errorf("%s: credential not set", a.errorName())
 	}
-	if cred.Kind != auth.APIKey {
-		return nil, fmt.Errorf("%s: api key credential not set", a.id)
+	if cred.Kind != auth.APIKey && cred.Kind != auth.Bearer && cred.Kind != auth.OAuth {
+		return nil, fmt.Errorf("%s: supported credential not set", a.errorName())
 	}
 	model, responseModel, override := a.resolveModel(req)
 	messages := any([]map[string]string{{"role": "user", "content": req.Prompt}})
@@ -85,21 +95,21 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 	}
 	bodyMap := map[string]any{
 		"model":      model,
-		"max_tokens": 2048,
+		"max_tokens": agentMaxOutputTokens,
 		"messages":   messages,
 	}
 	mergeRawBody(bodyMap, a.body)
 	mergeRawBody(bodyMap, override.Body)
 	effectiveEffort, err := validateReasoningEffort(nativeReasoningEffortSpec(a.id, model), req.ReasoningEffort)
 	if err != nil {
-		return nil, fmt.Errorf("%s/%s: %w", a.id, model, err)
+		return nil, fmt.Errorf("%s/%s: %w", a.errorName(), model, err)
 	}
 	if effectiveEffort != "" {
 		bodyMap["thinking"] = map[string]any{"type": "adaptive"}
 		bodyMap["output_config"] = map[string]any{"effort": effectiveEffort}
 	}
 	body, _ := json.Marshal(bodyMap)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(a.baseURL, "/")+"/messages", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicEndpoint(a.baseURL, "messages"), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -111,11 +121,11 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 
 	resp, err := a.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%s: request: %w", a.id, err)
+		return nil, fmt.Errorf("%s: request: %w", a.errorName(), err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, statusError(a.id, resp)
+		return nil, statusError(a.errorName(), resp)
 	}
 	var out struct {
 		Content []struct {
@@ -128,8 +138,8 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 			CacheReadTokens     int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("%s: decode: %w", a.id, err)
+	if err := decodeProviderJSON(a.errorName(), resp, &out); err != nil {
+		return nil, err
 	}
 	text := ""
 	for _, c := range out.Content {

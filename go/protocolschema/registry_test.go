@@ -70,10 +70,10 @@ func TestSchemaBundleCoversSDKEventModeAndGoalContract(t *testing.T) {
 		t.Fatal("session.events.stream schema must return event_mode")
 	}
 
-	submit := bundle.Methods["task.submit"]
+	submit := bundle.Methods["execution.start"]
 	submitParams, _ := submit.Params["properties"].(map[string]any)
 	if _, ok := submitParams["success_criteria"]; !ok {
-		t.Fatal("task.submit schema must accept success_criteria")
+		t.Fatal("execution.start schema must accept success_criteria")
 	}
 	successCheck, _ := bundle.Defs["success_check"].(map[string]any)
 	properties, _ := successCheck["properties"].(map[string]any)
@@ -81,20 +81,20 @@ func TestSchemaBundleCoversSDKEventModeAndGoalContract(t *testing.T) {
 	if command["type"] != "string" {
 		t.Fatalf("success_check.command schema = %+v, want string", command)
 	}
-	for _, method := range registry.APIs["task"] {
-		if method.Method != "task.submit" {
+	for _, method := range registry.APIs["execution"] {
+		if method.Method != "execution.start" {
 			continue
 		}
 		params, _ := method.Params.(map[string]any)
 		if _, ok := params["success_criteria"]; !ok {
-			t.Fatal("task.submit registry must document success_criteria")
+			t.Fatal("execution.start registry must document success_criteria")
 		}
 		return
 	}
-	t.Fatal("task.submit missing from registry")
+	t.Fatal("execution.start missing from registry")
 }
 
-func TestSchemaBundleCoversCheckpointRestoreAndTaskResume(t *testing.T) {
+func TestSchemaBundleCoversCheckpointRestoreAndExecutionResume(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	root := filepath.Join(filepath.Dir(file), "..", "..")
 	registry, err := Load(filepath.Join(root, "protocol", "jsonrpc", "methods.json"))
@@ -105,15 +105,15 @@ func TestSchemaBundleCoversCheckpointRestoreAndTaskResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, method := range []string{"session.checkpoint.list", "session.checkpoint.preview", "session.checkpoint.summarize", "session.checkpoint.restore", "task.resume"} {
+	for _, method := range []string{"session.checkpoint.list", "session.checkpoint.preview", "session.checkpoint.summarize", "session.checkpoint.restore", "execution.resume"} {
 		if _, ok := bundle.Methods[method]; !ok {
 			t.Errorf("schema bundle missing %s", method)
 		}
 	}
-	resume := bundle.Methods["task.resume"]
+	resume := bundle.Methods["execution.resume"]
 	params, _ := resume.Params["properties"].(map[string]any)
-	if _, ok := params["task_id"]; !ok {
-		t.Fatal("task.resume schema must require task_id")
+	if _, ok := params["run_id"]; !ok {
+		t.Fatal("execution.resume schema must require run_id")
 	}
 	restore := bundle.Methods["session.checkpoint.restore"]
 	required, _ := restore.Result["required"].([]any)

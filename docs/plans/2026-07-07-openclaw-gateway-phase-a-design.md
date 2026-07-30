@@ -49,5 +49,5 @@ Those should build on this catalog rather than bypass it.
 - Unit-test strict descriptor enforcement in `go/rpc`.
 - Unit-test descriptor-derived remote exposure in `go/rpc`.
 - Extend daemon handler coverage to call `gateway.methods` and assert core
-  descriptors such as `daemon.status` and `task.submit`.
+  descriptors such as `daemon.status` and `execution.start`.
 - Compile and help-check the CLI entrypoint.

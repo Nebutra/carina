@@ -46,7 +46,7 @@ let infra run it on a schedule." The defining properties are therefore:
 Grounded in the code (`go/daemon`, `go/scheduler`, `go/worker`, `go/session-store`):
 
 - **Async in-daemon execution** — `handleTaskSubmit` → `go d.runTask` (fire-and-forget goroutine); RPC returns immediately.
-- **Cooperative cancel + status poll** — `task.status` / `task.cancel`; the loop checks `cancelled` each turn (`agent.go`).
+- **Cooperative cancel + status poll** — `execution.status` / `execution.cancel`; the loop checks `cancelled` each turn (`agent.go`).
 - **Live event streaming** — `session.events.stream` via `Bus` (live-only, no replay-then-tail).
 - **Session-level crash recovery** — `sessionstore` persists sessions + the kernel's append-only event log; `daemon.recover()` re-inits active sessions so they accept *new* work.
 - **Workflow-step resume** — `workflowrun.go` persists each completed step; `runWorkflow` skips completed steps (the one real checkpoint/resume primitive we have).
@@ -58,7 +58,7 @@ Grounded in the code (`go/daemon`, `go/scheduler`, `go/worker`, `go/session-stor
 |---|---|
 | Durable background runs surviving **daemon restart** | ❌ scheduler is in-memory; `recover()` doesn't resume tasks |
 | Resume the **agent loop** (not just workflow steps) after crash | ❌ `runTask` transcript/turn state never checkpointed |
-| Run **registry**: `task.list` / `task.result` / attach-with-replay | ❌ no list, `Task` has no result field, stream is live-only |
+| Run **registry**: `execution.list` / `execution.result` / attach-with-replay | ❌ no list, `Task` has no result field, stream is live-only |
 | **Notify-on-completion** (webhook / push) | ❌ none |
 | **Remote / sandboxed** execution of the loop | ❌ workers are a registry only; no dispatch; no worktree/microVM isolation of a run |
 | **Concurrency limits + panic isolation** | ❌ unbounded `go d.runTask`; no `recover()` guard → one panic kills the daemon |
@@ -125,7 +125,7 @@ bolt on). Proposed phasing, highest-leverage first:
 **Phase 1 — Durable local background runs (the core, ~all additive):**
 1. Persist tasks + results: a `RunStore` modeled on `workflowrun.go`; add
    `Result/Summary/AppliedPatches/Mode` to `scheduler.Task`, persist on every
-   `SetStatus`. → unlocks `task.list` / `task.result`.
+   `SetStatus`. → unlocks `execution.list` / `execution.result`.
 2. Checkpoint the agent-loop transcript after each turn (mirror
    `runWorkflow`'s per-step snapshot); extend `daemon.recover()` to relaunch
    `running` tasks from the checkpoint. → **restart survival**.

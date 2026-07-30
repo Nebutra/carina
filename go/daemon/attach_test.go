@@ -28,8 +28,8 @@ func TestSessionAttachCursor(t *testing.T) {
 	_, cur0 := attach(0)
 
 	// Append two events.
-	d.record(sess.SessionID, "TaskCreated", "t1", "go", map[string]any{"n": 1}, "")
-	d.record(sess.SessionID, "TaskCreated", "t2", "go", map[string]any{"n": 2}, "")
+	d.record(sess.SessionID, "ExecutionProgressed", "run_1", "go", map[string]any{"n": 1}, "")
+	d.record(sess.SessionID, "ExecutionProgressed", "run_2", "go", map[string]any{"n": 2}, "")
 
 	// Re-attaching from the old cursor yields exactly the two new events.
 	n, cur1 := attach(cur0)

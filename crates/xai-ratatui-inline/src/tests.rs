@@ -134,15 +134,18 @@ mod links {
             Ok(())
         }
         fn hide_cursor(&mut self) -> io::Result<()> {
+            self.buf.extend_from_slice(b"<hide>");
             Ok(())
         }
         fn show_cursor(&mut self) -> io::Result<()> {
+            self.buf.extend_from_slice(b"<show>");
             Ok(())
         }
         fn get_cursor_position(&mut self) -> io::Result<Position> {
             Ok(Position::ORIGIN)
         }
         fn set_cursor_position<P: Into<Position>>(&mut self, _position: P) -> io::Result<()> {
+            self.buf.extend_from_slice(b"<move>");
             Ok(())
         }
         fn clear(&mut self) -> io::Result<()> {
@@ -153,6 +156,22 @@ mod links {
         }
         fn append_lines(&mut self, n: u16) -> io::Result<()> {
             self.appended_lines += n;
+            Ok(())
+        }
+        #[cfg(feature = "scrolling-regions")]
+        fn scroll_region_up(
+            &mut self,
+            _region: std::ops::Range<u16>,
+            _scroll_by: u16,
+        ) -> io::Result<()> {
+            Ok(())
+        }
+        #[cfg(feature = "scrolling-regions")]
+        fn scroll_region_down(
+            &mut self,
+            _region: std::ops::Range<u16>,
+            _scroll_by: u16,
+        ) -> io::Result<()> {
             Ok(())
         }
         fn size(&self) -> io::Result<Size> {
@@ -177,6 +196,22 @@ mod links {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn unchanged_frame_with_stable_cursor_writes_zero_bytes() {
+        let mut terminal = term(20, 4);
+        let render = |frame: &mut ratatui::Frame<'_>| {
+            frame.render_widget(ratatui::widgets::Paragraph::new("stable"), frame.area());
+            frame.set_cursor_position(Position::new(3, 1));
+            Vec::new()
+        };
+        terminal.draw_with_links(render).unwrap();
+        terminal.backend_mut().buf.clear();
+
+        terminal.draw_with_links(render).unwrap();
+
+        assert!(terminal.backend().buf.is_empty());
     }
 
     fn span(col_start: u16, col_end: u16, url: &str, id: Option<u32>) -> LinkSpan {

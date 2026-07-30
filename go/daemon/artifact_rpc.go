@@ -45,7 +45,7 @@ type artifactUploadParams struct {
 
 type artifactParams struct {
 	SessionID  string `json:"session_id"`
-	TaskID     string `json:"task_id"`
+	RunID      string `json:"run_id"`
 	CallID     string `json:"call_id"`
 	ArtifactID string `json:"artifact_id"`
 	Offset     int64  `json:"offset"`
@@ -73,7 +73,7 @@ func decodeArtifactParams(raw json.RawMessage) (artifactParams, error) {
 }
 
 func (p artifactParams) scope() artifact.Scope {
-	return artifact.Scope{SessionID: p.SessionID, TaskID: p.TaskID, CallID: p.CallID}
+	return artifact.Scope{SessionID: p.SessionID, TaskID: p.RunID, CallID: p.CallID}
 }
 
 func (d *Daemon) handleArtifactStat(raw json.RawMessage) (any, error) {

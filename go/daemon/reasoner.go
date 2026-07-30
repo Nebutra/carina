@@ -113,7 +113,7 @@ func normalizeReasonerBackend(value string) (string, error) {
 	}
 }
 
-func selectReasonerBackend(offline bool, configuredBackend, _ string, hasRunnableProvider bool) string {
+func selectReasonerBackend(offline bool, configuredBackend string) string {
 	if offline {
 		return reasonerBackendNone
 	}
@@ -121,11 +121,21 @@ func selectReasonerBackend(offline bool, configuredBackend, _ string, hasRunnabl
 	case reasonerBackendRouter, reasonerBackendClaudeCLI, reasonerBackendCodexCLI:
 		return configuredBackend
 	case reasonerBackendAuto:
-		if hasRunnableProvider {
-			return reasonerBackendRouter
-		}
+		// Keep the router reasoner stable for the daemon lifetime. Provider
+		// readiness is dynamic because credentials can change while it runs.
+		return reasonerBackendRouter
 	}
 	return reasonerBackendNone
+}
+
+func (d *Daemon) reasonerReady() bool {
+	if d.reasoner == nil {
+		return false
+	}
+	if d.reasoner.Name() != reasonerBackendRouter {
+		return true
+	}
+	return hasRunnableRuntimeProviderSet(d.providerCatalog, d.disabledProviders, d.authStore)
 }
 
 func withReasoningEffort(ctx context.Context, effort string) context.Context {
@@ -193,6 +203,9 @@ func thinkWithRetryPolicy(ctx context.Context, r Reasoner, model, prompt, stable
 	delay := policy.BaseDelay
 	var lastErr error
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
+		if stream := reasonerStreamFrom(ctx); stream != nil {
+			stream.reset()
+		}
 		governance, provider := retryGovernanceFrom(ctx)
 		if governance != nil {
 			if err := governance.admit(provider, attempt > 1); err != nil {
@@ -412,7 +425,21 @@ func (r *routerReasoner) complete(ctx context.Context, model string, req modelro
 		model = "default"
 		req.Model = model
 	}
-	resp, err := r.router.Complete(ctx, req)
+	var resp *modelrouter.Response
+	var err error
+	if stream := reasonerStreamFrom(ctx); stream != nil {
+		decoder := &actionEnvelopeStreamDecoder{}
+		resp, err = r.router.Stream(ctx, req, func(event modelrouter.StreamEvent) {
+			if event.Reset {
+				decoder.Reset()
+				stream.reset()
+				return
+			}
+			stream.emit(decoder.Push(event.Delta))
+		})
+	} else {
+		resp, err = r.router.Complete(ctx, req)
+	}
 	if err != nil {
 		return ReasonerResult{}, err
 	}

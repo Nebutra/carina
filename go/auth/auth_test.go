@@ -94,6 +94,11 @@ func TestApplySetsCorrectHeader(t *testing.T) {
 	if h2.Get("Authorization") != "Bearer tok" || h2.Get("x-api-key") != "" {
 		t.Fatalf("oauth must set Authorization: Bearer only: %v", h2)
 	}
+	h3 := http.Header{}
+	Credential{Kind: Bearer, Value: "external-tok"}.Apply(h3)
+	if h3.Get("Authorization") != "Bearer external-tok" || h3.Get("x-api-key") != "" {
+		t.Fatalf("bearer token must set Authorization: Bearer only: %v", h3)
+	}
 }
 
 func TestSourcesNeverLeakValues(t *testing.T) {

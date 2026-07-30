@@ -22,6 +22,4 @@ LINUX_AMD64_SHA256=<sha256> \
 ./scripts/render-homebrew-formula.sh
 ```
 
-The Formula does not auto-start `carina-daemon`. Every release archive includes
-the pinned Headroom context engine; Carina selects it automatically when its MCP
-health check succeeds.
+The Formula does not auto-start `carina-daemon`.

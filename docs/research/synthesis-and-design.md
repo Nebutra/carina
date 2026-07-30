@@ -11,7 +11,7 @@
 | **独立 session**(独立 profile + 独立 event log + workspace 边界) | sub-agent 的 context 隔离;workflow step 的隔离 |
 | **Rust kernel 内核级能力强制**(非 prompt 软约束) | 能力单调衰减(child⊆parent);Codex 两轴解耦;workflow step 的 risk_ceiling |
 | **哈希链 event log** | 免费的 workflow/loop checkpointer(replay 重建状态);防篡改审计 |
-| **现有 approval 设施**(waiting_approval + pendingCmds + task.action.approve) | goal 的分级审批;workflow 的 human-in-the-loop 全部复用 |
+| **现有 approval 设施**(waiting_approval + pendingCmds + governance.action.approve) | goal 的分级审批;workflow 的 human-in-the-loop 全部复用 |
 
 ## 四机制的统一关系模型
 ```

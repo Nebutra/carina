@@ -49,7 +49,7 @@ func TestAuditHashChainAndActors(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Generate a spread of events across actors.
-	c.Call("task.submit", map[string]any{"session_id": sess.SessionID, "prompt": "hi"}, &struct{}{})
+	c.Call("execution.start", map[string]any{"session_id": sess.SessionID, "prompt": "hi"}, &struct{}{})
 	c.Call("workspace.search", map[string]any{"session_id": sess.SessionID, "pattern": "hello"}, &struct{}{})
 	c.Call("command.exec", map[string]any{"session_id": sess.SessionID, "argv": []string{"echo", "ok"}}, &struct{}{})
 	// let the async task loop record its events

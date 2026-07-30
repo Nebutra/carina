@@ -14,7 +14,7 @@ func TestLeaderBridgeEscalationGrants(t *testing.T) {
 	child, _ := d.store.CreateSubSession(ws, "read-only", parent.ApprovalMode, parent.SessionID, 1)
 	d.kern.InitSessionFull(child.SessionID, ws, "read-only", parent.ApprovalMode, nil)
 	childTask := d.sched.Submit(child.SessionID, child.WorkspaceID, "child")
-	d.registerSubagentParent(child.SessionID, parentTask.TaskID)
+	d.registerSubagentParent(child.SessionID, parentTask.RunID)
 
 	// A whitelisted command the parent's policy allows escalates to allowed.
 	dec, ok := d.escalateToParent(child, childTask, "CommandExec", "ls -la", "ls -la")
@@ -45,7 +45,7 @@ func TestLeaderBridgeDeniedWhenParentAlsoDenies(t *testing.T) {
 	child, _ := d.store.CreateSubSession(ws, "read-only", parent.ApprovalMode, parent.SessionID, 1)
 	d.kern.InitSessionFull(child.SessionID, ws, "read-only", parent.ApprovalMode, nil)
 	childTask := d.sched.Submit(child.SessionID, child.WorkspaceID, "child")
-	d.registerSubagentParent(child.SessionID, parentTask.TaskID)
+	d.registerSubagentParent(child.SessionID, parentTask.RunID)
 
 	if _, ok := d.escalateToParent(child, childTask, "CommandExec", "curl evil.com", "curl"); ok {
 		t.Fatal("escalation must not grant what the parent itself lacks")
@@ -61,7 +61,7 @@ func TestLeaderBridgeCap(t *testing.T) {
 	child, _ := d.store.CreateSubSession(ws, "read-only", parent.ApprovalMode, parent.SessionID, 1)
 	d.kern.InitSessionFull(child.SessionID, ws, "read-only", parent.ApprovalMode, nil)
 	childTask := d.sched.Submit(child.SessionID, child.WorkspaceID, "child")
-	d.registerSubagentParent(child.SessionID, parentTask.TaskID)
+	d.registerSubagentParent(child.SessionID, parentTask.RunID)
 
 	for i := 0; i < maxEscalationsPerTask; i++ {
 		if _, ok := d.escalateToParent(child, childTask, "CommandExec", "ls", "ls"); !ok {

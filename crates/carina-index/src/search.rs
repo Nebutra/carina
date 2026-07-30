@@ -97,11 +97,7 @@ pub(crate) fn rrf_fuse(ranked_lists: &[Vec<i64>], k: f64) -> Vec<(i64, f64)> {
 /// differ from the query are skipped (a model change mid-flight must not
 /// error queries). Sorted by score descending, then ascending chunk_id —
 /// pure function, deterministic.
-pub(crate) fn cosine_rank(
-    candidates: &[(i64, Vec<f32>)],
-    query: &[f32],
-    top: usize,
-) -> Vec<i64> {
+pub(crate) fn cosine_rank(candidates: &[(i64, Vec<f32>)], query: &[f32], top: usize) -> Vec<i64> {
     let query_norm = query
         .iter()
         .map(|v| f64::from(*v) * f64::from(*v))
@@ -158,14 +154,9 @@ pub(crate) fn run(
     // The cosine channel exists only when the caller supplied a query vector
     // (with its model_id); otherwise search stays bit-identical V1 two-way.
     let vector_ids = match (&opts.query_vector, &opts.model_id) {
-        (Some(query_vector), Some(model_id)) => vector_candidates(
-            store,
-            query_vector,
-            model_id,
-            lang,
-            path_prefix,
-            fetch,
-        )?,
+        (Some(query_vector), Some(model_id)) => {
+            vector_candidates(store, query_vector, model_id, lang, path_prefix, fetch)?
+        }
         _ => Vec::new(),
     };
 
@@ -440,7 +431,10 @@ mod tests {
             })
             .collect();
         let report = idx.embed_store(MODEL, &items).expect("embed_store");
-        assert!(report.stale.is_empty(), "fixture chunks must store: {report:?}");
+        assert!(
+            report.stale.is_empty(),
+            "fixture chunks must store: {report:?}"
+        );
     }
 
     fn vector_opts(vector: Vec<f32>) -> SearchOptions {
@@ -471,8 +465,8 @@ mod tests {
     fn cosine_rank_skips_zero_norm_and_dims_mismatched_rows() {
         let candidates = vec![
             (1, vec![1.0f32, 0.0]),
-            (4, vec![0.0f32, 0.0]),       // zero norm: undefined cosine, skip
-            (5, vec![1.0f32, 0.0, 0.0]),  // dims mismatch: model change, skip
+            (4, vec![0.0f32, 0.0]),      // zero norm: undefined cosine, skip
+            (5, vec![1.0f32, 0.0, 0.0]), // dims mismatch: model change, skip
         ];
         assert_eq!(cosine_rank(&candidates, &[1.0, 0.0], 10), vec![1]);
         // A zero-norm QUERY ranks nothing (never NaN-panics).
@@ -492,7 +486,10 @@ mod tests {
     fn search_with_query_vector_adds_vector_source_and_provenance() {
         let content_a = "pub fn zz_vec_alpha() {}\n";
         let mut idx = fixture_index(&[("a.rs", content_a), ("b.rs", "pub fn zz_vec_beta() {}\n")]);
-        embed_by_path(&mut idx, &[("a.rs", vec![1.0, 0.0]), ("b.rs", vec![0.0, 1.0])]);
+        embed_by_path(
+            &mut idx,
+            &[("a.rs", vec![1.0, 0.0]), ("b.rs", vec![0.0, 1.0])],
+        );
 
         // The text query matches a.rs; the vector agrees.
         let hits = idx
@@ -517,7 +514,10 @@ mod tests {
             ("a.rs", "pub fn zz_kw_target() {}\n"),
             ("b.rs", "pub fn zz_semantic_neighbor() {}\n"),
         ]);
-        embed_by_path(&mut idx, &[("a.rs", vec![1.0, 0.0]), ("b.rs", vec![0.0, 1.0])]);
+        embed_by_path(
+            &mut idx,
+            &[("a.rs", vec![1.0, 0.0]), ("b.rs", vec![0.0, 1.0])],
+        );
         let hits = idx
             .search("zz_kw_target", &vector_opts(vec![0.0, 1.0]))
             .expect("vector search");
@@ -613,17 +613,24 @@ mod tests {
         ]);
         embed_by_path(
             &mut idx,
-            &[("src/a.rs", vec![1.0, 0.0]), ("scripts/b.py", vec![1.0, 0.0])],
+            &[
+                ("src/a.rs", vec![1.0, 0.0]),
+                ("scripts/b.py", vec![1.0, 0.0]),
+            ],
         );
         let mut opts = vector_opts(vec![1.0, 0.0]);
         opts.lang = Some(Lang::Rust);
-        let hits = idx.search("zz_filter_marker", &opts).expect("lang-filtered");
+        let hits = idx
+            .search("zz_filter_marker", &opts)
+            .expect("lang-filtered");
         assert!(!hits.is_empty());
         assert!(hits.iter().all(|h| h.path == "src/a.rs"), "got {hits:?}");
 
         let mut opts = vector_opts(vec![1.0, 0.0]);
         opts.path_prefix = Some("scripts/".into());
-        let hits = idx.search("zz_filter_marker", &opts).expect("prefix-filtered");
+        let hits = idx
+            .search("zz_filter_marker", &opts)
+            .expect("prefix-filtered");
         assert!(!hits.is_empty());
         assert!(
             hits.iter().all(|h| h.path.starts_with("scripts/")),

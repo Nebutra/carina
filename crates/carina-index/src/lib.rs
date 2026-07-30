@@ -211,7 +211,11 @@ impl CodeIndex {
     }
 
     /// Definitions and approximate references for a symbol name.
-    pub fn symbol_lookup(&self, name: &str, opts: &SymbolOptions) -> Result<SymbolReport, IndexError> {
+    pub fn symbol_lookup(
+        &self,
+        name: &str,
+        opts: &SymbolOptions,
+    ) -> Result<SymbolReport, IndexError> {
         symbols::lookup(&self.store, name, opts)
     }
 
@@ -448,8 +452,10 @@ mod tests {
             ("a.rs", "pub fn alpha_one() {}\n"),
             ("b.rs", "pub fn beta_one() {}\n"),
         ]);
-        idx.update(&[FileChange::Delete { path: "b.rs".into() }])
-            .expect("update");
+        idx.update(&[FileChange::Delete {
+            path: "b.rs".into(),
+        }])
+        .expect("update");
         let stats = idx.stats().expect("stats");
         assert_eq!(stats.files, 1);
         let report = idx
@@ -525,9 +531,18 @@ mod tests {
     #[test]
     fn search_respects_limit() {
         let idx = fixture_index(&[
-            ("a.rs", "pub fn shared_token_zz_a() { shared_token_zz(); }\n"),
-            ("b.rs", "pub fn shared_token_zz_b() { shared_token_zz(); }\n"),
-            ("c.rs", "pub fn shared_token_zz_c() { shared_token_zz(); }\n"),
+            (
+                "a.rs",
+                "pub fn shared_token_zz_a() { shared_token_zz(); }\n",
+            ),
+            (
+                "b.rs",
+                "pub fn shared_token_zz_b() { shared_token_zz(); }\n",
+            ),
+            (
+                "c.rs",
+                "pub fn shared_token_zz_c() { shared_token_zz(); }\n",
+            ),
         ]);
         let opts = SearchOptions {
             limit: 2,
@@ -557,7 +572,10 @@ mod tests {
     fn search_filters_by_path_prefix() {
         let idx = fixture_index(&[
             ("src/a.rs", "pub fn shared_token_zz() {}\n"),
-            ("tests/b.rs", "pub fn shared_token_zz_test() { shared_token_zz(); }\n"),
+            (
+                "tests/b.rs",
+                "pub fn shared_token_zz_test() { shared_token_zz(); }\n",
+            ),
         ]);
         let opts = SearchOptions {
             path_prefix: Some("src/".into()),
@@ -565,7 +583,10 @@ mod tests {
         };
         let hits = idx.search("shared_token_zz", &opts).expect("search");
         assert!(!hits.is_empty());
-        assert!(hits.iter().all(|h| h.path.starts_with("src/")), "got {hits:?}");
+        assert!(
+            hits.iter().all(|h| h.path.starts_with("src/")),
+            "got {hits:?}"
+        );
     }
 
     #[test]
@@ -575,7 +596,10 @@ mod tests {
             .search("zz_symbol_ctx", &SearchOptions::default())
             .expect("search");
         assert!(!hits.is_empty());
-        let symbol = hits[0].symbol.as_ref().expect("hit should carry its symbol");
+        let symbol = hits[0]
+            .symbol
+            .as_ref()
+            .expect("hit should carry its symbol");
         assert_eq!(symbol.name, "zz_symbol_ctx");
         assert_eq!(symbol.kind, SymbolKind::Function);
         assert_eq!(symbol.path, "a.rs");

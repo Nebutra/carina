@@ -158,7 +158,7 @@ func TestScheduleCreateExposesFrozenExecutionEnvelope(t *testing.T) {
 func TestUsageIncludesResumeContinuation(t *testing.T) {
 	for _, want := range []string{
 		"carina resume <session_id> [prompt|-]",
-		"carina steer <task_id> <message>",
+		"carina steer <run_id> <message>",
 		"carina answer <question_id> <value>",
 		"carina fork <session_id>",
 		"carina cost [session_id] [--json]",
@@ -177,7 +177,7 @@ func TestRunAnswerResolvesStructuredQuestion(t *testing.T) {
 	t.Cleanup(func() { dialHook = oldDial })
 	s := rpc.NewServer()
 	var got map[string]any
-	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "task.user.answer", Scope: rpc.ScopeWrite, Remote: true}, func(params json.RawMessage) (any, error) {
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "question.answer", Scope: rpc.ScopeWrite, Remote: true}, func(params json.RawMessage) (any, error) {
 		if err := json.Unmarshal(params, &got); err != nil {
 			return nil, err
 		}
@@ -209,7 +209,7 @@ func TestRunAnswerResolvesStructuredQuestion(t *testing.T) {
 func TestCmdSteerQueuesMessage(t *testing.T) {
 	s := rpc.NewServer()
 	var got map[string]any
-	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "task.steer", Scope: rpc.ScopeWrite, Remote: true}, func(params json.RawMessage) (any, error) {
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "execution.steer", Scope: rpc.ScopeWrite, Remote: true}, func(params json.RawMessage) (any, error) {
 		if err := json.Unmarshal(params, &got); err != nil {
 			return nil, err
 		}
@@ -233,8 +233,8 @@ func TestCmdSteerQueuesMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got["task_id"] != "task_1" || got["message"] != "also add tests" {
-		t.Fatalf("unexpected task.steer params: %#v", got)
+	if got["run_id"] != "task_1" || got["message"] != "also add tests" {
+		t.Fatalf("unexpected execution.steer params: %#v", got)
 	}
 	if !strings.Contains(out, `"queued": true`) {
 		t.Fatalf("steer output missing acknowledgement:\n%s", out)
@@ -272,11 +272,11 @@ func TestCmdResumeSubmitsTaskToExistingSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	var submitted map[string]any
-	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "task.submit", Scope: rpc.ScopeWrite, Remote: true}, func(params json.RawMessage) (any, error) {
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "execution.start", Scope: rpc.ScopeWrite, Remote: true}, func(params json.RawMessage) (any, error) {
 		if err := json.Unmarshal(params, &submitted); err != nil {
 			return nil, err
 		}
-		return map[string]any{"task_id": "task_1", "session_id": submitted["session_id"], "user_prompt": submitted["prompt"]}, nil
+		return map[string]any{"run_id": "task_1", "session_id": submitted["session_id"], "user_prompt": submitted["prompt"]}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -297,9 +297,9 @@ func TestCmdResumeSubmitsTaskToExistingSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	if submitted["session_id"] != "sess_1" || submitted["prompt"] != "continue please" || submitted["agent"] != "build" || submitted["reasoning_effort"] != "high" {
-		t.Fatalf("unexpected task.submit params: %+v", submitted)
+		t.Fatalf("unexpected execution.start params: %+v", submitted)
 	}
-	for _, want := range []string{"resuming session: sess_1", `"task_id": "task_1"`, "To continue this session"} {
+	for _, want := range []string{"resuming session: sess_1", `"run_id": "task_1"`, "To continue this session"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("resume output missing %q:\n%s", want, out)
 		}
@@ -334,10 +334,9 @@ func TestCmdContextStatus(t *testing.T) {
 	}
 }
 
-func TestCmdContextStatsCompressRetrieve(t *testing.T) {
+func TestCmdContextStatsAndCompress(t *testing.T) {
 	s := rpc.NewServer()
 	var compressed string
-	var retrieved map[string]any
 	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "context.stats", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
 		return map[string]any{"local": map[string]any{"engine": "noop"}}, nil
 	}); err != nil {
@@ -350,14 +349,6 @@ func TestCmdContextStatsCompressRetrieve(t *testing.T) {
 		}
 		compressed, _ = p["content"].(string)
 		return map[string]any{"content": compressed}, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "context.retrieve", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
-		if err := json.Unmarshal(params, &retrieved); err != nil {
-			return nil, err
-		}
-		return map[string]any{"ref": retrieved["hash"], "content": "original"}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -381,15 +372,6 @@ func TestCmdContextStatsCompressRetrieve(t *testing.T) {
 	}
 	if compressed != "hello" {
 		t.Fatalf("compress params = %q", compressed)
-	}
-	if _, err := captureStdout(t, func() error { return cmdContext(c, []string{"retrieve", "abc"}) }); err != nil {
-		t.Fatal(err)
-	}
-	if retrieved["hash"] != "abc" || retrieved["query"] != nil {
-		t.Fatalf("retrieve params = %#v", retrieved)
-	}
-	if err := cmdContext(c, []string{"retrieve", "abc", "needle"}); err == nil {
-		t.Fatal("retrieve query must be rejected before RPC because the managed Headroom contract is hash-only")
 	}
 }
 

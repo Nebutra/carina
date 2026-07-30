@@ -1,0 +1,35 @@
+---
+source: crates/carina-tui/tests/golden_frames.rs
+expression: "render_case(80, 24, \"workspace / model\",\nvec![Line::from(\"Start a conversation.\")], false)"
+---
+size=80x24
+ CARINA workspace / model
+
+────────────────────────────────────────────────────────────────────────────────
+ Start a conversation.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+❯ Ask Carina
+
+styles:
+(0, 0)..(8, 0) (Rgb(222, 133, 155), Reset, BOLD)
+(0, 2)..(80, 2) (Rgb(52, 65, 68), Reset, NONE)
+(0, 21)..(80, 21) (Rgb(52, 65, 68), Reset, NONE)
+(0, 22)..(2, 22) (Rgb(142, 219, 210), Reset, NONE)
+(2, 22)..(12, 22) (Rgb(150, 160, 156), Reset, NONE)

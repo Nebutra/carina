@@ -67,5 +67,5 @@ Add a mock MCP server that supports both tools and prompts. Cover:
 - prompt metadata discovery in `go/mcp`;
 - `prompts/get` text flattening;
 - command listing includes `/mcp.<server>.<prompt>`;
-- `task.submit` expands an MCP prompt and preserves explicit model/agent
+- `execution.start` expands an MCP prompt and preserves explicit model/agent
   overrides.

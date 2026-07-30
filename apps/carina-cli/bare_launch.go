@@ -31,6 +31,17 @@ type rustUILaunch struct {
 	Args   []string
 }
 
+func appendTerminalArgs(args []string, opts interactiveOptions, mode string) []string {
+	if opts.NoAltScreen {
+		return append(args, "--no-alt-screen")
+	}
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = "auto"
+	}
+	return append(args, "--alt-screen", mode)
+}
+
 var (
 	uiExecutable = os.Executable
 	uiLookPath   = exec.LookPath
@@ -117,6 +128,10 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 	if err != nil {
 		return rustUILaunch{}, err
 	}
+	altScreen, err := config.InspectTUIAlternateScreen(home, workspace)
+	if err != nil {
+		return rustUILaunch{}, err
+	}
 	mode, err := localruntime.ResolveMode(home)
 	if errors.Is(err, localruntime.ErrModeDecisionRequired) {
 		return rustUILaunch{
@@ -142,6 +157,20 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 		}
 		client, _, connectErr := connectOrStartRuntime(resolution.Spec)
 		if connectErr != nil {
+			var compatibility *localdaemon.RuntimeCompatibilityError
+			if errors.As(connectErr, &compatibility) {
+				return rustUILaunch{
+					Binary: uiBinary,
+					Args: buildRuntimeDiagnosticArgs(
+						opts,
+						resolution.Workspace.CanonicalRoot,
+						locale,
+						carinaBinary,
+						resolution.Spec.Paths.LogPath,
+						compatibility,
+					),
+				}, nil
+			}
 			return rustUILaunch{}, connectErr
 		}
 		_ = client.Close()
@@ -168,8 +197,31 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 		}
 	}
 
-	args := buildRustUIArgs(opts, socket, workspace, locale, localePath, carinaBinary)
+	args := buildRustUIArgs(opts, socket, workspace, locale, localePath, carinaBinary, altScreen)
 	return rustUILaunch{Binary: uiBinary, Args: args}, nil
+}
+
+func buildRuntimeDiagnosticArgs(opts interactiveOptions, workspace, locale, carinaBinary, logPath string, compatibility *localdaemon.RuntimeCompatibilityError) []string {
+	args := []string{
+		"--runtime-diagnostic",
+		"--workspace", workspace,
+		"--carina-bin", carinaBinary,
+		"--runtime-id", compatibility.Description.RuntimeID,
+		"--runtime-log", logPath,
+	}
+	if locale != "" {
+		args = append(args, "--locale", locale)
+	}
+	for _, method := range compatibility.MissingMethods {
+		args = append(args, "--missing-method", method)
+	}
+	for _, obligation := range compatibility.Description.Obligations {
+		args = append(args, "--obligation", obligation)
+	}
+	if opts.NoAltScreen {
+		args = append(args, "--no-alt-screen")
+	}
+	return args
 }
 
 func buildRuntimeModeSetupArgs(opts interactiveOptions, home, carinaBinary string) []string {
@@ -184,7 +236,7 @@ func buildRuntimeModeSetupArgs(opts interactiveOptions, home, carinaBinary strin
 	return args
 }
 
-func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localePath, carinaBinary string) []string {
+func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localePath, carinaBinary, altScreen string) []string {
 	args := []string{
 		"--socket", socket,
 		"--workspace", workspace,
@@ -199,10 +251,7 @@ func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localeP
 	if localePath != "" {
 		args = append(args, "--locale-path", localePath)
 	}
-	if opts.NoAltScreen {
-		args = append(args, "--no-alt-screen")
-	}
-	return args
+	return appendTerminalArgs(args, opts, altScreen)
 }
 
 func connectOrStartRuntime(spec localruntime.Spec) (*rpcClient, localdaemon.RuntimeDescription, error) {

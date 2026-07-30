@@ -68,7 +68,7 @@ func (d *Daemon) startWorkflowControlRun(sess *sessionstore.Session, spec *Workf
 	go func() {
 		defer d.taskWG.Done()
 		defer d.removeWorkflowControl(run.ID, control)
-		task := &scheduler.Task{TaskID: sessionstore.NewID("task"), SessionID: sess.SessionID, WorkspaceID: sess.WorkspaceID, Status: "running", UserPrompt: run.Input, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+		task := &scheduler.ExecutionRun{RunID: sessionstore.NewID("run"), SessionID: sess.SessionID, WorkspaceID: sess.WorkspaceID, Status: "running", UserPrompt: run.Input, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 		// The RPC control-plane entry point (workflow.run) must honor
 		// execution_mode exactly like the model-driven "workflow" tool call
 		// already does (executeWorkflowOutcome in workflow.go) — this used
@@ -81,7 +81,7 @@ func (d *Daemon) startWorkflowControlRun(sess *sessionstore.Session, spec *Workf
 		}
 		var outputs map[string]string
 		var runErr error
-		d.withTaskParentContext(control.ctx, task.TaskID, func(context.Context) {
+		d.withTaskParentContext(control.ctx, task.RunID, func(context.Context) {
 			outputs, runErr = runFn(sess, task, spec, run.Input, run.ID)
 		})
 		if runErr != nil {
@@ -372,20 +372,20 @@ func (d *Daemon) handleChannelEventInject(params json.RawMessage) (any, error) {
 	}
 	taskID := ""
 	if task != nil {
-		taskID = task.TaskID
+		taskID = task.RunID
 	}
 	payload := map[string]any{"status": "external_event", "event_id": p.Event.ID, "sender_id": p.Event.SenderID, "kind": p.Event.Kind, "data": p.Event.Payload}
-	cursor, err := d.kern.RecordEventWithCursor(p.Event.SessionID, "TaskCreated", taskID, "channel", payload, p.Event.PermissionDecisionID)
+	cursor, err := d.kern.RecordEventWithCursor(p.Event.SessionID, "ExternalEvent", taskID, "channel", payload, p.Event.PermissionDecisionID)
 	if err != nil {
 		return nil, fmt.Errorf("channel audit append: %w", err)
 	}
-	d.events.Publish(p.Event.SessionID, map[string]any{"type": "ExternalEvent", "session_id": p.Event.SessionID, "task_id": taskID, "timestamp": time.Now().UTC(), "payload": payload, internalRawAuditCursor: cursor})
+	d.events.Publish(p.Event.SessionID, map[string]any{"type": "ExternalEvent", "session_id": p.Event.SessionID, "run_id": taskID, "timestamp": time.Now().UTC(), "payload": payload, internalRawAuditCursor: cursor})
 	if task != nil {
 		data, _ := json.Marshal(p.Event.Payload)
 		// External channel events (CI results, human replies relayed through a
 		// bridge, etc.) are time-sensitive and should preempt any backlog of
 		// routine steering notes already queued for this task.
-		d.steerWithPriority(task.TaskID, fmt.Sprintf("CHANNEL EVENT %s from %s (event %s): %s", p.Event.Kind, p.Event.SenderID, p.Event.ID, data), steerUrgent)
+		d.steerWithPriority(task.RunID, fmt.Sprintf("CHANNEL EVENT %s from %s (event %s): %s", p.Event.Kind, p.Event.SenderID, p.Event.ID, data), steerUrgent)
 	}
 	if err := d.channels.MarkEffectApplied(reservation); err != nil {
 		return nil, fmt.Errorf("channel side effect applied but journal update failed: %w", err)
@@ -397,8 +397,8 @@ func (d *Daemon) handleChannelEventInject(params json.RawMessage) (any, error) {
 	return receipt, nil
 }
 
-func (d *Daemon) activeChannelTask(sessionID string) *scheduler.Task {
-	var selected *scheduler.Task
+func (d *Daemon) activeChannelTask(sessionID string) *scheduler.ExecutionRun {
+	var selected *scheduler.ExecutionRun
 	for _, task := range d.sched.List() {
 		if task.SessionID != sessionID {
 			continue

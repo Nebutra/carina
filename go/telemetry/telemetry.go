@@ -17,6 +17,7 @@ type Attribution struct {
 	SessionID   string `json:"session_id,omitempty"`
 	WorkflowID  string `json:"workflow_id,omitempty"`
 	StepID      string `json:"step_id,omitempty"`
+	RunID       string `json:"run_id,omitempty"`
 	TaskID      string `json:"task_id,omitempty"`
 	Provider    string `json:"provider,omitempty"`
 	Model       string `json:"model,omitempty"`

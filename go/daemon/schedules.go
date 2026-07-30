@@ -169,14 +169,14 @@ func (d *Daemon) runScheduleLoop() {
 					continue
 				}
 				taskID := ""
-				if task, ok := result.(*scheduler.Task); ok {
-					taskID = task.TaskID
+				if task, ok := result.(*scheduler.ExecutionRun); ok {
+					taskID = task.RunID
 				} else if raw, err := json.Marshal(result); err == nil {
 					var task struct {
-						TaskID string `json:"task_id"`
+						RunID string `json:"run_id"`
 					}
 					_ = json.Unmarshal(raw, &task)
-					taskID = task.TaskID
+					taskID = task.RunID
 				}
 				d.schedules.MarkTask(row.ScheduleID, taskID)
 				d.record(row.SessionID, "ScheduleTriggered", taskID, "go", map[string]any{"schedule_id": row.ScheduleID, "status": "submitted"}, "")
@@ -199,7 +199,7 @@ func (d *Daemon) resolveScheduleOverlap(row *scheduler.Schedule, now time.Time) 
 		d.record(row.SessionID, "ScheduleTriggered", row.LastTaskID, "go", map[string]any{"schedule_id": row.ScheduleID, "status": "queued", "reason": "previous_task_running"}, "")
 		return true
 	case "replace":
-		if _, err := d.handleTaskCancel(mustRaw(map[string]any{"task_id": row.LastTaskID})); err != nil {
+		if _, err := d.handleTaskCancel(mustRaw(map[string]any{"run_id": row.LastTaskID})); err != nil {
 			d.schedules.QueueClaim(row.ScheduleID, now)
 			d.record(row.SessionID, "ScheduleTriggered", row.LastTaskID, "go", map[string]any{"schedule_id": row.ScheduleID, "status": "failed", "reason": "replace_cancel_failed", "error": err.Error()}, "")
 			return true

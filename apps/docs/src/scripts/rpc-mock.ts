@@ -80,7 +80,7 @@ export function mockRpcResponse(req: RpcRequest): {
     };
   }
 
-  if (method === 'task.submit') {
+  if (method === 'execution.start') {
     return {
       status: 200,
       latencyMs,

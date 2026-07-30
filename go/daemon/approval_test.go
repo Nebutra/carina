@@ -34,7 +34,7 @@ func TestInteractiveApprovalAllowAndDeny(t *testing.T) {
 
 	// --- ALLOW path ---
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run")
-	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.RunID)
 	if dec.Decision != "requires_approval" {
 		t.Fatalf("expected requires_approval, got %s", dec.Decision)
 	}
@@ -51,7 +51,7 @@ func TestInteractiveApprovalAllowAndDeny(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("no permission.request emitted")
 	}
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "waiting_approval" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "waiting_approval" {
 		t.Fatalf("task should pause at waiting_approval, got %s", tk.Status)
 	}
 	if _, err := d.handleApprovalResolve(mustJSON(t, map[string]any{
@@ -64,7 +64,7 @@ func TestInteractiveApprovalAllowAndDeny(t *testing.T) {
 
 	// --- DENY path ---
 	task2 := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run2")
-	dec2, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install right-pad", task2.TaskID)
+	dec2, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install right-pad", task2.RunID)
 	out2 := make(chan bool, 1)
 	go func() {
 		_, ok := d.resolveApproval(sess, task2, dec2, "npm install right-pad")
@@ -89,12 +89,12 @@ func TestInteractiveApprovalTimeoutDenies(t *testing.T) {
 	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
 	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run")
-	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.RunID)
 
 	if _, ok := d.resolveApproval(sess, task, dec, "npm install left-pad"); ok {
 		t.Fatal("an unanswered approval must time out to denied")
 	}
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "running" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "running" {
 		t.Fatalf("task should return to running after timeout, got %s", tk.Status)
 	}
 	if _, err := d.kern.ApproveWithRole(sess.SessionID, dec.DecisionID, "late-operator", ""); err == nil {
@@ -160,7 +160,7 @@ func TestApprovalResolveAcceptsCanonicalAndLegacyBooleans(t *testing.T) {
 			sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
 			d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
 			task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run")
-			dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+			dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.RunID)
 			reqs := permissionRequests(d)
 			result := make(chan bool, 1)
 			go func() { _, ok := d.resolveApproval(sess, task, dec, "install"); result <- ok }()
@@ -190,7 +190,7 @@ func TestApprovalResolveRejectsMissingOrConflictingBoolean(t *testing.T) {
 	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
 	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run")
-	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.RunID)
 	reqs := permissionRequests(d)
 	result := make(chan bool, 1)
 	go func() { _, ok := d.resolveApproval(sess, task, dec, "install"); result <- ok }()
@@ -229,7 +229,7 @@ func TestAutonomousApprovalUnchanged(t *testing.T) {
 	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
 	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run")
-	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.RunID)
 
 	_, ok := d.resolveApproval(sess, task, dec, "npm install left-pad")
 	if !ok {
@@ -249,7 +249,7 @@ func TestRiskReviewAdvisoryRecordsAndAllows(t *testing.T) {
 	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
 	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "install dependency")
-	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.RunID)
 	if dec.Decision != "requires_approval" {
 		t.Fatalf("expected requires_approval, got %s", dec.Decision)
 	}
@@ -273,7 +273,7 @@ func TestRiskReviewEnforceBlocksHighRiskApproval(t *testing.T) {
 	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
 	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "move file")
-	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "mv a b", task.TaskID)
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "mv a b", task.RunID)
 	if dec.Decision != "requires_approval" {
 		t.Fatalf("expected requires_approval, got %s", dec.Decision)
 	}
@@ -300,7 +300,7 @@ func TestRiskReviewModelDenyEnforce(t *testing.T) {
 	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
 	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "install dependency")
-	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.RunID)
 	if dec.Decision != "requires_approval" {
 		t.Fatalf("expected requires_approval, got %s", dec.Decision)
 	}
@@ -326,7 +326,7 @@ func TestInteractiveApprovalBypassesRiskReview(t *testing.T) {
 	sess, _ := d.store.CreateSessionMode(ws, "safe-edit", "on_request")
 	d.kern.InitSessionFull(sess.SessionID, ws, "safe-edit", "on_request", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "install dependency")
-	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.TaskID)
+	dec, _ := d.kern.Request(sess.SessionID, "CommandExec", "npm install left-pad", task.RunID)
 	out := make(chan bool, 1)
 	go func() {
 		_, ok := d.resolveApproval(sess, task, dec, "npm install left-pad")
@@ -382,7 +382,7 @@ func lastRiskReviewPayloadOrNil(t *testing.T, d *Daemon, sessionID string) map[s
 	}
 	var payload map[string]any
 	for _, ev := range events {
-		if ev.Type == "TaskCreated" && ev.Payload["status"] == "risk_review" {
+		if ev.Type == "ExecutionProgressed" && ev.Payload["status"] == "risk_review" {
 			payload = ev.Payload
 		}
 	}

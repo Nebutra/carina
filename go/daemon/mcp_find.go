@@ -24,7 +24,7 @@ const mcpFindLimit = 6
 // still goes through callMCPOutcome's kernel decision + audit. mcp_find itself
 // is audited by the standard tool lifecycle envelopes (ToolCallRequested with
 // the query, then ToolCallCompleted/Failed) in executeActionOutcome.
-func (d *Daemon) mcpFindOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
+func (d *Daemon) mcpFindOutcome(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) toolExecutionOutcome {
 	query := strings.TrimSpace(act.Query)
 	if query == "" {
 		return toolFailed("error: mcp_find needs query", "invalid_arguments")

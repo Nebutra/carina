@@ -9,55 +9,55 @@ import (
 	"github.com/Nebutra/carina/go/outcome"
 )
 
-// TestTaskOutcomeErrorCompletedIsNil pins the happy path: a task that
+// TestExecutionOutcomeErrorCompletedIsNil pins the happy path: a execution that
 // reaches "completed" classifies as no error (OutcomeOK via
 // classifyExitCode(nil)).
-func TestTaskOutcomeErrorCompletedIsNil(t *testing.T) {
-	task := map[string]any{"status": "completed", "summary": "done"}
-	if err := taskOutcomeError(task); err != nil {
-		t.Fatalf("taskOutcomeError(completed) = %v, want nil", err)
+func TestExecutionOutcomeErrorCompletedIsNil(t *testing.T) {
+	execution := map[string]any{"status": "completed", "summary": "done"}
+	if err := executionOutcomeError(execution); err != nil {
+		t.Fatalf("executionOutcomeError(completed) = %v, want nil", err)
 	}
 }
 
-// TestTaskOutcomeErrorFailedClassifiesAsRuntimeError is the core P1.5(b)
+// TestExecutionOutcomeErrorFailedClassifiesAsRuntimeError is the core P1.5(b)
 // governance-exit-code fix this closes: before it, `carina run` returned
-// nil right after task.submit succeeded and never observed whether the
-// task itself failed — a task that ends "failed" must not exit 0.
-func TestTaskOutcomeErrorFailedClassifiesAsRuntimeError(t *testing.T) {
-	task := map[string]any{"status": "failed", "summary": "model error: rate limited"}
-	err := taskOutcomeError(task)
+// nil right after execution.start succeeded and never observed whether the
+// execution itself failed — a execution that ends "failed" must not exit 0.
+func TestExecutionOutcomeErrorFailedClassifiesAsRuntimeError(t *testing.T) {
+	execution := map[string]any{"status": "failed", "summary": "model error: rate limited"}
+	err := executionOutcomeError(execution)
 	if err == nil {
-		t.Fatal("taskOutcomeError(failed) = nil, want a non-nil error")
+		t.Fatal("executionOutcomeError(failed) = nil, want a non-nil error")
 	}
 	if got := classifyExitCode(err); got != outcome.OutcomeRuntimeError {
-		t.Fatalf("classifyExitCode(taskOutcomeError(failed)) = %v, want OutcomeRuntimeError", got)
+		t.Fatalf("classifyExitCode(executionOutcomeError(failed)) = %v, want OutcomeRuntimeError", got)
 	}
 }
 
-// TestTaskOutcomeErrorDegradedClassifiesAsDegradedPartial pins the
-// degrade-not-failure distinction (exit 6): a task that could not reach
+// TestExecutionOutcomeErrorDegradedClassifiesAsDegradedPartial pins the
+// degrade-not-failure distinction (exit 6): a execution that could not reach
 // "done" but made partial, rollbackable progress must not collapse into
 // the same exit code as a hard failure.
-func TestTaskOutcomeErrorDegradedClassifiesAsDegradedPartial(t *testing.T) {
-	task := map[string]any{"status": "degraded", "summary": "reached max turns without done"}
-	err := taskOutcomeError(task)
+func TestExecutionOutcomeErrorDegradedClassifiesAsDegradedPartial(t *testing.T) {
+	execution := map[string]any{"status": "degraded", "summary": "reached max turns without done"}
+	err := executionOutcomeError(execution)
 	if err == nil {
-		t.Fatal("taskOutcomeError(degraded) = nil, want a non-nil error")
+		t.Fatal("executionOutcomeError(degraded) = nil, want a non-nil error")
 	}
 	if got := classifyExitCode(err); got != outcome.OutcomeDegradedPartial {
-		t.Fatalf("classifyExitCode(taskOutcomeError(degraded)) = %v, want OutcomeDegradedPartial", got)
+		t.Fatalf("classifyExitCode(executionOutcomeError(degraded)) = %v, want OutcomeDegradedPartial", got)
 	}
 }
 
-// TestTaskOutcomeErrorSummaryCarriesPolicyDeniedPrefix proves a task whose
+// TestExecutionOutcomeErrorSummaryCarriesPolicyDeniedPrefix proves a execution whose
 // terminal summary embeds the daemon's own "DENIED by policy: ..." verdict
 // text (as agentRun/dispatchAction emit it into the transcript, which can
 // surface into a degrade/fail summary) still classifies distinctly via
-// classifyExitCode's existing policyDeniedPrefix match — taskOutcomeError
+// classifyExitCode's existing policyDeniedPrefix match — executionOutcomeError
 // must pass the summary through unmodified, not paraphrase it away.
-func TestTaskOutcomeErrorSummaryCarriesPolicyDeniedPrefix(t *testing.T) {
-	task := map[string]any{"status": "degraded", "summary": "DENIED by policy: destructive command blocked by rule cmd.rm-rf"}
-	err := taskOutcomeError(task)
+func TestExecutionOutcomeErrorSummaryCarriesPolicyDeniedPrefix(t *testing.T) {
+	execution := map[string]any{"status": "degraded", "summary": "DENIED by policy: destructive command blocked by rule cmd.rm-rf"}
+	err := executionOutcomeError(execution)
 	if err == nil {
 		t.Fatal("expected a non-nil error")
 	}
@@ -66,34 +66,34 @@ func TestTaskOutcomeErrorSummaryCarriesPolicyDeniedPrefix(t *testing.T) {
 	}
 }
 
-// TestTaskOutcomeErrorWaitingApprovalIsDistinctSentinel pins the
-// non-terminal "task is paused for a human decision" case: pollTaskUntilTerminal
+// TestExecutionOutcomeErrorWaitingApprovalIsDistinctSentinel pins the
+// non-terminal "execution is paused for a human decision" case: pollExecutionUntilTerminal
 // must not treat waiting_approval as done, but if a caller ever passes it to
-// taskOutcomeError directly it must not silently classify as OK either.
-func TestTaskOutcomeErrorWaitingApprovalIsDistinctSentinel(t *testing.T) {
-	task := map[string]any{"status": "waiting_approval", "task_id": "t1"}
-	err := taskOutcomeError(task)
+// executionOutcomeError directly it must not silently classify as OK either.
+func TestExecutionOutcomeErrorWaitingApprovalIsDistinctSentinel(t *testing.T) {
+	execution := map[string]any{"status": "waiting_approval", "run_id": "t1"}
+	err := executionOutcomeError(execution)
 	if err == nil {
-		t.Fatal("taskOutcomeError(waiting_approval) = nil, want a non-nil sentinel (never silently OK)")
+		t.Fatal("executionOutcomeError(waiting_approval) = nil, want a non-nil sentinel (never silently OK)")
 	}
-	if !errors.Is(err, errTaskWaitingApproval) {
-		t.Fatalf("taskOutcomeError(waiting_approval) = %v, want it to wrap errTaskWaitingApproval", err)
+	if !errors.Is(err, errExecutionWaitingApproval) {
+		t.Fatalf("executionOutcomeError(waiting_approval) = %v, want it to wrap errExecutionWaitingApproval", err)
 	}
 }
 
-// TestIsTerminalTaskStatus pins the terminal/non-terminal status split
-// pollTaskUntilTerminal relies on.
-func TestIsTerminalTaskStatus(t *testing.T) {
+// TestIsTerminalExecutionStatus pins the terminal/non-terminal status split
+// pollExecutionUntilTerminal relies on.
+func TestIsTerminalExecutionStatus(t *testing.T) {
 	terminal := []string{"completed", "degraded", "failed", "cancelled"}
 	for _, s := range terminal {
-		if !isTerminalTaskStatus(s) {
-			t.Errorf("isTerminalTaskStatus(%q) = false, want true", s)
+		if !isTerminalExecutionStatus(s) {
+			t.Errorf("isTerminalExecutionStatus(%q) = false, want true", s)
 		}
 	}
 	nonTerminal := []string{"queued", "running", "paused", "waiting_approval"}
 	for _, s := range nonTerminal {
-		if isTerminalTaskStatus(s) {
-			t.Errorf("isTerminalTaskStatus(%q) = true, want false", s)
+		if isTerminalExecutionStatus(s) {
+			t.Errorf("isTerminalExecutionStatus(%q) = true, want false", s)
 		}
 	}
 }
@@ -101,7 +101,7 @@ func TestIsTerminalTaskStatus(t *testing.T) {
 // TestHasFlagAndDropFlagBackgroundOptOut pins the exact args-parsing
 // interplay run()'s "run"/"ask" case relies on: --background must be
 // detected via hasFlag BEFORE dropFlag strips it, so the CLI can still tell
-// whether to skip runWaitForTask after parseRunArgs consumes the remaining
+// whether to skip runWaitForExecution after parseRunArgs consumes the remaining
 // flags/prompt.
 func TestHasFlagAndDropFlagBackgroundOptOut(t *testing.T) {
 	args := []string{"--model", "openai/gpt-5", "--background", "ship it"}
@@ -121,16 +121,16 @@ func TestHasFlagAndDropFlagBackgroundOptOut(t *testing.T) {
 	}
 }
 
-// fakeTaskStatusPoller replays a fixed sequence of task.status responses,
-// one per Call, so runWaitForTask's polling loop is testable without a
+// fakeExecutionStatusPoller replays a fixed sequence of execution.status responses,
+// one per Call, so runWaitForExecution's polling loop is testable without a
 // live daemon connection or real time.Sleep.
-type fakeTaskStatusPoller struct {
+type fakeExecutionStatusPoller struct {
 	responses []map[string]any
 	calls     int
 }
 
-func (f *fakeTaskStatusPoller) Call(method string, params any, result any) error {
-	if method != "task.status" {
+func (f *fakeExecutionStatusPoller) Call(method string, params any, result any) error {
+	if method != "execution.status" {
 		return fmt.Errorf("unexpected method %q", method)
 	}
 	resp := f.responses[len(f.responses)-1]
@@ -146,69 +146,69 @@ func (f *fakeTaskStatusPoller) Call(method string, params any, result any) error
 	return nil
 }
 
-// TestRunWaitForTaskReturnsImmediatelyOnFirstTerminalPoll proves the
-// P1.5(b) fix end to end at the polling layer: a task already terminal on
-// the very first task.status poll must classify without looping.
-func TestRunWaitForTaskReturnsImmediatelyOnFirstTerminalPoll(t *testing.T) {
-	poller := &fakeTaskStatusPoller{responses: []map[string]any{
+// TestRunWaitForExecutionReturnsImmediatelyOnFirstTerminalPoll proves the
+// P1.5(b) fix end to end at the polling layer: a execution already terminal on
+// the very first execution.status poll must classify without looping.
+func TestRunWaitForExecutionReturnsImmediatelyOnFirstTerminalPoll(t *testing.T) {
+	poller := &fakeExecutionStatusPoller{responses: []map[string]any{
 		{"status": "completed", "summary": "done"},
 	}}
 	var slept int
-	err := runWaitForTask(poller, "t1", time.Minute, func(time.Duration) { slept++ })
+	err := runWaitForExecution(poller, "t1", time.Minute, func(time.Duration) { slept++ })
 	if err != nil {
-		t.Fatalf("runWaitForTask = %v, want nil for a completed task", err)
+		t.Fatalf("runWaitForExecution = %v, want nil for a completed execution", err)
 	}
 	if poller.calls != 1 {
-		t.Fatalf("expected exactly 1 task.status call, got %d", poller.calls)
+		t.Fatalf("expected exactly 1 execution.status call, got %d", poller.calls)
 	}
 	if slept != 0 {
 		t.Fatalf("expected no sleep once the first poll is already terminal, got %d sleeps", slept)
 	}
 }
 
-// TestRunWaitForTaskPollsThroughRunningToFailed proves the polling loop
+// TestRunWaitForExecutionPollsThroughRunningToFailed proves the polling loop
 // advances through non-terminal statuses and returns the classified error
-// once the task reaches "failed" — the exact gap the finding describes:
-// `carina run` must observe this, not return nil after task.submit.
-func TestRunWaitForTaskPollsThroughRunningToFailed(t *testing.T) {
-	poller := &fakeTaskStatusPoller{responses: []map[string]any{
+// once the execution reaches "failed" — the exact gap the finding describes:
+// `carina run` must observe this, not return nil after execution.start.
+func TestRunWaitForExecutionPollsThroughRunningToFailed(t *testing.T) {
+	poller := &fakeExecutionStatusPoller{responses: []map[string]any{
 		{"status": "queued"},
 		{"status": "running"},
 		{"status": "failed", "summary": "model error: rate limited"},
 	}}
 	var slept int
-	err := runWaitForTask(poller, "t1", time.Minute, func(time.Duration) { slept++ })
+	err := runWaitForExecution(poller, "t1", time.Minute, func(time.Duration) { slept++ })
 	if err == nil {
-		t.Fatal("runWaitForTask = nil, want a non-nil error for a task that ends failed")
+		t.Fatal("runWaitForExecution = nil, want a non-nil error for a execution that ends failed")
 	}
 	if got := classifyExitCode(err); got != outcome.OutcomeRuntimeError {
-		t.Fatalf("classifyExitCode(runWaitForTask result) = %v, want OutcomeRuntimeError", got)
+		t.Fatalf("classifyExitCode(runWaitForExecution result) = %v, want OutcomeRuntimeError", got)
 	}
 	if poller.calls != 3 {
-		t.Fatalf("expected 3 task.status calls (queued, running, failed), got %d", poller.calls)
+		t.Fatalf("expected 3 execution.status calls (queued, running, failed), got %d", poller.calls)
 	}
 	if slept != 2 {
 		t.Fatalf("expected 2 sleeps between the 3 polls, got %d", slept)
 	}
 }
 
-// TestRunWaitForTaskGivesUpAfterTimeout proves the poll loop is bounded: a
-// task stuck in "running" forever must not hang the CLI process
+// TestRunWaitForExecutionGivesUpAfterTimeout proves the poll loop is bounded: a
+// execution stuck in "running" forever must not hang the CLI process
 // indefinitely — it must return a non-nil error once the timeout elapses.
-func TestRunWaitForTaskGivesUpAfterTimeout(t *testing.T) {
-	poller := &fakeTaskStatusPoller{responses: []map[string]any{
+func TestRunWaitForExecutionGivesUpAfterTimeout(t *testing.T) {
+	poller := &fakeExecutionStatusPoller{responses: []map[string]any{
 		{"status": "running"},
 	}}
 	var slept int
-	// runWaitForTask uses time.Now() internally; drive it to exceed a tiny
+	// runWaitForExecution uses time.Now() internally; drive it to exceed a tiny
 	// timeout using a real (but tiny) duration so the test stays fast
 	// without needing to inject a clock.
-	err := runWaitForTask(poller, "t1", 10*time.Millisecond, func(d time.Duration) {
+	err := runWaitForExecution(poller, "t1", 10*time.Millisecond, func(d time.Duration) {
 		slept++
 		time.Sleep(d)
 	})
 	if err == nil {
-		t.Fatal("runWaitForTask = nil, want a non-nil error once the timeout elapses on a non-terminal task")
+		t.Fatal("runWaitForExecution = nil, want a non-nil error once the timeout elapses on a non-terminal execution")
 	}
 	if slept == 0 {
 		t.Fatal("expected at least one sleep before giving up")

@@ -26,7 +26,6 @@ class Carina < Formula
 
   def install
     bin.install Dir["bin/carina*"]
-    bin.install "bin/headroom" if File.exist?("bin/headroom")
   end
 
   def caveats
@@ -35,14 +34,12 @@ class Carina < Formula
 
       Start it explicitly:
         carina-daemon
-
-      The Headroom context engine is bundled and selected automatically when healthy.
     EOS
   end
 
   test do
     assert_match "carina #{version}", shell_output("#{bin}/carina --version")
-    %w[carina-ui carina-daemon carina-worker carina-kernel-service headroom].each do |executable|
+    %w[carina-ui carina-daemon carina-worker carina-kernel-service].each do |executable|
       assert_predicate bin/executable, :executable?
     end
   end

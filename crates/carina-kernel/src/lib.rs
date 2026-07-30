@@ -9,7 +9,10 @@ mod secret;
 pub use secret::SecretBroker;
 
 use carina_audit::{AuditError, AuditLog, Event, EventType};
-use carina_policy::{ApprovalMode, Capability, CapabilityRequest, Decision, PolicyBundle, PolicyEngine, Profile, Verdict};
+use carina_policy::{
+    ApprovalMode, Capability, CapabilityRequest, Decision, PolicyBundle, PolicyEngine, Profile,
+    Verdict,
+};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -55,8 +58,13 @@ impl carina_plugin_runtime::CapabilityHost for ProfileHost {
             session_id: String::new(),
             task_id: None,
         };
-        PolicyEngine::evaluate_with_bundle(&self.profile, self.bundle.as_ref(), &self.workspace_root, &request)
-            .decision
+        PolicyEngine::evaluate_with_bundle(
+            &self.profile,
+            self.bundle.as_ref(),
+            &self.workspace_root,
+            &request,
+        )
+        .decision
             == Verdict::Allowed
     }
 }
@@ -175,7 +183,9 @@ impl Kernel {
 
     /// Trusts an ed25519 publisher key for signed-plugin verification.
     pub fn trust_plugin_key(&mut self, key_bytes: &[u8]) -> Result<(), KernelError> {
-        self.verifier.trust_key(key_bytes).map_err(|e| KernelError::Plugin(e.to_string()))
+        self.verifier
+            .trust_key(key_bytes)
+            .map_err(|e| KernelError::Plugin(e.to_string()))
     }
 
     /// Sets the role-based approval policy.
@@ -296,8 +306,8 @@ impl Kernel {
                 "created_at_ms": overlay.created_at_ms.to_string(),
             });
         }
-        let mut event = Event::new(&self.session_id, event_type, payload)
-            .with_decision(&decision.decision_id);
+        let mut event =
+            Event::new(&self.session_id, event_type, payload).with_decision(&decision.decision_id);
         if let Some(task_id) = &req.task_id {
             event = event.with_task(task_id);
         }
@@ -306,7 +316,11 @@ impl Kernel {
     }
 
     /// Convenience wrapper for the hot path: workspace file reads.
-    pub fn request_file_read(&self, path: &str, task_id: Option<String>) -> Result<Decision, KernelError> {
+    pub fn request_file_read(
+        &self,
+        path: &str,
+        task_id: Option<String>,
+    ) -> Result<Decision, KernelError> {
         self.request(CapabilityRequest {
             capability: Capability::FileRead,
             requested_by: carina_policy::Principal::Agent,
@@ -325,7 +339,11 @@ impl Kernel {
     /// Approves and remembers for the whole session: subsequent requests for
     /// the same capability+resource-prefix auto-satisfy (Codex
     /// ApprovedForSession — cuts approval fatigue on long tasks).
-    pub fn approve_for_session(&self, decision: &Decision, approver: &str) -> Result<Decision, KernelError> {
+    pub fn approve_for_session(
+        &self,
+        decision: &Decision,
+        approver: &str,
+    ) -> Result<Decision, KernelError> {
         self.approve_for_session_with_justification(decision, approver, "approved for session")
     }
 
@@ -352,7 +370,9 @@ impl Kernel {
             },
             created_at_ms: now_ms(),
         };
-        self.approval_overlays.borrow_mut().insert(key, overlay.clone());
+        self.approval_overlays
+            .borrow_mut()
+            .insert(key, overlay.clone());
         let approved = self.approve_as(decision, approver, None)?;
         let event = Event::new(
             &self.session_id,
@@ -390,7 +410,11 @@ impl Kernel {
                         "approval rejected: risk {risk} requires role '{required}', approver had {:?}",
                         role
                     );
-                    let denied = Decision { decision: Verdict::Denied, reason: reason.clone(), ..decision.clone() };
+                    let denied = Decision {
+                        decision: Verdict::Denied,
+                        reason: reason.clone(),
+                        ..decision.clone()
+                    };
                     let event = Event::new(
                         &self.session_id,
                         EventType::ToolDenied,
@@ -419,7 +443,12 @@ impl Kernel {
     }
 
     /// Records a denial issued by a human reviewer.
-    pub fn deny(&self, decision: &Decision, approver: &str, reason: &str) -> Result<Decision, KernelError> {
+    pub fn deny(
+        &self,
+        decision: &Decision,
+        approver: &str,
+        reason: &str,
+    ) -> Result<Decision, KernelError> {
         let denied = Decision {
             decision: Verdict::Denied,
             reason: format!("denied by {approver}: {reason}"),
@@ -504,7 +533,11 @@ impl Kernel {
 
         // Audit each capability decision the plugin made.
         for d in &outcome.decisions {
-            let event_type = if d.allowed { EventType::ToolApproved } else { EventType::PolicyViolation };
+            let event_type = if d.allowed {
+                EventType::ToolApproved
+            } else {
+                EventType::PolicyViolation
+            };
             let event = Event::new(
                 &self.session_id,
                 event_type,
@@ -552,12 +585,18 @@ impl Kernel {
 
 fn now_ms() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
 }
 
 fn new_overlay_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     format!("approval_overlay_{nanos:x}")
 }
 
@@ -590,7 +629,9 @@ mod tests {
         let kernel = Kernel::new("sess_k2", &ws, "safe-edit", &dir).unwrap();
 
         let inside = ws.join("main.rs");
-        let decision = kernel.request_file_read(inside.to_str().unwrap(), None).unwrap();
+        let decision = kernel
+            .request_file_read(inside.to_str().unwrap(), None)
+            .unwrap();
         assert_eq!(decision.decision, Verdict::Allowed);
 
         let events = kernel.audit().read_all().unwrap();
@@ -600,7 +641,10 @@ mod tests {
 
     fn tmp(name: &str) -> PathBuf {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let n = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         std::env::temp_dir().join(format!("carina-kernel-{name}-{}-{n:x}", std::process::id()))
     }
 
@@ -616,17 +660,23 @@ mod tests {
         let target = extra.join("notes.txt");
 
         // Before the grant: a read outside the workspace is denied.
-        let before = kernel.request_file_read(target.to_str().unwrap(), None).unwrap();
+        let before = kernel
+            .request_file_read(target.to_str().unwrap(), None)
+            .unwrap();
         assert_eq!(before.decision, Verdict::Denied);
 
         // After /add-dir: the same read is allowed (evaluated against the added root).
         kernel.add_dir(&extra);
-        let after = kernel.request_file_read(target.to_str().unwrap(), None).unwrap();
+        let after = kernel
+            .request_file_read(target.to_str().unwrap(), None)
+            .unwrap();
         assert_eq!(after.decision, Verdict::Allowed);
 
         // A path in neither root remains denied.
         let elsewhere = tmp("adddir-other").join("x.txt");
-        let denied = kernel.request_file_read(elsewhere.to_str().unwrap(), None).unwrap();
+        let denied = kernel
+            .request_file_read(elsewhere.to_str().unwrap(), None)
+            .unwrap();
         assert_eq!(denied.decision, Verdict::Denied);
 
         std::fs::remove_dir_all(&audit).ok();
@@ -682,7 +732,11 @@ mod tests {
         assert_eq!(first.decision, Verdict::RequiresApproval);
 
         let approved = kernel
-            .approve_for_session_with_justification(&first, "alice", "task needs npm dependency installs")
+            .approve_for_session_with_justification(
+                &first,
+                "alice",
+                "task needs npm dependency installs",
+            )
             .unwrap();
         assert_eq!(approved.decision, Verdict::Allowed);
 
@@ -764,7 +818,11 @@ mod tests {
             .unwrap();
         assert_eq!(first.decision, Verdict::RequiresApproval);
         kernel
-            .approve_for_session_with_justification(&first, "alice", "allow simple rm during cleanup")
+            .approve_for_session_with_justification(
+                &first,
+                "alice",
+                "allow simple rm during cleanup",
+            )
             .unwrap();
 
         let destructive = kernel
@@ -803,7 +861,9 @@ mod tests {
         kernel.set_approval_policy(ApprovalPolicy {
             required_role_at_risk: vec![(2, "lead".into())],
         });
-        kernel.request_file_read("/etc/passwd", Some("task_1".into())).unwrap();
+        kernel
+            .request_file_read("/etc/passwd", Some("task_1".into()))
+            .unwrap();
         let export = kernel.export_audit().unwrap();
         assert!(export["event_count"].as_u64().unwrap() >= 1);
         assert_eq!(export["profile"], "safe-edit");

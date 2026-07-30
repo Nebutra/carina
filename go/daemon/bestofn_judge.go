@@ -53,7 +53,7 @@ type bestOfNJudgeVerdict struct {
 // picking a candidate implicitly. When no judge Reasoner is configured, a
 // deterministic heuristic (shortest total diff among valid candidates) is
 // used instead of a model call — still fail-closed on zero valid candidates.
-func (d *Daemon) judgeBestOfN(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task, originalTask string, candidates []bestOfNCandidate) (bestOfNCandidate, string, error) {
+func (d *Daemon) judgeBestOfN(ctx context.Context, sess *sessionstore.Session, task *scheduler.ExecutionRun, originalTask string, candidates []bestOfNCandidate) (bestOfNCandidate, string, error) {
 	valid := make([]bestOfNCandidate, 0, len(candidates))
 	for _, c := range candidates {
 		if c.Valid {

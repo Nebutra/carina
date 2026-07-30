@@ -43,18 +43,40 @@ type Toolchain struct {
 	dir string // directory containing the carina-* binaries; "" = $PATH
 }
 
-// New resolves the tools directory: explicit arg, $CARINA_TOOLS_DIR, the
-// in-repo zig-out/bin, or $PATH.
+// New resolves the tools directory: explicit arg, $CARINA_TOOLS_DIR, an
+// installed sibling bundle, the in-repo zig-out/bin, or $PATH. Even when the
+// tools are discovered through $PATH, keep their concrete directory so the
+// daemon can pass it to the kernel as CARINA_TOOLS_DIR.
 func New(dir string) *Toolchain {
 	if dir == "" {
 		dir = os.Getenv("CARINA_TOOLS_DIR")
+	}
+	if dir == "" {
+		if exe, err := os.Executable(); err == nil {
+			dir = nativeToolsBeside(exe)
+		}
 	}
 	if dir == "" {
 		if _, err := os.Stat(filepath.Join("zig", "zig-out", "bin", "carina-scan")); err == nil {
 			dir = filepath.Join("zig", "zig-out", "bin")
 		}
 	}
+	if dir == "" {
+		if patchBin, err := exec.LookPath("carina-patch-native"); err == nil {
+			if absolute, absErr := filepath.Abs(patchBin); absErr == nil {
+				dir = filepath.Dir(absolute)
+			}
+		}
+	}
 	return &Toolchain{dir: dir}
+}
+
+func nativeToolsBeside(executable string) string {
+	dir := filepath.Dir(executable)
+	if _, err := os.Stat(filepath.Join(dir, "carina-patch-native")); err == nil {
+		return dir
+	}
+	return ""
 }
 
 func (t *Toolchain) tool(name string) string {
@@ -64,7 +86,7 @@ func (t *Toolchain) tool(name string) string {
 	return name
 }
 
-// Dir returns the resolved tools directory ("" if tools are on $PATH).
+// Dir returns the resolved tools directory ("" only when no bundle was found).
 func (t *Toolchain) Dir() string { return t.dir }
 
 // Available reports whether the native tools can be found.

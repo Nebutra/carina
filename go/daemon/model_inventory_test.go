@@ -80,6 +80,45 @@ func TestModelListReportsConcreteDefaultAndDaemonOwnedReasoner(t *testing.T) {
 	}
 }
 
+func TestModelListBecomesExecutionReadyAfterCredentialWriteWithoutDaemonRestart(t *testing.T) {
+	store, err := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := provider.Catalog{"openai": {
+		ID: "openai", API: "https://api.openai.com/v1", NPM: "@ai-sdk/openai",
+		Models: map[string]provider.Model{"gpt-test": {ID: "gpt-test"}},
+	}}
+	d := &Daemon{
+		router:            modelrouter.New(),
+		authStore:         store,
+		providerCatalog:   cat,
+		disabledProviders: map[string]bool{},
+		reasoner:          modelInventoryTestReasoner{name: reasonerBackendRouter},
+		reasonerBackend:   reasonerBackendRouter,
+	}
+	d.router.RegisterProvider(inventoryProvider("openai"))
+
+	readiness := func() (bool, bool) {
+		result, listErr := d.handleModelList(nil)
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		response := result.(map[string]any)
+		providers := response["providers"].([]modelInventoryProvider)
+		return providers[0].Available, response["reasoner"].(modelInventoryReasoner).Available
+	}
+	if providerReady, executionReady := readiness(); providerReady || executionReady {
+		t.Fatalf("readiness before import = provider:%v execution:%v", providerReady, executionReady)
+	}
+	if err := store.SetAPIKey("openai", "runtime-imported-key", nil); err != nil {
+		t.Fatal(err)
+	}
+	if providerReady, executionReady := readiness(); !providerReady || !executionReady {
+		t.Fatalf("readiness after import = provider:%v execution:%v", providerReady, executionReady)
+	}
+}
+
 func TestModelListReportsOnlyExplicitlyConstructedCLIReasoner(t *testing.T) {
 	d := &Daemon{router: modelrouter.New()}
 	result, err := d.handleModelList(nil)
@@ -165,5 +204,160 @@ func TestModelListPublishesInputAndToolCapabilities(t *testing.T) {
 	providers := result.(map[string]any)["providers"].([]modelInventoryProvider)
 	if len(providers) != 1 || len(providers[0].Models) != 1 || !providers[0].Models[0].ImageInput || !providers[0].Models[0].ToolCall {
 		t.Fatalf("model capabilities = %+v", providers)
+	}
+}
+
+func TestModelListProjectsCCSwitchDiscoveryWithoutSourceIDsOrSecrets(t *testing.T) {
+	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	d := &Daemon{
+		router:    modelrouter.New(),
+		authStore: store,
+		providerCatalog: provider.Catalog{"ccswitch-codex-safe": {
+			ID: "ccswitch-codex-safe", Name: "Relay", API: "https://relay.example/v1", APIProtocol: "openai-responses",
+			Source: &provider.Source{
+				Kind: provider.CCSwitchSourceKind, Label: provider.CCSwitchSourceLabel,
+				App: "codex", Route: provider.CCSwitchRouteManagedProxy, AuthMode: provider.CCSwitchCredentialBearer,
+				Action: provider.CCSwitchActionUseActiveRoute, Current: true, Importable: true,
+			},
+			Models: map[string]provider.Model{"gpt-test": {ID: "gpt-test"}},
+		}},
+	}
+	d.router.RegisterProvider(inventoryProvider("ccswitch-codex-safe"))
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers := result.(map[string]any)["providers"].([]modelInventoryProvider)
+	if len(providers) != 1 {
+		t.Fatalf("providers = %+v", providers)
+	}
+	row := providers[0]
+	if row.Available || row.SourceKind != provider.CCSwitchSourceKind || row.SourceLabel != "CC Switch" || !row.SourceCurrent || !row.SourceImportable {
+		t.Fatalf("discovered row = %+v", row)
+	}
+	if row.SourceApp != "codex" || row.SourceRoute != provider.CCSwitchRouteManagedProxy || row.SourceAuthMode != provider.CCSwitchCredentialBearer || row.SourceAction != provider.CCSwitchActionUseActiveRoute {
+		t.Fatalf("typed source route = %+v", row)
+	}
+	if len(row.Models) != 1 || row.Models[0].DisplayID != "Relay / gpt-test" {
+		t.Fatalf("safe model display projection = %+v", row.Models)
+	}
+	if got := detectRuntimeProtocol(d.providerCatalog[row.ID]); got != protocolOpenAIResponses {
+		t.Fatalf("runtime protocol = %q", got)
+	}
+}
+
+func TestModelListRequiresMatchingCCSwitchSourceRevision(t *testing.T) {
+	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	const providerID = "ccswitch-codex-managed-proxy"
+	if err := store.SetBearerToken(providerID, "stale-secret", map[string]string{
+		"source": provider.CCSwitchSourceKind, "validation": providerValidationContract, "source_revision": "old",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	info := provider.Info{
+		ID: providerID, Name: "Active Codex route", API: "http://127.0.0.1:15721/v1", APIProtocol: "openai-responses",
+		Source: &provider.Source{
+			Kind: provider.CCSwitchSourceKind, Route: provider.CCSwitchRouteManagedProxy,
+			Revision: "current", Importable: true,
+		},
+		Models: map[string]provider.Model{"gpt-live": {ID: "gpt-live"}},
+	}
+	d := &Daemon{
+		router: modelrouter.New(), authStore: store, providerCatalog: provider.Catalog{providerID: info},
+		reasoner: modelInventoryTestReasoner{name: reasonerBackendRouter}, reasonerBackend: reasonerBackendRouter,
+	}
+	d.router.RegisterProvider(inventoryProvider(providerID))
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := result.(map[string]any)["providers"].([]modelInventoryProvider)
+	if len(rows) != 1 || rows[0].Available || rows[0].AuthSource != "" || d.reasonerReady() {
+		t.Fatalf("stale managed credential became runnable: %+v", rows)
+	}
+	if err := store.SetBearerToken(providerID, "current-secret", map[string]string{
+		"source": provider.CCSwitchSourceKind, "validation": providerValidationContract, "source_revision": "current",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows = result.(map[string]any)["providers"].([]modelInventoryProvider)
+	if len(rows) != 1 || !rows[0].Available || rows[0].AuthSource != "auth:"+providerID || !d.reasonerReady() {
+		t.Fatalf("current managed credential not runnable: %+v", rows)
+	}
+}
+
+func TestModelListOrdersRunnableThenManagedThenSavedThenOrdinary(t *testing.T) {
+	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	if err := store.SetAPIKey("ready", "secret", nil); err != nil {
+		t.Fatal(err)
+	}
+	catalog := provider.Catalog{
+		"ordinary": {ID: "ordinary", Name: "A ordinary", API: "https://ordinary.example/v1", APIProtocol: "openai-responses"},
+		"saved": {
+			ID: "saved", Name: "B saved", API: "https://saved.example/v1", APIProtocol: "openai-responses",
+			Source: &provider.Source{Kind: provider.CCSwitchSourceKind, Route: provider.CCSwitchRouteSavedProfile, Importable: true},
+		},
+		"managed": {
+			ID: "managed", Name: "Z managed", API: "http://127.0.0.1:15721/v1", APIProtocol: "openai-responses",
+			Source: &provider.Source{Kind: provider.CCSwitchSourceKind, Route: provider.CCSwitchRouteManagedProxy, Importable: true},
+		},
+		"ready": {ID: "ready", Name: "Z ready", API: "https://ready.example/v1", APIProtocol: "openai-responses"},
+	}
+	d := &Daemon{router: modelrouter.New(), authStore: store, providerCatalog: catalog}
+	for id := range catalog {
+		d.router.RegisterProvider(inventoryProvider(id))
+	}
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := result.(map[string]any)["providers"].([]modelInventoryProvider)
+	got := make([]string, 0, len(rows))
+	for _, row := range rows {
+		got = append(got, row.ID)
+	}
+	want := []string{"ready", "managed", "saved", "ordinary"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("provider order = %v, want %v", got, want)
+	}
+}
+
+func TestModelListRequiresCurrentCCSwitchValidationContract(t *testing.T) {
+	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	const providerID = "ccswitch-claude-safe"
+	if err := store.SetAPIKey(providerID, "legacy-secret", map[string]string{"source": provider.CCSwitchSourceKind}); err != nil {
+		t.Fatal(err)
+	}
+	info := provider.Info{
+		ID: providerID, Name: "Claude Relay", API: "https://relay.example", APIProtocol: "anthropic",
+		Source: &provider.Source{Kind: provider.CCSwitchSourceKind, Label: provider.CCSwitchSourceLabel, Importable: true},
+		Models: map[string]provider.Model{"claude-test": {ID: "claude-test"}},
+	}
+	d := &Daemon{router: modelrouter.New(), authStore: store, providerCatalog: provider.Catalog{providerID: info}}
+	d.router.RegisterProvider(inventoryProvider(providerID))
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers := result.(map[string]any)["providers"].([]modelInventoryProvider)
+	if len(providers) != 1 || providers[0].Available || providers[0].AuthSource != "" {
+		t.Fatalf("legacy unvalidated CC Switch credential became runnable: %+v", providers)
+	}
+	if err := store.SetBearerToken(providerID, "validated-secret", map[string]string{
+		"source": provider.CCSwitchSourceKind, "validation": providerValidationContract,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers = result.(map[string]any)["providers"].([]modelInventoryProvider)
+	if len(providers) != 1 || !providers[0].Available || providers[0].AuthSource != "auth:"+providerID {
+		t.Fatalf("validated CC Switch credential not runnable: %+v", providers)
 	}
 }

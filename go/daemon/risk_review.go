@@ -74,7 +74,7 @@ func (d *Daemon) SetRiskReviewer(r Reasoner) { d.riskReviewer = r }
 
 func (d *Daemon) SetRiskReviewMode(mode string) error { return d.setRiskReviewMode(mode) }
 
-func (d *Daemon) reviewAutonomousApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) bool {
+func (d *Daemon) reviewAutonomousApproval(sess *sessionstore.Session, task *scheduler.ExecutionRun, dec *kernel.Decision, label string) bool {
 	mode := d.riskReviewModeString()
 	if mode == riskReviewOff {
 		return true
@@ -84,7 +84,7 @@ func (d *Daemon) reviewAutonomousApproval(sess *sessionstore.Session, task *sche
 	return mode != riskReviewEnforce || assessment.Outcome != "deny"
 }
 
-func (d *Daemon) assessApprovalRisk(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) riskReviewAssessment {
+func (d *Daemon) assessApprovalRisk(ctx context.Context, sess *sessionstore.Session, task *scheduler.ExecutionRun, dec *kernel.Decision, label string) riskReviewAssessment {
 	if d.riskReviewer == nil {
 		return d.heuristicRiskReview(dec)
 	}
@@ -187,10 +187,10 @@ func riskLabel(risk int) string {
 	}
 }
 
-func buildRiskReviewPrompt(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) string {
+func buildRiskReviewPrompt(sess *sessionstore.Session, task *scheduler.ExecutionRun, dec *kernel.Decision, label string) string {
 	payload := map[string]any{
 		"session_id":    sess.SessionID,
-		"task_id":       task.TaskID,
+		"task_id":       task.RunID,
 		"task":          task.UserPrompt,
 		"workspace":     sess.WorkspaceRoot,
 		"decision_id":   dec.DecisionID,
@@ -236,8 +236,8 @@ func parseRiskReviewAssessment(raw string) (riskReviewAssessment, error) {
 	return assessment, nil
 }
 
-func (d *Daemon) recordRiskReview(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label, mode string, assessment riskReviewAssessment) {
-	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+func (d *Daemon) recordRiskReview(sess *sessionstore.Session, task *scheduler.ExecutionRun, dec *kernel.Decision, label, mode string, assessment riskReviewAssessment) {
+	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
 		"status":        "risk_review",
 		"mode":          mode,
 		"decision_id":   dec.DecisionID,

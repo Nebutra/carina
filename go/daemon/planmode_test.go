@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Nebutra/carina/go/scheduler"
 )
 
 // TestPlanMode: while plan mode is on, exploration (list/read) is allowed but
@@ -52,11 +54,11 @@ func TestPlanModeSwitchNoticeInjection(t *testing.T) {
 	sess, _ := d.store.CreateSession(ws, "full-workspace")
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "full-workspace", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "x")
-	d.sched.SetStatus(task.TaskID, "running")
+	d.sched.SetStatus(task.RunID, "running")
 
 	// A normal-priority steering note is already queued; the mode-switch
 	// notice must still drain first (urgent tier).
-	d.steer(task.TaskID, "please also add tests")
+	d.steer(task.RunID, "please also add tests")
 
 	if _, err := d.handlePlanMode(mustJSON(t, map[string]any{
 		"session_id": sess.SessionID,
@@ -64,7 +66,7 @@ func TestPlanModeSwitchNoticeInjection(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("handlePlanMode: %v", err)
 	}
-	msgs := d.drainMailbox(task.TaskID)
+	msgs := d.drainMailbox(task.RunID)
 	if len(msgs) != 2 {
 		t.Fatalf("expected mode-switch notice plus queued steering note, got %#v", msgs)
 	}
@@ -81,20 +83,94 @@ func TestPlanModeSwitchNoticeInjection(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("handleApprovePlan: %v", err)
 	}
-	msgs = d.drainMailbox(task.TaskID)
+	msgs = d.drainMailbox(task.RunID)
 	if len(msgs) != 1 || !strings.Contains(msgs[0], "MODE SWITCH") || !strings.Contains(msgs[0], "plan mode is now OFF") {
 		t.Fatalf("expected a single OFF mode-switch notice, got %#v", msgs)
 	}
 
 	// No active task in the session: notice injection is a no-op, not an error.
-	d.sched.SetStatus(task.TaskID, "completed")
+	d.sched.SetStatus(task.RunID, "completed")
 	if _, err := d.handlePlanMode(mustJSON(t, map[string]any{
 		"session_id": sess.SessionID,
 		"on":         true,
 	})); err != nil {
 		t.Fatalf("handlePlanMode with no active task: %v", err)
 	}
-	if got := d.drainMailbox(task.TaskID); len(got) != 0 {
+	if got := d.drainMailbox(task.RunID); len(got) != 0 {
 		t.Fatalf("no active task should mean no mailbox notice, got %#v", got)
+	}
+}
+
+func TestApproveCompletedPlanSubmitsOneInheritedBuildTask(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "full-workspace")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "full-workspace", nil)
+	plan := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, "design it", "openai/gpt-5", "plan", nil)
+	d.sched.SetLocale(plan.RunID, "zh")
+	d.sched.SetModelState(plan.RunID, "openai/gpt-5", "openai/gpt-5")
+	d.sched.SetReasoningEffortState(plan.RunID, "high", "high")
+	if _, err := d.sched.SetTerminalResultFenced(plan.RunID, 0, "completed", "1. inspect\n2. implement\n3. verify", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.handlePlanMode(mustJSON(t, map[string]any{"session_id": sess.SessionID, "on": true})); err != nil {
+		t.Fatal(err)
+	}
+
+	resultAny, err := d.handleApprovePlan(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := resultAny.(map[string]any)
+	build, ok := result["task"].(*scheduler.ExecutionRun)
+	if !ok || build == nil {
+		t.Fatalf("approval result missing build task: %#v", result)
+	}
+	if build.Agent != "build" || build.Model != "openai/gpt-5" || build.RequestedReasoningEffort != "high" || build.Locale != "zh" {
+		t.Fatalf("build task did not inherit plan execution choices: %+v", build)
+	}
+	if build.UserPrompt != "Implement this approved plan:\n\n1. inspect\n2. implement\n3. verify" {
+		t.Fatalf("build prompt = %q", build.UserPrompt)
+	}
+
+	secondAny, err := d.handleApprovePlan(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := secondAny.(map[string]any)["task"].(*scheduler.ExecutionRun)
+	if second.RunID != build.RunID {
+		t.Fatalf("repeated approval returned %s, want %s", second.RunID, build.RunID)
+	}
+	if got := len(d.sched.List()); got != 2 {
+		t.Fatalf("repeated approval created duplicate tasks: %d", got)
+	}
+}
+
+func TestApproveActivePlanOnlyExitsModeAndNotifiesTask(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "full-workspace")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "full-workspace", nil)
+	plan := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, "design it", "", "plan", nil)
+	d.sched.SetStatus(plan.RunID, "running")
+	if _, err := d.handlePlanMode(mustJSON(t, map[string]any{"session_id": sess.SessionID, "on": true})); err != nil {
+		t.Fatal(err)
+	}
+	_ = d.drainMailbox(plan.RunID)
+
+	resultAny, err := d.handleApprovePlan(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := resultAny.(map[string]any)
+	if result["task"] != nil || d.isPlanMode(sess.SessionID) {
+		t.Fatalf("active approval must only exit mode: %#v", result)
+	}
+	msgs := d.drainMailbox(plan.RunID)
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "plan mode is now OFF") {
+		t.Fatalf("active plan task did not receive OFF notice: %#v", msgs)
+	}
+	if got := len(d.sched.List()); got != 1 {
+		t.Fatalf("active plan approval created another task: %d", got)
 	}
 }

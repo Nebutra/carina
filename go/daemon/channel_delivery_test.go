@@ -15,7 +15,7 @@ func TestChannelEventIsDurableAndSteersActiveTask(t *testing.T) {
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "watch CI")
-	d.sched.SetStatus(task.TaskID, "running")
+	d.sched.SetStatus(task.RunID, "running")
 	secret := []byte(strings.Repeat("c", 32))
 	if err := d.channels.Register(channels.Sender{ID: "ci", Secret: secret, Sessions: []string{sess.SessionID}, Kinds: []string{"build"}}); err != nil {
 		t.Fatal(err)
@@ -25,7 +25,7 @@ func TestChannelEventIsDurableAndSteersActiveTask(t *testing.T) {
 	if _, err := d.handleChannelEventInject(raw); err != nil {
 		t.Fatal(err)
 	}
-	messages := d.drainMailbox(task.TaskID)
+	messages := d.drainMailbox(task.RunID)
 	if len(messages) != 1 || !strings.Contains(messages[0], "CHANNEL EVENT build") || !strings.Contains(messages[0], "failed") {
 		t.Fatalf("channel event did not reach task mailbox: %#v", messages)
 	}

@@ -96,7 +96,7 @@ func TestSessionAttachCanonicalReplaysGovernanceLifecycle(t *testing.T) {
 			"task_id": "task_1", "decision_id": "perm_1", "capability": "CommandExec",
 		},
 	}, "perm_1")
-	d.record(sess.SessionID, "TaskCreated", "task_1", "operator", map[string]any{
+	d.record(sess.SessionID, "ExecutionProgressed", "run_1", "operator", map[string]any{
 		"status": "approval_resolved", "decision_id": "perm_1", "granted": true,
 	}, "perm_1")
 

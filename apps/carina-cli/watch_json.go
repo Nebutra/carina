@@ -29,7 +29,7 @@ func controlFrameForEvent(event map[string]any) (frame map[string]any, ok bool) 
 			"frame":       "control_request",
 			"decision_id": decisionID,
 		}
-		for _, key := range []string{"capability", "resource", "reason", "label", "diff", "session_id", "task_id"} {
+		for _, key := range []string{"capability", "resource", "reason", "label", "diff", "session_id", "run_id"} {
 			if v, present := event[key]; present {
 				out[key] = v
 			}
@@ -48,7 +48,7 @@ func controlFrameForEvent(event map[string]any) (frame map[string]any, ok bool) 
 			"prompt":      prompt,
 			"options":     options,
 		}
-		for _, key := range []string{"session_id", "task_id"} {
+		for _, key := range []string{"session_id", "run_id"} {
 			if v, present := event[key]; present {
 				out[key] = v
 			}

@@ -145,7 +145,11 @@ impl PatchTransaction {
     }
 
     pub fn approve(mut self, auto: bool) -> Result<Self, PatchError> {
-        self.approval_status = if auto { ApprovalStatus::Auto } else { ApprovalStatus::Approved };
+        self.approval_status = if auto {
+            ApprovalStatus::Auto
+        } else {
+            ApprovalStatus::Approved
+        };
         self.transition(PatchStatus::Approved)
     }
 
@@ -161,7 +165,11 @@ impl PatchTransaction {
     }
 
     pub fn mark_verified(mut self, tests_passed: bool) -> Result<Self, PatchError> {
-        self.test_status = if tests_passed { TestStatus::Passed } else { TestStatus::Failed };
+        self.test_status = if tests_passed {
+            TestStatus::Passed
+        } else {
+            TestStatus::Failed
+        };
         if tests_passed {
             self.transition(PatchStatus::Verified)
         } else {
@@ -200,7 +208,10 @@ impl PatchTransaction {
                 | (Verified, Failed)
         );
         if !legal {
-            return Err(PatchError::IllegalTransition { from: self.status, to });
+            return Err(PatchError::IllegalTransition {
+                from: self.status,
+                to,
+            });
         }
         self.status = to;
         Ok(self)
@@ -237,7 +248,14 @@ mod tests {
     use super::*;
 
     fn proposed() -> PatchTransaction {
-        PatchTransaction::propose("sess_1", vec!["src/auth.ts".into()], b"old", "-old\n+new", "fix auth").unwrap()
+        PatchTransaction::propose(
+            "sess_1",
+            vec!["src/auth.ts".into()],
+            b"old",
+            "-old\n+new",
+            "fix auth",
+        )
+        .unwrap()
     }
 
     #[test]
@@ -315,7 +333,10 @@ mod tests {
             .unwrap()
             .commit()
             .unwrap();
-        assert_eq!(committed.clone().rollback().unwrap().status, PatchStatus::RolledBack);
+        assert_eq!(
+            committed.clone().rollback().unwrap().status,
+            PatchStatus::RolledBack
+        );
     }
 
     #[test]

@@ -22,7 +22,7 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 	if _, ok := d.store.Get(p.SessionID); !ok {
 		return nil, fmt.Errorf("unknown session %s", p.SessionID)
 	}
-	var latest *scheduler.Task
+	var latest *scheduler.ExecutionRun
 	for _, task := range d.sched.List() {
 		if task.SessionID != p.SessionID {
 			continue
@@ -46,13 +46,13 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 		out["checkpoint"] = map[string]any{"available": false, "reason": "session has no task checkpoint"}
 		return out, nil
 	}
-	out["task"] = map[string]any{"task_id": latest.TaskID, "status": latest.Status, "tokens_used": latest.TokensUsed, "token_usage_observed": latest.TokenUsageObserved, "token_budget": latest.TokenBudget}
-	if usage, ok := d.usage.latestTaskContext(latest.TaskID); ok {
+	out["task"] = map[string]any{"task_id": latest.RunID, "status": latest.Status, "mode": latest.Mode, "tokens_used": latest.TokensUsed, "token_usage_observed": latest.TokenUsageObserved, "token_budget": latest.TokenBudget}
+	if usage, ok := d.usage.latestTaskContext(latest.RunID); ok {
 		used := usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
 		context := map[string]any{
 			"available": !usage.Estimated, "tokens": used, "measurement": "latest completed provider request",
 			"provider": usage.Provider, "model": usage.Model, "estimated": usage.Estimated,
-			"breakdown": map[string]any{"input_tokens": usage.InputTokens, "cache_read_tokens": usage.CacheReadTokens, "cache_write_tokens": usage.CacheWriteTokens},
+			"breakdown": map[string]any{"input_tokens": usage.InputTokens, "output_tokens": usage.OutputTokens, "cache_read_tokens": usage.CacheReadTokens, "cache_write_tokens": usage.CacheWriteTokens},
 		}
 		if usage.Estimated {
 			context["reason"] = "the active reasoner did not return provider token usage; tokens are explicitly estimated"
@@ -73,7 +73,7 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 		}
 		out["model_context_tokens"] = context
 	}
-	cp := d.runs.loadCheckpoint(latest.TaskID)
+	cp := d.runs.loadCheckpoint(latest.RunID)
 	if cp == nil || cp.Transcript == nil {
 		out["checkpoint"] = map[string]any{"available": false, "reason": "latest task has no persisted checkpoint"}
 		return out, nil

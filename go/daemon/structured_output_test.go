@@ -19,7 +19,7 @@ func TestStructuredOutputValidation(t *testing.T) {
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "produce json")
-	d.sched.SetOutputSchema(task.TaskID, json.RawMessage(`{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"],"additionalProperties":false}`))
+	d.sched.SetOutputSchema(task.RunID, json.RawMessage(`{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"],"additionalProperties":false}`))
 
 	d.SetReasoner(&scriptedReasoner{steps: []string{
 		`{"tool":"done","summary":"just some prose, not json"}`, // rejected
@@ -27,7 +27,7 @@ func TestStructuredOutputValidation(t *testing.T) {
 	}})
 	d.runTask(sess, task)
 
-	tk, _ := d.sched.Get(task.TaskID)
+	tk, _ := d.sched.Get(task.RunID)
 	if tk.Status != "completed" {
 		t.Fatalf("should complete after valid JSON, got %s", tk.Status)
 	}

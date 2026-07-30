@@ -1,0 +1,38 @@
+<blank:1>
+    ⠀⢀⣀⣀⡀⣠⣶⣶⣄⠀   Carina                                                                                     Provider
+    ⠀⣿⣿⣿⣿⣿⣿⣿⣿⠀   Provider   Relay profile  ·  CC Switch / Codex
+    ⠀⠙⣿⣿⡏⠀⠈⢻⡇⠀   Model      Model not selected  ·  reasoning pending
+    ⠀⢰⣿⣿⣿⣦⣴⣿⡿⠀   Workspace  <workspace>
+    ⠀⠈⠻⠿⠟⠁⠀⠀⠀⠀
+   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+<blank:1>
+   ▌ Connect a provider
+     Choose the model endpoint Carina may use for this workspace.
+<blank:1>
+   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   ╭ Providers  1 of 1 ────────────────────────────────────────────────────╮  ╭ Connection ─────────────────────────╮
+   │ /  Search all 1 providers by name or ID                               │  │                                     │
+   │ ───────────────────────────────────────────────────────────────────── │  │  ◆ Active route                     │
+   │ ▌ Relay profile                                      ◆ Active route   │  │                                     │
+   │ │ Codex  ·  active via proxy  ·  1 model                              │  │  Relay profile                      │
+   │                                                                       │  │  CC Switch                          │
+   │                                                                       │  │                                     │
+   │                                                                       │  │  PROVIDER DETAILS                   │
+   │                                                                       │  │  Models          1                  │
+   │                                                                       │  │  Authentication  available after    │
+   │                                                                       │  │  confirmation                       │
+   │                                                                       │  │  CC Switch       active managed     │
+   │                                                                       │  │  proxy                              │
+   │                                                                       │  │                                     │
+   │                                                                       │  │  This is the live local proxy       │
+   │                                                                       │  │  route configured for Codex.        │
+   │                                                                       │  │  Review it before Carina validates  │
+   │                                                                       │  │  and uses it.                       │
+   │                                                                       │  │                                     │
+   │                                                                       │  │                                     │
+   │                                                                       │  │                                     │
+   │                                                                       │  │                                     │
+   │                                                                       │  │   Use active route                  │
+   │                                                                       │  │                                     │
+   ╰───────────────────────────────────────────────────────────────────────╯  ╰─────────────────────────────────────╯
+    Esc  Exit   Enter  Use active route   /  Search   ↑↓  Navigate

@@ -22,7 +22,7 @@ func scrubLocaleEnv(t *testing.T) {
 // the same line — spinner text is snapshot-testable.
 func TestLoadingDeterministic(t *testing.T) {
 	seeds := []string{"code.search", "kernel.patch.apply", "session.resume",
-		"task.action.approve", "workspace.patch.propose", "audit.verify",
+		"governance.action.approve", "workspace.patch.propose", "audit.verify",
 		"command.exec", "totally.unknown.method", ""}
 	for _, locale := range SupportedLocales() {
 		for _, seed := range seeds {
@@ -65,7 +65,7 @@ func TestLoadingContextRouting(t *testing.T) {
 		{"session.fork", "session"},
 		{"audit.verify", "audit"},
 		{"audit.chain.export", "audit"},
-		{"task.action.approve", "generic"}, // approval → no ambient pool → generic
+		{"governance.action.approve", "generic"}, // approval → no ambient pool → generic
 		{"command.exec", "terminal"},
 		{"model.route", "provider"},
 		{"git.log", "git"},

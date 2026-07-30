@@ -14,7 +14,7 @@ func TestVerifierDefaultLenient(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "noop")
 	d.runTask(sess, task)
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "completed" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "completed" {
 		t.Fatalf("nil verifier must accept done, got %s", tk.Status)
 	}
 }
@@ -37,7 +37,7 @@ func TestVerifierRejectsThenAccepts(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "do work")
 	d.runTask(sess, task)
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "completed" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "completed" {
 		t.Fatalf("reject-then-pass should complete, got %s", tk.Status)
 	}
 }
@@ -59,7 +59,7 @@ func TestVerifierDegradesOnPersistentReject(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "unsatisfiable")
 	d.runTask(sess, task)
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "degraded" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "degraded" {
 		t.Fatalf("persistent reject should degrade, got %s", tk.Status)
 	}
 }
@@ -79,7 +79,7 @@ func TestVerifierFailOpenOnError(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "noop")
 	d.runTask(sess, task)
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "completed" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "completed" {
 		t.Fatalf("verifier error must fail open, got %s", tk.Status)
 	}
 }
@@ -94,7 +94,7 @@ func TestVerifierFailOpenOnMalformedVerdict(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "noop")
 	d.runTask(sess, task)
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "completed" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "completed" {
 		t.Fatalf("malformed verdict must fail open, got %s", tk.Status)
 	}
 }

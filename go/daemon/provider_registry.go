@@ -68,7 +68,7 @@ type providerQuirk struct {
 func loadRuntimeProviderCatalog(offline bool) provider.Catalog {
 	cachePath, err := provider.DefaultCachePath()
 	if err != nil {
-		return provider.Seed()
+		return mergeLocalProviderDiscoveries(provider.Seed())
 	}
 	strategy := provider.RefreshOnlineIfUncached
 	if offline {
@@ -81,9 +81,17 @@ func loadRuntimeProviderCatalog(offline bool) provider.Catalog {
 	defer cancel()
 	cat, err := provider.LoadWithStrategy(ctx, provider.Options{CachePath: cachePath, ModelsURL: os.Getenv("CARINA_MODELS_URL")}, strategy)
 	if err != nil || len(cat) == 0 {
-		return provider.Seed()
+		return mergeLocalProviderDiscoveries(provider.Seed())
 	}
-	return mergeBuiltinRuntimeProviders(cat)
+	return mergeLocalProviderDiscoveries(mergeBuiltinRuntimeProviders(cat))
+}
+
+func mergeLocalProviderDiscoveries(cat provider.Catalog) provider.Catalog {
+	profiles, err := provider.DetectCCSwitchProviders("")
+	if err != nil || len(profiles) == 0 {
+		return cat
+	}
+	return provider.MergeCCSwitchProviders(cat, profiles)
 }
 
 func mergeBuiltinRuntimeProviders(cat provider.Catalog) provider.Catalog {
@@ -123,7 +131,10 @@ func registerProviders(router *modelrouter.Router, offline bool, disabledProvide
 }
 
 func hasRunnableRuntimeProvider(cat provider.Catalog, disabledProviders []string, store *auth.Store) bool {
-	disabled := disabledProviderSet(disabledProviders)
+	return hasRunnableRuntimeProviderSet(cat, disabledProviderSet(disabledProviders), store)
+}
+
+func hasRunnableRuntimeProviderSet(cat provider.Catalog, disabled map[string]bool, store *auth.Store) bool {
 	for _, info := range orderedRuntimeProviders(cat) {
 		if disabled[normalizeProviderID(info.ID)] {
 			continue
@@ -135,12 +146,12 @@ func hasRunnableRuntimeProvider(cat provider.Catalog, disabledProviders []string
 		if !ok || strings.TrimSpace(baseURL) == "" {
 			continue
 		}
-		if isLocalEndpoint(baseURL) {
+		if runtimeProviderAllowsNoAuth(info, baseURL) {
 			if _, explicitlyConfigured := runtimeBaseURLOverride(info); explicitlyConfigured {
 				return true
 			}
 		}
-		chain := auth.ProviderChain(normalizeProviderID(info.ID), info.Env, store, nil)
+		chain := runtimeProviderAuthChain(info, store)
 		if cred, ok := chain.Resolve(); ok && strings.TrimSpace(cred.Value) != "" {
 			return true
 		}
@@ -184,26 +195,102 @@ func buildRuntimeProvider(info provider.Info, store *auth.Store) modelrouter.Pro
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	model := runtimeDefaultModel(info)
-	chain := auth.ProviderChain(id, info.Env, store, nil)
-	noAuth := isLocalEndpoint(baseURL)
+	chain := runtimeProviderAuthChain(info, store)
+	noAuth := runtimeProviderAllowsNoAuth(info, baseURL)
 	quirk := runtimeProviderQuirk(id, baseURL)
 	overrides := runtimeModelOverrides(info)
+	errorName := runtimeProviderErrorName(info)
 	switch protocol {
 	case protocolAnthropic:
-		return newAnthropicCatalogProvider(id, baseURL, model, chain, quirk.Headers, quirk.Body, overrides)
+		return newAnthropicCatalogProvider(id, errorName, baseURL, model, chain, quirk.Headers, quirk.Body, overrides)
 	case protocolGemini:
 		return &geminiProvider{providerBase: providerBase{
-			id: id, baseURL: baseURL, defaultModel: model, auth: chain, noAuth: noAuth,
+			id: id, label: errorName, baseURL: baseURL, defaultModel: model, auth: chain, noAuth: noAuth,
 			headers: quirk.Headers, body: quirk.Body, overrides: overrides,
 		}}
 	case protocolOpenAIResponses, protocolOpenAIChat:
 		return &openAIProvider{providerBase: providerBase{
-			id: id, baseURL: baseURL, defaultModel: model, auth: chain, noAuth: noAuth,
+			id: id, label: errorName, baseURL: baseURL, defaultModel: model, auth: chain, noAuth: noAuth,
 			headers: quirk.Headers, body: quirk.Body, overrides: overrides,
 		}, responses: protocol == protocolOpenAIResponses}
 	default:
 		return nil
 	}
+}
+
+func runtimeProviderErrorName(info provider.Info) string {
+	if info.Source != nil {
+		if name := strings.TrimSpace(info.Name); name != "" {
+			return name
+		}
+	}
+	return normalizeProviderID(info.ID)
+}
+
+func runtimeProviderAuthChain(info provider.Info, store *auth.Store) *auth.Chain {
+	sources := make([]auth.Source, 0, len(info.Env)+1)
+	for _, env := range info.Env {
+		sources = append(sources, auth.EnvKey{Var: env})
+	}
+	if store != nil {
+		if info.Source != nil && info.Source.Kind == provider.CCSwitchSourceKind {
+			sources = append(sources, validatedRuntimeStoreKey{
+				store:          store,
+				providerID:     info.ID,
+				sourceRevision: strings.TrimSpace(info.Source.Revision),
+			})
+		} else {
+			sources = append(sources, auth.StoreKey{Store: store, Provider: info.ID})
+		}
+	}
+	return auth.NewChain(sources...)
+}
+
+// validatedRuntimeStoreKey keeps imported credentials dynamic without letting
+// stale CC Switch metadata become execution authority. Providers are
+// registered once, while credential import and revocation can happen later in
+// the same daemon process.
+type validatedRuntimeStoreKey struct {
+	store          *auth.Store
+	providerID     string
+	sourceRevision string
+}
+
+func (s validatedRuntimeStoreKey) Name() string {
+	return "auth:" + normalizeProviderID(s.providerID)
+}
+
+func (s validatedRuntimeStoreKey) Resolve() (auth.Credential, bool) {
+	if s.store == nil {
+		return auth.Credential{}, false
+	}
+	credential, ok, err := s.store.Get(s.providerID)
+	if err != nil || !ok || credential.Metadata["validation"] != providerValidationContract {
+		return auth.Credential{}, false
+	}
+	if s.sourceRevision != "" && credential.Metadata["source_revision"] != s.sourceRevision {
+		return auth.Credential{}, false
+	}
+	return auth.StoreKey{Store: s.store, Provider: s.providerID}.Resolve()
+}
+
+func runtimeStoredCredentialAllowed(info provider.Info, store *auth.Store) bool {
+	if info.Source == nil || info.Source.Kind != provider.CCSwitchSourceKind {
+		return true
+	}
+	credential, ok, err := store.Get(info.ID)
+	if err != nil || !ok || credential.Metadata["validation"] != providerValidationContract {
+		return false
+	}
+	revision := strings.TrimSpace(info.Source.Revision)
+	return revision == "" || credential.Metadata["source_revision"] == revision
+}
+
+func runtimeProviderAllowsNoAuth(info provider.Info, baseURL string) bool {
+	if !isLocalEndpoint(baseURL) {
+		return false
+	}
+	return info.Source == nil || info.Source.Kind != provider.CCSwitchSourceKind
 }
 
 func runtimeProviderQuirk(id, baseURL string) providerQuirk {
@@ -329,6 +416,16 @@ func cloneRawMap(in map[string]json.RawMessage) map[string]json.RawMessage {
 }
 
 func detectRuntimeProtocol(info provider.Info) runtimeProtocol {
+	switch strings.TrimSpace(info.APIProtocol) {
+	case string(protocolAnthropic):
+		return protocolAnthropic
+	case string(protocolGemini):
+		return protocolGemini
+	case string(protocolOpenAIChat):
+		return protocolOpenAIChat
+	case string(protocolOpenAIResponses):
+		return protocolOpenAIResponses
+	}
 	id := normalizeProviderID(info.ID)
 	npm := strings.ToLower(strings.TrimSpace(info.NPM))
 	switch {

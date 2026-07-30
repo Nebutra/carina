@@ -83,7 +83,7 @@ func TestTaskSubmissionFreezesEffortInTaskFingerprintAndWAL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := result.(*scheduler.Task)
+	task := result.(*scheduler.ExecutionRun)
 	if task.RequestedReasoningEffort != "high" || task.EffectiveReasoningEffort != "high" {
 		t.Fatalf("effort not frozen into task: %+v", task)
 	}
@@ -119,7 +119,7 @@ func TestAnthropicSendsAdaptiveThinkingEffort(t *testing.T) {
 	if err := store.SetAPIKey("anthropic", "sk-test", nil); err != nil {
 		t.Fatal(err)
 	}
-	p := newAnthropicCatalogProvider("anthropic", srv.URL, "claude-sonnet-4-6", auth.ProviderChain("anthropic", nil, store, nil), nil, nil, nil)
+	p := newAnthropicCatalogProvider("anthropic", "anthropic", srv.URL, "claude-sonnet-4-6", auth.ProviderChain("anthropic", nil, store, nil), nil, nil, nil)
 	resp, err := p.Complete(context.Background(), modelrouter.Request{Prompt: "hello", ReasoningEffort: "max"})
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestGemini3SendsNativeThinkingLevel(t *testing.T) {
 		}
 		config, _ := body["generationConfig"].(map[string]any)
 		thinking, _ := config["thinkingConfig"].(map[string]any)
-		if thinking["thinkingLevel"] != "LOW" {
+		if thinking["thinkingLevel"] != "LOW" || config["maxOutputTokens"] != float64(agentMaxOutputTokens) {
 			t.Fatalf("gemini payload = %#v", body)
 		}
 		w.Header().Set("content-type", "application/json")

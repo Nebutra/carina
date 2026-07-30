@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,8 +27,9 @@ func TestOpenAIChatProvider(t *testing.T) {
 			t.Fatalf("authorization header = %q", got)
 		}
 		var body struct {
-			Model    string `json:"model"`
-			Messages []struct {
+			Model     string `json:"model"`
+			MaxTokens int    `json:"max_tokens"`
+			Messages  []struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"messages"`
@@ -34,7 +37,7 @@ func TestOpenAIChatProvider(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body.Model != "mixtral" || len(body.Messages) != 1 || body.Messages[0].Content != "hello" {
+		if body.Model != "mixtral" || body.MaxTokens != agentMaxOutputTokens || len(body.Messages) != 1 || body.Messages[0].Content != "hello" {
 			t.Fatalf("bad body: %+v", body)
 		}
 		w.Header().Set("content-type", "application/json")
@@ -131,13 +134,14 @@ func TestOpenAIResponsesProvider(t *testing.T) {
 			t.Fatalf("authorization header = %q", got)
 		}
 		var body struct {
-			Model string `json:"model"`
-			Input string `json:"input"`
+			Model           string `json:"model"`
+			Input           string `json:"input"`
+			MaxOutputTokens int    `json:"max_output_tokens"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body.Model != "gpt-5" || body.Input != "hello" {
+		if body.Model != "gpt-5" || body.Input != "hello" || body.MaxOutputTokens != agentMaxOutputTokens {
 			t.Fatalf("bad body: %+v", body)
 		}
 		w.Header().Set("content-type", "application/json")
@@ -328,6 +332,62 @@ func TestCatalogRegistrationTargetsOpenAICompatibleProvider(t *testing.T) {
 	}
 }
 
+func TestCCSwitchCredentialBecomesExecutableAfterRegistration(t *testing.T) {
+	const providerID = "ccswitch-codex-managed-proxy"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer proxy-token" {
+			t.Fatalf("authorization header = %q", got)
+		}
+		w.Header().Set("content-type", "application/json")
+		w.Write([]byte(`{"output_text":"ready","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+
+	store := testAuthStore(t)
+	cat := provider.Catalog{providerID: {
+		ID: providerID, Name: "Managed route", API: srv.URL + "/v1", APIProtocol: "openai-responses",
+		Source: &provider.Source{
+			Kind: provider.CCSwitchSourceKind, Route: provider.CCSwitchRouteManagedProxy,
+			Revision: "current", Importable: true,
+		},
+		Models: map[string]provider.Model{"gpt-live": {ID: "gpt-live"}},
+	}}
+	router := modelrouter.New()
+	registerProviders(router, false, nil, store, cat)
+
+	if _, err := router.Complete(context.Background(), modelrouter.Request{
+		Model: providerID + "/gpt-live", Prompt: "before import",
+	}); err == nil || !strings.Contains(err.Error(), "credential not set") {
+		t.Fatalf("request before import error = %v", err)
+	}
+	if err := store.SetBearerToken(providerID, "proxy-token", map[string]string{
+		"source": provider.CCSwitchSourceKind, "validation": providerValidationContract,
+		"source_revision": "current",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := router.Complete(context.Background(), modelrouter.Request{
+		Model: providerID + "/gpt-live", Prompt: "after import",
+	})
+	if err != nil {
+		t.Fatalf("request after same-process import: %v", err)
+	}
+	if resp.Text != "ready" || resp.Provider != providerID {
+		t.Fatalf("response = %+v", resp)
+	}
+	if err := store.Remove(providerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := router.Complete(context.Background(), modelrouter.Request{
+		Model: providerID + "/gpt-live", Prompt: "after revoke",
+	}); err == nil || !strings.Contains(err.Error(), "credential not set") {
+		t.Fatalf("request after revocation error = %v", err)
+	}
+}
+
 func TestDisabledProviderIsNotRegisteredOrRunnable(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-disabled")
 	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:65535/v1")
@@ -462,6 +522,23 @@ func TestProviderStatusErrorClassification(t *testing.T) {
 		if info.Category != test.category || info.Retryable != test.retryable {
 			t.Errorf("status %d: %+v", test.status, info)
 		}
+	}
+}
+
+func TestProviderStatusErrorClassifiesClientRestrictionWithoutEchoingBody(t *testing.T) {
+	const upstream = `{"error":{"message":"This group only allows another CLI clients"}}`
+	resp := &http.Response{
+		StatusCode: http.StatusServiceUnavailable,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(upstream)),
+	}
+	err := statusError("relay", resp)
+	if !strings.Contains(err.Error(), "rejects this client type") || strings.Contains(err.Error(), upstream) {
+		t.Fatalf("client restriction error = %v", err)
+	}
+	info := classifyProviderError(err)
+	if info.Code != "provider_client_restricted" || info.Retryable || info.UserAction == "" {
+		t.Fatalf("client restriction classification = %+v", info)
 	}
 }
 

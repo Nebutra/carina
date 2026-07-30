@@ -209,7 +209,7 @@ func (sc *streamCoordinator) injectGeneratedSteps(generatorID string, output str
 	sc.totalSteps += newCount
 	sc.remainingToResolve += newCount
 
-	sc.d.record(sc.parent.SessionID, "TaskCreated", sc.parentTask.TaskID, "go", map[string]any{
+	sc.d.record(sc.parent.SessionID, "ExecutionProgressed", sc.parentTask.RunID, "go", map[string]any{
 		"status": "workflow_steps_injected", "workflow": sc.spec.Name, "run_id": sc.runID,
 		"generator_step": generatorID, "spawned": newCount, "gen_depth": depth,
 		"rationale": truncate(env.Rationale, 300),
@@ -272,7 +272,7 @@ func (sc *streamCoordinator) requestSwarmSpawnApprovalIfThresholdCrossed(generat
 		return nil
 	}
 	resource := fmt.Sprintf("generator:%s:current_size:%d:requested:%d", generatorID, sc.totalSteps, newCount)
-	dec, err := sc.d.kern.Request(sc.parent.SessionID, "SwarmSpawn", resource, sc.parentTask.TaskID)
+	dec, err := sc.d.kern.Request(sc.parent.SessionID, "SwarmSpawn", resource, sc.parentTask.RunID)
 	if err != nil {
 		return fmt.Errorf("swarm spawn governance error: %w", err)
 	}

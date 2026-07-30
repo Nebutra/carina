@@ -65,7 +65,7 @@ kernel, and append-only audit log as the single authority.
   `go/daemon/daemon.go`, `go/daemon/ecosystem.go`, commit `1281f76`). A new
   `taskMailbox` (urgent/normal `[]string` tiers, urgent always drained first,
   FIFO within each tier) plus a fail-closed `steerPriority`/
-  `parseSteerPriority` and a `priority` param on `task.steer`. The existing
+  `parseSteerPriority` and a `priority` param on `execution.steer`. The existing
   `steer()` remains a normal-priority convenience wrapper so unrelated call
   sites are unaffected. `ecosystem.go`'s channel-event call site now uses
   `steerUrgent` so external events (e.g. CI failures) preempt queued routine

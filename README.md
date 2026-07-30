@@ -81,7 +81,7 @@ Implemented in this repository:
 | Commands | Risk classification, approval gates, command output events, optional OS sandbox backend |
 | Network and secrets | Deny-by-default egress proxy, allowlists, daemon-side credential injection, explicit per-host HTTPS MITM opt-in |
 | Models | BYOK auth chain, provider catalog, OpenAI/Anthropic/Gemini/OpenRouter-style runtime adapters, catalog-gated image input for vision-capable models (raw bytes stay in the artifact store, never in transcripts or audit) |
-| Context engine | Native context-engine boundary with bundled/configured Headroom discovery, managed private MCP transport, and `carina context` diagnostics |
+| Context engine | Native `auto` / `off` / `noop` boundary with local diagnostics and no bundled external compressor |
 | Integration | MCP client/server with tool search (`mcp_find`), WASM plugin boundary with org/user/project tighten-only enable merge, workers, workflow DAGs (batch and streaming — conditional/dynamic graphs, live inter-step channels, remote worker-pool dispatch, run-wide budgets; see [`docs/workflows.md`](docs/workflows.md)) |
 | Nebutra boundary | Local runtime stays authoritative; identity and multi-endpoint sync are scoped to Nebutra Cloud (`nebutra.com`) |
 
@@ -370,11 +370,9 @@ Nebutra Cloud memory sync remains off.
 
 ### Native Context Engine
 
-Release packages include a pinned Headroom executable as `bin/headroom`.
-`context_engine=auto` enables Headroom only when it is bundled with Carina or
-explicitly configured through `CARINA_HEADROOM_BIN`, `headroom_bin`, or
-`--headroom-bin`. A global `headroom` found on `PATH` is reported but not used
-as the built-in engine.
+Carina does not bundle or start an external context-compression runtime.
+`context_engine=auto` resolves deterministically to the local no-op engine;
+`off` disables the boundary explicitly.
 
 Inspect the integration:
 
@@ -383,9 +381,6 @@ carina context status
 carina context doctor
 carina context stats
 ```
-
-The managed Headroom MCP server is private to Carina's context adapter. It does
-not appear in the agent's public MCP tool list.
 
 ### BYOK Providers
 

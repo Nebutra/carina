@@ -92,6 +92,9 @@ mod tests {
         let mut b = SecretBroker::new();
         b.grant("DB_PASSWORD", "hunter2");
         let output = "connecting with password hunter2 to db";
-        assert_eq!(b.redact(output), "connecting with password «redacted:DB_PASSWORD» to db");
+        assert_eq!(
+            b.redact(output),
+            "connecting with password «redacted:DB_PASSWORD» to db"
+        );
     }
 }

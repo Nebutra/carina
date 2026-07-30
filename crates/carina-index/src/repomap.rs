@@ -319,7 +319,10 @@ mod tests {
     fn pagerank_scores_sum_to_one() {
         // Nodes 1 and 2 are dangling; their mass must be redistributed, not lost.
         let scores = pagerank(3, &[(0, 1, 1.0)], 0.85, 20);
-        assert!(scores.iter().all(|s| s.is_finite() && *s >= 0.0), "{scores:?}");
+        assert!(
+            scores.iter().all(|s| s.is_finite() && *s >= 0.0),
+            "{scores:?}"
+        );
         let sum: f64 = scores.iter().sum();
         assert!((sum - 1.0).abs() < 1e-6, "scores must sum to 1, got {sum}");
     }

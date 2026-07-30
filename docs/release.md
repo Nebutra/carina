@@ -111,21 +111,13 @@ The package command writes to `dist/`:
 - extracted staging directory with `MANIFEST.json`, `VERSION_CHECK.txt`, and
   `checksums.txt`.
 
-The archive includes Go CLIs, the Rust kernel service, Zig native tools matching
-`zig/zig-out/bin/carina-*`, README, LICENSE, SECURITY, and release docs. It
-smoke-tests `bin/carina --version` from the staged package.
-
-Headroom is an upstream-maintained component pinned by
-`integrations/headroom.lock`. `package-release.sh` downloads the target's
-SHA-256-pinned wheel or source distribution, installs the hash-locked build
-dependencies from `integrations/headroom-requirements.lock`, builds a standalone
-executable, and verifies both its CLI and managed MCP tools before packaging it.
-The daemon never downloads Headroom at startup and nothing is installed into the
-user's global Python, npm, pipx, or uv environment.
+The archive includes Go CLIs, the Rust UI and kernel service, Zig native tools
+matching `zig/zig-out/bin/carina-*`, README, LICENSE, SECURITY, and release
+docs. It smoke-tests `bin/carina --version` from the staged package.
 
 `VERSION_CHECK.txt` records CLI, daemon, Rust workspace, TypeScript SDK, and
-Python SDK versions, plus the bundled Headroom pin and source artifact. Version
-mismatches are warnings in the package manifest, not hidden state.
+Python SDK versions. Version mismatches are warnings in the package manifest,
+not hidden state.
 
 Use existing artifacts without rebuilding:
 
@@ -142,11 +134,6 @@ SKIP_ZIG=1 VERSION=0.6.5 make release-package
 
 `SKIP_BUILD=1` and `SKIP_ZIG=1` are recorded as warnings in `MANIFEST.json` and
 `VERSION_CHECK.txt`.
-
-`SKIP_HEADROOM=1` remains an explicit developer-only escape hatch for offline
-local package experiments and is recorded in the manifest. Tagged releases do
-not use it. In `context_engine=auto`, Carina selects the bundled Headroom engine
-after its health check and safely falls back to noop if startup later fails.
 
 Verify an archive:
 
@@ -167,14 +154,13 @@ tar -xzf carina_<version>_<goos>_<goarch>.tar.gz
 - `carina-daemon`
 - `carina-worker`
 
-- `headroom` in release packages only, pinned by `integrations/headroom.lock`
 - Zig tools from `zig/zig-out/bin`
 - Rust `carina-kernel-service` under `target/release`
 
 These are local build outputs, not public release artifacts. `make install`
-copies the Go binaries, the release `carina-kernel-service`, and the Zig tools
-flat into `$(PREFIX)/bin` (default `~/.local/bin`), mirroring the release
-package layout minus the pinned Headroom bundle.
+copies the Go binaries, the release `carina-ui` and `carina-kernel-service`, and
+the Zig tools flat into `$(PREFIX)/bin` (default `~/.local/bin`), mirroring the
+release package layout.
 
 ## Self-update contract
 

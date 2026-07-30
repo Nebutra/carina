@@ -1,0 +1,7 @@
+---
+source: crates/carina-tui/tests/golden_frames.rs
+expression: parser.screen().contents()
+---
+CARINA
+done
+working

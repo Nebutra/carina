@@ -27,27 +27,12 @@ func (d *Daemon) ApplyConfig(cfg config.Config) error {
 	if err := d.setRiskReviewMode(cfg.RiskReviewMode); err != nil {
 		return err
 	}
-	contextEng, err := contextengine.New(contextengine.Config{
-		ContextEngine:       cfg.ContextEngine,
-		HeadroomBin:         cfg.HeadroomBin,
-		HeadroomStateDir:    cfg.HeadroomStateDir,
-		HeadroomMode:        cfg.HeadroomMode,
-		HeadroomProxyPort:   cfg.HeadroomProxyPort,
-		HeadroomTokenBudget: cfg.HeadroomTokenBudget,
-		CarinaStateDir:      d.stateDir,
-	})
-	if err != nil {
-		return err
-	}
-	managedEnabled, err := d.connectContextEngineMCP(contextEng)
+	contextEng, err := contextengine.New(contextengine.Config{ContextEngine: cfg.ContextEngine})
 	if err != nil {
 		return err
 	}
 	oldContextEng := d.contextEng
 	d.contextEng = contextEng
-	if d.mcp != nil && (!managedEnabled || !contextEng.Status().ManagedMCPConnected) {
-		d.mcp.Disconnect(contextengine.ManagedMCPServerName)
-	}
 	if oldContextEng != nil {
 		_ = oldContextEng.Close()
 	}

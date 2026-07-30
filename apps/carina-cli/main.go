@@ -54,7 +54,7 @@ Start and run:
   carina update [--check] [--version x.y.z] [--force]
                                                    securely update the complete local runtime bundle
   carina run [--agent name] [--model provider/model] [--effort level] "<prompt>" [--background]
-                                                   create a safe-edit session in cwd, submit a task, and
+                                                   create a safe-edit session in cwd, start an execution, and
                                                    wait for it to finish (exits with its governance
                                                    outcome); --background returns as soon as it is queued
   carina run --input-format stream-json --output-format stream-json [--session id]
@@ -70,12 +70,12 @@ Inspect sessions:
   carina fork <session_id>                         branch a session without changing its parent
   carina cost [session_id] [--json]                show model usage and cost totals
   carina watch <session_id> [--json]               stream live events (--json emits actionable control frames)
-  carina steer <task_id> <message>                 redirect a running task at its next turn boundary
+  carina steer <run_id> <message>                 redirect the current execution at its next turn boundary
   carina answer <question_id> <value>              answer a structured agent question
   carina items <session_id>                        replay normalized thread/turn/item events
   carina session review <session_id>               show the governance-oriented session projection
-  carina artifact stat <session_id> <artifact_id> [--task id] [--call id]
-  carina artifact read <session_id> <artifact_id> [--task id] [--call id] [--output path] [--max-bytes n] [--verify]
+  carina artifact stat <session_id> <artifact_id> [--run id] [--call id]
+  carina artifact read <session_id> <artifact_id> [--run id] [--call id] [--output path] [--max-bytes n] [--verify]
   carina search <session_id> <text>                search the workspace through the daemon
   carina checkpoint list <session_id>              list conversation/code checkpoints
   carina checkpoint preview <session_id> <id>      preview a rewind without changing state
@@ -109,11 +109,10 @@ Memory:
 	                                                   recover one ambiguous projection after external confirmation
 
 Context engine:
-  carina context status                             show native context engine and Headroom availability
+  carina context status                             show the native context engine state
   carina context doctor                             diagnose context engine health
-  carina context stats                              show local and Headroom context-engine counters
+  carina context stats                              show local context-engine counters
   carina context compress <content|->               compress content through the native context engine
-  carina context retrieve <hash>                     retrieve original context from Headroom CCR
 
 Schedules:
   carina schedule list <session_id>                  list session-owned schedules
@@ -331,13 +330,13 @@ func run(cmd string, args []string) error {
 		if wantsStreamJSON(args) {
 			return cmdRunStream(c, args)
 		}
-		// The task always runs in the daemon and survives CLI exit (PRD
+		// The execution always runs in the daemon and survives CLI exit (PRD
 		// §5.2/§10.2) either way; --background additionally opts the CLI
 		// process itself out of waiting for the outcome (P1.5(b)): by
-		// default (foreground) `carina run` blocks until the task reaches
+		// default (foreground) `carina run` blocks until the execution reaches
 		// a terminal state and exits with that outcome's governance-
 		// distinct code, matching the plan's exit criterion — without it,
-		// run() returned nil the instant task.submit's RPC round trip
+		// run() returned nil the instant execution.start's RPC round trip
 		// succeeded and a genuinely failed/policy-denied run exited 0.
 		background := hasFlag(args, "--background")
 		args = dropFlag(args, "--background")
@@ -366,24 +365,24 @@ func run(cmd string, args []string) error {
 		if effort != "" {
 			params["reasoning_effort"] = effort
 		}
-		var task map[string]any
-		if err := c.Call("task.submit", params, &task); err != nil {
+		var execution map[string]any
+		if err := c.Call("execution.start", params, &execution); err != nil {
 			return err
 		}
-		if err := printJSON(task); err != nil {
+		if err := printJSON(execution); err != nil {
 			return err
 		}
 		if background {
 			printResumeHint(sess.SessionID)
 			return nil
 		}
-		taskID, _ := task["task_id"].(string)
-		if taskID == "" {
+		runID, _ := execution["run_id"].(string)
+		if runID == "" {
 			printResumeHint(sess.SessionID)
 			return nil
 		}
-		fmt.Println("waiting for the task to finish (ctrl-c to stop watching; the task keeps running) ...")
-		return runWaitForTask(c, taskID, runWaitForTaskDefaultTimeout, nil)
+		fmt.Println("waiting for the execution to finish (ctrl-c to stop watching; the execution keeps running) ...")
+		return runWaitForExecution(c, runID, runWaitForExecutionDefaultTimeout, nil)
 
 	case "resume":
 		return cmdResume(c, args)
@@ -422,7 +421,7 @@ func run(cmd string, args []string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("usage: carina answer <question_id> <value>")
 		}
-		return call(c, "task.user.answer", map[string]any{"question_id": args[0], "value": args[1]})
+		return call(c, "question.answer", map[string]any{"question_id": args[0], "value": args[1]})
 
 	case "search":
 		if len(args) < 2 {
@@ -441,7 +440,7 @@ func run(cmd string, args []string) error {
 		if len(args) > 2 {
 			p["role"] = args[2]
 		}
-		return call(c, "task.action.approve", p)
+		return call(c, "governance.action.approve", p)
 	case "deny":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: carina deny <session_id> <decision_id> [reason]")
@@ -450,7 +449,7 @@ func run(cmd string, args []string) error {
 		if len(args) > 2 {
 			reason = strings.Join(args[2:], " ")
 		}
-		return call(c, "task.action.deny", map[string]any{"session_id": args[0], "decision_id": args[1], "reason": reason})
+		return call(c, "governance.action.deny", map[string]any{"session_id": args[0], "decision_id": args[1], "reason": reason})
 
 	case "patch":
 		return cmdPatch(c, args)
@@ -475,14 +474,14 @@ func run(cmd string, args []string) error {
 
 func cmdSteer(c *rpcClient, args []string) error {
 	if len(args) < 2 || strings.TrimSpace(args[0]) == "" {
-		return fmt.Errorf("usage: carina steer <task_id> <message>")
+		return fmt.Errorf("usage: carina steer <run_id> <message>")
 	}
 	message := strings.TrimSpace(strings.Join(args[1:], " "))
 	if message == "" {
-		return fmt.Errorf("usage: carina steer <task_id> <message>")
+		return fmt.Errorf("usage: carina steer <run_id> <message>")
 	}
-	return call(c, "task.steer", map[string]any{
-		"task_id": strings.TrimSpace(args[0]),
+	return call(c, "execution.steer", map[string]any{
+		"run_id":  strings.TrimSpace(args[0]),
 		"message": message,
 	})
 }
@@ -597,14 +596,14 @@ func cmdResume(c *rpcClient, args []string) error {
 	if opts.effort != "" {
 		params["reasoning_effort"] = opts.effort
 	}
-	var task json.RawMessage
-	if err := c.Call("task.submit", params, &task); err != nil {
+	var execution json.RawMessage
+	if err := c.Call("execution.start", params, &execution); err != nil {
 		return err
 	}
 	if !opts.json {
 		fmt.Printf("resuming session: %s\n", sess.SessionID)
 	}
-	if err := printJSON(task); err != nil {
+	if err := printJSON(execution); err != nil {
 		return err
 	}
 	if opts.watch {
@@ -697,7 +696,7 @@ func printResumeSummary(c *rpcClient, sess resumeSession) error {
 	}
 	var items []struct {
 		Type      string         `json:"type"`
-		TaskID    string         `json:"task_id"`
+		RunID     string         `json:"run_id"`
 		Timestamp string         `json:"timestamp"`
 		Item      map[string]any `json:"item"`
 		Details   map[string]any `json:"details"`
@@ -710,8 +709,8 @@ func printResumeSummary(c *rpcClient, sess resumeSession) error {
 		}
 		for _, it := range items[start:] {
 			fmt.Printf("  %s", it.Type)
-			if it.TaskID != "" {
-				fmt.Printf(" task=%s", it.TaskID)
+			if it.RunID != "" {
+				fmt.Printf(" run=%s", it.RunID)
 			}
 			if title, ok := it.Item["title"].(string); ok && title != "" {
 				fmt.Printf(" %s", title)
@@ -767,13 +766,45 @@ func cmdInit() error {
 
 func cmdAuth(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: carina auth <login|list|logout> ...")
+		return fmt.Errorf("usage: carina auth <login|import|list|logout> ...")
 	}
 	store, err := auth.NewStore("")
 	if err != nil {
 		return err
 	}
 	switch args[0] {
+	case "import":
+		if len(args) != 3 || args[1] != provider.CCSwitchSourceKind {
+			return fmt.Errorf("usage: carina auth import cc-switch <provider>")
+		}
+		profile, key, err := provider.ImportCCSwitchCredential("", args[2])
+		if err != nil {
+			return err
+		}
+		cachePath, err := provider.DefaultCachePath()
+		if err != nil {
+			return err
+		}
+		catalog, err := provider.Load(provider.Options{CachePath: cachePath})
+		if err != nil {
+			return err
+		}
+		catalog = provider.MergeCCSwitchProviders(catalog, []provider.CCSwitchProfile{profile})
+		setup := daemon.NewProviderSetupService(store, catalog, nil)
+		metadata := map[string]string{
+			"source":          provider.CCSwitchSourceKind,
+			"source_route":    profile.Route,
+			"source_revision": profile.Revision,
+		}
+		credentialKind := auth.APIKey
+		if profile.CredentialKind == provider.CCSwitchCredentialBearer {
+			credentialKind = auth.Bearer
+		}
+		if _, err := setup.ValidateAndStoreCredentialWithMetadata(context.Background(), profile.RuntimeID, credentialKind, key, metadata); err != nil {
+			return err
+		}
+		fmt.Printf("imported %s from CC Switch into %s\n", profile.Name, store.Path)
+		return nil
 	case "login":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: carina auth login <provider> [-]")
@@ -1026,13 +1057,8 @@ func cmdContext(c *rpcClient, args []string) error {
 			return fmt.Errorf("content is required")
 		}
 		return call(c, "context.compress", map[string]any{"content": content})
-	case "retrieve":
-		if len(args) != 2 {
-			return fmt.Errorf("usage: carina context retrieve <hash>")
-		}
-		return call(c, "context.retrieve", map[string]any{"hash": args[1]})
 	default:
-		return fmt.Errorf("usage: carina context <status|doctor|stats|compress|retrieve>")
+		return fmt.Errorf("usage: carina context <status|doctor|stats|compress>")
 	}
 }
 
@@ -1404,7 +1430,7 @@ func writeClientWebSocketText(conn net.Conn, payload []byte) error {
 
 func cmdArtifact(c *rpcClient, args []string) error {
 	if len(args) < 3 || (args[0] != "stat" && args[0] != "read") {
-		return fmt.Errorf("usage: carina artifact <stat|read> <session_id> <artifact_id> [--task id] [--call id] [--output path] [--max-bytes n] [--verify]")
+		return fmt.Errorf("usage: carina artifact <stat|read> <session_id> <artifact_id> [--run id] [--call id] [--output path] [--max-bytes n] [--verify]")
 	}
 	mode, sessionID, id := args[0], args[1], args[2]
 	params := map[string]any{"session_id": sessionID, "artifact_id": id}
@@ -1415,15 +1441,15 @@ func cmdArtifact(c *rpcClient, args []string) error {
 		switch args[i] {
 		case "--verify":
 			verify = true
-		case "--task", "--call", "--output", "--max-bytes":
+		case "--run", "--call", "--output", "--max-bytes":
 			if i+1 >= len(args) {
 				return fmt.Errorf("%s requires a value", args[i])
 			}
 			v := args[i+1]
 			i++
 			switch args[i-1] {
-			case "--task":
-				params["task_id"] = v
+			case "--run":
+				params["run_id"] = v
 			case "--call":
 				params["call_id"] = v
 			case "--output":

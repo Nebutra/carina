@@ -31,8 +31,6 @@ contents:
     dst: /usr/bin/carina-run
   - src: ./dist/stage/bin/carina-scan
     dst: /usr/bin/carina-scan
-  - src: ./dist/stage/bin/headroom
-    dst: /usr/bin/headroom
   - src: ./THIRD_PARTY_NOTICES.md
     dst: /usr/share/doc/carina/THIRD_PARTY_NOTICES.md
   - src: ./packaging/systemd/carina-worker.service

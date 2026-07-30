@@ -58,10 +58,10 @@ func TestAutoGoalBlocksAfterThreeTerminalFailures(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "safe-edit", nil)
 	now := time.Now().UTC()
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "failed")
-	d.sched.SetStatus(task.TaskID, "failed")
-	failed, _ := d.sched.Get(task.TaskID)
+	d.sched.SetStatus(task.RunID, "failed")
+	failed, _ := d.sched.Get(task.RunID)
 	d.goals.mu.Lock()
-	d.goals.goals[sess.SessionID] = &goalRecord{Goal: &sessionGoal{SessionID: sess.SessionID, Objective: "x", Status: "active", AutoContinue: true, ConsecutiveFailures: 2, LastTaskID: task.TaskID, CreatedAt: now, UpdatedAt: now, MaxContinuations: 8, ActiveSince: now}}
+	d.goals.goals[sess.SessionID] = &goalRecord{Goal: &sessionGoal{SessionID: sess.SessionID, Objective: "x", Status: "active", AutoContinue: true, ConsecutiveFailures: 2, LastTaskID: task.RunID, CreatedAt: now, UpdatedAt: now, MaxContinuations: 8, ActiveSince: now}}
 	_ = d.goals.persistLocked()
 	d.goals.mu.Unlock()
 	d.reconcileGoalTask(failed)
@@ -80,11 +80,11 @@ func TestAutoGoalReconcilesTerminalTaskAfterRestart(t *testing.T) {
 	d.kern.InitSessionWithPolicy(sess.SessionID, sess.WorkspaceRoot, "safe-edit", nil)
 	now := time.Now().UTC()
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "done")
-	d.sched.SetStatus(task.TaskID, "completed")
-	completed, _ := d.sched.Get(task.TaskID)
+	d.sched.SetStatus(task.RunID, "completed")
+	completed, _ := d.sched.Get(task.RunID)
 	d.runs.save(completed)
 	d.goals.mu.Lock()
-	d.goals.goals[sess.SessionID] = &goalRecord{Goal: &sessionGoal{SessionID: sess.SessionID, Objective: "recover", Status: "active", AutoContinue: true, LastTaskID: task.TaskID, CreatedAt: now, UpdatedAt: now, MaxContinuations: 8, ActiveSince: now}}
+	d.goals.goals[sess.SessionID] = &goalRecord{Goal: &sessionGoal{SessionID: sess.SessionID, Objective: "recover", Status: "active", AutoContinue: true, LastTaskID: task.RunID, CreatedAt: now, UpdatedAt: now, MaxContinuations: 8, ActiveSince: now}}
 	_ = d.goals.persistLocked()
 	d.goals.mu.Unlock()
 	_ = d.Close()
@@ -115,11 +115,11 @@ func TestGoalContinuationFreezesBudgetBeforeDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := result.(*scheduler.Task)
+	task := result.(*scheduler.ExecutionRun)
 	if task.TokenBudget != 17 {
 		t.Fatalf("returned task budget = %d, want 17", task.TokenBudget)
 	}
-	persisted, _ := d.sched.Get(task.TaskID)
+	persisted, _ := d.sched.Get(task.RunID)
 	if persisted.TokenBudget != 17 {
 		t.Fatalf("published task budget = %d, want 17", persisted.TokenBudget)
 	}
@@ -194,8 +194,8 @@ func TestScheduleOverlapQueuePersistsAndReplaceCancels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d.schedules.MarkTask(queued.ScheduleID, previous.TaskID)
-	queued.LastTaskID = previous.TaskID
+	d.schedules.MarkTask(queued.ScheduleID, previous.RunID)
+	queued.LastTaskID = previous.RunID
 	if !d.resolveScheduleOverlap(queued, now) {
 		t.Fatal("queue did not defer overlap")
 	}
@@ -212,12 +212,12 @@ func TestScheduleOverlapQueuePersistsAndReplaceCancels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d.schedules.MarkTask(replace.ScheduleID, previous.TaskID)
-	replace.LastTaskID = previous.TaskID
+	d.schedules.MarkTask(replace.ScheduleID, previous.RunID)
+	replace.LastTaskID = previous.RunID
 	if d.resolveScheduleOverlap(replace, now) {
 		t.Fatal("replace did not admit replacement")
 	}
-	cancelled, _ := d.sched.Get(previous.TaskID)
+	cancelled, _ := d.sched.Get(previous.RunID)
 	if cancelled.Status != "cancelled" {
 		t.Fatalf("previous status=%s", cancelled.Status)
 	}

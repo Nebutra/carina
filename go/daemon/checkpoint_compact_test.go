@@ -89,10 +89,10 @@ func TestCheckpointCompactRequiresIdleTaskAndPreservesSource(t *testing.T) {
 	}
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "compact me")
 	source := &runCheckpoint{Turn: 9, Transcript: compactFixtureTranscript()}
-	if err := d.runs.saveCheckpointChecked(task.TaskID, source); err != nil {
+	if err := d.runs.saveCheckpointChecked(task.RunID, source); err != nil {
 		t.Fatal(err)
 	}
-	params := mustJSON(t, map[string]any{"session_id": sess.SessionID, "task_id": task.TaskID})
+	params := mustJSON(t, map[string]any{"session_id": sess.SessionID, "run_id": task.RunID})
 	// Queued/running is not idle — refuse mid-execution.
 	if _, err := d.handleCheckpointCompact(params); err == nil || !strings.Contains(err.Error(), "idle") {
 		// Submit leaves queued/running; message may say "idle" or active task.
@@ -100,7 +100,7 @@ func TestCheckpointCompactRequiresIdleTaskAndPreservesSource(t *testing.T) {
 			t.Fatalf("non-idle compact err=%v", err)
 		}
 	}
-	if _, err := d.sched.RestoreCheckpoint(task.TaskID, nil); err != nil {
+	if _, err := d.sched.RestoreCheckpoint(task.RunID, nil); err != nil {
 		t.Fatal(err)
 	}
 	d.SetSummarizer(&scriptedReasoner{steps: []string{"decisions preserved; continue migration"}})
@@ -112,11 +112,11 @@ func TestCheckpointCompactRequiresIdleTaskAndPreservesSource(t *testing.T) {
 	if row["compacted"] != true {
 		t.Fatalf("result=%#v", row)
 	}
-	if d.runs.loadCheckpointID(task.TaskID, runCheckpointID(task.TaskID, source)) == nil {
+	if d.runs.loadCheckpointID(task.RunID, runCheckpointID(task.RunID, source)) == nil {
 		t.Fatal("source checkpoint missing after compact")
 	}
-	latest := d.runs.loadCheckpoint(task.TaskID)
-	if latest == nil || latest.ParentCheckpointID != runCheckpointID(task.TaskID, source) || len(latest.Transcript.CompactionReceipts) == 0 {
+	latest := d.runs.loadCheckpoint(task.RunID)
+	if latest == nil || latest.ParentCheckpointID != runCheckpointID(task.RunID, source) || len(latest.Transcript.CompactionReceipts) == 0 {
 		t.Fatalf("latest=%#v", latest)
 	}
 }
@@ -130,12 +130,12 @@ func TestCheckpointCompactAllowsCompletedTask(t *testing.T) {
 	}
 	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "done work")
 	source := &runCheckpoint{Turn: 4, Transcript: compactFixtureTranscript()}
-	if err := d.runs.saveCheckpointChecked(task.TaskID, source); err != nil {
+	if err := d.runs.saveCheckpointChecked(task.RunID, source); err != nil {
 		t.Fatal(err)
 	}
-	d.sched.SetStatus(task.TaskID, "completed")
+	d.sched.SetStatus(task.RunID, "completed")
 	d.SetSummarizer(&scriptedReasoner{steps: []string{"completed work summarized"}})
-	result, err := d.handleCheckpointCompact(mustJSON(t, map[string]any{"session_id": sess.SessionID, "task_id": task.TaskID}))
+	result, err := d.handleCheckpointCompact(mustJSON(t, map[string]any{"session_id": sess.SessionID, "run_id": task.RunID}))
 	if err != nil {
 		t.Fatal(err)
 	}

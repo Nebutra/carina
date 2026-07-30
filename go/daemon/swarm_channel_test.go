@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // writeChannelWorkerAgent is writeWorkerAgent with a higher max_turns: the
@@ -112,6 +114,26 @@ func withShrunkChannelCap(t *testing.T, n int) {
 }
 
 // --- pure broker unit tests (no Daemon involved) ---------------------------
+
+func TestSwarmChannelPublishBroadcastsToEveryLongPollSubscriber(t *testing.T) {
+	broker := newSwarmChannelBroker()
+	var ready sync.WaitGroup
+	ready.Add(2)
+	results := make(chan bool, 2)
+	for _, stepID := range []string{"subscriber-a", "subscriber-b"} {
+		go func(stepID string) {
+			ready.Done()
+			results <- broker.waitForMessages(context.Background(), stepID, []string{"progress"}, time.Second)
+		}(stepID)
+	}
+	ready.Wait()
+	broker.publish("progress", "publisher", json.RawMessage(`{"ready":true}`))
+	for range 2 {
+		if !<-results {
+			t.Fatal("publish did not wake every channel subscriber")
+		}
+	}
+}
 
 func TestSwarmChannelBrokerDeliversPublishedMessagesOnce(t *testing.T) {
 	b := newSwarmChannelBroker()

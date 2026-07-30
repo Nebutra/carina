@@ -43,7 +43,7 @@ used to add Go TUI code back into production.
 
 | ID | Requirement | Source |
 |----|-------------|--------|
-| R1 | **Approval prompt whose body is a reviewable artifact**: colored unified diff for patch decisions, canonicalized command for exec, plan text for mode changes; 2–4 structured options (once/session/project/deny-with-reason); resolves `decision_id` over existing RPC (`task.approval.resolve` / `task.action.approve`) | P1.1 |
+| R1 | **Approval prompt whose body is a reviewable artifact**: colored unified diff for patch decisions, canonicalized command for exec, plan text for mode changes; 2–4 structured options (once/session/project/deny-with-reason); resolves `decision_id` over existing RPC (`governance.approval.resolve` / `governance.action.approve`) | P1.1 |
 | R2 | **Streaming session transcript** with collapse/expand; entries with kernel verdict `read-only-allow` collapse by default (governance as visual hierarchy) | P3.1 |
 | R3 | **Terminal history escape hatches**: a full-screen viewport for focused operation, an explicit normal-buffer mode for native terminal history, and a plain transcript pager. A strict commit-once static/dynamic renderer is reconsidered only if measured product evidence shows these modes are insufficient | Ink-lessons checklist (b)(f); resolution in §5.3 |
 | R4 | **Task progress pills** rendered from **server-side computed** pill segments (`/status` RPC) — client renders truth, doesn't compute it | P3.2 |
@@ -315,7 +315,7 @@ Stack actually used: `charm.land/bubbletea/v2` **v2.0.8**, bubbles v2.1.1, lipgl
 | Gate | Verdict | Evidence (spike run → independent re-run) |
 |---|---|---|
 | G1 live-daemon | **PASS** | Two-socket attach + `session.events.stream`; 12 external `command.exec` → 36 live events → re-run: fresh daemon, 5 external calls → 15 events (incl. zh output) streamed into the viewport live. |
-| G2 approval | **PASS**¹ | Real `workspace.patch.propose` → pending patch → overlay with real colored unified diff (ANSI 38;5;42 adds / 38;5;203 dels confirmed in both runs) → `y` → applied, file on disk. decision_id path re-run end-to-end: `/cmd mv …` → `requires_approval` + `decision_id perm_18c08fbe…` → `task.action.approve` → command executed (`renamed.txt` on disk), resume events streamed. |
+| G2 approval | **PASS**¹ | Real `workspace.patch.propose` → pending patch → overlay with real colored unified diff (ANSI 38;5;42 adds / 38;5;203 dels confirmed in both runs) → `y` → applied, file on disk. decision_id path re-run end-to-end: `/cmd mv …` → `requires_approval` + `decision_id perm_18c08fbe…` → `governance.action.approve` → command executed (`renamed.txt` on disk), resume events streamed. |
 | G3 cjk | **PASS** (automated) / **PENDING-HUMAN** (IME) | Re-run: required zh lines rendered; `carina 审批测试 with mixed 中英 text` typed through tmux PTY; 7 backspaces deleted grapheme-per-keypress; bracketed paste collapsed to `[Pasted 11 lines]`; **all 31 bordered rows exactly 108 display columns** (east-asian-width check) — zero tearing. |
 | G4 perf | **PASS** | Re-run, 100 ev/s × 10 s (1000 events): **frame render p95 9.38 ms** (spike: 10.98) vs 16 ms gate; event→flush p95 16.5 ms vs 33 ms criterion; **idle CPU 0.00 % mean / 0.0 % max** over 30×1 s ps samples (spike: 0.60 %) vs 1 % gate. |
 
@@ -330,7 +330,7 @@ remains part of the external release matrix.
 | Gate | Verdict | Evidence (spike run → independent re-run) |
 |---|---|---|
 | G1 live-daemon | **PASS** | Re-run via `run-gates.sh` end-to-end green: fresh isolated daemon+kernel, two connections, real events rendered in follow-scrolling transcript; all captures alignment-checked (100/100 cols). |
-| G2 approval | **PASS**¹ | Re-run live: real PatchTransaction diff as colored prompt body (28 ANSI-escape lines in capture) → applied; real `pendingCmds` approval `perm_18c08e8e…` → `task.action.approve` → `decision:"allowed"`, command executed; deny path exercised (`task.action.deny`). |
+| G2 approval | **PASS**¹ | Re-run live: real PatchTransaction diff as colored prompt body (28 ANSI-escape lines in capture) → applied; real `pendingCmds` approval `perm_18c08e8e…` → `governance.action.approve` → `decision:"allowed"`, command executed; deny path exercised (`governance.action.deny`). |
 | G3 cjk | **PASS** (automated) / **PENDING-HUMAN** (IME) | Re-run: required zh lines rendered; `中英 text` → 5 backspaces removed ` text`, next removed whole `英`; **hardware cursor pinned to caret** (`Frame::set_cursor_position`): after `你好 world` cursor x=11, arrowing over `好`/`你` jumps exactly 2 columns — R13 architecture demonstrably works; all bordered rows exactly 100 display columns. |
 | G4 perf | **PASS** | Re-runs: **frame render p95 5.3–7.3 ms** (spike: 3.8–8.3) vs 16 ms gate; **idle CPU 0.00 % mean / 0.0 % max** over 30×1 s samples vs 1 % gate. |
 

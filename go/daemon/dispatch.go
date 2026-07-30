@@ -22,10 +22,10 @@ func (d *Daemon) reapLeases() {
 			return
 		case now := <-ticker.C:
 			for _, id := range d.sched.ReapExpiredLeases(now.UTC()) {
-				if t, ok := d.sched.Get(id); ok {
-					d.record(t.SessionID, "TaskCreated", id, "go",
+				if t, ok := d.sched.GetTask(id); ok {
+					d.record(t.SessionID, "TaskRequeued", id, "go",
 						map[string]any{"status": "lease_expired_requeued", "attempts": t.Attempts}, "")
-					d.persistRun(id)
+					d.persistTask(id)
 				}
 			}
 		}
@@ -57,13 +57,32 @@ func (d *Daemon) handleWorkSubmit(params json.RawMessage) (any, error) {
 		}
 	}
 	task := d.sched.SubmitForDispatchWithCapabilities(sess.SessionID, sess.WorkspaceID, p.Prompt, p.SuccessCriteria, p.RequiredWorkerCapabilities)
-	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go",
+	d.record(sess.SessionID, "TaskSubmitted", task.TaskID, "go",
 		map[string]any{"task_id": task.TaskID, "user_prompt": task.UserPrompt, "mode": "dispatch"}, "")
-	d.persistRun(task.TaskID)
+	d.persistTask(task.TaskID)
 	d.emitDebug("scheduler", "work_submitted", task.TaskID, map[string]string{
 		"session_id": sess.SessionID,
 		"task_id":    task.TaskID,
 	})
+	return task, nil
+}
+
+func (d *Daemon) handleWorkCancel(params json.RawMessage) (any, error) {
+	var p struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	task, err := d.sched.CancelTask(p.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.runs.saveTask(task); err != nil {
+		return nil, fmt.Errorf("work cancellation persistence failed: %w", err)
+	}
+	d.record(task.SessionID, "TaskCancelled", task.TaskID, "operator", map[string]any{"reason": "operator_cancelled"}, "")
+	d.emitTaskCompletion(task.SessionID, task)
 	return task, nil
 }
 
@@ -99,9 +118,9 @@ func (d *Daemon) handleWorkPoll(params json.RawMessage) (any, error) {
 	if !ok {
 		return map[string]any{"empty": true, "backpressure": directive}, nil
 	}
-	d.record(task.SessionID, "TaskCreated", task.TaskID, "worker",
+	d.record(task.SessionID, "TaskLeased", task.TaskID, "worker",
 		map[string]any{"status": "leased", "worker_id": p.WorkerID, "attempts": task.Attempts}, "")
-	d.persistRun(task.TaskID)
+	d.persistTask(task.TaskID)
 	d.emitDebug("scheduler", "work_leased", task.TaskID, map[string]string{
 		"worker_id": p.WorkerID,
 		"task_id":   task.TaskID,
@@ -126,7 +145,7 @@ func (d *Daemon) handleWorkRenew(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	_ = d.pool.Heartbeat(p.WorkerID)
-	if task, ok := d.sched.Get(p.TaskID); ok && task.Status == "cancelled" {
+	if task, ok := d.sched.GetTask(p.TaskID); ok && task.Status == "cancelled" {
 		return map[string]any{"ok": false, "cancelled": true}, nil
 	}
 	if err := d.sched.RenewLease(p.TaskID, p.WorkerID, p.LeaseGeneration, time.Duration(p.TTLMs)*time.Millisecond); err != nil {
@@ -197,7 +216,7 @@ func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 			return nil, err
 		}
 	}
-	if task, ok := d.sched.Get(p.TaskID); ok && task.Status == "cancelled" {
+	if task, ok := d.sched.GetTask(p.TaskID); ok && task.Status == "cancelled" {
 		return map[string]any{"ok": false, "cancelled": true}, nil
 	}
 	if err := d.sched.ReportWithUsage(p.TaskID, p.WorkerID, p.LeaseGeneration, p.Status, p.Summary, p.Patches, tokensUsed, usageObserved); err != nil {
@@ -205,7 +224,7 @@ func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 	}
 	var task *scheduler.Task
 	sessionID := ""
-	if t, ok := d.sched.Get(p.TaskID); ok {
+	if t, ok := d.sched.GetTask(p.TaskID); ok {
 		task, sessionID = t, t.SessionID
 	}
 	// A dispatch task that a streaming workflow step routed here (see
@@ -221,14 +240,14 @@ func (d *Daemon) handleWorkReport(params json.RawMessage) (any, error) {
 			}
 		}
 	}
-	d.record(sessionID, "TaskCreated", p.TaskID, "worker",
+	d.record(sessionID, "TaskCompleted", p.TaskID, "worker",
 		map[string]any{"status": p.Status, "worker_id": p.WorkerID, "reported": true, "tokens_used": tokensUsed, "token_usage_observed": usageObserved}, "")
-	d.persistRun(p.TaskID)
+	d.persistTask(p.TaskID)
 	d.emitDebug("worker", "work_reported", p.TaskID, map[string]string{
 		"worker_id": p.WorkerID,
 		"task_id":   p.TaskID,
 		"status":    p.Status,
 	})
-	d.emitCompletion(sessionID, task)
+	d.emitTaskCompletion(sessionID, task)
 	return map[string]any{"ok": true}, nil
 }

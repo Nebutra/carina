@@ -20,7 +20,7 @@ class SubmissionIDTests(unittest.TestCase):
         client.call = call  # type: ignore[method-assign]
         task = client.submit_task("sess_1", "work", "sdk_request_1")
         self.assertEqual(captured, {
-            "method": "task.submit",
+            "method": "execution.start",
             "params": {"session_id": "sess_1", "prompt": "work", "client_submission_id": "sdk_request_1"},
         })
         self.assertEqual(task["client_submission_id"], "sdk_request_1")

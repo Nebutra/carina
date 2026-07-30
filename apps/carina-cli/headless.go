@@ -26,7 +26,7 @@ type streamInputFrame struct {
 	Type               string `json:"type"`
 	RequestID          string `json:"request_id,omitempty"`
 	Text               string `json:"text,omitempty"`
-	TaskID             string `json:"task_id,omitempty"`
+	RunID              string `json:"run_id,omitempty"`
 	DecisionID         string `json:"decision_id,omitempty"`
 	Decision           string `json:"decision,omitempty"`
 	Scope              string `json:"scope,omitempty"`
@@ -253,14 +253,14 @@ func handleStreamInput(c *rpcClient, sessionID string, defaults streamRunOptions
 		optional(params, "agent", firstNonEmpty(frame.Agent, defaults.agent))
 		optional(params, "mode", frame.Mode)
 		var out map[string]any
-		err := c.Call("task.submit", params, &out)
+		err := c.Call("execution.start", params, &out)
 		return out, false, err
 	case "steer":
-		if frame.TaskID == "" || strings.TrimSpace(frame.Text) == "" {
-			return nil, false, errors.New("steer requires task_id and text")
+		if frame.RunID == "" || strings.TrimSpace(frame.Text) == "" {
+			return nil, false, errors.New("steer requires run_id and text")
 		}
 		var out map[string]any
-		err := c.Call("task.steer", map[string]any{"task_id": frame.TaskID, "message": frame.Text}, &out)
+		err := c.Call("execution.steer", map[string]any{"run_id": frame.RunID, "message": frame.Text}, &out)
 		return out, false, err
 	case "approval":
 		if frame.DecisionID == "" || (frame.Decision != "allow" && frame.Decision != "deny") {
@@ -274,21 +274,21 @@ func handleStreamInput(c *rpcClient, sessionID string, defaults streamRunOptions
 			return nil, false, errors.New("approval scope must be once, session, or project")
 		}
 		var out map[string]any
-		err := c.Call("task.approval.resolve", map[string]any{"decision_id": frame.DecisionID, "approve": frame.Decision == "allow", "approver": "headless", "scope": scope}, &out)
+		err := c.Call("governance.approval.resolve", map[string]any{"decision_id": frame.DecisionID, "approve": frame.Decision == "allow", "approver": "headless", "scope": scope}, &out)
 		return out, false, err
 	case "answer":
 		if frame.QuestionID == "" {
 			return nil, false, errors.New("answer requires question_id")
 		}
 		var out map[string]any
-		err := c.Call("task.user.answer", map[string]any{"question_id": frame.QuestionID, "value": frame.Value}, &out)
+		err := c.Call("question.answer", map[string]any{"question_id": frame.QuestionID, "value": frame.Value}, &out)
 		return out, false, err
 	case "interrupt":
-		if frame.TaskID == "" {
-			return nil, false, errors.New("interrupt requires task_id")
+		if frame.RunID == "" {
+			return nil, false, errors.New("interrupt requires run_id")
 		}
 		var out map[string]any
-		err := c.Call("task.cancel", map[string]any{"task_id": frame.TaskID}, &out)
+		err := c.Call("execution.cancel", map[string]any{"run_id": frame.RunID}, &out)
 		return out, false, err
 	case "close":
 		return nil, true, nil

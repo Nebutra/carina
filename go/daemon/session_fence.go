@@ -18,7 +18,7 @@ func (d *Daemon) activeSessionTask(sessionID string) *schedulerTaskSnapshot {
 		}
 		switch task.Status {
 		case "queued", "running", "waiting_input", "waiting_approval":
-			return &schedulerTaskSnapshot{id: task.TaskID, status: task.Status}
+			return &schedulerTaskSnapshot{id: task.RunID, status: task.Status}
 		}
 	}
 	return nil

@@ -46,7 +46,7 @@ func cmdRuntime(args []string) error {
 		_ = client.Close()
 		return printRuntimeDescription(description, *jsonOutput)
 	case "status":
-		client, description, err := localdaemon.Connect(spec)
+		client, description, err := localdaemon.Describe(spec)
 		if err == nil {
 			_ = client.Close()
 			return printRuntimeDescription(description, *jsonOutput)

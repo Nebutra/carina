@@ -3,7 +3,7 @@
 **Status:** Approved identity integrated into the repository. Canonical assets and machine-readable tokens live under `docs/brand/`.
 **Production pipeline:** `generate-brand-vi`; repository consumption is governed by `docs/brand/AGENTS.md` and `asset-manifest.json`.
 **Historical visual reference:** a hydrogen-alpha-dominant rendering of the Carina Nebula informed the early temperament and palette research. It is not a repository dependency or an identity master.
-**Canonical naming:** Product lockup is **Nebutra Carina**; short form **Carina**; descriptor **the Carina agent runtime** (lowercase descriptor, never a second proper name). "Agent OS" is internal-PRD ambition language and does not appear in brand surfaces. Absorbed upstreams (Hermes, Headroom, OpenClaw) are external projects, not Nebutra siblings; no constellation codename system exists yet, and none should be implied.
+**Canonical naming:** Product lockup is **Nebutra Carina**; short form **Carina**; descriptor **the Carina agent runtime** (lowercase descriptor, never a second proper name). "Agent OS" is internal-PRD ambition language and does not appear in brand surfaces. External upstream projects are not Nebutra siblings; no constellation codename system exists yet, and none should be implied.
 
 ---
 

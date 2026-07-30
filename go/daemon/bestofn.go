@@ -99,11 +99,11 @@ func parseCandidateEnvelope(summary string) ([]kernel.FileChange, string, error)
 
 // executeBestOfN dispatches the best_of_n tool: N parallel candidate drafts
 // of the same task, judged, with only the winner ever proposed+applied.
-func (d *Daemon) executeBestOfN(sess *sessionstore.Session, task *scheduler.Task, act *action) string {
+func (d *Daemon) executeBestOfN(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) string {
 	return d.executeBestOfNOutcome(sess, task, act).display
 }
 
-func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *scheduler.Task, act *action) toolExecutionOutcome {
+func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) toolExecutionOutcome {
 	// best_of_n runs at the top level only — a candidate-drafter subagent
 	// cannot itself call best_of_n (no relaxation of runSubagentLoop's
 	// no-respawn guard: this tool is simply unreachable from inside a
@@ -129,7 +129,7 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 	// spawn_subagent/run_workflow (PluginLoad resource string), rather than a
 	// new Capability variant — this is conceptually "may this session delegate
 	// work", which PluginLoad already governs.
-	dec, err := d.kern.Request(sess.SessionID, "PluginLoad", "best_of_n", task.TaskID)
+	dec, err := d.kern.Request(sess.SessionID, "PluginLoad", "best_of_n", task.RunID)
 	if err != nil {
 		return toolFailed("best_of_n governance error: "+err.Error(), "governance_error")
 	}
@@ -161,16 +161,16 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 		}
 		dec = approved
 	}
-	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+	if err := d.ensureActiveToolStarted(task.RunID); err != nil {
 		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
 	}
 
 	runID := sessionstore.NewID("bestofn")
-	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
 		"status": "best_of_n_started", "run_id": runID, "n": n, "estimated_tokens": estTotal,
 	}, "")
 
-	ctx := d.contextForTask(task.TaskID)
+	ctx := d.contextForTask(task.RunID)
 
 	// Parallel fan-out: literal reuse of the existing spawnSubagentContext
 	// primitive (byte-identical pattern to workflow.go's runWorkflow and
@@ -226,13 +226,13 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 
 	winner, judgeRationale, jerr := d.judgeBestOfN(ctx, sess, task, act.Task, candidates)
 	if jerr != nil {
-		d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
 			"status": "best_of_n_result", "run_id": runID, "n": n, "outcome": "no_winner", "error": jerr.Error(),
 		}, "")
 		return toolFailed("best_of_n: "+jerr.Error()+" — falling back: retry with a single normal patch call", "best_of_n_no_winner")
 	}
 
-	d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
 		"status": "best_of_n_result", "run_id": runID, "n": n, "outcome": "winner_selected",
 		"winner_index": winner.Index, "judge_rationale": truncate(judgeRationale, 400),
 		"winner_verify_ran": winner.Verify.Ran, "winner_verify_passed": winner.Verify.Passed,
@@ -264,7 +264,7 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 			childHash, childRead = d.lastReadHash(winner.ChildSessionID, f.Path)
 		}
 		if !childRead {
-			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+			d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
 				"status": "best_of_n_result", "run_id": runID, "n": n, "outcome": "provenance_refused", "path": f.Path,
 			}, "")
 			return toolFailed(fmt.Sprintf("best_of_n: refusing to write %q — the winning candidate's session never read it first", f.Path), "write_provenance_refused")
@@ -272,7 +272,7 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 		curSum := sha256.Sum256(cur)
 		curHash := hex.EncodeToString(curSum[:])
 		if childHash != curHash {
-			d.record(sess.SessionID, "TaskCreated", task.TaskID, "go", map[string]any{
+			d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
 				"status": "best_of_n_result", "run_id": runID, "n": n, "outcome": "provenance_stale", "path": f.Path,
 			}, "")
 			return toolFailed(fmt.Sprintf("best_of_n: %q changed since the winning candidate read it — re-run", f.Path), "write_provenance_stale")

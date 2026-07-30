@@ -184,7 +184,7 @@ func TestKnownKeysCoversConfigFields(t *testing.T) {
 	if len(known) != typ.NumField() {
 		t.Fatalf("knownKeys has %d entries for %d Config fields", len(known), typ.NumField())
 	}
-	for _, key := range []string{"sandbox_commands", "policy_dir", "require_workspace_trust", "headroom_token_budget"} {
+	for _, key := range []string{"sandbox_commands", "policy_dir", "require_workspace_trust", "context_engine"} {
 		if !known[key] {
 			t.Errorf("knownKeys missing %q", key)
 		}

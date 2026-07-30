@@ -1,0 +1,22 @@
+<blank:1>
+  Carina                                                             Provider
+  Relay profile  ·  CC Switch / Codex  ·  Model not selected  ·  reasoning p…
+  ────────────────────────────────────────────────────────────────────────────
+<blank:1>
+  ▌ Connect a provider
+    Choose the model endpoint Carina may use for this workspace.
+<blank:1>
+  ────────────────────────────────────────────────────────────────────────────
+  ╭ Providers  1 of 1 ───────────────────────────────────────────────────────╮
+  │ /  Search all 1 providers by name or ID                                  │
+  │ ──────────────────────────────────────────────────────────────────────── │
+  │ ▌ Relay profile                                         ◆ Active route   │
+  │ │ Codex  ·  active via proxy  ·  1 model                                 │
+  │                                                                          │
+  │                                                                          │
+  │                                                                          │
+  │                                                                          │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+   Connection ────────────────────────────────────────────────────────────────
+  ◆ Relay profile  ·  Active route                           Use active route
+   Esc  Exit   Enter  Use active route   /  Search   ↑↓  Navigate

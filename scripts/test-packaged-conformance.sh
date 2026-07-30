@@ -17,7 +17,7 @@ stages=()
 while IFS= read -r path; do stages+=("$path"); done < <("${mapfile_cmd[@]}")
 [[ ${#stages[@]} -eq 1 ]] || { echo "packaged-conformance: archive must contain exactly one top-level directory" >&2; exit 1; }
 stage="${stages[0]}"
-for binary in carina carina-ui carina-daemon carina-worker carina-kernel-service carina-scan carina-grep carina-diff carina-run carina-pty carina-patch-native headroom; do
+for binary in carina carina-ui carina-daemon carina-worker carina-kernel-service carina-scan carina-grep carina-diff carina-run carina-pty carina-patch-native; do
   [[ -x "$stage/bin/$binary" ]] || { echo "packaged-conformance: missing executable $binary" >&2; exit 1; }
 done
 [[ -f "$stage/MANIFEST.json" && -f "$stage/checksums.txt" ]] || { echo "packaged-conformance: release metadata missing" >&2; exit 1; }
@@ -30,7 +30,9 @@ done < checksums.txt)
 "$stage/bin/carina" --version >/dev/null
 socket="$work/runtime/carina.sock"
 mkdir -p "$(dirname "$socket")" "$work/state"
-"$stage/bin/carina-daemon" -socket "$socket" -state "$work/state" -kernel "$stage/bin/carina-kernel-service" -tools "$stage/bin" -offline -safe-mode -context-engine=off >"$work/daemon.log" 2>&1 &
+# Exercise the installed sibling-discovery path. Passing -tools here would hide
+# regressions where the daemon fails to forward CARINA_TOOLS_DIR to the kernel.
+"$stage/bin/carina-daemon" -socket "$socket" -state "$work/state" -kernel "$stage/bin/carina-kernel-service" -offline -safe-mode -context-engine=off >"$work/daemon.log" 2>&1 &
 daemon_pid=$!
 for _ in {1..100}; do
   [[ -S "$socket" ]] && break

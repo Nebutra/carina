@@ -86,7 +86,7 @@ func approvalModeWarning(mode string) string {
 
 // autoApproveRequiresApproval runs risk review then kernel approve-as-agent.
 // Used by always-approve and by accept-edits for edit capabilities only.
-func (d *Daemon) autoApproveRequiresApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
+func (d *Daemon) autoApproveRequiresApproval(sess *sessionstore.Session, task *scheduler.ExecutionRun, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
 	if !d.reviewAutonomousApproval(sess, task, dec, label) {
 		d.closePendingApproval(sess, task, dec, "denied", "autonomous risk review denied approval")
 		return dec, false
@@ -95,14 +95,14 @@ func (d *Daemon) autoApproveRequiresApproval(sess *sessionstore.Session, task *s
 	if err != nil || approved.Decision != "allowed" {
 		return dec, false
 	}
-	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+	if err := d.ensureActiveToolStarted(task.RunID); err != nil {
 		return dec, false
 	}
 	return approved, true
 }
 
 // interactiveApproveRequiresApproval pauses for the operator (ask path body).
-func (d *Daemon) interactiveApproveRequiresApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
+func (d *Daemon) interactiveApproveRequiresApproval(sess *sessionstore.Session, task *scheduler.ExecutionRun, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
 	resolved, granted, scope, terminal := d.awaitInteractiveApproval(sess, task, dec, label)
 	if !granted {
 		if resolved == nil {
@@ -120,7 +120,7 @@ func (d *Daemon) interactiveApproveRequiresApproval(sess *sessionstore.Session, 
 	}
 	if resolved != nil {
 		if resolved.Decision == "allowed" {
-			if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+			if err := d.ensureActiveToolStarted(task.RunID); err != nil {
 				return dec, false
 			}
 		}
@@ -131,11 +131,11 @@ func (d *Daemon) interactiveApproveRequiresApproval(sess *sessionstore.Session, 
 		return dec, false
 	}
 	if err := d.rememberApprovalGrant(sess, approved, scope, "operator", ""); err != nil {
-		d.record(sess.SessionID, "ToolApproved", task.TaskID, "go", map[string]any{
+		d.record(sess.SessionID, "ToolApproved", task.RunID, "go", map[string]any{
 			"status": "approval_grant_failed", "requested_scope": scope, "error": err.Error(),
 		}, dec.DecisionID)
 	}
-	if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+	if err := d.ensureActiveToolStarted(task.RunID); err != nil {
 		return dec, false
 	}
 	return approved, true
@@ -145,13 +145,13 @@ func (d *Daemon) interactiveApproveRequiresApproval(sess *sessionstore.Session, 
 // autonomous mode (default) it auto-approves as the agent. In interactive mode
 // it asks the operator and only approves on an explicit allow. Returns the
 // (possibly upgraded) decision and whether it is now allowed.
-func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
-	if err := d.markActiveToolApprovalRequired(task.TaskID, dec.DecisionID); err != nil {
+func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.ExecutionRun, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
+	if err := d.markActiveToolApprovalRequired(task.RunID, dec.DecisionID); err != nil {
 		d.closePendingApproval(sess, task, dec, "denied", "approval lifecycle could not be persisted")
 		return dec, false
 	}
 	if approved, ok := d.approveFromStoredGrant(sess, dec); ok {
-		if err := d.ensureActiveToolStarted(task.TaskID); err != nil {
+		if err := d.ensureActiveToolStarted(task.RunID); err != nil {
 			return dec, false
 		}
 		return approved, true
@@ -162,7 +162,7 @@ func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Tas
 		// already matched above. Deny rules / plan mode / sandbox still apply
 		// on every other path; this only handles requires_approval fallthrough.
 		d.closePendingApproval(sess, task, dec, "denied", "dont-ask mode denies requires_approval without a matching grant")
-		d.record(sess.SessionID, "PolicyViolation", task.TaskID, "go", map[string]any{
+		d.record(sess.SessionID, "PolicyViolation", task.RunID, "go", map[string]any{
 			"capability": dec.Capability, "decision_id": dec.DecisionID,
 			"refusal": "dont_ask", "reason": "requires_approval denied by approval_mode=dont-ask",
 		}, dec.DecisionID)
@@ -183,7 +183,7 @@ func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.Tas
 // closePendingApproval fail-closes an unresolved kernel decision and mirrors
 // that terminal state into daemon-side queues. In particular, a timed-out
 // agent patch must not leave an approvable patch gate behind.
-func (d *Daemon) closePendingApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, gateStatus, reason string) {
+func (d *Daemon) closePendingApproval(sess *sessionstore.Session, task *scheduler.ExecutionRun, dec *kernel.Decision, gateStatus, reason string) {
 	if dec == nil || dec.DecisionID == "" {
 		return
 	}
@@ -198,7 +198,7 @@ func (d *Daemon) closePendingApproval(sess *sessionstore.Session, task *schedule
 	}
 	d.mu.Unlock()
 	if _, err := d.kern.Deny(sess.SessionID, dec.DecisionID, "system", reason); err != nil {
-		d.record(sess.SessionID, "PolicyViolation", task.TaskID, "go", map[string]any{
+		d.record(sess.SessionID, "PolicyViolation", task.RunID, "go", map[string]any{
 			"capability": dec.Capability, "decision_id": dec.DecisionID,
 			"refusal": "approval_close_failed", "error": err.Error(),
 		}, dec.DecisionID)
@@ -206,12 +206,12 @@ func (d *Daemon) closePendingApproval(sess *sessionstore.Session, task *schedule
 }
 
 // awaitInteractiveApproval pauses the task, emits a permission.request envelope,
-// and blocks until an operator resolves it (task.approval.resolve or the
-// task.action.approve / task.action.deny RPC surface), the timeout lapses
+// and blocks until an operator resolves it (governance.approval.resolve or the
+// governance.action.approve / governance.action.deny RPC surface), the timeout lapses
 // (=> denied), or the daemon shuts down. Returns the already-kernel-resolved
 // decision when the unblocking RPC call resolved one (nil if resolution was
 // only signaled, not resolved), and whether the wait ended granted.
-func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *scheduler.Task, dec *kernel.Decision, label string) (*kernel.Decision, bool, string, string) {
+func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *scheduler.ExecutionRun, dec *kernel.Decision, label string) (*kernel.Decision, bool, string, string) {
 	ch := make(chan approvalSignal, 1)
 	d.approvalMu.Lock()
 	d.pendingApprovals[dec.DecisionID] = ch
@@ -223,11 +223,11 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 	}
 	defer removePending()
 
-	d.sched.SetStatus(task.TaskID, "waiting_approval")
+	d.sched.SetStatus(task.RunID, "waiting_approval")
 	ev := map[string]any{
 		"type":        "permission.request",
 		"session_id":  sess.SessionID,
-		"task_id":     task.TaskID,
+		"task_id":     task.RunID,
 		"decision_id": dec.DecisionID,
 		"capability":  dec.Capability,
 		"resource":    dec.Resource,
@@ -247,11 +247,11 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 	// Persist the reviewable permission request before publishing it live. A
 	// reconnect can reconcile this event with the later approval_resolved event
 	// by decision_id without minting a second decision or approval prompt.
-	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "ToolRequested", task.TaskID, "go", map[string]any{
+	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "ToolRequested", task.RunID, "go", map[string]any{
 		"status": "permission_requested", "decision_id": dec.DecisionID, "request": ev,
 	}, dec.DecisionID)
 	if err != nil {
-		d.sched.SetStatus(task.TaskID, "running")
+		d.sched.SetStatus(task.RunID, "running")
 		return nil, false, approvalScopeOnce, ""
 	}
 	ev[internalRawAuditCursor] = cursor
@@ -264,25 +264,25 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 	var sig approvalSignal
 	select {
 	case sig = <-ch:
-	case <-d.contextForTask(task.TaskID).Done():
+	case <-d.contextForTask(task.RunID).Done():
 		sig = approvalSignal{granted: false, scope: approvalScopeOnce, terminal: "cancelled"}
-		d.markActiveToolTerminal(task.TaskID, "cancelled")
+		d.markActiveToolTerminal(task.RunID, "cancelled")
 	case <-time.After(timeout):
 		sig = approvalSignal{granted: false, scope: approvalScopeOnce, terminal: "timed_out"}
-		d.markActiveToolTerminal(task.TaskID, "timed_out")
+		d.markActiveToolTerminal(task.RunID, "timed_out")
 	case <-d.stopCh:
 		sig = approvalSignal{granted: false, scope: approvalScopeOnce, terminal: "cancelled"}
-		d.markActiveToolTerminal(task.TaskID, "cancelled")
+		d.markActiveToolTerminal(task.RunID, "cancelled")
 	}
-	// Make timeout/cancellation final for task.approval.resolve before the
+	// Make timeout/cancellation final for governance.approval.resolve before the
 	// kernel decision is closed by resolveApproval.
 	if !sig.granted {
 		removePending()
 	}
-	if d.activeToolTerminal(task.TaskID) == "" {
-		d.sched.SetStatus(task.TaskID, "running")
+	if d.activeToolTerminal(task.RunID) == "" {
+		d.sched.SetStatus(task.RunID, "running")
 	}
-	d.record(sess.SessionID, "TaskCreated", task.TaskID, "operator",
+	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "operator",
 		map[string]any{"status": "approval_resolved", "decision_id": dec.DecisionID, "granted": sig.granted, "scope": sig.scope}, dec.DecisionID)
 	return sig.resolved, sig.granted, sig.scope, sig.terminal
 }
@@ -291,7 +291,7 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 // awaitInteractiveApproval wait. resolved is set when the unblocking call
 // already resolved the decision in the kernel (handleApprove / handleDeny),
 // so the waiter must not re-approve; it is nil when the decision still needs
-// resolving (task.approval.resolve, which only signals).
+// resolving (governance.approval.resolve, which only signals).
 type approvalSignal struct {
 	resolved *kernel.Decision
 	granted  bool
@@ -329,7 +329,7 @@ func (d *Daemon) handleApprovalResolve(params json.RawMessage) (any, error) {
 		scope = approvalScopeOnce
 	}
 	if *approve && scope != approvalScopeOnce {
-		return nil, fmt.Errorf("scoped approval requires task.action.approve so grant persistence can be confirmed")
+		return nil, fmt.Errorf("scoped approval requires governance.action.approve so grant persistence can be confirmed")
 	}
 	if !d.signalPendingApproval(p.DecisionID, nil, *approve, scope) {
 		return nil, fmt.Errorf("no pending approval for decision %s", p.DecisionID)
@@ -339,8 +339,8 @@ func (d *Daemon) handleApprovalResolve(params json.RawMessage) (any, error) {
 
 // signalPendingApproval unblocks an in-flight awaitInteractiveApproval wait
 // for decisionID, if one is pending. It is the single choke point both
-// task.approval.resolve (handleApprovalResolve) and the general-purpose
-// task.action.approve / task.action.deny (handleApprove / handleDeny) funnel
+// governance.approval.resolve (handleApprovalResolve) and the general-purpose
+// governance.action.approve / governance.action.deny (handleApprove / handleDeny) funnel
 // through, so however an operator's client resolves a requires_approval
 // decision, a live interactive wait on that same decision actually unblocks
 // with the matching outcome — audit and runtime can never disagree. resolved

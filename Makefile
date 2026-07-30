@@ -1,4 +1,4 @@
-.PHONY: all install uninstall go rust-ui rust-ui-e2e rust zig sdk-ts test rust-test go-test brand-check zh-hant-check docs-build quality-check swarm-integration-test bench-gate-test audit-bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
+.PHONY: all install uninstall go rust-ui rust-ui-e2e rust-ui-native-clipboard-e2e rust zig sdk-ts test rust-test go-test brand-check zh-hant-check docs-build quality-check swarm-integration-test bench-gate-test audit-bench tui-bench bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
 
 PREFIX ?= $(HOME)/.local
 BINDIR = $(PREFIX)/bin
@@ -6,7 +6,7 @@ ZIG_TOOLS = carina-scan carina-grep carina-diff carina-run carina-pty carina-pat
 
 all: go rust-ui rust zig
 
-# Mirrors the release-package bin/ layout (minus the pinned Headroom bundle):
+# Mirrors the release-package bin/ layout:
 # the daemon discovers the kernel service and native tools next to its own
 # binary, so everything installs flat into one directory.
 install: all
@@ -17,10 +17,12 @@ install: all
 	for name in $(ZIG_TOOLS); do install -m 755 zig/zig-out/bin/$$name $(BINDIR) || exit 1; done
 	# Retired binary — interactive shell is bare `carina` only.
 	rm -f $(BINDIR)/carina-tui
+	# Remove the retired bundled context helper from older installations.
+	rm -f $(BINDIR)/head""room
 	@echo "Installed to $(BINDIR). Ensure it is on PATH."
 
 uninstall:
-	rm -f $(addprefix $(BINDIR)/,carina carina-ui carina-daemon carina-worker carina-tui carina-kernel-service $(ZIG_TOOLS))
+	rm -f $(addprefix $(BINDIR)/,carina carina-ui carina-daemon carina-worker carina-tui carina-kernel-service $(ZIG_TOOLS)) $(BINDIR)/head""room
 
 go:
 	rm -f bin/carina-tui
@@ -39,6 +41,9 @@ rust-ui-e2e: go rust-ui
 	cargo build --release -p carina-kernel --bin carina-kernel-service
 	./scripts/build-zig-tools.sh
 	bash scripts/test-rust-tui-journey.sh
+
+rust-ui-native-clipboard-e2e: rust-ui
+	bash scripts/test-rust-tui-native-clipboard.sh
 
 test: rust-test go-test
 
@@ -62,6 +67,12 @@ bench-gate-test:
 
 audit-bench:
 	bash scripts/bench-audit.sh
+
+# Issue #4: offscreen TUI render metrics (JSONL on stdout).
+tui-bench:
+	cargo run -q -p carina-tui --bin tui_bench -- --iterations 20
+
+bench: tui-bench
 
 rust-test:
 	cargo test --workspace

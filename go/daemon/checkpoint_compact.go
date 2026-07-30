@@ -38,7 +38,7 @@ func compactStatusOK(status string) bool {
 	}
 }
 
-func (d *Daemon) compactTaskForSession(sessionID, taskID string) (*scheduler.Task, error) {
+func (d *Daemon) compactTaskForSession(sessionID, taskID string) (*scheduler.ExecutionRun, error) {
 	if strings.TrimSpace(taskID) != "" {
 		task, ok := d.sched.Get(taskID)
 		if !ok || task.SessionID != sessionID {
@@ -46,9 +46,9 @@ func (d *Daemon) compactTaskForSession(sessionID, taskID string) (*scheduler.Tas
 		}
 		return task, nil
 	}
-	var candidates []*scheduler.Task
+	var candidates []*scheduler.ExecutionRun
 	for _, task := range d.sched.List() {
-		if task.SessionID == sessionID && compactStatusOK(task.Status) && d.runs.loadCheckpoint(task.TaskID) != nil {
+		if task.SessionID == sessionID && compactStatusOK(task.Status) && d.runs.loadCheckpoint(task.RunID) != nil {
 			candidates = append(candidates, task)
 		}
 	}
@@ -90,7 +90,7 @@ func (d *Daemon) handleCheckpointCompact(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("compact refused: session has active execution or patch mutation")
 	}
 	defer fence.Unlock()
-	if existing, loadErr := d.runs.loadCompactJournal(task.TaskID); loadErr != nil {
+	if existing, loadErr := d.runs.loadCompactJournal(task.RunID); loadErr != nil {
 		return nil, loadErr
 	} else if existing != nil {
 		if existing.State == "prepared" {
@@ -98,22 +98,22 @@ func (d *Daemon) handleCheckpointCompact(params json.RawMessage) (any, error) {
 				return nil, err
 			}
 			existing.State = "audited"
-			if err = d.runs.writeCompactJournal(task.TaskID, existing); err != nil {
+			if err = d.runs.writeCompactJournal(task.RunID, existing); err != nil {
 				return nil, err
 			}
 		}
 		if existing.State != "committed" {
-			if err = d.runs.commitCompact(task.TaskID, existing); err != nil {
+			if err = d.runs.commitCompact(task.RunID, existing); err != nil {
 				return nil, fmt.Errorf("compact recovery: %w", err)
 			}
 		}
 		if err = d.ensureCompactAudit(task, existing, "completion"); err != nil {
 			return nil, err
 		}
-		cleanup := d.runs.clearCompactJournal(task.TaskID) != nil
+		cleanup := d.runs.clearCompactJournal(task.RunID) != nil
 		return compactResult(task, existing, true, cleanup), nil
 	}
-	source := d.runs.loadCheckpoint(task.TaskID)
+	source := d.runs.loadCheckpoint(task.RunID)
 	if source == nil || source.Transcript == nil {
 		return nil, fmt.Errorf("compact requires a persisted checkpoint")
 	}
@@ -129,33 +129,33 @@ func (d *Daemon) handleCheckpointCompact(params json.RawMessage) (any, error) {
 		return thinkWithRetry(ctx, d.summarizeReasoner(), "Summarize this checkpoint for loss-aware continuation. Preserve decisions, constraints, failures, pending work, and file paths.\n\n"+head)
 	})
 	if receipt == nil {
-		return map[string]any{"compacted": false, "task_id": task.TaskID, "checkpoint_id": checkpointID(task, source), "reason": "checkpoint has no safely compactable head"}, nil
+		return map[string]any{"compacted": false, "task_id": task.RunID, "checkpoint_id": checkpointID(task, source), "reason": "checkpoint has no safely compactable head"}, nil
 	}
 	target := &runCheckpoint{Turn: source.Turn, Transcript: clone, MemorySnapshot: source.MemorySnapshot, AppliedPatches: append([]string(nil), source.AppliedPatches...)}
 	operationID := sessionstore.NewID("compact")
-	j, err := d.runs.prepareCompact(task.TaskID, operationID, checkpointID(task, source), target)
+	j, err := d.runs.prepareCompact(task.RunID, operationID, checkpointID(task, source), target)
 	if err != nil {
 		return nil, fmt.Errorf("compact WAL prepare: %w", err)
 	}
-	if err = d.recordChecked(task.SessionID, "ContextCompacted", task.TaskID, "operator", map[string]any{"status": "checkpoint_compact_requested", "operation_id": operationID, "source_checkpoint_id": j.SourceCheckpointID, "target_checkpoint_id": j.Target.CheckpointID, "phase": "requested"}, ""); err != nil {
+	if err = d.recordChecked(task.SessionID, "ContextCompacted", task.RunID, "operator", map[string]any{"status": "checkpoint_compact_requested", "operation_id": operationID, "source_checkpoint_id": j.SourceCheckpointID, "target_checkpoint_id": j.Target.CheckpointID, "phase": "requested"}, ""); err != nil {
 		return nil, fmt.Errorf("compact write-ahead audit: %w", err)
 	}
 	j.State = "audited"
-	if err = d.runs.writeCompactJournal(task.TaskID, j); err != nil {
+	if err = d.runs.writeCompactJournal(task.RunID, j); err != nil {
 		return nil, fmt.Errorf("persist compact audit boundary: %w", err)
 	}
-	if err = d.runs.commitCompact(task.TaskID, j); err != nil {
+	if err = d.runs.commitCompact(task.RunID, j); err != nil {
 		return nil, fmt.Errorf("compact commit (retry is idempotent): %w", err)
 	}
-	if err = d.recordChecked(task.SessionID, "ContextCompacted", task.TaskID, "operator", map[string]any{"status": "checkpoint_compacted", "operation_id": operationID, "source_checkpoint_id": j.SourceCheckpointID, "target_checkpoint_id": j.Target.CheckpointID, "receipt": receipt, "phase": "completion"}, ""); err != nil {
+	if err = d.recordChecked(task.SessionID, "ContextCompacted", task.RunID, "operator", map[string]any{"status": "checkpoint_compacted", "operation_id": operationID, "source_checkpoint_id": j.SourceCheckpointID, "target_checkpoint_id": j.Target.CheckpointID, "receipt": receipt, "phase": "completion"}, ""); err != nil {
 		return nil, fmt.Errorf("compact committed but completion audit failed: %w", err)
 	}
-	cleanup := d.runs.clearCompactJournal(task.TaskID) != nil
+	cleanup := d.runs.clearCompactJournal(task.RunID) != nil
 	return compactResult(task, j, false, cleanup), nil
 }
 
-func (d *Daemon) ensureCompactAudit(task *scheduler.Task, j *compactJournal, phase string) error {
-	count, err := d.restoreAuditPhaseCount(task.SessionID, task.TaskID, j.OperationID, phase)
+func (d *Daemon) ensureCompactAudit(task *scheduler.ExecutionRun, j *compactJournal, phase string) error {
+	count, err := d.restoreAuditPhaseCount(task.SessionID, task.RunID, j.OperationID, phase)
 	if err != nil {
 		return fmt.Errorf("compact %s audit check: %w", phase, err)
 	}
@@ -173,12 +173,12 @@ func (d *Daemon) ensureCompactAudit(task *scheduler.Task, j *compactJournal, pha
 	if phase == "completion" && len(j.Target.Transcript.CompactionReceipts) > 0 {
 		payload["receipt"] = j.Target.Transcript.CompactionReceipts[len(j.Target.Transcript.CompactionReceipts)-1]
 	}
-	return d.recordChecked(task.SessionID, "ContextCompacted", task.TaskID, "operator", payload, "")
+	return d.recordChecked(task.SessionID, "ContextCompacted", task.RunID, "operator", payload, "")
 }
 
-func compactResult(task *scheduler.Task, j *compactJournal, idempotent, cleanup bool) map[string]any {
+func compactResult(task *scheduler.ExecutionRun, j *compactJournal, idempotent, cleanup bool) map[string]any {
 	return map[string]any{
-		"compacted": true, "task_id": task.TaskID, "checkpoint_id": j.Target.CheckpointID,
+		"compacted": true, "task_id": task.RunID, "checkpoint_id": j.Target.CheckpointID,
 		"source_checkpoint_id": j.SourceCheckpointID, "turn": j.Target.Turn,
 		"status": task.Status, "idempotent": idempotent, "journal_cleanup_pending": cleanup,
 		"receipt": j.Target.Transcript.CompactionReceipts[len(j.Target.Transcript.CompactionReceipts)-1],

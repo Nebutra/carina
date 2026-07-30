@@ -10,6 +10,12 @@ import (
 	"github.com/Nebutra/carina/go/workflowui"
 )
 
+const workflowUsage = `Usage:
+  carina workflow run <name> ["input"] [--session <id>] [--json] [--background]
+  carina workflow list [--json]
+  carina workflow status <run_id> [--json]
+  carina workflow pause|resume|stop|restart <run_id>`
+
 // cmdWorkflow is the `carina workflow ...` entry point — the productization
 // gap this closes: workflow.run/list/detail/pause/resume/stop/restart were
 // previously only reachable via raw RPC or the model-driven "workflow" tool
@@ -17,9 +23,12 @@ import (
 // which all already have one).
 func cmdWorkflow(c *rpcClient, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: carina workflow <run|list|status|pause|resume|stop|restart> ...")
+		return fmt.Errorf("%s", workflowUsage)
 	}
 	switch args[0] {
+	case "help", "--help", "-h":
+		fmt.Println(workflowUsage)
+		return nil
 	case "run":
 		return cmdWorkflowRun(c, args[1:])
 	case "list", "ls":
@@ -188,13 +197,13 @@ func truncateForTable(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
-// workflowWaitDefaultTimeout mirrors runWaitForTaskDefaultTimeout's
+// workflowWaitDefaultTimeout mirrors runWaitForExecutionDefaultTimeout's
 // reasoning (task_outcome.go): generous enough for a real multi-step run,
 // never an unbounded hang.
 const workflowWaitDefaultTimeout = 30 * time.Minute
 
 // workflowWaitPollInterval is deliberately coarser than
-// runWaitForTaskPollInterval (500ms) — a workflow run's natural unit of
+// runWaitForExecutionPollInterval (500ms) — a workflow run's natural unit of
 // progress is a whole step (seconds to minutes), not a single reasoning
 // turn, so sub-second polling would just be waste.
 const workflowWaitPollInterval = 2 * time.Second
@@ -203,8 +212,8 @@ const workflowWaitPollInterval = 2 * time.Second
 // Status, printing the same live rollup a swarm run already emits on the
 // event bus but with nowhere to be seen until now, then renders the final
 // detail and returns a non-nil error for any non-Completed terminal status
-// (mirrors runWaitForTask's governance-distinct-exit-code contract).
-func runWaitForWorkflow(c taskStatusPoller, runID string, timeout time.Duration, sleep func(time.Duration)) error {
+// (mirrors runWaitForExecution's governance-distinct-exit-code contract).
+func runWaitForWorkflow(c executionStatusPoller, runID string, timeout time.Duration, sleep func(time.Duration)) error {
 	if timeout <= 0 {
 		timeout = workflowWaitDefaultTimeout
 	}

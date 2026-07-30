@@ -31,7 +31,7 @@ fn main() {
                 let started = Instant::now();
                 log.append(&Event::new(
                     "bench",
-                    EventType::TaskCreated,
+                    EventType::ExecutionQueued,
                     json!({"worker": worker, "sequence": sequence}),
                 ))
                 .expect("append audit event");

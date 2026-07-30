@@ -29,28 +29,24 @@ func TestNormalizeReasonerBackend(t *testing.T) {
 	}
 }
 
-func TestSelectReasonerBackendIsProviderFirst(t *testing.T) {
+func TestSelectReasonerBackendKeepsAutoRouterStable(t *testing.T) {
 	tests := []struct {
-		name     string
-		offline  bool
-		backend  string
-		model    string
-		runnable bool
-		want     string
+		name    string
+		offline bool
+		backend string
+		want    string
 	}{
-		{name: "offline", offline: true, backend: reasonerBackendClaudeCLI, runnable: true, want: reasonerBackendNone},
-		{name: "auto provider", backend: reasonerBackendAuto, runnable: true, want: reasonerBackendRouter},
-		{name: "auto explicit model unavailable", backend: reasonerBackendAuto, model: "openai/gpt-5", want: reasonerBackendNone},
-		{name: "auto explicit model available", backend: reasonerBackendAuto, model: "openai/gpt-5", runnable: true, want: reasonerBackendRouter},
-		{name: "auto unavailable", backend: reasonerBackendAuto, want: reasonerBackendNone},
+		{name: "offline", offline: true, backend: reasonerBackendClaudeCLI, want: reasonerBackendNone},
+		{name: "auto provider", backend: reasonerBackendAuto, want: reasonerBackendRouter},
+		{name: "auto unavailable", backend: reasonerBackendAuto, want: reasonerBackendRouter},
 		{name: "explicit router", backend: reasonerBackendRouter, want: reasonerBackendRouter},
-		{name: "explicit claude", backend: reasonerBackendClaudeCLI, runnable: true, want: reasonerBackendClaudeCLI},
-		{name: "explicit codex", backend: reasonerBackendCodexCLI, runnable: true, want: reasonerBackendCodexCLI},
-		{name: "offline codex", offline: true, backend: reasonerBackendCodexCLI, runnable: true, want: reasonerBackendNone},
+		{name: "explicit claude", backend: reasonerBackendClaudeCLI, want: reasonerBackendClaudeCLI},
+		{name: "explicit codex", backend: reasonerBackendCodexCLI, want: reasonerBackendCodexCLI},
+		{name: "offline codex", offline: true, backend: reasonerBackendCodexCLI, want: reasonerBackendNone},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := selectReasonerBackend(test.offline, test.backend, test.model, test.runnable); got != test.want {
+			if got := selectReasonerBackend(test.offline, test.backend); got != test.want {
 				t.Fatalf("backend = %q, want %q", got, test.want)
 			}
 		})

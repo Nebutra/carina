@@ -34,6 +34,22 @@ go test -race ./go/daemon ./go/config ./apps/carina-daemon
 make release-check
 ```
 
+### TUI rendering changes
+
+Golden terminal frames live under `crates/carina-tui/tests/snapshots/`. A
+rendering change is reviewed through the resulting `.snap` diff, including
+cell styles, rather than inferred from the Rust diff alone:
+
+```bash
+cargo install cargo-insta
+cargo insta test -p carina-tui
+cargo insta review
+```
+
+Do not accept snapshots only to make CI green. Freeze animation/time inputs,
+inspect every changed frame at its declared terminal size, and include the
+accepted `.snap` files in the pull request.
+
 For changes touching Rust kernel behavior, rebuild the release kernel service
 before Go integration tests:
 

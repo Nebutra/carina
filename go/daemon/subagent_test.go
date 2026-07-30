@@ -325,7 +325,7 @@ func TestSubagentLoopHonorsParentCancellation(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("subagent did not exit after cancellation")
 	}
-	current, _ := d.sched.Get(task.TaskID)
+	current, _ := d.sched.Get(task.RunID)
 	if current.Status != "cancelled" {
 		t.Fatalf("task status = %s", current.Status)
 	}

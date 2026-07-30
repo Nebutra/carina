@@ -27,8 +27,8 @@ const remoteDispatchPollInterval = 20 * time.Millisecond
 // different-magnitude trust decision than a same-process, capability-
 // attenuated child session, so it gets its own gate and its own (stronger,
 // RequiresApproval) default verdict rather than reusing a weaker one.
-func (d *Daemon) gateRemoteDispatch(parent *sessionstore.Session, parentTask *scheduler.Task, resource string) (bool, *kernel.Decision) {
-	dec, err := d.kern.Request(parent.SessionID, "RemoteDispatch", resource, parentTask.TaskID)
+func (d *Daemon) gateRemoteDispatch(parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, resource string) (bool, *kernel.Decision) {
+	dec, err := d.kern.Request(parent.SessionID, "RemoteDispatch", resource, parentTask.RunID)
 	if err != nil {
 		return false, &kernel.Decision{Decision: "denied", Reason: "governance error: " + err.Error()}
 	}
@@ -61,7 +61,7 @@ func (d *Daemon) gateRemoteDispatch(parent *sessionstore.Session, parentTask *sc
 // from the same per-step goroutine dispatch() already spawns for local
 // steps — no coordinator-side concurrency change needed, only which of the
 // two execution paths runStreamingStep picks.
-func (d *Daemon) runStreamingStepRemote(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.Task, spec *WorkflowSpec, runID string, st WorkflowStep, taskText string, channels *swarmChannelBroker) streamingStepResult {
+func (d *Daemon) runStreamingStepRemote(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, spec *WorkflowSpec, runID string, st WorkflowStep, taskText string, channels *swarmChannelBroker) streamingStepResult {
 	resource := fmt.Sprintf("step:%s:workflow:%s", st.ID, spec.Name)
 	if pool := st.Affinity["worker_pool"]; pool != "" {
 		resource += ":pool:" + pool
@@ -75,11 +75,25 @@ func (d *Daemon) runStreamingStepRemote(ctx context.Context, parent *sessionstor
 	if pool := st.Affinity["worker_pool"]; pool != "" {
 		required = []string{"worker_pool:" + pool}
 	}
-	task := d.sched.SubmitForDispatchWithCapabilities(parent.SessionID, parent.WorkspaceID, taskText, nil, required)
-	d.record(parent.SessionID, "TaskCreated", parentTask.TaskID, "go", map[string]any{
+	task := d.sched.PrepareDispatchTask(parent.SessionID, parent.WorkspaceID, taskText, nil, required)
+	task.Locale = parentTask.Locale
+
+	// Install every report-time prerequisite before admission. Once enqueued,
+	// an external worker may lease and report the task in the same scheduling
+	// quantum, so registering this binding afterwards loses channel messages.
+	binding := &swarmChannelBinding{broker: channels, stepID: st.ID}
+	d.dispatchSwarmBindings.Store(task.TaskID, binding)
+	defer d.dispatchSwarmBindings.Delete(task.TaskID)
+	if err := d.runs.saveTask(task); err != nil {
+		return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: "persist remote dispatch task: " + err.Error(), tokenUsageObserved: true}
+	}
+	d.record(parent.SessionID, "ExecutionProgressed", parentTask.RunID, "go", map[string]any{
 		"status": "workflow_step_dispatched_remote", "workflow": spec.Name, "run_id": runID, "step": st.ID,
 		"dispatch_task_id": task.TaskID, "required_worker_capabilities": required,
 	}, dec.DecisionID)
+	if err := d.sched.EnqueueDispatchTask(task); err != nil {
+		return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: "admit remote dispatch task: " + err.Error(), tokenUsageObserved: true}
+	}
 
 	// Binds this dispatch task to the run's swarm channel broker so a
 	// leased worker can publish into it via work.report's optional
@@ -90,19 +104,15 @@ func (d *Daemon) runStreamingStepRemote(ctx context.Context, parent *sessionstor
 	// stream, so a remote step's messages surface when it finishes, not
 	// continuously while it runs — a real but coarser participation than a
 	// local step's, documented rather than silently absent.
-	binding := &swarmChannelBinding{broker: channels, stepID: st.ID}
-	d.dispatchSwarmBindings.Store(task.TaskID, binding)
-	defer d.dispatchSwarmBindings.Delete(task.TaskID)
-
 	ticker := time.NewTicker(remoteDispatchPollInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			_, _ = d.sched.Cancel(task.TaskID)
+			_, _ = d.sched.CancelTask(task.TaskID)
 			return streamingStepResult{id: st.ID, kind: stepSkipped, errMsg: "workflow cancelled while waiting for a remote worker"}
 		case <-ticker.C:
-			t, ok := d.sched.Get(task.TaskID)
+			t, ok := d.sched.GetTask(task.TaskID)
 			if !ok {
 				return streamingStepResult{id: st.ID, kind: stepFailed, errMsg: "dispatched task disappeared from the scheduler"}
 			}

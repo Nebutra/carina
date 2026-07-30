@@ -37,14 +37,14 @@ type Session struct {
 	PermissionProfile string           `json:"permission_profile"`
 	CreatedAt         string           `json:"created_at"`
 	UpdatedAt         string           `json:"updated_at,omitempty"`
-	LatestTaskID      string           `json:"latest_task_id,omitempty"`
-	TaskStatus        string           `json:"task_status,omitempty"`
+	LatestRunID       string           `json:"latest_run_id,omitempty"`
+	ExecutionStatus   string           `json:"execution_status,omitempty"`
 	Summary           string           `json:"summary,omitempty"`
 	Continuity        *ContinuityState `json:"continuity,omitempty"`
 }
 
-type Task struct {
-	TaskID                     string          `json:"task_id"`
+type ExecutionRun struct {
+	RunID                      string          `json:"run_id"`
 	ClientSubmissionID         string          `json:"client_submission_id,omitempty"`
 	SessionID                  string          `json:"session_id"`
 	WorkspaceID                string          `json:"workspace_id"`
@@ -130,7 +130,7 @@ type WorkspaceAnchorReference struct {
 type Event struct {
 	EventID              string         `json:"event_id,omitempty"`
 	SessionID            string         `json:"session_id"`
-	TaskID               string         `json:"task_id,omitempty"`
+	RunID                string         `json:"run_id,omitempty"`
 	Type                 string         `json:"type"`
 	Timestamp            string         `json:"timestamp"`
 	Payload              map[string]any `json:"payload,omitempty"`
@@ -159,7 +159,7 @@ type ReviewItem struct {
 	ID      string         `json:"id"`
 	Type    string         `json:"type"`
 	Status  string         `json:"status"`
-	TaskID  string         `json:"task_id,omitempty"`
+	RunID   string         `json:"run_id,omitempty"`
 	Details map[string]any `json:"details,omitempty"`
 }
 
@@ -190,7 +190,7 @@ type SessionItemEvent struct {
 	Type          string         `json:"type"`
 	SessionID     string         `json:"session_id"`
 	TurnID        string         `json:"turn_id,omitempty"`
-	TaskID        string         `json:"task_id,omitempty"`
+	RunID         string         `json:"run_id,omitempty"`
 	ItemID        string         `json:"item_id,omitempty"`
 	SourceEventID string         `json:"source_event_id,omitempty"`
 	Timestamp     string         `json:"timestamp,omitempty"`
@@ -322,9 +322,9 @@ type RunOptions struct {
 	InputMediaRefs     []MediaRef
 }
 type TurnResult struct {
-	Task             Task   `json:"task"`
-	FinalResponse    string `json:"final_response"`
-	StructuredOutput any    `json:"structured_output,omitempty"`
+	Execution        ExecutionRun `json:"execution"`
+	FinalResponse    string       `json:"final_response"`
+	StructuredOutput any          `json:"structured_output,omitempty"`
 }
 type StreamEvent struct {
 	Type   string      `json:"type"`
@@ -375,7 +375,7 @@ type Checkpoint struct {
 	ParentCheckpointID string   `json:"parent_checkpoint_id,omitempty"`
 	CreatedAt          string   `json:"created_at"`
 	Sequence           string   `json:"sequence"`
-	TaskID             string   `json:"task_id"`
+	RunID              string   `json:"run_id"`
 	SessionID          string   `json:"session_id"`
 	Turn               int      `json:"turn"`
 	Summary            string   `json:"summary,omitempty"`
@@ -392,7 +392,7 @@ type CheckpointPreview struct {
 
 type CheckpointSummary struct {
 	CheckpointID string           `json:"checkpoint_id"`
-	TaskID       string           `json:"task_id"`
+	RunID        string           `json:"run_id"`
 	Turn         int              `json:"turn"`
 	Summary      string           `json:"summary,omitempty"`
 	Recent       []map[string]any `json:"recent"`
@@ -401,7 +401,7 @@ type CheckpointSummary struct {
 type CheckpointRestoreResult struct {
 	Restored               bool     `json:"restored"`
 	CheckpointID           string   `json:"checkpoint_id"`
-	TaskID                 string   `json:"task_id"`
+	RunID                  string   `json:"run_id"`
 	Turn                   int      `json:"turn"`
 	RolledBack             []string `json:"rolled_back"`
 	Status                 string   `json:"status"`
@@ -412,7 +412,7 @@ type CheckpointRestoreResult struct {
 
 type ArtifactScope struct {
 	SessionID string `json:"session_id"`
-	TaskID    string `json:"task_id,omitempty"`
+	RunID     string `json:"run_id,omitempty"`
 	CallID    string `json:"call_id,omitempty"`
 }
 type ArtifactMetadata struct {
@@ -498,32 +498,32 @@ func (c *Client) ReplaySession(sessionID string) ([]Event, error) {
 	return out, err
 }
 
-func (c *Client) SubmitTask(sessionID, prompt string) (Task, error) {
-	return c.SubmitTaskIdempotent(sessionID, prompt, "")
+func (c *Client) StartExecution(sessionID, prompt string) (ExecutionRun, error) {
+	return c.StartExecutionIdempotent(sessionID, prompt, "")
 }
 
-func (c *Client) SubmitTaskIdempotent(sessionID, prompt, clientSubmissionID string) (Task, error) {
-	return c.SubmitTaskWithMediaIdempotent(sessionID, prompt, clientSubmissionID, nil)
+func (c *Client) StartExecutionIdempotent(sessionID, prompt, clientSubmissionID string) (ExecutionRun, error) {
+	return c.StartExecutionWithMediaIdempotent(sessionID, prompt, clientSubmissionID, nil)
 }
 
-func (c *Client) SubmitTaskWithMedia(sessionID, prompt string, refs []MediaRef) (Task, error) {
-	return c.SubmitTaskWithMediaIdempotent(sessionID, prompt, "", refs)
+func (c *Client) StartExecutionWithMedia(sessionID, prompt string, refs []MediaRef) (ExecutionRun, error) {
+	return c.StartExecutionWithMediaIdempotent(sessionID, prompt, "", refs)
 }
 
-func (c *Client) SubmitTaskWithMediaIdempotent(sessionID, prompt, clientSubmissionID string, refs []MediaRef) (Task, error) {
+func (c *Client) StartExecutionWithMediaIdempotent(sessionID, prompt, clientSubmissionID string, refs []MediaRef) (ExecutionRun, error) {
 	if len(refs) > 4 {
-		return Task{}, errors.New("sdk: input media refs must contain at most 4 images")
+		return ExecutionRun{}, errors.New("sdk: input media refs must contain at most 4 images")
 	}
-	var out Task
-	err := c.Call("task.submit", taskSubmitParamsWithMedia(sessionID, prompt, clientSubmissionID, refs), &out)
+	var out ExecutionRun
+	err := c.Call("execution.start", executionStartParamsWithMedia(sessionID, prompt, clientSubmissionID, refs), &out)
 	return out, err
 }
 
-func taskSubmitParams(sessionID, prompt, clientSubmissionID string) map[string]any {
-	return taskSubmitParamsWithMedia(sessionID, prompt, clientSubmissionID, nil)
+func executionStartParams(sessionID, prompt, clientSubmissionID string) map[string]any {
+	return executionStartParamsWithMedia(sessionID, prompt, clientSubmissionID, nil)
 }
 
-func taskSubmitParamsWithMedia(sessionID, prompt, clientSubmissionID string, refs []MediaRef) map[string]any {
+func executionStartParamsWithMedia(sessionID, prompt, clientSubmissionID string, refs []MediaRef) map[string]any {
 	params := map[string]any{"session_id": sessionID, "prompt": prompt}
 	if clientSubmissionID != "" {
 		params["client_submission_id"] = clientSubmissionID
@@ -554,10 +554,10 @@ func (c *Client) ResumeThread(sessionID string) (*Thread, error) {
 	}
 	return &Thread{client: c, Session: s}, nil
 }
-func (c *Client) ForkThread(sessionID, lastTaskID string, throughTurn int) (*Thread, error) {
+func (c *Client) ForkThread(sessionID, lastRunID string, throughTurn int) (*Thread, error) {
 	params := map[string]any{"session_id": sessionID}
-	if lastTaskID != "" {
-		params["last_task_id"] = lastTaskID
+	if lastRunID != "" {
+		params["last_run_id"] = lastRunID
 	}
 	if throughTurn > 0 {
 		params["through_turn"] = throughTurn
@@ -568,19 +568,19 @@ func (c *Client) ForkThread(sessionID, lastTaskID string, throughTurn int) (*Thr
 	}
 	return &Thread{client: c, Session: s}, nil
 }
-func (t *Thread) Fork(lastTaskID string, throughTurn int) (*Thread, error) {
-	return t.client.ForkThread(t.Session.SessionID, lastTaskID, throughTurn)
+func (t *Thread) Fork(lastRunID string, throughTurn int) (*Thread, error) {
+	return t.client.ForkThread(t.Session.SessionID, lastRunID, throughTurn)
 }
 func (t *Thread) Run(ctx context.Context, prompt string, opts RunOptions) (TurnResult, error) {
 	if len(opts.InputMediaRefs) > 4 {
 		return TurnResult{}, errors.New("sdk: input media refs must contain at most 4 images")
 	}
-	params := taskSubmitParamsWithMedia(t.Session.SessionID, prompt, opts.ClientSubmissionID, opts.InputMediaRefs)
+	params := executionStartParamsWithMedia(t.Session.SessionID, prompt, opts.ClientSubmissionID, opts.InputMediaRefs)
 	if len(opts.OutputSchema) > 0 {
 		params["output_schema"] = json.RawMessage(opts.OutputSchema)
 	}
-	var task Task
-	if err := t.client.Call("task.submit", params, &task); err != nil {
+	var run ExecutionRun
+	if err := t.client.Call("execution.start", params, &run); err != nil {
 		return TurnResult{}, err
 	}
 	interval := opts.PollInterval
@@ -590,17 +590,17 @@ func (t *Thread) Run(ctx context.Context, prompt string, opts RunOptions) (TurnR
 	for {
 		select {
 		case <-ctx.Done():
-			_ = t.client.Call("task.cancel", map[string]any{"task_id": task.TaskID}, nil)
+			_ = t.client.Call("execution.cancel", map[string]any{"run_id": run.RunID}, nil)
 			return TurnResult{}, ctx.Err()
 		case <-time.After(interval):
 		}
-		var current Task
-		if err := t.client.Call("task.result", map[string]any{"task_id": task.TaskID}, &current); err != nil {
+		var current ExecutionRun
+		if err := t.client.Call("execution.status", map[string]any{"run_id": run.RunID}, &current); err != nil {
 			return TurnResult{}, err
 		}
 		switch current.Status {
 		case "completed", "degraded", "failed", "cancelled", "needs_input":
-			result := TurnResult{Task: current, FinalResponse: current.Summary}
+			result := TurnResult{Execution: current, FinalResponse: current.Summary}
 			if len(opts.OutputSchema) > 0 {
 				_ = json.Unmarshal([]byte(current.Summary), &result.StructuredOutput)
 			}
@@ -681,17 +681,17 @@ func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts RunOptions
 			}
 		}()
 
-		params := taskSubmitParamsWithMedia(t.Session.SessionID, prompt, opts.ClientSubmissionID, opts.InputMediaRefs)
+		params := executionStartParamsWithMedia(t.Session.SessionID, prompt, opts.ClientSubmissionID, opts.InputMediaRefs)
 		if len(opts.OutputSchema) > 0 {
 			params["output_schema"] = json.RawMessage(opts.OutputSchema)
 		}
-		var task Task
-		if err := t.client.Call("task.submit", params, &task); err != nil {
+		var run ExecutionRun
+		if err := t.client.Call("execution.start", params, &run); err != nil {
 			emitTerminal(StreamEvent{Type: "turn.failed", Err: err})
 			return
 		}
 		if err := drain(); err != nil {
-			_ = t.client.Call("task.cancel", map[string]any{"task_id": task.TaskID}, nil)
+			_ = t.client.Call("execution.cancel", map[string]any{"run_id": run.RunID}, nil)
 			emitTerminal(StreamEvent{Type: "turn.failed", Err: err})
 			return
 		}
@@ -702,25 +702,25 @@ func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts RunOptions
 		for {
 			select {
 			case <-ctx.Done():
-				_ = t.client.Call("task.cancel", map[string]any{"task_id": task.TaskID}, nil)
+				_ = t.client.Call("execution.cancel", map[string]any{"run_id": run.RunID}, nil)
 				_ = drain()
 				emitTerminal(StreamEvent{Type: "turn.failed", Err: ctx.Err()})
 				return
 			case <-time.After(interval):
 			}
-			var current Task
-			if err := t.client.Call("task.result", map[string]any{"task_id": task.TaskID}, &current); err != nil {
+			var current ExecutionRun
+			if err := t.client.Call("execution.status", map[string]any{"run_id": run.RunID}, &current); err != nil {
 				emitTerminal(StreamEvent{Type: "turn.failed", Err: err})
 				return
 			}
 			if err := drain(); err != nil {
-				_ = t.client.Call("task.cancel", map[string]any{"task_id": task.TaskID}, nil)
+				_ = t.client.Call("execution.cancel", map[string]any{"run_id": run.RunID}, nil)
 				emitTerminal(StreamEvent{Type: "turn.failed", Err: err})
 				return
 			}
 			switch current.Status {
 			case "completed", "degraded", "failed", "cancelled", "needs_input":
-				result := TurnResult{Task: current, FinalResponse: current.Summary}
+				result := TurnResult{Execution: current, FinalResponse: current.Summary}
 				if len(opts.OutputSchema) > 0 {
 					_ = json.Unmarshal([]byte(current.Summary), &result.StructuredOutput)
 				}
@@ -732,15 +732,15 @@ func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts RunOptions
 	return out
 }
 
-func (c *Client) SubmitGoal(sessionID, prompt string, criteria []SuccessCheck) (Task, error) {
+func (c *Client) SubmitGoal(sessionID, prompt string, criteria []SuccessCheck) (ExecutionRun, error) {
 	return c.SubmitGoalIdempotent(sessionID, prompt, criteria, "")
 }
 
-func (c *Client) SubmitGoalIdempotent(sessionID, prompt string, criteria []SuccessCheck, clientSubmissionID string) (Task, error) {
-	var out Task
-	params := taskSubmitParams(sessionID, prompt, clientSubmissionID)
+func (c *Client) SubmitGoalIdempotent(sessionID, prompt string, criteria []SuccessCheck, clientSubmissionID string) (ExecutionRun, error) {
+	var out ExecutionRun
+	params := executionStartParams(sessionID, prompt, clientSubmissionID)
 	params["success_criteria"] = criteria
-	err := c.Call("task.submit", params, &out)
+	err := c.Call("execution.start", params, &out)
 	return out, err
 }
 
@@ -779,25 +779,25 @@ func (c *Client) ForkSession(sessionID string) (Session, error) {
 	return out, err
 }
 
-func (c *Client) Cost(sessionID, taskID string) (UsageCostReport, error) {
+func (c *Client) Cost(sessionID, runID string) (UsageCostReport, error) {
 	params := map[string]any{}
 	if sessionID != "" {
 		params["session_id"] = sessionID
 	}
-	if taskID != "" {
-		params["task_id"] = taskID
+	if runID != "" {
+		params["run_id"] = runID
 	}
 	var out UsageCostReport
 	err := c.Call("usage.cost", params, &out)
 	return out, err
 }
 
-func (c *Client) SteerTask(taskID, message string) error {
-	return c.Call("task.steer", map[string]any{"task_id": taskID, "message": message}, nil)
+func (c *Client) SteerExecution(runID, message string) error {
+	return c.Call("execution.steer", map[string]any{"run_id": runID, "message": message}, nil)
 }
 
 func (c *Client) AnswerQuestion(questionID, value string) error {
-	return c.Call("task.user.answer", map[string]any{"question_id": questionID, "value": value}, nil)
+	return c.Call("question.answer", map[string]any{"question_id": questionID, "value": value}, nil)
 }
 
 func (c *Client) SubscribeSessionEvents(sessionID string) error {
@@ -919,10 +919,10 @@ func (c *Client) RollbackPatch(sessionID, patchID string) (map[string]any, error
 	return out, err
 }
 
-func (c *Client) Exec(sessionID string, argv []string, taskID string) (map[string]any, error) {
+func (c *Client) Exec(sessionID string, argv []string, runID string) (map[string]any, error) {
 	params := map[string]any{"session_id": sessionID, "argv": argv}
-	if taskID != "" {
-		params["task_id"] = taskID
+	if runID != "" {
+		params["run_id"] = runID
 	}
 	var out map[string]any
 	err := c.Call("command.exec", params, &out)
@@ -935,7 +935,7 @@ func (c *Client) AuditReport(sessionID string) (map[string]any, error) {
 	return out, err
 }
 func (c *Client) ResolveApproval(decisionID string, allow bool, approver, scope string) error {
-	return c.Call("task.approval.resolve", map[string]any{"decision_id": decisionID, "approve": allow, "approver": approver, "scope": scope}, nil)
+	return c.Call("governance.approval.resolve", map[string]any{"decision_id": decisionID, "approve": allow, "approver": approver, "scope": scope}, nil)
 }
 func (c *Client) Doctor() (map[string]any, error) {
 	var out map[string]any
@@ -972,9 +972,9 @@ func (c *Client) RestoreCheckpoint(sessionID, checkpointID string, confirmed boo
 	err := c.Call("session.checkpoint.restore", map[string]any{"session_id": sessionID, "checkpoint_id": checkpointID, "confirmed": confirmed}, &out)
 	return out, err
 }
-func (c *Client) ResumeTask(taskID string) (Task, error) {
-	var out Task
-	err := c.Call("task.resume", map[string]any{"task_id": taskID}, &out)
+func (c *Client) ResumeExecution(runID string) (ExecutionRun, error) {
+	var out ExecutionRun
+	err := c.Call("execution.resume", map[string]any{"run_id": runID}, &out)
 	return out, err
 }
 func (c *Client) InjectChannelEvent(event ChannelEvent, signature string) (map[string]any, error) {
@@ -998,7 +998,7 @@ func (c *Client) SetExtensionEnabled(name string, on bool) (Extension, error) {
 }
 
 func artifactParams(scope ArtifactScope, id string) map[string]any {
-	return map[string]any{"session_id": scope.SessionID, "task_id": scope.TaskID, "call_id": scope.CallID, "artifact_id": id}
+	return map[string]any{"session_id": scope.SessionID, "run_id": scope.RunID, "call_id": scope.CallID, "artifact_id": id}
 }
 func (c *Client) StatArtifact(scope ArtifactScope, id string) (ArtifactMetadata, error) {
 	var out ArtifactMetadata

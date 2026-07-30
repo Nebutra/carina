@@ -64,7 +64,7 @@ Carina 提供：
 | 命令 | 风险分类、审批 gate、命令输出事件、可选 OS sandbox backend |
 | 网络和 secret | 默认拒绝的 egress proxy、allowlist、daemon 侧凭证注入、显式 per-host HTTPS MITM opt-in |
 | 模型 | BYOK auth chain、provider catalog、OpenAI/Anthropic/Gemini/OpenRouter 风格 adapter、catalog 门控的图片输入（原始字节只存 artifact store，永不进 transcript/审计）|
-| Context engine | 原生 context engine 边界、bundled/configured Headroom 发现、私有 managed MCP transport、`carina context` 诊断 |
+| Context engine | 原生 `auto` / `off` / `noop` 边界、本地诊断，不内置外部压缩运行时 |
 | 集成 | MCP client/server（含 `mcp_find` 工具搜索）、WASM plugin boundary（org/user/project 只紧不松 enable merge）、worker、workflow DAG |
 | Nebutra 边界 | 本地 runtime 保持动作权威；身份和多端同步归 Nebutra Cloud（`nebutra.com`）边界 |
 
@@ -251,16 +251,14 @@ Carina 的长期记忆保存在 daemon state 目录下。本地 runtime 区分 a
 
 ### 原生 Context Engine
 
-release 包会把锁定版本的 Headroom 作为 `bin/headroom` 随 Carina 一起发布。
-`context_engine=auto` 只启用随包内建或显式配置的 Headroom；仅在 `PATH` 上找到的全局 `headroom` 会被报告，但不会当作内建引擎使用。
+Carina 不再内置或启动外部 context compression runtime。
+`context_engine=auto` 会确定性地使用本地 no-op engine；`off` 可显式关闭该边界。
 
 ```bash
 carina context status
 carina context doctor
 carina context stats
 ```
-
-managed Headroom MCP server 只供 Carina context adapter 内部调用，不会出现在 agent 的公开 MCP tool 列表里。
 
 ### BYOK Provider
 

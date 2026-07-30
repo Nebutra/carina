@@ -92,7 +92,7 @@ func TestTaskSubmitExpandsSlashCommandAndAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := res.(*scheduler.Task)
+	task := res.(*scheduler.ExecutionRun)
 	if task.Agent != "explore" {
 		t.Fatalf("command agent not applied: %+v", task)
 	}

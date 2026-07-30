@@ -23,7 +23,7 @@ func (d *Daemon) handleAgentView(_ json.RawMessage) (any, error) { return d.agen
 
 func (d *Daemon) handleAgentPeek(params json.RawMessage) (any, error) {
 	var p struct {
-		TaskID string `json:"task_id"`
+		RunID string `json:"run_id"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -31,12 +31,12 @@ func (d *Daemon) handleAgentPeek(params json.RawMessage) (any, error) {
 	roster := d.agentRoster()
 	for _, group := range [][]agentview.Entry{roster.NeedsInput, roster.Working, roster.Completed} {
 		for _, e := range group {
-			if e.TaskID == p.TaskID {
+			if e.RunID == p.RunID {
 				return e, nil
 			}
 		}
 	}
-	return nil, fmt.Errorf("unknown task %s", p.TaskID)
+	return nil, fmt.Errorf("unknown execution %s", p.RunID)
 }
 
 func (d *Daemon) handleAgentRecap(params json.RawMessage) (any, error) {
@@ -64,27 +64,27 @@ func (d *Daemon) handleAgentRemove(params json.RawMessage) (any, error) {
 	d.checkpointMu.Lock()
 	defer d.checkpointMu.Unlock()
 	var p struct {
-		TaskID string `json:"task_id"`
+		RunID string `json:"run_id"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	t, ok := d.sched.Get(p.TaskID)
+	t, ok := d.sched.Get(p.RunID)
 	if !ok {
-		if d.runs.isTombstoned(p.TaskID) {
-			return map[string]any{"removed": true, "task_id": p.TaskID, "idempotent": true, "cleanup_warnings": []string{}}, nil
+		if d.runs.isTombstoned(p.RunID) {
+			return map[string]any{"removed": true, "run_id": p.RunID, "idempotent": true, "cleanup_warnings": []string{}}, nil
 		}
-		return nil, fmt.Errorf("unknown task %s", p.TaskID)
+		return nil, fmt.Errorf("unknown execution %s", p.RunID)
 	}
 	switch t.Status {
 	case "completed", "failed", "cancelled", "degraded":
 	default:
-		return nil, fmt.Errorf("scheduler: task %s is still %s", p.TaskID, t.Status)
+		return nil, fmt.Errorf("scheduler: execution %s is still %s", p.RunID, t.Status)
 	}
-	if err := d.runs.tombstone(p.TaskID); err != nil {
+	if err := d.runs.tombstone(p.RunID); err != nil {
 		return nil, fmt.Errorf("durable removal: %w", err)
 	}
-	if err := d.sched.Remove(p.TaskID); err != nil {
+	if err := d.sched.Remove(p.RunID); err != nil {
 		return nil, fmt.Errorf("agent_remove_pending: durable tombstone committed but scheduler publication failed; retry agent.remove: %w", err)
 	}
 	remaining := false
@@ -116,7 +116,7 @@ func (d *Daemon) handleAgentRemove(params json.RawMessage) (any, error) {
 			}
 		}
 	}
-	return map[string]any{"removed": true, "task_id": p.TaskID, "session_id": t.SessionID, "idempotent": false, "cleanup_warnings": warnings}, nil
+	return map[string]any{"removed": true, "run_id": p.RunID, "session_id": t.SessionID, "idempotent": false, "cleanup_warnings": warnings}, nil
 }
 
 func (d *Daemon) handleAgentMetadataSet(params json.RawMessage) (any, error) {

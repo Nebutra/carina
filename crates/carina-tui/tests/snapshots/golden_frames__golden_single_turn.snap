@@ -1,0 +1,53 @@
+---
+source: crates/carina-tui/tests/golden_frames.rs
+expression: "render_case(120, 40, \"carina / high\",\nvec![Line::from(vec![Span::styled(format!(\"{}You{}{}\", glyphs.role_prefix(),\n\" \".repeat(carina_tui::layout_contract::TRANSCRIPT_ROLE_LABEL_WIDTH - 3),\n\" \".repeat(carina_tui::layout_contract::TRANSCRIPT_ROLE_GAP_WIDTH)),\ntheme.transcript_user(),), Span::raw(\"Explain the renderer.\"),]),\nLine::from(\"\"),\nLine::from(vec![Span::styled(format!(\"{}Carina{}\", glyphs.role_prefix(),\n\" \".repeat(carina_tui::layout_contract::TRANSCRIPT_ROLE_GAP_WIDTH)),\ntheme.transcript_assistant(),),\nSpan::raw(\"The transcript is retained and width-aware.\"),]),], false)"
+---
+size=120x40
+ CARINA carina / high
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ • You     Explain the renderer.
+
+ • Carina  The transcript is retained and width-aware.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Ask Carina
+
+styles:
+(0, 0)..(8, 0) (Rgb(222, 133, 155), Reset, BOLD)
+(0, 2)..(120, 2) (Rgb(52, 65, 68), Reset, NONE)
+(1, 3)..(11, 3) (Rgb(195, 202, 198), Reset, BOLD)
+(1, 5)..(11, 5) (Rgb(142, 219, 210), Reset, BOLD)
+(0, 37)..(120, 37) (Rgb(52, 65, 68), Reset, NONE)
+(0, 38)..(2, 38) (Rgb(142, 219, 210), Reset, NONE)
+(2, 38)..(12, 38) (Rgb(150, 160, 156), Reset, NONE)

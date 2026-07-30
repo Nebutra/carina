@@ -112,7 +112,7 @@ func TestMCPPromptListedAndExpandedAsSlashCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := res.(*scheduler.Task)
+	task := res.(*scheduler.ExecutionRun)
 	if task.Agent != "general" || task.Model != "openai/gpt-5" {
 		t.Fatalf("explicit agent/model not preserved: %+v", task)
 	}

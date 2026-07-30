@@ -33,7 +33,7 @@ KiloCode source-review decisions are tracked separately in
 - [x] Plan mode (read-only until the plan is approved)
 
 **Wave 5 — coordination / session lifecycle**
-- [x] Async steering mailbox (redirect a running/background agent via `task.steer`)
+- [x] Async steering mailbox (redirect a running/background agent via `execution.steer`)
 - [x] Session fork-with-lineage (`session.fork`)
 
 **Wave 6 — ops**
@@ -69,7 +69,7 @@ KiloCode source-review decisions are tracked separately in
   daemon entrypoint so all newer knobs are file/env configurable.
 - [x] **Interactive permission request/resolve** (`go/daemon/approval.go`): opt-in
   human-in-the-loop — `requires_approval` pauses (waiting_approval), emits a
-  `permission.request`, and blocks on `task.approval.resolve` (allow/deny) or a
+  `permission.request`, and blocks on `governance.approval.resolve` (allow/deny) or a
   timeout (=> denied); autonomous auto-approve stays the default.
 - [x] **Attach/tail replay cursor** (`session.attach`): cursor-based replay for a
   reconnecting client (catch up from a monotonic cursor, then tail live).
@@ -132,7 +132,7 @@ KiloCode source-review decisions are tracked separately in
   reusable prompt templates from built-in, user, and project registries.
 - [x] **MCP prompts as command registry entries** (`go/mcp`,
   `go/daemon/mcp_commands.go`): external MCP `prompts/list` metadata is exposed
-  as `/mcp.<server>.<prompt>` commands, and `task.submit` renders them through
+  as `/mcp.<server>.<prompt>` commands, and `execution.start` renders them through
   `prompts/get` before scheduling. Prompt-only MCP servers now connect cleanly;
   prompt expansion is read-only and does not grant MCP tool capabilities.
 
@@ -232,7 +232,7 @@ KiloCode source-review decisions are tracked separately in
   notifications after `gateway.hello`, and `carina gateway ws-probe <ws-url>
   [role]` performs a direct stdlib WS handshake and prints the hello response.
 - [x] **Dynamic scope expansion** (`go/daemon`): `session.add_dir`,
-  `workspace.trust`, and `task.action.deny` now resolve param-sensitive scopes;
+  `workspace.trust`, and `governance.action.deny` now resolve param-sensitive scopes;
   low-risk contained/revocation/ordinary-deny cases are `write`, while
   ambiguous, outside, granting, spoofed-approver, or approval paths stay
   `admin`.
@@ -306,7 +306,7 @@ KiloCode source-review decisions are tracked separately in
   policy bundles can still deny it explicitly via `deny_capabilities`.
   `memory.write` queues pending writes when approval is required and applies
   them only after
-  `task.action.approve`.
+  `governance.action.approve`.
 - [x] **Memory audit hygiene** (`go/daemon`): extra audit payloads record
   target, scope, action, operation count, content hash, and decision id rather
   than raw memory text. Nebutra Cloud memory sync remains explicitly out of
@@ -445,7 +445,7 @@ KiloCode source-review decisions are tracked separately in
   reusing the existing age-based elision fields keyed on path identity
   instead of turn age.
 - **Two-tier urgent/normal steering mailbox** (`go/daemon/daemon.go`,
-  `ecosystem.go`, commit `1281f76`): `task.steer` gained a `priority` param
+  `ecosystem.go`, commit `1281f76`): `execution.steer` gained a `priority` param
   and a `taskMailbox` with urgent/normal FIFO tiers (urgent always drained
   first); channel-driven external events (e.g. CI failures) now preempt
   queued routine steering via `steerUrgent`.

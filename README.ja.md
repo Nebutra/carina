@@ -64,7 +64,7 @@ Carina が提供するもの：
 | Commands | risk classification、approval gate、command output event、optional OS sandbox backend |
 | Network and secrets | deny-by-default egress proxy、allowlist、daemon-side credential injection、explicit per-host HTTPS MITM opt-in |
 | Models | BYOK auth chain、provider catalog、OpenAI/Anthropic/Gemini/OpenRouter-style adapter、catalog-gated image input（raw bytes は artifact store のみ、transcript/audit には不出）|
-| Context engine | native context-engine boundary、bundled/configured Headroom discovery、private managed MCP transport、`carina context` diagnostics |
+| Context engine | native `auto` / `off` / `noop` boundary、local diagnostics、bundled external compressor なし |
 | Integration | MCP client/server（`mcp_find` tool search 付き）、WASM plugin boundary（org/user/project tighten-only enable merge）、worker、workflow DAG |
 | Nebutra boundary | ローカル runtime が action authority を維持し、identity と multi-endpoint sync は Nebutra Cloud（`nebutra.com`）の境界に置く |
 
@@ -185,19 +185,15 @@ External semantic memory providers and Nebutra Cloud memory sync are not enabled
 
 ### Native Context Engine
 
-Release packages include a pinned Headroom executable as `bin/headroom`.
-`context_engine=auto` only enables bundled or explicitly configured Headroom; a
-global `headroom` found on `PATH` is reported but not used as the built-in
-engine.
+Carina does not bundle or start an external context-compression runtime.
+`context_engine=auto` deterministically uses the local no-op engine; `off`
+disables the boundary explicitly.
 
 ```bash
 carina context status
 carina context doctor
 carina context stats
 ```
-
-The managed Headroom MCP server is private to Carina's context adapter and is
-not listed as a public agent MCP tool.
 
 ### BYOK Providers
 

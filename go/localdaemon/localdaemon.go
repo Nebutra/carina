@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"time"
 
@@ -33,6 +34,11 @@ var SpawnRuntime = spawnRuntime
 
 // RuntimeHandshake proves that a reachable endpoint owns the expected spec.
 var RuntimeHandshake = runtimeHandshake
+
+// RuntimeDescribe proves endpoint identity without requiring client feature
+// compatibility. Lifecycle operations must remain able to inspect and stop an
+// owned older runtime after the client has upgraded.
+var RuntimeDescribe = runtimeDescribe
 
 // ReachableDeadline bounds post-spawn dial retries.
 var ReachableDeadline = 10 * time.Second
@@ -68,12 +74,43 @@ type RuntimeDescription struct {
 	IdleDeadline      *time.Time        `json:"idle_deadline,omitempty"`
 }
 
+// RuntimeCompatibilityError identifies a correctly owned workspace runtime
+// that is too old for this client. Description is retained so recovery can
+// distinguish an idle runtime from one with active obligations without
+// weakening the runtime identity checks.
+type RuntimeCompatibilityError struct {
+	Description    RuntimeDescription
+	MissingMethods []string
+}
+
+func (e *RuntimeCompatibilityError) Error() string {
+	return fmt.Sprintf("runtime is incompatible with this Carina client: missing RPC methods %v", e.MissingMethods)
+}
+
 // Connect dials and validates a runtime without starting it.
 func Connect(spec localruntime.Spec) (*rpc.Client, RuntimeDescription, error) {
 	if err := spec.Validate(); err != nil {
 		return nil, RuntimeDescription{}, err
 	}
 	return dialAndValidate(spec)
+}
+
+// Describe dials and validates runtime identity without asserting the client's
+// feature inventory. It is intended for lifecycle status and recovery only.
+func Describe(spec localruntime.Spec) (*rpc.Client, RuntimeDescription, error) {
+	if err := spec.Validate(); err != nil {
+		return nil, RuntimeDescription{}, err
+	}
+	client, err := Dial(spec.Paths.SocketPath)
+	if err != nil {
+		return nil, RuntimeDescription{}, err
+	}
+	description, err := RuntimeDescribe(client, spec)
+	if err != nil {
+		_ = client.Close()
+		return nil, RuntimeDescription{}, err
+	}
+	return client, description, nil
 }
 
 // ConnectOrStart holds the workspace start lock until a reachable endpoint
@@ -91,6 +128,19 @@ func ConnectOrStart(spec localruntime.Spec) (*rpc.Client, RuntimeDescription, er
 	client, description, err := dialAndValidate(spec)
 	if err == nil {
 		return client, description, nil
+	}
+	var compatibility *RuntimeCompatibilityError
+	if errors.As(err, &compatibility) {
+		if len(compatibility.Description.Obligations) > 0 {
+			return nil, RuntimeDescription{}, fmt.Errorf("runtime upgrade deferred while active obligations remain: %v: %w", compatibility.Description.Obligations, compatibility)
+		}
+		if _, stopErr := StopRuntime(spec, false); stopErr != nil {
+			return nil, RuntimeDescription{}, fmt.Errorf("replace incompatible workspace runtime: %w", stopErr)
+		}
+		if waitErr := waitRuntimeUnreachable(spec.Paths.SocketPath); waitErr != nil {
+			return nil, RuntimeDescription{}, fmt.Errorf("replace incompatible workspace runtime: %w", waitErr)
+		}
+		err = rpc.ErrDaemonUnreachable
 	}
 	if !errors.Is(err, rpc.ErrDaemonUnreachable) {
 		return nil, RuntimeDescription{}, err
@@ -132,7 +182,7 @@ func dialAndValidate(spec localruntime.Spec) (*rpc.Client, RuntimeDescription, e
 	return client, description, nil
 }
 
-func runtimeHandshake(client *rpc.Client, spec localruntime.Spec) (RuntimeDescription, error) {
+func runtimeDescribe(client *rpc.Client, spec localruntime.Spec) (RuntimeDescription, error) {
 	var description RuntimeDescription
 	if err := client.Call("runtime.describe", map[string]any{}, &description); err != nil {
 		return RuntimeDescription{}, fmt.Errorf("runtime describe: %w", err)
@@ -140,8 +190,19 @@ func runtimeHandshake(client *rpc.Client, spec localruntime.Spec) (RuntimeDescri
 	if err := validateRuntimeDescription(spec, description); err != nil {
 		return RuntimeDescription{}, err
 	}
+	return description, nil
+}
+
+func runtimeHandshake(client *rpc.Client, spec localruntime.Spec) (RuntimeDescription, error) {
+	description, err := RuntimeDescribe(client, spec)
+	if err != nil {
+		return RuntimeDescription{}, err
+	}
 	var initialized struct {
-		Runtime RuntimeDescription `json:"runtime"`
+		Runtime      RuntimeDescription `json:"runtime"`
+		Capabilities struct {
+			RPCMethods []string `json:"rpc_methods"`
+		} `json:"capabilities"`
 	}
 	if err := client.Call("runtime.initialize", map[string]any{
 		"protocol_version":      "1.3.0",
@@ -159,7 +220,53 @@ func runtimeHandshake(client *rpc.Client, spec localruntime.Spec) (RuntimeDescri
 	if initialized.Runtime.Epoch != description.Epoch {
 		return RuntimeDescription{}, &rpc.Error{Code: rpc.CodeRuntimeIdentityMismatch, Message: "runtime epoch changed during initialization", Data: map[string]any{"described": description.Epoch, "initialized": initialized.Runtime.Epoch}}
 	}
+	if missing := missingRuntimeMethods(initialized.Capabilities.RPCMethods, "execution.start"); len(missing) > 0 {
+		return RuntimeDescription{}, &RuntimeCompatibilityError{
+			Description:    initialized.Runtime,
+			MissingMethods: missing,
+		}
+	}
 	return initialized.Runtime, nil
+}
+
+func requireRuntimeMethods(available []string, required ...string) error {
+	missing := missingRuntimeMethods(available, required...)
+	if len(missing) == 0 {
+		return nil
+	}
+	return &rpc.Error{
+		Code:    rpc.CodeRuntimeIdentityMismatch,
+		Message: "runtime is incompatible with this Carina client",
+		Data: map[string]any{
+			"missing_rpc_methods": missing,
+			"recovery":            "restart the workspace runtime with the installed Carina version",
+		},
+	}
+}
+
+func missingRuntimeMethods(available []string, required ...string) []string {
+	missing := make([]string, 0, len(required))
+	for _, method := range required {
+		if !slices.Contains(available, method) {
+			missing = append(missing, method)
+		}
+	}
+	return missing
+}
+
+func waitRuntimeUnreachable(socket string) error {
+	deadline := time.Now().Add(ReachableDeadline)
+	for attempt := 0; time.Now().Before(deadline); attempt++ {
+		client, err := Dial(socket)
+		if errors.Is(err, rpc.ErrDaemonUnreachable) {
+			return nil
+		}
+		if err == nil {
+			_ = client.Close()
+		}
+		time.Sleep(startupBackoff(attempt))
+	}
+	return fmt.Errorf("runtime did not stop before restart deadline")
 }
 
 func validateRuntimeDescription(spec localruntime.Spec, description RuntimeDescription) error {
@@ -421,11 +528,15 @@ func StopRuntime(spec localruntime.Spec, force bool) (RuntimeDescription, error)
 	if err != nil {
 		return RuntimeDescription{}, fmt.Errorf("no valid CLI ownership record: %w", err)
 	}
-	client, description, err := Connect(spec)
+	client, err := Dial(spec.Paths.SocketPath)
 	if err != nil {
 		return RuntimeDescription{}, fmt.Errorf("refusing to signal pid %d: runtime endpoint is not reachable and verified: %w", record.PID, err)
 	}
+	description, describeErr := RuntimeDescribe(client, spec)
 	_ = client.Close()
+	if describeErr != nil {
+		return RuntimeDescription{}, fmt.Errorf("refusing to signal pid %d: runtime endpoint is not reachable and verified: %w", record.PID, describeErr)
+	}
 	if record.Owner != OwnershipMarker || record.WorkspaceID != spec.Workspace.ID || record.RuntimeID != spec.RuntimeID || record.Socket != spec.Paths.SocketPath || record.PID != description.PID || record.Epoch == "" || record.Epoch != description.Epoch {
 		return RuntimeDescription{}, fmt.Errorf("refusing to signal pid %d: ownership record does not match live runtime", record.PID)
 	}

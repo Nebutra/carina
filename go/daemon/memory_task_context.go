@@ -11,13 +11,13 @@ import (
 // buildTaskMemoryEvidence is the only fresh-task HMS recall boundary. Its
 // result becomes a pinned, low-trust tool observation in the checkpointed
 // transcript, so resume, fork, and restore never re-query mutable remote state.
-func (d *Daemon) buildTaskMemoryEvidence(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task) string {
+func (d *Daemon) buildTaskMemoryEvidence(ctx context.Context, sess *sessionstore.Session, task *scheduler.ExecutionRun) string {
 	provider := d.memoryHMS
 	if provider == nil {
 		return ""
 	}
 	resource := strings.ToLower(provider.endpoint.Hostname())
-	decision, err := d.kern.Request(sess.SessionID, "NetworkAccess", resource, task.TaskID)
+	decision, err := d.kern.Request(sess.SessionID, "NetworkAccess", resource, task.RunID)
 	if err == nil && decision.Decision == "requires_approval" {
 		if approved, ok := d.approveFromStoredGrant(sess, decision); ok {
 			decision = approved
@@ -36,7 +36,7 @@ func (d *Daemon) buildTaskMemoryEvidence(ctx context.Context, sess *sessionstore
 	}
 	provider.markAuthorized()
 	externalizeResource := "provider=hms host=" + resource + " query_sha256=" + hashMemoryQuery(task.UserPrompt) + " targets=user,memory"
-	externalize, err := d.kern.Request(sess.SessionID, "MemoryExternalize", externalizeResource, task.TaskID)
+	externalize, err := d.kern.Request(sess.SessionID, "MemoryExternalize", externalizeResource, task.RunID)
 	if err == nil && externalize.Decision == "requires_approval" {
 		if approved, ok := d.approveFromStoredGrant(sess, externalize); ok {
 			externalize = approved
@@ -53,7 +53,7 @@ func (d *Daemon) buildTaskMemoryEvidence(ctx context.Context, sess *sessionstore
 		d.recordMemoryRecall(sess, task, "degraded", reason, 0)
 		return ""
 	}
-	if err := d.recordChecked(sess.SessionID, "MemoryRecallRequested", task.TaskID, "go", map[string]any{"provider": "hms", "endpoint_host": resource, "query_sha256": hashMemoryQuery(task.UserPrompt), "status": "authorized"}, externalize.DecisionID); err != nil {
+	if err := d.recordChecked(sess.SessionID, "MemoryRecallRequested", task.RunID, "go", map[string]any{"provider": "hms", "endpoint_host": resource, "query_sha256": hashMemoryQuery(task.UserPrompt), "status": "authorized"}, externalize.DecisionID); err != nil {
 		provider.markPolicyDenied("audit_unavailable")
 		return ""
 	}
@@ -74,8 +74,8 @@ func (d *Daemon) buildTaskMemoryEvidence(ctx context.Context, sess *sessionstore
 	return strings.TrimSpace(evidence)
 }
 
-func (d *Daemon) recordMemoryRecall(sess *sessionstore.Session, task *scheduler.Task, status, reason string, count int) {
-	d.record(sess.SessionID, "MemoryRecalled", task.TaskID, "go", map[string]any{
+func (d *Daemon) recordMemoryRecall(sess *sessionstore.Session, task *scheduler.ExecutionRun, status, reason string, count int) {
+	d.record(sess.SessionID, "MemoryRecalled", task.RunID, "go", map[string]any{
 		"provider": "hms", "mode": d.memoryHMS.mode, "status": status,
 		"reason": reason, "evidence_count": count, "adapter_version": hmsAdapterVersion,
 	}, "")

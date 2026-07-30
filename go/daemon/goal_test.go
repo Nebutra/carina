@@ -106,7 +106,7 @@ func TestGoalSuccessCriteriaVerified(t *testing.T) {
 		[]scheduler.SuccessCheck{{Kind: "file_exists", Path: "expected.txt"}})
 	d.runTask(sess, task)
 
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status != "completed" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status != "completed" {
 		t.Fatalf("task should complete after criteria pass, got %s", tk.Status)
 	}
 	if _, err := os.Stat(filepath.Join(ws, "expected.txt")); err != nil {
@@ -131,7 +131,7 @@ func TestGoalSuccessCriteriaRejectsFalseDone(t *testing.T) {
 		[]scheduler.SuccessCheck{{Kind: "file_exists", Path: "never.txt"}})
 	d.runTask(sess, task)
 
-	if tk, _ := d.sched.Get(task.TaskID); tk.Status == "completed" {
+	if tk, _ := d.sched.Get(task.RunID); tk.Status == "completed" {
 		t.Fatal("unverified done must NOT complete")
 	}
 }

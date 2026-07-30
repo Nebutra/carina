@@ -135,7 +135,7 @@ func copyFile(src, dst string, mode os.FileMode) error {
 // directory it happens in, and this project's governance model does not
 // carve out an exception for "it's just a scratch copy". The resource
 // string is tagged so the audit trail is unambiguous about what ran and why.
-func (d *Daemon) verifyCandidate(ctx context.Context, sess *sessionstore.Session, task *scheduler.Task, argv []string, candIndex int, files []kernel.FileChange) candidateVerification {
+func (d *Daemon) verifyCandidate(ctx context.Context, sess *sessionstore.Session, task *scheduler.ExecutionRun, argv []string, candIndex int, files []kernel.FileChange) candidateVerification {
 	scratch, cleanup, ok, skipWhy, err := materializeCandidateWorkspace(sess.WorkspaceRoot, files)
 	if err != nil {
 		return candidateVerification{Ran: false, SkipWhy: "scratch workspace setup failed: " + err.Error()}
@@ -151,7 +151,7 @@ func (d *Daemon) verifyCandidate(ctx context.Context, sess *sessionstore.Session
 	}
 	classifyAs := canon.WrapperStripped
 	resource := fmt.Sprintf("best_of_n_verify:candidate_%d:%s", candIndex, classifyAs)
-	dec, err := d.kern.Request(sess.SessionID, "CommandExec", resource, task.TaskID)
+	dec, err := d.kern.Request(sess.SessionID, "CommandExec", resource, task.RunID)
 	if err != nil {
 		return candidateVerification{Ran: false, SkipWhy: "governance error: " + err.Error()}
 	}
@@ -166,13 +166,13 @@ func (d *Daemon) verifyCandidate(ctx context.Context, sess *sessionstore.Session
 		dec = approved
 	}
 
-	d.record(sess.SessionID, "CommandStarted", task.TaskID, "zig", map[string]any{
+	d.record(sess.SessionID, "CommandStarted", task.RunID, "zig", map[string]any{
 		"best_of_n_verify": true, "candidate_index": candIndex, "command": canon.Command,
 	}, dec.DecisionID)
 
 	result, runErr := d.tools.RunContext(ctx, canon.Argv, scratch, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
 	if runErr != nil {
-		d.record(sess.SessionID, "CommandExited", task.TaskID, "zig", map[string]any{
+		d.record(sess.SessionID, "CommandExited", task.RunID, "zig", map[string]any{
 			"best_of_n_verify": true, "candidate_index": candIndex, "exit_code": -1, "error": runErr.Error(),
 		}, "")
 		return candidateVerification{Ran: true, Passed: false, Output: "verify runner error: " + runErr.Error()}
@@ -183,7 +183,7 @@ func (d *Daemon) verifyCandidate(ctx context.Context, sess *sessionstore.Session
 	if len(result.Stderr) > 0 {
 		fmt.Fprintf(&out, "\n[stderr] %s", strings.Join(result.Stderr, "\n"))
 	}
-	d.record(sess.SessionID, "CommandExited", task.TaskID, "zig", map[string]any{
+	d.record(sess.SessionID, "CommandExited", task.RunID, "zig", map[string]any{
 		"best_of_n_verify": true, "candidate_index": candIndex, "exit_code": result.ExitCode,
 		"duration_ms": result.DurationMs, "timed_out": result.TimedOut,
 	}, "")

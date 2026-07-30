@@ -7,12 +7,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Nebutra/carina/go/localdaemon"
 	"github.com/Nebutra/carina/go/outcome"
 )
 
 func TestBuildRustUIArgsUsesStructuredNonSecretFields(t *testing.T) {
 	opts := interactiveOptions{SessionID: " session-1 ", NoAltScreen: true}
-	got := buildRustUIArgs(opts, "/tmp/carina.sock", "/work/project", "zh-Hant", "/home/user/.carina/config.json", "/opt/carina/bin/carina")
+	got := buildRustUIArgs(opts, "/tmp/carina.sock", "/work/project", "zh-Hant", "/home/user/.carina/config.json", "/opt/carina/bin/carina", "always")
 	want := []string{
 		"--socket", "/tmp/carina.sock",
 		"--workspace", "/work/project",
@@ -27,6 +28,41 @@ func TestBuildRustUIArgsUsesStructuredNonSecretFields(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(got, " "), "credential") {
 		t.Fatal("launcher arguments must never contain credential fields")
+	}
+}
+
+func TestBuildRustUIArgsPassesConfiguredAltScreenPolicy(t *testing.T) {
+	got := buildRustUIArgs(interactiveOptions{}, "/tmp/carina.sock", "/work/project", "en", "", "/opt/carina/bin/carina", "never")
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "--alt-screen never") {
+		t.Fatalf("launcher args %#v did not pass configured terminal policy", got)
+	}
+}
+
+func TestBuildRuntimeDiagnosticArgsRetainsSafeRecoveryContext(t *testing.T) {
+	compatibility := &localdaemon.RuntimeCompatibilityError{
+		Description: localdaemon.RuntimeDescription{
+			RuntimeID:   "runtime_old",
+			Obligations: []string{"execution:run_active"},
+		},
+		MissingMethods: []string{"execution.start"},
+	}
+	got := buildRuntimeDiagnosticArgs(
+		interactiveOptions{NoAltScreen: true},
+		"/work/project",
+		"zh-Hans",
+		"/opt/carina/bin/carina",
+		"/state/runtime.log",
+		compatibility,
+	)
+	joined := strings.Join(got, " ")
+	for _, field := range []string{
+		"--runtime-diagnostic", "runtime_old", "execution.start",
+		"execution:run_active", "/state/runtime.log", "--no-alt-screen",
+	} {
+		if !strings.Contains(joined, field) {
+			t.Fatalf("diagnostic args %#v missing %q", got, field)
+		}
 	}
 }
 

@@ -1,4 +1,4 @@
-// Package scheduler queues and tracks agent tasks (PRD §8.6).
+// Package scheduler queues and tracks agent runs (PRD §8.6).
 // MVP: FIFO in-memory queue. Priorities, pause/resume, and multi-agent
 // concurrency land in Phase 3.
 package scheduler
@@ -29,9 +29,9 @@ type InputMediaRef struct {
 	Origin     string `json:"origin,omitempty"`
 }
 
-// Task mirrors protocol/schemas/task.schema.json.
-type Task struct {
-	TaskID                      string           `json:"task_id"`
+// ExecutionRun is the foreground conversation execution owned by the daemon.
+type ExecutionRun struct {
+	RunID                       string           `json:"run_id"`
 	ClientSubmissionID          string           `json:"client_submission_id,omitempty"`
 	ClientSubmissionFingerprint string           `json:"-"` // durable internal identity; never exposed through Task JSON
 	SessionID                   string           `json:"session_id"`
@@ -40,6 +40,7 @@ type Task struct {
 	Revision                    int64            `json:"revision,omitempty"`
 	Continuity                  continuity.State `json:"continuity"`
 	UserPrompt                  string           `json:"user_prompt"`
+	Locale                      string           `json:"locale,omitempty"`
 	InputMediaRefs              []InputMediaRef  `json:"input_media_refs,omitempty"`
 	Model                       string           `json:"model,omitempty"` // provider/model override; empty => daemon default
 	RequestedModel              string           `json:"requested_model,omitempty"`
@@ -60,48 +61,42 @@ type Task struct {
 	TokenUsageObserved          bool             `json:"token_usage_observed,omitempty"`
 	TokenBudget                 int              `json:"token_budget,omitempty"`
 	OutputSchema                json.RawMessage  `json:"output_schema,omitempty"` // complete JSON Schema for final output
-	// Work-dispatch lease (remote execution via the bridge). Empty for tasks the
-	// local daemon runs in-process.
-	LeaseOwner                 string    `json:"lease_owner,omitempty"`      // worker holding the dispatch lease
-	LeaseExpiry                time.Time `json:"lease_expiry,omitempty"`     // visibility timeout; once past, the task is re-queued
-	LeaseGeneration            int       `json:"lease_generation,omitempty"` // fencing token; changes on every successful lease
-	Attempts                   int       `json:"attempts,omitempty"`         // dispatch delivery attempts (at-least-once)
-	RequiredWorkerCapabilities []string  `json:"required_worker_capabilities,omitempty"`
 }
 
 type Scheduler struct {
 	mu    sync.Mutex
 	queue []string
-	// dispatchQueue holds tasks awaiting a remote worker's lease (work.poll).
+	runs  map[string]*ExecutionRun
+	// dispatchQueue holds delegated tasks awaiting a remote worker's lease.
 	// It is separate from queue/the in-process path so the two never race for
-	// the same task.
+	// the same unit of work.
 	dispatchQueue []string
 	tasks         map[string]*Task
 }
 
 func New() *Scheduler {
-	return &Scheduler{tasks: make(map[string]*Task)}
+	return &Scheduler{runs: make(map[string]*ExecutionRun), tasks: make(map[string]*Task)}
 }
 
-func (s *Scheduler) Submit(sessionID, workspaceID, prompt string) *Task {
+func (s *Scheduler) Submit(sessionID, workspaceID, prompt string) *ExecutionRun {
 	return s.SubmitWithGoal(sessionID, workspaceID, prompt, nil)
 }
 
 // SubmitWithGoal submits a task carrying objective success criteria.
-func (s *Scheduler) SubmitWithGoal(sessionID, workspaceID, prompt string, criteria []SuccessCheck) *Task {
+func (s *Scheduler) SubmitWithGoal(sessionID, workspaceID, prompt string, criteria []SuccessCheck) *ExecutionRun {
 	return s.SubmitWithGoalAndModel(sessionID, workspaceID, prompt, "", criteria)
 }
 
 // SubmitWithGoalAndModel submits a task with optional objective criteria and a
 // model override such as "openai/gpt-5" or "openrouter/anthropic/claude...".
-func (s *Scheduler) SubmitWithGoalAndModel(sessionID, workspaceID, prompt, model string, criteria []SuccessCheck) *Task {
+func (s *Scheduler) SubmitWithGoalAndModel(sessionID, workspaceID, prompt, model string, criteria []SuccessCheck) *ExecutionRun {
 	return s.SubmitWithGoalModelAgent(sessionID, workspaceID, prompt, model, "", criteria)
 }
 
-func (s *Scheduler) SubmitWithGoalModelAgent(sessionID, workspaceID, prompt, model, agent string, criteria []SuccessCheck) *Task {
+func (s *Scheduler) SubmitWithGoalModelAgent(sessionID, workspaceID, prompt, model, agent string, criteria []SuccessCheck) *ExecutionRun {
 	now := time.Now().UTC()
-	task := &Task{
-		TaskID:          sessionstore.NewID("task"),
+	task := &ExecutionRun{
+		RunID:           sessionstore.NewID("run"),
 		SessionID:       sessionID,
 		WorkspaceID:     workspaceID,
 		Status:          "queued",
@@ -116,82 +111,93 @@ func (s *Scheduler) SubmitWithGoalModelAgent(sessionID, workspaceID, prompt, mod
 	}
 	task.Continuity.Progress = continuity.ProgressStarted
 	s.mu.Lock()
-	s.tasks[task.TaskID] = task
-	s.queue = append(s.queue, task.TaskID)
+	s.runs[task.RunID] = task
+	s.queue = append(s.queue, task.RunID)
 	s.mu.Unlock()
 	return task
 }
 
-func (s *Scheduler) Get(taskID string) (*Task, bool) {
+func (s *Scheduler) Get(taskID string) (*ExecutionRun, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.tasks[taskID]
+	t, ok := s.runs[taskID]
 	return t, ok
 }
 
 func (s *Scheduler) SetClientSubmission(taskID, clientSubmissionID, fingerprint string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if task := s.tasks[taskID]; task != nil {
+	if task := s.runs[taskID]; task != nil {
 		updated := *task
 		updated.ClientSubmissionID = clientSubmissionID
 		updated.ClientSubmissionFingerprint = fingerprint
-		touchTask(&updated)
-		s.tasks[taskID] = &updated
+		touchRun(&updated)
+		s.runs[taskID] = &updated
 	}
 }
 
 func (s *Scheduler) SetInputMediaRefs(taskID string, refs []InputMediaRef) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if task := s.tasks[taskID]; task != nil {
+	if task := s.runs[taskID]; task != nil {
 		updated := *task
 		updated.InputMediaRefs = append([]InputMediaRef(nil), refs...)
-		touchTask(&updated)
-		s.tasks[taskID] = &updated
+		touchRun(&updated)
+		s.runs[taskID] = &updated
 	}
 }
 
 func (s *Scheduler) SetModelState(taskID, requested, effective string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if task := s.tasks[taskID]; task != nil {
+	if task := s.runs[taskID]; task != nil {
 		updated := *task
 		updated.RequestedModel = requested
 		updated.EffectiveModel = effective
-		touchTask(&updated)
-		s.tasks[taskID] = &updated
+		touchRun(&updated)
+		s.runs[taskID] = &updated
 	}
 }
 
 func (s *Scheduler) SetReasoningEffortState(taskID, requested, effective string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if task := s.tasks[taskID]; task != nil {
+	if task := s.runs[taskID]; task != nil {
 		updated := *task
 		updated.RequestedReasoningEffort = requested
 		updated.EffectiveReasoningEffort = effective
-		touchTask(&updated)
-		s.tasks[taskID] = &updated
+		touchRun(&updated)
+		s.runs[taskID] = &updated
+	}
+}
+
+func (s *Scheduler) SetLocale(taskID, locale string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if task := s.runs[taskID]; task != nil {
+		updated := *task
+		updated.Locale = locale
+		touchRun(&updated)
+		s.runs[taskID] = &updated
 	}
 }
 
 func (s *Scheduler) SetEffectiveModel(taskID, effective string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if task := s.tasks[taskID]; task != nil && effective != "" {
+	if task := s.runs[taskID]; task != nil && effective != "" {
 		updated := *task
 		updated.EffectiveModel = effective
-		touchTask(&updated)
-		s.tasks[taskID] = &updated
+		touchRun(&updated)
+		s.runs[taskID] = &updated
 	}
 }
 
-func (s *Scheduler) Cancel(taskID string) (*Task, error) {
+func (s *Scheduler) Cancel(taskID string) (*ExecutionRun, error) {
 	cancelled, err := s.transition(taskID, "cancelled")
 	if err == nil && cancelled != nil {
 		s.mu.Lock()
-		if current := s.tasks[taskID]; current != nil {
+		if current := s.runs[taskID]; current != nil {
 			updated := *current
 			updated.Continuity.Interruption = &continuity.InterruptionRecord{
 				Kind: continuity.InterruptionOperatorCancelled, Actor: "user", ObservedAt: time.Now().UTC(),
@@ -199,8 +205,8 @@ func (s *Scheduler) Cancel(taskID string) (*Task, error) {
 				UserAction: "explicitly continue from a retained checkpoint or start a new task",
 			}
 			updated.Continuity.Recovery = continuity.RecoveryDecision{Disposition: continuity.RecoveryNone, Reason: "operator cancellation is never automatically recovered"}
-			touchTask(&updated)
-			s.tasks[taskID] = &updated
+			touchRun(&updated)
+			s.runs[taskID] = &updated
 			cancelled = &updated
 		}
 		s.mu.Unlock()
@@ -210,17 +216,17 @@ func (s *Scheduler) Cancel(taskID string) (*Task, error) {
 
 // Next pops the oldest queued task and marks it running.
 // Returns nil when the queue is empty.
-func (s *Scheduler) Next() *Task {
+func (s *Scheduler) Next() *ExecutionRun {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for len(s.queue) > 0 {
 		id := s.queue[0]
 		s.queue = s.queue[1:]
-		if t, ok := s.tasks[id]; ok && t.Status == "queued" {
+		if t, ok := s.runs[id]; ok && t.Status == "queued" {
 			updated := *t
 			updated.Status = "running"
-			touchTask(&updated)
-			s.tasks[id] = &updated
+			touchRun(&updated)
+			s.runs[id] = &updated
 			return &updated
 		}
 	}
@@ -230,15 +236,15 @@ func (s *Scheduler) Next() *Task {
 func (s *Scheduler) Count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.tasks)
+	return len(s.runs)
 }
 
-// CountByStatus returns the number of tasks in each status (for metrics).
+// CountByStatus returns the number of runs in each status (for metrics).
 func (s *Scheduler) CountByStatus() map[string]int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make(map[string]int)
-	for _, t := range s.tasks {
+	for _, t := range s.runs {
 		out[t.Status]++
 	}
 	return out
@@ -249,10 +255,10 @@ func (s *Scheduler) SetStatus(taskID, status string) {
 	_, _ = s.transition(taskID, status)
 }
 
-func (s *Scheduler) transition(taskID, status string) (*Task, error) {
+func (s *Scheduler) transition(taskID, status string) (*ExecutionRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.tasks[taskID]
+	t, ok := s.runs[taskID]
 	if !ok {
 		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
@@ -262,8 +268,8 @@ func (s *Scheduler) transition(taskID, status string) (*Task, error) {
 	}
 	updated := *t
 	updated.Status = status
-	touchTask(&updated)
-	s.tasks[taskID] = &updated
+	touchRun(&updated)
+	s.runs[taskID] = &updated
 	return &updated, nil
 }
 
@@ -272,25 +278,25 @@ func (s *Scheduler) transition(taskID, status string) (*Task, error) {
 func (s *Scheduler) SetResult(taskID, summary string, patches []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.tasks[taskID]
+	t, ok := s.runs[taskID]
 	if !ok {
 		return
 	}
 	updated := *t
 	updated.Summary = summary
 	updated.AppliedPatches = patches
-	touchTask(&updated)
-	s.tasks[taskID] = &updated
+	touchRun(&updated)
+	s.runs[taskID] = &updated
 }
 
 func (s *Scheduler) SetAppliedPatches(taskID string, patches []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if t, ok := s.tasks[taskID]; ok {
+	if t, ok := s.runs[taskID]; ok {
 		updated := *t
 		updated.AppliedPatches = append([]string(nil), patches...)
-		touchTask(&updated)
-		s.tasks[taskID] = &updated
+		touchRun(&updated)
+		s.runs[taskID] = &updated
 	}
 }
 
@@ -298,10 +304,10 @@ func (s *Scheduler) SetAppliedPatches(taskID string, patches []string) {
 // Keeping the patch lineage and lifecycle state in one scheduler mutation
 // prevents observers from seeing a restored patch set paired with an old
 // terminal status.
-func (s *Scheduler) RestoreCheckpoint(taskID string, patches []string) (*Task, error) {
+func (s *Scheduler) RestoreCheckpoint(taskID string, patches []string) (*ExecutionRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.tasks[taskID]
+	t, ok := s.runs[taskID]
 	if !ok {
 		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
@@ -313,17 +319,17 @@ func (s *Scheduler) RestoreCheckpoint(taskID string, patches []string) (*Task, e
 	updated.AppliedPatches = append([]string(nil), patches...)
 	updated.ReconciliationRequired = false
 	updated.BlockedReason = ""
-	touchTask(&updated)
-	s.tasks[taskID] = &updated
+	touchRun(&updated)
+	s.runs[taskID] = &updated
 	return &updated, nil
 }
 
 // MarkReconciliationRequired keeps a failed restore non-runnable until the
 // same restore target is retried and committed successfully.
-func (s *Scheduler) MarkReconciliationRequired(taskID, reason string, patches ...[]string) (*Task, error) {
+func (s *Scheduler) MarkReconciliationRequired(taskID, reason string, patches ...[]string) (*ExecutionRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.tasks[taskID]
+	t, ok := s.runs[taskID]
 	if !ok {
 		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
@@ -337,17 +343,17 @@ func (s *Scheduler) MarkReconciliationRequired(taskID, reason string, patches ..
 	if len(patches) > 0 {
 		updated.AppliedPatches = append([]string(nil), patches[0]...)
 	}
-	touchTask(&updated)
-	s.tasks[taskID] = &updated
+	touchRun(&updated)
+	s.runs[taskID] = &updated
 	return &updated, nil
 }
 
 // Resume atomically claims a paused task for execution. Callers must persist
 // the returned running row before starting the agent loop.
-func (s *Scheduler) Resume(taskID string) (*Task, error) {
+func (s *Scheduler) Resume(taskID string) (*ExecutionRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.tasks[taskID]
+	t, ok := s.runs[taskID]
 	if !ok {
 		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
@@ -359,8 +365,8 @@ func (s *Scheduler) Resume(taskID string) (*Task, error) {
 	}
 	updated := *t
 	updated.Status = "running"
-	touchTask(&updated)
-	s.tasks[taskID] = &updated
+	touchRun(&updated)
+	s.runs[taskID] = &updated
 	return &updated, nil
 }
 
@@ -369,11 +375,11 @@ func (s *Scheduler) Resume(taskID string) (*Task, error) {
 func (s *Scheduler) SetOutputSchema(taskID string, schema json.RawMessage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if t, ok := s.tasks[taskID]; ok {
+	if t, ok := s.runs[taskID]; ok {
 		updated := *t
 		updated.OutputSchema = append(json.RawMessage(nil), schema...)
-		touchTask(&updated)
-		s.tasks[taskID] = &updated
+		touchRun(&updated)
+		s.runs[taskID] = &updated
 	}
 }
 
@@ -381,21 +387,21 @@ func (s *Scheduler) SetOutputSchema(taskID string, schema json.RawMessage) {
 func (s *Scheduler) AddTokens(taskID string, n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if t, ok := s.tasks[taskID]; ok {
+	if t, ok := s.runs[taskID]; ok {
 		updated := *t
 		updated.TokensUsed += n
-		touchTask(&updated)
-		s.tasks[taskID] = &updated
+		touchRun(&updated)
+		s.runs[taskID] = &updated
 	}
 }
 func (s *Scheduler) SetTokenBudget(taskID string, budget int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if t, ok := s.tasks[taskID]; ok {
+	if t, ok := s.runs[taskID]; ok {
 		updated := *t
 		updated.TokenBudget = budget
-		touchTask(&updated)
-		s.tasks[taskID] = &updated
+		touchRun(&updated)
+		s.runs[taskID] = &updated
 	}
 }
 
@@ -403,20 +409,20 @@ func (s *Scheduler) SetTokenBudget(taskID string, budget int) {
 func (s *Scheduler) SetMode(taskID, mode string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if t, ok := s.tasks[taskID]; ok {
+	if t, ok := s.runs[taskID]; ok {
 		updated := *t
 		updated.Mode = mode
-		touchTask(&updated)
-		s.tasks[taskID] = &updated
+		touchRun(&updated)
+		s.runs[taskID] = &updated
 	}
 }
 
 // List returns a snapshot of every task (the background-run registry).
-func (s *Scheduler) List() []*Task {
+func (s *Scheduler) List() []*ExecutionRun {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]*Task, 0, len(s.tasks))
-	for _, t := range s.tasks {
+	out := make([]*ExecutionRun, 0, len(s.runs))
+	for _, t := range s.runs {
 		out = append(out, t)
 	}
 	return out
@@ -427,7 +433,7 @@ func (s *Scheduler) List() []*Task {
 func (s *Scheduler) Remove(taskID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.tasks[taskID]
+	t, ok := s.runs[taskID]
 	if !ok {
 		return fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
@@ -436,42 +442,36 @@ func (s *Scheduler) Remove(taskID string) error {
 	default:
 		return fmt.Errorf("scheduler: task %s is still %s", taskID, t.Status)
 	}
-	delete(s.tasks, taskID)
+	delete(s.runs, taskID)
 	return nil
 }
 
 // Load reinserts a persisted task on daemon startup (run-registry recovery). It
 // never clobbers a task already in memory.
-func (s *Scheduler) Load(t *Task) {
-	if t == nil || t.TaskID == "" {
+func (s *Scheduler) Load(t *ExecutionRun) {
+	if t == nil || t.RunID == "" {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.tasks[t.TaskID]; !exists {
+	if _, exists := s.runs[t.RunID]; !exists {
 		loaded := *t
-		normalizeTask(&loaded)
-		s.tasks[t.TaskID] = &loaded
+		normalizeRun(&loaded)
+		s.runs[t.RunID] = &loaded
 	}
 }
 
-func normalizeTask(task *Task) {
+func normalizeRun(task *ExecutionRun) {
 	if task.Revision < 1 {
 		task.Revision = 1
 	}
 	if task.Continuity.Activity == "" {
 		task.Continuity = continuity.ForTaskStatus(task.Status, len(task.SuccessCriteria) > 0)
 	}
-	if task.Continuity.Execution.LeaseGeneration == 0 && task.LeaseGeneration > 0 {
-		task.Continuity.Execution.LeaseGeneration = int64(task.LeaseGeneration)
-		task.Continuity.Execution.OwnerKind = "remote"
-		task.Continuity.Execution.OwnerID = task.LeaseOwner
-		task.Continuity.Execution.ExpiresAt = task.LeaseExpiry
-	}
 }
 
-func touchTask(task *Task) {
-	normalizeTask(task)
+func touchRun(task *ExecutionRun) {
+	normalizeRun(task)
 	task.Revision++
 	task.UpdatedAt = time.Now().UTC()
 	task.Continuity = continuity.MergeTaskStatus(task.Continuity, task.Status, len(task.SuccessCriteria) > 0)

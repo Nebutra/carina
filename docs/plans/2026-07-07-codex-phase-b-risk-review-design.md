@@ -20,7 +20,7 @@ kernel denial into an allow.
 - `advisory`: default. Review is recorded, but an agent approval may continue.
 - `enforce`: a `deny` review blocks autonomous approval.
 
-Interactive approvals and explicit operator `task.action.approve` stay human
+Interactive approvals and explicit operator `governance.action.approve` stay human
 controlled. Risk Review only governs the path where Carina would otherwise
 auto-approve as `agent`.
 

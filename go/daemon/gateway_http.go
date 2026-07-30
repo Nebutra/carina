@@ -102,10 +102,10 @@ func (h *gatewayHTTP) handleChatCompletions(w http.ResponseWriter, r *http.Reque
 		h.writeError(w, http.StatusBadRequest, "submit_failed", err.Error())
 		return
 	}
-	task = h.waitTask(task.TaskID, metadataWait(req.Metadata))
+	task = h.waitTask(task.RunID, metadataWait(req.Metadata))
 	content := taskMessage(task, sessionID)
 	resp := map[string]any{
-		"id":      "chatcmpl_" + task.TaskID,
+		"id":      "chatcmpl_" + task.RunID,
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
 		"model":   normalizedGatewayModel(req.Model),
@@ -119,7 +119,7 @@ func (h *gatewayHTTP) handleChatCompletions(w http.ResponseWriter, r *http.Reque
 		}},
 		"carina": gatewayTaskMeta(task, sessionID),
 	}
-	w.Header().Set("X-Carina-Task-ID", task.TaskID)
+	w.Header().Set("X-Carina-Task-ID", task.RunID)
 	w.Header().Set("X-Carina-Session-ID", sessionID)
 	h.writeJSON(w, http.StatusOK, resp)
 }
@@ -140,7 +140,7 @@ func (h *gatewayHTTP) handleChatCompletionsStream(w http.ResponseWriter, r *http
 		ctx:     r.Context(),
 		w:       w,
 		flusher: flusher,
-		id:      "chatcmpl_" + task.TaskID,
+		id:      "chatcmpl_" + task.RunID,
 		created: time.Now().Unix(),
 		model:   normalizedGatewayModel(req.Model),
 	}
@@ -148,7 +148,7 @@ func (h *gatewayHTTP) handleChatCompletionsStream(w http.ResponseWriter, r *http
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("X-Carina-Task-ID", task.TaskID)
+	w.Header().Set("X-Carina-Task-ID", task.RunID)
 	w.Header().Set("X-Carina-Session-ID", sessionID)
 	w.WriteHeader(http.StatusOK)
 
@@ -170,9 +170,9 @@ func (h *gatewayHTTP) handleChatCompletionsStream(w http.ResponseWriter, r *http
 	lastStatus := ""
 	eventReadDegraded := false
 	for {
-		current, exists := h.d.sched.Get(task.TaskID)
+		current, exists := h.d.sched.Get(task.RunID)
 		if !exists {
-			current = &scheduler.Task{TaskID: task.TaskID, Status: "queued"}
+			current = &scheduler.ExecutionRun{RunID: task.RunID, Status: "queued"}
 		}
 		if current.Status != lastStatus {
 			if err := stream.content(fmt.Sprintf("Carina task status: %s.\n", current.Status)); err != nil {
@@ -181,7 +181,7 @@ func (h *gatewayHTTP) handleChatCompletionsStream(w http.ResponseWriter, r *http
 			lastStatus = current.Status
 		}
 
-		events, nextCursor, err := h.gatewayTaskEvents(sessionID, task.TaskID, cursor)
+		events, nextCursor, err := h.gatewayTaskEvents(sessionID, task.RunID, cursor)
 		if err != nil {
 			if !eventReadDegraded {
 				if writeErr := stream.content("Carina event replay is temporarily unavailable; task status remains live.\n"); writeErr != nil {
@@ -316,7 +316,7 @@ func (h *gatewayHTTP) gatewayTaskEvents(sessionID, taskID string, since int) ([]
 
 func gatewayEventDelta(event itemAuditEvent) string {
 	switch event.Type {
-	case "TaskCreated":
+	case "ExecutionQueued", "ExecutionStarted", "ExecutionProgressed", "ExecutionCompleted", "ExecutionCancelled":
 		if status := gatewayPayloadString(event.Payload, "status"); status != "" {
 			return fmt.Sprintf("Carina task event: %s.\n", sanitizeGatewayDelta(status, 120))
 		}
@@ -421,8 +421,8 @@ func (h *gatewayHTTP) handleResponses(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "submit_failed", err.Error())
 		return
 	}
-	task = h.waitTask(task.TaskID, metadataWait(req.Metadata))
-	respID := "resp_" + task.TaskID
+	task = h.waitTask(task.RunID, metadataWait(req.Metadata))
+	respID := "resp_" + task.RunID
 	h.d.mu.Lock()
 	h.d.gatewayResponses[respID] = sessionID
 	h.d.mu.Unlock()
@@ -441,7 +441,7 @@ func (h *gatewayHTTP) handleResponses(w http.ResponseWriter, r *http.Request) {
 		}},
 		"carina": gatewayTaskMeta(task, sessionID),
 	}
-	w.Header().Set("X-Carina-Task-ID", task.TaskID)
+	w.Header().Set("X-Carina-Task-ID", task.RunID)
 	w.Header().Set("X-Carina-Session-ID", sessionID)
 	h.writeJSON(w, http.StatusOK, resp)
 }
@@ -466,7 +466,7 @@ func (h *gatewayHTTP) handleToolsInvoke(w http.ResponseWriter, r *http.Request) 
 	result, err := h.invokeReadOnlyTool(method, req.Args)
 	if err != nil {
 		if sid := stringArg(req.Args, "session_id"); sid != "" {
-			h.d.record(sid, "TaskCreated", "", "go", map[string]any{"status": "tools_invoke_denied", "method": method, "reason": err.Error()}, "")
+			h.d.record(sid, "PolicyViolation", "", "go", map[string]any{"capability": "tools_invoke", "resource": method, "reason": err.Error()}, "")
 		}
 		h.writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": err.Error(), "method": method})
 		return
@@ -542,7 +542,7 @@ func (h *gatewayHTTP) applyOrigin(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-func (h *gatewayHTTP) submitAgentTask(r *http.Request, model, prompt string, metadata map[string]any, previousResponseID string) (*scheduler.Task, string, error) {
+func (h *gatewayHTTP) submitAgentTask(r *http.Request, model, prompt string, metadata map[string]any, previousResponseID string) (*scheduler.ExecutionRun, string, error) {
 	agent, err := agentFromGatewayModel(model)
 	if err != nil {
 		return nil, "", err
@@ -579,10 +579,10 @@ func (h *gatewayHTTP) submitAgentTask(r *http.Request, model, prompt string, met
 	if err != nil {
 		return nil, "", err
 	}
-	task, ok := taskAny.(*scheduler.Task)
+	task, ok := taskAny.(*scheduler.ExecutionRun)
 	if !ok {
 		raw, _ := json.Marshal(taskAny)
-		var decoded scheduler.Task
+		var decoded scheduler.ExecutionRun
 		if err := json.Unmarshal(raw, &decoded); err != nil {
 			return nil, "", fmt.Errorf("decode submitted task: %w", err)
 		}
@@ -611,12 +611,12 @@ func (h *gatewayHTTP) createGatewaySession(root string) (*sessionstore.Session, 
 	return &decoded, nil
 }
 
-func (h *gatewayHTTP) waitTask(taskID string, seconds float64) *scheduler.Task {
+func (h *gatewayHTTP) waitTask(taskID string, seconds float64) *scheduler.ExecutionRun {
 	if seconds <= 0 {
 		if task, ok := h.d.sched.Get(taskID); ok {
 			return task
 		}
-		return &scheduler.Task{TaskID: taskID, Status: "queued"}
+		return &scheduler.ExecutionRun{RunID: taskID, Status: "queued"}
 	}
 	if seconds > 30 {
 		seconds = 30
@@ -631,7 +631,7 @@ func (h *gatewayHTTP) waitTask(taskID string, seconds float64) *scheduler.Task {
 			if ok {
 				return task
 			}
-			return &scheduler.Task{TaskID: taskID, Status: "queued"}
+			return &scheduler.ExecutionRun{RunID: taskID, Status: "queued"}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -786,19 +786,19 @@ func normalizedGatewayModel(model string) string {
 	return model
 }
 
-func gatewayTaskMeta(task *scheduler.Task, sessionID string) map[string]any {
+func gatewayTaskMeta(task *scheduler.ExecutionRun, sessionID string) map[string]any {
 	return map[string]any{
-		"task_id":    task.TaskID,
+		"task_id":    task.RunID,
 		"session_id": sessionID,
 		"status":     task.Status,
 	}
 }
 
-func taskMessage(task *scheduler.Task, sessionID string) string {
+func taskMessage(task *scheduler.ExecutionRun, sessionID string) string {
 	if gatewayTaskTerminal(task.Status) && strings.TrimSpace(task.Summary) != "" {
 		return task.Summary
 	}
-	return fmt.Sprintf("Carina task %s submitted in session %s (status: %s).", task.TaskID, sessionID, task.Status)
+	return fmt.Sprintf("Carina task %s submitted in session %s (status: %s).", task.RunID, sessionID, task.Status)
 }
 
 func gatewayTaskTerminal(status string) bool {

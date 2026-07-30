@@ -68,11 +68,6 @@ type Config struct {
 	NebutraCloudEndpoint       string              `json:"nebutra_cloud_endpoint"`
 	NebutraSyncMode            string              `json:"nebutra_sync_mode"`
 	ContextEngine              string              `json:"context_engine"`
-	HeadroomBin                string              `json:"headroom_bin"`
-	HeadroomStateDir           string              `json:"headroom_state_dir"`
-	HeadroomMode               string              `json:"headroom_mode"`
-	HeadroomProxyPort          int                 `json:"headroom_proxy_port"`
-	HeadroomTokenBudget        int                 `json:"headroom_token_budget"`
 	MemoryProvider             string              `json:"memory_provider"`
 	MemoryHMSEndpoint          string              `json:"memory_hms_endpoint"`
 	MemoryHMSAPIKeyEnv         string              `json:"memory_hms_api_key_env"`
@@ -98,8 +93,6 @@ func Defaults(home string) Config {
 		NebutraCloudEndpoint:      nebutra.DefaultCloudEndpoint,
 		NebutraSyncMode:           nebutra.SyncModeOff,
 		ContextEngine:             contextengine.ModeAuto,
-		HeadroomMode:              contextengine.HeadroomModeManagedMCP,
-		HeadroomTokenBudget:       4000,
 		MemoryProvider:            "off",
 		MemoryHMSTimeoutMS:        3000,
 		MemoryHMSMaxEvidence:      8,
@@ -231,9 +224,6 @@ func mergeEnv(cfg *Config) {
 	envStr("CARINA_NEBUTRA_CLOUD_ENDPOINT", &cfg.NebutraCloudEndpoint)
 	envStr("CARINA_NEBUTRA_SYNC_MODE", &cfg.NebutraSyncMode)
 	envStr("CARINA_CONTEXT_ENGINE", &cfg.ContextEngine)
-	envStr("CARINA_HEADROOM_BIN", &cfg.HeadroomBin)
-	envStr("CARINA_HEADROOM_STATE_DIR", &cfg.HeadroomStateDir)
-	envStr("CARINA_HEADROOM_MODE", &cfg.HeadroomMode)
 	envStr("CARINA_TUI_LOCALE", &cfg.TUILocale)
 	envStr("CARINA_TUI_ALTERNATE_SCREEN", &cfg.TUIAlternateScreen)
 	envBool("CARINA_OFFLINE", &cfg.Offline)
@@ -247,8 +237,6 @@ func mergeEnv(cfg *Config) {
 	envBool("CARINA_BEST_OF_N_ENABLED", &cfg.BestOfNEnabled)
 	envInt("CARINA_MAX_CONCURRENT_TASKS", &cfg.MaxConcurrentTasks)
 	envInt("CARINA_MAX_TASK_TOKENS", &cfg.MaxTaskTokens)
-	envInt("CARINA_HEADROOM_PROXY_PORT", &cfg.HeadroomProxyPort)
-	envInt("CARINA_HEADROOM_TOKEN_BUDGET", &cfg.HeadroomTokenBudget)
 	envStr("CARINA_MEMORY_PROVIDER", &cfg.MemoryProvider)
 	envStr("CARINA_MEMORY_HMS_ENDPOINT", &cfg.MemoryHMSEndpoint)
 	envStr("CARINA_MEMORY_HMS_API_KEY_ENV", &cfg.MemoryHMSAPIKeyEnv)
@@ -340,15 +328,7 @@ func (c Config) Validate() error {
 	if _, err := nebutra.NormalizeSyncMode(c.NebutraSyncMode); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	if _, err := contextengine.NormalizeConfig(contextengine.Config{
-		ContextEngine:       c.ContextEngine,
-		HeadroomBin:         c.HeadroomBin,
-		HeadroomStateDir:    c.HeadroomStateDir,
-		HeadroomMode:        c.HeadroomMode,
-		HeadroomProxyPort:   c.HeadroomProxyPort,
-		HeadroomTokenBudget: c.HeadroomTokenBudget,
-		CarinaStateDir:      c.StateDir,
-	}); err != nil {
+	if _, err := contextengine.NormalizeConfig(contextengine.Config{ContextEngine: c.ContextEngine}); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	return nil

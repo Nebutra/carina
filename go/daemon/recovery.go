@@ -16,8 +16,8 @@ type recoveryToolCall struct {
 	effect   continuity.EffectContract
 }
 
-func (d *Daemon) reconcileInterruptedTask(task *scheduler.Task) {
-	cp := d.runs.loadCheckpoint(task.TaskID)
+func (d *Daemon) reconcileInterruptedTask(task *scheduler.ExecutionRun) {
+	cp := d.runs.loadCheckpoint(task.RunID)
 	_, sessionOK := d.store.Get(task.SessionID)
 	proofs := map[string]bool{
 		"checkpoint":    cp != nil && cp.Transcript != nil,
@@ -56,31 +56,31 @@ func (d *Daemon) reconcileInterruptedTask(task *scheduler.Task) {
 	}
 	record := continuity.InterruptionRecord{
 		Kind: kind, Actor: "runtime", ObservedAt: time.Now().UTC(), RuntimeEpoch: d.runtimeLease.state.Epoch - 1,
-		TaskID: task.TaskID, Certainty: continuity.CertaintyInferred, Retryable: allPassed,
+		TaskID: task.RunID, Certainty: continuity.CertaintyInferred, Retryable: allPassed,
 	}
 	record.BillingUncertain = d.hasUnsettledModelRequest(task)
 	if cp != nil {
-		record.CheckpointID = runCheckpointID(task.TaskID, cp)
+		record.CheckpointID = runCheckpointID(task.RunID, cp)
 	}
 	decision := continuity.RecoveryDecision{
 		Disposition: disposition, Reason: strings.Join(reasons, "; "), CheckpointID: record.CheckpointID,
 		ExpectedTaskRevision: task.Revision, Proofs: proofs,
 	}
-	interrupted, err := d.sched.Interrupt(task.TaskID, record, decision)
+	interrupted, err := d.sched.Interrupt(task.RunID, record, decision)
 	if err != nil {
 		return
 	}
-	d.sched.SetResult(task.TaskID, "interrupted: "+decision.Reason, task.AppliedPatches)
-	d.persistRun(task.TaskID)
-	d.record(task.SessionID, "TaskInterrupted", task.TaskID, "go", map[string]any{
+	d.sched.SetResult(task.RunID, "interrupted: "+decision.Reason, task.AppliedPatches)
+	d.persistRun(task.RunID)
+	d.record(task.SessionID, "ExecutionInterrupted", task.RunID, "go", map[string]any{
 		"kind": kind, "certainty": record.Certainty, "retryable": allPassed,
 		"runtime_epoch": record.RuntimeEpoch, "checkpoint_id": record.CheckpointID, "billing_uncertain": record.BillingUncertain,
 	}, "")
-	eventType := "TaskRecoveryBlocked"
+	eventType := "ExecutionRecoveryBlocked"
 	if allPassed {
-		eventType = "TaskRecoveryPlanned"
+		eventType = "ExecutionRecoveryPlanned"
 	}
-	d.record(task.SessionID, eventType, task.TaskID, "go", map[string]any{
+	d.record(task.SessionID, eventType, task.RunID, "go", map[string]any{
 		"disposition": disposition, "recovery_generation": interrupted.Continuity.RecoveryGeneration,
 		"proofs": proofs, "reason": decision.Reason,
 	}, "")
@@ -90,32 +90,32 @@ func (d *Daemon) reconcileInterruptedTask(task *scheduler.Task) {
 	d.startPlannedRecovery(interrupted)
 }
 
-func (d *Daemon) startPlannedRecovery(task *scheduler.Task) {
-	if d.reasoner == nil || task == nil || task.Status != "interrupted" || task.Continuity.Recovery.Disposition != continuity.RecoveryResumeCheckpoint {
+func (d *Daemon) startPlannedRecovery(task *scheduler.ExecutionRun) {
+	if !d.reasonerReady() || task == nil || task.Status != "interrupted" || task.Continuity.Recovery.Disposition != continuity.RecoveryResumeCheckpoint {
 		return
 	}
 	sess, ok := d.store.Get(task.SessionID)
 	if !ok {
 		return
 	}
-	cp := d.runs.loadCheckpoint(task.TaskID)
-	if cp == nil || runCheckpointID(task.TaskID, cp) != task.Continuity.Recovery.CheckpointID {
+	cp := d.runs.loadCheckpoint(task.RunID)
+	if cp == nil || runCheckpointID(task.RunID, cp) != task.Continuity.Recovery.CheckpointID {
 		return
 	}
-	current, _ := d.sched.Get(task.TaskID)
-	claimed, err := d.sched.AcquireExecution(task.TaskID, current.Revision, "local", d.runtimeLease.state.InstanceID, d.runtimeLease.state.Epoch, time.Time{})
+	current, _ := d.sched.Get(task.RunID)
+	claimed, err := d.sched.AcquireExecution(task.RunID, current.Revision, "local", d.runtimeLease.state.InstanceID, d.runtimeLease.state.Epoch, time.Time{})
 	if err != nil {
 		return
 	}
-	d.persistRun(task.TaskID)
-	d.record(task.SessionID, "TaskRecoveryStarted", task.TaskID, "go", map[string]any{
+	d.persistRun(task.RunID)
+	d.record(task.SessionID, "ExecutionRecoveryStarted", task.RunID, "go", map[string]any{
 		"recovery_generation":  claimed.Continuity.RecoveryGeneration,
 		"execution_generation": claimed.Continuity.Execution.LeaseGeneration, "checkpoint_id": task.Continuity.Recovery.CheckpointID,
 	}, "")
 	go d.resumeTaskGuarded(sess, claimed, cp)
 }
 
-func (d *Daemon) recoveryEffectProof(task *scheduler.Task) (bool, bool, string) {
+func (d *Daemon) recoveryEffectProof(task *scheduler.ExecutionRun) (bool, bool, string) {
 	raw, err := d.kern.ReadEvents(task.SessionID)
 	if err != nil {
 		return false, false, "audit events unavailable"
@@ -126,7 +126,7 @@ func (d *Daemon) recoveryEffectProof(task *scheduler.Task) (bool, bool, string) 
 	}
 	calls := map[string]*recoveryToolCall{}
 	for _, event := range events {
-		if event.TaskID != task.TaskID {
+		if event.TaskID != task.RunID {
 			continue
 		}
 		callID, _ := event.Payload["call_id"].(string)
@@ -165,7 +165,7 @@ func (d *Daemon) recoveryEffectProof(task *scheduler.Task) (bool, bool, string) 
 	return true, true, "all started tool calls are settled or replay-safe"
 }
 
-func (d *Daemon) hasUnsettledModelRequest(task *scheduler.Task) bool {
+func (d *Daemon) hasUnsettledModelRequest(task *scheduler.ExecutionRun) bool {
 	raw, err := d.kern.ReadEvents(task.SessionID)
 	if err != nil {
 		return true
@@ -176,7 +176,7 @@ func (d *Daemon) hasUnsettledModelRequest(task *scheduler.Task) bool {
 	}
 	pending := 0
 	for _, event := range events {
-		if event.TaskID != task.TaskID {
+		if event.TaskID != task.RunID {
 			continue
 		}
 		switch event.Type {
