@@ -72,8 +72,17 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/carina-release-sign.XXXXXX")"
 keychain="$work/release.keychain-db"
 keychain_password="$(uuidgen)-$(uuidgen)"
 profile="carina-release-$(uuidgen)"
+original_keychains=()
+while IFS= read -r entry; do
+  entry="${entry#*\"}"
+  entry="${entry%\"*}"
+  [[ -n "$entry" ]] && original_keychains+=("$entry")
+done < <(security list-keychains -d user)
 
 cleanup() {
+  if (( ${#original_keychains[@]} > 0 )); then
+    security list-keychains -d user -s "${original_keychains[@]}" >/dev/null 2>&1 || true
+  fi
   security delete-keychain "$keychain" >/dev/null 2>&1 || true
   rm -rf "$work"
 }
@@ -83,12 +92,13 @@ printf '%s' "$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64" | base64 -D > "$work/de
 security create-keychain -p "$keychain_password" "$keychain"
 security set-keychain-settings -lut 3600 "$keychain"
 security unlock-keychain -p "$keychain_password" "$keychain"
+security list-keychains -d user -s "$keychain" "${original_keychains[@]}"
 security import "$work/developer-id.p12" \
   -k "$keychain" \
   -P "$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD" \
   -T /usr/bin/codesign \
   -T /usr/bin/security
-identity_listing="$(security find-identity -v -p codesigning "$keychain")"
+identity_listing="$(security find-identity -v -p codesigning)"
 grep -Fq "\"$APPLE_DEVELOPER_ID_APPLICATION_IDENTITY\"" <<< "$identity_listing" || \
   fail "requested signing identity was not imported into the temporary keychain"
 
