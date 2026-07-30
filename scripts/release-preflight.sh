@@ -204,7 +204,10 @@ else
     record apple_credentials BLOCKED external "codesigning environment lacks protection rules and/or environment-scoped Apple secrets"
   fi
   version="$(go run ./scripts/product-version.go 2>/dev/null || true)"
-  evidence_count="$(find "$dist" -maxdepth 1 -type f -name "carina_${version}_darwin_*.tar.gz*" 2>/dev/null | wc -l | tr -d ' ')"
+  evidence_count="$(find "$dist" -maxdepth 1 -type f \( \
+    -name "carina_${version}_darwin_*.tar.gz.notary.json" -o \
+    -name "carina_${version}_darwin_*.tar.gz.signing.txt" \
+  \) 2>/dev/null | wc -l | tr -d ' ')"
   if [[ "$evidence_count" == "0" ]]; then
     record apple_notarization_evidence SKIP external "pre-build state has no Darwin signing evidence yet"
   elif DIST="$dist" VERSION="$version" ./scripts/verify-notary-evidence.sh >/dev/null 2>&1; then

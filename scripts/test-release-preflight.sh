@@ -75,9 +75,22 @@ set -e
 [[ "$code" == "1" ]] || { echo "test-release-preflight: unwritable report exit=$code want=1" >&2; exit 1; }
 
 version="$(cd "$ROOT" && go run ./scripts/product-version.go)"
+archive_only="$work/dist-archive-only"
+mkdir -p "$archive_only"
+printf 'unsigned preflight archive\n' > "$archive_only/carina_${version}_darwin_arm64.tar.gz"
+report="$work/archive-only.json"
+CARINA_PREFLIGHT_EXTERNAL_OFFLINE=1 CARINA_PREFLIGHT_REPORT="$report" CARINA_PREFLIGHT_DIST="$archive_only" \
+  env PATH="$work/bin:$PATH" "$ROOT/scripts/release-preflight.sh" --check-only --allow-dirty >/dev/null 2>&1
+python3 - "$report" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1]))
+assert any(g["gate"] == "apple_notarization_evidence" and g["status"] == "SKIP" for g in data["gates"])
+PY
+
 partial="$work/dist-partial"
 mkdir -p "$partial"
 printf 'partial\n' > "$partial/carina_${version}_darwin_arm64.tar.gz"
+printf '{"status":"Accepted","id":"submission-arm64"}\n' > "$partial/carina_${version}_darwin_arm64.tar.gz.notary.json"
 report="$work/partial.json"
 set +e
 CARINA_PREFLIGHT_EXTERNAL_OFFLINE=1 CARINA_PREFLIGHT_REPORT="$report" CARINA_PREFLIGHT_DIST="$partial" \
