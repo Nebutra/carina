@@ -125,10 +125,32 @@ Suitable for:
 
 ### Vercel project settings
 
+- **Project**: `nebutra-carina`
+- **Custom domain**: `carina.nebutra.com`
 - **Root Directory**: `apps/docs`
 - **Install**: `pnpm install`
 - **Build**: `pnpm build`
 - **Output**: `dist`
+
+### Production ops
+
+| Piece | Where |
+| --- | --- |
+| Site source | this package (`apps/docs`) |
+| Canonical host | `https://carina.nebutra.com` (`astro.config.mjs` `site`) |
+| Vercel project | `nebutra-carina` · root `apps/docs` · framework Astro |
+| Platform bootstrap deploy | Nebutra-Sailor: `deploy-carina-vercel.yml` (uses Sailor `VERCEL_*`; preferred until secrets are mirrored here) |
+| Day-2 deploy (this repo) | `.github/workflows/deploy-docs-vercel.yml` — needs `VERCEL_TOKEN` + `VERCEL_ORG_ID` |
+| DNS (Cloudflare zone) | Nebutra-Sailor only: `point-carina-dns.yml` → CNAME `cname.vercel-dns.com` (proxied) |
+| Registry | Sailor `docs/DOMAINS.md` + `brand.domains.carina` + `topology.defaults.yaml` `vercel_surfaces` |
+
+**Bring-up order**
+
+1. Sailor → **Deploy Carina docs (Vercel)** (`workflow_dispatch`, ref `main`)
+2. Sailor → **Point carina DNS to Vercel**
+3. Smoke: `https://carina.nebutra.com/` and `/llms.txt` → 200
+
+**Do not** add `api.carina.*` / `status.carina.*`. Cloud identity stays on `nebutra.com` boundaries (see `docs/nebutra-cloud-boundary.md`).
 
 ### 阿里云 OSS 备注
 
