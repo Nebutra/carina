@@ -1,7 +1,6 @@
 use std::io::Cursor;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use image::{DynamicImage, ImageFormat, RgbaImage};
@@ -241,13 +240,19 @@ fn cleanup_orphaned_temp_images_in(directory: &Path) {
 
 #[cfg(unix)]
 fn process_is_live(pid: u32) -> bool {
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    if pid <= 0 {
+        return false;
+    }
+
+    // Signal zero performs existence/permission checking without sending a signal.
+    // A permission error still proves that the process exists.
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 #[cfg(not(unix))]
@@ -314,6 +319,14 @@ mod tests {
         assert!(!orphan.exists());
         assert!(legacy.exists());
         assert!(unrelated.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_probe_rejects_values_outside_positive_pid_t() {
+        assert!(process_is_live(std::process::id()));
+        assert!(!process_is_live(0));
+        assert!(!process_is_live(u32::MAX));
     }
 
     #[test]
