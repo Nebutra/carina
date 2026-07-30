@@ -243,7 +243,7 @@ build or install.
 ### Apple signing and notarization
 
 Tag releases are fail-closed on Apple release credentials. Before either
-architecture starts building, the workflow requires all of these protected
+architecture starts building, the workflow requires these protected
 `codesigning` environment secrets:
 
 - `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`: base64-encoded PKCS#12 export of
@@ -252,13 +252,22 @@ architecture starts building, the workflow requires all of these protected
   export;
 - `APPLE_DEVELOPER_ID_APPLICATION_IDENTITY`: the complete `Developer ID
   Application: ...` identity shown by `security find-identity`;
-- `APPLE_NOTARY_APPLE_ID`: Apple ID used for the notary service;
 - `APPLE_NOTARY_TEAM_ID`: ten-character Apple Developer team ID;
-- `APPLE_NOTARY_PASSWORD`: app-specific password for the notary Apple ID.
+- either `APPLE_NOTARY_KEY_P8`, `APPLE_NOTARY_KEY_ID`, and
+  `APPLE_NOTARY_ISSUER_ID` for App Store Connect API-key authentication;
+- or `APPLE_NOTARY_APPLE_ID` and `APPLE_NOTARY_PASSWORD` for legacy Apple ID
+  authentication.
 
 The macOS build matrix is bound to the protected `codesigning` GitHub
 environment. That environment must exist and should require reviewers before
 these secrets are exposed to either architecture job.
+
+For notarization, prefer an App Store Connect API key in CI. Configure
+`APPLE_NOTARY_KEY_P8`, `APPLE_NOTARY_KEY_ID`, and `APPLE_NOTARY_ISSUER_ID` as
+one complete environment-scoped set. The older Apple ID path remains supported
+through `APPLE_NOTARY_APPLE_ID` and `APPLE_NOTARY_PASSWORD`; do not configure a
+partial set from either authentication mode. `APPLE_NOTARY_TEAM_ID` remains
+required for signing identity verification.
 
 After configuring the five npm trusted-publisher bindings, set the non-secret
 repository variable `NPM_TRUSTED_PUBLISHERS_CONFIRMED=true`. The tag workflow

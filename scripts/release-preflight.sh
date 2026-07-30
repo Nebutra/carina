@@ -193,8 +193,12 @@ else
       [[ "$protection_count" =~ ^[0-9]+$ && "$protection_count" -gt 0 ]] && codesigning_protected=1
     fi
   fi
-  apple=(APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD APPLE_DEVELOPER_ID_APPLICATION_IDENTITY APPLE_NOTARY_APPLE_ID APPLE_NOTARY_TEAM_ID APPLE_NOTARY_PASSWORD)
-  if [[ "$codesigning_environment" == "1" && "$codesigning_protected" == "1" && -n "$environment_secret_names" ]] && check_secret_names "$environment_secret_names" "${apple[@]}"; then
+  apple_signing=(APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD APPLE_DEVELOPER_ID_APPLICATION_IDENTITY APPLE_NOTARY_TEAM_ID)
+  apple_api_key=(APPLE_NOTARY_KEY_P8 APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER_ID)
+  apple_id=(APPLE_NOTARY_APPLE_ID APPLE_NOTARY_PASSWORD)
+  if [[ "$codesigning_environment" == "1" && "$codesigning_protected" == "1" && -n "$environment_secret_names" ]] && \
+    check_secret_names "$environment_secret_names" "${apple_signing[@]}" && \
+    { check_secret_names "$environment_secret_names" "${apple_api_key[@]}" || check_secret_names "$environment_secret_names" "${apple_id[@]}"; }; then
     record apple_credentials PASS external "protected codesigning environment contains all required secret names; values remain workflow-validated"
   else
     record apple_credentials BLOCKED external "codesigning environment lacks protection rules and/or environment-scoped Apple secrets"

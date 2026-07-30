@@ -193,17 +193,29 @@ rm /tmp/carina-developer-id-check.p12
 `cmp` must print nothing and exit successfully. The contents of the `.b64`
 file become `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`.
 
-#### 1.3 Create the notarization password and test it locally
+#### 1.3 Configure notarization authentication and test it locally
 
-`APPLE_NOTARY_APPLE_ID` is the Apple ID email used for the developer account.
-`APPLE_NOTARY_PASSWORD` must be an app-specific password, not the normal Apple
-ID password and not an App Store Connect API key.
+Prefer an App Store Connect API key for CI. It avoids storing a personal Apple
+ID password and can be validated without creating a Keychain profile:
+
+```bash
+xcrun notarytool history \
+  --key /secure/path/AuthKey_KEYID.p8 \
+  --key-id TEN_CHARACTER_KEY_ID \
+  --issuer ISSUER_UUID \
+  --output-format json
+```
+
+Configure the complete API-key triple as `APPLE_NOTARY_KEY_P8`,
+`APPLE_NOTARY_KEY_ID`, and `APPLE_NOTARY_ISSUER_ID`. As a compatibility
+fallback, `APPLE_NOTARY_APPLE_ID` may contain the team Apple ID and
+`APPLE_NOTARY_PASSWORD` an app-specific password, never the normal password.
 
 1. Sign in to [Apple Account](https://account.apple.com/).
 2. Open **Sign-In and Security > App-Specific Passwords**.
 3. Select **Generate an app-specific password**, name it `Carina notarization`,
    and record the generated value in a password manager.
-4. Test the three notarization values on the Mac:
+4. Test the legacy notarization values on the Mac:
 
 ```bash
 xcrun notarytool store-credentials carina-release-local \
@@ -235,17 +247,24 @@ Required access: repository administrator for `Nebutra/carina`.
    rejects an unprotected environment. For a one-person release team, do not
    enable **Prevent self-review**, because that would make the release
    impossible to approve.
-4. Under **Environment secrets**, add the following six names. Preserve leading
-   and trailing characters in every value; do not add quotes.
+4. Under **Environment secrets**, add the four common names plus one complete
+   notarization authentication set. Preserve leading and trailing characters
+   in every value; do not add quotes.
 
 | GitHub environment secret | Exact value |
 | --- | --- |
 | `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64` | Entire one-line contents of `DeveloperIDApplication.p12.b64` |
 | `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD` | Password chosen when exporting the `.p12` |
 | `APPLE_DEVELOPER_ID_APPLICATION_IDENTITY` | Complete quoted identity from `security find-identity`, without the quote characters |
-| `APPLE_NOTARY_APPLE_ID` | Apple ID email used for notarization |
 | `APPLE_NOTARY_TEAM_ID` | Exact ten-character Apple Developer Team ID |
-| `APPLE_NOTARY_PASSWORD` | Apple app-specific password |
+| `APPLE_NOTARY_KEY_P8` | Entire contents of the App Store Connect `.p8` private key (preferred) |
+| `APPLE_NOTARY_KEY_ID` | Exact ten-character App Store Connect key ID (preferred) |
+| `APPLE_NOTARY_ISSUER_ID` | App Store Connect issuer UUID (preferred) |
+| `APPLE_NOTARY_APPLE_ID` | Apple ID email used for legacy notarization authentication |
+| `APPLE_NOTARY_PASSWORD` | Apple app-specific password for legacy authentication |
+
+Do not configure a partial authentication set. API-key authentication requires
+all three preferred values; legacy authentication requires both legacy values.
 
 The web UI is the simplest option. To upload from Terminal without placing a
 secret in command history, use standard input:
@@ -275,7 +294,8 @@ gh api repos/Nebutra/carina/environments/codesigning \
 gh secret list --repo Nebutra/carina --env codesigning
 ```
 
-The second command must list all six names. Then remove the local exported
+The second command must list the four common names and one complete
+notarization authentication set. Then remove the local exported
 certificate files after ensuring the original certificate and private key are
 safely backed up according to the team's credential policy:
 
@@ -499,12 +519,13 @@ runs `carina --version` successfully.
 
 - [ ] A valid Developer ID Application identity with its private key is
   available and backed up under the team's credential policy.
-- [ ] `notarytool store-credentials` validates the Apple ID, Team ID, and
-  app-specific password.
-- [ ] `codesigning` exists, has a protection rule, and contains all six exact
-  environment secret names.
+- [ ] `notarytool history` validates the preferred API-key tuple, or
+  `notarytool store-credentials` validates the legacy Apple ID tuple.
+- [ ] `codesigning` exists, has a protection rule, and contains the four common
+  environment secrets plus one complete notarization authentication set.
 - [ ] All five `@nebutra/carina*` packages exist publicly at
-  `0.0.0-bootstrap.0` under the `bootstrap` dist-tag; bootstrap is not `latest`.
+  `0.0.0-bootstrap.0` under the `bootstrap` dist-tag. The stable release must
+  move `latest` from the bootstrap version to the released version.
 - [ ] `npm-release` exists and all five packages bind to `Nebutra/carina`,
   `release.yml`, and `npm-release` as trusted publisher.
 - [ ] Repository variable `NPM_TRUSTED_PUBLISHERS_CONFIRMED` is exactly `true`.

@@ -20,11 +20,22 @@ for name in \
   APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 \
   APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD \
   APPLE_DEVELOPER_ID_APPLICATION_IDENTITY \
-  APPLE_NOTARY_APPLE_ID \
-  APPLE_NOTARY_TEAM_ID \
-  APPLE_NOTARY_PASSWORD; do
+  APPLE_NOTARY_TEAM_ID; do
   require_env "$name"
 done
+
+notary_auth=""
+if [[ -n "${APPLE_NOTARY_KEY_P8:-}" || -n "${APPLE_NOTARY_KEY_ID:-}" || -n "${APPLE_NOTARY_ISSUER_ID:-}" ]]; then
+  for name in APPLE_NOTARY_KEY_P8 APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER_ID; do
+    require_env "$name"
+  done
+  notary_auth="api-key"
+else
+  for name in APPLE_NOTARY_APPLE_ID APPLE_NOTARY_PASSWORD; do
+    require_env "$name"
+  done
+  notary_auth="apple-id"
+fi
 
 [[ -f "$ARCHIVE" ]] || fail "archive not found: $ARCHIVE"
 [[ "$ARCHIVE" == *.tar.gz ]] || fail "ARCHIVE must end in .tar.gz"
@@ -32,6 +43,14 @@ done
   fail "APPLE_DEVELOPER_ID_APPLICATION_IDENTITY must be a Developer ID Application identity"
 [[ "$APPLE_NOTARY_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || \
   fail "APPLE_NOTARY_TEAM_ID must be a 10-character Apple team id"
+if [[ "$notary_auth" == "api-key" ]]; then
+  [[ "$APPLE_NOTARY_KEY_ID" =~ ^[A-Z0-9]{10}$ ]] || \
+    fail "APPLE_NOTARY_KEY_ID must be a 10-character App Store Connect key id"
+  [[ "$APPLE_NOTARY_ISSUER_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || \
+    fail "APPLE_NOTARY_ISSUER_ID must be an App Store Connect issuer UUID"
+  grep -Fq 'BEGIN PRIVATE KEY' <<< "$APPLE_NOTARY_KEY_P8" || \
+    fail "APPLE_NOTARY_KEY_P8 must contain an App Store Connect private key"
+fi
 
 if [[ "${CHECK_ONLY:-0}" == "1" ]]; then
   printf '%s: required inputs are present\n' "$SCRIPT_NAME"
@@ -161,17 +180,30 @@ refresh_release_metadata "submitted"
 
 submit_zip="$work/$package-notarization.zip"
 ditto -c -k --keepParent "$stage" "$submit_zip"
-xcrun notarytool store-credentials "$profile" \
-  --apple-id "$APPLE_NOTARY_APPLE_ID" \
-  --team-id "$APPLE_NOTARY_TEAM_ID" \
-  --password "$APPLE_NOTARY_PASSWORD" \
-  --keychain "$keychain"
-xcrun notarytool submit "$submit_zip" \
-  --keychain-profile "$profile" \
-  --keychain "$keychain" \
-  --wait \
-  --timeout "${NOTARY_TIMEOUT:-30m}" \
-  --output-format json > "$notary_result"
+if [[ "$notary_auth" == "api-key" ]]; then
+  notary_key="$work/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+  printf '%s' "$APPLE_NOTARY_KEY_P8" > "$notary_key"
+  chmod 600 "$notary_key"
+  xcrun notarytool submit "$submit_zip" \
+    --key "$notary_key" \
+    --key-id "$APPLE_NOTARY_KEY_ID" \
+    --issuer "$APPLE_NOTARY_ISSUER_ID" \
+    --wait \
+    --timeout "${NOTARY_TIMEOUT:-30m}" \
+    --output-format json > "$notary_result"
+else
+  xcrun notarytool store-credentials "$profile" \
+    --apple-id "$APPLE_NOTARY_APPLE_ID" \
+    --team-id "$APPLE_NOTARY_TEAM_ID" \
+    --password "$APPLE_NOTARY_PASSWORD" \
+    --keychain "$keychain"
+  xcrun notarytool submit "$submit_zip" \
+    --keychain-profile "$profile" \
+    --keychain "$keychain" \
+    --wait \
+    --timeout "${NOTARY_TIMEOUT:-30m}" \
+    --output-format json > "$notary_result"
+fi
 
 read -r notary_status submission_id < <(
   NOTARY_RESULT="$notary_result" python3 <<'PY'
