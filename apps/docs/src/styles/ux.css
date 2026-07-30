@@ -41,7 +41,9 @@
     flex-direction: column;
     justify-content: flex-start;
     gap: 0;
-    padding-block: 0;
+    /* Kill Starlight host pad — content height is owned by .docs-header rows. */
+    padding-block: 0 !important;
+    padding-inline: var(--sl-nav-pad-x, 1.5rem) !important;
     height: auto !important;
     min-height: var(--docs-nav-row-height, 3.5rem);
     z-index: var(--sl-z-index-navbar, 10);
@@ -229,8 +231,8 @@
   }
 
   .sidebar-content {
-    /* Top aligns with the content breadcrumb and the TOC heading */
-    padding-block: 2.5rem var(--spacing-5);
+    /* Pane already clears sticky header; only a light inset here. */
+    padding-block: 0.75rem var(--spacing-5);
     font-size: var(--text-body-sm);
   }
 
@@ -248,7 +250,8 @@
 
   @media (min-width: 72rem) {
     .right-sidebar-panel {
-      padding-block-start: 2.5rem;
+      /* Match left rail — was 2.5rem and made TOC sit higher than nav. */
+      padding-block-start: 0.75rem;
     }
   }
 

@@ -245,10 +245,16 @@
   }
 
   /* ── Sidebar ─────────────────────────────────────────────────────── */
+  /*
+   * Keep top padding tight: sticky pane already starts under the two-row
+   * header (brand + section tabs). Large padding-block-start made the rail
+   * look "sunken" relative to the main column.
+   */
   .sidebar-content {
-    padding-block: 2.5rem var(--spacing-5);
+    padding-block: 0.75rem var(--spacing-5);
     padding-inline: 0.15rem;
     font-size: 0.875rem;
+    gap: 0.35rem;
   }
 
   .sidebar-content a,
@@ -492,7 +498,7 @@
       position: fixed;
       display: grid;
       place-items: center;
-      top: calc(var(--sl-nav-height) + 0.55rem);
+      top: calc(var(--sl-nav-height) + 0.35rem);
       inset-inline-start: calc(var(--sl-sidebar-width) - 2.3rem);
       z-index: var(--sl-z-index-menu);
       width: 1.75rem;

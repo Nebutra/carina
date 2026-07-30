@@ -100,16 +100,24 @@ const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档�
   };
   const headerWindow = window as HeaderWindow;
 
-  /** Sticky offset + keep active section chip in view on mobile. */
+  /**
+   * Sticky offset for sidebar / main-frame / anchors.
+   * Measure `.docs-header` (brand row + tabs + optional banner), not the
+   * outer `header.header` shell — Starlight pad on the host used to inflate
+   * --sl-nav-height and leave a dead band above the left rail.
+   */
   function syncHeaderOffset() {
-    const header = document.querySelector<HTMLElement>('header.header');
-    if (!header) return;
-    const h = header.getBoundingClientRect().height;
+    const shell = document.querySelector<HTMLElement>('header.header');
+    const measured =
+      document.querySelector<HTMLElement>('[data-docs-header]') ?? shell;
+    if (!measured) return;
+    const h = Math.ceil(measured.getBoundingClientRect().height);
+    if (h < 1) return;
     document.documentElement.style.setProperty('--sl-nav-height', `${h}px`);
     document.documentElement.style.setProperty('--docs-nav-height', `${h}px`);
     document.documentElement.style.setProperty(
       '--docs-anchor-offset',
-      `calc(${h}px + 1rem)`,
+      `calc(${h}px + 0.75rem)`,
     );
   }
 
