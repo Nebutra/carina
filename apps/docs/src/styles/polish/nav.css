@@ -197,15 +197,12 @@
   }
 
   /*
-   * Chromium base-select can reintroduce a solid field surface in light mode.
-   * Keep the closed trigger transparent; only the open picker is elevated.
+   * Do NOT force appearance:none under @supports (base-select) here.
+   * That override (higher specificity than `.version-selector__select`) used
+   * to win over the themed picker block below and leave the open menu as the
+   * unstyled OS dropdown. Closed-trigger transparency is already set above;
+   * base-select styles the open picker in Chromium 135+.
    */
-  @supports (appearance: base-select) {
-    .header-version .version-selector__select {
-      -webkit-appearance: none !important;
-      appearance: none !important;
-    }
-  }
 
   /*
    * One focus ring only. Global :focus-visible in motion.css would otherwise
@@ -782,6 +779,7 @@
     starlight-theme-select select,
     starlight-lang-select select,
     .version-selector__select,
+    .header-version .version-selector__select,
     [data-rpc-jump],
     .sl-markdown-content select {
       -webkit-appearance: base-select !important;
@@ -791,13 +789,15 @@
     starlight-theme-select select::picker(select),
     starlight-lang-select select::picker(select),
     .version-selector__select::picker(select),
+    .header-version .version-selector__select::picker(select),
     [data-rpc-jump]::picker(select),
     .sl-markdown-content select::picker(select) {
       -webkit-appearance: base-select;
       appearance: base-select;
       margin-top: 0.3rem;
       padding: 0.25rem;
-      min-width: anchor-size(width);
+      /* Short closed chips (e.g. "0.6.x") still get a readable menu */
+      min-width: max(anchor-size(width), 6.5rem);
       border: 1px solid var(--docs-border);
       border-radius: var(--radius-lg);
       background: var(--docs-bg-surface);
@@ -808,6 +808,7 @@
     starlight-theme-select select option,
     starlight-lang-select select option,
     .version-selector__select option,
+    .header-version .version-selector__select option,
     [data-rpc-jump] option,
     .sl-markdown-content select option {
       display: flex;
@@ -829,11 +830,13 @@
     starlight-theme-select select option:hover,
     starlight-lang-select select option:hover,
     .version-selector__select option:hover,
+    .header-version .version-selector__select option:hover,
     [data-rpc-jump] option:hover,
     .sl-markdown-content select option:hover,
     starlight-theme-select select option:focus,
     starlight-lang-select select option:focus,
     .version-selector__select option:focus,
+    .header-version .version-selector__select option:focus,
     [data-rpc-jump] option:focus,
     .sl-markdown-content select option:focus {
       background: color-mix(in srgb, var(--docs-accent) 8%, transparent);
@@ -843,6 +846,7 @@
     starlight-theme-select select option:checked,
     starlight-lang-select select option:checked,
     .version-selector__select option:checked,
+    .header-version .version-selector__select option:checked,
     [data-rpc-jump] option:checked,
     .sl-markdown-content select option:checked {
       color: var(--docs-fg);
@@ -852,6 +856,7 @@
     starlight-theme-select select option::checkmark,
     starlight-lang-select select option::checkmark,
     .version-selector__select option::checkmark,
+    .header-version .version-selector__select option::checkmark,
     [data-rpc-jump] option::checkmark,
     .sl-markdown-content select option::checkmark {
       color: var(--docs-accent);
@@ -862,6 +867,7 @@
     starlight-theme-select select::picker-icon,
     starlight-lang-select select::picker-icon,
     .version-selector__select::picker-icon,
+    .header-version .version-selector__select::picker-icon,
     [data-rpc-jump]::picker-icon,
     .sl-markdown-content select::picker-icon {
       display: none;

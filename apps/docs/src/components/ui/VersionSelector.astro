@@ -141,6 +141,8 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
   }
 
   .version-selector__select {
+    /* Default: strip OS chrome. Chromium 135+ upgrades to base-select below
+       so the open picker is in-page DOM we theme (see polish/nav.css). */
     -webkit-appearance: none;
     appearance: none;
     color: var(--docs-fg-muted);
@@ -177,6 +179,17 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
     transition:
       color var(--docs-transition),
       background-color var(--docs-transition);
+  }
+
+  @supports (appearance: base-select) {
+    .version-selector__select {
+      -webkit-appearance: base-select;
+      appearance: base-select;
+    }
+
+    .version-selector__select::picker-icon {
+      display: none;
+    }
   }
 
   .version-selector__select:hover {
