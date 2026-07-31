@@ -1,84 +1,132 @@
 ---
 /**
- * Static terminal mock for landing — visual product signal without runtime deps.
+ * Landing terminal — the single dark product signal on the cream hero.
+ * Intentionally denser than docs code blocks: window chrome + one climax frame.
  */
 interface Props {
   title?: string;
-  lines?: { tone?: 'muted' | 'accent' | 'ok' | 'default'; text: string }[];
+  lines?: { tone?: 'muted' | 'accent' | 'ok' | 'default' | 'dim'; text: string }[];
 }
 
 const {
-  title = 'carina — session',
+  title = 'carina — governed session',
   lines = [
-    { tone: 'muted', text: '$ carina daemon start' },
-    { tone: 'ok', text: '✓ daemon listening on ~/.carina/daemon.sock' },
     { tone: 'muted', text: '$ carina run "fix the failing test"' },
-    { tone: 'default', text: 'session  sess_01J…  profile  safe-edit' },
-    { tone: 'accent', text: '→ FileRead  src/parser.go          allowed' },
-    { tone: 'accent', text: '→ PatchApply parser.go:142          approval?' },
-    { tone: 'ok', text: '✓ patch applied  ·  audit chained  ·  rollback ready' },
+    { tone: 'dim', text: 'session  sess_01J…  ·  profile  safe-edit' },
+    { tone: 'accent', text: '→ FileRead     src/parser.go      allowed' },
+    { tone: 'accent', text: '→ PatchApply   parser.go:142      approval?' },
+    { tone: 'ok', text: '✓ applied  ·  audit chained  ·  rollback ready' },
   ],
 } = Astro.props;
 ---
 
-<figure class="term">
-  {/* Slim title bar — no traffic-light dots (matches the EC code-frame chrome) */}
+<figure class="term term--product">
   <div class="term__chrome">
-    <span class="term__prompt" aria-hidden="true">❯_</span>
+    <span class="term__dots" aria-hidden="true">
+      <i></i><i></i><i></i>
+    </span>
     <span class="term__title">{title}</span>
+    <span class="term__badge" aria-hidden="true">live</span>
   </div>
   {/* Whitespace inside <pre> is literal — keep each span on a single line. */}
   <pre class="term__body" tabindex="0"><code>{lines.map((line) => <span class:list={['term__line', line.tone && `term__line--${line.tone}`]}>{line.text}</span>)}</code></pre>
-  <figcaption class="term__cap">
-    Illustrative session — real TUI uses overlays, <kbd>?</kbd> help, and <code>/</code> commands
-  </figcaption>
 </figure>
 
 <style>
   .term {
     margin: 0;
-    border: 1px solid var(--carina-border-subtle, var(--docs-border-subtle));
-    border-radius: var(--docs-radius-xl);
-    background: var(--carina-surface, var(--docs-bg-raised));
+    border: 1px solid color-mix(in srgb, var(--carina-ion-cyan, var(--docs-accent)) 18%, var(--carina-border-subtle, var(--docs-border-subtle)));
+    border-radius: 14px;
+    background: var(--carina-code-void, #0f1416);
     overflow: hidden;
-    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--docs-fg) 6%, transparent);
     text-align: left;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--docs-fg) 4%, transparent),
+      0 1px 0 color-mix(in srgb, var(--carina-ion-cyan, var(--docs-accent)) 12%, transparent) inset,
+      0 28px 56px -24px color-mix(in srgb, #000 55%, transparent),
+      0 0 40px -12px color-mix(in srgb, var(--carina-ion-cyan, var(--docs-accent)) 22%, transparent);
   }
 
   .term__chrome {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.55rem 0.85rem;
-    border-bottom: 1px solid var(--carina-border-subtle, var(--docs-border-subtle));
-    background: var(--carina-surface-raised, var(--docs-bg-surface));
+    gap: 0.65rem;
+    min-height: 2.25rem;
+    padding: 0 0.85rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--carina-border-subtle, #2a3336) 90%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--carina-surface-raised, #1c2527) 92%, #fff 4%),
+      var(--carina-surface, #141b1d)
+    );
   }
 
-  .term__prompt {
-    font-family: var(--docs-font-mono);
-    font-size: 0.7rem;
-    line-height: 1;
-    color: var(--carina-ion-cyan, var(--docs-accent));
-    letter-spacing: 0.05em;
+  .term__dots {
+    display: inline-flex;
+    gap: 5px;
     flex-shrink: 0;
   }
 
+  .term__dots i {
+    display: block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--docs-fg) 14%, transparent);
+  }
+
+  .term__dots i:nth-child(1) {
+    background: color-mix(in srgb, #ff5f57 70%, transparent);
+  }
+  .term__dots i:nth-child(2) {
+    background: color-mix(in srgb, #febc2e 70%, transparent);
+  }
+  .term__dots i:nth-child(3) {
+    background: color-mix(in srgb, #28c840 70%, transparent);
+  }
+
   .term__title {
+    flex: 1;
+    min-width: 0;
     font-family: var(--docs-font-mono);
-    font-size: 0.7rem;
+    font-size: 0.6875rem;
     color: var(--carina-dust, var(--docs-fg-muted));
     letter-spacing: 0.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .term__badge {
+    flex-shrink: 0;
+    font-family: var(--docs-font-mono);
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--carina-ion-cyan, var(--docs-accent));
+    padding: 0.15rem 0.4rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--carina-ion-cyan, var(--docs-accent)) 35%, transparent);
+    background: color-mix(in srgb, var(--carina-ion-cyan, var(--docs-accent)) 10%, transparent);
   }
 
   .term__body {
     margin: 0;
-    padding: 1rem 1.1rem 1.15rem;
+    padding: 1.05rem 1.15rem 1.2rem;
     font-family: var(--docs-font-mono);
-    font-size: 0.78rem;
-    line-height: 1.65;
-    color: var(--carina-starlight, var(--docs-fg));
+    font-size: 0.8rem;
+    line-height: 1.7;
+    color: var(--carina-starlight, #f3f0e8);
     overflow-x: auto;
     tab-size: 2;
+    background:
+      radial-gradient(
+        ellipse 80% 60% at 100% 0%,
+        color-mix(in srgb, var(--carina-ion-cyan, var(--docs-accent)) 6%, transparent),
+        transparent 55%
+      ),
+      var(--carina-code-void, #0f1416);
   }
 
   .term__line {
@@ -87,7 +135,11 @@ const {
   }
 
   .term__line--muted {
-    color: var(--carina-dust, var(--docs-fg-muted));
+    color: color-mix(in srgb, var(--carina-starlight, #f3f0e8) 72%, transparent);
+  }
+
+  .term__line--dim {
+    color: var(--carina-dust, #8b9699);
   }
 
   .term__line--accent {
@@ -95,26 +147,10 @@ const {
   }
 
   .term__line--ok {
-    color: var(--carina-spectral-green, var(--docs-success));
+    color: var(--carina-spectral-green, var(--docs-success, #6bcf8e));
   }
 
-  .term__cap {
-    margin: 0;
-    padding: 0.4rem 0.85rem 0.55rem;
-    border-top: 1px solid var(--carina-border-subtle, var(--docs-border-subtle));
-    font-size: 0.7rem;
-    line-height: 1.4;
-    color: var(--docs-fg-subtle, var(--docs-fg-muted));
-    text-align: center;
-  }
-
-  .term__cap kbd,
-  .term__cap code {
-    font-family: var(--docs-font-mono);
-    font-size: 0.68rem;
-    padding: 0.05rem 0.3rem;
-    border-radius: 4px;
-    border: 1px solid var(--docs-border-subtle);
-    background: color-mix(in srgb, var(--docs-fg) 4%, transparent);
+  .term__line--default {
+    color: var(--carina-starlight, #f3f0e8);
   }
 </style>

@@ -1,15 +1,9 @@
 ---
 /**
- * Landing Hero — above-the-fold product entry.
+ * Landing Hero — above-the-fold product entry (Option A).
  *
- * UX goals:
- *  - Clear hierarchy: eyebrow → title → value prop → primary path
- *  - Primary CTA solid (ion-cyan interaction color); secondary ghost
- *  - Desktop: copy + terminal product signal side-by-side
- *  - Trust chips reduce “what is this?” before install
- *
- * Typography: Newsreader/display for H1; Geist for UI chrome.
- * Brand mark: symbol SVG only (not Display Alpha at caption size).
+ * - Left: copy + CTAs + light install toolstrip (not a second dark code shell)
+ * - Right: TerminalFrame as the sole dark product signal
  */
 import TerminalFrame from './TerminalFrame.astro';
 
@@ -22,6 +16,10 @@ interface Props {
   secondaryCta?: { label: string; href: string };
   trustChips?: string[];
   showTerminal?: boolean;
+  /** One-line install command under CTAs */
+  installCommand?: string;
+  installHref?: string;
+  showInstall?: boolean;
 }
 
 const {
@@ -33,7 +31,29 @@ const {
   secondaryCta,
   trustChips = ['Local-first', 'Policy-gated tools', 'Hash-chained audit', 'Rollback'],
   showTerminal = true,
+  installCommand = 'curl -fsSL https://carina.nebutra.com/install.sh | sh',
+  installHref,
+  showInstall = true,
 } = Astro.props;
+
+const isZh = Astro.locals.starlightRoute.locale === 'zh-cn';
+const resolvedInstallHref =
+  installHref ?? (isZh ? '/zh-cn/getting-started/installation/' : '/getting-started/installation/');
+const installCopy = isZh
+  ? {
+      regionLabel: '安装命令',
+      buttonLabel: '复制安装命令',
+      copy: '复制',
+      copied: '已复制',
+      more: 'Homebrew · npm · 全部方式',
+    }
+  : {
+      regionLabel: 'Install command',
+      buttonLabel: 'Copy install command',
+      copy: 'Copy',
+      copied: 'Copied',
+      more: 'Homebrew · npm · all options',
+    };
 ---
 
 <section class="hero">
@@ -83,11 +103,39 @@ const {
           )
         }
       </div>
+
+      {
+        showInstall && (
+          <div
+            class="hero__install docs-animate-in docs-animate-in--4"
+            data-hero-install
+            aria-label={installCopy.regionLabel}
+          >
+            <div class="hero__install-bar">
+              <span class="hero__install-prompt" aria-hidden="true">$</span>
+              <code class="hero__install-cmd" data-install-cmd>{installCommand}</code>
+              <button
+                type="button"
+                class="hero__install-copy"
+                data-install-copy
+                data-copy-success={installCopy.copied}
+                aria-label={installCopy.buttonLabel}
+              >
+                <span data-install-copy-label>{installCopy.copy}</span>
+              </button>
+            </div>
+            <a class="hero__install-more" href={resolvedInstallHref}>
+              {installCopy.more}
+              <span aria-hidden="true"> →</span>
+            </a>
+          </div>
+        )
+      }
     </div>
 
     {
       showTerminal && (
-        <div class="hero__visual docs-animate-in docs-animate-in--4" aria-hidden="false">
+        <div class="hero__visual docs-animate-in docs-animate-in--4">
           <TerminalFrame title="carina — governed session" />
         </div>
       )
@@ -95,17 +143,49 @@ const {
   </div>
 </section>
 
+<script>
+  function initInstall(root: Element) {
+    if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
+    root.dataset.ready = '1';
+    const btn = root.querySelector<HTMLButtonElement>('[data-install-copy]');
+    const labelEl = root.querySelector<HTMLElement>('[data-install-copy-label]');
+    const cmd = root.querySelector<HTMLElement>('[data-install-cmd]')?.textContent?.trim();
+    if (!btn || !cmd) return;
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(cmd);
+        if (labelEl) {
+          const prev = labelEl.textContent;
+          labelEl.textContent = btn.dataset.copySuccess || 'Copied';
+          btn.classList.add('is-copied');
+          window.setTimeout(() => {
+            labelEl.textContent = prev;
+            btn.classList.remove('is-copied');
+          }, 1400);
+        }
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+  function boot() {
+    document.querySelectorAll('[data-hero-install]').forEach(initInstall);
+  }
+  boot();
+  document.addEventListener('astro:page-load', boot);
+</script>
+
 <style>
   .hero {
     position: relative;
     overflow: hidden;
-    padding: var(--spacing-16) var(--spacing-6) var(--spacing-12);
+    padding: var(--spacing-16) var(--spacing-6) var(--spacing-14);
     border-bottom: 1px solid var(--docs-border-subtle);
   }
 
   @media (min-width: 768px) {
     .hero {
-      padding: clamp(3.5rem, 7vw, 5.5rem) var(--spacing-10) var(--spacing-16);
+      padding: clamp(3.5rem, 7vw, 5.5rem) var(--spacing-10) clamp(3.5rem, 6vw, 5rem);
     }
   }
 
@@ -131,6 +211,11 @@ const {
 
   .hero__inner:not(.hero__inner--split) .hero__actions {
     justify-content: center;
+  }
+
+  .hero__inner:not(.hero__inner--split) .hero__install {
+    margin-inline: auto;
+    align-items: center;
   }
 
   .hero__inner--split {
@@ -275,7 +360,6 @@ const {
     outline-offset: 2px;
   }
 
-  /* Primary = ion-cyan interaction fill (brand: interaction, not brand-rose) */
   .hero__btn--primary {
     background: var(--docs-accent);
     color: var(--docs-on-accent, #0d1214);
@@ -321,14 +405,107 @@ const {
     transition: transform 160ms cubic-bezier(0.2, 0, 0, 1);
   }
 
-  .hero__visual {
-    min-width: 0;
+  /* Light install toolstrip — secondary to CTAs; terminal keeps the only void shell */
+  .hero__install {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.55rem;
+    margin-top: var(--spacing-6);
+    max-width: 34rem;
+    width: 100%;
   }
 
-  .hero__visual :global(.term) {
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--docs-fg) 4%, transparent),
-      0 24px 48px -28px color-mix(in srgb, var(--docs-fg) 35%, transparent);
+  .hero__install-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    min-height: 2.5rem;
+    padding: 0.3rem 0.3rem 0.3rem 0.75rem;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--docs-bg-surface) 88%, transparent);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--docs-fg) 3%, transparent);
+  }
+
+  .hero__install-prompt {
+    flex-shrink: 0;
+    font-family: var(--docs-font-mono);
+    font-size: 0.8125rem;
+    color: var(--docs-accent);
+    user-select: none;
+  }
+
+  .hero__install-cmd {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    font-family: var(--docs-font-mono);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--docs-fg-muted);
+    white-space: nowrap;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+
+  .hero__install-cmd::-webkit-scrollbar {
+    display: none;
+  }
+
+  .hero__install-copy {
+    appearance: none;
+    flex-shrink: 0;
+    min-height: 1.9rem;
+    min-width: 3.5rem;
+    padding: 0 0.7rem;
+    border: 0;
+    border-radius: 7px;
+    background: var(--docs-accent);
+    color: var(--docs-on-accent, #0d1214);
+    font-family: var(--docs-font-sans);
+    font-size: 0.6875rem;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    transition:
+      background-color 150ms ease,
+      transform 150ms ease;
+  }
+
+  .hero__install-copy:hover {
+    background: var(--docs-accent-hover, var(--docs-accent));
+  }
+
+  .hero__install-copy.is-copied {
+    background: color-mix(in srgb, var(--docs-success, #6bcf8e) 85%, var(--docs-fg));
+    color: var(--docs-on-accent, #0d1214);
+  }
+
+  .hero__install-copy:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  .hero__install-more {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--docs-fg-subtle);
+    text-decoration: none;
+    transition: color 150ms ease;
+  }
+
+  .hero__install-more:hover {
+    color: var(--docs-accent);
+  }
+
+  .hero__visual {
+    min-width: 0;
   }
 
   .hero__glow {
@@ -385,6 +562,15 @@ const {
 
     .hero__inner--split .hero__actions {
       justify-content: center;
+    }
+
+    .hero__inner--split .hero__install {
+      margin-inline: auto;
+      align-items: center;
+    }
+
+    .hero__inner--split .hero__install-more {
+      text-align: center;
     }
   }
 

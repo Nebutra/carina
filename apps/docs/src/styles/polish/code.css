@@ -423,10 +423,13 @@
     box-shadow: none !important;
   }
 
-  /* ── Shared mineral shell for custom components ─────────────────── */
+  /* ── Shared mineral shell for custom components ───────────────────
+     Landing product terminal (`.term--product`) is exempt: it owns its
+     elevation / cyan edge / window chrome. Forcing the docs snippet
+     shell there flattened it into a second plain code card. */
   .snippet-tabs,
   .code-block,
-  .term {
+  .term:not(.term--product) {
     border: 1px solid var(--polish-code-border) !important;
     border-radius: 10px !important;
     background: var(--polish-code-bg) !important;
@@ -436,14 +439,14 @@
 
   .snippet-tabs__list,
   .code-block__chrome,
-  .term__chrome {
+  .term:not(.term--product) .term__chrome {
     background: var(--polish-code-chrome) !important;
     border-bottom: 1px solid var(--polish-code-border) !important;
   }
 
   .snippet-tabs__panel pre,
   .code-block__body pre,
-  .term__body {
+  .term:not(.term--product) .term__body {
     font-size: 13px !important;
     line-height: 1.7 !important;
   }
