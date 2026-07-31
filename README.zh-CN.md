@@ -7,7 +7,7 @@
 **在策略、审计和回滚边界内运行真实仓库上的编程智能体。**
 
 [![status](https://img.shields.io/badge/status-alpha-8E4053)](#当前状态)
-[![build](https://img.shields.io/badge/build-source%20first-176F70)](#从源码快速开始)
+[![release](https://img.shields.io/badge/release-v0.6.5-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.6.5)
 [![runtime](https://img.shields.io/badge/runtime-local--first-087C58)](#为什么用-carina)
 [![audit](https://img.shields.io/badge/audit-hash--chained-8C5A15)](#审查与审计)
 [![license](https://img.shields.io/badge/license-MIT-182023)](LICENSE)
@@ -18,7 +18,7 @@
 
 Carina 是一个本地优先的 AI 编程智能体运行时。它不是编辑器、聊天产品，也不是托管沙箱。它位于智能体和机器之间，让文件读取、代码修改、命令、网络访问、插件和 secret 都先经过明确策略，再真正发生。
 
-当前仓库适合源码构建、本地实验，以及团队设计自己的 Agent 执行底座。它仍处于 alpha。macOS 公开安装包已经通过 Nebutra Homebrew tap 提供；Apple 签名和 notarization 自动化已经实现，但仍等待发布凭据。Linux 归档/系统包、npm、Windows worker、容器以及已打包的 VS Code/Web Operator 客户端均已进入发布流水线，剩余工作是外部 registry、publisher、凭据和托管激活。
+Carina 仍处于 alpha，但已经具备 fail-closed 的公开发布流水线。`0.6.5` 提供完成签名并通过 Apple notarization 的 macOS 包、Linux 归档与系统包、带 provenance 的 npm launcher 和原生平台包、Windows worker，以及已打包的 VS Code/Web Operator 客户端。用户可以通过脚本、Homebrew、npm 或 release 归档安装；源码构建继续面向贡献者和运行时集成者。
 
 ## 为什么用 Carina
 
@@ -47,7 +47,7 @@ Carina 提供：
 
 - 你只需要编辑器内助手；
 - 你想要托管式、开箱即用的 Agent 服务；
-- 你今天就需要稳定安装包和发布渠道。
+- 你要求已经承诺稳定兼容性的运行时；当前安装包可用，但兼容性合同仍是 alpha。
 
 ## 当前状态
 
@@ -68,18 +68,32 @@ Carina 提供：
 | 集成 | MCP client/server（含 `mcp_find` 工具搜索）、WASM plugin boundary（org/user/project 只紧不松 enable merge）、worker、workflow DAG |
 | Nebutra 边界 | 本地 runtime 保持动作权威；身份和多端同步归 Nebutra Cloud（`nebutra.com`）边界 |
 
-仍需外部激活：
+`v0.6.5` 已公开发布：
 
-- 首次通过 Apple 验收的签名和 notarization 公开发布；自动化已经
-  fail-closed 落地，但所需 Apple 凭据尚未配置；
-- Linux/npm/container 的公开 registry 与 trusted publisher 配置；
+- macOS arm64/x64 签名包，以及 Apple `Accepted` 的 notary/signing 证据；
+- Linux arm64/x64 归档、Debian 和 RPM 包；
+- `@nebutra/carina` 与四个原生 npm 包，均通过 trusted publishing 发布并带 SLSA provenance；
+- Windows arm64/x64 worker、VS Code VSIX、Web Operator 归档；
+- `Nebutra/tap/carina` Homebrew Formula。
+
+仍需外部激活或保留的 alpha 限制：
+
+- 公共容器 registry 发布；
 - 已打包 VS Code/Web Operator 客户端的 Marketplace 与托管发布；
 - 让未添加 tap 的 `brew install carina` 生效所需的 Homebrew Core 上游审核；
 - 需要真实 provider 凭据和代表性终端硬件的 CJK/reconnect 验证；
 - Nebutra Cloud 的 API、tenant、identity、retention 外部合同；本地 sync 默认关闭；
 - Windows 当前支持远程 worker 包，不宣称桌面 daemon/CLI。
 
-## 使用 Homebrew 安装
+## 安装
+
+macOS 或 Linux 推荐使用完整工具链安装脚本：
+
+```bash
+curl -fsSL https://carina.nebutra.com/install.sh | sh
+```
+
+也可以使用 Homebrew：
 
 Carina 通过 Nebutra 官方 tap 提供 Apple Silicon 和 Intel macOS 安装包：
 
@@ -100,6 +114,15 @@ brew upgrade carina
 `brew update carina` 不是有效的 Homebrew 命令；`brew update` 更新包索引，
 `brew upgrade carina` 升级已安装的 Carina。安装后不会自动启动 daemon。
 
+或安装带 provenance 的 npm launcher 和匹配的原生平台包：
+
+```bash
+npm install -g @nebutra/carina
+```
+
+所有归档、checksum、notary 证据、Linux 包、Windows worker、VSIX 和 Web
+Operator bundle 都在 [`v0.6.5` release](https://github.com/Nebutra/carina/releases/tag/v0.6.5)。
+
 ## 内置更新
 
 任何安装方式都可以检查或安装最新公开版本：
@@ -114,6 +137,24 @@ Homebrew 安装会交回 `brew` 管理，npm/pnpm 安装会交回对应包管理
 内部 checksums，拒绝不安全的归档路径，并以支持失败回滚的事务整体替换同目录
 运行时。独立安装可用 `--version x.y.z` 指定版本；仅在明确需要重装或降级时使用
 `--force`。更新器不会自动终止正在执行任务的 daemon，请在任务结束后重启。
+
+## 首次运行
+
+进入仓库并直接启动：
+
+```bash
+cd /path/to/repository
+carina
+```
+
+TUI 会按需自动启动本地 daemon，并把新会话绑定到当前 workspace。首次运行会依次引导语言、provider 和模型选择，也会检测已有凭据与兼容的 CCSwitch profile。
+
+无头自动化可以显式启动 daemon：
+
+```bash
+carina daemon start
+carina run "fix the failing tests and show the patch"
+```
 
 ## TUI 交互与快捷键
 
@@ -167,7 +208,7 @@ Homebrew 安装会交回 `brew` 管理，npm/pnpm 安装会交回对应包管理
 简体 `zh` 仍是源文案真相。系统检测未支持语言时静默回落英文；显式指定不支持的
 locale 会 fail-fast。
 
-## 从源码快速开始
+## 从源码构建
 
 要求：
 
@@ -192,7 +233,7 @@ make install
 启动 daemon：
 
 ```bash
-carina-daemon &
+carina daemon start
 ```
 
 把模型凭证提供给 daemon 进程。BYOK API key 优先；配置后支持 Nebutra OAuth 兜底。
@@ -339,9 +380,9 @@ Alpha 限制：
 - Carina 本身不是 VM，也不是完整容器隔离系统。
 - OS sandbox backend 已存在，但生产 profile 需要部署前评审。
 - 策略正确性依赖命令通过 Carina daemon 和 toolchain 执行。
-- 发布归档已有 checksum 和 GitHub build provenance。Apple code signing 和
-  notarization 自动化已经实现，但尚未完成一次带真实凭据、通过 Apple
-  验收的公开发布。
+- tag release 自动化对 Developer ID 签名和 Apple notarization 保持
+  fail-closed；只有 release 页面同时包含 Apple `Accepted` notary JSON 和
+  signing report，才视为已 notarize。
 
 见 [SECURITY.md](SECURITY.md) 和 [docs/security-model.md](docs/security-model.md)。
 

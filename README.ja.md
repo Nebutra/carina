@@ -7,7 +7,7 @@
 **ポリシー、監査、ロールバックの境界内で、実リポジトリ上のコーディングエージェントを動かす。**
 
 [![status](https://img.shields.io/badge/status-alpha-8E4053)](#current-status)
-[![build](https://img.shields.io/badge/build-source%20first-176F70)](#quickstart-from-source)
+[![release](https://img.shields.io/badge/release-v0.6.5-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.6.5)
 [![runtime](https://img.shields.io/badge/runtime-local--first-087C58)](#why-carina)
 [![audit](https://img.shields.io/badge/audit-hash--chained-8C5A15)](#review-and-audit)
 [![license](https://img.shields.io/badge/license-MIT-182023)](LICENSE)
@@ -18,7 +18,7 @@
 
 Carina は、AI コーディングエージェントのためのローカルファーストなランタイム層です。エディタ、チャットアプリ、ホステッドサンドボックスではありません。エージェントとマシンの間に入り、ファイル読み取り、編集、コマンド、ネットワークアクセス、プラグイン、secret を明示的なポリシーの後ろに置きます。
 
-このリポジトリは、ソースビルド、ローカル実験、自社の Agent 実行基盤を設計するチームに向いています。まだ alpha です。macOS パッケージは Nebutra Homebrew tap から利用できます。Apple signing/notarization の自動化は実装済みですが、release credential を待っています。Linux archive/package、npm、Windows worker、container、package 済み VS Code/Web Operator client は release pipeline に入り、残作業は外部 registry、publisher、credential、hosting の有効化です。
+Carina はまだ alpha ですが、fail-closed な公開リリースパイプラインを備えています。`0.6.5` では、署名済みかつ Apple notarization 済みの macOS package、Linux archive/package、provenance 付き npm launcher と native package、Windows worker、package 済み VS Code/Web Operator client を提供します。shell installer、Homebrew、npm、release archive からインストールでき、source build は contributor と runtime integrator 向けに維持されています。
 
 ## Why Carina
 
@@ -47,7 +47,7 @@ Carina が提供するもの：
 
 - 必要なのはエディタ内 assistant だけ。
 - hosted managed agent service が欲しい。
-- 今日すぐ安定した packaged release が必要。
+- 安定互換性が保証された runtime が必要。package は利用可能ですが、compatibility contract はまだ alpha です。
 
 ## Current Status
 
@@ -68,18 +68,32 @@ Carina が提供するもの：
 | Integration | MCP client/server（`mcp_find` tool search 付き）、WASM plugin boundary（org/user/project tighten-only enable merge）、worker、workflow DAG |
 | Nebutra boundary | ローカル runtime が action authority を維持し、identity と multi-endpoint sync は Nebutra Cloud（`nebutra.com`）の境界に置く |
 
-外部 activation が必要なもの：
+`v0.6.5` で公開済み：
 
-- Apple に受理される credentialed signing/notarization public release；
-  fail-closed automation は実装済みですが、Apple credential は未設定；
-- Linux/npm/container の public registry と trusted publisher 設定；
+- macOS arm64/x64 の署名済み package と Apple `Accepted` notary/signing evidence；
+- Linux arm64/x64 archive、Debian、RPM package；
+- `@nebutra/carina` と 4 つの native npm package（trusted publishing + SLSA provenance）；
+- Windows arm64/x64 worker、VS Code VSIX、Web Operator archive；
+- `Nebutra/tap/carina` Homebrew Formula。
+
+残る activation と alpha limitation：
+
+- public container registry publication；
 - package 済み VS Code/Web Operator client の Marketplace/hosting 公開；
 - tap 未追加の `brew install carina` に必要な Homebrew Core upstream review；
 - real provider credential と代表的 terminal hardware を使う CJK/reconnect 検証；
 - Nebutra Cloud API、tenant、identity、retention contract；local sync は off；
 - Windows は remote worker package のみを support し、desktop daemon/CLI は非対応。
 
-## Homebrew Install
+## Install
+
+macOS/Linux の完全な toolchain は shell installer で導入できます：
+
+```bash
+curl -fsSL https://carina.nebutra.com/install.sh | sh
+```
+
+Homebrew を使う場合：
 
 Apple Silicon と Intel macOS 向け package を Nebutra 公式 tap からインストールできます：
 
@@ -100,7 +114,33 @@ brew upgrade carina
 `brew update carina` は有効な Homebrew command ではありません。
 インストール後に daemon は自動起動しません。
 
-## Quickstart From Source
+npm launcher と対応する native package を使う場合：
+
+```bash
+npm install -g @nebutra/carina
+```
+
+全 artifact は [`v0.6.5` release](https://github.com/Nebutra/carina/releases/tag/v0.6.5) から取得できます。
+
+## First Run
+
+repository に移動して `carina` を起動します：
+
+```bash
+cd /path/to/repository
+carina
+```
+
+TUI は必要に応じて local daemon を自動起動し、現在の workspace に session を紐付けます。初回は language、provider、model の順に案内し、既存 credential と互換 CCSwitch profile も検出します。
+
+headless automation では daemon を明示的に起動します：
+
+```bash
+carina daemon start
+carina run "fix the failing tests and show the patch"
+```
+
+## Build From Source
 
 Requirements:
 
@@ -126,7 +166,7 @@ make install
 Start daemon:
 
 ```bash
-carina-daemon &
+carina daemon start
 ```
 
 モデル credential を daemon process に渡します。BYOK API key が優先です。設定されていれば Nebutra OAuth fallback も利用できます。
@@ -274,9 +314,9 @@ Alpha limitations:
 - Carina itself is not a VM or complete container isolation system.
 - OS sandbox backends exist, but production profiles need deployment review.
 - Policy correctness depends on routing commands through the Carina daemon and toolchain.
-- Release archive には checksum と GitHub build provenance があります。
-  Apple code signing と notarization の automation は実装済みですが、
-  credentialed かつ Apple-accepted な public release はまだ完了していません。
+- Tag release automation は Developer ID signing と Apple notarization を
+  fail-closed に扱います。Release page に Apple `Accepted` notary JSON と
+  signing report が揃った場合のみ notarized release と見なします。
 
 See [SECURITY.md](SECURITY.md) and [docs/security-model.md](docs/security-model.md).
 

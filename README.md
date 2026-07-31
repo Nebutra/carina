@@ -7,7 +7,7 @@
 **Run coding agents on real repositories with policy, audit, and rollback in the loop.**
 
 [![status](https://img.shields.io/badge/status-alpha-8E4053)](#current-status)
-[![build](https://img.shields.io/badge/build-source%20first-176F70)](#quickstart-from-source)
+[![release](https://img.shields.io/badge/release-v0.6.5-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.6.5)
 [![runtime](https://img.shields.io/badge/runtime-local--first-087C58)](#why-carina)
 [![audit](https://img.shields.io/badge/audit-hash--chained-8C5A15)](#review-and-audit)
 [![license](https://img.shields.io/badge/license-MIT-182023)](LICENSE)
@@ -21,14 +21,12 @@ editor, a chat app, or a hosted sandbox. It sits between an agent and the
 machine, so file reads, edits, commands, network access, plugins, and secrets go
 through explicit policy before they happen.
 
-The current repository is useful for source builds, local experimentation, and
-teams designing their own agent execution substrate. It is still alpha. Public
-macOS packages are available through the Nebutra Homebrew tap. Apple signing
-and notarization automation is implemented but awaits release credentials.
-Linux archives/packages, npm trusted publishing, Windows worker, containers,
-and packaged VS Code/Web Operator clients are implemented in the release
-pipeline but still need their external registries, publishers, or credentials
-activated.
+Carina is alpha software with a public, fail-closed release pipeline. Version
+`0.6.5` ships signed and Apple-notarized macOS archives, Linux archives and
+packages, a provenance-backed npm launcher with native platform packages, a
+Windows worker, and packaged VS Code/Web Operator clients. Install through the
+shell installer, Homebrew, npm, or the release archives; source builds remain
+available for contributors and runtime integrators.
 
 ## Why Carina
 
@@ -63,8 +61,9 @@ Carina is a good fit when you need to:
   than the parent task;
 - evaluate agent work in environments where rollback and audit matter.
 
-Carina is not the right tool if you only need an editor assistant, a hosted
-managed agent service, or a stable packaged release today.
+Carina is not the right tool if you only need an editor assistant or a hosted
+managed agent service. The packaged release is usable today, but the runtime
+and its compatibility contracts remain alpha.
 
 ## Current Status
 
@@ -85,14 +84,20 @@ Implemented in this repository:
 | Integration | MCP client/server with tool search (`mcp_find`), WASM plugin boundary with org/user/project tighten-only enable merge, workers, workflow DAGs (batch and streaming — conditional/dynamic graphs, live inter-step channels, remote worker-pool dispatch, run-wide budgets; see [`docs/workflows.md`](docs/workflows.md)) |
 | Nebutra boundary | Local runtime stays authoritative; identity and multi-endpoint sync are scoped to Nebutra Cloud (`nebutra.com`) |
 
-External activation still required:
+Published in `v0.6.5`:
 
-- the first credentialed Apple-accepted public release; fail-closed signing and
-  notarization automation is ready, but the required Apple credentials have not
-  been provisioned;
-- public Linux/npm/container publication; build, package, SBOM, provenance, and
-  conformance paths are implemented, while external publisher/registry setup is
-  not;
+- signed and Apple-notarized macOS arm64/x64 archives with public notary and
+  signing evidence;
+- Linux arm64/x64 archives plus Debian and RPM packages;
+- `@nebutra/carina` and four native npm packages through trusted publishing,
+  each with SLSA provenance;
+- Windows arm64/x64 remote-worker packages, a VS Code VSIX, and the Web
+  Operator archive;
+- the maintained `Nebutra/tap/carina` Homebrew formula.
+
+Remaining activation and alpha limitations:
+
+- public container registry publication;
 - Marketplace/hosting activation for the packaged VS Code and Web Operator
   clients;
 - Homebrew Core review for untapped `brew install carina`; the maintained
@@ -103,7 +108,15 @@ External activation still required:
   remains deliberately off;
 - Windows is supported for the remote worker package, not a desktop daemon/CLI.
 
-## Install With Homebrew
+## Install
+
+The shell installer installs the complete local toolchain on macOS or Linux:
+
+```bash
+curl -fsSL https://carina.nebutra.com/install.sh | sh
+```
+
+Install the same release through Homebrew:
 
 Carina publishes checksummed macOS packages for Apple Silicon and Intel through
 the official Nebutra tap:
@@ -126,6 +139,16 @@ brew upgrade carina
 package metadata and `brew upgrade carina` upgrades the installed formula.
 Carina does not auto-start the daemon after installation.
 
+Or install the provenance-backed npm launcher and matching native package:
+
+```bash
+npm install -g @nebutra/carina
+```
+
+Exact archives, checksums, Apple notary evidence, Linux packages, the Windows
+worker, VSIX, and Web Operator bundle are available on the
+[`v0.6.5` release](https://github.com/Nebutra/carina/releases/tag/v0.6.5).
+
 ## Built-in Updates
 
 Check or install the newest public release from any installation:
@@ -143,6 +166,28 @@ entries, and replace sibling runtime binaries as one rollback-capable
 transaction. Use `--version x.y.z` for an exact standalone release and
 `--force` only for an intentional reinstall or downgrade. A running daemon is
 never killed automatically; restart it after active tasks finish.
+
+## First Run
+
+Open a repository and launch the interactive product:
+
+```bash
+cd /path/to/repository
+carina
+```
+
+The TUI auto-starts the local daemon when needed and scopes the new session to
+the current workspace. On first run, it guides you through language, provider,
+and model selection before entering the conversation. Existing provider
+credentials and compatible CCSwitch profiles are detected; credentials remain
+local.
+
+For headless automation, start the daemon explicitly and submit a task:
+
+```bash
+carina daemon start
+carina run "fix the failing tests and show the patch"
+```
 
 ## TUI Interaction And Keybindings
 
@@ -263,7 +308,7 @@ the same idempotency key instead of silently creating a duplicate task. Use the
 `composer.submit-new` binding (default `Alt+S`) only when a distinct submission
 is intentional.
 
-## Quickstart From Source
+## Build From Source
 
 Requirements:
 
@@ -285,10 +330,10 @@ make install
 is on `PATH`. To build without installing, run `make all` and use
 `./bin/carina` directly. Homebrew installs already put `carina` on `PATH`.
 
-Start the daemon:
+For a headless task, start the daemon explicitly:
 
 ```bash
-carina-daemon &
+carina daemon start
 ```
 
 Provide a model credential to the daemon process. BYOK API keys have priority;
