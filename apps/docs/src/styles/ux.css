@@ -61,11 +61,17 @@
    * Logo sizing only — do NOT set display.
    * Starlight light/dark pair uses .light:sl-hidden / .dark:sl-hidden.
    */
+  /*
+   * Lock logo to brand-row metrics. Starlight sizes logo with
+   * `calc(var(--sl-nav-height) - 2 * pad-y)` — once JS writes the *two-row*
+   * sticky height into --sl-nav-height that formula inflates the logo and
+   * can re-expand the brand row (feedback → sunk rail).
+   */
   .site-title img,
   .site-title svg {
-    height: var(--docs-logo-height);
-    width: auto;
-    max-height: calc(var(--docs-nav-row-height) - 0.875rem);
+    height: var(--docs-logo-height) !important;
+    width: auto !important;
+    max-height: calc(var(--docs-nav-row-height) - 0.875rem) !important;
   }
 
   [data-theme='light'] .site-title img.light\:sl-hidden {
@@ -231,9 +237,15 @@
   }
 
   .sidebar-content {
-    /* Pane already clears sticky header; only a light inset here. */
-    padding-block: 0.75rem var(--spacing-5);
+    /* Pane already clears sticky header — keep flush (see polish/nav.css). */
+    padding-block: 0.25rem var(--spacing-5);
     font-size: var(--text-body-sm);
+  }
+
+  @media (min-width: 50rem) {
+    .sidebar-content {
+      padding-block-start: 0.2rem;
+    }
   }
 
   /* ── Layout symmetry ─────────────────────────────────────────────── */

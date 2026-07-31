@@ -283,15 +283,32 @@
 
   /* ── Sidebar ─────────────────────────────────────────────────────── */
   /*
-   * Keep top padding tight: sticky pane already starts under the two-row
-   * header (brand + section tabs). Large padding-block-start made the rail
-   * look "sunken" relative to the main column.
+   * Sticky pane already starts at `inset-block-start: var(--sl-nav-height)`
+   * (flush under brand + tabs). Extra padding-block-start = dead band /
+   * "sunk" rail. Keep only a hairline inset; kill Starlight's 1rem default.
    */
   .sidebar-content {
-    padding-block: 0.75rem var(--spacing-5);
+    padding-block: 0.25rem var(--spacing-5) !important;
     padding-inline: 0.15rem;
     font-size: 0.875rem;
     gap: 0.35rem;
+  }
+
+  @media (min-width: 50rem) {
+    nav.sidebar .sidebar-pane {
+      /* Explicit lock — beat any host that re-applies a padded top */
+      inset-block-start: var(--sl-nav-height) !important;
+    }
+
+    .sidebar-content {
+      padding-block-start: 0.2rem !important;
+    }
+
+    /* First group should not push further down under the tabs */
+    .sidebar-content > ul > li:first-child,
+    .sidebar-content .top-level > li:first-child {
+      margin-top: 0 !important;
+    }
   }
 
   .sidebar-content a,

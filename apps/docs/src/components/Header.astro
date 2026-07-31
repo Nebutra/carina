@@ -102,19 +102,27 @@ const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档�
 
   /**
    * Sticky offset for sidebar / main-frame / anchors.
-   * Measure `.docs-header` (brand row + tabs + optional banner), not the
-   * outer `header.header` shell — Starlight pad on the host used to inflate
-   * --sl-nav-height and leave a dead band above the left rail.
+   *
+   * Use the fixed host's *viewport bottom* (header.header), not an inner
+   * height that can lag layout. Starlight's left rail is
+   * `inset-block-start: var(--sl-nav-height)` — if this is too large the
+   * rail "sinks" under the tabs with a dead band.
+   *
+   * Always re-measure on page-load (do not early-return before sync). A prior
+   * runtimeReady guard skipped remeasure after View Transitions / fonts and
+   * reintroduced the sink.
    */
   function syncHeaderOffset() {
     const shell = document.querySelector<HTMLElement>('header.header');
-    const measured =
-      document.querySelector<HTMLElement>('[data-docs-header]') ?? shell;
-    if (!measured) return;
-    const h = Math.ceil(measured.getBoundingClientRect().height);
+    if (!shell) return;
+    // position:fixed; top:0 → bottom edge is the true sticky occupancy
+    const h = Math.max(0, Math.round(shell.getBoundingClientRect().bottom));
     if (h < 1) return;
-    document.documentElement.style.setProperty('--sl-nav-height', `${h}px`);
-    document.documentElement.style.setProperty('--docs-nav-height', `${h}px`);
+    const prev = document.documentElement.style.getPropertyValue('--sl-nav-height');
+    const next = `${h}px`;
+    if (prev === next) return;
+    document.documentElement.style.setProperty('--sl-nav-height', next);
+    document.documentElement.style.setProperty('--docs-nav-height', next);
     document.documentElement.style.setProperty(
       '--docs-anchor-offset',
       `calc(${h}px + 0.75rem)`,
@@ -138,18 +146,39 @@ const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档�
   }
 
   function boot() {
+    // Always remeasure — layout can change between navigations.
+    syncHeaderOffset();
+    requestAnimationFrame(() => {
+      syncHeaderOffset();
+      requestAnimationFrame(syncHeaderOffset);
+    });
+    scrollActiveTabIntoView();
+
     const root = document.querySelector<HTMLElement>('[data-docs-header]');
+    const shell = document.querySelector<HTMLElement>('header.header');
     if (!root || root.dataset.runtimeReady === '1') return;
     root.dataset.runtimeReady = '1';
     headerWindow.__carinaHeaderCleanup__?.();
-    syncHeaderOffset();
-    scrollActiveTabIntoView();
+
     const banner = document.querySelector('[data-version-banner]');
-    const observer = banner ? new MutationObserver(syncHeaderOffset) : null;
-    observer?.observe(banner!, { attributes: true, attributeFilter: ['hidden'] });
+    const mutation = banner
+      ? new MutationObserver(() => syncHeaderOffset())
+      : null;
+    mutation?.observe(banner!, { attributes: true, attributeFilter: ['hidden'] });
+
+    const ro =
+      shell && typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => syncHeaderOffset())
+        : null;
+    if (shell && ro) ro.observe(shell);
+
     window.addEventListener('resize', syncHeaderOffset, { passive: true });
+    // Fonts swapping can change brand-row metrics after first paint
+    document.fonts?.ready?.then(() => syncHeaderOffset()).catch(() => {});
+
     headerWindow.__carinaHeaderCleanup__ = () => {
-      observer?.disconnect();
+      mutation?.disconnect();
+      ro?.disconnect();
       window.removeEventListener('resize', syncHeaderOffset);
     };
   }
