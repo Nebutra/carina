@@ -13,7 +13,7 @@ import (
 
 func TestRenderDoctorReportAllPass(t *testing.T) {
 	report := map[string]any{
-		"version":            "0.6.5",
+		"version":            "0.6.6",
 		"disabled":           false,
 		"kernel":             map[string]any{"ok": true},
 		"state_dir_writable": map[string]any{"ok": true},
@@ -38,7 +38,7 @@ func TestRenderDoctorReportAllPass(t *testing.T) {
 
 func TestRenderDoctorReportKernelFailPrintsRemediation(t *testing.T) {
 	report := map[string]any{
-		"version":            "0.6.5",
+		"version":            "0.6.6",
 		"disabled":           false,
 		"kernel":             map[string]any{"ok": false, "error": "connection refused"},
 		"state_dir_writable": map[string]any{"ok": true},
@@ -66,7 +66,7 @@ func TestRenderDoctorReportKernelFailPrintsRemediation(t *testing.T) {
 
 func TestRenderDoctorReportNoReasonerIsWarnNotFail(t *testing.T) {
 	report := map[string]any{
-		"version":            "0.6.5",
+		"version":            "0.6.6",
 		"disabled":           false,
 		"kernel":             map[string]any{"ok": true},
 		"state_dir_writable": map[string]any{"ok": true},
@@ -91,7 +91,7 @@ func TestRenderDoctorReportNoReasonerIsWarnNotFail(t *testing.T) {
 
 func TestRenderDoctorReportLSPMissingServerPrintsRemediation(t *testing.T) {
 	report := map[string]any{
-		"version":            "0.6.5",
+		"version":            "0.6.6",
 		"disabled":           false,
 		"kernel":             map[string]any{"ok": true},
 		"state_dir_writable": map[string]any{"ok": true},
@@ -115,7 +115,7 @@ func TestRenderDoctorReportLSPMissingServerPrintsRemediation(t *testing.T) {
 
 func TestRenderDoctorReportDisabled(t *testing.T) {
 	report := map[string]any{
-		"version":  "0.6.5",
+		"version":  "0.6.6",
 		"disabled": true,
 		"reason":   "CARINA_DOCTOR_DISABLE is set; probes did not run",
 	}
@@ -164,7 +164,7 @@ func TestCmdDoctorRendersHumanReport(t *testing.T) {
 	s := rpc.NewServer()
 	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "daemon.doctor", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
 		return map[string]any{
-			"version":            "0.6.5",
+			"version":            "0.6.6",
 			"disabled":           false,
 			"kernel":             map[string]any{"ok": true},
 			"state_dir_writable": map[string]any{"ok": true},
@@ -208,7 +208,7 @@ func TestCmdDoctorRendersHumanReport(t *testing.T) {
 func TestCmdDoctorJSONPassthrough(t *testing.T) {
 	s := rpc.NewServer()
 	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "daemon.doctor", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
-		return map[string]any{"version": "0.6.5", "disabled": false}, nil
+		return map[string]any{"version": "0.6.6", "disabled": false}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestCmdDoctorJSONPassthrough(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
 		t.Fatalf("--json output should be valid JSON: %v\n%s", err, out)
 	}
-	if decoded["version"] != "0.6.5" {
+	if decoded["version"] != "0.6.6" {
 		t.Fatalf("unexpected decoded version: %v", decoded["version"])
 	}
 }
@@ -245,7 +245,7 @@ func TestCmdDoctorReturnsOutcomeErrorOnWarn(t *testing.T) {
 	s := rpc.NewServer()
 	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "daemon.doctor", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
 		return map[string]any{
-			"version":            "0.6.5",
+			"version":            "0.6.6",
 			"disabled":           false,
 			"kernel":             map[string]any{"ok": true},
 			"state_dir_writable": map[string]any{"ok": true},
