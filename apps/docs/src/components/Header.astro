@@ -191,19 +191,40 @@ const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档�
   }
 
   .right-group {
-    gap: 0.5rem;
+    display: flex;
+    gap: 0.35rem;
     align-items: center;
     flex-shrink: 0;
+    height: var(--docs-nav-row-height, 3.5rem);
   }
 
   .header-version {
     display: flex;
     align-items: center;
+    height: 2rem;
+  }
+
+  .header-version :global(.version-selector),
+  .header-version :global(.version-selector__select) {
+    height: 2rem;
   }
 
   .header-selects {
-    gap: 0.25rem;
+    display: flex;
+    gap: 0.15rem;
     align-items: center;
+    height: 2rem;
+  }
+
+  /* Starlight hosts must share the same control box as version */
+  .header-selects :global(starlight-theme-select),
+  .header-selects :global(starlight-lang-select),
+  .header-selects :global(starlight-theme-select label),
+  .header-selects :global(starlight-lang-select label) {
+    display: inline-flex;
+    align-items: center;
+    height: 2rem;
+    margin: 0;
   }
 
   .social-icons {

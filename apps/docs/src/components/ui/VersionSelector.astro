@@ -121,7 +121,8 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
   .version-selector {
     display: inline-flex;
     align-items: center;
-    gap: var(--spacing-2);
+    gap: 0.35rem;
+    height: 2rem;
   }
 
   .version-selector__label {
@@ -134,23 +135,29 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
   .version-selector__select {
     -webkit-appearance: none;
     appearance: none;
-    color: var(--docs-fg);
+    color: var(--docs-fg-muted);
     border: 0 !important;
     border-radius: var(--docs-radius-md);
-    padding: 0.3rem 1.7rem 0.3rem 0.6rem;
-    font-size: 0.75rem;
+    /* Match ThemeSelect / LanguageSelect density in the header chrome */
+    padding: 0.25rem 1.45rem 0.25rem 0.45rem;
+    margin: 0;
+    font-size: 0.8125rem;
     font-family: var(--docs-font-mono);
-    line-height: 1.4;
-    min-height: 2.25rem;
+    font-weight: 500;
+    line-height: 1.25;
+    height: 2rem;
+    min-height: 2rem;
+    max-height: 2rem;
     cursor: pointer;
     box-shadow: none !important;
     outline: none;
+    /* Explicit layer split so base-select / light mode cannot reintroduce a field fill */
     background-color: transparent !important;
     background-image: linear-gradient(45deg, transparent 50%, var(--docs-fg-muted) 50%),
       linear-gradient(135deg, var(--docs-fg-muted) 50%, transparent 50%);
     background-position:
-      calc(100% - 12px) 55%,
-      calc(100% - 8px) 55%;
+      calc(100% - 11px) 52%,
+      calc(100% - 7px) 52%;
     background-size:
       4px 4px,
       4px 4px;
@@ -161,6 +168,7 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
   }
 
   .version-selector__select:hover {
+    color: var(--docs-fg);
     background-color: color-mix(in srgb, var(--docs-fg) 4%, transparent) !important;
   }
 
@@ -173,8 +181,15 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
     outline-offset: 2px;
   }
 
+  /* Header chrome: same ghost control as theme/lang (no “form field” box) */
+  .version-selector--compact {
+    height: 2rem;
+  }
+
   .version-selector--compact .version-selector__select {
-    padding-block: 0.3rem;
-    font-size: 0.75rem;
+    color: var(--docs-fg-muted);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    padding: 0.25rem 1.4rem 0.25rem 0.4rem;
   }
 </style>

@@ -167,6 +167,36 @@
     background-color: transparent !important;
   }
 
+  /* Header version: never look like a native form field next to ghost theme/lang */
+  .header-version .version-selector,
+  .header-version .version-selector__select {
+    border: 0 !important;
+    box-shadow: none !important;
+    background-color: transparent !important;
+    color: var(--docs-fg-muted) !important;
+    height: 2rem !important;
+    min-height: 2rem !important;
+    max-height: 2rem !important;
+    line-height: 1.25 !important;
+    vertical-align: middle;
+  }
+
+  .header-version .version-selector__select:hover {
+    color: var(--docs-fg) !important;
+    background-color: color-mix(in srgb, var(--docs-fg) 4%, transparent) !important;
+  }
+
+  /*
+   * Chromium base-select can reintroduce a solid field surface in light mode.
+   * Keep the closed trigger transparent; only the open picker is elevated.
+   */
+  @supports (appearance: base-select) {
+    .header-version .version-selector__select {
+      -webkit-appearance: none !important;
+      appearance: none !important;
+    }
+  }
+
   /*
    * One focus ring only. Global :focus-visible in motion.css would otherwise
    * stack with label:focus-within / host focus and look like “two frames”.
