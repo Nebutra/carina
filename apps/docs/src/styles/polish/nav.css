@@ -179,6 +179,16 @@
     max-height: 2rem !important;
     line-height: 1.25 !important;
     vertical-align: middle;
+    /* Collapse to selected label width (not longest option / form-field min) */
+    width: auto !important;
+    max-width: max-content !important;
+    field-sizing: content;
+  }
+
+  .header-version {
+    width: max-content;
+    max-width: max-content;
+    flex: 0 0 auto;
   }
 
   .header-version .version-selector__select:hover {

@@ -30,10 +30,18 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
     aria-label={ariaLabel}
   >
     {
+      /* Keep option labels short — native <select> sizes the closed control
+         to the longest option, so suffixes like " (preview)" leave a dead
+         gap beside short values such as "0.6.x". Preview status is already
+         surfaced by VersionBanner when next is active. */
       list.map((v) => (
-        <option value={v.id} data-badge={v.badge} data-description={v.description}>
+        <option
+          value={v.id}
+          data-badge={v.badge}
+          data-description={v.description}
+          title={v.description}
+        >
           {v.label}
-          {v.badge === 'preview' ? (isZh ? '（预览）' : ' (preview)') : ''}
         </option>
       ))
     }
@@ -139,7 +147,7 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
     border: 0 !important;
     border-radius: var(--docs-radius-md);
     /* Match ThemeSelect / LanguageSelect density in the header chrome */
-    padding: 0.25rem 1.45rem 0.25rem 0.45rem;
+    padding: 0 1.15rem 0 0.35rem;
     margin: 0;
     font-size: 0.8125rem;
     font-family: var(--docs-font-mono);
@@ -148,6 +156,10 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
     height: 2rem;
     min-height: 2rem;
     max-height: 2rem;
+    /* Size closed control to the selected label, not the longest option */
+    width: auto;
+    max-width: max-content;
+    field-sizing: content;
     cursor: pointer;
     box-shadow: none !important;
     outline: none;
@@ -156,8 +168,8 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
     background-image: linear-gradient(45deg, transparent 50%, var(--docs-fg-muted) 50%),
       linear-gradient(135deg, var(--docs-fg-muted) 50%, transparent 50%);
     background-position:
-      calc(100% - 11px) 52%,
-      calc(100% - 7px) 52%;
+      calc(100% - 9px) 52%,
+      calc(100% - 5px) 52%;
     background-size:
       4px 4px,
       4px 4px;
@@ -184,12 +196,18 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
   /* Header chrome: same ghost control as theme/lang (no “form field” box) */
   .version-selector--compact {
     height: 2rem;
+    width: max-content;
+    max-width: max-content;
   }
 
   .version-selector--compact .version-selector__select {
     color: var(--docs-fg-muted);
     font-size: 0.8125rem;
     font-weight: 500;
-    padding: 0.25rem 1.4rem 0.25rem 0.4rem;
+    /* Tight chip: label + caret only — no dead band after short versions */
+    padding: 0 1.1rem 0 0.3rem;
+    width: auto;
+    max-width: max-content;
+    field-sizing: content;
   }
 </style>

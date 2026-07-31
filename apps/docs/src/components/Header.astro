@@ -202,11 +202,18 @@ const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档�
     display: flex;
     align-items: center;
     height: 2rem;
+    /* Don't stretch past the select chip — longest-option sizing used to
+       leave a dead band after short labels like "0.6.x". */
+    width: max-content;
+    max-width: max-content;
+    flex: 0 0 auto;
   }
 
   .header-version :global(.version-selector),
   .header-version :global(.version-selector__select) {
     height: 2rem;
+    width: auto;
+    max-width: max-content;
   }
 
   .header-selects {
