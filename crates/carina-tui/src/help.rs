@@ -1,6 +1,6 @@
 //! Discoverable key hints and a real `/help` surface (#22).
 
-use crate::command::{COMMANDS, CommandSpec};
+use crate::i18n::{Locale, MessageId, format, text};
 use crate::keybinding::KeyBindings;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,76 +21,58 @@ pub struct HelpSurface {
 ///
 /// `/help` must list every registered slash command so new commands cannot be
 /// invisible (jcode pattern).
-pub fn build_help_surface(bindings: KeyBindings) -> HelpSurface {
+pub fn build_help_surface(
+    bindings: KeyBindings,
+    commands: Vec<HelpEntry>,
+    locale: Locale,
+) -> HelpSurface {
     HelpSurface {
-        title: "Carina help".into(),
-        shortcuts: conversation_key_hints(bindings),
-        commands: COMMANDS
-            .iter()
-            .map(|spec| HelpEntry {
-                key: spec.name.to_owned(),
-                description: command_description(spec),
-            })
-            .collect(),
-        footer: "Esc close  |  / opens command palette  |  ? toggles this help".into(),
+        title: text(locale, MessageId::HelpTitle).into(),
+        shortcuts: conversation_key_hints(bindings, locale),
+        commands,
+        footer: text(locale, MessageId::HelpFooter).into(),
     }
 }
 
 /// Compact footer hint line for the conversation surface.
-pub fn conversation_key_hints(bindings: KeyBindings) -> Vec<HelpEntry> {
+pub fn conversation_key_hints(bindings: KeyBindings, locale: Locale) -> Vec<HelpEntry> {
     vec![
         HelpEntry {
             key: "?".into(),
-            description: "help / shortcuts".into(),
+            description: text(locale, MessageId::HelpShortcutHelp).into(),
         },
         HelpEntry {
             key: "/".into(),
-            description: "commands".into(),
+            description: text(locale, MessageId::Commands).into(),
         },
         HelpEntry {
             key: bindings.expand_tools.label().into(),
-            description: "expand tool output".into(),
+            description: text(locale, MessageId::HelpShortcutExpandTools).into(),
         },
         HelpEntry {
             key: bindings.interrupt.label().into(),
-            description: "interrupt run".into(),
+            description: text(locale, MessageId::HelpShortcutInterrupt).into(),
         },
         HelpEntry {
             key: "Esc Esc".into(),
-            description: "edit previous prompt".into(),
+            description: text(locale, MessageId::HelpShortcutEditPrevious).into(),
         },
         HelpEntry {
             key: "Tab".into(),
-            description: "queue follow-up while running".into(),
+            description: text(locale, MessageId::HelpShortcutQueueFollowUp).into(),
         },
     ]
 }
 
-pub fn footer_hint_line(bindings: KeyBindings) -> String {
-    format!(
-        "? help  |  / commands  |  {} expand tools  |  {} interrupt",
-        bindings.expand_tools.label(),
-        bindings.interrupt.label()
+pub fn footer_hint_line(bindings: KeyBindings, locale: Locale) -> String {
+    format(
+        locale,
+        MessageId::HelpCompactFooter,
+        &[
+            ("expand", bindings.expand_tools.label()),
+            ("interrupt", bindings.interrupt.label()),
+        ],
     )
-}
-
-fn command_description(spec: &CommandSpec) -> String {
-    // Stable English labels for the help surface; i18n overlay can replace later.
-    match spec.name {
-        "/settings" => "Open settings".into(),
-        "/status" => "Show runtime and session status".into(),
-        "/provider" => "Choose or reconfigure a provider".into(),
-        "/model" => "Choose a model".into(),
-        "/plan" => "Toggle plan mode".into(),
-        "/build" => "Switch to build mode".into(),
-        "/sessions" => "Browse sessions".into(),
-        "/resume" => "Resume a session".into(),
-        "/cancel" => "Cancel the active run".into(),
-        "/doctor" => "Run health checks and recovery".into(),
-        "/help" => "Show this help surface".into(),
-        "/quit" => "Quit Carina".into(),
-        other => format!("Run {other}"),
-    }
 }
 
 #[cfg(test)]
@@ -100,17 +82,30 @@ mod tests {
     #[test]
     fn help_lists_every_registered_command_including_help_itself() {
         // Issue #22: /help is a real surface, not a composer re-trigger of "/".
-        let surface = build_help_surface(KeyBindings::default());
+        let surface = build_help_surface(
+            KeyBindings::default(),
+            vec![
+                HelpEntry {
+                    key: "/help".into(),
+                    description: "Show help".into(),
+                },
+                HelpEntry {
+                    key: "/quit".into(),
+                    description: "Quit".into(),
+                },
+            ],
+            Locale::En,
+        );
         let names: Vec<_> = surface.commands.iter().map(|e| e.key.as_str()).collect();
         assert!(names.contains(&"/help"));
         assert!(names.contains(&"/quit"));
-        assert_eq!(names.len(), COMMANDS.len());
+        assert_eq!(names.len(), 2);
         assert!(surface.shortcuts.iter().any(|e| e.key == "?"));
     }
 
     #[test]
     fn footer_hint_teaches_escape_hatches() {
-        let line = footer_hint_line(KeyBindings::default());
+        let line = footer_hint_line(KeyBindings::default(), Locale::En);
         assert!(line.contains("? help"));
         assert!(line.contains("Ctrl-O"));
         assert!(line.contains("Ctrl-C"));

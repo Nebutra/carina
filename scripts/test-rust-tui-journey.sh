@@ -752,6 +752,15 @@ def handle(connection, mode="normal"):
                     "id": "test", "name": "Test", "registered": True, "available": True,
                     "models": models
                 }]}
+            elif method == "command.list":
+                result = {"revision": "sha256:journey", "commands": [{
+                    "id": "prompt:project:dynamic-review",
+                    "kind": "prompt_template",
+                    "name": "dynamic-review",
+                    "description": "Review a dynamic target",
+                    "source": "project",
+                    "hints": ["target"]
+                }]}
             elif method == "session.list":
                 if mode == "model-journey":
                     result = ([{
@@ -986,10 +995,11 @@ def handle(connection, mode="normal"):
                                 "tool": "patch", "arguments": {"path": "src/snake.cpp"}}}},
                         {"type": "item.updated", "session_id": session_id,
                          "turn_id": "run_tools", "run_id": "run_tools",
-                         "item_id": "call-edit", "item": {
-                            "id": "call-edit", "type": "tool_call", "status": "running",
+                         "item_id": "patch-edit", "item": {
+                            "id": "patch-edit", "type": "file_change", "status": "proposed",
                             "run_id": "run_tools", "details": {
-                                "tool": "patch", "diff": "EDIT-DIFF-UNIQUE"}}},
+                                "patch_id": "patch-edit", "affected_files": ["src/snake.cpp"],
+                                "diff": "--- a/src/snake.cpp\n+++ b/src/snake.cpp\n@@ -1 +1 @@\n-old\n+EDIT-DIFF-UNIQUE"}}},
                         {"type": "item.completed", "session_id": session_id,
                          "turn_id": "run_tools", "run_id": "run_tools",
                          "item_id": "call-edit", "item": {
@@ -1706,7 +1716,9 @@ wait_for_text "│ image  media-sample.png"
 
 wait_for_text "Sessions"
 sessions_col="$(python3 -c 'import sys; line=next(line for line in sys.stdin if "Sessions" in line); print(line.index("Sessions") + 2)' <<<"$SCREEN")"
+printf -v sessions_move '\033[<35;%d;1M' "$sessions_col"
 printf -v sessions_click '\033[<0;%d;1M' "$sessions_col"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$sessions_move"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$sessions_click"
 wait_for_text "Conversations"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "/Media target"
@@ -1720,7 +1732,9 @@ TMUX_TMPDIR="$WORK" tmux resize-window -t "$SESSION" -x 120 -y 40
 wait_for_text "media-sample.png"
 wait_for_text "Sessions"
 sessions_col="$(python3 -c 'import sys; line=next(line for line in sys.stdin if "Sessions" in line); print(line.index("Sessions") + 2)' <<<"$SCREEN")"
+printf -v sessions_move '\033[<35;%d;1M' "$sessions_col"
 printf -v sessions_click '\033[<0;%d;1M' "$sessions_col"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$sessions_move"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$sessions_click"
 wait_for_text "Conversations"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "/"
@@ -1988,6 +2002,18 @@ TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
 wait_for_text "Read  src/snake.cpp"
 wait_for_text "✓ Inspect renderer"
 wait_for_text "● Run tests"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /dyn
+wait_for_text "dynamic-review"
+grep -Fq "project" <<<"$SCREEN" || {
+  printf '%s\n' "$SCREEN" >&2
+  echo "rust-tui-journey: daemon command source badge was not rendered" >&2
+  exit 1
+}
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Tab
+wait_for_text "/dynamic-review"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l " parser"
+wait_for_text "<target>"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-u
 [[ "$(grep -Fc "• Plan" <<<"$SCREEN")" == "1" ]] || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: todo updates did not reduce to one Plan component" >&2
@@ -2061,9 +2087,23 @@ wait_for_text "COMMAND-OUTPUT-UNIQUE"
   exit 1
 }
 
+# Expanding historical components intentionally preserves the reader's
+# viewport. Collapse them before asserting lower hydrated components instead
+# of assuming expansion will force-follow the transcript bottom.
+capture
+command_row="$(awk '/Run  cmake --build build/ { print NR; exit }' <<<"$SCREEN")"
+printf -v command_click '\033[<0;5;%dM\033[<0;5;%dm' "$command_row" "$command_row"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$command_click"
+wait_without_text "COMMAND-OUTPUT-UNIQUE"
+capture
+mcp_row="$(awk '/MCP  docs.search/ { print NR; exit }' <<<"$SCREEN")"
+printf -v mcp_click '\033[<0;5;%dM\033[<0;5;%dm' "$mcp_row" "$mcp_row"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$mcp_click"
+wait_without_text "ARTIFACT-OUTPUT-UNIQUE"
+
 wait_for_text "Edited 2 files"
-grep -Fq "▾ Edited 2 files  1 failed" <<<"$SCREEN"
-grep -Fq "src/snake.cpp  applied" <<<"$SCREEN"
+grep -Eq "▾ Edited 2 files.*1 failed" <<<"$SCREEN"
+grep -Eq "src/snake.cpp.*applied" <<<"$SCREEN"
 [[ "$(grep -Fc "EDIT-DIFF-UNIQUE" <<<"$SCREEN")" == "1" ]] || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: hydrated applied edit did not start with one visible diff" >&2
@@ -2073,7 +2113,7 @@ edit_row="$(awk '/Edited 2 files/ { print NR; exit }' <<<"$SCREEN")"
 printf -v edit_click '\033[<0;5;%dM\033[<0;5;%dm' "$edit_row" "$edit_row"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$edit_click"
 wait_without_text "EDIT-DIFF-UNIQUE"
-grep -Fq "▸ Edited 2 files  1 failed" <<<"$SCREEN" || {
+grep -Eq "▸ Edited 2 files.*1 failed" <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: hydrated applied edit could not be explicitly folded" >&2
   exit 1
@@ -2085,7 +2125,7 @@ wait_for_text "EDIT-DIFF-UNIQUE"
   echo "rust-tui-journey: edit diff was not owned by exactly one component" >&2
   exit 1
 }
-grep -Fq "src/broken.cpp  failed" <<<"$SCREEN" || {
+grep -Eq "src/broken.cpp.*failed" <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: failed edit lost its visible semantic status" >&2
   exit 1
@@ -2472,13 +2512,14 @@ wait_for_text "当前会话"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /help
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
-wait_for_text "双击 Esc 编辑历史消息"
+wait_for_text "编辑上一条输入"
 grep -Fq "命令" <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: help did not open the localized command palette" >&2
   exit 1
 }
-grep -Fq "/settings" <<<"$SCREEN"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" PageDown
+wait_for_text "/settings"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-u
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /settings

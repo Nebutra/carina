@@ -191,7 +191,7 @@ Built-in agent tools, Zig toolchain, and capability mediation.
 
 ## CLI & TUI
 
-Drive Carina from the terminal — matches live carina --help.
+Drive Carina from the terminal — CLI golden path and interactive TUI surface.
 
 - URL: https://carina.nebutra.com/use/cli-tui/
 - Markdown: https://carina.nebutra.com/use/cli-tui/index.md
@@ -401,7 +401,7 @@ Carina 文档的 KaTeX LaTeX 支持 — 行内、块级、矩阵与复杂 AMS �
 
 ## CLI 与 TUI
 
-用终端操作 Carina — 与本机 carina --help 对齐。
+用终端操作 Carina — CLI 黄金路径与交互 TUI 表面。
 
 - URL: https://carina.nebutra.com/zh-cn/use/cli-tui/
 - Markdown: https://carina.nebutra.com/zh-cn/use/cli-tui/index.md

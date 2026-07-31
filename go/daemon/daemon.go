@@ -1304,7 +1304,11 @@ func (d *Daemon) handleCommandList(params json.RawMessage) (any, error) {
 	if d.safeMode {
 		specs = builtinCommandSpecs()
 	}
-	return map[string]any{"commands": sortedCommandInfos(specs)}, nil
+	infos := sortedCommandInfos(specs)
+	return map[string]any{
+		"revision": commandRegistryRevision(infos),
+		"commands": infos,
+	}, nil
 }
 
 // handleWorkspaceTrust marks a workspace root trusted/untrusted for command

@@ -1,6 +1,9 @@
 package daemon
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,6 +33,8 @@ type CommandArgument struct {
 }
 
 type CommandInfo struct {
+	ID          string            `json:"id"`
+	Kind        string            `json:"kind"`
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"`
 	Agent       string            `json:"agent,omitempty"`
@@ -152,6 +157,8 @@ func sortedCommandInfos(specs map[string]*CommandSpec) []CommandInfo {
 			continue
 		}
 		out = append(out, CommandInfo{
+			ID:          commandInfoID(spec),
+			Kind:        "prompt_template",
 			Name:        spec.Name,
 			Description: spec.Description,
 			Agent:       spec.Agent,
@@ -164,6 +171,22 @@ func sortedCommandInfos(specs map[string]*CommandSpec) []CommandInfo {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func commandInfoID(spec *CommandSpec) string {
+	if spec == nil {
+		return ""
+	}
+	return "prompt:" + strings.TrimSpace(spec.Source) + ":" + strings.TrimSpace(spec.Name)
+}
+
+func commandRegistryRevision(infos []CommandInfo) string {
+	payload, err := json.Marshal(infos)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func expandSlashCommand(input string, specs map[string]*CommandSpec) (*ExpandedCommand, bool, error) {

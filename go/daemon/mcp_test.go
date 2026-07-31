@@ -89,7 +89,11 @@ func TestMCPPromptListedAndExpandedAsSlashCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	commands := listRes.(map[string]any)["commands"].([]CommandInfo)
+	registry := listRes.(map[string]any)
+	if revision, _ := registry["revision"].(string); revision == "" {
+		t.Fatal("command.list must return a registry revision")
+	}
+	commands := registry["commands"].([]CommandInfo)
 	var found *CommandInfo
 	for _, cmd := range commands {
 		if cmd.Name == "mcp.mock.review" {
@@ -97,7 +101,7 @@ func TestMCPPromptListedAndExpandedAsSlashCommand(t *testing.T) {
 			found = &cp
 		}
 	}
-	if found == nil || found.Source != "mcp" || len(found.Arguments) != 1 || found.Arguments[0].Name != "target" {
+	if found == nil || found.ID != "prompt:mcp:mcp.mock.review" || found.Kind != "prompt_template" || found.Source != "mcp" || len(found.Arguments) != 1 || found.Arguments[0].Name != "target" {
 		t.Fatalf("mcp prompt command not listed correctly: %+v", commands)
 	}
 

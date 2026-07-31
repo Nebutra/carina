@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-07-28T10:09:42.069Z",
+  "generated_at": "2026-07-31T07:52:09.189Z",
   "protocol_version": "1.6.0",
   "source": "protocol/jsonrpc/methods.json",
-  "method_count": 158,
+  "method_count": 161,
   "groups": [
     {
       "id": "runtime",
@@ -327,7 +327,7 @@
           "remote": true,
           "control_plane_write": false,
           "params": {
-            "archived": "boolean?"
+            "archived": "boolean? (false active/non-closed only; true closed only; omitted all)"
           },
           "result": "Session[]"
         },
@@ -590,8 +590,8 @@
       ]
     },
     {
-      "id": "task",
-      "label": "Task",
+      "id": "execution",
+      "label": "Execution",
       "methods": [
         {
           "method": "execution.start",
@@ -612,7 +612,7 @@
             "output_schema": "JSON Schema Draft 2020-12 object?",
             "input_media_refs": "MediaRef[]? max 4"
           },
-          "result": "Task"
+          "result": "ExecutionRun"
         },
         {
           "method": "execution.resume",
@@ -620,9 +620,9 @@
           "remote": false,
           "control_plane_write": true,
           "params": {
-            "task_id": "string"
+            "run_id": "string"
           },
-          "result": "Task"
+          "result": "ExecutionRun"
         },
         {
           "method": "execution.status",
@@ -630,9 +630,9 @@
           "remote": true,
           "control_plane_write": false,
           "params": {
-            "task_id": "string"
+            "run_id": "string"
           },
-          "result": "Task"
+          "result": "ExecutionRun"
         },
         {
           "method": "execution.list",
@@ -642,7 +642,7 @@
           "params": {
             "session_id": "string?"
           },
-          "result": "Task[]"
+          "result": "ExecutionRun[]"
         },
         {
           "method": "execution.result",
@@ -650,9 +650,9 @@
           "remote": true,
           "control_plane_write": false,
           "params": {
-            "task_id": "string"
+            "run_id": "string"
           },
-          "result": "TaskResult"
+          "result": "ExecutionRun"
         },
         {
           "method": "execution.cancel",
@@ -660,9 +660,9 @@
           "remote": false,
           "control_plane_write": false,
           "params": {
-            "task_id": "string"
+            "run_id": "string"
           },
-          "result": "Task"
+          "result": "ExecutionRun"
         },
         {
           "method": "execution.steer",
@@ -670,10 +670,10 @@
           "remote": false,
           "control_plane_write": false,
           "params": {
-            "task_id": "string",
+            "run_id": "string",
             "message": "string"
           },
-          "result": "{ queued: boolean, task_id: string, status: string }"
+          "result": "{ queued: boolean, run_id: string, status: string }"
         },
         {
           "method": "execution.budget.extend",
@@ -681,12 +681,29 @@
           "remote": false,
           "control_plane_write": true,
           "params": {
-            "task_id": "string",
+            "run_id": "string",
             "additional_tokens": "integer > 0",
             "approver": "string?"
           },
-          "result": "Task"
+          "result": "ExecutionRun"
         },
+        {
+          "method": "execution.btw",
+          "scope": "write",
+          "remote": false,
+          "control_plane_write": false,
+          "params": {
+            "run_id": "string",
+            "question": "string"
+          },
+          "result": "{ answer: string, ephemeral: true }"
+        }
+      ]
+    },
+    {
+      "id": "governance",
+      "label": "Governance",
+      "methods": [
         {
           "method": "governance.action.approve",
           "scope": "admin",
@@ -726,7 +743,13 @@
             "scope": "once|session|project?"
           },
           "result": "object"
-        },
+        }
+      ]
+    },
+    {
+      "id": "question",
+      "label": "Question",
+      "methods": [
         {
           "method": "question.answer",
           "scope": "write",
@@ -745,17 +768,6 @@
           "control_plane_write": false,
           "params": {},
           "result": "{ question_ids: string[] }"
-        },
-        {
-          "method": "task.btw",
-          "scope": "write",
-          "remote": false,
-          "control_plane_write": false,
-          "params": {
-            "session_id": "string",
-            "prompt": "string"
-          },
-          "result": "Task"
         }
       ]
     },
@@ -1318,7 +1330,7 @@
           "control_plane_write": false,
           "params": {
             "session_id": "string",
-            "task_id": "string?",
+            "run_id": "string?",
             "call_id": "string?",
             "artifact_id": "sha256"
           },
@@ -1331,7 +1343,7 @@
           "control_plane_write": false,
           "params": {
             "session_id": "string",
-            "task_id": "string?",
+            "run_id": "string?",
             "call_id": "string?",
             "artifact_id": "sha256",
             "offset": "integer? >= 0",
@@ -1624,8 +1636,11 @@
           "scope": "read",
           "remote": true,
           "control_plane_write": false,
-          "params": {},
-          "result": "{ commands: Command[] }"
+          "params": {
+            "session_id": "string?",
+            "workspace_root": "string?"
+          },
+          "result": "{ revision: string, commands: Command[] }"
         },
         {
           "method": "command.exec",
@@ -1867,6 +1882,16 @@
           "control_plane_write": true,
           "params": "WorkSubmission + { required_worker_capabilities: string[]? }",
           "result": "WorkItem"
+        },
+        {
+          "method": "work.cancel",
+          "scope": "admin",
+          "remote": false,
+          "control_plane_write": true,
+          "params": {
+            "task_id": "string"
+          },
+          "result": "Task"
         },
         {
           "method": "work.poll",

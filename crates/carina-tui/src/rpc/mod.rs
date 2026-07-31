@@ -2,6 +2,7 @@ mod types;
 
 pub use types::*;
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -61,6 +62,39 @@ pub struct Client {
     stream: UnixStream,
     reader: BufReader<UnixStream>,
     next_id: u64,
+}
+
+fn normalize_command_registry(mut registry: CommandRegistry) -> CommandRegistry {
+    registry.commands.retain_mut(|command| {
+        command.name = command.name.trim().trim_start_matches('/').to_owned();
+        command.source = command.source.trim().to_owned();
+        if command.name.is_empty()
+            || command.name.chars().any(char::is_whitespace)
+            || (!command.kind.is_empty() && command.kind != "prompt_template")
+        {
+            return false;
+        }
+        command.id = command.id.trim().to_owned();
+        if command.id.is_empty() {
+            command.id = format!("prompt:{}:{}", command.source, command.name);
+        }
+        command.kind = "prompt_template".to_owned();
+        true
+    });
+    let mut id_counts = BTreeMap::new();
+    for command in &registry.commands {
+        *id_counts.entry(command.id.clone()).or_insert(0usize) += 1;
+    }
+    registry
+        .commands
+        .retain(|command| id_counts.get(command.id.as_str()) == Some(&1));
+    registry.commands.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.source.cmp(&right.source))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    registry
 }
 
 impl Client {
@@ -161,6 +195,12 @@ impl Client {
 
     pub fn context_summary(&mut self, session_id: &str) -> Result<ContextSummary, RpcError> {
         self.call("context.summary", &json!({"session_id": session_id}))
+    }
+
+    pub fn command_registry(&mut self, session_id: &str) -> Result<CommandRegistry, RpcError> {
+        let registry: CommandRegistry =
+            self.call("command.list", &json!({"session_id": session_id}))?;
+        Ok(normalize_command_registry(registry))
     }
 
     pub fn agent_view(&mut self) -> Result<AgentView, RpcError> {
@@ -685,6 +725,64 @@ fn valid_relative_workspace_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_registry_normalizes_legacy_entries_and_rejects_invalid_kinds() {
+        let registry = normalize_command_registry(CommandRegistry {
+            revision: String::new(),
+            commands: vec![
+                PromptCommand {
+                    name: " /review ".into(),
+                    source: " project ".into(),
+                    ..PromptCommand::default()
+                },
+                PromptCommand {
+                    kind: "shell".into(),
+                    name: "unsafe".into(),
+                    source: "project".into(),
+                    ..PromptCommand::default()
+                },
+                PromptCommand {
+                    name: "bad name".into(),
+                    source: "project".into(),
+                    ..PromptCommand::default()
+                },
+            ],
+        });
+        assert_eq!(registry.commands.len(), 1);
+        assert_eq!(registry.commands[0].id, "prompt:project:review");
+        assert_eq!(registry.commands[0].kind, "prompt_template");
+        assert_eq!(registry.commands[0].name, "review");
+    }
+
+    #[test]
+    fn command_registry_deduplicates_stable_ids_before_display_sorting() {
+        let registry = normalize_command_registry(CommandRegistry {
+            revision: "sha256:test".into(),
+            commands: vec![
+                PromptCommand {
+                    id: "prompt:project:same".into(),
+                    name: "alpha".into(),
+                    source: "project".into(),
+                    ..PromptCommand::default()
+                },
+                PromptCommand {
+                    id: "prompt:project:other".into(),
+                    name: "between".into(),
+                    source: "project".into(),
+                    ..PromptCommand::default()
+                },
+                PromptCommand {
+                    id: "prompt:project:same".into(),
+                    name: "zeta".into(),
+                    source: "project".into(),
+                    ..PromptCommand::default()
+                },
+            ],
+        });
+        assert_eq!(registry.commands.len(), 1);
+        assert_eq!(registry.commands[0].name, "between");
+    }
 
     #[test]
     fn only_transport_or_frame_loss_has_ambiguous_delivery() {

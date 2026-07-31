@@ -2586,7 +2586,33 @@ impl App {
         let locale = self.ui_locale();
         let descriptions = suggestions
             .iter()
-            .map(|command| tr(locale, command.description))
+            .map(|command| {
+                let mut description = match &command.description {
+                    crate::command::SuggestionDescription::Localized(id) => {
+                        tr(locale, *id).to_owned()
+                    }
+                    crate::command::SuggestionDescription::Plain(value) => {
+                        let argument_hint = crate::command::argument_hint(command);
+                        let description = if argument_hint.is_empty() {
+                            value.clone()
+                        } else {
+                            format!("{value} {argument_hint}")
+                        };
+                        self.theme
+                            .glyphs
+                            .sanitize_free_text(std::borrow::Cow::Owned(description))
+                            .into_owned()
+                    }
+                };
+                if let Some(reason) = command.unavailable_reason {
+                    description = format!(
+                        "{description} {} {}",
+                        self.theme.glyphs.separator(),
+                        tr(locale, reason)
+                    );
+                }
+                description
+            })
             .collect::<Vec<_>>();
         let height =
             (suggestions.len() as u16 + 2).min(layout_contract::COMPLETION_MAX_ROWS as u16);
@@ -2594,7 +2620,14 @@ impl App {
             .iter()
             .zip(&descriptions)
             .map(|(command, description)| {
-                UnicodeWidthStr::width(command.name) + UnicodeWidthStr::width(*description) + 5
+                let source = self
+                    .theme
+                    .glyphs
+                    .sanitize_free_text(std::borrow::Cow::Borrowed(command.source.as_str()));
+                UnicodeWidthStr::width(command.name.as_str())
+                    + UnicodeWidthStr::width(description.as_str())
+                    + UnicodeWidthStr::width(source.as_ref())
+                    + 8
             })
             .max()
             .unwrap_or(layout_contract::SLASH_COMPLETION_MIN_WIDTH)
@@ -2615,7 +2648,19 @@ impl App {
             .borders(Borders::ALL)
             .border_type(self.theme.glyphs.outer_border_type())
             .border_style(self.theme.focus())
-            .title(format!(" {} ", tr(locale, MessageId::Commands)))
+            .title(format!(
+                " {} ",
+                if self.command_registry_stale {
+                    format!(
+                        "{} {} {}",
+                        tr(locale, MessageId::Commands),
+                        self.theme.glyphs.separator(),
+                        tr(locale, MessageId::CommandRegistryStale)
+                    )
+                } else {
+                    tr(locale, MessageId::Commands).to_owned()
+                }
+            ))
             .style(Style::default());
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -2631,6 +2676,10 @@ impl App {
             .take(visible_rows)
             .enumerate()
         {
+            let source = self
+                .theme
+                .glyphs
+                .sanitize_free_text(std::borrow::Cow::Borrowed(command.source.as_str()));
             let row = Rect::new(
                 inner.x,
                 inner.y + row_index as u16,
@@ -2640,6 +2689,8 @@ impl App {
             let component = ComponentId(9_200 + index as u64);
             let style = if index == self.slash_selected || self.interactions.hovered(component) {
                 self.theme.selected()
+            } else if command.unavailable_reason.is_some() {
+                Style::default().fg(self.theme.muted)
             } else {
                 Style::default().fg(self.theme.text)
             };
@@ -2653,7 +2704,11 @@ impl App {
                         ),
                         Style::default().fg(self.theme.accent),
                     ),
-                    Span::raw(description),
+                    Span::raw(if command.source == "carina" {
+                        description
+                    } else {
+                        format!("{description} {} {}", self.theme.glyphs.separator(), source)
+                    }),
                 ]))
                 .style(style),
                 row,
@@ -2661,7 +2716,10 @@ impl App {
             self.interactions.register(HitRegion {
                 component,
                 area: row,
-                action: Action::SelectSlashCommand(index),
+                action: Action::SelectSlashCommand {
+                    id: command.id.clone(),
+                    registry_revision: command.registry_revision.clone(),
+                },
             });
         }
     }
@@ -3542,7 +3600,9 @@ impl App {
                 let lines = doctor
                     .render_lines()
                     .into_iter()
-                    .map(|line| Line::from(Span::styled(line, Style::default().fg(self.theme.text))))
+                    .map(|line| {
+                        Line::from(Span::styled(line, Style::default().fg(self.theme.text)))
+                    })
                     .collect::<Vec<_>>();
                 let max_scroll = match lines.len() {
                     0 => 0,
@@ -3559,7 +3619,30 @@ impl App {
             }
             Overlay::Help(help) => {
                 // Issue #22: real /help surface from the command + keybinding registry.
-                let surface = crate::help::build_help_surface(self.keybindings);
+                let commands = crate::command::palette_matching(
+                    "/",
+                    self.active_run_id.is_some(),
+                    &self.command_registry.commands,
+                    &self.command_registry.revision,
+                    &self.command_mru,
+                )
+                .into_iter()
+                .map(|command| crate::help::HelpEntry {
+                    key: command.name,
+                    description: match command.description {
+                        crate::command::SuggestionDescription::Localized(id) => {
+                            tr(self.ui_locale(), id).to_owned()
+                        }
+                        crate::command::SuggestionDescription::Plain(value) => self
+                            .theme
+                            .glyphs
+                            .sanitize_free_text(std::borrow::Cow::Borrowed(value.as_str()))
+                            .into_owned(),
+                    },
+                })
+                .collect();
+                let surface =
+                    crate::help::build_help_surface(self.keybindings, commands, self.ui_locale());
                 let popup = centered(
                     area,
                     layout_contract::APPROVAL_POPUP.0,
@@ -4746,7 +4829,10 @@ fn transcript_block_height_with_tool_key(
 }
 
 fn transcript_block_hidden(block: &TranscriptBlock) -> bool {
-    block.title.trim().is_empty() && block.body.trim().is_empty() && block.status.trim().is_empty()
+    block.tool_members.is_empty()
+        && block.title.trim().is_empty()
+        && block.body.trim().is_empty()
+        && block.status.trim().is_empty()
 }
 
 #[cfg(test)]
@@ -6299,7 +6385,6 @@ mod transcript_tests {
     fn expanded_edit_group_renders_each_reviewable_diff_and_stats() {
         let mut group = block(BlockKind::Tool, "");
         group.tool_kind = Some(crate::tool_projection::ToolKind::Patch);
-        group.title = "Edited 2 files".into();
         group.status.clear();
         group.expanded = true;
         group.additions = 2;
@@ -6321,6 +6406,8 @@ mod transcript_tests {
             lifecycle: "completed".into(),
         })
         .collect();
+
+        assert!(!transcript_block_hidden(&group));
 
         insta::assert_snapshot!(plain(&transcript_lines(
             &group,
@@ -6379,10 +6466,7 @@ mod transcript_tests {
             plain.contains("old") && plain.contains("new"),
             "diff body missing: {plain}"
         );
-        assert!(
-            plain.contains('|'),
-            "expected line-number gutter: {plain}"
-        );
+        assert!(plain.contains('|'), "expected line-number gutter: {plain}");
         assert_eq!(lines[0].spans[2].content, "  +1");
         assert_eq!(lines[0].spans[2].style, added);
         assert_eq!(lines[0].spans[3].content, " -1");
@@ -6394,7 +6478,9 @@ mod transcript_tests {
             .flat_map(|line| line.spans.iter().map(|s| s.style))
             .collect();
         assert!(
-            body_styles.iter().any(|s| *s == removed || s.fg == removed.fg),
+            body_styles
+                .iter()
+                .any(|s| *s == removed || s.fg == removed.fg),
             "missing remove style"
         );
         assert!(

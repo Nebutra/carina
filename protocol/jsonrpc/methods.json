@@ -183,7 +183,7 @@
       { "method": "mcp.inventory", "scope": "read", "remote": false, "params": { "verbose": "boolean?" }, "result": "{ servers: MCPInventoryServer[], count: integer } (secret-free; private servers omitted)" }
     ],
     "command": [
-      { "method": "command.list", "scope": "read", "remote": true, "params": {}, "result": "{ commands: Command[] }" },
+      { "method": "command.list", "scope": "read", "remote": true, "params": { "session_id": "string?", "workspace_root": "string?" }, "result": "{ revision: string, commands: Command[] }" },
       { "method": "command.exec", "scope": "write", "remote": false, "params": { "session_id": "string", "task_id": "string?", "argv": "string[]" }, "result": "{ decision: PermissionDecision, result: CommandResult? }" }
     ],
     "audit": [

@@ -56,7 +56,10 @@ pub enum Action {
     BeginStopAgent,
     ConfirmStopAgent,
     SelectChange(usize),
-    SelectSlashCommand(usize),
+    SelectSlashCommand {
+        id: String,
+        registry_revision: Option<String>,
+    },
     SelectPromptHistory(usize),
     SelectFileCandidate(usize),
     SelectFileViewerLine(usize),

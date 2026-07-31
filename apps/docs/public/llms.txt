@@ -33,7 +33,7 @@ Site: https://carina.nebutra.com
 - [Math notation](https://carina.nebutra.com/reference/math/): KaTeX-powered LaTeX in Carina docs — inline, display, matrices, and complex AMS layouts.
 - [MCP integrations](https://carina.nebutra.com/tools/mcp/): Governed MCP client/server without leaking unconstrained authority.
 - [Tools overview](https://carina.nebutra.com/tools/overview/): Built-in agent tools, Zig toolchain, and capability mediation.
-- [CLI & TUI](https://carina.nebutra.com/use/cli-tui/): Drive Carina from the terminal — matches live carina --help.
+- [CLI & TUI](https://carina.nebutra.com/use/cli-tui/): Drive Carina from the terminal — CLI golden path and interactive TUI surface.
 - [Workflows overview](https://carina.nebutra.com/workflows/overview/): Declarative multi-step agent DAGs with attenuated subagents.
 - [Tutorial: review pipeline](https://carina.nebutra.com/workflows/tutorial-review/): Run the in-repo review workflow with parallel reviewers and a synthesis step.
 
@@ -66,7 +66,7 @@ Site: https://carina.nebutra.com
 - [数学公式](https://carina.nebutra.com/zh-cn/reference/math/): Carina 文档的 KaTeX LaTeX 支持 — 行内、块级、矩阵与复杂 AMS 排版。
 - [MCP 集成](https://carina.nebutra.com/zh-cn/tools/mcp/): 接入 MCP 服务且不泄露无约束权限。
 - [Tools 概览](https://carina.nebutra.com/zh-cn/tools/overview/): 由能力内核中介的内置工具、Zig 工具链与外部工具。
-- [CLI 与 TUI](https://carina.nebutra.com/zh-cn/use/cli-tui/): 用终端操作 Carina — 与本机 carina --help 对齐。
+- [CLI 与 TUI](https://carina.nebutra.com/zh-cn/use/cli-tui/): 用终端操作 Carina — CLI 黄金路径与交互 TUI 表面。
 - [Workflows 概览](https://carina.nebutra.com/zh-cn/workflows/overview/): 声明式多步 Agent DAG，使用能力衰减的隔离步骤。
 - [教程：审查流水线](https://carina.nebutra.com/zh-cn/workflows/tutorial-review/): 运行并行 reviewer 和汇总步骤，并在任何写入前保留人工控制。
 

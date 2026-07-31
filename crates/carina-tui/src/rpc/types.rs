@@ -3,6 +3,42 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct CommandRegistry {
+    #[serde(default)]
+    pub revision: String,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub commands: Vec<PromptCommand>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct PromptCommand {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub hints: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub arguments: Vec<PromptCommandArgument>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct PromptCommandArgument {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub required: bool,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DaemonStatus {
     #[serde(default)]
@@ -1606,12 +1642,14 @@ mod tests {
     #[test]
     fn daemon_owned_fixtures_reject_legacy_task_submit_shape() {
         // Old task.submit style payloads must not decode as ExecutionRun.
-        assert!(serde_json::from_value::<ExecutionRun>(json!({
-            "task_id": "task_legacy",
-            "session_id": "sess_1",
-            "status": "running"
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<ExecutionRun>(json!({
+                "task_id": "task_legacy",
+                "session_id": "sess_1",
+                "status": "running"
+            }))
+            .is_err()
+        );
         // Wire events without a typed kind stay non-governance.
         let bare: WireEvent = serde_json::from_value(json!({
             "type": "task.created",

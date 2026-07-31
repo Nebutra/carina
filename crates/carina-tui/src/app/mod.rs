@@ -30,7 +30,7 @@ use xai_ratatui_inline::{
 };
 use xai_ratatui_textarea::{ElementId, TextArea, TextAreaState, TextElementEventKind};
 
-use crate::command::{self, CommandId, CommandSpec};
+use crate::command::{self, CommandId, CommandSuggestion, SuggestionExecution};
 use crate::component::{Action, InteractionMap};
 use crate::context_completion::ContextCompletion;
 use crate::context_completion::FILE_ELEMENT_KIND;
@@ -227,6 +227,11 @@ enum AsyncMessage {
         session_id: String,
         result: Result<crate::rpc::ContextSummary, String>,
     },
+    CommandRegistryLoaded {
+        generation: u64,
+        session_id: String,
+        result: Result<crate::rpc::CommandRegistry, String>,
+    },
     CredentialStored {
         generation: u64,
         provider: String,
@@ -384,7 +389,13 @@ pub struct App {
     submit_after_paste: bool,
     composer_area: Rect,
     slash_selected: usize,
+    slash_selected_id: Option<String>,
     slash_dismissed_input: Option<String>,
+    command_registry: crate::rpc::CommandRegistry,
+    command_registry_session: String,
+    command_generation: u64,
+    command_mru: Vec<String>,
+    command_registry_stale: bool,
     persisted_prompt_history: Vec<String>,
     persisted_prompt_history_unavailable: bool,
     history_search: Option<HistorySearchState>,
@@ -539,7 +550,13 @@ impl App {
             submit_after_paste: false,
             composer_area: Rect::default(),
             slash_selected: 0,
+            slash_selected_id: None,
             slash_dismissed_input: None,
+            command_registry: crate::rpc::CommandRegistry::default(),
+            command_registry_session: String::new(),
+            command_generation: 0,
+            command_mru: Vec::new(),
+            command_registry_stale: false,
             persisted_prompt_history: Vec::new(),
             persisted_prompt_history_unavailable: false,
             history_search: None,
@@ -1199,6 +1216,11 @@ impl App {
     }
 
     fn remember_session(&mut self, session: Session) {
+        let session_changed = self
+            .active_session
+            .as_ref()
+            .is_some_and(|active| active.session_id != session.session_id);
+        let command_registry_changed = self.command_registry_session != session.session_id;
         if let Some(existing) = self
             .sessions
             .iter_mut()
@@ -1209,6 +1231,41 @@ impl App {
             self.sessions.push(session.clone());
         }
         self.active_session = Some(session);
+        if session_changed {
+            self.command_mru.clear();
+            self.command_registry = crate::rpc::CommandRegistry::default();
+            self.command_registry_stale = false;
+        }
+        if command_registry_changed {
+            self.request_command_registry();
+        }
+    }
+
+    fn request_command_registry(&mut self) {
+        let Some(session_id) = self
+            .active_session
+            .as_ref()
+            .map(|session| session.session_id.clone())
+        else {
+            self.command_registry = crate::rpc::CommandRegistry::default();
+            self.command_registry_session.clear();
+            return;
+        };
+        self.command_generation = self.command_generation.saturating_add(1);
+        let generation = self.command_generation;
+        self.command_registry_session = session_id.clone();
+        let socket = self.options.socket.clone();
+        let tx = self.async_tx.clone();
+        std::thread::spawn(move || {
+            let result = Client::connect(&socket)
+                .and_then(|mut rpc| rpc.command_registry(&session_id))
+                .map_err(|error| error.to_string());
+            let _ = tx.send(AsyncMessage::CommandRegistryLoaded {
+                generation,
+                session_id,
+                result,
+            });
+        });
     }
 
     fn update_active_execution_metadata(
@@ -1353,6 +1410,7 @@ impl App {
         } else {
             session.execution_status.clone()
         };
+        self.command_registry_session.clear();
         self.remember_session(session);
         self.notice.clear();
         self.start_event_stream();
@@ -1770,6 +1828,43 @@ impl App {
                     }
                     if let Ok(summary) = result {
                         self.context_summary = Some(summary);
+                    }
+                }
+                AsyncMessage::CommandRegistryLoaded {
+                    generation,
+                    session_id,
+                    result,
+                } => {
+                    let active_session = self
+                        .active_session
+                        .as_ref()
+                        .map(|session| session.session_id.as_str());
+                    if !command_registry_target_is_current(
+                        generation,
+                        self.command_generation,
+                        active_session,
+                        &session_id,
+                    ) {
+                        continue;
+                    }
+                    match result {
+                        Ok(registry) => {
+                            self.command_registry = registry;
+                            self.command_registry_session = session_id;
+                            self.command_registry_stale = false;
+                            self.sync_slash_selection();
+                        }
+                        Err(error) => {
+                            self.command_registry_stale = true;
+                            self.command_registry_session = session_id;
+                            self.sync_slash_selection();
+                            if self.composer.text().trim_start().starts_with('/') {
+                                self.notice = Notice::localized_with(
+                                    MessageId::CommandRegistryLoadFailed,
+                                    [("error", error)],
+                                );
+                            }
+                        }
                     }
                 }
                 AsyncMessage::CredentialStored {
@@ -2787,7 +2882,13 @@ impl App {
         {
             return Ok(());
         }
-        let slash_count = self.slash_suggestions().len();
+        let slash_suggestions = self.slash_suggestions();
+        let slash_count = slash_suggestions.len();
+        self.slash_selected = command::selected_index(
+            &slash_suggestions,
+            self.slash_selected_id.as_deref(),
+            self.slash_selected,
+        );
         if let Some(mode) = crate::clipboard_image::paste_mode(key) {
             self.capture_clipboard(mode);
             return Ok(());
@@ -2795,18 +2896,31 @@ impl App {
         match key.code {
             KeyCode::Up if slash_count > 0 => {
                 self.slash_selected = self.slash_selected.saturating_sub(1);
+                self.slash_selected_id = slash_suggestions
+                    .get(self.slash_selected)
+                    .map(|command| command.id.clone());
             }
             KeyCode::Down if slash_count > 0 => {
                 self.slash_selected = (self.slash_selected + 1).min(slash_count - 1);
+                self.slash_selected_id = slash_suggestions
+                    .get(self.slash_selected)
+                    .map(|command| command.id.clone());
             }
             KeyCode::Tab if slash_count > 0 => {
-                if let Some(command) = self.slash_suggestions().get(self.slash_selected) {
-                    self.composer.set_text(command.name);
+                if let Some(command) = slash_suggestions.get(self.slash_selected) {
+                    let completed =
+                        command::complete_prompt_token(self.composer.text(), &command.name);
+                    self.composer.set_text(&completed);
+                    self.composer.set_cursor(self.composer.text().len());
                     self.composer_state = TextAreaState::default();
+                    self.slash_selected_id = Some(command.id.clone());
                 }
             }
             KeyCode::BackTab if slash_count > 0 => {
                 self.slash_selected = self.slash_selected.saturating_sub(1);
+                self.slash_selected_id = slash_suggestions
+                    .get(self.slash_selected)
+                    .map(|command| command.id.clone());
             }
             KeyCode::BackTab => self.cycle_conversation_mode(),
             KeyCode::Up if slash_count == 0 && self.composer.text().is_empty() => {
@@ -2826,10 +2940,16 @@ impl App {
             KeyCode::Enter
                 if slash_count > 0
                     && !key.modifiers.contains(KeyModifiers::SHIFT)
+                    && !self.composer.text().contains(char::is_whitespace)
                     && command::resolve(self.composer.text(), self.active_run_id.is_some())
                         .is_none() =>
             {
-                self.execute_slash_suggestion(self.slash_selected)?;
+                if let Some(command) = slash_suggestions.get(self.slash_selected) {
+                    self.execute_slash_suggestion(
+                        &command.id,
+                        command.registry_revision.as_deref(),
+                    )?;
+                }
             }
             KeyCode::Esc if slash_count > 0 => {
                 self.slash_dismissed_input = Some(self.composer.text().trim().to_owned());
@@ -2889,6 +3009,7 @@ impl App {
                 self.composer.input(key);
                 self.media.reconcile(&self.composer);
                 self.slash_selected = 0;
+                self.slash_selected_id = None;
                 self.slash_dismissed_input = None;
             }
         }
@@ -2927,6 +3048,7 @@ impl App {
             self.composer_state = TextAreaState::default();
             self.media.reconcile(&self.composer);
             self.slash_selected = 0;
+            self.slash_selected_id = None;
             self.slash_dismissed_input = None;
         }
     }
@@ -3071,28 +3193,88 @@ impl App {
         self.submit_after_paste = false;
     }
 
-    fn slash_suggestions(&self) -> Vec<&'static CommandSpec> {
+    fn slash_suggestions(&self) -> Vec<CommandSuggestion> {
         let input = self.composer.text().trim();
         if self.slash_dismissed_input.as_deref() == Some(input) {
             return Vec::new();
         }
-        command::matching(input, self.active_run_id.is_some())
+        command::palette_matching(
+            input,
+            self.active_run_id.is_some(),
+            &self.command_registry.commands,
+            &self.command_registry.revision,
+            &self.command_mru,
+        )
     }
 
-    fn execute_slash_suggestion(&mut self, index: usize) -> Result<()> {
-        let Some(name) = self
+    fn sync_slash_selection(&mut self) {
+        let suggestions = self.slash_suggestions();
+        self.slash_selected = command::selected_index(
+            &suggestions,
+            self.slash_selected_id.as_deref(),
+            self.slash_selected,
+        );
+        self.slash_selected_id = suggestions
+            .get(self.slash_selected)
+            .map(|command| command.id.clone());
+    }
+
+    fn remember_command_use(&mut self, id: String) {
+        self.command_mru.retain(|candidate| candidate != &id);
+        self.command_mru.insert(0, id);
+        self.command_mru.truncate(20);
+    }
+
+    fn execute_slash_suggestion(
+        &mut self,
+        id: &str,
+        expected_registry_revision: Option<&str>,
+    ) -> Result<()> {
+        let Some(command) = self
             .slash_suggestions()
-            .get(index)
-            .map(|command| command.name)
+            .into_iter()
+            .find(|command| command.id == id)
         else {
             return Ok(());
         };
-        self.composer.set_text(name);
+        if matches!(
+            &command.execution,
+            SuggestionExecution::PromptTemplate { .. }
+        ) && expected_registry_revision != Some(self.command_registry.revision.as_str())
+        {
+            self.notice = Notice::localized(MessageId::CommandRegistryChanged);
+            return Ok(());
+        }
+        if let Some(reason) = command.unavailable_reason {
+            self.notice = Notice::localized(reason);
+            return Ok(());
+        }
+        let is_prompt = matches!(
+            &command.execution,
+            SuggestionExecution::PromptTemplate { .. }
+        );
+        let text = if is_prompt {
+            let completed = command::complete_prompt_token(self.composer.text(), &command.name);
+            if completed == command.name {
+                format!("{completed} ")
+            } else {
+                completed
+            }
+        } else {
+            command.name
+        };
+        self.composer.set_text(&text);
+        self.composer.set_cursor(self.composer.text().len());
         self.composer_state = TextAreaState::default();
-        self.slash_selected = index;
+        self.slash_selected_id = Some(command.id.clone());
         self.slash_dismissed_input = None;
         self.focus = Focus::Composer;
-        self.submit_prompt()
+        if is_prompt {
+            Ok(())
+        } else {
+            self.remember_command_use(command.id);
+            self.submit_prompt()
+        }
     }
 
     fn prompt_history(&self) -> Vec<String> {
@@ -3181,6 +3363,7 @@ impl App {
             self.composer.input(key);
             self.media.reconcile(&self.composer);
             self.slash_selected = 0;
+            self.slash_selected_id = None;
             self.slash_dismissed_input = None;
         } else {
             self.preview_prompt_history_search();
@@ -3230,6 +3413,23 @@ impl App {
         self.media.reconcile(&self.composer);
         let prompt = self.media.prompt_text(&self.composer);
         if prompt.is_empty() && self.media.is_empty() {
+            return Ok(());
+        }
+        if let Some(Err(error)) =
+            command::validate_prompt_arguments(&prompt, &self.command_registry.commands)
+        {
+            self.notice = match error {
+                command::PromptArgumentError::Required(argument) => Notice::localized_with(
+                    MessageId::CommandArgumentRequired,
+                    [("argument", argument)],
+                ),
+                command::PromptArgumentError::TooMany => {
+                    Notice::localized(MessageId::CommandArgumentsTooMany)
+                }
+                command::PromptArgumentError::NotAccepted => {
+                    Notice::localized(MessageId::CommandArgumentsNotAccepted)
+                }
+            };
             return Ok(());
         }
         if self.media.has_pending() {
@@ -3409,6 +3609,11 @@ impl App {
         execution: ExecutionRun,
         clear_matching_draft: bool,
     ) {
+        if let Some(command_id) =
+            command::prompt_command_id(&envelope.prompt, &self.command_registry.commands)
+        {
+            self.remember_command_use(command_id);
+        }
         let mut block = TranscriptBlock::local_user(envelope.local_id, envelope.prompt);
         block.id = format!("user:{}", execution.run_id);
         block.run_id = execution.run_id.clone();
@@ -3477,13 +3682,21 @@ impl App {
     }
 
     fn handle_slash_command(&mut self, prompt: &str) -> Option<bool> {
-        let command = command::resolve(prompt, self.active_run_id.is_some())?;
+        let command = command::lookup(prompt)?;
+        if let Some(reason) =
+            command::command_unavailable_reason(command, self.active_run_id.is_some())
+        {
+            self.notice = Notice::localized(reason);
+            return Some(false);
+        }
+        self.remember_command_use(command::operator_id(command.id));
         match command.id {
             CommandId::Settings => {
                 self.overlays
                     .replace(Overlay::Settings(SettingsOverlay { selected: 0 }));
             }
             CommandId::Status => self.apply_action(Action::OpenStatus),
+            CommandId::Changes => self.apply_action(Action::OpenChanges),
             CommandId::Provider => {
                 self.provider_index = self
                     .inventory
@@ -3526,6 +3739,7 @@ impl App {
                 self.composer.set_text("");
                 self.composer_state = TextAreaState::default();
                 self.slash_selected = 0;
+                self.slash_selected_id = None;
                 self.slash_dismissed_input = None;
                 self.open_doctor_overlay();
             }
@@ -3534,6 +3748,7 @@ impl App {
                 self.composer.set_text("");
                 self.composer_state = TextAreaState::default();
                 self.slash_selected = 0;
+                self.slash_selected_id = None;
                 self.slash_dismissed_input = None;
                 self.open_help_overlay();
             }
@@ -3542,7 +3757,8 @@ impl App {
     }
 
     fn open_help_overlay(&mut self) {
-        self.overlays.replace(Overlay::Help(HelpOverlay { scroll: 0 }));
+        self.overlays
+            .replace(Overlay::Help(HelpOverlay { scroll: 0 }));
     }
 
     fn open_doctor_overlay(&mut self) {
@@ -3562,10 +3778,8 @@ impl App {
                     )));
             }
             Err(error) => {
-                self.notice = Notice::localized_with(
-                    MessageId::CancelFailed,
-                    [("error", error.to_string())],
-                );
+                self.notice =
+                    Notice::localized_with(MessageId::CancelFailed, [("error", error.to_string())]);
             }
         }
     }
@@ -3867,9 +4081,7 @@ impl App {
                             }
                         }
                         KeyCode::Char('r') => deferred_doctor_rerun = true,
-                        KeyCode::Esc | KeyCode::Char('q') => {
-                            deferred = Some(Action::CloseOverlay)
-                        }
+                        KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::CloseOverlay),
                         _ => {}
                     }
                 }
@@ -4928,8 +5140,12 @@ impl App {
                     changes.scroll = 0;
                 }
             }
-            Action::SelectSlashCommand(index) => {
-                if let Err(error) = self.execute_slash_suggestion(index) {
+            Action::SelectSlashCommand {
+                id,
+                registry_revision,
+            } => {
+                if let Err(error) = self.execute_slash_suggestion(&id, registry_revision.as_deref())
+                {
                     self.notice = Notice::localized_with(
                         MessageId::RunCommandFailed,
                         [("error", error.to_string())],
@@ -6178,6 +6394,15 @@ fn artifact_target_is_current(
     generation == current_generation && active_session_id == Some(target_session_id)
 }
 
+fn command_registry_target_is_current(
+    generation: u64,
+    current_generation: u64,
+    active_session_id: Option<&str>,
+    target_session_id: &str,
+) -> bool {
+    generation == current_generation && active_session_id == Some(target_session_id)
+}
+
 fn persist_locale(path: &Path, locale: &str) -> Result<()> {
     let mut root = match fs::read(path) {
         Ok(data) => serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&data)
@@ -6203,6 +6428,28 @@ fn persist_locale(path: &Path, locale: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_registry_results_are_fenced_by_generation_and_session() {
+        assert!(command_registry_target_is_current(
+            2,
+            2,
+            Some("sess_a"),
+            "sess_a"
+        ));
+        assert!(!command_registry_target_is_current(
+            1,
+            2,
+            Some("sess_a"),
+            "sess_a"
+        ));
+        assert!(!command_registry_target_is_current(
+            2,
+            2,
+            Some("sess_b"),
+            "sess_a"
+        ));
+    }
 
     #[test]
     fn async_messages_keep_distinct_redraw_reasons() {

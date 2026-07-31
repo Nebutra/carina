@@ -2607,6 +2607,67 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
     }
 
     #[test]
+    fn hydration_retains_grouped_edits_before_later_tool_events() {
+        let mut reducer = TranscriptReducer::default();
+        let hydrated = reducer.hydrate(vec![
+            item_with_id(
+                "call-edit",
+                "tool_call",
+                "requested",
+                json!({"tool":"patch","arguments":{"path":"src/snake.cpp"}}),
+            ),
+            item_with_id(
+                "patch-edit",
+                "file_change",
+                "proposed",
+                json!({
+                    "patch_id":"patch-edit",
+                    "affected_files":["src/snake.cpp"],
+                    "diff":"--- a/src/snake.cpp\n+++ b/src/snake.cpp\n@@ -1 +1 @@\n-old\n+EDIT-DIFF-UNIQUE"
+                }),
+            ),
+            item_with_id(
+                "call-edit",
+                "tool_call",
+                "completed",
+                json!({"tool":"patch"}),
+            ),
+            item_with_id(
+                "call-edit-failed",
+                "tool_call",
+                "requested",
+                json!({"tool":"patch","arguments":{"path":"src/broken.cpp"}}),
+            ),
+            item_with_id(
+                "call-edit-failed",
+                "tool_call",
+                "failed",
+                json!({"tool":"patch","error":{"message":"EDIT-FAILURE-UNIQUE"}}),
+            ),
+        ]);
+
+        assert_eq!(hydrated.len(), 1);
+        assert_eq!(hydrated[0].localized_title(Locale::En), "Edited 2 files");
+        assert_eq!(hydrated[0].localized_status(Locale::En), "1 failed");
+        assert!(
+            hydrated[0]
+                .tool_members
+                .iter()
+                .any(|member| member.body.contains("EDIT-DIFF-UNIQUE"))
+        );
+
+        let mut blocks = hydrated;
+        reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "ToolCallRequested",
+                json!({"call_id":"call-todo","tool":"TodoWrite","arguments":{"todos":[]}}),
+            ),
+        );
+        assert_eq!(blocks[0].localized_title(Locale::En), "Edited 2 files");
+    }
+
+    #[test]
     fn patch_audit_terminal_event_completes_the_bound_edit_component() {
         let mut reducer = TranscriptReducer::default();
         let mut blocks = Vec::new();
