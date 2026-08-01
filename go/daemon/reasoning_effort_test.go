@@ -174,7 +174,56 @@ func TestReasoningEffortRejectsUnsupportedModelsBeforeNetwork(t *testing.T) {
 func TestCatalogEffortOptionsDriveInventoryDefaults(t *testing.T) {
 	model := provider.Model{Reasoning: true, ReasoningOptions: []json.RawMessage{json.RawMessage(`{"type":"effort","values":["minimal","low","high"]}`)}}
 	spec := catalogReasoningEffortSpec("openai", "gpt-5", model)
-	if len(spec.Options) != 3 || spec.Options[0] != "minimal" || spec.Options[2] != "high" || spec.Default != "minimal" {
-		t.Fatalf("catalog effort spec = %#v", spec)
+	// Intersected with native OpenAI ladder; default prefers medium/high/low then first.
+	if len(spec.Options) != 3 || spec.Options[0] != "minimal" || spec.Options[2] != "high" {
+		t.Fatalf("catalog effort spec options = %#v", spec)
+	}
+	if spec.Default != "high" && spec.Default != "low" && spec.Default != "minimal" {
+		t.Fatalf("catalog effort default = %#v", spec.Default)
+	}
+}
+
+func TestCatalogEffortWithoutNativeFamilyUsesCatalog(t *testing.T) {
+	// Unknown provider family: catalog-declared efforts still surface to inventory.
+	model := provider.Model{
+		Reasoning: true,
+		ReasoningOptions: []json.RawMessage{
+			json.RawMessage(`{"type":"effort","values":["low","turbo","ultra"]}`),
+		},
+	}
+	spec := catalogReasoningEffortSpec("mox", "gpt-5.6-sol", model)
+	if len(spec.Options) != 3 || spec.Options[1] != "turbo" || spec.Default != "low" {
+		t.Fatalf("catalog-only effort spec = %#v", spec)
+	}
+}
+
+func TestResolveEffortForModelKeepsExactThenRemapsThenDefaults(t *testing.T) {
+	spec := reasoningEffortSpec{Options: []string{"low", "medium", "high", "max"}, Default: "high"}
+	if got := resolveEffortForModel(spec, "medium"); got != "medium" {
+		t.Fatalf("exact keep = %q", got)
+	}
+	if got := resolveEffortForModel(spec, "xhigh"); got != "max" {
+		t.Fatalf("xhigh remap = %q", got)
+	}
+	if got := resolveEffortForModel(spec, "minimal"); got != "low" {
+		t.Fatalf("minimal remap = %q", got)
+	}
+	if got := resolveEffortForModel(spec, "nope"); got != "high" {
+		t.Fatalf("fallback default = %q", got)
+	}
+	empty := resolveEffortForModel(reasoningEffortSpec{}, "high")
+	if empty != "" {
+		t.Fatalf("no options should clear effort, got %q", empty)
+	}
+}
+
+func TestReasoningEffortOverrideEnv(t *testing.T) {
+	t.Setenv("CARINA_REASONING_EFFORT_OVERRIDES", `{"mox/gpt-5.6-sol":{"options":["low","deep"],"default":"deep"}}`)
+	resetReasoningEffortOverridesForTest()
+	defer resetReasoningEffortOverridesForTest()
+
+	spec := catalogReasoningEffortSpec("mox", "gpt-5.6-sol", provider.Model{Reasoning: true})
+	if len(spec.Options) != 2 || spec.Default != "deep" {
+		t.Fatalf("override spec = %#v", spec)
 	}
 }

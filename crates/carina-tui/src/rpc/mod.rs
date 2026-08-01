@@ -290,11 +290,13 @@ impl Client {
         &mut self,
         session_id: &str,
         model: &str,
+        reasoning_effort: &str,
     ) -> Result<SessionModelSelection, RpcError> {
-        let selection: SessionModelSelection = self.call(
-            "session.model.set",
-            &json!({"session_id": session_id, "model": model}),
-        )?;
+        let mut params = json!({"session_id": session_id, "model": model});
+        if !reasoning_effort.trim().is_empty() {
+            params["reasoning_effort"] = json!(reasoning_effort.trim());
+        }
+        let selection: SessionModelSelection = self.call("session.model.set", &params)?;
         if selection.session_id != session_id || selection.next_model.trim().is_empty() {
             return Err(RpcError::Protocol(
                 "session.model.set returned a mismatched or empty selection".into(),

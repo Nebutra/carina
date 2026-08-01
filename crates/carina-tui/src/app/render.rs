@@ -1246,6 +1246,63 @@ impl App {
             .wrap(Wrap { trim: false }),
             area,
         );
+        // Reasoning effort picker when the model supports discrete levels.
+        let efforts = self.model_reasoning_efforts();
+        let effort_lines = if efforts.is_empty() {
+            Vec::new()
+        } else {
+            let effort_label = if self.selected_reasoning_effort.is_empty() {
+                tr(locale, MessageId::DefaultReasoning).to_owned()
+            } else {
+                tr_format(
+                    locale,
+                    MessageId::ReasoningEffort,
+                    &[("effort", self.selected_reasoning_effort.as_str())],
+                )
+            };
+            let levels = efforts
+                .iter()
+                .map(|effort| {
+                    if effort == &self.selected_reasoning_effort {
+                        format!("[{effort}]")
+                    } else {
+                        effort.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    tr(locale, MessageId::DefaultReasoning),
+                    Style::default().fg(self.theme.muted),
+                )),
+                Line::from(vec![
+                    Span::styled(format!(" {effort_label} "), self.theme.focus()),
+                    Span::styled(format!("  Tab  {levels}"), Style::default().fg(self.theme.muted)),
+                ]),
+            ]
+        };
+        if !effort_lines.is_empty() {
+            let detail_height = area.height.saturating_sub(layout_contract::ROW_HEIGHT);
+            if detail_height > 0 {
+                let detail = Rect::new(area.x, area.y, area.width, detail_height);
+                // Re-paint the capability block was already drawn; append effort
+                // lines in the remaining detail space above the action button.
+                frame.render_widget(
+                    Paragraph::new(effort_lines).wrap(Wrap { trim: false }),
+                    Rect::new(
+                        detail.x,
+                        detail
+                            .bottom()
+                            .saturating_sub(layout_contract::COMPOSER_CHROME_HEIGHT)
+                            .max(detail.y),
+                        detail.width,
+                        layout_contract::COMPOSER_CHROME_HEIGHT.min(detail.height),
+                    ),
+                );
+            }
+        }
         let button = Rect::new(
             area.x,
             area.y
@@ -1971,14 +2028,20 @@ impl App {
                     tr(locale, MessageId::Navigate),
                 ),
             ],
-            Phase::Model => vec![
-                ("Esc", tr(locale, MessageId::Back)),
-                ("Enter", tr(locale, MessageId::UseModel)),
-                (
-                    self.theme.glyphs.nav_vertical(),
-                    tr(locale, MessageId::Navigate),
-                ),
-            ],
+            Phase::Model => {
+                let mut shortcuts = vec![
+                    ("Esc", tr(locale, MessageId::Back)),
+                    ("Enter", tr(locale, MessageId::UseModel)),
+                    (
+                        self.theme.glyphs.nav_vertical(),
+                        tr(locale, MessageId::Navigate),
+                    ),
+                ];
+                if self.model_reasoning_efforts().len() > 1 {
+                    shortcuts.push(("Tab", tr(locale, MessageId::DefaultReasoning)));
+                }
+                shortcuts
+            }
             Phase::Session => vec![
                 ("/", tr(locale, MessageId::Search)),
                 ("Tab", tr(locale, MessageId::Scope)),
@@ -3130,6 +3193,7 @@ impl App {
             })
             .filter(|model| !model.is_empty())
             .unwrap_or_else(|| tr(locale, MessageId::ModelNotSelected).to_owned());
+        let selected_effort = self.selected_reasoning_effort.trim();
         let session_effort = self
             .active_session
             .as_ref()
@@ -3141,10 +3205,12 @@ impl App {
         let default_effort = selected_model
             .map(|model| model.default_reasoning_effort.trim())
             .filter(|effort| !effort.is_empty());
-        let reasoning_label = if selected_model.is_none() {
+        let reasoning_label = if selected_model.is_none() && selected_effort.is_empty() {
             tr(locale, MessageId::ReasoningPending).to_owned()
         } else {
-            session_effort
+            (!selected_effort.is_empty())
+                .then_some(selected_effort)
+                .or(session_effort)
                 .or(default_effort)
                 .map(|effort| tr_format(locale, MessageId::ReasoningEffort, &[("effort", effort)]))
                 .unwrap_or_else(|| {

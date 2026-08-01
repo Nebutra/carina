@@ -373,6 +373,8 @@ pub struct App {
     provider_picker: ProviderPickerState,
     provider_import: ProviderImportState,
     model_index: usize,
+    /// Reasoning effort for the highlighted model (session preference).
+    selected_reasoning_effort: String,
     session_browser: SessionBrowserState,
     selected_model: String,
     active_session: Option<Session>,
@@ -534,6 +536,7 @@ impl App {
             provider_picker: ProviderPickerState::default(),
             provider_import: ProviderImportState::Idle,
             model_index,
+            selected_reasoning_effort: String::new(),
             session_browser: SessionBrowserState::default(),
             selected_model,
             active_session: None,
@@ -668,6 +671,7 @@ impl App {
                 .get(self.model_index)
                 .map(|model| model.id.clone())
                 .unwrap_or_default();
+            self.sync_reasoning_effort_for_selection();
             self.notice.clear();
             return;
         }
@@ -1043,6 +1047,7 @@ impl App {
             .unwrap_or(0);
         self.phase = Phase::Model;
         self.focus = Focus::Scene;
+        self.sync_reasoning_effort_for_selection();
     }
 
     fn return_to_conversation_or_repair(&mut self) -> bool {
@@ -1123,12 +1128,14 @@ impl App {
             }
         }
         if let Some(model) = selected_model {
+            let effort = self.selected_reasoning_effort.clone();
             let selection = self
                 .rpc
-                .set_session_model(&session.session_id, model)
+                .set_session_model(&session.session_id, model, &effort)
                 .with_context(|| format!("select model for session {}", session.session_id))?;
             session.next_model = selection.next_model;
             session.next_reasoning_effort = selection.next_reasoning_effort;
+            self.selected_reasoning_effort = session.next_reasoning_effort.clone();
         }
         self.apply_open_session_state(session, items);
         Ok(())
@@ -1567,6 +1574,7 @@ impl App {
         self.selected_model = self.models[self.model_index].id.clone();
         self.phase = Phase::Model;
         self.focus = Focus::Scene;
+        self.sync_reasoning_effort_for_selection();
         self.notice.clear();
     }
 
@@ -2352,6 +2360,7 @@ impl App {
                         } else {
                             self.phase = Phase::Model;
                             self.focus = Focus::Scene;
+                            self.sync_reasoning_effort_for_selection();
                             self.notice =
                                 Notice::localized(MessageId::ProviderSetupCompleteChooseModel);
                         }
@@ -2678,11 +2687,17 @@ impl App {
             },
             Phase::Credential => self.handle_credential_key(key),
             Phase::Model => match key.code {
-                KeyCode::Up => self.model_index = self.model_index.saturating_sub(1),
+                KeyCode::Up => {
+                    self.model_index = self.model_index.saturating_sub(1);
+                    self.sync_reasoning_effort_for_selection();
+                }
                 KeyCode::Down => {
                     self.model_index =
                         (self.model_index + 1).min(self.models.len().saturating_sub(1));
+                    self.sync_reasoning_effort_for_selection();
                 }
+                KeyCode::Tab | KeyCode::Right => self.cycle_reasoning_effort(true),
+                KeyCode::BackTab | KeyCode::Left => self.cycle_reasoning_effort(false),
                 KeyCode::Enter => self.select_model_and_continue(self.model_index),
                 KeyCode::Esc => {
                     if self.active_session.is_some() {
@@ -5220,11 +5235,97 @@ impl App {
         }
     }
 
+    /// Discrete effort ladder from model inventory only (no hard-coded global tiers).
+    fn model_reasoning_efforts(&self) -> Vec<String> {
+        self.models
+            .get(self.model_index)
+            .map(|model| model.reasoning_efforts.clone())
+            .unwrap_or_default()
+    }
+
+    fn model_default_reasoning_effort(&self) -> String {
+        let Some(model) = self.models.get(self.model_index) else {
+            return String::new();
+        };
+        let default = model.default_reasoning_effort.trim();
+        if !default.is_empty()
+            && model
+                .reasoning_efforts
+                .iter()
+                .any(|effort| effort == default)
+        {
+            return default.to_owned();
+        }
+        for candidate in ["medium", "high", "low"] {
+            if model
+                .reasoning_efforts
+                .iter()
+                .any(|effort| effort == candidate)
+            {
+                return candidate.to_owned();
+            }
+        }
+        model
+            .reasoning_efforts
+            .first()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Prefer exact match, then small cross-vendor remap, then model default.
+    fn resolve_reasoning_effort_for_selection(&self, previous: &str) -> String {
+        let efforts = self.model_reasoning_efforts();
+        if efforts.is_empty() {
+            return String::new();
+        }
+        let previous = previous.trim().to_ascii_lowercase();
+        if !previous.is_empty() && efforts.iter().any(|effort| effort == &previous) {
+            return previous;
+        }
+        if !previous.is_empty() {
+            let mapped = remap_reasoning_effort(&previous);
+            if mapped != previous && efforts.iter().any(|effort| effort == &mapped) {
+                return mapped;
+            }
+        }
+        self.model_default_reasoning_effort()
+    }
+
+    fn sync_reasoning_effort_for_selection(&mut self) {
+        let previous = if !self.selected_reasoning_effort.is_empty() {
+            self.selected_reasoning_effort.clone()
+        } else {
+            self.active_session
+                .as_ref()
+                .map(|session| session.next_reasoning_effort.clone())
+                .unwrap_or_default()
+        };
+        self.selected_reasoning_effort = self.resolve_reasoning_effort_for_selection(&previous);
+    }
+
+    fn cycle_reasoning_effort(&mut self, forward: bool) {
+        let efforts = self.model_reasoning_efforts();
+        if efforts.len() < 2 {
+            return;
+        }
+        let current = efforts
+            .iter()
+            .position(|effort| effort == &self.selected_reasoning_effort)
+            .unwrap_or(0);
+        let next = if forward {
+            (current + 1) % efforts.len()
+        } else {
+            (current + efforts.len() - 1) % efforts.len()
+        };
+        self.selected_reasoning_effort = efforts[next].clone();
+    }
+
     fn select_model_and_continue(&mut self, index: usize) {
-        let Some(model) = self.models.get(index) else {
+        let Some(model_id) = self.models.get(index).map(|model| model.id.clone()) else {
             return;
         };
-        let model_id = model.id.clone();
+        self.model_index = index;
+        self.sync_reasoning_effort_for_selection();
         let provider_id = self
             .inventory
             .providers
@@ -5295,10 +5396,11 @@ impl App {
             .map(|session| session.session_id.clone())
         {
             self.rpc
-                .set_session_model(&session_id, &model_id)
+                .set_session_model(&session_id, &model_id, &self.selected_reasoning_effort)
                 .map_err(anyhow::Error::new)
                 .map(|selection| {
                     self.selected_model = selection.next_model.clone();
+                    self.selected_reasoning_effort = selection.next_reasoning_effort.clone();
                     if let Some(session) = self.active_session.as_mut() {
                         session.next_model = selection.next_model;
                         session.next_reasoning_effort = selection.next_reasoning_effort;
@@ -5348,6 +5450,17 @@ fn prompt_history_from_blocks(blocks: &[TranscriptBlock]) -> Vec<String> {
         }
     }
     history
+}
+
+/// Small cross-vendor effort aliases (must stay aligned with go/daemon remap).
+fn remap_reasoning_effort(effort: &str) -> String {
+    match effort.trim().to_ascii_lowercase().as_str() {
+        "xhigh" | "extra_high" | "extra-high" => "max".into(),
+        "max" => "xhigh".into(),
+        "minimal" | "min" => "low".into(),
+        "none" | "off" => "low".into(),
+        other => other.to_owned(),
+    }
 }
 
 fn combined_prompt_history(
@@ -6595,6 +6708,14 @@ mod tests {
         assert_eq!(locale_selection_index(Some("zh-TW")), 2);
         assert_eq!(agent_locale("zh-Hans"), "zh");
         assert_eq!(agent_locale("zh-Hant"), "zh-Hant");
+    }
+
+    #[test]
+    fn reasoning_effort_remap_covers_cross_vendor_aliases() {
+        assert_eq!(remap_reasoning_effort("xhigh"), "max");
+        assert_eq!(remap_reasoning_effort("max"), "xhigh");
+        assert_eq!(remap_reasoning_effort("minimal"), "low");
+        assert_eq!(remap_reasoning_effort("medium"), "medium");
     }
 
     #[test]
