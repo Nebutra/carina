@@ -386,9 +386,10 @@ impl TranscriptReducer {
         blocks: &mut Vec<TranscriptBlock>,
         event: WireEvent,
     ) -> bool {
-        let text = first_detail(&event.payload, &["text", "content", "message", "result"])
+        let raw = first_detail(&event.payload, &["text", "content", "message", "result"])
             .unwrap_or_default();
-        if text.is_empty() || is_action_json(&text) {
+        let text = visible_assistant_text(&raw).unwrap_or_default();
+        if text.is_empty() {
             return false;
         }
         let status = display_status(event.projected_status());
@@ -631,9 +632,12 @@ impl TranscriptReducer {
                 upsert_block(blocks, tool_block(record));
             }
             "agent_message" => {
-                let text = first_detail(&item.details, &["text", "content", "message", "result"])
-                    .unwrap_or_default();
-                if !text.is_empty() && !is_action_json(&text) {
+                let raw = first_detail(
+                    &item.details,
+                    &["text", "content", "message", "result", "summary"],
+                )
+                .unwrap_or_default();
+                if let Some(text) = visible_assistant_text(&raw) {
                     upsert_block(
                         blocks,
                         message_block(
@@ -1435,6 +1439,39 @@ fn is_action_json(text: &str) -> bool {
                 .any(|field| candidate.contains(field)))
 }
 
+/// Human-visible assistant body: plain text, or `tool=done` summary.
+/// Other internal action JSON is suppressed so tool calls do not leak as chat.
+fn visible_assistant_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if !is_action_json(trimmed) {
+        return Some(trimmed.to_owned());
+    }
+    let candidate = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .and_then(|value| value.strip_suffix("```"))
+        .map(str::trim)
+        .unwrap_or(trimmed);
+    let object = serde_json::from_str::<Value>(candidate).ok()?;
+    let object = object.as_object()?;
+    let tool = object
+        .get("tool")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !tool.eq_ignore_ascii_case("done") {
+        return None;
+    }
+    let summary = object
+        .get("summary")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    Some(summary.to_owned())
+}
+
 fn nested_message(details: &BTreeMap<String, Value>, key: &str) -> Option<String> {
     details
         .get(key)
@@ -2037,6 +2074,39 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         ]);
 
         assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn done_action_summary_becomes_assistant_bubble() {
+        let mut reducer = TranscriptReducer::default();
+        let blocks = reducer.hydrate(vec![item(
+            "agent_message",
+            "completed",
+            json!({"text": r#"{"tool":"done","summary":"你好！"}"#}),
+        )]);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, BlockKind::Assistant);
+        assert_eq!(blocks[0].body, "你好！");
+
+        let mut live = TranscriptReducer::default();
+        let mut live_blocks = Vec::new();
+        live.reduce_event(
+            &mut live_blocks,
+            wire(
+                "ModelResponded",
+                json!({"text": r#"{"tool":"done","summary":"我是 Codex"}"#}),
+            ),
+        );
+        assert_eq!(live_blocks.len(), 1);
+        assert_eq!(live_blocks[0].body, "我是 Codex");
+
+        let mut hidden = TranscriptReducer::default();
+        let hidden_blocks = hidden.hydrate(vec![item(
+            "agent_message",
+            "completed",
+            json!({"text": r#"{"tool":"read","path":"main.go"}"#}),
+        )]);
+        assert!(hidden_blocks.is_empty());
     }
 
     #[test]

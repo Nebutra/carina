@@ -483,6 +483,53 @@ func TestProjectSessionItemsHidesInternalModelActionJSON(t *testing.T) {
 	}
 }
 
+func TestProjectSessionItemsSurfacesDoneSummaryAsAgentMessage(t *testing.T) {
+	items := projectSessionItems("sess_1", []itemAuditEvent{
+		{EventID: "evt_q", SessionID: "sess_1", TaskID: "run_1", Type: "ExecutionQueued", Payload: map[string]any{
+			"user_prompt": "hi", "model": "provider/model",
+		}},
+		{EventID: "evt_m", SessionID: "sess_1", TaskID: "run_1", Type: "ModelResponded", Actor: "model", Payload: map[string]any{
+			"text": `{"tool":"done","summary":"你好！有什么可以帮你的？"}`,
+		}},
+		{EventID: "evt_c", SessionID: "sess_1", TaskID: "run_1", Type: "ExecutionCompleted", Payload: map[string]any{
+			"summary": "你好！有什么可以帮你的？",
+		}},
+	})
+	assertEventType(t, items, "turn.started")
+	msg := findItem(t, items, "item.completed", "agent_message")
+	if msg.Details["text"] != "你好！有什么可以帮你的？" {
+		t.Fatalf("done summary not projected as agent_message text: %+v", msg.Details)
+	}
+	// ExecutionCompleted must not double the answer after ModelResponded(done).
+	for _, event := range items {
+		if event.Type == "turn.completed" {
+			t.Fatalf("duplicate turn.completed after done agent_message: %+v", event)
+		}
+	}
+}
+
+func TestProjectSessionItemsExecutionCompletedFallback(t *testing.T) {
+	items := projectSessionItems("sess_1", []itemAuditEvent{
+		{EventID: "evt_q", SessionID: "sess_1", TaskID: "run_2", Type: "ExecutionQueued", Payload: map[string]any{
+			"user_prompt": "你好",
+		}},
+		{EventID: "evt_c", SessionID: "sess_1", TaskID: "run_2", Type: "ExecutionCompleted", Payload: map[string]any{
+			"summary": "你好！",
+		}},
+	})
+	assertEventType(t, items, "turn.started")
+	assertEventType(t, items, "turn.completed")
+	var found bool
+	for _, event := range items {
+		if event.Type == "turn.completed" && stringField(event.Details, "summary") == "你好！" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("ExecutionCompleted summary not projected: %+v", items)
+	}
+}
+
 func assertEventType(t *testing.T, events []SessionItemEvent, typ string) {
 	t.Helper()
 	for _, ev := range events {

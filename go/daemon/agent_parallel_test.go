@@ -80,6 +80,37 @@ func TestSystemPromptRequiresEconomicalCompletion(t *testing.T) {
 	}
 }
 
+func TestSystemPromptCarriesNebutraCarinaProductIdentity(t *testing.T) {
+	for _, want := range []string{
+		"You are Carina",
+		"Nebutra",
+		"云毓智能",
+		"PRODUCT CAPABILITY BRIEF",
+		"transactional file patches",
+		"hash-chained audit",
+		"not: a full IDE",
+		"Do not self-identify as Claude, Codex, GPT",
+	} {
+		if !strings.Contains(systemPrompt, want) {
+			t.Fatalf("product identity/capability harness missing %q", want)
+		}
+	}
+	// Subagent tool sheet must stay lean: full product brief lives on main agent only.
+	if strings.Contains(toolsHelp, "hash-chained audit") || strings.Contains(toolsHelp, "BYOK") {
+		t.Fatal("toolsHelp must not embed the full product capability brief (subagents share toolsHelp)")
+	}
+	if !strings.Contains(productCapabilityBrief, "hash-chained audit") {
+		t.Fatal("productCapabilityBrief missing expected capability content")
+	}
+	if strings.HasPrefix(strings.TrimSpace(systemPrompt), "You are a coding agent") {
+		t.Fatal("system prompt still opens with generic coding-agent identity")
+	}
+	specs := builtinAgentSpecs()
+	if !strings.Contains(specs["build"].SystemPrompt, "You are Carina in build mode") {
+		t.Fatalf("build mode should name Carina: %q", specs["build"].SystemPrompt)
+	}
+}
+
 func TestExecuteBatchParallelReads(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()

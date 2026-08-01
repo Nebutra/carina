@@ -487,6 +487,9 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 	patches := map[string]*patchProjection{}
 	patchesByTask := map[string][]string{}
 	emittedDiff := map[string]bool{}
+	// Turns that already projected a human-visible assistant answer.
+	// Used to avoid duplicating ModelResponded(done) + ExecutionCompleted.
+	answerByTask := map[string]bool{}
 
 	for i, ev := range events {
 		if sessionID == "" {
@@ -579,8 +582,29 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			})
 
 		case "ModelResponded":
+			// Internal tool-call action JSON is not chat content, except terminal
+			// tool=done whose summary is the human-visible final answer. Without
+			// this, pure conversation turns rehydrate as user bubbles only.
 			if text := stringField(ev.Payload, "text"); text != "" {
-				if _, err := parseAction(text); err == nil {
+				if act, err := parseAction(text); err == nil {
+					if summary := terminalDoneSummary(act); summary != "" {
+						details := modelResponseDetails(ev)
+						details["text"] = summary
+						details["summary"] = summary
+						item := &SessionItem{
+							ID:          fallbackItemID("msg", ev, i),
+							Type:        "agent_message",
+							Status:      modelStatus(ev.Payload),
+							TaskID:      ev.TaskID,
+							StartedAt:   ev.Timestamp,
+							CompletedAt: ev.Timestamp,
+							Details:     details,
+						}
+						out = append(out, itemEvent("item.completed", sessionID, ev, item))
+						if ev.TaskID != "" {
+							answerByTask[ev.TaskID] = true
+						}
+					}
 					break
 				}
 			}
@@ -594,11 +618,32 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 				Details:     modelResponseDetails(ev),
 			}
 			out = append(out, itemEvent("item.completed", sessionID, ev, item))
+			if ev.TaskID != "" {
+				answerByTask[ev.TaskID] = true
+			}
 			if item.Status == "failed" {
 				out = append(out, turnEvent("turn.failed", sessionID, ev, map[string]any{
 					"status": "failed",
 					"error":  stringField(ev.Payload, "error"),
 				}))
+			}
+
+		case "ExecutionCompleted":
+			// Fallback when ModelResponded was missing or only carried opaque
+			// action JSON without a projectable done summary.
+			if ev.TaskID != "" && answerByTask[ev.TaskID] {
+				break
+			}
+			summary := strings.TrimSpace(stringField(ev.Payload, "summary"))
+			if summary == "" {
+				break
+			}
+			out = append(out, turnEvent("turn.completed", sessionID, ev, map[string]any{
+				"status":  "completed",
+				"summary": summary,
+			}))
+			if ev.TaskID != "" {
+				answerByTask[ev.TaskID] = true
 			}
 
 		case "CommandStarted":
@@ -1006,6 +1051,15 @@ func modelResponseDetails(ev itemAuditEvent) map[string]any {
 		details["actor"] = ev.Actor
 	}
 	return details
+}
+
+// terminalDoneSummary returns the user-facing answer from a terminal "done"
+// action. Other tools stay hidden in the transcript projection.
+func terminalDoneSummary(act action) string {
+	if !strings.EqualFold(strings.TrimSpace(act.Tool), "done") {
+		return ""
+	}
+	return strings.TrimSpace(act.Summary)
 }
 
 func modelStatus(payload map[string]any) string {

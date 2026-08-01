@@ -128,7 +128,7 @@ func builtinAgentSpecs() map[string]*AgentSpec {
 			Mode:         "primary",
 			MaxTurns:     8,
 			Source:       "built-in",
-			SystemPrompt: "You are in build mode. Inspect the workspace, make targeted changes, run relevant checks, and finish with a concise engineering summary.",
+			SystemPrompt: "You are Carina in build mode. Inspect the workspace, make targeted changes, run relevant checks, and finish with a concise engineering summary.",
 		},
 		"plan": {
 			Name:         "plan",
@@ -137,7 +137,7 @@ func builtinAgentSpecs() map[string]*AgentSpec {
 			Mode:         "primary",
 			MaxTurns:     8,
 			Source:       "built-in",
-			SystemPrompt: "You are in plan mode. Explore and reason, but do not edit files or run commands. Produce a concrete plan and wait for approval before implementation.",
+			SystemPrompt: "You are Carina in plan mode. Explore and reason, but do not edit files or run commands. Produce a concrete plan and wait for approval before implementation.",
 		},
 		"general": {
 			Name:         "general",
@@ -146,7 +146,7 @@ func builtinAgentSpecs() map[string]*AgentSpec {
 			Mode:         "subagent",
 			MaxTurns:     8,
 			Source:       "built-in",
-			SystemPrompt: "You are a general-purpose subagent. Complete the delegated task independently and return only the result summary.",
+			SystemPrompt: "You are a Carina subagent. Complete the delegated task independently and return only the result summary.",
 		},
 		"explore": {
 			Name:         "explore",
@@ -155,7 +155,7 @@ func builtinAgentSpecs() map[string]*AgentSpec {
 			Mode:         "subagent",
 			MaxTurns:     6,
 			Source:       "built-in",
-			SystemPrompt: "You are a codebase exploration specialist. Use list, search, and read. Do not edit files or run commands. Return exact paths and findings.",
+			SystemPrompt: "You are a Carina codebase exploration specialist. Use list, search, and read. Do not edit files or run commands. Return exact paths and findings.",
 		},
 		"candidate-drafter": {
 			Name:            "candidate-drafter",
