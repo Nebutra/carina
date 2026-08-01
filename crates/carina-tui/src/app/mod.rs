@@ -478,7 +478,7 @@ impl App {
             .model_inventory()
             .context("load provider/model inventory")?;
         let mut sessions = rpc.sessions().context("load sessions")?;
-        sessions.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        sort_sessions_by_recency(&mut sessions);
         let models = inventory.available_models();
         let locale_index = locale_selection_index(options.locale.as_deref());
         let phase = startup_phase(
@@ -689,7 +689,8 @@ impl App {
 
     fn open_session_browser(&mut self) {
         let refresh_error = match self.rpc.sessions() {
-            Ok(sessions) => {
+            Ok(mut sessions) => {
+                sort_sessions_by_recency(&mut sessions);
                 self.sessions = sessions;
                 None
             }
@@ -1385,7 +1386,7 @@ impl App {
             prompt_history,
             prompt_history_unavailable,
         } = *outcome;
-        sessions.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        sort_sessions_by_recency(&mut sessions);
         self.rpc = rpc;
         self.runtime = runtime;
         self.inventory = inventory;
@@ -5612,12 +5613,34 @@ fn plan_review_key_action(code: KeyCode) -> Option<Action> {
     }
 }
 
+/// Workspace sessions ordered most-recent first for cold-start resume.
 fn workspace_session_ids(sessions: &[Session], workspace: &Path) -> Vec<String> {
-    sessions
+    let mut ids: Vec<&Session> = sessions
         .iter()
         .filter(|session| same_workspace(&session.workspace_root, workspace))
+        .filter(|session| session.status != "closed")
+        .collect();
+    ids.sort_by(|left, right| session_recency_key(right).cmp(&session_recency_key(left)));
+    ids.into_iter()
         .map(|session| session.session_id.clone())
         .collect()
+}
+
+fn session_recency_key(session: &Session) -> String {
+    // ISO-8601 timestamps sort lexicographically when present.
+    let updated = session.updated_at.trim();
+    if !updated.is_empty() {
+        return updated.to_owned();
+    }
+    session.created_at.trim().to_owned()
+}
+
+fn sort_sessions_by_recency(sessions: &mut [Session]) {
+    sessions.sort_by(|left, right| {
+        session_recency_key(right)
+            .cmp(&session_recency_key(left))
+            .then_with(|| left.session_id.cmp(&right.session_id))
+    });
 }
 
 fn needs_explicit_model_confirmation(sessions: &[Session], workspace: &Path) -> bool {
@@ -6730,8 +6753,8 @@ mod tests {
     }
 
     #[test]
-    fn workspace_session_candidates_preserve_newest_first_order() {
-        let session = |id: &str, workspace_root: &str| Session {
+    fn workspace_session_candidates_prefer_most_recent_first() {
+        let session = |id: &str, workspace_root: &str, updated_at: &str| Session {
             session_id: id.into(),
             name: String::new(),
             workspace_id: String::new(),
@@ -6740,22 +6763,25 @@ mod tests {
             next_model: String::new(),
             next_reasoning_effort: String::new(),
             plan_mode: false,
-            created_at: String::new(),
+            created_at: updated_at.into(),
+            updated_at: updated_at.into(),
             latest_run_id: String::new(),
             latest_run_agent: String::new(),
             execution_status: String::new(),
             summary: String::new(),
             continuity: None,
         };
+        // Deliberately unordered input: older listed before newer.
         let sessions = vec![
-            session("stale-newest", "/tmp/carina"),
-            session("other", "/tmp/other"),
-            session("valid-older", "/tmp/carina"),
+            session("older", "/tmp/carina", "2026-07-01T00:00:00Z"),
+            session("other", "/tmp/other", "2026-08-01T00:00:00Z"),
+            session("newest", "/tmp/carina", "2026-08-02T12:00:00Z"),
+            session("mid", "/tmp/carina", "2026-07-15T00:00:00Z"),
         ];
 
         assert_eq!(
             workspace_session_ids(&sessions, Path::new("/tmp/carina")),
-            vec!["stale-newest", "valid-older"]
+            vec!["newest", "mid", "older"]
         );
         assert!(!needs_explicit_model_confirmation(
             &sessions,
@@ -6885,6 +6911,7 @@ mod tests {
             next_reasoning_effort: "high".into(),
             plan_mode: true,
             created_at: String::new(),
+            updated_at: String::new(),
             latest_run_id: "run_plan".into(),
             latest_run_agent: "plan".into(),
             execution_status: "completed".into(),

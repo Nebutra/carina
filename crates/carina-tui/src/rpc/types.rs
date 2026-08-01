@@ -433,6 +433,9 @@ pub struct Session {
     pub plan_mode: bool,
     #[serde(default)]
     pub created_at: String,
+    /// Recency for cold-start resume / session browser (task activity or created_at).
+    #[serde(default)]
+    pub updated_at: String,
     #[serde(default)]
     pub latest_run_id: String,
     #[serde(default)]

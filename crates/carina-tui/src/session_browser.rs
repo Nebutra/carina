@@ -315,6 +315,7 @@ mod tests {
             next_reasoning_effort: "high".into(),
             plan_mode: false,
             created_at: String::new(),
+            updated_at: String::new(),
             latest_run_id: String::new(),
             latest_run_agent: String::new(),
             execution_status: String::new(),

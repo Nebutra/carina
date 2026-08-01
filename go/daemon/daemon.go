@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1785,8 +1786,22 @@ func (d *Daemon) handleSessionList(params json.RawMessage) (any, error) {
 			entry.TaskRevision, entry.TaskStatus, entry.Summary = task.Revision, task.Status, task.Summary
 			entry.Continuity, entry.UpdatedAt = &state, task.UpdatedAt
 		}
+		// Always expose a recency timestamp so clients can resume the most recent
+		// conversation instead of map-iteration order.
+		if entry.UpdatedAt.IsZero() {
+			entry.UpdatedAt = sess.CreatedAt
+		}
 		out = append(out, entry)
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].UpdatedAt.After(out[j].UpdatedAt)
+		}
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].SessionID < out[j].SessionID
+	})
 	return out, nil
 }
 

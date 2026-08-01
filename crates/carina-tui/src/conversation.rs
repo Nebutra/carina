@@ -120,10 +120,10 @@ impl ConversationStatus<'_> {
             if area.width >= 80 {
                 format!(
                     "{spinner} {}  {:<11} {} {}",
-                    pad_or_truncate_cells(activity, 14),
+                    pad_or_truncate_cells(activity, 14, theme.glyphs),
                     elapsed,
                     theme.glyphs.separator(),
-                    pad_or_truncate_cells(&affordance, 23)
+                    pad_or_truncate_cells(&affordance, 23, theme.glyphs)
                 )
             } else if elapsed.is_empty() {
                 format!(
@@ -151,7 +151,7 @@ impl ConversationStatus<'_> {
         if self.priority_notice && !self.notice.is_empty() {
             frame.render_widget(
                 Paragraph::new(Span::styled(
-                    truncate_cells(self.notice, area.width as usize),
+                    truncate_cells(self.notice, area.width as usize, theme.glyphs),
                     Style::default().fg(theme.danger),
                 )),
                 area,
@@ -191,7 +191,7 @@ impl ConversationStatus<'_> {
                 + UnicodeWidthStr::width(metrics.as_str())
                 + UnicodeWidthStr::width(notice_separator)) as u16,
         ) as usize;
-        let notice = truncate_cells(self.notice, available);
+        let notice = truncate_cells(self.notice, available, theme.glyphs);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(left, Style::default().fg(theme.muted)),
@@ -313,12 +313,12 @@ pub fn localized_execution_status(locale: Locale, status: &str) -> String {
     tr(locale, id).to_owned()
 }
 
-fn truncate_cells(value: &str, max_width: usize) -> String {
-    crate::render_contract::truncate_width(value, max_width)
+fn truncate_cells(value: &str, max_width: usize, glyphs: Glyphs) -> String {
+    crate::render_contract::truncate_width_with_glyphs(value, max_width, glyphs)
 }
 
-fn pad_or_truncate_cells(value: &str, width: usize) -> String {
-    let value = truncate_cells(value, width);
+fn pad_or_truncate_cells(value: &str, width: usize, glyphs: Glyphs) -> String {
+    let value = truncate_cells(value, width, glyphs);
     let padding = width.saturating_sub(UnicodeWidthStr::width(value.as_str()));
     format!("{value}{}", " ".repeat(padding))
 }
@@ -365,6 +365,7 @@ mod tests {
             next_reasoning_effort: String::new(),
             plan_mode: false,
             created_at: String::new(),
+            updated_at: String::new(),
             latest_run_id: String::new(),
             latest_run_agent: String::new(),
             execution_status: String::new(),
@@ -422,11 +423,25 @@ mod tests {
             .collect::<String>();
         assert!(!rendered.contains("ready"));
         assert_eq!(
-            truncate_cells("中文状态更新", 11),
-            format!("中文状态更{}", Glyphs::detect().ellipsis())
+            truncate_cells(
+                "中文状态更新",
+                11,
+                Glyphs::new(crate::glyphs::GlyphMode::Unicode)
+            ),
+            format!(
+                "中文状态更{}",
+                Glyphs::new(crate::glyphs::GlyphMode::Unicode).ellipsis()
+            )
         );
         assert_eq!(
-            UnicodeWidthStr::width(truncate_cells("中文状态更新", 11).as_str()),
+            UnicodeWidthStr::width(
+                truncate_cells(
+                    "中文状态更新",
+                    11,
+                    Glyphs::new(crate::glyphs::GlyphMode::Unicode),
+                )
+                .as_str(),
+            ),
             11
         );
     }
