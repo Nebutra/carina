@@ -915,6 +915,7 @@ fn tool_facts(tool: String, status: &str, details: &BTreeMap<String, Value>) -> 
     .unwrap_or_default();
     ToolFacts {
         name: tool,
+        intent: detail(details, "intent").unwrap_or_default(),
         path: nested("path")
             .or_else(|| detail(details, "path"))
             .unwrap_or_default(),
@@ -1795,6 +1796,31 @@ tool:read-3 | title=[src/file-3.rs] | status=[] | body=[]
 tool:read-4 | title=[src/file-4.rs] | status=[] | body=[]
 tool:read-5 | title=[src/file-5.rs] | status=[] | body=[]
 ");
+    }
+
+    #[test]
+    fn intent_is_stable_across_live_lifecycle_and_hydrated_replay() {
+        let requested = json!({
+            "call_id":"read-1",
+            "tool":"read",
+            "intent":"Understand the transcript reducer",
+            "arguments":{"path":"src/transcript.rs"}
+        });
+        let completed = json!({"call_id":"read-1","tool":"read","status":"completed"});
+
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        reducer.reduce_event(&mut blocks, wire("ToolCallRequested", requested.clone()));
+        reducer.reduce_event(&mut blocks, wire("ToolCallCompleted", completed));
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].title, "Read  Understand the transcript reducer");
+        assert_eq!(blocks[0].tool_members[0].title, "src/transcript.rs");
+
+        let hydrated =
+            TranscriptReducer::default().hydrate(vec![item("tool_call", "completed", requested)]);
+        assert_eq!(hydrated.len(), 1);
+        assert_eq!(hydrated[0].title, blocks[0].title);
+        assert_eq!(hydrated[0].tool_members[0].title, "src/transcript.rs");
     }
 
     #[test]

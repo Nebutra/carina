@@ -75,6 +75,7 @@ const toolsHelp = `Available tools:
 
 Harness protocol:
 - Reply with ONLY the JSON object for the next action. No prose, no markdown fences outside JSON.
+- Every tool action except "done" MUST include "intent":"<brief user-visible purpose>". State why the action helps, without secrets, hidden reasoning, commands, paths, or policy metadata.
 - Emit ONE tool action per turn (except the read-only batch form below).
 - First decide whether the request needs workspace evidence or action.
 - For greetings, casual conversation, acknowledgements, language checks, or general questions answerable without workspace state, call "done" immediately with the direct user-facing answer. Do not list, read, search, run, patch, or load repository instructions first.
@@ -119,6 +120,7 @@ type action struct {
 	lifecycleCallID string
 	Thought         string               `json:"thought"`
 	Tool            string               `json:"tool"`
+	Intent          string               `json:"intent,omitempty"`
 	Action          json.RawMessage      `json:"action,omitempty"`
 	Path            string               `json:"path"`
 	Pattern         string               `json:"pattern"`
@@ -165,15 +167,13 @@ type SpawnTask struct {
 // hand-picked subset, so a stuck model can't dodge detection by varying a
 // field the old fingerprint (agent.go's five hard-coded fields) ignored.
 //
-// Thought is deliberately excluded: it is free-form
-// reasoning text a stuck model could reword every turn to evade detection
-// without changing what it actually does. Action is the raw nested-form input;
-// parseAction has already projected it into the typed fields. Actions remains
-// included because it is the actual payload of a parallel batch.
+// Thought and Intent are deliberately excluded: both are free-form text a
+// stuck model could reword every turn to evade detection without changing what
+// it actually does. Action is the raw nested-form input; parseAction has
+// already projected it into the typed fields. Actions remains included because
+// it is the actual payload of a parallel batch.
 func (a *action) signature() string {
-	cp := *a
-	cp.Thought = ""
-	cp.Action = nil
+	cp := a.signaturePayload()
 	raw, err := json.Marshal(cp)
 	if err != nil {
 		// Fall back to the tool name alone; extremely unlikely (all action
@@ -182,6 +182,16 @@ func (a *action) signature() string {
 	}
 	h := sha256.Sum256(raw)
 	return hex.EncodeToString(h[:])
+}
+
+func (a action) signaturePayload() action {
+	a.Thought = ""
+	a.Intent = ""
+	a.Action = nil
+	for i := range a.Actions {
+		a.Actions[i] = a.Actions[i].signaturePayload()
+	}
+	return a
 }
 
 // runTask drives one agent task to completion (PRD §18). Every side effect is

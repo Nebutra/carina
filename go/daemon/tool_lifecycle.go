@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/Nebutra/carina/go/artifact"
 	"github.com/Nebutra/carina/go/continuity"
@@ -259,16 +260,36 @@ func (d *Daemon) beginToolCall(sess *sessionstore.Session, task *scheduler.Execu
 	if err := env.Validate(); err != nil {
 		return call, err
 	}
-	if err := d.recordStrict(sess.SessionID, "ToolCallRequested", task.RunID, "go", map[string]any{
+	payload := map[string]any{
 		"call_id": call.id, "tool": call.tool, "kind": call.kind, "status": string(env.Status),
 		"arguments": redacted, "effect": effect,
-	}, ""); err != nil {
+	}
+	if intent := normalizeToolIntent(act.Intent); intent != "" {
+		payload["intent"] = intent
+	}
+	if err := d.recordStrict(sess.SessionID, "ToolCallRequested", task.RunID, "go", payload, ""); err != nil {
 		return call, err
 	}
 	if err := d.recordRuntimeStageStrict(sess, task, call, call.nextSequence(), "tool.requested", "running"); err != nil {
 		return call, err
 	}
 	return call, nil
+}
+
+func normalizeToolIntent(value string) string {
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	const maxRunes = 160
+	runes := []rune(value)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes-1]) + "…"
+	}
+	return value
 }
 
 func effectArguments(act *action) map[string]any {

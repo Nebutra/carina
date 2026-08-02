@@ -119,6 +119,7 @@ fn visible_count(total: usize, expanded: bool, collapsed_limit: usize) -> Visibl
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ToolFacts {
     pub name: String,
+    pub intent: String,
     pub path: String,
     pub affected_files: String,
     pub pattern: String,
@@ -169,10 +170,11 @@ pub fn present(facts: &ToolFacts, failed: bool) -> ToolPresentation {
         ToolKind::Diff => &facts.affected_files,
         ToolKind::CodeMap | ToolKind::Extension | ToolKind::Todo => "",
     };
-    let title = if target.is_empty() {
+    let title_detail = first(&facts.intent, target);
+    let title = if title_detail.is_empty() {
         kind.label().to_owned()
     } else {
-        format!("{}  {target}", kind.label())
+        format!("{}  {title_detail}", kind.label())
     };
     let body = match kind {
         ToolKind::Patch | ToolKind::Diff => edit_body(facts, failed),
@@ -266,6 +268,31 @@ mod tests {
         assert_eq!(presentation.title, "Read  src/lib.rs");
         assert!(presentation.body.is_empty());
         assert!(!presentation.collapsible);
+    }
+
+    #[test]
+    fn tool_titles_prefer_intent_and_retain_target_separately() {
+        let presentation = present(
+            &ToolFacts {
+                name: "read".into(),
+                intent: "Inspect the projection contract".into(),
+                path: "src/lib.rs".into(),
+                ..ToolFacts::default()
+            },
+            false,
+        );
+        assert_eq!(presentation.title, "Read  Inspect the projection contract");
+        assert_eq!(presentation.target, "src/lib.rs");
+
+        let fallback = present(
+            &ToolFacts {
+                name: "read".into(),
+                path: "src/lib.rs".into(),
+                ..ToolFacts::default()
+            },
+            false,
+        );
+        assert_eq!(fallback.title, "Read  src/lib.rs");
     }
 
     #[test]

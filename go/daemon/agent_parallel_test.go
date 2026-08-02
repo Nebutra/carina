@@ -9,12 +9,15 @@ import (
 
 func TestParseActionBatch(t *testing.T) {
 	// A well-formed batch parses with Actions populated.
-	a, err := parseAction(`{"actions":[{"tool":"read","path":"a.go"},{"tool":"search","pattern":"foo"}]}`)
+	a, err := parseAction(`{"intent":"Gather evidence","actions":[{"tool":"read","path":"a.go","intent":"Inspect the source"},{"tool":"search","pattern":"foo","intent":"Find consumers"}]}`)
 	if err != nil {
 		t.Fatalf("valid batch should parse: %v", err)
 	}
 	if len(a.Actions) != 2 || a.Actions[0].Tool != "read" || a.Actions[1].Tool != "search" {
 		t.Fatalf("batch not parsed: %+v", a.Actions)
+	}
+	if a.Intent != "Gather evidence" || a.Actions[0].Intent != "Inspect the source" || a.Actions[1].Intent != "Find consumers" {
+		t.Fatalf("batch intent was not decoded: %+v", a)
 	}
 
 	// A single action still parses with Actions==nil (back-compat).
@@ -30,6 +33,25 @@ func TestParseActionBatch(t *testing.T) {
 	// A nested batch errors.
 	if _, err := parseAction(`{"actions":[{"tool":"read","path":"a","actions":[{"tool":"read"}]}]}`); err == nil {
 		t.Fatal("nested batch must error")
+	}
+}
+
+func TestParseActionIntentFlatAndNested(t *testing.T) {
+	flat, err := parseAction(`{"tool":"read","path":"x","intent":"Inspect x"}`)
+	if err != nil || flat.Intent != "Inspect x" {
+		t.Fatalf("flat intent: action=%+v err=%v", flat, err)
+	}
+	nested, err := parseAction(`{"action":{"tool":"read","path":"x","intent":"Inspect nested x"}}`)
+	if err != nil || nested.Intent != "Inspect nested x" {
+		t.Fatalf("nested intent: action=%+v err=%v", nested, err)
+	}
+}
+
+func TestToolsHelpRequiresPublicIntentForToolActions(t *testing.T) {
+	for _, phrase := range []string{`Every tool action except "done" MUST include "intent"`, "without secrets, hidden reasoning, commands, paths, or policy metadata"} {
+		if !strings.Contains(toolsHelp, phrase) {
+			t.Fatalf("toolsHelp missing intent contract %q", phrase)
+		}
 	}
 }
 

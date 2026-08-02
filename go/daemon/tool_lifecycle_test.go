@@ -91,6 +91,7 @@ func TestBatchToolLifecycleCallIDsAreIsolated(t *testing.T) {
 	var mu sync.Mutex
 	requested := map[string]bool{}
 	completed := map[string]bool{}
+	requestedIntents := map[string]bool{}
 	d.events.Tap(func(_ string, event map[string]any) {
 		payload, _ := event["payload"].(map[string]any)
 		id, _ := payload["call_id"].(string)
@@ -102,17 +103,28 @@ func TestBatchToolLifecycleCallIDsAreIsolated(t *testing.T) {
 		switch event["type"] {
 		case "ToolCallRequested":
 			requested[id] = true
+			if intent, _ := payload["intent"].(string); intent != "" {
+				requestedIntents[intent] = true
+			}
 		case "ToolCallCompleted":
 			completed[id] = true
 		}
 	})
-	d.executeBatch(sess, task, []action{{Tool: "read", Path: "a.txt"}, {Tool: "read", Path: "b.txt"}})
+	d.executeBatch(sess, task, []action{
+		{Tool: "read", Path: "a.txt", Intent: "Inspect the first file"},
+		{Tool: "read", Path: "b.txt", Intent: "Inspect the second file"},
+	})
 	if len(requested) != 2 || len(completed) != 2 {
 		t.Fatalf("requested=%v completed=%v", requested, completed)
 	}
 	for id := range requested {
 		if !completed[id] {
 			t.Fatalf("call %s did not complete independently", id)
+		}
+	}
+	for _, intent := range []string{"Inspect the first file", "Inspect the second file"} {
+		if !requestedIntents[intent] {
+			t.Fatalf("batch lifecycle missing intent %q: %v", intent, requestedIntents)
 		}
 	}
 }
@@ -133,7 +145,8 @@ func TestExecuteActionEmitsAuthoritativeToolLifecycle(t *testing.T) {
 			observed = append(observed, event)
 		}
 	})
-	if got := d.executeAction(sess, task, &action{Tool: "read", Path: "secret.txt", Content: "must-not-leak"}); got != "value" {
+	intent := "  Inspect\n\tsecret\x00 metadata  " + strings.Repeat("界", 180)
+	if got := d.executeAction(sess, task, &action{Tool: "read", Path: "secret.txt", Content: "must-not-leak", Intent: intent}); got != "value" {
 		t.Fatalf("read result = %q", got)
 	}
 
@@ -174,6 +187,13 @@ func TestExecuteActionEmitsAuthoritativeToolLifecycle(t *testing.T) {
 	if args["path"] != "secret.txt" {
 		t.Fatalf("redacted args lost safe path: %#v", args)
 	}
+	if _, leaked := args["intent"]; leaked {
+		t.Fatal("intent must remain lifecycle metadata, not tool arguments")
+	}
+	wantIntent := "Inspect secret metadata " + strings.Repeat("界", 135) + "…"
+	if requested["intent"] != wantIntent {
+		t.Fatalf("intent = %q, want %q", requested["intent"], wantIntent)
+	}
 	completed := observed[5]["payload"].(map[string]any)
 	output := completed["output"].(map[string]any)
 	if output["bytes"] != 5 || output["sha256"] == "" || output["redacted"] != true {
@@ -199,6 +219,26 @@ func TestExecuteActionEmitsAuthoritativeToolLifecycle(t *testing.T) {
 	audit, _ := d.kern.ReadEvents(sess.SessionID)
 	if strings.Contains(string(audit), `"value"`) {
 		t.Fatal("tool output leaked into authoritative audit log")
+	}
+}
+
+func TestNormalizeToolIntent(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "empty", input: " \n\t\x00\u0085 ", want: ""},
+		{name: "unicode whitespace", input: "  inspect\u2003the\r\ncontract  ", want: "inspect the contract"},
+		{name: "unicode preserved", input: "读取 配置", want: "读取 配置"},
+		{name: "bounded by rune", input: strings.Repeat("界", 161), want: strings.Repeat("界", 159) + "…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeToolIntent(tt.input); got != tt.want {
+				t.Fatalf("normalizeToolIntent(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 

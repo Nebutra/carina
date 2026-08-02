@@ -439,6 +439,7 @@ func TestProjectSessionItemsMergesLifecycleOwnedCommandDetails(t *testing.T) {
 	events := []itemAuditEvent{
 		{EventID: "evt_1", SessionID: "sess_1", TaskID: "task_1", Type: "ToolCallRequested", Payload: map[string]any{
 			"call_id": "call_1", "tool": "run", "kind": "command", "status": "pending",
+			"intent":    "Verify the daemon lifecycle",
 			"arguments": map[string]any{"executable": "go", "argc": 3},
 		}},
 		{EventID: "evt_2", SessionID: "sess_1", TaskID: "task_1", Type: "CommandStarted", Payload: map[string]any{
@@ -462,6 +463,9 @@ func TestProjectSessionItemsMergesLifecycleOwnedCommandDetails(t *testing.T) {
 	}
 	if item.Details["command"] != "go test ./..." || item.Details["stdout"] != "ok\n" || fmt.Sprint(item.Details["exit_code"]) != "0" {
 		t.Fatalf("command details were not retained: %+v", item.Details)
+	}
+	if item.Details["intent"] != "Verify the daemon lifecycle" {
+		t.Fatalf("tool intent was not retained for replay: %+v", item.Details)
 	}
 	for _, event := range items {
 		if event.Item != nil && event.Item.Type == "command_execution" {

@@ -40,6 +40,23 @@ func TestActionSignatureExcludesThought(t *testing.T) {
 	}
 }
 
+func TestActionSignatureExcludesIntentAtEveryBatchLevel(t *testing.T) {
+	a1 := action{
+		Tool:   "batch",
+		Intent: "Inspect the implementation",
+		Actions: []action{{
+			Tool: "read", Path: "a.go", Intent: "Read the first implementation",
+		}},
+	}
+	a2 := a1
+	a2.Intent = "Gather implementation evidence"
+	a2.Actions = append([]action(nil), a1.Actions...)
+	a2.Actions[0].Intent = "Inspect the same file"
+	if a1.signature() != a2.signature() {
+		t.Fatal("intent text must not let repeated actions evade loop detection")
+	}
+}
+
 // TestActionSignatureIncludesActions verifies different batch payloads cannot
 // collide in the loop guard.
 func TestActionSignatureIncludesActions(t *testing.T) {
