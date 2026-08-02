@@ -46,6 +46,7 @@ States:
 | Key hints + real `/help` | **wired** | `help.rs`, `Overlay::Help`, `?` / `/help` | #22 |
 | UI copy voice guide | **wired** | `VOICE.md` | #23 |
 | Frame scheduling | **wired** | `frame_scheduler.rs` coalesce + idle `WaitPlan::Block` | #13 |
+| Streaming feedback latency | **wired** | RPC receipt markers + five-phase `feedback_latency` stats + focus-gated 80 ms motion | ISSUE-008 |
 | Sync output DECSET 2026 | **wired** | `sync_output.rs` | #12 |
 | Resize reflow from source | **wired** | `TranscriptReflowState` + reflow_scrollback | #15 |
 | Native scrollback migration | **wired** (partial) | ledger + insert_before path; default still uses product viewport where needed | #11 |

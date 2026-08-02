@@ -4,7 +4,7 @@
 //! forms can be width-locked together. Common box/block characters are used
 //! only where mainstream monospace fonts cover them; fragile miscellaneous
 //! symbols are deliberately avoided. ASCII mode uses familiar punctuation so
-//! missing fonts cannot render tofu. Braille animation falls back to a slower
+//! missing fonts cannot render tofu. Braille animation falls back to a
 //! one-cell ASCII cycle, and block waterlines fall back to `#`/`.` cells.
 //!
 //! Outer product chrome is rounded in Unicode mode and plain in ASCII mode.
@@ -16,6 +16,8 @@ use std::env;
 use ratatui::widgets::BorderType;
 #[cfg(test)]
 use unicode_width::UnicodeWidthStr;
+
+use crate::frame_scheduler::SPINNER_INTERVAL;
 
 pub const GLYPH_MODE_ENV: &str = "CARINA_TUI_GLYPHS";
 pub const ASCII_MODE_ENV: &str = "CARINA_ASCII";
@@ -324,11 +326,7 @@ impl Glyphs {
         }
     }
     pub fn spinner(self, elapsed_ms: u128) -> &'static str {
-        let period = if self.mode == GlyphMode::Ascii {
-            480
-        } else {
-            125
-        };
+        let period = SPINNER_INTERVAL.as_millis();
         self.get(SPINNER[(elapsed_ms / period) as usize % SPINNER.len()])
     }
     pub fn table(self) -> TableGlyphs {
@@ -451,6 +449,17 @@ mod tests {
             ] {
                 assert_eq!(UnicodeWidthStr::width(status), 1);
             }
+        }
+    }
+
+    #[test]
+    fn spinner_frames_advance_at_the_scheduler_interval() {
+        for mode in [GlyphMode::Unicode, GlyphMode::Ascii] {
+            let glyphs = Glyphs::new(mode);
+            assert_ne!(
+                glyphs.spinner(0),
+                glyphs.spinner(SPINNER_INTERVAL.as_millis())
+            );
         }
     }
 

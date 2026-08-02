@@ -8,7 +8,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use serde::Serialize;
@@ -49,6 +49,23 @@ pub enum RpcError {
     Protocol(String),
     #[error("ignored malformed event frame: {0}")]
     EventFrame(String),
+}
+
+#[derive(Debug)]
+pub struct ReceivedEvent {
+    pub event: WireEvent,
+    pub received_at: Instant,
+    pub replayed: bool,
+}
+
+impl ReceivedEvent {
+    pub fn feedback_milestone(&self) -> Option<FeedbackMilestone> {
+        if self.replayed {
+            None
+        } else {
+            self.event.feedback_milestone()
+        }
+    }
 }
 
 impl RpcError {
@@ -661,7 +678,7 @@ pub fn spawn_event_stream(
     socket: PathBuf,
     session_id: String,
     since: usize,
-    sender: Sender<Result<WireEvent, RpcError>>,
+    sender: Sender<Result<ReceivedEvent, RpcError>>,
 ) {
     std::thread::spawn(move || {
         let result = stream_events(&socket, &session_id, since, &sender);
@@ -675,7 +692,7 @@ fn stream_events(
     socket: &Path,
     session_id: &str,
     since: usize,
-    sender: &Sender<Result<WireEvent, RpcError>>,
+    sender: &Sender<Result<ReceivedEvent, RpcError>>,
 ) -> Result<(), RpcError> {
     let mut stream = UnixStream::connect(socket)?;
     let request = json!({
@@ -690,34 +707,87 @@ fn stream_events(
     stream.write_all(&encoded)?;
     stream.flush()?;
 
+    let mut catch_up = Vec::new();
+    let mut subscribed = false;
     for line in BufReader::new(stream).lines() {
         let line = line?;
-        let event = match decode_event_frame(&line) {
-            Ok(event) => event,
+        let frame = match decode_event_frame(&line) {
+            Ok(frame) => frame,
             Err(error) => {
                 let _ = sender.send(Err(error));
                 continue;
             }
         };
-        let Some(event) = event else {
-            continue;
-        };
-        if sender.send(Ok(event)).is_err() {
-            return Ok(());
+        match frame {
+            EventStreamFrame::Event(event) => {
+                let received = ReceivedEvent {
+                    event: *event,
+                    received_at: Instant::now(),
+                    replayed: false,
+                };
+                if subscribed {
+                    if sender.send(Ok(received)).is_err() {
+                        return Ok(());
+                    }
+                } else {
+                    catch_up.push(received);
+                }
+            }
+            EventStreamFrame::Subscribed { replayed } => {
+                mark_replayed_prefix(&mut catch_up, replayed);
+                for received in catch_up.drain(..) {
+                    if sender.send(Ok(received)).is_err() {
+                        return Ok(());
+                    }
+                }
+                subscribed = true;
+            }
+            EventStreamFrame::Ignored => {}
         }
     }
     Err(RpcError::Protocol("event stream closed".into()))
 }
 
-fn decode_event_frame(line: &str) -> Result<Option<WireEvent>, RpcError> {
+#[derive(Debug)]
+enum EventStreamFrame {
+    Event(Box<WireEvent>),
+    Subscribed { replayed: usize },
+    Ignored,
+}
+
+fn decode_event_frame(line: &str) -> Result<EventStreamFrame, RpcError> {
     let frame: Value =
         serde_json::from_str(line).map_err(|error| RpcError::EventFrame(error.to_string()))?;
-    if frame.get("method").and_then(Value::as_str) != Some("event") {
-        return Ok(None);
+    if frame.get("method").and_then(Value::as_str) == Some("event") {
+        return serde_json::from_value::<WireEvent>(
+            frame.get("params").cloned().unwrap_or(Value::Null),
+        )
+        .map(Box::new)
+        .map(EventStreamFrame::Event)
+        .map_err(|error| RpcError::EventFrame(error.to_string()));
     }
-    serde_json::from_value::<WireEvent>(frame.get("params").cloned().unwrap_or(Value::Null))
-        .map(Some)
-        .map_err(|error| RpcError::EventFrame(error.to_string()))
+    if frame.get("id").and_then(Value::as_u64) == Some(1) {
+        if let Some(error) = frame.get("error").filter(|value| !value.is_null()) {
+            let message = error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("event subscription rejected");
+            return Err(RpcError::EventFrame(message.to_owned()));
+        }
+        let replayed = frame
+            .get("result")
+            .and_then(|result| result.get("replayed"))
+            .and_then(Value::as_u64)
+            .map_or(usize::MAX, |value| value.min(usize::MAX as u64) as usize);
+        return Ok(EventStreamFrame::Subscribed { replayed });
+    }
+    Ok(EventStreamFrame::Ignored)
+}
+
+fn mark_replayed_prefix(events: &mut [ReceivedEvent], replayed: usize) {
+    for (index, received) in events.iter_mut().enumerate() {
+        received.replayed = index < replayed;
+    }
 }
 
 fn workspace_files_are_relative(files: &[WorkspaceFile]) -> bool {
@@ -1140,13 +1210,60 @@ mod tests {
             decode_event_frame("{bad"),
             Err(RpcError::EventFrame(_))
         ));
-        let event = decode_event_frame(
+        let EventStreamFrame::Event(event) = decode_event_frame(
             r#"{"jsonrpc":"2.0","method":"event","params":{"type":"user.question","options":null,"future_field":{"nested":true}}}"#,
         )
         .unwrap()
-        .unwrap();
+        else {
+            panic!("event notification must decode as an event frame");
+        };
         assert_eq!(event.kind, "user.question");
         assert!(event.options.is_empty());
+    }
+
+    #[test]
+    fn subscription_ack_marks_only_the_catch_up_prefix_as_replay() {
+        assert!(matches!(
+            decode_event_frame(r#"{"jsonrpc":"2.0","id":1,"result":{"replayed":1,"cursor":2}}"#)
+                .unwrap(),
+            EventStreamFrame::Subscribed { replayed: 1 }
+        ));
+
+        let received_at = Instant::now();
+        let mut events = [
+            ReceivedEvent {
+                event: WireEvent {
+                    kind: "ExecutionCompleted".into(),
+                    ..WireEvent::default()
+                },
+                received_at,
+                replayed: false,
+            },
+            ReceivedEvent {
+                event: WireEvent {
+                    kind: "ToolCallStarted".into(),
+                    payload: BTreeMap::from([(
+                        "call_id".into(),
+                        Value::String("call_live".into()),
+                    )]),
+                    ..WireEvent::default()
+                },
+                received_at,
+                replayed: false,
+            },
+        ];
+        mark_replayed_prefix(&mut events, 1);
+        assert!(events[0].replayed);
+        assert!(!events[1].replayed);
+        assert_eq!(events[1].received_at, received_at);
+        assert_eq!(events[0].feedback_milestone(), None);
+        assert_eq!(
+            events[1].feedback_milestone(),
+            Some(FeedbackMilestone {
+                phase: FeedbackPhase::ToolStart,
+                key: "call_live".into(),
+            })
+        );
     }
 
     #[test]

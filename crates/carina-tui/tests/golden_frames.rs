@@ -509,8 +509,8 @@ fn live_status_glyph_mode_is_fixture_owned() {
         None,
         carina_tui::glyphs::GlyphMode::Ascii,
     );
-    assert!(unicode.contains("⠋ running tests"));
+    assert!(unicode.contains("⠧ running tests"));
     assert!(unicode.contains("· Ctrl-C stop"));
-    assert!(ascii.contains("/ running tests"));
+    assert!(ascii.contains("\\ running tests"));
     assert!(ascii.contains("| Ctrl-C stop"));
 }

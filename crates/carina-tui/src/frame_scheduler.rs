@@ -1,12 +1,41 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
+
+use crate::rpc::FeedbackPhase;
 
 pub const DEFAULT_MIN_DRAW_INTERVAL: Duration = Duration::from_millis(16);
 pub const SLOW_TICK_INTERVAL: Duration = Duration::from_millis(83);
+pub const SPINNER_INTERVAL: Duration = Duration::from_millis(80);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(75);
-pub const SPINNER_DIVISOR: u64 = 4;
-pub const MONITOR_PULSE_DIVISOR: u64 = 8;
-pub const TITLE_SPINNER_DIVISOR: u64 = 8;
+const FEEDBACK_SAMPLE_LIMIT: usize = 512;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedbackMarker {
+    pub phase: FeedbackPhase,
+    pub key: String,
+    pub received_at: Instant,
+}
+
+impl FeedbackMarker {
+    pub fn new(phase: FeedbackPhase, key: impl Into<String>, received_at: Instant) -> Self {
+        Self {
+            phase,
+            key: key.into(),
+            received_at,
+        }
+    }
+}
+
+impl FeedbackPhase {
+    pub const fn budget(self) -> Duration {
+        match self {
+            Self::ToolStart => Duration::from_millis(80),
+            Self::FirstToken | Self::ApprovalWait | Self::ToolResult | Self::Completion => {
+                Duration::from_millis(100)
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RedrawReason {
@@ -47,6 +76,7 @@ pub struct FrameStats {
     presented: u64,
     latency_micros: Vec<u64>,
     render_micros: Vec<u64>,
+    feedback_latency_micros: BTreeMap<FeedbackPhase, Vec<u64>>,
 }
 
 impl FrameStats {
@@ -72,19 +102,66 @@ impl FrameStats {
         Duration::from_micros(samples[index])
     }
 
+    pub fn feedback_count(&self, phase: FeedbackPhase) -> usize {
+        self.feedback_latency_micros.get(&phase).map_or(0, Vec::len)
+    }
+
+    pub fn feedback_p95(&self, phase: FeedbackPhase) -> Duration {
+        Duration::from_micros(percentile_95(
+            self.feedback_latency_micros
+                .get(&phase)
+                .map_or(&[], Vec::as_slice),
+        ))
+    }
+
+    pub fn feedback_budget_violations(&self) -> Vec<FeedbackPhase> {
+        FeedbackPhase::ALL
+            .into_iter()
+            .filter(|phase| {
+                self.feedback_count(*phase) > 0 && self.feedback_p95(*phase) > phase.budget()
+            })
+            .collect()
+    }
+
     pub fn debug_report(&self) -> serde_json::Value {
         let requested = self
             .requested
             .iter()
             .map(|(reason, count)| (format!("{reason:?}").to_ascii_lowercase(), *count))
             .collect::<BTreeMap<_, _>>();
+        let feedback_latency = FeedbackPhase::ALL
+            .into_iter()
+            .map(|phase| {
+                let count = self.feedback_count(phase);
+                let p95 = self.feedback_p95(phase);
+                let budget = phase.budget();
+                (
+                    phase.as_str().to_owned(),
+                    serde_json::json!({
+                        "count": count,
+                        "p95_us": p95.as_micros(),
+                        "budget_us": budget.as_micros(),
+                        "over_budget": count > 0 && p95 > budget,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
         serde_json::json!({
             "requested": requested,
             "coalesced": self.coalesced,
             "presented": self.presented,
             "render_schedule_p95_us": self.p95_latency().as_micros(),
             "render_p95_us": percentile_95(&self.render_micros),
+            "feedback_latency": feedback_latency,
         })
+    }
+
+    fn record_feedback(&mut self, phase: FeedbackPhase, duration: Duration) {
+        let samples = self.feedback_latency_micros.entry(phase).or_default();
+        if samples.len() == FEEDBACK_SAMPLE_LIMIT {
+            samples.remove(0);
+        }
+        samples.push(duration.as_micros().min(u64::MAX as u128) as u64);
     }
 }
 
@@ -97,7 +174,8 @@ pub struct FrameScheduler {
     resize_at: Option<Instant>,
     tick_demand: TickDemand,
     next_tick_at: Option<Instant>,
-    tick_sequence: u64,
+    pending_feedback: BTreeMap<(FeedbackPhase, String), Instant>,
+    observed_feedback: BTreeSet<(FeedbackPhase, String)>,
     stats: FrameStats,
 }
 
@@ -111,13 +189,15 @@ impl FrameScheduler {
             resize_at: None,
             tick_demand: TickDemand::None,
             next_tick_at: None,
-            tick_sequence: 0,
+            pending_feedback: BTreeMap::new(),
+            observed_feedback: BTreeSet::new(),
             stats: FrameStats {
                 requested: BTreeMap::new(),
                 coalesced: 0,
                 presented: 0,
                 latency_micros: Vec::new(),
                 render_micros: Vec::new(),
+                feedback_latency_micros: BTreeMap::new(),
             },
         };
         scheduler.request(RedrawReason::Initial, now);
@@ -166,6 +246,22 @@ impl FrameScheduler {
         self.next_tick_at = tick_interval(demand).map(|interval| now + interval);
     }
 
+    pub fn request_feedback(&mut self, marker: FeedbackMarker) {
+        let key = marker.key.trim();
+        if key.is_empty() {
+            return;
+        }
+        let identity = (marker.phase, key.to_owned());
+        if self.observed_feedback.contains(&identity) {
+            return;
+        }
+        self.pending_feedback
+            .entry(identity)
+            .and_modify(|received_at| *received_at = (*received_at).min(marker.received_at))
+            .or_insert(marker.received_at);
+        self.request(RedrawReason::Stream, marker.received_at);
+    }
+
     pub fn advance_tick(&mut self, now: Instant) -> bool {
         let Some(interval) = tick_interval(self.tick_demand) else {
             self.next_tick_at = None;
@@ -174,24 +270,9 @@ impl FrameScheduler {
         if self.next_tick_at.is_none_or(|deadline| deadline > now) {
             return false;
         }
-        self.tick_sequence = self.tick_sequence.wrapping_add(1);
         self.next_tick_at = Some(now + interval);
-        if self.spinner_tick() {
-            self.request(RedrawReason::Animation, now);
-        }
+        self.request(RedrawReason::Animation, now);
         true
-    }
-
-    pub fn spinner_tick(&self) -> bool {
-        self.tick_sequence.is_multiple_of(SPINNER_DIVISOR)
-    }
-
-    pub fn monitor_tick(&self) -> bool {
-        self.tick_sequence.is_multiple_of(MONITOR_PULSE_DIVISOR)
-    }
-
-    pub fn title_tick(&self) -> bool {
-        self.tick_sequence.is_multiple_of(TITLE_SPINNER_DIVISOR)
     }
 
     pub fn deadline(&self) -> Option<Instant> {
@@ -234,6 +315,11 @@ impl FrameScheduler {
         self.scheduled_at = None;
         self.last_draw_at = Some(now);
         self.stats.presented += 1;
+        for (identity, received_at) in std::mem::take(&mut self.pending_feedback) {
+            self.stats
+                .record_feedback(identity.0, now.saturating_duration_since(received_at));
+            self.observed_feedback.insert(identity);
+        }
     }
 
     pub fn defer(&mut self, now: Instant) {
@@ -260,7 +346,7 @@ fn tick_interval(demand: TickDemand) -> Option<Duration> {
     match demand {
         TickDemand::None => None,
         TickDemand::Slow => Some(SLOW_TICK_INTERVAL),
-        TickDemand::Fast => Some(DEFAULT_MIN_DRAW_INTERVAL),
+        TickDemand::Fast => Some(SPINNER_INTERVAL),
     }
 }
 
@@ -315,25 +401,33 @@ mod tests {
         scheduler.set_tick_demand(TickDemand::Slow, start);
         let late = start + Duration::from_secs(2);
         assert!(scheduler.advance_tick(late));
+        assert!(scheduler.should_present(late));
+        scheduler.presented(late);
         assert_eq!(scheduler.deadline(), Some(late + SLOW_TICK_INTERVAL));
     }
 
     #[test]
-    fn animation_ticks_are_independent_and_divided_before_redraw() {
+    fn fast_animation_uses_an_explicit_spinner_deadline_without_catch_up() {
         let start = Instant::now();
         let mut scheduler = FrameScheduler::new(start);
         scheduler.presented(start);
         scheduler.set_tick_demand(TickDemand::Fast, start);
 
-        for tick in 1..SPINNER_DIVISOR {
-            let now = start + DEFAULT_MIN_DRAW_INTERVAL * tick as u32;
-            assert!(scheduler.advance_tick(now));
-            assert!(!scheduler.should_present(now));
-        }
-        let now = start + DEFAULT_MIN_DRAW_INTERVAL * SPINNER_DIVISOR as u32;
-        assert!(scheduler.advance_tick(now));
-        assert!(scheduler.should_present(now));
+        assert_eq!(scheduler.deadline(), Some(start + SPINNER_INTERVAL));
+        assert!(!scheduler.advance_tick(start + SPINNER_INTERVAL - Duration::from_millis(1)));
+
+        let first = start + SPINNER_INTERVAL;
+        assert!(scheduler.advance_tick(first));
+        assert!(scheduler.should_present(first));
         assert_eq!(scheduler.stats().requested(RedrawReason::Animation), 1);
+        scheduler.presented(first);
+
+        let late = start + Duration::from_secs(2);
+        assert!(scheduler.advance_tick(late));
+        assert!(scheduler.should_present(late));
+        scheduler.presented(late);
+        assert_eq!(scheduler.deadline(), Some(late + SPINNER_INTERVAL));
+        assert_eq!(scheduler.stats().requested(RedrawReason::Animation), 2);
     }
 
     #[test]
@@ -410,5 +504,126 @@ mod tests {
             7_000
         );
         assert_eq!(scheduler.stats().debug_report()["render_p95_us"], 3_000);
+    }
+
+    #[test]
+    fn feedback_markers_coalesce_deduplicate_and_settle_only_after_submission() {
+        let start = Instant::now();
+        let mut scheduler = FrameScheduler::new(start);
+        scheduler.presented(start);
+        scheduler.request_feedback(FeedbackMarker::new(
+            FeedbackPhase::FirstToken,
+            "run_1",
+            start + Duration::from_millis(1),
+        ));
+        scheduler.request_feedback(FeedbackMarker::new(
+            FeedbackPhase::ToolStart,
+            "call_1",
+            start + Duration::from_millis(2),
+        ));
+        scheduler.request_feedback(FeedbackMarker::new(
+            FeedbackPhase::FirstToken,
+            "run_1",
+            start + Duration::from_millis(3),
+        ));
+
+        let deferred = start + DEFAULT_MIN_DRAW_INTERVAL;
+        assert!(
+            !scheduler
+                .try_present(deferred, || Ok::<_, ()>(false))
+                .unwrap()
+        );
+        assert_eq!(
+            scheduler.stats().feedback_count(FeedbackPhase::FirstToken),
+            0
+        );
+        assert_eq!(
+            scheduler.stats().feedback_count(FeedbackPhase::ToolStart),
+            0
+        );
+
+        let submitted = deferred + DEFAULT_MIN_DRAW_INTERVAL;
+        assert!(
+            scheduler
+                .try_present(submitted, || Ok::<_, ()>(true))
+                .unwrap()
+        );
+        assert_eq!(
+            scheduler.stats().feedback_count(FeedbackPhase::FirstToken),
+            1
+        );
+        assert_eq!(
+            scheduler.stats().feedback_count(FeedbackPhase::ToolStart),
+            1
+        );
+        assert_eq!(
+            scheduler.stats().feedback_p95(FeedbackPhase::FirstToken),
+            Duration::from_millis(31)
+        );
+        assert_eq!(
+            scheduler.stats().feedback_p95(FeedbackPhase::ToolStart),
+            Duration::from_millis(30)
+        );
+
+        scheduler.request_feedback(FeedbackMarker::new(
+            FeedbackPhase::FirstToken,
+            "run_1",
+            submitted + Duration::from_millis(1),
+        ));
+        assert_eq!(scheduler.deadline(), None);
+    }
+
+    #[test]
+    fn feedback_report_exposes_all_budgets_and_deterministic_violations() {
+        let start = Instant::now();
+        let mut scheduler = FrameScheduler::new(start);
+        scheduler.request_feedback(FeedbackMarker::new(
+            FeedbackPhase::ToolStart,
+            "call_slow",
+            start,
+        ));
+        scheduler.presented(start + Duration::from_millis(81));
+
+        assert_eq!(
+            scheduler.stats().feedback_budget_violations(),
+            vec![FeedbackPhase::ToolStart]
+        );
+        let report = scheduler.stats().debug_report();
+        for phase in FeedbackPhase::ALL {
+            assert!(report["feedback_latency"].get(phase.as_str()).is_some());
+        }
+        assert_eq!(report["feedback_latency"]["tool_start"]["count"], 1);
+        assert_eq!(
+            report["feedback_latency"]["tool_start"]["budget_us"],
+            80_000
+        );
+        assert_eq!(
+            report["feedback_latency"]["tool_start"]["over_budget"],
+            true
+        );
+        assert_eq!(
+            report["feedback_latency"]["completion"]["over_budget"],
+            false
+        );
+    }
+
+    #[test]
+    fn feedback_samples_are_bounded_to_the_latest_window() {
+        let start = Instant::now();
+        let mut scheduler = FrameScheduler::new(start);
+        scheduler.presented(start);
+        for index in 0..=FEEDBACK_SAMPLE_LIMIT {
+            let received_at = start + Duration::from_millis(index as u64 + 1);
+            scheduler.request_feedback(FeedbackMarker::new(
+                FeedbackPhase::Completion,
+                format!("run_{index}"),
+                received_at,
+            ));
+            scheduler.presented(received_at + Duration::from_millis(1));
+        }
+        assert_eq!(
+            scheduler.stats().feedback_count(FeedbackPhase::Completion),
+            FEEDBACK_SAMPLE_LIMIT
+        );
     }
 }

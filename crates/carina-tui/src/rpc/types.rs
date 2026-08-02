@@ -675,6 +675,41 @@ pub enum AssistantMessagePhase {
     FinalAnswer,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FeedbackPhase {
+    FirstToken,
+    ToolStart,
+    ApprovalWait,
+    ToolResult,
+    Completion,
+}
+
+impl FeedbackPhase {
+    pub const ALL: [Self; 5] = [
+        Self::FirstToken,
+        Self::ToolStart,
+        Self::ApprovalWait,
+        Self::ToolResult,
+        Self::Completion,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FirstToken => "first_token",
+            Self::ToolStart => "tool_start",
+            Self::ApprovalWait => "approval_wait",
+            Self::ToolResult => "tool_result",
+            Self::Completion => "completion",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedbackMilestone {
+    pub phase: FeedbackPhase,
+    pub key: String,
+}
+
 impl AssistantMessagePhase {
     fn from_wire(value: &str) -> Option<Self> {
         match value {
@@ -811,6 +846,45 @@ impl WireEvent {
             }),
             _ => None,
         }
+    }
+
+    pub fn feedback_milestone(&self) -> Option<FeedbackMilestone> {
+        let payload_id = |key: &str| {
+            self.payload
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        };
+        let milestone = |phase, key: &str| FeedbackMilestone {
+            phase,
+            key: key.to_owned(),
+        };
+        match self.kind.as_str() {
+            "assistant.message.delta" | "assistant.message.completed"
+                if self.assistant_message_update().is_some() =>
+            {
+                Some(milestone(FeedbackPhase::FirstToken, self.run_id.trim()))
+            }
+            "ToolCallRequested" | "ToolCallStarted" => {
+                payload_id("call_id").map(|key| milestone(FeedbackPhase::ToolStart, key))
+            }
+            "ToolCallApprovalRequired" => self
+                .nonempty_decision_id()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .or_else(|| payload_id("decision_id"))
+                .or_else(|| payload_id("call_id"))
+                .map(|key| milestone(FeedbackPhase::ApprovalWait, key)),
+            "ToolCallCompleted" | "ToolCallFailed" | "ToolCallDenied" | "ToolCallCancelled" => {
+                payload_id("call_id").map(|key| milestone(FeedbackPhase::ToolResult, key))
+            }
+            _ if self.is_execution_terminal() && !self.run_id.trim().is_empty() => {
+                Some(milestone(FeedbackPhase::Completion, self.run_id.trim()))
+            }
+            _ => None,
+        }
+        .filter(|candidate| !candidate.key.is_empty())
     }
 
     pub fn tool_artifact_ref(&self) -> Option<ToolArtifactRef> {
@@ -1143,6 +1217,84 @@ mod tests {
             let event: WireEvent = serde_json::from_value(value).unwrap();
             assert_eq!(event.assistant_message_update(), None);
         }
+    }
+
+    #[test]
+    fn feedback_milestones_cover_live_fallbacks_and_reject_malformed_events() {
+        let cases = [
+            (
+                json!({
+                    "type":"assistant.message.delta", "run_id":"run_1",
+                    "payload":{"generation":1,"sequence":1,"phase":"final_answer","delta":"hi"}
+                }),
+                FeedbackPhase::FirstToken,
+                "run_1",
+            ),
+            (
+                json!({"type":"ToolCallRequested","run_id":"run_1","payload":{"call_id":"call_1"}}),
+                FeedbackPhase::ToolStart,
+                "call_1",
+            ),
+            (
+                json!({"type":"ToolCallStarted","run_id":"run_1","payload":{"call_id":"call_legacy"}}),
+                FeedbackPhase::ToolStart,
+                "call_legacy",
+            ),
+            (
+                json!({
+                    "type":"ToolCallApprovalRequired", "run_id":"run_1",
+                    "payload":{"call_id":"call_1","decision_id":"decision_1"}
+                }),
+                FeedbackPhase::ApprovalWait,
+                "decision_1",
+            ),
+            (
+                json!({
+                    "type":"ToolCallApprovalRequired", "run_id":"run_1",
+                    "payload":{"call_id":"call_fallback"}
+                }),
+                FeedbackPhase::ApprovalWait,
+                "call_fallback",
+            ),
+            (
+                json!({"type":"ToolCallCancelled","run_id":"run_1","payload":{"call_id":"call_1"}}),
+                FeedbackPhase::ToolResult,
+                "call_1",
+            ),
+            (
+                json!({"type":"ExecutionCompleted","run_id":"run_1","payload":{"summary":"done"}}),
+                FeedbackPhase::Completion,
+                "run_1",
+            ),
+            (
+                json!({"type":"ExecutionFailed","run_id":"run_failed","payload":{"error":"no"}}),
+                FeedbackPhase::Completion,
+                "run_failed",
+            ),
+        ];
+        for (value, phase, key) in cases {
+            let event: WireEvent = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                event.feedback_milestone(),
+                Some(FeedbackMilestone {
+                    phase,
+                    key: key.into(),
+                })
+            );
+        }
+
+        let malformed: WireEvent = serde_json::from_value(json!({
+            "type":"ToolCallStarted", "run_id":"run_1", "payload":{}
+        }))
+        .unwrap();
+        assert_eq!(malformed.feedback_milestone(), None);
+
+        let reset: WireEvent = serde_json::from_value(json!({
+            "type":"assistant.message.reset", "run_id":"run_1",
+            "payload":{"generation":2,"sequence":1,"phase":"final_answer"}
+        }))
+        .unwrap();
+        assert_eq!(reset.feedback_milestone(), None);
     }
 
     fn runnable_inventory(reasoner_available: bool) -> ModelInventory {

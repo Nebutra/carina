@@ -2224,6 +2224,32 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
     }
 
     #[test]
+    fn tool_cancellation_seals_the_existing_cell_without_an_orphan() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        for event in [
+            wire(
+                "ToolCallRequested",
+                json!({"call_id":"call-1","tool":"run","status":"pending","arguments":{"executable":"cargo","argc":2}}),
+            ),
+            wire(
+                "ToolCallStarted",
+                json!({"call_id":"call-1","tool":"run","status":"running"}),
+            ),
+            wire(
+                "ToolCallCancelled",
+                json!({"call_id":"call-1","tool":"run","status":"cancelled"}),
+            ),
+        ] {
+            reducer.reduce_event(&mut blocks, event);
+        }
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].id, "tool:call-1");
+        assert_eq!(blocks[0].status, "cancelled");
+    }
+
+    #[test]
     fn terminal_completion_seals_the_existing_stream_block() {
         let mut reducer = TranscriptReducer::default();
         let mut blocks = Vec::new();

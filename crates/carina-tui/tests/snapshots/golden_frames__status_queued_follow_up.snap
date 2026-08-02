@@ -3,6 +3,6 @@ source: crates/carina-tui/tests/golden_frames.rs
 expression: "render_status(\"running\", Some(\"editing src/lib.rs\"), 2, None)"
 ---
 size=120x1
-⠋ editing src/l…  1m02        · Ctrl-C stop · +2 queued
+⠧ editing src/l…  1m02        · Ctrl-C stop · +2 queued
 styles:
 (0, 0)..(55, 0) (Rgb(150, 160, 156), Reset, NONE)

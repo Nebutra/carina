@@ -3,6 +3,6 @@ source: crates/carina-tui/tests/golden_frames.rs
 expression: "render_status(\"running\", Some(\"running tests\"), 0, None)"
 ---
 size=120x1
-⠋ running tests   1m02        · Ctrl-C stop
+⠧ running tests   1m02        · Ctrl-C stop
 styles:
 (0, 0)..(55, 0) (Rgb(150, 160, 156), Reset, NONE)

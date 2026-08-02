@@ -38,7 +38,9 @@ use crate::conversation::ExecutionTimer;
 use crate::file_viewer::{
     FileViewer, FileViewerLoad, FileViewerOrigin, MAX_PREVIEW_BYTES, parse_file_reference,
 };
-use crate::frame_scheduler::{FrameScheduler, RedrawReason, TickDemand, WaitPlan, wait_plan};
+use crate::frame_scheduler::{
+    FeedbackMarker, FrameScheduler, RedrawReason, TickDemand, WaitPlan, wait_plan,
+};
 use crate::history_search::HistorySearchState;
 use crate::hyperlink::{HyperlinkSupport, MarkdownLink, markdown_links};
 use crate::i18n::{Locale, MessageId, Notice, format as tr_format, text as tr};
@@ -58,8 +60,8 @@ use crate::overlay::{
 use crate::prerequisite::ProviderPickerState;
 use crate::product_projection::ProductProjection;
 use crate::rpc::{
-    Client, ExecutionLifecycle, ExecutionRun, GovernanceId, Model, ModelInventory, RpcError,
-    RuntimeInitialize, Session, SessionItemEvent, WireEvent, spawn_event_stream,
+    Client, ExecutionLifecycle, ExecutionRun, GovernanceId, Model, ModelInventory, ReceivedEvent,
+    RpcError, RuntimeInitialize, Session, SessionItemEvent, WireEvent, spawn_event_stream,
 };
 use crate::session_browser::{SessionBrowserState, SessionScope};
 use crate::sync_output::SyncOutputSupport;
@@ -264,7 +266,7 @@ enum AsyncMessage {
     },
     Event {
         generation: u64,
-        value: Box<Result<WireEvent, RpcError>>,
+        value: Box<Result<ReceivedEvent, RpcError>>,
     },
     Reconnect {
         generation: u64,
@@ -430,7 +432,6 @@ pub struct App {
     overlays: OverlayStack,
     active_run_id: Option<String>,
     execution_timer: ExecutionTimer,
-    last_status_tick: Instant,
     execution_status: String,
     execution_activity: Option<String>,
     keybindings: KeyBindings,
@@ -442,6 +443,8 @@ pub struct App {
     async_tx: Sender<AsyncMessage>,
     async_rx: Receiver<AsyncMessage>,
     pending_async: VecDeque<AsyncMessage>,
+    pending_feedback: Vec<FeedbackMarker>,
+    terminal_focused: bool,
     terminal_resized: bool,
     redraw_reasons: Vec<RedrawReason>,
     quit: bool,
@@ -592,7 +595,6 @@ impl App {
             overlays: OverlayStack::default(),
             active_run_id: None,
             execution_timer: ExecutionTimer::default(),
-            last_status_tick: Instant::now(),
             execution_status: "ready".into(),
             execution_activity: None,
             keybindings: KeyBindings::default(),
@@ -604,6 +606,8 @@ impl App {
             async_tx,
             async_rx,
             pending_async: VecDeque::new(),
+            pending_feedback: Vec::new(),
+            terminal_focused: true,
             terminal_resized: false,
             redraw_reasons: Vec::new(),
             quit: false,
@@ -2041,7 +2045,11 @@ impl App {
                         continue;
                     }
                     match *value {
-                        Ok(event) => {
+                        Ok(received) => {
+                            let feedback_milestone = received.feedback_milestone();
+                            let ReceivedEvent {
+                                event, received_at, ..
+                            } = received;
                             let mut visual_changed = false;
                             let artifact_ref = event.tool_artifact_ref();
                             self.event_cursor = self.event_cursor.max(event.raw_cursor);
@@ -2136,6 +2144,13 @@ impl App {
                                 visual_changed = true;
                                 self.overlays.push(Overlay::PlanReview(review));
                                 self.notice.clear();
+                            }
+                            if visual_changed && let Some(milestone) = feedback_milestone {
+                                self.pending_feedback.push(FeedbackMarker::new(
+                                    milestone.phase,
+                                    milestone.key,
+                                    received_at,
+                                ));
                             }
                             if self.active_run_id.is_none()
                                 && self.phase == Phase::Conversation
@@ -2268,13 +2283,6 @@ impl App {
             self.dirty = true;
             self.redraw_reasons.push(RedrawReason::AsyncResult);
         }
-        if matches!(
-            &self.provider_import,
-            ProviderImportState::Validating { .. }
-        ) {
-            self.dirty = true;
-            self.redraw_reasons.push(RedrawReason::Animation);
-        }
     }
 
     fn wait_for_work(&mut self, deadline: Option<Instant>) -> bool {
@@ -2296,16 +2304,14 @@ impl App {
     }
 
     fn tick_demand(&self) -> TickDemand {
-        if self.active_run_id.is_some() {
-            TickDemand::Fast
-        } else if matches!(
-            &self.provider_import,
-            ProviderImportState::Validating { .. }
-        ) {
-            TickDemand::Slow
-        } else {
-            TickDemand::None
-        }
+        animation_tick_demand(
+            self.terminal_focused,
+            self.active_run_id.is_some(),
+            matches!(
+                &self.provider_import,
+                ProviderImportState::Validating { .. }
+            ),
+        )
     }
 
     fn next_wake_deadline(&self, frame_deadline: Option<Instant>) -> Option<Instant> {
@@ -2389,6 +2395,9 @@ impl App {
     }
 
     fn handle_event(&mut self, event: Event) -> Result<()> {
+        if let Some(focused) = terminal_focus_transition(&event) {
+            self.terminal_focused = focused;
+        }
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.handle_key(key)?,
             Event::Mouse(mouse) => self.handle_mouse(mouse),
@@ -5888,6 +5897,9 @@ pub fn run(options: Options) -> Result<Outcome> {
             scheduler.request_resize(now);
         }
         scheduler.set_tick_demand(app.tick_demand(), now);
+        for marker in app.pending_feedback.drain(..) {
+            scheduler.request_feedback(marker);
+        }
         scheduler.advance_tick(now);
         if app.dirty {
             if app.redraw_reasons.is_empty() {
@@ -5957,12 +5969,6 @@ pub fn run(options: Options) -> Result<Outcome> {
                 );
                 scheduler.request(RedrawReason::Media, Instant::now());
             }
-        }
-        if app.active_run_id.is_some()
-            && app.last_status_tick.elapsed() >= Duration::from_millis(125)
-        {
-            app.last_status_tick = Instant::now();
-            scheduler.request(RedrawReason::Animation, Instant::now());
         }
         if !app.quit && !app.wait_for_work(app.next_wake_deadline(scheduler.deadline())) {
             break;
@@ -6541,6 +6547,30 @@ fn command_registry_target_is_current(
     generation == current_generation && active_session_id == Some(target_session_id)
 }
 
+fn terminal_focus_transition(event: &Event) -> Option<bool> {
+    match event {
+        Event::FocusGained => Some(true),
+        Event::FocusLost => Some(false),
+        _ => None,
+    }
+}
+
+fn animation_tick_demand(
+    terminal_focused: bool,
+    has_active_run: bool,
+    provider_validating: bool,
+) -> TickDemand {
+    if !terminal_focused {
+        TickDemand::None
+    } else if has_active_run {
+        TickDemand::Fast
+    } else if provider_validating {
+        TickDemand::Slow
+    } else {
+        TickDemand::None
+    }
+}
+
 fn persist_locale(path: &Path, locale: &str) -> Result<()> {
     let mut root = match fs::read(path) {
         Ok(data) => serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&data)
@@ -6566,6 +6596,19 @@ fn persist_locale(path: &Path, locale: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focus_events_gate_decorative_tick_demand() {
+        assert_eq!(terminal_focus_transition(&Event::FocusLost), Some(false));
+        assert_eq!(terminal_focus_transition(&Event::FocusGained), Some(true));
+        assert_eq!(terminal_focus_transition(&Event::Resize(80, 24)), None);
+
+        assert_eq!(animation_tick_demand(true, true, false), TickDemand::Fast);
+        assert_eq!(animation_tick_demand(false, true, false), TickDemand::None);
+        assert_eq!(animation_tick_demand(true, false, true), TickDemand::Slow);
+        assert_eq!(animation_tick_demand(false, false, true), TickDemand::None);
+        assert_eq!(animation_tick_demand(true, false, false), TickDemand::None);
+    }
 
     #[test]
     fn command_registry_results_are_fenced_by_generation_and_session() {
