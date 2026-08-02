@@ -5,8 +5,15 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/provider"
 )
+
+type modelInventoryParams struct {
+	SessionID string `json:"session_id"`
+	ModelID   string `json:"model_id"`
+	Locale    string `json:"locale"`
+}
 
 type modelInventoryModel struct {
 	ID                     string            `json:"id"`
@@ -49,7 +56,24 @@ type modelInventoryReasoner struct {
 	Explicit  bool   `json:"explicit"`
 }
 
-func (d *Daemon) handleModelList(_ json.RawMessage) (any, error) {
+type modelInventoryReadiness struct {
+	Step       string   `json:"step"`
+	Blockers   []string `json:"blockers"`
+	RouteKind  string   `json:"route_kind,omitempty"`
+	ModelID    string   `json:"model_id,omitempty"`
+	Locale     string   `json:"locale,omitempty"`
+	CanSubmit  bool     `json:"can_submit"`
+	Epoch      string   `json:"epoch,omitempty"`
+	Generation uint64   `json:"generation"`
+}
+
+func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
+	var request modelInventoryParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &request); err != nil {
+			return nil, err
+		}
+	}
 	registered := map[string]bool{}
 	for _, name := range d.router.ProviderNames() {
 		registered[normalizeProviderID(name)] = true
@@ -121,12 +145,110 @@ func (d *Daemon) handleModelList(_ json.RawMessage) (any, error) {
 		}
 		return false
 	})
+	reasoner := d.modelInventoryReasoner(providers)
+	readiness := d.modelInventoryReadiness(request, providers, reasoner)
+	if d.journey != nil {
+		d.journey.observeReady(readiness.CanSubmit)
+	}
 	return map[string]any{
 		"default_model": modelInventoryDefault(providers),
-		"reasoner":      d.modelInventoryReasoner(providers),
+		"reasoner":      reasoner,
 		"providers":     providers,
+		"readiness":     readiness,
 	}, nil
 }
+
+func (d *Daemon) modelInventoryReadiness(request modelInventoryParams, providers []modelInventoryProvider, reasoner modelInventoryReasoner) modelInventoryReadiness {
+	snapshot := modelInventoryReadiness{
+		Step: "locale", Blockers: []string{}, Generation: d.readinessGeneration.Add(1),
+	}
+	d.runtimeMu.Lock()
+	if d.runtimeLease != nil {
+		snapshot.Epoch = d.runtimeLease.state.InstanceID
+	}
+	d.runtimeMu.Unlock()
+
+	locale := strings.TrimSpace(request.Locale)
+	if locale == "" {
+		snapshot.Blockers = append(snapshot.Blockers, "locale_required")
+	} else if canonical, err := microcopy.CanonicalLocale(locale); err != nil {
+		snapshot.Blockers = append(snapshot.Blockers, "locale_unsupported")
+	} else {
+		snapshot.Locale = canonical
+	}
+
+	modelID := strings.TrimSpace(request.ModelID)
+	var sessionActive bool
+	if sessionID := strings.TrimSpace(request.SessionID); sessionID == "" {
+		snapshot.Blockers = append(snapshot.Blockers, "session_required")
+	} else if session, ok := d.store.Get(sessionID); !ok || session.Status != "active" {
+		snapshot.Blockers = append(snapshot.Blockers, "session_unavailable")
+	} else {
+		sessionActive = true
+		if modelID == "" {
+			modelID = strings.TrimSpace(session.NextModel)
+		}
+	}
+	if modelID == "" || modelID == "default" {
+		modelID = modelInventoryDefault(providers)
+	}
+	snapshot.ModelID = modelID
+
+	providerReady := false
+	selectedProviderReady := false
+	modelReady := false
+	for _, provider := range providers {
+		if !provider.Registered || !provider.Available {
+			continue
+		}
+		providerReady = true
+		for _, model := range provider.Models {
+			if model.ID != modelID {
+				continue
+			}
+			selectedProviderReady = true
+			modelReady = model.Available
+			snapshot.RouteKind = inventoryRouteKind(provider, reasoner)
+			break
+		}
+	}
+	if !reasoner.Available || !providerReady {
+		snapshot.Blockers = append(snapshot.Blockers, "provider_unavailable")
+	}
+	if modelID == "" || !selectedProviderReady || !modelReady {
+		snapshot.Blockers = append(snapshot.Blockers, "model_unavailable")
+	}
+
+	switch {
+	case snapshot.Locale == "":
+		snapshot.Step = "locale"
+	case !reasoner.Available || !providerReady:
+		snapshot.Step = "provider"
+	case !selectedProviderReady || !modelReady:
+		snapshot.Step = "model"
+	case !sessionActive:
+		snapshot.Step = "session"
+	default:
+		snapshot.Step = "conversation"
+		snapshot.CanSubmit = true
+	}
+	return snapshot
+}
+
+func inventoryRouteKind(provider modelInventoryProvider, reasoner modelInventoryReasoner) string {
+	if reasoner.Backend == reasonerBackendClaudeCLI || reasoner.Backend == reasonerBackendCodexCLI {
+		return "cli_oauth"
+	}
+	if provider.SourceRoute == providerRouteManagedProxy {
+		return "live_proxy"
+	}
+	if provider.AuthSource != "" || provider.SourceAuthMode != "" {
+		return "credential_source"
+	}
+	return "upstream_record"
+}
+
+const providerRouteManagedProxy = "managed_proxy"
 
 func providerInventoryRank(row modelInventoryProvider) int {
 	if row.Registered && row.Available {

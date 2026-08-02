@@ -26,7 +26,7 @@
       { "method": "usage.cost", "scope": "read", "remote": true, "params": { "session_id": "string?", "task_id": "string?" }, "result": "UsageCostReport" }
     ],
     "model": [
-      { "method": "model.list", "scope": "read", "remote": true, "params": {}, "result": "{ default_model: string, providers: ModelProvider[] }" }
+      { "method": "model.list", "scope": "read", "remote": true, "params": { "session_id": "string?", "model_id": "string?", "locale": "string?" }, "result": "{ default_model: string, providers: ModelProvider[], reasoner: ModelReasoner, readiness: { step, blockers[], route_kind, model_id, locale, can_submit, epoch, generation } }" }
     ],
     "agent": [
       { "method": "agent.list", "scope": "read", "remote": true, "params": { "session_id": "string?", "workspace_root": "string?", "include_hidden": "boolean?" }, "result": "{ agents: Agent[] }" },

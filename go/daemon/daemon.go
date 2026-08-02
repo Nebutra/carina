@@ -143,17 +143,19 @@ type pendingMemoryProjection struct {
 }
 
 type Daemon struct {
-	store        *sessionstore.Store
-	sched        *scheduler.Scheduler
-	pool         *worker.Pool
-	backpressure *backpressureManager
-	router       *modelrouter.Router
-	server       *rpc.Server
-	kern         *kernel.Service
-	tools        *toolchain.Toolchain
-	events       *Bus
-	debugTrace   *debugTrace
-	started      time.Time
+	store               *sessionstore.Store
+	sched               *scheduler.Scheduler
+	pool                *worker.Pool
+	backpressure        *backpressureManager
+	router              *modelrouter.Router
+	server              *rpc.Server
+	kern                *kernel.Service
+	tools               *toolchain.Toolchain
+	events              *Bus
+	debugTrace          *debugTrace
+	started             time.Time
+	journey             *journeyMetrics
+	readinessGeneration atomic.Uint64
 
 	org              *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
 	policyDir        string            // opts.PolicyDir, kept for doctor's policyBundleStale freshness probe
@@ -439,6 +441,7 @@ func New(opts Options) (*Daemon, error) {
 		runtimeLease:          runtimeLease,
 		runtimeSpec:           runtimeSpec,
 	}
+	d.journey = newJourneyMetrics(time.Now)
 	d.server.SetConnectionObserver(d)
 	if err := d.publishRuntimeDescriptor(localruntime.LifecycleStarting, ""); err != nil {
 		_ = kern.Close()
@@ -1618,7 +1621,7 @@ func (d *Daemon) handleMetrics(_ json.RawMessage) (any, error) {
 		retryMetrics = d.retryGovernance.metricsSnapshot()
 		retryMetrics["enabled"] = true
 	}
-	return map[string]any{
+	report := map[string]any{
 		"version":         Version,
 		"uptime_seconds":  int(time.Since(d.started).Seconds()),
 		"tasks_by_status": d.sched.CountByStatus(),
@@ -1628,7 +1631,11 @@ func (d *Daemon) handleMetrics(_ json.RawMessage) (any, error) {
 		"debug_trace":     d.debugTraceStats(),
 		"artifacts":       artifactMetrics,
 		"provider_retry":  retryMetrics,
-	}, nil
+	}
+	if d.journey != nil {
+		report["first_five_minute_journey"] = d.journey.snapshot()
+	}
+	return report, nil
 }
 
 func (d *Daemon) handleGatewayHello(params json.RawMessage) (any, error) {
@@ -2781,6 +2788,9 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	}
 	if clientSubmissionID != "" {
 		d.taskSubmissions[taskSubmissionKey(p.SessionID, clientSubmissionID)] = task.RunID
+	}
+	if d.journey != nil {
+		d.journey.accepted(task.RunID, sess.SessionID)
 	}
 
 	d.startTask(func() { d.runTaskGuarded(sess, task) })
@@ -4244,6 +4254,9 @@ func (d *Daemon) recordChecked(sessionID, eventType, taskID, actor string, paylo
 		"payload":              payload,
 		internalRawAuditCursor: cursor,
 	})
+	if d.journey != nil {
+		d.journey.observeEvent(eventType, taskID)
+	}
 	return nil
 }
 
@@ -4267,6 +4280,14 @@ func (d *Daemon) publishKernelPatchEvents(patch *kernel.Patch) {
 		}
 		persisted.Event[internalRawAuditCursor] = persisted.Cursor
 		d.events.Publish(sessionID, persisted.Event)
+		if d.journey != nil {
+			eventType, _ := persisted.Event["type"].(string)
+			taskID, _ := persisted.Event["task_id"].(string)
+			if taskID == "" {
+				taskID = patch.TaskID
+			}
+			d.journey.observeEvent(eventType, taskID)
+		}
 	}
 }
 

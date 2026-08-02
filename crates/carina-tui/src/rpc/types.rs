@@ -324,6 +324,28 @@ pub struct ModelInventory {
     pub providers: Vec<ModelProvider>,
     #[serde(default)]
     pub reasoner: ModelReasoner,
+    #[serde(default)]
+    pub readiness: ExecutionReadiness,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ExecutionReadiness {
+    #[serde(default)]
+    pub step: String,
+    #[serde(default)]
+    pub blockers: Vec<String>,
+    #[serde(default)]
+    pub route_kind: String,
+    #[serde(default)]
+    pub model_id: String,
+    #[serde(default)]
+    pub locale: String,
+    #[serde(default)]
+    pub can_submit: bool,
+    #[serde(default)]
+    pub epoch: String,
+    #[serde(default)]
+    pub generation: u64,
 }
 
 impl ModelInventory {
@@ -1158,6 +1180,7 @@ mod tests {
                     tool_call: true,
                 }],
             }],
+            readiness: ExecutionReadiness::default(),
         }
     }
 
@@ -1170,6 +1193,38 @@ mod tests {
         let available = runnable_inventory(true);
         assert!(available.has_runnable_provider());
         assert_eq!(available.available_models().len(), 1);
+    }
+
+    #[test]
+    fn model_inventory_decodes_authoritative_readiness_and_legacy_absence() {
+        let current: ModelInventory = serde_json::from_value(json!({
+            "default_model": "openai/gpt-5",
+            "providers": [],
+            "reasoner": {"available": true},
+            "readiness": {
+                "step": "conversation",
+                "blockers": [],
+                "route_kind": "credential_source",
+                "model_id": "openai/gpt-5",
+                "locale": "zh",
+                "can_submit": true,
+                "epoch": "runtime-1",
+                "generation": 7
+            }
+        }))
+        .unwrap();
+        assert!(current.readiness.can_submit);
+        assert_eq!(current.readiness.generation, 7);
+        assert_eq!(current.readiness.locale, "zh");
+
+        let legacy: ModelInventory = serde_json::from_value(json!({
+            "default_model": "openai/gpt-5",
+            "providers": [],
+            "reasoner": {"available": true}
+        }))
+        .unwrap();
+        assert_eq!(legacy.readiness.generation, 0);
+        assert!(!legacy.readiness.can_submit);
     }
 
     #[test]

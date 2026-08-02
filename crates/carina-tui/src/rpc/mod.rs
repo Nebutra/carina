@@ -185,6 +185,18 @@ impl Client {
         self.call("model.list", &json!({}))
     }
 
+    pub fn model_inventory_for(
+        &mut self,
+        session_id: &str,
+        model_id: &str,
+        locale: &str,
+    ) -> Result<ModelInventory, RpcError> {
+        self.call(
+            "model.list",
+            &json!({"session_id": session_id, "model_id": model_id, "locale": locale}),
+        )
+    }
+
     pub fn daemon_status(&mut self) -> Result<DaemonStatus, RpcError> {
         self.call("daemon.status", &json!({}))
     }

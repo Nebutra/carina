@@ -117,6 +117,8 @@ func TestSubagentIsolatedAndAttenuated(t *testing.T) {
 	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
 	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
 	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "delegate recon")
+	d.sched.SetLocale(parentTask.RunID, "zh")
+	parentTask, _ = d.sched.Get(parentTask.RunID)
 
 	summary := d.spawnSubagent(parent, parentTask, "scout", "find SECRET_MARKER")
 	if summary == "" || !contains(summary, "SECRET_MARKER") {
@@ -126,15 +128,15 @@ func TestSubagentIsolatedAndAttenuated(t *testing.T) {
 	// A new child session must exist, be read-only (attenuated from parent's
 	// full-workspace), and be linked to the parent at depth 1.
 	var child *struct {
-		profile, parent string
-		depth           int
+		id, profile, parent string
+		depth               int
 	}
 	for _, s := range d.store.List() {
 		if s.ParentID == parent.SessionID {
 			child = &struct {
-				profile, parent string
-				depth           int
-			}{s.PermissionProfile, s.ParentID, s.Depth}
+				id, profile, parent string
+				depth               int
+			}{s.SessionID, s.PermissionProfile, s.ParentID, s.Depth}
 		}
 	}
 	if child == nil {
@@ -146,6 +148,15 @@ func TestSubagentIsolatedAndAttenuated(t *testing.T) {
 	if child.depth != 1 {
 		t.Fatalf("child depth should be 1, got %d", child.depth)
 	}
+	for _, task := range d.sched.List() {
+		if task.SessionID == child.id && task.Locale != "zh" {
+			t.Fatalf("child task locale = %q, want inherited zh", task.Locale)
+		}
+		if task.SessionID == child.id {
+			return
+		}
+	}
+	t.Fatal("no child task retained for locale assertion")
 }
 
 // TestSpawnedSessionToolNamesAllowListIsEnforced is the end-to-end wiring

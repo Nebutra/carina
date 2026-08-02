@@ -3486,7 +3486,16 @@ impl App {
         prompt: String,
         media_refs: Vec<crate::rpc::MediaRef>,
     ) -> Result<bool> {
-        match self.rpc.model_inventory() {
+        let session_id = self
+            .active_session
+            .as_ref()
+            .map(|session| session.session_id.clone())
+            .ok_or_else(|| anyhow!("conversation has no active session"))?;
+        let locale = agent_locale(self.options.locale.as_deref().unwrap_or("en"));
+        match self
+            .rpc
+            .model_inventory_for(&session_id, &self.selected_model, locale)
+        {
             Ok(inventory) => self.inventory = inventory,
             Err(error) => {
                 self.notice = Notice::localized_with(
@@ -3496,7 +3505,9 @@ impl App {
                 return Ok(false);
             }
         }
-        if !self.selected_model_is_runnable() {
+        let daemon_blocked =
+            self.inventory.readiness.generation > 0 && !self.inventory.readiness.can_submit;
+        if daemon_blocked || !self.selected_model_is_runnable() {
             self.phase = Phase::Provider;
             self.focus = Focus::Scene;
             self.notice = Notice::localized(MessageId::ExecutionNotReadyDraftKept);
@@ -3512,11 +3523,6 @@ impl App {
             self.notice = Notice::localized(MessageId::ImageModelIncompatibleDraftKept);
             return Ok(false);
         }
-        let session_id = self
-            .active_session
-            .as_ref()
-            .map(|session| session.session_id.clone())
-            .ok_or_else(|| anyhow!("conversation has no active session"))?;
         let envelope = PendingSubmission {
             session_id,
             prompt,
@@ -3530,7 +3536,7 @@ impl App {
             } else {
                 String::new()
             },
-            locale: agent_locale(self.options.locale.as_deref().unwrap_or("en")).into(),
+            locale: locale.into(),
             submission_id: operation_id("tui"),
             media_refs,
             local_id: operation_id("local"),
@@ -5266,11 +5272,7 @@ impl App {
                 return candidate.to_owned();
             }
         }
-        model
-            .reasoning_efforts
-            .first()
-            .cloned()
-            .unwrap_or_default()
+        model.reasoning_efforts.first().cloned().unwrap_or_default()
     }
 
     /// Prefer exact match, then small cross-vendor remap, then model default.
@@ -5620,7 +5622,7 @@ fn workspace_session_ids(sessions: &[Session], workspace: &Path) -> Vec<String> 
         .filter(|session| same_workspace(&session.workspace_root, workspace))
         .filter(|session| session.status != "closed")
         .collect();
-    ids.sort_by(|left, right| session_recency_key(right).cmp(&session_recency_key(left)));
+    ids.sort_by_key(|session| std::cmp::Reverse(session_recency_key(session)));
     ids.into_iter()
         .map(|session| session.session_id.clone())
         .collect()
@@ -6714,6 +6716,7 @@ mod tests {
                 available: true,
                 ..Default::default()
             },
+            readiness: crate::rpc::ExecutionReadiness::default(),
         };
 
         assert_eq!(startup_phase(true, &inventory, &[]), Phase::Diagnostic);

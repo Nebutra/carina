@@ -290,4 +290,7 @@ func (d *Daemon) publishAssistantStreamEvent(sessionID, taskID, kind string, pay
 		"actor":      "model",
 		"payload":    payload,
 	})
+	if d.journey != nil {
+		d.journey.observeEvent(kind, taskID)
+	}
 }

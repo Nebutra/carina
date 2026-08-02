@@ -708,6 +708,7 @@ def handle(connection, mode="normal"):
                     ]}
                 }
             elif method == "model.list":
+                params = request.get("params", {})
                 if mode == "ccswitch":
                     result = {"default_model": "", "providers": [{
 						"id": "ccswitch-codex-internal-id", "name": "Relay profile",
@@ -722,11 +723,29 @@ def handle(connection, mode="normal"):
                     continue
                 if mode == "model-journey":
                     execution_ready = os.path.exists(model_provider_ready_path)
+                    with model_list_lock:
+                        model_list_calls[mode] = model_list_calls.get(mode, 0) + 1
+                        readiness_generation = model_list_calls[mode]
+                    can_submit = (
+                        execution_ready
+                        and params.get("session_id") == "sess_model_journey"
+                        and params.get("model_id") == "test/model"
+                        and params.get("locale") == "zh"
+                    )
                     result = {"default_model": "test/model", "reasoner": {"backend": "model-router", "available": execution_ready}, "providers": [{
                         "id": "test", "name": "Test", "registered": execution_ready, "available": execution_ready,
                         "auth_source": "credential_store" if execution_ready else "",
                         "models": [{"id": "test/model", "display_id": "gpt-5.5", "name": "Test Model", "available": True, "reasoning": True, "reasoning_efforts": ["low", "medium", "high"], "default_reasoning_effort": "high"}]
-                    }]}
+                    }], "readiness": {
+                        "step": "conversation" if can_submit else ("session" if execution_ready else "provider"),
+                        "blockers": [] if can_submit else (["session_required"] if execution_ready else ["provider_unavailable"]),
+                        "route_kind": "credential_source" if execution_ready else "",
+                        "model_id": params.get("model_id", "test/model"),
+                        "locale": params.get("locale", ""),
+                        "can_submit": can_submit,
+                        "epoch": "runtime-model-journey",
+                        "generation": readiness_generation,
+                    }}
                     send(stream, {"jsonrpc": "2.0", "id": request_id, "result": result})
                     continue
                 if mode == "revocation":
@@ -740,7 +759,16 @@ def handle(connection, mode="normal"):
                         "models": [{"id": "test/model", "display_id": "gpt-5.5",
                                     "name": "Test Model", "available": True,
                                     "reasoning": True, "default_reasoning_effort": "high"}]
-                    }]}
+                    }], "readiness": {
+                        "step": "conversation" if execution_ready else "provider",
+                        "blockers": [] if execution_ready else ["provider_unavailable"],
+                        "route_kind": "credential_source" if execution_ready else "",
+                        "model_id": params.get("model_id", "test/model"),
+                        "locale": params.get("locale", "en"),
+                        "can_submit": execution_ready,
+                        "epoch": "runtime-revocation",
+                        "generation": model_list_calls[mode],
+                    }}
                     send(stream, {"jsonrpc": "2.0", "id": request_id, "result": result})
                     continue
                 models = [] if mode == "empty" else [
