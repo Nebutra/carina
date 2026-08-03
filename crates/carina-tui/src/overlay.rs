@@ -488,6 +488,7 @@ mod tests {
             raw_cursor: 0,
             status: String::new(),
             summary: String::new(),
+            result_kind: String::new(),
             decision_id: "perm_1".into(),
             capability: "CommandExec".into(),
             resource: "git status".into(),

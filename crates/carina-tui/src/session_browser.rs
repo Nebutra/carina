@@ -320,6 +320,7 @@ mod tests {
             updated_at: String::new(),
             latest_run_id: String::new(),
             latest_run_agent: String::new(),
+            latest_run_result_kind: String::new(),
             execution_status: String::new(),
             summary: summary.into(),
             continuity: None,

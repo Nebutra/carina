@@ -148,6 +148,7 @@ func TestApproveCompletedPlanSubmitsOneInheritedBuildTask(t *testing.T) {
 	if _, err := d.sched.SetTerminalResultFenced(plan.RunID, 0, "completed", "1. inspect\n2. implement\n3. verify", nil); err != nil {
 		t.Fatal(err)
 	}
+	d.sched.SetResultKind(plan.RunID, "plan")
 	if _, err := d.handlePlanMode(mustJSON(t, map[string]any{"session_id": sess.SessionID, "on": true})); err != nil {
 		t.Fatal(err)
 	}
@@ -178,6 +179,62 @@ func TestApproveCompletedPlanSubmitsOneInheritedBuildTask(t *testing.T) {
 	}
 	if got := len(d.sched.List()); got != 2 {
 		t.Fatalf("repeated approval created duplicate tasks: %d", got)
+	}
+}
+
+func TestPlanAgentResultKindControlsReviewability(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		steps []string
+		want  string
+	}{
+		{name: "answer", steps: []string{`{"tool":"done","summary":"你好！","result_kind":"answer"}`}, want: "answer"},
+		{name: "plan", steps: []string{`{"tool":"done","summary":"1. inspect\n2. implement\n3. verify","result_kind":"plan"}`}, want: "plan"},
+		{name: "missing is corrected", steps: []string{
+			`{"tool":"done","summary":"你好！"}`,
+			`{"tool":"done","summary":"你好！","result_kind":"answer"}`,
+		}, want: "answer"},
+		{name: "invalid is corrected", steps: []string{
+			`{"tool":"done","summary":"你好！","result_kind":"conversation"}`,
+			`{"tool":"done","summary":"你好！","result_kind":"answer"}`,
+		}, want: "answer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, ws := newLoopDaemon(t)
+			defer d.Close()
+			d.SetReasoner(&scriptedReasoner{steps: tc.steps})
+			sess, _ := d.store.CreateSession(ws, "safe-edit")
+			d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+			task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, "你好", "", "plan", nil)
+			d.runTask(sess, task)
+			got, ok := d.sched.Get(task.RunID)
+			if !ok || got.Status != "completed" || got.ResultKind != tc.want {
+				t.Fatalf("completed run = %+v, want result_kind %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestApprovePlanAnswerOnlyExitsPlanMode(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	answer := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, "你好", "", "plan", nil)
+	d.sched.SetResultKind(answer.RunID, "answer")
+	if _, err := d.sched.SetTerminalResultFenced(answer.RunID, 0, "completed", "你好！", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.handlePlanMode(mustJSON(t, map[string]any{"session_id": sess.SessionID, "on": true})); err != nil {
+		t.Fatal(err)
+	}
+	resultAny, err := d.handleApprovePlan(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := resultAny.(map[string]any)
+	if result["task"] != nil || d.isPlanMode(sess.SessionID) || len(d.sched.List()) != 1 {
+		t.Fatalf("answer approval must only exit Plan mode: %#v", result)
 	}
 }
 

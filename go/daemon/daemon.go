@@ -1756,6 +1756,33 @@ func (d *Daemon) handleSessionCreate(params json.RawMessage) (any, error) {
 	return sess, nil
 }
 
+type sessionContinuityEntry struct {
+	*sessionstore.Session
+	LatestTaskID     string            `json:"latest_task_id,omitempty"`
+	LatestTaskAgent  string            `json:"latest_task_agent,omitempty"`
+	LatestResultKind string            `json:"latest_run_result_kind,omitempty"`
+	TaskRevision     int64             `json:"task_revision,omitempty"`
+	TaskStatus       string            `json:"task_status,omitempty"`
+	Summary          string            `json:"summary,omitempty"`
+	Continuity       *continuity.State `json:"continuity,omitempty"`
+	UpdatedAt        time.Time         `json:"updated_at,omitempty"`
+}
+
+func (d *Daemon) projectSession(sess *sessionstore.Session, task *scheduler.ExecutionRun) sessionContinuityEntry {
+	entry := sessionContinuityEntry{Session: sess}
+	if task != nil {
+		state := task.Continuity
+		entry.LatestTaskID, entry.LatestTaskAgent = task.RunID, task.Agent
+		entry.LatestResultKind = task.ResultKind
+		entry.TaskRevision, entry.TaskStatus, entry.Summary = task.Revision, task.Status, task.Summary
+		entry.Continuity, entry.UpdatedAt = &state, task.UpdatedAt
+	}
+	if entry.UpdatedAt.IsZero() {
+		entry.UpdatedAt = sess.CreatedAt
+	}
+	return entry
+}
+
 func (d *Daemon) handleSessionGet(params json.RawMessage) (any, error) {
 	id, err := sessionID(params)
 	if err != nil {
@@ -1765,7 +1792,7 @@ func (d *Daemon) handleSessionGet(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", id)
 	}
-	return sess, nil
+	return d.projectSession(sess, d.latestSessionTask(id)), nil
 }
 
 func (d *Daemon) handleSessionList(params json.RawMessage) (any, error) {
@@ -1785,28 +1812,12 @@ func (d *Daemon) handleSessionList(params json.RawMessage) (any, error) {
 			latest[task.SessionID] = task
 		}
 	}
-	type sessionContinuityEntry struct {
-		*sessionstore.Session
-		LatestTaskID    string            `json:"latest_task_id,omitempty"`
-		LatestTaskAgent string            `json:"latest_task_agent,omitempty"`
-		TaskRevision    int64             `json:"task_revision,omitempty"`
-		TaskStatus      string            `json:"task_status,omitempty"`
-		Summary         string            `json:"summary,omitempty"`
-		Continuity      *continuity.State `json:"continuity,omitempty"`
-		UpdatedAt       time.Time         `json:"updated_at,omitempty"`
-	}
 	out := make([]sessionContinuityEntry, 0, len(d.store.List()))
 	for _, sess := range d.store.List() {
 		if p.Archived != nil && (sess.Status == "closed") != *p.Archived {
 			continue
 		}
-		entry := sessionContinuityEntry{Session: sess}
-		if task := latest[sess.SessionID]; task != nil {
-			state := task.Continuity
-			entry.LatestTaskID, entry.LatestTaskAgent = task.RunID, task.Agent
-			entry.TaskRevision, entry.TaskStatus, entry.Summary = task.Revision, task.Status, task.Summary
-			entry.Continuity, entry.UpdatedAt = &state, task.UpdatedAt
-		}
+		entry := d.projectSession(sess, latest[sess.SessionID])
 		// Always expose a recency timestamp so clients can resume the most recent
 		// conversation instead of map-iteration order.
 		if entry.UpdatedAt.IsZero() {
@@ -2187,7 +2198,7 @@ func (d *Daemon) handleApprovePlan(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("persist plan approval notification: %w", err)
 	}
 	result := map[string]any{"session_id": id, "plan_mode": false, "approved": true}
-	if latest == nil || latest.Status != "completed" || latest.Agent != "plan" || strings.TrimSpace(latest.Summary) == "" {
+	if latest == nil || latest.Status != "completed" || latest.Agent != "plan" || latest.ResultKind != "plan" || strings.TrimSpace(latest.Summary) == "" {
 		return result, nil
 	}
 	model := strings.TrimSpace(latest.RequestedModel)

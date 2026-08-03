@@ -127,6 +127,7 @@ type action struct {
 	Command         []string             `json:"command"`
 	Content         string               `json:"content"`
 	Summary         string               `json:"summary"`
+	ResultKind      string               `json:"result_kind,omitempty"`
 	Target          string               `json:"target"`
 	OldText         string               `json:"old_text"`
 	Operations      []memoryOperation    `json:"operations,omitempty"`
@@ -560,6 +561,17 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		}
 
 		if act.Tool == "done" {
+			if task.Agent == "plan" && act.ResultKind != "answer" && act.ResultKind != "plan" {
+				assistantStream.reset()
+				verifyAttempts++
+				if verifyAttempts > maxVerifyAttempts {
+					d.degrade(sess, task, tr, "plan agent never supplied a valid result_kind")
+					return
+				}
+				tr.addTurn(Turn{Tool: "system", ActionBrief: "result-kind", Obs: Observation{Pinned: true,
+					Content: "Your 'done' action must include result_kind. Use exactly 'answer' for an ordinary conversational response, or 'plan' only for a concrete implementation plan that is ready for user review. Re-emit done with the correct result_kind."}})
+				continue
+			}
 			// Goal verification: if the task carries objective success criteria,
 			// check them before accepting model-reported completion.
 			if len(task.SuccessCriteria) > 0 {
@@ -607,6 +619,8 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				continue
 			}
 			tr.addTurn(Turn{Tool: "done", ActionBrief: "done", Obs: Observation{Content: act.Summary, Pinned: true}})
+			d.sched.SetResultKind(task.RunID, act.ResultKind)
+			task.ResultKind = act.ResultKind
 			if !d.persistFinalCheckpoint(sess, task, tr, turn, memorySnapshot) {
 				assistantStream.reset()
 				return
@@ -872,7 +886,7 @@ func (d *Daemon) finish(sess *sessionstore.Session, task *scheduler.ExecutionRun
 		return
 	}
 	d.record(sess.SessionID, "ExecutionCompleted", task.RunID, "go",
-		map[string]any{"summary": summary}, "")
+		map[string]any{"summary": summary, "result_kind": task.ResultKind}, "")
 	d.persistRun(task.RunID)
 	if task.Continuity.RecoveryGeneration > 0 {
 		d.record(sess.SessionID, "ExecutionRecoveryCompleted", task.RunID, "go", map[string]any{

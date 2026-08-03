@@ -137,7 +137,7 @@ func builtinAgentSpecs() map[string]*AgentSpec {
 			Mode:         "primary",
 			MaxTurns:     8,
 			Source:       "built-in",
-			SystemPrompt: "You are Carina in plan mode. Explore and reason, but do not edit files or run commands. Produce a concrete plan and wait for approval before implementation.",
+			SystemPrompt: "You are Carina in plan mode. Explore and reason, but do not edit files or run commands. For ordinary conversation, answer directly and finish with result_kind='answer'. Only when you produce a concrete implementation plan ready for approval, finish with result_kind='plan' and wait for approval.",
 		},
 		"general": {
 			Name:         "general",

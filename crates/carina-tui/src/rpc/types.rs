@@ -658,11 +658,13 @@ pub struct Session {
     /// Recency for cold-start resume / session browser (task activity or created_at).
     #[serde(default)]
     pub updated_at: String,
-    #[serde(default)]
+    #[serde(default, alias = "latest_task_id")]
     pub latest_run_id: String,
-    #[serde(default)]
+    #[serde(default, alias = "latest_task_agent")]
     pub latest_run_agent: String,
     #[serde(default)]
+    pub latest_run_result_kind: String,
+    #[serde(default, alias = "task_status")]
     pub execution_status: String,
     #[serde(default)]
     pub summary: String,
@@ -805,6 +807,8 @@ pub struct WireEvent {
     pub status: String,
     #[serde(default)]
     pub summary: String,
+    #[serde(default)]
+    pub result_kind: String,
     #[serde(default)]
     pub decision_id: String,
     #[serde(default)]
@@ -1334,6 +1338,18 @@ impl WireEvent {
             },
             _ => None,
         }
+    }
+
+    pub fn execution_result_kind(&self) -> Option<&str> {
+        let kind = if self.result_kind.is_empty() {
+            self.payload
+                .get("result_kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        } else {
+            self.result_kind.as_str()
+        };
+        matches!(kind, "answer" | "plan").then_some(kind)
     }
 
     pub fn is_execution_terminal(&self) -> bool {
@@ -2402,6 +2418,55 @@ mod tests {
         .unwrap();
         assert_eq!(bare.execution_lifecycle(), None);
     }
+
+    #[test]
+    fn typed_plan_result_kind_decodes_additively() {
+        let event: WireEvent = serde_json::from_value(json!({
+            "type": "execution.completed",
+            "run_id": "run_1",
+            "status": "completed",
+            "result_kind": "answer"
+        }))
+        .unwrap();
+        assert_eq!(event.execution_result_kind(), Some("answer"));
+
+        let nested: WireEvent = serde_json::from_value(json!({
+            "type": "ExecutionCompleted",
+            "run_id": "run_2",
+            "payload": {"result_kind": "plan"}
+        }))
+        .unwrap();
+        assert_eq!(nested.execution_result_kind(), Some("plan"));
+
+        let legacy: WireEvent = serde_json::from_value(json!({
+            "type": "ExecutionCompleted",
+            "run_id": "run_old",
+            "payload": {}
+        }))
+        .unwrap();
+        assert_eq!(legacy.execution_result_kind(), None);
+
+        let session: Session = serde_json::from_value(json!({
+            "session_id": "sess_1",
+            "latest_task_id": "run_1",
+            "latest_task_agent": "plan",
+            "task_status": "completed",
+            "latest_run_result_kind": "answer"
+        }))
+        .unwrap();
+        assert_eq!(session.latest_run_id, "run_1");
+        assert_eq!(session.latest_run_agent, "plan");
+        assert_eq!(session.execution_status, "completed");
+        assert_eq!(session.latest_run_result_kind, "answer");
+
+        let run: ExecutionRun = serde_json::from_value(json!({
+            "run_id": "run_1",
+            "session_id": "sess_1",
+            "result_kind": "plan"
+        }))
+        .unwrap();
+        assert_eq!(run.result_kind, "plan");
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -2418,6 +2483,8 @@ pub struct ExecutionRun {
     pub user_prompt: String,
     #[serde(default)]
     pub summary: String,
+    #[serde(default)]
+    pub result_kind: String,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

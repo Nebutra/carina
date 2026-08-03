@@ -674,7 +674,7 @@ def handle(connection, mode="normal"):
                         "type": "ExecutionCompleted", "event_id": "evt_plan_completed",
                         "session_id": session_id, "run_id": "run_plan", "raw_cursor": 2,
                         "agent": "plan",
-                        "payload": {"summary": "Implement provider discovery with typed readiness and recovery."}
+                        "payload": {"summary": "Implement provider discovery with typed readiness and recovery.", "result_kind": "plan"}
                     }})
                     if not plan_approved.wait(10):
                         return

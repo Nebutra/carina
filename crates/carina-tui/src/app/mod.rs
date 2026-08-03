@@ -1344,6 +1344,7 @@ impl App {
         };
         session.latest_run_id = snapshot.latest_run_id.clone();
         session.latest_run_agent = snapshot.latest_run_agent.clone();
+        session.latest_run_result_kind = snapshot.latest_run_result_kind.clone();
         session.execution_status = snapshot.execution_status.clone();
         session.summary = snapshot.summary.clone();
         session.plan_mode = snapshot.plan_mode;
@@ -1413,6 +1414,7 @@ impl App {
         status: &str,
         agent: Option<&str>,
         summary: Option<&str>,
+        result_kind: Option<&str>,
     ) {
         let Some(mut session) = self.active_session.as_ref().cloned() else {
             return;
@@ -1424,6 +1426,9 @@ impl App {
         }
         if let Some(summary) = summary.filter(|value| !value.trim().is_empty()) {
             session.summary = summary.to_owned();
+        }
+        if let Some(result_kind) = result_kind {
+            session.latest_run_result_kind = result_kind.to_owned();
         }
         self.remember_session(session);
     }
@@ -2258,6 +2263,7 @@ impl App {
                                     status,
                                     event_agent.as_deref(),
                                     None,
+                                    Some(""),
                                 );
                             }
                             if let Some(activity) = event.live_activity_description() {
@@ -2282,6 +2288,7 @@ impl App {
                                     &execution_status,
                                     event_agent.as_deref(),
                                     terminal_summary.as_deref(),
+                                    event.execution_result_kind(),
                                 );
                                 clear_terminal_execution_notice(&mut self.notice, &event.run_id);
                             }
@@ -3914,6 +3921,7 @@ impl App {
             &execution_status,
             Some(submitted_agent),
             None,
+            Some(""),
         );
         self.notice.clear();
         self.follow_transcript_bottom();
@@ -4210,6 +4218,7 @@ impl App {
                             execution.status.clone()
                         };
                         session.summary.clear();
+                        session.latest_run_result_kind.clear();
                     }
                     self.remember_session(session);
                 }
@@ -5977,6 +5986,7 @@ fn plan_review_overlay(session: &Session) -> Option<PlanReviewOverlay> {
     (session.plan_mode
         && session.execution_status == "completed"
         && session.latest_run_agent == "plan"
+        && session.latest_run_result_kind == "plan"
         && !session.latest_run_id.is_empty()
         && !session.summary.trim().is_empty())
     .then(|| PlanReviewOverlay {
@@ -7577,6 +7587,7 @@ mod tests {
             updated_at: updated_at.into(),
             latest_run_id: String::new(),
             latest_run_agent: String::new(),
+            latest_run_result_kind: String::new(),
             execution_status: String::new(),
             summary: String::new(),
             continuity: None,
@@ -7787,6 +7798,7 @@ mod tests {
             updated_at: String::new(),
             latest_run_id: "run_plan".into(),
             latest_run_agent: "plan".into(),
+            latest_run_result_kind: "plan".into(),
             execution_status: "completed".into(),
             summary: "Inspect, change, verify.".into(),
             continuity: None,
@@ -7794,6 +7806,13 @@ mod tests {
         let review = plan_review_overlay(&session).expect("completed plans remain reviewable");
         assert_eq!(review.run_id, "run_plan");
         assert_eq!(review.summary, "Inspect, change, verify.");
+
+        let mut answer = session.clone();
+        answer.latest_run_result_kind = "answer".into();
+        assert!(plan_review_overlay(&answer).is_none());
+        let mut legacy = session;
+        legacy.latest_run_result_kind.clear();
+        assert!(plan_review_overlay(&legacy).is_none());
     }
 
     #[test]

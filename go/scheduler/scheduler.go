@@ -55,6 +55,7 @@ type ExecutionRun struct {
 	RiskLevel                   int              `json:"risk_level"`
 	Mode                        string           `json:"mode,omitempty"`            // foreground | background
 	Summary                     string           `json:"summary,omitempty"`         // final result / degrade reason
+	ResultKind                  string           `json:"result_kind,omitempty"`     // answer | plan for typed Plan-agent results
 	AppliedPatches              []string         `json:"applied_patches,omitempty"` // rollbackable patch ids
 	ReconciliationRequired      bool             `json:"reconciliation_required,omitempty"`
 	BlockedReason               string           `json:"blocked_reason,omitempty"`
@@ -299,6 +300,19 @@ func (s *Scheduler) SetResult(taskID, summary string, patches []string) {
 	updated.AppliedPatches = patches
 	touchRun(&updated)
 	s.runs[taskID] = &updated
+}
+
+// SetResultKind records the typed identity of a completed result before the
+// terminal transition is published. Empty remains valid for legacy runs.
+func (s *Scheduler) SetResultKind(taskID, resultKind string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.runs[taskID]; ok {
+		updated := *t
+		updated.ResultKind = resultKind
+		touchRun(&updated)
+		s.runs[taskID] = &updated
+	}
 }
 
 func (s *Scheduler) SetAppliedPatches(taskID string, patches []string) {

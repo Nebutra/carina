@@ -33,6 +33,7 @@ func (d *Daemon) emitCompletion(sessionID string, run *scheduler.ExecutionRun) {
 		"agent":           t.Agent,
 		"status":          t.Status,
 		"summary":         t.Summary,
+		"result_kind":     t.ResultKind,
 		"applied_patches": t.AppliedPatches,
 		"tokens_used":     t.TokensUsed,
 		"mode":            t.Mode,

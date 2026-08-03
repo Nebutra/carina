@@ -40,7 +40,7 @@ func TestCompletionEnvelopeEmitted(t *testing.T) {
 	})
 
 	d.SetReasoner(&scriptedReasoner{steps: []string{
-		`{"tool":"done","summary":"all set"}`,
+		`{"tool":"done","summary":"all set","result_kind":"answer"}`,
 	}})
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
@@ -64,6 +64,25 @@ func TestCompletionEnvelopeEmitted(t *testing.T) {
 	}
 	if _, ok := env["duration_ms"]; !ok {
 		t.Fatal("envelope should carry duration_ms")
+	}
+}
+
+func TestPlanCompletionEnvelopeCarriesResultKind(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	completed := make(chan map[string]any, 1)
+	d.events.Tap(func(_ string, ev map[string]any) {
+		if ev["type"] == "execution.completed" {
+			completed <- ev
+		}
+	})
+	d.SetReasoner(&scriptedReasoner{steps: []string{`{"tool":"done","summary":"hello","result_kind":"answer"}`}})
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, "hello", "", "plan", nil)
+	d.runTask(sess, task)
+	if event := <-completed; event["result_kind"] != "answer" {
+		t.Fatalf("completion result_kind = %v", event["result_kind"])
 	}
 }
 
