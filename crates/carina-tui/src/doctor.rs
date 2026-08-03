@@ -683,7 +683,7 @@ mod tests {
     #[test]
     fn projects_kernel_failure_and_policy_stale_into_typed_sections() {
         let raw = json!({
-            "version": "0.6.6",
+            "version": "0.7.0",
             "disabled": false,
             "kernel": {"ok": false, "error": "unreachable"},
             "policy": {"configured": true, "stale": true, "reason": "bundle.toml changed on disk"},
@@ -723,7 +723,7 @@ mod tests {
     #[test]
     fn disabled_doctor_is_info_not_error() {
         let raw = json!({
-            "version": "0.6.6",
+            "version": "0.7.0",
             "disabled": true,
             "reason": "CARINA_DOCTOR_DISABLE is set; probes did not run"
         });

@@ -1,10 +1,10 @@
-/** Carina JSON-RPC SDK for Runtime 0.6.6. */
+/** Carina JSON-RPC SDK for Runtime 0.7.0. */
 import { createConnection, type Socket } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 
-export const compatibleRuntimeVersion = '0.6.6'
+export const compatibleRuntimeVersion = '0.7.0'
 
 export interface MediaRef {
   artifact_id: string

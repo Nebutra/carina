@@ -1899,7 +1899,7 @@ mod tests {
             (
                 "RuntimeInitialize",
                 json!({
-                    "runtime_version": "0.6.6",
+                    "runtime_version": "0.7.0",
                     "protocol_version": "1.3.0",
                     "projection_version": "1.0.0",
                     "capabilities": {
