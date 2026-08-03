@@ -101,6 +101,9 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 		"memory_snapshot_bytes": len(cp.MemorySnapshot),
 		"measurement":           "exact persisted checkpoint bytes; not token or live in-flight context usage",
 	}
+	if receipts := cp.Transcript.CompactionReceipts; len(receipts) > 0 {
+		out["recent_receipt"] = receipts[len(receipts)-1]
+	}
 	// Compact is available at any idle turn boundary with a checkpoint — not
 	// only paused. Live mid-execution stays refused (activeSessionTask / fence).
 	if latest.ReconciliationRequired {

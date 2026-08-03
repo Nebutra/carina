@@ -3167,6 +3167,36 @@ impl App {
         let (hitl_label, isolation_label, session_label, sandbox_label) =
             security_axis_labels(self.ui_locale());
         let width = area.width as usize;
+        let context = self
+            .context_summary
+            .as_ref()
+            .map(|summary| &summary.model_context_tokens);
+        let context_text = context
+            .filter(|value| value.limit_tokens > 0)
+            .map(|value| {
+                format!(
+                    "ctx {}{}",
+                    crate::render_contract::format_percent(f64::from(value.used_percent)),
+                    if value.estimated || value.estimated_limit {
+                        " est."
+                    } else {
+                        ""
+                    }
+                )
+            })
+            .unwrap_or_else(|| "ctx ?".to_owned());
+        let context_style = context.map_or_else(
+            || Style::default().fg(self.theme.muted),
+            |value| {
+                if value.used_percent >= 90 || value.threshold == "critical" {
+                    Style::default().fg(self.theme.danger)
+                } else if value.used_percent >= 80 || value.threshold == "warning" {
+                    Style::default().fg(self.theme.warning)
+                } else {
+                    Style::default().fg(self.theme.muted)
+                }
+            },
+        );
         let isolation = if width >= 54 {
             format!(
                 "{isolation_label}  {profile}  {}  {session_label} {approval}  {}  {sandbox_label} {sandbox}",
@@ -3181,6 +3211,13 @@ impl App {
         } else {
             format!("{isolation_label}  {profile}")
         };
+        let context_width = UnicodeWidthStr::width(context_text.as_str());
+        let context_separator = format!("  {}  ", self.theme.glyphs.separator());
+        let separator_width = UnicodeWidthStr::width(context_separator.as_str());
+        let isolation = truncate_cells(
+            &isolation,
+            width.saturating_sub(context_width + separator_width),
+        );
         let lines = vec![
             Line::from(vec![
                 Span::styled(
@@ -3189,14 +3226,18 @@ impl App {
                 ),
                 Span::styled(hitl, hitl_style),
             ]),
-            Line::from(Span::styled(
-                truncate_cells(&isolation, width),
-                Style::default().fg(if sandbox == "off" {
-                    self.theme.warning
-                } else {
-                    self.theme.muted
-                }),
-            )),
+            Line::from(vec![
+                Span::styled(context_text, context_style),
+                Span::raw(context_separator),
+                Span::styled(
+                    isolation,
+                    Style::default().fg(if sandbox == "off" {
+                        self.theme.warning
+                    } else {
+                        self.theme.muted
+                    }),
+                ),
+            ]),
         ];
         frame.render_widget(Paragraph::new(lines), area);
     }
@@ -3997,6 +4038,100 @@ impl App {
                         (tr(locale, MessageId::Refresh), Action::OpenStatus, 12_102),
                         (tr(locale, MessageId::Close), Action::CloseOverlay, 12_103),
                     ],
+                );
+            }
+            Overlay::Context(context) => {
+                let popup = centered(
+                    area,
+                    layout_contract::CHECKPOINT_POPUP.0,
+                    layout_contract::CHECKPOINT_POPUP.1,
+                );
+                frame.render_widget(Clear, popup);
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(self.theme.glyphs.outer_border_type())
+                    .border_style(self.theme.focus())
+                    .title(format!(" {} ", context_title(locale)))
+                    .style(Style::default());
+                let inner = block.inner(popup).inner(Margin::new(2, 1));
+                frame.render_widget(block, popup);
+                let tokens = &context.model_context_tokens;
+                let policy = &context.compaction_policy;
+                let estimate = if tokens.estimated || tokens.estimated_limit {
+                    " est."
+                } else {
+                    ""
+                };
+                let mut body = vec![
+                    Line::from(Span::styled(
+                        format!(
+                            "ctx  {} / {}  {}{}",
+                            crate::render_contract::format_tokens(tokens.tokens),
+                            crate::render_contract::format_tokens(tokens.limit_tokens),
+                            crate::render_contract::format_percent(f64::from(tokens.used_percent)),
+                            estimate
+                        ),
+                        context_style_for_percent(
+                            tokens.used_percent,
+                            &tokens.threshold,
+                            self.theme,
+                        ),
+                    )),
+                    Line::from(format!(
+                        "window {}  {}  reserve {}  {}  trigger {}",
+                        crate::render_contract::format_tokens(policy.window_tokens),
+                        self.theme.glyphs.separator(),
+                        crate::render_contract::format_tokens(policy.reserve_tokens),
+                        self.theme.glyphs.separator(),
+                        crate::render_contract::format_tokens(policy.trigger_tokens),
+                    )),
+                    Line::from(format!(
+                        "policy {}  {}  source {}",
+                        fallback_label(&policy.policy_version),
+                        self.theme.glyphs.separator(),
+                        fallback_label(&policy.metadata_source),
+                    )),
+                    Line::from(""),
+                    Line::from(format!(
+                        "checkpoint  {}  {} bytes  {} turns  {} compactions",
+                        if context.checkpoint.available {
+                            "ready"
+                        } else {
+                            "unavailable"
+                        },
+                        context.checkpoint.transcript_bytes,
+                        context.checkpoint.turn_count,
+                        context.checkpoint.compaction_count,
+                    )),
+                ];
+                if let Some(receipt) = &context.recent_receipt {
+                    body.extend([
+                        Line::from(""),
+                        Line::from(format!(
+                            "receipt  pressure {:.0}%  removed {}  verbatim {}",
+                            receipt.pressure_before * 100.0,
+                            receipt.removed_turns,
+                            receipt.kept_turn_indices.len(),
+                        )),
+                        Line::from(format!(
+                            "hash  pre {}  summary {}  kept {}",
+                            short_hash(&receipt.preimage_sha256),
+                            short_hash(&receipt.summary_sha256),
+                            short_hash(&receipt.kept_sha256),
+                        )),
+                        Line::from(format!("key files  {}", receipt.key_files.join(", "))),
+                    ]);
+                }
+                body.push(Line::from(""));
+                body.push(Line::from(Span::styled(
+                    "R refresh  Enter/Esc close",
+                    Style::default().fg(self.theme.muted),
+                )));
+                frame.render_widget(
+                    Paragraph::new(body)
+                        .style(Style::default().fg(self.theme.text))
+                        .wrap(Wrap { trim: false }),
+                    inner,
                 );
             }
             Overlay::Agents(overlay) => {
@@ -4992,6 +5127,42 @@ fn security_axis_labels(
         Locale::Es => ("Aprobación", "Aislamiento", "sesión", "sandbox"),
         Locale::Fr => ("Approbation", "Isolation", "session", "sandbox"),
     }
+}
+
+fn context_title(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Context",
+        Locale::ZhHans => "上下文",
+        Locale::ZhHant => "上下文",
+        Locale::Ja => "コンテキスト",
+        Locale::Ko => "컨텍스트",
+        Locale::Es => "Contexto",
+        Locale::Fr => "Contexte",
+    }
+}
+
+fn context_style_for_percent(percent: u8, threshold: &str, theme: crate::theme::Theme) -> Style {
+    if theme.no_color {
+        theme.muted()
+    } else if percent >= 90 || threshold == "critical" {
+        Style::default().fg(theme.danger)
+    } else if percent >= 80 || threshold == "warning" {
+        Style::default().fg(theme.warning)
+    } else {
+        theme.muted()
+    }
+}
+
+fn fallback_label(value: &str) -> &str {
+    if value.trim().is_empty() {
+        "unknown"
+    } else {
+        value
+    }
+}
+
+fn short_hash(value: &str) -> &str {
+    value.get(..12).unwrap_or(value)
 }
 
 #[cfg(test)]

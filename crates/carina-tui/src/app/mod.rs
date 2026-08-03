@@ -1862,6 +1862,9 @@ impl App {
                         continue;
                     }
                     if let Ok(summary) = result {
+                        if let Some(Overlay::Context(context)) = self.overlays.active_mut() {
+                            *context = summary.clone();
+                        }
                         self.context_summary = Some(summary);
                     }
                 }
@@ -3822,6 +3825,12 @@ impl App {
                     .replace(Overlay::Settings(SettingsOverlay { selected: 0 }));
             }
             CommandId::Status => self.apply_action(Action::OpenStatus),
+            CommandId::Context => {
+                self.request_context_summary();
+                self.overlays.replace(Overlay::Context(
+                    self.context_summary.clone().unwrap_or_default(),
+                ));
+            }
             CommandId::Changes => self.apply_action(Action::OpenChanges),
             CommandId::Provider => {
                 self.provider_index = self
@@ -4158,6 +4167,13 @@ impl App {
                 KeyCode::Char('r') => deferred = Some(Action::OpenStatus),
                 KeyCode::Char('a') => deferred = Some(Action::OpenAgents),
                 KeyCode::Char('c') => deferred = Some(Action::OpenChanges),
+                _ => {}
+            },
+            Some(Overlay::Context(_)) => match key.code {
+                KeyCode::Char('r') => self.request_context_summary(),
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
+                    deferred = Some(Action::CloseOverlay)
+                }
                 _ => {}
             },
             Some(Overlay::Help(help)) => match key.code {

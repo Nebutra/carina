@@ -5,6 +5,7 @@ use crate::rpc::{PromptCommand, PromptCommandArgument};
 pub enum CommandId {
     Settings,
     Status,
+    Context,
     Changes,
     Provider,
     Model,
@@ -43,6 +44,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         CommandId::Status,
         "/status",
         MessageId::CommandStatus,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Context,
+        "/context",
+        MessageId::CommandContext,
         AvailabilityRule::Always,
     ),
     command(

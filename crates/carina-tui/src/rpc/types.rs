@@ -83,7 +83,7 @@ pub struct UsageTotals {
     pub cost_usd: f64,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 pub struct ContextSummary {
     #[serde(default)]
     pub session_id: String,
@@ -91,6 +91,72 @@ pub struct ContextSummary {
     pub model_context_tokens: ModelContextTokens,
     #[serde(default)]
     pub task: ContextExecutionSummary,
+    #[serde(default)]
+    pub compaction_policy: ContextCompactionPolicy,
+    #[serde(default)]
+    pub checkpoint: ContextCheckpointSummary,
+    #[serde(default)]
+    pub compact: ContextCompactAvailability,
+    #[serde(default)]
+    pub recent_receipt: Option<ContextCompactionReceipt>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct ContextCompactionPolicy {
+    #[serde(default)]
+    pub policy_version: String,
+    #[serde(default)]
+    pub window_tokens: u64,
+    #[serde(default)]
+    pub reserve_tokens: u64,
+    #[serde(default)]
+    pub trigger_tokens: u64,
+    #[serde(default)]
+    pub metadata_source: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct ContextCheckpointSummary {
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub checkpoint_id: String,
+    #[serde(default)]
+    pub transcript_bytes: u64,
+    #[serde(default)]
+    pub turn_count: usize,
+    #[serde(default)]
+    pub compaction_count: usize,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct ContextCompactAvailability {
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct ContextCompactionReceipt {
+    #[serde(default)]
+    pub policy_version: String,
+    #[serde(default)]
+    pub metadata_source: String,
+    #[serde(default)]
+    pub pressure_before: f64,
+    #[serde(default)]
+    pub removed_turns: usize,
+    #[serde(default)]
+    pub kept_turn_indices: Vec<usize>,
+    #[serde(default)]
+    pub key_files: Vec<String>,
+    #[serde(default)]
+    pub preimage_sha256: String,
+    #[serde(default)]
+    pub summary_sha256: String,
+    #[serde(default)]
+    pub kept_sha256: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -107,6 +173,10 @@ pub struct ModelContextTokens {
     pub available: bool,
     #[serde(default)]
     pub estimated: bool,
+    #[serde(default)]
+    pub estimated_limit: bool,
+    #[serde(default)]
+    pub metadata_source: String,
     #[serde(default)]
     pub tokens: u64,
     #[serde(default)]
@@ -2034,10 +2104,25 @@ mod tests {
                 json!({
                     "session_id": "sess_1",
                     "model_context_tokens": {
-                        "used": 100,
-                        "limit": 128000
+                        "tokens": 100,
+                        "limit_tokens": 32000,
+                        "used_percent": 1,
+                        "estimated_limit": true,
+                        "metadata_source": "fallback-estimate"
                     },
-                    "task": {"mode": "foreground", "status": "running"}
+                    "task": {"mode": "foreground", "status": "running"},
+                    "compaction_policy": {
+                        "policy_version": "model-window-v1",
+                        "window_tokens": 32000,
+                        "reserve_tokens": 4000,
+                        "trigger_tokens": 22400,
+                        "metadata_source": "fallback-estimate"
+                    },
+                    "recent_receipt": {
+                        "pressure_before": 1.02,
+                        "summary_sha256": "abcdef123456",
+                        "key_files": ["src/lib.rs"]
+                    }
                 }),
             ),
             (
@@ -2097,6 +2182,12 @@ mod tests {
                 "ContextSummary" => {
                     let decoded: ContextSummary = serde_json::from_value(value).unwrap();
                     assert_eq!(decoded.session_id, "sess_1");
+                    assert!(decoded.model_context_tokens.estimated_limit);
+                    assert_eq!(decoded.compaction_policy.reserve_tokens, 4000);
+                    assert_eq!(
+                        decoded.recent_receipt.unwrap().summary_sha256,
+                        "abcdef123456"
+                    );
                 }
                 "PlanModeState" => {
                     let decoded: PlanModeState = serde_json::from_value(value).unwrap();

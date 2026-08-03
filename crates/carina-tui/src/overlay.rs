@@ -2,7 +2,9 @@ use std::collections::{HashSet, VecDeque};
 
 use crate::file_viewer::FileViewer;
 use crate::product_projection::ProductProjection;
-use crate::rpc::{AgentRecap, GovernanceId, QuestionOption, SessionItemEvent, WireEvent};
+use crate::rpc::{
+    AgentRecap, ContextSummary, GovernanceId, QuestionOption, SessionItemEvent, WireEvent,
+};
 
 #[derive(Debug, Clone)]
 pub enum Overlay {
@@ -11,6 +13,7 @@ pub enum Overlay {
     PlanReview(PlanReviewOverlay),
     Settings(SettingsOverlay),
     Status(StatusOverlay),
+    Context(ContextSummary),
     Help(HelpOverlay),
     Doctor(crate::doctor::DoctorScreen),
     Agents(Box<AgentDashboardOverlay>),
@@ -117,6 +120,7 @@ impl Overlay {
             Self::PlanReview(_)
             | Self::Settings(_)
             | Self::Status(_)
+            | Self::Context(_)
             | Self::Help(_)
             | Self::Doctor(_)
             | Self::Agents(_)
