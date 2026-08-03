@@ -17,7 +17,7 @@ use ratatui::widgets::BorderType;
 #[cfg(test)]
 use unicode_width::UnicodeWidthStr;
 
-use crate::frame_scheduler::SPINNER_INTERVAL;
+use crate::frame_scheduler::{SPINNER_INTERVAL, reduced_motion_enabled};
 
 pub const GLYPH_MODE_ENV: &str = "CARINA_TUI_GLYPHS";
 pub const ASCII_MODE_ENV: &str = "CARINA_ASCII";
@@ -210,16 +210,27 @@ const ALL: &[GlyphPair] = &[
 #[derive(Debug, Clone, Copy)]
 pub struct Glyphs {
     pub mode: GlyphMode,
+    reduced_motion: bool,
 }
 
 impl Glyphs {
     pub fn detect() -> Self {
         Self {
             mode: GlyphMode::detect(),
+            reduced_motion: reduced_motion_enabled(),
         }
     }
     pub const fn new(mode: GlyphMode) -> Self {
-        Self { mode }
+        Self {
+            mode,
+            reduced_motion: false,
+        }
+    }
+    pub const fn new_with_reduced_motion(mode: GlyphMode, reduced_motion: bool) -> Self {
+        Self {
+            mode,
+            reduced_motion,
+        }
     }
     fn get(self, pair: GlyphPair) -> &'static str {
         pair.get(self.mode)
@@ -326,6 +337,9 @@ impl Glyphs {
         }
     }
     pub fn spinner(self, elapsed_ms: u128) -> &'static str {
+        if self.reduced_motion {
+            return self.get(SPINNER[0]);
+        }
         let period = SPINNER_INTERVAL.as_millis();
         self.get(SPINNER[(elapsed_ms / period) as usize % SPINNER.len()])
     }
@@ -361,6 +375,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
     #[test]
     fn every_fallback_has_the_same_display_width() {
@@ -460,6 +475,17 @@ mod tests {
                 glyphs.spinner(0),
                 glyphs.spinner(SPINNER_INTERVAL.as_millis())
             );
+        }
+    }
+
+    #[test]
+    fn reduced_motion_spinner_is_static_and_width_stable() {
+        for mode in [GlyphMode::Unicode, GlyphMode::Ascii] {
+            let glyphs = Glyphs::new_with_reduced_motion(mode, true);
+            let first = glyphs.spinner(0);
+            assert_eq!(first, glyphs.spinner(SPINNER_INTERVAL.as_millis()));
+            assert_eq!(first, glyphs.spinner(Duration::from_secs(30).as_millis()));
+            assert_eq!(UnicodeWidthStr::width(first), 1);
         }
     }
 

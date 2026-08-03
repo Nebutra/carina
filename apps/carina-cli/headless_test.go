@@ -50,7 +50,7 @@ func TestHandleStreamInputUsesOneGovernedControlContract(t *testing.T) {
 	register("execution.steer", rpc.ScopeWrite)
 	register("governance.approval.resolve", rpc.ScopeAdmin)
 	register("question.answer", rpc.ScopeWrite)
-	register("execution.cancel", rpc.ScopeWrite)
+	register("execution.interrupt", rpc.ScopeWrite)
 	c := dialTestServer(t, s)
 	defer c.Close()
 
@@ -80,6 +80,12 @@ func TestHandleStreamInputUsesOneGovernedControlContract(t *testing.T) {
 
 	if _, _, err := handleStreamInput(c, "sess_1", defaults, streamInputFrame{Type: "approval", DecisionID: "dec_2", Decision: "allow", Scope: "global"}); err == nil {
 		t.Fatal("unsafe approval scope accepted")
+	}
+	if _, _, err := handleStreamInput(c, "sess_1", defaults, streamInputFrame{Type: "interrupt", RunID: "run_1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls["execution.interrupt"]; got["run_id"] != "run_1" || got["mode"] != "soft" {
+		t.Fatalf("soft interrupt params=%#v", got)
 	}
 	if _, stop, err := handleStreamInput(c, "sess_1", defaults, streamInputFrame{Type: "close"}); err != nil || !stop {
 		t.Fatalf("close stop=%v err=%v", stop, err)

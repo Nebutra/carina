@@ -403,6 +403,9 @@ func (d *Daemon) handleTaskResume(params json.RawMessage) (any, error) {
 	if cp == nil {
 		return nil, fmt.Errorf("task_resume_blocked: latest checkpoint is unavailable")
 	}
+	if err := d.clearSoftInterrupt(task.RunID); err != nil {
+		return nil, fmt.Errorf("task_resume_blocked: clear stale soft interrupt intent: %w", err)
+	}
 	actual := d.appliedPatchIDsForSession(task.SessionID)
 	if !slices.Equal(task.AppliedPatches, cp.AppliedPatches) || !slices.Equal(actual, cp.AppliedPatches) {
 		reason := "latest checkpoint, durable task, and workspace patch lineages do not match"

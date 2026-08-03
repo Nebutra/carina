@@ -312,6 +312,14 @@ impl OverlayStack {
             .count()
     }
 
+    pub fn governance_ids(&self) -> Vec<GovernanceId> {
+        self.active
+            .iter()
+            .chain(self.pending.iter())
+            .filter_map(Overlay::governance_id)
+            .collect()
+    }
+
     pub fn push(&mut self, overlay: Overlay) {
         if let Overlay::PlanReview(review) = &overlay
             && self

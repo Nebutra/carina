@@ -288,7 +288,7 @@ func handleStreamInput(c *rpcClient, sessionID string, defaults streamRunOptions
 			return nil, false, errors.New("interrupt requires run_id")
 		}
 		var out map[string]any
-		err := c.Call("execution.cancel", map[string]any{"run_id": frame.RunID}, &out)
+		err := c.Call("execution.interrupt", map[string]any{"run_id": frame.RunID, "mode": "soft"}, &out)
 		return out, false, err
 	case "close":
 		return nil, true, nil

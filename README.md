@@ -7,7 +7,7 @@
 **Run coding agents on real repositories with policy, audit, and rollback in the loop.**
 
 [![status](https://img.shields.io/badge/status-alpha-8E4053)](#current-status)
-[![release](https://img.shields.io/badge/release-v0.7.0-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.7.0)
+[![release](https://img.shields.io/badge/release-v0.8.0-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.8.0)
 [![runtime](https://img.shields.io/badge/runtime-local--first-087C58)](#why-carina)
 [![audit](https://img.shields.io/badge/audit-hash--chained-8C5A15)](#review-and-audit)
 [![license](https://img.shields.io/badge/license-MIT-182023)](LICENSE)
@@ -22,7 +22,7 @@ machine, so file reads, edits, commands, network access, plugins, and secrets go
 through explicit policy before they happen.
 
 Carina is alpha software with a public, fail-closed release pipeline. Version
-`0.7.0` ships signed and Apple-notarized macOS archives, Linux archives and
+`0.8.0` ships signed and Apple-notarized macOS archives, Linux archives and
 packages, a provenance-backed npm launcher with native platform packages, a
 Windows worker, and packaged VS Code/Web Operator clients. Install through the
 shell installer, Homebrew, npm, or the release archives; source builds remain
@@ -84,7 +84,7 @@ Implemented in this repository:
 | Integration | MCP client/server with tool search (`mcp_find`), WASM plugin boundary with org/user/project tighten-only enable merge, workers, workflow DAGs (batch and streaming — conditional/dynamic graphs, live inter-step channels, remote worker-pool dispatch, run-wide budgets; see [`docs/workflows.md`](docs/workflows.md)) |
 | Nebutra boundary | Local runtime stays authoritative; identity and multi-endpoint sync are scoped to Nebutra Cloud (`nebutra.com`) |
 
-Published in `v0.7.0`:
+Published in `v0.8.0`:
 
 - signed and Apple-notarized macOS arm64/x64 archives with public notary and
   signing evidence;
@@ -147,7 +147,7 @@ npm install -g @nebutra/carina
 
 Exact archives, checksums, Apple notary evidence, Linux packages, the Windows
 worker, VSIX, and Web Operator bundle are available on the
-[`v0.7.0` release](https://github.com/Nebutra/carina/releases/tag/v0.7.0).
+[`v0.8.0` release](https://github.com/Nebutra/carina/releases/tag/v0.8.0).
 
 ## Built-in Updates
 
@@ -192,7 +192,8 @@ carina run "fix the failing tests and show the patch"
 ## TUI Interaction And Keybindings
 
 Run bare `carina` in an interactive terminal (optional flags:
-`-session`, `-workspace`, `-locale`, `-socket`, `-no-alt-screen`). The
+`-session`, `-workspace`, `-locale`, `-socket`, `-screen-mode`,
+`-no-alt-screen`). The
 composer keeps control keys responsive while a task submission is waiting for
 its daemon acknowledgement. Ordinary typing or paste during that interval
 starts an independent next draft; it cannot mutate the frozen, journaled
@@ -245,10 +246,19 @@ The default interaction loop is:
 - Autonomous **risk review** (always-approve / accept-edits edit path) is
   projected into the transcript with outcome / risk / rationale.
 
-The TUI normally uses the alternate screen. To keep the rendered session in
-the terminal's normal buffer, use `carina --no-alt-screen`, or set
-`"tui_alternate_screen": "never"`.
-The accepted values are `auto`, `always`, and `never`.
+The TUI defaults to **Minimal** mode: finalized transcript blocks are committed
+once to native terminal scrollback while the live tail, composer, and overlays
+remain interactive. Use `/fullscreen` for long diff, agent, audit, workflow,
+and media review; use `/inline` for a keyboard-only capability-safe fallback;
+use `/minimal` to return. The same modes are available at launch with
+`carina --screen-mode minimal|fullscreen|inline`. Switching re-execs the UI,
+reattaches the same runtime/session, and carries the draft, follow-up queue,
+selection, pending-governance IDs, and native scrollback watermark through a
+bounded private handoff.
+
+`carina --no-alt-screen` remains a Minimal compatibility shortcut. Legacy
+`tui_alternate_screen` values `auto`, `always`, and `never` remain accepted;
+an explicit `--screen-mode` takes precedence.
 
 The TUI ships authored copy for English, Simplified Chinese
 (`zh-CN`/`zh-Hans`, runtime key `zh`), Traditional Chinese (`zh-Hant` /
@@ -263,44 +273,14 @@ unsupported locale quietly falls back to English, while an unsupported
 explicit flag, environment value, or config value fails fast instead of
 silently choosing a different language.
 
-The interactive TUI reads key overrides from the normal global and project
-configuration cascade (`~/.carina/config.json` and `.carina/config.json`).
-Bindings are keyed by semantic action names shown in the F1 help overlay and
-the `/keymap` picker:
-
-```json
-{
-  "tui_keybindings": {
-    "global.help": ["f2"],
-    "chat.interrupt": ["esc"],
-    "composer.submit": ["ctrl+enter"],
-    "composer.external-editor": ["ctrl+g"],
-    "editor.move-word-left": ["alt+left", "alt+b"]
-  }
-}
-```
-
-Unknown actions, duplicate JSON keys, conflicting keys in the same context, and
-unbound critical approval/search escape actions fail with an actionable error.
-Cross-context bindings are checked against the contexts that can actually be
-active together, including suggestions, normal transcript controls, and legacy
-terminal-equivalent keys such as `Ctrl+[` and `Esc`. Printable pager bindings
-remain overlay-only, so they cannot steal composer text. Modifier aliases such
-as `control`, `option`/`opt`, `cmd`/`command`, and `win` normalize to the runtime
-`ctrl`, `alt`, and `super` vocabulary.
-Multi-key chords use a space-separated value such as `"ctrl+x ctrl+r"`.
-Chord prefixes must start with a reliable modifier key; pending chords are
-visible in the status line, time out after 1.2 seconds, and `Esc` cancels them.
-Ambiguous single-key/chord prefixes are rejected instead of delaying or losing
-ordinary input.
-`/keymap` can replace a binding, add an alternate, or restore the inherited
-value. During capture, `Ctrl+V` quotes the next key: for example, `Ctrl+V Esc`
-records Escape, while `Ctrl+X Ctrl+V Enter` records a chord ending in Enter.
-Bare Escape still cancels and bare Enter still saves, so capture always has a
-reachable exit. The picker writes project `.carina/config.json` atomically and
-applies the validated keymap immediately. External edits to managed, global, or
-project config are hot-reloaded; invalid edits leave the last-good keymap
-active.
+`/keymap` is a read-only shortcut reference. It lists the runtime's actual
+interrupt, steer, send-now, follow-up, hard-cancel, and checkpoint-history
+bindings. Send-now is `Ctrl+Enter` in Ghostty and ordinary terminals, with
+`Alt+Enter` in the VS Code integrated terminal where `Ctrl+Enter` is not
+reliably distinguishable from Enter. Keymap editing and persistence are not
+currently supported. Idle double-Esc opens checkpoint history only when both
+presses land inside the grace window; set `CARINA_ESC_GRACE_MS` to a value from
+250 through 2000 milliseconds to override the 800 ms default.
 
 Task submissions are journaled under the configured state directory before
 dispatch. If an acknowledgement is lost or the TUI restarts, Carina reconciles

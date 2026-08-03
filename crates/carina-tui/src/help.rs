@@ -54,8 +54,20 @@ pub fn conversation_key_hints(bindings: KeyBindings, locale: Locale) -> Vec<Help
             description: text(locale, MessageId::HelpShortcutInterrupt).into(),
         },
         HelpEntry {
+            key: bindings.hard_cancel.label().into(),
+            description: text(locale, MessageId::HelpShortcutHardCancel).into(),
+        },
+        HelpEntry {
+            key: bindings.steer.label().into(),
+            description: text(locale, MessageId::HelpShortcutSteer).into(),
+        },
+        HelpEntry {
+            key: bindings.send_now.label().into(),
+            description: text(locale, MessageId::HelpShortcutSendNow).into(),
+        },
+        HelpEntry {
             key: "Esc Esc".into(),
-            description: text(locale, MessageId::HelpShortcutEditPrevious).into(),
+            description: text(locale, MessageId::HelpShortcutCheckpoint).into(),
         },
         HelpEntry {
             key: "Tab".into(),
@@ -108,6 +120,55 @@ mod tests {
         let line = footer_hint_line(KeyBindings::default(), Locale::En);
         assert!(line.contains("? help"));
         assert!(line.contains("Ctrl-O"));
-        assert!(line.contains("Ctrl-C"));
+        assert!(line.contains("Esc"));
+        assert!(!line.contains("Ctrl-C interrupt"));
+    }
+
+    #[test]
+    fn running_actions_are_discoverable_and_semantically_distinct() {
+        let hints = conversation_key_hints(KeyBindings::default(), Locale::En);
+        assert!(
+            hints
+                .iter()
+                .any(|entry| entry.key == "Esc" && entry.description.contains("pause"))
+        );
+        assert!(
+            hints
+                .iter()
+                .any(|entry| entry.key == "Ctrl-C" && entry.description.contains("cancel"))
+        );
+        assert!(
+            hints
+                .iter()
+                .any(|entry| entry.key == "Enter" && entry.description.contains("steer"))
+        );
+        assert!(
+            hints
+                .iter()
+                .any(|entry| entry.key == "Tab" && entry.description.contains("queue"))
+        );
+        assert!(
+            hints.iter().any(|entry| {
+                entry.key == "Ctrl-Enter" && entry.description.contains("send now")
+            })
+        );
+        assert!(
+            hints.iter().any(|entry| {
+                entry.key == "Esc Esc" && entry.description.contains("checkpoint")
+            })
+        );
+    }
+
+    #[test]
+    fn vscode_keymap_projects_its_send_now_fallback() {
+        let hints = conversation_key_hints(
+            KeyBindings::for_terminal(crate::keybinding::TerminalFamily::VsCode),
+            Locale::En,
+        );
+        assert!(
+            hints.iter().any(|entry| {
+                entry.key == "Alt-Enter" && entry.description.contains("send now")
+            })
+        );
     }
 }

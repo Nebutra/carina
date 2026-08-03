@@ -151,6 +151,12 @@ func (d *Daemon) activeToolTerminal(taskID string) string {
 	return ""
 }
 
+func (d *Daemon) hasActiveToolCall(taskID string) bool {
+	d.activeToolCallMu.Lock()
+	defer d.activeToolCallMu.Unlock()
+	return len(d.activeToolCallsByTask[taskID]) > 0
+}
+
 func (d *Daemon) installActiveToolCall(sess *sessionstore.Session, task *scheduler.ExecutionRun, call toolCallLifecycle) {
 	d.activeToolCallMu.Lock()
 	d.activeToolCalls[call.id] = &activeToolCall{call: call, sess: sess, task: task}

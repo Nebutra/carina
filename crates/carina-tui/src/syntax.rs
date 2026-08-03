@@ -65,7 +65,12 @@ fn highlight_syntect(language: &str, source: &str) -> Option<Vec<Token>> {
             }
             tokens.push(Token {
                 text: text.to_owned(),
-                kind: scope_kind(style.foreground.r, style.foreground.g, style.foreground.b, text),
+                kind: scope_kind(
+                    style.foreground.r,
+                    style.foreground.g,
+                    style.foreground.b,
+                    text,
+                ),
             });
         }
     }
@@ -171,9 +176,31 @@ fn keywords_for(lang: &str) -> &'static [&'static str] {
             "trait", "true", "type", "unsafe", "use", "where", "while",
         ],
         "go" => &[
-            "break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough",
-            "for", "func", "go", "goto", "if", "import", "interface", "map", "package", "range",
-            "return", "select", "struct", "switch", "type", "var",
+            "break",
+            "case",
+            "chan",
+            "const",
+            "continue",
+            "default",
+            "defer",
+            "else",
+            "fallthrough",
+            "for",
+            "func",
+            "go",
+            "goto",
+            "if",
+            "import",
+            "interface",
+            "map",
+            "package",
+            "range",
+            "return",
+            "select",
+            "struct",
+            "switch",
+            "type",
+            "var",
         ],
         "python" => &[
             "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
@@ -182,11 +209,47 @@ fn keywords_for(lang: &str) -> &'static [&'static str] {
             "True", "try", "while", "with", "yield",
         ],
         "javascript" | "typescript" => &[
-            "async", "await", "break", "case", "catch", "class", "const", "continue", "debugger",
-            "default", "delete", "do", "else", "export", "extends", "false", "finally", "for",
-            "from", "function", "if", "import", "in", "instanceof", "let", "new", "null", "return",
-            "static", "super", "switch", "this", "throw", "true", "try", "typeof", "var", "void",
-            "while", "with", "yield",
+            "async",
+            "await",
+            "break",
+            "case",
+            "catch",
+            "class",
+            "const",
+            "continue",
+            "debugger",
+            "default",
+            "delete",
+            "do",
+            "else",
+            "export",
+            "extends",
+            "false",
+            "finally",
+            "for",
+            "from",
+            "function",
+            "if",
+            "import",
+            "in",
+            "instanceof",
+            "let",
+            "new",
+            "null",
+            "return",
+            "static",
+            "super",
+            "switch",
+            "this",
+            "throw",
+            "true",
+            "try",
+            "typeof",
+            "var",
+            "void",
+            "while",
+            "with",
+            "yield",
         ],
         "shell" => &[
             "case", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if", "in",
@@ -203,11 +266,30 @@ fn types_for(lang: &str) -> &'static [&'static str] {
             "String", "u8", "u16", "u32", "u64", "u128", "usize", "Vec", "Option", "Result",
         ],
         "go" => &[
-            "bool", "byte", "complex64", "complex128", "error", "float32", "float64", "int",
-            "int8", "int16", "int32", "int64", "rune", "string", "uint", "uint8", "uint16",
-            "uint32", "uint64", "uintptr",
+            "bool",
+            "byte",
+            "complex64",
+            "complex128",
+            "error",
+            "float32",
+            "float64",
+            "int",
+            "int8",
+            "int16",
+            "int32",
+            "int64",
+            "rune",
+            "string",
+            "uint",
+            "uint8",
+            "uint16",
+            "uint32",
+            "uint64",
+            "uintptr",
         ],
-        "python" => &["int", "float", "str", "bool", "list", "dict", "set", "tuple", "None"],
+        "python" => &[
+            "int", "float", "str", "bool", "list", "dict", "set", "tuple", "None",
+        ],
         "typescript" => &[
             "boolean", "number", "string", "any", "void", "never", "unknown", "object",
         ],
@@ -310,11 +392,7 @@ fn take_number(rest: &str) -> Option<(Token, usize)> {
     ))
 }
 
-fn take_ident(
-    rest: &str,
-    keywords: &[&str],
-    types: &[&str],
-) -> Option<(Token, usize)> {
+fn take_ident(rest: &str, keywords: &[&str], types: &[&str]) -> Option<(Token, usize)> {
     let mut chars = rest.char_indices();
     let (_, first) = chars.next()?;
     if !(first.is_ascii_alphabetic() || first == '_') {
@@ -413,9 +491,9 @@ mod tests {
     fn syntect_path_classifies_rust_keywords() {
         let tokens = highlight_syntect("rust", "fn main() { let x = 1; }").expect("syntect");
         assert!(
-            tokens
-                .iter()
-                .any(|t| t.kind == TokenKind::Keyword || t.text.contains("fn") || t.text.contains("let")),
+            tokens.iter().any(|t| t.kind == TokenKind::Keyword
+                || t.text.contains("fn")
+                || t.text.contains("let")),
             "expected syntect tokens: {tokens:?}"
         );
         let reconstructed: String = tokens.iter().map(|t| t.text.as_str()).collect();

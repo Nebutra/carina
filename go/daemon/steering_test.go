@@ -1,7 +1,10 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +35,197 @@ func TestAsyncSteering(t *testing.T) {
 	// Mailbox must be drained (not re-delivered).
 	if len(d.drainMailbox(task.RunID)) != 0 {
 		t.Fatal("mailbox should be empty after draining")
+	}
+}
+
+type lateSteerReasoner struct {
+	started chan struct{}
+	release chan struct{}
+	calls   int
+	last    string
+}
+
+func (r *lateSteerReasoner) Name() string { return "late-steer" }
+func (r *lateSteerReasoner) Think(ctx context.Context, prompt string) (string, error) {
+	r.calls++
+	r.last = prompt
+	if r.calls == 1 {
+		close(r.started)
+		select {
+		case <-r.release:
+		case <-ctx.Done():
+			return "", context.Cause(ctx)
+		}
+	}
+	return `{"tool":"done","summary":"done"}`, nil
+}
+
+func TestSteerArrivingDuringModelInvalidatesStaleDone(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+	reasoner := &lateSteerReasoner{started: make(chan struct{}), release: make(chan struct{})}
+	d.SetReasoner(reasoner)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
+	done := make(chan struct{})
+	go func() {
+		d.runTask(sess, task)
+		close(done)
+	}()
+	<-reasoner.started
+	if _, err := d.handleTaskSteer(mustJSON(t, map[string]any{
+		"run_id": task.RunID, "message": "include the late requirement", "steer_id": "steer_late",
+	})); err != nil {
+		t.Fatal(err)
+	}
+	close(reasoner.release)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not finish after late steer")
+	}
+	if reasoner.calls != 2 || !strings.Contains(reasoner.last, "include the late requirement") {
+		t.Fatalf("late steer did not invalidate stale done: calls=%d prompt=%s", reasoner.calls, reasoner.last)
+	}
+}
+
+func TestSteerQueuePersistsStableIDsAndReconnectDepth(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
+
+	params := mustJSON(t, map[string]any{
+		"run_id": task.RunID, "message": "add reconnect coverage", "steer_id": "steer_stable", "priority": "normal",
+	})
+	first, err := d.handleTaskSteer(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := d.handleTaskSteer(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.(map[string]any)["queue_depth"] != 1 || second.(map[string]any)["queue_depth"] != 1 {
+		t.Fatalf("idempotent steer changed queue depth: first=%#v second=%#v", first, second)
+	}
+	records := newRunStore(filepath.Dir(d.runs.dir)).loadExecutionControls()
+	record := records[task.RunID]
+	if len(record.Normal) != 1 || record.Normal[0].SteerID != "steer_stable" {
+		t.Fatalf("reconnected control record = %#v", record)
+	}
+	if _, err := d.handleTaskSteer(mustJSON(t, map[string]any{
+		"run_id": task.RunID, "message": "different", "steer_id": "steer_stable",
+	})); err == nil {
+		t.Fatal("reusing steer_id with different content must fail closed")
+	}
+	status, err := d.handleTaskStatus(mustJSON(t, map[string]any{"run_id": task.RunID}))
+	if err != nil || status.(map[string]any)["queue_depth"] != 1 {
+		t.Fatalf("status queue projection = %#v err=%v", status, err)
+	}
+	if _, err := d.handleTaskSteer(mustJSON(t, map[string]any{
+		"run_id": task.RunID, "message": strings.Repeat("x", maxSteerBytes+1),
+	})); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized steer must be rejected, got %v", err)
+	}
+}
+
+func TestSteerQueueBoundRejectsWithoutMutation(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
+	box := &taskMailbox{}
+	for index := 0; index < maxQueuedSteers; index++ {
+		box.pushEntry(queuedSteer{SteerID: fmt.Sprintf("steer_%d", index), Message: "queued", Priority: steerNormal})
+	}
+	d.mailbox[task.RunID] = box
+	if _, err := d.enqueueSteer(task.RunID, "steer_overflow", "overflow", steerNormal); err == nil || !strings.Contains(err.Error(), "queue is full") {
+		t.Fatalf("full queue must reject, got %v", err)
+	}
+	if got := d.queueDepth(task.RunID); got != maxQueuedSteers {
+		t.Fatalf("rejected enqueue mutated depth: %d", got)
+	}
+}
+
+func TestSoftInterruptWaitsForLongToolAndLeavesNoOrphanLifecycle(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+	d.SetReasoner(&scriptedReasoner{steps: []string{
+		`{"tool":"run","command":["sh","-c","sleep 0.5; echo completed"]}`,
+		`{"tool":"done","summary":"done"}`,
+	}})
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "run a long tool")
+	done := make(chan struct{})
+	go func() {
+		d.runTask(sess, task)
+		close(done)
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	for !d.hasActiveToolCall(task.RunID) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !d.hasActiveToolCall(task.RunID) {
+		t.Fatal("long command never entered active tool lifecycle")
+	}
+	result, err := d.handleTaskInterrupt(mustJSON(t, map[string]any{"run_id": task.RunID, "mode": "soft"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.(map[string]any)["active_tool"] != true {
+		t.Fatalf("interrupt did not report active tool: %#v", result)
+	}
+	if current, _ := d.sched.Get(task.RunID); current.Status != "running" {
+		t.Fatalf("soft interrupt cancelled active tool immediately: status=%s", current.Status)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("soft-interrupted long tool did not reach safe point")
+	}
+	current, _ := d.sched.Get(task.RunID)
+	if current.Status != "paused" {
+		t.Fatalf("status after safe-point interrupt = %s, want paused", current.Status)
+	}
+	if d.runs.loadCheckpoint(task.RunID) == nil {
+		t.Fatal("soft interrupt did not leave a resumable checkpoint")
+	}
+	raw, err := d.kern.ReadEvents(sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []struct {
+		Type    string         `json:"type"`
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &events); err != nil {
+		t.Fatal(err)
+	}
+	started := map[string]bool{}
+	terminal := map[string]bool{}
+	for _, event := range events {
+		callID, _ := event.Payload["call_id"].(string)
+		switch event.Type {
+		case "ToolCallStarted":
+			started[callID] = true
+		case "ToolCallCompleted", "ToolCallFailed", "ToolCallDenied", "ToolCallCancelled":
+			terminal[callID] = true
+		}
+	}
+	for callID := range started {
+		if !terminal[callID] {
+			t.Fatalf("orphan ToolCallStarted after soft interrupt: %s", callID)
+		}
 	}
 }
 
@@ -240,5 +434,45 @@ func TestTaskSteerRejectsUnknownAndTerminalTasks(t *testing.T) {
 		"message": "hello",
 	})); err == nil || !strings.Contains(err.Error(), "unknown execution") {
 		t.Fatalf("unknown execution steer error = %v", err)
+	}
+}
+
+func TestTerminalControlCleanupRemovesDurableQueue(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
+	if _, err := d.enqueueSteer(task.RunID, "steer_terminal", "late", steerNormal); err != nil {
+		t.Fatal(err)
+	}
+	d.sched.SetStatus(task.RunID, "completed")
+	if err := d.cleanupTerminalExecutionControl(task.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if d.queueDepth(task.RunID) != 0 {
+		t.Fatal("terminal queue remained in memory")
+	}
+	if _, ok := d.runs.loadExecutionControls()[task.RunID]; ok {
+		t.Fatal("terminal queue remained durable")
+	}
+	if _, err := d.enqueueSteer(task.RunID, "steer_after_terminal", "too late", steerNormal); err == nil {
+		t.Fatal("terminal task accepted a raced steer")
+	}
+}
+
+func TestPausedControlCleanupPreservesFollowUps(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
+	if _, err := d.enqueueSteer(task.RunID, "steer_paused", "after resume", steerNormal); err != nil {
+		t.Fatal(err)
+	}
+	d.sched.SetStatus(task.RunID, "paused")
+	if err := d.cleanupTerminalExecutionControl(task.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if d.queueDepth(task.RunID) != 1 {
+		t.Fatal("paused cleanup discarded a queued follow-up")
 	}
 }

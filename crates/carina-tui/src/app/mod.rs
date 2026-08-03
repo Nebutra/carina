@@ -50,8 +50,8 @@ use crate::media::{
     inspect_image, pasted_image_path,
 };
 use crate::native_scrollback::{
-    ScrollbackLedger, ScrollbackWrap, TranscriptReflowState, history_for_width, is_plain_url_line,
-    raw_block_text, reflow_line_cap,
+    ScrollbackLedger, ScrollbackStamp, ScrollbackWrap, TranscriptReflowState, history_for_width,
+    is_plain_url_line, raw_block_text, reflow_line_cap,
 };
 use crate::overlay::{
     AgentDashboardOverlay, ApprovalScope, ChangesOverlay, HelpOverlay, Overlay, OverlayStack,
@@ -82,7 +82,10 @@ const LOCALES: &[(&str, &str)] = &[
     ("es", "Español"),
     ("fr", "Français"),
 ];
-const REWIND_PRIME_WINDOW: Duration = Duration::from_millis(500);
+const DEFAULT_REWIND_PRIME_WINDOW: Duration = Duration::from_millis(800);
+const REWIND_GRACE_ENV: &str = "CARINA_ESC_GRACE_MS";
+const MIN_REWIND_GRACE_MS: u64 = 250;
+const MAX_REWIND_GRACE_MS: u64 = 2_000;
 const SETTINGS_ITEM_COUNT: usize = 8;
 const IMPORT_ERROR_LIMIT: u64 = 1024;
 const IMPORT_HELPER_TIMEOUT: Duration = Duration::from_secs(20);
@@ -96,8 +99,65 @@ pub struct Options {
     pub locale_path: Option<PathBuf>,
     pub carina_bin: Option<PathBuf>,
     pub no_alt_screen: bool,
+    pub screen_mode: Option<ScreenMode>,
+    pub screen_handoff: Option<ScreenModeHandoff>,
     pub alt_screen: AltScreenPolicy,
     pub scrollback_wrap: ScrollbackWrap,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ScreenMode {
+    #[default]
+    Minimal,
+    Fullscreen,
+    Inline,
+}
+
+impl ScreenMode {
+    fn as_arg(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Fullscreen => "fullscreen",
+            Self::Inline => "inline",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ScreenModeHandoff {
+    session_id: String,
+    runtime_id: String,
+    runtime_epoch: String,
+    runtime_process_epoch: i64,
+    runtime_pid: i64,
+    draft: String,
+    queued_prompts: Vec<String>,
+    committed_scrollback: Vec<ScrollbackStamp>,
+    pending_governance: Vec<GovernanceId>,
+    selected_block_id: Option<String>,
+    transcript_scroll: usize,
+    transcript_follow_bottom: bool,
+}
+
+pub fn read_screen_handoff(path: &Path) -> Result<ScreenModeHandoff> {
+    let raw = fs::read(path).context("read screen mode handoff")?;
+    let _ = fs::remove_file(path);
+    if raw.len() > 256 * 1024 {
+        return Err(anyhow!("screen mode handoff exceeds 256 KiB"));
+    }
+    serde_json::from_slice(&raw).context("decode screen mode handoff")
+}
+
+fn screen_handoff_identity_matches(
+    session_id: Option<&str>,
+    identity: &crate::rpc::RuntimeIdentity,
+    handoff: &ScreenModeHandoff,
+) -> bool {
+    session_id == Some(handoff.session_id.as_str())
+        && identity.runtime_id == handoff.runtime_id
+        && identity.epoch == handoff.runtime_epoch
+        && identity.process_epoch == handoff.runtime_process_epoch
+        && identity.pid == handoff.runtime_pid
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -427,6 +487,7 @@ pub struct App {
     resume_pending: bool,
     history_branch_pending: bool,
     rewind_primed_at: Option<Instant>,
+    rewind_prime_window: Duration,
     credential: String,
     credential_generation: u64,
     credential_pending: bool,
@@ -456,6 +517,9 @@ pub struct App {
     dirty: bool,
     graphics_enabled: bool,
     media_preview_placement: Option<MediaPreviewPlacement>,
+    relaunch_screen_mode: Option<ScreenMode>,
+    screen_handoff: Option<ScreenModeHandoff>,
+    screen_handoff_failed: bool,
 }
 
 impl App {
@@ -481,6 +545,17 @@ impl App {
         let mut rpc = Client::connect(&options.socket)
             .with_context(|| format!("connect {}", options.socket.display()))?;
         let runtime = rpc.initialize().context("initialize runtime protocol")?;
+        if let Some(handoff) = options.screen_handoff.as_ref()
+            && !screen_handoff_identity_matches(
+                options.session_id.as_deref(),
+                &runtime.runtime,
+                handoff,
+            )
+        {
+            return Err(anyhow!(
+                "screen mode handoff identity no longer matches the runtime"
+            ));
+        }
         let inventory = rpc
             .model_inventory()
             .context("load provider/model inventory")?;
@@ -592,6 +667,7 @@ impl App {
             resume_pending: false,
             history_branch_pending: false,
             rewind_primed_at: None,
+            rewind_prime_window: rewind_prime_window(),
             credential: String::new(),
             credential_generation: 0,
             credential_pending: false,
@@ -621,7 +697,16 @@ impl App {
             dirty: true,
             graphics_enabled: false,
             media_preview_placement: None,
+            relaunch_screen_mode: None,
+            screen_handoff: None,
+            screen_handoff_failed: false,
         };
+        if let Some(handoff) = app.options.screen_handoff.take() {
+            app.composer.set_text(&handoff.draft);
+            app.composer.set_cursor(app.composer.text().len());
+            app.queued_prompts = handoff.queued_prompts.iter().cloned().collect();
+            app.screen_handoff = Some(handoff);
+        }
         if matches!(app.phase, Phase::Model | Phase::Diagnostic) {
             app.route_after_locale();
         }
@@ -1177,8 +1262,34 @@ impl App {
         self.execution_lifecycle.clear();
         self.blocks = self.transcript_reducer.hydrate(items);
         self.scrollback.reset();
-        self.transcript_stale = false;
         self.reset_transcript_viewport();
+        let handoff = self.screen_handoff.take();
+        if let Some(handoff) = handoff {
+            let stamps_match = self
+                .scrollback
+                .restore_committed_prefix(&self.blocks, handoff.committed_scrollback)
+                .is_ok();
+            let governance_matches =
+                hydrated_overlays.governance_ids() == handoff.pending_governance;
+            let selection = handoff
+                .selected_block_id
+                .as_deref()
+                .map(|id| self.blocks.iter().position(|block| block.id == id));
+            let selection_matches = selection.as_ref().is_none_or(Option::is_some);
+            self.screen_handoff_failed = handoff.session_id != session.session_id
+                || !stamps_match
+                || !governance_matches
+                || !selection_matches;
+            if !self.screen_handoff_failed {
+                self.history_selected = selection.flatten();
+                self.transcript_scroll = handoff.transcript_scroll;
+                self.transcript_follow_bottom = handoff.transcript_follow_bottom;
+            } else {
+                self.scrollback.reset();
+                self.outcome = Outcome::Degraded;
+            }
+        }
+        self.transcript_stale = false;
         self.active_run_id = matches!(
             session.execution_status.as_str(),
             "queued" | "running" | "waiting_input" | "waiting_approval"
@@ -1214,6 +1325,9 @@ impl App {
             self.overlays.push(Overlay::PlanReview(review));
         }
         self.return_to_conversation_or_repair();
+        if self.screen_handoff_failed {
+            self.notice = Notice::localized(MessageId::ScreenModeHandoffRejected);
+        }
         self.context_summary = None;
         self.request_context_summary();
         self.event_cursor = 0;
@@ -2324,7 +2438,7 @@ impl App {
         }
         if self
             .rewind_primed_at
-            .is_some_and(|primed| primed.elapsed() > REWIND_PRIME_WINDOW)
+            .is_some_and(|primed| primed.elapsed() > self.rewind_prime_window)
         {
             self.rewind_primed_at = None;
             if self.notice.is_localized(MessageId::HistoryPrime) {
@@ -2367,7 +2481,7 @@ impl App {
     fn next_wake_deadline(&self, frame_deadline: Option<Instant>) -> Option<Instant> {
         let rewind_deadline = self
             .rewind_primed_at
-            .map(|primed| primed + REWIND_PRIME_WINDOW);
+            .map(|primed| primed + self.rewind_prime_window);
         match (frame_deadline, rewind_deadline) {
             (Some(frame), Some(rewind)) => Some(frame.min(rewind)),
             (Some(deadline), None) | (None, Some(deadline)) => Some(deadline),
@@ -2643,7 +2757,7 @@ impl App {
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
         let key = normalize_shift_tab(key);
-        if self.keybindings.interrupt.matches(key) {
+        if self.keybindings.hard_cancel.matches(key) {
             if self.close_top_non_governance() {
                 self.dirty = true;
                 return Ok(());
@@ -3029,9 +3143,10 @@ impl App {
             KeyCode::Esc if slash_count > 0 => {
                 self.slash_dismissed_input = Some(self.composer.text().trim().to_owned());
             }
-            KeyCode::Esc => {
-                self.handle_rewind_escape();
-            }
+            KeyCode::Esc => match self.active_run_id.clone() {
+                Some(run_id) => self.interrupt_execution(&run_id),
+                None => self.handle_rewind_escape(),
+            },
             KeyCode::Char('?') if self.composer.text().is_empty() => {
                 self.open_help_overlay();
             }
@@ -3080,7 +3195,10 @@ impl App {
             KeyCode::PageDown => {
                 self.scroll_transcript(self.transcript_page_size() as isize);
             }
-            KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+            KeyCode::Enter if self.keybindings.send_now.matches(key) => {
+                self.submit_prompt()?;
+            }
+            KeyCode::Enter if self.keybindings.steer.matches(key) => {
                 let failed_media = self
                     .media
                     .attachment_for_preview(&self.composer)
@@ -3888,6 +4006,9 @@ impl App {
                     self.notice = Notice::localized(MessageId::NoActiveExecutionRun);
                 }
             }
+            CommandId::Minimal => self.request_screen_mode(ScreenMode::Minimal),
+            CommandId::Fullscreen => self.request_screen_mode(ScreenMode::Fullscreen),
+            CommandId::Inline => self.request_screen_mode(ScreenMode::Inline),
             CommandId::Quit => self.quit = true,
             CommandId::Doctor => {
                 self.composer.set_text("");
@@ -3897,7 +4018,7 @@ impl App {
                 self.slash_dismissed_input = None;
                 self.open_doctor_overlay();
             }
-            CommandId::Help => {
+            CommandId::Keymap | CommandId::Help => {
                 // Issue #22: real help surface, not a composer re-trigger of "/".
                 self.composer.set_text("");
                 self.composer_state = TextAreaState::default();
@@ -3908,6 +4029,13 @@ impl App {
             }
         }
         Some(true)
+    }
+
+    fn request_screen_mode(&mut self, mode: ScreenMode) {
+        self.composer.set_text("");
+        self.composer_state = TextAreaState::default();
+        self.relaunch_screen_mode = Some(mode);
+        self.quit = true;
     }
 
     fn open_help_overlay(&mut self) {
@@ -3954,6 +4082,27 @@ impl App {
             Err(error) => {
                 self.notice =
                     Notice::localized_with(MessageId::CancelFailed, [("error", error.to_string())])
+            }
+        }
+    }
+
+    fn interrupt_execution(&mut self, run_id: &str) {
+        match self.rpc.interrupt_execution(run_id) {
+            Ok(result) => {
+                self.notice = Notice::localized_with(
+                    if result.already_requested {
+                        MessageId::SoftInterruptAlreadyRequested
+                    } else {
+                        MessageId::SoftInterruptRequested
+                    },
+                    [("queue", result.queue_depth.to_string())],
+                );
+            }
+            Err(error) => {
+                self.notice = Notice::localized_with(
+                    MessageId::SoftInterruptFailed,
+                    [("error", error.to_string())],
+                );
             }
         }
     }
@@ -4655,37 +4804,41 @@ impl App {
     }
 
     fn handle_rewind_escape(&mut self) {
-        if self.active_run_id.is_some() {
-            self.notice = Notice::localized(MessageId::HistoryBusy);
-            self.rewind_primed_at = None;
-            return;
-        }
         let eligible = self.eligible_history_indices();
-        if eligible.is_empty() {
-            self.notice = Notice::localized(MessageId::HistoryNoEarlierPrompt);
-            self.rewind_primed_at = None;
-            return;
-        }
         let now = Instant::now();
-        if self
-            .rewind_primed_at
-            .is_some_and(|primed| now.duration_since(primed) <= REWIND_PRIME_WINDOW)
-        {
-            self.history_generation = self.history_generation.saturating_add(1);
-            self.history_branch_request_id = None;
-            self.history_branch_pending = false;
-            self.history_stashed_draft = Some(self.composer.text().to_owned());
-            self.history_original_scroll =
-                Some((self.transcript_scroll, self.transcript_follow_bottom));
-            self.composer.set_text("");
-            self.composer_state = TextAreaState::default();
-            self.history_selected = eligible.last().copied();
-            self.rewind_primed_at = None;
-            self.sync_history_selection();
-            self.notice = Notice::localized(MessageId::HistoryChoosePrompt);
-        } else {
-            self.rewind_primed_at = Some(now);
-            self.notice = Notice::localized(MessageId::HistoryPrime);
+        match rewind_escape_action(
+            self.active_run_id.is_some(),
+            !eligible.is_empty(),
+            self.rewind_primed_at,
+            now,
+            self.rewind_prime_window,
+        ) {
+            RewindEscapeAction::Busy => {
+                self.notice = Notice::localized(MessageId::HistoryBusy);
+                self.rewind_primed_at = None;
+            }
+            RewindEscapeAction::Unavailable => {
+                self.notice = Notice::localized(MessageId::HistoryNoEarlierPrompt);
+                self.rewind_primed_at = None;
+            }
+            RewindEscapeAction::Prime => {
+                self.rewind_primed_at = Some(now);
+                self.notice = Notice::localized(MessageId::HistoryPrime);
+            }
+            RewindEscapeAction::Open => {
+                self.history_generation = self.history_generation.saturating_add(1);
+                self.history_branch_request_id = None;
+                self.history_branch_pending = false;
+                self.history_stashed_draft = Some(self.composer.text().to_owned());
+                self.history_original_scroll =
+                    Some((self.transcript_scroll, self.transcript_follow_bottom));
+                self.composer.set_text("");
+                self.composer_state = TextAreaState::default();
+                self.history_selected = eligible.last().copied();
+                self.rewind_primed_at = None;
+                self.sync_history_selection();
+                self.notice = Notice::localized(MessageId::HistoryChoosePrompt);
+            }
         }
     }
 
@@ -6109,8 +6262,13 @@ pub fn run(options: Options) -> Result<Outcome> {
     app.theme = Theme::detected(background);
     let graphics = TerminalGraphics::detect();
     app.graphics_enabled = graphics.enabled();
-    let mut terminal =
-        TerminalHost::enter(app.options.no_alt_screen, app.options.alt_screen, graphics)?;
+    let mut terminal = TerminalHost::enter(
+        app.options.screen_mode,
+        app.options.no_alt_screen,
+        app.options.alt_screen,
+        graphics,
+    )?;
+    app.options.screen_mode = Some(terminal.mode);
     let hyperlink_support = HyperlinkSupport::detect();
     let input_tx = app.async_tx.clone();
     std::thread::Builder::new()
@@ -6158,6 +6316,7 @@ pub fn run(options: Options) -> Result<Outcome> {
             if terminal.can_commit_scrollback()
                 && app.phase == Phase::Conversation
                 && app.transcript_reflow.needs_reflow()
+                && !app.screen_handoff_failed
             {
                 let committed = app.scrollback.committed_prefix_len(&app.blocks);
                 terminal.reflow_scrollback(
@@ -6174,6 +6333,7 @@ pub fn run(options: Options) -> Result<Outcome> {
         if terminal.can_commit_scrollback()
             && app.phase == Phase::Conversation
             && app.active_run_id.is_none()
+            && !app.screen_handoff_failed
         {
             let pending = app.scrollback.pending_finalized(&app.blocks).to_vec();
             if !pending.is_empty() {
@@ -6219,7 +6379,95 @@ pub fn run(options: Options) -> Result<Outcome> {
             serde_json::to_vec_pretty(&scheduler.stats().debug_report())?,
         );
     }
-    Ok(app.outcome)
+    let relaunch = app.relaunch_screen_mode.take();
+    let outcome = app.outcome;
+    drop(terminal);
+    if let Some(mode) = relaunch {
+        return relaunch_in_screen_mode(&app, mode);
+    }
+    Ok(outcome)
+}
+
+fn relaunch_in_screen_mode(app: &App, mode: ScreenMode) -> Result<Outcome> {
+    let mut handoff = tempfile::Builder::new()
+        .prefix("carina-screen-")
+        .suffix(".json")
+        .tempfile()
+        .context("create screen mode handoff")?;
+    serde_json::to_writer(
+        &mut handoff,
+        &ScreenModeHandoff {
+            session_id: app
+                .active_session
+                .as_ref()
+                .map(|session| session.session_id.clone())
+                .unwrap_or_default(),
+            runtime_id: app.runtime.runtime.runtime_id.clone(),
+            runtime_epoch: app.runtime.runtime.epoch.clone(),
+            runtime_process_epoch: app.runtime.runtime.process_epoch,
+            runtime_pid: app.runtime.runtime.pid,
+            draft: app.composer.text().to_owned(),
+            queued_prompts: app.queued_prompts.iter().cloned().collect(),
+            committed_scrollback: app.scrollback.committed_snapshot(),
+            pending_governance: app.overlays.governance_ids(),
+            selected_block_id: app
+                .history_selected
+                .and_then(|index| app.blocks.get(index))
+                .map(|block| block.id.clone()),
+            transcript_scroll: app.transcript_scroll,
+            transcript_follow_bottom: app.transcript_follow_bottom,
+        },
+    )
+    .context("write screen mode handoff")?;
+    handoff.flush().context("flush screen mode handoff")?;
+    let (_, handoff_path) = handoff.keep().context("persist screen mode handoff")?;
+
+    let executable = std::env::current_exe().context("resolve carina-ui executable")?;
+    let mut command = Command::new(executable);
+    command
+        .arg("--socket")
+        .arg(&app.options.socket)
+        .arg("--workspace")
+        .arg(&app.options.workspace)
+        .arg("--screen-mode")
+        .arg(mode.as_arg())
+        .arg("--screen-handoff")
+        .arg(&handoff_path);
+    if let Some(session_id) = app
+        .active_session
+        .as_ref()
+        .map(|session| &session.session_id)
+    {
+        command.arg("--session").arg(session_id);
+    }
+    if let Some(locale) = app.options.locale.as_deref() {
+        command.arg("--locale").arg(locale);
+    }
+    if let Some(path) = app.options.locale_path.as_ref() {
+        command.arg("--locale-path").arg(path);
+    }
+    if let Some(path) = app.options.carina_bin.as_ref() {
+        command.arg("--carina-bin").arg(path);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let error = command.exec();
+        let _ = fs::remove_file(handoff_path);
+        Err(error).context("re-exec Carina screen mode")
+    }
+    #[cfg(not(unix))]
+    {
+        let status = command.status();
+        let _ = fs::remove_file(handoff_path);
+        let status = status.context("relaunch Carina screen mode")?;
+        Ok(match status.code() {
+            Some(0) => Outcome::Ok,
+            Some(2) => Outcome::Usage,
+            Some(6) => Outcome::Degraded,
+            _ => Outcome::RuntimeError,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6244,6 +6492,7 @@ pub fn choose_runtime_mode(no_alt_screen: bool) -> Result<Option<RuntimeModeChoi
     use ratatui::widgets::{Paragraph, Wrap};
 
     let mut terminal = TerminalHost::enter(
+        None,
         no_alt_screen,
         AltScreenPolicy::Auto,
         TerminalGraphics::disabled(),
@@ -6351,33 +6600,76 @@ pub fn choose_runtime_mode(no_alt_screen: bool) -> Result<Option<RuntimeModeChoi
 struct TerminalHost {
     terminal: Terminal<CrosstermBackend<TerminalWriter>>,
     sync_output: SyncOutputSupport,
-    alternate: bool,
+    mode: ScreenMode,
     graphics: TerminalGraphics,
     preview_owner: Option<u64>,
     preview_area: Option<Rect>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScreenCapabilities {
+    alternate: bool,
+    mouse: bool,
+    focus: bool,
+    graphics: bool,
+    native_scrollback: bool,
+}
+
+fn screen_capabilities(mode: ScreenMode) -> ScreenCapabilities {
+    match mode {
+        ScreenMode::Minimal => ScreenCapabilities {
+            alternate: false,
+            mouse: false,
+            focus: true,
+            graphics: false,
+            native_scrollback: true,
+        },
+        ScreenMode::Fullscreen => ScreenCapabilities {
+            alternate: true,
+            mouse: true,
+            focus: true,
+            graphics: true,
+            native_scrollback: false,
+        },
+        ScreenMode::Inline => ScreenCapabilities {
+            alternate: false,
+            mouse: false,
+            focus: false,
+            graphics: false,
+            native_scrollback: false,
+        },
+    }
+}
+
 impl TerminalHost {
     fn enter(
+        requested_mode: Option<ScreenMode>,
         no_alt_screen: bool,
         alt_screen: AltScreenPolicy,
         graphics: TerminalGraphics,
     ) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        let alternate = resolve_alt_screen(no_alt_screen, alt_screen);
-        if alternate {
+        let mode = resolve_screen_mode(requested_mode, no_alt_screen, alt_screen);
+        let capabilities = screen_capabilities(mode);
+        if capabilities.alternate {
             execute!(stdout, EnterAlternateScreen)?;
         }
-        execute!(
-            stdout,
-            EnableMouseCapture,
-            EnableBracketedPaste,
-            EnableFocusChange
-        )?;
+        execute!(stdout, EnableBracketedPaste)?;
+        if capabilities.mouse {
+            execute!(stdout, EnableMouseCapture)?;
+        }
+        if capabilities.focus {
+            execute!(stdout, EnableFocusChange)?;
+        }
+        let graphics = if capabilities.graphics {
+            graphics
+        } else {
+            TerminalGraphics::disabled()
+        };
         graphics.upload(&mut stdout)?;
         let backend = CrosstermBackend::new(TerminalWriter::spawn()?);
-        let terminal = if !alternate {
+        let terminal = if !capabilities.alternate {
             let (_, height) = crossterm::terminal::size()?;
             Terminal::with_options(
                 backend,
@@ -6391,19 +6683,15 @@ impl TerminalHost {
         Ok(Self {
             terminal,
             sync_output: SyncOutputSupport::detect(),
-            alternate,
+            mode,
             graphics,
             preview_owner: None,
             preview_area: None,
         })
     }
 
-    fn is_inline(&self) -> bool {
-        !self.alternate
-    }
-
     fn can_commit_scrollback(&self) -> bool {
-        self.is_inline() && self.terminal.viewport_area().y > 0
+        screen_capabilities(self.mode).native_scrollback && self.terminal.viewport_area().y > 0
     }
 
     fn commit_scrollback(
@@ -6586,7 +6874,7 @@ impl Drop for TerminalHost {
                 DisableBracketedPaste,
                 DisableMouseCapture
             );
-            if self.alternate {
+            if screen_capabilities(self.mode).alternate {
                 let _ = execute!(backend, LeaveAlternateScreen);
             }
         }
@@ -6599,24 +6887,93 @@ impl Drop for TerminalHost {
     }
 }
 
-fn resolve_alt_screen(no_alt_screen: bool, policy: AltScreenPolicy) -> bool {
-    if no_alt_screen {
-        return false;
-    }
+fn resolve_screen_mode(
+    requested: Option<ScreenMode>,
+    no_alt_screen: bool,
+    policy: AltScreenPolicy,
+) -> ScreenMode {
     let zellij =
         std::env::var_os("ZELLIJ").is_some() || std::env::var_os("ZELLIJ_SESSION_NAME").is_some();
     let tmux_control = std::env::var_os("TMUX_CONTROL_MODE").is_some()
         || (std::env::var_os("TMUX").is_some()
             && std::env::var("TERM_PROGRAM")
                 .is_ok_and(|value| value.eq_ignore_ascii_case("iTerm.app")));
-    resolve_alt_screen_for(policy, zellij, tmux_control)
+    let capability_poor = std::env::var_os("SSH_CONNECTION").is_some()
+        || std::env::var("TERM").is_ok_and(|value| value.eq_ignore_ascii_case("dumb"));
+    resolve_screen_mode_for(
+        requested,
+        no_alt_screen,
+        policy,
+        zellij,
+        tmux_control || capability_poor,
+    )
 }
 
-fn resolve_alt_screen_for(policy: AltScreenPolicy, zellij: bool, tmux_control: bool) -> bool {
+/// Resolve the product screen mode from the current terminal environment.
+/// This is public only so the Unix PTY certification matrix can exercise the
+/// same policy as the terminal host.
+pub fn detected_screen_mode(no_alt_screen: bool, policy: AltScreenPolicy) -> ScreenMode {
+    resolve_screen_mode(None, no_alt_screen, policy)
+}
+
+fn resolve_screen_mode_for(
+    requested: Option<ScreenMode>,
+    no_alt_screen: bool,
+    policy: AltScreenPolicy,
+    zellij: bool,
+    tmux_control: bool,
+) -> ScreenMode {
+    if no_alt_screen {
+        return ScreenMode::Minimal;
+    }
+    if let Some(requested) = requested {
+        return requested;
+    }
     match policy {
-        AltScreenPolicy::Always => true,
-        AltScreenPolicy::Never => false,
-        AltScreenPolicy::Auto => !zellij && !tmux_control,
+        AltScreenPolicy::Always => ScreenMode::Fullscreen,
+        AltScreenPolicy::Never => ScreenMode::Minimal,
+        AltScreenPolicy::Auto if zellij || tmux_control => ScreenMode::Inline,
+        AltScreenPolicy::Auto => ScreenMode::Minimal,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RewindEscapeAction {
+    Busy,
+    Unavailable,
+    Prime,
+    Open,
+}
+
+fn rewind_prime_window() -> Duration {
+    rewind_prime_window_from(std::env::var(REWIND_GRACE_ENV).ok().as_deref())
+}
+
+fn rewind_prime_window_from(value: Option<&str>) -> Duration {
+    value
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|millis| (MIN_REWIND_GRACE_MS..=MAX_REWIND_GRACE_MS).contains(millis))
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_REWIND_PRIME_WINDOW)
+}
+
+fn rewind_escape_action(
+    active_run: bool,
+    has_eligible_history: bool,
+    primed_at: Option<Instant>,
+    now: Instant,
+    grace: Duration,
+) -> RewindEscapeAction {
+    if active_run {
+        return RewindEscapeAction::Busy;
+    }
+    if !has_eligible_history {
+        return RewindEscapeAction::Unavailable;
+    }
+    if primed_at.is_some_and(|primed| now.saturating_duration_since(primed) <= grace) {
+        RewindEscapeAction::Open
+    } else {
+        RewindEscapeAction::Prime
     }
 }
 
@@ -6892,16 +7249,140 @@ mod tests {
     }
 
     #[test]
-    fn alternate_screen_policy_honors_explicit_and_mux_rules() {
-        assert!(resolve_alt_screen_for(AltScreenPolicy::Always, true, true));
-        assert!(!resolve_alt_screen_for(
-            AltScreenPolicy::Never,
-            false,
-            false
+    fn screen_mode_is_first_class_and_minimal_by_default() {
+        assert_eq!(
+            resolve_screen_mode_for(None, false, AltScreenPolicy::Auto, false, false),
+            ScreenMode::Minimal
+        );
+        assert_eq!(
+            resolve_screen_mode_for(
+                Some(ScreenMode::Fullscreen),
+                false,
+                AltScreenPolicy::Never,
+                true,
+                true,
+            ),
+            ScreenMode::Fullscreen
+        );
+        assert_eq!(
+            resolve_screen_mode_for(
+                Some(ScreenMode::Inline),
+                false,
+                AltScreenPolicy::Always,
+                false,
+                false,
+            ),
+            ScreenMode::Inline
+        );
+        assert_eq!(
+            resolve_screen_mode_for(
+                Some(ScreenMode::Fullscreen),
+                true,
+                AltScreenPolicy::Always,
+                false,
+                false,
+            ),
+            ScreenMode::Minimal
+        );
+        assert_eq!(
+            resolve_screen_mode_for(None, false, AltScreenPolicy::Auto, true, false),
+            ScreenMode::Inline
+        );
+        assert_eq!(
+            resolve_screen_mode_for(None, false, AltScreenPolicy::Always, true, true),
+            ScreenMode::Fullscreen
+        );
+    }
+
+    #[test]
+    fn screen_modes_own_one_explicit_capability_matrix() {
+        assert_eq!(
+            screen_capabilities(ScreenMode::Minimal),
+            ScreenCapabilities {
+                alternate: false,
+                mouse: false,
+                focus: true,
+                graphics: false,
+                native_scrollback: true,
+            }
+        );
+        assert!(screen_capabilities(ScreenMode::Fullscreen).graphics);
+        assert!(screen_capabilities(ScreenMode::Fullscreen).mouse);
+        assert_eq!(
+            screen_capabilities(ScreenMode::Inline),
+            ScreenCapabilities {
+                alternate: false,
+                mouse: false,
+                focus: false,
+                graphics: false,
+                native_scrollback: false,
+            }
+        );
+    }
+
+    #[test]
+    fn screen_handoff_is_bounded_and_consumed_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("handoff.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&ScreenModeHandoff {
+                session_id: "sess_1".into(),
+                runtime_id: "runtime_1".into(),
+                runtime_epoch: "epoch_1".into(),
+                runtime_process_epoch: 2,
+                runtime_pid: 42,
+                draft: "保留草稿".into(),
+                queued_prompts: vec!["next".into()],
+                committed_scrollback: Vec::new(),
+                pending_governance: Vec::new(),
+                selected_block_id: None,
+                transcript_scroll: 0,
+                transcript_follow_bottom: true,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let handoff = read_screen_handoff(&path).unwrap();
+        assert_eq!(handoff.draft, "保留草稿");
+        assert_eq!(handoff.queued_prompts, ["next"]);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn screen_handoff_identity_is_fenced_by_session_and_runtime_epoch() {
+        let handoff = ScreenModeHandoff {
+            session_id: "sess_1".into(),
+            runtime_id: "runtime_1".into(),
+            runtime_epoch: "epoch_1".into(),
+            runtime_process_epoch: 2,
+            runtime_pid: 42,
+            ..ScreenModeHandoff::default()
+        };
+        let identity = crate::rpc::RuntimeIdentity {
+            runtime_id: "runtime_1".into(),
+            epoch: "epoch_1".into(),
+            process_epoch: 2,
+            pid: 42,
+            ..crate::rpc::RuntimeIdentity::default()
+        };
+        assert!(screen_handoff_identity_matches(
+            Some("sess_1"),
+            &identity,
+            &handoff
         ));
-        assert!(!resolve_alt_screen_for(AltScreenPolicy::Auto, true, false));
-        assert!(!resolve_alt_screen_for(AltScreenPolicy::Auto, false, true));
-        assert!(resolve_alt_screen_for(AltScreenPolicy::Auto, false, false));
+        let mut restarted = identity.clone();
+        restarted.process_epoch = 3;
+        assert!(!screen_handoff_identity_matches(
+            Some("sess_1"),
+            &restarted,
+            &handoff
+        ));
+        assert!(!screen_handoff_identity_matches(
+            Some("sess_2"),
+            &identity,
+            &handoff
+        ));
     }
 
     #[test]
@@ -7109,6 +7590,61 @@ mod tests {
         assert_eq!(conversation_mode_target(false, true), Some(false));
         assert_eq!(conversation_mode_target(true, false), None);
         assert_eq!(conversation_mode_target(true, true), None);
+    }
+
+    #[test]
+    fn escape_grace_is_configurable_but_rejects_unsafe_values() {
+        assert_eq!(
+            rewind_prime_window_from(Some(" 1000 ")),
+            Duration::from_millis(1_000)
+        );
+        for value in [None, Some(""), Some("249"), Some("2001"), Some("invalid")] {
+            assert_eq!(rewind_prime_window_from(value), DEFAULT_REWIND_PRIME_WINDOW);
+        }
+    }
+
+    #[test]
+    fn escape_state_machine_requires_two_idle_escapes_inside_grace() {
+        let now = Instant::now();
+        let grace = Duration::from_millis(800);
+        assert_eq!(
+            rewind_escape_action(false, true, None, now, grace),
+            RewindEscapeAction::Prime
+        );
+        assert_eq!(
+            rewind_escape_action(
+                false,
+                true,
+                Some(now - Duration::from_millis(799)),
+                now,
+                grace,
+            ),
+            RewindEscapeAction::Open
+        );
+        assert_eq!(
+            rewind_escape_action(
+                false,
+                true,
+                Some(now - Duration::from_millis(801)),
+                now,
+                grace,
+            ),
+            RewindEscapeAction::Prime
+        );
+    }
+
+    #[test]
+    fn escape_state_machine_never_opens_history_while_running_or_empty() {
+        let now = Instant::now();
+        let primed = Some(now - Duration::from_millis(1));
+        assert_eq!(
+            rewind_escape_action(true, true, primed, now, Duration::from_secs(1)),
+            RewindEscapeAction::Busy
+        );
+        assert_eq!(
+            rewind_escape_action(false, false, primed, now, Duration::from_secs(1)),
+            RewindEscapeAction::Unavailable
+        );
     }
 
     #[test]

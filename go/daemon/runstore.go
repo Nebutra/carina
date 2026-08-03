@@ -102,7 +102,7 @@ func (r *runStore) load() []*scheduler.ExecutionRun {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue
 		}
-		if strings.HasSuffix(e.Name(), ".ckpt.json") || strings.HasSuffix(e.Name(), ".restore.json") {
+		if strings.HasSuffix(e.Name(), ".ckpt.json") || strings.HasSuffix(e.Name(), ".restore.json") || strings.HasSuffix(e.Name(), ".control.json") {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(r.dir, strings.TrimSuffix(e.Name(), ".json")+".tombstone")); err == nil {
@@ -183,6 +183,7 @@ func (r *runStore) tombstone(taskID string) error {
 	}
 	_ = os.Remove(filepath.Join(r.dir, taskID+".json"))
 	_ = os.Remove(filepath.Join(r.dir, taskID+".ckpt.json"))
+	_ = os.Remove(filepath.Join(r.dir, taskID+".control.json"))
 	_ = os.RemoveAll(filepath.Join(r.dir, taskID+".ckpts"))
 	return nil
 }
@@ -420,6 +421,17 @@ func (r *runStore) loadCheckpoint(taskID string) *runCheckpoint {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return readRunCheckpoint(filepath.Join(r.dir, taskID+".ckpt.json"))
+}
+
+func (r *runStore) checkpointResourceStats(taskID string) (int, *runCheckpoint) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	path := filepath.Join(r.dir, taskID+".ckpt.json")
+	info, err := os.Stat(path)
+	if err != nil || info.Size() < 0 || info.Size() > int64(^uint(0)>>1) {
+		return 0, nil
+	}
+	return int(info.Size()), readRunCheckpoint(path)
 }
 
 func (r *runStore) loadCheckpointTurn(taskID string, turn int) *runCheckpoint {

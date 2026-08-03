@@ -632,6 +632,14 @@ func New(opts Options) (*Daemon, error) {
 	d.sandbox.Store(opts.SandboxCommands)
 	d.safeMode = opts.SafeMode
 	d.mailbox = map[string]*taskMailbox{}
+	controlRecords := d.runs.loadExecutionControls()
+	for _, taskID := range controlRunIDs(controlRecords) {
+		record := controlRecords[taskID]
+		d.mailbox[taskID] = &taskMailbox{
+			urgent: append([]queuedSteer(nil), record.Urgent...), normal: append([]queuedSteer(nil), record.Normal...),
+			softInterruptRequested: record.SoftInterruptRequested,
+		}
+	}
 	d.taskContexts = map[string]context.Context{}
 	d.taskCancels = map[string]context.CancelCauseFunc{}
 	d.activeToolCalls = map[string]*activeToolCall{}
@@ -1169,6 +1177,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("execution.list", rpc.ScopeRead, true, d.handleTaskList)
 	d.registerRPC("execution.result", rpc.ScopeRead, true, d.handleTaskResult)
 	d.registerRPC("execution.cancel", rpc.ScopeWrite, false, d.handleTaskCancel)
+	d.registerRPC("execution.interrupt", rpc.ScopeWrite, false, d.handleTaskInterrupt)
 	d.registerRPC("execution.steer", rpc.ScopeWrite, false, d.handleTaskSteer)
 	d.registerRPC("execution.budget.extend", rpc.ScopeAdmin, false, d.handleTaskBudgetExtend, true)
 	d.registerRPC("governance.action.approve", rpc.ScopeAdmin, false, d.handleApprove, true)
@@ -1425,6 +1434,7 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 	}
 	artifactHealth := d.artifacts.Health()
 	report["artifact_store"] = map[string]any{"ok": artifactHealth.OK, "health": artifactHealth, "metrics": d.artifacts.Metrics()}
+	report["resources"] = d.resourceSummary(time.Now().UTC())
 	if info, err := os.Stat(d.stateDir); err == nil {
 		report["state_dir_permissions"] = map[string]any{"ok": info.Mode().Perm() == 0o700, "mode": fmt.Sprintf("%04o", info.Mode().Perm())}
 	}
@@ -1634,6 +1644,7 @@ func (d *Daemon) handleMetrics(_ json.RawMessage) (any, error) {
 		"debug_trace":     d.debugTraceStats(),
 		"artifacts":       artifactMetrics,
 		"provider_retry":  retryMetrics,
+		"resources":       d.resourceSummary(time.Now().UTC()),
 	}
 	if d.journey != nil {
 		report["first_five_minute_journey"] = d.journey.snapshot()
@@ -2068,7 +2079,11 @@ func (d *Daemon) handlePlanMode(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	d.setPlanMode(p.SessionID, p.On)
-	d.noticePlanModeSwitch(p.SessionID, p.On)
+	if err := d.noticePlanModeSwitch(p.SessionID, p.On); err != nil {
+		_, _ = d.store.SetPlanMode(p.SessionID, false)
+		d.setPlanMode(p.SessionID, false)
+		return nil, fmt.Errorf("persist plan-mode notification: %w", err)
+	}
 	return map[string]any{"session_id": p.SessionID, "plan_mode": p.On}, nil
 }
 
@@ -2166,7 +2181,11 @@ func (d *Daemon) handleApprovePlan(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	d.setPlanMode(id, false)
-	d.noticePlanModeSwitch(id, false)
+	if err := d.noticePlanModeSwitch(id, false); err != nil {
+		_, _ = d.store.SetPlanMode(id, true)
+		d.setPlanMode(id, true)
+		return nil, fmt.Errorf("persist plan approval notification: %w", err)
+	}
 	result := map[string]any{"session_id": id, "plan_mode": false, "approved": true}
 	if latest == nil || latest.Status != "completed" || latest.Agent != "plan" || strings.TrimSpace(latest.Summary) == "" {
 		return result, nil
@@ -2196,7 +2215,7 @@ func (d *Daemon) handleApprovePlan(params json.RawMessage) (any, error) {
 	if err != nil {
 		_, _ = d.store.SetPlanMode(id, true)
 		d.setPlanMode(id, true)
-		d.noticePlanModeSwitch(id, true)
+		_ = d.noticePlanModeSwitch(id, true)
 		return nil, fmt.Errorf("approve plan: submit implementation: %w", err)
 	}
 	result["task"] = build
@@ -2595,10 +2614,10 @@ func (d *Daemon) planModeEnabled(sessionID string) bool { return d.isPlanMode(se
 // touches enforcement (isPlanMode / the plan-mode tool gate is unchanged) —
 // it only makes the switch legible to the model. A no-op if the session has
 // no active task (e.g. the mode is set before a task is submitted).
-func (d *Daemon) noticePlanModeSwitch(sessionID string, on bool) {
+func (d *Daemon) noticePlanModeSwitch(sessionID string, on bool) error {
 	task := d.activeChannelTask(sessionID)
 	if task == nil {
-		return
+		return nil
 	}
 	var msg string
 	if on {
@@ -2606,7 +2625,7 @@ func (d *Daemon) noticePlanModeSwitch(sessionID string, on bool) {
 	} else {
 		msg = "MODE SWITCH: plan mode is now OFF — the plan was approved (or plan mode was cleared); edits, commands, and memory writes are permitted again"
 	}
-	d.steerWithPriority(task.RunID, msg, steerUrgent)
+	return d.steerWithPriority(task.RunID, msg, steerUrgent)
 }
 
 // ---- tasks ----------------------------------------------------------------
@@ -2950,7 +2969,45 @@ func (d *Daemon) handleTaskStatus(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown execution %s", p.RunID)
 	}
-	return task, nil
+	return d.taskWithControl(task, task.RunID), nil
+}
+
+func (d *Daemon) handleTaskInterrupt(params json.RawMessage) (any, error) {
+	var p struct {
+		RunID string `json:"run_id"`
+		Mode  string `json:"mode"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	p.RunID = strings.TrimSpace(p.RunID)
+	p.Mode = strings.TrimSpace(p.Mode)
+	if p.RunID == "" {
+		return nil, fmt.Errorf("run_id is required")
+	}
+	if p.Mode != "" && p.Mode != "soft" {
+		return nil, fmt.Errorf("invalid interrupt mode %q (want soft)", p.Mode)
+	}
+	task, ok := d.sched.Get(p.RunID)
+	if !ok {
+		return nil, fmt.Errorf("unknown execution %s", p.RunID)
+	}
+	if !acceptsExecutionControl(task.Status) {
+		return nil, fmt.Errorf("execution %s is %s and cannot be interrupted", p.RunID, task.Status)
+	}
+	already, depth, err := d.requestSoftInterrupt(p.RunID)
+	if err != nil {
+		return nil, fmt.Errorf("persist soft interrupt: %w", err)
+	}
+	activeTool := d.hasActiveToolCall(p.RunID)
+	d.record(task.SessionID, "ExecutionProgressed", task.RunID, "operator", map[string]any{
+		"status": "soft_interrupt_requested", "mode": "soft", "safe_point": "next_turn_boundary",
+		"active_tool": activeTool, "queue_depth": depth,
+	}, "")
+	return map[string]any{
+		"requested": true, "already_requested": already, "run_id": p.RunID, "mode": "soft",
+		"safe_point": "next_turn_boundary", "active_tool": activeTool, "queue_depth": depth,
+	}, nil
 }
 
 func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
@@ -2971,6 +3028,7 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 		"owner": "operator", "retryable": true,
 	}, "")
 	persistErr := d.runs.saveChecked(task)
+	controlErr := d.discardExecutionControl(p.RunID)
 	d.taskContextMu.Lock()
 	cancel := d.taskCancels[p.RunID]
 	d.taskContextMu.Unlock()
@@ -2982,7 +3040,10 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 	if persistErr != nil {
 		return nil, fmt.Errorf("task_cancel_pending: task is cancelled in memory but durable persistence failed; retry execution.cancel: %w", persistErr)
 	}
-	return task, nil
+	if controlErr != nil {
+		return nil, fmt.Errorf("task_cancel_pending: task is cancelled but queued follow-ups could not be discarded durably: %w", controlErr)
+	}
+	return d.taskWithControl(task, task.RunID), nil
 }
 
 // steerPriority selects which mailbox tier a steering message is queued
@@ -3011,16 +3072,41 @@ func parseSteerPriority(raw string) (steerPriority, error) {
 // taskMailbox is a two-tier FIFO queue: urgent messages are always drained
 // before normal ones, preserving arrival order within each tier.
 type taskMailbox struct {
-	urgent []string
-	normal []string
+	urgent                 []queuedSteer
+	normal                 []queuedSteer
+	softInterruptRequested bool
 }
 
-func (m *taskMailbox) push(priority steerPriority, message string) {
-	if priority == steerUrgent {
+func (m *taskMailbox) pushEntry(message queuedSteer) {
+	if message.Priority == steerUrgent {
 		m.urgent = append(m.urgent, message)
 		return
 	}
 	m.normal = append(m.normal, message)
+}
+
+func (m *taskMailbox) push(priority steerPriority, message string) {
+	m.pushEntry(queuedSteer{SteerID: sessionstore.NewID("steer"), Message: message, Priority: priority})
+}
+
+func (m *taskMailbox) remove(steerID string) {
+	remove := func(values []queuedSteer) []queuedSteer {
+		for index := range values {
+			if values[index].SteerID == steerID {
+				return append(values[:index], values[index+1:]...)
+			}
+		}
+		return values
+	}
+	m.urgent = remove(m.urgent)
+	m.normal = remove(m.normal)
+}
+
+func (m *taskMailbox) depth() int {
+	if m == nil {
+		return 0
+	}
+	return len(m.urgent) + len(m.normal)
 }
 
 func (m *taskMailbox) empty() bool {
@@ -3029,19 +3115,28 @@ func (m *taskMailbox) empty() bool {
 
 // drain returns queued messages urgent-first, normal-second, each in FIFO
 // arrival order within its tier.
-func (m *taskMailbox) drain() []string {
+func (m *taskMailbox) peek() []queuedSteer {
 	if m == nil {
 		return nil
 	}
 	if len(m.urgent) == 0 {
-		return m.normal
+		return append([]queuedSteer(nil), m.normal...)
 	}
 	if len(m.normal) == 0 {
-		return m.urgent
+		return append([]queuedSteer(nil), m.urgent...)
 	}
-	out := make([]string, 0, len(m.urgent)+len(m.normal))
+	out := make([]queuedSteer, 0, len(m.urgent)+len(m.normal))
 	out = append(out, m.urgent...)
 	out = append(out, m.normal...)
+	return out
+}
+
+func (m *taskMailbox) drain() []string {
+	pending := m.peek()
+	out := make([]string, len(pending))
+	for index := range pending {
+		out[index] = pending[index].Message
+	}
 	return out
 }
 
@@ -3073,56 +3168,50 @@ func (d *Daemon) handleTaskSteer(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown execution %s", p.RunID)
 	}
-	switch task.Status {
-	case "queued", "running", "waiting_approval":
-	default:
+	if !acceptsExecutionControl(task.Status) {
 		return nil, fmt.Errorf("execution %s is %s and cannot be steered", p.RunID, task.Status)
 	}
-	d.steerWithPriority(p.RunID, p.Message, priority)
 	p.SteerID = strings.TrimSpace(p.SteerID)
 	if p.SteerID == "" {
 		p.SteerID = sessionstore.NewID("steer")
+	} else if !validClientSubmissionID(p.SteerID) {
+		return nil, fmt.Errorf("steer_id must be a 1-128 byte ASCII token using letters, digits, '.', '_', ':', or '-'")
+	}
+	depth, err := d.enqueueSteer(p.RunID, p.SteerID, p.Message, priority)
+	if err != nil {
+		return nil, err
 	}
 	d.record(task.SessionID, "ExecutionProgressed", task.RunID, "user", map[string]any{
-		"status": "steered", "message": p.Message, "steer_id": p.SteerID,
+		"status": "steered", "message": p.Message, "steer_id": p.SteerID, "queue_depth": depth,
 	}, "")
-	return map[string]any{"queued": true, "run_id": p.RunID, "status": task.Status, "priority": string(priority), "steer_id": p.SteerID}, nil
+	return map[string]any{"queued": true, "run_id": p.RunID, "status": task.Status, "priority": string(priority), "steer_id": p.SteerID, "queue_depth": depth, "safe_point": "next_turn_boundary"}, nil
 }
 
 // steer queues a normal-priority steering message. Kept for existing call
 // sites that do not need to express priority.
-func (d *Daemon) steer(taskID, message string) {
-	d.steerWithPriority(taskID, message, steerNormal)
+func (d *Daemon) steer(taskID, message string) error {
+	return d.steerWithPriority(taskID, message, steerNormal)
 }
 
 // steerWithPriority queues a steering message into the given tier.
-func (d *Daemon) steerWithPriority(taskID, message string, priority steerPriority) {
+func (d *Daemon) steerWithPriority(taskID, message string, priority steerPriority) error {
 	if strings.TrimSpace(message) == "" {
-		return
+		return nil
 	}
-	d.mailboxMu.Lock()
-	box := d.mailbox[taskID]
-	if box == nil {
-		box = &taskMailbox{}
-		d.mailbox[taskID] = box
-	}
-	box.push(priority, message)
-	d.mailboxMu.Unlock()
+	_, err := d.enqueueSteer(taskID, sessionstore.NewID("steer"), strings.TrimSpace(message), priority)
+	return err
 }
 
 // drainMailbox returns and clears a task's pending steering messages,
 // urgent-tier messages first.
 func (d *Daemon) drainMailbox(taskID string) []string {
-	d.mailboxMu.Lock()
-	defer d.mailboxMu.Unlock()
-	box := d.mailbox[taskID]
-	if box.empty() {
-		delete(d.mailbox, taskID)
-		return nil
+	pending := d.peekMailbox(taskID)
+	messages := make([]string, len(pending))
+	for index := range pending {
+		messages[index] = pending[index].Message
 	}
-	msgs := box.drain()
-	delete(d.mailbox, taskID)
-	return msgs
+	_ = d.acknowledgeMailbox(taskID, pending)
+	return messages
 }
 
 // handleTaskList returns the background-run registry, optionally filtered by
@@ -3144,7 +3233,11 @@ func (d *Daemon) handleTaskList(params json.RawMessage) (any, error) {
 		}
 		out = append(out, t)
 	}
-	return out, nil
+	projected := make([]map[string]any, 0, len(out))
+	for _, task := range out {
+		projected = append(projected, d.taskWithControl(task, task.RunID))
+	}
+	return projected, nil
 }
 
 // handleTaskResult returns one run record: status, summary, and applied patches.
@@ -3159,7 +3252,7 @@ func (d *Daemon) handleTaskResult(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown execution %s", p.RunID)
 	}
-	return t, nil
+	return d.taskWithControl(t, t.RunID), nil
 }
 
 // persistRun snapshots a task's current record to the durable run store.
@@ -3278,6 +3371,7 @@ func (d *Daemon) runTaskGuarded(sess *sessionstore.Session, task *scheduler.Exec
 	d.withTaskContext(task.RunID, func(ctx context.Context) {
 		d.guardRun(ctx, sess, task, func() { d.runTaskContext(ctx, sess, task) })
 	})
+	_ = d.cleanupTerminalExecutionControl(task.RunID)
 	if current, ok := d.sched.Get(task.RunID); ok && current.Status == "cancelled" {
 		d.emitCompletion(sess.SessionID, current)
 	}
@@ -3308,6 +3402,7 @@ func (d *Daemon) resumeTaskGuarded(sess *sessionstore.Session, task *scheduler.E
 	d.withTaskContext(task.RunID, func(ctx context.Context) {
 		d.guardRun(ctx, sess, task, func() { d.resumeTaskContext(ctx, sess, task, cp) })
 	})
+	_ = d.cleanupTerminalExecutionControl(task.RunID)
 	if current, ok := d.sched.Get(task.RunID); ok && current.Status == "cancelled" {
 		d.emitCompletion(sess.SessionID, current)
 	}

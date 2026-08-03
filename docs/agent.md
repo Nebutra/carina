@@ -39,9 +39,12 @@ are refused. Every file the agent edits is a rollbackable patch transaction.
 
 The loop is hardened against pathological runs: a **LoopGuard** breaks
 canonical-signature action repetition, a **MistakeTracker** breaks consecutive
-failure streaks, and token-triggered **compaction** folds old turns into a
-summary (user-authored turns keep a verbatim tier; every fold is recorded as an
-auditable `CompactionReceipt`). Operators can steer a running task through a
+failure streaks, and token-triggered **compaction** first collapses modest
+pressure locally into a deterministic action/key-file skeleton without a
+summary-model call; severe pressure uses the structured summary tier.
+User-authored turns keep a verbatim tier, and every fold records its mode and
+ordered transforms in an auditable `CompactionReceipt`. Operators can steer a
+running task through a
 two-tier (urgent/normal) mailbox drained at turn boundaries, and plan/act mode
 switches are injected as urgent notices.
 

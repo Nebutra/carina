@@ -385,7 +385,9 @@ func (d *Daemon) handleChannelEventInject(params json.RawMessage) (any, error) {
 		// External channel events (CI results, human replies relayed through a
 		// bridge, etc.) are time-sensitive and should preempt any backlog of
 		// routine steering notes already queued for this task.
-		d.steerWithPriority(task.RunID, fmt.Sprintf("CHANNEL EVENT %s from %s (event %s): %s", p.Event.Kind, p.Event.SenderID, p.Event.ID, data), steerUrgent)
+		if err := d.steerWithPriority(task.RunID, fmt.Sprintf("CHANNEL EVENT %s from %s (event %s): %s", p.Event.Kind, p.Event.SenderID, p.Event.ID, data), steerUrgent); err != nil {
+			return nil, fmt.Errorf("persist channel event steering: %w", err)
+		}
 	}
 	if err := d.channels.MarkEffectApplied(reservation); err != nil {
 		return nil, fmt.Errorf("channel side effect applied but journal update failed: %w", err)

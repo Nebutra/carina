@@ -222,7 +222,7 @@ func TestBootstrapCatalogCompleteAndSafe(t *testing.T) {
 	codes := []BootstrapCode{
 		BootstrapTUIUsage, BootstrapBareUsage, BootstrapFlagSocket,
 		BootstrapFlagSession, BootstrapFlagWorkspace, BootstrapFlagLocale,
-		BootstrapFlagNoAltScreen, BootstrapInteractiveRequired,
+		BootstrapFlagNoAltScreen, BootstrapFlagScreenMode, BootstrapInteractiveRequired,
 		BootstrapResolveHomeFailed, BootstrapConfigFailed, BootstrapLocaleInvalid,
 		BootstrapRecoveryFailed, BootstrapStartupFailed, BootstrapRuntimeFailed,
 	}

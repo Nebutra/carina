@@ -1,4 +1,4 @@
-// Package sdk provides typed JSON-RPC wrappers for Carina Runtime 0.7.0.
+// Package sdk provides typed JSON-RPC wrappers for Carina Runtime 0.8.0.
 package sdk
 
 import (
@@ -18,7 +18,7 @@ import (
 	"github.com/Nebutra/carina/go/rpc"
 )
 
-const CompatibleRuntimeVersion = "0.7.0"
+const CompatibleRuntimeVersion = "0.8.0"
 const streamQueueLimit = 64
 const artifactUploadChunkSize = 512 << 10
 const artifactUploadMaxBytes = 4 << 20
@@ -794,6 +794,12 @@ func (c *Client) Cost(sessionID, runID string) (UsageCostReport, error) {
 
 func (c *Client) SteerExecution(runID, message string) error {
 	return c.Call("execution.steer", map[string]any{"run_id": runID, "message": message}, nil)
+}
+
+// InterruptExecution requests a soft interrupt. The run pauses at the next
+// safe turn boundary; use execution.cancel when terminal cancellation is intended.
+func (c *Client) InterruptExecution(runID string) error {
+	return c.Call("execution.interrupt", map[string]any{"run_id": runID, "mode": "soft"}, nil)
 }
 
 func (c *Client) AnswerQuestion(questionID, value string) error {

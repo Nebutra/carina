@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use carina_tui::app::{ScreenMode, read_screen_handoff};
 use carina_tui::i18n::Locale;
 use carina_tui::{
     Options, RuntimeDiagnosticOptions, RuntimeDiagnosticOutcome, choose_runtime_mode, run,
@@ -25,6 +26,10 @@ struct Args {
     carina_bin: Option<PathBuf>,
     #[arg(long)]
     no_alt_screen: bool,
+    #[arg(long, value_enum)]
+    screen_mode: Option<ScreenModeArg>,
+    #[arg(long, hide = true)]
+    screen_handoff: Option<PathBuf>,
     #[arg(long, value_enum, default_value_t = AltScreenArg::Auto)]
     alt_screen: AltScreenArg,
     #[arg(long, hide = true, value_enum, default_value_t = ScrollbackWrapArg::PreWrap)]
@@ -50,6 +55,13 @@ enum AltScreenArg {
     Auto,
     Always,
     Never,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum ScreenModeArg {
+    Minimal,
+    Fullscreen,
+    Inline,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -143,6 +155,16 @@ fn try_main() -> Result<i32> {
         locale_path: args.locale_path,
         carina_bin,
         no_alt_screen: args.no_alt_screen,
+        screen_mode: args.screen_mode.map(|mode| match mode {
+            ScreenModeArg::Minimal => ScreenMode::Minimal,
+            ScreenModeArg::Fullscreen => ScreenMode::Fullscreen,
+            ScreenModeArg::Inline => ScreenMode::Inline,
+        }),
+        screen_handoff: args
+            .screen_handoff
+            .as_deref()
+            .map(read_screen_handoff)
+            .transpose()?,
         alt_screen: match args.alt_screen {
             AltScreenArg::Auto => carina_tui::AltScreenPolicy::Auto,
             AltScreenArg::Always => carina_tui::AltScreenPolicy::Always,

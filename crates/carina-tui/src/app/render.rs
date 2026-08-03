@@ -11,7 +11,7 @@ use ratatui::widgets::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use super::{App, Focus, LOCALES, Phase};
+use super::{App, Focus, LOCALES, Phase, ScreenMode};
 use crate::component::{Action, ComponentId, HitRegion, InteractionMap};
 use crate::conversation::{
     ConversationStatus, EmptyConversation, conversation_title, localized_execution_status,
@@ -2114,7 +2114,11 @@ impl App {
         );
         // A conversation is an operating surface, not a repeated welcome
         // screen. Keep its context bar compact at every terminal size.
-        let header_height = layout_contract::CONVERSATION_HEADER_HEIGHT;
+        let header_height = if self.options.screen_mode == Some(ScreenMode::Inline) {
+            0
+        } else {
+            layout_contract::CONVERSATION_HEADER_HEIGHT
+        };
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -2125,7 +2129,9 @@ impl App {
                 Constraint::Length(layout_contract::SCENE_FOOTER_HEIGHT),
             ])
             .split(content);
-        self.render_conversation_header(frame, chunks[0]);
+        if header_height > 0 {
+            self.render_conversation_header(frame, chunks[0]);
+        }
         self.render_transcript(frame, chunks[1]);
         self.render_composer(frame, chunks[2]);
         if status_height > 0 {
@@ -6291,6 +6297,8 @@ mod transcript_tests {
             locale_path: None,
             carina_bin: None,
             no_alt_screen: true,
+            screen_mode: None,
+            screen_handoff: None,
             alt_screen: super::super::AltScreenPolicy::Never,
             scrollback_wrap: crate::native_scrollback::ScrollbackWrap::PreWrap,
         })

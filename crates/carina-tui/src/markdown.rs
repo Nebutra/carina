@@ -635,13 +635,10 @@ fn group_tokens_by_line(tokens: Vec<syntax::Token>) -> Vec<Vec<syntax::Token>> {
         loop {
             if let Some((head, tail)) = remaining.split_once('\n') {
                 if !head.is_empty() {
-                    lines
-                        .last_mut()
-                        .expect("line")
-                        .push(syntax::Token {
-                            text: head.to_owned(),
-                            kind: token.kind,
-                        });
+                    lines.last_mut().expect("line").push(syntax::Token {
+                        text: head.to_owned(),
+                        kind: token.kind,
+                    });
                 }
                 lines.push(Vec::new());
                 remaining = tail;

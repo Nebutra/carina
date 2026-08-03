@@ -76,7 +76,8 @@
       { "method": "execution.list", "scope": "read", "remote": true, "params": { "session_id": "string?" }, "result": "ExecutionRun[]" },
       { "method": "execution.result", "scope": "read", "remote": true, "params": { "run_id": "string" }, "result": "ExecutionRun" },
       { "method": "execution.cancel", "scope": "write", "remote": false, "params": { "run_id": "string" }, "result": "ExecutionRun" },
-      { "method": "execution.steer", "scope": "write", "remote": false, "params": { "run_id": "string", "message": "string" }, "result": "{ queued: boolean, run_id: string, status: string }" },
+      { "method": "execution.interrupt", "scope": "write", "remote": false, "params": { "run_id": "string", "mode": "soft?" }, "result": "{ requested: boolean, already_requested: boolean, run_id: string, mode: soft, safe_point: next_turn_boundary, active_tool: boolean, queue_depth: integer }" },
+      { "method": "execution.steer", "scope": "write", "remote": false, "params": { "run_id": "string", "message": "string", "priority": "normal|urgent?", "steer_id": "string?" }, "result": "{ queued: boolean, run_id: string, status: string, priority: string, steer_id: string, queue_depth: integer, safe_point: next_turn_boundary }" },
       { "method": "execution.budget.extend", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "run_id": "string", "additional_tokens": "integer > 0", "approver": "string?" }, "result": "ExecutionRun" },
       { "method": "execution.btw", "scope": "write", "remote": false, "params": { "run_id": "string", "question": "string" }, "result": "{ answer: string, ephemeral: true }" }
     ],

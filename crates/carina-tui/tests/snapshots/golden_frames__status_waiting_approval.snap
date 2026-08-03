@@ -3,6 +3,6 @@ source: crates/carina-tui/tests/golden_frames.rs
 expression: "render_status(\"waiting_approval\", None, 0, None)"
 ---
 size=120x1
-⠧ waiting for a…  1m02        · Ctrl-C stop
+⠧ waiting for a…  1m02        · Esc pause safely
 styles:
-(0, 0)..(55, 0) (Rgb(150, 160, 156), Reset, NONE)
+(0, 0)..(61, 0) (Rgb(150, 160, 156), Reset, NONE)

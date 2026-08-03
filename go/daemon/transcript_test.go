@@ -150,6 +150,9 @@ func TestTranscriptCompactionElidesThenSummarizes(t *testing.T) {
 	if receipt.Version != 2 {
 		t.Fatalf("receipt version = %d, want 2 (folded-only preimage semantics)", receipt.Version)
 	}
+	if receipt.Mode != compactionModeSummary || !reflect.DeepEqual(receipt.Transforms, []string{"elide_tool_output", "model_summary"}) {
+		t.Fatalf("summary receipt must disclose its transforms: %+v", receipt)
+	}
 	if receipt.SummarySHA256 != sha256Hex(tr.Summary) {
 		t.Fatalf("summary receipt hash does not verify: %+v", receipt)
 	}
@@ -160,6 +163,102 @@ func TestTranscriptCompactionElidesThenSummarizes(t *testing.T) {
 	last := tr.Turns[len(tr.Turns)-1]
 	if last.Obs.Elided {
 		t.Fatal("recent/pinned turn must not be elided")
+	}
+}
+
+func TestCompactionCollapseOnlySkipsSummarizerAndDisclosesTransforms(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.policy = CompactionPolicy{
+		KeepRecent: 1, ToolOutputMax: 10_000, SummarizeAfter: 1,
+		VerbatimUserMaxChars: 4_000,
+	}
+	tr.addTurn(Turn{Tool: "user", ActionBrief: "steer", Obs: Observation{Content: "USER STEERING: preserve this", Pinned: true}})
+	for i := 0; i < 4; i++ {
+		tr.addTurn(Turn{
+			Tool: "patch", ActionBrief: "patch important.go",
+			Obs: Observation{Content: "SECRET RAW TOOL OUTPUT " + strings.Repeat("x", 200)},
+		})
+	}
+	// Put the transcript slightly over the effective trigger even after Step-1
+	// elision, while keeping pre-elision pressure inside the local tier.
+	for i := 0; i < len(tr.Turns)-tr.policy.KeepRecent; i++ {
+		if !tr.Turns[i].Obs.Pinned {
+			tr.Turns[i].Obs.Elided = true
+		}
+	}
+	postElisionSize := tr.size()
+	for i := range tr.Turns {
+		tr.Turns[i].Obs.Elided = false
+	}
+	tr.policy.MaxChars = postElisionSize - 1
+	summarizeCalls := 0
+	receipt := tr.compact(func(string) (string, error) {
+		summarizeCalls++
+		return "model summary must not be used", nil
+	})
+	if summarizeCalls != 0 {
+		t.Fatalf("collapse-only called summarizer %d time(s)", summarizeCalls)
+	}
+	if receipt == nil || receipt.Version != 3 || receipt.Mode != compactionModeCollapseOnly {
+		t.Fatalf("collapse-only receipt = %+v", receipt)
+	}
+	if !reflect.DeepEqual(receipt.Transforms, []string{"elide_tool_output", "collapse_action_skeleton"}) {
+		t.Fatalf("collapse transforms = %v", receipt.Transforms)
+	}
+	if strings.Contains(tr.Summary, "SECRET RAW TOOL OUTPUT") || !strings.Contains(tr.Summary, "patch important.go") || !strings.Contains(tr.Summary, "important.go") {
+		t.Fatalf("local skeleton leaked output or lost structure:\n%s", tr.Summary)
+	}
+	if len(tr.Turns) != 2 || tr.Turns[0].Tool != "user" || tr.Turns[0].Obs.Content != "USER STEERING: preserve this" {
+		t.Fatalf("collapse-only changed verbatim user retention: %+v", tr.Turns)
+	}
+}
+
+func TestCompactionSelectorUsesModelPressureWhenConfigured(t *testing.T) {
+	tr := newTranscript("task")
+	tr.policy = CompactionPolicy{MaxChars: 1, MaxTokens: 10_000, CollapseOnlyMaxPressure: 1.10}
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.go", Obs: Observation{Content: strings.Repeat("x", 44), Pinned: true}})
+	if pressure := tr.compactionPressure(); pressure >= 1.10 {
+		t.Fatalf("configured token pressure should ignore the compatibility char threshold: %.3f", pressure)
+	}
+	if mode := tr.compactionMode(tr.compactionPressure()); mode != compactionModeCollapseOnly {
+		t.Fatalf("mode = %q, want collapse_only", mode)
+	}
+	tr.policy.MaxTokens = 0
+	tr.policy.MaxChars = tr.size() - 1
+	if pressure, mode := tr.compactionPressure(), tr.compactionMode(tr.compactionPressure()); mode != compactionModeCollapseOnly {
+		t.Fatalf("pressure = %.3f max_chars=%d size=%d mode=%q, want collapse_only", pressure, tr.policy.MaxChars, tr.size(), mode)
+	}
+}
+
+func TestCollapseOnlyReceiptSurvivesCheckpointRoundTrip(t *testing.T) {
+	tr := newTranscript("task")
+	tr.policy = CompactionPolicy{KeepRecent: 1, ToolOutputMax: 10_000, SummarizeAfter: 1}
+	for i := 0; i < 4; i++ {
+		tr.addTurn(Turn{Tool: "read", ActionBrief: fmt.Sprintf("read f%d.go", i), Obs: Observation{Content: strings.Repeat("context ", 30)}})
+	}
+	for i := 0; i < len(tr.Turns)-tr.policy.KeepRecent; i++ {
+		tr.Turns[i].Obs.Elided = true
+	}
+	postElisionSize := tr.size()
+	for i := range tr.Turns {
+		tr.Turns[i].Obs.Elided = false
+	}
+	tr.policy.MaxChars = postElisionSize - 1
+	receipt := tr.compact(func(string) (string, error) { return "unexpected", nil })
+	if receipt == nil || receipt.Mode != compactionModeCollapseOnly {
+		t.Fatalf("receipt = %+v", receipt)
+	}
+	runs := newRunStore(filepath.Join(t.TempDir(), "state"))
+	if err := runs.saveCheckpointChecked("task-collapse", &runCheckpoint{Turn: 4, Transcript: tr}); err != nil {
+		t.Fatal(err)
+	}
+	loaded := runs.loadCheckpoint("task-collapse")
+	if loaded == nil || loaded.Transcript == nil || len(loaded.Transcript.CompactionReceipts) != 1 {
+		t.Fatalf("loaded checkpoint = %+v", loaded)
+	}
+	got := loaded.Transcript.CompactionReceipts[0]
+	if got.Mode != compactionModeCollapseOnly || !reflect.DeepEqual(got.Transforms, receipt.Transforms) || got.SummarySHA256 != sha256Hex(loaded.Transcript.Summary) {
+		t.Fatalf("collapse receipt did not round-trip: %+v", got)
 	}
 }
 
@@ -690,8 +789,8 @@ func TestShouldCompactMaxTokensAboveCurrentDoesNotFire(t *testing.T) {
 
 // TestCompactFiresOnTokenTriggerAlone drives compact() itself (not just
 // shouldCompact) through the token-estimate trigger while MaxChars is set so
-// high the char trigger never fires, proving both of compact()'s gates read
-// the combiner rather than the old size()<=triggerChars() checks.
+// high the char trigger never fires. A normal threshold crossing uses the
+// deterministic collapse tier and must not pay for a model summary.
 func TestCompactFiresOnTokenTriggerAlone(t *testing.T) {
 	tr := newTranscript("fix the bug")
 	tr.policy = CompactionPolicy{
@@ -704,12 +803,8 @@ func TestCompactFiresOnTokenTriggerAlone(t *testing.T) {
 	if tr.size() >= tr.policy.MaxChars {
 		t.Fatalf("fixture must stay well under MaxChars — the whole point is proving MaxTokens, not MaxChars, drives compaction: size=%d", tr.size())
 	}
-	// compact()'s second (summarize-decision) gate re-checks shouldCompact()
-	// AFTER step 1 has already elided the head turns, which shrinks the
-	// rendered estimate substantially (elided turns render as a short
-	// placeholder). MaxTokens must stay below that post-elision estimate, not
-	// just the pre-elision one, so the token trigger — not MaxChars, which
-	// stays unmet throughout — is what carries compact() through both gates.
+	// Keep MaxTokens below the post-elision estimate so the token trigger, not
+	// MaxChars, remains authoritative after Step 1.
 	cutoff := len(tr.Turns) - tr.policy.KeepRecent
 	postElisionTurns := append([]Turn(nil), tr.Turns...)
 	for i := 0; i < cutoff; i++ {
@@ -722,8 +817,8 @@ func TestCompactFiresOnTokenTriggerAlone(t *testing.T) {
 		summarizeCalled = true
 		return "SUMMARY: read many files", nil
 	})
-	if !summarizeCalled || receipt == nil {
-		t.Fatalf("compact() must fire off the token-estimate trigger alone when the char trigger is unmet (summarizeCalled=%v receipt=%v)", summarizeCalled, receipt)
+	if summarizeCalled || receipt == nil || receipt.Mode != compactionModeCollapseOnly {
+		t.Fatalf("token-only threshold crossing must use local collapse (summarizeCalled=%v receipt=%v)", summarizeCalled, receipt)
 	}
 }
 

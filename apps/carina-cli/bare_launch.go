@@ -24,6 +24,7 @@ type interactiveOptions struct {
 	WorkspaceRoot string
 	Locale        string
 	NoAltScreen   bool
+	ScreenMode    string
 }
 
 type rustUILaunch struct {
@@ -34,6 +35,9 @@ type rustUILaunch struct {
 func appendTerminalArgs(args []string, opts interactiveOptions, mode string) []string {
 	if opts.NoAltScreen {
 		return append(args, "--no-alt-screen")
+	}
+	if screenMode := strings.ToLower(strings.TrimSpace(opts.ScreenMode)); screenMode != "" {
+		return append(args, "--screen-mode", screenMode)
 	}
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" {

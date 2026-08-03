@@ -10,10 +10,10 @@ pub enum ScrollbackWrap {
     Terminal,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BlockStamp {
-    id: String,
-    revision: u64,
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ScrollbackStamp {
+    pub id: String,
+    pub revision: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +25,7 @@ enum TailState {
 
 #[derive(Debug, Default)]
 pub struct ScrollbackLedger {
-    committed: Vec<BlockStamp>,
+    committed: Vec<ScrollbackStamp>,
     tail: HashMap<String, TailState>,
 }
 
@@ -168,6 +168,27 @@ pub fn history_for_width(
 }
 
 impl ScrollbackLedger {
+    pub fn committed_snapshot(&self) -> Vec<ScrollbackStamp> {
+        self.committed.clone()
+    }
+
+    pub fn restore_committed_prefix(
+        &mut self,
+        blocks: &[TranscriptBlock],
+        stamps: Vec<ScrollbackStamp>,
+    ) -> Result<(), &'static str> {
+        if stamps.len() > blocks.len()
+            || !stamps.iter().zip(blocks).all(|(stamp, block)| {
+                stamp.id == block.id && stamp.revision == block.layout_revision
+            })
+        {
+            return Err("committed scrollback prefix no longer matches the session projection");
+        }
+        self.committed = stamps;
+        self.tail.clear();
+        Ok(())
+    }
+
     pub fn committed_prefix_len(&self, blocks: &[TranscriptBlock]) -> usize {
         self.committed
             .iter()
@@ -265,7 +286,7 @@ impl ScrollbackLedger {
 
     pub fn commit(&mut self, blocks: &[TranscriptBlock]) {
         for block in blocks {
-            self.committed.push(BlockStamp {
+            self.committed.push(ScrollbackStamp {
                 id: block.id.clone(),
                 revision: block.layout_revision,
             });
@@ -321,6 +342,12 @@ mod tests {
     use crate::tool_projection::ToolKind;
     use crate::transcript::{BlockBodyKind, BlockKind, ToolGroupMember};
 
+    fn stamped_block(id: &str, revision: u64) -> TranscriptBlock {
+        let mut block = TranscriptBlock::local_user(id.to_owned(), id.to_owned());
+        block.layout_revision = revision;
+        block
+    }
+
     #[test]
     fn pure_url_detection_does_not_misclassify_prose() {
         assert!(is_plain_url_line("https://example.test/a/very/long/path"));
@@ -344,6 +371,55 @@ mod tests {
         changed[0].layout_revision += 1;
         assert_eq!(ledger.committed_prefix_len(&changed), 0);
         ledger.reset();
+        assert_eq!(ledger.committed_prefix_len(&blocks), 0);
+    }
+
+    #[test]
+    fn restored_watermark_keeps_new_finalized_blocks_commit_eligible() {
+        let blocks = vec![
+            stamped_block("a", 1),
+            stamped_block("b", 1),
+            stamped_block("c", 1),
+        ];
+        let mut ledger = ScrollbackLedger::default();
+        ledger
+            .restore_committed_prefix(
+                &blocks,
+                vec![
+                    ScrollbackStamp {
+                        id: "a".into(),
+                        revision: 1,
+                    },
+                    ScrollbackStamp {
+                        id: "b".into(),
+                        revision: 1,
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(ledger.committed_prefix_len(&blocks), 2);
+        ledger.stage_for_commit(&blocks, None);
+        ledger.observe_presented(&blocks);
+        let pending = ledger.pending_finalized(&blocks);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, "c");
+    }
+
+    #[test]
+    fn restored_watermark_rejects_revision_or_identity_drift() {
+        let blocks = vec![stamped_block("a", 2)];
+        let mut ledger = ScrollbackLedger::default();
+        assert!(
+            ledger
+                .restore_committed_prefix(
+                    &blocks,
+                    vec![ScrollbackStamp {
+                        id: "a".into(),
+                        revision: 1,
+                    }],
+                )
+                .is_err()
+        );
         assert_eq!(ledger.committed_prefix_len(&blocks), 0);
     }
 
@@ -543,10 +619,7 @@ mod multi_terminal_policy_tests {
             reflow_line_cap_for("vscode", false, false, false, false),
             1_000
         );
-        assert_eq!(
-            reflow_line_cap_for("", false, true, false, false),
-            9_001
-        ); // Windows Terminal
+        assert_eq!(reflow_line_cap_for("", false, true, false, false), 9_001); // Windows Terminal
         assert_eq!(
             reflow_line_cap_for("wezterm", false, false, false, false),
             3_500
@@ -556,8 +629,14 @@ mod multi_terminal_policy_tests {
             10_000
         );
         // Unknown / Ghostty / iTerm defaults stay on the safer 3500 path.
-        assert_eq!(reflow_line_cap_for("ghostty", false, false, false, false), 3_500);
-        assert_eq!(reflow_line_cap_for("iTerm.app", false, false, false, false), 3_500);
+        assert_eq!(
+            reflow_line_cap_for("ghostty", false, false, false, false),
+            3_500
+        );
+        assert_eq!(
+            reflow_line_cap_for("iTerm.app", false, false, false, false),
+            3_500
+        );
     }
 
     #[test]

@@ -58,7 +58,12 @@ impl AnchorStabilityRecorder {
 
     pub fn record_frame(&mut self, visible_lines: &[String], expected_motion: bool) -> AnchorEvent {
         let hashes: Vec<u64> = visible_lines.iter().map(|line| hash_line(line)).collect();
-        let event = classify(&self.previous_previous, &self.previous, &hashes, expected_motion);
+        let event = classify(
+            &self.previous_previous,
+            &self.previous,
+            &hashes,
+            expected_motion,
+        );
         if !(self.exclude_expected && expected_motion && matches!(event, AnchorEvent::InsertPush)) {
             self.events.push(event);
         } else {

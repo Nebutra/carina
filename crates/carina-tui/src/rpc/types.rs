@@ -463,6 +463,22 @@ pub struct RuntimeInitialize {
     pub projection_version: String,
     #[serde(default)]
     pub capabilities: RuntimeCapabilities,
+    #[serde(default)]
+    pub runtime: RuntimeIdentity,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct RuntimeIdentity {
+    #[serde(default)]
+    pub runtime_id: String,
+    #[serde(default)]
+    pub workspace_id: String,
+    #[serde(default)]
+    pub epoch: String,
+    #[serde(default)]
+    pub process_epoch: i64,
+    #[serde(default)]
+    pub pid: i64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -676,6 +692,20 @@ pub struct EffectiveConfig {
 pub struct PlanModeState {
     pub session_id: String,
     pub plan_mode: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct SoftInterruptResult {
+    pub requested: bool,
+    #[serde(default)]
+    pub already_requested: bool,
+    pub run_id: String,
+    pub mode: String,
+    pub safe_point: String,
+    #[serde(default)]
+    pub active_tool: bool,
+    #[serde(default)]
+    pub queue_depth: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1360,7 +1390,7 @@ impl WireEvent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum GovernanceId {
     Approval(String),
     Question(String),

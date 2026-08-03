@@ -14,7 +14,11 @@ pub enum CommandId {
     Sessions,
     Resume,
     Cancel,
+    Minimal,
+    Fullscreen,
+    Inline,
     Doctor,
+    Keymap,
     Help,
     Quit,
 }
@@ -101,9 +105,33 @@ pub const COMMANDS: &[CommandSpec] = &[
         AvailabilityRule::ActiveExecution,
     ),
     command(
+        CommandId::Minimal,
+        "/minimal",
+        MessageId::CommandMinimal,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Fullscreen,
+        "/fullscreen",
+        MessageId::CommandFullscreen,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Inline,
+        "/inline",
+        MessageId::CommandInline,
+        AvailabilityRule::Always,
+    ),
+    command(
         CommandId::Doctor,
         "/doctor",
         MessageId::CommandDoctor,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Keymap,
+        "/keymap",
+        MessageId::CommandKeymap,
         AvailabilityRule::Always,
     ),
     command(

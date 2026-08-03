@@ -309,10 +309,7 @@ pub fn project_doctor_report(raw: &Value, revision: u64) -> DoctorReport {
     let mut sections = Vec::new();
     if let Some(map) = object {
         for (key, value) in map {
-            if matches!(
-                key.as_str(),
-                "version" | "disabled" | "reason" | "fix_plan"
-            ) {
+            if matches!(key.as_str(), "version" | "disabled" | "reason" | "fix_plan") {
                 continue;
             }
             sections.push(project_section(key, value));
@@ -336,11 +333,15 @@ pub fn project_doctor_report(raw: &Value, revision: u64) -> DoctorReport {
     }
 
     let mut recommended = None;
-    if let Some(plan) = object.and_then(|map| map.get("fix_plan")).and_then(Value::as_array)
+    if let Some(plan) = object
+        .and_then(|map| map.get("fix_plan"))
+        .and_then(Value::as_array)
     {
         for item in plan {
             let severity = DoctorSeverity::parse(
-                item.get("severity").and_then(Value::as_str).unwrap_or("warn"),
+                item.get("severity")
+                    .and_then(Value::as_str)
+                    .unwrap_or("warn"),
             );
             let issue = item
                 .get("issue")
@@ -374,10 +375,10 @@ pub fn project_doctor_report(raw: &Value, revision: u64) -> DoctorReport {
                 enabled: true,
                 disabled_reason: String::new(),
             };
-            let replace = recommended
-                .as_ref()
-                .is_none_or(|current: &RecoveryAction| severity.rank() >= DoctorSeverity::Warn.rank()
-                    && current.kind == RecoveryActionKind::Instruct);
+            let replace = recommended.as_ref().is_none_or(|current: &RecoveryAction| {
+                severity.rank() >= DoctorSeverity::Warn.rank()
+                    && current.kind == RecoveryActionKind::Instruct
+            });
             if replace && severity.rank() >= DoctorSeverity::Warn.rank() {
                 recommended = Some(candidate);
             }
@@ -644,7 +645,10 @@ fn redact_string(text: &str) -> String {
         || lower.contains("token")
         || lower.contains("secret")
         || lower.contains("password")
-        || (text.len() > 24 && text.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
+        || (text.len() > 24
+            && text
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
     {
         // Never project credential-like material into the doctor UI.
         if text.chars().count() > 8 {
@@ -769,10 +773,8 @@ mod tests {
 
     #[test]
     fn redacts_long_token_like_strings() {
-        let evidence = flatten_evidence(
-            &json!({"api_token": "abcdefghijklmnopqrstuvwxyz012345"}),
-            0,
-        );
+        let evidence =
+            flatten_evidence(&json!({"api_token": "abcdefghijklmnopqrstuvwxyz012345"}), 0);
         assert_eq!(evidence[0].value, "<redacted>");
     }
 }

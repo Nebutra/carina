@@ -14,6 +14,7 @@ const (
 	BootstrapFlagWorkspace       BootstrapCode = "flag.workspace"
 	BootstrapFlagLocale          BootstrapCode = "flag.locale"
 	BootstrapFlagNoAltScreen     BootstrapCode = "flag.no_alt_screen"
+	BootstrapFlagScreenMode      BootstrapCode = "flag.screen_mode"
 	BootstrapInteractiveRequired BootstrapCode = "interactive.required"
 	BootstrapResolveHomeFailed   BootstrapCode = "home.failed"
 	BootstrapConfigFailed        BootstrapCode = "config.failed"
@@ -79,6 +80,14 @@ var bootstrapCatalog = map[BootstrapCode]map[string]string{
 		"ko": "기본 터미널 버퍼를 사용하고 기본 스크롤백 기록 유지",
 		"es": "Usar el búfer normal del terminal y conservar el historial nativo",
 		"fr": "Utiliser le tampon normal du terminal et conserver l’historique natif",
+	},
+	BootstrapFlagScreenMode: {
+		"en": "Screen mode: minimal, fullscreen, or inline (default: minimal)",
+		"zh": "屏幕模式：minimal、fullscreen 或 inline（默认：minimal）",
+		"ja": "画面モード: minimal、fullscreen、inline（既定: minimal）",
+		"ko": "화면 모드: minimal, fullscreen 또는 inline(기본값: minimal)",
+		"es": "Modo de pantalla: minimal, fullscreen o inline (predeterminado: minimal)",
+		"fr": "Mode d’écran : minimal, fullscreen ou inline (par défaut : minimal)",
 	},
 	BootstrapInteractiveRequired: {
 		"en": "An interactive terminal is required. Use `carina watch --json` for pipes.",

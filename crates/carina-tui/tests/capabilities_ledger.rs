@@ -11,10 +11,7 @@ fn capabilities_ledger_lists_six_inline_surfaces() {
         "diff_large",
         "scrolling-regions",
     ] {
-        assert!(
-            text.contains(needle),
-            "CAPABILITIES.md missing {needle}"
-        );
+        assert!(text.contains(needle), "CAPABILITIES.md missing {needle}");
     }
     assert!(text.contains("**wired**") || text.contains("| **wired**"));
 }

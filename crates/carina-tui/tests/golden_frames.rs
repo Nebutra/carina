@@ -193,7 +193,7 @@ fn render_status_with_mode(
                 activity,
                 queued_follow_ups,
                 background_work: false,
-                interrupt_key: "Ctrl-C",
+                interrupt_key: "Esc",
                 priority_notice: false,
                 no_color: false,
                 context,
@@ -510,7 +510,7 @@ fn live_status_glyph_mode_is_fixture_owned() {
         carina_tui::glyphs::GlyphMode::Ascii,
     );
     assert!(unicode.contains("⠧ running tests"));
-    assert!(unicode.contains("· Ctrl-C stop"));
+    assert!(unicode.contains("· Esc pause safely"));
     assert!(ascii.contains("\\ running tests"));
-    assert!(ascii.contains("| Ctrl-C stop"));
+    assert!(ascii.contains("| Esc pause safely"));
 }

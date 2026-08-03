@@ -1603,7 +1603,7 @@ TMUX_TMPDIR="$WORK" tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true
 RETURNING_EXIT_FILE="$WORK/returning-ui-exit"
 SESSION="carina-rust-tui-returning-$$"
 TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
-  "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color '$STAGE/carina-ui' --socket '$GOV_SOCKET' --workspace '$WORKSPACE' --locale en --no-alt-screen; code=\$?; printf '%s' \"\$code\" > '$RETURNING_EXIT_FILE'; sleep 300"
+  "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color '$STAGE/carina-ui' --socket '$GOV_SOCKET' --workspace '$WORKSPACE' --locale en --screen-mode fullscreen; code=\$?; printf '%s' \"\$code\" > '$RETURNING_EXIT_FILE'; sleep 300"
 
 wait_for_text "Describe the change you want to make."
 grep -Fq "Test  ·  Direct API  ·  gpt-5.5  ·  high reasoning  ·  workspace" <<<"$SCREEN"
@@ -2580,13 +2580,26 @@ wait_for_text "当前会话"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /help
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
-wait_for_text "编辑上一条输入"
+wait_for_text "打开检查点历史"
+for keymap_action in \
+  "在下一个安全点暂停" \
+  "强制取消当前任务" \
+  "立即引导当前任务" \
+  "运行时立即发送" \
+  "打开检查点历史" \
+  "回复运行时排队后续输入"; do
+  grep -Fq "$keymap_action" <<<"$SCREEN" || {
+    printf '%s\n' "$SCREEN" >&2
+    echo "rust-tui-journey: /keymap missing $keymap_action" >&2
+    exit 1
+  }
+done
 grep -Fq "命令" <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: help did not open the localized command palette" >&2
   exit 1
 }
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" PageDown
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" PageDown PageDown
 wait_for_text "/settings"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-u
@@ -2632,9 +2645,9 @@ TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
 wait_for_text "The current execution is paused"
 grep -Fq "Resume" <<<"$SCREEN"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" /resume Enter
-wait_for_text "Ctrl-C stop"
+wait_for_text "Esc pause safely"
 capture
-grep -Fq "Ctrl-C stop" <<<"$SCREEN" || {
+grep -Fq "Esc pause safely" <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: active execution did not expose its interrupt affordance" >&2
   exit 1
@@ -2655,7 +2668,7 @@ grep -Fq "↑ 12K ↓1.4K" <<<"$SCREEN" || {
   exit 1
 }
 wait_for_text "Returning paused execution complete"
-wait_without_text "Ctrl-C stop"
+wait_without_text "Esc pause safely"
 if grep -Fq "ExecutionCompleted" <<<"$SCREEN"; then
   echo "rust-tui-journey: paused completion rendered as an event receipt" >&2
   exit 1

@@ -586,6 +586,14 @@ func TestTaskResumePersistsRunningBeforeStartingFromLatest(t *testing.T) {
 	if err := d.runs.saveCheckpointChecked(task.RunID, &runCheckpoint{Turn: 1, Transcript: tr}); err != nil {
 		t.Fatal(err)
 	}
+	box := &taskMailbox{
+		normal:                 []queuedSteer{{SteerID: "steer_after_resume", Message: "keep this", Priority: steerNormal}},
+		softInterruptRequested: true,
+	}
+	d.mailbox[task.RunID] = box
+	if err := d.runs.saveExecutionControl(box.record(task.RunID)); err != nil {
+		t.Fatal(err)
+	}
 	reasoner := &blockingResumeReasoner{started: make(chan struct{}), release: make(chan struct{})}
 	d.SetReasoner(reasoner)
 	resultAny, err := d.handleTaskResume(mustJSON(t, map[string]any{"run_id": task.RunID}))
@@ -594,6 +602,9 @@ func TestTaskResumePersistsRunningBeforeStartingFromLatest(t *testing.T) {
 	}
 	if result := resultAny.(*scheduler.ExecutionRun); result.RunID != task.RunID || result.Status != "running" {
 		t.Fatalf("resume result = %+v", result)
+	}
+	if d.softInterruptRequested(task.RunID) || d.queueDepth(task.RunID) != 1 {
+		t.Fatalf("resume did not clear only stale interrupt intent: pending=%v depth=%d", d.softInterruptRequested(task.RunID), d.queueDepth(task.RunID))
 	}
 	select {
 	case <-reasoner.started:

@@ -225,11 +225,12 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 	client := NewClient(rpc.NewClient(clientConn, clientConn, clientConn))
 	defer client.Close()
 
+	want := []string{"session.attach", "session.fork", "session.review", "session.items", "usage.cost", "execution.steer", "execution.interrupt", "question.answer", "session.events.stream"}
 	methods := make(chan []string, 1)
 	go func() {
 		reader := bufio.NewReader(serverConn)
 		seen := []string{}
-		for len(seen) < 8 {
+		for len(seen) < len(want) {
 			line, err := reader.ReadBytes('\n')
 			if err != nil {
 				return
@@ -265,7 +266,7 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 		methods <- seen
 	}()
 
-	if CompatibleRuntimeVersion != "0.7.0" {
+	if CompatibleRuntimeVersion != "0.8.0" {
 		t.Fatalf("compatibility version = %s", CompatibleRuntimeVersion)
 	}
 	if attached, err := client.AttachSession("s1", 3); err != nil || attached.Cursor != 7 {
@@ -286,6 +287,9 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 	if err := client.SteerExecution("t1", "continue"); err != nil {
 		t.Fatal(err)
 	}
+	if err := client.InterruptExecution("t1"); err != nil {
+		t.Fatal(err)
+	}
 	if err := client.AnswerQuestion("q1", "yes"); err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +300,6 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 	if err != nil || event.Type != "ModelResponded" {
 		t.Fatalf("event = %+v, %v", event, err)
 	}
-	want := []string{"session.attach", "session.fork", "session.review", "session.items", "usage.cost", "execution.steer", "question.answer", "session.events.stream"}
 	if got := <-methods; !reflect.DeepEqual(got, want) {
 		t.Fatalf("methods = %v, want %v", got, want)
 	}
@@ -601,7 +604,7 @@ func TestHighLevelThreadRunNegotiatesAndUsesSchema(t *testing.T) {
 			var result any = map[string]any{}
 			switch req.Method {
 			case "runtime.initialize":
-				result = map[string]any{"runtime_version": "0.7.0", "protocol_version": "1.2.0", "projection_version": "1.0.0", "capabilities": map[string]any{"tool_call_lifecycle": true, "event_schema_version": "0.3.0"}}
+				result = map[string]any{"runtime_version": "0.8.0", "protocol_version": "1.2.0", "projection_version": "1.0.0", "capabilities": map[string]any{"tool_call_lifecycle": true, "event_schema_version": "0.3.0"}}
 			case "session.create":
 				result = map[string]any{"session_id": "s", "workspace_id": "w", "workspace_root": "/tmp", "status": "active"}
 			case "execution.start":

@@ -236,6 +236,11 @@ func doctorChecks(report map[string]any) []doctorCheck {
 		}
 		out = append(out, chk)
 	}
+	if resources, ok := report["resources"].(map[string]any); ok {
+		if chk, present := resourceCheck(resources); present {
+			out = append(out, chk)
+		}
+	}
 	if tools, ok := report["tools"].(map[string]any); ok {
 		available, _ := tools["available"].(bool)
 		dir, _ := tools["dir"].(string)
@@ -275,6 +280,70 @@ func doctorChecks(report map[string]any) []doctorCheck {
 		}
 	}
 	return out
+}
+
+func resourceCheck(resources map[string]any) (doctorCheck, bool) {
+	sessions, ok := resources["sessions"].(map[string]any)
+	if !ok {
+		return doctorCheck{}, false
+	}
+	count, ok := doctorNumber(sessions["count"])
+	if !ok {
+		return doctorCheck{}, false
+	}
+	detail := fmt.Sprintf("sessions %d", count)
+	if process, ok := resources["process"].(map[string]any); ok {
+		if available, _ := process["rss_available"].(bool); available {
+			if rss, ok := doctorNumber(process["rss_bytes"]); ok {
+				detail += fmt.Sprintf(" · rss %.1f MiB", float64(rss)/(1024*1024))
+			} else {
+				detail += " · rss unavailable"
+			}
+		} else {
+			detail += " · rss unavailable"
+		}
+	}
+	compactions := int64(0)
+	if items, ok := sessions["items"].([]any); ok {
+		for _, raw := range items {
+			item, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if count, ok := doctorNumber(item["compactions"]); ok {
+				compactions += count
+			}
+		}
+	}
+	detail += fmt.Sprintf(" · compactions %d", compactions)
+	if caches, ok := resources["caches"].(map[string]any); ok {
+		if artifacts, ok := caches["artifact_store"].(map[string]any); ok {
+			puts, putsOK := doctorNumber(artifacts["puts"])
+			reads, readsOK := doctorNumber(artifacts["reads"])
+			if putsOK && readsOK {
+				detail += fmt.Sprintf(" · artifact cache %d puts/%d reads", puts, reads)
+			}
+		}
+	}
+	return doctorCheck{name: "resources", state: "PASS", detail: detail}, true
+}
+
+func doctorNumber(value any) (int64, bool) {
+	switch value := value.(type) {
+	case int:
+		return int64(value), true
+	case int64:
+		return value, true
+	case uint64:
+		if value <= uint64(^uint64(0)>>1) {
+			return int64(value), true
+		}
+	case float64:
+		if value >= 0 && value <= float64(^uint64(0)>>1) {
+			return int64(value), true
+		}
+	}
+	return 0, false
 }
 
 // policyCheck renders the policy freshness probe (P1.6): WARN when the

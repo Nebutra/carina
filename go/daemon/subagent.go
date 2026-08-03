@@ -229,6 +229,7 @@ func (d *Daemon) runSubagentLoop(sess *sessionstore.Session, task *scheduler.Exe
 }
 
 func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.Session, task *scheduler.ExecutionRun, spec *AgentSpec) string {
+	defer func() { _ = d.cleanupTerminalExecutionControl(task.RunID) }()
 	if !d.reasonerReady() {
 		return "(no reasoner configured)"
 	}

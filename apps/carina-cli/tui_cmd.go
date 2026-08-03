@@ -31,6 +31,16 @@ func cmdInteractive(args []string) outcome.Outcome {
 		return nil
 	})
 	noAltScreen := fs.Bool("no-alt-screen", false, microcopy.Bootstrap(microcopy.BootstrapFlagNoAltScreen, nil, bootstrapLocale))
+	screenMode := ""
+	fs.Func("screen-mode", microcopy.Bootstrap(microcopy.BootstrapFlagScreenMode, nil, bootstrapLocale), func(raw string) error {
+		switch mode := strings.ToLower(strings.TrimSpace(raw)); mode {
+		case "minimal", "fullscreen", "inline":
+			screenMode = mode
+			return nil
+		default:
+			return fmt.Errorf("screen mode must be minimal, fullscreen, or inline")
+		}
+	})
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "Usage: carina [options]")
 		fmt.Fprintln(fs.Output(), "  (no args = interactive shell on a TTY; flags configure that shell)")
@@ -51,5 +61,6 @@ func cmdInteractive(args []string) outcome.Outcome {
 		WorkspaceRoot: *workspace,
 		Locale:        locale,
 		NoAltScreen:   *noAltScreen,
+		ScreenMode:    screenMode,
 	})
 }

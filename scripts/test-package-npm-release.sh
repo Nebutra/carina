@@ -102,7 +102,7 @@ first_bundle_digest="$(sha256_manifest "$bundle" | awk '{print $1}')"
 (cd "$ROOT" && VERSION="$version" BUNDLE="$bundle" OUTPUT_DIR="$work/frozen" ./scripts/verify-npm-release-bundle.sh >/dev/null)
 [[ "$(find "$work/frozen" -type f -name '*.tgz' | wc -l | tr -d ' ')" == "5" ]]
 cp "$bundle" "$work/corrupt-bundle.tar.gz"
-printf '\0' | dd of="$work/corrupt-bundle.tar.gz" bs=1 seek=32 count=1 conv=notrunc 2>/dev/null
+printf 'CARINA_CORRUPTION' | dd of="$work/corrupt-bundle.tar.gz" bs=1 seek=64 conv=notrunc 2>/dev/null
 if (cd "$ROOT" && VERSION="$version" BUNDLE="$work/corrupt-bundle.tar.gz" ./scripts/verify-npm-release-bundle.sh) >/dev/null 2>&1; then
   echo "test-package-npm-release: corrupt frozen bundle was accepted" >&2
   exit 1

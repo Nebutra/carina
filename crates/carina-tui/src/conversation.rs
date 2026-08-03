@@ -123,7 +123,7 @@ impl ConversationStatus<'_> {
                     pad_or_truncate_cells(activity, 14, theme.glyphs),
                     elapsed,
                     theme.glyphs.separator(),
-                    pad_or_truncate_cells(&affordance, 23, theme.glyphs)
+                    pad_or_truncate_cells(&affordance, 29, theme.glyphs)
                 )
             } else if elapsed.is_empty() {
                 format!(
@@ -411,7 +411,7 @@ mod tests {
                     activity: None,
                     queued_follow_ups: 0,
                     background_work: false,
-                    interrupt_key: "Ctrl-C",
+                    interrupt_key: "Esc",
                     priority_notice: false,
                     no_color: true,
                     context: None,
@@ -578,7 +578,7 @@ mod tests {
                     activity: Some("running tests"),
                     queued_follow_ups: 2,
                     background_work: false,
-                    interrupt_key: "Ctrl-C",
+                    interrupt_key: "Esc",
                     priority_notice: false,
                     no_color: true,
                     context: Some(&context),
@@ -592,7 +592,7 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("running tests"));
         assert!(rendered.contains("1m02"));
-        assert!(rendered.contains("Ctrl-C stop"));
+        assert!(rendered.contains("Esc pause safely"));
         assert!(rendered.contains("+2 queued"));
         let glyphs = Theme::carina(true).glyphs;
         assert!(rendered.contains(&format_context_waterline(&context, glyphs)));
@@ -659,7 +659,7 @@ mod tests {
         let rendered = (0..120)
             .map(|x| terminal.backend().buffer().cell((x, 0)).unwrap().symbol())
             .collect::<String>();
-        assert!(rendered.contains("F12 stop background"));
+        assert!(rendered.contains("F12 pause background safely"));
     }
 
     #[test]

@@ -7,7 +7,21 @@ pub const DEFAULT_MIN_DRAW_INTERVAL: Duration = Duration::from_millis(16);
 pub const SLOW_TICK_INTERVAL: Duration = Duration::from_millis(83);
 pub const SPINNER_INTERVAL: Duration = Duration::from_millis(80);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(75);
+pub const REDUCED_MOTION_ENV: &str = "CARINA_REDUCED_MOTION";
 const FEEDBACK_SAMPLE_LIMIT: usize = 512;
+
+pub fn reduced_motion_enabled() -> bool {
+    reduced_motion_from_environment(std::env::var(REDUCED_MOTION_ENV).ok().as_deref())
+}
+
+pub(crate) fn reduced_motion_from_environment(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedbackMarker {
@@ -168,6 +182,7 @@ impl FrameStats {
 #[derive(Debug, Clone)]
 pub struct FrameScheduler {
     min_draw_interval: Duration,
+    reduced_motion: bool,
     dirty_since: Option<Instant>,
     scheduled_at: Option<Instant>,
     last_draw_at: Option<Instant>,
@@ -181,8 +196,13 @@ pub struct FrameScheduler {
 
 impl FrameScheduler {
     pub fn new(now: Instant) -> Self {
+        Self::with_reduced_motion(now, reduced_motion_enabled())
+    }
+
+    fn with_reduced_motion(now: Instant, reduced_motion: bool) -> Self {
         let mut scheduler = Self {
             min_draw_interval: min_draw_interval(),
+            reduced_motion,
             dirty_since: None,
             scheduled_at: None,
             last_draw_at: None,
@@ -239,6 +259,11 @@ impl FrameScheduler {
     }
 
     pub fn set_tick_demand(&mut self, demand: TickDemand, now: Instant) {
+        let demand = if self.reduced_motion {
+            TickDemand::None
+        } else {
+            demand
+        };
         if self.tick_demand == demand {
             return;
         }
@@ -428,6 +453,49 @@ mod tests {
         scheduler.presented(late);
         assert_eq!(scheduler.deadline(), Some(late + SPINNER_INTERVAL));
         assert_eq!(scheduler.stats().requested(RedrawReason::Animation), 2);
+    }
+
+    #[test]
+    fn reduced_motion_parsing_is_explicit_and_fail_open() {
+        for enabled in ["1", " true ", "YES", "On"] {
+            assert!(
+                reduced_motion_from_environment(Some(enabled)),
+                "{enabled:?}"
+            );
+        }
+        for enabled in [None, Some(""), Some("0"), Some("false"), Some("reduce")] {
+            assert!(!reduced_motion_from_environment(enabled), "{enabled:?}");
+        }
+    }
+
+    #[test]
+    fn reduced_motion_suppresses_all_decorative_tick_deadlines() {
+        let start = Instant::now();
+        for demand in [TickDemand::Slow, TickDemand::Fast] {
+            let mut scheduler = FrameScheduler::with_reduced_motion(start, true);
+            scheduler.presented(start);
+            scheduler.set_tick_demand(demand, start);
+
+            assert_eq!(scheduler.deadline(), None);
+            assert!(!scheduler.advance_tick(start + Duration::from_secs(1)));
+            assert_eq!(scheduler.stats().requested(RedrawReason::Animation), 0);
+        }
+    }
+
+    #[test]
+    fn clearing_tick_demand_freezes_motion_without_blocking_explicit_redraws() {
+        let start = Instant::now();
+        let mut scheduler = FrameScheduler::with_reduced_motion(start, false);
+        scheduler.presented(start);
+        scheduler.set_tick_demand(TickDemand::Fast, start);
+        assert_eq!(scheduler.deadline(), Some(start + SPINNER_INTERVAL));
+
+        // This is the scheduler half of App's FocusLost -> TickDemand::None
+        // contract. Explicit focus redraw still proceeds independently.
+        scheduler.set_tick_demand(TickDemand::None, start + Duration::from_millis(1));
+        assert_eq!(scheduler.deadline(), None);
+        scheduler.request(RedrawReason::Focus, start + Duration::from_millis(1));
+        assert!(scheduler.should_present(start + DEFAULT_MIN_DRAW_INTERVAL));
     }
 
     #[test]

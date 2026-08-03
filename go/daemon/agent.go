@@ -394,11 +394,13 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			return
 		}
 
-		// Drain async steering messages at the turn boundary so a running
-		// (background) agent can be redirected without a restart.
-		for _, msg := range d.drainMailbox(task.RunID) {
-			tr.addTurn(Turn{Tool: "user", ActionBrief: "steer",
-				Obs: Observation{Content: "USER STEERING (incorporate this now): " + msg, Pinned: true}})
+		// Peek steering at the safe turn boundary. The queue is acknowledged
+		// only after these pinned turns are durable in a checkpoint.
+		if _, ok := d.checkpointPendingSteers(sess, task, tr, turn-1, memorySnapshot); !ok {
+			return
+		}
+		if d.pauseForSoftInterrupt(sess, task, tr, turn-1, memorySnapshot) {
+			return
 		}
 
 		// Bound the model view (audit log keeps everything).
@@ -541,6 +543,19 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			d.sched.SetResult(task.RunID, fmt.Sprintf("token budget exceeded (%d > %d); approval required to extend", t.TokensUsed, t.TokenBudget), d.appliedPatchIDs(sess))
 			d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{"status": "budget_extension_required", "tokens_used": t.TokensUsed, "token_budget": t.TokenBudget, "decision_id": "budget_" + task.RunID}, "")
 			d.persistRun(task.RunID)
+			return
+		}
+
+		// A steer may arrive while the model is producing this action. Recheck
+		// before done or any tool request; a newly checkpointed steer makes the
+		// model action stale, so ask again on the next turn.
+		if processed, ok := d.checkpointPendingSteers(sess, task, tr, turn-1, memorySnapshot); !ok {
+			return
+		} else if processed {
+			assistantStream.reset()
+			continue
+		}
+		if d.pauseForSoftInterrupt(sess, task, tr, turn-1, memorySnapshot) {
 			return
 		}
 
@@ -713,6 +728,72 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 	}
 
 	d.degrade(sess, task, tr, "reached max turns without done")
+}
+
+func (d *Daemon) checkpointPendingSteers(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, completedTurn int, memorySnapshot string) (bool, bool) {
+	pendingSteers := d.peekMailbox(task.RunID)
+	if len(pendingSteers) == 0 {
+		return false, true
+	}
+	for _, pending := range pendingSteers {
+		if transcriptHasSteer(tr, pending.SteerID) {
+			continue
+		}
+		tr.addTurn(Turn{Tool: "user", ActionBrief: "steer:" + pending.SteerID,
+			Obs: Observation{Content: "USER STEERING (incorporate this now): " + pending.Message, Pinned: true}})
+	}
+	if !d.persistTurnCheckpoint(sess, task, tr, completedTurn, memorySnapshot) {
+		return true, false
+	}
+	if err := d.acknowledgeMailbox(task.RunID, pendingSteers); err != nil {
+		d.degrade(sess, task, tr, "steering acknowledgement persistence failed: "+err.Error())
+		return true, false
+	}
+	return true, true
+}
+
+func transcriptHasSteer(tr *Transcript, steerID string) bool {
+	if tr == nil || steerID == "" {
+		return false
+	}
+	brief := "steer:" + steerID
+	for index := len(tr.Turns) - 1; index >= 0; index-- {
+		if tr.Turns[index].Tool == "user" && tr.Turns[index].ActionBrief == brief {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *Daemon) pauseForSoftInterrupt(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, completedTurn int, memorySnapshot string) bool {
+	if !d.softInterruptRequested(task.RunID) {
+		return false
+	}
+	if d.hasActiveToolCall(task.RunID) {
+		return false
+	}
+	if !d.persistTurnCheckpoint(sess, task, tr, completedTurn, memorySnapshot) {
+		return true
+	}
+	if err := d.recordChecked(sess.SessionID, "ExecutionInterrupted", task.RunID, "operator", map[string]any{
+		"kind": "operator_soft_interrupt", "mode": "soft", "safe_point": "turn_boundary",
+		"retryable": true, "queue_depth": d.queueDepth(task.RunID),
+	}, ""); err != nil {
+		d.degrade(sess, task, tr, "soft interrupt audit persistence failed: "+err.Error())
+		return true
+	}
+	d.sched.SetStatus(task.RunID, "paused")
+	paused, ok := d.sched.Get(task.RunID)
+	if !ok || d.runs.saveChecked(paused) != nil {
+		d.degrade(sess, task, tr, "soft interrupt paused state could not be persisted")
+		return true
+	}
+	if err := d.clearSoftInterrupt(task.RunID); err != nil {
+		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
+			"status": "soft_interrupt_cleanup_pending", "error": err.Error(),
+		}, "")
+	}
+	return true
 }
 
 func (d *Daemon) persistTurnCheckpoint(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, turn int, memorySnapshot string) bool {

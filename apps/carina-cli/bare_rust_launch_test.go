@@ -39,6 +39,17 @@ func TestBuildRustUIArgsPassesConfiguredAltScreenPolicy(t *testing.T) {
 	}
 }
 
+func TestBuildRustUIArgsPassesFirstClassScreenMode(t *testing.T) {
+	got := buildRustUIArgs(interactiveOptions{ScreenMode: " fullscreen "}, "/tmp/carina.sock", "/work/project", "en", "", "/opt/carina/bin/carina", "never")
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "--screen-mode fullscreen") {
+		t.Fatalf("launcher args %#v did not pass screen mode", got)
+	}
+	if strings.Contains(joined, "--alt-screen") {
+		t.Fatalf("first-class screen mode must supersede legacy alt policy: %#v", got)
+	}
+}
+
 func TestBuildRuntimeDiagnosticArgsRetainsSafeRecoveryContext(t *testing.T) {
 	compatibility := &localdaemon.RuntimeCompatibilityError{
 		Description: localdaemon.RuntimeDescription{

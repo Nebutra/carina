@@ -71,6 +71,18 @@ type CompactionBudgetSnapshot struct {
 	MetadataSource string `json:"metadata_source,omitempty"`
 }
 
+type CompactionMode string
+
+const (
+	compactionModeCollapseOnly CompactionMode = "collapse_only"
+	compactionModeSummary      CompactionMode = "summary"
+
+	defaultCollapseOnlyMaxPressure = 1.10
+	maxCollapsedPriorSummaryChars  = 2000
+	maxCollapsedActionBriefs       = 20
+	maxCollapsedActionBriefChars   = 160
+)
+
 // CompactionReceipt is the auditable record of one Step-2 summarize fold.
 // Semantics are versioned:
 //
@@ -78,7 +90,7 @@ type CompactionBudgetSnapshot struct {
 //     entries): the whole head [FirstTurn..LastTurn] was folded into the
 //     rolling summary, and PreimageSHA256 covers previous-summary + the
 //     entire pre-compaction head.
-//   - Version 2 (current): the head is partitioned into user-authored turns
+//   - Version 2: the head is partitioned into user-authored turns
 //     (kept verbatim in the transcript — see compact()) and everything else
 //     (folded). PreimageSHA256 covers previous-summary + the FOLDED turns
 //     only; FirstTurn/LastTurn/RemovedTurns likewise describe the folded set.
@@ -87,22 +99,29 @@ type CompactionBudgetSnapshot struct {
 //     verbatim-budget truncation/elision), and KeyFiles is the deterministic
 //     top-K most-edited files among the folded turns — the substrate a later
 //     content-reinjection tier consumes.
+//   - Version 3: the same preimage and verbatim-user semantics as v2, but the
+//     folded head is represented by a deterministic local action skeleton
+//     instead of a model-written summary. Mode and Transforms disclose which
+//     path produced every new receipt; their absence remains valid for old
+//     v1/v2 checkpoints.
 type CompactionReceipt struct {
-	Version         int       `json:"version"`
-	CreatedAt       time.Time `json:"created_at"`
-	FirstTurn       int       `json:"first_turn"`
-	LastTurn        int       `json:"last_turn"`
-	RemovedTurns    int       `json:"removed_turns"`
-	PreimageSHA256  string    `json:"preimage_sha256"`
-	SummarySHA256   string    `json:"summary_sha256"`
-	KeptTurnIndices []int     `json:"kept_turn_indices,omitempty"`
-	KeptSHA256      string    `json:"kept_sha256,omitempty"`
-	KeyFiles        []string  `json:"key_files,omitempty"`
-	PolicyVersion   string    `json:"policy_version,omitempty"`
-	WindowTokens    int       `json:"window_tokens,omitempty"`
-	ReserveTokens   int       `json:"reserve_tokens,omitempty"`
-	MetadataSource  string    `json:"metadata_source,omitempty"`
-	PressureBefore  float64   `json:"pressure_before,omitempty"`
+	Version         int            `json:"version"`
+	CreatedAt       time.Time      `json:"created_at"`
+	FirstTurn       int            `json:"first_turn"`
+	LastTurn        int            `json:"last_turn"`
+	RemovedTurns    int            `json:"removed_turns"`
+	PreimageSHA256  string         `json:"preimage_sha256"`
+	SummarySHA256   string         `json:"summary_sha256"`
+	KeptTurnIndices []int          `json:"kept_turn_indices,omitempty"`
+	KeptSHA256      string         `json:"kept_sha256,omitempty"`
+	KeyFiles        []string       `json:"key_files,omitempty"`
+	PolicyVersion   string         `json:"policy_version,omitempty"`
+	WindowTokens    int            `json:"window_tokens,omitempty"`
+	ReserveTokens   int            `json:"reserve_tokens,omitempty"`
+	MetadataSource  string         `json:"metadata_source,omitempty"`
+	PressureBefore  float64        `json:"pressure_before,omitempty"`
+	Mode            CompactionMode `json:"mode,omitempty"`
+	Transforms      []string       `json:"transforms,omitempty"`
 }
 
 // CompactionPolicy bounds the model view. Provider-neutral preflight
@@ -145,6 +164,11 @@ type CompactionPolicy struct {
 	WindowTokens   int
 	ReserveTokens  int
 	MetadataSource string
+
+	// CollapseOnlyMaxPressure selects deterministic local collapse while the
+	// transcript is only modestly over its effective trigger. Zero uses the
+	// default 1.10 ratio; a negative value disables the local tier.
+	CollapseOnlyMaxPressure float64
 }
 
 func defaultCompactionPolicy() CompactionPolicy {
@@ -283,6 +307,27 @@ func (t *Transcript) shouldCompact() bool {
 	return false
 }
 
+func (t *Transcript) compactionPressure() float64 {
+	if t.policy.MaxTokens > 0 {
+		return float64(estimateTokens(t.render())) / float64(t.policy.MaxTokens)
+	}
+	if trigger := t.triggerChars(); trigger > 0 {
+		return float64(t.size()) / float64(trigger)
+	}
+	return 0
+}
+
+func (t *Transcript) compactionMode(pressure float64) CompactionMode {
+	maxPressure := t.policy.CollapseOnlyMaxPressure
+	if maxPressure == 0 {
+		maxPressure = defaultCollapseOnlyMaxPressure
+	}
+	if maxPressure > 0 && pressure <= maxPressure {
+		return compactionModeCollapseOnly
+	}
+	return compactionModeSummary
+}
+
 // compact enforces the char budget. Step 1: elide old, non-pinned
 // observations (keeping the most recent KeepRecent turns verbatim). Step 2:
 // if still over budget, partition the head (all but the recent tail) into
@@ -299,10 +344,7 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 	}
 	preCompactionSummary := t.Summary
 	preCompactionTurns := append([]Turn(nil), t.Turns...)
-	pressureBefore := 0.0
-	if t.policy.MaxTokens > 0 {
-		pressureBefore = float64(estimateTokens(t.render())) / float64(t.policy.MaxTokens)
-	}
+	pressureBefore := t.compactionPressure()
 	// Step 1: elide.
 	cutoff := len(t.Turns) - t.policy.KeepRecent
 	for i := 0; i < cutoff; i++ {
@@ -340,6 +382,12 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 		// elision already ran. Fail closed: no summarizer call, no receipt.
 		return nil
 	}
+	// Select after the cheap Step-1 elision. PressureBefore remains the honest
+	// pre-compaction measurement in the receipt, while the tier decision asks
+	// whether local transforms left only a modest overshoot. Selecting before
+	// elision would route large-but-easily-elided observations straight to the
+	// model and defeat the purpose of the local tier.
+	mode := t.compactionMode(t.compactionPressure())
 	var head strings.Builder
 	if t.Summary != "" {
 		fmt.Fprintf(&head, "%s\n", t.Summary)
@@ -347,19 +395,34 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 	for _, turn := range folded {
 		fmt.Fprintf(&head, "turn %d: %s -> %s\n", turn.Index, turn.ActionBrief, brief(turn.Obs.Content, 200))
 	}
-	if summary, err := summarize(head.String()); err == nil && summary != "" {
+	var summary string
+	var transforms []string
+	receiptVersion := 2
+	if mode == compactionModeCollapseOnly {
+		summary = collapseActionSkeleton(preCompactionSummary, folded)
+		transforms = []string{"elide_tool_output", "collapse_action_skeleton"}
+		receiptVersion = 3
+	} else if summarize != nil {
+		var err error
+		summary, err = summarize(head.String())
+		if err != nil {
+			return nil
+		}
+		transforms = []string{"elide_tool_output", "model_summary"}
+	}
+	if summary != "" {
 		preimageHash := compactionPreimageHash(preCompactionSummary, foldedPre)
 		firstTurn, lastTurn := folded[0].Index, folded[len(folded)-1].Index
 		t.Summary = summary
 		kept = applyVerbatimUserBudget(kept, t.policy.VerbatimUserMaxChars)
 		t.Turns = append(kept, t.Turns[headEnd:]...)
 		receipt := CompactionReceipt{
-			Version: 2, CreatedAt: time.Now().UTC(), FirstTurn: firstTurn, LastTurn: lastTurn,
+			Version: receiptVersion, CreatedAt: time.Now().UTC(), FirstTurn: firstTurn, LastTurn: lastTurn,
 			RemovedTurns: len(folded), PreimageSHA256: preimageHash, SummarySHA256: sha256Hex(summary),
 			KeptTurnIndices: keptIdx, KeyFiles: keyFiles(folded, 5),
 			PolicyVersion: t.policy.PolicyVersion, WindowTokens: t.policy.WindowTokens,
 			ReserveTokens: t.policy.ReserveTokens, MetadataSource: t.policy.MetadataSource,
-			PressureBefore: pressureBefore,
+			PressureBefore: pressureBefore, Mode: mode, Transforms: transforms,
 		}
 		if len(kept) > 0 {
 			receipt.KeptSHA256 = turnsSHA256(kept)
@@ -368,6 +431,33 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 		return &receipt
 	}
 	return nil
+}
+
+func collapseActionSkeleton(previousSummary string, folded []Turn) string {
+	var b strings.Builder
+	b.WriteString("COLLAPSED EARLIER WORK (local action skeleton; raw tool output removed):\n")
+	if previousSummary != "" {
+		preview, _, valid := artifact.Preview([]byte(previousSummary), maxCollapsedPriorSummaryChars, 0)
+		if valid {
+			fmt.Fprintf(&b, "Prior summary:\n%s\n", strings.TrimSpace(preview))
+		}
+	}
+	start := max(0, len(folded)-maxCollapsedActionBriefs)
+	b.WriteString("Recent actions:\n")
+	for _, turn := range folded[start:] {
+		action := strings.TrimSpace(turn.ActionBrief)
+		if action == "" {
+			action = strings.TrimSpace(turn.Tool)
+		}
+		fmt.Fprintf(&b, "- turn %d: %s\n", turn.Index, brief(action, maxCollapsedActionBriefChars))
+	}
+	if files := keyFiles(folded, 5); len(files) > 0 {
+		b.WriteString("Key files:\n")
+		for _, path := range files {
+			fmt.Fprintf(&b, "- %s\n", path)
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // applyVerbatimUserBudget spends maxChars of verbatim budget over the kept

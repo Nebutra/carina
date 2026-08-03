@@ -36,6 +36,42 @@ func TestRenderDoctorReportAllPass(t *testing.T) {
 	}
 }
 
+func TestRenderDoctorReportIncludesResourceSummary(t *testing.T) {
+	report := map[string]any{
+		"version":  "0.7.0",
+		"disabled": false,
+		"resources": map[string]any{
+			"process": map[string]any{"rss_available": true, "rss_bytes": float64(32 * 1024 * 1024)},
+			"sessions": map[string]any{
+				"count": float64(2),
+				"items": []any{
+					map[string]any{"compactions": float64(3)},
+					map[string]any{"compactions": float64(1)},
+				},
+			},
+			"caches": map[string]any{
+				"artifact_store": map[string]any{"puts": float64(5), "reads": float64(8)},
+			},
+		},
+	}
+	out := renderDoctorReport(report, false)
+	for _, want := range []string{"sessions 2", "rss 32.0 MiB", "compactions 4", "artifact cache 5 puts/8 reads"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("doctor resource output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestResourceCheckDoesNotInventUnavailableRSS(t *testing.T) {
+	chk, ok := resourceCheck(map[string]any{
+		"process":  map[string]any{"rss_available": false, "go_heap_alloc_bytes": float64(1024)},
+		"sessions": map[string]any{"count": float64(1), "items": []any{}},
+	})
+	if !ok || !strings.Contains(chk.detail, "rss unavailable") || strings.Contains(chk.detail, "0.0 MiB") {
+		t.Fatalf("unavailable RSS must stay explicit: %+v, present=%v", chk, ok)
+	}
+}
+
 func TestRenderDoctorReportKernelFailPrintsRemediation(t *testing.T) {
 	report := map[string]any{
 		"version":            "0.7.0",

@@ -615,6 +615,13 @@ impl Client {
         self.call("execution.cancel", &json!({"run_id": run_id}))
     }
 
+    pub fn interrupt_execution(&mut self, run_id: &str) -> Result<SoftInterruptResult, RpcError> {
+        self.call(
+            "execution.interrupt",
+            &json!({"run_id": run_id, "mode": "soft"}),
+        )
+    }
+
     pub fn resolve_approval(
         &mut self,
         decision_id: &str,
