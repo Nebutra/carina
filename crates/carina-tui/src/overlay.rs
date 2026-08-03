@@ -19,6 +19,7 @@ pub enum Overlay {
     Agents(Box<AgentDashboardOverlay>),
     Changes(Box<ChangesOverlay>),
     FileViewer(FileViewer),
+    Queue(QueueOverlay),
 }
 
 impl Overlay {
@@ -125,7 +126,8 @@ impl Overlay {
             | Self::Doctor(_)
             | Self::Agents(_)
             | Self::Changes(_)
-            | Self::FileViewer(_) => None,
+            | Self::FileViewer(_)
+            | Self::Queue(_) => None,
         }
     }
 }
@@ -228,6 +230,16 @@ pub struct ChangesOverlay {
     pub confirm_rollback: bool,
     pub rollback_preview: Option<crate::rpc::PatchRollbackPreview>,
     pub rollback_error: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueueOverlay {
+    pub run_id: String,
+    pub items: Vec<crate::rpc::QueueItem>,
+    pub selected: usize,
+    pub soft_interrupt_pending: bool,
+    pub load: RetainedLoad,
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Default)]

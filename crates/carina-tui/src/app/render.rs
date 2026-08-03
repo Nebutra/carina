@@ -3136,6 +3136,7 @@ impl App {
                 .as_ref()
                 .map(|summary| &summary.model_context_tokens),
             locale: self.ui_locale(),
+            screen_mode: self.options.screen_mode.map(ScreenMode::as_arg),
         }
         .render(frame, area, self.theme);
     }
@@ -4524,6 +4525,93 @@ impl App {
                         action: Action::ConfirmFileViewer,
                     });
                 }
+            }
+            Overlay::Queue(queue) => {
+                let popup = centered(area, 72, 22);
+                frame.render_widget(Clear, popup);
+                let title = format!(" {} ", tr(locale, MessageId::QueueTitle));
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(self.theme.glyphs.outer_border_type())
+                    .border_style(if queue.items.is_empty() {
+                        Style::default().fg(self.theme.muted)
+                    } else {
+                        Style::default().fg(self.theme.warning)
+                    })
+                    .title(title)
+                    .style(Style::default());
+                let inner = block.inner(popup).inner(Margin::new(1, 1));
+                frame.render_widget(block, popup);
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(layout_contract::CONTROL_HEIGHT),
+                        Constraint::Min(layout_contract::MIN_DIMENSION),
+                        Constraint::Length(layout_contract::ROW_HEIGHT),
+                    ])
+                    .split(inner);
+                let header = if queue.load.loading {
+                    tr(locale, MessageId::Validating).to_owned()
+                } else if !queue.error.is_empty() {
+                    queue.error.clone()
+                } else {
+                    format!(
+                        "{}  {}  n={}",
+                        queue.run_id,
+                        if queue.soft_interrupt_pending {
+                            "soft-interrupt"
+                        } else {
+                            "idle-control"
+                        },
+                        queue.items.len()
+                    )
+                };
+                frame.render_widget(
+                    Paragraph::new(header)
+                        .style(Style::default().fg(self.theme.muted))
+                        .wrap(Wrap { trim: false }),
+                    chunks[0],
+                );
+                if queue.items.is_empty() && !queue.load.loading {
+                    frame.render_widget(
+                        Paragraph::new(tr(locale, MessageId::QueueEmpty))
+                            .style(Style::default().fg(self.theme.muted)),
+                        chunks[1],
+                    );
+                } else {
+                    let mut lines = Vec::new();
+                    for (index, item) in queue.items.iter().enumerate() {
+                        let marker = if index == queue.selected {
+                            self.theme.glyphs.selected_cell()
+                        } else {
+                            " "
+                        };
+                        let priority = if item.priority.is_empty() {
+                            "normal"
+                        } else {
+                            item.priority.as_str()
+                        };
+                        let row = format!(
+                            "{marker} [{priority}] {}  {}",
+                            item.steer_id, item.preview
+                        );
+                        let style = if index == queue.selected {
+                            self.theme.selected()
+                        } else {
+                            Style::default().fg(self.theme.text)
+                        };
+                        lines.push(Line::from(Span::styled(
+                            truncate_cells(&row, chunks[1].width as usize),
+                            style,
+                        )));
+                    }
+                    frame.render_widget(Paragraph::new(lines), chunks[1]);
+                }
+                frame.render_widget(
+                    Paragraph::new(tr(locale, MessageId::QueueDropHint))
+                        .style(Style::default().fg(self.theme.muted)),
+                    chunks[2],
+                );
             }
             Overlay::Changes(overlay) => {
                 let popup = centered(

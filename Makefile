@@ -1,4 +1,4 @@
-.PHONY: all install uninstall go rust-ui rust-ui-e2e rust-ui-native-clipboard-e2e rust zig sdk-ts test rust-test go-test brand-check zh-hant-check docs-build quality-check swarm-integration-test bench-gate-test audit-bench tui-bench bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test clean
+.PHONY: all install uninstall go rust-ui rust-ui-e2e rust-ui-native-clipboard-e2e rust zig sdk-ts test rust-test go-test brand-check zh-hant-check docs-build quality-check swarm-integration-test bench-gate-test audit-bench tui-bench bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test residual-ux-gate clean
 
 PREFIX ?= $(HOME)/.local
 BINDIR = $(PREFIX)/bin
@@ -101,6 +101,15 @@ zig:
 
 sdk-ts:
 	cd sdk/typescript && npm install && npm run build
+
+# Post-0.8 residual iron gate: durable steer/interrupt + screen-mode units.
+# PTY matrix is host-gated separately via carina-tui terminal_microinteractions.
+residual-ux-gate:
+	go test ./go/daemon -run 'Steer|Interrupt|Cancel|LongTool|ExecutionQueueList|TruncateSteer' -count=1
+	go test ./go/toolchain -run 'Cancellation|ProcessGroup' -count=1
+	cargo test -p carina-tui --lib screen_mode -- --nocapture
+	cargo test -p carina-tui --lib keybinding -- --nocapture
+	cargo test -p carina-tui --lib i18n -- --nocapture
 
 release-check:
 	./scripts/release-check.sh

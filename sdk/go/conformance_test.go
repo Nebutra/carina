@@ -17,7 +17,7 @@ func TestRealDaemonConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	info, err := c.Initialize("carina-sdk-go", "0.8.0")
+	info, err := c.Initialize("carina-sdk-go", "0.8.1")
 	if err != nil {
 		t.Fatal(err)
 	}

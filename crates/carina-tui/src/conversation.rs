@@ -67,6 +67,8 @@ pub struct ConversationStatus<'a> {
     pub no_color: bool,
     pub context: Option<&'a ModelContextTokens>,
     pub locale: Locale,
+    /// Product screen mode token: minimal | fullscreen | inline.
+    pub screen_mode: Option<&'a str>,
 }
 
 impl ConversationStatus<'_> {
@@ -147,6 +149,9 @@ impl ConversationStatus<'_> {
             );
             left.push_str(&format!("  {} ", theme.glyphs.separator()));
             left.push_str(&queued);
+        }
+        if let Some(mode) = self.screen_mode.filter(|value| !value.is_empty()) {
+            left.push_str(&format!("  {}  {mode}", theme.glyphs.separator()));
         }
         if self.priority_notice && !self.notice.is_empty() {
             frame.render_widget(
@@ -417,6 +422,7 @@ mod tests {
                     no_color: true,
                     context: None,
                     locale: Locale::ZhHans,
+                    screen_mode: None,
                 }
                 .render(frame, frame.area(), Theme::carina(true));
             })
@@ -466,6 +472,7 @@ mod tests {
                     no_color: true,
                     context: None,
                     locale: Locale::En,
+                    screen_mode: None,
                 }
                 .render(frame, frame.area(), Theme::carina(true));
             })
@@ -584,6 +591,7 @@ mod tests {
                     no_color: true,
                     context: Some(&context),
                     locale: Locale::En,
+                    screen_mode: None,
                 }
                 .render(frame, frame.area(), Theme::carina(true));
             })
@@ -624,6 +632,7 @@ mod tests {
                     no_color: false,
                     context: Some(&context),
                     locale: Locale::En,
+                    screen_mode: None,
                 }
                 .render(frame, frame.area(), Theme::carina(false));
             })
@@ -653,6 +662,7 @@ mod tests {
                     no_color: true,
                     context: None,
                     locale: Locale::En,
+                    screen_mode: None,
                 }
                 .render(frame, frame.area(), Theme::carina(true));
             })
@@ -688,6 +698,7 @@ mod tests {
                     no_color: true,
                     context: Some(&context),
                     locale: Locale::En,
+                    screen_mode: None,
                 }
                 .render(frame, frame.area(), Theme::carina(true));
             })

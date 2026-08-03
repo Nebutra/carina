@@ -710,6 +710,37 @@ pub struct SoftInterruptResult {
     pub queue_depth: usize,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct QueueItem {
+    pub steer_id: String,
+    #[serde(default)]
+    pub priority: String,
+    #[serde(default)]
+    pub preview: String,
+    #[serde(default)]
+    pub index: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct QueueListResult {
+    pub run_id: String,
+    #[serde(default)]
+    pub queue_depth: usize,
+    #[serde(default)]
+    pub items: Vec<QueueItem>,
+    #[serde(default)]
+    pub soft_interrupt_pending: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct QueueDropResult {
+    pub run_id: String,
+    pub steer_id: String,
+    pub dropped: bool,
+    #[serde(default)]
+    pub queue_depth: usize,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlanApprovalResult {
     pub session_id: String,

@@ -1,45 +1,139 @@
 {
   "name": "carina-vscode",
   "displayName": "Carina Agent Runtime",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "publisher": "nebutra",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/Nebutra/carina.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nebutra/carina.git"
+  },
   "private": true,
-  "engines": { "vscode": "^1.95.0" },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
   "main": "./dist/extension.js",
-  "files": ["dist/**", "media/**", "README.md", "LICENSE"],
-  "activationEvents": ["onView:carina.agents", "onCommand:carina.refresh", "onCommand:carina.sendEditorContext"],
+  "files": [
+    "dist/**",
+    "media/**",
+    "README.md",
+    "LICENSE"
+  ],
+  "activationEvents": [
+    "onView:carina.agents",
+    "onCommand:carina.refresh",
+    "onCommand:carina.sendEditorContext"
+  ],
   "contributes": {
-    "viewsContainers": { "activitybar": [{ "id": "carina", "title": "Carina", "icon": "media/carina.svg" }] },
-    "views": { "carina": [{ "id": "carina.agents", "name": "Agent View" }] },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "carina",
+          "title": "Carina",
+          "icon": "media/carina.svg"
+        }
+      ]
+    },
+    "views": {
+      "carina": [
+        {
+          "id": "carina.agents",
+          "name": "Agent View"
+        }
+      ]
+    },
     "commands": [
-      { "command": "carina.refresh", "title": "Carina: Refresh Agent View" },
-      { "command": "carina.inspect", "title": "Carina: Inspect Session" },
-      { "command": "carina.attach", "title": "Carina: Attach Session" },
-      { "command": "carina.steer", "title": "Carina: Steer Task" },
-      { "command": "carina.approve", "title": "Carina: Resolve Approval" },
-      { "command": "carina.answer", "title": "Carina: Answer Question" },
-      { "command": "carina.previewPatch", "title": "Carina: Preview Patch" },
-      { "command": "carina.sendEditorContext", "title": "Carina: Send Selection and Diagnostics" },
-      { "command": "carina.openArtifact", "title": "Carina: Open Artifact" }
+      {
+        "command": "carina.refresh",
+        "title": "Carina: Refresh Agent View"
+      },
+      {
+        "command": "carina.inspect",
+        "title": "Carina: Inspect Session"
+      },
+      {
+        "command": "carina.attach",
+        "title": "Carina: Attach Session"
+      },
+      {
+        "command": "carina.steer",
+        "title": "Carina: Steer Task"
+      },
+      {
+        "command": "carina.approve",
+        "title": "Carina: Resolve Approval"
+      },
+      {
+        "command": "carina.answer",
+        "title": "Carina: Answer Question"
+      },
+      {
+        "command": "carina.previewPatch",
+        "title": "Carina: Preview Patch"
+      },
+      {
+        "command": "carina.sendEditorContext",
+        "title": "Carina: Send Selection and Diagnostics"
+      },
+      {
+        "command": "carina.openArtifact",
+        "title": "Carina: Open Artifact"
+      }
     ],
     "menus": {
-      "view/title": [{ "command": "carina.refresh", "when": "view == carina.agents", "group": "navigation" }],
+      "view/title": [
+        {
+          "command": "carina.refresh",
+          "when": "view == carina.agents",
+          "group": "navigation"
+        }
+      ],
       "view/item/context": [
-        { "command": "carina.inspect", "when": "view == carina.agents && viewItem =~ /carinaAgent/", "group": "inline" },
-        { "command": "carina.steer", "when": "viewItem == carinaAgent.working", "group": "carina@1" },
-        { "command": "carina.approve", "when": "viewItem == carinaAgent.needs_input", "group": "carina@2" },
-        { "command": "carina.answer", "when": "viewItem == carinaAgent.needs_input", "group": "carina@3" },
-        { "command": "carina.previewPatch", "when": "view == carina.agents && viewItem =~ /carinaAgent/", "group": "carina@4" },
-        { "command": "carina.sendEditorContext", "when": "view == carina.agents && viewItem =~ /carinaAgent/", "group": "carina@5" }
+        {
+          "command": "carina.inspect",
+          "when": "view == carina.agents && viewItem =~ /carinaAgent/",
+          "group": "inline"
+        },
+        {
+          "command": "carina.steer",
+          "when": "viewItem == carinaAgent.working",
+          "group": "carina@1"
+        },
+        {
+          "command": "carina.approve",
+          "when": "viewItem == carinaAgent.needs_input",
+          "group": "carina@2"
+        },
+        {
+          "command": "carina.answer",
+          "when": "viewItem == carinaAgent.needs_input",
+          "group": "carina@3"
+        },
+        {
+          "command": "carina.previewPatch",
+          "when": "view == carina.agents && viewItem =~ /carinaAgent/",
+          "group": "carina@4"
+        },
+        {
+          "command": "carina.sendEditorContext",
+          "when": "view == carina.agents && viewItem =~ /carinaAgent/",
+          "group": "carina@5"
+        }
       ]
     },
     "configuration": {
       "title": "Carina",
       "properties": {
-        "carina.socketPath": { "type": "string", "default": "", "description": "Daemon Unix socket; empty uses ~/.carina/daemon.sock." },
-        "carina.refreshIntervalMs": { "type": "number", "default": 3000, "minimum": 1000 }
+        "carina.socketPath": {
+          "type": "string",
+          "default": "",
+          "description": "Daemon Unix socket; empty uses ~/.carina/daemon.sock."
+        },
+        "carina.refreshIntervalMs": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 1000
+        }
       }
     }
   },

@@ -1179,6 +1179,8 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("execution.cancel", rpc.ScopeWrite, false, d.handleTaskCancel)
 	d.registerRPC("execution.interrupt", rpc.ScopeWrite, false, d.handleTaskInterrupt)
 	d.registerRPC("execution.steer", rpc.ScopeWrite, false, d.handleTaskSteer)
+	d.registerRPC("execution.queue.list", rpc.ScopeRead, false, d.handleExecutionQueueList)
+	d.registerRPC("execution.queue.drop", rpc.ScopeWrite, false, d.handleExecutionQueueDrop)
 	d.registerRPC("execution.budget.extend", rpc.ScopeAdmin, false, d.handleTaskBudgetExtend, true)
 	d.registerRPC("governance.action.approve", rpc.ScopeAdmin, false, d.handleApprove, true)
 	d.registerRPCDynamic("governance.action.deny", rpc.ScopeAdmin, false, d.handleDeny, d.taskActionDenyScope, true)
@@ -3196,6 +3198,62 @@ func (d *Daemon) handleTaskSteer(params json.RawMessage) (any, error) {
 		"status": "steered", "message": p.Message, "steer_id": p.SteerID, "queue_depth": depth,
 	}, "")
 	return map[string]any{"queued": true, "run_id": p.RunID, "status": task.Status, "priority": string(priority), "steer_id": p.SteerID, "queue_depth": depth, "safe_point": "next_turn_boundary"}, nil
+}
+
+// handleExecutionQueueList returns truncated operator previews of pending steers.
+// Full bodies remain off list/status projections (see docs/SOFT_INTERRUPT.md).
+func (d *Daemon) handleExecutionQueueList(params json.RawMessage) (any, error) {
+	var p struct {
+		RunID        string `json:"run_id"`
+		PreviewCells int    `json:"preview_cells"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	p.RunID = strings.TrimSpace(p.RunID)
+	if p.RunID == "" {
+		return nil, fmt.Errorf("run_id is required")
+	}
+	if _, ok := d.sched.Get(p.RunID); !ok {
+		return nil, fmt.Errorf("unknown execution %s", p.RunID)
+	}
+	items := d.listQueuedSteers(p.RunID, p.PreviewCells)
+	return map[string]any{
+		"run_id":              p.RunID,
+		"queue_depth":         len(items),
+		"items":               items,
+		"soft_interrupt_pending": d.softInterruptRequested(p.RunID),
+	}, nil
+}
+
+// handleExecutionQueueDrop removes one pending steer by stable steer_id.
+func (d *Daemon) handleExecutionQueueDrop(params json.RawMessage) (any, error) {
+	var p struct {
+		RunID   string `json:"run_id"`
+		SteerID string `json:"steer_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	p.RunID = strings.TrimSpace(p.RunID)
+	p.SteerID = strings.TrimSpace(p.SteerID)
+	if p.RunID == "" || p.SteerID == "" {
+		return nil, fmt.Errorf("run_id and steer_id are required")
+	}
+	dropped, depth, err := d.dropQueuedSteer(p.RunID, p.SteerID)
+	if err != nil {
+		return nil, err
+	}
+	if dropped {
+		if task, ok := d.sched.Get(p.RunID); ok {
+			d.record(task.SessionID, "ExecutionProgressed", task.RunID, "user", map[string]any{
+				"status": "steer_dropped", "steer_id": p.SteerID, "queue_depth": depth,
+			}, "")
+		}
+	}
+	return map[string]any{
+		"run_id": p.RunID, "steer_id": p.SteerID, "dropped": dropped, "queue_depth": depth,
+	}, nil
 }
 
 // steer queues a normal-priority steering message. Kept for existing call

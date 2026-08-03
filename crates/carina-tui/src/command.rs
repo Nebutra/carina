@@ -17,6 +17,7 @@ pub enum CommandId {
     Minimal,
     Fullscreen,
     Inline,
+    Queue,
     Doctor,
     Keymap,
     Help,
@@ -120,6 +121,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         CommandId::Inline,
         "/inline",
         MessageId::CommandInline,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Queue,
+        "/queue",
+        MessageId::CommandQueue,
         AvailabilityRule::Always,
     ),
     command(

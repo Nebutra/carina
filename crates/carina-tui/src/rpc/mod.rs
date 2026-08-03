@@ -622,6 +622,28 @@ impl Client {
         )
     }
 
+    pub fn list_execution_queue(
+        &mut self,
+        run_id: &str,
+        preview_cells: usize,
+    ) -> Result<QueueListResult, RpcError> {
+        self.call(
+            "execution.queue.list",
+            &json!({"run_id": run_id, "preview_cells": preview_cells}),
+        )
+    }
+
+    pub fn drop_execution_queue_item(
+        &mut self,
+        run_id: &str,
+        steer_id: &str,
+    ) -> Result<QueueDropResult, RpcError> {
+        self.call(
+            "execution.queue.drop",
+            &json!({"run_id": run_id, "steer_id": steer_id}),
+        )
+    }
+
     pub fn resolve_approval(
         &mut self,
         decision_id: &str,

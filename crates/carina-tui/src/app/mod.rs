@@ -55,7 +55,8 @@ use crate::native_scrollback::{
 };
 use crate::overlay::{
     AgentDashboardOverlay, ApprovalScope, ChangesOverlay, HelpOverlay, Overlay, OverlayStack,
-    PlanReviewOverlay, RetainedLoad, SettingsOverlay, StatusOverlay,
+    PlanReviewOverlay,
+    QueueOverlay, RetainedLoad, SettingsOverlay, StatusOverlay,
 };
 use crate::prerequisite::ProviderPickerState;
 use crate::product_projection::ProductProjection;
@@ -114,7 +115,7 @@ pub enum ScreenMode {
 }
 
 impl ScreenMode {
-    fn as_arg(self) -> &'static str {
+    pub fn as_arg(self) -> &'static str {
         match self {
             Self::Minimal => "minimal",
             Self::Fullscreen => "fullscreen",
@@ -4017,6 +4018,7 @@ impl App {
             CommandId::Minimal => self.request_screen_mode(ScreenMode::Minimal),
             CommandId::Fullscreen => self.request_screen_mode(ScreenMode::Fullscreen),
             CommandId::Inline => self.request_screen_mode(ScreenMode::Inline),
+            CommandId::Queue => self.open_queue_overlay(),
             CommandId::Quit => self.quit = true,
             CommandId::Doctor => {
                 self.composer.set_text("");
@@ -4042,8 +4044,47 @@ impl App {
     fn request_screen_mode(&mut self, mode: ScreenMode) {
         self.composer.set_text("");
         self.composer_state = TextAreaState::default();
+        let scrollback = if screen_capabilities(mode).native_scrollback {
+            "on"
+        } else {
+            "off"
+        };
+        self.notice = Notice::localized_with(
+            MessageId::ScreenModeSwitched,
+            [("mode", mode.as_arg()), ("scrollback", scrollback)],
+        );
         self.relaunch_screen_mode = Some(mode);
         self.quit = true;
+    }
+
+    fn open_queue_overlay(&mut self) {
+        let Some(run_id) = self.active_run_id.clone() else {
+            self.notice = Notice::localized(MessageId::QueueNoActiveRun);
+            return;
+        };
+        self.composer.set_text("");
+        self.composer_state = TextAreaState::default();
+        self.slash_selected = 0;
+        self.slash_selected_id = None;
+        self.slash_dismissed_input = None;
+        match self.rpc.list_execution_queue(&run_id, 56) {
+            Ok(listed) => {
+                self.overlays.replace(Overlay::Queue(QueueOverlay {
+                    run_id: listed.run_id,
+                    items: listed.items,
+                    selected: 0,
+                    soft_interrupt_pending: listed.soft_interrupt_pending,
+                    load: RetainedLoad::default(),
+                    error: String::new(),
+                }));
+            }
+            Err(error) => {
+                self.notice = Notice::localized_with(
+                    MessageId::CancelFailed,
+                    [("error", error.to_string())],
+                );
+            }
+        }
     }
 
     fn open_help_overlay(&mut self) {
@@ -4537,6 +4578,57 @@ impl App {
                             ));
                         }
                         KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::CloseOverlay),
+                        _ => {}
+                    }
+                }
+            }
+            Some(Overlay::Queue(queue)) => {
+                if queue.load.loading {
+                    if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+                        deferred = Some(Action::CloseOverlay);
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            queue.selected = queue.selected.saturating_sub(1);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if !queue.items.is_empty() {
+                                queue.selected =
+                                    (queue.selected + 1).min(queue.items.len().saturating_sub(1));
+                            }
+                        }
+                        KeyCode::Char('d') | KeyCode::Backspace | KeyCode::Delete => {
+                            if let Some(item) = queue.items.get(queue.selected).cloned() {
+                                let run_id = queue.run_id.clone();
+                                match self.rpc.drop_execution_queue_item(&run_id, &item.steer_id) {
+                                    Ok(result) => {
+                                        if result.dropped {
+                                            queue.items.remove(queue.selected);
+                                            if queue.selected > 0
+                                                && queue.selected >= queue.items.len()
+                                            {
+                                                queue.selected =
+                                                    queue.items.len().saturating_sub(1);
+                                            }
+                                            self.notice = Notice::localized_with(
+                                                MessageId::QueueDropped,
+                                                [(
+                                                    "remaining",
+                                                    result.queue_depth.to_string(),
+                                                )],
+                                            );
+                                        }
+                                    }
+                                    Err(error) => {
+                                        queue.error = error.to_string();
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            deferred = Some(Action::CloseOverlay);
+                        }
                         _ => {}
                     }
                 }
@@ -6321,6 +6413,13 @@ pub fn run(options: Options) -> Result<Outcome> {
         graphics,
     )?;
     app.options.screen_mode = Some(terminal.mode);
+    if terminal.mode == ScreenMode::Inline && app.options.screen_handoff.is_none() {
+        let reason = inline_force_reason(app.options.alt_screen);
+        app.notice = Notice::localized_with(
+            MessageId::ScreenModeForcedInline,
+            [("reason", reason)],
+        );
+    }
     let hyperlink_support = HyperlinkSupport::detect();
     let input_tx = app.async_tx.clone();
     std::thread::Builder::new()
@@ -6986,6 +7085,28 @@ fn resolve_screen_mode_for(
         AltScreenPolicy::Never => ScreenMode::Minimal,
         AltScreenPolicy::Auto if zellij || tmux_control => ScreenMode::Inline,
         AltScreenPolicy::Auto => ScreenMode::Minimal,
+    }
+}
+
+fn inline_force_reason(policy: AltScreenPolicy) -> &'static str {
+    if std::env::var_os("ZELLIJ").is_some() {
+        return "zellij";
+    }
+    if std::env::var("TMUX")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .is_some()
+        && std::env::var_os("TMUX_PANE").is_some()
+    {
+        return "tmux";
+    }
+    match std::env::var("TERM").unwrap_or_default().as_str() {
+        "dumb" | "" => return "dumb-term",
+        _ => {}
+    }
+    match policy {
+        AltScreenPolicy::Never => "alt-screen-never",
+        _ => "capability-fallback",
     }
 }
 

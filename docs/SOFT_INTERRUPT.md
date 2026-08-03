@@ -33,6 +33,16 @@ Pending steering entries and soft-interrupt intent are stored in versioned
 and `execution.list` expose `queue_depth` and `soft_interrupt_pending`. Message
 bodies are not exposed by list/status projections.
 
+Operator inspect uses a separate surface:
+
+| RPC | Scope | Returns |
+| --- | --- | --- |
+| `execution.queue.list` | read | Truncated `preview` (cell budget), `steer_id`, `priority`, depth |
+| `execution.queue.drop` | write | Drop one pending `steer_id`; idempotent when missing |
+
+Full bodies never appear on metrics/doctor snapshots. The TUI `/queue` overlay
+consumes list/drop only.
+
 The queue is at-least-once across a crash around checkpoint acknowledgement:
 before the checkpoint it remains queued; after acknowledgement its pinned
 transcript turn is already durable. Stable `steer_id` values make client retries

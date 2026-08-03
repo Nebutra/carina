@@ -154,6 +154,79 @@ func TestSteerQueueBoundRejectsWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestExecutionQueueListTruncatesPreviewAndDropRemoves(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "work")
+	long := strings.Repeat("secret-token-value-", 8)
+	if _, err := d.handleTaskSteer(mustJSON(t, map[string]any{
+		"run_id": task.RunID, "message": long, "steer_id": "steer_preview", "priority": "urgent",
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.handleTaskSteer(mustJSON(t, map[string]any{
+		"run_id": task.RunID, "message": "second follow-up", "steer_id": "steer_second",
+	})); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := d.handleExecutionQueueList(mustJSON(t, map[string]any{
+		"run_id": task.RunID, "preview_cells": 12,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := listed.(map[string]any)
+	if payload["queue_depth"] != 2 {
+		t.Fatalf("list depth = %#v", payload["queue_depth"])
+	}
+	items, ok := payload["items"].([]map[string]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("items = %#v", payload["items"])
+	}
+	first := items[0]
+	preview, _ := first["preview"].(string)
+	if preview == long || !strings.HasSuffix(preview, "…") || len([]rune(preview)) > 12 {
+		t.Fatalf("preview must be truncated to cells, got %q", preview)
+	}
+	if first["steer_id"] != "steer_preview" || first["priority"] != "urgent" {
+		t.Fatalf("first item = %#v", first)
+	}
+	dropped, err := d.handleExecutionQueueDrop(mustJSON(t, map[string]any{
+		"run_id": task.RunID, "steer_id": "steer_preview",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropPayload := dropped.(map[string]any)
+	if dropPayload["dropped"] != true || dropPayload["queue_depth"] != 1 {
+		t.Fatalf("drop = %#v", dropPayload)
+	}
+	if d.queueDepth(task.RunID) != 1 {
+		t.Fatalf("depth after drop = %d", d.queueDepth(task.RunID))
+	}
+	// Idempotent drop of missing id
+	again, err := d.handleExecutionQueueDrop(mustJSON(t, map[string]any{
+		"run_id": task.RunID, "steer_id": "steer_preview",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.(map[string]any)["dropped"] != false {
+		t.Fatalf("missing drop should be false: %#v", again)
+	}
+}
+
+func TestTruncateSteerPreview(t *testing.T) {
+	if got := truncateSteerPreview("short", 48); got != "short" {
+		t.Fatalf("short = %q", got)
+	}
+	got := truncateSteerPreview("abcdefghijklmnop", 8)
+	if got != "abcdefg…" {
+		t.Fatalf("truncated = %q", got)
+	}
+}
+
 func TestSoftInterruptWaitsForLongToolAndLeavesNoOrphanLifecycle(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()

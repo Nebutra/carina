@@ -180,6 +180,76 @@ func (d *Daemon) queueDepth(taskID string) int {
 	return d.mailbox[taskID].depth()
 }
 
+// listQueuedSteers returns operator-facing queue entries with truncated previews.
+// Full message bodies are never returned on list/status surfaces.
+func (d *Daemon) listQueuedSteers(taskID string, previewCells int) []map[string]any {
+	d.mailboxMu.Lock()
+	defer d.mailboxMu.Unlock()
+	pending := d.mailbox[taskID].peek()
+	if len(pending) == 0 {
+		return []map[string]any{}
+	}
+	if previewCells <= 0 {
+		previewCells = 48
+	}
+	out := make([]map[string]any, 0, len(pending))
+	for index, entry := range pending {
+		out = append(out, map[string]any{
+			"steer_id": entry.SteerID,
+			"priority": string(entry.Priority),
+			"preview":  truncateSteerPreview(entry.Message, previewCells),
+			"index":    index,
+		})
+	}
+	return out
+}
+
+func (d *Daemon) dropQueuedSteer(taskID, steerID string) (bool, int, error) {
+	d.mailboxMu.Lock()
+	defer d.mailboxMu.Unlock()
+	task, ok := d.sched.Get(taskID)
+	if !ok {
+		return false, 0, fmt.Errorf("unknown execution %s", taskID)
+	}
+	if terminalExecutionStatus(task.Status) {
+		return false, 0, fmt.Errorf("execution %s is %s and cannot drop steers", taskID, task.Status)
+	}
+	box := d.mailbox[taskID]
+	if box == nil {
+		return false, 0, nil
+	}
+	before := box.depth()
+	box.remove(steerID)
+	if box.depth() == before {
+		return false, before, nil
+	}
+	if err := d.runs.saveExecutionControl(box.record(taskID)); err != nil {
+		// Best-effort restore is not available after remove; fail closed on persist
+		// would leave memory ahead of disk — re-push is not safe without content.
+		return false, box.depth(), fmt.Errorf("persist steering queue: %w", err)
+	}
+	if box.empty() && !box.softInterruptRequested {
+		delete(d.mailbox, taskID)
+	}
+	return true, box.depth(), nil
+}
+
+func truncateSteerPreview(message string, maxCells int) string {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return ""
+	}
+	// Approximate terminal cells as runes for operator previews (not layout-critical).
+	runes := []rune(message)
+	if len(runes) <= maxCells {
+		return message
+	}
+	if maxCells <= 1 {
+		return "…"
+	}
+	return string(runes[:maxCells-1]) + "…"
+}
+
 func (d *Daemon) requestSoftInterrupt(taskID string) (bool, int, error) {
 	d.mailboxMu.Lock()
 	defer d.mailboxMu.Unlock()
