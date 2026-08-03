@@ -5636,7 +5636,10 @@ fn transcript_lines_with_tool_key(
     };
     let block_title = block.localized_title(locale);
     let block_status = block.localized_status(locale);
-    let mut lines = vec![Line::from(vec![
+    // When intent is primary, show technical target as dim secondary text on the
+    // same row (member title holds the path/command for single-tool blocks).
+    let dim_target = tool_row_dim_target(block, &block_title);
+    let mut title_spans = vec![
         Span::styled(format!("{marker}{label}"), label_style),
         Span::styled(
             format!(
@@ -5646,31 +5649,38 @@ fn transcript_lines_with_tool_key(
             ),
             text_style,
         ),
-        Span::styled(
-            if block.additions == 0 {
-                String::new()
-            } else {
-                format!("  +{}", block.additions)
-            },
-            added_style,
-        ),
-        Span::styled(
-            if block.deletions == 0 {
-                String::new()
-            } else {
-                format!(" -{}", block.deletions)
-            },
-            removed_style,
-        ),
-        Span::styled(
-            if block_status.is_empty() {
-                String::new()
-            } else {
-                format!("  {block_status}")
-            },
+    ];
+    if let Some(target) = dim_target {
+        title_spans.push(Span::styled(
+            format!("  {target}"),
             metadata_style,
-        ),
-    ])];
+        ));
+    }
+    title_spans.push(Span::styled(
+        if block.additions == 0 {
+            String::new()
+        } else {
+            format!("  +{}", block.additions)
+        },
+        added_style,
+    ));
+    title_spans.push(Span::styled(
+        if block.deletions == 0 {
+            String::new()
+        } else {
+            format!(" -{}", block.deletions)
+        },
+        removed_style,
+    ));
+    title_spans.push(Span::styled(
+        if block_status.is_empty() {
+            String::new()
+        } else {
+            format!("  {block_status}")
+        },
+        metadata_style,
+    ));
+    let mut lines = vec![Line::from(title_spans)];
     let tool_context = ToolLineContext {
         locale,
         styles,
@@ -5704,6 +5714,24 @@ struct ToolLineContext {
     styles: TranscriptStyles,
     content_width: u16,
     expand_key: &'static str,
+}
+
+/// Dim secondary target for intent-first single-tool rows.
+///
+/// When the title already embeds the technical target (no intent), returns None
+/// to avoid duplicating path/command after the primary text.
+fn tool_row_dim_target(block: &TranscriptBlock, title: &str) -> Option<String> {
+    if block.kind != BlockKind::Tool || block.tool_members.len() != 1 {
+        return None;
+    }
+    let target = block.tool_members[0].title.trim();
+    if target.is_empty() {
+        return None;
+    }
+    if title.contains(target) {
+        return None;
+    }
+    Some(target.to_owned())
 }
 
 fn tool_group_lines(block: &TranscriptBlock, context: ToolLineContext) -> Vec<Line<'static>> {

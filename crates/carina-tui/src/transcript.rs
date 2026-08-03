@@ -1853,6 +1853,7 @@ fn first_display<const N: usize>(values: [String; N]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::tool_projection::format_tool_title;
     use super::*;
     use crate::rpc::SessionItem;
     use serde_json::json;
@@ -1977,7 +1978,7 @@ mod tests {
             reducer.reduce_event(&mut blocks, event);
         }
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].title, "Read  src/lib.rs");
+        assert_eq!(blocks[0].title, format_tool_title("Read", "src/lib.rs"));
         assert_eq!(blocks[0].status, "");
         assert_eq!(blocks[0].body, "");
         assert!(!blocks[0].is_collapsible());
@@ -2058,7 +2059,7 @@ tool:read-5 | title=[src/file-5.rs] | status=[] | body=[]
         reducer.reduce_event(&mut blocks, wire("ToolCallRequested", requested.clone()));
         reducer.reduce_event(&mut blocks, wire("ToolCallCompleted", completed));
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].title, "Read  Understand the transcript reducer");
+        assert_eq!(blocks[0].title, format_tool_title("Read", "Understand the transcript reducer"));
         assert_eq!(blocks[0].tool_members[0].title, "src/transcript.rs");
 
         let hydrated =
@@ -2684,7 +2685,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         );
 
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].title, "Definition  Kernel");
+        assert_eq!(blocks[0].title, format_tool_title("Definition", "Kernel"));
         assert_eq!(blocks[0].body_kind, BlockBodyKind::CodeIntelligence);
         assert!(blocks[0].collapsible);
         assert!(blocks[0].expanded);
@@ -2735,7 +2736,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             reducer.reduce_event(&mut blocks, event);
         }
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].title, "Run  cargo test");
+        assert_eq!(blocks[0].title, format_tool_title("Run", "cargo test"));
         assert_eq!(blocks[0].body, "ok");
         assert!(blocks[0].is_collapsible());
         assert_eq!(blocks[0].status, "");
@@ -2792,7 +2793,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             reducer.reduce_event(&mut blocks, event);
         }
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].title, "Run  true (1 args)");
+        assert_eq!(blocks[0].title, format_tool_title("Run", "true (1 args)"));
         assert!(blocks[0].body.is_empty());
         assert!(!blocks[0].is_collapsible());
     }
@@ -2967,7 +2968,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             ),
         );
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].title, "Read  missing.txt");
+        assert_eq!(blocks[0].title, format_tool_title("Read", "missing.txt"));
         assert_eq!(blocks[0].status, "denied");
         assert_eq!(blocks[0].body, "outside workspace");
         assert!(blocks[0].is_collapsible());
@@ -2996,7 +2997,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         ];
         let blocks = reducer.hydrate(items);
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].title, "Search  TranscriptReducer");
+        assert_eq!(blocks[0].title, format_tool_title("Search", "TranscriptReducer"));
         assert_eq!(blocks[0].status, "");
         assert!(!blocks[0].is_collapsible());
     }
@@ -3061,7 +3062,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         ]);
 
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].title, "Edit  src/lib.rs");
+        assert_eq!(blocks[0].title, format_tool_title("Edit", "src/lib.rs"));
         assert!(blocks[0].body.contains("pub fn ready"));
         assert!(blocks[0].is_collapsible());
     }
@@ -3153,7 +3154,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         }
 
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].title, "Edit  src/lib.rs");
+        assert_eq!(blocks[0].title, format_tool_title("Edit", "src/lib.rs"));
         assert_eq!(blocks[0].status, "applied");
         assert!(blocks[0].body.contains("pub fn ready"));
         assert!(blocks[0].is_collapsible());
@@ -3223,7 +3224,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
 
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].id, "patch:patch-1");
-        assert_eq!(blocks[0].title, "Edit  src/lib.rs");
+        assert_eq!(blocks[0].title, format_tool_title("Edit", "src/lib.rs"));
         assert_eq!(blocks[0].status, "applied");
         assert!(blocks[0].body.contains("pub fn ready"));
         assert!(blocks[0].expanded);

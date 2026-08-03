@@ -145,10 +145,58 @@ pub struct TodoItem {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolPresentation {
+    /// Full title line: fixed-width label + primary detail (intent, else target).
     pub title: String,
+    /// Kind label before padding (e.g. `Read`, `Edit`).
+    pub label: String,
+    /// Primary scannable text: intent when present, otherwise technical target.
+    pub primary: String,
+    /// True when `primary` came from lifecycle intent (not path/command fallback).
+    pub intent_primary: bool,
+    /// Technical target kept for expand/member rows and dim secondary text.
     pub target: String,
     pub body: String,
     pub collapsible: bool,
+}
+
+/// Compose the intent-first tool title grammar.
+///
+/// Layout: `[label ≤ TOOL_LABEL_WIDTH cells][gap 2][primary]`.
+/// Glyph/disclosure is applied by the renderer, not here.
+pub fn format_tool_title(label: &str, primary: &str) -> String {
+    let label = pad_tool_label(label);
+    if primary.is_empty() {
+        label.trim_end().to_owned()
+    } else {
+        format!("{label}  {primary}")
+    }
+}
+
+fn pad_tool_label(label: &str) -> String {
+    use unicode_width::UnicodeWidthStr;
+    let width = crate::layout_contract::TRANSCRIPT_TOOL_LABEL_WIDTH;
+    let full_w = UnicodeWidthStr::width(label);
+    if full_w <= width {
+        return format!("{label}{}", " ".repeat(width - full_w));
+    }
+    // Truncate to width-1 and append a single-cell ellipsis.
+    let mut out = String::new();
+    let mut used = 0usize;
+    let budget = width.saturating_sub(1);
+    for ch in label.chars() {
+        let ch_w = UnicodeWidthStr::width(ch.encode_utf8(&mut [0; 4]));
+        if used + ch_w > budget {
+            break;
+        }
+        out.push(ch);
+        used += ch_w;
+    }
+    out.push('…');
+    used = UnicodeWidthStr::width(out.as_str());
+    if used < width {
+        out.push_str(&" ".repeat(width - used));
+    }
+    out
 }
 
 pub fn present(facts: &ToolFacts, failed: bool) -> ToolPresentation {
@@ -170,12 +218,15 @@ pub fn present(facts: &ToolFacts, failed: bool) -> ToolPresentation {
         ToolKind::Diff => &facts.affected_files,
         ToolKind::CodeMap | ToolKind::Extension | ToolKind::Todo => "",
     };
-    let title_detail = first(&facts.intent, target);
-    let title = if title_detail.is_empty() {
-        kind.label().to_owned()
+    let intent = facts.intent.trim();
+    let intent_primary = !intent.is_empty();
+    let primary = if intent_primary {
+        intent
     } else {
-        format!("{}  {title_detail}", kind.label())
+        target
     };
+    let label = kind.label().to_owned();
+    let title = format_tool_title(&label, primary);
     let body = match kind {
         ToolKind::Patch | ToolKind::Diff => edit_body(facts, failed),
         ToolKind::Todo if failed => first(&facts.error, &facts.output).to_owned(),
@@ -186,6 +237,9 @@ pub fn present(facts: &ToolFacts, failed: bool) -> ToolPresentation {
     };
     ToolPresentation {
         title,
+        label,
+        primary: primary.to_owned(),
+        intent_primary,
         target: target.to_owned(),
         // Progress and a lone error should read in place. Folding is useful only
         // once an edit has reviewable code, or a non-edit tool has detail.
@@ -265,7 +319,8 @@ mod tests {
             },
             false,
         );
-        assert_eq!(presentation.title, "Read  src/lib.rs");
+        assert_eq!(presentation.title, format_tool_title("Read", "src/lib.rs"));
+        assert!(!presentation.intent_primary);
         assert!(presentation.body.is_empty());
         assert!(!presentation.collapsible);
     }
@@ -281,8 +336,15 @@ mod tests {
             },
             false,
         );
-        assert_eq!(presentation.title, "Read  Inspect the projection contract");
+        assert_eq!(
+            presentation.title,
+            format_tool_title("Read", "Inspect the projection contract")
+        );
+        assert!(presentation.intent_primary);
+        assert_eq!(presentation.primary, "Inspect the projection contract");
         assert_eq!(presentation.target, "src/lib.rs");
+        // Intent-first title must not bury the why under the path.
+        assert!(!presentation.title.contains("src/lib.rs"));
 
         let fallback = present(
             &ToolFacts {
@@ -292,7 +354,43 @@ mod tests {
             },
             false,
         );
-        assert_eq!(fallback.title, "Read  src/lib.rs");
+        assert_eq!(fallback.title, format_tool_title("Read", "src/lib.rs"));
+        assert!(!fallback.intent_primary);
+    }
+
+    #[test]
+    fn tool_label_field_is_fixed_width_for_scan_columns() {
+        use unicode_width::UnicodeWidthStr;
+        let width = crate::layout_contract::TRANSCRIPT_TOOL_LABEL_WIDTH;
+        for label in ["Read", "Edit", "Run", "Search", "Code search", "Definition"] {
+            let padded = pad_tool_label(label);
+            assert_eq!(
+                UnicodeWidthStr::width(padded.as_str()),
+                width,
+                "label {label:?} => {padded:?}"
+            );
+        }
+        let long = format_tool_title("Definition", "Kernel");
+        assert!(long.starts_with(&pad_tool_label("Definition")));
+        assert!(long.contains("Kernel"));
+    }
+
+    #[test]
+    fn cjk_intent_stays_primary_without_losing_target() {
+        let presentation = present(
+            &ToolFacts {
+                name: "read".into(),
+                intent: "检查投影契约".into(),
+                path: "src/中文.rs".into(),
+                ..ToolFacts::default()
+            },
+            false,
+        );
+        assert!(presentation.intent_primary);
+        assert_eq!(presentation.primary, "检查投影契约");
+        assert_eq!(presentation.target, "src/中文.rs");
+        assert!(presentation.title.contains("检查投影契约"));
+        assert!(!presentation.title.contains("src/中文.rs"));
     }
 
     #[test]

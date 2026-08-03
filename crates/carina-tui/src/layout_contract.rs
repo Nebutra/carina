@@ -60,6 +60,8 @@ pub const TRANSCRIPT_ROLE_GAP_WIDTH: usize = 2;
 pub const TRANSCRIPT_ROLE_PREFIX_WIDTH: usize =
     TRANSCRIPT_ROLE_MARK_WIDTH + TRANSCRIPT_ROLE_LABEL_WIDTH + TRANSCRIPT_ROLE_GAP_WIDTH;
 pub const TRANSCRIPT_TOOL_GUTTER_WIDTH: usize = 2;
+/// Fixed tool-kind label field for intent-first rows (matches role label width).
+pub const TRANSCRIPT_TOOL_LABEL_WIDTH: usize = 6;
 pub const TRANSCRIPT_RELATED_GAP: usize = 0;
 pub const TRANSCRIPT_BLOCK_GAP: usize = 1;
 pub const TRANSCRIPT_FINAL_GAP: usize = TRANSCRIPT_BLOCK_GAP;
