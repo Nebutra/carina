@@ -3985,8 +3985,8 @@ impl App {
                 self.focus = Focus::Scene;
             }
             CommandId::Model => self.open_models(),
-            CommandId::Plan => self.set_plan_mode(true),
-            CommandId::Build => self.set_plan_mode(false),
+            CommandId::Plan => self.request_conversation_mode(true),
+            CommandId::Build => self.request_conversation_mode(false),
             CommandId::Sessions => self.open_session_browser(),
             CommandId::Resume => {
                 let paused = self
@@ -4107,7 +4107,7 @@ impl App {
         }
     }
 
-    fn set_plan_mode(&mut self, on: bool) {
+    fn enter_plan_mode(&mut self) {
         let Some(session_id) = self
             .active_session
             .as_ref()
@@ -4116,7 +4116,7 @@ impl App {
             self.notice = Notice::localized(MessageId::ModeConversationRequired);
             return;
         };
-        match self.rpc.set_plan_mode(&session_id, on) {
+        match self.rpc.set_plan_mode(&session_id, true) {
             Ok(state) if state.session_id == session_id => {
                 if let Some(mut session) = self.active_session.as_ref().cloned() {
                     session.plan_mode = state.plan_mode;
@@ -4138,16 +4138,47 @@ impl App {
         }
     }
 
+    fn request_conversation_mode(&mut self, plan_mode: bool) {
+        if self.active_run_id.is_some() {
+            self.notice = Notice::localized(MessageId::ModeChangeBlocked);
+            return;
+        }
+        let Some(current) = self
+            .active_session
+            .as_ref()
+            .map(|session| session.plan_mode)
+        else {
+            self.notice = Notice::localized(MessageId::ModeConversationRequired);
+            return;
+        };
+        if current == plan_mode {
+            self.notice = Notice::localized(if plan_mode {
+                MessageId::PlanModeActive
+            } else {
+                MessageId::BuildModeActive
+            });
+            return;
+        }
+        match conversation_mode_action(false, current) {
+            Some(ConversationModeAction::EnterPlan) => self.enter_plan_mode(),
+            Some(ConversationModeAction::ApprovePlan) => self.approve_plan(),
+            None => unreachable!("idle conversation mode transition must have an action"),
+        }
+    }
+
     fn cycle_conversation_mode(&mut self) {
         let current = self
             .active_session
             .as_ref()
             .is_some_and(|session| session.plan_mode);
-        let Some(on) = conversation_mode_target(self.active_run_id.is_some(), current) else {
+        let Some(action) = conversation_mode_action(self.active_run_id.is_some(), current) else {
             self.notice = Notice::localized(MessageId::ModeChangeBlocked);
             return;
         };
-        self.set_plan_mode(on);
+        match action {
+            ConversationModeAction::EnterPlan => self.enter_plan_mode(),
+            ConversationModeAction::ApprovePlan => self.approve_plan(),
+        }
     }
 
     fn approve_plan(&mut self) {
@@ -5618,12 +5649,8 @@ impl App {
                 self.phase = Phase::Provider;
             }
             Action::TogglePlanMode => {
-                let on = !self
-                    .active_session
-                    .as_ref()
-                    .is_some_and(|session| session.plan_mode);
                 self.close_top_non_governance();
-                self.set_plan_mode(on);
+                self.cycle_conversation_mode();
             }
             Action::ApprovalAllow => self.resolve_active_approval(true),
             Action::ApprovalDeny => self.resolve_active_approval(false),
@@ -5998,8 +6025,23 @@ fn normalize_shift_tab(mut key: KeyEvent) -> KeyEvent {
     key
 }
 
-fn conversation_mode_target(execution_running: bool, plan_mode: bool) -> Option<bool> {
-    (!execution_running).then_some(!plan_mode)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConversationModeAction {
+    EnterPlan,
+    ApprovePlan,
+}
+
+fn conversation_mode_action(
+    execution_running: bool,
+    plan_mode: bool,
+) -> Option<ConversationModeAction> {
+    if execution_running {
+        None
+    } else if plan_mode {
+        Some(ConversationModeAction::ApprovePlan)
+    } else {
+        Some(ConversationModeAction::EnterPlan)
+    }
 }
 
 fn plan_review_key_action(code: KeyCode) -> Option<Action> {
@@ -7586,10 +7628,16 @@ mod tests {
             normalize_shift_tab(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).code,
             KeyCode::Tab
         );
-        assert_eq!(conversation_mode_target(false, false), Some(true));
-        assert_eq!(conversation_mode_target(false, true), Some(false));
-        assert_eq!(conversation_mode_target(true, false), None);
-        assert_eq!(conversation_mode_target(true, true), None);
+        assert_eq!(
+            conversation_mode_action(false, false),
+            Some(ConversationModeAction::EnterPlan)
+        );
+        assert_eq!(
+            conversation_mode_action(false, true),
+            Some(ConversationModeAction::ApprovePlan)
+        );
+        assert_eq!(conversation_mode_action(true, false), None);
+        assert_eq!(conversation_mode_action(true, true), None);
     }
 
     #[test]

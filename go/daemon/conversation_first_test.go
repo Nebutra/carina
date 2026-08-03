@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
 type conversationFirstReasoner struct {
@@ -50,6 +52,24 @@ func TestConversationalRequestFinishesWithoutToolLifecycle(t *testing.T) {
 	}
 	if len(toolEvents) != 0 {
 		t.Fatalf("conversational request emitted tool lifecycle events: %v", toolEvents)
+	}
+	cp := d.runs.loadCheckpoint(task.RunID)
+	if cp == nil || cp.Turn != 1 || cp.Transcript == nil || len(cp.Transcript.Turns) != 1 {
+		t.Fatalf("completed conversation checkpoint = %+v", cp)
+	}
+	final := cp.Transcript.Turns[0]
+	if final.Tool != "done" || final.Obs.Content != completed.Summary {
+		t.Fatalf("completed conversation checkpoint lost final response: %+v", final)
+	}
+	forked, err := d.handleSessionFork(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "last_task_id": task.RunID,
+	}))
+	if err != nil {
+		t.Fatalf("fork through completed conversation: %v", err)
+	}
+	child := forked.(*sessionstore.Session)
+	if child.ForkedFromTaskID != task.RunID || child.ForkedThroughTurn != 1 {
+		t.Fatalf("fork lineage = %+v", child)
 	}
 	for _, want := range []string{
 		"Use Simplified Chinese",

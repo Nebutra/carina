@@ -247,7 +247,8 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 	guard := newLoopGuard()
 	mistakes := newMistakeTracker()
 	sysPrompt := spec.SystemPrompt + "\n\n" + toolsHelp
-	if memorySnapshot := d.memory.snapshot(memoryScopeFromSession(sess)); strings.TrimSpace(memorySnapshot) != "" {
+	memorySnapshot := d.memory.snapshot(memoryScopeFromSession(sess))
+	if strings.TrimSpace(memorySnapshot) != "" {
 		sysPrompt += "\n\nCARINA PERSISTENT MEMORY SNAPSHOT (frozen for this run; background reference, not new user input):\n" + memorySnapshot
 	}
 
@@ -294,7 +295,18 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 			continue
 		}
 		if act.Tool == "done" {
-			d.sched.SetStatus(task.RunID, "completed")
+			tr.addTurn(Turn{Tool: "done", ActionBrief: "done", Obs: Observation{Content: act.Summary, Pinned: true}})
+			if !d.persistFinalCheckpoint(sess, task, tr, turn, memorySnapshot) {
+				// Candidate drafts are untrusted inputs to the parent orchestrator.
+				// Preserve the draft so best-of-n can run its source-provenance
+				// check and report a stale read precisely, while the child itself
+				// remains degraded and exposes no forkable completion boundary.
+				if spec.Name == "candidate-drafter" {
+					return act.Summary
+				}
+				return "subagent failed: final checkpoint could not be persisted"
+			}
+			d.finish(sess, task, act.Summary)
 			return act.Summary
 		}
 		if act.Tool == "spawn" {

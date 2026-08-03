@@ -606,6 +606,11 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 					Content: "An independent verifier rejected your 'done': " + reason + "\nKeep working, then call done again."}})
 				continue
 			}
+			tr.addTurn(Turn{Tool: "done", ActionBrief: "done", Obs: Observation{Content: act.Summary, Pinned: true}})
+			if !d.persistFinalCheckpoint(sess, task, tr, turn, memorySnapshot) {
+				assistantStream.reset()
+				return
+			}
 			assistantStream.complete(act.Summary)
 			d.finish(sess, task, act.Summary)
 			return
@@ -797,9 +802,19 @@ func (d *Daemon) pauseForSoftInterrupt(sess *sessionstore.Session, task *schedul
 }
 
 func (d *Daemon) persistTurnCheckpoint(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, turn int, memorySnapshot string) bool {
+	return d.persistCheckpoint(sess, task, tr, turn, memorySnapshot,
+		"checkpoint persistence failed before the next action; run stopped to prevent stale replay")
+}
+
+func (d *Daemon) persistFinalCheckpoint(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, turn int, memorySnapshot string) bool {
+	return d.persistCheckpoint(sess, task, tr, turn, memorySnapshot,
+		"final checkpoint persistence failed; run was not marked completed")
+}
+
+func (d *Daemon) persistCheckpoint(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, turn int, memorySnapshot, failure string) bool {
 	anchor, err := d.captureWorkspaceAnchor(sess)
 	if err != nil {
-		d.degrade(sess, task, tr, "workspace anchor persistence failed before the next action; run stopped to prevent stale replay: "+err.Error())
+		d.degrade(sess, task, tr, failure+": "+err.Error())
 		return false
 	}
 	cp := &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess), WorkspaceAnchor: anchor}
@@ -809,7 +824,7 @@ func (d *Daemon) persistTurnCheckpoint(sess *sessionstore.Session, task *schedul
 		d.persistRun(task.RunID)
 		return true
 	}
-	d.degrade(sess, task, tr, "checkpoint persistence failed before the next action; run stopped to prevent stale replay: "+err.Error())
+	d.degrade(sess, task, tr, failure+": "+err.Error())
 	return false
 }
 

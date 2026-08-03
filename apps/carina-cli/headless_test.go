@@ -30,6 +30,41 @@ func TestParseStreamRunArgsRequiresSymmetricProtocol(t *testing.T) {
 	}
 }
 
+func TestConfigureStreamSessionModeOnlyEntersPlan(t *testing.T) {
+	s := rpc.NewServer()
+	calls := 0
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "session.plan_mode", Scope: rpc.ScopeWrite, Remote: true}, func(params json.RawMessage) (any, error) {
+		calls++
+		var decoded map[string]any
+		if err := json.Unmarshal(params, &decoded); err != nil {
+			return nil, err
+		}
+		if decoded["session_id"] != "sess_1" || decoded["on"] != true {
+			t.Fatalf("session.plan_mode params = %#v", decoded)
+		}
+		return map[string]any{"plan_mode": true}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := dialTestServer(t, s)
+	defer c.Close()
+
+	for _, mode := range []string{"", "build"} {
+		if err := configureStreamSessionMode(c, "sess_1", mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("build/default mode emitted %d plan transitions", calls)
+	}
+	if err := configureStreamSessionMode(c, "sess_1", "plan"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("plan mode emitted %d transitions, want 1", calls)
+	}
+}
+
 func TestHandleStreamInputUsesOneGovernedControlContract(t *testing.T) {
 	s := rpc.NewServer()
 	calls := map[string]map[string]any{}

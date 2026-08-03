@@ -148,15 +148,30 @@ func TestSubagentIsolatedAndAttenuated(t *testing.T) {
 	if child.depth != 1 {
 		t.Fatalf("child depth should be 1, got %d", child.depth)
 	}
+	var childTaskID string
 	for _, task := range d.sched.List() {
 		if task.SessionID == child.id && task.Locale != "zh" {
 			t.Fatalf("child task locale = %q, want inherited zh", task.Locale)
 		}
 		if task.SessionID == child.id {
-			return
+			childTaskID = task.RunID
 		}
 	}
-	t.Fatal("no child task retained for locale assertion")
+	if childTaskID == "" {
+		t.Fatal("no child task retained for locale assertion")
+	}
+	cp := d.runs.loadCheckpoint(childTaskID)
+	if cp == nil || cp.Transcript == nil || cp.Turn != 2 {
+		t.Fatalf("completed subagent checkpoint = %+v", cp)
+	}
+	if final := cp.Transcript.Turns[len(cp.Transcript.Turns)-1]; final.Tool != "done" || !strings.Contains(final.Obs.Content, "SECRET_MARKER") {
+		t.Fatalf("completed subagent checkpoint lost final response: %+v", final)
+	}
+	if _, err := d.handleSessionFork(mustJSON(t, map[string]any{
+		"session_id": child.id, "last_task_id": childTaskID,
+	})); err != nil {
+		t.Fatalf("fork through completed subagent: %v", err)
+	}
 }
 
 // TestSpawnedSessionToolNamesAllowListIsEnforced is the end-to-end wiring

@@ -159,10 +159,8 @@ func runStreamProtocol(c, stream *rpcClient, opts streamRunOptions, input io.Rea
 			return fmt.Errorf("session %s is %s, not active", sessionID, session.Status)
 		}
 	}
-	if opts.mode != "" {
-		if err := c.Call("session.plan_mode", map[string]any{"session_id": sessionID, "on": opts.mode == "plan"}, nil); err != nil {
-			return err
-		}
+	if err := configureStreamSessionMode(c, sessionID, opts.mode); err != nil {
+		return err
 	}
 	if err := stream.Call("session.events.stream", map[string]any{"session_id": sessionID, "event_mode": "canonical"}, nil); err != nil {
 		return err
@@ -238,6 +236,13 @@ func runStreamProtocol(c, stream *rpcClient, opts streamRunOptions, input io.Rea
 		return err
 	}
 	return nil
+}
+
+func configureStreamSessionMode(c *rpcClient, sessionID, mode string) error {
+	if mode != "plan" {
+		return nil
+	}
+	return c.Call("session.plan_mode", map[string]any{"session_id": sessionID, "on": true}, nil)
 }
 
 func handleStreamInput(c *rpcClient, sessionID string, defaults streamRunOptions, frame streamInputFrame) (any, bool, error) {

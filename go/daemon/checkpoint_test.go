@@ -657,6 +657,43 @@ func TestCheckpointPersistenceFailureStopsRunBeforeNextAction(t *testing.T) {
 	}
 }
 
+func TestFinalCheckpointPersistenceFailurePreventsCompletedRun(t *testing.T) {
+	d := newDaemonAt(t, t.TempDir())
+	defer d.Close()
+	workspace := t.TempDir()
+	sess, err := d.store.CreateSession(workspace, "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "finish durably")
+	if err := os.WriteFile(filepath.Join(d.runs.dir, task.RunID+".ckpts"), []byte("blocked"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.SetReasoner(&scriptedReasoner{steps: []string{`{"tool":"done","summary":"must be durable"}`}})
+	completedEvents := 0
+	d.events.Tap(func(_ string, event map[string]any) {
+		if event["type"] == "ExecutionCompleted" {
+			completedEvents++
+		}
+	})
+
+	d.runTask(sess, task)
+
+	current, _ := d.sched.Get(task.RunID)
+	if current.Status != "degraded" || !strings.Contains(current.Summary, "final checkpoint persistence failed") {
+		t.Fatalf("task after final checkpoint failure = %+v", current)
+	}
+	if completedEvents != 0 {
+		t.Fatalf("checkpoint failure published %d completed events", completedEvents)
+	}
+	if cp := d.runs.loadCheckpoint(task.RunID); cp != nil {
+		t.Fatalf("checkpoint failure unexpectedly published boundary: %+v", cp)
+	}
+}
+
 func taskByID(tasks []*scheduler.ExecutionRun, taskID string) *scheduler.ExecutionRun {
 	for _, task := range tasks {
 		if task.RunID == taskID {
