@@ -4864,9 +4864,10 @@ impl App {
         );
         if !patch.diff.is_empty() {
             let visible = chunks[1].height as usize;
-            let lines = patch
-                .diff
+            let (bounded_diff, _) = crate::diff_render::bounded_diff_source(&patch.diff);
+            let lines = bounded_diff
                 .lines()
+                .take(crate::diff_render::DIFF_HARD_LINE_LIMIT)
                 .skip(overlay.scroll)
                 .take(visible)
                 .map(|line| {
@@ -4879,7 +4880,10 @@ impl App {
                     } else {
                         Style::default().fg(self.theme.text)
                     };
-                    Line::from(Span::styled(line, style))
+                    Line::from(Span::styled(
+                        crate::diff_render::bounded_display_text(line),
+                        style,
+                    ))
                 })
                 .collect::<Vec<_>>();
             frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), chunks[1]);
@@ -5698,20 +5702,28 @@ fn tool_detail_lines(
         )])
     };
     if body_kind == BlockBodyKind::Diff {
-        let mut rendered = styled_diff_lines(body, context.styles);
-        let visibility = visible_output_lines(rendered.len(), expanded);
-        if visibility.omitted > 0 {
-            rendered.truncate(visibility.visible);
-        }
-        let mut lines = wrap_styled_lines(rendered, usize::from(context.content_width), &prefix);
-        if visibility.omitted > 0 {
-            lines.push(tool_omission_line(
-                visibility.omitted,
-                MessageId::ToolLineOmitted,
-                MessageId::ToolLinesOmitted,
-                context,
-                nested,
-            ));
+        let rendered = styled_diff_lines(body, context.styles, expanded);
+        let mut lines =
+            wrap_styled_lines(rendered.lines, usize::from(context.content_width), &prefix);
+        if rendered.omitted_lines > 0 {
+            if expanded || rendered.hard_capped {
+                let count = rendered.visible_lines.to_string();
+                let bytes = rendered.total_bytes.to_string();
+                let hint = tr_format(
+                    context.locale,
+                    MessageId::DiffReviewContinues,
+                    &[("count", count.as_str()), ("bytes", bytes.as_str())],
+                );
+                lines.push(tool_hint_line(hint, context, nested));
+            } else {
+                lines.push(tool_omission_line(
+                    rendered.omitted_lines,
+                    MessageId::ToolLineOmitted,
+                    MessageId::ToolLinesOmitted,
+                    context,
+                    nested,
+                ));
+            }
         }
         return lines;
     }
@@ -5763,12 +5775,29 @@ fn styled_detail_line(
     Line::from(Span::styled(line.to_owned(), style))
 }
 
-/// Issue #19: unified diff with line numbers and word-level emphasis under one palette.
-fn styled_diff_lines(body: &str, styles: TranscriptStyles) -> Vec<Line<'static>> {
-    use crate::diff_render::{DiffLineKind, render_unified_diff};
+struct StyledDiffWindow {
+    lines: Vec<Line<'static>>,
+    visible_lines: usize,
+    omitted_lines: usize,
+    hard_capped: bool,
+    total_bytes: usize,
+}
+
+/// Number and emphasize only the current bounded review window.
+fn styled_diff_lines(body: &str, styles: TranscriptStyles, expanded: bool) -> StyledDiffWindow {
+    use crate::diff_render::{
+        DiffLineKind, render_unified_diff_progressive, render_unified_diff_window,
+    };
     use ratatui::style::Modifier;
 
-    render_unified_diff(body)
+    let rendered = if expanded {
+        render_unified_diff_progressive(body)
+    } else {
+        render_unified_diff_window(body, 0)
+    };
+    let visible_lines = rendered.lines.len();
+    let lines = rendered
+        .lines
         .into_iter()
         .map(|line| {
             let base = match line.kind {
@@ -5800,7 +5829,14 @@ fn styled_diff_lines(body: &str, styles: TranscriptStyles) -> Vec<Line<'static>>
             }
             Line::from(spans)
         })
-        .collect()
+        .collect();
+    StyledDiffWindow {
+        lines,
+        visible_lines,
+        omitted_lines: rendered.omitted_lines,
+        hard_capped: rendered.hard_capped,
+        total_bytes: rendered.total_bytes,
+    }
 }
 
 fn pad_key_label(key: &str, width: usize) -> String {
@@ -5825,6 +5861,10 @@ fn tool_omission_line(
         id,
         &[("count", count.as_str()), ("key", context.expand_key)],
     );
+    tool_hint_line(hint, context, nested)
+}
+
+fn tool_hint_line(hint: String, context: ToolLineContext, nested: bool) -> Line<'static> {
     let gutter = if nested {
         format!("{}  ", context.styles.glyphs.tool_gutter())
     } else {
@@ -6999,6 +7039,45 @@ mod transcript_tests {
         assert!(expanded[0].starts_with(Glyphs::default().disclosure_open()));
         assert_eq!(expanded.len(), 8);
         assert!(!expanded.join("\n").contains("omitted"));
+    }
+
+    #[test]
+    fn expanded_large_cjk_diff_is_progressive_and_keeps_one_bounded_escape_row() {
+        let body = (0..=crate::diff_render::DIFF_PROGRESSIVE_LINE_LIMIT)
+            .map(|index| format!("+第 {index} 行"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let context = ToolLineContext {
+            locale: Locale::ZhHans,
+            styles: TranscriptStyles::default(),
+            content_width: 80,
+            expand_key: "F12",
+        };
+        let lines = tool_detail_lines(&body, BlockBodyKind::Diff, true, context, false);
+        let visible = plain(&lines);
+        assert_eq!(
+            visible.len(),
+            crate::diff_render::DIFF_PROGRESSIVE_LINE_LIMIT + 1
+        );
+        assert!(visible.last().unwrap().contains("/changes"));
+
+        let narrow = tool_detail_lines(
+            &body,
+            BlockBodyKind::Diff,
+            true,
+            ToolLineContext {
+                content_width: 18,
+                ..context
+            },
+            false,
+        );
+        assert_eq!(
+            Paragraph::new(narrow.clone())
+                .wrap(Wrap { trim: false })
+                .line_count(18),
+            narrow.len(),
+            "CJK diff and its escape hatch must stay inside owned rows"
+        );
     }
 
     #[test]

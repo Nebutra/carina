@@ -2,6 +2,15 @@
 
 use unicode_segmentation::UnicodeSegmentation;
 
+pub const DIFF_HARD_BYTE_LIMIT: usize = 2 << 20;
+pub const DIFF_HARD_LINE_LIMIT: usize = 50_000;
+pub const DIFF_PROGRESSIVE_LINE_LIMIT: usize = 500;
+pub const DIFF_PROGRESSIVE_BYTE_LIMIT: usize = 32 << 10;
+const DIFF_DISPLAY_LINE_BYTE_LIMIT: usize = 4 << 10;
+const DIFF_WORD_PAIR_BYTE_LIMIT: usize = 8 << 10;
+const DIFF_WORD_TOKEN_LIMIT: usize = 256;
+const DIFF_WORD_PAIR_LIMIT: usize = 16;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffLineKind {
     Context,
@@ -27,16 +36,81 @@ pub struct DiffLine {
     pub spans: Vec<DiffSpan>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffRenderWindow {
+    pub lines: Vec<DiffLine>,
+    pub omitted_lines: usize,
+    pub omitted_exact: bool,
+    pub hard_capped: bool,
+    pub total_bytes: usize,
+}
+
 /// Parse a unified diff into numbered, word-emphasized lines.
 pub fn render_unified_diff(diff: &str) -> Vec<DiffLine> {
+    render_unified_diff_window(diff, DIFF_HARD_LINE_LIMIT).lines
+}
+
+/// Parse only a bounded prefix. Budgeting happens before line collection and
+/// word-level LCS so untrusted large diffs cannot make one frame unbounded.
+pub fn render_unified_diff_window(diff: &str, line_limit: usize) -> DiffRenderWindow {
+    render_unified_diff_window_bounded(diff, line_limit, DIFF_HARD_BYTE_LIMIT)
+}
+
+pub fn render_unified_diff_progressive(diff: &str) -> DiffRenderWindow {
+    render_unified_diff_window_bounded(
+        diff,
+        DIFF_PROGRESSIVE_LINE_LIMIT,
+        DIFF_PROGRESSIVE_BYTE_LIMIT,
+    )
+}
+
+fn render_unified_diff_window_bounded(
+    diff: &str,
+    line_limit: usize,
+    byte_limit: usize,
+) -> DiffRenderWindow {
     if diff.is_empty() {
-        return Vec::new();
+        return DiffRenderWindow {
+            lines: Vec::new(),
+            omitted_lines: 0,
+            omitted_exact: true,
+            hard_capped: false,
+            total_bytes: 0,
+        };
     }
-    let raw: Vec<&str> = diff.split('\n').collect();
+    if line_limit == 0 {
+        return DiffRenderWindow {
+            lines: Vec::new(),
+            omitted_lines: 1,
+            omitted_exact: false,
+            hard_capped: false,
+            total_bytes: diff.len(),
+        };
+    }
+    let (bounded, byte_capped) = bounded_source(diff, byte_limit);
+    let visible_limit = line_limit.min(DIFF_HARD_LINE_LIMIT);
+    let raw: Vec<&str> = bounded.split('\n').take(visible_limit).collect();
+    let bounded_lines = bounded.split('\n').count();
+    let line_capped = bounded_lines > DIFF_HARD_LINE_LIMIT;
+    let visible = raw.len();
+    let omitted_within_window = bounded_lines.saturating_sub(visible);
+    let omitted_lines = omitted_within_window + usize::from(byte_capped);
+    let lines = render_bounded_lines(&raw);
+    DiffRenderWindow {
+        lines,
+        omitted_lines,
+        omitted_exact: !byte_capped,
+        hard_capped: byte_capped || line_capped,
+        total_bytes: diff.len(),
+    }
+}
+
+fn render_bounded_lines(raw: &[&str]) -> Vec<DiffLine> {
     let mut out = Vec::with_capacity(raw.len());
     let mut old_no: Option<u32> = None;
     let mut new_no: Option<u32> = None;
     let mut i = 0;
+    let mut emphasized_pairs = 0;
     while i < raw.len() {
         let line = raw[i];
         if line.starts_with("@@") {
@@ -49,7 +123,7 @@ pub fn render_unified_diff(diff: &str) -> Vec<DiffLine> {
                 new_no: None,
                 marker: ' ',
                 spans: vec![DiffSpan {
-                    text: line.to_owned(),
+                    text: bounded_display_text(line),
                     emphasize: false,
                 }],
             });
@@ -63,7 +137,7 @@ pub fn render_unified_diff(diff: &str) -> Vec<DiffLine> {
                 new_no: None,
                 marker: ' ',
                 spans: vec![DiffSpan {
-                    text: line.to_owned(),
+                    text: bounded_display_text(line),
                     emphasize: false,
                 }],
             });
@@ -77,7 +151,18 @@ pub fn render_unified_diff(diff: &str) -> Vec<DiffLine> {
                 && !add_line.starts_with("+++")
             {
                 let add_body = &add_line[1..];
-                let (remove_spans, add_spans) = word_level_pair(remove_body, add_body);
+                let (remove_spans, add_spans) = if emphasized_pairs < DIFF_WORD_PAIR_LIMIT
+                    && remove_body.len() + add_body.len() <= DIFF_WORD_PAIR_BYTE_LIMIT
+                {
+                    word_level_pair(remove_body, add_body)
+                        .map(|(remove, add)| {
+                            emphasized_pairs += 1;
+                            (bound_spans(remove), bound_spans(add))
+                        })
+                        .unwrap_or_else(|| (plain_span(remove_body), plain_span(add_body)))
+                } else {
+                    (plain_span(remove_body), plain_span(add_body))
+                };
                 let current_old = old_no;
                 let current_new = new_no;
                 out.push(DiffLine {
@@ -109,7 +194,7 @@ pub fn render_unified_diff(diff: &str) -> Vec<DiffLine> {
                 new_no: None,
                 marker: '-',
                 spans: vec![DiffSpan {
-                    text: remove_body.to_owned(),
+                    text: bounded_display_text(remove_body),
                     emphasize: false,
                 }],
             });
@@ -126,7 +211,7 @@ pub fn render_unified_diff(diff: &str) -> Vec<DiffLine> {
                 new_no,
                 marker: '+',
                 spans: vec![DiffSpan {
-                    text: line[1..].to_owned(),
+                    text: bounded_display_text(&line[1..]),
                     emphasize: false,
                 }],
             });
@@ -149,7 +234,7 @@ pub fn render_unified_diff(diff: &str) -> Vec<DiffLine> {
             new_no,
             marker: ' ',
             spans: vec![DiffSpan {
-                text: body.to_owned(),
+                text: bounded_display_text(body),
                 emphasize: false,
             }],
         });
@@ -162,6 +247,60 @@ pub fn render_unified_diff(diff: &str) -> Vec<DiffLine> {
         i += 1;
     }
     out
+}
+
+fn plain_span(value: &str) -> Vec<DiffSpan> {
+    vec![DiffSpan {
+        text: bounded_display_text(value),
+        emphasize: false,
+    }]
+}
+
+pub(crate) fn bounded_display_text(value: &str) -> String {
+    if value.len() <= DIFF_DISPLAY_LINE_BYTE_LIMIT {
+        return value.to_owned();
+    }
+    let end = floor_char_boundary(value, DIFF_DISPLAY_LINE_BYTE_LIMIT);
+    format!("{} ...", &value[..end])
+}
+
+pub(crate) fn bounded_diff_source(diff: &str) -> (&str, bool) {
+    bounded_source(diff, DIFF_HARD_BYTE_LIMIT)
+}
+
+fn bounded_source(diff: &str, byte_limit: usize) -> (&str, bool) {
+    let byte_end = floor_char_boundary(diff, diff.len().min(byte_limit));
+    (&diff[..byte_end], byte_end < diff.len())
+}
+
+fn bound_spans(spans: Vec<DiffSpan>) -> Vec<DiffSpan> {
+    let mut remaining = DIFF_DISPLAY_LINE_BYTE_LIMIT;
+    let mut bounded = Vec::new();
+    for mut span in spans {
+        if span.text.len() <= remaining {
+            remaining -= span.text.len();
+            bounded.push(span);
+            continue;
+        }
+        let end = floor_char_boundary(&span.text, remaining);
+        span.text.truncate(end);
+        if !span.text.is_empty() {
+            bounded.push(span);
+        }
+        bounded.push(DiffSpan {
+            text: " ...".to_owned(),
+            emphasize: false,
+        });
+        return bounded;
+    }
+    bounded
+}
+
+fn floor_char_boundary(value: &str, mut end: usize) -> usize {
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
 }
 
 /// Format a single rendered line as plain text: `NNN|MMM ± body`.
@@ -187,23 +326,26 @@ fn parse_hunk_header(line: &str) -> (Option<u32>, Option<u32>) {
     let mut new = None;
     for part in line.split_whitespace() {
         if let Some(rest) = part.strip_prefix('-') {
-            old = rest
-                .split(',')
-                .next()
-                .and_then(|s| s.parse::<u32>().ok());
+            old = rest.split(',').next().and_then(|s| s.parse::<u32>().ok());
         } else if let Some(rest) = part.strip_prefix('+') {
-            new = rest
-                .split(',')
-                .next()
-                .and_then(|s| s.parse::<u32>().ok());
+            new = rest.split(',').next().and_then(|s| s.parse::<u32>().ok());
         }
     }
     (old, new)
 }
 
-fn word_level_pair(old: &str, new: &str) -> (Vec<DiffSpan>, Vec<DiffSpan>) {
-    let old_words: Vec<&str> = old.split_word_bounds().collect();
-    let new_words: Vec<&str> = new.split_word_bounds().collect();
+fn word_level_pair(old: &str, new: &str) -> Option<(Vec<DiffSpan>, Vec<DiffSpan>)> {
+    let old_words: Vec<&str> = old
+        .split_word_bounds()
+        .take(DIFF_WORD_TOKEN_LIMIT + 1)
+        .collect();
+    let new_words: Vec<&str> = new
+        .split_word_bounds()
+        .take(DIFF_WORD_TOKEN_LIMIT + 1)
+        .collect();
+    if old_words.len() > DIFF_WORD_TOKEN_LIMIT || new_words.len() > DIFF_WORD_TOKEN_LIMIT {
+        return None;
+    }
     let lcs = lcs_table(&old_words, &new_words);
     let mut i = old_words.len();
     let mut j = new_words.len();
@@ -237,10 +379,7 @@ fn word_level_pair(old: &str, new: &str) -> (Vec<DiffSpan>, Vec<DiffSpan>) {
     }
     remove_stack.reverse();
     add_stack.reverse();
-    (
-        coalesce_spans(remove_stack),
-        coalesce_spans(add_stack),
-    )
+    Some((coalesce_spans(remove_stack), coalesce_spans(add_stack)))
 }
 
 fn lcs_table(a: &[&str], b: &[&str]) -> Vec<Vec<usize>> {
@@ -325,5 +464,99 @@ mod tests {
     #[test]
     fn empty_diff_is_empty() {
         assert!(render_unified_diff("").is_empty());
+    }
+
+    #[test]
+    fn progressive_window_never_parses_the_complete_diff_first() {
+        let diff = (0..10_000)
+            .map(|index| format!("+line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let window = render_unified_diff_window(&diff, 12);
+        assert_eq!(window.lines.len(), 12);
+        assert_eq!(window.omitted_lines, 9_988);
+        assert!(window.omitted_exact);
+        assert!(!window.hard_capped);
+    }
+
+    #[test]
+    fn hard_line_cap_bounds_allocation_before_rendering() {
+        let diff = std::iter::repeat_n("+x", DIFF_HARD_LINE_LIMIT + 100)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let window = render_unified_diff_window(&diff, usize::MAX);
+        assert_eq!(window.lines.len(), DIFF_HARD_LINE_LIMIT);
+        assert_eq!(window.omitted_lines, 100);
+        assert!(window.hard_capped);
+    }
+
+    #[test]
+    fn byte_and_display_line_caps_preserve_utf8_boundaries() {
+        let diff = format!("+{}", "界".repeat(DIFF_HARD_BYTE_LIMIT));
+        let window = render_unified_diff_window(&diff, 1);
+        assert_eq!(window.lines.len(), 1);
+        assert!(window.hard_capped);
+        assert!(!window.omitted_exact);
+        let rendered = window.lines[0]
+            .spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>();
+        assert!(rendered.is_char_boundary(rendered.len()));
+        assert!(rendered.len() <= DIFF_DISPLAY_LINE_BYTE_LIMIT + " ...".len());
+        assert!(!rendered.contains('\u{fffd}'));
+    }
+
+    #[test]
+    fn pathological_word_pairs_skip_quadratic_lcs_but_keep_polarity() {
+        let old = "a ".repeat(DIFF_WORD_TOKEN_LIMIT + 50);
+        let new = "b ".repeat(DIFF_WORD_TOKEN_LIMIT + 50);
+        let diff = format!("-{old}\n+{new}");
+        let window = render_unified_diff_window(&diff, 2);
+        assert_eq!(window.lines[0].kind, DiffLineKind::Remove);
+        assert_eq!(window.lines[1].kind, DiffLineKind::Add);
+        assert!(
+            window
+                .lines
+                .iter()
+                .all(|line| line.spans.iter().all(|span| !span.emphasize))
+        );
+    }
+
+    #[test]
+    fn paired_word_highlight_cannot_bypass_display_line_cap() {
+        let old = format!("{} tail", "a ".repeat(2_000));
+        let new = "b";
+        let diff = format!("-{old}\n+{new}");
+        let window = render_unified_diff_window(&diff, 2);
+        let rendered = window.lines[0]
+            .spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>();
+        assert!(rendered.len() <= DIFF_DISPLAY_LINE_BYTE_LIMIT + " ...".len());
+    }
+
+    #[test]
+    fn progressive_window_bounds_total_source_and_lcs_pairs() {
+        let pair = format!("-{}\n+{}", "old ".repeat(200), "new ".repeat(200));
+        let diff = std::iter::repeat_n(pair, DIFF_PROGRESSIVE_LINE_LIMIT)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let window = render_unified_diff_progressive(&diff);
+        let rendered_bytes = window
+            .lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.text.len())
+            .sum::<usize>();
+        let emphasized_lines = window
+            .lines
+            .iter()
+            .filter(|line| line.spans.iter().any(|span| span.emphasize))
+            .count();
+        assert!(rendered_bytes <= DIFF_PROGRESSIVE_BYTE_LIMIT + 2 * " ...".len());
+        assert!(emphasized_lines <= DIFF_WORD_PAIR_LIMIT * 2);
+        assert!(window.hard_capped);
     }
 }
