@@ -1478,6 +1478,17 @@ fn finalize_projected_update(block: &mut TranscriptBlock, previous: &TranscriptB
 }
 
 fn upsert_projected_block(blocks: &mut Vec<TranscriptBlock>, mut block: TranscriptBlock) -> bool {
+    if block.kind == BlockKind::Assistant
+        && block.assistant_phase == Some(AssistantMessagePhase::FinalAnswer)
+        && let Some(previous) = blocks.last()
+        && previous.kind == BlockKind::Assistant
+        && previous.assistant_phase == Some(AssistantMessagePhase::Commentary)
+        && previous.body == block.body
+    {
+        let previous = blocks.pop().expect("last assistant block exists");
+        block.selected = previous.selected;
+        block.layout_revision = previous.layout_revision.saturating_add(1);
+    }
     if let Some(existing) = blocks.iter_mut().find(|item| item.id == block.id) {
         let was_terminal = existing.status.is_empty() || is_failure_status(&existing.status);
         let is_terminal = block.status.is_empty() || is_failure_status(&block.status);
@@ -2399,6 +2410,67 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             blocks[0].assistant_phase,
             Some(AssistantMessagePhase::FinalAnswer)
         );
+    }
+
+    #[test]
+    fn identical_adjacent_final_answer_replaces_commentary_from_an_alias_id() {
+        let mut blocks = vec![{
+            let mut block = message_block(
+                "assistant:commentary-run".into(),
+                "commentary-run".into(),
+                BlockKind::Assistant,
+                "Carina",
+                "你好，我是 Carina。有什么需要我处理的？".into(),
+                String::new(),
+            );
+            block.assistant_phase = Some(AssistantMessagePhase::Commentary);
+            block
+        }];
+        let mut final_answer = message_block(
+            "assistant:final-run".into(),
+            "final-run".into(),
+            BlockKind::Assistant,
+            "Carina",
+            "你好，我是 Carina。有什么需要我处理的？".into(),
+            String::new(),
+        );
+        final_answer.assistant_phase = Some(AssistantMessagePhase::FinalAnswer);
+
+        assert!(upsert_projected_block(&mut blocks, final_answer));
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].id, "assistant:final-run");
+        assert_eq!(
+            blocks[0].assistant_phase,
+            Some(AssistantMessagePhase::FinalAnswer)
+        );
+    }
+
+    #[test]
+    fn distinct_commentary_is_retained_before_the_final_answer() {
+        let mut blocks = vec![{
+            let mut block = message_block(
+                "assistant:commentary-run".into(),
+                "commentary-run".into(),
+                BlockKind::Assistant,
+                "Carina",
+                "正在检查工作区".into(),
+                String::new(),
+            );
+            block.assistant_phase = Some(AssistantMessagePhase::Commentary);
+            block
+        }];
+        let mut final_answer = message_block(
+            "assistant:final-run".into(),
+            "final-run".into(),
+            BlockKind::Assistant,
+            "Carina",
+            "检查完成".into(),
+            String::new(),
+        );
+        final_answer.assistant_phase = Some(AssistantMessagePhase::FinalAnswer);
+
+        assert!(upsert_projected_block(&mut blocks, final_answer));
+        assert_eq!(blocks.len(), 2);
     }
 
     #[test]
