@@ -525,7 +525,7 @@ func decodeRunCheckpoint(raw []byte) *runCheckpoint {
 	if json.Unmarshal(raw, &cp) != nil || cp.Transcript == nil {
 		return nil
 	}
-	cp.Transcript.policy = defaultCompactionPolicy()
+	restoreCompactionBudget(cp.Transcript)
 	return &cp
 }
 

@@ -242,6 +242,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		maxTurns = subagentMaxTurns
 	}
 	tr := newTranscript(task.UserPrompt)
+	applyCompactionBudget(tr, d.providerCatalog, taskModel(task))
 	guard := newLoopGuard()
 	mistakes := newMistakeTracker()
 	sysPrompt := spec.SystemPrompt + "\n\n" + toolsHelp

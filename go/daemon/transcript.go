@@ -58,8 +58,17 @@ type Transcript struct {
 	Task               string
 	Summary            string // rolling summary of compacted-away head turns
 	Turns              []Turn
-	CompactionReceipts []CompactionReceipt `json:"compaction_receipts,omitempty"`
+	CompactionReceipts []CompactionReceipt      `json:"compaction_receipts,omitempty"`
+	CompactionBudget   CompactionBudgetSnapshot `json:"compaction_budget,omitempty"`
 	policy             CompactionPolicy
+}
+
+type CompactionBudgetSnapshot struct {
+	PolicyVersion  string `json:"policy_version,omitempty"`
+	WindowTokens   int    `json:"window_tokens,omitempty"`
+	ReserveTokens  int    `json:"reserve_tokens,omitempty"`
+	TriggerTokens  int    `json:"trigger_tokens,omitempty"`
+	MetadataSource string `json:"metadata_source,omitempty"`
 }
 
 // CompactionReceipt is the auditable record of one Step-2 summarize fold.
@@ -89,6 +98,11 @@ type CompactionReceipt struct {
 	KeptTurnIndices []int     `json:"kept_turn_indices,omitempty"`
 	KeptSHA256      string    `json:"kept_sha256,omitempty"`
 	KeyFiles        []string  `json:"key_files,omitempty"`
+	PolicyVersion   string    `json:"policy_version,omitempty"`
+	WindowTokens    int       `json:"window_tokens,omitempty"`
+	ReserveTokens   int       `json:"reserve_tokens,omitempty"`
+	MetadataSource  string    `json:"metadata_source,omitempty"`
+	PressureBefore  float64   `json:"pressure_before,omitempty"`
 }
 
 // CompactionPolicy bounds the model view. Provider-neutral preflight
@@ -126,7 +140,11 @@ type CompactionPolicy struct {
 	// count (see the CompactionPolicy doc comment above), so this reuses
 	// agent.go's existing estimateTokens() approximation rather than adding a
 	// second estimator.
-	MaxTokens int
+	MaxTokens      int
+	PolicyVersion  string
+	WindowTokens   int
+	ReserveTokens  int
+	MetadataSource string
 }
 
 func defaultCompactionPolicy() CompactionPolicy {
@@ -281,6 +299,10 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 	}
 	preCompactionSummary := t.Summary
 	preCompactionTurns := append([]Turn(nil), t.Turns...)
+	pressureBefore := 0.0
+	if t.policy.MaxTokens > 0 {
+		pressureBefore = float64(estimateTokens(t.render())) / float64(t.policy.MaxTokens)
+	}
 	// Step 1: elide.
 	cutoff := len(t.Turns) - t.policy.KeepRecent
 	for i := 0; i < cutoff; i++ {
@@ -335,6 +357,9 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 			Version: 2, CreatedAt: time.Now().UTC(), FirstTurn: firstTurn, LastTurn: lastTurn,
 			RemovedTurns: len(folded), PreimageSHA256: preimageHash, SummarySHA256: sha256Hex(summary),
 			KeptTurnIndices: keptIdx, KeyFiles: keyFiles(folded, 5),
+			PolicyVersion: t.policy.PolicyVersion, WindowTokens: t.policy.WindowTokens,
+			ReserveTokens: t.policy.ReserveTokens, MetadataSource: t.policy.MetadataSource,
+			PressureBefore: pressureBefore,
 		}
 		if len(kept) > 0 {
 			receipt.KeptSHA256 = turnsSHA256(kept)

@@ -49,6 +49,7 @@ States:
 | Subagent observation surface | **wired** | `agent.view` / `agent.recap`; retained Agents overlay; permission attenuation tests | ISSUE-012 |
 | Governed plan-mode exit | **wired** | daemon plan tool mask; `session.approve_plan`; child plan inheritance and tool-matrix tests | ISSUE-009 |
 | Dual-axis HITL footer | **wired** | typed `config.inventory`; persistent HITL/isolation rows; front-only approval queue count | ISSUE-010 |
+| Model-aware context compaction | **wired** | catalog/fallback budget resolver; checkpoint snapshot; verifiable receipt policy metadata | ISSUE-004 |
 | Key hints + real `/help` | **wired** | `help.rs`, `Overlay::Help`, `?` / `/help` | #22 |
 | UI copy voice guide | **wired** | `VOICE.md` | #23 |
 | Frame scheduling | **wired** | `frame_scheduler.rs` coalesce + idle `WaitPlan::Block` | #13 |

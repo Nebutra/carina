@@ -21,7 +21,7 @@ func cloneTranscriptForCompact(src *Transcript) (*Transcript, error) {
 	if err = json.Unmarshal(raw, &out); err != nil {
 		return nil, err
 	}
-	out.policy = defaultCompactionPolicy()
+	restoreCompactionBudget(&out)
 	return &out, nil
 }
 

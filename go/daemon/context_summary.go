@@ -78,6 +78,22 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 		out["checkpoint"] = map[string]any{"available": false, "reason": "latest task has no persisted checkpoint"}
 		return out, nil
 	}
+	policy := cp.Transcript.CompactionBudget
+	out["compaction_policy"] = map[string]any{
+		"policy_version": policy.PolicyVersion, "window_tokens": policy.WindowTokens,
+		"reserve_tokens": policy.ReserveTokens, "trigger_tokens": policy.TriggerTokens,
+		"metadata_source": policy.MetadataSource,
+	}
+	if context, ok := out["model_context_tokens"].(map[string]any); ok && policy.WindowTokens > 0 {
+		if _, hasLimit := context["limit_tokens"]; !hasLimit {
+			used, _ := context["tokens"].(int)
+			context["limit_tokens"] = policy.WindowTokens
+			context["remaining_tokens"] = max(0, policy.WindowTokens-used)
+			context["used_percent"] = minInt(100, used*100/policy.WindowTokens)
+		}
+		context["metadata_source"] = policy.MetadataSource
+		context["estimated_limit"] = policy.MetadataSource != "catalog"
+	}
 	out["checkpoint"] = map[string]any{
 		"available": true, "checkpoint_id": checkpointID(latest, cp), "turn": cp.Turn,
 		"transcript_bytes": cp.Transcript.size(), "turn_count": len(cp.Transcript.Turns),
