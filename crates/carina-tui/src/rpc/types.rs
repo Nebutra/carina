@@ -455,6 +455,11 @@ pub struct Session {
     #[serde(default)]
     pub plan_mode: bool,
     #[serde(default)]
+    pub permission_profile: String,
+    /// Session/kernel approval axis; distinct from product HITL mode.
+    #[serde(default)]
+    pub approval_mode: String,
+    #[serde(default)]
     pub created_at: String,
     /// Recency for cold-start resume / session browser (task activity or created_at).
     #[serde(default)]
@@ -469,6 +474,24 @@ pub struct Session {
     pub summary: String,
     #[serde(default)]
     pub continuity: Option<ContinuityState>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct ConfigInventory {
+    #[serde(default)]
+    pub effective: EffectiveConfig,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct EffectiveConfig {
+    #[serde(default)]
+    pub approval_mode: String,
+    #[serde(default)]
+    pub disable_always_approve: bool,
+    #[serde(default)]
+    pub sandbox_commands: bool,
+    #[serde(default)]
+    pub permission_profile: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

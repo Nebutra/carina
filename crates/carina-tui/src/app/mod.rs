@@ -60,9 +60,9 @@ use crate::overlay::{
 use crate::prerequisite::ProviderPickerState;
 use crate::product_projection::ProductProjection;
 use crate::rpc::{
-    Client, ExecutionLifecycle, ExecutionLifecycleReducer, ExecutionLifecycleReduction,
-    ExecutionRun, GovernanceId, Model, ModelInventory, ReceivedEvent, RpcError, RuntimeInitialize,
-    Session, SessionItemEvent, WireEvent, spawn_event_stream,
+    Client, EffectiveConfig, ExecutionLifecycle, ExecutionLifecycleReducer,
+    ExecutionLifecycleReduction, ExecutionRun, GovernanceId, Model, ModelInventory, ReceivedEvent,
+    RpcError, RuntimeInitialize, Session, SessionItemEvent, WireEvent, spawn_event_stream,
 };
 use crate::session_browser::{SessionBrowserState, SessionScope};
 use crate::sync_output::SyncOutputSupport;
@@ -348,6 +348,7 @@ struct RuntimeReconnectOutcome {
     items: Vec<SessionItemEvent>,
     prompt_history: Vec<String>,
     prompt_history_unavailable: bool,
+    security_context: Option<EffectiveConfig>,
 }
 
 #[derive(Clone)]
@@ -381,6 +382,7 @@ pub struct App {
     session_browser: SessionBrowserState,
     selected_model: String,
     active_session: Option<Session>,
+    security_context: Option<EffectiveConfig>,
     blocks: Vec<TranscriptBlock>,
     scrollback: ScrollbackLedger,
     transcript_reflow: TranscriptReflowState,
@@ -545,6 +547,7 @@ impl App {
             session_browser: SessionBrowserState::default(),
             selected_model,
             active_session: None,
+            security_context: None,
             blocks: Vec::new(),
             scrollback: ScrollbackLedger::default(),
             transcript_reflow: TranscriptReflowState::default(),
@@ -1121,6 +1124,11 @@ impl App {
         selected_model: Option<&str>,
     ) -> Result<()> {
         let mut session = self.hydrate_session_snapshot(session);
+        self.security_context = self
+            .rpc
+            .config_inventory(&session.session_id)
+            .ok()
+            .map(|config| config.effective);
         let items = self
             .rpc
             .items(&session.session_id)
@@ -1400,6 +1408,7 @@ impl App {
             items,
             prompt_history,
             prompt_history_unavailable,
+            security_context,
         } = *outcome;
         sort_sessions_by_recency(&mut sessions);
         self.rpc = rpc;
@@ -1420,6 +1429,7 @@ impl App {
         self.transcript_stale = false;
         self.persisted_prompt_history = prompt_history;
         self.persisted_prompt_history_unavailable = prompt_history_unavailable;
+        self.security_context = security_context;
         self.active_run_id = matches!(
             session.execution_status.as_str(),
             "queued" | "running" | "waiting_input" | "waiting_approval"
@@ -5782,6 +5792,10 @@ fn reconnect_runtime_and_session(
     let session = rpc
         .resume_session(session_id)
         .map_err(|error| error.to_string())?;
+    let security_context = rpc
+        .config_inventory(session_id)
+        .ok()
+        .map(|config| config.effective);
     let items = rpc.items(session_id).map_err(|error| error.to_string())?;
     let (prompt_history, prompt_history_unavailable) = match rpc.prompt_history(session_id, 200) {
         Ok(history) => (history.entries, false),
@@ -5796,6 +5810,7 @@ fn reconnect_runtime_and_session(
         items,
         prompt_history,
         prompt_history_unavailable,
+        security_context,
     })
 }
 
@@ -6892,6 +6907,8 @@ mod tests {
             next_model: String::new(),
             next_reasoning_effort: String::new(),
             plan_mode: false,
+            permission_profile: "safe-edit".into(),
+            approval_mode: "on_request".into(),
             created_at: updated_at.into(),
             updated_at: updated_at.into(),
             latest_run_id: String::new(),
@@ -7039,6 +7056,8 @@ mod tests {
             next_model: "provider/model".into(),
             next_reasoning_effort: "high".into(),
             plan_mode: true,
+            permission_profile: "safe-edit".into(),
+            approval_mode: "on_request".into(),
             created_at: String::new(),
             updated_at: String::new(),
             latest_run_id: "run_plan".into(),

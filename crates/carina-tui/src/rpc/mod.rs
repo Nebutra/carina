@@ -227,6 +227,10 @@ impl Client {
         self.call("context.summary", &json!({"session_id": session_id}))
     }
 
+    pub fn config_inventory(&mut self, session_id: &str) -> Result<ConfigInventory, RpcError> {
+        self.call("config.inventory", &json!({"session_id": session_id}))
+    }
+
     pub fn command_registry(&mut self, session_id: &str) -> Result<CommandRegistry, RpcError> {
         let registry: CommandRegistry =
             self.call("command.list", &json!({"session_id": session_id}))?;
@@ -1310,16 +1314,33 @@ mod tests {
     }
 
     #[test]
-    fn session_decodes_the_saved_reasoning_preference() {
+    fn session_decodes_reasoning_and_independent_security_axes() {
         let session: Session = serde_json::from_value(json!({
             "session_id": "sess_1",
             "workspace_root": "/tmp/carina",
             "status": "active",
             "next_model": "openai/gpt-5",
-            "next_reasoning_effort": "high"
+            "next_reasoning_effort": "high",
+            "permission_profile": "safe-edit",
+            "approval_mode": "on_request"
         }))
         .unwrap();
         assert_eq!(session.next_reasoning_effort, "high");
+        assert_eq!(session.permission_profile, "safe-edit");
+        assert_eq!(session.approval_mode, "on_request");
+
+        let config: ConfigInventory = serde_json::from_value(json!({
+            "effective": {
+                "approval_mode": "accept-edits",
+                "disable_always_approve": true,
+                "sandbox_commands": true,
+                "permission_profile": "safe-edit"
+            }
+        }))
+        .unwrap();
+        assert_eq!(config.effective.approval_mode, "accept-edits");
+        assert!(config.effective.disable_always_approve);
+        assert!(config.effective.sandbox_commands);
     }
 
     #[test]

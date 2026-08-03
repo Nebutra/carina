@@ -1279,7 +1279,10 @@ impl App {
                 )),
                 Line::from(vec![
                     Span::styled(format!(" {effort_label} "), self.theme.focus()),
-                    Span::styled(format!("  Tab  {levels}"), Style::default().fg(self.theme.muted)),
+                    Span::styled(
+                        format!("  Tab  {levels}"),
+                        Style::default().fg(self.theme.muted),
+                    ),
                 ]),
             ]
         };
@@ -2119,6 +2122,7 @@ impl App {
                 Constraint::Min(layout_contract::CONVERSATION_MIN_TRANSCRIPT_HEIGHT),
                 Constraint::Length(composer_height),
                 Constraint::Length(status_height),
+                Constraint::Length(layout_contract::SCENE_FOOTER_HEIGHT),
             ])
             .split(content);
         self.render_conversation_header(frame, chunks[0]);
@@ -2127,6 +2131,7 @@ impl App {
         if status_height > 0 {
             self.render_status(frame, chunks[3]);
         }
+        self.render_security_footer(frame, chunks[4]);
         self.render_slash_completion(frame, chunks[1]);
         self.render_context_completion(frame, chunks[1]);
         self.render_prompt_history_search(frame, chunks[1]);
@@ -3129,6 +3134,73 @@ impl App {
         .render(frame, area, self.theme);
     }
 
+    fn render_security_footer(&self, frame: &mut Frame<'_>, area: Rect) {
+        let session = self.active_session.as_ref();
+        let config = self.security_context.as_ref();
+        let hitl = config
+            .map(|value| value.approval_mode.as_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("unknown");
+        let profile = session
+            .map(|value| value.permission_profile.as_str())
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                config
+                    .map(|value| value.permission_profile.as_str())
+                    .filter(|value| !value.is_empty())
+            })
+            .unwrap_or("unknown");
+        let approval = session
+            .map(|value| value.approval_mode.as_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("unknown");
+        let sandbox = config.map_or(
+            "unknown",
+            |value| if value.sandbox_commands { "on" } else { "off" },
+        );
+        let hitl_style = match hitl {
+            "always-approve" => Style::default().fg(self.theme.danger),
+            "accept-edits" | "dont-ask" => Style::default().fg(self.theme.warning),
+            "ask" => Style::default().fg(self.theme.accent),
+            _ => Style::default().fg(self.theme.muted),
+        };
+        let (hitl_label, isolation_label, session_label, sandbox_label) =
+            security_axis_labels(self.ui_locale());
+        let width = area.width as usize;
+        let isolation = if width >= 54 {
+            format!(
+                "{isolation_label}  {profile}  {}  {session_label} {approval}  {}  {sandbox_label} {sandbox}",
+                self.theme.glyphs.separator(),
+                self.theme.glyphs.separator()
+            )
+        } else if width >= 32 {
+            format!(
+                "{isolation_label}  {profile}  {}  {sandbox_label} {sandbox}",
+                self.theme.glyphs.separator()
+            )
+        } else {
+            format!("{isolation_label}  {profile}")
+        };
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(
+                    format!("{hitl_label}  "),
+                    Style::default().fg(self.theme.muted),
+                ),
+                Span::styled(hitl, hitl_style),
+            ]),
+            Line::from(Span::styled(
+                truncate_cells(&isolation, width),
+                Style::default().fg(if sandbox == "off" {
+                    self.theme.warning
+                } else {
+                    self.theme.muted
+                }),
+            )),
+        ];
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+
     fn product_header_metadata(&self) -> (String, String, String) {
         let locale = self.ui_locale();
         let sep = self.theme.glyphs.separator();
@@ -3229,6 +3301,13 @@ impl App {
         let sep = self.theme.glyphs.separator();
         match overlay {
             Overlay::Approval(approval) => {
+                let approval_title = format!(
+                    " {}  1/{} ",
+                    tr(locale, MessageId::ApprovalRequired),
+                    self.overlays
+                        .governance_queue_len()
+                        .max(layout_contract::MIN_DIMENSION as usize)
+                );
                 let popup = centered(
                     area,
                     layout_contract::APPROVAL_POPUP.0,
@@ -3239,14 +3318,14 @@ impl App {
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
                     .border_style(Style::default().fg(self.theme.danger))
-                    .title(format!(" {} ", tr(locale, MessageId::ApprovalRequired)))
+                    .title(approval_title.clone())
                     .inner(popup);
                 frame.render_widget(
                     Block::default()
                         .borders(Borders::ALL)
                         .border_type(self.theme.glyphs.outer_border_type())
                         .border_style(Style::default().fg(self.theme.danger))
-                        .title(format!(" {} ", tr(locale, MessageId::ApprovalRequired)))
+                        .title(approval_title)
                         .style(Style::default()),
                     popup,
                 );
@@ -4899,6 +4978,20 @@ fn transcript_block_hidden(block: &TranscriptBlock) -> bool {
         && block.title.trim().is_empty()
         && block.body.trim().is_empty()
         && block.status.trim().is_empty()
+}
+
+fn security_axis_labels(
+    locale: Locale,
+) -> (&'static str, &'static str, &'static str, &'static str) {
+    match locale {
+        Locale::En => ("HITL", "Isolation", "session", "sandbox"),
+        Locale::ZhHans => ("审批", "隔离", "会话", "沙箱"),
+        Locale::ZhHant => ("審批", "隔離", "工作階段", "沙箱"),
+        Locale::Ja => ("承認", "分離", "セッション", "サンドボックス"),
+        Locale::Ko => ("승인", "격리", "세션", "샌드박스"),
+        Locale::Es => ("Aprobación", "Aislamiento", "sesión", "sandbox"),
+        Locale::Fr => ("Approbation", "Isolation", "session", "sandbox"),
+    }
 }
 
 #[cfg(test)]

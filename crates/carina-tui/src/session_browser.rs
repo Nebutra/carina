@@ -314,6 +314,8 @@ mod tests {
             next_model: "openai/gpt-5".into(),
             next_reasoning_effort: "high".into(),
             plan_mode: false,
+            permission_profile: "safe-edit".into(),
+            approval_mode: "on_request".into(),
             created_at: String::new(),
             updated_at: String::new(),
             latest_run_id: String::new(),

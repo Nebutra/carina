@@ -297,6 +297,14 @@ impl OverlayStack {
         self.active.as_mut()
     }
 
+    pub fn governance_queue_len(&self) -> usize {
+        self.active
+            .iter()
+            .chain(self.pending.iter())
+            .filter(|overlay| overlay.is_governance())
+            .count()
+    }
+
     pub fn push(&mut self, overlay: Overlay) {
         if let Overlay::PlanReview(review) = &overlay
             && self
@@ -484,6 +492,7 @@ mod tests {
         let mut second = event("permission.request");
         second.decision_id = "perm_2".into();
         stack.push(Overlay::from_event(&second).unwrap());
+        assert_eq!(stack.governance_queue_len(), 2);
 
         let Some(Overlay::Approval(active)) = stack.active() else {
             panic!("approval must remain active");
@@ -494,6 +503,7 @@ mod tests {
             panic!("second approval must advance after resolution");
         };
         assert_eq!(active.decision_id, "perm_2");
+        assert_eq!(stack.governance_queue_len(), 1);
     }
 
     #[test]
