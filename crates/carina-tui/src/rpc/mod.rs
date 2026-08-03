@@ -261,6 +261,43 @@ impl Client {
         self.call("workspace.diff", &json!({"session_id": session_id}))
     }
 
+    pub fn workspace_patches(&mut self, session_id: &str) -> Result<Vec<WorkspacePatch>, RpcError> {
+        self.call("workspace.patch.list", &json!({"session_id": session_id}))
+    }
+
+    pub fn workspace_patch(
+        &mut self,
+        session_id: &str,
+        patch_id: &str,
+    ) -> Result<WorkspacePatch, RpcError> {
+        self.call(
+            "workspace.patch.show",
+            &json!({"session_id": session_id, "patch_id": patch_id}),
+        )
+    }
+
+    pub fn rollback_workspace_patch(
+        &mut self,
+        session_id: &str,
+        patch_id: &str,
+    ) -> Result<WorkspacePatch, RpcError> {
+        self.call(
+            "workspace.patch.rollback",
+            &json!({"session_id": session_id, "patch_id": patch_id}),
+        )
+    }
+
+    pub fn preview_workspace_patch_rollback(
+        &mut self,
+        session_id: &str,
+        patch_id: &str,
+    ) -> Result<PatchRollbackPreview, RpcError> {
+        self.call(
+            "workspace.patch.rollback.preview",
+            &json!({"session_id": session_id, "patch_id": patch_id}),
+        )
+    }
+
     pub fn sessions(&mut self) -> Result<Vec<Session>, RpcError> {
         self.call("session.list", &json!({}))
     }

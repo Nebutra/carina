@@ -298,7 +298,10 @@ or denial never rolls back canonical local memory. See
 | `workspace.tree` | file tree (via `carina-scan`) |
 | `workspace.search` | structured search (via `carina-grep`) |
 | `workspace.file.get` | read a clean relative UTF-8 file up to 1 MiB (FileRead capability) |
-| `workspace.patch.propose` / `apply` / `rollback` | transactional patch operations |
+| `workspace.patch.propose` / `apply` / `verify` | propose, apply, and verify a transactional patch |
+| `workspace.patch.list` / `show` | inspect patch status, attribution, approval, verification, and audit IDs |
+| `workspace.patch.rollback.preview` | validate the post-image and return typed restore/delete impacts without mutation |
+| `workspace.patch.rollback` | restore the pre-image when the preview invariant still holds |
 
 There is no separate workspace registration method: a workspace is bound at
 `session.create` time via the `workspace_root` param.
@@ -310,6 +313,13 @@ refuses (error + `PolicyViolation` audit event) until the decision is resolved
 with `governance.action.approve`; a decision resolved by `governance.action.deny`, or left
 unresolved past the approval window, refuses permanently and the patch must be
 re-proposed.
+
+Applied patches carry `transaction_id`, `actor`, `approval_id`,
+`audit_event_ids`, `verify_result`, and per-hunk attribution. Clients must call
+`workspace.patch.rollback.preview` before confirmation. The preview and write
+RPC use the same post-image hash check; a stale or conflicting workspace is
+rejected with `workspace unchanged` and is never fuzzy-applied or partially
+restored.
 
 ## Artifact API
 

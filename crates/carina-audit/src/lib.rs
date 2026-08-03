@@ -76,6 +76,7 @@ pub enum EventType {
     FileWriteProposed,
     PatchProposed,
     PatchApplied,
+    PatchVerified,
     PatchFailed,
     CommandStarted,
     CommandOutput,

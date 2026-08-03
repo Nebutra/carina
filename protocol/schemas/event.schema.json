@@ -81,6 +81,7 @@
         "FileWriteProposed",
         "PatchProposed",
         "PatchApplied",
+        "PatchVerified",
         "PatchFailed",
         "CommandStarted",
         "CommandOutput",

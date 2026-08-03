@@ -303,6 +303,114 @@ pub struct WorkspaceDiffFile {
     pub diff: String,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatch {
+    #[serde(default)]
+    pub patch_id: String,
+    #[serde(default)]
+    pub transaction_id: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub actor: String,
+    #[serde(default)]
+    pub task_id: String,
+    #[serde(default)]
+    pub agent_step_id: String,
+    #[serde(default)]
+    pub model_id: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub affected_files: Vec<String>,
+    #[serde(default)]
+    pub base_hash: String,
+    #[serde(default)]
+    pub new_hash: String,
+    #[serde(default)]
+    pub diff: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub risk_level: u8,
+    #[serde(default)]
+    pub approval_status: String,
+    #[serde(default)]
+    pub test_status: String,
+    #[serde(default)]
+    pub approval_id: String,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub audit_event_ids: Vec<String>,
+    #[serde(default)]
+    pub verify_result: Option<PatchVerifyResult>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub hunk_attributions: Vec<PatchHunkAttribution>,
+    #[serde(default)]
+    pub rollback_pointer: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct PatchVerifyResult {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub expected_hash: String,
+    #[serde(default)]
+    pub actual_hash: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct PatchHunkAttribution {
+    #[serde(default)]
+    pub file: String,
+    #[serde(default)]
+    pub hunk_index: usize,
+    #[serde(default)]
+    pub actor: String,
+    #[serde(default)]
+    pub transaction_id: String,
+    #[serde(default)]
+    pub approval_id: String,
+    #[serde(default)]
+    pub audit_event_id: String,
+    #[serde(default)]
+    pub verify_result: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct PatchRollbackPreview {
+    #[serde(default)]
+    pub patch_id: String,
+    #[serde(default)]
+    pub transaction_id: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub can_rollback: bool,
+    #[serde(default)]
+    pub workspace_unchanged: bool,
+    #[serde(default)]
+    pub expected_hash: String,
+    #[serde(default)]
+    pub actual_hash: String,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub files: Vec<PatchRollbackFile>,
+    #[serde(default)]
+    pub file_count: usize,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub hunk_attributions: Vec<PatchHunkAttribution>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct PatchRollbackFile {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub action: String,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ReviewEntry {
     #[serde(default)]
@@ -1329,6 +1437,49 @@ mod tests {
         .unwrap();
         assert_eq!(diff.files[0].path, "src/main.rs");
         assert!(diff.files[0].diff.contains("+new"));
+
+        let patch: WorkspacePatch = serde_json::from_value(json!({
+            "patch_id": "patch_1",
+            "transaction_id": "txn_1",
+            "session_id": "sess_1",
+            "actor": "model",
+            "status": "applied",
+            "affected_files": ["src/main.rs"],
+            "approval_status": "approved",
+            "approval_id": "decision_1",
+            "test_status": "passed",
+            "audit_event_ids": ["evt_1"],
+            "verify_result": {"status": "passed", "expected_hash": "a", "actual_hash": "a"},
+            "hunk_attributions": [{
+                "file": "src/main.rs",
+                "hunk_index": 0,
+                "actor": "model",
+                "transaction_id": "txn_1",
+                "approval_id": "decision_1",
+                "audit_event_id": "evt_1",
+                "verify_result": "passed"
+            }],
+            "rollback_pointer": "snapshot_1"
+        }))
+        .unwrap();
+        assert_eq!(patch.hunk_attributions[0].transaction_id, "txn_1");
+        assert_eq!(patch.verify_result.unwrap().status, "passed");
+
+        let preview: PatchRollbackPreview = serde_json::from_value(json!({
+            "patch_id": "patch_1",
+            "transaction_id": "txn_1",
+            "status": "verified",
+            "can_rollback": true,
+            "workspace_unchanged": true,
+            "expected_hash": "a",
+            "actual_hash": "a",
+            "files": [{"path": "src/main.rs", "action": "restore"}],
+            "file_count": 1,
+            "hunk_attributions": []
+        }))
+        .unwrap();
+        assert!(preview.can_rollback);
+        assert_eq!(preview.files[0].action, "restore");
 
         let recap: AgentRecap = serde_json::from_value(json!({
             "agent": {"task_id": "task_2", "category": "working"},

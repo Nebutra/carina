@@ -1182,6 +1182,8 @@ func (d *Daemon) registerMethods() {
 	d.registerRPCDynamic("workspace.trust", rpc.ScopeAdmin, false, d.handleWorkspaceTrust, workspaceTrustScope, true)
 	d.registerRPCDynamic("workspace.patch.propose", rpc.ScopeWrite, false, d.handlePatchPropose, patchProposeScope)
 	d.registerRPC("workspace.patch.apply", rpc.ScopeWrite, false, d.handlePatchApply)
+	d.registerRPC("workspace.patch.verify", rpc.ScopeWrite, false, d.handlePatchVerify)
+	d.registerRPC("workspace.patch.rollback.preview", rpc.ScopeRead, false, d.handlePatchRollbackPreview)
 	d.registerRPC("workspace.patch.rollback", rpc.ScopeWrite, false, d.handlePatchRollback)
 	d.registerRPC("workspace.patch.list", rpc.ScopeRead, false, d.handlePatchList)
 	d.registerRPC("workspace.patch.show", rpc.ScopeRead, false, d.handlePatchShow)
@@ -3913,12 +3915,29 @@ func (d *Daemon) handlePatchApply(params json.RawMessage) (any, error) {
 	if err := d.checkPatchGate(p.SessionID, p.PatchID); err != nil {
 		return nil, err
 	}
-	patch, err := d.kern.PatchApply(p.SessionID, p.PatchID, p.Approver)
+	approvalID, err := d.patchGateApprovalID(p.SessionID, p.PatchID)
+	if err != nil {
+		return nil, err
+	}
+	patch, err := d.kern.PatchApplyAttributed(p.SessionID, p.PatchID, p.Approver, approvalID)
 	if err != nil {
 		return nil, err
 	}
 	d.publishKernelPatchEvents(patch)
 	return patch, nil
+}
+
+func (d *Daemon) patchGateApprovalID(sessionID, patchID string) (string, error) {
+	d.mu.Lock()
+	gate := d.patchGates[patchID]
+	if gate != nil && gate.sessionID == sessionID && gate.decisionID != "" {
+		decisionID := gate.decisionID
+		d.mu.Unlock()
+		return decisionID, nil
+	}
+	d.mu.Unlock()
+	d.recordPatchRefusal(sessionID, patchID, "", "approval_attribution_missing")
+	return "", fmt.Errorf("approval_attribution_missing: patch %s was not applied because its approved gate is no longer available", patchID)
 }
 
 // checkPatchGate refuses a patch apply unless its PatchApply decision was
@@ -4043,6 +4062,33 @@ func (d *Daemon) handlePatchRollback(params json.RawMessage) (any, error) {
 	// Keep the code index in step with the restore (best-effort; an index
 	// error never fails the rollback).
 	d.invalidateIndex(p.SessionID, patch.AffectedFiles)
+	return patch, nil
+}
+
+func (d *Daemon) handlePatchRollbackPreview(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		PatchID   string `json:"patch_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	return d.kern.PatchRollbackPreview(p.SessionID, p.PatchID)
+}
+
+func (d *Daemon) handlePatchVerify(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string `json:"session_id"`
+		PatchID   string `json:"patch_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	patch, err := d.kern.PatchVerify(p.SessionID, p.PatchID)
+	if err != nil {
+		return nil, err
+	}
+	d.publishKernelPatchEvents(patch)
 	return patch, nil
 }
 

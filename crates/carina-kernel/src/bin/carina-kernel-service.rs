@@ -114,6 +114,8 @@ impl Service {
             "kernel.audit.verify" => self.audit_verify(p),
             "kernel.patch.propose" => self.patch_propose(p),
             "kernel.patch.apply" => self.patch_apply(p),
+            "kernel.patch.verify" => self.patch_verify(p),
+            "kernel.patch.rollback_preview" => self.patch_rollback_preview(p),
             "kernel.patch.rollback" => self.patch_rollback(p),
             "kernel.patch.list" => self.patch_list(p),
             "kernel.patch.show" => self.patch_show(p),
@@ -524,7 +526,7 @@ impl Service {
             .and_then(Value::as_str)
             .map(String::from);
         let model_id = p.get("model_id").and_then(Value::as_str).map(String::from);
-        let tx =
+        let mut tx =
             PatchTransaction::propose(&session_id, paths.clone(), base.as_bytes(), &diff, &reason)
                 .map_err(err_str)?
                 .with_provenance(task_id.clone(), agent_step_id, model_id);
@@ -550,6 +552,7 @@ impl Service {
             .kernel
             .record_event_with_cursor(&event)
             .map_err(err_str)?;
+        tx = tx.with_audit_event(event.event_id.clone());
 
         let result = patch_result_with_events(&tx, &[(event, cursor)])?;
         ctx.patches.insert(
@@ -571,6 +574,10 @@ impl Service {
             .and_then(Value::as_str)
             .unwrap_or("user")
             .to_string();
+        let approval_id = p
+            .get("approval_id")
+            .and_then(Value::as_str)
+            .map(String::from);
         let state_dir = self.state_dir.clone();
         let ctx = self.ctx(p)?;
 
@@ -607,12 +614,20 @@ impl Service {
         }
         let current_hash = combined_hash(&current, Pre::Old);
 
-        let tx = record
-            .tx
-            .validate(current_hash.as_bytes())
-            .map_err(|e| format!("patch validation failed: {e}"))?
-            .approve(false)
-            .map_err(err_str)?;
+        let tx = match record.tx.clone().validate(current_hash.as_bytes()) {
+            Ok(tx) => tx,
+            Err(error) => {
+                ctx.patches.insert(patch_id.clone(), record);
+                return Err(format!("patch validation failed: {error}"));
+            }
+        }
+        .approve(false)
+        .map_err(err_str)?
+        .with_approval(
+            approval_id
+                .clone()
+                .unwrap_or_else(|| decision.decision_id.clone()),
+        );
 
         // Delegate the actual disk write to the Zig carina-patch-native tool
         // (PRD §4.4: file mutation runs in the native toolchain, not Rust).
@@ -651,7 +666,7 @@ impl Service {
         }
 
         let new_hash = combined_hash(&record.files, Pre::New);
-        let tx = tx
+        let mut tx = tx
             .mark_applied(new_hash.as_bytes(), record.snapshot_dir.to_string_lossy())
             .map_err(err_str)?;
 
@@ -660,11 +675,16 @@ impl Service {
             EventType::PatchApplied,
             json!({"patch_id": patch_id, "new_hash": tx.new_hash, "rollback_pointer": tx.rollback_pointer}),
         )
-        .with_decision(&decision.decision_id);
+        .with_decision(
+            approval_id
+                .as_deref()
+                .unwrap_or(decision.decision_id.as_str()),
+        );
         let cursor = ctx
             .kernel
             .record_event_with_cursor(&event)
             .map_err(err_str)?;
+        tx = tx.with_audit_event(event.event_id.clone());
 
         // Keep the code index in step with the write (no-op without an index).
         invalidate_index_after_patch(&state_dir, ctx, &session_id, &record.files);
@@ -681,6 +701,59 @@ impl Service {
         Ok(result)
     }
 
+    fn patch_verify(&mut self, p: &Value) -> Result<Value, String> {
+        let session_id = str_param(p, "session_id")?;
+        let patch_id = str_param(p, "patch_id")?;
+        let ctx = self.ctx(p)?;
+        let mut record = ctx
+            .patches
+            .remove(&patch_id)
+            .ok_or_else(|| format!("unknown patch {patch_id}"))?;
+        let expected_hash = match record.tx.new_hash.clone() {
+            Some(hash) => hash,
+            None => {
+                ctx.patches.insert(patch_id.clone(), record);
+                return Err(format!("patch {patch_id} has not been applied"));
+            }
+        };
+        let actual_hash = current_patch_hash(&ctx.workspace_root, &record.files);
+        let passed = actual_hash == expected_hash;
+        let mut tx = match record.tx.clone().mark_verified(passed) {
+            Ok(tx) => tx.with_verify_result(expected_hash.clone(), actual_hash.clone()),
+            Err(error) => {
+                ctx.patches.insert(patch_id.clone(), record);
+                return Err(error.to_string());
+            }
+        };
+        let event = Event::new(
+            &session_id,
+            EventType::PatchVerified,
+            json!({"patch_id": patch_id, "passed": passed, "expected_hash": expected_hash, "actual_hash": actual_hash}),
+        );
+        let cursor = match ctx.kernel.record_event_with_cursor(&event) {
+            Ok(cursor) => cursor,
+            Err(error) => {
+                ctx.patches.insert(patch_id.clone(), record);
+                return Err(error.to_string());
+            }
+        };
+        tx = tx.with_audit_event(event.event_id.clone());
+        let result = patch_result_with_events(&tx, &[(event, cursor)])?;
+        record.tx = tx;
+        ctx.patches.insert(patch_id, record);
+        Ok(result)
+    }
+
+    fn patch_rollback_preview(&mut self, p: &Value) -> Result<Value, String> {
+        let patch_id = str_param(p, "patch_id")?;
+        let ctx = self.ctx(p)?;
+        let record = ctx
+            .patches
+            .get(&patch_id)
+            .ok_or_else(|| format!("unknown patch {patch_id}"))?;
+        rollback_preview(&ctx.workspace_root, record)
+    }
+
     fn patch_rollback(&mut self, p: &Value) -> Result<Value, String> {
         let session_id = str_param(p, "session_id")?;
         let patch_id = str_param(p, "patch_id")?;
@@ -690,6 +763,11 @@ impl Service {
             .patches
             .remove(&patch_id)
             .ok_or_else(|| format!("unknown patch {patch_id}"))?;
+
+        if let Err(error) = rollback_preview(&ctx.workspace_root, &record) {
+            ctx.patches.insert(patch_id.clone(), record);
+            return Err(error);
+        }
 
         let started = Event::new(
             &session_id,
@@ -723,7 +801,7 @@ impl Service {
             }
         }
 
-        let tx = record.tx.rollback().map_err(err_str)?;
+        let mut tx = record.tx.rollback().map_err(err_str)?;
         let completed = Event::new(
             &session_id,
             EventType::RollbackCompleted,
@@ -734,6 +812,9 @@ impl Service {
             .kernel
             .record_event_with_cursor(&completed)
             .map_err(err_str)?;
+        tx = tx
+            .with_audit_event(started.event_id.clone())
+            .with_audit_event(completed.event_id.clone());
 
         // Keep the code index in step with the restore (no-op without an index).
         invalidate_index_after_patch(&state_dir, ctx, &session_id, &record.files);
@@ -1788,6 +1869,55 @@ fn combined_hash(files: &[FileChange], which: Pre) -> String {
         buf.push(0);
     }
     content_hash(&buf)
+}
+
+fn current_patch_hash(root: &Path, files: &[FileChange]) -> String {
+    let mut current = files.to_vec();
+    for change in &mut current {
+        change.old_content = std::fs::read(root.join(&change.path)).unwrap_or_default();
+    }
+    // PatchTransaction::mark_applied hashes the combined-hash bytes, matching
+    // propose/validate's transaction-layer hashing convention.
+    content_hash(combined_hash(&current, Pre::Old).as_bytes())
+}
+
+/// Proves the rollback target still equals the transaction post-image and
+/// returns impact metadata without exposing file contents or mutating state.
+fn rollback_preview(root: &Path, record: &PatchRecord) -> Result<Value, String> {
+    let expected_hash = record
+        .tx
+        .new_hash
+        .as_ref()
+        .ok_or_else(|| format!("patch {} has not been applied", record.tx.patch_id))?;
+    let actual_hash = current_patch_hash(root, &record.files);
+    if &actual_hash != expected_hash {
+        return Err(format!(
+            "rollback conflict: workspace unchanged; patch {} expected post-image {}, found {}",
+            record.tx.patch_id, expected_hash, actual_hash
+        ));
+    }
+    let files: Vec<Value> = record
+        .files
+        .iter()
+        .map(|change| {
+            json!({
+                "path": change.path,
+                "action": if change.existed { "restore" } else { "delete" },
+            })
+        })
+        .collect();
+    Ok(json!({
+        "patch_id": record.tx.patch_id,
+        "transaction_id": record.tx.transaction_id,
+        "status": record.tx.status,
+        "can_rollback": true,
+        "workspace_unchanged": true,
+        "expected_hash": expected_hash,
+        "actual_hash": actual_hash,
+        "files": files,
+        "file_count": files.len(),
+        "hunk_attributions": record.tx.hunk_attributions,
+    }))
 }
 
 /// Minimal human-readable diff (PRD §8.4). Line-based; Myers diff later.

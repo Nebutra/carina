@@ -41,6 +41,27 @@ pub enum TestStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifyResult {
+    pub status: TestStatus,
+    pub expected_hash: String,
+    pub actual_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HunkAttribution {
+    pub file: String,
+    pub hunk_index: usize,
+    pub actor: String,
+    pub transaction_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audit_event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verify_result: Option<TestStatus>,
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum PatchError {
     #[error("illegal transition {from:?} -> {to:?}")]
@@ -59,7 +80,10 @@ pub enum PatchError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchTransaction {
     pub patch_id: String,
+    /// Stable transaction identity. Equal to patch_id for the current MVP.
+    pub transaction_id: String,
     pub session_id: String,
+    pub actor: String,
     /// Provenance: the task, agent step, and model that produced the patch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
@@ -80,6 +104,13 @@ pub struct PatchTransaction {
     pub risk_level: u8,
     pub approval_status: ApprovalStatus,
     pub test_status: TestStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audit_event_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verify_result: Option<VerifyResult>,
+    pub hunk_attributions: Vec<HunkAttribution>,
     /// Snapshot id used to restore the pre-image on rollback.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rollback_pointer: Option<String>,
@@ -96,9 +127,25 @@ impl PatchTransaction {
         if affected_files.is_empty() {
             return Err(PatchError::Empty);
         }
+        let patch_id = new_patch_id();
+        let hunk_attributions = affected_files
+            .iter()
+            .enumerate()
+            .map(|(hunk_index, file)| HunkAttribution {
+                file: file.clone(),
+                hunk_index,
+                actor: "agent".into(),
+                transaction_id: patch_id.clone(),
+                approval_id: None,
+                audit_event_id: None,
+                verify_result: None,
+            })
+            .collect();
         Ok(Self {
-            patch_id: new_patch_id(),
+            patch_id: patch_id.clone(),
+            transaction_id: patch_id,
             session_id: session_id.into(),
+            actor: "agent".into(),
             task_id: None,
             agent_step_id: None,
             model_id: None,
@@ -112,6 +159,10 @@ impl PatchTransaction {
             risk_level: 2,
             approval_status: ApprovalStatus::Pending,
             test_status: TestStatus::NotRun,
+            approval_id: None,
+            audit_event_ids: Vec::new(),
+            verify_result: None,
+            hunk_attributions,
             rollback_pointer: None,
         })
     }
@@ -153,6 +204,24 @@ impl PatchTransaction {
         self.transition(PatchStatus::Approved)
     }
 
+    pub fn with_approval(mut self, approval_id: impl Into<String>) -> Self {
+        let approval_id = approval_id.into();
+        self.approval_id = Some(approval_id.clone());
+        for hunk in &mut self.hunk_attributions {
+            hunk.approval_id = Some(approval_id.clone());
+        }
+        self
+    }
+
+    pub fn with_audit_event(mut self, event_id: impl Into<String>) -> Self {
+        let event_id = event_id.into();
+        self.audit_event_ids.push(event_id.clone());
+        for hunk in &mut self.hunk_attributions {
+            hunk.audit_event_id = Some(event_id.clone());
+        }
+        self
+    }
+
     /// Records a successful atomic apply with its rollback snapshot.
     pub fn mark_applied(
         mut self,
@@ -175,6 +244,18 @@ impl PatchTransaction {
         } else {
             self.transition(PatchStatus::Failed)
         }
+    }
+
+    pub fn with_verify_result(mut self, expected_hash: String, actual_hash: String) -> Self {
+        self.verify_result = Some(VerifyResult {
+            status: self.test_status,
+            expected_hash,
+            actual_hash,
+        });
+        for hunk in &mut self.hunk_attributions {
+            hunk.verify_result = Some(self.test_status);
+        }
+        self
     }
 
     pub fn commit(self) -> Result<Self, PatchError> {

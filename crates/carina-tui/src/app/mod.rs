@@ -1807,6 +1807,11 @@ impl App {
                     }
                     match result {
                         Ok(projection) => {
+                            let selected_patch = changes
+                                .projection
+                                .patches
+                                .get(changes.selected)
+                                .map(|patch| patch.patch_id.as_str());
                             let selected_path = changes
                                 .projection
                                 .workspace_diff
@@ -1819,7 +1824,16 @@ impl App {
                                 .changes
                                 .get(changes.selected)
                                 .map(|change| change.id.as_str());
-                            changes.selected = if projection.workspace_diff.files.is_empty() {
+                            changes.selected = if !projection.patches.is_empty() {
+                                selected_patch
+                                    .and_then(|patch_id| {
+                                        projection
+                                            .patches
+                                            .iter()
+                                            .position(|patch| patch.patch_id == patch_id)
+                                    })
+                                    .unwrap_or(0)
+                            } else if projection.workspace_diff.files.is_empty() {
                                 selected_review
                                     .and_then(|id| {
                                         projection
@@ -1840,7 +1854,12 @@ impl App {
                                     })
                                     .unwrap_or(0)
                             };
-                            changes.load.finish(projection.workspace_diff_error.clone());
+                            changes.load.finish(
+                                projection
+                                    .patches_error
+                                    .clone()
+                                    .or_else(|| projection.workspace_diff_error.clone()),
+                            );
                             changes.projection = *projection;
                             changes.scroll = 0;
                         }
@@ -4244,12 +4263,17 @@ impl App {
                 _ => {}
             },
             Some(Overlay::Changes(changes)) => match key.code {
+                KeyCode::Esc if changes.confirm_rollback => {
+                    deferred = Some(Action::CancelPatchRollback)
+                }
                 KeyCode::Up | KeyCode::Char('k') => {
                     changes.selected = changes.selected.saturating_sub(1);
                     changes.scroll = 0;
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    let count = if changes.projection.workspace_diff.files.is_empty() {
+                    let count = if !changes.projection.patches.is_empty() {
+                        changes.projection.patches.len()
+                    } else if changes.projection.workspace_diff.files.is_empty() {
                         changes.projection.review.changes.len()
                     } else {
                         changes.projection.workspace_diff.files.len()
@@ -4260,6 +4284,15 @@ impl App {
                 KeyCode::PageDown => changes.scroll = changes.scroll.saturating_add(12),
                 KeyCode::PageUp => changes.scroll = changes.scroll.saturating_sub(12),
                 KeyCode::Home => changes.scroll = 0,
+                KeyCode::Enter if changes.confirm_rollback => {
+                    deferred = Some(Action::ConfirmPatchRollback)
+                }
+                KeyCode::Char('y') if changes.confirm_rollback => {
+                    deferred = Some(Action::ConfirmPatchRollback)
+                }
+                KeyCode::Enter if !changes.projection.patches.is_empty() => {
+                    deferred = Some(Action::BeginPatchRollback)
+                }
                 KeyCode::Char('r') => deferred = Some(Action::RefreshChanges),
                 KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::OpenStatus),
                 _ => {}
@@ -5030,13 +5063,21 @@ impl App {
         match self.overlays.active_mut() {
             Some(Overlay::Changes(changes)) => {
                 changes.load.refresh(generation, session_id.clone());
+                changes.confirm_rollback = false;
+                changes.rollback_preview = None;
+                changes.rollback_error.clear();
             }
-            _ => self.overlays.replace(Overlay::Changes(ChangesOverlay {
-                projection: ProductProjection::default(),
-                selected: 0,
-                scroll: 0,
-                load: RetainedLoad::begin(generation, session_id.clone()),
-            })),
+            _ => self
+                .overlays
+                .replace(Overlay::Changes(Box::new(ChangesOverlay {
+                    projection: ProductProjection::default(),
+                    selected: 0,
+                    scroll: 0,
+                    load: RetainedLoad::begin(generation, session_id.clone()),
+                    confirm_rollback: false,
+                    rollback_preview: None,
+                    rollback_error: String::new(),
+                }))),
         }
         let socket = self.rpc.socket().to_path_buf();
         let tx = self.async_tx.clone();
@@ -5221,6 +5262,90 @@ impl App {
             }
             Action::OpenAgents | Action::RefreshAgents => self.request_agents(),
             Action::OpenChanges | Action::RefreshChanges => self.request_changes(),
+            Action::BeginPatchRollback => {
+                let target = match self.overlays.active() {
+                    Some(Overlay::Changes(changes)) => changes
+                        .projection
+                        .patches
+                        .get(changes.selected)
+                        .filter(|patch| {
+                            !patch.rollback_pointer.is_empty()
+                                && !matches!(
+                                    patch.status.as_str(),
+                                    "rolled_back" | "failed" | "proposed"
+                                )
+                        })
+                        .map(|patch| (patch.session_id.clone(), patch.patch_id.clone())),
+                    _ => None,
+                };
+                if let Some((session_id, patch_id)) = target {
+                    let locale = self.ui_locale();
+                    let preview = self
+                        .rpc
+                        .preview_workspace_patch_rollback(&session_id, &patch_id);
+                    if let Some(Overlay::Changes(changes)) = self.overlays.active_mut() {
+                        match preview {
+                            Ok(preview) if preview.can_rollback => {
+                                changes.confirm_rollback = true;
+                                changes.rollback_preview = Some(preview);
+                                changes.rollback_error.clear();
+                            }
+                            Ok(_) => {
+                                changes.confirm_rollback = false;
+                                changes.rollback_preview = None;
+                                changes.rollback_error = tr_format(
+                                    locale,
+                                    MessageId::PatchRollbackUnavailable,
+                                    &[("error", tr(locale, MessageId::NotAvailable))],
+                                );
+                            }
+                            Err(error) => {
+                                changes.confirm_rollback = false;
+                                changes.rollback_preview = None;
+                                changes.rollback_error = tr_format(
+                                    locale,
+                                    MessageId::PatchRollbackUnavailable,
+                                    &[("error", &error.to_string())],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            Action::CancelPatchRollback => {
+                if let Some(Overlay::Changes(changes)) = self.overlays.active_mut() {
+                    changes.confirm_rollback = false;
+                    changes.rollback_preview = None;
+                    changes.rollback_error.clear();
+                }
+            }
+            Action::ConfirmPatchRollback => {
+                let target = match self.overlays.active() {
+                    Some(Overlay::Changes(changes)) if changes.confirm_rollback => changes
+                        .projection
+                        .patches
+                        .get(changes.selected)
+                        .map(|patch| (patch.session_id.clone(), patch.patch_id.clone())),
+                    _ => None,
+                };
+                if let Some((session_id, patch_id)) = target {
+                    let locale = self.ui_locale();
+                    match self.rpc.rollback_workspace_patch(&session_id, &patch_id) {
+                        Ok(_) => self.request_changes(),
+                        Err(error) => {
+                            if let Some(Overlay::Changes(changes)) = self.overlays.active_mut() {
+                                changes.confirm_rollback = false;
+                                changes.rollback_preview = None;
+                                changes.rollback_error = tr_format(
+                                    locale,
+                                    MessageId::PatchRollbackUnavailable,
+                                    &[("error", &error.to_string())],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             Action::SelectAgent(index) => self.select_agent(index),
             Action::OpenSelectedAgentSession => {
                 let session_id = match self.overlays.active() {

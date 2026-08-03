@@ -58,6 +58,7 @@
     { "name": "FileWriteProposed", "side_effect": false, "payload": ["path", "patch_id"] },
     { "name": "PatchProposed", "side_effect": false, "payload": ["patch_id", "affected_files", "reason", "diff"] },
     { "name": "PatchApplied", "side_effect": true, "payload": ["patch_id", "new_hash", "rollback_pointer"] },
+    { "name": "PatchVerified", "side_effect": false, "payload": ["patch_id", "passed", "expected_hash", "actual_hash"] },
     { "name": "PatchFailed", "side_effect": false, "payload": ["patch_id", "error"] },
     { "name": "CommandStarted", "side_effect": true, "payload": ["command", "cwd", "risk_level"] },
     { "name": "CommandOutput", "side_effect": false, "payload": ["stream", "chunk"] },

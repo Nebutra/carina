@@ -30,23 +30,63 @@ type Decision struct {
 
 // Patch mirrors protocol/schemas/patch-transaction.schema.json.
 type Patch struct {
-	PatchID         string           `json:"patch_id"`
-	SessionID       string           `json:"session_id"`
-	TaskID          string           `json:"task_id,omitempty"`
-	AgentStepID     string           `json:"agent_step_id,omitempty"`
-	ModelID         string           `json:"model_id,omitempty"`
-	CreatedAt       string           `json:"created_at"`
-	Status          string           `json:"status"`
-	AffectedFiles   []string         `json:"affected_files"`
-	BaseHash        string           `json:"base_hash"`
-	NewHash         string           `json:"new_hash,omitempty"`
-	Diff            string           `json:"diff"`
-	Reason          string           `json:"reason"`
-	RiskLevel       int              `json:"risk_level"`
-	ApprovalStatus  string           `json:"approval_status"`
-	TestStatus      string           `json:"test_status"`
-	RollbackPointer string           `json:"rollback_pointer,omitempty"`
-	AuditEvents     []PersistedEvent `json:"_audit_events,omitempty"`
+	PatchID          string                 `json:"patch_id"`
+	TransactionID    string                 `json:"transaction_id"`
+	SessionID        string                 `json:"session_id"`
+	Actor            string                 `json:"actor"`
+	TaskID           string                 `json:"task_id,omitempty"`
+	AgentStepID      string                 `json:"agent_step_id,omitempty"`
+	ModelID          string                 `json:"model_id,omitempty"`
+	CreatedAt        string                 `json:"created_at"`
+	Status           string                 `json:"status"`
+	AffectedFiles    []string               `json:"affected_files"`
+	BaseHash         string                 `json:"base_hash"`
+	NewHash          string                 `json:"new_hash,omitempty"`
+	Diff             string                 `json:"diff"`
+	Reason           string                 `json:"reason"`
+	RiskLevel        int                    `json:"risk_level"`
+	ApprovalStatus   string                 `json:"approval_status"`
+	TestStatus       string                 `json:"test_status"`
+	ApprovalID       string                 `json:"approval_id,omitempty"`
+	AuditEventIDs    []string               `json:"audit_event_ids,omitempty"`
+	VerifyResult     *PatchVerifyResult     `json:"verify_result,omitempty"`
+	HunkAttributions []PatchHunkAttribution `json:"hunk_attributions"`
+	RollbackPointer  string                 `json:"rollback_pointer,omitempty"`
+	AuditEvents      []PersistedEvent       `json:"_audit_events,omitempty"`
+}
+
+type PatchVerifyResult struct {
+	Status       string `json:"status"`
+	ExpectedHash string `json:"expected_hash"`
+	ActualHash   string `json:"actual_hash"`
+}
+
+type PatchHunkAttribution struct {
+	File          string `json:"file"`
+	HunkIndex     int    `json:"hunk_index"`
+	Actor         string `json:"actor"`
+	TransactionID string `json:"transaction_id"`
+	ApprovalID    string `json:"approval_id,omitempty"`
+	AuditEventID  string `json:"audit_event_id,omitempty"`
+	VerifyResult  string `json:"verify_result,omitempty"`
+}
+
+type PatchRollbackPreview struct {
+	PatchID            string                 `json:"patch_id"`
+	TransactionID      string                 `json:"transaction_id"`
+	Status             string                 `json:"status"`
+	CanRollback        bool                   `json:"can_rollback"`
+	WorkspaceUnchanged bool                   `json:"workspace_unchanged"`
+	ExpectedHash       string                 `json:"expected_hash"`
+	ActualHash         string                 `json:"actual_hash"`
+	Files              []PatchRollbackImpact  `json:"files"`
+	FileCount          int                    `json:"file_count"`
+	HunkAttributions   []PatchHunkAttribution `json:"hunk_attributions"`
+}
+
+type PatchRollbackImpact struct {
+	Path   string `json:"path"`
+	Action string `json:"action"` // restore | delete
 }
 
 // PersistedEvent carries a kernel-authored event and its durable raw cursor
@@ -333,16 +373,36 @@ func (s *Service) PatchPropose(sessionID, taskID, reason string, files []FileCha
 }
 
 func (s *Service) PatchApply(sessionID, patchID, approver string) (*Patch, error) {
+	return s.PatchApplyAttributed(sessionID, patchID, approver, "")
+}
+
+func (s *Service) PatchApplyAttributed(sessionID, patchID, approver, approvalID string) (*Patch, error) {
 	var p Patch
-	err := s.call("kernel.patch.apply", map[string]any{
+	params := map[string]any{
 		"session_id": sessionID, "patch_id": patchID, "approver": approver,
-	}, &p)
+	}
+	if approvalID != "" {
+		params["approval_id"] = approvalID
+	}
+	err := s.call("kernel.patch.apply", params, &p)
 	return &p, err
 }
 
 func (s *Service) PatchRollback(sessionID, patchID string) (*Patch, error) {
 	var p Patch
 	err := s.call("kernel.patch.rollback", map[string]any{"session_id": sessionID, "patch_id": patchID}, &p)
+	return &p, err
+}
+
+func (s *Service) PatchRollbackPreview(sessionID, patchID string) (*PatchRollbackPreview, error) {
+	var out PatchRollbackPreview
+	err := s.call("kernel.patch.rollback_preview", map[string]any{"session_id": sessionID, "patch_id": patchID}, &out)
+	return &out, err
+}
+
+func (s *Service) PatchVerify(sessionID, patchID string) (*Patch, error) {
+	var p Patch
+	err := s.call("kernel.patch.verify", map[string]any{"session_id": sessionID, "patch_id": patchID}, &p)
 	return &p, err
 }
 

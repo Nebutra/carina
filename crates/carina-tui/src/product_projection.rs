@@ -1,6 +1,6 @@
 use crate::rpc::{
     AgentView, AgentViewEntry, Client, DaemonStatus, ReviewEntry, SessionReview, UsageTotals,
-    WireEvent, WorkspaceDiff, WorkspaceDiffFile,
+    WireEvent, WorkspaceDiff, WorkspaceDiffFile, WorkspacePatch,
 };
 use std::path::Path;
 
@@ -167,38 +167,48 @@ pub struct ProductProjection {
     pub review: SessionReview,
     pub workspace_diff: WorkspaceDiff,
     pub workspace_diff_error: Option<String>,
+    pub patches: Vec<WorkspacePatch>,
+    pub patches_error: Option<String>,
 }
 
 impl ProductProjection {
     pub fn load(client: &mut Client, session_id: Option<&str>) -> Result<Self, String> {
         let runtime = client.daemon_status().map_err(|error| error.to_string())?;
         let agents = client.agent_view().map_err(|error| error.to_string())?;
-        let (usage, review, workspace_diff, workspace_diff_error) = if let Some(session_id) =
-            session_id
-        {
-            let (workspace_diff, workspace_diff_error) = match client.workspace_diff(session_id) {
-                Ok(diff) => (diff, None),
-                Err(error) => (WorkspaceDiff::default(), Some(error.to_string())),
+        let (usage, review, workspace_diff, workspace_diff_error, patches, patches_error) =
+            if let Some(session_id) = session_id {
+                let (workspace_diff, workspace_diff_error) = match client.workspace_diff(session_id)
+                {
+                    Ok(diff) => (diff, None),
+                    Err(error) => (WorkspaceDiff::default(), Some(error.to_string())),
+                };
+                let (patches, patches_error) = match client.workspace_patches(session_id) {
+                    Ok(patches) => (patches, None),
+                    Err(error) => (Vec::new(), Some(error.to_string())),
+                };
+                (
+                    client
+                        .usage_cost(session_id)
+                        .map_err(|error| error.to_string())?
+                        .totals,
+                    client
+                        .session_review(session_id)
+                        .map_err(|error| error.to_string())?,
+                    workspace_diff,
+                    workspace_diff_error,
+                    patches,
+                    patches_error,
+                )
+            } else {
+                (
+                    UsageTotals::default(),
+                    SessionReview::default(),
+                    WorkspaceDiff::default(),
+                    None,
+                    Vec::new(),
+                    None,
+                )
             };
-            (
-                client
-                    .usage_cost(session_id)
-                    .map_err(|error| error.to_string())?
-                    .totals,
-                client
-                    .session_review(session_id)
-                    .map_err(|error| error.to_string())?,
-                workspace_diff,
-                workspace_diff_error,
-            )
-        } else {
-            (
-                UsageTotals::default(),
-                SessionReview::default(),
-                WorkspaceDiff::default(),
-                None,
-            )
-        };
         Ok(Self {
             runtime,
             usage,
@@ -206,6 +216,8 @@ impl ProductProjection {
             review,
             workspace_diff,
             workspace_diff_error,
+            patches,
+            patches_error,
         })
     }
 

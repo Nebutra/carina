@@ -4546,6 +4546,10 @@ impl App {
                         vec![Constraint::Percentage(55), Constraint::Percentage(45)]
                     })
                     .split(inner);
+                if !overlay.projection.patches.is_empty() {
+                    self.render_workspace_patches(frame, &columns, overlay);
+                    return;
+                }
                 if !overlay.projection.workspace_diff.files.is_empty() {
                     self.render_workspace_changes(frame, &columns, overlay);
                     return;
@@ -4678,6 +4682,207 @@ impl App {
                     );
                 }
             }
+        }
+    }
+
+    fn render_workspace_patches(
+        &mut self,
+        frame: &mut Frame<'_>,
+        columns: &[Rect],
+        overlay: &crate::overlay::ChangesOverlay,
+    ) {
+        let locale = self.ui_locale();
+        let patches = &overlay.projection.patches;
+        for (index, patch) in patches.iter().take(columns[0].height as usize).enumerate() {
+            let row = Rect::new(
+                columns[0].x,
+                columns[0].y + index as u16,
+                columns[0].width,
+                layout_contract::ROW_HEIGHT,
+            );
+            let file = patch
+                .affected_files
+                .first()
+                .map(String::as_str)
+                .unwrap_or("-");
+            let extra = match patch.affected_files.len() {
+                0 => 0,
+                count => count - 1,
+            };
+            let summary = if extra == 0 {
+                format!("{}  {file}", patch.status)
+            } else {
+                format!("{}  {file} +{extra}", patch.status)
+            };
+            let style = if index == overlay.selected {
+                self.theme.selected()
+            } else {
+                Style::default().fg(self.theme.text)
+            };
+            frame.render_widget(
+                Paragraph::new(truncate_cells(&summary, columns[0].width as usize)).style(style),
+                row,
+            );
+            self.interactions.register(HitRegion {
+                component: ComponentId(12_600 + index as u64),
+                area: row,
+                action: Action::SelectChange(index),
+            });
+        }
+
+        let Some(patch) = patches.get(overlay.selected) else {
+            return;
+        };
+        let rollback_ready = !patch.rollback_pointer.is_empty()
+            && !matches!(patch.status.as_str(), "rolled_back" | "failed" | "proposed");
+        let mut details = vec![
+            Line::from(Span::styled(
+                patch.patch_id.as_str(),
+                Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(format!(
+                "{}  {}",
+                tr(locale, MessageId::Status),
+                patch.status
+            )),
+            Line::from(format!(
+                "{}  {}",
+                tr(locale, MessageId::PatchActor),
+                if patch.actor.is_empty() {
+                    "-"
+                } else {
+                    &patch.actor
+                }
+            )),
+            Line::from(format!(
+                "{}  {}",
+                tr(locale, MessageId::PatchTransaction),
+                patch.transaction_id
+            )),
+            Line::from(format!(
+                "{}  {}  {}",
+                tr(locale, MessageId::PatchApproval),
+                patch.approval_status,
+                patch.approval_id
+            )),
+            Line::from(format!(
+                "{}  {}",
+                tr(locale, MessageId::PatchVerify),
+                patch
+                    .verify_result
+                    .as_ref()
+                    .map(|result| result.status.as_str())
+                    .unwrap_or(&patch.test_status)
+            )),
+            Line::from(format!(
+                "{}  {}",
+                tr(locale, MessageId::PatchAudit),
+                patch.audit_event_ids.join(", ")
+            )),
+            Line::from(format!(
+                "{}  {}",
+                tr(locale, MessageId::Reason),
+                patch.reason
+            )),
+            Line::from(""),
+        ];
+        for file in &patch.affected_files {
+            details.push(Line::from(format!(
+                "  {} {file}",
+                self.theme.glyphs.scroll_track()
+            )));
+        }
+        for hunk in &patch.hunk_attributions {
+            details.push(Line::from(format!(
+                "  @@ {}:{}  {}  {}  {}",
+                hunk.file, hunk.hunk_index, hunk.actor, hunk.approval_id, hunk.verify_result
+            )));
+        }
+        details.push(Line::from(""));
+        if overlay.confirm_rollback {
+            let preview = overlay.rollback_preview.as_ref();
+            details.push(Line::from(Span::styled(
+                tr_format(
+                    locale,
+                    MessageId::PatchRollbackPreview,
+                    &[(
+                        "count",
+                        &preview
+                            .map_or(patch.affected_files.len(), |preview| preview.file_count)
+                            .to_string(),
+                    )],
+                ),
+                Style::default()
+                    .fg(self.theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            if let Some(preview) = preview {
+                for file in &preview.files {
+                    let action = match file.action.as_str() {
+                        "restore" => tr(locale, MessageId::PatchRestore),
+                        "delete" => tr(locale, MessageId::PatchDelete),
+                        _ => file.action.as_str(),
+                    };
+                    details.push(Line::from(format!("  {action}  {}", file.path)));
+                }
+            }
+        } else if !overlay.rollback_error.is_empty() {
+            details.push(Line::from(Span::styled(
+                overlay.rollback_error.as_str(),
+                Style::default().fg(self.theme.danger),
+            )));
+        } else {
+            details.push(Line::from(format!(
+                "{}  {}  | {}",
+                tr(locale, MessageId::Rollback),
+                if rollback_ready {
+                    tr(locale, MessageId::StatusReady)
+                } else {
+                    tr(locale, MessageId::NotAvailable)
+                },
+                tr(locale, MessageId::PatchRollbackHint)
+            )));
+        }
+
+        let meta_height = (details.len() as u16).min(
+            columns[1]
+                .height
+                .saturating_sub(layout_contract::ROW_HEIGHT),
+        );
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(meta_height),
+                Constraint::Min(layout_contract::ROW_HEIGHT),
+            ])
+            .split(columns[1]);
+        frame.render_widget(
+            Paragraph::new(details).wrap(Wrap { trim: false }),
+            chunks[0],
+        );
+        if !patch.diff.is_empty() {
+            let visible = chunks[1].height as usize;
+            let lines = patch
+                .diff
+                .lines()
+                .skip(overlay.scroll)
+                .take(visible)
+                .map(|line| {
+                    let style = if line.starts_with('+') && !line.starts_with("+++") {
+                        Style::default().fg(self.theme.success)
+                    } else if line.starts_with('-') && !line.starts_with("---") {
+                        Style::default().fg(self.theme.danger)
+                    } else if line.starts_with("@@") {
+                        Style::default().fg(self.theme.warning)
+                    } else {
+                        Style::default().fg(self.theme.text)
+                    };
+                    Line::from(Span::styled(line, style))
+                })
+                .collect::<Vec<_>>();
+            frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), chunks[1]);
         }
     }
 

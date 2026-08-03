@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Nebutra/carina/go/kernel"
 )
 
 // proposeGovernedPatch proposes one full-file change through the RPC handler
@@ -161,6 +163,16 @@ func TestKernelPatchEventsPublishLiveOnceWithoutPrivateMetadata(t *testing.T) {
 	if strings.Contains(string(appliedRaw), "_audit_events") {
 		t.Fatalf("public apply response leaked private audit transport metadata: %s", appliedRaw)
 	}
+	var attributed kernel.Patch
+	if err := json.Unmarshal(appliedRaw, &attributed); err != nil {
+		t.Fatal(err)
+	}
+	if attributed.ApprovalID != proposed.ApplyDecision.DecisionID {
+		t.Fatalf("patch approval attribution = %q, want gate decision %q", attributed.ApprovalID, proposed.ApplyDecision.DecisionID)
+	}
+	if len(attributed.HunkAttributions) != 1 || attributed.HunkAttributions[0].ApprovalID != proposed.ApplyDecision.DecisionID {
+		t.Fatalf("hunk approval attribution missing gate decision: %+v", attributed.HunkAttributions)
+	}
 	rolled, err := d.handlePatchRollback(mustJSON(t, map[string]any{
 		"session_id": sess.SessionID, "patch_id": proposed.PatchID,
 	}))
@@ -189,6 +201,30 @@ func TestKernelPatchEventsPublishLiveOnceWithoutPrivateMetadata(t *testing.T) {
 	wantLifecycle := []string{"PatchProposed", "PatchApplied", "RollbackStarted", "RollbackCompleted"}
 	if strings.Join(lifecycle, ",") != strings.Join(wantLifecycle, ",") {
 		t.Fatalf("unexpected live patch lifecycle: got %v want %v", lifecycle, wantLifecycle)
+	}
+}
+
+func TestPatchApplyMissingGateAttributionFailsClosed(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	patchID, _, _ := proposeGovernedPatch(t, d, sess.SessionID, "missing-gate.txt", "new\n")
+	d.mu.Lock()
+	delete(d.patchGates, patchID)
+	d.mu.Unlock()
+
+	if _, err := d.patchGateApprovalID(sess.SessionID, patchID); err == nil || !strings.Contains(err.Error(), "approval_attribution_missing") {
+		t.Fatalf("missing gate attribution must fail closed, got %v", err)
+	}
+	if payload := lastPatchRefusal(t, d, sess.SessionID, patchID); payload == nil || payload["refusal"] != "approval_attribution_missing" {
+		t.Fatalf("missing attribution refusal was not audited: %+v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(ws, "missing-gate.txt")); !os.IsNotExist(err) {
+		t.Fatal("missing attribution path must not mutate workspace")
 	}
 }
 

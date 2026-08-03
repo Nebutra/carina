@@ -14,6 +14,12 @@
       "type": "string",
       "pattern": "^patch_"
     },
+    "transaction_id": { "type": "string", "pattern": "^patch_" },
+    "actor": { "type": "string" },
+    "approval_id": { "type": "string" },
+    "audit_event_ids": { "type": "array", "items": { "type": "string" } },
+    "verify_result": { "type": "object" },
+    "hunk_attributions": { "type": "array", "items": { "type": "object" } },
     "session_id": {
       "type": "string",
       "pattern": "^sess_"

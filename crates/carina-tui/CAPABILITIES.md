@@ -51,6 +51,8 @@ States:
 | Dual-axis HITL footer | **wired** | typed `config.inventory`; persistent HITL/isolation rows; front-only approval queue count | ISSUE-010 |
 | Model-aware context compaction | **wired** | catalog/fallback budget resolver; checkpoint snapshot; verifiable receipt policy metadata | ISSUE-004 |
 | Context pressure and receipt detail | **wired** | persistent `ctx%`/`est.` footer; typed `/context` overlay; 80/90 semantic thresholds | ISSUE-011 |
+| Patch attribution and rollback trust loop | **wired** | typed `workspace.patch.list/show/rollback.preview/rollback`; Changes workbench; apply/verify/rollback E2E | ISSUE-003 |
+| Assistant phase duplicate sealing | **wired** | adjacent identical commentary is replaced by the authoritative final answer; transcript regressions | conversation projection |
 | Key hints + real `/help` | **wired** | `help.rs`, `Overlay::Help`, `?` / `/help` | #22 |
 | UI copy voice guide | **wired** | `VOICE.md` | #23 |
 | Frame scheduling | **wired** | `frame_scheduler.rs` coalesce + idle `WaitPlan::Block` | #13 |

@@ -176,6 +176,8 @@
       { "method": "workspace.trust", "scope": "admin", "remote": false, "dynamic_scope": true, "control_plane_write": true, "params": { "session_id": "string", "trusted": "boolean" }, "result": "object" },
       { "method": "workspace.patch.propose", "scope": "write", "remote": false, "dynamic_scope": true, "params": { "session_id": "string", "diff": "string?", "files": "PatchFile[]?", "reason": "string?" }, "result": "PatchTransaction" },
       { "method": "workspace.patch.apply", "scope": "write", "remote": false, "params": { "session_id": "string?", "patch_id": "string" }, "result": "PatchTransaction" },
+      { "method": "workspace.patch.verify", "scope": "write", "remote": false, "params": { "session_id": "string", "patch_id": "string" }, "result": "PatchTransaction" },
+      { "method": "workspace.patch.rollback.preview", "scope": "read", "remote": false, "params": { "session_id": "string", "patch_id": "string" }, "result": "PatchRollbackPreview" },
       { "method": "workspace.patch.rollback", "scope": "write", "remote": false, "params": { "session_id": "string?", "patch_id": "string" }, "result": "PatchTransaction" },
       { "method": "workspace.patch.list", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "PatchTransaction[]" },
       { "method": "workspace.patch.show", "scope": "read", "remote": false, "params": { "session_id": "string", "patch_id": "string" }, "result": "PatchTransaction" }

@@ -157,6 +157,116 @@ fn patch_apply_then_rollback_restores_preimage() {
 }
 
 #[test]
+fn patch_attribution_verify_preview_and_rollback_are_consistent() {
+    let (tmp, mut svc) = setup();
+    let file = tmp.ws.join("trust.txt");
+    std::fs::write(&file, "before\n").unwrap();
+
+    let proposed = svc.call(
+        "kernel.patch.propose",
+        json!({"session_id": "sess_it", "reason": "trust", "files": [{"path": "trust.txt", "new_content": "after\n"}]}),
+    );
+    let patch_id = proposed["patch_id"].as_str().unwrap().to_string();
+    assert_eq!(proposed["transaction_id"], patch_id);
+    assert_eq!(proposed["actor"], "agent");
+    assert_eq!(proposed["hunk_attributions"][0]["file"], "trust.txt");
+    assert!(proposed["audit_event_ids"][0]
+        .as_str()
+        .unwrap()
+        .starts_with("evt_"));
+
+    let applied = svc.call(
+        "kernel.patch.apply",
+        json!({"session_id": "sess_it", "patch_id": patch_id, "approver": "operator"}),
+    );
+    assert_eq!(applied["status"], "applied");
+    let approval_id = applied["approval_id"].as_str().unwrap();
+    assert!(approval_id.starts_with("perm_"), "{applied}");
+    assert_eq!(applied["hunk_attributions"][0]["approval_id"], approval_id);
+
+    let verified = svc.call(
+        "kernel.patch.verify",
+        json!({"session_id": "sess_it", "patch_id": patch_id}),
+    );
+    assert_eq!(verified["status"], "verified");
+    assert_eq!(verified["verify_result"]["status"], "passed");
+    assert_eq!(verified["hunk_attributions"][0]["verify_result"], "passed");
+
+    let shown = svc.call(
+        "kernel.patch.show",
+        json!({"session_id": "sess_it", "patch_id": patch_id}),
+    );
+    assert_eq!(shown["approval_id"], approval_id);
+    assert_eq!(shown["verify_result"]["status"], "passed");
+    let listed = svc.call("kernel.patch.list", json!({"session_id": "sess_it"}));
+    assert_eq!(listed[0]["transaction_id"], patch_id);
+
+    let preview = svc.call(
+        "kernel.patch.rollback_preview",
+        json!({"session_id": "sess_it", "patch_id": patch_id}),
+    );
+    assert_eq!(preview["can_rollback"], true);
+    assert_eq!(preview["workspace_unchanged"], true);
+    assert_eq!(
+        preview["files"][0],
+        json!({"path": "trust.txt", "action": "restore"})
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "after\n");
+
+    let rolled = svc.call(
+        "kernel.patch.rollback",
+        json!({"session_id": "sess_it", "patch_id": patch_id}),
+    );
+    assert_eq!(rolled["status"], "rolled_back");
+    assert_eq!(rolled["transaction_id"], patch_id);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "before\n");
+}
+
+#[test]
+fn rollback_preview_and_rollback_reject_conflict_without_mutation() {
+    let (tmp, mut svc) = setup();
+    let file = tmp.ws.join("conflict.txt");
+    std::fs::write(&file, "before\n").unwrap();
+    let proposed = svc.call(
+        "kernel.patch.propose",
+        json!({"session_id": "sess_it", "reason": "conflict", "files": [{"path": "conflict.txt", "new_content": "applied\n"}]}),
+    );
+    let patch_id = proposed["patch_id"].as_str().unwrap().to_string();
+    svc.call(
+        "kernel.patch.apply",
+        json!({"session_id": "sess_it", "patch_id": patch_id}),
+    );
+    std::fs::write(&file, "intervening edit\n").unwrap();
+
+    let preview = svc.call(
+        "kernel.patch.rollback_preview",
+        json!({"session_id": "sess_it", "patch_id": patch_id}),
+    );
+    assert!(preview["__error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("workspace unchanged"));
+    let rolled = svc.call(
+        "kernel.patch.rollback",
+        json!({"session_id": "sess_it", "patch_id": patch_id}),
+    );
+    assert!(rolled["__error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("rollback conflict"));
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "intervening edit\n"
+    );
+
+    let shown = svc.call(
+        "kernel.patch.show",
+        json!({"session_id": "sess_it", "patch_id": patch_id}),
+    );
+    assert_eq!(shown["status"], "applied");
+}
+
+#[test]
 fn patch_proposed_audit_carries_reviewable_diff_and_path() {
     let (tmp, mut svc) = setup();
     let file = tmp.ws.join("review.txt");

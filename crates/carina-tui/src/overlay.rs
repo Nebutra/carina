@@ -17,7 +17,7 @@ pub enum Overlay {
     Help(HelpOverlay),
     Doctor(crate::doctor::DoctorScreen),
     Agents(Box<AgentDashboardOverlay>),
-    Changes(ChangesOverlay),
+    Changes(Box<ChangesOverlay>),
     FileViewer(FileViewer),
 }
 
@@ -225,6 +225,9 @@ pub struct ChangesOverlay {
     pub selected: usize,
     pub scroll: usize,
     pub load: RetainedLoad,
+    pub confirm_rollback: bool,
+    pub rollback_preview: Option<crate::rpc::PatchRollbackPreview>,
+    pub rollback_error: String,
 }
 
 #[derive(Debug, Clone, Default)]

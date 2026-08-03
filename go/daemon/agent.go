@@ -1352,7 +1352,7 @@ func (d *Daemon) proposeAndApplyPatch(sess *sessionstore.Session, task *schedule
 	if err := d.ensureActiveToolStarted(task.RunID); err != nil {
 		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
 	}
-	applied, err := d.kern.PatchApply(sess.SessionID, patch.PatchID, approver)
+	applied, err := d.kern.PatchApplyAttributed(sess.SessionID, patch.PatchID, approver, dec.DecisionID)
 	if err != nil {
 		return toolFailed("patch apply failed (nothing written): "+err.Error(), "patch_apply_error")
 	}
