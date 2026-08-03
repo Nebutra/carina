@@ -198,6 +198,7 @@ fn render_status_with_mode(
                 no_color: false,
                 context,
                 locale: Locale::En,
+                screen_mode: Some("minimal"),
             }
             .render(frame, frame.area(), theme);
         })
