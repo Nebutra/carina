@@ -24,6 +24,7 @@ pub enum EventType {
     ExecutionStarted,
     ExecutionProgressed,
     ExecutionCompleted,
+    ExecutionFailed,
     ExecutionCancelled,
     ExecutionInterrupted,
     ExecutionRecoveryPlanned,
@@ -38,6 +39,8 @@ pub enum EventType {
     TaskCancelled,
     IndexSyncFailed,
     SessionForked,
+    SessionArchived,
+    SessionUnarchived,
     DirectoryGranted,
     CommandExpanded,
     ExternalEvent,
@@ -60,6 +63,7 @@ pub enum EventType {
     ToolRequested,
     ToolApproved,
     ToolDenied,
+    InteractiveApprovalChanged,
     ToolCallRequested,
     ToolCallApprovalRequired,
     ToolCallStarted,
@@ -110,6 +114,8 @@ pub enum Actor {
     Operator,
     /// A remote worker reporting governed execution state.
     Worker,
+    /// An authenticated external channel relay.
+    Channel,
 }
 
 impl Actor {
@@ -123,6 +129,7 @@ impl Actor {
             "plugin" | "Plugin" => Actor::Plugin,
             "operator" | "Operator" => Actor::Operator,
             "worker" | "Worker" => Actor::Worker,
+            "channel" | "Channel" => Actor::Channel,
             _ => Actor::Rust,
         }
     }
@@ -427,6 +434,19 @@ mod tests {
                 .unwrap_or_else(|error| panic!("canonical event {name} is unsupported: {error}"));
         }
         assert!(serde_json::from_value::<EventType>(serde_json::json!("TaskCreated")).is_err());
+    }
+
+    #[test]
+    fn actor_deserializer_matches_every_canonical_protocol_variant() {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../../protocol/schemas/event.schema.json"))
+                .unwrap();
+        let names = schema["properties"]["actor"]["enum"].as_array().unwrap();
+        for name in names {
+            serde_json::from_value::<Actor>(name.clone())
+                .unwrap_or_else(|error| panic!("canonical actor {name} is unsupported: {error}"));
+        }
+        assert_eq!(Actor::parse_lossy("channel"), Actor::Channel);
     }
 
     fn tmp(name: &str) -> PathBuf {

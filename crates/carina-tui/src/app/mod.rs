@@ -60,8 +60,9 @@ use crate::overlay::{
 use crate::prerequisite::ProviderPickerState;
 use crate::product_projection::ProductProjection;
 use crate::rpc::{
-    Client, ExecutionLifecycle, ExecutionRun, GovernanceId, Model, ModelInventory, ReceivedEvent,
-    RpcError, RuntimeInitialize, Session, SessionItemEvent, WireEvent, spawn_event_stream,
+    Client, ExecutionLifecycle, ExecutionLifecycleReducer, ExecutionLifecycleReduction,
+    ExecutionRun, GovernanceId, Model, ModelInventory, ReceivedEvent, RpcError, RuntimeInitialize,
+    Session, SessionItemEvent, WireEvent, spawn_event_stream,
 };
 use crate::session_browser::{SessionBrowserState, SessionScope};
 use crate::sync_output::SyncOutputSupport;
@@ -384,6 +385,7 @@ pub struct App {
     scrollback: ScrollbackLedger,
     transcript_reflow: TranscriptReflowState,
     transcript_reducer: TranscriptReducer,
+    execution_lifecycle: ExecutionLifecycleReducer,
     composer: TextArea,
     composer_state: TextAreaState,
     media: MediaComposer,
@@ -547,6 +549,7 @@ impl App {
             scrollback: ScrollbackLedger::default(),
             transcript_reflow: TranscriptReflowState::default(),
             transcript_reducer: TranscriptReducer::default(),
+            execution_lifecycle: ExecutionLifecycleReducer::default(),
             composer,
             composer_state: TextAreaState::default(),
             media: MediaComposer::default(),
@@ -1163,6 +1166,7 @@ impl App {
             self.selected_model = session.next_model.clone();
         }
         let hydrated_overlays = OverlayStack::hydrate_governance(&items);
+        self.execution_lifecycle.clear();
         self.blocks = self.transcript_reducer.hydrate(items);
         self.scrollback.reset();
         self.transcript_stale = false;
@@ -1180,6 +1184,7 @@ impl App {
         } else {
             session.execution_status.clone()
         };
+        self.seed_execution_lifecycle(&session.latest_run_id, &session.execution_status);
         if session.execution_status == "paused" && !session.latest_run_id.is_empty() {
             self.notice = Notice::localized(MessageId::ResumePausedDetail);
         }
@@ -1299,6 +1304,12 @@ impl App {
             session.summary = summary.to_owned();
         }
         self.remember_session(session);
+    }
+
+    fn seed_execution_lifecycle(&mut self, run_id: &str, status: &str) {
+        if let Some(lifecycle) = ExecutionLifecycle::from_status(status) {
+            self.execution_lifecycle.seed(run_id, lifecycle);
+        }
     }
 
     fn start_event_stream(&mut self) {
@@ -1422,6 +1433,7 @@ impl App {
         } else {
             session.execution_status.clone()
         };
+        self.seed_execution_lifecycle(&session.latest_run_id, &session.execution_status);
         self.command_registry_session.clear();
         self.remember_session(session);
         self.notice.clear();
@@ -2050,9 +2062,14 @@ impl App {
                             let ReceivedEvent {
                                 event, received_at, ..
                             } = received;
+                            self.event_cursor = self.event_cursor.max(event.raw_cursor);
+                            let lifecycle = match self.execution_lifecycle.reduce(&event) {
+                                ExecutionLifecycleReduction::Accepted(lifecycle) => Some(lifecycle),
+                                ExecutionLifecycleReduction::NotLifecycle => None,
+                                ExecutionLifecycleReduction::Ignored => continue,
+                            };
                             let mut visual_changed = false;
                             let artifact_ref = event.tool_artifact_ref();
-                            self.event_cursor = self.event_cursor.max(event.raw_cursor);
                             let terminal_summary = event_terminal_summary(&event);
                             let event_agent = event_agent(&event)
                                 .or_else(|| {
@@ -2070,12 +2087,14 @@ impl App {
                                     self.notice.clear();
                                 }
                             }
-                            let lifecycle = event.execution_lifecycle();
                             let projected_status = lifecycle
                                 .map(ExecutionLifecycle::status)
                                 .unwrap_or_else(|| event.projected_status())
                                 .to_owned();
-                            if let Some(status) = event.execution_activity_status() {
+                            if let Some(status) = lifecycle
+                                .filter(|lifecycle| lifecycle.is_active())
+                                .map(ExecutionLifecycle::status)
+                            {
                                 visual_changed = true;
                                 if self.active_run_id.as_deref() != Some(event.run_id.as_str()) {
                                     self.execution_timer.start_new();
@@ -2099,7 +2118,7 @@ impl App {
                                 self.execution_activity = Some(activity);
                                 visual_changed = true;
                             }
-                            if event.clears_active_execution() {
+                            if lifecycle.is_some_and(ExecutionLifecycle::clears_active) {
                                 visual_changed = true;
                                 if self.active_run_id.as_deref() == Some(event.run_id.as_str()) {
                                     self.active_run_id = None;
@@ -2121,14 +2140,13 @@ impl App {
                                 clear_terminal_execution_notice(&mut self.notice, &event.run_id);
                             }
                             if matches!(event.kind.as_str(), "ModelResponded" | "model.responded")
-                                || event.is_execution_terminal()
+                                || lifecycle.is_some_and(ExecutionLifecycle::is_terminal)
                             {
                                 self.request_context_summary();
                             }
                             let plan_review = self.active_session.as_ref().and_then(|session| {
                                 plan_review_overlay(session).filter(|review| {
                                     review.run_id == event.run_id
-                                        && event.is_execution_terminal()
                                         && lifecycle == Some(ExecutionLifecycle::Completed)
                                 })
                             });
@@ -3664,6 +3682,7 @@ impl App {
         } else {
             execution.status.clone()
         };
+        self.seed_execution_lifecycle(&execution.run_id, &self.execution_status.clone());
         let submitted_agent = if execution.agent.is_empty() {
             if envelope.agent == "plan" {
                 "plan"
@@ -3920,6 +3939,10 @@ impl App {
                     } else {
                         execution.status
                     };
+                    self.seed_execution_lifecycle(
+                        &execution.run_id,
+                        &self.execution_status.clone(),
+                    );
                     self.notice = Notice::localized_for_run(
                         MessageId::PlanApprovedQueued,
                         execution.run_id,
@@ -4485,16 +4508,19 @@ impl App {
             self.remember_session(session);
         }
         if let Some(items) = outcome.items {
+            self.execution_lifecycle.clear();
             self.blocks = self.transcript_reducer.hydrate(items);
             self.scrollback.reset();
             self.transcript_stale = false;
             self.reset_transcript_viewport();
         } else {
+            self.execution_lifecycle.clear();
             self.blocks = self.transcript_reducer.hydrate(Vec::new());
             self.scrollback.reset();
             self.transcript_stale = true;
             self.reset_transcript_viewport();
         }
+        self.seed_execution_lifecycle(&outcome.execution.run_id, &self.execution_status.clone());
         self.event_cursor = 0;
         self.start_event_stream();
         self.notice = if let Some(error) = outcome.refresh_error {
@@ -4733,6 +4759,7 @@ impl App {
         {
             self.selected_model = outcome.session.next_model.clone();
         }
+        self.execution_lifecycle.clear();
         self.blocks = self.transcript_reducer.hydrate(outcome.items);
         self.scrollback.reset();
         self.persisted_prompt_history = outcome.prompt_history;

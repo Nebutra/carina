@@ -224,6 +224,9 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 	defer removePending()
 
 	d.sched.SetStatus(task.RunID, "waiting_approval")
+	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
+		"status": "waiting_approval", "decision_id": dec.DecisionID,
+	}, dec.DecisionID)
 	ev := map[string]any{
 		"type":        "permission.request",
 		"session_id":  sess.SessionID,
@@ -247,14 +250,15 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 	// Persist the reviewable permission request before publishing it live. A
 	// reconnect can reconcile this event with the later approval_resolved event
 	// by decision_id without minting a second decision or approval prompt.
-	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "ToolRequested", task.RunID, "go", map[string]any{
+	receipt, err := d.kern.RecordEventWithCursor(sess.SessionID, "ToolRequested", task.RunID, "go", map[string]any{
 		"status": "permission_requested", "decision_id": dec.DecisionID, "request": ev,
 	}, dec.DecisionID)
 	if err != nil {
 		d.sched.SetStatus(task.RunID, "running")
 		return nil, false, approvalScopeOnce, ""
 	}
-	ev[internalRawAuditCursor] = cursor
+	ev["event_id"] = receipt.EventID
+	ev[internalRawAuditCursor] = receipt.Cursor
 	d.events.Publish(sess.SessionID, ev)
 
 	timeout := d.approvalTimeout
@@ -284,6 +288,11 @@ func (d *Daemon) awaitInteractiveApproval(sess *sessionstore.Session, task *sche
 	}
 	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "operator",
 		map[string]any{"status": "approval_resolved", "decision_id": dec.DecisionID, "granted": sig.granted, "scope": sig.scope}, dec.DecisionID)
+	if sig.granted {
+		d.record(sess.SessionID, "ExecutionStarted", task.RunID, "go", map[string]any{
+			"resumed": true,
+		}, dec.DecisionID)
+	}
 	return sig.resolved, sig.granted, sig.scope, sig.terminal
 }
 

@@ -501,6 +501,9 @@ func TestProjectSessionItemsSurfacesDoneSummaryAsAgentMessage(t *testing.T) {
 	})
 	assertEventType(t, items, "turn.started")
 	msg := findItem(t, items, "item.completed", "agent_message")
+	if msg.ID != "run_1" {
+		t.Fatalf("agent message id = %q, want stable run identity", msg.ID)
+	}
 	if msg.Details["text"] != "你好！有什么可以帮你的？" {
 		t.Fatalf("done summary not projected as agent_message text: %+v", msg.Details)
 	}

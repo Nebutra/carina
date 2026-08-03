@@ -379,6 +379,20 @@ def send(stream, value):
         return False
 
 
+def send_execution_started(stream, session_id, run_id, event_id, raw_cursor, agent=""):
+    params = {
+        "type": "ExecutionStarted",
+        "event_id": event_id,
+        "session_id": session_id,
+        "run_id": run_id,
+        "raw_cursor": raw_cursor,
+        "payload": {},
+    }
+    if agent:
+        params["agent"] = agent
+    return send(stream, {"jsonrpc": "2.0", "method": "event", "params": params})
+
+
 def capture_plan_request(request):
     with open(plan_capture_path, "a", encoding="utf-8") as stream:
         stream.write(json.dumps(request, separators=(",", ":")) + "\n")
@@ -430,30 +444,43 @@ def handle(connection, mode="normal"):
                         time.sleep(0.1)
                     else:
                         return
+                    send_execution_started(
+                        stream, session_id, "run_locale", "evt_reconnect_draft_started", 3
+                    )
                     send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                         "type": "ExecutionCompleted", "event_id": "evt_reconnect_draft_completed",
-                        "session_id": session_id, "run_id": "run_locale", "raw_cursor": 3,
+                        "session_id": session_id, "run_id": "run_locale", "raw_cursor": 4,
                         "payload": {"summary": "RECONNECT-DRAFT-COMPLETED"}
                     }})
                     continue
                 if session_id == "sess_unknown_submit":
                     if not unknown_submission_reconciled.wait(10):
                         return
+                    send_execution_started(
+                        stream, session_id, "run_unknown_submit", "evt_unknown_submit_started", 1
+                    )
                     send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                         "type": "ExecutionCompleted", "event_id": "evt_unknown_submit_completed",
-                        "session_id": session_id, "run_id": "run_unknown_submit", "raw_cursor": 1,
+                        "session_id": session_id, "run_id": "run_unknown_submit", "raw_cursor": 2,
                         "payload": {"summary": "UNKNOWN-SUBMISSION-RECONCILED"}
                     }})
                     continue
                 if session_id == "sess_governance_restart":
                     if not restart_governance_answered.wait(10):
                         return
+                    send_execution_started(
+                        stream,
+                        session_id,
+                        "run_governance_restart",
+                        "evt_governance_restart_resumed",
+                        1,
+                    )
                     send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                         "type": "ExecutionCompleted",
                         "event_id": "evt_governance_restart_completed",
                         "session_id": session_id,
                         "run_id": "run_governance_restart",
-                        "raw_cursor": 1,
+                        "raw_cursor": 2,
                         "payload": {"summary": "Recovered verification completed"}
                     }})
                     continue
@@ -487,9 +514,12 @@ def handle(connection, mode="normal"):
                     if mode == "normal":
                         if not media_run_submitted.wait(30):
                             return
+                        send_execution_started(
+                            stream, session_id, "run_media", "evt_media_started", 1
+                        )
                         send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                             "type": "ExecutionCompleted", "event_id": "evt_media_completed",
-                            "session_id": session_id, "run_id": "run_media", "raw_cursor": 1,
+                            "session_id": session_id, "run_id": "run_media", "raw_cursor": 2,
                             "payload": {"summary": "Image received"}
                         }})
                     continue
@@ -567,6 +597,9 @@ def handle(connection, mode="normal"):
                 if session_id == "sess_streaming":
                     if stream_completed.is_set():
                         continue
+                    send_execution_started(
+                        stream, session_id, "run_stream", "evt_stream_started", 1
+                    )
                     send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                         "type": "assistant.message.reset", "session_id": session_id,
                         "run_id": "run_stream", "payload": {"generation": 1, "sequence": 1, "phase": "final_answer"}
@@ -614,7 +647,7 @@ def handle(connection, mode="normal"):
                     }})
                     send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                         "type": "ExecutionCompleted", "event_id": "evt_stream_completed",
-                        "session_id": session_id, "run_id": "run_stream", "raw_cursor": 1,
+                        "session_id": session_id, "run_id": "run_stream", "raw_cursor": 2,
                         "payload": {"summary": final_summary}
                     }})
                     stream_completed.set()
@@ -622,18 +655,24 @@ def handle(connection, mode="normal"):
                 if session_id == "sess_model_journey":
                     if not model_run_submitted.wait(10):
                         return
+                    send_execution_started(
+                        stream, session_id, "run_locale", "evt_model_journey_started", 1
+                    )
                     send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                         "type": "ExecutionCompleted", "event_id": "evt_model_journey_completed",
-                        "session_id": session_id, "run_id": "run_locale", "raw_cursor": 1,
+                        "session_id": session_id, "run_id": "run_locale", "raw_cursor": 2,
                         "payload": {"summary": "已按简体中文完成"}
                     }})
                     continue
                 if session_id == "sess_plan":
                     if not plan_submitted.wait(10):
                         return
+                    send_execution_started(
+                        stream, session_id, "run_plan", "evt_plan_started", 1, "plan"
+                    )
                     send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                         "type": "ExecutionCompleted", "event_id": "evt_plan_completed",
-                        "session_id": session_id, "run_id": "run_plan", "raw_cursor": 1,
+                        "session_id": session_id, "run_id": "run_plan", "raw_cursor": 2,
                         "agent": "plan",
                         "payload": {"summary": "Implement provider discovery with typed readiness and recovery."}
                     }})
@@ -642,21 +681,22 @@ def handle(connection, mode="normal"):
                     time.sleep(0.5)
                     send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                         "type": "ExecutionStarted", "event_id": "evt_build_running",
-                        "session_id": session_id, "run_id": "run_build", "raw_cursor": 2,
+                        "session_id": session_id, "run_id": "run_build", "raw_cursor": 3,
                         "agent": "build",
                         "payload": {}
                     }})
                     time.sleep(0.5)
                     send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                         "type": "ExecutionCompleted", "event_id": "evt_build_completed",
-                        "session_id": session_id, "run_id": "run_build", "raw_cursor": 3,
+                        "session_id": session_id, "run_id": "run_build", "raw_cursor": 4,
                         "agent": "build",
                         "payload": {"summary": "Approved plan implemented"}
                     }})
                     continue
+                send_execution_started(stream, "sess_1", "run_1", "evt_started", 1)
                 send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                     "type": "permission.request", "event_id": "evt_request",
-                    "session_id": "sess_1", "run_id": "run_1", "raw_cursor": 1,
+                    "session_id": "sess_1", "run_id": "run_1", "raw_cursor": 2,
                     "decision_id": "perm_1", "capability": "CommandExec",
                     "resource": "cargo test", "reason": "workspace policy",
                     "label": "Run verification"
@@ -665,12 +705,12 @@ def handle(connection, mode="normal"):
                     return
                 send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                     "type": "ExecutionProgressed", "event_id": "evt_resolution",
-                    "session_id": "sess_1", "run_id": "run_1", "raw_cursor": 2,
+                    "session_id": "sess_1", "run_id": "run_1", "raw_cursor": 3,
                     "payload": {"status": "approval_resolved", "decision_id": "perm_1", "granted": True}
                 }})
                 send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                     "type": "user.question", "event_id": "evt_question",
-                    "session_id": "sess_1", "run_id": "run_1", "raw_cursor": 3,
+                    "session_id": "sess_1", "run_id": "run_1", "raw_cursor": 4,
                     "question_id": "q_1", "prompt": "How thorough should the verification be?",
                     "options": [
                         {"label": "Focused", "value": "focused", "description": "Run affected checks"},
@@ -681,12 +721,12 @@ def handle(connection, mode="normal"):
                     return
                 send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                     "type": "ExecutionProgressed", "event_id": "evt_question_resolution",
-                    "session_id": "sess_1", "run_id": "run_1", "raw_cursor": 4,
+                    "session_id": "sess_1", "run_id": "run_1", "raw_cursor": 5,
                     "payload": {"status": "user_question_resolved", "question_id": "q_1", "value": "full"}
                 }})
                 send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                     "type": "ExecutionCompleted", "event_id": "evt_completed",
-                    "session_id": "sess_1", "run_id": "run_1", "raw_cursor": 5,
+                    "session_id": "sess_1", "run_id": "run_1", "raw_cursor": 6,
                     "payload": {"summary": "Verification complete"}
                 }})
                 continue

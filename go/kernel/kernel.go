@@ -278,9 +278,14 @@ func (s *Service) RecordEvent(sessionID, eventType, taskID, actor string, payloa
 	return err
 }
 
-// RecordEventWithCursor appends a lifecycle event and returns the exclusive
-// raw audit cursor without replaying the session log.
-func (s *Service) RecordEventWithCursor(sessionID, eventType, taskID, actor string, payload map[string]any, decisionID string) (int, error) {
+type EventRecordReceipt struct {
+	EventID string `json:"event_id"`
+	Cursor  int    `json:"cursor"`
+}
+
+// RecordEventWithCursor appends a lifecycle event and returns the durable
+// event identity plus exclusive raw audit cursor without replaying the log.
+func (s *Service) RecordEventWithCursor(sessionID, eventType, taskID, actor string, payload map[string]any, decisionID string) (EventRecordReceipt, error) {
 	params := map[string]any{"session_id": sessionID, "type": eventType, "payload": payload}
 	if taskID != "" {
 		params["task_id"] = taskID
@@ -291,13 +296,11 @@ func (s *Service) RecordEventWithCursor(sessionID, eventType, taskID, actor stri
 	if decisionID != "" {
 		params["permission_decision_id"] = decisionID
 	}
-	var out struct {
-		Cursor int `json:"cursor"`
-	}
+	var out EventRecordReceipt
 	if err := s.call("kernel.event.record", params, &out); err != nil {
-		return 0, err
+		return EventRecordReceipt{}, err
 	}
-	return out.Cursor, nil
+	return out, nil
 }
 
 // AuditVerify recomputes the session's hash chain and reports any tampering.

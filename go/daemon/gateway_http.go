@@ -316,7 +316,7 @@ func (h *gatewayHTTP) gatewayTaskEvents(sessionID, taskID string, since int) ([]
 
 func gatewayEventDelta(event itemAuditEvent) string {
 	switch event.Type {
-	case "ExecutionQueued", "ExecutionStarted", "ExecutionProgressed", "ExecutionCompleted", "ExecutionCancelled":
+	case "ExecutionQueued", "ExecutionStarted", "ExecutionProgressed", "ExecutionCompleted", "ExecutionFailed", "ExecutionCancelled":
 		if status := gatewayPayloadString(event.Payload, "status"); status != "" {
 			return fmt.Sprintf("Carina task event: %s.\n", sanitizeGatewayDelta(status, 120))
 		}

@@ -106,6 +106,9 @@ func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.Exec
 	}()
 
 	d.sched.SetStatus(task.RunID, "waiting_input")
+	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
+		"status": "waiting_input", "question_id": questionID,
+	}, "")
 	ev := map[string]any{
 		"type":        "user.question",
 		"session_id":  sess.SessionID,
@@ -115,14 +118,15 @@ func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.Exec
 		"options":     options,
 		"timestamp":   time.Now().UTC().Format(time.RFC3339),
 	}
-	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "ToolRequested", task.RunID, "go", map[string]any{
+	receipt, err := d.kern.RecordEventWithCursor(sess.SessionID, "ToolRequested", task.RunID, "go", map[string]any{
 		"status": "user_question_requested", "question_id": questionID, "request": ev,
 	}, "")
 	if err != nil {
 		d.sched.SetStatus(task.RunID, "running")
 		return toolFailed("ask_user error: persist request: "+err.Error(), "audit_persistence_error")
 	}
-	ev[internalRawAuditCursor] = cursor
+	ev["event_id"] = receipt.EventID
+	ev[internalRawAuditCursor] = receipt.Cursor
 	d.events.Publish(sess.SessionID, ev)
 
 	timeout := d.approvalTimeout
@@ -160,6 +164,9 @@ func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.Exec
 		"value": answer.Value, "timed_out": timedOut,
 	}
 	d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "operator", payload, "")
+	d.record(sess.SessionID, "ExecutionStarted", task.RunID, "go", map[string]any{
+		"resumed": true,
+	}, "")
 	if timedOut {
 		return toolTimedOut("User did not answer the question before it expired. Continue with the safest reversible option or ask again if the choice is required.")
 	}

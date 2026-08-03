@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use serde_json::Value;
 
@@ -185,9 +185,13 @@ pub struct TranscriptReducer {
     commands: HashMap<String, ToolRecord>,
     open_command_by_run: HashMap<String, String>,
     assistant_streams: HashMap<String, AssistantStream>,
+    seen_event_ids: HashSet<String>,
+    event_id_order: VecDeque<String>,
 }
 
 impl TranscriptReducer {
+    const SEEN_EVENT_LIMIT: usize = 4_096;
+
     pub fn apply_tool_output(
         &mut self,
         blocks: &mut Vec<TranscriptBlock>,
@@ -223,6 +227,9 @@ impl TranscriptReducer {
     }
 
     pub fn reduce_event(&mut self, blocks: &mut Vec<TranscriptBlock>, event: WireEvent) -> bool {
+        if !self.remember_event(&event) {
+            return false;
+        }
         match event.kind.as_str() {
             "RuntimeStageChanged"
             | "FileRead"
@@ -259,11 +266,15 @@ impl TranscriptReducer {
             return false;
         };
         let id = format!("tool:{call_id}");
+        let next_status = lifecycle_status(&event);
         let record = self.tools.entry(id.clone()).or_insert_with(|| ToolRecord {
             id: id.clone(),
             run_id: event.run_id.clone(),
             ..ToolRecord::default()
         });
+        if !can_transition_tool_status(&record.status, &next_status) {
+            return false;
+        }
         if record.run_id.is_empty() {
             record.run_id = event.run_id.clone();
         }
@@ -271,7 +282,7 @@ impl TranscriptReducer {
             record.tool = tool;
         }
         merge_details(&mut record.details, &event.payload);
-        record.status = lifecycle_status(&event);
+        record.status = next_status;
 
         if matches!(event.kind.as_str(), "ToolCallRequested" | "ToolCallStarted")
             && !event.run_id.is_empty()
@@ -285,6 +296,23 @@ impl TranscriptReducer {
             self.active_tool_by_run.remove(&event.run_id);
         }
         changed
+    }
+
+    fn remember_event(&mut self, event: &WireEvent) -> bool {
+        let event_id = event.event_id.trim();
+        if event_id.is_empty() {
+            return true;
+        }
+        if !self.seen_event_ids.insert(event_id.to_owned()) {
+            return false;
+        }
+        self.event_id_order.push_back(event_id.to_owned());
+        while self.event_id_order.len() > Self::SEEN_EVENT_LIMIT {
+            if let Some(expired) = self.event_id_order.pop_front() {
+                self.seen_event_ids.remove(&expired);
+            }
+        }
+        true
     }
 
     fn reduce_command_event(
@@ -393,17 +421,21 @@ impl TranscriptReducer {
             return false;
         }
         let status = display_status(event.projected_status());
-        upsert_block(
-            blocks,
-            message_block(
-                format!("assistant:{}", event.stable_id()),
-                event.run_id,
-                BlockKind::Assistant,
-                "Carina",
-                text,
-                status,
-            ),
-        )
+        let id = if event.run_id.is_empty() {
+            event.stable_id()
+        } else {
+            event.run_id.clone()
+        };
+        let mut block = message_block(
+            format!("assistant:{id}"),
+            event.run_id,
+            BlockKind::Assistant,
+            "Carina",
+            text,
+            status,
+        );
+        block.assistant_phase = Some(AssistantMessagePhase::FinalAnswer);
+        upsert_block(blocks, block)
     }
 
     fn reduce_assistant_stream(
@@ -638,17 +670,21 @@ impl TranscriptReducer {
                 )
                 .unwrap_or_default();
                 if let Some(text) = visible_assistant_text(&raw) {
-                    upsert_block(
-                        blocks,
-                        message_block(
-                            format!("assistant:{item_id}"),
-                            item.run_id,
-                            BlockKind::Assistant,
-                            "Carina",
-                            text,
-                            display_status(&item.status),
-                        ),
+                    let message_id = if item.run_id.is_empty() {
+                        item_id
+                    } else {
+                        item.run_id.clone()
+                    };
+                    let mut block = message_block(
+                        format!("assistant:{message_id}"),
+                        item.run_id,
+                        BlockKind::Assistant,
+                        "Carina",
+                        text,
+                        display_status(&item.status),
                     );
+                    block.assistant_phase = Some(AssistantMessagePhase::FinalAnswer);
+                    upsert_block(blocks, block);
                 }
             }
             "user" => {
@@ -1411,6 +1447,29 @@ fn is_terminal_tool_status(status: &str) -> bool {
     )
 }
 
+fn can_transition_tool_status(current: &str, next: &str) -> bool {
+    if current.is_empty() {
+        return tool_status_stage(next).is_some();
+    }
+    if is_terminal_tool_status(current) {
+        return current == next;
+    }
+    match (tool_status_stage(current), tool_status_stage(next)) {
+        (Some(current), Some(next)) => next >= current,
+        _ => false,
+    }
+}
+
+fn tool_status_stage(status: &str) -> Option<u8> {
+    match status {
+        "requested" | "pending" => Some(1),
+        "awaiting_approval" | "permission_requested" => Some(2),
+        "started" | "running" => Some(3),
+        "completed" | "failed" | "denied" | "cancelled" | "timed_out" | "rolled_back" => Some(4),
+        _ => None,
+    }
+}
+
 fn is_failure_status(status: &str) -> bool {
     matches!(
         status,
@@ -1641,8 +1700,10 @@ mod tests {
     use super::*;
     use crate::rpc::SessionItem;
     use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn wire(kind: &str, mut payload: Value) -> WireEvent {
+        static NEXT_EVENT: AtomicUsize = AtomicUsize::new(1);
         if kind.starts_with("assistant.message.")
             && let Some(payload) = payload.as_object_mut()
         {
@@ -1652,7 +1713,7 @@ mod tests {
         }
         serde_json::from_value(json!({
             "type": kind,
-            "event_id": format!("event-{kind}"),
+            "event_id": format!("event-{kind}-{}", NEXT_EVENT.fetch_add(1, Ordering::Relaxed)),
             "session_id": "session-1",
             "run_id": "run-1",
             "payload": payload
@@ -1764,6 +1825,34 @@ mod tests {
         assert_eq!(blocks[0].status, "");
         assert_eq!(blocks[0].body, "");
         assert!(!blocks[0].is_collapsible());
+    }
+
+    #[test]
+    fn duplicate_and_out_of_order_tool_events_cannot_regress_terminal_state() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        let requested = wire(
+            "ToolCallRequested",
+            json!({"call_id":"call-1","tool":"read","status":"pending","arguments":{"path":"src/lib.rs"}}),
+        );
+        assert!(reducer.reduce_event(&mut blocks, requested.clone()));
+        assert!(!reducer.reduce_event(&mut blocks, requested));
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "ToolCallCompleted",
+                json!({"call_id":"call-1","tool":"read","status":"completed"}),
+            ),
+        ));
+        assert!(!reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "ToolCallStarted",
+                json!({"call_id":"call-1","tool":"read","status":"running"}),
+            ),
+        ));
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].tool_members[0].lifecycle, "completed");
     }
 
     #[test]
@@ -2125,6 +2214,11 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         );
         assert_eq!(live_blocks.len(), 1);
         assert_eq!(live_blocks[0].body, "我是 Codex");
+        assert_eq!(live_blocks[0].id, "assistant:run-1");
+        assert_eq!(
+            live_blocks[0].assistant_phase,
+            Some(AssistantMessagePhase::FinalAnswer)
+        );
 
         let mut hidden = TranscriptReducer::default();
         let hidden_blocks = hidden.hydrate(vec![item(
@@ -2133,6 +2227,33 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             json!({"text": r#"{"tool":"read","path":"main.go"}"#}),
         )]);
         assert!(hidden_blocks.is_empty());
+    }
+
+    #[test]
+    fn durable_model_response_seals_the_existing_live_component() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.completed",
+                json!({"generation":1,"sequence":1,"content":"done"}),
+            ),
+        ));
+        assert!(!reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "ModelResponded",
+                json!({"text": r#"{"tool":"done","summary":"done"}"#}),
+            ),
+        ));
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].id, "assistant:run-1");
+        assert_eq!(blocks[0].body, "done");
+        assert_eq!(
+            blocks[0].assistant_phase,
+            Some(AssistantMessagePhase::FinalAnswer)
+        );
     }
 
     #[test]
@@ -2930,6 +3051,64 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         assert_eq!(live[0].body, hydrated[0].body);
         assert_eq!(live[0].status, hydrated[0].status);
         assert_eq!(live[0].collapsible, hydrated[0].collapsible);
+    }
+
+    #[test]
+    fn live_and_hydrated_sequences_have_the_same_component_identity_tree() {
+        let mut live_reducer = TranscriptReducer::default();
+        let mut live = Vec::new();
+        for event in [
+            wire(
+                "ToolCallRequested",
+                json!({"call_id":"call-1","tool":"run","status":"pending","arguments":{"executable":"cargo","argc":2}}),
+            ),
+            wire(
+                "ToolCallStarted",
+                json!({"call_id":"call-1","tool":"run","status":"running"}),
+            ),
+            wire(
+                "ToolCallCompleted",
+                json!({"call_id":"call-1","tool":"run","status":"completed","output":"ok"}),
+            ),
+            wire(
+                "assistant.message.completed",
+                json!({"generation":1,"sequence":1,"content":"done"}),
+            ),
+        ] {
+            live_reducer.reduce_event(&mut live, event);
+        }
+
+        let mut hydrated_reducer = TranscriptReducer::default();
+        let assistant = item_with_id(
+            "legacy-message-id",
+            "agent_message",
+            "",
+            json!({"content":"done"}),
+        );
+        let hydrated = hydrated_reducer.hydrate(vec![
+            item(
+                "tool_call",
+                "completed",
+                json!({"tool":"run","status":"completed","arguments":{"executable":"cargo","argc":2},"output":"ok"}),
+            ),
+            assistant,
+        ]);
+
+        let identity_tree = |blocks: &[TranscriptBlock]| {
+            blocks
+                .iter()
+                .map(|block| {
+                    (
+                        block.id.clone(),
+                        block.run_id.clone(),
+                        block.kind,
+                        block.assistant_phase,
+                        block.tool_kind,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(identity_tree(&live), identity_tree(&hydrated));
     }
 
     #[test]

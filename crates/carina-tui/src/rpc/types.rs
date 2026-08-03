@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -242,6 +242,7 @@ pub struct ReviewEntry {
     #[serde(default)]
     pub status: String,
     #[serde(default)]
+    #[serde(alias = "task_id")]
     pub run_id: String,
     #[serde(default)]
     pub started_at: String,
@@ -520,6 +521,7 @@ pub struct SessionItemEvent {
     #[serde(default)]
     pub turn_id: String,
     #[serde(default)]
+    #[serde(alias = "task_id")]
     pub run_id: String,
     #[serde(default)]
     pub item_id: String,
@@ -540,6 +542,7 @@ pub struct SessionItem {
     #[serde(default)]
     pub status: String,
     #[serde(default)]
+    #[serde(alias = "task_id")]
     pub run_id: String,
     #[serde(default)]
     pub details: BTreeMap<String, Value>,
@@ -551,7 +554,7 @@ pub struct WireEvent {
     pub event_id: String,
     #[serde(default)]
     pub session_id: String,
-    #[serde(default)]
+    #[serde(default, alias = "task_id")]
     pub run_id: String,
     #[serde(default)]
     pub agent: String,
@@ -613,7 +616,101 @@ pub enum ExecutionLifecycle {
     Cancelled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionLifecycleReduction {
+    NotLifecycle,
+    Accepted(ExecutionLifecycle),
+    Ignored,
+}
+
+#[derive(Debug, Default)]
+pub struct ExecutionLifecycleReducer {
+    by_run: BTreeMap<String, ExecutionLifecycle>,
+    seen_event_ids: BTreeSet<String>,
+    event_id_order: VecDeque<String>,
+}
+
+impl ExecutionLifecycleReducer {
+    const SEEN_EVENT_LIMIT: usize = 4_096;
+
+    pub fn clear(&mut self) {
+        self.by_run.clear();
+        self.seen_event_ids.clear();
+        self.event_id_order.clear();
+    }
+
+    pub fn seed(&mut self, run_id: &str, lifecycle: ExecutionLifecycle) -> bool {
+        if run_id.is_empty() {
+            return false;
+        }
+        let previous = self.by_run.get(run_id).copied();
+        if previous == Some(lifecycle)
+            || previous.is_some_and(|state| !state.can_transition_to(lifecycle))
+        {
+            return false;
+        }
+        self.by_run.insert(run_id.to_owned(), lifecycle);
+        true
+    }
+
+    pub fn reduce(&mut self, event: &WireEvent) -> ExecutionLifecycleReduction {
+        if self.remembered(event) {
+            return ExecutionLifecycleReduction::Ignored;
+        }
+        let Some(next) = event.execution_lifecycle() else {
+            return ExecutionLifecycleReduction::NotLifecycle;
+        };
+        let previous = self.by_run.get(&event.run_id).copied();
+        if previous.is_none()
+            && !matches!(
+                next,
+                ExecutionLifecycle::Queued | ExecutionLifecycle::Started
+            )
+        {
+            return ExecutionLifecycleReduction::Ignored;
+        }
+        if previous == Some(next) || previous.is_some_and(|state| !state.can_transition_to(next)) {
+            return ExecutionLifecycleReduction::Ignored;
+        }
+        self.by_run.insert(event.run_id.clone(), next);
+        ExecutionLifecycleReduction::Accepted(next)
+    }
+
+    fn remembered(&mut self, event: &WireEvent) -> bool {
+        let event_id = event.event_id.trim();
+        if event_id.is_empty() {
+            return false;
+        }
+        if !self.seen_event_ids.insert(event_id.to_owned()) {
+            return true;
+        }
+        self.event_id_order.push_back(event_id.to_owned());
+        while self.event_id_order.len() > Self::SEEN_EVENT_LIMIT {
+            if let Some(expired) = self.event_id_order.pop_front() {
+                self.seen_event_ids.remove(&expired);
+            }
+        }
+        false
+    }
+}
+
 impl ExecutionLifecycle {
+    pub fn from_status(status: &str) -> Option<Self> {
+        match status {
+            "queued" => Some(Self::Queued),
+            "running" | "started" => Some(Self::Started),
+            "waiting_input" | "needs_input" => Some(Self::WaitingInput),
+            "waiting_approval" => Some(Self::WaitingApproval),
+            "paused" => Some(Self::Paused),
+            "interrupted" => Some(Self::Interrupted),
+            "completed" | "succeeded" => Some(Self::Completed),
+            "failed" => Some(Self::Failed),
+            "degraded" => Some(Self::Degraded),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+
     pub fn status(self) -> &'static str {
         match self {
             Self::Queued => "queued",
@@ -645,6 +742,42 @@ impl ExecutionLifecycle {
 
     pub fn clears_active(self) -> bool {
         self.is_terminal() || matches!(self, Self::Paused | Self::Interrupted)
+    }
+
+    fn can_transition_to(self, next: Self) -> bool {
+        if self.is_terminal() {
+            return false;
+        }
+        match self {
+            Self::Queued => matches!(next, Self::Started | Self::Failed | Self::Cancelled),
+            Self::Started => matches!(
+                next,
+                Self::WaitingInput
+                    | Self::WaitingApproval
+                    | Self::Paused
+                    | Self::Interrupted
+                    | Self::Completed
+                    | Self::Failed
+                    | Self::Degraded
+                    | Self::Cancelled
+            ),
+            Self::WaitingInput | Self::WaitingApproval => matches!(
+                next,
+                Self::Started
+                    | Self::WaitingInput
+                    | Self::WaitingApproval
+                    | Self::Paused
+                    | Self::Interrupted
+                    | Self::Failed
+                    | Self::Degraded
+                    | Self::Cancelled
+            ),
+            Self::Paused | Self::Interrupted => matches!(
+                next,
+                Self::Started | Self::Failed | Self::Degraded | Self::Cancelled
+            ),
+            Self::Completed | Self::Failed | Self::Degraded | Self::Cancelled => false,
+        }
     }
 }
 
@@ -1474,6 +1607,112 @@ mod tests {
         assert_eq!(unrelated_progress.execution_lifecycle(), None);
         assert_eq!(unrelated_progress.execution_activity_status(), None);
         assert!(!unrelated_progress.clears_active_execution());
+    }
+
+    #[test]
+    fn lifecycle_reducer_rejects_duplicates_and_illegal_regressions() {
+        let event = |event_id: &str, kind: &str, status: Option<&str>| {
+            let mut value = json!({
+                "event_id": event_id,
+                "type": kind,
+                "run_id": "run_1",
+                "payload": {}
+            });
+            if let Some(status) = status {
+                value["payload"]["status"] = status.into();
+            }
+            serde_json::from_value::<WireEvent>(value).unwrap()
+        };
+        let mut reducer = ExecutionLifecycleReducer::default();
+        let unknown = event("evt_unknown", "FutureLifecycleEvent", None);
+        assert_eq!(
+            reducer.reduce(&unknown),
+            ExecutionLifecycleReduction::NotLifecycle
+        );
+        assert_eq!(
+            reducer.reduce(&unknown),
+            ExecutionLifecycleReduction::Ignored
+        );
+        assert_eq!(
+            reducer.reduce(&event("evt_unknown_done", "ExecutionCompleted", None)),
+            ExecutionLifecycleReduction::Ignored
+        );
+        let queued = event("evt_queued", "ExecutionQueued", None);
+        assert_eq!(
+            reducer.reduce(&queued),
+            ExecutionLifecycleReduction::Accepted(ExecutionLifecycle::Queued)
+        );
+        assert_eq!(
+            reducer.reduce(&queued),
+            ExecutionLifecycleReduction::Ignored
+        );
+        assert_eq!(
+            reducer.reduce(&event("evt_early_done", "ExecutionCompleted", None)),
+            ExecutionLifecycleReduction::Ignored
+        );
+        assert_eq!(
+            reducer.reduce(&event("evt_started", "ExecutionStarted", None)),
+            ExecutionLifecycleReduction::Accepted(ExecutionLifecycle::Started)
+        );
+        assert_eq!(
+            reducer.reduce(&event(
+                "evt_waiting",
+                "ExecutionProgressed",
+                Some("waiting_approval")
+            )),
+            ExecutionLifecycleReduction::Accepted(ExecutionLifecycle::WaitingApproval)
+        );
+        assert_eq!(
+            reducer.reduce(&event("evt_resumed", "ExecutionStarted", None)),
+            ExecutionLifecycleReduction::Accepted(ExecutionLifecycle::Started)
+        );
+        assert_eq!(
+            reducer.reduce(&event("evt_done", "ExecutionCompleted", None)),
+            ExecutionLifecycleReduction::Accepted(ExecutionLifecycle::Completed)
+        );
+        assert_eq!(
+            reducer.reduce(&event("evt_regression", "ExecutionStarted", None)),
+            ExecutionLifecycleReduction::Ignored
+        );
+
+        let mut legacy = ExecutionLifecycleReducer::default();
+        assert_eq!(
+            legacy.reduce(&event("evt_legacy_started", "ExecutionStarted", None)),
+            ExecutionLifecycleReduction::Accepted(ExecutionLifecycle::Started)
+        );
+
+        let mut snapshot = ExecutionLifecycleReducer::default();
+        assert!(snapshot.seed("run_snapshot", ExecutionLifecycle::WaitingApproval));
+        assert!(!snapshot.seed("run_snapshot", ExecutionLifecycle::Queued));
+        assert_eq!(
+            ExecutionLifecycle::from_status("needs_input"),
+            Some(ExecutionLifecycle::WaitingInput)
+        );
+    }
+
+    #[test]
+    fn legacy_task_id_aliases_to_run_identity_at_decode_boundaries() {
+        let wire: WireEvent = serde_json::from_value(json!({
+            "event_id": "evt_1",
+            "type": "ExecutionStarted",
+            "task_id": "run_legacy"
+        }))
+        .unwrap();
+        assert_eq!(wire.run_id, "run_legacy");
+
+        let item: SessionItemEvent = serde_json::from_value(json!({
+            "type": "item.started",
+            "session_id": "sess_1",
+            "task_id": "run_legacy",
+            "item": {
+                "id": "call_1",
+                "type": "tool_call",
+                "task_id": "run_legacy"
+            }
+        }))
+        .unwrap();
+        assert_eq!(item.run_id, "run_legacy");
+        assert_eq!(item.item.unwrap().run_id, "run_legacy");
     }
 
     #[test]

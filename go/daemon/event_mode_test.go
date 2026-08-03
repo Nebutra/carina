@@ -6,7 +6,7 @@ import (
 )
 
 func TestCanonicalEventModeFiltersOnlyDuplicateLifecycle(t *testing.T) {
-	for _, typ := range []string{"ToolRequested", "ToolApproved", "ToolDenied"} {
+	for _, typ := range []string{"ToolRequested", "ToolApproved", "ToolDenied", "execution.completed"} {
 		if _, ok := projectEvent(eventModeCanonical, map[string]any{"type": typ}); ok {
 			t.Fatalf("%s retained", typ)
 		}
@@ -15,6 +15,21 @@ func TestCanonicalEventModeFiltersOnlyDuplicateLifecycle(t *testing.T) {
 		if _, ok := projectEvent(eventModeCanonical, map[string]any{"type": typ}); !ok {
 			t.Fatalf("%s filtered", typ)
 		}
+	}
+}
+
+func TestCanonicalEventModePreservesDelegatedTaskIdentity(t *testing.T) {
+	projected, ok := projectEvent(eventModeCanonical, map[string]any{
+		"event_id": "evt_task",
+		"type":     "TaskCompleted",
+		"task_id":  "task_1",
+	})
+	if !ok {
+		t.Fatal("delegated task lifecycle was filtered")
+	}
+	event := projected.(map[string]any)
+	if event["task_id"] != "task_1" || event["run_id"] != nil {
+		t.Fatalf("delegated task identity = %#v", event)
 	}
 }
 
@@ -49,10 +64,41 @@ func TestCanonicalEventModeProjectsDurableGovernanceRequests(t *testing.T) {
 			if event["type"] != tt.eventType || event[tt.idKey] != tt.id {
 				t.Fatalf("projected request = %#v", event)
 			}
-			if event["event_id"] != "evt_1" || event["raw_cursor"] != 7 {
+			if event["event_id"] != "evt_1" || event["run_id"] != "task_1" || event["raw_cursor"] != 7 {
 				t.Fatalf("projected replay identity = %#v", event)
 			}
+			if _, legacy := event["task_id"]; legacy {
+				t.Fatalf("canonical request retained task_id = %#v", event)
+			}
 		})
+	}
+}
+
+func TestCanonicalLiveAndReplayRetainDurableIdentity(t *testing.T) {
+	live, ok := projectEvent(eventModeCanonical, map[string]any{
+		"event_id":             "evt_identity",
+		"type":                 "ToolCallStarted",
+		"task_id":              "task_identity",
+		internalRawAuditCursor: 9,
+	})
+	if !ok {
+		t.Fatal("live canonical event was filtered")
+	}
+	replay, ok := projectEvent(eventModeCanonical, json.RawMessage(`{
+		"event_id":"evt_identity",
+		"type":"ToolCallStarted",
+		"task_id":"task_identity"
+	}`), 9)
+	if !ok {
+		t.Fatal("replayed canonical event was filtered")
+	}
+	for _, event := range []map[string]any{live.(map[string]any), replay.(map[string]any)} {
+		if event["event_id"] != "evt_identity" || event["run_id"] != "task_identity" || event["raw_cursor"] != 9 {
+			t.Fatalf("canonical identity = %#v", event)
+		}
+		if _, legacy := event["task_id"]; legacy {
+			t.Fatalf("canonical event retained task_id = %#v", event)
+		}
 	}
 }
 

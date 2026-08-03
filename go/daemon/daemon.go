@@ -2770,14 +2770,15 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		"locale":           task.Locale,
 		"input_media_refs": task.InputMediaRefs,
 	}
-	cursor, err := d.kern.RecordEventWithCursor(sess.SessionID, "ExecutionQueued", task.RunID, "go", writeAheadPayload, "")
+	receipt, err := d.kern.RecordEventWithCursor(sess.SessionID, "ExecutionQueued", task.RunID, "go", writeAheadPayload, "")
 	if err != nil {
 		_, _ = d.sched.Cancel(task.RunID)
 		return nil, fmt.Errorf("execution_start_failed: write-ahead audit-chain append failed; execution was not dispatched: %w", err)
 	}
 	d.events.Publish(sess.SessionID, map[string]any{
-		"session_id": sess.SessionID, "run_id": task.RunID, "type": "ExecutionQueued", "actor": "go",
-		"timestamp": time.Now().UTC().Format(time.RFC3339), "payload": writeAheadPayload, internalRawAuditCursor: cursor,
+		"event_id": receipt.EventID, "session_id": sess.SessionID, "task_id": task.RunID,
+		"type": "ExecutionQueued", "actor": "go", "timestamp": time.Now().UTC().Format(time.RFC3339),
+		"payload": writeAheadPayload, internalRawAuditCursor: receipt.Cursor,
 	})
 	_ = d.history.AppendScoped(history.Entry{ // shared cross-process prompt history (best-effort)
 		Text: prompt, SessionID: sess.SessionID, WorkspaceRoot: sess.WorkspaceRoot,
@@ -4241,18 +4242,19 @@ func (d *Daemon) record(sessionID, eventType, taskID, actor string, payload map[
 	_ = d.recordChecked(sessionID, eventType, taskID, actor, payload, decisionID)
 }
 func (d *Daemon) recordChecked(sessionID, eventType, taskID, actor string, payload map[string]any, decisionID string) error {
-	cursor, err := d.kern.RecordEventWithCursor(sessionID, eventType, taskID, actor, payload, decisionID)
+	receipt, err := d.kern.RecordEventWithCursor(sessionID, eventType, taskID, actor, payload, decisionID)
 	if err != nil {
 		return err
 	}
 	d.events.Publish(sessionID, map[string]any{
+		"event_id":             receipt.EventID,
 		"session_id":           sessionID,
 		"task_id":              taskID,
 		"type":                 eventType,
 		"actor":                actor,
 		"timestamp":            time.Now().UTC().Format(time.RFC3339),
 		"payload":              payload,
-		internalRawAuditCursor: cursor,
+		internalRawAuditCursor: receipt.Cursor,
 	})
 	if d.journey != nil {
 		d.journey.observeEvent(eventType, taskID)

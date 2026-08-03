@@ -141,23 +141,38 @@ func assertDecisionAudited(t *testing.T, d *Daemon, sessionID, decisionID, want 
 		t.Fatal(err)
 	}
 	var events []struct {
-		Type    string         `json:"type"`
-		Payload map[string]any `json:"payload"`
+		Type                 string         `json:"type"`
+		PermissionDecisionID string         `json:"permission_decision_id"`
+		Payload              map[string]any `json:"payload"`
 	}
 	if err := json.Unmarshal(raw, &events); err != nil {
 		t.Fatal(err)
 	}
 	grantedWant := want == "allowed"
 	var sawResolved bool
+	var sawWaiting bool
+	var sawResumed bool
 	for _, ev := range events {
+		if ev.Type == "ExecutionProgressed" && ev.Payload["status"] == "waiting_approval" && ev.Payload["decision_id"] == decisionID {
+			sawWaiting = true
+		}
 		if ev.Type == "ExecutionProgressed" && ev.Payload["status"] == "approval_resolved" && ev.Payload["decision_id"] == decisionID {
 			sawResolved = true
 			if granted, _ := ev.Payload["granted"].(bool); granted != grantedWant {
 				t.Fatalf("approval_resolved granted=%v, want %v (decision %s)", granted, grantedWant, decisionID)
 			}
 		}
+		if ev.Type == "ExecutionStarted" && ev.PermissionDecisionID == decisionID && ev.Payload["resumed"] == true {
+			sawResumed = true
+		}
+	}
+	if !sawWaiting {
+		t.Fatalf("no waiting_approval audit event for decision %s", decisionID)
 	}
 	if !sawResolved {
 		t.Fatalf("no approval_resolved audit event for decision %s", decisionID)
+	}
+	if sawResumed != grantedWant {
+		t.Fatalf("approval resume event=%v, want %v (decision %s)", sawResumed, grantedWant, decisionID)
 	}
 }

@@ -592,7 +592,7 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 						details["text"] = summary
 						details["summary"] = summary
 						item := &SessionItem{
-							ID:          fallbackItemID("msg", ev, i),
+							ID:          assistantMessageID(ev, i),
 							Type:        "agent_message",
 							Status:      modelStatus(ev.Payload),
 							TaskID:      ev.TaskID,
@@ -609,7 +609,7 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 				}
 			}
 			item := &SessionItem{
-				ID:          fallbackItemID("msg", ev, i),
+				ID:          assistantMessageID(ev, i),
 				Type:        "agent_message",
 				Status:      modelStatus(ev.Payload),
 				TaskID:      ev.TaskID,
@@ -1116,6 +1116,13 @@ func fallbackItemID(prefix string, ev itemAuditEvent, index int) string {
 		return prefix + "_" + ev.EventID
 	}
 	return fmt.Sprintf("%s_%06d", prefix, index)
+}
+
+func assistantMessageID(ev itemAuditEvent, index int) string {
+	if ev.TaskID != "" {
+		return ev.TaskID
+	}
+	return fallbackItemID("msg", ev, index)
 }
 
 func stringField(m map[string]any, key string) string {

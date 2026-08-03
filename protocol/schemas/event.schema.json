@@ -29,6 +29,7 @@
         "ExecutionStarted",
         "ExecutionProgressed",
         "ExecutionCompleted",
+        "ExecutionFailed",
         "ExecutionCancelled",
         "ExecutionInterrupted",
         "ExecutionRecoveryPlanned",
@@ -43,6 +44,8 @@
         "TaskCancelled",
         "IndexSyncFailed",
         "SessionForked",
+        "SessionArchived",
+        "SessionUnarchived",
         "DirectoryGranted",
         "CommandExpanded",
         "ExternalEvent",
@@ -65,6 +68,7 @@
         "ToolRequested",
         "ToolApproved",
         "ToolDenied",
+        "InteractiveApprovalChanged",
         "ToolCallRequested",
         "ToolCallApprovalRequired",
         "ToolCallStarted",
@@ -112,7 +116,8 @@
         "agent",
         "plugin",
         "operator",
-        "worker"
+        "worker",
+        "channel"
       ],
       "description": "language layer that produced the event"
     },

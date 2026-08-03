@@ -352,21 +352,22 @@ func (d *Daemon) addApprovalGrant(sess *sessionstore.Session, dec *kernel.Decisi
 	} else {
 		auditPayload["session_id"] = sess.SessionID
 	}
-	var cursor int
+	var receipt kernel.EventRecordReceipt
 	if err := d.approvalGrants.add(grant, func() error {
 		var err error
-		cursor, err = d.kern.RecordEventWithCursor(sess.SessionID, "ToolApproved", "", "user", auditPayload, dec.DecisionID)
+		receipt, err = d.kern.RecordEventWithCursor(sess.SessionID, "ToolApproved", "", "user", auditPayload, dec.DecisionID)
 		return err
 	}); err != nil {
 		return err
 	}
 	d.events.Publish(sess.SessionID, map[string]any{
+		"event_id":             receipt.EventID,
 		"session_id":           sess.SessionID,
 		"type":                 "ToolApproved",
 		"actor":                "user",
 		"timestamp":            time.Now().UTC().Format(time.RFC3339),
 		"payload":              auditPayload,
-		internalRawAuditCursor: cursor,
+		internalRawAuditCursor: receipt.Cursor,
 	})
 	return nil
 }

@@ -44,6 +44,10 @@ func projectEvent(mode eventMode, event any, replayCursor ...int) (any, bool) {
 	if mode != eventModeCanonical {
 		return value, true
 	}
+	if runID, ok := value["task_id"].(string); ok && runID != "" && !usesTaskIdentity(value["type"]) {
+		value["run_id"] = runID
+		delete(value, "task_id")
+	}
 	switch value["type"] {
 	case "ToolRequested":
 		if request, ok := projectGovernanceRequest(value); ok {
@@ -53,13 +57,22 @@ func projectEvent(mode eventMode, event any, replayCursor ...int) (any, bool) {
 			return request, true
 		}
 		return nil, false
-	case "ToolApproved", "ToolDenied":
+	case "ToolApproved", "ToolDenied", "execution.completed":
 		return nil, false
 	default:
 		if cursor > 0 {
 			value["raw_cursor"] = cursor
 		}
 		return value, true
+	}
+}
+
+func usesTaskIdentity(eventType any) bool {
+	switch eventType {
+	case "TaskSubmitted", "TaskLeased", "TaskRequeued", "TaskProgressed", "TaskCompleted", "TaskCancelled", "task.completed":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -86,11 +99,15 @@ func projectGovernanceRequest(event map[string]any) (map[string]any, bool) {
 	for key, value := range request {
 		projected[key] = value
 	}
+	if runID, ok := projected["task_id"].(string); ok && runID != "" {
+		projected["run_id"] = runID
+	}
+	delete(projected, "task_id")
 	projected["type"] = eventType
 	if projected[idKey] == nil || projected[idKey] == "" {
 		projected[idKey] = payload[idKey]
 	}
-	for _, key := range []string{"event_id", "session_id", "task_id", "actor", "timestamp"} {
+	for _, key := range []string{"event_id", "session_id", "run_id", "actor", "timestamp"} {
 		if projected[key] == nil || projected[key] == "" {
 			projected[key] = event[key]
 		}

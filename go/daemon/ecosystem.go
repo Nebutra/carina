@@ -375,11 +375,11 @@ func (d *Daemon) handleChannelEventInject(params json.RawMessage) (any, error) {
 		taskID = task.RunID
 	}
 	payload := map[string]any{"status": "external_event", "event_id": p.Event.ID, "sender_id": p.Event.SenderID, "kind": p.Event.Kind, "data": p.Event.Payload}
-	cursor, err := d.kern.RecordEventWithCursor(p.Event.SessionID, "ExternalEvent", taskID, "channel", payload, p.Event.PermissionDecisionID)
+	eventReceipt, err := d.kern.RecordEventWithCursor(p.Event.SessionID, "ExternalEvent", taskID, "channel", payload, p.Event.PermissionDecisionID)
 	if err != nil {
 		return nil, fmt.Errorf("channel audit append: %w", err)
 	}
-	d.events.Publish(p.Event.SessionID, map[string]any{"type": "ExternalEvent", "session_id": p.Event.SessionID, "run_id": taskID, "timestamp": time.Now().UTC(), "payload": payload, internalRawAuditCursor: cursor})
+	d.events.Publish(p.Event.SessionID, map[string]any{"event_id": eventReceipt.EventID, "type": "ExternalEvent", "session_id": p.Event.SessionID, "task_id": taskID, "timestamp": time.Now().UTC(), "payload": payload, internalRawAuditCursor: eventReceipt.Cursor})
 	if task != nil {
 		data, _ := json.Marshal(p.Event.Payload)
 		// External channel events (CI results, human replies relayed through a

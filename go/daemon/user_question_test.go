@@ -112,8 +112,16 @@ func TestAskUserBlocksUntilStructuredAnswerAndAuditsLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := string(raw)
-	if !strings.Contains(log, "user_question_requested") || !strings.Contains(log, "user_question_resolved") {
-		t.Fatalf("question lifecycle missing from audit: %s", log)
+	for _, marker := range []string{
+		`"status":"waiting_input"`,
+		"user_question_requested",
+		"user_question_resolved",
+		`"type":"ExecutionStarted"`,
+		`"resumed":true`,
+	} {
+		if !strings.Contains(log, marker) {
+			t.Fatalf("question lifecycle missing %s from audit: %s", marker, log)
+		}
 	}
 }
 
