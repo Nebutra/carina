@@ -934,7 +934,7 @@ func (d *Daemon) executeActionOutcome(sess *sessionstore.Session, task *schedule
 		}
 		return outcome.display, outcome
 	}
-	if d.isPlanMode(sess.SessionID) && (act.Tool == "patch" || act.Tool == "run" || act.Tool == "memory") {
+	if d.isPlanMode(sess.SessionID) && planModeBlocksTool(act.Tool) {
 		outcome := toolDenied("BLOCKED: plan mode active — explore read-only and present a plan; the operator must approve it (session.approve_plan) before edits, commands, or memory writes", "plan_mode")
 		if err := d.finishToolCall(sess, task, call, outcome); err != nil {
 			failed := toolFailed("governance error: "+err.Error(), "audit_persistence_error")
@@ -955,6 +955,15 @@ func (d *Daemon) executeActionOutcome(sess *sessionstore.Session, task *schedule
 		return failed.display, failed
 	}
 	return outcome.display, outcome
+}
+
+func planModeBlocksTool(tool string) bool {
+	switch tool {
+	case "patch", "run", "memory":
+		return true
+	default:
+		return false
+	}
 }
 
 func (d *Daemon) contextForTask(taskID string) context.Context {

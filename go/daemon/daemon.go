@@ -2059,6 +2059,9 @@ func (d *Daemon) handlePlanMode(params json.RawMessage) (any, error) {
 	if p.SessionID == "" {
 		return nil, fmt.Errorf("session_id is required")
 	}
+	if !p.On {
+		return nil, fmt.Errorf("plan mode can only be exited through session.approve_plan")
+	}
 	if _, err := d.store.SetPlanMode(p.SessionID, p.On); err != nil {
 		return nil, err
 	}

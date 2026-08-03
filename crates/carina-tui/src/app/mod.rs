@@ -4041,21 +4041,9 @@ impl App {
     }
 
     fn cancel_plan(&mut self) {
-        let before = self
-            .active_session
-            .as_ref()
-            .is_some_and(|session| session.plan_mode);
-        self.set_plan_mode(false);
-        if before
-            && self
-                .active_session
-                .as_ref()
-                .is_some_and(|session| !session.plan_mode)
-        {
-            self.overlays.resolve_active();
-            self.focus = Focus::Composer;
-            self.notice = Notice::localized(MessageId::PlanCancelled);
-        }
+        self.overlays.resolve_active();
+        self.focus = Focus::Composer;
+        self.notice = Notice::localized(MessageId::PlanCancelled);
     }
 
     fn handle_overlay_key(&mut self, key: KeyEvent) {

@@ -141,6 +141,14 @@ func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessio
 	if err := d.kern.InitSessionFull(child.SessionID, child.WorkspaceRoot, childProfile, parent.ApprovalMode, d.org); err != nil {
 		return "spawn init failed: " + err.Error(), ""
 	}
+	if d.isPlanMode(parent.SessionID) {
+		if _, err := d.store.SetPlanMode(child.SessionID, true); err != nil {
+			_, _ = d.store.SetStatus(child.SessionID, "closed")
+			_ = d.store.Delete(child.SessionID)
+			return "spawn failed to inherit plan mode: " + err.Error(), ""
+		}
+		d.setPlanMode(child.SessionID, true)
+	}
 	if len(spec.RestrictedTools) > 0 {
 		d.restrictedTools.Store(child.SessionID, spec.RestrictedTools)
 		defer d.restrictedTools.Delete(child.SessionID)

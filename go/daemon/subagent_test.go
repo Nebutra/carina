@@ -375,6 +375,10 @@ func TestSubagentPermissionInheritance(t *testing.T) {
 	if parent.ApprovalMode != "on_request" {
 		t.Fatalf("parent ApprovalMode = %q, want on_request", parent.ApprovalMode)
 	}
+	if _, err := d.store.SetPlanMode(parent.SessionID, true); err != nil {
+		t.Fatal(err)
+	}
+	d.setPlanMode(parent.SessionID, true)
 
 	// Product HITL is daemon-global and independent of session axis.
 	if err := d.SetApprovalMode("accept-edits"); err != nil {
@@ -427,6 +431,9 @@ func TestSubagentPermissionInheritance(t *testing.T) {
 	}
 	if child.ApprovalMode != parent.ApprovalMode {
 		t.Fatalf("child ApprovalMode = %q, want parent session axis %q", child.ApprovalMode, parent.ApprovalMode)
+	}
+	if !child.PlanMode || !d.isPlanMode(child.SessionID) {
+		t.Fatalf("child did not inherit parent plan mask: child=%+v runtime=%v", child, d.isPlanMode(child.SessionID))
 	}
 	// Product HITL remains daemon-global after spawn (always-approve here).
 	if got := d.approvalModeString(); got != approvalModeAlwaysApprove {

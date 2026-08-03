@@ -1101,7 +1101,7 @@ pub fn text(locale: Locale, id: MessageId) -> &'static str {
         (ZhHans, PlanApprovedQueued) => "计划已批准，实施已排队。",
         (ZhHans, PlanApprovedBuild) => "计划已批准，执行模式已启用。",
         (ZhHans, PlanRevisionRequested) => "规划模式保持启用。请描述需要调整的内容。",
-        (ZhHans, PlanCancelled) => "计划已取消。执行模式已启用，未执行任何操作。",
+        (ZhHans, PlanCancelled) => "已关闭计划审阅。规划模式保持启用，未执行任何操作。",
         (ZhHans, ApprovalRequired) => "需要批准",
         (ZhHans, GovernedAction) => "操作",
         (ZhHans, ApprovalNoDiff) => "此请求没有附带差异。请检查上方的能力和资源。",
@@ -1851,7 +1851,7 @@ fn en(id: MessageId) -> &'static str {
         PlanRevisionRequested => {
             "Plan mode remains active. Describe what should change in the plan."
         }
-        PlanCancelled => "Plan cancelled. Build mode is active; nothing was executed.",
+        PlanCancelled => "Plan review closed. Plan mode remains active; nothing was executed.",
         ApprovalRequired => "Approval required",
         GovernedAction => "Action",
         ApprovalNoDiff => "No diff is attached. Review the capability and resource above.",
@@ -2058,7 +2058,7 @@ fn zh_hant(id: MessageId) -> &'static str {
         PlanApprovedQueued => "計劃已核准，實作已排隊。",
         PlanApprovedBuild => "計劃已核准，執行模式已啟用。",
         PlanRevisionRequested => "規劃模式保持啟用。請描述需要調整的內容。",
-        PlanCancelled => "計劃已取消。執行模式已啟用，未執行任何操作。",
+        PlanCancelled => "已關閉計劃審閱。規劃模式保持啟用，未執行任何操作。",
         ApprovalRequired => "需要核准",
         GovernedAction => "操作",
         ApprovalNoDiff => "此要求沒有附帶差異。請檢查上方的能力與資源。",
@@ -2514,10 +2514,10 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
             "Le mode plan reste actif. Décrivez les changements à apporter.",
         ],
         PlanCancelled => [
-            "計画をキャンセルしました。実行モードは有効ですが、何も実行されていません。",
-            "계획이 취소되었습니다. 실행 모드는 활성화되었으며 아무 작업도 실행되지 않았습니다.",
-            "Plan cancelado. El modo de ejecución está activo; no se ejecutó nada.",
-            "Plan annulé. Le mode exécution est actif ; rien n’a été exécuté.",
+            "計画レビューを閉じました。計画モードは有効なままで、何も実行されていません。",
+            "계획 검토를 닫았습니다. 계획 모드는 계속 활성화되며 아무 작업도 실행되지 않았습니다.",
+            "Revisión del plan cerrada. El modo de planificación sigue activo; no se ejecutó nada.",
+            "Révision du plan fermée. Le mode plan reste actif ; rien n’a été exécuté.",
         ],
         ApprovalRequired => [
             "承認が必要",

@@ -43,6 +43,41 @@ func TestPlanMode(t *testing.T) {
 	}
 }
 
+func TestPlanModeToolMatrix(t *testing.T) {
+	for tool, blocked := range map[string]bool{
+		"read": false, "list": false, "search": false,
+		"todo": false, "update_plan": false,
+		"patch": true, "run": true, "memory": true,
+	} {
+		if got := planModeBlocksTool(tool); got != blocked {
+			t.Fatalf("planModeBlocksTool(%q) = %v, want %v", tool, got, blocked)
+		}
+	}
+}
+
+func TestPlanModeCannotExitWithoutApproval(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "full-workspace")
+	if _, err := d.handlePlanMode(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID,
+		"on":         true,
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.handlePlanMode(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID,
+		"on":         false,
+	})); err == nil || !strings.Contains(err.Error(), "session.approve_plan") {
+		t.Fatalf("direct plan exit error = %v", err)
+	}
+	stored, ok := d.store.Get(sess.SessionID)
+	if !ok || !stored.PlanMode || !d.isPlanMode(sess.SessionID) {
+		t.Fatalf("rejected direct exit changed plan state: stored=%+v runtime=%v", stored, d.isPlanMode(sess.SessionID))
+	}
+}
+
 // TestPlanModeSwitchNoticeInjection: session.plan_mode and session.approve_plan
 // queue an urgent mode-switch notice into the active task's mailbox (the
 // two-tier taskMailbox landed for steer_vs_queue_priority), so a task already
