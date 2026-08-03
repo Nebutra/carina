@@ -65,6 +65,14 @@ pub fn format_bytes(value: u64) -> String {
 
 /// Truncate without splitting a wide character and keep the result within `max_width` cells.
 pub fn truncate_width(value: &str, max_width: usize) -> String {
+    truncate_width_with_glyphs(value, max_width, crate::glyphs::Glyphs::detect())
+}
+
+pub fn truncate_width_with_glyphs(
+    value: &str,
+    max_width: usize,
+    glyphs: crate::glyphs::Glyphs,
+) -> String {
     if UnicodeWidthStr::width(value) <= max_width {
         return value.to_owned();
     }
@@ -82,7 +90,7 @@ pub fn truncate_width(value: &str, max_width: usize) -> String {
         output.push(character);
         width += character_width;
     }
-    output.push_str(crate::glyphs::Glyphs::detect().ellipsis());
+    output.push_str(glyphs.ellipsis());
     output
 }
 
@@ -119,5 +127,13 @@ mod tests {
                 assert!(UnicodeWidthStr::width(truncate_width(input, width).as_str()) <= width);
             }
         }
+    }
+
+    #[test]
+    fn truncation_uses_the_callers_glyph_mode() {
+        let unicode = crate::glyphs::Glyphs::new(crate::glyphs::GlyphMode::Unicode);
+        let ascii = crate::glyphs::Glyphs::new(crate::glyphs::GlyphMode::Ascii);
+        assert_eq!(truncate_width_with_glyphs("abcdef", 4, unicode), "abc…");
+        assert_eq!(truncate_width_with_glyphs("abcdef", 4, ascii), "abc.");
     }
 }
