@@ -189,6 +189,7 @@ impl Client {
             }),
         )?;
         initialized.require_methods(&[
+            "execution.retry",
             "execution.start",
             "model.list",
             "session.create",
@@ -528,6 +529,20 @@ impl Client {
                 "locale": locale,
                 "client_submission_id": client_submission_id,
                 "input_media_refs": input_media_refs,
+            }),
+        )
+    }
+
+    pub fn retry_execution(
+        &mut self,
+        run_id: &str,
+        client_submission_id: &str,
+    ) -> Result<ExecutionRun, RpcError> {
+        self.call(
+            "execution.retry",
+            &json!({
+                "run_id": run_id,
+                "client_submission_id": client_submission_id,
             }),
         )
     }

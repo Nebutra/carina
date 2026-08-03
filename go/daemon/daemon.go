@@ -1163,6 +1163,7 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("artifact.upload", rpc.ScopeWrite, false, d.handleArtifactUpload)
 
 	d.registerRPC("execution.start", rpc.ScopeWrite, false, d.handleTaskSubmit)
+	d.registerRPC("execution.retry", rpc.ScopeWrite, false, d.handleTaskRetry)
 	d.registerRPC("execution.resume", rpc.ScopeWrite, false, d.handleTaskResume, true)
 	d.registerRPC("execution.status", rpc.ScopeRead, true, d.handleTaskStatus)
 	d.registerRPC("execution.list", rpc.ScopeRead, true, d.handleTaskList)
@@ -2621,6 +2622,10 @@ type taskSubmitParams struct {
 }
 
 func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
+	return d.handleTaskSubmitInternal(params, "")
+}
+
+func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, retryOfRunID string) (any, error) {
 	var p taskSubmitParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -2732,6 +2737,9 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 	d.sched.SetInputMediaRefs(task.RunID, inputMediaRefs)
 	d.sched.SetModelState(task.RunID, requestedModel, taskModel(task))
 	d.sched.SetReasoningEffortState(task.RunID, requestedEffort, effectiveEffort)
+	if retryOfRunID != "" {
+		d.sched.SetRetryOf(task.RunID, retryOfRunID)
+	}
 	if clientSubmissionID != "" {
 		d.sched.SetClientSubmission(task.RunID, clientSubmissionID, submissionFingerprint)
 	}
@@ -2770,6 +2778,9 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		"locale":           task.Locale,
 		"input_media_refs": task.InputMediaRefs,
 	}
+	if task.RetryOfRunID != "" {
+		writeAheadPayload["retry_of_run_id"] = task.RetryOfRunID
+	}
 	receipt, err := d.kern.RecordEventWithCursor(sess.SessionID, "ExecutionQueued", task.RunID, "go", writeAheadPayload, "")
 	if err != nil {
 		_, _ = d.sched.Cancel(task.RunID)
@@ -2799,6 +2810,75 @@ func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
 		return t, nil
 	}
 	return task, nil
+}
+
+type taskRetryParams struct {
+	RunID              string `json:"run_id"`
+	ClientSubmissionID string `json:"client_submission_id"`
+}
+
+func (d *Daemon) handleTaskRetry(params json.RawMessage) (any, error) {
+	var p taskRetryParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	p.RunID = strings.TrimSpace(p.RunID)
+	if p.RunID == "" {
+		return nil, fmt.Errorf("run_id is required")
+	}
+	if !validClientSubmissionID(p.ClientSubmissionID) {
+		return nil, fmt.Errorf("client_submission_id must be a 1-128 byte ASCII token using letters, digits, '.', '_', ':', or '-'")
+	}
+	original, ok := d.sched.Get(p.RunID)
+	if !ok {
+		return nil, fmt.Errorf("unknown execution %s", p.RunID)
+	}
+	if !matchesRetryableExecutionStatus(original.Status) {
+		return nil, fmt.Errorf("execution %s is %s, not retryable", p.RunID, original.Status)
+	}
+	if original.Status == "interrupted" && original.Continuity.Recovery.Disposition == continuity.RecoveryResumeCheckpoint {
+		return nil, fmt.Errorf("execution %s has automatic checkpoint recovery in progress", p.RunID)
+	}
+	media := make([]MediaRef, 0, len(original.InputMediaRefs))
+	for _, ref := range original.InputMediaRefs {
+		media = append(media, MediaRef{
+			ArtifactID: ref.ArtifactID,
+			MediaType:  ref.MediaType,
+			Bytes:      ref.Bytes,
+			Origin:     ref.Origin,
+		})
+	}
+	mode := original.Mode
+	if mode == "" || mode == "foreground" {
+		mode = "background"
+	}
+	retryParams, err := json.Marshal(taskSubmitParams{
+		SessionID:          original.SessionID,
+		ClientSubmissionID: &p.ClientSubmissionID,
+		Prompt:             original.UserPrompt,
+		Model:              firstNonEmpty(original.RequestedModel, original.Model),
+		Agent:              original.Agent,
+		Mode:               mode,
+		ReasoningEffort:    firstNonEmpty(original.RequestedReasoningEffort, original.EffectiveReasoningEffort),
+		Locale:             original.Locale,
+		TokenBudget:        original.TokenBudget,
+		SuccessCriteria:    append([]scheduler.SuccessCheck(nil), original.SuccessCriteria...),
+		OutputSchema:       append(json.RawMessage(nil), original.OutputSchema...),
+		InputMediaRefs:     media,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode retry submission: %w", err)
+	}
+	return d.handleTaskSubmitInternal(retryParams, original.RunID)
+}
+
+func matchesRetryableExecutionStatus(status string) bool {
+	switch status {
+	case "failed", "degraded", "cancelled", "interrupted":
+		return true
+	default:
+		return false
+	}
 }
 
 func (d *Daemon) validateTaskModel(model string) error {
@@ -2882,7 +2962,8 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	d.record(task.SessionID, "ExecutionCancelled", task.RunID, "operator", map[string]any{
-		"reason": "operator_cancelled",
+		"reason": "operator_cancelled", "reason_code": "operator_cancelled",
+		"owner": "operator", "retryable": true,
 	}, "")
 	persistErr := d.runs.saveChecked(task)
 	d.taskContextMu.Lock()

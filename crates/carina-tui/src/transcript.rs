@@ -33,6 +33,32 @@ pub enum UserBlockKind {
     Steer,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureKind {
+    Failed,
+    ApprovalDenied,
+    Interrupted,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureAction {
+    Retry,
+    RunAgain,
+    Recovering,
+    Disabled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailurePresentation {
+    pub kind: FailureKind,
+    pub action: FailureAction,
+    pub owner: String,
+    pub reason: String,
+    pub source_event_id: String,
+    pub run_id: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolGroupMember {
     pub id: String,
@@ -65,6 +91,7 @@ pub struct TranscriptBlock {
     pub user_kind: UserBlockKind,
     pub tool_kind: Option<ToolKind>,
     pub tool_members: Vec<ToolGroupMember>,
+    pub failure: Option<FailurePresentation>,
     pub title: String,
     pub body: String,
     pub body_kind: BlockBodyKind,
@@ -116,6 +143,7 @@ impl TranscriptBlock {
             user_kind: UserBlockKind::Prompt,
             tool_kind: None,
             tool_members: Vec::new(),
+            failure: None,
             title: String::new(),
             body: prompt.clone(),
             body_kind: BlockBodyKind::Plain,
@@ -140,6 +168,7 @@ impl TranscriptBlock {
             user_kind: UserBlockKind::Steer,
             tool_kind: None,
             tool_members: Vec::new(),
+            failure: None,
             title: String::new(),
             body: prompt.clone(),
             body_kind: BlockBodyKind::Plain,
@@ -251,6 +280,11 @@ impl TranscriptReducer {
                 self.reduce_patch_event(blocks, event)
             }
             "PolicyViolation" => self.reduce_policy_event(blocks, event),
+            "ExecutionFailed" | "ExecutionInterrupted" | "ExecutionCancelled" => {
+                failure_block_from_event(event)
+                    .map(|block| upsert_block(blocks, block))
+                    .unwrap_or(false)
+            }
             "assistant.message.reset"
             | "assistant.message.delta"
             | "assistant.message.completed" => self.reduce_assistant_stream(blocks, event),
@@ -741,18 +775,19 @@ impl TranscriptReducer {
                 }
             }
             "turn.failed" => {
-                let body = first_detail(&event.details, &["summary", "error", "message"])
+                let source_event_id = event.source_event_id;
+                let run_id = first_non_empty([event.run_id, event.turn_id]);
+                let reason = first_detail(&event.details, &["summary", "error", "message"])
                     .unwrap_or_else(|| "The response did not complete".into());
-                let id = first_non_empty([event.turn_id, event.run_id.clone()]);
                 upsert_block(
                     blocks,
-                    message_block(
-                        format!("diagnostic:{id}"),
-                        event.run_id,
-                        BlockKind::Diagnostic,
-                        "Response failed",
-                        body,
-                        "failed".into(),
+                    failure_block(
+                        run_id,
+                        source_event_id,
+                        FailureKind::Failed,
+                        "runtime".into(),
+                        reason,
+                        true,
                     ),
                 );
             }
@@ -897,6 +932,7 @@ fn tool_block(record: &ToolRecord) -> TranscriptBlock {
         user_kind: UserBlockKind::Prompt,
         tool_kind: Some(kind),
         tool_members: vec![member],
+        failure: None,
         title: presentation.title,
         body: presentation.body,
         body_kind: if matches!(kind, ToolKind::Patch | ToolKind::Diff) {
@@ -1098,6 +1134,7 @@ fn simple_block_from_event(event: WireEvent) -> Option<TranscriptBlock> {
         user_kind: UserBlockKind::Prompt,
         tool_kind: None,
         tool_members: Vec::new(),
+        failure: None,
         title: title(kind, &event.kind),
         body,
         body_kind: BlockBodyKind::Plain,
@@ -1111,6 +1148,109 @@ fn simple_block_from_event(event: WireEvent) -> Option<TranscriptBlock> {
         branchable: false,
         layout_revision: 1,
     })
+}
+
+fn failure_block_from_event(event: WireEvent) -> Option<TranscriptBlock> {
+    let run_id = event.run_id.trim().to_owned();
+    if run_id.is_empty() {
+        return None;
+    }
+    let reason_code = detail(&event.payload, "reason_code").unwrap_or_default();
+    let kind = match event.kind.as_str() {
+        "ExecutionInterrupted" => FailureKind::Interrupted,
+        "ExecutionCancelled" => FailureKind::Cancelled,
+        "ExecutionFailed" if reason_code.contains("approval") || reason_code.contains("denied") => {
+            FailureKind::ApprovalDenied
+        }
+        "ExecutionFailed" => FailureKind::Failed,
+        _ => return None,
+    };
+    let owner = detail(&event.payload, "owner").unwrap_or_else(|| match kind {
+        FailureKind::Cancelled => "operator".into(),
+        FailureKind::Interrupted => "runtime".into(),
+        _ if !event.agent.trim().is_empty() => event.agent.trim().to_owned(),
+        _ => "runtime".into(),
+    });
+    let reason = first_display([
+        detail(&event.payload, "reason").unwrap_or_default(),
+        event.reason,
+        event.summary,
+        reason_code,
+    ]);
+    let retryable = event
+        .payload
+        .get("retryable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let recovering = detail(&event.payload, "recovery_disposition")
+        .is_some_and(|value| value == "resume_checkpoint");
+    Some(failure_block(
+        run_id,
+        event.event_id,
+        kind,
+        owner,
+        if reason.is_empty() {
+            "The execution did not complete".into()
+        } else {
+            reason
+        },
+        (retryable || kind == FailureKind::Interrupted) && !recovering,
+    ))
+}
+
+fn failure_block(
+    run_id: String,
+    source_event_id: String,
+    kind: FailureKind,
+    owner: String,
+    reason: String,
+    retryable: bool,
+) -> TranscriptBlock {
+    let action = if kind == FailureKind::Interrupted && !retryable {
+        FailureAction::Recovering
+    } else if !retryable || run_id.is_empty() {
+        FailureAction::Disabled
+    } else if kind == FailureKind::Cancelled {
+        FailureAction::RunAgain
+    } else {
+        FailureAction::Retry
+    };
+    let title = match kind {
+        FailureKind::Failed => "Execution failed",
+        FailureKind::ApprovalDenied => "Approval denied",
+        FailureKind::Interrupted => "Execution interrupted",
+        FailureKind::Cancelled => "Execution cancelled",
+    };
+    let failure = FailurePresentation {
+        kind,
+        action,
+        owner,
+        reason: reason.clone(),
+        source_event_id,
+        run_id: run_id.clone(),
+    };
+    TranscriptBlock {
+        id: format!("failure:{run_id}"),
+        run_id,
+        kind: BlockKind::Diagnostic,
+        assistant_phase: None,
+        user_kind: UserBlockKind::Prompt,
+        tool_kind: None,
+        tool_members: Vec::new(),
+        failure: Some(failure),
+        title: title.into(),
+        body: reason,
+        body_kind: BlockBodyKind::Plain,
+        additions: 0,
+        deletions: 0,
+        status: String::new(),
+        collapsible: false,
+        expanded: true,
+        selected: false,
+        source_prompt: String::new(),
+        branchable: false,
+        layout_revision: 1,
+    }
 }
 
 fn simple_block_from_item(
@@ -1137,6 +1277,7 @@ fn simple_block_from_item(
         user_kind: UserBlockKind::Prompt,
         tool_kind: None,
         tool_members: Vec::new(),
+        failure: None,
         title: title(kind, &item_kind),
         body,
         body_kind: BlockBodyKind::Plain,
@@ -1161,6 +1302,7 @@ fn user_block(id: String, run_id: String, prompt: String) -> TranscriptBlock {
         user_kind: UserBlockKind::Prompt,
         tool_kind: None,
         tool_members: Vec::new(),
+        failure: None,
         title: String::new(),
         body: prompt.clone(),
         body_kind: BlockBodyKind::Plain,
@@ -1193,6 +1335,7 @@ fn message_block(
         user_kind: UserBlockKind::Prompt,
         tool_kind: None,
         tool_members: Vec::new(),
+        failure: None,
         title: title.into(),
         body,
         body_kind: BlockBodyKind::Plain,
@@ -1395,6 +1538,7 @@ impl TranscriptBlock {
             && self.user_kind == other.user_kind
             && self.tool_kind == other.tool_kind
             && self.tool_members == other.tool_members
+            && self.failure == other.failure
             && self.title == other.title
             && self.body == other.body
             && self.body_kind == other.body_kind
@@ -1413,6 +1557,7 @@ impl TranscriptBlock {
             && self.user_kind == other.user_kind
             && self.tool_kind == other.tool_kind
             && self.tool_members == other.tool_members
+            && self.failure == other.failure
             && self.title == other.title
             && self.body == other.body
             && self.body_kind == other.body_kind
@@ -3182,5 +3327,85 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             ("message".into(), Value::String("validation failed".into())),
         ]);
         assert_eq!(summarize_details(&details), "validation failed");
+    }
+
+    #[test]
+    fn execution_failures_project_typed_actions_and_stable_identity() {
+        let cases = [
+            (
+                "ExecutionFailed",
+                json!({"owner":"build","reason":"provider failed","reason_code":"provider_error","retryable":true}),
+                FailureKind::Failed,
+                FailureAction::Retry,
+            ),
+            (
+                "ExecutionFailed",
+                json!({"owner":"policy","reason":"approval denied","reason_code":"approval_denied","retryable":true}),
+                FailureKind::ApprovalDenied,
+                FailureAction::Retry,
+            ),
+            (
+                "ExecutionCancelled",
+                json!({"owner":"operator","reason":"cancelled","retryable":true}),
+                FailureKind::Cancelled,
+                FailureAction::RunAgain,
+            ),
+            (
+                "ExecutionInterrupted",
+                json!({"owner":"runtime","reason":"restarting","retryable":true,"recovery_disposition":"resume_checkpoint"}),
+                FailureKind::Interrupted,
+                FailureAction::Recovering,
+            ),
+        ];
+        for (event_kind, payload, failure_kind, action) in cases {
+            let mut reducer = TranscriptReducer::default();
+            let mut blocks = Vec::new();
+            assert!(reducer.reduce_event(&mut blocks, wire(event_kind, payload)));
+            assert_eq!(blocks[0].id, "failure:run-1");
+            let failure = blocks[0].failure.as_ref().unwrap();
+            assert_eq!(failure.kind, failure_kind);
+            assert_eq!(failure.action, action);
+        }
+    }
+
+    #[test]
+    fn malformed_failure_never_enables_retry() {
+        let mut event = wire(
+            "ExecutionFailed",
+            json!({"reason":"unknown failure","retryable":true}),
+        );
+        event.run_id.clear();
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        assert!(!reducer.reduce_event(&mut blocks, event));
+        assert!(blocks.is_empty());
+
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire("ExecutionFailed", json!({"reason":"unknown failure"})),
+        ));
+        assert_eq!(
+            blocks[0].failure.as_ref().unwrap().action,
+            FailureAction::Disabled
+        );
+    }
+
+    #[test]
+    fn legacy_turn_failure_uses_the_canonical_failure_identity() {
+        let mut reducer = TranscriptReducer::default();
+        let blocks = reducer.hydrate(vec![SessionItemEvent {
+            kind: "turn.failed".into(),
+            session_id: "session-1".into(),
+            turn_id: "run-1".into(),
+            run_id: "run-1".into(),
+            item_id: String::new(),
+            source_event_id: "event-legacy".into(),
+            timestamp: String::new(),
+            details: BTreeMap::from([("error".into(), json!("legacy failure"))]),
+            item: None,
+        }]);
+        assert_eq!(blocks[0].id, "failure:run-1");
+        assert_eq!(blocks[0].failure.as_ref().unwrap().owner, "runtime");
+        assert_eq!(blocks[0].body, "legacy failure");
     }
 }

@@ -33,7 +33,7 @@ use crate::product_projection::{
 use crate::session_browser::SessionScope;
 use crate::tool_projection::{visible_group_members, visible_output_lines};
 use crate::transcript::{
-    BlockBodyKind, BlockKind, ToolGroupMember, TranscriptBlock, UserBlockKind,
+    BlockBodyKind, BlockKind, FailureAction, ToolGroupMember, TranscriptBlock, UserBlockKind,
 };
 
 impl App {
@@ -5012,6 +5012,44 @@ fn transcript_lines_with_tool_key(
             &prefix,
         );
     }
+    if let Some(failure) = &block.failure {
+        let action = match failure.action {
+            FailureAction::Retry | FailureAction::RunAgain => {
+                format!("[Alt-R] {}  [Alt-C] ID", tr(locale, MessageId::Retry))
+            }
+            FailureAction::Recovering => tr(locale, MessageId::ExecutionWorking).to_owned(),
+            FailureAction::Disabled => "[Alt-C] ID".into(),
+        };
+        let logical_lines = [
+            Line::from(vec![
+                Span::styled(format!("{}  ", glyphs.failure()), removed_style),
+                Span::styled(
+                    block.title.clone(),
+                    removed_style.add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    format!("{}  ", tr(locale, MessageId::Agent)),
+                    metadata_style,
+                ),
+                Span::styled(failure.owner.clone(), text_style),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    format!("{}  ", tr(locale, MessageId::Reason)),
+                    metadata_style,
+                ),
+                Span::styled(failure.reason.clone(), metadata_style),
+            ]),
+            Line::from(Span::styled(action, label_style)),
+        ];
+        return wrap_styled_lines(
+            logical_lines,
+            usize::from(content_width),
+            &StyledPrefix::default(),
+        );
+    }
     let label = transcript_label(locale, block.kind);
     let marker = if block.is_collapsible() {
         if block.expanded {
@@ -5460,6 +5498,20 @@ fn transcript_click_action(
         return (block.kind == BlockKind::User && block.branchable)
             .then_some(Action::SelectHistory(index));
     }
+    if let Some(failure) = &block.failure {
+        return match failure.action {
+            FailureAction::Retry | FailureAction::RunAgain => {
+                Some(Action::RetryExecution(failure.run_id.clone()))
+            }
+            FailureAction::Recovering | FailureAction::Disabled => Some(Action::CopyFailureId(
+                if failure.source_event_id.is_empty() {
+                    failure.run_id.clone()
+                } else {
+                    failure.source_event_id.clone()
+                },
+            )),
+        };
+    }
     block
         .is_collapsible()
         .then(|| Action::ToggleBlock(block.id.clone()))
@@ -5687,7 +5739,7 @@ mod transcript_tests {
                         "protocol_version": "1.3.0",
                         "projection_version": "1.0.0",
                         "capabilities": {"rpc_methods": [
-                            "execution.start", "model.list", "session.create",
+                            "execution.start", "execution.retry", "model.list", "session.create",
                             "session.events.stream", "session.list"
                         ]}
                     }),
@@ -5880,6 +5932,7 @@ mod transcript_tests {
             user_kind: UserBlockKind::Prompt,
             tool_kind: None,
             tool_members: Vec::new(),
+            failure: None,
             title: "Result".into(),
             body: body.into(),
             body_kind: BlockBodyKind::Plain,
@@ -6003,6 +6056,38 @@ mod transcript_tests {
             Glyphs::default().steer()
         )));
         assert!(visible[0].ends_with("  queued"));
+    }
+
+    #[test]
+    fn failure_cell_is_ascii_safe_and_wraps_cjk_at_supported_widths() {
+        let mut failure = block(BlockKind::Diagnostic, "");
+        failure.id = "failure:run-1".into();
+        failure.run_id = "run-1".into();
+        failure.title = "Execution failed".into();
+        failure.failure = Some(crate::transcript::FailurePresentation {
+            kind: crate::transcript::FailureKind::Failed,
+            action: FailureAction::Retry,
+            owner: "构建代理".into(),
+            reason: "服务暂时不可用，请检查配置后重试".into(),
+            source_event_id: "event-1".into(),
+            run_id: "run-1".into(),
+        });
+        let styles = TranscriptStyles {
+            glyphs: Glyphs::new(crate::glyphs::GlyphMode::Ascii),
+            ..TranscriptStyles::default()
+        };
+        for width in [80, 120, 160] {
+            let lines = transcript_lines(&failure, Locale::ZhHans, styles, width);
+            let visible = plain(&lines);
+            assert!(visible[0].starts_with("x  "));
+            assert!(
+                visible
+                    .iter()
+                    .all(|line| UnicodeWidthStr::width(line.as_str()) <= width as usize)
+            );
+            assert!(visible.iter().any(|line| line.contains("[Alt-R] 重试")));
+            assert!(visible.iter().all(|line| !line.contains('✗')));
+        }
     }
 
     #[test]

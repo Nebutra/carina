@@ -6,6 +6,7 @@
   "required": ["run_id", "session_id", "workspace_id", "status", "user_prompt", "created_at", "updated_at"],
   "properties": {
     "run_id": { "type": "string", "pattern": "^run_" },
+    "retry_of_run_id": { "type": "string", "pattern": "^run_" },
     "client_submission_id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
     "session_id": { "type": "string", "pattern": "^sess_" },
     "workspace_id": { "type": "string", "pattern": "^ws_" },
@@ -67,4 +68,3 @@
     "token_usage_observed": { "type": "boolean" }
   }
 }
-

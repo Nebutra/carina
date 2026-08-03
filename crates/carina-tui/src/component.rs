@@ -43,6 +43,8 @@ pub enum Action {
     FocusComposer,
     PreviewMedia(ElementId),
     RetryMedia(ElementId),
+    RetryExecution(String),
+    CopyFailureId(String),
     OpenSessions,
     OpenModels,
     OpenSettings,

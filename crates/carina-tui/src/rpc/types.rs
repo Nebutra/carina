@@ -2112,6 +2112,8 @@ mod tests {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ExecutionRun {
     pub run_id: String,
+    #[serde(default)]
+    pub retry_of_run_id: String,
     pub session_id: String,
     #[serde(default)]
     pub status: String,

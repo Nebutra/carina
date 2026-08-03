@@ -75,6 +75,7 @@ func (d *Daemon) reconcileInterruptedTask(task *scheduler.ExecutionRun) {
 	d.record(task.SessionID, "ExecutionInterrupted", task.RunID, "go", map[string]any{
 		"kind": kind, "certainty": record.Certainty, "retryable": allPassed,
 		"runtime_epoch": record.RuntimeEpoch, "checkpoint_id": record.CheckpointID, "billing_uncertain": record.BillingUncertain,
+		"owner": "runtime", "reason": decision.Reason, "recovery_disposition": disposition,
 	}, "")
 	eventType := "ExecutionRecoveryBlocked"
 	if allPassed {

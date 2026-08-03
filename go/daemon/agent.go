@@ -811,7 +811,8 @@ func (d *Daemon) degrade(sess *sessionstore.Session, task *scheduler.ExecutionRu
 		return
 	}
 	d.record(sess.SessionID, "ExecutionFailed", task.RunID, "go", map[string]any{
-		"outcome": "degraded", "reason": reason,
+		"outcome": "degraded", "reason": reason, "reason_code": "execution_degraded",
+		"owner": firstNonEmpty(task.Agent, "runtime"), "retryable": true,
 		"turns": len(tr.Turns), "applied_patches": applied,
 	}, "")
 	d.persistRun(task.RunID)

@@ -3015,6 +3015,33 @@ impl App {
                     self.cancel_execution(&run_id);
                 }
             }
+            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::ALT) => {
+                if let Some(run_id) = self.blocks.iter().rev().find_map(|block| {
+                    block.failure.as_ref().and_then(|failure| {
+                        matches!(
+                            failure.action,
+                            crate::transcript::FailureAction::Retry
+                                | crate::transcript::FailureAction::RunAgain
+                        )
+                        .then(|| failure.run_id.clone())
+                    })
+                }) {
+                    self.retry_failed_execution(&run_id);
+                }
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::ALT) => {
+                if let Some(id) = self.blocks.iter().rev().find_map(|block| {
+                    block.failure.as_ref().map(|failure| {
+                        if failure.source_event_id.is_empty() {
+                            failure.run_id.clone()
+                        } else {
+                            failure.source_event_id.clone()
+                        }
+                    })
+                }) {
+                    self.copy_failure_id(&id);
+                }
+            }
             KeyCode::PageUp => {
                 self.scroll_transcript(-(self.transcript_page_size() as isize));
             }
@@ -3058,6 +3085,45 @@ impl App {
         }
         self.sync_context_completion();
         Ok(())
+    }
+
+    fn retry_failed_execution(&mut self, original_run_id: &str) {
+        match self
+            .rpc
+            .retry_execution(original_run_id, &operation_id("retry"))
+        {
+            Ok(execution) => {
+                self.active_run_id = Some(execution.run_id.clone());
+                self.execution_timer.start_new();
+                self.execution_activity = None;
+                self.execution_status = if execution.status.is_empty() {
+                    "queued".into()
+                } else {
+                    execution.status.clone()
+                };
+                self.seed_execution_lifecycle(&execution.run_id, &self.execution_status.clone());
+                self.notice = Notice::localized_for_run(
+                    MessageId::ExecutionWorking,
+                    execution.run_id,
+                    std::iter::empty::<(&str, &str)>(),
+                );
+            }
+            Err(error) => {
+                self.notice = Notice::localized_with(
+                    MessageId::SubmitFailedDraftKept,
+                    [("error", error.to_string())],
+                );
+            }
+        }
+    }
+
+    fn copy_failure_id(&mut self, id: &str) {
+        if id.is_empty() {
+            return;
+        }
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            let _ = clipboard.set_text(id.to_owned());
+        }
     }
 
     fn sync_context_completion(&mut self) {
@@ -5109,6 +5175,8 @@ impl App {
                 self.retry_media(element_id);
                 self.focus = Focus::Composer;
             }
+            Action::RetryExecution(run_id) => self.retry_failed_execution(&run_id),
+            Action::CopyFailureId(id) => self.copy_failure_id(&id),
             Action::OpenSessions => {
                 self.close_top_non_governance();
                 self.open_session_browser();

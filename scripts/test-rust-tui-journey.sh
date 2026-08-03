@@ -743,7 +743,7 @@ def handle(connection, mode="normal"):
                     "protocol_version": "1.3.0",
                     "projection_version": "1.0.0",
                     "capabilities": {"rpc_methods": [
-                        "execution.start", "model.list", "session.create",
+                        "execution.start", "execution.retry", "model.list", "session.create",
                         "session.events.stream", "session.list"
                     ]}
                 }

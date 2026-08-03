@@ -32,6 +32,7 @@ type InputMediaRef struct {
 // ExecutionRun is the foreground conversation execution owned by the daemon.
 type ExecutionRun struct {
 	RunID                       string           `json:"run_id"`
+	RetryOfRunID                string           `json:"retry_of_run_id,omitempty"`
 	ClientSubmissionID          string           `json:"client_submission_id,omitempty"`
 	ClientSubmissionFingerprint string           `json:"-"` // durable internal identity; never exposed through Task JSON
 	SessionID                   string           `json:"session_id"`
@@ -131,6 +132,17 @@ func (s *Scheduler) SetClientSubmission(taskID, clientSubmissionID, fingerprint 
 		updated := *task
 		updated.ClientSubmissionID = clientSubmissionID
 		updated.ClientSubmissionFingerprint = fingerprint
+		touchRun(&updated)
+		s.runs[taskID] = &updated
+	}
+}
+
+func (s *Scheduler) SetRetryOf(taskID, retryOfRunID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if task := s.runs[taskID]; task != nil {
+		updated := *task
+		updated.RetryOfRunID = retryOfRunID
 		touchRun(&updated)
 		s.runs[taskID] = &updated
 	}
