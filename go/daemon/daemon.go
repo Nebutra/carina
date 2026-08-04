@@ -287,9 +287,15 @@ type Daemon struct {
 
 	reload func() error // config reload closure (SIGHUP/RPC); nil until SetReloader
 
-	authChain                *auth.Chain      // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
-	authStore                *auth.Store      // local BYOK credential store (doctor's per-provider probe)
-	providerCatalog          provider.Catalog // runtime provider catalog (doctor's per-provider probe)
+	authChain       *auth.Chain      // ordered provider-credential resolver (BYOK -> Nebutra OAuth)
+	authStore       *auth.Store      // local BYOK credential store (doctor's per-provider probe)
+	providerCatalog provider.Catalog // runtime provider catalog (doctor's per-provider probe)
+	// liveModelsCache holds recent GET /models results per provider+endpoint so
+	// model.list can expand thin catalogs (CC Switch profile.Model, open gateways)
+	// without hammering the upstream on every picker open.
+	liveModelsMu             sync.Mutex
+	liveModelsCache          map[string]liveModelsCacheEntry
+	liveModelsHTTP           *http.Client     // optional; tests inject httptest; nil => default client
 	disabledProviders        map[string]bool  // normalized provider IDs blocked before registration and task routing
 	usage                    *usageStore      // durable per-task/session model usage and cost accounting
 	goals                    *goalStore       // one durable operator-controlled goal per session
@@ -3219,9 +3225,9 @@ func (d *Daemon) handleExecutionQueueList(params json.RawMessage) (any, error) {
 	}
 	items := d.listQueuedSteers(p.RunID, p.PreviewCells)
 	return map[string]any{
-		"run_id":              p.RunID,
-		"queue_depth":         len(items),
-		"items":               items,
+		"run_id":                 p.RunID,
+		"queue_depth":            len(items),
+		"items":                  items,
 		"soft_interrupt_pending": d.softInterruptRequested(p.RunID),
 	}, nil
 }
