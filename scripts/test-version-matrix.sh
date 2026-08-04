@@ -10,7 +10,8 @@ grep -Fq "VERSION=$version" scripts/test-homebrew-formula.sh
 grep -Fq "VERSION=$version make release-package" docs/release.md
 grep -Fq 'required="0.15.1"' scripts/zig-tool.sh
 grep -Fq 'version="0.15.1"' scripts/install-zig-tool.sh
-test "$(grep -c 'version: 0.15.1' .github/workflows/release.yml)" -eq 3
+# validate + validate-suite + build + build-linux each pin Zig 0.15.1.
+test "$(grep -c 'version: 0.15.1' .github/workflows/release.yml)" -eq 4
 grep -Fq './scripts/build-zig-tools.sh' Makefile
 grep -Fq './scripts/build-zig-tools.sh' .github/workflows/ci.yml
 grep -Fq '"$ROOT/scripts/build-zig-tools.sh"' scripts/package-release.sh

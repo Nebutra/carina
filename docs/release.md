@@ -13,7 +13,11 @@ Before tagging or publishing anything from this repository, run:
 make release-check
 ```
 
-This is the same technical gate used by the tag workflow. It is strict: a
+This is the same technical gate used by the tag workflow's `validate-suite`
+job. The workflow splits gates so platform builds are not blocked on the full
+suite: a fast `validate` job runs identity/version/package contracts first,
+`validate-suite` runs this full check in parallel with packaging, and
+`publish` still requires both. Locally, `make release-check` remains strict: a
 failed gate or an unclean/out-of-sync release source returns non-zero. It
 validates:
 

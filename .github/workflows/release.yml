@@ -10,6 +10,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Fast gate on the critical path: identity, version matrix, package contracts,
+  # and workflow lint. Full build/test suite runs in parallel as validate-suite
+  # so platform builds can start ~7 minutes earlier.
   validate:
     runs-on: ubuntu-latest
     permissions:
@@ -25,8 +28,10 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: "1.25"
+          cache: true
 
       - name: Set up Rust
+        # Preflight toolchain probe still expects cargo/rustc even in --check-only.
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: "1.96.1"
@@ -74,6 +79,59 @@ jobs:
             npm view "$package" name >/dev/null
           done
           test "$NPM_TRUSTED_PUBLISHERS_CONFIRMED" = "true"
+
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Run contract-only release gate
+        # --check-only keeps package/signing/workflow contracts fail-closed without
+        # re-running the full Go/Rust/SDK suite that blocks platform builds.
+        run: PATH="$(go env GOPATH)/bin:$PATH" ./scripts/release-preflight.sh --no-external --strict --check-only
+
+  # Full local-equivalent suite. Runs in parallel with platform packaging and
+  # still gates publish so a red suite never ships.
+  validate-suite:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.96.1"
+
+      - name: Cache Rust workspace
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          shared-key: release-validate-suite
+          cache-on-failure: true
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24"
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.15.1
 
       - name: Install pinned actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
@@ -155,6 +213,12 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: "1.96.1"
+
+      - name: Cache Rust workspace
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          shared-key: release-darwin-${{ matrix.goarch }}
+          cache-on-failure: true
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -275,7 +339,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: [build, build-linux, build-windows-worker, build-integrations, publish-npm]
+    needs: [validate-suite, build, build-linux, build-windows-worker, build-integrations, publish-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -391,12 +455,19 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with: { go-version: "1.25" }
+        with:
+          go-version: "1.25"
+          cache: true
       - name: Install pinned nFPM
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.1
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: "1.96.1"
+      - name: Cache Rust workspace
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          shared-key: release-linux-${{ matrix.goarch }}
+          cache-on-failure: true
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.12" }
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -512,7 +583,8 @@ jobs:
             --repo "$GITHUB_REPOSITORY"
 
   publish-npm:
-    needs: freeze-npm
+    # Wait for the full suite so npm registry packages never ship on a red gate.
+    needs: [freeze-npm, validate-suite]
     runs-on: ubuntu-latest
     environment: npm-release
     permissions:
