@@ -19,7 +19,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/charmbracelet/x/term"
 )
 
 const (
@@ -169,10 +172,12 @@ func updateWithHomebrew(opts updateOptions) error {
 	if opts.version != "" {
 		return fmt.Errorf("Homebrew owns this installation; exact-version updates must use Homebrew's versioned-formula workflow")
 	}
-	fmt.Printf("carina update: channel=homebrew current=%s\n", cliVersion)
+	printUpdateHeader("homebrew", cliVersion, "", "")
 	if opts.check {
+		printUpdatePhase("checking Homebrew formula")
 		return updateRunCommand("brew", "outdated", "--formula", "carina")
 	}
+	printUpdatePhase("refreshing Homebrew")
 	if err := updateRunCommand("brew", "update"); err != nil {
 		return fmt.Errorf("brew update: %w", err)
 	}
@@ -180,10 +185,12 @@ func updateWithHomebrew(opts updateOptions) error {
 	if opts.force {
 		args = []string{"reinstall", "carina"}
 	}
+	printUpdatePhase("installing via Homebrew")
 	if err := updateRunCommand("brew", args...); err != nil {
 		return fmt.Errorf("brew %s: %w", args[0], err)
 	}
-	fmt.Println("carina update: restart the current workspace runtime after active executions finish: carina runtime stop; carina")
+	printUpdateDone(cliVersion, "homebrew")
+	printUpdateRestartHint()
 	return nil
 }
 
@@ -192,8 +199,9 @@ func updateWithNodeManager(manager string, opts updateOptions) error {
 	if opts.version != "" {
 		version = opts.version
 	}
-	fmt.Printf("carina update: channel=%s current=%s target=%s\n", manager, cliVersion, version)
+	printUpdateHeader(manager, cliVersion, version, "")
 	if opts.check {
+		printUpdatePhase("checking " + manager + " registry")
 		out, err := updateCommandOutput(manager, "view", "@nebutra/carina", "version")
 		if err != nil {
 			return fmt.Errorf("%s version check: %s: %w", manager, strings.TrimSpace(string(out)), err)
@@ -204,9 +212,9 @@ func updateWithNodeManager(manager string, opts updateOptions) error {
 			return fmt.Errorf("%s returned invalid package version %q", manager, latest)
 		}
 		if comparison > 0 {
-			fmt.Printf("carina update: update available: %s\n", latest)
+			fmt.Printf("update available: %s\n", latest)
 		} else {
-			fmt.Println("carina update: already up to date")
+			fmt.Println("already up to date")
 		}
 		return nil
 	}
@@ -214,10 +222,12 @@ func updateWithNodeManager(manager string, opts updateOptions) error {
 	if manager == "pnpm" {
 		args[0] = "add"
 	}
+	printUpdatePhase("installing via " + manager)
 	if err := updateRunCommand(manager, args...); err != nil {
 		return fmt.Errorf("%s update: %w", manager, err)
 	}
-	fmt.Println("carina update: restart the current workspace runtime after active executions finish: carina runtime stop; carina")
+	printUpdateDone(cliVersion, version)
+	printUpdateRestartHint()
 	return nil
 }
 
@@ -231,25 +241,25 @@ func updateStandalone(opts updateOptions, executable string) error {
 		return err
 	}
 	installDir := filepath.Dir(executable)
-	fmt.Printf("carina update: channel=standalone current=%s target=%s install=%s\n", cliVersion, targetVersion, installDir)
+	printUpdateHeader("standalone", cliVersion, targetVersion, installDir)
 	if opts.check {
 		switch {
 		case comparison > 0:
-			fmt.Println("carina update: update available")
+			fmt.Println("update available")
 		case comparison == 0:
-			fmt.Println("carina update: already up to date")
+			fmt.Println("already up to date")
 		default:
-			fmt.Println("carina update: current build is newer than the selected public release")
+			fmt.Println("current build is newer than the selected public release")
 		}
 		return nil
 	}
 	if comparison <= 0 && !opts.force {
 		if comparison == 0 {
-			fmt.Println("carina update: already up to date")
+			fmt.Println("already up to date")
 			return nil
 		}
 		if opts.version == "" {
-			fmt.Println("carina update: current build is newer than the latest public release; nothing changed")
+			fmt.Println("current build is newer than the latest public release; nothing changed")
 			return nil
 		}
 		return fmt.Errorf("refusing to downgrade %s to %s without --force", cliVersion, targetVersion)
@@ -278,17 +288,21 @@ func updateStandalone(opts updateOptions, executable string) error {
 	defer os.RemoveAll(work)
 	archivePath := filepath.Join(work, archiveName)
 	checksumPath := archivePath + ".sha256"
+	printUpdatePhase("downloading " + archiveName)
 	if err := downloadUpdateFile(archiveURL, archivePath, maxUpdateArchive); err != nil {
-		return fmt.Errorf("download release archive: %w", err)
+		return fmt.Errorf("download timed out or failed; check network and retry: %w", err)
 	}
+	printUpdatePhase("downloading checksum")
 	if err := downloadUpdateFile(checksumURL, checksumPath, maxUpdateMetadata); err != nil {
-		return fmt.Errorf("download release checksum: %w", err)
+		return fmt.Errorf("download checksum failed; check network and retry: %w", err)
 	}
+	printUpdatePhase("verifying sha256")
 	if err := verifyUpdateChecksum(archivePath, checksumPath, archiveName); err != nil {
 		return err
 	}
 
 	stage := filepath.Join(work, "stage")
+	printUpdatePhase("installing to " + displayInstallDir(installDir))
 	binaries, err := extractAndVerifyUpdateArchive(archivePath, stage, targetVersion, updateGOOS, updateGOARCH)
 	if err != nil {
 		return err
@@ -297,9 +311,165 @@ func updateStandalone(opts updateOptions, executable string) error {
 		return err
 	}
 	removeObsoleteUpdateBinaries(installDir)
-	fmt.Printf("carina update: updated %s -> %s\n", cliVersion, targetVersion)
-	fmt.Println("carina update: restart the current workspace runtime after active executions finish: carina runtime stop; carina")
+	printUpdateDone(cliVersion, targetVersion)
+	printUpdateRestartHint()
 	return nil
+}
+
+// --- operator-facing update UX (TTY progress; plain for CI/pipes) ---
+
+func updateStdoutIsTTY() bool {
+	if envFlagEnabled(os.Getenv("CARINA_UPDATE_PLAIN")) || envFlagEnabled(os.Getenv("CI")) {
+		return false
+	}
+	return term.IsTerminal(os.Stdout.Fd())
+}
+
+func envFlagEnabled(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func displayInstallDir(path string) string {
+	path = filepath.Clean(path)
+	if home, err := os.UserHomeDir(); err == nil {
+		home = filepath.Clean(home)
+		if path == home {
+			return "~"
+		}
+		prefix := home + string(os.PathSeparator)
+		if strings.HasPrefix(path, prefix) {
+			return "~/" + filepath.ToSlash(path[len(prefix):])
+		}
+	}
+	return filepath.ToSlash(path)
+}
+
+func printUpdateHeader(channel, current, target, installDir string) {
+	// One quiet brand line, then facts — no multi-line ASCII banner.
+	if updateStdoutIsTTY() {
+		fmt.Println("◆ Carina update")
+	} else {
+		fmt.Println("Carina update")
+	}
+	if target != "" && target != "latest" {
+		fmt.Printf("  %s → %s  (%s)\n", current, target, channel)
+	} else {
+		fmt.Printf("  current %s  (%s)\n", current, channel)
+	}
+	if installDir != "" {
+		fmt.Printf("  install %s\n", displayInstallDir(installDir))
+	}
+}
+
+func printUpdatePhase(step string) {
+	if updateStdoutIsTTY() {
+		fmt.Printf("· %s…\n", step)
+	} else {
+		fmt.Printf("%s…\n", step)
+	}
+}
+
+func printUpdateDone(from, to string) {
+	if to == "homebrew" || to == "latest" || to == from {
+		fmt.Printf("✓ updated via %s\n", to)
+		return
+	}
+	fmt.Printf("✓ updated %s -> %s\n", from, to)
+}
+
+func printUpdateRestartHint() {
+	fmt.Println("restart the current workspace runtime after active executions finish: carina runtime stop; carina")
+}
+
+type downloadProgress struct {
+	mu      sync.Mutex
+	label   string
+	total   int64
+	written int64
+	last    time.Time
+	tty     bool
+}
+
+func newDownloadProgress(label string, total int64) *downloadProgress {
+	return &downloadProgress{
+		label: label,
+		total: total,
+		tty:   updateStdoutIsTTY(),
+		last:  time.Now().Add(-time.Second),
+	}
+}
+
+func (p *downloadProgress) Write(b []byte) (int, error) {
+	n := len(b)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.written += int64(n)
+	if !p.tty {
+		return n, nil
+	}
+	now := time.Now()
+	// Throttle redraws; always paint on completion.
+	done := p.total > 0 && p.written >= p.total
+	if !done && now.Sub(p.last) < 80*time.Millisecond {
+		return n, nil
+	}
+	p.last = now
+	p.renderLocked()
+	return n, nil
+}
+
+func (p *downloadProgress) finish() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.tty {
+		return
+	}
+	p.renderLocked()
+	fmt.Fprint(os.Stdout, "\n")
+}
+
+func (p *downloadProgress) renderLocked() {
+	const width = 28
+	if p.total > 0 {
+		ratio := float64(p.written) / float64(p.total)
+		if ratio > 1 {
+			ratio = 1
+		}
+		filled := int(ratio * float64(width))
+		if filled > width {
+			filled = width
+		}
+		bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+		fmt.Fprintf(os.Stdout, "\r  %s  %s  %s / %s  ",
+			p.label, bar, formatByteCount(p.written), formatByteCount(p.total))
+		return
+	}
+	fmt.Fprintf(os.Stdout, "\r  %s  %s  ", p.label, formatByteCount(p.written))
+}
+
+func formatByteCount(n int64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	units := []string{"KB", "MB", "GB"}
+	value := float64(n)
+	unit := "B"
+	for _, u := range units {
+		if value < 1024 {
+			break
+		}
+		value /= 1024
+		unit = u
+	}
+	if unit == "B" {
+		return fmt.Sprintf("%d B", n)
+	}
+	return fmt.Sprintf("%.1f %s", value, unit)
 }
 
 func updateAPIBase() string {
@@ -448,7 +618,14 @@ func downloadUpdateFile(rawURL, destination string, maxBytes int64) error {
 	if err != nil {
 		return err
 	}
-	n, copyErr := io.Copy(f, io.LimitReader(resp.Body, maxBytes+1))
+	total := resp.ContentLength
+	if total < 0 {
+		total = 0
+	}
+	progress := newDownloadProgress("downloading", total)
+	reader := io.TeeReader(io.LimitReader(resp.Body, maxBytes+1), progress)
+	n, copyErr := io.Copy(f, reader)
+	progress.finish()
 	syncErr := f.Sync()
 	closeErr := f.Close()
 	if copyErr != nil {
@@ -704,7 +881,7 @@ func removeObsoleteUpdateBinaries(installDir string) {
 	for _, name := range obsoleteUpdateBinaries {
 		path := filepath.Join(installDir, name)
 		if err := updateRemove(path); err == nil {
-			fmt.Printf("carina update: removed obsolete binary %s\n", name)
+			fmt.Printf("removed obsolete binary %s\n", name)
 		}
 	}
 }
