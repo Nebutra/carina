@@ -135,7 +135,10 @@ const installCopy = isZh
 
     {
       showTerminal && (
-        <div class="hero__visual docs-animate-in docs-animate-in--4">
+        {/* No docs-animate-in here: translateY rise on the product window
+            made the traffic-light chrome look like it was bouncing. Copy
+            column still staggers; the terminal paints steady. */}
+        <div class="hero__visual">
           <TerminalFrame title="carina — governed session" />
         </div>
       )

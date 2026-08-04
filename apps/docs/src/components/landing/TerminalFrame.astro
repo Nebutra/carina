@@ -2,6 +2,9 @@
 /**
  * Landing terminal — the single dark product signal on the cream hero.
  * Intentionally denser than docs code blocks: window chrome + one climax frame.
+ *
+ * Traffic-light dots use spans (not <i>) with a fixed chrome track so they
+ * never baseline-wobble or “bounce” relative to the title/badge.
  */
 interface Props {
   title?: string;
@@ -23,7 +26,9 @@ const {
 <figure class="term term--product">
   <div class="term__chrome">
     <span class="term__dots" aria-hidden="true">
-      <i></i><i></i><i></i>
+      <span class="term__dot term__dot--close"></span>
+      <span class="term__dot term__dot--min"></span>
+      <span class="term__dot term__dot--max"></span>
     </span>
     <span class="term__title">{title}</span>
     <span class="term__badge" aria-hidden="true">live</span>
@@ -40,6 +45,9 @@ const {
     background: var(--carina-code-void, #0f1416);
     overflow: hidden;
     text-align: left;
+    /* Isolate paint so entrance/parent transforms cannot re-composite dots */
+    transform: translateZ(0);
+    isolation: isolate;
     box-shadow:
       0 0 0 1px color-mix(in srgb, var(--docs-fg) 4%, transparent),
       0 1px 0 color-mix(in srgb, var(--carina-ion-cyan, var(--docs-accent)) 12%, transparent) inset,
@@ -51,8 +59,12 @@ const {
     display: flex;
     align-items: center;
     gap: 0.65rem;
+    /* Fixed track — not min-height — keeps dots/title/badge on one centerline */
+    height: 2.25rem;
     min-height: 2.25rem;
+    max-height: 2.25rem;
     padding: 0 0.85rem;
+    box-sizing: border-box;
     border-bottom: 1px solid color-mix(in srgb, var(--carina-border-subtle, #2a3336) 90%, transparent);
     background: linear-gradient(
       180deg,
@@ -63,26 +75,34 @@ const {
 
   .term__dots {
     display: inline-flex;
-    gap: 5px;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
     flex-shrink: 0;
+    height: 8px;
+    line-height: 0;
+    /* Kill any residual italic / font metrics from UA styles */
+    font-size: 0;
   }
 
-  .term__dots i {
+  .term__dot {
     display: block;
-    width: 7px;
-    height: 7px;
+    width: 8px;
+    height: 8px;
+    flex: 0 0 8px;
     border-radius: 50%;
-    background: color-mix(in srgb, var(--docs-fg) 14%, transparent);
+    /* Solid fills — no alpha mix (avoids subpixel “shimmer” on dark chrome) */
+    background: #5c6366;
   }
 
-  .term__dots i:nth-child(1) {
-    background: color-mix(in srgb, #ff5f57 70%, transparent);
+  .term__dot--close {
+    background: #ff5f57;
   }
-  .term__dots i:nth-child(2) {
-    background: color-mix(in srgb, #febc2e 70%, transparent);
+  .term__dot--min {
+    background: #febc2e;
   }
-  .term__dots i:nth-child(3) {
-    background: color-mix(in srgb, #28c840 70%, transparent);
+  .term__dot--max {
+    background: #28c840;
   }
 
   .term__title {
@@ -90,6 +110,7 @@ const {
     min-width: 0;
     font-family: var(--docs-font-mono);
     font-size: 0.6875rem;
+    line-height: 1;
     color: var(--carina-dust, var(--docs-fg-muted));
     letter-spacing: 0.02em;
     white-space: nowrap;
@@ -99,13 +120,17 @@ const {
 
   .term__badge {
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    height: 1.25rem;
     font-family: var(--docs-font-mono);
     font-size: 0.625rem;
     font-weight: 600;
     letter-spacing: 0.06em;
+    line-height: 1;
     text-transform: uppercase;
     color: var(--carina-ion-cyan, var(--docs-accent));
-    padding: 0.15rem 0.4rem;
+    padding: 0 0.4rem;
     border-radius: 999px;
     border: 1px solid color-mix(in srgb, var(--carina-ion-cyan, var(--docs-accent)) 35%, transparent);
     background: color-mix(in srgb, var(--carina-ion-cyan, var(--docs-accent)) 10%, transparent);
