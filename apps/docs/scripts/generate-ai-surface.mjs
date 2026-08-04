@@ -106,7 +106,7 @@ const llms = [
   `- Full index: ${site}/llms-full.txt`,
   `- Skill: ${site}/skill.md`,
   `- Markdown export: append \`index.md\` to any docs path (e.g. ${site}/getting-started/quickstart/index.md)`,
-  `- JSON-RPC catalogs: ${site}/data/rpc-catalog-0.6.x.json · ${site}/data/rpc-catalog-next.json`,
+  `- JSON-RPC catalogs: ${site}/data/rpc-catalog-0.8.x.json · ${site}/data/rpc-catalog-next.json`,
   '',
 ].join('\n');
 
@@ -136,7 +136,7 @@ description: Use Carina documentation to answer questions about the local-first 
 - Human docs: ${site}
 - LLM index: ${site}/llms.txt
 - Full index: ${site}/llms-full.txt
-- Method catalog (stable): ${site}/data/rpc-catalog-0.6.x.json
+- Method catalog (stable): ${site}/data/rpc-catalog-0.8.x.json
 - Method catalog (next): ${site}/data/rpc-catalog-next.json
 
 ## Preferred workflow

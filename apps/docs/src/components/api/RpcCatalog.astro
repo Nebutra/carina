@@ -2,7 +2,7 @@
 /**
  * Version-pinned protocol method catalog with URL-addressable state.
  */
-import stableCatalog from '../../data/rpc-catalog-0.6.x.json';
+import stableCatalog from '../../data/rpc-catalog-0.8.x.json';
 import nextCatalog from '../../data/rpc-catalog-next.json';
 import SnippetTabs from './SnippetTabs.astro';
 import TryIt from './TryIt.astro';
@@ -11,11 +11,11 @@ interface Props {
   groups?: string[];
   showSnippets?: boolean;
   showTryIt?: boolean;
-  version?: '0.6.x' | 'next';
+  version?: '0.8.x' | 'next';
   initial?: boolean;
 }
 
-const { groups: only, showSnippets = true, showTryIt = true, version = '0.6.x', initial = true } = Astro.props;
+const { groups: only, showSnippets = true, showTryIt = true, version = '0.8.x', initial = true } = Astro.props;
 const catalog = version === 'next' ? nextCatalog : stableCatalog;
 const isZh = Astro.url.pathname.startsWith('/zh-cn/');
 const labels = isZh
@@ -234,7 +234,7 @@ const groups = groupList.map((group) => ({
     if (!(root instanceof HTMLElement) || root.dataset.ready === '1') return;
     root.dataset.ready = '1';
 
-    const catalogVersion = root.dataset.catalogVersion || '0.6.x';
+    const catalogVersion = root.dataset.catalogVersion || '0.8.x';
     const filter = root.querySelector<HTMLInputElement>('[data-rpc-filter]');
     const jump = root.querySelector<HTMLSelectElement>('[data-rpc-jump]');
     const empty = root.querySelector<HTMLElement>('[data-rpc-empty]');

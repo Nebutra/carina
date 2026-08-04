@@ -41,7 +41,7 @@ The CLI and TUI share the same daemon, policy kernel, and audit trail as JSON-RP
 
 ## Interactive TUI
 
-Open with `carina` (TTY required). This is the primary operator surface.
+Open with `carina` (TTY required). This is the primary operator surface for the **0.8** line.
 
 ### Discoverability
 
@@ -53,28 +53,35 @@ Open with `carina` (TTY required). This is the primary operator surface.
 | `Ctrl-C` | Interrupt the active run (default; remappable) |
 | `Ctrl-O` | Expand truncated tool output (default; remappable) |
 
-Footer status often shows: `? help  |  / commands  |  Ctrl-O expand tools  |  Ctrl-C interrupt`.
+Footer status often shows help/command hints, plus **context pressure** (`ctx%` / estimates), **HITL** approval state, and **queue depth** when relevant. Prefer the on-screen footer over memorizing keys.
 
 ### Slash commands
 
-Registered in the TUI (`crates/carina-tui/src/command.rs`). `/exit` aliases `/quit`.
+Registered in the TUI (`crates/carina-tui/src/command.rs`). `/exit` aliases `/quit`. Dynamic skill commands (e.g. `/review`) appear when the daemon registers them.
 
 | Command | Purpose |
 | --- | --- |
 | `/settings` | Open settings |
 | `/status` | Runtime and session status |
+| `/context` | Context pressure and compaction receipt detail |
+| `/changes` | Patch / diff workbench (apply, verify, rollback) |
 | `/provider` | Choose or reconfigure a provider |
 | `/model` | Choose a model |
-| `/plan` | Toggle plan mode |
+| `/plan` | Toggle plan mode (exit may require governed approval) |
 | `/build` | Switch to build mode |
 | `/sessions` | Browse sessions |
 | `/resume` | Resume a session |
 | `/cancel` | Cancel the active run (only when a run is active) |
+| `/queue` | Inspect / drop follow-up execution queue |
+| `/minimal` | Screen mode: minimal chrome |
+| `/fullscreen` | Screen mode: fullscreen review |
+| `/inline` | Screen mode: inline / capability fallback |
+| `/keymap` | Keybinding reference |
 | `/doctor` | Health checks and recovery UI |
 | `/help` | Full help surface |
-| `/quit` | Quit Carina |
+| `/quit` | Quit Carina (`/exit` alias) |
 
-List from the CLI (daemon-backed registry):
+List from the CLI (daemon-backed registry, includes skills when available):
 
 ```bash frame="none"
 carina commands list
@@ -82,7 +89,7 @@ carina commands list
 
 ### Approvals in the TUI
 
-Risky side effects surface an **approval overlay**. You can also resolve from another terminal:
+Risky side effects surface an **approval overlay** (dual-axis HITL: isolation + approval queue). You can also resolve from another terminal:
 
 ```bash frame="none"
 carina approve SESSION DECISION_ID
@@ -93,15 +100,15 @@ See [Policy](/concepts/policy/).
 
 ### Keybindings
 
-Defaults live in the TUI; project/global config can override via `tui_keybindings` (see product config). Prefer the on-screen footer and `?` over memorizing keys.
+Defaults live in the TUI; project/global config can override via `tui_keybindings` (see product config). Prefer the on-screen footer, `?`, and `/keymap` over memorizing keys.
 
 ## CLI command groups
 
 | Area | Commands |
 | --- | --- |
-| Lifecycle | `init`, `status`, `doctor`, `update`, `daemon *` |
+| Lifecycle | `init`, `status`, `doctor`, `update`, `daemon *`, `runtime *`, `runtimes` |
 | Work | `run`, `ask`, `resume`, `fork`, `steer`, `answer` |
-| Inspect | `sessions`, `items`, `watch`, `cost`, `session review` |
+| Inspect | `sessions`, `items`, `watch`, `cost`, `session review`, `checkpoint *` |
 | Governance | `approve`, `deny`, `profile`, `audit*`, `patch*`, `report`, `export` |
 | Orchestration | `workflow *`, `worker *`, `schedule *` |
 | Memory / context | `memory *`, `context *` |
@@ -112,9 +119,8 @@ Full tables: [CLI reference](/reference/cli/).
 ## Source of truth
 
 - Live binary: `carina --help`  
-- TUI slash registry: `crates/carina-tui/src/command.rs` · help surface: `help.rs`  
+- TUI slash registry: `crates/carina-tui/src/command.rs` · capability ledger: `crates/carina-tui/CAPABILITIES.md`  
 - Recipes: [Common workflows](/getting-started/common-workflows/)  
-- Capability ledger: `crates/carina-tui/CAPABILITIES.md`  
 
 <Callout variant="tip">
   Prefer `carina doctor` before debugging “nothing happens” — most issues are PATH, socket, or daemon down.

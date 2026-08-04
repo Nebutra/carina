@@ -1,12 +1,12 @@
 {
-  "default": "0.6.x",
+  "default": "0.8.x",
   "versions": [
     {
-      "id": "0.6.x",
-      "label": "0.6.x",
-      "description": "Stable docs surface for the 0.6 release line.",
+      "id": "0.8.x",
+      "label": "0.8.x",
+      "description": "Stable docs surface for the 0.8.x release line.",
       "badge": "stable",
-      "catalog": "/data/rpc-catalog-0.6.x.json"
+      "catalog": "/data/rpc-catalog-0.8.x.json"
     },
     {
       "id": "next",

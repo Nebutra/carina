@@ -6,10 +6,17 @@
  * Outputs:
  *   src/data/rpc-catalog.json          — default SSG import (next/head)
  *   src/data/rpc-catalog-next.json
- *   src/data/rpc-catalog-0.6.x.json    — stable channel pin (refreshed on sync)
+ *   src/data/rpc-catalog-0.8.x.json    — stable channel pin (current release line)
  *   public/data/rpc-catalog-*.json     — client-fetchable trees
+ *   src/data/versions.json + public
  *
  * Run: pnpm sync-protocol
+ *
+ * Channel model (objective):
+ *   - stable `0.8.x` — docs surface for the current 0.8 release line
+ *   - `next` — monorepo head of methods.json (may include unreleased methods)
+ * Both are regenerated from the same source on sync; release freezes happen by
+ * committing the generated JSON on the release branch.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -22,6 +29,9 @@ const source = join(repoRoot, 'protocol/jsonrpc/methods.json');
 const outDir = join(docsRoot, 'src/data');
 const publicData = join(docsRoot, 'public/data');
 const outFile = join(outDir, 'rpc-catalog.json');
+
+/** Stable docs channel id — keep in lock-step with the current published major.minor line. */
+const STABLE_CHANNEL = '0.8.x';
 
 if (!existsSync(source)) {
   console.error(`Missing protocol registry: ${source}`);
@@ -62,13 +72,11 @@ const nextCatalog = {
   note: 'Tracks protocol/jsonrpc/methods.json from the monorepo head.',
 };
 
-// Stable pin: refresh from the same registry at sync time (release freezes
-// happen by committing this file on the release branch).
 const stableCatalog = {
   ...base,
-  channel: '0.6.x',
+  channel: STABLE_CHANNEL,
   badge: 'stable',
-  note: 'Docs channel for the 0.6 release line. Re-sync on release branches freezes the pin.',
+  note: `Docs channel for the ${STABLE_CHANNEL} release line. Re-sync on release branches freezes the pin.`,
 };
 
 mkdirSync(outDir, { recursive: true });
@@ -79,24 +87,26 @@ function writeJson(path, data) {
   console.log(`✓ ${path}`);
 }
 
+const stableFile = `rpc-catalog-${STABLE_CHANNEL}.json`;
+
 // Default SSG import = next (latest protocol surface for docs development)
 writeJson(outFile, nextCatalog);
 writeJson(join(outDir, 'rpc-catalog-next.json'), nextCatalog);
-writeJson(join(outDir, 'rpc-catalog-0.6.x.json'), stableCatalog);
+writeJson(join(outDir, stableFile), stableCatalog);
 writeJson(join(publicData, 'rpc-catalog-next.json'), nextCatalog);
-writeJson(join(publicData, 'rpc-catalog-0.6.x.json'), stableCatalog);
+writeJson(join(publicData, stableFile), stableCatalog);
 
 // versions manifest for clients
 const versionsPath = join(outDir, 'versions.json');
 const versions = {
-  default: '0.6.x',
+  default: STABLE_CHANNEL,
   versions: [
     {
-      id: '0.6.x',
-      label: '0.6.x',
-      description: 'Stable docs surface for the 0.6 release line.',
+      id: STABLE_CHANNEL,
+      label: STABLE_CHANNEL,
+      description: `Stable docs surface for the ${STABLE_CHANNEL} release line.`,
       badge: 'stable',
-      catalog: '/data/rpc-catalog-0.6.x.json',
+      catalog: `/data/${stableFile}`,
     },
     {
       id: 'next',
@@ -110,5 +120,5 @@ const versions = {
 writeJson(versionsPath, versions);
 copyFileSync(versionsPath, join(publicData, 'versions.json'));
 console.log(
-  `  protocol ${base.protocol_version} · ${base.method_count} methods · ${groups.length} groups · channels 0.6.x + next`,
+  `  protocol ${base.protocol_version} · ${base.method_count} methods · ${groups.length} groups · channels ${STABLE_CHANNEL} + next`,
 );

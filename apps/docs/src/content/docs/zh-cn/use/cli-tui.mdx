@@ -9,7 +9,7 @@ import Callout from '../../../../components/ui/Callout.astro';
 import Steps from '../../../../components/mdx/Steps.astro';
 import Step from '../../../../components/mdx/Step.astro';
 
-CLI / TUI 与 JSON-RPC 共用同一 daemon、策略内核与审计链。
+CLI 与 TUI 共享同一 daemon、策略内核与审计链路（与 JSON-RPC 一致）。
 
 ## 黄金路径
 
@@ -19,15 +19,15 @@ CLI / TUI 与 JSON-RPC 共用同一 daemon、策略内核与审计链。
     carina doctor
     ```
   </Step>
-  <Step title="跑任务或打开 TUI">
+  <Step title="运行或打开 TUI">
     ```bash frame="none"
     cd /path/to/repo
     carina run "your task"
     # 或交互：
     carina
     ```
-    `carina run` 在 cwd 创建 **safe-edit** 会话并等待任务结束（除非 `--background`）。
-    裸跑 `carina` 打开交互 TUI，并在需要时 **自动启动** daemon。
+    `carina run` 在 `cwd` 创建 **safe-edit** 会话并等待任务完成（除非 `--background`）。
+    裸 `carina` 打开交互 TUI，并在需要时 **自动启动** daemon。
   </Step>
   <Step title="检查">
     ```bash frame="none"
@@ -41,7 +41,7 @@ CLI / TUI 与 JSON-RPC 共用同一 daemon、策略内核与审计链。
 
 ## 交互 TUI
 
-在 TTY 中运行 `carina`。这是主要的操作者表面。
+在 TTY 下运行 `carina`。这是 **0.8** 线的主操作面。
 
 ### 可发现性
 
@@ -50,31 +50,38 @@ CLI / TUI 与 JSON-RPC 共用同一 daemon、策略内核与审计链。
 | `?` | 切换帮助面（与 `/help` 相同） |
 | `/` | 打开 slash 命令面板（可输入过滤） |
 | `Esc` | 关闭浮层 / 取消 |
-| `Ctrl-C` | 中断当前 run（默认；可重映射） |
-| `Ctrl-O` | 展开被截断的工具输出（默认；可重映射） |
+| `Ctrl-C` | 中断当前 run（默认可重映射） |
+| `Ctrl-O` | 展开被截断的工具输出（默认可重映射） |
 
-状态栏常见提示：`? help  |  / commands  |  Ctrl-O expand tools  |  Ctrl-C interrupt`。
+页脚常显示帮助/命令提示，以及 **上下文压力**（`ctx%` / 估算）、**HITL** 审批状态、**队列深度**（有跟随时）。以页脚为准，勿死记键位。
 
 ### Slash 命令
 
-注册于 TUI（`crates/carina-tui/src/command.rs`）。`/exit` 等价于 `/quit`。
+注册于 TUI（`crates/carina-tui/src/command.rs`）。`/exit` 是 `/quit` 的别名。daemon 注册的 skill 会以动态 slash 出现（如 `/review`）。
 
-| 命令 | 作用 |
+| 命令 | 用途 |
 | --- | --- |
 | `/settings` | 打开设置 |
 | `/status` | 运行时与会话状态 |
+| `/context` | 上下文压力与压缩回执详情 |
+| `/changes` | 补丁 / diff 工作台（应用、校验、回滚） |
 | `/provider` | 选择或配置 provider |
 | `/model` | 选择模型 |
-| `/plan` | 切换 plan 模式 |
+| `/plan` | 切换 plan 模式（退出可能需要受控审批） |
 | `/build` | 切换到 build 模式 |
 | `/sessions` | 浏览会话 |
 | `/resume` | 恢复会话 |
 | `/cancel` | 取消当前 run（仅有活动 run 时可用） |
+| `/queue` | 查看 / 丢弃 follow-up 执行队列 |
+| `/minimal` | 屏幕模式：精简 chrome |
+| `/fullscreen` | 屏幕模式：全屏审阅 |
+| `/inline` | 屏幕模式：inline / 能力回退 |
+| `/keymap` | 键位参考 |
 | `/doctor` | 健康检查与恢复 UI |
 | `/help` | 完整帮助面 |
-| `/quit` | 退出 Carina |
+| `/quit` | 退出（`/exit` 别名） |
 
-从 CLI 列出（经 daemon 注册表）：
+也可从 CLI 列出（含 skill，若 daemon 已注册）：
 
 ```bash frame="none"
 carina commands list
@@ -82,7 +89,7 @@ carina commands list
 
 ### TUI 中的审批
 
-有风险的副作用会弹出 **审批浮层**。也可在另一终端用 CLI 处理：
+高风险副作用会弹出 **审批浮层**（双轴 HITL：隔离 + 审批队列）。也可在另一终端处理：
 
 ```bash frame="none"
 carina approve SESSION DECISION_ID
@@ -93,29 +100,28 @@ carina deny SESSION DECISION_ID "reason"
 
 ### 键位
 
-默认键位在 TUI 内定义；项目/全局配置可通过 `tui_keybindings` 覆盖。优先看屏幕底部提示和 `?`，不要死记硬背。
+默认在 TUI 内；项目/全局配置可通过 `tui_keybindings` 覆盖。优先看页脚、`?` 与 `/keymap`。
 
 ## CLI 命令分组
 
 | 区域 | 命令 |
 | --- | --- |
-| 生命周期 | `init`, `status`, `doctor`, `update`, `daemon *` |
-| 干活 | `run`, `ask`, `resume`, `fork`, `steer`, `answer` |
-| 检查 | `sessions`, `items`, `watch`, `cost`, `session review` |
+| 生命周期 | `init`, `status`, `doctor`, `update`, `daemon *`, `runtime *`, `runtimes` |
+| 工作 | `run`, `ask`, `resume`, `fork`, `steer`, `answer` |
+| 检查 | `sessions`, `items`, `watch`, `cost`, `session review`, `checkpoint *` |
 | 治理 | `approve`, `deny`, `profile`, `audit*`, `patch*`, `report`, `export` |
 | 编排 | `workflow *`, `worker *`, `schedule *` |
 | 记忆 / 上下文 | `memory *`, `context *` |
-| Provider | `auth *`, `providers list` |
+| 提供商 | `auth *`, `providers list` |
 
-完整表：[CLI 参考](/zh-cn/reference/cli/)。
+完整表见 [CLI 参考](/zh-cn/reference/cli/)。
 
 ## 权威来源
 
-- 本机：`carina --help`  
-- TUI slash 注册：`crates/carina-tui/src/command.rs` · 帮助面：`help.rs`  
+- 本机二进制：`carina --help`  
+- TUI slash 注册表：`crates/carina-tui/src/command.rs` · 能力账本：`crates/carina-tui/CAPABILITIES.md`  
 - 配方：[常用工作流](/zh-cn/getting-started/common-workflows/)  
-- 能力台账：`crates/carina-tui/CAPABILITIES.md`  
 
 <Callout variant="tip">
-  「没反应」时先 `carina doctor` — 多数是 PATH、socket 或 daemon 未起。
+  排查「没反应」前先跑 `carina doctor`——多数是 PATH、socket 或 daemon 未起。
 </Callout>

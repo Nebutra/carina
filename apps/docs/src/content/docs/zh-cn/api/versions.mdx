@@ -1,6 +1,6 @@
 ---
 title: API 版本通道
-description: 文档 0.6.x / next 通道与协议目录的对应关系。
+description: 文档 0.8.x / next 通道与协议目录的对应关系。
 sidebar:
   order: 4
 ---
@@ -13,7 +13,7 @@ import Callout from '../../../../components/ui/Callout.astro';
 
 | 通道 | 标记 | 目录文件 | 用途 |
 | --- | --- | --- | --- |
-| `0.6.x` | stable | `/data/rpc-catalog-0.6.x.json` | 0.6 发布线文档面 |
+| `0.8.x` | stable | `/data/rpc-catalog-0.8.x.json` | **0.8** 发布线文档面（当前产品） |
 | `next` | preview | `/data/rpc-catalog-next.json` | 跟踪仓库内最新 `methods.json` |
 
 顶栏 **Version** 选择会写入 `localStorage`，并在 `<html>` 上设置 `data-docs-version`。
@@ -26,7 +26,7 @@ import Callout from '../../../../components/ui/Callout.astro';
 pnpm sync-protocol
 ```
 
-协议变更后请提交更新的 `src/data/rpc-catalog*.json` 与 `public/data/*`。
+协议变更后请提交更新的 `src/data/rpc-catalog*.json` 与 `public/data/*`。生成器从同一份 `methods.json` 写出两个通道；release 分支上的 commit 即稳定钉扎。
 
 ## Try it
 
@@ -34,10 +34,11 @@ pnpm sync-protocol
 
 ## 权威来源
 
+- 协议注册表：`protocol/jsonrpc/methods.json`
 - 目录生成：`apps/docs` → `pnpm sync-protocol`
 - 钉扎：`src/data/rpc-catalog-*.json` 与 `public/data/`
 - 相关：[方法目录](/zh-cn/api/methods/) · [JSON-RPC](/zh-cn/api/json-rpc/) · [API 概览](/zh-cn/api/overview/)
 
 ## 下一步
 
-- 在页眉切换 **Version**（`0.6.x` / `next`），再打开 [方法目录](/zh-cn/api/methods/)
+- 在页眉切换 **Version**（`0.8.x` / `next`），再打开 [方法目录](/zh-cn/api/methods/)

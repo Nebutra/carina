@@ -6,11 +6,11 @@ const isZh = Astro.locals.starlightRoute.locale === 'zh-cn';
 const copy = isZh
   ? {
       message: '你正在查看预览通道，方法目录会跟踪仓库内的协议注册表。',
-      switchLabel: '切换到 0.6.x',
+      switchLabel: '切换到 0.8.x',
     }
   : {
       message: 'You are viewing the preview channel; the method catalog tracks the in-repo protocol registry.',
-      switchLabel: 'Switch to 0.6.x',
+      switchLabel: 'Switch to 0.8.x',
     };
 ---
 
@@ -30,23 +30,23 @@ const copy = isZh
       btn.addEventListener('click', () => {
         const selector = document.querySelector<HTMLSelectElement>('[data-version-root] select');
         if (selector) {
-          selector.value = '0.6.x';
+          selector.value = '0.8.x';
           selector.dispatchEvent(new Event('change', { bubbles: true }));
           return;
         }
 
         // The selector is part of the normal header, but keep a resilient
         // fallback for embedded layouts that render the banner independently.
-        localStorage.setItem('carina-docs-version', '0.6.x');
-        document.documentElement.dataset.docsVersion = '0.6.x';
+        localStorage.setItem('carina-docs-version', '0.8.x');
+        document.documentElement.dataset.docsVersion = '0.8.x';
         document.querySelectorAll<HTMLElement>('[data-version-only]').forEach((el) => {
-          el.hidden = el.dataset.versionOnly !== '0.6.x';
+          el.hidden = el.dataset.versionOnly !== '0.8.x';
         });
         document.querySelectorAll<HTMLElement>('[data-version-banner]').forEach((banner) => {
           banner.hidden = true;
         });
         window.dispatchEvent(
-          new CustomEvent('carina:docs-version', { detail: { version: '0.6.x' } }),
+          new CustomEvent('carina:docs-version', { detail: { version: '0.8.x' } }),
         );
       });
     });

@@ -10,6 +10,19 @@ Update this file when you ship a feature or rename a page.
 3. Alpha surfaces get a `Badge` and an honest boundary note.
 4. Chinese pages mirror EN structure (`zh-cn/...` same relative path).
 
+## Release / channel SSOT (0.8 line)
+
+| Fact | Source of truth |
+| --- | --- |
+| Latest **published** GitHub Release | `gh release view` → currently **v0.8.1** |
+| Monorepo source / crate tags | may be at `0.8.2+` before a Release is cut |
+| Docs stable channel | **`0.8.x`** (`versions.json`, header Version control) |
+| Docs preview channel | **`next`** (tracks `protocol/jsonrpc/methods.json` at head) |
+| Protocol registry | `protocol/jsonrpc/methods.json` |
+| Generated catalogs | `pnpm sync-protocol` → `src/data/rpc-catalog-0.8.x.json` + `rpc-catalog-next.json` |
+
+Do **not** advertise a release tag in README unless that tag has a GitHub Release with installable assets.
+
 ## Differentiation pillars (always surface early)
 
 | Pillar | One-liner | Canonical page |
@@ -23,36 +36,41 @@ Update this file when you ship a feature or rename a page.
 
 | Feature | Canonical page | Source of truth | UI / CLI surface |
 | --- | --- | --- | --- |
-| Install / packages | `/getting-started/installation/` | installer, release scripts | `install.sh`, brew, npm |
+| Install / packages | `/getting-started/installation/` | installer, release scripts | `install.sh`, `Nebutra/tap/carina`, npm |
 | Daemon lifecycle | `/getting-started/quickstart/` | `carina-daemon` | `carina daemon`, `doctor` |
-| Sessions | `/api/sessions/` | `session.*` RPC, `docs/tui-session-lifecycle.md` | TUI session, SDK |
-| Permission profiles | `/concepts/policy/` | `docs/security-model.md`, profiles JSON | session create `profile` |
+| Workspace runtimes | `/reference/cli/` | `carina runtime` / `runtimes` | CLI |
+| Sessions | `/api/sessions/` | `session.*` RPC | TUI session, SDK |
+| Permission profiles | `/concepts/policy/` | `docs/security-model.md`, profiles | session create `profile` |
 | Capability types | `/concepts/policy/` | `protocol/capabilities/` | kernel decisions |
-| Approvals | `/concepts/policy/` | permission decisions | TUI approval prompts |
+| Approvals / dual-axis HITL | `/concepts/policy/` + `/use/cli-tui/` | permission decisions, TUI footer | TUI overlay, `approve`/`deny` |
 | Agent ReAct loop | `/agents/overview/` | `docs/agent.md` | `carina run`, TUI |
-| Sub-agents | `/agents/sub-agents/` | SubagentSpawn attenuation | spawn tool / subagent status |
+| Sub-agents | `/agents/sub-agents/` | SubagentSpawn attenuation | spawn tool / agent.view |
 | Built-in tools | `/tools/overview/` | agent tool table, Zig bins | tool calls |
 | MCP | `/tools/mcp/` | MCP manager | inventory / mcp tools |
-| Memory | `/memory/overview/` | MemoryWrite capability | memory tools / RPC |
+| Memory | `/memory/overview/` | MemoryWrite capability | `carina memory *` |
 | Workflows | `/workflows/overview/` | `docs/workflows.md`, schema | `carina workflow run` |
 | Workflow tutorial | `/workflows/tutorial-review/` | `examples/workflows/review.json` | review pipeline |
 | Workers | `/deployment/workers/` | `docs/worker-executor.md` | worker register / poll |
 | Audit log | `/concepts/audit/` | event log | `carina audit` |
 | Hash verify | `/concepts/audit/` | chain verify | `carina audit verify` |
-| Patches | `/concepts/audit/` | patch pipeline | `carina patch` |
+| Patches / Changes workbench | `/concepts/audit/` + `/use/cli-tui/` | patch pipeline | `carina patch *`, `/changes` |
+| Checkpoints | `/reference/cli/` | `session.checkpoint.*` | `carina checkpoint *` |
+| Context pressure | `/use/cli-tui/` | context engine + TUI | `/context`, `carina context *` |
+| Follow-up queue | `/use/cli-tui/` | `execution.queue.*` | `/queue` |
+| Screen modes | `/use/cli-tui/` | TUI ScreenMode | `/minimal` `/fullscreen` `/inline` |
 | Traces / items | `/observability/traces/` | item stream, events | session items / events |
 | JSON-RPC surface | `/api/overview/`, `/api/json-rpc/` | `docs/rpc-api.md`, `protocol/jsonrpc/` | socket / gateway |
-| Method catalog | `/api/methods/` | `methods.json` catalogs | Playground TryIt |
-| API versions | `/api/versions/` | dual catalogs 0.6 / next | version selector |
+| Method catalog | `/api/methods/` | `methods.json` → catalogs | Playground TryIt |
+| API versions | `/api/versions/` | channels **0.8.x** / **next** | version selector |
 | Gateway HTTP | `/api/overview/` | gateway docs | scoped `/v1` |
-| Cost reporting | (link from runtime; expand later) | `carina cost` | cost CLI |
-| Context engine | `/api/json-rpc/` (highlights) | context.* methods | local-only |
+| Cost reporting | `/reference/cli/` | `carina cost` | cost CLI |
+| Context engine CLI | `/reference/cli/` | `context.*` methods | `carina context *` |
 | Nebutra Cloud boundary | introduction + enterprise notes | `docs/nebutra-cloud-boundary.md` | sync off by default |
 | Math / KaTeX | `/reference/math/` | KaTeX pipeline | authoring only |
 | Glossary | `/reference/glossary/` | this map + product.md | — |
 | CLI reference | `/reference/cli/` | live `carina --help` | all subcommands |
 | Common workflows | `/getting-started/common-workflows/` | recipes | day-to-day |
-| CLI & TUI guide | `/use/cli-tui/` | CLI help + TUI slash/keys (`command.rs`, `help.rs`) | operator path |
+| CLI & TUI guide | `/use/cli-tui/` | CLI help + TUI slash/keys (`command.rs`, `CAPABILITIES.md`) | operator path |
 
 ## Common workflows (recipes)
 
@@ -68,8 +86,11 @@ Update this file when you ship a feature or rename a page.
 
 ## Maintenance checklist (release)
 
-- [ ] CLI flags in docs match `--help`
-- [ ] New RPC methods appear in catalog JSON + methods page
+- [ ] `carina --help` vs `/reference/cli/` (especially `steer <run_id>`, `runtime`/`runtimes`)
+- [ ] `pnpm sync-protocol` — catalog `method_count` == methods.json method count
+- [ ] Header channel default is current release line (`0.8.x` until 0.9 ships)
+- [ ] README release badge links a **published** GitHub Release (not a bare tag)
+- [ ] TUI slash table matches `crates/carina-tui/src/command.rs`
 - [ ] FEATURE_MAP row added/updated
 - [ ] EN + zh-cn page pair if user-facing
 - [ ] Screenshots / TUI SVG still accurate

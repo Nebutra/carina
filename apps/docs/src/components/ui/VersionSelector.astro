@@ -1,6 +1,6 @@
 ---
 /**
- * Docs version switcher — static channels (0.6.x / next).
+ * Docs version switcher — static channels (0.8.x stable / next preview).
  * Preference is stored in localStorage; a site-wide banner reflects the choice.
  */
 import versions from '../../data/versions.json';
@@ -51,10 +51,15 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
 <script>
   const STORAGE_KEY = 'carina-docs-version';
 
+  function versionHashKey(id: string) {
+    return id === 'next' ? 'next' : id.replace(/[^a-zA-Z0-9]+/g, '-');
+  }
+
   function catalogVersionFromPath() {
     const path = window.location.pathname.replace(/\/+$/, '/');
     if (/\/(?:zh-cn\/)?api\/methods\/next\/$/.test(path)) return 'next';
-    if (/\/(?:zh-cn\/)?api\/methods\/$/.test(path)) return '0.6.x';
+    // Stable catalog lives at /api/methods/ (no channel segment)
+    if (/\/(?:zh-cn\/)?api\/methods\/$/.test(path)) return '0.8.x';
     return '';
   }
 
@@ -86,12 +91,17 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
 
   function boot() {
     const root = document.querySelector<HTMLElement>('[data-version-root]');
-    const fallback = root?.dataset.defaultVersion || '0.6.x';
+    const fallback = root?.dataset.defaultVersion || '0.8.x';
     const allowed = new Set(
       [...document.querySelectorAll<HTMLOptionElement>('[data-version-root] option')].map((option) => option.value),
     );
     const fromUrl = new URL(window.location.href).searchParams.get('version');
-    const stored = localStorage.getItem(STORAGE_KEY);
+    // Migrate retired channel ids (0.6.x → 0.8.x) so old localStorage does not stick.
+    let stored = localStorage.getItem(STORAGE_KEY);
+    if (stored && !allowed.has(stored)) {
+      localStorage.removeItem(STORAGE_KEY);
+      stored = null;
+    }
     const fromPath = catalogVersionFromPath();
     const initial = fromPath || (fromUrl && allowed.has(fromUrl) && fromUrl) || (stored && allowed.has(stored) && stored) || fallback;
     if (fromPath) localStorage.setItem(STORAGE_KEY, fromPath);
@@ -107,8 +117,8 @@ const ariaLabel = isZh ? '文档版本' : 'Documentation version';
           const url = new URL(window.location.href);
           url.pathname = targetPath;
           url.searchParams.delete('version');
-          const targetKey = sel.value === 'next' ? 'next' : '0-6-x';
-          url.hash = url.hash.replace(/^#rpc-(?:0-6-x|next)-/, `#rpc-${targetKey}-`);
+          const targetKey = versionHashKey(sel.value);
+          url.hash = url.hash.replace(/^#rpc-(?:[0-9]+-[0-9]+-x|next)-/, `#rpc-${targetKey}-`);
           window.location.assign(`${url.pathname}${url.search}${url.hash}`);
           return;
         }

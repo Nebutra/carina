@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-07-31T07:52:09.189Z",
+  "generated_at": "2026-08-04T01:58:43.355Z",
   "protocol_version": "1.6.0",
   "source": "protocol/jsonrpc/methods.json",
-  "method_count": 161,
+  "method_count": 167,
   "groups": [
     {
       "id": "runtime",
@@ -191,8 +191,12 @@
           "scope": "read",
           "remote": true,
           "control_plane_write": false,
-          "params": {},
-          "result": "{ default_model: string, providers: ModelProvider[] }"
+          "params": {
+            "session_id": "string?",
+            "model_id": "string?",
+            "locale": "string?"
+          },
+          "result": "{ default_model: string, providers: ModelProvider[], reasoner: ModelReasoner, readiness: { step, blockers[], route_kind, model_id, locale, can_submit, epoch, generation } }"
         }
       ]
     },
@@ -615,6 +619,17 @@
           "result": "ExecutionRun"
         },
         {
+          "method": "execution.retry",
+          "scope": "write",
+          "remote": false,
+          "control_plane_write": false,
+          "params": {
+            "run_id": "string",
+            "client_submission_id": "ASCII token 1-128"
+          },
+          "result": "ExecutionRun with retry_of_run_id; original run remains terminal"
+        },
+        {
           "method": "execution.resume",
           "scope": "write",
           "remote": false,
@@ -665,15 +680,50 @@
           "result": "ExecutionRun"
         },
         {
+          "method": "execution.interrupt",
+          "scope": "write",
+          "remote": false,
+          "control_plane_write": false,
+          "params": {
+            "run_id": "string",
+            "mode": "soft?"
+          },
+          "result": "{ requested: boolean, already_requested: boolean, run_id: string, mode: soft, safe_point: next_turn_boundary, active_tool: boolean, queue_depth: integer }"
+        },
+        {
           "method": "execution.steer",
           "scope": "write",
           "remote": false,
           "control_plane_write": false,
           "params": {
             "run_id": "string",
-            "message": "string"
+            "message": "string",
+            "priority": "normal|urgent?",
+            "steer_id": "string?"
           },
-          "result": "{ queued: boolean, run_id: string, status: string }"
+          "result": "{ queued: boolean, run_id: string, status: string, priority: string, steer_id: string, queue_depth: integer, safe_point: next_turn_boundary }"
+        },
+        {
+          "method": "execution.queue.list",
+          "scope": "read",
+          "remote": false,
+          "control_plane_write": false,
+          "params": {
+            "run_id": "string",
+            "preview_cells": "integer > 0?"
+          },
+          "result": "{ run_id: string, queue_depth: integer, soft_interrupt_pending: boolean, items: { steer_id: string, priority: string, preview: string, index: integer }[] }"
+        },
+        {
+          "method": "execution.queue.drop",
+          "scope": "write",
+          "remote": false,
+          "control_plane_write": false,
+          "params": {
+            "run_id": "string",
+            "steer_id": "string"
+          },
+          "result": "{ run_id: string, steer_id: string, dropped: boolean, queue_depth: integer }"
         },
         {
           "method": "execution.budget.extend",
@@ -1578,6 +1628,28 @@
           "result": "PatchTransaction"
         },
         {
+          "method": "workspace.patch.verify",
+          "scope": "write",
+          "remote": false,
+          "control_plane_write": false,
+          "params": {
+            "session_id": "string",
+            "patch_id": "string"
+          },
+          "result": "PatchTransaction"
+        },
+        {
+          "method": "workspace.patch.rollback.preview",
+          "scope": "read",
+          "remote": false,
+          "control_plane_write": false,
+          "params": {
+            "session_id": "string",
+            "patch_id": "string"
+          },
+          "result": "PatchRollbackPreview"
+        },
+        {
           "method": "workspace.patch.rollback",
           "scope": "write",
           "remote": false,
@@ -1958,7 +2030,7 @@
       ]
     }
   ],
-  "channel": "0.6.x",
+  "channel": "0.8.x",
   "badge": "stable",
-  "note": "Docs channel for the 0.6 release line. Re-sync on release branches freezes the pin."
+  "note": "Docs channel for the 0.8.x release line. Re-sync on release branches freezes the pin."
 }

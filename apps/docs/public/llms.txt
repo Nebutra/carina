@@ -14,7 +14,7 @@ Site: https://carina.nebutra.com
 - [Method catalog (next)](https://carina.nebutra.com/api/methods/next/): Preview JSON-RPC catalog synced from the current in-repo protocol registry.
 - [Runtime API overview](https://carina.nebutra.com/api/overview/): JSON-RPC over unix socket/stdio, optional Gateway, scopes, and SDK surfaces.
 - [Sessions](https://carina.nebutra.com/api/sessions/): Create, control, stream, and export Carina sessions.
-- [API versions](https://carina.nebutra.com/api/versions/): How Carina docs version channels map to protocol catalogs and release lines.
+- [API versions](https://carina.nebutra.com/api/versions/): How Carina docs version channels map to protocol catalogs and the 0.8 release line.
 - [Audit & rollback](https://carina.nebutra.com/concepts/audit/): Append-only event log, hash-chain verification, transactional patches — explain and undo agent work.
 - [Policy & capabilities](https://carina.nebutra.com/concepts/policy/): Capability types, permission profiles, command risk levels — policy before every side effect.
 - [Runtime model](https://carina.nebutra.com/concepts/runtime/): Layered architecture — client surfaces, Go control plane, Rust capability kernel, Zig tools.
@@ -47,7 +47,7 @@ Site: https://carina.nebutra.com
 - [方法目录（next）](https://carina.nebutra.com/zh-cn/api/methods/next/): 从仓库当前协议注册表同步的预览版 JSON-RPC 方法目录。
 - [Runtime API 概览](https://carina.nebutra.com/zh-cn/api/overview/): JSON-RPC、本地与可选 Gateway 传输、作用域和 SDK 接入面。
 - [会话](https://carina.nebutra.com/zh-cn/api/sessions/): 创建、控制、流式读取与导出 Carina 会话。
-- [API 版本通道](https://carina.nebutra.com/zh-cn/api/versions/): 文档 0.6.x / next 通道与协议目录的对应关系。
+- [API 版本通道](https://carina.nebutra.com/zh-cn/api/versions/): 文档 0.8.x / next 通道与协议目录的对应关系。
 - [审计与回滚](https://carina.nebutra.com/zh-cn/concepts/audit/): 追加写事件日志、哈希链校验、事务补丁 — 解释并撤销 Agent 工作。
 - [策略与能力](https://carina.nebutra.com/zh-cn/concepts/policy/): 能力类型、权限配置、命令风险等级 — 每次副作用前先策略。
 - [运行时模型](https://carina.nebutra.com/zh-cn/concepts/runtime/): 客户端、Go 控制面、Rust 能力内核与 Zig 工具链组成的分层架构。
@@ -75,4 +75,4 @@ Site: https://carina.nebutra.com
 - Full index: https://carina.nebutra.com/llms-full.txt
 - Skill: https://carina.nebutra.com/skill.md
 - Markdown export: append `index.md` to any docs path (e.g. https://carina.nebutra.com/getting-started/quickstart/index.md)
-- JSON-RPC catalogs: https://carina.nebutra.com/data/rpc-catalog-0.6.x.json · https://carina.nebutra.com/data/rpc-catalog-next.json
+- JSON-RPC catalogs: https://carina.nebutra.com/data/rpc-catalog-0.8.x.json · https://carina.nebutra.com/data/rpc-catalog-next.json

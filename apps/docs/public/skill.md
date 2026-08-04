@@ -16,7 +16,7 @@ description: Use Carina documentation to answer questions about the local-first 
 - Human docs: https://carina.nebutra.com
 - LLM index: https://carina.nebutra.com/llms.txt
 - Full index: https://carina.nebutra.com/llms-full.txt
-- Method catalog (stable): https://carina.nebutra.com/data/rpc-catalog-0.6.x.json
+- Method catalog (stable): https://carina.nebutra.com/data/rpc-catalog-0.8.x.json
 - Method catalog (next): https://carina.nebutra.com/data/rpc-catalog-next.json
 
 ## Preferred workflow

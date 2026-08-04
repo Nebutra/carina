@@ -105,7 +105,7 @@ export function mockRpcResponse(req: RpcRequest): {
         id,
         result: {
           ok: true,
-          version: '0.6.x-mock',
+          version: '0.8.x-mock',
           mode: 'docs-playground',
           note: 'Simulated response — not a live daemon.',
         },

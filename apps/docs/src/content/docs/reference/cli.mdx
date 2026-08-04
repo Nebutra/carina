@@ -47,7 +47,7 @@ carina --help
 | `carina fork <session_id>` | Branch without mutating parent |
 | `carina cost [session_id] [--json]` | Model usage / cost |
 | `carina watch <session_id> [--json]` | Live events |
-| `carina steer <task_id> <message>` | Redirect at next turn boundary |
+| `carina steer <run_id> <message>` | Redirect the current execution at the next turn boundary |
 | `carina answer <question_id> <value>` | Answer structured question |
 | `carina items <session_id>` | Normalized item stream |
 | `carina session review <session_id>` | Governance projection |
@@ -143,6 +143,13 @@ carina --help
 | `carina scan\|grep\|diff …` | Tree / search / diff |
 | `carina run-native` / `pty` | Native wrappers |
 | `carina patch-native …` | Atomic patch primitive (JSON stdin) |
+
+## Workspace runtimes
+
+| Command | Description |
+| --- | --- |
+| `carina runtime start\|status\|stop\|logs` | Manage the current workspace runtime |
+| `carina runtimes [--json]` | List known workspace runtimes without starting them |
 
 ## Daemon lifecycle
 

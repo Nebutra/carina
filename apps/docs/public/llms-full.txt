@@ -58,7 +58,7 @@ Create, control, stream, and export Carina sessions.
 
 ## API versions
 
-How Carina docs version channels map to protocol catalogs and release lines.
+How Carina docs version channels map to protocol catalogs and the 0.8 release line.
 
 - URL: https://carina.nebutra.com/api/versions/
 - Markdown: https://carina.nebutra.com/api/versions/index.md
@@ -268,7 +268,7 @@ JSON-RPC、本地与可选 Gateway 传输、作用域和 SDK 接入面。
 
 ## API 版本通道
 
-文档 0.6.x / next 通道与协议目录的对应关系。
+文档 0.8.x / next 通道与协议目录的对应关系。
 
 - URL: https://carina.nebutra.com/zh-cn/api/versions/
 - Markdown: https://carina.nebutra.com/zh-cn/api/versions/index.md

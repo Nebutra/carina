@@ -37,9 +37,17 @@ carina --help
 | --- | --- |
 | `carina sessions` / `resume` / `fork` | 列表 / 继续 / 分支 |
 | `carina cost` / `watch` / `items` | 成本 / 实时事件 / item 流 |
-| `carina steer` / `answer` | 转向任务 / 回答结构化问题 |
+| `carina steer <run_id> <message>` | 在下一 turn 边界转向当前 execution |
+| `carina answer <question_id> <value>` | 回答结构化问题 |
 | `carina session review` | 治理投影 |
 | `carina checkpoint *` | 检查点预览/恢复（restore 需 `--yes`） |
+
+## 工作区 runtime
+
+| 命令 | 说明 |
+| --- | --- |
+| `carina runtime start\|status\|stop\|logs` | 管理当前工作区 runtime |
+| `carina runtimes [--json]` | 列出已知工作区 runtime（不自动启动） |
 
 ## 审计与补丁
 
