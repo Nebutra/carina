@@ -105,6 +105,11 @@ pub const BLOCK_PADDING: u16 = 2;
 pub const PANEL_PADDING: u16 = 4;
 pub const PROVIDER_DETAIL_CURSOR_OFFSET: u16 = 6;
 pub const PROVIDER_STATE_RESERVE: u16 = 24;
+/// Cell gap between provider name column and right-hand status column.
+pub const PROVIDER_STATE_GUTTER: u16 = 1;
+/// Cell padding around glyph/label inside the status column (and button chrome).
+pub const LABEL_CELL_PAD: u16 = 1;
+pub const ACTION_BUTTON_PAD: u16 = 2;
 pub const PROVIDER_DETAIL_LABEL_WIDTH: usize = 16;
 pub const MODEL_ID_WIDTH: usize = 38;
 pub const SESSION_LABEL_WIDTH: usize = 34;

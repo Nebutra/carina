@@ -601,13 +601,15 @@ impl App {
             } else {
                 "  "
             };
-            // Use terminal cell width, not char count — CJK labels like 「就绪」
-            // are 2 cells each; char-count layout truncated them to 「就」.
+            // Use terminal cell width, not char count. CJK labels like 就绪
+            // are 2 cells each; char-count layout truncated them to the first glyph.
             let state_width = provider_state_column_width(state_glyph, state);
             let show_right_state = row_area.width
                 > state_width.saturating_add(layout_contract::PROVIDER_STATE_RESERVE);
             let name_width = if show_right_state {
-                row_area.width.saturating_sub(state_width.saturating_add(1))
+                row_area.width.saturating_sub(
+                    state_width.saturating_add(layout_contract::PROVIDER_STATE_GUTTER),
+                )
             } else {
                 row_area.width
             };
@@ -637,7 +639,9 @@ impl App {
                     ]))
                     .alignment(Alignment::Right),
                     Rect::new(
-                        row_area.right().saturating_sub(state_width + 1),
+                        row_area.right().saturating_sub(
+                            state_width.saturating_add(layout_contract::PROVIDER_STATE_GUTTER),
+                        ),
                         row_area.y,
                         state_width,
                         1,
@@ -5225,15 +5229,15 @@ fn display_cells(value: &str) -> u16 {
 /// Right-hand provider status column: glyph + gap + label + pad, in cells.
 fn provider_state_column_width(glyph: &str, state: &str) -> u16 {
     display_cells(glyph)
-        .saturating_add(1)
+        .saturating_add(layout_contract::LABEL_CELL_PAD)
         .saturating_add(display_cells(state))
-        .saturating_add(1)
-        .max(4)
+        .saturating_add(layout_contract::LABEL_CELL_PAD)
+        .max(layout_contract::PANEL_PADDING)
 }
 
 /// Padded action button width for ` {label} `.
 fn label_button_width(label: &str) -> u16 {
-    display_cells(label).saturating_add(2)
+    display_cells(label).saturating_add(layout_contract::ACTION_BUTTON_PAD)
 }
 
 #[cfg(test)]
@@ -5245,7 +5249,8 @@ mod layout_width_tests {
         // 「就绪」 is 2 chars but 4 terminal cells; char-count layout was clipping to 「就」.
         assert_eq!(display_cells("就绪"), 4);
         assert!(display_cells("就绪") > "就绪".chars().count() as u16);
-        let width = provider_state_column_width("●", "就绪");
+        // Use plain ASCII stand-ins; product glyph literals are owned by glyphs.rs.
+        let width = provider_state_column_width("*", "就绪");
         assert!(
             width >= 6,
             "status column must fit glyph + CJK label, got {width}"
@@ -5256,7 +5261,7 @@ mod layout_width_tests {
     #[test]
     fn ascii_ready_stays_compact() {
         assert_eq!(display_cells("Ready"), 5);
-        let width = provider_state_column_width("•", "Ready");
+        let width = provider_state_column_width("*", "Ready");
         assert!(width >= 7);
     }
 
