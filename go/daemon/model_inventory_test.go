@@ -246,6 +246,61 @@ func TestModelListProjectsCCSwitchDiscoveryWithoutSourceIDsOrSecrets(t *testing.
 	}
 }
 
+func TestModelListRejectsExplainUnavailableCCSwitchEvenWithStoredCredential(t *testing.T) {
+	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	const providerID = "ccswitch-codex-managed-proxy"
+	if err := store.SetBearerToken(providerID, "stale-managed-token", map[string]string{
+		"source": provider.CCSwitchSourceKind, "validation": providerValidationContract, "source_revision": "rev-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	info := provider.Info{
+		ID: providerID, Name: "Mox", API: "http://127.0.0.1:15721/v1", APIProtocol: "openai-responses",
+		Source: &provider.Source{
+			Kind: provider.CCSwitchSourceKind, Label: provider.CCSwitchSourceLabel, App: "codex",
+			Route: provider.CCSwitchRouteManagedProxy, AuthMode: provider.CCSwitchCredentialCLIOAuth,
+			Action: provider.CCSwitchActionExplainUnavailable, Current: true, Importable: false,
+			Revision: "rev-1", Reason: "The active CC Switch Codex route has no reusable proxy access token",
+		},
+		// Empty catalog mirrors non-importable managed proxy projection.
+		Models: map[string]provider.Model{},
+	}
+	d := &Daemon{
+		router: modelrouter.New(), authStore: store, providerCatalog: provider.Catalog{providerID: info},
+		reasoner: modelInventoryTestReasoner{name: reasonerBackendRouter}, reasonerBackend: reasonerBackendRouter,
+	}
+	d.router.RegisterProvider(inventoryProvider(providerID))
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := result.(map[string]any)
+	rows := payload["providers"].([]modelInventoryProvider)
+	if len(rows) != 1 {
+		t.Fatalf("providers = %+v", rows)
+	}
+	row := rows[0]
+	if row.Available || row.SourceAction != provider.CCSwitchActionExplainUnavailable {
+		t.Fatalf("explain_unavailable managed proxy became runnable: %+v", row)
+	}
+	if len(row.Models) != 0 {
+		t.Fatalf("non-importable route should keep empty model inventory: %+v", row.Models)
+	}
+	if row.DefaultModel != "" {
+		t.Fatalf("placeholder default must not surface: %q", row.DefaultModel)
+	}
+	if defaultModel, _ := payload["default_model"].(string); defaultModel != "" {
+		t.Fatalf("inventory default_model = %q, want empty", defaultModel)
+	}
+	reasoner := payload["reasoner"].(modelInventoryReasoner)
+	if reasoner.Available {
+		t.Fatalf("router reasoner must not be available without a real model: %+v", reasoner)
+	}
+	if d.reasonerReady() {
+		t.Fatal("reasonerReady should ignore non-executable CC Switch sources")
+	}
+}
+
 func TestModelListRequiresMatchingCCSwitchSourceRevision(t *testing.T) {
 	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
 	const providerID = "ccswitch-codex-managed-proxy"

@@ -739,7 +739,9 @@ impl App {
             return;
         }
         if self.models.is_empty() {
-            self.phase = Phase::Diagnostic;
+            // Stay on Provider so the operator can import/repair another route
+            // instead of a Diagnostic dead-end with only redetect/exit.
+            self.phase = Phase::Provider;
             self.focus = Focus::Scene;
             self.notice = Notice::localized(MessageId::NoCompatibleModels);
             return;
@@ -1700,7 +1702,7 @@ impl App {
             .cloned()
             .collect();
         if self.models.is_empty() {
-            self.phase = Phase::Diagnostic;
+            self.phase = Phase::Provider;
             self.focus = Focus::Scene;
             self.notice = Notice::localized_with(
                 MessageId::ProviderNoCompatibleModels,
@@ -6021,10 +6023,10 @@ fn startup_phase(
 ) -> Phase {
     if !has_supported_locale {
         Phase::Locale
-    } else if !inventory.has_runnable_provider() {
+    } else if !inventory.has_runnable_provider() || models.is_empty() {
+        // Empty model inventory is a provider-repair problem, not a hard
+        // diagnostic lockout (stale CC Switch managed proxy with no models).
         Phase::Provider
-    } else if models.is_empty() {
-        Phase::Diagnostic
     } else {
         Phase::Model
     }
@@ -7655,7 +7657,7 @@ mod tests {
             readiness: crate::rpc::ExecutionReadiness::default(),
         };
 
-        assert_eq!(startup_phase(true, &inventory, &[]), Phase::Diagnostic);
+        assert_eq!(startup_phase(true, &inventory, &[]), Phase::Provider);
 
         let mut unavailable = inventory.clone();
         unavailable.reasoner.available = false;

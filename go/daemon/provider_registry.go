@@ -142,6 +142,9 @@ func hasRunnableRuntimeProviderSet(cat provider.Catalog, disabled map[string]boo
 		if detectRuntimeProtocol(info) == protocolUnsupported {
 			continue
 		}
+		if !runtimeSourceAllowsExecution(info) {
+			continue
+		}
 		baseURL, ok := runtimeBaseURL(info)
 		if !ok || strings.TrimSpace(baseURL) == "" {
 			continue

@@ -88,11 +88,15 @@ func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
 		authSource := chain.ResolvedSource()
 		endpoint, hasEndpoint := runtimeBaseURL(info)
 		_, explicitEndpoint := runtimeBaseURLOverride(info)
-		available := registered[id] && (authSource != "" || (hasEndpoint && explicitEndpoint && runtimeProviderAllowsNoAuth(info, endpoint)))
+		// Stale BYOK must not make explain_unavailable / non-importable CC Switch
+		// routes look runnable (that stranded TUI in Diagnostic with zero models).
+		available := registered[id] &&
+			runtimeSourceAllowsExecution(info) &&
+			(authSource != "" || (hasEndpoint && explicitEndpoint && runtimeProviderAllowsNoAuth(info, endpoint)))
 		row := modelInventoryProvider{
 			ID: id, Name: info.Name, Registered: registered[id], Available: available,
 			AuthSource: authSource, DynamicModels: len(info.Models) == 0,
-			DefaultModel: runtimeDefaultModel(info), Models: []modelInventoryModel{},
+			DefaultModel: inventoryProviderDefaultModel(info), Models: []modelInventoryModel{},
 		}
 		if info.Source != nil {
 			row.SourceKind = info.Source.Kind
@@ -288,19 +292,62 @@ func modelInventoryDefault(providers []modelInventoryProvider) string {
 		if !provider.Registered || !provider.Available {
 			continue
 		}
-		if model := strings.TrimSpace(provider.DefaultModel); model != "" {
+		if model := strings.TrimSpace(provider.DefaultModel); model != "" && !isPlaceholderModelID(model) {
 			if !strings.HasPrefix(model, provider.ID+"/") {
 				model = provider.ID + "/" + model
 			}
 			return model
 		}
 		for _, model := range provider.Models {
-			if model.Available && strings.TrimSpace(model.ID) != "" {
+			if model.Available && strings.TrimSpace(model.ID) != "" && !isPlaceholderModelID(model.ID) {
 				return model.ID
 			}
 		}
 	}
 	return ""
+}
+
+// runtimeSourceAllowsExecution reports whether source metadata permits treating
+// a resolved credential as execution authority. CC Switch explain_unavailable
+// and non-importable rows stay discoverable but never runnable.
+func runtimeSourceAllowsExecution(info provider.Info) bool {
+	if info.Source == nil {
+		return true
+	}
+	if info.Source.Kind != provider.CCSwitchSourceKind {
+		return true
+	}
+	if !info.Source.Importable {
+		return false
+	}
+	if info.Source.Action == provider.CCSwitchActionExplainUnavailable {
+		return false
+	}
+	return true
+}
+
+func inventoryProviderDefaultModel(info provider.Info) string {
+	model := strings.TrimSpace(runtimeDefaultModel(info))
+	if isPlaceholderModelID(model) {
+		return ""
+	}
+	return model
+}
+
+func isPlaceholderModelID(model string) bool {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return true
+	}
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		model = model[i+1:]
+	}
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "", "default", "auto", "none":
+		return true
+	default:
+		return false
+	}
 }
 
 func (d *Daemon) modelInventoryReasoner(providers []modelInventoryProvider) modelInventoryReasoner {
