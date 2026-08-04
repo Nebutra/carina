@@ -434,7 +434,7 @@ impl App {
         let inner = panel.inner(area);
         frame.render_widget(panel, area);
 
-        let action_width = (action_label.chars().count() as u16 + 2).min(inner.width);
+        let action_width = label_button_width(action_label).min(inner.width);
         let summary_width = inner
             .width
             .saturating_sub(action_width.saturating_add(layout_contract::BLOCK_PADDING));
@@ -600,11 +600,13 @@ impl App {
             } else {
                 "  "
             };
-            let state_width = (state.chars().count() + 3) as u16;
+            // Use terminal cell width, not char count — CJK labels like 「就绪」
+            // are 2 cells each; char-count layout truncated them to 「就」.
+            let state_width = provider_state_column_width(state_glyph, state);
             let show_right_state = row_area.width
                 > state_width.saturating_add(layout_contract::PROVIDER_STATE_RESERVE);
             let name_width = if show_right_state {
-                row_area.width.saturating_sub(state_width + 3)
+                row_area.width.saturating_sub(state_width.saturating_add(1))
             } else {
                 row_area.width
             };
@@ -1013,7 +1015,7 @@ impl App {
         let button = Rect::new(
             inner.x,
             button_y,
-            (action_label.chars().count() as u16 + 2).min(inner.width),
+            label_button_width(action_label).min(inner.width),
             u16::from(inner.height > 0),
         );
         let component = ComponentId(951);
@@ -1048,7 +1050,7 @@ impl App {
                     .right()
                     .saturating_add(layout_contract::BLOCK_PADDING),
                 button.y,
-                cancel_label.chars().count() as u16,
+                display_cells(&cancel_label),
                 button.height,
             );
             let cancel_component = ComponentId(952);
@@ -1339,7 +1341,7 @@ impl App {
         } else {
             tr(locale, MessageId::Unavailable)
         };
-        let button_width = ((button_label.chars().count() as u16) + 2).min(area.width);
+        let button_width = label_button_width(button_label).min(area.width);
         let button = Rect::new(
             area.x,
             area.y
@@ -1683,7 +1685,7 @@ impl App {
         let button = Rect::new(
             area.x,
             area.bottom().saturating_sub(layout_contract::BLOCK_PADDING),
-            (action_label.chars().count() as u16).min(area.width),
+            display_cells(&action_label).min(area.width),
             u16::from(area.height > 0),
         );
         let component = ComponentId(953);
@@ -5211,6 +5213,56 @@ fn model_health_color(app: &App, status: &str) -> ratatui::style::Color {
         "probing" => app.theme.warning,
         "rate_limited" | "circuit_open" | "auth_error" | "unavailable" => app.theme.danger,
         _ => app.theme.muted,
+    }
+}
+
+/// Terminal cell width for layout (CJK is typically 2 cells per character).
+fn display_cells(value: &str) -> u16 {
+    UnicodeWidthStr::width(value).min(u16::MAX as usize) as u16
+}
+
+/// Right-hand provider status column: glyph + gap + label + pad, in cells.
+fn provider_state_column_width(glyph: &str, state: &str) -> u16 {
+    display_cells(glyph)
+        .saturating_add(1)
+        .saturating_add(display_cells(state))
+        .saturating_add(1)
+        .max(4)
+}
+
+/// Padded action button width for ` {label} `.
+fn label_button_width(label: &str) -> u16 {
+    display_cells(label).saturating_add(2)
+}
+
+#[cfg(test)]
+mod layout_width_tests {
+    use super::{display_cells, label_button_width, provider_state_column_width};
+
+    #[test]
+    fn cjk_ready_state_is_wider_than_char_count() {
+        // 「就绪」 is 2 chars but 4 terminal cells; char-count layout was clipping to 「就」.
+        assert_eq!(display_cells("就绪"), 4);
+        assert!(display_cells("就绪") > "就绪".chars().count() as u16);
+        let width = provider_state_column_width("●", "就绪");
+        assert!(
+            width >= 6,
+            "status column must fit glyph + CJK label, got {width}"
+        );
+        assert!(width > ("就绪".chars().count() + 3) as u16);
+    }
+
+    #[test]
+    fn ascii_ready_stays_compact() {
+        assert_eq!(display_cells("Ready"), 5);
+        let width = provider_state_column_width("•", "Ready");
+        assert!(width >= 7);
+    }
+
+    #[test]
+    fn chinese_action_buttons_use_cell_width() {
+        assert_eq!(label_button_width("使用模型"), 10); // 4 chars × 2 + 2 pad
+        assert_eq!(label_button_width("Use model"), 11); // 9 + 2
     }
 }
 

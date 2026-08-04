@@ -171,6 +171,81 @@ func TestReasoningEffortRejectsUnsupportedModelsBeforeNetwork(t *testing.T) {
 	}
 }
 
+func TestCCSwitchCodexAndAzureEncodeOpenAIReasoningEffort(t *testing.T) {
+	// Inventory maps ccswitch-codex-* / azure onto the OpenAI effort family; the
+	// wire encoder must follow that family or Mox/TDS routes fail after Tab-select.
+	for _, providerID := range []string{
+		"ccswitch-codex-e29abfcda9ba",
+		"azure",
+		"azure-openai",
+		"openrouter",
+		"xai",
+	} {
+		body := map[string]any{}
+		effective, err := applyNativeReasoningEffort(providerID, "gpt-5.6-sol", "low", body)
+		if err != nil {
+			t.Fatalf("%s: apply effort: %v", providerID, err)
+		}
+		if effective != "low" {
+			t.Fatalf("%s: effective = %q", providerID, effective)
+		}
+		reasoning, _ := body["reasoning"].(map[string]any)
+		if reasoning["effort"] != "low" {
+			t.Fatalf("%s: body reasoning = %#v", providerID, body["reasoning"])
+		}
+	}
+}
+
+func TestCCSwitchGeminiEncodesThinkingLevel(t *testing.T) {
+	body := map[string]any{}
+	effective, err := applyNativeReasoningEffort("ccswitch-gemini-deadbeef", "gemini-3-pro", "medium", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective != "medium" {
+		t.Fatalf("effective = %q", effective)
+	}
+	config, _ := body["generationConfig"].(map[string]any)
+	thinking, _ := config["thinkingConfig"].(map[string]any)
+	if thinking["thinkingLevel"] != "MEDIUM" {
+		t.Fatalf("gemini family body = %#v", body)
+	}
+}
+
+func TestCCSwitchCodexProviderSendsEffortOnResponsesWire(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		reasoning, _ := body["reasoning"].(map[string]any)
+		if reasoning["effort"] != "low" {
+			t.Fatalf("ccswitch-codex responses payload = %#v", body["reasoning"])
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"output_text":"ok","usage":{"input_tokens":3,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+	store := testAuthStore(t)
+	const providerID = "ccswitch-codex-e29abfcda9ba"
+	if err := store.SetAPIKey(providerID, "sk-test", nil); err != nil {
+		t.Fatal(err)
+	}
+	p := &openAIProvider{providerBase: providerBase{
+		id: providerID, baseURL: srv.URL, defaultModel: "gpt-5.6-sol",
+		auth: auth.ProviderChain(providerID, nil, store, nil), client: srv.Client(),
+	}, responses: true}
+	resp, err := p.Complete(context.Background(), modelrouter.Request{
+		Model: "gpt-5.6-sol", Prompt: "hi", ReasoningEffort: "low",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.EffectiveReasoningEffort != "low" {
+		t.Fatalf("effective effort = %+v", resp)
+	}
+}
+
 func TestCatalogEffortOptionsDriveInventoryDefaults(t *testing.T) {
 	model := provider.Model{Reasoning: true, ReasoningOptions: []json.RawMessage{json.RawMessage(`{"type":"effort","values":["minimal","low","high"]}`)}}
 	spec := catalogReasoningEffortSpec("openai", "gpt-5", model)

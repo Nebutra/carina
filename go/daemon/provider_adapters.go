@@ -236,8 +236,10 @@ func applyNativeReasoningEffort(providerID, model, effort string, body map[strin
 	if err != nil {
 		return "", fmt.Errorf("%s/%s: %w", providerID, model, err)
 	}
-	switch normalizeProviderID(providerID) {
-	case "openai", "openrouter":
+	// Encode by effort family (not bare provider id) so CC Switch / Azure / OpenRouter
+	// runtime ids that already advertise ladders can actually send them on the wire.
+	switch reasoningEffortFamily(providerID, model) {
+	case "openai", "xai":
 		body["reasoning"] = map[string]any{"effort": effective}
 	case "google":
 		config, _ := body["generationConfig"].(map[string]any)
