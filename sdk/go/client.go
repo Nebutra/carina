@@ -1,4 +1,4 @@
-// Package sdk provides typed JSON-RPC wrappers for Carina Runtime 0.8.7.
+// Package sdk provides typed JSON-RPC wrappers for Carina Runtime 0.8.8.
 package sdk
 
 import (
@@ -18,7 +18,7 @@ import (
 	"github.com/Nebutra/carina/go/rpc"
 )
 
-const CompatibleRuntimeVersion = "0.8.7"
+const CompatibleRuntimeVersion = "0.8.8"
 const streamQueueLimit = 64
 const artifactUploadChunkSize = 512 << 10
 const artifactUploadMaxBytes = 4 << 20
