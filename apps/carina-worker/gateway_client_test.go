@@ -91,7 +91,11 @@ func TestGatewayClientDisconnectFailsAllPendingCalls(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		select {
 		case err := <-results:
-			if err == nil || !strings.Contains(err.Error(), "gateway read") {
+			// Close may surface as a failed read or a failed write depending on
+			// which side of the pending call races the peer disconnect.
+			if err == nil || !(strings.Contains(err.Error(), "gateway read") ||
+				strings.Contains(err.Error(), "gateway write") ||
+				strings.Contains(err.Error(), "closed network connection")) {
 				t.Fatalf("pending call error = %v", err)
 			}
 		case <-time.After(time.Second):
