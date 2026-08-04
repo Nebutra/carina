@@ -38,6 +38,7 @@ fn terminal_screen_mode_probe() {
     assert!(std::io::IsTerminal::is_terminal(&std::io::stdin()));
     let expected = match expected.as_str() {
         "minimal" => ScreenMode::Minimal,
+        "fullscreen" => ScreenMode::Fullscreen,
         "inline" => ScreenMode::Inline,
         other => panic!("unknown screen mode {other}"),
     };
@@ -130,18 +131,28 @@ fn vscode_pty_decodes_alt_enter_fallback() {
 
 #[test]
 fn screen_mode_pty_matrix_covers_supported_terminal_families() {
+    // Capable local terminals default to Fullscreen (alt-screen).
     run_screen_mode_probe(
-        "minimal",
+        "fullscreen",
         &[("TERM", "xterm-ghostty"), ("TERM_PROGRAM", "ghostty")],
     );
     run_screen_mode_probe(
-        "minimal",
+        "fullscreen",
         &[("TERM", "xterm-256color"), ("TERM_PROGRAM", "iTerm.app")],
     );
     run_screen_mode_probe(
-        "minimal",
+        "fullscreen",
         &[("TERM", "wezterm"), ("TERM_PROGRAM", "WezTerm")],
     );
+    run_screen_mode_probe(
+        "fullscreen",
+        &[("TERM", "screen-256color"), ("TMUX", "/tmp/tmux")],
+    );
+    run_screen_mode_probe(
+        "fullscreen",
+        &[("TERM", "xterm-256color"), ("NO_COLOR", "1")],
+    );
+    // Capability-poor hosts stay on Inline.
     run_screen_mode_probe(
         "inline",
         &[
@@ -149,10 +160,14 @@ fn screen_mode_pty_matrix_covers_supported_terminal_families() {
             ("SSH_CONNECTION", "client server"),
         ],
     );
-    run_screen_mode_probe(
-        "minimal",
-        &[("TERM", "screen-256color"), ("TMUX", "/tmp/tmux")],
-    );
-    run_screen_mode_probe("minimal", &[("TERM", "xterm-256color"), ("NO_COLOR", "1")]);
     run_screen_mode_probe("inline", &[("TERM", "dumb")]);
+    // iTerm control-mode under tmux forces Inline for safety.
+    run_screen_mode_probe(
+        "inline",
+        &[
+            ("TERM", "xterm-256color"),
+            ("TERM_PROGRAM", "iTerm.app"),
+            ("TMUX", "/tmp/tmux"),
+        ],
+    );
 }
