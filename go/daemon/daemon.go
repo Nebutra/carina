@@ -2133,12 +2133,10 @@ func (d *Daemon) handleSessionModelSet(params json.RawMessage) (any, error) {
 	if err := d.validateTaskModel(p.Model); err != nil {
 		return nil, err
 	}
-	p.ReasoningEffort = normalizeReasoningEffort(p.ReasoningEffort)
-	if p.ReasoningEffort != "" {
-		if _, err := validateReasoningEffort(d.reasoningEffortSpec(p.Model), p.ReasoningEffort); err != nil {
-			return nil, err
-		}
-	}
+	// Remap/clear effort to what the destination model can actually send.
+	// Stale session effort (e.g. low after switching onto a no-effort route)
+	// must not hard-fail the preference write.
+	p.ReasoningEffort = resolveEffortForModel(d.reasoningEffortSpec(p.Model), p.ReasoningEffort)
 	sess, err := d.store.SetNextModelPreference(p.SessionID, p.Model, p.ReasoningEffort)
 	if err != nil {
 		return nil, err
@@ -2771,9 +2769,14 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, retryOfRunID s
 	if requestedEffort == "" {
 		requestedEffort = normalizeReasoningEffort(sess.NextReasoningEffort)
 	}
-	effectiveEffort, err := validateReasoningEffort(d.reasoningEffortSpec(model), requestedEffort)
-	if err != nil {
-		return nil, err
+	// End-to-end: only freeze efforts the route can encode. Invalid/stale
+	// values remap (minimal→low) or clear instead of failing the whole turn.
+	effortSpec := d.reasoningEffortSpec(model)
+	effectiveEffort := resolveEffortForModel(effortSpec, requestedEffort)
+	if requestedEffort != "" && effectiveEffort == "" {
+		requestedEffort = ""
+	} else if effectiveEffort != "" {
+		requestedEffort = effectiveEffort
 	}
 	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, prompt, model, agent, p.SuccessCriteria)
 	d.sched.SetLocale(task.RunID, p.Locale)

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -258,8 +259,9 @@ func TestCatalogEffortOptionsDriveInventoryDefaults(t *testing.T) {
 	}
 }
 
-func TestCatalogEffortWithoutNativeFamilyUsesCatalog(t *testing.T) {
-	// Unknown provider family: catalog-declared efforts still surface to inventory.
+func TestCatalogEffortWithoutNativeFamilyDoesNotAdvertiseUnencodable(t *testing.T) {
+	// Unknown family + catalog-only values must NOT surface Tab effort levels:
+	// applyNative cannot encode them and operators hit hard failures after select.
 	model := provider.Model{
 		Reasoning: true,
 		ReasoningOptions: []json.RawMessage{
@@ -267,8 +269,66 @@ func TestCatalogEffortWithoutNativeFamilyUsesCatalog(t *testing.T) {
 		},
 	}
 	spec := catalogReasoningEffortSpec("mox", "gpt-5.6-sol", model)
-	if len(spec.Options) != 3 || spec.Options[1] != "turbo" || spec.Default != "low" {
-		t.Fatalf("catalog-only effort spec = %#v", spec)
+	if len(spec.Options) != 0 {
+		t.Fatalf("catalog-only without wire family should be empty, got %#v", spec)
+	}
+}
+
+func TestInventoryEffortOptionsAreAlwaysWireEncodable(t *testing.T) {
+	// End-to-end contract: every effort shown in inventory must encode without
+	// "not supported by this adapter" for OpenAI/Google adapter paths.
+	// Anthropic uses a separate messages encoder and is validated only.
+	cases := []struct {
+		provider, model, family string
+		modelMeta               provider.Model
+	}{
+		{"openai", "gpt-5", "openai", provider.Model{Reasoning: true}},
+		{"openrouter", "openai/gpt-5", "openai", provider.Model{Reasoning: true}},
+		{"azure", "gpt-5", "openai", provider.Model{Reasoning: true}},
+		{"ccswitch-codex-e29abfcda9ba", "gpt-5.6-sol", "openai", provider.Model{Reasoning: true, ToolCall: true}},
+		{"ccswitch-codex-tds", "gpt-5.5", "openai", provider.Model{Reasoning: true, ToolCall: true}},
+		{"xai", "grok-4", "xai", provider.Model{Reasoning: true}},
+		{"google", "gemini-3-pro", "google", provider.Model{Reasoning: true}},
+		{"ccswitch-gemini-deadbeef", "gemini-3-flash", "google", provider.Model{Reasoning: true}},
+		{"anthropic", "claude-opus-5", "anthropic", provider.Model{Reasoning: true}},
+		{"ccswitch-claude-0c171e46f7b8", "claude-opus-5", "anthropic", provider.Model{Reasoning: true, ToolCall: true}},
+	}
+	for _, tc := range cases {
+		spec := catalogReasoningEffortSpec(tc.provider, tc.model, tc.modelMeta)
+		if effortWireFamily(tc.provider, tc.model) != tc.family && tc.family != "" {
+			// family may be empty only when no options
+			if len(spec.Options) > 0 && effortWireFamily(tc.provider, tc.model) == "" {
+				t.Fatalf("%s/%s: options without wire family: %#v", tc.provider, tc.model, spec)
+			}
+		}
+		if len(spec.Options) == 0 {
+			// Some routes legitimately have no discrete effort UI.
+			continue
+		}
+		for _, effort := range spec.Options {
+			if tc.family == "anthropic" {
+				if _, err := validateReasoningEffort(spec, effort); err != nil {
+					t.Fatalf("%s/%s effort %q: %v", tc.provider, tc.model, effort, err)
+				}
+				continue
+			}
+			body := map[string]any{}
+			if _, err := applyNativeReasoningEffort(tc.provider, tc.model, effort, body); err != nil {
+				t.Fatalf("%s/%s effort %q not wire-encodable: %v", tc.provider, tc.model, effort, err)
+			}
+		}
+	}
+}
+
+func TestReasoningEffortUnsupportedClassifiesForOperatorCopy(t *testing.T) {
+	err := fmt.Errorf("requesty/gpt-5: %w", errReasoningEffortUnsupported)
+	info := classifyProviderError(err)
+	if info.Code != "provider_reasoning_effort_unsupported" {
+		t.Fatalf("classification = %#v", info)
+	}
+	got := operatorFacingReasonerError(err)
+	if !strings.Contains(strings.ToLower(got), "reasoning effort") {
+		t.Fatalf("operator copy = %q", got)
 	}
 }
 

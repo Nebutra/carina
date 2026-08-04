@@ -232,13 +232,28 @@ func applyNativeReasoningEffort(providerID, model, effort string, body map[strin
 	if effort == "" {
 		return "", nil
 	}
-	effective, err := validateReasoningEffort(nativeReasoningEffortSpec(providerID, model), effort)
+	// Prefer ops override ladder when present; otherwise native family ladder.
+	// Inventory only advertises these same options (catalog-only without family
+	// is suppressed), so encode and UI stay end-to-end consistent.
+	spec := nativeReasoningEffortSpec(providerID, model)
+	if over, ok := lookupReasoningEffortOverride(providerID, model); ok {
+		spec = over
+	}
+	effective, err := validateReasoningEffort(spec, effort)
 	if err != nil {
 		return "", fmt.Errorf("%s/%s: %w", providerID, model, err)
 	}
-	// Encode by effort family (not bare provider id) so CC Switch / Azure / OpenRouter
-	// runtime ids that already advertise ladders can actually send them on the wire.
-	switch reasoningEffortFamily(providerID, model) {
+	family := effortWireFamily(providerID, model)
+	// Ops overrides on unknown catalog ids (e.g. mox/gpt-5.6-sol) still need a
+	// wire shape; default to OpenAI-compatible reasoning.effort.
+	if family == "" {
+		if _, ok := lookupReasoningEffortOverride(providerID, model); ok {
+			family = "openai"
+		}
+	}
+	// Encode by family so CC Switch / Azure / OpenRouter runtime ids that
+	// advertise ladders actually send them on the wire.
+	switch family {
 	case "openai", "xai":
 		body["reasoning"] = map[string]any{"effort": effective}
 	case "google":
@@ -249,7 +264,7 @@ func applyNativeReasoningEffort(providerID, model, effort string, body map[strin
 		}
 		config["thinkingConfig"] = map[string]any{"thinkingLevel": strings.ToUpper(effective)}
 	default:
-		return "", fmt.Errorf("%s/%s: reasoning effort is not supported by this adapter", providerID, model)
+		return "", fmt.Errorf("%s/%s: %w", providerID, model, errReasoningEffortUnsupported)
 	}
 	return effective, nil
 }

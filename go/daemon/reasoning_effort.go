@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -9,6 +10,11 @@ import (
 
 	"github.com/Nebutra/carina/go/provider"
 )
+
+// errReasoningEffortUnsupported is returned when a non-empty effort cannot be
+// encoded for the resolved provider family. classifyProviderError maps it to a
+// stable operator code instead of a generic internal failure.
+var errReasoningEffortUnsupported = errors.New("reasoning effort is not supported by this adapter")
 
 type reasoningEffortSpec struct {
 	Options []string `json:"options"`
@@ -72,20 +78,24 @@ func catalogReasoningEffortSpec(providerID, modelID string, model provider.Model
 	catalogOpts := extractCatalogEffortValues(model.ReasoningOptions)
 	native := nativeReasoningEffortSpec(providerID, modelID)
 
-	// Catalog-declared effort values are the primary product surface when present.
-	// Intersect with native when we have a family allowlist; otherwise trust catalog.
+	// Inventory must only advertise efforts that a wire encoder can send.
+	// Catalog options without a known family used to surface Tab levels that
+	// later failed with "reasoning effort is not supported by this adapter".
 	if len(catalogOpts) > 0 {
 		if len(native.Options) > 0 {
 			return intersectEffortSpecs(native, catalogOpts)
 		}
-		return reasoningEffortSpec{
-			Options: catalogOpts,
-			Default: preferEffortDefault(catalogOpts, ""),
-		}
+		return reasoningEffortSpec{}
 	}
 
 	// No catalog options: family native ladder only (may be empty → no UI control).
 	return native
+}
+
+// effortWireFamily is the body-encoding family for a route. Empty means no
+// discrete effort control should be offered or sent.
+func effortWireFamily(providerID, modelID string) string {
+	return reasoningEffortFamily(providerID, modelID)
 }
 
 func lookupReasoningEffortOverride(providerID, modelID string) (reasoningEffortSpec, bool) {

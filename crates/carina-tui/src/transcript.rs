@@ -5,8 +5,18 @@ use serde_json::Value;
 use crate::rpc::{
     AssistantMessagePhase, AssistantMessageUpdate, ExecutionLifecycle, SessionItemEvent, WireEvent,
 };
+use crate::i18n::MessageId;
 use crate::tool_projection::{TodoItem, ToolFacts, ToolKind, present as present_tool};
 use crate::{i18n, i18n::Locale};
+
+fn failure_kind_message_id(kind: FailureKind) -> MessageId {
+    match kind {
+        FailureKind::Failed => MessageId::FailureTitleFailed,
+        FailureKind::ApprovalDenied => MessageId::FailureTitleApprovalDenied,
+        FailureKind::Interrupted => MessageId::FailureTitleInterrupted,
+        FailureKind::Cancelled => MessageId::FailureTitleCancelled,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockKind {
@@ -115,7 +125,12 @@ impl TranscriptBlock {
                 );
                 i18n::tool_group_title(locale, kind, count, running, &paths)
             }
-            None => self.title.clone(),
+            None => {
+                if let Some(failure) = self.failure.as_ref() {
+                    return i18n::text(locale, failure_kind_message_id(failure.kind)).to_owned();
+                }
+                self.title.clone()
+            }
         }
     }
 
@@ -1244,7 +1259,15 @@ fn humanize_failure_reason(reason: &str) -> String {
         if lower.contains("circuit") {
             return "The model provider circuit is open. Wait for the probe or choose another provider.".into();
         }
+        if lower.contains("reasoning effort") {
+            return "Reasoning effort is not supported or not valid for this model route. Clear effort or choose another model.".into();
+        }
         return "The model could not complete this turn. Check the provider and network, then retry explicitly if needed.".into();
+    }
+    if lower.contains("reasoning effort is not supported")
+        || (lower.contains("reasoning effort") && lower.contains("not supported by this adapter"))
+    {
+        return "Reasoning effort is not supported or not valid for this model route. Clear effort or choose another model.".into();
     }
     trimmed.to_owned()
 }
@@ -1266,6 +1289,7 @@ fn failure_block(
     } else {
         FailureAction::Retry
     };
+    // English storage title; localized_title remaps FailureKind for display locales.
     let title = match kind {
         FailureKind::Failed => "Execution failed",
         FailureKind::ApprovalDenied => "Approval denied",

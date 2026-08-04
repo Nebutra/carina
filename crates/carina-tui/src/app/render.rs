@@ -271,7 +271,8 @@ impl App {
             action: Action::FocusProviderSearch,
         });
         if search_focused && search_inner.width > 0 {
-            let cursor_offset = (3usize + self.provider_picker.query().chars().count()).min(
+            let query = self.provider_picker.query();
+            let cursor_offset = (3usize + UnicodeWidthStr::width(query)).min(
                 search_inner
                     .width
                     .saturating_sub(layout_contract::ROW_HEIGHT) as usize,

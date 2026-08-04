@@ -277,6 +277,12 @@ func classifyProviderError(err error) providerErrorInfo {
 	if errors.Is(err, errRetryPressure) {
 		return providerErrorInfo{Code: "retry_paused_by_backpressure", Category: "unavailable", UserAction: "wait for scheduler pressure to recover", Retryable: false}
 	}
+	if errors.Is(err, errReasoningEffortUnsupported) {
+		return providerErrorInfo{
+			Code: "provider_reasoning_effort_unsupported", Category: "compatibility", Retryable: false,
+			UserAction: "clear reasoning effort or choose a model that supports it",
+		}
+	}
 	// Stream budget / idle failures before generic net.Error: mid-body
 	// Client.Timeout must not auto-retry (duplicate side effects + cost).
 	var streamErr providerStreamError
@@ -288,6 +294,20 @@ func classifyProviderError(err error) providerErrorInfo {
 		return providerErrorInfo{
 			Code: "provider_stream_budget_exceeded", Category: "timeout", Retryable: false,
 			UserAction: "check the model proxy and network, then retry explicitly",
+		}
+	}
+	if msg := strings.ToLower(err.Error()); strings.Contains(msg, "reasoning effort is not supported") ||
+		(strings.Contains(msg, "reasoning effort") && strings.Contains(msg, "not supported by this adapter")) {
+		return providerErrorInfo{
+			Code: "provider_reasoning_effort_unsupported", Category: "compatibility", Retryable: false,
+			UserAction: "clear reasoning effort or choose a model that supports it",
+		}
+	}
+	if msg := strings.ToLower(err.Error()); strings.Contains(msg, "reasoning effort") &&
+		(strings.Contains(msg, "is invalid") || strings.Contains(msg, "supported values")) {
+		return providerErrorInfo{
+			Code: "provider_reasoning_effort_invalid", Category: "compatibility", Retryable: false,
+			UserAction: "choose a supported reasoning effort for this model",
 		}
 	}
 	var classified providerErrorClassifier
@@ -337,6 +357,10 @@ func operatorFacingReasonerError(err error) string {
 		return "The model request hit a deadline before finishing. Retry explicitly if needed."
 	case "provider_client_restricted":
 		return joinOperatorSentence("The model endpoint rejected this client type", info.UserAction)
+	case "provider_reasoning_effort_unsupported":
+		return joinOperatorSentence("Reasoning effort is not supported for this model route", info.UserAction)
+	case "provider_reasoning_effort_invalid":
+		return joinOperatorSentence("The selected reasoning effort is not valid for this model", info.UserAction)
 	}
 	if info.UserAction != "" {
 		return joinOperatorSentence("The model could not complete this turn", info.UserAction)
