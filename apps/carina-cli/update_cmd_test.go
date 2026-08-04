@@ -52,7 +52,7 @@ func TestUpdateVersionAndChannelParsing(t *testing.T) {
 }
 
 func TestStandaloneUpdateDownloadsVerifiesAndReplacesWholeBundle(t *testing.T) {
-	const version = "0.8.10"
+	const version = "0.8.11"
 	archive, checksum := buildUpdateFixture(t, version, "linux", "amd64", "")
 	base, assetHits := installUpdateHTTPFixture(t, version, "linux", "amd64", archive, checksum)
 	installDir := prepareOldUpdateInstall(t)
@@ -63,7 +63,7 @@ func TestStandaloneUpdateDownloadsVerifiesAndReplacesWholeBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "updated 0.8.9 -> 0.8.10") || !strings.Contains(out, "restart the current workspace runtime") {
+	if !strings.Contains(out, "updated 0.8.10 -> 0.8.11") || !strings.Contains(out, "restart the current workspace runtime") {
 		t.Fatalf("update output missing lifecycle guidance:\n%s", out)
 	}
 	if *assetHits != 2 {
@@ -86,7 +86,7 @@ func TestStandaloneUpdateDownloadsVerifiesAndReplacesWholeBundle(t *testing.T) {
 }
 
 func TestUpdateCheckDoesNotDownloadAssets(t *testing.T) {
-	const version = "0.8.10"
+	const version = "0.8.11"
 	archive, checksum := buildUpdateFixture(t, version, "linux", "amd64", "")
 	base, assetHits := installUpdateHTTPFixture(t, version, "linux", "amd64", archive, checksum)
 	installDir := prepareOldUpdateInstall(t)
@@ -119,9 +119,9 @@ func TestUpdateDoesNotDowngradeDevelopmentBuildByDefault(t *testing.T) {
 }
 
 func TestStandaloneUpdateRejectsBadOuterChecksumWithoutMutation(t *testing.T) {
-	const version = "0.8.10"
+	const version = "0.8.11"
 	archive, _ := buildUpdateFixture(t, version, "linux", "amd64", "")
-	base, _ := installUpdateHTTPFixture(t, version, "linux", "amd64", archive, strings.Repeat("0", 64)+"  carina_0.8.10_linux_amd64.tar.gz\n")
+	base, _ := installUpdateHTTPFixture(t, version, "linux", "amd64", archive, strings.Repeat("0", 64)+"  carina_0.8.11_linux_amd64.tar.gz\n")
 	installDir := prepareOldUpdateInstall(t)
 	withUpdateTestHooks(t, filepath.Join(installDir, "carina"), "linux", "amd64")
 	t.Setenv("CARINA_UPDATE_API_BASE", base)
@@ -136,7 +136,7 @@ func TestStandaloneUpdateRejectsBadOuterChecksumWithoutMutation(t *testing.T) {
 }
 
 func TestStandaloneUpdateRejectsDeveloperOnlyArchive(t *testing.T) {
-	const version = "0.8.10"
+	const version = "0.8.11"
 	archive, checksum := buildUpdateFixture(t, version, "linux", "amd64", "SKIP_BUILD=1: reused local artifacts")
 	base, _ := installUpdateHTTPFixture(t, version, "linux", "amd64", archive, checksum)
 	installDir := prepareOldUpdateInstall(t)
@@ -253,10 +253,10 @@ func TestUpdateChecksNodeManagedPackageWithOwningManager(t *testing.T) {
 	var got []string
 	updateCommandOutput = func(name string, args ...string) ([]byte, error) {
 		got = append([]string{name}, args...)
-		return []byte("0.8.10\n"), nil
+		return []byte("0.8.11\n"), nil
 	}
 	out, err := captureStdout(t, func() error { return cmdUpdate([]string{"--check"}) })
-	if err != nil || !strings.Contains(out, "update available: 0.8.10") {
+	if err != nil || !strings.Contains(out, "update available: 0.8.11") {
 		t.Fatalf("npm check output=%q err=%v", out, err)
 	}
 	want := []string{"npm", "view", "@nebutra/carina", "version"}
