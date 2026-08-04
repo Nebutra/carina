@@ -227,3 +227,39 @@ func TestReasoningEffortOverrideEnv(t *testing.T) {
 		t.Fatalf("override spec = %#v", spec)
 	}
 }
+
+func TestCCSwitchClaudeLiveModelsExposeAdaptiveEffort(t *testing.T) {
+	// Live-list stubs only set Reasoning:true; effort UI must still resolve from
+	// protocol family (ccswitch-claude-*) + model markers (opus-5).
+	spec := catalogReasoningEffortSpec(
+		"ccswitch-claude-0c171e46f7b8",
+		"claude-opus-5",
+		provider.Model{ID: "claude-opus-5", Name: "claude-opus-5", Reasoning: true, ToolCall: true},
+	)
+	if len(spec.Options) < 3 || spec.Default == "" {
+		t.Fatalf("CC Switch Claude adaptive effort missing: %#v", spec)
+	}
+	for _, want := range []string{"low", "medium", "high"} {
+		found := false
+		for _, got := range spec.Options {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("options %#v missing %q", spec.Options, want)
+		}
+	}
+}
+
+func TestCCSwitchCodexLiveModelsExposeOpenAIEffortLadder(t *testing.T) {
+	spec := catalogReasoningEffortSpec(
+		"ccswitch-codex-b184b08b0aa6",
+		"gpt-5.5",
+		provider.Model{ID: "gpt-5.5", Name: "gpt-5.5", Reasoning: true, ToolCall: true},
+	)
+	if len(spec.Options) < 4 || spec.Default == "" {
+		t.Fatalf("CC Switch Codex effort ladder missing: %#v", spec)
+	}
+}

@@ -235,8 +235,8 @@ func remapReasoningEffort(effort string) string {
 func nativeReasoningEffortSpec(providerID, modelID string) reasoningEffortSpec {
 	providerID = normalizeProviderID(providerID)
 	modelID = strings.ToLower(strings.TrimSpace(modelID))
-	switch providerID {
-	case "openai", "openrouter", "azure", "azure-openai":
+	switch reasoningEffortFamily(providerID, modelID) {
+	case "openai":
 		// Full OpenAI-style ladder; catalog intersection trims unsupported tiers.
 		return reasoningEffortSpec{
 			Options: []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"},
@@ -245,15 +245,15 @@ func nativeReasoningEffortSpec(providerID, modelID string) reasoningEffortSpec {
 	case "xai":
 		return reasoningEffortSpec{Options: []string{"low", "medium", "high"}, Default: "high"}
 	case "anthropic":
-		// Adaptive thinking effort (Claude 4.6+). Older thinking models use
-		// token budgets and must not share this control.
+		// Adaptive thinking effort (Claude 4.6+ / Opus-5 family). Older thinking
+		// models use token budgets and must not share this control.
 		if anthropicSupportsAdaptiveEffort(modelID) {
 			return reasoningEffortSpec{
 				Options: []string{"low", "medium", "high", "xhigh", "max"},
 				Default: "high",
 			}
 		}
-	case "google", "gemini":
+	case "google":
 		// thinking_level for Gemini 3.x. Gemini 2.5 uses thinking_budget instead.
 		if strings.Contains(modelID, "gemini-3") || strings.Contains(modelID, "gemini-3.") {
 			if strings.Contains(modelID, "image") {
@@ -269,12 +269,44 @@ func nativeReasoningEffortSpec(providerID, modelID string) reasoningEffortSpec {
 	return reasoningEffortSpec{}
 }
 
+// reasoningEffortFamily maps catalog and CC Switch runtime IDs onto the native
+// effort ladders. Without this, ccswitch-claude-* / ccswitch-codex-* live-model
+// rows land with reasoning=true but empty reasoning_efforts, so the TUI cannot
+// offer Tab effort selection after model pick.
+func reasoningEffortFamily(providerID, modelID string) string {
+	providerID = normalizeProviderID(providerID)
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	switch providerID {
+	case "openai", "openrouter", "azure", "azure-openai":
+		return "openai"
+	case "xai":
+		return "xai"
+	case "anthropic":
+		return "anthropic"
+	case "google", "gemini":
+		return "google"
+	}
+	// CC Switch / managed runtime IDs carry the app in the id prefix.
+	// Do not guess from model id alone — custom relays may declare their own
+	// catalog effort values that must not be intersected with a wrong family.
+	switch {
+	case strings.HasPrefix(providerID, "ccswitch-claude"):
+		return "anthropic"
+	case strings.HasPrefix(providerID, "ccswitch-codex"):
+		return "openai"
+	case strings.HasPrefix(providerID, "ccswitch-gemini"):
+		return "google"
+	}
+	_ = modelID
+	return ""
+}
+
 func anthropicSupportsAdaptiveEffort(modelID string) bool {
 	modelID = strings.ToLower(modelID)
 	// Explicit generation markers for adaptive effort / thinking.level API.
 	for _, marker := range []string{
 		"4-6", "4.6", "4-7", "4.7", "4-8", "4.8",
-		"opus-5", "sonnet-5", "haiku-5",
+		"opus-5", "sonnet-5", "haiku-5", "fable-5",
 	} {
 		if strings.Contains(modelID, marker) {
 			return true
