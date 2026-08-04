@@ -108,7 +108,7 @@ experimental_bearer_token = "proxy-secret"
 	if managed.Route != CCSwitchRouteManagedProxy || managed.Action != CCSwitchActionUseActiveRoute || !managed.Importable {
 		t.Fatalf("managed route = %#v", managed)
 	}
-	if managed.Name != "Relay" || managed.BaseURL != "http://127.0.0.1:15721/v1" || managed.Model != "gpt-live" {
+	if managed.Name != "Relay · Proxy" || managed.BaseURL != "http://127.0.0.1:15721/v1" || managed.Model != "gpt-live" {
 		t.Fatalf("managed route projection = %#v", managed)
 	}
 	if managed.CredentialKind != CCSwitchCredentialBearer || managed.Rank != 0 || managed.Revision == "" {

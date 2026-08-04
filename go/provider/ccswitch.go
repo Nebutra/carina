@@ -359,13 +359,15 @@ func resolveManagedCodexRoute(configs []ccSwitchProxyConfig, records []ccSwitchR
 	if proxy == nil {
 		return nil
 	}
-	name := "CC Switch"
+	name := "CC Switch Proxy"
 	currentFound := false
 	for _, record := range records {
 		if record.appType == "codex" && record.current {
 			currentFound = true
 			if candidate := strings.TrimSpace(record.name); candidate != "" {
-				name = candidate
+				// Distinguish the managed proxy row from the saved profile that
+				// shares the same CC Switch display name (e.g. both "TDS").
+				name = candidate + " · Proxy"
 			}
 			break
 		}
