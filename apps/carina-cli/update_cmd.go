@@ -350,15 +350,18 @@ func displayInstallDir(path string) string {
 }
 
 func printUpdateHeader(channel, current, target, installDir string) {
-	// One quiet brand line, then facts — no multi-line ASCII banner.
+	// One quiet brand line, then facts - no multi-line ASCII banner.
 	if updateStdoutIsTTY() {
 		fmt.Println("◆ Carina update")
 	} else {
 		fmt.Println("Carina update")
 	}
-	if target != "" && target != "latest" {
+	switch {
+	case target != "" && target != "latest" && target != current:
 		fmt.Printf("  %s → %s  (%s)\n", current, target, channel)
-	} else {
+	case target != "" && target != "latest":
+		fmt.Printf("  %s  (%s)\n", current, channel)
+	default:
 		fmt.Printf("  current %s  (%s)\n", current, channel)
 	}
 	if installDir != "" {
