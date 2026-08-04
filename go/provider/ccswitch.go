@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	_ "modernc.org/sqlite"
@@ -106,7 +108,7 @@ func DetectCCSwitchProviders(databasePath string) ([]CCSwitchProfile, error) {
 // ImportCCSwitchCredential resolves a profile only after explicit user action.
 // The returned credential must remain transient and must never be logged.
 func ImportCCSwitchCredential(databasePath, runtimeID string) (CCSwitchProfile, string, error) {
-	resolved, err := readCCSwitch(databasePath)
+	resolved, err := loadCCSwitchResolved(databasePath)
 	if err != nil {
 		return CCSwitchProfile{}, "", err
 	}
@@ -120,6 +122,81 @@ func ImportCCSwitchCredential(databasePath, runtimeID string) (CCSwitchProfile, 
 		return item.profile, item.credential, nil
 	}
 	return CCSwitchProfile{}, "", fmt.Errorf("cc switch profile %q was not found", runtimeID)
+}
+
+// LookupCCSwitchCredential is a non-mutating read of a reusable CC Switch
+// credential for runtime inventory and execution. Results are cached briefly so
+// model.list can expand live model lists without opening SQLite per provider.
+// Secrets are never logged.
+func LookupCCSwitchCredential(runtimeID string) (CCSwitchProfile, string, bool) {
+	runtimeID = strings.TrimSpace(runtimeID)
+	if runtimeID == "" {
+		return CCSwitchProfile{}, "", false
+	}
+	resolved, err := loadCCSwitchResolved("")
+	if err != nil {
+		return CCSwitchProfile{}, "", false
+	}
+	for _, item := range resolved {
+		if item.profile.RuntimeID != runtimeID {
+			continue
+		}
+		if !item.profile.Importable || strings.TrimSpace(item.credential) == "" {
+			return item.profile, "", false
+		}
+		return item.profile, item.credential, true
+	}
+	return CCSwitchProfile{}, "", false
+}
+
+const ccSwitchResolvedCacheTTL = 30 * time.Second
+
+var (
+	ccSwitchResolvedMu    sync.Mutex
+	ccSwitchResolvedAt    time.Time
+	ccSwitchResolvedCache []ccSwitchResolved
+	ccSwitchResolvedPath  string
+	ccSwitchResolvedErr   error
+)
+
+func loadCCSwitchResolved(databasePath string) ([]ccSwitchResolved, error) {
+	ccSwitchResolvedMu.Lock()
+	defer ccSwitchResolvedMu.Unlock()
+	path := strings.TrimSpace(databasePath)
+	if path == "" {
+		var err error
+		path, err = DefaultCCSwitchDatabasePath()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if ccSwitchResolvedCache != nil &&
+		ccSwitchResolvedPath == path &&
+		ccSwitchResolvedErr == nil &&
+		time.Since(ccSwitchResolvedAt) < ccSwitchResolvedCacheTTL {
+		return ccSwitchResolvedCache, nil
+	}
+	resolved, err := readCCSwitch(path)
+	ccSwitchResolvedPath = path
+	ccSwitchResolvedAt = time.Now()
+	ccSwitchResolvedErr = err
+	if err != nil {
+		ccSwitchResolvedCache = nil
+		return nil, err
+	}
+	ccSwitchResolvedCache = resolved
+	return resolved, nil
+}
+
+// InvalidateCCSwitchCredentialCache drops the short-lived credential snapshot.
+// Tests call this after mutating fixtures.
+func InvalidateCCSwitchCredentialCache() {
+	ccSwitchResolvedMu.Lock()
+	defer ccSwitchResolvedMu.Unlock()
+	ccSwitchResolvedCache = nil
+	ccSwitchResolvedAt = time.Time{}
+	ccSwitchResolvedPath = ""
+	ccSwitchResolvedErr = nil
 }
 
 // MergeCCSwitchProviders adds safe runtime projections without mutating the

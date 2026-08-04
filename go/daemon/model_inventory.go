@@ -110,17 +110,16 @@ func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
 			row.SourceReason = info.Source.Reason
 			row.sourceRank = info.Source.Rank
 		}
-		// Prefer a live GET /models (Bearer/token) when the provider is runnable.
-		// Catalog stays the fallback for offline, unauthenticated, or thin proxies.
-		if available {
-			if liveIDs, source := d.liveModelIDs(info, chain); len(liveIDs) > 0 && source != "" {
-				row.Models = projectInventoryModels(id, info, available, liveIDs, info.Models)
-				row.Models = ensureDefaultModelPresent(row.Models, id, info, available, row.DefaultModel)
-				row.DynamicModels = true
-				sortInventoryModels(row.Models, id, row.DefaultModel)
-				providers = append(providers, row)
-				continue
-			}
+		// Prefer a live GET /models whenever a credential is resolvable (auth
+		// store or live CC Switch DB). Catalog stays the fallback when the
+		// endpoint is offline or returns nothing useful.
+		if liveIDs, source := d.liveModelIDs(info, chain); len(liveIDs) > 0 && source != "" {
+			row.Models = projectInventoryModels(id, info, available, liveIDs, info.Models)
+			row.Models = ensureDefaultModelPresent(row.Models, id, info, available, row.DefaultModel)
+			row.DynamicModels = true
+			sortInventoryModels(row.Models, id, row.DefaultModel)
+			providers = append(providers, row)
+			continue
 		}
 		for key, model := range info.Models {
 			modelID := strings.TrimSpace(model.ID)

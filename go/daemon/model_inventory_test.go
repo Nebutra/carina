@@ -2,15 +2,61 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Nebutra/carina/go/auth"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/provider"
+	_ "modernc.org/sqlite"
 )
+
+func createCCSwitchLiveFixture(t *testing.T, baseURL, model, apiKey string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "cc-switch.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE providers (
+		id TEXT NOT NULL,
+		app_type TEXT NOT NULL,
+		name TEXT NOT NULL,
+		settings_config TEXT NOT NULL,
+		is_current BOOLEAN NOT NULL DEFAULT 0,
+		sort_index INTEGER,
+		PRIMARY KEY (id, app_type)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	tomlConfig := fmt.Sprintf(
+		"model = %q\nmodel_provider = \"custom\"\n[model_providers.custom]\nbase_url = %q\nwire_api = \"responses\"\n",
+		model, baseURL,
+	)
+	payload, err := json.Marshal(map[string]any{
+		"auth":   map[string]string{"OPENAI_API_KEY": apiKey},
+		"config": tomlConfig,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO providers (id, app_type, name, settings_config, is_current, sort_index) VALUES (?, 'codex', 'TDS-Live', ?, 1, 0)`,
+		"tds-live-id", string(payload),
+	); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
 type modelInventoryTestReasoner struct{ name string }
 
@@ -243,6 +289,116 @@ func TestModelListProjectsCCSwitchDiscoveryWithoutSourceIDsOrSecrets(t *testing.
 	}
 	if got := detectRuntimeProtocol(d.providerCatalog[row.ID]); got != protocolOpenAIResponses {
 		t.Fatalf("runtime protocol = %q", got)
+	}
+}
+
+func TestModelListExpandsCCSwitchLiveModelsWithoutPriorAuthImport(t *testing.T) {
+	// Credential lives only in CC Switch DB path (simulated via Lookup override
+	// of auth chain using a real httptest + in-memory store without the key).
+	var sawAuth atomic.Value
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		hits.Add(1)
+		sawAuth.Store(r.Header.Get("Authorization"))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{
+				{"id": "gpt-5.5"},
+				{"id": "gpt-5.6"},
+				{"id": "gpt-5.4"},
+				{"id": "text-embedding-3-small"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	// Seed a temporary CC Switch-shaped lookup by registering a fake source
+	// through the real auth chain path: put nothing in store, inject via
+	// provider.Lookup by using a fixture database.
+	dbPath := createCCSwitchLiveFixture(t, srv.URL+"/v1", "gpt-5.5", "tds-live-secret")
+	prevHome := os.Getenv("HOME")
+	// DefaultCCSwitchDatabasePath uses ~/.cc-switch/cc-switch.db — point HOME
+	// at a temp tree that contains our fixture.
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".cc-switch"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(dbPath, filepath.Join(home, ".cc-switch", "cc-switch.db")); err != nil {
+		// copy if rename across volumes
+		in, _ := os.ReadFile(dbPath)
+		if werr := os.WriteFile(filepath.Join(home, ".cc-switch", "cc-switch.db"), in, 0o600); werr != nil {
+			t.Fatal(werr)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", prevHome)
+		provider.InvalidateCCSwitchCredentialCache()
+	})
+	provider.InvalidateCCSwitchCredentialCache()
+
+	profiles, err := provider.DetectCCSwitchProviders("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile provider.CCSwitchProfile
+	for _, p := range profiles {
+		if p.Name == "TDS-Live" {
+			profile = p
+			break
+		}
+	}
+	if profile.RuntimeID == "" || !profile.Importable {
+		t.Fatalf("fixture profile missing: %+v", profiles)
+	}
+
+	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	catalog := provider.MergeCCSwitchProviders(provider.Catalog{}, []provider.CCSwitchProfile{profile})
+	// Point catalog API at the test server (merge uses profile.BaseURL).
+	info := catalog[profile.RuntimeID]
+	info.API = srv.URL + "/v1"
+	catalog[profile.RuntimeID] = info
+
+	d := &Daemon{
+		router:          modelrouter.New(),
+		authStore:       store,
+		providerCatalog: catalog,
+		liveModelsHTTP:  srv.Client(),
+		reasoner:        modelInventoryTestReasoner{name: reasonerBackendRouter},
+		reasonerBackend: reasonerBackendRouter,
+	}
+	d.router.RegisterProvider(inventoryProvider(profile.RuntimeID))
+
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() < 1 {
+		t.Fatal("expected live GET /models without prior auth import")
+	}
+	if got, _ := sawAuth.Load().(string); got != "Bearer tds-live-secret" {
+		t.Fatalf("Authorization = %q", got)
+	}
+	row := result.(map[string]any)["providers"].([]modelInventoryProvider)[0]
+	if !row.Available {
+		t.Fatalf("CC Switch credential should make provider available: %+v", row)
+	}
+	if !row.DynamicModels || len(row.Models) < 3 {
+		t.Fatalf("expected expanded live models, got %+v", row.Models)
+	}
+	ids := make([]string, 0, len(row.Models))
+	for _, m := range row.Models {
+		ids = append(ids, m.ID)
+		if strings.Contains(m.ID, "embedding") {
+			t.Fatalf("embedding leaked: %s", m.ID)
+		}
+	}
+	joined := strings.Join(ids, ",")
+	if !strings.Contains(joined, "gpt-5.5") || !strings.Contains(joined, "gpt-5.6") || !strings.Contains(joined, "gpt-5.4") {
+		t.Fatalf("live models = %v", ids)
 	}
 }
 

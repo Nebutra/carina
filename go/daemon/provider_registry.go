@@ -231,7 +231,7 @@ func runtimeProviderErrorName(info provider.Info) string {
 }
 
 func runtimeProviderAuthChain(info provider.Info, store *auth.Store) *auth.Chain {
-	sources := make([]auth.Source, 0, len(info.Env)+1)
+	sources := make([]auth.Source, 0, len(info.Env)+2)
 	for _, env := range info.Env {
 		sources = append(sources, auth.EnvKey{Var: env})
 	}
@@ -246,7 +246,46 @@ func runtimeProviderAuthChain(info provider.Info, store *auth.Store) *auth.Chain
 			sources = append(sources, auth.StoreKey{Store: store, Provider: info.ID})
 		}
 	}
+	// Importable CC Switch profiles can resolve a reusable token from the local
+	// CC Switch DB without a prior `carina auth import`. That unlocks live
+	// model lists (TDS, relays) and execution while store import remains the
+	// durable/explicit path when present (and wins above).
+	if info.Source != nil &&
+		info.Source.Kind == provider.CCSwitchSourceKind &&
+		info.Source.Importable &&
+		runtimeSourceAllowsExecution(info) {
+		sources = append(sources, ccSwitchRuntimeCredential{
+			providerID:     info.ID,
+			sourceRevision: strings.TrimSpace(info.Source.Revision),
+		})
+	}
 	return auth.NewChain(sources...)
+}
+
+// ccSwitchRuntimeCredential resolves secrets straight from CC Switch for
+// importable profiles. Values are never logged; Name is safe provenance.
+type ccSwitchRuntimeCredential struct {
+	providerID     string
+	sourceRevision string
+}
+
+func (s ccSwitchRuntimeCredential) Name() string {
+	return "cc-switch:" + normalizeProviderID(s.providerID)
+}
+
+func (s ccSwitchRuntimeCredential) Resolve() (auth.Credential, bool) {
+	profile, secret, ok := provider.LookupCCSwitchCredential(s.providerID)
+	if !ok || strings.TrimSpace(secret) == "" {
+		return auth.Credential{}, false
+	}
+	if s.sourceRevision != "" && strings.TrimSpace(profile.Revision) != "" && profile.Revision != s.sourceRevision {
+		return auth.Credential{}, false
+	}
+	kind := auth.APIKey
+	if profile.CredentialKind == provider.CCSwitchCredentialBearer {
+		kind = auth.Bearer
+	}
+	return auth.Credential{Kind: kind, Value: secret, Source: s.Name()}, true
 }
 
 // validatedRuntimeStoreKey keeps imported credentials dynamic without letting
