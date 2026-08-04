@@ -410,6 +410,20 @@ func resolveCCSwitchRecord(record ccSwitchRecord) ccSwitchResolved {
 			credential = firstString(settings.Env, "OPENROUTER_API_KEY")
 			profile.CredentialKind = CCSwitchCredentialBearer
 		}
+		// Official Claude Code / Claude Max login leaves no API key in the
+		// CC Switch row. Reuse Claude Code's local OAuth access token so the
+		// profile is importable into Carina as a Bearer credential.
+		if strings.TrimSpace(credential) == "" {
+			if tok, ok := claudeCodeOAuthLookup(); ok {
+				credential = tok
+				profile.CredentialKind = CCSwitchCredentialBearer
+				// Loopback ANTHROPIC_BASE_URL proxies are for Claude Code's
+				// own process; OAuth bearers talk to Anthropic's public API.
+				if isLoopbackBaseURL(profile.BaseURL) || strings.TrimSpace(profile.BaseURL) == "" {
+					profile.BaseURL = "https://api.anthropic.com/v1"
+				}
+			}
+		}
 		profile.Model = firstString(settings.Env, "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL")
 		if profile.Model == "" {
 			profile.Model = strings.TrimSpace(settings.Model)
