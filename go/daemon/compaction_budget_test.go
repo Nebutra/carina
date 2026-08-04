@@ -61,6 +61,32 @@ func TestResolveCompactionBudgetLabelsInvalidMetadataFallback(t *testing.T) {
 	}
 }
 
+func TestResolveCompactionBudgetAliasesManagedProxyToCatalogModel(t *testing.T) {
+	catalog := provider.Catalog{
+		"openai": {
+			ID: "openai",
+			Models: map[string]provider.Model{
+				"gpt-5.6-sol": {ID: "gpt-5.6-sol", Limit: provider.ModelLimit{Context: 1_050_000}},
+			},
+		},
+	}
+	// Exact provider miss (CC Switch managed proxy), short model hits openai catalog.
+	budget := resolveCompactionBudget(catalog, "ccswitch-codex-managed-proxy/gpt-5.6-sol")
+	if budget.WindowTokens != 1_050_000 || budget.Source != "catalog-alias" {
+		t.Fatalf("managed proxy budget = %+v", budget)
+	}
+	// Direct vendor route still stamps catalog (not alias).
+	direct := resolveCompactionBudget(catalog, "openai/gpt-5.6-sol")
+	if direct.WindowTokens != 1_050_000 || direct.Source != "catalog" {
+		t.Fatalf("direct budget = %+v", direct)
+	}
+	// Unknown model still falls back to 32k estimate.
+	missing := resolveCompactionBudget(catalog, "ccswitch-codex-managed-proxy/not-a-real-model")
+	if missing.WindowTokens != fallbackContextTokens || missing.Source != "fallback-estimate" {
+		t.Fatalf("missing model budget = %+v", missing)
+	}
+}
+
 func TestCompactionReceiptStampsModelBudget(t *testing.T) {
 	tr := newTranscript("task")
 	tr.policy = CompactionPolicy{

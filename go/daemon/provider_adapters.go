@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -18,7 +19,18 @@ import (
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 )
 
+// providerHTTPTimeout bounds non-stream Complete() calls (headers + full body).
 const providerHTTPTimeout = 120 * time.Second
+
+// Stream transports must not use http.Client.Timeout: that wall-clock covers
+// the entire SSE body and aborts long reasoning/tool-prep turns. Streaming
+// uses ResponseHeaderTimeout for first-byte and an idle reader for hangs.
+const providerStreamHeaderTimeout = 60 * time.Second
+
+// providerStreamIdleTimeout aborts a live stream when no body bytes arrive for
+// this long. Total stream length is intentionally unbounded. Var so tests can
+// shrink the idle window without sleeping for minutes.
+var providerStreamIdleTimeout = 5 * time.Minute
 
 // Patch actions carry complete file contents in the current agent protocol.
 // A 2K cap truncates otherwise valid JSON for modest source files and turns one
@@ -113,6 +125,40 @@ func (p *providerBase) httpClient() *http.Client {
 		return p.client
 	}
 	return &http.Client{Timeout: providerHTTPTimeout}
+}
+
+// streamHTTPClient returns a client safe for SSE. Injected clients with
+// Timeout==0 (httptest) are kept for tests; any wall-clock Timeout is replaced
+// so long event streams are not killed mid-body.
+func (p *providerBase) streamHTTPClient() *http.Client {
+	return streamHTTPClientOr(p.client)
+}
+
+func streamHTTPClientOr(client *http.Client) *http.Client {
+	if client != nil && client.Timeout == 0 {
+		return client
+	}
+	return newProviderStreamHTTPClient()
+}
+
+func newProviderStreamHTTPClient() *http.Client {
+	return &http.Client{
+		// Timeout 0: body may stream longer than the header budget.
+		Timeout: 0,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   15 * time.Second,
+			ResponseHeaderTimeout: providerStreamHeaderTimeout,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
 }
 
 func (p *providerBase) endpoint(path string) string {

@@ -5,14 +5,175 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Nebutra/carina/go/auth"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
 )
+
+// errProviderStreamIdle is returned when no SSE body bytes arrive for
+// providerStreamIdleTimeout. It is not automatically retryable.
+var errProviderStreamIdle = errors.New("provider stream idle timeout")
+
+// providerStreamError is a classified streaming failure. Body/idle budget
+// exhaustion is intentionally non-retryable so agent runs do not re-pay
+// side effects; operators still have explicit execution.retry.
+type providerStreamError struct {
+	provider string
+	phase    string // request | idle | body
+	err      error
+}
+
+func (e providerStreamError) Error() string {
+	switch e.phase {
+	case "idle":
+		return fmt.Sprintf(
+			"%s: model stream stalled (no events for %s). Not auto-retried. Check the proxy/network, then retry explicitly if needed",
+			e.provider, providerStreamIdleTimeout,
+		)
+	case "body":
+		return fmt.Sprintf(
+			"%s: model stream stopped while reading events. Not auto-retried. Check the proxy/network, then retry explicitly if needed",
+			e.provider,
+		)
+	default:
+		return fmt.Sprintf("%s: model stream request failed: %v", e.provider, e.err)
+	}
+}
+
+func (e providerStreamError) Unwrap() error { return e.err }
+
+func (e providerStreamError) ProviderError() providerErrorInfo {
+	info := providerErrorInfo{
+		Code:       "provider_stream_failed",
+		Category:   "unavailable",
+		Provider:   e.provider,
+		Retryable:  false,
+		UserAction: "check the model proxy and network, then retry explicitly",
+	}
+	switch e.phase {
+	case "idle", "body":
+		info.Code = "provider_stream_budget_exceeded"
+		info.Category = "timeout"
+		info.Retryable = false
+	case "request":
+		// First-byte / dial failures may be transient; still prefer not to
+		// auto-retry multi-turn agent runs with prior tool effects. Header
+		// timeouts stay non-retryable at reasoner level unless transport
+		// classification promotes them (see classifyProviderError).
+		if isTransientStreamRequestError(e.err) {
+			info.Code = "provider_stream_unavailable"
+			info.Category = "unavailable"
+			info.Retryable = true
+			info.UserAction = "wait briefly or choose another provider"
+		} else {
+			info.Code = "provider_stream_request_failed"
+			info.Category = "unavailable"
+			info.Retryable = false
+		}
+	}
+	return info
+}
+
+func isTransientStreamRequestError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		// ResponseHeaderTimeout is a timeout but usually means upstream
+		// hung before first byte — one bounded auto-retry is reasonable.
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"connection reset", "connection refused", "broken pipe", "unexpected eof",
+		"i/o timeout", "temporarily unavailable", "bad gateway", "service unavailable",
+		"gateway timeout",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	// Client.Timeout while reading body must never look transient.
+	if strings.Contains(msg, "while reading body") || strings.Contains(msg, "client.timeout") {
+		return false
+	}
+	return false
+}
+
+func wrapProviderStreamRequestError(provider string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return providerStreamError{provider: provider, phase: "request", err: err}
+}
+
+func wrapProviderStreamBodyError(provider string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, errProviderStreamIdle) {
+		return providerStreamError{provider: provider, phase: "idle", err: err}
+	}
+	// Legacy Client.Timeout wrapping / net body deadline.
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "while reading body") ||
+		strings.Contains(msg, "client.timeout") ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, errProviderStreamIdle) {
+		return providerStreamError{provider: provider, phase: "body", err: err}
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return providerStreamError{provider: provider, phase: "body", err: err}
+	}
+	// Malformed SSE / response errors pass through for their own classifiers.
+	var classified providerErrorClassifier
+	if errors.As(err, &classified) {
+		return err
+	}
+	return fmt.Errorf("%s: read event stream: %w", provider, err)
+}
+
+// idleTimeoutReader aborts Read when no bytes arrive within idle.
+type idleTimeoutReader struct {
+	r    io.Reader
+	idle time.Duration
+}
+
+func (r idleTimeoutReader) Read(p []byte) (int, error) {
+	if r.idle <= 0 {
+		return r.r.Read(p)
+	}
+	type outcome struct {
+		n   int
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		n, err := r.r.Read(p)
+		ch <- outcome{n: n, err: err}
+	}()
+	timer := time.NewTimer(r.idle)
+	defer timer.Stop()
+	select {
+	case out := <-ch:
+		return out.n, out.err
+	case <-timer.C:
+		return 0, errProviderStreamIdle
+	}
+}
+
+func streamBodyReader(body io.Reader) io.Reader {
+	return idleTimeoutReader{r: body, idle: providerStreamIdleTimeout}
+}
 
 type providerSSEEvent struct {
 	name string
@@ -55,7 +216,7 @@ func consumeProviderSSE(provider string, reader io.Reader, consume func(provider
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("%s: read event stream: %w", provider, err)
+		return wrapProviderStreamBodyError(provider, err)
 	}
 	if limited.N == 0 {
 		return providerResponseError{provider: provider, status: http.StatusOK, contentType: "text/event-stream", kind: "response too large"}
@@ -126,7 +287,7 @@ func (o *openAIProvider) completeChatStream(ctx context.Context, req modelrouter
 
 	var text strings.Builder
 	var promptTokens, outputTokens, cachedTokens int
-	err = consumeProviderSSE(o.errorName(), response.Body, func(event providerSSEEvent) error {
+	err = consumeProviderSSE(o.errorName(), streamBodyReader(response.Body), func(event providerSSEEvent) error {
 		if bytes.Equal(bytes.TrimSpace(event.data), []byte("[DONE]")) {
 			return nil
 		}
@@ -206,7 +367,7 @@ func (o *openAIProvider) completeResponsesStream(ctx context.Context, req modelr
 
 	var text strings.Builder
 	var inputTokens, outputTokens, cachedTokens int
-	err = consumeProviderSSE(o.errorName(), response.Body, func(event providerSSEEvent) error {
+	err = consumeProviderSSE(o.errorName(), streamBodyReader(response.Body), func(event providerSSEEvent) error {
 		if bytes.Equal(bytes.TrimSpace(event.data), []byte("[DONE]")) {
 			return nil
 		}
@@ -276,9 +437,9 @@ func (o *openAIProvider) openAIStreamRequest(ctx context.Context, path string, b
 	}
 	o.applyExtraHeaders(request.Header)
 	applyHeaders(request.Header, override.Headers)
-	response, err := o.httpClient().Do(request)
+	response, err := o.streamHTTPClient().Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("%s: request: %w", o.errorName(), err)
+		return nil, wrapProviderStreamRequestError(o.errorName(), err)
 	}
 	return response, nil
 }
@@ -328,9 +489,9 @@ func (a *anthropicProvider) Stream(ctx context.Context, req modelrouter.Request,
 	request.Header.Set("anthropic-version", "2023-06-01")
 	applyHeaders(request.Header, a.headers)
 	applyHeaders(request.Header, override.Headers)
-	response, err := a.client.Do(request)
+	response, err := streamHTTPClientOr(a.client).Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("%s: request: %w", a.errorName(), err)
+		return nil, wrapProviderStreamRequestError(a.errorName(), err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -339,7 +500,7 @@ func (a *anthropicProvider) Stream(ctx context.Context, req modelrouter.Request,
 
 	var text strings.Builder
 	var inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int
-	err = consumeProviderSSE(a.errorName(), response.Body, func(event providerSSEEvent) error {
+	err = consumeProviderSSE(a.errorName(), streamBodyReader(response.Body), func(event providerSSEEvent) error {
 		var chunk struct {
 			Type    string `json:"type"`
 			Message struct {

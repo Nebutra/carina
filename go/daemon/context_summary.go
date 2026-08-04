@@ -57,7 +57,13 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 		if usage.Estimated {
 			context["reason"] = "the active reasoner did not return provider token usage; tokens are explicitly estimated"
 		}
-		if limit, ok := modelContextLimit(d.providerCatalog, usage.Provider, usage.Model); ok {
+		modelRef := usage.Model
+		if p := strings.TrimSpace(usage.Provider); p != "" {
+			if !strings.Contains(modelRef, "/") {
+				modelRef = p + "/" + strings.TrimSpace(usage.Model)
+			}
+		}
+		if limit, source, ok := resolveModelContextLimit(d.providerCatalog, modelRef); ok {
 			remaining := max(0, limit-used)
 			percent := 0
 			if limit > 0 {
@@ -70,6 +76,9 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 				level = "warning"
 			}
 			context["limit_tokens"], context["remaining_tokens"], context["used_percent"], context["threshold"] = limit, remaining, percent, level
+			context["metadata_source"] = source
+			// Real catalog windows (including alias) are not "guessed" 32k.
+			context["estimated_limit"] = false
 		}
 		out["model_context_tokens"] = context
 	}
@@ -90,9 +99,14 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 			context["limit_tokens"] = policy.WindowTokens
 			context["remaining_tokens"] = max(0, policy.WindowTokens-used)
 			context["used_percent"] = minInt(100, used*100/policy.WindowTokens)
+			context["metadata_source"] = policy.MetadataSource
+			context["estimated_limit"] = policy.MetadataSource != "catalog" && policy.MetadataSource != "catalog-alias"
+		} else if _, hasSource := context["metadata_source"]; !hasSource {
+			context["metadata_source"] = policy.MetadataSource
+			if _, hasEst := context["estimated_limit"]; !hasEst {
+				context["estimated_limit"] = policy.MetadataSource != "catalog" && policy.MetadataSource != "catalog-alias"
+			}
 		}
-		context["metadata_source"] = policy.MetadataSource
-		context["estimated_limit"] = policy.MetadataSource != "catalog"
 	}
 	out["checkpoint"] = map[string]any{
 		"available": true, "checkpoint_id": checkpointID(latest, cp), "turn": cp.Turn,

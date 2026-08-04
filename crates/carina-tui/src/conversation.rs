@@ -303,16 +303,21 @@ impl ExecutionTimer {
 }
 
 pub fn localized_execution_status(locale: Locale, status: &str) -> String {
-    let id = match status {
-        "" | "ready" | "completed" => MessageId::StatusReady,
+    let normalized = status.trim().to_ascii_lowercase();
+    let id = match normalized.as_str() {
+        "" | "ready" | "completed" | "complete" | "done" | "idle" => MessageId::StatusReady,
         "queued" | "pending" => MessageId::StatusQueued,
-        "running" | "in_progress" | "working" => MessageId::StatusRunning,
+        "running" | "in_progress" | "working" | "active" => MessageId::StatusRunning,
         "waiting_approval" | "awaiting_approval" | "blocked_on_approval" => {
             MessageId::StatusWaitingApproval
         }
-        "paused" => MessageId::StatusPaused,
+        "paused" | "interrupted" => MessageId::StatusPaused,
         "cancelled" | "canceled" => MessageId::StatusCancelled,
         "failed" | "error" => MessageId::StatusFailed,
+        // Partial success / soft failure; not "unknown".
+        "degraded" | "partial" | "partially_complete" => MessageId::StatusDegraded,
+        // Daemon/session metadata missing a concrete lifecycle: treat as idle ready.
+        "unknown" | "none" | "n/a" | "na" => MessageId::StatusReady,
         unknown => return tr_format(locale, MessageId::StatusUnknown, &[("status", unknown)]),
     };
     tr(locale, id).to_owned()
@@ -496,6 +501,14 @@ mod tests {
         assert_eq!(
             localized_execution_status(Locale::ZhHans, "future_state"),
             "未知状态 (future_state)"
+        );
+        assert_eq!(
+            localized_execution_status(Locale::ZhHans, "degraded"),
+            "部分完成"
+        );
+        assert_eq!(
+            localized_execution_status(Locale::En, "unknown"),
+            "ready"
         );
     }
 

@@ -64,6 +64,69 @@ pub fn render_unified_diff_progressive(diff: &str) -> DiffRenderWindow {
     )
 }
 
+/// Preview line count for collapsed create-only file cards in the transcript.
+pub const COLLAPSED_CREATE_PREVIEW_LINES: usize = 8;
+
+/// True when the unified diff only adds content (new file / pure create).
+pub fn is_create_only_diff(diff: &str) -> bool {
+    let (adds, deletes) = unified_diff_add_delete_counts(diff);
+    deletes == 0 && adds > 0
+}
+
+pub fn unified_diff_add_delete_counts(diff: &str) -> (usize, usize) {
+    let mut adds = 0usize;
+    let mut deletes = 0usize;
+    for line in diff.lines() {
+        if line.starts_with('+') && !line.starts_with("+++") {
+            adds += 1;
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            deletes += 1;
+        }
+    }
+    (adds, deletes)
+}
+
+/// Best-effort path from `+++ b/...` (or `--- a/...` when new path is /dev/null).
+pub fn primary_new_path(diff: &str) -> Option<String> {
+    for line in diff.lines() {
+        if let Some(rest) = line.strip_prefix("+++ ") {
+            let path = rest
+                .strip_prefix("b/")
+                .or_else(|| rest.strip_prefix("b\\"))
+                .unwrap_or(rest)
+                .trim();
+            if !path.is_empty() && path != "/dev/null" {
+                return Some(path.to_owned());
+            }
+        }
+    }
+    for line in diff.lines() {
+        if let Some(rest) = line.strip_prefix("--- ") {
+            let path = rest
+                .strip_prefix("a/")
+                .or_else(|| rest.strip_prefix("a\\"))
+                .unwrap_or(rest)
+                .trim();
+            if !path.is_empty() && path != "/dev/null" {
+                return Some(path.to_owned());
+            }
+        }
+    }
+    None
+}
+
+/// Content lines for a create-only diff, without leading `+` markers.
+pub fn create_file_preview_lines(diff: &str, max_lines: usize) -> Vec<String> {
+    if max_lines == 0 {
+        return Vec::new();
+    }
+    diff.lines()
+        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .take(max_lines)
+        .map(|line| line[1..].to_owned())
+        .collect()
+}
+
 fn render_unified_diff_window_bounded(
     diff: &str,
     line_limit: usize,
@@ -79,10 +142,11 @@ fn render_unified_diff_window_bounded(
         };
     }
     if line_limit == 0 {
+        let line_count = diff.lines().count().max(1);
         return DiffRenderWindow {
             lines: Vec::new(),
-            omitted_lines: 1,
-            omitted_exact: false,
+            omitted_lines: line_count,
+            omitted_exact: true,
             hard_capped: false,
             total_bytes: diff.len(),
         };

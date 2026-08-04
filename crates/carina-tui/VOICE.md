@@ -52,9 +52,37 @@ Examples:
 {Consequence}. {Scope}. Confirm or Esc to keep the current state.
 ```
 
+### Collapsed success tool groups (V002)
+
+```
+{Verb} ×{N} · {path1}, {path2}, …
+```
+
+Example: `Read ×5 · src/a.rs, src/b.rs, …`
+
+- Collapsed default is **title-only** (no member path rows).
+- Expand via the disclosure glyph / tool expand key restores every member path.
+- Failures, cancels, and diff-bearing tools never seal under a collapsed success group
+  (expand forced; later successes do not join a failed group).
+
+### Model / provider failures
+
+```
+{What stopped.} {Not auto-retried when side effects may have run.} {Check proxy/network or retry explicitly.}
+```
+
+Do not surface `modelrouter` / `reasoner failed` / raw `Client.Timeout` stacks in the
+transcript failure cell. Technical detail belongs in audit / RoutingOutcome.
+
+### Successful edits in the dialogue stream
+
+- Default **collapsed**: path · `+N` / `-M` · create preview (first lines, no green `+`).
+- Expand restores full review window (create-only still uses line numbers without marker noise).
+
 ## Alignment checklist
 
 - [x] Tool omission lines include expand key (`ToolLineOmitted` / `ToolCallsOmitted`)
 - [x] Artifact truncation mentions expand + artifact path (`transcript::apply_tool_output`)
+- [x] Collapsed Read/List groups use `×N · path…` title language; disclosure expands
 - [x] `/help` and `?` expose the same command registry
 - [ ] Remaining bare English in overlays (approval Esc hints) — prefer MessageId in a follow-up

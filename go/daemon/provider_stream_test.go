@@ -3,11 +3,13 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nebutra/carina/go/auth"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
@@ -165,5 +167,87 @@ func TestAnthropicStreamIgnoresThinkingAndPreservesCacheUsage(t *testing.T) {
 	}
 	if resp.InputTokens != 17 || resp.OutputTokens != 8 || resp.CacheWriteTokens != 5 || resp.CacheReadTokens != 7 {
 		t.Fatalf("usage = %+v", resp)
+	}
+}
+
+func TestStreamHTTPClientDoesNotWallClockBody(t *testing.T) {
+	client := newProviderStreamHTTPClient()
+	if client.Timeout != 0 {
+		t.Fatalf("stream client Timeout = %s, want 0 (body must not be wall-clock capped)", client.Timeout)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.ResponseHeaderTimeout != providerStreamHeaderTimeout {
+		t.Fatalf("ResponseHeaderTimeout = %+v", client.Transport)
+	}
+	// Injected complete-style clients with Timeout are replaced for streaming.
+	replaced := streamHTTPClientOr(&http.Client{Timeout: providerHTTPTimeout})
+	if replaced.Timeout != 0 {
+		t.Fatalf("streamHTTPClientOr kept wall-clock Timeout %s", replaced.Timeout)
+	}
+	// httptest-style unbounded clients are preserved for tests.
+	keep := &http.Client{Timeout: 0}
+	if streamHTTPClientOr(keep) != keep {
+		t.Fatal("streamHTTPClientOr should keep Timeout=0 injected clients")
+	}
+}
+
+func TestStreamBodyBudgetErrorsAreNotAutoRetryable(t *testing.T) {
+	cases := []error{
+		providerStreamError{provider: "TDS", phase: "body", err: errors.New("context deadline exceeded (Client.Timeout or context cancellation while reading body)")},
+		providerStreamError{provider: "TDS", phase: "idle", err: errProviderStreamIdle},
+		wrapProviderStreamBodyError("TDS", errProviderStreamIdle),
+		errors.New("ccswitch-codex-managed-proxy: TDS: read event stream: context deadline exceeded (Client.Timeout or context cancellation while reading body)"),
+	}
+	for _, err := range cases {
+		info := classifyProviderError(err)
+		if info.Retryable {
+			t.Fatalf("expected non-retryable for %v, got %+v", err, info)
+		}
+		if info.Code != "provider_stream_budget_exceeded" && info.Code != "provider_stream_failed" {
+			// legacy string path uses provider_stream_budget_exceeded
+			if !strings.Contains(strings.ToLower(err.Error()), "while reading body") {
+				t.Fatalf("code = %q for %v", info.Code, err)
+			}
+		}
+		if info.UserAction == "" {
+			t.Fatalf("missing user action for %v", err)
+		}
+	}
+}
+
+func TestStreamIdleTimeoutAbortsHungSSE(t *testing.T) {
+	oldIdle := providerStreamIdleTimeout
+	providerStreamIdleTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { providerStreamIdleTimeout = oldIdle })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		// Hang without closing — idle reader should abort.
+		time.Sleep(500 * time.Millisecond)
+	}))
+	defer srv.Close()
+	store := testAuthStore(t)
+	if err := store.SetAPIKey("openai", "sk-test", nil); err != nil {
+		t.Fatal(err)
+	}
+	p := &openAIProvider{providerBase: providerBase{
+		id: "openai", baseURL: srv.URL + "/v1", defaultModel: "gpt-5",
+		auth: auth.ProviderChain("openai", nil, store, nil), client: srv.Client(),
+	}}
+	_, err := p.Stream(context.Background(), modelrouter.Request{Prompt: "hello"}, nil)
+	if err == nil {
+		t.Fatal("expected idle timeout error")
+	}
+	info := classifyProviderError(err)
+	if info.Retryable || info.Code != "provider_stream_budget_exceeded" {
+		t.Fatalf("classification = %+v err=%v", info, err)
+	}
+	if !strings.Contains(err.Error(), "Not auto-retried") {
+		t.Fatalf("error should explain no auto-retry: %v", err)
 	}
 }

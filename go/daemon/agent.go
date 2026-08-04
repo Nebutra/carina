@@ -86,6 +86,7 @@ Harness protocol:
 - For workspace tasks, gather only the evidence needed, then act. On the first exploration turn, batch all independent list/read/search actions you already know you need instead of issuing them serially.
 - Use "patch" to change files (never shell for edits). Provide the COMPLETE new file content.
 - After implementation and verification succeed, use "done" immediately with a clear summary. Do not spend another turn rereading unchanged files or repeating a successful check.
+- Final-turn contract (interactive operators): "done.summary" is the only user-visible answer. Write it as plain language (short markdown allowed: lists, paths in backticks). Never put a JSON object, schema payload, or key/value dump as the summary — tool results already carry paths, diffs, and command output. Mention the outcome and next step in prose (e.g. where the file is and how to open it).
 - Prefer the smallest correct action: verify claims against the workspace when the task depends on repo state; do not invent files, test results, or policy outcomes.`
 
 // systemPrompt is the main-agent harness: identity → capability brief → tools → orchestration.
@@ -504,7 +505,8 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				if errors.Is(err, context.Canceled) || ctx.Err() != nil {
 					return
 				}
-				d.degrade(sess, task, tr, "reasoner error: "+err.Error())
+				// Operator-facing reason only; technical stack is on RoutingOutcome.
+				d.degrade(sess, task, tr, operatorFacingReasonerError(err))
 				return
 			}
 			_ = d.usage.record(sess.SessionID, task.RunID, result.Usage)

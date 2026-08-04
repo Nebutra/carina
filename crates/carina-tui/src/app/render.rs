@@ -5824,28 +5824,21 @@ fn tool_detail_lines(
         )])
     };
     if body_kind == BlockBodyKind::Diff {
-        let rendered = styled_diff_lines(body, context.styles, expanded);
+        if !expanded {
+            return collapsed_edit_card_lines(body, context, nested);
+        }
+        let rendered = styled_diff_lines(body, context.styles, true);
         let mut lines =
             wrap_styled_lines(rendered.lines, usize::from(context.content_width), &prefix);
         if rendered.omitted_lines > 0 {
-            if expanded || rendered.hard_capped {
-                let count = rendered.visible_lines.to_string();
-                let bytes = rendered.total_bytes.to_string();
-                let hint = tr_format(
-                    context.locale,
-                    MessageId::DiffReviewContinues,
-                    &[("count", count.as_str()), ("bytes", bytes.as_str())],
-                );
-                lines.push(tool_hint_line(hint, context, nested));
-            } else {
-                lines.push(tool_omission_line(
-                    rendered.omitted_lines,
-                    MessageId::ToolLineOmitted,
-                    MessageId::ToolLinesOmitted,
-                    context,
-                    nested,
-                ));
-            }
+            let count = rendered.visible_lines.to_string();
+            let bytes = rendered.total_bytes.to_string();
+            let hint = tr_format(
+                context.locale,
+                MessageId::DiffReviewContinues,
+                &[("count", count.as_str()), ("bytes", bytes.as_str())],
+            );
+            lines.push(tool_hint_line(hint, context, nested));
         }
         return lines;
     }
@@ -5905,13 +5898,101 @@ struct StyledDiffWindow {
     total_bytes: usize,
 }
 
+/// Collapsed edit card: path + stats, create-only preview without green `+` noise.
+fn collapsed_edit_card_lines(
+    body: &str,
+    context: ToolLineContext,
+    nested: bool,
+) -> Vec<Line<'static>> {
+    use crate::diff_render::{
+        COLLAPSED_CREATE_PREVIEW_LINES, create_file_preview_lines, is_create_only_diff,
+        primary_new_path, unified_diff_add_delete_counts,
+    };
+
+    let gutter = if nested {
+        format!("{}  ", context.styles.glyphs.tool_gutter())
+    } else {
+        context.styles.glyphs.tool_gutter().to_owned()
+    };
+    let (adds, deletes) = unified_diff_add_delete_counts(body);
+    let path = primary_new_path(body).unwrap_or_default();
+    let mut lines = Vec::new();
+
+    if !path.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(gutter.clone(), context.styles.metadata),
+            Span::styled(path, context.styles.text),
+        ]));
+    }
+
+    let mut stats = String::new();
+    if adds > 0 {
+        stats.push_str(&format!("+{adds}"));
+    }
+    if deletes > 0 {
+        if !stats.is_empty() {
+            stats.push(' ');
+        }
+        stats.push_str(&format!("-{deletes}"));
+    }
+    if is_create_only_diff(body) {
+        if !stats.is_empty() {
+            stats.push_str(&format!(" {} ", context.styles.glyphs.separator()));
+        }
+        stats.push_str("new file");
+    }
+    if !stats.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(gutter.clone(), context.styles.metadata),
+            Span::styled(stats, context.styles.metadata),
+        ]));
+    }
+
+    if is_create_only_diff(body) {
+        let preview = create_file_preview_lines(body, COLLAPSED_CREATE_PREVIEW_LINES);
+        let total_add = adds;
+        for (index, line) in preview.iter().enumerate() {
+            let number = format!("{:>4} ", index + 1);
+            lines.push(Line::from(vec![
+                Span::styled(gutter.clone(), context.styles.metadata),
+                Span::styled(number, context.styles.metadata),
+                Span::styled(line.clone(), context.styles.text),
+            ]));
+        }
+        let remaining = total_add.saturating_sub(preview.len());
+        if remaining > 0 {
+            lines.push(tool_omission_line(
+                remaining,
+                MessageId::ToolLineOmitted,
+                MessageId::ToolLinesOmitted,
+                context,
+                nested,
+            ));
+        } else if !preview.is_empty() {
+            // Expand still available via disclosure even when fully previewed.
+        }
+    } else {
+        let omitted = body.lines().count().max(1);
+        lines.push(tool_omission_line(
+            omitted,
+            MessageId::ToolLineOmitted,
+            MessageId::ToolLinesOmitted,
+            context,
+            nested,
+        ));
+    }
+    lines
+}
+
 /// Number and emphasize only the current bounded review window.
 fn styled_diff_lines(body: &str, styles: TranscriptStyles, expanded: bool) -> StyledDiffWindow {
     use crate::diff_render::{
-        DiffLineKind, render_unified_diff_progressive, render_unified_diff_window,
+        DiffLineKind, is_create_only_diff, render_unified_diff_progressive,
+        render_unified_diff_window,
     };
     use ratatui::style::Modifier;
 
+    let create_only = is_create_only_diff(body);
     let rendered = if expanded {
         render_unified_diff_progressive(body)
     } else {
@@ -5922,7 +6003,9 @@ fn styled_diff_lines(body: &str, styles: TranscriptStyles, expanded: bool) -> St
         .lines
         .into_iter()
         .map(|line| {
+            // Create-only expanded views read as file content, not green + noise.
             let base = match line.kind {
+                DiffLineKind::Add if create_only => styles.text,
                 DiffLineKind::Add => styles.added,
                 DiffLineKind::Remove => styles.removed,
                 DiffLineKind::Hunk | DiffLineKind::Meta => styles.metadata,
@@ -5930,16 +6013,24 @@ fn styled_diff_lines(body: &str, styles: TranscriptStyles, expanded: bool) -> St
             };
             let mut spans = Vec::new();
             if !matches!(line.kind, DiffLineKind::Meta | DiffLineKind::Hunk) {
-                let old = line
-                    .old_no
-                    .map(|n| format!("{n:>4}"))
-                    .unwrap_or_else(|| "    ".into());
-                let new = line
-                    .new_no
-                    .map(|n| format!("{n:>4}"))
-                    .unwrap_or_else(|| "    ".into());
-                spans.push(Span::styled(format!("{old}|{new} "), styles.metadata));
-                spans.push(Span::styled(format!("{} ", line.marker), base));
+                if create_only && matches!(line.kind, DiffLineKind::Add | DiffLineKind::Context) {
+                    let new = line
+                        .new_no
+                        .map(|n| format!("{n:>4} "))
+                        .unwrap_or_else(|| "     ".into());
+                    spans.push(Span::styled(new, styles.metadata));
+                } else {
+                    let old = line
+                        .old_no
+                        .map(|n| format!("{n:>4}"))
+                        .unwrap_or_else(|| "    ".into());
+                    let new = line
+                        .new_no
+                        .map(|n| format!("{n:>4}"))
+                        .unwrap_or_else(|| "    ".into());
+                    spans.push(Span::styled(format!("{old}|{new} "), styles.metadata));
+                    spans.push(Span::styled(format!("{} ", line.marker), base));
+                }
             }
             for part in line.spans {
                 let style = if part.emphasize {
@@ -7002,7 +7093,7 @@ mod transcript_tests {
     }
 
     #[test]
-    fn five_reads_fit_the_collapsed_group_without_an_escape_hint() {
+    fn five_reads_collapse_to_one_title_line_with_path_preview() {
         let members = (1..=5)
             .map(|index| {
                 tool_member(
@@ -7014,27 +7105,26 @@ mod transcript_tests {
                 )
             })
             .collect();
+        let group = read_group(members, false);
         let lines = plain(&transcript_lines_with_tool_key(
-            &read_group(members, false),
+            &group,
             Locale::En,
             TranscriptStyles::default(),
             80,
             "F12",
         ));
 
+        // Dialogue-first: one title line; disclosure is the expand hatch.
         insta::assert_snapshot!(lines.join("\n"), @r"
-▸ Read 5 files
-│ src/file-1.rs
-│ src/file-2.rs
-│ src/file-3.rs
-│ src/file-4.rs
-│ src/file-5.rs
+▸ Read ×5 · src/file-1.rs, src/file-2.rs, …
 ");
-        assert!(!lines.join("\n").contains("F12"));
+        assert_eq!(lines.len(), 1);
+        assert!(!lines[0].contains("F12"));
+        assert!(!lines.join("\n").contains("src/file-3.rs"));
     }
 
     #[test]
-    fn over_threshold_read_group_counts_hidden_members_and_uses_bound_key() {
+    fn expanded_read_group_restores_every_member_path() {
         let members = (1..=7)
             .map(|index| {
                 tool_member(
@@ -7047,7 +7137,7 @@ mod transcript_tests {
             })
             .collect();
         let lines = plain(&transcript_lines_with_tool_key(
-            &read_group(members, false),
+            &read_group(members, true),
             Locale::En,
             TranscriptStyles::default(),
             80,
@@ -7055,15 +7145,16 @@ mod transcript_tests {
         ));
 
         insta::assert_snapshot!(lines.join("\n"), @r"
-▸ Read 7 files
+▾ Read ×7 · src/file-1.rs, src/file-2.rs, …
 │ src/file-1.rs
 │ src/file-2.rs
 │ src/file-3.rs
 │ src/file-4.rs
 │ src/file-5.rs
-│ ... 2 calls omitted · F12 expand
+│ src/file-6.rs
+│ src/file-7.rs
 ");
-        assert!(!lines.join("\n").contains("src/file-6.rs"));
+        assert!(lines.iter().any(|line| line.contains("src/file-7.rs")));
     }
 
     #[test]
@@ -7075,15 +7166,14 @@ mod transcript_tests {
             ],
             false,
         );
+        // Collapsed running group: title only (paths in preview).
         insta::assert_snapshot!(plain(&transcript_lines(
             &running,
             Locale::En,
             TranscriptStyles::default(),
             80,
         )).join("\n"), @r"
-▸ Reading 2 files
-│ src/ready.rs
-│ ● src/running.rs  pending
+▸ Reading ×2 · src/ready.rs, src/running.rs
 ");
 
         let failed = read_group(
@@ -7105,7 +7195,7 @@ mod transcript_tests {
             TranscriptStyles::default(),
             80,
         )).join("\n"), @r"
-▾ Read 2 files  1 failed
+▾ Read ×2 · src/ready.rs, src/missing.rs  1 failed
 │ src/ready.rs
 │ ✗ src/missing.rs  failed
 │   permission denied
@@ -7238,7 +7328,7 @@ mod transcript_tests {
             TranscriptStyles::default(),
             80,
         )).join("\n"), @r"
-▾ Edited 2 files  +2 -2
+▾ Edited ×2 · src/one.rs, src/two.rs  +2 -2
 │ src/one.rs  +1 -1
 │   --- a/src/one.rs
 │   +++ b/src/one.rs

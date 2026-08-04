@@ -109,7 +109,12 @@ pub struct TranscriptBlock {
 impl TranscriptBlock {
     pub fn localized_title(&self, locale: Locale) -> String {
         match self.tool_group_state() {
-            Some((kind, count, running, _)) => i18n::tool_group_title(locale, kind, count, running),
+            Some((kind, count, running, _)) => {
+                let paths = crate::tool_projection::tool_group_path_titles(
+                    self.tool_members.iter().map(|member| member.title.as_str()),
+                );
+                i18n::tool_group_title(locale, kind, count, running, &paths)
+            }
             None => self.title.clone(),
         }
     }
@@ -543,12 +548,21 @@ impl TranscriptReducer {
         if stream.body.is_empty() {
             return false;
         }
+        // Same content-type channel as ModelResponded / agent_message hydration.
+        let display = visible_assistant_text(&stream.body).unwrap_or_default();
+        if display.is_empty() {
+            // Suppressed action JSON mid-stream: drop the block if present.
+            let id = format!("assistant:{}", event.run_id);
+            let before = blocks.len();
+            blocks.retain(|block| block.id != id);
+            return before != blocks.len();
+        }
         let mut block = message_block(
             format!("assistant:{}", event.run_id),
             event.run_id,
             BlockKind::Assistant,
             "Carina",
-            stream.body.clone(),
+            display,
             String::new(),
         );
         block.assistant_phase = Some(phase);
@@ -887,11 +901,15 @@ fn tool_block(record: &ToolRecord) -> TranscriptBlock {
     } else {
         (0, 0)
     };
+    // Successful edits start collapsed (title + stats + expand hatch). Failures,
+    // plans, and code-intel stay open so risk stays visible.
     let expanded = if is_failure_status(&record.status)
-        || matches!(kind, ToolKind::Patch | ToolKind::Todo)
+        || matches!(kind, ToolKind::Todo)
         || kind.is_code_intelligence()
     {
         !presentation.body.is_empty()
+    } else if matches!(kind, ToolKind::Patch | ToolKind::Diff) {
+        false
     } else {
         presentation.collapsible && running
     };
@@ -1177,6 +1195,7 @@ fn failure_block_from_event(event: WireEvent) -> Option<TranscriptBlock> {
         event.summary,
         reason_code,
     ]);
+    let reason = humanize_failure_reason(&reason);
     let retryable = event
         .payload
         .get("retryable")
@@ -1196,6 +1215,38 @@ fn failure_block_from_event(event: WireEvent) -> Option<TranscriptBlock> {
         },
         (retryable || kind == FailureKind::Interrupted) && !recovering,
     ))
+}
+
+/// Defense-in-depth VOICE for older daemons that still emit internal stacks.
+fn humanize_failure_reason(reason: &str) -> String {
+    let trimmed = reason.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("while reading body")
+        || lower.contains("stream budget")
+        || lower.contains("provider_stream_budget")
+        || (lower.contains("client.timeout") && lower.contains("body"))
+    {
+        return "The model stream stopped before finishing. Not auto-retried. Check the proxy and network, then retry explicitly if needed.".into();
+    }
+    if lower.contains("modelrouter")
+        || lower.starts_with("reasoner error:")
+        || lower.starts_with("reasoner failed:")
+    {
+        if lower.contains("credential") || lower.contains("authentication") {
+            return "The model provider rejected the credential. Check the provider credential.".into();
+        }
+        if lower.contains("rate") || lower.contains("quota") {
+            return "The model provider rate-limited or quota-blocked the request. Wait or choose another provider.".into();
+        }
+        if lower.contains("circuit") {
+            return "The model provider circuit is open. Wait for the probe or choose another provider.".into();
+        }
+        return "The model could not complete this turn. Check the provider and network, then retry explicitly if needed.".into();
+    }
+    trimmed.to_owned()
 }
 
 fn failure_block(
@@ -1413,6 +1464,14 @@ fn tool_blocks_are_groupable(existing: &TranscriptBlock, incoming: &TranscriptBl
     {
         return false;
     }
+    // Fail/cancel never join a success group (and a failed group never absorbs
+    // later successes). Diff-bearing kinds still group with peers but always
+    // expand via preserve_group_state; they must not hide under a success seal.
+    let existing_has_failure = existing.tool_members.iter().any(ToolGroupMember::is_failure);
+    let incoming_has_failure = incoming.tool_members.iter().any(ToolGroupMember::is_failure);
+    if existing_has_failure || incoming_has_failure {
+        return false;
+    }
     if kind != ToolKind::Extension {
         return true;
     }
@@ -1457,8 +1516,9 @@ fn preserve_group_state(group: &mut TranscriptBlock, previous: &TranscriptBlock)
         .iter()
         .all(|member| !member.is_running());
     let is_terminal = group.tool_members.iter().all(|member| !member.is_running());
-    let requires_expansion = matches!(group.tool_kind, Some(ToolKind::Patch | ToolKind::Diff))
-        || group.tool_members.iter().any(ToolGroupMember::is_failure);
+    // Diff-bearing groups expand only on failure (or when operator expanded).
+    // Successful edits stay collapsed so the transcript stays dialogue-first.
+    let requires_expansion = group.tool_members.iter().any(ToolGroupMember::is_failure);
     group.expanded = requires_expansion
         || if !is_terminal || was_terminal {
             previous.expanded
@@ -1633,14 +1693,19 @@ fn is_failure_status(status: &str) -> bool {
     )
 }
 
-fn is_action_json(text: &str) -> bool {
+fn strip_json_fence(text: &str) -> &str {
     let trimmed = text.trim();
-    let candidate = trimmed
+    trimmed
         .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```JSON"))
         .or_else(|| trimmed.strip_prefix("```"))
         .and_then(|value| value.strip_suffix("```"))
         .map(str::trim)
-        .unwrap_or(trimmed);
+        .unwrap_or(trimmed)
+}
+
+fn is_action_json(text: &str) -> bool {
+    let candidate = strip_json_fence(text);
     serde_json::from_str::<Value>(candidate)
         .ok()
         .and_then(|value| value.as_object().cloned())
@@ -1655,37 +1720,63 @@ fn is_action_json(text: &str) -> bool {
                 .any(|field| candidate.contains(field)))
 }
 
-/// Human-visible assistant body: plain text, or `tool=done` summary.
-/// Other internal action JSON is suppressed so tool calls do not leak as chat.
+/// Human-visible assistant body (content-type channel, not field allowlists).
+///
+/// Pipeline:
+/// 1. Internal action JSON → suppressed (`tool=done` keeps `summary` only).
+/// 2. Whole-body JSON object/array → pretty ` ```json ` fence for markdown.
+/// 3. Everything else → prose/markdown as authored (primary chat path).
+///
+/// Business keys like `result`/`path` are never special-cased; structured
+/// facts belong on tool projectors, not free-form completion payloads.
 fn visible_assistant_text(text: &str) -> Option<String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return None;
     }
-    if !is_action_json(trimmed) {
-        return Some(trimmed.to_owned());
+    if is_action_json(trimmed) {
+        let candidate = strip_json_fence(trimmed);
+        let object = serde_json::from_str::<Value>(candidate).ok()?;
+        let object = object.as_object()?;
+        let tool = object
+            .get("tool")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !tool.eq_ignore_ascii_case("done") {
+            return None;
+        }
+        let summary = object
+            .get("summary")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        return Some(summary.to_owned());
     }
-    let candidate = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .and_then(|value| value.strip_suffix("```"))
-        .map(str::trim)
-        .unwrap_or(trimmed);
-    let object = serde_json::from_str::<Value>(candidate).ok()?;
-    let object = object.as_object()?;
-    let tool = object
-        .get("tool")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !tool.eq_ignore_ascii_case("done") {
+    if let Some(fenced) = project_json_document_as_markdown(trimmed) {
+        return Some(fenced);
+    }
+    Some(trimmed.to_owned())
+}
+
+/// When the entire assistant body is one JSON object or array, render it as a
+/// markdown code fence so the shared markdown pipeline pretty-prints it.
+///
+/// Does not invent prose from field names. Prose-with-embedded-JSON is left
+/// alone (`from_str` fails on the full body). Scalars (`"hi"`, `1`, `true`)
+/// stay raw so quoted strings are not force-fenced.
+fn project_json_document_as_markdown(text: &str) -> Option<String> {
+    let candidate = strip_json_fence(text);
+    let first = candidate.chars().next()?;
+    if first != '{' && first != '[' {
         return None;
     }
-    let summary = object
-        .get("summary")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    Some(summary.to_owned())
+    let value: Value = serde_json::from_str(candidate).ok()?;
+    match &value {
+        Value::Object(_) | Value::Array(_) => {}
+        _ => return None,
+    }
+    let pretty = serde_json::to_string_pretty(&value).ok()?;
+    Some(format!("```json\n{pretty}\n```"))
 }
 
 fn nested_message(details: &BTreeMap<String, Value>, key: &str) -> Option<String> {
@@ -2034,8 +2125,13 @@ mod tests {
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].id, "tool:read-1");
         assert_eq!(blocks[0].tool_members.len(), 5);
+        assert_eq!(
+            blocks[0].localized_title(Locale::En),
+            "Read ×5 · src/file-1.rs, src/file-2.rs, …"
+        );
+        assert!(!blocks[0].expanded);
         insta::assert_snapshot!(group_snapshot(&blocks[0]), @r"
-id=tool:read-1 title=Read 5 files status= expanded=false
+id=tool:read-1 title=Read ×5 · src/file-1.rs, src/file-2.rs, … status= expanded=false
 tool:read-1 | title=[src/file-1.rs] | status=[] | body=[]
 tool:read-2 | title=[src/file-2.rs] | status=[] | body=[]
 tool:read-3 | title=[src/file-3.rs] | status=[] | body=[]
@@ -2086,10 +2182,13 @@ tool:read-5 | title=[src/file-5.rs] | status=[] | body=[]
         apply_read(&mut reducer, &mut blocks, "read-2", "src/running.rs", None);
 
         assert!(blocks[0].title.is_empty());
-        assert_eq!(blocks[0].localized_title(Locale::En), "Reading 2 files");
+        assert_eq!(
+            blocks[0].localized_title(Locale::En),
+            "Reading ×2 · src/ready.rs, src/running.rs"
+        );
         assert!(blocks[0].tool_members[1].is_running());
         insta::assert_snapshot!(group_snapshot(&blocks[0]), @r"
-id=tool:read-1 title=Reading 2 files status= expanded=false
+id=tool:read-1 title=Reading ×2 · src/ready.rs, src/running.rs status= expanded=false
 tool:read-1 | title=[src/ready.rs] | status=[] | body=[]
 tool:read-2 | title=[src/running.rs] | status=[pending] | body=[]
 ");
@@ -2108,15 +2207,33 @@ tool:read-2 | title=[src/running.rs] | status=[pending] | body=[]
         );
         assert!(blocks[0].title.is_empty());
         assert!(blocks[0].status.is_empty());
-        assert_eq!(blocks[0].localized_title(Locale::En), "Read 2 files");
+        assert_eq!(
+            blocks[0].localized_title(Locale::En),
+            "Read ×2 · src/ready.rs, src/running.rs"
+        );
         assert_eq!(blocks[0].localized_status(Locale::En), "1 failed");
-        assert!(blocks[0].expanded);
+        assert!(blocks[0].expanded, "failure must break the collapsed success seal");
         assert_eq!(blocks[0].tool_members[1].body, "permission denied");
         insta::assert_snapshot!(group_snapshot(&blocks[0]), @r"
-id=tool:read-1 title=Read 2 files status=1 failed expanded=true
+id=tool:read-1 title=Read ×2 · src/ready.rs, src/running.rs status=1 failed expanded=true
 tool:read-1 | title=[src/ready.rs] | status=[] | body=[]
 tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied]
 ");
+
+        // Later successes must not join a group that already carries a failure.
+        apply_read(
+            &mut reducer,
+            &mut blocks,
+            "read-3",
+            "src/after.rs",
+            Some((
+                "ToolCallCompleted",
+                json!({"call_id":"read-3","tool":"read","status":"completed"}),
+            )),
+        );
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[1].id, "tool:read-3");
+        assert_eq!(blocks[1].tool_members.len(), 1);
     }
 
     #[test]
@@ -2255,8 +2372,14 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         }
 
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].localized_title(Locale::En), "Edited 2 files");
-        assert!(blocks[0].expanded);
+        assert_eq!(
+            blocks[0].localized_title(Locale::En),
+            "Edited ×2 · src/1.rs, src/2.rs"
+        );
+        assert!(
+            !blocks[0].expanded,
+            "successful edit groups stay collapsed by default"
+        );
         assert_eq!((blocks[0].additions, blocks[0].deletions), (2, 2));
         assert!(blocks[0].tool_members[0].body.contains("-old\n+new"));
         assert!(blocks[0].tool_members[1].body.contains("-before\n+after"));
@@ -2928,7 +3051,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         assert!(blocks[0].body.contains("-old\n+new"));
         assert!(!blocks[0].body.contains("patch patch-1 applied"));
         assert_eq!((blocks[0].additions, blocks[0].deletions), (1, 1));
-        assert!(blocks[0].expanded);
+        assert!(!blocks[0].expanded, "successful edits start collapsed");
         assert_eq!(blocks[0].status, "applied");
     }
 
@@ -3000,6 +3123,61 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         assert_eq!(blocks[0].title, format_tool_title("Search", "TranscriptReducer"));
         assert_eq!(blocks[0].status, "");
         assert!(!blocks[0].is_collapsible());
+    }
+
+    #[test]
+    fn whole_body_json_projects_to_markdown_fence_not_field_prose() {
+        let payload = json!({
+            "result": "已在桌面创建可直接运行的 ASCII Art 马里奥第一关游戏。",
+            "path": "/Users/tseka_luk/Desktop/ascii-mario-world-1-1/index.html",
+            "features": ["横版卷轴 ASCII 场景", "移动与跳跃操作"],
+            "verification": "已通过 JavaScript 语法与核心游戏结构检查。",
+            "launch": "直接在浏览器中打开 index.html 即可游玩。"
+        });
+        let raw = payload.to_string();
+
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire("ModelResponded", json!({"text": raw})),
+        ));
+        assert_eq!(blocks.len(), 1);
+        let body = &blocks[0].body;
+        assert!(
+            body.starts_with("```json\n"),
+            "must enter markdown json fence: {body}"
+        );
+        assert!(body.trim_end().ends_with("```"), "fence must close: {body}");
+        assert!(
+            body.contains("\"result\""),
+            "content-type path keeps JSON structure (no field whitelist): {body}"
+        );
+        assert!(
+            body.contains('\n'),
+            "pretty-print should introduce newlines: {body}"
+        );
+        // Compact single-line dump must not remain the body form.
+        assert_ne!(body.trim(), raw.trim());
+
+        // Any object/array — not only "result"/"path" shapes — gets the same treatment.
+        let generic = visible_assistant_text(r#"{"foo":1,"bar":[2,3]}"#).unwrap();
+        assert!(generic.starts_with("```json\n"));
+        assert!(generic.contains("\"foo\""));
+
+        // Prose with an embedded object is not rewritten (content-type = markdown).
+        let prose = "Done. Details: {\"path\":\"/tmp/x\"}";
+        assert_eq!(visible_assistant_text(prose).as_deref(), Some(prose));
+
+        // Action channel still suppressed / tool=done → summary.
+        assert_eq!(
+            visible_assistant_text(r#"{"tool":"read","path":"x"}"#),
+            None
+        );
+        assert_eq!(
+            visible_assistant_text(r#"{"tool":"done","summary":"All set."}"#).as_deref(),
+            Some("All set.")
+        );
     }
 
     #[test]
@@ -3108,7 +3286,10 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         ]);
 
         assert_eq!(hydrated.len(), 1);
-        assert_eq!(hydrated[0].localized_title(Locale::En), "Edited 2 files");
+        assert_eq!(
+            hydrated[0].localized_title(Locale::En),
+            "Edited ×2 · src/snake.cpp, src/broken.cpp"
+        );
         assert_eq!(hydrated[0].localized_status(Locale::En), "1 failed");
         assert!(
             hydrated[0]
@@ -3125,7 +3306,10 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
                 json!({"call_id":"call-todo","tool":"TodoWrite","arguments":{"todos":[]}}),
             ),
         );
-        assert_eq!(blocks[0].localized_title(Locale::En), "Edited 2 files");
+        assert_eq!(
+            blocks[0].localized_title(Locale::En),
+            "Edited ×2 · src/snake.cpp, src/broken.cpp"
+        );
     }
 
     #[test]
@@ -3158,7 +3342,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         assert_eq!(blocks[0].status, "applied");
         assert!(blocks[0].body.contains("pub fn ready"));
         assert!(blocks[0].is_collapsible());
-        assert!(blocks[0].expanded);
+        assert!(!blocks[0].expanded, "successful edits start collapsed");
     }
 
     #[test]
@@ -3183,7 +3367,9 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
                 }),
             ),
         );
-        assert!(blocks[0].expanded);
+        assert!(!blocks[0].expanded, "edits start collapsed");
+        // Operator expands for review, then apply must not re-open a closed fold.
+        blocks[0].expanded = true;
         blocks[0].expanded = false;
 
         reducer.reduce_event(
@@ -3227,7 +3413,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         assert_eq!(blocks[0].title, format_tool_title("Edit", "src/lib.rs"));
         assert_eq!(blocks[0].status, "applied");
         assert!(blocks[0].body.contains("pub fn ready"));
-        assert!(blocks[0].expanded);
+        assert!(!blocks[0].expanded, "hydrated successful edits stay collapsed");
     }
 
     #[test]

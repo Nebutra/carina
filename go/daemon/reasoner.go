@@ -277,6 +277,19 @@ func classifyProviderError(err error) providerErrorInfo {
 	if errors.Is(err, errRetryPressure) {
 		return providerErrorInfo{Code: "retry_paused_by_backpressure", Category: "unavailable", UserAction: "wait for scheduler pressure to recover", Retryable: false}
 	}
+	// Stream budget / idle failures before generic net.Error: mid-body
+	// Client.Timeout must not auto-retry (duplicate side effects + cost).
+	var streamErr providerStreamError
+	if errors.As(err, &streamErr) {
+		return streamErr.ProviderError()
+	}
+	if msg := strings.ToLower(err.Error()); strings.Contains(msg, "while reading body") ||
+		(strings.Contains(msg, "client.timeout") && strings.Contains(msg, "body")) {
+		return providerErrorInfo{
+			Code: "provider_stream_budget_exceeded", Category: "timeout", Retryable: false,
+			UserAction: "check the model proxy and network, then retry explicitly",
+		}
+	}
 	var classified providerErrorClassifier
 	if errors.As(err, &classified) {
 		return classified.ProviderError()
@@ -286,6 +299,80 @@ func classifyProviderError(err error) providerErrorInfo {
 		return providerErrorInfo{Code: "provider_transport_error", Category: "unavailable", Retryable: true}
 	}
 	return providerErrorInfo{Code: "reasoner_internal_error", Category: "internal", Retryable: false}
+}
+
+// operatorFacingReasonerError turns a reasoner/provider failure into VOICE copy
+// for ExecutionFailed.reason. Technical stacks stay on RoutingOutcome audit only.
+func operatorFacingReasonerError(err error) string {
+	if err == nil {
+		return "The model could not complete this turn."
+	}
+	var streamErr providerStreamError
+	if errors.As(err, &streamErr) {
+		return streamErr.Error()
+	}
+	info := classifyProviderError(err)
+	switch info.Code {
+	case "provider_stream_budget_exceeded":
+		return "The model stream stopped before finishing. Not auto-retried. Check the proxy and network, then retry explicitly if needed."
+	case "provider_stream_unavailable", "provider_transport_error":
+		return joinOperatorSentence("The model provider was temporarily unavailable", info.UserAction)
+	case "provider_stream_request_failed", "provider_stream_failed":
+		return joinOperatorSentence("The model stream request failed", info.UserAction)
+	case "provider_circuit_open":
+		return joinOperatorSentence("The model provider circuit is open", info.UserAction)
+	case "retry_budget_exhausted":
+		return joinOperatorSentence("Local provider retry budget is exhausted", info.UserAction)
+	case "retry_paused_by_backpressure":
+		return joinOperatorSentence("Provider retries are paused under backpressure", info.UserAction)
+	case "provider_rate_limited", "provider_quota_exhausted":
+		return joinOperatorSentence("The model provider rate-limited or quota-blocked the request", info.UserAction)
+	case "provider_authentication_failed", "provider_credential_missing":
+		return joinOperatorSentence("The model provider rejected the credential", info.UserAction)
+	case "provider_permission_denied":
+		return joinOperatorSentence("The model provider denied permission for this request", info.UserAction)
+	case "request_cancelled":
+		return "The model request was cancelled."
+	case "request_deadline_exceeded":
+		return "The model request hit a deadline before finishing. Retry explicitly if needed."
+	case "provider_client_restricted":
+		return joinOperatorSentence("The model endpoint rejected this client type", info.UserAction)
+	}
+	if info.UserAction != "" {
+		return joinOperatorSentence("The model could not complete this turn", info.UserAction)
+	}
+	// Last resort: strip internal prefixes without dumping multi-hop stacks.
+	msg := err.Error()
+	for _, prefix := range []string{
+		"reasoner failed: ",
+		"modelrouter: all providers failed: ",
+		"modelrouter: ",
+	} {
+		msg = strings.TrimPrefix(msg, prefix)
+	}
+	if i := strings.Index(msg, ": "); i > 0 && strings.Count(msg, ": ") >= 2 {
+		// Prefer the rightmost human-ish clause when still nested.
+		parts := strings.Split(msg, ": ")
+		if last := strings.TrimSpace(parts[len(parts)-1]); len(last) >= 12 && len(last) <= 180 {
+			msg = last
+		}
+	}
+	if len(msg) > 220 {
+		msg = msg[:217] + "..."
+	}
+	return "The model could not complete this turn. " + msg
+}
+
+func joinOperatorSentence(what, action string) string {
+	what = strings.TrimSpace(what)
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return what + "."
+	}
+	if strings.HasSuffix(action, ".") {
+		return what + ". " + action
+	}
+	return what + ". " + action + "."
 }
 
 func retryDelay(err error, fallback time.Duration) time.Duration {

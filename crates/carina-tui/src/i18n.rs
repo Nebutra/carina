@@ -222,6 +222,7 @@ pub enum MessageId {
     CurrentExecutionPaused,
     StatusCancelled,
     StatusFailed,
+    StatusDegraded,
     StatusUnknown,
     ReadyInWorkspace,
     EmptyConversationPrompt,
@@ -678,6 +679,7 @@ impl MessageId {
         Self::CurrentExecutionPaused,
         Self::StatusCancelled,
         Self::StatusFailed,
+        Self::StatusDegraded,
         Self::StatusUnknown,
         Self::ReadyInWorkspace,
         Self::EmptyConversationPrompt,
@@ -1136,6 +1138,7 @@ pub fn text(locale: Locale, id: MessageId) -> &'static str {
         (ZhHans, CurrentExecutionPaused) => "当前执行已暂停",
         (ZhHans, StatusCancelled) => "已取消",
         (ZhHans, StatusFailed) => "失败",
+        (ZhHans, StatusDegraded) => "部分完成",
         (ZhHans, StatusUnknown) => "未知状态 ({status})",
         (ZhHans, ReadyInWorkspace) => "已在 {workspace} 中就绪",
         (ZhHans, EmptyConversationPrompt) => "描述你想完成的改动。",
@@ -1319,17 +1322,55 @@ pub fn count(locale: Locale, one: MessageId, other: MessageId, value: usize) -> 
     format(locale, id, &[("count", &value.to_string())])
 }
 
-pub fn tool_group_title(locale: Locale, kind: ToolKind, count: usize, running: bool) -> String {
+/// Collapsed multi-tool group title: `Read ×N · path1, path2, …`.
+///
+/// `paths` are member technical targets (usually file paths). The first
+/// [`crate::tool_projection::TOOL_GROUP_PATH_PREVIEW_LIMIT`] are shown; extra
+/// paths collapse to a trailing ellipsis. Empty paths fall back to count+noun.
+pub fn tool_group_title(
+    locale: Locale,
+    kind: ToolKind,
+    count: usize,
+    running: bool,
+    paths: &[&str],
+) -> String {
     let (active, settled) = tool_group_verbs(locale, kind);
-    let (singular, plural) = tool_group_nouns(locale, kind);
     let verb = if running { active } else { settled };
+    let preview = tool_group_path_preview_copy(paths);
+    if !preview.is_empty() {
+        return format!("{verb} ×{count} · {preview}");
+    }
+    let (singular, plural) = tool_group_nouns(locale, kind);
     let noun = if count == 1 { singular } else { plural };
     match locale {
-        Locale::ZhHans => format!("{verb}{count} 个{noun}"),
-        Locale::ZhHant => format!("{verb}{count} 個{noun}"),
-        Locale::Ja => format!("{noun}{count}件を{verb}"),
-        Locale::Ko => format!("{noun} {count}개 {verb}"),
-        Locale::En | Locale::Es | Locale::Fr => format!("{verb} {count} {noun}"),
+        Locale::ZhHans => format!("{verb} ×{count} {noun}"),
+        Locale::ZhHant => format!("{verb} ×{count} {noun}"),
+        Locale::Ja => format!("{noun}×{count}を{verb}"),
+        Locale::Ko => format!("{noun} ×{count} {verb}"),
+        Locale::En | Locale::Es | Locale::Fr => format!("{verb} ×{count} {noun}"),
+    }
+}
+
+fn tool_group_path_preview_copy(paths: &[&str]) -> String {
+    use crate::tool_projection::TOOL_GROUP_PATH_PREVIEW_LIMIT;
+    let cleaned: Vec<&str> = paths
+        .iter()
+        .map(|path| path.trim())
+        .filter(|path| !path.is_empty())
+        .collect();
+    if cleaned.is_empty() || TOOL_GROUP_PATH_PREVIEW_LIMIT == 0 {
+        return String::new();
+    }
+    let shown = cleaned
+        .iter()
+        .take(TOOL_GROUP_PATH_PREVIEW_LIMIT)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if cleaned.len() > TOOL_GROUP_PATH_PREVIEW_LIMIT {
+        format!("{shown}, …")
+    } else {
+        shown
     }
 }
 
@@ -1884,6 +1925,7 @@ fn en(id: MessageId) -> &'static str {
         CurrentExecutionPaused => "The current execution is paused",
         StatusCancelled => "cancelled",
         StatusFailed => "failed",
+        StatusDegraded => "partial",
         StatusUnknown => "unknown status ({status})",
         ReadyInWorkspace => "Ready in {workspace}",
         EmptyConversationPrompt => "Describe the change you want to make.",
@@ -2101,6 +2143,7 @@ fn zh_hant(id: MessageId) -> &'static str {
         CurrentExecutionPaused => "目前執行已暫停",
         StatusCancelled => "已取消",
         StatusFailed => "失敗",
+        StatusDegraded => "部分完成",
         StatusUnknown => "未知狀態 ({status})",
         ReadyInWorkspace => "已在 {workspace} 中就緒",
         EmptyConversationPrompt => "描述你想完成的變更。",
@@ -2450,6 +2493,12 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
         ],
         StatusCancelled => ["キャンセル済み", "취소됨", "cancelado", "annulé"],
         StatusFailed => ["失敗", "실패", "fallido", "échec"],
+        StatusDegraded => [
+            "一部完了",
+            "부분 완료",
+            "parcial",
+            "partiel",
+        ],
         StatusUnknown => [
             "不明な状態 ({status})",
             "알 수 없는 상태 ({status})",
@@ -5514,10 +5563,17 @@ mod tests {
     #[test]
     fn tool_group_grammar_covers_every_locale_and_lifecycle() {
         for locale in Locale::ALL {
-            let running_one = tool_group_title(locale, ToolKind::Read, 1, true);
-            let running_two = tool_group_title(locale, ToolKind::Read, 2, true);
-            let settled_one = tool_group_title(locale, ToolKind::Read, 1, false);
-            let settled_two = tool_group_title(locale, ToolKind::Read, 2, false);
+            let running_one = tool_group_title(locale, ToolKind::Read, 1, true, &[]);
+            let running_two = tool_group_title(locale, ToolKind::Read, 2, true, &[]);
+            let settled_one = tool_group_title(locale, ToolKind::Read, 1, false, &[]);
+            let settled_two = tool_group_title(locale, ToolKind::Read, 2, false, &[]);
+            let with_paths = tool_group_title(
+                locale,
+                ToolKind::Read,
+                5,
+                false,
+                &["a.rs", "b.rs", "c.rs"],
+            );
             for (value, count) in [
                 (&running_one, '1'),
                 (&running_two, '2'),
@@ -5525,15 +5581,29 @@ mod tests {
                 (&settled_two, '2'),
             ] {
                 assert!(value.contains(count), "{locale:?}: {value}");
+                assert!(value.contains('×'), "{locale:?}: {value}");
                 assert!(!value.trim().is_empty());
             }
+            assert!(with_paths.contains('×'), "{locale:?}: {with_paths}");
+            assert!(with_paths.contains("a.rs"), "{locale:?}: {with_paths}");
+            assert!(with_paths.contains('…'), "{locale:?}: {with_paths}");
             assert_ne!(running_one, settled_one, "{locale:?}");
             assert_ne!(running_one, running_two, "{locale:?}");
             assert!(tool_group_failure(locale, 0).is_empty());
             assert!(tool_group_failure(locale, 1).contains('1'));
             assert!(tool_group_failure(locale, 2).contains('2'));
         }
-        assert!(tool_group_title(Locale::ZhHans, ToolKind::Read, 2, true).contains("2 个"));
-        assert!(tool_group_title(Locale::ZhHant, ToolKind::Read, 2, true).contains("2 個"));
+        assert_eq!(
+            tool_group_title(
+                Locale::En,
+                ToolKind::Read,
+                5,
+                false,
+                &["a.rs", "b.rs", "c.rs"]
+            ),
+            "Read ×5 · a.rs, b.rs, …"
+        );
+        assert!(tool_group_title(Locale::ZhHans, ToolKind::Read, 2, true, &[]).contains('×'));
+        assert!(tool_group_title(Locale::ZhHant, ToolKind::Read, 2, true, &[]).contains('×'));
     }
 }

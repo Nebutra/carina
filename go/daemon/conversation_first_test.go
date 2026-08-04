@@ -81,6 +81,8 @@ func TestConversationalRequestFinishesWithoutToolLifecycle(t *testing.T) {
 		"云毓智能",
 		"PRODUCT CAPABILITY BRIEF",
 		"call \"done\" immediately with the direct user-facing answer",
+		"Final-turn contract",
+		"Never put a JSON object",
 	} {
 		if !strings.Contains(reasoner.prompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, reasoner.prompt)

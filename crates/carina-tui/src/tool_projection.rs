@@ -87,8 +87,13 @@ impl ToolKind {
     }
 }
 
-pub const COLLAPSED_TOOL_GROUP_MEMBER_LIMIT: usize = 5;
+/// Collapsed multi-tool groups show **title only** (dialogue-first density).
+/// Member paths live in the group title preview; expand restores full member rows.
+/// Failures / diff-bearing tools force expand via the transcript reducer.
+pub const COLLAPSED_TOOL_GROUP_MEMBER_LIMIT: usize = 0;
 pub const COLLAPSED_TOOL_OUTPUT_LINE_LIMIT: usize = 0;
+/// How many member paths appear in a collapsed group title preview.
+pub const TOOL_GROUP_PATH_PREVIEW_LIMIT: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisibleCount {
@@ -96,8 +101,23 @@ pub struct VisibleCount {
     pub omitted: usize,
 }
 
+/// How many group member rows to paint.
+///
+/// Collapsed groups intentionally hide every member row (`visible = 0`,
+/// `omitted = 0`). The count and path preview live on the title line; the
+/// disclosure glyph is the expand escape hatch (no separate "N omitted" row).
 pub fn visible_group_members(total: usize, expanded: bool) -> VisibleCount {
-    visible_count(total, expanded, COLLAPSED_TOOL_GROUP_MEMBER_LIMIT)
+    if expanded {
+        VisibleCount {
+            visible: total,
+            omitted: 0,
+        }
+    } else {
+        VisibleCount {
+            visible: COLLAPSED_TOOL_GROUP_MEMBER_LIMIT.min(total),
+            omitted: 0,
+        }
+    }
 }
 
 pub fn visible_output_lines(total: usize, expanded: bool) -> VisibleCount {
@@ -114,6 +134,20 @@ fn visible_count(total: usize, expanded: bool, collapsed_limit: usize) -> Visibl
         visible,
         omitted: total.saturating_sub(visible),
     }
+}
+
+/// Collect non-empty member titles for a collapsed group path preview.
+///
+/// Truncation / ellipsis / separator copy is applied by
+/// [`crate::i18n::tool_group_title`] so product glyphs stay on the i18n boundary.
+pub fn tool_group_path_titles<'a>(
+    titles: impl IntoIterator<Item = &'a str>,
+) -> Vec<&'a str> {
+    titles
+        .into_iter()
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .collect()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -480,18 +514,19 @@ mod tests {
 
     #[test]
     fn collapsed_visibility_limits_are_central_and_count_only_omissions() {
+        // Dialogue-first: collapsed groups paint zero member rows (title absorbs).
         assert_eq!(
-            visible_group_members(COLLAPSED_TOOL_GROUP_MEMBER_LIMIT, false),
+            visible_group_members(5, false),
             VisibleCount {
-                visible: COLLAPSED_TOOL_GROUP_MEMBER_LIMIT,
+                visible: 0,
                 omitted: 0,
             }
         );
         assert_eq!(
-            visible_group_members(COLLAPSED_TOOL_GROUP_MEMBER_LIMIT + 3, false),
+            visible_group_members(7, false),
             VisibleCount {
-                visible: COLLAPSED_TOOL_GROUP_MEMBER_LIMIT,
-                omitted: 3,
+                visible: 0,
+                omitted: 0,
             }
         );
         assert_eq!(
@@ -502,11 +537,20 @@ mod tests {
             }
         );
         assert_eq!(
-            visible_group_members(COLLAPSED_TOOL_GROUP_MEMBER_LIMIT + 3, true),
+            visible_group_members(7, true),
             VisibleCount {
-                visible: COLLAPSED_TOOL_GROUP_MEMBER_LIMIT + 3,
+                visible: 7,
                 omitted: 0,
             }
+        );
+    }
+
+    #[test]
+    fn tool_group_path_titles_skips_empty() {
+        assert!(tool_group_path_titles([]).is_empty());
+        assert_eq!(
+            tool_group_path_titles(["a.rs", "", "  ", "b.rs"]),
+            vec!["a.rs", "b.rs"]
         );
     }
 }

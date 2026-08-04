@@ -56,6 +56,13 @@ States:
 | ScreenMode + native scrollback | **wired** | Minimal default; Fullscreen review; Inline capability fallback; fenced re-exec handoff + exact commit watermark; status chip shows mode; forced Inline explains reason | ISSUE-005 / residual R5 |
 | Follow-up queue inspect | **wired** | `/queue` overlay; `execution.queue.list` truncated preview; `execution.queue.drop`; durable depth footer | ISSUE-007 residual R7 |
 | Tool row intent-first grammar | **wired** | Fixed 6-cell kind label; intent primary; dim technical target on single-tool rows; `format_tool_title` | V001 visual density |
+| Success-read collapse language | **wired** | Title-only `Read ×N · path…`; expand restores members; fail/cancel never join success groups | V002 visual density |
+| Assistant content-type channel | **wired** | action JSON suppressed (`tool=done`→summary); whole-body JSON → pretty `json` markdown fence; else prose/markdown | transcript projection |
+| Managed-proxy context window alias | **wired** | `ccswitch-*/model` resolves via openai/azure catalog; footer uses real window not 32k guess | daemon compaction_budget |
+| Operator-facing reasoner failures | **wired** | degrade/ExecutionFailed reasons VOICE-ized; stacks stay on RoutingOutcome | daemon agent/reasoner |
+| Edit dialogue-first density | **wired** | successful edits start collapsed; create-only card with path/stats/preview (no green + dump) | transcript + render |
+| Session status labels | **wired** | `degraded`→partial; bare `unknown`→ready (not StatusUnknown spam) | conversation localization |
+| Interactive final-turn prose contract | **wired** | `done.summary` must be plain language; no JSON completion payloads as user answer | daemon toolsHelp |
 | Assistant phase duplicate sealing | **wired** | adjacent identical commentary is replaced by the authoritative final answer; transcript regressions | conversation projection |
 | Key hints + real `/help` | **wired** | `help.rs`, `Overlay::Help`, `?` / `/help` | #22 |
 | UI copy voice guide | **wired** | `VOICE.md` | #23 |
