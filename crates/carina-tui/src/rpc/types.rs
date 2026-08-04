@@ -619,6 +619,11 @@ pub struct Model {
     pub name: String,
     #[serde(default)]
     pub available: bool,
+    /// ready|circuit_open|rate_limited|probing|auth_error|unavailable
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub status_reason: String,
     #[serde(default)]
     pub reasoning: bool,
     #[serde(default)]
@@ -629,6 +634,28 @@ pub struct Model {
     pub image_input: bool,
     #[serde(default)]
     pub tool_call: bool,
+}
+
+impl Model {
+    /// Operator-facing route health code (ready when unset and available).
+    pub fn health_status(&self) -> &str {
+        if !self.available {
+            return "unavailable";
+        }
+        match self.status.as_str() {
+            "" => "ready",
+            other => other,
+        }
+    }
+
+    /// Operator-facing health: whether the model is currently safe to select.
+    pub fn is_usable(&self) -> bool {
+        match self.health_status() {
+            "ready" | "probing" => true, // half-open probe may succeed
+            "circuit_open" | "rate_limited" | "auth_error" | "unavailable" => false,
+            _ => self.available,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1779,6 +1806,8 @@ mod tests {
                     display_id: String::new(),
                     name: "Model".into(),
                     available: true,
+                    status: String::new(),
+                    status_reason: String::new(),
                     reasoning: false,
                     reasoning_efforts: Vec::new(),
                     default_reasoning_effort: String::new(),
@@ -1799,6 +1828,41 @@ mod tests {
         let available = runnable_inventory(true);
         assert!(available.has_runnable_provider());
         assert_eq!(available.available_models().len(), 1);
+    }
+
+    #[test]
+    fn model_is_usable_reflects_route_health() {
+        let mut model = Model {
+            id: "ccswitch-claude/claude-opus-5".into(),
+            display_id: "claude-opus-5".into(),
+            name: "Claude Opus 5".into(),
+            available: true,
+            status: String::new(),
+            status_reason: String::new(),
+            reasoning: true,
+            reasoning_efforts: Vec::new(),
+            default_reasoning_effort: String::new(),
+            image_input: false,
+            tool_call: true,
+        };
+        assert!(model.is_usable());
+        assert_eq!(model.health_status(), "ready");
+
+        model.status = "rate_limited".into();
+        model.status_reason = "Recently rate-limited".into();
+        assert!(!model.is_usable());
+        assert_eq!(model.health_status(), "rate_limited");
+
+        model.status = "circuit_open".into();
+        assert!(!model.is_usable());
+
+        model.status = "probing".into();
+        assert!(model.is_usable());
+
+        model.available = false;
+        model.status = "ready".into();
+        assert!(!model.is_usable());
+        assert_eq!(model.health_status(), "unavailable");
     }
 
     #[test]

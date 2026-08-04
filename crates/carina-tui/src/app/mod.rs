@@ -5916,6 +5916,21 @@ impl App {
         };
         self.models = refreshed_models;
         self.model_index = refreshed_index;
+        // Honesty before submit: surface circuit/rate-limit from the refreshed
+        // inventory instead of opening a conversation that will fail immediately.
+        if !self.models[refreshed_index].is_usable() {
+            let status = crate::i18n::model_health_status_label(
+                self.ui_locale(),
+                self.models[refreshed_index].health_status(),
+            );
+            self.phase = Phase::Model;
+            self.focus = Focus::Scene;
+            self.notice = Notice::localized_with(
+                MessageId::ModelUnusableBlocked,
+                [("status", status.to_owned())],
+            );
+            return;
+        }
         self.selected_model = model_id.clone();
         self.notice.clear();
 

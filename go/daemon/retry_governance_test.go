@@ -120,3 +120,46 @@ func TestRetryGovernanceRouteKeyIncludesModel(t *testing.T) {
 		t.Fatalf("default route key = %q", got)
 	}
 }
+
+func TestRouteHealthSurfacesCircuitAndRateLimit(t *testing.T) {
+	now := time.Unix(200, 0)
+	g := newRetryGovernance(func() time.Time { return now })
+	g.minimumSample = 5
+	for i := 0; i < 5; i++ {
+		g.observe("ccswitch-claude/claude-opus-5", providerErrorInfo{Code: "provider_rate_limited", Category: "rate_limit", Retryable: true}, false)
+	}
+	health := g.routeHealth("ccswitch-claude/claude-opus-5")
+	if health.Status != "circuit_open" {
+		t.Fatalf("expected circuit_open after rate-limit failures, got %#v", health)
+	}
+	if got := g.routeHealth("ccswitch-claude/claude-sonnet-5"); got.Status != "ready" {
+		t.Fatalf("independent model health = %#v", got)
+	}
+}
+
+func TestEnrichInventoryModelHealthFromGovernance(t *testing.T) {
+	now := time.Unix(300, 0)
+	d := &Daemon{retryGovernance: newRetryGovernance(func() time.Time { return now })}
+	d.retryGovernance.minimumSample = 3
+	for i := 0; i < 3; i++ {
+		d.retryGovernance.observe("ccswitch-claude/claude-opus-5", providerErrorInfo{Code: "provider_rate_limited", Category: "rate_limit", Retryable: true}, false)
+	}
+	models := []modelInventoryModel{
+		{ID: "ccswitch-claude/claude-opus-5", Available: true},
+		{ID: "ccswitch-claude/claude-sonnet-5", Available: true},
+		{ID: "other/model", Available: false},
+	}
+	d.enrichInventoryModelHealth(models)
+	if models[0].Status != "circuit_open" {
+		t.Fatalf("rate-limited route status = %#v", models[0])
+	}
+	if models[0].StatusReason == "" {
+		t.Fatal("expected status_reason for circuit_open route")
+	}
+	if models[1].Status != "ready" {
+		t.Fatalf("healthy route status = %#v", models[1])
+	}
+	if models[2].Status != "unavailable" {
+		t.Fatalf("unavailable model status = %#v", models[2])
+	}
+}

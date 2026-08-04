@@ -20,6 +20,10 @@ type modelInventoryModel struct {
 	DisplayID              string            `json:"display_id,omitempty"`
 	Name                   string            `json:"name,omitempty"`
 	Available              bool              `json:"available"`
+	// Status is operator-facing route health: ready|circuit_open|rate_limited|
+	// probing|auth_error|unavailable. Distinct from Available (credential/route).
+	Status                 string            `json:"status,omitempty"`
+	StatusReason           string            `json:"status_reason,omitempty"`
 	Reasoning              bool              `json:"reasoning"`
 	ReasoningOptions       []json.RawMessage `json:"reasoning_options,omitempty"`
 	ReasoningEfforts       []string          `json:"reasoning_efforts,omitempty"`
@@ -160,6 +164,9 @@ func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
 		}
 		return false
 	})
+	for i := range providers {
+		d.enrichInventoryModelHealth(providers[i].Models)
+	}
 	reasoner := d.modelInventoryReasoner(providers)
 	readiness := d.modelInventoryReadiness(request, providers, reasoner)
 	if d.journey != nil {
@@ -171,6 +178,28 @@ func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
 		"providers":     providers,
 		"readiness":     readiness,
 	}, nil
+}
+
+// enrichInventoryModelHealth attaches circuit/rate-limit status from runtime
+// governance so the model picker can show honesty before submit.
+func (d *Daemon) enrichInventoryModelHealth(models []modelInventoryModel) {
+	for i := range models {
+		if !models[i].Available {
+			models[i].Status = "unavailable"
+			if models[i].StatusReason == "" {
+				models[i].StatusReason = "Provider credential or route is not ready."
+			}
+			continue
+		}
+		if d == nil || d.retryGovernance == nil {
+			models[i].Status = "ready"
+			continue
+		}
+		// model-router isolates governance by provider/model route id.
+		health := d.retryGovernance.routeHealth(models[i].ID)
+		models[i].Status = health.Status
+		models[i].StatusReason = health.Reason
+	}
 }
 
 func (d *Daemon) modelInventoryReadiness(request modelInventoryParams, providers []modelInventoryProvider, reasoner modelInventoryReasoner) modelInventoryReadiness {

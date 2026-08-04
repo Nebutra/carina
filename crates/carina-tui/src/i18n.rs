@@ -598,6 +598,11 @@ pub enum MessageId {
     ModelVerifyFailed,
     ExecutionReadinessChanged,
     SelectedModelUnavailable,
+    ModelHealthCircuitOpen,
+    ModelHealthRateLimited,
+    ModelHealthProbing,
+    ModelHealthAuthError,
+    ModelUnusableBlocked,
     OpenConversationModelFailed,
     ImagePreviewUnavailable,
     HistoryChoosePrompt,
@@ -1055,6 +1060,11 @@ impl MessageId {
         Self::ModelVerifyFailed,
         Self::ExecutionReadinessChanged,
         Self::SelectedModelUnavailable,
+        Self::ModelHealthCircuitOpen,
+        Self::ModelHealthRateLimited,
+        Self::ModelHealthProbing,
+        Self::ModelHealthAuthError,
+        Self::ModelUnusableBlocked,
         Self::OpenConversationModelFailed,
         Self::ImagePreviewUnavailable,
         Self::HistoryChoosePrompt,
@@ -1286,6 +1296,18 @@ pub fn text(locale: Locale, id: MessageId) -> &'static str {
         (Fr, id) => fr(id),
         (En, id) => en(id),
         (ZhHans, id) => extended(ZhHans, id).expect("extended Simplified Chinese copy"),
+    }
+}
+
+/// Short operator-facing label for model inventory `status` codes.
+pub fn model_health_status_label(locale: Locale, status: &str) -> &'static str {
+    match status {
+        "circuit_open" => text(locale, MessageId::ModelHealthCircuitOpen),
+        "rate_limited" => text(locale, MessageId::ModelHealthRateLimited),
+        "probing" => text(locale, MessageId::ModelHealthProbing),
+        "auth_error" => text(locale, MessageId::ModelHealthAuthError),
+        "unavailable" => text(locale, MessageId::Unavailable),
+        _ => text(locale, MessageId::Ready),
     }
 }
 
@@ -5188,6 +5210,51 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "선택한 모델을 더 이상 사용할 수 없습니다. 다른 모델을 선택하세요.",
             "El modelo seleccionado ya no está disponible. Elige otro.",
             "Le modèle sélectionné n’est plus disponible. Choisissez-en un autre.",
+        ],
+        ModelHealthCircuitOpen => [
+            "Circuit open",
+            "熔断中",
+            "熔斷中",
+            "サーキットオープン",
+            "회로 열림",
+            "Circuito abierto",
+            "Circuit ouvert",
+        ],
+        ModelHealthRateLimited => [
+            "Rate limited",
+            "限流",
+            "限流",
+            "レート制限",
+            "요청 제한",
+            "Límite de tasa",
+            "Limité en débit",
+        ],
+        ModelHealthProbing => [
+            "Probing",
+            "探测中",
+            "探測中",
+            "プローブ中",
+            "프로빙",
+            "Sondeando",
+            "Sondage",
+        ],
+        ModelHealthAuthError => [
+            "Auth error",
+            "鉴权失败",
+            "驗證失敗",
+            "認証エラー",
+            "인증 오류",
+            "Error de autenticación",
+            "Erreur d’auth",
+        ],
+        ModelUnusableBlocked => [
+            "This model is currently unusable ({status}). Choose another model or wait.",
+            "该模型当前不可用（{status}）。请选择其他模型或稍后再试。",
+            "此模型目前無法使用（{status}）。請選擇其他模型或稍後再試。",
+            "このモデルは現在使えません（{status}）。別のモデルを選ぶか待ってください。",
+            "이 모델은 현재 사용할 수 없습니다({status}). 다른 모델을 선택하거나 잠시 기다려 주세요.",
+            "Este modelo no se puede usar ahora ({status}). Elige otro o espera.",
+            "Ce modèle est actuellement inutilisable ({status}). Choisissez-en un autre ou attendez.",
         ],
         OpenConversationModelFailed => [
             "Could not open the conversation with {model}: {error}. Your selection was kept.",

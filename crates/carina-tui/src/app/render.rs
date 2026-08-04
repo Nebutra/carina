@@ -19,7 +19,10 @@ use crate::conversation::{
 use crate::file_viewer::{FileViewerLoad, selection_hint};
 use crate::glyphs::Glyphs;
 use crate::history_search::HistoryMode;
-use crate::i18n::{Locale, MessageId, count as tr_count, format as tr_format, text as tr};
+use crate::i18n::{
+    Locale, MessageId, count as tr_count, format as tr_format,
+    model_health_status_label, text as tr,
+};
 use crate::layout_contract;
 use crate::markdown::{
     MarkdownTheme, StyledPrefix, render_prefixed as render_markdown_prefixed, wrap_styled_lines,
@@ -1163,9 +1166,16 @@ impl App {
                 } else {
                     model.display_id.as_str()
                 };
+                let health = model_health_status_label(locale, model.health_status());
+                let mut suffix = capabilities.join(" ");
+                if !matches!(model.health_status(), "ready" | "") {
+                    if !suffix.is_empty() {
+                        suffix.push(' ');
+                    }
+                    suffix.push_str(health);
+                }
                 format!(
-                    "{display_id:<width$} {}",
-                    capabilities.join(" "),
+                    "{display_id:<width$} {suffix}",
                     width = layout_contract::MODEL_ID_WIDTH
                 )
             })
@@ -1204,51 +1214,69 @@ impl App {
         if model.tool_call {
             capabilities.push(tr(locale, MessageId::CapabilityTools));
         }
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(Span::styled(
-                    tr(locale, MessageId::SelectedModel),
-                    Style::default()
-                        .fg(self.theme.muted)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    name,
-                    Style::default()
-                        .fg(self.theme.text)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(Span::styled(
-                    if model.display_id.is_empty() {
-                        model.id.as_str()
-                    } else {
-                        model.display_id.as_str()
-                    },
+        let health = model.health_status();
+        let health_label = model_health_status_label(locale, health);
+        let health_color = model_health_color(self, health);
+        let usable = model.is_usable();
+        let mut detail_lines = vec![
+            Line::from(Span::styled(
+                tr(locale, MessageId::SelectedModel),
+                Style::default()
+                    .fg(self.theme.muted)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                name,
+                Style::default()
+                    .fg(self.theme.text)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                if model.display_id.is_empty() {
+                    model.id.as_str()
+                } else {
+                    model.display_id.as_str()
+                },
+                Style::default().fg(self.theme.muted),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(
+                    format!("{}  ", tr(locale, MessageId::Status)),
                     Style::default().fg(self.theme.muted),
-                )),
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled(
-                        format!("{}  ", tr(locale, MessageId::Capabilities)),
-                        Style::default().fg(self.theme.muted),
-                    ),
-                    Span::styled(
-                        if capabilities.is_empty() {
-                            tr(locale, MessageId::CapabilityText).into()
-                        } else {
-                            capabilities.join(", ")
-                        },
-                        Style::default().fg(self.theme.text),
-                    ),
-                ]),
-            ])
-            .wrap(Wrap { trim: false }),
+                ),
+                Span::styled(health_label, Style::default().fg(health_color)),
+            ]),
+        ];
+        if !model.status_reason.is_empty() && !usable {
+            detail_lines.push(Line::from(Span::styled(
+                &model.status_reason,
+                Style::default().fg(self.theme.muted),
+            )));
+        }
+        detail_lines.push(Line::from(""));
+        detail_lines.push(Line::from(vec![
+            Span::styled(
+                format!("{}  ", tr(locale, MessageId::Capabilities)),
+                Style::default().fg(self.theme.muted),
+            ),
+            Span::styled(
+                if capabilities.is_empty() {
+                    tr(locale, MessageId::CapabilityText).into()
+                } else {
+                    capabilities.join(", ")
+                },
+                Style::default().fg(self.theme.text),
+            ),
+        ]));
+        frame.render_widget(
+            Paragraph::new(detail_lines).wrap(Wrap { trim: false }),
             area,
         );
         // Reasoning effort picker when the model supports discrete levels.
         let efforts = self.model_reasoning_efforts();
-        let effort_lines = if efforts.is_empty() {
+        let effort_lines = if efforts.is_empty() || !usable {
             Vec::new()
         } else {
             let effort_label = if self.selected_reasoning_effort.is_empty() {
@@ -1306,25 +1334,33 @@ impl App {
                 );
             }
         }
+        let button_label = if usable {
+            tr(locale, MessageId::UseModel)
+        } else {
+            tr(locale, MessageId::Unavailable)
+        };
+        let button_width = ((button_label.chars().count() as u16) + 2).min(area.width);
         let button = Rect::new(
             area.x,
             area.y
                 .saturating_add(layout_contract::SESSION_ACTION_CURSOR_OFFSET)
                 .min(area.bottom().saturating_sub(layout_contract::ROW_HEIGHT)),
-            11.min(area.width),
+            button_width,
             u16::from(area.height > 0),
         );
         let component = ComponentId(952);
         frame.render_widget(
-            Paragraph::new(format!(" {} ", tr(locale, MessageId::UseModel))).style(
-                if self.interactions.hovered(component) {
-                    self.theme.selected()
-                } else {
-                    self.theme.focus()
-                },
-            ),
+            Paragraph::new(format!(" {button_label} ")).style(if !usable {
+                Style::default().fg(self.theme.muted)
+            } else if self.interactions.hovered(component) {
+                self.theme.selected()
+            } else {
+                self.theme.focus()
+            }),
             button,
         );
+        // Always register: unusable models soft-block in select_model_and_continue
+        // so the operator still gets an honest status notice.
         self.interactions.register(HitRegion {
             component,
             area: button,
@@ -5166,6 +5202,15 @@ impl App {
             });
             x = x.saturating_add(rect.width + layout_contract::ROW_HEIGHT);
         }
+    }
+}
+
+fn model_health_color(app: &App, status: &str) -> ratatui::style::Color {
+    match status {
+        "ready" | "" => app.theme.success,
+        "probing" => app.theme.warning,
+        "rate_limited" | "circuit_open" | "auth_error" | "unavailable" => app.theme.danger,
+        _ => app.theme.muted,
     }
 }
 

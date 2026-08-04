@@ -45,12 +45,21 @@ type providerOutcome struct {
 }
 
 type providerGovernanceState struct {
-	outcomes   []providerOutcome
-	state      circuitState
-	openUntil  time.Time
-	probeInUse bool
-	tokens     float64
-	refilledAt time.Time
+	outcomes     []providerOutcome
+	state        circuitState
+	openUntil    time.Time
+	probeInUse   bool
+	tokens       float64
+	refilledAt   time.Time
+	lastCode     string
+	lastCategory string
+	lastAt       time.Time
+}
+
+// routeHealth is operator-facing inventory health for a provider/model route.
+type routeHealth struct {
+	Status string // ready|circuit_open|rate_limited|probing|unavailable
+	Reason string
 }
 
 type retryGovernance struct {
@@ -140,6 +149,13 @@ func (g *retryGovernance) observe(provider string, info providerErrorInfo, succe
 	defer g.mu.Unlock()
 	now := g.now()
 	s := g.stateLocked(provider, now)
+	if success {
+		s.lastCode, s.lastCategory, s.lastAt = "", "", time.Time{}
+	} else {
+		s.lastCode = strings.TrimSpace(info.Code)
+		s.lastCategory = strings.TrimSpace(info.Category)
+		s.lastAt = now
+	}
 	if s.state == circuitHalfOpen {
 		s.probeInUse = false
 		if success || !info.Retryable {
@@ -172,7 +188,46 @@ func (g *retryGovernance) snapshot(provider string) map[string]any {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	s := g.stateLocked(provider, g.now())
-	return map[string]any{"scope": "daemon", "provider": provider, "breaker_state": s.state, "retry_tokens": int(s.tokens), "metrics": g.metrics}
+	return map[string]any{
+		"scope": "daemon", "provider": provider, "breaker_state": s.state,
+		"retry_tokens": int(s.tokens), "last_code": s.lastCode, "last_category": s.lastCategory,
+		"metrics": g.metrics,
+	}
+}
+
+// routeHealth reports inventory-facing health for a provider/model route so the
+// model picker can show circuit/rate-limit state before the operator submits.
+func (g *retryGovernance) routeHealth(route string) routeHealth {
+	if g == nil {
+		return routeHealth{Status: "ready"}
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now := g.now()
+	s := g.stateLocked(route, now)
+	switch s.state {
+	case circuitOpen:
+		reason := "Provider circuit is open after recent failures. Wait or choose another model."
+		if s.lastCategory == "rate_limit" || strings.Contains(s.lastCode, "rate") || strings.Contains(s.lastCode, "quota") {
+			reason = "Rate-limited or quota-blocked; circuit is open. Wait or choose another model."
+		}
+		return routeHealth{Status: "circuit_open", Reason: reason}
+	case circuitHalfOpen:
+		return routeHealth{Status: "probing", Reason: "Provider is being probed after recent failures."}
+	}
+	if s.lastCategory == "rate_limit" && !s.lastAt.IsZero() && now.Sub(s.lastAt) < g.window {
+		return routeHealth{
+			Status: "rate_limited",
+			Reason: "Recently rate-limited or quota-blocked. Wait or choose another model.",
+		}
+	}
+	if s.lastCode != "" && !s.lastAt.IsZero() && now.Sub(s.lastAt) < g.window && !strings.EqualFold(s.lastCategory, "") {
+		// Surface other recent hard failures as degraded without marking unusable forever.
+		if s.lastCategory == "auth" || s.lastCategory == "permission" || s.lastCategory == "authentication" {
+			return routeHealth{Status: "auth_error", Reason: "Recent authentication/permission failure for this model."}
+		}
+	}
+	return routeHealth{Status: "ready"}
 }
 
 func (g *retryGovernance) metricsSnapshot() map[string]any {
