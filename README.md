@@ -246,19 +246,20 @@ The default interaction loop is:
 - Autonomous **risk review** (always-approve / accept-edits edit path) is
   projected into the transcript with outcome / risk / rationale.
 
-The TUI defaults to **Minimal** mode: finalized transcript blocks are committed
-once to native terminal scrollback while the live tail, composer, and overlays
-remain interactive. Use `/fullscreen` for long diff, agent, audit, workflow,
-and media review; use `/inline` for a keyboard-only capability-safe fallback;
-use `/minimal` to return. The same modes are available at launch with
-`carina --screen-mode minimal|fullscreen|inline`. Switching re-execs the UI,
-reattaches the same runtime/session, and carries the draft, follow-up queue,
-selection, pending-governance IDs, and native scrollback watermark through a
-bounded private handoff.
+The TUI defaults to **Fullscreen** mode (alt-screen + mouse capture) so
+trackpad and wheel input stay inside Carina instead of terminal scrollback.
+Use `/minimal` when you want finalized blocks committed once to native
+terminal history; use `/inline` for a keyboard-only capability-safe fallback;
+use `/fullscreen` to return to the default. The same modes are available at
+launch with `carina --screen-mode minimal|fullscreen|inline`. Switching
+re-execs the UI, reattaches the same runtime/session, and carries the draft,
+follow-up queue, selection, pending-governance IDs, and native scrollback
+watermark through a bounded private handoff.
 
 `carina --no-alt-screen` remains a Minimal compatibility shortcut. Legacy
-`tui_alternate_screen` values `auto`, `always`, and `never` remain accepted;
-an explicit `--screen-mode` takes precedence.
+`tui_alternate_screen` values `auto` (Fullscreen), `always` (Fullscreen), and
+`never` (Minimal) remain accepted; an explicit `--screen-mode` takes
+precedence.
 
 The TUI ships authored copy for English, Simplified Chinese
 (`zh-CN`/`zh-Hans`, runtime key `zh`), Traditional Chinese (`zh-Hant` /

@@ -7085,8 +7085,11 @@ fn resolve_screen_mode_for(
     match policy {
         AltScreenPolicy::Always => ScreenMode::Fullscreen,
         AltScreenPolicy::Never => ScreenMode::Minimal,
+        // Poor multiplexers / control-mode hosts stay on Inline for safety.
         AltScreenPolicy::Auto if zellij || tmux_control => ScreenMode::Inline,
-        AltScreenPolicy::Auto => ScreenMode::Minimal,
+        // Default product surface is Fullscreen (alt-screen + mouse capture) so
+        // trackpad scroll stays inside Carina instead of terminal history.
+        AltScreenPolicy::Auto => ScreenMode::Fullscreen,
     }
 }
 
@@ -7424,10 +7427,10 @@ mod tests {
     }
 
     #[test]
-    fn screen_mode_is_first_class_and_minimal_by_default() {
+    fn screen_mode_is_first_class_and_fullscreen_by_default() {
         assert_eq!(
             resolve_screen_mode_for(None, false, AltScreenPolicy::Auto, false, false),
-            ScreenMode::Minimal
+            ScreenMode::Fullscreen
         );
         assert_eq!(
             resolve_screen_mode_for(
@@ -7466,6 +7469,10 @@ mod tests {
         assert_eq!(
             resolve_screen_mode_for(None, false, AltScreenPolicy::Always, true, true),
             ScreenMode::Fullscreen
+        );
+        assert_eq!(
+            resolve_screen_mode_for(None, false, AltScreenPolicy::Never, false, false),
+            ScreenMode::Minimal
         );
     }
 

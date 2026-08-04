@@ -53,7 +53,7 @@ States:
 | Context pressure and receipt detail | **wired** | persistent `ctx%`/`est.` footer; typed `/context` overlay; 80/90 semantic thresholds | ISSUE-011 |
 | Patch attribution and rollback trust loop | **wired** | typed `workspace.patch.list/show/rollback.preview/rollback`; Changes workbench; apply/verify/rollback E2E | ISSUE-003 |
 | Large diff progressive highlight + cap | **wired** | 2MiB/50k review cap; 500-row/32KiB transcript window; 4KiB line + bounded LCS; `/changes` paging | ISSUE-015 |
-| ScreenMode + native scrollback | **wired** | Minimal default; Fullscreen review; Inline capability fallback; fenced re-exec handoff + exact commit watermark; status chip shows mode; forced Inline explains reason | ISSUE-005 / residual R5 |
+| ScreenMode + native scrollback | **wired** | Fullscreen default (alt-screen); Minimal opt-in native scrollback; Inline capability fallback; fenced re-exec handoff + exact commit watermark; status chip shows mode; forced Inline explains reason | ISSUE-005 / residual R5 |
 | Follow-up queue inspect | **wired** | `/queue` overlay; `execution.queue.list` truncated preview; `execution.queue.drop`; durable depth footer | ISSUE-007 residual R7 |
 | Tool row intent-first grammar | **wired** | Fixed 6-cell kind label; intent primary; dim technical target on single-tool rows; `format_tool_title` | V001 visual density |
 | Success-read collapse language | **wired** | Title-only `Read ×N · path…`; expand restores members; fail/cancel never join success groups | V002 visual density |
