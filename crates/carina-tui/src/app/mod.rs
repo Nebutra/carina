@@ -489,6 +489,8 @@ pub struct App {
     history_branch_pending: bool,
     rewind_primed_at: Option<Instant>,
     rewind_prime_window: Duration,
+    /// First Ctrl-C (hard_cancel) while idle primes quit; second within grace exits.
+    quit_primed_at: Option<Instant>,
     credential: String,
     credential_generation: u64,
     credential_pending: bool,
@@ -669,6 +671,7 @@ impl App {
             history_branch_pending: false,
             rewind_primed_at: None,
             rewind_prime_window: rewind_prime_window(),
+            quit_primed_at: None,
             credential: String::new(),
             credential_generation: 0,
             credential_pending: false,
@@ -2457,6 +2460,17 @@ impl App {
             self.dirty = true;
             self.redraw_reasons.push(RedrawReason::AsyncResult);
         }
+        if self
+            .quit_primed_at
+            .is_some_and(|primed| primed.elapsed() > self.rewind_prime_window)
+        {
+            self.quit_primed_at = None;
+            if self.notice.is_localized(MessageId::QuitPrime) {
+                self.notice.clear();
+            }
+            self.dirty = true;
+            self.redraw_reasons.push(RedrawReason::AsyncResult);
+        }
     }
 
     fn wait_for_work(&mut self, deadline: Option<Instant>) -> bool {
@@ -2492,8 +2506,16 @@ impl App {
         let rewind_deadline = self
             .rewind_primed_at
             .map(|primed| primed + self.rewind_prime_window);
-        match (frame_deadline, rewind_deadline) {
-            (Some(frame), Some(rewind)) => Some(frame.min(rewind)),
+        let quit_deadline = self
+            .quit_primed_at
+            .map(|primed| primed + self.rewind_prime_window);
+        let prime_deadline = match (rewind_deadline, quit_deadline) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(deadline), None) | (None, Some(deadline)) => Some(deadline),
+            (None, None) => None,
+        };
+        match (frame_deadline, prime_deadline) {
+            (Some(frame), Some(prime)) => Some(frame.min(prime)),
             (Some(deadline), None) | (None, Some(deadline)) => Some(deadline),
             (None, None) => None,
         }
@@ -2769,15 +2791,47 @@ impl App {
         let key = normalize_shift_tab(key);
         if self.keybindings.hard_cancel.matches(key) {
             if self.close_top_non_governance() {
+                self.quit_primed_at = None;
                 self.dirty = true;
                 return Ok(());
             }
-            if let Some(run_id) = self.active_run_id.clone() {
-                self.cancel_execution(&run_id);
-            } else {
-                self.quit = true;
+            let now = Instant::now();
+            match quit_hard_cancel_action(
+                self.active_run_id.is_some(),
+                self.quit_primed_at,
+                now,
+                self.rewind_prime_window,
+            ) {
+                QuitHardCancelAction::CancelRun => {
+                    // Active turn: hard-cancel the run. Do not exit the TUI.
+                    self.quit_primed_at = None;
+                    if let Some(run_id) = self.active_run_id.clone() {
+                        self.cancel_execution(&run_id);
+                    }
+                }
+                QuitHardCancelAction::Prime => {
+                    // Idle: require a second Ctrl-C inside the grace window to quit
+                    // (same double-confirm pattern as Esc Esc history rewind).
+                    self.quit_primed_at = Some(now);
+                    self.notice = Notice::localized_with(
+                        MessageId::QuitPrime,
+                        [("key", self.keybindings.hard_cancel.label().to_owned())],
+                    );
+                }
+                QuitHardCancelAction::Quit => {
+                    self.quit_primed_at = None;
+                    self.quit = true;
+                }
             }
+            self.dirty = true;
             return Ok(());
+        }
+        // Any other key clears a pending quit prime.
+        if self.quit_primed_at.is_some() {
+            self.quit_primed_at = None;
+            if self.notice.is_localized(MessageId::QuitPrime) {
+                self.notice.clear();
+            }
         }
         if self.overlays.active().is_some() {
             self.handle_overlay_key(key);
@@ -7170,6 +7224,29 @@ fn rewind_escape_action(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuitHardCancelAction {
+    CancelRun,
+    Prime,
+    Quit,
+}
+
+fn quit_hard_cancel_action(
+    active_run: bool,
+    primed_at: Option<Instant>,
+    now: Instant,
+    grace: Duration,
+) -> QuitHardCancelAction {
+    if active_run {
+        return QuitHardCancelAction::CancelRun;
+    }
+    if primed_at.is_some_and(|primed| now.saturating_duration_since(primed) <= grace) {
+        QuitHardCancelAction::Quit
+    } else {
+        QuitHardCancelAction::Prime
+    }
+}
+
 fn store_provider_credential(
     carina_bin: &Path,
     provider: &str,
@@ -7848,6 +7925,28 @@ mod tests {
         assert_eq!(
             rewind_escape_action(false, false, primed, now, Duration::from_secs(1)),
             RewindEscapeAction::Unavailable
+        );
+    }
+
+    #[test]
+    fn idle_hard_cancel_requires_two_presses_inside_grace() {
+        let now = Instant::now();
+        let grace = Duration::from_millis(800);
+        assert_eq!(
+            quit_hard_cancel_action(false, None, now, grace),
+            QuitHardCancelAction::Prime
+        );
+        assert_eq!(
+            quit_hard_cancel_action(false, Some(now - Duration::from_millis(799)), now, grace),
+            QuitHardCancelAction::Quit
+        );
+        assert_eq!(
+            quit_hard_cancel_action(false, Some(now - Duration::from_millis(801)), now, grace),
+            QuitHardCancelAction::Prime
+        );
+        assert_eq!(
+            quit_hard_cancel_action(true, Some(now), now, grace),
+            QuitHardCancelAction::CancelRun
         );
     }
 
