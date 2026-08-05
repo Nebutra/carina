@@ -20,8 +20,8 @@ use crate::file_viewer::{FileViewerLoad, selection_hint};
 use crate::glyphs::Glyphs;
 use crate::history_search::HistoryMode;
 use crate::i18n::{
-    Locale, MessageId, count as tr_count, format as tr_format,
-    model_health_status_label, text as tr,
+    Locale, MessageId, count as tr_count, format as tr_format, localize_operator_failure_reason,
+    model_health_reason_label, model_health_status_label, text as tr,
 };
 use crate::layout_contract;
 use crate::markdown::{
@@ -1256,11 +1256,20 @@ impl App {
                 Span::styled(health_label, Style::default().fg(health_color)),
             ]),
         ];
-        if !model.status_reason.is_empty() && !usable {
-            detail_lines.push(Line::from(Span::styled(
-                &model.status_reason,
-                Style::default().fg(self.theme.muted),
-            )));
+        if !usable {
+            // Prefer locale copy keyed by status code; fall back to daemon English.
+            let reason = model_health_reason_label(locale, health)
+                .map(str::to_owned)
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    (!model.status_reason.is_empty()).then(|| model.status_reason.clone())
+                });
+            if let Some(reason) = reason {
+                detail_lines.push(Line::from(Span::styled(
+                    reason,
+                    Style::default().fg(self.theme.muted),
+                )));
+            }
         }
         detail_lines.push(Line::from(""));
         detail_lines.push(Line::from(vec![
@@ -5710,7 +5719,10 @@ fn transcript_lines_with_tool_key(
                     format!("{}  ", tr(locale, MessageId::Reason)),
                     metadata_style,
                 ),
-                Span::styled(failure.reason.clone(), metadata_style),
+                Span::styled(
+                    localize_operator_failure_reason(locale, &failure.reason),
+                    metadata_style,
+                ),
             ]),
             Line::from(Span::styled(action, label_style)),
         ];

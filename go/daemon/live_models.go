@@ -285,7 +285,14 @@ func projectInventoryModels(
 		}
 		model, ok := catalogModelLookup(catalog, modelID)
 		if !ok {
-			model = provider.Model{ID: modelID, Name: modelID, Reasoning: true, ToolCall: true}
+			// Honesty: do not advertise tool_call without catalog evidence.
+			// Reasoning is only claimed when a wire family can expose effort.
+			// Unknown live ids stay conservative rather than "all capabilities".
+			claimsReasoning := effortWireFamily(providerID, modelID) != ""
+			model = provider.Model{
+				ID: modelID, Name: modelID,
+				Reasoning: claimsReasoning, ToolCall: false,
+			}
 		}
 		if modelUnsupportedByTextPrompt(modelID, model) {
 			continue

@@ -607,6 +607,18 @@ pub enum MessageId {
     FailureTitleApprovalDenied,
     FailureTitleInterrupted,
     FailureTitleCancelled,
+    FailureReasonDidNotComplete,
+    FailureReasonStreamStopped,
+    FailureReasonCredential,
+    FailureReasonRateLimited,
+    FailureReasonCircuitOpen,
+    FailureReasonEffortUnsupported,
+    FailureReasonGenericTurn,
+    ModelHealthReasonCircuitOpen,
+    ModelHealthReasonRateLimited,
+    ModelHealthReasonProbing,
+    ModelHealthReasonAuthError,
+    ModelHealthReasonUnavailable,
     OpenConversationModelFailed,
     ImagePreviewUnavailable,
     HistoryChoosePrompt,
@@ -1073,6 +1085,18 @@ impl MessageId {
         Self::FailureTitleApprovalDenied,
         Self::FailureTitleInterrupted,
         Self::FailureTitleCancelled,
+        Self::FailureReasonDidNotComplete,
+        Self::FailureReasonStreamStopped,
+        Self::FailureReasonCredential,
+        Self::FailureReasonRateLimited,
+        Self::FailureReasonCircuitOpen,
+        Self::FailureReasonEffortUnsupported,
+        Self::FailureReasonGenericTurn,
+        Self::ModelHealthReasonCircuitOpen,
+        Self::ModelHealthReasonRateLimited,
+        Self::ModelHealthReasonProbing,
+        Self::ModelHealthReasonAuthError,
+        Self::ModelHealthReasonUnavailable,
         Self::OpenConversationModelFailed,
         Self::ImagePreviewUnavailable,
         Self::HistoryChoosePrompt,
@@ -1317,6 +1341,60 @@ pub fn model_health_status_label(locale: Locale, status: &str) -> &'static str {
         "unavailable" => text(locale, MessageId::Unavailable),
         _ => text(locale, MessageId::Ready),
     }
+}
+
+/// Localized detail reason for model health status codes (preferred over
+/// English daemon status_reason strings).
+pub fn model_health_reason_label(locale: Locale, status: &str) -> Option<&'static str> {
+    let id = match status {
+        "circuit_open" => MessageId::ModelHealthReasonCircuitOpen,
+        "rate_limited" => MessageId::ModelHealthReasonRateLimited,
+        "probing" => MessageId::ModelHealthReasonProbing,
+        "auth_error" => MessageId::ModelHealthReasonAuthError,
+        "unavailable" => MessageId::ModelHealthReasonUnavailable,
+        _ => return None,
+    };
+    Some(text(locale, id))
+}
+
+/// Map daemon/operator English failure copy (and residual stacks) to locale text.
+pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String {
+    let trimmed = reason.trim();
+    if trimmed.is_empty() {
+        return text(locale, MessageId::FailureReasonDidNotComplete).to_owned();
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let id = if lower.contains("while reading body")
+        || lower.contains("stream budget")
+        || lower.contains("provider_stream_budget")
+        || lower.contains("stream stopped before finishing")
+        || (lower.contains("client.timeout") && lower.contains("body"))
+    {
+        MessageId::FailureReasonStreamStopped
+    } else if lower.contains("credential") || lower.contains("authentication") {
+        MessageId::FailureReasonCredential
+    } else if lower.contains("rate-limited")
+        || lower.contains("rate limited")
+        || lower.contains("quota")
+    {
+        MessageId::FailureReasonRateLimited
+    } else if lower.contains("circuit") {
+        MessageId::FailureReasonCircuitOpen
+    } else if lower.contains("reasoning effort") {
+        MessageId::FailureReasonEffortUnsupported
+    } else if lower.contains("modelrouter")
+        || lower.starts_with("reasoner error:")
+        || lower.starts_with("reasoner failed:")
+        || lower.contains("could not complete this turn")
+    {
+        MessageId::FailureReasonGenericTurn
+    } else if lower == "the execution did not complete" {
+        MessageId::FailureReasonDidNotComplete
+    } else {
+        // Unknown product copy: keep operator-facing text as-is.
+        return trimmed.to_owned();
+    };
+    text(locale, id).to_owned()
 }
 
 pub fn format(locale: Locale, id: MessageId, args: &[(&str, &str)]) -> String {
@@ -5300,6 +5378,114 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "Ejecución cancelada",
             "Exécution annulée",
         ],
+        FailureReasonDidNotComplete => [
+            "The execution did not complete.",
+            "执行未完成。",
+            "執行未完成。",
+            "実行が完了しませんでした。",
+            "실행이 완료되지 않았습니다.",
+            "La ejecución no se completó.",
+            "L’exécution ne s’est pas terminée.",
+        ],
+        FailureReasonStreamStopped => [
+            "The model stream stopped before finishing. Not auto-retried. Check the proxy and network, then retry explicitly if needed.",
+            "模型流在完成前中断，未自动重试。请检查代理与网络，必要时再手动重试。",
+            "模型串流在完成前中斷，未自動重試。請檢查代理與網路，必要時再手動重試。",
+            "モデルのストリームが完了前に停止しました。自動再試行しません。プロキシとネットワークを確認し、必要なら明示的に再試行してください。",
+            "모델 스트림이 완료 전에 중단되었습니다. 자동 재시도하지 않습니다. 프록시와 네트워크를 확인한 뒤 필요하면 수동으로 다시 시도하세요.",
+            "El flujo del modelo se detuvo antes de terminar. No se reintenta automáticamente. Revisa el proxy y la red y reintenta si hace falta.",
+            "Le flux du modèle s’est arrêté avant la fin. Pas de nouvel essai auto. Vérifiez le proxy et le réseau, puis réessayez si besoin.",
+        ],
+        FailureReasonCredential => [
+            "The model provider rejected the credential. Check the provider credential.",
+            "模型服务商拒绝了凭证。请检查服务商凭证。",
+            "模型服務商拒絕了憑證。請檢查服務商憑證。",
+            "モデルプロバイダーが資格情報を拒否しました。資格情報を確認してください。",
+            "모델 제공자가 자격 증명을 거부했습니다. 제공자 자격 증명을 확인하세요.",
+            "El proveedor del modelo rechazó la credencial. Revisa la credencial del proveedor.",
+            "Le fournisseur de modèle a rejeté l’identifiant. Vérifiez l’identifiant du fournisseur.",
+        ],
+        FailureReasonRateLimited => [
+            "The model provider rate-limited or quota-blocked the request. Wait or choose another provider.",
+            "模型服务商限流或配额不足。请等待或更换服务商。",
+            "模型服務商限流或配額不足。請等待或更換服務商。",
+            "モデルプロバイダーがレート制限またはクォータで拒否しました。待つか別のプロバイダーを選んでください。",
+            "모델 제공자가 요청을 제한했거나 할당량이 부족합니다. 기다리거나 다른 제공자를 선택하세요.",
+            "El proveedor limitó la tasa o el cupo de la solicitud. Espera o elige otro proveedor.",
+            "Le fournisseur a limité le débit ou le quota. Attendez ou choisissez un autre fournisseur.",
+        ],
+        FailureReasonCircuitOpen => [
+            "The model provider circuit is open. Wait for the probe or choose another provider.",
+            "模型服务商熔断已打开。请等待探测恢复或更换服务商。",
+            "模型服務商熔斷已開啟。請等待探測恢復或更換服務商。",
+            "モデルプロバイダーのサーキットが開いています。プローブを待つか別のプロバイダーを選んでください。",
+            "모델 제공자 회로가 열려 있습니다. 프로브를 기다리거나 다른 제공자를 선택하세요.",
+            "El circuito del proveedor está abierto. Espera la sonda o elige otro proveedor.",
+            "Le circuit du fournisseur est ouvert. Attendez la sonde ou choisissez un autre fournisseur.",
+        ],
+        FailureReasonEffortUnsupported => [
+            "Reasoning effort is not supported or not valid for this model route. Clear effort or choose another model.",
+            "该模型路由不支持或不接受当前推理强度。请清空强度或换模型。",
+            "此模型路由不支援或不接受目前推理強度。請清空強度或換模型。",
+            "このモデル経路では推論強度が未対応または無効です。強度を解除するか別のモデルを選んでください。",
+            "이 모델 경로에서는 추론 강도를 지원하지 않거나 유효하지 않습니다. 강도를 비우거나 다른 모델을 선택하세요.",
+            "El esfuerzo de razonamiento no es válido o no se admite en esta ruta. Quita el esfuerzo o elige otro modelo.",
+            "L’effort de raisonnement n’est pas pris en charge ou n’est pas valide sur cette route. Effacez l’effort ou choisissez un autre modèle.",
+        ],
+        FailureReasonGenericTurn => [
+            "The model could not complete this turn. Check the provider and network, then retry explicitly if needed.",
+            "模型无法完成本轮。请检查服务商与网络，必要时再手动重试。",
+            "模型無法完成本輪。請檢查服務商與網路，必要時再手動重試。",
+            "モデルがこのターンを完了できませんでした。プロバイダーとネットワークを確認し、必要なら明示的に再試行してください。",
+            "모델이 이 턴을 완료하지 못했습니다. 제공자와 네트워크를 확인한 뒤 필요하면 수동으로 다시 시도하세요.",
+            "El modelo no pudo completar este turno. Revisa el proveedor y la red y reintenta si hace falta.",
+            "Le modèle n’a pas pu terminer ce tour. Vérifiez le fournisseur et le réseau, puis réessayez si besoin.",
+        ],
+        ModelHealthReasonCircuitOpen => [
+            "Provider circuit is open after recent failures. Wait or choose another model.",
+            "近期失败后服务商熔断已打开。请等待或换模型。",
+            "近期失敗後服務商熔斷已開啟。請等待或換模型。",
+            "最近の失敗でサーキットが開いています。待つか別のモデルを選んでください。",
+            "최근 실패로 회로가 열려 있습니다. 기다리거나 다른 모델을 선택하세요.",
+            "El circuito del proveedor está abierto tras fallos recientes. Espera o elige otro modelo.",
+            "Le circuit du fournisseur est ouvert après des échecs récents. Attendez ou choisissez un autre modèle.",
+        ],
+        ModelHealthReasonRateLimited => [
+            "Recently rate-limited or quota-blocked. Wait or choose another model.",
+            "近期限流或配额不足。请等待或换模型。",
+            "近期限流或配額不足。請等待或換模型。",
+            "最近レート制限またはクォータ制限がありました。待つか別のモデルを選んでください。",
+            "최근에 요청 제한 또는 할당량 차단이 있었습니다. 기다리거나 다른 모델을 선택하세요.",
+            "Recientemente limitado por tasa o cupo. Espera o elige otro modelo.",
+            "Récemment limité en débit ou en quota. Attendez ou choisissez un autre modèle.",
+        ],
+        ModelHealthReasonProbing => [
+            "Provider is being probed after recent failures.",
+            "近期失败后正在探测服务商是否恢复。",
+            "近期失敗後正在探測服務商是否恢復。",
+            "最近の失敗のあとプロバイダーをプローブ中です。",
+            "최근 실패 이후 제공자를 프로빙 중입니다.",
+            "Se está sondeando al proveedor tras fallos recientes.",
+            "Le fournisseur est en cours de sondage après des échecs récents.",
+        ],
+        ModelHealthReasonAuthError => [
+            "Recent authentication or permission failure for this model.",
+            "该模型近期鉴权或权限失败。",
+            "此模型近期驗證或權限失敗。",
+            "このモデルで最近認証または権限エラーがありました。",
+            "이 모델에서 최근 인증 또는 권한 오류가 있었습니다.",
+            "Fallo reciente de autenticación o permiso en este modelo.",
+            "Échec récent d’authentification ou de permission pour ce modèle.",
+        ],
+        ModelHealthReasonUnavailable => [
+            "Provider credential or route is not ready.",
+            "服务商凭证或路由尚未就绪。",
+            "服務商憑證或路由尚未就緒。",
+            "プロバイダーの資格情報または経路が未準備です。",
+            "제공자 자격 증명 또는 경로가 준비되지 않았습니다.",
+            "La credencial o la ruta del proveedor no está lista.",
+            "L’identifiant ou la route du fournisseur n’est pas prêt.",
+        ],
         OpenConversationModelFailed => [
             "Could not open the conversation with {model}: {error}. Your selection was kept.",
             "无法使用 {model} 打开会话：{error}。已保留你的选择。",
@@ -5489,6 +5675,26 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn operator_failure_reasons_localize_for_zh_hans() {
+        let en = "The model provider rate-limited or quota-blocked the request. Wait or choose another provider.";
+        let zh = localize_operator_failure_reason(Locale::ZhHans, en);
+        assert!(zh.contains("限流") || zh.contains("配额"), "zh={zh}");
+        assert_ne!(zh, en);
+        let effort = localize_operator_failure_reason(
+            Locale::ZhHans,
+            "ccswitch-codex/x: reasoning effort is not supported by this adapter",
+        );
+        assert!(effort.contains("推理"), "effort={effort}");
+    }
+
+    #[test]
+    fn model_health_reason_is_localized_by_status_code() {
+        let reason = model_health_reason_label(Locale::ZhHans, "circuit_open").unwrap();
+        assert!(reason.contains("熔断"), "reason={reason}");
+        assert!(model_health_reason_label(Locale::ZhHans, "ready").is_none());
+    }
 
     #[test]
     fn every_supported_locale_has_safe_nonempty_copy_for_every_key() {

@@ -356,3 +356,22 @@ func TestEnsureDefaultModelPresentInjectsMissing(t *testing.T) {
 		t.Fatalf("duplicate inject: %+v", out2)
 	}
 }
+
+func TestProjectInventoryModelsDoesNotInventCapabilities(t *testing.T) {
+	// Unknown live ids must not advertise tool_call; reasoning only when a wire family exists.
+	info := provider.Info{ID: "p", Name: "P", Models: map[string]provider.Model{}}
+	plain := projectInventoryModels("p", info, true, []string{"mystery-model"}, nil)
+	if len(plain) != 1 || plain[0].ToolCall || plain[0].Reasoning {
+		t.Fatalf("unknown provider should stay capability-conservative: %+v", plain)
+	}
+	codex := projectInventoryModels("ccswitch-codex-abc", info, true, []string{"gpt-5.5"}, nil)
+	if len(codex) != 1 {
+		t.Fatalf("codex live rows: %+v", codex)
+	}
+	if !codex[0].Reasoning || codex[0].ToolCall {
+		t.Fatalf("codex family may claim reasoning for effort UI, not tools: %+v", codex[0])
+	}
+	if len(codex[0].ReasoningEfforts) == 0 {
+		t.Fatalf("codex family should still expose effort ladder: %+v", codex[0])
+	}
+}

@@ -141,6 +141,13 @@ impl TranscriptBlock {
         }
     }
 
+    /// Operator-facing failure reason for the active locale.
+    pub fn localized_failure_reason(&self, locale: Locale) -> Option<String> {
+        self.failure
+            .as_ref()
+            .map(|failure| i18n::localize_operator_failure_reason(locale, &failure.reason))
+    }
+
     fn tool_group_state(&self) -> Option<(ToolKind, usize, bool, usize)> {
         let kind = self.tool_kind?;
         (self.tool_members.len() > 1).then(|| {
@@ -1232,7 +1239,8 @@ fn failure_block_from_event(event: WireEvent) -> Option<TranscriptBlock> {
     ))
 }
 
-/// Defense-in-depth VOICE for older daemons that still emit internal stacks.
+/// Defense-in-depth: strip internal stacks to stable English operator VOICE.
+/// Display localization happens at render via [`i18n::localize_operator_failure_reason`].
 fn humanize_failure_reason(reason: &str) -> String {
     let trimmed = reason.trim();
     if trimmed.is_empty() {
