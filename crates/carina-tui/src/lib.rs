@@ -27,6 +27,7 @@ pub mod product_header;
 pub mod product_projection;
 pub mod render_contract;
 pub mod rpc;
+pub mod semantic_cell;
 pub mod session_browser;
 pub mod startup_diagnostic;
 pub mod sync_output;

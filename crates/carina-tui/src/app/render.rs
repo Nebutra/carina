@@ -33,6 +33,7 @@ use crate::product_header::{HeaderAction, ProductHeader};
 use crate::product_projection::{
     ActivityKind, AgentCategory, ChangeKind, FileChangeKind, ProductStatus,
 };
+use crate::semantic_cell::SemanticCellKind;
 use crate::session_browser::SessionScope;
 use crate::tool_projection::{visible_group_members, visible_output_lines};
 use crate::transcript::{
@@ -1261,9 +1262,7 @@ impl App {
             let reason = model_health_reason_label(locale, health)
                 .map(str::to_owned)
                 .filter(|value| !value.is_empty())
-                .or_else(|| {
-                    (!model.status_reason.is_empty()).then(|| model.status_reason.clone())
-                });
+                .or_else(|| (!model.status_reason.is_empty()).then(|| model.status_reason.clone()));
             if let Some(reason) = reason {
                 detail_lines.push(Line::from(Span::styled(
                     reason,
@@ -2329,6 +2328,7 @@ impl App {
             let relative_index = item.index;
             let index = committed + relative_index;
             let block = &self.blocks[index];
+            let cell_kind = SemanticCellKind::from_block(block);
             let block_area = Rect::new(
                 transcript_x,
                 area.y.saturating_add(
@@ -2344,9 +2344,9 @@ impl App {
             let component = ComponentId::stable("transcript", &block.id);
             let hovered = self.interactions.hovered(component);
             let dimmed = selection_anchor.is_some_and(|anchor| relative_index > anchor);
-            let mut label_style = match block.kind {
-                BlockKind::User => self.theme.transcript_user(),
-                BlockKind::Assistant
+            let mut label_style = match cell_kind {
+                SemanticCellKind::User => self.theme.transcript_user(),
+                SemanticCellKind::Assistant
                     if block.assistant_phase
                         == Some(crate::rpc::AssistantMessagePhase::FinalAnswer) =>
                 {
@@ -2354,11 +2354,15 @@ impl App {
                         .transcript_assistant()
                         .add_modifier(Modifier::BOLD)
                 }
-                BlockKind::Assistant => self.theme.transcript_metadata(),
-                BlockKind::Thinking => self.theme.transcript_thinking(),
-                BlockKind::Tool => self.theme.transcript_tool(),
-                BlockKind::Governance | BlockKind::Diagnostic => self.theme.transcript_danger(),
-                BlockKind::Status => self
+                SemanticCellKind::Assistant => self.theme.transcript_metadata(),
+                SemanticCellKind::Thinking => self.theme.transcript_thinking(),
+                SemanticCellKind::Tool | SemanticCellKind::ToolGroup | SemanticCellKind::Patch => {
+                    self.theme.transcript_tool()
+                }
+                SemanticCellKind::Approval | SemanticCellKind::Failure => {
+                    self.theme.transcript_danger()
+                }
+                SemanticCellKind::Notice => self
                     .theme
                     .transcript_metadata()
                     .add_modifier(Modifier::BOLD),
@@ -2370,10 +2374,12 @@ impl App {
                 && block.assistant_phase == Some(crate::rpc::AssistantMessagePhase::Commentary);
             let text_style = if dimmed || commentary {
                 self.theme.transcript_metadata()
-            } else if block.kind == BlockKind::Thinking {
-                self.theme.transcript_thinking()
             } else {
-                Style::default().fg(self.theme.text)
+                match cell_kind {
+                    SemanticCellKind::Thinking => self.theme.transcript_thinking(),
+                    SemanticCellKind::Notice => self.theme.transcript_metadata(),
+                    _ => Style::default().fg(self.theme.text),
+                }
             };
             let accent = label_style.fg.unwrap_or(self.theme.text);
             let transcript_styles = TranscriptStyles {
@@ -2418,10 +2424,10 @@ impl App {
             };
             // Chrome lives in the outer gutter. It may recolor without ever
             // consuming a content cell or changing the wrap width.
-            let outer_chrome_owned = block.kind != BlockKind::Tool;
+            let outer_chrome_owned = !cell_kind.owns_internal_rail();
             let chrome_color = if block.selected
                 || outer_chrome_owned && (hovered || block.is_collapsible())
-                || matches!(block.kind, BlockKind::Governance | BlockKind::Diagnostic)
+                || cell_kind.is_risk()
             {
                 accent
             } else {
@@ -4643,10 +4649,8 @@ impl App {
                         } else {
                             item.priority.as_str()
                         };
-                        let row = format!(
-                            "{marker} [{priority}] {}  {}",
-                            item.steer_id, item.preview
-                        );
+                        let row =
+                            format!("{marker} [{priority}] {}  {}", item.steer_id, item.preview);
                         let style = if index == queue.selected {
                             self.theme.selected()
                         } else {
@@ -5632,7 +5636,8 @@ fn transcript_lines_with_tool_key(
         link: link_style,
         headings,
     } = styles;
-    if block.kind == BlockKind::User {
+    let cell_kind = SemanticCellKind::from_block(block);
+    if cell_kind == SemanticCellKind::User {
         let marker = if block.user_kind == UserBlockKind::Steer {
             glyphs.steer()
         } else {
@@ -5663,7 +5668,7 @@ fn transcript_lines_with_tool_key(
             .chain(body.map(|line| Line::from(Span::styled(line.to_owned(), text_style))));
         return wrap_styled_lines(logical_lines, usize::from(content_width), &prefix);
     }
-    if block.kind == BlockKind::Assistant {
+    if cell_kind == SemanticCellKind::Assistant {
         let prefix = transcript_role_prefix(
             glyphs.role_prefix(),
             tr(locale, MessageId::TranscriptCarina),
@@ -5701,13 +5706,14 @@ fn transcript_lines_with_tool_key(
         };
         let logical_lines = [
             Line::from(vec![
-                Span::styled(format!("{}  ", glyphs.failure()), removed_style),
+                Span::styled(glyphs.failure_prefix(), removed_style),
                 Span::styled(
                     block.title.clone(),
                     removed_style.add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
+                Span::styled(glyphs.tool_gutter(), metadata_style),
                 Span::styled(
                     format!("{}  ", tr(locale, MessageId::Agent)),
                     metadata_style,
@@ -5715,6 +5721,7 @@ fn transcript_lines_with_tool_key(
                 Span::styled(failure.owner.clone(), text_style),
             ]),
             Line::from(vec![
+                Span::styled(glyphs.tool_gutter(), metadata_style),
                 Span::styled(
                     format!("{}  ", tr(locale, MessageId::Reason)),
                     metadata_style,
@@ -5724,7 +5731,10 @@ fn transcript_lines_with_tool_key(
                     metadata_style,
                 ),
             ]),
-            Line::from(Span::styled(action, label_style)),
+            Line::from(vec![
+                Span::styled(glyphs.tool_gutter(), metadata_style),
+                Span::styled(action, label_style),
+            ]),
         ];
         return wrap_styled_lines(
             logical_lines,
@@ -5739,10 +5749,17 @@ fn transcript_lines_with_tool_key(
         } else {
             glyphs.disclosure_closed()
         }
-    } else if block.kind == BlockKind::Tool {
-        glyphs.bullet_prefix()
     } else {
-        ""
+        match cell_kind {
+            SemanticCellKind::Approval => glyphs.warning_prefix(),
+            SemanticCellKind::Failure => glyphs.failure_prefix(),
+            SemanticCellKind::Thinking
+            | SemanticCellKind::Tool
+            | SemanticCellKind::ToolGroup
+            | SemanticCellKind::Patch
+            | SemanticCellKind::Notice => glyphs.bullet_prefix(),
+            SemanticCellKind::User | SemanticCellKind::Assistant => "",
+        }
     };
     let label = if block.kind == BlockKind::Tool {
         ""
@@ -5766,10 +5783,7 @@ fn transcript_lines_with_tool_key(
         ),
     ];
     if let Some(target) = dim_target {
-        title_spans.push(Span::styled(
-            format!("  {target}"),
-            metadata_style,
-        ));
+        title_spans.push(Span::styled(format!("  {target}"), metadata_style));
     }
     title_spans.push(Span::styled(
         if block.additions == 0 {
@@ -5813,12 +5827,13 @@ fn transcript_lines_with_tool_key(
             false,
         ));
     } else if block.expanded && !block.body.is_empty() {
-        lines.extend(
-            block
-                .body
-                .split('\n')
-                .map(|line| styled_detail_line(line, block.body_kind, styles)),
-        );
+        lines.extend(block.body.split('\n').map(|line| {
+            let mut detail = styled_detail_line(line, block.body_kind, styles);
+            detail
+                .spans
+                .insert(0, Span::styled(glyphs.tool_gutter(), metadata_style));
+            detail
+        }));
     }
     lines
 }
@@ -6009,7 +6024,6 @@ struct StyledDiffWindow {
     lines: Vec<Line<'static>>,
     visible_lines: usize,
     omitted_lines: usize,
-    hard_capped: bool,
     total_bytes: usize,
 }
 
@@ -6162,7 +6176,6 @@ fn styled_diff_lines(body: &str, styles: TranscriptStyles, expanded: bool) -> St
         lines,
         visible_lines,
         omitted_lines: rendered.omitted_lines,
-        hard_capped: rendered.hard_capped,
         total_bytes: rendered.total_bytes,
     }
 }
@@ -6834,6 +6847,156 @@ mod transcript_tests {
             .collect()
     }
 
+    fn rendered_frame_text(buffer: &ratatui::buffer::Buffer) -> String {
+        let area = buffer.area;
+        let mut rows = Vec::with_capacity(area.height as usize);
+        for y in area.y..area.bottom() {
+            let mut row = String::new();
+            let mut x = area.x;
+            while x < area.right() {
+                let symbol = buffer[(x, y)].symbol();
+                row.push_str(symbol);
+                x = x.saturating_add(UnicodeWidthStr::width(symbol).max(1) as u16);
+            }
+            rows.push(row.trim_end().to_owned());
+        }
+        while rows.last().is_some_and(String::is_empty) {
+            rows.pop();
+        }
+        format!("size={}x{}\n{}\n", area.width, area.height, rows.join("\n"))
+    }
+
+    #[test]
+    fn semantic_cell_gallery_120_uses_production_renderer() {
+        let mut user = block(
+            BlockKind::User,
+            "Refactor the transcript without hiding risk.",
+        );
+        user.id = "gallery:user".into();
+        user.status.clear();
+
+        let mut assistant = block(
+            BlockKind::Assistant,
+            "I will keep routine work quiet and reviewable changes visible.",
+        );
+        assistant.id = "gallery:assistant".into();
+        assistant.status.clear();
+        assistant.assistant_phase = Some(crate::rpc::AssistantMessagePhase::FinalAnswer);
+
+        let mut thinking = block(
+            BlockKind::Thinking,
+            "Mapping lifecycle owners and render paths.",
+        );
+        thinking.id = "gallery:thinking".into();
+        thinking.title = "Inspecting the projection boundary".into();
+        thinking.status.clear();
+        thinking.collapsible = true;
+        thinking.expanded = true;
+
+        let mut tool = block(BlockKind::Tool, "");
+        tool.id = "gallery:tool".into();
+        tool.tool_kind = Some(crate::tool_projection::ToolKind::Read);
+        tool.title =
+            crate::tool_projection::format_tool_title("Read", "Inspect the semantic cell contract");
+        tool.status = "completed".into();
+        tool.collapsible = false;
+        tool.tool_members = vec![tool_member(
+            "gallery:tool",
+            "src/semantic_cell.rs",
+            "completed",
+            "completed",
+            "",
+        )];
+
+        let mut group = read_group(
+            vec![
+                tool_member("gallery:group-1", "src/transcript.rs", "", "completed", ""),
+                tool_member("gallery:group-2", "src/app/render.rs", "", "completed", ""),
+            ],
+            true,
+        );
+        group.id = "gallery:group".into();
+
+        let mut approval = block(BlockKind::Governance, "cargo test --workspace");
+        approval.id = "gallery:approval".into();
+        approval.title = "Shell command needs approval".into();
+        approval.status = "waiting".into();
+        approval.collapsible = false;
+
+        let mut patch = block(
+            BlockKind::Tool,
+            "--- /dev/null\n+++ b/src/semantic_cell.rs\n+pub enum SemanticCellKind {}",
+        );
+        patch.id = "gallery:patch".into();
+        patch.tool_kind = Some(crate::tool_projection::ToolKind::Patch);
+        patch.title = crate::tool_projection::format_tool_title("Edit", "Add typed skeletons");
+        patch.body_kind = BlockBodyKind::Diff;
+        patch.additions = 1;
+        patch.deletions = 0;
+        patch.status = "applied".into();
+        patch.collapsible = true;
+        patch.expanded = false;
+
+        let mut failure = block(BlockKind::Diagnostic, "");
+        failure.id = "gallery:failure".into();
+        failure.run_id = "run-failure".into();
+        failure.title = "Response failed".into();
+        failure.status.clear();
+        failure.failure = Some(crate::transcript::FailurePresentation {
+            kind: crate::transcript::FailureKind::Failed,
+            action: FailureAction::Retry,
+            owner: "Carina".into(),
+            reason: "The provider stopped before returning a complete response".into(),
+            source_event_id: "event-failure".into(),
+            run_id: "run-failure".into(),
+        });
+
+        let mut notice = block(
+            BlockKind::Diagnostic,
+            "Older routine tool detail was summarized.",
+        );
+        notice.id = "gallery:notice".into();
+        notice.title = "Context compacted".into();
+        notice.status.clear();
+        notice.collapsible = false;
+
+        let blocks = vec![
+            user, assistant, thinking, tool, group, approval, patch, failure, notice,
+        ];
+        assert_eq!(
+            blocks
+                .iter()
+                .map(SemanticCellKind::from_block)
+                .collect::<Vec<_>>(),
+            vec![
+                SemanticCellKind::User,
+                SemanticCellKind::Assistant,
+                SemanticCellKind::Thinking,
+                SemanticCellKind::Tool,
+                SemanticCellKind::ToolGroup,
+                SemanticCellKind::Approval,
+                SemanticCellKind::Patch,
+                SemanticCellKind::Failure,
+                SemanticCellKind::Notice,
+            ]
+        );
+
+        let (mut app, root, server) = production_render_app();
+        app.theme.glyphs = Glyphs::new(crate::glyphs::GlyphMode::Unicode);
+        app.blocks = blocks;
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| app.render_transcript(frame, frame.area()))
+            .unwrap();
+        insta::assert_snapshot!(
+            "semantic_cell_gallery_120",
+            rendered_frame_text(terminal.backend().buffer())
+        );
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn cjk_modal_button_hit_region_matches_visible_cells() {
         let area = Rect::new(10, 4, 30, 1);
@@ -6918,7 +7081,12 @@ mod transcript_tests {
         for width in [80, 120, 160] {
             let lines = transcript_lines(&failure, Locale::ZhHans, styles, width);
             let visible = plain(&lines);
-            assert!(visible[0].starts_with("x  "));
+            assert!(visible[0].starts_with(styles.glyphs.failure_prefix()));
+            assert!(
+                visible[1..]
+                    .iter()
+                    .all(|line| line.starts_with(styles.glyphs.tool_gutter()))
+            );
             assert!(
                 visible
                     .iter()
@@ -7561,12 +7729,11 @@ mod transcript_tests {
                 .add_modifier
                 .contains(Modifier::DIM | Modifier::ITALIC)
         );
-        assert!(
-            lines[1].spans[0]
-                .style
+        assert!(lines[1].spans.iter().any(|span| {
+            span.style
                 .add_modifier
                 .contains(Modifier::DIM | Modifier::ITALIC)
-        );
+        }));
         assert_eq!(
             lines[0].spans.last().unwrap().style,
             theme.transcript_metadata()

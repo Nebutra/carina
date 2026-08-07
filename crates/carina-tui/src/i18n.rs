@@ -2603,12 +2603,7 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
         ],
         StatusCancelled => ["キャンセル済み", "취소됨", "cancelado", "annulé"],
         StatusFailed => ["失敗", "실패", "fallido", "échec"],
-        StatusDegraded => [
-            "一部完了",
-            "부분 완료",
-            "parcial",
-            "partiel",
-        ],
+        StatusDegraded => ["一部完了", "부분 완료", "parcial", "partiel"],
         StatusUnknown => [
             "不明な状態 ({status})",
             "알 수 없는 상태 ({status})",
@@ -5895,13 +5890,8 @@ mod tests {
             let running_two = tool_group_title(locale, ToolKind::Read, 2, true, &[]);
             let settled_one = tool_group_title(locale, ToolKind::Read, 1, false, &[]);
             let settled_two = tool_group_title(locale, ToolKind::Read, 2, false, &[]);
-            let with_paths = tool_group_title(
-                locale,
-                ToolKind::Read,
-                5,
-                false,
-                &["a.rs", "b.rs", "c.rs"],
-            );
+            let with_paths =
+                tool_group_title(locale, ToolKind::Read, 5, false, &["a.rs", "b.rs", "c.rs"]);
             for (value, count) in [
                 (&running_one, '1'),
                 (&running_two, '2'),

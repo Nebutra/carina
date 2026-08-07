@@ -2,10 +2,10 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use serde_json::Value;
 
+use crate::i18n::MessageId;
 use crate::rpc::{
     AssistantMessagePhase, AssistantMessageUpdate, ExecutionLifecycle, SessionItemEvent, WireEvent,
 };
-use crate::i18n::MessageId;
 use crate::tool_projection::{TodoItem, ToolFacts, ToolKind, present as present_tool};
 use crate::{i18n, i18n::Locale};
 
@@ -292,7 +292,12 @@ impl TranscriptReducer {
             | "FileWriteProposed"
             | "ToolRequested"
             | "ToolApproved"
-            | "ToolDenied" => false,
+            | "ToolDenied"
+            // OverlayStack is the single live/replay owner for pending
+            // governance input. Transcript receipts would duplicate the
+            // actionable surface and diverge from hydrated history.
+            | "permission.request"
+            | "user.question" => false,
             "ToolCallRequested"
             | "ToolCallStarted"
             | "ToolCallApprovalRequired"
@@ -1259,7 +1264,8 @@ fn humanize_failure_reason(reason: &str) -> String {
         || lower.starts_with("reasoner failed:")
     {
         if lower.contains("credential") || lower.contains("authentication") {
-            return "The model provider rejected the credential. Check the provider credential.".into();
+            return "The model provider rejected the credential. Check the provider credential."
+                .into();
         }
         if lower.contains("rate") || lower.contains("quota") {
             return "The model provider rate-limited or quota-blocked the request. Wait or choose another provider.".into();
@@ -1499,8 +1505,14 @@ fn tool_blocks_are_groupable(existing: &TranscriptBlock, incoming: &TranscriptBl
     // Fail/cancel never join a success group (and a failed group never absorbs
     // later successes). Diff-bearing kinds still group with peers but always
     // expand via preserve_group_state; they must not hide under a success seal.
-    let existing_has_failure = existing.tool_members.iter().any(ToolGroupMember::is_failure);
-    let incoming_has_failure = incoming.tool_members.iter().any(ToolGroupMember::is_failure);
+    let existing_has_failure = existing
+        .tool_members
+        .iter()
+        .any(ToolGroupMember::is_failure);
+    let incoming_has_failure = incoming
+        .tool_members
+        .iter()
+        .any(ToolGroupMember::is_failure);
     if existing_has_failure || incoming_has_failure {
         return false;
     }
@@ -1976,9 +1988,9 @@ fn first_display<const N: usize>(values: [String; N]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::tool_projection::format_tool_title;
     use super::*;
     use crate::rpc::SessionItem;
+    use crate::tool_projection::format_tool_title;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -2187,7 +2199,10 @@ tool:read-5 | title=[src/file-5.rs] | status=[] | body=[]
         reducer.reduce_event(&mut blocks, wire("ToolCallRequested", requested.clone()));
         reducer.reduce_event(&mut blocks, wire("ToolCallCompleted", completed));
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].title, format_tool_title("Read", "Understand the transcript reducer"));
+        assert_eq!(
+            blocks[0].title,
+            format_tool_title("Read", "Understand the transcript reducer")
+        );
         assert_eq!(blocks[0].tool_members[0].title, "src/transcript.rs");
 
         let hydrated =
@@ -2244,7 +2259,10 @@ tool:read-2 | title=[src/running.rs] | status=[pending] | body=[]
             "Read ×2 · src/ready.rs, src/running.rs"
         );
         assert_eq!(blocks[0].localized_status(Locale::En), "1 failed");
-        assert!(blocks[0].expanded, "failure must break the collapsed success seal");
+        assert!(
+            blocks[0].expanded,
+            "failure must break the collapsed success seal"
+        );
         assert_eq!(blocks[0].tool_members[1].body, "permission denied");
         insta::assert_snapshot!(group_snapshot(&blocks[0]), @r"
 id=tool:read-1 title=Read ×2 · src/ready.rs, src/running.rs status=1 failed expanded=true
@@ -2500,6 +2518,25 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             ),
         ]);
 
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn live_governance_events_are_state_not_conversation_content() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        for event in [
+            wire(
+                "permission.request",
+                json!({"decision_id":"approval-1","label":"Run tests"}),
+            ),
+            wire(
+                "user.question",
+                json!({"question_id":"question-1","prompt":"Continue?"}),
+            ),
+        ] {
+            assert!(!reducer.reduce_event(&mut blocks, event));
+        }
         assert!(blocks.is_empty());
     }
 
@@ -3152,7 +3189,10 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         ];
         let blocks = reducer.hydrate(items);
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].title, format_tool_title("Search", "TranscriptReducer"));
+        assert_eq!(
+            blocks[0].title,
+            format_tool_title("Search", "TranscriptReducer")
+        );
         assert_eq!(blocks[0].status, "");
         assert!(!blocks[0].is_collapsible());
     }
@@ -3170,10 +3210,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
 
         let mut reducer = TranscriptReducer::default();
         let mut blocks = Vec::new();
-        assert!(reducer.reduce_event(
-            &mut blocks,
-            wire("ModelResponded", json!({"text": raw})),
-        ));
+        assert!(reducer.reduce_event(&mut blocks, wire("ModelResponded", json!({"text": raw})),));
         assert_eq!(blocks.len(), 1);
         let body = &blocks[0].body;
         assert!(
@@ -3445,7 +3482,10 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         assert_eq!(blocks[0].title, format_tool_title("Edit", "src/lib.rs"));
         assert_eq!(blocks[0].status, "applied");
         assert!(blocks[0].body.contains("pub fn ready"));
-        assert!(!blocks[0].expanded, "hydrated successful edits stay collapsed");
+        assert!(
+            !blocks[0].expanded,
+            "hydrated successful edits stay collapsed"
+        );
     }
 
     #[test]
@@ -3491,6 +3531,8 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
 
     #[test]
     fn live_and_hydrated_sequences_have_the_same_component_identity_tree() {
+        use crate::semantic_cell::SemanticCellKind;
+
         let mut live_reducer = TranscriptReducer::default();
         let mut live = Vec::new();
         for event in [
@@ -3540,6 +3582,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
                         block.kind,
                         block.assistant_phase,
                         block.tool_kind,
+                        SemanticCellKind::from_block(block),
                     )
                 })
                 .collect::<Vec<_>>()

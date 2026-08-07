@@ -57,6 +57,7 @@ States:
 | Follow-up queue inspect | **wired** | `/queue` overlay; `execution.queue.list` truncated preview; `execution.queue.drop`; durable depth footer | ISSUE-007 residual R7 |
 | Tool row intent-first grammar | **wired** | Fixed 6-cell kind label; intent primary; dim technical target on single-tool rows; `format_tool_title` | V001 visual density |
 | Success-read collapse language | **wired** | Title-only `Read ×N · path…`; expand restores members; fail/cancel never join success groups | V002 visual density |
+| Semantic transcript cell skeletons | **wired** | Pure typed `SemanticCellKind`; production 120-column gallery; governance remains overlay-owned | V003 visual density |
 | Assistant content-type channel | **wired** | action JSON suppressed (`tool=done`→summary); whole-body JSON → pretty `json` markdown fence; else prose/markdown | transcript projection |
 | Managed-proxy context window alias | **wired** | `ccswitch-*/model` resolves via openai/azure catalog; footer uses real window not 32k guess | daemon compaction_budget |
 | Operator-facing reasoner failures | **wired** | degrade/ExecutionFailed reasons VOICE-ized; stacks stay on RoutingOutcome | daemon agent/reasoner |

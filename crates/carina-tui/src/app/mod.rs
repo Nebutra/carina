@@ -55,8 +55,7 @@ use crate::native_scrollback::{
 };
 use crate::overlay::{
     AgentDashboardOverlay, ApprovalScope, ChangesOverlay, HelpOverlay, Overlay, OverlayStack,
-    PlanReviewOverlay,
-    QueueOverlay, RetainedLoad, SettingsOverlay, StatusOverlay,
+    PlanReviewOverlay, QueueOverlay, RetainedLoad, SettingsOverlay, StatusOverlay,
 };
 use crate::prerequisite::ProviderPickerState;
 use crate::product_projection::ProductProjection;
@@ -4135,10 +4134,8 @@ impl App {
                 }));
             }
             Err(error) => {
-                self.notice = Notice::localized_with(
-                    MessageId::CancelFailed,
-                    [("error", error.to_string())],
-                );
+                self.notice =
+                    Notice::localized_with(MessageId::CancelFailed, [("error", error.to_string())]);
             }
         }
     }
@@ -4669,10 +4666,7 @@ impl App {
                                             }
                                             self.notice = Notice::localized_with(
                                                 MessageId::QueueDropped,
-                                                [(
-                                                    "remaining",
-                                                    result.queue_depth.to_string(),
-                                                )],
+                                                [("remaining", result.queue_depth.to_string())],
                                             );
                                         }
                                     }
@@ -6486,10 +6480,8 @@ pub fn run(options: Options) -> Result<Outcome> {
     app.options.screen_mode = Some(terminal.mode);
     if terminal.mode == ScreenMode::Inline && app.options.screen_handoff.is_none() {
         let reason = inline_force_reason(app.options.alt_screen);
-        app.notice = Notice::localized_with(
-            MessageId::ScreenModeForcedInline,
-            [("reason", reason)],
-        );
+        app.notice =
+            Notice::localized_with(MessageId::ScreenModeForcedInline, [("reason", reason)]);
     }
     let hyperlink_support = HyperlinkSupport::detect();
     let input_tx = app.async_tx.clone();

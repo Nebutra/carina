@@ -114,7 +114,7 @@ pub fn visible_group_members(total: usize, expanded: bool) -> VisibleCount {
         }
     } else {
         VisibleCount {
-            visible: COLLAPSED_TOOL_GROUP_MEMBER_LIMIT.min(total),
+            visible: COLLAPSED_TOOL_GROUP_MEMBER_LIMIT,
             omitted: 0,
         }
     }
@@ -140,9 +140,7 @@ fn visible_count(total: usize, expanded: bool, collapsed_limit: usize) -> Visibl
 ///
 /// Truncation / ellipsis / separator copy is applied by
 /// [`crate::i18n::tool_group_title`] so product glyphs stay on the i18n boundary.
-pub fn tool_group_path_titles<'a>(
-    titles: impl IntoIterator<Item = &'a str>,
-) -> Vec<&'a str> {
+pub fn tool_group_path_titles<'a>(titles: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
     titles
         .into_iter()
         .map(str::trim)
@@ -254,11 +252,7 @@ pub fn present(facts: &ToolFacts, failed: bool) -> ToolPresentation {
     };
     let intent = facts.intent.trim();
     let intent_primary = !intent.is_empty();
-    let primary = if intent_primary {
-        intent
-    } else {
-        target
-    };
+    let primary = if intent_primary { intent } else { target };
     let label = kind.label().to_owned();
     let title = format_tool_title(&label, primary);
     let body = match kind {

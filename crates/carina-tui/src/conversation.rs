@@ -506,10 +506,7 @@ mod tests {
             localized_execution_status(Locale::ZhHans, "degraded"),
             "部分完成"
         );
-        assert_eq!(
-            localized_execution_status(Locale::En, "unknown"),
-            "ready"
-        );
+        assert_eq!(localized_execution_status(Locale::En, "unknown"), "ready");
     }
 
     #[test]

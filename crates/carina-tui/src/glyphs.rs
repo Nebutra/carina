@@ -99,7 +99,9 @@ impl GlyphPair {
 const PROMPT: GlyphPair = GlyphPair::new("❯ ", "> ", 2);
 const SUCCESS: GlyphPair = GlyphPair::new("✓", "+", 1);
 const FAILURE: GlyphPair = GlyphPair::new("✗", "x", 1);
+const FAILURE_PREFIX: GlyphPair = GlyphPair::new("✗ ", "x ", 2);
 const WARNING: GlyphPair = GlyphPair::new("!", "!", 1);
+const WARNING_PREFIX: GlyphPair = GlyphPair::new("! ", "! ", 2);
 const BULLET: GlyphPair = GlyphPair::new("•", "*", 1);
 const BULLET_PREFIX: GlyphPair = GlyphPair::new("• ", "* ", 2);
 const READY: GlyphPair = GlyphPair::new("●", "*", 1);
@@ -171,7 +173,9 @@ const ALL: &[GlyphPair] = &[
     PROMPT,
     SUCCESS,
     FAILURE,
+    FAILURE_PREFIX,
     WARNING,
+    WARNING_PREFIX,
     BULLET,
     BULLET_PREFIX,
     READY,
@@ -244,8 +248,14 @@ impl Glyphs {
     pub fn failure(self) -> &'static str {
         self.get(FAILURE)
     }
+    pub fn failure_prefix(self) -> &'static str {
+        self.get(FAILURE_PREFIX)
+    }
     pub fn warning(self) -> &'static str {
         self.get(WARNING)
+    }
+    pub fn warning_prefix(self) -> &'static str {
+        self.get(WARNING_PREFIX)
     }
     pub fn bullet(self) -> &'static str {
         self.get(BULLET)
@@ -449,6 +459,8 @@ mod tests {
             assert_eq!(UnicodeWidthStr::width(glyphs.disclosure_closed()), 2);
             assert_eq!(UnicodeWidthStr::width(glyphs.role_prefix()), 2);
             assert_eq!(UnicodeWidthStr::width(glyphs.tool_gutter()), 2);
+            assert_eq!(UnicodeWidthStr::width(glyphs.failure_prefix()), 2);
+            assert_eq!(UnicodeWidthStr::width(glyphs.warning_prefix()), 2);
             assert_eq!(
                 UnicodeWidthStr::width(glyphs.selected()),
                 UnicodeWidthStr::width("  ")
