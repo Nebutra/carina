@@ -102,6 +102,9 @@ jobs:
       - name: Cargo test (capability kernel)
         run: cargo test --workspace
 
+      - name: TUI visual density contract
+        run: make visual-density-gate
+
       - name: Build Rust runtime components
         run: cargo build --release -p carina-kernel --bin carina-kernel-service -p carina-tui --bin carina-ui
 

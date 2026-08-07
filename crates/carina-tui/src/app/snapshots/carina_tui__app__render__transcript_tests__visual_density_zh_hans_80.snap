@@ -1,0 +1,63 @@
+---
+source: crates/carina-tui/src/app/render.rs
+expression: rendered
+---
+size=80x40
+ • 你      重构会话记录，但不能隐藏风险。
+
+ • Carina  我会让常规操作保持安静，同时让可审阅的改动清晰可见，并在窄屏和宽屏上
+           保留批准、补丁与失败证据。
+
+ ▾ 思考  检查投影边界
+ │ 正在映射生命周期所有权与渲染路径。
+ • Read    检查语义单元契约  src/semantic_cell.rs
+ ▾ 已读取 ×2 · src/transcript.rs, src/app/render.rs
+ │ src/transcript.rs
+ │ src/app/render.rs
+
+ ! 操作  Shell 命令需要批准  等待批准
+ │ cargo test --workspace
+
+ ▸ Edit    添加类型化骨架  +1  applied
+ │ src/semantic_cell.rs
+ │ +1 · new file
+ │    1 pub enum SemanticCellKind {}
+
+ ✗ 响应失败
+ │ Agent  Carina
+ │ 原因  模型服务商在返回完整响应前停止了
+ │ [Alt-R] 重试  [Alt-C] ID
+
+ • 诊断  上下文已压缩
+ │ 较早的常规工具详情已被摘要。
+styles:
+(1,0)..(11,0) (Rgb(195, 202, 198), Rgb(38, 43, 44), BOLD)
+(11,0)..(79,0) (Reset, Rgb(38, 43, 44), NONE)
+(1,2)..(11,2) (Rgb(142, 219, 210), Reset, BOLD)
+(1,3)..(11,3) (Rgb(90, 101, 99), Reset, NONE)
+(1,5)..(21,5) (Rgb(90, 101, 99), Reset, DIM | ITALIC)
+(1,6)..(3,6) (Rgb(90, 101, 99), Reset, NONE)
+(3,6)..(37,6) (Rgb(90, 101, 99), Reset, DIM | ITALIC)
+(1,7)..(3,7) (Rgb(195, 202, 198), Reset, BOLD)
+(27,7)..(49,7) (Rgb(90, 101, 99), Reset, NONE)
+(1,8)..(3,8) (Rgb(195, 202, 198), Reset, BOLD)
+(1,9)..(3,9) (Rgb(90, 101, 99), Reset, NONE)
+(1,10)..(3,10) (Rgb(90, 101, 99), Reset, NONE)
+(1,12)..(7,12) (Rgb(255, 124, 120), Reset, BOLD)
+(27,12)..(37,12) (Rgb(90, 101, 99), Reset, NONE)
+(1,13)..(3,13) (Rgb(90, 101, 99), Reset, NONE)
+(1,15)..(3,15) (Rgb(232, 168, 95), Reset, BOLD)
+(25,15)..(29,15) (Rgb(142, 219, 210), Reset, NONE)
+(29,15)..(38,15) (Rgb(90, 101, 99), Reset, NONE)
+(1,16)..(3,16) (Rgb(90, 101, 99), Reset, NONE)
+(1,17)..(16,17) (Rgb(90, 101, 99), Reset, NONE)
+(1,18)..(8,18) (Rgb(90, 101, 99), Reset, NONE)
+(1,20)..(3,20) (Rgb(255, 124, 120), Reset, NONE)
+(3,20)..(11,20) (Rgb(255, 124, 120), Reset, BOLD)
+(1,21)..(10,21) (Rgb(90, 101, 99), Reset, NONE)
+(1,22)..(41,22) (Rgb(90, 101, 99), Reset, NONE)
+(1,23)..(3,23) (Rgb(90, 101, 99), Reset, NONE)
+(3,23)..(27,23) (Rgb(255, 124, 120), Reset, BOLD)
+(1,25)..(7,25) (Rgb(90, 101, 99), Reset, BOLD)
+(7,25)..(21,25) (Rgb(90, 101, 99), Reset, NONE)
+(1,26)..(31,26) (Rgb(90, 101, 99), Reset, NONE)

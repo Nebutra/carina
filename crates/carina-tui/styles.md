@@ -62,7 +62,9 @@ neither state changes wrapping, retained heights, nor pointer hit geometry.
 The main transcript uses no more than three saturated foreground hues at once:
 
 - `ion-cyan`: assistant identity, links, headings, and added-line emphasis;
-- `copper-amber`: tool activity and warning emphasis;
+- `copper-amber`: active tool, review, and warning emphasis; settled routine
+  tool receipts return to `gray_bright` so completed operations do not compete
+  with live work or risk;
 - `event-red`: governance, diagnostics, destructive/error state, and removals.
 
 User identity is `gray_bright`, never the interaction accent. Assistant identity

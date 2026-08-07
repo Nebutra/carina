@@ -1,4 +1,4 @@
-.PHONY: all install uninstall go rust-ui rust-ui-e2e rust-ui-native-clipboard-e2e rust zig sdk-ts test rust-test go-test brand-check zh-hant-check docs-build quality-check swarm-integration-test bench-gate-test audit-bench tui-bench bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test residual-ux-gate clean
+.PHONY: all install uninstall go rust-ui rust-ui-e2e rust-ui-native-clipboard-e2e rust zig sdk-ts test rust-test go-test brand-check zh-hant-check docs-build quality-check swarm-integration-test bench-gate-test audit-bench tui-bench bench release-check release-preflight release-ready release-preflight-test release-package integration-package homebrew-formula-test homebrew-install-test platform-smoke vscode-test residual-ux-gate visual-density-gate clean
 
 PREFIX ?= $(HOME)/.local
 BINDIR = $(PREFIX)/bin
@@ -110,6 +110,15 @@ residual-ux-gate:
 	cargo test -p carina-tui --lib screen_mode -- --nocapture
 	cargo test -p carina-tui --lib keybinding -- --nocapture
 	cargo test -p carina-tui --lib i18n -- --nocapture
+
+# Production-renderer visual contract: typed transcript matrix plus terminal,
+# palette, and source-boundary checks. This target never updates snapshots.
+visual-density-gate:
+	cargo test -p carina-tui --lib semantic_cell -- --nocapture
+	cargo test -p carina-tui --lib visual_density -- --nocapture
+	cargo test -p carina-tui --lib theme::tests::transcript -- --nocapture
+	cargo test -p carina-tui --test golden_frames -- --nocapture
+	cargo test -p carina-tui --test style_discipline -- --nocapture
 
 release-check:
 	./scripts/release-check.sh

@@ -3,29 +3,29 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered_frame_text(terminal.backend().buffer())
 ---
 size=120x40
-│• You     Refactor the transcript without hiding risk.
+ • You     Refactor the transcript without hiding risk.
 
-│• Carina  I will keep routine work quiet and reviewable changes visible.
+ • Carina  I will keep routine work quiet and reviewable changes visible across every supported terminal width.
 
-│▾ Thinking  Inspecting the projection boundary
-││ Mapping lifecycle owners and render paths.
-│• Read    Inspect the semantic cell contract  src/semantic_cell.rs  completed
-│▾ Read ×2 · src/transcript.rs, src/app/render.rs
-││ src/transcript.rs
-││ src/app/render.rs
+ ▾ Thinking  Inspecting the projection boundary
+ │ Mapping lifecycle owners and render paths.
+ • Read    Inspect the semantic cell contract  src/semantic_cell.rs
+ ▾ Read ×2 · src/transcript.rs, src/app/render.rs
+ │ src/transcript.rs
+ │ src/app/render.rs
 
-│! Action  Shell command needs approval  waiting
-││ cargo test --workspace
+ ! Action  Shell command needs approval  waiting for approval
+ │ cargo test --workspace
 
-│▸ Edit    Add typed skeletons  +1  applied
-││ src/semantic_cell.rs
-││ +1 · new file
-││    1 pub enum SemanticCellKind {}
+ ▸ Edit    Add typed skeletons  +1  applied
+ │ src/semantic_cell.rs
+ │ +1 · new file
+ │    1 pub enum SemanticCellKind {}
 
-│✗ Response failed
-││ Agent  Carina
-││ Reason  The provider stopped before returning a complete response
-││ [Alt-R] Retry  [Alt-C] ID
+ ✗ Response failed
+ │ Agent  Carina
+ │ Reason  The provider stopped before returning a complete response
+ │ [Alt-R] Retry  [Alt-C] ID
 
-│• Diagnostic  Context compacted
-││ Older routine tool detail was summarized.
+ • Diagnostic  Context compacted
+ │ Older routine tool detail was summarized.

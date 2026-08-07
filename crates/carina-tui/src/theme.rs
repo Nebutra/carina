@@ -347,6 +347,9 @@ impl Theme {
             .fg(self.warning)
             .add_modifier(Modifier::BOLD)
     }
+    pub fn transcript_tool_settled(self) -> Style {
+        self.bright_muted().add_modifier(Modifier::BOLD)
+    }
     pub fn transcript_danger(self) -> Style {
         Style::default()
             .fg(self.danger)
@@ -679,6 +682,8 @@ mod tests {
             assert_eq!(theme.transcript_assistant().fg, Some(theme.accent));
             assert_ne!(theme.transcript_assistant().fg, Some(theme.success));
             assert_eq!(theme.transcript_metadata().fg, Some(theme.gray_dim));
+            assert_eq!(theme.transcript_tool().fg, Some(theme.warning));
+            assert_eq!(theme.transcript_tool_settled().fg, Some(theme.gray_bright));
             assert!(
                 theme
                     .transcript_thinking()

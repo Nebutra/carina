@@ -1,0 +1,61 @@
+---
+source: crates/carina-tui/src/app/render.rs
+expression: rendered
+---
+size=120x40
+ • You     Refactor the transcript without hiding risk.
+
+ • Carina  I will keep routine work quiet and reviewable changes visible across every supported terminal width.
+
+ ▾ Thinking  Inspecting the projection boundary
+ │ Mapping lifecycle owners and render paths.
+ • Read    Inspect the semantic cell contract  src/semantic_cell.rs
+ ▾ Read ×2 · src/transcript.rs, src/app/render.rs
+ │ src/transcript.rs
+ │ src/app/render.rs
+
+ ! Action  Shell command needs approval  waiting for approval
+ │ cargo test --workspace
+
+ ▸ Edit    Add typed skeletons  +1  applied
+ │ src/semantic_cell.rs
+ │ +1 · new file
+ │    1 pub enum SemanticCellKind {}
+
+ ✗ Response failed
+ │ Agent  Carina
+ │ Reason  The provider stopped before returning a complete response
+ │ [Alt-R] Retry  [Alt-C] ID
+
+ • Diagnostic  Context compacted
+ │ Older routine tool detail was summarized.
+styles:
+(1,0)..(11,0) (Rgb(195, 202, 198), Rgb(38, 43, 44), BOLD)
+(11,0)..(119,0) (Reset, Rgb(38, 43, 44), NONE)
+(1,2)..(11,2) (Rgb(142, 219, 210), Reset, BOLD)
+(1,4)..(47,4) (Rgb(90, 101, 99), Reset, DIM | ITALIC)
+(1,5)..(3,5) (Rgb(90, 101, 99), Reset, NONE)
+(3,5)..(45,5) (Rgb(90, 101, 99), Reset, DIM | ITALIC)
+(1,6)..(3,6) (Rgb(195, 202, 198), Reset, BOLD)
+(45,6)..(67,6) (Rgb(90, 101, 99), Reset, NONE)
+(1,7)..(3,7) (Rgb(195, 202, 198), Reset, BOLD)
+(1,8)..(3,8) (Rgb(90, 101, 99), Reset, NONE)
+(1,9)..(3,9) (Rgb(90, 101, 99), Reset, NONE)
+(1,11)..(9,11) (Rgb(255, 124, 120), Reset, BOLD)
+(39,11)..(61,11) (Rgb(90, 101, 99), Reset, NONE)
+(1,12)..(3,12) (Rgb(90, 101, 99), Reset, NONE)
+(1,14)..(3,14) (Rgb(232, 168, 95), Reset, BOLD)
+(30,14)..(34,14) (Rgb(142, 219, 210), Reset, NONE)
+(34,14)..(43,14) (Rgb(90, 101, 99), Reset, NONE)
+(1,15)..(3,15) (Rgb(90, 101, 99), Reset, NONE)
+(1,16)..(16,16) (Rgb(90, 101, 99), Reset, NONE)
+(1,17)..(8,17) (Rgb(90, 101, 99), Reset, NONE)
+(1,19)..(3,19) (Rgb(255, 124, 120), Reset, NONE)
+(3,19)..(18,19) (Rgb(255, 124, 120), Reset, BOLD)
+(1,20)..(10,20) (Rgb(90, 101, 99), Reset, NONE)
+(1,21)..(68,21) (Rgb(90, 101, 99), Reset, NONE)
+(1,22)..(3,22) (Rgb(90, 101, 99), Reset, NONE)
+(3,22)..(28,22) (Rgb(255, 124, 120), Reset, BOLD)
+(1,24)..(13,24) (Rgb(90, 101, 99), Reset, BOLD)
+(13,24)..(32,24) (Rgb(90, 101, 99), Reset, NONE)
+(1,25)..(44,25) (Rgb(90, 101, 99), Reset, NONE)

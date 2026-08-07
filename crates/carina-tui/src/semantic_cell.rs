@@ -56,7 +56,16 @@ impl SemanticCellKind {
     }
 
     pub const fn owns_internal_rail(self) -> bool {
-        matches!(self, Self::Tool | Self::ToolGroup | Self::Patch)
+        matches!(
+            self,
+            Self::Thinking
+                | Self::Tool
+                | Self::ToolGroup
+                | Self::Approval
+                | Self::Patch
+                | Self::Failure
+                | Self::Notice
+        )
     }
 }
 

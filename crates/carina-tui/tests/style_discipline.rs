@@ -49,6 +49,7 @@ fn transcript_uses_owned_role_and_accent_helpers() {
         "transcript_assistant()",
         "transcript_thinking()",
         "transcript_tool()",
+        "transcript_tool_settled()",
         "transcript_metadata()",
         "transcript_added()",
         "transcript_removed()",

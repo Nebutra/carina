@@ -2356,6 +2356,12 @@ impl App {
                 }
                 SemanticCellKind::Assistant => self.theme.transcript_metadata(),
                 SemanticCellKind::Thinking => self.theme.transcript_thinking(),
+                SemanticCellKind::Tool | SemanticCellKind::ToolGroup
+                    if !block.tool_members.is_empty()
+                        && block.tool_members.iter().all(|member| !member.is_running()) =>
+                {
+                    self.theme.transcript_tool_settled()
+                }
                 SemanticCellKind::Tool | SemanticCellKind::ToolGroup | SemanticCellKind::Patch => {
                     self.theme.transcript_tool()
                 }
@@ -2422,16 +2428,17 @@ impl App {
             } else {
                 Style::default()
             };
-            // Chrome lives in the outer gutter. It may recolor without ever
-            // consuming a content cell or changing the wrap width.
+            // Chrome lives in the outer gutter and never changes the content
+            // width. Use a blank cell when inactive: Color::Reset is the
+            // terminal foreground, so recoloring the rail to it does not hide
+            // the glyph on a terminal-owned background.
             let outer_chrome_owned = !cell_kind.owns_internal_rail();
-            let chrome_color = if block.selected
-                || outer_chrome_owned && (hovered || block.is_collapsible())
-                || cell_kind.is_risk()
-            {
-                accent
+            let chrome_visible =
+                block.selected || outer_chrome_owned && (hovered || block.is_collapsible());
+            let chrome_glyph = if chrome_visible {
+                self.theme.glyphs.scroll_track()
             } else {
-                self.theme.background
+                " "
             };
             let chrome_area = Rect::new(
                 block_area
@@ -2444,8 +2451,12 @@ impl App {
             frame.render_widget(
                 Paragraph::new(vec![
                     Line::styled(
-                        self.theme.glyphs.scroll_track(),
-                        Style::default().fg(chrome_color),
+                        chrome_glyph,
+                        if chrome_visible {
+                            Style::default().fg(accent)
+                        } else {
+                            Style::default()
+                        },
                     );
                     chrome_area.height as usize
                 ]),
@@ -6564,6 +6575,7 @@ fn fit_media_preview_size(
 #[cfg(test)]
 mod transcript_tests {
     use super::*;
+    use ratatui::style::Color;
 
     fn production_render_app() -> (App, std::path::PathBuf, std::thread::JoinHandle<()>) {
         use std::io::{BufRead, BufReader, Write};
@@ -6866,18 +6878,61 @@ mod transcript_tests {
         format!("size={}x{}\n{}\n", area.width, area.height, rows.join("\n"))
     }
 
-    #[test]
-    fn semantic_cell_gallery_120_uses_production_renderer() {
+    fn rendered_frame_contract(buffer: &ratatui::buffer::Buffer) -> String {
+        let mut output = rendered_frame_text(buffer);
+        output.push_str("styles:\n");
+        let area = buffer.area;
+        for y in area.y..area.bottom() {
+            let mut run: Option<(u16, u16, (Color, Color, Modifier))> = None;
+            let mut x = area.x;
+            while x < area.right() {
+                let cell = &buffer[(x, y)];
+                let symbol_width = UnicodeWidthStr::width(cell.symbol()).max(1) as u16;
+                let end = x.saturating_add(symbol_width).min(area.right());
+                let style = (cell.fg, cell.bg, cell.modifier);
+                let is_default = style == (Color::Reset, Color::Reset, Modifier::empty());
+                match (run, is_default) {
+                    (Some((start, run_end, active)), true) => {
+                        output.push_str(&format!("({start},{y})..({run_end},{y}) {active:?}\n"));
+                        run = None;
+                    }
+                    (Some((start, run_end, active)), false) if active != style || run_end != x => {
+                        output.push_str(&format!("({start},{y})..({run_end},{y}) {active:?}\n"));
+                        run = Some((x, end, style));
+                    }
+                    (Some((start, _, active)), false) => run = Some((start, end, active)),
+                    (None, false) => run = Some((x, end, style)),
+                    _ => {}
+                }
+                x = end;
+            }
+            if let Some((start, run_end, active)) = run {
+                output.push_str(&format!("({start},{y})..({run_end},{y}) {active:?}\n"));
+            }
+        }
+        output
+    }
+
+    fn semantic_gallery_blocks(locale: Locale) -> Vec<TranscriptBlock> {
+        let zh = locale == Locale::ZhHans;
         let mut user = block(
             BlockKind::User,
-            "Refactor the transcript without hiding risk.",
+            if zh {
+                "重构会话记录，但不能隐藏风险。"
+            } else {
+                "Refactor the transcript without hiding risk."
+            },
         );
         user.id = "gallery:user".into();
         user.status.clear();
 
         let mut assistant = block(
             BlockKind::Assistant,
-            "I will keep routine work quiet and reviewable changes visible.",
+            if zh {
+                "我会让常规操作保持安静，同时让可审阅的改动清晰可见，并在窄屏和宽屏上保留批准、补丁与失败证据。"
+            } else {
+                "I will keep routine work quiet and reviewable changes visible across every supported terminal width."
+            },
         );
         assistant.id = "gallery:assistant".into();
         assistant.status.clear();
@@ -6885,10 +6940,19 @@ mod transcript_tests {
 
         let mut thinking = block(
             BlockKind::Thinking,
-            "Mapping lifecycle owners and render paths.",
+            if zh {
+                "正在映射生命周期所有权与渲染路径。"
+            } else {
+                "Mapping lifecycle owners and render paths."
+            },
         );
         thinking.id = "gallery:thinking".into();
-        thinking.title = "Inspecting the projection boundary".into();
+        thinking.title = if zh {
+            "检查投影边界"
+        } else {
+            "Inspecting the projection boundary"
+        }
+        .into();
         thinking.status.clear();
         thinking.collapsible = true;
         thinking.expanded = true;
@@ -6896,9 +6960,15 @@ mod transcript_tests {
         let mut tool = block(BlockKind::Tool, "");
         tool.id = "gallery:tool".into();
         tool.tool_kind = Some(crate::tool_projection::ToolKind::Read);
-        tool.title =
-            crate::tool_projection::format_tool_title("Read", "Inspect the semantic cell contract");
-        tool.status = "completed".into();
+        tool.title = crate::tool_projection::format_tool_title(
+            "Read",
+            if zh {
+                "检查语义单元契约"
+            } else {
+                "Inspect the semantic cell contract"
+            },
+        );
+        tool.status.clear();
         tool.collapsible = false;
         tool.tool_members = vec![tool_member(
             "gallery:tool",
@@ -6919,8 +6989,13 @@ mod transcript_tests {
 
         let mut approval = block(BlockKind::Governance, "cargo test --workspace");
         approval.id = "gallery:approval".into();
-        approval.title = "Shell command needs approval".into();
-        approval.status = "waiting".into();
+        approval.title = if zh {
+            "Shell 命令需要批准"
+        } else {
+            "Shell command needs approval"
+        }
+        .into();
+        approval.status = tr(locale, MessageId::StatusWaitingApproval).into();
         approval.collapsible = false;
 
         let mut patch = block(
@@ -6929,7 +7004,14 @@ mod transcript_tests {
         );
         patch.id = "gallery:patch".into();
         patch.tool_kind = Some(crate::tool_projection::ToolKind::Patch);
-        patch.title = crate::tool_projection::format_tool_title("Edit", "Add typed skeletons");
+        patch.title = crate::tool_projection::format_tool_title(
+            "Edit",
+            if zh {
+                "添加类型化骨架"
+            } else {
+                "Add typed skeletons"
+            },
+        );
         patch.body_kind = BlockBodyKind::Diff;
         patch.additions = 1;
         patch.deletions = 0;
@@ -6940,29 +7022,125 @@ mod transcript_tests {
         let mut failure = block(BlockKind::Diagnostic, "");
         failure.id = "gallery:failure".into();
         failure.run_id = "run-failure".into();
-        failure.title = "Response failed".into();
+        failure.title = if zh {
+            "响应失败"
+        } else {
+            "Response failed"
+        }
+        .into();
         failure.status.clear();
         failure.failure = Some(crate::transcript::FailurePresentation {
             kind: crate::transcript::FailureKind::Failed,
             action: FailureAction::Retry,
             owner: "Carina".into(),
-            reason: "The provider stopped before returning a complete response".into(),
+            reason: if zh {
+                "模型服务商在返回完整响应前停止了"
+            } else {
+                "The provider stopped before returning a complete response"
+            }
+            .into(),
             source_event_id: "event-failure".into(),
             run_id: "run-failure".into(),
         });
 
         let mut notice = block(
             BlockKind::Diagnostic,
-            "Older routine tool detail was summarized.",
+            if zh {
+                "较早的常规工具详情已被摘要。"
+            } else {
+                "Older routine tool detail was summarized."
+            },
         );
         notice.id = "gallery:notice".into();
-        notice.title = "Context compacted".into();
+        notice.title = if zh {
+            "上下文已压缩"
+        } else {
+            "Context compacted"
+        }
+        .into();
         notice.status.clear();
         notice.collapsible = false;
 
-        let blocks = vec![
+        vec![
             user, assistant, thinking, tool, group, approval, patch, failure, notice,
-        ];
+        ]
+    }
+
+    #[derive(Clone, Copy)]
+    struct VisualFixture {
+        width: u16,
+        locale: Locale,
+        glyph_mode: crate::glyphs::GlyphMode,
+        polarity: crate::theme::Polarity,
+        color_level: crate::theme::ColorLevel,
+        selected: bool,
+    }
+
+    fn render_semantic_gallery(fixture: VisualFixture) -> String {
+        let (mut app, root, server) = production_render_app();
+        app.options.locale = Some(fixture.locale.product_id().into());
+        app.locale_index = Locale::ALL
+            .iter()
+            .position(|locale| *locale == fixture.locale)
+            .unwrap_or_default();
+        app.theme = crate::theme::Theme::new(fixture.polarity, fixture.color_level);
+        app.theme.glyphs = Glyphs::new(fixture.glyph_mode);
+        app.blocks = semantic_gallery_blocks(fixture.locale);
+        if fixture.selected {
+            app.blocks[1].selected = true;
+        }
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(fixture.width, 40)).unwrap();
+        terminal
+            .draw(|frame| app.render_transcript(frame, frame.area()))
+            .unwrap();
+        let rendered = rendered_frame_contract(terminal.backend().buffer());
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        rendered
+    }
+
+    fn gallery_risk_anchors(locale: Locale) -> [&'static str; 3] {
+        if locale == Locale::ZhHans {
+            ["Shell 命令需要批准", "添加类型化骨架", "响应失败"]
+        } else {
+            [
+                "Shell command needs approval",
+                "Add typed skeletons",
+                "Response failed",
+            ]
+        }
+    }
+
+    fn gallery_geometry_anchors(locale: Locale) -> [&'static str; 4] {
+        if locale == Locale::ZhHans {
+            [
+                "我会让常规操作保持安静",
+                "检查投影边界",
+                "Shell 命令需要批准",
+                "响应失败",
+            ]
+        } else {
+            [
+                "I will keep routine work quiet",
+                "Inspecting the projection boundary",
+                "Shell command needs approval",
+                "Response failed",
+            ]
+        }
+    }
+
+    fn gallery_wrap_anchor(locale: Locale) -> &'static str {
+        if locale == Locale::ZhHans {
+            "失败证据。"
+        } else {
+            "terminal width."
+        }
+    }
+
+    #[test]
+    fn semantic_cell_gallery_120_uses_production_renderer() {
+        let blocks = semantic_gallery_blocks(Locale::En);
         assert_eq!(
             blocks
                 .iter()
@@ -6995,6 +7173,160 @@ mod transcript_tests {
         );
         server.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn visible_contract(contract: &str) -> &str {
+        contract.split("styles:\n").next().unwrap_or(contract)
+    }
+
+    fn anchor_position(contract: &str, anchor: &str) -> (usize, usize) {
+        visible_contract(contract)
+            .lines()
+            .enumerate()
+            .find_map(|(row, line)| {
+                line.find(anchor)
+                    .map(|byte| (row, UnicodeWidthStr::width(&line[..byte])))
+            })
+            .unwrap_or_else(|| panic!("missing visual-density anchor {anchor:?}"))
+    }
+
+    #[test]
+    fn visual_density_matrix_uses_production_renderer_and_style_runs() {
+        for (locale_name, locale) in [("en", Locale::En), ("zh_hans", Locale::ZhHans)] {
+            let mut wrap_rows = Vec::new();
+            for width in [80, 120, 160] {
+                let rendered = render_semantic_gallery(VisualFixture {
+                    width,
+                    locale,
+                    glyph_mode: crate::glyphs::GlyphMode::Unicode,
+                    polarity: crate::theme::Polarity::Dark,
+                    color_level: crate::theme::ColorLevel::TrueColor,
+                    selected: false,
+                });
+                for anchor in gallery_risk_anchors(locale) {
+                    assert!(
+                        visible_contract(&rendered).contains(anchor),
+                        "{width}-column {locale_name} fixture cropped {anchor:?}"
+                    );
+                }
+                assert!(
+                    rendered.contains("Rgb("),
+                    "the owned snapshot must include per-cell style evidence"
+                );
+                wrap_rows.push((
+                    width,
+                    anchor_position(&rendered, gallery_wrap_anchor(locale)).0,
+                ));
+                insta::assert_snapshot!(format!("visual_density_{locale_name}_{width}"), rendered);
+            }
+            assert!(
+                wrap_rows[0].1 > wrap_rows[1].1,
+                "80-column {locale_name} fixture must wrap content that fits at 120 columns"
+            );
+            assert_eq!(
+                wrap_rows[1].1, wrap_rows[2].1,
+                "the 120-column reading measure must stay stable on an ultrawide terminal"
+            );
+        }
+    }
+
+    #[test]
+    fn visual_density_fallbacks_and_selection_preserve_information_and_geometry() {
+        for locale in [Locale::En, Locale::ZhHans] {
+            for width in [80, 120, 160] {
+                let baseline_fixture = VisualFixture {
+                    width,
+                    locale,
+                    glyph_mode: crate::glyphs::GlyphMode::Unicode,
+                    polarity: crate::theme::Polarity::Dark,
+                    color_level: crate::theme::ColorLevel::TrueColor,
+                    selected: false,
+                };
+                let baseline = render_semantic_gallery(baseline_fixture);
+                let ascii_no_color = render_semantic_gallery(VisualFixture {
+                    glyph_mode: crate::glyphs::GlyphMode::Ascii,
+                    color_level: crate::theme::ColorLevel::None,
+                    ..baseline_fixture
+                });
+                let visible = visible_contract(&ascii_no_color);
+                for anchor in gallery_risk_anchors(locale) {
+                    assert!(visible.contains(anchor));
+                }
+                assert!(visible.contains("! "));
+                assert!(visible.contains("x "));
+                assert!(!visible.contains('\u{fffd}'));
+                assert!(!ascii_no_color.contains("Rgb("));
+                assert!(!ascii_no_color.contains("Indexed("));
+
+                for anchor in gallery_geometry_anchors(locale) {
+                    assert_eq!(
+                        anchor_position(&baseline, anchor),
+                        anchor_position(&ascii_no_color, anchor),
+                        "{width}-column {locale:?} ASCII/NO_COLOR shifted {anchor:?}"
+                    );
+                }
+
+                let selected = render_semantic_gallery(VisualFixture {
+                    selected: true,
+                    ..baseline_fixture
+                });
+                for anchor in gallery_geometry_anchors(locale) {
+                    assert_eq!(
+                        anchor_position(&baseline, anchor),
+                        anchor_position(&selected, anchor),
+                        "{width}-column {locale:?} selection chrome shifted {anchor:?}"
+                    );
+                }
+
+                if locale == Locale::En {
+                    for (polarity, color_level) in [
+                        (
+                            crate::theme::Polarity::Dark,
+                            crate::theme::ColorLevel::Basic,
+                        ),
+                        (
+                            crate::theme::Polarity::Dark,
+                            crate::theme::ColorLevel::Ansi256,
+                        ),
+                        (
+                            crate::theme::Polarity::Light,
+                            crate::theme::ColorLevel::TrueColor,
+                        ),
+                    ] {
+                        let rendered = render_semantic_gallery(VisualFixture {
+                            polarity,
+                            color_level,
+                            ..baseline_fixture
+                        });
+                        for anchor in gallery_risk_anchors(locale) {
+                            assert!(visible_contract(&rendered).contains(anchor));
+                        }
+                        for anchor in gallery_geometry_anchors(locale) {
+                            assert_eq!(
+                                anchor_position(&baseline, anchor),
+                                anchor_position(&rendered, anchor),
+                                "{width}-column {polarity:?}/{color_level:?} shifted {anchor:?}"
+                            );
+                        }
+                        assert!(!visible_contract(&rendered).contains('\u{fffd}'));
+                        match color_level {
+                            crate::theme::ColorLevel::Basic => {
+                                assert!(!rendered.contains("Rgb("));
+                                assert!(!rendered.contains("Indexed("));
+                            }
+                            crate::theme::ColorLevel::Ansi256 => {
+                                assert!(rendered.contains("Indexed("));
+                                assert!(!rendered.contains("Rgb("));
+                            }
+                            crate::theme::ColorLevel::TrueColor => {
+                                assert!(rendered.contains("Rgb("));
+                            }
+                            crate::theme::ColorLevel::None => unreachable!(),
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
