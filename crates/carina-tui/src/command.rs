@@ -4,6 +4,7 @@ use crate::rpc::{PromptCommand, PromptCommandArgument};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandId {
     Settings,
+    Density,
     Status,
     Context,
     Changes,
@@ -43,6 +44,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         CommandId::Settings,
         "/settings",
         MessageId::CommandSettings,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Density,
+        "/density",
+        MessageId::CommandDensity,
         AvailabilityRule::Always,
     ),
     command(
@@ -508,6 +515,19 @@ mod tests {
         assert_eq!(
             resolve("/status", false).map(|item| item.id),
             Some(CommandId::Status)
+        );
+    }
+
+    #[test]
+    fn density_is_discoverable_and_resolves_while_idle() {
+        assert!(
+            matching("/den", false)
+                .iter()
+                .any(|item| item.id == CommandId::Density)
+        );
+        assert_eq!(
+            resolve("/density", false).map(|item| item.id),
+            Some(CommandId::Density)
         );
     }
 

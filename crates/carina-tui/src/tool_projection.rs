@@ -107,26 +107,51 @@ pub struct VisibleCount {
 /// `omitted = 0`). The count and path preview live on the title line; the
 /// disclosure glyph is the expand escape hatch (no separate "N omitted" row).
 pub fn visible_group_members(total: usize, expanded: bool) -> VisibleCount {
+    visible_group_members_with_limits(
+        total,
+        expanded,
+        COLLAPSED_TOOL_GROUP_MEMBER_LIMIT,
+        usize::MAX,
+    )
+}
+
+pub fn visible_group_members_with_limits(
+    total: usize,
+    expanded: bool,
+    collapsed_limit: usize,
+    expanded_limit: usize,
+) -> VisibleCount {
     if expanded {
+        let visible = total.min(expanded_limit);
         VisibleCount {
-            visible: total,
-            omitted: 0,
+            visible,
+            omitted: total.saturating_sub(visible),
         }
     } else {
         VisibleCount {
-            visible: COLLAPSED_TOOL_GROUP_MEMBER_LIMIT,
+            visible: total.min(collapsed_limit),
             omitted: 0,
         }
     }
 }
 
 pub fn visible_output_lines(total: usize, expanded: bool) -> VisibleCount {
-    visible_count(total, expanded, COLLAPSED_TOOL_OUTPUT_LINE_LIMIT)
+    visible_output_lines_with_limits(
+        total,
+        expanded,
+        COLLAPSED_TOOL_OUTPUT_LINE_LIMIT,
+        usize::MAX,
+    )
 }
 
-fn visible_count(total: usize, expanded: bool, collapsed_limit: usize) -> VisibleCount {
+pub fn visible_output_lines_with_limits(
+    total: usize,
+    expanded: bool,
+    collapsed_limit: usize,
+    expanded_limit: usize,
+) -> VisibleCount {
     let visible = if expanded {
-        total
+        total.min(expanded_limit)
     } else {
         total.min(collapsed_limit)
     };
@@ -535,6 +560,38 @@ mod tests {
             VisibleCount {
                 visible: 7,
                 omitted: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn density_limits_keep_collapsed_groups_quiet_and_expanded_output_bounded() {
+        assert_eq!(
+            visible_group_members_with_limits(5, false, 2, 4),
+            VisibleCount {
+                visible: 2,
+                omitted: 0,
+            }
+        );
+        assert_eq!(
+            visible_group_members_with_limits(5, true, 2, 4),
+            VisibleCount {
+                visible: 4,
+                omitted: 1,
+            }
+        );
+        assert_eq!(
+            visible_output_lines_with_limits(9, false, 3, 8),
+            VisibleCount {
+                visible: 3,
+                omitted: 6,
+            }
+        );
+        assert_eq!(
+            visible_output_lines_with_limits(9, true, 3, 8),
+            VisibleCount {
+                visible: 8,
+                omitted: 1,
             }
         );
     }

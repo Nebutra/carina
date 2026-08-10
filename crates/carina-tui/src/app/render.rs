@@ -1,5 +1,7 @@
-use std::collections::HashMap;
 use std::time::Duration;
+
+#[cfg(test)]
+use std::collections::HashMap;
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect};
@@ -11,11 +13,15 @@ use ratatui::widgets::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use super::{App, Focus, LOCALES, Phase, ScreenMode};
+use super::{
+    App, Focus, LOCALES, Phase, ScreenMode, TranscriptHeightCache, TranscriptHeightCacheEntry,
+    TranscriptRenderCache, TranscriptRenderCacheEntry,
+};
 use crate::component::{Action, ComponentId, HitRegion, InteractionMap};
 use crate::conversation::{
     ConversationStatus, EmptyConversation, conversation_title, localized_execution_status,
 };
+use crate::density::DensityMode;
 use crate::file_viewer::{FileViewerLoad, selection_hint};
 use crate::glyphs::Glyphs;
 use crate::history_search::HistoryMode;
@@ -35,7 +41,7 @@ use crate::product_projection::{
 };
 use crate::semantic_cell::SemanticCellKind;
 use crate::session_browser::SessionScope;
-use crate::tool_projection::{visible_group_members, visible_output_lines};
+use crate::tool_projection::{visible_group_members_with_limits, visible_output_lines_with_limits};
 use crate::transcript::{
     BlockBodyKind, BlockKind, FailureAction, ToolGroupMember, TranscriptBlock, UserBlockKind,
 };
@@ -2292,7 +2298,15 @@ impl App {
             return;
         }
         let committed = self.scrollback.committed_prefix_len(&self.blocks);
-        let visible_blocks = &self.blocks[committed..];
+        let projected_blocks = self.blocks[committed..]
+            .iter()
+            .cloned()
+            .map(|mut block| {
+                block.expanded = self.effective_block_expanded(&block);
+                block
+            })
+            .collect::<Vec<_>>();
+        let visible_blocks = projected_blocks.as_slice();
         let locale = self.ui_locale();
         let selection_anchor = self
             .history_selected
@@ -2305,6 +2319,7 @@ impl App {
             visible_blocks,
             TranscriptViewport {
                 locale,
+                density: self.density,
                 content_width,
                 tool_expand_key: self.keybindings.expand_tools.label(),
                 height: area.height as usize,
@@ -2327,7 +2342,7 @@ impl App {
             }
             let relative_index = item.index;
             let index = committed + relative_index;
-            let block = &self.blocks[index];
+            let block = &projected_blocks[relative_index];
             let cell_kind = SemanticCellKind::from_block(block);
             let block_area = Rect::new(
                 transcript_x,
@@ -2402,21 +2417,23 @@ impl App {
                 headings: std::array::from_fn(|index| self.theme.heading(index + 1)),
             };
             let lines = if dimmed {
-                transcript_lines_with_tool_key(
+                transcript_lines_with_tool_key_and_density(
                     block,
                     locale,
                     transcript_styles,
                     content_width,
                     self.keybindings.expand_tools.label(),
+                    self.density,
                 )
             } else {
-                cached_transcript_lines_with_tool_key(
+                cached_transcript_lines_with_tool_key_and_density(
                     &mut self.transcript_render_cache,
                     block,
                     locale,
                     transcript_styles,
                     content_width,
                     self.keybindings.expand_tools.label(),
+                    self.density,
                 )
             };
             let style = if block.selected {
@@ -3804,6 +3821,17 @@ impl App {
                                 tr(locale, MessageId::ModeBuildDetail)
                             )
                         },
+                        format!(
+                            "{}  {sep}  {}",
+                            tr(locale, MessageId::Density),
+                            tr(
+                                locale,
+                                match self.density {
+                                    DensityMode::Compact => MessageId::DensityCompact,
+                                    DensityMode::Comfortable => MessageId::DensityComfortable,
+                                }
+                            )
+                        ),
                         format!(
                             "{}  {sep}  {}",
                             tr(locale, MessageId::Status),
@@ -5389,6 +5417,7 @@ struct TranscriptLayout {
 #[derive(Debug, Clone, Copy)]
 struct TranscriptViewport {
     locale: Locale,
+    density: DensityMode,
     content_width: u16,
     tool_expand_key: &'static str,
     height: usize,
@@ -5418,10 +5447,11 @@ impl TranscriptLayout {
     fn new(
         blocks: &[TranscriptBlock],
         viewport: TranscriptViewport,
-        height_cache: &mut HashMap<String, (u64, u16, Locale, &'static str, usize, usize)>,
+        height_cache: &mut TranscriptHeightCache,
     ) -> Self {
         let TranscriptViewport {
             locale,
+            density,
             content_width,
             tool_expand_key,
             height: viewport_height,
@@ -5437,37 +5467,35 @@ impl TranscriptLayout {
                 (0, 0)
             } else {
                 match height_cache.get(&block.id) {
-                    Some((
-                        revision,
-                        width,
-                        cached_locale,
-                        cached_expand_key,
-                        height,
-                        header_height,
-                    )) if *revision == block.layout_revision
-                        && *width == content_width
-                        && *cached_locale == locale
-                        && *cached_expand_key == tool_expand_key =>
+                    Some(entry)
+                        if entry.revision == block.layout_revision
+                            && entry.width == content_width
+                            && entry.locale == locale
+                            && entry.density == density
+                            && entry.expand_key == tool_expand_key =>
                     {
-                        (*height, *header_height)
+                        (entry.height, entry.header_height)
                     }
                     _ => {
-                        let (height, header_height) = transcript_block_height_with_tool_key(
-                            block,
-                            locale,
-                            content_width,
-                            tool_expand_key,
-                        );
+                        let (height, header_height) =
+                            transcript_block_height_with_tool_key_and_density(
+                                block,
+                                locale,
+                                content_width,
+                                tool_expand_key,
+                                density,
+                            );
                         height_cache.insert(
                             block.id.clone(),
-                            (
-                                block.layout_revision,
-                                content_width,
+                            TranscriptHeightCacheEntry {
+                                revision: block.layout_revision,
+                                width: content_width,
                                 locale,
-                                tool_expand_key,
+                                density,
+                                expand_key: tool_expand_key,
                                 height,
                                 header_height,
-                            ),
+                            },
                         );
                         (height, header_height)
                     }
@@ -5475,7 +5503,11 @@ impl TranscriptLayout {
             };
             if height > 0 {
                 if let Some(previous_index) = previous_visible_index {
-                    top = top.saturating_add(transcript_gap(&blocks[previous_index], block));
+                    top = top.saturating_add(transcript_gap_for_density(
+                        &blocks[previous_index],
+                        block,
+                        density,
+                    ));
                 }
                 previous_visible_index = Some(index);
             };
@@ -5488,7 +5520,7 @@ impl TranscriptLayout {
             top = top.saturating_add(height);
         }
         if previous_visible_index.is_some() {
-            top = top.saturating_add(layout_contract::TRANSCRIPT_FINAL_GAP);
+            top = top.saturating_add(density.profile().final_gap);
         }
         let max_scroll = top.saturating_sub(viewport_height);
         let viewport_start = anchor
@@ -5514,18 +5546,36 @@ impl TranscriptLayout {
     }
 }
 
+#[cfg(test)]
 fn transcript_block_height_with_tool_key(
     block: &TranscriptBlock,
     locale: Locale,
     content_width: u16,
     tool_expand_key: &'static str,
 ) -> (usize, usize) {
-    let lines = transcript_lines_with_tool_key(
+    transcript_block_height_with_tool_key_and_density(
+        block,
+        locale,
+        content_width,
+        tool_expand_key,
+        DensityMode::Compact,
+    )
+}
+
+fn transcript_block_height_with_tool_key_and_density(
+    block: &TranscriptBlock,
+    locale: Locale,
+    content_width: u16,
+    tool_expand_key: &'static str,
+    density: DensityMode,
+) -> (usize, usize) {
+    let lines = transcript_lines_with_tool_key_and_density(
         block,
         locale,
         TranscriptStyles::default(),
         content_width,
         tool_expand_key,
+        density,
     );
     let header_height = Paragraph::new(vec![lines[0].clone()])
         .wrap(Wrap { trim: false })
@@ -5629,12 +5679,31 @@ fn transcript_lines(
     )
 }
 
+#[cfg(test)]
 fn transcript_lines_with_tool_key(
     block: &TranscriptBlock,
     locale: Locale,
     styles: TranscriptStyles,
     content_width: u16,
     tool_expand_key: &'static str,
+) -> Vec<Line<'static>> {
+    transcript_lines_with_tool_key_and_density(
+        block,
+        locale,
+        styles,
+        content_width,
+        tool_expand_key,
+        DensityMode::Compact,
+    )
+}
+
+fn transcript_lines_with_tool_key_and_density(
+    block: &TranscriptBlock,
+    locale: Locale,
+    styles: TranscriptStyles,
+    content_width: u16,
+    tool_expand_key: &'static str,
+    density: DensityMode,
 ) -> Vec<Line<'static>> {
     let TranscriptStyles {
         glyphs,
@@ -5823,6 +5892,7 @@ fn transcript_lines_with_tool_key(
     let mut lines = vec![Line::from(title_spans)];
     let tool_context = ToolLineContext {
         locale,
+        density,
         styles,
         content_width,
         expand_key: tool_expand_key,
@@ -5852,6 +5922,7 @@ fn transcript_lines_with_tool_key(
 #[derive(Debug, Clone, Copy)]
 struct ToolLineContext {
     locale: Locale,
+    density: DensityMode,
     styles: TranscriptStyles,
     content_width: u16,
     expand_key: &'static str,
@@ -5876,7 +5947,13 @@ fn tool_row_dim_target(block: &TranscriptBlock, title: &str) -> Option<String> {
 }
 
 fn tool_group_lines(block: &TranscriptBlock, context: ToolLineContext) -> Vec<Line<'static>> {
-    let visibility = visible_group_members(block.tool_members.len(), block.expanded);
+    let profile = context.density.profile();
+    let visibility = visible_group_members_with_limits(
+        block.tool_members.len(),
+        block.expanded,
+        profile.collapsed_group_members,
+        usize::MAX,
+    );
     let mut lines = Vec::new();
     for member in block.tool_members.iter().take(visibility.visible) {
         lines.push(tool_group_member_line(member, context.styles));
@@ -5984,7 +6061,13 @@ fn tool_detail_lines(
         return lines;
     }
     let body_lines = body.split('\n').collect::<Vec<_>>();
-    let visibility = visible_output_lines(body_lines.len(), expanded);
+    let profile = context.density.profile();
+    let visibility = visible_output_lines_with_limits(
+        body_lines.len(),
+        expanded,
+        profile.collapsed_output_lines,
+        usize::MAX,
+    );
     let mut lines = wrap_styled_lines(
         body_lines
             .into_iter()
@@ -6045,8 +6128,8 @@ fn collapsed_edit_card_lines(
     nested: bool,
 ) -> Vec<Line<'static>> {
     use crate::diff_render::{
-        COLLAPSED_CREATE_PREVIEW_LINES, create_file_preview_lines, is_create_only_diff,
-        primary_new_path, unified_diff_add_delete_counts,
+        create_file_preview_lines, is_create_only_diff, primary_new_path,
+        unified_diff_add_delete_counts,
     };
 
     let gutter = if nested {
@@ -6089,7 +6172,10 @@ fn collapsed_edit_card_lines(
     }
 
     if is_create_only_diff(body) {
-        let preview = create_file_preview_lines(body, COLLAPSED_CREATE_PREVIEW_LINES);
+        let preview = create_file_preview_lines(
+            body,
+            context.density.profile().collapsed_create_preview_lines,
+        );
         let total_add = adds;
         for (index, line) in preview.iter().enumerate() {
             let number = format!("{:>4} ", index + 1);
@@ -6265,40 +6351,69 @@ fn transcript_role_prefix(
     prefix
 }
 
+#[cfg(test)]
 fn cached_transcript_lines_with_tool_key(
-    cache: &mut HashMap<String, (u64, u16, Locale, &'static str, Vec<Line<'static>>)>,
+    cache: &mut TranscriptRenderCache,
     block: &TranscriptBlock,
     locale: Locale,
     styles: TranscriptStyles,
     content_width: u16,
     tool_expand_key: &'static str,
 ) -> Vec<Line<'static>> {
-    if let Some((revision, width, cached_locale, cached_expand_key, lines)) = cache.get(&block.id)
-        && *revision == block.layout_revision
-        && *width == content_width
-        && *cached_locale == locale
-        && *cached_expand_key == tool_expand_key
+    cached_transcript_lines_with_tool_key_and_density(
+        cache,
+        block,
+        locale,
+        styles,
+        content_width,
+        tool_expand_key,
+        DensityMode::Compact,
+    )
+}
+
+fn cached_transcript_lines_with_tool_key_and_density(
+    cache: &mut TranscriptRenderCache,
+    block: &TranscriptBlock,
+    locale: Locale,
+    styles: TranscriptStyles,
+    content_width: u16,
+    tool_expand_key: &'static str,
+    density: DensityMode,
+) -> Vec<Line<'static>> {
+    if let Some(entry) = cache.get(&block.id)
+        && entry.revision == block.layout_revision
+        && entry.width == content_width
+        && entry.locale == locale
+        && entry.density == density
+        && entry.expand_key == tool_expand_key
     {
-        return lines.clone();
+        return entry.lines.clone();
     }
-    let lines =
-        transcript_lines_with_tool_key(block, locale, styles, content_width, tool_expand_key);
+    let lines = transcript_lines_with_tool_key_and_density(
+        block,
+        locale,
+        styles,
+        content_width,
+        tool_expand_key,
+        density,
+    );
     cache.insert(
         block.id.clone(),
-        (
-            block.layout_revision,
-            content_width,
+        TranscriptRenderCacheEntry {
+            revision: block.layout_revision,
+            width: content_width,
             locale,
-            tool_expand_key,
-            lines.clone(),
-        ),
+            density,
+            expand_key: tool_expand_key,
+            lines: lines.clone(),
+        },
     );
     lines
 }
 
 #[cfg(test)]
 fn cached_transcript_lines(
-    cache: &mut HashMap<String, (u64, u16, Locale, &'static str, Vec<Line<'static>>)>,
+    cache: &mut TranscriptRenderCache,
     block: &TranscriptBlock,
     locale: Locale,
     styles: TranscriptStyles,
@@ -6336,7 +6451,11 @@ fn transcript_label(locale: Locale, kind: BlockKind) -> &'static str {
     }
 }
 
-fn transcript_gap(previous: &TranscriptBlock, next: &TranscriptBlock) -> usize {
+fn transcript_gap_for_density(
+    previous: &TranscriptBlock,
+    next: &TranscriptBlock,
+    density: DensityMode,
+) -> usize {
     let related = matches!(
         (previous.kind, next.kind),
         (BlockKind::Tool, BlockKind::Tool)
@@ -6344,10 +6463,15 @@ fn transcript_gap(previous: &TranscriptBlock, next: &TranscriptBlock) -> usize {
             | (BlockKind::Thinking, BlockKind::Tool)
     );
     if related {
-        layout_contract::TRANSCRIPT_RELATED_GAP
+        density.profile().related_gap
     } else {
-        layout_contract::TRANSCRIPT_BLOCK_GAP
+        density.profile().block_gap
     }
+}
+
+#[cfg(test)]
+fn transcript_gap(previous: &TranscriptBlock, next: &TranscriptBlock) -> usize {
+    transcript_gap_for_density(previous, next, DensityMode::Compact)
 }
 
 fn transcript_click_action(
@@ -6642,6 +6766,8 @@ mod transcript_tests {
             session_id: None,
             locale: None,
             locale_path: None,
+            density: DensityMode::Compact,
+            density_path: None,
             carina_bin: None,
             no_alt_screen: true,
             screen_mode: None,
@@ -7070,6 +7196,7 @@ mod transcript_tests {
     struct VisualFixture {
         width: u16,
         locale: Locale,
+        density: DensityMode,
         glyph_mode: crate::glyphs::GlyphMode,
         polarity: crate::theme::Polarity,
         color_level: crate::theme::ColorLevel,
@@ -7085,6 +7212,7 @@ mod transcript_tests {
             .unwrap_or_default();
         app.theme = crate::theme::Theme::new(fixture.polarity, fixture.color_level);
         app.theme.glyphs = Glyphs::new(fixture.glyph_mode);
+        app.density = fixture.density;
         app.blocks = semantic_gallery_blocks(fixture.locale);
         if fixture.selected {
             app.blocks[1].selected = true;
@@ -7198,6 +7326,7 @@ mod transcript_tests {
                 let rendered = render_semantic_gallery(VisualFixture {
                     width,
                     locale,
+                    density: DensityMode::Compact,
                     glyph_mode: crate::glyphs::GlyphMode::Unicode,
                     polarity: crate::theme::Polarity::Dark,
                     color_level: crate::theme::ColorLevel::TrueColor,
@@ -7231,12 +7360,165 @@ mod transcript_tests {
     }
 
     #[test]
+    fn visual_density_comfortable_matrix_uses_the_same_production_tree() {
+        for (locale_name, locale) in [("en", Locale::En), ("zh_hans", Locale::ZhHans)] {
+            let mut wrap_rows = Vec::new();
+            for width in [80, 120, 160] {
+                let rendered = render_semantic_gallery(VisualFixture {
+                    width,
+                    locale,
+                    density: DensityMode::Comfortable,
+                    glyph_mode: crate::glyphs::GlyphMode::Unicode,
+                    polarity: crate::theme::Polarity::Dark,
+                    color_level: crate::theme::ColorLevel::TrueColor,
+                    selected: false,
+                });
+                for anchor in gallery_risk_anchors(locale) {
+                    assert!(visible_contract(&rendered).contains(anchor));
+                }
+                assert!(rendered.contains("Rgb("));
+                wrap_rows.push(anchor_position(&rendered, gallery_wrap_anchor(locale)).0);
+                insta::assert_snapshot!(
+                    format!("visual_density_comfortable_{locale_name}_{width}"),
+                    rendered
+                );
+            }
+            assert!(wrap_rows[0] > wrap_rows[1]);
+            assert_eq!(wrap_rows[1], wrap_rows[2]);
+        }
+    }
+
+    #[test]
+    fn visual_density_switch_preserves_product_and_disclosure_state() {
+        let (mut app, root, server) = production_render_app();
+        let config = root.join("config.json");
+        app.options.density_path = Some(config.clone());
+        app.options.screen_mode = Some(ScreenMode::Inline);
+        app.composer.set_text("retain this draft");
+        app.history_selected = Some(0);
+        let mut tool = block(BlockKind::Tool, "detail");
+        tool.id = "density:tool".into();
+        tool.collapsible = true;
+        tool.expanded = false;
+        tool.selected = true;
+        app.blocks = vec![tool];
+        let original_id = app.blocks[0].id.clone();
+
+        assert!(!app.effective_block_expanded(&app.blocks[0]));
+        app.apply_action(Action::ToggleDensity);
+        assert_eq!(app.density, DensityMode::Comfortable);
+        assert!(app.effective_block_expanded(&app.blocks[0]));
+        assert_eq!(app.composer.text(), "retain this draft");
+        assert_eq!(app.history_selected, Some(0));
+        assert_eq!(app.blocks[0].id, original_id);
+        assert!(app.blocks[0].selected);
+        assert_eq!(app.options.screen_mode, Some(ScreenMode::Inline));
+        assert_eq!(
+            super::super::load_density(Some(&config)).unwrap(),
+            DensityMode::Comfortable
+        );
+
+        app.apply_action(Action::ToggleBlock("density:tool".into()));
+        assert!(!app.effective_block_expanded(&app.blocks[0]));
+        app.apply_action(Action::ToggleDensity);
+        assert_eq!(app.density, DensityMode::Compact);
+        assert!(!app.effective_block_expanded(&app.blocks[0]));
+
+        app.options.density_path = Some(root.clone());
+        app.apply_action(Action::ToggleDensity);
+        assert_eq!(app.density, DensityMode::Compact);
+        assert!(app.notice.is_localized(MessageId::DensityPersistFailed));
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn visual_density_comfortable_fallbacks_preserve_information_and_geometry() {
+        for locale in [Locale::En, Locale::ZhHans] {
+            for width in [80, 120, 160] {
+                let baseline_fixture = VisualFixture {
+                    width,
+                    locale,
+                    density: DensityMode::Comfortable,
+                    glyph_mode: crate::glyphs::GlyphMode::Unicode,
+                    polarity: crate::theme::Polarity::Dark,
+                    color_level: crate::theme::ColorLevel::TrueColor,
+                    selected: false,
+                };
+                let baseline = render_semantic_gallery(baseline_fixture);
+                let ascii_no_color = render_semantic_gallery(VisualFixture {
+                    glyph_mode: crate::glyphs::GlyphMode::Ascii,
+                    color_level: crate::theme::ColorLevel::None,
+                    ..baseline_fixture
+                });
+                for anchor in gallery_risk_anchors(locale) {
+                    assert!(visible_contract(&ascii_no_color).contains(anchor));
+                }
+                assert!(!ascii_no_color.contains("Rgb("));
+                assert!(!ascii_no_color.contains("Indexed("));
+                for anchor in gallery_geometry_anchors(locale) {
+                    assert_eq!(
+                        anchor_position(&baseline, anchor),
+                        anchor_position(&ascii_no_color, anchor),
+                        "{width}-column comfortable/{locale:?} fallback shifted {anchor:?}"
+                    );
+                }
+                let selected = render_semantic_gallery(VisualFixture {
+                    selected: true,
+                    ..baseline_fixture
+                });
+                for anchor in gallery_geometry_anchors(locale) {
+                    assert_eq!(
+                        anchor_position(&baseline, anchor),
+                        anchor_position(&selected, anchor),
+                        "{width}-column comfortable/{locale:?} selection shifted {anchor:?}"
+                    );
+                }
+                if locale == Locale::En {
+                    for (polarity, color_level) in [
+                        (
+                            crate::theme::Polarity::Dark,
+                            crate::theme::ColorLevel::Basic,
+                        ),
+                        (
+                            crate::theme::Polarity::Dark,
+                            crate::theme::ColorLevel::Ansi256,
+                        ),
+                        (
+                            crate::theme::Polarity::Light,
+                            crate::theme::ColorLevel::TrueColor,
+                        ),
+                    ] {
+                        let rendered = render_semantic_gallery(VisualFixture {
+                            polarity,
+                            color_level,
+                            ..baseline_fixture
+                        });
+                        for anchor in gallery_risk_anchors(locale) {
+                            assert!(visible_contract(&rendered).contains(anchor));
+                        }
+                        for anchor in gallery_geometry_anchors(locale) {
+                            assert_eq!(
+                                anchor_position(&baseline, anchor),
+                                anchor_position(&rendered, anchor),
+                                "{width}-column comfortable/{polarity:?}/{color_level:?} shifted {anchor:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn visual_density_fallbacks_and_selection_preserve_information_and_geometry() {
         for locale in [Locale::En, Locale::ZhHans] {
             for width in [80, 120, 160] {
                 let baseline_fixture = VisualFixture {
                     width,
                     locale,
+                    density: DensityMode::Compact,
                     glyph_mode: crate::glyphs::GlyphMode::Unicode,
                     polarity: crate::theme::Polarity::Dark,
                     color_level: crate::theme::ColorLevel::TrueColor,
@@ -7513,6 +7795,7 @@ mod transcript_tests {
     ) -> TranscriptViewport {
         TranscriptViewport {
             locale: Locale::En,
+            density: DensityMode::Compact,
             content_width,
             tool_expand_key: crate::keybinding::KeyBindings::default()
                 .expand_tools
@@ -7591,18 +7874,39 @@ mod transcript_tests {
     }
 
     #[test]
-    fn transcript_height_cache_reuses_stable_blocks_and_invalidates_revisions() {
+    fn transcript_height_cache_reuses_stable_blocks_and_invalidates_density_and_revisions() {
         let mut stable = block(BlockKind::Assistant, "one\ntwo");
         stable.id = "stable".into();
         let expand_key = crate::keybinding::KeyBindings::default()
             .expand_tools
             .label();
-        let mut cache = HashMap::from([("stable".into(), (1, 80, Locale::En, expand_key, 7, 3))]);
+        let mut cache = HashMap::from([(
+            "stable".into(),
+            TranscriptHeightCacheEntry {
+                revision: 1,
+                width: 80,
+                locale: Locale::En,
+                density: DensityMode::Compact,
+                expand_key,
+                height: 7,
+                header_height: 3,
+            },
+        )]);
 
         let cached =
             TranscriptLayout::new(&[stable.clone()], viewport(80, 20, 0, false), &mut cache);
         assert_eq!(cached.items[0].height, 7);
         assert_eq!(cached.items[0].header_height, 3);
+
+        let mut comfortable_viewport = viewport(80, 20, 0, false);
+        comfortable_viewport.density = DensityMode::Comfortable;
+        let density_refreshed = TranscriptLayout::new(
+            std::slice::from_ref(&stable),
+            comfortable_viewport,
+            &mut cache,
+        );
+        assert_ne!(density_refreshed.items[0].height, 7);
+        assert_eq!(cache["stable"].density, DensityMode::Comfortable);
 
         stable.layout_revision += 1;
         let refreshed = TranscriptLayout::new(&[stable], viewport(80, 20, 0, false), &mut cache);
@@ -7611,7 +7915,7 @@ mod transcript_tests {
     }
 
     #[test]
-    fn transcript_render_cache_reuses_stable_rows_and_invalidates_revisions() {
+    fn transcript_render_cache_reuses_stable_rows_and_invalidates_density_and_revisions() {
         let mut stable = block(BlockKind::Assistant, "current body");
         stable.id = "stable".into();
         let expand_key = crate::keybinding::KeyBindings::default()
@@ -7619,13 +7923,14 @@ mod transcript_tests {
             .label();
         let mut cache = HashMap::from([(
             "stable".into(),
-            (
-                1,
-                80,
-                Locale::En,
+            TranscriptRenderCacheEntry {
+                revision: 1,
+                width: 80,
+                locale: Locale::En,
+                density: DensityMode::Compact,
                 expand_key,
-                vec![Line::from("cached rows")],
-            ),
+                lines: vec![Line::from("cached rows")],
+            },
         )]);
 
         let cached = cached_transcript_lines(
@@ -7636,6 +7941,18 @@ mod transcript_tests {
             80,
         );
         assert_eq!(cached[0].spans[0].content, "cached rows");
+
+        let density_refreshed = cached_transcript_lines_with_tool_key_and_density(
+            &mut cache,
+            &stable,
+            Locale::En,
+            TranscriptStyles::default(),
+            80,
+            expand_key,
+            DensityMode::Comfortable,
+        );
+        assert_ne!(density_refreshed[0].spans[0].content, "cached rows");
+        assert_eq!(cache["stable"].density, DensityMode::Comfortable);
 
         stable.layout_revision += 1;
         let refreshed = cached_transcript_lines(
@@ -7878,6 +8195,7 @@ mod transcript_tests {
             .join("\n");
         let context = ToolLineContext {
             locale: Locale::ZhHans,
+            density: DensityMode::Compact,
             styles: TranscriptStyles::default(),
             content_width: 80,
             expand_key: "F12",

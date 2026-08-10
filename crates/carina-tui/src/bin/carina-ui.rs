@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use carina_tui::app::{ScreenMode, read_screen_handoff};
+use carina_tui::density::DensityMode;
 use carina_tui::i18n::Locale;
 use carina_tui::{
     Options, RuntimeDiagnosticOptions, RuntimeDiagnosticOutcome, choose_runtime_mode, run,
@@ -22,6 +23,10 @@ struct Args {
     locale: Option<String>,
     #[arg(long)]
     locale_path: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = DensityArg::Compact)]
+    density: DensityArg,
+    #[arg(long)]
+    density_path: Option<PathBuf>,
     #[arg(long)]
     carina_bin: Option<PathBuf>,
     #[arg(long)]
@@ -55,6 +60,12 @@ enum AltScreenArg {
     Auto,
     Always,
     Never,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum DensityArg {
+    Compact,
+    Comfortable,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -153,6 +164,11 @@ fn try_main() -> Result<i32> {
         session_id: args.session,
         locale: args.locale,
         locale_path: args.locale_path,
+        density: match args.density {
+            DensityArg::Compact => DensityMode::Compact,
+            DensityArg::Comfortable => DensityMode::Comfortable,
+        },
+        density_path: args.density_path,
         carina_bin,
         no_alt_screen: args.no_alt_screen,
         screen_mode: args.screen_mode.map(|mode| match mode {

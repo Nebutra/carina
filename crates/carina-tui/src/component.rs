@@ -48,6 +48,7 @@ pub enum Action {
     OpenSessions,
     OpenModels,
     OpenSettings,
+    ToggleDensity,
     OpenStatus,
     OpenAgents,
     OpenChanges,

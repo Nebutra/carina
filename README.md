@@ -261,6 +261,13 @@ watermark through a bounded private handoff.
 `never` (Minimal) remain accepted; an explicit `--screen-mode` takes
 precedence.
 
+Transcript density defaults to **Compact**. Use `/density` or the Density row in
+settings to switch to **Comfortable** spacing and routine-tool disclosure. The
+choice is stored as `tui_density: "compact" | "comfortable"` in the normal
+global/project config cascade and survives relaunch. Density changes only the
+transcript presentation; it preserves the draft, selection, lifecycle identity,
+manual disclosure choices, and current screen mode.
+
 The TUI ships authored copy for English, Simplified Chinese
 (`zh-CN`/`zh-Hans`, runtime key `zh`), Traditional Chinese (`zh-Hant` /
 `zh-TW` / `zh-HK` / `zh-MO`, runtime key `zh-Hant`), Japanese, Korean,

@@ -132,6 +132,10 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 	if err != nil {
 		return rustUILaunch{}, err
 	}
+	density, err := config.InspectTUIDensity(home, workspace)
+	if err != nil {
+		return rustUILaunch{}, err
+	}
 	altScreen, err := config.InspectTUIAlternateScreen(home, workspace)
 	if err != nil {
 		return rustUILaunch{}, err
@@ -201,7 +205,17 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 		}
 	}
 
-	args := buildRustUIArgs(opts, socket, workspace, locale, localePath, carinaBinary, altScreen)
+	args := buildRustUIArgs(
+		opts,
+		socket,
+		workspace,
+		locale,
+		localePath,
+		density.Value,
+		density.PersistPath,
+		carinaBinary,
+		altScreen,
+	)
 	return rustUILaunch{Binary: uiBinary, Args: args}, nil
 }
 
@@ -240,7 +254,7 @@ func buildRuntimeModeSetupArgs(opts interactiveOptions, home, carinaBinary strin
 	return args
 }
 
-func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localePath, carinaBinary, altScreen string) []string {
+func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localePath, density, densityPath, carinaBinary, altScreen string) []string {
 	args := []string{
 		"--socket", socket,
 		"--workspace", workspace,
@@ -254,6 +268,10 @@ func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localeP
 	}
 	if localePath != "" {
 		args = append(args, "--locale-path", localePath)
+	}
+	args = append(args, "--density", density)
+	if densityPath != "" {
+		args = append(args, "--density-path", densityPath)
 	}
 	return appendTerminalArgs(args, opts, altScreen)
 }

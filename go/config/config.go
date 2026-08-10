@@ -78,6 +78,7 @@ type Config struct {
 	MemoryHMSProjectionPollMS  int                 `json:"memory_hms_projection_poll_ms"`
 	TUIKeybindings             map[string][]string `json:"tui_keybindings"`
 	TUILocale                  string              `json:"tui_locale"`
+	TUIDensity                 string              `json:"tui_density"`
 	TUIAlternateScreen         string              `json:"tui_alternate_screen"`
 }
 
@@ -97,6 +98,7 @@ func Defaults(home string) Config {
 		MemoryHMSTimeoutMS:        3000,
 		MemoryHMSMaxEvidence:      8,
 		MemoryHMSProjectionPollMS: 1000,
+		TUIDensity:                "compact",
 		TUIAlternateScreen:        "auto",
 	}
 }
@@ -282,6 +284,9 @@ func (c Config) Validate() error {
 		if _, err := microcopy.CanonicalLocale(c.TUILocale); err != nil {
 			return fmt.Errorf("config: tui_locale: %w", ErrInvalidTUILocale)
 		}
+	}
+	if density := strings.ToLower(strings.TrimSpace(c.TUIDensity)); density != "" && density != "compact" && density != "comfortable" {
+		return fmt.Errorf("config: tui_density must be one of compact, comfortable")
 	}
 	if c.MaxTaskTokens < 0 {
 		return fmt.Errorf("config: max_task_tokens must be >= 0, got %d", c.MaxTaskTokens)

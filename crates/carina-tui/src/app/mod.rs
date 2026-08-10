@@ -35,6 +35,7 @@ use crate::component::{Action, InteractionMap};
 use crate::context_completion::ContextCompletion;
 use crate::context_completion::FILE_ELEMENT_KIND;
 use crate::conversation::ExecutionTimer;
+use crate::density::DensityMode;
 use crate::file_viewer::{
     FileViewer, FileViewerLoad, FileViewerOrigin, MAX_PREVIEW_BYTES, parse_file_reference,
 };
@@ -69,9 +70,7 @@ use crate::sync_output::SyncOutputSupport;
 use crate::terminal_graphics::{MediaPreviewPlacement, TerminalGraphics};
 use crate::terminal_writer::TerminalWriter;
 use crate::theme::Theme;
-use crate::transcript::{
-    TranscriptBlock, TranscriptReducer, set_tool_blocks_expanded, toggle_block_expansion,
-};
+use crate::transcript::{TranscriptBlock, TranscriptReducer};
 
 const LOCALES: &[(&str, &str)] = &[
     ("en", "English"),
@@ -86,9 +85,33 @@ const DEFAULT_REWIND_PRIME_WINDOW: Duration = Duration::from_millis(800);
 const REWIND_GRACE_ENV: &str = "CARINA_ESC_GRACE_MS";
 const MIN_REWIND_GRACE_MS: u64 = 250;
 const MAX_REWIND_GRACE_MS: u64 = 2_000;
-const SETTINGS_ITEM_COUNT: usize = 8;
+const SETTINGS_ITEM_COUNT: usize = 9;
 const IMPORT_ERROR_LIMIT: u64 = 1024;
 const IMPORT_HELPER_TIMEOUT: Duration = Duration::from_secs(20);
+
+#[derive(Debug, Clone, Copy)]
+struct TranscriptHeightCacheEntry {
+    revision: u64,
+    width: u16,
+    locale: Locale,
+    density: DensityMode,
+    expand_key: &'static str,
+    height: usize,
+    header_height: usize,
+}
+
+#[derive(Debug, Clone)]
+struct TranscriptRenderCacheEntry {
+    revision: u64,
+    width: u16,
+    locale: Locale,
+    density: DensityMode,
+    expand_key: &'static str,
+    lines: Vec<Line<'static>>,
+}
+
+type TranscriptHeightCache = HashMap<String, TranscriptHeightCacheEntry>;
+type TranscriptRenderCache = HashMap<String, TranscriptRenderCacheEntry>;
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -97,6 +120,8 @@ pub struct Options {
     pub session_id: Option<String>,
     pub locale: Option<String>,
     pub locale_path: Option<PathBuf>,
+    pub density: DensityMode,
+    pub density_path: Option<PathBuf>,
     pub carina_bin: Option<PathBuf>,
     pub no_alt_screen: bool,
     pub screen_mode: Option<ScreenMode>,
@@ -443,6 +468,8 @@ pub struct App {
     selected_model: String,
     active_session: Option<Session>,
     security_context: Option<EffectiveConfig>,
+    density: DensityMode,
+    tool_disclosure_overrides: HashMap<String, bool>,
     blocks: Vec<TranscriptBlock>,
     scrollback: ScrollbackLedger,
     transcript_reflow: TranscriptReflowState,
@@ -476,8 +503,8 @@ pub struct App {
     transcript_scroll: usize,
     transcript_max_scroll: usize,
     transcript_follow_bottom: bool,
-    transcript_height_cache: HashMap<String, (u64, u16, Locale, &'static str, usize, usize)>,
-    transcript_render_cache: HashMap<String, (u64, u16, Locale, &'static str, Vec<Line<'static>>)>,
+    transcript_height_cache: TranscriptHeightCache,
+    transcript_render_cache: TranscriptRenderCache,
     history_selected: Option<usize>,
     history_stashed_draft: Option<String>,
     history_original_scroll: Option<(usize, bool)>,
@@ -531,6 +558,57 @@ impl App {
             .as_deref()
             .and_then(Locale::from_product_id)
             .unwrap_or_else(|| Locale::ALL[self.locale_index.min(Locale::ALL.len() - 1)])
+    }
+
+    fn effective_block_expanded(&self, block: &TranscriptBlock) -> bool {
+        self.tool_disclosure_overrides
+            .get(&block.id)
+            .copied()
+            .unwrap_or_else(|| {
+                block.expanded
+                    || self.density.profile().default_tool_expanded
+                        && block.is_collapsible()
+                        && matches!(
+                            crate::semantic_cell::SemanticCellKind::from_block(block),
+                            crate::semantic_cell::SemanticCellKind::Tool
+                                | crate::semantic_cell::SemanticCellKind::ToolGroup
+                        )
+            })
+    }
+
+    fn clear_transcript_projection_caches(&mut self) {
+        self.transcript_height_cache.clear();
+        self.transcript_render_cache.clear();
+    }
+
+    fn set_block_disclosure(&mut self, id: &str, expanded: bool) -> bool {
+        if !self
+            .blocks
+            .iter()
+            .any(|block| block.id == id && block.is_collapsible())
+        {
+            return false;
+        }
+        self.tool_disclosure_overrides
+            .insert(id.to_owned(), expanded);
+        self.clear_transcript_projection_caches();
+        true
+    }
+
+    fn toggle_density(&mut self) {
+        let next = self.density.toggled();
+        let path = self
+            .options
+            .density_path
+            .clone()
+            .or_else(default_locale_path);
+        match path.and_then(|path| persist_density(&path, next).ok().map(|_| path)) {
+            Some(_) => {
+                self.density = next;
+                self.clear_transcript_projection_caches();
+            }
+            None => self.notice = Notice::localized(MessageId::DensityPersistFailed),
+        }
     }
 
     fn media_chip_labels(&self) -> MediaChipLabels<'static> {
@@ -605,6 +683,7 @@ impl App {
         composer.show_scrollbar = false;
         composer.set_tab_width(4);
         let (async_tx, async_rx) = mpsc::channel();
+        let density = options.density;
 
         let mut app = Self {
             options,
@@ -625,6 +704,8 @@ impl App {
             selected_model,
             active_session: None,
             security_context: None,
+            density,
+            tool_disclosure_overrides: HashMap::new(),
             blocks: Vec::new(),
             scrollback: ScrollbackLedger::default(),
             transcript_reflow: TranscriptReflowState::default(),
@@ -1265,6 +1346,7 @@ impl App {
         }
         let hydrated_overlays = OverlayStack::hydrate_governance(&items);
         self.execution_lifecycle.clear();
+        self.tool_disclosure_overrides.clear();
         self.blocks = self.transcript_reducer.hydrate(items);
         self.scrollback.reset();
         self.reset_transcript_viewport();
@@ -1548,6 +1630,7 @@ impl App {
             self.model_index = index;
             self.selected_model = session.next_model.clone();
         }
+        self.tool_disclosure_overrides.clear();
         self.blocks = self.transcript_reducer.hydrate(items);
         self.scrollback.reset();
         self.transcript_stale = false;
@@ -3075,9 +3158,15 @@ impl App {
             let expand = self.blocks.iter().any(|block| {
                 block.kind == crate::transcript::BlockKind::Tool
                     && block.is_collapsible()
-                    && !block.expanded
+                    && !self.effective_block_expanded(block)
             });
-            set_tool_blocks_expanded(&mut self.blocks, expand);
+            for block in self.blocks.iter().filter(|block| {
+                block.kind == crate::transcript::BlockKind::Tool && block.is_collapsible()
+            }) {
+                self.tool_disclosure_overrides
+                    .insert(block.id.clone(), expand);
+            }
+            self.clear_transcript_projection_caches();
             return Ok(());
         }
         if self.history_search.is_some() {
@@ -4025,6 +4114,7 @@ impl App {
                 self.overlays
                     .replace(Overlay::Settings(SettingsOverlay { selected: 0 }));
             }
+            CommandId::Density => self.apply_action(Action::ToggleDensity),
             CommandId::Status => self.apply_action(Action::OpenStatus),
             CommandId::Context => {
                 self.request_context_summary();
@@ -4953,12 +5043,14 @@ impl App {
         }
         if let Some(items) = outcome.items {
             self.execution_lifecycle.clear();
+            self.tool_disclosure_overrides.clear();
             self.blocks = self.transcript_reducer.hydrate(items);
             self.scrollback.reset();
             self.transcript_stale = false;
             self.reset_transcript_viewport();
         } else {
             self.execution_lifecycle.clear();
+            self.tool_disclosure_overrides.clear();
             self.blocks = self.transcript_reducer.hydrate(Vec::new());
             self.scrollback.reset();
             self.transcript_stale = true;
@@ -5208,6 +5300,7 @@ impl App {
             self.selected_model = outcome.session.next_model.clone();
         }
         self.execution_lifecycle.clear();
+        self.tool_disclosure_overrides.clear();
         self.blocks = self.transcript_reducer.hydrate(outcome.items);
         self.scrollback.reset();
         self.persisted_prompt_history = outcome.prompt_history;
@@ -5543,7 +5636,14 @@ impl App {
                 .session_browser
                 .toggle_scope(&self.sessions, &self.options.workspace),
             Action::ToggleBlock(id) => {
-                toggle_block_expansion(&mut self.blocks, &id);
+                if let Some(expanded) = self
+                    .blocks
+                    .iter()
+                    .find(|block| block.id == id && block.is_collapsible())
+                    .map(|block| !self.effective_block_expanded(block))
+                {
+                    self.set_block_disclosure(&id, expanded);
+                }
             }
             Action::SelectHistory(index) => {
                 if self.eligible_history_indices().contains(&index) {
@@ -5578,6 +5678,7 @@ impl App {
             Action::OpenSettings => self
                 .overlays
                 .replace(Overlay::Settings(SettingsOverlay { selected: 0 })),
+            Action::ToggleDensity => self.toggle_density(),
             Action::OpenStatus => {
                 let session_id = self
                     .active_session
@@ -6174,10 +6275,11 @@ fn settings_action(index: usize) -> Option<Action> {
         1 => Some(Action::OpenProvider),
         2 => Some(Action::OpenModels),
         3 => Some(Action::TogglePlanMode),
-        4 => Some(Action::OpenStatus),
-        5 => Some(Action::OpenSessions),
-        6 => Some(Action::ResumePausedExecutionRun),
-        7 => Some(Action::CloseOverlay),
+        4 => Some(Action::ToggleDensity),
+        5 => Some(Action::OpenStatus),
+        6 => Some(Action::OpenSessions),
+        7 => Some(Action::ResumePausedExecutionRun),
+        8 => Some(Action::CloseOverlay),
         _ => None,
     }
 }
@@ -6659,6 +6761,10 @@ fn relaunch_in_screen_mode(app: &App, mode: ScreenMode) -> Result<Outcome> {
     }
     if let Some(path) = app.options.locale_path.as_ref() {
         command.arg("--locale-path").arg(path);
+    }
+    command.arg("--density").arg(app.density.as_config_value());
+    if let Some(path) = app.options.density_path.as_ref() {
+        command.arg("--density-path").arg(path);
     }
     if let Some(path) = app.options.carina_bin.as_ref() {
         command.arg("--carina-bin").arg(path);
@@ -7429,26 +7535,54 @@ fn animation_tick_demand(
     }
 }
 
-fn persist_locale(path: &Path, locale: &str) -> Result<()> {
+#[cfg(test)]
+fn load_density(path: Option<&Path>) -> Result<DensityMode> {
+    let Some(path) = path else {
+        return Ok(DensityMode::default());
+    };
+    let root = match fs::read(path) {
+        Ok(data) => serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&data)
+            .with_context(|| format!("parse {}", path.display()))?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(DensityMode::default());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let Some(value) = root.get("tui_density") else {
+        return Ok(DensityMode::default());
+    };
+    let value = value
+        .as_str()
+        .ok_or_else(|| anyhow!("{} tui_density must be a string", path.display()))?;
+    DensityMode::parse(value)
+        .ok_or_else(|| anyhow!("{} has invalid tui_density {value:?}", path.display()))
+}
+
+fn persist_config_string(path: &Path, key: &str, value: &str) -> Result<()> {
     let mut root = match fs::read(path) {
         Ok(data) => serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&data)
             .with_context(|| format!("parse {}", path.display()))?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => serde_json::Map::new(),
         Err(error) => return Err(error.into()),
     };
-    root.insert(
-        "tui_locale".into(),
-        serde_json::Value::String(locale.into()),
-    );
+    root.insert(key.into(), serde_json::Value::String(value.into()));
     let parent = path
         .parent()
-        .ok_or_else(|| anyhow!("locale config has no parent"))?;
+        .ok_or_else(|| anyhow!("TUI config has no parent"))?;
     fs::create_dir_all(parent)?;
     let temp = parent.join(format!(".config.{}.tmp", std::process::id()));
     let data = serde_json::to_vec_pretty(&root)?;
     fs::write(&temp, data)?;
     fs::rename(&temp, path)?;
     Ok(())
+}
+
+fn persist_locale(path: &Path, locale: &str) -> Result<()> {
+    persist_config_string(path, "tui_locale", locale)
+}
+
+fn persist_density(path: &Path, density: DensityMode) -> Result<()> {
+    persist_config_string(path, "tui_density", density.as_config_value())
 }
 
 #[cfg(test)]
@@ -7713,6 +7847,56 @@ mod tests {
     }
 
     #[test]
+    fn density_update_preserves_config_and_survives_reload() {
+        let root = std::env::temp_dir().join(format!(
+            "carina-tui-density-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("config.json");
+        fs::write(
+            &path,
+            br#"{"max_concurrent_tasks":4,"tui_locale":"zh-Hans"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(load_density(Some(&path)).unwrap(), DensityMode::Compact);
+        persist_density(&path, DensityMode::Comfortable).unwrap();
+        assert_eq!(load_density(Some(&path)).unwrap(), DensityMode::Comfortable);
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(value["max_concurrent_tasks"], 4);
+        assert_eq!(value["tui_locale"], "zh-Hans");
+        assert_eq!(value["tui_density"], "comfortable");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_persisted_density_is_explicit() {
+        let root = std::env::temp_dir().join(format!(
+            "carina-tui-density-invalid-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("config.json");
+        fs::write(&path, br#"{"tui_density":"dense"}"#).unwrap();
+        assert!(
+            load_density(Some(&path))
+                .unwrap_err()
+                .to_string()
+                .contains("dense")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn workspace_matching_does_not_resume_an_unrelated_session() {
         assert!(same_workspace("/tmp/carina", Path::new("/tmp/carina")));
         assert!(!same_workspace("/tmp/other", Path::new("/tmp/carina")));
@@ -7830,12 +8014,13 @@ mod tests {
 
     #[test]
     fn settings_keyboard_and_pointer_share_provider_action_order() {
-        assert_eq!(SETTINGS_ITEM_COUNT, 8);
+        assert_eq!(SETTINGS_ITEM_COUNT, 9);
         assert_eq!(settings_action(1), Some(Action::OpenProvider));
         assert_eq!(settings_action(3), Some(Action::TogglePlanMode));
-        assert_eq!(settings_action(4), Some(Action::OpenStatus));
-        assert_eq!(settings_action(7), Some(Action::CloseOverlay));
-        assert_eq!(settings_action(8), None);
+        assert_eq!(settings_action(4), Some(Action::ToggleDensity));
+        assert_eq!(settings_action(5), Some(Action::OpenStatus));
+        assert_eq!(settings_action(8), Some(Action::CloseOverlay));
+        assert_eq!(settings_action(9), None);
     }
 
     #[test]

@@ -57,6 +57,29 @@ order) use the related-row gap; unrelated conversation objects use the normal
 block gap. Selection and hover chrome remain outside the content rectangle, so
 neither state changes wrapping, retained heights, nor pointer hit geometry.
 
+## Density projection
+
+Transcript density is a persisted presentation preference over one semantic
+tree. `compact` is the default; `comfortable` adds space and opens routine tool
+detail by default. `/density` and the settings row dispatch the same action and
+persist `tui_density` without replacing unrelated configuration keys.
+
+| Projection | Compact | Comfortable |
+|------------|---------|-------------|
+| unrelated / related / final gap | 1 / 0 / 1 | 2 / 1 / 2 |
+| default routine tool detail | collapsed | expanded |
+| collapsed group members | 0 | 2 |
+| collapsed plain-output lines | 0 | 3 |
+| collapsed create preview lines | 4 | 8 |
+
+An explicit disclosure choice always overrides the density default for the
+current run. Density must not change transcript or lifecycle identity, draft,
+selection, ScreenMode, approval state, or daemon events. Patch summaries,
+failures, approvals, and their recovery actions remain visible in both modes.
+Expanded plain output stays complete until a separate full-output viewer exists;
+density may bound a collapsed preview but may not hide evidence without an
+escape hatch.
+
 ## Transcript color budget
 
 The main transcript uses no more than three saturated foreground hues at once:
