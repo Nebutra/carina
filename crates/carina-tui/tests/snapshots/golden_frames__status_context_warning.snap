@@ -3,7 +3,7 @@ source: crates/carina-tui/tests/golden_frames.rs
 expression: "render_status(\"running\", Some(\"checking context\"), 0, Some(&warning_context))"
 ---
 size=120x2
-⠧ checking context  1m02  Esc pause safely
+⠦ checking context  1m02  Esc pause safely
 run running · HITL ask · isolation safe edit + command sandbox · ctx 85% · screen minimal
 styles:
 (0, 0)..(42, 0) (Rgb(142, 219, 210), Reset, NONE)

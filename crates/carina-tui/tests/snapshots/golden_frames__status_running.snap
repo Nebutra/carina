@@ -3,7 +3,7 @@ source: crates/carina-tui/tests/golden_frames.rs
 expression: "render_status(\"running\", Some(\"running tests\"), 0, None)"
 ---
 size=120x2
-⠧ running tests  1m02  Esc pause safely
+⠦ running tests  1m02  Esc pause safely
 run running · HITL ask · isolation safe edit + command sandbox · ctx unknown · screen minimal
 styles:
 (0, 0)..(39, 0) (Rgb(142, 219, 210), Reset, NONE)

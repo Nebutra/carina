@@ -12,12 +12,15 @@
 //! cross junctions do not exist.
 
 use std::env;
+use std::time::Duration;
 
 use ratatui::widgets::BorderType;
 #[cfg(test)]
 use unicode_width::UnicodeWidthStr;
 
-use crate::frame_scheduler::{SPINNER_INTERVAL, reduced_motion_enabled};
+use crate::frame_scheduler::{
+    ACTIVITY_TICK_INTERVAL, STATUS_TICK_INTERVAL, reduced_motion_enabled,
+};
 
 pub const GLYPH_MODE_ENV: &str = "CARINA_TUI_GLYPHS";
 pub const ASCII_MODE_ENV: &str = "CARINA_ASCII";
@@ -346,11 +349,17 @@ impl Glyphs {
             GlyphMode::Ascii => BorderType::Plain,
         }
     }
-    pub fn spinner(self, elapsed_ms: u128) -> &'static str {
+    pub fn activity_spinner(self, elapsed_ms: u128) -> &'static str {
+        self.spinner_for(elapsed_ms, ACTIVITY_TICK_INTERVAL)
+    }
+    pub fn status_spinner(self, elapsed_ms: u128) -> &'static str {
+        self.spinner_for(elapsed_ms, STATUS_TICK_INTERVAL)
+    }
+    fn spinner_for(self, elapsed_ms: u128, interval: Duration) -> &'static str {
         if self.reduced_motion {
             return self.get(SPINNER[0]);
         }
-        let period = SPINNER_INTERVAL.as_millis();
+        let period = interval.as_millis();
         self.get(SPINNER[(elapsed_ms / period) as usize % SPINNER.len()])
     }
     pub fn table(self) -> TableGlyphs {
@@ -480,13 +489,19 @@ mod tests {
     }
 
     #[test]
-    fn spinner_frames_advance_at_the_scheduler_interval() {
+    fn spinner_classes_advance_at_their_scheduler_intervals() {
         for mode in [GlyphMode::Unicode, GlyphMode::Ascii] {
             let glyphs = Glyphs::new(mode);
             assert_ne!(
-                glyphs.spinner(0),
-                glyphs.spinner(SPINNER_INTERVAL.as_millis())
+                glyphs.activity_spinner(0),
+                glyphs.activity_spinner(ACTIVITY_TICK_INTERVAL.as_millis())
             );
+            assert_ne!(
+                glyphs.status_spinner(0),
+                glyphs.status_spinner(STATUS_TICK_INTERVAL.as_millis())
+            );
+            assert_eq!(glyphs.status_spinner(0), glyphs.status_spinner(33));
+            assert_ne!(glyphs.activity_spinner(0), glyphs.activity_spinner(33));
         }
     }
 
@@ -494,9 +509,23 @@ mod tests {
     fn reduced_motion_spinner_is_static_and_width_stable() {
         for mode in [GlyphMode::Unicode, GlyphMode::Ascii] {
             let glyphs = Glyphs::new_with_reduced_motion(mode, true);
-            let first = glyphs.spinner(0);
-            assert_eq!(first, glyphs.spinner(SPINNER_INTERVAL.as_millis()));
-            assert_eq!(first, glyphs.spinner(Duration::from_secs(30).as_millis()));
+            let first = glyphs.activity_spinner(0);
+            assert_eq!(
+                first,
+                glyphs.activity_spinner(ACTIVITY_TICK_INTERVAL.as_millis())
+            );
+            assert_eq!(
+                first,
+                glyphs.status_spinner(STATUS_TICK_INTERVAL.as_millis())
+            );
+            assert_eq!(
+                first,
+                glyphs.activity_spinner(Duration::from_secs(30).as_millis())
+            );
+            assert_eq!(
+                first,
+                glyphs.status_spinner(Duration::from_secs(30).as_millis())
+            );
             assert_eq!(UnicodeWidthStr::width(first), 1);
         }
     }

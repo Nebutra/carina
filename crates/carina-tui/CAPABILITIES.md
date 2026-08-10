@@ -70,8 +70,8 @@ States:
 | Assistant phase duplicate sealing | **wired** | adjacent identical commentary is replaced by the authoritative final answer; transcript regressions | conversation projection |
 | Key hints + real `/help` | **wired** | `help.rs`, `Overlay::Help`, `?` / `/help` | #22 |
 | UI copy voice guide | **wired** | `VOICE.md` | #23 |
-| Frame scheduling | **wired** | `frame_scheduler.rs` coalesce + idle `WaitPlan::Block` | #13 |
-| Streaming feedback latency | **wired** | RPC receipt markers + five-phase `feedback_latency` stats + focus-gated 80 ms motion | ISSUE-008 |
+| Frame scheduling | **wired** | `frame_scheduler.rs` coalesce; semantic Activity 33 ms / Status 80 ms demand; idle, unfocused, reduced-motion, and governance waits use `WaitPlan::Block` | #13 / V009 visual density |
+| Streaming feedback latency | **wired** | RPC receipt markers + five-phase `feedback_latency` stats + focus-gated semantic motion | ISSUE-008 |
 | Sync output DECSET 2026 | **wired** | `sync_output.rs` | #12 |
 | Resize reflow from source | **wired** | `TranscriptReflowState` + reflow_scrollback | #15 |
 | Native scrollback migration | **wired** (partial) | ledger + insert_before path; default still uses product viewport where needed | #11 |

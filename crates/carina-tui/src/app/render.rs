@@ -3240,7 +3240,7 @@ impl App {
                 primary_spans.push(Span::styled(
                     format!(
                         "{} ",
-                        self.theme.glyphs.spinner(
+                        self.theme.glyphs.activity_spinner(
                             self.execution_timer
                                 .elapsed()
                                 .unwrap_or_default()
@@ -6519,7 +6519,7 @@ fn centered(area: Rect, max_width: u16, max_height: u16) -> Rect {
 }
 
 fn validation_spinner(elapsed: Option<Duration>) -> &'static str {
-    crate::render_contract::spinner(elapsed.unwrap_or_default(), false)
+    crate::render_contract::status_spinner(elapsed.unwrap_or_default(), false)
 }
 
 fn bottom_sheet(area: Rect, max_width: u16, max_height: u16) -> Rect {

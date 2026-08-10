@@ -103,6 +103,22 @@ hit rectangle. Unknown lifecycle and policy values become localized Unknown
 copy, never raw protocol strings. ASCII, no-color, polarity, and ScreenMode may
 change glyphs or styling but cannot change slot meaning or action geometry.
 
+## Motion
+
+Motion communicates liveness; it is not decoration. Activity such as a running
+execution advances at the shared 33ms scheduler/glyph cadence. Secondary status
+work such as provider validation advances at 80ms. Activity takes precedence
+when both demand classes are present, and the cadence constants that schedule a
+frame are the same constants that select its glyph.
+
+Idle, completed, failed, paused, approval-waiting, input-waiting, and unknown
+execution states do not request animation. Governance controls, borders, focus,
+hover, and selection remain static. Losing terminal focus or enabling
+`CARINA_REDUCED_MOTION` removes every decorative deadline while preserving
+semantic event redraws; all animated glyph classes then render their stable
+first frame. A late wake draws once and schedules from the observed time rather
+than replaying missed frames.
+
 ## Transcript color budget
 
 The main transcript uses no more than three saturated foreground hues at once:

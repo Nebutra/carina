@@ -1,0 +1,8 @@
+---
+source: crates/carina-tui/tests/golden_frames.rs
+expression: render_reduced_motion_strip()
+---
+size=32x2
+activity ⠋ ⠋ ⠋ ⠋
+status   ⠋ ⠋ ⠋ ⠋
+styles:

@@ -206,7 +206,7 @@ fn render_status_with_mode(
             if let Some(value) = &chrome.primary {
                 if value.animated {
                     primary.push(Span::styled(
-                        format!("{} ", theme.glyphs.spinner(62_000)),
+                        format!("{} ", theme.glyphs.activity_spinner(62_000)),
                         chrome_tone_style(value.tone, theme),
                     ));
                 }
@@ -299,6 +299,36 @@ fn render_palette(theme: Theme) -> String {
     serialize_frame(terminal.backend().buffer())
 }
 
+fn render_reduced_motion_strip() -> String {
+    let mut terminal = Terminal::new(TestBackend::new(32, 2)).unwrap();
+    let glyphs = carina_tui::glyphs::Glyphs::new_with_reduced_motion(
+        carina_tui::glyphs::GlyphMode::Unicode,
+        true,
+    );
+    terminal
+        .draw(|frame| {
+            let activity = [0, 33, 66, 99]
+                .into_iter()
+                .map(|elapsed| glyphs.activity_spinner(elapsed))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let status = [0, 80, 160, 240]
+                .into_iter()
+                .map(|elapsed| glyphs.status_spinner(elapsed))
+                .collect::<Vec<_>>()
+                .join(" ");
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(format!("activity {activity}")),
+                    Line::from(format!("status   {status}")),
+                ]),
+                frame.area(),
+            );
+        })
+        .unwrap();
+    serialize_frame(terminal.backend().buffer())
+}
+
 #[test]
 fn semantic_palette_dark_truecolor() {
     insta::assert_snapshot!(render_palette(Theme::new(
@@ -328,6 +358,11 @@ fn semantic_palette_color_depths() {
             render_palette(Theme::new(Polarity::Dark, level))
         );
     }
+}
+
+#[test]
+fn golden_reduced_motion_keeps_every_spinner_static() {
+    insta::assert_snapshot!("motion_reduced_static", render_reduced_motion_strip());
 }
 
 #[test]
@@ -545,8 +580,8 @@ fn live_status_glyph_mode_is_fixture_owned() {
         None,
         carina_tui::glyphs::GlyphMode::Ascii,
     );
-    assert!(unicode.contains("⠧ running tests  1m02  Esc pause safely"));
+    assert!(unicode.contains("⠦ running tests  1m02  Esc pause safely"));
     assert!(unicode.contains(" · "));
-    assert!(ascii.contains("\\ running tests"));
+    assert!(ascii.contains("- running tests"));
     assert!(ascii.contains(" | "));
 }

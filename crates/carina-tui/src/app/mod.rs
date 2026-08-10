@@ -34,7 +34,7 @@ use crate::command::{self, CommandId, CommandSuggestion, SuggestionExecution};
 use crate::component::{Action, InteractionMap};
 use crate::context_completion::ContextCompletion;
 use crate::context_completion::FILE_ELEMENT_KIND;
-use crate::conversation::ExecutionTimer;
+use crate::conversation::{ExecutionTimer, execution_status_animates};
 use crate::density::DensityMode;
 use crate::file_viewer::{
     FileViewer, FileViewerLoad, FileViewerOrigin, MAX_PREVIEW_BYTES, parse_file_reference,
@@ -2577,6 +2577,7 @@ impl App {
         animation_tick_demand(
             self.terminal_focused,
             self.active_run_id.is_some(),
+            &self.execution_status,
             matches!(
                 &self.provider_import,
                 ProviderImportState::Validating { .. }
@@ -7521,14 +7522,19 @@ fn terminal_focus_transition(event: &Event) -> Option<bool> {
 fn animation_tick_demand(
     terminal_focused: bool,
     has_active_run: bool,
+    execution_status: &str,
     provider_validating: bool,
 ) -> TickDemand {
     if !terminal_focused {
         TickDemand::None
     } else if has_active_run {
-        TickDemand::Fast
+        if execution_status_animates(execution_status) {
+            TickDemand::Activity
+        } else {
+            TickDemand::None
+        }
     } else if provider_validating {
-        TickDemand::Slow
+        TickDemand::Status
     } else {
         TickDemand::None
     }
@@ -7594,11 +7600,49 @@ mod tests {
         assert_eq!(terminal_focus_transition(&Event::FocusGained), Some(true));
         assert_eq!(terminal_focus_transition(&Event::Resize(80, 24)), None);
 
-        assert_eq!(animation_tick_demand(true, true, false), TickDemand::Fast);
-        assert_eq!(animation_tick_demand(false, true, false), TickDemand::None);
-        assert_eq!(animation_tick_demand(true, false, true), TickDemand::Slow);
-        assert_eq!(animation_tick_demand(false, false, true), TickDemand::None);
-        assert_eq!(animation_tick_demand(true, false, false), TickDemand::None);
+        assert_eq!(
+            animation_tick_demand(true, true, "running", false),
+            TickDemand::Activity
+        );
+        assert_eq!(
+            animation_tick_demand(true, true, "running", true),
+            TickDemand::Activity
+        );
+        assert_eq!(
+            animation_tick_demand(false, true, "running", false),
+            TickDemand::None
+        );
+        assert_eq!(
+            animation_tick_demand(true, false, "ready", true),
+            TickDemand::Status
+        );
+        assert_eq!(
+            animation_tick_demand(false, false, "ready", true),
+            TickDemand::None
+        );
+        assert_eq!(
+            animation_tick_demand(true, false, "ready", false),
+            TickDemand::None
+        );
+        for waiting in [
+            "waiting_approval",
+            "awaiting_approval",
+            "blocked_on_approval",
+            "waiting_input",
+            "needs_input",
+            "blocked_on_input",
+        ] {
+            assert_eq!(
+                animation_tick_demand(true, true, waiting, false),
+                TickDemand::None,
+                "status={waiting}"
+            );
+            assert_eq!(
+                animation_tick_demand(true, true, waiting, true),
+                TickDemand::None,
+                "provider validation must not animate through status={waiting}"
+            );
+        }
     }
 
     #[test]

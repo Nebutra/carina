@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-pub fn spinner(elapsed: Duration, no_color: bool) -> &'static str {
+pub fn status_spinner(elapsed: Duration, no_color: bool) -> &'static str {
     let _ = no_color;
-    crate::glyphs::Glyphs::detect().spinner(elapsed.as_millis())
+    crate::glyphs::Glyphs::detect().status_spinner(elapsed.as_millis())
 }
 
 /// A compact token count that never exceeds four terminal cells.

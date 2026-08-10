@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use crate::rpc::FeedbackPhase;
 
 pub const DEFAULT_MIN_DRAW_INTERVAL: Duration = Duration::from_millis(16);
-pub const SLOW_TICK_INTERVAL: Duration = Duration::from_millis(83);
-pub const SPINNER_INTERVAL: Duration = Duration::from_millis(80);
+pub const ACTIVITY_TICK_INTERVAL: Duration = Duration::from_millis(33);
+pub const STATUS_TICK_INTERVAL: Duration = Duration::from_millis(80);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(75);
 pub const REDUCED_MOTION_ENV: &str = "CARINA_REDUCED_MOTION";
 const FEEDBACK_SAMPLE_LIMIT: usize = 512;
@@ -67,8 +67,8 @@ pub enum RedrawReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickDemand {
     None,
-    Slow,
-    Fast,
+    Status,
+    Activity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -370,8 +370,8 @@ impl FrameScheduler {
 fn tick_interval(demand: TickDemand) -> Option<Duration> {
     match demand {
         TickDemand::None => None,
-        TickDemand::Slow => Some(SLOW_TICK_INTERVAL),
-        TickDemand::Fast => Some(SPINNER_INTERVAL),
+        TickDemand::Status => Some(STATUS_TICK_INTERVAL),
+        TickDemand::Activity => Some(ACTIVITY_TICK_INTERVAL),
     }
 }
 
@@ -423,25 +423,25 @@ mod tests {
         assert_eq!(scheduler.deadline(), None);
         assert_eq!(wait_plan(scheduler.deadline(), start), WaitPlan::Block);
 
-        scheduler.set_tick_demand(TickDemand::Slow, start);
+        scheduler.set_tick_demand(TickDemand::Status, start);
         let late = start + Duration::from_secs(2);
         assert!(scheduler.advance_tick(late));
         assert!(scheduler.should_present(late));
         scheduler.presented(late);
-        assert_eq!(scheduler.deadline(), Some(late + SLOW_TICK_INTERVAL));
+        assert_eq!(scheduler.deadline(), Some(late + STATUS_TICK_INTERVAL));
     }
 
     #[test]
-    fn fast_animation_uses_an_explicit_spinner_deadline_without_catch_up() {
+    fn activity_animation_uses_an_explicit_deadline_without_catch_up() {
         let start = Instant::now();
         let mut scheduler = FrameScheduler::new(start);
         scheduler.presented(start);
-        scheduler.set_tick_demand(TickDemand::Fast, start);
+        scheduler.set_tick_demand(TickDemand::Activity, start);
 
-        assert_eq!(scheduler.deadline(), Some(start + SPINNER_INTERVAL));
-        assert!(!scheduler.advance_tick(start + SPINNER_INTERVAL - Duration::from_millis(1)));
+        assert_eq!(scheduler.deadline(), Some(start + ACTIVITY_TICK_INTERVAL));
+        assert!(!scheduler.advance_tick(start + ACTIVITY_TICK_INTERVAL - Duration::from_millis(1)));
 
-        let first = start + SPINNER_INTERVAL;
+        let first = start + ACTIVITY_TICK_INTERVAL;
         assert!(scheduler.advance_tick(first));
         assert!(scheduler.should_present(first));
         assert_eq!(scheduler.stats().requested(RedrawReason::Animation), 1);
@@ -451,8 +451,28 @@ mod tests {
         assert!(scheduler.advance_tick(late));
         assert!(scheduler.should_present(late));
         scheduler.presented(late);
-        assert_eq!(scheduler.deadline(), Some(late + SPINNER_INTERVAL));
+        assert_eq!(scheduler.deadline(), Some(late + ACTIVITY_TICK_INTERVAL));
         assert_eq!(scheduler.stats().requested(RedrawReason::Animation), 2);
+    }
+
+    #[test]
+    fn status_and_activity_demands_have_distinct_semantic_rates() {
+        let start = Instant::now();
+        let mut status = FrameScheduler::with_reduced_motion(start, false);
+        status.presented(start);
+        status.set_tick_demand(TickDemand::Status, start);
+        let mut activity = FrameScheduler::with_reduced_motion(start, false);
+        activity.presented(start);
+        activity.set_tick_demand(TickDemand::Activity, start);
+
+        assert_eq!(ACTIVITY_TICK_INTERVAL, Duration::from_millis(33));
+        assert_eq!(STATUS_TICK_INTERVAL, Duration::from_millis(80));
+        assert!(ACTIVITY_TICK_INTERVAL < STATUS_TICK_INTERVAL);
+        assert_eq!(activity.deadline(), Some(start + ACTIVITY_TICK_INTERVAL));
+        assert_eq!(status.deadline(), Some(start + STATUS_TICK_INTERVAL));
+        assert!(activity.advance_tick(start + ACTIVITY_TICK_INTERVAL));
+        assert!(!status.advance_tick(start + ACTIVITY_TICK_INTERVAL));
+        assert!(status.advance_tick(start + STATUS_TICK_INTERVAL));
     }
 
     #[test]
@@ -471,7 +491,7 @@ mod tests {
     #[test]
     fn reduced_motion_suppresses_all_decorative_tick_deadlines() {
         let start = Instant::now();
-        for demand in [TickDemand::Slow, TickDemand::Fast] {
+        for demand in [TickDemand::Status, TickDemand::Activity] {
             let mut scheduler = FrameScheduler::with_reduced_motion(start, true);
             scheduler.presented(start);
             scheduler.set_tick_demand(demand, start);
@@ -487,8 +507,8 @@ mod tests {
         let start = Instant::now();
         let mut scheduler = FrameScheduler::with_reduced_motion(start, false);
         scheduler.presented(start);
-        scheduler.set_tick_demand(TickDemand::Fast, start);
-        assert_eq!(scheduler.deadline(), Some(start + SPINNER_INTERVAL));
+        scheduler.set_tick_demand(TickDemand::Activity, start);
+        assert_eq!(scheduler.deadline(), Some(start + ACTIVITY_TICK_INTERVAL));
 
         // This is the scheduler half of App's FocusLost -> TickDemand::None
         // contract. Explicit focus redraw still proceeds independently.

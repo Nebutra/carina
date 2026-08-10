@@ -347,10 +347,7 @@ fn label(locale: Locale, id: MessageId) -> &'static str {
 
 fn execution_state(locale: Locale, status: &str) -> (String, ChromeTone, bool) {
     let normalized = status.trim().to_ascii_lowercase();
-    let active = matches!(
-        normalized.as_str(),
-        "queued" | "pending" | "running" | "in_progress" | "working" | "active"
-    );
+    let active = execution_status_animates(&normalized);
     let tone = match normalized.as_str() {
         "failed" | "error" => ChromeTone::Danger,
         "waiting_approval"
@@ -398,6 +395,13 @@ fn execution_state(locale: Locale, status: &str) -> (String, ChromeTone, bool) {
         _ => tr(locale, MessageId::UnknownValue).to_owned(),
     };
     (value, tone, active)
+}
+
+pub(crate) fn execution_status_animates(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "queued" | "pending" | "running" | "in_progress" | "working" | "active"
+    )
 }
 
 fn hitl_slot(locale: Locale, value: &str) -> ChromeSlot {
@@ -686,10 +690,36 @@ mod tests {
             for no_color in [false, true] {
                 let glyphs = Theme::carina(no_color).glyphs;
                 assert_eq!(
-                    UnicodeWidthStr::width(glyphs.spinner(elapsed.as_millis())),
+                    UnicodeWidthStr::width(glyphs.activity_spinner(elapsed.as_millis())),
                     1
                 );
             }
+        }
+    }
+
+    #[test]
+    fn only_visually_active_execution_states_request_motion() {
+        for status in [
+            "queued",
+            "pending",
+            "running",
+            "in_progress",
+            "working",
+            "active",
+        ] {
+            assert!(execution_status_animates(status), "status={status}");
+        }
+        for status in [
+            "",
+            "ready",
+            "waiting_approval",
+            "waiting_input",
+            "paused",
+            "completed",
+            "failed",
+            "future_state",
+        ] {
+            assert!(!execution_status_animates(status), "status={status}");
         }
     }
 
