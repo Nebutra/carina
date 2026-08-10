@@ -1,15 +1,10 @@
 name: Deploy Carina docs (Vercel)
 
-# Creates/updates the nebutra-carina Vercel project (root apps/docs), attaches
-# carina.nebutra.com, then deploys production. DNS CNAME is owned by the
-# Nebutra-Sailor zone workflows (point-carina-dns.yml).
+# Legacy experimental origin only. Production carina.nebutra.com is served by
+# the Nebutra-Sailor ECS workflow; keep Vercel opt-in so main cannot publish a
+# parallel origin or attach the production domain unexpectedly.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "apps/docs/**"
-      - ".github/workflows/deploy-docs-vercel.yml"
   workflow_dispatch:
 
 permissions:

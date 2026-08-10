@@ -263,6 +263,32 @@ function assertOrWrite(path, expected) {
   writeFileSync(path, expected);
 }
 
+async function verifyOrWriteImage(path, rendered, expectedWidth, expectedHeight) {
+  if (!checkOnly) {
+    writeFileSync(path, rendered);
+    return rendered;
+  }
+
+  let current;
+  try {
+    current = readFileSync(path);
+  } catch {
+    throw new Error(`${relative(repoRoot, path)} is missing; run pnpm render:tui-captures`);
+  }
+
+  const metadata = await sharp(current).metadata();
+  if (metadata.width !== expectedWidth || metadata.height !== expectedHeight) {
+    throw new Error(
+      `${relative(repoRoot, path)} has ${metadata.width}x${metadata.height}; expected ${expectedWidth}x${expectedHeight}`,
+    );
+  }
+
+  // WebP encoder output is not byte-stable across libvips platforms. In check
+  // mode the manifest locks the committed image hash and every source input;
+  // dimensions additionally prove the asset remains decodable.
+  return current;
+}
+
 const fontData = fontBuffer.toString('base64');
 const manifest = {
   generatedBy: 'apps/docs/scripts/render-tui-captures.mjs',
@@ -292,13 +318,18 @@ for (const capture of captures) {
     .webp({ quality: 92, effort: 6, smartSubsample: true })
     .toBuffer();
   const outputPath = resolve(outputDir, capture.output);
-  assertOrWrite(outputPath, image);
+  const canonicalImage = await verifyOrWriteImage(
+    outputPath,
+    image,
+    imageWidth,
+    imageHeight,
+  );
   manifest.captures.push({
     id: capture.id,
     output: `apps/docs/public/images/${capture.output}`,
     terminalCells: `${capture.width}x${capture.height}`,
     pixels: `${imageWidth}x${imageHeight}`,
-    sha256: digest(image),
+    sha256: digest(canonicalImage),
     sources: sourceMetadata,
   });
 }
