@@ -119,6 +119,35 @@ semantic event redraws; all animated glyph classes then render their stable
 first frame. A late wake draws once and schedules from the observed time rather
 than replaying missed frames.
 
+## Patch review workbench
+
+Fullscreen `/changes` uses one product-width outer frame with three stable,
+unboxed regions: transaction history, the selected transaction's file tree, and
+the selected file's numbered hunk detail. A 120-column terminal is the first
+three-region layout; narrower terminals stack the same semantic projection.
+Minimal and Inline retain the compact overlay and native-scrollback contract.
+
+The transaction row and summary always show a localized lifecycle disposition;
+color is reinforcement, never the identity. Only the focused list uses the
+selection background. The other selected list keeps a structural marker and
+bold text, preventing two adjacent selected rows from becoming one visual band.
+File statistics align at the trailing edge, while hunk detail omits duplicate
+`diff --git` path headers and retains old/new line numbers plus bounded word
+emphasis.
+
+Patch review consumes the background-built `PatchReview` projection. Frames do
+not split or highlight raw patch payloads. The projection is bounded to 2 MiB
+and 50,000 logical lines, and any continuation says that the complete typed
+transaction remains available for verification and rollback. Fullscreen review
+uses no more than three saturated semantic foregrounds at once: interaction/add
+cyan, warning amber, and remove/failure red.
+
+Rollback confirmation freezes list navigation and pointer selection. Its short
+impact line, affected-file actions, and keycap footer all refer to the previewed
+patch and transaction identity. A later list selection cannot retarget the
+confirmation; a changed workspace or mismatched identity makes the preview
+ineligible.
+
 ## Transcript color budget
 
 The main transcript uses no more than three saturated foreground hues at once:

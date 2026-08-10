@@ -52,6 +52,7 @@ States:
 | Model-aware context compaction | **wired** | catalog/fallback budget resolver; checkpoint snapshot; verifiable receipt policy metadata | ISSUE-004 |
 | Context pressure and receipt detail | **wired** | persistent `ctx%`/`est.` footer; typed `/context` overlay; 80/90 semantic thresholds | ISSUE-011 |
 | Patch attribution and rollback trust loop | **wired** | typed `workspace.patch.list/show/rollback.preview/rollback`; Changes workbench; apply/verify/rollback E2E | ISSUE-003 |
+| Fullscreen patch review workbench | **wired** | typed background `PatchReview` projection; transaction/file/hunk regions at 120/160; bounded numbered diff; exact preview identity; EN/zh-Hans goldens plus ASCII/no-color/resize geometry contracts | V005 visual density |
 | Large diff progressive highlight + cap | **wired** | 2MiB/50k review cap; 500-row/32KiB transcript window; 4KiB line + bounded LCS; `/changes` paging | ISSUE-015 |
 | ScreenMode + native scrollback | **wired** | Fullscreen default (alt-screen); Minimal opt-in native scrollback; Inline capability fallback; fenced re-exec handoff + exact commit watermark; status chip shows mode; forced Inline explains reason | ISSUE-005 / residual R5 |
 | Follow-up queue inspect | **wired** | `/queue` overlay; `execution.queue.list` truncated preview; `execution.queue.drop`; durable depth footer | ISSUE-007 residual R7 |

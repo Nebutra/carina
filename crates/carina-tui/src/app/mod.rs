@@ -55,9 +55,10 @@ use crate::native_scrollback::{
     is_plain_url_line, raw_block_text, reflow_line_cap,
 };
 use crate::overlay::{
-    AgentDashboardOverlay, ApprovalScope, ChangesOverlay, HelpOverlay, Overlay, OverlayStack,
-    PlanReviewOverlay, QueueOverlay, RetainedLoad, SettingsOverlay, StatusOverlay,
+    AgentDashboardOverlay, ApprovalScope, ChangesFocus, ChangesOverlay, HelpOverlay, Overlay,
+    OverlayStack, PlanReviewOverlay, QueueOverlay, RetainedLoad, SettingsOverlay, StatusOverlay,
 };
+use crate::patch_review::{PatchReview, project_patch_reviews};
 use crate::prerequisite::ProviderPickerState;
 use crate::product_projection::ProductProjection;
 use crate::rpc::{
@@ -308,7 +309,7 @@ enum AsyncMessage {
     ChangesLoaded {
         generation: u64,
         session_id: String,
-        result: Result<Box<ProductProjection>, String>,
+        result: Result<Box<ChangesLoadOutcome>, String>,
     },
     ContextSummaryLoaded {
         generation: u64,
@@ -408,6 +409,11 @@ impl AsyncMessage {
 
 struct AgentsLoadOutcome {
     projection: ProductProjection,
+}
+
+struct ChangesLoadOutcome {
+    projection: ProductProjection,
+    patch_reviews: Vec<PatchReview>,
 }
 
 struct PausedResumeOutcome {
@@ -2013,35 +2019,44 @@ impl App {
                         continue;
                     }
                     match result {
-                        Ok(projection) => {
+                        Ok(outcome) => {
                             let selected_patch = changes
                                 .projection
                                 .patches
                                 .get(changes.selected)
-                                .map(|patch| patch.patch_id.as_str());
+                                .map(|patch| patch.patch_id.clone());
+                            let selected_patch_file = changes
+                                .patch_reviews
+                                .get(changes.selected)
+                                .and_then(|review| review.files.get(changes.selected_file))
+                                .map(|file| file.path.clone());
                             let selected_path = changes
                                 .projection
                                 .workspace_diff
                                 .files
                                 .get(changes.selected)
-                                .map(|file| file.path.as_str());
+                                .map(|file| file.path.clone());
                             let selected_review = changes
                                 .projection
                                 .review
                                 .changes
                                 .get(changes.selected)
-                                .map(|change| change.id.as_str());
+                                .map(|change| change.id.clone());
+                            let ChangesLoadOutcome {
+                                projection,
+                                patch_reviews,
+                            } = *outcome;
+                            let retained_patch_selection = retain_patch_review_selection(
+                                selected_patch.as_deref(),
+                                selected_patch_file.as_deref(),
+                                &projection.patches,
+                                &patch_reviews,
+                            );
                             changes.selected = if !projection.patches.is_empty() {
-                                selected_patch
-                                    .and_then(|patch_id| {
-                                        projection
-                                            .patches
-                                            .iter()
-                                            .position(|patch| patch.patch_id == patch_id)
-                                    })
-                                    .unwrap_or(0)
+                                retained_patch_selection.0
                             } else if projection.workspace_diff.files.is_empty() {
                                 selected_review
+                                    .as_deref()
                                     .and_then(|id| {
                                         projection
                                             .review
@@ -2052,6 +2067,7 @@ impl App {
                                     .unwrap_or(0)
                             } else {
                                 selected_path
+                                    .as_deref()
                                     .and_then(|path| {
                                         projection
                                             .workspace_diff
@@ -2061,13 +2077,19 @@ impl App {
                                     })
                                     .unwrap_or(0)
                             };
+                            changes.selected_file = if projection.patches.is_empty() {
+                                0
+                            } else {
+                                retained_patch_selection.1
+                            };
                             changes.load.finish(
                                 projection
                                     .patches_error
                                     .clone()
                                     .or_else(|| projection.workspace_diff_error.clone()),
                             );
-                            changes.projection = *projection;
+                            changes.projection = projection;
+                            changes.patch_reviews = patch_reviews;
                             changes.scroll = 0;
                         }
                         Err(error) => changes.load.finish(Some(error)),
@@ -4461,6 +4483,7 @@ impl App {
         let mut retry_file = None;
         let mut deferred_doctor = None;
         let mut deferred_doctor_rerun = false;
+        let fullscreen_changes = self.options.screen_mode == Some(ScreenMode::Fullscreen);
         match self.overlays.active_mut() {
             Some(Overlay::Approval(approval)) => match key.code {
                 KeyCode::Left | KeyCode::BackTab => {
@@ -4634,41 +4657,85 @@ impl App {
                 KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::OpenStatus),
                 _ => {}
             },
-            Some(Overlay::Changes(changes)) => match key.code {
-                KeyCode::Esc if changes.confirm_rollback => {
-                    deferred = Some(Action::CancelPatchRollback)
+            Some(Overlay::Changes(changes)) => {
+                if changes.confirm_rollback {
+                    match key.code {
+                        KeyCode::Esc => deferred = Some(Action::CancelPatchRollback),
+                        KeyCode::Enter | KeyCode::Char('y') => {
+                            deferred = Some(Action::ConfirmPatchRollback)
+                        }
+                        _ => {}
+                    }
+                } else if fullscreen_changes && !changes.projection.patches.is_empty() {
+                    match key.code {
+                        KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
+                            changes.focus = ChangesFocus::Files
+                        }
+                        KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
+                            changes.focus = ChangesFocus::Transactions
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if changes.focus == ChangesFocus::Files {
+                                changes.selected_file = changes.selected_file.saturating_sub(1);
+                            } else {
+                                changes.selected = changes.selected.saturating_sub(1);
+                                changes.selected_file = 0;
+                            }
+                            changes.scroll = 0;
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if changes.focus == ChangesFocus::Files {
+                                let count = changes
+                                    .patch_reviews
+                                    .get(changes.selected)
+                                    .map_or(0, |review| review.files.len());
+                                changes.selected_file =
+                                    (changes.selected_file + 1).min(count.saturating_sub(1));
+                            } else {
+                                changes.selected = (changes.selected + 1)
+                                    .min(changes.projection.patches.len().saturating_sub(1));
+                                changes.selected_file = 0;
+                            }
+                            changes.scroll = 0;
+                        }
+                        KeyCode::Enter => changes.focus = ChangesFocus::Files,
+                        KeyCode::PageDown => changes.scroll = changes.scroll.saturating_add(12),
+                        KeyCode::PageUp => changes.scroll = changes.scroll.saturating_sub(12),
+                        KeyCode::Home => changes.scroll = 0,
+                        KeyCode::Char('b') => deferred = Some(Action::BeginPatchRollback),
+                        KeyCode::Char('r') => deferred = Some(Action::RefreshChanges),
+                        KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::OpenStatus),
+                        _ => {}
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            changes.selected = changes.selected.saturating_sub(1);
+                            changes.scroll = 0;
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            let count = if !changes.projection.patches.is_empty() {
+                                changes.projection.patches.len()
+                            } else if changes.projection.workspace_diff.files.is_empty() {
+                                changes.projection.review.changes.len()
+                            } else {
+                                changes.projection.workspace_diff.files.len()
+                            };
+                            changes.selected = (changes.selected + 1).min(count.saturating_sub(1));
+                            changes.scroll = 0;
+                        }
+                        KeyCode::PageDown => changes.scroll = changes.scroll.saturating_add(12),
+                        KeyCode::PageUp => changes.scroll = changes.scroll.saturating_sub(12),
+                        KeyCode::Home => changes.scroll = 0,
+                        KeyCode::Enter if !changes.projection.patches.is_empty() => {
+                            deferred = Some(Action::BeginPatchRollback)
+                        }
+                        KeyCode::Char('r') => deferred = Some(Action::RefreshChanges),
+                        KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::OpenStatus),
+                        _ => {}
+                    }
                 }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    changes.selected = changes.selected.saturating_sub(1);
-                    changes.scroll = 0;
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    let count = if !changes.projection.patches.is_empty() {
-                        changes.projection.patches.len()
-                    } else if changes.projection.workspace_diff.files.is_empty() {
-                        changes.projection.review.changes.len()
-                    } else {
-                        changes.projection.workspace_diff.files.len()
-                    };
-                    changes.selected = (changes.selected + 1).min(count.saturating_sub(1));
-                    changes.scroll = 0;
-                }
-                KeyCode::PageDown => changes.scroll = changes.scroll.saturating_add(12),
-                KeyCode::PageUp => changes.scroll = changes.scroll.saturating_sub(12),
-                KeyCode::Home => changes.scroll = 0,
-                KeyCode::Enter if changes.confirm_rollback => {
-                    deferred = Some(Action::ConfirmPatchRollback)
-                }
-                KeyCode::Char('y') if changes.confirm_rollback => {
-                    deferred = Some(Action::ConfirmPatchRollback)
-                }
-                KeyCode::Enter if !changes.projection.patches.is_empty() => {
-                    deferred = Some(Action::BeginPatchRollback)
-                }
-                KeyCode::Char('r') => deferred = Some(Action::RefreshChanges),
-                KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::OpenStatus),
-                _ => {}
-            },
+            }
             Some(Overlay::FileViewer(viewer)) => {
                 let visible_rows = self.transcript_area.height.saturating_sub(8).max(1) as usize;
                 if viewer.search.is_some() {
@@ -5498,7 +5565,10 @@ impl App {
                 .overlays
                 .replace(Overlay::Changes(Box::new(ChangesOverlay {
                     projection: ProductProjection::default(),
+                    patch_reviews: Vec::new(),
                     selected: 0,
+                    selected_file: 0,
+                    focus: ChangesFocus::Transactions,
                     scroll: 0,
                     load: RetainedLoad::begin(generation, session_id.clone()),
                     confirm_rollback: false,
@@ -5513,7 +5583,13 @@ impl App {
                 &socket,
                 (!session_id.is_empty()).then_some(session_id.as_str()),
             )
-            .map(Box::new);
+            .map(|projection| {
+                let patch_reviews = project_patch_reviews(&projection.patches);
+                Box::new(ChangesLoadOutcome {
+                    projection,
+                    patch_reviews,
+                })
+            });
             let _ = tx.send(AsyncMessage::ChangesLoaded {
                 generation,
                 session_id,
@@ -5711,17 +5787,29 @@ impl App {
                                     "rolled_back" | "failed" | "proposed"
                                 )
                         })
-                        .map(|patch| (patch.session_id.clone(), patch.patch_id.clone())),
+                        .map(|patch| {
+                            (
+                                patch.session_id.clone(),
+                                patch.patch_id.clone(),
+                                patch.transaction_id.clone(),
+                            )
+                        }),
                     _ => None,
                 };
-                if let Some((session_id, patch_id)) = target {
+                if let Some((session_id, patch_id, transaction_id)) = target {
                     let locale = self.ui_locale();
                     let preview = self
                         .rpc
                         .preview_workspace_patch_rollback(&session_id, &patch_id);
                     if let Some(Overlay::Changes(changes)) = self.overlays.active_mut() {
                         match preview {
-                            Ok(preview) if preview.can_rollback => {
+                            Ok(preview)
+                                if rollback_preview_matches(
+                                    &preview,
+                                    &patch_id,
+                                    &transaction_id,
+                                ) =>
+                            {
                                 changes.confirm_rollback = true;
                                 changes.rollback_preview = Some(preview);
                                 changes.rollback_error.clear();
@@ -5757,11 +5845,9 @@ impl App {
             }
             Action::ConfirmPatchRollback => {
                 let target = match self.overlays.active() {
-                    Some(Overlay::Changes(changes)) if changes.confirm_rollback => changes
-                        .projection
-                        .patches
-                        .get(changes.selected)
-                        .map(|patch| (patch.session_id.clone(), patch.patch_id.clone())),
+                    Some(Overlay::Changes(changes)) if changes.confirm_rollback => {
+                        rollback_confirmation_target(changes)
+                    }
                     _ => None,
                 };
                 if let Some((session_id, patch_id)) = target {
@@ -5836,8 +5922,21 @@ impl App {
                 }
             }
             Action::SelectChange(index) => {
-                if let Some(Overlay::Changes(changes)) = self.overlays.active_mut() {
+                if let Some(Overlay::Changes(changes)) = self.overlays.active_mut()
+                    && !changes.confirm_rollback
+                {
                     changes.selected = index;
+                    changes.selected_file = 0;
+                    changes.focus = ChangesFocus::Transactions;
+                    changes.scroll = 0;
+                }
+            }
+            Action::SelectPatchReviewFile(index) => {
+                if let Some(Overlay::Changes(changes)) = self.overlays.active_mut()
+                    && !changes.confirm_rollback
+                {
+                    changes.selected_file = index;
+                    changes.focus = ChangesFocus::Files;
                     changes.scroll = 0;
                 }
             }
@@ -7519,6 +7618,60 @@ fn terminal_focus_transition(event: &Event) -> Option<bool> {
     }
 }
 
+fn rollback_preview_matches(
+    preview: &crate::rpc::PatchRollbackPreview,
+    patch_id: &str,
+    transaction_id: &str,
+) -> bool {
+    preview.can_rollback
+        && preview.workspace_unchanged
+        && !patch_id.is_empty()
+        && !transaction_id.is_empty()
+        && preview.patch_id == patch_id
+        && preview.transaction_id == transaction_id
+}
+
+fn rollback_confirmation_target(changes: &ChangesOverlay) -> Option<(String, String)> {
+    let preview = changes.rollback_preview.as_ref()?;
+    if !preview.can_rollback
+        || !preview.workspace_unchanged
+        || preview.patch_id.is_empty()
+        || preview.transaction_id.is_empty()
+    {
+        return None;
+    }
+    changes
+        .projection
+        .patches
+        .iter()
+        .find(|patch| {
+            patch.patch_id == preview.patch_id
+                && patch.transaction_id == preview.transaction_id
+                && !patch.rollback_pointer.is_empty()
+                && !matches!(patch.status.as_str(), "rolled_back" | "failed" | "proposed")
+        })
+        .map(|patch| (patch.session_id.clone(), patch.patch_id.clone()))
+}
+
+fn retain_patch_review_selection(
+    patch_id: Option<&str>,
+    file_path: Option<&str>,
+    patches: &[crate::rpc::WorkspacePatch],
+    reviews: &[PatchReview],
+) -> (usize, usize) {
+    let patch_index = patch_id
+        .and_then(|patch_id| patches.iter().position(|patch| patch.patch_id == patch_id))
+        .unwrap_or(0);
+    let file_index = file_path
+        .and_then(|path| {
+            reviews
+                .get(patch_index)
+                .and_then(|review| review.files.iter().position(|file| file.path == path))
+        })
+        .unwrap_or(0);
+    (patch_index, file_index)
+}
+
 fn animation_tick_demand(
     terminal_focused: bool,
     has_active_run: bool,
@@ -7593,6 +7746,103 @@ fn persist_density(path: &Path, density: DensityMode) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rollback_preview_requires_exact_identity_and_unchanged_workspace() {
+        let preview = crate::rpc::PatchRollbackPreview {
+            patch_id: "patch-a".into(),
+            transaction_id: "tx-a".into(),
+            can_rollback: true,
+            workspace_unchanged: true,
+            ..crate::rpc::PatchRollbackPreview::default()
+        };
+        assert!(rollback_preview_matches(&preview, "patch-a", "tx-a"));
+        assert!(!rollback_preview_matches(&preview, "patch-b", "tx-a"));
+        assert!(!rollback_preview_matches(&preview, "patch-a", "tx-b"));
+
+        let mut changed = preview;
+        changed.workspace_unchanged = false;
+        assert!(!rollback_preview_matches(&changed, "patch-a", "tx-a"));
+    }
+
+    #[test]
+    fn rollback_confirmation_keeps_the_previewed_transaction_when_selection_moves() {
+        let patches = vec![
+            crate::rpc::WorkspacePatch {
+                patch_id: "patch-a".into(),
+                transaction_id: "tx-a".into(),
+                session_id: "session-a".into(),
+                status: "verified".into(),
+                rollback_pointer: "rollback-a".into(),
+                ..crate::rpc::WorkspacePatch::default()
+            },
+            crate::rpc::WorkspacePatch {
+                patch_id: "patch-b".into(),
+                transaction_id: "tx-b".into(),
+                session_id: "session-b".into(),
+                status: "verified".into(),
+                rollback_pointer: "rollback-b".into(),
+                ..crate::rpc::WorkspacePatch::default()
+            },
+        ];
+        let changes = ChangesOverlay {
+            projection: ProductProjection {
+                patches,
+                ..ProductProjection::default()
+            },
+            patch_reviews: Vec::new(),
+            selected: 1,
+            selected_file: 0,
+            focus: ChangesFocus::Transactions,
+            scroll: 0,
+            load: RetainedLoad::default(),
+            confirm_rollback: true,
+            rollback_preview: Some(crate::rpc::PatchRollbackPreview {
+                patch_id: "patch-a".into(),
+                transaction_id: "tx-a".into(),
+                can_rollback: true,
+                workspace_unchanged: true,
+                ..crate::rpc::PatchRollbackPreview::default()
+            }),
+            rollback_error: String::new(),
+        };
+        assert_eq!(
+            rollback_confirmation_target(&changes),
+            Some(("session-a".into(), "patch-a".into()))
+        );
+    }
+
+    #[test]
+    fn changes_refresh_preserves_patch_and_file_identity_across_reordering() {
+        let patches = vec![
+            crate::rpc::WorkspacePatch {
+                patch_id: "patch-b".into(),
+                affected_files: vec!["other.rs".into(), "target.rs".into()],
+                diff: concat!(
+                    "diff --git a/other.rs b/other.rs\n",
+                    "--- a/other.rs\n+++ b/other.rs\n@@ -1 +1 @@\n-old\n+new\n",
+                    "diff --git a/target.rs b/target.rs\n",
+                    "--- a/target.rs\n+++ b/target.rs\n@@ -1 +1 @@\n-before\n+after\n"
+                )
+                .into(),
+                ..crate::rpc::WorkspacePatch::default()
+            },
+            crate::rpc::WorkspacePatch {
+                patch_id: "patch-a".into(),
+                affected_files: vec!["a.rs".into()],
+                ..crate::rpc::WorkspacePatch::default()
+            },
+        ];
+        let reviews = project_patch_reviews(&patches);
+        assert_eq!(
+            retain_patch_review_selection(Some("patch-b"), Some("target.rs"), &patches, &reviews),
+            (0, 1)
+        );
+        assert_eq!(
+            retain_patch_review_selection(Some("missing"), Some("missing.rs"), &patches, &reviews),
+            (0, 0)
+        );
+    }
 
     #[test]
     fn focus_events_gate_decorative_tick_demand() {

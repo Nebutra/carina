@@ -11,7 +11,7 @@ use ratatui::widgets::{
     Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
     StatefulWidgetRef, Wrap,
 };
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{
     App, Focus, LOCALES, Phase, ScreenMode, TranscriptHeightCache, TranscriptHeightCacheEntry,
@@ -34,7 +34,8 @@ use crate::layout_contract;
 use crate::markdown::{
     MarkdownTheme, StyledPrefix, render_prefixed as render_markdown_prefixed, wrap_styled_lines,
 };
-use crate::overlay::{ApprovalScope, Overlay};
+use crate::overlay::{ApprovalScope, ChangesFocus, Overlay};
+use crate::patch_review::{PatchDisposition, PatchReview};
 use crate::prerequisite::{BrowserLayout, PickerWindow, PrerequisiteLayout};
 use crate::product_header::{HeaderAction, ProductHeader};
 use crate::product_projection::{
@@ -4670,6 +4671,12 @@ impl App {
                 );
             }
             Overlay::Changes(overlay) => {
+                if self.options.screen_mode == Some(ScreenMode::Fullscreen)
+                    && !overlay.projection.patches.is_empty()
+                {
+                    self.render_fullscreen_patch_review(frame, area, overlay);
+                    return;
+                }
                 let popup = centered(
                     area,
                     layout_contract::CHANGES_POPUP.0,
@@ -4835,6 +4842,707 @@ impl App {
         }
     }
 
+    fn render_fullscreen_patch_review(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        overlay: &crate::overlay::ChangesOverlay,
+    ) {
+        let locale = self.ui_locale();
+        let popup = layout_contract::canvas(area);
+        frame.render_widget(Clear, popup);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(self.theme.glyphs.outer_border_type())
+            .border_style(self.theme.focus())
+            .title(format!(" {} ", tr(locale, MessageId::ChangesWorkbench)));
+        let inner = block.inner(popup).inner(Margin::new(1, 0));
+        frame.render_widget(block, popup);
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+
+        let regions = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(layout_contract::PATCH_REVIEW_SUMMARY_HEIGHT.min(inner.height)),
+                Constraint::Min(layout_contract::ROW_HEIGHT),
+                Constraint::Length(
+                    layout_contract::PATCH_REVIEW_FOOTER_HEIGHT
+                        .min(inner.height.saturating_sub(layout_contract::ROW_HEIGHT)),
+                ),
+            ])
+            .split(inner);
+        let (selected_patch_index, selected_file_index) = patch_review_render_selection(overlay);
+        let selected_patch = overlay.projection.patches.get(selected_patch_index);
+        let selected_review = overlay.patch_reviews.get(selected_patch_index);
+        self.render_patch_review_summary(frame, regions[0], selected_patch, selected_review);
+
+        if regions[1].width >= layout_contract::PATCH_REVIEW_THREE_PANE_MIN_WIDTH {
+            let columns = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(19),
+                    Constraint::Length(layout_contract::CONTROL_HEIGHT),
+                    Constraint::Percentage(29),
+                    Constraint::Length(layout_contract::CONTROL_HEIGHT),
+                    Constraint::Min(24),
+                ])
+                .split(regions[1]);
+            self.render_patch_review_transactions(frame, columns[0], overlay, selected_patch_index);
+            self.render_patch_review_divider(frame, columns[1]);
+            self.render_patch_review_files(
+                frame,
+                columns[2],
+                overlay,
+                selected_review,
+                selected_file_index,
+            );
+            self.render_patch_review_divider(frame, columns[3]);
+            self.render_patch_review_detail(
+                frame,
+                columns[4],
+                overlay,
+                selected_review,
+                selected_file_index,
+            );
+        } else {
+            self.render_stacked_patch_review(
+                frame,
+                regions[1],
+                overlay,
+                selected_review,
+                selected_patch_index,
+                selected_file_index,
+            );
+        }
+        let rollback_ready = selected_patch.is_some_and(|patch| {
+            !patch.rollback_pointer.is_empty()
+                && !matches!(patch.status.as_str(), "rolled_back" | "failed" | "proposed")
+        });
+        self.render_patch_review_footer(
+            frame,
+            regions[2],
+            overlay.confirm_rollback,
+            rollback_ready,
+        );
+    }
+
+    fn render_stacked_patch_review(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        overlay: &crate::overlay::ChangesOverlay,
+        review: Option<&PatchReview>,
+        selected_patch: usize,
+        selected_file: usize,
+    ) {
+        let list_height = layout_contract::PATCH_REVIEW_STACKED_LIST_HEIGHT
+            .min(area.height.saturating_sub(3).max(1));
+        if area.width >= layout_contract::SPLIT_PANE_MIN_WIDTH {
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(list_height), Constraint::Min(3)])
+                .split(area);
+            let lists = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(40),
+                    Constraint::Length(layout_contract::ROW_HEIGHT),
+                    Constraint::Min(24),
+                ])
+                .split(rows[0]);
+            self.render_patch_review_transactions(frame, lists[0], overlay, selected_patch);
+            self.render_patch_review_divider(frame, lists[1]);
+            self.render_patch_review_files(frame, lists[2], overlay, review, selected_file);
+            self.render_patch_review_detail(frame, rows[1], overlay, review, selected_file);
+        } else {
+            let detail_height = 3.min(area.height);
+            let lists_height = area.height.saturating_sub(detail_height);
+            let transaction_height = 3.min(lists_height);
+            let file_height = lists_height.saturating_sub(transaction_height);
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(transaction_height),
+                    Constraint::Length(file_height),
+                    Constraint::Length(detail_height),
+                ])
+                .split(area);
+            self.render_patch_review_transactions(frame, rows[0], overlay, selected_patch);
+            self.render_patch_review_files(frame, rows[1], overlay, review, selected_file);
+            self.render_patch_review_detail(frame, rows[2], overlay, review, selected_file);
+        }
+    }
+
+    fn render_patch_review_summary(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        patch: Option<&crate::rpc::WorkspacePatch>,
+        review: Option<&PatchReview>,
+    ) {
+        let locale = self.ui_locale();
+        let Some(patch) = patch else {
+            frame.render_widget(
+                Paragraph::new(tr(locale, MessageId::NoFileChanges))
+                    .style(Style::default().fg(self.theme.muted)),
+                area,
+            );
+            return;
+        };
+        let disposition = review
+            .map(|review| review.disposition)
+            .unwrap_or(PatchDisposition::Unknown);
+        let (status, status_style) = self.patch_disposition(disposition);
+        let (additions, deletions, file_count) = review.map_or((0, 0, 0), |review| {
+            (review.additions, review.deletions, review.files.len())
+        });
+        let verify = patch
+            .verify_result
+            .as_ref()
+            .map(|result| result.status.as_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or({
+                if patch.test_status.is_empty() {
+                    "-"
+                } else {
+                    patch.test_status.as_str()
+                }
+            });
+        let verify = tr(locale, patch_verification_message(verify));
+        let actor = if patch.actor.is_empty() {
+            "-"
+        } else {
+            patch.actor.as_str()
+        };
+        let transaction = if patch.transaction_id.is_empty() {
+            "-"
+        } else {
+            patch.transaction_id.as_str()
+        };
+        let files = tr_format(
+            locale,
+            MessageId::PatchFilesCount,
+            &[("count", &file_count.to_string())],
+        );
+        let stats = format!("+{additions}  -{deletions}  {files}");
+        let separator = format!("  {}  ", self.theme.glyphs.separator());
+        let first_line = if area.width < layout_contract::SPLIT_PANE_MIN_WIDTH {
+            Line::from(vec![
+                Span::styled(status, status_style),
+                Span::styled(format!("  {stats}"), Style::default().fg(self.theme.muted)),
+            ])
+        } else {
+            let reserved = UnicodeWidthStr::width(separator.as_str())
+                + UnicodeWidthStr::width(status)
+                + 2
+                + UnicodeWidthStr::width(stats.as_str());
+            Line::from(vec![
+                Span::styled(
+                    self.truncate_patch_review(
+                        &patch.patch_id,
+                        (area.width as usize).saturating_sub(reserved),
+                    ),
+                    Style::default()
+                        .fg(self.theme.text)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(separator.clone(), Style::default().fg(self.theme.muted)),
+                Span::styled(status, status_style),
+                Span::styled(format!("  {stats}"), Style::default().fg(self.theme.muted)),
+            ])
+        };
+        let mut metadata = vec![
+            Span::styled(
+                format!("{}  ", tr(locale, MessageId::PatchTransaction)),
+                Style::default().fg(self.theme.muted),
+            ),
+            Span::styled(transaction.to_owned(), Style::default().fg(self.theme.text)),
+        ];
+        if area.width >= 100 {
+            metadata.extend([
+                Span::styled(separator.clone(), Style::default().fg(self.theme.muted)),
+                Span::styled(
+                    format!("{}  ", tr(locale, MessageId::PatchActor)),
+                    Style::default().fg(self.theme.muted),
+                ),
+                Span::styled(actor.to_owned(), Style::default().fg(self.theme.text)),
+            ]);
+        }
+        if area.width >= layout_contract::SPLIT_PANE_MIN_WIDTH {
+            metadata.extend([
+                Span::styled(separator, Style::default().fg(self.theme.muted)),
+                Span::styled(
+                    format!("{}  ", tr(locale, MessageId::PatchVerify)),
+                    Style::default().fg(self.theme.muted),
+                ),
+                Span::styled(verify, Style::default().fg(self.theme.text)),
+            ]);
+        }
+        frame.render_widget(Paragraph::new(vec![first_line, Line::from(metadata)]), area);
+    }
+
+    fn render_patch_review_transactions(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        overlay: &crate::overlay::ChangesOverlay,
+        selected_patch: usize,
+    ) {
+        let locale = self.ui_locale();
+        let regions = patch_review_section(area);
+        self.render_patch_review_heading(
+            frame,
+            regions[0],
+            tr(locale, MessageId::PatchTransaction),
+            overlay.focus == ChangesFocus::Transactions,
+        );
+        let visible = regions[1].height as usize;
+        let start =
+            selection_window_start(selected_patch, overlay.projection.patches.len(), visible);
+        for (visual_index, (index, patch)) in overlay
+            .projection
+            .patches
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(visible)
+            .enumerate()
+        {
+            let row = Rect::new(
+                regions[1].x,
+                regions[1].y + visual_index as u16,
+                regions[1].width,
+                layout_contract::ROW_HEIGHT,
+            );
+            let disposition = overlay
+                .patch_reviews
+                .get(index)
+                .map(|review| review.disposition)
+                .unwrap_or(PatchDisposition::Unknown);
+            let (status, _) = self.patch_disposition(disposition);
+            let status = if disposition == PatchDisposition::Pending {
+                tr(locale, MessageId::PatchPending)
+            } else {
+                status
+            };
+            let marker = if index == selected_patch {
+                self.theme.glyphs.selected()
+            } else {
+                "  "
+            };
+            let available = row.width.saturating_sub(2) as usize;
+            let identity_width = available.saturating_sub(
+                UnicodeWidthStr::width(marker) + UnicodeWidthStr::width(status) + 2,
+            );
+            let identity = self.truncate_patch_reference(&patch.patch_id, identity_width);
+            let summary = format!("{marker}{status}  {identity}");
+            let style = if index == selected_patch && overlay.focus == ChangesFocus::Transactions {
+                self.theme.selected()
+            } else if index == selected_patch {
+                Style::default()
+                    .fg(self.theme.text)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(self.theme.text)
+            };
+            frame.render_widget(Paragraph::new(summary).style(style), row);
+            if !overlay.confirm_rollback {
+                self.interactions.register(HitRegion {
+                    component: ComponentId(12_600 + index as u64),
+                    area: row,
+                    action: Action::SelectChange(index),
+                });
+            }
+        }
+    }
+
+    fn render_patch_review_files(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        overlay: &crate::overlay::ChangesOverlay,
+        review: Option<&PatchReview>,
+        selected_file: usize,
+    ) {
+        let locale = self.ui_locale();
+        let regions = patch_review_section(area);
+        self.render_patch_review_heading(
+            frame,
+            regions[0],
+            tr(locale, MessageId::WorkspaceFiles),
+            overlay.focus == ChangesFocus::Files,
+        );
+        let Some(review) = review else {
+            return;
+        };
+        let visible = regions[1].height as usize;
+        let start = selection_window_start(selected_file, review.files.len(), visible);
+        for (visual_index, (index, file)) in review
+            .files
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(visible)
+            .enumerate()
+        {
+            let row = Rect::new(
+                regions[1].x,
+                regions[1].y + visual_index as u16,
+                regions[1].width,
+                layout_contract::ROW_HEIGHT,
+            );
+            let marker = if index == selected_file {
+                self.theme.glyphs.selected_cell()
+            } else {
+                self.theme.glyphs.scroll_track()
+            };
+            let hunk_stats = format!("{}/{}@@", file.attributed_hunks, file.hunk_count);
+            let counts = format!("+{} -{} {hunk_stats}", file.additions, file.deletions);
+            let reserved = UnicodeWidthStr::width(counts.as_str()) + 7;
+            let path_width = (row.width as usize).saturating_sub(reserved);
+            let mut path = self.truncate_patch_reference(&file.path, path_width);
+            path.push_str(
+                &" ".repeat(path_width.saturating_sub(UnicodeWidthStr::width(path.as_str()))),
+            );
+            let line = Line::from(vec![
+                Span::styled(
+                    format!("{marker} {} ", file.kind.marker()),
+                    Style::default().fg(self.theme.muted),
+                ),
+                Span::styled(path, Style::default().fg(self.theme.text)),
+                Span::styled("  ", Style::default()),
+                Span::styled(
+                    format!("+{}", file.additions),
+                    self.theme.transcript_added(),
+                ),
+                Span::styled(" ", Style::default()),
+                Span::styled(
+                    format!("-{}", file.deletions),
+                    self.theme.transcript_removed(),
+                ),
+                Span::styled(format!(" {hunk_stats}"), self.theme.transcript_metadata()),
+            ]);
+            let style = if index == selected_file && overlay.focus == ChangesFocus::Files {
+                self.theme.selected()
+            } else if index == selected_file {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            frame.render_widget(Paragraph::new(line).style(style), row);
+            if !overlay.confirm_rollback {
+                self.interactions.register(HitRegion {
+                    component: ComponentId(12_800 + index as u64),
+                    area: row,
+                    action: Action::SelectPatchReviewFile(index),
+                });
+            }
+        }
+    }
+
+    fn render_patch_review_detail(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        overlay: &crate::overlay::ChangesOverlay,
+        review: Option<&PatchReview>,
+        selected_file: usize,
+    ) {
+        let locale = self.ui_locale();
+        let Some(review) = review else {
+            return;
+        };
+        let Some(file) = review.files.get(selected_file) else {
+            return;
+        };
+        let regions = patch_review_section(area);
+        let stats = format!(
+            "+{} -{}  {}/{} @@",
+            file.additions, file.deletions, file.attributed_hunks, file.hunk_count
+        );
+        let heading_path_width = regions[0]
+            .width
+            .saturating_sub(UnicodeWidthStr::width(stats.as_str()) as u16)
+            .saturating_sub(layout_contract::PANEL_PADDING)
+            as usize;
+        let heading = format!(
+            "{}  {stats}",
+            self.truncate_patch_reference(&file.path, heading_path_width)
+        );
+        self.render_patch_review_heading(frame, regions[0], &heading, false);
+        let mut body = regions[1];
+        if overlay.confirm_rollback {
+            let preview = overlay.rollback_preview.as_ref();
+            let preview_height = preview
+                .map_or(2, |preview| preview.files.len().saturating_add(1))
+                .min(body.height as usize) as u16;
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(preview_height),
+                    Constraint::Min(layout_contract::ROW_HEIGHT),
+                ])
+                .split(body);
+            let mut lines = vec![Line::from(Span::styled(
+                tr_format(
+                    locale,
+                    MessageId::PatchRollbackImpact,
+                    &[(
+                        "count",
+                        &preview
+                            .map_or(review.files.len(), |preview| preview.file_count)
+                            .to_string(),
+                    )],
+                ),
+                Style::default()
+                    .fg(self.theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            ))];
+            if let Some(preview) = preview {
+                for preview_file in preview
+                    .files
+                    .iter()
+                    .take(rows[0].height.saturating_sub(1) as usize)
+                {
+                    let action = match preview_file.action.as_str() {
+                        "restore" => tr(locale, MessageId::PatchRestore),
+                        "delete" => tr(locale, MessageId::PatchDelete),
+                        _ => tr(locale, MessageId::UnknownValue),
+                    };
+                    lines.push(Line::from(self.truncate_patch_review(
+                        &format!("  {action}  {}", preview_file.path),
+                        rows[0].width as usize,
+                    )));
+                }
+            }
+            frame.render_widget(Paragraph::new(lines), rows[0]);
+            body = rows[1];
+        } else if !overlay.rollback_error.is_empty() && body.height > 0 {
+            frame.render_widget(
+                Paragraph::new(
+                    self.truncate_patch_review(&overlay.rollback_error, body.width as usize),
+                )
+                .style(Style::default().fg(self.theme.danger)),
+                Rect::new(body.x, body.y, body.width, layout_contract::ROW_HEIGHT),
+            );
+            body.y = body.y.saturating_add(layout_contract::ROW_HEIGHT);
+            body.height = body.height.saturating_sub(layout_contract::ROW_HEIGHT);
+        }
+
+        let reserve_continuation = usize::from(
+            file.window.omitted_lines > 0 || file.window.hard_capped || review.source_hard_capped,
+        );
+        let visible = (body.height as usize).saturating_sub(reserve_continuation);
+        let styles = TranscriptStyles {
+            text: Style::default().fg(self.theme.text),
+            metadata: self.theme.transcript_metadata(),
+            added: self.theme.transcript_added(),
+            removed: self.theme.transcript_removed(),
+            ..TranscriptStyles::default()
+        };
+        let lines = file
+            .window
+            .lines
+            .iter()
+            .filter(|line| line.kind != crate::diff_render::DiffLineKind::Meta)
+            .skip(overlay.scroll)
+            .take(visible)
+            .map(|line| styled_projected_diff_line(line, styles))
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(lines), body);
+        if reserve_continuation > 0 && body.height > 0 {
+            let row = Rect::new(
+                body.x,
+                body.bottom().saturating_sub(layout_contract::ROW_HEIGHT),
+                body.width,
+                layout_contract::ROW_HEIGHT,
+            );
+            let continuation = if file.window.omitted_exact && review.source_omitted_exact {
+                tr_format(
+                    locale,
+                    MessageId::PatchReviewContinues,
+                    &[(
+                        "count",
+                        &(file.window.omitted_lines + review.source_omitted_lines).to_string(),
+                    )],
+                )
+            } else {
+                tr(locale, MessageId::PatchReviewHardCapped).to_owned()
+            };
+            frame.render_widget(
+                Paragraph::new(self.truncate_patch_review(&continuation, row.width as usize))
+                    .style(Style::default().fg(self.theme.muted)),
+                row,
+            );
+        }
+    }
+
+    fn render_patch_review_heading(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        title: &str,
+        focused: bool,
+    ) {
+        let marker = if focused {
+            self.theme.glyphs.selected_cell()
+        } else {
+            " "
+        };
+        let style = if focused {
+            self.theme.focus()
+        } else {
+            Style::default()
+                .fg(self.theme.muted)
+                .add_modifier(Modifier::BOLD)
+        };
+        frame.render_widget(
+            Paragraph::new(format!(
+                "{marker} {}",
+                self.truncate_patch_review(title, area.width.saturating_sub(2) as usize)
+            ))
+            .style(style),
+            area,
+        );
+    }
+
+    fn truncate_patch_review(&self, value: &str, max_width: usize) -> String {
+        crate::render_contract::truncate_width_with_glyphs(value, max_width, self.theme.glyphs)
+    }
+
+    fn truncate_patch_reference(&self, value: &str, max_width: usize) -> String {
+        if UnicodeWidthStr::width(value) <= max_width {
+            return value.to_owned();
+        }
+        let ellipsis = self.theme.glyphs.ellipsis();
+        if max_width < UnicodeWidthStr::width(ellipsis) {
+            return String::new();
+        }
+        let content_width = max_width.saturating_sub(UnicodeWidthStr::width(ellipsis));
+        let mut suffix = String::new();
+        let mut suffix_width = 0;
+        for character in value.chars().rev() {
+            let width = UnicodeWidthChar::width(character).unwrap_or_default();
+            if suffix_width + width > content_width {
+                break;
+            }
+            suffix.insert(0, character);
+            suffix_width += width;
+        }
+        format!("{ellipsis}{suffix}")
+    }
+
+    fn render_patch_review_divider(&self, frame: &mut Frame<'_>, area: Rect) {
+        let line = Line::from(Span::styled(
+            self.theme.glyphs.scroll_track(),
+            Style::default().fg(self.theme.border),
+        ));
+        frame.render_widget(
+            Paragraph::new(std::iter::repeat_n(line, area.height as usize).collect::<Vec<_>>()),
+            area,
+        );
+    }
+
+    fn render_patch_review_footer(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        confirming: bool,
+        rollback_ready: bool,
+    ) {
+        let locale = self.ui_locale();
+        let mut shortcuts = if confirming {
+            vec![
+                ("Enter", tr(locale, MessageId::Rollback)),
+                ("Esc", tr(locale, MessageId::Cancel)),
+            ]
+        } else {
+            let mut shortcuts = vec![
+                ("Tab", tr(locale, MessageId::Navigate)),
+                ("R", tr(locale, MessageId::Refresh)),
+                ("Esc", tr(locale, MessageId::Close)),
+            ];
+            if rollback_ready {
+                shortcuts.insert(1, ("B", tr(locale, MessageId::Rollback)));
+            }
+            shortcuts
+        };
+        let shortcuts_width = |items: &[(&str, &str)]| {
+            items
+                .iter()
+                .map(|(key, label)| {
+                    UnicodeWidthStr::width(*key) + UnicodeWidthStr::width(*label) + 5
+                })
+                .sum::<usize>()
+        };
+        if shortcuts_width(&shortcuts) > area.width as usize {
+            shortcuts = if confirming {
+                vec![("Esc", tr(locale, MessageId::Cancel))]
+            } else if rollback_ready {
+                vec![
+                    ("B", tr(locale, MessageId::Rollback)),
+                    ("Esc", tr(locale, MessageId::Close)),
+                ]
+            } else {
+                vec![
+                    ("R", tr(locale, MessageId::Refresh)),
+                    ("Esc", tr(locale, MessageId::Close)),
+                ]
+            };
+        }
+        let mut spans = Vec::new();
+        for (key, label) in shortcuts {
+            spans.push(Span::styled(format!(" {key} "), self.theme.keycap()));
+            spans.push(Span::styled(
+                format!(" {label}  "),
+                Style::default().fg(self.theme.muted),
+            ));
+        }
+        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    }
+
+    fn patch_disposition(&self, disposition: PatchDisposition) -> (&'static str, Style) {
+        let locale = self.ui_locale();
+        match disposition {
+            PatchDisposition::Accepted => (
+                tr(locale, MessageId::PatchAccepted),
+                Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            PatchDisposition::Rejected => (
+                tr(locale, MessageId::PatchRejected),
+                Style::default()
+                    .fg(self.theme.danger)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            PatchDisposition::Applied => (
+                tr(locale, MessageId::PatchApplied),
+                Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            PatchDisposition::Pending => (
+                tr(locale, MessageId::PatchPendingReview),
+                Style::default()
+                    .fg(self.theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            PatchDisposition::Failed => (
+                tr(locale, MessageId::StatusFailed),
+                Style::default()
+                    .fg(self.theme.danger)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            PatchDisposition::Unknown => (
+                tr(locale, MessageId::UnknownValue),
+                Style::default().fg(self.theme.muted),
+            ),
+        }
+    }
+
     fn render_workspace_patches(
         &mut self,
         frame: &mut Frame<'_>,
@@ -4973,7 +5681,7 @@ impl App {
                     let action = match file.action.as_str() {
                         "restore" => tr(locale, MessageId::PatchRestore),
                         "delete" => tr(locale, MessageId::PatchDelete),
-                        _ => file.action.as_str(),
+                        _ => tr(locale, MessageId::UnknownValue),
                     };
                     details.push(Line::from(format!("  {action}  {}", file.path)));
                 }
@@ -5012,28 +5720,22 @@ impl App {
             Paragraph::new(details).wrap(Wrap { trim: false }),
             chunks[0],
         );
-        if !patch.diff.is_empty() {
+        if let Some(review) = overlay.patch_reviews.get(overlay.selected) {
             let visible = chunks[1].height as usize;
-            let (bounded_diff, _) = crate::diff_render::bounded_diff_source(&patch.diff);
-            let lines = bounded_diff
-                .lines()
-                .take(crate::diff_render::DIFF_HARD_LINE_LIMIT)
+            let lines = review
+                .files
+                .iter()
+                .flat_map(|file| file.window.lines.iter())
                 .skip(overlay.scroll)
                 .take(visible)
                 .map(|line| {
-                    let style = if line.starts_with('+') && !line.starts_with("+++") {
-                        Style::default().fg(self.theme.success)
-                    } else if line.starts_with('-') && !line.starts_with("---") {
-                        Style::default().fg(self.theme.danger)
-                    } else if line.starts_with("@@") {
-                        Style::default().fg(self.theme.warning)
-                    } else {
-                        Style::default().fg(self.theme.text)
-                    };
-                    Line::from(Span::styled(
-                        crate::diff_render::bounded_display_text(line),
-                        style,
-                    ))
+                    styled_compact_projected_diff_line(
+                        line,
+                        Style::default().fg(self.theme.text),
+                        Style::default().fg(self.theme.success),
+                        Style::default().fg(self.theme.danger),
+                        Style::default().fg(self.theme.warning),
+                    )
                 })
                 .collect::<Vec<_>>();
             frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), chunks[1]);
@@ -6250,6 +6952,125 @@ fn styled_diff_lines(body: &str, styles: TranscriptStyles, expanded: bool) -> St
     }
 }
 
+fn patch_review_section(area: Rect) -> [Rect; 2] {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(layout_contract::ROW_HEIGHT.min(area.height)),
+            Constraint::Min(layout_contract::ROW_HEIGHT),
+        ])
+        .split(area);
+    [rows[0], rows[1]]
+}
+
+fn patch_review_render_selection(overlay: &crate::overlay::ChangesOverlay) -> (usize, usize) {
+    let patch_index = overlay
+        .confirm_rollback
+        .then_some(())
+        .and(overlay.rollback_preview.as_ref())
+        .and_then(|preview| {
+            overlay.projection.patches.iter().position(|patch| {
+                patch.patch_id == preview.patch_id && patch.transaction_id == preview.transaction_id
+            })
+        })
+        .unwrap_or(overlay.selected);
+    let file_index = if patch_index == overlay.selected {
+        overlay.selected_file
+    } else {
+        0
+    };
+    (patch_index, file_index)
+}
+
+fn selection_window_start(selected: usize, total: usize, visible: usize) -> usize {
+    if visible == 0 || total <= visible {
+        return 0;
+    }
+    selected
+        .min(total.saturating_sub(1))
+        .saturating_add(1)
+        .saturating_sub(visible)
+}
+
+fn patch_verification_message(status: &str) -> MessageId {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "verified" | "passed" | "success" | "ok" => MessageId::PatchVerificationPassed,
+        "failed" | "error" | "mismatch" => MessageId::StatusFailed,
+        "pending" | "queued" | "running" => MessageId::StatusQueued,
+        "" | "-" => MessageId::NotAvailable,
+        _ => MessageId::UnknownValue,
+    }
+}
+
+fn styled_projected_diff_line(
+    line: &crate::diff_render::DiffLine,
+    styles: TranscriptStyles,
+) -> Line<'static> {
+    use crate::diff_render::DiffLineKind;
+
+    let base = match line.kind {
+        DiffLineKind::Add => styles.added,
+        DiffLineKind::Remove => styles.removed,
+        DiffLineKind::Hunk | DiffLineKind::Meta => styles.metadata,
+        DiffLineKind::Context | DiffLineKind::Header => styles.text,
+    };
+    let mut spans = Vec::new();
+    if !matches!(line.kind, DiffLineKind::Meta | DiffLineKind::Hunk) {
+        let old = line
+            .old_no
+            .map(|number| format!("{number:>4}"))
+            .unwrap_or_else(|| "    ".into());
+        let new = line
+            .new_no
+            .map(|number| format!("{number:>4}"))
+            .unwrap_or_else(|| "    ".into());
+        spans.push(Span::styled(format!("{old}|{new} "), styles.metadata));
+        spans.push(Span::styled(format!("{} ", line.marker), base));
+    }
+    for part in &line.spans {
+        let style = if part.emphasize {
+            base.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            base
+        };
+        spans.push(Span::styled(part.text.clone(), style));
+    }
+    Line::from(spans)
+}
+
+fn styled_compact_projected_diff_line(
+    line: &crate::diff_render::DiffLine,
+    text: Style,
+    added: Style,
+    removed: Style,
+    hunk: Style,
+) -> Line<'static> {
+    use crate::diff_render::DiffLineKind;
+
+    let base = match line.kind {
+        DiffLineKind::Add => added,
+        DiffLineKind::Remove => removed,
+        DiffLineKind::Hunk => hunk,
+        DiffLineKind::Meta | DiffLineKind::Context | DiffLineKind::Header => text,
+    };
+    let mut spans = Vec::new();
+    if matches!(
+        line.kind,
+        DiffLineKind::Add | DiffLineKind::Remove | DiffLineKind::Context
+    ) {
+        spans.push(Span::styled(line.marker.to_string(), base));
+    }
+    spans.extend(line.spans.iter().map(|part| {
+        let style = if part.emphasize {
+            base.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            base
+        };
+        Span::styled(part.text.clone(), style)
+    }));
+    Line::from(spans)
+}
+
 fn pad_key_label(key: &str, width: usize) -> String {
     let mut out = format!(" {key} ");
     while unicode_width::UnicodeWidthStr::width(out.as_str()) < width {
@@ -6751,6 +7572,337 @@ mod transcript_tests {
         .unwrap();
         app.phase = Phase::Conversation;
         (app, root, server)
+    }
+
+    fn patch_review_fixture(
+        width: u16,
+        height: u16,
+        locale: Locale,
+        screen_mode: ScreenMode,
+    ) -> (String, Vec<(Position, Action)>) {
+        patch_review_fixture_variant(
+            width,
+            height,
+            locale,
+            screen_mode,
+            crate::glyphs::GlyphMode::Unicode,
+            crate::theme::ColorLevel::TrueColor,
+            false,
+        )
+    }
+
+    fn patch_review_fixture_variant(
+        width: u16,
+        height: u16,
+        locale: Locale,
+        screen_mode: ScreenMode,
+        glyph_mode: crate::glyphs::GlyphMode,
+        color_level: crate::theme::ColorLevel,
+        confirm_rollback: bool,
+    ) -> (String, Vec<(Position, Action)>) {
+        use crate::overlay::{ChangesFocus, ChangesOverlay, RetainedLoad};
+        use crate::product_projection::ProductProjection;
+        use crate::rpc::{
+            PatchHunkAttribution, PatchRollbackFile, PatchRollbackPreview, PatchVerifyResult,
+            WorkspacePatch,
+        };
+
+        let (mut app, root, server) = production_render_app();
+        app.options.locale = Some(locale.product_id().into());
+        app.locale_index = Locale::ALL
+            .iter()
+            .position(|candidate| *candidate == locale)
+            .unwrap_or_default();
+        app.options.screen_mode = Some(screen_mode);
+        app.theme = crate::theme::Theme::new(crate::theme::Polarity::Dark, color_level);
+        app.theme.glyphs = Glyphs::new(glyph_mode);
+        let primary = WorkspacePatch {
+            patch_id: "patch-authz-boundary-0184".into(),
+            transaction_id: "tx-workspace-0184".into(),
+            session_id: "session-7".into(),
+            actor: "carina/patch-agent".into(),
+            status: "verified".into(),
+            affected_files: vec![
+                "crates/carina-kernel/src/runtime/patch.rs".into(),
+                "crates/carina-tui/src/app/review.rs".into(),
+                "docs/product/patch-review.md".into(),
+            ],
+            diff: concat!(
+                "diff --git a/crates/carina-kernel/src/runtime/patch.rs b/crates/carina-kernel/src/runtime/patch.rs\n",
+                "--- a/crates/carina-kernel/src/runtime/patch.rs\n",
+                "+++ b/crates/carina-kernel/src/runtime/patch.rs\n",
+                "@@ -41,5 +41,7 @@ pub fn authorize_patch(request: Request) -> Decision {\n",
+                "-    policy.check(request.capability)\n",
+                "+    policy.check(request.capability, request.workspace)\n",
+                "+        .with_transaction(request.transaction_id)\n",
+                " }\n",
+                "diff --git a/crates/carina-tui/src/app/review.rs b/crates/carina-tui/src/app/review.rs\n",
+                "--- /dev/null\n",
+                "+++ b/crates/carina-tui/src/app/review.rs\n",
+                "@@ -0,0 +1,4 @@\n",
+                "+pub struct ReviewIdentity {\n",
+                "+    pub patch_id: String,\n",
+                "+    pub transaction_id: String,\n",
+                "+}\n",
+                "diff --git a/docs/product/patch-review.md b/docs/product/patch-review.md\n",
+                "--- a/docs/product/patch-review.md\n",
+                "+++ b/docs/product/patch-review.md\n",
+                "@@ -8,3 +8,4 @@ Rollback contract\n",
+                "-Confirmation follows the selected patch.\n",
+                "+Confirmation retains the previewed patch identity.\n",
+                "+The workspace hash must remain unchanged.\n"
+            )
+            .into(),
+            approval_status: "approved".into(),
+            approval_id: "approval-44".into(),
+            test_status: "passed".into(),
+            verify_result: Some(PatchVerifyResult {
+                status: "passed".into(),
+                expected_hash: "f9a7".into(),
+                actual_hash: "f9a7".into(),
+            }),
+            hunk_attributions: vec![
+                PatchHunkAttribution {
+                    file: "crates/carina-kernel/src/runtime/patch.rs".into(),
+                    hunk_index: 0,
+                    actor: "carina/patch-agent".into(),
+                    transaction_id: "tx-workspace-0184".into(),
+                    approval_id: "approval-44".into(),
+                    verify_result: "passed".into(),
+                    ..PatchHunkAttribution::default()
+                },
+                PatchHunkAttribution {
+                    file: "crates/carina-tui/src/app/review.rs".into(),
+                    hunk_index: 0,
+                    actor: "carina/patch-agent".into(),
+                    transaction_id: "tx-workspace-0184".into(),
+                    approval_id: "approval-44".into(),
+                    verify_result: "passed".into(),
+                    ..PatchHunkAttribution::default()
+                },
+            ],
+            rollback_pointer: "rollback-0184".into(),
+            ..WorkspacePatch::default()
+        };
+        let pending = WorkspacePatch {
+            patch_id: "patch-docs-0185".into(),
+            transaction_id: "tx-workspace-0185".into(),
+            session_id: "session-7".into(),
+            actor: "carina/docs-agent".into(),
+            status: "proposed".into(),
+            affected_files: vec!["docs/product/runtime.md".into()],
+            diff: concat!(
+                "diff --git a/docs/product/runtime.md b/docs/product/runtime.md\n",
+                "--- a/docs/product/runtime.md\n",
+                "+++ b/docs/product/runtime.md\n",
+                "@@ -1 +1,2 @@\n",
+                " Runtime contract\n",
+                "+Review remains bounded and auditable.\n"
+            )
+            .into(),
+            ..WorkspacePatch::default()
+        };
+        let patches = vec![primary, pending];
+        let patch_reviews = crate::patch_review::project_patch_reviews(&patches);
+        app.overlays
+            .replace(Overlay::Changes(Box::new(ChangesOverlay {
+                projection: ProductProjection {
+                    patches,
+                    ..ProductProjection::default()
+                },
+                patch_reviews,
+                // Confirmation deliberately simulates later selection movement.
+                selected: usize::from(confirm_rollback),
+                selected_file: 0,
+                focus: ChangesFocus::Files,
+                scroll: 0,
+                load: RetainedLoad::default(),
+                confirm_rollback,
+                rollback_preview: confirm_rollback.then(|| PatchRollbackPreview {
+                    patch_id: "patch-authz-boundary-0184".into(),
+                    transaction_id: "tx-workspace-0184".into(),
+                    can_rollback: true,
+                    workspace_unchanged: true,
+                    files: vec![
+                        PatchRollbackFile {
+                            path: "crates/carina-kernel/src/runtime/patch.rs".into(),
+                            action: "restore".into(),
+                        },
+                        PatchRollbackFile {
+                            path: "crates/carina-tui/src/app/review.rs".into(),
+                            action: "delete".into(),
+                        },
+                        PatchRollbackFile {
+                            path: "docs/product/patch-review.md".into(),
+                            action: "restore".into(),
+                        },
+                    ],
+                    file_count: 3,
+                    ..PatchRollbackPreview::default()
+                }),
+                rollback_error: String::new(),
+            })));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                let overlay = app.overlays.active().cloned().unwrap();
+                app.interactions.begin_frame();
+                app.interactions.begin_overlay();
+                app.render_overlay(frame, frame.area(), &overlay);
+            })
+            .unwrap();
+        let mut actions = Vec::new();
+        for y in 0..height {
+            for x in 0..width {
+                let position = Position::new(x, y);
+                if let Some(action) = app.interactions.action_at(position) {
+                    actions.push((position, action));
+                }
+            }
+        }
+        let rendered = rendered_frame_contract(terminal.backend().buffer());
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        (rendered, actions)
+    }
+
+    #[test]
+    fn fullscreen_patch_review_goldens_cover_en_and_zh_hans_at_product_widths() {
+        for (locale_name, locale) in [("en", Locale::En), ("zh_hans", Locale::ZhHans)] {
+            for (width, height) in [(120, 34), (160, 40)] {
+                let (rendered, actions) =
+                    patch_review_fixture(width, height, locale, ScreenMode::Fullscreen);
+                assert!(
+                    actions
+                        .iter()
+                        .any(|(_, action)| *action == Action::SelectChange(0))
+                );
+                assert!(
+                    actions
+                        .iter()
+                        .any(|(_, action)| *action == Action::SelectPatchReviewFile(0))
+                );
+                insta::assert_snapshot!(
+                    format!("fullscreen_patch_review_{locale_name}_{width}"),
+                    rendered
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fullscreen_patch_review_rollback_preview_has_a_stable_confirmation_state() {
+        let (rendered, actions) = patch_review_fixture_variant(
+            120,
+            34,
+            Locale::En,
+            ScreenMode::Fullscreen,
+            crate::glyphs::GlyphMode::Unicode,
+            crate::theme::ColorLevel::TrueColor,
+            true,
+        );
+        assert!(rendered.contains("Rollback affects 3 files."));
+        assert!(rendered.contains("restore  crates/carina-kernel/src/runtime/patch.rs"));
+        let summary = rendered
+            .lines()
+            .find(|line| line.contains("Accepted") && line.contains("3 files"))
+            .expect("previewed transaction summary");
+        assert!(summary.contains("patch-authz-boundary-0184"));
+        assert!(actions.iter().all(|(_, action)| {
+            !matches!(
+                action,
+                Action::SelectChange(_) | Action::SelectPatchReviewFile(_)
+            )
+        }));
+        insta::assert_snapshot!("fullscreen_patch_review_rollback_en_120", rendered);
+    }
+
+    #[test]
+    fn patch_review_list_window_keeps_the_selected_identity_visible() {
+        assert_eq!(selection_window_start(0, 10, 3), 0);
+        assert_eq!(selection_window_start(2, 10, 3), 0);
+        assert_eq!(selection_window_start(3, 10, 3), 1);
+        assert_eq!(selection_window_start(9, 10, 3), 7);
+        assert_eq!(selection_window_start(99, 10, 3), 7);
+        assert_eq!(selection_window_start(4, 10, 0), 0);
+    }
+
+    #[test]
+    fn fullscreen_patch_review_ascii_no_color_preserves_pointer_geometry() {
+        for locale in [Locale::En, Locale::ZhHans] {
+            let (_, unicode_actions) = patch_review_fixture_variant(
+                120,
+                34,
+                locale,
+                ScreenMode::Fullscreen,
+                crate::glyphs::GlyphMode::Unicode,
+                crate::theme::ColorLevel::TrueColor,
+                false,
+            );
+            let (ascii, ascii_actions) = patch_review_fixture_variant(
+                120,
+                34,
+                locale,
+                ScreenMode::Fullscreen,
+                crate::glyphs::GlyphMode::Ascii,
+                crate::theme::ColorLevel::None,
+                false,
+            );
+            for action in [Action::SelectChange(0), Action::SelectPatchReviewFile(0)] {
+                let positions = |actions: &[(Position, Action)]| {
+                    actions
+                        .iter()
+                        .filter_map(|(position, candidate)| {
+                            (*candidate == action).then_some(*position)
+                        })
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(positions(&unicode_actions), positions(&ascii_actions));
+            }
+            assert!(!ascii.contains("Rgb("));
+            assert!(!ascii.contains("Indexed("));
+        }
+    }
+
+    #[test]
+    fn fullscreen_patch_review_resize_fallbacks_remain_contained_and_interactive() {
+        for (width, height) in [(120, 26), (80, 24), (48, 16)] {
+            let (rendered, actions) =
+                patch_review_fixture(width, height, Locale::En, ScreenMode::Fullscreen);
+            assert!(rendered.starts_with(&format!("size={width}x{height}\n")));
+            assert!(rendered.contains("Changes workbench"));
+            assert!(rendered.contains("@@ -41"));
+            assert!(rendered.contains("Esc"));
+            assert!(rendered.contains("Close"));
+            assert!(
+                actions
+                    .iter()
+                    .all(|(position, _)| position.x < width && position.y < height)
+            );
+            assert!(
+                actions
+                    .iter()
+                    .any(|(_, action)| *action == Action::SelectPatchReviewFile(0))
+            );
+        }
+    }
+
+    #[test]
+    fn minimal_patch_review_keeps_the_compact_overlay_contract() {
+        let (rendered, actions) = patch_review_fixture(120, 34, Locale::En, ScreenMode::Minimal);
+        assert!(rendered.contains("Changes workbench"));
+        assert!(!rendered.contains("Workspace files"));
+        assert!(
+            actions
+                .iter()
+                .any(|(_, action)| *action == Action::SelectChange(0))
+        );
+        assert!(
+            !actions
+                .iter()
+                .any(|(_, action)| matches!(action, Action::SelectPatchReviewFile(_)))
+        );
     }
 
     fn render_composer_chrome_fixture(

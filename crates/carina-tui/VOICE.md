@@ -52,6 +52,13 @@ Examples:
 {Consequence}. {Scope}. Confirm or Esc to keep the current state.
 ```
 
+In the Fullscreen patch workbench, use the compact consequence
+`Rollback affects {count} files.` beside the affected-file actions. The footer
+owns the localized Rollback/Cancel keycaps; do not repeat shortcut prose in the
+body. Lifecycle labels and bounded-review continuation copy must come from
+`MessageId` and must state that the complete transaction remains available for
+verification and rollback.
+
 ### Collapsed success tool groups (V002)
 
 ```

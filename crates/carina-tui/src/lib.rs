@@ -23,6 +23,7 @@ pub mod markdown;
 pub mod media;
 pub mod native_scrollback;
 pub mod overlay;
+mod patch_review;
 pub mod prerequisite;
 pub mod product_header;
 pub mod product_projection;

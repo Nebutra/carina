@@ -224,12 +224,22 @@ pub struct AgentDashboardOverlay {
 #[derive(Debug, Clone)]
 pub struct ChangesOverlay {
     pub projection: ProductProjection,
+    pub(crate) patch_reviews: Vec<crate::patch_review::PatchReview>,
     pub selected: usize,
+    pub selected_file: usize,
+    pub focus: ChangesFocus,
     pub scroll: usize,
     pub load: RetainedLoad,
     pub confirm_rollback: bool,
     pub rollback_preview: Option<crate::rpc::PatchRollbackPreview>,
     pub rollback_error: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ChangesFocus {
+    #[default]
+    Transactions,
+    Files,
 }
 
 #[derive(Debug, Clone)]

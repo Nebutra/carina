@@ -63,6 +63,7 @@ pub enum Action {
     BeginStopAgent,
     ConfirmStopAgent,
     SelectChange(usize),
+    SelectPatchReviewFile(usize),
     SelectSlashCommand {
         id: String,
         registry_revision: Option<String>,
