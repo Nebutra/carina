@@ -18,36 +18,7 @@
     box-shadow: none !important;
   }
 
-  /* Scroll fade-up for below-fold sections */
-  .code-preview,
-  .quickstart {
-    animation: polish-fade-up 0.55s var(--polish-ease) both;
-    animation-timeline: view();
-    animation-range: entry 0% entry 35%;
-  }
-
-  @keyframes polish-fade-up {
-    from {
-      opacity: 0;
-      transform: translateY(12px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @supports not (animation-timeline: view()) {
-    .code-preview,
-    .quickstart {
-      animation: none;
-      opacity: 1;
-    }
-  }
-
   @media (prefers-reduced-motion: reduce) {
-    .code-preview,
-    .quickstart,
     .qs-card {
       animation: none !important;
       transition: none !important;

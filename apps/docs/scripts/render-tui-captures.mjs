@@ -60,6 +60,18 @@ const captures = [
       },
     ],
   },
+  {
+    id: 'review-zh-cn',
+    output: 'tui-review-zh-cn.webp',
+    width: 160,
+    height: 40,
+    sources: [
+      {
+        path: 'crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__fullscreen_patch_review_zh_hans_160.snap',
+        row: 0,
+      },
+    ],
+  },
 ];
 
 const stylePattern = /^\((\d+),(\d+)\)\.\.\((\d+),(\d+)\) \((Rgb\(\d+, \d+, \d+\)|Reset), (Rgb\(\d+, \d+, \d+\)|Reset), (.+)\)$/;

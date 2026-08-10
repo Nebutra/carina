@@ -24,6 +24,8 @@ const {
   imageAlt = 'Carina Fullscreen changes workbench showing transactions, files, and numbered diff hunks',
   caption = 'Generated from the production 160-column Ratatui fixture',
 } = Astro.props;
+const isZh = Astro.locals.starlightRoute.locale === 'zh-cn';
+const fullSizeLabel = isZh ? '查看原始尺寸' : 'Open full size';
 ---
 
 <section class="code-preview not-content">
@@ -39,25 +41,32 @@ const {
     </ol>
 
     <figure class="code-preview__figure">
-      <img
-        class="code-preview__image"
-        src={imageSrc}
-        alt={imageAlt}
-        width="1656"
-        height="856"
-        loading="lazy"
-        decoding="async"
-      />
-      <figcaption>{caption}</figcaption>
+      <div class="code-preview__viewport">
+        <img
+          class="code-preview__image"
+          src={imageSrc}
+          alt={imageAlt}
+          width="1656"
+          height="856"
+          loading="lazy"
+          decoding="async"
+        />
+      </div>
+      <div class="code-preview__figure-meta">
+        <a class="code-preview__expand" href={imageSrc} target="_blank" rel="noreferrer">
+          {fullSizeLabel}<span aria-hidden="true">↗</span>
+        </a>
+        <figcaption>{caption}</figcaption>
+      </div>
     </figure>
   </div>
 </section>
 
 <style>
   .code-preview {
-    padding: var(--spacing-16) var(--spacing-6) var(--spacing-20);
+    padding: var(--spacing-12) var(--spacing-6) var(--spacing-20);
     border-bottom: 1px solid var(--docs-border-subtle);
-    background: var(--docs-bg);
+    background: var(--docs-bg-surface);
   }
 
   .code-preview__inner {
@@ -66,8 +75,8 @@ const {
   }
 
   .code-preview__header {
-    max-width: 48rem;
-    margin-bottom: 2rem;
+    max-width: 52rem;
+    margin-bottom: 2.25rem;
   }
 
   .code-preview__eyebrow {
@@ -82,7 +91,7 @@ const {
   .code-preview__heading {
     margin: 0 0 0.8rem;
     color: var(--docs-fg);
-    font-size: 1.65rem;
+    font-size: 1.75rem;
     font-weight: 620;
     line-height: 1.12;
     letter-spacing: 0;
@@ -132,27 +141,83 @@ const {
     margin: 0;
   }
 
-  .code-preview__image {
-    display: block;
-    width: 100%;
-    height: auto;
-    aspect-ratio: 1656 / 856;
+  .code-preview__viewport {
+    overflow: clip;
     border: 1px solid var(--docs-border-subtle);
     border-radius: 4px;
     background: var(--polish-code-bg);
   }
 
-  .code-preview__figure figcaption {
+  .code-preview__image {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1656 / 856;
+    max-width: none;
+    background: var(--polish-code-bg);
+  }
+
+  .code-preview__figure-meta {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
     margin-top: 0.65rem;
+  }
+
+  .code-preview__figure figcaption {
+    margin: 0;
     color: var(--docs-fg-subtle);
     font-family: var(--docs-font-mono);
     font-size: 0.7rem;
     text-align: end;
   }
 
+  .code-preview__expand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 2.75rem;
+    color: var(--docs-accent);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  .code-preview__expand:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
   @media (min-width: 768px) {
     .code-preview {
-      padding: var(--spacing-20) var(--spacing-10) var(--spacing-24);
+      padding: var(--spacing-16) var(--spacing-10) var(--spacing-24);
+    }
+
+    .code-preview__header {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
+      align-items: end;
+      column-gap: var(--spacing-12);
+      row-gap: 0.65rem;
+      max-width: none;
+      margin-bottom: 2.5rem;
+    }
+
+    .code-preview__eyebrow {
+      grid-column: 1;
+    }
+
+    .code-preview__heading {
+      grid-column: 1;
+      margin-bottom: 0;
+    }
+
+    .code-preview__description {
+      grid-column: 2;
+      grid-row: 1 / span 2;
+      align-self: end;
+      max-width: 26rem;
     }
 
     .code-preview__facts {
@@ -170,11 +235,29 @@ const {
     }
 
     .code-preview__heading {
-      font-size: 2.15rem;
+      font-size: 2.5rem;
     }
   }
 
   @media (max-width: 520px) {
+    .code-preview__viewport {
+      overflow-x: auto;
+      overscroll-behavior-inline: contain;
+      scrollbar-color: var(--docs-border) var(--polish-code-bg);
+    }
+
+    .code-preview__image {
+      width: 56rem;
+    }
+
+    .code-preview__figure-meta {
+      align-items: flex-start;
+    }
+
+    .code-preview__figure figcaption {
+      max-width: 12rem;
+    }
+
     .code-preview__facts {
       grid-template-columns: 1fr;
     }

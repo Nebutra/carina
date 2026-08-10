@@ -44,6 +44,20 @@
           "sha256": "7b5650660b0254adc97aaa75ce1b9d9f5e921f4934cc563e7099bbe985741403"
         }
       ]
+    },
+    {
+      "id": "review-zh-cn",
+      "output": "apps/docs/public/images/tui-review-zh-cn.webp",
+      "terminalCells": "160x40",
+      "pixels": "1656x856",
+      "sha256": "8c4ada0b8cba8d243481a4ea896c336f23810501c20f5086234b197e51bde4c4",
+      "sources": [
+        {
+          "path": "crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__fullscreen_patch_review_zh_hans_160.snap",
+          "row": 0,
+          "sha256": "3b76402dee31c342940bee9fcbe3f664f320e1e5371b0edc647f2719427a082b"
+        }
+      ]
     }
   ]
 }

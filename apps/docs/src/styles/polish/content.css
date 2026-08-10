@@ -22,9 +22,8 @@
   }
 
   /* H1 — brand editorial role (Newsreader / --font-family-serif) */
-  h1#_top,
-  .sl-markdown-content h1,
-  .content-panel h1#_top {
+  .sl-markdown-content h1:not(:where(.not-content *)),
+  .content-panel > .sl-container > h1#_top {
     font-family: var(--docs-font-display) !important;
     font-size: clamp(1.95rem, 3.4vw, 2.5rem) !important;
     font-weight: 550 !important;

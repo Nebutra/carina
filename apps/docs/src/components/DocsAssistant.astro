@@ -213,9 +213,35 @@ const t = isZh
     const titleEl = dialog.querySelector<HTMLElement>('[data-docs-ai-page-title]');
     const closeBtn = dialog.querySelector<HTMLButtonElement>('[data-docs-ai-close]');
     const copyPromptBtn = dialog.querySelector<HTMLButtonElement>('[data-docs-ai-copy-prompt]');
+    const landingEvidence = document.querySelector<HTMLElement>('.code-preview__figure');
     let lastFocus: HTMLElement | null = null;
     let busy = false;
     let requestController: AbortController | null = null;
+    let collisionFrame = 0;
+    const syncEvidenceCollision = () => {
+      collisionFrame = 0;
+      if (!landingEvidence || openBtn.hidden) {
+        openBtn.removeAttribute('data-avoid-evidence');
+        return;
+      }
+      const evidence = landingEvidence.getBoundingClientRect();
+      const trigger = openBtn.getBoundingClientRect();
+      const overlaps =
+        trigger.left < evidence.right &&
+        trigger.right > evidence.left &&
+        trigger.top < evidence.bottom &&
+        trigger.bottom > evidence.top;
+      openBtn.toggleAttribute('data-avoid-evidence', overlaps);
+    };
+    const scheduleEvidenceCollision = () => {
+      if (collisionFrame) return;
+      collisionFrame = requestAnimationFrame(syncEvidenceCollision);
+    };
+    if (landingEvidence) {
+      window.addEventListener('scroll', scheduleEvidenceCollision, { passive: true });
+      window.addEventListener('resize', scheduleEvidenceCollision, { passive: true });
+      scheduleEvidenceCollision();
+    }
 
     const setBusy = (value: boolean) => {
       busy = value;
@@ -339,6 +365,7 @@ const t = isZh
     const onDialogClose = () => {
       requestController?.abort();
       openBtn.hidden = false;
+      scheduleEvidenceCollision();
       if (lastFocus?.isConnected) lastFocus.focus();
     };
     const onDialogClick = (event: MouseEvent) => {
@@ -391,6 +418,10 @@ const t = isZh
 
     assistantWindow.__carinaDocsAssistantCleanup__ = () => {
       requestController?.abort();
+      if (collisionFrame) cancelAnimationFrame(collisionFrame);
+      window.removeEventListener('scroll', scheduleEvidenceCollision);
+      window.removeEventListener('resize', scheduleEvidenceCollision);
+      openBtn.removeAttribute('data-avoid-evidence');
       document.removeEventListener('keydown', onKeydown);
       window.removeEventListener('carina:ask-ai', onAskAi);
       window.removeEventListener('carina:docs-ask-ai', onAskAi);
@@ -443,6 +474,13 @@ const t = isZh
 
   .docs-ai-fab[hidden] {
     display: none;
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+
+  .docs-ai-fab[data-avoid-evidence] {
+    visibility: hidden;
+    pointer-events: none;
     opacity: 0;
     transform: translateY(6px) scale(0.96);
   }

@@ -48,6 +48,9 @@ const tabs = hasSidebar
       .filter((tab): tab is { label: string; href: string; active: boolean } => Boolean(tab.href))
   : [];
 const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档分区' : 'Documentation sections';
+const preferencesLabel = Astro.locals.starlightRoute.locale === 'zh-cn'
+  ? '显示与语言设置'
+  : 'Display and language settings';
 ---
 
 <div class="docs-header" data-docs-header>
@@ -65,9 +68,21 @@ const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档�
       <div class="sl-hidden md:sl-flex social-icons">
         <SocialIcons />
       </div>
-      <div class="sl-hidden md:sl-flex header-selects">
-        <ThemeSelect />
-        <LanguageSelect />
+      <div class="header-preferences" data-header-preferences>
+        <button
+          class="header-preferences__toggle"
+          type="button"
+          aria-label={preferencesLabel}
+          aria-controls="header-preferences-menu"
+          aria-expanded="false"
+          data-header-preferences-toggle
+        >
+          <span aria-hidden="true">•••</span>
+        </button>
+        <div class="header-selects" id="header-preferences-menu" data-header-preferences-menu>
+          <ThemeSelect />
+          <LanguageSelect />
+        </div>
       </div>
     </div>
   </div>
@@ -172,6 +187,47 @@ const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档�
         : null;
     if (shell && ro) ro.observe(shell);
 
+    const preferences = root.querySelector<HTMLElement>('[data-header-preferences]');
+    const preferencesToggle = preferences?.querySelector<HTMLButtonElement>(
+      '[data-header-preferences-toggle]',
+    );
+    const preferencesMenu = preferences?.querySelector<HTMLElement>(
+      '[data-header-preferences-menu]',
+    );
+    const closePreferences = () => {
+      if (!preferences || !preferencesToggle) return;
+      delete preferences.dataset.open;
+      preferencesToggle.setAttribute('aria-expanded', 'false');
+    };
+    const onPreferencesToggle = () => {
+      if (!preferences || !preferencesToggle) return;
+      const open = preferences.dataset.open !== 'true';
+      preferences.dataset.open = String(open);
+      preferencesToggle.setAttribute('aria-expanded', String(open));
+      if (open) preferencesMenu?.querySelector<HTMLSelectElement>('select')?.focus();
+    };
+    const onDocumentClick = (event: MouseEvent) => {
+      if (!(event.target instanceof Node) || preferences?.contains(event.target)) return;
+      closePreferences();
+    };
+    const onDocumentKeydown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || preferences?.dataset.open !== 'true') return;
+      closePreferences();
+      preferencesToggle?.focus();
+    };
+    const onDocumentFocusin = (event: FocusEvent) => {
+      if (preferences?.dataset.open !== 'true') return;
+      if (event.target instanceof Node && preferences.contains(event.target)) return;
+      closePreferences();
+    };
+    const onPreferencesResize = () => closePreferences();
+    preferencesToggle?.addEventListener('click', onPreferencesToggle);
+    preferencesMenu?.addEventListener('change', closePreferences);
+    document.addEventListener('click', onDocumentClick);
+    document.addEventListener('focusin', onDocumentFocusin);
+    document.addEventListener('keydown', onDocumentKeydown);
+    window.addEventListener('resize', onPreferencesResize, { passive: true });
+
     window.addEventListener('resize', syncHeaderOffset, { passive: true });
     // Fonts swapping can change brand-row metrics after first paint
     document.fonts?.ready?.then(() => syncHeaderOffset()).catch(() => {});
@@ -179,6 +235,12 @@ const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档�
     headerWindow.__carinaHeaderCleanup__ = () => {
       mutation?.disconnect();
       ro?.disconnect();
+      preferencesToggle?.removeEventListener('click', onPreferencesToggle);
+      preferencesMenu?.removeEventListener('change', closePreferences);
+      document.removeEventListener('click', onDocumentClick);
+      document.removeEventListener('focusin', onDocumentFocusin);
+      document.removeEventListener('keydown', onDocumentKeydown);
+      window.removeEventListener('resize', onPreferencesResize);
       window.removeEventListener('resize', syncHeaderOffset);
     };
   }
@@ -246,10 +308,67 @@ const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档�
   }
 
   .header-selects {
-    display: flex;
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    inset-inline-end: 0;
+    z-index: 2;
+    display: none;
+    flex-direction: column;
     gap: 0.15rem;
+    width: min(18rem, calc(100vw - 2rem));
+    height: auto;
+    padding: 0.5rem;
+    border: 1px solid var(--docs-border);
+    border-radius: var(--docs-radius-lg);
+    background: var(--docs-bg-surface);
+    box-shadow: var(--docs-elev-2);
+  }
+
+  .header-preferences {
+    position: relative;
+    display: flex;
     align-items: center;
-    height: 2rem;
+  }
+
+  .header-preferences[data-open='true'] .header-selects {
+    display: flex;
+  }
+
+  .header-preferences__toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    padding: 0;
+    border: 0;
+    border-radius: var(--docs-radius-md);
+    background: transparent;
+    color: var(--docs-fg-muted);
+    font-family: var(--docs-font-sans);
+    font-size: 0.95rem;
+    letter-spacing: 0;
+    cursor: pointer;
+  }
+
+  .header-preferences__toggle:hover {
+    background: color-mix(in srgb, var(--docs-fg) 4%, transparent);
+    color: var(--docs-fg);
+  }
+
+  .header-preferences__toggle:focus-visible {
+    outline: 2px solid var(--docs-focus);
+    outline-offset: 2px;
+  }
+
+  .header-selects :global(starlight-theme-select),
+  .header-selects :global(starlight-lang-select),
+  .header-selects :global(label) {
+    width: 100%;
+  }
+
+  .header-selects :global(select) {
+    width: 100% !important;
   }
 
   /* Starlight hosts must share the same control box as version */
@@ -261,6 +380,17 @@ const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档�
     align-items: center;
     height: 2rem;
     margin: 0;
+  }
+
+  @media (max-width: 49.999rem) {
+    .header-selects :global(starlight-theme-select),
+    .header-selects :global(starlight-lang-select),
+    .header-selects :global(starlight-theme-select label),
+    .header-selects :global(starlight-lang-select label),
+    .header-selects :global(select) {
+      min-height: 2.75rem;
+      height: 2.75rem;
+    }
   }
 
   .social-icons {
@@ -294,6 +424,41 @@ const sectionsLabel = Astro.locals.starlightRoute.locale === 'zh-cn' ? '文档�
 
     .right-group {
       justify-self: end;
+    }
+
+    .header-preferences__toggle {
+      display: none;
+    }
+
+    .header-selects {
+      position: static;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      width: auto;
+      height: 2rem;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .header-selects :global(starlight-theme-select),
+    .header-selects :global(starlight-lang-select),
+    .header-selects :global(label),
+    .header-selects :global(select) {
+      width: auto !important;
+    }
+  }
+
+  @media (max-width: 30rem) {
+    .header-search {
+      flex: 0 0 2.25rem;
+    }
+
+    .header-search :global(site-search) {
+      width: 2.25rem;
     }
   }
 

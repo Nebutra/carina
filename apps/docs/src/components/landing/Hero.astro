@@ -140,7 +140,7 @@ const copy = isZh
   .hero {
     position: relative;
     isolation: isolate;
-    min-height: clamp(34rem, 74svh, 46rem);
+    min-height: clamp(34rem, 68svh, 41rem);
     overflow: hidden;
     display: flex;
     align-items: center;
@@ -160,25 +160,25 @@ const copy = isZh
   .hero__scene {
     z-index: -2;
     object-fit: cover;
-    object-position: center;
-    opacity: 0.48;
-    filter: brightness(0.68) contrast(0.96);
+    object-position: center 44%;
+    opacity: 0.42;
+    filter: brightness(0.62) contrast(1.04);
   }
 
   .hero__shade {
     z-index: -1;
-    background: color-mix(in srgb, var(--polish-code-bg) 64%, transparent);
+    background: color-mix(in srgb, var(--polish-code-bg) 70%, transparent);
   }
 
   .hero__inner {
-    width: min(100%, var(--docs-page-max, 72rem));
+    width: min(calc(100% - var(--spacing-12)), var(--docs-page-max, 72rem));
     margin: 0 auto;
-    padding: clamp(3rem, 8svh, 5rem) var(--spacing-6);
+    padding-block: clamp(3rem, 7svh, 4.5rem);
   }
 
   @media (min-width: 768px) {
     .hero__inner {
-      padding-inline: var(--spacing-10);
+      width: min(calc(100% - var(--spacing-20)), var(--docs-page-max, 72rem));
     }
   }
 
@@ -200,7 +200,7 @@ const copy = isZh
   }
 
   .hero__title {
-    max-width: 44rem;
+    max-width: 46rem;
     margin: 0 0 1rem;
     background: none;
     color: var(--polish-code-fg);
@@ -213,7 +213,7 @@ const copy = isZh
   }
 
   .hero__subtitle {
-    max-width: 42rem;
+    max-width: 40rem;
     margin: 0 0 1.35rem;
     color: var(--polish-code-muted);
     font-size: 1rem;
@@ -370,6 +370,10 @@ const copy = isZh
       object-position: 42% center;
     }
 
+    .hero__inner {
+      padding-block: var(--spacing-12);
+    }
+
     .hero__lockup {
       width: 9.75rem;
     }
@@ -386,9 +390,16 @@ const copy = isZh
     }
   }
 
+  @media (min-width: 1024px) {
+    .hero__scene {
+      opacity: 0.68;
+      transform: translateX(52%);
+    }
+  }
+
   @media (min-width: 1200px) {
     .hero__title {
-      font-size: 4.25rem;
+      font-size: 4rem;
     }
   }
 

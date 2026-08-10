@@ -170,9 +170,8 @@
   }
 
   /* Primary titles — Newsreader display serif */
-  .sl-markdown-content h1,
-  h1#_top,
-  .content-panel h1#_top {
+  .sl-markdown-content h1:not(:where(.not-content *)),
+  .content-panel > .sl-container > h1#_top {
     font-family: var(--docs-font-display) !important;
     font-weight: 550 !important;
     letter-spacing: -0.022em;
