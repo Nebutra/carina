@@ -1,0 +1,14 @@
+---
+source: crates/carina-tui/src/app/render.rs
+expression: rendered
+---
+size=80x2
+⠋ Running focused checks  Esc pause safely
+run running · HITL ask · isolation safe edit + command sandbox · ctx 42%
+styles:
+(0,0)..(42,0) (Rgb(142, 219, 210), Reset, NONE)
+(0,1)..(11,1) (Rgb(142, 219, 210), Reset, NONE)
+(11,1)..(14,1) (Rgb(150, 160, 156), Reset, NONE)
+(14,1)..(22,1) (Rgb(142, 219, 210), Reset, NONE)
+(22,1)..(65,1) (Rgb(150, 160, 156), Reset, NONE)
+(65,1)..(72,1) (Rgb(142, 219, 210), Reset, NONE)

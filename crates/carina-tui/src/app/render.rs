@@ -19,7 +19,8 @@ use super::{
 };
 use crate::component::{Action, ComponentId, HitRegion, InteractionMap};
 use crate::conversation::{
-    ConversationStatus, EmptyConversation, conversation_title, localized_execution_status,
+    ChromeCapability, ChromeSlotKind, ChromeTone, ComposerChrome, ComposerChromeInput,
+    EmptyConversation, conversation_title, localized_execution_status,
 };
 use crate::density::DensityMode;
 use crate::file_viewer::{FileViewerLoad, selection_hint};
@@ -2165,10 +2166,6 @@ impl App {
                 layout_contract::COMPOSER_MAX_HEIGHT,
             )
             + layout_contract::COMPOSER_CHROME_HEIGHT;
-        let status_height = u16::from(
-            !self.notice.is_empty()
-                || !matches!(self.execution_status.as_str(), "" | "ready" | "completed"),
-        );
         // A conversation is an operating surface, not a repeated welcome
         // screen. Keep its context bar compact at every terminal size.
         let header_height = if self.options.screen_mode == Some(ScreenMode::Inline) {
@@ -2182,7 +2179,6 @@ impl App {
                 Constraint::Length(header_height),
                 Constraint::Min(layout_contract::CONVERSATION_MIN_TRANSCRIPT_HEIGHT),
                 Constraint::Length(composer_height),
-                Constraint::Length(status_height),
                 Constraint::Length(layout_contract::SCENE_FOOTER_HEIGHT),
             ])
             .split(content);
@@ -2191,10 +2187,7 @@ impl App {
         }
         self.render_transcript(frame, chunks[1]);
         self.render_composer(frame, chunks[2]);
-        if status_height > 0 {
-            self.render_status(frame, chunks[3]);
-        }
-        self.render_security_footer(frame, chunks[4]);
+        self.render_composer_chrome(frame, chunks[3]);
         self.render_slash_completion(frame, chunks[1]);
         self.render_context_completion(frame, chunks[1]);
         self.render_prompt_history_search(frame, chunks[1]);
@@ -3197,37 +3190,8 @@ impl App {
         }
     }
 
-    fn render_status(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_composer_chrome(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let notice = self.notice.render(self.ui_locale());
-        ConversationStatus {
-            execution_status: &self.execution_status,
-            notice: notice.as_ref(),
-            elapsed: self.execution_timer.elapsed(),
-            activity: self.execution_activity.as_deref(),
-            queued_follow_ups: if layout_contract::short_terminal(frame.area().height) {
-                0
-            } else {
-                self.queued_prompts.len()
-            },
-            background_work: self
-                .context_summary
-                .as_ref()
-                .is_some_and(|summary| summary.task.mode == "background"),
-            interrupt_key: self.keybindings.interrupt.label(),
-            priority_notice: self.notice.is_localized(MessageId::RuntimeUnavailable)
-                || self.notice.is_localized(MessageId::EventStreamInterrupted),
-            no_color: self.theme.no_color,
-            context: self
-                .context_summary
-                .as_ref()
-                .map(|summary| &summary.model_context_tokens),
-            locale: self.ui_locale(),
-            screen_mode: self.options.screen_mode.map(ScreenMode::as_arg),
-        }
-        .render(frame, area, self.theme);
-    }
-
-    fn render_security_footer(&self, frame: &mut Frame<'_>, area: Rect) {
         let session = self.active_session.as_ref();
         let config = self.security_context.as_ref();
         let hitl = config
@@ -3243,96 +3207,93 @@ impl App {
                     .filter(|value| !value.is_empty())
             })
             .unwrap_or("unknown");
-        let approval = session
-            .map(|value| value.approval_mode.as_str())
-            .filter(|value| !value.is_empty())
-            .unwrap_or("unknown");
-        let sandbox = config.map_or(
-            "unknown",
-            |value| if value.sandbox_commands { "on" } else { "off" },
-        );
-        let hitl_style = match hitl {
-            "always-approve" => Style::default().fg(self.theme.danger),
-            "accept-edits" | "dont-ask" => Style::default().fg(self.theme.warning),
-            "ask" => Style::default().fg(self.theme.accent),
-            _ => Style::default().fg(self.theme.muted),
-        };
-        let (hitl_label, isolation_label, session_label, sandbox_label) =
-            security_axis_labels(self.ui_locale());
-        let width = area.width as usize;
-        let context = self
-            .context_summary
-            .as_ref()
-            .map(|summary| &summary.model_context_tokens);
-        let context_text = context
-            .filter(|value| value.limit_tokens > 0)
-            .map(|value| {
-                format!(
-                    "ctx {}{}",
-                    crate::render_contract::format_percent(f64::from(value.used_percent)),
-                    if value.estimated || value.estimated_limit {
-                        " est."
-                    } else {
-                        ""
-                    }
-                )
-            })
-            .unwrap_or_else(|| "ctx ?".to_owned());
-        let context_style = context.map_or_else(
-            || Style::default().fg(self.theme.muted),
-            |value| {
-                if value.used_percent >= 90 || value.threshold == "critical" {
-                    Style::default().fg(self.theme.danger)
-                } else if value.used_percent >= 80 || value.threshold == "warning" {
-                    Style::default().fg(self.theme.warning)
-                } else {
-                    Style::default().fg(self.theme.muted)
-                }
-            },
-        );
-        let isolation = if width >= 54 {
-            format!(
-                "{isolation_label}  {profile}  {}  {session_label} {approval}  {}  {sandbox_label} {sandbox}",
-                self.theme.glyphs.separator(),
-                self.theme.glyphs.separator()
-            )
-        } else if width >= 32 {
-            format!(
-                "{isolation_label}  {profile}  {}  {sandbox_label} {sandbox}",
-                self.theme.glyphs.separator()
-            )
-        } else {
-            format!("{isolation_label}  {profile}")
-        };
-        let context_width = UnicodeWidthStr::width(context_text.as_str());
-        let context_separator = format!("  {}  ", self.theme.glyphs.separator());
-        let separator_width = UnicodeWidthStr::width(context_separator.as_str());
-        let isolation = truncate_cells(
-            &isolation,
-            width.saturating_sub(context_width + separator_width),
-        );
-        let lines = vec![
-            Line::from(vec![
-                Span::styled(
-                    format!("{hitl_label}  "),
-                    Style::default().fg(self.theme.muted),
+        let chrome = ComposerChrome::project(ComposerChromeInput {
+            execution_status: &self.execution_status,
+            notice: notice.as_ref(),
+            elapsed: self.execution_timer.elapsed(),
+            activity: self.execution_activity.as_deref(),
+            queued_follow_ups: self.queued_prompts.len(),
+            background_work: self
+                .context_summary
+                .as_ref()
+                .is_some_and(|summary| summary.task.mode == "background"),
+            interrupt_key: self.keybindings.interrupt.label(),
+            priority_notice: self.notice.is_localized(MessageId::RuntimeUnavailable)
+                || self.notice.is_localized(MessageId::EventStreamInterrupted),
+            context: self
+                .context_summary
+                .as_ref()
+                .map(|summary| &summary.model_context_tokens),
+            locale: self.ui_locale(),
+            screen_mode: self.options.screen_mode.unwrap_or_default().as_arg(),
+            hitl,
+            isolation_profile: profile,
+            sandbox_commands: config.map(|value| value.sandbox_commands),
+        });
+        if area.height == 0 || area.width == 0 {
+            return;
+        }
+
+        let mut primary_spans = Vec::new();
+        if let Some(primary) = &chrome.primary {
+            if primary.animated {
+                primary_spans.push(Span::styled(
+                    format!(
+                        "{} ",
+                        self.theme.glyphs.spinner(
+                            self.execution_timer
+                                .elapsed()
+                                .unwrap_or_default()
+                                .as_millis()
+                        )
+                    ),
+                    chrome_tone_style(primary.tone, self.theme),
+                ));
+            }
+            let prefix_width = primary_spans
+                .iter()
+                .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+                .sum::<usize>();
+            primary_spans.push(Span::styled(
+                truncate_cells(
+                    &primary.text,
+                    (area.width as usize).saturating_sub(prefix_width),
                 ),
-                Span::styled(hitl, hitl_style),
-            ]),
-            Line::from(vec![
-                Span::styled(context_text, context_style),
-                Span::raw(context_separator),
-                Span::styled(
-                    isolation,
-                    Style::default().fg(if sandbox == "off" {
-                        self.theme.warning
-                    } else {
-                        self.theme.muted
-                    }),
-                ),
-            ]),
-        ];
-        frame.render_widget(Paragraph::new(lines), area);
+                chrome_tone_style(primary.tone, self.theme),
+            ));
+        }
+
+        let slots = chrome.layout_slots(area.width, self.theme.glyphs);
+        let separator = format!(" {} ", self.theme.glyphs.separator());
+        let mut slot_spans = Vec::new();
+        let slot_row = area
+            .y
+            .saturating_add(1)
+            .min(area.bottom().saturating_sub(1));
+        for (index, slot) in slots.iter().enumerate() {
+            if index > 0 {
+                slot_spans.push(Span::styled(separator.clone(), self.theme.muted()));
+            }
+            let component = ComponentId::stable("composer-chrome", chrome_slot_key(slot.kind));
+            let action = slot.capability.map(chrome_capability_action);
+            let style = if action.is_some() && self.interactions.hovered(component) {
+                self.theme.hovered()
+            } else {
+                chrome_tone_style(slot.tone, self.theme)
+            };
+            slot_spans.push(Span::styled(slot.text.as_str(), style));
+            if let Some(action) = action {
+                self.interactions.register(HitRegion {
+                    component,
+                    area: Rect::new(area.x.saturating_add(slot.start), slot_row, slot.width, 1),
+                    action,
+                });
+            }
+        }
+        frame.render_widget(
+            Paragraph::new(vec![Line::from(primary_spans), Line::from(slot_spans)]),
+            area,
+        );
     }
 
     fn product_header_metadata(&self) -> (String, String, String) {
@@ -5595,17 +5556,29 @@ fn transcript_block_hidden(block: &TranscriptBlock) -> bool {
         && block.status.trim().is_empty()
 }
 
-fn security_axis_labels(
-    locale: Locale,
-) -> (&'static str, &'static str, &'static str, &'static str) {
-    match locale {
-        Locale::En => ("HITL", "Isolation", "session", "sandbox"),
-        Locale::ZhHans => ("审批", "隔离", "会话", "沙箱"),
-        Locale::ZhHant => ("審批", "隔離", "工作階段", "沙箱"),
-        Locale::Ja => ("承認", "分離", "セッション", "サンドボックス"),
-        Locale::Ko => ("승인", "격리", "세션", "샌드박스"),
-        Locale::Es => ("Aprobación", "Aislamiento", "sesión", "sandbox"),
-        Locale::Fr => ("Approbation", "Isolation", "session", "sandbox"),
+fn chrome_slot_key(kind: ChromeSlotKind) -> &'static str {
+    match kind {
+        ChromeSlotKind::Run => "run",
+        ChromeSlotKind::Queue => "queue",
+        ChromeSlotKind::Hitl => "hitl",
+        ChromeSlotKind::Isolation => "isolation",
+        ChromeSlotKind::Context => "context",
+        ChromeSlotKind::ScreenMode => "screen-mode",
+    }
+}
+
+fn chrome_capability_action(capability: ChromeCapability) -> Action {
+    match capability {
+        ChromeCapability::OpenQueue => Action::OpenQueue,
+    }
+}
+
+fn chrome_tone_style(tone: ChromeTone, theme: crate::theme::Theme) -> Style {
+    match tone {
+        ChromeTone::Muted => theme.muted(),
+        ChromeTone::Accent => Style::default().fg(theme.accent),
+        ChromeTone::Warning => Style::default().fg(theme.warning),
+        ChromeTone::Danger => Style::default().fg(theme.danger),
     }
 }
 
@@ -6778,6 +6751,245 @@ mod transcript_tests {
         .unwrap();
         app.phase = Phase::Conversation;
         (app, root, server)
+    }
+
+    fn render_composer_chrome_fixture(
+        width: u16,
+        locale: Locale,
+        state: &str,
+        glyph_mode: crate::glyphs::GlyphMode,
+        color_level: crate::theme::ColorLevel,
+    ) -> (String, Option<Position>) {
+        let (mut app, root, server) = production_render_app();
+        app.options.locale = Some(locale.product_id().into());
+        app.locale_index = Locale::ALL
+            .iter()
+            .position(|candidate| *candidate == locale)
+            .unwrap_or_default();
+        app.options.screen_mode = Some(ScreenMode::Fullscreen);
+        app.theme = crate::theme::Theme::new(crate::theme::Polarity::Dark, color_level);
+        app.theme.glyphs = Glyphs::new(glyph_mode);
+        app.security_context = Some(crate::rpc::EffectiveConfig {
+            approval_mode: "ask".into(),
+            sandbox_commands: true,
+            permission_profile: "safe-edit".into(),
+            ..crate::rpc::EffectiveConfig::default()
+        });
+        app.context_summary = Some(crate::rpc::ContextSummary {
+            model_context_tokens: crate::rpc::ModelContextTokens {
+                available: true,
+                used_percent: 42,
+                limit_tokens: 100_000,
+                ..crate::rpc::ModelContextTokens::default()
+            },
+            ..crate::rpc::ContextSummary::default()
+        });
+        app.execution_status = match state {
+            "idle" => "ready",
+            "approval" => "waiting_approval",
+            _ => "running",
+        }
+        .into();
+        app.execution_activity = match (locale, state) {
+            (_, "idle" | "approval") => None,
+            (Locale::ZhHans, "running") => Some("正在运行聚焦检查".into()),
+            (Locale::ZhHans, "queued") => Some("正在整理后续工作".into()),
+            (_, "running") => Some("Running focused checks".into()),
+            (_, "queued") => Some("Preparing follow-up work".into()),
+            _ => None,
+        };
+        if state == "queued" {
+            app.queued_prompts.push_back("next task".into());
+            app.queued_prompts.push_back("then summarize".into());
+        }
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 2)).unwrap();
+        terminal
+            .draw(|frame| {
+                app.interactions.begin_frame();
+                app.render_composer_chrome(frame, frame.area());
+            })
+            .unwrap();
+        let queue_position = (0..width).find_map(|x| {
+            let position = Position::new(x, 1);
+            (app.interactions.action_at(position) == Some(Action::OpenQueue)).then_some(position)
+        });
+        let rendered = rendered_frame_contract(terminal.backend().buffer());
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        (rendered, queue_position)
+    }
+
+    #[test]
+    fn composer_chrome_production_goldens_cover_idle_running_queue_and_approval() {
+        for (locale_name, locale) in [("en", Locale::En), ("zh_hans", Locale::ZhHans)] {
+            for width in [80, 120] {
+                for state in ["idle", "running", "queued", "approval"] {
+                    let (rendered, queue_position) = render_composer_chrome_fixture(
+                        width,
+                        locale,
+                        state,
+                        crate::glyphs::GlyphMode::Unicode,
+                        crate::theme::ColorLevel::TrueColor,
+                    );
+                    assert!(rendered.lines().any(|line| !line.trim().is_empty()));
+                    assert_eq!(queue_position.is_some(), state == "queued");
+                    insta::assert_snapshot!(
+                        format!("composer_chrome_{locale_name}_{state}_{width}"),
+                        rendered
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn composer_chrome_ascii_no_color_keeps_queue_hit_geometry() {
+        for locale in [Locale::En, Locale::ZhHans] {
+            let (unicode, unicode_queue) = render_composer_chrome_fixture(
+                60,
+                locale,
+                "queued",
+                crate::glyphs::GlyphMode::Unicode,
+                crate::theme::ColorLevel::TrueColor,
+            );
+            let (ascii, ascii_queue) = render_composer_chrome_fixture(
+                60,
+                locale,
+                "queued",
+                crate::glyphs::GlyphMode::Ascii,
+                crate::theme::ColorLevel::None,
+            );
+            assert_eq!(unicode_queue, ascii_queue);
+            let queue_anchor = if locale == Locale::ZhHans {
+                "队列 2"
+            } else {
+                "queue 2"
+            };
+            assert_eq!(
+                anchor_position(&unicode, queue_anchor),
+                anchor_position(&ascii, queue_anchor)
+            );
+            assert!(!ascii.contains("Rgb("));
+            assert!(!ascii.contains("Indexed("));
+        }
+    }
+
+    #[test]
+    fn composer_chrome_polarity_and_screen_mode_keep_queue_action_geometry() {
+        let mut expected = None;
+        for polarity in [crate::theme::Polarity::Dark, crate::theme::Polarity::Light] {
+            for screen_mode in [ScreenMode::Minimal, ScreenMode::Fullscreen] {
+                let (mut app, root, server) = production_render_app();
+                app.theme = crate::theme::Theme::new(polarity, crate::theme::ColorLevel::TrueColor);
+                app.options.screen_mode = Some(screen_mode);
+                app.execution_status = "running".into();
+                app.queued_prompts.push_back("next task".into());
+                let mut terminal =
+                    ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 2)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        app.interactions.begin_frame();
+                        app.render_composer_chrome(frame, frame.area());
+                    })
+                    .unwrap();
+                let queue_cells = (0..120)
+                    .filter_map(|x| {
+                        let position = Position::new(x, 1);
+                        (app.interactions.action_at(position) == Some(Action::OpenQueue))
+                            .then_some(position)
+                    })
+                    .collect::<Vec<_>>();
+                assert!(!queue_cells.is_empty());
+                if let Some(expected) = &expected {
+                    assert_eq!(&queue_cells, expected);
+                } else {
+                    expected = Some(queue_cells);
+                }
+                server.join().unwrap();
+                std::fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn queue_action_preserves_an_unsent_pointer_draft() {
+        let (mut app, root, server) = production_render_app();
+        app.active_run_id = Some("run_stale".into());
+        app.composer.set_text("keep this draft");
+        app.apply_action(Action::OpenQueue);
+        assert_eq!(app.composer.text(), "keep this draft");
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn composer_chrome_queue_hover_changes_style_not_geometry_or_action() {
+        for color_level in [
+            crate::theme::ColorLevel::TrueColor,
+            crate::theme::ColorLevel::None,
+        ] {
+            let (mut app, root, server) = production_render_app();
+            app.theme = crate::theme::Theme::new(crate::theme::Polarity::Dark, color_level);
+            app.execution_status = "running".into();
+            app.queued_prompts.push_back("next task".into());
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 2)).unwrap();
+            terminal
+                .draw(|frame| {
+                    app.interactions.begin_frame();
+                    app.render_composer_chrome(frame, frame.area());
+                })
+                .unwrap();
+            let before = rendered_frame_contract(terminal.backend().buffer());
+            let queue_position = (0..80)
+                .find_map(|x| {
+                    let position = Position::new(x, 1);
+                    (app.interactions.action_at(position) == Some(Action::OpenQueue))
+                        .then_some(position)
+                })
+                .expect("queued work should register a queue hit region");
+            let before_anchor = anchor_position(&before, "queue 1");
+            assert!(app.interactions.update_hover(queue_position));
+
+            terminal
+                .draw(|frame| {
+                    app.interactions.begin_frame();
+                    app.render_composer_chrome(frame, frame.area());
+                })
+                .unwrap();
+            let after = rendered_frame_contract(terminal.backend().buffer());
+            assert_eq!(anchor_position(&after, "queue 1"), before_anchor);
+            assert_eq!(
+                app.interactions.action_at(queue_position),
+                Some(Action::OpenQueue)
+            );
+            assert_ne!(
+                after, before,
+                "hover should change style in every color mode"
+            );
+
+            server.join().unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn execution_and_notice_changes_do_not_move_the_composer_or_chrome() {
+        let (mut app, root, server) = production_render_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 28)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let idle_composer = app.composer_area;
+        app.execution_status = "running".into();
+        app.execution_activity = Some("Running checks".into());
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        assert_eq!(app.composer_area, idle_composer);
+        app.notice = crate::i18n::Notice::localized(MessageId::RuntimeUnavailable);
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        assert_eq!(app.composer_area, idle_composer);
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

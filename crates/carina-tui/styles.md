@@ -80,6 +80,29 @@ Expanded plain output stays complete until a separate full-output viewer exists;
 density may bound a collapsed preview but may not hide evidence without an
 escape hatch.
 
+## Composer chrome
+
+Conversation state uses one fixed two-row chrome below the composer. The first
+row has one typed narrative owner: active activity with elapsed time and the
+interrupt hint may carry a routine notice at its tail, while a priority failure
+replaces the narrative. The second row is the only owner of Run, Queue, HITL,
+Isolation, Context, and ScreenMode state. Starting work or showing a notice must
+never add a row or reduce transcript height.
+
+Slots are unboxed semantic text runs separated by the canonical glyph separator.
+They use terminal-transparent backgrounds and existing muted, accent, warning,
+and danger tokens. Run, HITL, and Isolation remain visible at every supported
+width; nonzero Queue is also protected. Normal Context appears from 80 columns,
+ScreenMode from 120, while warning or critical Context remains protected even at
+60. Protected slots compact before truncation, and display-cell truncation must
+not split graphemes.
+
+The Queue slot contains depth only and owns an exact hit region. Pointer and
+`/queue` dispatch the same action; hover changes style without moving text or the
+hit rectangle. Unknown lifecycle and policy values become localized Unknown
+copy, never raw protocol strings. ASCII, no-color, polarity, and ScreenMode may
+change glyphs or styling but cannot change slot meaning or action geometry.
+
 ## Transcript color budget
 
 The main transcript uses no more than three saturated foreground hues at once:

@@ -1,5 +1,5 @@
 use carina_tui::{
-    conversation::ConversationStatus,
+    conversation::{ChromeTone, ComposerChrome, ComposerChromeInput},
     i18n::Locale,
     markdown,
     rpc::ModelContextTokens,
@@ -182,11 +182,11 @@ fn render_status_with_mode(
     context: Option<&ModelContextTokens>,
     mode: carina_tui::glyphs::GlyphMode,
 ) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(120, 1)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(120, 2)).unwrap();
     let theme = deterministic_theme(mode);
     terminal
         .draw(|frame| {
-            ConversationStatus {
+            let chrome = ComposerChrome::project(ComposerChromeInput {
                 execution_status,
                 notice: "",
                 elapsed: Some(std::time::Duration::from_secs(62)),
@@ -195,15 +195,50 @@ fn render_status_with_mode(
                 background_work: false,
                 interrupt_key: "Esc",
                 priority_notice: false,
-                no_color: false,
                 context,
                 locale: Locale::En,
-                screen_mode: Some("minimal"),
+                screen_mode: "minimal",
+                hitl: "ask",
+                isolation_profile: "safe-edit",
+                sandbox_commands: Some(true),
+            });
+            let mut primary = Vec::new();
+            if let Some(value) = &chrome.primary {
+                if value.animated {
+                    primary.push(Span::styled(
+                        format!("{} ", theme.glyphs.spinner(62_000)),
+                        chrome_tone_style(value.tone, theme),
+                    ));
+                }
+                primary.push(Span::styled(
+                    value.text.as_str(),
+                    chrome_tone_style(value.tone, theme),
+                ));
             }
-            .render(frame, frame.area(), theme);
+            let separator = format!(" {} ", theme.glyphs.separator());
+            let mut slots = Vec::new();
+            for (index, slot) in chrome.visible_slots(120).into_iter().enumerate() {
+                if index > 0 {
+                    slots.push(Span::styled(separator.clone(), theme.muted()));
+                }
+                slots.push(Span::styled(slot.text, chrome_tone_style(slot.tone, theme)));
+            }
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(primary), Line::from(slots)]),
+                frame.area(),
+            );
         })
         .unwrap();
     serialize_frame(terminal.backend().buffer())
+}
+
+fn chrome_tone_style(tone: ChromeTone, theme: Theme) -> Style {
+    match tone {
+        ChromeTone::Muted => theme.muted(),
+        ChromeTone::Accent => Style::default().fg(theme.accent),
+        ChromeTone::Warning => Style::default().fg(theme.warning),
+        ChromeTone::Danger => Style::default().fg(theme.danger),
+    }
 }
 
 fn render_palette(theme: Theme) -> String {
@@ -510,8 +545,8 @@ fn live_status_glyph_mode_is_fixture_owned() {
         None,
         carina_tui::glyphs::GlyphMode::Ascii,
     );
-    assert!(unicode.contains("⠧ running tests"));
-    assert!(unicode.contains("· Esc pause safely"));
+    assert!(unicode.contains("⠧ running tests  1m02  Esc pause safely"));
+    assert!(unicode.contains(" · "));
     assert!(ascii.contains("\\ running tests"));
-    assert!(ascii.contains("| Esc pause safely"));
+    assert!(ascii.contains(" | "));
 }

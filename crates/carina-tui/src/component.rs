@@ -50,6 +50,7 @@ pub enum Action {
     OpenSettings,
     ToggleDensity,
     OpenStatus,
+    OpenQueue,
     OpenAgents,
     OpenChanges,
     RefreshAgents,

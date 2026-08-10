@@ -36,7 +36,7 @@ States:
 | Light-background terminals | **kept** | `theme.rs` Polarity | #8 |
 | Glyph vocabulary | **kept** | `glyphs.rs` | #9 |
 | Layout constants | **kept** | `layout_contract.rs` | #10 |
-| Live status cell | **kept** | `conversation.rs` ConversationStatus | #21 |
+| Live status cell | **kept** | `conversation.rs` typed `ComposerChrome` projection | #21 |
 | i18n/width correctness | **kept** | `i18n.rs`, width helpers | #24 |
 | Transcript typography | **wired** | `layout_contract` role prefix widths; `render.rs` hanging prefixes | #16 |
 | Role labels + accents | **wired** | `theme::transcript_*`; role prefix tests in render | #17 |
@@ -59,6 +59,7 @@ States:
 | Success-read collapse language | **wired** | Title-only `Read ×N · path…`; expand restores members; fail/cancel never join success groups | V002 visual density |
 | Semantic transcript cell skeletons | **wired** | Pure typed `SemanticCellKind`; production 120-column gallery; governance remains overlay-owned | V003 visual density |
 | Persisted transcript density | **wired** | Compact default and Comfortable projection; `/density` + settings share one action; structured `tui_density` config; explicit disclosure wins; ScreenMode remains orthogonal | V004 visual density |
+| Unified composer chrome | **wired** | Fixed two-row `ComposerChrome`; typed Run/Queue/HITL/Isolation/Context/ScreenMode slots; `/queue` and pointer share `Action::OpenQueue`; 60/80/120 EN/zh-Hans and fallback geometry tests | V007 visual density |
 | Visual density regression gate | **wired** | Production App matrix for both densities at 80/120/160 × EN/zh-Hans; Unicode style-run goldens; ASCII/color/polarity/selection contracts; Make + CI gate | V011 visual density |
 | Assistant content-type channel | **wired** | action JSON suppressed (`tool=done`→summary); whole-body JSON → pretty `json` markdown fence; else prose/markdown | transcript projection |
 | Managed-proxy context window alias | **wired** | `ccswitch-*/model` resolves via openai/azure catalog; footer uses real window not 32k guess | daemon compaction_budget |

@@ -4163,7 +4163,7 @@ impl App {
             CommandId::Minimal => self.request_screen_mode(ScreenMode::Minimal),
             CommandId::Fullscreen => self.request_screen_mode(ScreenMode::Fullscreen),
             CommandId::Inline => self.request_screen_mode(ScreenMode::Inline),
-            CommandId::Queue => self.open_queue_overlay(),
+            CommandId::Queue => self.apply_action(Action::OpenQueue),
             CommandId::Quit => self.quit = true,
             CommandId::Doctor => {
                 self.composer.set_text("");
@@ -4207,8 +4207,6 @@ impl App {
             self.notice = Notice::localized(MessageId::QueueNoActiveRun);
             return;
         };
-        self.composer.set_text("");
-        self.composer_state = TextAreaState::default();
         self.slash_selected = 0;
         self.slash_selected_id = None;
         self.slash_dismissed_input = None;
@@ -5679,6 +5677,7 @@ impl App {
                 .overlays
                 .replace(Overlay::Settings(SettingsOverlay { selected: 0 })),
             Action::ToggleDensity => self.toggle_density(),
+            Action::OpenQueue => self.open_queue_overlay(),
             Action::OpenStatus => {
                 let session_id = self
                     .active_session

@@ -2,7 +2,11 @@
 source: crates/carina-tui/tests/golden_frames.rs
 expression: "render_status(\"waiting_approval\", None, 0, None)"
 ---
-size=120x1
-⠧ waiting for a…  1m02        · Esc pause safely               ·  minimal
+size=120x2
+
+run waiting for approval · HITL ask · isolation safe edit + command sandbox · ctx unknown · screen minimal
 styles:
-(0, 0)..(73, 0) (Rgb(150, 160, 156), Reset, NONE)
+(0, 1)..(24, 1) (Rgb(232, 168, 95), Reset, NONE)
+(24, 1)..(27, 1) (Rgb(150, 160, 156), Reset, NONE)
+(27, 1)..(35, 1) (Rgb(142, 219, 210), Reset, NONE)
+(35, 1)..(106, 1) (Rgb(150, 160, 156), Reset, NONE)

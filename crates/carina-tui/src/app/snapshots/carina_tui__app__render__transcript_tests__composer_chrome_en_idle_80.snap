@@ -1,0 +1,12 @@
+---
+source: crates/carina-tui/src/app/render.rs
+expression: rendered
+---
+size=80x2
+
+run ready · HITL ask · isolation safe edit + command sandbox · ctx 42%
+styles:
+(0,1)..(12,1) (Rgb(150, 160, 156), Reset, NONE)
+(12,1)..(20,1) (Rgb(142, 219, 210), Reset, NONE)
+(20,1)..(63,1) (Rgb(150, 160, 156), Reset, NONE)
+(63,1)..(70,1) (Rgb(142, 219, 210), Reset, NONE)

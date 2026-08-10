@@ -10,6 +10,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::glyphs::Glyphs;
 use crate::i18n::{Locale, MessageId, format as tr_format, text as tr};
+use crate::render_contract::truncate_width_with_glyphs;
 use crate::rpc::{ModelContextTokens, Session};
 use crate::theme::Theme;
 
@@ -55,7 +56,63 @@ impl EmptyConversation<'_> {
     }
 }
 
-pub struct ConversationStatus<'a> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChromeTone {
+    Muted,
+    Accent,
+    Warning,
+    Danger,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChromeSlotKind {
+    Run,
+    Queue,
+    Hitl,
+    Isolation,
+    Context,
+    ScreenMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChromeCapability {
+    OpenQueue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChromeSlot {
+    pub kind: ChromeSlotKind,
+    pub text: String,
+    pub compact_text: String,
+    pub tone: ChromeTone,
+    pub capability: Option<ChromeCapability>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaidOutChromeSlot {
+    pub kind: ChromeSlotKind,
+    pub text: String,
+    pub tone: ChromeTone,
+    pub capability: Option<ChromeCapability>,
+    pub start: u16,
+    pub width: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChromePrimary {
+    pub text: String,
+    pub tone: ChromeTone,
+    pub animated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposerChrome {
+    pub primary: Option<ChromePrimary>,
+    slots: Vec<ChromeSlot>,
+    context_protected: bool,
+}
+
+pub struct ComposerChromeInput<'a> {
     pub execution_status: &'a str,
     pub notice: &'a str,
     pub elapsed: Option<Duration>,
@@ -64,195 +121,394 @@ pub struct ConversationStatus<'a> {
     pub background_work: bool,
     pub interrupt_key: &'a str,
     pub priority_notice: bool,
-    pub no_color: bool,
     pub context: Option<&'a ModelContextTokens>,
     pub locale: Locale,
-    /// Product screen mode token: minimal | fullscreen | inline.
-    pub screen_mode: Option<&'a str>,
+    pub screen_mode: &'a str,
+    pub hitl: &'a str,
+    pub isolation_profile: &'a str,
+    pub sandbox_commands: Option<bool>,
 }
 
-impl ConversationStatus<'_> {
-    pub fn render(&self, frame: &mut Frame<'_>, area: Rect, theme: Theme) {
-        let sep = theme.glyphs.separator();
-        let state = if self.execution_status == "paused" {
-            tr(self.locale, MessageId::CurrentExecutionPaused).to_owned()
-        } else {
-            localized_execution_status(self.locale, self.execution_status)
-        };
-        let active = matches!(
-            self.execution_status,
-            "queued"
-                | "pending"
-                | "running"
-                | "in_progress"
-                | "working"
-                | "waiting_input"
-                | "waiting_approval"
-                | "awaiting_approval"
-                | "blocked_on_approval"
-        );
-        let mut left = if active {
-            let elapsed = self.elapsed.map(fmt_elapsed_compact).unwrap_or_default();
-            let spinner = theme
-                .glyphs
-                .spinner(self.elapsed.unwrap_or_default().as_millis());
-            let activity = self
-                .activity
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or(&state);
-            let interrupt = tr_format(
-                self.locale,
-                if self.background_work {
+impl ComposerChrome {
+    pub fn project(input: ComposerChromeInput<'_>) -> Self {
+        let locale = input.locale;
+        let (run_value, run_tone, active) = execution_state(locale, input.execution_status);
+        let notice = input.notice.trim();
+        let primary = if input.priority_notice && !notice.is_empty() {
+            Some(ChromePrimary {
+                text: notice.to_owned(),
+                tone: ChromeTone::Danger,
+                animated: false,
+            })
+        } else if active {
+            let mut parts = Vec::new();
+            if let Some(activity) = input.activity.filter(|value| !value.trim().is_empty()) {
+                parts.push(activity.trim().to_owned());
+            }
+            if let Some(elapsed) = input.elapsed {
+                parts.push(fmt_elapsed_compact(elapsed));
+            }
+            parts.push(tr_format(
+                locale,
+                if input.background_work {
                     MessageId::BackgroundInterruptHint
                 } else {
                     MessageId::InterruptHint
                 },
-                &[("key", self.interrupt_key)],
-            );
-            let affordance = if self.queued_follow_ups > 0 {
-                let queued = tr_format(
-                    self.locale,
-                    MessageId::FollowUpsQueued,
-                    &[("count", &self.queued_follow_ups.to_string())],
-                );
-                format!("{interrupt} {} {queued}", theme.glyphs.separator())
-            } else {
-                interrupt
-            };
-            if area.width >= 80 {
-                format!(
-                    "{spinner} {}  {:<11} {} {}",
-                    pad_or_truncate_cells(activity, 14, theme.glyphs),
-                    elapsed,
-                    theme.glyphs.separator(),
-                    pad_or_truncate_cells(&affordance, 29, theme.glyphs)
-                )
-            } else if elapsed.is_empty() {
-                format!(
-                    "{spinner} {activity}  {} {affordance}",
-                    theme.glyphs.separator()
-                )
-            } else {
-                format!(
-                    "{spinner} {activity}  {elapsed}  {} {affordance}",
-                    theme.glyphs.separator()
-                )
+                &[("key", input.interrupt_key)],
+            ));
+            if !notice.is_empty() {
+                parts.push(notice.to_owned());
             }
-        } else {
-            state.clone()
-        };
-        if !active && self.queued_follow_ups > 0 {
-            let queued = tr_format(
-                self.locale,
-                MessageId::FollowUpsQueued,
-                &[("count", &self.queued_follow_ups.to_string())],
-            );
-            left.push_str(&format!("  {} ", theme.glyphs.separator()));
-            left.push_str(&queued);
-        }
-        if let Some(mode) = self.screen_mode.filter(|value| !value.is_empty()) {
-            left.push_str(&format!("  {}  {mode}", theme.glyphs.separator()));
-        }
-        if self.priority_notice && !self.notice.is_empty() {
-            frame.render_widget(
-                Paragraph::new(Span::styled(
-                    truncate_cells(self.notice, area.width as usize, theme.glyphs),
-                    Style::default().fg(theme.danger),
-                )),
-                area,
-            );
-            return;
-        }
-        let measured_context = self
-            .context
-            .filter(|context| context.available && !context.estimated && context.limit_tokens > 0);
-        let metrics = measured_context
-            .map(|context| {
-                let mut value = format_context_waterline(context, theme.glyphs);
-                if context.breakdown.input_tokens > 0 || context.breakdown.output_tokens > 0 {
-                    value.push_str("  ");
-                    value.push_str(&format_measured_io(context, theme.glyphs));
-                }
-                value
+            Some(ChromePrimary {
+                text: parts.join("  "),
+                tone: ChromeTone::Accent,
+                animated: true,
             })
-            .unwrap_or_default();
-        if matches!(self.execution_status, "" | "ready" | "completed") && !self.notice.is_empty() {
-            left.clear();
+        } else if !notice.is_empty() {
+            Some(ChromePrimary {
+                text: notice.to_owned(),
+                tone: ChromeTone::Warning,
+                animated: false,
+            })
+        } else {
+            None
+        };
+
+        let mut slots = vec![slot(
+            ChromeSlotKind::Run,
+            label(locale, MessageId::ChromeRun),
+            run_value,
+            run_tone,
+        )];
+        if input.queued_follow_ups > 0 {
+            slots.push(slot(
+                ChromeSlotKind::Queue,
+                label(locale, MessageId::ChromeQueue),
+                input.queued_follow_ups.to_string(),
+                ChromeTone::Accent,
+            ));
         }
-        let metrics_separator = if left.is_empty() || metrics.is_empty() {
-            String::new()
-        } else {
-            format!("  {sep} ")
+        slots.push(hitl_slot(locale, input.hitl));
+        slots.push(isolation_slot(
+            locale,
+            input.isolation_profile,
+            input.sandbox_commands,
+        ));
+        let (context_slot, context_protected) = context_slot(locale, input.context);
+        slots.push(context_slot);
+        slots.push(screen_mode_slot(locale, input.screen_mode));
+        Self {
+            primary,
+            slots,
+            context_protected,
+        }
+    }
+
+    pub fn visible_slots(&self, width: u16) -> Vec<ChromeSlot> {
+        self.slots
+            .iter()
+            .filter(|slot| match slot.kind {
+                ChromeSlotKind::Run
+                | ChromeSlotKind::Queue
+                | ChromeSlotKind::Hitl
+                | ChromeSlotKind::Isolation => true,
+                ChromeSlotKind::Context => width >= 80 || self.context_protected,
+                ChromeSlotKind::ScreenMode => width >= 120,
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn layout_slots(&self, width: u16, glyphs: Glyphs) -> Vec<LaidOutChromeSlot> {
+        let visible = self.visible_slots(width);
+        let separator = format!(" {} ", glyphs.separator());
+        let separator_width = UnicodeWidthStr::width(separator.as_str());
+        let mut texts = visible
+            .iter()
+            .map(|slot| slot.text.clone())
+            .collect::<Vec<_>>();
+        let row_width = |values: &[String]| {
+            values
+                .iter()
+                .map(|value| UnicodeWidthStr::width(value.as_str()))
+                .sum::<usize>()
+                .saturating_add(separator_width.saturating_mul(values.len().saturating_sub(1)))
         };
-        let notice_separator = if (left.is_empty() && metrics.is_empty()) || self.notice.is_empty()
-        {
-            ""
-        } else {
-            "  "
-        };
-        let available = area.width.saturating_sub(
-            (UnicodeWidthStr::width(left.as_str())
-                + UnicodeWidthStr::width(metrics_separator.as_str())
-                + UnicodeWidthStr::width(metrics.as_str())
-                + UnicodeWidthStr::width(notice_separator)) as u16,
-        ) as usize;
-        let notice = truncate_cells(self.notice, available, theme.glyphs);
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(left, Style::default().fg(theme.muted)),
-                Span::raw(metrics_separator),
-                Span::styled(
-                    metrics,
-                    measured_context
-                        .map(|context| context_style(context, theme))
-                        .unwrap_or_default(),
-                ),
-                Span::raw(notice_separator),
-                Span::styled(notice, Style::default().fg(theme.accent)),
-            ])),
-            area,
-        );
+        for kind in [
+            ChromeSlotKind::Isolation,
+            ChromeSlotKind::ScreenMode,
+            ChromeSlotKind::Context,
+            ChromeSlotKind::Run,
+            ChromeSlotKind::Hitl,
+        ] {
+            if row_width(&texts) <= width as usize {
+                break;
+            }
+            if let Some(index) = visible.iter().position(|slot| slot.kind == kind) {
+                texts[index] = visible[index].compact_text.clone();
+            }
+        }
+
+        let content_budget = (width as usize)
+            .saturating_sub(separator_width.saturating_mul(texts.len().saturating_sub(1)));
+        let mut text_widths = texts
+            .iter()
+            .map(|text| UnicodeWidthStr::width(text.as_str()))
+            .collect::<Vec<_>>();
+        let mut deficit = text_widths
+            .iter()
+            .sum::<usize>()
+            .saturating_sub(content_budget);
+        for kind in [
+            ChromeSlotKind::Isolation,
+            ChromeSlotKind::Run,
+            ChromeSlotKind::Hitl,
+            ChromeSlotKind::ScreenMode,
+            ChromeSlotKind::Queue,
+            ChromeSlotKind::Context,
+        ] {
+            if deficit == 0 {
+                break;
+            }
+            if let Some(index) = visible.iter().position(|slot| slot.kind == kind) {
+                let minimum = minimum_slot_width(kind).min(text_widths[index]);
+                let reduction = deficit.min(text_widths[index].saturating_sub(minimum));
+                text_widths[index] = text_widths[index].saturating_sub(reduction);
+                deficit = deficit.saturating_sub(reduction);
+            }
+        }
+        if deficit > 0 {
+            for value in &mut text_widths {
+                if deficit == 0 {
+                    break;
+                }
+                let reduction = deficit.min(value.saturating_sub(1));
+                *value = value.saturating_sub(reduction);
+                deficit = deficit.saturating_sub(reduction);
+            }
+        }
+
+        let mut laid_out = Vec::new();
+        let mut used = 0_usize;
+        for (index, slot) in visible.iter().enumerate() {
+            if index > 0 {
+                if used.saturating_add(separator_width) >= width as usize {
+                    break;
+                }
+                used = used.saturating_add(separator_width);
+            }
+            let text = truncate_width_with_glyphs(&texts[index], text_widths[index], glyphs);
+            let text_width = UnicodeWidthStr::width(text.as_str());
+            if text_width == 0 {
+                break;
+            }
+            laid_out.push(LaidOutChromeSlot {
+                kind: slot.kind,
+                text,
+                tone: slot.tone,
+                capability: slot.capability,
+                start: used as u16,
+                width: text_width as u16,
+            });
+            used = used.saturating_add(text_width);
+        }
+        laid_out
     }
 }
 
-fn fmt_tokens(tokens: u64) -> String {
-    crate::render_contract::format_tokens(tokens)
+fn minimum_slot_width(kind: ChromeSlotKind) -> usize {
+    match kind {
+        ChromeSlotKind::Run | ChromeSlotKind::ScreenMode => 4,
+        ChromeSlotKind::Queue => 5,
+        ChromeSlotKind::Hitl | ChromeSlotKind::Context => 3,
+        ChromeSlotKind::Isolation => 6,
+    }
 }
 
-fn format_context_waterline(context: &ModelContextTokens, glyphs: Glyphs) -> String {
-    let used = format!("{:>4}", fmt_tokens(context.tokens));
-    let limit = format!("{:<4}", fmt_tokens(context.limit_tokens));
-    let filled = (usize::from(context.used_percent).min(100) * 8).div_ceil(100);
-    format!(
-        "{used} / {limit} {} {}{}",
-        crate::render_contract::format_percent(f64::from(context.used_percent)),
-        glyphs.bar_full().repeat(filled),
-        glyphs.bar_empty().repeat(8 - filled)
-    )
-}
-
-fn format_measured_io(context: &ModelContextTokens, glyphs: Glyphs) -> String {
-    format!(
-        "{}{:>4} {}{:>4}",
-        glyphs.up(),
-        fmt_tokens(context.breakdown.input_tokens),
-        glyphs.down(),
-        fmt_tokens(context.breakdown.output_tokens)
-    )
-}
-
-fn context_style(context: &ModelContextTokens, theme: Theme) -> Style {
-    if theme.no_color {
-        theme.muted()
-    } else if context.used_percent >= 90 || context.threshold == "critical" {
-        Style::default().fg(theme.danger)
-    } else if context.used_percent >= 80 || context.threshold == "warning" {
-        Style::default().fg(theme.warning)
-    } else if context.used_percent >= 50 {
-        Style::default().fg(theme.accent)
+fn slot(kind: ChromeSlotKind, label: &str, value: String, tone: ChromeTone) -> ChromeSlot {
+    let compact_text = if kind == ChromeSlotKind::Queue {
+        format!("{label} {value}")
     } else {
-        theme.muted()
+        value.clone()
+    };
+    ChromeSlot {
+        kind,
+        text: format!("{label} {value}"),
+        compact_text,
+        tone,
+        capability: (kind == ChromeSlotKind::Queue).then_some(ChromeCapability::OpenQueue),
     }
+}
+
+fn label(locale: Locale, id: MessageId) -> &'static str {
+    tr(locale, id)
+}
+
+fn execution_state(locale: Locale, status: &str) -> (String, ChromeTone, bool) {
+    let normalized = status.trim().to_ascii_lowercase();
+    let active = matches!(
+        normalized.as_str(),
+        "queued" | "pending" | "running" | "in_progress" | "working" | "active"
+    );
+    let tone = match normalized.as_str() {
+        "failed" | "error" => ChromeTone::Danger,
+        "waiting_approval"
+        | "awaiting_approval"
+        | "blocked_on_approval"
+        | "degraded"
+        | "partial"
+        | "partially_complete"
+        | "waiting_input"
+        | "needs_input"
+        | "blocked_on_input" => ChromeTone::Warning,
+        "queued" | "pending" | "running" | "in_progress" | "working" | "active" => {
+            ChromeTone::Accent
+        }
+        _ => ChromeTone::Muted,
+    };
+    let value = match normalized.as_str() {
+        "waiting_input" | "needs_input" | "blocked_on_input" => {
+            tr(locale, MessageId::ChromeWaitingInput).to_owned()
+        }
+        ""
+        | "ready"
+        | "completed"
+        | "complete"
+        | "done"
+        | "idle"
+        | "queued"
+        | "pending"
+        | "running"
+        | "in_progress"
+        | "working"
+        | "active"
+        | "waiting_approval"
+        | "awaiting_approval"
+        | "blocked_on_approval"
+        | "paused"
+        | "interrupted"
+        | "cancelled"
+        | "canceled"
+        | "failed"
+        | "error"
+        | "degraded"
+        | "partial"
+        | "partially_complete" => localized_execution_status(locale, &normalized),
+        _ => tr(locale, MessageId::UnknownValue).to_owned(),
+    };
+    (value, tone, active)
+}
+
+fn hitl_slot(locale: Locale, value: &str) -> ChromeSlot {
+    let (id, tone) = match value.trim().to_ascii_lowercase().as_str() {
+        "ask" => (MessageId::ChromeAsk, ChromeTone::Accent),
+        "accept-edits" => (MessageId::ChromeAcceptEdits, ChromeTone::Warning),
+        "dont-ask" => (MessageId::ChromeNeverAsk, ChromeTone::Warning),
+        "always-approve" => (MessageId::ChromeAlwaysApprove, ChromeTone::Danger),
+        _ => (MessageId::UnknownValue, ChromeTone::Muted),
+    };
+    slot(
+        ChromeSlotKind::Hitl,
+        label(locale, MessageId::ChromeHitl),
+        tr(locale, id).to_owned(),
+        tone,
+    )
+}
+
+fn isolation_slot(locale: Locale, profile: &str, sandbox: Option<bool>) -> ChromeSlot {
+    let id = match profile.trim().to_ascii_lowercase().as_str() {
+        "read-only" => MessageId::ChromeProfileReadOnly,
+        "safe-edit" => MessageId::ChromeProfileSafeEdit,
+        "full-workspace" => MessageId::ChromeProfileFullWorkspace,
+        "ci-runner" => MessageId::ChromeProfileCiRunner,
+        "sandboxed" => MessageId::ChromeProfileSandboxed,
+        "trusted-local" => MessageId::ChromeProfileTrusted,
+        "enterprise-restricted" => MessageId::ChromeProfileRestricted,
+        _ => MessageId::UnknownValue,
+    };
+    let mut value = tr(locale, id).to_owned();
+    let tone = match sandbox {
+        Some(true) => {
+            value.push_str(" + ");
+            value.push_str(tr(locale, MessageId::ChromeSandboxOn));
+            ChromeTone::Muted
+        }
+        Some(false) => {
+            value.push_str(" + ");
+            value.push_str(tr(locale, MessageId::ChromeSandboxOff));
+            ChromeTone::Warning
+        }
+        None => {
+            value.push_str(" + ");
+            value.push_str(tr(locale, MessageId::UnknownValue));
+            ChromeTone::Muted
+        }
+    };
+    slot(
+        ChromeSlotKind::Isolation,
+        label(locale, MessageId::ChromeIsolation),
+        value,
+        tone,
+    )
+}
+
+fn context_slot(locale: Locale, context: Option<&ModelContextTokens>) -> (ChromeSlot, bool) {
+    let context = context.filter(|context| {
+        context.limit_tokens > 0
+            || context.used_percent > 0
+            || matches!(context.threshold.as_str(), "warning" | "critical")
+    });
+    let (value, tone, protected) = context.map_or_else(
+        || {
+            (
+                tr(locale, MessageId::UnknownValue).to_owned(),
+                ChromeTone::Muted,
+                false,
+            )
+        },
+        |context| {
+            let protected = context.used_percent >= 80
+                || matches!(context.threshold.as_str(), "warning" | "critical");
+            let tone = if context.used_percent >= 90 || context.threshold == "critical" {
+                ChromeTone::Danger
+            } else if protected {
+                ChromeTone::Warning
+            } else {
+                ChromeTone::Accent
+            };
+            let value = if context.estimated || context.estimated_limit {
+                format!("~{}%", context.used_percent.min(100))
+            } else {
+                format!("{}%", context.used_percent.min(100))
+            };
+            (value, tone, protected)
+        },
+    );
+    (
+        slot(
+            ChromeSlotKind::Context,
+            label(locale, MessageId::ChromeContext),
+            value,
+            tone,
+        ),
+        protected,
+    )
+}
+
+fn screen_mode_slot(locale: Locale, mode: &str) -> ChromeSlot {
+    let id = match mode.trim().to_ascii_lowercase().as_str() {
+        "minimal" => MessageId::ChromeModeMinimal,
+        "inline" => MessageId::ChromeModeInline,
+        "fullscreen" => MessageId::ChromeModeFullscreen,
+        _ => MessageId::UnknownValue,
+    };
+    slot(
+        ChromeSlotKind::ScreenMode,
+        label(locale, MessageId::ChromeMode),
+        tr(locale, id).to_owned(),
+        ChromeTone::Muted,
+    )
 }
 
 pub fn fmt_elapsed_compact(elapsed: Duration) -> String {
@@ -323,16 +579,6 @@ pub fn localized_execution_status(locale: Locale, status: &str) -> String {
     tr(locale, id).to_owned()
 }
 
-fn truncate_cells(value: &str, max_width: usize, glyphs: Glyphs) -> String {
-    crate::render_contract::truncate_width_with_glyphs(value, max_width, glyphs)
-}
-
-fn pad_or_truncate_cells(value: &str, width: usize, glyphs: Glyphs) -> String {
-    let value = truncate_cells(value, width, glyphs);
-    let padding = width.saturating_sub(UnicodeWidthStr::width(value.as_str()));
-    format!("{value}{}", " ".repeat(padding))
-}
-
 pub fn conversation_title(session: Option<&Session>, workspace: &Path, locale: Locale) -> String {
     if let Some(value) =
         session.and_then(|session| non_empty(&session.name).or_else(|| non_empty(&session.summary)))
@@ -359,9 +605,6 @@ fn non_empty(value: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-
     use super::*;
 
     fn session() -> Session {
@@ -411,84 +654,6 @@ mod tests {
     }
 
     #[test]
-    fn idle_notice_does_not_repeat_ready_and_truncates_by_terminal_cells() {
-        let mut terminal = Terminal::new(TestBackend::new(12, 1)).unwrap();
-        terminal
-            .draw(|frame| {
-                ConversationStatus {
-                    execution_status: "ready",
-                    notice: "中文状态更新",
-                    elapsed: None,
-                    activity: None,
-                    queued_follow_ups: 0,
-                    background_work: false,
-                    interrupt_key: "Esc",
-                    priority_notice: false,
-                    no_color: true,
-                    context: None,
-                    locale: Locale::ZhHans,
-                    screen_mode: None,
-                }
-                .render(frame, frame.area(), Theme::carina(true));
-            })
-            .unwrap();
-        let rendered = (0..12)
-            .map(|x| terminal.backend().buffer().cell((x, 0)).unwrap().symbol())
-            .collect::<String>();
-        assert!(!rendered.contains("ready"));
-        assert_eq!(
-            truncate_cells(
-                "中文状态更新",
-                11,
-                Glyphs::new(crate::glyphs::GlyphMode::Unicode)
-            ),
-            format!(
-                "中文状态更{}",
-                Glyphs::new(crate::glyphs::GlyphMode::Unicode).ellipsis()
-            )
-        );
-        assert_eq!(
-            UnicodeWidthStr::width(
-                truncate_cells(
-                    "中文状态更新",
-                    11,
-                    Glyphs::new(crate::glyphs::GlyphMode::Unicode),
-                )
-                .as_str(),
-            ),
-            11
-        );
-    }
-
-    #[test]
-    fn paused_conversation_uses_product_copy_instead_of_wire_status() {
-        let mut terminal = Terminal::new(TestBackend::new(50, 1)).unwrap();
-        terminal
-            .draw(|frame| {
-                ConversationStatus {
-                    execution_status: "paused",
-                    notice: "",
-                    elapsed: None,
-                    activity: None,
-                    queued_follow_ups: 0,
-                    background_work: false,
-                    interrupt_key: "Ctrl-C",
-                    priority_notice: false,
-                    no_color: true,
-                    context: None,
-                    locale: Locale::En,
-                    screen_mode: None,
-                }
-                .render(frame, frame.area(), Theme::carina(true));
-            })
-            .unwrap();
-        let rendered = (0..50)
-            .map(|x| terminal.backend().buffer().cell((x, 0)).unwrap().symbol())
-            .collect::<String>();
-        assert!(rendered.contains("The current execution is paused"));
-    }
-
-    #[test]
     fn protocol_statuses_are_mapped_before_rendering() {
         assert_eq!(
             localized_execution_status(Locale::ZhHans, "queued"),
@@ -529,193 +694,443 @@ mod tests {
     }
 
     #[test]
-    fn measured_token_and_context_formats_have_fixed_width() {
-        for tokens in [0, 999, 1_000, 9_999, 10_000, 999_999, 1_000_000, u64::MAX] {
-            assert!(UnicodeWidthStr::width(fmt_tokens(tokens).as_str()) <= 4);
+    fn composer_chrome_priority_table_is_explicit_at_60_80_and_120_columns() {
+        let context = ModelContextTokens {
+            used_percent: 12,
+            ..ModelContextTokens::default()
+        };
+        let chrome = ComposerChrome::project(ComposerChromeInput {
+            execution_status: "running",
+            notice: "",
+            elapsed: Some(Duration::from_secs(62)),
+            activity: Some("running tests"),
+            queued_follow_ups: 2,
+            background_work: false,
+            interrupt_key: "Esc",
+            priority_notice: false,
+            context: Some(&context),
+            locale: Locale::En,
+            screen_mode: "fullscreen",
+            hitl: "ask",
+            isolation_profile: "safe-edit",
+            sandbox_commands: Some(true),
+        });
+        let kinds = |width| {
+            chrome
+                .visible_slots(width)
+                .iter()
+                .map(|slot| slot.kind)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            kinds(60),
+            [
+                ChromeSlotKind::Run,
+                ChromeSlotKind::Queue,
+                ChromeSlotKind::Hitl,
+                ChromeSlotKind::Isolation,
+            ]
+        );
+        assert_eq!(
+            kinds(80),
+            [
+                ChromeSlotKind::Run,
+                ChromeSlotKind::Queue,
+                ChromeSlotKind::Hitl,
+                ChromeSlotKind::Isolation,
+                ChromeSlotKind::Context,
+            ]
+        );
+        assert_eq!(kinds(120).len(), 6);
+        let primary = chrome.primary.as_ref().unwrap();
+        assert!(primary.text.contains("running tests"));
+        assert!(primary.text.contains("1m02"));
+        assert!(primary.text.contains("Esc pause safely"));
+        assert!(!primary.text.contains("+2 queued"));
+    }
+
+    #[test]
+    fn composer_chrome_layout_owns_cjk_cell_geometry_and_compaction() {
+        let chrome = ComposerChrome::project(ComposerChromeInput {
+            execution_status: "running",
+            notice: "",
+            elapsed: None,
+            activity: None,
+            queued_follow_ups: 2,
+            background_work: false,
+            interrupt_key: "Esc",
+            priority_notice: false,
+            context: None,
+            locale: Locale::ZhHans,
+            screen_mode: "fullscreen",
+            hitl: "ask",
+            isolation_profile: "safe-edit",
+            sandbox_commands: Some(true),
+        });
+        for mode in [
+            crate::glyphs::GlyphMode::Unicode,
+            crate::glyphs::GlyphMode::Ascii,
+        ] {
+            let glyphs = Glyphs::new(mode);
+            let slots = chrome.layout_slots(60, glyphs);
+            assert_eq!(
+                slots.iter().map(|slot| slot.kind).collect::<Vec<_>>(),
+                [
+                    ChromeSlotKind::Run,
+                    ChromeSlotKind::Queue,
+                    ChromeSlotKind::Hitl,
+                    ChromeSlotKind::Isolation,
+                ]
+            );
+            let separator_width =
+                UnicodeWidthStr::width(format!(" {} ", glyphs.separator()).as_str()) as u16;
+            let mut expected_start = 0;
+            for (index, slot) in slots.iter().enumerate() {
+                if index > 0 {
+                    expected_start += separator_width;
+                }
+                assert_eq!(slot.start, expected_start);
+                assert_eq!(
+                    slot.width,
+                    UnicodeWidthStr::width(slot.text.as_str()) as u16
+                );
+                expected_start += slot.width;
+            }
+            assert!(expected_start <= 60);
         }
-        for percent in [0, 9, 50, 80, 90, 100] {
+    }
+
+    #[test]
+    fn composer_chrome_layout_bounds_every_locale_and_keeps_protected_slots() {
+        let context = ModelContextTokens {
+            used_percent: 95,
+            threshold: "critical".into(),
+            ..ModelContextTokens::default()
+        };
+        for locale in Locale::ALL {
+            let chrome = ComposerChrome::project(ComposerChromeInput {
+                execution_status: "waiting_approval",
+                notice: "",
+                elapsed: None,
+                activity: None,
+                queued_follow_ups: 12,
+                background_work: false,
+                interrupt_key: "Esc",
+                priority_notice: false,
+                context: Some(&context),
+                locale,
+                screen_mode: "fullscreen",
+                hitl: "always-approve",
+                isolation_profile: "enterprise-restricted",
+                sandbox_commands: Some(false),
+            });
+            for width in [60, 80, 120] {
+                let slots =
+                    chrome.layout_slots(width, Glyphs::new(crate::glyphs::GlyphMode::Unicode));
+                assert!(
+                    slots
+                        .last()
+                        .is_some_and(|slot| slot.start + slot.width <= width),
+                    "locale={locale:?} width={width} slots={slots:?}"
+                );
+                for kind in [
+                    ChromeSlotKind::Run,
+                    ChromeSlotKind::Queue,
+                    ChromeSlotKind::Hitl,
+                    ChromeSlotKind::Isolation,
+                    ChromeSlotKind::Context,
+                ] {
+                    assert!(
+                        slots.iter().any(|slot| slot.kind == kind),
+                        "locale={locale:?} width={width} missing={kind:?} slots={slots:?}"
+                    );
+                }
+                assert_eq!(
+                    slots
+                        .iter()
+                        .any(|slot| slot.kind == ChromeSlotKind::ScreenMode),
+                    width == 120
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn warning_and_critical_context_are_protected_at_60_columns() {
+        for (percent, threshold, tone) in [
+            (80, "warning", ChromeTone::Warning),
+            (95, "critical", ChromeTone::Danger),
+        ] {
             let context = ModelContextTokens {
-                available: true,
-                tokens: 12_000,
-                limit_tokens: 100_000,
                 used_percent: percent,
+                threshold: threshold.into(),
                 ..ModelContextTokens::default()
             };
-            assert_eq!(
-                UnicodeWidthStr::width(
-                    format_context_waterline(&context, Theme::carina(false).glyphs).as_str()
-                ),
-                26
-            );
+            let chrome = ComposerChrome::project(ComposerChromeInput {
+                execution_status: "ready",
+                notice: "",
+                elapsed: None,
+                activity: None,
+                queued_follow_ups: 2,
+                background_work: false,
+                interrupt_key: "Esc",
+                priority_notice: false,
+                context: Some(&context),
+                locale: Locale::En,
+                screen_mode: "minimal",
+                hitl: "ask",
+                isolation_profile: "full-workspace",
+                sandbox_commands: Some(true),
+            });
+            let context_slot = chrome
+                .layout_slots(60, Glyphs::new(crate::glyphs::GlyphMode::Unicode))
+                .into_iter()
+                .find(|slot| slot.kind == ChromeSlotKind::Context)
+                .unwrap();
+            assert_eq!(context_slot.tone, tone);
+            assert_eq!(context_slot.text, format!("{percent}%"));
         }
     }
 
     #[test]
-    fn context_pressure_uses_semantic_threshold_styles() {
-        let theme = Theme::carina(false);
-        let normal = ModelContextTokens {
-            used_percent: 12,
-            ..ModelContextTokens::default()
-        };
-        let warning = ModelContextTokens {
-            used_percent: 85,
-            ..ModelContextTokens::default()
-        };
-        let critical = ModelContextTokens {
-            used_percent: 95,
-            ..ModelContextTokens::default()
-        };
-        assert_eq!(context_style(&normal, theme).fg, Some(theme.muted));
-        assert_eq!(context_style(&warning, theme).fg, Some(theme.warning));
-        assert_eq!(context_style(&critical, theme).fg, Some(theme.danger));
-    }
-
-    #[test]
-    fn active_status_keeps_interrupt_and_queue_affordances_visible() {
-        let context = ModelContextTokens {
-            available: true,
-            tokens: 12_000,
-            limit_tokens: 100_000,
-            remaining_tokens: 88_000,
-            used_percent: 12,
-            measurement: "latest completed provider request".into(),
-            breakdown: crate::rpc::ModelTokenBreakdown {
-                input_tokens: 12_000,
-                output_tokens: 1_400,
-                ..crate::rpc::ModelTokenBreakdown::default()
-            },
-            ..ModelContextTokens::default()
-        };
-        let mut terminal = Terminal::new(TestBackend::new(160, 1)).unwrap();
-        terminal
-            .draw(|frame| {
-                ConversationStatus {
-                    execution_status: "running",
-                    notice: "",
-                    elapsed: Some(Duration::from_secs(62)),
-                    activity: Some("running tests"),
-                    queued_follow_ups: 2,
-                    background_work: false,
-                    interrupt_key: "Esc",
-                    priority_notice: false,
-                    no_color: true,
-                    context: Some(&context),
-                    locale: Locale::En,
-                    screen_mode: None,
-                }
-                .render(frame, frame.area(), Theme::carina(true));
-            })
+    fn projector_normalizes_policy_values_and_unknowns_before_rendering() {
+        let chrome = ComposerChrome::project(ComposerChromeInput {
+            execution_status: "blocked_on_approval",
+            notice: "",
+            elapsed: None,
+            activity: None,
+            queued_follow_ups: 0,
+            background_work: false,
+            interrupt_key: "Esc",
+            priority_notice: false,
+            context: None,
+            locale: Locale::ZhHans,
+            screen_mode: "inline",
+            hitl: "always-approve",
+            isolation_profile: "future-profile",
+            sandbox_commands: Some(false),
+        });
+        let all = chrome.visible_slots(120);
+        let hitl = all
+            .iter()
+            .find(|slot| slot.kind == ChromeSlotKind::Hitl)
             .unwrap();
-        let rendered = (0..160)
-            .map(|x| terminal.backend().buffer().cell((x, 0)).unwrap().symbol())
-            .collect::<String>();
-        assert!(rendered.contains("running tests"));
-        assert!(rendered.contains("1m02"));
-        assert!(rendered.contains("Esc pause safely"));
-        assert!(rendered.contains("+2 queued"));
-        let glyphs = Theme::carina(true).glyphs;
-        assert!(rendered.contains(&format_context_waterline(&context, glyphs)));
-        assert!(rendered.contains(&format_measured_io(&context, glyphs)));
-    }
-
-    #[test]
-    fn priority_notice_displaces_stale_activity_and_metrics() {
-        let context = ModelContextTokens {
-            available: true,
-            tokens: 12_000,
-            limit_tokens: 100_000,
-            used_percent: 12,
-            ..ModelContextTokens::default()
-        };
-        let mut terminal = Terminal::new(TestBackend::new(40, 1)).unwrap();
-        terminal
-            .draw(|frame| {
-                ConversationStatus {
-                    execution_status: "running",
-                    notice: "Runtime unavailable",
-                    elapsed: Some(Duration::from_secs(17)),
-                    activity: Some("running"),
-                    queued_follow_ups: 0,
-                    background_work: false,
-                    interrupt_key: "Ctrl-C",
-                    priority_notice: true,
-                    no_color: false,
-                    context: Some(&context),
-                    locale: Locale::En,
-                    screen_mode: None,
-                }
-                .render(frame, frame.area(), Theme::carina(false));
-            })
+        assert_eq!(hitl.text, "审批 始终批准");
+        assert_eq!(hitl.tone, ChromeTone::Danger);
+        let isolation = all
+            .iter()
+            .find(|slot| slot.kind == ChromeSlotKind::Isolation)
             .unwrap();
-        let rendered = (0..40)
-            .map(|x| terminal.backend().buffer().cell((x, 0)).unwrap().symbol())
-            .collect::<String>();
-        assert!(rendered.contains("Runtime unavailable"));
-        assert!(!rendered.contains("12K"));
-        assert!(!rendered.contains("running"));
+        assert!(isolation.text.contains("未知"));
+        assert!(!isolation.text.contains("future-profile"));
+        assert!(all.iter().any(|slot| slot.text == "界面 行内"));
     }
 
     #[test]
-    fn daemon_owned_background_mode_changes_the_interrupt_affordance() {
-        let mut terminal = Terminal::new(TestBackend::new(120, 1)).unwrap();
-        terminal
-            .draw(|frame| {
-                ConversationStatus {
-                    execution_status: "running",
-                    notice: "",
-                    elapsed: Some(Duration::from_secs(5)),
-                    activity: Some("monitoring"),
-                    queued_follow_ups: 0,
-                    background_work: true,
-                    interrupt_key: "F12",
-                    priority_notice: false,
-                    no_color: true,
-                    context: None,
-                    locale: Locale::En,
-                    screen_mode: None,
-                }
-                .render(frame, frame.area(), Theme::carina(true));
-            })
+    fn projector_never_exposes_unknown_run_or_missing_context_as_facts() {
+        let context = ModelContextTokens::default();
+        let chrome = ComposerChrome::project(ComposerChromeInput {
+            execution_status: "future_wire_state",
+            notice: "",
+            elapsed: None,
+            activity: None,
+            queued_follow_ups: 0,
+            background_work: false,
+            interrupt_key: "Esc",
+            priority_notice: false,
+            context: Some(&context),
+            locale: Locale::En,
+            screen_mode: "future-screen",
+            hitl: "future-hitl",
+            isolation_profile: "future-profile",
+            sandbox_commands: None,
+        });
+        let slots = chrome.visible_slots(120);
+        let run = slots
+            .iter()
+            .find(|slot| slot.kind == ChromeSlotKind::Run)
             .unwrap();
-        let rendered = (0..120)
-            .map(|x| terminal.backend().buffer().cell((x, 0)).unwrap().symbol())
-            .collect::<String>();
-        assert!(rendered.contains("F12 pause background safely"));
+        assert_eq!(run.text, "run unknown");
+        assert!(!run.text.contains("future_wire_state"));
+        let context = slots
+            .iter()
+            .find(|slot| slot.kind == ChromeSlotKind::Context)
+            .unwrap();
+        assert_eq!(context.text, "ctx unknown");
+        let isolation = slots
+            .iter()
+            .find(|slot| slot.kind == ChromeSlotKind::Isolation)
+            .unwrap();
+        assert_eq!(isolation.text, "isolation unknown + unknown");
     }
 
     #[test]
-    fn estimated_context_is_not_presented_as_exact_usage() {
+    fn ordinary_context_is_accent_and_estimates_use_locale_neutral_geometry() {
         let context = ModelContextTokens {
-            available: false,
             estimated: true,
-            tokens: 42,
-            limit_tokens: 100,
+            limit_tokens: 100_000,
             used_percent: 42,
+            threshold: "normal".into(),
             ..ModelContextTokens::default()
         };
-        let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
-        terminal
-            .draw(|frame| {
-                ConversationStatus {
-                    execution_status: "running",
-                    notice: "",
-                    elapsed: Some(Duration::ZERO),
-                    activity: None,
-                    queued_follow_ups: 0,
-                    background_work: false,
-                    interrupt_key: "Ctrl-C",
-                    priority_notice: false,
-                    no_color: true,
-                    context: Some(&context),
-                    locale: Locale::En,
-                    screen_mode: None,
-                }
-                .render(frame, frame.area(), Theme::carina(true));
+        let (slot, protected) = context_slot(Locale::Ja, Some(&context));
+        assert!(!protected);
+        assert_eq!(slot.text, "文脈 ~42%");
+        assert_eq!(slot.tone, ChromeTone::Accent);
+    }
+
+    #[test]
+    fn protected_layout_and_queue_capability_hold_for_every_locale() {
+        let context = ModelContextTokens {
+            limit_tokens: 100_000,
+            used_percent: 95,
+            threshold: "critical".into(),
+            ..ModelContextTokens::default()
+        };
+        for locale in Locale::ALL {
+            let chrome = ComposerChrome::project(ComposerChromeInput {
+                execution_status: "running",
+                notice: "",
+                elapsed: None,
+                activity: None,
+                queued_follow_ups: 12,
+                background_work: false,
+                interrupt_key: "Esc",
+                priority_notice: false,
+                context: Some(&context),
+                locale,
+                screen_mode: "fullscreen",
+                hitl: "accept-edits",
+                isolation_profile: "enterprise-restricted",
+                sandbox_commands: Some(false),
+            });
+            for mode in [
+                crate::glyphs::GlyphMode::Unicode,
+                crate::glyphs::GlyphMode::Ascii,
+            ] {
+                let glyphs = Glyphs::new(mode);
+                let slots = chrome.layout_slots(60, glyphs);
+                assert_eq!(
+                    slots.iter().map(|slot| slot.kind).collect::<Vec<_>>(),
+                    [
+                        ChromeSlotKind::Run,
+                        ChromeSlotKind::Queue,
+                        ChromeSlotKind::Hitl,
+                        ChromeSlotKind::Isolation,
+                        ChromeSlotKind::Context,
+                    ],
+                    "protected slot set changed for {locale:?} in {mode:?}"
+                );
+                let queue = slots
+                    .iter()
+                    .find(|slot| slot.kind == ChromeSlotKind::Queue)
+                    .unwrap();
+                assert_eq!(queue.capability, Some(ChromeCapability::OpenQueue));
+                let separator_width =
+                    UnicodeWidthStr::width(format!(" {} ", glyphs.separator()).as_str());
+                let row_width = slots
+                    .iter()
+                    .map(|slot| usize::from(slot.width))
+                    .sum::<usize>()
+                    + separator_width * slots.len().saturating_sub(1);
+                assert!(
+                    row_width <= 60,
+                    "{locale:?} {mode:?} used {row_width} cells"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn routine_notice_follows_active_narrative_without_disabling_spinner() {
+        let chrome = ComposerChrome::project(ComposerChromeInput {
+            execution_status: "running",
+            notice: "Message added",
+            elapsed: Some(Duration::from_secs(3)),
+            activity: Some("Working"),
+            queued_follow_ups: 0,
+            background_work: false,
+            interrupt_key: "Esc",
+            priority_notice: false,
+            context: None,
+            locale: Locale::En,
+            screen_mode: "fullscreen",
+            hitl: "ask",
+            isolation_profile: "safe-edit",
+            sandbox_commands: Some(true),
+        });
+        let primary = chrome.primary.unwrap();
+        assert!(primary.animated);
+        assert_eq!(primary.tone, ChromeTone::Accent);
+        assert!(primary.text.starts_with("Working  3s  Esc pause safely"));
+        assert!(primary.text.ends_with("Message added"));
+    }
+
+    #[test]
+    fn waiting_for_input_is_localized_and_does_not_animate() {
+        for locale in Locale::ALL {
+            let chrome = ComposerChrome::project(ComposerChromeInput {
+                execution_status: "waiting_input",
+                notice: "",
+                elapsed: Some(Duration::from_secs(3)),
+                activity: Some("stale work"),
+                queued_follow_ups: 0,
+                background_work: false,
+                interrupt_key: "Esc",
+                priority_notice: false,
+                context: None,
+                locale,
+                screen_mode: "fullscreen",
+                hitl: "ask",
+                isolation_profile: "safe-edit",
+                sandbox_commands: Some(true),
+            });
+            assert!(chrome.primary.is_none());
+            let run = chrome
+                .visible_slots(60)
+                .into_iter()
+                .find(|slot| slot.kind == ChromeSlotKind::Run)
+                .unwrap();
+            assert_eq!(run.tone, ChromeTone::Warning);
+            assert!(run.text.contains(tr(locale, MessageId::ChromeWaitingInput)));
+        }
+    }
+
+    #[test]
+    fn priority_notice_is_the_only_primary_narrative_owner() {
+        let context = ModelContextTokens {
+            used_percent: 12,
+            ..ModelContextTokens::default()
+        };
+        let chrome = ComposerChrome::project(ComposerChromeInput {
+            execution_status: "running",
+            notice: "Runtime unavailable",
+            elapsed: Some(Duration::from_secs(17)),
+            activity: Some("stale activity"),
+            queued_follow_ups: 0,
+            background_work: false,
+            interrupt_key: "Ctrl-C",
+            priority_notice: true,
+            context: Some(&context),
+            locale: Locale::En,
+            screen_mode: "fullscreen",
+            hitl: "ask",
+            isolation_profile: "safe-edit",
+            sandbox_commands: Some(true),
+        });
+        assert_eq!(
+            chrome.primary,
+            Some(ChromePrimary {
+                text: "Runtime unavailable".into(),
+                tone: ChromeTone::Danger,
+                animated: false,
             })
-            .unwrap();
-        let rendered = (0..80)
-            .map(|x| terminal.backend().buffer().cell((x, 0)).unwrap().symbol())
-            .collect::<String>();
-        assert!(!rendered.contains("42 / 100"));
+        );
+        assert!(
+            !chrome
+                .visible_slots(120)
+                .iter()
+                .any(|slot| slot.text.contains("stale activity"))
+        );
     }
 }

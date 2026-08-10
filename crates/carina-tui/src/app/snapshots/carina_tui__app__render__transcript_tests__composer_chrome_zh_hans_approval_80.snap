@@ -1,0 +1,13 @@
+---
+source: crates/carina-tui/src/app/render.rs
+expression: rendered
+---
+size=80x2
+
+执行 等待批准 · 审批 询问 · 隔离 安全编辑 + 命令沙箱 · 上下文 42%
+styles:
+(0,1)..(13,1) (Rgb(232, 168, 95), Reset, NONE)
+(13,1)..(16,1) (Rgb(150, 160, 156), Reset, NONE)
+(16,1)..(25,1) (Rgb(142, 219, 210), Reset, NONE)
+(25,1)..(55,1) (Rgb(150, 160, 156), Reset, NONE)
+(55,1)..(65,1) (Rgb(142, 219, 210), Reset, NONE)
