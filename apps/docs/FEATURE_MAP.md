@@ -14,7 +14,7 @@ Update this file when you ship a feature or rename a page.
 
 | Fact | Source of truth |
 | --- | --- |
-| Latest **published** GitHub Release | `gh release view` → currently **v0.8.1** |
+| Latest **published** GitHub Release | `gh release view` → currently **v0.8.14** |
 | Monorepo source / crate tags | may be at `0.8.2+` before a Release is cut |
 | Docs stable channel | **`0.8.x`** (`versions.json`, header Version control) |
 | Docs preview channel | **`next`** (tracks `protocol/jsonrpc/methods.json` at head) |
@@ -54,6 +54,10 @@ Do **not** advertise a release tag in README unless that tag has a GitHub Releas
 | Audit log | `/concepts/audit/` | event log | `carina audit` |
 | Hash verify | `/concepts/audit/` | chain verify | `carina audit verify` |
 | Patches / Changes workbench | `/concepts/audit/` + `/use/cli-tui/` | patch pipeline | `carina patch *`, `/changes` |
+| Transcript density | `/use/cli-tui/#transcript-density` | TUI DensityMode | `/density`, Settings, `tui_density` |
+| Composer status chrome | `/use/cli-tui/#composer-status` | TUI ComposerChrome | Run / Queue / HITL / Isolation / Context / ScreenMode |
+| Semantic motion | `/use/cli-tui/#motion--accessibility` | frame scheduler + glyph policy | activity, validation, `CARINA_REDUCED_MOTION` |
+| Fullscreen transaction review (next) | `/use/cli-tui/#review-workbench` + `/concepts/audit/#transaction-review` | typed PatchReview projection | `/changes` in Fullscreen |
 | Checkpoints | `/reference/cli/` | `session.checkpoint.*` | `carina checkpoint *` |
 | Context pressure | `/use/cli-tui/` | context engine + TUI | `/context`, `carina context *` |
 | Follow-up queue | `/use/cli-tui/` | `execution.queue.*` | `/queue` |

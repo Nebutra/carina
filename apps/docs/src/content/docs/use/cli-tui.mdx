@@ -6,6 +6,7 @@ sidebar:
 ---
 
 import Callout from '../../../components/ui/Callout.astro';
+import Badge from '../../../components/mdx/Badge.astro';
 import Steps from '../../../components/mdx/Steps.astro';
 import Step from '../../../components/mdx/Step.astro';
 
@@ -64,7 +65,8 @@ Registered in the TUI (`crates/carina-tui/src/command.rs`). `/exit` aliases `/qu
 | `/settings` | Open settings |
 | `/status` | Runtime and session status |
 | `/context` | Context pressure and compaction receipt detail |
-| `/changes` | Patch / diff workbench (apply, verify, rollback) |
+| `/changes` | Review patch transactions, files, hunks, and rollback |
+| `/density` | Toggle Compact / Comfortable transcript density |
 | `/provider` | Choose or reconfigure a provider |
 | `/model` | Choose a model |
 | `/plan` | Toggle plan mode (exit may require governed approval) |
@@ -86,6 +88,30 @@ List from the CLI (daemon-backed registry, includes skills when available):
 ```bash frame="none"
 carina commands list
 ```
+
+### Transcript density
+
+<Badge variant="accent">Compact</Badge> is the default: routine successful reads collapse and verified edits stay reviewable without filling the transcript. <Badge variant="info">Comfortable</Badge> adds spacing and opens routine tool detail by default. Use `/density` or the Density row in Settings; both persist the same `tui_density` preference. An explicit expand/collapse choice always wins over the density default.
+
+Density changes presentation only. It does not change screen mode, policy, approval state, patch identity, or daemon data.
+
+### Composer status
+
+The composer keeps one stable two-row status surface. The first row owns the current action or recovery notice. The second row owns **Run**, **Queue**, **HITL**, **Isolation**, **Context**, and **ScreenMode**. Starting work, receiving output, or waiting for approval does not move the composer or replace those controls with a different layout.
+
+At narrow widths, lower-priority context is compacted before governance state. Run, HITL, Isolation, and a non-zero Queue remain visible; warning or critical context pressure is also protected.
+
+### Review workbench
+
+<Badge variant="accent">next</Badge>
+
+In Fullscreen mode, `/changes` projects each patch as a transaction → file → numbered hunk review. The selected file keeps A/M/D state, addition/deletion totals, hunk attribution, and a bounded diff window. Large diffs show an explicit continuation instead of blocking the frame loop; verify and rollback still operate on the complete daemon transaction.
+
+Rollback confirmation is bound to the exact previewed `patch_id` and `transaction_id`, and only opens while the workspace still matches that preview. Navigation is frozen until confirm or cancel, so moving a row cannot retarget a destructive action. Minimal and Inline modes keep the compact changes surface and native scrollback behavior.
+
+### Motion & accessibility
+
+Motion communicates active execution or background validation; static approval/input waits do not animate. Set `CARINA_REDUCED_MOTION=1` to remove decorative animation deadlines while preserving state, layout, keyboard actions, and progress text.
 
 ### Approvals in the TUI
 

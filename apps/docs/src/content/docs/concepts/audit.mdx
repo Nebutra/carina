@@ -72,6 +72,23 @@ carina patch apply SESSION PATCH_ID
 carina patch rollback SESSION PATCH_ID
 ```
 
+### Transaction review
+
+<Badge variant="accent">next</Badge>
+
+The Fullscreen `/changes` workbench mirrors the transaction boundary rather than inventing a Git-only review model:
+
+```text
+patch transaction
+  -> affected files (A / M / D, additions, deletions)
+     -> numbered hunks with attribution and verification evidence
+        -> rollback preview for the same patch + transaction identity
+```
+
+The visible diff is a bounded review projection. A continuation row means more lines remain outside the viewport or source cap; it does not weaken verification or truncate the daemon's rollback transaction. Confirmation is allowed only when the preview says the workspace is unchanged and its patch and transaction identifiers still match.
+
+For keys, density, narrow-screen behavior, and accessibility, see [CLI & TUI](/use/cli-tui/#review-workbench).
+
 ## Recipe: after a bad edit
 
 <Steps>

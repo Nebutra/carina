@@ -119,18 +119,10 @@ Suitable for:
 
 | Target | Notes |
 | --- | --- |
-| **Vercel** | `vercel.json` included; root directory = `apps/docs` |
+| **ECS nginx (production)** | Build `pnpm build`; deploy `dist/` to `/var/www/nebutra/carina/current` |
+| **Vercel (legacy experiment)** | `vercel.json` remains for previews; it is not the production origin |
 | **Cloudflare Pages** | Build `pnpm build`, output `dist` |
 | **阿里云 OSS + CDN** | Sync `dist/` to bucket; set `index.html` + SPA-less static hosting (directory URLs) |
-
-### Vercel project settings
-
-- **Project**: `nebutra-carina`
-- **Custom domain**: `carina.nebutra.com`
-- **Root Directory**: `apps/docs`
-- **Install**: `pnpm install`
-- **Build**: `pnpm build`
-- **Output**: `dist`
 
 ### Production ops
 
@@ -138,17 +130,17 @@ Suitable for:
 | --- | --- |
 | Site source | this package (`apps/docs`) |
 | Canonical host | `https://carina.nebutra.com` (`astro.config.mjs` `site`) |
-| Vercel project | `nebutra-carina` · root `apps/docs` · framework Astro |
-| Platform bootstrap deploy | Nebutra-Sailor: `deploy-carina-vercel.yml` (uses Sailor `VERCEL_*`; preferred until secrets are mirrored here) |
-| Day-2 deploy (this repo) | `.github/workflows/deploy-docs-vercel.yml` — needs `VERCEL_TOKEN` + `VERCEL_ORG_ID` |
-| DNS (Cloudflare zone) | Nebutra-Sailor only: `point-carina-dns.yml` → CNAME `cname.vercel-dns.com` (proxied) |
-| Registry | Sailor `docs/DOMAINS.md` + `brand.domains.carina` + `topology.defaults.yaml` `vercel_surfaces` |
+| Production origin | ECS nginx static root `/var/www/nebutra/carina/current` |
+| Build / deploy owner | Nebutra-Sailor: `deploy-carina-ecs.yml` + `infra/ops/scripts/deploy-carina-docs-ecs.sh` |
+| DNS (Cloudflare zone) | A record `carina.nebutra.com` → ECS, proxied; do not replace with a Vercel CNAME |
+| Registry | Sailor `docs/DOMAINS.md` + nginx vhost + DNS topology defaults |
+| Legacy preview | `nebutra-carina` Vercel project; not the canonical production path |
 
 **Bring-up order**
 
-1. Sailor → **Deploy Carina docs (Vercel)** (`workflow_dispatch`, ref `main`)
-2. Sailor → **Point carina DNS to Vercel**
-3. Smoke: `https://carina.nebutra.com/` and `/llms.txt` → 200
+1. Confirm Cloudflare A record points to the ECS origin documented by Sailor.
+2. Sailor → **Deploy Carina docs (ECS)** (`workflow_dispatch`, explicit Carina ref).
+3. Smoke: `https://carina.nebutra.com/`, `/use/cli-tui/`, and `/llms.txt` → 200.
 
 **Do not** add `api.carina.*` / `status.carina.*`. Cloud identity stays on `nebutra.com` boundaries (see `docs/nebutra-cloud-boundary.md`).
 

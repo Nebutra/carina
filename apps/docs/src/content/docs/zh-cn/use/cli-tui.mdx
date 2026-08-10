@@ -6,6 +6,7 @@ sidebar:
 ---
 
 import Callout from '../../../../components/ui/Callout.astro';
+import Badge from '../../../../components/mdx/Badge.astro';
 import Steps from '../../../../components/mdx/Steps.astro';
 import Step from '../../../../components/mdx/Step.astro';
 
@@ -64,7 +65,8 @@ CLI 与 TUI 共享同一 daemon、策略内核与审计链路（与 JSON-RPC 一
 | `/settings` | 打开设置 |
 | `/status` | 运行时与会话状态 |
 | `/context` | 上下文压力与压缩回执详情 |
-| `/changes` | 补丁 / diff 工作台（应用、校验、回滚） |
+| `/changes` | 审阅 patch 事务、文件、hunk 与回滚 |
+| `/density` | 切换 Compact / Comfortable transcript 密度 |
 | `/provider` | 选择或配置 provider |
 | `/model` | 选择模型 |
 | `/plan` | 切换 plan 模式（退出可能需要受控审批） |
@@ -86,6 +88,30 @@ CLI 与 TUI 共享同一 daemon、策略内核与审计链路（与 JSON-RPC 一
 ```bash frame="none"
 carina commands list
 ```
+
+### Transcript 密度
+
+<Badge variant="accent">Compact</Badge> 是默认模式：例行成功读取会折叠，已验证编辑仍保留可审阅证据，但不会塞满 transcript。<Badge variant="info">Comfortable</Badge> 增加间距，并默认展开例行工具详情。使用 `/density` 或 Settings 中的 Density 行；两处都会持久化同一个 `tui_density` 偏好。用户显式执行的展开或折叠始终优先于密度默认值。
+
+密度只改变呈现，不改变屏幕模式、策略、审批状态、patch 身份或 daemon 数据。
+
+### Composer 状态
+
+Composer 下方保持固定的两行状态面。第一行只承载当前动作或恢复提示；第二行统一承载 **Run**、**Queue**、**HITL**、**Isolation**、**Context** 与 **ScreenMode**。开始执行、收到输出或等待审批时，composer 都不会位移，也不会换成另一套布局。
+
+窄屏会先压缩低优先级上下文，再处理治理状态。Run、HITL、Isolation 和非零 Queue 始终可见；进入警告或临界区的上下文压力也会保留。
+
+### 审阅工作台
+
+<Badge variant="accent">next</Badge>
+
+在 Fullscreen 模式中，`/changes` 按 transaction → file → 带行号 hunk 投影每个 patch。所选文件保留 A/M/D 状态、增删统计、hunk 归因与有界 diff 窗口。大型 diff 会显示明确的续行提示，而不会阻塞 frame loop；校验与回滚仍作用于 daemon 中的完整事务。
+
+回滚确认绑定到预览时精确的 `patch_id` 与 `transaction_id`，且只在 workspace 仍与预览一致时打开。确认或取消前会冻结导航，因此移动列表项不能重定向破坏性动作。Minimal 与 Inline 模式继续使用紧凑 changes 表面和原生 scrollback 行为。
+
+### 动效与无障碍
+
+动效只表达活动执行或后台校验；静态的审批 / 输入等待不会动画。设置 `CARINA_REDUCED_MOTION=1` 可移除装饰性动画 deadline，同时保留状态、布局、键盘动作与进度文本。
 
 ### TUI 中的审批
 

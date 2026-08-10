@@ -64,6 +64,23 @@ carina patch apply SESSION PATCH_ID
 carina patch rollback SESSION PATCH_ID
 ```
 
+### Transaction 审阅
+
+<Badge variant="accent">next</Badge>
+
+Fullscreen `/changes` 工作台遵循真实事务边界，而不是发明一套只存在于 Git 视角的审阅模型：
+
+```text
+patch transaction
+  -> 受影响文件（A / M / D、增加、删除）
+     -> 带行号的 hunk、归因与校验证据
+        -> 同一 patch + transaction 身份的回滚预览
+```
+
+屏幕上的 diff 是有界审阅投影。续行提示表示 viewport 或源数据上限之外仍有内容，不会削弱校验，也不会截断 daemon 中的回滚事务。只有当预览确认 workspace 未变化，且 patch 与 transaction 标识仍完全匹配时，才允许进入确认。
+
+键位、密度、窄屏行为与无障碍说明见 [CLI 与 TUI](/zh-cn/use/cli-tui/#审阅工作台)。
+
 ## 配方：错误编辑之后
 
 <Steps>
