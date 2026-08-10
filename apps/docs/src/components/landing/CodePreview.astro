@@ -1,155 +1,193 @@
 ---
-/**
- * Landing product preview — brand-accurate TUI capture + optional terminal fallback.
- */
+/** Product evidence band backed by the production Fullscreen review fixture. */
 interface Props {
+  eyebrow?: string;
   heading?: string;
   description?: string;
   bullets?: string[];
-  title?: string;
   imageSrc?: string;
   imageAlt?: string;
+  caption?: string;
 }
 
 const {
-  heading = 'Start a governed session in seconds',
-  description = 'Attach to the local daemon, open a session, and every tool call lands on a policy gate with a hash-chained audit trail.',
+  eyebrow = 'Transaction review',
+  heading = 'Review every agent change at transaction depth',
+  description = 'Move from patch to file to numbered hunk without losing attribution, verification, or the rollback identity.',
   bullets = [
-    'Local-first — your machine stays the authority',
-    'Policy-gated tools — approvals before side effects',
-    'Transactional patches — roll back bad agent edits',
+    'Bounded rendering, complete transaction',
+    'Patch and file identity survive refresh',
+    'Rollback confirmation cannot retarget',
+    'ASCII, no-color, and narrow terminals stay usable',
   ],
-  imageSrc = '/images/tui-session.svg',
-  imageAlt = 'Carina TUI showing a governed session with tool calls and an approval prompt',
+  imageSrc = '/images/tui-review.webp',
+  imageAlt = 'Carina Fullscreen changes workbench showing transactions, files, and numbered diff hunks',
+  caption = 'Generated from the production 160-column Ratatui fixture',
 } = Astro.props;
 ---
 
-<section class="code-preview">
+<section class="code-preview not-content">
   <div class="code-preview__inner">
-    <div class="code-preview__copy">
+    <header class="code-preview__header">
+      <p class="code-preview__eyebrow">{eyebrow}</p>
       <h2 class="code-preview__heading">{heading}</h2>
-      <p class="code-preview__desc">{description}</p>
-      <ul class="code-preview__list">
-        {bullets.map((item) => <li>{item}</li>)}
-      </ul>
-    </div>
-    <figure class="code-preview__panel">
+      <p class="code-preview__description">{description}</p>
+    </header>
+
+    <ol class="code-preview__facts">
+      {bullets.map((item, index) => <li><span>{String(index + 1).padStart(2, '0')}</span>{item}</li>)}
+    </ol>
+
+    <figure class="code-preview__figure">
       <img
-        class="code-preview__shot"
+        class="code-preview__image"
         src={imageSrc}
         alt={imageAlt}
-        width="960"
-        height="560"
+        width="1656"
+        height="856"
         loading="lazy"
         decoding="async"
       />
-      <figcaption class="code-preview__cap">
-        Product UI — interactive shell (approval gate + hash-chained audit)
-      </figcaption>
+      <figcaption>{caption}</figcaption>
     </figure>
   </div>
 </section>
 
 <style>
   .code-preview {
+    padding: var(--spacing-16) var(--spacing-6) var(--spacing-20);
+    border-bottom: 1px solid var(--docs-border-subtle);
+    background: var(--docs-bg);
+  }
+
+  .code-preview__inner {
+    width: min(100%, var(--docs-page-max, 72rem));
+    margin: 0 auto;
+  }
+
+  .code-preview__header {
+    max-width: 48rem;
+    margin-bottom: 2rem;
+  }
+
+  .code-preview__eyebrow {
+    margin: 0 0 0.65rem;
+    color: var(--docs-accent);
+    font-family: var(--docs-font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .code-preview__heading {
+    margin: 0 0 0.8rem;
+    color: var(--docs-fg);
+    font-size: 1.65rem;
+    font-weight: 620;
+    line-height: 1.12;
+    letter-spacing: 0;
+    text-wrap: balance;
+  }
+
+  .code-preview__description {
+    max-width: 42rem;
+    margin: 0;
+    color: var(--docs-fg-muted);
+    font-size: 1rem;
+    line-height: 1.65;
+  }
+
+  .code-preview__facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 0 0 2rem;
+    padding: 0;
     border-block: 1px solid var(--docs-border-subtle);
-    background:
-      radial-gradient(
-        ellipse 60% 50% at 80% 40%,
-        color-mix(in srgb, var(--docs-accent) 6%, transparent),
-        transparent 70%
-      ),
-      color-mix(in srgb, var(--docs-bg-surface) 55%, transparent);
-    padding: var(--spacing-16) var(--spacing-6);
+    list-style: none;
+  }
+
+  .code-preview__facts li {
+    display: flex;
+    gap: 0.75rem;
+    min-width: 0;
+    padding: 0.9rem 1rem 0.9rem 0;
+    color: var(--docs-fg-muted);
+    font-size: 0.85rem;
+    line-height: 1.45;
+  }
+
+  .code-preview__facts li:nth-child(even) {
+    padding-inline-start: 1rem;
+    border-inline-start: 1px solid var(--docs-border-subtle);
+  }
+
+  .code-preview__facts span {
+    flex: 0 0 auto;
+    color: var(--docs-accent);
+    font-family: var(--docs-font-mono);
+    font-size: 0.72rem;
+  }
+
+  .code-preview__figure {
+    margin: 0;
+  }
+
+  .code-preview__image {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1656 / 856;
+    border: 1px solid var(--docs-border-subtle);
+    border-radius: 4px;
+    background: var(--polish-code-bg);
+  }
+
+  .code-preview__figure figcaption {
+    margin-top: 0.65rem;
+    color: var(--docs-fg-subtle);
+    font-family: var(--docs-font-mono);
+    font-size: 0.7rem;
+    text-align: end;
   }
 
   @media (min-width: 768px) {
     .code-preview {
-      padding: var(--spacing-20) var(--spacing-10);
+      padding: var(--spacing-20) var(--spacing-10) var(--spacing-24);
+    }
+
+    .code-preview__facts {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .code-preview__facts li {
+      padding: 1rem;
+      border-inline-start: 1px solid var(--docs-border-subtle);
+    }
+
+    .code-preview__facts li:first-child {
+      padding-inline-start: 0;
+      border-inline-start: 0;
+    }
+
+    .code-preview__heading {
+      font-size: 2.15rem;
     }
   }
 
-  .code-preview__inner {
-    max-width: var(--layout-page-max);
-    margin: 0 auto;
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: var(--spacing-8);
-    align-items: center;
-  }
-
-  @media (min-width: 960px) {
-    .code-preview__inner {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-      gap: var(--spacing-12);
+  @media (max-width: 520px) {
+    .code-preview__facts {
+      grid-template-columns: 1fr;
     }
-  }
 
-  .code-preview__heading {
-    margin: 0 0 var(--spacing-3);
-    font-size: clamp(1.4rem, 2.5vw, 1.85rem);
-    font-weight: var(--font-weight-semibold);
-    color: var(--docs-fg);
-    letter-spacing: -0.02em;
-    line-height: 1.2;
-  }
+    .code-preview__facts li,
+    .code-preview__facts li:nth-child(even) {
+      padding-inline: 0;
+      border-inline-start: 0;
+      border-top: 1px solid var(--docs-border-subtle);
+    }
 
-  .code-preview__desc {
-    margin: 0 0 var(--spacing-5);
-    color: var(--docs-fg-muted);
-    font-size: var(--text-body);
-    line-height: 1.65;
-  }
-
-  .code-preview__list {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-3);
-  }
-
-  .code-preview__list li {
-    position: relative;
-    padding-inline-start: 1.65rem;
-    color: var(--docs-fg-muted);
-    font-size: var(--text-body-sm);
-    line-height: 1.55;
-  }
-
-  .code-preview__list li::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0.4em;
-    width: 1rem;
-    height: 1rem;
-    border-radius: 50%;
-    background:
-      radial-gradient(circle at center, var(--docs-accent) 0 3px, transparent 3.5px),
-      color-mix(in srgb, var(--docs-accent) 14%, transparent);
-    border: 1px solid color-mix(in srgb, var(--docs-accent) 35%, transparent);
-  }
-
-  .code-preview__panel {
-    margin: 0;
-    min-width: 0;
-  }
-
-  .code-preview__shot {
-    display: block;
-    width: 100%;
-    height: auto;
-    border-radius: 12px;
-    border: 1px solid var(--docs-border-subtle);
-    background: var(--polish-code-bg, #0f1416);
-  }
-
-  .code-preview__cap {
-    margin-top: 0.55rem;
-    font-size: 0.72rem;
-    color: var(--docs-fg-subtle);
-    text-align: center;
+    .code-preview__facts li:first-child {
+      border-top: 0;
+    }
   }
 </style>

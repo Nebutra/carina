@@ -145,6 +145,20 @@
     gap: 0.1rem;
   }
 
+  @media (max-width: 30rem) {
+    header.header .docs-header > .header {
+      gap: 0.3rem !important;
+    }
+
+    button[data-open-modal] {
+      padding-inline: 0.25rem;
+    }
+
+    button[data-open-modal] > svg {
+      flex: 0 0 1rem;
+    }
+  }
+
   starlight-theme-select,
   starlight-lang-select {
     border: 0 !important;
@@ -697,11 +711,22 @@
     display: none !important;
   }
 
-  /* Splash CTAs are outline-style — keep accent / starlight ink, kill underline */
-  html:not([data-has-sidebar]) .sl-markdown-content a.hero__btn--primary,
+  /* Splash CTA ink stays explicit because prose-link rules have higher reach. */
+  html:not([data-has-sidebar]) .sl-markdown-content a.hero__btn--primary {
+    color: var(--polish-code-bg) !important;
+    -webkit-text-fill-color: var(--polish-code-bg);
+    text-decoration: none;
+  }
+
   html:not([data-has-sidebar]) .sl-markdown-content a.not-found__btn--primary {
     color: var(--docs-accent) !important;
     -webkit-text-fill-color: var(--docs-accent);
+    text-decoration: none;
+  }
+
+  html:not([data-has-sidebar]) .sl-markdown-content a.hero__btn--secondary {
+    color: var(--polish-code-fg) !important;
+    -webkit-text-fill-color: var(--polish-code-fg);
     text-decoration: none;
   }
 

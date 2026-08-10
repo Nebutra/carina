@@ -13,9 +13,11 @@
     "sync-brand": "node ./scripts/sync-brand.mjs",
     "sync-protocol": "node ./scripts/sync-protocol.mjs",
     "generate-ai-surface": "node ./scripts/generate-ai-surface.mjs",
+    "render:tui-captures": "node ./scripts/render-tui-captures.mjs",
+    "check:tui-captures": "node ./scripts/render-tui-captures.mjs --check",
     "check-content": "node ./scripts/check-content.mjs",
     "sync": "pnpm sync-brand && pnpm sync-protocol && pnpm generate-ai-surface",
-    "prebuild": "node ./scripts/sync-install.mjs && pnpm check-content && pnpm generate-ai-surface",
+    "prebuild": "node ./scripts/sync-install.mjs && pnpm check-content && pnpm check:tui-captures && pnpm generate-ai-surface",
     "typecheck": "astro check && tsc --noEmit",
     "lighthouse": "pnpm build && pnpm dlx @lhci/cli@0.14.0 autorun --config=./lighthouserc.cjs",
     "sync-install": "node ./scripts/sync-install.mjs"
@@ -46,6 +48,7 @@
     "@types/node": "^26.1.1",
     "remark-mdx": "^3.1.1",
     "remark-parse": "^11.0.0",
+    "string-width": "4.2.3",
     "typescript": "^5.9.3",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.1.0"

@@ -1,110 +1,7 @@
-/**
- * Landing page polish — outline CTAs, nebula wash, card hover, fade-up.
- */
+/** Landing page polish for shared below-fold sections. */
 
 @layer components {
-  /* Hero nebula wash */
-  .hero {
-    position: relative;
-    isolation: isolate;
-  }
-
-  .hero__glow {
-    opacity: 0.55;
-    background: radial-gradient(
-      ellipse 70% 55% at 50% 0%,
-      color-mix(in srgb, var(--docs-accent) 18%, transparent),
-      color-mix(in srgb, var(--carina-dust-violet) 8%, transparent) 42%,
-      transparent 70%
-    ) !important;
-  }
-
-  /* Ultra-low nebula grain — deep-space texture without noise library */
-  .hero::before {
-    content: '';
-    pointer-events: none;
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    opacity: 0.035;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    background-size: 180px 180px;
-    mix-blend-mode: soft-light;
-  }
-
-  .hero__title {
-    font-family: var(--docs-font-display) !important;
-    font-weight: 550;
-    background: linear-gradient(
-      180deg,
-      var(--docs-fg) 0%,
-      color-mix(in srgb, var(--docs-fg) 82%, var(--docs-accent) 18%) 100%
-    );
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
-
-  @supports not (background-clip: text) {
-    .hero__title {
-      color: var(--docs-fg);
-      background: none;
-    }
-  }
-
-  /* Outline CTAs only — no solid fills (design system) */
-  .hero__btn {
-    min-height: 2.5rem;
-    border-radius: var(--radius-md);
-    font-weight: 500;
-    box-shadow: none !important;
-    transition:
-      color var(--polish-transition),
-      border-color var(--polish-transition),
-      background-color var(--polish-transition),
-      transform var(--polish-transition);
-  }
-
-  .hero__btn--primary {
-    background: transparent !important;
-    color: var(--docs-accent) !important;
-    -webkit-text-fill-color: var(--docs-accent) !important;
-    border: 1px solid color-mix(in srgb, var(--docs-accent) 65%, transparent) !important;
-    box-shadow: var(--polish-inset-glow-strong) !important;
-  }
-
-  .hero__btn--primary:hover {
-    background: color-mix(in srgb, var(--docs-accent) 8%, transparent) !important;
-    border-color: var(--docs-accent) !important;
-    color: var(--docs-accent-hover) !important;
-    -webkit-text-fill-color: var(--docs-accent-hover) !important;
-    transform: translateY(-1px);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--docs-accent) 50%, transparent) !important;
-  }
-
-  .hero__btn--ghost {
-    background: transparent !important;
-    color: var(--docs-fg) !important;
-    -webkit-text-fill-color: var(--docs-fg) !important;
-    border: 1px solid var(--docs-border) !important;
-  }
-
-  .hero__btn--ghost:hover {
-    border-color: color-mix(in srgb, var(--docs-fg) 35%, var(--docs-border)) !important;
-    background: color-mix(in srgb, var(--docs-fg) 3%, transparent) !important;
-    transform: translateY(-1px);
-  }
-
-  .hero__eyebrow {
-    border: 1px solid var(--docs-border-subtle);
-    background: color-mix(in srgb, var(--docs-bg-surface) 60%, transparent);
-    box-shadow: none;
-  }
-
-  /*
-   * Feature cards: styles live in FeatureGrid.astro (component-owned skeleton).
-   * Only qs-card polish here so global hover/lift doesn't fight the equal grid.
-   */
+  /* Quick-start cards keep a quiet hover without shifting the layout. */
   .qs-card {
     border: 1px solid var(--docs-border-subtle);
     background: color-mix(in srgb, var(--docs-bg-surface) 70%, transparent);
@@ -122,7 +19,6 @@
   }
 
   /* Scroll fade-up for below-fold sections */
-  .features,
   .code-preview,
   .quickstart {
     animation: polish-fade-up 0.55s var(--polish-ease) both;
@@ -142,7 +38,6 @@
   }
 
   @supports not (animation-timeline: view()) {
-    .features,
     .code-preview,
     .quickstart {
       animation: none;
@@ -151,13 +46,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .features,
     .code-preview,
     .quickstart,
-    .hero__btn,
-    .feature-card,
-    .feature-card__link,
-    .feature-card__arrow,
     .qs-card {
       animation: none !important;
       transition: none !important;

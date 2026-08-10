@@ -8,78 +8,31 @@ head:
 ---
 
 import Hero from '../../../components/landing/Hero.astro';
-import FeatureGrid from '../../../components/landing/FeatureGrid.astro';
 import CodePreview from '../../../components/landing/CodePreview.astro';
 import QuickStart from '../../../components/landing/QuickStart.astro';
 
+<div class="landing-flow not-content">
 <Hero
-  productLabel="AI Agent 运行时"
-  title="让编程 Agent 全力执行 —— 同时保持可控。"
-  subtitle="Carina 是本地运行时：每次 Agent 动作都经过策略门控，写入哈希链审计，并可事务回滚。"
+  productLabel="受治理的编程运行时"
+  title="本地优先的 Agent 运行时"
+  subtitle="以显式策略、哈希链证据和事务身份绑定的回滚运行编程 Agent，同时让权威始终留在你的机器上。"
   primaryCta={{ label: '快速开始', href: '/zh-cn/getting-started/quickstart/' }}
   secondaryCta={{ label: 'Runtime API', href: '/zh-cn/api/overview/' }}
-  trustChips={['本地优先', '策略门控工具', '哈希链审计', '可回滚']}
-/>
-
-<FeatureGrid
-  heading="为可控的 Agent 执行而设计"
-  subheading="动作级策略 · 哈希链审计 · 事务回滚 · 本地权威。"
-  moreLabel="了解更多"
-  features={[
-    {
-      title: '策略内核',
-      description: '能力配置与审批模式在写文件、执行命令、访问网络前完成门控。',
-      category: 'core',
-      categoryLabel: 'Runtime',
-      href: '/zh-cn/concepts/policy/',
-    },
-    {
-      title: 'Agent 与子 Agent',
-      description: '以能力衰减委派任务，保证外层会话始终保持权威与边界。',
-      category: 'agent',
-      categoryLabel: 'Agents',
-      href: '/zh-cn/agents/overview/',
-    },
-    {
-      title: 'Tools 与 MCP',
-      description: '统一工具调用形态，接入 MCP 服务且不泄露无约束权限。',
-      category: 'tool',
-      categoryLabel: 'Tools',
-      href: '/zh-cn/tools/overview/',
-    },
-    {
-      title: 'Memory 表面',
-      description: '会话上下文、检索钩子与持久记录均可检视，拒绝黑盒记忆。',
-      category: 'memory',
-      categoryLabel: 'Memory',
-      href: '/zh-cn/memory/overview/',
-    },
-    {
-      title: 'Workflow DAG',
-      description: '用显式边、重试与人工检查点编排多步 Agent 流水线。',
-      category: 'core',
-      categoryLabel: 'Workflows',
-      href: '/zh-cn/workflows/overview/',
-    },
-    {
-      title: '可观测性',
-      description: '哈希链审计、轮次 diff 与成本追踪，让每次运行事后可解释。',
-      category: 'observability',
-      categoryLabel: 'Observability',
-      href: '/zh-cn/observability/traces/',
-    },
-  ]}
+  trustChips={['副作用前执行策略', '哈希链审计', '身份绑定回滚']}
 />
 
 <CodePreview
-  heading="数秒内启动受治理的会话"
-  description="连接本地 daemon、打开会话，每次工具调用都会进入策略门控与哈希链审计。"
+  eyebrow="事务审阅"
+  heading="在事务深度审阅每一次 Agent 修改"
+  description="从 patch 深入到文件与编号 hunk，同时保留归因、验证状态和精确的回滚身份。"
   bullets={[
-    '本地优先 —— 权威始终在你的机器上',
-    '策略门控工具 —— 副作用发生前先审批',
-    '事务化补丁 —— 坏的 Agent 修改可回滚',
+    '有界渲染，完整事务',
+    '刷新后仍保留 patch 与文件身份',
+    '回滚确认无法被重新定向',
+    'ASCII、无颜色和窄屏仍可用',
   ]}
-  title="carina — session"
+  imageAlt="Carina 全屏修改工作台，展示事务、文件与编号 diff hunk"
+  caption="由生产环境的 160 列 Ratatui fixture 生成"
 />
 
 <QuickStart
@@ -107,3 +60,4 @@ import QuickStart from '../../../components/landing/QuickStart.astro';
     },
   ]}
 />
+</div>

@@ -22,6 +22,8 @@ pnpm dev          # http://localhost:4321
 | `pnpm preview` | Preview the production build |
 | `pnpm sync-brand` | Re-sync design tokens, fonts, logos from `docs/brand/` |
 | `pnpm sync-protocol` | Re-sync JSON-RPC catalog from `protocol/jsonrpc/methods.json` |
+| `pnpm render:tui-captures` | Render landing WebPs from production Ratatui snapshots |
+| `pnpm check:tui-captures` | Fail when committed TUI captures drift from their snapshots |
 | `pnpm sync` | Brand + protocol sync |
 | `pnpm typecheck` | Astro + TypeScript checks |
 
@@ -29,11 +31,13 @@ pnpm dev          # http://localhost:4321
 
 ```
 apps/docs/
-├── public/                 # Static assets (fonts, logos, favicon)
-├── scripts/sync-brand.mjs  # Brand authority → package copy
+├── public/                 # Static assets, including generated TUI captures
+├── scripts/
+│   ├── render-tui-captures.mjs # Ratatui snapshots → deterministic WebP
+│   └── sync-brand.mjs      # Brand authority → package copy
 ├── src/
 │   ├── components/
-│   │   ├── landing/        # Hero, FeatureGrid, CodePreview, QuickStart
+│   │   ├── landing/        # Product hero, review evidence, QuickStart
 │   │   ├── layouts/        # ApiReference three-column template
 │   │   └── ui/             # CategoryTag, Callout, CodeBlock, VersionSelector
 │   ├── content/
@@ -108,6 +112,16 @@ Locales: **English (default, root)** and **简体中文 (`/zh-cn/`)**. Language 
 pnpm build
 ```
 
+The build checks product imagery before compiling the site. Landing WebPs come
+from committed production Ratatui snapshots, while
+`public/images/tui-captures.json` records source hashes and output digests.
+After an intentional snapshot change, regenerate and verify them with:
+
+```bash
+pnpm render:tui-captures
+pnpm check:tui-captures
+```
+
 Produces pure static files under **`dist/`**:
 
 - HTML pages for every locale/route
@@ -174,7 +188,7 @@ Starlight’s built-in **Pagefind** search is enabled. It indexes at build time 
 | `Cards` / `Card` | `src/components/mdx/` | Link/content card grids |
 | `Breadcrumb` | `src/components/Breadcrumb.astro` | Path crumbs under page title |
 | `PageFeedback` | `src/components/PageFeedback.astro` | “Was this helpful?” (sessionStorage) |
-| Landing set | `src/components/landing/*` | Hero, features, terminal mock, quickstart |
+| Landing set | `src/components/landing/*` | Product-authentic hero, review evidence, quickstart |
 
 Import MDX components at the top of a page, for example:
 

@@ -8,72 +8,20 @@ head:
 ---
 
 import Hero from '../../components/landing/Hero.astro';
-import FeatureGrid from '../../components/landing/FeatureGrid.astro';
 import CodePreview from '../../components/landing/CodePreview.astro';
 import QuickStart from '../../components/landing/QuickStart.astro';
 
+<div class="landing-flow not-content">
 <Hero
-  title="Give coding agents full power — without losing control."
-  subtitle="Carina is the local runtime where every agent action passes policy, lands on a hash-chained audit record, and can be rolled back."
+  productLabel="Governed coding runtime"
+  title="Local-first agent runtime"
+  subtitle="Run coding agents with explicit policy, hash-chained evidence, and transaction-bound rollback — while authority stays on your machine."
   primaryCta={{ label: 'Get started', href: '/getting-started/quickstart/' }}
   secondaryCta={{ label: 'Runtime API', href: '/api/overview/' }}
-  trustChips={['Local-first', 'Policy-gated tools', 'Hash-chained audit', 'Rollback']}
+  trustChips={['Policy before effect', 'Hash-chained audit', 'Identity-bound rollback']}
 />
 
-<FeatureGrid
-  features={[
-    {
-      title: 'Policy kernel',
-      description:
-        'Capability profiles and approval modes gate every file write, shell command, and network call.',
-      category: 'core',
-      categoryLabel: 'Runtime',
-      href: '/concepts/policy/',
-    },
-    {
-      title: 'Agents & sub-agents',
-      description:
-        'Delegate to workers with attenuated capabilities so outer sessions stay authoritative.',
-      category: 'agent',
-      categoryLabel: 'Agents',
-      href: '/agents/overview/',
-    },
-    {
-      title: 'Tools & MCP',
-      description:
-        'Normalize tool calls across providers and wire MCP without leaking unconstrained authority.',
-      category: 'tool',
-      categoryLabel: 'Tools',
-      href: '/tools/overview/',
-    },
-    {
-      title: 'Memory surfaces',
-      description:
-        'Session context, retrieval hooks, and durable records stay inspectable — never a black box.',
-      category: 'memory',
-      categoryLabel: 'Memory',
-      href: '/memory/overview/',
-    },
-    {
-      title: 'Workflow DAGs',
-      description:
-        'Compose multi-step agent pipelines with explicit edges, retries, and human checkpoints.',
-      category: 'core',
-      categoryLabel: 'Workflows',
-      href: '/workflows/overview/',
-    },
-    {
-      title: 'Observability',
-      description:
-        'Hash-chained audit logs, turn diffs, and cost traces make every run explainable later.',
-      category: 'observability',
-      categoryLabel: 'Observability',
-      href: '/observability/traces/',
-    },
-  ]}
-/>
-
-<CodePreview title="carina — governed session" />
+<CodePreview />
 
 <QuickStart
   subheading="Three steps from install to a governed session."
@@ -98,3 +46,4 @@ import QuickStart from '../../components/landing/QuickStart.astro';
     },
   ]}
 />
+</div>

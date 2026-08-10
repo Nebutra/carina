@@ -1,0 +1,49 @@
+{
+  "generatedBy": "apps/docs/scripts/render-tui-captures.mjs",
+  "renderer": "production Ratatui fixture snapshots",
+  "inputs": {
+    "brandVariables": {
+      "path": "docs/brand/design-system/variables.css",
+      "sha256": "22377ba9c6feded9ad93ca561f1a549af897022085a0565e8fbfcc3cd6926752"
+    },
+    "font": {
+      "path": "apps/docs/public/fonts/geist-mono-latin-variable.woff2",
+      "sha256": "af61b969e7f999969f6af576e584ee85dca301a008a76be1251d172d56b9904c"
+    }
+  },
+  "captures": [
+    {
+      "id": "session",
+      "output": "apps/docs/public/images/tui-session.webp",
+      "terminalCells": "120x30",
+      "pixels": "1256x656",
+      "sha256": "93e62f7d3f4039d58681a81a83c402a2e57e5104ab135abfa7acb14d305662cc",
+      "sources": [
+        {
+          "path": "crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__visual_density_en_120.snap",
+          "row": 0,
+          "sha256": "fdf0ff8e5364e28e5a80354ee1d8f9e6eca52be9bc45073d4b74d560f43af97f"
+        },
+        {
+          "path": "crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__composer_chrome_en_running_120.snap",
+          "row": 28,
+          "sha256": "a642139e744c2f68284530217a96e9520c9b1a52a0aa58f53e60b303c89ccf33"
+        }
+      ]
+    },
+    {
+      "id": "review",
+      "output": "apps/docs/public/images/tui-review.webp",
+      "terminalCells": "160x40",
+      "pixels": "1656x856",
+      "sha256": "56d6e67c8865c2de96b545e008ad2c7fa5b99448d3512923f25eb38de94f1875",
+      "sources": [
+        {
+          "path": "crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__fullscreen_patch_review_en_160.snap",
+          "row": 0,
+          "sha256": "7b5650660b0254adc97aaa75ce1b9d9f5e921f4934cc563e7099bbe985741403"
+        }
+      ]
+    }
+  ]
+}
