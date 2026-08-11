@@ -287,6 +287,25 @@ RECONNECT_CAPTURE="$WORK/reconnect-stream-rpc.jsonl"
 RECONNECT_SUBMIT_CAPTURE="$WORK/reconnect-submit.json"
 UNKNOWN_SUBMIT_CAPTURE="$WORK/unknown-submit.jsonl"
 MEDIA_IMAGE="$WORK/media-sample.png"
+
+assert_plan_review_local_only() {
+  local checkpoint="$1"
+  python3 - "$PLAN_CAPTURE" "$checkpoint" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    requests = [json.loads(line) for line in stream if line.strip()]
+methods = [request.get("method") for request in requests]
+if "session.approve_plan" in methods:
+    raise SystemExit(f"{sys.argv[2]} unexpectedly approved the plan")
+if methods.count("execution.start") != 1:
+    raise SystemExit(
+        f"{sys.argv[2]} unexpectedly changed execution count: {methods!r}"
+    )
+PY
+}
+
 python3 - "$MEDIA_IMAGE" <<'PY'
 import base64
 import pathlib
@@ -678,7 +697,9 @@ def handle(connection, mode="normal"):
                     }})
                     if not plan_approved.wait(10):
                         return
-                    time.sleep(0.5)
+                    # Leave enough time for the UI to project the canonical
+                    # approval `task` before lifecycle events supersede it.
+                    time.sleep(1.0)
                     send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
                         "type": "ExecutionStarted", "event_id": "evt_build_running",
                         "session_id": session_id, "run_id": "run_build", "raw_cursor": 3,
@@ -1243,14 +1264,18 @@ def handle(connection, mode="normal"):
                 if params.get("session_id") != "sess_plan" or not plan_submitted.is_set():
                     send(stream, {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32602, "message": "plan approval arrived before a completed plan"}})
                     continue
+                if params.get("run_id") != "run_plan":
+                    send(stream, {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32602, "message": "plan approval did not preserve the reviewed run identity"}})
+                    continue
                 result = {
                     "session_id": "sess_plan", "plan_mode": False, "approved": True,
-                    "execution": {
+                    "task": {
                         "run_id": "run_build", "session_id": "sess_plan", "agent": "build",
                         "status": "queued", "user_prompt": "Implement this approved plan"
                     }
                 }
                 send(stream, {"jsonrpc": "2.0", "id": request_id, "result": result})
+                plan_mode_enabled.clear()
                 plan_approved.set()
                 continue
             elif method == "session.checkpoint.list":
@@ -1453,7 +1478,9 @@ fi
 
 # Locale is durable, provider readiness is not. Restart must return to the
 # first unresolved provider prerequisite without replaying Language or leaking Model.
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+# Idle quit is deliberately double-confirmed; keep both presses inside the
+# product's bounded confirmation window.
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do [[ -s "$MODEL_JOURNEY_EXIT_FILE" ]] && break; sleep 0.1; done
 [[ -s "$MODEL_JOURNEY_EXIT_FILE" && "$(cat "$MODEL_JOURNEY_EXIT_FILE")" == "0" ]] || {
   echo "rust-tui-journey: locale-boundary restart did not exit cleanly" >&2
@@ -1485,7 +1512,7 @@ fi
 # recompute Provider as the first unresolved durable prerequisite and must not
 # retain or expose a partial secret.
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "partial-secret"
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do [[ -s "$MODEL_JOURNEY_EXIT_FILE" ]] && break; sleep 0.1; done
 [[ -s "$MODEL_JOURNEY_EXIT_FILE" && "$(cat "$MODEL_JOURNEY_EXIT_FILE")" == "0" ]] || {
   echo "rust-tui-journey: credential-boundary restart did not exit cleanly" >&2
@@ -1519,7 +1546,7 @@ fi
 # Credential/provider readiness is durable, but no workspace session exists
 # yet. Restart must remain on explicit Model confirmation instead of silently
 # creating a default-model conversation.
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do [[ -s "$MODEL_JOURNEY_EXIT_FILE" ]] && break; sleep 0.1; done
 [[ -s "$MODEL_JOURNEY_EXIT_FILE" && "$(cat "$MODEL_JOURNEY_EXIT_FILE")" == "0" ]] || {
   echo "rust-tui-journey: provider-boundary restart did not exit cleanly" >&2
@@ -1551,7 +1578,7 @@ done
 
 # Model confirmation is represented by the daemon-owned workspace session.
 # Restart now resumes Conversation and may not replay any setup surface.
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do [[ -s "$MODEL_JOURNEY_EXIT_FILE" ]] && break; sleep 0.1; done
 [[ -s "$MODEL_JOURNEY_EXIT_FILE" && "$(cat "$MODEL_JOURNEY_EXIT_FILE")" == "0" ]] || {
   echo "rust-tui-journey: model-boundary restart did not exit cleanly" >&2
@@ -1589,7 +1616,7 @@ for leaked in "run_locale" "Task queued" "active task" "任务已排队"; do
     exit 1
   fi
 done
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$MODEL_JOURNEY_EXIT_FILE" ]] && break
   sleep 0.1
@@ -1947,7 +1974,7 @@ TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-z
 wait_for_text "Workspace files"
 wait_for_text "@src/app/rend"
 
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$RETURNING_EXIT_FILE" ]] && break
   sleep 0.1
@@ -1986,7 +2013,7 @@ TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" PPage PPage PPage
 wait_for_text "TRANSCRIPT-FIRST-LINE"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" NPage NPage NPage
 wait_for_text "TRANSCRIPT-FINAL-LINE"
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$TRANSCRIPT_EXIT_FILE" ]] && break
   sleep 0.1
@@ -2028,7 +2055,7 @@ if grep -Fq 'A **partial' <<<"$SCREEN"; then
   echo "rust-tui-journey: streaming Markdown leaked raw syntax or a reset generation" >&2
   exit 1
 fi
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$STREAM_EXIT_FILE" ]] && break
   sleep 0.1
@@ -2051,7 +2078,7 @@ if [[ "$(grep -Fo "STREAM-FINAL-ONCE" <<<"$SCREEN" | wc -l | tr -d ' ')" != "1" 
   echo "rust-tui-journey: restart did not hydrate only the durable assistant body" >&2
   exit 1
 fi
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$STREAM_RESTART_EXIT_FILE" ]] && break
   sleep 0.1
@@ -2067,7 +2094,7 @@ SESSION="carina-rust-tui-tools-$$"
 TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
   "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color '$STAGE/carina-ui' --socket '$GOV_SOCKET' --workspace '$WORKSPACE' --session sess_tools --locale en --no-alt-screen; code=\$?; printf '%s' \"\$code\" > '$TOOLS_EXIT_FILE'; sleep 300"
 
-wait_for_text "Read  src/snake.cpp"
+wait_for_text "Read    src/snake.cpp"
 wait_for_text "✓ Inspect renderer"
 wait_for_text "● Run tests"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /dyn
@@ -2092,12 +2119,12 @@ if grep -Eq '[▸▾][[:space:]]+Plan' <<<"$SCREEN"; then
   echo "rust-tui-journey: Plan checklist exposed a disclosure control" >&2
   exit 1
 fi
-[[ "$(grep -Fc "Read  src/snake.cpp" <<<"$SCREEN")" == "1" ]] || {
+[[ "$(grep -Fc "Read    src/snake.cpp" <<<"$SCREEN")" == "1" ]] || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: hydrated read lifecycle did not reduce to one row" >&2
   exit 1
 }
-grep -Fq "• Read  src/snake.cpp" <<<"$SCREEN"
+grep -Fq "• Read    src/snake.cpp" <<<"$SCREEN"
 for leaked in "TOOL" "CommandStarted" " live" " completed"; do
   if grep -Fq "$leaked" <<<"$SCREEN"; then
     printf '%s\n' "$SCREEN" >&2
@@ -2115,8 +2142,8 @@ if grep -Eq '[▸▾][[:space:]]+Read' <<<"$SCREEN"; then
   echo "rust-tui-journey: compact read receipt exposed a disclosure control" >&2
   exit 1
 fi
-wait_for_text "MCP  docs.search"
-grep -Fq "▸ MCP  docs.search" <<<"$SCREEN" || {
+wait_for_text "MCP     docs.search"
+grep -Fq "▸ MCP     docs.search" <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: artifact-backed MCP result did not become inspectable" >&2
   exit 1
@@ -2125,7 +2152,7 @@ if grep -Fq "ARTIFACT-OUTPUT-UNIQUE" <<<"$SCREEN"; then
   echo "rust-tui-journey: artifact-backed MCP output started expanded" >&2
   exit 1
 fi
-mcp_row="$(awk '/MCP  docs.search/ { print NR; exit }' <<<"$SCREEN")"
+mcp_row="$(awk '/MCP     docs.search/ { print NR; exit }' <<<"$SCREEN")"
 printf -v mcp_click '\033[<0;5;%dM\033[<0;5;%dm' "$mcp_row" "$mcp_row"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$mcp_click"
 wait_for_text "ARTIFACT-OUTPUT-UNIQUE"
@@ -2134,18 +2161,18 @@ wait_for_text "ARTIFACT-OUTPUT-UNIQUE"
   echo "rust-tui-journey: artifact output was not owned by exactly one component" >&2
   exit 1
 }
-[[ "$(grep -Fc "Run  cmake --build build" <<<"$SCREEN")" == "1" ]] || {
+[[ "$(grep -Fc "Run     cmake --build build" <<<"$SCREEN")" == "1" ]] || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: command lifecycle did not reduce to one component" >&2
   exit 1
 }
-grep -Fq "▸ Run  cmake --build build" <<<"$SCREEN"
+grep -Fq "▸ Run     cmake --build build" <<<"$SCREEN"
 if grep -Fq "COMMAND-OUTPUT-UNIQUE" <<<"$SCREEN"; then
   echo "rust-tui-journey: completed command output started expanded" >&2
   exit 1
 fi
 
-command_row="$(awk '/Run  cmake --build build/ { print NR; exit }' <<<"$SCREEN")"
+command_row="$(awk '/Run     cmake --build build/ { print NR; exit }' <<<"$SCREEN")"
 printf -v command_click '\033[<0;5;%dM\033[<0;5;%dm' "$command_row" "$command_row"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$command_click"
 wait_for_text "COMMAND-OUTPUT-UNIQUE"
@@ -2159,29 +2186,29 @@ wait_for_text "COMMAND-OUTPUT-UNIQUE"
 # viewport. Collapse them before asserting lower hydrated components instead
 # of assuming expansion will force-follow the transcript bottom.
 capture
-command_row="$(awk '/Run  cmake --build build/ { print NR; exit }' <<<"$SCREEN")"
+command_row="$(awk '/Run     cmake --build build/ { print NR; exit }' <<<"$SCREEN")"
 printf -v command_click '\033[<0;5;%dM\033[<0;5;%dm' "$command_row" "$command_row"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$command_click"
 wait_without_text "COMMAND-OUTPUT-UNIQUE"
 capture
-mcp_row="$(awk '/MCP  docs.search/ { print NR; exit }' <<<"$SCREEN")"
+mcp_row="$(awk '/MCP     docs.search/ { print NR; exit }' <<<"$SCREEN")"
 printf -v mcp_click '\033[<0;5;%dM\033[<0;5;%dm' "$mcp_row" "$mcp_row"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$mcp_click"
 wait_without_text "ARTIFACT-OUTPUT-UNIQUE"
 
-wait_for_text "Edited 2 files"
-grep -Eq "▾ Edited 2 files.*1 failed" <<<"$SCREEN"
+wait_for_text "Edited ×2 · src/snake.cpp, src/broken.cpp"
+grep -Fq "▾ Edited ×2 · src/snake.cpp, src/broken.cpp  +1 -1  1 failed" <<<"$SCREEN"
 grep -Eq "src/snake.cpp.*applied" <<<"$SCREEN"
 [[ "$(grep -Fc "EDIT-DIFF-UNIQUE" <<<"$SCREEN")" == "1" ]] || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: hydrated applied edit did not start with one visible diff" >&2
   exit 1
 }
-edit_row="$(awk '/Edited 2 files/ { print NR; exit }' <<<"$SCREEN")"
+edit_row="$(awk '/Edited ×2 · src\/snake.cpp, src\/broken.cpp/ { print NR; exit }' <<<"$SCREEN")"
 printf -v edit_click '\033[<0;5;%dM\033[<0;5;%dm' "$edit_row" "$edit_row"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$edit_click"
 wait_without_text "EDIT-DIFF-UNIQUE"
-grep -Eq "▸ Edited 2 files.*1 failed" <<<"$SCREEN" || {
+grep -Fq "▸ Edited ×2 · src/snake.cpp, src/broken.cpp  +1 -1  1 failed" <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: hydrated applied edit could not be explicitly folded" >&2
   exit 1
@@ -2199,7 +2226,7 @@ grep -Eq "src/broken.cpp.*failed" <<<"$SCREEN" || {
   exit 1
 }
 
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$TOOLS_EXIT_FILE" ]] && break
   sleep 0.1
@@ -2218,13 +2245,13 @@ TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
 # This conversation hydrates no items. The diff must therefore arrive through
 # the live canonical event stream, then settle in the same retained component.
 wait_for_text "EDIT-DIFF-LIVE-UNIQUE"
-[[ "$(grep -Fc "Edit  src/live.rs" <<<"$SCREEN")" == "1" ]] || {
+[[ "$(grep -Fc "Edit    src/live.rs" <<<"$SCREEN")" == "1" ]] || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: live patch proposal did not reduce to one Edit component" >&2
   exit 1
 }
-wait_for_text "Edit  src/live.rs  +1  applied"
-grep -Eq 'Edit  src/live\.rs.*\+1.*applied' <<<"$SCREEN" || {
+wait_for_text "Edit    src/live.rs  +1  applied"
+grep -Eq 'Edit    src/live\.rs.*\+1.*applied' <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: applied edit did not expose its diff statistics" >&2
   exit 1
@@ -2239,23 +2266,12 @@ if grep -Fq "PATCH-RECEIPT-LIVE-UNIQUE" <<<"$SCREEN"; then
   echo "rust-tui-journey: terminal artifact receipt replaced the reviewable edit diff" >&2
   exit 1
 fi
-live_patch_row="$(awk '/Edit  src\/live.rs/ { print NR; exit }' <<<"$SCREEN")"
-printf -v live_patch_click '\033[<0;5;%dM\033[<0;5;%dm' "$live_patch_row" "$live_patch_row"
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$live_patch_click"
-wait_without_text "EDIT-DIFF-LIVE-UNIQUE"
-grep -Eq '▸ Edit  src/live\.rs.*\+1.*applied' <<<"$SCREEN" || {
-  printf '%s\n' "$SCREEN" >&2
-  echo "rust-tui-journey: applied live patch could not be explicitly folded" >&2
-  exit 1
-}
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$live_patch_click"
-wait_for_text "EDIT-DIFF-LIVE-UNIQUE"
 [[ "$(grep -Fc "EDIT-DIFF-LIVE-UNIQUE" <<<"$SCREEN")" == "1" ]] || {
   printf '%s\n' "$SCREEN" >&2
-  echo "rust-tui-journey: live patch diff was duplicated or lost after apply" >&2
+  echo "rust-tui-journey: live patch diff was duplicated after apply" >&2
   exit 1
 }
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$LIVE_PATCH_EXIT_FILE" ]] && break
   sleep 0.1
@@ -2321,7 +2337,7 @@ if grep -Fq "Search conversations" <<<"$SCREEN"; then
   echo "rust-tui-journey: restored conversation remained in the session browser" >&2
   exit 1
 fi
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$INVALID_SESSION_EXIT_FILE" ]] && break
   sleep 0.1
@@ -2341,7 +2357,7 @@ SESSION="carina-rust-tui-empty-models-$$"
 TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
   "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color '$STAGE/carina-ui' --socket '$EMPTY_MODELS_SOCKET' --workspace '$WORKSPACE' --session sess_returning --locale en --no-alt-screen; code=\$?; printf '%s' \"\$code\" > '$EMPTY_MODELS_EXIT_FILE'; sleep 300"
 
-wait_for_text "No compatible models are available for the configured provider"
+wait_for_text "Test has no compatible models."
 grep -Fq "Diagnostic only" <<<"$SCREEN"
 if grep -Fq "╭ Message" <<<"$SCREEN" || grep -Fq "sess_returning" <<<"$SCREEN"; then
   echo "rust-tui-journey: zero-model startup mounted a composer or leaked a session id" >&2
@@ -2392,7 +2408,7 @@ wait_for_text "No matching prompts"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
 wait_without_text "Prompt history"
 wait_for_text "REVOCATION-DRAFT"
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$REVOCATION_EXIT_FILE" ]] && break
   sleep 0.1
@@ -2432,7 +2448,7 @@ for internal in user_question_resolved "Value: full" "Timed out" "Question q_1" 
     exit 1
   fi
 done
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$GOV_EXIT_FILE" ]] && break
   sleep 0.1
@@ -2476,7 +2492,7 @@ for leaked in perm_restart q_restart user_question_requested "ACTION  Needs inpu
     exit 1
   fi
 done
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$GOV_RESTART_EXIT_FILE" ]] && break
   sleep 0.1
@@ -2515,7 +2531,9 @@ grep -Fq "Implement provider discovery with typed readiness and recovery." <<<"$
 grep -Fq "等待你的决定" <<<"$SCREEN"
 grep -Fq "批准" <<<"$SCREEN"
 grep -Fq "修改" <<<"$SCREEN"
-grep -Fq "取消" <<<"$SCREEN"
+grep -Fq "评论" <<<"$SCREEN"
+grep -Fq "关闭审阅" <<<"$SCREEN"
+grep -Fq "A 批准 S 修改 C 评论 M 范围 Q 关闭" <<<"$SCREEN"
 python3 - "$PLAN_CAPTURE" <<'PY'
 import json
 import sys
@@ -2537,7 +2555,56 @@ if params.get("locale") != "zh":
     raise SystemExit(f"Simplified Chinese plan locale was not submitted: {params!r}")
 PY
 
+# Q closes only the local Review. Plan mode and the retained typed result stay
+# intact, so the exact same plan can be reopened without daemon mutation.
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l Q
+wait_without_text "审阅计划"
+wait_for_text "已关闭计划审阅。规划模式保持启用，未执行任何操作。"
+wait_for_text "计划 ⇧Tab"
+assert_plan_review_local_only "Q close"
+
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /view-plan
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
+wait_for_text "审阅计划"
+grep -Fq "Implement provider discovery with typed readiness and recovery." <<<"$SCREEN"
+
+# C owns input inside Review. Saving a Unicode line comment stays local; S
+# closes Review and places an editable, anchored revision request in composer.
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l C
+wait_for_text "为 L1 添加评论。Enter 保存；Esc 放弃。"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "补充回滚验证"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
+# The retained in-review count is authoritative; the success notice may be
+# replaced by the next render before a PTY capture observes it.
+wait_for_text "1 条评论"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l S
+wait_without_text "审阅计划"
+wait_for_text "修改草稿已放入输入框。规划模式仍处于启用状态"
+wait_for_text "请根据下面的审阅评论修改此计划。"
+wait_for_text "第 1 行：补充回滚验证"
+wait_for_text "计划 ⇧Tab"
+assert_plan_review_local_only "S revise"
+
+# Esc remains the compatibility alias for Revise, not a close action.
+for _ in $(seq 1 8); do
+  TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-u
+done
+wait_without_text "补充回滚验证"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /view-plan
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
+wait_for_text "审阅计划"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
+wait_without_text "审阅计划"
+wait_for_text "修改草稿已放入输入框。规划模式仍处于启用状态"
+assert_plan_review_local_only "Esc revise"
+
+for _ in $(seq 1 8); do
+  TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-u
+done
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /view-plan
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
+wait_for_text "审阅计划"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l A
 wait_without_text "审阅计划"
 for _ in $(seq 1 100); do
   grep -Fq '"method":"session.approve_plan"' "$PLAN_CAPTURE" && break
@@ -2547,9 +2614,24 @@ grep -Fq '"method":"session.approve_plan"' "$PLAN_CAPTURE" || {
   echo "rust-tui-journey: Plan Review approval did not call session.approve_plan" >&2
   exit 1
 }
-# The fake runtime may emit the terminal implementation event before the next
-# terminal frame. The approve RPC and durable terminal state are the contract;
-# a transient queued notice is not guaranteed to be observable.
+python3 - "$PLAN_CAPTURE" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    requests = [json.loads(line) for line in stream if line.strip()]
+approvals = [request for request in requests if request.get("method") == "session.approve_plan"]
+if len(approvals) != 1:
+    raise SystemExit(f"expected exactly one plan approval, got {len(approvals)}")
+params = approvals[0].get("params", {})
+if params != {"session_id": "sess_plan", "run_id": "run_plan"}:
+    raise SystemExit(f"Plan Review approval lost its run identity: {params!r}")
+if sum(request.get("method") == "execution.start" for request in requests) != 1:
+    raise SystemExit("Plan Review local actions started an extra execution")
+PY
+wait_for_text "计划已批准，实施已排队。"
+# The mock leaves a bounded interval before lifecycle events so this notice
+# proves Rust adopted the canonical approval `task` directly from the RPC.
 wait_for_text "Approved plan implemented"
 grep -Fq "╭ 消息" <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
@@ -2599,7 +2681,7 @@ grep -Fq "命令" <<<"$SCREEN" || {
   echo "rust-tui-journey: help did not open the localized command palette" >&2
   exit 1
 }
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" PageDown PageDown
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" PageDown PageDown PageDown
 wait_for_text "/settings"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-u
@@ -2626,7 +2708,7 @@ for leaked in "internal-agent-task" "internal-artifact-id" "internal-patch-id"; 
   fi
 done
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$PLAN_EXIT_FILE" ]] && break
   sleep 0.1
@@ -2642,7 +2724,7 @@ SESSION="carina-rust-tui-paused-$$"
 TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
   "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color '$STAGE/carina-ui' --socket '$GOV_SOCKET' --workspace '$WORKSPACE' --session sess_paused --locale en --no-alt-screen; code=\$?; printf '%s' \"\$code\" > '$PAUSED_EXIT_FILE'; sleep 300"
 
-wait_for_text "The current execution is paused"
+wait_for_text "run paused"
 grep -Fq "Resume" <<<"$SCREEN"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" /resume Enter
 wait_for_text "Esc pause safely"
@@ -2657,14 +2739,9 @@ grep -Eq '[0-9]+s' <<<"$SCREEN" || {
   echo "rust-tui-journey: active execution did not expose elapsed time" >&2
   exit 1
 }
-grep -Fq "12K / 100K 12.0% █░░░░░░░" <<<"$SCREEN" || {
+grep -Fq "ctx 12%" <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
-  echo "rust-tui-journey: measured context usage was not projected into the active status cell" >&2
-  exit 1
-}
-grep -Fq "↑ 12K ↓1.4K" <<<"$SCREEN" || {
-  printf '%s\n' "$SCREEN" >&2
-  echo "rust-tui-journey: measured input/output usage was not projected truthfully" >&2
+  echo "rust-tui-journey: measured context ratio was not projected into the compact active status" >&2
   exit 1
 }
 wait_for_text "Returning paused execution complete"
@@ -2673,7 +2750,7 @@ if grep -Fq "ExecutionCompleted" <<<"$SCREEN"; then
   echo "rust-tui-journey: paused completion rendered as an event receipt" >&2
   exit 1
 fi
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$PAUSED_EXIT_FILE" ]] && break
   sleep 0.1
@@ -2760,7 +2837,7 @@ if retry_first.get("client_fork_id") != retry_second.get("client_fork_id"):
 if not retry_first.get("before_first") or "last_run_id" in retry_first:
     raise SystemExit(f"first-prompt fork did not use before_first: {retry_first}")
 PY
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$HISTORY_EXIT_FILE" ]] && break
   sleep 0.1

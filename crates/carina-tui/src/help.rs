@@ -17,6 +17,46 @@ pub struct HelpSurface {
     pub footer: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LocalizedHint {
+    key: &'static str,
+    description: MessageId,
+    show_description_in_footer: bool,
+}
+
+const PLAN_REVIEW_HINTS: &[LocalizedHint] = &[
+    LocalizedHint {
+        key: "A",
+        description: MessageId::Approve,
+        show_description_in_footer: true,
+    },
+    LocalizedHint {
+        key: "S",
+        description: MessageId::Revise,
+        show_description_in_footer: true,
+    },
+    LocalizedHint {
+        key: "C",
+        description: MessageId::Comment,
+        show_description_in_footer: true,
+    },
+    LocalizedHint {
+        key: "M",
+        description: MessageId::PlanMarkRange,
+        show_description_in_footer: true,
+    },
+    LocalizedHint {
+        key: "Q",
+        description: MessageId::Close,
+        show_description_in_footer: true,
+    },
+    LocalizedHint {
+        key: "Up/Dn J/K Page Home/End",
+        description: MessageId::PlanNavigate,
+        show_description_in_footer: false,
+    },
+];
+
 /// Build the help surface from the command registry and keybindings.
 ///
 /// `/help` must list every registered slash command so new commands cannot be
@@ -34,9 +74,9 @@ pub fn build_help_surface(
     }
 }
 
-/// Compact footer hint line for the conversation surface.
+/// Shared shortcut registry consumed by `/help` and `/keymap`.
 pub fn conversation_key_hints(bindings: KeyBindings, locale: Locale) -> Vec<HelpEntry> {
-    vec![
+    let mut hints = vec![
         HelpEntry {
             key: "?".into(),
             description: text(locale, MessageId::HelpShortcutHelp).into(),
@@ -73,7 +113,35 @@ pub fn conversation_key_hints(bindings: KeyBindings, locale: Locale) -> Vec<Help
             key: "Tab".into(),
             description: text(locale, MessageId::HelpShortcutQueueFollowUp).into(),
         },
-    ]
+    ];
+    hints.extend(plan_review_key_hints(locale));
+    hints
+}
+
+/// Canonical Plan Review action matrix shared by `/help`, `/keymap`, and the
+/// review surface.
+pub fn plan_review_key_hints(locale: Locale) -> Vec<HelpEntry> {
+    PLAN_REVIEW_HINTS
+        .iter()
+        .map(|hint| HelpEntry {
+            key: hint.key.into(),
+            description: text(locale, hint.description).into(),
+        })
+        .collect()
+}
+
+pub fn plan_review_hint_line(locale: Locale) -> String {
+    PLAN_REVIEW_HINTS
+        .iter()
+        .map(|hint| {
+            if hint.show_description_in_footer {
+                format!("{} {}", hint.key, text(locale, hint.description))
+            } else {
+                hint.key.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub fn footer_hint_line(bindings: KeyBindings, locale: Locale) -> String {
@@ -170,5 +238,49 @@ mod tests {
                 entry.key == "Alt-Enter" && entry.description.contains("send now")
             })
         );
+    }
+
+    #[test]
+    fn plan_review_matrix_is_canonical_and_complete() {
+        let plan = plan_review_key_hints(Locale::En);
+        let keys = plan
+            .iter()
+            .map(|entry| entry.key.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, ["A", "S", "C", "M", "Q", "Up/Dn J/K Page Home/End"]);
+        assert_eq!(
+            conversation_key_hints(KeyBindings::default(), Locale::En)
+                .into_iter()
+                .rev()
+                .take(plan.len())
+                .rev()
+                .collect::<Vec<_>>(),
+            plan
+        );
+        let footer = plan_review_hint_line(Locale::En);
+        let footer_lower = footer.to_ascii_lowercase();
+        for key in [
+            "A approve",
+            "S revise",
+            "C comment",
+            "M range",
+            "Q close",
+            "Home/End",
+        ] {
+            assert!(
+                footer_lower.contains(&key.to_ascii_lowercase()),
+                "missing {key:?} in {footer:?}"
+            );
+        }
+        for locale in Locale::ALL {
+            let footer = plan_review_hint_line(locale);
+            assert!(
+                unicode_width::UnicodeWidthStr::width(footer.as_str()) <= 75,
+                "Plan Review hints overflow the 80-column footer in {locale:?}: {footer:?}"
+            );
+        }
+        let renderer = include_str!("app/render.rs");
+        assert!(renderer.contains("help::plan_review_hint_line"));
+        assert!(!renderer.contains("MessageId::PlanHint"));
     }
 }

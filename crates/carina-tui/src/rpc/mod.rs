@@ -595,8 +595,16 @@ impl Client {
         )
     }
 
-    pub fn approve_plan(&mut self, session_id: &str) -> Result<PlanApprovalResult, RpcError> {
-        self.call("session.approve_plan", &json!({"session_id": session_id}))
+    pub fn approve_plan(
+        &mut self,
+        session_id: &str,
+        expected_run_id: Option<&str>,
+    ) -> Result<PlanApprovalResult, RpcError> {
+        let mut params = json!({"session_id": session_id});
+        if let Some(run_id) = expected_run_id {
+            params["run_id"] = json!(run_id);
+        }
+        self.call("session.approve_plan", &params)
     }
 
     pub fn steer(
@@ -1066,6 +1074,65 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "src/app.rs");
         assert_eq!(files[0].language, "rust");
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn plan_approval_sends_the_reviewed_run_identity_only_when_available() {
+        let nonce = NEXT_MEDIA_UPLOAD_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "carina-tui-plan-approval-rpc-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("daemon.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            for expected_run_id in [Some("run-plan"), None, Some("")] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], "session.approve_plan");
+                assert_eq!(request["params"]["session_id"], "sess-1");
+                match expected_run_id {
+                    Some(run_id) => assert_eq!(request["params"]["run_id"], run_id),
+                    None => assert!(request["params"].get("run_id").is_none()),
+                }
+                writeln!(
+                    stream,
+                    "{}",
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {
+                            "session_id": "sess-1",
+                            "plan_mode": false,
+                            "approved": true
+                        }
+                    })
+                )
+                .unwrap();
+                stream.flush().unwrap();
+            }
+        });
+
+        Client::connect(&socket)
+            .unwrap()
+            .approve_plan("sess-1", Some("run-plan"))
+            .unwrap();
+        Client::connect(&socket)
+            .unwrap()
+            .approve_plan("sess-1", None)
+            .unwrap();
+        Client::connect(&socket)
+            .unwrap()
+            .approve_plan("sess-1", Some(""))
+            .unwrap();
+
         server.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }

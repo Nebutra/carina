@@ -8,5 +8,5 @@ Test  ·  Direct API  ·  gpt-5.5  ·  high reasoning  ·  workspace
 ╭ Message ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-HITL  unknown
-ctx 12.0%  ·  Isolation  unknown  ·  session unknown  ·  sandbox unknown
+<blank:1>
+run ready · HITL unknown · isolation unknown + unknown · ctx 12% · screen fullscreen

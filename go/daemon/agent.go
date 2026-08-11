@@ -1038,18 +1038,18 @@ func (d *Daemon) executeActionOutcome(sess *sessionstore.Session, task *schedule
 	d.installActiveToolCall(sess, task, call)
 	act.lifecycleCallID = call.id
 	defer d.clearActiveToolCall(task.RunID, call.id)
-	if blocked, reason := d.runPreToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, "")); blocked {
-		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go",
-			map[string]any{"status": "hook_blocked", "tool": act.Tool, "reason": reason}, "")
-		outcome := toolDenied("BLOCKED by hook: "+reason, "hook_denied")
+	if d.isPlanMode(sess.SessionID) && planModeBlocksTool(act.Tool) {
+		outcome := toolDenied("BLOCKED: plan mode active — explore read-only and present a plan; the operator must approve it (session.approve_plan) before edits, commands, or memory writes", "plan_mode")
 		if err := d.finishToolCall(sess, task, call, outcome); err != nil {
 			failed := toolFailed("governance error: "+err.Error(), "audit_persistence_error")
 			return failed.display, failed
 		}
 		return outcome.display, outcome
 	}
-	if d.isPlanMode(sess.SessionID) && planModeBlocksTool(act.Tool) {
-		outcome := toolDenied("BLOCKED: plan mode active — explore read-only and present a plan; the operator must approve it (session.approve_plan) before edits, commands, or memory writes", "plan_mode")
+	if blocked, reason := d.runPreToolHooks(sess.WorkspaceRoot, act.Tool, hookPayload(act, "")); blocked {
+		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go",
+			map[string]any{"status": "hook_blocked", "tool": act.Tool, "reason": reason}, "")
+		outcome := toolDenied("BLOCKED by hook: "+reason, "hook_denied")
 		if err := d.finishToolCall(sess, task, call, outcome); err != nil {
 			failed := toolFailed("governance error: "+err.Error(), "audit_persistence_error")
 			return failed.display, failed
@@ -1072,11 +1072,16 @@ func (d *Daemon) executeActionOutcome(sess *sessionstore.Session, task *schedule
 }
 
 func planModeBlocksTool(tool string) bool {
-	switch tool {
-	case "patch", "run", "memory":
-		return true
-	default:
+	if isReadOnlyTool(tool) {
 		return false
+	}
+	// Keep non-read exceptions limited to Plan bookkeeping and interaction.
+	// Spawn is safe here because the child inherits the Plan mask before it runs.
+	switch tool {
+	case "todo", "update_plan", "ask_user", "done", "mcp_find", "spawn":
+		return false
+	default:
+		return true
 	}
 }
 

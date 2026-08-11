@@ -59,6 +59,24 @@ body. Lifecycle labels and bounded-review continuation copy must come from
 `MessageId` and must state that the complete transaction remains available for
 verification and rollback.
 
+### Plan review
+
+Plan Review distinguishes three outcomes and always states what remains true:
+
+```text
+Approved: implementation was queued, or Build mode is active.
+Revision requested: a localized draft was added to the composer; Plan mode remains active.
+Review closed: Plan mode remains active; nothing was executed.
+```
+
+Comments use one-based `Lx` or `Lx-Ly` anchors. Revision drafts include a
+localized request, a localized comments header, and localized line/range bullet
+formats; they remain editable and are never submitted automatically. Approval
+failures and stale reviews state that Plan mode remains active and teach
+`/view-plan` as the recovery path. The footer and `/keymap` share one canonical
+`A` approve, `S` revise, `C` comment, `M` mark range, `Q` close, and navigation
+hint model.
+
 ### Collapsed success tool groups (V002)
 
 ```
@@ -92,4 +110,5 @@ transcript failure cell. Technical detail belongs in audit / RoutingOutcome.
 - [x] Artifact truncation mentions expand + artifact path (`transcript::apply_tool_output`)
 - [x] Collapsed Read/List groups use `×N · path…` title language; disclosure expands
 - [x] `/help` and `?` expose the same command registry
+- [x] Plan Review outcomes, comments, recovery, and complete key matrix use localized copy
 - [ ] Remaining bare English in overlays (approval Esc hints) — prefer MessageId in a follow-up

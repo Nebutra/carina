@@ -247,6 +247,12 @@ pub enum MessageId {
     PlanApprovedBuild,
     PlanRevisionRequested,
     PlanCancelled,
+    PlanCommentSaved,
+    PlanCommentEmpty,
+    PlanReviewUnavailable,
+    PlanReviewStale,
+    PlanApprovalNotConfirmed,
+    PlanApprovalFailed,
     ApprovalRequired,
     GovernedAction,
     ApprovalNoDiff,
@@ -265,7 +271,18 @@ pub enum MessageId {
     PlanApproving,
     Approve,
     Revise,
+    Comment,
+    CloseReview,
     Cancel,
+    PlanCommentPrompt,
+    PlanCommentCountOne,
+    PlanCommentCountOther,
+    PlanRevisionSeed,
+    PlanRevisionCommentsHeader,
+    PlanRevisionCommentLine,
+    PlanRevisionCommentRange,
+    PlanMarkRange,
+    PlanNavigate,
     PlanHint,
     CheckpointRecovery,
     LoadingCheckpoints,
@@ -363,6 +380,7 @@ pub enum MessageId {
     CommandProvider,
     CommandModel,
     CommandPlan,
+    CommandViewPlan,
     CommandBuild,
     CommandSessions,
     CommandResume,
@@ -764,6 +782,12 @@ impl MessageId {
         Self::PlanApprovedBuild,
         Self::PlanRevisionRequested,
         Self::PlanCancelled,
+        Self::PlanCommentSaved,
+        Self::PlanCommentEmpty,
+        Self::PlanReviewUnavailable,
+        Self::PlanReviewStale,
+        Self::PlanApprovalNotConfirmed,
+        Self::PlanApprovalFailed,
         Self::ApprovalRequired,
         Self::GovernedAction,
         Self::ApprovalNoDiff,
@@ -782,7 +806,18 @@ impl MessageId {
         Self::PlanApproving,
         Self::Approve,
         Self::Revise,
+        Self::Comment,
+        Self::CloseReview,
         Self::Cancel,
+        Self::PlanCommentPrompt,
+        Self::PlanCommentCountOne,
+        Self::PlanCommentCountOther,
+        Self::PlanRevisionSeed,
+        Self::PlanRevisionCommentsHeader,
+        Self::PlanRevisionCommentLine,
+        Self::PlanRevisionCommentRange,
+        Self::PlanMarkRange,
+        Self::PlanNavigate,
         Self::PlanHint,
         Self::CheckpointRecovery,
         Self::LoadingCheckpoints,
@@ -880,6 +915,7 @@ impl MessageId {
         Self::CommandProvider,
         Self::CommandModel,
         Self::CommandPlan,
+        Self::CommandViewPlan,
         Self::CommandBuild,
         Self::CommandSessions,
         Self::CommandResume,
@@ -1287,7 +1323,9 @@ pub fn text(locale: Locale, id: MessageId) -> &'static str {
         (ZhHans, ModeChangeFailed) => "模式切换失败：{error}",
         (ZhHans, PlanApprovedQueued) => "计划已批准，实施已排队。",
         (ZhHans, PlanApprovedBuild) => "计划已批准，执行模式已启用。",
-        (ZhHans, PlanRevisionRequested) => "规划模式保持启用。请描述需要调整的内容。",
+        (ZhHans, PlanRevisionRequested) => {
+            "修改草稿已放入输入框。规划模式仍处于启用状态；请编辑并在准备好后发送。"
+        }
         (ZhHans, PlanCancelled) => "已关闭计划审阅。规划模式保持启用，未执行任何操作。",
         (ZhHans, ApprovalRequired) => "需要批准",
         (ZhHans, GovernedAction) => "操作",
@@ -1302,13 +1340,17 @@ pub fn text(locale: Locale, id: MessageId) -> &'static str {
         (ZhHans, QuestionHint) => "Enter 回答  Ctrl+C 停止回复",
         (ZhHans, PlanReview) => "审阅计划",
         (ZhHans, PlanReadyDecision) => "等待你的决定",
-        (ZhHans, PlanDecisionDetail) => "批准会开始实施；修改会返回输入框；取消不会执行任何操作。",
+        (ZhHans, PlanDecisionDetail) => {
+            "批准会开始实施；修改会把评论放入输入框；关闭不会执行任何操作。"
+        }
         (ZhHans, PlanCandidate) => "待批准计划",
         (ZhHans, PlanApproving) => "正在批准计划并准备实施…",
         (ZhHans, Approve) => "批准",
         (ZhHans, Revise) => "修改",
         (ZhHans, Cancel) => "取消",
-        (ZhHans, PlanHint) => "Enter 批准  R 修改  C 取消  ↑↓ 滚动",
+        (ZhHans, PlanHint) => {
+            "A 批准  S 修改  C 评论  M 标记范围  Q 关闭  ↑↓/J/K/Page/Home/End 浏览"
+        }
         (ZhHans, CheckpointRecovery) => "检查点恢复",
         (ZhHans, LoadingCheckpoints) => "正在加载检查点…",
         (ZhHans, LoadingCheckpointsDetail) => "加载恢复数据时，会话仍保持可见。",
@@ -2170,7 +2212,7 @@ fn en(id: MessageId) -> &'static str {
         PlanApprovedQueued => "Plan approved. Implementation queued.",
         PlanApprovedBuild => "Plan approved. Build mode is active.",
         PlanRevisionRequested => {
-            "Plan mode remains active. Describe what should change in the plan."
+            "A revision draft was added to the composer. Plan mode remains active; edit and send it when ready."
         }
         PlanCancelled => "Plan review closed. Plan mode remains active; nothing was executed.",
         ApprovalRequired => "Approval required",
@@ -2186,15 +2228,15 @@ fn en(id: MessageId) -> &'static str {
         QuestionHint => "Enter answer  Ctrl+C stop response",
         PlanReview => "Plan review",
         PlanReadyDecision => "Ready for your decision",
-        PlanDecisionDetail => {
-            "Approve starts implementation. Revise returns to the composer. Cancel executes nothing."
-        }
-        PlanCandidate => "Approved plan candidate",
+        PlanDecisionDetail => "Approve implements. Revise drafts comments. Close executes nothing.",
+        PlanCandidate => "Plan candidate",
         PlanApproving => "Approving plan and preparing implementation…",
         Approve => "Approve",
         Revise => "Revise",
         Cancel => "Cancel",
-        PlanHint => "Enter approve  R revise  C cancel  Up/Down scroll",
+        PlanHint => {
+            "A approve  S revise  C comment  M mark range  Q close  Up/Down J/K Page Home/End navigate"
+        }
         CheckpointRecovery => "Checkpoint recovery",
         LoadingCheckpoints => "Loading checkpoints…",
         LoadingCheckpointsDetail => "The conversation remains visible while recovery data loads.",
@@ -2408,7 +2450,9 @@ fn zh_hant(id: MessageId) -> &'static str {
         ModeChangeFailed => "模式切換失敗：{error}",
         PlanApprovedQueued => "計劃已核准，實作已排隊。",
         PlanApprovedBuild => "計劃已核准，執行模式已啟用。",
-        PlanRevisionRequested => "規劃模式保持啟用。請描述需要調整的內容。",
+        PlanRevisionRequested => {
+            "修改草稿已放入輸入框。規劃模式仍處於啟用狀態；請編輯並在準備好後傳送。"
+        }
         PlanCancelled => "已關閉計劃審閱。規劃模式保持啟用，未執行任何操作。",
         ApprovalRequired => "需要核准",
         GovernedAction => "操作",
@@ -2423,13 +2467,13 @@ fn zh_hant(id: MessageId) -> &'static str {
         QuestionHint => "Enter 回答  Ctrl+C 取消工作",
         PlanReview => "檢閱計劃",
         PlanReadyDecision => "等待你的決定",
-        PlanDecisionDetail => "核准會開始實作；修改會返回輸入框；取消不會執行任何操作。",
+        PlanDecisionDetail => "核准會開始實作；修改會把評論放入輸入框；關閉不會執行任何操作。",
         PlanCandidate => "待核准計劃",
         PlanApproving => "正在核准計劃並準備實作…",
         Approve => "核准",
         Revise => "修改",
         Cancel => "取消",
-        PlanHint => "Enter 核准  R 修改  C 取消  ↑↓ 捲動",
+        PlanHint => "A 核准  S 修改  C 評論  M 標記範圍  Q 關閉  ↑↓/J/K/Page/Home/End 瀏覽",
         CheckpointRecovery => "檢查點復原",
         LoadingCheckpoints => "正在載入檢查點…",
         LoadingCheckpointsDetail => "載入復原資料時，對話仍保持可見。",
@@ -2889,10 +2933,10 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
             "Plan approuvé. Mode exécution actif.",
         ],
         PlanRevisionRequested => [
-            "計画モードは有効なままです。変更点を説明してください。",
-            "계획 모드는 계속 활성화됩니다. 변경할 내용을 설명하세요.",
-            "El modo de planificación sigue activo. Describe qué debe cambiar.",
-            "Le mode plan reste actif. Décrivez les changements à apporter.",
+            "修正用の下書きを入力欄に追加しました。計画モードは有効なままです。編集し、準備ができたら送信してください。",
+            "수정 초안을 입력창에 추가했습니다. 계획 모드는 계속 활성화됩니다. 편집한 뒤 준비되면 보내세요.",
+            "Se añadió un borrador de revisión al editor. El modo de planificación sigue activo; edítalo y envíalo cuando esté listo.",
+            "Un brouillon de révision a été ajouté à l’éditeur. Le mode plan reste actif ; modifiez-le et envoyez-le lorsqu’il est prêt.",
         ],
         PlanCancelled => [
             "計画レビューを閉じました。計画モードは有効なままで、何も実行されていません。",
@@ -2944,10 +2988,10 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
             "En attente de votre décision",
         ],
         PlanDecisionDetail => [
-            "承認すると実装を開始します。修正すると入力欄に戻ります。キャンセルでは何も実行しません。",
-            "승인하면 구현을 시작합니다. 수정하면 입력창으로 돌아갑니다. 취소하면 아무것도 실행하지 않습니다.",
-            "Aprobar inicia la implementación. Revisar vuelve al editor. Cancelar no ejecuta nada.",
-            "Approuver lance l’implémentation. Réviser revient à l’éditeur. Annuler n’exécute rien.",
+            "承認すると実装を開始します。修正するとコメントを入力欄に追加します。閉じても何も実行しません。",
+            "승인하면 구현을 시작합니다. 수정하면 댓글을 입력창에 추가합니다. 닫으면 아무것도 실행하지 않습니다.",
+            "Aprobar inicia la implementación. Revisar añade los comentarios al editor. Cerrar no ejecuta nada.",
+            "Approuver lance l’implémentation. Réviser ajoute les commentaires à l’éditeur. Fermer n’exécute rien.",
         ],
         PlanCandidate => [
             "承認候補の計画",
@@ -2965,10 +3009,10 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
         Revise => ["修正", "수정", "Revisar", "Réviser"],
         Cancel => ["キャンセル", "취소", "Cancelar", "Annuler"],
         PlanHint => [
-            "Enter 承認  R 修正  C キャンセル  ↑↓ スクロール",
-            "Enter 승인  R 수정  C 취소  ↑↓ 스크롤",
-            "Enter aprobar  R revisar  C cancelar  ↑↓ desplazar",
-            "Entrée approuver  R réviser  C annuler  ↑↓ défiler",
+            "A 承認  S 修正  C コメント  M 範囲指定  Q 閉じる  ↑↓/J/K/Page/Home/End 移動",
+            "A 승인  S 수정  C 댓글  M 범위 표시  Q 닫기  ↑↓/J/K/Page/Home/End 탐색",
+            "A aprobar  S revisar  C comentar  M marcar rango  Q cerrar  ↑↓/J/K/Page/Home/End navegar",
+            "A approuver  S réviser  C commenter  M marquer  Q fermer  ↑↓/J/K/Page/Home/End parcourir",
         ],
         CheckpointRecovery => [
             "チェックポイント復元",
@@ -3457,6 +3501,152 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
 fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
     use MessageId::*;
     let values = match id {
+        PlanCommentSaved => [
+            "Comment saved. Saved comments: {count}.",
+            "评论已保存。已保存评论：{count} 条。",
+            "評論已儲存。已儲存評論：{count} 則。",
+            "コメントを保存しました。保存済み: {count} 件。",
+            "댓글을 저장했습니다. 저장된 댓글: {count}개.",
+            "Comentario guardado. Comentarios guardados: {count}.",
+            "Commentaire enregistré. Commentaires enregistrés : {count}.",
+        ],
+        PlanCommentEmpty => [
+            "Add a comment before saving. Esc discards the draft.",
+            "请先输入评论再保存。按 Esc 放弃草稿。",
+            "請先輸入評論再儲存。按 Esc 放棄草稿。",
+            "保存する前にコメントを入力してください。Esc で下書きを破棄します。",
+            "저장하기 전에 댓글을 입력하세요. Esc를 누르면 초안을 버립니다.",
+            "Escribe un comentario antes de guardarlo. Esc descarta el borrador.",
+            "Ajoutez un commentaire avant de l’enregistrer. Esc ignore le brouillon.",
+        ],
+        PlanReviewUnavailable => [
+            "Plan Review is unavailable. Only the latest completed plan can be reopened. Use /plan to create one.",
+            "计划审阅当前不可用。只能重新打开最新完成的计划。使用 /plan 创建计划。",
+            "計劃檢閱目前不可用。只能重新開啟最新完成的計劃。使用 /plan 建立計劃。",
+            "計画レビューは利用できません。再度開けるのは最新の完了した計画だけです。/plan で計画を作成してください。",
+            "계획 검토를 사용할 수 없습니다. 최근 완료된 계획만 다시 열 수 있습니다. /plan으로 계획을 만드세요.",
+            "La revisión del plan no está disponible. Solo se puede reabrir el último plan completado. Usa /plan para crear uno.",
+            "La révision du plan n’est pas disponible. Seul le dernier plan terminé peut être rouvert. Utilisez /plan pour en créer un.",
+        ],
+        PlanReviewStale => [
+            "This plan review is no longer current. Plan mode remains active. Run /view-plan to open the latest plan.",
+            "此计划审阅已不是最新版本。规划模式仍处于启用状态。运行 /view-plan 打开最新计划。",
+            "此計劃檢閱已不是最新版本。規劃模式仍處於啟用狀態。執行 /view-plan 開啟最新計劃。",
+            "この計画レビューは最新ではありません。計画モードは有効なままです。/view-plan で最新の計画を開いてください。",
+            "이 계획 검토는 더 이상 최신 상태가 아닙니다. 계획 모드는 계속 활성화됩니다. /view-plan으로 최신 계획을 여세요.",
+            "Esta revisión ya no corresponde al plan actual. El modo de planificación sigue activo. Ejecuta /view-plan para abrir el último plan.",
+            "Cette révision ne correspond plus au plan actuel. Le mode plan reste actif. Lancez /view-plan pour ouvrir le dernier plan.",
+        ],
+        PlanApprovalNotConfirmed => [
+            "Plan approval was not confirmed. Plan mode remains active. Retry or run /view-plan to reopen the current plan.",
+            "计划批准未获确认。规划模式仍处于启用状态。请重试，或运行 /view-plan 重新打开当前计划。",
+            "計劃核准未獲確認。規劃模式仍處於啟用狀態。請重試，或執行 /view-plan 重新開啟目前計劃。",
+            "計画の承認を確認できませんでした。計画モードは有効なままです。再試行するか、/view-plan で現在の計画を開き直してください。",
+            "계획 승인이 확인되지 않았습니다. 계획 모드는 계속 활성화됩니다. 다시 시도하거나 /view-plan으로 현재 계획을 다시 여세요.",
+            "No se confirmó la aprobación del plan. El modo de planificación sigue activo. Reintenta o ejecuta /view-plan para reabrir el plan actual.",
+            "L’approbation du plan n’a pas été confirmée. Le mode plan reste actif. Réessayez ou lancez /view-plan pour rouvrir le plan actuel.",
+        ],
+        PlanApprovalFailed => [
+            "Plan approval failed: {error}. Plan mode remains active. Retry or run /view-plan to reopen the current plan.",
+            "计划批准失败：{error}。规划模式仍处于启用状态。请重试，或运行 /view-plan 重新打开当前计划。",
+            "計劃核准失敗：{error}。規劃模式仍處於啟用狀態。請重試，或執行 /view-plan 重新開啟目前計劃。",
+            "計画の承認に失敗しました: {error}。計画モードは有効なままです。再試行するか、/view-plan で現在の計画を開き直してください。",
+            "계획 승인에 실패했습니다: {error}. 계획 모드는 계속 활성화됩니다. 다시 시도하거나 /view-plan으로 현재 계획을 다시 여세요.",
+            "Falló la aprobación del plan: {error}. El modo de planificación sigue activo. Reintenta o ejecuta /view-plan para reabrir el plan actual.",
+            "Échec de l’approbation du plan : {error}. Le mode plan reste actif. Réessayez ou lancez /view-plan pour rouvrir le plan actuel.",
+        ],
+        Comment => [
+            "Comment",
+            "评论",
+            "評論",
+            "コメント",
+            "댓글",
+            "Comentar",
+            "Commenter",
+        ],
+        CloseReview => [
+            "Close review",
+            "关闭审阅",
+            "關閉檢閱",
+            "レビューを閉じる",
+            "검토 닫기",
+            "Cerrar revisión",
+            "Fermer la révision",
+        ],
+        PlanCommentPrompt => [
+            "Comment on {range}. Enter saves; Esc discards.",
+            "为 {range} 添加评论。Enter 保存；Esc 放弃。",
+            "為 {range} 新增評論。Enter 儲存；Esc 放棄。",
+            "{range} にコメント。Enter で保存、Esc で破棄します。",
+            "{range}에 댓글을 남기세요. Enter는 저장하고 Esc는 버립니다.",
+            "Comenta {range}. Enter guarda; Esc descarta.",
+            "Commentez {range}. Entrée enregistre ; Esc ignore.",
+        ],
+        PlanCommentCountOne => [
+            "{count} comment",
+            "{count} 条评论",
+            "{count} 則評論",
+            "コメント {count} 件",
+            "댓글 {count}개",
+            "{count} comentario",
+            "{count} commentaire",
+        ],
+        PlanCommentCountOther => [
+            "{count} comments",
+            "{count} 条评论",
+            "{count} 則評論",
+            "コメント {count} 件",
+            "댓글 {count}개",
+            "{count} comentarios",
+            "{count} commentaires",
+        ],
+        PlanRevisionSeed => [
+            "Please revise this plan using the review comments below.",
+            "请根据下面的审阅评论修改此计划。",
+            "請根據下方的檢閱評論修改此計劃。",
+            "以下のレビューコメントに沿って、この計画を修正してください。",
+            "아래 검토 댓글을 반영하여 이 계획을 수정해 주세요.",
+            "Revisa este plan según los comentarios siguientes.",
+            "Révisez ce plan à partir des commentaires ci-dessous.",
+        ],
+        PlanRevisionCommentsHeader => [
+            "Plan review comments:",
+            "计划审阅评论：",
+            "計劃檢閱評論：",
+            "計画レビューのコメント:",
+            "계획 검토 댓글:",
+            "Comentarios de la revisión del plan:",
+            "Commentaires sur le plan :",
+        ],
+        PlanRevisionCommentLine => [
+            "- L{line}: {text}",
+            "- 第 {line} 行：{text}",
+            "- 第 {line} 行：{text}",
+            "- L{line}: {text}",
+            "- L{line}: {text}",
+            "- L{line}: {text}",
+            "- L{line} : {text}",
+        ],
+        PlanRevisionCommentRange => [
+            "- L{start}-L{end}: {text}",
+            "- 第 {start}-{end} 行：{text}",
+            "- 第 {start}-{end} 行：{text}",
+            "- L{start}-L{end}: {text}",
+            "- L{start}-L{end}: {text}",
+            "- L{start}-L{end}: {text}",
+            "- L{start}-L{end} : {text}",
+        ],
+        PlanMarkRange => ["range", "范围", "範圍", "範囲", "범위", "rango", "plage"],
+        PlanNavigate => ["move", "移动", "移動", "移動", "이동", "mover", "déplacer"],
+        CommandViewPlan => [
+            "Review the latest completed plan",
+            "审阅最新完成的计划",
+            "檢閱最新完成的計劃",
+            "最新の完了した計画をレビュー",
+            "최근 완료된 계획 검토",
+            "Revisar el último plan completado",
+            "Examiner le dernier plan terminé",
+        ],
         CommandQueue => [
             "Inspect durable follow-up and steer queue",
             "查看耐久 follow-up / steer 队列",
@@ -6050,6 +6240,38 @@ mod tests {
     }
 
     #[test]
+    fn plan_review_copy_is_complete_in_every_supported_locale() {
+        for locale in Locale::ALL {
+            let hint = text(locale, MessageId::PlanHint);
+            for key in ["A", "S", "C", "M", "Q", "Home/End"] {
+                assert!(
+                    hint.contains(key),
+                    "missing {key:?} in {locale:?}: {hint:?}"
+                );
+            }
+
+            let line = format(
+                locale,
+                MessageId::PlanRevisionCommentLine,
+                &[("line", "2"), ("text", "verify")],
+            );
+            let range = format(
+                locale,
+                MessageId::PlanRevisionCommentRange,
+                &[("start", "2"), ("end", "4"), ("text", "verify")],
+            );
+            assert!(
+                line.contains('2') && line.contains("verify"),
+                "line={line:?}"
+            );
+            assert!(
+                range.contains('2') && range.contains('4') && range.contains("verify"),
+                "range={range:?}"
+            );
+        }
+    }
+
+    #[test]
     fn retained_surfaces_do_not_reintroduce_migrated_english_copy() {
         let renderer = include_str!("app/render.rs");
         for copy in [
@@ -6106,6 +6328,16 @@ mod tests {
             assert!(
                 !clipboard_sources.contains(copy),
                 "clipboard copy must use MessageId instead of {copy:?}"
+            );
+        }
+        let plan_sources = [include_str!("app/mod.rs"), include_str!("app/render.rs")].join("\n");
+        for copy in [
+            "The daemon did not confirm this plan approval.",
+            "Approval failed:",
+        ] {
+            assert!(
+                !plan_sources.contains(copy),
+                "Plan Review copy must use MessageId instead of {copy:?}"
             );
         }
     }

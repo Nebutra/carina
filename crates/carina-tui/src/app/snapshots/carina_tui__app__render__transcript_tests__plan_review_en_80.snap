@@ -1,0 +1,123 @@
+---
+source: crates/carina-tui/src/app/render.rs
+expression: rendered
+---
+size=80x30
+Carina  ·  carina conversation        Sessions   Model   Build ⇧Tab   Settings
+Provider  ·  Direct API  ·  model  ·  reasoning off  ·  carina
+────────────────────────────────────────────────────────────────────────────────
+ ╭ Plan review ───────────────────────────────────────────────────────────────╮
+ │ Ready for your decision                                                    │
+ │ Approve implements. Revise drafts comments. Close executes nothing.        │
+ │ 1 comment                                                                  │
+ │                                                                            │
+ │  Plan candidate ────────────────────────────────────────────────────────── │
+ │    L1   1. Inspect the session projection boundary and Plan identity.      │
+ │ ▌  L2 • 2. Preserve comment ownership across a deliberately long terminal  │
+ │         line that wraps at eighty columns without changing its logical     │
+ │         line anchor.                                                       │
+ │    L3 • 3. Verify coordinates in no-color and ASCII fallback modes.        │
+ │    L4   4. Read the relevant protocol and existing tests.                  │
+ │    L5   5. Update approval requests without bypassing governance.          │
+ │    L6   6. Run focused tests and the complete quality gates.               │
+ │    L7   7. Check the behavior for reopening the current plan.              │
+ │    L8   8. Preserve any draft that already exists in the composer.         │
+ │    L9   9. Verify mouse-wheel and keyboard navigation parity.              │
+ │   L10   10. Check that localized actions remain inside the popup.          │
+ │   L11   11. Confirm closing the review executes nothing.                   │
+ │   L12   12. Record the final verification outcome.                         │
+ │ ────────────────────────────────────────────────────────────────────────── │
+ │ [ Approve ] [ Revise ] [ Comment ] [ Close review ]                        │
+ │                                                                            │
+ │ A Approve S Revise C Comment M range Q Close Up/Dn J/K Page Home/End       │
+ │                                                                            │
+ ╰────────────────────────────────────────────────────────────────────────────╯
+run ready · HITL unknown · isolation unknown + unknown · ctx unknown
+styles:
+(0,0)..(6,0) (Rgb(222, 133, 155), Reset, BOLD)
+(6,0)..(30,0) (Rgb(150, 160, 156), Reset, NONE)
+(37,0)..(47,0) (Rgb(150, 160, 156), Reset, NONE)
+(48,0)..(55,0) (Rgb(150, 160, 156), Reset, NONE)
+(56,0)..(68,0) (Rgb(150, 160, 156), Reset, NONE)
+(69,0)..(79,0) (Rgb(150, 160, 156), Reset, NONE)
+(0,1)..(79,1) (Rgb(150, 160, 156), Reset, NONE)
+(0,2)..(80,2) (Rgb(52, 65, 68), Reset, NONE)
+(1,3)..(79,3) (Rgb(142, 219, 210), Reset, BOLD)
+(1,4)..(2,4) (Rgb(142, 219, 210), Reset, BOLD)
+(3,4)..(26,4) (Rgb(142, 219, 210), Reset, BOLD)
+(78,4)..(79,4) (Rgb(142, 219, 210), Reset, BOLD)
+(1,5)..(2,5) (Rgb(142, 219, 210), Reset, BOLD)
+(3,5)..(70,5) (Rgb(150, 160, 156), Reset, NONE)
+(78,5)..(79,5) (Rgb(142, 219, 210), Reset, BOLD)
+(1,6)..(2,6) (Rgb(142, 219, 210), Reset, BOLD)
+(3,6)..(12,6) (Rgb(150, 160, 156), Reset, NONE)
+(78,6)..(79,6) (Rgb(142, 219, 210), Reset, BOLD)
+(1,7)..(2,7) (Rgb(142, 219, 210), Reset, BOLD)
+(78,7)..(79,7) (Rgb(142, 219, 210), Reset, BOLD)
+(1,8)..(2,8) (Rgb(142, 219, 210), Reset, BOLD)
+(3,8)..(77,8) (Rgb(52, 65, 68), Reset, NONE)
+(78,8)..(79,8) (Rgb(142, 219, 210), Reset, BOLD)
+(1,9)..(2,9) (Rgb(142, 219, 210), Reset, BOLD)
+(4,9)..(8,9) (Rgb(150, 160, 156), Reset, NONE)
+(78,9)..(79,9) (Rgb(142, 219, 210), Reset, BOLD)
+(1,10)..(2,10) (Rgb(142, 219, 210), Reset, BOLD)
+(3,10)..(8,10) (Reset, Rgb(36, 61, 62), BOLD)
+(8,10)..(11,10) (Rgb(232, 168, 95), Rgb(36, 61, 62), BOLD)
+(11,10)..(76,10) (Reset, Rgb(36, 61, 62), BOLD)
+(78,10)..(79,10) (Rgb(142, 219, 210), Reset, BOLD)
+(1,11)..(2,11) (Rgb(142, 219, 210), Reset, BOLD)
+(3,11)..(73,11) (Reset, Rgb(36, 61, 62), BOLD)
+(78,11)..(79,11) (Rgb(142, 219, 210), Reset, BOLD)
+(1,12)..(2,12) (Rgb(142, 219, 210), Reset, BOLD)
+(3,12)..(23,12) (Reset, Rgb(36, 61, 62), BOLD)
+(78,12)..(79,12) (Rgb(142, 219, 210), Reset, BOLD)
+(1,13)..(2,13) (Rgb(142, 219, 210), Reset, BOLD)
+(4,13)..(8,13) (Rgb(150, 160, 156), Reset, NONE)
+(8,13)..(11,13) (Rgb(232, 168, 95), Reset, NONE)
+(78,13)..(79,13) (Rgb(142, 219, 210), Reset, BOLD)
+(1,14)..(2,14) (Rgb(142, 219, 210), Reset, BOLD)
+(4,14)..(8,14) (Rgb(150, 160, 156), Reset, NONE)
+(78,14)..(79,14) (Rgb(142, 219, 210), Reset, BOLD)
+(1,15)..(2,15) (Rgb(142, 219, 210), Reset, BOLD)
+(4,15)..(8,15) (Rgb(150, 160, 156), Reset, NONE)
+(78,15)..(79,15) (Rgb(142, 219, 210), Reset, BOLD)
+(1,16)..(2,16) (Rgb(142, 219, 210), Reset, BOLD)
+(4,16)..(8,16) (Rgb(150, 160, 156), Reset, NONE)
+(78,16)..(79,16) (Rgb(142, 219, 210), Reset, BOLD)
+(1,17)..(2,17) (Rgb(142, 219, 210), Reset, BOLD)
+(4,17)..(8,17) (Rgb(150, 160, 156), Reset, NONE)
+(78,17)..(79,17) (Rgb(142, 219, 210), Reset, BOLD)
+(1,18)..(2,18) (Rgb(142, 219, 210), Reset, BOLD)
+(4,18)..(8,18) (Rgb(150, 160, 156), Reset, NONE)
+(78,18)..(79,18) (Rgb(142, 219, 210), Reset, BOLD)
+(1,19)..(2,19) (Rgb(142, 219, 210), Reset, BOLD)
+(4,19)..(8,19) (Rgb(150, 160, 156), Reset, NONE)
+(78,19)..(79,19) (Rgb(142, 219, 210), Reset, BOLD)
+(1,20)..(2,20) (Rgb(142, 219, 210), Reset, BOLD)
+(4,20)..(8,20) (Rgb(150, 160, 156), Reset, NONE)
+(78,20)..(79,20) (Rgb(142, 219, 210), Reset, BOLD)
+(1,21)..(2,21) (Rgb(142, 219, 210), Reset, BOLD)
+(4,21)..(8,21) (Rgb(150, 160, 156), Reset, NONE)
+(78,21)..(79,21) (Rgb(142, 219, 210), Reset, BOLD)
+(1,22)..(2,22) (Rgb(142, 219, 210), Reset, BOLD)
+(4,22)..(8,22) (Rgb(150, 160, 156), Reset, NONE)
+(78,22)..(79,22) (Rgb(142, 219, 210), Reset, BOLD)
+(1,23)..(2,23) (Rgb(142, 219, 210), Reset, BOLD)
+(3,23)..(77,23) (Rgb(52, 65, 68), Reset, NONE)
+(78,23)..(79,23) (Rgb(142, 219, 210), Reset, BOLD)
+(1,24)..(2,24) (Rgb(142, 219, 210), Reset, BOLD)
+(3,24)..(14,24) (Rgb(142, 219, 210), Reset, NONE)
+(15,24)..(25,24) (Rgb(142, 219, 210), Reset, NONE)
+(26,24)..(37,24) (Rgb(142, 219, 210), Reset, NONE)
+(38,24)..(54,24) (Rgb(142, 219, 210), Reset, NONE)
+(78,24)..(79,24) (Rgb(142, 219, 210), Reset, BOLD)
+(1,25)..(2,25) (Rgb(142, 219, 210), Reset, BOLD)
+(78,25)..(79,25) (Rgb(142, 219, 210), Reset, BOLD)
+(1,26)..(2,26) (Rgb(142, 219, 210), Reset, BOLD)
+(3,26)..(77,26) (Rgb(150, 160, 156), Reset, NONE)
+(78,26)..(79,26) (Rgb(142, 219, 210), Reset, BOLD)
+(1,27)..(2,27) (Rgb(142, 219, 210), Reset, BOLD)
+(3,27)..(77,27) (Rgb(150, 160, 156), Reset, NONE)
+(78,27)..(79,27) (Rgb(142, 219, 210), Reset, BOLD)
+(1,28)..(79,28) (Rgb(142, 219, 210), Reset, BOLD)
+(0,29)..(68,29) (Rgb(150, 160, 156), Reset, NONE)

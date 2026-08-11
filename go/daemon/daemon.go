@@ -2178,32 +2178,53 @@ func (d *Daemon) handleAddDir(params json.RawMessage) (any, error) {
 // changes execution state: it exits plan mode and submits a governed build task
 // carrying the approved summary, rather than emitting a display-only receipt.
 func (d *Daemon) handleApprovePlan(params json.RawMessage) (any, error) {
-	id, err := sessionID(params)
-	if err != nil {
-		return nil, err
+	var p struct {
+		SessionID string  `json:"session_id"`
+		RunID     *string `json:"run_id"`
 	}
-	sess, ok := d.store.Get(id)
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if p.SessionID == "" {
+		return nil, fmt.Errorf("session_id is required")
+	}
+	expectedRunID := ""
+	if p.RunID != nil {
+		expectedRunID = strings.TrimSpace(*p.RunID)
+		if expectedRunID == "" {
+			return nil, fmt.Errorf("run_id must not be empty when provided")
+		}
+	}
+	sess, ok := d.store.Get(p.SessionID)
 	if !ok {
-		return nil, fmt.Errorf("unknown session %s", id)
+		return nil, fmt.Errorf("unknown session %s", p.SessionID)
 	}
 	if !sess.PlanMode {
-		result := map[string]any{"session_id": id, "plan_mode": false, "approved": true}
-		if task := d.approvedPlanBuildTask(id); task != nil {
+		result := map[string]any{"session_id": p.SessionID, "plan_mode": false, "approved": true}
+		if task := d.approvedPlanBuildTask(p.SessionID, expectedRunID); task != nil {
 			result["task"] = task
+			return result, nil
+		}
+		if expectedRunID != "" {
+			return nil, fmt.Errorf("stale plan run %s: it is not the approved plan for this session", expectedRunID)
 		}
 		return result, nil
 	}
-	latest := d.latestSessionTask(id)
-	if _, err := d.store.SetPlanMode(id, false); err != nil {
+	latest := d.latestSessionTask(p.SessionID)
+	if expectedRunID != "" && (latest == nil || latest.RunID != expectedRunID || latest.Status != "completed" ||
+		latest.Agent != "plan" || latest.ResultKind != "plan" || strings.TrimSpace(latest.Summary) == "") {
+		return nil, fmt.Errorf("stale plan run %s: it is not the latest completed typed plan for this session", expectedRunID)
+	}
+	if _, err := d.store.SetPlanMode(p.SessionID, false); err != nil {
 		return nil, err
 	}
-	d.setPlanMode(id, false)
-	if err := d.noticePlanModeSwitch(id, false); err != nil {
-		_, _ = d.store.SetPlanMode(id, true)
-		d.setPlanMode(id, true)
+	d.setPlanMode(p.SessionID, false)
+	if err := d.noticePlanModeSwitch(p.SessionID, false); err != nil {
+		_, _ = d.store.SetPlanMode(p.SessionID, true)
+		d.setPlanMode(p.SessionID, true)
 		return nil, fmt.Errorf("persist plan approval notification: %w", err)
 	}
-	result := map[string]any{"session_id": id, "plan_mode": false, "approved": true}
+	result := map[string]any{"session_id": p.SessionID, "plan_mode": false, "approved": true}
 	if latest == nil || latest.Status != "completed" || latest.Agent != "plan" || latest.ResultKind != "plan" || strings.TrimSpace(latest.Summary) == "" {
 		return result, nil
 	}
@@ -2217,7 +2238,7 @@ func (d *Daemon) handleApprovePlan(params json.RawMessage) (any, error) {
 	}
 	submissionID := "plan-approval:" + latest.RunID
 	buildParams, err := json.Marshal(map[string]any{
-		"session_id":           id,
+		"session_id":           p.SessionID,
 		"client_submission_id": submissionID,
 		"prompt":               "Implement this approved plan:\n\n" + strings.TrimSpace(latest.Summary),
 		"model":                model,
@@ -2230,9 +2251,9 @@ func (d *Daemon) handleApprovePlan(params json.RawMessage) (any, error) {
 	}
 	build, err := d.handleTaskSubmit(buildParams)
 	if err != nil {
-		_, _ = d.store.SetPlanMode(id, true)
-		d.setPlanMode(id, true)
-		_ = d.noticePlanModeSwitch(id, true)
+		_, _ = d.store.SetPlanMode(p.SessionID, true)
+		d.setPlanMode(p.SessionID, true)
+		_ = d.noticePlanModeSwitch(p.SessionID, true)
 		return nil, fmt.Errorf("approve plan: submit implementation: %w", err)
 	}
 	result["task"] = build
@@ -2253,16 +2274,21 @@ func (d *Daemon) latestSessionTask(sessionID string) *scheduler.ExecutionRun {
 	return latest
 }
 
-func (d *Daemon) approvedPlanBuildTask(sessionID string) *scheduler.ExecutionRun {
+func (d *Daemon) approvedPlanBuildTask(sessionID, expectedPlanRunID string) *scheduler.ExecutionRun {
 	var latest *scheduler.ExecutionRun
 	for _, task := range d.sched.List() {
 		if task.SessionID != sessionID || task.Agent != "build" ||
 			!strings.HasPrefix(task.ClientSubmissionID, "plan-approval:") {
 			continue
 		}
-		if latest == nil || task.UpdatedAt.After(latest.UpdatedAt) {
+		if latest == nil || task.CreatedAt.After(latest.CreatedAt) ||
+			(task.CreatedAt.Equal(latest.CreatedAt) && task.RunID > latest.RunID) {
 			latest = task
 		}
+	}
+	if expectedPlanRunID != "" && (latest == nil ||
+		latest.ClientSubmissionID != "plan-approval:"+expectedPlanRunID) {
+		return nil
 	}
 	return latest
 }

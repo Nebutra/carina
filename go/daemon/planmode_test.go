@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,9 @@ func TestPlanMode(t *testing.T) {
 	if obs := d.executeAction(sess, task, &action{Tool: "run", Command: []string{"echo", "hi"}}); !strings.Contains(obs, "plan mode") {
 		t.Fatalf("run should be blocked in plan mode, got: %s", obs)
 	}
+	if _, outcome := d.executeActionOutcome(sess, task, &action{Tool: "future_unknown_tool"}); outcome.status != "denied" || outcome.errorCategory != "plan_mode" {
+		t.Fatalf("unknown tool must fail closed at the Plan gate, got: %+v", outcome)
+	}
 
 	// Approving the plan lets edits through the plan gate.
 	d.setPlanMode(sess.SessionID, false)
@@ -44,14 +48,62 @@ func TestPlanMode(t *testing.T) {
 }
 
 func TestPlanModeToolMatrix(t *testing.T) {
-	for tool, blocked := range map[string]bool{
-		"read": false, "list": false, "search": false,
-		"todo": false, "update_plan": false,
-		"patch": true, "run": true, "memory": true,
-	} {
-		if got := planModeBlocksTool(tool); got != blocked {
-			t.Fatalf("planModeBlocksTool(%q) = %v, want %v", tool, got, blocked)
-		}
+	tests := []struct {
+		tool    string
+		blocked bool
+	}{
+		{tool: "list"}, {tool: "read"}, {tool: "search"},
+		{tool: "code.search"}, {tool: "code.symbols"}, {tool: "code.map"},
+		{tool: "code.def"}, {tool: "code.refs"}, {tool: "code.impact"},
+		{tool: "todo"}, {tool: "update_plan"}, {tool: "ask_user"},
+		{tool: "done"}, {tool: "mcp_find"}, {tool: "spawn"},
+		{tool: "patch", blocked: true}, {tool: "run", blocked: true},
+		{tool: "memory", blocked: true}, {tool: "mcp", blocked: true},
+		{tool: "workflow", blocked: true}, {tool: "best_of_n", blocked: true},
+		{tool: "swarm_publish", blocked: true}, {tool: "swarm_receive", blocked: true},
+		{tool: "future_unknown_tool", blocked: true},
+	}
+	for _, test := range tests {
+		t.Run(test.tool, func(t *testing.T) {
+			if got := planModeBlocksTool(test.tool); got != test.blocked {
+				t.Fatalf("planModeBlocksTool(%q) = %v, want %v", test.tool, got, test.blocked)
+			}
+		})
+	}
+}
+
+func TestPlanModeDenialRunsBeforeEffectfulPreToolHook(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+
+	hookOutput := filepath.Join(ws, "plan-hook-ran")
+	if err := os.MkdirAll(filepath.Join(ws, ".carina"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hooks, err := json.Marshal([]HookSpec{{
+		Event:   "PreToolUse",
+		Matcher: "patch",
+		Command: []string{"sh", "-c", `touch "$1"`, "hook", hookOutput},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, ".carina", "hooks.json"), hooks, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sess, _ := d.store.CreateSession(ws, "full-workspace")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "full-workspace", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "probe Plan hook ordering")
+	d.setPlanMode(sess.SessionID, true)
+
+	_, outcome := d.executeActionOutcome(sess, task, &action{
+		Tool: "patch", Path: "blocked.txt", Content: "blocked\n",
+	})
+	if outcome.status != "denied" || outcome.errorCategory != "plan_mode" {
+		t.Fatalf("Plan patch outcome = %+v", outcome)
+	}
+	if _, err := os.Stat(hookOutput); !os.IsNotExist(err) {
+		t.Fatalf("Plan-denied tool ran its effectful PreToolUse hook: %v", err)
 	}
 }
 
@@ -179,6 +231,203 @@ func TestApproveCompletedPlanSubmitsOneInheritedBuildTask(t *testing.T) {
 	}
 	if got := len(d.sched.List()); got != 2 {
 		t.Fatalf("repeated approval created duplicate tasks: %d", got)
+	}
+}
+
+func TestApprovePlanExpectedRunRejectsStaleWithoutMutation(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "full-workspace")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "full-workspace", nil)
+
+	stale := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, "first plan", "", "plan", nil)
+	if _, err := d.sched.SetTerminalResultFenced(stale.RunID, 0, "completed", "1. old", nil); err != nil {
+		t.Fatal(err)
+	}
+	d.sched.SetResultKind(stale.RunID, "plan")
+	current := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, "revised plan", "", "plan", nil)
+	if _, err := d.sched.SetTerminalResultFenced(current.RunID, 0, "completed", "1. current", nil); err != nil {
+		t.Fatal(err)
+	}
+	d.sched.SetResultKind(current.RunID, "plan")
+	if latest := d.latestSessionTask(sess.SessionID); latest == nil || latest.RunID != current.RunID {
+		t.Fatalf("latest task = %+v, want %s", latest, current.RunID)
+	}
+	if _, err := d.handlePlanMode(mustJSON(t, map[string]any{"session_id": sess.SessionID, "on": true})); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeTasks := len(d.sched.List())
+	_, err := d.handleApprovePlan(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID,
+		"run_id":     stale.RunID,
+	}))
+	if err == nil || !strings.Contains(err.Error(), "stale plan run") {
+		t.Fatalf("stale approval error = %v", err)
+	}
+	stored, ok := d.store.Get(sess.SessionID)
+	if !ok || !stored.PlanMode || !d.isPlanMode(sess.SessionID) {
+		t.Fatalf("stale approval changed Plan mode: stored=%+v runtime=%v", stored, d.isPlanMode(sess.SessionID))
+	}
+	if got := len(d.sched.List()); got != beforeTasks {
+		t.Fatalf("stale approval changed task count: got %d want %d", got, beforeTasks)
+	}
+	if build := d.approvedPlanBuildTask(sess.SessionID, ""); build != nil {
+		t.Fatalf("stale approval created build task: %+v", build)
+	}
+}
+
+func TestApprovePlanExplicitEmptyRunIDDoesNotUseCompatibilityPath(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "full-workspace")
+	if _, err := d.handlePlanMode(mustJSON(t, map[string]any{"session_id": sess.SessionID, "on": true})); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.handleApprovePlan(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID,
+		"run_id":     "   ",
+	})); err == nil || !strings.Contains(err.Error(), "run_id must not be empty") {
+		t.Fatalf("empty run_id error = %v", err)
+	}
+	stored, _ := d.store.Get(sess.SessionID)
+	if !stored.PlanMode || !d.isPlanMode(sess.SessionID) {
+		t.Fatalf("empty run_id changed Plan mode: stored=%+v runtime=%v", stored, d.isPlanMode(sess.SessionID))
+	}
+}
+
+func TestApprovePlanExpectedRunRequiresLatestCompletedTypedPlan(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	tests := []struct {
+		name       string
+		agent      string
+		status     string
+		resultKind string
+		summary    string
+	}{
+		{name: "answer", agent: "plan", status: "completed", resultKind: "answer", summary: "hello"},
+		{name: "active", agent: "plan", status: "running", resultKind: "plan", summary: "1. inspect"},
+		{name: "build agent", agent: "build", status: "completed", resultKind: "plan", summary: "1. inspect"},
+		{name: "empty summary", agent: "plan", status: "completed", resultKind: "plan"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sess, _ := d.store.CreateSession(ws, "full-workspace")
+			d.kern.InitSessionWithPolicy(sess.SessionID, ws, "full-workspace", nil)
+			run := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, test.name, "", test.agent, nil)
+			d.sched.SetResultKind(run.RunID, test.resultKind)
+			if test.status == "completed" {
+				if _, err := d.sched.SetTerminalResultFenced(run.RunID, 0, "completed", test.summary, nil); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				d.sched.SetStatus(run.RunID, test.status)
+			}
+			if _, err := d.handlePlanMode(mustJSON(t, map[string]any{"session_id": sess.SessionID, "on": true})); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := d.handleApprovePlan(mustJSON(t, map[string]any{
+				"session_id": sess.SessionID,
+				"run_id":     run.RunID,
+			})); err == nil || !strings.Contains(err.Error(), "latest completed typed plan") {
+				t.Fatalf("approval error = %v", err)
+			}
+			stored, _ := d.store.Get(sess.SessionID)
+			if !stored.PlanMode || !d.isPlanMode(sess.SessionID) {
+				t.Fatalf("invalid expected run changed Plan mode: stored=%+v runtime=%v", stored, d.isPlanMode(sess.SessionID))
+			}
+		})
+	}
+}
+
+func TestApprovePlanExpectedRunRetryIsIdempotent(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "full-workspace")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "full-workspace", nil)
+	plan := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, "design it", "", "plan", nil)
+	if _, err := d.sched.SetTerminalResultFenced(plan.RunID, 0, "completed", "1. inspect\n2. implement", nil); err != nil {
+		t.Fatal(err)
+	}
+	d.sched.SetResultKind(plan.RunID, "plan")
+	if _, err := d.handlePlanMode(mustJSON(t, map[string]any{"session_id": sess.SessionID, "on": true})); err != nil {
+		t.Fatal(err)
+	}
+	params := mustJSON(t, map[string]any{"session_id": sess.SessionID, "run_id": plan.RunID})
+
+	firstAny, err := d.handleApprovePlan(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := firstAny.(map[string]any)["task"].(*scheduler.ExecutionRun)
+	secondAny, err := d.handleApprovePlan(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := secondAny.(map[string]any)["task"].(*scheduler.ExecutionRun)
+	if second.RunID != first.RunID || len(d.sched.List()) != 2 {
+		t.Fatalf("expected-run retry was not idempotent: first=%s second=%s tasks=%d", first.RunID, second.RunID, len(d.sched.List()))
+	}
+
+	omittedAny, err := d.handleApprovePlan(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	omitted := omittedAny.(map[string]any)["task"].(*scheduler.ExecutionRun)
+	if omitted.RunID != first.RunID || len(d.sched.List()) != 2 {
+		t.Fatalf("omitted-run retry drifted: first=%s omitted=%s tasks=%d", first.RunID, omitted.RunID, len(d.sched.List()))
+	}
+}
+
+func TestApprovePlanExpectedRunRetryRejectsASupersededApproval(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "full-workspace")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "full-workspace", nil)
+
+	approve := func(prompt, summary string) (*scheduler.ExecutionRun, *scheduler.ExecutionRun) {
+		plan := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, prompt, "", "plan", nil)
+		if _, err := d.sched.SetTerminalResultFenced(plan.RunID, 0, "completed", summary, nil); err != nil {
+			t.Fatal(err)
+		}
+		d.sched.SetResultKind(plan.RunID, "plan")
+		if _, err := d.handlePlanMode(mustJSON(t, map[string]any{"session_id": sess.SessionID, "on": true})); err != nil {
+			t.Fatal(err)
+		}
+		approvedAny, err := d.handleApprovePlan(mustJSON(t, map[string]any{
+			"session_id": sess.SessionID,
+			"run_id":     plan.RunID,
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plan, approvedAny.(map[string]any)["task"].(*scheduler.ExecutionRun)
+	}
+
+	firstPlan, firstBuild := approve("first plan", "1. first")
+	if _, err := d.sched.SetTerminalResultFenced(firstBuild.RunID, 0, "completed", "implemented first", nil); err != nil {
+		t.Fatal(err)
+	}
+	_, secondBuild := approve("second plan", "1. second")
+	// A later lifecycle update to the old Build must not reclaim approval identity.
+	d.sched.SetStatus(firstBuild.RunID, "completed")
+	beforeTasks := len(d.sched.List())
+
+	_, err := d.handleApprovePlan(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID,
+		"run_id":     firstPlan.RunID,
+	}))
+	if err == nil || !strings.Contains(err.Error(), "stale plan run") {
+		t.Fatalf("superseded approval retry error = %v", err)
+	}
+	if got := len(d.sched.List()); got != beforeTasks {
+		t.Fatalf("superseded retry changed task count: got %d want %d", got, beforeTasks)
+	}
+	if latest := d.approvedPlanBuildTask(sess.SessionID, ""); latest == nil || latest.RunID != secondBuild.RunID {
+		t.Fatalf("latest approved Build = %+v, want %s", latest, secondBuild.RunID)
 	}
 }
 

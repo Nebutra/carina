@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-04T01:58:43.355Z",
+  "generated_at": "2026-08-10T08:35:12.675Z",
   "protocol_version": "1.6.0",
   "source": "protocol/jsonrpc/methods.json",
   "method_count": 167,
@@ -493,9 +493,10 @@
           "remote": false,
           "control_plane_write": false,
           "params": {
-            "session_id": "string"
+            "session_id": "string",
+            "run_id": "string? (expected latest completed typed Plan run)"
           },
-          "result": "{ session_id: string, plan_mode: false, approved: true, task: Task? }; a completed plan queues exactly one build task"
+          "result": "{ session_id: string, plan_mode: false, approved: true, task: Task? }; a matching completed plan queues exactly one build task; omitted run_id preserves compatibility"
         },
         {
           "method": "session.add_dir",

@@ -12,6 +12,7 @@ use ratatui::widgets::{
     StatefulWidgetRef, Wrap,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use xai_ratatui_textarea::wrapping::{RtOptions, word_wrap_line};
 
 use super::{
     App, Focus, LOCALES, Phase, ScreenMode, TranscriptHeightCache, TranscriptHeightCacheEntry,
@@ -34,13 +35,14 @@ use crate::layout_contract;
 use crate::markdown::{
     MarkdownTheme, StyledPrefix, render_prefixed as render_markdown_prefixed, wrap_styled_lines,
 };
-use crate::overlay::{ApprovalScope, ChangesFocus, Overlay};
+use crate::overlay::{ApprovalScope, ChangesFocus, Overlay, PlanReviewOverlay};
 use crate::patch_review::{PatchDisposition, PatchReview};
 use crate::prerequisite::{BrowserLayout, PickerWindow, PrerequisiteLayout};
 use crate::product_header::{HeaderAction, ProductHeader};
 use crate::product_projection::{
     ActivityKind, AgentCategory, ChangeKind, FileChangeKind, ProductStatus,
 };
+use crate::rpc::ModelProvider;
 use crate::semantic_cell::SemanticCellKind;
 use crate::session_browser::SessionScope;
 use crate::tool_projection::{visible_group_members_with_limits, visible_output_lines_with_limits};
@@ -335,7 +337,14 @@ impl App {
         let is_ccswitch = provider.source_kind == "cc-switch";
         let active_route = provider.source_route == "managed_proxy";
         let execution_ready = self.inventory.is_provider_runnable(provider);
-        let (state_glyph, state, state_color) = if execution_ready {
+        let has_compatible_models = provider_has_compatible_models(provider);
+        let (state_glyph, state, state_color) = if execution_ready && !has_compatible_models {
+            (
+                self.theme.glyphs.empty(),
+                tr(locale, MessageId::Unavailable),
+                self.theme.warning,
+            )
+        } else if execution_ready {
             (
                 self.theme.glyphs.ready(),
                 tr(locale, MessageId::Ready),
@@ -408,6 +417,8 @@ impl App {
             } else {
                 tr(locale, MessageId::ConfirmImport)
             }
+        } else if execution_ready && !has_compatible_models {
+            tr(locale, MessageId::DiagnosticOnly)
         } else if execution_ready {
             tr(locale, MessageId::UseProvider)
         } else if provider.registered && provider.available {
@@ -424,6 +435,7 @@ impl App {
             tr(locale, MessageId::Connect)
         };
         let disabled = import_validating
+            || (execution_ready && !has_compatible_models)
             || (is_ccswitch && !provider.source_importable && !provider.available);
         let name = if provider.name.is_empty() {
             provider.id.as_str()
@@ -547,8 +559,15 @@ impl App {
                 provider.name.as_str()
             };
             let execution_ready = self.inventory.is_provider_runnable(provider);
+            let has_compatible_models = provider_has_compatible_models(provider);
             let active_route = provider.source_route == "managed_proxy";
-            let (state_glyph, state, state_color) = if execution_ready {
+            let (state_glyph, state, state_color) = if execution_ready && !has_compatible_models {
+                (
+                    self.theme.glyphs.empty(),
+                    tr(locale, MessageId::Unavailable),
+                    self.theme.warning,
+                )
+            } else if execution_ready {
                 (
                     self.theme.glyphs.ready(),
                     tr(locale, MessageId::Ready),
@@ -805,90 +824,104 @@ impl App {
         let is_ccswitch = provider.source_kind == "cc-switch";
         let active_route = provider.source_route == "managed_proxy";
         let execution_ready = self.inventory.is_provider_runnable(provider);
-        let (state_glyph, state, state_color, guidance) = if execution_ready {
-            (
-                self.theme.glyphs.ready(),
-                tr(locale, MessageId::Ready),
-                self.theme.success,
-                tr(locale, MessageId::ProviderAvailableDetail),
-            )
-        } else if provider.registered && provider.available {
-            (
-                self.theme.glyphs.empty(),
-                tr(locale, MessageId::RuntimeUnavailable),
-                self.theme.warning,
-                tr(locale, MessageId::ProviderBackendNotReadyDetail),
-            )
-        } else if import_validating {
-            (
-                validation_glyph,
-                tr(locale, MessageId::ValidatingProvider),
-                self.theme.accent,
-                tr(locale, MessageId::ProviderValidationDetail),
-            )
-        } else if let Some(message) = import_failure {
-            (
-                "!",
-                tr(locale, MessageId::ImportFailed),
-                self.theme.danger,
-                message,
-            )
-        } else if is_ccswitch && provider.source_importable && import_reviewing {
-            (
-                self.theme.glyphs.diamond_solid(),
-                if active_route {
-                    tr(locale, MessageId::ReadyToUse)
-                } else {
-                    tr(locale, MessageId::ReadyToImport)
-                },
-                self.theme.accent,
-                if active_route {
-                    tr(locale, MessageId::ActiveProxyImportDetail)
-                } else {
-                    tr(locale, MessageId::SavedProfileImportDetail)
-                },
-            )
-        } else if is_ccswitch && provider.source_importable {
-            (
-                self.theme.glyphs.diamond_solid(),
-                if active_route {
-                    tr(locale, MessageId::ActiveRoute)
-                } else {
-                    tr(locale, MessageId::SavedProfile)
-                },
-                self.theme.accent,
-                if active_route {
-                    tr(locale, MessageId::ActiveProxyReviewDetail)
-                } else {
-                    tr(locale, MessageId::SavedProfileReviewDetail)
-                },
-            )
-        } else if is_ccswitch {
-            (
-                self.theme.glyphs.diamond_open(),
-                if provider.source_auth_mode == "cli_oauth" {
-                    tr(locale, MessageId::CliOauth)
-                } else {
-                    tr(locale, MessageId::Unavailable)
-                },
-                self.theme.muted,
-                provider.source_reason.as_str(),
-            )
-        } else if provider.registered {
-            (
-                self.theme.glyphs.empty(),
-                tr(locale, MessageId::CredentialRequired),
-                self.theme.warning,
-                tr(locale, MessageId::CredentialSafetyDetail),
-            )
-        } else {
-            (
-                self.theme.glyphs.unavailable(),
-                tr(locale, MessageId::NotRegistered),
-                self.theme.muted,
-                tr(locale, MessageId::ProviderConnectDetail),
-            )
-        };
+        let has_compatible_models = provider_has_compatible_models(provider);
+        let no_models_guidance = tr_format(
+            locale,
+            MessageId::ProviderNoCompatibleModels,
+            &[("provider", name)],
+        );
+        let (state_glyph, state, state_color, guidance) =
+            if execution_ready && !has_compatible_models {
+                (
+                    self.theme.glyphs.empty(),
+                    tr(locale, MessageId::Unavailable),
+                    self.theme.warning,
+                    no_models_guidance.as_str(),
+                )
+            } else if execution_ready {
+                (
+                    self.theme.glyphs.ready(),
+                    tr(locale, MessageId::Ready),
+                    self.theme.success,
+                    tr(locale, MessageId::ProviderAvailableDetail),
+                )
+            } else if provider.registered && provider.available {
+                (
+                    self.theme.glyphs.empty(),
+                    tr(locale, MessageId::RuntimeUnavailable),
+                    self.theme.warning,
+                    tr(locale, MessageId::ProviderBackendNotReadyDetail),
+                )
+            } else if import_validating {
+                (
+                    validation_glyph,
+                    tr(locale, MessageId::ValidatingProvider),
+                    self.theme.accent,
+                    tr(locale, MessageId::ProviderValidationDetail),
+                )
+            } else if let Some(message) = import_failure {
+                (
+                    "!",
+                    tr(locale, MessageId::ImportFailed),
+                    self.theme.danger,
+                    message,
+                )
+            } else if is_ccswitch && provider.source_importable && import_reviewing {
+                (
+                    self.theme.glyphs.diamond_solid(),
+                    if active_route {
+                        tr(locale, MessageId::ReadyToUse)
+                    } else {
+                        tr(locale, MessageId::ReadyToImport)
+                    },
+                    self.theme.accent,
+                    if active_route {
+                        tr(locale, MessageId::ActiveProxyImportDetail)
+                    } else {
+                        tr(locale, MessageId::SavedProfileImportDetail)
+                    },
+                )
+            } else if is_ccswitch && provider.source_importable {
+                (
+                    self.theme.glyphs.diamond_solid(),
+                    if active_route {
+                        tr(locale, MessageId::ActiveRoute)
+                    } else {
+                        tr(locale, MessageId::SavedProfile)
+                    },
+                    self.theme.accent,
+                    if active_route {
+                        tr(locale, MessageId::ActiveProxyReviewDetail)
+                    } else {
+                        tr(locale, MessageId::SavedProfileReviewDetail)
+                    },
+                )
+            } else if is_ccswitch {
+                (
+                    self.theme.glyphs.diamond_open(),
+                    if provider.source_auth_mode == "cli_oauth" {
+                        tr(locale, MessageId::CliOauth)
+                    } else {
+                        tr(locale, MessageId::Unavailable)
+                    },
+                    self.theme.muted,
+                    provider.source_reason.as_str(),
+                )
+            } else if provider.registered {
+                (
+                    self.theme.glyphs.empty(),
+                    tr(locale, MessageId::CredentialRequired),
+                    self.theme.warning,
+                    tr(locale, MessageId::CredentialSafetyDetail),
+                )
+            } else {
+                (
+                    self.theme.glyphs.unavailable(),
+                    tr(locale, MessageId::NotRegistered),
+                    self.theme.muted,
+                    tr(locale, MessageId::ProviderConnectDetail),
+                )
+            };
         let model_count = if is_ccswitch && !provider.available {
             provider.models.len()
         } else {
@@ -908,6 +941,8 @@ impl App {
             } else {
                 tr(locale, MessageId::ConfirmImport)
             }
+        } else if execution_ready && !has_compatible_models {
+            tr(locale, MessageId::DiagnosticOnly)
         } else if execution_ready {
             tr(locale, MessageId::UseProvider)
         } else if provider.registered && provider.available {
@@ -1034,6 +1069,7 @@ impl App {
         );
         let component = ComponentId(951);
         let disabled = import_validating
+            || (execution_ready && !has_compatible_models)
             || (is_ccswitch && !provider.source_importable && !provider.available);
         let style = if self.interactions.hovered(component) && !self.theme.no_color {
             self.theme.action().add_modifier(Modifier::UNDERLINED)
@@ -3622,8 +3658,24 @@ impl App {
                 );
             }
             Overlay::PlanReview(review) => {
-                let popup = bottom_sheet(area, 92, 24);
-                frame.render_widget(Clear, popup);
+                let maximum_popup = bottom_sheet(area, 96, 28);
+                let plan_width = maximum_popup
+                    .width
+                    .saturating_sub(layout_contract::PANEL_PADDING)
+                    .max(layout_contract::MIN_DIMENSION);
+                let line_groups = self.plan_review_line_groups(review, plan_width);
+                let total_visual_rows = line_groups.iter().map(Vec::len).sum::<usize>();
+                let popup = bottom_sheet(area, 96, plan_review_popup_height(total_visual_rows));
+                let clear = Rect::new(
+                    popup.x.saturating_sub(1),
+                    popup.y,
+                    popup
+                        .width
+                        .saturating_add(2)
+                        .min(area.right().saturating_sub(popup.x.saturating_sub(1))),
+                    popup.height,
+                );
+                frame.render_widget(Clear, clear);
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
@@ -3635,12 +3687,18 @@ impl App {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Length(layout_contract::COMPACT_SECTION_HEIGHT),
+                        Constraint::Length(layout_contract::COMPACT_SECTION_HEIGHT + 1),
                         Constraint::Min(layout_contract::QUESTION_BODY_MIN_HEIGHT),
                         Constraint::Length(layout_contract::CONTROL_HEIGHT),
-                        Constraint::Length(layout_contract::ROW_HEIGHT),
+                        Constraint::Length(layout_contract::ROW_HEIGHT + 1),
                     ])
                     .split(inner.inner(Margin::new(1, 0)));
+                let comment_count = tr_count(
+                    locale,
+                    MessageId::PlanCommentCountOne,
+                    MessageId::PlanCommentCountOther,
+                    review.comment_count(),
+                );
                 frame.render_widget(
                     Paragraph::new(vec![
                         Line::from(Span::styled(
@@ -3651,27 +3709,93 @@ impl App {
                             tr(locale, MessageId::PlanDecisionDetail),
                             Style::default().fg(self.theme.muted),
                         )),
+                        Line::from(Span::styled(
+                            comment_count,
+                            Style::default().fg(self.theme.muted),
+                        )),
                     ])
                     .wrap(Wrap { trim: false }),
                     chunks[0],
                 );
+                let plan_block = Block::default()
+                    .borders(Borders::TOP | Borders::BOTTOM)
+                    .border_type(self.theme.glyphs.outer_border_type())
+                    .border_style(Style::default().fg(self.theme.border))
+                    .title(format!(" {} ", tr(locale, MessageId::PlanCandidate)));
+                let plan_body = plan_block.inner(chunks[1]);
+                frame.render_widget(plan_block, chunks[1]);
+                let body_height = usize::from(plan_body.height);
+                let cursor = review.cursor.min(line_groups.len().saturating_sub(1));
+                let mut start = if review.commenting {
+                    review.scroll.min(line_groups.len().saturating_sub(1))
+                } else {
+                    review.scroll.min(cursor)
+                };
+                let mut cursor_rows = line_groups
+                    .get(start..=cursor)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(Vec::len)
+                    .sum::<usize>();
+                while cursor_rows > body_height && start < cursor {
+                    cursor_rows = cursor_rows.saturating_sub(line_groups[start].len());
+                    start += 1;
+                }
+                let rendered = line_groups
+                    .iter()
+                    .skip(start)
+                    .flatten()
+                    .take(body_height)
+                    .cloned()
+                    .collect::<Vec<_>>();
                 frame.render_widget(
-                    Paragraph::new(review.summary.as_str())
-                        .scroll((review.scroll.min(u16::MAX as usize) as u16, 0))
-                        .wrap(Wrap { trim: false })
-                        .block(
-                            Block::default()
-                                .borders(Borders::TOP | Borders::BOTTOM)
-                                .border_type(self.theme.glyphs.outer_border_type())
-                                .border_style(Style::default().fg(self.theme.border))
-                                .title(format!(" {} ", tr(locale, MessageId::PlanCandidate))),
-                        ),
-                    chunks[1],
+                    Paragraph::new(rendered).style(Style::default().fg(self.theme.text)),
+                    plan_body,
                 );
+                if total_visual_rows > body_height {
+                    let mut scrollbar_state = ScrollbarState::new(review.line_count())
+                        .viewport_content_length(body_height.min(review.line_count()))
+                        .position(review.cursor);
+                    frame.render_stateful_widget(
+                        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                            .thumb_style(self.theme.focus())
+                            .track_style(Style::default().fg(self.theme.border))
+                            .begin_symbol(Some(self.theme.glyphs.up()))
+                            .end_symbol(Some(self.theme.glyphs.down())),
+                        plan_body,
+                        &mut scrollbar_state,
+                    );
+                }
                 if review.resolving {
                     frame.render_widget(
                         Paragraph::new(tr(locale, MessageId::PlanApproving))
                             .style(Style::default().fg(self.theme.accent)),
+                        chunks[2],
+                    );
+                } else if review.commenting {
+                    let range = review
+                        .comment_range()
+                        .map(|(start, end)| {
+                            if start == end {
+                                format!("L{}", start + 1)
+                            } else {
+                                format!("L{}-L{}", start + 1, end + 1)
+                            }
+                        })
+                        .unwrap_or_else(|| "L1".to_owned());
+                    let prompt = tr_format(
+                        locale,
+                        MessageId::PlanCommentPrompt,
+                        &[("range", range.as_str())],
+                    );
+                    frame.render_widget(
+                        Paragraph::new(vec![
+                            Line::from(Span::styled(prompt, Style::default().fg(self.theme.muted))),
+                            Line::from(vec![
+                                Span::styled(self.theme.glyphs.prompt(), self.theme.focus()),
+                                Span::styled(review.comment_draft.clone(), self.theme.selected()),
+                            ]),
+                        ]),
                         chunks[2],
                     );
                 } else {
@@ -3681,21 +3805,31 @@ impl App {
                         &[
                             (tr(locale, MessageId::Approve), Action::ApprovePlan, 12_801),
                             (tr(locale, MessageId::Revise), Action::RevisePlan, 12_802),
-                            (tr(locale, MessageId::Cancel), Action::CancelPlan, 12_803),
+                            (
+                                tr(locale, MessageId::Comment),
+                                Action::BeginPlanComment,
+                                12_803,
+                            ),
+                            (
+                                tr(locale, MessageId::CloseReview),
+                                Action::CancelPlan,
+                                12_804,
+                            ),
                         ],
                     );
                 }
                 frame.render_widget(
                     Paragraph::new(if review.error.is_empty() {
-                        tr(locale, MessageId::PlanHint)
+                        crate::help::plan_review_hint_line(locale)
                     } else {
-                        review.error.as_str()
+                        review.error.clone()
                     })
                     .style(Style::default().fg(if review.error.is_empty() {
                         self.theme.muted
                     } else {
                         self.theme.danger
-                    })),
+                    }))
+                    .wrap(Wrap { trim: false }),
                     chunks[3],
                 );
             }
@@ -4842,6 +4976,83 @@ impl App {
         }
     }
 
+    fn plan_review_line_groups(
+        &self,
+        review: &PlanReviewOverlay,
+        width: u16,
+    ) -> Vec<Vec<Line<'static>>> {
+        let line_number_width = review.line_count().max(1).to_string().len();
+        let mut line_groups = Vec::with_capacity(review.line_count());
+        for (index, logical) in review.lines().iter().enumerate() {
+            let selected = index == review.cursor;
+            let marked = review.line_is_marked(index);
+            let row_style = if selected {
+                self.theme.selected()
+            } else if marked {
+                Style::default().fg(self.theme.warning)
+            } else {
+                Style::default().fg(self.theme.text)
+            };
+            let cursor = if selected {
+                self.theme.glyphs.selected_cell()
+            } else {
+                " "
+            };
+            let comment = if review.line_has_comments(index) {
+                self.theme.glyphs.bullet()
+            } else {
+                " "
+            };
+            let initial_indent = Line::from(vec![
+                Span::styled(cursor.to_owned(), row_style),
+                Span::styled(
+                    format!(
+                        " {:>width$}",
+                        format!("L{}", index + 1),
+                        width = line_number_width + 1
+                    ),
+                    if selected || marked {
+                        row_style
+                    } else {
+                        Style::default().fg(self.theme.muted)
+                    },
+                ),
+                Span::styled(
+                    format!(" {comment} "),
+                    if review.line_has_comments(index) {
+                        Style::default().fg(self.theme.warning)
+                    } else {
+                        row_style
+                    },
+                ),
+            ]);
+            let subsequent_indent =
+                Line::from(Span::styled(" ".repeat(initial_indent.width()), row_style));
+            let logical_line = Line::from(Span::styled(logical.clone(), row_style));
+            let lines = word_wrap_line(
+                &logical_line,
+                RtOptions::new(usize::from(width.max(1)))
+                    .initial_indent(initial_indent)
+                    .subsequent_indent(subsequent_indent),
+            );
+            line_groups.push(
+                lines
+                    .into_iter()
+                    .map(|line| {
+                        Line::from(
+                            line.spans
+                                .into_iter()
+                                .map(|span| Span::styled(span.content.into_owned(), span.style))
+                                .collect::<Vec<_>>(),
+                        )
+                        .style(row_style)
+                    })
+                    .collect(),
+            );
+        }
+        line_groups
+    }
+
     fn render_fullscreen_patch_review(
         &mut self,
         frame: &mut Frame<'_>,
@@ -5948,6 +6159,10 @@ fn provider_state_column_width(glyph: &str, state: &str) -> u16 {
         .saturating_add(display_cells(state))
         .saturating_add(layout_contract::LABEL_CELL_PAD)
         .max(layout_contract::PANEL_PADDING)
+}
+
+fn provider_has_compatible_models(provider: &ModelProvider) -> bool {
+    provider.models.iter().any(|model| model.available)
 }
 
 /// Padded action button width for ` {label} `.
@@ -7364,6 +7579,27 @@ fn bottom_sheet(area: Rect, max_width: u16, max_height: u16) -> Rect {
     )
 }
 
+fn plan_review_popup_height(visual_rows: usize) -> u16 {
+    const MAX_HEIGHT: u16 = 28;
+    const PLAN_FRAME_HEIGHT: u16 = 2;
+
+    let fixed_chrome = layout_contract::BLOCK_PADDING
+        + layout_contract::COMPACT_SECTION_HEIGHT
+        + layout_contract::ROW_HEIGHT
+        + layout_contract::CONTROL_HEIGHT
+        + layout_contract::ROW_HEIGHT
+        + layout_contract::ROW_HEIGHT
+        + PLAN_FRAME_HEIGHT;
+    let minimum_body = layout_contract::QUESTION_BODY_MIN_HEIGHT
+        .saturating_sub(PLAN_FRAME_HEIGHT)
+        .max(layout_contract::MIN_DIMENSION);
+    let maximum_body = MAX_HEIGHT.saturating_sub(fixed_chrome);
+    let body = u16::try_from(visual_rows)
+        .unwrap_or(u16::MAX)
+        .clamp(minimum_body, maximum_body);
+    fixed_chrome + body
+}
+
 fn first_non_empty<'a>(first: &'a str, second: &'a str, fallback: &'a str) -> &'a str {
     if !first.is_empty() {
         first
@@ -7493,6 +7729,8 @@ fn fit_media_preview_size(
 #[cfg(test)]
 mod transcript_tests {
     use super::*;
+    use crate::overlay::PlanReviewOverlay;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
     use ratatui::style::Color;
 
     fn production_render_app() -> (App, std::path::PathBuf, std::thread::JoinHandle<()>) {
@@ -8680,6 +8918,493 @@ mod transcript_tests {
                     .map(|byte| (row, UnicodeWidthStr::width(&line[..byte])))
             })
             .unwrap_or_else(|| panic!("missing visual-density anchor {anchor:?}"))
+    }
+
+    fn plan_review_fixture(locale: Locale) -> PlanReviewOverlay {
+        let summary = if locale == Locale::ZhHans {
+            [
+                "1. 检查会话投影边界与计划身份。",
+                "2. 保持中文批注归属，即使这一条计划内容很长并且在八十列终端中需要自然换行，也不能改变逻辑行锚点。",
+                "3. 验证无颜色和 ASCII 回退时的坐标。",
+                "4. 读取相关协议与现有测试。",
+                "5. 更新审批请求但不绕过治理。",
+                "6. 运行聚焦测试与完整质量门禁。",
+                "7. 检查重新打开计划的行为。",
+                "8. 保留输入框中已有的草稿。",
+                "9. 验证鼠标滚轮和键盘导航一致。",
+                "10. 检查多语言按钮不会溢出。",
+                "11. 确认关闭审阅不会执行计划。",
+                "12. 记录最终验证结果。",
+            ]
+            .join("\n")
+        } else {
+            [
+                "1. Inspect the session projection boundary and Plan identity.",
+                "2. Preserve comment ownership across a deliberately long terminal line that wraps at eighty columns without changing its logical line anchor.",
+                "3. Verify coordinates in no-color and ASCII fallback modes.",
+                "4. Read the relevant protocol and existing tests.",
+                "5. Update approval requests without bypassing governance.",
+                "6. Run focused tests and the complete quality gates.",
+                "7. Check the behavior for reopening the current plan.",
+                "8. Preserve any draft that already exists in the composer.",
+                "9. Verify mouse-wheel and keyboard navigation parity.",
+                "10. Check that localized actions remain inside the popup.",
+                "11. Confirm closing the review executes nothing.",
+                "12. Record the final verification outcome.",
+            ]
+            .join("\n")
+        };
+        let mut review = PlanReviewOverlay::new("run-plan-review", summary);
+        review.cursor = 1;
+        review.toggle_mark();
+        review.move_down(8);
+        review.begin_comment();
+        review.append_comment(if locale == Locale::ZhHans {
+            "这里需要补充失败路径。"
+        } else {
+            "Add the failure path here."
+        });
+        assert!(review.commit_comment());
+        review.cursor = 1;
+        review.clamp(8);
+        review
+    }
+
+    fn render_plan_review(
+        width: u16,
+        locale: Locale,
+        glyph_mode: crate::glyphs::GlyphMode,
+        polarity: crate::theme::Polarity,
+        color_level: crate::theme::ColorLevel,
+        selected_line: usize,
+    ) -> String {
+        let (mut app, root, server) = production_render_app();
+        app.options.workspace = std::path::PathBuf::from("/workspace/carina");
+        app.options.locale = Some(locale.product_id().into());
+        app.locale_index = Locale::ALL
+            .iter()
+            .position(|candidate| *candidate == locale)
+            .unwrap_or_default();
+        app.theme = crate::theme::Theme::new(polarity, color_level);
+        app.theme.glyphs = Glyphs::new(glyph_mode);
+        let mut review = plan_review_fixture(locale);
+        review.cursor = selected_line.min(review.line_count().saturating_sub(1));
+        review.clamp(8);
+        app.overlays.replace(Overlay::PlanReview(review));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 30)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = rendered_frame_contract(terminal.backend().buffer());
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        rendered
+    }
+
+    #[test]
+    fn plan_review_visual_matrix_owns_wrapping_comments_and_actions() {
+        for (locale_name, locale, anchor) in [
+            ("en", Locale::En, "Preserve comment ownership"),
+            ("zh_hans", Locale::ZhHans, "保持中文批注归属"),
+        ] {
+            let mut anchor_rows = Vec::new();
+            for width in [80, 120, 160] {
+                let rendered = render_plan_review(
+                    width,
+                    locale,
+                    crate::glyphs::GlyphMode::Unicode,
+                    crate::theme::Polarity::Dark,
+                    crate::theme::ColorLevel::TrueColor,
+                    1,
+                );
+                for required in [
+                    tr(locale, MessageId::PlanReview),
+                    tr(locale, MessageId::Approve),
+                    tr(locale, MessageId::Revise),
+                    tr(locale, MessageId::Comment),
+                    tr(locale, MessageId::CloseReview),
+                    anchor,
+                ] {
+                    assert!(
+                        visible_contract(&rendered).contains(required),
+                        "{width}-column {locale_name} Plan Review cropped {required:?}"
+                    );
+                }
+                assert!(
+                    visible_contract(&rendered)
+                        .contains(Glyphs::new(crate::glyphs::GlyphMode::Unicode).bullet())
+                );
+                anchor_rows.push(anchor_position(&rendered, anchor).0);
+                insta::assert_snapshot!(format!("plan_review_{locale_name}_{width}"), rendered);
+            }
+            assert_eq!(anchor_rows[1], anchor_rows[2]);
+        }
+    }
+
+    #[test]
+    fn plan_review_fallback_axes_preserve_terminal_cell_anchors() {
+        for width in [80, 120, 160] {
+            for (locale, content_anchor) in [
+                (Locale::En, "Preserve comment ownership"),
+                (Locale::ZhHans, "保持中文批注归属"),
+            ] {
+                let baseline = render_plan_review(
+                    width,
+                    locale,
+                    crate::glyphs::GlyphMode::Unicode,
+                    crate::theme::Polarity::Dark,
+                    crate::theme::ColorLevel::TrueColor,
+                    1,
+                );
+                let anchors = [
+                    content_anchor,
+                    tr(locale, MessageId::Approve),
+                    tr(locale, MessageId::Comment),
+                    tr(locale, MessageId::CloseReview),
+                ];
+                for (glyph_mode, polarity, color_level) in [
+                    (
+                        crate::glyphs::GlyphMode::Ascii,
+                        crate::theme::Polarity::Dark,
+                        crate::theme::ColorLevel::None,
+                    ),
+                    (
+                        crate::glyphs::GlyphMode::Unicode,
+                        crate::theme::Polarity::Dark,
+                        crate::theme::ColorLevel::Basic,
+                    ),
+                    (
+                        crate::glyphs::GlyphMode::Unicode,
+                        crate::theme::Polarity::Dark,
+                        crate::theme::ColorLevel::Ansi256,
+                    ),
+                    (
+                        crate::glyphs::GlyphMode::Unicode,
+                        crate::theme::Polarity::Light,
+                        crate::theme::ColorLevel::TrueColor,
+                    ),
+                ] {
+                    let fallback =
+                        render_plan_review(width, locale, glyph_mode, polarity, color_level, 1);
+                    for anchor in anchors {
+                        assert_eq!(
+                            anchor_position(&baseline, anchor),
+                            anchor_position(&fallback, anchor),
+                            "{width}-column {locale:?} fallback moved {anchor:?}"
+                        );
+                    }
+                }
+                let other_selection = render_plan_review(
+                    width,
+                    locale,
+                    crate::glyphs::GlyphMode::Unicode,
+                    crate::theme::Polarity::Dark,
+                    crate::theme::ColorLevel::TrueColor,
+                    0,
+                );
+                for anchor in anchors {
+                    assert_eq!(
+                        anchor_position(&baseline, anchor),
+                        anchor_position(&other_selection, anchor),
+                        "{width}-column {locale:?} selection moved {anchor:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn short_plan_review_hugs_its_content_without_losing_actions() {
+        let (mut app, root, server) = production_render_app();
+        app.options.workspace = std::path::PathBuf::from("/workspace/carina");
+        app.overlays
+            .replace(Overlay::PlanReview(PlanReviewOverlay::new(
+                "run-short-plan",
+                "Verify provider recovery before applying changes.",
+            )));
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+        let title_row = anchor_position(&rendered, tr(Locale::En, MessageId::PlanReview)).0;
+        let hint_row = anchor_position(&rendered, "A Approve S Revise").0;
+
+        assert!(rendered.contains("Verify provider recovery before applying changes."));
+        assert!(rendered.contains("[ Approve ]"));
+        assert!(rendered.contains("[ Close review ]"));
+        assert!(title_row >= 20, "short review should remain a bottom sheet");
+        assert!(
+            hint_row.saturating_sub(title_row) <= 13,
+            "short review should not reserve the 28-row long-plan height"
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn plan_review_owns_paste_comment_navigation_and_revision_draft_state() {
+        let (mut app, root, server) = production_render_app();
+        app.composer.set_text("Keep this operator draft.  ");
+        let summary = "inspect\nchange\nverify\ndocument\nship\nreview\npolish\ntest\npackage\nrelease\nobserve\nreport";
+        let mut review = PlanReviewOverlay::new("run-plan-input", summary);
+        review.move_down(3);
+        assert!(review.begin_comment());
+        app.overlays.replace(Overlay::PlanReview(review));
+
+        app.handle_event(Event::Paste("补充 failure path\r\n再验证".into()))
+            .unwrap();
+        let Some(Overlay::PlanReview(review)) = app.overlays.active() else {
+            panic!("Plan Review must retain paste ownership");
+        };
+        assert_eq!(review.comment_draft, "补充 failure path\n再验证");
+        assert_eq!(review.cursor, 1);
+        assert_eq!(app.composer.text(), "Keep this operator draft.  ");
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let comment_frame = rendered_frame_text(terminal.backend().buffer());
+        assert!(comment_frame.contains("Comment on L2"));
+        assert!(comment_frame.contains("补充 failure path"));
+        assert!(!comment_frame.contains("[ Approve ]"));
+
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 40,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        });
+        let Some(Overlay::PlanReview(review)) = app.overlays.active() else {
+            unreachable!();
+        };
+        assert_eq!(review.cursor, 1, "comment editing freezes its line anchor");
+        assert_eq!(review.comment_range(), Some((1, 1)));
+        assert_eq!(
+            review.scroll, 4,
+            "navigation and wheel input scroll the owned review body"
+        );
+
+        app.handle_overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.notice.is_localized(MessageId::PlanCommentSaved));
+        let Some(Overlay::PlanReview(review)) = app.overlays.active() else {
+            unreachable!();
+        };
+        assert_eq!(review.comment_count(), 1);
+        assert_eq!(review.summary, summary);
+
+        app.handle_event(Event::Paste("must-not-reach-the-composer".into()))
+            .unwrap();
+        assert_eq!(
+            app.composer.text(),
+            "Keep this operator draft.  ",
+            "a non-commenting Plan Review must absorb paste instead of mutating the hidden composer"
+        );
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 40,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        });
+        let Some(Overlay::PlanReview(review)) = app.overlays.active() else {
+            unreachable!();
+        };
+        assert_eq!(review.cursor, 4);
+
+        app.revise_plan();
+        assert!(app.overlays.active().is_none());
+        assert!(
+            app.active_run_id.is_none(),
+            "revision never submits automatically"
+        );
+        assert!(
+            app.composer
+                .text()
+                .starts_with("Keep this operator draft.  \n\n"),
+            "revision preserves the operator draft byte-for-byte before appending its seed"
+        );
+        assert!(
+            app.composer
+                .text()
+                .contains(tr(Locale::En, MessageId::PlanRevisionSeed))
+        );
+        assert!(app.composer.text().contains("L2"));
+        assert!(app.composer.text().contains("补充 failure path"));
+
+        app.composer.set_text("");
+        let retained_element =
+            app.composer
+                .insert_element("[image:review]", crate::media::IMAGE_ELEMENT_KIND, None);
+        app.overlays
+            .replace(Overlay::PlanReview(PlanReviewOverlay::new(
+                "run-plan-element",
+                summary,
+            )));
+        app.revise_plan();
+        assert!(
+            app.composer
+                .elements()
+                .iter()
+                .any(|element| element.id == retained_element),
+            "revision insertion must preserve atomic composer elements"
+        );
+        assert!(app.composer.text().starts_with("[image:review]\n\n"));
+        assert!(
+            app.composer
+                .text()
+                .ends_with(tr(Locale::En, MessageId::PlanRevisionSeed))
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn view_plan_reopens_only_the_idle_latest_typed_plan() {
+        let (mut app, root, server) = production_render_app();
+        let plan = crate::rpc::Session {
+            session_id: "sess-view-plan".into(),
+            name: String::new(),
+            workspace_id: "ws".into(),
+            workspace_root: root.display().to_string(),
+            status: "active".into(),
+            next_model: "provider/model".into(),
+            next_reasoning_effort: "high".into(),
+            plan_mode: true,
+            permission_profile: "safe-edit".into(),
+            approval_mode: "on_request".into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            latest_run_id: "run-latest-plan".into(),
+            latest_run_agent: "plan".into(),
+            latest_run_result_kind: "plan".into(),
+            execution_status: "completed".into(),
+            summary: "Inspect\nChange\nVerify".into(),
+            continuity: None,
+        };
+        app.active_session = Some(plan.clone());
+
+        app.open_plan_review();
+        let Some(Overlay::PlanReview(review)) = app.overlays.active() else {
+            panic!("an idle completed typed Plan must reopen");
+        };
+        assert_eq!(review.run_id, "run-latest-plan");
+        app.cancel_plan();
+        assert!(app.overlays.active().is_none());
+        assert!(
+            app.active_session
+                .as_ref()
+                .is_some_and(|session| session.plan_mode)
+        );
+
+        app.open_plan_review();
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::PlanReview(_))
+        ));
+        app.cancel_plan();
+
+        app.active_run_id = Some("run-active".into());
+        app.open_plan_review();
+        assert!(app.overlays.active().is_none());
+        assert!(app.notice.is_localized(MessageId::PlanReviewUnavailable));
+
+        app.active_run_id = None;
+        for unavailable in [
+            {
+                let mut session = plan.clone();
+                session.latest_run_result_kind = "answer".into();
+                session
+            },
+            {
+                let mut session = plan.clone();
+                session.latest_run_id.clear();
+                session
+            },
+            {
+                let mut session = plan.clone();
+                session.execution_status = "running".into();
+                session
+            },
+            {
+                let mut session = plan;
+                session.latest_run_agent = "build".into();
+                session
+            },
+        ] {
+            app.active_session = Some(unavailable.clone());
+            app.open_plan_review();
+            assert!(app.overlays.active().is_none());
+            assert!(app.notice.is_localized(MessageId::PlanReviewUnavailable));
+        }
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runnable_provider_without_models_is_visibly_unavailable_and_disabled() {
+        let (mut app, root, server) = production_render_app();
+        app.phase = Phase::Provider;
+        app.inventory.reasoner.available = true;
+        let provider = &mut app.inventory.providers[0];
+        provider.registered = true;
+        provider.available = true;
+        provider.models.clear();
+        app.models.clear();
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+        let no_models = tr_format(
+            Locale::En,
+            MessageId::ProviderNoCompatibleModels,
+            &[("provider", "test")],
+        );
+        let diagnostic_only = tr(Locale::En, MessageId::DiagnosticOnly);
+
+        assert!(rendered.contains(&no_models), "{rendered}");
+        assert!(rendered.contains(diagnostic_only));
+        assert!(!rendered.contains("Use provider"));
+        assert!(!rendered.contains("● Ready"));
+        let (row, column) = anchor_position(&rendered, diagnostic_only);
+        assert_eq!(
+            app.interactions
+                .action_at(Position::new(column as u16, row as u16)),
+            None,
+            "a zero-model provider must not expose a runnable action"
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn plan_review_keeps_the_selected_logical_line_visible_after_visual_wrapping() {
+        let (mut app, root, server) = production_render_app();
+        app.options.workspace = std::path::PathBuf::from("/workspace/carina");
+        let mut lines = (1..12)
+            .map(|index| {
+                format!(
+                    "line {index} contains deliberately extended review prose that occupies multiple visual rows on an eighty-column terminal before the selected line"
+                )
+            })
+            .collect::<Vec<_>>();
+        lines.push("selected terminal anchor remains visible".into());
+        let mut review = PlanReviewOverlay::new("run-wrapped-cursor", lines.join("\n"));
+        review.end(8);
+        app.overlays.replace(Overlay::PlanReview(review));
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+        assert!(rendered.contains("selected terminal anchor remains visible"));
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

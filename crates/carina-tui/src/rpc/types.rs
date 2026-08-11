@@ -773,8 +773,8 @@ pub struct PlanApprovalResult {
     pub session_id: String,
     pub plan_mode: bool,
     pub approved: bool,
-    #[serde(default)]
-    pub execution: Option<ExecutionRun>,
+    #[serde(default, alias = "execution")]
+    pub task: Option<ExecutionRun>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1483,6 +1483,28 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn plan_approval_decodes_canonical_task_and_legacy_execution_fields() {
+        for (field, run_id) in [("task", "run-task"), ("execution", "run-legacy")] {
+            let mut value = json!({
+                "session_id": "sess-1",
+                "plan_mode": false,
+                "approved": true
+            });
+            value[field] = json!({
+                "run_id": run_id,
+                "session_id": "sess-1",
+                "status": "queued"
+            });
+            let result: PlanApprovalResult = serde_json::from_value(value).unwrap();
+
+            assert_eq!(
+                result.task.as_ref().map(|task| task.run_id.as_str()),
+                Some(run_id)
+            );
+        }
+    }
 
     #[test]
     fn product_status_payloads_decode_into_typed_projections() {

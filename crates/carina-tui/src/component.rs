@@ -80,6 +80,7 @@ pub enum Action {
     TogglePlanMode,
     ApprovePlan,
     RevisePlan,
+    BeginPlanComment,
     CancelPlan,
     ResumePausedExecutionRun,
     CloseOverlay,

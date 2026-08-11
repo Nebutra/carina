@@ -186,13 +186,247 @@ pub struct QuestionOverlay {
     pub error: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanLineComment {
+    /// One-based inclusive line anchor.
+    pub start_line: usize,
+    /// One-based inclusive line anchor.
+    pub end_line: usize,
+    pub text: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct PlanReviewOverlay {
     pub run_id: String,
     pub summary: String,
     pub resolving: bool,
     pub error: String,
+    lines: Vec<String>,
+    pub cursor: usize,
     pub scroll: usize,
+    pub mark_start: Option<usize>,
+    pub commenting: bool,
+    pub comment_draft: String,
+    comment_range: Option<(usize, usize)>,
+    comments: Vec<PlanLineComment>,
+}
+
+impl PlanReviewOverlay {
+    pub fn new(run_id: impl Into<String>, summary: impl Into<String>) -> Self {
+        let summary = summary.into();
+        let lines = summary.lines().map(str::to_owned).collect();
+        Self {
+            run_id: run_id.into(),
+            summary,
+            resolving: false,
+            error: String::new(),
+            lines,
+            cursor: 0,
+            scroll: 0,
+            mark_start: None,
+            commenting: false,
+            comment_draft: String::new(),
+            comment_range: None,
+            comments: Vec::new(),
+        }
+    }
+
+    pub fn lines(&self) -> &[String] {
+        &self.lines
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+
+    pub fn current_line(&self) -> Option<&str> {
+        self.lines.get(self.cursor).map(String::as_str)
+    }
+
+    /// Returns the selected zero-based inclusive line range.
+    pub fn selected_range(&self) -> Option<(usize, usize)> {
+        let last = self.line_count().checked_sub(1)?;
+        let cursor = self.cursor.min(last);
+        let mark = self.mark_start.unwrap_or(cursor).min(last);
+        Some((mark.min(cursor), mark.max(cursor)))
+    }
+
+    pub fn clamp(&mut self, viewport_height: usize) {
+        let Some(last) = self.line_count().checked_sub(1) else {
+            self.cursor = 0;
+            self.scroll = 0;
+            self.mark_start = None;
+            return;
+        };
+        let viewport_height = viewport_height.max(1);
+        self.cursor = self.cursor.min(last);
+        self.mark_start = self.mark_start.map(|mark| mark.min(last));
+        self.scroll = self
+            .scroll
+            .min(self.line_count().saturating_sub(viewport_height));
+        if self.cursor < self.scroll {
+            self.scroll = self.cursor;
+        } else if self.cursor >= self.scroll.saturating_add(viewport_height) {
+            self.scroll = self
+                .cursor
+                .saturating_add(1)
+                .saturating_sub(viewport_height);
+        }
+    }
+
+    pub fn move_up(&mut self, viewport_height: usize) {
+        self.cursor = self.cursor.saturating_sub(1);
+        self.clamp(viewport_height);
+    }
+
+    pub fn move_down(&mut self, viewport_height: usize) {
+        self.cursor = self.cursor.saturating_add(1);
+        self.clamp(viewport_height);
+    }
+
+    pub fn page_up(&mut self, viewport_height: usize) {
+        self.cursor = self.cursor.saturating_sub(viewport_height.max(1));
+        self.clamp(viewport_height);
+    }
+
+    pub fn page_down(&mut self, viewport_height: usize) {
+        self.cursor = self.cursor.saturating_add(viewport_height.max(1));
+        self.clamp(viewport_height);
+    }
+
+    pub fn scroll_up(&mut self, lines: usize) {
+        self.scroll = self.scroll.saturating_sub(lines.max(1));
+    }
+
+    pub fn scroll_down(&mut self, lines: usize, viewport_height: usize) {
+        let max_scroll = self.line_count().saturating_sub(viewport_height.max(1));
+        self.scroll = self.scroll.saturating_add(lines.max(1)).min(max_scroll);
+    }
+
+    pub fn scroll_home(&mut self) {
+        self.scroll = 0;
+    }
+
+    pub fn scroll_end(&mut self, viewport_height: usize) {
+        self.scroll = self.line_count().saturating_sub(viewport_height.max(1));
+    }
+
+    pub fn home(&mut self, viewport_height: usize) {
+        self.cursor = 0;
+        self.clamp(viewport_height);
+    }
+
+    pub fn end(&mut self, viewport_height: usize) {
+        self.cursor = self.line_count().saturating_sub(1);
+        self.clamp(viewport_height);
+    }
+
+    pub fn toggle_mark(&mut self) -> bool {
+        if self.lines.is_empty() {
+            self.mark_start = None;
+            return false;
+        }
+        if self.mark_start.is_some() {
+            self.mark_start = None;
+        } else {
+            self.mark_start = Some(self.cursor.min(self.line_count() - 1));
+        }
+        self.mark_start.is_some()
+    }
+
+    pub fn line_is_marked(&self, line_index: usize) -> bool {
+        self.mark_start.is_some()
+            && self
+                .selected_range()
+                .is_some_and(|(start, end)| (start..=end).contains(&line_index))
+    }
+
+    pub fn begin_comment(&mut self) -> bool {
+        let Some(range) = self.selected_range() else {
+            return false;
+        };
+        self.commenting = true;
+        self.comment_draft.clear();
+        self.comment_range = Some(range);
+        true
+    }
+
+    pub fn comment_range(&self) -> Option<(usize, usize)> {
+        if self.commenting {
+            self.comment_range
+        } else {
+            self.selected_range()
+        }
+    }
+
+    pub fn append_comment(&mut self, text: &str) -> bool {
+        if !self.commenting {
+            return false;
+        }
+        self.comment_draft.push_str(text);
+        true
+    }
+
+    pub fn push_comment_char(&mut self, character: char) -> bool {
+        if !self.commenting {
+            return false;
+        }
+        self.comment_draft.push(character);
+        true
+    }
+
+    pub fn backspace_comment(&mut self) -> bool {
+        self.commenting && self.comment_draft.pop().is_some()
+    }
+
+    pub fn cancel_comment(&mut self) {
+        self.commenting = false;
+        self.comment_draft.clear();
+        self.comment_range = None;
+    }
+
+    pub fn commit_comment(&mut self) -> bool {
+        if !self.commenting {
+            return false;
+        }
+        let text = self.comment_draft.trim().to_owned();
+        let Some((start, end)) = self.comment_range else {
+            return false;
+        };
+        if text.is_empty() {
+            return false;
+        }
+        self.commenting = false;
+        self.comment_draft.clear();
+        self.comment_range = None;
+        self.comments.push(PlanLineComment {
+            start_line: start + 1,
+            end_line: end + 1,
+            text,
+        });
+        self.mark_start = None;
+        true
+    }
+
+    pub fn comment_count(&self) -> usize {
+        self.comments.len()
+    }
+
+    pub fn comments_on_line(&self, line_index: usize) -> usize {
+        let line_number = line_index.saturating_add(1);
+        self.comments
+            .iter()
+            .filter(|comment| (comment.start_line..=comment.end_line).contains(&line_number))
+            .count()
+    }
+
+    pub fn line_has_comments(&self, line_index: usize) -> bool {
+        self.comments_on_line(line_index) > 0
+    }
+
+    pub fn revision_notes(&self) -> &[PlanLineComment] {
+        &self.comments
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -477,6 +711,150 @@ mod tests {
 
     use super::*;
     use crate::rpc::SessionItem;
+
+    #[test]
+    fn plan_review_records_single_and_range_comments_with_one_based_anchors() {
+        let mut review = PlanReviewOverlay::new("run-1", "inspect\nchange\nverify");
+        assert_eq!(review.line_count(), 3);
+        assert_eq!(review.current_line(), Some("inspect"));
+
+        review.move_down(2);
+        assert!(review.begin_comment());
+        assert!(review.append_comment("explain the change"));
+        assert!(review.commit_comment());
+
+        review.end(2);
+        assert!(review.toggle_mark());
+        review.home(2);
+        assert_eq!(review.selected_range(), Some((0, 2)));
+        assert!(review.begin_comment());
+        assert!(review.append_comment("cover the full sequence"));
+        assert!(review.commit_comment());
+
+        assert_eq!(
+            review.revision_notes(),
+            [
+                PlanLineComment {
+                    start_line: 2,
+                    end_line: 2,
+                    text: "explain the change".into(),
+                },
+                PlanLineComment {
+                    start_line: 1,
+                    end_line: 3,
+                    text: "cover the full sequence".into(),
+                },
+            ]
+        );
+        assert_eq!(review.comment_count(), 2);
+        assert_eq!(review.comments_on_line(0), 1);
+        assert_eq!(review.comments_on_line(1), 2);
+        assert!(review.line_has_comments(2));
+        assert!(!review.line_has_comments(3));
+    }
+
+    #[test]
+    fn plan_review_comment_editing_preserves_unicode_scalars() {
+        let mut review = PlanReviewOverlay::new("run-cjk", "检查方案\n运行测试");
+        assert!(review.begin_comment());
+        assert_eq!(review.comment_range(), Some((0, 0)));
+        assert!(review.append_comment("请补充验证"));
+        assert!(review.push_comment_char('。'));
+        assert!(review.push_comment_char('界'));
+        assert!(review.backspace_comment());
+        assert_eq!(review.comment_draft, "请补充验证。");
+        review.move_down(1);
+        assert_eq!(review.comment_range(), Some((0, 0)));
+        assert!(review.commit_comment());
+        assert_eq!(review.comment_range(), Some((1, 1)));
+        assert_eq!(review.revision_notes()[0].text, "请补充验证。");
+        assert_eq!(review.revision_notes()[0].start_line, 1);
+    }
+
+    #[test]
+    fn plan_review_empty_and_cancelled_drafts_do_not_add_comments() {
+        let mut review = PlanReviewOverlay::new("run-1", "one line");
+        assert!(review.begin_comment());
+        assert!(review.append_comment(" \t "));
+        assert!(!review.commit_comment());
+        assert_eq!(review.comment_count(), 0);
+        assert!(review.commenting);
+        assert_eq!(review.comment_draft, " \t ");
+
+        review.cancel_comment();
+        assert!(review.begin_comment());
+        assert!(review.append_comment("discard this"));
+        review.cancel_comment();
+        assert_eq!(review.comment_count(), 0);
+        assert!(!review.commenting);
+        assert!(review.comment_draft.is_empty());
+
+        let mut empty = PlanReviewOverlay::new("run-empty", "");
+        assert_eq!(empty.line_count(), 0);
+        assert_eq!(empty.current_line(), None);
+        assert!(!empty.begin_comment());
+        assert!(!empty.toggle_mark());
+    }
+
+    #[test]
+    fn plan_review_navigation_clamps_cursor_scroll_and_mark() {
+        let mut review = PlanReviewOverlay::new("run-1", "one\ntwo\nthree\nfour\nfive");
+        review.end(2);
+        assert_eq!((review.cursor, review.scroll), (4, 3));
+        review.move_down(2);
+        assert_eq!((review.cursor, review.scroll), (4, 3));
+        review.page_up(2);
+        assert_eq!((review.cursor, review.scroll), (2, 2));
+        review.page_down(2);
+        assert_eq!((review.cursor, review.scroll), (4, 3));
+        review.home(2);
+        assert_eq!((review.cursor, review.scroll), (0, 0));
+
+        review.scroll_down(2, 2);
+        assert_eq!((review.cursor, review.scroll), (0, 2));
+        review.scroll_up(1);
+        assert_eq!(review.scroll, 1);
+        review.scroll_end(2);
+        assert_eq!(review.scroll, 3);
+        review.scroll_home();
+        assert_eq!(review.scroll, 0);
+
+        review.cursor = usize::MAX;
+        review.scroll = usize::MAX;
+        review.mark_start = Some(usize::MAX);
+        review.clamp(2);
+        assert_eq!((review.cursor, review.scroll), (4, 3));
+        assert_eq!(review.mark_start, Some(4));
+        assert!(review.line_is_marked(4));
+    }
+
+    #[test]
+    fn plan_review_stack_deduplicates_by_run_id_without_replacing_state() {
+        let mut stack = OverlayStack::default();
+        let mut original = PlanReviewOverlay::new("run-1", "original");
+        assert!(original.begin_comment());
+        assert!(original.append_comment("keep me"));
+        assert!(original.commit_comment());
+        stack.push(Overlay::PlanReview(original));
+        stack.push(Overlay::PlanReview(PlanReviewOverlay::new(
+            "run-1",
+            "duplicate",
+        )));
+        stack.push(Overlay::PlanReview(PlanReviewOverlay::new("run-2", "next")));
+
+        assert_eq!(stack.governance_queue_len(), 2);
+        let Some(Overlay::PlanReview(active)) = stack.active() else {
+            panic!("the first review must remain active");
+        };
+        assert_eq!(active.summary, "original");
+        assert_eq!(active.comment_count(), 1);
+
+        stack.resolve_active();
+        let Some(Overlay::PlanReview(active)) = stack.active() else {
+            panic!("the distinct review must remain queued");
+        };
+        assert_eq!(active.run_id, "run-2");
+    }
 
     #[test]
     fn retained_load_fences_generation_and_target_and_keeps_failure_visible() {

@@ -48,6 +48,7 @@ States:
 | Installed skill slash discovery | **wired** | daemon skill prompt registry; trusted-root marketplace policy; slash command tests | ISSUE-016 |
 | Subagent observation surface | **wired** | `agent.view` / `agent.recap`; retained Agents overlay; permission attenuation tests | ISSUE-012 |
 | Governed plan-mode exit | **wired** | daemon plan tool mask; `session.approve_plan`; child plan inheritance and tool-matrix tests | ISSUE-009 |
+| Dense Plan Review | **wired** | retained numbered line/range comments; expected-run approval fence; `/view-plan`; shared footer/`/keymap` A/S/C/M/Q matrix; seven-locale outcomes and revision seed | V006 visual density |
 | Dual-axis HITL footer | **wired** | typed `config.inventory`; persistent HITL/isolation rows; front-only approval queue count | ISSUE-010 |
 | Model-aware context compaction | **wired** | catalog/fallback budget resolver; checkpoint snapshot; verifiable receipt policy metadata | ISSUE-004 |
 | Context pressure and receipt detail | **wired** | persistent `ctx%`/`est.` footer; typed `/context` overlay; 80/90 semantic thresholds | ISSUE-011 |

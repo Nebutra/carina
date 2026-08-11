@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/Nebutra/carina/go/runtimecontract"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
@@ -453,5 +455,89 @@ func TestSubagentPermissionInheritance(t *testing.T) {
 	// Product HITL remains daemon-global after spawn (always-approve here).
 	if got := d.approvalModeString(); got != approvalModeAlwaysApprove {
 		t.Fatalf("product mode drifted after spawn: %q", got)
+	}
+}
+
+func TestPlanModeSpawnedChildActuallyDeniesEffectfulTools(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+
+	agentsDir := filepath.Join(ws, ".carina", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "scout.md"),
+		[]byte("---\nname: scout\ndescription: plan-mode boundary probe\nprofile: full-workspace\nmax_turns: 3\n---\nProbe one tool, then finish.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.store.SetPlanMode(parent.SessionID, true); err != nil {
+		t.Fatal(err)
+	}
+	d.setPlanMode(parent.SessionID, true)
+	d.SetApprovalMode("always-approve")
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "probe inherited Plan boundary")
+
+	var mu sync.Mutex
+	denied := map[string]map[string]string{}
+	d.events.Tap(func(sessionID string, event map[string]any) {
+		if event["type"] != "ToolCallDenied" {
+			return
+		}
+		payload, _ := event["payload"].(map[string]any)
+		tool, _ := payload["tool"].(string)
+		envelope, _ := payload["error"].(*runtimecontract.ErrorEnvelope)
+		category := ""
+		if envelope != nil {
+			category, _ = envelope.Metadata["category"].(string)
+		}
+		mu.Lock()
+		if denied[sessionID] == nil {
+			denied[sessionID] = map[string]string{}
+		}
+		denied[sessionID][tool] = category
+		mu.Unlock()
+	})
+
+	tests := []struct {
+		tool   string
+		action string
+	}{
+		{tool: "patch", action: `{"tool":"patch","path":"blocked.txt","content":"changed\n"}`},
+		{tool: "run", action: `{"tool":"run","command":["sh","-c","echo changed > child-ran.txt"]}`},
+		{tool: "memory", action: `{"tool":"memory","target":"memory","action":"add","content":"must not persist"}`},
+		{tool: "mcp", action: `{"tool":"mcp","mcp_server":"external","mcp_tool":"mutate","args":{}}`},
+		{tool: "workflow", action: `{"tool":"workflow","workflow":"external-effect"}`},
+	}
+	for _, test := range tests {
+		d.SetReasoner(&scriptedReasoner{steps: []string{
+			test.action,
+			`{"tool":"done","summary":"probe complete"}`,
+		}})
+		summary, childID := d.spawnSubagentContextID(context.Background(), parent, parentTask, "scout", "attempt "+test.tool)
+		if childID == "" || summary != "probe complete" {
+			t.Fatalf("%s child result = %q child=%q", test.tool, summary, childID)
+		}
+		child, ok := d.store.Get(childID)
+		if !ok || !child.PlanMode || !d.isPlanMode(childID) {
+			t.Fatalf("%s child lost inherited Plan mode: child=%+v runtime=%v", test.tool, child, d.isPlanMode(childID))
+		}
+		mu.Lock()
+		category := denied[childID][test.tool]
+		mu.Unlock()
+		if category != "plan_mode" {
+			t.Fatalf("%s child denial category = %q, want plan_mode", test.tool, category)
+		}
+	}
+	for _, path := range []string{"blocked.txt", "child-ran.txt"} {
+		if _, err := os.Stat(filepath.Join(ws, path)); !os.IsNotExist(err) {
+			t.Fatalf("Plan-mode child created %s: %v", path, err)
+		}
 	}
 }

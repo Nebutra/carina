@@ -11,6 +11,7 @@ pub enum CommandId {
     Provider,
     Model,
     Plan,
+    ViewPlan,
     Build,
     Sessions,
     Resume,
@@ -86,6 +87,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         CommandId::Plan,
         "/plan",
         MessageId::CommandPlan,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::ViewPlan,
+        "/view-plan",
+        MessageId::CommandViewPlan,
         AvailabilityRule::Always,
     ),
     command(
@@ -528,6 +535,27 @@ mod tests {
         assert_eq!(
             resolve("/density", false).map(|item| item.id),
             Some(CommandId::Density)
+        );
+    }
+
+    #[test]
+    fn view_plan_is_a_builtin_command_available_while_idle() {
+        assert!(
+            matching("/view", false)
+                .iter()
+                .any(|item| item.id == CommandId::ViewPlan)
+        );
+        assert_eq!(
+            resolve("/view-plan", false).map(|item| item.id),
+            Some(CommandId::ViewPlan)
+        );
+        assert_eq!(
+            resolve("/view-plan", true).map(|item| item.id),
+            Some(CommandId::ViewPlan)
+        );
+        assert_eq!(
+            lookup("/view-plan").map(|item| item.description),
+            Some(MessageId::CommandViewPlan)
         );
     }
 

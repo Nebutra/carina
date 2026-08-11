@@ -87,6 +87,7 @@ const REWIND_GRACE_ENV: &str = "CARINA_ESC_GRACE_MS";
 const MIN_REWIND_GRACE_MS: u64 = 250;
 const MAX_REWIND_GRACE_MS: u64 = 2_000;
 const SETTINGS_ITEM_COUNT: usize = 9;
+const PLAN_REVIEW_PAGE_LINES: usize = 8;
 const IMPORT_ERROR_LIMIT: u64 = 1024;
 const IMPORT_HELPER_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -2703,14 +2704,25 @@ impl App {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.handle_key(key)?,
             Event::Mouse(mouse) => self.handle_mouse(mouse),
             Event::Paste(value) if self.phase == Phase::Conversation => {
-                if let Some(path) = pasted_image_path(&value) {
+                let plan_review_active =
+                    matches!(self.overlays.active(), Some(Overlay::PlanReview(_)));
+                if plan_review_active {
+                    if let Some(Overlay::PlanReview(review)) = self.overlays.active_mut()
+                        && review.commenting
+                    {
+                        review.append_comment(&value.replace('\r', ""));
+                    }
+                } else if let Some(path) = pasted_image_path(&value) {
                     self.attach_image(path, false);
                 } else {
                     self.composer.insert_str(&value.replace('\r', ""));
                     self.media.reconcile(&self.composer);
                     self.sync_context_completion();
                 }
-                self.focus = Focus::Composer;
+                if !plan_review_active {
+                    self.focus = Focus::Composer;
+                }
+                self.dirty = true;
             }
             Event::Resize(_, _) | Event::FocusGained | Event::FocusLost => self.dirty = true,
             _ => {}
@@ -4164,6 +4176,7 @@ impl App {
             CommandId::Model => self.open_models(),
             CommandId::Plan => self.request_conversation_mode(true),
             CommandId::Build => self.request_conversation_mode(false),
+            CommandId::ViewPlan => self.open_plan_review(),
             CommandId::Sessions => self.open_session_browser(),
             CommandId::Resume => {
                 let paused = self
@@ -4254,6 +4267,18 @@ impl App {
     fn open_help_overlay(&mut self) {
         self.overlays
             .replace(Overlay::Help(HelpOverlay { scroll: 0 }));
+    }
+
+    fn open_plan_review(&mut self) {
+        let review = (self.active_run_id.is_none())
+            .then(|| self.active_session.as_ref().and_then(plan_review_overlay))
+            .flatten();
+        if let Some(review) = review {
+            self.overlays.push(Overlay::PlanReview(review));
+            self.notice.clear();
+        } else {
+            self.notice = Notice::localized(MessageId::PlanReviewUnavailable);
+        }
     }
 
     fn open_doctor_overlay(&mut self) {
@@ -4402,15 +4427,30 @@ impl App {
         else {
             return;
         };
+        let locale = self.ui_locale();
+        let expected_run_id = match self.overlays.active() {
+            Some(Overlay::PlanReview(review)) => Some(review.run_id.clone()),
+            _ => None,
+        };
         if let Some(Overlay::PlanReview(review)) = self.overlays.active_mut() {
             review.resolving = true;
             review.error.clear();
         }
-        match self.rpc.approve_plan(&session_id) {
-            Ok(result) if result.session_id == session_id && result.approved => {
+        match self
+            .rpc
+            .approve_plan(&session_id, expected_run_id.as_deref())
+        {
+            Ok(result)
+                if result.session_id == session_id
+                    && result.approved
+                    && !result.plan_mode
+                    && result.task.as_ref().is_none_or(|execution| {
+                        execution.session_id == session_id && !execution.run_id.is_empty()
+                    }) =>
+            {
                 if let Some(mut session) = self.active_session.as_ref().cloned() {
                     session.plan_mode = result.plan_mode;
-                    if let Some(execution) = result.execution.as_ref() {
+                    if let Some(execution) = result.task.as_ref() {
                         session.latest_run_id = execution.run_id.clone();
                         session.latest_run_agent = if execution.agent.is_empty() {
                             "build".into()
@@ -4428,7 +4468,7 @@ impl App {
                     self.remember_session(session);
                 }
                 self.overlays.resolve_active();
-                if let Some(execution) = result.execution {
+                if let Some(execution) = result.task {
                     self.active_run_id = Some(execution.run_id.clone());
                     self.execution_timer.start_new();
                     self.execution_activity = None;
@@ -4454,21 +4494,87 @@ impl App {
             Ok(_) => {
                 if let Some(Overlay::PlanReview(review)) = self.overlays.active_mut() {
                     review.resolving = false;
-                    review.error = "The daemon did not confirm this plan approval.".into();
+                    review.error = tr(locale, MessageId::PlanApprovalNotConfirmed).to_owned();
+                } else {
+                    self.notice = Notice::localized(MessageId::PlanApprovalNotConfirmed);
                 }
             }
             Err(error) => {
+                let message = error.to_string();
+                let stale = matches!(
+                    &error,
+                    RpcError::Remote { message, .. }
+                        if message.contains("plan run") || message.contains("latest plan")
+                );
                 if let Some(Overlay::PlanReview(review)) = self.overlays.active_mut() {
                     review.resolving = false;
-                    review.error = format!("Approval failed: {error}");
+                    review.error = if stale {
+                        tr(locale, MessageId::PlanReviewStale).to_owned()
+                    } else {
+                        tr_format(
+                            locale,
+                            MessageId::PlanApprovalFailed,
+                            &[("error", message.as_str())],
+                        )
+                    };
+                } else if stale {
+                    self.notice = Notice::localized(MessageId::PlanReviewStale);
+                } else {
+                    self.notice =
+                        Notice::localized_with(MessageId::PlanApprovalFailed, [("error", message)]);
                 }
             }
         }
     }
 
     fn revise_plan(&mut self) {
+        let comments = match self.overlays.active() {
+            Some(Overlay::PlanReview(review)) => review.revision_notes().to_vec(),
+            _ => Vec::new(),
+        };
         self.overlays.resolve_active();
         self.focus = Focus::Composer;
+        let locale = self.ui_locale();
+        let mut seed = String::from(tr(locale, MessageId::PlanRevisionSeed));
+        if !comments.is_empty() {
+            seed.push('\n');
+            seed.push_str(tr(locale, MessageId::PlanRevisionCommentsHeader));
+            for comment in comments {
+                seed.push('\n');
+                let start = comment.start_line.to_string();
+                let end = comment.end_line.to_string();
+                let line = if comment.start_line == comment.end_line {
+                    tr_format(
+                        locale,
+                        MessageId::PlanRevisionCommentLine,
+                        &[("line", start.as_str()), ("text", comment.text.as_str())],
+                    )
+                } else {
+                    tr_format(
+                        locale,
+                        MessageId::PlanRevisionCommentRange,
+                        &[
+                            ("start", start.as_str()),
+                            ("end", end.as_str()),
+                            ("text", comment.text.as_str()),
+                        ],
+                    )
+                };
+                seed.push_str(&line);
+            }
+        }
+        let separator = if self.composer.text().is_empty() {
+            ""
+        } else {
+            "\n\n"
+        };
+        let suffix = format!("{separator}{seed}");
+        self.composer
+            .insert_str_at(self.composer.text().len(), &suffix);
+        self.composer.set_cursor(self.composer.text().len());
+        self.composer_state = TextAreaState::default();
+        self.media.reconcile(&self.composer);
+        self.sync_context_completion();
         self.notice = Notice::localized(MessageId::PlanRevisionRequested);
     }
 
@@ -4483,7 +4589,9 @@ impl App {
         let mut retry_file = None;
         let mut deferred_doctor = None;
         let mut deferred_doctor_rerun = false;
+        let mut plan_comment_saved = None;
         let fullscreen_changes = self.options.screen_mode == Some(ScreenMode::Fullscreen);
+        let locale = self.ui_locale();
         match self.overlays.active_mut() {
             Some(Overlay::Approval(approval)) => match key.code {
                 KeyCode::Left | KeyCode::BackTab => {
@@ -4558,10 +4666,61 @@ impl App {
                 if review.resolving {
                     return;
                 }
-                match key.code {
-                    KeyCode::Up => review.scroll = review.scroll.saturating_sub(1),
-                    KeyCode::Down => review.scroll = review.scroll.saturating_add(1),
-                    code => deferred = plan_review_key_action(code),
+                if review.commenting {
+                    match key.code {
+                        KeyCode::Char(character)
+                            if !key.modifiers.intersects(
+                                KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                            ) =>
+                        {
+                            review.push_comment_char(character);
+                        }
+                        KeyCode::Backspace if key.modifiers.is_empty() => {
+                            review.backspace_comment();
+                        }
+                        KeyCode::Enter if key.modifiers.is_empty() => {
+                            if review.commit_comment() {
+                                review.error.clear();
+                                plan_comment_saved = Some(review.comment_count());
+                            } else {
+                                review.error = tr(locale, MessageId::PlanCommentEmpty).to_owned();
+                            }
+                        }
+                        KeyCode::Esc if key.modifiers.is_empty() => review.cancel_comment(),
+                        KeyCode::Up => review.scroll_up(1),
+                        KeyCode::Down => {
+                            review.scroll_down(1, PLAN_REVIEW_PAGE_LINES);
+                        }
+                        KeyCode::PageUp => review.scroll_up(PLAN_REVIEW_PAGE_LINES),
+                        KeyCode::PageDown => {
+                            review.scroll_down(PLAN_REVIEW_PAGE_LINES, PLAN_REVIEW_PAGE_LINES)
+                        }
+                        KeyCode::Home => review.scroll_home(),
+                        KeyCode::End => review.scroll_end(PLAN_REVIEW_PAGE_LINES),
+                        _ => {}
+                    }
+                } else if key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+                {
+                    // Modified printable keys remain available to global shortcuts.
+                } else {
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k' | 'K') => {
+                            review.move_up(PLAN_REVIEW_PAGE_LINES)
+                        }
+                        KeyCode::Down | KeyCode::Char('j' | 'J') => {
+                            review.move_down(PLAN_REVIEW_PAGE_LINES)
+                        }
+                        KeyCode::PageUp => review.page_up(PLAN_REVIEW_PAGE_LINES),
+                        KeyCode::PageDown => review.page_down(PLAN_REVIEW_PAGE_LINES),
+                        KeyCode::Home => review.home(PLAN_REVIEW_PAGE_LINES),
+                        KeyCode::End => review.end(PLAN_REVIEW_PAGE_LINES),
+                        KeyCode::Char('m' | 'M') => {
+                            review.toggle_mark();
+                        }
+                        _ => deferred = plan_review_key_action(key),
+                    }
                 }
             }
             Some(Overlay::Settings(settings)) => match key.code {
@@ -4840,6 +4999,10 @@ impl App {
                 }
             }
             None => {}
+        }
+        if let Some(count) = plan_comment_saved {
+            self.notice =
+                Notice::localized_with(MessageId::PlanCommentSaved, [("count", count.to_string())]);
         }
         if let Some((generation, session_id, path)) = retry_file {
             self.load_file_viewer(generation, session_id, path);
@@ -5491,6 +5654,30 @@ impl App {
                 self.dirty = true;
             }
             MouseEventKind::ScrollUp
+                if matches!(self.overlays.active(), Some(Overlay::PlanReview(_))) =>
+            {
+                if let Some(Overlay::PlanReview(review)) = self.overlays.active_mut() {
+                    if review.commenting {
+                        review.scroll_up(3);
+                    } else {
+                        review.page_up(3);
+                    }
+                }
+                self.dirty = true;
+            }
+            MouseEventKind::ScrollDown
+                if matches!(self.overlays.active(), Some(Overlay::PlanReview(_))) =>
+            {
+                if let Some(Overlay::PlanReview(review)) = self.overlays.active_mut() {
+                    if review.commenting {
+                        review.scroll_down(3, PLAN_REVIEW_PAGE_LINES);
+                    } else {
+                        review.page_down(3);
+                    }
+                }
+                self.dirty = true;
+            }
+            MouseEventKind::ScrollUp
                 if self.overlays.active().is_none() && self.transcript_area.contains(position) =>
             {
                 self.scroll_transcript(-3);
@@ -6008,6 +6195,12 @@ impl App {
             Action::QuestionOption(index) => self.answer_active_question(Some(index)),
             Action::ApprovePlan => self.approve_plan(),
             Action::RevisePlan => self.revise_plan(),
+            Action::BeginPlanComment => {
+                if let Some(Overlay::PlanReview(review)) = self.overlays.active_mut() {
+                    review.begin_comment();
+                    review.error.clear();
+                }
+            }
             Action::CancelPlan => self.cancel_plan(),
             Action::ResumePausedExecutionRun => self.resume_paused_execution(),
             Action::CloseOverlay => {
@@ -6346,12 +6539,11 @@ fn plan_review_overlay(session: &Session) -> Option<PlanReviewOverlay> {
         && session.latest_run_result_kind == "plan"
         && !session.latest_run_id.is_empty()
         && !session.summary.trim().is_empty())
-    .then(|| PlanReviewOverlay {
-        run_id: session.latest_run_id.clone(),
-        summary: session.summary.trim().to_owned(),
-        resolving: false,
-        error: String::new(),
-        scroll: 0,
+    .then(|| {
+        PlanReviewOverlay::new(
+            session.latest_run_id.clone(),
+            session.summary.trim().to_owned(),
+        )
     })
 }
 
@@ -6412,11 +6604,17 @@ fn conversation_mode_action(
     }
 }
 
-fn plan_review_key_action(code: KeyCode) -> Option<Action> {
-    match code {
-        KeyCode::Enter | KeyCode::Char('a') | KeyCode::Char('y') => Some(Action::ApprovePlan),
-        KeyCode::Char('r') | KeyCode::Esc => Some(Action::RevisePlan),
-        KeyCode::Char('c') | KeyCode::Char('n') => Some(Action::CancelPlan),
+fn plan_review_key_action(key: KeyEvent) -> Option<Action> {
+    let action_modifiers = key.modifiers.is_empty()
+        || (matches!(key.code, KeyCode::Char(_)) && key.modifiers == KeyModifiers::SHIFT);
+    if !action_modifiers {
+        return None;
+    }
+    match key.code {
+        KeyCode::Enter | KeyCode::Char('a' | 'A') => Some(Action::ApprovePlan),
+        KeyCode::Char('s' | 'S' | 'r' | 'R') | KeyCode::Esc => Some(Action::RevisePlan),
+        KeyCode::Char('c' | 'C') => Some(Action::BeginPlanComment),
+        KeyCode::Char('q' | 'Q') => Some(Action::CancelPlan),
         _ => None,
     }
 }
@@ -8530,19 +8728,38 @@ mod tests {
     }
 
     #[test]
-    fn plan_review_keys_keep_revision_distinct_from_cancellation() {
+    fn plan_review_keys_keep_approval_revision_comment_and_close_distinct() {
         assert_eq!(
-            plan_review_key_action(KeyCode::Esc),
+            plan_review_key_action(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
             Some(Action::RevisePlan)
         );
         assert_eq!(
-            plan_review_key_action(KeyCode::Char('c')),
+            plan_review_key_action(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE)),
+            Some(Action::RevisePlan)
+        );
+        assert_eq!(
+            plan_review_key_action(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE)),
+            Some(Action::BeginPlanComment)
+        );
+        assert_eq!(
+            plan_review_key_action(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
             Some(Action::CancelPlan)
         );
         assert_eq!(
-            plan_review_key_action(KeyCode::Enter),
+            plan_review_key_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             Some(Action::ApprovePlan)
         );
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SUPER,
+            KeyModifiers::SHIFT,
+        ] {
+            assert_eq!(
+                plan_review_key_action(KeyEvent::new(KeyCode::Enter, modifiers)),
+                None
+            );
+        }
     }
 
     #[test]
