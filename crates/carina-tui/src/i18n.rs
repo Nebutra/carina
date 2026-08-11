@@ -59,7 +59,7 @@ impl Notice {
         matches!(self, Self::Empty)
     }
 
-    pub fn render(&self, locale: Locale) -> Cow<'_, str> {
+    pub fn render(&self, locale: Locale, glyphs: crate::glyphs::Glyphs) -> Cow<'_, str> {
         let rendered = match self {
             Self::Empty => Cow::Borrowed(""),
             Self::Raw(value) => Cow::Borrowed(value.as_str()),
@@ -71,7 +71,7 @@ impl Notice {
                 Cow::Owned(format(locale, *id, &refs))
             }
         };
-        crate::glyphs::Glyphs::detect().sanitize_free_text(rendered)
+        glyphs.sanitize_free_text(rendered)
     }
 
     pub fn raw(&self) -> &str {
@@ -319,6 +319,24 @@ pub enum MessageId {
     Density,
     DensityCompact,
     DensityComfortable,
+    Symbols,
+    SymbolsAutomatic,
+    SymbolsUnicode,
+    SymbolsNerdFont,
+    SymbolsAscii,
+    SymbolsAutomaticDetail,
+    SymbolsUnicodeDetail,
+    SymbolsNerdFontDetail,
+    SymbolsAsciiDetail,
+    SymbolsPreviewGuidance,
+    SymbolsRequested,
+    SymbolsEffective,
+    SymbolsEnvironmentOverride,
+    SymbolsAutoFallback,
+    SymbolsApplyHint,
+    SymbolsKeepCurrentHint,
+    SymbolsApplied,
+    SymbolsPersistFailed,
     ChromeRun,
     ChromeQueue,
     ChromeContext,
@@ -375,6 +393,7 @@ pub enum MessageId {
     Commands,
     CommandSettings,
     CommandDensity,
+    CommandSymbols,
     CommandStatus,
     CommandContext,
     CommandProvider,
@@ -854,6 +873,24 @@ impl MessageId {
         Self::Density,
         Self::DensityCompact,
         Self::DensityComfortable,
+        Self::Symbols,
+        Self::SymbolsAutomatic,
+        Self::SymbolsUnicode,
+        Self::SymbolsNerdFont,
+        Self::SymbolsAscii,
+        Self::SymbolsAutomaticDetail,
+        Self::SymbolsUnicodeDetail,
+        Self::SymbolsNerdFontDetail,
+        Self::SymbolsAsciiDetail,
+        Self::SymbolsPreviewGuidance,
+        Self::SymbolsRequested,
+        Self::SymbolsEffective,
+        Self::SymbolsEnvironmentOverride,
+        Self::SymbolsAutoFallback,
+        Self::SymbolsApplyHint,
+        Self::SymbolsKeepCurrentHint,
+        Self::SymbolsApplied,
+        Self::SymbolsPersistFailed,
         Self::ChromeRun,
         Self::ChromeQueue,
         Self::ChromeContext,
@@ -910,6 +947,7 @@ impl MessageId {
         Self::Commands,
         Self::CommandSettings,
         Self::CommandDensity,
+        Self::CommandSymbols,
         Self::CommandStatus,
         Self::CommandContext,
         Self::CommandProvider,
@@ -3501,6 +3539,165 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
 fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
     use MessageId::*;
     let values = match id {
+        Symbols => [
+            "Symbols",
+            "符号",
+            "符號",
+            "記号",
+            "기호",
+            "Símbolos",
+            "Symboles",
+        ],
+        SymbolsAutomatic => [
+            "Automatic",
+            "自动",
+            "自動",
+            "自動",
+            "자동",
+            "Automático",
+            "Automatique",
+        ],
+        SymbolsUnicode => [
+            "Unicode", "Unicode", "Unicode", "Unicode", "Unicode", "Unicode", "Unicode",
+        ],
+        SymbolsNerdFont => [
+            "Nerd Font",
+            "Nerd Font",
+            "Nerd Font",
+            "Nerd Font",
+            "Nerd Font",
+            "Nerd Font",
+            "Nerd Font",
+        ],
+        SymbolsAscii => [
+            "ASCII", "ASCII", "ASCII", "ASCII", "ASCII", "ASCII", "ASCII",
+        ],
+        SymbolsAutomaticDetail => [
+            "Unicode by default; legacy uses ASCII",
+            "默认 Unicode；旧式终端用 ASCII",
+            "預設 Unicode；舊式終端用 ASCII",
+            "通常は Unicode、旧式端末は ASCII",
+            "기본 Unicode, 구형 터미널은 ASCII",
+            "Unicode; ASCII en terminales antiguos",
+            "Unicode ; ASCII sur anciens terminaux",
+        ],
+        SymbolsUnicodeDetail => [
+            "Common Unicode font coverage",
+            "常用 Unicode 字体支持",
+            "常用 Unicode 字型支援",
+            "一般的な Unicode フォント向け",
+            "일반 Unicode 글꼴용",
+            "Fuentes con símbolos Unicode comunes",
+            "Polices avec symboles Unicode courants",
+        ],
+        SymbolsNerdFontDetail => [
+            "Nerd Font Mono required",
+            "需要 Nerd Font Mono",
+            "需要 Nerd Font Mono",
+            "Nerd Font Mono が必要",
+            "Nerd Font Mono 필요",
+            "Requiere Nerd Font Mono",
+            "Nécessite Nerd Font Mono",
+        ],
+        SymbolsAsciiDetail => [
+            "Maximum font compatibility",
+            "字体兼容性最高",
+            "字型相容性最高",
+            "フォント互換性を最優先",
+            "글꼴 호환성 우선",
+            "Máxima compatibilidad tipográfica",
+            "Compatibilité typographique maximale",
+        ],
+        SymbolsPreviewGuidance => [
+            "Choose the row that stays aligned. Boxes or misaligned symbols mean missing font coverage.",
+            "请选择保持对齐的行。方框或错位符号表示字体覆盖不完整。",
+            "請選擇保持對齊的列。方框或錯位符號表示字型涵蓋不完整。",
+            "配置が揃う行を選んでください。四角や位置ずれは、フォントに必要な記号がないことを示します。",
+            "정렬이 유지되는 행을 선택하세요. 네모나 어긋난 기호는 글꼴에 필요한 문자가 없다는 뜻입니다.",
+            "Elige la fila que se mantenga alineada. Los cuadros o símbolos desalineados indican que la fuente no los incluye.",
+            "Choisissez la ligne qui reste alignée. Des carrés ou symboles décalés indiquent que la police ne les contient pas.",
+        ],
+        SymbolsRequested => [
+            "Preference: {preference}",
+            "偏好：{preference}",
+            "偏好：{preference}",
+            "選択: {preference}",
+            "선택: {preference}",
+            "Preferencia: {preference}",
+            "Préférence : {preference}",
+        ],
+        SymbolsEffective => [
+            "Active: {mode}",
+            "当前：{mode}",
+            "目前：{mode}",
+            "表示: {mode}",
+            "표시: {mode}",
+            "Activos: {mode}",
+            "Actifs : {mode}",
+        ],
+        SymbolsEnvironmentOverride => [
+            "An environment override controls the active symbols ({mode}). Remove it to use this choice.",
+            "环境变量覆盖了当前符号（{mode}）。移除该覆盖后才能使用此选择。",
+            "環境變數覆寫了目前符號（{mode}）。移除該覆寫後才能使用此選擇。",
+            "環境変数が表示中の記号を制御しています（{mode}）。この選択を使うには上書きを解除してください。",
+            "환경 변수가 현재 기호를 제어합니다({mode}). 이 선택을 사용하려면 재정의를 제거하세요.",
+            "Una variable de entorno controla los símbolos activos ({mode}). Elimínala para usar esta opción.",
+            "Une variable d’environnement contrôle les symboles actifs ({mode}). Supprimez-la pour utiliser ce choix.",
+        ],
+        SymbolsAutoFallback => [
+            "ASCII was selected automatically for a limited terminal or legacy Windows console.",
+            "检测到受限终端或旧式 Windows 控制台，已自动选择 ASCII。",
+            "偵測到受限終端或舊式 Windows 主控台，已自動選擇 ASCII。",
+            "制限のある端末または旧式 Windows コンソール向けに ASCII が自動選択されました。",
+            "제한된 터미널 또는 구형 Windows 콘솔을 위해 ASCII가 자동으로 선택되었습니다.",
+            "ASCII se eligió automáticamente para un terminal limitado o una consola Windows antigua.",
+            "ASCII a été sélectionné automatiquement pour un terminal limité ou une ancienne console Windows.",
+        ],
+        SymbolsApplyHint => [
+            "Enter Apply",
+            "Enter 应用",
+            "Enter 套用",
+            "Enter 適用",
+            "Enter 적용",
+            "Intro Aplicar",
+            "Entrée Appliquer",
+        ],
+        SymbolsKeepCurrentHint => [
+            "Esc Keep current",
+            "Esc 保留当前设置",
+            "Esc 保留目前設定",
+            "Esc 現在の設定を維持",
+            "Esc 현재 설정 유지",
+            "Esc Mantener actual",
+            "Esc Conserver l’actuel",
+        ],
+        SymbolsApplied => [
+            "Symbols saved · preference {preference}, active {mode}.",
+            "符号已保存 · 偏好 {preference}，当前 {mode}。",
+            "符號已儲存 · 偏好 {preference}，目前 {mode}。",
+            "記号を保存しました · 選択 {preference}、表示 {mode}。",
+            "기호를 저장했습니다 · 선택 {preference}, 표시 {mode}.",
+            "Símbolos guardados · preferencia {preference}, activos {mode}.",
+            "Symboles enregistrés · préférence {preference}, actifs {mode}.",
+        ],
+        SymbolsPersistFailed => [
+            "Could not save symbols. The previous choice is still active. Try again.",
+            "无法保存符号；仍使用之前的选择。请重试。",
+            "無法儲存符號；仍使用先前的選擇。請重試。",
+            "記号を保存できませんでした。以前の選択が有効です。再試行してください。",
+            "기호를 저장할 수 없습니다. 이전 선택이 계속 적용됩니다. 다시 시도하세요.",
+            "No se pudieron guardar los símbolos. La opción anterior sigue activa. Inténtalo de nuevo.",
+            "Impossible d’enregistrer les symboles. Le choix précédent reste actif. Réessayez.",
+        ],
+        CommandSymbols => [
+            "Preview and choose terminal symbols",
+            "预览并选择终端符号",
+            "預覽並選擇終端符號",
+            "端末記号をプレビューして選択",
+            "터미널 기호 미리보기 및 선택",
+            "Previsualizar y elegir símbolos del terminal",
+            "Prévisualiser et choisir les symboles du terminal",
+        ],
         PlanCommentSaved => [
             "Comment saved. Saved comments: {count}.",
             "评论已保存。已保存评论：{count} 条。",
@@ -6272,6 +6469,82 @@ mod tests {
     }
 
     #[test]
+    fn symbols_copy_is_complete_and_compact_in_every_supported_locale() {
+        for locale in Locale::ALL {
+            for id in [
+                MessageId::Symbols,
+                MessageId::SymbolsAutomatic,
+                MessageId::SymbolsUnicode,
+                MessageId::SymbolsNerdFont,
+                MessageId::SymbolsAscii,
+                MessageId::SymbolsAutomaticDetail,
+                MessageId::SymbolsUnicodeDetail,
+                MessageId::SymbolsNerdFontDetail,
+                MessageId::SymbolsAsciiDetail,
+                MessageId::SymbolsPreviewGuidance,
+                MessageId::SymbolsEnvironmentOverride,
+                MessageId::SymbolsAutoFallback,
+                MessageId::SymbolsApplyHint,
+                MessageId::SymbolsKeepCurrentHint,
+                MessageId::SymbolsPersistFailed,
+                MessageId::CommandSymbols,
+            ] {
+                assert!(!text(locale, id).trim().is_empty(), "{locale:?} {id:?}");
+            }
+
+            let requested = format(
+                locale,
+                MessageId::SymbolsRequested,
+                &[("preference", "AUTO")],
+            );
+            let effective = format(locale, MessageId::SymbolsEffective, &[("mode", "ASCII")]);
+            let applied = format(
+                locale,
+                MessageId::SymbolsApplied,
+                &[("preference", "AUTO"), ("mode", "ASCII")],
+            );
+            assert!(requested.contains("AUTO"), "{locale:?}: {requested}");
+            assert!(effective.contains("ASCII"), "{locale:?}: {effective}");
+            assert!(
+                applied.contains("AUTO") && applied.contains("ASCII"),
+                "{locale:?}: {applied}"
+            );
+
+            for id in [
+                MessageId::Symbols,
+                MessageId::SymbolsAutomatic,
+                MessageId::SymbolsUnicode,
+                MessageId::SymbolsNerdFont,
+                MessageId::SymbolsAscii,
+            ] {
+                let copy = text(locale, id);
+                assert!(
+                    unicode_width::UnicodeWidthStr::width(copy) <= 20,
+                    "Symbols label is too wide in {locale:?}: {copy:?}"
+                );
+            }
+
+            for id in [
+                MessageId::SymbolsAutomaticDetail,
+                MessageId::SymbolsUnicodeDetail,
+                MessageId::SymbolsNerdFontDetail,
+                MessageId::SymbolsAsciiDetail,
+            ] {
+                let copy = text(locale, id);
+                assert!(
+                    unicode_width::UnicodeWidthStr::width(copy) <= 39,
+                    "Symbols detail exceeds the 80-column row budget in {locale:?}: {copy:?}"
+                );
+            }
+        }
+
+        let guidance = text(Locale::En, MessageId::SymbolsPreviewGuidance);
+        assert!(guidance.contains("aligned"));
+        assert!(guidance.contains("missing font coverage"));
+        assert!(!guidance.to_ascii_lowercase().contains("tofu"));
+    }
+
+    #[test]
     fn retained_surfaces_do_not_reintroduce_migrated_english_copy() {
         let renderer = include_str!("app/render.rs");
         for copy in [
@@ -6415,10 +6688,11 @@ mod tests {
     fn retained_notice_rerenders_without_exposing_internal_execution_id() {
         let notice =
             Notice::localized_for_run(MessageId::ExecutionWorking, "run_7", [("task", "run_7")]);
-        assert_eq!(notice.render(Locale::En), "Working");
-        assert_eq!(notice.render(Locale::ZhHans), "正在处理");
+        let glyphs = crate::glyphs::Glyphs::default();
+        assert_eq!(notice.render(Locale::En, glyphs), "Working");
+        assert_eq!(notice.render(Locale::ZhHans, glyphs), "正在处理");
         for locale in Locale::ALL {
-            assert!(!notice.render(locale).contains("run_7"));
+            assert!(!notice.render(locale, glyphs).contains("run_7"));
         }
         assert!(notice.is_owned_by_run("run_7"));
         assert!(!notice.is_owned_by_run("run_8"));

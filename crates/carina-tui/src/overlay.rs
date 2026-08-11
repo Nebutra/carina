@@ -1,6 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use crate::file_viewer::FileViewer;
+use crate::glyphs::GlyphPreference;
 use crate::product_projection::ProductProjection;
 use crate::rpc::{
     AgentRecap, ContextSummary, GovernanceId, QuestionOption, SessionItemEvent, WireEvent,
@@ -432,6 +433,43 @@ impl PlanReviewOverlay {
 #[derive(Debug, Clone)]
 pub struct SettingsOverlay {
     pub selected: usize,
+    pub page: SettingsPage,
+    pub symbol_selected: usize,
+    pub original_preference: GlyphPreference,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SettingsPage {
+    #[default]
+    Root,
+    Symbols,
+}
+
+impl SettingsOverlay {
+    pub fn root(preference: GlyphPreference) -> Self {
+        Self {
+            selected: 0,
+            page: SettingsPage::Root,
+            symbol_selected: GlyphPreference::ALL
+                .iter()
+                .position(|candidate| *candidate == preference)
+                .unwrap_or_default(),
+            original_preference: preference,
+        }
+    }
+
+    pub fn symbols(preference: GlyphPreference) -> Self {
+        Self {
+            page: SettingsPage::Symbols,
+            ..Self::root(preference)
+        }
+    }
+
+    pub fn symbol_preference(&self) -> GlyphPreference {
+        GlyphPreference::ALL[self
+            .symbol_selected
+            .min(GlyphPreference::ALL.len().saturating_sub(1))]
+    }
 }
 
 #[derive(Debug, Clone)]

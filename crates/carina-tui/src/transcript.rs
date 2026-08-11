@@ -101,6 +101,7 @@ pub struct TranscriptBlock {
     pub user_kind: UserBlockKind,
     pub tool_kind: Option<ToolKind>,
     pub tool_members: Vec<ToolGroupMember>,
+    pub todo_items: Vec<TodoItem>,
     pub failure: Option<FailurePresentation>,
     pub title: String,
     pub body: String,
@@ -170,6 +171,7 @@ impl TranscriptBlock {
             user_kind: UserBlockKind::Prompt,
             tool_kind: None,
             tool_members: Vec::new(),
+            todo_items: Vec::new(),
             failure: None,
             title: String::new(),
             body: prompt.clone(),
@@ -195,6 +197,7 @@ impl TranscriptBlock {
             user_kind: UserBlockKind::Steer,
             tool_kind: None,
             tool_members: Vec::new(),
+            todo_items: Vec::new(),
             failure: None,
             title: String::new(),
             body: prompt.clone(),
@@ -934,7 +937,7 @@ fn tool_block(record: &ToolRecord) -> TranscriptBlock {
         || matches!(kind, ToolKind::Todo)
         || kind.is_code_intelligence()
     {
-        !presentation.body.is_empty()
+        !presentation.body.is_empty() || !presentation.todo_items.is_empty()
     } else if matches!(kind, ToolKind::Patch | ToolKind::Diff) {
         false
     } else {
@@ -977,6 +980,7 @@ fn tool_block(record: &ToolRecord) -> TranscriptBlock {
         user_kind: UserBlockKind::Prompt,
         tool_kind: Some(kind),
         tool_members: vec![member],
+        todo_items: presentation.todo_items,
         failure: None,
         title: presentation.title,
         body: presentation.body,
@@ -1179,6 +1183,7 @@ fn simple_block_from_event(event: WireEvent) -> Option<TranscriptBlock> {
         user_kind: UserBlockKind::Prompt,
         tool_kind: None,
         tool_members: Vec::new(),
+        todo_items: Vec::new(),
         failure: None,
         title: title(kind, &event.kind),
         body,
@@ -1326,6 +1331,7 @@ fn failure_block(
         user_kind: UserBlockKind::Prompt,
         tool_kind: None,
         tool_members: Vec::new(),
+        todo_items: Vec::new(),
         failure: Some(failure),
         title: title.into(),
         body: reason,
@@ -1366,6 +1372,7 @@ fn simple_block_from_item(
         user_kind: UserBlockKind::Prompt,
         tool_kind: None,
         tool_members: Vec::new(),
+        todo_items: Vec::new(),
         failure: None,
         title: title(kind, &item_kind),
         body,
@@ -1391,6 +1398,7 @@ fn user_block(id: String, run_id: String, prompt: String) -> TranscriptBlock {
         user_kind: UserBlockKind::Prompt,
         tool_kind: None,
         tool_members: Vec::new(),
+        todo_items: Vec::new(),
         failure: None,
         title: String::new(),
         body: prompt.clone(),
@@ -1424,6 +1432,7 @@ fn message_block(
         user_kind: UserBlockKind::Prompt,
         tool_kind: None,
         tool_members: Vec::new(),
+        todo_items: Vec::new(),
         failure: None,
         title: title.into(),
         body,
@@ -1653,6 +1662,7 @@ impl TranscriptBlock {
             && self.user_kind == other.user_kind
             && self.tool_kind == other.tool_kind
             && self.tool_members == other.tool_members
+            && self.todo_items == other.todo_items
             && self.failure == other.failure
             && self.title == other.title
             && self.body == other.body
@@ -1672,6 +1682,7 @@ impl TranscriptBlock {
             && self.user_kind == other.user_kind
             && self.tool_kind == other.tool_kind
             && self.tool_members == other.tool_members
+            && self.todo_items == other.todo_items
             && self.failure == other.failure
             && self.title == other.title
             && self.body == other.body
@@ -2478,15 +2489,12 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         let plan = &blocks[0];
         assert_eq!(plan.id, "plan:run-1");
         assert_eq!(plan.title, "Plan");
-        let glyphs = crate::glyphs::Glyphs::detect();
-        assert_eq!(
-            plan.body,
-            format!(
-                "{} Inspect renderer\n{} Run tests",
-                glyphs.success(),
-                glyphs.ready()
-            )
-        );
+        assert!(plan.body.is_empty());
+        assert_eq!(plan.todo_items.len(), 2);
+        assert_eq!(plan.todo_items[0].content, "Inspect renderer");
+        assert_eq!(plan.todo_items[0].status, "completed");
+        assert_eq!(plan.todo_items[1].content, "Run tests");
+        assert_eq!(plan.todo_items[1].status, "in_progress");
         assert!(!plan.collapsible);
         assert!(plan.expanded);
         assert!(plan.status.is_empty());

@@ -1,0 +1,106 @@
+---
+source: crates/carina-tui/src/app/render.rs
+expression: rendered
+---
+size=160x24
+Carina  ·  carina conversation                                                                                        Sessions   Model   Build ⇧Tab   Settings
+Provider  ·  Direct API  ·  model  ·  reasoning off  ·  carina
+─────────────────────────────────────────────────╭ Settings / Symbols ────────────────────────────────────────╮─────────────────────────────────────────────────
+                                                 │ Choose the row that stays aligned. Boxes or misaligned     │
+                                                 │ symbols mean missing font coverage.                        │
+                                                 │ ▌ 1  Automatic     Unicode by default; legacy uses ASCII   │
+                                                 │   2  Unicode       Common Unicode font coverage            │
+                                                 │   3  Nerd Font     Nerd Font Mono required                 │
+                                                 │   4  ASCII         Maximum font compatibility              │
+                                                 │                                                            │
+                                                 │ ✓ Done   ● Working   ! Review   ✗ failed                   │
+                                                 │ ▌ Navigate  ▸ Close  ▾ Open  │ Status  ⠋Working            │
+                                                 │ Preference: Automatic  ·  Active: Unicode                  │
+                                                 │                                                            │
+                                                 │                                                            │
+  Ready in carina                                │                                                            │
+  Describe the change you want to make.          │                                                            │
+                                                 │                                                            │
+                                                 │                                                            │
+╭ Message ───────────────────────────────────────│                                                            │────────────────────────────────────────────────╮
+│                                                │ [ Enter Apply ] [ Esc Keep current ]                       │                                                │
+╰────────────────────────────────────────────────╰────────────────────────────────────────────────────────────╯────────────────────────────────────────────────╯
+
+run ready · HITL unknown · isolation unknown + unknown · ctx unknown · screen minimal
+styles:
+(0,0)..(6,0) (Rgb(222, 133, 155), Reset, BOLD)
+(6,0)..(30,0) (Rgb(150, 160, 156), Reset, NONE)
+(117,0)..(127,0) (Rgb(150, 160, 156), Reset, NONE)
+(128,0)..(135,0) (Rgb(150, 160, 156), Reset, NONE)
+(136,0)..(148,0) (Rgb(150, 160, 156), Reset, NONE)
+(149,0)..(159,0) (Rgb(150, 160, 156), Reset, NONE)
+(0,1)..(159,1) (Rgb(150, 160, 156), Reset, NONE)
+(0,2)..(49,2) (Rgb(52, 65, 68), Reset, NONE)
+(49,2)..(111,2) (Rgb(142, 219, 210), Reset, BOLD)
+(111,2)..(160,2) (Rgb(52, 65, 68), Reset, NONE)
+(49,3)..(50,3) (Rgb(142, 219, 210), Reset, BOLD)
+(51,3)..(109,3) (Rgb(150, 160, 156), Reset, NONE)
+(110,3)..(111,3) (Rgb(142, 219, 210), Reset, BOLD)
+(49,4)..(50,4) (Rgb(142, 219, 210), Reset, BOLD)
+(51,4)..(109,4) (Rgb(150, 160, 156), Reset, NONE)
+(110,4)..(111,4) (Rgb(142, 219, 210), Reset, BOLD)
+(49,5)..(50,5) (Rgb(142, 219, 210), Reset, BOLD)
+(51,5)..(109,5) (Reset, Rgb(36, 61, 62), BOLD)
+(110,5)..(111,5) (Rgb(142, 219, 210), Reset, BOLD)
+(49,6)..(50,6) (Rgb(142, 219, 210), Reset, BOLD)
+(110,6)..(111,6) (Rgb(142, 219, 210), Reset, BOLD)
+(49,7)..(50,7) (Rgb(142, 219, 210), Reset, BOLD)
+(110,7)..(111,7) (Rgb(142, 219, 210), Reset, BOLD)
+(49,8)..(50,8) (Rgb(142, 219, 210), Reset, BOLD)
+(110,8)..(111,8) (Rgb(142, 219, 210), Reset, BOLD)
+(49,9)..(50,9) (Rgb(142, 219, 210), Reset, BOLD)
+(110,9)..(111,9) (Rgb(142, 219, 210), Reset, BOLD)
+(49,10)..(50,10) (Rgb(142, 219, 210), Reset, BOLD)
+(51,10)..(57,10) (Rgb(104, 210, 163), Reset, NONE)
+(60,10)..(69,10) (Rgb(142, 219, 210), Reset, NONE)
+(72,10)..(80,10) (Rgb(232, 168, 95), Reset, NONE)
+(83,10)..(91,10) (Rgb(255, 124, 120), Reset, NONE)
+(110,10)..(111,10) (Rgb(142, 219, 210), Reset, BOLD)
+(49,11)..(50,11) (Rgb(142, 219, 210), Reset, BOLD)
+(51,11)..(109,11) (Rgb(150, 160, 156), Reset, NONE)
+(110,11)..(111,11) (Rgb(142, 219, 210), Reset, BOLD)
+(49,12)..(50,12) (Rgb(142, 219, 210), Reset, BOLD)
+(72,12)..(77,12) (Rgb(52, 65, 68), Reset, NONE)
+(77,12)..(92,12) (Rgb(142, 219, 210), Reset, NONE)
+(92,12)..(109,12) (Rgb(150, 160, 156), Reset, NONE)
+(110,12)..(111,12) (Rgb(142, 219, 210), Reset, BOLD)
+(49,13)..(50,13) (Rgb(142, 219, 210), Reset, BOLD)
+(51,13)..(109,13) (Rgb(150, 160, 156), Reset, NONE)
+(110,13)..(111,13) (Rgb(142, 219, 210), Reset, BOLD)
+(49,14)..(50,14) (Rgb(142, 219, 210), Reset, BOLD)
+(51,14)..(109,14) (Rgb(150, 160, 156), Reset, NONE)
+(110,14)..(111,14) (Rgb(142, 219, 210), Reset, BOLD)
+(2,15)..(17,15) (Reset, Reset, BOLD)
+(49,15)..(50,15) (Rgb(142, 219, 210), Reset, BOLD)
+(51,15)..(109,15) (Rgb(150, 160, 156), Reset, NONE)
+(110,15)..(111,15) (Rgb(142, 219, 210), Reset, BOLD)
+(2,16)..(39,16) (Rgb(150, 160, 156), Reset, NONE)
+(49,16)..(50,16) (Rgb(142, 219, 210), Reset, BOLD)
+(51,16)..(109,16) (Rgb(150, 160, 156), Reset, NONE)
+(110,16)..(111,16) (Rgb(142, 219, 210), Reset, BOLD)
+(49,17)..(50,17) (Rgb(142, 219, 210), Reset, BOLD)
+(51,17)..(109,17) (Rgb(150, 160, 156), Reset, NONE)
+(110,17)..(111,17) (Rgb(142, 219, 210), Reset, BOLD)
+(49,18)..(50,18) (Rgb(142, 219, 210), Reset, BOLD)
+(51,18)..(109,18) (Rgb(150, 160, 156), Reset, NONE)
+(110,18)..(111,18) (Rgb(142, 219, 210), Reset, BOLD)
+(0,19)..(49,19) (Rgb(52, 65, 68), Reset, NONE)
+(49,19)..(50,19) (Rgb(142, 219, 210), Reset, BOLD)
+(51,19)..(109,19) (Rgb(150, 160, 156), Reset, NONE)
+(110,19)..(111,19) (Rgb(142, 219, 210), Reset, BOLD)
+(111,19)..(160,19) (Rgb(52, 65, 68), Reset, NONE)
+(0,20)..(1,20) (Rgb(52, 65, 68), Reset, NONE)
+(49,20)..(50,20) (Rgb(142, 219, 210), Reset, BOLD)
+(51,20)..(66,20) (Rgb(142, 219, 210), Reset, NONE)
+(67,20)..(87,20) (Rgb(142, 219, 210), Reset, NONE)
+(110,20)..(111,20) (Rgb(142, 219, 210), Reset, BOLD)
+(159,20)..(160,20) (Rgb(52, 65, 68), Reset, NONE)
+(0,21)..(49,21) (Rgb(52, 65, 68), Reset, NONE)
+(49,21)..(111,21) (Rgb(142, 219, 210), Reset, BOLD)
+(111,21)..(160,21) (Rgb(52, 65, 68), Reset, NONE)
+(0,23)..(85,23) (Rgb(150, 160, 156), Reset, NONE)

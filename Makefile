@@ -117,6 +117,7 @@ visual-density-gate:
 	cargo test -p carina-tui --lib semantic_cell -- --nocapture
 	cargo test -p carina-tui --lib visual_density -- --nocapture
 	cargo test -p carina-tui --lib plan_review -- --nocapture
+	cargo test -p carina-tui --lib symbols_preview -- --nocapture
 	cargo test -p carina-tui --lib theme::tests::transcript -- --nocapture
 	cargo test -p carina-tui --test golden_frames -- --nocapture
 	cargo test -p carina-tui --test style_discipline -- --nocapture

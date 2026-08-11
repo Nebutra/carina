@@ -136,6 +136,10 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 	if err != nil {
 		return rustUILaunch{}, err
 	}
+	glyphs, err := config.InspectTUIGlyphs(home, workspace)
+	if err != nil {
+		return rustUILaunch{}, err
+	}
 	altScreen, err := config.InspectTUIAlternateScreen(home, workspace)
 	if err != nil {
 		return rustUILaunch{}, err
@@ -213,6 +217,8 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 		localePath,
 		density.Value,
 		density.PersistPath,
+		glyphs.Value,
+		glyphs.PersistPath,
 		carinaBinary,
 		altScreen,
 	)
@@ -254,7 +260,7 @@ func buildRuntimeModeSetupArgs(opts interactiveOptions, home, carinaBinary strin
 	return args
 }
 
-func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localePath, density, densityPath, carinaBinary, altScreen string) []string {
+func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localePath, density, densityPath, glyphs, glyphsPath, carinaBinary, altScreen string) []string {
 	args := []string{
 		"--socket", socket,
 		"--workspace", workspace,
@@ -272,6 +278,10 @@ func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localeP
 	args = append(args, "--density", density)
 	if densityPath != "" {
 		args = append(args, "--density-path", densityPath)
+	}
+	args = append(args, "--glyphs", glyphs)
+	if glyphsPath != "" {
+		args = append(args, "--glyphs-path", glyphsPath)
 	}
 	return appendTerminalArgs(args, opts, altScreen)
 }

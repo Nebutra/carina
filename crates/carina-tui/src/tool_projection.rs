@@ -213,6 +213,7 @@ pub struct ToolPresentation {
     /// Technical target kept for expand/member rows and dim secondary text.
     pub target: String,
     pub body: String,
+    pub todo_items: Vec<TodoItem>,
     pub collapsible: bool,
 }
 
@@ -283,7 +284,7 @@ pub fn present(facts: &ToolFacts, failed: bool) -> ToolPresentation {
     let body = match kind {
         ToolKind::Patch | ToolKind::Diff => edit_body(facts, failed),
         ToolKind::Todo if failed => first(&facts.error, &facts.output).to_owned(),
-        ToolKind::Todo => todo_body(&facts.todo_items),
+        ToolKind::Todo => String::new(),
         _ if failed => first(&facts.error, &facts.output).to_owned(),
         _ if kind.shows_success_detail() => facts.output.clone(),
         _ => String::new(),
@@ -306,25 +307,8 @@ pub fn present(facts: &ToolFacts, failed: bool) -> ToolPresentation {
             !body.is_empty() && kind.shows_success_detail()
         },
         body,
+        todo_items: facts.todo_items.clone(),
     }
-}
-
-fn todo_body(items: &[TodoItem]) -> String {
-    let glyphs = crate::glyphs::Glyphs::detect();
-    items
-        .iter()
-        .filter(|item| !item.content.trim().is_empty())
-        .map(|item| {
-            let marker = match item.status.as_str() {
-                "completed" | "done" => glyphs.success(),
-                "in_progress" | "running" | "active" => glyphs.ready(),
-                "pending" | "queued" | "todo" | "" => glyphs.empty(),
-                _ => glyphs.bullet(),
-            };
-            format!("{marker} {}", item.content.trim())
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn edit_body(facts: &ToolFacts, failed: bool) -> String {
@@ -517,16 +501,11 @@ mod tests {
             false,
         );
         assert_eq!(presentation.title, "Plan");
-        let glyphs = crate::glyphs::Glyphs::detect();
-        assert_eq!(
-            presentation.body,
-            format!(
-                "{} Inspect the renderer\n{} Fix transcript ownership\n{} Run PTY coverage",
-                glyphs.success(),
-                glyphs.ready(),
-                glyphs.empty()
-            )
-        );
+        assert!(presentation.body.is_empty());
+        assert_eq!(presentation.todo_items.len(), 3);
+        assert_eq!(presentation.todo_items[0].status, "completed");
+        assert_eq!(presentation.todo_items[1].status, "in_progress");
+        assert_eq!(presentation.todo_items[2].status, "pending");
         assert!(!presentation.body.contains("completed"));
         assert!(!presentation.collapsible);
     }

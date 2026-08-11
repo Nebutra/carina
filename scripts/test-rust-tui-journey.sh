@@ -1974,6 +1974,55 @@ TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-z
 wait_for_text "Workspace files"
 wait_for_text "@src/app/rend"
 
+# Symbols is a Settings detail page with live, reversible preview. The fourth
+# candidate changes the current frame to ASCII without restarting; Escape
+# restores the original Unicode tier and must leave config bytes untouched.
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
+wait_without_text "Workspace files"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-u
+GLYPH_CONFIG="$HOME_DIR/.carina/config.json"
+GLYPH_CONFIG_BEFORE_CANCEL="$WORK/glyph-config-before-cancel.json"
+cp "$GLYPH_CONFIG" "$GLYPH_CONFIG_BEFORE_CANCEL"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /symbols
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
+wait_for_text "Settings / Symbols"
+wait_for_text "✓ Done"
+grep -Fq "● Working" <<<"$SCREEN"
+grep -Fq "✗ Failed" <<<"$SCREEN"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" 4
+wait_for_text "+ Done"
+grep -Fq "* Working" <<<"$SCREEN"
+grep -Fq "x Failed" <<<"$SCREEN"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
+wait_for_text "Symbols  ·  Automatic (Unicode)"
+cmp -s "$GLYPH_CONFIG_BEFORE_CANCEL" "$GLYPH_CONFIG" || {
+  echo "rust-tui-journey: cancelling the Symbols preview changed config" >&2
+  exit 1
+}
+
+# Reopen the detail and explicitly apply ASCII. Selection only previews; Enter
+# is the commit boundary and preserves every unrelated config key.
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /symbols
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
+wait_for_text "Settings / Symbols"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" 4
+wait_for_text "+ Done"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
+wait_for_text "Symbols  |  ASCII"
+python3 - "$GLYPH_CONFIG" <<'PY'
+import json
+import pathlib
+import sys
+
+config = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if config.get("tui_glyphs") != "ascii":
+    raise SystemExit(f"Symbols Apply did not persist ASCII: {config!r}")
+if config.get("tui_locale") != "en":
+    raise SystemExit(f"Symbols Apply changed unrelated locale state: {config!r}")
+PY
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
+
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$RETURNING_EXIT_FILE" ]] && break
@@ -1985,6 +2034,70 @@ done
 }
 [[ "$(cat "$RETURNING_EXIT_FILE")" == "0" ]] || {
   echo "rust-tui-journey: returning UI exit = $(cat "$RETURNING_EXIT_FILE")" >&2
+  exit 1
+}
+TMUX_TMPDIR="$WORK" tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true
+
+# Relaunch through the packaged Go router, not carina-ui directly. The visible
+# retained plan glyphs prove the router loaded and forwarded persisted ASCII.
+GLYPH_RESTART_EXIT_FILE="$WORK/glyph-restart-ui-exit"
+SESSION="carina-rust-tui-glyph-restart-$$"
+TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
+  "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color CARINA_RUNTIME_MODE=legacy CARINA_UI_BIN='$STAGE/carina-ui' '$STAGE/carina' --socket '$GOV_SOCKET' --workspace '$WORKSPACE' --session sess_tools --locale en --no-alt-screen; code=\$?; printf '%s' \"\$code\" > '$GLYPH_RESTART_EXIT_FILE'; sleep 300"
+
+wait_for_text "+ Inspect renderer"
+wait_for_text "* Run tests"
+for leaked in "✓ Inspect renderer" "● Run tests"; do
+  if grep -Fq "$leaked" <<<"$SCREEN"; then
+    printf '%s\n' "$SCREEN" >&2
+    echo "rust-tui-journey: persisted ASCII relaunch leaked Unicode plan glyphs" >&2
+    exit 1
+  fi
+done
+
+# Save Unicode from the relaunched UI, then relaunch once more with NO_COLOR.
+# Unicode remaining active proves color suppression does not select a symbol
+# tier or override the persisted preference.
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /symbols
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
+wait_for_text "Settings / Symbols"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" 2
+wait_for_text "✓ Done"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
+wait_for_text "Symbols  ·  Unicode"
+grep -Eq '"tui_glyphs"[[:space:]]*:[[:space:]]*"unicode"' "$GLYPH_CONFIG"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape C-c C-c
+for _ in $(seq 1 50); do
+  [[ -s "$GLYPH_RESTART_EXIT_FILE" ]] && break
+  sleep 0.1
+done
+[[ -s "$GLYPH_RESTART_EXIT_FILE" && "$(cat "$GLYPH_RESTART_EXIT_FILE")" == "0" ]] || {
+  echo "rust-tui-journey: persisted ASCII relaunch did not exit cleanly" >&2
+  exit 1
+}
+TMUX_TMPDIR="$WORK" tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true
+
+GLYPH_NO_COLOR_EXIT_FILE="$WORK/glyph-no-color-ui-exit"
+SESSION="carina-rust-tui-glyph-no-color-$$"
+TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
+  "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color NO_COLOR=1 CARINA_RUNTIME_MODE=legacy CARINA_UI_BIN='$STAGE/carina-ui' '$STAGE/carina' --socket '$GOV_SOCKET' --workspace '$WORKSPACE' --session sess_tools --locale en --no-alt-screen; code=\$?; printf '%s' \"\$code\" > '$GLYPH_NO_COLOR_EXIT_FILE'; sleep 300"
+
+wait_for_text "✓ Inspect renderer"
+wait_for_text "● Run tests"
+for leaked in "+ Inspect renderer" "* Run tests"; do
+  if grep -Fq "$leaked" <<<"$SCREEN"; then
+    printf '%s\n' "$SCREEN" >&2
+    echo "rust-tui-journey: NO_COLOR overrode persisted Unicode glyphs" >&2
+    exit 1
+  fi
+done
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
+for _ in $(seq 1 50); do
+  [[ -s "$GLYPH_NO_COLOR_EXIT_FILE" ]] && break
+  sleep 0.1
+done
+[[ -s "$GLYPH_NO_COLOR_EXIT_FILE" && "$(cat "$GLYPH_NO_COLOR_EXIT_FILE")" == "0" ]] || {
+  echo "rust-tui-journey: NO_COLOR glyph relaunch did not exit cleanly" >&2
   exit 1
 }
 TMUX_TMPDIR="$WORK" tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true

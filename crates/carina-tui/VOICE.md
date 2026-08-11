@@ -42,6 +42,18 @@ Examples:
 {Capability} is limited here ({reason}). {Fallback behavior}.
 ```
 
+For font coverage, state the visible result and the recovery path. Do not use
+font-rendering slang or claim that Carina detected an installed font:
+
+```text
+ASCII selected automatically for a limited terminal or legacy Windows console.
+Boxes or misaligned symbols mean missing font coverage. Use /symbols or Settings to choose ASCII.
+```
+
+Automatic symbols may explain a legacy-terminal fallback, while an environment
+override must say that it owns the active tier. Nerd Font copy always says that
+Nerd Font Mono is required; Automatic never promises or implies Nerd detection.
+
 ### Waiting
 ```
 {Progress noun}… {elapsed or cancel key}

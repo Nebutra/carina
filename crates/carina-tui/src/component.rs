@@ -1,6 +1,8 @@
 use ratatui::layout::{Position, Rect};
 use xai_ratatui_textarea::ElementId;
 
+use crate::glyphs::GlyphPreference;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ComponentId(pub u64);
 
@@ -48,6 +50,10 @@ pub enum Action {
     OpenSessions,
     OpenModels,
     OpenSettings,
+    OpenGlyphPreview,
+    PreviewGlyphPreference(GlyphPreference),
+    ApplyGlyphPreference,
+    CancelGlyphPreview,
     ToggleDensity,
     OpenStatus,
     OpenQueue,

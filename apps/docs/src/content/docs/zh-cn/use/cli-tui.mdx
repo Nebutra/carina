@@ -67,6 +67,7 @@ CLI 与 TUI 共享同一 daemon、策略内核与审计链路（与 JSON-RPC 一
 | `/context` | 上下文压力与压缩回执详情 |
 | `/changes` | 审阅 patch 事务、文件、hunk 与回滚 |
 | `/density` | 切换 Compact / Comfortable transcript 密度 |
+| `/symbols` | 预览并选择终端符号 |
 | `/provider` | 选择或配置 provider |
 | `/model` | 选择模型 |
 | `/plan` | 切换 plan 模式（退出可能需要受控审批） |
@@ -94,6 +95,23 @@ carina commands list
 <Badge variant="accent">Compact</Badge> 是默认模式：例行成功读取会折叠，已验证编辑仍保留可审阅证据，但不会塞满 transcript。<Badge variant="info">Comfortable</Badge> 增加间距，并默认展开例行工具详情。使用 `/density` 或 Settings 中的 Density 行；两处都会持久化同一个 `tui_density` 偏好。用户显式执行的展开或折叠始终优先于密度默认值。
 
 密度只改变呈现，不改变屏幕模式、策略、审批状态、patch 身份或 daemon 数据。
+
+### 终端符号
+
+使用 `/symbols` 或 Settings 中的 **符号** 行，可在原位比较四种偏好：
+
+| 偏好 | 行为 |
+| --- | --- |
+| 自动 | 默认使用 Unicode；遇到明确的旧式终端兼容信号时使用 ASCII |
+| Unicode | 适用于包含常用 Unicode 符号的字体 |
+| Nerd Font | 需要显式选择，并要求 Nerd Font Mono |
+| ASCII | 字体兼容性最高 |
+
+选择会按正常的全局/项目配置级联保存为 `tui_glyphs: "auto" | "unicode" | "nerd" | "ascii"`。候选行会立即预览但不会保存；应用后才会提交选择，按 Esc 则保留之前的设置。这只改变呈现，不改变草稿、transcript 状态、选择、展开状态、策略或屏幕模式。
+
+自动模式无法可靠探测终端安装了哪些字体，也绝不会自动选择 Nerd Font。它的保守 ASCII 信号包括 `TERM=dumb` 和旧式 Windows 原生控制台；Windows Terminal、macOS 与 Linux 上的字体覆盖仍可能不同。请选择保持对齐的预览行。方框或错位符号表示字体覆盖不完整，此时可选择 ASCII 恢复。
+
+有效的 `CARINA_TUI_GLYPHS=auto|unicode|nerd|ascii` 具有最高优先级。未设置该变量时，为真的旧版兼容变量 `CARINA_ASCII` 会先于已保存偏好强制使用 ASCII。环境变量控制当前层级时，Settings 会明确说明。`NO_COLOR` 与符号层级互相独立：它只关闭产品颜色，不会切换符号。
 
 ### Composer 状态
 

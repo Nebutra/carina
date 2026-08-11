@@ -25,6 +25,7 @@ use ratatui::layout::{Position, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 use ratatui::{TerminalOptions, Viewport};
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use xai_ratatui_inline::{
     Terminal, emit_to_scrollback, resize_purge_rerender, with_synchronized_output,
 };
@@ -42,6 +43,7 @@ use crate::file_viewer::{
 use crate::frame_scheduler::{
     FeedbackMarker, FrameScheduler, RedrawReason, TickDemand, WaitPlan, wait_plan,
 };
+use crate::glyphs::{GlyphPreference, GlyphResolution, ResolvedGlyphs};
 use crate::history_search::HistorySearchState;
 use crate::hyperlink::{HyperlinkSupport, MarkdownLink, markdown_links};
 use crate::i18n::{Locale, MessageId, Notice, format as tr_format, text as tr};
@@ -56,7 +58,8 @@ use crate::native_scrollback::{
 };
 use crate::overlay::{
     AgentDashboardOverlay, ApprovalScope, ChangesFocus, ChangesOverlay, HelpOverlay, Overlay,
-    OverlayStack, PlanReviewOverlay, QueueOverlay, RetainedLoad, SettingsOverlay, StatusOverlay,
+    OverlayStack, PlanReviewOverlay, QueueOverlay, RetainedLoad, SettingsOverlay, SettingsPage,
+    StatusOverlay,
 };
 use crate::patch_review::{PatchReview, project_patch_reviews};
 use crate::prerequisite::ProviderPickerState;
@@ -86,7 +89,8 @@ const DEFAULT_REWIND_PRIME_WINDOW: Duration = Duration::from_millis(800);
 const REWIND_GRACE_ENV: &str = "CARINA_ESC_GRACE_MS";
 const MIN_REWIND_GRACE_MS: u64 = 250;
 const MAX_REWIND_GRACE_MS: u64 = 2_000;
-const SETTINGS_ITEM_COUNT: usize = 9;
+const SETTINGS_ITEM_COUNT: usize = 10;
+const SETTINGS_SYMBOLS_INDEX: usize = 5;
 const PLAN_REVIEW_PAGE_LINES: usize = 8;
 const IMPORT_ERROR_LIMIT: u64 = 1024;
 const IMPORT_HELPER_TIMEOUT: Duration = Duration::from_secs(20);
@@ -97,6 +101,7 @@ struct TranscriptHeightCacheEntry {
     width: u16,
     locale: Locale,
     density: DensityMode,
+    glyph_mode: crate::glyphs::GlyphMode,
     expand_key: &'static str,
     height: usize,
     header_height: usize,
@@ -108,6 +113,7 @@ struct TranscriptRenderCacheEntry {
     width: u16,
     locale: Locale,
     density: DensityMode,
+    glyph_mode: crate::glyphs::GlyphMode,
     expand_key: &'static str,
     lines: Vec<Line<'static>>,
 }
@@ -124,6 +130,8 @@ pub struct Options {
     pub locale_path: Option<PathBuf>,
     pub density: DensityMode,
     pub density_path: Option<PathBuf>,
+    pub glyph_preference: GlyphPreference,
+    pub glyphs_path: Option<PathBuf>,
     pub carina_bin: Option<PathBuf>,
     pub no_alt_screen: bool,
     pub screen_mode: Option<ScreenMode>,
@@ -476,6 +484,8 @@ pub struct App {
     active_session: Option<Session>,
     security_context: Option<EffectiveConfig>,
     density: DensityMode,
+    glyph_preference: GlyphPreference,
+    glyph_resolution: GlyphResolution,
     tool_disclosure_overrides: HashMap<String, bool>,
     blocks: Vec<TranscriptBlock>,
     scrollback: ScrollbackLedger,
@@ -618,6 +628,125 @@ impl App {
         }
     }
 
+    fn resolved_glyphs(&self, preference: GlyphPreference) -> Option<GlyphResolution> {
+        ResolvedGlyphs::detect(preference).ok()
+    }
+
+    fn apply_glyph_resolution(&mut self, resolution: GlyphResolution) {
+        self.glyph_resolution = resolution;
+        self.theme.glyphs = self.theme.glyphs.with_mode(resolution.mode);
+        self.clear_transcript_projection_caches();
+        self.dirty = true;
+    }
+
+    fn open_settings(&mut self) {
+        if matches!(
+            self.overlays.active(),
+            Some(Overlay::Settings(SettingsOverlay {
+                page: SettingsPage::Symbols,
+                ..
+            }))
+        ) {
+            self.cancel_glyph_preview();
+        }
+        self.overlays
+            .replace(Overlay::Settings(SettingsOverlay::root(
+                self.glyph_preference,
+            )));
+    }
+
+    fn open_glyph_preview(&mut self) {
+        match self.overlays.active_mut() {
+            Some(Overlay::Settings(settings)) => {
+                settings.page = SettingsPage::Symbols;
+                settings.original_preference = self.glyph_preference;
+                settings.symbol_selected = GlyphPreference::ALL
+                    .iter()
+                    .position(|candidate| *candidate == self.glyph_preference)
+                    .unwrap_or_default();
+            }
+            _ => self
+                .overlays
+                .replace(Overlay::Settings(SettingsOverlay::symbols(
+                    self.glyph_preference,
+                ))),
+        }
+    }
+
+    fn preview_glyph_preference(&mut self, preference: GlyphPreference) {
+        let Some(resolution) = self.resolved_glyphs(preference) else {
+            self.notice = Notice::localized(MessageId::SymbolsPersistFailed);
+            return;
+        };
+        let Some(Overlay::Settings(settings)) = self.overlays.active_mut() else {
+            return;
+        };
+        if settings.page != SettingsPage::Symbols {
+            return;
+        }
+        settings.symbol_selected = GlyphPreference::ALL
+            .iter()
+            .position(|candidate| *candidate == preference)
+            .unwrap_or_default();
+        self.apply_glyph_resolution(resolution);
+    }
+
+    fn cancel_glyph_preview(&mut self) {
+        let Some(Overlay::Settings(settings)) = self.overlays.active() else {
+            return;
+        };
+        let original = settings.original_preference;
+        let Some(resolution) = self.resolved_glyphs(original) else {
+            self.notice = Notice::localized(MessageId::SymbolsPersistFailed);
+            return;
+        };
+        self.apply_glyph_resolution(resolution);
+        if let Some(Overlay::Settings(settings)) = self.overlays.active_mut() {
+            settings.page = SettingsPage::Root;
+            settings.symbol_selected = GlyphPreference::ALL
+                .iter()
+                .position(|candidate| *candidate == original)
+                .unwrap_or_default();
+        }
+    }
+
+    fn commit_glyph_preference(&mut self) {
+        let Some(Overlay::Settings(settings)) = self.overlays.active() else {
+            return;
+        };
+        let preference = settings.symbol_preference();
+        let path = self
+            .options
+            .glyphs_path
+            .clone()
+            .or_else(default_locale_path);
+        let Some(path) = path else {
+            self.notice = Notice::localized(MessageId::SymbolsPersistFailed);
+            return;
+        };
+        let Some(resolution) = self.resolved_glyphs(preference) else {
+            self.notice = Notice::localized(MessageId::SymbolsPersistFailed);
+            return;
+        };
+        if persist_glyph_preference(&path, preference).is_err() {
+            self.notice = Notice::localized(MessageId::SymbolsPersistFailed);
+            return;
+        }
+        self.glyph_preference = preference;
+        self.apply_glyph_resolution(resolution);
+        if let Some(Overlay::Settings(settings)) = self.overlays.active_mut() {
+            settings.original_preference = preference;
+            settings.page = SettingsPage::Root;
+        }
+        self.notice = Notice::localized_with(
+            MessageId::SymbolsApplied,
+            [
+                ("preference", preference.as_config_value()),
+                ("mode", resolution.mode.as_str()),
+            ],
+        );
+    }
+
     fn media_chip_labels(&self) -> MediaChipLabels<'static> {
         let locale = self.ui_locale();
         MediaChipLabels {
@@ -691,6 +820,11 @@ impl App {
         composer.set_tab_width(4);
         let (async_tx, async_rx) = mpsc::channel();
         let density = options.density;
+        let glyph_preference = options.glyph_preference;
+        let glyph_resolution = ResolvedGlyphs::detect(glyph_preference)
+            .context("resolve terminal symbol preference")?;
+        let mut theme = Theme::detected(None);
+        theme.glyphs = theme.glyphs.with_mode(glyph_resolution.mode);
 
         let mut app = Self {
             options,
@@ -712,6 +846,8 @@ impl App {
             active_session: None,
             security_context: None,
             density,
+            glyph_preference,
+            glyph_resolution,
             tool_disclosure_overrides: HashMap::new(),
             blocks: Vec::new(),
             scrollback: ScrollbackLedger::default(),
@@ -775,7 +911,7 @@ impl App {
             event_generation: 0,
             event_cursor: 0,
             transcript_stale: false,
-            theme: Theme::detected(None),
+            theme,
             async_tx,
             async_rx,
             pending_async: VecDeque::new(),
@@ -3338,8 +3474,7 @@ impl App {
                 self.open_help_overlay();
             }
             KeyCode::Char(',') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.overlays
-                    .replace(Overlay::Settings(SettingsOverlay { selected: 0 }));
+                self.open_settings();
             }
             KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.open_prompt_history_search();
@@ -4146,10 +4281,10 @@ impl App {
         self.remember_command_use(command::operator_id(command.id));
         match command.id {
             CommandId::Settings => {
-                self.overlays
-                    .replace(Overlay::Settings(SettingsOverlay { selected: 0 }));
+                self.open_settings();
             }
             CommandId::Density => self.apply_action(Action::ToggleDensity),
+            CommandId::Symbols => self.apply_action(Action::OpenGlyphPreview),
             CommandId::Status => self.apply_action(Action::OpenStatus),
             CommandId::Context => {
                 self.request_context_summary();
@@ -4723,17 +4858,40 @@ impl App {
                     }
                 }
             }
-            Some(Overlay::Settings(settings)) => match key.code {
-                KeyCode::Up | KeyCode::BackTab => {
-                    settings.selected = settings.selected.saturating_sub(1)
-                }
-                KeyCode::Down | KeyCode::Tab => {
-                    settings.selected =
-                        (settings.selected + 1).min(SETTINGS_ITEM_COUNT.saturating_sub(1));
-                }
-                KeyCode::Enter => deferred = settings_action(settings.selected),
-                KeyCode::Esc => self.overlays.resolve_active(),
-                _ => {}
+            Some(Overlay::Settings(settings)) => match settings.page {
+                SettingsPage::Root => match key.code {
+                    KeyCode::Up | KeyCode::BackTab => {
+                        settings.selected = settings.selected.saturating_sub(1)
+                    }
+                    KeyCode::Down | KeyCode::Tab => {
+                        settings.selected =
+                            (settings.selected + 1).min(SETTINGS_ITEM_COUNT.saturating_sub(1));
+                    }
+                    KeyCode::Enter => deferred = settings_action(settings.selected),
+                    KeyCode::Esc => self.overlays.resolve_active(),
+                    _ => {}
+                },
+                SettingsPage::Symbols => match key.code {
+                    KeyCode::Up | KeyCode::Left | KeyCode::BackTab => {
+                        let index = settings.symbol_selected.saturating_sub(1);
+                        deferred =
+                            Some(Action::PreviewGlyphPreference(GlyphPreference::ALL[index]));
+                    }
+                    KeyCode::Down | KeyCode::Right | KeyCode::Tab => {
+                        let index = (settings.symbol_selected + 1)
+                            .min(GlyphPreference::ALL.len().saturating_sub(1));
+                        deferred =
+                            Some(Action::PreviewGlyphPreference(GlyphPreference::ALL[index]));
+                    }
+                    KeyCode::Char(value @ '1'..='4') => {
+                        let index = value.to_digit(10).unwrap_or(1) as usize - 1;
+                        deferred =
+                            Some(Action::PreviewGlyphPreference(GlyphPreference::ALL[index]));
+                    }
+                    KeyCode::Enter => deferred = Some(Action::ApplyGlyphPreference),
+                    KeyCode::Esc => deferred = Some(Action::CancelGlyphPreview),
+                    _ => {}
+                },
             },
             Some(Overlay::Status(_)) => match key.code {
                 KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::CloseOverlay),
@@ -5031,8 +5189,7 @@ impl App {
                 self.overlays.resolve_active();
             }
             Ok(DoctorOperation::Succeeded) if action.kind == RecoveryActionKind::OpenSettings => {
-                self.overlays
-                    .replace(Overlay::Settings(SettingsOverlay { selected: 0 }));
+                self.open_settings();
             }
             Ok(DoctorOperation::Succeeded) if action.kind == RecoveryActionKind::CopyEvidence => {
                 if let Some(Overlay::Doctor(screen)) = self.overlays.active() {
@@ -5296,6 +5453,15 @@ impl App {
     }
 
     fn close_top_non_governance(&mut self) -> bool {
+        if matches!(
+            self.overlays.active(),
+            Some(Overlay::Settings(SettingsOverlay {
+                page: SettingsPage::Symbols,
+                ..
+            }))
+        ) {
+            self.cancel_glyph_preview();
+        }
         let Some(overlay) = self.overlays.active() else {
             return false;
         };
@@ -5937,9 +6103,11 @@ impl App {
                 self.close_top_non_governance();
                 self.open_models();
             }
-            Action::OpenSettings => self
-                .overlays
-                .replace(Overlay::Settings(SettingsOverlay { selected: 0 })),
+            Action::OpenSettings => self.open_settings(),
+            Action::OpenGlyphPreview => self.open_glyph_preview(),
+            Action::PreviewGlyphPreference(preference) => self.preview_glyph_preference(preference),
+            Action::ApplyGlyphPreference => self.commit_glyph_preference(),
+            Action::CancelGlyphPreview => self.cancel_glyph_preview(),
             Action::ToggleDensity => self.toggle_density(),
             Action::OpenQueue => self.open_queue_overlay(),
             Action::OpenStatus => {
@@ -6567,10 +6735,11 @@ fn settings_action(index: usize) -> Option<Action> {
         2 => Some(Action::OpenModels),
         3 => Some(Action::TogglePlanMode),
         4 => Some(Action::ToggleDensity),
-        5 => Some(Action::OpenStatus),
-        6 => Some(Action::OpenSessions),
-        7 => Some(Action::ResumePausedExecutionRun),
-        8 => Some(Action::CloseOverlay),
+        SETTINGS_SYMBOLS_INDEX => Some(Action::OpenGlyphPreview),
+        6 => Some(Action::OpenStatus),
+        7 => Some(Action::OpenSessions),
+        8 => Some(Action::ResumePausedExecutionRun),
+        9 => Some(Action::CloseOverlay),
         _ => None,
     }
 }
@@ -6868,6 +7037,7 @@ pub fn run(options: Options) -> Result<Outcome> {
     let background = crate::terminal_probe::background(Duration::from_millis(80));
     let mut app = App::bootstrap(options)?;
     app.theme = Theme::detected(background);
+    app.theme.glyphs = app.theme.glyphs.with_mode(app.glyph_resolution.mode);
     let graphics = TerminalGraphics::detect();
     app.graphics_enabled = graphics.enabled();
     let mut terminal = TerminalHost::enter(
@@ -7062,6 +7232,12 @@ fn relaunch_in_screen_mode(app: &App, mode: ScreenMode) -> Result<Outcome> {
     command.arg("--density").arg(app.density.as_config_value());
     if let Some(path) = app.options.density_path.as_ref() {
         command.arg("--density-path").arg(path);
+    }
+    command
+        .arg("--glyphs")
+        .arg(app.glyph_preference.as_config_value());
+    if let Some(path) = app.options.glyphs_path.as_ref() {
+        command.arg("--glyphs-path").arg(path);
     }
     if let Some(path) = app.options.carina_bin.as_ref() {
         command.arg("--carina-bin").arg(path);
@@ -7916,8 +8092,9 @@ fn load_density(path: Option<&Path>) -> Result<DensityMode> {
 
 fn persist_config_string(path: &Path, key: &str, value: &str) -> Result<()> {
     let mut root = match fs::read(path) {
-        Ok(data) => serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&data)
-            .with_context(|| format!("parse {}", path.display()))?,
+        Ok(data) => {
+            parse_unique_json_object(&data).with_context(|| format!("parse {}", path.display()))?
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => serde_json::Map::new(),
         Err(error) => return Err(error.into()),
     };
@@ -7926,11 +8103,119 @@ fn persist_config_string(path: &Path, key: &str, value: &str) -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow!("TUI config has no parent"))?;
     fs::create_dir_all(parent)?;
-    let temp = parent.join(format!(".config.{}.tmp", std::process::id()));
-    let data = serde_json::to_vec_pretty(&root)?;
-    fs::write(&temp, data)?;
-    fs::rename(&temp, path)?;
+    let permissions = match fs::metadata(path) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    if let Some(permissions) = permissions {
+        temp.as_file().set_permissions(permissions)?;
+    }
+    serde_json::to_writer_pretty(temp.as_file_mut(), &root)?;
+    temp.as_file_mut().write_all(b"\n")?;
+    temp.as_file_mut().flush()?;
+    temp.as_file().sync_all()?;
+    temp.persist(path).map_err(|error| error.error)?;
     Ok(())
+}
+
+fn parse_unique_json_object(data: &[u8]) -> Result<serde_json::Map<String, serde_json::Value>> {
+    let StrictJson(value) = serde_json::from_slice::<StrictJson>(data)?;
+    value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| anyhow!("TUI config root must be an object"))
+}
+
+struct StrictJson(serde_json::Value);
+
+impl<'de> serde::Deserialize<'de> for StrictJson {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(StrictJsonVisitor)
+    }
+}
+
+struct StrictJsonVisitor;
+
+impl<'de> Visitor<'de> for StrictJsonVisitor {
+    type Value = StrictJson;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("valid JSON without duplicate object keys")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJson(value.into()))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJson(value.into()))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJson(value.into()))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> std::result::Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        serde_json::Number::from_f64(value)
+            .map(serde_json::Value::Number)
+            .map(StrictJson)
+            .ok_or_else(|| E::custom("JSON number must be finite"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        self.visit_string(value.to_owned())
+    }
+
+    fn visit_string<E>(self, value: String) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJson(value.into()))
+    }
+
+    fn visit_none<E>(self) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJson(serde_json::Value::Null))
+    }
+
+    fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJson(serde_json::Value::Null))
+    }
+
+    fn visit_seq<A>(self, mut values: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut array = Vec::new();
+        while let Some(StrictJson(value)) = values.next_element::<StrictJson>()? {
+            array.push(value);
+        }
+        Ok(StrictJson(serde_json::Value::Array(array)))
+    }
+
+    fn visit_map<A>(self, mut values: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut object = serde_json::Map::new();
+        while let Some(key) = values.next_key::<String>()? {
+            if object.contains_key(&key) {
+                return Err(de::Error::custom(format!(
+                    "duplicate JSON key {key:?}; remove one entry before changing TUI settings"
+                )));
+            }
+            let StrictJson(value) = values.next_value::<StrictJson>()?;
+            object.insert(key, value);
+        }
+        Ok(StrictJson(serde_json::Value::Object(object)))
+    }
 }
 
 fn persist_locale(path: &Path, locale: &str) -> Result<()> {
@@ -7939,6 +8224,10 @@ fn persist_locale(path: &Path, locale: &str) -> Result<()> {
 
 fn persist_density(path: &Path, density: DensityMode) -> Result<()> {
     persist_config_string(path, "tui_density", density.as_config_value())
+}
+
+fn persist_glyph_preference(path: &Path, preference: GlyphPreference) -> Result<()> {
+    persist_config_string(path, "tui_glyphs", preference.as_config_value())
 }
 
 #[cfg(test)]
@@ -8366,6 +8655,63 @@ mod tests {
     }
 
     #[test]
+    fn glyph_update_preserves_unrelated_config_and_survives_reload() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.json");
+        fs::write(
+            &path,
+            br#"{"max_concurrent_tasks":4,"provider":{"id":"openai"},"tui_locale":"zh-Hans"}"#,
+        )
+        .unwrap();
+
+        persist_glyph_preference(&path, GlyphPreference::Nerd).unwrap();
+
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(value["max_concurrent_tasks"], 4);
+        assert_eq!(value["provider"]["id"], "openai");
+        assert_eq!(value["tui_locale"], "zh-Hans");
+        assert_eq!(value["tui_glyphs"], "nerd");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn glyph_update_preserves_existing_config_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.json");
+        fs::write(&path, br#"{"tui_locale":"en"}"#).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+
+        persist_glyph_preference(&path, GlyphPreference::Ascii).unwrap();
+
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+    }
+
+    #[test]
+    fn config_update_rejects_invalid_or_duplicate_json_without_replacing_it() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.json");
+        for original in [
+            br#"{"tui_glyphs":"auto""#.as_slice(),
+            br#"{"tui_glyphs":"auto","tui_glyphs":"ascii"}"#.as_slice(),
+            br#"{"provider":{"id":"one","id":"two"}}"#.as_slice(),
+            br#"["not","an","object"]"#.as_slice(),
+        ] {
+            fs::write(&path, original).unwrap();
+            assert!(
+                persist_glyph_preference(&path, GlyphPreference::Unicode).is_err(),
+                "invalid config must be rejected: {}",
+                String::from_utf8_lossy(original)
+            );
+            assert_eq!(fs::read(&path).unwrap(), original);
+        }
+    }
+
+    #[test]
     fn invalid_persisted_density_is_explicit() {
         let root = std::env::temp_dir().join(format!(
             "carina-tui-density-invalid-{}-{}",
@@ -8505,13 +8851,14 @@ mod tests {
 
     #[test]
     fn settings_keyboard_and_pointer_share_provider_action_order() {
-        assert_eq!(SETTINGS_ITEM_COUNT, 9);
+        assert_eq!(SETTINGS_ITEM_COUNT, 10);
         assert_eq!(settings_action(1), Some(Action::OpenProvider));
         assert_eq!(settings_action(3), Some(Action::TogglePlanMode));
         assert_eq!(settings_action(4), Some(Action::ToggleDensity));
-        assert_eq!(settings_action(5), Some(Action::OpenStatus));
-        assert_eq!(settings_action(8), Some(Action::CloseOverlay));
-        assert_eq!(settings_action(9), None);
+        assert_eq!(settings_action(5), Some(Action::OpenGlyphPreview));
+        assert_eq!(settings_action(6), Some(Action::OpenStatus));
+        assert_eq!(settings_action(9), Some(Action::CloseOverlay));
+        assert_eq!(settings_action(10), None);
     }
 
     #[test]

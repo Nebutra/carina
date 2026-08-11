@@ -5,6 +5,7 @@ use crate::rpc::{PromptCommand, PromptCommandArgument};
 pub enum CommandId {
     Settings,
     Density,
+    Symbols,
     Status,
     Context,
     Changes,
@@ -51,6 +52,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         CommandId::Density,
         "/density",
         MessageId::CommandDensity,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Symbols,
+        "/symbols",
+        MessageId::CommandSymbols,
         AvailabilityRule::Always,
     ),
     command(
@@ -535,6 +542,25 @@ mod tests {
         assert_eq!(
             resolve("/density", false).map(|item| item.id),
             Some(CommandId::Density)
+        );
+    }
+
+    #[test]
+    fn symbols_is_a_builtin_command_available_in_every_execution_state() {
+        for has_active_execution in [false, true] {
+            assert!(
+                matching("/sym", has_active_execution)
+                    .iter()
+                    .any(|item| item.id == CommandId::Symbols)
+            );
+            assert_eq!(
+                resolve("/symbols", has_active_execution).map(|item| item.id),
+                Some(CommandId::Symbols)
+            );
+        }
+        assert_eq!(
+            lookup("/symbols").map(|item| item.description),
+            Some(MessageId::CommandSymbols)
         );
     }
 

@@ -79,6 +79,7 @@ type Config struct {
 	TUIKeybindings             map[string][]string `json:"tui_keybindings"`
 	TUILocale                  string              `json:"tui_locale"`
 	TUIDensity                 string              `json:"tui_density"`
+	TUIGlyphs                  string              `json:"tui_glyphs"`
 	TUIAlternateScreen         string              `json:"tui_alternate_screen"`
 }
 
@@ -99,6 +100,7 @@ func Defaults(home string) Config {
 		MemoryHMSMaxEvidence:      8,
 		MemoryHMSProjectionPollMS: 1000,
 		TUIDensity:                "compact",
+		TUIGlyphs:                 "auto",
 		TUIAlternateScreen:        "auto",
 	}
 }
@@ -287,6 +289,11 @@ func (c Config) Validate() error {
 	}
 	if density := strings.ToLower(strings.TrimSpace(c.TUIDensity)); density != "" && density != "compact" && density != "comfortable" {
 		return fmt.Errorf("config: tui_density must be one of compact, comfortable")
+	}
+	if strings.TrimSpace(c.TUIGlyphs) != "" {
+		if _, err := normalizeTUIGlyphs(c.TUIGlyphs); err != nil {
+			return err
+		}
 	}
 	if c.MaxTaskTokens < 0 {
 		return fmt.Errorf("config: max_task_tokens must be >= 0, got %d", c.MaxTaskTokens)

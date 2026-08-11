@@ -61,6 +61,7 @@ States:
 | Success-read collapse language | **wired** | Title-only `Read ×N · path…`; expand restores members; fail/cancel never join success groups | V002 visual density |
 | Semantic transcript cell skeletons | **wired** | Pure typed `SemanticCellKind`; production 120-column gallery; governance remains overlay-owned | V003 visual density |
 | Persisted transcript density | **wired** | Compact default and Comfortable projection; `/density` + settings share one action; structured `tui_density` config; explicit disclosure wins; ScreenMode remains orthogonal | V004 visual density |
+| Portable symbol tiers | **wired** | Automatic, Unicode, explicit Nerd Font, and ASCII preferences; live `/symbols` + Settings preview; width-locked semantic registry; structured `tui_glyphs` config; environment ownership disclosed | V008 visual density |
 | Unified composer chrome | **wired** | Fixed two-row `ComposerChrome`; typed Run/Queue/HITL/Isolation/Context/ScreenMode slots; `/queue` and pointer share `Action::OpenQueue`; 60/80/120 EN/zh-Hans and fallback geometry tests | V007 visual density |
 | Visual density regression gate | **wired** | Production App matrix for both densities at 80/120/160 × EN/zh-Hans; Unicode style-run goldens; ASCII/color/polarity/selection contracts; Make + CI gate | V011 visual density |
 | Assistant content-type channel | **wired** | action JSON suppressed (`tool=done`→summary); whole-body JSON → pretty `json` markdown fence; else prose/markdown | transcript projection |
@@ -83,7 +84,9 @@ States:
 ## Architecture constraints (executable)
 
 1. **Color discipline** — prefer theme tokens; `tests/style_discipline.rs` guards raw palette sprawl.
-2. **Glyph centralization** — product glyphs live in `glyphs.rs` with width invariants.
+2. **Glyph centralization** — product glyphs live in `glyphs.rs` with Unicode,
+   Nerd Font, and ASCII width invariants. `tui_glyphs` stores
+   `auto|unicode|nerd|ascii`; Automatic never probes fonts or selects Nerd Font.
 3. **Capability ledger** — this file; large TUI PRs should update the row state.
 
 ## Previously deferred — now shipped (late pass)

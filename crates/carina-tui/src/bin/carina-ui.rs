@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use carina_tui::app::{ScreenMode, read_screen_handoff};
 use carina_tui::density::DensityMode;
+use carina_tui::glyphs::GlyphPreference;
 use carina_tui::i18n::Locale;
 use carina_tui::{
     Options, RuntimeDiagnosticOptions, RuntimeDiagnosticOutcome, choose_runtime_mode, run,
@@ -27,6 +28,10 @@ struct Args {
     density: DensityArg,
     #[arg(long)]
     density_path: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = GlyphArg::Auto)]
+    glyphs: GlyphArg,
+    #[arg(long)]
+    glyphs_path: Option<PathBuf>,
     #[arg(long)]
     carina_bin: Option<PathBuf>,
     #[arg(long)]
@@ -66,6 +71,14 @@ enum AltScreenArg {
 enum DensityArg {
     Compact,
     Comfortable,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum GlyphArg {
+    Auto,
+    Unicode,
+    Nerd,
+    Ascii,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -169,6 +182,13 @@ fn try_main() -> Result<i32> {
             DensityArg::Comfortable => DensityMode::Comfortable,
         },
         density_path: args.density_path,
+        glyph_preference: match args.glyphs {
+            GlyphArg::Auto => GlyphPreference::Auto,
+            GlyphArg::Unicode => GlyphPreference::Unicode,
+            GlyphArg::Nerd => GlyphPreference::Nerd,
+            GlyphArg::Ascii => GlyphPreference::Ascii,
+        },
+        glyphs_path: args.glyphs_path,
         carina_bin,
         no_alt_screen: args.no_alt_screen,
         screen_mode: args.screen_mode.map(|mode| match mode {

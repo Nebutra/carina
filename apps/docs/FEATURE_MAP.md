@@ -55,6 +55,7 @@ Do **not** advertise a release tag in README unless that tag has a GitHub Releas
 | Hash verify | `/concepts/audit/` | chain verify | `carina audit verify` |
 | Patches / Changes workbench | `/concepts/audit/` + `/use/cli-tui/` | patch pipeline | `carina patch *`, `/changes` |
 | Transcript density | `/use/cli-tui/#transcript-density` | TUI DensityMode | `/density`, Settings, `tui_density` |
+| Terminal symbols | `/use/cli-tui/#terminal-symbols` | TUI GlyphPreference + semantic glyph registry | `/symbols`, Settings, `tui_glyphs` |
 | Composer status chrome | `/use/cli-tui/#composer-status` | TUI ComposerChrome | Run / Queue / HITL / Isolation / Context / ScreenMode |
 | Semantic motion | `/use/cli-tui/#motion--accessibility` | frame scheduler + glyph policy | activity, validation, `CARINA_REDUCED_MOTION` |
 | Fullscreen transaction review (next) | `/use/cli-tui/#review-workbench` + `/concepts/audit/#transaction-review` | typed PatchReview projection | `/changes` in Fullscreen |

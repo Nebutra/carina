@@ -67,6 +67,7 @@ Registered in the TUI (`crates/carina-tui/src/command.rs`). `/exit` aliases `/qu
 | `/context` | Context pressure and compaction receipt detail |
 | `/changes` | Review patch transactions, files, hunks, and rollback |
 | `/density` | Toggle Compact / Comfortable transcript density |
+| `/symbols` | Preview and choose terminal symbols |
 | `/provider` | Choose or reconfigure a provider |
 | `/model` | Choose a model |
 | `/plan` | Toggle plan mode (exit may require governed approval) |
@@ -94,6 +95,23 @@ carina commands list
 <Badge variant="accent">Compact</Badge> is the default: routine successful reads collapse and verified edits stay reviewable without filling the transcript. <Badge variant="info">Comfortable</Badge> adds spacing and opens routine tool detail by default. Use `/density` or the Density row in Settings; both persist the same `tui_density` preference. An explicit expand/collapse choice always wins over the density default.
 
 Density changes presentation only. It does not change screen mode, policy, approval state, patch identity, or daemon data.
+
+### Terminal symbols
+
+Open `/symbols` or choose **Symbols** in Settings to compare four preferences in place:
+
+| Preference | Behavior |
+| --- | --- |
+| Automatic | Unicode by default; ASCII for established legacy-terminal safety signals |
+| Unicode | Standard symbols for fonts with common Unicode coverage |
+| Nerd Font | An explicit opt-in that requires Nerd Font Mono |
+| ASCII | Maximum font compatibility |
+
+The saved setting is `tui_glyphs: "auto" | "unicode" | "nerd" | "ascii"` in the normal global/project config cascade. Candidate rows preview immediately without saving; Apply commits the choice, while Esc keeps the previous one. This is presentation only and preserves the draft, transcript state, selection, disclosure, policy, and screen mode.
+
+Automatic cannot reliably detect installed terminal fonts and never selects Nerd Font. Its conservative ASCII signals include `TERM=dumb` and legacy native Windows consoles; font coverage can still vary in Windows Terminal and on macOS or Linux. Choose the preview row that remains aligned. Boxes or misaligned symbols mean the font is missing coverage, so use ASCII as the recovery tier.
+
+A valid `CARINA_TUI_GLYPHS=auto|unicode|nerd|ascii` has highest priority. When it is unset, a truthy legacy `CARINA_ASCII` forces ASCII ahead of the saved preference. Settings discloses when an environment override owns the active tier. `NO_COLOR` is independent: it disables product color without changing the symbol tier.
 
 ### Composer status
 

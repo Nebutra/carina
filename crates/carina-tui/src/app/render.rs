@@ -25,7 +25,7 @@ use crate::conversation::{
 };
 use crate::density::DensityMode;
 use crate::file_viewer::{FileViewerLoad, selection_hint};
-use crate::glyphs::Glyphs;
+use crate::glyphs::{GlyphMode, GlyphPreference, GlyphSource, Glyphs};
 use crate::history_search::HistoryMode;
 use crate::i18n::{
     Locale, MessageId, count as tr_count, format as tr_format, localize_operator_failure_reason,
@@ -35,7 +35,9 @@ use crate::layout_contract;
 use crate::markdown::{
     MarkdownTheme, StyledPrefix, render_prefixed as render_markdown_prefixed, wrap_styled_lines,
 };
-use crate::overlay::{ApprovalScope, ChangesFocus, Overlay, PlanReviewOverlay};
+use crate::overlay::{
+    ApprovalScope, ChangesFocus, Overlay, PlanReviewOverlay, SettingsOverlay, SettingsPage,
+};
 use crate::patch_review::{PatchDisposition, PatchReview};
 use crate::prerequisite::{BrowserLayout, PickerWindow, PrerequisiteLayout};
 use crate::product_header::{HeaderAction, ProductHeader};
@@ -45,7 +47,9 @@ use crate::product_projection::{
 use crate::rpc::ModelProvider;
 use crate::semantic_cell::SemanticCellKind;
 use crate::session_browser::SessionScope;
-use crate::tool_projection::{visible_group_members_with_limits, visible_output_lines_with_limits};
+use crate::tool_projection::{
+    TodoItem, visible_group_members_with_limits, visible_output_lines_with_limits,
+};
 use crate::transcript::{
     BlockBodyKind, BlockKind, FailureAction, ToolGroupMember, TranscriptBlock, UserBlockKind,
 };
@@ -333,7 +337,7 @@ impl App {
         let import_validating = validation_elapsed.is_some();
         let import_failed = self.provider_import.failure(&provider.id).is_some();
         let import_active = import_reviewing || import_validating || import_failed;
-        let validation_glyph = validation_spinner(validation_elapsed);
+        let validation_glyph = validation_spinner(validation_elapsed, self.theme.glyphs);
         let is_ccswitch = provider.source_kind == "cc-switch";
         let active_route = provider.source_route == "managed_proxy";
         let execution_ready = self.inventory.is_provider_runnable(provider);
@@ -820,7 +824,7 @@ impl App {
         let import_validating = validation_elapsed.is_some();
         let import_failure = self.provider_import.failure(&provider.id);
         let import_active = import_reviewing || import_validating || import_failure.is_some();
-        let validation_glyph = validation_spinner(validation_elapsed);
+        let validation_glyph = validation_spinner(validation_elapsed, self.theme.glyphs);
         let is_ccswitch = provider.source_kind == "cc-switch";
         let active_route = provider.source_route == "managed_proxy";
         let execution_ready = self.inventory.is_provider_runnable(provider);
@@ -2171,7 +2175,7 @@ impl App {
                 Style::default().fg(self.theme.muted),
             ));
         }
-        let notice_text = self.notice.render(self.ui_locale());
+        let notice_text = self.notice.render(self.ui_locale(), self.theme.glyphs);
         let notice = if notice_text.is_empty() {
             Line::default()
         } else {
@@ -2350,6 +2354,7 @@ impl App {
             TranscriptViewport {
                 locale,
                 density: self.density,
+                glyph_mode: self.theme.glyphs.mode,
                 content_width,
                 tool_expand_key: self.keybindings.expand_tools.label(),
                 height: area.height as usize,
@@ -2972,13 +2977,18 @@ impl App {
             )
         };
         frame.render_widget(
-            Paragraph::new(truncate_cells(&status, inner.width as usize)).style(
-                Style::default().fg(if self.context_completion.error().is_some() {
+            Paragraph::new(truncate_cells(
+                &status,
+                inner.width as usize,
+                self.theme.glyphs,
+            ))
+            .style(Style::default().fg(
+                if self.context_completion.error().is_some() {
                     self.theme.warning
                 } else {
                     self.theme.muted
-                }),
-            ),
+                },
+            )),
             Rect::new(inner.x, inner.y, inner.width, layout_contract::ROW_HEIGHT),
         );
         let rows = Rect::new(
@@ -3027,7 +3037,10 @@ impl App {
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::styled(
-                        format!("{prefix}{}", truncate_cells(&candidate.path, available)),
+                        format!(
+                            "{prefix}{}",
+                            truncate_cells(&candidate.path, available, self.theme.glyphs)
+                        ),
                         if active {
                             self.theme.selected()
                         } else {
@@ -3093,6 +3106,7 @@ impl App {
                 Paragraph::new(truncate_cells(
                     tr(locale, MessageId::PromptHistoryBrowseHint),
                     inner.width as usize,
+                    self.theme.glyphs,
                 ))
                 .style(Style::default().fg(self.theme.muted)),
                 query_area,
@@ -3105,6 +3119,7 @@ impl App {
                     .width
                     .saturating_sub(UnicodeWidthStr::width(query_prefix.as_str()) as u16)
                     as usize,
+                self.theme.glyphs,
             );
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
@@ -3125,6 +3140,7 @@ impl App {
                 Paragraph::new(truncate_cells(
                     tr(locale, MessageId::WorkspaceHistoryUnavailable),
                     separator.width as usize,
+                    self.theme.glyphs,
                 ))
                 .style(Style::default().fg(self.theme.warning)),
                 separator,
@@ -3189,6 +3205,7 @@ impl App {
                         truncate_cells(
                             &one_line,
                             row.width.saturating_sub(layout_contract::BLOCK_PADDING) as usize,
+                            self.theme.glyphs,
                         )
                     ))
                     .style(style),
@@ -3210,6 +3227,7 @@ impl App {
                     .width
                     .saturating_sub(UnicodeWidthStr::width(query_prefix.as_str()) as u16)
                     as usize,
+                self.theme.glyphs,
             );
             let query_width = UnicodeWidthStr::width(query.as_str()) as u16;
             frame.set_cursor_position(Position::new(
@@ -3228,7 +3246,7 @@ impl App {
     }
 
     fn render_composer_chrome(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let notice = self.notice.render(self.ui_locale());
+        let notice = self.notice.render(self.ui_locale(), self.theme.glyphs);
         let session = self.active_session.as_ref();
         let config = self.security_context.as_ref();
         let hitl = config
@@ -3295,6 +3313,7 @@ impl App {
                 truncate_cells(
                     &primary.text,
                     (area.width as usize).saturating_sub(prefix_width),
+                    self.theme.glyphs,
                 ),
                 chrome_tone_style(primary.tone, self.theme),
             ));
@@ -3430,7 +3449,6 @@ impl App {
 
     fn render_overlay(&mut self, frame: &mut Frame<'_>, area: Rect, overlay: &Overlay) {
         let locale = self.ui_locale();
-        let sep = self.theme.glyphs.separator();
         match overlay {
             Overlay::Approval(approval) => {
                 let approval_title = format!(
@@ -3833,141 +3851,7 @@ impl App {
                     chunks[3],
                 );
             }
-            Overlay::Settings(settings) => {
-                let popup = centered(
-                    area,
-                    layout_contract::SETTINGS_POPUP.0,
-                    layout_contract::SETTINGS_POPUP.1,
-                );
-                frame.render_widget(Clear, popup);
-                let block = Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
-                    .title(format!(" {} ", tr(locale, MessageId::Settings)))
-                    .style(Style::default());
-                let inner = block.inner(popup);
-                frame.render_widget(block, popup);
-                let selected_model_label = self
-                    .models
-                    .iter()
-                    .find(|model| model.id == self.selected_model)
-                    .map(|model| {
-                        if model.display_id.is_empty() {
-                            model.id.as_str()
-                        } else {
-                            model.display_id.as_str()
-                        }
-                    })
-                    .unwrap_or(self.selected_model.as_str());
-                let selected_model_label = if selected_model_label.trim().is_empty() {
-                    tr(locale, MessageId::NotSet)
-                } else {
-                    selected_model_label
-                };
-                self.render_rows(
-                    frame,
-                    inner.inner(Margin::new(1, 1)),
-                    vec![
-                        format!(
-                            "{}  {sep}  {}",
-                            tr(locale, MessageId::PhaseLanguage),
-                            self.options
-                                .locale
-                                .as_deref()
-                                .unwrap_or(tr(locale, MessageId::NotSet))
-                        ),
-                        self.inventory
-                            .providers
-                            .get(self.provider_index)
-                            .map(|provider| {
-                                let name = if provider.name.is_empty() {
-                                    provider.id.as_str()
-                                } else {
-                                    provider.name.as_str()
-                                };
-                                format!("{}  {sep}  {name}", tr(locale, MessageId::Provider))
-                            })
-                            .unwrap_or_else(|| {
-                                format!(
-                                    "{}  {sep}  {}",
-                                    tr(locale, MessageId::Provider),
-                                    tr(locale, MessageId::NotSet)
-                                )
-                            }),
-                        format!(
-                            "{}  {sep}  {}",
-                            tr(locale, MessageId::Model),
-                            selected_model_label
-                        ),
-                        if self
-                            .active_session
-                            .as_ref()
-                            .is_some_and(|session| session.plan_mode)
-                        {
-                            format!(
-                                "{}  {sep}  {}",
-                                tr(locale, MessageId::Mode),
-                                tr(locale, MessageId::ModePlanDetail)
-                            )
-                        } else {
-                            format!(
-                                "{}  {sep}  {}",
-                                tr(locale, MessageId::Mode),
-                                tr(locale, MessageId::ModeBuildDetail)
-                            )
-                        },
-                        format!(
-                            "{}  {sep}  {}",
-                            tr(locale, MessageId::Density),
-                            tr(
-                                locale,
-                                match self.density {
-                                    DensityMode::Compact => MessageId::DensityCompact,
-                                    DensityMode::Comfortable => MessageId::DensityComfortable,
-                                }
-                            )
-                        ),
-                        format!(
-                            "{}  {sep}  {}",
-                            tr(locale, MessageId::Status),
-                            tr(locale, MessageId::StatusDetail)
-                        ),
-                        format!(
-                            "{}  {sep}  {}",
-                            tr(locale, MessageId::Sessions),
-                            tr(locale, MessageId::SessionsDetail)
-                        ),
-                        if self.paused_resume_blocker().is_some() {
-                            format!(
-                                "{}  {sep}  {}",
-                                tr(locale, MessageId::Review),
-                                tr(locale, MessageId::ContinuityRequired)
-                            )
-                        } else if self
-                            .active_session
-                            .as_ref()
-                            .is_some_and(|session| session.execution_status == "paused")
-                        {
-                            format!(
-                                "{}  {sep}  {}",
-                                tr(locale, MessageId::Resume),
-                                tr(locale, MessageId::ResumePausedDetail)
-                            )
-                        } else {
-                            format!(
-                                "{}  {sep}  {}",
-                                tr(locale, MessageId::Resume),
-                                tr(locale, MessageId::NoPausedExecution)
-                            )
-                        },
-                        tr(locale, MessageId::Close).into(),
-                    ],
-                    settings.selected,
-                    12_000,
-                    super::settings_action,
-                );
-            }
+            Overlay::Settings(settings) => self.render_settings_overlay(frame, area, settings),
             Overlay::Doctor(doctor) => {
                 let popup = centered(
                     area,
@@ -4578,8 +4462,12 @@ impl App {
                         )
                     });
                 frame.render_widget(
-                    Paragraph::new(truncate_cells(&search, chunks[0].width as usize))
-                        .style(Style::default().fg(self.theme.muted)),
+                    Paragraph::new(truncate_cells(
+                        &search,
+                        chunks[0].width as usize,
+                        self.theme.glyphs,
+                    ))
+                    .style(Style::default().fg(self.theme.muted)),
                     chunks[0],
                 );
                 match &viewer.load {
@@ -4650,7 +4538,10 @@ impl App {
                             frame.render_widget(
                                 Paragraph::new(Line::from(vec![
                                     Span::styled(prefix, Style::default().fg(self.theme.muted)),
-                                    Span::styled(truncate_cells(content, available), style),
+                                    Span::styled(
+                                        truncate_cells(content, available, self.theme.glyphs),
+                                        style,
+                                    ),
                                 ]))
                                 .style(if active {
                                     self.theme.selected()
@@ -4792,7 +4683,7 @@ impl App {
                             Style::default().fg(self.theme.text)
                         };
                         lines.push(Line::from(Span::styled(
-                            truncate_cells(&row, chunks[1].width as usize),
+                            truncate_cells(&row, chunks[1].width as usize, self.theme.glyphs),
                             style,
                         )));
                     }
@@ -5051,6 +4942,380 @@ impl App {
             );
         }
         line_groups
+    }
+
+    fn render_settings_overlay(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        settings: &SettingsOverlay,
+    ) {
+        let locale = self.ui_locale();
+        let popup = centered(
+            area,
+            layout_contract::SETTINGS_POPUP.0,
+            layout_contract::SETTINGS_POPUP.1,
+        );
+        frame.render_widget(Clear, popup);
+        let title = match settings.page {
+            SettingsPage::Root => tr(locale, MessageId::Settings).to_owned(),
+            SettingsPage::Symbols => format!(
+                "{} / {}",
+                tr(locale, MessageId::Settings),
+                tr(locale, MessageId::Symbols)
+            ),
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(self.theme.glyphs.outer_border_type())
+            .border_style(self.theme.focus())
+            .title(format!(" {title} "))
+            .style(Style::default());
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+        match settings.page {
+            SettingsPage::Root => self.render_settings_root(frame, inner, settings),
+            SettingsPage::Symbols => self.render_symbols_settings(frame, inner, settings),
+        }
+    }
+
+    fn render_settings_root(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        settings: &SettingsOverlay,
+    ) {
+        let locale = self.ui_locale();
+        let sep = self.theme.glyphs.separator();
+        let selected_model_label = self
+            .models
+            .iter()
+            .find(|model| model.id == self.selected_model)
+            .map(|model| {
+                if model.display_id.is_empty() {
+                    model.id.as_str()
+                } else {
+                    model.display_id.as_str()
+                }
+            })
+            .unwrap_or(self.selected_model.as_str());
+        let selected_model_label = if selected_model_label.trim().is_empty() {
+            tr(locale, MessageId::NotSet)
+        } else {
+            selected_model_label
+        };
+        let symbol_preference = glyph_preference_label(locale, self.glyph_preference);
+        let symbol_mode = glyph_mode_label(locale, self.glyph_resolution.mode);
+        let symbol_value = if self.glyph_preference == GlyphPreference::Auto
+            || self.glyph_resolution.source.is_environment_override()
+        {
+            format!("{symbol_preference} ({symbol_mode})")
+        } else {
+            symbol_preference.to_owned()
+        };
+        self.render_rows(
+            frame,
+            area.inner(Margin::new(1, 1)),
+            vec![
+                format!(
+                    "{}  {sep}  {}",
+                    tr(locale, MessageId::PhaseLanguage),
+                    self.options
+                        .locale
+                        .as_deref()
+                        .unwrap_or(tr(locale, MessageId::NotSet))
+                ),
+                self.inventory
+                    .providers
+                    .get(self.provider_index)
+                    .map(|provider| {
+                        let name = if provider.name.is_empty() {
+                            provider.id.as_str()
+                        } else {
+                            provider.name.as_str()
+                        };
+                        format!("{}  {sep}  {name}", tr(locale, MessageId::Provider))
+                    })
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{}  {sep}  {}",
+                            tr(locale, MessageId::Provider),
+                            tr(locale, MessageId::NotSet)
+                        )
+                    }),
+                format!(
+                    "{}  {sep}  {}",
+                    tr(locale, MessageId::Model),
+                    selected_model_label
+                ),
+                if self
+                    .active_session
+                    .as_ref()
+                    .is_some_and(|session| session.plan_mode)
+                {
+                    format!(
+                        "{}  {sep}  {}",
+                        tr(locale, MessageId::Mode),
+                        tr(locale, MessageId::ModePlanDetail)
+                    )
+                } else {
+                    format!(
+                        "{}  {sep}  {}",
+                        tr(locale, MessageId::Mode),
+                        tr(locale, MessageId::ModeBuildDetail)
+                    )
+                },
+                format!(
+                    "{}  {sep}  {}",
+                    tr(locale, MessageId::Density),
+                    tr(
+                        locale,
+                        match self.density {
+                            DensityMode::Compact => MessageId::DensityCompact,
+                            DensityMode::Comfortable => MessageId::DensityComfortable,
+                        }
+                    )
+                ),
+                format!("{}  {sep}  {symbol_value}", tr(locale, MessageId::Symbols)),
+                format!(
+                    "{}  {sep}  {}",
+                    tr(locale, MessageId::Status),
+                    tr(locale, MessageId::StatusDetail)
+                ),
+                format!(
+                    "{}  {sep}  {}",
+                    tr(locale, MessageId::Sessions),
+                    tr(locale, MessageId::SessionsDetail)
+                ),
+                if self.paused_resume_blocker().is_some() {
+                    format!(
+                        "{}  {sep}  {}",
+                        tr(locale, MessageId::Review),
+                        tr(locale, MessageId::ContinuityRequired)
+                    )
+                } else if self
+                    .active_session
+                    .as_ref()
+                    .is_some_and(|session| session.execution_status == "paused")
+                {
+                    format!(
+                        "{}  {sep}  {}",
+                        tr(locale, MessageId::Resume),
+                        tr(locale, MessageId::ResumePausedDetail)
+                    )
+                } else {
+                    format!(
+                        "{}  {sep}  {}",
+                        tr(locale, MessageId::Resume),
+                        tr(locale, MessageId::NoPausedExecution)
+                    )
+                },
+                tr(locale, MessageId::Close).into(),
+            ],
+            settings.selected,
+            12_000,
+            super::settings_action,
+        );
+    }
+
+    fn render_symbols_settings(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        settings: &SettingsOverlay,
+    ) {
+        let locale = self.ui_locale();
+        let content = area.inner(Margin::new(1, 0));
+        if content.height == 0 || content.width == 0 {
+            return;
+        }
+        let compact = content.height <= 14;
+        let guidance_height = if compact { 1 } else { 2 }.min(content.height);
+        frame.render_widget(
+            Paragraph::new(tr(locale, MessageId::SymbolsPreviewGuidance))
+                .style(Style::default().fg(self.theme.muted))
+                .wrap(Wrap { trim: false }),
+            Rect::new(content.x, content.y, content.width, guidance_height),
+        );
+
+        let choices_y = content.y.saturating_add(guidance_height);
+        let choices = Rect::new(
+            content.x,
+            choices_y,
+            content.width,
+            4.min(content.bottom().saturating_sub(choices_y)),
+        );
+        let detail_width = usize::from(choices.width).saturating_sub(
+            self.theme.glyphs.selected().width() + "1  ".width() + 12 + "  ".width(),
+        );
+        self.render_rows(
+            frame,
+            choices,
+            GlyphPreference::ALL
+                .into_iter()
+                .enumerate()
+                .map(|(index, preference)| {
+                    format!(
+                        "{}  {}  {}",
+                        index + 1,
+                        pad_cells(
+                            glyph_preference_label(locale, preference),
+                            12,
+                            self.theme.glyphs,
+                        ),
+                        truncate_cells(
+                            glyph_preference_detail(locale, preference),
+                            detail_width,
+                            self.theme.glyphs,
+                        )
+                    )
+                })
+                .collect(),
+            settings.symbol_selected,
+            12_500,
+            symbol_preview_action,
+        );
+
+        let sample_y = if compact {
+            choices.bottom()
+        } else {
+            choices.bottom().saturating_add(1)
+        }
+        .min(content.bottom());
+        if sample_y < content.bottom().saturating_sub(2) {
+            let sample = Line::from(vec![
+                Span::styled(
+                    format!(
+                        "{} {}",
+                        self.theme.glyphs.success(),
+                        tr(locale, MessageId::Done)
+                    ),
+                    Style::default().fg(self.theme.success),
+                ),
+                Span::styled("   ", Style::default()),
+                Span::styled(
+                    format!(
+                        "{} {}",
+                        self.theme.glyphs.ready(),
+                        tr(locale, MessageId::ExecutionWorking)
+                    ),
+                    Style::default().fg(self.theme.accent),
+                ),
+                Span::styled("   ", Style::default()),
+                Span::styled(
+                    format!(
+                        "{} {}",
+                        self.theme.glyphs.warning(),
+                        tr(locale, MessageId::Review)
+                    ),
+                    Style::default().fg(self.theme.warning),
+                ),
+                Span::styled("   ", Style::default()),
+                Span::styled(
+                    format!(
+                        "{} {}",
+                        self.theme.glyphs.failure(),
+                        tr(locale, MessageId::StatusFailed)
+                    ),
+                    Style::default().fg(self.theme.danger),
+                ),
+            ]);
+            frame.render_widget(
+                Paragraph::new(sample),
+                Rect::new(content.x, sample_y, content.width, 1),
+            );
+            if !compact && sample_y + 1 < content.bottom().saturating_sub(2) {
+                frame.render_widget(
+                    Paragraph::new(format!(
+                        "{}{}  {}{}  {}{}  {}{}  {}{}",
+                        self.theme.glyphs.selected(),
+                        tr(locale, MessageId::Navigate),
+                        self.theme.glyphs.disclosure_closed(),
+                        tr(locale, MessageId::Close),
+                        self.theme.glyphs.disclosure_open(),
+                        tr(locale, MessageId::Open),
+                        self.theme.glyphs.tree(),
+                        tr(locale, MessageId::Status),
+                        self.theme.glyphs.status_spinner(0),
+                        tr(locale, MessageId::ExecutionWorking),
+                    ))
+                    .style(Style::default().fg(self.theme.muted)),
+                    Rect::new(content.x, sample_y + 1, content.width, 1),
+                );
+            }
+        }
+
+        let footer_y = content.bottom().saturating_sub(1);
+        let info_y = if compact {
+            sample_y.saturating_add(1).min(footer_y)
+        } else {
+            sample_y.saturating_add(2).min(footer_y)
+        };
+        let info_height = footer_y.saturating_sub(info_y);
+        if info_height > 0 {
+            let preference = settings.symbol_preference();
+            let mode = self.glyph_resolution.mode;
+            let mut info = vec![Line::from(vec![
+                Span::styled(
+                    tr_format(
+                        locale,
+                        MessageId::SymbolsRequested,
+                        &[("preference", glyph_preference_label(locale, preference))],
+                    ),
+                    Style::default().fg(self.theme.text),
+                ),
+                Span::styled(
+                    format!("  {}  ", self.theme.glyphs.separator()),
+                    Style::default().fg(self.theme.border),
+                ),
+                Span::styled(
+                    tr_format(
+                        locale,
+                        MessageId::SymbolsEffective,
+                        &[("mode", glyph_mode_label(locale, mode))],
+                    ),
+                    Style::default().fg(self.theme.accent),
+                ),
+            ])];
+            if self.glyph_resolution.source.is_environment_override() {
+                info.push(Line::from(Span::styled(
+                    tr_format(
+                        locale,
+                        MessageId::SymbolsEnvironmentOverride,
+                        &[("mode", glyph_mode_label(locale, mode))],
+                    ),
+                    Style::default().fg(self.theme.warning),
+                )));
+            } else if self.glyph_resolution.source == GlyphSource::AutomaticLegacyTerminal {
+                info.push(Line::from(Span::styled(
+                    tr(locale, MessageId::SymbolsAutoFallback),
+                    Style::default().fg(self.theme.warning),
+                )));
+            }
+            frame.render_widget(
+                Paragraph::new(info)
+                    .wrap(Wrap { trim: false })
+                    .style(Style::default().fg(self.theme.muted)),
+                Rect::new(content.x, info_y, content.width, info_height),
+            );
+        }
+
+        self.render_modal_buttons(
+            frame,
+            Rect::new(content.x, footer_y, content.width, 1),
+            &[
+                (
+                    tr(locale, MessageId::SymbolsApplyHint),
+                    Action::ApplyGlyphPreference,
+                    12_600,
+                ),
+                (
+                    tr(locale, MessageId::SymbolsKeepCurrentHint),
+                    Action::CancelGlyphPreview,
+                    12_601,
+                ),
+            ],
+        );
     }
 
     fn render_fullscreen_patch_review(
@@ -5789,7 +6054,12 @@ impl App {
                 Style::default().fg(self.theme.text)
             };
             frame.render_widget(
-                Paragraph::new(truncate_cells(&summary, columns[0].width as usize)).style(style),
+                Paragraph::new(truncate_cells(
+                    &summary,
+                    columns[0].width as usize,
+                    self.theme.glyphs,
+                ))
+                .style(style),
                 row,
             );
             self.interactions.register(HitRegion {
@@ -6147,6 +6417,48 @@ fn model_health_color(app: &App, status: &str) -> ratatui::style::Color {
     }
 }
 
+fn glyph_preference_label(locale: Locale, preference: GlyphPreference) -> &'static str {
+    tr(
+        locale,
+        match preference {
+            GlyphPreference::Auto => MessageId::SymbolsAutomatic,
+            GlyphPreference::Unicode => MessageId::SymbolsUnicode,
+            GlyphPreference::Nerd => MessageId::SymbolsNerdFont,
+            GlyphPreference::Ascii => MessageId::SymbolsAscii,
+        },
+    )
+}
+
+fn glyph_preference_detail(locale: Locale, preference: GlyphPreference) -> &'static str {
+    tr(
+        locale,
+        match preference {
+            GlyphPreference::Auto => MessageId::SymbolsAutomaticDetail,
+            GlyphPreference::Unicode => MessageId::SymbolsUnicodeDetail,
+            GlyphPreference::Nerd => MessageId::SymbolsNerdFontDetail,
+            GlyphPreference::Ascii => MessageId::SymbolsAsciiDetail,
+        },
+    )
+}
+
+fn glyph_mode_label(locale: Locale, mode: GlyphMode) -> &'static str {
+    tr(
+        locale,
+        match mode {
+            GlyphMode::Unicode => MessageId::SymbolsUnicode,
+            GlyphMode::Nerd => MessageId::SymbolsNerdFont,
+            GlyphMode::Ascii => MessageId::SymbolsAscii,
+        },
+    )
+}
+
+fn symbol_preview_action(index: usize) -> Option<Action> {
+    GlyphPreference::ALL
+        .get(index)
+        .copied()
+        .map(Action::PreviewGlyphPreference)
+}
+
 /// Terminal cell width for layout (CJK is typically 2 cells per character).
 fn display_cells(value: &str) -> u16 {
     UnicodeWidthStr::width(value).min(u16::MAX as usize) as u16
@@ -6296,6 +6608,7 @@ struct TranscriptLayout {
 struct TranscriptViewport {
     locale: Locale,
     density: DensityMode,
+    glyph_mode: GlyphMode,
     content_width: u16,
     tool_expand_key: &'static str,
     height: usize,
@@ -6317,8 +6630,15 @@ struct TranscriptStyles {
     headings: [Style; 6],
 }
 
-fn truncate_cells(value: &str, max_width: usize) -> String {
-    crate::render_contract::truncate_width(value, max_width)
+fn truncate_cells(value: &str, max_width: usize, glyphs: Glyphs) -> String {
+    crate::render_contract::truncate_width_with_glyphs(value, max_width, glyphs)
+}
+
+fn pad_cells(value: &str, width: usize, glyphs: Glyphs) -> String {
+    let mut out = truncate_cells(value, width, glyphs);
+    let used = UnicodeWidthStr::width(out.as_str());
+    out.push_str(&" ".repeat(width.saturating_sub(used)));
+    out
 }
 
 impl TranscriptLayout {
@@ -6330,6 +6650,7 @@ impl TranscriptLayout {
         let TranscriptViewport {
             locale,
             density,
+            glyph_mode,
             content_width,
             tool_expand_key,
             height: viewport_height,
@@ -6350,6 +6671,7 @@ impl TranscriptLayout {
                             && entry.width == content_width
                             && entry.locale == locale
                             && entry.density == density
+                            && entry.glyph_mode == glyph_mode
                             && entry.expand_key == tool_expand_key =>
                     {
                         (entry.height, entry.header_height)
@@ -6370,6 +6692,7 @@ impl TranscriptLayout {
                                 width: content_width,
                                 locale,
                                 density,
+                                glyph_mode,
                                 expand_key: tool_expand_key,
                                 height,
                                 header_height,
@@ -6468,6 +6791,7 @@ fn transcript_block_height_with_tool_key_and_density(
 
 fn transcript_block_hidden(block: &TranscriptBlock) -> bool {
     block.tool_members.is_empty()
+        && block.todo_items.is_empty()
         && block.title.trim().is_empty()
         && block.body.trim().is_empty()
         && block.status.trim().is_empty()
@@ -6789,6 +7113,11 @@ fn transcript_lines_with_tool_key_and_density(
     };
     if block.kind == BlockKind::Tool && block.tool_members.len() > 1 {
         lines.extend(tool_group_lines(block, tool_context));
+    } else if block.kind == BlockKind::Tool
+        && block.tool_kind == Some(crate::tool_projection::ToolKind::Todo)
+        && !block.todo_items.is_empty()
+    {
+        lines.extend(todo_item_lines(&block.todo_items, tool_context));
     } else if block.kind == BlockKind::Tool && !block.body.is_empty() {
         lines.extend(tool_detail_lines(
             &block.body,
@@ -6807,6 +7136,33 @@ fn transcript_lines_with_tool_key_and_density(
         }));
     }
     lines
+}
+
+fn todo_item_lines(items: &[TodoItem], context: ToolLineContext) -> Vec<Line<'static>> {
+    let prefix = StyledPrefix::repeating(vec![Span::styled(
+        context.styles.glyphs.tool_gutter(),
+        context.styles.metadata,
+    )]);
+    let logical = items
+        .iter()
+        .filter(|item| !item.content.trim().is_empty())
+        .map(|item| {
+            let (marker, style) = match item.status.as_str() {
+                "completed" | "done" => (context.styles.glyphs.success(), context.styles.added),
+                "in_progress" | "running" | "active" => {
+                    (context.styles.glyphs.ready(), context.styles.label)
+                }
+                "pending" | "queued" | "todo" | "" => {
+                    (context.styles.glyphs.empty(), context.styles.metadata)
+                }
+                _ => (context.styles.glyphs.bullet(), context.styles.metadata),
+            };
+            Line::from(vec![
+                Span::styled(format!("{marker} "), style),
+                Span::styled(item.content.trim().to_owned(), context.styles.text),
+            ])
+        });
+    wrap_styled_lines(logical, usize::from(context.content_width), &prefix)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -7321,14 +7677,18 @@ fn tool_hint_line(hint: String, context: ToolLineContext, nested: bool) -> Line<
     let width = usize::from(context.content_width);
     if gutter_width >= width {
         return Line::from(Span::styled(
-            truncate_cells(&hint, width),
+            truncate_cells(&hint, width, context.styles.glyphs),
             context.styles.metadata,
         ));
     }
     Line::from(vec![
         Span::styled(gutter, context.styles.metadata),
         Span::styled(
-            truncate_cells(&hint, width.saturating_sub(gutter_width)),
+            truncate_cells(
+                &hint,
+                width.saturating_sub(gutter_width),
+                context.styles.glyphs,
+            ),
             context.styles.metadata,
         ),
     ])
@@ -7394,6 +7754,7 @@ fn cached_transcript_lines_with_tool_key_and_density(
         && entry.width == content_width
         && entry.locale == locale
         && entry.density == density
+        && entry.glyph_mode == styles.glyphs.mode
         && entry.expand_key == tool_expand_key
     {
         return entry.lines.clone();
@@ -7413,6 +7774,7 @@ fn cached_transcript_lines_with_tool_key_and_density(
             width: content_width,
             locale,
             density,
+            glyph_mode: styles.glyphs.mode,
             expand_key: tool_expand_key,
             lines: lines.clone(),
         },
@@ -7554,8 +7916,8 @@ fn centered(area: Rect, max_width: u16, max_height: u16) -> Rect {
     )
 }
 
-fn validation_spinner(elapsed: Option<Duration>) -> &'static str {
-    crate::render_contract::status_spinner(elapsed.unwrap_or_default(), false)
+fn validation_spinner(elapsed: Option<Duration>, glyphs: Glyphs) -> &'static str {
+    crate::render_contract::status_spinner(elapsed.unwrap_or_default(), glyphs)
 }
 
 fn bottom_sheet(area: Rect, max_width: u16, max_height: u16) -> Rect {
@@ -7800,6 +8162,8 @@ mod transcript_tests {
             locale_path: None,
             density: DensityMode::Compact,
             density_path: None,
+            glyph_preference: crate::glyphs::GlyphPreference::Auto,
+            glyphs_path: None,
             carina_bin: None,
             no_alt_screen: true,
             screen_mode: None,
@@ -8524,6 +8888,7 @@ mod transcript_tests {
             user_kind: UserBlockKind::Prompt,
             tool_kind: None,
             tool_members: Vec::new(),
+            todo_items: Vec::new(),
             failure: None,
             title: "Result".into(),
             body: body.into(),
@@ -8909,6 +9274,19 @@ mod transcript_tests {
         contract.split("styles:\n").next().unwrap_or(contract)
     }
 
+    fn normalized_visible_copy(contract: &str) -> String {
+        visible_contract(contract)
+            .lines()
+            .map(|line| {
+                line.trim().trim_matches(|character| {
+                    matches!(character, '│' | '┃' | '|' | '╎' | '┆' | '┊')
+                })
+            })
+            .flat_map(str::chars)
+            .filter(|character| !character.is_whitespace())
+            .collect()
+    }
+
     fn anchor_position(contract: &str, anchor: &str) -> (usize, usize) {
         visible_contract(contract)
             .lines()
@@ -8998,6 +9376,450 @@ mod transcript_tests {
         server.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
         rendered
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_symbols_preview(
+        width: u16,
+        height: u16,
+        locale: Locale,
+        preference: GlyphPreference,
+        glyph_mode: GlyphMode,
+        source: GlyphSource,
+        polarity: crate::theme::Polarity,
+        color_level: crate::theme::ColorLevel,
+    ) -> (String, Vec<Position>) {
+        let (mut app, root, server) = production_render_app();
+        app.options.workspace = std::path::PathBuf::from("/workspace/carina");
+        app.options.locale = Some(locale.product_id().into());
+        app.locale_index = Locale::ALL
+            .iter()
+            .position(|candidate| *candidate == locale)
+            .unwrap_or_default();
+        app.glyph_preference = preference;
+        app.glyph_resolution = crate::glyphs::ResolvedGlyphs {
+            preference,
+            mode: glyph_mode,
+            source,
+        };
+        app.theme = crate::theme::Theme::new(polarity, color_level);
+        app.theme.glyphs = Glyphs::new(glyph_mode);
+        app.overlays
+            .replace(Overlay::Settings(SettingsOverlay::symbols(preference)));
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = rendered_frame_contract(terminal.backend().buffer());
+        let actions = GlyphPreference::ALL
+            .into_iter()
+            .map(Action::PreviewGlyphPreference)
+            .chain([Action::ApplyGlyphPreference, Action::CancelGlyphPreview])
+            .map(|action| {
+                (0..height)
+                    .flat_map(|row| (0..width).map(move |column| Position::new(column, row)))
+                    .find(|position| app.interactions.action_at(*position) == Some(action.clone()))
+                    .unwrap_or_else(|| panic!("missing Symbols action {action:?}"))
+            })
+            .collect();
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        (rendered, actions)
+    }
+
+    fn assert_symbols_color_contract(contract: &str, level: crate::theme::ColorLevel) {
+        match level {
+            crate::theme::ColorLevel::TrueColor => assert!(contract.contains("Rgb(")),
+            crate::theme::ColorLevel::Ansi256 => {
+                assert!(contract.contains("Indexed("));
+                assert!(!contract.contains("Rgb("));
+            }
+            crate::theme::ColorLevel::Basic => {
+                assert!(!contract.contains("Rgb("));
+                assert!(!contract.contains("Indexed("));
+                assert!(
+                    ["Red", "Green", "Yellow", "Blue", "Magenta", "Cyan"]
+                        .into_iter()
+                        .any(|name| contract.contains(name))
+                );
+            }
+            crate::theme::ColorLevel::None => {
+                for encoded in [
+                    "Rgb(", "Indexed(", "Black", "Red", "Green", "Yellow", "Blue", "Magenta",
+                    "Cyan", "Gray", "White",
+                ] {
+                    assert!(
+                        !contract.contains(encoded),
+                        "no-color Symbols surface leaked {encoded}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn symbols_preview_goldens_cover_en_and_zh_hans_at_product_widths() {
+        for (locale_name, locale) in [("en", Locale::En), ("zh_hans", Locale::ZhHans)] {
+            for width in [80, 120, 160] {
+                let (rendered, _) = render_symbols_preview(
+                    width,
+                    24,
+                    locale,
+                    GlyphPreference::Auto,
+                    GlyphMode::Unicode,
+                    GlyphSource::AutomaticDefault,
+                    crate::theme::Polarity::Dark,
+                    crate::theme::ColorLevel::TrueColor,
+                );
+                for required in [
+                    tr(locale, MessageId::Symbols),
+                    tr(locale, MessageId::SymbolsAutomatic),
+                    tr(locale, MessageId::SymbolsUnicode),
+                    tr(locale, MessageId::SymbolsNerdFont),
+                    tr(locale, MessageId::SymbolsAscii),
+                    tr(locale, MessageId::SymbolsApplyHint),
+                    tr(locale, MessageId::SymbolsKeepCurrentHint),
+                ] {
+                    assert!(
+                        visible_contract(&rendered).contains(required),
+                        "{width}-column {locale_name} Symbols preview cropped {required:?}"
+                    );
+                }
+                assert!(rendered.contains("Rgb("));
+                insta::assert_snapshot!(format!("symbols_preview_{locale_name}_{width}"), rendered);
+            }
+        }
+    }
+
+    #[test]
+    fn short_symbols_preview_keeps_choices_sample_information_and_actions() {
+        for locale in [Locale::En, Locale::ZhHans] {
+            let (rendered, actions) = render_symbols_preview(
+                80,
+                16,
+                locale,
+                GlyphPreference::Auto,
+                GlyphMode::Unicode,
+                GlyphSource::AutomaticDefault,
+                crate::theme::Polarity::Dark,
+                crate::theme::ColorLevel::TrueColor,
+            );
+            let visible = visible_contract(&rendered);
+            for required in [
+                tr(locale, MessageId::SymbolsAutomatic),
+                tr(locale, MessageId::SymbolsUnicode),
+                tr(locale, MessageId::SymbolsNerdFont),
+                tr(locale, MessageId::SymbolsAscii),
+                tr(locale, MessageId::Done),
+                tr(locale, MessageId::ExecutionWorking),
+                tr(locale, MessageId::SymbolsApplyHint),
+                tr(locale, MessageId::SymbolsKeepCurrentHint),
+            ] {
+                assert!(
+                    visible.contains(required),
+                    "short Symbols lost {required:?}"
+                );
+            }
+            let requested = tr_format(
+                locale,
+                MessageId::SymbolsRequested,
+                &[(
+                    "preference",
+                    glyph_preference_label(locale, GlyphPreference::Auto),
+                )],
+            );
+            let effective = tr_format(
+                locale,
+                MessageId::SymbolsEffective,
+                &[("mode", glyph_mode_label(locale, GlyphMode::Unicode))],
+            );
+            assert!(visible.contains(&requested));
+            assert!(visible.contains(&effective));
+            assert_eq!(actions.len(), 6);
+            assert!(
+                !visible.contains(&format!(
+                    "{}{}",
+                    Glyphs::new(GlyphMode::Unicode).disclosure_closed(),
+                    tr(locale, MessageId::Close)
+                )),
+                "short mode must collapse the secondary sample line first"
+            );
+        }
+    }
+
+    #[test]
+    fn symbols_preview_discloses_environment_and_automatic_fallback_owners() {
+        for locale in [Locale::En, Locale::ZhHans] {
+            let (environment, _) = render_symbols_preview(
+                80,
+                24,
+                locale,
+                GlyphPreference::Nerd,
+                GlyphMode::Ascii,
+                GlyphSource::EnvironmentOverride,
+                crate::theme::Polarity::Dark,
+                crate::theme::ColorLevel::TrueColor,
+            );
+            let environment_notice = tr_format(
+                locale,
+                MessageId::SymbolsEnvironmentOverride,
+                &[("mode", glyph_mode_label(locale, GlyphMode::Ascii))],
+            );
+            let visible_environment = normalized_visible_copy(&environment);
+            let environment_notice = environment_notice
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>();
+            assert!(
+                visible_environment.contains(&environment_notice),
+                "expected {environment_notice:?} in:\n{environment}"
+            );
+            assert!(visible_contract(&environment).contains(&tr_format(
+                locale,
+                MessageId::SymbolsRequested,
+                &[(
+                    "preference",
+                    glyph_preference_label(locale, GlyphPreference::Nerd),
+                )],
+            )));
+
+            let (automatic, _) = render_symbols_preview(
+                80,
+                24,
+                locale,
+                GlyphPreference::Auto,
+                GlyphMode::Ascii,
+                GlyphSource::AutomaticLegacyTerminal,
+                crate::theme::Polarity::Dark,
+                crate::theme::ColorLevel::TrueColor,
+            );
+            let visible_automatic = normalized_visible_copy(&automatic);
+            let fallback = tr(locale, MessageId::SymbolsAutoFallback)
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>();
+            assert!(visible_automatic.contains(&fallback));
+        }
+    }
+
+    #[test]
+    fn symbols_preview_matrix_preserves_information_and_action_geometry() {
+        for width in [80, 120, 160] {
+            for locale in [Locale::En, Locale::ZhHans] {
+                let (_, baseline_actions) = render_symbols_preview(
+                    width,
+                    24,
+                    locale,
+                    GlyphPreference::Unicode,
+                    GlyphMode::Unicode,
+                    GlyphSource::PersistedPreference,
+                    crate::theme::Polarity::Dark,
+                    crate::theme::ColorLevel::TrueColor,
+                );
+                for (preference, mode) in [
+                    (GlyphPreference::Unicode, GlyphMode::Unicode),
+                    (GlyphPreference::Nerd, GlyphMode::Nerd),
+                    (GlyphPreference::Ascii, GlyphMode::Ascii),
+                ] {
+                    for (polarity, color_level) in [
+                        (
+                            crate::theme::Polarity::Dark,
+                            crate::theme::ColorLevel::TrueColor,
+                        ),
+                        (
+                            crate::theme::Polarity::Dark,
+                            crate::theme::ColorLevel::Ansi256,
+                        ),
+                        (
+                            crate::theme::Polarity::Dark,
+                            crate::theme::ColorLevel::Basic,
+                        ),
+                        (crate::theme::Polarity::Dark, crate::theme::ColorLevel::None),
+                        (
+                            crate::theme::Polarity::Light,
+                            crate::theme::ColorLevel::TrueColor,
+                        ),
+                    ] {
+                        let (rendered, actions) = render_symbols_preview(
+                            width,
+                            24,
+                            locale,
+                            preference,
+                            mode,
+                            GlyphSource::PersistedPreference,
+                            polarity,
+                            color_level,
+                        );
+                        let visible = visible_contract(&rendered);
+                        assert!(!visible.contains('\u{fffd}'));
+                        assert!(
+                            visible
+                                .chars()
+                                .all(|character| { character == '\n' || !character.is_control() })
+                        );
+                        for required in [
+                            tr(locale, MessageId::SymbolsAutomatic),
+                            tr(locale, MessageId::SymbolsUnicode),
+                            tr(locale, MessageId::SymbolsNerdFont),
+                            tr(locale, MessageId::SymbolsAscii),
+                            tr(locale, MessageId::SymbolsAutomaticDetail),
+                            tr(locale, MessageId::SymbolsUnicodeDetail),
+                            tr(locale, MessageId::SymbolsNerdFontDetail),
+                            tr(locale, MessageId::SymbolsAsciiDetail),
+                        ] {
+                            assert!(visible.contains(required), "missing {required:?}");
+                        }
+                        let requested = tr_format(
+                            locale,
+                            MessageId::SymbolsRequested,
+                            &[("preference", glyph_preference_label(locale, preference))],
+                        );
+                        let effective = tr_format(
+                            locale,
+                            MessageId::SymbolsEffective,
+                            &[("mode", glyph_mode_label(locale, mode))],
+                        );
+                        assert!(visible.contains(&requested), "missing {requested:?}");
+                        assert!(visible.contains(&effective), "missing {effective:?}");
+                        assert_eq!(
+                            actions, baseline_actions,
+                            "{width}-column {locale:?} {mode:?}/{polarity:?}/{color_level:?} moved Symbols actions"
+                        );
+                        assert_symbols_color_contract(&rendered, color_level);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn symbols_preview_is_live_reversible_and_persists_only_on_apply() {
+        let (mut app, root, server) = production_render_app();
+        let config = root.join("config.json");
+        let original_config = br#"{"max_concurrent_tasks":4,"tui_locale":"en"}"#;
+        std::fs::write(&config, original_config).unwrap();
+        app.options.glyphs_path = Some(config.clone());
+        app.options.screen_mode = Some(ScreenMode::Inline);
+        app.glyph_preference = GlyphPreference::Unicode;
+        app.apply_glyph_resolution(crate::glyphs::ResolvedGlyphs {
+            preference: GlyphPreference::Unicode,
+            mode: GlyphMode::Unicode,
+            source: GlyphSource::PersistedPreference,
+        });
+        app.composer.set_text("retain this operator draft");
+        app.history_selected = Some(0);
+        app.tool_disclosure_overrides
+            .insert("symbols:todo".into(), true);
+        let mut todo = block(BlockKind::Tool, "");
+        todo.id = "symbols:todo".into();
+        todo.tool_kind = Some(crate::tool_projection::ToolKind::Todo);
+        todo.title = crate::tool_projection::format_tool_title("Plan", "release checks");
+        todo.todo_items = vec![
+            crate::tool_projection::TodoItem {
+                content: "Keep retained semantic state glyph-free".into(),
+                status: "completed".into(),
+            },
+            crate::tool_projection::TodoItem {
+                content: "Redraw existing rows live".into(),
+                status: "in_progress".into(),
+            },
+        ];
+        app.blocks = vec![todo];
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
+        terminal
+            .draw(|frame| app.render_transcript(frame, frame.area()))
+            .unwrap();
+        let unicode_frame = rendered_frame_text(terminal.backend().buffer());
+        assert!(unicode_frame.contains(Glyphs::new(GlyphMode::Unicode).success()));
+        assert!(!app.transcript_height_cache.is_empty());
+        assert!(!app.transcript_render_cache.is_empty());
+
+        assert_eq!(app.handle_slash_command("/symbols"), Some(true));
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::Settings(SettingsOverlay {
+                page: SettingsPage::Symbols,
+                ..
+            }))
+        ));
+        app.apply_action(Action::PreviewGlyphPreference(GlyphPreference::Nerd));
+        assert_eq!(app.glyph_preference, GlyphPreference::Unicode);
+        assert_eq!(app.glyph_resolution.mode, GlyphMode::Nerd);
+        assert_eq!(app.theme.glyphs.mode, GlyphMode::Nerd);
+        assert!(app.transcript_height_cache.is_empty());
+        assert!(app.transcript_render_cache.is_empty());
+        assert_eq!(app.composer.text(), "retain this operator draft");
+        assert_eq!(app.history_selected, Some(0));
+        assert_eq!(app.options.screen_mode, Some(ScreenMode::Inline));
+        assert_eq!(
+            app.tool_disclosure_overrides.get("symbols:todo"),
+            Some(&true)
+        );
+
+        terminal
+            .draw(|frame| app.render_transcript(frame, frame.area()))
+            .unwrap();
+        let nerd_frame = rendered_frame_text(terminal.backend().buffer());
+        assert!(nerd_frame.contains(Glyphs::new(GlyphMode::Nerd).success()));
+        assert!(!nerd_frame.contains(Glyphs::new(GlyphMode::Unicode).success()));
+
+        app.apply_action(Action::CancelGlyphPreview);
+        assert_eq!(app.glyph_preference, GlyphPreference::Unicode);
+        assert_eq!(app.glyph_resolution.mode, GlyphMode::Unicode);
+        assert_eq!(std::fs::read(&config).unwrap(), original_config);
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::Settings(SettingsOverlay {
+                page: SettingsPage::Root,
+                ..
+            }))
+        ));
+
+        app.apply_action(Action::OpenGlyphPreview);
+        app.apply_action(Action::PreviewGlyphPreference(GlyphPreference::Nerd));
+        assert!(app.close_top_non_governance());
+        assert!(app.overlays.active().is_none());
+        assert_eq!(app.glyph_preference, GlyphPreference::Unicode);
+        assert_eq!(app.glyph_resolution.mode, GlyphMode::Unicode);
+        assert_eq!(std::fs::read(&config).unwrap(), original_config);
+
+        app.apply_action(Action::OpenGlyphPreview);
+        app.apply_action(Action::PreviewGlyphPreference(GlyphPreference::Ascii));
+        app.apply_action(Action::ApplyGlyphPreference);
+        assert_eq!(app.glyph_preference, GlyphPreference::Ascii);
+        assert_eq!(app.glyph_resolution.mode, GlyphMode::Ascii);
+        assert_eq!(app.theme.glyphs.mode, GlyphMode::Ascii);
+        assert!(app.notice.is_localized(MessageId::SymbolsApplied));
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+        assert_eq!(persisted["max_concurrent_tasks"], 4);
+        assert_eq!(persisted["tui_locale"], "en");
+        assert_eq!(persisted["tui_glyphs"], "ascii");
+        assert_eq!(app.composer.text(), "retain this operator draft");
+        assert_eq!(app.blocks[0].todo_items.len(), 2);
+
+        app.options.glyphs_path = Some(root.clone());
+        app.apply_action(Action::OpenGlyphPreview);
+        app.apply_action(Action::PreviewGlyphPreference(GlyphPreference::Unicode));
+        app.apply_action(Action::ApplyGlyphPreference);
+        assert_eq!(
+            app.glyph_preference,
+            GlyphPreference::Ascii,
+            "failed persistence must not commit the previewed preference"
+        );
+        assert!(app.notice.is_localized(MessageId::SymbolsPersistFailed));
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::Settings(SettingsOverlay {
+                page: SettingsPage::Symbols,
+                ..
+            }))
+        ));
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -9727,7 +10549,7 @@ mod transcript_tests {
     #[test]
     fn cjk_composer_and_overlay_titles_stay_inside_owned_cells() {
         for width in 1..16 {
-            let composer = truncate_cells("继续检查工作区状态", width);
+            let composer = truncate_cells("继续检查工作区状态", width, Glyphs::default());
             assert!(UnicodeWidthStr::width(composer.as_str()) <= width);
         }
 
@@ -9885,6 +10707,7 @@ mod transcript_tests {
         TranscriptViewport {
             locale: Locale::En,
             density: DensityMode::Compact,
+            glyph_mode: GlyphMode::Unicode,
             content_width,
             tool_expand_key: crate::keybinding::KeyBindings::default()
                 .expand_tools
@@ -9976,6 +10799,7 @@ mod transcript_tests {
                 width: 80,
                 locale: Locale::En,
                 density: DensityMode::Compact,
+                glyph_mode: GlyphMode::Unicode,
                 expand_key,
                 height: 7,
                 header_height: 3,
@@ -10017,6 +10841,7 @@ mod transcript_tests {
                 width: 80,
                 locale: Locale::En,
                 density: DensityMode::Compact,
+                glyph_mode: GlyphMode::Unicode,
                 expand_key,
                 lines: vec![Line::from("cached rows")],
             },

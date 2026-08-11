@@ -80,6 +80,27 @@ Expanded plain output stays complete until a separate full-output viewer exists;
 density may bound a collapsed preview but may not hide evidence without an
 escape hatch.
 
+## Symbol projection
+
+Terminal symbols are a persisted presentation preference over the same semantic
+tree. `tui_glyphs` accepts `auto`, `unicode`, `nerd`, or `ascii`; `/symbols` and
+the Settings row open the same reversible live preview. Previewing or applying a
+choice may change glyph shapes, but it must not change transcript identity,
+drafts, selection, disclosure, ScreenMode, or hit geometry.
+
+The renderer consumes one width-locked Unicode, Nerd Font, or ASCII registry.
+Automatic uses Unicode except for established legacy-terminal safety signals.
+It does not probe installed fonts and never selects Nerd Font; Nerd Font is an
+explicit choice that requires Nerd Font Mono. Boxes or misaligned symbols in the
+preview indicate missing font coverage and make ASCII the recovery path.
+
+`CARINA_TUI_GLYPHS` is the explicit symbol override and the legacy
+`CARINA_ASCII` switch remains a hard ASCII override. The Settings preview must
+disclose when an environment override owns the active tier. `NO_COLOR` controls
+color capability independently and must not force ASCII. Product chrome stays
+rounded in Unicode and Nerd Font modes and plain in ASCII; Markdown tables are
+the only sharp-junction exception in graphical modes.
+
 ## Composer chrome
 
 Conversation state uses one fixed two-row chrome below the composer. The first

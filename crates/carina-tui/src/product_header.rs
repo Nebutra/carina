@@ -104,7 +104,7 @@ impl ProductHeader<'_> {
                     Style::default().fg(theme.border),
                 ));
                 identity.push(Span::styled(
-                    truncate_width(title, available),
+                    truncate_width(title, available, theme.glyphs),
                     Style::default().fg(theme.muted),
                 ));
             }
@@ -197,6 +197,7 @@ impl ProductHeader<'_> {
                             .saturating_sub(metadata_x)
                             .saturating_sub(UnicodeWidthStr::width(COMPACT_NAME) as u16)
                             as usize,
+                        theme.glyphs,
                     ),
                     Style::default().fg(theme.muted),
                 ),
@@ -224,6 +225,7 @@ impl ProductHeader<'_> {
             Paragraph::new(truncate_width(
                 &summary,
                 area.right().saturating_sub(metadata_x + 1) as usize,
+                theme.glyphs,
             ))
             .style(Style::default().fg(theme.muted)),
             Rect::new(
@@ -253,7 +255,7 @@ impl ProductHeader<'_> {
                     Style::default().fg(theme.muted),
                 ),
                 Span::styled(
-                    truncate_width(value, value_width),
+                    truncate_width(value, value_width, theme.glyphs),
                     Style::default().fg(value_color),
                 ),
             ])),
@@ -335,8 +337,8 @@ fn workspace_label(workspace: &Path, compact: bool, locale: Locale) -> String {
     }
 }
 
-fn truncate_width(value: &str, max_width: usize) -> String {
-    crate::render_contract::truncate_width(value, max_width)
+fn truncate_width(value: &str, max_width: usize, glyphs: crate::glyphs::Glyphs) -> String {
+    crate::render_contract::truncate_width_with_glyphs(value, max_width, glyphs)
 }
 
 #[cfg(test)]
@@ -357,12 +359,13 @@ mod tests {
 
     #[test]
     fn truncation_uses_terminal_cell_width_for_cjk() {
+        let glyphs = crate::glyphs::Glyphs::default();
         assert_eq!(
-            truncate_width("工作区/carina", 8),
-            format!("工作区/{}", crate::glyphs::Glyphs::detect().ellipsis())
+            truncate_width("工作区/carina", 8, glyphs),
+            format!("工作区/{}", glyphs.ellipsis())
         );
         assert_eq!(
-            UnicodeWidthStr::width(truncate_width("工作区/carina", 8).as_str()),
+            UnicodeWidthStr::width(truncate_width("工作区/carina", 8, glyphs).as_str()),
             8
         );
     }

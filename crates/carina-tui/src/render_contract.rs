@@ -4,9 +4,8 @@ use std::time::Duration;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-pub fn status_spinner(elapsed: Duration, no_color: bool) -> &'static str {
-    let _ = no_color;
-    crate::glyphs::Glyphs::detect().status_spinner(elapsed.as_millis())
+pub fn status_spinner(elapsed: Duration, glyphs: crate::glyphs::Glyphs) -> &'static str {
+    glyphs.status_spinner(elapsed.as_millis())
 }
 
 /// A compact token count that never exceeds four terminal cells.
@@ -65,7 +64,7 @@ pub fn format_bytes(value: u64) -> String {
 
 /// Truncate without splitting a wide character and keep the result within `max_width` cells.
 pub fn truncate_width(value: &str, max_width: usize) -> String {
-    truncate_width_with_glyphs(value, max_width, crate::glyphs::Glyphs::detect())
+    truncate_width_with_glyphs(value, max_width, crate::glyphs::Glyphs::default())
 }
 
 pub fn truncate_width_with_glyphs(

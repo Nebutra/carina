@@ -268,6 +268,15 @@ global/project config cascade and survives relaunch. Density changes only the
 transcript presentation; it preserves the draft, selection, lifecycle identity,
 manual disclosure choices, and current screen mode.
 
+Terminal symbols default to **Automatic**. Use `/symbols` or the Symbols row in
+Settings to preview and save `tui_glyphs: "auto" | "unicode" | "nerd" |
+"ascii"`. Automatic uses Unicode except for established legacy-terminal safety
+signals; it never claims to detect installed fonts and never selects Nerd Font.
+The Nerd tier is an explicit opt-in and requires Nerd Font Mono. If the preview
+shows boxes or misaligned symbols, choose ASCII. `NO_COLOR` controls color only.
+`CARINA_TUI_GLYPHS` has the highest symbol priority; when it is unset, the
+legacy `CARINA_ASCII` remains an explicit ASCII override.
+
 The TUI ships authored copy for English, Simplified Chinese
 (`zh-CN`/`zh-Hans`, runtime key `zh`), Traditional Chinese (`zh-Hant` /
 `zh-TW` / `zh-HK` / `zh-MO`, runtime key `zh-Hant`), Japanese, Korean,
