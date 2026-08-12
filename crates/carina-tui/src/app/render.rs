@@ -4319,7 +4319,7 @@ impl App {
                 frame.render_widget(block, popup);
                 let mut lines = Vec::new();
                 lines.push(Line::from(Span::styled(
-                    "Shortcuts",
+                    tr(self.ui_locale(), MessageId::Shortcuts),
                     Style::default()
                         .fg(self.theme.accent)
                         .add_modifier(Modifier::BOLD),
@@ -4335,7 +4335,7 @@ impl App {
                 }
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
-                    "Commands",
+                    tr(self.ui_locale(), MessageId::Commands),
                     Style::default()
                         .fg(self.theme.accent)
                         .add_modifier(Modifier::BOLD),

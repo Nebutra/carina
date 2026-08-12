@@ -193,6 +193,10 @@ require_screen_text() {
   return 1
 }
 
+has_conversation_composer() {
+  grep -Eq '^[[:blank:]]*(❯|>)([[:blank:]]|$)' <<<"$SCREEN"
+}
+
 open_conversations_from_product_menu() {
   # An attachment preview may still be open after retry. Close it before using
   # the current compact header entry point instead of the retired Sessions tab.
@@ -225,7 +229,7 @@ TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 160 -y 44 \
   "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color '$STAGE/carina' --no-alt-screen; code=\$?; printf '%s' \"\$code\" > '$EXIT_FILE'; sleep 300"
 
 wait_for_text "Choose language"
-if grep -Fq "SETUP" <<<"$SCREEN" || grep -Fq "1  Language" <<<"$SCREEN" || grep -Fq "╭ Message" <<<"$SCREEN"; then
+if grep -Fq "SETUP" <<<"$SCREEN" || grep -Fq "1  Language" <<<"$SCREEN" || has_conversation_composer; then
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: composer appeared before prerequisites" >&2
   exit 1
@@ -237,7 +241,7 @@ wait_for_text "Connect a provider"
 # Wait for the completed frame instead of sampling the first titled frame.
 wait_for_text "Search all 159 providers by name or ID"
 require_screen_text "Connection" "provider detail panel"
-if grep -Fq "SETUP" <<<"$SCREEN" || grep -Fq "Choose model" <<<"$SCREEN" || grep -Fq "╭ Message" <<<"$SCREEN"; then
+if grep -Fq "SETUP" <<<"$SCREEN" || grep -Fq "Choose model" <<<"$SCREEN" || has_conversation_composer; then
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: model/composer leaked before provider readiness" >&2
   exit 1
@@ -1555,7 +1559,7 @@ done
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
 wait_for_text "验证 test"
 grep -Fq "凭证会在保存前验证" <<<"$SCREEN"
-if grep -Fq "╭ 消息" <<<"$SCREEN"; then
+if has_conversation_composer; then
   echo "rust-tui-journey: credential prerequisite leaked the conversation composer" >&2
   exit 1
 fi
@@ -2517,7 +2521,7 @@ TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
 
 wait_for_text "Test has no compatible models."
 grep -Fq "Diagnostic only" <<<"$SCREEN"
-if grep -Fq "╭ Message" <<<"$SCREEN" || grep -Fq "sess_returning" <<<"$SCREEN"; then
+if has_conversation_composer || grep -Fq "sess_returning" <<<"$SCREEN"; then
   echo "rust-tui-journey: zero-model startup mounted a composer or leaked a session id" >&2
   exit 1
 fi
@@ -2793,7 +2797,7 @@ wait_for_text "计划已批准，实施已排队。"
 wait_for_text "Approved plan implemented"
 # The compact composer has no boxed title. Its empty prompt row is the stable
 # ready-state affordance after the approved implementation completes.
-grep -Eq '^ ❯[[:space:]]*$' <<<"$SCREEN" || {
+grep -Eq '^[[:blank:]]*(❯|>)[[:blank:]]*$' <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: completed implementation did not restore the ready composer" >&2
   exit 1
@@ -2836,11 +2840,18 @@ for keymap_action in \
     exit 1
   }
 done
-grep -Fq "命令" <<<"$SCREEN" || {
+grep -Fq "Carina 帮助" <<<"$SCREEN" &&
+  grep -Fq "快捷键" <<<"$SCREEN" &&
+  grep -Fq "命令" <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
-  echo "rust-tui-journey: help did not open the localized command palette" >&2
+  echo "rust-tui-journey: help surface headings were not localized" >&2
   exit 1
 }
+if grep -Fq "Shortcuts" <<<"$SCREEN" || grep -Fq "Commands" <<<"$SCREEN"; then
+  printf '%s\n' "$SCREEN" >&2
+  echo "rust-tui-journey: Simplified Chinese help leaked English headings" >&2
+  exit 1
+fi
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" PageDown PageDown PageDown
 wait_for_text "/settings"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
