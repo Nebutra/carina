@@ -1864,7 +1864,10 @@ fi
   exit 1
 }
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
-wait_for_text "Image attached"
+# The retained media component is authoritative after retry. The success
+# notice is intentionally lower priority than its open preview and may be
+# replaced before a PTY capture observes it.
+wait_for_text "Image · media-sample.png · 68B · Ready"
 wait_for_text "❯  image  media-sample.png"
 
 open_conversations_from_product_menu
