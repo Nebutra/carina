@@ -590,6 +590,10 @@ impl Client {
         )
     }
 
+    pub fn execution_status(&mut self, run_id: &str) -> Result<ExecutionRun, RpcError> {
+        self.call("execution.status", &json!({"run_id": run_id}))
+    }
+
     pub fn set_plan_mode(&mut self, session_id: &str, on: bool) -> Result<PlanModeState, RpcError> {
         self.call(
             "session.plan_mode",
@@ -1193,6 +1197,56 @@ mod tests {
             .unwrap();
         assert_eq!(original.run_id, "run-retry-1");
 
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn execution_status_uses_typed_run_truth() {
+        let nonce = NEXT_MEDIA_UPLOAD_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "carina-tui-execution-status-rpc-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("daemon.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "execution.status");
+            assert_eq!(request["params"], json!({"run_id": "run-active"}));
+            writeln!(
+                stream,
+                "{}",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "result": {
+                        "run_id": "run-active",
+                        "session_id": "sess-1",
+                        "status": "running",
+                        "requested_model": "provider/requested",
+                        "effective_model": "provider/effective",
+                        "requested_reasoning_effort": "high",
+                        "effective_reasoning_effort": "medium"
+                    }
+                })
+            )
+            .unwrap();
+        });
+
+        let run = Client::connect(&socket)
+            .unwrap()
+            .execution_status("run-active")
+            .unwrap();
+        assert_eq!(run.run_id, "run-active");
+        assert_eq!(run.effective_model, "provider/effective");
+        assert_eq!(run.effective_reasoning_effort, "medium");
         server.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }

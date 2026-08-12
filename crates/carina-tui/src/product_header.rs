@@ -213,11 +213,11 @@ impl ProductHeader<'_> {
         );
         let summary = format!(
             "{}  {}  {}  {}  {}  {}  {}",
-            self.provider,
-            theme.glyphs.separator(),
             self.model,
             theme.glyphs.separator(),
             self.reasoning,
+            theme.glyphs.separator(),
+            self.provider,
             theme.glyphs.separator(),
             workspace_label(self.workspace, true, self.locale)
         );

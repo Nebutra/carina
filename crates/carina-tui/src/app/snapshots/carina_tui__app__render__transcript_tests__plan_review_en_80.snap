@@ -1,10 +1,11 @@
 ---
 source: crates/carina-tui/src/app/render.rs
+assertion_line: 10702
 expression: rendered
 ---
 size=80x30
 Carina  ·  carina conversation        Sessions   Model   Build ⇧Tab   Settings
-Provider  ·  Direct API  ·  model  ·  reasoning off  ·  carina
+model  ·  reasoning off  ·  Provider  ·  Direct API  ·  carina
 ────────────────────────────────────────────────────────────────────────────────
  ╭ Plan review ───────────────────────────────────────────────────────────────╮
  │ Ready for your decision                                                    │
@@ -32,7 +33,6 @@ Provider  ·  Direct API  ·  model  ·  reasoning off  ·  carina
  │ A Approve S Revise C Comment M range Q Close Up/Dn J/K Page Home/End       │
  │                                                                            │
  ╰────────────────────────────────────────────────────────────────────────────╯
-run ready · HITL unknown · isolation unknown + unknown · ctx unknown
 styles:
 (0,0)..(6,0) (Rgb(222, 133, 155), Reset, BOLD)
 (6,0)..(30,0) (Rgb(150, 160, 156), Reset, NONE)
@@ -120,4 +120,3 @@ styles:
 (3,27)..(77,27) (Rgb(150, 160, 156), Reset, NONE)
 (78,27)..(79,27) (Rgb(142, 219, 210), Reset, BOLD)
 (1,28)..(79,28) (Rgb(142, 219, 210), Reset, BOLD)
-(0,29)..(68,29) (Rgb(150, 160, 156), Reset, NONE)

@@ -1228,8 +1228,14 @@ pub struct WorkspaceFileContent {
     pub hash: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LiveActivityUpdate {
+    Started { key: String, label: String },
+    Finished { key: String },
+}
+
 impl WireEvent {
-    pub fn live_activity_description(&self) -> Option<String> {
+    pub fn live_activity_update(&self) -> Option<LiveActivityUpdate> {
         let payload_text = |key: &str| {
             self.payload
                 .get(key)
@@ -1238,9 +1244,22 @@ impl WireEvent {
                 .filter(|value| !value.is_empty())
         };
         match self.kind.as_str() {
-            "ToolCallStarted" => payload_text("tool").map(str::to_owned),
-            "CommandStarted" => payload_text("command").map(str::to_owned),
-            "PatchProposed" => payload_text("reason").map(str::to_owned),
+            "ToolCallStarted" => Some(LiveActivityUpdate::Started {
+                key: format!("tool:{}", payload_text("call_id")?),
+                label: payload_text("tool")?.to_owned(),
+            }),
+            "ToolCallCompleted" | "ToolCallFailed" | "ToolCallDenied" | "ToolCallCancelled" => {
+                Some(LiveActivityUpdate::Finished {
+                    key: format!("tool:{}", payload_text("call_id")?),
+                })
+            }
+            "CommandStarted" => Some(LiveActivityUpdate::Started {
+                key: format!("command:{}", payload_text("command_id")?),
+                label: payload_text("command")?.to_owned(),
+            }),
+            "CommandExited" => Some(LiveActivityUpdate::Finished {
+                key: format!("command:{}", payload_text("command_id")?),
+            }),
             _ => None,
         }
     }
@@ -2161,14 +2180,33 @@ mod tests {
     }
 
     #[test]
-    fn live_activity_uses_only_typed_public_event_fields() {
+    fn live_activity_uses_typed_identity_and_terminal_events() {
         let tool: WireEvent = serde_json::from_value(json!({
             "type": "ToolCallStarted",
             "run_id": "run_1",
-            "payload": {"tool": "test", "private_trace": "must not render"}
+            "payload": {"call_id": "call_1", "tool": "test", "private_trace": "must not render"}
         }))
         .unwrap();
-        assert_eq!(tool.live_activity_description().as_deref(), Some("test"));
+        assert_eq!(
+            tool.live_activity_update(),
+            Some(LiveActivityUpdate::Started {
+                key: "tool:call_1".into(),
+                label: "test".into(),
+            })
+        );
+
+        let completed: WireEvent = serde_json::from_value(json!({
+            "type": "ToolCallCompleted",
+            "run_id": "run_1",
+            "payload": {"call_id": "call_1", "tool": "test"}
+        }))
+        .unwrap();
+        assert_eq!(
+            completed.live_activity_update(),
+            Some(LiveActivityUpdate::Finished {
+                key: "tool:call_1".into(),
+            })
+        );
 
         let unknown: WireEvent = serde_json::from_value(json!({
             "type": "InternalDiagnostic",
@@ -2176,7 +2214,7 @@ mod tests {
             "summary": "private state"
         }))
         .unwrap();
-        assert_eq!(unknown.live_activity_description(), None);
+        assert_eq!(unknown.live_activity_update(), None);
     }
 
     #[test]
@@ -2583,6 +2621,22 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(run.result_kind, "plan");
+        assert!(run.requested_model.is_empty());
+
+        let routed: ExecutionRun = serde_json::from_value(json!({
+            "run_id": "run_2",
+            "session_id": "sess_1",
+            "model": "provider/requested",
+            "requested_model": "provider/requested",
+            "effective_model": "provider/effective",
+            "requested_reasoning_effort": "high",
+            "effective_reasoning_effort": "medium"
+        }))
+        .unwrap();
+        assert_eq!(routed.requested_model, "provider/requested");
+        assert_eq!(routed.effective_model, "provider/effective");
+        assert_eq!(routed.requested_reasoning_effort, "high");
+        assert_eq!(routed.effective_reasoning_effort, "medium");
     }
 }
 
@@ -2602,6 +2656,16 @@ pub struct ExecutionRun {
     pub summary: String,
     #[serde(default)]
     pub result_kind: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub requested_model: String,
+    #[serde(default)]
+    pub effective_model: String,
+    #[serde(default)]
+    pub requested_reasoning_effort: String,
+    #[serde(default)]
+    pub effective_reasoning_effort: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

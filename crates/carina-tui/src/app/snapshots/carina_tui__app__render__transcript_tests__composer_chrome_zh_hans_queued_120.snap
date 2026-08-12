@@ -3,15 +3,10 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered
 ---
 size=120x2
-⠋ 正在整理后续工作  Esc 在安全点暂停
-执行 正在运行 · 队列 2 · 审批 询问 · 隔离 安全编辑 + 命令沙箱 · 上下文 42% · 界面 全屏
+⠋ 正在整理后续工作 0s  Esc 在安全点暂停
+执行 正在运行 · 队列 2
 styles:
-(0,0)..(36,0) (Rgb(142, 219, 210), Reset, NONE)
+(0,0)..(39,0) (Rgb(142, 219, 210), Reset, NONE)
 (0,1)..(13,1) (Rgb(142, 219, 210), Reset, NONE)
 (13,1)..(16,1) (Rgb(150, 160, 156), Reset, NONE)
 (16,1)..(22,1) (Rgb(142, 219, 210), Reset, NONE)
-(22,1)..(25,1) (Rgb(150, 160, 156), Reset, NONE)
-(25,1)..(34,1) (Rgb(142, 219, 210), Reset, NONE)
-(34,1)..(64,1) (Rgb(150, 160, 156), Reset, NONE)
-(64,1)..(74,1) (Rgb(142, 219, 210), Reset, NONE)
-(74,1)..(86,1) (Rgb(150, 160, 156), Reset, NONE)

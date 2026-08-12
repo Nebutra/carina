@@ -1,10 +1,11 @@
 ---
 source: crates/carina-tui/src/app/render.rs
+assertion_line: 10332
 expression: rendered
 ---
 size=80x24
 Carina  ·  carina conversation        Sessions   Model   Build ⇧Tab   Settings
-Provider  ·  Direct API  ·  model  ·  reasoning off  ·  carina
+model  ·  reasoning off  ·  Provider  ·  Direct API  ·  carina
 ─────────╭ Settings / Symbols ────────────────────────────────────────╮─────────
          │ Choose the row that stays aligned. Boxes or misaligned     │
          │ symbols mean missing font coverage.                        │
@@ -18,15 +19,13 @@ Provider  ·  Direct API  ·  model  ·  reasoning off  ·  carina
          │ Preference: Automatic  ·  Active: Unicode                  │
          │                                                            │
          │                                                            │
-  Ready i│                                                            │
-  Describ│                                                            │
          │                                                            │
          │                                                            │
-╭ Message│                                                            │────────╮
-│        │ [ Enter Apply ] [ Esc Keep current ]                       │        │
-╰────────╰────────────────────────────────────────────────────────────╯────────╯
-
-run ready · HITL unknown · isolation unknown + unknown · ctx unknown
+         │                                                            │
+         │                                                            │
+         │                                                            │
+         │ [ Enter Apply ] [ Esc Keep current ]                       │
+         ╰────────────────────────────────────────────────────────────╯
 styles:
 (0,0)..(6,0) (Rgb(222, 133, 155), Reset, BOLD)
 (6,0)..(30,0) (Rgb(150, 160, 156), Reset, NONE)
@@ -75,11 +74,9 @@ styles:
 (9,14)..(10,14) (Rgb(142, 219, 210), Reset, BOLD)
 (11,14)..(69,14) (Rgb(150, 160, 156), Reset, NONE)
 (70,14)..(71,14) (Rgb(142, 219, 210), Reset, BOLD)
-(2,15)..(9,15) (Reset, Reset, BOLD)
 (9,15)..(10,15) (Rgb(142, 219, 210), Reset, BOLD)
 (11,15)..(69,15) (Rgb(150, 160, 156), Reset, NONE)
 (70,15)..(71,15) (Rgb(142, 219, 210), Reset, BOLD)
-(2,16)..(9,16) (Rgb(150, 160, 156), Reset, NONE)
 (9,16)..(10,16) (Rgb(142, 219, 210), Reset, BOLD)
 (11,16)..(69,16) (Rgb(150, 160, 156), Reset, NONE)
 (70,16)..(71,16) (Rgb(142, 219, 210), Reset, BOLD)
@@ -89,18 +86,11 @@ styles:
 (9,18)..(10,18) (Rgb(142, 219, 210), Reset, BOLD)
 (11,18)..(69,18) (Rgb(150, 160, 156), Reset, NONE)
 (70,18)..(71,18) (Rgb(142, 219, 210), Reset, BOLD)
-(0,19)..(9,19) (Rgb(52, 65, 68), Reset, NONE)
 (9,19)..(10,19) (Rgb(142, 219, 210), Reset, BOLD)
 (11,19)..(69,19) (Rgb(150, 160, 156), Reset, NONE)
 (70,19)..(71,19) (Rgb(142, 219, 210), Reset, BOLD)
-(71,19)..(80,19) (Rgb(52, 65, 68), Reset, NONE)
-(0,20)..(1,20) (Rgb(52, 65, 68), Reset, NONE)
 (9,20)..(10,20) (Rgb(142, 219, 210), Reset, BOLD)
 (11,20)..(26,20) (Rgb(142, 219, 210), Reset, NONE)
 (27,20)..(47,20) (Rgb(142, 219, 210), Reset, NONE)
 (70,20)..(71,20) (Rgb(142, 219, 210), Reset, BOLD)
-(79,20)..(80,20) (Rgb(52, 65, 68), Reset, NONE)
-(0,21)..(9,21) (Rgb(52, 65, 68), Reset, NONE)
 (9,21)..(71,21) (Rgb(142, 219, 210), Reset, BOLD)
-(71,21)..(80,21) (Rgb(52, 65, 68), Reset, NONE)
-(0,23)..(68,23) (Rgb(150, 160, 156), Reset, NONE)

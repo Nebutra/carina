@@ -3,14 +3,10 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered
 ---
 size=80x2
-⠋ Preparing follow-up work  Esc pause safely
-run running · queue 2 · HITL ask · safe edit + command sandbox · ctx 42%
+⠋ Preparing follow-up work 0s  Esc pause safely
+run running · queue 2
 styles:
-(0,0)..(44,0) (Rgb(142, 219, 210), Reset, NONE)
+(0,0)..(47,0) (Rgb(142, 219, 210), Reset, NONE)
 (0,1)..(11,1) (Rgb(142, 219, 210), Reset, NONE)
 (11,1)..(14,1) (Rgb(150, 160, 156), Reset, NONE)
 (14,1)..(21,1) (Rgb(142, 219, 210), Reset, NONE)
-(21,1)..(24,1) (Rgb(150, 160, 156), Reset, NONE)
-(24,1)..(32,1) (Rgb(142, 219, 210), Reset, NONE)
-(32,1)..(65,1) (Rgb(150, 160, 156), Reset, NONE)
-(65,1)..(72,1) (Rgb(142, 219, 210), Reset, NONE)

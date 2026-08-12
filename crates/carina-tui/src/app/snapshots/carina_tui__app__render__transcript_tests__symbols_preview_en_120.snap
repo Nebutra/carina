@@ -4,7 +4,7 @@ expression: rendered
 ---
 size=120x24
 Carina  ·  carina conversation                                                Sessions   Model   Build ⇧Tab   Settings
-Provider  ·  Direct API  ·  model  ·  reasoning off  ·  carina
+model  ·  reasoning off  ·  Provider  ·  Direct API  ·  carina
 ─────────────────────────────╭ Settings / Symbols ────────────────────────────────────────╮─────────────────────────────
                              │ Choose the row that stays aligned. Boxes or misaligned     │
                              │ symbols mean missing font coverage.                        │
@@ -18,15 +18,13 @@ Provider  ·  Direct API  ·  model  ·  reasoning off  ·  carina
                              │ Preference: Automatic  ·  Active: Unicode                  │
                              │                                                            │
                              │                                                            │
-  Ready in carina            │                                                            │
-  Describe the change you wan│                                                            │
                              │                                                            │
                              │                                                            │
-╭ Message ───────────────────│                                                            │────────────────────────────╮
-│                            │ [ Enter Apply ] [ Esc Keep current ]                       │                            │
-╰────────────────────────────╰────────────────────────────────────────────────────────────╯────────────────────────────╯
-
-run ready · HITL unknown · isolation unknown + unknown · ctx unknown · screen minimal
+                             │                                                            │
+                             │                                                            │
+                             │                                                            │
+                             │ [ Enter Apply ] [ Esc Keep current ]                       │
+                             ╰────────────────────────────────────────────────────────────╯
 styles:
 (0,0)..(6,0) (Rgb(222, 133, 155), Reset, BOLD)
 (6,0)..(30,0) (Rgb(150, 160, 156), Reset, NONE)
@@ -75,11 +73,9 @@ styles:
 (29,14)..(30,14) (Rgb(142, 219, 210), Reset, BOLD)
 (31,14)..(89,14) (Rgb(150, 160, 156), Reset, NONE)
 (90,14)..(91,14) (Rgb(142, 219, 210), Reset, BOLD)
-(2,15)..(17,15) (Reset, Reset, BOLD)
 (29,15)..(30,15) (Rgb(142, 219, 210), Reset, BOLD)
 (31,15)..(89,15) (Rgb(150, 160, 156), Reset, NONE)
 (90,15)..(91,15) (Rgb(142, 219, 210), Reset, BOLD)
-(2,16)..(29,16) (Rgb(150, 160, 156), Reset, NONE)
 (29,16)..(30,16) (Rgb(142, 219, 210), Reset, BOLD)
 (31,16)..(89,16) (Rgb(150, 160, 156), Reset, NONE)
 (90,16)..(91,16) (Rgb(142, 219, 210), Reset, BOLD)
@@ -89,18 +85,11 @@ styles:
 (29,18)..(30,18) (Rgb(142, 219, 210), Reset, BOLD)
 (31,18)..(89,18) (Rgb(150, 160, 156), Reset, NONE)
 (90,18)..(91,18) (Rgb(142, 219, 210), Reset, BOLD)
-(0,19)..(29,19) (Rgb(52, 65, 68), Reset, NONE)
 (29,19)..(30,19) (Rgb(142, 219, 210), Reset, BOLD)
 (31,19)..(89,19) (Rgb(150, 160, 156), Reset, NONE)
 (90,19)..(91,19) (Rgb(142, 219, 210), Reset, BOLD)
-(91,19)..(120,19) (Rgb(52, 65, 68), Reset, NONE)
-(0,20)..(1,20) (Rgb(52, 65, 68), Reset, NONE)
 (29,20)..(30,20) (Rgb(142, 219, 210), Reset, BOLD)
 (31,20)..(46,20) (Rgb(142, 219, 210), Reset, NONE)
 (47,20)..(67,20) (Rgb(142, 219, 210), Reset, NONE)
 (90,20)..(91,20) (Rgb(142, 219, 210), Reset, BOLD)
-(119,20)..(120,20) (Rgb(52, 65, 68), Reset, NONE)
-(0,21)..(29,21) (Rgb(52, 65, 68), Reset, NONE)
 (29,21)..(91,21) (Rgb(142, 219, 210), Reset, BOLD)
-(91,21)..(120,21) (Rgb(52, 65, 68), Reset, NONE)
-(0,23)..(85,23) (Rgb(150, 160, 156), Reset, NONE)

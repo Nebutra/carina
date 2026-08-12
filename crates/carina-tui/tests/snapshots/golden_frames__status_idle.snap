@@ -4,8 +4,5 @@ expression: "render_status(\"ready\", None, 0, None)"
 ---
 size=120x2
 
-run ready · HITL ask · isolation safe edit + command sandbox · ctx unknown · screen minimal
+
 styles:
-(0, 1)..(12, 1) (Rgb(150, 160, 156), Reset, NONE)
-(12, 1)..(20, 1) (Rgb(142, 219, 210), Reset, NONE)
-(20, 1)..(91, 1) (Rgb(150, 160, 156), Reset, NONE)

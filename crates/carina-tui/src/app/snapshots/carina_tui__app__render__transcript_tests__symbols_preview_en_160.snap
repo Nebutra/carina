@@ -4,7 +4,7 @@ expression: rendered
 ---
 size=160x24
 Carina  ·  carina conversation                                                                                        Sessions   Model   Build ⇧Tab   Settings
-Provider  ·  Direct API  ·  model  ·  reasoning off  ·  carina
+model  ·  reasoning off  ·  Provider  ·  Direct API  ·  carina
 ─────────────────────────────────────────────────╭ Settings / Symbols ────────────────────────────────────────╮─────────────────────────────────────────────────
                                                  │ Choose the row that stays aligned. Boxes or misaligned     │
                                                  │ symbols mean missing font coverage.                        │
@@ -18,15 +18,13 @@ Provider  ·  Direct API  ·  model  ·  reasoning off  ·  carina
                                                  │ Preference: Automatic  ·  Active: Unicode                  │
                                                  │                                                            │
                                                  │                                                            │
-  Ready in carina                                │                                                            │
-  Describe the change you want to make.          │                                                            │
                                                  │                                                            │
                                                  │                                                            │
-╭ Message ───────────────────────────────────────│                                                            │────────────────────────────────────────────────╮
-│                                                │ [ Enter Apply ] [ Esc Keep current ]                       │                                                │
-╰────────────────────────────────────────────────╰────────────────────────────────────────────────────────────╯────────────────────────────────────────────────╯
-
-run ready · HITL unknown · isolation unknown + unknown · ctx unknown · screen minimal
+                                                 │                                                            │
+                                                 │                                                            │
+                                                 │                                                            │
+                                                 │ [ Enter Apply ] [ Esc Keep current ]                       │
+                                                 ╰────────────────────────────────────────────────────────────╯
 styles:
 (0,0)..(6,0) (Rgb(222, 133, 155), Reset, BOLD)
 (6,0)..(30,0) (Rgb(150, 160, 156), Reset, NONE)
@@ -75,11 +73,9 @@ styles:
 (49,14)..(50,14) (Rgb(142, 219, 210), Reset, BOLD)
 (51,14)..(109,14) (Rgb(150, 160, 156), Reset, NONE)
 (110,14)..(111,14) (Rgb(142, 219, 210), Reset, BOLD)
-(2,15)..(17,15) (Reset, Reset, BOLD)
 (49,15)..(50,15) (Rgb(142, 219, 210), Reset, BOLD)
 (51,15)..(109,15) (Rgb(150, 160, 156), Reset, NONE)
 (110,15)..(111,15) (Rgb(142, 219, 210), Reset, BOLD)
-(2,16)..(39,16) (Rgb(150, 160, 156), Reset, NONE)
 (49,16)..(50,16) (Rgb(142, 219, 210), Reset, BOLD)
 (51,16)..(109,16) (Rgb(150, 160, 156), Reset, NONE)
 (110,16)..(111,16) (Rgb(142, 219, 210), Reset, BOLD)
@@ -89,18 +85,11 @@ styles:
 (49,18)..(50,18) (Rgb(142, 219, 210), Reset, BOLD)
 (51,18)..(109,18) (Rgb(150, 160, 156), Reset, NONE)
 (110,18)..(111,18) (Rgb(142, 219, 210), Reset, BOLD)
-(0,19)..(49,19) (Rgb(52, 65, 68), Reset, NONE)
 (49,19)..(50,19) (Rgb(142, 219, 210), Reset, BOLD)
 (51,19)..(109,19) (Rgb(150, 160, 156), Reset, NONE)
 (110,19)..(111,19) (Rgb(142, 219, 210), Reset, BOLD)
-(111,19)..(160,19) (Rgb(52, 65, 68), Reset, NONE)
-(0,20)..(1,20) (Rgb(52, 65, 68), Reset, NONE)
 (49,20)..(50,20) (Rgb(142, 219, 210), Reset, BOLD)
 (51,20)..(66,20) (Rgb(142, 219, 210), Reset, NONE)
 (67,20)..(87,20) (Rgb(142, 219, 210), Reset, NONE)
 (110,20)..(111,20) (Rgb(142, 219, 210), Reset, BOLD)
-(159,20)..(160,20) (Rgb(52, 65, 68), Reset, NONE)
-(0,21)..(49,21) (Rgb(52, 65, 68), Reset, NONE)
 (49,21)..(111,21) (Rgb(142, 219, 210), Reset, BOLD)
-(111,21)..(160,21) (Rgb(52, 65, 68), Reset, NONE)
-(0,23)..(85,23) (Rgb(150, 160, 156), Reset, NONE)

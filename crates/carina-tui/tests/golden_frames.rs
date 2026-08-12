@@ -191,6 +191,7 @@ fn render_status_with_mode(
                 notice: "",
                 elapsed: Some(std::time::Duration::from_secs(62)),
                 activity,
+                activity_elapsed: activity.map(|_| std::time::Duration::from_secs(4)),
                 queued_follow_ups,
                 background_work: false,
                 interrupt_key: "Esc",
@@ -569,18 +570,18 @@ fn live_status_glyph_mode_is_fixture_owned() {
     let unicode = render_status_with_mode(
         "running",
         Some("running tests"),
-        0,
+        2,
         None,
         carina_tui::glyphs::GlyphMode::Unicode,
     );
     let ascii = render_status_with_mode(
         "running",
         Some("running tests"),
-        0,
+        2,
         None,
         carina_tui::glyphs::GlyphMode::Ascii,
     );
-    assert!(unicode.contains("⠦ running tests  1m02  Esc pause safely"));
+    assert!(unicode.contains("⠦ running tests 4s  Esc pause safely"));
     assert!(unicode.contains(" · "));
     assert!(ascii.contains("- running tests"));
     assert!(ascii.contains(" | "));

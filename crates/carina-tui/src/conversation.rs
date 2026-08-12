@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::glyphs::Glyphs;
 use crate::i18n::{Locale, MessageId, format as tr_format, text as tr};
 use crate::render_contract::truncate_width_with_glyphs;
-use crate::rpc::{ModelContextTokens, Session};
+use crate::rpc::{ExecutionRun, LiveActivityUpdate, ModelContextTokens, Session, WireEvent};
 use crate::theme::Theme;
 
 pub struct EmptyConversation<'a> {
@@ -79,6 +79,20 @@ pub enum ChromeCapability {
     OpenQueue,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FooterMode {
+    PriorityNotice,
+    Running,
+    Queued,
+    WaitingApproval,
+    WaitingInput,
+    Paused,
+    Failed,
+    Notice,
+    Idle,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChromeSlot {
     pub kind: ChromeSlotKind,
@@ -108,6 +122,7 @@ pub struct ChromePrimary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComposerChrome {
     pub primary: Option<ChromePrimary>,
+    pub mode: FooterMode,
     slots: Vec<ChromeSlot>,
     context_protected: bool,
 }
@@ -117,6 +132,7 @@ pub struct ComposerChromeInput<'a> {
     pub notice: &'a str,
     pub elapsed: Option<Duration>,
     pub activity: Option<&'a str>,
+    pub activity_elapsed: Option<Duration>,
     pub queued_follow_ups: usize,
     pub background_work: bool,
     pub interrupt_key: &'a str,
@@ -132,7 +148,16 @@ pub struct ComposerChromeInput<'a> {
 impl ComposerChrome {
     pub fn project(input: ComposerChromeInput<'_>) -> Self {
         let locale = input.locale;
-        let (run_value, run_tone, active) = execution_state(locale, input.execution_status);
+        let mode = footer_mode(
+            input.execution_status,
+            input.priority_notice,
+            !input.notice.trim().is_empty(),
+        );
+        let (mut run_value, run_tone, active) = execution_state(locale, input.execution_status);
+        if active && let Some(elapsed) = input.elapsed {
+            run_value.push(' ');
+            run_value.push_str(&fmt_elapsed_compact(elapsed));
+        }
         let notice = input.notice.trim();
         let primary = if input.priority_notice && !notice.is_empty() {
             Some(ChromePrimary {
@@ -143,10 +168,11 @@ impl ComposerChrome {
         } else if active {
             let mut parts = Vec::new();
             if let Some(activity) = input.activity.filter(|value| !value.trim().is_empty()) {
-                parts.push(activity.trim().to_owned());
-            }
-            if let Some(elapsed) = input.elapsed {
-                parts.push(fmt_elapsed_compact(elapsed));
+                let activity = input.activity_elapsed.map_or_else(
+                    || activity.trim().to_owned(),
+                    |elapsed| format!("{} {}", activity.trim(), fmt_elapsed_compact(elapsed)),
+                );
+                parts.push(activity);
             }
             parts.push(tr_format(
                 locale,
@@ -200,6 +226,7 @@ impl ComposerChrome {
         slots.push(screen_mode_slot(locale, input.screen_mode));
         Self {
             primary,
+            mode,
             slots,
             context_protected,
         }
@@ -208,16 +235,32 @@ impl ComposerChrome {
     pub fn visible_slots(&self, width: u16) -> Vec<ChromeSlot> {
         self.slots
             .iter()
-            .filter(|slot| match slot.kind {
-                ChromeSlotKind::Run
-                | ChromeSlotKind::Queue
-                | ChromeSlotKind::Hitl
-                | ChromeSlotKind::Isolation => true,
-                ChromeSlotKind::Context => width >= 80 || self.context_protected,
-                ChromeSlotKind::ScreenMode => width >= 120,
-            })
+            .filter(|slot| self.slot_visible(slot.kind, width))
             .cloned()
             .collect()
+    }
+
+    pub fn row_count(&self, width: u16) -> u16 {
+        u16::from(self.primary.is_some()) + u16::from(!self.visible_slots(width).is_empty())
+    }
+
+    fn slot_visible(&self, kind: ChromeSlotKind, _width: u16) -> bool {
+        if kind == ChromeSlotKind::Queue {
+            return true;
+        }
+        if kind == ChromeSlotKind::Context && self.context_protected {
+            return true;
+        }
+        match self.mode {
+            FooterMode::Running | FooterMode::Queued => kind == ChromeSlotKind::Run,
+            FooterMode::WaitingApproval
+            | FooterMode::WaitingInput
+            | FooterMode::Paused
+            | FooterMode::Failed
+            | FooterMode::Unknown => kind == ChromeSlotKind::Run,
+            FooterMode::PriorityNotice | FooterMode::Notice => false,
+            FooterMode::Idle => false,
+        }
     }
 
     pub fn layout_slots(&self, width: u16, glyphs: Glyphs) -> Vec<LaidOutChromeSlot> {
@@ -397,6 +440,32 @@ fn execution_state(locale: Locale, status: &str) -> (String, ChromeTone, bool) {
     (value, tone, active)
 }
 
+fn footer_mode(status: &str, priority_notice: bool, has_notice: bool) -> FooterMode {
+    if priority_notice && has_notice {
+        return FooterMode::PriorityNotice;
+    }
+    match status.trim().to_ascii_lowercase().as_str() {
+        "queued" | "pending" => FooterMode::Queued,
+        "running" | "in_progress" | "working" | "active" => FooterMode::Running,
+        "waiting_approval" | "awaiting_approval" | "blocked_on_approval" => {
+            FooterMode::WaitingApproval
+        }
+        "waiting_input" | "needs_input" | "blocked_on_input" => FooterMode::WaitingInput,
+        "paused" | "interrupted" => FooterMode::Paused,
+        "failed" | "error" | "degraded" | "partial" | "partially_complete" => FooterMode::Failed,
+        "" | "ready" | "completed" | "complete" | "done" | "idle" | "cancelled" | "canceled"
+        | "unknown" | "none" | "n/a" | "na" => {
+            if has_notice {
+                FooterMode::Notice
+            } else {
+                FooterMode::Idle
+            }
+        }
+        _ if has_notice => FooterMode::Notice,
+        _ => FooterMode::Unknown,
+    }
+}
+
 pub(crate) fn execution_status_animates(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
@@ -519,11 +588,194 @@ pub fn fmt_elapsed_compact(elapsed: Duration) -> String {
     crate::render_contract::format_elapsed(elapsed)
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ActiveRunPresentation {
+    pub run_id: String,
+    pub requested_model: String,
+    pub effective_model: String,
+    pub provider: String,
+    pub requested_reasoning_effort: String,
+    pub effective_reasoning_effort: String,
+}
+
+impl ActiveRunPresentation {
+    pub fn from_execution(execution: &ExecutionRun) -> Self {
+        let mut presentation = Self {
+            run_id: execution.run_id.clone(),
+            ..Self::default()
+        };
+        presentation.merge(
+            &execution.requested_model,
+            first_non_empty_value(&execution.effective_model, &execution.model),
+            "",
+            &execution.requested_reasoning_effort,
+            &execution.effective_reasoning_effort,
+        );
+        presentation
+    }
+
+    pub fn seed_request(&mut self, model: &str, reasoning_effort: &str) {
+        merge_non_empty(&mut self.requested_model, model);
+        merge_non_empty(&mut self.requested_reasoning_effort, reasoning_effort);
+    }
+
+    pub fn apply_event(&mut self, event: &WireEvent) -> bool {
+        if event.run_id.trim().is_empty() || event.run_id != self.run_id {
+            return false;
+        }
+        let text = |key: &str| {
+            event
+                .payload
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+        };
+        let before = self.clone();
+        match event.kind.as_str() {
+            "ExecutionQueued" => self.merge(
+                text("requested_model"),
+                first_non_empty_value(text("effective_model"), text("model")),
+                text("provider"),
+                text("requested_reasoning_effort"),
+                text("effective_reasoning_effort"),
+            ),
+            "ModelRequested" => self.merge(
+                text("model"),
+                "",
+                text("provider"),
+                text("reasoning_effort"),
+                "",
+            ),
+            "RoutingDecision" => self.merge(
+                text("requested_model"),
+                "",
+                text("provider"),
+                text("requested_reasoning_effort"),
+                text("effective_reasoning_effort"),
+            ),
+            "RoutingOutcome" => self.merge(
+                text("requested_model"),
+                text("model"),
+                text("provider"),
+                text("requested_reasoning_effort"),
+                text("effective_reasoning_effort"),
+            ),
+            _ => {}
+        }
+        *self != before
+    }
+
+    pub fn actual_model(&self) -> &str {
+        first_non_empty_value(&self.effective_model, &self.requested_model)
+    }
+
+    pub fn actual_reasoning_effort(&self) -> &str {
+        first_non_empty_value(
+            &self.effective_reasoning_effort,
+            &self.requested_reasoning_effort,
+        )
+    }
+
+    fn merge(
+        &mut self,
+        requested_model: &str,
+        effective_model: &str,
+        provider: &str,
+        requested_effort: &str,
+        effective_effort: &str,
+    ) {
+        merge_non_empty(&mut self.requested_model, requested_model);
+        merge_non_empty(&mut self.effective_model, effective_model);
+        merge_non_empty(&mut self.provider, provider);
+        merge_non_empty(&mut self.requested_reasoning_effort, requested_effort);
+        merge_non_empty(&mut self.effective_reasoning_effort, effective_effort);
+    }
+}
+
+fn merge_non_empty(target: &mut String, value: &str) {
+    let value = value.trim();
+    if !value.is_empty() {
+        target.clear();
+        target.push_str(value);
+    }
+}
+
+fn first_non_empty_value<'a>(first: &'a str, second: &'a str) -> &'a str {
+    if first.trim().is_empty() {
+        second
+    } else {
+        first
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ExecutionTimer {
     accumulated: Duration,
     running_since: Option<std::time::Instant>,
     observed: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct ExecutionActivityTracker {
+    active: Vec<ExecutionActivity>,
+}
+
+#[derive(Debug)]
+struct ExecutionActivity {
+    key: String,
+    label: String,
+    started_at: std::time::Instant,
+}
+
+impl ExecutionActivityTracker {
+    pub fn apply(&mut self, update: LiveActivityUpdate) -> bool {
+        match update {
+            LiveActivityUpdate::Started { key, label } => {
+                self.active.retain(|activity| activity.key != key);
+                self.active.push(ExecutionActivity {
+                    key,
+                    label,
+                    started_at: std::time::Instant::now(),
+                });
+                true
+            }
+            LiveActivityUpdate::Finished { key } => {
+                let previous_len = self.active.len();
+                self.active.retain(|activity| activity.key != key);
+                self.active.len() != previous_len
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.active.clear();
+    }
+
+    pub fn current(&self) -> Option<(&str, Duration)> {
+        self.active
+            .last()
+            .map(|activity| (activity.label.as_str(), activity.started_at.elapsed()))
+    }
+
+    #[cfg(test)]
+    pub fn set_single(&mut self, label: impl Into<String>) {
+        self.active = vec![ExecutionActivity {
+            key: "test".into(),
+            label: label.into(),
+            started_at: std::time::Instant::now(),
+        }];
+    }
+
+    #[cfg(test)]
+    fn set_single_elapsed(&mut self, label: impl Into<String>, elapsed: Duration) {
+        self.active = vec![ExecutionActivity {
+            key: "test".into(),
+            label: label.into(),
+            started_at: std::time::Instant::now()
+                .checked_sub(elapsed)
+                .unwrap_or_else(std::time::Instant::now),
+        }];
+    }
 }
 
 impl ExecutionTimer {
@@ -584,9 +836,7 @@ pub fn localized_execution_status(locale: Locale, status: &str) -> String {
 }
 
 pub fn conversation_title(session: Option<&Session>, workspace: &Path, locale: Locale) -> String {
-    if let Some(value) =
-        session.and_then(|session| non_empty(&session.name).or_else(|| non_empty(&session.summary)))
-    {
+    if let Some(value) = session.and_then(|session| non_empty(&session.name)) {
         return value
             .lines()
             .next()
@@ -643,18 +893,66 @@ mod tests {
     }
 
     #[test]
-    fn conversation_title_prefers_human_name_then_summary() {
+    fn conversation_title_uses_stable_name_and_never_latest_assistant_summary() {
         let mut value = session();
         value.summary = "Refactor provider setup\ninternal detail".into();
         assert_eq!(
             conversation_title(Some(&value), Path::new("/tmp/carina"), Locale::En),
-            "Refactor provider setup"
+            "carina conversation"
         );
         value.name = "Provider onboarding".into();
         assert_eq!(
             conversation_title(Some(&value), Path::new("/tmp/carina"), Locale::En),
             "Provider onboarding"
         );
+    }
+
+    #[test]
+    fn active_run_presentation_merges_requested_and_effective_route_truth() {
+        let execution: ExecutionRun = serde_json::from_value(serde_json::json!({
+            "run_id": "run-1",
+            "session_id": "session-1",
+            "status": "queued",
+            "requested_model": "provider/requested",
+            "requested_reasoning_effort": "high"
+        }))
+        .unwrap();
+        let mut presentation = ActiveRunPresentation::from_execution(&execution);
+        assert_eq!(presentation.actual_model(), "provider/requested");
+
+        let outcome: WireEvent = serde_json::from_value(serde_json::json!({
+            "type": "RoutingOutcome",
+            "run_id": "run-1",
+            "payload": {
+                "requested_model": "provider/requested",
+                "provider": "provider",
+                "model": "provider/effective",
+                "effective_reasoning_effort": "medium"
+            }
+        }))
+        .unwrap();
+        assert!(presentation.apply_event(&outcome));
+        assert_eq!(presentation.actual_model(), "provider/effective");
+        assert_eq!(presentation.provider, "provider");
+        assert_eq!(presentation.actual_reasoning_effort(), "medium");
+
+        let empty_started: WireEvent = serde_json::from_value(serde_json::json!({
+            "type": "ExecutionStarted",
+            "run_id": "run-1",
+            "payload": {}
+        }))
+        .unwrap();
+        assert!(!presentation.apply_event(&empty_started));
+        assert_eq!(presentation.actual_model(), "provider/effective");
+
+        let stale: WireEvent = serde_json::from_value(serde_json::json!({
+            "type": "RoutingOutcome",
+            "run_id": "run-old",
+            "payload": {"model": "provider/stale"}
+        }))
+        .unwrap();
+        assert!(!presentation.apply_event(&stale));
+        assert_eq!(presentation.actual_model(), "provider/effective");
     }
 
     #[test]
@@ -698,6 +996,66 @@ mod tests {
     }
 
     #[test]
+    fn activity_tracker_restores_the_still_running_parallel_tool() {
+        let mut tracker = ExecutionActivityTracker::default();
+        tracker.apply(LiveActivityUpdate::Started {
+            key: "tool:map".into(),
+            label: "code.map".into(),
+        });
+        tracker.apply(LiveActivityUpdate::Started {
+            key: "tool:list".into(),
+            label: "list".into(),
+        });
+        assert_eq!(tracker.current().map(|(label, _)| label), Some("list"));
+
+        assert!(tracker.apply(LiveActivityUpdate::Finished {
+            key: "tool:list".into(),
+        }));
+        assert_eq!(tracker.current().map(|(label, _)| label), Some("code.map"));
+
+        assert!(tracker.apply(LiveActivityUpdate::Finished {
+            key: "tool:map".into(),
+        }));
+        assert_eq!(tracker.current(), None);
+    }
+
+    #[test]
+    fn activity_elapsed_is_independent_from_run_elapsed() {
+        let mut tracker = ExecutionActivityTracker::default();
+        tracker.set_single_elapsed("list", Duration::from_secs(2));
+        let (activity, elapsed) = tracker.current().expect("active activity");
+        assert_eq!(activity, "list");
+        assert!(elapsed >= Duration::from_secs(2));
+
+        let chrome = ComposerChrome::project(ComposerChromeInput {
+            execution_status: "running",
+            notice: "",
+            elapsed: Some(Duration::from_secs(707)),
+            activity: Some(activity),
+            activity_elapsed: Some(elapsed),
+            queued_follow_ups: 0,
+            background_work: false,
+            interrupt_key: "Esc",
+            priority_notice: false,
+            context: None,
+            locale: Locale::En,
+            screen_mode: "fullscreen",
+            hitl: "ask",
+            isolation_profile: "safe-edit",
+            sandbox_commands: Some(true),
+        });
+        let primary = &chrome.primary.as_ref().expect("active primary").text;
+        assert!(primary.starts_with("list 2s"), "{primary}");
+        assert!(!primary.contains("11m47"), "{primary}");
+        assert!(
+            chrome
+                .visible_slots(120)
+                .iter()
+                .any(|slot| slot.kind == ChromeSlotKind::Run && slot.text.contains("11m47"))
+        );
+    }
+
+    #[test]
     fn only_visually_active_execution_states_request_motion() {
         for status in [
             "queued",
@@ -734,6 +1092,7 @@ mod tests {
             notice: "",
             elapsed: Some(Duration::from_secs(62)),
             activity: Some("running tests"),
+            activity_elapsed: Some(Duration::from_secs(4)),
             queued_follow_ups: 2,
             background_work: false,
             interrupt_key: "Esc",
@@ -752,31 +1111,21 @@ mod tests {
                 .map(|slot| slot.kind)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(
-            kinds(60),
-            [
-                ChromeSlotKind::Run,
-                ChromeSlotKind::Queue,
-                ChromeSlotKind::Hitl,
-                ChromeSlotKind::Isolation,
-            ]
-        );
-        assert_eq!(
-            kinds(80),
-            [
-                ChromeSlotKind::Run,
-                ChromeSlotKind::Queue,
-                ChromeSlotKind::Hitl,
-                ChromeSlotKind::Isolation,
-                ChromeSlotKind::Context,
-            ]
-        );
-        assert_eq!(kinds(120).len(), 6);
+        for width in [60, 80, 120, 160] {
+            assert_eq!(kinds(width), [ChromeSlotKind::Run, ChromeSlotKind::Queue]);
+        }
         let primary = chrome.primary.as_ref().unwrap();
         assert!(primary.text.contains("running tests"));
-        assert!(primary.text.contains("1m02"));
+        assert!(primary.text.contains("4s"));
+        assert!(!primary.text.contains("1m02"));
         assert!(primary.text.contains("Esc pause safely"));
         assert!(!primary.text.contains("+2 queued"));
+        assert!(
+            chrome
+                .visible_slots(120)
+                .iter()
+                .any(|slot| slot.kind == ChromeSlotKind::Run && slot.text.contains("1m02"))
+        );
     }
 
     #[test]
@@ -786,6 +1135,7 @@ mod tests {
             notice: "",
             elapsed: None,
             activity: None,
+            activity_elapsed: None,
             queued_follow_ups: 2,
             background_work: false,
             interrupt_key: "Esc",
@@ -805,12 +1155,7 @@ mod tests {
             let slots = chrome.layout_slots(60, glyphs);
             assert_eq!(
                 slots.iter().map(|slot| slot.kind).collect::<Vec<_>>(),
-                [
-                    ChromeSlotKind::Run,
-                    ChromeSlotKind::Queue,
-                    ChromeSlotKind::Hitl,
-                    ChromeSlotKind::Isolation,
-                ]
+                [ChromeSlotKind::Run, ChromeSlotKind::Queue]
             );
             let separator_width =
                 UnicodeWidthStr::width(format!(" {} ", glyphs.separator()).as_str()) as u16;
@@ -843,6 +1188,7 @@ mod tests {
                 notice: "",
                 elapsed: None,
                 activity: None,
+                activity_elapsed: None,
                 queued_follow_ups: 12,
                 background_work: false,
                 interrupt_key: "Esc",
@@ -866,8 +1212,6 @@ mod tests {
                 for kind in [
                     ChromeSlotKind::Run,
                     ChromeSlotKind::Queue,
-                    ChromeSlotKind::Hitl,
-                    ChromeSlotKind::Isolation,
                     ChromeSlotKind::Context,
                 ] {
                     assert!(
@@ -875,12 +1219,10 @@ mod tests {
                         "locale={locale:?} width={width} missing={kind:?} slots={slots:?}"
                     );
                 }
-                assert_eq!(
-                    slots
-                        .iter()
-                        .any(|slot| slot.kind == ChromeSlotKind::ScreenMode),
-                    width == 120
-                );
+                assert!(!slots.iter().any(|slot| matches!(
+                    slot.kind,
+                    ChromeSlotKind::Hitl | ChromeSlotKind::Isolation | ChromeSlotKind::ScreenMode
+                )));
             }
         }
     }
@@ -901,6 +1243,7 @@ mod tests {
                 notice: "",
                 elapsed: None,
                 activity: None,
+                activity_elapsed: None,
                 queued_follow_ups: 2,
                 background_work: false,
                 interrupt_key: "Esc",
@@ -918,8 +1261,79 @@ mod tests {
                 .find(|slot| slot.kind == ChromeSlotKind::Context)
                 .unwrap();
             assert_eq!(context_slot.tone, tone);
-            assert_eq!(context_slot.text, format!("{percent}%"));
+            assert_eq!(context_slot.text, format!("ctx {percent}%"));
         }
+    }
+
+    #[test]
+    fn idle_footer_is_quiet_at_every_width() {
+        let context = ModelContextTokens {
+            used_percent: 42,
+            ..ModelContextTokens::default()
+        };
+        let chrome = ComposerChrome::project(ComposerChromeInput {
+            execution_status: "ready",
+            notice: "",
+            elapsed: None,
+            activity: None,
+            activity_elapsed: None,
+            queued_follow_ups: 0,
+            background_work: false,
+            interrupt_key: "Esc",
+            priority_notice: false,
+            context: Some(&context),
+            locale: Locale::En,
+            screen_mode: "fullscreen",
+            hitl: "ask",
+            isolation_profile: "safe-edit",
+            sandbox_commands: Some(true),
+        });
+        let kinds = |width| {
+            chrome
+                .visible_slots(width)
+                .iter()
+                .map(|slot| slot.kind)
+                .collect::<Vec<_>>()
+        };
+        assert!(kinds(60).is_empty());
+        assert!(kinds(80).is_empty());
+        assert!(kinds(120).is_empty());
+        assert!(kinds(160).is_empty());
+        assert_eq!(chrome.row_count(60), 0);
+        assert_eq!(chrome.row_count(80), 0);
+        assert_eq!(chrome.row_count(120), 0);
+        assert_eq!(chrome.row_count(160), 0);
+    }
+
+    #[test]
+    fn chrome_height_is_derived_from_visible_state_rows() {
+        let project = |status: &str, notice: &str, width: u16| {
+            ComposerChrome::project(ComposerChromeInput {
+                execution_status: status,
+                notice,
+                elapsed: None,
+                activity: None,
+                activity_elapsed: None,
+                queued_follow_ups: 0,
+                background_work: false,
+                interrupt_key: "Esc",
+                priority_notice: false,
+                context: None,
+                locale: Locale::En,
+                screen_mode: "fullscreen",
+                hitl: "ask",
+                isolation_profile: "safe-edit",
+                sandbox_commands: Some(true),
+            })
+            .row_count(width)
+        };
+
+        assert_eq!(project("ready", "", 80), 0);
+        assert_eq!(project("running", "", 80), 2);
+        assert_eq!(project("waiting_approval", "", 80), 1);
+        assert_eq!(project("failed", "", 80), 1);
+        assert_eq!(project("ready", "Message added", 60), 1);
+        assert_eq!(project("ready", "Message added", 80), 1);
     }
 
     #[test]
@@ -929,6 +1343,7 @@ mod tests {
             notice: "",
             elapsed: None,
             activity: None,
+            activity_elapsed: None,
             queued_follow_ups: 0,
             background_work: false,
             interrupt_key: "Esc",
@@ -941,19 +1356,9 @@ mod tests {
             sandbox_commands: Some(false),
         });
         let all = chrome.visible_slots(120);
-        let hitl = all
-            .iter()
-            .find(|slot| slot.kind == ChromeSlotKind::Hitl)
-            .unwrap();
-        assert_eq!(hitl.text, "审批 始终批准");
-        assert_eq!(hitl.tone, ChromeTone::Danger);
-        let isolation = all
-            .iter()
-            .find(|slot| slot.kind == ChromeSlotKind::Isolation)
-            .unwrap();
-        assert!(isolation.text.contains("未知"));
-        assert!(!isolation.text.contains("future-profile"));
-        assert!(all.iter().any(|slot| slot.text == "界面 行内"));
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].kind, ChromeSlotKind::Run);
+        assert_eq!(all[0].tone, ChromeTone::Warning);
     }
 
     #[test]
@@ -964,6 +1369,7 @@ mod tests {
             notice: "",
             elapsed: None,
             activity: None,
+            activity_elapsed: None,
             queued_follow_ups: 0,
             background_work: false,
             interrupt_key: "Esc",
@@ -982,16 +1388,7 @@ mod tests {
             .unwrap();
         assert_eq!(run.text, "run unknown");
         assert!(!run.text.contains("future_wire_state"));
-        let context = slots
-            .iter()
-            .find(|slot| slot.kind == ChromeSlotKind::Context)
-            .unwrap();
-        assert_eq!(context.text, "ctx unknown");
-        let isolation = slots
-            .iter()
-            .find(|slot| slot.kind == ChromeSlotKind::Isolation)
-            .unwrap();
-        assert_eq!(isolation.text, "isolation unknown + unknown");
+        assert_eq!(slots.len(), 1);
     }
 
     #[test]
@@ -1023,6 +1420,7 @@ mod tests {
                 notice: "",
                 elapsed: None,
                 activity: None,
+                activity_elapsed: None,
                 queued_follow_ups: 12,
                 background_work: false,
                 interrupt_key: "Esc",
@@ -1045,8 +1443,6 @@ mod tests {
                     [
                         ChromeSlotKind::Run,
                         ChromeSlotKind::Queue,
-                        ChromeSlotKind::Hitl,
-                        ChromeSlotKind::Isolation,
                         ChromeSlotKind::Context,
                     ],
                     "protected slot set changed for {locale:?} in {mode:?}"
@@ -1078,6 +1474,7 @@ mod tests {
             notice: "Message added",
             elapsed: Some(Duration::from_secs(3)),
             activity: Some("Working"),
+            activity_elapsed: Some(Duration::from_secs(1)),
             queued_follow_ups: 0,
             background_work: false,
             interrupt_key: "Esc",
@@ -1092,7 +1489,7 @@ mod tests {
         let primary = chrome.primary.unwrap();
         assert!(primary.animated);
         assert_eq!(primary.tone, ChromeTone::Accent);
-        assert!(primary.text.starts_with("Working  3s  Esc pause safely"));
+        assert!(primary.text.starts_with("Working 1s  Esc pause safely"));
         assert!(primary.text.ends_with("Message added"));
     }
 
@@ -1104,6 +1501,7 @@ mod tests {
                 notice: "",
                 elapsed: Some(Duration::from_secs(3)),
                 activity: Some("stale work"),
+                activity_elapsed: Some(Duration::from_secs(1)),
                 queued_follow_ups: 0,
                 background_work: false,
                 interrupt_key: "Esc",
@@ -1137,6 +1535,7 @@ mod tests {
             notice: "Runtime unavailable",
             elapsed: Some(Duration::from_secs(17)),
             activity: Some("stale activity"),
+            activity_elapsed: Some(Duration::from_secs(1)),
             queued_follow_ups: 0,
             background_work: false,
             interrupt_key: "Ctrl-C",

@@ -3,13 +3,10 @@ source: crates/carina-tui/tests/golden_frames.rs
 expression: "render_status(\"running\", Some(\"editing src/lib.rs\"), 2, None)"
 ---
 size=120x2
-⠦ editing src/lib.rs  1m02  Esc pause safely
-run running · queue 2 · HITL ask · isolation safe edit + command sandbox · ctx unknown · screen minimal
+⠦ editing src/lib.rs 4s  Esc pause safely
+run running 1m02 · queue 2
 styles:
-(0, 0)..(44, 0) (Rgb(142, 219, 210), Reset, NONE)
-(0, 1)..(11, 1) (Rgb(142, 219, 210), Reset, NONE)
-(11, 1)..(14, 1) (Rgb(150, 160, 156), Reset, NONE)
-(14, 1)..(21, 1) (Rgb(142, 219, 210), Reset, NONE)
-(21, 1)..(24, 1) (Rgb(150, 160, 156), Reset, NONE)
-(24, 1)..(32, 1) (Rgb(142, 219, 210), Reset, NONE)
-(32, 1)..(103, 1) (Rgb(150, 160, 156), Reset, NONE)
+(0, 0)..(41, 0) (Rgb(142, 219, 210), Reset, NONE)
+(0, 1)..(16, 1) (Rgb(142, 219, 210), Reset, NONE)
+(16, 1)..(19, 1) (Rgb(150, 160, 156), Reset, NONE)
+(19, 1)..(26, 1) (Rgb(142, 219, 210), Reset, NONE)

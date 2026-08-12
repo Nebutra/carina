@@ -35,7 +35,9 @@ use crate::command::{self, CommandId, CommandSuggestion, SuggestionExecution};
 use crate::component::{Action, InteractionMap};
 use crate::context_completion::ContextCompletion;
 use crate::context_completion::FILE_ELEMENT_KIND;
-use crate::conversation::{ExecutionTimer, execution_status_animates};
+use crate::conversation::{
+    ActiveRunPresentation, ExecutionActivityTracker, ExecutionTimer, execution_status_animates,
+};
 use crate::density::DensityMode;
 use crate::file_viewer::{
     FileViewer, FileViewerLoad, FileViewerOrigin, MAX_PREVIEW_BYTES, parse_file_reference,
@@ -48,6 +50,9 @@ use crate::history_search::HistorySearchState;
 use crate::hyperlink::{HyperlinkSupport, MarkdownLink, markdown_links};
 use crate::i18n::{Locale, MessageId, Notice, format as tr_format, text as tr};
 use crate::keybinding::KeyBindings;
+use crate::layout_contract::{
+    TranscriptGeometry, TranscriptScrollbar, TranscriptScrollbarInteraction,
+};
 use crate::media::{
     IMAGE_ELEMENT_KIND, MediaChipLabels, MediaComposer, MediaSourceLabel, MediaUploadWork,
     inspect_image, pasted_image_path,
@@ -172,6 +177,16 @@ pub struct ScreenModeHandoff {
     selected_block_id: Option<String>,
     transcript_scroll: usize,
     transcript_follow_bottom: bool,
+    #[serde(default)]
+    transcript_anchor: Option<TranscriptScrollAnchor>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct TranscriptScrollAnchor {
+    block_id: String,
+    block_index: usize,
+    logical_line: usize,
+    sub_rows: usize,
 }
 
 pub fn read_screen_handoff(path: &Path) -> Result<ScreenModeHandoff> {
@@ -441,6 +456,7 @@ struct PausedResumeOutcome {
 struct HistoryBranchOutcome {
     session: Session,
     items: Vec<SessionItemEvent>,
+    active_run: Option<ExecutionRun>,
     prompt_history: Vec<String>,
     prompt_history_unavailable: bool,
 }
@@ -452,6 +468,7 @@ struct RuntimeReconnectOutcome {
     sessions: Vec<Session>,
     session: Session,
     items: Vec<SessionItemEvent>,
+    active_run: Option<ExecutionRun>,
     prompt_history: Vec<String>,
     prompt_history_unavailable: bool,
     security_context: Option<EffectiveConfig>,
@@ -462,6 +479,7 @@ struct PendingSubmission {
     session_id: String,
     prompt: String,
     model: String,
+    reasoning_effort: String,
     agent: String,
     locale: String,
     submission_id: String,
@@ -522,10 +540,13 @@ pub struct App {
     product_generation: u64,
     context_generation: u64,
     context_summary: Option<crate::rpc::ContextSummary>,
-    transcript_area: Rect,
+    transcript_geometry: TranscriptGeometry,
+    transcript_scrollbar: TranscriptScrollbar,
+    transcript_scrollbar_interaction: TranscriptScrollbarInteraction,
     transcript_scroll: usize,
     transcript_max_scroll: usize,
     transcript_follow_bottom: bool,
+    transcript_anchor: Option<TranscriptScrollAnchor>,
     transcript_height_cache: TranscriptHeightCache,
     transcript_render_cache: TranscriptRenderCache,
     history_selected: Option<usize>,
@@ -549,9 +570,10 @@ pub struct App {
     interactions: InteractionMap,
     overlays: OverlayStack,
     active_run_id: Option<String>,
+    active_run_presentation: ActiveRunPresentation,
     execution_timer: ExecutionTimer,
     execution_status: String,
-    execution_activity: Option<String>,
+    execution_activity: ExecutionActivityTracker,
     keybindings: KeyBindings,
     queued_prompts: VecDeque<String>,
     event_generation: u64,
@@ -582,6 +604,18 @@ impl App {
             .as_deref()
             .and_then(Locale::from_product_id)
             .unwrap_or_else(|| Locale::ALL[self.locale_index.min(Locale::ALL.len() - 1)])
+    }
+
+    fn retained_run_id(&self) -> Option<&str> {
+        retained_execution_run_id(
+            self.active_run_id.as_deref(),
+            &self.active_run_presentation.run_id,
+            &self.execution_status,
+        )
+    }
+
+    fn has_retained_run(&self) -> bool {
+        self.retained_run_id().is_some()
     }
 
     fn effective_block_expanded(&self, block: &TranscriptBlock) -> bool {
@@ -885,10 +919,13 @@ impl App {
             product_generation: 0,
             context_generation: 0,
             context_summary: None,
-            transcript_area: Rect::default(),
+            transcript_geometry: TranscriptGeometry::default(),
+            transcript_scrollbar: TranscriptScrollbar::default(),
+            transcript_scrollbar_interaction: TranscriptScrollbarInteraction::default(),
             transcript_scroll: 0,
             transcript_max_scroll: 0,
             transcript_follow_bottom: true,
+            transcript_anchor: None,
             transcript_height_cache: HashMap::new(),
             transcript_render_cache: HashMap::new(),
             history_selected: None,
@@ -911,9 +948,10 @@ impl App {
             interactions: InteractionMap::default(),
             overlays: OverlayStack::default(),
             active_run_id: None,
+            active_run_presentation: ActiveRunPresentation::default(),
             execution_timer: ExecutionTimer::default(),
             execution_status: "ready".into(),
-            execution_activity: None,
+            execution_activity: ExecutionActivityTracker::default(),
             keybindings: KeyBindings::default(),
             queued_prompts: VecDeque::new(),
             event_generation: 0,
@@ -1198,8 +1236,9 @@ impl App {
                 {
                     self.active_session = None;
                     self.active_run_id = None;
+                    self.active_run_presentation = ActiveRunPresentation::default();
                     self.execution_timer.reset();
-                    self.execution_activity = None;
+                    self.execution_activity.clear();
                     self.event_generation = self.event_generation.saturating_add(1);
                 }
                 self.session_browser
@@ -1261,7 +1300,7 @@ impl App {
                 self.session_browser.finish_load(generation, target_id);
                 self.persisted_prompt_history = outcome.prompt_history;
                 self.persisted_prompt_history_unavailable = outcome.prompt_history_unavailable;
-                self.apply_open_session_state(outcome.session, outcome.items);
+                self.apply_open_session_state(outcome.session, outcome.items, outcome.active_run);
             }
             Err(error) => self.session_browser.fail_load(
                 generation,
@@ -1475,11 +1514,17 @@ impl App {
             session.next_reasoning_effort = selection.next_reasoning_effort;
             self.selected_reasoning_effort = session.next_reasoning_effort.clone();
         }
-        self.apply_open_session_state(session, items);
+        let active_run = load_active_run(&mut self.rpc, &session);
+        self.apply_open_session_state(session, items, active_run);
         Ok(())
     }
 
-    fn apply_open_session_state(&mut self, session: Session, items: Vec<SessionItemEvent>) {
+    fn apply_open_session_state(
+        &mut self,
+        session: Session,
+        items: Vec<SessionItemEvent>,
+        active_run: Option<ExecutionRun>,
+    ) {
         let session_changed = self
             .active_session
             .as_ref()
@@ -1522,20 +1567,26 @@ impl App {
                 self.history_selected = selection.flatten();
                 self.transcript_scroll = handoff.transcript_scroll;
                 self.transcript_follow_bottom = handoff.transcript_follow_bottom;
+                self.transcript_anchor = handoff.transcript_anchor;
             } else {
                 self.scrollback.reset();
                 self.outcome = Outcome::Degraded;
             }
         }
         self.transcript_stale = false;
-        self.active_run_id = matches!(
-            session.execution_status.as_str(),
-            "queued" | "running" | "waiting_input" | "waiting_approval"
-        )
-        .then(|| session.latest_run_id.clone())
-        .filter(|run_id| !run_id.is_empty());
+        self.active_run_id = execution_status_is_interactive(&session.execution_status)
+            .then(|| session.latest_run_id.clone())
+            .filter(|run_id| !run_id.is_empty());
+        self.active_run_presentation = active_run
+            .as_ref()
+            .filter(|run| {
+                execution_status_retains_run_truth(&session.execution_status)
+                    && run.run_id == session.latest_run_id
+            })
+            .map(ActiveRunPresentation::from_execution)
+            .unwrap_or_default();
         self.execution_timer.reset();
-        self.execution_activity = None;
+        self.execution_activity.clear();
         self.execution_status = if session.execution_status.is_empty() {
             "ready".into()
         } else {
@@ -1763,6 +1814,7 @@ impl App {
             mut sessions,
             session,
             items,
+            active_run,
             prompt_history,
             prompt_history_unavailable,
             security_context,
@@ -1788,14 +1840,19 @@ impl App {
         self.persisted_prompt_history = prompt_history;
         self.persisted_prompt_history_unavailable = prompt_history_unavailable;
         self.security_context = security_context;
-        self.active_run_id = matches!(
-            session.execution_status.as_str(),
-            "queued" | "running" | "waiting_input" | "waiting_approval"
-        )
-        .then(|| session.latest_run_id.clone())
-        .filter(|run_id| !run_id.is_empty());
+        self.active_run_id = execution_status_is_interactive(&session.execution_status)
+            .then(|| session.latest_run_id.clone())
+            .filter(|run_id| !run_id.is_empty());
+        self.active_run_presentation = active_run
+            .as_ref()
+            .filter(|run| {
+                execution_status_retains_run_truth(&session.execution_status)
+                    && run.run_id == session.latest_run_id
+            })
+            .map(ActiveRunPresentation::from_execution)
+            .unwrap_or_default();
         self.execution_timer.reset();
-        self.execution_activity = None;
+        self.execution_activity.clear();
         self.execution_status = if session.execution_status.is_empty() {
             "ready".into()
         } else {
@@ -2497,17 +2554,37 @@ impl App {
                                 .map(ExecutionLifecycle::status)
                                 .unwrap_or_else(|| event.projected_status())
                                 .to_owned();
+                            let projected_run_id = self.active_run_id.as_deref().or_else(|| {
+                                (!self.active_run_presentation.run_id.is_empty())
+                                    .then_some(self.active_run_presentation.run_id.as_str())
+                            });
+                            let latest_session_run_id = self
+                                .active_session
+                                .as_ref()
+                                .map(|session| session.latest_run_id.as_str())
+                                .filter(|run_id| !run_id.is_empty());
+                            let event_owns_projection = execution_event_owns_projection(
+                                projected_run_id,
+                                latest_session_run_id,
+                                &event.run_id,
+                                lifecycle,
+                            );
                             if let Some(status) = lifecycle
                                 .filter(|lifecycle| lifecycle.is_active())
+                                .filter(|_| event_owns_projection)
                                 .map(ExecutionLifecycle::status)
                             {
                                 visual_changed = true;
                                 if self.active_run_id.as_deref() != Some(event.run_id.as_str()) {
                                     self.execution_timer.start_new();
-                                    self.execution_activity = None;
+                                    self.execution_activity.clear();
+                                    self.active_run_presentation = ActiveRunPresentation {
+                                        run_id: event.run_id.clone(),
+                                        ..ActiveRunPresentation::default()
+                                    };
                                 } else if matches!(status, "waiting_input" | "waiting_approval") {
                                     self.execution_timer.pause();
-                                    self.execution_activity = None;
+                                    self.execution_activity.clear();
                                 } else {
                                     self.execution_timer.resume();
                                 }
@@ -2521,16 +2598,24 @@ impl App {
                                     Some(""),
                                 );
                             }
-                            if let Some(activity) = event.live_activity_description() {
-                                self.execution_activity = Some(activity);
-                                visual_changed = true;
+                            visual_changed |= self.active_run_presentation.apply_event(&event);
+                            if self.active_run_id.as_deref() == Some(event.run_id.as_str())
+                                && execution_status_animates(&self.execution_status)
+                                && let Some(update) = event.live_activity_update()
+                            {
+                                visual_changed |= self.execution_activity.apply(update);
                             }
-                            if lifecycle.is_some_and(ExecutionLifecycle::clears_active) {
+                            if lifecycle.is_some_and(ExecutionLifecycle::clears_active)
+                                && event_owns_projection
+                            {
                                 visual_changed = true;
                                 if self.active_run_id.as_deref() == Some(event.run_id.as_str()) {
                                     self.active_run_id = None;
                                     self.execution_timer.reset();
-                                    self.execution_activity = None;
+                                    self.execution_activity.clear();
+                                }
+                                if lifecycle.is_some_and(ExecutionLifecycle::is_terminal) {
+                                    self.active_run_presentation = ActiveRunPresentation::default();
                                 }
                                 self.execution_status = if projected_status.is_empty() {
                                     "completed".into()
@@ -2578,7 +2663,7 @@ impl App {
                                     received_at,
                                 ));
                             }
-                            if self.active_run_id.is_none()
+                            if !self.has_retained_run()
                                 && self.phase == Phase::Conversation
                                 && let Some(prompt) = self.queued_prompts.pop_front()
                             {
@@ -3058,7 +3143,7 @@ impl App {
             }
             let now = Instant::now();
             match quit_hard_cancel_action(
-                self.active_run_id.is_some(),
+                self.has_retained_run(),
                 self.quit_primed_at,
                 now,
                 self.rewind_prime_window,
@@ -3066,7 +3151,7 @@ impl App {
                 QuitHardCancelAction::CancelRun => {
                     // Active turn: hard-cancel the run. Do not exit the TUI.
                     self.quit_primed_at = None;
-                    if let Some(run_id) = self.active_run_id.clone() {
+                    if let Some(run_id) = self.retained_run_id().map(str::to_owned) {
                         self.cancel_execution(&run_id);
                     }
                 }
@@ -3464,7 +3549,7 @@ impl App {
                 if slash_count > 0
                     && !key.modifiers.contains(KeyModifiers::SHIFT)
                     && !self.composer.text().contains(char::is_whitespace)
-                    && command::resolve(self.composer.text(), self.active_run_id.is_some())
+                    && command::resolve(self.composer.text(), self.has_retained_run())
                         .is_none() =>
             {
                 if let Some(command) = slash_suggestions.get(self.slash_selected) {
@@ -3491,7 +3576,7 @@ impl App {
                 self.open_prompt_history_search();
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if let Some(run_id) = self.active_run_id.clone() {
+                if let Some(run_id) = self.retained_run_id().map(str::to_owned) {
                     self.cancel_execution(&run_id);
                 }
             }
@@ -3571,7 +3656,7 @@ impl App {
     }
 
     fn retry_failed_execution(&mut self, original_run_id: &str, routing: crate::rpc::RetryRouting) {
-        if !retry_dispatch_allowed(&self.blocks, self.active_run_id.as_deref(), original_run_id) {
+        if !retry_dispatch_allowed(&self.blocks, self.retained_run_id(), original_run_id) {
             return;
         }
         match self
@@ -3602,14 +3687,23 @@ impl App {
                     self.clear_transcript_projection_caches();
                 }
                 self.active_run_id = Some(execution.run_id.clone());
+                self.active_run_presentation = ActiveRunPresentation::from_execution(&execution);
                 self.execution_timer.start_new();
-                self.execution_activity = None;
+                self.execution_activity.clear();
                 self.execution_status = if execution.status.is_empty() {
                     "queued".into()
                 } else {
                     execution.status.clone()
                 };
                 self.seed_execution_lifecycle(&execution.run_id, &self.execution_status.clone());
+                let execution_status = self.execution_status.clone();
+                self.update_active_execution_metadata(
+                    &execution.run_id,
+                    &execution_status,
+                    (!execution.agent.is_empty()).then_some(execution.agent.as_str()),
+                    None,
+                    Some(""),
+                );
                 self.notice = Notice::localized_for_run(
                     MessageId::ExecutionWorking,
                     execution.run_id,
@@ -3717,7 +3811,7 @@ impl App {
 
         if key.code != KeyCode::Tab
             || !key.modifiers.is_empty()
-            || self.active_run_id.is_some()
+            || self.has_retained_run()
             || !self.composer.text().is_empty()
         {
             return false;
@@ -3928,7 +4022,7 @@ impl App {
         }
         command::palette_matching(
             input,
-            self.active_run_id.is_some(),
+            self.has_retained_run(),
             &self.command_registry.commands,
             &self.command_registry.revision,
             &self.command_mru,
@@ -4042,7 +4136,12 @@ impl App {
     }
 
     fn handle_prompt_history_search_key(&mut self, key: KeyEvent) {
-        let visible_rows = self.transcript_area.height.saturating_sub(4).min(8) as usize;
+        let visible_rows = self
+            .transcript_geometry
+            .viewport
+            .height
+            .saturating_sub(4)
+            .min(8) as usize;
         let mut accept = false;
         let mut cancel = false;
         let mut restore_and_close = false;
@@ -4190,6 +4289,10 @@ impl App {
             }
             return self.submit_steer(run_id, prompt);
         }
+        if self.has_retained_run() {
+            self.notice = Notice::localized(MessageId::CurrentExecutionPaused);
+            return Ok(());
+        }
         self.submit_new_prompt(prompt, media_refs).map(|_| ())
     }
 
@@ -4198,6 +4301,10 @@ impl App {
         prompt: String,
         media_refs: Vec<crate::rpc::MediaRef>,
     ) -> Result<bool> {
+        if self.has_retained_run() {
+            self.notice = Notice::localized(MessageId::CurrentExecutionPaused);
+            return Ok(false);
+        }
         let session_id = self
             .active_session
             .as_ref()
@@ -4239,6 +4346,7 @@ impl App {
             session_id,
             prompt,
             model: self.selected_model.clone(),
+            reasoning_effort: self.selected_reasoning_effort.clone(),
             agent: if self
                 .active_session
                 .as_ref()
@@ -4360,8 +4468,11 @@ impl App {
             self.composer_state = TextAreaState::default();
         }
         self.active_run_id = Some(execution.run_id.clone());
+        self.active_run_presentation = ActiveRunPresentation::from_execution(&execution);
+        self.active_run_presentation
+            .seed_request(&envelope.model, &envelope.reasoning_effort);
         self.execution_timer.start_new();
-        self.execution_activity = None;
+        self.execution_activity.clear();
         self.execution_status = if execution.status.is_empty() {
             "queued".into()
         } else {
@@ -4472,7 +4583,7 @@ impl App {
                 }
             }
             CommandId::Cancel => {
-                if let Some(run_id) = self.active_run_id.clone() {
+                if let Some(run_id) = self.retained_run_id().map(str::to_owned) {
                     self.cancel_execution(&run_id);
                 } else {
                     self.notice = Notice::localized(MessageId::NoActiveExecutionRun);
@@ -4521,7 +4632,7 @@ impl App {
     }
 
     fn open_queue_overlay(&mut self) {
-        let Some(run_id) = self.active_run_id.clone() else {
+        let Some(run_id) = self.retained_run_id().map(str::to_owned) else {
             self.notice = Notice::localized(MessageId::QueueNoActiveRun);
             return;
         };
@@ -4552,7 +4663,7 @@ impl App {
     }
 
     fn open_plan_review(&mut self) {
-        let review = (self.active_run_id.is_none())
+        let review = (!self.has_retained_run())
             .then(|| self.active_session.as_ref().and_then(plan_review_overlay))
             .flatten();
         if let Some(review) = review {
@@ -4590,13 +4701,22 @@ impl App {
         match self.rpc.cancel_execution(run_id) {
             Ok(execution) => {
                 self.active_run_id = None;
+                self.active_run_presentation = ActiveRunPresentation::default();
                 self.execution_timer.reset();
-                self.execution_activity = None;
+                self.execution_activity.clear();
                 self.execution_status = if execution.status.is_empty() {
                     "cancelled".into()
                 } else {
                     execution.status
                 };
+                let execution_status = self.execution_status.clone();
+                self.update_active_execution_metadata(
+                    run_id,
+                    &execution_status,
+                    None,
+                    None,
+                    Some(&execution.result_kind),
+                );
                 self.notice = Notice::localized(MessageId::CancellationRequested);
             }
             Err(error) => {
@@ -4659,7 +4779,7 @@ impl App {
     }
 
     fn request_conversation_mode(&mut self, plan_mode: bool) {
-        if self.active_run_id.is_some() {
+        if self.has_retained_run() {
             self.notice = Notice::localized(MessageId::ModeChangeBlocked);
             return;
         }
@@ -4691,7 +4811,7 @@ impl App {
             .active_session
             .as_ref()
             .is_some_and(|session| session.plan_mode);
-        let Some(action) = conversation_mode_action(self.active_run_id.is_some(), current) else {
+        let Some(action) = conversation_mode_action(self.has_retained_run(), current) else {
             self.notice = Notice::localized(MessageId::ModeChangeBlocked);
             return;
         };
@@ -4752,8 +4872,10 @@ impl App {
                 self.overlays.resolve_active();
                 if let Some(execution) = result.task {
                     self.active_run_id = Some(execution.run_id.clone());
+                    self.active_run_presentation =
+                        ActiveRunPresentation::from_execution(&execution);
                     self.execution_timer.start_new();
-                    self.execution_activity = None;
+                    self.execution_activity.clear();
                     self.execution_status = if execution.status.is_empty() {
                         "queued".into()
                     } else {
@@ -5201,7 +5323,12 @@ impl App {
                 }
             }
             Some(Overlay::FileViewer(viewer)) => {
-                let visible_rows = self.transcript_area.height.saturating_sub(8).max(1) as usize;
+                let visible_rows = self
+                    .transcript_geometry
+                    .viewport
+                    .height
+                    .saturating_sub(8)
+                    .max(1) as usize;
                 if viewer.search.is_some() {
                     match key.code {
                         KeyCode::Esc => viewer.search = None,
@@ -5559,8 +5686,9 @@ impl App {
             }
         };
         self.active_run_id = Some(outcome.execution.run_id.clone());
+        self.active_run_presentation = ActiveRunPresentation::from_execution(&outcome.execution);
         self.execution_timer.start_new();
-        self.execution_activity = None;
+        self.execution_activity.clear();
         self.execution_status = if outcome.execution.status.is_empty() {
             "running".into()
         } else {
@@ -5623,7 +5751,7 @@ impl App {
         let eligible = self.eligible_history_indices();
         let now = Instant::now();
         match rewind_escape_action(
-            self.active_run_id.is_some(),
+            self.has_retained_run(),
             !eligible.is_empty(),
             self.rewind_primed_at,
             now,
@@ -5742,6 +5870,11 @@ impl App {
     }
 
     fn branch_from_history(&mut self) {
+        if self.has_retained_run() {
+            self.cancel_history_selection();
+            self.notice = Notice::localized(MessageId::HistoryBusy);
+            return;
+        }
         let Some(selected) = self.history_selected else {
             return;
         };
@@ -5841,19 +5974,42 @@ impl App {
         {
             self.selected_model = outcome.session.next_model.clone();
         }
+        let HistoryBranchOutcome {
+            session,
+            items,
+            active_run,
+            prompt_history,
+            prompt_history_unavailable,
+        } = outcome;
         self.execution_lifecycle.clear();
         self.tool_disclosure_overrides.clear();
-        self.blocks = self.transcript_reducer.hydrate(outcome.items);
+        self.blocks = self.transcript_reducer.hydrate(items);
         self.scrollback.reset();
-        self.persisted_prompt_history = outcome.prompt_history;
-        self.persisted_prompt_history_unavailable = outcome.prompt_history_unavailable;
+        self.persisted_prompt_history = prompt_history;
+        self.persisted_prompt_history_unavailable = prompt_history_unavailable;
         self.transcript_stale = false;
         self.reset_transcript_viewport();
-        self.active_run_id = None;
+        self.active_run_id = execution_status_is_interactive(&session.execution_status)
+            .then(|| session.latest_run_id.clone())
+            .filter(|run_id| !run_id.is_empty());
+        self.active_run_presentation = active_run
+            .as_ref()
+            .filter(|run| {
+                execution_status_retains_run_truth(&session.execution_status)
+                    && run.run_id == session.latest_run_id
+            })
+            .map(ActiveRunPresentation::from_execution)
+            .unwrap_or_default();
         self.execution_timer.reset();
-        self.execution_activity = None;
-        self.execution_status = "ready".into();
-        self.remember_session(outcome.session);
+        self.execution_activity.clear();
+        self.execution_status = if session.execution_status.is_empty() {
+            "ready".into()
+        } else {
+            session.execution_status.clone()
+        };
+        self.seed_execution_lifecycle(&session.latest_run_id, &session.execution_status);
+        let retained_run = self.has_retained_run();
+        self.remember_session(session);
         self.overlays = OverlayStack::default();
         let conversation_ready = self.return_to_conversation_or_repair();
         self.event_cursor = 0;
@@ -5866,7 +6022,7 @@ impl App {
         self.history_branch_request_id = None;
         self.history_branch_pending = false;
         self.history_generation = self.history_generation.saturating_add(1);
-        if conversation_ready {
+        if conversation_ready && !retained_run {
             self.notice = Notice::localized(MessageId::HistoryBranched);
         }
     }
@@ -5875,21 +6031,27 @@ impl App {
         self.failure_action_focus = None;
         self.transcript_height_cache.clear();
         self.transcript_render_cache.clear();
+        self.transcript_geometry = TranscriptGeometry::default();
+        self.transcript_scrollbar = TranscriptScrollbar::default();
+        self.transcript_scrollbar_interaction.release();
         self.transcript_scroll = 0;
         self.transcript_max_scroll = 0;
         self.transcript_follow_bottom = true;
+        self.transcript_anchor = None;
     }
 
     fn follow_transcript_bottom(&mut self) {
         self.transcript_follow_bottom = true;
         self.transcript_scroll = self.transcript_max_scroll;
+        self.transcript_anchor = None;
     }
 
     fn transcript_page_size(&self) -> usize {
-        self.transcript_area.height.saturating_sub(2).max(1) as usize
+        self.transcript_geometry.content.height.max(1) as usize
     }
 
     fn scroll_transcript(&mut self, delta: isize) {
+        self.transcript_anchor = None;
         if delta < 0 {
             let next = self.transcript_scroll.saturating_sub(delta.unsigned_abs());
             if next != self.transcript_scroll {
@@ -5905,8 +6067,17 @@ impl App {
         }
     }
 
+    fn set_transcript_scroll(&mut self, offset: usize) {
+        self.transcript_anchor = None;
+        self.transcript_scroll = offset.min(self.transcript_max_scroll);
+        self.transcript_follow_bottom = self.transcript_scroll >= self.transcript_max_scroll;
+    }
+
     fn handle_mouse(&mut self, mouse: MouseEvent) {
         let position = Position::new(mouse.column, mouse.row);
+        if self.overlays.active().is_some() {
+            self.transcript_scrollbar_interaction.release();
+        }
         match mouse.kind {
             MouseEventKind::Moved => {
                 if self.interactions.update_hover(position) {
@@ -5944,6 +6115,20 @@ impl App {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                if self.overlays.active().is_none() && self.phase == Phase::Conversation {
+                    let (handled, next_scroll) = self
+                        .transcript_scrollbar
+                        .pointer_down(position, &mut self.transcript_scrollbar_interaction);
+                    if handled {
+                        self.media.set_hovered(None);
+                        if let Some(next_scroll) = next_scroll {
+                            self.set_transcript_scroll(next_scroll);
+                        }
+                        self.dirty = true;
+                        return;
+                    }
+                }
+                self.transcript_scrollbar_interaction.release();
                 let action = self.interactions.action_at(position);
                 if let Some(action) = action {
                     self.media.set_hovered(None);
@@ -5966,6 +6151,24 @@ impl App {
                     self.media.set_hovered(None);
                 }
                 self.dirty = true;
+            }
+            MouseEventKind::Drag(MouseButton::Left)
+                if self.overlays.active().is_none()
+                    && self.phase == Phase::Conversation
+                    && self.transcript_scrollbar_interaction.is_dragging() =>
+            {
+                if let Some(next_scroll) = self
+                    .transcript_scrollbar
+                    .pointer_drag(position.y, self.transcript_scrollbar_interaction)
+                {
+                    self.set_transcript_scroll(next_scroll);
+                    self.dirty = true;
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if self.transcript_scrollbar_interaction.release() {
+                    self.dirty = true;
+                }
             }
             MouseEventKind::ScrollUp
                 if matches!(self.overlays.active(), Some(Overlay::PlanReview(_))) =>
@@ -5992,13 +6195,15 @@ impl App {
                 self.dirty = true;
             }
             MouseEventKind::ScrollUp
-                if self.overlays.active().is_none() && self.transcript_area.contains(position) =>
+                if self.overlays.active().is_none()
+                    && self.transcript_geometry.content.contains(position) =>
             {
                 self.scroll_transcript(-3);
                 self.dirty = true;
             }
             MouseEventKind::ScrollDown
-                if self.overlays.active().is_none() && self.transcript_area.contains(position) =>
+                if self.overlays.active().is_none()
+                    && self.transcript_geometry.content.contains(position) =>
             {
                 self.scroll_transcript(3);
                 self.dirty = true;
@@ -6475,8 +6680,12 @@ impl App {
             }
             Action::SelectFileViewerLine(index) => {
                 if let Some(Overlay::FileViewer(viewer)) = self.overlays.active_mut() {
-                    let visible_rows =
-                        self.transcript_area.height.saturating_sub(8).max(1) as usize;
+                    let visible_rows = self
+                        .transcript_geometry
+                        .viewport
+                        .height
+                        .saturating_sub(8)
+                        .max(1) as usize;
                     viewer.select_line(index, visible_rows);
                 }
             }
@@ -6989,6 +7198,7 @@ fn load_session_and_items(
     let items = rpc
         .items(&session.session_id)
         .map_err(|error| error.to_string())?;
+    let active_run = load_active_run(&mut rpc, &session);
     let (prompt_history, prompt_history_unavailable) =
         match rpc.prompt_history(&session.session_id, 200) {
             Ok(history) => (history.entries, false),
@@ -6997,6 +7207,7 @@ fn load_session_and_items(
     Ok(HistoryBranchOutcome {
         session,
         items,
+        active_run,
         prompt_history,
         prompt_history_unavailable,
     })
@@ -7018,6 +7229,7 @@ fn reconnect_runtime_and_session(
         .ok()
         .map(|config| config.effective);
     let items = rpc.items(session_id).map_err(|error| error.to_string())?;
+    let active_run = load_active_run(&mut rpc, &session);
     let (prompt_history, prompt_history_unavailable) = match rpc.prompt_history(session_id, 200) {
         Ok(history) => (history.entries, false),
         Err(_) => (Vec::new(), true),
@@ -7029,6 +7241,7 @@ fn reconnect_runtime_and_session(
         sessions,
         session,
         items,
+        active_run,
         prompt_history,
         prompt_history_unavailable,
         security_context,
@@ -7082,6 +7295,7 @@ fn branch_history_and_load(
     let items = rpc
         .items(&session.session_id)
         .map_err(|error| error.to_string())?;
+    let active_run = load_active_run(&mut rpc, &session);
     let (prompt_history, prompt_history_unavailable) =
         match rpc.prompt_history(&session.session_id, 200) {
             Ok(history) => (history.entries, false),
@@ -7090,9 +7304,53 @@ fn branch_history_and_load(
     Ok(HistoryBranchOutcome {
         session,
         items,
+        active_run,
         prompt_history,
         prompt_history_unavailable,
     })
+}
+
+fn load_active_run(rpc: &mut Client, session: &Session) -> Option<ExecutionRun> {
+    execution_status_retains_run_truth(&session.execution_status)
+        .then(|| session.latest_run_id.trim())
+        .filter(|run_id| !run_id.is_empty())
+        .and_then(|run_id| rpc.execution_status(run_id).ok())
+        .filter(|run| run.run_id == session.latest_run_id && run.session_id == session.session_id)
+}
+
+fn execution_status_is_interactive(status: &str) -> bool {
+    ExecutionLifecycle::from_status(status).is_some_and(ExecutionLifecycle::is_active)
+}
+
+fn execution_status_retains_run_truth(status: &str) -> bool {
+    ExecutionLifecycle::from_status(status).is_some_and(|lifecycle| !lifecycle.is_terminal())
+}
+
+fn retained_execution_run_id<'a>(
+    active_run_id: Option<&'a str>,
+    presentation_run_id: &'a str,
+    execution_status: &str,
+) -> Option<&'a str> {
+    active_run_id.or_else(|| {
+        execution_status_retains_run_truth(execution_status)
+            .then_some(presentation_run_id.trim())
+            .filter(|run_id| !run_id.is_empty())
+    })
+}
+
+fn execution_event_owns_projection(
+    projected_run_id: Option<&str>,
+    latest_session_run_id: Option<&str>,
+    event_run_id: &str,
+    lifecycle: Option<ExecutionLifecycle>,
+) -> bool {
+    match projected_run_id {
+        Some(run_id) => run_id == event_run_id,
+        None => latest_session_run_id
+            .map_or(lifecycle == Some(ExecutionLifecycle::Queued), |run_id| {
+                run_id == event_run_id
+            }),
+    }
 }
 
 fn same_workspace(session_root: &str, workspace: &Path) -> bool {
@@ -7349,6 +7607,7 @@ fn relaunch_in_screen_mode(app: &App, mode: ScreenMode) -> Result<Outcome> {
                 .map(|block| block.id.clone()),
             transcript_scroll: app.transcript_scroll,
             transcript_follow_bottom: app.transcript_follow_bottom,
+            transcript_anchor: app.transcript_anchor.clone(),
         },
     )
     .context("write screen mode handoff")?;
@@ -8720,6 +8979,7 @@ mod tests {
                 selected_block_id: None,
                 transcript_scroll: 0,
                 transcript_follow_bottom: true,
+                transcript_anchor: None,
             })
             .unwrap(),
         )
@@ -8728,6 +8988,31 @@ mod tests {
         assert_eq!(handoff.draft, "保留草稿");
         assert_eq!(handoff.queued_prompts, ["next"]);
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn screen_handoff_accepts_legacy_payload_without_transcript_anchor() {
+        let handoff: ScreenModeHandoff = serde_json::from_str(
+            r#"{
+                "session_id":"sess_1",
+                "runtime_id":"runtime_1",
+                "runtime_epoch":"epoch_1",
+                "runtime_process_epoch":2,
+                "runtime_pid":42,
+                "draft":"keep",
+                "queued_prompts":[],
+                "committed_scrollback":[],
+                "pending_governance":[],
+                "selected_block_id":null,
+                "transcript_scroll":17,
+                "transcript_follow_bottom":false
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(handoff.transcript_scroll, 17);
+        assert!(!handoff.transcript_follow_bottom);
+        assert_eq!(handoff.transcript_anchor, None);
     }
 
     #[test]
@@ -8939,6 +9224,100 @@ mod tests {
         assert!(same_workspace("/tmp/carina", Path::new("/tmp/carina")));
         assert!(!same_workspace("/tmp/other", Path::new("/tmp/carina")));
         assert!(!same_workspace("", Path::new("/tmp/carina")));
+    }
+
+    #[test]
+    fn runtime_truth_outlives_only_nonterminal_execution_states() {
+        for status in [
+            "queued",
+            "running",
+            "waiting_input",
+            "waiting_approval",
+            "paused",
+            "interrupted",
+        ] {
+            assert!(
+                execution_status_retains_run_truth(status),
+                "status={status}"
+            );
+        }
+        for status in ["", "completed", "failed", "degraded", "cancelled"] {
+            assert!(
+                !execution_status_retains_run_truth(status),
+                "status={status}"
+            );
+        }
+        for status in ["queued", "running", "waiting_input", "waiting_approval"] {
+            assert!(execution_status_is_interactive(status), "status={status}");
+        }
+        for status in ["paused", "interrupted", "completed", "failed"] {
+            assert!(!execution_status_is_interactive(status), "status={status}");
+        }
+    }
+
+    #[test]
+    fn paused_run_remains_cancelable_without_becoming_steerable() {
+        assert_eq!(
+            retained_execution_run_id(None, "run-paused", "paused"),
+            Some("run-paused")
+        );
+        assert_eq!(
+            retained_execution_run_id(None, "run-interrupted", "interrupted"),
+            Some("run-interrupted")
+        );
+        assert_eq!(
+            retained_execution_run_id(Some("run-active"), "run-stale", "running"),
+            Some("run-active")
+        );
+        for status in ["completed", "failed", "cancelled"] {
+            assert_eq!(retained_execution_run_id(None, "run-old", status), None);
+        }
+    }
+
+    #[test]
+    fn stale_run_events_cannot_replace_the_foreground_projection() {
+        assert!(execution_event_owns_projection(
+            Some("run-current"),
+            Some("run-current"),
+            "run-current",
+            Some(ExecutionLifecycle::Completed),
+        ));
+        assert!(!execution_event_owns_projection(
+            Some("run-current"),
+            Some("run-current"),
+            "run-old",
+            Some(ExecutionLifecycle::Completed),
+        ));
+        assert!(!execution_event_owns_projection(
+            Some("run-current"),
+            Some("run-current"),
+            "run-old",
+            Some(ExecutionLifecycle::Queued),
+        ));
+        assert!(execution_event_owns_projection(
+            None,
+            Some("run-paused"),
+            "run-paused",
+            Some(ExecutionLifecycle::Paused),
+        ));
+        assert!(execution_event_owns_projection(
+            None,
+            None,
+            "run-new",
+            Some(ExecutionLifecycle::Queued),
+        ));
+        assert!(!execution_event_owns_projection(
+            None,
+            Some("run-latest"),
+            "run-old",
+            Some(ExecutionLifecycle::Completed),
+        ));
+        assert!(!execution_event_owns_projection(
+            None,
+            Some("run-latest"),
+            "run-old",
+            Some(ExecutionLifecycle::Queued),
+        ));
     }
 
     #[test]
