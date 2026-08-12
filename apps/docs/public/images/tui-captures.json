@@ -17,7 +17,7 @@
       "output": "apps/docs/public/images/tui-session.webp",
       "terminalCells": "120x30",
       "pixels": "1256x656",
-      "sha256": "32ccc49cc954b075dd25c24fd912643f1d245e2ce0b8a628dd7b651f47561feb",
+      "sha256": "3810ec483046d08a0ff3af83424980194f0d203c01d2beba74eb0a4f76fd60a8",
       "sources": [
         {
           "path": "crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__visual_density_en_120.snap",
@@ -27,7 +27,7 @@
         {
           "path": "crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__composer_chrome_en_running_120.snap",
           "row": 28,
-          "sha256": "a642139e744c2f68284530217a96e9520c9b1a52a0aa58f53e60b303c89ccf33"
+          "sha256": "0872c6e63d267eac4202bfdff0f5e6bc15a16162effaf6c74fa89b4b86f2ac3d"
         }
       ]
     },

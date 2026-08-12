@@ -1633,7 +1633,7 @@ TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
   "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color '$STAGE/carina-ui' --socket '$GOV_SOCKET' --workspace '$WORKSPACE' --locale en --screen-mode fullscreen; code=\$?; printf '%s' \"\$code\" > '$RETURNING_EXIT_FILE'; sleep 300"
 
 wait_for_text "Describe the change you want to make."
-grep -Fq "Test  ·  Direct API  ·  gpt-5.5  ·  high reasoning  ·  workspace" <<<"$SCREEN"
+grep -Fq "gpt-5.5  ·  high reasoning  ·  Test  ·  Direct API  ·  workspace" <<<"$SCREEN"
 grep -Fq "Carina  ·  workspace conversation" <<<"$SCREEN"
 for leaked in "Choose model" "Open a conversation" "sess_stale" "sess_returning" "Started" "recorded" "runtime test" "protocol 1.3.0"; do
   if grep -Fq "$leaked" <<<"$SCREEN"; then
@@ -2858,11 +2858,11 @@ grep -Eq '[0-9]+s' <<<"$SCREEN" || {
   echo "rust-tui-journey: active execution did not expose elapsed time" >&2
   exit 1
 }
-grep -Fq "ctx 12%" <<<"$SCREEN" || {
+if grep -Fq "ctx 12%" <<<"$SCREEN"; then
   printf '%s\n' "$SCREEN" >&2
-  echo "rust-tui-journey: measured context ratio was not projected into the compact active status" >&2
+  echo "rust-tui-journey: routine context telemetry displaced the compact active status" >&2
   exit 1
-}
+fi
 wait_for_text "Returning paused execution complete"
 wait_without_text "Esc pause safely"
 if grep -Fq "ExecutionCompleted" <<<"$SCREEN"; then
