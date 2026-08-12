@@ -7,9 +7,9 @@ import (
 	"os/exec"
 )
 
-func configureCodexCLICommand(cmd *exec.Cmd) {}
+func configureCLIReasonerCommand(cmd *exec.Cmd) {}
 
-func killCodexCLICommand(cmd *exec.Cmd) error {
+func killCLIReasonerCommand(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return os.ErrProcessDone
 	}

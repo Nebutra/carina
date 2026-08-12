@@ -8,7 +8,7 @@ what shipped.
 
 V1 status: **as built** — carina-index crate (tree-sitter + SQLite/FTS5 +
 RRF fusion + PageRank repo map + content_hash invalidation),
-`kernel.index.build/update/search/symbols/map` gated by the `CodeIndex`
+`kernel.index.build/update/status/search/symbols/map` gated by the `CodeIndex`
 capability, Go tools `code.search`/`code.symbols`/`code.map`, patch/rollback
 invalidation hooks.
 
@@ -40,12 +40,33 @@ read a file must not see its content through search results).
 - Invalidation is **caller-driven**: on patch apply/rollback the kernel passes
   the changed paths; the index drops and re-ingests those files keyed by
   `content_hash`. No file watchers in V1.
-- Kernel integration: `kernel.index.build/update/search/symbols/map` JSON-RPC
+- Kernel integration: `kernel.index.build/update/status/search/symbols/map` JSON-RPC
   methods on `carina-kernel-service`, each mediated by a new `CodeIndex`
   capability and recorded in the hash-chained audit log.
 - Go daemon: agent tools `code.search`, `code.symbols`, `code.map` routed to
   the kernel methods; the index is built lazily on first use and invalidated
   after every applied patch / completed rollback.
+
+### Production large-workspace extension
+
+The shipped lazy-build path is bounded rather than request-blocking. Workspaces
+above the synchronous file threshold start one background build keyed by the
+cleaned session workspace root. The daemon sends bounded `kernel.index.update`
+batches, persists the source fingerprint and next-path cursor atomically, and
+marks the snapshot complete only after a stable final rescan. A cold daemon can
+reuse the per-workspace SQLite graph only when that completion fingerprint still
+matches the current scanner snapshot; an older database without the marker is
+reconciled once. The versioned orchestration marker contains only a hashed
+workspace key and aggregate cursor/fingerprint metadata, never source bytes or
+workspace-relative/absolute path inventories.
+
+While the graph is building, `code.map` returns progress and the best available
+partial semantic projection, falling back to a bounded top-level file histogram
+before the first batch exists. A completed map reports total graph and projected
+file/symbol counts. PageRank remains the relevance authority, while finite-token
+selection seeds top-level domains and then allocates symbols round-robin across
+ranked files. This is an information-dense graph projection, not a directory
+listing and not a claim that every symbol fits the model observation.
 
 Non-goals for V1: embeddings, LSP-precise references, cross-repo indexes,
 file watchers, incremental tree-sitter re-parse (whole-file re-parse on
@@ -400,6 +421,7 @@ prefix-friendly (the kernel's overlay cache keys on the first token):
 |----------------------|--------------------------------------------|
 | `kernel.index.build` | `index build files=<n>`                    |
 | `kernel.index.update`| `index update changed=<n> deleted=<m>`     |
+| `kernel.index.status`| `index status`                             |
 | `kernel.index.search`| `index search <query, truncated to 200>`   |
 | `kernel.index.symbols`| `index symbols <name>`                    |
 | `kernel.index.map`   | `index map budget=<tokens>`                |
@@ -414,7 +436,7 @@ variants in V1: the twenty canonical types stay closed.
 
 ## kernel.index.* RPC contracts
 
-Dispatch: five new arms in `Service::dispatch`
+Dispatch: the index arms in `Service::dispatch`
 (`crates/carina-kernel/src/bin/carina-kernel-service.rs`), following the
 `kernel.patch.*` handler style. `SessionCtx` gains
 `index: Option<carina_index::CodeIndex>`, opened lazily at
@@ -458,6 +480,21 @@ paths.
 Changed paths that no longer exist on disk are treated as deletes. Same
 per-path FileRead gating as build.
 
+### kernel.index.status
+
+```jsonc
+// params
+{ "session_id": "string" }
+// result
+{ "ready": true, "files": 42, "symbols": 512, "edges": 1930,
+  "chunks": 640, "indexed_paths": ["crates/core/src/lib.rs", "..."] }
+```
+
+Status opens only an existing workspace database and never creates an empty
+one. It is `CodeIndex`-gated because even the relative path inventory is
+derived workspace information. `ready` means a database build exists; an
+intentionally empty completed build is therefore ready with zero counts.
+
 ### kernel.index.search
 
 ```jsonc
@@ -499,9 +536,18 @@ has no index database yet.
   "focus_paths": "string[]?" }
 // result
 { "map": "crates/…/lib.rs:\n  struct Kernel\n  …",
-  "ranked": [ { "qualified_name": "…", "path": "…", "kind": "…", "rank": 0.031 } ],
-  "token_estimate": 987 }
+  "token_estimate": 987,
+  "symbols_total": 512, "symbols_included": 76,
+  "files_total": 42, "files_included": 30,
+  "indexed_files": 110, "edges_total": 1930, "chunks_total": 640,
+  "projection": "pagerank-domain-diverse" }
 ```
+
+Each rendered symbol line includes its compact global PageRank ordinal and
+incoming/outgoing edge counts. The full internal ranking is deliberately not
+serialized over the daemon transport: the bounded map is the consumer, and an
+unconsumed all-symbol JSON array would make response cost scale with the graph
+the token budget exists to bound.
 
 These methods are kernel-internal (Go ↔ Rust stdio), like every other
 `kernel.*` method they are not listed in `protocol/jsonrpc/methods.json`
@@ -553,8 +599,10 @@ to these.
      `"code.map"`, each: `ensureIndex` → kernel call → observation string.
      Denials surface as `"DENIED: <reason>"` like every other tool; results
      are truncated for the transcript (audit keeps full metadata kernel-side).
-   - `isReadOnlyTool` adds the three names so they are batchable
-     (`{"actions":[…]}`), matching their side-effect-free semantics.
+   - `isReadOnlyTool` adds the three names for policy and Plan-mode semantics.
+     The independent parallel-batch classifier still excludes semantic tools:
+     their governed kernel RPCs are serialized and must retain one lifecycle
+     identity per turn.
    - Invalidation on write: in `agentPatch`, after a successful
      `d.kern.PatchApply`, call `d.kern.IndexUpdate(sess.SessionID,
      []string{path}, nil)` (best-effort; an index error never fails the

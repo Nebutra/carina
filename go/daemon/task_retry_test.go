@@ -138,8 +138,8 @@ func TestTaskRetryCurrentRoutingUsesSessionPreferenceAndIsIdempotent(t *testing.
 		t.Fatalf("current retry envelope/linkage drifted: original=%+v retry=%+v", original, first)
 	}
 
-	// A repeated logical request returns the first frozen selection even if the
-	// session preference changes before the duplicate delivery arrives.
+	// A legacy retry without an explicit request snapshot keeps idempotency tied
+	// to the first frozen selection even if the session preference later changes.
 	if _, err := d.store.SetNextModelPreference(session.SessionID, "openai/gpt-5-later", "medium"); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,80 @@ func TestTaskRetryCurrentRoutingUsesSessionPreferenceAndIsIdempotent(t *testing.
 	}
 }
 
-func TestTaskRetryCurrentRoutingFallsBackToOriginalWhenSessionPreferenceIsEmpty(t *testing.T) {
+func TestTaskRetryCurrentRoutingUsesRequestSnapshotBeforeSessionPreference(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	session, _ := d.store.CreateSession(workspace, "safe-edit")
+	d.kern.InitSessionWithPolicy(session.SessionID, workspace, "safe-edit", nil)
+
+	original := d.sched.SubmitWithGoalModelAgent(session.SessionID, session.WorkspaceID, "retry with visible selection", "openai/gpt-5", "build", nil)
+	d.sched.SetModelState(original.RunID, "openai/gpt-5", "openai/gpt-5")
+	d.sched.SetReasoningEffortState(original.RunID, "high", "high")
+	original, err := d.sched.Cancel(original.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.store.SetNextModelPreference(session.SessionID, "openai/session-stale", "low"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := d.handleTaskRetry(mustJSON(t, map[string]any{
+		"run_id": original.RunID, "client_submission_id": "retry_current_snapshot", "routing": "current",
+		"current_model": "openai/gpt-5-visible", "current_reasoning_effort": "medium",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry := result.(*scheduler.ExecutionRun)
+	if retry.RequestedModel != "openai/gpt-5-visible" || retry.RequestedReasoningEffort != "medium" {
+		t.Fatalf("request snapshot did not own current retry: %+v", retry)
+	}
+	payload := executionQueuedPayloadForRun(t, d, session.SessionID, retry.RunID)
+	if payload["retry_model_source"] != "request_current" ||
+		payload["retry_reasoning_effort_source"] != "request_current" {
+		t.Fatalf("request snapshot audit evidence = %#v", payload)
+	}
+	if _, err := d.handleTaskRetry(mustJSON(t, map[string]any{
+		"run_id": original.RunID, "client_submission_id": "retry_current_snapshot", "routing": "current",
+		"current_model": "openai/gpt-5-other", "current_reasoning_effort": "medium",
+	})); err == nil || !strings.Contains(err.Error(), "already used for a different request") {
+		t.Fatalf("changed request snapshot reused an incompatible retry: %v", err)
+	}
+}
+
+func TestTaskRetryCurrentRoutingPreservesExplicitlyClearedEffort(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	session, _ := d.store.CreateSession(workspace, "safe-edit")
+	d.kern.InitSessionWithPolicy(session.SessionID, workspace, "safe-edit", nil)
+
+	original := d.sched.SubmitWithGoalModelAgent(session.SessionID, session.WorkspaceID, "retry without effort", "openai/gpt-5", "build", nil)
+	d.sched.SetModelState(original.RunID, "openai/gpt-5", "openai/gpt-5")
+	d.sched.SetReasoningEffortState(original.RunID, "high", "high")
+	original, err := d.sched.Cancel(original.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.store.SetNextModelPreference(session.SessionID, "openai/session-stale", "high"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := d.handleTaskRetry(mustJSON(t, map[string]any{
+		"run_id": original.RunID, "client_submission_id": "retry_current_no_effort", "routing": "current",
+		"current_model": "openai/gpt-5-visible", "current_reasoning_effort": "",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry := result.(*scheduler.ExecutionRun)
+	if retry.RequestedReasoningEffort != "" || retry.EffectiveReasoningEffort != "" {
+		t.Fatalf("explicit empty effort inherited stale session value: %+v", retry)
+	}
+	payload := executionQueuedPayloadForRun(t, d, session.SessionID, retry.RunID)
+	if payload["retry_reasoning_effort_source"] != "request_current" || payload["requested_reasoning_effort"] != "" {
+		t.Fatalf("cleared effort audit evidence = %#v", payload)
+	}
+}
+
+func TestTaskRetryCurrentRoutingRejectsEmptyCurrentModel(t *testing.T) {
 	d, workspace := newLoopDaemon(t)
 	defer d.Close()
 	session, _ := d.store.CreateSession(workspace, "safe-edit")
@@ -181,20 +254,15 @@ func TestTaskRetryCurrentRoutingFallsBackToOriginalWhenSessionPreferenceIsEmpty(
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := d.handleTaskRetry(mustJSON(t, map[string]any{
+	before := len(d.sched.List())
+	_, err = d.handleTaskRetry(mustJSON(t, map[string]any{
 		"run_id": original.RunID, "client_submission_id": "retry_current_fallback", "routing": "current",
 	}))
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "current model is unavailable") {
+		t.Fatalf("empty current model error = %v", err)
 	}
-	retry := result.(*scheduler.ExecutionRun)
-	if retry.RequestedModel != "openai/gpt-5" || retry.RequestedReasoningEffort != "high" {
-		t.Fatalf("empty current preference did not fall back: %+v", retry)
-	}
-	payload := executionQueuedPayloadForRun(t, d, session.SessionID, retry.RunID)
-	if payload["retry_routing"] != "current" || payload["retry_model_source"] != "original_fallback" ||
-		payload["retry_reasoning_effort_source"] != "original_fallback" {
-		t.Fatalf("current fallback audit evidence = %#v", payload)
+	if after := len(d.sched.List()); after != before {
+		t.Fatalf("empty current model created a task: before=%d after=%d", before, after)
 	}
 }
 

@@ -67,6 +67,33 @@ See the full action table in [Agents overview](/agents/overview/). Families:
 
 These emit machine-readable JSON and **never** bypass kernel policy.
 
+## Code intelligence
+
+| Tool | Result |
+| --- | --- |
+| `code.search` | Ranked keyword and semantic matches |
+| `code.symbols` / `code.def` / `code.refs` | Definitions, references, and precision provenance |
+| `code.impact` | Governed transitive dependents |
+| `code.map` | A token-bounded projection of the workspace symbol graph |
+
+Large workspaces do not block the agent on a first-use full scan. Carina builds
+one resumable graph per workspace in bounded background batches. While it is
+building, `code.map` returns explicit progress and the best available partial
+projection; a metadata-only overview is used until the first semantic batch is
+ready. Completed graphs are reused across daemon restarts when the persisted
+source fingerprint still matches the workspace.
+
+```text frame="none"
+Index coverage: complete; graph: 6434 indexed files, 44120 symbols, 228788 edges, 82687 chunks;
+projection: 37/5689 files and 37/44120 symbols (pagerank-domain-diverse, about 1017 tokens).
+```
+
+The finite projection is not presented as an exhaustive dump. PageRank provides
+global relevance; selection covers top-level domains and ranked files before
+repeating a file. Each retained symbol carries a global rank plus incoming and
+outgoing edge counts. Ingestion, status, and map reads all remain gated by the
+session's `CodeIndex` and `FileRead` policy.
+
 ## Safety rules
 
 1. Every tool has a capability requirement

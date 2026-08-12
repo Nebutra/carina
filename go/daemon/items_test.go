@@ -523,6 +523,83 @@ func TestProjectSessionItemsSurfacesDoneSummaryAsAgentMessage(t *testing.T) {
 	}
 }
 
+func TestProjectSessionItemsPresentsLegacyStructuredDoneSummaryAsMarkdown(t *testing.T) {
+	items := projectSessionItems("sess_1", []itemAuditEvent{
+		{EventID: "evt_m", SessionID: "sess_1", TaskID: "run_1", Type: "ModelResponded", Actor: "model", Payload: map[string]any{
+			"text": `{"tool":"done","summary":"{\"summary\":\"Pebble is a local-first IDE.\",\"architecture\":[\"Desktop: Tauri\",\"Runtime: Go\"],\"verification\":\"No files changed.\"}"}`,
+		}},
+	})
+	msg := findItem(t, items, "item.completed", "agent_message")
+	text := stringField(msg.Details, "text")
+	if !strings.Contains(text, "Pebble is a local-first IDE.") ||
+		!strings.Contains(text, "**Architecture**\n- Desktop: Tauri") ||
+		!strings.Contains(text, "**Verification**\nNo files changed.") {
+		t.Fatalf("legacy report was not presented as markdown: %q", text)
+	}
+	if strings.HasPrefix(text, "{") {
+		t.Fatalf("legacy report leaked as JSON: %q", text)
+	}
+}
+
+func TestProjectSessionItemsPreservesExplicitStructuredOutput(t *testing.T) {
+	raw := `{"summary":"machine result","architecture":["runtime"]}`
+	items := projectSessionItems("sess_1", []itemAuditEvent{
+		{EventID: "evt_m", SessionID: "sess_1", TaskID: "run_1", Type: "ModelResponded", Actor: "model", Payload: map[string]any{
+			"text":              `{"tool":"done","summary":"{\"summary\":\"machine result\",\"architecture\":[\"runtime\"]}"}`,
+			"structured_output": true,
+		}},
+	})
+	msg := findItem(t, items, "item.completed", "agent_message")
+	if text := stringField(msg.Details, "text"); text != raw {
+		t.Fatalf("explicit structured output changed: got %q want %q", text, raw)
+	}
+}
+
+func TestProjectSessionItemsPresentsTerminalOnlyLegacyReport(t *testing.T) {
+	items := projectSessionItems("sess_1", []itemAuditEvent{
+		{EventID: "evt_c", SessionID: "sess_1", TaskID: "run_1", Type: "ExecutionCompleted", Payload: map[string]any{
+			"summary": `{"summary":"Readable result.","verification":"No files changed."}`,
+		}},
+	})
+	for _, event := range items {
+		if event.Type == "turn.completed" {
+			if summary := stringField(event.Details, "summary"); summary != "Readable result.\n\n**Verification**\nNo files changed." {
+				t.Fatalf("terminal-only report projection = %q", summary)
+			}
+			return
+		}
+	}
+	t.Fatalf("terminal completion missing: %+v", items)
+}
+
+func TestProjectSessionItemsSuppressesTruncatedActionAndUsesTerminalSummary(t *testing.T) {
+	items := projectSessionItems("sess_1", []itemAuditEvent{
+		{EventID: "evt_prefixed", SessionID: "sess_1", TaskID: "run_1", Type: "ModelResponded", Payload: map[string]any{
+			"text": `I will inspect one more boundary. {"actions":[{"tool":"read","path":"truncated`,
+		}},
+		{EventID: "evt_m", SessionID: "sess_1", TaskID: "run_1", Type: "ModelResponded", Payload: map[string]any{
+			"text": `{"tool":"done","summary":"{\"summary\":\"Pebble is a local-first IDE.\",\"architecture\":[\"truncated`,
+		}},
+		{EventID: "evt_c", SessionID: "sess_1", TaskID: "run_1", Type: "ExecutionCompleted", Payload: map[string]any{
+			"summary": `{"summary":"Pebble is a local-first IDE.","architecture":["Desktop: Tauri"]}`,
+		}},
+	})
+	for _, event := range items {
+		if event.Item != nil && event.Item.Type == "agent_message" {
+			t.Fatalf("truncated internal action leaked as a message: %+v", event.Item)
+		}
+	}
+	for _, event := range items {
+		if event.Type == "turn.completed" {
+			if summary := stringField(event.Details, "summary"); summary != "Pebble is a local-first IDE.\n\n**Architecture**\n- Desktop: Tauri" {
+				t.Fatalf("terminal fallback = %q", summary)
+			}
+			return
+		}
+	}
+	t.Fatalf("terminal completion missing: %+v", items)
+}
+
 func TestProjectSessionItemsHydratesTurnStartFromExecutionQueued(t *testing.T) {
 	items := projectSessionItems("sess_1", []itemAuditEvent{
 		{

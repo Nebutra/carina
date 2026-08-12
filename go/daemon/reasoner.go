@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -10,9 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	modelrouter "github.com/Nebutra/carina/go/model-router"
+	"github.com/Nebutra/carina/go/provider"
 )
 
 // Reasoner turns a prompt into the agent's next decision. It is the pure
@@ -97,6 +98,17 @@ const (
 	reasonerBackendCodexCLI  = "codex-cli"
 	reasonerBackendNone      = ""
 )
+
+var claudeCLIAvailable = func() bool {
+	_, err := exec.LookPath("claude")
+	return err == nil
+}
+
+func runtimeProviderUsesClaudeCLI(info provider.Info) bool {
+	return info.Source != nil &&
+		info.Source.Kind == provider.CCSwitchSourceKind &&
+		info.Source.CredentialOwner == provider.CCSwitchCredentialOwnerClaudeCode
+}
 
 func normalizeReasonerBackend(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -483,12 +495,32 @@ func estimatedReasonerResult(out string, err error, provider, model, prompt stri
 // ---- model-router reasoner ------------------------------------------------
 
 type routerReasoner struct {
-	router *modelrouter.Router
-	model  string
+	router            *modelrouter.Router
+	model             string
+	providerCatalog   provider.Catalog
+	claudeCodeMu      sync.Mutex
+	claudeCode        routedClaudeCodeReasoner
+	claudeCodeFactory func() (routedClaudeCodeReasoner, error)
 }
 
 func newRouterReasoner(router *modelrouter.Router, model string) *routerReasoner {
-	return &routerReasoner{router: router, model: model}
+	return &routerReasoner{
+		router: router,
+		model:  model,
+		claudeCodeFactory: func() (routedClaudeCodeReasoner, error) {
+			reasoner, err := newClaudeCLIReasoner()
+			if reasoner != nil {
+				reasoner.model = ""
+			}
+			return reasoner, err
+		},
+	}
+}
+
+func newRouterReasonerWithCatalog(router *modelrouter.Router, model string, catalog provider.Catalog) *routerReasoner {
+	reasoner := newRouterReasoner(router, model)
+	reasoner.providerCatalog = catalog
+	return reasoner
 }
 
 func (r *routerReasoner) Name() string { return "model-router" }
@@ -536,6 +568,18 @@ func (r *routerReasoner) complete(ctx context.Context, model string, req modelro
 		model = "default"
 		req.Model = model
 	}
+	if providerID, cliModel, ok := r.claudeCodeRoute(model); ok {
+		delegate, err := r.claudeCodeDelegate()
+		if err != nil {
+			return ReasonerResult{}, claudeCLIError{message: err.Error()}
+		}
+		result, err := delegate.ThinkRoutedModel(ctx, cliModel, req.Prompt)
+		if err != nil {
+			return ReasonerResult{}, err
+		}
+		result.Usage.Provider = providerID
+		return result, nil
+	}
 	var resp *modelrouter.Response
 	var err error
 	if stream := reasonerStreamFrom(ctx); stream != nil {
@@ -565,14 +609,57 @@ func (r *routerReasoner) complete(ctx context.Context, model string, req modelro
 	}}, nil
 }
 
+func (r *routerReasoner) claudeCodeRoute(model string) (string, string, bool) {
+	providerID, routedModel, ok := strings.Cut(strings.TrimSpace(model), "/")
+	if !ok || providerID == "" || routedModel == "" {
+		return "", "", false
+	}
+	info, ok := r.providerCatalog[providerID]
+	if !ok || !runtimeProviderUsesClaudeCLI(info) {
+		return "", "", false
+	}
+	return providerID, routedModel, true
+}
+
+type routedClaudeCodeReasoner interface {
+	ThinkRoutedModel(context.Context, string, string) (ReasonerResult, error)
+	Close()
+}
+
+func (r *routerReasoner) claudeCodeDelegate() (routedClaudeCodeReasoner, error) {
+	r.claudeCodeMu.Lock()
+	defer r.claudeCodeMu.Unlock()
+	if r.claudeCode != nil {
+		return r.claudeCode, nil
+	}
+	if r.claudeCodeFactory == nil {
+		return nil, errors.New("Claude CLI delegation is unavailable")
+	}
+	delegate, err := r.claudeCodeFactory()
+	if err != nil {
+		return nil, err
+	}
+	r.claudeCode = delegate
+	return delegate, nil
+}
+
+func (r *routerReasoner) Close() {
+	r.claudeCodeMu.Lock()
+	delegate := r.claudeCode
+	r.claudeCode = nil
+	r.claudeCodeMu.Unlock()
+	if delegate != nil {
+		delegate.Close()
+	}
+}
+
 // ---- claude CLI reasoner ---------------------------------------------------
 
 // claudeCLIReasoner uses the local `claude` binary in headless mode as a pure
-// inference engine. Claude Code's OWN tools are disabled (--allowedTools "")
-// and it runs in an isolated, empty cwd, so it cannot touch the workspace —
-// it can only reason and emit a decision. This supports gateways that only
-// admit the Claude Code client while keeping every real side effect inside the
-// carina capability kernel.
+// inference engine. Claude Code customizations and tools are disabled and it
+// runs in an isolated, empty cwd, so it can only reason and emit a decision.
+// This supports gateways that only admit the Claude Code client while keeping
+// every real side effect inside the carina capability kernel.
 type claudeCLIReasoner struct {
 	bin     string
 	model   string // optional --model override
@@ -580,24 +667,11 @@ type claudeCLIReasoner struct {
 	timeout time.Duration
 }
 
-type claudeCLIResponse struct {
-	Result         string `json:"result"`
-	IsError        bool   `json:"is_error"`
-	Subtype        string `json:"subtype"`
-	Model          string `json:"model"`
-	APIErrorStatus *int   `json:"api_error_status"`
-	Usage          struct {
-		InputTokens         int `json:"input_tokens"`
-		OutputTokens        int `json:"output_tokens"`
-		CacheCreationTokens int `json:"cache_creation_input_tokens"`
-		CacheReadTokens     int `json:"cache_read_input_tokens"`
-	} `json:"usage"`
-}
-
 type claudeCLIError struct {
 	message string
 	subtype string
 	status  int
+	kind    string
 }
 
 func (e claudeCLIError) Error() string {
@@ -611,6 +685,22 @@ func (e claudeCLIError) Error() string {
 }
 
 func (e claudeCLIError) ProviderError() providerErrorInfo {
+	if e.kind == "safety" {
+		return providerErrorInfo{
+			Code:       "reasoner_safety_violation",
+			Category:   "internal",
+			Provider:   "anthropic",
+			UserAction: "update Claude Code or use a direct model provider",
+		}
+	}
+	if e.kind == "protocol" {
+		return providerErrorInfo{
+			Code:       "reasoner_protocol_error",
+			Category:   "internal",
+			Provider:   "anthropic",
+			UserAction: "update Claude Code or use a direct model provider",
+		}
+	}
 	if e.status > 0 {
 		return providerStatusError{provider: "anthropic", status: e.status}.ProviderError()
 	}
@@ -691,9 +781,13 @@ func newClaudeCLIReasonerModel(model string) (*claudeCLIReasoner, error) {
 }
 
 func newConfiguredReasoner(backend string, router *modelrouter.Router, model string) (Reasoner, error) {
+	return newConfiguredReasonerWithCatalog(backend, router, model, nil)
+}
+
+func newConfiguredReasonerWithCatalog(backend string, router *modelrouter.Router, model string, catalog provider.Catalog) (Reasoner, error) {
 	switch backend {
 	case reasonerBackendRouter:
-		return newRouterReasoner(router, nonempty(strings.TrimSpace(model), "default")), nil
+		return newRouterReasonerWithCatalog(router, nonempty(strings.TrimSpace(model), "default"), catalog), nil
 	case reasonerBackendClaudeCLI:
 		if strings.TrimSpace(model) != "" {
 			return newClaudeCLIReasonerModel(strings.TrimSpace(model))
@@ -717,75 +811,11 @@ func (r *claudeCLIReasoner) Think(ctx context.Context, prompt string) (string, e
 }
 
 func (r *claudeCLIReasoner) ThinkResult(ctx context.Context, prompt string) (ReasonerResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, r.timeout)
-	defer cancel()
-
-	// --allowedTools "" disables Claude Code's own tools; --permission-mode
-	// deny is a belt-and-suspenders guard. Running in an empty temp cwd means
-	// even if it tried, there is nothing to touch.
-	args := []string{
-		"-p", prompt,
-		"--output-format", "json",
-		"--allowedTools", "",
-	}
-	if r.model != "" {
-		args = append(args, "--model", r.model)
-	}
-	cmd := exec.CommandContext(ctx, r.bin, args...)
-	cmd.Dir = r.workdir
-	// Inherit the environment for Claude CLI authentication and gateway config.
-	cmd.Env = os.Environ()
-
-	out, runErr := cmd.Output()
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ReasonerResult{}, ctxErr
-	}
-	var stderr []byte
-	var exitErr *exec.ExitError
-	if errors.As(runErr, &exitErr) {
-		stderr = exitErr.Stderr
-	}
-	return decodeClaudeCLIOutput(out, stderr, runErr, r.model)
+	return r.ThinkRoutedModel(ctx, r.model, prompt)
 }
 
-func decodeClaudeCLIOutput(out, stderr []byte, runErr error, fallbackModel string) (ReasonerResult, error) {
-	var resp claudeCLIResponse
-	if err := json.Unmarshal(out, &resp); err != nil {
-		if runErr != nil {
-			message := boundedMetadata(string(stderr), 500)
-			if message == "" {
-				message = boundedMetadata(string(out), 500)
-			}
-			if message == "" {
-				message = runErr.Error()
-			}
-			return ReasonerResult{}, claudeCLIError{message: message}
-		}
-		return ReasonerResult{}, fmt.Errorf("claude reasoner: decode: %w (%s)", err, truncate(string(out), 200))
-	}
-	if resp.IsError || runErr != nil {
-		message := resp.Result
-		if strings.TrimSpace(message) == "" {
-			message = string(stderr)
-		}
-		if strings.TrimSpace(message) == "" && runErr != nil {
-			message = runErr.Error()
-		}
-		status := 0
-		if resp.APIErrorStatus != nil {
-			status = *resp.APIErrorStatus
-		}
-		return ReasonerResult{}, claudeCLIError{message: message, subtype: resp.Subtype, status: status}
-	}
-	model := resp.Model
-	if model == "" {
-		model = fallbackModel
-	}
-	return ReasonerResult{Text: strings.TrimSpace(resp.Result), Usage: ModelUsage{
-		Provider: "anthropic", Model: model, InputTokens: resp.Usage.InputTokens,
-		OutputTokens: resp.Usage.OutputTokens, CacheReadTokens: resp.Usage.CacheReadTokens,
-		CacheWriteTokens: resp.Usage.CacheCreationTokens,
-	}}, nil
+func (r *claudeCLIReasoner) ThinkRoutedModel(ctx context.Context, model, prompt string) (ReasonerResult, error) {
+	return r.thinkRoutedModelStream(ctx, model, prompt)
 }
 func (r *claudeCLIReasoner) Close() {
 	_ = os.RemoveAll(r.workdir)

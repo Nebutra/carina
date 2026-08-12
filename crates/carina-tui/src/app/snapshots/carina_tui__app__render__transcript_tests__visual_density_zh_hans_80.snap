@@ -11,9 +11,7 @@ size=80x40
  ▾ 思考  检查投影边界
  │ 正在映射生命周期所有权与渲染路径。
  • Read    检查语义单元契约  src/semantic_cell.rs
- ▾ 已读取 ×2 · src/transcript.rs, src/app/render.rs
- │ src/transcript.rs
- │ src/app/render.rs
+ ▸ 已探索 ×5 · README.md, workspace, …
 
  ! 操作  Shell 命令需要批准  等待批准
  │ cargo test --workspace
@@ -23,17 +21,14 @@ size=80x40
  │ +1 · new file
  │    1 pub enum SemanticCellKind {}
 
- ✗ 执行失败
- │ Agent  Carina
- │ 失败模型  provider/original-model  尝试 2 次
- │ 原因  模型服务商在返回完整响应前停止了
+ ✗ 执行失败  ·  provider/original-model  ·  尝试 2 次
+ │ 模型服务商在返回完整响应前停止了
  │ 用当前模型重试  重放原配置  详情  复制 ID
 
  • 诊断  上下文已压缩
  │ 较早的常规工具详情已被摘要。
 styles:
-(1,0)..(11,0) (Rgb(195, 202, 198), Rgb(38, 43, 44), BOLD)
-(11,0)..(79,0) (Reset, Rgb(38, 43, 44), NONE)
+(1,0)..(11,0) (Rgb(195, 202, 198), Reset, BOLD)
 (1,2)..(11,2) (Rgb(142, 219, 210), Reset, BOLD)
 (1,3)..(11,3) (Rgb(90, 101, 99), Reset, NONE)
 (1,5)..(21,5) (Rgb(90, 101, 99), Reset, DIM | ITALIC)
@@ -42,31 +37,25 @@ styles:
 (1,7)..(3,7) (Rgb(195, 202, 198), Reset, BOLD)
 (27,7)..(49,7) (Rgb(90, 101, 99), Reset, NONE)
 (1,8)..(3,8) (Rgb(195, 202, 198), Reset, BOLD)
-(1,9)..(3,9) (Rgb(90, 101, 99), Reset, NONE)
-(1,10)..(3,10) (Rgb(90, 101, 99), Reset, NONE)
-(1,12)..(7,12) (Rgb(255, 124, 120), Reset, BOLD)
-(27,12)..(37,12) (Rgb(90, 101, 99), Reset, NONE)
-(1,13)..(3,13) (Rgb(90, 101, 99), Reset, NONE)
-(1,15)..(3,15) (Rgb(232, 168, 95), Reset, BOLD)
-(25,15)..(29,15) (Rgb(142, 219, 210), Reset, NONE)
-(29,15)..(38,15) (Rgb(90, 101, 99), Reset, NONE)
-(1,16)..(3,16) (Rgb(90, 101, 99), Reset, NONE)
-(1,17)..(16,17) (Rgb(90, 101, 99), Reset, NONE)
-(1,18)..(8,18) (Rgb(90, 101, 99), Reset, NONE)
-(1,20)..(3,20) (Rgb(255, 124, 120), Reset, NONE)
-(3,20)..(11,20) (Rgb(255, 124, 120), Reset, BOLD)
-(1,21)..(10,21) (Rgb(90, 101, 99), Reset, NONE)
-(1,22)..(13,22) (Rgb(90, 101, 99), Reset, NONE)
-(36,22)..(47,22) (Rgb(90, 101, 99), Reset, NONE)
-(1,23)..(41,23) (Rgb(90, 101, 99), Reset, NONE)
-(1,24)..(3,24) (Rgb(90, 101, 99), Reset, NONE)
-(3,24)..(17,24) (Rgb(255, 124, 120), Reset, BOLD)
-(17,24)..(19,24) (Rgb(90, 101, 99), Reset, NONE)
-(19,24)..(29,24) (Rgb(255, 124, 120), Reset, BOLD)
-(29,24)..(31,24) (Rgb(90, 101, 99), Reset, NONE)
-(31,24)..(35,24) (Rgb(255, 124, 120), Reset, BOLD)
-(35,24)..(37,24) (Rgb(90, 101, 99), Reset, NONE)
-(37,24)..(44,24) (Rgb(255, 124, 120), Reset, BOLD)
-(1,26)..(7,26) (Rgb(90, 101, 99), Reset, BOLD)
-(7,26)..(21,26) (Rgb(90, 101, 99), Reset, NONE)
-(1,27)..(31,27) (Rgb(90, 101, 99), Reset, NONE)
+(1,10)..(7,10) (Rgb(255, 124, 120), Reset, BOLD)
+(27,10)..(37,10) (Rgb(90, 101, 99), Reset, NONE)
+(1,11)..(3,11) (Rgb(90, 101, 99), Reset, NONE)
+(1,13)..(3,13) (Rgb(232, 168, 95), Reset, BOLD)
+(25,13)..(29,13) (Rgb(142, 219, 210), Reset, NONE)
+(29,13)..(38,13) (Rgb(90, 101, 99), Reset, NONE)
+(1,14)..(3,14) (Rgb(90, 101, 99), Reset, NONE)
+(1,15)..(16,15) (Rgb(90, 101, 99), Reset, NONE)
+(1,16)..(8,16) (Rgb(90, 101, 99), Reset, NONE)
+(1,18)..(3,18) (Rgb(255, 124, 120), Reset, NONE)
+(3,18)..(11,18) (Rgb(255, 124, 120), Reset, BOLD)
+(11,18)..(16,18) (Rgb(90, 101, 99), Reset, NONE)
+(39,18)..(53,18) (Rgb(90, 101, 99), Reset, NONE)
+(1,19)..(3,19) (Rgb(90, 101, 99), Reset, NONE)
+(1,20)..(3,20) (Rgb(90, 101, 99), Reset, NONE)
+(3,20)..(17,20) (Rgb(142, 219, 210), Reset, BOLD | UNDERLINED)
+(17,20)..(19,20) (Rgb(90, 101, 99), Reset, NONE)
+(19,20)..(29,20) (Reset, Reset, BOLD)
+(29,20)..(44,20) (Rgb(90, 101, 99), Reset, NONE)
+(1,22)..(7,22) (Rgb(90, 101, 99), Reset, BOLD)
+(7,22)..(21,22) (Rgb(90, 101, 99), Reset, NONE)
+(1,23)..(31,23) (Rgb(90, 101, 99), Reset, NONE)

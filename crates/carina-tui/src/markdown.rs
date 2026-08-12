@@ -56,9 +56,21 @@ pub struct StyledPrefix {
 impl StyledPrefix {
     pub fn hanging(initial: Vec<Span<'static>>, continuation_style: Style) -> Self {
         let width = spans_width(&initial);
+        Self::hanging_with_width(initial, width, continuation_style)
+    }
+
+    pub fn hanging_with_width(
+        initial: Vec<Span<'static>>,
+        continuation_width: usize,
+        continuation_style: Style,
+    ) -> Self {
+        debug_assert!(continuation_width <= spans_width(&initial));
         Self {
             initial,
-            continuation: vec![Span::styled(" ".repeat(width), continuation_style)],
+            continuation: vec![Span::styled(
+                " ".repeat(continuation_width),
+                continuation_style,
+            )],
         }
     }
 
@@ -71,6 +83,10 @@ impl StyledPrefix {
 
     pub fn width(&self) -> usize {
         spans_width(&self.initial)
+    }
+
+    pub fn continuation_width(&self) -> usize {
+        spans_width(&self.continuation)
     }
 }
 
@@ -111,7 +127,7 @@ pub fn render_prefixed(
         code_language: String::new(),
         code_buffer: String::new(),
         table: None,
-        width: width.saturating_sub(prefix.width()).max(1),
+        width: width.saturating_sub(prefix.continuation_width()).max(1),
         theme,
     };
     for event in parser {
@@ -904,13 +920,38 @@ mod tests {
     }
 
     #[test]
-    fn prefixed_url_wrapping_preserves_the_exact_url() {
-        let prefix = StyledPrefix::hanging(
-            vec![Span::raw("* You      ")],
+    fn adaptive_hanging_prefix_reclaims_continuation_width() {
+        let prefix = StyledPrefix::hanging_with_width(
+            vec![Span::raw("* Carina  ")],
+            2,
             Style::default().add_modifier(Modifier::DIM),
         );
-        let url = "https://example.com/a/very/long/path?mode=exact&lang=zh-Hant#result";
-        let lines = wrap_styled_lines(vec![Line::from(Span::raw(url))], 22, &prefix);
+        let lines = render_prefixed(
+            "A response that crosses the available terminal width.",
+            24,
+            theme(),
+            &prefix,
+        );
+        let visible = plain(&lines);
+
+        assert_eq!(prefix.width(), 10);
+        assert_eq!(prefix.continuation_width(), 2);
+        assert!(visible.len() > 1);
+        assert!(visible[0].starts_with("* Carina  "));
+        assert!(visible[1].starts_with("  "));
+        assert!(!visible[1].starts_with("          "));
+        assert!(visible.iter().all(|line| line.width() <= 24));
+    }
+
+    #[test]
+    fn adaptive_prefixed_cjk_and_url_wrapping_preserves_exact_graphemes() {
+        let prefix = StyledPrefix::hanging_with_width(
+            vec![Span::raw("* You      ")],
+            2,
+            Style::default().add_modifier(Modifier::DIM),
+        );
+        let body = "中文https://example.com/a/very/long/path?mode=exact&lang=zh-Hant#result";
+        let lines = wrap_styled_lines(vec![Line::from(Span::raw(body))], 22, &prefix);
         let visible = plain(&lines);
         let restored = visible
             .iter()
@@ -919,15 +960,15 @@ mod tests {
                 if index == 0 {
                     line.strip_prefix("* You      ").expect("initial prefix")
                 } else {
-                    line.strip_prefix("           ")
-                        .expect("continuation prefix")
+                    line.strip_prefix("  ").expect("continuation prefix")
                 }
             })
             .collect::<String>();
 
         assert_eq!(prefix.width(), 11);
+        assert_eq!(prefix.continuation_width(), 2);
         assert!(visible.len() > 1);
         assert!(visible.iter().all(|line| line.width() <= 22));
-        assert_eq!(restored, url);
+        assert_eq!(restored, body);
     }
 }

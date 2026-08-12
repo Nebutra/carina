@@ -33,6 +33,29 @@ pub struct ProductHeader<'a> {
     pub actions: &'a [HeaderAction],
 }
 
+#[derive(Debug, Clone)]
+pub struct ConversationHeaderAction<'a> {
+    pub label: &'a str,
+    pub action: Action,
+    pub component: ComponentId,
+    pub tone: ConversationHeaderTone,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversationHeaderTone {
+    Muted,
+    Active,
+    Blocking,
+}
+
+pub struct ConversationHeader<'a> {
+    pub title: &'a str,
+    pub product_menu_open: bool,
+    /// Ordered from highest to lowest priority. Higher-priority actions remain
+    /// visible as the terminal narrows.
+    pub actions: &'a [ConversationHeaderAction<'a>],
+}
+
 pub fn product_header_height(area: Rect) -> u16 {
     if layout::expanded_header(area) {
         layout::EXPANDED_HEADER_HEIGHT
@@ -313,6 +336,101 @@ impl ProductHeader<'_> {
     }
 }
 
+impl ConversationHeader<'_> {
+    pub fn render(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        theme: Theme,
+        interactions: &mut InteractionMap,
+    ) -> Option<Rect> {
+        if area.width == 0 || area.height == 0 {
+            return None;
+        }
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_type(theme.glyphs.outer_border_type())
+                .border_style(Style::default().fg(theme.border)),
+            area,
+        );
+
+        let product_component = ComponentId::stable("conversation-header", "product-menu");
+        let product_label = format!("{COMPACT_NAME} {}", theme.glyphs.disclosure_open());
+        let identity_min_width = UnicodeWidthStr::width(product_label.as_str()) as u16;
+        let mut right = area.right();
+        for action in self.actions {
+            let width = UnicodeWidthStr::width(action.label) as u16 + 2;
+            let x = right.saturating_sub(width);
+            if x <= area.x.saturating_add(identity_min_width + 2) {
+                continue;
+            }
+            let rect = Rect::new(x, area.y, width, 1);
+            let base_style = match action.tone {
+                ConversationHeaderTone::Muted => theme.muted(),
+                ConversationHeaderTone::Active => theme.focus(),
+                ConversationHeaderTone::Blocking => Style::default()
+                    .fg(theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            };
+            let style = if interactions.hovered(action.component) {
+                base_style.patch(theme.hovered())
+            } else {
+                base_style
+            };
+            frame.render_widget(
+                Paragraph::new(format!(" {} ", action.label)).style(style),
+                rect,
+            );
+            interactions.register(HitRegion {
+                component: action.component,
+                area: rect,
+                action: action.action.clone(),
+            });
+            right = x.saturating_sub(1);
+        }
+
+        let available = right.saturating_sub(area.x) as usize;
+        if available == 0 {
+            return None;
+        }
+        let separator = theme.glyphs.separator();
+        let suffix = if self.title.trim().is_empty() {
+            String::new()
+        } else {
+            format!("  {separator}  {}", self.title)
+        };
+        let name_width = UnicodeWidthStr::width(product_label.as_str());
+        let product_style = Style::default()
+            .fg(theme.brand)
+            .add_modifier(Modifier::BOLD);
+        let product_style = if self.product_menu_open {
+            product_style.patch(theme.focus())
+        } else if interactions.hovered(product_component) {
+            product_style.patch(theme.hovered())
+        } else {
+            product_style
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(product_label, product_style),
+                Span::styled(
+                    truncate_width(&suffix, available.saturating_sub(name_width), theme.glyphs),
+                    Style::default().fg(theme.muted),
+                ),
+            ])),
+            Rect::new(area.x, area.y, available as u16, 1),
+        );
+        let product_area = Rect::new(area.x, area.y, name_width as u16, 1);
+        interactions.register(HitRegion {
+            component: product_component,
+            area: product_area,
+            action: Action::ToggleProductMenu,
+        });
+        Some(product_area)
+    }
+}
+
 fn workspace_label(workspace: &Path, compact: bool, locale: Locale) -> String {
     if compact {
         return workspace
@@ -345,6 +463,7 @@ fn truncate_width(value: &str, max_width: usize, glyphs: crate::glyphs::Glyphs) 
 mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::layout::Position;
 
     use super::*;
 
@@ -502,5 +621,203 @@ mod tests {
                 .modifier
                 .contains(Modifier::BOLD)
         );
+    }
+
+    #[test]
+    fn conversation_header_keeps_priority_actions_as_width_narrows() {
+        let actions = [
+            ConversationHeaderAction {
+                label: "Review",
+                action: Action::ResumePausedExecutionRun,
+                component: ComponentId(51),
+                tone: ConversationHeaderTone::Blocking,
+            },
+            ConversationHeaderAction {
+                label: "Build",
+                action: Action::TogglePlanMode,
+                component: ComponentId(52),
+                tone: ConversationHeaderTone::Active,
+            },
+            ConversationHeaderAction {
+                label: "gpt-5.5",
+                action: Action::OpenModels,
+                component: ComponentId(53),
+                tone: ConversationHeaderTone::Muted,
+            },
+            ConversationHeaderAction {
+                label: "Sessions",
+                action: Action::OpenSessions,
+                component: ComponentId(54),
+                tone: ConversationHeaderTone::Muted,
+            },
+            ConversationHeaderAction {
+                label: "Settings",
+                action: Action::OpenSettings,
+                component: ComponentId(55),
+                tone: ConversationHeaderTone::Muted,
+            },
+        ];
+
+        for (width, expected, hidden) in [
+            (
+                50,
+                vec!["Review", "Build", "gpt-5.5", "Sessions"],
+                vec!["Settings"],
+            ),
+            (
+                30,
+                vec!["Review", "Build"],
+                vec!["gpt-5.5", "Sessions", "Settings"],
+            ),
+            (
+                20,
+                vec!["Review"],
+                vec!["Build", "gpt-5.5", "Sessions", "Settings"],
+            ),
+        ] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 2)).unwrap();
+            let mut interactions = InteractionMap::default();
+            terminal
+                .draw(|frame| {
+                    ConversationHeader {
+                        title: "Design system convergence",
+                        product_menu_open: false,
+                        actions: &actions,
+                    }
+                    .render(
+                        frame,
+                        frame.area(),
+                        Theme::carina(false),
+                        &mut interactions,
+                    );
+                })
+                .unwrap();
+            let rendered = (0..width)
+                .map(|x| terminal.backend().buffer().cell((x, 0)).unwrap().symbol())
+                .collect::<String>();
+            assert!(rendered.contains("Carina"), "width={width}: {rendered}");
+            for label in expected {
+                assert!(rendered.contains(label), "width={width}: {rendered}");
+            }
+            for label in hidden {
+                assert!(!rendered.contains(label), "width={width}: {rendered}");
+            }
+            assert_eq!(
+                interactions.action_at(Position::new(width - 2, 0)),
+                Some(Action::ResumePausedExecutionRun),
+                "the blocking action must own the rightmost priority slot at width={width}"
+            );
+        }
+    }
+
+    #[test]
+    fn conversation_header_hover_changes_style_not_copy_or_hit_geometry() {
+        for no_color in [false, true] {
+            let action = ConversationHeaderAction {
+                label: "Build",
+                action: Action::TogglePlanMode,
+                component: ComponentId(61),
+                tone: ConversationHeaderTone::Active,
+            };
+            let mut terminal = Terminal::new(TestBackend::new(40, 2)).unwrap();
+            let mut interactions = InteractionMap::default();
+            terminal
+                .draw(|frame| {
+                    interactions.begin_frame();
+                    ConversationHeader {
+                        title: "conversation",
+                        product_menu_open: false,
+                        actions: std::slice::from_ref(&action),
+                    }
+                    .render(
+                        frame,
+                        frame.area(),
+                        Theme::carina(no_color),
+                        &mut interactions,
+                    );
+                })
+                .unwrap();
+            let before = terminal.backend().buffer().clone();
+            let position = Position::new(36, 0);
+            assert_eq!(
+                interactions.action_at(position),
+                Some(Action::TogglePlanMode)
+            );
+            assert!(interactions.update_hover(position));
+
+            terminal
+                .draw(|frame| {
+                    interactions.begin_frame();
+                    ConversationHeader {
+                        title: "conversation",
+                        product_menu_open: false,
+                        actions: std::slice::from_ref(&action),
+                    }
+                    .render(
+                        frame,
+                        frame.area(),
+                        Theme::carina(no_color),
+                        &mut interactions,
+                    );
+                })
+                .unwrap();
+            let after = terminal.backend().buffer();
+            assert_eq!(
+                (0..40)
+                    .map(|x| before.cell((x, 0)).unwrap().symbol())
+                    .collect::<String>(),
+                (0..40)
+                    .map(|x| after.cell((x, 0)).unwrap().symbol())
+                    .collect::<String>()
+            );
+            assert_eq!(
+                interactions.action_at(position),
+                Some(Action::TogglePlanMode)
+            );
+            assert_ne!(
+                before.cell((position.x, position.y)).unwrap().modifier,
+                after.cell((position.x, position.y)).unwrap().modifier
+            );
+        }
+    }
+
+    #[test]
+    fn conversation_product_menu_trigger_is_exact_and_width_locked() {
+        for (glyphs, expected) in [
+            (crate::glyphs::GlyphMode::Unicode, "Carina ▾ "),
+            (crate::glyphs::GlyphMode::Ascii, "Carina v "),
+        ] {
+            let mut theme = Theme::carina(false);
+            theme.glyphs = theme.glyphs.with_mode(glyphs);
+            let mut terminal = Terminal::new(TestBackend::new(40, 2)).unwrap();
+            let mut interactions = InteractionMap::default();
+            let mut anchor = None;
+            terminal
+                .draw(|frame| {
+                    anchor = ConversationHeader {
+                        title: "conversation",
+                        product_menu_open: false,
+                        actions: &[],
+                    }
+                    .render(frame, frame.area(), theme, &mut interactions);
+                })
+                .unwrap();
+            let anchor = anchor.expect("visible header owns a product menu anchor");
+            let rendered = (0..anchor.width)
+                .map(|x| terminal.backend().buffer().cell((x, 0)).unwrap().symbol())
+                .collect::<String>();
+            assert_eq!(rendered, expected);
+            for x in anchor.x..anchor.right() {
+                assert_eq!(
+                    interactions.action_at(Position::new(x, anchor.y)),
+                    Some(Action::ToggleProductMenu)
+                );
+            }
+            assert_ne!(
+                interactions.action_at(Position::new(anchor.right(), anchor.y)),
+                Some(Action::ToggleProductMenu),
+                "the conversation title must not inherit the product trigger"
+            );
+        }
     }
 }

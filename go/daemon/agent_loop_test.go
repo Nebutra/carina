@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Nebutra/carina/go/continuity"
+	"github.com/Nebutra/carina/go/kernel"
 )
 
 // scripted reasoner from reasoner.go drives the loop deterministically.
@@ -143,6 +146,116 @@ func TestAgentLoopWithoutReasonerFailsClosed(t *testing.T) {
 	got, _ := d.sched.Get(task.RunID)
 	if got.Status != "degraded" || !contains(got.Summary, "no available model provider") {
 		t.Fatalf("task = %+v", got)
+	}
+}
+
+func TestReasonerAuthenticationFailureIsFailedAndTerminalEventOwnsRouteTruth(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	d.SetReasoner(&failingReasoner{err: providerStatusError{provider: "openai", status: 401}})
+	sess, _ := d.store.CreateSession(workspace, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "safe-edit", nil)
+	task := d.sched.SubmitWithGoalModelAgent(
+		sess.SessionID,
+		sess.WorkspaceID,
+		"inspect this repository",
+		"openai/gpt-5.6-sol",
+		"build",
+		nil,
+	)
+	d.sched.SetModelState(task.RunID, "openai/gpt-5.6-sol", "openai/gpt-5.6-sol")
+	d.sched.SetReasoningEffortState(task.RunID, "medium", "medium")
+	d.sched.SetRetryOf(task.RunID, "run-original")
+	if frozen, ok := d.sched.Get(task.RunID); ok {
+		task = frozen
+	}
+
+	d.runTask(sess, task)
+
+	got, _ := d.sched.Get(task.RunID)
+	if got.Status != "failed" || got.Continuity.Outcome != continuity.OutcomeFailed {
+		t.Fatalf("credential rejection must be a failed run, got %+v", got)
+	}
+	raw, err := d.kern.ReadEvents(sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []struct {
+		TaskID  string         `json:"task_id"`
+		Type    string         `json:"type"`
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &events); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Type != "ExecutionFailed" || event.TaskID != task.RunID {
+			continue
+		}
+		if event.Payload["outcome"] != "failed" ||
+			event.Payload["reason_code"] != "provider_authentication_failed" ||
+			event.Payload["error_category"] != "authentication" ||
+			event.Payload["model"] != "openai/gpt-5.6-sol" ||
+			event.Payload["requested_model"] != "openai/gpt-5.6-sol" ||
+			event.Payload["retry_of_run_id"] != "run-original" ||
+			event.Payload["same_route_retryable"] != false {
+			t.Fatalf("terminal failure truth = %#v", event.Payload)
+		}
+		return
+	}
+	t.Fatalf("ExecutionFailed not found for %s: %s", task.RunID, raw)
+}
+
+func TestReasonerFailureOnlyDegradesForPatchOwnedByCurrentRun(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	d.SetReasoner(&failingReasoner{err: providerStatusError{provider: "openai", status: 401}})
+	sess, _ := d.store.CreateSession(workspace, "full-workspace")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "full-workspace", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "result.txt"), []byte("base\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	apply := func(runID, content string) string {
+		t.Helper()
+		patch, err := d.kern.PatchPropose(sess.SessionID, runID, "continuity ownership regression", []kernel.FileChange{{
+			Path: "result.txt", NewContent: content,
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.kern.PatchApply(sess.SessionID, patch.PatchID, "test"); err != nil {
+			t.Fatal(err)
+		}
+		return patch.PatchID
+	}
+
+	olderPatchID := apply("run-older", "older patch\n")
+	withoutOwnPatch := d.sched.SubmitWithGoalModelAgent(
+		sess.SessionID, sess.WorkspaceID, "fail after an older run changed the workspace", "openai/gpt-5.6-sol", "build", nil,
+	)
+	d.runTask(sess, withoutOwnPatch)
+	failed, _ := d.sched.Get(withoutOwnPatch.RunID)
+	if failed.Status != "failed" || failed.Continuity.Outcome != continuity.OutcomeFailed {
+		t.Fatalf("an older run's patch must not imply partial completion: %+v", failed)
+	}
+	if len(failed.AppliedPatches) != 0 {
+		t.Fatalf("failed run claimed another run's patch %s: %+v", olderPatchID, failed.AppliedPatches)
+	}
+
+	withOwnPatch := d.sched.SubmitWithGoalModelAgent(
+		sess.SessionID, sess.WorkspaceID, "fail after this run changed the workspace", "openai/gpt-5.6-sol", "build", nil,
+	)
+	currentPatchID := apply(withOwnPatch.RunID, "current patch\n")
+	d.runTask(sess, withOwnPatch)
+	degraded, _ := d.sched.Get(withOwnPatch.RunID)
+	if degraded.Status != "degraded" || degraded.Continuity.Outcome != continuity.OutcomePartial {
+		t.Fatalf("a current-run patch must preserve partial completion: %+v", degraded)
+	}
+	if len(degraded.AppliedPatches) != 1 || degraded.AppliedPatches[0] != currentPatchID {
+		t.Fatalf("degraded run patch attribution = %+v, want %s", degraded.AppliedPatches, currentPatchID)
 	}
 }
 

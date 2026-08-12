@@ -48,7 +48,12 @@ func TestParseActionIntentFlatAndNested(t *testing.T) {
 }
 
 func TestToolsHelpRequiresPublicIntentForToolActions(t *testing.T) {
-	for _, phrase := range []string{`Every tool action except "done" MUST include "intent"`, "without secrets, hidden reasoning, commands, paths, or policy metadata"} {
+	for _, phrase := range []string{
+		`Every tool action except "done" MUST include "intent"`,
+		"without secrets, hidden reasoning, commands, paths, or policy metadata",
+		"Only list/read/search may appear in a parallel batch",
+		"Code-intelligence tools and writes",
+	} {
 		if !strings.Contains(toolsHelp, phrase) {
 			t.Fatalf("toolsHelp missing intent contract %q", phrase)
 		}
@@ -71,7 +76,7 @@ func TestParseActionDeduplicatesRepeatedProviderOutput(t *testing.T) {
 }
 
 func TestReadOnlyToolClassification(t *testing.T) {
-	for _, tool := range []string{"list", "read", "search"} {
+	for _, tool := range []string{"list", "read", "search", "code.search", "code.map"} {
 		if !isReadOnlyTool(tool) {
 			t.Errorf("%q should be read-only", tool)
 		}
@@ -81,12 +86,17 @@ func TestReadOnlyToolClassification(t *testing.T) {
 			t.Errorf("%q must not be read-only", tool)
 		}
 	}
-	bad := nonReadOnlyTools([]action{{Tool: "read"}, {Tool: "patch"}, {Tool: "run"}})
-	if len(bad) != 2 || bad[0] != "patch" || bad[1] != "run" {
-		t.Fatalf("nonReadOnlyTools wrong: %v", bad)
+	for _, tool := range []string{"list", "read", "search"} {
+		if !isParallelBatchTool(tool) {
+			t.Errorf("%q should be parallel-batch safe", tool)
+		}
 	}
-	if len(nonReadOnlyTools([]action{{Tool: "read"}, {Tool: "search"}})) != 0 {
-		t.Fatal("an all-read-only batch must have no offenders")
+	bad := nonParallelBatchTools([]action{{Tool: "read"}, {Tool: "code.map"}, {Tool: "patch"}})
+	if len(bad) != 2 || bad[0] != "code.map" || bad[1] != "patch" {
+		t.Fatalf("nonParallelBatchTools wrong: %v", bad)
+	}
+	if len(nonParallelBatchTools([]action{{Tool: "read"}, {Tool: "search"}})) != 0 {
+		t.Fatal("a list/read/search batch must have no offenders")
 	}
 }
 
@@ -152,5 +162,27 @@ func TestExecuteBatchParallelReads(t *testing.T) {
 	}
 	if strings.Index(obs, "[0]") > strings.Index(obs, "[1]") {
 		t.Fatalf("batch observations must be in emit order: %s", obs)
+	}
+}
+
+func TestExecuteBatchRejectsSemanticToolsBeforeLifecycle(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "batch")
+
+	obs := d.executeBatch(sess, task, []action{{Tool: "list"}, {Tool: "code.map"}})
+	if !strings.Contains(obs, "parallel batch rejected") || !strings.Contains(obs, "code.map") {
+		t.Fatalf("semantic batch must fail closed, got: %s", obs)
+	}
+	events, err := d.store.ReadEvents(sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.TaskID == task.RunID {
+			t.Fatalf("rejected batch must emit no tool lifecycle, got: %+v", event)
+		}
 	}
 }

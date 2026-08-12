@@ -203,6 +203,10 @@ type Daemon struct {
 	indexBuilt sync.Map // session -> true once the code index was lazily built (code.* tools)
 
 	indexSnapshot sync.Map // session -> *sweepSnapshot from the last index sync (V4 mtime staleness sweep)
+	indexJobs     sync.Map // workspace root -> *backgroundIndexJob (one incremental build per workspace)
+
+	indexSyncFileLimit  int // synchronous full-build ceiling; test-overridable
+	indexBuildBatchSize int // paths per background kernel RPC; test-overridable
 
 	codeIntelStatus sync.Map // session -> codeIntelStatus (V3: semantic-layer health on daemon.status.code_intel)
 
@@ -446,6 +450,8 @@ func New(opts Options) (*Daemon, error) {
 		gatewayResponses:      map[string]string{},
 		runtimeLease:          runtimeLease,
 		runtimeSpec:           runtimeSpec,
+		indexSyncFileLimit:    synchronousRepoMapFileLimit,
+		indexBuildBatchSize:   backgroundIndexBatchSize,
 	}
 	d.journey = newJourneyMetrics(time.Now)
 	d.server.SetConnectionObserver(d)
@@ -734,7 +740,7 @@ func New(opts Options) (*Daemon, error) {
 		d.reasonerBackend = selectedBackend
 		d.reasonerModel = model
 		d.reasonerExplicit = configuredReasonerBackend != reasonerBackendAuto && selectedBackend != reasonerBackendNone
-		d.reasoner, err = newConfiguredReasoner(selectedBackend, d.router, model)
+		d.reasoner, err = newConfiguredReasonerWithCatalog(selectedBackend, d.router, model, d.providerCatalog)
 		if err != nil {
 			closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 			_ = kern.Close()
@@ -742,7 +748,7 @@ func New(opts Options) (*Daemon, error) {
 		}
 		// Model tiering: an optional cheaper model for compaction/summarization.
 		if m := os.Getenv("CARINA_SUMMARIZER_MODEL"); m != "" && selectedBackend != reasonerBackendNone {
-			d.summarizer, err = newConfiguredReasoner(selectedBackend, d.router, m)
+			d.summarizer, err = newConfiguredReasonerWithCatalog(selectedBackend, d.router, m, d.providerCatalog)
 			if err != nil {
 				closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 				_ = kern.Close()
@@ -755,7 +761,7 @@ func New(opts Options) (*Daemon, error) {
 			vm = os.Getenv("CARINA_VERIFIER_MODEL")
 		}
 		if vm != "" && selectedBackend != reasonerBackendNone {
-			d.verifier, err = newConfiguredReasoner(selectedBackend, d.router, vm)
+			d.verifier, err = newConfiguredReasonerWithCatalog(selectedBackend, d.router, vm, d.providerCatalog)
 			if err != nil {
 				closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 				_ = kern.Close()
@@ -770,7 +776,7 @@ func New(opts Options) (*Daemon, error) {
 			rm = os.Getenv("CARINA_RISK_REVIEW_MODEL")
 		}
 		if rm != "" && selectedBackend != reasonerBackendNone {
-			d.riskReviewer, err = newConfiguredReasoner(selectedBackend, d.router, rm)
+			d.riskReviewer, err = newConfiguredReasonerWithCatalog(selectedBackend, d.router, rm, d.providerCatalog)
 			if err != nil {
 				closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 				_ = kern.Close()
@@ -2808,13 +2814,17 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 	}
 	requestedModel := model
 	requestedEffort := normalizeReasoningEffort(p.ReasoningEffort)
-	if requestedEffort == "" {
+	explicitRetryEffort := provenance.Retry != nil && provenance.Retry.ReasoningEffortSource == taskRetryRouteRequestCurrent
+	if requestedEffort == "" && !explicitRetryEffort {
 		requestedEffort = normalizeReasoningEffort(sess.NextReasoningEffort)
 	}
 	// End-to-end: only freeze efforts the route can encode. Invalid/stale
 	// values remap (minimal→low) or clear instead of failing the whole turn.
 	effortSpec := d.reasoningEffortSpec(model)
-	effectiveEffort := resolveEffortForModel(effortSpec, requestedEffort)
+	effectiveEffort := ""
+	if requestedEffort != "" || !explicitRetryEffort {
+		effectiveEffort = resolveEffortForModel(effortSpec, requestedEffort)
+	}
 	if requestedEffort != "" && effectiveEffort == "" {
 		requestedEffort = ""
 	} else if effectiveEffort != "" {
@@ -2906,9 +2916,11 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 }
 
 type taskRetryParams struct {
-	RunID              string           `json:"run_id"`
-	ClientSubmissionID string           `json:"client_submission_id"`
-	Routing            taskRetryRouting `json:"routing,omitempty"`
+	RunID                  string           `json:"run_id"`
+	ClientSubmissionID     string           `json:"client_submission_id"`
+	Routing                taskRetryRouting `json:"routing,omitempty"`
+	CurrentModel           *string          `json:"current_model,omitempty"`
+	CurrentReasoningEffort *string          `json:"current_reasoning_effort,omitempty"`
 }
 
 type taskRetryRouting string
@@ -2921,9 +2933,9 @@ const (
 type taskRetryRouteSource string
 
 const (
-	taskRetryRouteOriginal         taskRetryRouteSource = "original"
-	taskRetryRouteSessionCurrent   taskRetryRouteSource = "session_current"
-	taskRetryRouteOriginalFallback taskRetryRouteSource = "original_fallback"
+	taskRetryRouteOriginal       taskRetryRouteSource = "original"
+	taskRetryRouteRequestCurrent taskRetryRouteSource = "request_current"
+	taskRetryRouteSessionCurrent taskRetryRouteSource = "session_current"
 )
 
 func parseTaskRetryRouting(raw taskRetryRouting) (taskRetryRouting, error) {
@@ -2974,17 +2986,28 @@ func (d *Daemon) handleTaskRetry(params json.RawMessage) (any, error) {
 		if !exists {
 			return nil, fmt.Errorf("unknown session %s", original.SessionID)
 		}
-		if current := strings.TrimSpace(sess.NextModel); current != "" {
+		if p.CurrentModel != nil {
+			current := strings.TrimSpace(*p.CurrentModel)
+			if current == "" {
+				return nil, fmt.Errorf("current model is empty; select a model or replay the original route")
+			}
+			if err := d.validateTaskModel(current); err != nil {
+				return nil, fmt.Errorf("current model: %w", err)
+			}
+			model = current
+			modelSource = taskRetryRouteRequestCurrent
+		} else if current := strings.TrimSpace(sess.NextModel); current != "" {
 			model = current
 			modelSource = taskRetryRouteSessionCurrent
 		} else {
-			modelSource = taskRetryRouteOriginalFallback
+			return nil, fmt.Errorf("current model is unavailable; select a model or replay the original route")
 		}
-		if current := strings.TrimSpace(sess.NextReasoningEffort); current != "" {
-			effort = current
-			effortSource = taskRetryRouteSessionCurrent
+		if p.CurrentReasoningEffort != nil {
+			effort = strings.TrimSpace(*p.CurrentReasoningEffort)
+			effortSource = taskRetryRouteRequestCurrent
 		} else {
-			effortSource = taskRetryRouteOriginalFallback
+			effort = strings.TrimSpace(sess.NextReasoningEffort)
+			effortSource = taskRetryRouteSessionCurrent
 		}
 	}
 	media := make([]MediaRef, 0, len(original.InputMediaRefs))
@@ -3080,12 +3103,16 @@ func taskSubmissionFingerprintForProvenance(p taskSubmitParams, provenance taskS
 		// exact retries so persisted idempotency keys remain valid after upgrade.
 		return taskSubmissionFingerprint(p)
 	}
-	// "current" is resolved from mutable session preferences. Bind idempotency
-	// to the caller's logical retry request, not to whichever preference happens
-	// to be visible on a later delivery of the same request.
+	// Explicit request snapshots are part of the logical request. Legacy clients
+	// resolve from mutable session preferences, so preserve their old fingerprint
+	// by replacing only session-owned axes with the original route.
 	stable := p
-	stable.Model = provenance.Retry.OriginalModel
-	stable.ReasoningEffort = provenance.Retry.OriginalReasoningEffort
+	if provenance.Retry.ModelSource == taskRetryRouteSessionCurrent {
+		stable.Model = provenance.Retry.OriginalModel
+	}
+	if provenance.Retry.ReasoningEffortSource == taskRetryRouteSessionCurrent {
+		stable.ReasoningEffort = provenance.Retry.OriginalReasoningEffort
+	}
 	raw := strings.Join([]string{
 		taskSubmissionFingerprint(stable),
 		"execution.retry",

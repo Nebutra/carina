@@ -578,16 +578,20 @@ impl Client {
         &mut self,
         run_id: &str,
         routing: RetryRouting,
+        current_model: &str,
+        current_reasoning_effort: &str,
         client_submission_id: &str,
     ) -> Result<ExecutionRun, RpcError> {
-        self.call(
-            "execution.retry",
-            &json!({
-                "run_id": run_id,
-                "routing": routing.as_str(),
-                "client_submission_id": client_submission_id,
-            }),
-        )
+        let mut params = json!({
+            "run_id": run_id,
+            "routing": routing.as_str(),
+            "client_submission_id": client_submission_id,
+        });
+        if routing == RetryRouting::Current {
+            params["current_model"] = json!(current_model.trim());
+            params["current_reasoning_effort"] = json!(current_reasoning_effort.trim());
+        }
+        self.call("execution.retry", &params)
     }
 
     pub fn execution_status(&mut self, run_id: &str) -> Result<ExecutionRun, RpcError> {
@@ -1164,6 +1168,13 @@ mod tests {
                 assert_eq!(request["method"], "execution.retry");
                 assert_eq!(request["params"]["run_id"], "run-failed");
                 assert_eq!(request["params"]["routing"], routing);
+                if routing == "current" {
+                    assert_eq!(request["params"]["current_model"], "provider/current");
+                    assert_eq!(request["params"]["current_reasoning_effort"], "medium");
+                } else {
+                    assert!(request["params"].get("current_model").is_none());
+                    assert!(request["params"].get("current_reasoning_effort").is_none());
+                }
                 assert_eq!(
                     request["params"]["client_submission_id"],
                     format!("retry-{index}")
@@ -1188,12 +1199,24 @@ mod tests {
 
         let current = Client::connect(&socket)
             .unwrap()
-            .retry_execution("run-failed", RetryRouting::Current, "retry-0")
+            .retry_execution(
+                "run-failed",
+                RetryRouting::Current,
+                "provider/current",
+                "medium",
+                "retry-0",
+            )
             .unwrap();
         assert_eq!(current.run_id, "run-retry-0");
         let original = Client::connect(&socket)
             .unwrap()
-            .retry_execution("run-failed", RetryRouting::Original, "retry-1")
+            .retry_execution(
+                "run-failed",
+                RetryRouting::Original,
+                "provider/current",
+                "medium",
+                "retry-1",
+            )
             .unwrap();
         assert_eq!(original.run_id, "run-retry-1");
 

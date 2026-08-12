@@ -17,6 +17,7 @@ func TestActionEnvelopeStreamDecoderExposesOnlyConfirmedDoneSummary(t *testing.T
 		{name: "flat done", chunks: []string{`{"thought":"private","tool":"done","summary":"hel`, `lo"}`}, want: "hello"},
 		{name: "nested done", chunks: []string{`{"thought":"private","action":{"tool":"done",`, `"summary":"nested"}}`}, want: "nested"},
 		{name: "tool args", chunks: []string{`{"thought":"private","tool":"patch",`, `"content":"secret patch"}`}},
+		{name: "structured report wrapper", chunks: []string{`{"tool":"done","summary":"{\"summary\":\"report\",`, `\"risks\":[\"one\"]}"}`}},
 		{name: "unfinished valid prefix", chunks: []string{`{"tool":"done","summary":"never"`}, want: "never"},
 	}
 	for _, test := range tests {

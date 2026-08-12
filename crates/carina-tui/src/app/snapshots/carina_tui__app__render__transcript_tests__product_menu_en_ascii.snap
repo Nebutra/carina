@@ -1,0 +1,48 @@
+---
+source: crates/carina-tui/src/app/render.rs
+expression: rendered_frame_contract(terminal.backend().buffer())
+---
+size=80x24
+Carina v   |  product-menu conversation                           model   Build
+────────────────────────────────────────────────────────────────────────────────
+┌ Carina menu ─────────────┐
+│> New conversation        │
+│  Conversations           │
+│  Status                  │
+│  Settings                │
+│  Help                    │
+└──────────────────────────┘
+
+
+
+
+
+
+
+
+
+   Ready in product-menu
+   Describe the change you want to make.
+
+
+ ──────────────────────────────────────────────────────────────────────────────
+ >
+styles:
+(0,0)..(9,0) (Reset, Reset, BOLD)
+(65,0)..(72,0) (Reset, Reset, DIM)
+(73,0)..(80,0) (Reset, Reset, BOLD)
+(0,2)..(28,2) (Reset, Reset, BOLD)
+(0,3)..(1,3) (Reset, Reset, BOLD)
+(1,3)..(27,3) (Reset, Reset, BOLD | REVERSED)
+(27,3)..(28,3) (Reset, Reset, BOLD)
+(0,4)..(1,4) (Reset, Reset, BOLD)
+(27,4)..(28,4) (Reset, Reset, BOLD)
+(0,5)..(1,5) (Reset, Reset, BOLD)
+(27,5)..(28,5) (Reset, Reset, BOLD)
+(0,6)..(1,6) (Reset, Reset, BOLD)
+(27,6)..(28,6) (Reset, Reset, BOLD)
+(0,7)..(1,7) (Reset, Reset, BOLD)
+(27,7)..(28,7) (Reset, Reset, BOLD)
+(0,8)..(28,8) (Reset, Reset, BOLD)
+(3,18)..(24,18) (Reset, Reset, BOLD)
+(1,23)..(3,23) (Reset, Reset, DIM)

@@ -495,8 +495,8 @@ func TestFindNamePositionRespectsTokenBoundaries(t *testing.T) {
 
 // TestCodeDefLSPReadIsKernelGated: the LSP file read is a file read — it must
 // go through the kernel FileRead gate. When the indexed path now resolves
-// outside the workspace (symlink swap), no content may be read, no language
-// server may spawn, and the tool degrades to tree-sitter.
+// outside the workspace (symlink swap), the staleness sweep removes the denied
+// path before lookup: no content may be read and no language server may spawn.
 func TestCodeDefLSPReadIsKernelGated(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
@@ -536,8 +536,8 @@ func TestCodeDefLSPReadIsKernelGated(t *testing.T) {
 	if strings.Contains(obs, "outside-secret") {
 		t.Fatalf("out-of-workspace content leaked: %s", obs)
 	}
-	if !strings.Contains(obs, "tree-sitter") {
-		t.Fatalf("denied LSP read must degrade to tree-sitter, got: %s", obs)
+	if obs != "no symbol named zz_gated_def" {
+		t.Fatalf("a denied path must be removed from the index before lookup, got: %s", obs)
 	}
 }
 

@@ -1,5 +1,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolKind {
+    /// Presentation-only aggregate for adjacent, read-only discovery tools.
+    Explore,
     Read,
     List,
     Search,
@@ -48,19 +50,20 @@ impl ToolKind {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Explore => "Explore",
             Self::Read => "Read",
             Self::List => "List",
             Self::Search => "Search",
             Self::Run => "Run",
             Self::Patch => "Edit",
             Self::Diff => "Changes",
-            Self::CodeSearch => "Code search",
-            Self::CodeSymbols => "Symbols",
-            Self::CodeMap => "Code map",
-            Self::CodeDefinition => "Definition",
-            Self::CodeReferences => "References",
+            Self::CodeSearch => "Code",
+            Self::CodeSymbols => "Symbol",
+            Self::CodeMap => "Map",
+            Self::CodeDefinition => "Def",
+            Self::CodeReferences => "Refs",
             Self::CodeImpact => "Impact",
-            Self::McpFind => "Find tool",
+            Self::McpFind => "Find",
             Self::Mcp => "MCP",
             Self::Delegate => "Delegate",
             Self::Workflow => "Workflow",
@@ -78,6 +81,22 @@ impl ToolKind {
         matches!(
             self,
             Self::CodeSearch
+                | Self::CodeSymbols
+                | Self::CodeMap
+                | Self::CodeDefinition
+                | Self::CodeReferences
+                | Self::CodeImpact
+        )
+    }
+
+    pub fn is_exploration(self) -> bool {
+        matches!(
+            self,
+            Self::Explore
+                | Self::Read
+                | Self::List
+                | Self::Search
+                | Self::CodeSearch
                 | Self::CodeSymbols
                 | Self::CodeMap
                 | Self::CodeDefinition
@@ -166,11 +185,13 @@ pub fn visible_output_lines_with_limits(
 /// Truncation / ellipsis / separator copy is applied by
 /// [`crate::i18n::tool_group_title`] so product glyphs stay on the i18n boundary.
 pub fn tool_group_path_titles<'a>(titles: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
-    titles
-        .into_iter()
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .collect()
+    let mut unique = Vec::new();
+    for title in titles.into_iter().map(str::trim) {
+        if !title.is_empty() && !unique.contains(&title) {
+            unique.push(title);
+        }
+    }
+    unique
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -260,6 +281,7 @@ fn pad_tool_label(label: &str) -> String {
 pub fn present(facts: &ToolFacts, failed: bool) -> ToolPresentation {
     let kind = ToolKind::from_name(&facts.name);
     let target = match kind {
+        ToolKind::Explore => "",
         ToolKind::Read | ToolKind::Patch => first(&facts.path, &facts.affected_files),
         ToolKind::List => "workspace",
         ToolKind::Search => &facts.pattern,
@@ -579,7 +601,7 @@ mod tests {
     fn tool_group_path_titles_skips_empty() {
         assert!(tool_group_path_titles([]).is_empty());
         assert_eq!(
-            tool_group_path_titles(["a.rs", "", "  ", "b.rs"]),
+            tool_group_path_titles(["a.rs", "", "  ", "b.rs", "a.rs"]),
             vec!["a.rs", "b.rs"]
         );
     }

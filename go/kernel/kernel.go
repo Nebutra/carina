@@ -473,6 +473,15 @@ type IndexReport struct {
 	Chunks    int           `json:"chunks"`
 }
 
+type IndexStatus struct {
+	Ready        bool     `json:"ready"`
+	Files        int      `json:"files"`
+	Symbols      int      `json:"symbols"`
+	Edges        int      `json:"edges"`
+	Chunks       int      `json:"chunks"`
+	IndexedPaths []string `json:"indexed_paths"`
+}
+
 // SkippedFile is one path the index build/update did not ingest.
 type SkippedFile struct {
 	Path   string `json:"path"`
@@ -491,6 +500,9 @@ func (s *Service) IndexBuild(sessionID string, paths []string) (*IndexReport, er
 // IndexUpdate invalidates and re-ingests changed paths (and drops deleted
 // ones) after a patch apply/rollback.
 func (s *Service) IndexUpdate(sessionID string, changed, deleted []string) (*IndexReport, error) {
+	if changed == nil {
+		changed = []string{}
+	}
 	params := map[string]any{"session_id": sessionID, "changed_paths": changed}
 	if len(deleted) > 0 {
 		params["deleted_paths"] = deleted
@@ -498,6 +510,14 @@ func (s *Service) IndexUpdate(sessionID string, changed, deleted []string) (*Ind
 	var r IndexReport
 	err := s.call("kernel.index.update", params, &r)
 	return &r, err
+}
+
+// IndexStatus returns aggregate counts and the governed relative-path inventory
+// of an existing workspace index. It never creates an empty index.
+func (s *Service) IndexStatus(sessionID string) (*IndexStatus, error) {
+	var out IndexStatus
+	err := s.call("kernel.index.status", map[string]any{"session_id": sessionID}, &out)
+	return &out, err
 }
 
 // IndexSearch runs governed keyword search (FTS5 BM25 + exact, RRF-fused).

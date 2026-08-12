@@ -52,6 +52,24 @@ import Callout from '../../../../components/ui/Callout.astro';
 
 这些工具输出机器可读 JSON，但**不会绕过能力内核**。原生工具负责快速、确定地执行；是否允许执行仍由策略决定。
 
+## 代码智能
+
+| 工具 | 结果 |
+| --- | --- |
+| `code.search` | 排序后的关键词与语义匹配 |
+| `code.symbols` / `code.def` / `code.refs` | 定义、引用与精度来源 |
+| `code.impact` | 受治理的传递依赖影响范围 |
+| `code.map` | 工作区符号图的 token 有界投影 |
+
+大型工作区首次使用时不会让 Agent 阻塞等待完整扫描。Carina 为每个工作区维护一份可恢复的完整图，并在后台按有界批次构建。构建期间，`code.map` 会返回明确进度和当前可用的局部语义投影；首个语义批次就绪前使用元数据概览。daemon 重启后，只有持久化源指纹仍与工作区匹配时才会复用已完成图。
+
+```text frame="none"
+Index coverage: complete; graph: 6434 indexed files, 44120 symbols, 228788 edges, 82687 chunks;
+projection: 37/5689 files and 37/44120 symbols (pagerank-domain-diverse, about 1017 tokens).
+```
+
+有限投影不会伪装成完整符号转储。PageRank 提供全局相关性；选择器先覆盖不同顶层域和已排序文件，再为同一文件分配更多符号。每个保留符号都携带全局排名以及入边、出边数量。摄取、状态检查和图读取仍同时受会话 `CodeIndex` 与 `FileRead` 策略约束。
+
 ## 安全规则
 
 1. 每个工具声明所需能力。

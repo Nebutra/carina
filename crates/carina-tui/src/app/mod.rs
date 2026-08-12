@@ -63,8 +63,8 @@ use crate::native_scrollback::{
 };
 use crate::overlay::{
     AgentDashboardOverlay, ApprovalScope, ChangesFocus, ChangesOverlay, HelpOverlay, Overlay,
-    OverlayStack, PlanReviewOverlay, QueueOverlay, RetainedLoad, SettingsOverlay, SettingsPage,
-    StatusOverlay,
+    OverlayStack, PRODUCT_MENU_ITEMS, PlanReviewOverlay, ProductMenuOverlay, QueueOverlay,
+    RetainedLoad, SettingsOverlay, SettingsPage, StatusOverlay,
 };
 use crate::patch_review::{PatchReview, project_patch_reviews};
 use crate::prerequisite::ProviderPickerState;
@@ -524,6 +524,8 @@ pub struct App {
     pending_pastes: HashMap<u64, crate::clipboard_image::PendingPaste>,
     submit_after_paste: bool,
     composer_area: Rect,
+    product_menu_anchor: Option<Rect>,
+    composer_pointer_captured: bool,
     slash_selected: usize,
     slash_selected_id: Option<String>,
     slash_dismissed_input: Option<String>,
@@ -632,6 +634,29 @@ impl App {
                                 | crate::semantic_cell::SemanticCellKind::ToolGroup
                         )
             })
+    }
+
+    fn reconcile_mandatory_disclosures(&mut self) -> bool {
+        let mandatory = self
+            .blocks
+            .iter()
+            .filter(|block| {
+                block.failure.is_some()
+                    || block
+                        .tool_members
+                        .iter()
+                        .any(crate::transcript::ToolGroupMember::is_failure)
+            })
+            .map(|block| block.id.clone())
+            .collect::<Vec<_>>();
+        let mut changed = false;
+        for id in mandatory {
+            if self.tool_disclosure_overrides.get(&id) == Some(&false) {
+                self.tool_disclosure_overrides.remove(&id);
+                changed = true;
+            }
+        }
+        changed
     }
 
     fn clear_transcript_projection_caches(&mut self) {
@@ -903,6 +928,8 @@ impl App {
             pending_pastes: HashMap::new(),
             submit_after_paste: false,
             composer_area: Rect::default(),
+            product_menu_anchor: None,
+            composer_pointer_captured: false,
             slash_selected: 0,
             slash_selected_id: None,
             slash_dismissed_input: None,
@@ -1533,13 +1560,7 @@ impl App {
             self.cancel_pending_pastes();
         }
         self.context_completion.reset_session();
-        if self
-            .models
-            .iter()
-            .any(|model| model.id == session.next_model)
-        {
-            self.selected_model = session.next_model.clone();
-        }
+        self.sync_selection_from_session(&session);
         let hydrated_overlays = OverlayStack::hydrate_governance(&items);
         self.execution_lifecycle.clear();
         self.tool_disclosure_overrides.clear();
@@ -1825,14 +1846,7 @@ impl App {
         self.inventory = inventory;
         self.sessions = sessions;
         self.models = self.inventory.available_models();
-        if let Some(index) = self
-            .models
-            .iter()
-            .position(|model| model.id == session.next_model)
-        {
-            self.model_index = index;
-            self.selected_model = session.next_model.clone();
-        }
+        self.sync_selection_from_session(&session);
         self.tool_disclosure_overrides.clear();
         self.blocks = self.transcript_reducer.hydrate(items);
         self.scrollback.reset();
@@ -2643,9 +2657,13 @@ impl App {
                                         && lifecycle == Some(ExecutionLifecycle::Completed)
                                 })
                             });
-                            visual_changed |= self
+                            let transcript_changed = self
                                 .transcript_reducer
                                 .reduce_event(&mut self.blocks, event);
+                            visual_changed |= transcript_changed;
+                            if transcript_changed {
+                                visual_changed |= self.reconcile_mandatory_disclosures();
+                            }
                             if let Some(reference) = artifact_ref {
                                 self.scrollback
                                     .hold_tool_call(&self.blocks, &reference.call_id);
@@ -3659,13 +3677,23 @@ impl App {
         if !retry_dispatch_allowed(&self.blocks, self.retained_run_id(), original_run_id) {
             return;
         }
-        match self
-            .rpc
-            .retry_execution(original_run_id, routing, &operation_id("retry"))
-        {
+        match self.rpc.retry_execution(
+            original_run_id,
+            routing,
+            &self.selected_model,
+            &self.selected_reasoning_effort,
+            &operation_id("retry"),
+        ) {
             Ok(execution) => {
                 self.failure_action_focus = None;
                 self.focus = Focus::Composer;
+                let retry_root_run_id = self.blocks.iter().find_map(|block| {
+                    block
+                        .failure
+                        .as_ref()
+                        .filter(|failure| failure.run_id == original_run_id)
+                        .map(|failure| failure.retry_root_run_id.clone())
+                });
                 let mut failure_changed = false;
                 for block in &mut self.blocks {
                     let Some(failure) = block
@@ -3682,6 +3710,14 @@ impl App {
                     failure.focused_action = None;
                     block.layout_revision = block.layout_revision.saturating_add(1);
                     failure_changed = true;
+                }
+                if let Some(retry_root_run_id) = retry_root_run_id
+                    && let Some(user) = self
+                        .blocks
+                        .iter_mut()
+                        .find(|block| block.id == format!("user:{retry_root_run_id}"))
+                {
+                    user.run_id.clone_from(&execution.run_id);
                 }
                 if failure_changed {
                     self.clear_transcript_projection_caches();
@@ -4662,6 +4698,17 @@ impl App {
             .replace(Overlay::Help(HelpOverlay { scroll: 0 }));
     }
 
+    fn toggle_product_menu(&mut self) {
+        match self.overlays.active() {
+            Some(Overlay::ProductMenu(_)) => self.overlays.resolve_active(),
+            None if self.phase == Phase::Conversation => {
+                self.overlays
+                    .replace(Overlay::ProductMenu(ProductMenuOverlay::default()));
+            }
+            Some(_) | None => {}
+        }
+    }
+
     fn open_plan_review(&mut self) {
         let review = (!self.has_retained_run())
             .then(|| self.active_session.as_ref().and_then(plan_review_overlay))
@@ -4997,6 +5044,18 @@ impl App {
         let fullscreen_changes = self.options.screen_mode == Some(ScreenMode::Fullscreen);
         let locale = self.ui_locale();
         match self.overlays.active_mut() {
+            Some(Overlay::ProductMenu(menu)) => match key.code {
+                KeyCode::Up | KeyCode::BackTab => menu.selected = menu.selected.saturating_sub(1),
+                KeyCode::Down | KeyCode::Tab => {
+                    menu.selected =
+                        (menu.selected + 1).min(PRODUCT_MENU_ITEMS.len().saturating_sub(1));
+                }
+                KeyCode::Home => menu.selected = 0,
+                KeyCode::End => menu.selected = PRODUCT_MENU_ITEMS.len().saturating_sub(1),
+                KeyCode::Enter => deferred = product_menu_action(menu.selected),
+                KeyCode::Esc => deferred = Some(Action::CloseOverlay),
+                _ => {}
+            },
             Some(Overlay::Approval(approval)) => match key.code {
                 KeyCode::Left | KeyCode::BackTab => {
                     let index = ApprovalScope::ALL
@@ -6115,6 +6174,7 @@ impl App {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                self.composer_pointer_captured = false;
                 if self.overlays.active().is_none() && self.phase == Phase::Conversation {
                     let (handled, next_scroll) = self
                         .transcript_scrollbar
@@ -6130,7 +6190,23 @@ impl App {
                 }
                 self.transcript_scrollbar_interaction.release();
                 let action = self.interactions.action_at(position);
-                if let Some(action) = action {
+                if action == Some(Action::FocusComposer)
+                    && self.overlays.active().is_none()
+                    && self.phase == Phase::Conversation
+                    && self.composer_area.contains(position)
+                {
+                    self.media.set_hovered(None);
+                    let _ =
+                        self.composer
+                            .handle_mouse(mouse, self.composer_area, self.composer_state);
+                    while let Some(event) = self.composer.poll_element_event() {
+                        if event.kind == TextElementEventKind::Click {
+                            self.media.set_hovered(Some(event.id));
+                        }
+                    }
+                    self.focus = Focus::Composer;
+                    self.composer_pointer_captured = true;
+                } else if let Some(action) = action {
                     self.media.set_hovered(None);
                     self.apply_action(action);
                 } else if self.overlays.active().is_none()
@@ -6147,6 +6223,7 @@ impl App {
                         }
                     }
                     self.focus = Focus::Composer;
+                    self.composer_pointer_captured = true;
                 } else {
                     self.media.set_hovered(None);
                 }
@@ -6165,8 +6242,28 @@ impl App {
                     self.dirty = true;
                 }
             }
+            MouseEventKind::Drag(MouseButton::Left)
+                if self.overlays.active().is_none()
+                    && self.phase == Phase::Conversation
+                    && self.composer_pointer_captured =>
+            {
+                let _ = self
+                    .composer
+                    .handle_mouse(mouse, self.composer_area, self.composer_state);
+                self.dirty = true;
+            }
             MouseEventKind::Up(MouseButton::Left) => {
                 if self.transcript_scrollbar_interaction.release() {
+                    self.composer_pointer_captured = false;
+                    self.dirty = true;
+                } else if self.overlays.active().is_none()
+                    && self.phase == Phase::Conversation
+                    && self.composer_pointer_captured
+                {
+                    let _ =
+                        self.composer
+                            .handle_mouse(mouse, self.composer_area, self.composer_state);
+                    self.composer_pointer_captured = false;
                     self.dirty = true;
                 }
             }
@@ -6404,7 +6501,16 @@ impl App {
             Action::SelectSession(index) => {
                 self.open_selected_session(Some(index));
             }
-            Action::CreateSession => self.create_session_from_browser(),
+            Action::CreateSession => {
+                if self.phase == Phase::Conversation {
+                    self.close_top_non_governance();
+                    self.session_browser
+                        .open(&self.sessions, &self.options.workspace);
+                    self.phase = Phase::Session;
+                    self.focus = Focus::Scene;
+                }
+                self.create_session_from_browser();
+            }
             Action::BeginRenameSession => self.begin_selected_session_rename(),
             Action::ConfirmRenameSession => self.confirm_session_rename(),
             Action::CancelRenameSession => self.session_browser.cancel_rename(),
@@ -6450,6 +6556,7 @@ impl App {
                 self.retry_failed_execution(&run_id, routing)
             }
             Action::CopyFailureId(id) => self.copy_failure_id(&id),
+            Action::ToggleProductMenu => self.toggle_product_menu(),
             Action::OpenSessions => {
                 self.close_top_non_governance();
                 self.open_session_browser();
@@ -6466,6 +6573,9 @@ impl App {
             Action::ToggleDensity => self.toggle_density(),
             Action::OpenQueue => self.open_queue_overlay(),
             Action::OpenStatus => {
+                if matches!(self.overlays.active(), Some(Overlay::ProductMenu(_))) {
+                    self.close_top_non_governance();
+                }
                 let session_id = self
                     .active_session
                     .as_ref()
@@ -6482,6 +6592,7 @@ impl App {
                     }
                 }
             }
+            Action::OpenHelp => self.open_help_overlay(),
             Action::OpenAgents | Action::RefreshAgents => self.request_agents(),
             Action::OpenChanges | Action::RefreshChanges => self.request_changes(),
             Action::BeginPatchRollback => {
@@ -6800,6 +6911,19 @@ impl App {
         self.selected_reasoning_effort = self.resolve_reasoning_effort_for_selection(&previous);
     }
 
+    fn sync_selection_from_session(&mut self, session: &Session) {
+        if let Some(index) = self
+            .models
+            .iter()
+            .position(|model| model.id == session.next_model)
+        {
+            self.model_index = index;
+            self.selected_model = session.next_model.clone();
+        }
+        self.selected_reasoning_effort =
+            self.resolve_reasoning_effort_for_selection(&session.next_reasoning_effort);
+    }
+
     fn cycle_reasoning_effort(&mut self, forward: bool) {
         let efforts = self.model_reasoning_efforts();
         if efforts.len() < 2 {
@@ -7101,6 +7225,12 @@ fn settings_action(index: usize) -> Option<Action> {
         9 => Some(Action::CloseOverlay),
         _ => None,
     }
+}
+
+fn product_menu_action(index: usize) -> Option<Action> {
+    PRODUCT_MENU_ITEMS
+        .get(index)
+        .map(|item| item.action.clone())
 }
 
 fn normalize_shift_tab(mut key: KeyEvent) -> KeyEvent {
@@ -7559,6 +7689,12 @@ pub fn run(options: Options) -> Result<Outcome> {
                 );
                 scheduler.request(RedrawReason::Media, Instant::now());
             }
+        }
+        // Rendering may discover that retained pointer ownership changed after
+        // the current frame rebuilt its hit geometry. Schedule that correction
+        // before blocking for external input.
+        if app.dirty {
+            continue;
         }
         if !app.quit && !app.wait_for_work(app.next_wake_deadline(scheduler.deadline())) {
             break;

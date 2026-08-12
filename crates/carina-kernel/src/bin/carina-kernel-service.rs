@@ -121,6 +121,7 @@ impl Service {
             "kernel.patch.show" => self.patch_show(p),
             "kernel.index.build" => self.index_build(p),
             "kernel.index.update" => self.index_update(p),
+            "kernel.index.status" => self.index_status(p),
             "kernel.index.search" => self.index_search(p),
             "kernel.index.pending_chunks" => self.index_pending_chunks(p),
             "kernel.index.embed_store" => self.index_embed_store(p),
@@ -1089,6 +1090,27 @@ impl Service {
         Ok(result)
     }
 
+    /// Returns only aggregate readiness metadata and indexed relative paths.
+    /// The path inventory is derived read access, so this uses the same
+    /// CodeIndex gate as every query and never creates an empty database.
+    fn index_status(&mut self, p: &Value) -> Result<Value, String> {
+        let session_id = str_param(p, "session_id")?;
+        let state_dir = self.state_dir.clone();
+        let ctx = self.ctx(p)?;
+        index_gate(ctx, &session_id, "index status".into())?;
+        let index = existing_index(&state_dir, ctx)?;
+        let stats = index.stats().map_err(index_err)?;
+        let indexed_paths = index.indexed_paths().map_err(index_err)?;
+        Ok(json!({
+            "ready": true,
+            "files": stats.files,
+            "symbols": stats.symbols,
+            "edges": stats.edges,
+            "chunks": stats.chunks,
+            "indexed_paths": indexed_paths,
+        }))
+    }
+
     fn index_search(&mut self, p: &Value) -> Result<Value, String> {
         let session_id = str_param(p, "session_id")?;
         let query = str_param(p, "query")?;
@@ -1489,6 +1511,7 @@ impl Service {
             format!("index map budget={}", opts.token_budget),
         )?;
         let index = existing_index(&state_dir, ctx)?;
+        let stats = index.stats().map_err(index_err)?;
         let map = index.repo_map(&opts).map_err(index_err)?;
 
         // Decision-linked completion status event (same idiom as
@@ -1516,8 +1539,15 @@ impl Service {
 
         Ok(json!({
             "map": map.text,
-            "ranked": map.ranked,
             "token_estimate": map.token_estimate,
+            "symbols_total": map.symbols_total,
+            "symbols_included": map.symbols_included,
+            "files_total": map.files_total,
+            "files_included": map.files_included,
+            "indexed_files": stats.files,
+            "edges_total": stats.edges,
+            "chunks_total": stats.chunks,
+            "projection": "pagerank-domain-diverse",
         }))
     }
 }

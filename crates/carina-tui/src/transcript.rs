@@ -379,6 +379,19 @@ impl TranscriptReducer {
             .get(run_id)
             .map(RunMetadata::actual_model)
             .unwrap_or_default();
+        let (retry_root_run_id, attempt_count) = self.retry_lineage(run_id);
+        FailureContext {
+            model,
+            retry_root_run_id,
+            attempt_count,
+        }
+    }
+
+    fn retry_lineage(&self, run_id: &str) -> (String, usize) {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return (String::new(), 0);
+        }
         let mut retry_root_run_id = run_id.to_owned();
         let mut attempt_count = 1;
         let mut cursor = run_id;
@@ -396,11 +409,32 @@ impl TranscriptReducer {
             attempt_count += 1;
             cursor = parent;
         }
-        FailureContext {
-            model,
-            retry_root_run_id,
-            attempt_count,
+        (retry_root_run_id, attempt_count)
+    }
+
+    fn user_block_identity(&self, fallback_id: String, run_id: &str) -> String {
+        let (retry_root_run_id, _) = self.retry_lineage(run_id);
+        if retry_root_run_id.is_empty() {
+            fallback_id
+        } else {
+            retry_root_run_id
         }
+    }
+
+    fn upsert_user_block(
+        &self,
+        blocks: &mut Vec<TranscriptBlock>,
+        fallback_id: String,
+        run_id: String,
+        prompt: String,
+    ) -> bool {
+        let id = self.user_block_identity(fallback_id, &run_id);
+        let canonical_id = format!("user:{id}");
+        let retry_id = format!("user:{run_id}");
+        if retry_id != canonical_id {
+            blocks.retain(|block| block.id != retry_id || block.kind != BlockKind::User);
+        }
+        upsert_block(blocks, user_block(id, run_id, prompt))
     }
 
     fn mark_failure_recovering(&self, blocks: &mut [TranscriptBlock], run_id: &str) -> bool {
@@ -480,6 +514,10 @@ impl TranscriptReducer {
             }
             "PolicyViolation" => self.reduce_policy_event(blocks, event),
             "ExecutionFailed" | "ExecutionInterrupted" | "ExecutionCancelled" => {
+                // Terminal events repeat route and retry ancestry so they can
+                // reconstruct one truthful failure chain after reconnect even
+                // when an earlier queued event was not observed.
+                self.record_run_metadata(&event.run_id, &event.payload);
                 let context = self.failure_context(&event.run_id);
                 failure_block_from_event(event, context)
                     .map(|block| upsert_block(blocks, block))
@@ -655,9 +693,20 @@ impl TranscriptReducer {
         blocks: &mut Vec<TranscriptBlock>,
         event: WireEvent,
     ) -> bool {
-        let raw = first_detail(&event.payload, &["text", "content", "message", "result"])
-            .unwrap_or_default();
-        let text = visible_assistant_text(&raw).unwrap_or_default();
+        let raw = first_detail(
+            &event.payload,
+            &["presentation_text", "text", "content", "message", "result"],
+        )
+        .unwrap_or_default();
+        let text = visible_assistant_text_with_mode(
+            &raw,
+            !event
+                .payload
+                .get("structured_output")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        )
+        .unwrap_or_default();
         if text.is_empty() {
             return false;
         }
@@ -751,7 +800,15 @@ impl TranscriptReducer {
             return false;
         }
         // Same content-type channel as ModelResponded / agent_message hydration.
-        let display = visible_assistant_text(&stream.body).unwrap_or_default();
+        let display = visible_assistant_text_with_mode(
+            &stream.body,
+            !event
+                .payload
+                .get("structured_output")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        )
+        .unwrap_or_default();
         if display.is_empty() {
             // Suppressed action JSON mid-stream: drop the block if present.
             let id = format!("assistant:{}", event.run_id);
@@ -787,6 +844,7 @@ impl TranscriptReducer {
         } else {
             item.id.clone()
         };
+        self.record_run_metadata(&item.run_id, &item.details);
         match item.kind.as_str() {
             // Governance is retained by OverlayStack. Rendering either the
             // pending or resolved item here duplicates the input owner as an
@@ -916,10 +974,24 @@ impl TranscriptReducer {
             "agent_message" => {
                 let raw = first_detail(
                     &item.details,
-                    &["text", "content", "message", "result", "summary"],
+                    &[
+                        "presentation_text",
+                        "text",
+                        "content",
+                        "message",
+                        "result",
+                        "summary",
+                    ],
                 )
                 .unwrap_or_default();
-                if let Some(text) = visible_assistant_text(&raw) {
+                if let Some(text) = visible_assistant_text_with_mode(
+                    &raw,
+                    !item
+                        .details
+                        .get("structured_output")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                ) {
                     let message_id = if item.run_id.is_empty() {
                         item_id
                     } else {
@@ -942,7 +1014,8 @@ impl TranscriptReducer {
                     first_detail(&item.details, &["user_prompt", "prompt", "text", "content"])
                         .unwrap_or_default();
                 if !prompt.is_empty() {
-                    upsert_block(blocks, user_block(item_id, item.run_id, prompt));
+                    let run_id = item.run_id;
+                    self.upsert_user_block(blocks, item_id, run_id, prompt);
                 }
             }
             _ => {
@@ -972,8 +1045,8 @@ impl TranscriptReducer {
                 )
                 .unwrap_or_default();
                 if !prompt.is_empty() {
-                    let id = first_non_empty([event.turn_id, run_id.clone()]);
-                    upsert_block(blocks, user_block(id, run_id, prompt));
+                    let fallback_id = first_non_empty([event.turn_id, run_id.clone()]);
+                    self.upsert_user_block(blocks, fallback_id, run_id, prompt);
                 }
             }
             "turn.completed" => {
@@ -981,6 +1054,16 @@ impl TranscriptReducer {
                 self.mark_failure_recovery_settled(blocks, &run_id);
                 let summary = first_detail(&event.details, &["summary", "message", "text"])
                     .unwrap_or_default();
+                let summary = if event
+                    .details
+                    .get("structured_output")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    summary
+                } else {
+                    project_structured_summary_as_markdown(&summary).unwrap_or(summary)
+                };
                 if !summary.is_empty() {
                     let id = first_non_empty([event.turn_id, event.run_id.clone()]);
                     let mut answer = message_block(
@@ -998,6 +1081,7 @@ impl TranscriptReducer {
             "turn.failed" => {
                 let source_event_id = event.source_event_id;
                 let run_id = first_non_empty([event.run_id, event.turn_id]);
+                self.record_run_metadata(&run_id, &event.details);
                 let context = self.failure_context(&run_id);
                 let source_type = detail(&event.details, "source_type").unwrap_or_default();
                 let reason_code = detail(&event.details, "reason_code").unwrap_or_default();
@@ -1142,12 +1226,9 @@ fn tool_block(record: &ToolRecord) -> TranscriptBlock {
     } else {
         (0, 0)
     };
-    // Successful edits start collapsed (title + stats + expand hatch). Failures,
-    // plans, and code-intel stay open so risk stays visible.
-    let expanded = if is_failure_status(&record.status)
-        || matches!(kind, ToolKind::Todo)
-        || kind.is_code_intelligence()
-    {
+    // Failures and plans stay open so risk and next steps remain visible.
+    // Successful code-intel is evidence, not dialogue, and settles collapsed.
+    let expanded = if is_failure_status(&record.status) || matches!(kind, ToolKind::Todo) {
         !presentation.body.is_empty() || !presentation.todo_items.is_empty()
     } else if matches!(kind, ToolKind::Patch | ToolKind::Diff) {
         false
@@ -1344,6 +1425,16 @@ fn simple_block_from_event(event: WireEvent) -> Option<TranscriptBlock> {
         event.summary.clone(),
         first_detail(&event.payload, &["summary", "message"]).unwrap_or_default(),
     ]);
+    let terminal_summary = if event
+        .payload
+        .get("structured_output")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        terminal_summary
+    } else {
+        project_structured_summary_as_markdown(&terminal_summary).unwrap_or(terminal_summary)
+    };
     let kind = if classified == BlockKind::Status
         && event.clears_active_execution()
         && !terminal_summary.is_empty()
@@ -1719,14 +1810,11 @@ fn upsert_tool_block(blocks: &mut Vec<TranscriptBlock>, block: TranscriptBlock) 
 }
 
 fn tool_blocks_are_groupable(existing: &TranscriptBlock, incoming: &TranscriptBlock) -> bool {
-    let Some(kind) = existing.tool_kind else {
+    let (Some(existing_kind), Some(incoming_kind)) = (existing.tool_kind, incoming.tool_kind)
+    else {
         return false;
     };
-    if incoming.tool_kind != Some(kind)
-        || kind == ToolKind::Todo
-        || existing.run_id.is_empty()
-        || existing.run_id != incoming.run_id
-    {
+    if existing.run_id.is_empty() || existing.run_id != incoming.run_id {
         return false;
     }
     // Fail/cancel never join a success group (and a failed group never absorbs
@@ -1743,7 +1831,13 @@ fn tool_blocks_are_groupable(existing: &TranscriptBlock, incoming: &TranscriptBl
     if existing_has_failure || incoming_has_failure {
         return false;
     }
-    if kind != ToolKind::Extension {
+    if existing_kind.is_exploration() && incoming_kind.is_exploration() {
+        return true;
+    }
+    if existing_kind != incoming_kind || existing_kind == ToolKind::Todo {
+        return false;
+    }
+    if existing_kind != ToolKind::Extension {
         return true;
     }
     existing
@@ -1754,10 +1848,27 @@ fn tool_blocks_are_groupable(existing: &TranscriptBlock, incoming: &TranscriptBl
 }
 
 fn refresh_tool_group(block: &mut TranscriptBlock) {
-    let Some(kind) = block.tool_kind else { return };
     if block.tool_members.len() < 2 {
         return;
     }
+    let mut member_kinds = block
+        .tool_members
+        .iter()
+        .map(|member| ToolKind::from_name(&member.tool_name));
+    let Some(first_kind) = member_kinds.next() else {
+        return;
+    };
+    let kind = if member_kinds.clone().all(|kind| kind == first_kind) {
+        first_kind
+    } else if std::iter::once(first_kind)
+        .chain(member_kinds)
+        .all(ToolKind::is_exploration)
+    {
+        ToolKind::Explore
+    } else {
+        return;
+    };
+    block.tool_kind = Some(kind);
     block.title.clear();
     block.body.clear();
     block.body_kind = if matches!(kind, ToolKind::Patch | ToolKind::Diff) {
@@ -1789,7 +1900,12 @@ fn preserve_group_state(group: &mut TranscriptBlock, previous: &TranscriptBlock)
     let is_terminal = group.tool_members.iter().all(|member| !member.is_running());
     // Diff-bearing groups expand only on failure (or when operator expanded).
     // Successful edits stay collapsed so the transcript stays dialogue-first.
-    let requires_expansion = group.tool_members.iter().any(ToolGroupMember::is_failure);
+    let requires_expansion = group.tool_members.iter().any(|member| {
+        member.is_failure()
+            || member.is_running()
+                && !member.body.is_empty()
+                && ToolKind::from_name(&member.tool_name).is_code_intelligence()
+    });
     group.expanded = requires_expansion
         || if !is_terminal || was_terminal {
             previous.expanded
@@ -2002,7 +2118,12 @@ fn is_action_json(text: &str) -> bool {
 ///
 /// Business keys like `result`/`path` are never special-cased; structured
 /// facts belong on tool projectors, not free-form completion payloads.
+#[cfg(test)]
 fn visible_assistant_text(text: &str) -> Option<String> {
+    visible_assistant_text_with_mode(text, true)
+}
+
+fn visible_assistant_text_with_mode(text: &str, project_report: bool) -> Option<String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return None;
@@ -2023,12 +2144,120 @@ fn visible_assistant_text(text: &str) -> Option<String> {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())?;
-        return Some(summary.to_owned());
+        return Some(if project_report {
+            project_structured_summary_as_markdown(summary).unwrap_or_else(|| summary.to_owned())
+        } else {
+            project_json_document_as_markdown(summary).unwrap_or_else(|| summary.to_owned())
+        });
     }
     if let Some(fenced) = project_json_document_as_markdown(trimmed) {
         return Some(fenced);
     }
     Some(trimmed.to_owned())
+}
+
+fn project_structured_summary_as_markdown(text: &str) -> Option<String> {
+    let candidate = strip_json_fence(text);
+    let Value::Object(report) = serde_json::from_str::<Value>(candidate).ok()? else {
+        return None;
+    };
+    let lead = report.get("summary")?.as_str()?.trim();
+    if lead.is_empty() {
+        return None;
+    }
+
+    let mut keys = report
+        .keys()
+        .filter(|key| key.as_str() != "summary")
+        .cloned()
+        .collect::<Vec<_>>();
+    keys.sort_by(|left, right| {
+        report_section_rank(left)
+            .cmp(&report_section_rank(right))
+            .then_with(|| left.cmp(right))
+    });
+    let mut markdown = lead.to_owned();
+    for key in keys {
+        let Some(section) = report
+            .get(&key)
+            .and_then(|value| render_report_value(value, 0))
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        markdown.push_str("\n\n**");
+        markdown.push_str(&report_section_label(&key));
+        markdown.push_str("**\n");
+        markdown.push_str(&section);
+    }
+    Some(markdown)
+}
+
+fn report_section_rank(key: &str) -> usize {
+    [
+        "result",
+        "architecture",
+        "engineering",
+        "changes",
+        "risks",
+        "commands",
+        "tests",
+        "verification",
+        "next_steps",
+    ]
+    .iter()
+    .position(|candidate| *candidate == key)
+    .unwrap_or(100)
+}
+
+fn report_section_label(key: &str) -> String {
+    key.replace(['_', '-'], " ")
+        .split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn render_report_value(value: &Value, depth: usize) -> Option<String> {
+    if depth > 3 {
+        return None;
+    }
+    match value {
+        Value::String(value) => Some(value.trim().to_owned()).filter(|value| !value.is_empty()),
+        Value::Array(values) => {
+            let lines = values
+                .iter()
+                .filter_map(|value| render_report_value(value, depth + 1))
+                .map(|value| format!("- {}", value.replace('\n', "\n  ")))
+                .collect::<Vec<_>>();
+            (!lines.is_empty()).then(|| lines.join("\n"))
+        }
+        Value::Object(values) => {
+            let mut keys = values.keys().collect::<Vec<_>>();
+            keys.sort();
+            let lines = keys
+                .into_iter()
+                .filter_map(|key| {
+                    render_report_value(values.get(key)?, depth + 1).map(|value| {
+                        format!(
+                            "- **{}:** {}",
+                            report_section_label(key),
+                            value.replace('\n', "\n  ")
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+            (!lines.is_empty()).then(|| lines.join("\n"))
+        }
+        Value::Null => None,
+        other => Some(other.to_string()),
+    }
 }
 
 /// When the entire assistant body is one JSON object or array, render it as a
@@ -2609,6 +2838,179 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
     }
 
     #[test]
+    fn adjacent_read_only_discovery_tools_form_one_exploration_group() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        for (call_id, tool, arguments) in [
+            ("read-1", "read", json!({"path":"README.md"})),
+            ("list-1", "list", json!({"path":"workspace"})),
+            ("search-1", "search", json!({"pattern":"architecture"})),
+            ("map-1", "code.map", json!({"query":"core modules"})),
+        ] {
+            reducer.reduce_event(
+                &mut blocks,
+                wire_for_run(
+                    "ToolCallRequested",
+                    "run-explore",
+                    json!({"call_id":call_id,"tool":tool,"arguments":arguments}),
+                ),
+            );
+            reducer.reduce_event(
+                &mut blocks,
+                wire_for_run(
+                    "ToolCallCompleted",
+                    "run-explore",
+                    json!({"call_id":call_id,"tool":tool,"status":"completed"}),
+                ),
+            );
+        }
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].tool_kind, Some(ToolKind::Explore));
+        assert_eq!(blocks[0].tool_members.len(), 4);
+        assert_eq!(
+            blocks[0].localized_title(Locale::En),
+            "Explored ×4 · README.md, workspace, …"
+        );
+        assert_eq!(
+            blocks[0].localized_title(Locale::ZhHans),
+            "已探索 ×4 · README.md, workspace, …"
+        );
+        assert!(!blocks[0].expanded);
+    }
+
+    #[test]
+    fn running_code_intelligence_opens_a_previously_collapsed_exploration_group() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        apply_read(
+            &mut reducer,
+            &mut blocks,
+            "read-first",
+            "README.md",
+            Some((
+                "ToolCallCompleted",
+                json!({"call_id":"read-first","tool":"read","status":"completed"}),
+            )),
+        );
+        assert!(!blocks[0].expanded);
+
+        reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "ToolCallStarted",
+                json!({
+                    "call_id":"map-running",
+                    "tool":"code.map",
+                    "status":"running",
+                    "output":"entry -> runtime"
+                }),
+            ),
+        );
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].tool_kind, Some(ToolKind::Explore));
+        assert!(blocks[0].expanded);
+        assert!(blocks[0].tool_members[1].body.contains("entry -> runtime"));
+
+        reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "ToolCallCompleted",
+                json!({
+                    "call_id":"map-running",
+                    "tool":"code.map",
+                    "status":"completed",
+                    "output":"entry -> runtime"
+                }),
+            ),
+        );
+        assert!(!blocks[0].expanded);
+    }
+
+    #[test]
+    fn exploration_group_stops_at_run_write_and_failure_boundaries() {
+        let exploration_block = |id: &str, run_id: &str, tool: &str, status: &str| {
+            tool_block(&ToolRecord {
+                id: format!("tool:{id}"),
+                run_id: run_id.into(),
+                tool: tool.into(),
+                status: status.into(),
+                details: BTreeMap::from([(
+                    "arguments".into(),
+                    json!({"path":format!("{id}.rs"),"pattern":id}),
+                )]),
+            })
+        };
+
+        let read = exploration_block("read", "run-1", "read", "completed");
+        assert!(!tool_blocks_are_groupable(
+            &read,
+            &exploration_block("other-run", "run-2", "search", "completed")
+        ));
+        assert!(!tool_blocks_are_groupable(
+            &read,
+            &exploration_block("write", "run-1", "patch", "completed")
+        ));
+        assert!(!tool_blocks_are_groupable(
+            &read,
+            &exploration_block("failed", "run-1", "search", "failed")
+        ));
+    }
+
+    #[test]
+    fn settled_code_intelligence_collapses_but_running_and_failed_evidence_opens() {
+        for (status, expected_expanded) in
+            [("running", true), ("completed", false), ("failed", true)]
+        {
+            let block = tool_block(&ToolRecord {
+                id: format!("tool:map-{status}"),
+                run_id: "run-1".into(),
+                tool: "code.map".into(),
+                status: status.into(),
+                details: BTreeMap::from([("output".into(), json!("symbol graph"))]),
+            });
+            assert_eq!(
+                block.expanded, expected_expanded,
+                "unexpected disclosure for {status}"
+            );
+        }
+    }
+
+    #[test]
+    fn live_code_intelligence_settles_from_open_progress_to_collapsed_evidence() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "ToolCallStarted",
+                json!({
+                    "call_id":"map-live",
+                    "tool":"code.map",
+                    "status":"running",
+                    "output":"symbol graph"
+                }),
+            ),
+        ));
+        assert!(blocks[0].expanded);
+
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "ToolCallCompleted",
+                json!({
+                    "call_id":"map-live",
+                    "tool":"code.map",
+                    "status":"completed",
+                    "output":"symbol graph\nentry -> runtime"
+                }),
+            ),
+        ));
+        assert!(!blocks[0].expanded);
+        assert!(blocks[0].body.contains("entry -> runtime"));
+    }
+
+    #[test]
     fn hydration_and_live_events_share_the_group_projection() {
         let items = (1..=3)
             .map(|index| {
@@ -2644,6 +3046,79 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
 
         assert_eq!(hydrated.len(), 1);
         assert_eq!(group_snapshot(&hydrated[0]), group_snapshot(&live[0]));
+    }
+
+    #[test]
+    fn mixed_exploration_has_live_hydrate_parity() {
+        let tools = [
+            ("read-1", "read", json!({"path":"README.md"})),
+            ("list-1", "list", json!({"path":"workspace"})),
+            ("search-1", "search", json!({"pattern":"runtime"})),
+            ("map-1", "code.map", json!({"query":"entry points"})),
+        ];
+        let hydrated = TranscriptReducer::default().hydrate(
+            tools
+                .iter()
+                .map(|(id, tool, arguments)| {
+                    let mut item = item_with_id(
+                        id,
+                        "tool_call",
+                        "completed",
+                        json!({"tool":tool,"arguments":arguments}),
+                    );
+                    item.run_id = "run-explore".into();
+                    item.turn_id = "run-explore".into();
+                    item.item.as_mut().expect("item exists").run_id = "run-explore".into();
+                    item
+                })
+                .collect(),
+        );
+
+        let mut reducer = TranscriptReducer::default();
+        let mut live = Vec::new();
+        for (id, tool, arguments) in tools {
+            reducer.reduce_event(
+                &mut live,
+                wire_for_run(
+                    "ToolCallRequested",
+                    "run-explore",
+                    json!({"call_id":id,"tool":tool,"arguments":arguments}),
+                ),
+            );
+            reducer.reduce_event(
+                &mut live,
+                wire_for_run(
+                    "ToolCallCompleted",
+                    "run-explore",
+                    json!({"call_id":id,"tool":tool,"status":"completed"}),
+                ),
+            );
+        }
+
+        assert_eq!(hydrated.len(), 1);
+        assert_eq!(group_snapshot(&hydrated[0]), group_snapshot(&live[0]));
+    }
+
+    #[test]
+    fn user_message_is_a_hard_exploration_group_boundary() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        apply_read(&mut reducer, &mut blocks, "before-user", "README.md", None);
+        blocks.push(user_block(
+            "run-follow-up".into(),
+            "run-follow-up".into(),
+            "Check the runtime too".into(),
+        ));
+        reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "ToolCallRequested",
+                json!({"call_id":"after-user","tool":"search","arguments":{"pattern":"runtime"}}),
+            ),
+        );
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].tool_kind, Some(ToolKind::Read));
+        assert_eq!(blocks[2].tool_kind, Some(ToolKind::Search));
     }
 
     #[test]
@@ -2827,6 +3302,60 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             json!({"text": r#"{"tool":"read","path":"main.go"}"#}),
         )]);
         assert!(hidden_blocks.is_empty());
+    }
+
+    #[test]
+    fn structured_done_report_becomes_readable_markdown_live_and_replayed() {
+        let report = r#"{"summary":"Pebble 是本地优先 IDE。","architecture":["桌面端：Tauri","运行时：Go"],"commands":{"development":"pnpm dev"},"verification":"没有修改文件。"}"#;
+        let action = json!({"tool":"done","summary":report}).to_string();
+
+        let mut live = TranscriptReducer::default();
+        let mut live_blocks = Vec::new();
+        assert!(live.reduce_event(
+            &mut live_blocks,
+            wire("ModelResponded", json!({"text": action})),
+        ));
+        let live_body = &live_blocks[0].body;
+        assert!(live_body.starts_with("Pebble 是本地优先 IDE。"));
+        assert!(live_body.contains("**Architecture**\n- 桌面端：Tauri"));
+        assert!(live_body.contains("**Commands**\n- **Development:** pnpm dev"));
+        assert!(live_body.contains("**Verification**\n没有修改文件。"));
+        assert!(!live_body.starts_with('{'));
+        assert!(!live_body.starts_with("```json"));
+
+        let replayed = TranscriptReducer::default().hydrate(vec![item(
+            "agent_message",
+            "completed",
+            json!({"text": report,"presentation_text":live_body}),
+        )]);
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0].body, *live_body);
+    }
+
+    #[test]
+    fn explicit_structured_output_remains_json() {
+        let report = r#"{"summary":"machine result","architecture":["runtime"]}"#;
+        let action = json!({"tool":"done","summary":report}).to_string();
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "ModelResponded",
+                json!({"text":action,"structured_output":true}),
+            ),
+        ));
+        assert!(blocks[0].body.starts_with("```json\n"));
+        assert!(blocks[0].body.contains(r#""summary": "machine result""#));
+        assert!(!blocks[0].body.contains("**Architecture**"));
+
+        let generic = visible_assistant_text_with_mode(
+            r#"{"summary":"user-requested JSON","architecture":["runtime"]}"#,
+            true,
+        )
+        .unwrap();
+        assert!(generic.starts_with("```json\n"));
+        assert!(!generic.contains("**Architecture**"));
     }
 
     #[test]
@@ -3104,7 +3633,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
     }
 
     #[test]
-    fn completed_code_intelligence_stays_visible_as_a_semantic_result() {
+    fn completed_code_intelligence_stays_available_as_collapsed_semantic_evidence() {
         let mut reducer = TranscriptReducer::default();
         let mut blocks = Vec::new();
         reducer.reduce_event(
@@ -3128,9 +3657,12 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         );
 
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].title, format_tool_title("Definition", "Kernel"));
+        assert_eq!(blocks[0].title, format_tool_title("Def", "Kernel"));
         assert_eq!(blocks[0].body_kind, BlockBodyKind::CodeIntelligence);
         assert!(blocks[0].collapsible);
+        assert!(!blocks[0].expanded);
+        assert!(blocks[0].body.contains("crates/kernel.rs:42:7"));
+        assert!(toggle_block_expansion(&mut blocks, "tool:call-1"));
         assert!(blocks[0].expanded);
     }
 
@@ -3452,7 +3984,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
     fn whole_body_json_projects_to_markdown_fence_not_field_prose() {
         let payload = json!({
             "result": "已在桌面创建可直接运行的 ASCII Art 马里奥第一关游戏。",
-            "path": "/Users/tseka_luk/Desktop/ascii-mario-world-1-1/index.html",
+            "path": "/workspace/ascii-mario-world-1-1/index.html",
             "features": ["横版卷轴 ASCII 场景", "移动与跳跃操作"],
             "verification": "已通过 JavaScript 语法与核心游戏结构检查。",
             "launch": "直接在浏览器中打开 index.html 即可游玩。"
@@ -3881,6 +4413,141 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
     }
 
     #[test]
+    fn retry_chain_projects_one_stable_user_intent() {
+        let prompt = "Analyze this repo";
+        let blocks = TranscriptReducer::default().hydrate(vec![
+            turn_item_for_run(
+                "turn.started",
+                "run-root",
+                "queued-root",
+                json!({"prompt":prompt}),
+            ),
+            turn_item_for_run(
+                "turn.started",
+                "run-retry-1",
+                "queued-retry-1",
+                json!({"prompt":prompt,"retry_of_run_id":"run-root"}),
+            ),
+            turn_item_for_run(
+                "turn.started",
+                "run-retry-2",
+                "queued-retry-2",
+                json!({"prompt":prompt,"retry_of_run_id":"run-retry-1"}),
+            ),
+        ]);
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].id, "user:run-root");
+        assert_eq!(blocks[0].run_id, "run-retry-2");
+        assert_eq!(blocks[0].body, prompt);
+    }
+
+    #[test]
+    fn independent_identical_prompts_keep_distinct_user_blocks() {
+        let prompt = "Analyze this repo";
+        let blocks = TranscriptReducer::default().hydrate(
+            ["run-1", "run-2", "run-3"]
+                .into_iter()
+                .map(|run_id| {
+                    turn_item_for_run(
+                        "turn.started",
+                        run_id,
+                        &format!("queued-{run_id}"),
+                        json!({"prompt":prompt}),
+                    )
+                })
+                .collect(),
+        );
+
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|block| block.id.as_str())
+                .collect::<Vec<_>>(),
+            ["user:run-1", "user:run-2", "user:run-3"]
+        );
+        assert!(blocks.iter().all(|block| block.body == prompt));
+    }
+
+    #[test]
+    fn turn_and_durable_user_item_share_run_identity() {
+        let prompt = "Analyze this repo";
+        let mut durable = item_with_id(
+            "legacy-prompt-item",
+            "user",
+            "completed",
+            json!({"prompt":prompt}),
+        );
+        durable.run_id = "run-1".into();
+        durable.turn_id = "run-1".into();
+        durable.item.as_mut().expect("item exists").run_id = "run-1".into();
+        let blocks = TranscriptReducer::default().hydrate(vec![
+            turn_item_for_run(
+                "turn.started",
+                "run-1",
+                "queued-run-1",
+                json!({"prompt":prompt}),
+            ),
+            durable,
+        ]);
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].id, "user:run-1");
+        assert_eq!(blocks[0].body, prompt);
+    }
+
+    #[test]
+    fn retry_turn_reconciles_a_durable_user_item_seen_first() {
+        let prompt = "Analyze this repo";
+        let mut durable = item_with_id(
+            "legacy-retry-prompt",
+            "user",
+            "completed",
+            json!({"prompt":prompt}),
+        );
+        durable.run_id = "run-retry".into();
+        durable.turn_id = "run-retry".into();
+        durable.item.as_mut().expect("item exists").run_id = "run-retry".into();
+        let blocks = TranscriptReducer::default().hydrate(vec![
+            turn_item_for_run(
+                "turn.started",
+                "run-root",
+                "queued-root",
+                json!({"prompt":prompt}),
+            ),
+            durable,
+            turn_item_for_run(
+                "turn.started",
+                "run-retry",
+                "queued-retry",
+                json!({"prompt":prompt,"retry_of_run_id":"run-root"}),
+            ),
+        ]);
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].id, "user:run-root");
+        assert_eq!(blocks[0].run_id, "run-retry");
+    }
+
+    #[test]
+    fn terminal_only_replay_projects_legacy_report_as_markdown() {
+        let blocks = TranscriptReducer::default().hydrate(vec![turn_item_for_run(
+            "turn.completed",
+            "run-legacy",
+            "event-completed",
+            json!({
+                "summary":"{\"summary\":\"Readable result.\",\"verification\":\"No files changed.\"}"
+            }),
+        )]);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(
+            blocks[0].body,
+            "Readable result.\n\n**Verification**\nNo files changed."
+        );
+    }
+
+    #[test]
     fn assistant_stream_rejects_phase_drift_within_a_generation() {
         let mut reducer = TranscriptReducer::default();
         let mut blocks = Vec::new();
@@ -4074,6 +4741,75 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
                 FailureRecoveryAction::Details,
                 FailureRecoveryAction::CopyId,
             ]
+        );
+    }
+
+    #[test]
+    fn self_contained_retry_failure_replaces_root_without_queued_event() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire_for_run(
+                "ExecutionFailed",
+                "run-root",
+                json!({
+                    "reason":"first failure",
+                    "retryable":true,
+                    "model":"provider/original"
+                }),
+            ),
+        ));
+        let mut retry_failure = wire_for_run(
+            "ExecutionFailed",
+            "run-retry",
+            json!({
+                "reason":"credential rejected",
+                "retryable":true,
+                "model":"provider/current",
+                "requested_model":"provider/current",
+                "retry_of_run_id":"run-root"
+            }),
+        );
+        retry_failure.event_id = "retry-terminal".into();
+        assert!(reducer.reduce_event(&mut blocks, retry_failure));
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].id, "failure:run-root");
+        let failure = blocks[0].failure.as_ref().unwrap();
+        assert_eq!(failure.run_id, "run-retry");
+        assert_eq!(failure.model, "provider/current");
+        assert_eq!(failure.attempt_count, 2);
+        assert_eq!(failure.reason, "credential rejected");
+
+        let hydrated = TranscriptReducer::default().hydrate(vec![
+            turn_item_for_run(
+                "turn.failed",
+                "run-root",
+                "root-terminal",
+                json!({
+                    "error":"first failure",
+                    "model":"provider/original"
+                }),
+            ),
+            turn_item_for_run(
+                "turn.failed",
+                "run-retry",
+                "retry-terminal",
+                json!({
+                    "error":"credential rejected",
+                    "model":"provider/current",
+                    "requested_model":"provider/current",
+                    "retry_of_run_id":"run-root"
+                }),
+            ),
+        ]);
+        assert_eq!(hydrated.len(), 1);
+        assert_eq!(hydrated[0].id, "failure:run-root");
+        assert_eq!(hydrated[0].failure.as_ref().unwrap().attempt_count, 2);
+        assert_eq!(
+            hydrated[0].failure.as_ref().unwrap().model,
+            "provider/current"
         );
     }
 

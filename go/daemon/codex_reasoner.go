@@ -192,14 +192,14 @@ func (r *codexCLIReasoner) ThinkResult(ctx context.Context, prompt string) (Reas
 	defer cancel()
 
 	cmd := exec.CommandContext(callCtx, r.bin, r.args(prompt)...)
-	configureCodexCLICommand(cmd)
+	configureCLIReasonerCommand(cmd)
 	cmd.Dir = r.workdir
 	cmd.Env = os.Environ()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return ReasonerResult{}, codexCLIError{message: err.Error(), kind: "protocol"}
 	}
-	stderr := &codexBoundedBuffer{limit: codexCLIStderrLimit}
+	stderr := &boundedCLIWriter{limit: codexCLIStderrLimit}
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		return ReasonerResult{}, codexCLIError{message: err.Error()}
@@ -209,7 +209,7 @@ func (r *codexCLIReasoner) ThinkResult(ctx context.Context, prompt string) (Reas
 	if streamErr != nil {
 		_ = stdout.Close()
 		cancel()
-		killCodexCLICommand(cmd)
+		killCLIReasonerCommand(cmd)
 	}
 	waitErr := cmd.Wait()
 	if ctxErr := ctx.Err(); ctxErr != nil {
@@ -375,12 +375,12 @@ func (r *codexCLIReasoner) Close() {
 	})
 }
 
-type codexBoundedBuffer struct {
+type boundedCLIWriter struct {
 	data  []byte
 	limit int
 }
 
-func (b *codexBoundedBuffer) Write(p []byte) (int, error) {
+func (b *boundedCLIWriter) Write(p []byte) (int, error) {
 	written := len(p)
 	remaining := b.limit - len(b.data)
 	if remaining > 0 {
@@ -389,12 +389,12 @@ func (b *codexBoundedBuffer) Write(p []byte) (int, error) {
 	return written, nil
 }
 
-func (b *codexBoundedBuffer) String() string {
+func (b *boundedCLIWriter) String() string {
 	return string(b.data)
 }
 
 var _ Reasoner = (*codexCLIReasoner)(nil)
 var _ resultReasoner = (*codexCLIReasoner)(nil)
 var _ providerErrorClassifier = codexCLIError{}
-var _ io.Writer = (*codexBoundedBuffer)(nil)
+var _ io.Writer = (*boundedCLIWriter)(nil)
 var _ error = codexCLIError{}

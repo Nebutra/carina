@@ -27,6 +27,9 @@ const (
 	CCSwitchCredentialBearer   = "bearer_token"
 	CCSwitchCredentialCLIOAuth = "cli_oauth"
 
+	CCSwitchCredentialOwnerProfile    = "cc-switch"
+	CCSwitchCredentialOwnerClaudeCode = "claude-code"
+
 	CCSwitchRouteManagedProxy = "managed_proxy"
 	CCSwitchRouteSavedProfile = "saved_profile"
 
@@ -38,20 +41,21 @@ const (
 // CCSwitchProfile is the non-sensitive projection of one compatible CC Switch
 // provider row. Raw source IDs and credentials are intentionally excluded.
 type CCSwitchProfile struct {
-	RuntimeID      string
-	Name           string
-	AppType        string
-	BaseURL        string
-	Protocol       string
-	CredentialKind string
-	Route          string
-	Action         string
-	Revision       string
-	Rank           int
-	Model          string
-	Current        bool
-	Importable     bool
-	Reason         string
+	RuntimeID       string
+	Name            string
+	AppType         string
+	BaseURL         string
+	Protocol        string
+	CredentialKind  string
+	CredentialOwner string
+	Route           string
+	Action          string
+	Revision        string
+	Rank            int
+	Model           string
+	Current         bool
+	Importable      bool
+	Reason          string
 }
 
 type ccSwitchRecord struct {
@@ -116,10 +120,11 @@ func ImportCCSwitchCredential(databasePath, runtimeID string) (CCSwitchProfile, 
 		if item.profile.RuntimeID != runtimeID {
 			continue
 		}
-		if !item.profile.Importable || strings.TrimSpace(item.credential) == "" {
+		credential, ok := currentCCSwitchCredential(item)
+		if !item.profile.Importable || !ok {
 			return item.profile, "", fmt.Errorf("cc switch profile %q has no reusable API credential", item.profile.Name)
 		}
-		return item.profile, item.credential, nil
+		return item.profile, credential, nil
 	}
 	return CCSwitchProfile{}, "", fmt.Errorf("cc switch profile %q was not found", runtimeID)
 }
@@ -141,12 +146,21 @@ func LookupCCSwitchCredential(runtimeID string) (CCSwitchProfile, string, bool) 
 		if item.profile.RuntimeID != runtimeID {
 			continue
 		}
-		if !item.profile.Importable || strings.TrimSpace(item.credential) == "" {
+		credential, ok := currentCCSwitchCredential(item)
+		if !item.profile.Importable || !ok {
 			return item.profile, "", false
 		}
-		return item.profile, item.credential, true
+		return item.profile, credential, true
 	}
 	return CCSwitchProfile{}, "", false
+}
+
+func currentCCSwitchCredential(item ccSwitchResolved) (string, bool) {
+	if item.profile.CredentialOwner == CCSwitchCredentialOwnerClaudeCode {
+		return "", false
+	}
+	credential := strings.TrimSpace(item.credential)
+	return credential, credential != ""
 }
 
 const ccSwitchResolvedCacheTTL = 30 * time.Second
@@ -227,17 +241,18 @@ func MergeCCSwitchProviders(base Catalog, profiles []CCSwitchProfile) Catalog {
 			API:         profile.BaseURL,
 			APIProtocol: profile.Protocol,
 			Source: &Source{
-				Kind:       CCSwitchSourceKind,
-				Label:      CCSwitchSourceLabel,
-				App:        profile.AppType,
-				Route:      profile.Route,
-				AuthMode:   profile.CredentialKind,
-				Action:     profile.Action,
-				Revision:   profile.Revision,
-				Rank:       profile.Rank,
-				Current:    profile.Current,
-				Importable: profile.Importable,
-				Reason:     profile.Reason,
+				Kind:            CCSwitchSourceKind,
+				Label:           CCSwitchSourceLabel,
+				App:             profile.AppType,
+				Route:           profile.Route,
+				AuthMode:        profile.CredentialKind,
+				CredentialOwner: profile.CredentialOwner,
+				Action:          profile.Action,
+				Revision:        profile.Revision,
+				Rank:            profile.Rank,
+				Current:         profile.Current,
+				Importable:      profile.Importable,
+				Reason:          profile.Reason,
 			},
 			Models: models,
 		}
@@ -305,7 +320,11 @@ func readCCSwitch(databasePath string) ([]ccSwitchResolved, error) {
 		item.profile.Route = CCSwitchRouteSavedProfile
 		item.profile.Action = CCSwitchActionExplainUnavailable
 		if item.profile.Importable {
-			item.profile.Action = CCSwitchActionImportSaved
+			if item.profile.CredentialOwner == CCSwitchCredentialOwnerClaudeCode {
+				item.profile.Action = CCSwitchActionUseActiveRoute
+			} else {
+				item.profile.Action = CCSwitchActionImportSaved
+			}
 		}
 		item.profile.Rank = 100 + index
 		item.profile.Revision = ccSwitchProfileRevision(item.profile)
@@ -373,15 +392,16 @@ func resolveManagedCodexRoute(configs []ccSwitchProxyConfig, records []ccSwitchR
 		}
 	}
 	profile := CCSwitchProfile{
-		RuntimeID:      "ccswitch-codex-managed-proxy",
-		Name:           name,
-		AppType:        "codex",
-		Protocol:       "openai-responses",
-		CredentialKind: CCSwitchCredentialBearer,
-		Route:          CCSwitchRouteManagedProxy,
-		Action:         CCSwitchActionExplainUnavailable,
-		Current:        true,
-		Rank:           0,
+		RuntimeID:       "ccswitch-codex-managed-proxy",
+		Name:            name,
+		AppType:         "codex",
+		Protocol:        "openai-responses",
+		CredentialKind:  CCSwitchCredentialBearer,
+		CredentialOwner: CCSwitchCredentialOwnerProfile,
+		Route:           CCSwitchRouteManagedProxy,
+		Action:          CCSwitchActionExplainUnavailable,
+		Current:         true,
+		Rank:            0,
 	}
 	if !currentFound {
 		profile.Reason = "CC Switch proxy is enabled, but no current Codex profile is selected"
@@ -457,10 +477,11 @@ func ccSwitchProfileRevision(profile CCSwitchProfile) string {
 
 func resolveCCSwitchRecord(record ccSwitchRecord) ccSwitchResolved {
 	profile := CCSwitchProfile{
-		RuntimeID: ccSwitchRuntimeID(record.appType, record.id),
-		Name:      strings.TrimSpace(record.name),
-		AppType:   record.appType,
-		Current:   record.current,
+		RuntimeID:       ccSwitchRuntimeID(record.appType, record.id),
+		Name:            strings.TrimSpace(record.name),
+		AppType:         record.appType,
+		CredentialOwner: CCSwitchCredentialOwnerProfile,
+		Current:         record.current,
 	}
 	if profile.Name == "" {
 		profile.Name = "CC Switch provider"
@@ -489,18 +510,14 @@ func resolveCCSwitchRecord(record ccSwitchRecord) ccSwitchResolved {
 			credential = firstString(settings.Env, "OPENROUTER_API_KEY")
 			profile.CredentialKind = CCSwitchCredentialBearer
 		}
-		// Official Claude Code / Claude Max login leaves no API key in the
-		// CC Switch row. Reuse Claude Code's local OAuth access token so the
-		// profile is importable into Carina as a Bearer credential.
+		// Official Claude Code / Claude Max login leaves no API key in the CC
+		// Switch row. Claude Code remains the credential owner and Carina delegates
+		// inference to the CLI instead of exporting its access or refresh tokens.
 		if strings.TrimSpace(credential) == "" {
-			if tok, ok := claudeCodeOAuthLookup(); ok {
-				credential = tok
-				profile.CredentialKind = CCSwitchCredentialBearer
-				// Loopback ANTHROPIC_BASE_URL proxies are for Claude Code's
-				// own process; OAuth bearers talk to Anthropic's public API.
-				if isLoopbackBaseURL(profile.BaseURL) || strings.TrimSpace(profile.BaseURL) == "" {
-					profile.BaseURL = "https://api.anthropic.com/v1"
-				}
+			profile.CredentialOwner = CCSwitchCredentialOwnerClaudeCode
+			if claudeCodeOAuthSessionLookup() {
+				profile.CredentialKind = CCSwitchCredentialCLIOAuth
+				profile.Importable = true
 			}
 		}
 		profile.Model = firstString(settings.Env, "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL")
@@ -536,7 +553,7 @@ func resolveCCSwitchRecord(record ccSwitchRecord) ccSwitchResolved {
 	credential = strings.TrimSpace(credential)
 	if profile.BaseURL == "" {
 		profile.Reason = "No usable endpoint was found"
-	} else if credential == "" {
+	} else if credential == "" && !profile.Importable {
 		profile.CredentialKind = CCSwitchCredentialCLIOAuth
 		profile.Reason = "No reusable API credential; OAuth sessions stay with their owning CLI"
 	} else {

@@ -70,7 +70,7 @@
     ],
     "execution": [
       { "method": "execution.start", "scope": "write", "remote": false, "params": { "session_id": "string", "prompt": "string", "client_submission_id": "string?", "agent": "string?", "model": "string?", "reasoning_effort": "string?", "locale": "en|zh|zh-Hant|ja|ko|es|fr?", "token_budget": "integer >= 0?", "mode": "background?", "success_criteria": "SuccessCheck[]?", "output_schema": "JSON Schema Draft 2020-12 object?", "input_media_refs": "MediaRef[]? max 4" }, "result": "ExecutionRun" },
-      { "method": "execution.retry", "scope": "write", "remote": false, "params": { "run_id": "string", "client_submission_id": "ASCII token 1-128" }, "result": "ExecutionRun with retry_of_run_id; original run remains terminal" },
+      { "method": "execution.retry", "scope": "write", "remote": false, "params": { "run_id": "string", "client_submission_id": "ASCII token 1-128", "routing": "original|current? (default original)", "current_model": "string? (required from current-route clients)", "current_reasoning_effort": "string?" }, "result": "ExecutionRun with retry_of_run_id; original run remains terminal" },
       { "method": "execution.resume", "scope": "write", "remote": false, "control_plane_write": true, "params": { "run_id": "string" }, "result": "ExecutionRun" },
       { "method": "execution.status", "scope": "read", "remote": true, "params": { "run_id": "string" }, "result": "ExecutionRun" },
       { "method": "execution.list", "scope": "read", "remote": true, "params": { "session_id": "string?" }, "result": "ExecutionRun[]" },

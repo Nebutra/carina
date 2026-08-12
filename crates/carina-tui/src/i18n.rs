@@ -229,6 +229,8 @@ pub enum MessageId {
     EmptyConversationPrompt,
     WorkspaceFallback,
     NewConversation,
+    ProductMenu,
+    Help,
     ConversationName,
     NoCompatibleModels,
     ExecutionNotReadyDraftKept,
@@ -362,6 +364,8 @@ pub enum MessageId {
     ChromeModeFullscreen,
     ChromeModeInline,
     Mode,
+    ModePlanLabel,
+    ModeBuildLabel,
     ModePlanDetail,
     ModeBuildDetail,
     Status,
@@ -795,6 +799,8 @@ impl MessageId {
         Self::EmptyConversationPrompt,
         Self::WorkspaceFallback,
         Self::NewConversation,
+        Self::ProductMenu,
+        Self::Help,
         Self::ConversationName,
         Self::NoCompatibleModels,
         Self::ExecutionNotReadyDraftKept,
@@ -928,6 +934,8 @@ impl MessageId {
         Self::ChromeModeFullscreen,
         Self::ChromeModeInline,
         Self::Mode,
+        Self::ModePlanLabel,
+        Self::ModeBuildLabel,
         Self::ModePlanDetail,
         Self::ModeBuildDetail,
         Self::Status,
@@ -1363,6 +1371,8 @@ pub fn text(locale: Locale, id: MessageId) -> &'static str {
         (ZhHans, EmptyConversationPrompt) => "描述你想完成的改动。",
         (ZhHans, WorkspaceFallback) => "工作区",
         (ZhHans, NewConversation) => "新会话",
+        (ZhHans, ProductMenu) => "Carina 菜单",
+        (ZhHans, Help) => "帮助",
         (ZhHans, ConversationName) => "{workspace} 会话",
         (ZhHans, NoCompatibleModels) => "已配置的服务商没有兼容模型。",
         (ZhHans, ExecutionNotReadyDraftKept) => {
@@ -1471,6 +1481,8 @@ pub fn text(locale: Locale, id: MessageId) -> &'static str {
         (ZhHans, ChromeModeFullscreen) => "全屏",
         (ZhHans, ChromeModeInline) => "行内",
         (ZhHans, Mode) => "模式",
+        (ZhHans, ModePlanLabel) => "规划",
+        (ZhHans, ModeBuildLabel) => "执行",
         (ZhHans, ModePlanDetail) => "规划 · 实施前审阅",
         (ZhHans, ModeBuildDetail) => "执行 · 直接实施",
         (ZhHans, Status) => "状态",
@@ -1710,6 +1722,22 @@ pub fn tool_group_failure(locale: Locale, count: usize) -> String {
 fn tool_group_verbs(locale: Locale, kind: ToolKind) -> (&'static str, &'static str) {
     use ToolKind::*;
     let copy = match kind {
+        Explore => [
+            "Exploring",
+            "Explored",
+            "正在探索",
+            "已探索",
+            "正在探索",
+            "已探索",
+            "探索中",
+            "探索済み",
+            "탐색 중",
+            "탐색함",
+            "Explorando",
+            "Explorado:",
+            "Exploration de",
+            "Exploration terminée :",
+        ],
         Read | Memory => [
             "Reading",
             "Read",
@@ -1909,6 +1937,10 @@ fn tool_group_verbs(locale: Locale, kind: ToolKind) -> (&'static str, &'static s
 fn tool_group_nouns(locale: Locale, kind: ToolKind) -> (&'static str, &'static str) {
     use ToolKind::*;
     let copy = match kind {
+        Explore => [
+            "step", "steps", "步", "步", "步", "步", "工程", "단계", "paso", "pasos", "étape",
+            "étapes",
+        ],
         Read | Patch => [
             "file",
             "files",
@@ -2250,6 +2282,8 @@ fn en(id: MessageId) -> &'static str {
         EmptyConversationPrompt => "Describe the change you want to make.",
         WorkspaceFallback => "workspace",
         NewConversation => "New conversation",
+        ProductMenu => "Carina menu",
+        Help => "Help",
         ConversationName => "{workspace} conversation",
         NoCompatibleModels => "No compatible models are available for the configured provider.",
         ExecutionNotReadyDraftKept => {
@@ -2364,6 +2398,8 @@ fn en(id: MessageId) -> &'static str {
         ChromeModeFullscreen => "fullscreen",
         ChromeModeInline => "inline",
         Mode => "Mode",
+        ModePlanLabel => "Plan",
+        ModeBuildLabel => "Build",
         ModePlanDetail => "Plan · review before implementation",
         ModeBuildDetail => "Build · implement directly",
         Status => "Status",
@@ -2496,6 +2532,8 @@ fn zh_hant(id: MessageId) -> &'static str {
         EmptyConversationPrompt => "描述你想完成的變更。",
         WorkspaceFallback => "工作區",
         NewConversation => "新對話",
+        ProductMenu => "Carina 選單",
+        Help => "說明",
         ConversationName => "{workspace} 對話",
         NoCompatibleModels => "已設定的服務商沒有相容模型。",
         ExecutionNotReadyDraftKept => "執行環境尚未就緒。草稿已保留；請修復服務商後繼續。",
@@ -2596,6 +2634,8 @@ fn zh_hant(id: MessageId) -> &'static str {
         ChromeModeFullscreen => "全螢幕",
         ChromeModeInline => "行內",
         Mode => "模式",
+        ModePlanLabel => "規劃",
+        ModeBuildLabel => "執行",
         ModePlanDetail => "規劃 · 實作前檢閱",
         ModeBuildDetail => "執行 · 直接實作",
         Status => "狀態",
@@ -3302,6 +3342,8 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
         ChromeModeFullscreen => ["全画面", "전체 화면", "pantalla completa", "plein écran"],
         ChromeModeInline => ["インライン", "인라인", "en línea", "intégré"],
         Mode => ["モード", "모드", "Modo", "Mode"],
+        ModePlanLabel => ["計画", "계획", "Plan", "Plan"],
+        ModeBuildLabel => ["実行", "실행", "Ejecutar", "Exécuter"],
         ModePlanDetail => [
             "計画 · 実装前に確認",
             "계획 · 구현 전 검토",
@@ -3567,6 +3609,16 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
 fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
     use MessageId::*;
     let values = match id {
+        ProductMenu => [
+            "Carina menu",
+            "Carina 菜单",
+            "Carina 選單",
+            "Carina メニュー",
+            "Carina 메뉴",
+            "Menú de Carina",
+            "Menu Carina",
+        ],
+        Help => ["Help", "帮助", "說明", "ヘルプ", "도움말", "Ayuda", "Aide"],
         Symbols => [
             "Symbols",
             "符号",

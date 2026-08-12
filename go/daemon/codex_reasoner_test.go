@@ -237,8 +237,8 @@ func TestFinishCodexCLIStreamUsesBoundedStderrOnExit(t *testing.T) {
 	}
 }
 
-func TestCodexBoundedBufferCapsCapturedBytes(t *testing.T) {
-	buffer := &codexBoundedBuffer{limit: 5}
+func TestBoundedCLIWriterCapsCapturedBytes(t *testing.T) {
+	buffer := &boundedCLIWriter{limit: 5}
 	if n, err := buffer.Write([]byte("123456789")); err != nil || n != 9 {
 		t.Fatalf("write = %d, %v", n, err)
 	}

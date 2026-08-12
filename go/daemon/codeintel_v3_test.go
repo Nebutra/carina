@@ -618,8 +618,8 @@ func TestCodeLookupHeaderLSPUnavailable(t *testing.T) {
 }
 
 // TestCodeLookupHeaderReadDenied: a kernel FileRead denial on the anchor file
-// degrades with precision:tree-sitter(read-denied) — and no server ever sees
-// the content.
+// removes the path during the staleness sweep before either tree-sitter output
+// or an LSP process can expose stale content.
 func TestCodeLookupHeaderReadDenied(t *testing.T) {
 	t.Setenv("CARINA_FAKE_LSP", "1")
 	d, ws := newLoopDaemon(t)
@@ -651,18 +651,11 @@ func TestCodeLookupHeaderReadDenied(t *testing.T) {
 	}
 
 	obs := d.executeAction(sess, task, &action{Tool: "code.def", Name: "zz_v3prec_denied"})
-	if !strings.Contains(obs, "precision:tree-sitter(read-denied)") {
-		t.Fatalf("a denied anchor read must degrade as precision:tree-sitter(read-denied), got: %s", obs)
+	if obs != "no symbol named zz_v3prec_denied" {
+		t.Fatalf("a denied anchor must be removed before lookup, got: %s", obs)
 	}
-	payloads := v3StatusEventPayloads(t, d, sess.SessionID, "code_lookup_degraded")
-	found := false
-	for _, p := range payloads {
-		if p["reason"] == "read-denied" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected a code_lookup_degraded event with reason read-denied, got: %v", payloads)
+	if payloads := v3StatusEventPayloads(t, d, sess.SessionID, "code_lookup_degraded"); len(payloads) != 0 {
+		t.Fatalf("a removed symbol must not claim an LSP degradation: %v", payloads)
 	}
 }
 

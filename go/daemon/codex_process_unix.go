@@ -10,13 +10,13 @@ import (
 	"time"
 )
 
-func configureCodexCLICommand(cmd *exec.Cmd) {
+func configureCLIReasonerCommand(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return killCodexCLICommand(cmd) }
+	cmd.Cancel = func() error { return killCLIReasonerCommand(cmd) }
 	cmd.WaitDelay = 100 * time.Millisecond
 }
 
-func killCodexCLICommand(cmd *exec.Cmd) error {
+func killCLIReasonerCommand(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return os.ErrProcessDone
 	}

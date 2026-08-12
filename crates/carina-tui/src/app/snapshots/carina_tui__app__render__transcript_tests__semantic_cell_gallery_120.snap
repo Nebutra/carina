@@ -10,9 +10,7 @@ size=120x40
  ▾ Thinking  Inspecting the projection boundary
  │ Mapping lifecycle owners and render paths.
  • Read    Inspect the semantic cell contract  src/semantic_cell.rs
- ▾ Read ×2 · src/transcript.rs, src/app/render.rs
- │ src/transcript.rs
- │ src/app/render.rs
+ ▸ Explored ×5 · README.md, workspace, …
 
  ! Action  Shell command needs approval  waiting for approval
  │ cargo test --workspace
@@ -22,10 +20,8 @@ size=120x40
  │ +1 · new file
  │    1 pub enum SemanticCellKind {}
 
- ✗ Execution failed
- │ Agent  Carina
- │ Failed model  provider/original-model  2 attempts
- │ Reason  The provider stopped before returning a complete response
+ ✗ Execution failed  ·  provider/original-model  ·  2 attempts
+ │ The provider stopped before returning a complete response
  │ Retry current  Replay original  Details  Copy ID
 
  • Diagnostic  Context compacted

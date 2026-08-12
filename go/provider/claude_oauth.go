@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -10,137 +11,73 @@ import (
 	"time"
 )
 
-// claudeCodeOAuthLookup resolves a Claude Code subscription OAuth access
-// token when a CC Switch Claude profile has no reusable API key. Tests
-// override this to avoid depending on the operator keychain.
-var claudeCodeOAuthLookup = lookupClaudeCodeOAuthToken
+const claudeCodeKeychainProbeTimeout = 2 * time.Second
 
-// lookupClaudeCodeOAuthToken reads Claude Code's macOS keychain item (and a
-// small set of file fallbacks). The access token is an Anthropic OAuth
-// bearer (sk-ant-oat01-…) accepted by api.anthropic.com with Authorization:
-// Bearer. It is never logged.
-func lookupClaudeCodeOAuthToken() (string, bool) {
-	if tok, ok := lookupClaudeCodeOAuthFromKeychain(); ok {
-		return tok, true
-	}
-	if tok, ok := lookupClaudeCodeOAuthFromFiles(); ok {
-		return tok, true
-	}
-	return "", false
-}
+// claudeCodeOAuthSessionLookup reports whether Claude Code owns a renewable
+// local OAuth session even when its current access token needs refresh. The
+// owning CLI performs refresh; Carina uses this only for route readiness.
+var claudeCodeOAuthSessionLookup = lookupClaudeCodeOAuthSession
 
-func lookupClaudeCodeOAuthFromKeychain() (string, bool) {
-	if runtime.GOOS != "darwin" {
-		return "", false
-	}
-	// Claude Code stores OAuth under this generic-password service name.
-	for _, service := range []string{"Claude Code-credentials", "Claude Code"} {
-		out, err := exec.Command("security", "find-generic-password", "-s", service, "-w").Output()
-		if err != nil {
-			continue
-		}
-		if tok, ok := parseClaudeCodeOAuthPayload(out); ok {
-			return tok, true
+func lookupClaudeCodeOAuthSession() bool {
+	if runtime.GOOS == "darwin" {
+		ctx, cancel := context.WithTimeout(context.Background(), claudeCodeKeychainProbeTimeout)
+		defer cancel()
+		if lookupClaudeCodeKeychainSession(ctx, "security") {
+			return true
 		}
 	}
-	return "", false
-}
-
-func lookupClaudeCodeOAuthFromFiles() (string, bool) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", false
+		return false
 	}
-	candidates := []string{
+	for _, path := range []string{
 		filepath.Join(home, ".claude", ".credentials.json"),
 		filepath.Join(home, ".claude", "credentials.json"),
 		filepath.Join(home, ".config", "claude", "credentials.json"),
-	}
-	for _, path := range candidates {
+	} {
 		raw, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		if tok, ok := parseClaudeCodeOAuthPayload(raw); ok {
-			return tok, true
+		if err == nil && parseClaudeCodeOAuthSession(raw) {
+			return true
 		}
 	}
-	return "", false
+	return false
 }
 
-func parseClaudeCodeOAuthPayload(raw []byte) (string, bool) {
-	raw = []byte(strings.TrimSpace(string(raw)))
-	if len(raw) == 0 {
-		return "", false
-	}
-	// Some dumps are a bare token string.
-	if !json.Valid(raw) {
-		tok := strings.TrimSpace(string(raw))
-		if isClaudeCodeOAuthAccessToken(tok) {
-			return tok, true
+func lookupClaudeCodeKeychainSession(ctx context.Context, securityBin string) bool {
+	for _, service := range []string{"Claude Code-credentials", "Claude Code"} {
+		// Presence is sufficient. Never pass -w: Carina delegates authentication
+		// to Claude Code and does not need to read the keychain secret itself.
+		if exec.CommandContext(ctx, securityBin, "find-generic-password", "-s", service).Run() == nil {
+			return true
 		}
-		return "", false
+		if ctx.Err() != nil {
+			return false
+		}
 	}
+	return false
+}
+
+func parseClaudeCodeOAuthSession(raw []byte) bool {
 	var payload struct {
 		ClaudeAiOauth *struct {
-			AccessToken string `json:"accessToken"`
-			ExpiresAt   int64  `json:"expiresAt"`
+			AccessToken  string `json:"accessToken"`
+			RefreshToken string `json:"refreshToken"`
 		} `json:"claudeAiOauth"`
-		// Alternate shapes seen in file exports.
 		AccessToken string `json:"accessToken"`
 		Token       string `json:"token"`
 	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", false
+	if json.Unmarshal([]byte(strings.TrimSpace(string(raw))), &payload) != nil {
+		return false
 	}
 	if payload.ClaudeAiOauth != nil {
-		tok := strings.TrimSpace(payload.ClaudeAiOauth.AccessToken)
-		if isClaudeCodeOAuthAccessToken(tok) && !claudeOAuthExpired(payload.ClaudeAiOauth.ExpiresAt) {
-			return tok, true
-		}
+		return isClaudeCodeOAuthAccessToken(strings.TrimSpace(payload.ClaudeAiOauth.AccessToken)) ||
+			strings.TrimSpace(payload.ClaudeAiOauth.RefreshToken) != ""
 	}
-	for _, tok := range []string{payload.AccessToken, payload.Token} {
-		tok = strings.TrimSpace(tok)
-		if isClaudeCodeOAuthAccessToken(tok) {
-			return tok, true
-		}
-	}
-	return "", false
+	return isClaudeCodeOAuthAccessToken(strings.TrimSpace(payload.AccessToken)) ||
+		isClaudeCodeOAuthAccessToken(strings.TrimSpace(payload.Token))
 }
 
 func isClaudeCodeOAuthAccessToken(tok string) bool {
 	// Claude Code subscription OAuth access tokens use this prefix.
 	return strings.HasPrefix(tok, "sk-ant-oat")
-}
-
-func claudeOAuthExpired(expiresAt int64) bool {
-	if expiresAt <= 0 {
-		return false
-	}
-	// Claude stores expiresAt in unix milliseconds.
-	if expiresAt > 1_000_000_000_000 {
-		return time.Now().UnixMilli() >= expiresAt
-	}
-	return time.Now().Unix() >= expiresAt
-}
-
-func isLoopbackBaseURL(raw string) bool {
-	raw = strings.ToLower(strings.TrimSpace(raw))
-	if raw == "" {
-		return false
-	}
-	// Strip scheme.
-	if i := strings.Index(raw, "://"); i >= 0 {
-		raw = raw[i+3:]
-	}
-	host := raw
-	if i := strings.IndexAny(host, "/:"); i >= 0 {
-		host = host[:i]
-	}
-	switch host {
-	case "127.0.0.1", "localhost", "0.0.0.0", "::1", "[::1]":
-		return true
-	default:
-		return strings.HasPrefix(host, "127.")
-	}
 }

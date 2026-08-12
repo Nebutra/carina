@@ -49,6 +49,8 @@ var defaultProviderModel = map[string]string{
 	"xai":        "grok-4",
 }
 
+var lookupCCSwitchCredential = provider.LookupCCSwitchCredential
+
 var openAICompatibleProviderIDs = map[string]bool{
 	"cerebras":   true,
 	"deepinfra":  true,
@@ -145,6 +147,12 @@ func hasRunnableRuntimeProviderSet(cat provider.Catalog, disabled map[string]boo
 		if !runtimeSourceAllowsExecution(info) {
 			continue
 		}
+		if runtimeProviderUsesClaudeCLI(info) {
+			if claudeCLIAvailable() {
+				return true
+			}
+			continue
+		}
 		baseURL, ok := runtimeBaseURL(info)
 		if !ok || strings.TrimSpace(baseURL) == "" {
 			continue
@@ -235,7 +243,8 @@ func runtimeProviderAuthChain(info provider.Info, store *auth.Store) *auth.Chain
 	for _, env := range info.Env {
 		sources = append(sources, auth.EnvKey{Var: env})
 	}
-	if store != nil {
+	claudeCodeOwned := runtimeProviderUsesClaudeCLI(info)
+	if store != nil && !claudeCodeOwned {
 		if info.Source != nil && info.Source.Kind == provider.CCSwitchSourceKind {
 			sources = append(sources, validatedRuntimeStoreKey{
 				store:          store,
@@ -248,10 +257,11 @@ func runtimeProviderAuthChain(info provider.Info, store *auth.Store) *auth.Chain
 	}
 	// Importable CC Switch profiles can resolve a reusable token from the local
 	// CC Switch DB without a prior `carina auth import`. That unlocks live
-	// model lists (TDS, relays) and execution while store import remains the
-	// durable/explicit path when present (and wins above).
+	// model lists (TDS, relays) and execution. Claude Code-owned OAuth is omitted
+	// because the router delegates that route to the owning CLI instead.
 	if info.Source != nil &&
 		info.Source.Kind == provider.CCSwitchSourceKind &&
+		!claudeCodeOwned &&
 		info.Source.Importable &&
 		runtimeSourceAllowsExecution(info) {
 		sources = append(sources, ccSwitchRuntimeCredential{
@@ -274,7 +284,7 @@ func (s ccSwitchRuntimeCredential) Name() string {
 }
 
 func (s ccSwitchRuntimeCredential) Resolve() (auth.Credential, bool) {
-	profile, secret, ok := provider.LookupCCSwitchCredential(s.providerID)
+	profile, secret, ok := lookupCCSwitchCredential(s.providerID)
 	if !ok || strings.TrimSpace(secret) == "" {
 		return auth.Credential{}, false
 	}

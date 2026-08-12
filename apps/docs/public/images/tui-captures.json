@@ -17,12 +17,12 @@
       "output": "apps/docs/public/images/tui-session.webp",
       "terminalCells": "120x30",
       "pixels": "1256x656",
-      "sha256": "3810ec483046d08a0ff3af83424980194f0d203c01d2beba74eb0a4f76fd60a8",
+      "sha256": "cd2ad5d614e3d0bef56aaccd1b2dad135264fc85cc4e04de2c492bf8105591c6",
       "sources": [
         {
           "path": "crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__visual_density_en_120.snap",
           "row": 0,
-          "sha256": "b7b16bac3381d7107fb4f44a232a1e188f83c478939a98336c3f49f5c313f564"
+          "sha256": "f7c5302396494cbd739b53c99eed320b7be01813993c2fe8b20519baf01996a4"
         },
         {
           "path": "crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__composer_chrome_en_running_120.snap",

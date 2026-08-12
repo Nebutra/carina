@@ -47,7 +47,7 @@ impl DensityMode {
                 related_gap: 1,
                 block_gap: 2,
                 final_gap: 2,
-                default_tool_expanded: true,
+                default_tool_expanded: false,
                 collapsed_group_members: 2,
                 collapsed_output_lines: 3,
                 collapsed_create_preview_lines: 8,
@@ -93,7 +93,7 @@ mod tests {
         assert!(comfortable.block_gap > compact.block_gap);
         assert!(comfortable.final_gap > compact.final_gap);
         assert!(!compact.default_tool_expanded);
-        assert!(comfortable.default_tool_expanded);
+        assert!(!comfortable.default_tool_expanded);
         assert!(comfortable.collapsed_group_members > compact.collapsed_group_members);
         assert!(comfortable.collapsed_output_lines > compact.collapsed_output_lines);
         assert!(

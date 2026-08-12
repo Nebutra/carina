@@ -600,8 +600,22 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			// tool=done whose summary is the human-visible final answer. Without
 			// this, pure conversation turns rehydrate as user bubbles only.
 			if text := stringField(ev.Payload, "text"); text != "" {
+				if presentation := stringField(ev.Payload, "presentation_text"); presentation != "" {
+					details := modelResponseDetails(ev)
+					details["text"] = presentation
+					details["summary"] = presentation
+					item := &SessionItem{
+						ID: assistantMessageID(ev, i), Type: "agent_message", Status: modelStatus(ev.Payload),
+						TaskID: ev.TaskID, StartedAt: ev.Timestamp, CompletedAt: ev.Timestamp, Details: details,
+					}
+					out = append(out, itemEvent("item.completed", sessionID, ev, item))
+					if ev.TaskID != "" {
+						answerByTask[ev.TaskID] = true
+					}
+					break
+				}
 				if act, err := parseAction(text); err == nil {
-					if summary := terminalDoneSummary(act); summary != "" {
+					if summary := terminalDoneSummary(act, boolField(ev.Payload, "structured_output")); summary != "" {
 						details := modelResponseDetails(ev)
 						details["text"] = summary
 						details["summary"] = summary
@@ -619,6 +633,13 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 							answerByTask[ev.TaskID] = true
 						}
 					}
+					break
+				}
+				// Audit records intentionally bound raw provider output. A long
+				// action can therefore be valid at execution time but truncated on
+				// replay. Keep that private and let ExecutionCompleted carry the
+				// authoritative, untruncated final summary.
+				if looksLikeActionEnvelope(text) {
 					break
 				}
 			}
@@ -647,6 +668,9 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			// settle its failure chain during hydration. Only carry the summary
 			// when ModelResponded did not already project the visible answer.
 			summary := strings.TrimSpace(stringField(ev.Payload, "summary"))
+			if !boolField(ev.Payload, "structured_output") {
+				summary = presentDoneSummary(summary)
+			}
 			details := map[string]any{"status": "completed"}
 			if ev.TaskID == "" || !answerByTask[ev.TaskID] {
 				if summary != "" {
@@ -1092,11 +1116,28 @@ func modelResponseDetails(ev itemAuditEvent) map[string]any {
 
 // terminalDoneSummary returns the user-facing answer from a terminal "done"
 // action. Other tools stay hidden in the transcript projection.
-func terminalDoneSummary(act action) string {
+func terminalDoneSummary(act action, structuredOutput bool) string {
 	if !strings.EqualFold(strings.TrimSpace(act.Tool), "done") {
 		return ""
 	}
-	return strings.TrimSpace(act.Summary)
+	if structuredOutput {
+		return strings.TrimSpace(act.Summary)
+	}
+	return presentDoneSummary(act.Summary)
+}
+
+func looksLikeActionEnvelope(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(strings.TrimSpace(trimmed), "```")
+	return strings.Contains(trimmed, `"tool"`) ||
+		strings.Contains(trimmed, `"action"`) ||
+		strings.Contains(trimmed, `"actions"`)
+}
+
+func boolField(m map[string]any, key string) bool {
+	value, _ := m[key].(bool)
+	return value
 }
 
 func modelStatus(payload map[string]any) string {

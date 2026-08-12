@@ -51,6 +51,7 @@ pub enum Action {
         routing: RetryRouting,
     },
     CopyFailureId(String),
+    ToggleProductMenu,
     OpenSessions,
     OpenModels,
     OpenSettings,
@@ -60,6 +61,7 @@ pub enum Action {
     CancelGlyphPreview,
     ToggleDensity,
     OpenStatus,
+    OpenHelp,
     OpenQueue,
     OpenAgents,
     OpenChanges,
@@ -107,6 +109,7 @@ pub struct HitRegion {
 pub struct InteractionMap {
     regions: Vec<HitRegion>,
     hovered: Option<ComponentId>,
+    pointer: Option<Position>,
     overlay_start: Option<usize>,
 }
 
@@ -136,12 +139,26 @@ impl InteractionMap {
     }
 
     pub fn update_hover(&mut self, position: Position) -> bool {
-        let start = self.overlay_start.unwrap_or(0);
-        let next = self.regions[start..]
-            .iter()
-            .rev()
-            .find(|region| region.area.contains(position))
-            .map(|region| region.component);
+        self.pointer = Some(position);
+        self.resolve_hover()
+    }
+
+    /// Re-resolve the retained pointer against the regions registered by the
+    /// current frame. Layout changes can move a component without emitting a
+    /// new terminal mouse-motion event.
+    pub fn finish_frame(&mut self) -> bool {
+        self.resolve_hover()
+    }
+
+    fn resolve_hover(&mut self) -> bool {
+        let next = self.pointer.and_then(|position| {
+            let start = self.overlay_start.unwrap_or(0);
+            self.regions[start..]
+                .iter()
+                .rev()
+                .find(|region| region.area.contains(position))
+                .map(|region| region.component)
+        });
         let changed = next != self.hovered;
         self.hovered = next;
         changed
@@ -204,5 +221,51 @@ mod tests {
             Some(Action::CloseOverlay)
         );
         assert_eq!(map.action_at(Position::new(1, 1)), None);
+    }
+
+    #[test]
+    fn hover_can_leave_and_reenter_the_same_component() {
+        let mut map = InteractionMap::default();
+        map.register(HitRegion {
+            component: ComponentId(1),
+            area: Rect::new(2, 2, 8, 1),
+            action: Action::ToggleBlock("tool:first".into()),
+        });
+
+        assert!(map.update_hover(Position::new(3, 2)));
+        assert!(map.hovered(ComponentId(1)));
+        assert!(map.update_hover(Position::new(1, 1)));
+        assert!(!map.hovered(ComponentId(1)));
+        assert!(map.update_hover(Position::new(3, 2)));
+        assert!(map.hovered(ComponentId(1)));
+    }
+
+    #[test]
+    fn frame_rebuild_reconciles_hover_against_current_geometry() {
+        let mut map = InteractionMap::default();
+        map.register(HitRegion {
+            component: ComponentId(1),
+            area: Rect::new(2, 2, 8, 1),
+            action: Action::ToggleBlock("tool:first".into()),
+        });
+        assert!(map.update_hover(Position::new(3, 2)));
+
+        map.begin_frame();
+        map.register(HitRegion {
+            component: ComponentId(1),
+            area: Rect::new(2, 6, 8, 1),
+            action: Action::ToggleBlock("tool:first".into()),
+        });
+        assert!(map.finish_frame());
+        assert!(!map.hovered(ComponentId(1)));
+
+        map.begin_frame();
+        map.register(HitRegion {
+            component: ComponentId(2),
+            area: Rect::new(2, 2, 8, 1),
+            action: Action::FocusComposer,
+        });
+        assert!(map.finish_frame());
+        assert!(map.hovered(ComponentId(2)));
     }
 }

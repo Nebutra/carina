@@ -129,6 +129,11 @@ fn build_then_search_finds_a_known_symbol() {
     assert!(built["symbols"].as_u64().unwrap() >= 2);
     assert!(built["db_path"].as_str().unwrap().ends_with(".sqlite"));
 
+    let status = svc.call("kernel.index.status", json!({"session_id": "sess_ix"}));
+    assert_eq!(status["ready"], true);
+    assert_eq!(status["files"], 1);
+    assert_eq!(status["indexed_paths"], json!(["lib.rs"]));
+
     let found = svc.call(
         "kernel.index.search",
         json!({"session_id": "sess_ix", "query": "zz_indexed_marker"}),
@@ -157,6 +162,32 @@ fn build_then_search_finds_a_known_symbol() {
     );
     assert!(map["map"].as_str().unwrap().contains("lib.rs"));
     assert!(map["token_estimate"].as_u64().unwrap() <= 512);
+    assert_eq!(map["symbols_total"], built["symbols"]);
+    assert_eq!(map["files_total"], 1);
+    assert_eq!(map["projection"], "pagerank-domain-diverse");
+}
+
+#[test]
+fn status_does_not_create_a_never_built_index() {
+    let (_tmp, mut svc) = setup();
+    let status = svc.call("kernel.index.status", json!({"session_id": "sess_ix"}));
+    assert!(status["__error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("index not built"));
+}
+
+#[test]
+fn status_treats_a_completed_empty_index_as_ready() {
+    let (_tmp, mut svc) = setup();
+    let built = svc.call(
+        "kernel.index.build",
+        json!({"session_id": "sess_ix", "paths": []}),
+    );
+    assert_eq!(built["indexed"], 0);
+    let status = svc.call("kernel.index.status", json!({"session_id": "sess_ix"}));
+    assert_eq!(status["ready"], true);
+    assert_eq!(status["files"], 0);
 }
 
 #[test]
@@ -425,6 +456,18 @@ fn bundle_file_read_deny_blocks_queries_over_a_previously_built_index() {
     let err = found
         .get("__error")
         .expect("stricter session must be denied");
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("code index denied"),
+        "got {err}"
+    );
+
+    let status = svc.call("kernel.index.status", json!({"session_id": "sess_strict"}));
+    let err = status
+        .get("__error")
+        .expect("stricter session must not inspect indexed paths");
     assert!(
         err["message"]
             .as_str()

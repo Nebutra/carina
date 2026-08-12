@@ -41,33 +41,41 @@ approximation of a dark truecolor screenshot.
 
 ## Transcript grammar
 
-User and assistant messages share one styled role-prefix grammar. The prefix is
-part of the wrap input, not inserted after wrapping: a two-cell semantic mark,
-a six-cell locale-owned role label, and a two-cell relationship gap produce the
-same ten-cell hanging indent for both roles. All seven locale labels must fit the
-six-cell field. Narrow degradation may clip the prefix to preserve one body cell;
-it must never drop or rewrite message graphemes. Long URLs wrap at grapheme
-boundaries without inserted whitespace, hyphens, or mutated bytes.
+User and assistant messages share one responsive styled role-prefix grammar. The
+prefix is part of the wrap input, not inserted after wrapping: a two-cell
+semantic mark, a six-cell locale-owned role label, and a two-cell relationship
+gap produce the same ten-cell first-line prefix for both roles. At 72 content
+cells and above, continuation rows retain that ten-cell hanging indent. Below 72
+cells, continuation rows retain only the two-cell semantic rail so the role does
+not consume a disproportionate share of the reading measure. All seven locale
+labels must fit the six-cell field. Extreme-width degradation may clip the
+prefix to preserve one body cell; it must never drop or rewrite message
+graphemes. Long URLs wrap at grapheme boundaries without inserted whitespace,
+hyphens, or mutated bytes.
 Production rendering and golden frames share `transcript_content`, which applies
 the `TRANSCRIPT_READING_MAX_WIDTH` measure instead of the wider product canvas.
 
 Expanded tool detail uses the semantic two-cell tree gutter on every source and
 continuation row. Related operational rows (tool/tool and tool/thinking in either
 order) use the related-row gap; unrelated conversation objects use the normal
-block gap. Selection and hover chrome remain outside the content rectangle, so
-neither state changes wrapping, retained heights, nor pointer hit geometry.
+block gap. Selection chrome remains outside the content rectangle. Pointer hover
+may patch the semantic interaction style onto a collapsible header, but it must
+not change wrapping, retained heights, visible copy, or pointer hit geometry.
+The last pointer position is re-resolved after every frame rebuild so hover can
+leave and re-enter repeatedly and cannot retain stale ownership after reflow,
+scrolling, disclosure, resize, or overlay changes.
 
 ## Density projection
 
 Transcript density is a persisted presentation preference over one semantic
-tree. `compact` is the default; `comfortable` adds space and opens routine tool
-detail by default. `/density` and the settings row dispatch the same action and
+tree. `compact` is the default; `comfortable` adds space and bounded previews
+without changing disclosure state. `/density` and the settings row dispatch the same action and
 persist `tui_density` without replacing unrelated configuration keys.
 
 | Projection | Compact | Comfortable |
 |------------|---------|-------------|
 | unrelated / related / final gap | 1 / 0 / 1 | 2 / 1 / 2 |
-| default routine tool detail | collapsed | expanded |
+| default routine tool detail | collapsed | collapsed |
 | collapsed group members | 0 | 2 |
 | collapsed plain-output lines | 0 | 3 |
 | collapsed create preview lines | 4 | 8 |
@@ -102,6 +110,34 @@ rounded in Unicode and Nerd Font modes and plain in ASCII; Markdown tables are
 the only sharp-junction exception in graphical modes.
 
 ## Composer chrome
+
+The conversation shell is intentionally quieter than setup. Its header owns one
+content row and one bottom hairline: `Carina ▾ · conversation` on the left, with
+the current mode as the highest-priority routine action on the right. The
+width-locked product trigger opens an anchored menu for New conversation,
+Conversations, Status, Settings, and Help. A paused run's Review/Resume action
+outranks the mode, followed by the model picker. Provider, reasoning, source,
+workspace, navigation, and shortcut tutorials remain available in their
+dedicated surfaces instead of being repeated above every turn. Hover/open state
+may change action style, never label, width, order, or hit geometry.
+
+The product menu is a non-governance overlay anchored below the header hairline,
+so its complete border remains visually independent from the shell separator. It
+re-registers the header trigger inside overlay hit ownership, captures its
+border, and registers only the four outside rectangles as close actions;
+background transcript and composer actions remain unreachable. Approval,
+question, and plan-review overlays preempt and discard it. If resize, Inline
+mode, or a short terminal removes the rendered header anchor, the menu closes
+rather than inventing geometry.
+
+The composer is a bottom-anchored input track, not a form card. A single top
+hairline separates it from status chrome; a width-locked two-cell prompt glyph
+owns the leading column and the TextArea owns the remaining rectangle for
+rendering, wrapping, cursor placement, element hit-testing, and mouse input.
+Empty input consumes one content row and drafts grow upward to five. The full
+track focuses the composer, while clicks inside the TextArea must also place the
+cursor and composer drag/up events must complete selection. Focus remains
+structural in `NO_COLOR` through bold/reversed prompt treatment.
 
 Conversation state uses a state-derived zero-, one-, or two-row chrome directly
 above the bottom-anchored composer. Idle is quiet. Active work owns a narrative

@@ -12,9 +12,9 @@ import (
 func TestDetectCCSwitchProvidersProjectsSafeTypedProfiles(t *testing.T) {
 	// Fixture OAuth-only Claude row must stay non-importable even when the
 	// developer machine has a real Claude Code keychain login.
-	prev := claudeCodeOAuthLookup
-	claudeCodeOAuthLookup = func() (string, bool) { return "", false }
-	t.Cleanup(func() { claudeCodeOAuthLookup = prev })
+	prev := claudeCodeOAuthSessionLookup
+	claudeCodeOAuthSessionLookup = func() bool { return false }
+	t.Cleanup(func() { claudeCodeOAuthSessionLookup = prev })
 
 	databasePath := createCCSwitchFixture(t)
 	profiles, err := DetectCCSwitchProviders(databasePath)
@@ -61,9 +61,9 @@ func TestResolveCCSwitchClaudeAPIKeyKeepsAPIKeyHeaderSemantics(t *testing.T) {
 }
 
 func TestImportCCSwitchCredentialRequiresExplicitProfileLookup(t *testing.T) {
-	prev := claudeCodeOAuthLookup
-	claudeCodeOAuthLookup = func() (string, bool) { return "", false }
-	t.Cleanup(func() { claudeCodeOAuthLookup = prev })
+	prev := claudeCodeOAuthSessionLookup
+	claudeCodeOAuthSessionLookup = func() bool { return false }
+	t.Cleanup(func() { claudeCodeOAuthSessionLookup = prev })
 
 	databasePath := createCCSwitchFixture(t)
 	profiles, err := DetectCCSwitchProviders(databasePath)

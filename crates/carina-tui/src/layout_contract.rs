@@ -48,12 +48,17 @@ pub const SCENE_HEADER_GAP: u16 = 1;
 pub const SCENE_CONTENT_MIN_HEIGHT: u16 = 6;
 pub const SCENE_FOOTER_HEIGHT: u16 = 2;
 
-pub const CONVERSATION_HEADER_HEIGHT: u16 = COMPACT_HEADER_HEIGHT;
+/// One content row plus a bottom hairline. Conversation chrome intentionally
+/// stays independent from the denser setup header.
+pub const CONVERSATION_HEADER_HEIGHT: u16 = 2;
+pub const PRODUCT_MENU_WIDTH: u16 = 28;
+pub const PRODUCT_MENU_HEIGHT: u16 = 7;
+pub const PRODUCT_MENU_SEPARATOR_ROWS: u16 = 1;
 pub const CONVERSATION_MIN_TRANSCRIPT_HEIGHT: u16 = 4;
 pub const COMPOSER_MIN_HEIGHT: u16 = 1;
 pub const COMPOSER_MAX_HEIGHT: u16 = 5;
-pub const COMPOSER_BORDER_COLUMNS: u16 = 2;
-pub const COMPOSER_BORDER_ROWS: u16 = 2;
+pub const COMPOSER_PROMPT_COLUMNS: u16 = 2;
+pub const COMPOSER_CHROME_ROWS: u16 = 1;
 pub const COMPOSER_CHROME_HEIGHT: u16 = 2;
 pub const TRANSCRIPT_HORIZONTAL_INSET: u16 = 1;
 pub const TRANSCRIPT_SCROLLBAR_GAP: u16 = 1;
@@ -63,6 +68,9 @@ pub const TRANSCRIPT_ROLE_LABEL_WIDTH: usize = 6;
 pub const TRANSCRIPT_ROLE_GAP_WIDTH: usize = 2;
 pub const TRANSCRIPT_ROLE_PREFIX_WIDTH: usize =
     TRANSCRIPT_ROLE_MARK_WIDTH + TRANSCRIPT_ROLE_LABEL_WIDTH + TRANSCRIPT_ROLE_GAP_WIDTH;
+/// Below this content width, continuation rows keep only the semantic rail so
+/// role labels do not consume a disproportionate share of the reading measure.
+pub const TRANSCRIPT_FULL_ROLE_MIN_WIDTH: u16 = 72;
 pub const TRANSCRIPT_TOOL_GUTTER_WIDTH: usize = 2;
 /// Fixed tool-kind label field for intent-first rows (matches role label width).
 pub const TRANSCRIPT_TOOL_LABEL_WIDTH: usize = 6;
@@ -531,6 +539,7 @@ mod tests {
     #[test]
     fn transcript_indents_are_relational_and_width_locked() {
         assert_eq!(TRANSCRIPT_ROLE_PREFIX_WIDTH, 10);
+        assert_eq!(TRANSCRIPT_FULL_ROLE_MIN_WIDTH, 72);
         assert_eq!(TRANSCRIPT_TOOL_GUTTER_WIDTH, TRANSCRIPT_ROLE_MARK_WIDTH);
         assert_eq!(TRANSCRIPT_FINAL_GAP, TRANSCRIPT_BLOCK_GAP);
         assert_eq!(

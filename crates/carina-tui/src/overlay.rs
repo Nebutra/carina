@@ -1,7 +1,9 @@
 use std::collections::{HashSet, VecDeque};
 
+use crate::component::Action;
 use crate::file_viewer::FileViewer;
 use crate::glyphs::GlyphPreference;
+use crate::i18n::MessageId;
 use crate::product_projection::ProductProjection;
 use crate::rpc::{
     AgentRecap, ContextSummary, GovernanceId, QuestionOption, SessionItemEvent, WireEvent,
@@ -9,6 +11,7 @@ use crate::rpc::{
 
 #[derive(Debug, Clone)]
 pub enum Overlay {
+    ProductMenu(ProductMenuOverlay),
     Approval(ApprovalOverlay),
     Question(QuestionOverlay),
     PlanReview(PlanReviewOverlay),
@@ -119,7 +122,8 @@ impl Overlay {
         match self {
             Self::Approval(approval) => Some(GovernanceId::Approval(approval.decision_id.clone())),
             Self::Question(question) => Some(GovernanceId::Question(question.question_id.clone())),
-            Self::PlanReview(_)
+            Self::ProductMenu(_)
+            | Self::PlanReview(_)
             | Self::Settings(_)
             | Self::Status(_)
             | Self::Context(_)
@@ -131,6 +135,46 @@ impl Overlay {
             | Self::Queue(_) => None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ProductMenuItem {
+    pub id: &'static str,
+    pub label: MessageId,
+    pub action: Action,
+}
+
+pub const PRODUCT_MENU_ITEMS: [ProductMenuItem; 5] = [
+    ProductMenuItem {
+        id: "new",
+        label: MessageId::NewConversation,
+        action: Action::CreateSession,
+    },
+    ProductMenuItem {
+        id: "sessions",
+        label: MessageId::Conversations,
+        action: Action::OpenSessions,
+    },
+    ProductMenuItem {
+        id: "status",
+        label: MessageId::Status,
+        action: Action::OpenStatus,
+    },
+    ProductMenuItem {
+        id: "settings",
+        label: MessageId::Settings,
+        action: Action::OpenSettings,
+    },
+    ProductMenuItem {
+        id: "help",
+        label: MessageId::Help,
+        action: Action::OpenHelp,
+    },
+];
+
+#[derive(Debug, Clone, Default)]
+pub struct ProductMenuOverlay {
+    pub selected: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -642,6 +686,10 @@ impl OverlayStack {
         {
             return;
         }
+        if overlay.is_governance() && matches!(self.active, Some(Overlay::ProductMenu(_))) {
+            self.active = Some(overlay);
+            return;
+        }
         if self.active.is_some() {
             self.pending.push_back(overlay);
         } else {
@@ -681,8 +729,11 @@ impl OverlayStack {
         }
         if let Some(overlay) = Overlay::from_event(event) {
             let before = self.pending.len() + usize::from(self.active.is_some());
+            let preempts_product_menu =
+                overlay.is_governance() && matches!(self.active, Some(Overlay::ProductMenu(_)));
             self.push(overlay);
-            return before != self.pending.len() + usize::from(self.active.is_some());
+            return preempts_product_menu
+                || before != self.pending.len() + usize::from(self.active.is_some());
         }
         false
     }
@@ -749,6 +800,17 @@ mod tests {
 
     use super::*;
     use crate::rpc::SessionItem;
+
+    #[test]
+    fn governance_preempts_the_product_menu() {
+        let mut stack = OverlayStack::default();
+        stack.replace(Overlay::ProductMenu(ProductMenuOverlay::default()));
+        stack.push(Overlay::PlanReview(PlanReviewOverlay::new(
+            "run-1", "review",
+        )));
+        assert!(matches!(stack.active(), Some(Overlay::PlanReview(_))));
+        assert_eq!(stack.pending.len(), 0);
+    }
 
     #[test]
     fn plan_review_records_single_and_range_comments_with_one_based_anchors() {

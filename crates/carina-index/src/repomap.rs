@@ -143,6 +143,13 @@ pub(crate) fn build(store: &Store, opts: &RepoMapOptions) -> Result<RepoMap, Ind
         })
         .collect();
 
+    let mut incoming = vec![0usize; rows.len()];
+    let mut outgoing = vec![0usize; rows.len()];
+    for &(src, dst, _) in &edges {
+        outgoing[src] += 1;
+        incoming[dst] += 1;
+    }
+
     let mut ranks = pagerank(rows.len(), &edges, opts.damping, opts.iterations);
     if !opts.focus_paths.is_empty() {
         let focus: HashSet<&str> = opts.focus_paths.iter().map(String::as_str).collect();
@@ -178,47 +185,100 @@ pub(crate) fn build(store: &Store, opts: &RepoMapOptions) -> Result<RepoMap, Ind
             .then(rows[a].start_line.cmp(&rows[b].start_line))
             .then(rows[a].id.cmp(&rows[b].id))
     });
+    let mut rank_position = vec![0usize; rows.len()];
+    for (position, &index) in order.iter().enumerate() {
+        rank_position[index] = position + 1;
+    }
     ranked = order.iter().map(|&i| ranked[i].clone()).collect();
 
-    // Group by file in first-appearance (best-rank) order; symbols within a
-    // file keep rank order. Lines are added while they fit the budget; a
-    // file's header is charged together with its first symbol line.
-    let mut text = String::new();
-    let mut by_file: Vec<(&str, Vec<usize>)> = Vec::new();
+    // Build a diversity-first file order without changing the authoritative
+    // PageRank scores: seed one best-ranked file from every top-level domain,
+    // then append the remaining files by rank. This prevents a large dominant
+    // package tree from erasing smaller runtime/test/native domains.
+    let mut members_by_file: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut ranked_files: Vec<&str> = Vec::new();
     for &index in &order {
         let path = rows[index].path.as_str();
-        match by_file.iter_mut().find(|(p, _)| *p == path) {
-            Some((_, members)) => members.push(index),
-            None => by_file.push((path, vec![index])),
+        if !members_by_file.contains_key(path) {
+            ranked_files.push(path);
+        }
+        members_by_file.entry(path).or_default().push(index);
+    }
+    let mut file_order: Vec<&str> = Vec::with_capacity(ranked_files.len());
+    let mut seen_files: HashSet<&str> = HashSet::new();
+    let mut seen_domains: HashSet<&str> = HashSet::new();
+    for &path in &ranked_files {
+        let domain = top_level_domain(path);
+        if seen_domains.insert(domain) && seen_files.insert(path) {
+            file_order.push(path);
+        }
+    }
+    for path in ranked_files {
+        if seen_files.insert(path) {
+            file_order.push(path);
         }
     }
     let symbols_total = rows.len();
-    let files_total = by_file.len();
+    let files_total = file_order.len();
+
+    // Select in rounds: every chosen file gets its best symbol before any file
+    // gets a second one. Headers are charged exactly once. Under a generous
+    // budget later rounds still include the complete graph projection.
+    let mut selected: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut selected_bytes = 0usize;
     let mut symbols_included = 0usize;
-    let mut files_included = 0usize;
-    'render: for (path, members) in &by_file {
-        let header = format!("{path}:\n");
-        let mut header_pending = true;
-        for &index in members {
+    let max_members = members_by_file.values().map(Vec::len).max().unwrap_or(0);
+    for round in 0..max_members {
+        for &path in &file_order {
+            let Some(&index) = members_by_file
+                .get(path)
+                .and_then(|members| members.get(round))
+            else {
+                continue;
+            };
             let row = &rows[index];
             let line = format!(
-                "  {} {} ({}-{})\n",
+                "  {} {} ({}-{}) [#{} in:{} out:{}]\n",
                 kind_label(row.kind),
                 row.qualified_name,
                 row.start_line,
-                row.end_line
+                row.end_line,
+                rank_position[index],
+                incoming[index],
+                outgoing[index]
             );
-            let added = line.len() + if header_pending { header.len() } else { 0 };
-            if token_estimate(text.len() + added) > opts.token_budget {
-                break 'render;
+            let first_for_file = !selected.contains_key(path);
+            let added = line.len() + if first_for_file { path.len() + 2 } else { 0 };
+            if token_estimate(selected_bytes + added) > opts.token_budget {
+                continue;
             }
-            if header_pending {
-                text.push_str(&header);
-                header_pending = false;
-                files_included += 1;
-            }
-            text.push_str(&line);
+            selected.entry(path).or_default().push(index);
+            selected_bytes += added;
             symbols_included += 1;
+        }
+    }
+
+    let mut text = String::with_capacity(selected_bytes);
+    let mut files_included = 0usize;
+    for path in file_order {
+        let Some(members) = selected.get(path) else {
+            continue;
+        };
+        files_included += 1;
+        text.push_str(path);
+        text.push_str(":\n");
+        for &index in members {
+            let row = &rows[index];
+            text.push_str(&format!(
+                "  {} {} ({}-{}) [#{} in:{} out:{}]\n",
+                kind_label(row.kind),
+                row.qualified_name,
+                row.start_line,
+                row.end_line,
+                rank_position[index],
+                incoming[index],
+                outgoing[index]
+            ));
         }
     }
 
@@ -232,6 +292,10 @@ pub(crate) fn build(store: &Store, opts: &RepoMapOptions) -> Result<RepoMap, Ind
         files_total,
         files_included,
     })
+}
+
+fn top_level_domain(path: &str) -> &str {
+    path.split_once('/').map_or("(root)", |(domain, _)| domain)
 }
 
 /// The Go daemon's transport token estimate: `len/4 + 1`.
@@ -363,6 +427,11 @@ mod tests {
             .expect("repo_map");
         assert!(map.text.contains("a.rs:"), "map text:\n{}", map.text);
         assert!(map.text.contains("central"), "map text:\n{}", map.text);
+        assert!(
+            map.text.contains("[#1 in:2 out:0]"),
+            "map must expose compact graph identity and degree: {}",
+            map.text
+        );
         assert!(!map.ranked.is_empty());
         for pair in map.ranked.windows(2) {
             assert!(
@@ -443,5 +512,45 @@ mod tests {
         assert_eq!(map.files_total, 0);
         assert_eq!(map.files_included, 0);
         assert!(map.text.is_empty());
+    }
+
+    #[test]
+    fn tight_map_covers_top_level_domains_before_repeating_a_file() {
+        let mut idx = CodeIndex::in_memory().expect("in-memory index");
+        idx.ingest(&[
+            IngestFile {
+                path: "packages/core.rs".into(),
+                content: (0..20)
+                    .map(|i| format!("pub fn package_{i}() {{}}\n"))
+                    .collect(),
+            },
+            IngestFile {
+                path: "runtime/engine.rs".into(),
+                content: "pub fn runtime_entry() {}\n".into(),
+            },
+            IngestFile {
+                path: "tests/smoke.rs".into(),
+                content: "pub fn smoke_test() {}\n".into(),
+            },
+        ])
+        .expect("ingest");
+
+        let map = idx
+            .repo_map(&RepoMapOptions {
+                token_budget: 80,
+                ..RepoMapOptions::default()
+            })
+            .expect("repo_map");
+        for domain in ["packages/", "runtime/", "tests/"] {
+            assert!(map.text.contains(domain), "missing {domain}: {}", map.text);
+        }
+        assert_eq!(map.files_included, 3);
+    }
+
+    #[test]
+    fn root_files_share_one_diversity_domain() {
+        assert_eq!(top_level_domain("main.rs"), "(root)");
+        assert_eq!(top_level_domain("build.rs"), "(root)");
+        assert_eq!(top_level_domain("crates/core.rs"), "crates");
     }
 }

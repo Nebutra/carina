@@ -288,6 +288,21 @@ func TestKernelIndexRoundTrip(t *testing.T) {
 		t.Fatalf("index map: %v", err)
 	}
 
+	// A delete-only update must still encode changed_paths as [] rather than
+	// JSON null; the kernel contract requires an array even when it is empty.
+	if err := os.WriteFile(filepath.Join(ws, "gone.rs"), []byte("pub fn gone() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.IndexUpdate("sess_ix", []string{"gone.rs"}, nil); err != nil {
+		t.Fatalf("index add before delete: %v", err)
+	}
+	if err := os.Remove(filepath.Join(ws, "gone.rs")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.IndexUpdate("sess_ix", nil, []string{"gone.rs"}); err != nil {
+		t.Fatalf("delete-only index update: %v", err)
+	}
+
 	// Patch apply, then update reflects the edit.
 	if _, err := os.Stat(filepath.Join(toolsDir, "carina-patch-native")); err != nil {
 		t.Skip("zig tools not built for patch")

@@ -10,9 +10,11 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -21,6 +23,14 @@ import (
 	"github.com/Nebutra/carina/go/lsp"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
+)
+
+const (
+	// A first-use semantic build performs one governed FileRead per source file.
+	// Beyond this size, the first interactive request starts a resumable batched
+	// build and returns a bounded progressive map instead of blocking on it.
+	synchronousRepoMapFileLimit  = 256
+	lightweightRepoMapGroupLimit = 20
 )
 
 // ensureIndex lazily builds the session's code index on first use. Candidate
@@ -34,22 +44,50 @@ import (
 // built branch a cheap (mtime, size, mode) diff against the last-sync
 // snapshot routes out-of-band edits through kernel.index.update.
 func (d *Daemon) ensureIndex(sess *sessionstore.Session, task *scheduler.ExecutionRun) error {
+	return d.ensureIndexFromSnapshot(sess, task, nil)
+}
+
+func (d *Daemon) ensureIndexFromSnapshot(sess *sessionstore.Session, task *scheduler.ExecutionRun, snap *sweepSnapshot) error {
 	if _, built := d.indexBuilt.Load(sess.SessionID); built {
 		if sweepEnabled() {
 			d.sweepIndex(sess, task)
+			if _, stillBuilt := d.indexBuilt.Load(sess.SessionID); !stillBuilt {
+				return errors.New("semantic index refresh failed; retry to rebuild")
+			}
 		}
 		return nil
 	}
-	snap, err := d.scanSupportedStamps(sess.WorkspaceRoot)
-	if err != nil {
-		return fmt.Errorf("scan workspace: %w", err)
+	if snap == nil {
+		var err error
+		snap, err = d.scanSupportedStamps(sess.WorkspaceRoot)
+		if err != nil {
+			return fmt.Errorf("scan workspace: %w", err)
+		}
 	}
+	if restored, err := d.restoreReadyIndex(sess, snap); err != nil {
+		return err
+	} else if restored {
+		return nil
+	}
+	limit := d.indexSyncFileLimit
+	if limit <= 0 {
+		limit = synchronousRepoMapFileLimit
+	}
+	if len(snap.stamps) > limit {
+		progress := d.startBackgroundIndexBuild(sess, task, snap)
+		return &indexBuildingError{progress: progress}
+	}
+
 	paths := make([]string, 0, len(snap.stamps))
 	for p := range snap.stamps {
 		paths = append(paths, p)
 	}
+	sort.Strings(paths)
 	if _, err := d.kern.IndexBuild(sess.SessionID, paths); err != nil {
 		return err
+	}
+	if err := d.persistReadySnapshot(sess.WorkspaceRoot, snap); err != nil {
+		return fmt.Errorf("persist completed index state: %w", err)
 	}
 	d.indexBuilt.Store(sess.SessionID, true)
 	d.indexSnapshot.Store(sess.SessionID, snap)
@@ -60,6 +98,53 @@ func (d *Daemon) ensureIndex(sess *sessionstore.Session, task *scheduler.Executi
 		d.noteEmbeddingSyncFailure(sess.SessionID, task.RunID, err)
 	}
 	return nil
+}
+
+type repoMapGroup struct {
+	name  string
+	count int
+}
+
+// lightweightRepoMap is a deterministic metadata-only overview. It makes no
+// semantic-index claim and intentionally exposes only bounded aggregate paths.
+func lightweightRepoMap(snap *sweepSnapshot) string {
+	counts := make(map[string]int)
+	for path := range snap.stamps {
+		clean := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(path)), "./")
+		group := clean
+		if slash := strings.IndexByte(clean, '/'); slash >= 0 {
+			group = clean[:slash] + "/"
+		} else {
+			group = "(root)"
+		}
+		counts[group]++
+	}
+	groups := make([]repoMapGroup, 0, len(counts))
+	for name, count := range counts {
+		groups = append(groups, repoMapGroup{name: name, count: count})
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].count != groups[j].count {
+			return groups[i].count > groups[j].count
+		}
+		return groups[i].name < groups[j].name
+	})
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Lightweight workspace map (%d source files; metadata fallback while the semantic index completes):\n", len(snap.stamps))
+	limit := min(len(groups), lightweightRepoMapGroupLimit)
+	for _, group := range groups[:limit] {
+		unit := "files"
+		if group.count == 1 {
+			unit = "file"
+		}
+		fmt.Fprintf(&b, "- %s (%d %s)\n", group.name, group.count, unit)
+	}
+	if len(groups) > limit {
+		fmt.Fprintf(&b, "- ... (%d more top-level groups)\n", len(groups)-limit)
+	}
+	b.WriteString("Use focused list/search/read actions for details.")
+	return b.String()
 }
 
 // fileStamp is one sweep snapshot entry: file metadata only — the daemon
@@ -171,6 +256,10 @@ func (d *Daemon) sweepIndex(sess *sessionstore.Session, task *scheduler.Executio
 	if err := d.syncEmbeddings(sess.SessionID); err != nil {
 		d.noteEmbeddingSyncFailure(sess.SessionID, task.RunID, err)
 	}
+	if err := d.persistReadySnapshot(sess.WorkspaceRoot, cur); err != nil {
+		d.noteSweepFailure(sess.SessionID, task.RunID, "state-error", err)
+		return
+	}
 	d.indexSnapshot.Store(sess.SessionID, cur)
 }
 
@@ -184,6 +273,9 @@ func (d *Daemon) noteSweepFailure(sessionID, taskID, reason string, err error) {
 		map[string]any{"status": "index_sweep_failed", "reason": reason}, "")
 	d.indexBuilt.Delete(sessionID)
 	d.indexSnapshot.Delete(sessionID)
+	if sess, ok := d.store.Get(sessionID); ok {
+		d.markIndexStateIncomplete(sess.WorkspaceRoot)
+	}
 }
 
 // invalidateIndex keeps the code index in step with a write (patch apply or
@@ -204,12 +296,20 @@ func (d *Daemon) invalidateIndex(sessionID string, changed []string) {
 			map[string]any{"status": "index_invalidation_failed", "reason": "kernel-error"}, "")
 		d.indexBuilt.Delete(sessionID)
 		d.indexSnapshot.Delete(sessionID)
+		if sess, ok := d.store.Get(sessionID); ok {
+			d.markIndexStateIncomplete(sess.WorkspaceRoot)
+		}
 		return
 	}
 	// Best-effort re-embed of changed chunks — failures never fail the write,
 	// but they surface (V3): log line, audit event, daemon.status entry.
 	if err := d.syncEmbeddings(sessionID); err != nil {
 		d.noteEmbeddingSyncFailure(sessionID, "", err)
+	}
+	if err := d.updatePersistedSnapshot(sessionID, changed); err != nil {
+		fmt.Printf("carina-daemon: index state persistence failed (session %s): %v\n", sessionID, err)
+		d.record(sessionID, "IndexSyncFailed", "", "go",
+			map[string]any{"status": "index_state_persist_failed", "reason": "state-error"}, "")
 	}
 }
 
@@ -905,16 +1005,44 @@ func (d *Daemon) agentCodeImpact(sess *sessionstore.Session, task *scheduler.Exe
 
 // agentCodeMap renders the PageRank-ranked repo map within a token budget.
 func (d *Daemon) agentCodeMap(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) string {
-	if err := d.ensureIndex(sess, task); err != nil {
+	var snap *sweepSnapshot
+	if _, built := d.indexBuilt.Load(sess.SessionID); !built {
+		var err error
+		snap, err = d.scanSupportedStamps(sess.WorkspaceRoot)
+		if err != nil {
+			return codeIntelError(fmt.Errorf("scan workspace: %w", err))
+		}
+	}
+	if err := d.ensureIndexFromSnapshot(sess, task, snap); err != nil {
+		var building *indexBuildingError
+		if errors.As(err, &building) && snap != nil {
+			return renderProgressiveMap(building.progress, lightweightRepoMap(snap), d.partialSemanticMap(sess.SessionID))
+		}
 		return codeIntelError(err)
 	}
 	raw, err := d.kern.IndexMap(sess.SessionID, 1024)
 	if err != nil {
 		return codeIntelError(err)
 	}
+	return renderSemanticRepoMap(raw, true)
+}
+
+// renderSemanticRepoMap makes projection completeness explicit. The map body
+// is a finite-token PageRank projection of a larger graph; presenting the
+// graph and projection counts prevents callers from mistaking it for a file
+// listing or an exhaustive symbol dump.
+func renderSemanticRepoMap(raw json.RawMessage, complete bool) string {
 	var res struct {
-		Map           string `json:"map"`
-		TokenEstimate int    `json:"token_estimate"`
+		Map             string `json:"map"`
+		TokenEstimate   int    `json:"token_estimate"`
+		SymbolsTotal    int    `json:"symbols_total"`
+		SymbolsIncluded int    `json:"symbols_included"`
+		FilesTotal      int    `json:"files_total"`
+		FilesIncluded   int    `json:"files_included"`
+		IndexedFiles    int    `json:"indexed_files"`
+		EdgesTotal      int    `json:"edges_total"`
+		ChunksTotal     int    `json:"chunks_total"`
+		Projection      string `json:"projection"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return "code intel error: " + err.Error()
@@ -922,5 +1050,27 @@ func (d *Daemon) agentCodeMap(sess *sessionstore.Session, task *scheduler.Execut
 	if strings.TrimSpace(res.Map) == "" {
 		return "repo map is empty (no indexed symbols)"
 	}
-	return res.Map
+	coverage := "partial"
+	if complete {
+		coverage = "complete"
+	}
+	projection := res.Projection
+	if projection == "" {
+		projection = "pagerank-domain-diverse"
+	}
+	header := fmt.Sprintf(
+		"Index coverage: %s; graph: %d indexed files, %d symbols, %d edges, %d chunks; projection: %d/%d files and %d/%d symbols (%s, about %d tokens).",
+		coverage,
+		res.IndexedFiles,
+		res.SymbolsTotal,
+		res.EdgesTotal,
+		res.ChunksTotal,
+		res.FilesIncluded,
+		res.FilesTotal,
+		res.SymbolsIncluded,
+		res.SymbolsTotal,
+		projection,
+		res.TokenEstimate,
+	)
+	return header + "\n" + res.Map
 }

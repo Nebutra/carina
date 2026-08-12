@@ -16,10 +16,10 @@ type modelInventoryParams struct {
 }
 
 type modelInventoryModel struct {
-	ID                     string            `json:"id"`
-	DisplayID              string            `json:"display_id,omitempty"`
-	Name                   string            `json:"name,omitempty"`
-	Available              bool              `json:"available"`
+	ID        string `json:"id"`
+	DisplayID string `json:"display_id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Available bool   `json:"available"`
 	// Status is operator-facing route health: ready|circuit_open|rate_limited|
 	// probing|auth_error|unavailable. Distinct from Available (credential/route).
 	Status                 string            `json:"status,omitempty"`
@@ -33,24 +33,25 @@ type modelInventoryModel struct {
 }
 
 type modelInventoryProvider struct {
-	ID               string `json:"id"`
-	Name             string `json:"name,omitempty"`
-	Registered       bool   `json:"registered"`
-	Available        bool   `json:"available"`
-	AuthSource       string `json:"auth_source,omitempty"`
-	SourceKind       string `json:"source_kind,omitempty"`
-	SourceLabel      string `json:"source_label,omitempty"`
-	SourceApp        string `json:"source_app,omitempty"`
-	SourceRoute      string `json:"source_route,omitempty"`
-	SourceAuthMode   string `json:"source_auth_mode,omitempty"`
-	SourceAction     string `json:"source_action,omitempty"`
-	SourceCurrent    bool   `json:"source_current,omitempty"`
-	SourceImportable bool   `json:"source_importable,omitempty"`
-	SourceReason     string `json:"source_reason,omitempty"`
-	sourceRank       int
-	DynamicModels    bool                  `json:"dynamic_models"`
-	DefaultModel     string                `json:"default_model,omitempty"`
-	Models           []modelInventoryModel `json:"models"`
+	ID                    string `json:"id"`
+	Name                  string `json:"name,omitempty"`
+	Registered            bool   `json:"registered"`
+	Available             bool   `json:"available"`
+	AuthSource            string `json:"auth_source,omitempty"`
+	SourceKind            string `json:"source_kind,omitempty"`
+	SourceLabel           string `json:"source_label,omitempty"`
+	SourceApp             string `json:"source_app,omitempty"`
+	SourceRoute           string `json:"source_route,omitempty"`
+	SourceAuthMode        string `json:"source_auth_mode,omitempty"`
+	SourceCredentialOwner string `json:"source_credential_owner,omitempty"`
+	SourceAction          string `json:"source_action,omitempty"`
+	SourceCurrent         bool   `json:"source_current,omitempty"`
+	SourceImportable      bool   `json:"source_importable,omitempty"`
+	SourceReason          string `json:"source_reason,omitempty"`
+	sourceRank            int
+	DynamicModels         bool                  `json:"dynamic_models"`
+	DefaultModel          string                `json:"default_model,omitempty"`
+	Models                []modelInventoryModel `json:"models"`
 }
 
 type modelInventoryReasoner struct {
@@ -90,13 +91,17 @@ func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
 		}
 		chain := runtimeProviderAuthChain(info, d.authStore)
 		authSource := chain.ResolvedSource()
+		cliDelegated := runtimeProviderUsesClaudeCLI(info) && claudeCLIAvailable()
+		if cliDelegated {
+			authSource = reasonerBackendClaudeCLI
+		}
 		endpoint, hasEndpoint := runtimeBaseURL(info)
 		_, explicitEndpoint := runtimeBaseURLOverride(info)
 		// Stale BYOK must not make explain_unavailable / non-importable CC Switch
 		// routes look runnable (that stranded TUI in Diagnostic with zero models).
 		available := registered[id] &&
 			runtimeSourceAllowsExecution(info) &&
-			(authSource != "" || (hasEndpoint && explicitEndpoint && runtimeProviderAllowsNoAuth(info, endpoint)))
+			(cliDelegated || authSource != "" || (hasEndpoint && explicitEndpoint && runtimeProviderAllowsNoAuth(info, endpoint)))
 		row := modelInventoryProvider{
 			ID: id, Name: info.Name, Registered: registered[id], Available: available,
 			AuthSource: authSource, DynamicModels: len(info.Models) == 0,
@@ -108,6 +113,7 @@ func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
 			row.SourceApp = info.Source.App
 			row.SourceRoute = info.Source.Route
 			row.SourceAuthMode = info.Source.AuthMode
+			row.SourceCredentialOwner = info.Source.CredentialOwner
 			row.SourceAction = info.Source.Action
 			row.SourceCurrent = info.Source.Current
 			row.SourceImportable = info.Source.Importable
@@ -279,14 +285,17 @@ func (d *Daemon) modelInventoryReadiness(request modelInventoryParams, providers
 	return snapshot
 }
 
-func inventoryRouteKind(provider modelInventoryProvider, reasoner modelInventoryReasoner) string {
+func inventoryRouteKind(row modelInventoryProvider, reasoner modelInventoryReasoner) string {
 	if reasoner.Backend == reasonerBackendClaudeCLI || reasoner.Backend == reasonerBackendCodexCLI {
 		return "cli_oauth"
 	}
-	if provider.SourceRoute == providerRouteManagedProxy {
+	if row.SourceCredentialOwner == provider.CCSwitchCredentialOwnerClaudeCode {
+		return "cli_oauth"
+	}
+	if row.SourceRoute == providerRouteManagedProxy {
 		return "live_proxy"
 	}
-	if provider.AuthSource != "" || provider.SourceAuthMode != "" {
+	if row.AuthSource != "" || row.SourceAuthMode != "" {
 		return "credential_source"
 	}
 	return "upstream_record"

@@ -36,11 +36,14 @@ use crate::markdown::{
     MarkdownTheme, StyledPrefix, render_prefixed as render_markdown_prefixed, wrap_styled_lines,
 };
 use crate::overlay::{
-    ApprovalScope, ChangesFocus, Overlay, PlanReviewOverlay, SettingsOverlay, SettingsPage,
+    ApprovalScope, ChangesFocus, Overlay, PRODUCT_MENU_ITEMS, PlanReviewOverlay,
+    ProductMenuOverlay, SettingsOverlay, SettingsPage,
 };
 use crate::patch_review::{PatchDisposition, PatchReview};
 use crate::prerequisite::{BrowserLayout, PickerWindow, PrerequisiteLayout};
-use crate::product_header::{HeaderAction, ProductHeader};
+use crate::product_header::{
+    ConversationHeader, ConversationHeaderAction, ConversationHeaderTone, ProductHeader,
+};
 use crate::product_projection::{
     ActivityKind, AgentCategory, ChangeKind, FileChangeKind, ProductStatus,
 };
@@ -58,14 +61,23 @@ use crate::transcript::{
 impl App {
     pub(super) fn render(&mut self, frame: &mut Frame<'_>) {
         self.interactions.begin_frame();
+        self.product_menu_anchor = None;
         let area = frame.area();
         match self.phase {
             Phase::Conversation => self.render_conversation(frame, area),
             _ => self.render_scene(frame, area),
         }
+        if matches!(self.overlays.active(), Some(Overlay::ProductMenu(_)))
+            && self.product_menu_anchor.is_none()
+        {
+            self.overlays.resolve_active();
+        }
         if let Some(overlay) = self.overlays.active().cloned() {
             self.interactions.begin_overlay();
             self.render_overlay(frame, area, &overlay);
+        }
+        if self.interactions.finish_frame() {
+            self.dirty = true;
         }
     }
 
@@ -2199,25 +2211,44 @@ impl App {
         let reading_axis = layout_contract::transcript_content(content);
         let chrome = self.composer_chrome();
         let chrome_height = chrome.row_count(reading_axis.width);
-        let composer_height = self
+        // A short terminal drops the identity bar before it compresses the
+        // minimum transcript or the input track.
+        let header_height = if self.options.screen_mode == Some(ScreenMode::Inline)
+            || content.height
+                < layout_contract::CONVERSATION_HEADER_HEIGHT
+                    + layout_contract::CONVERSATION_MIN_TRANSCRIPT_HEIGHT
+                    + chrome_height
+                    + layout_contract::COMPOSER_MIN_HEIGHT
+                    + layout_contract::COMPOSER_CHROME_ROWS
+        {
+            0
+        } else {
+            layout_contract::CONVERSATION_HEADER_HEIGHT
+        };
+        let preferred_composer_height = self
             .composer
             .desired_height(
                 reading_axis
                     .width
-                    .saturating_sub(layout_contract::COMPOSER_BORDER_COLUMNS),
+                    .saturating_sub(layout_contract::COMPOSER_PROMPT_COLUMNS),
             )
             .clamp(
                 layout_contract::COMPOSER_MIN_HEIGHT,
                 layout_contract::COMPOSER_MAX_HEIGHT,
             )
-            + layout_contract::COMPOSER_BORDER_ROWS;
+            + layout_contract::COMPOSER_CHROME_ROWS;
+        let composer_height = preferred_composer_height.min(
+            content
+                .height
+                .saturating_sub(
+                    header_height
+                        + chrome_height
+                        + layout_contract::CONVERSATION_MIN_TRANSCRIPT_HEIGHT,
+                )
+                .max(layout_contract::COMPOSER_MIN_HEIGHT + layout_contract::COMPOSER_CHROME_ROWS),
+        );
         // A conversation is an operating surface, not a repeated welcome
         // screen. Keep its context bar compact at every terminal size.
-        let header_height = if self.options.screen_mode == Some(ScreenMode::Inline) {
-            0
-        } else {
-            layout_contract::CONVERSATION_HEADER_HEIGHT
-        };
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -2237,9 +2268,10 @@ impl App {
             &chrome,
         );
         self.render_composer(frame, reading_axis.intersection(chunks[3]));
-        self.render_slash_completion(frame, chunks[1]);
-        self.render_context_completion(frame, chunks[1]);
-        self.render_prompt_history_search(frame, chunks[1]);
+        let completion_axis = reading_axis.intersection(chunks[1]);
+        self.render_slash_completion(frame, completion_axis);
+        self.render_context_completion(frame, completion_axis);
+        self.render_prompt_history_search(frame, completion_axis);
     }
 
     fn render_conversation_header(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -2249,38 +2281,23 @@ impl App {
             &self.options.workspace,
             self.ui_locale(),
         );
-        let (provider, model, reasoning) = self.product_header_metadata();
-        let mut actions = vec![
-            HeaderAction {
-                label: tr(locale, MessageId::Sessions),
-                action: Action::OpenSessions,
-                component: ComponentId(9_101),
-            },
-            HeaderAction {
-                label: tr(locale, MessageId::Model),
-                action: Action::OpenModels,
-                component: ComponentId(9_102),
-            },
-            HeaderAction {
-                label: if self
-                    .active_session
-                    .as_ref()
-                    .is_some_and(|session| session.plan_mode)
-                {
-                    tr(locale, MessageId::PlanModeShortcut)
-                } else {
-                    tr(locale, MessageId::BuildModeShortcut)
-                },
-                action: Action::TogglePlanMode,
-                component: ComponentId(9_106),
-            },
-        ];
+        let (_, model, _) = self.product_header_metadata();
+        let mode = if self
+            .active_session
+            .as_ref()
+            .is_some_and(|session| session.plan_mode)
+        {
+            tr(locale, MessageId::ModePlanLabel)
+        } else {
+            tr(locale, MessageId::ModeBuildLabel)
+        };
+        let mut actions = Vec::new();
         if self
             .active_session
             .as_ref()
             .is_some_and(|session| session.execution_status == "paused")
         {
-            actions.push(HeaderAction {
+            actions.push(ConversationHeaderAction {
                 label: if self.paused_resume_blocker().is_some() {
                     tr(locale, MessageId::Review)
                 } else {
@@ -2288,24 +2305,119 @@ impl App {
                 },
                 action: Action::ResumePausedExecutionRun,
                 component: ComponentId(9_105),
+                tone: ConversationHeaderTone::Blocking,
             });
         }
-        actions.push(HeaderAction {
-            label: tr(locale, MessageId::Settings),
-            action: Action::OpenSettings,
-            component: ComponentId(9_104),
+        actions.push(ConversationHeaderAction {
+            label: mode,
+            action: Action::TogglePlanMode,
+            component: ComponentId(9_106),
+            tone: ConversationHeaderTone::Active,
         });
-        ProductHeader {
-            locale: self.ui_locale(),
-            title: Some(&title),
-            phase: None,
-            provider: &provider,
-            model: &model,
-            reasoning: &reasoning,
-            workspace: &self.options.workspace,
+        actions.push(ConversationHeaderAction {
+            label: &model,
+            action: Action::OpenModels,
+            component: ComponentId(9_102),
+            tone: ConversationHeaderTone::Muted,
+        });
+        let product_menu_anchor = ConversationHeader {
+            title: &title,
+            product_menu_open: matches!(self.overlays.active(), Some(Overlay::ProductMenu(_))),
             actions: &actions,
         }
         .render(frame, area, self.theme, &mut self.interactions);
+        self.product_menu_anchor = product_menu_anchor;
+    }
+
+    fn render_product_menu_overlay(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        menu: &ProductMenuOverlay,
+    ) {
+        let Some(anchor) = self.product_menu_anchor else {
+            return;
+        };
+        let width = layout_contract::PRODUCT_MENU_WIDTH.min(area.width);
+        let popup_y = anchor
+            .bottom()
+            .saturating_add(layout_contract::PRODUCT_MENU_SEPARATOR_ROWS);
+        let height = layout_contract::PRODUCT_MENU_HEIGHT.min(
+            area.bottom()
+                .saturating_sub(popup_y)
+                .max(layout_contract::ROW_HEIGHT),
+        );
+        let x = anchor.x.min(area.right().saturating_sub(width)).max(area.x);
+        let popup = Rect::new(x, popup_y, width, height);
+
+        for (index, backdrop) in outside_rects(area, popup).into_iter().enumerate() {
+            self.interactions.register(HitRegion {
+                component: ComponentId::stable("product-menu-backdrop", &index.to_string()),
+                area: backdrop,
+                action: Action::CloseOverlay,
+            });
+        }
+        for (index, border) in border_rects(popup).into_iter().enumerate() {
+            self.interactions.register(HitRegion {
+                component: ComponentId::stable("product-menu-border", &index.to_string()),
+                area: border,
+                action: Action::ToggleProductMenu,
+            });
+        }
+        self.interactions.register(HitRegion {
+            component: ComponentId::stable("conversation-header", "product-menu"),
+            area: anchor,
+            action: Action::ToggleProductMenu,
+        });
+
+        frame.render_widget(Clear, popup);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(self.theme.glyphs.outer_border_type())
+            .border_style(self.theme.focus())
+            .title(format!(
+                " {} ",
+                tr(self.ui_locale(), MessageId::ProductMenu)
+            ))
+            .style(Style::default());
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+
+        for (index, item) in PRODUCT_MENU_ITEMS.iter().enumerate() {
+            if index >= inner.height as usize {
+                break;
+            }
+            let row = Rect::new(
+                inner.x,
+                inner.y + index as u16,
+                inner.width,
+                layout_contract::ROW_HEIGHT,
+            );
+            let component = ComponentId::stable("product-menu-item", item.id);
+            let selected = index == menu.selected;
+            let style = if selected {
+                self.theme.selected()
+            } else if self.interactions.hovered(component) {
+                self.theme.hovered()
+            } else {
+                Style::default().fg(self.theme.text)
+            };
+            let prefix = if selected {
+                self.theme.glyphs.selected()
+            } else {
+                "  "
+            };
+            frame.render_widget(
+                Paragraph::new(format!("{prefix}{}", tr(self.ui_locale(), item.label)))
+                    .style(style),
+                row,
+            );
+            self.interactions.register(HitRegion {
+                component,
+                area: row,
+                action: item.action.clone(),
+            });
+        }
     }
 
     fn render_transcript(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -2484,7 +2596,7 @@ impl App {
                 link: self.theme.transcript_link(),
                 headings: std::array::from_fn(|index| self.theme.heading(index + 1)),
             };
-            let lines = if dimmed || block.failure.is_some() {
+            let mut lines = if dimmed || block.failure.is_some() {
                 transcript_lines_with_tool_key_and_density(
                     block,
                     locale,
@@ -2504,12 +2616,19 @@ impl App {
                     self.density,
                 )
             };
+            if hovered
+                && block.is_collapsible()
+                && block.failure.is_none()
+                && self.history_selected.is_none()
+                && let Some(header) = lines.first_mut()
+            {
+                let hover_style = self.theme.hovered();
+                for span in &mut header.spans {
+                    span.style = span.style.patch(hover_style);
+                }
+            }
             let style = if block.selected {
                 self.theme.selected().add_modifier(Modifier::BOLD)
-            } else if block.kind == BlockKind::User
-                && self.theme.level > crate::theme::ColorLevel::Basic
-            {
-                Style::default().bg(self.theme.user_message_bg)
             } else {
                 Style::default()
             };
@@ -2666,51 +2785,78 @@ impl App {
         let focused = self.focus == Focus::Composer;
         let locale = self.ui_locale();
         let sep = self.theme.glyphs.separator();
-        let title = self
-            .media
-            .attachment_for_preview(&self.composer)
-            .map(|attachment| {
-                let state = match &attachment.state {
-                    crate::media::MediaState::Pending => tr(locale, MessageId::StatusRunning),
-                    crate::media::MediaState::Ready(_) => tr(locale, MessageId::Ready),
-                    crate::media::MediaState::Failed(_) => tr(locale, MessageId::StatusFailed),
-                };
-                format!(
-                    " {} {sep} {} {sep} {} {sep} {state} ",
-                    tr(locale, MessageId::Image),
-                    attachment.label,
-                    human_bytes(attachment.bytes as usize)
-                )
-            })
-            .unwrap_or_else(|| format!(" {} ", tr(locale, MessageId::Message)));
-        let block = Block::default()
-            .borders(Borders::ALL)
+        let attachment_title =
+            self.media
+                .attachment_for_preview(&self.composer)
+                .map(|attachment| {
+                    let state = match &attachment.state {
+                        crate::media::MediaState::Pending => tr(locale, MessageId::StatusRunning),
+                        crate::media::MediaState::Ready(_) => tr(locale, MessageId::Ready),
+                        crate::media::MediaState::Failed(_) => tr(locale, MessageId::StatusFailed),
+                    };
+                    format!(
+                        " {} {sep} {} {sep} {} {sep} {state} ",
+                        tr(locale, MessageId::Image),
+                        attachment.label,
+                        human_bytes(attachment.bytes as usize)
+                    )
+                });
+        let component = ComponentId(9_000);
+        let interactive = focused || self.interactions.hovered(component);
+        let mut block = Block::default()
+            .borders(Borders::TOP)
             .border_type(self.theme.glyphs.outer_border_type())
-            .border_style(if focused {
+            .border_style(if interactive {
                 self.theme.focus()
             } else {
                 Style::default().fg(self.theme.border)
-            })
-            .title(title);
+            });
+        if let Some(title) = attachment_title {
+            block = block.title(title).title_alignment(Alignment::Right);
+        }
         let inner = block.inner(area);
         frame.render_widget(block, area);
+        let prompt_width = layout_contract::COMPOSER_PROMPT_COLUMNS.min(inner.width);
+        let input = Rect::new(
+            inner.x.saturating_add(prompt_width),
+            inner.y,
+            inner.width.saturating_sub(prompt_width),
+            inner.height,
+        );
+        if inner.height > 0 && prompt_width > 0 {
+            let prompt_style = if focused {
+                if self.theme.no_color {
+                    self.theme.selected()
+                } else {
+                    self.theme.focus()
+                }
+            } else if self.interactions.hovered(component) {
+                self.theme.hovered()
+            } else {
+                self.theme.muted()
+            };
+            frame.render_widget(
+                Paragraph::new(self.theme.glyphs.prompt()).style(prompt_style),
+                Rect::new(inner.x, inner.y, prompt_width, 1),
+            );
+        }
         StatefulWidgetRef::render_ref(
             &&self.composer,
-            inner,
+            input,
             frame.buffer_mut(),
             &mut self.composer_state,
         );
-        self.composer_area = inner;
+        self.composer_area = input;
         self.interactions.register(HitRegion {
-            component: ComponentId(9_000),
+            component,
             area,
             action: Action::FocusComposer,
         });
-        for row in inner.y..inner.bottom() {
-            for column in inner.x..inner.right() {
+        for row in input.y..input.bottom() {
+            for column in input.x..input.right() {
                 if let Some(element) = self
                     .composer
-                    .element_at_screen(column, row, inner, self.composer_state)
+                    .element_at_screen(column, row, input, self.composer_state)
                     .filter(|element| element.kind == crate::media::IMAGE_ELEMENT_KIND)
                 {
                     self.interactions.register(HitRegion {
@@ -2731,11 +2877,11 @@ impl App {
             && self.history_search.is_none()
             && let Some((x, y)) = self
                 .composer
-                .cursor_pos_with_state(inner, self.composer_state)
+                .cursor_pos_with_state(input, self.composer_state)
         {
             frame.set_cursor_position(Position::new(x, y));
         }
-        self.render_media_preview(frame, inner, focused);
+        self.render_media_preview(frame, input, focused);
     }
 
     fn render_media_preview(&mut self, frame: &mut Frame<'_>, composer: Rect, focused: bool) {
@@ -3185,7 +3331,7 @@ impl App {
             .saturating_sub(layout_contract::TRANSCRIPT_HORIZONTAL_INSET * 2)
             .min(layout_contract::COMPLETION_MAX_WIDTH);
         let area = Rect::new(
-            transcript.x + 1,
+            transcript.x + layout_contract::ROW_HEIGHT,
             transcript.bottom().saturating_sub(height),
             width,
             height,
@@ -3684,6 +3830,7 @@ impl App {
     fn render_overlay(&mut self, frame: &mut Frame<'_>, area: Rect, overlay: &Overlay) {
         let locale = self.ui_locale();
         match overlay {
+            Overlay::ProductMenu(menu) => self.render_product_menu_overlay(frame, area, menu),
             Overlay::Approval(approval) => {
                 let approval_title = format!(
                     " {}  1/{} ",
@@ -7351,6 +7498,7 @@ fn transcript_lines_with_tool_key_and_density(
             tr(locale, MessageId::TranscriptYou),
             label_style,
             metadata_style,
+            content_width,
         );
         let mut body = block.body.split('\n');
         let mut first = Vec::new();
@@ -7377,6 +7525,7 @@ fn transcript_lines_with_tool_key_and_density(
             tr(locale, MessageId::TranscriptCarina),
             label_style,
             metadata_style,
+            content_width,
         );
         return render_markdown_prefixed(
             &block.body,
@@ -7415,6 +7564,7 @@ fn transcript_lines_with_tool_key_and_density(
         } else {
             failure.model.clone()
         };
+        let separator = format!("  {}  ", glyphs.separator());
         let mut logical_lines = vec![
             Line::from(vec![
                 Span::styled(glyphs.failure_prefix(), removed_style),
@@ -7422,37 +7572,30 @@ fn transcript_lines_with_tool_key_and_density(
                     block.localized_title(locale),
                     removed_style.add_modifier(Modifier::BOLD),
                 ),
-            ]),
-            Line::from(vec![
-                Span::styled(glyphs.tool_gutter(), metadata_style),
-                Span::styled(
-                    format!("{}  ", tr(locale, MessageId::Agent)),
-                    metadata_style,
-                ),
-                Span::styled(failure.owner.clone(), text_style),
-            ]),
-            Line::from(vec![
-                Span::styled(glyphs.tool_gutter(), metadata_style),
-                Span::styled(
-                    format!("{}  ", tr(locale, MessageId::FailureModelLabel)),
-                    metadata_style,
-                ),
+                Span::styled(separator.clone(), metadata_style),
                 Span::styled(model, text_style),
-                Span::styled(format!("  {attempt}"), metadata_style),
+                Span::styled(separator, metadata_style),
+                Span::styled(attempt, metadata_style),
             ]),
             Line::from(vec![
                 Span::styled(glyphs.tool_gutter(), metadata_style),
-                Span::styled(
-                    format!("{}  ", tr(locale, MessageId::Reason)),
-                    metadata_style,
-                ),
                 Span::styled(
                     localize_operator_failure_reason(locale, &failure.reason),
-                    metadata_style,
+                    text_style,
                 ),
             ]),
         ];
         if block.expanded {
+            if !failure.owner.is_empty() {
+                logical_lines.push(Line::from(vec![
+                    Span::styled(glyphs.tool_gutter(), metadata_style),
+                    Span::styled(
+                        format!("{}  ", tr(locale, MessageId::Agent)),
+                        metadata_style,
+                    ),
+                    Span::styled(failure.owner.clone(), text_style),
+                ]));
+            }
             for (label, value) in [
                 (
                     MessageId::FailureRootRun,
@@ -7482,10 +7625,15 @@ fn transcript_lines_with_tool_key_and_density(
             if action_line.len() > 1 {
                 action_line.push(Span::styled("  ", metadata_style));
             }
+            let base_style = match action.action {
+                FailureRecoveryAction::RetryCurrent => link_style.add_modifier(Modifier::BOLD),
+                FailureRecoveryAction::ReplayOriginal => text_style.add_modifier(Modifier::BOLD),
+                FailureRecoveryAction::Details | FailureRecoveryAction::CopyId => metadata_style,
+            };
             let style = if failure.focused_action == Some(action.action) {
-                label_style.add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                base_style.add_modifier(Modifier::BOLD | Modifier::REVERSED)
             } else {
-                label_style.add_modifier(Modifier::BOLD)
+                base_style
             };
             action_line.push(Span::styled(action.label, style));
         }
@@ -7662,7 +7810,11 @@ fn tool_group_lines(block: &TranscriptBlock, context: ToolLineContext) -> Vec<Li
     );
     let mut lines = Vec::new();
     for member in block.tool_members.iter().take(visibility.visible) {
-        lines.push(tool_group_member_line(member, context.styles));
+        lines.push(tool_group_member_line(
+            member,
+            context.styles,
+            block.tool_kind == Some(crate::tool_projection::ToolKind::Explore),
+        ));
         if !member.body.is_empty() {
             lines.extend(tool_detail_lines(
                 &member.body,
@@ -7685,7 +7837,11 @@ fn tool_group_lines(block: &TranscriptBlock, context: ToolLineContext) -> Vec<Li
     lines
 }
 
-fn tool_group_member_line(member: &ToolGroupMember, styles: TranscriptStyles) -> Line<'static> {
+fn tool_group_member_line(
+    member: &ToolGroupMember,
+    styles: TranscriptStyles,
+    show_kind: bool,
+) -> Line<'static> {
     let (marker, marker_style) = if member.is_failure() {
         (styles.glyphs.failure(), styles.removed)
     } else if member.is_running() {
@@ -7698,10 +7854,18 @@ fn tool_group_member_line(member: &ToolGroupMember, styles: TranscriptStyles) ->
     } else {
         format!("{marker} ")
     };
+    let title = if show_kind {
+        crate::tool_projection::format_tool_title(
+            crate::tool_projection::ToolKind::from_name(&member.tool_name).label(),
+            &member.title,
+        )
+    } else {
+        member.title.clone()
+    };
     Line::from(vec![
         Span::styled(styles.glyphs.tool_gutter(), styles.metadata),
         Span::styled(marker, marker_style),
-        Span::styled(member.title.clone(), styles.text),
+        Span::styled(title, styles.text),
         Span::styled(
             if member.additions == 0 {
                 String::new()
@@ -8159,6 +8323,7 @@ fn transcript_role_prefix(
     label: &'static str,
     label_style: Style,
     continuation_style: Style,
+    content_width: u16,
 ) -> StyledPrefix {
     let label_width = UnicodeWidthStr::width(label);
     let padded_label = format!(
@@ -8166,11 +8331,17 @@ fn transcript_role_prefix(
         " ".repeat(layout_contract::TRANSCRIPT_ROLE_LABEL_WIDTH.saturating_sub(label_width)),
         " ".repeat(layout_contract::TRANSCRIPT_ROLE_GAP_WIDTH)
     );
-    let prefix = StyledPrefix::hanging(
+    let continuation_width = if content_width < layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH {
+        layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH
+    } else {
+        layout_contract::TRANSCRIPT_ROLE_PREFIX_WIDTH
+    };
+    let prefix = StyledPrefix::hanging_with_width(
         vec![
             Span::styled(marker, label_style),
             Span::styled(padded_label, label_style),
         ],
+        continuation_width,
         continuation_style,
     );
     debug_assert_eq!(
@@ -8426,6 +8597,49 @@ fn centered(area: Rect, max_width: u16, max_height: u16) -> Rect {
     )
 }
 
+fn outside_rects(area: Rect, popup: Rect) -> [Rect; 4] {
+    [
+        Rect::new(area.x, area.y, area.width, popup.y.saturating_sub(area.y)),
+        Rect::new(
+            area.x,
+            popup.bottom(),
+            area.width,
+            area.bottom().saturating_sub(popup.bottom()),
+        ),
+        Rect::new(
+            area.x,
+            popup.y,
+            popup.x.saturating_sub(area.x),
+            popup.height,
+        ),
+        Rect::new(
+            popup.right(),
+            popup.y,
+            area.right().saturating_sub(popup.right()),
+            popup.height,
+        ),
+    ]
+}
+
+fn border_rects(area: Rect) -> [Rect; 4] {
+    [
+        Rect::new(area.x, area.y, area.width, area.height.min(1)),
+        Rect::new(
+            area.x,
+            area.bottom().saturating_sub(1),
+            area.width,
+            area.height.min(1),
+        ),
+        Rect::new(area.x, area.y, area.width.min(1), area.height),
+        Rect::new(
+            area.right().saturating_sub(1),
+            area.y,
+            area.width.min(1),
+            area.height,
+        ),
+    ]
+}
+
 fn validation_spinner(elapsed: Option<Duration>, glyphs: Glyphs) -> &'static str {
     crate::render_contract::status_spinner(elapsed.unwrap_or_default(), glyphs)
 }
@@ -8601,7 +8815,9 @@ fn fit_media_preview_size(
 #[cfg(test)]
 mod transcript_tests {
     use super::*;
+    use crate::history_search::HistorySearchState;
     use crate::overlay::PlanReviewOverlay;
+    use crate::rpc::Session;
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
@@ -8805,6 +9021,49 @@ mod transcript_tests {
             .default_reasoning_effort = "high".into();
         let (_, _, reasoning) = app.product_header_metadata();
         assert_eq!(reasoning, "high");
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resumed_selection_freezes_the_effort_shown_in_the_header() {
+        let (mut app, root, server) = production_render_app();
+        let mut provider =
+            header_provider("provider-b", "Provider B", "provider-b/model-b", "Model B");
+        provider.models[0].reasoning_efforts = vec!["medium".into(), "high".into()];
+        provider.models[0].default_reasoning_effort = "medium".into();
+        app.inventory.providers = vec![provider];
+        app.models = app.inventory.available_models();
+        app.selected_model.clear();
+        app.selected_reasoning_effort.clear();
+
+        let session = Session {
+            session_id: "sess-resumed".into(),
+            name: String::new(),
+            workspace_id: "ws".into(),
+            workspace_root: root.to_string_lossy().into_owned(),
+            status: "active".into(),
+            next_model: "provider-b/model-b".into(),
+            next_reasoning_effort: String::new(),
+            plan_mode: false,
+            permission_profile: "safe-edit".into(),
+            approval_mode: "on_request".into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            latest_run_id: String::new(),
+            latest_run_agent: String::new(),
+            latest_run_result_kind: String::new(),
+            execution_status: "ready".into(),
+            summary: String::new(),
+            continuity: None,
+        };
+        app.sync_selection_from_session(&session);
+
+        assert_eq!(app.model_index, 0);
+        assert_eq!(app.selected_model, "provider-b/model-b");
+        assert_eq!(app.selected_reasoning_effort, "medium");
+        assert_eq!(app.product_header_metadata().2, "medium reasoning");
 
         server.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
@@ -9416,6 +9675,464 @@ mod transcript_tests {
     }
 
     #[test]
+    fn transcript_disclosure_hover_styles_only_the_clickable_header() {
+        for glyph_mode in [
+            crate::glyphs::GlyphMode::Unicode,
+            crate::glyphs::GlyphMode::Ascii,
+        ] {
+            for color_level in [
+                crate::theme::ColorLevel::TrueColor,
+                crate::theme::ColorLevel::None,
+            ] {
+                for expanded in [false, true] {
+                    let (mut app, root, server) = production_render_app();
+                    app.theme = crate::theme::Theme::new(crate::theme::Polarity::Dark, color_level);
+                    app.theme.glyphs = Glyphs::new(glyph_mode);
+                    let mut group = read_group(
+                        vec![
+                            tool_member(
+                                "hover-1",
+                                "src/transcript.rs",
+                                "",
+                                "completed",
+                                "first detail",
+                            ),
+                            tool_member(
+                                "hover-2",
+                                "src/app/render.rs",
+                                "",
+                                "completed",
+                                "second detail",
+                            ),
+                        ],
+                        expanded,
+                    );
+                    group.id = "hover-disclosure".into();
+                    app.blocks = vec![group];
+
+                    let mut terminal =
+                        ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 12)).unwrap();
+                    terminal
+                        .draw(|frame| {
+                            app.interactions.begin_frame();
+                            app.render_transcript(frame, frame.area());
+                        })
+                        .unwrap();
+                    let before_buffer = terminal.backend().buffer().clone();
+                    let before = rendered_frame_contract(&before_buffer);
+                    let action = Action::ToggleBlock("hover-disclosure".into());
+                    let before_targets = action_positions(&app, before_buffer.area, action.clone());
+                    let hover_position = before_targets
+                        .first()
+                        .copied()
+                        .expect("disclosure header should be clickable");
+                    assert!(app.interactions.update_hover(hover_position));
+
+                    terminal
+                        .draw(|frame| {
+                            app.interactions.begin_frame();
+                            app.render_transcript(frame, frame.area());
+                        })
+                        .unwrap();
+                    let after_buffer = terminal.backend().buffer();
+                    let after = rendered_frame_contract(after_buffer);
+                    let after_targets = action_positions(&app, after_buffer.area, action.clone());
+
+                    assert_eq!(visible_contract(&after), visible_contract(&before));
+                    assert_eq!(after_targets, before_targets);
+                    assert_eq!(
+                        app.interactions.action_at(hover_position),
+                        Some(action.clone())
+                    );
+
+                    let mut changed = Vec::new();
+                    for row in before_buffer.area.y..before_buffer.area.bottom() {
+                        for column in before_buffer.area.x..before_buffer.area.right() {
+                            let position = Position::new(column, row);
+                            let before_cell = &before_buffer[position];
+                            let after_cell = &after_buffer[position];
+                            if (before_cell.fg, before_cell.bg, before_cell.modifier)
+                                != (after_cell.fg, after_cell.bg, after_cell.modifier)
+                            {
+                                changed.push(position);
+                            }
+                        }
+                    }
+                    assert!(!changed.is_empty(), "hover must produce visible feedback");
+                    assert!(
+                        changed
+                            .iter()
+                            .all(|position| before_targets.contains(position)),
+                        "hover styling escaped the disclosure hit region: {changed:?}"
+                    );
+
+                    server.join().unwrap();
+                    std::fs::remove_dir_all(root).unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transcript_disclosure_hover_survives_reentry_and_disclosure_reflow() {
+        let (mut app, root, server) = production_render_app();
+        let mut group = read_group(
+            vec![
+                tool_member(
+                    "hover-repeat-1",
+                    "src/transcript.rs",
+                    "",
+                    "completed",
+                    "first detail",
+                ),
+                tool_member(
+                    "hover-repeat-2",
+                    "src/app/render.rs",
+                    "",
+                    "completed",
+                    "second detail",
+                ),
+            ],
+            false,
+        );
+        group.id = "hover-repeat".into();
+        app.blocks = vec![group];
+        let action = Action::ToggleBlock("hover-repeat".into());
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 18)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let target = action_positions(&app, terminal.backend().buffer().area, action.clone())[0];
+        let outside = Position::new(0, 0);
+        assert_ne!(app.interactions.action_at(outside), Some(action.clone()));
+
+        let move_pointer = |app: &mut App, position: Position| {
+            app.handle_mouse(MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: position.x,
+                row: position.y,
+                modifiers: KeyModifiers::NONE,
+            });
+        };
+
+        move_pointer(&mut app, target);
+        assert!(app.dirty);
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let first_hover = rendered_frame_contract(terminal.backend().buffer());
+
+        move_pointer(&mut app, outside);
+        assert!(app.dirty);
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let left = rendered_frame_contract(terminal.backend().buffer());
+        assert_ne!(left, first_hover);
+
+        app.dirty = false;
+        move_pointer(&mut app, target);
+        assert!(app.dirty, "re-entry must request another frame");
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        assert_eq!(
+            rendered_frame_contract(terminal.backend().buffer()),
+            first_hover
+        );
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: target.x,
+            row: target.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.effective_block_expanded(&app.blocks[0]));
+        terminal.draw(|frame| app.render(frame)).unwrap();
+
+        move_pointer(&mut app, outside);
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let expanded_target =
+            action_positions(&app, terminal.backend().buffer().area, action.clone())[0];
+        app.dirty = false;
+        move_pointer(&mut app, expanded_target);
+        assert!(app.dirty, "re-entry after disclosure must request a frame");
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let component = ComponentId::stable("transcript", "hover-repeat");
+        assert!(app.interactions.hovered(component));
+        assert_eq!(
+            app.interactions.action_at(expanded_target),
+            Some(action.clone())
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn conversation_shell_matrix_keeps_a_quiet_header_and_prompt_aligned_composer() {
+        for locale in [Locale::En, Locale::ZhHans] {
+            for glyph_mode in [
+                crate::glyphs::GlyphMode::Unicode,
+                crate::glyphs::GlyphMode::Ascii,
+            ] {
+                for color_level in [
+                    crate::theme::ColorLevel::TrueColor,
+                    crate::theme::ColorLevel::None,
+                ] {
+                    let (mut app, root, server) = production_render_app();
+                    app.options.locale = Some(locale.product_id().into());
+                    app.theme = crate::theme::Theme::new(crate::theme::Polarity::Dark, color_level);
+                    app.theme.glyphs = Glyphs::new(glyph_mode);
+                    app.focus = Focus::Composer;
+
+                    for width in [60, 80, 120, 160, 180] {
+                        let mut terminal =
+                            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 18))
+                                .unwrap();
+                        terminal.draw(|frame| app.render(frame)).unwrap();
+                        let buffer = terminal.backend().buffer();
+                        let rendered = rendered_frame_text(buffer);
+                        let header = rendered.lines().nth(1).unwrap_or_default();
+                        assert!(header.contains("Carina"), "width={width}\n{rendered}");
+                        assert!(
+                            header.contains(tr(locale, MessageId::ModeBuildLabel)),
+                            "width={width}\n{rendered}"
+                        );
+                        for repeated in ["⇧Tab", "reasoning off", "Direct API"] {
+                            assert!(
+                                !header.contains(repeated),
+                                "width={width} repeated {repeated:?}\n{rendered}"
+                            );
+                        }
+                        assert!(
+                            action_positions(&app, buffer.area, Action::OpenSessions).is_empty(),
+                            "width={width}"
+                        );
+                        assert!(
+                            action_positions(&app, buffer.area, Action::OpenSettings).is_empty(),
+                            "width={width}"
+                        );
+
+                        let reading_axis = layout_contract::transcript_content(buffer.area);
+                        assert_eq!(app.composer_area.x, reading_axis.x + 2, "width={width}");
+                        assert_eq!(
+                            app.composer_area.width,
+                            reading_axis.width.saturating_sub(2),
+                            "width={width}"
+                        );
+                        assert_eq!(app.composer_area.height, 1, "width={width}");
+                        assert_eq!(app.composer_area.bottom(), buffer.area.bottom());
+                        let prompt = Position::new(reading_axis.x, app.composer_area.y);
+                        assert_eq!(
+                            app.interactions.action_at(prompt),
+                            Some(Action::FocusComposer),
+                            "width={width}"
+                        );
+                        assert_eq!(
+                            app.interactions.action_at(app.composer_area.as_position()),
+                            Some(Action::FocusComposer),
+                            "width={width}"
+                        );
+                        if color_level == crate::theme::ColorLevel::None {
+                            let modifier = buffer[prompt].modifier;
+                            assert!(modifier.contains(Modifier::BOLD), "width={width}");
+                            assert!(modifier.contains(Modifier::REVERSED), "width={width}");
+                        }
+                        terminal
+                            .backend_mut()
+                            .assert_cursor_position(app.composer_area.as_position());
+                    }
+
+                    server.join().unwrap();
+                    std::fs::remove_dir_all(root).unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn composer_pointer_places_cursor_and_completes_drag_selection() {
+        let (mut app, root, server) = production_render_app();
+        app.composer.set_text("alpha beta gamma");
+        app.focus = Focus::Composer;
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 18)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let input = app.composer_area;
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: input.x + 6,
+            row: input.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.composer.cursor(), 6);
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: input.x + 10,
+            row: input.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.composer.selection_range(), Some(6..10));
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: input.x + 10,
+            row: input.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.composer.selection_range(), Some(6..10));
+
+        let cursor_before_prompt_click = app.composer.cursor();
+        app.focus = Focus::Scene;
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: input.x - 1,
+            row: input.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.focus, Focus::Composer);
+        assert_eq!(app.composer.cursor(), cursor_before_prompt_click);
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn slash_completion_inner_text_aligns_with_the_composer_on_wide_terminals() {
+        for width in [120, 160, 180] {
+            let (mut app, root, server) = production_render_app();
+            app.composer.set_text("/");
+            app.focus = Focus::Composer;
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 24)).unwrap();
+            terminal.draw(|frame| app.render(frame)).unwrap();
+
+            let first_suggestion = (0..app.composer_area.y)
+                .flat_map(|y| (0..width).map(move |x| Position::new(x, y)))
+                .filter(|position| {
+                    matches!(
+                        app.interactions.action_at(*position),
+                        Some(Action::SelectSlashCommand { .. })
+                    )
+                })
+                .min_by_key(|position| (position.y, position.x))
+                .expect("slash completion row");
+            assert_eq!(first_suggestion.x, app.composer_area.x, "width={width}");
+
+            server.join().unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn context_and_history_completion_rows_align_with_the_composer() {
+        for width in [120, 160, 180] {
+            let (mut app, root, server) = production_render_app();
+            app.composer.set_text("@src");
+            app.composer.set_cursor(app.composer.text().len());
+            assert!(app.context_completion.update_context(&app.composer));
+            let generation = app.context_completion.begin_load("session".into());
+            assert!(app.context_completion.apply_load(
+                generation,
+                "session",
+                Ok(vec![crate::rpc::WorkspaceFile {
+                    path: "src/app/render.rs".into(),
+                    language: "rust".into(),
+                    size: 42,
+                    binary: false,
+                    large: false,
+                    mtime: 0,
+                }]),
+            ));
+            app.focus = Focus::Composer;
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 24)).unwrap();
+            terminal.draw(|frame| app.render(frame)).unwrap();
+            let context_row = (0..app.composer_area.y)
+                .flat_map(|y| (0..width).map(move |x| Position::new(x, y)))
+                .find(|position| {
+                    app.interactions.action_at(*position) == Some(Action::SelectFileCandidate(0))
+                })
+                .expect("context completion row");
+            assert_eq!(context_row.x, app.composer_area.x, "width={width}");
+
+            app.context_completion.dismiss(&app.composer);
+            app.history_search = Some(HistorySearchState::activate(
+                vec!["inspect shell geometry".into()],
+                String::new(),
+                false,
+            ));
+            terminal.draw(|frame| app.render(frame)).unwrap();
+            let history_row = (0..app.composer_area.y)
+                .flat_map(|y| (0..width).map(move |x| Position::new(x, y)))
+                .find(|position| {
+                    app.interactions.action_at(*position) == Some(Action::SelectPromptHistory(0))
+                })
+                .expect("history completion row");
+            assert_eq!(history_row.x, app.composer_area.x, "width={width}");
+
+            server.join().unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn conversation_shell_handles_extreme_terminal_widths_without_overflow() {
+        for width in 1..=12 {
+            let (mut app, root, server) = production_render_app();
+            app.composer.set_text("narrow");
+            app.focus = Focus::Composer;
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 8)).unwrap();
+            terminal.draw(|frame| app.render(frame)).unwrap();
+            let area = terminal.backend().buffer().area;
+            assert!(app.composer_area.right() <= area.right(), "width={width}");
+            assert!(app.composer_area.bottom() <= area.bottom(), "width={width}");
+            assert!(
+                app.transcript_geometry.viewport.right() <= area.right(),
+                "width={width}"
+            );
+            assert!(
+                app.transcript_geometry.viewport.bottom() <= area.bottom(),
+                "width={width}"
+            );
+
+            server.join().unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn short_conversation_preserves_transcript_before_growing_the_composer() {
+        for height in [8, 12, 16] {
+            let (mut app, root, server) = production_render_app();
+            app.composer.set_text("one\ntwo\nthree\nfour\nfive\nsix");
+            app.focus = Focus::Composer;
+            app.execution_status = "running".into();
+            app.execution_activity.set_single("Running checks");
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, height)).unwrap();
+            terminal.draw(|frame| app.render(frame)).unwrap();
+
+            assert!(
+                app.transcript_geometry.viewport.height
+                    >= layout_contract::CONVERSATION_MIN_TRANSCRIPT_HEIGHT,
+                "height={height} transcript={:?} composer={:?}",
+                app.transcript_geometry.viewport,
+                app.composer_area
+            );
+            assert_eq!(app.composer_area.bottom(), height);
+            assert!(
+                app.composer_area.height <= layout_contract::COMPOSER_MAX_HEIGHT,
+                "height={height} composer={:?}",
+                app.composer_area
+            );
+            if height == 8 {
+                assert_eq!(app.transcript_geometry.viewport.y, 0);
+                assert_eq!(app.composer_area.height, 1);
+            }
+
+            server.join().unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn execution_and_notice_changes_do_not_move_the_composer_or_chrome() {
         let (mut app, root, server) = production_render_app();
         let mut terminal =
@@ -9766,6 +10483,131 @@ mod transcript_tests {
             .collect()
     }
 
+    #[test]
+    fn product_menu_pointer_contract_opens_routes_and_closes_outside() {
+        let (mut app, root, server) = production_render_app();
+        let draft = "keep this draft";
+        app.composer.set_text(draft);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 32)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let trigger = action_positions(
+            &app,
+            terminal.backend().buffer().area,
+            Action::ToggleProductMenu,
+        )[0];
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: trigger.x,
+            row: trigger.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ProductMenu(_))
+        ));
+        assert_eq!(app.composer.text(), draft);
+        for action in [
+            Action::CreateSession,
+            Action::OpenSessions,
+            Action::OpenStatus,
+            Action::OpenSettings,
+            Action::OpenHelp,
+        ] {
+            assert!(!action_positions(&app, terminal.backend().buffer().area, action).is_empty());
+        }
+        assert!(
+            action_positions(
+                &app,
+                terminal.backend().buffer().area,
+                Action::FocusComposer,
+            )
+            .is_empty(),
+            "the open menu must hide background hit regions"
+        );
+
+        let trigger_open = action_positions(
+            &app,
+            terminal.backend().buffer().area,
+            Action::ToggleProductMenu,
+        )[0];
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: trigger_open.x,
+            row: trigger_open.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.overlays.active().is_none());
+
+        app.apply_action(Action::ToggleProductMenu);
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let outside = Position::new(119, 31);
+        assert_eq!(
+            app.interactions.action_at(outside),
+            Some(Action::CloseOverlay)
+        );
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: outside.x,
+            row: outside.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.overlays.active().is_none());
+        assert_eq!(app.composer.text(), draft);
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn product_menu_keyboard_navigation_uses_the_same_typed_actions() {
+        let (mut app, root, server) = production_render_app();
+        app.apply_action(Action::ToggleProductMenu);
+        app.handle_overlay_key(KeyEvent::from(KeyCode::End));
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ProductMenu(ProductMenuOverlay { selected: 4 }))
+        ));
+        app.handle_overlay_key(KeyEvent::from(KeyCode::Enter));
+        assert!(matches!(app.overlays.active(), Some(Overlay::Help(_))));
+
+        app.close_top_non_governance();
+        app.apply_action(Action::ToggleProductMenu);
+        app.handle_overlay_key(KeyEvent::from(KeyCode::Esc));
+        assert!(app.overlays.active().is_none());
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn product_menu_goldens_cover_locale_and_glyph_fallback() {
+        for (locale_name, locale) in [("en", Locale::En), ("zh_hans", Locale::ZhHans)] {
+            for (glyph_name, glyph_mode) in [
+                ("unicode", crate::glyphs::GlyphMode::Unicode),
+                ("ascii", crate::glyphs::GlyphMode::Ascii),
+            ] {
+                let (mut app, root, server) = production_render_app();
+                app.options.workspace = std::path::PathBuf::from("/tmp/product-menu");
+                app.options.locale = Some(locale.product_id().into());
+                app.theme.glyphs = app.theme.glyphs.with_mode(glyph_mode);
+                app.apply_action(Action::ToggleProductMenu);
+                let mut terminal =
+                    ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+                terminal.draw(|frame| app.render(frame)).unwrap();
+                insta::assert_snapshot!(
+                    format!("product_menu_{locale_name}_{glyph_name}"),
+                    rendered_frame_contract(terminal.backend().buffer())
+                );
+
+                server.join().unwrap();
+                std::fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
     fn tool_member(
         id: &str,
         title: &str,
@@ -9929,13 +10771,7 @@ mod transcript_tests {
             "",
         )];
 
-        let mut group = read_group(
-            vec![
-                tool_member("gallery:group-1", "src/transcript.rs", "", "completed", ""),
-                tool_member("gallery:group-2", "src/app/render.rs", "", "completed", ""),
-            ],
-            true,
-        );
+        let mut group = exploration_group(false);
         group.id = "gallery:group".into();
 
         let mut approval = block(BlockKind::Governance, "cargo test --workspace");
@@ -10133,6 +10969,82 @@ mod transcript_tests {
         );
         server.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn exploration_group(expanded: bool) -> TranscriptBlock {
+        let members = [
+            ("read", "read", "README.md", ""),
+            ("list", "list", "workspace", ""),
+            (
+                "map",
+                "code.map",
+                "core modules",
+                "symbol graph\nentry -> runtime",
+            ),
+            ("search", "search", "runtime/go", "main.go:42"),
+            ("read-again", "read", "README.md", ""),
+        ]
+        .into_iter()
+        .map(|(id, tool_name, title, body)| ToolGroupMember {
+            id: format!("tool:{id}"),
+            tool_name: tool_name.into(),
+            title: title.into(),
+            body: body.into(),
+            body_kind: if tool_name.starts_with("code.") {
+                BlockBodyKind::CodeIntelligence
+            } else {
+                BlockBodyKind::Plain
+            },
+            additions: 0,
+            deletions: 0,
+            status: String::new(),
+            lifecycle: "completed".into(),
+        })
+        .collect();
+        let mut group = read_group(members, expanded);
+        group.id = "exploration:group".into();
+        group.run_id = "run-explore".into();
+        group.tool_kind = Some(crate::tool_projection::ToolKind::Explore);
+        group.collapsible = true;
+        group
+    }
+
+    #[test]
+    fn exploration_group_is_quiet_by_default_and_complete_when_expanded() {
+        for width in [80, 120, 160] {
+            let collapsed = transcript_lines(
+                &exploration_group(false),
+                Locale::En,
+                TranscriptStyles::default(),
+                width,
+            );
+            let collapsed = plain(&collapsed).join("\n");
+            assert!(collapsed.contains("Explored ×5 · README.md, workspace, …"));
+            assert_eq!(collapsed.matches("README.md").count(), 1);
+            assert!(!collapsed.contains("runtime/go"));
+
+            let expanded = transcript_lines(
+                &exploration_group(true),
+                Locale::En,
+                TranscriptStyles::default(),
+                width,
+            );
+            let expanded = plain(&expanded).join("\n");
+            for evidence in [
+                "Read",
+                "List",
+                "Map",
+                "Search",
+                "symbol graph",
+                "main.go:42",
+            ] {
+                assert!(
+                    expanded.contains(evidence),
+                    "{width}-column expansion lost {evidence:?}:\n{expanded}"
+                );
+            }
+            assert_eq!(expanded.matches("README.md").count(), 3);
+        }
     }
 
     fn visible_contract(contract: &str) -> &str {
@@ -11183,7 +12095,7 @@ mod transcript_tests {
         assert!(!app.effective_block_expanded(&app.blocks[0]));
         app.apply_action(Action::ToggleDensity);
         assert_eq!(app.density, DensityMode::Comfortable);
-        assert!(app.effective_block_expanded(&app.blocks[0]));
+        assert!(!app.effective_block_expanded(&app.blocks[0]));
         assert_eq!(app.composer.text(), "retain this draft");
         assert_eq!(app.history_selected, Some(0));
         assert_eq!(app.blocks[0].id, original_id);
@@ -11195,10 +12107,10 @@ mod transcript_tests {
         );
 
         app.apply_action(Action::ToggleBlock("density:tool".into()));
-        assert!(!app.effective_block_expanded(&app.blocks[0]));
+        assert!(app.effective_block_expanded(&app.blocks[0]));
         app.apply_action(Action::ToggleDensity);
         assert_eq!(app.density, DensityMode::Compact);
-        assert!(!app.effective_block_expanded(&app.blocks[0]));
+        assert!(app.effective_block_expanded(&app.blocks[0]));
 
         app.options.density_path = Some(root.clone());
         app.apply_action(Action::ToggleDensity);
@@ -11522,6 +12434,83 @@ mod transcript_tests {
         }
     }
 
+    #[test]
+    fn failure_actions_use_primary_secondary_and_tertiary_semantic_styles() {
+        let theme = crate::theme::Theme::new(
+            crate::theme::Polarity::Dark,
+            crate::theme::ColorLevel::TrueColor,
+        );
+        let mut block = actionable_failure_block();
+        block.failure.as_mut().expect("failure").current_model = "provider/current-model".into();
+        let styles = TranscriptStyles {
+            label: theme.transcript_danger(),
+            text: Style::default().fg(theme.text),
+            metadata: theme.transcript_metadata(),
+            link: theme.transcript_link(),
+            ..TranscriptStyles::default()
+        };
+        let action_styles = |block: &TranscriptBlock| {
+            let lines = transcript_lines(block, Locale::En, styles, 120);
+            let action_line = lines.last().expect("failure action line");
+            action_line
+                .spans
+                .iter()
+                .filter(|span| !span.content.trim().is_empty())
+                .map(|span| (span.content.to_string(), span.style))
+                .collect::<Vec<_>>()
+        };
+
+        let actions = action_styles(&block);
+        let style_for = |label: &str| {
+            actions
+                .iter()
+                .find(|(content, _)| content.contains(label))
+                .map(|(_, style)| *style)
+                .unwrap_or_else(|| panic!("missing action {label:?}: {actions:?}"))
+        };
+        assert_eq!(style_for("Retry current").fg, Some(theme.accent));
+        assert_eq!(style_for("Replay original").fg, Some(theme.text));
+        assert_eq!(style_for("Details").fg, theme.transcript_metadata().fg);
+        assert_eq!(style_for("Copy ID").fg, theme.transcript_metadata().fg);
+        assert_ne!(style_for("Retry current").fg, Some(theme.danger));
+
+        block.failure.as_mut().expect("failure").focused_action =
+            Some(FailureRecoveryAction::Details);
+        let focused = action_styles(&block);
+        let details = focused
+            .iter()
+            .find(|(content, _)| content.contains("Details"))
+            .expect("focused details");
+        assert!(details.1.add_modifier.contains(Modifier::REVERSED));
+    }
+
+    #[test]
+    fn failure_lifecycle_clears_a_stale_collapsed_disclosure_override() {
+        let (mut app, root, server) = production_render_app();
+        let mut group = read_group(
+            vec![
+                tool_member("read", "README.md", "", "completed", ""),
+                tool_member("search", "runtime", "failed", "failed", "permission denied"),
+            ],
+            true,
+        );
+        group.id = "tool:risk-group".into();
+        app.blocks = vec![group];
+        app.tool_disclosure_overrides
+            .insert("tool:risk-group".into(), false);
+        assert!(!app.effective_block_expanded(&app.blocks[0]));
+
+        assert!(app.reconcile_mandatory_disclosures());
+        assert!(app.effective_block_expanded(&app.blocks[0]));
+        assert!(
+            !app.tool_disclosure_overrides
+                .contains_key("tool:risk-group")
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     fn actionable_failure_block() -> TranscriptBlock {
         let mut block = block(BlockKind::Diagnostic, "");
         block.id = "failure:run-root".into();
@@ -11775,8 +12764,31 @@ mod transcript_tests {
                         label,
                         Style::default(),
                         Style::default(),
+                        layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH,
                     )
                     .width(),
+                    layout_contract::TRANSCRIPT_ROLE_PREFIX_WIDTH
+                );
+                assert_eq!(
+                    transcript_role_prefix(
+                        glyphs.role_prefix(),
+                        label,
+                        Style::default(),
+                        Style::default(),
+                        layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH - 1,
+                    )
+                    .continuation_width(),
+                    layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH
+                );
+                assert_eq!(
+                    transcript_role_prefix(
+                        glyphs.role_prefix(),
+                        label,
+                        Style::default(),
+                        Style::default(),
+                        layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH,
+                    )
+                    .continuation_width(),
                     layout_contract::TRANSCRIPT_ROLE_PREFIX_WIDTH
                 );
             }
@@ -11802,7 +12814,7 @@ mod transcript_tests {
     }
 
     #[test]
-    fn user_and_assistant_share_the_same_hanging_indent_snapshot() {
+    fn narrow_user_and_assistant_share_the_same_semantic_rail_snapshot() {
         let mut user = block(BlockKind::User, "abcdefghijklmno");
         user.status.clear();
         let mut assistant = block(BlockKind::Assistant, "abcdefghijklmno");
@@ -11820,18 +12832,76 @@ mod transcript_tests {
             18,
         ));
 
-        assert!(user[1].starts_with(&" ".repeat(10)));
-        assert!(assistant[1].starts_with(&" ".repeat(10)));
+        assert!(user[1].starts_with(&" ".repeat(2)));
+        assert!(!user[1].starts_with(&" ".repeat(10)));
+        assert!(assistant[1].starts_with(&" ".repeat(2)));
+        assert!(!assistant[1].starts_with(&" ".repeat(10)));
         insta::assert_snapshot!(
             [user.join("\n"), assistant.join("\n")].join("\n\n"),
             @r###"
         • You     abcdefgh
-                  ijklmno
+          ijklmno
 
         • Carina  abcdefgh
-                  ijklmno
+          ijklmno
         "###
         );
+    }
+
+    #[test]
+    fn wide_user_and_assistant_keep_the_full_hanging_indent() {
+        let body = "x".repeat(80);
+        for kind in [BlockKind::User, BlockKind::Assistant] {
+            let mut message = block(kind, &body);
+            message.status.clear();
+            let lines = plain(&transcript_lines(
+                &message,
+                Locale::En,
+                TranscriptStyles::default(),
+                layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH,
+            ));
+
+            assert!(lines.len() > 1);
+            assert!(lines[1].starts_with(&" ".repeat(10)));
+        }
+    }
+
+    #[test]
+    fn production_role_geometry_tracks_the_responsive_width_matrix() {
+        let body = "x".repeat(180);
+        for width in [60, 71, 72, 80, 120] {
+            let expected_continuation = if width < layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH {
+                layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH
+            } else {
+                layout_contract::TRANSCRIPT_ROLE_PREFIX_WIDTH
+            };
+            let mut rendered = Vec::new();
+            for kind in [BlockKind::User, BlockKind::Assistant] {
+                let mut message = block(kind, &body);
+                message.status.clear();
+                let lines = plain(&transcript_lines(
+                    &message,
+                    Locale::En,
+                    TranscriptStyles::default(),
+                    width,
+                ));
+
+                assert!(lines.len() > 1, "width={width} kind={kind:?}");
+                assert!(
+                    lines
+                        .iter()
+                        .all(|line| UnicodeWidthStr::width(line.as_str()) <= usize::from(width)),
+                    "width={width} kind={kind:?} lines={lines:?}"
+                );
+                assert_eq!(
+                    lines[1].chars().take_while(|ch| *ch == ' ').count(),
+                    expected_continuation,
+                    "width={width} kind={kind:?}"
+                );
+                rendered.push(lines);
+            }
+            assert_eq!(rendered[0].len(), rendered[1].len(), "width={width}");
+        }
     }
 
     fn viewport(
@@ -11936,6 +13006,26 @@ mod transcript_tests {
         let blocks = [answer];
         let before = captured_anchor(&blocks, viewport(40, 6, 31, false));
         let after = captured_anchor(&blocks, anchored_viewport(100, 6, before.clone()));
+
+        assert_eq!(after.block_id, before.block_id);
+        assert_eq!(after.logical_line, before.logical_line);
+    }
+
+    #[test]
+    fn role_breakpoint_reflow_preserves_the_anchored_logical_line() {
+        let mut answer = block(
+            BlockKind::Assistant,
+            &(1..=18)
+                .map(|line| format!("logical line {line}: {}", "细节 detail ".repeat(12)))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        answer.id = "responsive-answer".into();
+        let blocks = [answer];
+        let before_width = layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH - 1;
+        let after_width = layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH;
+        let before = captured_anchor(&blocks, viewport(before_width, 6, 31, false));
+        let after = captured_anchor(&blocks, anchored_viewport(after_width, 6, before.clone()));
 
         assert_eq!(after.block_id, before.block_id);
         assert_eq!(after.logical_line, before.logical_line);

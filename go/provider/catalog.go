@@ -68,17 +68,18 @@ type Info struct {
 // deliberately safe to project to clients and never contains credentials or
 // the source product's raw record identifier.
 type Source struct {
-	Kind       string `json:"kind"`
-	Label      string `json:"label"`
-	App        string `json:"app,omitempty"`
-	Route      string `json:"route,omitempty"`
-	AuthMode   string `json:"auth_mode,omitempty"`
-	Action     string `json:"action,omitempty"`
-	Revision   string `json:"revision,omitempty"`
-	Rank       int    `json:"rank,omitempty"`
-	Current    bool   `json:"current,omitempty"`
-	Importable bool   `json:"importable,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+	Kind            string `json:"kind"`
+	Label           string `json:"label"`
+	App             string `json:"app,omitempty"`
+	Route           string `json:"route,omitempty"`
+	AuthMode        string `json:"auth_mode,omitempty"`
+	CredentialOwner string `json:"credential_owner,omitempty"`
+	Action          string `json:"action,omitempty"`
+	Revision        string `json:"revision,omitempty"`
+	Rank            int    `json:"rank,omitempty"`
+	Current         bool   `json:"current,omitempty"`
+	Importable      bool   `json:"importable,omitempty"`
+	Reason          string `json:"reason,omitempty"`
 }
 
 // Model is a models.dev model entry. Only fields useful to Carina's public

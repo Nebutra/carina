@@ -76,7 +76,8 @@ const toolsHelp = `Available tools:
 Harness protocol:
 - Reply with ONLY the JSON object for the next action. No prose, no markdown fences outside JSON.
 - Every tool action except "done" MUST include "intent":"<brief user-visible purpose>". State why the action helps, without secrets, hidden reasoning, commands, paths, or policy metadata.
-- Emit ONE tool action per turn (except the read-only batch form below).
+- Emit ONE tool action per turn, except the parallel batch described next.
+- Only list/read/search may appear in a parallel batch. Code-intelligence tools and writes must run one action per turn.
 - First decide whether the request needs workspace evidence or action.
 - For greetings, casual conversation, acknowledgements, language checks, or general questions answerable without workspace state, call "done" immediately with the direct user-facing answer. Do not list, read, search, run, patch, or load repository instructions first.
 - Respond to the user's actual message. Never introduce yourself with a capability list, workspace tour, system-prompt summary, or operational metadata unless the user explicitly asks for that information.
@@ -100,8 +101,8 @@ Orchestration (top-level agent only when useful):
 - Subagents (isolated context, restricted capabilities): {"tool":"spawn","agent":"scout","task":"find all auth code"}
 - Parallel spawn: {"tool":"spawn","tasks":[{"agent":"scout","task":"..."},{"agent":"reviewer","task":"..."}]}
 - Named workflow DAG: {"tool":"workflow","workflow":"review","task":"optional input, available to every step as ${input}"}
-- Read-only parallel batch in one turn: {"actions":[{"tool":"read","path":"a.go"},{"tool":"read","path":"b.go"},{"tool":"search","pattern":"foo"}]}
-Writes (patch/run/memory) must stay one action per turn — never put them in a batch.`
+- Parallel batch in one turn: {"actions":[{"tool":"read","path":"a.go"},{"tool":"read","path":"b.go"},{"tool":"search","pattern":"foo"}]}
+Only list/read/search may appear in a parallel batch. Code-intelligence tools and writes (patch/run/memory) must run one action per turn.`
 
 func outputLanguagePrompt(locale string) string {
 	name := map[string]string{
@@ -295,7 +296,10 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 	guard := newLoopGuard()
 	mistakes := newMistakeTracker()
 	verifyAttempts := 0
-	streamPublisher := &assistantStreamPublisher{d: d, sessionID: sess.SessionID, taskID: task.RunID}
+	streamPublisher := &assistantStreamPublisher{
+		d: d, sessionID: sess.SessionID, taskID: task.RunID,
+		structuredOutput: len(task.OutputSchema) > 0,
+	}
 	assistantStream := newReasonerStreamController(streamPublisher.publish)
 	// A cheap summarizer for compaction: reuse the reasoner on the head. The
 	// prompt asks for the structured Goal/State(Done|InProgress|Blocked)/
@@ -506,14 +510,20 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 					return
 				}
 				// Operator-facing reason only; technical stack is on RoutingOutcome.
-				d.degrade(sess, task, tr, operatorFacingReasonerError(err))
+				d.degradeReasoner(sess, task, tr, err)
 				return
 			}
 			_ = d.usage.record(sess.SessionID, task.RunID, result.Usage)
 			turnTokens += result.Usage.totalTokens()
-			d.record(sess.SessionID, "ModelResponded", task.RunID, "model",
-				map[string]any{"turn": turn, "text": sanitizeModelResponseForAudit(raw), "usage": result.Usage}, "")
 			a, perr := parseAction(raw)
+			responsePayload := map[string]any{
+				"turn": turn, "text": sanitizeModelResponseForAudit(raw), "usage": result.Usage,
+				"structured_output": len(task.OutputSchema) > 0,
+			}
+			if perr == nil && strings.EqualFold(strings.TrimSpace(a.Tool), "done") && len(task.OutputSchema) == 0 {
+				responsePayload["presentation_text"] = presentDoneSummary(a.Summary)
+			}
+			d.record(sess.SessionID, "ModelResponded", task.RunID, "model", responsePayload, "")
 			if perr == nil {
 				act, ok = a, true
 				break
@@ -563,6 +573,9 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		}
 
 		if act.Tool == "done" {
+			if len(task.OutputSchema) == 0 {
+				act.Summary = presentDoneSummary(act.Summary)
+			}
 			if task.Agent == "plan" && act.ResultKind != "answer" && act.ResultKind != "plan" {
 				assistantStream.reset()
 				verifyAttempts++
@@ -632,14 +645,15 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			return
 		}
 
-		// Intra-turn parallel batch: run several read-only tools concurrently and
-		// fold their observations back as one turn. Writes are rejected so no
-		// write races are possible.
+		// Intra-turn parallel batch: run only the small filesystem readers
+		// concurrently. Code-intelligence tools are read-only for policy purposes,
+		// but they share one serialized kernel RPC connection and may trigger an
+		// index build, so batching them would head-of-line block completed readers.
 		if len(act.Actions) > 0 {
-			if bad := nonReadOnlyTools(act.Actions); len(bad) > 0 {
+			if bad := nonParallelBatchTools(act.Actions); len(bad) > 0 {
 				tr.addTurn(Turn{Tool: "system", ActionBrief: "batch-rejected", Obs: Observation{Pinned: true,
-					Content: "Parallel batches are read-only (list/read/search); these are not: " + strings.Join(bad, ", ") +
-						". Run writes (patch/run) one action per turn."}})
+					Content: "Parallel batches support only list/read/search; these tools must run one action per turn: " +
+						strings.Join(bad, ", ") + "."}})
 				guard.tick()
 				if !d.persistTurnCheckpoint(sess, task, tr, turn, memorySnapshot) {
 					return
@@ -887,8 +901,10 @@ func (d *Daemon) finish(sess *sessionstore.Session, task *scheduler.ExecutionRun
 	if _, err := d.sched.SetTerminalResultFenced(task.RunID, task.Continuity.Execution.LeaseGeneration, "completed", summary, d.appliedPatchIDs(sess)); err != nil {
 		return
 	}
-	d.record(sess.SessionID, "ExecutionCompleted", task.RunID, "go",
-		map[string]any{"summary": summary, "result_kind": task.ResultKind}, "")
+	d.record(sess.SessionID, "ExecutionCompleted", task.RunID, "go", map[string]any{
+		"summary": summary, "result_kind": task.ResultKind,
+		"structured_output": len(task.OutputSchema) > 0,
+	}, "")
 	d.persistRun(task.RunID)
 	if task.Continuity.RecoveryGeneration > 0 {
 		d.record(sess.SessionID, "ExecutionRecoveryCompleted", task.RunID, "go", map[string]any{
@@ -913,26 +929,71 @@ func (d *Daemon) appliedPatchIDs(sess *sessionstore.Session) []string {
 	return applied
 }
 
-// degrade ends a task that couldn't reach done, but does so gracefully:
-// it reports partial progress (applied patches survive and are rollbackable)
-// rather than a bare failure (the SWE-agent "autosubmit" idea).
+func (d *Daemon) runHasAppliedPatch(sess *sessionstore.Session, runID string) bool {
+	return len(d.appliedPatchIDsForRun(sess, runID)) > 0
+}
+
+func (d *Daemon) appliedPatchIDsForRun(sess *sessionstore.Session, runID string) []string {
+	patches, _ := d.kern.PatchList(sess.SessionID)
+	applied := make([]string, 0, len(patches))
+	for _, patch := range patches {
+		if patch.TaskID == runID && (patch.Status == "applied" || patch.Status == "committed") {
+			applied = append(applied, patch.PatchID)
+		}
+	}
+	return applied
+}
+
+// degrade preserves the existing partial-outcome contract for runs that made
+// useful progress but could not reach done.
 func (d *Daemon) degrade(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, reason string) {
+	d.finishFailedExecution(sess, task, tr, "degraded", reason, nil)
+}
+
+func (d *Daemon) degradeReasoner(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, err error) {
+	info := classifyProviderError(err)
+	status := "failed"
+	if d.runHasAppliedPatch(sess, task.RunID) {
+		status = "degraded"
+	}
+	d.finishFailedExecution(sess, task, tr, status, operatorFacingReasonerError(err), &info)
+}
+
+func (d *Daemon) finishFailedExecution(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, status, reason string, providerFailure *providerErrorInfo) {
 	if current, ok := d.sched.Get(task.RunID); ok && current.Status == "cancelled" {
 		return
 	}
-	applied := d.appliedPatchIDs(sess)
-	if _, err := d.sched.SetTerminalResultFenced(task.RunID, task.Continuity.Execution.LeaseGeneration, "degraded", reason, applied); err != nil {
+	applied := d.appliedPatchIDsForRun(sess, task.RunID)
+	outcome := status
+	reasonCode := "execution_" + status
+	if status == "degraded" {
+		outcome = "degraded"
+	}
+	if _, err := d.sched.SetTerminalResultFenced(task.RunID, task.Continuity.Execution.LeaseGeneration, status, reason, applied); err != nil {
 		return
 	}
-	d.record(sess.SessionID, "ExecutionFailed", task.RunID, "go", map[string]any{
-		"outcome": "degraded", "reason": reason, "reason_code": "execution_degraded",
+	payload := map[string]any{
+		"outcome": outcome, "reason": reason, "reason_code": reasonCode,
 		"owner": firstNonEmpty(task.Agent, "runtime"), "retryable": true,
 		"turns": len(tr.Turns), "applied_patches": applied,
-	}, "")
+		"model": task.Model, "requested_model": task.RequestedModel, "effective_model": task.EffectiveModel,
+		"requested_reasoning_effort": task.RequestedReasoningEffort, "effective_reasoning_effort": task.EffectiveReasoningEffort,
+	}
+	if task.RetryOfRunID != "" {
+		payload["retry_of_run_id"] = task.RetryOfRunID
+	}
+	if providerFailure != nil {
+		payload["reason_code"] = providerFailure.Code
+		payload["error_category"] = providerFailure.Category
+		payload["provider"] = providerFailure.Provider
+		payload["user_action"] = providerFailure.UserAction
+		payload["same_route_retryable"] = providerFailure.Retryable
+	}
+	d.record(sess.SessionID, "ExecutionFailed", task.RunID, "go", payload, "")
 	d.persistRun(task.RunID)
 	if task.Continuity.RecoveryGeneration > 0 {
 		d.record(sess.SessionID, "ExecutionRecoveryCompleted", task.RunID, "go", map[string]any{
-			"recovery_generation": task.Continuity.RecoveryGeneration, "status": "degraded",
+			"recovery_generation": task.Continuity.RecoveryGeneration, "status": status,
 		}, "")
 	}
 	// Retain the last checkpoint for governed rewind after degraded completion.
@@ -964,7 +1025,8 @@ func briefAction(a *action) string {
 	}
 }
 
-// isReadOnlyTool reports whether a tool has no side effects (safe to batch).
+// isReadOnlyTool reports whether a tool has no product-side effects. This is a
+// policy classification, not a concurrency guarantee.
 func isReadOnlyTool(tool string) bool {
 	switch tool {
 	case "list", "read", "search", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact":
@@ -973,11 +1035,22 @@ func isReadOnlyTool(tool string) bool {
 	return false
 }
 
-// nonReadOnlyTools returns the offending tool names in a batch (empty = all safe).
-func nonReadOnlyTools(acts []action) []string {
+// isParallelBatchTool is deliberately narrower than isReadOnlyTool. Semantic
+// code tools share the serialized kernel RPC connection and may lazily build an
+// index, so running them beside a fast reader creates head-of-line blocking.
+func isParallelBatchTool(tool string) bool {
+	switch tool {
+	case "list", "read", "search":
+		return true
+	}
+	return false
+}
+
+// nonParallelBatchTools returns tools that cannot safely enter a parallel batch.
+func nonParallelBatchTools(acts []action) []string {
 	var bad []string
 	for _, a := range acts {
-		if !isReadOnlyTool(a.Tool) {
+		if !isParallelBatchTool(a.Tool) {
 			bad = append(bad, a.Tool)
 		}
 	}
@@ -993,11 +1066,12 @@ func briefBatch(acts []action) string {
 	return "parallel[" + strings.Join(parts, " | ") + "]"
 }
 
-// executeBatch runs a batch of read-only actions concurrently (one goroutine
-// each, through the same kernel-gated executeAction as a single action) and
-// joins the observations in emit order. Safe because every sub-action is
-// side-effect-free and the kernel client serializes requests.
+// executeBatch runs a validated batch of small filesystem reads concurrently
+// and joins the observations in emit order.
 func (d *Daemon) executeBatch(sess *sessionstore.Session, task *scheduler.ExecutionRun, acts []action) string {
+	if bad := nonParallelBatchTools(acts); len(bad) > 0 {
+		return "parallel batch rejected; run one action per turn: " + strings.Join(bad, ", ")
+	}
 	results := make([]string, len(acts))
 	var wg sync.WaitGroup
 	for i := range acts {
@@ -1569,6 +1643,8 @@ func (d *Daemon) agentRunOutcome(sess *sessionstore.Session, task *scheduler.Exe
 	// on a runner error — the command may have partially executed).
 	if risk > 0 {
 		d.indexBuilt.Delete(sess.SessionID)
+		d.indexSnapshot.Delete(sess.SessionID)
+		d.markIndexStateIncomplete(sess.WorkspaceRoot)
 	}
 	if err != nil {
 		d.record(sess.SessionID, "CommandExited", task.RunID, "zig", map[string]any{"command_id": commandID, "exit_code": -1, "error": err.Error()}, "")
@@ -1779,7 +1855,7 @@ func decodeAction(block json.RawMessage) (action, error) {
 			a = nested.Action
 		}
 	}
-	// Batch form: {"actions":[...]} runs several read-only tools in parallel.
+	// Batch form: {"actions":[...]} runs several list/read/search tools in parallel.
 	// Validate structurally here; the read-only policy is enforced in runLoop.
 	if len(a.Actions) > 0 {
 		for i, sub := range a.Actions {

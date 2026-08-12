@@ -3,9 +3,9 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered
 ---
 size=120x24
-Carina  ·  carina conversation                                                Sessions   Model   Build ⇧Tab   Settings
-model  ·  reasoning off  ·  Provider  ·  Direct API  ·  carina
-─────────────────────────────╭ Settings / Symbols ────────────────────────────────────────╮─────────────────────────────
+Carina ▾   ·  carina conversation                                                                         model   Build
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             ╭ Settings / Symbols ────────────────────────────────────────╮
                              │ Choose the row that stays aligned. Boxes or misaligned     │
                              │ symbols mean missing font coverage.                        │
                              │ ▌ 1  Automatic     Unicode by default; legacy uses ASCII   │
@@ -26,16 +26,12 @@ model  ·  reasoning off  ·  Provider  ·  Direct API  ·  carina
                              │ [ Enter Apply ] [ Esc Keep current ]                       │
                              ╰────────────────────────────────────────────────────────────╯
 styles:
-(0,0)..(6,0) (Rgb(222, 133, 155), Reset, BOLD)
-(6,0)..(30,0) (Rgb(150, 160, 156), Reset, NONE)
-(77,0)..(87,0) (Rgb(150, 160, 156), Reset, NONE)
-(88,0)..(95,0) (Rgb(150, 160, 156), Reset, NONE)
-(96,0)..(108,0) (Rgb(150, 160, 156), Reset, NONE)
-(109,0)..(119,0) (Rgb(150, 160, 156), Reset, NONE)
-(0,1)..(119,1) (Rgb(150, 160, 156), Reset, NONE)
-(0,2)..(29,2) (Rgb(52, 65, 68), Reset, NONE)
+(0,0)..(9,0) (Rgb(222, 133, 155), Reset, BOLD)
+(9,0)..(33,0) (Rgb(150, 160, 156), Reset, NONE)
+(105,0)..(112,0) (Rgb(150, 160, 156), Reset, NONE)
+(113,0)..(120,0) (Rgb(142, 219, 210), Reset, BOLD)
+(0,1)..(120,1) (Rgb(52, 65, 68), Reset, NONE)
 (29,2)..(91,2) (Rgb(142, 219, 210), Reset, BOLD)
-(91,2)..(120,2) (Rgb(52, 65, 68), Reset, NONE)
 (29,3)..(30,3) (Rgb(142, 219, 210), Reset, BOLD)
 (31,3)..(89,3) (Rgb(150, 160, 156), Reset, NONE)
 (90,3)..(91,3) (Rgb(142, 219, 210), Reset, BOLD)

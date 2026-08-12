@@ -76,5 +76,7 @@ fn transcript_uses_owned_role_and_accent_helpers() {
     let contract = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("styles.md"))
         .expect("read terminal style contract");
     assert!(contract.contains("no more than three saturated foreground hues"));
-    assert!(contract.contains("same ten-cell hanging indent"));
+    assert!(contract.contains("same ten-cell first-line prefix"));
+    assert!(contract.contains("Below 72"));
+    assert!(contract.contains("two-cell semantic rail"));
 }

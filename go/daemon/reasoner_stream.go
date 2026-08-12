@@ -113,6 +113,11 @@ func (d *actionEnvelopeStreamDecoder) Push(delta string) string {
 	if err != nil || action.Tool != "done" || action.Summary == "" {
 		return ""
 	}
+	// A JSON document nested inside summary is a presentation wrapper, not
+	// public prose. Keep it private until the complete action can be normalized.
+	if first := strings.TrimSpace(action.Summary); strings.HasPrefix(first, "{") || strings.HasPrefix(first, "[") {
+		return ""
+	}
 	if !strings.HasPrefix(action.Summary, d.emitted) {
 		return ""
 	}
@@ -233,12 +238,13 @@ func decodeJSONHex4(value string) (uint16, bool) {
 }
 
 type assistantStreamPublisher struct {
-	d          *Daemon
-	sessionID  string
-	taskID     string
-	mu         sync.Mutex
-	generation uint64
-	sequence   uint64
+	d                *Daemon
+	sessionID        string
+	taskID           string
+	structuredOutput bool
+	mu               sync.Mutex
+	generation       uint64
+	sequence         uint64
 }
 
 func (p *assistantStreamPublisher) publish(update ReasonerStreamUpdate) {
@@ -275,7 +281,8 @@ func (p *assistantStreamPublisher) publish(update ReasonerStreamUpdate) {
 		kind, key = "assistant.message.completed", "content"
 	}
 	p.d.publishAssistantStreamEvent(p.sessionID, p.taskID, kind, map[string]any{
-		"generation": update.Generation, "sequence": sequence, "phase": assistantPhaseFinalAnswer, key: update.Text,
+		"generation": update.Generation, "sequence": sequence, "phase": assistantPhaseFinalAnswer,
+		"structured_output": p.structuredOutput, key: update.Text,
 	})
 }
 
