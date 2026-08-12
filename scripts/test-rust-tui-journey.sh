@@ -1848,7 +1848,7 @@ fi
 }
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
 wait_for_text "Image attached"
-wait_for_text "│ image  media-sample.png"
+wait_for_text "❯  image  media-sample.png"
 
 wait_for_text "Sessions"
 sessions_col="$(python3 -c 'import sys; line=next(line for line in sys.stdin if "Sessions" in line); print(line.index("Sessions") + 2)' <<<"$SCREEN")"
