@@ -10592,6 +10592,10 @@ mod transcript_tests {
                 let (mut app, root, server) = production_render_app();
                 app.options.workspace = std::path::PathBuf::from("/tmp/product-menu");
                 app.options.locale = Some(locale.product_id().into());
+                app.theme = crate::theme::Theme::new(
+                    crate::theme::Polarity::Dark,
+                    crate::theme::ColorLevel::TrueColor,
+                );
                 app.theme.glyphs = app.theme.glyphs.with_mode(glyph_mode);
                 app.apply_action(Action::ToggleProductMenu);
                 let mut terminal =
