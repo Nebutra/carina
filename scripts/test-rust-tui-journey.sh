@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -140,6 +140,20 @@ capture() {
   SCREEN="$(TMUX_TMPDIR="$WORK" tmux capture-pane -p -t "$SESSION" 2>/dev/null || true)"
 }
 
+report_error() {
+  local status="$?"
+  local line="$1"
+  local command="$2"
+  capture
+  if [[ -n "$SCREEN" ]]; then
+    printf '%s\n' "$SCREEN" >&2
+  fi
+  echo "rust-tui-journey: command failed at line $line: $command" >&2
+  exit "$status"
+}
+
+trap 'report_error "$LINENO" "$BASH_COMMAND"' ERR
+
 wait_for_text() {
   local wanted="$1"
   for _ in $(seq 1 150); do
@@ -268,7 +282,19 @@ done
   exit 1
 }
 
-grep -Eq '"tui_locale"[[:space:]]*:[[:space:]]*"en"' "$HOME_DIR/.carina/config.json"
+for _ in $(seq 1 50); do
+  if [[ -s "$HOME_DIR/.carina/config.json" ]] &&
+    grep -Eq '"tui_locale"[[:space:]]*:[[:space:]]*"en"' "$HOME_DIR/.carina/config.json"; then
+    break
+  fi
+  sleep 0.1
+done
+if [[ ! -s "$HOME_DIR/.carina/config.json" ]] ||
+  ! grep -Eq '"tui_locale"[[:space:]]*:[[:space:]]*"en"' "$HOME_DIR/.carina/config.json"; then
+  echo "rust-tui-journey: English locale was not persisted after setup" >&2
+  [[ ! -e "$HOME_DIR/.carina/config.json" ]] || sed -n '1,80p' "$HOME_DIR/.carina/config.json" >&2
+  exit 1
+fi
 descriptor_count="$(find "$HOME_DIR/.carina/runtimes/v1" -name descriptor.json -type f | wc -l | tr -d ' ')"
 [[ "$descriptor_count" == "1" ]] || {
   echo "rust-tui-journey: expected one workspace runtime, got $descriptor_count" >&2
@@ -1760,7 +1786,9 @@ wait_for_text "Prompt history"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "LATEST"
 wait_for_text "Search  LATEST"
 wait_for_text "PERSISTED-HISTORY-LATEST"
-grep -Fq "Message" <<<"$SCREEN"
+# Compact composer chrome intentionally omits the old boxed "Message" label.
+# The selected prompt remains visible below the history overlay at 80 columns.
+require_screen_text "❯ PERSISTED-HISTORY-LATEST" "compact history composer"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
 wait_without_text "Prompt history"
 wait_for_text "PERSISTED-HISTORY-LATEST"
