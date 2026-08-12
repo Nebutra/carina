@@ -133,6 +133,11 @@ mod tests {
             reason: "Provider unavailable".into(),
             source_event_id: "event-1".into(),
             run_id: "run-1".into(),
+            model: "provider/model-1".into(),
+            current_model: "provider/model-1".into(),
+            retry_root_run_id: "run-1".into(),
+            attempt_count: 1,
+            focused_action: None,
         });
         assert_eq!(
             SemanticCellKind::from_block(&failure),

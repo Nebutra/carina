@@ -51,7 +51,8 @@ use crate::tool_projection::{
     TodoItem, visible_group_members_with_limits, visible_output_lines_with_limits,
 };
 use crate::transcript::{
-    BlockBodyKind, BlockKind, FailureAction, ToolGroupMember, TranscriptBlock, UserBlockKind,
+    BlockBodyKind, BlockKind, FailureAction, FailurePresentation, FailureRecoveryAction,
+    ToolGroupMember, TranscriptBlock, UserBlockKind,
 };
 
 impl App {
@@ -2337,6 +2338,23 @@ impl App {
             .cloned()
             .map(|mut block| {
                 block.expanded = self.effective_block_expanded(&block);
+                if let Some(failure) = block.failure.as_mut() {
+                    failure.current_model.clone_from(&self.selected_model);
+                    failure.focused_action = self
+                        .failure_action_focus
+                        .as_ref()
+                        .filter(|focus| focus.block_id == block.id)
+                        .map(|focus| focus.selected)
+                        .or_else(|| {
+                            failure
+                                .available_actions(&self.selected_model)
+                                .into_iter()
+                                .find(|action| {
+                                    self.interactions
+                                        .hovered(failure_action_component(&block.id, *action))
+                                })
+                        });
+                }
                 block
             })
             .collect::<Vec<_>>();
@@ -2451,7 +2469,7 @@ impl App {
                 link: self.theme.transcript_link(),
                 headings: std::array::from_fn(|index| self.theme.heading(index + 1)),
             };
-            let lines = if dimmed {
+            let lines = if dimmed || block.failure.is_some() {
                 transcript_lines_with_tool_key_and_density(
                     block,
                     locale,
@@ -2514,6 +2532,7 @@ impl App {
                 ]),
                 chrome_area,
             );
+            let rendered_line_count = lines.len();
             frame.render_widget(
                 Paragraph::new(lines)
                     .style(style)
@@ -2524,6 +2543,42 @@ impl App {
                     )),
                 block_area,
             );
+            if let Some(failure) = block.failure.as_ref() {
+                let action_line_top = item
+                    .top
+                    .saturating_add(rendered_line_count.saturating_sub(1));
+                if action_line_top >= layout.viewport_start && action_line_top < viewport_end {
+                    let y = area.y.saturating_add(
+                        action_line_top
+                            .saturating_sub(layout.viewport_start)
+                            .min(u16::MAX as usize) as u16,
+                    );
+                    let gutter_width = UnicodeWidthStr::width(self.theme.glyphs.tool_gutter());
+                    for action in failure_action_layout(locale, failure, block.expanded) {
+                        let start = gutter_width.saturating_add(action.start_cell);
+                        if start >= usize::from(block_width) {
+                            continue;
+                        }
+                        let width = action
+                            .width
+                            .min(usize::from(block_width).saturating_sub(start));
+                        let Some(action_value) = Self::failure_action_for(block, action.action)
+                        else {
+                            continue;
+                        };
+                        self.interactions.register(HitRegion {
+                            component: failure_action_component(&block.id, action.action),
+                            area: Rect::new(
+                                transcript_x.saturating_add(start.min(u16::MAX as usize) as u16),
+                                y,
+                                width.min(u16::MAX as usize) as u16,
+                                1,
+                            ),
+                            action: action_value,
+                        });
+                    }
+                }
+            }
             if let Some(action) =
                 transcript_click_action(block, index, self.history_selected.is_some())
             {
@@ -6991,18 +7046,26 @@ fn transcript_lines_with_tool_key_and_density(
         );
     }
     if let Some(failure) = &block.failure {
-        let action = match failure.action {
-            FailureAction::Retry | FailureAction::RunAgain => {
-                format!("[Alt-R] {}  [Alt-C] ID", tr(locale, MessageId::Retry))
-            }
-            FailureAction::Recovering => tr(locale, MessageId::ExecutionWorking).to_owned(),
-            FailureAction::Disabled => "[Alt-C] ID".into(),
+        let count = failure.attempt_count.max(1).to_string();
+        let attempt = tr_format(
+            locale,
+            if failure.attempt_count.max(1) == 1 {
+                MessageId::FailureAttemptOne
+            } else {
+                MessageId::FailureAttemptOther
+            },
+            &[("count", count.as_str())],
+        );
+        let model = if failure.model.trim().is_empty() {
+            tr(locale, MessageId::UnknownValue).to_owned()
+        } else {
+            failure.model.clone()
         };
-        let logical_lines = [
+        let mut logical_lines = vec![
             Line::from(vec![
                 Span::styled(glyphs.failure_prefix(), removed_style),
                 Span::styled(
-                    block.title.clone(),
+                    block.localized_title(locale),
                     removed_style.add_modifier(Modifier::BOLD),
                 ),
             ]),
@@ -7017,6 +7080,15 @@ fn transcript_lines_with_tool_key_and_density(
             Line::from(vec![
                 Span::styled(glyphs.tool_gutter(), metadata_style),
                 Span::styled(
+                    format!("{}  ", tr(locale, MessageId::FailureModelLabel)),
+                    metadata_style,
+                ),
+                Span::styled(model, text_style),
+                Span::styled(format!("  {attempt}"), metadata_style),
+            ]),
+            Line::from(vec![
+                Span::styled(glyphs.tool_gutter(), metadata_style),
+                Span::styled(
                     format!("{}  ", tr(locale, MessageId::Reason)),
                     metadata_style,
                 ),
@@ -7025,11 +7097,45 @@ fn transcript_lines_with_tool_key_and_density(
                     metadata_style,
                 ),
             ]),
-            Line::from(vec![
-                Span::styled(glyphs.tool_gutter(), metadata_style),
-                Span::styled(action, label_style),
-            ]),
         ];
+        if block.expanded {
+            for (label, value) in [
+                (
+                    MessageId::FailureRootRun,
+                    failure.retry_root_run_id.as_str(),
+                ),
+                (MessageId::FailureLatestRun, failure.run_id.as_str()),
+                (MessageId::FailureEventId, failure.source_event_id.as_str()),
+            ] {
+                if value.is_empty() {
+                    continue;
+                }
+                logical_lines.push(Line::from(vec![
+                    Span::styled(glyphs.tool_gutter(), metadata_style),
+                    Span::styled(format!("{}  ", tr(locale, label)), metadata_style),
+                    Span::styled(value.to_owned(), code_style),
+                ]));
+            }
+        }
+        let mut action_line = vec![Span::styled(glyphs.tool_gutter(), metadata_style)];
+        if failure.action == FailureAction::Recovering {
+            action_line.push(Span::styled(
+                tr(locale, MessageId::ExecutionWorking),
+                metadata_style.add_modifier(Modifier::BOLD),
+            ));
+        }
+        for action in failure_action_layout(locale, failure, block.expanded) {
+            if action_line.len() > 1 {
+                action_line.push(Span::styled("  ", metadata_style));
+            }
+            let style = if failure.focused_action == Some(action.action) {
+                label_style.add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else {
+                label_style.add_modifier(Modifier::BOLD)
+            };
+            action_line.push(Span::styled(action.label, style));
+        }
+        logical_lines.push(Line::from(action_line));
         return wrap_styled_lines(
             logical_lines,
             usize::from(content_width),
@@ -7854,23 +7960,73 @@ fn transcript_click_action(
         return (block.kind == BlockKind::User && block.branchable)
             .then_some(Action::SelectHistory(index));
     }
-    if let Some(failure) = &block.failure {
-        return match failure.action {
-            FailureAction::Retry | FailureAction::RunAgain => {
-                Some(Action::RetryExecution(failure.run_id.clone()))
-            }
-            FailureAction::Recovering | FailureAction::Disabled => Some(Action::CopyFailureId(
-                if failure.source_event_id.is_empty() {
-                    failure.run_id.clone()
-                } else {
-                    failure.source_event_id.clone()
-                },
-            )),
-        };
+    if block.failure.is_some() {
+        return None;
     }
     block
         .is_collapsible()
         .then(|| Action::ToggleBlock(block.id.clone()))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FailureActionLayout {
+    action: FailureRecoveryAction,
+    label: String,
+    start_cell: usize,
+    width: usize,
+}
+
+fn failure_action_label(
+    locale: Locale,
+    action: FailureRecoveryAction,
+    expanded: bool,
+) -> &'static str {
+    let id = match action {
+        FailureRecoveryAction::RetryCurrent => MessageId::RetryCurrentModel,
+        FailureRecoveryAction::ReplayOriginal => MessageId::ReplayOriginalRoute,
+        FailureRecoveryAction::Details if expanded => MessageId::FailureHideDetails,
+        FailureRecoveryAction::Details => MessageId::FailureDetails,
+        FailureRecoveryAction::CopyId => MessageId::CopyFailureId,
+    };
+    tr(locale, id)
+}
+
+fn failure_action_layout(
+    locale: Locale,
+    failure: &FailurePresentation,
+    expanded: bool,
+) -> Vec<FailureActionLayout> {
+    let mut cursor = if failure.action == FailureAction::Recovering {
+        UnicodeWidthStr::width(tr(locale, MessageId::ExecutionWorking)).saturating_add(2)
+    } else {
+        0
+    };
+    failure
+        .available_actions(&failure.current_model)
+        .into_iter()
+        .map(|action| {
+            let label = failure_action_label(locale, action, expanded).to_owned();
+            let width = UnicodeWidthStr::width(label.as_str());
+            let start_cell = cursor;
+            cursor = cursor.saturating_add(width).saturating_add(2);
+            FailureActionLayout {
+                action,
+                label,
+                start_cell,
+                width,
+            }
+        })
+        .collect()
+}
+
+fn failure_action_component(block_id: &str, action: FailureRecoveryAction) -> ComponentId {
+    let suffix = match action {
+        FailureRecoveryAction::RetryCurrent => "retry-current",
+        FailureRecoveryAction::ReplayOriginal => "replay-original",
+        FailureRecoveryAction::Details => "details",
+        FailureRecoveryAction::CopyId => "copy-id",
+    };
+    ComponentId::stable("failure-action", &format!("{block_id}:{suffix}"))
 }
 
 fn visible_transcript_rect(
@@ -9122,6 +9278,8 @@ mod transcript_tests {
         }
         .into();
         failure.status.clear();
+        failure.collapsible = true;
+        failure.expanded = false;
         failure.failure = Some(crate::transcript::FailurePresentation {
             kind: crate::transcript::FailureKind::Failed,
             action: FailureAction::Retry,
@@ -9134,6 +9292,11 @@ mod transcript_tests {
             .into(),
             source_event_id: "event-failure".into(),
             run_id: "run-failure".into(),
+            model: "provider/original-model".into(),
+            current_model: "provider/current-model".into(),
+            retry_root_run_id: "run-failure".into(),
+            attempt_count: 2,
+            focused_action: None,
         });
 
         let mut notice = block(
@@ -9197,12 +9360,12 @@ mod transcript_tests {
 
     fn gallery_risk_anchors(locale: Locale) -> [&'static str; 3] {
         if locale == Locale::ZhHans {
-            ["Shell 命令需要批准", "添加类型化骨架", "响应失败"]
+            ["Shell 命令需要批准", "添加类型化骨架", "执行失败"]
         } else {
             [
                 "Shell command needs approval",
                 "Add typed skeletons",
-                "Response failed",
+                "Execution failed",
             ]
         }
     }
@@ -9213,14 +9376,14 @@ mod transcript_tests {
                 "我会让常规操作保持安静",
                 "检查投影边界",
                 "Shell 命令需要批准",
-                "响应失败",
+                "执行失败",
             ]
         } else {
             [
                 "I will keep routine work quiet",
                 "Inspecting the projection boundary",
                 "Shell command needs approval",
-                "Response failed",
+                "Execution failed",
             ]
         }
     }
@@ -10598,6 +10761,11 @@ mod transcript_tests {
             reason: "服务暂时不可用，请检查配置后重试".into(),
             source_event_id: "event-1".into(),
             run_id: "run-1".into(),
+            model: "provider/original-model".into(),
+            current_model: "provider/current-model".into(),
+            retry_root_run_id: "run-1".into(),
+            attempt_count: 2,
+            focused_action: None,
         });
         let styles = TranscriptStyles {
             glyphs: Glyphs::new(crate::glyphs::GlyphMode::Ascii),
@@ -10617,9 +10785,160 @@ mod transcript_tests {
                     .iter()
                     .all(|line| UnicodeWidthStr::width(line.as_str()) <= width as usize)
             );
-            assert!(visible.iter().any(|line| line.contains("[Alt-R] 重试")));
+            assert!(visible.iter().any(|line| line.contains("用当前模型重试")));
+            assert!(visible.iter().any(|line| line.contains("重放原配置")));
+            assert!(visible.iter().all(|line| !line.contains("Alt-")));
             assert!(visible.iter().all(|line| !line.contains('✗')));
         }
+    }
+
+    #[test]
+    fn failure_action_rows_fit_the_supported_narrow_width_in_every_locale() {
+        let failure = FailurePresentation {
+            kind: crate::transcript::FailureKind::Failed,
+            action: FailureAction::Retry,
+            owner: "Carina".into(),
+            reason: "Provider unavailable".into(),
+            source_event_id: "event-1".into(),
+            run_id: "run-2".into(),
+            model: "provider/original-model".into(),
+            current_model: "provider/current-model".into(),
+            retry_root_run_id: "run-1".into(),
+            attempt_count: 2,
+            focused_action: None,
+        };
+        for locale in Locale::ALL {
+            let actions = failure_action_layout(locale, &failure, false);
+            let width = actions
+                .last()
+                .map(|action| action.start_cell + action.width)
+                .unwrap_or_default();
+            assert!(
+                width + UnicodeWidthStr::width(Glyphs::default().tool_gutter()) <= 80,
+                "failure actions overflow at 80 columns for {locale:?}: {actions:?}"
+            );
+        }
+    }
+
+    fn actionable_failure_block() -> TranscriptBlock {
+        let mut block = block(BlockKind::Diagnostic, "");
+        block.id = "failure:run-root".into();
+        block.run_id = "run-latest".into();
+        block.collapsible = true;
+        block.expanded = false;
+        block.failure = Some(FailurePresentation {
+            kind: crate::transcript::FailureKind::Failed,
+            action: FailureAction::Retry,
+            owner: "build".into(),
+            reason: "The provider stopped before returning a complete response".into(),
+            source_event_id: "event-latest".into(),
+            run_id: "run-latest".into(),
+            model: "provider/original-model".into(),
+            current_model: String::new(),
+            retry_root_run_id: "run-root".into(),
+            attempt_count: 2,
+            focused_action: None,
+        });
+        block
+    }
+
+    #[test]
+    fn failure_actions_have_independent_pointer_targets_at_product_widths() {
+        for locale in [Locale::En, Locale::ZhHans] {
+            for width in [80, 120, 160] {
+                let (mut app, root, server) = production_render_app();
+                app.options.locale = Some(locale.product_id().into());
+                app.selected_model = "provider/current-model".into();
+                app.blocks = vec![actionable_failure_block()];
+                let mut terminal =
+                    ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 24)).unwrap();
+                terminal.draw(|frame| app.render(frame)).unwrap();
+
+                for expected in [
+                    Action::RetryExecution {
+                        run_id: "run-latest".into(),
+                        routing: crate::rpc::RetryRouting::Current,
+                    },
+                    Action::RetryExecution {
+                        run_id: "run-latest".into(),
+                        routing: crate::rpc::RetryRouting::Original,
+                    },
+                    Action::ToggleBlock("failure:run-root".into()),
+                    Action::CopyFailureId("event-latest".into()),
+                ] {
+                    let found = (0..24).any(|row| {
+                        (0..width).any(|column| {
+                            app.interactions.action_at(Position::new(column, row))
+                                == Some(expected.clone())
+                        })
+                    });
+                    assert!(
+                        found,
+                        "missing {expected:?} at {width} columns for {locale:?}"
+                    );
+                }
+
+                let rendered = rendered_frame_text(terminal.backend().buffer());
+                let title = tr(locale, MessageId::FailureTitleFailed);
+                let (row, column) = anchor_position(&rendered, title);
+                assert_eq!(
+                    app.interactions
+                        .action_at(Position::new(column as u16, row as u16)),
+                    None,
+                    "failure card body must not behave like an invisible retry button"
+                );
+                server.join().unwrap();
+                std::fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn failure_keyboard_focus_preserves_drafts_and_uses_typed_actions() {
+        let (mut app, root, server) = production_render_app();
+        app.selected_model = "provider/current-model".into();
+        app.blocks = vec![actionable_failure_block()];
+
+        assert!(app.handle_failure_action_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(
+            app.failure_action_focus,
+            Some(super::super::FailureActionFocus {
+                block_id: "failure:run-root".into(),
+                selected: FailureRecoveryAction::RetryCurrent,
+            })
+        );
+        assert!(app.handle_failure_action_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)));
+        assert_eq!(
+            app.failure_action_focus
+                .as_ref()
+                .map(|focus| focus.selected),
+            Some(FailureRecoveryAction::ReplayOriginal)
+        );
+        assert!(app.handle_failure_action_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)));
+        assert!(app.handle_failure_action_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+        assert!(app.effective_block_expanded(&app.blocks[0]));
+        assert_eq!(
+            app.failure_action_focus
+                .as_ref()
+                .map(|focus| focus.selected),
+            Some(FailureRecoveryAction::Details)
+        );
+        assert!(app.handle_failure_action_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        assert!(app.failure_action_focus.is_none());
+        assert_eq!(app.focus, Focus::Composer);
+
+        app.composer.set_text("keep this exact draft");
+        assert!(!app.handle_failure_action_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(app.composer.text(), "keep this exact draft");
+        assert!(app.failure_action_focus.is_none());
+
+        app.composer.set_text("");
+        app.active_run_id = Some("run-active".into());
+        assert!(!app.handle_failure_action_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert!(app.failure_action_focus.is_none());
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

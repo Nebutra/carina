@@ -2604,6 +2604,21 @@ pub struct ExecutionRun {
     pub result_kind: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryRouting {
+    Current,
+    Original,
+}
+
+impl RetryRouting {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::Original => "original",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Checkpoint {
     pub checkpoint_id: String,

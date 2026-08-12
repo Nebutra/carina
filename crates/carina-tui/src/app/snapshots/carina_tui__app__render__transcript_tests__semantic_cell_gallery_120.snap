@@ -22,10 +22,11 @@ size=120x40
  │ +1 · new file
  │    1 pub enum SemanticCellKind {}
 
- ✗ Response failed
+ ✗ Execution failed
  │ Agent  Carina
+ │ Failed model  provider/original-model  2 attempts
  │ Reason  The provider stopped before returning a complete response
- │ [Alt-R] Retry  [Alt-C] ID
+ │ Retry current  Replay original  Details  Copy ID
 
  • Diagnostic  Context compacted
  │ Older routine tool detail was summarized.

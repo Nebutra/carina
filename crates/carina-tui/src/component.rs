@@ -2,6 +2,7 @@ use ratatui::layout::{Position, Rect};
 use xai_ratatui_textarea::ElementId;
 
 use crate::glyphs::GlyphPreference;
+use crate::rpc::RetryRouting;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ComponentId(pub u64);
@@ -45,7 +46,10 @@ pub enum Action {
     FocusComposer,
     PreviewMedia(ElementId),
     RetryMedia(ElementId),
-    RetryExecution(String),
+    RetryExecution {
+        run_id: String,
+        routing: RetryRouting,
+    },
     CopyFailureId(String),
     OpenSessions,
     OpenModels,

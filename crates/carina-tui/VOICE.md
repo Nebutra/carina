@@ -111,6 +111,26 @@ Example: `Read ×5 · src/a.rs, src/b.rs, …`
 Do not surface `modelrouter` / `reasoner failed` / raw `Client.Timeout` stacks in the
 transcript failure cell. Technical detail belongs in audit / RoutingOutcome.
 
+### Failure recovery
+
+The model in the header is the next-run preference. A failure cell names the
+model that actually served the failed run; it must never relabel history from
+the current header selection.
+
+Recovery actions use explicit outcome language:
+
+```text
+Retry current      Uses the session's current model and reasoning preference.
+Replay original    Reuses the failed run's original governed configuration.
+Details            Reveals linked run and event identities.
+Copy ID            Copies the failure event or run identity.
+```
+
+Do not present Alt-only key chords as the primary recovery UI. Actions remain
+visible, pointer-addressable, and keyboard-focusable. Once recovery is queued,
+say that execution is running and remove both retry actions until a new terminal
+outcome arrives.
+
 ### Successful edits in the dialogue stream
 
 - Default **collapsed**: path · `+N` / `-M` · create preview (first lines, no green `+`).

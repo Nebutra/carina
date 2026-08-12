@@ -22,10 +22,11 @@ size=120x40
  │ +1 · new file
  │    1 pub enum SemanticCellKind {}
 
- ✗ Response failed
+ ✗ Execution failed
  │ Agent  Carina
+ │ Failed model  provider/original-model  2 attempts
  │ Reason  The provider stopped before returning a complete response
- │ [Alt-R] Retry  [Alt-C] ID
+ │ Retry current  Replay original  Details  Copy ID
 
  • Diagnostic  Context compacted
  │ Older routine tool detail was summarized.
@@ -51,11 +52,19 @@ styles:
 (1,16)..(16,16) (Rgb(90, 101, 99), Reset, NONE)
 (1,17)..(8,17) (Rgb(90, 101, 99), Reset, NONE)
 (1,19)..(3,19) (Rgb(255, 124, 120), Reset, NONE)
-(3,19)..(18,19) (Rgb(255, 124, 120), Reset, BOLD)
+(3,19)..(19,19) (Rgb(255, 124, 120), Reset, BOLD)
 (1,20)..(10,20) (Rgb(90, 101, 99), Reset, NONE)
-(1,21)..(68,21) (Rgb(90, 101, 99), Reset, NONE)
-(1,22)..(3,22) (Rgb(90, 101, 99), Reset, NONE)
-(3,22)..(28,22) (Rgb(255, 124, 120), Reset, BOLD)
-(1,24)..(13,24) (Rgb(90, 101, 99), Reset, BOLD)
-(13,24)..(32,24) (Rgb(90, 101, 99), Reset, NONE)
-(1,25)..(44,25) (Rgb(90, 101, 99), Reset, NONE)
+(1,21)..(17,21) (Rgb(90, 101, 99), Reset, NONE)
+(40,21)..(52,21) (Rgb(90, 101, 99), Reset, NONE)
+(1,22)..(68,22) (Rgb(90, 101, 99), Reset, NONE)
+(1,23)..(3,23) (Rgb(90, 101, 99), Reset, NONE)
+(3,23)..(16,23) (Rgb(255, 124, 120), Reset, BOLD)
+(16,23)..(18,23) (Rgb(90, 101, 99), Reset, NONE)
+(18,23)..(33,23) (Rgb(255, 124, 120), Reset, BOLD)
+(33,23)..(35,23) (Rgb(90, 101, 99), Reset, NONE)
+(35,23)..(42,23) (Rgb(255, 124, 120), Reset, BOLD)
+(42,23)..(44,23) (Rgb(90, 101, 99), Reset, NONE)
+(44,23)..(51,23) (Rgb(255, 124, 120), Reset, BOLD)
+(1,25)..(13,25) (Rgb(90, 101, 99), Reset, BOLD)
+(13,25)..(32,25) (Rgb(90, 101, 99), Reset, NONE)
+(1,26)..(44,26) (Rgb(90, 101, 99), Reset, NONE)

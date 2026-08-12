@@ -2689,13 +2689,29 @@ type taskSubmitParams struct {
 }
 
 func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
-	return d.handleTaskSubmitInternal(params, "")
+	return d.handleTaskSubmitInternal(params, taskSubmitProvenance{})
 }
 
-func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, retryOfRunID string) (any, error) {
+type taskSubmitProvenance struct {
+	Retry *taskRetryProvenance
+}
+
+type taskRetryProvenance struct {
+	OriginalRunID           string
+	Routing                 taskRetryRouting
+	ModelSource             taskRetryRouteSource
+	ReasoningEffortSource   taskRetryRouteSource
+	OriginalModel           string
+	OriginalReasoningEffort string
+}
+
+func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance taskSubmitProvenance) (any, error) {
 	var p taskSubmitParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if provenance.Retry != nil && strings.TrimSpace(provenance.Retry.OriginalRunID) == "" {
+		return nil, fmt.Errorf("internal retry provenance requires original run id")
 	}
 	sess, ok := d.store.Get(p.SessionID)
 	if !ok {
@@ -2743,7 +2759,7 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, retryOfRunID s
 		if !validClientSubmissionID(clientSubmissionID) {
 			return nil, fmt.Errorf("client_submission_id must be a 1-128 byte ASCII token using letters, digits, '.', '_', ':', or '-'")
 		}
-		submissionFingerprint = taskSubmissionFingerprint(p)
+		submissionFingerprint = taskSubmissionFingerprintForProvenance(p, provenance)
 		key := taskSubmissionKey(p.SessionID, clientSubmissionID)
 		d.submissionMu.Lock()
 		defer d.submissionMu.Unlock()
@@ -2809,8 +2825,8 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, retryOfRunID s
 	d.sched.SetInputMediaRefs(task.RunID, inputMediaRefs)
 	d.sched.SetModelState(task.RunID, requestedModel, taskModel(task))
 	d.sched.SetReasoningEffortState(task.RunID, requestedEffort, effectiveEffort)
-	if retryOfRunID != "" {
-		d.sched.SetRetryOf(task.RunID, retryOfRunID)
+	if provenance.Retry != nil {
+		d.sched.SetRetryOf(task.RunID, provenance.Retry.OriginalRunID)
 	}
 	if clientSubmissionID != "" {
 		d.sched.SetClientSubmission(task.RunID, clientSubmissionID, submissionFingerprint)
@@ -2850,8 +2866,13 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, retryOfRunID s
 		"locale":           task.Locale,
 		"input_media_refs": task.InputMediaRefs,
 	}
-	if task.RetryOfRunID != "" {
+	if provenance.Retry != nil {
 		writeAheadPayload["retry_of_run_id"] = task.RetryOfRunID
+		writeAheadPayload["retry_routing"] = string(provenance.Retry.Routing)
+		writeAheadPayload["retry_model_source"] = string(provenance.Retry.ModelSource)
+		writeAheadPayload["retry_reasoning_effort_source"] = string(provenance.Retry.ReasoningEffortSource)
+		writeAheadPayload["retry_original_model"] = provenance.Retry.OriginalModel
+		writeAheadPayload["retry_original_reasoning_effort"] = provenance.Retry.OriginalReasoningEffort
 	}
 	receipt, err := d.kern.RecordEventWithCursor(sess.SessionID, "ExecutionQueued", task.RunID, "go", writeAheadPayload, "")
 	if err != nil {
@@ -2885,8 +2906,35 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, retryOfRunID s
 }
 
 type taskRetryParams struct {
-	RunID              string `json:"run_id"`
-	ClientSubmissionID string `json:"client_submission_id"`
+	RunID              string           `json:"run_id"`
+	ClientSubmissionID string           `json:"client_submission_id"`
+	Routing            taskRetryRouting `json:"routing,omitempty"`
+}
+
+type taskRetryRouting string
+
+const (
+	taskRetryRoutingOriginal taskRetryRouting = "original"
+	taskRetryRoutingCurrent  taskRetryRouting = "current"
+)
+
+type taskRetryRouteSource string
+
+const (
+	taskRetryRouteOriginal         taskRetryRouteSource = "original"
+	taskRetryRouteSessionCurrent   taskRetryRouteSource = "session_current"
+	taskRetryRouteOriginalFallback taskRetryRouteSource = "original_fallback"
+)
+
+func parseTaskRetryRouting(raw taskRetryRouting) (taskRetryRouting, error) {
+	switch routing := taskRetryRouting(strings.TrimSpace(string(raw))); routing {
+	case "", taskRetryRoutingOriginal:
+		return taskRetryRoutingOriginal, nil
+	case taskRetryRoutingCurrent:
+		return taskRetryRoutingCurrent, nil
+	default:
+		return "", fmt.Errorf("invalid retry routing %q (want original or current)", string(raw))
+	}
 }
 
 func (d *Daemon) handleTaskRetry(params json.RawMessage) (any, error) {
@@ -2897,6 +2945,10 @@ func (d *Daemon) handleTaskRetry(params json.RawMessage) (any, error) {
 	p.RunID = strings.TrimSpace(p.RunID)
 	if p.RunID == "" {
 		return nil, fmt.Errorf("run_id is required")
+	}
+	routing, err := parseTaskRetryRouting(p.Routing)
+	if err != nil {
+		return nil, err
 	}
 	if !validClientSubmissionID(p.ClientSubmissionID) {
 		return nil, fmt.Errorf("client_submission_id must be a 1-128 byte ASCII token using letters, digits, '.', '_', ':', or '-'")
@@ -2910,6 +2962,30 @@ func (d *Daemon) handleTaskRetry(params json.RawMessage) (any, error) {
 	}
 	if original.Status == "interrupted" && original.Continuity.Recovery.Disposition == continuity.RecoveryResumeCheckpoint {
 		return nil, fmt.Errorf("execution %s has automatic checkpoint recovery in progress", p.RunID)
+	}
+	originalModel := firstNonEmpty(original.RequestedModel, original.Model, original.EffectiveModel)
+	originalEffort := firstNonEmpty(original.RequestedReasoningEffort, original.EffectiveReasoningEffort)
+	model := originalModel
+	effort := originalEffort
+	modelSource := taskRetryRouteOriginal
+	effortSource := taskRetryRouteOriginal
+	if routing == taskRetryRoutingCurrent {
+		sess, exists := d.store.Get(original.SessionID)
+		if !exists {
+			return nil, fmt.Errorf("unknown session %s", original.SessionID)
+		}
+		if current := strings.TrimSpace(sess.NextModel); current != "" {
+			model = current
+			modelSource = taskRetryRouteSessionCurrent
+		} else {
+			modelSource = taskRetryRouteOriginalFallback
+		}
+		if current := strings.TrimSpace(sess.NextReasoningEffort); current != "" {
+			effort = current
+			effortSource = taskRetryRouteSessionCurrent
+		} else {
+			effortSource = taskRetryRouteOriginalFallback
+		}
 	}
 	media := make([]MediaRef, 0, len(original.InputMediaRefs))
 	for _, ref := range original.InputMediaRefs {
@@ -2928,10 +3004,10 @@ func (d *Daemon) handleTaskRetry(params json.RawMessage) (any, error) {
 		SessionID:          original.SessionID,
 		ClientSubmissionID: &p.ClientSubmissionID,
 		Prompt:             original.UserPrompt,
-		Model:              firstNonEmpty(original.RequestedModel, original.Model),
+		Model:              model,
 		Agent:              original.Agent,
 		Mode:               mode,
-		ReasoningEffort:    firstNonEmpty(original.RequestedReasoningEffort, original.EffectiveReasoningEffort),
+		ReasoningEffort:    effort,
 		Locale:             original.Locale,
 		TokenBudget:        original.TokenBudget,
 		SuccessCriteria:    append([]scheduler.SuccessCheck(nil), original.SuccessCriteria...),
@@ -2941,7 +3017,14 @@ func (d *Daemon) handleTaskRetry(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode retry submission: %w", err)
 	}
-	return d.handleTaskSubmitInternal(retryParams, original.RunID)
+	return d.handleTaskSubmitInternal(retryParams, taskSubmitProvenance{Retry: &taskRetryProvenance{
+		OriginalRunID:           original.RunID,
+		Routing:                 routing,
+		ModelSource:             modelSource,
+		ReasoningEffortSource:   effortSource,
+		OriginalModel:           originalModel,
+		OriginalReasoningEffort: originalEffort,
+	}})
 }
 
 func matchesRetryableExecutionStatus(status string) bool {
@@ -2988,6 +3071,28 @@ func taskSubmissionFingerprint(p taskSubmitParams) string {
 	}
 	raw, _ := json.Marshal(p)
 	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func taskSubmissionFingerprintForProvenance(p taskSubmitParams, provenance taskSubmitProvenance) string {
+	if provenance.Retry == nil || provenance.Retry.Routing == taskRetryRoutingOriginal {
+		// Preserve the pre-routing fingerprint for public submissions and legacy
+		// exact retries so persisted idempotency keys remain valid after upgrade.
+		return taskSubmissionFingerprint(p)
+	}
+	// "current" is resolved from mutable session preferences. Bind idempotency
+	// to the caller's logical retry request, not to whichever preference happens
+	// to be visible on a later delivery of the same request.
+	stable := p
+	stable.Model = provenance.Retry.OriginalModel
+	stable.ReasoningEffort = provenance.Retry.OriginalReasoningEffort
+	raw := strings.Join([]string{
+		taskSubmissionFingerprint(stable),
+		"execution.retry",
+		string(provenance.Retry.Routing),
+		provenance.Retry.OriginalRunID,
+	}, "\x00")
+	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
 }
 

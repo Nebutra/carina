@@ -59,6 +59,14 @@ pub enum FailureAction {
     Disabled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureRecoveryAction {
+    RetryCurrent,
+    ReplayOriginal,
+    Details,
+    CopyId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailurePresentation {
     pub kind: FailureKind,
@@ -67,6 +75,31 @@ pub struct FailurePresentation {
     pub reason: String,
     pub source_event_id: String,
     pub run_id: String,
+    pub model: String,
+    pub current_model: String,
+    pub retry_root_run_id: String,
+    pub attempt_count: usize,
+    pub focused_action: Option<FailureRecoveryAction>,
+}
+
+impl FailurePresentation {
+    pub fn available_actions(&self, current_model: &str) -> Vec<FailureRecoveryAction> {
+        let mut actions = Vec::with_capacity(4);
+        if matches!(self.action, FailureAction::Retry | FailureAction::RunAgain) {
+            actions.push(FailureRecoveryAction::RetryCurrent);
+            let failed_model = self.model.trim();
+            let current_model = current_model.trim();
+            if !failed_model.is_empty()
+                && !current_model.is_empty()
+                && failed_model != current_model
+            {
+                actions.push(FailureRecoveryAction::ReplayOriginal);
+            }
+        }
+        actions.push(FailureRecoveryAction::Details);
+        actions.push(FailureRecoveryAction::CopyId);
+        actions
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -236,6 +269,35 @@ struct AssistantStream {
     body: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct RunMetadata {
+    requested_model: String,
+    effective_model: String,
+    model: String,
+    retry_of_run_id: String,
+}
+
+impl RunMetadata {
+    fn actual_model(&self) -> String {
+        [
+            self.effective_model.as_str(),
+            self.model.as_str(),
+            self.requested_model.as_str(),
+        ]
+        .into_iter()
+        .find(|model| !model.is_empty())
+        .unwrap_or_default()
+        .to_owned()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct FailureContext {
+    model: String,
+    retry_root_run_id: String,
+    attempt_count: usize,
+}
+
 #[derive(Debug, Default)]
 pub struct TranscriptReducer {
     tools: HashMap<String, ToolRecord>,
@@ -244,6 +306,7 @@ pub struct TranscriptReducer {
     commands: HashMap<String, ToolRecord>,
     open_command_by_run: HashMap<String, String>,
     assistant_streams: HashMap<String, AssistantStream>,
+    run_metadata: HashMap<String, RunMetadata>,
     seen_event_ids: HashSet<String>,
     event_id_order: VecDeque<String>,
 }
@@ -285,11 +348,112 @@ impl TranscriptReducer {
         blocks
     }
 
+    fn record_run_metadata(&mut self, run_id: &str, details: &BTreeMap<String, Value>) {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return;
+        }
+        let metadata = self.run_metadata.entry(run_id.to_owned()).or_default();
+        if let Some(value) = detail(details, "requested_model") {
+            metadata.requested_model = value;
+        }
+        if let Some(value) = detail(details, "effective_model") {
+            metadata.effective_model = value;
+        }
+        if let Some(value) = detail(details, "model") {
+            metadata.model = value;
+        }
+        if let Some(value) = detail(details, "retry_of_run_id") {
+            metadata.retry_of_run_id = value;
+        }
+    }
+
+    fn failure_context(&self, run_id: &str) -> FailureContext {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return FailureContext::default();
+        }
+
+        let model = self
+            .run_metadata
+            .get(run_id)
+            .map(RunMetadata::actual_model)
+            .unwrap_or_default();
+        let mut retry_root_run_id = run_id.to_owned();
+        let mut attempt_count = 1;
+        let mut cursor = run_id;
+        let mut seen = HashSet::from([run_id.to_owned()]);
+        while let Some(parent) = self
+            .run_metadata
+            .get(cursor)
+            .map(|metadata| metadata.retry_of_run_id.trim())
+            .filter(|parent| !parent.is_empty())
+        {
+            if !seen.insert(parent.to_owned()) {
+                break;
+            }
+            retry_root_run_id = parent.to_owned();
+            attempt_count += 1;
+            cursor = parent;
+        }
+        FailureContext {
+            model,
+            retry_root_run_id,
+            attempt_count,
+        }
+    }
+
+    fn mark_failure_recovering(&self, blocks: &mut [TranscriptBlock], run_id: &str) -> bool {
+        let context = self.failure_context(run_id);
+        if context.retry_root_run_id.is_empty() || context.retry_root_run_id == run_id {
+            return false;
+        }
+        let id = format!("failure:{}", context.retry_root_run_id);
+        let Some(block) = blocks.iter_mut().find(|block| block.id == id) else {
+            return false;
+        };
+        let previous = block.clone();
+        block.run_id = run_id.to_owned();
+        if let Some(failure) = block.failure.as_mut() {
+            failure.action = FailureAction::Recovering;
+            failure.run_id = run_id.to_owned();
+            failure.retry_root_run_id = context.retry_root_run_id;
+            failure.attempt_count = context.attempt_count;
+            failure.focused_action = None;
+        }
+        finalize_projected_update(block, &previous)
+    }
+
+    fn mark_failure_recovery_settled(&self, blocks: &mut [TranscriptBlock], run_id: &str) -> bool {
+        let context = self.failure_context(run_id);
+        if context.retry_root_run_id.is_empty() || context.retry_root_run_id == run_id {
+            return false;
+        }
+        let id = format!("failure:{}", context.retry_root_run_id);
+        let Some(block) = blocks.iter_mut().find(|block| block.id == id) else {
+            return false;
+        };
+        let previous = block.clone();
+        block.run_id = run_id.to_owned();
+        if let Some(failure) = block.failure.as_mut() {
+            failure.action = FailureAction::Disabled;
+            failure.run_id = run_id.to_owned();
+            failure.retry_root_run_id = context.retry_root_run_id;
+            failure.attempt_count = context.attempt_count;
+            failure.focused_action = None;
+        }
+        finalize_projected_update(block, &previous)
+    }
+
     pub fn reduce_event(&mut self, blocks: &mut Vec<TranscriptBlock>, event: WireEvent) -> bool {
         if !self.remember_event(&event) {
             return false;
         }
         match event.kind.as_str() {
+            "ExecutionQueued" => {
+                self.record_run_metadata(&event.run_id, &event.payload);
+                self.mark_failure_recovering(blocks, &event.run_id)
+            }
             "RuntimeStageChanged"
             | "FileRead"
             | "FileWriteProposed"
@@ -316,9 +480,17 @@ impl TranscriptReducer {
             }
             "PolicyViolation" => self.reduce_policy_event(blocks, event),
             "ExecutionFailed" | "ExecutionInterrupted" | "ExecutionCancelled" => {
-                failure_block_from_event(event)
+                let context = self.failure_context(&event.run_id);
+                failure_block_from_event(event, context)
                     .map(|block| upsert_block(blocks, block))
                     .unwrap_or(false)
+            }
+            "ExecutionCompleted" => {
+                let settled = self.mark_failure_recovery_settled(blocks, &event.run_id);
+                let projected = simple_block_from_event(event)
+                    .map(|block| upsert_block(blocks, block))
+                    .unwrap_or(false);
+                settled || projected
             }
             "assistant.message.reset"
             | "assistant.message.delta"
@@ -791,17 +963,22 @@ impl TranscriptReducer {
         match event.kind.as_str() {
             "thread.started" | "session.started" | "runtime.stage_changed" => {}
             "turn.started" => {
+                let run_id = first_non_empty([event.run_id.clone(), event.turn_id.clone()]);
+                self.record_run_metadata(&run_id, &event.details);
+                self.mark_failure_recovering(blocks, &run_id);
                 let prompt = first_detail(
                     &event.details,
                     &["user_prompt", "prompt", "text", "content"],
                 )
                 .unwrap_or_default();
                 if !prompt.is_empty() {
-                    let id = first_non_empty([event.turn_id, event.run_id.clone()]);
-                    upsert_block(blocks, user_block(id, event.run_id, prompt));
+                    let id = first_non_empty([event.turn_id, run_id.clone()]);
+                    upsert_block(blocks, user_block(id, run_id, prompt));
                 }
             }
             "turn.completed" => {
+                let run_id = first_non_empty([event.run_id.clone(), event.turn_id.clone()]);
+                self.mark_failure_recovery_settled(blocks, &run_id);
                 let summary = first_detail(&event.details, &["summary", "message", "text"])
                     .unwrap_or_default();
                 if !summary.is_empty() {
@@ -821,17 +998,51 @@ impl TranscriptReducer {
             "turn.failed" => {
                 let source_event_id = event.source_event_id;
                 let run_id = first_non_empty([event.run_id, event.turn_id]);
-                let reason = first_detail(&event.details, &["summary", "error", "message"])
-                    .unwrap_or_else(|| "The response did not complete".into());
+                let context = self.failure_context(&run_id);
+                let source_type = detail(&event.details, "source_type").unwrap_or_default();
+                let reason_code = detail(&event.details, "reason_code").unwrap_or_default();
+                let kind = match source_type.as_str() {
+                    "ExecutionInterrupted" => FailureKind::Interrupted,
+                    "ExecutionCancelled" => FailureKind::Cancelled,
+                    "ExecutionFailed"
+                        if reason_code.contains("approval") || reason_code.contains("denied") =>
+                    {
+                        FailureKind::ApprovalDenied
+                    }
+                    _ => FailureKind::Failed,
+                };
+                let owner = detail(&event.details, "owner").unwrap_or_else(|| match kind {
+                    FailureKind::Cancelled => "operator".into(),
+                    _ => "runtime".into(),
+                });
+                let reason = humanize_failure_reason(&first_display([
+                    detail(&event.details, "reason").unwrap_or_default(),
+                    detail(&event.details, "summary").unwrap_or_default(),
+                    detail(&event.details, "error").unwrap_or_default(),
+                    detail(&event.details, "message").unwrap_or_default(),
+                    reason_code,
+                ]));
+                let retryable = event
+                    .details
+                    .get("retryable")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(source_type.is_empty());
+                let recovering = detail(&event.details, "recovery_disposition")
+                    .is_some_and(|value| value == "resume_checkpoint");
                 upsert_block(
                     blocks,
                     failure_block(
                         run_id,
                         source_event_id,
-                        FailureKind::Failed,
-                        "runtime".into(),
-                        reason,
-                        true,
+                        kind,
+                        owner,
+                        if reason.is_empty() {
+                            "The response did not complete".into()
+                        } else {
+                            reason
+                        },
+                        (retryable || kind == FailureKind::Interrupted) && !recovering,
+                        context,
                     ),
                 );
             }
@@ -1200,7 +1411,7 @@ fn simple_block_from_event(event: WireEvent) -> Option<TranscriptBlock> {
     })
 }
 
-fn failure_block_from_event(event: WireEvent) -> Option<TranscriptBlock> {
+fn failure_block_from_event(event: WireEvent, context: FailureContext) -> Option<TranscriptBlock> {
     let run_id = event.run_id.trim().to_owned();
     if run_id.is_empty() {
         return None;
@@ -1246,6 +1457,7 @@ fn failure_block_from_event(event: WireEvent) -> Option<TranscriptBlock> {
             reason
         },
         (retryable || kind == FailureKind::Interrupted) && !recovering,
+        context,
     ))
 }
 
@@ -1298,6 +1510,7 @@ fn failure_block(
     owner: String,
     reason: String,
     retryable: bool,
+    context: FailureContext,
 ) -> TranscriptBlock {
     let action = if kind == FailureKind::Interrupted && !retryable {
         FailureAction::Recovering
@@ -1322,9 +1535,14 @@ fn failure_block(
         reason: reason.clone(),
         source_event_id,
         run_id: run_id.clone(),
+        model: context.model,
+        current_model: String::new(),
+        retry_root_run_id: context.retry_root_run_id.clone(),
+        attempt_count: context.attempt_count,
+        focused_action: None,
     };
     TranscriptBlock {
-        id: format!("failure:{run_id}"),
+        id: format!("failure:{}", context.retry_root_run_id),
         run_id,
         kind: BlockKind::Diagnostic,
         assistant_phase: None,
@@ -1339,8 +1557,8 @@ fn failure_block(
         additions: 0,
         deletions: 0,
         status: String::new(),
-        collapsible: false,
-        expanded: true,
+        collapsible: true,
+        expanded: false,
         selected: false,
         source_prompt: String::new(),
         branchable: false,
@@ -2022,6 +2240,31 @@ mod tests {
             "payload": payload
         }))
         .unwrap()
+    }
+
+    fn wire_for_run(kind: &str, run_id: &str, payload: Value) -> WireEvent {
+        let mut event = wire(kind, payload);
+        event.run_id = run_id.into();
+        event
+    }
+
+    fn turn_item_for_run(
+        kind: &str,
+        run_id: &str,
+        source_event_id: &str,
+        details: Value,
+    ) -> SessionItemEvent {
+        SessionItemEvent {
+            kind: kind.into(),
+            session_id: "session-1".into(),
+            turn_id: run_id.into(),
+            run_id: run_id.into(),
+            item_id: String::new(),
+            source_event_id: source_event_id.into(),
+            timestamp: String::new(),
+            details: serde_json::from_value(details).unwrap(),
+            item: None,
+        }
     }
 
     fn item(kind: &str, status: &str, details: Value) -> SessionItemEvent {
@@ -3711,6 +3954,273 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
     }
 
     #[test]
+    fn retry_chain_failures_group_and_match_hydrated_projection() {
+        let queued = [
+            (
+                "run-1",
+                json!({
+                    "requested_model":"provider/original",
+                    "effective_model":"provider/model-1",
+                    "model":"provider/model-1"
+                }),
+            ),
+            (
+                "run-2",
+                json!({
+                    "requested_model":"provider/current",
+                    "effective_model":"provider/model-2",
+                    "model":"provider/model-2",
+                    "retry_of_run_id":"run-1",
+                    "retry_routing":"current"
+                }),
+            ),
+            (
+                "run-3",
+                json!({
+                    "requested_model":"provider/current",
+                    "effective_model":"provider/model-3",
+                    "model":"provider/model-3",
+                    "retry_of_run_id":"run-2",
+                    "retry_routing":"original"
+                }),
+            ),
+            ("run-other", json!({"effective_model":"provider/other"})),
+        ];
+
+        let mut live_reducer = TranscriptReducer::default();
+        let mut live = Vec::new();
+        for (index, (run_id, details)) in queued.iter().enumerate() {
+            let queued_changed = live_reducer.reduce_event(
+                &mut live,
+                wire_for_run("ExecutionQueued", run_id, details.clone()),
+            );
+            assert_eq!(
+                queued_changed,
+                matches!(index, 1 | 2),
+                "only linked retry queues update an existing failure chain"
+            );
+            let mut failed = wire_for_run(
+                "ExecutionFailed",
+                run_id,
+                json!({"reason":format!("failure-{index}"),"retryable":true}),
+            );
+            failed.event_id = format!("failed-{index}");
+            assert!(live_reducer.reduce_event(&mut live, failed));
+        }
+
+        let mut hydrated_items = Vec::new();
+        for (index, (run_id, details)) in queued.iter().enumerate() {
+            hydrated_items.push(turn_item_for_run(
+                "turn.started",
+                run_id,
+                &format!("queued-{index}"),
+                details.clone(),
+            ));
+            hydrated_items.push(turn_item_for_run(
+                "turn.failed",
+                run_id,
+                &format!("failed-{index}"),
+                json!({"error":format!("failure-{index}")}),
+            ));
+        }
+        let hydrated = TranscriptReducer::default().hydrate(hydrated_items);
+
+        let failure_snapshot = |blocks: &[TranscriptBlock]| {
+            blocks
+                .iter()
+                .filter_map(|block| {
+                    let failure = block.failure.clone()?;
+                    Some((
+                        block.id.clone(),
+                        block.run_id.clone(),
+                        failure,
+                        block.collapsible,
+                        block.expanded,
+                    ))
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(failure_snapshot(&live), failure_snapshot(&hydrated));
+        assert_eq!(live.len(), 2, "retry chain and unrelated run stay separate");
+
+        let chain = live
+            .iter()
+            .find(|block| block.id == "failure:run-1")
+            .expect("retry chain failure");
+        let failure = chain.failure.as_ref().unwrap();
+        assert_eq!(chain.run_id, "run-3");
+        assert_eq!(failure.run_id, "run-3");
+        assert_eq!(failure.reason, "failure-2");
+        assert_eq!(failure.model, "provider/model-3");
+        assert_eq!(failure.retry_root_run_id, "run-1");
+        assert_eq!(failure.attempt_count, 3);
+        assert_eq!(failure.focused_action, None);
+        assert!(chain.collapsible);
+        assert!(!chain.expanded);
+
+        assert_eq!(
+            failure.available_actions("provider/model-3"),
+            vec![
+                FailureRecoveryAction::RetryCurrent,
+                FailureRecoveryAction::Details,
+                FailureRecoveryAction::CopyId,
+            ]
+        );
+        assert_eq!(
+            failure.available_actions("provider/current"),
+            vec![
+                FailureRecoveryAction::RetryCurrent,
+                FailureRecoveryAction::ReplayOriginal,
+                FailureRecoveryAction::Details,
+                FailureRecoveryAction::CopyId,
+            ]
+        );
+    }
+
+    #[test]
+    fn non_retryable_failure_actions_only_offer_details_and_copy_id() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire("ExecutionFailed", json!({"reason":"failed"})),
+        ));
+        assert_eq!(
+            blocks[0]
+                .failure
+                .as_ref()
+                .unwrap()
+                .available_actions("provider/current"),
+            vec![
+                FailureRecoveryAction::Details,
+                FailureRecoveryAction::CopyId,
+            ]
+        );
+    }
+
+    #[test]
+    fn typed_terminal_failures_match_live_and_hydrated_projection() {
+        for (event_kind, payload) in [
+            (
+                "ExecutionFailed",
+                json!({"owner":"build","reason":"provider failed","reason_code":"provider_error","retryable":true}),
+            ),
+            (
+                "ExecutionCancelled",
+                json!({"owner":"operator","reason":"operator_cancelled","retryable":true}),
+            ),
+            (
+                "ExecutionInterrupted",
+                json!({"owner":"runtime","reason":"restarting","retryable":true,"recovery_disposition":"resume_checkpoint"}),
+            ),
+        ] {
+            let queued = json!({"effective_model":"provider/actual"});
+            let mut live_reducer = TranscriptReducer::default();
+            let mut live = Vec::new();
+            assert!(!live_reducer.reduce_event(
+                &mut live,
+                wire_for_run("ExecutionQueued", "run-1", queued.clone()),
+            ));
+            let mut terminal = wire_for_run(event_kind, "run-1", payload.clone());
+            terminal.event_id = "event-terminal".into();
+            assert!(live_reducer.reduce_event(&mut live, terminal));
+
+            let mut hydrated_details = payload;
+            hydrated_details
+                .as_object_mut()
+                .unwrap()
+                .insert("source_type".into(), Value::String(event_kind.to_owned()));
+            let hydrated = TranscriptReducer::default().hydrate(vec![
+                turn_item_for_run("turn.started", "run-1", "event-queued", queued),
+                turn_item_for_run("turn.failed", "run-1", "event-terminal", hydrated_details),
+            ]);
+
+            assert_eq!(live.len(), 1, "live {event_kind}");
+            assert_eq!(hydrated.len(), 1, "hydrated {event_kind}");
+            assert_eq!(live[0].id, hydrated[0].id, "identity for {event_kind}");
+            assert_eq!(live[0].title, hydrated[0].title, "title for {event_kind}");
+            assert_eq!(live[0].body, hydrated[0].body, "reason for {event_kind}");
+            assert_eq!(
+                live[0].failure, hydrated[0].failure,
+                "presentation for {event_kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn linked_retry_queue_disables_duplicate_recovery_live_and_after_hydration() {
+        let first = json!({"effective_model":"provider/original"});
+        let retry = json!({
+            "effective_model":"provider/current",
+            "retry_of_run_id":"run-1",
+            "retry_routing":"current"
+        });
+
+        let mut live_reducer = TranscriptReducer::default();
+        let mut live = Vec::new();
+        assert!(!live_reducer.reduce_event(
+            &mut live,
+            wire_for_run("ExecutionQueued", "run-1", first.clone()),
+        ));
+        assert!(live_reducer.reduce_event(
+            &mut live,
+            wire_for_run(
+                "ExecutionFailed",
+                "run-1",
+                json!({"reason":"first failure","retryable":true}),
+            ),
+        ));
+        assert!(live_reducer.reduce_event(
+            &mut live,
+            wire_for_run("ExecutionQueued", "run-2", retry.clone()),
+        ));
+
+        let mut hydrated_reducer = TranscriptReducer::default();
+        let hydrated = hydrated_reducer.hydrate(vec![
+            turn_item_for_run("turn.started", "run-1", "queued-1", first),
+            turn_item_for_run(
+                "turn.failed",
+                "run-1",
+                "failed-1",
+                json!({"error":"first failure"}),
+            ),
+            turn_item_for_run("turn.started", "run-2", "queued-2", retry),
+        ]);
+
+        for blocks in [&live, &hydrated] {
+            let failure = blocks[0].failure.as_ref().unwrap();
+            assert_eq!(blocks[0].id, "failure:run-1");
+            assert_eq!(failure.action, FailureAction::Recovering);
+            assert_eq!(failure.run_id, "run-2");
+            assert_eq!(failure.model, "provider/original");
+            assert_eq!(failure.attempt_count, 2);
+            assert_eq!(
+                failure.available_actions("provider/current"),
+                vec![
+                    FailureRecoveryAction::Details,
+                    FailureRecoveryAction::CopyId,
+                ]
+            );
+        }
+
+        assert!(live_reducer.reduce_event(
+            &mut live,
+            wire_for_run(
+                "ExecutionCompleted",
+                "run-2",
+                json!({"summary":"recovered"}),
+            ),
+        ));
+        assert_eq!(
+            live.iter()
+                .find_map(|block| block.failure.as_ref())
+                .unwrap()
+                .action,
+            FailureAction::Disabled
+        );
+    }
+
+    #[test]
     fn malformed_failure_never_enables_retry() {
         let mut event = wire(
             "ExecutionFailed",
@@ -3747,7 +4257,11 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             item: None,
         }]);
         assert_eq!(blocks[0].id, "failure:run-1");
-        assert_eq!(blocks[0].failure.as_ref().unwrap().owner, "runtime");
+        let failure = blocks[0].failure.as_ref().unwrap();
+        assert_eq!(failure.owner, "runtime");
+        assert_eq!(failure.model, "");
+        assert_eq!(failure.retry_root_run_id, "run-1");
+        assert_eq!(failure.attempt_count, 1);
         assert_eq!(blocks[0].body, "legacy failure");
     }
 }

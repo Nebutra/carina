@@ -507,11 +507,102 @@ func TestProjectSessionItemsSurfacesDoneSummaryAsAgentMessage(t *testing.T) {
 	if msg.Details["text"] != "你好！有什么可以帮你的？" {
 		t.Fatalf("done summary not projected as agent_message text: %+v", msg.Details)
 	}
-	// ExecutionCompleted must not double the answer after ModelResponded(done).
+	// ExecutionCompleted retains lifecycle for retry-chain settlement, but must
+	// not duplicate the answer already projected by ModelResponded(done).
+	var completed bool
 	for _, event := range items {
 		if event.Type == "turn.completed" {
-			t.Fatalf("duplicate turn.completed after done agent_message: %+v", event)
+			completed = true
+			if stringField(event.Details, "summary") != "" {
+				t.Fatalf("turn.completed duplicated done summary: %+v", event)
+			}
 		}
+	}
+	if !completed {
+		t.Fatalf("ExecutionCompleted lifecycle was not retained: %+v", items)
+	}
+}
+
+func TestProjectSessionItemsHydratesTurnStartFromExecutionQueued(t *testing.T) {
+	items := projectSessionItems("sess_1", []itemAuditEvent{
+		{
+			EventID: "evt_created", SessionID: "sess_1", TaskID: "run_retry", Type: "TaskCreated",
+			Timestamp: "2026-08-11T00:00:00Z", Payload: map[string]any{"status": "submitted"},
+		},
+		{
+			EventID: "evt_queued", SessionID: "sess_1", TaskID: "run_retry", Type: "ExecutionQueued",
+			Timestamp: "2026-08-11T00:00:01Z", Payload: map[string]any{
+				"user_prompt":     "retry the request",
+				"model":           "provider/effective",
+				"requested_model": "provider/requested",
+				"effective_model": "provider/effective",
+				"retry_of_run_id": "run_original",
+				"retry_routing":   "current",
+			},
+		},
+	})
+
+	var starts []SessionItemEvent
+	for _, event := range items {
+		if event.Type == "turn.started" {
+			starts = append(starts, event)
+		}
+	}
+	if len(starts) != 1 {
+		t.Fatalf("turn.started count=%d, want 1: %+v", len(starts), items)
+	}
+	start := starts[0]
+	if start.SourceEventID != "evt_queued" || start.Timestamp != "2026-08-11T00:00:01Z" {
+		t.Fatalf("turn.started did not use queued provenance: %+v", start)
+	}
+	want := map[string]string{
+		"source_type":     "ExecutionQueued",
+		"user_prompt":     "retry the request",
+		"model":           "provider/effective",
+		"requested_model": "provider/requested",
+		"effective_model": "provider/effective",
+		"retry_of_run_id": "run_original",
+		"retry_routing":   "current",
+	}
+	for key, value := range want {
+		if got := stringField(start.Details, key); got != value {
+			t.Fatalf("turn.started detail %s=%q, want %q: %+v", key, got, value, start.Details)
+		}
+	}
+}
+
+func TestProjectSessionItemsProjectsTypedTerminalFailures(t *testing.T) {
+	for _, tc := range []struct {
+		eventType string
+		status    string
+	}{
+		{eventType: "ExecutionFailed", status: "failed"},
+		{eventType: "ExecutionInterrupted", status: "interrupted"},
+		{eventType: "ExecutionCancelled", status: "cancelled"},
+	} {
+		t.Run(tc.eventType, func(t *testing.T) {
+			items := projectSessionItems("sess_1", []itemAuditEvent{
+				{EventID: "evt_q", SessionID: "sess_1", TaskID: "run_1", Type: "ExecutionQueued"},
+				{EventID: "evt_terminal", SessionID: "sess_1", TaskID: "run_1", Type: tc.eventType, Payload: map[string]any{
+					"reason": "terminal reason", "owner": "runtime", "retryable": true,
+				}},
+			})
+			var terminal *SessionItemEvent
+			for i := range items {
+				if items[i].Type == "turn.failed" && items[i].SourceEventID == "evt_terminal" {
+					terminal = &items[i]
+					break
+				}
+			}
+			if terminal == nil {
+				t.Fatalf("typed terminal failure was not projected: %+v", items)
+			}
+			if stringField(terminal.Details, "source_type") != tc.eventType ||
+				stringField(terminal.Details, "status") != tc.status ||
+				stringField(terminal.Details, "reason") != "terminal reason" {
+				t.Fatalf("typed terminal failure lost semantics: %+v", terminal.Details)
+			}
+		})
 	}
 }
 

@@ -240,6 +240,12 @@ enum Focus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct FailureActionFocus {
+    block_id: String,
+    selected: crate::transcript::FailureRecoveryAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ProviderImportState {
     Idle,
     Reviewing {
@@ -530,6 +536,7 @@ pub struct App {
     resume_generation: u64,
     resume_pending: bool,
     history_branch_pending: bool,
+    failure_action_focus: Option<FailureActionFocus>,
     rewind_primed_at: Option<Instant>,
     rewind_prime_window: Duration,
     /// First Ctrl-C (hard_cancel) while idle primes quit; second within grace exits.
@@ -892,6 +899,7 @@ impl App {
             resume_generation: 0,
             resume_pending: false,
             history_branch_pending: false,
+            failure_action_focus: None,
             rewind_primed_at: None,
             rewind_prime_window: rewind_prime_window(),
             quit_primed_at: None,
@@ -3405,6 +3413,9 @@ impl App {
             self.capture_clipboard(mode);
             return Ok(());
         }
+        if slash_count == 0 && self.handle_failure_action_key(key) {
+            return Ok(());
+        }
         match key.code {
             KeyCode::Up if slash_count > 0 => {
                 self.slash_selected = self.slash_selected.saturating_sub(1);
@@ -3495,7 +3506,7 @@ impl App {
                         .then(|| failure.run_id.clone())
                     })
                 }) {
-                    self.retry_failed_execution(&run_id);
+                    self.retry_failed_execution(&run_id, crate::rpc::RetryRouting::Current);
                 }
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::ALT) => {
@@ -3559,12 +3570,37 @@ impl App {
         Ok(())
     }
 
-    fn retry_failed_execution(&mut self, original_run_id: &str) {
+    fn retry_failed_execution(&mut self, original_run_id: &str, routing: crate::rpc::RetryRouting) {
+        if !retry_dispatch_allowed(&self.blocks, self.active_run_id.as_deref(), original_run_id) {
+            return;
+        }
         match self
             .rpc
-            .retry_execution(original_run_id, &operation_id("retry"))
+            .retry_execution(original_run_id, routing, &operation_id("retry"))
         {
             Ok(execution) => {
+                self.failure_action_focus = None;
+                self.focus = Focus::Composer;
+                let mut failure_changed = false;
+                for block in &mut self.blocks {
+                    let Some(failure) = block
+                        .failure
+                        .as_mut()
+                        .filter(|failure| failure.run_id == original_run_id)
+                    else {
+                        continue;
+                    };
+                    block.run_id.clone_from(&execution.run_id);
+                    failure.run_id.clone_from(&execution.run_id);
+                    failure.action = crate::transcript::FailureAction::Recovering;
+                    failure.attempt_count = failure.attempt_count.saturating_add(1);
+                    failure.focused_action = None;
+                    block.layout_revision = block.layout_revision.saturating_add(1);
+                    failure_changed = true;
+                }
+                if failure_changed {
+                    self.clear_transcript_projection_caches();
+                }
                 self.active_run_id = Some(execution.run_id.clone());
                 self.execution_timer.start_new();
                 self.execution_activity = None;
@@ -3587,6 +3623,117 @@ impl App {
                 );
             }
         }
+    }
+
+    fn failure_action_for(
+        block: &TranscriptBlock,
+        selected: crate::transcript::FailureRecoveryAction,
+    ) -> Option<Action> {
+        use crate::transcript::FailureRecoveryAction;
+
+        let failure = block.failure.as_ref()?;
+        match selected {
+            FailureRecoveryAction::RetryCurrent => Some(Action::RetryExecution {
+                run_id: failure.run_id.clone(),
+                routing: crate::rpc::RetryRouting::Current,
+            }),
+            FailureRecoveryAction::ReplayOriginal => Some(Action::RetryExecution {
+                run_id: failure.run_id.clone(),
+                routing: crate::rpc::RetryRouting::Original,
+            }),
+            FailureRecoveryAction::Details => Some(Action::ToggleBlock(block.id.clone())),
+            FailureRecoveryAction::CopyId => Some(Action::CopyFailureId(
+                if failure.source_event_id.is_empty() {
+                    failure.run_id.clone()
+                } else {
+                    failure.source_event_id.clone()
+                },
+            )),
+        }
+    }
+
+    fn handle_failure_action_key(&mut self, key: KeyEvent) -> bool {
+        use crate::transcript::FailureRecoveryAction;
+
+        if let Some(focus) = self.failure_action_focus.clone() {
+            let Some(block) = self.blocks.iter().find(|block| block.id == focus.block_id) else {
+                self.failure_action_focus = None;
+                self.focus = Focus::Composer;
+                return false;
+            };
+            let Some(failure) = block.failure.as_ref() else {
+                self.failure_action_focus = None;
+                self.focus = Focus::Composer;
+                return false;
+            };
+            let actions = failure.available_actions(&self.selected_model);
+            if actions.is_empty() {
+                self.failure_action_focus = None;
+                self.focus = Focus::Composer;
+                return false;
+            }
+            let index = actions
+                .iter()
+                .position(|action| *action == focus.selected)
+                .unwrap_or(0);
+            match key.code {
+                KeyCode::Tab | KeyCode::Right | KeyCode::Down => {
+                    self.failure_action_focus = Some(FailureActionFocus {
+                        block_id: focus.block_id,
+                        selected: actions[(index + 1) % actions.len()],
+                    });
+                    return true;
+                }
+                KeyCode::BackTab | KeyCode::Left | KeyCode::Up => {
+                    self.failure_action_focus = Some(FailureActionFocus {
+                        block_id: focus.block_id,
+                        selected: actions[(index + actions.len() - 1) % actions.len()],
+                    });
+                    return true;
+                }
+                KeyCode::Enter if key.modifiers.is_empty() => {
+                    let action = Self::failure_action_for(block, focus.selected);
+                    if !matches!(focus.selected, FailureRecoveryAction::Details) {
+                        self.failure_action_focus = None;
+                        self.focus = Focus::Composer;
+                    }
+                    if let Some(action) = action {
+                        self.apply_action(action);
+                    }
+                    return true;
+                }
+                KeyCode::Esc => {
+                    self.failure_action_focus = None;
+                    self.focus = Focus::Composer;
+                    return true;
+                }
+                _ => {
+                    self.failure_action_focus = None;
+                    self.focus = Focus::Composer;
+                    return false;
+                }
+            }
+        }
+
+        if key.code != KeyCode::Tab
+            || !key.modifiers.is_empty()
+            || self.active_run_id.is_some()
+            || !self.composer.text().is_empty()
+        {
+            return false;
+        }
+        let Some((block_id, selected)) = self.blocks.iter().rev().find_map(|block| {
+            let failure = block.failure.as_ref()?;
+            failure
+                .available_actions(&self.selected_model)
+                .contains(&FailureRecoveryAction::RetryCurrent)
+                .then(|| (block.id.clone(), FailureRecoveryAction::RetryCurrent))
+        }) else {
+            return false;
+        };
+        self.failure_action_focus = Some(FailureActionFocus { block_id, selected });
+        self.focus = Focus::Scene;
+        true
     }
 
     fn copy_failure_id(&mut self, id: &str) {
@@ -5725,6 +5872,7 @@ impl App {
     }
 
     fn reset_transcript_viewport(&mut self) {
+        self.failure_action_focus = None;
         self.transcript_height_cache.clear();
         self.transcript_render_cache.clear();
         self.transcript_scroll = 0;
@@ -6093,7 +6241,9 @@ impl App {
                 self.retry_media(element_id);
                 self.focus = Focus::Composer;
             }
-            Action::RetryExecution(run_id) => self.retry_failed_execution(&run_id),
+            Action::RetryExecution { run_id, routing } => {
+                self.retry_failed_execution(&run_id, routing)
+            }
             Action::CopyFailureId(id) => self.copy_failure_id(&id),
             Action::OpenSessions => {
                 self.close_top_non_governance();
@@ -7966,6 +8116,25 @@ fn operation_id(prefix: &str) -> String {
     )
 }
 
+fn retry_dispatch_allowed(
+    blocks: &[TranscriptBlock],
+    active_run_id: Option<&str>,
+    requested_run_id: &str,
+) -> bool {
+    active_run_id.is_none()
+        && !requested_run_id.is_empty()
+        && blocks.iter().any(|block| {
+            block.failure.as_ref().is_some_and(|failure| {
+                failure.run_id == requested_run_id
+                    && matches!(
+                        failure.action,
+                        crate::transcript::FailureAction::Retry
+                            | crate::transcript::FailureAction::RunAgain
+                    )
+            })
+        })
+}
+
 fn artifact_target_is_current(
     generation: u64,
     current_generation: u64,
@@ -8233,6 +8402,38 @@ fn persist_glyph_preference(path: &Path, preference: GlyphPreference) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_dispatch_revalidates_stale_pointer_actions_before_rpc() {
+        let mut block = TranscriptBlock::local_steer(
+            "failure:run-root".into(),
+            "run-failed".into(),
+            String::new(),
+        );
+        block.failure = Some(crate::transcript::FailurePresentation {
+            kind: crate::transcript::FailureKind::Failed,
+            action: crate::transcript::FailureAction::Retry,
+            owner: "runtime".into(),
+            reason: "failed".into(),
+            source_event_id: "event-failed".into(),
+            run_id: "run-failed".into(),
+            model: "provider/model".into(),
+            current_model: String::new(),
+            retry_root_run_id: "run-root".into(),
+            attempt_count: 1,
+            focused_action: None,
+        });
+
+        assert!(retry_dispatch_allowed(&[block.clone()], None, "run-failed"));
+        assert!(!retry_dispatch_allowed(
+            &[block.clone()],
+            Some("run-retry"),
+            "run-failed"
+        ));
+
+        block.failure.as_mut().unwrap().action = crate::transcript::FailureAction::Recovering;
+        assert!(!retry_dispatch_allowed(&[block], None, "run-failed"));
+    }
 
     #[test]
     fn rollback_preview_requires_exact_identity_and_unchanged_workspace() {

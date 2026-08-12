@@ -478,6 +478,16 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 	}
 	out = append(out, started)
 
+	queuedTurns := map[string]itemAuditEvent{}
+	for _, ev := range events {
+		if ev.TaskID == "" || ev.Type != "ExecutionQueued" {
+			continue
+		}
+		if _, ok := queuedTurns[ev.TaskID]; !ok {
+			queuedTurns[ev.TaskID] = ev
+		}
+	}
+
 	seenTurns := map[string]bool{}
 	openByID := map[string]*commandProjection{}
 	openByTask := map[string][]*commandProjection{}
@@ -497,14 +507,18 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 		}
 		if ev.TaskID != "" && !seenTurns[ev.TaskID] {
 			seenTurns[ev.TaskID] = true
+			turnStart := ev
+			if queued, ok := queuedTurns[ev.TaskID]; ok {
+				turnStart = queued
+			}
 			out = append(out, SessionItemEvent{
 				Type:          "turn.started",
-				SessionID:     nonempty(sessionID, ev.SessionID),
+				SessionID:     nonempty(sessionID, turnStart.SessionID),
 				TurnID:        ev.TaskID,
 				TaskID:        ev.TaskID,
-				SourceEventID: ev.EventID,
-				Timestamp:     ev.Timestamp,
-				Details:       turnStartDetails(ev),
+				SourceEventID: turnStart.EventID,
+				Timestamp:     turnStart.Timestamp,
+				Details:       turnStartDetails(turnStart),
 			})
 		}
 
@@ -629,22 +643,32 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			}
 
 		case "ExecutionCompleted":
-			// Fallback when ModelResponded was missing or only carried opaque
-			// action JSON without a projectable done summary.
-			if ev.TaskID != "" && answerByTask[ev.TaskID] {
-				break
-			}
+			// Always retain terminal lifecycle so a successful linked retry can
+			// settle its failure chain during hydration. Only carry the summary
+			// when ModelResponded did not already project the visible answer.
 			summary := strings.TrimSpace(stringField(ev.Payload, "summary"))
-			if summary == "" {
-				break
+			details := map[string]any{"status": "completed"}
+			if ev.TaskID == "" || !answerByTask[ev.TaskID] {
+				if summary != "" {
+					details["summary"] = summary
+				}
 			}
-			out = append(out, turnEvent("turn.completed", sessionID, ev, map[string]any{
-				"status":  "completed",
-				"summary": summary,
-			}))
+			out = append(out, turnEvent("turn.completed", sessionID, ev, details))
 			if ev.TaskID != "" {
 				answerByTask[ev.TaskID] = true
 			}
+
+		case "ExecutionFailed", "ExecutionInterrupted", "ExecutionCancelled":
+			details := copyMap(ev.Payload)
+			details["source_type"] = ev.Type
+			if stringField(details, "status") == "" {
+				details["status"] = map[string]string{
+					"ExecutionFailed":      "failed",
+					"ExecutionInterrupted": "interrupted",
+					"ExecutionCancelled":   "cancelled",
+				}[ev.Type]
+			}
+			out = append(out, turnEvent("turn.failed", sessionID, ev, details))
 
 		case "CommandStarted":
 			if callID := activeRunByTask[ev.TaskID]; callID != "" {
@@ -1019,7 +1043,20 @@ func turnEvent(eventType, sessionID string, ev itemAuditEvent, details map[strin
 
 func turnStartDetails(ev itemAuditEvent) map[string]any {
 	details := map[string]any{}
-	copySelected(details, ev.Payload, "status", "prompt", "user_prompt", "model", "agent", "success_criteria")
+	copySelected(
+		details,
+		ev.Payload,
+		"status",
+		"prompt",
+		"user_prompt",
+		"model",
+		"requested_model",
+		"effective_model",
+		"retry_of_run_id",
+		"retry_routing",
+		"agent",
+		"success_criteria",
+	)
 	if ev.Type != "" {
 		details["source_type"] = ev.Type
 	}
