@@ -2672,7 +2672,7 @@ wait_for_text "gpt-5.5   执行"
 # the typed daemon RPC instead of leaking into the composer as a plain Tab.
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l $'\033[Z'
 wait_for_text "规划模式已启用"
-wait_for_text "gpt-5.5   计划"
+wait_for_text "gpt-5.5   规划"
 for _ in $(seq 1 100); do
   [[ -f "$PLAN_CAPTURE" ]] && grep -Fq '"method":"session.plan_mode"' "$PLAN_CAPTURE" && break
   sleep 0.05
@@ -2718,7 +2718,7 @@ PY
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l Q
 wait_without_text "审阅计划"
 wait_for_text "已关闭计划审阅。规划模式保持启用，未执行任何操作。"
-wait_for_text "gpt-5.5   计划"
+wait_for_text "gpt-5.5   规划"
 assert_plan_review_local_only "Q close"
 
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /view-plan
@@ -2740,7 +2740,7 @@ wait_without_text "审阅计划"
 wait_for_text "修改草稿已放入输入框。规划模式仍处于启用状态"
 wait_for_text "请根据下面的审阅评论修改此计划。"
 wait_for_text "第 1 行：补充回滚验证"
-wait_for_text "gpt-5.5   计划"
+wait_for_text "gpt-5.5   规划"
 assert_plan_review_local_only "S revise"
 
 # Esc remains the compatibility alias for Revise, not a close action.
@@ -2791,7 +2791,9 @@ wait_for_text "计划已批准，实施已排队。"
 # The mock leaves a bounded interval before lifecycle events so this notice
 # proves Rust adopted the canonical approval `task` directly from the RPC.
 wait_for_text "Approved plan implemented"
-grep -Fq "╭ 消息" <<<"$SCREEN" || {
+# The compact composer has no boxed title. Its empty prompt row is the stable
+# ready-state affordance after the approved implementation completes.
+grep -Eq '^ ❯[[:space:]]*$' <<<"$SCREEN" || {
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: completed implementation did not restore the ready composer" >&2
   exit 1
@@ -2848,7 +2850,7 @@ TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
 wait_for_text "语言  ·  zh-Hans"
 grep -Fq "服务商  ·  Test" <<<"$SCREEN"
 grep -Fq "模式  ·  执行 · 直接实施" <<<"$SCREEN"
-grep -Fq "状态  ·  运行时、Agent、用量与改动" <<<"$SCREEN"
+grep -Fq "运行时、Agent、用量与改动" <<<"$SCREEN"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /status
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
