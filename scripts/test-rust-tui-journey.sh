@@ -2667,12 +2667,12 @@ TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
   "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color '$STAGE/carina-ui' --socket '$PLAN_SOCKET' --workspace '$WORKSPACE' --session sess_plan --locale zh-Hans --no-alt-screen; code=\$?; printf '%s' \"\$code\" > '$PLAN_EXIT_FILE'; sleep 300"
 
 wait_for_text "描述你想完成的改动。"
-wait_for_text "执行 ⇧Tab"
+wait_for_text "gpt-5.5   执行"
 # xterm encodes Shift-Tab as CSI Z. It changes the idle session mode through
 # the typed daemon RPC instead of leaking into the composer as a plain Tab.
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l $'\033[Z'
 wait_for_text "规划模式已启用"
-wait_for_text "计划 ⇧Tab"
+wait_for_text "gpt-5.5   计划"
 for _ in $(seq 1 100); do
   [[ -f "$PLAN_CAPTURE" ]] && grep -Fq '"method":"session.plan_mode"' "$PLAN_CAPTURE" && break
   sleep 0.05
@@ -2718,7 +2718,7 @@ PY
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l Q
 wait_without_text "审阅计划"
 wait_for_text "已关闭计划审阅。规划模式保持启用，未执行任何操作。"
-wait_for_text "计划 ⇧Tab"
+wait_for_text "gpt-5.5   计划"
 assert_plan_review_local_only "Q close"
 
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /view-plan
@@ -2740,7 +2740,7 @@ wait_without_text "审阅计划"
 wait_for_text "修改草稿已放入输入框。规划模式仍处于启用状态"
 wait_for_text "请根据下面的审阅评论修改此计划。"
 wait_for_text "第 1 行：补充回滚验证"
-wait_for_text "计划 ⇧Tab"
+wait_for_text "gpt-5.5   计划"
 assert_plan_review_local_only "S revise"
 
 # Esc remains the compatibility alias for Revise, not a close action.
