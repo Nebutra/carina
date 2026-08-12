@@ -119,6 +119,29 @@ The composer keeps one stable two-row status surface. The first row owns the cur
 
 At narrow widths, lower-priority context is compacted before governance state. Run, HITL, Isolation, and a non-zero Queue remain visible; warning or critical context pressure is also protected.
 
+### Failure recovery
+
+A failure cell records the model that actually served the failed run. The model
+in the header is the preference for the next run, so changing it never rewrites
+the history shown in an older failure.
+
+| Action | Behavior |
+| --- | --- |
+| **Retry current** | Reuses the failed prompt with the session's current model and reasoning preference |
+| **Replay original** | Reuses the failed run's original governed model and reasoning configuration |
+| **Details** | Shows the retry root, latest run, and failure event identities |
+| **Copy ID** | Copies the failure identity for audit or support |
+
+Each retry creates a new immutable run linked to the original; it does not
+overwrite the failed outcome. Related attempts stay in one failure cell with an
+attempt count. Once recovery is queued, the retry actions are disabled until a
+new terminal result arrives.
+
+Actions are visible and clickable. With an empty composer and no active run,
+press `Tab` to focus the newest retryable failure, use `Tab` or the arrow keys to
+move, `Enter` to activate, and `Esc` to return to the composer. Existing drafts
+and active-run follow-up behavior keep ownership of `Tab`.
+
 ### Review workbench
 
 <Badge variant="accent">next</Badge>
