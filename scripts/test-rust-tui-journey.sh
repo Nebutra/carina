@@ -193,6 +193,19 @@ require_screen_text() {
   return 1
 }
 
+open_conversations_from_product_menu() {
+  # An attachment preview may still be open after retry. Close it before using
+  # the current compact header entry point instead of the retired Sessions tab.
+  TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
+  printf -v product_move '\033[<35;2;1M'
+  printf -v product_click '\033[<0;2;1M'
+  TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$product_move"
+  TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$product_click"
+  wait_for_text "Carina menu"
+  TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Down Enter
+  wait_for_text "Conversations"
+}
+
 check_snapshot() {
   local path="$1"
   local content="$2"
@@ -1850,13 +1863,7 @@ TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
 wait_for_text "Image attached"
 wait_for_text "❯  image  media-sample.png"
 
-wait_for_text "Sessions"
-sessions_col="$(python3 -c 'import sys; line=next(line for line in sys.stdin if "Sessions" in line); print(line.index("Sessions") + 2)' <<<"$SCREEN")"
-printf -v sessions_move '\033[<35;%d;1M' "$sessions_col"
-printf -v sessions_click '\033[<0;%d;1M' "$sessions_col"
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$sessions_move"
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$sessions_click"
-wait_for_text "Conversations"
+open_conversations_from_product_menu
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "/Media target"
 wait_for_text "Media target"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
@@ -1866,13 +1873,7 @@ TMUX_TMPDIR="$WORK" tmux resize-window -t "$SESSION" -x 70 -y 20
 wait_for_text "media-sample.png"
 TMUX_TMPDIR="$WORK" tmux resize-window -t "$SESSION" -x 120 -y 40
 wait_for_text "media-sample.png"
-wait_for_text "Sessions"
-sessions_col="$(python3 -c 'import sys; line=next(line for line in sys.stdin if "Sessions" in line); print(line.index("Sessions") + 2)' <<<"$SCREEN")"
-printf -v sessions_move '\033[<35;%d;1M' "$sessions_col"
-printf -v sessions_click '\033[<0;%d;1M' "$sessions_col"
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$sessions_move"
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$sessions_click"
-wait_for_text "Conversations"
+open_conversations_from_product_menu
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "/"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace BSpace
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "Primary draft"
@@ -1901,7 +1902,7 @@ wait_for_text "media-sample.png"
   exit 1
 }
 capture
-model_col="$(python3 -c 'import sys; line=sys.stdin.readline(); print(line.index("Model") + 2)' <<<"$SCREEN")"
+model_col="$(python3 -c 'import sys; line=sys.stdin.readline(); print(line.index("text-only") + 2)' <<<"$SCREEN")"
 printf -v model_click '\033[<0;%d;1M' "$model_col"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$model_click"
 wait_for_text "Choose model"
@@ -1941,10 +1942,7 @@ if len({upload.get("sha256") for upload in uploads}) != 1:
 PY
 
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "draft survives failed resume"
-wait_for_text "Sessions"
-sessions_col="$(python3 -c 'import sys; line=next(line for line in sys.stdin if "Sessions" in line); print(line.index("Sessions") + 2)' <<<"$SCREEN")"
-printf -v sessions_click '\033[<0;%d;1M\033[<0;%d;1m' "$sessions_col" "$sessions_col"
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$sessions_click"
+open_conversations_from_product_menu
 wait_for_text "Search conversations"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
 wait_for_text "Could not open the conversation"
