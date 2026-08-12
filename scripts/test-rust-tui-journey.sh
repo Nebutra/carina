@@ -1988,11 +1988,11 @@ TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
 wait_for_text "Settings / Symbols"
 wait_for_text "✓ Done"
 grep -Fq "● Working" <<<"$SCREEN"
-grep -Fq "✗ Failed" <<<"$SCREEN"
+grep -Fq "✗ failed" <<<"$SCREEN"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" 4
 wait_for_text "+ Done"
 grep -Fq "* Working" <<<"$SCREEN"
-grep -Fq "x Failed" <<<"$SCREEN"
+grep -Fq "x failed" <<<"$SCREEN"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
 wait_for_text "Symbols  ·  Automatic (Unicode)"
 cmp -s "$GLYPH_CONFIG_BEFORE_CANCEL" "$GLYPH_CONFIG" || {
@@ -2010,16 +2010,20 @@ TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" 4
 wait_for_text "+ Done"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
 wait_for_text "Symbols  |  ASCII"
-python3 - "$GLYPH_CONFIG" <<'PY'
+python3 - "$GLYPH_CONFIG" "$GLYPH_CONFIG_BEFORE_CANCEL" <<'PY'
 import json
 import pathlib
 import sys
 
 config = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+before = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
 if config.get("tui_glyphs") != "ascii":
     raise SystemExit(f"Symbols Apply did not persist ASCII: {config!r}")
-if config.get("tui_locale") != "en":
-    raise SystemExit(f"Symbols Apply changed unrelated locale state: {config!r}")
+before["tui_glyphs"] = "ascii"
+if config != before:
+    raise SystemExit(
+        f"Symbols Apply changed unrelated config state: before={before!r} after={config!r}"
+    )
 PY
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
 
@@ -2066,7 +2070,9 @@ wait_for_text "✓ Done"
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
 wait_for_text "Symbols  ·  Unicode"
 grep -Eq '"tui_glyphs"[[:space:]]*:[[:space:]]*"unicode"' "$GLYPH_CONFIG"
-TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape C-c C-c
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Escape
+wait_without_text "Symbols  ·  Unicode"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
 for _ in $(seq 1 50); do
   [[ -s "$GLYPH_RESTART_EXIT_FILE" ]] && break
   sleep 0.1
