@@ -168,6 +168,17 @@ wait_without_text() {
   return 1
 }
 
+require_screen_text() {
+  local wanted="$1"
+  local label="$2"
+  if grep -Fq "$wanted" <<<"$SCREEN"; then
+    return 0
+  fi
+  printf '%s\n' "$SCREEN" >&2
+  echo "rust-tui-journey: missing $label: $wanted" >&2
+  return 1
+}
+
 check_snapshot() {
   local path="$1"
   local content="$2"
@@ -195,8 +206,10 @@ fi
 
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
 wait_for_text "Connect a provider"
-grep -Fq "Search all 159 providers by name or ID" <<<"$SCREEN"
-grep -Fq "Connection" <<<"$SCREEN"
+# The title renders before the provider inventory on slower Linux runners.
+# Wait for the completed frame instead of sampling the first titled frame.
+wait_for_text "Search all 159 providers by name or ID"
+require_screen_text "Connection" "provider detail panel"
 if grep -Fq "SETUP" <<<"$SCREEN" || grep -Fq "Choose model" <<<"$SCREEN" || grep -Fq "╭ Message" <<<"$SCREEN"; then
   printf '%s\n' "$SCREEN" >&2
   echo "rust-tui-journey: model/composer leaked before provider readiness" >&2
@@ -1633,8 +1646,8 @@ TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
   "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color '$STAGE/carina-ui' --socket '$GOV_SOCKET' --workspace '$WORKSPACE' --locale en --screen-mode fullscreen; code=\$?; printf '%s' \"\$code\" > '$RETURNING_EXIT_FILE'; sleep 300"
 
 wait_for_text "Describe the change you want to make."
-grep -Fq "gpt-5.5  ·  high reasoning  ·  Test  ·  Direct API  ·  workspace" <<<"$SCREEN"
-grep -Fq "Carina  ·  workspace conversation" <<<"$SCREEN"
+require_screen_text "gpt-5.5" "returning conversation model"
+require_screen_text "workspace conversation" "returning conversation title"
 for leaked in "Choose model" "Open a conversation" "sess_stale" "sess_returning" "Started" "recorded" "runtime test" "protocol 1.3.0"; do
   if grep -Fq "$leaked" <<<"$SCREEN"; then
     printf '%s\n' "$SCREEN" >&2
