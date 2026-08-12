@@ -3,7 +3,7 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered
 ---
 size=160x30
-Carina ▾   ·  carina 会话                                                                                                                          model   执行
+Carina ▾   ·  carina 会话                                                                                                           model  ·  推理已关闭   执行
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -35,7 +35,7 @@ Carina ▾   ·  carina 会话                                                  
 styles:
 (0,0)..(9,0) (Rgb(222, 133, 155), Reset, BOLD)
 (9,0)..(25,0) (Rgb(150, 160, 156), Reset, NONE)
-(146,0)..(153,0) (Rgb(150, 160, 156), Reset, NONE)
+(131,0)..(153,0) (Rgb(150, 160, 156), Reset, NONE)
 (154,0)..(160,0) (Rgb(142, 219, 210), Reset, BOLD)
 (0,1)..(160,1) (Rgb(52, 65, 68), Reset, NONE)
 (32,4)..(128,4) (Rgb(142, 219, 210), Reset, BOLD)

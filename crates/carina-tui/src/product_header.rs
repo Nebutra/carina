@@ -639,7 +639,7 @@ mod tests {
                 tone: ConversationHeaderTone::Active,
             },
             ConversationHeaderAction {
-                label: "gpt-5.5",
+                label: "gpt-5.5  ·  high reasoning",
                 action: Action::OpenModels,
                 component: ComponentId(53),
                 tone: ConversationHeaderTone::Muted,
@@ -660,19 +660,19 @@ mod tests {
 
         for (width, expected, hidden) in [
             (
-                50,
-                vec!["Review", "Build", "gpt-5.5", "Sessions"],
+                70,
+                vec!["Review", "Build", "gpt-5.5  ·  high reasoning", "Sessions"],
                 vec!["Settings"],
             ),
             (
                 30,
                 vec!["Review", "Build"],
-                vec!["gpt-5.5", "Sessions", "Settings"],
+                vec!["gpt-5.5", "high reasoning", "Sessions", "Settings"],
             ),
             (
                 20,
                 vec!["Review"],
-                vec!["Build", "gpt-5.5", "Sessions", "Settings"],
+                vec!["Build", "gpt-5.5", "high reasoning", "Sessions", "Settings"],
             ),
         ] {
             let mut terminal = Terminal::new(TestBackend::new(width, 2)).unwrap();

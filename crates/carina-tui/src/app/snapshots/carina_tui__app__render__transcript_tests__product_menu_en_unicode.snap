@@ -3,7 +3,7 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered_frame_contract(terminal.backend().buffer())
 ---
 size=80x24
-Carina ▾   ·  product-menu conversation                           model   Build
+Carina ▾   ·  product-menu conversation         model  ·  reasoning off   Build
 ────────────────────────────────────────────────────────────────────────────────
 ╭ Carina menu ─────────────╮
 │▌ New conversation        │
@@ -30,7 +30,7 @@ Carina ▾   ·  product-menu conversation                           model   Bui
 styles:
 (0,0)..(9,0) (Rgb(142, 219, 210), Reset, BOLD)
 (9,0)..(39,0) (Rgb(150, 160, 156), Reset, NONE)
-(65,0)..(72,0) (Rgb(150, 160, 156), Reset, NONE)
+(47,0)..(72,0) (Rgb(150, 160, 156), Reset, NONE)
 (73,0)..(80,0) (Rgb(142, 219, 210), Reset, BOLD)
 (0,1)..(80,1) (Rgb(52, 65, 68), Reset, NONE)
 (0,2)..(28,2) (Rgb(142, 219, 210), Reset, BOLD)

@@ -2281,7 +2281,8 @@ impl App {
             &self.options.workspace,
             self.ui_locale(),
         );
-        let (_, model, _) = self.product_header_metadata();
+        let (_, model, reasoning) = self.product_header_metadata();
+        let model_route = format!("{model}  {}  {reasoning}", self.theme.glyphs.separator());
         let mode = if self
             .active_session
             .as_ref()
@@ -2315,7 +2316,7 @@ impl App {
             tone: ConversationHeaderTone::Active,
         });
         actions.push(ConversationHeaderAction {
-            label: &model,
+            label: &model_route,
             action: Action::OpenModels,
             component: ComponentId(9_102),
             tone: ConversationHeaderTone::Muted,
@@ -8925,6 +8926,62 @@ mod transcript_tests {
     }
 
     #[test]
+    fn conversation_header_exposes_reasoning_inside_the_model_route() {
+        let (mut app, root, server) = production_render_app();
+        app.options.locale = Some(Locale::ZhHans.product_id().into());
+        app.locale_index = Locale::ALL
+            .iter()
+            .position(|locale| *locale == Locale::ZhHans)
+            .unwrap_or_default();
+        let mut provider = header_provider(
+            "provider-a",
+            "Provider A",
+            "provider-a/gpt-5.6-sol",
+            "gpt-5.6-sol",
+        );
+        provider.models[0].reasoning_efforts = vec!["low".into(), "high".into()];
+        provider.models[0].default_reasoning_effort = "high".into();
+        app.inventory.providers = vec![provider];
+        app.models = app.inventory.available_models();
+        app.selected_model = "provider-a/gpt-5.6-sol".into();
+        app.selected_reasoning_effort = "high".into();
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 18)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let route = format!("gpt-5.6-sol  {}  high 推理", app.theme.glyphs.separator());
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+        assert!(rendered.contains(&route), "{rendered}");
+        let model_positions =
+            action_positions(&app, terminal.backend().buffer().area, Action::OpenModels);
+        assert_eq!(
+            model_positions.len(),
+            UnicodeWidthStr::width(route.as_str()) + 2,
+            "the padded model and effort route must be one hit target"
+        );
+        assert!(
+            model_positions
+                .windows(2)
+                .all(|pair| pair[0].y == pair[1].y && pair[0].x + 1 == pair[1].x),
+            "the combined route must not contain non-clickable gaps"
+        );
+
+        let mut narrow =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(30, 18)).unwrap();
+        narrow.draw(|frame| app.render(frame)).unwrap();
+        let rendered = rendered_frame_text(narrow.backend().buffer());
+        assert!(!rendered.contains("gpt-5.6-sol"), "{rendered}");
+        assert!(!rendered.contains("推理"), "{rendered}");
+        assert!(
+            action_positions(&app, narrow.backend().buffer().area, Action::OpenModels).is_empty(),
+            "narrow layouts must hide the combined route atomically"
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn running_header_owns_route_labels_once_when_next_preferences_differ() {
         let (mut app, root, server) = production_render_app();
         app.inventory.providers = vec![
@@ -9892,7 +9949,11 @@ mod transcript_tests {
                             header.contains(tr(locale, MessageId::ModeBuildLabel)),
                             "width={width}\n{rendered}"
                         );
-                        for repeated in ["⇧Tab", "reasoning off", "Direct API"] {
+                        assert!(
+                            header.contains(tr(locale, MessageId::ReasoningOff)),
+                            "width={width}\n{rendered}"
+                        );
+                        for repeated in ["⇧Tab", "Direct API"] {
                             assert!(
                                 !header.contains(repeated),
                                 "width={width} repeated {repeated:?}\n{rendered}"
